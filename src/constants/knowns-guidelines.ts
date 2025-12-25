@@ -1,4 +1,9 @@
-<!-- KNOWNS GUIDELINES START -->
+/**
+ * Knowns CLI Guidelines - System Prompt
+ * This content will be injected into agent instruction files (CLAUDE.md, AGENTS.md, etc.)
+ */
+
+export const KNOWNS_GUIDELINES = `<!-- KNOWNS GUIDELINES START -->
 # Knowns CLI Guidelines
 
 ## Core Principle
@@ -9,12 +14,12 @@
 
 ## Project Structure
 
-```
+\`\`\`
 .knowns/
 ├── tasks/              # Task files: task-<id> - <title>.md
 ├── docs/               # Documentation (supports nested folders)
 └── decisions/          # Architecture decision records
-```
+\`\`\`
 
 ---
 
@@ -22,14 +27,14 @@
 
 ### Task Lifecycle
 
-1. **Create** → `knowns task create "Title" -d "Description" --ac "Criterion 1" --ac "Criterion 2"`
-2. **Start** → `knowns task edit <id> -s "In Progress" -a @yourself`
+1. **Create** → \`knowns task create "Title" -d "Description" --ac "Criterion 1" --ac "Criterion 2"\`
+2. **Start** → \`knowns task edit <id> -s "In Progress" -a @yourself\`
 3. **Work** → Check acceptance criteria as you complete them
 4. **Complete** → Mark status as Done after all criteria met
 
 ### Critical Commands
 
-```bash
+\`\`\`bash
 # View task (always use --plain for AI)
 knowns task view <id> --plain
 
@@ -54,67 +59,67 @@ knowns task edit <id> --uncheck-ac 2
 knowns task edit <id> --remove-ac 3
 
 # Implementation
-knowns task edit <id> --plan $'1. Step one\n2. Step two'
+knowns task edit <id> --plan $'1. Step one\\n2. Step two'
 knowns task edit <id> --notes "Implementation summary"
-knowns task edit <id> --append-notes $'Additional note\nAnother line'
-```
+knowns task edit <id> --append-notes $'Additional note\\nAnother line'
+\`\`\`
 
 ### Multi-line Input (Shell-specific)
 
-**Bash/Zsh** - Use `$'...\n...'`:
-```bash
-knowns task edit 42 --desc $'Line 1\nLine 2\n\nLine 3'
-knowns task edit 42 --plan $'1. First\n2. Second'
-knowns task edit 42 --notes $'Done A\nDoing B'
-```
+**Bash/Zsh** - Use \`$'...\\n...'\`:
+\`\`\`bash
+knowns task edit 42 --desc $'Line 1\\nLine 2\\n\\nLine 3'
+knowns task edit 42 --plan $'1. First\\n2. Second'
+knowns task edit 42 --notes $'Done A\\nDoing B'
+\`\`\`
 
 **PowerShell** - Use backtick-n:
-```powershell
-knowns task edit 42 --notes "Line1`nLine2"
-```
+\`\`\`powershell
+knowns task edit 42 --notes "Line1\`nLine2"
+\`\`\`
 
 **Portable** - Use printf:
-```bash
-knowns task edit 42 --notes "$(printf 'Line1\nLine2')"
-```
+\`\`\`bash
+knowns task edit 42 --notes "$(printf 'Line1\\nLine2')"
+\`\`\`
 
 ---
 
 ## Task Workflow
 
 ### Step 1: Take Task
-```bash
+\`\`\`bash
 knowns task edit <id> -s "In Progress" -a @yourself
-```
+\`\`\`
 
 ### Step 2: Create Plan
-```bash
-knowns task edit <id> --plan $'1. Research\n2. Implement\n3. Test'
-```
+\`\`\`bash
+knowns task edit <id> --plan $'1. Research\\n2. Implement\\n3. Test'
+\`\`\`
 
 **IMPORTANT**: Share plan with user and wait for approval before coding.
 
 ### Step 3: Implementation
 Write code, then check acceptance criteria:
-```bash
+\`\`\`bash
 knowns task edit <id> --check-ac 1 --check-ac 2 --check-ac 3
-```
+\`\`\`
 
 ### Step 4: Add Notes (PR Description)
-```bash
-knowns task edit <id> --notes $'Implemented using X pattern\nUpdated tests\nReady for review'
-```
+\`\`\`bash
+knowns task edit <id> --notes $'Implemented using X pattern\\nUpdated tests\\nReady for review'
+\`\`\`
 
 Or append progressively:
-```bash
+\`\`\`bash
 knowns task edit <id> --append-notes "Completed feature X"
 knowns task edit <id> --append-notes "Added tests"
-```
+\`\`\`
 
 ### Step 5: Complete
-```bash
+\`\`\`bash
 knowns task edit <id> -s Done
-```
+\`\`\`
 
 ---
 
@@ -123,9 +128,9 @@ knowns task edit <id> -s Done
 Task is Done ONLY when ALL items are complete:
 
 **Via CLI:**
-1. All acceptance criteria checked: `--check-ac <index>`
-2. Implementation notes added: `--notes "..."`
-3. Status set to Done: `-s Done`
+1. All acceptance criteria checked: \`--check-ac <index>\`
+2. Implementation notes added: \`--notes "..."\`
+3. Status set to Done: \`-s Done\`
 
 **Via Code:**
 4. Tests pass
@@ -139,7 +144,7 @@ Task is Done ONLY when ALL items are complete:
 
 ### Commands
 
-```bash
+\`\`\`bash
 # List all docs (includes nested folders)
 knowns doc list --plain
 
@@ -153,12 +158,12 @@ knowns doc create "Title" -d "Description" -t "tag1,tag2"
 
 # Edit metadata
 knowns doc edit <name> -t "New Title" -d "New Description"
-```
+\`\`\`
 
 ### Document Links
 
-In `--plain` mode, markdown links are replaced with resolved paths:
-- `[guards.md](./patterns/guards.md)` → `@.knowns/docs/patterns/guards.md`
+In \`--plain\` mode, markdown links are replaced with resolved paths:
+- \`[guards.md](./patterns/guards.md)\` → \`@.knowns/docs/patterns/guards.md\`
 
 ---
 
@@ -192,8 +197,8 @@ Summary of what was done, suitable for PR. Added AFTER completion.
 
 | Wrong | Right |
 |-------|-------|
-| Edit .md files directly | Use `knowns task edit` |
-| Change `- [ ]` to `- [x]` in file | Use `--check-ac <index>` |
+| Edit .md files directly | Use \`knowns task edit\` |
+| Change \`- [ ]\` to \`- [x]\` in file | Use \`--check-ac <index>\` |
 | Add plan during creation | Add plan when starting work |
 | Mark Done without all criteria | Check ALL criteria first |
 
@@ -201,7 +206,7 @@ Summary of what was done, suitable for PR. Added AFTER completion.
 
 ## Search
 
-```bash
+\`\`\`bash
 # Search everything
 knowns search "auth" --plain
 
@@ -211,60 +216,60 @@ knowns search "login" --type task --plain
 # Search with filters
 knowns search "api" --status "In Progress" --plain
 knowns search "bug" --priority high --plain
-```
+\`\`\`
 
 ---
 
 ## Required Patterns
 
 ### When Starting Task
-```bash
+\`\`\`bash
 # Step 1: Assign and set in progress
 knowns task edit <id> -s "In Progress" -a @yourself
 
 # Step 2: Add implementation plan
-knowns task edit <id> --plan $'1. Research codebase\n2. Implement\n3. Test'
+knowns task edit <id> --plan $'1. Research codebase\\n2. Implement\\n3. Test'
 
 # Step 3: Share plan with user, WAIT for approval
 # Step 4: Start coding only after approval
-```
+\`\`\`
 
 ### When Completing Task
-```bash
+\`\`\`bash
 # Step 1: Check all acceptance criteria
 knowns task edit <id> --check-ac 1 --check-ac 2 --check-ac 3
 
 # Step 2: Add implementation notes (PR description)
-knowns task edit <id> --notes $'Summary of changes\nTesting approach\nFollow-up needed'
+knowns task edit <id> --notes $'Summary of changes\\nTesting approach\\nFollow-up needed'
 
 # Step 3: Mark as done
 knowns task edit <id> -s Done
-```
+\`\`\`
 
 ### Only Implement What's In Acceptance Criteria
 If you need to do more:
-1. Update AC first: `knowns task edit <id> --ac "New requirement"`
-2. Or create new task: `knowns task create "Additional feature"`
+1. Update AC first: \`knowns task edit <id> --ac "New requirement"\`
+2. Or create new task: \`knowns task create "Additional feature"\`
 
 ---
 
 ## Tips
 
-- Always use `--plain` flag for AI-readable output
-- AC flags accept multiple values: `--check-ac 1 --check-ac 2`
-- Mixed operations work: `--check-ac 1 --uncheck-ac 2 --remove-ac 3`
-- Use `$'...\n...'` for multi-line input in Bash/Zsh
-- Related docs show as `@.knowns/docs/path/to/file.md` in plain mode
+- Always use \`--plain\` flag for AI-readable output
+- AC flags accept multiple values: \`--check-ac 1 --check-ac 2\`
+- Mixed operations work: \`--check-ac 1 --uncheck-ac 2 --remove-ac 3\`
+- Use \`$'...\\n...'\` for multi-line input in Bash/Zsh
+- Related docs show as \`@.knowns/docs/path/to/file.md\` in plain mode
 
 ---
 
 ## Full Help
 
-```bash
+\`\`\`bash
 knowns --help
 knowns task --help
 knowns doc --help
 knowns search --help
-```
+\`\`\`
 <!-- KNOWNS GUIDELINES END -->
-
+`;

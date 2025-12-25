@@ -22,7 +22,7 @@ import { Command } from "commander";
 
 const program = new Command();
 
-program.name("knowns").description("CLI tool for dev teams to manage tasks, track time, and sync").version("0.1.0");
+program.name("knowns").description("CLI tool for dev teams to manage tasks, track time, and sync").version("0.1.2");
 
 // Add commands
 program.addCommand(initCommand);
