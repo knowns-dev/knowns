@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2024-12-26
+
+### Fixed
+- **Browser Command**: Fixed UI path detection when running from installed package
+  - Server now correctly finds pre-built UI files in `dist/ui`
+  - Works in both development mode (build on-the-fly) and production (serve pre-built)
+  - Fixed package root detection for bundled code
+- **GitHub Actions**: Fixed release creation permissions error
+  - Updated permissions from `contents: read` to `contents: write`
+  - Switched from deprecated `actions/create-release@v1` to `softprops/action-gh-release@v1`
+  - Enhanced release notes with installation instructions
+
+### Added
+- **Build Process**: UI files now built and included in npm package
+  - `dist/ui/index.html` - Main HTML file
+  - `dist/ui/main.js` - Minified React application (533KB)
+  - `dist/ui/main.css` - Compiled styles
+  - `dist/ui/index.css` - Additional styles
+- Separate build scripts for CLI and UI (`build:cli`, `build:ui`, `build:copy-html`)
+- Production vs development mode for browser server
+
+### Changed
+- Browser command now serves pre-built UI instead of building on user's machine
+- Improved error messages when UI files are not found
+- Server logs now indicate whether using pre-built UI or development mode
+
 ## [0.1.2] - 2024-12-26
 
 ### Added
@@ -69,6 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLAUDE.md with complete guidelines for AI agents
 - Example workflows and patterns
 
+[0.1.3]: https://github.com/knowns-dev/knowns/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/knowns-dev/knowns/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/knowns-dev/knowns/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/knowns-dev/knowns/releases/tag/v0.1.0

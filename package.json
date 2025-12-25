@@ -1,6 +1,6 @@
 {
 	"name": "knowns",
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"description": "CLI tool for dev teams to manage tasks and documentation",
 	"module": "index.ts",
 	"type": "module",
@@ -23,7 +23,10 @@
 	},
 	"scripts": {
 		"dev": "bun run --watch src/index.ts",
-		"build": "bun build src/index.ts --outdir dist --target bun && bun build src/mcp/server.ts --outdir dist/mcp --target bun",
+		"build": "bun run build:cli && bun run build:ui && bun run build:copy-html",
+		"build:cli": "bun build src/index.ts --outdir dist --target bun && bun build src/mcp/server.ts --outdir dist/mcp --target bun",
+		"build:ui": "bun build src/ui/main.tsx --outdir dist/ui --target browser --minify && bun build src/ui/index.css --outdir dist/ui --target browser --minify",
+		"build:copy-html": "cp src/ui/index.html dist/ui/index.html",
 		"start": "bun run src/index.ts",
 		"mcp": "bun run src/mcp/server.ts",
 		"test": "bun test",

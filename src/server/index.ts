@@ -46,19 +46,53 @@ export async function startServer(options: ServerOptions) {
 		}
 	};
 
-	// Build the UI bundle
-	const uiPath = join(projectRoot, "src", "ui");
-	const entrypoint = join(uiPath, "index.html");
-	const buildDir = join(projectRoot, ".knowns", "ui-build");
+	// Find the UI files in the installed package (not in user's project)
+	// When bundled with Bun, all code is in dist/index.js
+	// So import.meta.dir will be the dist/ folder
+	const currentDir = import.meta.dir;
 
-	// Check if UI files exist
-	const entryFile = Bun.file(entrypoint);
-	if (!(await entryFile.exists())) {
-		throw new Error(`UI entry point not found: ${entrypoint}`);
+	// Try to find package root by checking parent directories
+	let packageRoot = currentDir;
+
+	// If we're in dist/ folder (bundled), go up 1 level to package root
+	if (currentDir.endsWith("/dist")) {
+		packageRoot = join(currentDir, "..");
+	}
+	// If we're in src/server (development), go up 2 levels to package root
+	else if (currentDir.includes("/src/server")) {
+		packageRoot = join(currentDir, "..", "..");
 	}
 
-	// Build function
+	const uiSourcePath = join(packageRoot, "src", "ui");
+	const uiDistPath = join(packageRoot, "dist", "ui");
+
+	// Check if pre-built UI exists (production) or source UI (development)
+	let uiPath: string;
+	let shouldBuild = false;
+
+	if (existsSync(join(uiDistPath, "main.js"))) {
+		// Use pre-built UI from dist/ui
+		uiPath = uiDistPath;
+		shouldBuild = false;
+	} else if (existsSync(join(uiSourcePath, "index.html"))) {
+		// Use source UI and build it (development mode)
+		uiPath = uiSourcePath;
+		shouldBuild = true;
+	} else {
+		throw new Error(
+			`UI files not found. Tried:\n  - ${uiDistPath} (${existsSync(uiDistPath) ? "exists but no main.js" : "not found"})\n  - ${uiSourcePath} (${existsSync(uiSourcePath) ? "exists but no index.html" : "not found"})\nPackage root: ${packageRoot}\nCurrent dir: ${currentDir}`,
+		);
+	}
+
+	const buildDir = join(projectRoot, ".knowns", "ui-build");
+
+	// Build function (only used in development mode)
 	const buildUI = async () => {
+		if (!shouldBuild) {
+			// Skip build in production mode
+			return true;
+		}
+
 		console.log("Building UI...");
 		const startTime = Date.now();
 
@@ -96,40 +130,45 @@ export async function startServer(options: ServerOptions) {
 		return true;
 	};
 
-	// Initial build
-	if (!(await buildUI())) {
-		throw new Error("Failed to build UI");
+	// Initial build (only if in development mode)
+	if (shouldBuild) {
+		if (!(await buildUI())) {
+			throw new Error("Failed to build UI");
+		}
 	}
 
-	// Watch for file changes and rebuild
-	let rebuildTimeout: ReturnType<typeof setTimeout> | null = null;
-	const watcher = watch(uiPath, { recursive: true }, async (_event, filename) => {
-		if (!filename) return;
-		// Ignore non-source files
-		if (!filename.endsWith(".tsx") && !filename.endsWith(".ts") && !filename.endsWith(".css")) {
-			return;
-		}
-
-		// Debounce rebuilds
-		if (rebuildTimeout) {
-			clearTimeout(rebuildTimeout);
-		}
-
-		rebuildTimeout = setTimeout(async () => {
-			console.log(`File changed: ${filename}`);
-			const success = await buildUI();
-			if (success) {
-				// Notify all clients to reload
-				broadcast({ type: "reload" });
+	// Watch for file changes and rebuild (only in development mode)
+	let watcher: ReturnType<typeof watch> | null = null;
+	if (shouldBuild) {
+		let rebuildTimeout: ReturnType<typeof setTimeout> | null = null;
+		watcher = watch(uiPath, { recursive: true }, async (_event, filename) => {
+			if (!filename) return;
+			// Ignore non-source files
+			if (!filename.endsWith(".tsx") && !filename.endsWith(".ts") && !filename.endsWith(".css")) {
+				return;
 			}
-		}, 100);
-	});
 
-	// Cleanup watcher on process exit
-	process.on("SIGINT", () => {
-		watcher.close();
-		process.exit(0);
-	});
+			// Debounce rebuilds
+			if (rebuildTimeout) {
+				clearTimeout(rebuildTimeout);
+			}
+
+			rebuildTimeout = setTimeout(async () => {
+				console.log(`File changed: ${filename}`);
+				const success = await buildUI();
+				if (success) {
+					// Notify all clients to reload
+					broadcast({ type: "reload" });
+				}
+			}, 100);
+		});
+
+		// Cleanup watcher on process exit
+		process.on("SIGINT", () => {
+			watcher?.close();
+			process.exit(0);
+		});
+	}
 
 	const server = Bun.serve({
 		port,
@@ -155,7 +194,11 @@ export async function startServer(options: ServerOptions) {
 
 			// Serve built JS bundle (with cache busting)
 			if (url.pathname === "/main.js" || url.pathname.startsWith("/main.js?")) {
-				const file = Bun.file(join(buildDir, "main.js"));
+				// Try build dir first (development), then dist (production)
+				let file = Bun.file(join(buildDir, "main.js"));
+				if (!(await file.exists())) {
+					file = Bun.file(join(uiPath, "main.js"));
+				}
 				if (await file.exists()) {
 					return new Response(file, {
 						headers: {
@@ -168,7 +211,11 @@ export async function startServer(options: ServerOptions) {
 
 			// Serve built CSS (with cache busting)
 			if (url.pathname === "/index.css" || url.pathname.startsWith("/index.css?")) {
-				const file = Bun.file(join(buildDir, "index.css"));
+				// Try build dir first (development), then dist (production)
+				let file = Bun.file(join(buildDir, "index.css"));
+				if (!(await file.exists())) {
+					file = Bun.file(join(uiPath, "main.css"));
+				}
 				if (await file.exists()) {
 					return new Response(file, {
 						headers: {
@@ -263,7 +310,11 @@ export async function startServer(options: ServerOptions) {
 
 	console.log(`Server running at http://localhost:${port}`);
 	console.log(`Open in browser: http://localhost:${port}`);
-	console.log(`Live reload enabled - watching ${uiPath}`);
+	if (shouldBuild) {
+		console.log(`Live reload enabled - watching ${uiPath}`);
+	} else {
+		console.log(`Serving pre-built UI from ${uiPath}`);
+	}
 
 	if (open) {
 		// Open browser (platform-specific)
