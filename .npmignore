@@ -1,0 +1,44 @@
+# Source files (we only publish dist/)
+src/
+*.ts
+!*.d.ts
+
+# Development files
+.husky/
+.knowns/
+backlog/
+node_modules/
+.git/
+.github/
+
+# Config files
+tsconfig.json
+biome.json
+.lintstagedrc.json
+bun.lock
+.gitignore
+
+# Development docs
+DOCUMENT.md
+Backlog.md.txt
+AGENTS.md
+GEMINI.md
+
+# Build artifacts
+*.log
+*.tsbuildinfo
+
+# Test files
+test/
+*.test.ts
+*.spec.ts
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

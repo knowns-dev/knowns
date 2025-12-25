@@ -1,0 +1,66 @@
+{
+	"name": "knowns",
+	"version": "0.1.0",
+	"description": "CLI tool for dev teams to manage tasks and documentation",
+	"module": "index.ts",
+	"type": "module",
+	"bin": {
+		"knowns": "./dist/index.js",
+		"kn": "./dist/index.js"
+	},
+	"main": "./dist/index.js",
+	"files": ["dist", "CLAUDE.md", "README.md", "LICENSE"],
+	"keywords": ["cli", "task-management", "documentation", "knowledge-base", "team-tools", "developer-tools"],
+	"author": "howznguyen <howznguyen@knowns.dev>",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/yourusername/knowns.git"
+	},
+	"homepage": "https://github.com/yourusername/knowns#readme",
+	"bugs": {
+		"url": "https://github.com/yourusername/knowns/issues"
+	},
+	"scripts": {
+		"dev": "bun run --watch src/index.ts",
+		"build": "bun build src/index.ts --outdir dist --target bun && bun build src/mcp/server.ts --outdir dist/mcp --target bun",
+		"start": "bun run src/index.ts",
+		"mcp": "bun run src/mcp/server.ts",
+		"test": "bun test",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write .",
+		"format": "biome format --write .",
+		"prepare": "husky"
+	},
+	"dependencies": {
+		"@modelcontextprotocol/sdk": "^1.25.1",
+		"@tiptap/extension-link": "^3.14.0",
+		"@tiptap/extension-placeholder": "^3.14.0",
+		"@tiptap/extension-table": "^3.14.0",
+		"@tiptap/extension-table-cell": "^3.14.0",
+		"@tiptap/extension-table-header": "^3.14.0",
+		"@tiptap/extension-table-row": "^3.14.0",
+		"@tiptap/react": "^3.14.0",
+		"@tiptap/starter-kit": "^3.14.0",
+		"chalk": "^5.3.0",
+		"commander": "^12.1.0",
+		"gray-matter": "^4.0.3",
+		"marked": "^17.0.1",
+		"react": "^19.2.3",
+		"react-dom": "^19.2.3",
+		"turndown": "^7.2.2",
+		"zod": "^4.2.1"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.4",
+		"@types/bun": "latest",
+		"@types/react": "^19.2.7",
+		"@types/react-dom": "^19.2.3",
+		"autoprefixer": "^10.4.23",
+		"husky": "^9.1.7",
+		"lint-staged": "^15.2.10",
+		"postcss": "^8.5.6",
+		"tailwindcss": "^4.1.18",
+		"typescript": "^5.7.2"
+	}
+}

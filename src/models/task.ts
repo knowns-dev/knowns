@@ -1,0 +1,74 @@
+/**
+ * Task Domain Model
+ * Core entity for task management with value objects
+ */
+
+// Task status: todo, in-progress, in-review, done, blocked
+export type TaskStatus = "todo" | "in-progress" | "in-review" | "done" | "blocked";
+
+// Priority: low, medium, high
+export type TaskPriority = "low" | "medium" | "high";
+
+// Task interface
+export interface Task {
+	id: string; // "7" or "7.1" or "7.1.1" (hierarchical)
+	title: string;
+	description?: string;
+	status: TaskStatus;
+	priority: TaskPriority;
+	assignee?: string; // "@harry"
+	labels: string[];
+	parent?: string; // Parent task ID for subtasks
+	subtasks: string[]; // Child task IDs
+	createdAt: Date;
+	updatedAt: Date;
+
+	// Acceptance criteria
+	acceptanceCriteria: AcceptanceCriterion[];
+
+	// Time tracking
+	timeSpent: number; // Total seconds
+	timeEntries: TimeEntry[];
+
+	// Notes
+	implementationPlan?: string;
+	implementationNotes?: string;
+}
+
+export interface AcceptanceCriterion {
+	text: string;
+	completed: boolean;
+}
+
+export interface TimeEntry {
+	id: string;
+	startedAt: Date;
+	endedAt?: Date;
+	duration: number; // Seconds
+	note?: string;
+}
+
+// Helper functions for task creation
+export function createTask(
+	data: Omit<Task, "id" | "createdAt" | "updatedAt" | "subtasks" | "timeSpent" | "timeEntries">,
+): Omit<Task, "id"> {
+	const now = new Date();
+	return {
+		...data,
+		subtasks: [],
+		timeSpent: 0,
+		timeEntries: [],
+		createdAt: now,
+		updatedAt: now,
+	};
+}
+
+// Helper to validate task status
+export function isValidTaskStatus(status: string): status is TaskStatus {
+	return ["todo", "in-progress", "in-review", "done", "blocked"].includes(status);
+}
+
+// Helper to validate task priority
+export function isValidTaskPriority(priority: string): priority is TaskPriority {
+	return ["low", "medium", "high"].includes(priority);
+}
