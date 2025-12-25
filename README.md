@@ -4,8 +4,11 @@
 
 CLI tool for dev teams to manage tasks and documentation with AI-first context linking.
 
-[![npm version](https://img.shields.io/npm/v/knowns.svg)](https://www.npmjs.com/package/knowns)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![npm version](https://img.shields.io/npm/v/knowns.svg?style=flat-square)](https://www.npmjs.com/package/knowns)
+[![npm downloads](https://img.shields.io/npm/dm/knowns.svg?style=flat-square)](https://www.npmjs.com/package/knowns)
+[![CI](https://img.shields.io/github/actions/workflow/status/knowns-dev/knowns/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/knowns-dev/knowns/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](./LICENSE)
+[![Bundle Size](https://img.shields.io/bundlephobia/min/knowns?style=flat-square)](https://bundlephobia.com/package/knowns)
 
 ## Why Knowns?
 
@@ -58,7 +61,11 @@ CLI tool for dev teams to manage tasks and documentation with AI-first context l
 ## Installation
 
 ```bash
+# Using npm
 npm install -g knowns
+
+# Or using bun
+bun install -g knowns
 ```
 
 ## Quick Start
@@ -525,8 +532,9 @@ MIT © [Knowns Contributors](./LICENSE)
 ## Links
 
 - [npm package](https://www.npmjs.com/package/knowns)
-- [GitHub repository](https://github.com/yourusername/knowns)
-- [Issues](https://github.com/yourusername/knowns/issues)
+- [GitHub repository](https://github.com/knowns-dev/knowns)
+- [Issues](https://github.com/knowns-dev/knowns/issues)
+- [Changelog](https://github.com/knowns-dev/knowns/releases)
 
 ---
 

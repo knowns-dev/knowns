@@ -1,6 +1,6 @@
 {
 	"name": "knowns",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "CLI tool for dev teams to manage tasks and documentation",
 	"module": "index.ts",
 	"type": "module",
@@ -9,17 +9,17 @@
 		"kn": "./dist/index.js"
 	},
 	"main": "./dist/index.js",
-	"files": ["dist", "CLAUDE.md", "README.md", "LICENSE"],
+	"files": ["dist", "CLAUDE.md", "README.md", "CHANGELOG.md", "LICENSE"],
 	"keywords": ["cli", "task-management", "documentation", "knowledge-base", "team-tools", "developer-tools"],
 	"author": "howznguyen <howznguyen@knowns.dev>",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/yourusername/knowns.git"
+		"url": "https://github.com/knowns-dev/knowns.git"
 	},
-	"homepage": "https://github.com/yourusername/knowns#readme",
+	"homepage": "https://github.com/knowns-dev/knowns#readme",
 	"bugs": {
-		"url": "https://github.com/yourusername/knowns/issues"
+		"url": "https://github.com/knowns-dev/knowns/issues"
 	},
 	"scripts": {
 		"dev": "bun run --watch src/index.ts",
