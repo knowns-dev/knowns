@@ -10,266 +10,337 @@ export const KNOWNS_GUIDELINES = `<!-- KNOWNS GUIDELINES START -->
 
 **NEVER edit .md files directly. ALL operations MUST use CLI commands.**
 
----
-
-## Project Structure
-
-\`\`\`
-.knowns/
-├── tasks/              # Task files: task-<id> - <title>.md
-├── docs/               # Documentation (supports nested folders)
-└── decisions/          # Architecture decision records
-\`\`\`
+This ensures data integrity, maintains proper change history, and prevents file corruption.
 
 ---
 
-## Task Management
-
-### Task Lifecycle
-
-1. **Create** → \`knowns task create "Title" -d "Description" --ac "Criterion 1" --ac "Criterion 2"\`
-2. **Start** → \`knowns task edit <id> -s "In Progress" -a @yourself\`
-3. **Work** → Check acceptance criteria as you complete them
-4. **Complete** → Mark status as Done after all criteria met
-
-### Critical Commands
+## Quick Start
 
 \`\`\`bash
-# View task (always use --plain for AI)
+# Initialize project
+knowns init [name]
+
+# Create task with acceptance criteria
+knowns task create "Title" -d "Description" --ac "Criterion 1" --ac "Criterion 2"
+
+# View task (ALWAYS use --plain for AI)
 knowns task view <id> --plain
 
 # List tasks
 knowns task list --plain
-knowns task list -s "In Progress" --plain
 
-# Search tasks/docs
+# Search (tasks + docs)
 knowns search "query" --plain
-knowns search "query" --type task --plain
-
-# Edit task
-knowns task edit <id> -s "In Progress" -a @agent
-knowns task edit <id> -t "New Title"
-knowns task edit <id> -d "Description"
-
-# Acceptance criteria
-knowns task edit <id> --ac "New criterion"
-knowns task edit <id> --check-ac 1
-knowns task edit <id> --check-ac 1 --check-ac 2 --check-ac 3
-knowns task edit <id> --uncheck-ac 2
-knowns task edit <id> --remove-ac 3
-
-# Implementation
-knowns task edit <id> --plan $'1. Step one\\n2. Step two'
-knowns task edit <id> --notes "Implementation summary"
-knowns task edit <id> --append-notes $'Additional note\\nAnother line'
-\`\`\`
-
-### Multi-line Input (Shell-specific)
-
-**Bash/Zsh** - Use \`$'...\\n...'\`:
-\`\`\`bash
-knowns task edit 42 --desc $'Line 1\\nLine 2\\n\\nLine 3'
-knowns task edit 42 --plan $'1. First\\n2. Second'
-knowns task edit 42 --notes $'Done A\\nDoing B'
-\`\`\`
-
-**PowerShell** - Use backtick-n:
-\`\`\`powershell
-knowns task edit 42 --notes "Line1\`nLine2"
-\`\`\`
-
-**Portable** - Use printf:
-\`\`\`bash
-knowns task edit 42 --notes "$(printf 'Line1\\nLine2')"
 \`\`\`
 
 ---
 
-## Task Workflow
+## Task Workflow (CRITICAL - Follow Every Step!)
 
 ### Step 1: Take Task
 \`\`\`bash
-knowns task edit <id> -s "In Progress" -a @yourself
+knowns task edit <id> -s in-progress -a @yourself
 \`\`\`
 
-### Step 2: Create Plan
+### Step 2: Start Time Tracking
 \`\`\`bash
-knowns task edit <id> --plan $'1. Research\\n2. Implement\\n3. Test'
+knowns time start <id>
 \`\`\`
 
-**IMPORTANT**: Share plan with user and wait for approval before coding.
-
-### Step 3: Implementation
-Write code, then check acceptance criteria:
+### Step 3: Read Related Documentation
 \`\`\`bash
+# Search for related docs
+knowns search "authentication" --type doc --plain
+
+# View relevant documents
+knowns doc view "API Guidelines" --plain
+\`\`\`
+
+**CRITICAL**: ALWAYS read related documentation BEFORE planning!
+
+### Step 4: Create Implementation Plan
+\`\`\`bash
+# Add plan with documentation references
+knowns task edit <id> --plan $'1. Research patterns (see [security-patterns.md](./security-patterns.md))\\n2. Design middleware\\n3. Implement\\n4. Add tests\\n5. Update docs'
+\`\`\`
+
+**CRITICAL**:
+- Share plan with user and **WAIT for approval** before coding
+- Include doc references using \`[file.md](./path/file.md)\` format
+
+### Step 5: Implement
+\`\`\`bash
+# Check acceptance criteria as you complete them
 knowns task edit <id> --check-ac 1 --check-ac 2 --check-ac 3
 \`\`\`
 
-### Step 4: Add Notes (PR Description)
+### Step 6: Add Implementation Notes
 \`\`\`bash
-knowns task edit <id> --notes $'Implemented using X pattern\\nUpdated tests\\nReady for review'
+# Add comprehensive notes (suitable for PR description)
+knowns task edit <id> --notes $'## Summary\\n\\nImplemented JWT auth.\\n\\n## Changes\\n- Added middleware\\n- Added tests'
+
+# OR append progressively
+knowns task edit <id> --append-notes "✓ Implemented middleware"
+knowns task edit <id> --append-notes "✓ Added tests"
 \`\`\`
 
-Or append progressively:
+### Step 7: Stop Time Tracking
 \`\`\`bash
-knowns task edit <id> --append-notes "Completed feature X"
-knowns task edit <id> --append-notes "Added tests"
+knowns time stop
 \`\`\`
 
-### Step 5: Complete
+### Step 8: Complete Task
 \`\`\`bash
-knowns task edit <id> -s Done
+# Mark as done (only after ALL criteria are met)
+knowns task edit <id> -s done
 \`\`\`
 
 ---
 
-## Definition of Done
+## Essential Commands
 
-Task is Done ONLY when ALL items are complete:
-
-**Via CLI:**
-1. All acceptance criteria checked: \`--check-ac <index>\`
-2. Implementation notes added: \`--notes "..."\`
-3. Status set to Done: \`-s Done\`
-
-**Via Code:**
-4. Tests pass
-5. Documentation updated
-6. Code reviewed
-7. No regressions
-
----
-
-## Documentation Management
-
-### Commands
+### Task Management
 
 \`\`\`bash
-# List all docs (includes nested folders)
+# Create task
+knowns task create "Title" -d "Description" --ac "Criterion" -l "labels" --priority high
+
+# Edit task
+knowns task edit <id> -t "New title"
+knowns task edit <id> -d "New description"
+knowns task edit <id> -s in-progress
+knowns task edit <id> --priority high
+knowns task edit <id> -a @yourself
+
+# Acceptance Criteria
+knowns task edit <id> --ac "New criterion"           # Add
+knowns task edit <id> --check-ac 1 --check-ac 2      # Check
+knowns task edit <id> --uncheck-ac 2                 # Uncheck
+knowns task edit <id> --remove-ac 3                  # Remove
+
+# Implementation Plan & Notes
+knowns task edit <id> --plan $'1. Step\\n2. Step'
+knowns task edit <id> --notes "Implementation summary"
+knowns task edit <id> --append-notes "Progress update"
+
+# View & List
+knowns task view <id> --plain                        # ALWAYS use --plain
+knowns task list --plain
+knowns task list --status in-progress --plain
+knowns task list --assignee @yourself --plain
+knowns task list --tree --plain                      # Tree hierarchy
+\`\`\`
+
+### Time Tracking
+
+\`\`\`bash
+# Timer
+knowns time start <id>
+knowns time stop
+knowns time pause
+knowns time resume
+knowns time status
+
+# Manual entry
+knowns time add <id> 2h -n "Note" -d "2025-12-25"
+
+# Reports
+knowns time report --from "2025-12-01" --to "2025-12-31"
+knowns time report --by-label --csv > report.csv
+\`\`\`
+
+### Documentation
+
+\`\`\`bash
+# List & View
 knowns doc list --plain
+knowns doc list --tag architecture --plain
+knowns doc view "Doc Name" --plain
 
-# View document
-knowns doc view <name> --plain
-knowns doc view patterns/guards --plain
-knowns doc view patterns/guards.md --plain
-
-# Create document
-knowns doc create "Title" -d "Description" -t "tag1,tag2"
+# Create
+knowns doc create "Title" -d "Description" -t "tags"
 
 # Edit metadata
-knowns doc edit <name> -t "New Title" -d "New Description"
+knowns doc edit "Doc Name" -t "New Title" --tags "new,tags"
 \`\`\`
 
-### Document Links
+### Search
 
-In \`--plain\` mode, markdown links are replaced with resolved paths:
-- \`[guards.md](./patterns/guards.md)\` → \`@.knowns/docs/patterns/guards.md\`
+\`\`\`bash
+# Search everything
+knowns search "query" --plain
+
+# Search specific type
+knowns search "auth" --type task --plain
+knowns search "patterns" --type doc --plain
+
+# Filter
+knowns search "bug" --status in-progress --priority high --plain
+\`\`\`
 
 ---
 
 ## Task Structure
 
 ### Title
-Brief, clear summary of the task.
+Clear summary (WHAT needs to be done).
+- Good: "Add JWT authentication"
+- Bad: "Do auth stuff"
 
 ### Description
-Explains WHY and WHAT (not HOW). Provides context.
+Explains WHY and WHAT (not HOW). **Link related docs using \`[file.md](./path/file.md)\`**
+
+\`\`\`
+We need JWT authentication because sessions don't scale.
+
+Related docs:
+- [security-patterns.md](./security-patterns.md)
+- [api-guidelines.md](./api-guidelines.md)
+\`\`\`
 
 ### Acceptance Criteria
-**Outcome-oriented**, testable, user-focused criteria.
+**Outcome-oriented**, testable criteria. NOT implementation details.
 
-Good:
-- "User can login with valid credentials"
-- "System processes 1000 requests/sec without errors"
+- Good: "User can login and receive JWT token"
+- Good: "Token expires after 15 minutes"
+- Bad: "Add function handleLogin() in auth.ts"
 
-Bad:
-- "Add function handleLogin() in auth.ts" (implementation detail)
+### Implementation Plan
+HOW to solve. Added AFTER taking task, BEFORE coding.
 
-### Implementation Plan (added during work)
-**HOW** to solve the task. Added AFTER taking the task, BEFORE coding.
+\`\`\`
+1. Research JWT libraries (see [security-patterns.md](./security-patterns.md))
+2. Design token structure
+3. Implement middleware
+4. Add tests
+\`\`\`
 
-### Implementation Notes (PR description)
-Summary of what was done, suitable for PR. Added AFTER completion.
+### Implementation Notes
+Summary for PR. Added AFTER completion.
+
+\`\`\`
+## Summary
+Implemented JWT auth using jsonwebtoken.
+
+## Changes
+- Added middleware in src/auth.ts
+- Added tests with 100% coverage
+
+## Documentation
+- Updated API.md
+\`\`\`
+
+---
+
+## Definition of Done
+
+A task is **Done** ONLY when **ALL** criteria are met:
+
+### Via CLI (Required)
+1. All acceptance criteria checked: \`--check-ac <index>\`
+2. Implementation notes added: \`--notes "..."\`
+3. Status set to done: \`-s done\`
+
+### Via Code (Required)
+4. Tests pass
+5. Documentation updated
+6. Code reviewed (linting, formatting)
+7. No regressions
 
 ---
 
 ## Common Mistakes
 
 | Wrong | Right |
-|-------|-------|
+|---------|---------|
 | Edit .md files directly | Use \`knowns task edit\` |
 | Change \`- [ ]\` to \`- [x]\` in file | Use \`--check-ac <index>\` |
-| Add plan during creation | Add plan when starting work |
-| Mark Done without all criteria | Check ALL criteria first |
+| Start coding without reading docs | Read docs FIRST, then plan |
+| Plan without checking docs | Search and read docs before planning |
+| Missing doc links in description/plan | Link docs using \`[file.md](./path/file.md)\` |
+| Forget to use \`--plain\` flag | Always use \`--plain\` for AI |
+| Forget to share plan before coding | Share plan, WAIT for approval |
+| Mark done without all criteria checked | Check ALL criteria first |
+| Write implementation details in AC | Write outcome-oriented criteria |
+| Use \`"In Progress"\` or \`"Done"\` | Use \`in-progress\`, \`done\` |
 
 ---
 
-## Search
+## Best Practices
+
+### Critical Rules
+- **ALWAYS use \`--plain\` flag** for AI-readable output
+- **Read documentation BEFORE planning**: \`knowns search "keyword" --type doc --plain\`
+- **Link docs in tasks**: Use \`[file.md](./path/file.md)\` or \`[mapper.md](./patterns/mapper.md)\`
+- **Share plan before coding**: Get approval first
+- **Start time tracking**: \`knowns time start <id>\` before work
+- **Stop time tracking**: \`knowns time stop\` after work
+- **Check criteria as you go**: Don't wait until end
+- **Add notes progressively**: Use \`--append-notes\`
+
+### Multi-line Input
+- **Bash/Zsh**: \`$'Line1\\nLine2\\nLine3'\`
+- **PowerShell**: \`"Line1\\\`nLine2\\\`nLine3"\`
+- **Portable**: \`"$(printf 'Line1\\nLine2\\nLine3')"\`
+
+### Documentation Workflow
+1. Search: \`knowns search "keyword" --type doc --plain\`
+2. Read: \`knowns doc view "Doc Name" --plain\`
+3. Link in description: \`[file.md](./path/file.md)\`
+4. Link in plan: Reference specific sections
+5. Update after implementation
+
+---
+
+## Status & Priority Values
+
+**Status** (lowercase with hyphens):
+- \`todo\` - Not started
+- \`in-progress\` - Currently working
+- \`in-review\` - In code review
+- \`done\` - Completed
+- \`blocked\` - Waiting on dependency
+
+**Priority**:
+- \`low\` - Can wait
+- \`medium\` - Normal (default)
+- \`high\` - Urgent, important
+
+---
+
+## Quick Reference
 
 \`\`\`bash
-# Search everything
-knowns search "auth" --plain
+# Full workflow
+knowns task create "Title" -d "Description" --ac "Criterion"
+knowns task edit <id> -s in-progress -a @yourself
+knowns time start <id>
+knowns search "keyword" --type doc --plain
+knowns doc view "Doc Name" --plain
+knowns task edit <id> --plan $'1. Step (see [file.md](./file.md))\\n2. Step'
+# ... implement code ...
+knowns task edit <id> --check-ac 1 --check-ac 2
+knowns task edit <id> --append-notes "✓ Completed"
+knowns time stop
+knowns task edit <id> -s done
 
-# Search tasks only
-knowns search "login" --type task --plain
+# View task
+knowns task view <id> --plain
 
-# Search with filters
-knowns search "api" --status "In Progress" --plain
-knowns search "bug" --priority high --plain
+# List tasks
+knowns task list --plain
+knowns task list --status in-progress --assignee @yourself --plain
+
+# Search
+knowns search "query" --plain
+knowns search "bug" --type task --status in-progress --plain
 \`\`\`
 
 ---
 
-## Required Patterns
+**Last Updated**: 2025-12-26
+**Version**: 2.1.0
+**Maintained By**: Knowns CLI Team
 
-### When Starting Task
-\`\`\`bash
-# Step 1: Assign and set in progress
-knowns task edit <id> -s "In Progress" -a @yourself
-
-# Step 2: Add implementation plan
-knowns task edit <id> --plan $'1. Research codebase\\n2. Implement\\n3. Test'
-
-# Step 3: Share plan with user, WAIT for approval
-# Step 4: Start coding only after approval
-\`\`\`
-
-### When Completing Task
-\`\`\`bash
-# Step 1: Check all acceptance criteria
-knowns task edit <id> --check-ac 1 --check-ac 2 --check-ac 3
-
-# Step 2: Add implementation notes (PR description)
-knowns task edit <id> --notes $'Summary of changes\\nTesting approach\\nFollow-up needed'
-
-# Step 3: Mark as done
-knowns task edit <id> -s Done
-\`\`\`
-
-### Only Implement What's In Acceptance Criteria
-If you need to do more:
-1. Update AC first: \`knowns task edit <id> --ac "New requirement"\`
-2. Or create new task: \`knowns task create "Additional feature"\`
-
----
-
-## Tips
-
-- Always use \`--plain\` flag for AI-readable output
-- AC flags accept multiple values: \`--check-ac 1 --check-ac 2\`
-- Mixed operations work: \`--check-ac 1 --uncheck-ac 2 --remove-ac 3\`
-- Use \`$'...\\n...'\` for multi-line input in Bash/Zsh
-- Related docs show as \`@.knowns/docs/path/to/file.md\` in plain mode
-
----
-
-## Full Help
-
-\`\`\`bash
-knowns --help
-knowns task --help
-knowns doc --help
-knowns search --help
-\`\`\`
 <!-- KNOWNS GUIDELINES END -->
 `;

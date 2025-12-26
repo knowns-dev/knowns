@@ -111,8 +111,19 @@ export default function App() {
 			});
 
 		const ws = connectWebSocket((data) => {
-			if (data.type === "tasks:updated") {
-				api.getTasks().then(setTasks).catch(console.error);
+			if (data.type === "tasks:updated" && data.task) {
+				// Update specific task instead of reloading all tasks
+				setTasks((prevTasks) => {
+					const existingIndex = prevTasks.findIndex((t) => t.id === data.task?.id);
+					if (existingIndex >= 0) {
+						// Update existing task
+						const newTasks = [...prevTasks];
+						newTasks[existingIndex] = data.task;
+						return newTasks;
+					}
+					// Add new task
+					return [...prevTasks, data.task];
+				});
 			}
 		});
 

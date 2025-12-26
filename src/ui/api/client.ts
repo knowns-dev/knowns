@@ -104,7 +104,12 @@ export function connectWebSocket(onMessage: (data: WebSocketMessage) => void): W
 
 		ws.onmessage = (e) => {
 			try {
-				const data = JSON.parse(e.data);
+				const rawData = JSON.parse(e.data);
+				// Parse task DTO to Task if present
+				const data: WebSocketMessage = {
+					...rawData,
+					task: rawData.task ? parseTaskDTO(rawData.task) : undefined,
+				};
 				onMessage(data);
 			} catch (error) {
 				console.error("Failed to parse WebSocket message:", error);

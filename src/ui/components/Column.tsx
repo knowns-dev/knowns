@@ -62,7 +62,7 @@ export default function Column({ status, tasks, onDrop, onTaskClick }: ColumnPro
 
 	return (
 		<div
-			className={`rounded-lg border-2 p-3 min-w-[280px] max-w-[320px] flex-shrink-0 transition-colors ${
+			className={`rounded-lg border-2 p-4 min-w-[380px] max-w-[420px] flex-shrink-0 transition-colors overflow-visible ${
 				colors[status]
 			} ${isDragOver ? "ring-2 ring-blue-400 border-blue-400" : ""}`}
 			onDragOver={handleDragOver}
@@ -84,7 +84,7 @@ export default function Column({ status, tasks, onDrop, onTaskClick }: ColumnPro
 				</span>
 			</div>
 
-			<div className="space-y-2 max-h-[calc(100vh-200px)] overflow-y-auto">
+			<div className="space-y-2 overflow-visible">
 				{tasks.length === 0 ? (
 					<div className={`text-center py-8 text-sm ${isDark ? "text-gray-500" : "text-gray-400"}`}>
 						No tasks

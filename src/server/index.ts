@@ -66,25 +66,20 @@ export async function startServer(options: ServerOptions) {
 	const uiSourcePath = join(packageRoot, "src", "ui");
 	const uiDistPath = join(packageRoot, "dist", "ui");
 
-	// Check if pre-built UI exists (production) or source UI (development)
-	let uiPath: string;
+	// Check if we should build (development mode with source files)
 	let shouldBuild = false;
 
 	if (existsSync(join(uiDistPath, "main.js"))) {
-		// Use pre-built UI from dist/ui
-		uiPath = uiDistPath;
+		// Pre-built UI exists, no need to build
 		shouldBuild = false;
 	} else if (existsSync(join(uiSourcePath, "index.html"))) {
-		// Use source UI and build it (development mode)
-		uiPath = uiSourcePath;
+		// Source UI exists, need to build to dist/ui
 		shouldBuild = true;
 	} else {
 		throw new Error(
 			`UI files not found. Tried:\n  - ${uiDistPath} (${existsSync(uiDistPath) ? "exists but no main.js" : "not found"})\n  - ${uiSourcePath} (${existsSync(uiSourcePath) ? "exists but no index.html" : "not found"})\nPackage root: ${packageRoot}\nCurrent dir: ${currentDir}`,
 		);
 	}
-
-	const buildDir = join(projectRoot, ".knowns", "ui-build");
 
 	// Build function (only used in development mode)
 	const buildUI = async () => {
@@ -96,10 +91,15 @@ export async function startServer(options: ServerOptions) {
 		console.log("Building UI...");
 		const startTime = Date.now();
 
+		// Ensure dist/ui directory exists
+		if (!existsSync(uiDistPath)) {
+			await mkdir(uiDistPath, { recursive: true });
+		}
+
 		// Build the bundle
 		const buildResult = await Bun.build({
-			entrypoints: [join(uiPath, "main.tsx")],
-			outdir: buildDir,
+			entrypoints: [join(uiSourcePath, "main.tsx")],
+			outdir: uiDistPath,
 			target: "browser",
 			minify: false,
 			sourcemap: "inline",
@@ -115,8 +115,8 @@ export async function startServer(options: ServerOptions) {
 
 		// Also build CSS
 		const cssResult = await Bun.build({
-			entrypoints: [join(uiPath, "index.css")],
-			outdir: buildDir,
+			entrypoints: [join(uiSourcePath, "index.css")],
+			outdir: uiDistPath,
 			target: "browser",
 			minify: false,
 		});
@@ -141,7 +141,7 @@ export async function startServer(options: ServerOptions) {
 	let watcher: ReturnType<typeof watch> | null = null;
 	if (shouldBuild) {
 		let rebuildTimeout: ReturnType<typeof setTimeout> | null = null;
-		watcher = watch(uiPath, { recursive: true }, async (_event, filename) => {
+		watcher = watch(uiSourcePath, { recursive: true }, async (_event, filename) => {
 			if (!filename) return;
 			// Ignore non-source files
 			if (!filename.endsWith(".tsx") && !filename.endsWith(".ts") && !filename.endsWith(".css")) {
@@ -194,11 +194,7 @@ export async function startServer(options: ServerOptions) {
 
 			// Serve built JS bundle (with cache busting)
 			if (url.pathname === "/main.js" || url.pathname.startsWith("/main.js?")) {
-				// Try build dir first (development), then dist (production)
-				let file = Bun.file(join(buildDir, "main.js"));
-				if (!(await file.exists())) {
-					file = Bun.file(join(uiPath, "main.js"));
-				}
+				const file = Bun.file(join(uiDistPath, "main.js"));
 				if (await file.exists()) {
 					return new Response(file, {
 						headers: {
@@ -211,11 +207,7 @@ export async function startServer(options: ServerOptions) {
 
 			// Serve built CSS (with cache busting)
 			if (url.pathname === "/index.css" || url.pathname.startsWith("/index.css?")) {
-				// Try build dir first (development), then dist (production)
-				let file = Bun.file(join(buildDir, "index.css"));
-				if (!(await file.exists())) {
-					file = Bun.file(join(uiPath, "main.css"));
-				}
+				const file = Bun.file(join(uiDistPath, "index.css"));
 				if (await file.exists()) {
 					return new Response(file, {
 						headers: {
@@ -296,11 +288,9 @@ export async function startServer(options: ServerOptions) {
 		websocket: {
 			open(ws) {
 				clients.add(ws);
-				console.log("WebSocket client connected");
 			},
 			close(ws) {
 				clients.delete(ws);
-				console.log("WebSocket client disconnected");
 			},
 			message(_ws, _message) {
 				// Handle client messages if needed
@@ -311,9 +301,9 @@ export async function startServer(options: ServerOptions) {
 	console.log(`Server running at http://localhost:${port}`);
 	console.log(`Open in browser: http://localhost:${port}`);
 	if (shouldBuild) {
-		console.log(`Live reload enabled - watching ${uiPath}`);
+		console.log(`Live reload enabled - watching ${uiSourcePath}`);
 	} else {
-		console.log(`Serving pre-built UI from ${uiPath}`);
+		console.log(`Serving pre-built UI from ${uiDistPath}`);
 	}
 
 	if (open) {
