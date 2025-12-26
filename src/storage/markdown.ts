@@ -118,6 +118,7 @@ export function serializeTaskMarkdown(task: Task): string {
 
 /**
  * Parse body sections from markdown content
+ * Priority: Parse by markers first, fallback to headings for backward compatibility
  */
 function parseBodySections(body: string): {
 	description?: string;
@@ -125,6 +126,25 @@ function parseBodySections(body: string): {
 	implementationPlan?: string;
 	implementationNotes?: string;
 } {
+	// Try to extract by markers first (preferred method)
+	const description = hasSectionMarkers(body, "description") ? extractSectionContent(body, "description") : undefined;
+
+	const implementationPlan = hasSectionMarkers(body, "plan") ? extractSectionContent(body, "plan") : undefined;
+
+	const implementationNotes = hasSectionMarkers(body, "notes") ? extractSectionContent(body, "notes") : undefined;
+
+	// Extract acceptance criteria section (always has markers)
+	let acceptanceCriteria: string | undefined;
+
+	// Find AC section by markers
+	if (hasSectionMarkers(body, "ac")) {
+		acceptanceCriteria = body.substring(
+			body.indexOf("<!-- AC:BEGIN -->"),
+			body.indexOf("<!-- AC:END -->") + "<!-- AC:END -->".length,
+		);
+	}
+
+	// Fallback: Parse by headings for backward compatibility (for files without markers)
 	const sections: Record<string, string> = {};
 	const lines = body.split("\n");
 
@@ -158,30 +178,12 @@ function parseBodySections(body: string): {
 		sections[currentSection] = sectionContent.join("\n").trim();
 	}
 
-	// Extract content from section markers if present
-	const description = sections.description
-		? hasSectionMarkers(sections.description, "description")
-			? extractSectionContent(sections.description, "description")
-			: sections.description
-		: undefined;
-
-	const implementationPlan = sections.implementationPlan
-		? hasSectionMarkers(sections.implementationPlan, "plan")
-			? extractSectionContent(sections.implementationPlan, "plan")
-			: sections.implementationPlan
-		: undefined;
-
-	const implementationNotes = sections.implementationNotes
-		? hasSectionMarkers(sections.implementationNotes, "notes")
-			? extractSectionContent(sections.implementationNotes, "notes")
-			: sections.implementationNotes
-		: undefined;
-
+	// Use heading-based parsing as fallback only if markers didn't find content
 	return {
-		description,
-		acceptanceCriteria: sections.acceptanceCriteria,
-		implementationPlan,
-		implementationNotes,
+		description: description || sections.description,
+		acceptanceCriteria: acceptanceCriteria || sections.acceptanceCriteria,
+		implementationPlan: implementationPlan || sections.implementationPlan,
+		implementationNotes: implementationNotes || sections.implementationNotes,
 	};
 }
 

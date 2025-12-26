@@ -53,6 +53,11 @@ export function resolveDocReferences(content: string, projectRoot: string): DocR
 			continue;
 		}
 
+		// Skip task references (task-123, task-123.md, 123, 123.md)
+		if (/^(task-)?\d+(\.md)?$/.test(link.target)) {
+			continue;
+		}
+
 		// Normalize filename
 		let filename = link.target;
 		// Remove leading ./ if present

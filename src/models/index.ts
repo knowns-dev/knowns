@@ -5,7 +5,7 @@
 
 // Task exports
 export type { Task, AcceptanceCriterion, TimeEntry, TaskStatus, TaskPriority } from "./task";
-export { createTask, isValidTaskStatus, isValidTaskPriority } from "./task";
+export { DEFAULT_STATUSES, createTask, isValidTaskStatus, isValidTaskPriority } from "./task";
 
 // Project exports
 export type { Project, ProjectSettings } from "./project";

@@ -3,8 +3,8 @@
  * Core entity for task management with value objects
  */
 
-// Task status: todo, in-progress, in-review, done, blocked
-export type TaskStatus = "todo" | "in-progress" | "in-review" | "done" | "blocked";
+// Task status: dynamic, read from config.settings.statuses
+export type TaskStatus = string;
 
 // Priority: low, medium, high
 export type TaskPriority = "low" | "medium" | "high";
@@ -63,9 +63,14 @@ export function createTask(
 	};
 }
 
+// Default statuses (fallback if config not available)
+export const DEFAULT_STATUSES: TaskStatus[] = ["todo", "in-progress", "in-review", "done", "blocked", "on-hold"];
+
 // Helper to validate task status
-export function isValidTaskStatus(status: string): status is TaskStatus {
-	return ["todo", "in-progress", "in-review", "done", "blocked"].includes(status);
+// Use with allowed statuses from config, or falls back to DEFAULT_STATUSES
+export function isValidTaskStatus(status: string, allowedStatuses?: TaskStatus[]): status is TaskStatus {
+	const validStatuses = allowedStatuses || DEFAULT_STATUSES;
+	return validStatuses.includes(status);
 }
 
 // Helper to validate task priority

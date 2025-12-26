@@ -24,6 +24,8 @@ interface WebSocketData {
 
 interface DocResult {
 	filename: string;
+	path: string;
+	folder: string;
 	metadata: Record<string, unknown>;
 	content: string;
 }
@@ -225,8 +227,7 @@ export async function startServer(options: ServerOptions) {
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>Knowns.dev</title>
-		<script src="https://cdn.tailwindcss.com"></script>
+		<title>Knowns - Task Management</title>
 		<link rel="stylesheet" href="/index.css?v=${buildVersion}" />
 	</head>
 	<body>
@@ -523,6 +524,7 @@ async function handleAPI(
 				return new Response(
 					JSON.stringify({
 						config: {
+							name: "Knowns",
 							defaultPriority: "medium",
 							defaultLabels: [],
 							timeFormat: "24h",
@@ -534,7 +536,16 @@ async function handleAPI(
 			}
 
 			const content = await readFile(configPath, "utf-8");
-			const config = JSON.parse(content);
+			const data = JSON.parse(content);
+			const settings = data.settings || {};
+
+			// Merge root-level properties (name, id, createdAt) with settings
+			const config = {
+				name: data.name,
+				id: data.id,
+				createdAt: data.createdAt,
+				...settings,
+			};
 
 			// Ensure visibleColumns exists with default value
 			if (!config.visibleColumns) {
@@ -549,7 +560,24 @@ async function handleAPI(
 			const config = await req.json();
 			const configPath = join(store.projectRoot, ".knowns", "config.json");
 
-			await writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
+			// Read existing file to preserve project metadata
+			let existingData: { name?: string; id?: string; createdAt?: string; settings?: Record<string, unknown> } = {};
+			if (existsSync(configPath)) {
+				const content = await readFile(configPath, "utf-8");
+				existingData = JSON.parse(content);
+			}
+
+			// Extract name if provided, put it at top level
+			const { name, ...settings } = config;
+
+			// Merge: update name if provided, update settings
+			const merged = {
+				...existingData,
+				name: name || existingData.name,
+				settings: settings,
+			};
+
+			await writeFile(configPath, JSON.stringify(merged, null, 2), "utf-8");
 
 			return new Response(JSON.stringify({ success: true }), { headers });
 		}
@@ -581,24 +609,32 @@ async function handleAPI(
 				return searchText.includes(q);
 			});
 
-			// Search docs
+			// Search docs (including nested folders)
 			const docsDir = join(store.projectRoot, ".knowns", "docs");
 			const docResults: DocResult[] = [];
 
 			if (existsSync(docsDir)) {
-				const files = await readdir(docsDir);
-				const mdFiles = files.filter((f) => f.endsWith(".md"));
+				// Recursively find all .md files
+				const mdFiles = await findMarkdownFiles(docsDir, docsDir);
 
-				for (const file of mdFiles) {
-					const content = await readFile(join(docsDir, file), "utf-8");
+				for (const relativePath of mdFiles) {
+					const fullPath = join(docsDir, relativePath);
+					const content = await readFile(fullPath, "utf-8");
 					const { data, content: docContent } = matter(content);
 
 					const searchText =
 						`${data.title || ""} ${data.description || ""} ${data.tags?.join(" ") || ""} ${docContent}`.toLowerCase();
 
 					if (searchText.includes(q)) {
+						// Extract folder path and filename
+						const pathParts = relativePath.split("/");
+						const filename = pathParts[pathParts.length - 1];
+						const folder = pathParts.length > 1 ? pathParts.slice(0, -1).join("/") : "";
+
 						docResults.push({
-							filename: file,
+							filename,
+							path: relativePath,
+							folder,
 							metadata: data,
 							content: docContent,
 						});

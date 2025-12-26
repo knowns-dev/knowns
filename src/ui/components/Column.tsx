@@ -1,8 +1,14 @@
 import type React from "react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { Task, TaskStatus } from "../../models/task";
 import { useTheme } from "../App";
 import TaskCard from "./TaskCard";
+import {
+	generateColorScheme,
+	DEFAULT_COLOR_SCHEME,
+	DEFAULT_STATUS_COLORS,
+	type ColorName,
+} from "../utils/colors";
 
 interface ColumnProps {
 	status: TaskStatus;
@@ -11,33 +17,54 @@ interface ColumnProps {
 	onTaskClick: (task: Task) => void;
 }
 
-const LABELS: Record<TaskStatus, string> = {
+// Default column labels
+const DEFAULT_LABELS: Record<string, string> = {
 	todo: "To Do",
 	"in-progress": "In Progress",
 	"in-review": "In Review",
 	done: "Done",
 	blocked: "Blocked",
+	"on-hold": "On Hold",
+	urgent: "Urgent",
 };
 
-const COLORS_LIGHT: Record<TaskStatus, string> = {
-	todo: "bg-gray-50 border-gray-200",
-	"in-progress": "bg-blue-50 border-blue-200",
-	"in-review": "bg-purple-50 border-purple-200",
-	done: "bg-green-50 border-green-200",
-	blocked: "bg-red-50 border-red-200",
-};
-
-const COLORS_DARK: Record<TaskStatus, string> = {
-	todo: "bg-gray-800 border-gray-700",
-	"in-progress": "bg-blue-900/30 border-blue-800",
-	"in-review": "bg-purple-900/30 border-purple-800",
-	done: "bg-green-900/30 border-green-800",
-	blocked: "bg-red-900/30 border-red-800",
-};
+// Convert status slug to readable label
+function getColumnLabel(status: string): string {
+	if (DEFAULT_LABELS[status]) {
+		return DEFAULT_LABELS[status];
+	}
+	// Auto-generate label: "my-status" → "My Status"
+	return status
+		.split("-")
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+		.join(" ");
+}
 
 export default function Column({ status, tasks, onDrop, onTaskClick }: ColumnProps) {
 	const { isDark } = useTheme();
 	const [isDragOver, setIsDragOver] = useState(false);
+	const [statusColors, setStatusColors] = useState<Record<string, ColorName>>(DEFAULT_STATUS_COLORS);
+
+	// Load status colors from config
+	useEffect(() => {
+		fetch("/api/config")
+			.then((res) => res.json())
+			.then((data) => {
+				if (data.config?.statusColors) {
+					setStatusColors(data.config.statusColors);
+				}
+			})
+			.catch((err) => console.error("Failed to load status colors:", err));
+	}, []);
+
+	// Get color scheme for current status
+	const colorScheme = statusColors[status]
+		? generateColorScheme(statusColors[status])
+		: DEFAULT_COLOR_SCHEME;
+
+	const columnColors = isDark
+		? `${colorScheme.columnBgDark} ${colorScheme.columnBorderDark}`
+		: `${colorScheme.columnBg} ${colorScheme.columnBorder}`;
 
 	const handleDragOver = (e: React.DragEvent) => {
 		e.preventDefault();
@@ -58,13 +85,9 @@ export default function Column({ status, tasks, onDrop, onTaskClick }: ColumnPro
 		}
 	};
 
-	const colors = isDark ? COLORS_DARK : COLORS_LIGHT;
-
 	return (
 		<div
-			className={`rounded-lg border-2 p-4 min-w-[380px] max-w-[420px] flex-shrink-0 transition-colors overflow-visible ${
-				colors[status]
-			} ${isDragOver ? "ring-2 ring-blue-400 border-blue-400" : ""}`}
+			className={`rounded-lg border-2 p-4 min-w-[380px] max-w-[420px] flex-shrink-0 transition-colors overflow-visible ${columnColors} ${isDragOver ? "ring-2 ring-blue-400 border-blue-400" : ""}`}
 			onDragOver={handleDragOver}
 			onDragLeave={handleDragLeave}
 			onDrop={handleDrop}
@@ -73,7 +96,7 @@ export default function Column({ status, tasks, onDrop, onTaskClick }: ColumnPro
 				<h2
 					className={`font-bold text-sm uppercase tracking-wide ${isDark ? "text-gray-300" : "text-gray-700"}`}
 				>
-					{LABELS[status]}
+					{getColumnLabel(status)}
 				</h2>
 				<span
 					className={`text-xs rounded-full px-2 py-1 font-medium ${

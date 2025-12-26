@@ -6,7 +6,7 @@
 import { mkdir, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { Task, TaskPriority, TaskStatus, TaskVersion } from "@models/index";
-import { isValidTaskPriority, isValidTaskStatus } from "@models/index";
+import { DEFAULT_STATUSES, isValidTaskPriority, isValidTaskStatus } from "@models/index";
 import { FileStore } from "@storage/file-store";
 import { formatDocReferences, resolveDocReferences } from "@utils/doc-links";
 import { findProjectRoot } from "@utils/find-project-root";
@@ -547,10 +547,14 @@ const createCommand = new Command("create")
 			try {
 				const fileStore = getFileStore();
 
+				// Get project config for validation
+				const project = await fileStore.getProject();
+				const allowedStatuses = project?.settings.statuses || DEFAULT_STATUSES;
+
 				// Validate status
-				if (!isValidTaskStatus(options.status)) {
+				if (!isValidTaskStatus(options.status, allowedStatuses)) {
 					console.error(chalk.red(`✗ Invalid status: ${options.status}`));
-					console.error(chalk.gray("  Valid statuses: todo, in-progress, in-review, done, blocked"));
+					console.error(chalk.gray(`  Valid statuses: ${allowedStatuses.join(", ")}`));
 					process.exit(1);
 				}
 
@@ -749,6 +753,10 @@ const editCommand = new Command("edit")
 					process.exit(1);
 				}
 
+				// Get project config for validation
+				const project = await fileStore.getProject();
+				const allowedStatuses = project?.settings.statuses || DEFAULT_STATUSES;
+
 				const updates: Partial<Task> = {};
 
 				// Update title
@@ -763,9 +771,9 @@ const editCommand = new Command("edit")
 
 				// Update status
 				if (options.status) {
-					if (!isValidTaskStatus(options.status)) {
+					if (!isValidTaskStatus(options.status, allowedStatuses)) {
 						console.error(chalk.red(`✗ Invalid status: ${options.status}`));
-						console.error(chalk.gray("  Valid statuses: todo, in-progress, in-review, done, blocked"));
+						console.error(chalk.gray(`  Valid statuses: ${allowedStatuses.join(", ")}`));
 						process.exit(1);
 					}
 					updates.status = options.status as TaskStatus;
