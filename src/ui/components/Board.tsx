@@ -37,16 +37,8 @@ interface BoardProps {
 
 export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 	const { isDark } = useTheme();
-	const [availableStatuses, setAvailableStatuses] = useState<TaskStatus[]>([
-		"todo",
-		"in-progress",
-		"in-review",
-		"done",
-		"blocked",
-	]);
-	const [visibleColumns, setVisibleColumns] = useState<Set<TaskStatus>>(
-		new Set(["todo", "in-progress", "done"])
-	);
+	const [availableStatuses, setAvailableStatuses] = useState<TaskStatus[]>([]);
+	const [visibleColumns, setVisibleColumns] = useState<Set<TaskStatus>>(new Set());
 
 	// Get selected task from URL hash
 	const getSelectedTask = (): Task | null => {
@@ -78,11 +70,23 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 		fetch("/api/config")
 			.then((res) => res.json())
 			.then((data) => {
-				if (data.config?.statuses) {
-					setAvailableStatuses(data.config.statuses as TaskStatus[]);
-				}
+				const statuses = (data.config?.statuses as TaskStatus[]) || [
+					"todo",
+					"in-progress",
+					"in-review",
+					"done",
+					"blocked",
+				];
+				setAvailableStatuses(statuses);
+
+				// By default, all columns are visible
+				const newVisibleColumns = new Set(statuses);
+
+				// If user has saved a preference, use that instead
 				if (data.config?.visibleColumns) {
 					setVisibleColumns(new Set(data.config.visibleColumns));
+				} else {
+					setVisibleColumns(newVisibleColumns);
 				}
 			})
 			.catch((err) => console.error("Failed to load config:", err));
@@ -210,9 +214,9 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 				</div>
 			</div>
 
-			{/* Board Columns - Horizontal scrollable area */}
-			<div className="flex-1 overflow-x-auto overflow-y-hidden">
-				<div className="flex gap-4 pb-4 h-full">
+			{/* Board Columns - Horizontal and vertical scrollable area */}
+			<div className="flex-1 overflow-auto">
+				<div className="flex gap-4 pb-4">
 					{availableStatuses.filter((status) => visibleColumns.has(status)).map((status) => (
 						<Column
 							key={status}

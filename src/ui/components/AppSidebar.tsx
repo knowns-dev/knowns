@@ -155,7 +155,7 @@ export function AppSidebar({
 							>
 								Knowns
 							</a>
-							<span className="font-mono">0.1.3</span>
+							<span className="font-mono">{process.env.APP_VERSION}</span>
 						</div>
 					</div>
 				)}

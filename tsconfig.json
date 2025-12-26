@@ -34,6 +34,6 @@
 		"noUnusedParameters": false,
 		"noPropertyAccessFromIndexSignature": false
 	},
-	"include": ["src/**/*"],
+	"include": ["src/**/*", "src/ui/types/env.d.ts"],
 	"exclude": ["node_modules", "dist"]
 }
