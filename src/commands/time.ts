@@ -5,6 +5,7 @@
 
 import { FileStore } from "@storage/file-store";
 import { findProjectRoot } from "@utils/find-project-root";
+import { notifyTaskUpdate } from "@utils/notify-server";
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -166,6 +167,9 @@ const stopCommand = new Command("stop").description("Stop current timer and save
 				timeEntries: task.timeEntries,
 				timeSpent: task.timeSpent,
 			});
+
+			// Notify web server for real-time updates
+			await notifyTaskUpdate(taskId);
 		}
 
 		// Clear active timer
@@ -411,6 +415,9 @@ const addCommand = new Command("add")
 				timeEntries: task.timeEntries,
 				timeSpent: task.timeSpent,
 			});
+
+			// Notify web server for real-time updates
+			await notifyTaskUpdate(taskId);
 
 			console.log(chalk.green(`✓ Added ${formatDuration(seconds)} to #${taskId}: ${task.title}`));
 			if (options.note) {

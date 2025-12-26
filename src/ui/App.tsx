@@ -1,11 +1,13 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { Task } from "../models/task";
-import { api, connectWebSocket } from "./api/client";
+import { api, connectWebSocket, getConfig } from "./api/client";
 import { AppSidebar } from "./components/AppSidebar";
 import TaskCreateForm from "./components/TaskCreateForm";
 import SearchCommandDialog from "./components/SearchCommandDialog";
+import NotificationBell from "./components/NotificationBell";
 import { SidebarProvider, SidebarTrigger } from "./components/ui/sidebar";
 import { Separator } from "./components/ui/separator";
+import { UserProvider } from "./contexts/UserContext";
 import ConfigPage from "./pages/ConfigPage";
 import DocsPage from "./pages/DocsPage";
 import KanbanPage from "./pages/KanbanPage";
@@ -55,7 +57,7 @@ export default function App() {
 		const hash = window.location.hash.slice(1);
 
 		// Support both /tasks/42, /kanban/42 and /tasks?id=42 formats
-		const prefix = page || "(?:tasks|kanban)";
+		const prefix = page || "(?:kanban|tasks)";
 		const match =
 			hash.match(new RegExp(`^\/${prefix}\/([^?]+)`)) || hash.match(/[?&]id=([^&]+)/);
 		return match ? match[1] : null;
@@ -101,11 +103,10 @@ export default function App() {
 
 	useEffect(() => {
 		// Fetch config for project name
-		fetch("/api/config")
-			.then((res) => res.json())
-			.then((data) => {
-				if (data.config?.name) {
-					setProjectName(data.config.name);
+		getConfig()
+			.then((config) => {
+				if (config?.name) {
+					setProjectName(config.name as string);
 				}
 			})
 			.catch((err) => console.error("Failed to load config:", err));
@@ -135,6 +136,9 @@ export default function App() {
 					// Add new task
 					return [...prevTasks, data.task];
 				});
+			} else if (data.type === "tasks:refresh") {
+				// Reload all tasks (CLI bulk operation)
+				api.getTasks().then(setTasks).catch(console.error);
 			}
 		});
 
@@ -155,8 +159,8 @@ export default function App() {
 
 	// Handle search task select
 	const handleSearchTaskSelect = (task: Task) => {
-		// Update URL hash to /tasks/ID
-		window.location.hash = `/tasks/${task.id}`;
+		// Navigate to kanban view with task detail
+		window.location.hash = `/kanban/${task.id}`;
 		// State will be updated via hashchange listener
 	};
 
@@ -221,7 +225,8 @@ export default function App() {
 
 	return (
 		<ThemeContext.Provider value={{ isDark, toggle: toggleTheme }}>
-			<SidebarProvider>
+			<UserProvider>
+				<SidebarProvider>
 				<AppSidebar
 					currentPage={currentPage}
 					isDark={isDark}
@@ -235,9 +240,10 @@ export default function App() {
 						<Separator orientation="vertical" className="mr-2 h-4" />
 						<div className="flex flex-1 items-center gap-2 text-sm">
 							<span className={`font-semibold ${isDark ? "text-gray-100" : "text-gray-900"}`}>
-								{projectName} - Task Management
+								{projectName}
 							</span>
 						</div>
+						<NotificationBell />
 					</header>
 
 					{/* Page Content */}
@@ -259,7 +265,8 @@ export default function App() {
 				onTaskSelect={handleSearchTaskSelect}
 				onDocSelect={handleSearchDocSelect}
 			/>
-		</SidebarProvider>
-	</ThemeContext.Provider>
+			</SidebarProvider>
+			</UserProvider>
+		</ThemeContext.Provider>
 	);
 }

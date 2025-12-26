@@ -1,10 +1,13 @@
 import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { X, AlignLeft, ClipboardCheck, User, Plus, Trash2, ArrowUp } from "lucide-react";
+import { X, AlignLeft, ClipboardCheck, Plus, Trash2, ArrowUp } from "lucide-react";
 import type { Task, TaskPriority, TaskStatus } from "../../models/task";
 import { useTheme } from "../App";
+import { useCurrentUser } from "../contexts/UserContext";
 import { createTask } from "../api/client";
-import MarkdownEditor from "./MarkdownEditor";
+import AssigneeDropdown from "./AssigneeDropdown";
+import { TiptapEditor } from "./editor";
+import { ScrollArea } from "./ui/scroll-area";
 
 interface TaskCreateFormProps {
 	isOpen: boolean;
@@ -81,6 +84,7 @@ export default function TaskCreateForm({
 	onCreated,
 }: TaskCreateFormProps) {
 	const { isDark } = useTheme();
+	const { currentUser } = useCurrentUser();
 	const dialogRef = useRef<HTMLDialogElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
 	const titleInputRef = useRef<HTMLInputElement>(null);
@@ -228,7 +232,7 @@ export default function TaskCreateForm({
 	const bgMain = isDark ? "bg-gray-800" : "bg-gray-100";
 	const bgCard = isDark ? "bg-gray-700" : "bg-white";
 	const bgSidebar = isDark ? "bg-gray-750" : "bg-gray-50";
-	const textPrimary = isDark ? "text-gray-100" : "text-gray-900";
+	const _textPrimary = isDark ? "text-gray-100" : "text-gray-900";
 	const textSecondary = isDark ? "text-gray-300" : "text-gray-700";
 	const textMuted = isDark ? "text-gray-400" : "text-gray-500";
 	const borderColor = isDark ? "border-gray-600" : "border-gray-200";
@@ -248,7 +252,7 @@ export default function TaskCreateForm({
 			<div className="flex justify-center pt-12 pb-8 px-4 min-h-full">
 				<div
 					ref={contentRef}
-					className={`${bgMain} rounded-xl shadow-2xl w-full max-w-4xl max-h-[calc(100vh-80px)] overflow-hidden flex flex-col`}
+					className={`${bgMain} rounded-xl shadow-2xl w-full max-w-6xl max-h-[calc(100vh-80px)] overflow-hidden flex flex-col`}
 				>
 					{/* Header */}
 					<div className="bg-gradient-to-r from-green-500 to-green-600 px-6 py-4 flex items-start justify-between">
@@ -295,10 +299,11 @@ export default function TaskCreateForm({
 					)}
 
 					{/* Content */}
-					<form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
-						<div className="flex flex-col md:flex-row">
+					<form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+						<div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
 							{/* Main Content */}
-							<div className="flex-1 p-6 space-y-6">
+							<ScrollArea className="flex-1 min-h-0">
+								<div className="p-6 space-y-6">
 								{/* Description */}
 								<section>
 									<div className="flex items-center gap-2 mb-3">
@@ -307,7 +312,7 @@ export default function TaskCreateForm({
 										</span>
 										<h3 className={`font-semibold ${textSecondary}`}>Description</h3>
 									</div>
-									<MarkdownEditor
+									<TiptapEditor
 										markdown={description}
 										onChange={setDescription}
 										placeholder="Add a more detailed description..."
@@ -412,12 +417,12 @@ export default function TaskCreateForm({
 										</button>
 									)}
 								</section>
-							</div>
+								</div>
+							</ScrollArea>
 
 							{/* Sidebar */}
-							<div
-								className={`w-full md:w-64 ${bgSidebar} p-4 border-t md:border-t-0 md:border-l ${borderColor} space-y-4`}
-							>
+							<ScrollArea className={`w-full md:w-64 ${bgSidebar} border-t md:border-t-0 md:border-l ${borderColor}`}>
+								<div className="p-4 space-y-4">
 								{/* Status */}
 								<div>
 									<label
@@ -467,21 +472,12 @@ export default function TaskCreateForm({
 									>
 										Assignee
 									</label>
-									<div
-										className={`flex items-center gap-2 ${bgCard} rounded-lg px-3 py-2 border ${borderColor}`}
-									>
-										<span className={textMuted}>
-											<User className="w-5 h-5" />
-										</span>
-										<input
-											type="text"
-											value={assignee}
-											onChange={(e) => setAssignee(e.target.value)}
-											placeholder="@username"
-											className={`flex-1 text-sm bg-transparent focus:outline-none ${textPrimary}`}
-											disabled={saving}
-										/>
-									</div>
+									<AssigneeDropdown
+										value={assignee}
+										onChange={setAssignee}
+										currentUser={currentUser}
+										showGrabButton={true}
+									/>
 								</div>
 
 								{/* Labels */}
@@ -623,7 +619,8 @@ export default function TaskCreateForm({
 										</button>
 									)}
 								</div>
-							</div>
+								</div>
+							</ScrollArea>
 						</div>
 					</form>
 

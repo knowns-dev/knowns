@@ -1,14 +1,17 @@
 import type React from "react";
 import { useState, useEffect } from "react";
-import { ClipboardList, User } from "lucide-react";
+import { ClipboardList } from "lucide-react";
 import type { Task, TaskStatus } from "../../models/task";
 import { useTheme } from "../App";
+import { getConfig } from "../api/client";
 import {
 	generateColorScheme,
 	DEFAULT_COLOR_SCHEME,
 	DEFAULT_STATUS_COLORS,
 	type ColorName,
 } from "../utils/colors";
+import Avatar from "./Avatar";
+import { Skeleton } from "./ui/skeleton";
 
 interface TaskCardProps {
 	task: Task;
@@ -44,11 +47,10 @@ export default function TaskCard({ task, onClick }: TaskCardProps) {
 
 	// Load status colors from config
 	useEffect(() => {
-		fetch("/api/config")
-			.then((res) => res.json())
-			.then((data) => {
-				if (data.config?.statusColors) {
-					setStatusColors(data.config.statusColors);
+		getConfig()
+			.then((config) => {
+				if (config?.statusColors) {
+					setStatusColors(config.statusColors as Record<string, ColorName>);
 				}
 			})
 			.catch((err) => console.error("Failed to load status colors:", err));
@@ -79,7 +81,7 @@ export default function TaskCard({ task, onClick }: TaskCardProps) {
 	return (
 		<button
 			type="button"
-			className={`rounded-lg shadow hover:shadow-md transition-all p-3 cursor-pointer active:cursor-grabbing select-none w-full text-left ${
+			className={`task-card rounded-lg shadow hover:shadow-md p-3 cursor-pointer active:cursor-grabbing select-none w-full text-left ${
 				isDark ? "bg-gray-700 hover:bg-gray-650" : "bg-white"
 			}`}
 			draggable
@@ -152,9 +154,9 @@ export default function TaskCard({ task, onClick }: TaskCardProps) {
 
 			{task.assignee && (
 				<div
-					className={`flex items-center gap-1 text-xs mt-2 ${isDark ? "text-gray-400" : "text-gray-600"}`}
+					className={`flex items-center gap-1.5 text-xs mt-2 ${isDark ? "text-gray-400" : "text-gray-600"}`}
 				>
-					<User className="w-3 h-3" aria-hidden="true" />
+					<Avatar name={task.assignee} size="sm" />
 					<span>{task.assignee}</span>
 				</div>
 			)}

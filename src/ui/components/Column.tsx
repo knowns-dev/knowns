@@ -2,7 +2,9 @@ import type React from "react";
 import { useState, useEffect } from "react";
 import type { Task, TaskStatus } from "../../models/task";
 import { useTheme } from "../App";
+import { getConfig } from "../api/client";
 import TaskCard from "./TaskCard";
+import { ScrollArea } from "./ui/scroll-area";
 import {
 	generateColorScheme,
 	DEFAULT_COLOR_SCHEME,
@@ -47,11 +49,10 @@ export default function Column({ status, tasks, onDrop, onTaskClick }: ColumnPro
 
 	// Load status colors from config
 	useEffect(() => {
-		fetch("/api/config")
-			.then((res) => res.json())
-			.then((data) => {
-				if (data.config?.statusColors) {
-					setStatusColors(data.config.statusColors);
+		getConfig()
+			.then((config) => {
+				if (config?.statusColors) {
+					setStatusColors(config.statusColors as Record<string, ColorName>);
 				}
 			})
 			.catch((err) => console.error("Failed to load status colors:", err));
@@ -87,12 +88,12 @@ export default function Column({ status, tasks, onDrop, onTaskClick }: ColumnPro
 
 	return (
 		<div
-			className={`rounded-lg border-2 p-4 min-w-[380px] max-w-[420px] flex-shrink-0 transition-colors overflow-visible ${columnColors} ${isDragOver ? "ring-2 ring-blue-400 border-blue-400" : ""}`}
+			className={`rounded-lg border-2 p-4 min-w-[380px] max-w-[420px] flex-shrink-0 transition-colors flex flex-col max-h-[calc(100vh-220px)] ${columnColors} ${isDragOver ? "ring-2 ring-blue-400 border-blue-400" : ""}`}
 			onDragOver={handleDragOver}
 			onDragLeave={handleDragLeave}
 			onDrop={handleDrop}
 		>
-			<div className="flex items-center justify-between mb-3">
+			<div className="flex items-center justify-between mb-3 shrink-0">
 				<h2
 					className={`font-bold text-sm uppercase tracking-wide ${isDark ? "text-gray-300" : "text-gray-700"}`}
 				>
@@ -107,17 +108,19 @@ export default function Column({ status, tasks, onDrop, onTaskClick }: ColumnPro
 				</span>
 			</div>
 
-			<div className="space-y-2 overflow-visible">
-				{tasks.length === 0 ? (
-					<div className={`text-center py-8 text-sm ${isDark ? "text-gray-500" : "text-gray-400"}`}>
-						No tasks
-					</div>
-				) : (
-					tasks.map((task) => (
-						<TaskCard key={task.id} task={task} onClick={() => onTaskClick(task)} />
-					))
-				)}
-			</div>
+			<ScrollArea className="flex-1 -mr-2 pr-2">
+				<div className="space-y-2 stagger-animation">
+					{tasks.length === 0 ? (
+						<div className={`text-center py-8 text-sm ${isDark ? "text-gray-500" : "text-gray-400"}`}>
+							No tasks
+						</div>
+					) : (
+						tasks.map((task) => (
+							<TaskCard key={task.id} task={task} onClick={() => onTaskClick(task)} />
+						))
+					)}
+				</div>
+			</ScrollArea>
 		</div>
 	);
 }

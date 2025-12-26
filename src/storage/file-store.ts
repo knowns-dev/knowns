@@ -106,6 +106,11 @@ export class FileStore {
 		const task: Task = {
 			...taskData,
 			id,
+			labels: taskData.labels || [],
+			subtasks: taskData.subtasks || [],
+			acceptanceCriteria: taskData.acceptanceCriteria || [],
+			timeSpent: taskData.timeSpent ?? 0,
+			timeEntries: taskData.timeEntries || [],
 			createdAt: now,
 			updatedAt: now,
 		};

@@ -5,6 +5,10 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { FileStore } from "@storage/file-store";
+import { findProjectRoot } from "@utils/find-project-root";
+import { buildTaskMap, transformMentionsToRefs } from "@utils/mention-refs";
+import { notifyDocUpdate } from "@utils/notify-server";
 import chalk from "chalk";
 import { Command } from "commander";
 import matter from "gray-matter";
@@ -70,16 +74,31 @@ const createCommand = new Command("create")
 	.argument("<title>", "Document title")
 	.option("-d, --description <text>", "Document description")
 	.option("-t, --tags <tags>", "Comma-separated tags")
+	.option("-f, --folder <path>", "Folder path (e.g., guides, patterns/auth)")
 	.option("--plain", "Plain text output for AI")
-	.action(async (title: string, options: { description?: string; tags?: string; plain?: boolean }) => {
+	.action(async (title: string, options: { description?: string; tags?: string; folder?: string; plain?: boolean }) => {
 		try {
 			await ensureDocsDir();
 
 			const filename = `${titleToFilename(title)}.md`;
-			const filepath = join(DOCS_DIR, filename);
+
+			// Handle folder path
+			let targetDir = DOCS_DIR;
+			let relativePath = filename;
+			if (options.folder) {
+				const folderPath = options.folder.replace(/^\/|\/$/g, ""); // Remove leading/trailing slashes
+				targetDir = join(DOCS_DIR, folderPath);
+				relativePath = join(folderPath, filename);
+				// Ensure folder exists
+				if (!existsSync(targetDir)) {
+					await mkdir(targetDir, { recursive: true });
+				}
+			}
+
+			const filepath = join(targetDir, filename);
 
 			if (existsSync(filepath)) {
-				console.error(chalk.red(`✗ Document already exists: ${filename}`));
+				console.error(chalk.red(`✗ Document already exists: ${relativePath}`));
 				process.exit(1);
 			}
 
@@ -102,10 +121,13 @@ const createCommand = new Command("create")
 
 			await writeFile(filepath, content, "utf-8");
 
+			// Notify web server for real-time updates
+			await notifyDocUpdate(relativePath);
+
 			if (options.plain) {
-				console.log(`Created: ${filename}`);
+				console.log(`Created: ${relativePath}`);
 			} else {
-				console.log(chalk.green(`✓ Created documentation: ${chalk.bold(filename)}`));
+				console.log(chalk.green(`✓ Created documentation: ${chalk.bold(relativePath)}`));
 				console.log(chalk.gray(`  Location: ${filepath}`));
 			}
 		} catch (error) {
@@ -317,6 +339,15 @@ const viewCommand = new Command("view")
 					enhancedContent = enhancedContent.replace(original, resolved);
 				}
 
+				// Transform @task-{id} and @doc/{path} mentions
+				const knownProjectRoot = findProjectRoot();
+				if (knownProjectRoot) {
+					const fileStore = new FileStore(knownProjectRoot);
+					const allTasks = await fileStore.getAllTasks();
+					const taskMap = buildTaskMap(allTasks);
+					enhancedContent = transformMentionsToRefs(enhancedContent, taskMap);
+				}
+
 				console.log(enhancedContent);
 			} else {
 				console.log(chalk.bold(`\n📄 ${metadata.title}\n`));
@@ -340,49 +371,102 @@ const viewCommand = new Command("view")
 
 // Edit command
 const editCommand = new Command("edit")
-	.description("Edit a documentation file metadata")
-	.argument("<name>", "Document name")
+	.description("Edit a documentation file (metadata and content)")
+	.argument("<name>", "Document name or path (e.g., guides/my-doc)")
 	.option("-t, --title <text>", "New title")
 	.option("-d, --description <text>", "New description")
 	.option("--tags <tags>", "Comma-separated tags")
-	.action(async (name: string, options: { title?: string; description?: string; tags?: string }) => {
-		try {
-			await ensureDocsDir();
+	.option("-c, --content <text>", "Replace content")
+	.option("-a, --append <text>", "Append to content")
+	.option("--plain", "Plain text output for AI")
+	.action(
+		async (
+			name: string,
+			options: {
+				title?: string;
+				description?: string;
+				tags?: string;
+				content?: string;
+				append?: string;
+				plain?: boolean;
+			},
+		) => {
+			try {
+				await ensureDocsDir();
 
-			// Find the file
-			let filename = name.endsWith(".md") ? name : `${name}.md`;
-			let filepath = join(DOCS_DIR, filename);
+				// Find the file - support nested paths
+				let filename = name.endsWith(".md") ? name : `${name}.md`;
+				let filepath = join(DOCS_DIR, filename);
 
-			if (!existsSync(filepath)) {
-				filename = `${titleToFilename(name)}.md`;
-				filepath = join(DOCS_DIR, filename);
-			}
+				if (!existsSync(filepath)) {
+					// Try converting title to filename
+					const baseName = name.includes("/") ? name : titleToFilename(name);
+					filename = baseName.endsWith(".md") ? baseName : `${baseName}.md`;
+					filepath = join(DOCS_DIR, filename);
+				}
 
-			if (!existsSync(filepath)) {
-				console.error(chalk.red(`✗ Documentation not found: ${name}`));
+				if (!existsSync(filepath)) {
+					// Try searching in all md files
+					const allFiles = await getAllMdFiles(DOCS_DIR);
+					const searchName = name.toLowerCase().replace(/\.md$/, "");
+
+					const matchingFile = allFiles.find((file) => {
+						const fileNameOnly = file.toLowerCase().replace(/\.md$/, "");
+						const fileBaseName = file.split("/").pop()?.toLowerCase().replace(/\.md$/, "");
+						return fileNameOnly === searchName || fileBaseName === searchName || file === name;
+					});
+
+					if (matchingFile) {
+						filename = matchingFile;
+						filepath = join(DOCS_DIR, matchingFile);
+					}
+				}
+
+				if (!existsSync(filepath)) {
+					console.error(chalk.red(`✗ Documentation not found: ${name}`));
+					process.exit(1);
+				}
+
+				const fileContent = await readFile(filepath, "utf-8");
+				const { data, content } = matter(fileContent);
+				const metadata = data as DocMetadata;
+
+				// Update metadata
+				if (options.title) metadata.title = options.title;
+				if (options.description) metadata.description = options.description;
+				if (options.tags) metadata.tags = options.tags.split(",").map((t) => t.trim());
+				metadata.updatedAt = new Date().toISOString();
+
+				// Update content
+				let updatedContent = content;
+				if (options.content) {
+					updatedContent = options.content;
+				}
+				if (options.append) {
+					updatedContent = `${content.trimEnd()}\n\n${options.append}`;
+				}
+
+				// Write back
+				const newFileContent = matter.stringify(updatedContent, metadata);
+				await writeFile(filepath, newFileContent, "utf-8");
+
+				// Notify web server for real-time updates
+				await notifyDocUpdate(filename);
+
+				if (options.plain) {
+					console.log(`Updated: ${filename}`);
+				} else {
+					console.log(chalk.green(`✓ Updated documentation: ${chalk.bold(filename)}`));
+				}
+			} catch (error) {
+				console.error(
+					chalk.red("Error editing documentation:"),
+					error instanceof Error ? error.message : String(error),
+				);
 				process.exit(1);
 			}
-
-			const fileContent = await readFile(filepath, "utf-8");
-			const { data, content } = matter(fileContent);
-			const metadata = data as DocMetadata;
-
-			// Update metadata
-			if (options.title) metadata.title = options.title;
-			if (options.description) metadata.description = options.description;
-			if (options.tags) metadata.tags = options.tags.split(",").map((t) => t.trim());
-			metadata.updatedAt = new Date().toISOString();
-
-			// Write back
-			const newContent = matter.stringify(content, metadata);
-			await writeFile(filepath, newContent, "utf-8");
-
-			console.log(chalk.green(`✓ Updated documentation: ${chalk.bold(filename)}`));
-		} catch (error) {
-			console.error(chalk.red("Error editing documentation:"), error instanceof Error ? error.message : String(error));
-			process.exit(1);
-		}
-	});
+		},
+	);
 
 // Main doc command
 export const docCommand = new Command("doc")

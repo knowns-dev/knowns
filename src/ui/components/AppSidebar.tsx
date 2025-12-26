@@ -119,6 +119,7 @@ export function AppSidebar({
 						</SidebarMenu>
 					</SidebarGroupContent>
 				</SidebarGroup>
+
 			</SidebarContent>
 
 			<SidebarFooter>
@@ -155,7 +156,7 @@ export function AppSidebar({
 							>
 								Knowns
 							</a>
-							<span className="font-mono">{process.env.APP_VERSION}</span>
+							<span className="font-mono">{import.meta.env.APP_VERSION}</span>
 						</div>
 					</div>
 				)}
