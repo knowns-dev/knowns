@@ -1,55 +1,63 @@
 import type React from "react";
+import { useState, useEffect } from "react";
+import { ClipboardList, User } from "lucide-react";
 import type { Task, TaskStatus } from "../../models/task";
 import { useTheme } from "../App";
+import {
+	generateColorScheme,
+	DEFAULT_COLOR_SCHEME,
+	DEFAULT_STATUS_COLORS,
+	type ColorName,
+} from "../utils/colors";
 
 interface TaskCardProps {
 	task: Task;
 	onClick?: () => void;
 }
 
-const statusColors: Record<
-	TaskStatus,
-	{ bg: string; darkBg: string; text: string; darkText: string; label: string }
-> = {
-	todo: {
-		bg: "bg-gray-100",
-		darkBg: "bg-gray-700",
-		text: "text-gray-700",
-		darkText: "text-gray-300",
-		label: "To Do",
-	},
-	"in-progress": {
-		bg: "bg-blue-100",
-		darkBg: "bg-blue-900/50",
-		text: "text-blue-700",
-		darkText: "text-blue-300",
-		label: "In Progress",
-	},
-	"in-review": {
-		bg: "bg-purple-100",
-		darkBg: "bg-purple-900/50",
-		text: "text-purple-700",
-		darkText: "text-purple-300",
-		label: "In Review",
-	},
-	done: {
-		bg: "bg-green-100",
-		darkBg: "bg-green-900/50",
-		text: "text-green-700",
-		darkText: "text-green-300",
-		label: "Done",
-	},
-	blocked: {
-		bg: "bg-red-100",
-		darkBg: "bg-red-900/50",
-		text: "text-red-700",
-		darkText: "text-red-300",
-		label: "Blocked",
-	},
+// Default status labels
+const DEFAULT_STATUS_LABELS: Record<string, string> = {
+	todo: "To Do",
+	"in-progress": "In Progress",
+	"in-review": "In Review",
+	done: "Done",
+	blocked: "Blocked",
+	"on-hold": "On Hold",
+	urgent: "Urgent",
 };
+
+// Get status label with fallback
+function getStatusLabel(status: string): string {
+	if (DEFAULT_STATUS_LABELS[status]) {
+		return DEFAULT_STATUS_LABELS[status];
+	}
+	// Auto-generate label: "my-status" → "My Status"
+	return status
+		.split("-")
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+		.join(" ");
+}
 
 export default function TaskCard({ task, onClick }: TaskCardProps) {
 	const { isDark } = useTheme();
+	const [statusColors, setStatusColors] = useState<Record<string, ColorName>>(DEFAULT_STATUS_COLORS);
+
+	// Load status colors from config
+	useEffect(() => {
+		fetch("/api/config")
+			.then((res) => res.json())
+			.then((data) => {
+				if (data.config?.statusColors) {
+					setStatusColors(data.config.statusColors);
+				}
+			})
+			.catch((err) => console.error("Failed to load status colors:", err));
+	}, []);
+
+	// Get color scheme for task status
+	const colorScheme = statusColors[task.status]
+		? generateColorScheme(statusColors[task.status])
+		: DEFAULT_COLOR_SCHEME;
 
 	const handleDragStart = (e: React.DragEvent) => {
 		e.dataTransfer.setData("taskId", task.id);
@@ -63,7 +71,10 @@ export default function TaskCard({ task, onClick }: TaskCardProps) {
 
 	const completedAC = task.acceptanceCriteria.filter((ac) => ac.completed).length;
 	const totalAC = task.acceptanceCriteria.length;
-	const statusStyle = statusColors[task.status];
+
+	const statusBadgeClasses = isDark
+		? `${colorScheme.darkBg} ${colorScheme.darkText}`
+		: `${colorScheme.bg} ${colorScheme.text}`;
 
 	return (
 		<button
@@ -83,14 +94,8 @@ export default function TaskCard({ task, onClick }: TaskCardProps) {
 					#{task.id}
 				</span>
 				<div className="flex items-center gap-1 flex-wrap justify-end">
-					<span
-						className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-							isDark
-								? `${statusStyle.darkBg} ${statusStyle.darkText}`
-								: `${statusStyle.bg} ${statusStyle.text}`
-						}`}
-					>
-						{statusStyle.label}
+					<span className={`text-xs px-1.5 py-0.5 rounded font-medium ${statusBadgeClasses}`}>
+						{getStatusLabel(task.status)}
 					</span>
 					{task.priority === "high" && (
 						<span
@@ -123,20 +128,7 @@ export default function TaskCard({ task, onClick }: TaskCardProps) {
 				<div
 					className={`flex items-center gap-2 text-xs mb-2 ${isDark ? "text-gray-400" : "text-gray-500"}`}
 				>
-					<svg
-						className="w-3 h-3"
-						fill="none"
-						stroke="currentColor"
-						viewBox="0 0 24 24"
-						aria-hidden="true"
-					>
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-						/>
-					</svg>
+					<ClipboardList className="w-3 h-3" aria-hidden="true" />
 					<span>
 						{completedAC}/{totalAC}
 					</span>
@@ -162,20 +154,7 @@ export default function TaskCard({ task, onClick }: TaskCardProps) {
 				<div
 					className={`flex items-center gap-1 text-xs mt-2 ${isDark ? "text-gray-400" : "text-gray-600"}`}
 				>
-					<svg
-						className="w-3 h-3"
-						fill="none"
-						stroke="currentColor"
-						viewBox="0 0 24 24"
-						aria-hidden="true"
-					>
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-						/>
-					</svg>
+					<User className="w-3 h-3" aria-hidden="true" />
 					<span>{task.assignee}</span>
 				</div>
 			)}

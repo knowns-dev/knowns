@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
+import { Search, X, ClipboardList, FileText } from "lucide-react";
 import type { Task } from "../../models/task";
 import { useTheme } from "../App";
 
 interface Doc {
 	filename: string;
+	path: string;
+	folder: string;
 	metadata: {
 		title: string;
 		description?: string;
@@ -17,43 +20,6 @@ interface SearchBoxProps {
 	onDocSelect?: (doc: Doc) => void;
 }
 
-const Icons = {
-	Search: () => (
-		<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-			/>
-		</svg>
-	),
-	Close: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-		</svg>
-	),
-	Task: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-			/>
-		</svg>
-	),
-	Document: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-			/>
-		</svg>
-	),
-};
 
 export default function SearchBox({ onTaskSelect, onDocSelect }: SearchBoxProps) {
 	const { isDark } = useTheme();
@@ -89,7 +55,7 @@ export default function SearchBox({ onTaskSelect, onDocSelect }: SearchBoxProps)
 		setLoading(true);
 		try {
 			const response = await fetch(
-				`http://localhost:3456/api/search?q=${encodeURIComponent(query)}`
+				`/api/search?q=${encodeURIComponent(query)}`
 			);
 			const data = await response.json();
 			setTasks(data.tasks || []);
@@ -126,7 +92,7 @@ export default function SearchBox({ onTaskSelect, onDocSelect }: SearchBoxProps)
 			{/* Search Input */}
 			<div className="relative">
 				<div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-					<Icons.Search />
+					<Search className="w-5 h-5" />
 				</div>
 				<input
 					type="text"
@@ -141,7 +107,7 @@ export default function SearchBox({ onTaskSelect, onDocSelect }: SearchBoxProps)
 						onClick={clearSearch}
 						className={`absolute inset-y-0 right-0 pr-3 flex items-center ${textSecondary} ${hoverBg} rounded-r-lg transition-colors`}
 					>
-						<Icons.Close />
+						<X className="w-4 h-4" />
 					</button>
 				)}
 			</div>
@@ -178,7 +144,7 @@ export default function SearchBox({ onTaskSelect, onDocSelect }: SearchBoxProps)
 											onClick={() => handleTaskClick(task)}
 											className={`w-full text-left px-4 py-2 ${hoverBg} transition-colors flex items-start gap-3`}
 										>
-											<Icons.Task />
+											<ClipboardList className="w-4 h-4" />
 											<div className="flex-1 min-w-0">
 												<div className="flex items-center gap-2">
 													<span className={`text-xs ${textSecondary} font-mono`}>{task.id}</span>
@@ -219,7 +185,7 @@ export default function SearchBox({ onTaskSelect, onDocSelect }: SearchBoxProps)
 											onClick={() => handleDocClick(doc)}
 											className={`w-full text-left px-4 py-2 ${hoverBg} transition-colors flex items-start gap-3`}
 										>
-											<Icons.Document />
+											<FileText className="w-4 h-4" />
 											<div className="flex-1 min-w-0">
 												<p className={`font-medium ${textColor}`}>{doc.metadata.title}</p>
 												{doc.metadata.description && (

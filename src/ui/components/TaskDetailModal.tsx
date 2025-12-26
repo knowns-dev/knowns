@@ -1,5 +1,18 @@
 import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	X,
+	AlignLeft,
+	ClipboardCheck,
+	User,
+	Clock,
+	FileText,
+	Pencil,
+	Plus,
+	Trash2,
+	Archive,
+	ArrowUp,
+} from "lucide-react";
 import type { Task, TaskPriority, TaskStatus } from "../../models/task";
 import { useTheme } from "../App";
 import { updateTask } from "../api/client";
@@ -76,108 +89,6 @@ const priorityOptions: {
 	},
 ];
 
-const Icons = {
-	Close: () => (
-		<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-		</svg>
-	),
-	Description: () => (
-		<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M4 6h16M4 12h16M4 18h7"
-			/>
-		</svg>
-	),
-	Checklist: () => (
-		<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
-			/>
-		</svg>
-	),
-	User: () => (
-		<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-			/>
-		</svg>
-	),
-	Clock: () => (
-		<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-			/>
-		</svg>
-	),
-	Document: () => (
-		<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-			/>
-		</svg>
-	),
-	Note: () => (
-		<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-			/>
-		</svg>
-	),
-	Plus: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-		</svg>
-	),
-	Trash: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-			/>
-		</svg>
-	),
-	Archive: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
-			/>
-		</svg>
-	),
-	Parent: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M5 10l7-7m0 0l7 7m-7-7v18"
-			/>
-		</svg>
-	),
-};
 
 export default function TaskDetailModal({
 	task,
@@ -247,25 +158,30 @@ export default function TaskDetailModal({
 				const anchor = target as HTMLAnchorElement;
 				const href = anchor.getAttribute("href");
 
-				// Handle task links
-				if (href && /^task-\d+(.md)?$/.test(href)) {
-					e.preventDefault();
-					const taskId = href.replace(".md", "");
-					const targetTask = allTasks.find((t) => `task-${t.id}` === taskId);
-					if (targetTask && onNavigateToTask) {
-						onNavigateToTask(targetTask.id);
-					}
+				// Handle hash-based links (already formatted by MarkdownRenderer)
+				if (href && href.startsWith("#/")) {
+					// Let browser handle hash navigation, just close modal
+					onClose();
 					return;
 				}
 
-				// Handle document links
+				// Handle task links (legacy format: task-123 or task-123.md)
+				if (href && /^(task-)?\d+(\.md)?$/.test(href)) {
+					e.preventDefault();
+					const taskId = href.replace(/^task-/, "").replace(/\.md$/, "");
+					window.location.hash = `/tasks/${taskId}`;
+					onClose();
+					return;
+				}
+
+				// Handle document links (legacy format: ./README.md or README.md)
 				if (href && (href.endsWith(".md") || href.includes(".md#"))) {
 					e.preventDefault();
 					// Normalize path
 					const normalizedPath = href.replace(/^\.\//, "").replace(/^\//, "");
 					// Navigate to docs page with path in URL
 					window.location.hash = `/docs/${normalizedPath}`;
-					onClose(); // Close task modal
+					onClose();
 				}
 			}
 		};
@@ -485,7 +401,7 @@ export default function TaskDetailModal({
 							className="text-white/80 hover:text-white hover:bg-white/20 rounded-full p-2 ml-4 transition-colors"
 							aria-label="Close modal"
 						>
-							<Icons.Close />
+							<X className="w-5 h-5" />
 						</button>
 					</div>
 
@@ -497,7 +413,7 @@ export default function TaskDetailModal({
 								{/* Description */}
 								<section>
 									<div className={`flex items-center gap-2 mb-3 ${textSecondary}`}>
-										<Icons.Description />
+										<AlignLeft className="w-5 h-5" />
 										<h3 className="font-semibold">Description</h3>
 									</div>
 									{editingDescription ? (
@@ -553,7 +469,7 @@ export default function TaskDetailModal({
 								{/* Acceptance Criteria */}
 								<section>
 									<div className={`flex items-center gap-2 mb-3 ${textSecondary}`}>
-										<Icons.Checklist />
+										<ClipboardCheck className="w-5 h-5" />
 										<h3 className="font-semibold">Acceptance Criteria</h3>
 										{totalAC > 0 && (
 											<span className={`text-sm ${textMuted}`}>
@@ -619,7 +535,7 @@ export default function TaskDetailModal({
 													onClick={() => handleACDelete(index)}
 													className={`opacity-0 group-hover:opacity-100 ${textMuted} hover:text-red-500 p-1 transition-all`}
 												>
-													<Icons.Trash />
+													<Trash2 className="w-4 h-4" />
 												</button>
 											</div>
 										))}
@@ -669,7 +585,7 @@ export default function TaskDetailModal({
 											onClick={() => setAddingAC(true)}
 											className={`mt-2 flex items-center gap-1 text-sm ${textMuted} ${hoverBg} px-3 py-2 rounded-lg w-full`}
 										>
-											<Icons.Plus />
+											<Plus className="w-4 h-4" />
 											<span>Add an item</span>
 										</button>
 									)}
@@ -678,7 +594,7 @@ export default function TaskDetailModal({
 								{/* Implementation Plan */}
 								<section>
 									<div className={`flex items-center gap-2 mb-3 ${textSecondary}`}>
-										<Icons.Document />
+										<FileText className="w-5 h-5" />
 										<h3 className="font-semibold">Implementation Plan</h3>
 									</div>
 									{editingPlan ? (
@@ -736,7 +652,7 @@ export default function TaskDetailModal({
 								{/* Implementation Notes */}
 								<section>
 									<div className={`flex items-center gap-2 mb-3 ${textSecondary}`}>
-										<Icons.Note />
+										<Pencil className="w-5 h-5" />
 										<h3 className="font-semibold">Implementation Notes</h3>
 									</div>
 									{editingNotes ? (
@@ -812,6 +728,10 @@ export default function TaskDetailModal({
 										if (target.startsWith("../")) {
 											continue;
 										}
+										// Skip task references (task-123, task-123.md, 123, 123.md)
+										if (/^(task-)?\d+(\.md)?$/.test(target)) {
+											continue;
+										}
 
 										let filename = target;
 										// Remove leading ./ if present
@@ -836,7 +756,7 @@ export default function TaskDetailModal({
 									return (
 										<section>
 											<div className={`flex items-center gap-2 mb-3 ${textSecondary}`}>
-												<Icons.Document />
+												<FileText className="w-5 h-5" />
 												<h3 className="font-semibold">Related Documentation</h3>
 												<span className={`text-sm ${textMuted}`}>({uniqueRefs.length})</span>
 											</div>
@@ -865,7 +785,7 @@ export default function TaskDetailModal({
 								{/* Time Tracking */}
 								<section>
 									<div className={`flex items-center gap-2 mb-3 ${textSecondary}`}>
-										<Icons.Clock />
+										<Clock className="w-5 h-5" />
 										<h3 className="font-semibold">Time Tracking</h3>
 									</div>
 									<div className={`${bgCard} rounded-lg p-3`}>
@@ -949,7 +869,7 @@ export default function TaskDetailModal({
 											onClick={() => setEditingAssignee(true)}
 											className={`w-full flex items-center gap-2 ${bgCard} rounded-lg px-3 py-2 text-sm text-left ${hoverBg} border ${borderColor}`}
 										>
-											<Icons.User />
+											<User className="w-5 h-5" />
 											<span className={task.assignee ? textSecondary : textMuted}>
 												{task.assignee || "Unassigned"}
 											</span>
@@ -1024,7 +944,7 @@ export default function TaskDetailModal({
 											onClick={() => setAddingLabel(true)}
 											className={`flex items-center gap-1 text-sm ${textMuted} ${hoverBg} px-2 py-1.5 rounded`}
 										>
-											<Icons.Plus />
+											<Plus className="w-4 h-4" />
 											<span>Add label</span>
 										</button>
 									)}
@@ -1047,7 +967,7 @@ export default function TaskDetailModal({
 													onClick={() => onNavigateToTask?.(parentTask.id)}
 													className={`w-full flex items-center gap-2 ${bgCard} rounded-lg px-3 py-2 text-sm text-left ${hoverBg} border ${borderColor}`}
 												>
-													<Icons.Parent />
+													<ArrowUp className="w-4 h-4" />
 													<div className="flex-1 min-w-0">
 														<span className={`text-xs ${textMuted} font-mono`}>
 															#{parentTask.id}
@@ -1114,7 +1034,7 @@ export default function TaskDetailModal({
 											className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left ${textMuted} ${hoverBg} rounded-lg`}
 											disabled={saving || task.status === "done"}
 										>
-											<Icons.Archive />
+											<Archive className="w-4 h-4" />
 											<span>Mark as Done</span>
 										</button>
 										{onDelete && (
@@ -1126,7 +1046,7 @@ export default function TaskDetailModal({
 												className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-red-500 ${isDark ? "hover:bg-red-900/30" : "hover:bg-red-50"} rounded-lg`}
 												disabled={saving}
 											>
-												<Icons.Trash />
+												<Trash2 className="w-4 h-4" />
 												<span>Delete Task</span>
 											</button>
 										)}

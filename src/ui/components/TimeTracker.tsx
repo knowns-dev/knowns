@@ -1,5 +1,6 @@
 import type React from "react";
 import { useCallback, useEffect, useState } from "react";
+import { Play, Pause, Square } from "lucide-react";
 import type { Task, TimeEntry } from "../../models/task";
 import { useTheme } from "../App";
 import { updateTask } from "../api/client";
@@ -189,10 +190,7 @@ export default function TimeTracker({ task, onUpdate }: TimeTrackerProps) {
 						disabled={saving}
 						className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
 					>
-						<svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-							<title>Start</title>
-							<path d="M8 5v14l11-7z" />
-						</svg>
+						<Play className="w-4 h-4" aria-hidden="true" />
 						Start
 					</button>
 				) : (
@@ -204,10 +202,7 @@ export default function TimeTracker({ task, onUpdate }: TimeTrackerProps) {
 								disabled={saving}
 								className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
 							>
-								<svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-									<title>Resume</title>
-									<path d="M8 5v14l11-7z" />
-								</svg>
+								<Play className="w-4 h-4" aria-hidden="true" />
 								Resume
 							</button>
 						) : (
@@ -217,10 +212,7 @@ export default function TimeTracker({ task, onUpdate }: TimeTrackerProps) {
 								disabled={saving}
 								className="px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700 disabled:opacity-50 flex items-center gap-2"
 							>
-								<svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-									<title>Pause</title>
-									<path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
-								</svg>
+								<Pause className="w-4 h-4" aria-hidden="true" />
 								Pause
 							</button>
 						)}
@@ -230,10 +222,7 @@ export default function TimeTracker({ task, onUpdate }: TimeTrackerProps) {
 							disabled={saving}
 							className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 flex items-center gap-2"
 						>
-							<svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-								<title>Stop</title>
-								<path d="M6 6h12v12H6V6z" />
-							</svg>
+							<Square className="w-4 h-4" aria-hidden="true" />
 							Stop
 						</button>
 					</>

@@ -24,6 +24,8 @@ interface WebSocketData {
 
 interface DocResult {
 	filename: string;
+	path: string;
+	folder: string;
 	metadata: Record<string, unknown>;
 	content: string;
 }
@@ -66,25 +68,20 @@ export async function startServer(options: ServerOptions) {
 	const uiSourcePath = join(packageRoot, "src", "ui");
 	const uiDistPath = join(packageRoot, "dist", "ui");
 
-	// Check if pre-built UI exists (production) or source UI (development)
-	let uiPath: string;
+	// Check if we should build (development mode with source files)
 	let shouldBuild = false;
 
 	if (existsSync(join(uiDistPath, "main.js"))) {
-		// Use pre-built UI from dist/ui
-		uiPath = uiDistPath;
+		// Pre-built UI exists, no need to build
 		shouldBuild = false;
 	} else if (existsSync(join(uiSourcePath, "index.html"))) {
-		// Use source UI and build it (development mode)
-		uiPath = uiSourcePath;
+		// Source UI exists, need to build to dist/ui
 		shouldBuild = true;
 	} else {
 		throw new Error(
 			`UI files not found. Tried:\n  - ${uiDistPath} (${existsSync(uiDistPath) ? "exists but no main.js" : "not found"})\n  - ${uiSourcePath} (${existsSync(uiSourcePath) ? "exists but no index.html" : "not found"})\nPackage root: ${packageRoot}\nCurrent dir: ${currentDir}`,
 		);
 	}
-
-	const buildDir = join(projectRoot, ".knowns", "ui-build");
 
 	// Build function (only used in development mode)
 	const buildUI = async () => {
@@ -96,10 +93,15 @@ export async function startServer(options: ServerOptions) {
 		console.log("Building UI...");
 		const startTime = Date.now();
 
+		// Ensure dist/ui directory exists
+		if (!existsSync(uiDistPath)) {
+			await mkdir(uiDistPath, { recursive: true });
+		}
+
 		// Build the bundle
 		const buildResult = await Bun.build({
-			entrypoints: [join(uiPath, "main.tsx")],
-			outdir: buildDir,
+			entrypoints: [join(uiSourcePath, "main.tsx")],
+			outdir: uiDistPath,
 			target: "browser",
 			minify: false,
 			sourcemap: "inline",
@@ -115,8 +117,8 @@ export async function startServer(options: ServerOptions) {
 
 		// Also build CSS
 		const cssResult = await Bun.build({
-			entrypoints: [join(uiPath, "index.css")],
-			outdir: buildDir,
+			entrypoints: [join(uiSourcePath, "index.css")],
+			outdir: uiDistPath,
 			target: "browser",
 			minify: false,
 		});
@@ -141,7 +143,7 @@ export async function startServer(options: ServerOptions) {
 	let watcher: ReturnType<typeof watch> | null = null;
 	if (shouldBuild) {
 		let rebuildTimeout: ReturnType<typeof setTimeout> | null = null;
-		watcher = watch(uiPath, { recursive: true }, async (_event, filename) => {
+		watcher = watch(uiSourcePath, { recursive: true }, async (_event, filename) => {
 			if (!filename) return;
 			// Ignore non-source files
 			if (!filename.endsWith(".tsx") && !filename.endsWith(".ts") && !filename.endsWith(".css")) {
@@ -194,11 +196,7 @@ export async function startServer(options: ServerOptions) {
 
 			// Serve built JS bundle (with cache busting)
 			if (url.pathname === "/main.js" || url.pathname.startsWith("/main.js?")) {
-				// Try build dir first (development), then dist (production)
-				let file = Bun.file(join(buildDir, "main.js"));
-				if (!(await file.exists())) {
-					file = Bun.file(join(uiPath, "main.js"));
-				}
+				const file = Bun.file(join(uiDistPath, "main.js"));
 				if (await file.exists()) {
 					return new Response(file, {
 						headers: {
@@ -211,11 +209,7 @@ export async function startServer(options: ServerOptions) {
 
 			// Serve built CSS (with cache busting)
 			if (url.pathname === "/index.css" || url.pathname.startsWith("/index.css?")) {
-				// Try build dir first (development), then dist (production)
-				let file = Bun.file(join(buildDir, "index.css"));
-				if (!(await file.exists())) {
-					file = Bun.file(join(uiPath, "main.css"));
-				}
+				const file = Bun.file(join(uiDistPath, "index.css"));
 				if (await file.exists()) {
 					return new Response(file, {
 						headers: {
@@ -233,8 +227,7 @@ export async function startServer(options: ServerOptions) {
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>Knowns.dev</title>
-		<script src="https://cdn.tailwindcss.com"></script>
+		<title>Knowns - Task Management</title>
 		<link rel="stylesheet" href="/index.css?v=${buildVersion}" />
 	</head>
 	<body>
@@ -296,11 +289,9 @@ export async function startServer(options: ServerOptions) {
 		websocket: {
 			open(ws) {
 				clients.add(ws);
-				console.log("WebSocket client connected");
 			},
 			close(ws) {
 				clients.delete(ws);
-				console.log("WebSocket client disconnected");
 			},
 			message(_ws, _message) {
 				// Handle client messages if needed
@@ -311,9 +302,9 @@ export async function startServer(options: ServerOptions) {
 	console.log(`Server running at http://localhost:${port}`);
 	console.log(`Open in browser: http://localhost:${port}`);
 	if (shouldBuild) {
-		console.log(`Live reload enabled - watching ${uiPath}`);
+		console.log(`Live reload enabled - watching ${uiSourcePath}`);
 	} else {
-		console.log(`Serving pre-built UI from ${uiPath}`);
+		console.log(`Serving pre-built UI from ${uiDistPath}`);
 	}
 
 	if (open) {
@@ -533,6 +524,7 @@ async function handleAPI(
 				return new Response(
 					JSON.stringify({
 						config: {
+							name: "Knowns",
 							defaultPriority: "medium",
 							defaultLabels: [],
 							timeFormat: "24h",
@@ -544,7 +536,16 @@ async function handleAPI(
 			}
 
 			const content = await readFile(configPath, "utf-8");
-			const config = JSON.parse(content);
+			const data = JSON.parse(content);
+			const settings = data.settings || {};
+
+			// Merge root-level properties (name, id, createdAt) with settings
+			const config = {
+				name: data.name,
+				id: data.id,
+				createdAt: data.createdAt,
+				...settings,
+			};
 
 			// Ensure visibleColumns exists with default value
 			if (!config.visibleColumns) {
@@ -559,7 +560,24 @@ async function handleAPI(
 			const config = await req.json();
 			const configPath = join(store.projectRoot, ".knowns", "config.json");
 
-			await writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
+			// Read existing file to preserve project metadata
+			let existingData: { name?: string; id?: string; createdAt?: string; settings?: Record<string, unknown> } = {};
+			if (existsSync(configPath)) {
+				const content = await readFile(configPath, "utf-8");
+				existingData = JSON.parse(content);
+			}
+
+			// Extract name if provided, put it at top level
+			const { name, ...settings } = config;
+
+			// Merge: update name if provided, update settings
+			const merged = {
+				...existingData,
+				name: name || existingData.name,
+				settings: settings,
+			};
+
+			await writeFile(configPath, JSON.stringify(merged, null, 2), "utf-8");
 
 			return new Response(JSON.stringify({ success: true }), { headers });
 		}
@@ -591,24 +609,32 @@ async function handleAPI(
 				return searchText.includes(q);
 			});
 
-			// Search docs
+			// Search docs (including nested folders)
 			const docsDir = join(store.projectRoot, ".knowns", "docs");
 			const docResults: DocResult[] = [];
 
 			if (existsSync(docsDir)) {
-				const files = await readdir(docsDir);
-				const mdFiles = files.filter((f) => f.endsWith(".md"));
+				// Recursively find all .md files
+				const mdFiles = await findMarkdownFiles(docsDir, docsDir);
 
-				for (const file of mdFiles) {
-					const content = await readFile(join(docsDir, file), "utf-8");
+				for (const relativePath of mdFiles) {
+					const fullPath = join(docsDir, relativePath);
+					const content = await readFile(fullPath, "utf-8");
 					const { data, content: docContent } = matter(content);
 
 					const searchText =
 						`${data.title || ""} ${data.description || ""} ${data.tags?.join(" ") || ""} ${docContent}`.toLowerCase();
 
 					if (searchText.includes(q)) {
+						// Extract folder path and filename
+						const pathParts = relativePath.split("/");
+						const filename = pathParts[pathParts.length - 1];
+						const folder = pathParts.length > 1 ? pathParts.slice(0, -1).join("/") : "";
+
 						docResults.push({
-							filename: file,
+							filename,
+							path: relativePath,
+							folder,
 							metadata: data,
 							content: docContent,
 						});

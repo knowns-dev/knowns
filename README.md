@@ -71,8 +71,11 @@ bun install -g knowns
 ## Quick Start
 
 ```bash
-# 1. Initialize in your project
+# 1. Initialize in your project (interactive wizard)
 knowns init
+
+# Or with project name directly
+knowns init "My Project"
 
 # 2. Create documentation for your patterns
 knowns doc create "Authentication Pattern" \
@@ -202,6 +205,26 @@ knowns browser
 
 # Open on specific port
 knowns browser -p 8080
+```
+
+### Project Initialization
+
+```bash
+# Interactive wizard (recommended)
+knowns init
+
+# 🚀 Knowns Project Setup Wizard
+# ? Project name › my-project
+# ? Default assignee (optional) › @claude
+# ? Default priority for new tasks › Medium
+# ? Default labels (comma-separated) › frontend, ui
+# ? Time format › 24-hour
+
+# Quick init with name
+knowns init "My Project"
+
+# Skip wizard, use defaults
+knowns init --no-wizard
 ```
 
 ### Agent Instructions
@@ -424,9 +447,22 @@ The browser UI provides:
 - **Kanban Board** - Drag & drop tasks across status columns
 - **Task Details** - Full task view with inline editing
 - **Document Browser** - Tree view with markdown preview
+- **Configuration** - Full config.json editing (Form + JSON modes)
 - **Dark Mode** - System preference aware
-- **Search** - Global search across tasks and docs
+- **Search** - Global search across tasks and docs (Cmd+K)
 - **Time Tracking** - Start/stop timers, view history
+
+### Configuration Page
+
+Edit all project settings through the Web UI:
+
+- **Project Name** - Change project display name
+- **Default Assignee** - Set default for new tasks
+- **Default Priority** - Low, Medium, High
+- **Default Labels** - Comma-separated labels
+- **Task Statuses** - Add/remove custom statuses with colors
+- **Visible Columns** - Configure Kanban board columns
+- **JSON Mode** - Direct config.json editing for advanced users
 
 ## MCP Server - AI Context Integration
 

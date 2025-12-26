@@ -1,50 +1,47 @@
 import { useEffect, useState } from "react";
+import { Plus, Filter, ClipboardList } from "lucide-react";
 import type { Task } from "../../models/task";
 import { useTheme } from "../App";
 import TaskDetailModal from "../components/TaskDetailModal";
 
-interface TasksPageProps {
-	tasks: Task[];
-	loading: boolean;
-	onTasksUpdate: () => void;
-	selectedTask?: Task | null;
-	onTaskClose?: () => void;
-	onNewTask: () => void;
-}
-
-const Icons = {
-	Plus: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-		</svg>
-	),
-	Filter: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
-			/>
-		</svg>
-	),
-};
-
-const statusIcons: Record<string, string> = {
+// Default status icons
+const DEFAULT_STATUS_ICONS: Record<string, string> = {
 	todo: "○",
 	"in-progress": "◒",
 	"in-review": "◎",
 	done: "◉",
 	blocked: "⊗",
+	"on-hold": "⊙",
+	urgent: "⚡",
 };
 
-const statusLabels: Record<string, string> = {
+// Default status labels
+const DEFAULT_STATUS_LABELS: Record<string, string> = {
 	todo: "To Do",
 	"in-progress": "In Progress",
 	"in-review": "In Review",
 	done: "Done",
 	blocked: "Blocked",
+	"on-hold": "On Hold",
+	urgent: "Urgent",
 };
+
+// Get status icon with fallback
+function getStatusIcon(status: string): string {
+	return DEFAULT_STATUS_ICONS[status] || "●";
+}
+
+// Get status label with fallback
+function getStatusLabel(status: string): string {
+	if (DEFAULT_STATUS_LABELS[status]) {
+		return DEFAULT_STATUS_LABELS[status];
+	}
+	// Auto-generate: "my-status" → "My Status"
+	return status
+		.split("-")
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+		.join(" ");
+}
 
 export default function TasksPage({
 	tasks,
@@ -56,7 +53,9 @@ export default function TasksPage({
 }: TasksPageProps) {
 	const { isDark } = useTheme();
 	const [statusFilter, setStatusFilter] = useState<string>("all");
+	const [parentFilter, setParentFilter] = useState<string>("all");
 	const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+	const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
 
 	// Handle external selected task from search
 	useEffect(() => {
@@ -71,9 +70,20 @@ export default function TasksPage({
 	const borderColor = isDark ? "border-gray-700" : "border-gray-200";
 	const hoverBg = isDark ? "hover:bg-gray-700" : "hover:bg-gray-50";
 
-	// Filter tasks
-	const filteredTasks =
-		statusFilter === "all" ? tasks : tasks.filter((t) => t.status === statusFilter);
+	// Get list of parent tasks (tasks that have subtasks)
+	const parentTasks = tasks.filter((t) => t.subtasks && t.subtasks.length > 0);
+
+	// Filter tasks by status and parent
+	let filteredTasks = statusFilter === "all" ? tasks : tasks.filter((t) => t.status === statusFilter);
+
+	// Apply parent filter
+	if (parentFilter === "root") {
+		// Show only tasks without parent
+		filteredTasks = filteredTasks.filter((t) => !t.parent);
+	} else if (parentFilter !== "all") {
+		// Show only subtasks of selected parent
+		filteredTasks = filteredTasks.filter((t) => t.parent === parentFilter);
+	}
 
 	// Group by status
 	const groupedTasks: Record<string, Task[]> = {
@@ -111,13 +121,15 @@ export default function TasksPage({
 	return (
 		<div className="p-6">
 			{/* Header with title and New Task button */}
-			<div className="mb-6 flex items-center justify-between">
+			<div className="mb-6 flex items-center justify-between gap-4">
 				<div className="flex-1">
 					<h1 className={`text-2xl font-bold ${textColor} mb-4`}>All Tasks</h1>
 
-					{/* Filter */}
-					<div className="flex items-center gap-2">
-						<Icons.Filter />
+					{/* Filters */}
+					<div className="flex items-center gap-3 flex-wrap">
+						<Filter className="w-4 h-4" />
+
+						{/* Status Filter */}
 						<select
 							value={statusFilter}
 							onChange={(e) => setStatusFilter(e.target.value)}
@@ -130,6 +142,22 @@ export default function TasksPage({
 							<option value="blocked">Blocked</option>
 							<option value="done">Done</option>
 						</select>
+
+						{/* Parent Filter */}
+						<select
+							value={parentFilter}
+							onChange={(e) => setParentFilter(e.target.value)}
+							className={`px-3 py-2 rounded-lg border ${borderColor} ${bgColor} ${textColor} focus:outline-none focus:ring-2 focus:ring-blue-500`}
+						>
+							<option value="all">All Tasks</option>
+							<option value="root">Root Tasks Only</option>
+							{parentTasks.map((parent) => (
+								<option key={parent.id} value={parent.id}>
+									Subtasks of #{parent.id}: {parent.title}
+								</option>
+							))}
+						</select>
+
 						<span className={textSecondary}>
 							{filteredTasks.length} {filteredTasks.length === 1 ? "task" : "tasks"}
 						</span>
@@ -139,9 +167,9 @@ export default function TasksPage({
 				<button
 					type="button"
 					onClick={onNewTask}
-					className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 flex items-center gap-2 transition-colors ml-4"
+					className="shrink-0 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 flex items-center gap-2 transition-colors ml-4"
 				>
-					<Icons.Plus />
+					<Plus className="w-4 h-4" />
 					New Task
 				</button>
 			</div>
@@ -154,65 +182,138 @@ export default function TasksPage({
 					return (
 						<div key={status}>
 							<h2 className={`text-lg font-semibold ${textColor} mb-3`}>
-								{statusLabels[status]} ({statusTasks.length})
+								{getStatusLabel(status)} ({statusTasks.length})
 							</h2>
 							<div className="space-y-2">
-								{statusTasks.map((task) => (
-									<button
-										key={task.id}
-										type="button"
-										onClick={() => setSelectedTask(task)}
-										className={`w-full ${bgColor} rounded-lg p-4 border ${borderColor} ${hoverBg} transition-colors text-left`}
-									>
-										<div className="flex items-start gap-3">
-											{/* Status Icon */}
-											<span className="text-xl mt-0.5">{statusIcons[task.status]}</span>
+								{statusTasks.map((task) => {
+									const isExpanded = expandedTasks.has(task.id);
+									const parentTask = task.parent ? tasks.find((t) => t.id === task.parent) : null;
 
-											{/* Task Info */}
-											<div className="flex-1 min-w-0">
-												<div className="flex items-center gap-2 mb-1">
-													<span className={`text-xs ${textSecondary} font-mono`}>{task.id}</span>
-													<span
-														className={`text-xs px-2 py-0.5 rounded ${
-															task.priority === "high"
-																? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200"
-																: task.priority === "medium"
-																	? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-200"
-																	: "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
-														}`}
-													>
-														{task.priority.toUpperCase()}
-													</span>
-												</div>
-												<h3 className={`font-medium ${textColor} mb-1`}>{task.title}</h3>
-												{task.description && (
-													<p className={`text-sm ${textSecondary} line-clamp-2`}>
-														{task.description}
-													</p>
-												)}
-												{task.labels.length > 0 && (
-													<div className="flex gap-1 mt-2 flex-wrap">
-														{task.labels.map((label) => (
+									return (
+										<div
+											key={task.id}
+											className={`${bgColor} rounded-lg p-4 border ${borderColor} transition-colors`}
+										>
+											<div className="flex items-start gap-3">
+												{/* Status Icon */}
+												<span className="text-xl mt-0.5">{getStatusIcon(task.status)}</span>
+
+												{/* Task Info */}
+												<div className="flex-1 min-w-0">
+													<div className="flex items-center gap-2 mb-1 flex-wrap">
+														<span className={`text-xs ${textSecondary} font-mono`}>
+															{task.id}
+														</span>
+														<span
+															className={`text-xs px-2 py-0.5 rounded ${
+																task.priority === "high"
+																	? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200"
+																	: task.priority === "medium"
+																		? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-200"
+																		: "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+															}`}
+														>
+															{task.priority.toUpperCase()}
+														</span>
+
+														{/* Parent/Subtask badges */}
+														{parentTask && (
 															<span
-																key={label}
-																className={`text-xs px-2 py-0.5 rounded ${isDark ? "bg-blue-900 text-blue-200" : "bg-blue-100 text-blue-700"}`}
+																className={`text-xs px-2 py-0.5 rounded ${isDark ? "bg-purple-900 text-purple-200" : "bg-purple-100 text-purple-700"}`}
 															>
-																{label}
+																Subtask of #{parentTask.id}
 															</span>
-														))}
+														)}
+														{task.subtasks && task.subtasks.length > 0 && (
+															<span
+																className={`text-xs px-2 py-0.5 rounded ${isDark ? "bg-green-900 text-green-200" : "bg-green-100 text-green-700"}`}
+															>
+																{task.subtasks.length} subtask
+																{task.subtasks.length > 1 ? "s" : ""}
+															</span>
+														)}
 													</div>
+
+													<button
+														type="button"
+														onClick={() => {
+															// Update URL hash instead of setting state directly
+															window.location.hash = `/tasks/${task.id}`;
+														}}
+														className={`font-medium ${textColor} mb-1 hover:underline text-left w-full`}
+													>
+														{task.title}
+													</button>
+
+													{task.description && (
+														<div className={`text-sm ${textSecondary} mt-2`}>
+															<p
+																className={
+																	isExpanded ? "" : "line-clamp-2"
+																}
+															>
+																{task.description}
+															</p>
+															{task.description.length > 100 && (
+																<button
+																	type="button"
+																	onClick={(e) => {
+																		e.stopPropagation();
+																		const newExpanded = new Set(
+																			expandedTasks,
+																		);
+																		if (isExpanded) {
+																			newExpanded.delete(task.id);
+																		} else {
+																			newExpanded.add(task.id);
+																		}
+																		setExpandedTasks(newExpanded);
+																	}}
+																	className={`text-xs ${isDark ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-700"} mt-1 font-medium`}
+																>
+																	{isExpanded ? "Show less" : "Show more"}
+																</button>
+															)}
+														</div>
+													)}
+
+													{/* Acceptance Criteria Progress */}
+													{task.acceptanceCriteria.length > 0 && (
+														<div className={`flex items-center gap-2 mt-2 text-xs ${textSecondary}`}>
+															<ClipboardList className="w-3 h-3" />
+															<span>
+																{task.acceptanceCriteria.filter((ac) => ac.completed).length}/
+																{task.acceptanceCriteria.length} criteria
+															</span>
+														</div>
+													)}
+
+													{task.labels.length > 0 && (
+														<div className="flex gap-1 mt-2 flex-wrap">
+															{task.labels.map((label) => (
+																<span
+																	key={label}
+																	className={`text-xs px-2 py-0.5 rounded ${isDark ? "bg-blue-900 text-blue-200" : "bg-blue-100 text-blue-700"}`}
+																>
+																	{label}
+																</span>
+															))}
+														</div>
+													)}
+												</div>
+
+												{/* Assignee */}
+												{task.assignee && (
+													<span
+														className={`text-sm ${textSecondary} font-mono shrink-0`}
+													>
+														{task.assignee}
+													</span>
 												)}
 											</div>
-
-											{/* Assignee */}
-											{task.assignee && (
-												<span className={`text-sm ${textSecondary} font-mono shrink-0`}>
-													{task.assignee}
-												</span>
-											)}
 										</div>
-									</button>
-								))}
+									);
+								})}
 							</div>
 						</div>
 					);

@@ -57,7 +57,9 @@ async function loadConfig(projectRoot: string): Promise<Config> {
 	try {
 		const content = await readFile(configPath, "utf-8");
 		const data = JSON.parse(content);
-		const validated = ConfigSchema.parse(data);
+		// Read from settings field
+		const settings = data.settings || {};
+		const validated = ConfigSchema.parse(settings);
 		return { ...DEFAULT_CONFIG, ...validated };
 	} catch (error) {
 		console.error(chalk.red("✗ Invalid config file"));
@@ -81,7 +83,20 @@ async function saveConfig(projectRoot: string, config: Config): Promise<void> {
 	}
 
 	try {
-		await writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
+		// Read existing file to preserve project metadata
+		let existingData: { name?: string; id?: string; createdAt?: string } = {};
+		if (existsSync(configPath)) {
+			const content = await readFile(configPath, "utf-8");
+			existingData = JSON.parse(content);
+		}
+
+		// Merge: preserve project metadata, update settings
+		const merged = {
+			...existingData,
+			settings: config,
+		};
+
+		await writeFile(configPath, JSON.stringify(merged, null, 2), "utf-8");
 	} catch (error) {
 		console.error(chalk.red("✗ Failed to save config"));
 		if (error instanceof Error) {

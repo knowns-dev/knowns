@@ -1,9 +1,11 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { Task } from "../models/task";
 import { api, connectWebSocket } from "./api/client";
-import SearchBox from "./components/SearchBox";
-import Sidebar from "./components/Sidebar";
+import { AppSidebar } from "./components/AppSidebar";
 import TaskCreateForm from "./components/TaskCreateForm";
+import SearchCommandDialog from "./components/SearchCommandDialog";
+import { SidebarProvider, SidebarTrigger } from "./components/ui/sidebar";
+import { Separator } from "./components/ui/separator";
 import ConfigPage from "./pages/ConfigPage";
 import DocsPage from "./pages/DocsPage";
 import KanbanPage from "./pages/KanbanPage";
@@ -22,40 +24,12 @@ export const ThemeContext = createContext<ThemeContextType>({
 
 export const useTheme = () => useContext(ThemeContext);
 
-// Icons
-const Icons = {
-	Sun: () => (
-		<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"
-			/>
-		</svg>
-	),
-	Moon: () => (
-		<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"
-			/>
-		</svg>
-	),
-	Plus: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-		</svg>
-	),
-};
-
 export default function App() {
 	const [tasks, setTasks] = useState<Task[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [showCreateForm, setShowCreateForm] = useState(false);
-	const [searchSelectedTask, setSearchSelectedTask] = useState<Task | null>(null);
+	const [showCommandDialog, setShowCommandDialog] = useState(false);
+	const [projectName, setProjectName] = useState("Knowns");
 	const [isDark, setIsDark] = useState(() => {
 		if (typeof window !== "undefined") {
 			const saved = localStorage.getItem("theme");
@@ -71,16 +45,30 @@ export default function App() {
 		if (hash.startsWith("/tasks")) return "tasks";
 		if (hash.startsWith("/docs")) return "docs";
 		if (hash.startsWith("/config")) return "config";
+		if (hash.startsWith("/kanban")) return "kanban";
 		if (hash === "/" || hash === "") return "kanban";
 		return "kanban"; // default
 	};
 
+	// Extract task ID from hash (e.g., #/tasks/42, #/kanban/42, or #/tasks?id=42)
+	const getTaskIdFromHash = (page?: string): string | null => {
+		const hash = window.location.hash.slice(1);
+
+		// Support both /tasks/42, /kanban/42 and /tasks?id=42 formats
+		const prefix = page || "(?:tasks|kanban)";
+		const match =
+			hash.match(new RegExp(`^\/${prefix}\/([^?]+)`)) || hash.match(/[?&]id=([^&]+)/);
+		return match ? match[1] : null;
+	};
+
 	const [currentPage, setCurrentPage] = useState(getCurrentRoute());
+	const [currentHash, setCurrentHash] = useState(window.location.hash);
 
 	// Listen to hash changes for routing
 	useEffect(() => {
 		const handleHashChange = () => {
 			setCurrentPage(getCurrentRoute());
+			setCurrentHash(window.location.hash);
 		};
 
 		window.addEventListener("hashchange", handleHashChange);
@@ -98,7 +86,30 @@ export default function App() {
 		}
 	}, [isDark]);
 
+	// Keyboard shortcut for command dialog (⌘K / Ctrl+K)
 	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+				e.preventDefault();
+				setShowCommandDialog((prev) => !prev);
+			}
+		};
+
+		window.addEventListener("keydown", handleKeyDown);
+		return () => window.removeEventListener("keydown", handleKeyDown);
+	}, []);
+
+	useEffect(() => {
+		// Fetch config for project name
+		fetch("/api/config")
+			.then((res) => res.json())
+			.then((data) => {
+				if (data.config?.name) {
+					setProjectName(data.config.name);
+				}
+			})
+			.catch((err) => console.error("Failed to load config:", err));
+
 		api
 			.getTasks()
 			.then((data) => {
@@ -111,8 +122,19 @@ export default function App() {
 			});
 
 		const ws = connectWebSocket((data) => {
-			if (data.type === "tasks:updated") {
-				api.getTasks().then(setTasks).catch(console.error);
+			if (data.type === "tasks:updated" && data.task) {
+				// Update specific task instead of reloading all tasks
+				setTasks((prevTasks) => {
+					const existingIndex = prevTasks.findIndex((t) => t.id === data.task?.id);
+					if (existingIndex >= 0) {
+						// Update existing task
+						const newTasks = [...prevTasks];
+						newTasks[existingIndex] = data.task;
+						return newTasks;
+					}
+					// Add new task
+					return [...prevTasks, data.task];
+				});
 			}
 		});
 
@@ -133,13 +155,21 @@ export default function App() {
 
 	// Handle search task select
 	const handleSearchTaskSelect = (task: Task) => {
-		setCurrentPage("tasks");
-		setSearchSelectedTask(task);
+		// Update URL hash to /tasks/ID
+		window.location.hash = `/tasks/${task.id}`;
+		// State will be updated via hashchange listener
 	};
 
 	// Handle search doc select
-	const handleSearchDocSelect = () => {
-		setCurrentPage("docs");
+	const handleSearchDocSelect = (doc?: { path?: string; filename?: string }) => {
+		// Update URL hash to /docs/path
+		if (doc?.path) {
+			window.location.hash = `/docs/${doc.path}`;
+		} else if (doc?.filename) {
+			window.location.hash = `/docs/${doc.filename}`;
+		} else {
+			window.location.hash = "/docs";
+		}
 	};
 
 	// Render current page
@@ -154,17 +184,25 @@ export default function App() {
 						onNewTask={() => setShowCreateForm(true)}
 					/>
 				);
-			case "tasks":
+			case "tasks": {
+				// Get task ID from hash
+				const taskId = getTaskIdFromHash();
+				const selectedTask = taskId ? tasks.find((t) => t.id === taskId) : null;
+
 				return (
 					<TasksPage
 						tasks={tasks}
 						loading={loading}
 						onTasksUpdate={handleTaskCreated}
-						selectedTask={searchSelectedTask}
-						onTaskClose={() => setSearchSelectedTask(null)}
+						selectedTask={selectedTask}
+						onTaskClose={() => {
+							// Clear task ID from hash, keep on /tasks page
+							window.location.hash = "/tasks";
+						}}
 						onNewTask={() => setShowCreateForm(true)}
 					/>
 				);
+			}
 			case "docs":
 				return <DocsPage />;
 			case "config":
@@ -183,46 +221,28 @@ export default function App() {
 
 	return (
 		<ThemeContext.Provider value={{ isDark, toggle: toggleTheme }}>
-			<div
-				className={`min-h-screen transition-colors duration-200 flex ${isDark ? "bg-gray-900" : "bg-gray-100"}`}
-			>
-				{/* Sidebar */}
-				<Sidebar currentPage={currentPage} />
-
-				{/* Main Content */}
-				<div className="flex-1 flex flex-col min-h-screen">
-					{/* Header */}
-					<header
-						className={`shadow transition-colors duration-200 ${isDark ? "bg-gray-800" : "bg-white"}`}
-					>
-						<div className="px-6 py-3 flex items-center justify-between gap-4">
-							{/* Search Box */}
-							<div className="flex-1 max-w-2xl">
-								<SearchBox
-									onTaskSelect={handleSearchTaskSelect}
-									onDocSelect={handleSearchDocSelect}
-								/>
-							</div>
-
-							{/* Dark mode toggle */}
-							<button
-								type="button"
-								onClick={toggleTheme}
-								className={`p-2 rounded-lg transition-colors ${
-									isDark
-										? "bg-gray-700 text-yellow-400 hover:bg-gray-600"
-										: "bg-gray-100 text-gray-600 hover:bg-gray-200"
-								}`}
-								aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-							>
-								{isDark ? <Icons.Sun /> : <Icons.Moon />}
-							</button>
+			<SidebarProvider>
+				<AppSidebar
+					currentPage={currentPage}
+					isDark={isDark}
+					onToggleTheme={toggleTheme}
+					onSearchClick={() => setShowCommandDialog(true)}
+				/>
+				<main className="flex flex-1 flex-col bg-background overflow-hidden">
+					{/* Header with Trigger */}
+					<header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
+						<SidebarTrigger className="-ml-1" />
+						<Separator orientation="vertical" className="mr-2 h-4" />
+						<div className="flex flex-1 items-center gap-2 text-sm">
+							<span className={`font-semibold ${isDark ? "text-gray-100" : "text-gray-900"}`}>
+								{projectName} - Task Management
+							</span>
 						</div>
 					</header>
 
 					{/* Page Content */}
-					<main className="flex-1 overflow-auto">{renderPage()}</main>
-				</div>
+					<div className="flex-1 w-full overflow-y-auto overflow-x-hidden">{renderPage()}</div>
+				</main>
 
 				{/* Task Create Form Modal */}
 				<TaskCreateForm
@@ -231,7 +251,15 @@ export default function App() {
 					onClose={() => setShowCreateForm(false)}
 					onCreated={handleTaskCreated}
 				/>
-			</div>
-		</ThemeContext.Provider>
+
+			{/* Command Dialog (⌘K Search) */}
+			<SearchCommandDialog
+				open={showCommandDialog}
+				onOpenChange={setShowCommandDialog}
+				onTaskSelect={handleSearchTaskSelect}
+				onDocSelect={handleSearchDocSelect}
+			/>
+		</SidebarProvider>
+	</ThemeContext.Provider>
 	);
 }

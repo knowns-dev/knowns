@@ -1,4 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	Plus,
+	FileText,
+	Folder,
+	FolderOpen,
+	ChevronRight,
+	ChevronDown,
+	Pencil,
+	Check,
+	X,
+	Copy,
+} from "lucide-react";
 import { useTheme } from "../App";
 import MarkdownEditor from "../components/MarkdownEditor";
 import MarkdownRenderer from "../components/MarkdownRenderer";
@@ -19,83 +31,6 @@ interface Doc {
 	content: string;
 }
 
-const Icons = {
-	Plus: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-		</svg>
-	),
-	Document: () => (
-		<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-			/>
-		</svg>
-	),
-	Folder: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-			/>
-		</svg>
-	),
-	FolderOpen: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"
-			/>
-		</svg>
-	),
-	ChevronRight: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-		</svg>
-	),
-	ChevronDown: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-		</svg>
-	),
-	Edit: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-			/>
-		</svg>
-	),
-	Save: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-		</svg>
-	),
-	Cancel: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-		</svg>
-	),
-	Copy: () => (
-		<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth={2}
-				d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-			/>
-		</svg>
-	),
-};
 
 export default function DocsPage() {
 	const { isDark } = useTheme();
@@ -160,6 +95,30 @@ export default function DocsPage() {
 		handleHashNavigation();
 	}, [handleHashNavigation]);
 
+	// Auto-expand parent folders when a doc is selected
+	useEffect(() => {
+		if (!selectedDoc || !selectedDoc.folder) return;
+
+		// Get all parent folder paths
+		const folderParts = selectedDoc.folder.split("/");
+		const parentPaths: string[] = [];
+
+		let currentPath = "";
+		for (const part of folderParts) {
+			currentPath = currentPath ? `${currentPath}/${part}` : part;
+			parentPaths.push(currentPath);
+		}
+
+		// Expand all parent folders
+		setExpandedFolders((prev) => {
+			const newExpanded = new Set(prev);
+			for (const path of parentPaths) {
+				newExpanded.add(path);
+			}
+			return newExpanded;
+		});
+	}, [selectedDoc]);
+
 	// Handle hash changes (when user navigates or changes URL)
 	useEffect(() => {
 		window.addEventListener("hashchange", handleHashNavigation);
@@ -214,7 +173,7 @@ export default function DocsPage() {
 	}, [docs, selectedDoc]);
 
 	const loadDocs = () => {
-		fetch("http://localhost:6420/api/docs")
+		fetch("/api/docs")
 			.then((res) => res.json())
 			.then((data) => {
 				setDocs(data.docs || []);
@@ -239,7 +198,7 @@ export default function DocsPage() {
 				.map((t) => t.trim())
 				.filter((t) => t);
 
-			const response = await fetch("http://localhost:6420/api/docs", {
+			const response = await fetch("/api/docs", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
@@ -301,7 +260,7 @@ export default function DocsPage() {
 			console.log("Saving doc:", selectedDoc.filename, editedContent);
 
 			// TODO: Add API endpoint to save doc
-			// await fetch(`http://localhost:3456/api/docs/${selectedDoc.filename}`, {
+			// await fetch(`/api/docs/${selectedDoc.filename}`, {
 			// 	method: 'PUT',
 			// 	headers: { 'Content-Type': 'application/json' },
 			// 	body: JSON.stringify({ content: editedContent })
@@ -409,8 +368,8 @@ export default function DocsPage() {
 					className={`w-full flex items-center gap-2 px-3 py-2 ${hoverBg} ${textColor} transition-colors`}
 					style={{ paddingLeft }}
 				>
-					{isExpanded ? <Icons.ChevronDown /> : <Icons.ChevronRight />}
-					{isExpanded ? <Icons.FolderOpen /> : <Icons.Folder />}
+					{isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+					{isExpanded ? <FolderOpen className="w-4 h-4" /> : <Folder className="w-4 h-4" />}
 					<span className="text-sm font-medium">{node.name}</span>
 					<span className={`text-xs ${textSecondary}`}>({totalDocs})</span>
 				</button>
@@ -445,7 +404,7 @@ export default function DocsPage() {
 						}`}
 						style={{ paddingLeft: `${(level + 1) * 16}px` }}
 					>
-						<Icons.Document />
+						<FileText className="w-5 h-5" />
 						<div className="flex-1 min-w-0">
 							<div className="text-sm font-medium truncate">{doc.metadata.title}</div>
 							{doc.metadata.description && (
@@ -480,7 +439,7 @@ export default function DocsPage() {
 					onClick={() => setShowCreateModal(true)}
 					className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 flex items-center gap-2 transition-colors"
 				>
-					<Icons.Plus />
+					<Plus className="w-4 h-4" />
 					New Document
 				</button>
 			</div>
@@ -499,7 +458,7 @@ export default function DocsPage() {
 
 					{docs.length === 0 && (
 						<div className={`${bgColor} rounded-lg border ${borderColor} p-8 text-center`}>
-							<Icons.Document />
+							<FileText className="w-5 h-5" />
 							<p className={`mt-2 ${textSecondary}`}>No documentation found</p>
 							<p className={`text-sm ${textSecondary} mt-1`}>
 								Create a doc with: <code className="font-mono">knowns doc create "Title"</code>
@@ -528,10 +487,10 @@ export default function DocsPage() {
 										className={`flex items-center gap-2 px-2 py-1 rounded text-xs ${textSecondary} ${hoverBg} transition-colors group`}
 										title="Click to copy URL"
 									>
-										<Icons.Folder />
+										<Folder className="w-4 h-4" />
 										<span className="font-mono">/docs/{selectedDoc.path}</span>
 										<span className="opacity-0 group-hover:opacity-100 transition-opacity">
-											{pathCopied ? "✓" : <Icons.Copy />}
+											{pathCopied ? "✓" : <Copy className="w-4 h-4" />}
 										</span>
 									</button>
 									<div className={`text-sm ${textSecondary} mt-2`}>
@@ -547,7 +506,7 @@ export default function DocsPage() {
 											onClick={handleEdit}
 											className="px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 flex items-center gap-2 transition-colors"
 										>
-											<Icons.Edit />
+											<Pencil className="w-4 h-4" />
 											Edit
 										</button>
 									) : (
@@ -558,7 +517,7 @@ export default function DocsPage() {
 												disabled={saving}
 												className="px-3 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-2 transition-colors"
 											>
-												<Icons.Save />
+												<Check className="w-4 h-4" />
 												{saving ? "Saving..." : "Save"}
 											</button>
 											<button
@@ -567,7 +526,7 @@ export default function DocsPage() {
 												disabled={saving}
 												className={`px-3 py-2 ${isDark ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"} ${textColor} text-sm font-medium rounded-lg disabled:opacity-50 flex items-center gap-2 transition-colors`}
 											>
-												<Icons.Cancel />
+												<X className="w-4 h-4" />
 												Cancel
 											</button>
 										</>
@@ -595,7 +554,7 @@ export default function DocsPage() {
 						</div>
 					) : (
 						<div className={`${bgColor} rounded-lg border ${borderColor} p-12 text-center`}>
-							<Icons.Document />
+							<FileText className="w-5 h-5" />
 							<p className={`mt-4 ${textSecondary}`}>Select a document to view its content</p>
 						</div>
 					)}

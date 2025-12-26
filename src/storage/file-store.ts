@@ -5,7 +5,7 @@
 
 import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { Project, Task, TaskVersion } from "@models/index";
+import type { Project, ProjectSettings, Task, TaskVersion } from "@models/index";
 import { applyVersionSnapshot, createProject } from "@models/index";
 import { parseTaskMarkdown, serializeTaskMarkdown } from "./markdown";
 import { VersionStore } from "./version-store";
@@ -14,7 +14,7 @@ export class FileStore {
 	public readonly projectRoot: string;
 	private basePath: string; // .knowns/
 	private tasksPath: string; // .knowns/tasks/
-	private projectPath: string; // .knowns/project.json
+	private projectPath: string; // .knowns/config.json
 	private timeEntriesPath: string; // .knowns/time-entries.json
 	private versionStore: VersionStore;
 
@@ -22,7 +22,7 @@ export class FileStore {
 		this.projectRoot = projectRoot;
 		this.basePath = join(projectRoot, ".knowns");
 		this.tasksPath = join(this.basePath, "tasks");
-		this.projectPath = join(this.basePath, "project.json");
+		this.projectPath = join(this.basePath, "config.json");
 		this.timeEntriesPath = join(this.basePath, "time-entries.json");
 		this.versionStore = new VersionStore(projectRoot);
 	}
@@ -52,7 +52,7 @@ export class FileStore {
 	/**
 	 * Initialize project structure
 	 */
-	async initProject(name: string): Promise<Project> {
+	async initProject(name: string, settings?: Partial<ProjectSettings>): Promise<Project> {
 		// Create directories
 		await mkdir(this.basePath, { recursive: true });
 		await mkdir(this.tasksPath, { recursive: true });
@@ -61,7 +61,7 @@ export class FileStore {
 		await this.versionStore.init();
 
 		// Create project config
-		const project = createProject(name);
+		const project = createProject(name, undefined, settings);
 		await this.saveProject(project);
 
 		return project;
