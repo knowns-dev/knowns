@@ -207,6 +207,26 @@ knowns browser
 knowns browser -p 8080
 ```
 
+### Project Initialization
+
+```bash
+# Interactive wizard (recommended)
+knowns init
+
+# 🚀 Knowns Project Setup Wizard
+# ? Project name › my-project
+# ? Default assignee (optional) › @claude
+# ? Default priority for new tasks › Medium
+# ? Default labels (comma-separated) › frontend, ui
+# ? Time format › 24-hour
+
+# Quick init with name
+knowns init "My Project"
+
+# Skip wizard, use defaults
+knowns init --no-wizard
+```
+
 ### Agent Instructions
 
 ```bash
