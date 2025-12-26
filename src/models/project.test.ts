@@ -79,14 +79,14 @@ describe("ProjectSettings", () => {
 		test("returns all standard statuses", () => {
 			const settings = createDefaultProjectSettings();
 
-			expect(settings.statuses).toEqual(["todo", "in-progress", "in-review", "done", "blocked"]);
+			expect(settings.statuses).toEqual(["todo", "in-progress", "in-review", "done", "blocked", "on-hold", "urgent"]);
 		});
 
 		test("returns statuses in workflow order", () => {
 			const settings = createDefaultProjectSettings();
 
 			expect(settings.statuses[0]).toBe("todo");
-			expect(settings.statuses[settings.statuses.length - 1]).toBe("blocked");
+			expect(settings.statuses[settings.statuses.length - 1]).toBe("urgent");
 		});
 
 		test("returns a new object each time", () => {
