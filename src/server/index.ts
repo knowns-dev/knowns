@@ -3,11 +3,9 @@
  * Serves Web UI via `knowns browser`
  */
 
-import { watch } from "node:fs";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
-import type { Task } from "@models/task";
 import { FileStore } from "@storage/file-store";
 import type { ServerWebSocket } from "bun";
 import matter from "gray-matter";
@@ -30,9 +28,6 @@ interface DocResult {
 	content: string;
 }
 
-// Build version to bust cache
-let buildVersion = Date.now();
-
 export async function startServer(options: ServerOptions) {
 	const { port, projectRoot, open } = options;
 	const store = new FileStore(projectRoot);
@@ -48,9 +43,7 @@ export async function startServer(options: ServerOptions) {
 		}
 	};
 
-	// Find the UI files in the installed package (not in user's project)
-	// When bundled with Bun, all code is in dist/index.js
-	// So import.meta.dir will be the dist/ folder
+	// Find the UI files in the installed package
 	const currentDir = import.meta.dir;
 
 	// Try to find package root by checking parent directories
@@ -65,111 +58,11 @@ export async function startServer(options: ServerOptions) {
 		packageRoot = join(currentDir, "..", "..");
 	}
 
-	const uiSourcePath = join(packageRoot, "src", "ui");
 	const uiDistPath = join(packageRoot, "dist", "ui");
 
-	// Check if we should build (development mode with source files)
-	let shouldBuild = false;
-
-	if (existsSync(join(uiDistPath, "main.js"))) {
-		// Pre-built UI exists, no need to build
-		shouldBuild = false;
-	} else if (existsSync(join(uiSourcePath, "index.html"))) {
-		// Source UI exists, need to build to dist/ui
-		shouldBuild = true;
-	} else {
-		throw new Error(
-			`UI files not found. Tried:\n  - ${uiDistPath} (${existsSync(uiDistPath) ? "exists but no main.js" : "not found"})\n  - ${uiSourcePath} (${existsSync(uiSourcePath) ? "exists but no index.html" : "not found"})\nPackage root: ${packageRoot}\nCurrent dir: ${currentDir}`,
-		);
-	}
-
-	// Build function (only used in development mode)
-	const buildUI = async () => {
-		if (!shouldBuild) {
-			// Skip build in production mode
-			return true;
-		}
-
-		console.log("Building UI...");
-		const startTime = Date.now();
-
-		// Ensure dist/ui directory exists
-		if (!existsSync(uiDistPath)) {
-			await mkdir(uiDistPath, { recursive: true });
-		}
-
-		// Build the bundle
-		const buildResult = await Bun.build({
-			entrypoints: [join(uiSourcePath, "main.tsx")],
-			outdir: uiDistPath,
-			target: "browser",
-			minify: false,
-			sourcemap: "inline",
-			define: {
-				"process.env.NODE_ENV": JSON.stringify("development"),
-			},
-		});
-
-		if (!buildResult.success) {
-			console.error("Build errors:", buildResult.logs);
-			return false;
-		}
-
-		// Also build CSS
-		const cssResult = await Bun.build({
-			entrypoints: [join(uiSourcePath, "index.css")],
-			outdir: uiDistPath,
-			target: "browser",
-			minify: false,
-		});
-
-		if (!cssResult.success) {
-			console.error("CSS build errors:", cssResult.logs);
-		}
-
-		buildVersion = Date.now();
-		console.log(`UI built in ${Date.now() - startTime}ms`);
-		return true;
-	};
-
-	// Initial build (only if in development mode)
-	if (shouldBuild) {
-		if (!(await buildUI())) {
-			throw new Error("Failed to build UI");
-		}
-	}
-
-	// Watch for file changes and rebuild (only in development mode)
-	let watcher: ReturnType<typeof watch> | null = null;
-	if (shouldBuild) {
-		let rebuildTimeout: ReturnType<typeof setTimeout> | null = null;
-		watcher = watch(uiSourcePath, { recursive: true }, async (_event, filename) => {
-			if (!filename) return;
-			// Ignore non-source files
-			if (!filename.endsWith(".tsx") && !filename.endsWith(".ts") && !filename.endsWith(".css")) {
-				return;
-			}
-
-			// Debounce rebuilds
-			if (rebuildTimeout) {
-				clearTimeout(rebuildTimeout);
-			}
-
-			rebuildTimeout = setTimeout(async () => {
-				console.log(`File changed: ${filename}`);
-				const success = await buildUI();
-				if (success) {
-					// Notify all clients to reload
-					broadcast({ type: "reload" });
-				}
-			}, 100);
-		});
-
-		// Cleanup watcher on process exit
-		process.on("SIGINT", () => {
-			watcher?.close();
-			process.exit(0);
-		});
+	// Check if UI build exists
+	if (!existsSync(join(uiDistPath, "index.html"))) {
+		throw new Error(`UI build not found at ${uiDistPath}. Run 'bun run build:ui' first.`);
 	}
 
 	const server = Bun.serve({
@@ -194,93 +87,49 @@ export async function startServer(options: ServerOptions) {
 				return handleAPI(req, url, store, broadcast);
 			}
 
-			// Serve built JS bundle (with cache busting)
-			if (url.pathname === "/main.js" || url.pathname.startsWith("/main.js?")) {
-				const file = Bun.file(join(uiDistPath, "main.js"));
+			// Serve static assets from Vite build (assets folder with hashed names)
+			if (url.pathname.startsWith("/assets/")) {
+				const filePath = join(uiDistPath, url.pathname);
+				const file = Bun.file(filePath);
 				if (await file.exists()) {
+					const ext = url.pathname.split(".").pop();
+					const contentType =
+						ext === "js"
+							? "application/javascript"
+							: ext === "css"
+								? "text/css"
+								: ext === "svg"
+									? "image/svg+xml"
+									: ext === "png"
+										? "image/png"
+										: ext === "jpg" || ext === "jpeg"
+											? "image/jpeg"
+											: ext === "woff2"
+												? "font/woff2"
+												: ext === "woff"
+													? "font/woff"
+													: "application/octet-stream";
 					return new Response(file, {
 						headers: {
-							"Content-Type": "application/javascript",
-							"Cache-Control": "no-cache, no-store, must-revalidate",
+							"Content-Type": contentType,
+							// Vite assets have content hash, can cache forever
+							"Cache-Control": "public, max-age=31536000, immutable",
 						},
 					});
 				}
 			}
 
-			// Serve built CSS (with cache busting)
-			if (url.pathname === "/index.css" || url.pathname.startsWith("/index.css?")) {
-				const file = Bun.file(join(uiDistPath, "index.css"));
-				if (await file.exists()) {
-					return new Response(file, {
+			// Serve index.html for root and SPA routes
+			if (url.pathname === "/" || url.pathname === "/index.html" || !url.pathname.includes(".")) {
+				const indexFile = Bun.file(join(uiDistPath, "index.html"));
+				if (await indexFile.exists()) {
+					return new Response(indexFile, {
 						headers: {
-							"Content-Type": "text/css",
+							"Content-Type": "text/html",
 							"Cache-Control": "no-cache, no-store, must-revalidate",
 						},
 					});
 				}
-			}
-
-			// Serve index.html for root (with live reload script)
-			if (url.pathname === "/" || url.pathname === "/index.html") {
-				const html = `<!DOCTYPE html>
-<html lang="en">
-	<head>
-		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>Knowns - Task Management</title>
-		<link rel="stylesheet" href="/index.css?v=${buildVersion}" />
-	</head>
-	<body>
-		<div id="root"></div>
-		<script type="module" src="/main.js?v=${buildVersion}"></script>
-		<script>
-			// Live reload via WebSocket
-			(function() {
-				let ws;
-				let reconnectInterval;
-
-				function connect() {
-					ws = new WebSocket('ws://' + location.host + '/ws');
-
-					ws.onopen = function() {
-						console.log('[LiveReload] Connected');
-						if (reconnectInterval) {
-							clearInterval(reconnectInterval);
-							reconnectInterval = null;
-						}
-					};
-
-					ws.onmessage = function(event) {
-						const data = JSON.parse(event.data);
-						if (data.type === 'reload') {
-							console.log('[LiveReload] Reloading...');
-							location.reload();
-						}
-					};
-
-					ws.onclose = function() {
-						console.log('[LiveReload] Disconnected, reconnecting...');
-						if (!reconnectInterval) {
-							reconnectInterval = setInterval(connect, 1000);
-						}
-					};
-
-					ws.onerror = function() {
-						ws.close();
-					};
-				}
-
-				connect();
-			})();
-		</script>
-	</body>
-</html>`;
-				return new Response(html, {
-					headers: {
-						"Content-Type": "text/html",
-						"Cache-Control": "no-cache, no-store, must-revalidate",
-					},
-				});
 			}
 
 			return new Response("Not Found", { status: 404 });
@@ -299,13 +148,7 @@ export async function startServer(options: ServerOptions) {
 		},
 	});
 
-	console.log(`Server running at http://localhost:${port}`);
-	console.log(`Open in browser: http://localhost:${port}`);
-	if (shouldBuild) {
-		console.log(`Live reload enabled - watching ${uiSourcePath}`);
-	} else {
-		console.log(`Serving pre-built UI from ${uiDistPath}`);
-	}
+	console.log(`✓ Server running at http://localhost:${port}`);
 
 	if (open) {
 		// Open browser (platform-specific)
@@ -368,8 +211,16 @@ async function handleAPI(
 			return new Response(JSON.stringify(tasks), { headers });
 		}
 
+		// GET /api/tasks/:id/history - Get version history for a task
+		const historyMatch = url.pathname.match(/^\/api\/tasks\/(.+)\/history$/);
+		if (historyMatch && req.method === "GET") {
+			const taskId = historyMatch[1];
+			const history = await store.getTaskVersionHistory(taskId);
+			return new Response(JSON.stringify({ versions: history }), { headers });
+		}
+
 		// GET /api/tasks/:id
-		const taskMatch = url.pathname.match(/^\/api\/tasks\/(.+)$/);
+		const taskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
 		if (taskMatch && req.method === "GET") {
 			const task = await store.getTask(taskMatch[1]);
 			if (!task) {
@@ -383,13 +234,21 @@ async function handleAPI(
 
 		// PUT /api/tasks/:id
 		if (taskMatch && req.method === "PUT") {
-			const updates = await req.json();
-			const task = await store.updateTask(taskMatch[1], updates);
+			try {
+				const updates = await req.json();
+				const task = await store.updateTask(taskMatch[1], updates);
 
-			// Broadcast update to all clients
-			broadcast({ type: "tasks:updated", task });
+				// Broadcast update to all clients
+				broadcast({ type: "tasks:updated", task });
 
-			return new Response(JSON.stringify(task), { headers });
+				return new Response(JSON.stringify(task), { headers });
+			} catch (error) {
+				console.error("Error updating task:", error);
+				return new Response(JSON.stringify({ error: String(error) }), {
+					status: 500,
+					headers,
+				});
+			}
 		}
 
 		// POST /api/tasks
@@ -404,6 +263,45 @@ async function handleAPI(
 				headers,
 				status: 201,
 			});
+		}
+
+		// POST /api/notify - CLI notifies server about task/doc changes
+		if (url.pathname === "/api/notify" && req.method === "POST") {
+			try {
+				const { taskId, type, docPath } = await req.json();
+
+				if (taskId) {
+					// Reload task from disk and broadcast
+					const task = await store.getTask(taskId);
+					if (task) {
+						broadcast({ type: "tasks:updated", task });
+						return new Response(JSON.stringify({ success: true }), { headers });
+					}
+				} else if (type === "tasks:refresh") {
+					// Broadcast refresh signal to reload all tasks
+					broadcast({ type: "tasks:refresh" });
+					return new Response(JSON.stringify({ success: true }), { headers });
+				} else if (type === "docs:updated" && docPath) {
+					// Broadcast doc update
+					broadcast({ type: "docs:updated", docPath });
+					return new Response(JSON.stringify({ success: true }), { headers });
+				} else if (type === "docs:refresh") {
+					// Broadcast docs refresh signal
+					broadcast({ type: "docs:refresh" });
+					return new Response(JSON.stringify({ success: true }), { headers });
+				}
+
+				return new Response(JSON.stringify({ success: false, error: "Invalid notify request" }), {
+					status: 400,
+					headers,
+				});
+			} catch (error) {
+				console.error("[Server] Notify error:", error);
+				return new Response(JSON.stringify({ error: String(error) }), {
+					status: 500,
+					headers,
+				});
+			}
 		}
 
 		// GET /api/docs
@@ -439,6 +337,115 @@ async function handleAPI(
 			);
 
 			return new Response(JSON.stringify({ docs }), { headers });
+		}
+
+		// GET /api/docs/:path - Get single doc by path
+		if (url.pathname.startsWith("/api/docs/") && req.method === "GET") {
+			const docPath = decodeURIComponent(url.pathname.replace("/api/docs/", ""));
+			const docsDir = join(store.projectRoot, ".knowns", "docs");
+			const fullPath = join(docsDir, docPath);
+
+			// Security: ensure path doesn't escape docs directory
+			if (!fullPath.startsWith(docsDir)) {
+				return new Response(JSON.stringify({ error: "Invalid path" }), {
+					status: 400,
+					headers,
+				});
+			}
+
+			if (!existsSync(fullPath)) {
+				return new Response(JSON.stringify({ error: "Document not found" }), {
+					status: 404,
+					headers,
+				});
+			}
+
+			const content = await readFile(fullPath, "utf-8");
+			const { data, content: docContent } = matter(content);
+
+			// Extract folder path and filename
+			const pathParts = docPath.split("/");
+			const filename = pathParts[pathParts.length - 1];
+			const folder = pathParts.length > 1 ? pathParts.slice(0, -1).join("/") : "";
+
+			const doc = {
+				filename,
+				path: docPath,
+				folder,
+				title: data.title || filename.replace(/\.md$/, ""),
+				description: data.description || "",
+				tags: data.tags || [],
+				metadata: data,
+				content: docContent,
+			};
+
+			return new Response(JSON.stringify(doc), { headers });
+		}
+
+		// PUT /api/docs/:path - Update existing doc
+		if (url.pathname.startsWith("/api/docs/") && req.method === "PUT") {
+			const docPath = decodeURIComponent(url.pathname.replace("/api/docs/", ""));
+			const docsDir = join(store.projectRoot, ".knowns", "docs");
+			const fullPath = join(docsDir, docPath);
+
+			// Security: ensure path doesn't escape docs directory
+			if (!fullPath.startsWith(docsDir)) {
+				return new Response(JSON.stringify({ error: "Invalid path" }), {
+					status: 400,
+					headers,
+				});
+			}
+
+			if (!existsSync(fullPath)) {
+				return new Response(JSON.stringify({ error: "Document not found" }), {
+					status: 404,
+					headers,
+				});
+			}
+
+			const data = await req.json();
+			const { content, title, description, tags } = data;
+
+			// Read existing file to get current frontmatter
+			const existingContent = await readFile(fullPath, "utf-8");
+			const { data: existingData } = matter(existingContent);
+
+			// Update frontmatter
+			const now = new Date().toISOString();
+			const updatedFrontmatter = {
+				...existingData,
+				title: title ?? existingData.title,
+				description: description ?? existingData.description,
+				tags: tags ?? existingData.tags,
+				updatedAt: now,
+			};
+
+			// Create new file content
+			const newFileContent = matter.stringify(content ?? "", updatedFrontmatter);
+
+			// Write file
+			await writeFile(fullPath, newFileContent, "utf-8");
+
+			// Return updated doc
+			const pathParts = docPath.split("/");
+			const filename = pathParts[pathParts.length - 1];
+			const folder = pathParts.length > 1 ? pathParts.slice(0, -1).join("/") : "";
+
+			const updatedDoc = {
+				filename,
+				path: docPath,
+				folder,
+				title: updatedFrontmatter.title || filename.replace(/\.md$/, ""),
+				description: updatedFrontmatter.description || "",
+				tags: updatedFrontmatter.tags || [],
+				metadata: updatedFrontmatter,
+				content: content ?? "",
+			};
+
+			// Broadcast update to all clients
+			broadcast({ type: "docs:updated", doc: updatedDoc });
+
+			return new Response(JSON.stringify(updatedDoc), { headers });
 		}
 
 		// POST /api/docs
@@ -580,6 +587,51 @@ async function handleAPI(
 			await writeFile(configPath, JSON.stringify(merged, null, 2), "utf-8");
 
 			return new Response(JSON.stringify({ success: true }), { headers });
+		}
+
+		// GET /api/activities - Get recent activities across all tasks
+		if (url.pathname === "/api/activities" && req.method === "GET") {
+			const limit = Number.parseInt(url.searchParams.get("limit") || "50", 10);
+			const type = url.searchParams.get("type"); // Filter by change type
+
+			const tasks = await store.getAllTasks();
+			const allActivities: Array<{
+				taskId: string;
+				taskTitle: string;
+				version: number;
+				timestamp: Date;
+				author?: string;
+				changes: Array<{ field: string; oldValue: unknown; newValue: unknown }>;
+			}> = [];
+
+			// Collect version history from all tasks
+			for (const task of tasks) {
+				const versions = await store.getTaskVersionHistory(task.id);
+				for (const version of versions) {
+					// Filter by change type if specified
+					if (type) {
+						const hasMatchingChange = version.changes.some((c) => c.field === type);
+						if (!hasMatchingChange) continue;
+					}
+
+					allActivities.push({
+						taskId: task.id,
+						taskTitle: task.title,
+						version: version.version,
+						timestamp: version.timestamp,
+						author: version.author,
+						changes: version.changes,
+					});
+				}
+			}
+
+			// Sort by timestamp descending (most recent first)
+			allActivities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+			// Limit results
+			const limited = allActivities.slice(0, limit);
+
+			return new Response(JSON.stringify({ activities: limited }), { headers });
 		}
 
 		// GET /api/search?q=query

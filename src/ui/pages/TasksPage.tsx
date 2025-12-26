@@ -3,6 +3,7 @@ import { Plus, Filter, ClipboardList } from "lucide-react";
 import type { Task } from "../../models/task";
 import { useTheme } from "../App";
 import TaskDetailModal from "../components/TaskDetailModal";
+import { ScrollArea } from "../components/ui/scroll-area";
 
 // Default status icons
 const DEFAULT_STATUS_ICONS: Record<string, string> = {
@@ -119,7 +120,7 @@ export default function TasksPage({
 	}
 
 	return (
-		<div className="p-6">
+		<div className="p-6 h-full flex flex-col overflow-hidden">
 			{/* Header with title and New Task button */}
 			<div className="mb-6 flex items-center justify-between gap-4">
 				<div className="flex-1">
@@ -175,7 +176,8 @@ export default function TasksPage({
 			</div>
 
 			{/* Task Groups */}
-			<div className="space-y-6">
+			<ScrollArea className="flex-1">
+				<div className="space-y-6 pr-4">
 				{Object.entries(groupedTasks).map(([status, statusTasks]) => {
 					if (statusTasks.length === 0) return null;
 
@@ -237,8 +239,8 @@ export default function TasksPage({
 													<button
 														type="button"
 														onClick={() => {
-															// Update URL hash instead of setting state directly
-															window.location.hash = `/tasks/${task.id}`;
+															// Navigate to kanban view with task detail
+															window.location.hash = `/kanban/${task.id}`;
 														}}
 														className={`font-medium ${textColor} mb-1 hover:underline text-left w-full`}
 													>
@@ -318,13 +320,13 @@ export default function TasksPage({
 						</div>
 					);
 				})}
-			</div>
-
-			{filteredTasks.length === 0 && (
-				<div className="text-center py-12">
-					<p className={`text-lg ${textSecondary}`}>No tasks found</p>
+				{filteredTasks.length === 0 && (
+					<div className="text-center py-12">
+						<p className={`text-lg ${textSecondary}`}>No tasks found</p>
+					</div>
+				)}
 				</div>
-			)}
+			</ScrollArea>
 
 			{/* Task Detail Modal */}
 			{selectedTask && (

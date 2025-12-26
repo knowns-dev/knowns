@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Settings, Check, Plus, Trash2, Code, FormInput } from "lucide-react";
 import { useTheme } from "../App";
+import { ScrollArea } from "../components/ui/scroll-area";
+import { getConfig, saveConfig } from "../api/client";
 
 type TaskStatus = string;
 
@@ -38,11 +40,9 @@ export default function ConfigPage() {
 
 	useEffect(() => {
 		// Fetch config from API
-		fetch("/api/config")
-			.then((res) => res.json())
-			.then((data) => {
-				const cfg = data.config || {};
-				setConfig(cfg);
+		getConfig()
+			.then((cfg) => {
+				setConfig(cfg as Config);
 				setJsonText(JSON.stringify(cfg, null, 2));
 				setLoading(false);
 			})
@@ -79,15 +79,7 @@ export default function ConfigPage() {
 				}
 			}
 
-			const response = await fetch("/api/config", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(configToSave),
-			});
-
-			if (!response.ok) {
-				throw new Error("Failed to save config");
-			}
+			await saveConfig(configToSave);
 
 			setMessage({ type: "success", text: "Configuration saved successfully!" });
 			setTimeout(() => setMessage(null), 3000);
@@ -148,9 +140,10 @@ export default function ConfigPage() {
 	const statusColors = config.statusColors || {};
 
 	return (
+		<ScrollArea className="h-full">
 		<div className="p-6 max-w-3xl">
 			{/* Header */}
-			<div className="mb-6 flex items-center justify-between">
+			<div className="mb-6 flex items-center justify-between shrink-0">
 				<div className="flex items-center gap-3">
 					<Settings className="w-6 h-6" />
 					<h1 className={`text-2xl font-bold ${textColor}`}>Configuration</h1>
@@ -433,5 +426,6 @@ export default function ConfigPage() {
 				</div>
 			)}
 		</div>
+		</ScrollArea>
 	);
 }

@@ -12,8 +12,9 @@ import {
 	Copy,
 } from "lucide-react";
 import { useTheme } from "../App";
-import MarkdownEditor from "../components/MarkdownEditor";
-import MarkdownRenderer from "../components/MarkdownRenderer";
+import { TiptapEditor, EditorRender } from "../components/editor";
+import { ScrollArea } from "../components/ui/scroll-area";
+import { getDocs, createDoc, updateDoc, connectWebSocket } from "../api/client";
 
 interface DocMetadata {
 	title: string;
@@ -59,6 +60,18 @@ export default function DocsPage() {
 
 	useEffect(() => {
 		loadDocs();
+
+		// Listen for real-time updates from CLI/AI
+		const ws = connectWebSocket((data) => {
+			if (data.type === "docs:updated" || data.type === "docs:refresh") {
+				// Reload docs when CLI makes changes
+				loadDocs();
+			}
+		});
+
+		return () => {
+			if (ws) ws.close();
+		};
 	}, []);
 
 	// Handle doc path from URL navigation (e.g., #/docs/patterns/controller.md)
@@ -173,10 +186,9 @@ export default function DocsPage() {
 	}, [docs, selectedDoc]);
 
 	const loadDocs = () => {
-		fetch("/api/docs")
-			.then((res) => res.json())
-			.then((data) => {
-				setDocs(data.docs || []);
+		getDocs()
+			.then((docs) => {
+				setDocs(docs as Doc[]);
 				setLoading(false);
 			})
 			.catch((err) => {
@@ -198,21 +210,13 @@ export default function DocsPage() {
 				.map((t) => t.trim())
 				.filter((t) => t);
 
-			const response = await fetch("/api/docs", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					title: newDocTitle,
-					description: newDocDescription,
-					tags,
-					folder: newDocFolder,
-					content: newDocContent,
-				}),
+			await createDoc({
+				title: newDocTitle,
+				description: newDocDescription,
+				tags,
+				folder: newDocFolder,
+				content: newDocContent,
 			});
-
-			if (!response.ok) {
-				throw new Error("Failed to create document");
-			}
 
 			// Reset form
 			setNewDocTitle("");
@@ -255,22 +259,24 @@ export default function DocsPage() {
 
 		setSaving(true);
 		try {
-			// Update doc via CLI (we'd need an API endpoint for this)
-			// For now, just simulate save
-			console.log("Saving doc:", selectedDoc.filename, editedContent);
+			// Update doc via API
+			const updatedDoc = await updateDoc(selectedDoc.path, {
+				content: editedContent,
+			});
 
-			// TODO: Add API endpoint to save doc
-			// await fetch(`/api/docs/${selectedDoc.filename}`, {
-			// 	method: 'PUT',
-			// 	headers: { 'Content-Type': 'application/json' },
-			// 	body: JSON.stringify({ content: editedContent })
-			// });
-
+			// Update local state
+			setDocs((prevDocs) =>
+				prevDocs.map((doc) =>
+					doc.path === selectedDoc.path
+						? { ...doc, content: editedContent, metadata: { ...doc.metadata, updatedAt: new Date().toISOString() } }
+						: doc
+				)
+			);
+			setSelectedDoc((prev) => (prev ? { ...prev, content: editedContent } : prev));
 			setIsEditing(false);
-			// Reload docs
-			loadDocs();
 		} catch (error) {
 			console.error("Failed to save doc:", error);
+			alert(error instanceof Error ? error.message : "Failed to save document");
 		} finally {
 			setSaving(false);
 		}
@@ -430,7 +436,7 @@ export default function DocsPage() {
 	}
 
 	return (
-		<div className="p-6">
+		<div className="p-6 h-full flex flex-col overflow-hidden">
 			{/* Header */}
 			<div className="mb-6 flex items-center justify-between">
 				<h1 className={`text-2xl font-bold ${textColor}`}>Documentation</h1>
@@ -444,16 +450,16 @@ export default function DocsPage() {
 				</button>
 			</div>
 
-			<div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+			<div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0 overflow-hidden">
 				{/* Doc List */}
-				<div className="lg:col-span-1">
-					<div className={`${bgColor} rounded-lg border ${borderColor} overflow-hidden`}>
-						<div className={`p-4 border-b ${borderColor}`}>
+				<div className="lg:col-span-1 flex flex-col min-h-0 overflow-hidden">
+					<div className={`${bgColor} rounded-lg border ${borderColor} overflow-hidden flex flex-col flex-1 min-h-0`}>
+						<div className={`p-4 border-b ${borderColor} shrink-0`}>
 							<h2 className={`font-semibold ${textColor}`}>All Documents ({docs.length})</h2>
 						</div>
-						<div className="max-h-[600px] overflow-y-auto">
+						<ScrollArea className="flex-1">
 							{renderFolderNode(buildFolderTree())}
-						</div>
+						</ScrollArea>
 					</div>
 
 					{docs.length === 0 && (
@@ -468,11 +474,11 @@ export default function DocsPage() {
 				</div>
 
 				{/* Doc Content */}
-				<div className="lg:col-span-2">
+				<div className="lg:col-span-2 flex flex-col min-h-0 overflow-hidden">
 					{selectedDoc ? (
-						<div className={`${bgColor} rounded-lg border ${borderColor} overflow-hidden`}>
+						<div className={`${bgColor} rounded-lg border ${borderColor} overflow-hidden flex flex-col flex-1 min-h-0`}>
 							{/* Header */}
-							<div className="p-6 border-b border-gray-700 flex items-start justify-between">
+							<div className="p-6 border-b border-gray-700 flex items-start justify-between shrink-0">
 								<div className="flex-1">
 									<h2 className={`text-2xl font-bold ${textColor} mb-2`}>
 										{selectedDoc.metadata.title}
@@ -535,22 +541,25 @@ export default function DocsPage() {
 							</div>
 
 							{/* Content */}
-							<div className="p-6">
-								{isEditing ? (
-									<MarkdownEditor
+							{isEditing ? (
+								<div className="flex-1 p-6 overflow-hidden">
+									<TiptapEditor
 										markdown={editedContent}
 										onChange={setEditedContent}
 										placeholder="Write your documentation here..."
+										height="100%"
 									/>
-								) : (
-									<MarkdownRenderer
-										ref={markdownPreviewRef}
-										markdown={selectedDoc.content || ""}
-										className={textColor}
-										enableGFM={true}
-									/>
-								)}
-							</div>
+								</div>
+							) : (
+								<ScrollArea className="flex-1">
+									<div className="p-6">
+										<EditorRender
+											markdown={selectedDoc.content || ""}
+											className={textColor}
+										/>
+									</div>
+								</ScrollArea>
+							)}
 						</div>
 					) : (
 						<div className={`${bgColor} rounded-lg border ${borderColor} p-12 text-center`}>
@@ -565,15 +574,15 @@ export default function DocsPage() {
 			{showCreateModal && (
 				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
 					<div
-						className={`${bgColor} rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto`}
+						className={`${bgColor} rounded-lg shadow-xl max-w-4xl w-full h-[90vh] flex flex-col`}
 					>
-						<div className={`p-6 border-b ${borderColor}`}>
+						<div className={`p-6 border-b ${borderColor} shrink-0`}>
 							<h2 className={`text-xl font-bold ${textColor}`}>Create New Document</h2>
 						</div>
 
-						<div className="p-6 space-y-4">
+						<div className="p-6 space-y-4 flex-1 flex flex-col overflow-hidden">
 							{/* Title */}
-							<div>
+							<div className="shrink-0">
 								<label className={`block text-sm font-medium ${textColor} mb-2`}>Title *</label>
 								<input
 									type="text"
@@ -587,7 +596,7 @@ export default function DocsPage() {
 							</div>
 
 							{/* Description */}
-							<div>
+							<div className="shrink-0">
 								<label className={`block text-sm font-medium ${textColor} mb-2`}>Description</label>
 								<input
 									type="text"
@@ -601,7 +610,7 @@ export default function DocsPage() {
 							</div>
 
 							{/* Folder */}
-							<div>
+							<div className="shrink-0">
 								<label className={`block text-sm font-medium ${textColor} mb-2`}>
 									Folder (optional)
 								</label>
@@ -617,7 +626,7 @@ export default function DocsPage() {
 							</div>
 
 							{/* Tags */}
-							<div>
+							<div className="shrink-0">
 								<label className={`block text-sm font-medium ${textColor} mb-2`}>
 									Tags (comma-separated)
 								</label>
@@ -633,17 +642,20 @@ export default function DocsPage() {
 							</div>
 
 							{/* Content */}
-							<div>
+							<div className="flex-1 flex flex-col min-h-0">
 								<label className={`block text-sm font-medium ${textColor} mb-2`}>Content</label>
-								<MarkdownEditor
-									markdown={newDocContent}
-									onChange={setNewDocContent}
-									placeholder="Write your documentation here..."
-								/>
+								<div className="flex-1 min-h-[400px]">
+									<TiptapEditor
+										markdown={newDocContent}
+										onChange={setNewDocContent}
+										placeholder="Write your documentation here..."
+										height="100%"
+									/>
+								</div>
 							</div>
 						</div>
 
-						<div className={`p-6 border-t ${borderColor} flex justify-end gap-3`}>
+						<div className={`p-6 border-t ${borderColor} flex justify-end gap-3 shrink-0`}>
 							<button
 								type="button"
 								onClick={() => {

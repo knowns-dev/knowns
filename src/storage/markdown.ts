@@ -69,10 +69,10 @@ export function serializeTaskMarkdown(task: Task): string {
 		title: task.title,
 		status: task.status,
 		priority: task.priority,
-		labels: task.labels,
+		labels: task.labels || [],
 		createdAt: task.createdAt.toISOString(),
 		updatedAt: task.updatedAt.toISOString(),
-		timeSpent: task.timeSpent,
+		timeSpent: task.timeSpent ?? 0,
 	};
 
 	// Add optional fields only if defined

@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2025-12-27
+
+### Added
+- **Real-time Sync**: CLI/AI changes now sync to Web UI in real-time via WebSocket
+  - When AI or CLI modifies tasks/docs, Web UI updates automatically without refresh
+  - Added `/api/notify` endpoint for CLI to notify server of changes
+  - Tasks and docs pages listen for WebSocket updates
+- **Custom Server Port**: Server port is now saved to config when using `-p` option
+  - Example: `knowns browser -p 7000` saves port 7000 to config
+  - Notify functions automatically use the saved port for real-time sync
+- **Doc CLI**: Added `--folder` option to `doc create` command for creating docs in nested folders
+  - Example: `knowns doc create "Guide" -f guides`
+- **Doc CLI**: Added `--content` and `--append` options to `doc edit` command
+  - `-c, --content <text>` - Replace document content
+  - `-a, --append <text>` - Append to existing content
+- **Web UI**: MDEditor now supports full-height mode for better editing experience
+- **Web UI**: Create document modal is now larger (90vh) with full editor support
+- **Documentation**: Added comprehensive CLI guide at `guides/knowns-cli-guide.md`
+
+### Changed
+- **Web UI**: Improved markdown editor layout with flex-based height management
+- **Web UI**: Editor properly fills available space when editing docs
+- **Reference System**: Doc mention regex now matches both `@doc/` and `@docs/` patterns
+
+### Fixed
+- **Web UI**: Fixed Assignee dropdown not working inside modal (Portal container fix)
+- **Web UI**: Fixed editor scroll issues in full-height mode
+- **Web UI**: Fixed create modal form fields not properly sized
+
 ## [0.1.5] - 2024-12-26
 
 ### Fixed
@@ -107,6 +136,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLAUDE.md with complete guidelines for AI agents
 - Example workflows and patterns
 
+[0.1.6]: https://github.com/knowns-dev/knowns/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/knowns-dev/knowns/compare/v0.1.3...v0.1.5
 [0.1.3]: https://github.com/knowns-dev/knowns/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/knowns-dev/knowns/compare/v0.1.1...v0.1.2

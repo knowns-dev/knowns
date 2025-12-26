@@ -10,6 +10,8 @@ import { DEFAULT_STATUSES, isValidTaskPriority, isValidTaskStatus } from "@model
 import { FileStore } from "@storage/file-store";
 import { formatDocReferences, resolveDocReferences } from "@utils/doc-links";
 import { findProjectRoot } from "@utils/find-project-root";
+import { buildTaskMap, transformMentionsToRefs } from "@utils/mention-refs";
+import { notifyTaskUpdate } from "@utils/notify-server";
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -74,6 +76,13 @@ async function formatTask(task: Task, fileStore: FileStore, plain = false): Prom
 		const border = "-".repeat(50);
 		const titleBorder = "=".repeat(50);
 		const output: string[] = [];
+
+		// Build task map for mention transformation
+		const allTasks = await fileStore.getAllTasks();
+		const taskMap = buildTaskMap(allTasks);
+
+		// Helper to transform mentions in text
+		const transformText = (text: string) => transformMentionsToRefs(text, taskMap);
 
 		// File path
 		const projectRoot = findProjectRoot();
@@ -142,38 +151,38 @@ async function formatTask(task: Task, fileStore: FileStore, plain = false): Prom
 
 		output.push("");
 
-		// Description
+		// Description (with mention transformation)
 		if (task.description) {
 			output.push("Description:");
 			output.push(border);
-			output.push(task.description);
+			output.push(transformText(task.description));
 			output.push("");
 		}
 
-		// Acceptance Criteria
+		// Acceptance Criteria (with mention transformation)
 		if (task.acceptanceCriteria.length > 0) {
 			output.push("Acceptance Criteria:");
 			output.push(border);
 			for (const [i, ac] of task.acceptanceCriteria.entries()) {
 				const checkbox = ac.completed ? "[x]" : "[ ]";
-				output.push(`- ${checkbox} #${i + 1} ${ac.text}`);
+				output.push(`- ${checkbox} #${i + 1} ${transformText(ac.text)}`);
 			}
 			output.push("");
 		}
 
-		// Implementation Plan
+		// Implementation Plan (with mention transformation)
 		if (task.implementationPlan) {
 			output.push("Implementation Plan:");
 			output.push(border);
-			output.push(task.implementationPlan);
+			output.push(transformText(task.implementationPlan));
 			output.push("");
 		}
 
-		// Implementation Notes
+		// Implementation Notes (with mention transformation)
 		if (task.implementationNotes) {
 			output.push("Implementation Notes:");
 			output.push(border);
-			output.push(task.implementationNotes);
+			output.push(transformText(task.implementationNotes));
 			output.push("");
 		}
 
@@ -589,6 +598,9 @@ const createCommand = new Command("create")
 					timeEntries: [],
 				});
 
+				// Notify web server for real-time updates
+				await notifyTaskUpdate(task.id);
+
 				console.log(chalk.green(`✓ Created task-${task.id}: ${task.title}`));
 
 				if (options.parent) {
@@ -893,6 +905,9 @@ const editCommand = new Command("edit")
 
 				// Apply updates
 				await fileStore.updateTask(id, updates);
+
+				// Notify web server for real-time updates
+				await notifyTaskUpdate(id);
 
 				console.log(chalk.green(`✓ Updated task-${id}`));
 

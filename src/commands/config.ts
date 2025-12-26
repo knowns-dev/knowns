@@ -20,6 +20,7 @@ const ConfigSchema = z.object({
 	timeFormat: z.enum(["12h", "24h"]).optional(),
 	editor: z.string().optional(),
 	visibleColumns: z.array(z.enum(["todo", "in-progress", "in-review", "done", "blocked"])).optional(),
+	serverPort: z.number().optional(),
 });
 
 type Config = z.infer<typeof ConfigSchema>;
@@ -29,6 +30,7 @@ const DEFAULT_CONFIG: Config = {
 	defaultLabels: [],
 	timeFormat: "24h",
 	visibleColumns: ["todo", "in-progress", "done"],
+	serverPort: 6420,
 };
 
 /**

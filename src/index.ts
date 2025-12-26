@@ -19,10 +19,14 @@ import {
 	timeCommand,
 } from "@commands/index";
 import { Command } from "commander";
+import packageJson from "../package.json";
 
 const program = new Command();
 
-program.name("knowns").description("CLI tool for dev teams to manage tasks, track time, and sync").version("0.1.2");
+program
+	.name("knowns")
+	.description("CLI tool for dev teams to manage tasks, track time, and sync")
+	.version(packageJson.version);
 
 // Add commands
 program.addCommand(initCommand);

@@ -4,7 +4,6 @@ import {
 	X,
 	AlignLeft,
 	ClipboardCheck,
-	User,
 	Clock,
 	FileText,
 	Pencil,
@@ -15,10 +14,13 @@ import {
 } from "lucide-react";
 import type { Task, TaskPriority, TaskStatus } from "../../models/task";
 import { useTheme } from "../App";
+import { useCurrentUser } from "../contexts/UserContext";
 import { updateTask } from "../api/client";
-import MarkdownEditor from "./MarkdownEditor";
-import MarkdownRenderer from "./MarkdownRenderer";
+import AssigneeDropdown from "./AssigneeDropdown";
+import { TiptapEditor, EditorRender } from "./editor";
+import TaskHistoryPanel from "./TaskHistoryPanel";
 import TimeTracker from "./TimeTracker";
+import { ScrollArea } from "./ui/scroll-area";
 
 interface TaskDetailModalProps {
 	task: Task | null;
@@ -99,6 +101,7 @@ export default function TaskDetailModal({
 	onNavigateToTask,
 }: TaskDetailModalProps) {
 	const { isDark } = useTheme();
+	const { currentUser } = useCurrentUser();
 	const dialogRef = useRef<HTMLDialogElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
 
@@ -169,7 +172,7 @@ export default function TaskDetailModal({
 				if (href && /^(task-)?\d+(\.md)?$/.test(href)) {
 					e.preventDefault();
 					const taskId = href.replace(/^task-/, "").replace(/\.md$/, "");
-					window.location.hash = `/tasks/${taskId}`;
+					window.location.hash = `/kanban/${taskId}`;
 					onClose();
 					return;
 				}
@@ -361,7 +364,7 @@ export default function TaskDetailModal({
 			<div className="flex justify-center pt-12 pb-8 px-4 min-h-full" onClick={handleBackdropClick}>
 				<div
 					ref={contentRef}
-					className={`${bgMain} rounded-xl shadow-2xl w-full max-w-4xl max-h-[calc(100vh-80px)] overflow-hidden flex flex-col`}
+					className={`${bgMain} rounded-xl shadow-2xl w-full max-w-6xl max-h-[calc(100vh-80px)] overflow-hidden flex flex-col`}
 					onClick={(e) => e.stopPropagation()}
 				>
 					{/* Header */}
@@ -406,10 +409,10 @@ export default function TaskDetailModal({
 					</div>
 
 					{/* Content */}
-					<div className="flex-1 overflow-y-auto">
-						<div className="flex flex-col md:flex-row">
-							{/* Main Content */}
-							<div className="flex-1 p-6 space-y-6">
+					<div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
+						{/* Main Content */}
+						<ScrollArea className="flex-1 min-h-0">
+							<div className="p-6 space-y-6">
 								{/* Description */}
 								<section>
 									<div className={`flex items-center gap-2 mb-3 ${textSecondary}`}>
@@ -418,12 +421,11 @@ export default function TaskDetailModal({
 									</div>
 									{editingDescription ? (
 										<div>
-											<MarkdownEditor
+											<TiptapEditor
 												markdown={description}
 												onChange={setDescription}
 												placeholder="Add a more detailed description..."
 												readOnly={saving}
-												sectionType="description"
 											/>
 											<div className="flex gap-2 mt-2">
 												<button
@@ -448,16 +450,15 @@ export default function TaskDetailModal({
 										</div>
 									) : (
 										<div
-											className={`${bgCard} rounded-lg px-3 py-2 min-h-20 cursor-pointer ${hoverBg} transition-colors border ${borderColor}`}
+											className={`${bgCard} rounded-lg px-3 py-2 min-h-20 cursor-pointer ${hoverBg} transition-colors border ${borderColor} overflow-hidden`}
 											onClick={() => setEditingDescription(true)}
 											tabIndex={0}
 											role="button"
 										>
 											{task.description ? (
-												<MarkdownRenderer
+												<EditorRender
 													markdown={task.description}
 													className={`text-sm ${textSecondary}`}
-													sectionType="description"
 												/>
 											) : (
 												<span className={`${textMuted} italic text-sm`}>Add description...</span>
@@ -599,12 +600,11 @@ export default function TaskDetailModal({
 									</div>
 									{editingPlan ? (
 										<div>
-											<MarkdownEditor
+											<TiptapEditor
 												markdown={plan}
 												onChange={setPlan}
 												placeholder="1. First step&#10;2. Second step&#10;3. Third step..."
 												readOnly={saving}
-												sectionType="plan"
 											/>
 											<div className="flex gap-2 mt-2">
 												<button
@@ -629,16 +629,15 @@ export default function TaskDetailModal({
 										</div>
 									) : (
 										<div
-											className={`${bgCard} rounded-lg px-3 py-2 min-h-16 cursor-pointer ${hoverBg} border ${borderColor}`}
+											className={`${bgCard} rounded-lg px-3 py-2 min-h-16 cursor-pointer ${hoverBg} border ${borderColor} overflow-hidden`}
 											onClick={() => setEditingPlan(true)}
 											tabIndex={0}
 											role="button"
 										>
 											{task.implementationPlan ? (
-												<MarkdownRenderer
+												<EditorRender
 													markdown={task.implementationPlan}
 													className={`text-sm ${textSecondary}`}
-													sectionType="plan"
 												/>
 											) : (
 												<span className={`${textMuted} italic text-sm`}>
@@ -657,12 +656,11 @@ export default function TaskDetailModal({
 									</div>
 									{editingNotes ? (
 										<div>
-											<MarkdownEditor
+											<TiptapEditor
 												markdown={notes}
 												onChange={setNotes}
 												placeholder="Add implementation notes..."
 												readOnly={saving}
-												sectionType="notes"
 											/>
 											<div className="flex gap-2 mt-2">
 												<button
@@ -687,16 +685,15 @@ export default function TaskDetailModal({
 										</div>
 									) : (
 										<div
-											className={`${bgCard} rounded-lg px-3 py-2 min-h-16 cursor-pointer ${hoverBg} border ${borderColor}`}
+											className={`${bgCard} rounded-lg px-3 py-2 min-h-16 cursor-pointer ${hoverBg} border ${borderColor} overflow-hidden`}
 											onClick={() => setEditingNotes(true)}
 											tabIndex={0}
 											role="button"
 										>
 											{task.implementationNotes ? (
-												<MarkdownRenderer
+												<EditorRender
 													markdown={task.implementationNotes}
 													className={`text-sm ${textSecondary}`}
-													sectionType="notes"
 												/>
 											) : (
 												<span className={`${textMuted} italic text-sm`}>Add notes...</span>
@@ -792,12 +789,17 @@ export default function TaskDetailModal({
 										<TimeTracker task={task} onUpdate={onUpdate} />
 									</div>
 								</section>
-							</div>
 
-							{/* Sidebar */}
-							<div
-								className={`w-full md:w-64 ${isDark ? "bg-gray-750" : "bg-gray-50"} p-4 border-t md:border-t-0 md:border-l ${borderColor} space-y-4`}
-							>
+								{/* History */}
+								<section>
+									<TaskHistoryPanel taskId={task.id} />
+								</section>
+							</div>
+						</ScrollArea>
+
+						{/* Sidebar */}
+						<ScrollArea className={`w-full md:w-64 ${isDark ? "bg-gray-750" : "bg-gray-50"} border-t md:border-t-0 md:border-l ${borderColor}`}>
+							<div className="p-4 space-y-4">
 								{/* Status */}
 								<div>
 									<label
@@ -847,34 +849,16 @@ export default function TaskDetailModal({
 									>
 										Assignee
 									</label>
-									{editingAssignee ? (
-										<input
-											type="text"
-											value={assignee}
-											onChange={(e) => setAssignee(e.target.value)}
-											onBlur={handleAssigneeSave}
-											onKeyDown={(e) => {
-												if (e.key === "Enter") handleAssigneeSave();
-												if (e.key === "Escape") {
-													setAssignee(task.assignee || "");
-													setEditingAssignee(false);
-												}
-											}}
-											placeholder="@username"
-											className={`w-full ${inputBg} rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500`}
-										/>
-									) : (
-										<button
-											type="button"
-											onClick={() => setEditingAssignee(true)}
-											className={`w-full flex items-center gap-2 ${bgCard} rounded-lg px-3 py-2 text-sm text-left ${hoverBg} border ${borderColor}`}
-										>
-											<User className="w-5 h-5" />
-											<span className={task.assignee ? textSecondary : textMuted}>
-												{task.assignee || "Unassigned"}
-											</span>
-										</button>
-									)}
+									<AssigneeDropdown
+										value={task.assignee || ""}
+										onChange={(newAssignee) => {
+											setAssignee(newAssignee);
+											handleSave({ assignee: newAssignee || undefined });
+										}}
+										currentUser={currentUser}
+										showGrabButton={false}
+										container={contentRef.current}
+									/>
 								</div>
 
 								{/* Labels */}
@@ -1053,7 +1037,7 @@ export default function TaskDetailModal({
 									</div>
 								</div>
 							</div>
-						</div>
+						</ScrollArea>
 					</div>
 
 					{/* Footer */}

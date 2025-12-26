@@ -1,0 +1,6 @@
+{
+	"watch": ["src"],
+	"ext": "ts,tsx,css,html",
+	"ignore": ["dist/**", "node_modules/**"],
+	"exec": "bun run build && bun run dev"
+}

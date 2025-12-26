@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import type { Task, TaskStatus } from "../../models/task";
 import { useTheme } from "../App";
-import { api } from "../api/client";
+import { api, getConfig, saveConfig } from "../api/client";
 import Column from "./Column";
 import TaskDetailModal from "./TaskDetailModal";
+import { ScrollArea, ScrollBar } from "./ui/scroll-area";
 
 // Default column labels (can be overridden by config)
 const DEFAULT_COLUMN_LABELS: Record<string, string> = {
@@ -67,10 +68,9 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 
 	// Load statuses and visible columns from config
 	useEffect(() => {
-		fetch("/api/config")
-			.then((res) => res.json())
-			.then((data) => {
-				const statuses = (data.config?.statuses as TaskStatus[]) || [
+		getConfig()
+			.then((config) => {
+				const statuses = (config?.statuses as TaskStatus[]) || [
 					"todo",
 					"in-progress",
 					"in-review",
@@ -83,8 +83,8 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 				const newVisibleColumns = new Set(statuses);
 
 				// If user has saved a preference, use that instead
-				if (data.config?.visibleColumns) {
-					setVisibleColumns(new Set(data.config.visibleColumns));
+				if (config?.visibleColumns) {
+					setVisibleColumns(new Set(config.visibleColumns as TaskStatus[]));
 				} else {
 					setVisibleColumns(newVisibleColumns);
 				}
@@ -96,19 +96,13 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 	const saveVisibleColumns = async (columns: Set<TaskStatus>) => {
 		try {
 			// Get current config first
-			const response = await fetch("/api/config");
-			const data = await response.json();
-			const config = data.config || {};
+			const config = await getConfig();
 
 			// Update visibleColumns
 			config.visibleColumns = [...columns];
 
 			// Save back
-			await fetch("/api/config", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(config),
-			});
+			await saveConfig(config);
 		} catch (err) {
 			console.error("Failed to save config:", err);
 		}
@@ -214,9 +208,9 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 				</div>
 			</div>
 
-			{/* Board Columns - Horizontal and vertical scrollable area */}
-			<div className="flex-1 overflow-auto">
-				<div className="flex gap-4 pb-4">
+			{/* Board Columns - Horizontal scrollable area */}
+			<ScrollArea className="flex-1">
+				<div className="flex gap-4 pb-4 min-h-full">
 					{availableStatuses.filter((status) => visibleColumns.has(status)).map((status) => (
 						<Column
 							key={status}
@@ -235,7 +229,8 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 						</p>
 					</div>
 				)}
-			</div>
+				<ScrollBar orientation="horizontal" />
+			</ScrollArea>
 
 			<TaskDetailModal
 				task={selectedTask}
