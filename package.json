@@ -1,6 +1,6 @@
 {
 	"name": "knowns",
-	"version": "0.1.4",
+	"version": "0.1.5",
 	"description": "CLI tool for dev teams to manage tasks and documentation",
 	"module": "index.ts",
 	"type": "module",
@@ -27,7 +27,7 @@
 		"watch:ui": "nodemon --watch src/ui --ext tsx,ts,css --exec 'bun run build:ui && bun run build:copy-html'",
 		"build": "bun run build:cli && bun run build:ui && bun run build:copy-html",
 		"build:cli": "bun build src/index.ts --outdir dist --target bun && bun build src/mcp/server.ts --outdir dist/mcp --target bun",
-		"build:ui": "bun build src/ui/main.tsx --outdir dist/ui --target browser --minify && postcss src/ui/index.css -o dist/ui/index.css",
+		"build:ui": "bun run ./scripts/build-ui.js",
 		"build:copy-html": "cp src/ui/index.html dist/ui/index.html",
 		"start": "bun run src/index.ts",
 		"mcp": "bun run src/mcp/server.ts",

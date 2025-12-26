@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2024-12-26
+
+### Fixed
+- **Kanban Board**: Fixed an issue where columns with many tasks were not scrollable. The entire board area is now vertically scrollable.
+
+### Added
+- **Build Process**: The UI now dynamically displays the version from `package.json`.
+  - The version is injected at build time, so it's always up-to-date.
+
+### Changed
+- The UI build process now uses a separate script (`scripts/build-ui.js`) for more robust version injection.
+
 ## [0.1.3] - 2024-12-26
 
 ### Fixed
@@ -95,6 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLAUDE.md with complete guidelines for AI agents
 - Example workflows and patterns
 
+[0.1.5]: https://github.com/knowns-dev/knowns/compare/v0.1.3...v0.1.5
 [0.1.3]: https://github.com/knowns-dev/knowns/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/knowns-dev/knowns/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/knowns-dev/knowns/compare/v0.1.0...v0.1.1
