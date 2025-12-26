@@ -244,9 +244,9 @@ $ knowns search "password security" --type doc --plain
 $ knowns doc view "security-patterns" --plain
 
 # 5. Create implementation plan (SHARE WITH USER, WAIT FOR APPROVAL)
-$ knowns task edit AUTH-042 --plan $'1. Review security patterns (see [security-patterns.md](./docs/security-patterns.md))
+$ knowns task edit AUTH-042 --plan $'1. Review security patterns (see @doc/security-patterns)
 2. Design token generation with 1-hour expiry
-3. Create email template (see [email-templates.md](./docs/email-templates.md))
+3. Create email template (see @doc/email-templates)
 4. Implement /forgot-password endpoint
 5. Implement /reset-password endpoint
 6. Add unit tests
@@ -333,7 +333,7 @@ knowns search "auth" --type task --status done --plain
 ### Step 4: Create Implementation Plan
 
 \`\`\`bash
-knowns task edit <id> --plan $'1. Research patterns (see [security-patterns.md](./security-patterns.md))
+knowns task edit <id> --plan $'1. Research patterns (see @doc/security-patterns)
 2. Design middleware
 3. Implement
 4. Add tests
@@ -342,7 +342,7 @@ knowns task edit <id> --plan $'1. Research patterns (see [security-patterns.md](
 
 > **CRITICAL**:
 > - Share plan with user and **WAIT for approval** before coding
-> - Include doc references using \`[file.md](./path/file.md)\` format
+> - Include doc references using \`@doc/<path>\` format
 
 ### Step 5: Implement
 
@@ -484,14 +484,12 @@ Clear summary (WHAT needs to be done).
 
 ### Description
 
-Explains WHY and WHAT (not HOW). **Link related docs using \`[file.md](./path/file.md)\`**
+Explains WHY and WHAT (not HOW). **Link related docs using \`@doc/<path>\`**
 
 \`\`\`markdown
 We need JWT authentication because sessions don't scale for our microservices architecture.
 
-Related docs:
-- [security-patterns.md](./docs/security-patterns.md)
-- [api-guidelines.md](./docs/api-guidelines.md)
+Related docs: @doc/security-patterns, @doc/api-guidelines
 \`\`\`
 
 ### Acceptance Criteria
@@ -509,7 +507,7 @@ Related docs:
 HOW to solve. Added AFTER taking task, BEFORE coding.
 
 \`\`\`markdown
-1. Research JWT libraries (see [security-patterns.md](./docs/security-patterns.md))
+1. Research JWT libraries (see @doc/security-patterns)
 2. Design token structure (access + refresh tokens)
 3. Implement auth middleware
 4. Add unit tests (aim for 90%+ coverage)
@@ -626,7 +624,7 @@ Use **lowercase with hyphens**:
 | Assume you know the conventions | Read CONVENTIONS/ARCHITECTURE docs |
 | Plan without checking docs | Read docs before planning |
 | Ignore similar completed tasks | Search done tasks for patterns |
-| Missing doc links in description/plan | Link docs using \`[file.md](./path)\` |
+| Missing doc links in description/plan | Link docs using \`@doc/<path>\` |
 | Forget \`--plain\` flag | Always use \`--plain\` for AI |
 | Code before plan approval | Share plan, WAIT for approval |
 | Mark done without all criteria | Check ALL criteria first |
@@ -702,7 +700,7 @@ EOF
 ### During Work
 
 - [ ] Implementation plan created and approved
-- [ ] Doc links included in plan: \`[file.md](./path/file.md)\`
+- [ ] Doc links included in plan: \`@doc/<path>\`
 - [ ] Criteria checked as completed: \`--check-ac <index>\`
 - [ ] Progress notes appended: \`--append-notes "✓ ..."\`
 
@@ -733,7 +731,7 @@ knowns time start <id>
 knowns search "keyword" --type doc --plain
 knowns doc view "Doc Name" --plain
 knowns search "keyword" --type task --status done --plain  # Learn from history
-knowns task edit <id> --plan $'1. Step (see [file.md](./file.md))\\n2. Step'
+knowns task edit <id> --plan $'1. Step (see @doc/file)\\n2. Step'
 # ... wait for approval, then implement ...
 knowns task edit <id> --check-ac 1 --check-ac 2
 knowns task edit <id> --append-notes "✓ Completed feature"

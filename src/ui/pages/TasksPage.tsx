@@ -152,11 +152,15 @@ export default function TasksPage({
 						>
 							<option value="all">All Tasks</option>
 							<option value="root">Root Tasks Only</option>
-							{parentTasks.map((parent) => (
-								<option key={parent.id} value={parent.id}>
-									Subtasks of #{parent.id}: {parent.title}
-								</option>
-							))}
+							{parentTasks.map((parent) => {
+								const fullText = `Subtasks of #${parent.id}: ${parent.title}`;
+								const displayText = fullText.length > 60 ? fullText.substring(0, 60) + "..." : fullText;
+								return (
+									<option key={parent.id} value={parent.id} title={fullText}>
+										{displayText}
+									</option>
+								);
+							})}
 						</select>
 
 						<span className={textSecondary}>
