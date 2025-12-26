@@ -158,6 +158,8 @@ describe("Task CLI Integration Tests", () => {
 				timeEntries: [],
 			});
 
+			await new Promise((resolve) => setTimeout(resolve, 1)); // Introduce a small delay
+
 			const updated = await fileStore.updateTask(task.id, {
 				title: "Updated Title",
 			});
