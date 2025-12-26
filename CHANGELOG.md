@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2025-12-27
+
+### Fixed
+- **Web UI**: Fixed layout breaking with long parent task titles in dropdowns and displays
+  - Truncated long titles in parent task selection dropdowns (TasksPage and TaskCreateForm)
+  - Changed parent task display from button to div with proper accessibility attributes in TaskDetailModal
+  - Added `w-full` constraint to prevent buttons from expanding to 1200px width
+  - Implemented proper text truncation with `truncate`, `flex-1`, `min-w-0`, and `overflow-hidden` classes
+  - Added title attributes to show full text on hover for truncated titles
+
 ## [0.1.6] - 2025-12-27
 
 ### Added
@@ -136,6 +146,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLAUDE.md with complete guidelines for AI agents
 - Example workflows and patterns
 
+[0.1.7]: https://github.com/knowns-dev/knowns/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/knowns-dev/knowns/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/knowns-dev/knowns/compare/v0.1.3...v0.1.5
 [0.1.3]: https://github.com/knowns-dev/knowns/compare/v0.1.2...v0.1.3

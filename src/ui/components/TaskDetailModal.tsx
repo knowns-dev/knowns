@@ -798,8 +798,8 @@ export default function TaskDetailModal({
 						</ScrollArea>
 
 						{/* Sidebar */}
-						<ScrollArea className={`w-full md:w-64 ${isDark ? "bg-gray-750" : "bg-gray-50"} border-t md:border-t-0 md:border-l ${borderColor}`}>
-							<div className="p-4 space-y-4">
+						<ScrollArea className={`w-full md:w-64 md:max-w-64 ${isDark ? "bg-gray-750" : "bg-gray-50"} border-t md:border-t-0 md:border-l ${borderColor}`}>
+							<div className="p-4 space-y-4 max-w-full overflow-hidden">
 								{/* Status */}
 								<div>
 									<label
@@ -946,19 +946,22 @@ export default function TaskDetailModal({
 												>
 													Parent Task
 												</label>
-												<button
-													type="button"
+												<div
+										  title={`#${parentTask.id} ${parentTask.title}`}
+													role="button"
+													tabIndex={0}
 													onClick={() => onNavigateToTask?.(parentTask.id)}
-													className={`w-full flex items-center gap-2 ${bgCard} rounded-lg px-3 py-2 text-sm text-left ${hoverBg} border ${borderColor}`}
+													onKeyDown={(e) => e.key === 'Enter' && onNavigateToTask?.(parentTask.id)}
+													className={`w-56 flex items-center gap-2 ${bgCard} rounded-lg px-3 py-2 text-sm text-left ${hoverBg} border ${borderColor} overflow-hidden cursor-pointer`}
 												>
 													<ArrowUp className="w-4 h-4" />
-													<div className="flex-1 min-w-0">
+													<div className="flex-1 min-w-0 overflow-hidden">
 														<span className={`text-xs ${textMuted} font-mono`}>
 															#{parentTask.id}
 														</span>
 														<p className={`${textSecondary} truncate`}>{parentTask.title}</p>
 													</div>
-												</button>
+												</div>
 											</div>
 										);
 									})()}
@@ -977,15 +980,16 @@ export default function TaskDetailModal({
 												if (!subtask) return null;
 												return (
 													<button
+													  title={`#${subtask.id} ${subtask.title}`}
 														key={subtaskId}
 														type="button"
 														onClick={() => onNavigateToTask?.(subtaskId)}
-														className={`w-full flex items-center gap-2 ${bgCard} rounded-lg px-3 py-2 text-sm text-left ${hoverBg} border ${borderColor}`}
+														className={`w-56 flex items-center gap-2 ${bgCard} rounded-lg px-3 py-2 text-sm text-left ${hoverBg} border ${borderColor} overflow-hidden`}
 													>
 														<span
 															className={`w-2 h-2 rounded-full ${subtask.status === "done" ? "bg-green-500" : "bg-gray-400"}`}
 														/>
-														<div className="flex-1 min-w-0">
+														<div className="flex-1 min-w-0 overflow-hidden">
 															<span className={`text-xs ${textMuted} font-mono`}>
 																#{subtask.id}
 															</span>

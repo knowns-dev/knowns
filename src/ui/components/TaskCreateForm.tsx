@@ -475,8 +475,9 @@ export default function TaskCreateForm({
 									<AssigneeDropdown
 										value={assignee}
 										onChange={setAssignee}
+										showGrabButton={false}
 										currentUser={currentUser}
-										showGrabButton={true}
+										container={contentRef.current}
 									/>
 								</div>
 
@@ -574,15 +575,19 @@ export default function TaskCreateForm({
 													setParentId(e.target.value);
 													setSelectingParent(false);
 												}}
-												className={`w-full border ${borderColor} rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 ${inputBg}`}
+												className={`w-56 border ${borderColor} rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 ${inputBg}`}
 												disabled={saving}
 											>
 												<option value="">None</option>
-												{allTasks.map((t) => (
-													<option key={t.id} value={t.id}>
-														#{t.id} - {t.title}
-													</option>
-												))}
+												{allTasks.map((t) => {
+													const fullText = `#${t.id} - ${t.title}`;
+													const displayText = fullText.length > 60 ? fullText.substring(0, 60) + "..." : fullText;
+													return (
+														<option key={t.id} value={t.id} title={fullText}>
+															{displayText}
+														</option>
+													);
+												})}
 											</select>
 											<button
 												type="button"
@@ -596,7 +601,7 @@ export default function TaskCreateForm({
 										<button
 											type="button"
 											onClick={() => setSelectingParent(true)}
-											className={`w-full flex items-center gap-2 ${bgCard} rounded-lg px-3 py-2 text-sm text-left ${hoverBg} transition-colors border ${borderColor}`}
+											className={`w-56 flex items-center gap-2 ${bgCard} rounded-lg px-3 py-2 text-sm text-left ${hoverBg} transition-colors border ${borderColor}`}
 											disabled={saving}
 										>
 											<span className={textMuted}>
