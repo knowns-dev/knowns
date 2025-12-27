@@ -5,7 +5,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { basename, dirname, join, relative } from "node:path";
@@ -52,7 +52,8 @@ export async function startServer(options: ServerOptions) {
 	};
 
 	// Find the UI files in the installed package
-	const currentFile = fileURLToPath(import.meta.url);
+	// Use realpathSync to resolve symlinks (bun creates symlinks in ~/.bun/bin/)
+	const currentFile = realpathSync(fileURLToPath(import.meta.url));
 	const currentDir = dirname(currentFile);
 
 	// Try to find package root by checking parent directories
@@ -643,7 +644,8 @@ export async function startServer(options: ServerOptions) {
 	app.get("/{*path}", (_req: Request, res: Response) => {
 		const indexPath = join(uiDistPath, "index.html");
 		if (existsSync(indexPath)) {
-			res.sendFile(indexPath);
+			// Use root option for more reliable path resolution
+			res.sendFile("index.html", { root: uiDistPath });
 		} else {
 			res.status(404).send("Not Found");
 		}

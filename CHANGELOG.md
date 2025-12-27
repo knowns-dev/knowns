@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2025-12-28
+
+### Fixed
+- **Web UI Static Files**: Fixed `NotFoundError` when running `knowns browser` from global install
+  - Bun creates symlinks in `~/.bun/bin/` which broke path resolution for UI files
+  - Added `realpathSync` to resolve symlinks before computing paths
+  - Changed Express `sendFile` to use `root` option for reliable file serving
+
 ## [0.2.0] - 2025-12-27
 
 ### Added
