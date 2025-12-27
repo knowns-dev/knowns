@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - CLI can now be built with `node scripts/build-cli.js` (no Bun required)
   - Uses ESM format with `createRequire` shim for CommonJS compatibility
   - Builds both main CLI and MCP server
+  - Properly strips old shebangs and adds Node.js-compatible shebang
+- **CI/CD**: Updated GitHub Actions workflows to use only Node.js and npm
+  - Removed Bun dependency from CI/CD pipelines
+  - Both `ci.yml` and `publish.yml` now use `npm ci`, `npm test`, `npm run build`
+  - Added npm cache for faster builds
+- **Testing**: Migrated from `bun test` to `vitest`
+  - Added `vitest.config.ts` with path aliases support
+  - All 76 tests passing with vitest
 
 ### Fixed
 - **File Deletion**: Fixed improper file deletion that was clearing files instead of deleting them
@@ -30,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Server Path Detection**: Fixed `import.meta.dir` undefined error when running with Node.js
   - Now uses `fileURLToPath(import.meta.url)` as fallback for Node.js compatibility
   - Added Windows path separator support
+- **Windows Build**: Fixed shebang syntax error when running built CLI on Windows
+  - Build script now strips BOM and old shebangs before adding Node.js shebang
+  - Added `.npmrc` with `legacy-peer-deps=true` for React 19 compatibility
+- **Web UI Doc Update**: Fixed "path must be string" error when updating docs
+  - Express 5 wildcard `{*path}` returns array, now properly joined to string
 
 ### Changed
 - **Server Architecture**: Complete rewrite of `src/server/index.ts`

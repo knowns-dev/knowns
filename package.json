@@ -29,7 +29,7 @@
 		"build:ui": "vite build",
 		"start": "bun run src/index.ts",
 		"mcp": "bun run src/mcp/server.ts",
-		"test": "bun test",
+		"test": "vitest run",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
 		"format": "biome format --write .",
@@ -84,6 +84,7 @@
 		"nodemon": "^3.1.11",
 		"tailwindcss": "^4.1.18",
 		"typescript": "^5.7.2",
-		"vite": "^7.3.0"
+		"vite": "^7.3.0",
+		"vitest": "^4.0.16"
 	}
 }

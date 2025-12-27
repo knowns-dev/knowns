@@ -263,7 +263,8 @@ export async function startServer(options: ServerOptions) {
 	// GET /api/docs/:path - Get single doc by path (supports nested paths)
 	app.get("/api/docs/{*path}", async (req: Request, res: Response) => {
 		try {
-			const docPath = req.params.path;
+			// Express 5 wildcard returns array, join to get path string
+			const docPath = Array.isArray(req.params.path) ? req.params.path.join("/") : req.params.path;
 			const docsDir = join(store.projectRoot, ".knowns", "docs");
 			const fullPath = join(docsDir, docPath);
 
@@ -307,7 +308,8 @@ export async function startServer(options: ServerOptions) {
 	// PUT /api/docs/:path - Update existing doc (supports nested paths)
 	app.put("/api/docs/{*path}", async (req: Request, res: Response) => {
 		try {
-			const docPath = req.params.path;
+			// Express 5 wildcard returns array, join to get path string
+			const docPath = Array.isArray(req.params.path) ? req.params.path.join("/") : req.params.path;
 			const docsDir = join(store.projectRoot, ".knowns", "docs");
 			const fullPath = join(docsDir, docPath);
 

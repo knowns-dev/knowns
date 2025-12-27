@@ -1,7 +1,7 @@
 /**
  * Unit Tests for Project Domain Model
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { type Project, type ProjectSettings, createDefaultProjectSettings, createProject } from "./project";
 
 describe("Project Entity", () => {

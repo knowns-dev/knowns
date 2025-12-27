@@ -1,7 +1,7 @@
 /**
  * Unit Tests for Version Domain Model
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import type { Task } from "./task";
 import {
 	TRACKED_FIELDS,
