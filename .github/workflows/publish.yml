@@ -24,34 +24,30 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          bun-version: latest
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: npm ci
 
       - name: Run linter
-        run: bun run lint
+        run: npm run lint
 
       - name: Run tests
-        run: bun test
+        run: npm test
 
       - name: Build project
-        run: bun run build
+        run: npm run build
 
       - name: Verify build output
         run: |
           ls -la dist/
           echo "Checking if dist/index.js exists..."
           test -f dist/index.js || (echo "Error: dist/index.js not found" && exit 1)
-
-      - name: Setup Node.js (for npm publish)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Publish to npm
         run: npm publish --provenance --access public

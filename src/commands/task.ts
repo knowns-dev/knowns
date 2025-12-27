@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { Task, TaskPriority, TaskStatus, TaskVersion } from "@models/index";
 import { DEFAULT_STATUSES, isValidTaskPriority, isValidTaskStatus } from "@models/index";
 import { FileStore } from "@storage/file-store";
+import { file, write } from "@utils/bun-compat";
 import { formatDocReferences, resolveDocReferences } from "@utils/doc-links";
 import { findProjectRoot } from "@utils/find-project-root";
 import { buildTaskMap, transformMentionsToRefs } from "@utils/mention-refs";
@@ -986,8 +987,8 @@ const archiveCommand = new Command("archive")
 			const newPath = join(archiveDir, taskFile);
 
 			// Copy file to archive
-			const content = await Bun.file(oldPath).text();
-			await Bun.write(newPath, content);
+			const content = await file(oldPath).text();
+			await write(newPath, content);
 
 			// Delete original file
 			await unlink(oldPath);
@@ -1033,8 +1034,8 @@ const unarchiveCommand = new Command("unarchive")
 			const tasksFilePath = join(tasksPath, taskFile);
 
 			// Copy file back to tasks
-			const content = await Bun.file(archivePath).text();
-			await Bun.write(tasksFilePath, content);
+			const content = await file(archivePath).text();
+			await write(tasksFilePath, content);
 
 			// Delete from archive
 			await unlink(archivePath);

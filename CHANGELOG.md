@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2025-12-27
+
+### Added
+- **Node.js Runtime Support**: Browser command now works with both Bun and Node.js
+  - Migrated server from `Bun.serve()` to Express + ws
+  - Added `express`, `ws`, and `cors` dependencies
+  - WebSocket real-time sync works on both runtimes
+- **Bun Compatibility Layer**: New `src/utils/bun-compat.ts` utility providing cross-runtime support
+  - `file()` - Bun.file() compatible wrapper for reading files
+  - `write()` - Bun.write() compatible wrapper for writing files
+  - `bunSpawn()` - Bun.spawn() compatible wrapper for process spawning
+  - CLI commands now work with both Bun and Node.js runtimes
+- **Build Scripts**: Added `scripts/build-cli.js` using esbuild for Node.js-compatible builds
+  - CLI can now be built with `node scripts/build-cli.js` (no Bun required)
+  - Uses ESM format with `createRequire` shim for CommonJS compatibility
+  - Builds both main CLI and MCP server
+  - Properly strips old shebangs and adds Node.js-compatible shebang
+- **CI/CD**: Updated GitHub Actions workflows to use only Node.js and npm
+  - Removed Bun dependency from CI/CD pipelines
+  - Both `ci.yml` and `publish.yml` now use `npm ci`, `npm test`, `npm run build`
+  - Added npm cache for faster builds
+- **Testing**: Migrated from `bun test` to `vitest`
+  - Added `vitest.config.ts` with path aliases support
+  - All 76 tests passing with vitest
+
+### Fixed
+- **File Deletion**: Fixed improper file deletion that was clearing files instead of deleting them
+  - Changed from `Bun.write(path, "")` to proper `unlink()` in `file-store.ts` and `version-store.ts`
+  - Tasks and version history are now properly deleted when archived or removed
+- **Browser Command**: Fixed browser opening on non-Bun runtimes with proper `spawn()` fallback
+- **Server Path Detection**: Fixed `import.meta.dir` undefined error when running with Node.js
+  - Now uses `fileURLToPath(import.meta.url)` as fallback for Node.js compatibility
+  - Added Windows path separator support
+- **Windows Build**: Fixed shebang syntax error when running built CLI on Windows
+  - Build script now strips BOM and old shebangs before adding Node.js shebang
+  - Added `.npmrc` with `legacy-peer-deps=true` for React 19 compatibility
+- **Web UI Doc Update**: Fixed "path must be string" error when updating docs
+  - Express 5 wildcard `{*path}` returns array, now properly joined to string
+
+### Changed
+- **Server Architecture**: Complete rewrite of `src/server/index.ts`
+  - Replaced `Bun.serve()` with Express HTTP server
+  - Replaced Bun WebSocket API with `ws` library
+  - All 15 API routes migrated to Express router pattern
+  - Static file serving now uses `express.static()`
+- Refactored file operations across multiple modules to use the new compatibility layer:
+  - `src/commands/task.ts` - Archive/unarchive operations
+  - `src/commands/time.ts` - Time tracking data persistence
+  - `src/storage/file-store.ts` - Task and project storage
+  - `src/storage/version-store.ts` - Version history storage
+- Simplified `src/utils/bun-compat.ts` - removed `serve()` function (now using Express)
+
 ## [0.1.7] - 2025-12-27
 
 ### Fixed
@@ -146,6 +198,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLAUDE.md with complete guidelines for AI agents
 - Example workflows and patterns
 
+[0.1.8]: https://github.com/knowns-dev/knowns/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/knowns-dev/knowns/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/knowns-dev/knowns/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/knowns-dev/knowns/compare/v0.1.3...v0.1.5

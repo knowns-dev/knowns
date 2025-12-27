@@ -1,7 +1,7 @@
 /**
  * Unit Tests for Task Domain Model
  */
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "vitest";
 import {
 	type AcceptanceCriterion,
 	type Task,

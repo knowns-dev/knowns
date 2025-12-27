@@ -4,6 +4,7 @@
  */
 
 import { FileStore } from "@storage/file-store";
+import { file, write } from "@utils/bun-compat";
 import { findProjectRoot } from "@utils/find-project-root";
 import { notifyTaskUpdate } from "@utils/notify-server";
 import chalk from "chalk";
@@ -56,9 +57,10 @@ function getProjectRoot(): string {
  * Load time tracking data
  */
 async function loadTimeData(projectRoot: string): Promise<TimeData> {
-	const file = Bun.file(`${projectRoot}/.knowns/time.json`);
-	if (await file.exists()) {
-		return await file.json();
+	const f = file(`${projectRoot}/.knowns/time.json`);
+	if (await f.exists()) {
+		const content = await f.text();
+		return JSON.parse(content);
 	}
 	return { active: null };
 }
@@ -67,7 +69,7 @@ async function loadTimeData(projectRoot: string): Promise<TimeData> {
  * Save time tracking data
  */
 async function saveTimeData(projectRoot: string, data: TimeData): Promise<void> {
-	await Bun.write(`${projectRoot}/.knowns/time.json`, JSON.stringify(data, null, 2));
+	await write(`${projectRoot}/.knowns/time.json`, JSON.stringify(data, null, 2));
 }
 
 /**

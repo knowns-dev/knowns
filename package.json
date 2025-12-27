@@ -1,6 +1,6 @@
 {
 	"name": "knowns",
-	"version": "0.1.7",
+	"version": "0.1.8",
 	"description": "CLI tool for dev teams to manage tasks and documentation",
 	"module": "index.ts",
 	"type": "module",
@@ -24,12 +24,12 @@
 	"scripts": {
 		"dev": "bun run --watch src/index.ts browser --no-open",
 		"watch": "nodemon",
-		"build": "bun run build:cli && bun run build:ui",
-		"build:cli": "bun build src/index.ts --outdir dist --target bun && bun build src/mcp/server.ts --outdir dist/mcp --target bun",
+		"build": "npm run build:cli && npm run build:ui",
+		"build:cli": "node scripts/build-cli.js",
 		"build:ui": "vite build",
 		"start": "bun run src/index.ts",
 		"mcp": "bun run src/mcp/server.ts",
-		"test": "bun test",
+		"test": "vitest run",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
 		"format": "biome format --write .",
@@ -51,6 +51,8 @@
 		"clsx": "^2.1.1",
 		"cmdk": "^1.1.1",
 		"commander": "^12.1.0",
+		"cors": "^2.8.5",
+		"express": "^5.2.1",
 		"gray-matter": "^4.0.3",
 		"lucide-react": "^0.562.0",
 		"marked": "^17.0.1",
@@ -61,23 +63,28 @@
 		"tailwind-merge": "^3.4.0",
 		"turndown": "^7.2.2",
 		"unist-util-visit": "^5.0.0",
+		"ws": "^8.18.3",
 		"zod": "^4.2.1"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.4",
 		"@tailwindcss/vite": "^4.1.18",
 		"@types/bun": "latest",
+		"@types/express": "^5.0.6",
 		"@types/prompts": "^2.4.9",
 		"@types/react": "^19.2.7",
 		"@types/react-dom": "^19.2.3",
+		"@types/ws": "^8.18.1",
 		"@vitejs/plugin-react": "^5.1.2",
 		"autoprefixer": "^10.4.23",
 		"concurrently": "^9.2.1",
+		"esbuild": "^0.27.2",
 		"husky": "^9.1.7",
 		"lint-staged": "^15.2.10",
 		"nodemon": "^3.1.11",
 		"tailwindcss": "^4.1.18",
 		"typescript": "^5.7.2",
-		"vite": "^7.3.0"
+		"vite": "^7.3.0",
+		"vitest": "^4.0.16"
 	}
 }
