@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  CLI tool for dev teams to manage tasks and documentation with AI-first context linking.
+  CLI-first knowledge layer that gives AI persistent memory of your project.
 </p>
 
 <p align="center">
@@ -17,198 +17,149 @@
   <a href="https://www.npmjs.com/package/knowns"><img src="https://img.shields.io/npm/dm/knowns.svg?style=flat-square" alt="npm downloads"></a>
   <a href="https://github.com/knowns-dev/knowns/actions"><img src="https://img.shields.io/github/actions/workflow/status/knowns-dev/knowns/ci.yml?branch=main&style=flat-square&label=CI" alt="CI"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License: MIT"></a>
+  <br>
+  <a href="#"><img src="https://img.shields.io/node/v/knowns?style=flat-square" alt="node version"></a>
+  <a href="#"><img src="https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"></a>
+  <a href="#"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=flat-square" alt="platform"></a>
+  <a href="https://github.com/knowns-dev/knowns/stargazers"><img src="https://img.shields.io/github/stars/knowns-dev/knowns?style=flat-square" alt="GitHub stars"></a>
+  <a href="#"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome"></a>
 </p>
 
 ---
 
-## Why Knowns?
+> **TL;DR:** Knowns is a CLI-first knowledge layer that lets AI reliably read and reuse your project context — instead of asking the same questions every session.
 
-**Problem:** AI assistants lose context between sessions. You repeat the same architecture explanations, patterns, and decisions over and over.
+## The Problem
 
-**Solution:** Knowns links tasks to documentation with structured context that AI can understand and reference automatically.
+AI assistants are stateless — they forget your architecture, patterns, and decisions every session.
+
+```
+Session 1: "Implement feature X" → AI: "How does your auth work?" → You explain
+
+Session 2: "Implement feature Y" → AI: "How does your auth work?" → You explain AGAIN
+
+Session 100: Still explaining the same thing...
+```
+
+## The Solution
+
+```bash
+# Document once
+knowns doc create "Auth Pattern" -d "JWT with guards" -f patterns
+
+# Reference everywhere
+knowns task create "Add login" -d "Follow @doc/patterns/auth-pattern"
+
+# AI reads context automatically — never forgets
+```
+
+**How it works:**
+
+1. **You plan** — Create tasks with acceptance criteria in Web UI or CLI
+2. **You link** — Reference docs like `@doc/patterns/auth` in task descriptions
+3. **AI executes** — Tell AI *"Work on task 42"*, it reads the task, follows the refs, and implements
+
+Knowns resolves `@doc/...` and `@task-...` into real files. AI reads them via [MCP](./docs/mcp-integration.md) or `--plain` output — no copy-paste needed.
+
+## Install
+
+```bash
+# using npm
+npm install -g knowns
+
+# using bun
+bun install -g knowns
+
+
+knowns init
+knowns browser  # Open Web UI
+```
+
+---
+
+## Why Knowns over Notion / Jira / Obsidian?
+
+| | Knowns | Notion/Jira | Obsidian |
+|---|--------|-------------|----------|
+| **AI-readable** | `--plain` output, MCP server | Copy-paste manually | Plugins needed |
+| **File-based** | Git-friendly `.knowns/` folder | Cloud-locked | Local files |
+| **CLI-first** | Full CLI + Web UI | Web only | GUI only |
+| **Context linking** | `@doc/...` `@task-42` refs | Manual links | Wiki links |
+| **Source of truth** | Local files (Git-versioned) | Remote database | Local vault |
+| **Minimal setup** | `knowns init` and done | Complex setup | Many plugins |
+
+**Best for:** Dev teams who pair with AI and want persistent project memory.
 
 ## Features
 
 | Feature | Description |
 |---------|-------------|
-| 🎯 **Task Management** | Create, track, and manage tasks with acceptance criteria |
-| 📚 **Documentation** | Nested folder structure with markdown support |
-| ⏱️ **Time Tracking** | Built-in timers and time reports |
-| 🔗 **Context Linking** | `@task-42` and `@doc/patterns/auth` references |
-| 🤖 **AI Integration** | MCP Server for Claude Desktop, `--plain` output for AI |
-| 🌐 **Web UI** | Kanban board, document browser, dark mode |
-| 🔄 **Agent Sync** | Sync guidelines to Claude, Gemini, Copilot |
+| **Task Management** | Create, track tasks with acceptance criteria |
+| **Documentation** | Nested folders with markdown support |
+| **Time Tracking** | Built-in timers and reports |
+| **Context Linking** | `@task-42` and `@doc/patterns/auth` references |
+| **AI Integration** | MCP Server for Claude, `--plain` output |
+| **Web UI** | Kanban board, doc browser, dark mode |
 
-## Installation
+---
 
-```bash
-# Using npm
-npm install -g knowns
-
-# Using bun
-bun install -g knowns
-```
-
-## Quick Start
+## Quick Reference
 
 ```bash
-# Initialize project
-knowns init
-
-# Create documentation
-knowns doc create "Auth Pattern" -d "JWT authentication" -t "patterns" -f patterns
-
-# Create task with context
-knowns task create "Add authentication" \
-  -d "Implement JWT auth following @doc/patterns/auth-pattern" \
-  --ac "User can login" \
-  --ac "Session persists"
-
-# View task (AI-readable)
-knowns task view 1 --plain
-
-# Open Web UI
-knowns browser
-```
-
-## Commands
-
-### Tasks
-
-```bash
+# Tasks
 knowns task create "Title" -d "Description" --ac "Criterion"
-knowns task view <id> --plain
 knowns task list --plain
+knowns task view <id> --plain
 knowns task edit <id> -s in-progress -a @me
-knowns task edit <id> --check-ac 1 --check-ac 2
-knowns task edit <id> --plan "1. Step 1\n2. Step 2"
-knowns task edit <id> --notes "Implementation summary"
-```
 
-### Documentation
-
-```bash
-knowns doc create "Title" -d "Description" -t "tags" -f "folder"
+# Documentation
+knowns doc create "Title" -d "Description" -f "folder"
 knowns doc view "doc-name" --plain
-knowns doc list --plain
-knowns doc edit "doc-name" -c "New content"
-knowns doc edit "doc-name" -a "Appended content"
-```
 
-### Time Tracking
-
-```bash
-knowns time start <task-id>
-knowns time stop
-knowns time status
-knowns time report --from "2025-01-01" --to "2025-12-31"
-```
-
-### Search
-
-```bash
+# Time & Search
+knowns time start <id> && knowns time stop
 knowns search "query" --plain
-knowns search "auth" --type task --plain
-knowns search "patterns" --type doc --plain
 ```
 
-### Other
+---
 
-```bash
-knowns browser              # Open Web UI
-knowns agents --update-instructions  # Sync AI guidelines
-knowns mcp                  # Start MCP server
-```
+## Documentation
 
-## Reference System
+| Guide | Description |
+|-------|-------------|
+| [Command Reference](./docs/commands.md) | All CLI commands with examples |
+| [Workflow Guide](./docs/workflow.md) | Task lifecycle from creation to completion |
+| [Reference System](./docs/reference-system.md) | How `@doc/` and `@task-` linking works |
+| [Web UI](./docs/web-ui.md) | Kanban board and document browser |
+| [MCP Integration](./docs/mcp-integration.md) | Claude Desktop setup |
+| [Configuration](./docs/configuration.md) | Project structure and options |
+| [AI Workflow](./docs/ai-workflow.md) | Guide for AI agents |
 
-Link tasks and docs using `@` syntax:
+---
 
-| Type | Input | Output |
-|------|-------|--------|
-| Task | `@task-42` | `@.knowns/tasks/task-42 - Title.md` |
-| Doc | `@doc/patterns/auth` | `@.knowns/docs/patterns/auth.md` |
+## Roadmap
 
-**Example:**
-```markdown
-Implement auth following @doc/patterns/guards
-Related: @task-42 @task-38
-```
+### Self-Hosted Team Sync 🚧 (Planned)
 
-AI reads task → sees refs → fetches context → implements correctly.
+Knowns will optionally support a self-hosted sync server — for teams that want shared visibility without giving up local-first workflows.
 
-## Web UI
+- **Real-time visibility** — See who is working on what
+- **Shared knowledge** — Sync tasks and documentation across the team
+- **Progress tracking** — Track activity over time
+- **Full data control** — Self-hosted, no cloud dependency
 
-```bash
-knowns browser
-```
+The CLI and local `.knowns/` folder remain the source of truth.
+The server acts only as a sync and visibility layer.
 
-Features:
-- **Kanban Board** - Drag & drop tasks
-- **Document Browser** - Tree view with markdown preview
-- **Task Details** - Inline editing with acceptance criteria
-- **Dark Mode** - System preference aware
-- **Global Search** - Cmd+K
-
-## MCP Server (Claude Desktop)
-
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "knowns": {
-      "command": "knowns",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-Claude can now read your tasks and documentation automatically.
-
-## Project Structure
-
-```
-.knowns/
-├── tasks/              # Task markdown files
-├── docs/               # Documentation
-│   ├── patterns/
-│   ├── guides/
-│   └── architecture/
-└── config.json         # Project config
-```
-
-## Task Workflow
-
-```bash
-# 1. Take task
-knowns task edit <id> -s in-progress -a @me
-
-# 2. Start timer
-knowns time start <id>
-
-# 3. Create plan
-knowns task edit <id> --plan "1. Research\n2. Implement\n3. Test"
-
-# 4. Work & check criteria
-knowns task edit <id> --check-ac 1 --check-ac 2
-
-# 5. Add notes
-knowns task edit <id> --notes "Implementation complete"
-
-# 6. Stop timer & complete
-knowns time stop
-knowns task edit <id> -s done
-```
+---
 
 ## Development
 
 ```bash
-bun install
-bun run dev      # Dev mode
-bun run build    # Build
-bun run lint     # Lint
+npm install
+npm run dev      # Dev mode
+npm run build    # Build
+npm run test     # Test
 ```
 
 ## Links
@@ -216,6 +167,10 @@ bun run lint     # Lint
 - [npm](https://www.npmjs.com/package/knowns)
 - [GitHub](https://github.com/knowns-dev/knowns)
 - [Changelog](./CHANGELOG.md)
+
+For design principles and long-term direction, see [Philosophy](./PHILOSOPHY.md).
+
+For technical details, see [Architecture](./ARCHITECTURE.md) and [Contributing](./CONTRIBUTING.md).
 
 ---
 

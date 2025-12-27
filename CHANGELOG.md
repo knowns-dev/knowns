@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2025-12-27
+
+### Added
+- **Project Documentation**: Comprehensive project docs for contributors and users
+  - `PHILOSOPHY.md` - 10 core principles guiding Knowns design
+  - `ARCHITECTURE.md` - Technical overview, diagrams, data flow, sync logic
+  - `CONTRIBUTING.md` - Contribution guidelines aligned with philosophy
+  - `docs/` folder with detailed guides:
+    - `commands.md` - Full CLI command reference
+    - `workflow.md` - Task lifecycle guide
+    - `reference-system.md` - How `@doc/` and `@task-` linking works
+    - `web-ui.md` - Kanban board and document browser guide
+    - `mcp-integration.md` - Claude Desktop MCP setup
+    - `configuration.md` - Project structure and options
+    - `ai-workflow.md` - Guide for AI agents
+
+- **README Improvements**:
+  - Added TL;DR section for quick understanding
+  - Added comparison table vs Notion/Jira/Obsidian
+  - Added "How it works" 3-step explanation
+  - Added Roadmap section with Self-Hosted Team Sync (planned)
+  - New badges: Node version, TypeScript, Platform, GitHub stars, PRs welcome
+  - Links to Philosophy, Architecture, and Contributing docs
+
+- **Node.js Engine Requirement**: Added `engines.node >= 18.0.0` to package.json
+
+### Changed
+- **README Restructure**: Optimized for first impressions
+  - Moved detailed docs to `./docs/` folder
+  - Shortened main README from ~300 to ~175 lines
+  - Documentation table links to detailed guides
+- **Tagline**: Updated to "CLI-first knowledge layer that gives AI persistent memory of your project"
+- **Version Display**: Now reads directly from package.json (works with both npm and bun)
+
+### Fixed
+- **UI Version Display**: Fixed version showing "dev" or old version when built with bun
+  - Vite config now reads version directly from package.json instead of `npm_package_version`
+- **Doc Mention Regex**: Fixed badge not rendering for `@doc/path` without `.md` extension
+  - Changed regex from `/@doc\/([^\s]+\.md)/g` to `/@docs?\/([^\s)]+)/g`
+  - Added `normalizeDocPath()` to automatically add `.md` extension
+
 ## [0.1.8] - 2025-12-27
 
 ### Added
@@ -198,6 +239,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLAUDE.md with complete guidelines for AI agents
 - Example workflows and patterns
 
+[0.2.0]: https://github.com/knowns-dev/knowns/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/knowns-dev/knowns/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/knowns-dev/knowns/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/knowns-dev/knowns/compare/v0.1.5...v0.1.6

@@ -1,6 +1,6 @@
 {
 	"name": "knowns",
-	"version": "0.1.8",
+	"version": "0.2.0",
 	"description": "CLI tool for dev teams to manage tasks and documentation",
 	"module": "index.ts",
 	"type": "module",
@@ -13,6 +13,9 @@
 	"keywords": ["cli", "task-management", "documentation", "knowledge-base", "team-tools", "developer-tools"],
 	"author": "howznguyen <howznguyen@knowns.dev>",
 	"license": "MIT",
+	"engines": {
+		"node": ">=18.0.0"
+	},
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/knowns-dev/knowns.git"
