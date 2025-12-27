@@ -44,12 +44,16 @@ const __filename = __fileURLToPath(import.meta.url);
 const __dirname = __dirname_fn(__filename);
 `;
 
-// Add shebang to built file (ensures it's first, no BOM)
+// Add shebang to built file (ensures it's first, no BOM, removes old shebangs)
 function addShebang(filePath) {
 	let content = readFileSync(filePath, "utf8");
 	// Remove BOM if present
 	if (content.charCodeAt(0) === 0xfeff) {
 		content = content.slice(1);
+	}
+	// Remove any existing shebangs (handles Windows line endings too)
+	while (content.startsWith("#!")) {
+		content = content.replace(/^#![^\r\n]*[\r\n]+/, "");
 	}
 	writeFileSync(filePath, shebang + content, "utf8");
 }
