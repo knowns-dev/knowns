@@ -4,7 +4,7 @@
  */
 
 import * as esbuild from "esbuild";
-import { readFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -32,15 +32,27 @@ const stripShebangPlugin = {
 	},
 };
 
-// Banner to add shebang and create require for ESM
-const esmBanner = `#!/usr/bin/env node
-import { createRequire } from 'module';
+// Shebang (added separately to avoid BOM issues on Windows)
+const shebang = "#!/usr/bin/env node\n";
+
+// Banner to create require for ESM (shebang added after build)
+const esmBanner = `import { createRequire } from 'module';
 import { fileURLToPath as __fileURLToPath } from 'url';
 import { dirname as __dirname_fn } from 'path';
 const require = createRequire(import.meta.url);
 const __filename = __fileURLToPath(import.meta.url);
 const __dirname = __dirname_fn(__filename);
 `;
+
+// Add shebang to built file (ensures it's first, no BOM)
+function addShebang(filePath) {
+	let content = readFileSync(filePath, "utf8");
+	// Remove BOM if present
+	if (content.charCodeAt(0) === 0xfeff) {
+		content = content.slice(1);
+	}
+	writeFileSync(filePath, shebang + content, "utf8");
+}
 
 // Common build options
 const commonOptions = {
@@ -59,20 +71,25 @@ const commonOptions = {
 async function build() {
 	console.log("Building CLI with esbuild...");
 
+	const mainOut = join(rootDir, "dist", "index.js");
+	const mcpOut = join(rootDir, "dist", "mcp", "server.js");
+
 	// Build main CLI
 	await esbuild.build({
 		...commonOptions,
 		entryPoints: [join(rootDir, "src", "index.ts")],
-		outfile: join(rootDir, "dist", "index.js"),
+		outfile: mainOut,
 	});
+	addShebang(mainOut);
 	console.log("  ✓ dist/index.js");
 
 	// Build MCP server
 	await esbuild.build({
 		...commonOptions,
 		entryPoints: [join(rootDir, "src", "mcp", "server.ts")],
-		outfile: join(rootDir, "dist", "mcp", "server.js"),
+		outfile: mcpOut,
 	});
+	addShebang(mcpOut);
 	console.log("  ✓ dist/mcp/server.js");
 
 	console.log("\n✓ Build complete!");
