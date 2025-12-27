@@ -1,16 +1,20 @@
 /**
  * Local Server
  * Serves Web UI via `knowns browser`
+ * Uses Express + ws for Node.js compatibility
  */
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { createServer } from "node:http";
+import { basename, dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { FileStore } from "@storage/file-store";
-import { file } from "@utils/bun-compat";
-import type { ServerWebSocket } from "bun";
+import cors from "cors";
+import express, { type Request, type Response } from "express";
 import matter from "gray-matter";
+import { type WebSocket, WebSocketServer } from "ws";
 
 // Check if running in Bun
 const isBun = typeof globalThis.Bun !== "undefined";
@@ -19,10 +23,6 @@ interface ServerOptions {
 	port: number;
 	projectRoot: string;
 	open: boolean;
-}
-
-interface WebSocketData {
-	type: string;
 }
 
 interface DocResult {
@@ -38,28 +38,36 @@ export async function startServer(options: ServerOptions) {
 	const store = new FileStore(projectRoot);
 
 	// Track WebSocket clients
-	const clients = new Set<ServerWebSocket<WebSocketData>>();
+	const clients = new Set<WebSocket>();
 
 	// Broadcast to all connected clients
 	const broadcast = (data: object) => {
 		const msg = JSON.stringify(data);
 		for (const client of clients) {
-			client.send(msg);
+			if (client.readyState === 1) {
+				// WebSocket.OPEN
+				client.send(msg);
+			}
 		}
 	};
 
 	// Find the UI files in the installed package
-	const currentDir = import.meta.dir;
+	const currentFile = fileURLToPath(import.meta.url);
+	const currentDir = dirname(currentFile);
 
 	// Try to find package root by checking parent directories
 	let packageRoot = currentDir;
 
+	// Normalize: remove trailing slashes for consistent checking
+	const normalizedDir = currentDir.replace(/[/\\]+$/, "");
+	const dirName = basename(normalizedDir);
+
 	// If we're in dist/ folder (bundled), go up 1 level to package root
-	if (currentDir.endsWith("/dist")) {
+	if (dirName === "dist") {
 		packageRoot = join(currentDir, "..");
 	}
 	// If we're in src/server (development), go up 2 levels to package root
-	else if (currentDir.includes("/src/server")) {
+	else if (normalizedDir.includes("/src/server") || normalizedDir.includes("\\src\\server")) {
 		packageRoot = join(currentDir, "..", "..");
 	}
 
@@ -70,261 +78,155 @@ export async function startServer(options: ServerOptions) {
 		throw new Error(`UI build not found at ${uiDistPath}. Run 'bun run build:ui' first.`);
 	}
 
-	if (!isBun) {
-		throw new Error("The browser command requires Bun runtime. Please run with: bun knowns browser");
-	}
+	// Create Express app
+	const app = express();
+	app.use(cors());
+	app.use(express.json());
 
-	const server = Bun.serve({
-		port,
+	// Create HTTP server
+	const httpServer = createServer(app);
 
-		async fetch(req, server) {
-			const url = new URL(req.url);
+	// Create WebSocket server
+	const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
-			// WebSocket upgrade
-			if (url.pathname === "/ws") {
-				const upgraded = server.upgrade(req, {
-					data: { type: "client" },
-				});
-				if (upgraded) {
-					return undefined;
-				}
-				return new Response("WebSocket upgrade failed", { status: 500 });
-			}
+	wss.on("connection", (ws) => {
+		clients.add(ws);
 
-			// API Routes
-			if (url.pathname.startsWith("/api/")) {
-				return handleAPI(req, url, store, broadcast);
-			}
+		ws.on("close", () => {
+			clients.delete(ws);
+		});
 
-			// Serve static assets from Vite build (assets folder with hashed names)
-			if (url.pathname.startsWith("/assets/")) {
-				const filePath = join(uiDistPath, url.pathname);
-				const f = file(filePath);
-				if (await f.exists()) {
-					const ext = url.pathname.split(".").pop();
-					const contentType =
-						ext === "js"
-							? "application/javascript"
-							: ext === "css"
-								? "text/css"
-								: ext === "svg"
-									? "image/svg+xml"
-									: ext === "png"
-										? "image/png"
-										: ext === "jpg" || ext === "jpeg"
-											? "image/jpeg"
-											: ext === "woff2"
-												? "font/woff2"
-												: ext === "woff"
-													? "font/woff"
-													: "application/octet-stream";
-					const content = await f.arrayBuffer();
-					return new Response(content, {
-						headers: {
-							"Content-Type": contentType,
-							// Vite assets have content hash, can cache forever
-							"Cache-Control": "public, max-age=31536000, immutable",
-						},
-					});
-				}
-			}
-
-			// Serve index.html for root and SPA routes
-			if (url.pathname === "/" || url.pathname === "/index.html" || !url.pathname.includes(".")) {
-				const indexFile = file(join(uiDistPath, "index.html"));
-				if (await indexFile.exists()) {
-					const content = await indexFile.text();
-					return new Response(content, {
-						headers: {
-							"Content-Type": "text/html",
-							"Cache-Control": "no-cache, no-store, must-revalidate",
-						},
-					});
-				}
-			}
-
-			return new Response("Not Found", { status: 404 });
-		},
-
-		websocket: {
-			open(ws) {
-				clients.add(ws);
-			},
-			close(ws) {
-				clients.delete(ws);
-			},
-			message(_ws, _message) {
-				// Handle client messages if needed
-			},
-		},
+		ws.on("error", (error) => {
+			console.error("WebSocket error:", error);
+			clients.delete(ws);
+		});
 	});
 
-	console.log(`✓ Server running at http://localhost:${port}`);
+	// Serve static assets from Vite build (assets folder with hashed names)
+	app.use(
+		"/assets",
+		express.static(join(uiDistPath, "assets"), {
+			maxAge: "1y",
+			immutable: true,
+		}),
+	);
 
-	if (open) {
-		// Open browser (platform-specific)
-		const openCommand = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-
+	// API Routes
+	// GET /api/tasks
+	app.get("/api/tasks", async (_req: Request, res: Response) => {
 		try {
-			if (isBun) {
-				Bun.spawn([openCommand, `http://localhost:${port}`]);
-			} else {
-				spawn(openCommand, [`http://localhost:${port}`], { stdio: "ignore", shell: true });
-			}
-		} catch (error) {
-			console.error("Failed to open browser:", error);
-		}
-	}
-
-	return server;
-}
-
-// Helper function to recursively find all .md files
-async function findMarkdownFiles(dir: string, baseDir: string): Promise<string[]> {
-	const files: string[] = [];
-	const entries = await readdir(dir, { withFileTypes: true });
-
-	for (const entry of entries) {
-		const fullPath = join(dir, entry.name);
-
-		if (entry.isDirectory()) {
-			// Recursively search subdirectories
-			const subFiles = await findMarkdownFiles(fullPath, baseDir);
-			files.push(...subFiles);
-		} else if (entry.isFile() && entry.name.endsWith(".md")) {
-			// Return relative path from baseDir
-			const relativePath = relative(baseDir, fullPath);
-			files.push(relativePath);
-		}
-	}
-
-	return files;
-}
-
-async function handleAPI(
-	req: Request,
-	url: URL,
-	store: FileStore,
-	broadcast: (data: object) => void,
-): Promise<Response> {
-	const headers = {
-		"Content-Type": "application/json",
-		"Access-Control-Allow-Origin": "*",
-		"Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-		"Access-Control-Allow-Headers": "Content-Type",
-	};
-
-	// Handle OPTIONS for CORS
-	if (req.method === "OPTIONS") {
-		return new Response(null, { headers });
-	}
-
-	try {
-		// GET /api/tasks
-		if (url.pathname === "/api/tasks" && req.method === "GET") {
 			const tasks = await store.getAllTasks();
-			return new Response(JSON.stringify(tasks), { headers });
+			res.json(tasks);
+		} catch (error) {
+			console.error("Error getting tasks:", error);
+			res.status(500).json({ error: String(error) });
 		}
+	});
 
-		// GET /api/tasks/:id/history - Get version history for a task
-		const historyMatch = url.pathname.match(/^\/api\/tasks\/(.+)\/history$/);
-		if (historyMatch && req.method === "GET") {
-			const taskId = historyMatch[1];
+	// GET /api/tasks/:id/history
+	app.get("/api/tasks/:id/history", async (req: Request, res: Response) => {
+		try {
+			const taskId = req.params.id;
 			const history = await store.getTaskVersionHistory(taskId);
-			return new Response(JSON.stringify({ versions: history }), { headers });
+			res.json({ versions: history });
+		} catch (error) {
+			console.error("Error getting task history:", error);
+			res.status(500).json({ error: String(error) });
 		}
+	});
 
-		// GET /api/tasks/:id
-		const taskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
-		if (taskMatch && req.method === "GET") {
-			const task = await store.getTask(taskMatch[1]);
+	// GET /api/tasks/:id
+	app.get("/api/tasks/:id", async (req: Request, res: Response) => {
+		try {
+			const task = await store.getTask(req.params.id);
 			if (!task) {
-				return new Response(JSON.stringify({ error: "Task not found" }), {
-					status: 404,
-					headers,
-				});
+				res.status(404).json({ error: "Task not found" });
+				return;
 			}
-			return new Response(JSON.stringify(task), { headers });
+			res.json(task);
+		} catch (error) {
+			console.error("Error getting task:", error);
+			res.status(500).json({ error: String(error) });
 		}
+	});
 
-		// PUT /api/tasks/:id
-		if (taskMatch && req.method === "PUT") {
-			try {
-				const updates = await req.json();
-				const task = await store.updateTask(taskMatch[1], updates);
+	// PUT /api/tasks/:id
+	app.put("/api/tasks/:id", async (req: Request, res: Response) => {
+		try {
+			const updates = req.body;
+			const task = await store.updateTask(req.params.id, updates);
 
-				// Broadcast update to all clients
-				broadcast({ type: "tasks:updated", task });
+			// Broadcast update to all clients
+			broadcast({ type: "tasks:updated", task });
 
-				return new Response(JSON.stringify(task), { headers });
-			} catch (error) {
-				console.error("Error updating task:", error);
-				return new Response(JSON.stringify({ error: String(error) }), {
-					status: 500,
-					headers,
-				});
-			}
+			res.json(task);
+		} catch (error) {
+			console.error("Error updating task:", error);
+			res.status(500).json({ error: String(error) });
 		}
+	});
 
-		// POST /api/tasks
-		if (url.pathname === "/api/tasks" && req.method === "POST") {
-			const data = await req.json();
+	// POST /api/tasks
+	app.post("/api/tasks", async (req: Request, res: Response) => {
+		try {
+			const data = req.body;
 			const task = await store.createTask(data);
 
 			// Broadcast new task to all clients
 			broadcast({ type: "tasks:updated", task });
 
-			return new Response(JSON.stringify(task), {
-				headers,
-				status: 201,
-			});
+			res.status(201).json(task);
+		} catch (error) {
+			console.error("Error creating task:", error);
+			res.status(500).json({ error: String(error) });
 		}
+	});
 
-		// POST /api/notify - CLI notifies server about task/doc changes
-		if (url.pathname === "/api/notify" && req.method === "POST") {
-			try {
-				const { taskId, type, docPath } = await req.json();
+	// POST /api/notify - CLI notifies server about task/doc changes
+	app.post("/api/notify", async (req: Request, res: Response) => {
+		try {
+			const { taskId, type, docPath } = req.body;
 
-				if (taskId) {
-					// Reload task from disk and broadcast
-					const task = await store.getTask(taskId);
-					if (task) {
-						broadcast({ type: "tasks:updated", task });
-						return new Response(JSON.stringify({ success: true }), { headers });
-					}
-				} else if (type === "tasks:refresh") {
-					// Broadcast refresh signal to reload all tasks
-					broadcast({ type: "tasks:refresh" });
-					return new Response(JSON.stringify({ success: true }), { headers });
-				} else if (type === "docs:updated" && docPath) {
-					// Broadcast doc update
-					broadcast({ type: "docs:updated", docPath });
-					return new Response(JSON.stringify({ success: true }), { headers });
-				} else if (type === "docs:refresh") {
-					// Broadcast docs refresh signal
-					broadcast({ type: "docs:refresh" });
-					return new Response(JSON.stringify({ success: true }), { headers });
+			if (taskId) {
+				// Reload task from disk and broadcast
+				const task = await store.getTask(taskId);
+				if (task) {
+					broadcast({ type: "tasks:updated", task });
+					res.json({ success: true });
+					return;
 				}
-
-				return new Response(JSON.stringify({ success: false, error: "Invalid notify request" }), {
-					status: 400,
-					headers,
-				});
-			} catch (error) {
-				console.error("[Server] Notify error:", error);
-				return new Response(JSON.stringify({ error: String(error) }), {
-					status: 500,
-					headers,
-				});
+			} else if (type === "tasks:refresh") {
+				// Broadcast refresh signal to reload all tasks
+				broadcast({ type: "tasks:refresh" });
+				res.json({ success: true });
+				return;
+			} else if (type === "docs:updated" && docPath) {
+				// Broadcast doc update
+				broadcast({ type: "docs:updated", docPath });
+				res.json({ success: true });
+				return;
+			} else if (type === "docs:refresh") {
+				// Broadcast docs refresh signal
+				broadcast({ type: "docs:refresh" });
+				res.json({ success: true });
+				return;
 			}
-		}
 
-		// GET /api/docs
-		if (url.pathname === "/api/docs" && req.method === "GET") {
+			res.status(400).json({ success: false, error: "Invalid notify request" });
+		} catch (error) {
+			console.error("[Server] Notify error:", error);
+			res.status(500).json({ error: String(error) });
+		}
+	});
+
+	// GET /api/docs
+	app.get("/api/docs", async (_req: Request, res: Response) => {
+		try {
 			const docsDir = join(store.projectRoot, ".knowns", "docs");
 
 			if (!existsSync(docsDir)) {
-				return new Response(JSON.stringify({ docs: [] }), { headers });
+				res.json({ docs: [] });
+				return;
 			}
 
 			// Recursively find all .md files
@@ -351,28 +253,29 @@ async function handleAPI(
 				}),
 			);
 
-			return new Response(JSON.stringify({ docs }), { headers });
+			res.json({ docs });
+		} catch (error) {
+			console.error("Error getting docs:", error);
+			res.status(500).json({ error: String(error) });
 		}
+	});
 
-		// GET /api/docs/:path - Get single doc by path
-		if (url.pathname.startsWith("/api/docs/") && req.method === "GET") {
-			const docPath = decodeURIComponent(url.pathname.replace("/api/docs/", ""));
+	// GET /api/docs/:path - Get single doc by path (supports nested paths)
+	app.get("/api/docs/{*path}", async (req: Request, res: Response) => {
+		try {
+			const docPath = req.params.path;
 			const docsDir = join(store.projectRoot, ".knowns", "docs");
 			const fullPath = join(docsDir, docPath);
 
 			// Security: ensure path doesn't escape docs directory
 			if (!fullPath.startsWith(docsDir)) {
-				return new Response(JSON.stringify({ error: "Invalid path" }), {
-					status: 400,
-					headers,
-				});
+				res.status(400).json({ error: "Invalid path" });
+				return;
 			}
 
 			if (!existsSync(fullPath)) {
-				return new Response(JSON.stringify({ error: "Document not found" }), {
-					status: 404,
-					headers,
-				});
+				res.status(404).json({ error: "Document not found" });
+				return;
 			}
 
 			const content = await readFile(fullPath, "utf-8");
@@ -394,31 +297,32 @@ async function handleAPI(
 				content: docContent,
 			};
 
-			return new Response(JSON.stringify(doc), { headers });
+			res.json(doc);
+		} catch (error) {
+			console.error("Error getting doc:", error);
+			res.status(500).json({ error: String(error) });
 		}
+	});
 
-		// PUT /api/docs/:path - Update existing doc
-		if (url.pathname.startsWith("/api/docs/") && req.method === "PUT") {
-			const docPath = decodeURIComponent(url.pathname.replace("/api/docs/", ""));
+	// PUT /api/docs/:path - Update existing doc (supports nested paths)
+	app.put("/api/docs/{*path}", async (req: Request, res: Response) => {
+		try {
+			const docPath = req.params.path;
 			const docsDir = join(store.projectRoot, ".knowns", "docs");
 			const fullPath = join(docsDir, docPath);
 
 			// Security: ensure path doesn't escape docs directory
 			if (!fullPath.startsWith(docsDir)) {
-				return new Response(JSON.stringify({ error: "Invalid path" }), {
-					status: 400,
-					headers,
-				});
+				res.status(400).json({ error: "Invalid path" });
+				return;
 			}
 
 			if (!existsSync(fullPath)) {
-				return new Response(JSON.stringify({ error: "Document not found" }), {
-					status: 404,
-					headers,
-				});
+				res.status(404).json({ error: "Document not found" });
+				return;
 			}
 
-			const data = await req.json();
+			const data = req.body;
 			const { content, title, description, tags } = data;
 
 			// Read existing file to get current frontmatter
@@ -460,11 +364,16 @@ async function handleAPI(
 			// Broadcast update to all clients
 			broadcast({ type: "docs:updated", doc: updatedDoc });
 
-			return new Response(JSON.stringify(updatedDoc), { headers });
+			res.json(updatedDoc);
+		} catch (error) {
+			console.error("Error updating doc:", error);
+			res.status(500).json({ error: String(error) });
 		}
+	});
 
-		// POST /api/docs
-		if (url.pathname === "/api/docs" && req.method === "POST") {
+	// POST /api/docs
+	app.post("/api/docs", async (req: Request, res: Response) => {
+		try {
 			const docsDir = join(store.projectRoot, ".knowns", "docs");
 
 			// Ensure docs directory exists
@@ -472,14 +381,12 @@ async function handleAPI(
 				await mkdir(docsDir, { recursive: true });
 			}
 
-			const data = await req.json();
+			const data = req.body;
 			const { title, description, tags, content, folder } = data;
 
 			if (!title) {
-				return new Response(JSON.stringify({ error: "Title is required" }), {
-					status: 400,
-					headers,
-				});
+				res.status(400).json({ error: "Title is required" });
+				return;
 			}
 
 			// Create filename from title
@@ -506,10 +413,8 @@ async function handleAPI(
 
 			// Check if file already exists
 			if (existsSync(filepath)) {
-				return new Response(JSON.stringify({ error: "Document with this title already exists in this folder" }), {
-					status: 409,
-					headers,
-				});
+				res.status(409).json({ error: "Document with this title already exists in this folder" });
+				return;
 			}
 
 			// Create frontmatter
@@ -526,35 +431,35 @@ async function handleAPI(
 			const markdown = matter.stringify(content || "", frontmatter);
 			await writeFile(filepath, markdown, "utf-8");
 
-			return new Response(
-				JSON.stringify({
-					success: true,
-					filename,
-					folder: folder || "",
-					path: folder ? `${folder}/${filename}` : filename,
-					metadata: frontmatter,
-				}),
-				{ status: 201, headers },
-			);
+			res.status(201).json({
+				success: true,
+				filename,
+				folder: folder || "",
+				path: folder ? `${folder}/${filename}` : filename,
+				metadata: frontmatter,
+			});
+		} catch (error) {
+			console.error("Error creating doc:", error);
+			res.status(500).json({ error: String(error) });
 		}
+	});
 
-		// GET /api/config
-		if (url.pathname === "/api/config" && req.method === "GET") {
+	// GET /api/config
+	app.get("/api/config", async (_req: Request, res: Response) => {
+		try {
 			const configPath = join(store.projectRoot, ".knowns", "config.json");
 
 			if (!existsSync(configPath)) {
-				return new Response(
-					JSON.stringify({
-						config: {
-							name: "Knowns",
-							defaultPriority: "medium",
-							defaultLabels: [],
-							timeFormat: "24h",
-							visibleColumns: ["todo", "in-progress", "done"],
-						},
-					}),
-					{ headers },
-				);
+				res.json({
+					config: {
+						name: "Knowns",
+						defaultPriority: "medium",
+						defaultLabels: [],
+						timeFormat: "24h",
+						visibleColumns: ["todo", "in-progress", "done"],
+					},
+				});
+				return;
 			}
 
 			const content = await readFile(configPath, "utf-8");
@@ -574,12 +479,17 @@ async function handleAPI(
 				config.visibleColumns = ["todo", "in-progress", "done"];
 			}
 
-			return new Response(JSON.stringify({ config }), { headers });
+			res.json({ config });
+		} catch (error) {
+			console.error("Error getting config:", error);
+			res.status(500).json({ error: String(error) });
 		}
+	});
 
-		// POST /api/config
-		if (url.pathname === "/api/config" && req.method === "POST") {
-			const config = await req.json();
+	// POST /api/config
+	app.post("/api/config", async (req: Request, res: Response) => {
+		try {
+			const config = req.body;
 			const configPath = join(store.projectRoot, ".knowns", "config.json");
 
 			// Read existing file to preserve project metadata
@@ -601,13 +511,18 @@ async function handleAPI(
 
 			await writeFile(configPath, JSON.stringify(merged, null, 2), "utf-8");
 
-			return new Response(JSON.stringify({ success: true }), { headers });
+			res.json({ success: true });
+		} catch (error) {
+			console.error("Error saving config:", error);
+			res.status(500).json({ error: String(error) });
 		}
+	});
 
-		// GET /api/activities - Get recent activities across all tasks
-		if (url.pathname === "/api/activities" && req.method === "GET") {
-			const limit = Number.parseInt(url.searchParams.get("limit") || "50", 10);
-			const type = url.searchParams.get("type"); // Filter by change type
+	// GET /api/activities
+	app.get("/api/activities", async (req: Request, res: Response) => {
+		try {
+			const limit = Number.parseInt((req.query.limit as string) || "50", 10);
+			const type = req.query.type as string | undefined;
 
 			const tasks = await store.getAllTasks();
 			const allActivities: Array<{
@@ -646,14 +561,20 @@ async function handleAPI(
 			// Limit results
 			const limited = allActivities.slice(0, limit);
 
-			return new Response(JSON.stringify({ activities: limited }), { headers });
+			res.json({ activities: limited });
+		} catch (error) {
+			console.error("Error getting activities:", error);
+			res.status(500).json({ error: String(error) });
 		}
+	});
 
-		// GET /api/search?q=query
-		if (url.pathname === "/api/search" && req.method === "GET") {
-			const query = url.searchParams.get("q");
+	// GET /api/search
+	app.get("/api/search", async (req: Request, res: Response) => {
+		try {
+			const query = req.query.q as string;
 			if (!query) {
-				return new Response(JSON.stringify({ tasks: [], docs: [] }), { headers });
+				res.json({ tasks: [], docs: [] });
+				return;
 			}
 
 			const q = query.toLowerCase();
@@ -709,22 +630,76 @@ async function handleAPI(
 				}
 			}
 
-			return new Response(JSON.stringify({ tasks: taskResults, docs: docResults }), {
-				headers,
-			});
+			res.json({ tasks: taskResults, docs: docResults });
+		} catch (error) {
+			console.error("Error searching:", error);
+			res.status(500).json({ error: String(error) });
 		}
+	});
 
-		return new Response(JSON.stringify({ error: "Not Found" }), {
-			status: 404,
-			headers,
+	// SPA fallback - serve index.html for all other routes
+	app.get("/{*path}", (_req: Request, res: Response) => {
+		const indexPath = join(uiDistPath, "index.html");
+		if (existsSync(indexPath)) {
+			res.sendFile(indexPath);
+		} else {
+			res.status(404).send("Not Found");
+		}
+	});
+
+	// Start server
+	return new Promise<{ close: () => void }>((resolve) => {
+		httpServer.listen(port, () => {
+			console.log(`✓ Server running at http://localhost:${port}`);
+
+			if (open) {
+				// Open browser (platform-specific)
+				try {
+					const url = `http://localhost:${port}`;
+					if (isBun) {
+						const openCommand =
+							process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+						Bun.spawn([openCommand, url]);
+					} else if (process.platform === "darwin") {
+						spawn("open", [url], { stdio: "ignore" });
+					} else if (process.platform === "win32") {
+						spawn("cmd", ["/c", "start", "", url], { stdio: "ignore" });
+					} else {
+						spawn("xdg-open", [url], { stdio: "ignore" });
+					}
+				} catch (error) {
+					console.error("Failed to open browser:", error);
+				}
+			}
+
+			resolve({
+				close: () => {
+					wss.close();
+					httpServer.close();
+				},
+			});
 		});
-	} catch (error) {
-		console.error("API Error:", error);
-		return new Response(
-			JSON.stringify({
-				error: error instanceof Error ? error.message : "Internal Server Error",
-			}),
-			{ status: 500, headers },
-		);
+	});
+}
+
+// Helper function to recursively find all .md files
+async function findMarkdownFiles(dir: string, baseDir: string): Promise<string[]> {
+	const files: string[] = [];
+	const entries = await readdir(dir, { withFileTypes: true });
+
+	for (const entry of entries) {
+		const fullPath = join(dir, entry.name);
+
+		if (entry.isDirectory()) {
+			// Recursively search subdirectories
+			const subFiles = await findMarkdownFiles(fullPath, baseDir);
+			files.push(...subFiles);
+		} else if (entry.isFile() && entry.name.endsWith(".md")) {
+			// Return relative path from baseDir
+			const relativePath = relative(baseDir, fullPath);
+			files.push(relativePath);
+		}
 	}
+
+	return files;
 }

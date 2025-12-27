@@ -8,29 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.8] - 2025-12-27
 
 ### Added
+- **Node.js Runtime Support**: Browser command now works with both Bun and Node.js
+  - Migrated server from `Bun.serve()` to Express + ws
+  - Added `express`, `ws`, and `cors` dependencies
+  - WebSocket real-time sync works on both runtimes
 - **Bun Compatibility Layer**: New `src/utils/bun-compat.ts` utility providing cross-runtime support
   - `file()` - Bun.file() compatible wrapper for reading files
   - `write()` - Bun.write() compatible wrapper for writing files
   - `bunSpawn()` - Bun.spawn() compatible wrapper for process spawning
-  - `serve()` - Bun.serve() compatible wrapper for HTTP server (Node.js fallback)
   - CLI commands now work with both Bun and Node.js runtimes
-- **Build Scripts**: Added `scripts/fix-shebang.js` for proper CLI executable generation
+- **Build Scripts**: Added `scripts/build-cli.js` using esbuild for Node.js-compatible builds
+  - CLI can now be built with `node scripts/build-cli.js` (no Bun required)
+  - Uses ESM format with `createRequire` shim for CommonJS compatibility
+  - Builds both main CLI and MCP server
 
 ### Fixed
 - **File Deletion**: Fixed improper file deletion that was clearing files instead of deleting them
   - Changed from `Bun.write(path, "")` to proper `unlink()` in `file-store.ts` and `version-store.ts`
   - Tasks and version history are now properly deleted when archived or removed
 - **Browser Command**: Fixed browser opening on non-Bun runtimes with proper `spawn()` fallback
-- **Server Runtime Check**: Added explicit check for Bun runtime before starting server
-  - Shows clear error message when trying to run browser command without Bun
+- **Server Path Detection**: Fixed `import.meta.dir` undefined error when running with Node.js
+  - Now uses `fileURLToPath(import.meta.url)` as fallback for Node.js compatibility
+  - Added Windows path separator support
 
 ### Changed
+- **Server Architecture**: Complete rewrite of `src/server/index.ts`
+  - Replaced `Bun.serve()` with Express HTTP server
+  - Replaced Bun WebSocket API with `ws` library
+  - All 15 API routes migrated to Express router pattern
+  - Static file serving now uses `express.static()`
 - Refactored file operations across multiple modules to use the new compatibility layer:
   - `src/commands/task.ts` - Archive/unarchive operations
   - `src/commands/time.ts` - Time tracking data persistence
-  - `src/server/index.ts` - Static file serving
   - `src/storage/file-store.ts` - Task and project storage
   - `src/storage/version-store.ts` - Version history storage
+- Simplified `src/utils/bun-compat.ts` - removed `serve()` function (now using Express)
 
 ## [0.1.7] - 2025-12-27
 
