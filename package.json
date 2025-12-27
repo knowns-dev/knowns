@@ -1,6 +1,6 @@
 {
 	"name": "knowns",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"description": "CLI tool for dev teams to manage tasks and documentation",
 	"module": "index.ts",
 	"type": "module",
@@ -48,6 +48,7 @@
 		"@radix-ui/react-separator": "^1.1.8",
 		"@radix-ui/react-slot": "^1.2.4",
 		"@radix-ui/react-tooltip": "^1.2.8",
+		"@types/cors": "^2.8.19",
 		"@uiw/react-md-editor": "^4.0.11",
 		"chalk": "^5.3.0",
 		"class-variance-authority": "^0.7.1",
