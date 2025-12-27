@@ -1,6 +1,6 @@
 {
 	"name": "knowns",
-	"version": "0.1.7",
+	"version": "0.1.8",
 	"description": "CLI tool for dev teams to manage tasks and documentation",
 	"module": "index.ts",
 	"type": "module",
@@ -25,7 +25,7 @@
 		"dev": "bun run --watch src/index.ts browser --no-open",
 		"watch": "nodemon",
 		"build": "bun run build:cli && bun run build:ui",
-		"build:cli": "bun build src/index.ts --outdir dist --target bun && bun build src/mcp/server.ts --outdir dist/mcp --target bun",
+		"build:cli": "bun build src/index.ts --outdir dist --target node && bun build src/mcp/server.ts --outdir dist/mcp --target node && node scripts/fix-shebang.js",
 		"build:ui": "vite build",
 		"start": "bun run src/index.ts",
 		"mcp": "bun run src/mcp/server.ts",

@@ -3,10 +3,11 @@
  * Main storage class that handles .knowns/ folder
  */
 
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { Project, ProjectSettings, Task, TaskVersion } from "@models/index";
 import { applyVersionSnapshot, createProject } from "@models/index";
+import { file, write } from "../utils/bun-compat";
 import { parseTaskMarkdown, serializeTaskMarkdown } from "./markdown";
 import { VersionStore } from "./version-store";
 
@@ -32,9 +33,10 @@ export class FileStore {
 	 */
 	private async loadTimeEntries(): Promise<Record<string, Task["timeEntries"]>> {
 		try {
-			const file = Bun.file(this.timeEntriesPath);
-			if (await file.exists()) {
-				return await file.json();
+			const f = file(this.timeEntriesPath);
+			if (await f.exists()) {
+				const content = await f.text();
+				return JSON.parse(content);
 			}
 		} catch {
 			// Ignore errors, return empty
@@ -46,7 +48,7 @@ export class FileStore {
 	 * Save time entries for all tasks
 	 */
 	private async saveTimeEntries(entries: Record<string, Task["timeEntries"]>): Promise<void> {
-		await Bun.write(this.timeEntriesPath, JSON.stringify(entries, null, 2));
+		await write(this.timeEntriesPath, JSON.stringify(entries, null, 2));
 	}
 
 	/**
@@ -72,12 +74,13 @@ export class FileStore {
 	 */
 	async getProject(): Promise<Project | null> {
 		try {
-			const file = Bun.file(this.projectPath);
-			if (!(await file.exists())) {
+			const f = file(this.projectPath);
+			if (!(await f.exists())) {
 				return null;
 			}
 
-			const data = await file.json();
+			const content = await f.text();
+			const data = JSON.parse(content);
 			return {
 				...data,
 				createdAt: new Date(data.createdAt),
@@ -92,7 +95,7 @@ export class FileStore {
 	 * Save project configuration
 	 */
 	private async saveProject(project: Project): Promise<void> {
-		await Bun.write(this.projectPath, JSON.stringify(project, null, 2));
+		await write(this.projectPath, JSON.stringify(project, null, 2));
 	}
 
 	/**
@@ -137,8 +140,8 @@ export class FileStore {
 			}
 
 			const filePath = join(this.tasksPath, fileName);
-			const file = Bun.file(filePath);
-			const content = await file.text();
+			const f = file(filePath);
+			const content = await f.text();
 
 			const taskData = parseTaskMarkdown(content);
 
@@ -178,9 +181,9 @@ export class FileStore {
 
 			// First pass: load all tasks without subtasks
 			const tasksMap = new Map<string, Task>();
-			for (const file of taskFiles) {
-				const filePath = join(this.tasksPath, file);
-				const content = await Bun.file(filePath).text();
+			for (const taskFile of taskFiles) {
+				const filePath = join(this.tasksPath, taskFile);
+				const content = await file(filePath).text();
 				const taskData = parseTaskMarkdown(content);
 				if (taskData.id) {
 					// Load time entries for this task
@@ -274,8 +277,7 @@ export class FileStore {
 		}
 
 		const filePath = join(this.tasksPath, fileName);
-		await Bun.write(filePath, ""); // Bun doesn't have unlink, so we clear the file
-		// Note: In production, you'd want to use fs.unlink or move to archive
+		await unlink(filePath);
 	}
 
 	/**
@@ -285,7 +287,7 @@ export class FileStore {
 		const content = serializeTaskMarkdown(task);
 		const fileName = this.getTaskFileName(task);
 		const filePath = join(this.tasksPath, fileName);
-		await Bun.write(filePath, content);
+		await write(filePath, content);
 	}
 
 	/**

@@ -3,12 +3,17 @@
  * Serves Web UI via `knowns browser`
  */
 
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { FileStore } from "@storage/file-store";
+import { file } from "@utils/bun-compat";
 import type { ServerWebSocket } from "bun";
 import matter from "gray-matter";
+
+// Check if running in Bun
+const isBun = typeof globalThis.Bun !== "undefined";
 
 interface ServerOptions {
 	port: number;
@@ -65,6 +70,10 @@ export async function startServer(options: ServerOptions) {
 		throw new Error(`UI build not found at ${uiDistPath}. Run 'bun run build:ui' first.`);
 	}
 
+	if (!isBun) {
+		throw new Error("The browser command requires Bun runtime. Please run with: bun knowns browser");
+	}
+
 	const server = Bun.serve({
 		port,
 
@@ -90,8 +99,8 @@ export async function startServer(options: ServerOptions) {
 			// Serve static assets from Vite build (assets folder with hashed names)
 			if (url.pathname.startsWith("/assets/")) {
 				const filePath = join(uiDistPath, url.pathname);
-				const file = Bun.file(filePath);
-				if (await file.exists()) {
+				const f = file(filePath);
+				if (await f.exists()) {
 					const ext = url.pathname.split(".").pop();
 					const contentType =
 						ext === "js"
@@ -109,7 +118,8 @@ export async function startServer(options: ServerOptions) {
 												: ext === "woff"
 													? "font/woff"
 													: "application/octet-stream";
-					return new Response(file, {
+					const content = await f.arrayBuffer();
+					return new Response(content, {
 						headers: {
 							"Content-Type": contentType,
 							// Vite assets have content hash, can cache forever
@@ -121,9 +131,10 @@ export async function startServer(options: ServerOptions) {
 
 			// Serve index.html for root and SPA routes
 			if (url.pathname === "/" || url.pathname === "/index.html" || !url.pathname.includes(".")) {
-				const indexFile = Bun.file(join(uiDistPath, "index.html"));
+				const indexFile = file(join(uiDistPath, "index.html"));
 				if (await indexFile.exists()) {
-					return new Response(indexFile, {
+					const content = await indexFile.text();
+					return new Response(content, {
 						headers: {
 							"Content-Type": "text/html",
 							"Cache-Control": "no-cache, no-store, must-revalidate",
@@ -155,7 +166,11 @@ export async function startServer(options: ServerOptions) {
 		const openCommand = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
 
 		try {
-			Bun.spawn([openCommand, `http://localhost:${port}`]);
+			if (isBun) {
+				Bun.spawn([openCommand, `http://localhost:${port}`]);
+			} else {
+				spawn(openCommand, [`http://localhost:${port}`], { stdio: "ignore", shell: true });
+			}
 		} catch (error) {
 			console.error("Failed to open browser:", error);
 		}

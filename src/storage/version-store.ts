@@ -3,10 +3,11 @@
  * Handles version history storage for tasks
  */
 
-import { mkdir } from "node:fs/promises";
+import { mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { Task, TaskChange, TaskVersion, TaskVersionHistory } from "@models/index";
 import { TRACKED_FIELDS, createTaskDiff, createVersion, createVersionHistory } from "@models/index";
+import { file, write } from "../utils/bun-compat";
 
 export class VersionStore {
 	private versionsPath: string; // .knowns/versions/
@@ -35,10 +36,11 @@ export class VersionStore {
 	async getVersionHistory(taskId: string): Promise<TaskVersionHistory> {
 		try {
 			const filePath = this.getVersionFilePath(taskId);
-			const file = Bun.file(filePath);
+			const f = file(filePath);
 
-			if (await file.exists()) {
-				const data = await file.json();
+			if (await f.exists()) {
+				const content = await f.text();
+				const data = JSON.parse(content);
 				// Parse dates in versions
 				return {
 					...data,
@@ -60,7 +62,7 @@ export class VersionStore {
 	 */
 	private async saveVersionHistory(history: TaskVersionHistory): Promise<void> {
 		const filePath = this.getVersionFilePath(history.taskId);
-		await Bun.write(filePath, JSON.stringify(history, null, 2));
+		await write(filePath, JSON.stringify(history, null, 2));
 	}
 
 	/**
@@ -158,10 +160,9 @@ export class VersionStore {
 	async deleteVersionHistory(taskId: string): Promise<void> {
 		const filePath = this.getVersionFilePath(taskId);
 		try {
-			const file = Bun.file(filePath);
-			if (await file.exists()) {
-				// Clear the file (Bun doesn't have unlink)
-				await Bun.write(filePath, "");
+			const f = file(filePath);
+			if (await f.exists()) {
+				await unlink(filePath);
 			}
 		} catch {
 			// Ignore errors

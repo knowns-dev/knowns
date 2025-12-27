@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2025-12-27
+
+### Added
+- **Bun Compatibility Layer**: New `src/utils/bun-compat.ts` utility providing cross-runtime support
+  - `file()` - Bun.file() compatible wrapper for reading files
+  - `write()` - Bun.write() compatible wrapper for writing files
+  - `bunSpawn()` - Bun.spawn() compatible wrapper for process spawning
+  - `serve()` - Bun.serve() compatible wrapper for HTTP server (Node.js fallback)
+  - CLI commands now work with both Bun and Node.js runtimes
+- **Build Scripts**: Added `scripts/fix-shebang.js` for proper CLI executable generation
+
+### Fixed
+- **File Deletion**: Fixed improper file deletion that was clearing files instead of deleting them
+  - Changed from `Bun.write(path, "")` to proper `unlink()` in `file-store.ts` and `version-store.ts`
+  - Tasks and version history are now properly deleted when archived or removed
+- **Browser Command**: Fixed browser opening on non-Bun runtimes with proper `spawn()` fallback
+- **Server Runtime Check**: Added explicit check for Bun runtime before starting server
+  - Shows clear error message when trying to run browser command without Bun
+
+### Changed
+- Refactored file operations across multiple modules to use the new compatibility layer:
+  - `src/commands/task.ts` - Archive/unarchive operations
+  - `src/commands/time.ts` - Time tracking data persistence
+  - `src/server/index.ts` - Static file serving
+  - `src/storage/file-store.ts` - Task and project storage
+  - `src/storage/version-store.ts` - Version history storage
+
 ## [0.1.7] - 2025-12-27
 
 ### Fixed
@@ -146,6 +173,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLAUDE.md with complete guidelines for AI agents
 - Example workflows and patterns
 
+[0.1.8]: https://github.com/knowns-dev/knowns/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/knowns-dev/knowns/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/knowns-dev/knowns/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/knowns-dev/knowns/compare/v0.1.3...v0.1.5
