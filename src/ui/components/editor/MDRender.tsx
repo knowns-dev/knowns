@@ -17,7 +17,14 @@ interface MDRenderProps {
 
 // Regex patterns for mentions
 const TASK_MENTION_REGEX = /@(task-\d+)/g;
-const DOC_MENTION_REGEX = /@doc\/([^\s]+\.md)/g;
+const DOC_MENTION_REGEX = /@docs?\/([^\s)]+)/g;
+
+/**
+ * Normalize doc path - ensure .md extension
+ */
+function normalizeDocPath(path: string): string {
+	return path.endsWith(".md") ? path : `${path}.md`;
+}
 
 /**
  * Transform mention patterns into markdown links
@@ -27,8 +34,11 @@ function transformMentions(content: string): string {
 	// Transform @task-123 to [@@task-123](#/tasks/task-123)
 	let transformed = content.replace(TASK_MENTION_REGEX, "[@@$1](#/tasks/$1)");
 
-	// Transform @doc/path.md to [@@doc/path.md](#/docs/path.md)
-	transformed = transformed.replace(DOC_MENTION_REGEX, "[@@doc/$1](#/docs/$1)");
+	// Transform @doc/path or @docs/path to [@@doc/path.md](#/docs/path.md)
+	transformed = transformed.replace(DOC_MENTION_REGEX, (_match, docPath) => {
+		const normalizedPath = normalizeDocPath(docPath);
+		return `[@@doc/${normalizedPath}](#/docs/${normalizedPath})`;
+	});
 
 	return transformed;
 }

@@ -2,7 +2,9 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
+import { readFileSync } from "node:fs";
 
+const pkg = JSON.parse(readFileSync(path.resolve(__dirname, "package.json"), "utf-8"));
 const isProd = process.env.NODE_ENV === "production";
 
 // Dev: use separate API server, Prod: use relative URLs (same server)
@@ -27,8 +29,6 @@ export default defineConfig({
 	define: {
 		"import.meta.env.API_URL": JSON.stringify(API_URL),
 		"import.meta.env.WS_URL": JSON.stringify(WS_URL),
-		"import.meta.env.APP_VERSION": JSON.stringify(
-			process.env.npm_package_version || "dev"
-		),
+		"import.meta.env.APP_VERSION": JSON.stringify(pkg.version),
 	},
 });
