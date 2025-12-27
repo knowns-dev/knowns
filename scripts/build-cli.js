@@ -1,6 +1,6 @@
-#!/usr/bin/env node
 /**
  * Build CLI using esbuild (works with both Node.js and Bun)
+ * Run with: node scripts/build-cli.js
  */
 
 import * as esbuild from "esbuild";
