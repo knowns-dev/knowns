@@ -90,7 +90,7 @@ export default function KanbanPage({ tasks, loading, onTasksUpdate, onNewTask }:
 						{/* New Task Button */}
 						<Button
 							onClick={onNewTask}
-							className="bg-green-600 hover:bg-green-700"
+							className="bg-green-700 hover:bg-green-800 text-white"
 						>
 							<Plus className="w-4 h-4 mr-2" />
 							New Task

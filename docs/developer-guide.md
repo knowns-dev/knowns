@@ -205,7 +205,7 @@ class FileStore {
 ### Connection
 
 ```
-ws://localhost:3456/ws
+ws://localhost:6420/ws
 ```
 
 ### Message Types
@@ -246,7 +246,7 @@ When CLI modifies data, it notifies the server:
 // src/utils/notify-server.ts
 export async function notifyServer(type: string, data?: any) {
   try {
-    await fetch('http://localhost:3456/api/notify', {
+    await fetch('http://localhost:6420/api/notify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, data })

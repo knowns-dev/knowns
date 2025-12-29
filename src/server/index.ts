@@ -82,6 +82,12 @@ export async function startServer(options: ServerOptions) {
 	// Create WebSocket server
 	const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
+	// Handle WebSocket server errors (e.g., when HTTP server fails to start)
+	wss.on("error", () => {
+		// Error is already handled by httpServer.on('error')
+		// This prevents unhandled 'error' event crash
+	});
+
 	wss.on("connection", (ws) => {
 		clients.add(ws);
 
@@ -121,7 +127,17 @@ export async function startServer(options: ServerOptions) {
 	});
 
 	// Start server
-	return new Promise<{ close: () => void }>((resolve) => {
+	return new Promise<{ close: () => void }>((resolve, reject) => {
+		httpServer.on("error", (err: NodeJS.ErrnoException) => {
+			if (err.code === "EADDRINUSE") {
+				console.error(`Error: Port ${port} is already in use`);
+				console.error("Please stop the process using this port or choose a different port");
+				reject(err);
+			} else {
+				reject(err);
+			}
+		});
+
 		httpServer.listen(port, () => {
 			console.log(`✓ Server running at http://localhost:${port}`);
 

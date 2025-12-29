@@ -40,6 +40,11 @@ export default function TasksPage({
 		window.location.hash = `/tasks/${task.id}`;
 	};
 
+	const handleNavigateToTask = (taskId: string) => {
+		// Navigate to task by updating hash - this will trigger the App.tsx hash handler
+		window.location.hash = `/tasks/${taskId}`;
+	};
+
 	if (loading) {
 		return (
 			<div className="p-6 flex items-center justify-center h-64">
@@ -134,6 +139,7 @@ export default function TasksPage({
 					if (onTaskClose) onTaskClose();
 				}}
 				onUpdate={onTasksUpdate}
+				onNavigateToTask={handleNavigateToTask}
 			/>
 		</div>
 	);

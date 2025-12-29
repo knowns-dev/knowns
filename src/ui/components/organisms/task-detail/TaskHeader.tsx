@@ -43,7 +43,7 @@ export function TaskHeader({ task, onSave, saving }: TaskHeaderProps) {
 	};
 
 	return (
-		<SheetHeader className="space-y-3 pb-4 border-b">
+		<SheetHeader className="space-y-3">
 			<div className="flex items-center gap-2">
 				<Badge variant="outline" className="font-mono">
 					#{task.id}

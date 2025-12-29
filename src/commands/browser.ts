@@ -59,10 +59,8 @@ export const browserCommand = new Command("browser")
 
 		const port = Number.parseInt(options.port);
 
-		// Save custom port to config if user specified -p
-		if (options.port !== String(DEFAULT_PORT)) {
-			await saveServerPort(projectRoot, port);
-		}
+		// Always save port to config so notify-server stays in sync
+		await saveServerPort(projectRoot, port);
 
 		console.log(chalk.cyan("◆ Starting Knowns.dev Web UI..."));
 		console.log("");

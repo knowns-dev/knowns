@@ -8,7 +8,7 @@ Visual interface for managing tasks and documentation.
 knowns browser
 ```
 
-Opens the Web UI at `http://localhost:3456`.
+Opens the Web UI at `http://localhost:6420`.
 
 ### Options
 
@@ -134,14 +134,14 @@ The Web UI connects to a local Express server that reads/writes to your `.knowns
 ### Port in use
 
 ```bash
-knowns browser --port 3457
+knowns browser --port 6421
 ```
 
 ### Browser doesn't open
 
 ```bash
 knowns browser --no-open
-# Then manually open http://localhost:3456
+# Then manually open http://localhost:6420
 ```
 
 ### Changes not syncing

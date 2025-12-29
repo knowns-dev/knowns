@@ -30,11 +30,11 @@ export const priorityOptions: { value: TaskPriority; label: string }[] = [
 ];
 
 export const statusColors: Record<TaskStatus, string> = {
-	todo: "bg-secondary text-secondary-foreground",
-	"in-progress": "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300",
-	"in-review": "bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300",
-	done: "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300",
-	blocked: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
+	todo: "bg-secondary text-secondary-foreground hover:bg-secondary",
+	"in-progress": "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300 hover:bg-blue-200",
+	"in-review": "bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300 hover:bg-purple-200",
+	done: "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300 hover:bg-green-200",
+	blocked: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300 hover:bg-red-200",
 };
 
 export const priorityColors: Record<TaskPriority, string> = {

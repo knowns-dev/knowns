@@ -58,8 +58,8 @@ Before planning, gather context from documentation:
 knowns search "authentication" --type doc --plain
 
 # Read relevant documentation
-knowns doc view "patterns/auth" --plain
-knowns doc view "api-guidelines" --plain
+knowns doc "patterns/auth" --plain
+knowns doc "api-guidelines" --plain
 
 # Check similar completed tasks
 knowns search "auth" --type task --status done --plain

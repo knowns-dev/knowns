@@ -131,7 +131,7 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 					</span>
 				</div>
 
-				<Button onClick={onNewTask} className="bg-green-600 hover:bg-green-700">
+				<Button onClick={onNewTask} className="bg-green-700 hover:bg-green-800 text-white">
 					<Plus className="mr-2 h-4 w-4" />
 					New Task
 				</Button>

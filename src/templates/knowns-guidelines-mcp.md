@@ -706,19 +706,3 @@ mcp__knowns__update_doc({ path: "doc-name", appendContent: "New content" })
 **Maintained By**: Knowns CLI Team
 
 <!-- KNOWNS GUIDELINES END -->
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -1,6 +1,6 @@
 {
 	"name": "knowns",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"description": "CLI tool for dev teams to manage tasks and documentation",
 	"module": "index.ts",
 	"type": "module",
@@ -25,13 +25,13 @@
 		"url": "https://github.com/knowns-dev/knowns/issues"
 	},
 	"scripts": {
-		"dev": "npx tsx src/index.ts browser --no-open",
+		"dev": "npx tsx --import ./scripts/md-loader.mjs src/index.ts browser --no-open -p 3456",
 		"watch": "nodemon",
 		"build": "npm run build:cli && npm run build:ui",
 		"build:cli": "node scripts/build-cli.js",
 		"build:ui": "vite build",
-		"start": "npx tsx src/index.ts",
-		"mcp": "npx tsx src/mcp/server.ts",
+		"start": "npx tsx --import ./scripts/md-loader.mjs src/index.ts",
+		"mcp": "npx tsx --import ./scripts/md-loader.mjs src/mcp/server.ts",
 		"test": "vitest run",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",

@@ -180,7 +180,7 @@ Link related tasks and docs:
 ### CLI Output
 
 ```bash
-$ knowns task view 42 --plain
+$ knowns task 42 --plain
 
 # Task 42: Add Authentication
 Status: in-progress | Priority: high

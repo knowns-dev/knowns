@@ -1,9 +1,4 @@
-/**
- * Knowns CLI Guidelines - System Prompt
- * This content will be injected into agent instruction files (CLAUDE.md, AGENTS.md, etc.)
- */
-
-export const KNOWNS_GUIDELINES = `<!-- KNOWNS GUIDELINES START -->
+<!-- KNOWNS GUIDELINES START -->
 # Knowns CLI Guidelines
 
 ## Core Principles
@@ -28,7 +23,7 @@ AI agents must understand project context, conventions, and existing patterns be
 
 When starting a new session or working on an unfamiliar project:
 
-\`\`\`bash
+```bash
 # 1. List all available documentation
 knowns doc list --plain
 
@@ -41,11 +36,11 @@ knowns doc "API" --plain                   # API specifications
 # 3. Review current task backlog
 knowns task list --plain
 knowns task list --status in-progress --plain
-\`\`\`
+```
 
 ### Before Taking Any Task
 
-\`\`\`bash
+```bash
 # 1. View the task details
 knowns task <id> --plain
 
@@ -61,7 +56,7 @@ knowns doc "<related-doc>" --plain
 
 # 5. Check for similar completed tasks (learn from history)
 knowns search "<keywords>" --type task --status done --plain
-\`\`\`
+```
 
 ### Why Documentation First?
 
@@ -77,7 +72,7 @@ knowns search "<keywords>" --type task --status done --plain
 
 Before writing ANY code, ensure you can answer:
 
-- [ ] Have I followed ALL refs (\`@.knowns/...\`) in the task?
+- [ ] Have I followed ALL refs (`@.knowns/...`) in the task?
 - [ ] Have I followed nested refs recursively?
 - [ ] What is the project's overall architecture?
 - [ ] What coding conventions does this project follow?
@@ -97,19 +92,19 @@ Tasks and docs can contain **references** to other tasks/docs. AI agents MUST un
 
 | Type | When Writing (Input) | When Reading (Output) | CLI Command |
 |------|---------------------|----------------------|-------------|
-| **Task ref** | \`@task-<id>\` | \`@.knowns/tasks/task-<id> - <title>.md\` | \`knowns task <id> --plain\` |
-| **Doc ref** | \`@doc/<path>\` | \`@.knowns/docs/<path>.md\` | \`knowns doc <path> --plain\` |
+| **Task ref** | `@task-<id>` | `@.knowns/tasks/task-<id> - <title>.md` | `knowns task <id> --plain` |
+| **Doc ref** | `@doc/<path>` | `@.knowns/docs/<path>.md` | `knowns doc <path> --plain` |
 
 > **CRITICAL for AI Agents**:
-> - When **WRITING** refs (in descriptions, plans, notes): Use \`@task-<id>\` and \`@doc/<path>\`
-> - When **READING** output from \`--plain\`: You'll see \`@.knowns/tasks/...\` and \`@.knowns/docs/...\`
-> - **NEVER write** the output format (\`@.knowns/...\`) - always use input format (\`@task-<id>\`, \`@doc/<path>\`)
+> - When **WRITING** refs (in descriptions, plans, notes): Use `@task-<id>` and `@doc/<path>`
+> - When **READING** output from `--plain`: You'll see `@.knowns/tasks/...` and `@.knowns/docs/...`
+> - **NEVER write** the output format (`@.knowns/...`) - always use input format (`@task-<id>`, `@doc/<path>`)
 
 ### How to Follow Refs
 
 When you read a task and see refs in system output format, follow them:
 
-\`\`\`bash
+```bash
 # Example: Task 42 output contains:
 # @.knowns/tasks/task-44 - CLI Task Create Command.md
 # @.knowns/docs/patterns/module.md
@@ -119,23 +114,23 @@ knowns task 44 --plain
 
 # Follow doc ref (extract path, remove .md)
 knowns doc "patterns/module" --plain
-\`\`\`
+```
 
 ### Parsing Rules
 
-1. **Task refs**: \`@.knowns/tasks/task-<id> - ...\` → extract \`<id>\` → \`knowns task <id> --plain\`
-2. **Doc refs**: \`@.knowns/docs/<path>.md\` → extract \`<path>\` → \`knowns doc "<path>" --plain\`
+1. **Task refs**: `@.knowns/tasks/task-<id> - ...` → extract `<id>` → `knowns task <id> --plain`
+2. **Doc refs**: `@.knowns/docs/<path>.md` → extract `<path>` → `knowns doc "<path>" --plain`
 
 ### Recursive Following
 
 Refs can be nested. Follow until complete context is gathered:
 
-\`\`\`
+```
 Task 42
   → @.knowns/docs/README.md
     → @.knowns/docs/patterns/module.md (found in README)
       → (read for full pattern details)
-\`\`\`
+```
 
 ### When to Follow Refs
 
@@ -148,7 +143,7 @@ Task 42
 
 ### Example: Complete Ref Resolution
 
-\`\`\`bash
+```bash
 # 1. Read the task
 $ knowns task 42 --plain
 
@@ -166,7 +161,7 @@ $ knowns doc "README" --plain
 # @.knowns/docs/patterns/module.md → knowns doc "patterns/module" --plain
 
 # Now you have complete context
-\`\`\`
+```
 
 > **CRITICAL**: Never assume you understand a task fully without following its refs. Refs contain essential context that may change your implementation approach.
 
@@ -174,7 +169,7 @@ $ knowns doc "README" --plain
 
 ## Quick Start
 
-\`\`\`bash
+```bash
 # Initialize project
 knowns init [name]
 
@@ -194,7 +189,7 @@ knowns task list --plain
 
 # Search (tasks + docs)
 knowns search "query" --plain
-\`\`\`
+```
 
 ---
 
@@ -202,7 +197,7 @@ knowns search "query" --plain
 
 Here's a complete workflow for an AI agent implementing a feature:
 
-\`\`\`bash
+```bash
 # === AGENT SESSION START (Do this once per session) ===
 
 # 0a. List all available documentation
@@ -226,19 +221,19 @@ $ knowns doc "CONVENTIONS" --plain
 # === TASK WORKFLOW ===
 
 # 1. Create the task
-$ knowns task create "Add password reset flow" \\
-    -d "Users need ability to reset forgotten passwords via email" \\
-    --ac "User can request password reset via email" \\
-    --ac "Reset link expires after 1 hour" \\
-    --ac "User can set new password via reset link" \\
-    --ac "Unit tests cover all scenarios" \\
-    --priority high \\
+$ knowns task create "Add password reset flow" \
+    -d "Users need ability to reset forgotten passwords via email" \
+    --ac "User can request password reset via email" \
+    --ac "Reset link expires after 1 hour" \
+    --ac "User can set new password via reset link" \
+    --ac "Unit tests cover all scenarios" \
+    --priority high \
     -l "auth,feature"
 
 # Output: Created task AUTH-042
 
-# 2. Take the task and start timer
-$ knowns task edit AUTH-042 -s in-progress -a @me
+# 2. Take the task and start timer (uses defaultAssignee or @me fallback)
+$ knowns task edit AUTH-042 -s in-progress -a $(knowns config get defaultAssignee --plain || echo "@me")
 $ knowns time start AUTH-042
 
 # Output: Timer started for AUTH-042
@@ -302,7 +297,7 @@ $ knowns time stop
 $ knowns task edit AUTH-042 -s done
 
 # Output: Task AUTH-042 marked as done
-\`\`\`
+```
 
 ---
 
@@ -310,23 +305,30 @@ $ knowns task edit AUTH-042 -s done
 
 ### Step 1: Take Task
 
-\`\`\`bash
-knowns task edit <id> -s in-progress -a @me
-\`\`\`
+```bash
+# Assign using defaultAssignee from config (falls back to @me if not set)
+knowns task edit <id> -s in-progress -a $(knowns config get defaultAssignee --plain || echo "@me")
+```
 
-> **Note**: \`@me\` is a special keyword that assigns the task to yourself. You can also use specific usernames like \`@harry\` or \`@john\`.
+> **Note**: The `defaultAssignee` is configured in `.knowns/config.json` during `knowns init`. If not set, `@me` is used as fallback. To update: `knowns config set defaultAssignee "@username"`
 
-### Step 2: Start Time Tracking
+### Step 2: Start Time Tracking (REQUIRED)
 
-\`\`\`bash
+```bash
 knowns time start <id>
-\`\`\`
+```
+
+> **CRITICAL**: Time tracking is MANDATORY. Always start timer when taking a task and stop when done. This data is essential for:
+> - Accurate project estimation
+> - Identifying bottlenecks
+> - Resource planning
+> - Sprint retrospectives
 
 ### Step 3: Read Related Documentation
 
 > **FOR AI AGENTS**: This step is MANDATORY, not optional. You must understand the codebase before planning.
 
-\`\`\`bash
+```bash
 # Search for related docs
 knowns search "authentication" --type doc --plain
 
@@ -336,34 +338,66 @@ knowns doc "Security Patterns" --plain
 
 # Also check for similar completed tasks
 knowns search "auth" --type task --status done --plain
-\`\`\`
+```
 
 > **CRITICAL**: ALWAYS read related documentation BEFORE planning! Understanding existing patterns and conventions prevents rework and ensures consistency.
 
 ### Step 4: Create Implementation Plan
 
-\`\`\`bash
+```bash
 knowns task edit <id> --plan $'1. Research patterns (see @doc/security-patterns)
 2. Design middleware
 3. Implement
 4. Add tests
 5. Update docs'
-\`\`\`
+```
 
 > **CRITICAL**:
 > - Share plan with user and **WAIT for approval** before coding
-> - Include doc references using \`@doc/<path>\` format
+> - Include doc references using `@doc/<path>` format
 
 ### Step 5: Implement
 
-\`\`\`bash
-# Check acceptance criteria as you complete them
-knowns task edit <id> --check-ac 1 --check-ac 2 --check-ac 3
-\`\`\`
+```bash
+# Work through implementation plan step by step
+# IMPORTANT: Only check AC AFTER completing the work, not before
 
-### Step 6: Add Implementation Notes
+# After completing work for AC #1:
+knowns task edit <id> --check-ac 1
+knowns task edit <id> --append-notes "✓ Completed: <brief description>"
 
-\`\`\`bash
+# After completing work for AC #2:
+knowns task edit <id> --check-ac 2
+knowns task edit <id> --append-notes "✓ Completed: <brief description>"
+```
+
+> **CRITICAL**: Never check an AC before the work is actually done. ACs represent completed outcomes, not intentions.
+
+### Step 6: Handle Dynamic Requests (During Implementation)
+
+If the user adds new requirements during implementation:
+
+```bash
+# Add new acceptance criteria
+knowns task edit <id> --ac "New requirement from user"
+
+# Update implementation plan to include new steps
+knowns task edit <id> --plan $'1. Original step 1
+2. Original step 2
+3. NEW: Handle user request for X
+4. Continue with remaining work'
+
+# Append note about scope change
+knowns task edit <id> --append-notes "⚠️ Scope updated: Added requirement for X per user request"
+
+# Continue with Step 5 (Implement) for new requirements
+```
+
+> **Note**: Always document scope changes. This helps track why a task took longer than expected.
+
+### Step 7: Add Implementation Notes
+
+```bash
 # Add comprehensive notes (suitable for PR description)
 knowns task edit <id> --notes $'## Summary
 
@@ -376,19 +410,78 @@ Implemented JWT auth.
 # OR append progressively (recommended)
 knowns task edit <id> --append-notes "✓ Implemented middleware"
 knowns task edit <id> --append-notes "✓ Added tests"
-\`\`\`
+```
 
-### Step 7: Stop Time Tracking
+### Step 8: Stop Time Tracking (REQUIRED)
 
-\`\`\`bash
+```bash
 knowns time stop
-\`\`\`
+```
 
-### Step 8: Complete Task
+> **CRITICAL**: Never forget to stop the timer. If you forget, use manual entry: `knowns time add <id> <duration> -n "Forgot to stop timer"`
 
-\`\`\`bash
+### Step 9: Complete Task
+
+```bash
 knowns task edit <id> -s done
-\`\`\`
+```
+
+### Step 10: Handle Post-Completion Changes (If Applicable)
+
+If the user requests changes or updates AFTER task is marked done:
+
+```bash
+# 1. Reopen task - set back to in-progress
+knowns task edit <id> -s in-progress
+
+# 2. Restart time tracking (REQUIRED)
+knowns time start <id>
+
+# 3. Add new AC for the changes requested
+knowns task edit <id> --ac "Post-completion fix: <description>"
+
+# 4. Document the reopen reason
+knowns task edit <id> --append-notes "🔄 Reopened: User requested changes - <reason>"
+
+# 5. Follow Step 5-9 again (Implement → Notes → Stop Timer → Done)
+```
+
+> **CRITICAL**: Treat post-completion changes as a mini-workflow. Always:
+> - Reopen task (in-progress)
+> - Start timer again
+> - Add AC for traceability
+> - Document why it was reopened
+> - Follow the same completion process
+
+### Step 11: Knowledge Extraction (Post-Completion)
+
+After completing a task, extract reusable knowledge to docs:
+
+```bash
+# Search if similar pattern already documented
+knowns search "<pattern/concept>" --type doc --plain
+
+# If new knowledge, create a doc for future reference
+knowns doc create "Pattern: <Name>" \
+    -d "Reusable pattern discovered during task implementation" \
+    -t "pattern,<domain>" \
+    -f "patterns"
+
+# Or append to existing doc
+knowns doc edit "<existing-doc>" -a "## New Section\n\nLearned from task <id>: ..."
+
+# Reference the source task
+knowns doc edit "<doc-name>" -a "\n\n> Source: @task-<id>"
+```
+
+**When to extract knowledge:**
+- New patterns/conventions discovered
+- Common error solutions
+- Reusable code snippets or approaches
+- Integration patterns with external services
+- Performance optimization techniques
+
+> **CRITICAL**: Only extract **generalizable** knowledge. Task-specific details belong in implementation notes, not docs.
 
 ---
 
@@ -396,7 +489,7 @@ knowns task edit <id> -s done
 
 ### Task Management
 
-\`\`\`bash
+```bash
 # Create task
 knowns task create "Title" -d "Description" --ac "Criterion" -l "labels" --priority high
 
@@ -405,7 +498,7 @@ knowns task edit <id> -t "New title"
 knowns task edit <id> -d "New description"
 knowns task edit <id> -s in-progress
 knowns task edit <id> --priority high
-knowns task edit <id> -a @me
+knowns task edit <id> -a <assignee>              # $(knowns config get defaultAssignee --plain || echo "@me")
 
 # Acceptance Criteria
 knowns task edit <id> --ac "New criterion"           # Add
@@ -414,7 +507,7 @@ knowns task edit <id> --uncheck-ac 2                 # Uncheck
 knowns task edit <id> --remove-ac 3                  # Remove
 
 # Implementation Plan & Notes
-knowns task edit <id> --plan $'1. Step\\n2. Step'
+knowns task edit <id> --plan $'1. Step\n2. Step'
 knowns task edit <id> --notes "Implementation summary"
 knowns task edit <id> --append-notes "Progress update"
 
@@ -423,13 +516,13 @@ knowns task <id> --plain                             # Shorthand (ALWAYS use --p
 knowns task view <id> --plain                        # Full command
 knowns task list --plain
 knowns task list --status in-progress --plain
-knowns task list --assignee @me --plain
+knowns task list --assignee <assignee> --plain   # $(knowns config get defaultAssignee --plain || echo "@me")
 knowns task list --tree --plain                      # Tree hierarchy
-\`\`\`
+```
 
 ### Time Tracking
 
-\`\`\`bash
+```bash
 # Timer
 knowns time start <id>
 knowns time stop
@@ -443,11 +536,11 @@ knowns time add <id> 2h -n "Note" -d "2025-12-25"
 # Reports
 knowns time report --from "2025-12-01" --to "2025-12-31"
 knowns time report --by-label --csv > report.csv
-\`\`\`
+```
 
 ### Documentation
 
-\`\`\`bash
+```bash
 # List & View
 knowns doc list --plain
 knowns doc list --tag architecture --plain
@@ -464,11 +557,11 @@ knowns doc edit "Doc Name" -t "New Title" --tags "new,tags"
 # Edit content
 knowns doc edit "Doc Name" -c "New content"        # Replace content
 knowns doc edit "Doc Name" -a "Appended content"   # Append to content
-\`\`\`
+```
 
 ### Search
 
-\`\`\`bash
+```bash
 # Search everything
 knowns search "query" --plain
 
@@ -478,7 +571,7 @@ knowns search "patterns" --type doc --plain
 
 # Filter
 knowns search "bug" --status in-progress --priority high --plain
-\`\`\`
+```
 
 ---
 
@@ -496,13 +589,13 @@ Clear summary (WHAT needs to be done).
 
 ### Description
 
-Explains WHY and WHAT (not HOW). **Link related docs using \`@doc/<path>\`**
+Explains WHY and WHAT (not HOW). **Link related docs using `@doc/<path>`**
 
-\`\`\`markdown
+```markdown
 We need JWT authentication because sessions don't scale for our microservices architecture.
 
 Related docs: @doc/security-patterns, @doc/api-guidelines
-\`\`\`
+```
 
 ### Acceptance Criteria
 
@@ -518,19 +611,19 @@ Related docs: @doc/security-patterns, @doc/api-guidelines
 
 HOW to solve. Added AFTER taking task, BEFORE coding.
 
-\`\`\`markdown
+```markdown
 1. Research JWT libraries (see @doc/security-patterns)
 2. Design token structure (access + refresh tokens)
 3. Implement auth middleware
 4. Add unit tests (aim for 90%+ coverage)
 5. Update API.md with new endpoints
-\`\`\`
+```
 
 ### Implementation Notes
 
 Summary for PR description. Added AFTER completion.
 
-\`\`\`markdown
+```markdown
 ## Summary
 Implemented JWT auth using jsonwebtoken library.
 
@@ -545,7 +638,7 @@ Implemented JWT auth using jsonwebtoken library.
 
 ## Documentation
 - Updated API.md with authentication section
-\`\`\`
+```
 
 ---
 
@@ -555,17 +648,17 @@ Implemented JWT auth using jsonwebtoken library.
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| \`Error: Task not found\` | Invalid task ID | Run \`knowns task list --plain\` to find correct ID |
-| \`Error: No active timer\` | Calling \`time stop\` without active timer | Start timer first: \`knowns time start <id>\` |
-| \`Error: Timer already running\` | Starting timer when one is active | Stop current: \`knowns time stop\` |
-| \`Error: Invalid status\` | Wrong status format | Use lowercase with hyphens: \`in-progress\`, not \`In Progress\` |
-| \`Error: AC index out of range\` | Checking non-existent criterion | View task first: \`knowns task <id> --plain\` |
-| \`Error: Document not found\` | Wrong document name | Run \`knowns doc list --plain\` to find correct name |
-| \`Error: Not initialized\` | Running commands without init | Run \`knowns init\` first |
+| `Error: Task not found` | Invalid task ID | Run `knowns task list --plain` to find correct ID |
+| `Error: No active timer` | Calling `time stop` without active timer | Start timer first: `knowns time start <id>` |
+| `Error: Timer already running` | Starting timer when one is active | Stop current: `knowns time stop` |
+| `Error: Invalid status` | Wrong status format | Use lowercase with hyphens: `in-progress`, not `In Progress` |
+| `Error: AC index out of range` | Checking non-existent criterion | View task first: `knowns task <id> --plain` |
+| `Error: Document not found` | Wrong document name | Run `knowns doc list --plain` to find correct name |
+| `Error: Not initialized` | Running commands without init | Run `knowns init` first |
 
 ### Debugging Commands
 
-\`\`\`bash
+```bash
 # Check CLI version
 knowns --version
 
@@ -577,7 +670,7 @@ knowns task <id> --json
 
 # Check timer status
 knowns time status
-\`\`\`
+```
 
 ---
 
@@ -587,10 +680,11 @@ A task is **Done** ONLY when **ALL** criteria are met:
 
 ### Via CLI (Required)
 
-- [ ] All acceptance criteria checked: \`--check-ac <index>\`
-- [ ] Implementation notes added: \`--notes "..."\`
-- [ ] Timer stopped: \`knowns time stop\`
-- [ ] Status set to done: \`-s done\`
+- [ ] All acceptance criteria checked: `--check-ac <index>` (only after work is actually done)
+- [ ] Implementation notes added: `--notes "..."`
+- [ ] ⏱️ Timer stopped: `knowns time stop` (MANDATORY - do not skip!)
+- [ ] Status set to done: `-s done`
+- [ ] Knowledge extracted to docs (if applicable)
 
 ### Via Code (Required)
 
@@ -609,19 +703,19 @@ Use **lowercase with hyphens**:
 
 | Status | Description | When to Use |
 |--------|-------------|-------------|
-| \`todo\` | Not started | Default for new tasks |
-| \`in-progress\` | Currently working | After taking task |
-| \`in-review\` | In code review | PR submitted |
-| \`blocked\` | Waiting on dependency | External blocker |
-| \`done\` | Completed | All criteria met |
+| `todo` | Not started | Default for new tasks |
+| `in-progress` | Currently working | After taking task |
+| `in-review` | In code review | PR submitted |
+| `blocked` | Waiting on dependency | External blocker |
+| `done` | Completed | All criteria met |
 
 ### Priority Values
 
 | Priority | Description |
 |----------|-------------|
-| \`low\` | Can wait, nice-to-have |
-| \`medium\` | Normal priority (default) |
-| \`high\` | Urgent, time-sensitive |
+| `low` | Can wait, nice-to-have |
+| `medium` | Normal priority (default) |
+| `high` | Urgent, time-sensitive |
 
 ---
 
@@ -629,24 +723,26 @@ Use **lowercase with hyphens**:
 
 | Wrong | Right |
 |-------|-------|
-| Edit .md files directly | Use \`knowns task edit\` |
-| Change \`- [ ]\` to \`- [x]\` in file | Use \`--check-ac <index>\` |
+| Edit .md files directly | Use `knowns task edit` |
+| Change `- [ ]` to `- [x]` in file | Use `--check-ac <index>` |
+| Check AC before completing work | Only check AC AFTER work is actually done |
+| Skip time tracking | ALWAYS use `time start` and `time stop` |
 | Start coding without reading docs | Read ALL related docs FIRST |
-| Skip \`knowns doc list\` on new project | Always list docs when starting |
+| Skip `knowns doc list` on new project | Always list docs when starting |
 | Assume you know the conventions | Read CONVENTIONS/ARCHITECTURE docs |
 | Plan without checking docs | Read docs before planning |
 | Ignore similar completed tasks | Search done tasks for patterns |
-| Missing doc links in description/plan | Link docs using \`@doc/<path>\` |
-| Write refs as \`@.knowns/docs/...\` or \`@.knowns/tasks/...\` | Use input format: \`@doc/<path>\`, \`@task-<id>\` |
-| Forget \`--plain\` flag | Always use \`--plain\` for AI |
+| Missing doc links in description/plan | Link docs using `@doc/<path>` |
+| Write refs as `@.knowns/docs/...` or `@.knowns/tasks/...` | Use input format: `@doc/<path>`, `@task-<id>` |
+| Forget `--plain` flag | Always use `--plain` for AI |
 | Code before plan approval | Share plan, WAIT for approval |
 | Mark done without all criteria | Check ALL criteria first |
 | Write implementation steps in AC | Write outcome-oriented criteria |
-| Use \`"In Progress"\` or \`"Done"\` | Use \`in-progress\`, \`done\` |
-| Use \`@yourself\` | Use \`@me\` or specific username |
-| Ignore refs in task description | Follow ALL refs (\`@.knowns/...\`) before planning |
-| See \`@.knowns/docs/...\` but don't read | Use \`knowns doc "<path>" --plain\` |
-| See \`@.knowns/tasks/task-X\` but don't check | Use \`knowns task X --plain\` for context |
+| Use `"In Progress"` or `"Done"` | Use `in-progress`, `done` |
+| Use `@yourself` or unknown assignee | Use `$(knowns config get defaultAssignee --plain \|\| echo "@me")` |
+| Ignore refs in task description | Follow ALL refs (`@.knowns/...`) before planning |
+| See `@.knowns/docs/...` but don't read | Use `knowns doc "<path>" --plain` |
+| See `@.knowns/tasks/task-X` but don't check | Use `knowns task X --plain` for context |
 | Follow only first-level refs | Recursively follow nested refs until complete |
 
 ---
@@ -658,33 +754,33 @@ Use **lowercase with hyphens**:
 Different shells handle multi-line strings differently:
 
 **Bash / Zsh (Recommended)**
-\`\`\`bash
-knowns task edit <id> --plan $'1. First step\\n2. Second step\\n3. Third step'
-\`\`\`
+```bash
+knowns task edit <id> --plan $'1. First step\n2. Second step\n3. Third step'
+```
 
 **PowerShell**
-\`\`\`powershell
-knowns task edit <id> --plan "1. First step\`n2. Second step\`n3. Third step"
-\`\`\`
+```powershell
+knowns task edit <id> --plan "1. First step`n2. Second step`n3. Third step"
+```
 
 **Cross-platform (Using printf)**
-\`\`\`bash
-knowns task edit <id> --plan "$(printf '1. First step\\n2. Second step\\n3. Third step')"
-\`\`\`
+```bash
+knowns task edit <id> --plan "$(printf '1. First step\n2. Second step\n3. Third step')"
+```
 
 **Using heredoc (for long content)**
-\`\`\`bash
+```bash
 knowns task edit <id> --plan "$(cat <<EOF
 1. First step
 2. Second step
 3. Third step
 EOF
 )"
-\`\`\`
+```
 
 ### Path Separators
 
-- **Unix/macOS**: Use forward slashes: \`./docs/api.md\`
+- **Unix/macOS**: Use forward slashes: `./docs/api.md`
 - **Windows**: Both work, but prefer forward slashes for consistency
 
 ---
@@ -693,7 +789,7 @@ EOF
 
 ### For AI Agents: Session Start
 
-- [ ] List all docs: \`knowns doc list --plain\`
+- [ ] List all docs: `knowns doc list --plain`
 - [ ] Read README/ARCHITECTURE docs
 - [ ] Understand coding conventions
 - [ ] Review current task backlog
@@ -701,36 +797,37 @@ EOF
 ### Before Starting Work
 
 - [ ] Task has clear acceptance criteria
-- [ ] ALL refs in task followed (\`@.knowns/...\`)
+- [ ] ALL refs in task followed (`@.knowns/...`)
 - [ ] Nested refs recursively followed until complete context gathered
-- [ ] Related docs searched: \`knowns search "keyword" --type doc --plain\`
-- [ ] ALL relevant docs read: \`knowns doc "Doc Name" --plain\`
+- [ ] Related docs searched: `knowns search "keyword" --type doc --plain`
+- [ ] ALL relevant docs read: `knowns doc "Doc Name" --plain`
 - [ ] Similar done tasks reviewed for patterns
-- [ ] Task assigned to self: \`-a @me\`
-- [ ] Status set to in-progress: \`-s in-progress\`
-- [ ] Timer started: \`knowns time start <id>\`
+- [ ] Task assigned to self: `-a $(knowns config get defaultAssignee --plain || echo "@me")`
+- [ ] Status set to in-progress: `-s in-progress`
+- [ ] Timer started: `knowns time start <id>`
 
 ### During Work
 
 - [ ] Implementation plan created and approved
-- [ ] Doc links included in plan: \`@doc/<path>\`
-- [ ] Criteria checked as completed: \`--check-ac <index>\`
-- [ ] Progress notes appended: \`--append-notes "✓ ..."\`
+- [ ] Doc links included in plan: `@doc/<path>`
+- [ ] Criteria checked as completed: `--check-ac <index>`
+- [ ] Progress notes appended: `--append-notes "✓ ..."`
 
 ### After Work
 
-- [ ] All acceptance criteria checked
-- [ ] Implementation notes added: \`--notes "..."\`
-- [ ] Timer stopped: \`knowns time stop\`
+- [ ] All acceptance criteria checked (only after work is done)
+- [ ] Implementation notes added: `--notes "..."`
+- [ ] Timer stopped: `knowns time stop`
 - [ ] Tests passing
 - [ ] Documentation updated
-- [ ] Status set to done: \`-s done\`
+- [ ] Status set to done: `-s done`
+- [ ] Knowledge extracted to docs (if applicable): patterns, solutions, conventions
 
 ---
 
 ## Quick Reference Card
 
-\`\`\`bash
+```bash
 # === AGENT INITIALIZATION (Once per session) ===
 knowns doc list --plain
 knowns doc "README" --plain
@@ -739,22 +836,26 @@ knowns doc "CONVENTIONS" --plain
 
 # === FULL WORKFLOW ===
 knowns task create "Title" -d "Description" --ac "Criterion"
-knowns task edit <id> -s in-progress -a @me
-knowns time start <id>
+knowns task edit <id> -s in-progress -a $(knowns config get defaultAssignee --plain || echo "@me")
+knowns time start <id>                                     # ⏱️ REQUIRED: Start timer
 knowns search "keyword" --type doc --plain
 knowns doc "Doc Name" --plain
 knowns search "keyword" --type task --status done --plain  # Learn from history
-knowns task edit <id> --plan $'1. Step (see @doc/file)\\n2. Step'
+knowns task edit <id> --plan $'1. Step (see @doc/file)\n2. Step'
 # ... wait for approval, then implement ...
-knowns task edit <id> --check-ac 1 --check-ac 2
-knowns task edit <id> --append-notes "✓ Completed feature"
-knowns time stop
+# Only check AC AFTER completing the work:
+knowns task edit <id> --check-ac 1
+knowns task edit <id> --append-notes "✓ Completed: feature X"
+knowns task edit <id> --check-ac 2
+knowns task edit <id> --append-notes "✓ Completed: feature Y"
+knowns time stop                                           # ⏱️ REQUIRED: Stop timer
 knowns task edit <id> -s done
+# Optional: Extract knowledge to docs if generalizable patterns found
 
 # === VIEW & SEARCH ===
 knowns task <id> --plain                                   # Shorthand for view
 knowns task list --plain
-knowns task list --status in-progress --assignee @me --plain
+knowns task list --status in-progress --assignee $(knowns config get defaultAssignee --plain || echo "@me") --plain
 knowns search "query" --plain
 knowns search "bug" --type task --status in-progress --plain
 
@@ -770,11 +871,10 @@ knowns doc "path/doc-name" --plain                         # Shorthand for view
 knowns doc create "Title" -d "Description" -t "tags" -f "folder"
 knowns doc edit "doc-name" -c "New content"
 knowns doc edit "doc-name" -a "Appended content"
-\`\`\`
+```
 
 ---
 
 **Maintained By**: Knowns CLI Team
 
 <!-- KNOWNS GUIDELINES END -->
-`;
