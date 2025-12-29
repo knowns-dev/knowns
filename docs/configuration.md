@@ -107,18 +107,41 @@ You may want to ignore certain files:
 .knowns/.timer
 ```
 
+## Configuration Commands
+
+Manage project configuration via CLI:
+
+```bash
+# Get a config value
+knowns config get defaultAssignee --plain
+
+# Set a config value
+knowns config set defaultAssignee "@john"
+
+# List all config
+knowns config list
+```
+
 ## AI Agent Guidelines
 
 Knowns can sync guidelines to AI assistants:
 
 ```bash
+# Interactive mode - select version and files
+knowns agents
+
+# Non-interactive update (uses defaults)
 knowns agents --update-instructions
+
+# Update specific files with MCP version
+knowns agents --update-instructions --type mcp --files "CLAUDE.md,AGENTS.md"
 ```
 
-This updates:
-- `CLAUDE.md` - For Claude Code
+**Supported files:**
+- `CLAUDE.md` - For Claude Code (default)
+- `AGENTS.md` - For Agent SDK (default)
+- `GEMINI.md` - For Google Gemini
 - `.github/copilot-instructions.md` - For GitHub Copilot
-- Other AI-specific config files
 
 ## Environment Variables
 
@@ -130,6 +153,6 @@ This updates:
 
 | Setting | Default |
 |---------|---------|
-| Web UI port | 3456 |
+| Web UI port | 6420 |
 | Task priority | medium |
 | Task status | todo |

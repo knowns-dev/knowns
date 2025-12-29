@@ -232,8 +232,8 @@ $ knowns task create "Add password reset flow" \
 
 # Output: Created task AUTH-042
 
-# 2. Take the task and start timer
-$ knowns task edit AUTH-042 -s in-progress -a @me
+# 2. Take the task and start timer (uses defaultAssignee or @me fallback)
+$ knowns task edit AUTH-042 -s in-progress -a $(knowns config get defaultAssignee --plain || echo "@me")
 $ knowns time start AUTH-042
 
 # Output: Timer started for AUTH-042
@@ -306,16 +306,23 @@ $ knowns task edit AUTH-042 -s done
 ### Step 1: Take Task
 
 ```bash
-knowns task edit <id> -s in-progress -a @me
+# Assign using defaultAssignee from config (falls back to @me if not set)
+knowns task edit <id> -s in-progress -a $(knowns config get defaultAssignee --plain || echo "@me")
 ```
 
-> **Note**: `@me` is a special keyword that assigns the task to yourself. You can also use specific usernames like `@harry` or `@john`.
+> **Note**: The `defaultAssignee` is configured in `.knowns/config.json` during `knowns init`. If not set, `@me` is used as fallback. To update: `knowns config set defaultAssignee "@username"`
 
-### Step 2: Start Time Tracking
+### Step 2: Start Time Tracking (REQUIRED)
 
 ```bash
 knowns time start <id>
 ```
+
+> **CRITICAL**: Time tracking is MANDATORY. Always start timer when taking a task and stop when done. This data is essential for:
+> - Accurate project estimation
+> - Identifying bottlenecks
+> - Resource planning
+> - Sprint retrospectives
 
 ### Step 3: Read Related Documentation
 
@@ -352,11 +359,43 @@ knowns task edit <id> --plan $'1. Research patterns (see @doc/security-patterns)
 ### Step 5: Implement
 
 ```bash
-# Check acceptance criteria as you complete them
-knowns task edit <id> --check-ac 1 --check-ac 2 --check-ac 3
+# Work through implementation plan step by step
+# IMPORTANT: Only check AC AFTER completing the work, not before
+
+# After completing work for AC #1:
+knowns task edit <id> --check-ac 1
+knowns task edit <id> --append-notes "✓ Completed: <brief description>"
+
+# After completing work for AC #2:
+knowns task edit <id> --check-ac 2
+knowns task edit <id> --append-notes "✓ Completed: <brief description>"
 ```
 
-### Step 6: Add Implementation Notes
+> **CRITICAL**: Never check an AC before the work is actually done. ACs represent completed outcomes, not intentions.
+
+### Step 6: Handle Dynamic Requests (During Implementation)
+
+If the user adds new requirements during implementation:
+
+```bash
+# Add new acceptance criteria
+knowns task edit <id> --ac "New requirement from user"
+
+# Update implementation plan to include new steps
+knowns task edit <id> --plan $'1. Original step 1
+2. Original step 2
+3. NEW: Handle user request for X
+4. Continue with remaining work'
+
+# Append note about scope change
+knowns task edit <id> --append-notes "⚠️ Scope updated: Added requirement for X per user request"
+
+# Continue with Step 5 (Implement) for new requirements
+```
+
+> **Note**: Always document scope changes. This helps track why a task took longer than expected.
+
+### Step 7: Add Implementation Notes
 
 ```bash
 # Add comprehensive notes (suitable for PR description)
@@ -373,17 +412,76 @@ knowns task edit <id> --append-notes "✓ Implemented middleware"
 knowns task edit <id> --append-notes "✓ Added tests"
 ```
 
-### Step 7: Stop Time Tracking
+### Step 8: Stop Time Tracking (REQUIRED)
 
 ```bash
 knowns time stop
 ```
 
-### Step 8: Complete Task
+> **CRITICAL**: Never forget to stop the timer. If you forget, use manual entry: `knowns time add <id> <duration> -n "Forgot to stop timer"`
+
+### Step 9: Complete Task
 
 ```bash
 knowns task edit <id> -s done
 ```
+
+### Step 10: Handle Post-Completion Changes (If Applicable)
+
+If the user requests changes or updates AFTER task is marked done:
+
+```bash
+# 1. Reopen task - set back to in-progress
+knowns task edit <id> -s in-progress
+
+# 2. Restart time tracking (REQUIRED)
+knowns time start <id>
+
+# 3. Add new AC for the changes requested
+knowns task edit <id> --ac "Post-completion fix: <description>"
+
+# 4. Document the reopen reason
+knowns task edit <id> --append-notes "🔄 Reopened: User requested changes - <reason>"
+
+# 5. Follow Step 5-9 again (Implement → Notes → Stop Timer → Done)
+```
+
+> **CRITICAL**: Treat post-completion changes as a mini-workflow. Always:
+> - Reopen task (in-progress)
+> - Start timer again
+> - Add AC for traceability
+> - Document why it was reopened
+> - Follow the same completion process
+
+### Step 11: Knowledge Extraction (Post-Completion)
+
+After completing a task, extract reusable knowledge to docs:
+
+```bash
+# Search if similar pattern already documented
+knowns search "<pattern/concept>" --type doc --plain
+
+# If new knowledge, create a doc for future reference
+knowns doc create "Pattern: <Name>" \
+    -d "Reusable pattern discovered during task implementation" \
+    -t "pattern,<domain>" \
+    -f "patterns"
+
+# Or append to existing doc
+knowns doc edit "<existing-doc>" -a "## New Section\n\nLearned from task <id>: ..."
+
+# Reference the source task
+knowns doc edit "<doc-name>" -a "\n\n> Source: @task-<id>"
+```
+
+**When to extract knowledge:**
+- New patterns/conventions discovered
+- Common error solutions
+- Reusable code snippets or approaches
+- Integration patterns with external services
+- Performance optimization techniques
+
+> **CRITICAL**: Only extract **generalizable** knowledge. Task-specific details belong in implementation notes, not docs.
 
 ---
 
@@ -400,7 +498,7 @@ knowns task edit <id> -t "New title"
 knowns task edit <id> -d "New description"
 knowns task edit <id> -s in-progress
 knowns task edit <id> --priority high
-knowns task edit <id> -a @me
+knowns task edit <id> -a <assignee>              # $(knowns config get defaultAssignee --plain || echo "@me")
 
 # Acceptance Criteria
 knowns task edit <id> --ac "New criterion"           # Add
@@ -418,7 +516,7 @@ knowns task <id> --plain                             # Shorthand (ALWAYS use --p
 knowns task view <id> --plain                        # Full command
 knowns task list --plain
 knowns task list --status in-progress --plain
-knowns task list --assignee @me --plain
+knowns task list --assignee <assignee> --plain   # $(knowns config get defaultAssignee --plain || echo "@me")
 knowns task list --tree --plain                      # Tree hierarchy
 ```
 
@@ -582,10 +680,11 @@ A task is **Done** ONLY when **ALL** criteria are met:
 
 ### Via CLI (Required)
 
-- [ ] All acceptance criteria checked: `--check-ac <index>`
+- [ ] All acceptance criteria checked: `--check-ac <index>` (only after work is actually done)
 - [ ] Implementation notes added: `--notes "..."`
-- [ ] Timer stopped: `knowns time stop`
+- [ ] ⏱️ Timer stopped: `knowns time stop` (MANDATORY - do not skip!)
 - [ ] Status set to done: `-s done`
+- [ ] Knowledge extracted to docs (if applicable)
 
 ### Via Code (Required)
 
@@ -626,6 +725,8 @@ Use **lowercase with hyphens**:
 |-------|-------|
 | Edit .md files directly | Use `knowns task edit` |
 | Change `- [ ]` to `- [x]` in file | Use `--check-ac <index>` |
+| Check AC before completing work | Only check AC AFTER work is actually done |
+| Skip time tracking | ALWAYS use `time start` and `time stop` |
 | Start coding without reading docs | Read ALL related docs FIRST |
 | Skip `knowns doc list` on new project | Always list docs when starting |
 | Assume you know the conventions | Read CONVENTIONS/ARCHITECTURE docs |
@@ -638,7 +739,7 @@ Use **lowercase with hyphens**:
 | Mark done without all criteria | Check ALL criteria first |
 | Write implementation steps in AC | Write outcome-oriented criteria |
 | Use `"In Progress"` or `"Done"` | Use `in-progress`, `done` |
-| Use `@yourself` | Use `@me` or specific username |
+| Use `@yourself` or unknown assignee | Use `$(knowns config get defaultAssignee --plain \|\| echo "@me")` |
 | Ignore refs in task description | Follow ALL refs (`@.knowns/...`) before planning |
 | See `@.knowns/docs/...` but don't read | Use `knowns doc "<path>" --plain` |
 | See `@.knowns/tasks/task-X` but don't check | Use `knowns task X --plain` for context |
@@ -701,7 +802,7 @@ EOF
 - [ ] Related docs searched: `knowns search "keyword" --type doc --plain`
 - [ ] ALL relevant docs read: `knowns doc "Doc Name" --plain`
 - [ ] Similar done tasks reviewed for patterns
-- [ ] Task assigned to self: `-a @me`
+- [ ] Task assigned to self: `-a $(knowns config get defaultAssignee --plain || echo "@me")`
 - [ ] Status set to in-progress: `-s in-progress`
 - [ ] Timer started: `knowns time start <id>`
 
@@ -714,12 +815,13 @@ EOF
 
 ### After Work
 
-- [ ] All acceptance criteria checked
+- [ ] All acceptance criteria checked (only after work is done)
 - [ ] Implementation notes added: `--notes "..."`
 - [ ] Timer stopped: `knowns time stop`
 - [ ] Tests passing
 - [ ] Documentation updated
 - [ ] Status set to done: `-s done`
+- [ ] Knowledge extracted to docs (if applicable): patterns, solutions, conventions
 
 ---
 
@@ -734,22 +836,26 @@ knowns doc "CONVENTIONS" --plain
 
 # === FULL WORKFLOW ===
 knowns task create "Title" -d "Description" --ac "Criterion"
-knowns task edit <id> -s in-progress -a @me
-knowns time start <id>
+knowns task edit <id> -s in-progress -a $(knowns config get defaultAssignee --plain || echo "@me")
+knowns time start <id>                                     # ⏱️ REQUIRED: Start timer
 knowns search "keyword" --type doc --plain
 knowns doc "Doc Name" --plain
 knowns search "keyword" --type task --status done --plain  # Learn from history
 knowns task edit <id> --plan $'1. Step (see @doc/file)\n2. Step'
 # ... wait for approval, then implement ...
-knowns task edit <id> --check-ac 1 --check-ac 2
-knowns task edit <id> --append-notes "✓ Completed feature"
-knowns time stop
+# Only check AC AFTER completing the work:
+knowns task edit <id> --check-ac 1
+knowns task edit <id> --append-notes "✓ Completed: feature X"
+knowns task edit <id> --check-ac 2
+knowns task edit <id> --append-notes "✓ Completed: feature Y"
+knowns time stop                                           # ⏱️ REQUIRED: Stop timer
 knowns task edit <id> -s done
+# Optional: Extract knowledge to docs if generalizable patterns found
 
 # === VIEW & SEARCH ===
 knowns task <id> --plain                                   # Shorthand for view
 knowns task list --plain
-knowns task list --status in-progress --assignee @me --plain
+knowns task list --status in-progress --assignee $(knowns config get defaultAssignee --plain || echo "@me") --plain
 knowns search "query" --plain
 knowns search "bug" --type task --status in-progress --plain
 
@@ -772,6 +878,10 @@ knowns doc edit "doc-name" -a "Appended content"
 **Maintained By**: Knowns CLI Team
 
 <!-- KNOWNS GUIDELINES END -->
+
+
+
+
 
 
 

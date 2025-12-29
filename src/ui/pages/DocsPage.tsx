@@ -16,6 +16,7 @@ import { ScrollArea } from "../components/ui/scroll-area";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { getDocs, createDoc, updateDoc, connectWebSocket } from "../api/client";
+import { normalizePath, toDisplayPath, normalizePathForAPI } from "../lib/utils";
 
 interface DocMetadata {
 	title: string;
@@ -78,15 +79,16 @@ export default function DocsPage() {
 
 		if (match) {
 			const docPath = decodeURIComponent(match[1]);
-			// Normalize path
-			const normalizedPath = docPath.replace(/^\.\//, "").replace(/^\//, "");
+			// Normalize path - convert backslashes to forward slashes and clean up
+			const normalizedDocPath = normalizePath(docPath).replace(/^\.\//, "").replace(/^\//, "");
 
-			// Find document
+			// Find document - normalize both sides for comparison
 			const targetDoc = docs.find((doc) => {
+				const normalizedStoredPath = normalizePath(doc.path);
 				return (
-					doc.path === normalizedPath ||
-					doc.path.endsWith(`/${normalizedPath}`) ||
-					doc.filename === normalizedPath
+					normalizedStoredPath === normalizedDocPath ||
+					normalizedStoredPath.endsWith(`/${normalizedDocPath}`) ||
+					doc.filename === normalizedDocPath
 				);
 			});
 
@@ -239,9 +241,10 @@ export default function DocsPage() {
 
 	const handleCopyPath = () => {
 		if (selectedDoc) {
-			// Copy as URL path for browser navigation
-			const urlPath = `${window.location.origin}${window.location.pathname}#/docs/${selectedDoc.path}`;
-			navigator.clipboard.writeText(urlPath).then(() => {
+			// Copy as @doc/... reference format (normalize path for cross-platform)
+			const normalizedPath = toDisplayPath(selectedDoc.path).replace(/\.md$/, "");
+			const refPath = `@doc/${normalizedPath}`;
+			navigator.clipboard.writeText(refPath).then(() => {
 				setPathCopied(true);
 				setTimeout(() => setPathCopied(false), 2000);
 			});
@@ -253,8 +256,8 @@ export default function DocsPage() {
 
 		setSaving(true);
 		try {
-			// Update doc via API
-			const updatedDoc = await updateDoc(selectedDoc.path, {
+			// Update doc via API - normalize path for cross-platform compatibility
+			const updatedDoc = await updateDoc(normalizePathForAPI(selectedDoc.path), {
 				content: editedContent,
 			});
 
@@ -396,8 +399,8 @@ export default function DocsPage() {
 						key={`doc-${doc.path}`}
 						type="button"
 						onClick={() => {
-							// Navigate using hash to update URL
-							window.location.hash = `/docs/${doc.path}`;
+							// Navigate using hash to update URL - normalize path for cross-platform
+							window.location.hash = `/docs/${toDisplayPath(doc.path)}`;
 						}}
 						className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-accent text-foreground transition-colors ${
 							selectedDoc?.path === doc.path ? "bg-accent" : ""
@@ -436,7 +439,7 @@ export default function DocsPage() {
 				<h1 className="text-2xl font-bold">Documentation</h1>
 				<Button
 					onClick={() => setShowCreateModal(true)}
-					className="bg-green-600 hover:bg-green-700"
+					className="bg-green-700 hover:bg-green-800 text-white"
 				>
 					<Plus className="w-4 h-4 mr-2" />
 					New Document
@@ -483,13 +486,13 @@ export default function DocsPage() {
 									<button
 										type="button"
 										onClick={handleCopyPath}
-										className="flex items-center gap-2 px-2 py-1 rounded text-xs text-muted-foreground hover:bg-accent transition-colors group"
-										title="Click to copy URL"
+										className="flex items-center gap-2 px-2 py-1 rounded text-xs text-blue-600 dark:text-blue-400 hover:bg-accent transition-colors group"
+										title="Click to copy reference"
 									>
 										<Folder className="w-4 h-4" />
-										<span className="font-mono">/docs/{selectedDoc.path}</span>
+										<span className="font-mono">@doc/{toDisplayPath(selectedDoc.path).replace(/\.md$/, "")}</span>
 										<span className="opacity-0 group-hover:opacity-100 transition-opacity">
-											{pathCopied ? "✓" : <Copy className="w-4 h-4" />}
+											{pathCopied ? "✓ Copied!" : <Copy className="w-4 h-4" />}
 										</span>
 									</button>
 									<div className="text-sm text-muted-foreground mt-2">
@@ -509,7 +512,7 @@ export default function DocsPage() {
 											<Button
 												onClick={handleSave}
 												disabled={saving}
-												className="bg-green-600 hover:bg-green-700"
+												className="bg-green-700 hover:bg-green-800 text-white"
 											>
 												<Check className="w-4 h-4 mr-2" />
 												{saving ? "Saving..." : "Save"}
@@ -645,7 +648,7 @@ export default function DocsPage() {
 							<Button
 								onClick={handleCreateDoc}
 								disabled={creating || !newDocTitle.trim()}
-								className="bg-green-600 hover:bg-green-700"
+								className="bg-green-700 hover:bg-green-800 text-white"
 							>
 								{creating ? "Creating..." : "Create Document"}
 							</Button>

@@ -22,7 +22,8 @@
 			"@models/*": ["src/models/*"],
 			"@storage/*": ["src/storage/*"],
 			"@server/*": ["src/server/*"],
-			"@utils/*": ["src/utils/*"]
+			"@utils/*": ["src/utils/*"],
+			"@mcp/*": ["src/mcp/*"]
 		},
 
 		"strict": true,

@@ -1,7 +1,7 @@
 import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlignLeft, ClipboardCheck, Plus, Trash2, ArrowUp, Maximize2, Minimize2, X } from "lucide-react";
+import { AlignLeft, ClipboardCheck, Plus, Trash2, ArrowUp, Maximize2, Minimize2, X, FileText, StickyNote } from "lucide-react";
 import type { Task, TaskPriority, TaskStatus } from "../../models/task";
 import { useCurrentUser } from "../../contexts/UserContext";
 import { useUIPreferences } from "../../contexts/UIPreferencesContext";
@@ -93,6 +93,8 @@ export default function TaskCreateForm({
 	const [labels, setLabels] = useState<string[]>([]);
 	const [parentId, setParentId] = useState<string>("");
 	const [acceptanceCriteria, setAcceptanceCriteria] = useState<{ id: string; text: string }[]>([]);
+	const [implementationPlan, setImplementationPlan] = useState("");
+	const [implementationNotes, setImplementationNotes] = useState("");
 
 	// UI states
 	const [saving, setSaving] = useState(false);
@@ -138,6 +140,8 @@ export default function TaskCreateForm({
 			setLabels([]);
 			setParentId("");
 			setAcceptanceCriteria([]);
+			setImplementationPlan("");
+			setImplementationNotes("");
 			setError(null);
 			setSuccess(false);
 			setNewACText("");
@@ -212,6 +216,8 @@ export default function TaskCreateForm({
 					text: ac.text,
 					completed: false,
 				})),
+				implementationPlan: implementationPlan.trim() || undefined,
+				implementationNotes: implementationNotes.trim() || undefined,
 			};
 
 			await createTask(taskData);
@@ -239,7 +245,7 @@ export default function TaskCreateForm({
 
 	// Header component (shared)
 	const Header = (
-		<div className="flex items-center justify-between gap-2 p-4 border-b bg-green-600">
+		<div className="flex items-center justify-between gap-2 p-4 border-b bg-green-700">
 			<div className="flex-1 min-w-0">
 				<span className="text-green-100 text-xs font-medium uppercase tracking-wide">New Task</span>
 				<input
@@ -257,7 +263,7 @@ export default function TaskCreateForm({
 					variant="ghost"
 					size="icon"
 					onClick={toggleTaskCreateLayout}
-					className="h-8 w-8 text-white/80 hover:text-white hover:bg-white/20"
+					className="h-8 w-8 text-foreground hover:text-foreground"
 					title={isMaximized ? "Minimize" : "Maximize"}
 				>
 					{isMaximized ? (
@@ -270,7 +276,7 @@ export default function TaskCreateForm({
 					variant="ghost"
 					size="icon"
 					onClick={onClose}
-					className="h-8 w-8 text-white/80 hover:text-white hover:bg-white/20"
+					className="h-8 w-8 text-foreground hover:text-foreground"
 					title="Close"
 				>
 					<X className="w-4 h-4" />
@@ -380,7 +386,7 @@ export default function TaskCreateForm({
 								size="sm"
 								onClick={handleACAdd}
 								disabled={!newACText.trim() || saving}
-								className="bg-green-600 hover:bg-green-700"
+								className="bg-green-700 hover:bg-green-800 text-white"
 							>
 								Add
 							</Button>
@@ -408,6 +414,36 @@ export default function TaskCreateForm({
 						<span>Add an item</span>
 					</button>
 				)}
+			</section>
+
+			{/* Implementation Plan */}
+			<section>
+				<div className="flex items-center gap-2 mb-3">
+					<FileText className="w-5 h-5 text-muted-foreground" />
+					<h3 className="font-semibold text-sm text-muted-foreground">Implementation Plan</h3>
+					<span className="text-xs text-muted-foreground">(optional)</span>
+				</div>
+				<MDEditor
+					markdown={implementationPlan}
+					onChange={setImplementationPlan}
+					placeholder="Describe how you plan to implement this task..."
+					readOnly={saving}
+				/>
+			</section>
+
+			{/* Implementation Notes */}
+			<section>
+				<div className="flex items-center gap-2 mb-3">
+					<StickyNote className="w-5 h-5 text-muted-foreground" />
+					<h3 className="font-semibold text-sm text-muted-foreground">Implementation Notes</h3>
+					<span className="text-xs text-muted-foreground">(optional)</span>
+				</div>
+				<MDEditor
+					markdown={implementationNotes}
+					onChange={setImplementationNotes}
+					placeholder="Add notes, observations, or any other relevant information..."
+					readOnly={saving}
+				/>
 			</section>
 		</div>
 	);
@@ -638,7 +674,7 @@ export default function TaskCreateForm({
 			<Button
 				type="button"
 				onClick={handleSubmit}
-				className="bg-green-600 hover:bg-green-700"
+				className="bg-green-700 hover:bg-green-800 text-white"
 				disabled={saving || success || !title.trim()}
 			>
 				{saving ? "Creating..." : "Create Task"}

@@ -4,6 +4,24 @@ Complete reference for all Knowns CLI commands.
 
 ## Task Commands
 
+### `knowns task <id>` (Shorthand)
+
+View a single task (shorthand for `knowns task view`).
+
+```bash
+knowns task <id> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--plain` | Plain text output (for AI) |
+
+**Examples:**
+
+```bash
+knowns task 42 --plain
+```
+
 ### `knowns task create`
 
 Create a new task.
@@ -66,7 +84,7 @@ knowns task list --tree --plain
 
 ### `knowns task view`
 
-View a single task.
+View a single task (full command form).
 
 ```bash
 knowns task view <id> [options]
@@ -75,7 +93,6 @@ knowns task view <id> [options]
 | Option | Description |
 |--------|-------------|
 | `--plain` | Plain text output (for AI) |
-| `--json` | JSON output |
 
 ### `knowns task edit`
 
@@ -120,6 +137,25 @@ knowns task edit 42 --append-notes "Completed auth middleware"
 ---
 
 ## Documentation Commands
+
+### `knowns doc <path>` (Shorthand)
+
+View a document (shorthand for `knowns doc view`).
+
+```bash
+knowns doc <name-or-path> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--plain` | Plain text output (for AI) |
+
+**Examples:**
+
+```bash
+knowns doc "README" --plain
+knowns doc "patterns/auth" --plain
+```
 
 ### `knowns doc create`
 
@@ -292,10 +328,59 @@ knowns search <query> [options]
 
 ### `knowns init`
 
-Initialize Knowns in current directory.
+Initialize Knowns in current directory with interactive wizard.
 
 ```bash
-knowns init [project-name]
+knowns init [project-name] [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--wizard` | Force interactive wizard mode |
+| `--no-wizard` | Skip wizard, use defaults |
+| `-f, --force` | Reinitialize (overwrites existing config) |
+
+**Examples:**
+
+```bash
+# Interactive wizard (default when no name provided)
+knowns init
+
+# Quick init with name
+knowns init my-project
+
+# Force reinitialize
+knowns init --force
+```
+
+**Wizard prompts:**
+- Project name
+- Default assignee
+- Default priority
+- Default labels
+- Time format (12h/24h)
+- AI guidelines version (CLI/MCP)
+- AI agent files to sync (CLAUDE.md, GEMINI.md, etc.)
+
+### `knowns config`
+
+Manage project configuration.
+
+```bash
+knowns config <command> [key] [value]
+```
+
+**Commands:**
+
+```bash
+# Get a config value
+knowns config get defaultAssignee --plain
+
+# Set a config value
+knowns config set defaultAssignee "@john"
+
+# List all config
+knowns config list
 ```
 
 ### `knowns browser`
@@ -308,23 +393,67 @@ knowns browser [options]
 
 | Option | Description |
 |--------|-------------|
-| `--port` | Custom port (default: 3456) |
+| `-p, --port` | Custom port (default: 6420) |
 | `--no-open` | Don't open browser |
 
 ### `knowns mcp`
 
-Start MCP server for Claude Desktop.
+Start MCP server for Claude Desktop integration.
 
 ```bash
-knowns mcp
+knowns mcp [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--info` | Show configuration instructions |
+| `--verbose` | Enable verbose logging |
+
+**Examples:**
+
+```bash
+# Show setup instructions
+knowns mcp --info
+
+# Start server with logging
+knowns mcp --verbose
 ```
 
 ### `knowns agents`
 
-Sync AI agent guidelines.
+Manage AI agent instruction files. Syncs Knowns guidelines to various AI assistant configuration files.
 
 ```bash
+knowns agents [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| (none) | Interactive mode - prompts to select version and files |
+| `--update-instructions` | Non-interactive update |
+| `--type <type>` | Guidelines version: `cli` or `mcp` (default: cli) |
+| `--files <files>` | Comma-separated list of files to update |
+
+**Supported files:**
+
+| File | Description | Default |
+|------|-------------|---------|
+| `CLAUDE.md` | Claude Code instructions | ✓ |
+| `AGENTS.md` | Agent SDK | ✓ |
+| `GEMINI.md` | Google Gemini | |
+| `.github/copilot-instructions.md` | GitHub Copilot | |
+
+**Examples:**
+
+```bash
+# Interactive mode - select version and files
+knowns agents
+
+# Non-interactive update (uses defaults)
 knowns agents --update-instructions
+
+# Update specific files with MCP version
+knowns agents --update-instructions --type mcp --files "CLAUDE.md,AGENTS.md"
 ```
 
 ---
@@ -336,17 +465,9 @@ knowns agents --update-instructions
 Plain text output optimized for AI consumption. Always use this when working with AI assistants.
 
 ```bash
-knowns task view 42 --plain
+knowns task 42 --plain
 knowns doc list --plain
 knowns search "auth" --plain
-```
-
-### `--json`
-
-JSON output for programmatic use.
-
-```bash
-knowns task view 42 --json
 ```
 
 ---

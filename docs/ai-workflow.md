@@ -22,7 +22,7 @@ knowns task edit 42 --check-ac 1
 
 ```bash
 knowns doc list --plain
-knowns doc view "patterns/auth" --plain
+knowns doc "patterns/auth" --plain
 ```
 
 ### 3. Always Use --plain
@@ -30,7 +30,7 @@ knowns doc view "patterns/auth" --plain
 **ALWAYS use `--plain` flag for AI-readable output:**
 
 ```bash
-knowns task view 42 --plain
+knowns task 42 --plain
 knowns doc list --plain
 knowns search "auth" --plain
 ```
@@ -44,8 +44,8 @@ When starting a new session:
 knowns doc list --plain
 
 # 2. Read essential docs
-knowns doc view "README" --plain
-knowns doc view "ARCHITECTURE" --plain
+knowns doc "README" --plain
+knowns doc "ARCHITECTURE" --plain
 
 # 3. Review current tasks
 knowns task list --plain
@@ -57,7 +57,8 @@ knowns task list --status in-progress --plain
 ### Step 1: Read the task
 
 ```bash
-knowns task view 42 --plain
+knowns task 42 --plain              # Shorthand
+knowns task view 42 --plain         # Full command
 ```
 
 ### Step 2: Follow ALL references
@@ -65,13 +66,13 @@ knowns task view 42 --plain
 If the task contains `@doc/patterns/auth`:
 
 ```bash
-knowns doc view "patterns/auth" --plain
+knowns doc "patterns/auth" --plain  # Shorthand
 ```
 
 If it contains `@task-38`:
 
 ```bash
-knowns task view 38 --plain
+knowns task 38 --plain              # Shorthand
 ```
 
 ### Step 3: Search for related docs
@@ -148,8 +149,8 @@ When you see references in task output:
 
 | You see | Command to run |
 |---------|----------------|
-| `@.knowns/tasks/task-38 - Title.md` | `knowns task view 38 --plain` |
-| `@.knowns/docs/patterns/auth.md` | `knowns doc view "patterns/auth" --plain` |
+| `@.knowns/tasks/task-38 - Title.md` | `knowns task 38 --plain` |
+| `@.knowns/docs/patterns/auth.md` | `knowns doc "patterns/auth" --plain` |
 
 ## Context Checklist
 
@@ -177,10 +178,10 @@ Before writing ANY code:
 ```bash
 # Initialize context
 knowns doc list --plain
-knowns doc view "README" --plain
+knowns doc "README" --plain
 
 # Take task
-knowns task view 42 --plain
+knowns task 42 --plain
 knowns task edit 42 -s in-progress -a @me
 knowns time start 42
 

@@ -12,3 +12,4 @@ export { browserCommand } from "./browser";
 export { docCommand } from "./doc";
 export { configCommand } from "./config";
 export { agentsCommand } from "./agents";
+export { mcpCommand } from "./mcp";

@@ -7,16 +7,28 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import chalk from "chalk";
 import { Command } from "commander";
-import { KNOWNS_GUIDELINES } from "../constants/knowns-guidelines";
+import prompts from "prompts";
+// Import markdown templates as text (esbuild loader: "text")
+import KNOWNS_GUIDELINES from "../templates/knowns-guidelines-cli.md";
+import KNOWNS_GUIDELINES_MCP from "../templates/knowns-guidelines-mcp.md";
 
 const PROJECT_ROOT = process.cwd();
 
 export const INSTRUCTION_FILES = [
-	{ path: "CLAUDE.md", name: "Claude Code" },
-	{ path: "AGENTS.md", name: "Agent SDK" },
-	{ path: "GEMINI.md", name: "Gemini" },
-	{ path: ".github/copilot-instructions.md", name: "GitHub Copilot" },
+	{ path: "CLAUDE.md", name: "Claude Code", selected: true },
+	{ path: "AGENTS.md", name: "Agent SDK", selected: true },
+	{ path: "GEMINI.md", name: "Gemini", selected: false },
+	{ path: ".github/copilot-instructions.md", name: "GitHub Copilot", selected: false },
 ];
+
+export type GuidelinesVersion = "cli" | "mcp";
+
+/**
+ * Get guidelines content by version
+ */
+export function getGuidelines(version: GuidelinesVersion): string {
+	return version === "mcp" ? KNOWNS_GUIDELINES_MCP : KNOWNS_GUIDELINES;
+}
 
 /**
  * Update instruction file with guidelines
@@ -63,72 +75,151 @@ export async function updateInstructionFile(
 }
 
 /**
- * Update all instruction files
+ * Interactive agents command
  */
-const updateInstructionsCommand = new Command("agents")
-	.description("Manage agent instruction files")
-	.option("--update-instructions", "Update agent instruction files")
-	.action(async (options: { updateInstructions?: boolean }) => {
-		if (!options.updateInstructions) {
-			console.log(chalk.yellow("No action specified. Use --update-instructions to update files."));
-			console.log(chalk.gray("\nExample: knowns agents --update-instructions"));
-			return;
-		}
-
+const agentsCommand = new Command("agents")
+	.description("Manage agent instruction files (CLAUDE.md, GEMINI.md, etc.)")
+	.option("--update-instructions", "Update agent instruction files (non-interactive)")
+	.option("--type <type>", "Guidelines type: cli or mcp", "cli")
+	.option("--files <files>", "Comma-separated list of files to update")
+	.action(async (options: { updateInstructions?: boolean; type?: string; files?: string }) => {
 		try {
-			console.log(chalk.bold("\nUpdating agent instruction files...\n"));
+			// Non-interactive mode with --update-instructions flag
+			if (options.updateInstructions) {
+				const version = (options.type === "mcp" ? "mcp" : "cli") as GuidelinesVersion;
+				const guidelines = getGuidelines(version);
 
-			let createdCount = 0;
-			let appendedCount = 0;
-			let updatedCount = 0;
-			let errorCount = 0;
-
-			for (const file of INSTRUCTION_FILES) {
-				try {
-					const result = await updateInstructionFile(file.path, KNOWNS_GUIDELINES);
-
-					if (result.success) {
-						if (result.action === "created") {
-							createdCount++;
-							console.log(chalk.green(`✓ Created ${file.name}: ${file.path}`));
-						} else if (result.action === "appended") {
-							appendedCount++;
-							console.log(chalk.cyan(`✓ Appended ${file.name}: ${file.path}`));
-						} else {
-							updatedCount++;
-							console.log(chalk.green(`✓ Updated ${file.name}: ${file.path}`));
-						}
-					}
-				} catch (error) {
-					errorCount++;
-					console.error(
-						chalk.red(`✗ Failed ${file.name}: ${file.path}`),
-						error instanceof Error ? error.message : String(error),
+				// Determine which files to update
+				let filesToUpdate = INSTRUCTION_FILES;
+				if (options.files) {
+					const requestedFiles = options.files.split(",").map((f) => f.trim());
+					filesToUpdate = INSTRUCTION_FILES.filter(
+						(f) => requestedFiles.includes(f.path) || requestedFiles.includes(f.name),
 					);
 				}
+
+				console.log(chalk.bold(`\nUpdating agent instruction files (${version.toUpperCase()} version)...\n`));
+				await updateFiles(filesToUpdate, guidelines);
+				return;
 			}
 
-			console.log(chalk.bold("\nSummary:"));
-			if (createdCount > 0) {
-				console.log(chalk.green(`  Created: ${createdCount}`));
+			// Interactive mode
+			console.log(chalk.bold("\n🤖 Agent Instructions Manager\n"));
+
+			// Step 1: Select guidelines version
+			const versionResponse = await prompts({
+				type: "select",
+				name: "version",
+				message: "Select guidelines version:",
+				choices: [
+					{
+						title: "CLI",
+						value: "cli",
+						description: "Use CLI commands (knowns task edit, knowns doc view, etc.)",
+					},
+					{
+						title: "MCP",
+						value: "mcp",
+						description: "Use MCP tools (mcp__knowns__update_task, mcp__knowns__get_doc, etc.)",
+					},
+				],
+				initial: 0,
+			});
+
+			if (!versionResponse.version) {
+				console.log(chalk.yellow("\n⚠️  Cancelled"));
+				return;
 			}
-			if (appendedCount > 0) {
-				console.log(chalk.cyan(`  Appended: ${appendedCount}`));
+
+			// Step 2: Select files to update
+			const filesResponse = await prompts({
+				type: "multiselect",
+				name: "files",
+				message: "Select agent files to update:",
+				choices: INSTRUCTION_FILES.map((f) => ({
+					title: `${f.name} (${f.path})`,
+					value: f,
+					selected: f.selected,
+				})),
+				hint: "- Space to select. Return to submit",
+			});
+
+			if (!filesResponse.files || filesResponse.files.length === 0) {
+				console.log(chalk.yellow("\n⚠️  No files selected"));
+				return;
 			}
-			if (updatedCount > 0) {
-				console.log(chalk.green(`  Updated: ${updatedCount}`));
+
+			// Step 3: Confirm
+			const confirmResponse = await prompts({
+				type: "confirm",
+				name: "confirm",
+				message: `Update ${filesResponse.files.length} file(s) with ${versionResponse.version.toUpperCase()} guidelines?`,
+				initial: true,
+			});
+
+			if (!confirmResponse.confirm) {
+				console.log(chalk.yellow("\n⚠️  Cancelled"));
+				return;
 			}
-			if (errorCount > 0) {
-				console.log(chalk.red(`  Failed: ${errorCount}`));
-			}
-			console.log();
+
+			// Step 4: Update files
+			const guidelines = getGuidelines(versionResponse.version as GuidelinesVersion);
+			console.log(chalk.bold(`\nUpdating files with ${versionResponse.version.toUpperCase()} guidelines...\n`));
+			await updateFiles(filesResponse.files, guidelines);
 		} catch (error) {
-			console.error(
-				chalk.red("Error updating instruction files:"),
-				error instanceof Error ? error.message : String(error),
-			);
+			console.error(chalk.red("Error:"), error instanceof Error ? error.message : String(error));
 			process.exit(1);
 		}
 	});
 
-export const agentsCommand = updateInstructionsCommand;
+/**
+ * Update multiple files with guidelines
+ */
+async function updateFiles(files: Array<{ path: string; name: string }>, guidelines: string): Promise<void> {
+	let createdCount = 0;
+	let appendedCount = 0;
+	let updatedCount = 0;
+	let errorCount = 0;
+
+	for (const file of files) {
+		try {
+			const result = await updateInstructionFile(file.path, guidelines);
+
+			if (result.success) {
+				if (result.action === "created") {
+					createdCount++;
+					console.log(chalk.green(`✓ Created ${file.name}: ${file.path}`));
+				} else if (result.action === "appended") {
+					appendedCount++;
+					console.log(chalk.cyan(`✓ Appended ${file.name}: ${file.path}`));
+				} else {
+					updatedCount++;
+					console.log(chalk.green(`✓ Updated ${file.name}: ${file.path}`));
+				}
+			}
+		} catch (error) {
+			errorCount++;
+			console.error(
+				chalk.red(`✗ Failed ${file.name}: ${file.path}`),
+				error instanceof Error ? error.message : String(error),
+			);
+		}
+	}
+
+	console.log(chalk.bold("\nSummary:"));
+	if (createdCount > 0) {
+		console.log(chalk.green(`  Created: ${createdCount}`));
+	}
+	if (appendedCount > 0) {
+		console.log(chalk.cyan(`  Appended: ${appendedCount}`));
+	}
+	if (updatedCount > 0) {
+		console.log(chalk.green(`  Updated: ${updatedCount}`));
+	}
+	if (errorCount > 0) {
+		console.log(chalk.red(`  Failed: ${errorCount}`));
+	}
+	console.log();
+}
+
+export { agentsCommand };

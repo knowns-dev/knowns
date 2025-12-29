@@ -135,7 +135,7 @@ export function TaskDetailSheet({
 
 	// Header component (shared)
 	const Header = (
-		<div className="flex items-center justify-between gap-2 p-4 border-b bg-muted/30">
+		<div className="flex items-center justify-between gap-2 p-4 border-b bg-blue-800">
 			<div className="flex-1 min-w-0">
 				<TaskHeader task={task} onSave={handleSave} saving={saving} />
 			</div>
@@ -144,7 +144,7 @@ export function TaskDetailSheet({
 					variant="ghost"
 					size="icon"
 					onClick={toggleTaskDetailLayout}
-					className="h-8 w-8 text-muted-foreground hover:text-foreground"
+					className="h-8 w-8 text-foreground hover:text-foreground"
 					title={isMaximized ? "Minimize" : "Maximize"}
 				>
 					{isMaximized ? (
@@ -157,7 +157,7 @@ export function TaskDetailSheet({
 					variant="ghost"
 					size="icon"
 					onClick={onClose}
-					className="h-8 w-8 text-muted-foreground hover:text-foreground"
+					className="h-8 w-8 text-foreground hover:text-foreground"
 					title="Close"
 				>
 					<X className="w-4 h-4" />

@@ -1,6 +1,6 @@
 # Knowns MCP Server
 
-Model Context Protocol (MCP) server for Knowns task management system, enabling AI agents like Claude to interact with your tasks.
+Model Context Protocol (MCP) server for Knowns task management system, enabling AI agents like Claude to interact with your tasks and documentation.
 
 ## Features
 
@@ -45,25 +45,56 @@ The Knowns MCP server exposes the following capabilities:
 10. **get_board** - Get current board state with tasks grouped by status
     - No parameters required
 
+### Documentation Tools
+
+11. **list_docs** - List all documentation files
+    - Optional: `tag` (filter by tag)
+
+12. **get_doc** - Get a documentation file by path
+    - Required: `path` (e.g., "readme", "guides/setup", "conventions/naming")
+
+13. **create_doc** - Create a new documentation file
+    - Required: `title`
+    - Optional: `description`, `content`, `tags`, `folder`
+
+14. **update_doc** - Update an existing documentation file
+    - Required: `path`
+    - Optional: `title`, `description`, `content`, `tags`, `appendContent`
+
+15. **search_docs** - Search documentation by query
+    - Required: `query`
+    - Optional: `tag`
+
 ### Resources
 
-The server also exposes all tasks as resources accessible via URIs:
+The server also exposes all tasks and docs as resources accessible via URIs:
+
+**Tasks:**
 - Format: `knowns://task/{taskId}`
 - MIME type: `application/json`
 
+**Documentation:**
+- Format: `knowns://doc/{docPath}`
+- MIME type: `text/markdown`
+
 ## Installation & Setup
 
-### 1. Build the MCP Server
+### Option 1: Using CLI Command (Recommended)
+
+If you have knowns installed globally or locally:
 
 ```bash
-bun run build
+# Show configuration instructions
+knowns mcp --info
+
+# Start MCP server
+knowns mcp
+
+# Start with verbose logging
+knowns mcp --verbose
 ```
 
-This will create the built server at `dist/mcp/server.js`.
-
-### 2. Configure Claude Desktop
-
-Add the following to your Claude Desktop configuration file:
+Configure Claude Desktop:
 
 **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 
@@ -73,16 +104,36 @@ Add the following to your Claude Desktop configuration file:
 {
   "mcpServers": {
     "knowns": {
-      "command": "node",
-      "args": [
-        "/absolute/path/to/knowns/dist/mcp/server.js"
-      ]
+      "command": "knowns",
+      "args": ["mcp"],
+      "cwd": "/path/to/your/project"
     }
   }
 }
 ```
 
-Replace `/absolute/path/to/knowns` with the actual path to your knowns installation.
+Replace `/path/to/your/project` with your actual project path.
+
+### Option 2: Using Built Server Directly
+
+Build and run the standalone server:
+
+```bash
+bun run build
+```
+
+Configure Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "knowns": {
+      "command": "node",
+      "args": ["/absolute/path/to/knowns/dist/mcp/server.js"]
+    }
+  }
+}
+```
 
 ### 3. Restart Claude Desktop
 
@@ -152,12 +203,72 @@ Show me the current board state
 
 Claude will use the `get_board` tool to display all tasks organized by status columns.
 
+### Documentation
+
+```
+List all documentation files
+```
+
+Claude will use the `list_docs` tool to show available docs.
+
+```
+Get the README documentation
+```
+
+Claude will use the `get_doc` tool to retrieve the doc content.
+
+```
+Create a new doc titled "API Guidelines" with tag "api" in the guides folder
+```
+
+Claude will use the `create_doc` tool to create a new documentation file.
+
+```
+Search docs for "authentication"
+```
+
+Claude will use the `search_docs` tool to find relevant documentation.
+
+## Architecture
+
+The MCP server is organized into modular handlers:
+
+```
+src/mcp/
+├── server.ts         # Main server entry point
+├── utils.ts          # Shared utilities
+├── handlers/
+│   ├── index.ts      # Handler exports
+│   ├── task.ts       # Task management handlers
+│   ├── time.ts       # Time tracking handlers
+│   ├── board.ts      # Board management handlers
+│   └── doc.ts        # Documentation handlers
+└── README.md
+```
+
+## Real-time Updates
+
+The MCP server integrates with the Knowns web UI for real-time updates. When tasks or docs are modified via MCP:
+
+1. Changes are persisted to `.knowns/` directory
+2. Notifications are sent to the web server (if running)
+3. Web UI updates automatically
+
+The server reads the port from `.knowns/config.json` (default: 6420).
+
 ## Development
 
-### Running the Server Directly
+### Running the Server
 
 ```bash
+# Using CLI command
+knowns mcp --verbose
+
+# Using npm script
 bun run mcp
+
+# Using tsx directly
+npx tsx src/mcp/server.ts
 ```
 
 This starts the server in stdio mode, ready to accept JSON-RPC messages.
@@ -179,7 +290,7 @@ The server implements the [Model Context Protocol specification (2025-11-25)](ht
 All tool calls return a JSON response with:
 - `success`: boolean indicating if the operation succeeded
 - `error`: error message if `success` is false
-- `task`/`tasks`: result data if `success` is true
+- `task`/`tasks`/`doc`/`docs`: result data if `success` is true
 
 Example error response:
 ```json

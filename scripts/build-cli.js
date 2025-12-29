@@ -70,6 +70,9 @@ const commonOptions = {
 	banner: {
 		js: esmBanner,
 	},
+	loader: {
+		".md": "text", // Load markdown files as text strings
+	},
 };
 
 async function build() {

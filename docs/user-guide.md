@@ -69,11 +69,11 @@ knowns task create "Add login" -d "Implement user login" --ac "Login form works"
 
 #### View Task
 ```bash
-knowns task view <id> [--plain] [--json]
+knowns task <id> [--plain]           # Shorthand
+knowns task view <id> [--plain]      # Full command
 ```
 
 - `--plain` - Plain text output (for AI agents)
-- `--json` - JSON output
 
 #### List Tasks
 ```bash
@@ -140,7 +140,8 @@ knowns doc create "Title" [options]
 
 #### View Document
 ```bash
-knowns doc view "path/name" [--plain]
+knowns doc <path> [--plain]          # Shorthand
+knowns doc view "path/name" [--plain] # Full command
 ```
 
 #### Edit Document
@@ -232,7 +233,7 @@ knowns search "query" [options]
 knowns browser
 ```
 
-This opens `http://localhost:3456` in your browser.
+This opens `http://localhost:6420` in your browser.
 
 ### Navigation
 
@@ -362,9 +363,9 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 
 Always use `--plain` flag when AI agents call CLI commands:
 ```bash
-knowns task view 42 --plain
+knowns task 42 --plain
 knowns task list --plain
-knowns doc view "README" --plain
+knowns doc "README" --plain
 ```
 
 ### Reference System
@@ -393,8 +394,8 @@ Check the task ID with `knowns task list --plain`.
 Stop the current timer with `knowns time stop` before starting a new one.
 
 #### Web UI won't start
-- Check if port 3456 is available
-- Try `knowns browser --port 3457`
+- Check if port 6420 is available
+- Try `knowns browser --port 6421`
 
 #### Tasks not syncing
 - Refresh the browser
