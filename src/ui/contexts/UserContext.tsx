@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
-import { getConfig } from "../api/client";
+import { useConfig } from "./ConfigContext";
 
 interface UserContextType {
 	currentUser: string;
@@ -12,6 +12,7 @@ const USER_STORAGE_KEY = "knowns-current-user";
 const DEFAULT_USER = "@me";
 
 export function UserProvider({ children }: { children: ReactNode }) {
+	const { config } = useConfig();
 	const [currentUser, setCurrentUserState] = useState<string>(() => {
 		try {
 			return localStorage.getItem(USER_STORAGE_KEY) || DEFAULT_USER;
@@ -29,18 +30,12 @@ export function UserProvider({ children }: { children: ReactNode }) {
 		}
 	};
 
-	// Fetch user from config on mount
+	// Set user from config when it loads
 	useEffect(() => {
-		getConfig()
-			.then((config) => {
-				if (config?.defaultAssignee) {
-					setCurrentUser(config.defaultAssignee as string);
-				}
-			})
-			.catch(() => {
-				// Ignore errors, use default
-			});
-	}, []);
+		if (config?.defaultAssignee) {
+			setCurrentUser(config.defaultAssignee);
+		}
+	}, [config?.defaultAssignee]);
 
 	return (
 		<UserContext.Provider value={{ currentUser, setCurrentUser }}>{children}</UserContext.Provider>

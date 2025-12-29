@@ -142,6 +142,48 @@ export const api = {
 		return data.versions.map(parseVersionDTO);
 	},
 
+	async archiveTask(id: string): Promise<{ success: boolean; task: Task }> {
+		const res = await fetch(`${API_BASE}/api/tasks/${id}/archive`, {
+			method: "POST",
+		});
+		if (!res.ok) {
+			const text = await res.text();
+			throw new Error(`Failed to archive task ${id}: ${text}`);
+		}
+		const data = await res.json();
+		return { success: data.success, task: parseTaskDTO(data.task) };
+	},
+
+	async unarchiveTask(id: string): Promise<{ success: boolean; task: Task }> {
+		const res = await fetch(`${API_BASE}/api/tasks/${id}/unarchive`, {
+			method: "POST",
+		});
+		if (!res.ok) {
+			const text = await res.text();
+			throw new Error(`Failed to unarchive task ${id}: ${text}`);
+		}
+		const data = await res.json();
+		return { success: data.success, task: parseTaskDTO(data.task) };
+	},
+
+	async batchArchiveTasks(olderThanMs: number): Promise<{ success: boolean; count: number; tasks: Task[] }> {
+		const res = await fetch(`${API_BASE}/api/tasks/batch-archive`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ olderThanMs }),
+		});
+		if (!res.ok) {
+			const text = await res.text();
+			throw new Error(`Failed to batch archive tasks: ${text}`);
+		}
+		const data = await res.json();
+		return {
+			success: data.success,
+			count: data.count,
+			tasks: data.tasks.map(parseTaskDTO),
+		};
+	},
+
 	async getActivities(options?: { limit?: number; type?: string }): Promise<Activity[]> {
 		const params = new URLSearchParams();
 		if (options?.limit) params.set("limit", options.limit.toString());
@@ -156,13 +198,32 @@ export const api = {
 	},
 };
 
+export interface ActiveTimer {
+	taskId: string;
+	taskTitle: string;
+	startedAt: string;
+	pausedAt: string | null;
+	totalPausedMs: number;
+}
+
 interface WebSocketMessage {
 	type: string;
 	task?: Task;
 	tasks?: Task[];
+	active?: ActiveTimer | null;
 }
 
-export const { createTask, updateTask, getTasks, getTask, getTaskHistory, getActivities } = api;
+export const {
+	createTask,
+	updateTask,
+	getTasks,
+	getTask,
+	getTaskHistory,
+	getActivities,
+	archiveTask,
+	unarchiveTask,
+	batchArchiveTasks,
+} = api;
 
 // Config API
 export async function getConfig(): Promise<Record<string, unknown>> {
@@ -252,6 +313,63 @@ export async function search(query: string): Promise<{ tasks: Task[]; docs: unkn
 		docs: data.docs || [],
 	};
 }
+
+// Time Tracking API
+export const timeApi = {
+	async getStatus(): Promise<{ active: ActiveTimer | null }> {
+		const res = await fetch(`${API_BASE}/api/time/status`);
+		if (!res.ok) {
+			throw new Error("Failed to fetch time status");
+		}
+		return res.json();
+	},
+
+	async start(taskId: string): Promise<{ success: boolean; active: ActiveTimer }> {
+		const res = await fetch(`${API_BASE}/api/time/start`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ taskId }),
+		});
+		if (!res.ok) {
+			const data = await res.json();
+			throw new Error(data.error || "Failed to start timer");
+		}
+		return res.json();
+	},
+
+	async stop(): Promise<{ success: boolean; duration: number; taskId: string }> {
+		const res = await fetch(`${API_BASE}/api/time/stop`, {
+			method: "POST",
+		});
+		if (!res.ok) {
+			const data = await res.json();
+			throw new Error(data.error || "Failed to stop timer");
+		}
+		return res.json();
+	},
+
+	async pause(): Promise<{ success: boolean; active: ActiveTimer }> {
+		const res = await fetch(`${API_BASE}/api/time/pause`, {
+			method: "POST",
+		});
+		if (!res.ok) {
+			const data = await res.json();
+			throw new Error(data.error || "Failed to pause timer");
+		}
+		return res.json();
+	},
+
+	async resume(): Promise<{ success: boolean; active: ActiveTimer }> {
+		const res = await fetch(`${API_BASE}/api/time/resume`, {
+			method: "POST",
+		});
+		if (!res.ok) {
+			const data = await res.json();
+			throw new Error(data.error || "Failed to resume timer");
+		}
+		return res.json();
+	},
+};
 
 // WebSocket connection
 export function connectWebSocket(onMessage: (data: WebSocketMessage) => void): WebSocket | null {

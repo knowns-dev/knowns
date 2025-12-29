@@ -8,6 +8,18 @@ export default defineConfig({
 	test: {
 		include: ["src/**/*.test.ts"],
 		exclude: ["src/ui/**", "node_modules/**"],
+		coverage: {
+			provider: "v8",
+			reporter: ["text", "lcov", "html"],
+			reportsDirectory: "./coverage",
+			exclude: [
+				"node_modules/**",
+				"src/ui/**",
+				"**/*.test.ts",
+				"**/index.ts",
+				"scripts/**",
+			],
+		},
 	},
 	resolve: {
 		alias: {

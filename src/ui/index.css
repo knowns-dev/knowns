@@ -123,6 +123,12 @@ body {
 	}
 }
 
+/* Fix ScrollArea viewport table display causing overflow */
+[data-radix-scroll-area-viewport] > div {
+  display: block !important;
+  min-width: 0 !important;
+}
+
 /* ===== Transition Animations ===== */
 
 /* Fade in animation */
@@ -400,4 +406,27 @@ body {
 .wmde-markdown th {
   background-color: var(--muted);
   font-weight: 600;
+}
+
+/* ===== View Transitions for Theme Toggle ===== */
+
+/* Disable default crossfade animation */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* Keep the old view static while new view animates */
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 9999;
+}
+
+/* Disable view transitions for elements that shouldn't animate */
+.no-view-transition {
+  view-transition-name: none;
 }

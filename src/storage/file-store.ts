@@ -3,7 +3,7 @@
  * Main storage class that handles .knowns/ folder
  */
 
-import { mkdir, readdir, unlink } from "node:fs/promises";
+import { mkdir, readdir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { Project, ProjectSettings, Task, TaskVersion } from "@models/index";
 import { applyVersionSnapshot, createProject } from "@models/index";
@@ -15,6 +15,7 @@ export class FileStore {
 	public readonly projectRoot: string;
 	private basePath: string; // .knowns/
 	private tasksPath: string; // .knowns/tasks/
+	private archivePath: string; // .knowns/archive/
 	private projectPath: string; // .knowns/config.json
 	private timeEntriesPath: string; // .knowns/time-entries.json
 	private versionStore: VersionStore;
@@ -23,6 +24,7 @@ export class FileStore {
 		this.projectRoot = projectRoot;
 		this.basePath = join(projectRoot, ".knowns");
 		this.tasksPath = join(this.basePath, "tasks");
+		this.archivePath = join(this.basePath, "archive");
 		this.projectPath = join(this.basePath, "config.json");
 		this.timeEntriesPath = join(this.basePath, "time-entries.json");
 		this.versionStore = new VersionStore(projectRoot);
@@ -245,6 +247,9 @@ export class FileStore {
 			}
 		}
 
+		// Check if title is changing - need to delete old file
+		const oldFileName = updates.title && updates.title !== task.title ? await this.findTaskFile(id) : null;
+
 		const updatedTask: Task = {
 			...task,
 			...updates,
@@ -254,6 +259,12 @@ export class FileStore {
 
 		// Record version before saving
 		await this.versionStore.recordVersion(id, task, updatedTask, author);
+
+		// Delete old file if title changed (before saving new file)
+		if (oldFileName) {
+			const oldFilePath = join(this.tasksPath, oldFileName);
+			await unlink(oldFilePath);
+		}
 
 		await this.saveTask(updatedTask);
 
@@ -281,6 +292,87 @@ export class FileStore {
 	}
 
 	/**
+	 * Archive task - move to archive folder
+	 */
+	async archiveTask(id: string): Promise<Task> {
+		const task = await this.getTask(id);
+		if (!task) {
+			throw new Error(`Task ${id} not found`);
+		}
+
+		const fileName = await this.findTaskFile(id);
+		if (!fileName) {
+			throw new Error(`Task file for ${id} not found`);
+		}
+
+		// Create archive directory if not exists
+		await mkdir(this.archivePath, { recursive: true });
+
+		const oldPath = join(this.tasksPath, fileName);
+		const newPath = join(this.archivePath, fileName);
+
+		// Move file to archive
+		await rename(oldPath, newPath);
+
+		return task;
+	}
+
+	/**
+	 * Unarchive task - restore from archive folder
+	 */
+	async unarchiveTask(id: string): Promise<Task | null> {
+		try {
+			const files = await readdir(this.archivePath);
+			const taskFile = files.find((f) => f.startsWith(`task-${id} -`));
+
+			if (!taskFile) {
+				throw new Error(`Archived task ${id} not found`);
+			}
+
+			const archiveFilePath = join(this.archivePath, taskFile);
+			const tasksFilePath = join(this.tasksPath, taskFile);
+
+			// Move file back to tasks
+			await rename(archiveFilePath, tasksFilePath);
+
+			// Return the restored task
+			return await this.getTask(id);
+		} catch (error) {
+			console.error(`Failed to unarchive task ${id}:`, error);
+			throw error;
+		}
+	}
+
+	/**
+	 * Batch archive tasks - archive all done tasks older than specified duration
+	 * @param olderThanMs - Duration in milliseconds (tasks done before now - olderThanMs will be archived)
+	 * @returns Array of archived tasks
+	 */
+	async batchArchiveTasks(olderThanMs: number): Promise<Task[]> {
+		const allTasks = await this.getAllTasks();
+		const now = Date.now();
+		const cutoffTime = now - olderThanMs;
+
+		// Filter tasks that are done and updated before cutoff time
+		const tasksToArchive = allTasks.filter(
+			(task) => task.status === "done" && new Date(task.updatedAt).getTime() < cutoffTime,
+		);
+
+		const archivedTasks: Task[] = [];
+
+		for (const task of tasksToArchive) {
+			try {
+				await this.archiveTask(task.id);
+				archivedTasks.push(task);
+			} catch (error) {
+				console.error(`Failed to archive task ${task.id}:`, error);
+			}
+		}
+
+		return archivedTasks;
+	}
+
+	/**
 	 * Save task to file
 	 */
 	private async saveTask(task: Task): Promise<void> {
@@ -300,11 +392,21 @@ export class FileStore {
 
 	/**
 	 * Find task file by ID
+	 * Warns if multiple files with same ID are found (indicates a bug)
 	 */
 	private async findTaskFile(id: string): Promise<string | null> {
 		try {
 			const files = await readdir(this.tasksPath);
-			return files.find((f) => f.startsWith(`task-${id} -`)) || null;
+			const matchingFiles = files.filter((f) => f.startsWith(`task-${id} -`));
+
+			if (matchingFiles.length > 1) {
+				console.warn(
+					`Warning: Found ${matchingFiles.length} files for task-${id}. ` +
+						`This may cause data inconsistency. Files: ${matchingFiles.join(", ")}`,
+				);
+			}
+
+			return matchingFiles[0] || null;
 		} catch (_error) {
 			return null;
 		}

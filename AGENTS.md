@@ -562,10 +562,10 @@ When starting a new session or working on an unfamiliar project:
 knowns doc list --plain
 
 # 2. Read essential project docs (prioritize these)
-knowns doc view "README" --plain           # Project overview
-knowns doc view "ARCHITECTURE" --plain     # System design
-knowns doc view "CONVENTIONS" --plain      # Coding standards
-knowns doc view "API" --plain              # API specifications
+knowns doc "README" --plain                # Project overview
+knowns doc "ARCHITECTURE" --plain          # System design
+knowns doc "CONVENTIONS" --plain           # Coding standards
+knowns doc "API" --plain                   # API specifications
 
 # 3. Review current task backlog
 knowns task list --plain
@@ -576,17 +576,17 @@ knowns task list --status in-progress --plain
 
 ```bash
 # 1. View the task details
-knowns task view <id> --plain
+knowns task <id> --plain
 
 # 2. Follow ALL refs in the task (see Reference System section)
-# @.knowns/tasks/task-44 - ... → knowns task view 44 --plain
-# @.knowns/docs/patterns/module.md → knowns doc view "patterns/module" --plain
+# @.knowns/tasks/task-44 - ... → knowns task 44 --plain
+# @.knowns/docs/patterns/module.md → knowns doc "patterns/module" --plain
 
 # 3. Search for additional related documentation
 knowns search "<keywords from task>" --type doc --plain
 
 # 4. Read ALL related docs before planning
-knowns doc view "<related-doc>" --plain
+knowns doc "<related-doc>" --plain
 
 # 5. Check for similar completed tasks (learn from history)
 knowns search "<keywords>" --type task --status done --plain
@@ -624,10 +624,15 @@ Tasks and docs can contain **references** to other tasks/docs. AI agents MUST un
 
 ### Reference Formats
 
-| Type | User Input | System Output | CLI Command |
-|------|------------|---------------|-------------|
-| **Task ref** | `@task-<id>` | `@.knowns/tasks/task-<id> - <title>.md` | `knowns task view <id> --plain` |
-| **Doc ref** | `@doc/<path>` | `@.knowns/docs/<path>.md` | `knowns doc view "<path>" --plain` |
+| Type | When Writing (Input) | When Reading (Output) | CLI Command |
+|------|---------------------|----------------------|-------------|
+| **Task ref** | `@task-<id>` | `@.knowns/tasks/task-<id> - <title>.md` | `knowns task <id> --plain` |
+| **Doc ref** | `@doc/<path>` | `@.knowns/docs/<path>.md` | `knowns doc <path> --plain` |
+
+> **CRITICAL for AI Agents**:
+> - When **WRITING** refs (in descriptions, plans, notes): Use `@task-<id>` and `@doc/<path>`
+> - When **READING** output from `--plain`: You'll see `@.knowns/tasks/...` and `@.knowns/docs/...`
+> - **NEVER write** the output format (`@.knowns/...`) - always use input format (`@task-<id>`, `@doc/<path>`)
 
 ### How to Follow Refs
 
@@ -639,16 +644,16 @@ When you read a task and see refs in system output format, follow them:
 # @.knowns/docs/patterns/module.md
 
 # Follow task ref (extract ID from task-<id>)
-knowns task view 44 --plain
+knowns task 44 --plain
 
 # Follow doc ref (extract path, remove .md)
-knowns doc view "patterns/module" --plain
+knowns doc "patterns/module" --plain
 ```
 
 ### Parsing Rules
 
-1. **Task refs**: `@.knowns/tasks/task-<id> - ...` → extract `<id>` → `knowns task view <id> --plain`
-2. **Doc refs**: `@.knowns/docs/<path>.md` → extract `<path>` → `knowns doc view "<path>" --plain`
+1. **Task refs**: `@.knowns/tasks/task-<id> - ...` → extract `<id>` → `knowns task <id> --plain`
+2. **Doc refs**: `@.knowns/docs/<path>.md` → extract `<path>` → `knowns doc "<path>" --plain`
 
 ### Recursive Following
 
@@ -674,20 +679,20 @@ Task 42
 
 ```bash
 # 1. Read the task
-$ knowns task view 42 --plain
+$ knowns task 42 --plain
 
 # Output contains:
 # @.knowns/tasks/task-44 - CLI Task Create Command.md
 # @.knowns/docs/README.md
 
 # 2. Follow task ref
-$ knowns task view 44 --plain
+$ knowns task 44 --plain
 
 # 3. Follow doc ref
-$ knowns doc view "README" --plain
+$ knowns doc "README" --plain
 
 # 4. If README contains more refs, follow them too
-# @.knowns/docs/patterns/module.md → knowns doc view "patterns/module" --plain
+# @.knowns/docs/patterns/module.md → knowns doc "patterns/module" --plain
 
 # Now you have complete context
 ```
@@ -706,7 +711,12 @@ knowns init [name]
 knowns task create "Title" -d "Description" --ac "Criterion 1" --ac "Criterion 2"
 
 # View task (ALWAYS use --plain for AI)
-knowns task view <id> --plain
+knowns task <id> --plain                    # Shorthand
+knowns task view <id> --plain               # Full command
+
+# View doc (ALWAYS use --plain for AI)
+knowns doc <path> --plain                   # Shorthand
+knowns doc view "<path>" --plain            # Full command
 
 # List tasks
 knowns task list --plain
@@ -736,9 +746,9 @@ $ knowns doc list --plain
 # DOC: email-templates.md
 
 # 0b. Read essential project docs
-$ knowns doc view "README" --plain
-$ knowns doc view "ARCHITECTURE" --plain
-$ knowns doc view "CONVENTIONS" --plain
+$ knowns doc "README" --plain
+$ knowns doc "ARCHITECTURE" --plain
+$ knowns doc "CONVENTIONS" --plain
 
 # Now the agent understands project context and conventions
 
@@ -770,12 +780,12 @@ $ knowns search "password security" --type doc --plain
 # DOC: email-templates.md (score: 0.78)
 
 # 4. Read the documentation
-$ knowns doc view "security-patterns" --plain
+$ knowns doc "security-patterns" --plain
 
 # 5. Create implementation plan (SHARE WITH USER, WAIT FOR APPROVAL)
-$ knowns task edit AUTH-042 --plan $'1. Review security patterns (see [security-patterns.md](./docs/security-patterns.md))
+$ knowns task edit AUTH-042 --plan $'1. Review security patterns (see @doc/security-patterns)
 2. Design token generation with 1-hour expiry
-3. Create email template (see [email-templates.md](./docs/email-templates.md))
+3. Create email template (see @doc/email-templates)
 4. Implement /forgot-password endpoint
 5. Implement /reset-password endpoint
 6. Add unit tests
@@ -850,8 +860,8 @@ knowns time start <id>
 knowns search "authentication" --type doc --plain
 
 # View relevant documents
-knowns doc view "API Guidelines" --plain
-knowns doc view "Security Patterns" --plain
+knowns doc "API Guidelines" --plain
+knowns doc "Security Patterns" --plain
 
 # Also check for similar completed tasks
 knowns search "auth" --type task --status done --plain
@@ -862,7 +872,7 @@ knowns search "auth" --type task --status done --plain
 ### Step 4: Create Implementation Plan
 
 ```bash
-knowns task edit <id> --plan $'1. Research patterns (see [security-patterns.md](./security-patterns.md))
+knowns task edit <id> --plan $'1. Research patterns (see @doc/security-patterns)
 2. Design middleware
 3. Implement
 4. Add tests
@@ -871,7 +881,7 @@ knowns task edit <id> --plan $'1. Research patterns (see [security-patterns.md](
 
 > **CRITICAL**:
 > - Share plan with user and **WAIT for approval** before coding
-> - Include doc references using `[file.md](./path/file.md)` format
+> - Include doc references using `@doc/<path>` format
 
 ### Step 5: Implement
 
@@ -938,7 +948,8 @@ knowns task edit <id> --notes "Implementation summary"
 knowns task edit <id> --append-notes "Progress update"
 
 # View & List
-knowns task view <id> --plain                        # ALWAYS use --plain
+knowns task <id> --plain                             # Shorthand (ALWAYS use --plain)
+knowns task view <id> --plain                        # Full command
 knowns task list --plain
 knowns task list --status in-progress --plain
 knowns task list --assignee @me --plain
@@ -969,7 +980,8 @@ knowns time report --by-label --csv > report.csv
 # List & View
 knowns doc list --plain
 knowns doc list --tag architecture --plain
-knowns doc view "Doc Name" --plain
+knowns doc <path> --plain                          # Shorthand (ALWAYS use --plain)
+knowns doc view "<path>" --plain                   # Full command
 
 # Create (with optional folder)
 knowns doc create "Title" -d "Description" -t "tags"
@@ -1013,14 +1025,12 @@ Clear summary (WHAT needs to be done).
 
 ### Description
 
-Explains WHY and WHAT (not HOW). **Link related docs using `[file.md](./path/file.md)`**
+Explains WHY and WHAT (not HOW). **Link related docs using `@doc/<path>`**
 
 ```markdown
 We need JWT authentication because sessions don't scale for our microservices architecture.
 
-Related docs:
-- [security-patterns.md](./docs/security-patterns.md)
-- [api-guidelines.md](./docs/api-guidelines.md)
+Related docs: @doc/security-patterns, @doc/api-guidelines
 ```
 
 ### Acceptance Criteria
@@ -1038,7 +1048,7 @@ Related docs:
 HOW to solve. Added AFTER taking task, BEFORE coding.
 
 ```markdown
-1. Research JWT libraries (see [security-patterns.md](./docs/security-patterns.md))
+1. Research JWT libraries (see @doc/security-patterns)
 2. Design token structure (access + refresh tokens)
 3. Implement auth middleware
 4. Add unit tests (aim for 90%+ coverage)
@@ -1078,7 +1088,7 @@ Implemented JWT auth using jsonwebtoken library.
 | `Error: No active timer` | Calling `time stop` without active timer | Start timer first: `knowns time start <id>` |
 | `Error: Timer already running` | Starting timer when one is active | Stop current: `knowns time stop` |
 | `Error: Invalid status` | Wrong status format | Use lowercase with hyphens: `in-progress`, not `In Progress` |
-| `Error: AC index out of range` | Checking non-existent criterion | View task first: `knowns task view <id> --plain` |
+| `Error: AC index out of range` | Checking non-existent criterion | View task first: `knowns task <id> --plain` |
 | `Error: Document not found` | Wrong document name | Run `knowns doc list --plain` to find correct name |
 | `Error: Not initialized` | Running commands without init | Run `knowns init` first |
 
@@ -1092,7 +1102,7 @@ knowns --version
 knowns status
 
 # View raw task data (for debugging)
-knowns task view <id> --json
+knowns task <id> --json
 
 # Check timer status
 knowns time status
@@ -1155,7 +1165,8 @@ Use **lowercase with hyphens**:
 | Assume you know the conventions | Read CONVENTIONS/ARCHITECTURE docs |
 | Plan without checking docs | Read docs before planning |
 | Ignore similar completed tasks | Search done tasks for patterns |
-| Missing doc links in description/plan | Link docs using `[file.md](./path)` |
+| Missing doc links in description/plan | Link docs using `@doc/<path>` |
+| Write refs as `@.knowns/docs/...` or `@.knowns/tasks/...` | Use input format: `@doc/<path>`, `@task-<id>` |
 | Forget `--plain` flag | Always use `--plain` for AI |
 | Code before plan approval | Share plan, WAIT for approval |
 | Mark done without all criteria | Check ALL criteria first |
@@ -1163,8 +1174,8 @@ Use **lowercase with hyphens**:
 | Use `"In Progress"` or `"Done"` | Use `in-progress`, `done` |
 | Use `@yourself` | Use `@me` or specific username |
 | Ignore refs in task description | Follow ALL refs (`@.knowns/...`) before planning |
-| See `@.knowns/docs/...` but don't read | Use `knowns doc view "<path>" --plain` |
-| See `@.knowns/tasks/task-X` but don't check | Use `knowns task view X --plain` for context |
+| See `@.knowns/docs/...` but don't read | Use `knowns doc "<path>" --plain` |
+| See `@.knowns/tasks/task-X` but don't check | Use `knowns task X --plain` for context |
 | Follow only first-level refs | Recursively follow nested refs until complete |
 
 ---
@@ -1222,7 +1233,7 @@ EOF
 - [ ] ALL refs in task followed (`@.knowns/...`)
 - [ ] Nested refs recursively followed until complete context gathered
 - [ ] Related docs searched: `knowns search "keyword" --type doc --plain`
-- [ ] ALL relevant docs read: `knowns doc view "Doc Name" --plain`
+- [ ] ALL relevant docs read: `knowns doc "Doc Name" --plain`
 - [ ] Similar done tasks reviewed for patterns
 - [ ] Task assigned to self: `-a @me`
 - [ ] Status set to in-progress: `-s in-progress`
@@ -1231,7 +1242,7 @@ EOF
 ### During Work
 
 - [ ] Implementation plan created and approved
-- [ ] Doc links included in plan: `[file.md](./path/file.md)`
+- [ ] Doc links included in plan: `@doc/<path>`
 - [ ] Criteria checked as completed: `--check-ac <index>`
 - [ ] Progress notes appended: `--append-notes "✓ ..."`
 
@@ -1251,18 +1262,18 @@ EOF
 ```bash
 # === AGENT INITIALIZATION (Once per session) ===
 knowns doc list --plain
-knowns doc view "README" --plain
-knowns doc view "ARCHITECTURE" --plain
-knowns doc view "CONVENTIONS" --plain
+knowns doc "README" --plain
+knowns doc "ARCHITECTURE" --plain
+knowns doc "CONVENTIONS" --plain
 
 # === FULL WORKFLOW ===
 knowns task create "Title" -d "Description" --ac "Criterion"
 knowns task edit <id> -s in-progress -a @me
 knowns time start <id>
 knowns search "keyword" --type doc --plain
-knowns doc view "Doc Name" --plain
+knowns doc "Doc Name" --plain
 knowns search "keyword" --type task --status done --plain  # Learn from history
-knowns task edit <id> --plan $'1. Step (see [file.md](./file.md))\n2. Step'
+knowns task edit <id> --plan $'1. Step (see @doc/file)\n2. Step'
 # ... wait for approval, then implement ...
 knowns task edit <id> --check-ac 1 --check-ac 2
 knowns task edit <id> --append-notes "✓ Completed feature"
@@ -1270,7 +1281,7 @@ knowns time stop
 knowns task edit <id> -s done
 
 # === VIEW & SEARCH ===
-knowns task view <id> --plain
+knowns task <id> --plain                                   # Shorthand for view
 knowns task list --plain
 knowns task list --status in-progress --assignee @me --plain
 knowns search "query" --plain
@@ -1284,7 +1295,7 @@ knowns time report --from "2025-12-01" --to "2025-12-31"
 
 # === DOCUMENTATION ===
 knowns doc list --plain
-knowns doc view "path/doc-name" --plain
+knowns doc "path/doc-name" --plain                         # Shorthand for view
 knowns doc create "Title" -d "Description" -t "tags" -f "folder"
 knowns doc edit "doc-name" -c "New content"
 knowns doc edit "doc-name" -a "Appended content"
@@ -1295,6 +1306,7 @@ knowns doc edit "doc-name" -a "Appended content"
 **Maintained By**: Knowns CLI Team
 
 <!-- KNOWNS GUIDELINES END -->
+
 
 
 

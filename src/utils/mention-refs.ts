@@ -5,9 +5,15 @@
 
 import type { Task } from "@models/index";
 
-// Regex patterns for mentions
+// Regex patterns for mentions (input format)
 const TASK_MENTION_REGEX = /@task-(\d+)/g;
 const DOC_MENTION_REGEX = /@docs?\/([^\s|)]+)/g;
+
+// Regex patterns for output format (need to normalize back to input format)
+// Matches: @.knowns/tasks/task-55 - Title.md or @.knowns/tasks/task-55.md
+const OUTPUT_TASK_REGEX = /@\.knowns\/tasks\/task-(\d+)(?:\s*-\s*[^@\n]+?\.md|\.md)/g;
+// Matches: @.knowns/docs/path/to/doc.md or @.knowns/docs/README.md - Description
+const OUTPUT_DOC_REGEX = /@\.knowns\/docs\/([^\s@]+?)\.md(?:\s*-\s*[^@\n]+)?/g;
 
 /**
  * Sanitize title for filename (same logic as file-store)
@@ -105,4 +111,34 @@ export function extractDocPaths(text: string): string[] {
 	}
 
 	return [...new Set(paths)]; // Dedupe
+}
+
+/**
+ * Normalize refs from output format back to input format
+ * This is used when saving content to ensure consistent storage format
+ *
+ * Converts:
+ * - @.knowns/tasks/task-55 - Some Title.md → @task-55
+ * - @.knowns/docs/README.md → @doc/README
+ * - @.knowns/docs/folder/doc.md - Description → @doc/folder/doc
+ */
+export function normalizeRefs(text: string): string {
+	let result = text;
+
+	// Normalize task refs: @.knowns/tasks/task-{id} - Title.md → @task-{id}
+	result = result.replace(new RegExp(OUTPUT_TASK_REGEX.source, "g"), (match, taskId) => `@task-${taskId}`);
+
+	// Normalize doc refs: @.knowns/docs/{path}.md → @doc/{path}
+	result = result.replace(new RegExp(OUTPUT_DOC_REGEX.source, "g"), (match, docPath) => `@doc/${docPath}`);
+
+	return result;
+}
+
+/**
+ * Check if text contains any output-format refs that should be normalized
+ */
+export function hasOutputFormatRefs(text: string): boolean {
+	const taskRegex = new RegExp(OUTPUT_TASK_REGEX.source);
+	const docRegex = new RegExp(OUTPUT_DOC_REGEX.source);
+	return taskRegex.test(text) || docRegex.test(text);
 }

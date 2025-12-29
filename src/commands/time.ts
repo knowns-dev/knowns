@@ -6,7 +6,7 @@
 import { FileStore } from "@storage/file-store";
 import { file, write } from "@utils/bun-compat";
 import { findProjectRoot } from "@utils/find-project-root";
-import { notifyTaskUpdate } from "@utils/notify-server";
+import { notifyTaskUpdate, notifyTimeUpdate } from "@utils/notify-server";
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -123,6 +123,15 @@ const startCommand = new Command("start")
 			};
 			await saveTimeData(projectRoot, data);
 
+			// Notify web server for real-time updates
+			await notifyTimeUpdate({
+				taskId,
+				taskTitle: task.title,
+				startedAt: data.active.startedAt,
+				pausedAt: null,
+				totalPausedMs: 0,
+			});
+
 			console.log(chalk.green(`⏱  Started timer for #${taskId}: ${task.title}`));
 		} catch (error) {
 			console.error(chalk.red("✗ Failed to start timer"));
@@ -178,6 +187,9 @@ const stopCommand = new Command("stop").description("Stop current timer and save
 		data.active = null;
 		await saveTimeData(projectRoot, data);
 
+		// Notify web server that timer stopped
+		await notifyTimeUpdate(null);
+
 		console.log(chalk.green(`⏹  Stopped timer for #${taskId}`));
 		console.log(chalk.gray(`   Duration: ${formatDuration(seconds)}`));
 	} catch (error) {
@@ -195,6 +207,7 @@ const stopCommand = new Command("stop").description("Stop current timer and save
 const pauseCommand = new Command("pause").description("Pause current timer").action(async () => {
 	try {
 		const projectRoot = getProjectRoot();
+		const fileStore = getFileStore();
 
 		const data = await loadTimeData(projectRoot);
 		if (!data.active) {
@@ -209,6 +222,16 @@ const pauseCommand = new Command("pause").description("Pause current timer").act
 
 		data.active.pausedAt = new Date().toISOString();
 		await saveTimeData(projectRoot, data);
+
+		// Notify web server
+		const task = await fileStore.getTask(data.active.taskId);
+		await notifyTimeUpdate({
+			taskId: data.active.taskId,
+			taskTitle: task?.title || "",
+			startedAt: data.active.startedAt,
+			pausedAt: data.active.pausedAt,
+			totalPausedMs: data.active.totalPausedMs,
+		});
 
 		console.log(chalk.yellow(`⏸  Paused timer for #${data.active.taskId}`));
 	} catch (error) {
@@ -226,6 +249,7 @@ const pauseCommand = new Command("pause").description("Pause current timer").act
 const resumeCommand = new Command("resume").description("Resume paused timer").action(async () => {
 	try {
 		const projectRoot = getProjectRoot();
+		const fileStore = getFileStore();
 
 		const data = await loadTimeData(projectRoot);
 		if (!data.active) {
@@ -243,6 +267,16 @@ const resumeCommand = new Command("resume").description("Resume paused timer").a
 		data.active.totalPausedMs += pausedDuration;
 		data.active.pausedAt = null;
 		await saveTimeData(projectRoot, data);
+
+		// Notify web server
+		const task = await fileStore.getTask(data.active.taskId);
+		await notifyTimeUpdate({
+			taskId: data.active.taskId,
+			taskTitle: task?.title || "",
+			startedAt: data.active.startedAt,
+			pausedAt: null,
+			totalPausedMs: data.active.totalPausedMs,
+		});
 
 		console.log(chalk.green(`▶  Resumed timer for #${data.active.taskId}`));
 	} catch (error) {

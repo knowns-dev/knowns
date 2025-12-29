@@ -7,7 +7,7 @@ import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { FileStore } from "@storage/file-store";
 import { findProjectRoot } from "@utils/find-project-root";
-import { buildTaskMap, transformMentionsToRefs } from "@utils/mention-refs";
+import { buildTaskMap, normalizeRefs, transformMentionsToRefs } from "@utils/mention-refs";
 import { notifyDocUpdate } from "@utils/notify-server";
 import chalk from "chalk";
 import { Command } from "commander";
@@ -68,6 +68,44 @@ function filenameToTitle(filename: string): string {
 		.join(" ");
 }
 
+// Resolve doc name to filepath and filename
+async function resolveDocPath(name: string): Promise<{ filepath: string; filename: string } | null> {
+	await ensureDocsDir();
+
+	// Try multiple approaches to find the file
+	let filename = name.endsWith(".md") ? name : `${name}.md`;
+	let filepath = join(DOCS_DIR, filename);
+
+	if (!existsSync(filepath)) {
+		// Try converting title to filename (root level only)
+		filename = `${titleToFilename(name)}.md`;
+		filepath = join(DOCS_DIR, filename);
+	}
+
+	if (!existsSync(filepath)) {
+		// Try searching in all md files
+		const allFiles = await getAllMdFiles(DOCS_DIR);
+		const searchName = name.toLowerCase().replace(/\.md$/, "");
+
+		const matchingFile = allFiles.find((file) => {
+			const fileNameOnly = file.toLowerCase().replace(/\.md$/, "");
+			const fileBaseName = file.split("/").pop()?.toLowerCase().replace(/\.md$/, "");
+			return fileNameOnly === searchName || fileBaseName === searchName || file === name;
+		});
+
+		if (matchingFile) {
+			filename = matchingFile;
+			filepath = join(DOCS_DIR, matchingFile);
+		}
+	}
+
+	if (!existsSync(filepath)) {
+		return null;
+	}
+
+	return { filepath, filename };
+}
+
 // Create command
 const createCommand = new Command("create")
 	.description("Create a new documentation file")
@@ -109,8 +147,9 @@ const createCommand = new Command("create")
 				updatedAt: now,
 			};
 
+			// Normalize refs in description to ensure consistent storage
 			if (options.description) {
-				metadata.description = options.description;
+				metadata.description = normalizeRefs(options.description);
 			}
 
 			if (options.tags) {
@@ -431,19 +470,19 @@ const editCommand = new Command("edit")
 				const { data, content } = matter(fileContent);
 				const metadata = data as DocMetadata;
 
-				// Update metadata
+				// Update metadata (normalize refs to ensure consistent storage)
 				if (options.title) metadata.title = options.title;
-				if (options.description) metadata.description = options.description;
+				if (options.description) metadata.description = normalizeRefs(options.description);
 				if (options.tags) metadata.tags = options.tags.split(",").map((t) => t.trim());
 				metadata.updatedAt = new Date().toISOString();
 
-				// Update content
+				// Update content (normalize refs to ensure consistent storage)
 				let updatedContent = content;
 				if (options.content) {
-					updatedContent = options.content;
+					updatedContent = normalizeRefs(options.content);
 				}
 				if (options.append) {
-					updatedContent = `${content.trimEnd()}\n\n${options.append}`;
+					updatedContent = `${content.trimEnd()}\n\n${normalizeRefs(options.append)}`;
 				}
 
 				// Write back
@@ -471,7 +510,134 @@ const editCommand = new Command("edit")
 // Main doc command
 export const docCommand = new Command("doc")
 	.description("Manage documentation")
-	.addCommand(createCommand)
-	.addCommand(listCommand)
-	.addCommand(viewCommand)
-	.addCommand(editCommand);
+	.argument("[name]", "Document name (shorthand for 'doc view <name>')")
+	.option("--plain", "Plain text output for AI")
+	.action(async (name: string | undefined, options: { plain?: boolean }) => {
+		// If no name provided, show help
+		if (!name) {
+			docCommand.help();
+			return;
+		}
+
+		// Shorthand: `doc <name>` = `doc view <name>`
+		try {
+			const resolved = await resolveDocPath(name);
+			if (!resolved) {
+				console.error(chalk.red(`✗ Documentation not found: ${name}`));
+				process.exit(1);
+			}
+
+			const { filepath, filename } = resolved;
+			const fileContent = await readFile(filepath, "utf-8");
+			const { data, content } = matter(fileContent);
+			const metadata = data as DocMetadata;
+
+			if (options.plain) {
+				const border = "-".repeat(50);
+				const titleBorder = "=".repeat(50);
+
+				// File path
+				const projectRoot = process.cwd();
+				console.log(`File: ${projectRoot}/.knowns/docs/${filename}`);
+				console.log();
+
+				// Title
+				console.log(metadata.title);
+				console.log(titleBorder);
+				console.log();
+
+				// Metadata
+				console.log(`Created: ${metadata.createdAt}`);
+				console.log(`Updated: ${metadata.updatedAt}`);
+				if (metadata.tags && metadata.tags.length > 0) {
+					console.log(`Tags: ${metadata.tags.join(", ")}`);
+				}
+
+				// Description
+				if (metadata.description) {
+					console.log();
+					console.log("Description:");
+					console.log(border);
+					console.log(metadata.description);
+				}
+
+				// Content with resolved links
+				console.log();
+				console.log("Content:");
+				console.log(border);
+
+				// Parse and enhance markdown links
+				const linkPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
+				let enhancedContent = content.trimEnd();
+				const linksToAdd: Array<{ original: string; resolved: string }> = [];
+
+				let match: RegExpExecArray | null;
+				// biome-ignore lint/suspicious/noAssignInExpressions: Standard regex iteration pattern
+				while ((match = linkPattern.exec(content)) !== null) {
+					const _linkText = match[1];
+					const linkTarget = match[2];
+					const fullMatch = match[0];
+
+					// Skip external URLs
+					if (linkTarget.startsWith("http://") || linkTarget.startsWith("https://")) {
+						continue;
+					}
+
+					// Skip relative paths that go outside docs
+					if (linkTarget.startsWith("../")) {
+						continue;
+					}
+
+					// Normalize filename
+					let resolvedFilename = linkTarget.replace(/^\.\//, "");
+					if (!resolvedFilename.endsWith(".md")) {
+						resolvedFilename = `${resolvedFilename}.md`;
+					}
+
+					const resolvedPath = `@.knowns/docs/${resolvedFilename}`;
+					linksToAdd.push({
+						original: fullMatch,
+						resolved: resolvedPath,
+					});
+				}
+
+				// Replace each link with resolved path only
+				for (const { original, resolved } of linksToAdd) {
+					enhancedContent = enhancedContent.replace(original, resolved);
+				}
+
+				// Transform @task-{id} and @doc/{path} mentions
+				const knownProjectRoot = findProjectRoot();
+				if (knownProjectRoot) {
+					const fileStore = new FileStore(knownProjectRoot);
+					const allTasks = await fileStore.getAllTasks();
+					const taskMap = buildTaskMap(allTasks);
+					enhancedContent = transformMentionsToRefs(enhancedContent, taskMap);
+				}
+
+				console.log(enhancedContent);
+			} else {
+				console.log(chalk.bold(`\n📄 ${metadata.title}\n`));
+				if (metadata.description) {
+					console.log(chalk.gray(metadata.description));
+					console.log();
+				}
+				if (metadata.tags && metadata.tags.length > 0) {
+					console.log(chalk.gray(`Tags: ${metadata.tags.join(", ")}`));
+				}
+				console.log(chalk.gray(`Updated: ${new Date(metadata.updatedAt).toLocaleString()}`));
+				console.log(chalk.gray("-".repeat(60)));
+				console.log(content);
+				console.log();
+			}
+		} catch (error) {
+			console.error(chalk.red("Error viewing documentation:"), error instanceof Error ? error.message : String(error));
+			process.exit(1);
+		}
+	});
+
+// Add subcommands
+docCommand.addCommand(createCommand);
+docCommand.addCommand(listCommand);
+docCommand.addCommand(viewCommand);
+docCommand.addCommand(editCommand);
