@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/cover.png" alt="Knowns - Task & Documentation Management" width="100%">
+  <img src="images/cover.jpeg" alt="Knowns - Task & Documentation Management" width="100%">
 </p>
 
 <h1 align="center">Knowns</h1>
@@ -109,12 +109,12 @@ knowns browser  # Open Web UI
 # Tasks
 knowns task create "Title" -d "Description" --ac "Criterion"
 knowns task list --plain
-knowns task view <id> --plain
+knowns task <id> --plain                    # View task (shorthand)
 knowns task edit <id> -s in-progress -a @me
 
 # Documentation
 knowns doc create "Title" -d "Description" -f "folder"
-knowns doc view "doc-name" --plain
+knowns doc "doc-name" --plain               # View doc (shorthand)
 
 # Time & Search
 knowns time start <id> && knowns time stop
