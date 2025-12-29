@@ -104,3 +104,29 @@ export async function notifyDocsRefresh(): Promise<void> {
 		// Server not running - silently ignore
 	}
 }
+
+/**
+ * Notify server about time tracking updates
+ * @param active - Active timer data or null if stopped
+ */
+export async function notifyTimeUpdate(
+	active: {
+		taskId: string;
+		taskTitle: string;
+		startedAt: string;
+		pausedAt: string | null;
+		totalPausedMs: number;
+	} | null,
+): Promise<void> {
+	try {
+		const port = getServerPort();
+		await fetch(`http://localhost:${port}/api/notify`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ type: "time:updated", active }),
+			signal: AbortSignal.timeout(1000),
+		});
+	} catch {
+		// Server not running - silently ignore
+	}
+}

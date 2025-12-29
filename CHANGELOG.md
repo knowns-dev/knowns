@@ -5,6 +5,85 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2025-12-29
+
+### Added
+- **CLI Shorthand Commands**: New concise syntax for common operations
+  - `knowns task <id>` - Shorthand for `knowns task view <id>`
+  - `knowns doc <path>` - Shorthand for `knowns doc view <path>`
+  - Reduces typing while maintaining full command compatibility
+
+- **New UI Components** (shadcn/ui):
+  - Badge, Card, Checkbox, Label, Progress, Select components
+  - Data Table with sorting, filtering, and pagination
+  - Dropdown Menu for context actions
+  - Kanban board components (Column, Card, Board)
+  - Sonner for toast notifications
+  - Table component for data display
+
+- **New React Contexts**:
+  - `ConfigContext` - Global configuration state management
+  - `TimeTrackerContext` - Time tracking state across components
+  - `UIPreferencesContext` - User UI preferences persistence
+
+- **Server Architecture**:
+  - `src/server/middleware/` - Request processing middleware
+  - `src/server/routes/` - Modular route handlers
+  - `src/server/utils/` - Server utility functions
+  - `src/server/types.ts` - TypeScript type definitions
+
+- **Documentation**:
+  - `docs/developer-guide.md` - Developer setup and contribution guide
+  - `docs/user-guide.md` - End-user documentation
+
+- **Utilities**:
+  - `src/ui/utils/colors.ts` - Color utility functions for UI
+  - `src/ui/utils/markdown-sections.ts` - Markdown section parsing
+
+### Changed
+- **UI Architecture**: Migrated to Atomic Design pattern
+  - `atoms/` - Basic UI building blocks (buttons, inputs, icons)
+  - `molecules/` - Composed components (form fields, cards)
+  - `organisms/` - Complex UI sections (forms, lists, modals)
+  - `templates/` - Page layout templates
+  - Improved component reusability and maintainability
+
+- **Server Refactoring**: Modularized monolithic server
+  - Split 567-line `server/index.ts` into focused modules
+  - Cleaner separation of concerns
+  - Easier testing and maintenance
+
+- **Page Components**: Simplified and optimized
+  - `TasksPage` - Reduced from 700+ to ~300 lines
+  - `DocsPage` - Streamlined document management
+  - `KanbanPage` - Enhanced board functionality
+  - `ConfigPage` - Improved settings interface
+
+- **API Client**: Enhanced `src/ui/api/client.ts`
+  - Better error handling
+  - Type-safe API calls
+  - Improved response parsing
+
+- **Guidelines**: Updated AI agent guidelines
+  - Clearer reference format documentation
+  - Better examples for input vs output formats
+  - Improved workflow instructions
+
+### Removed
+- **Legacy Components**: Cleaned up old monolithic components
+  - `ActivityFeed.tsx`, `AppSidebar.tsx`, `AssigneeDropdown.tsx`
+  - `Avatar.tsx`, `Board.tsx`, `Column.tsx`
+  - `MarkdownRenderer.tsx`, `NotificationBell.tsx`
+  - `SearchBox.tsx`, `SearchCommandDialog.tsx`
+  - `TaskCard.tsx`, `TaskCreateForm.tsx`, `TaskDetailModal.tsx`
+  - `TaskHistoryPanel.tsx`, `TimeTracker.tsx`, `VersionDiffViewer.tsx`
+  - Functionality preserved in new Atomic Design components
+
+### Fixed
+- **Dialog/Sheet Components**: Fixed accessibility and styling issues
+- **Mention Refs**: Improved reference parsing reliability
+- **Server Notifications**: Better WebSocket notification handling
+
 ## [0.2.1] - 2025-12-28
 
 ### Fixed

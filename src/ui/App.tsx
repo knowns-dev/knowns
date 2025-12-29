@@ -1,13 +1,16 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { Task } from "../models/task";
-import { api, connectWebSocket, getConfig } from "./api/client";
-import { AppSidebar } from "./components/AppSidebar";
-import TaskCreateForm from "./components/TaskCreateForm";
-import SearchCommandDialog from "./components/SearchCommandDialog";
-import NotificationBell from "./components/NotificationBell";
+import { api, connectWebSocket } from "./api/client";
+import { AppSidebar, TaskCreateForm, SearchCommandDialog, NotificationBell } from "./components/organisms";
+import { ThemeToggle } from "./components/atoms";
+import { HeaderTimeTracker } from "./components/molecules";
 import { SidebarProvider, SidebarTrigger } from "./components/ui/sidebar";
 import { Separator } from "./components/ui/separator";
+import { Toaster } from "./components/ui/sonner";
+import { ConfigProvider, useConfig } from "./contexts/ConfigContext";
 import { UserProvider } from "./contexts/UserContext";
+import { UIPreferencesProvider } from "./contexts/UIPreferencesContext";
+import { TimeTrackerProvider } from "./contexts/TimeTrackerContext";
 import ConfigPage from "./pages/ConfigPage";
 import DocsPage from "./pages/DocsPage";
 import KanbanPage from "./pages/KanbanPage";
@@ -16,7 +19,7 @@ import TasksPage from "./pages/TasksPage";
 // Dark mode context
 interface ThemeContextType {
 	isDark: boolean;
-	toggle: () => void;
+	toggle: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
 export const ThemeContext = createContext<ThemeContextType>({
@@ -24,14 +27,24 @@ export const ThemeContext = createContext<ThemeContextType>({
 	toggle: () => {},
 });
 
+// Extend Document interface for View Transitions API
+declare global {
+	interface Document {
+		startViewTransition?: (callback: () => void) => {
+			ready: Promise<void>;
+			finished: Promise<void>;
+		};
+	}
+}
+
 export const useTheme = () => useContext(ThemeContext);
 
-export default function App() {
+function AppContent() {
+	const { config } = useConfig();
 	const [tasks, setTasks] = useState<Task[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [showCreateForm, setShowCreateForm] = useState(false);
 	const [showCommandDialog, setShowCommandDialog] = useState(false);
-	const [projectName, setProjectName] = useState("Knowns");
 	const [isDark, setIsDark] = useState(() => {
 		if (typeof window !== "undefined") {
 			const saved = localStorage.getItem("theme");
@@ -102,15 +115,6 @@ export default function App() {
 	}, []);
 
 	useEffect(() => {
-		// Fetch config for project name
-		getConfig()
-			.then((config) => {
-				if (config?.name) {
-					setProjectName(config.name as string);
-				}
-			})
-			.catch((err) => console.error("Failed to load config:", err));
-
 		api
 			.getTasks()
 			.then((data) => {
@@ -155,7 +159,51 @@ export default function App() {
 		setTasks(updatedTasks);
 	};
 
-	const toggleTheme = () => setIsDark((prev) => !prev);
+	const toggleTheme = async (event: React.MouseEvent<HTMLButtonElement>) => {
+		const newIsDark = !isDark;
+
+		// Check if View Transitions API is supported
+		if (
+			!document.startViewTransition ||
+			window.matchMedia("(prefers-reduced-motion: reduce)").matches
+		) {
+			setIsDark(newIsDark);
+			return;
+		}
+
+		// Get click position for circular reveal
+		const x = event.clientX;
+		const y = event.clientY;
+
+		// Calculate the maximum radius needed to cover the entire screen
+		const endRadius = Math.hypot(
+			Math.max(x, window.innerWidth - x),
+			Math.max(y, window.innerHeight - y),
+		);
+
+		// Start the view transition
+		const transition = document.startViewTransition(() => {
+			setIsDark(newIsDark);
+		});
+
+		// Wait for the transition to be ready
+		await transition.ready;
+
+		// Animate the NEW view expanding from click position
+		document.documentElement.animate(
+			{
+				clipPath: [
+					`circle(0px at ${x}px ${y}px)`,
+					`circle(${endRadius}px at ${x}px ${y}px)`,
+				],
+			},
+			{
+				duration: 400,
+				easing: "ease-out",
+				pseudoElement: "::view-transition-new(root)",
+			},
+		);
+	};
 
 	// Handle search task select
 	const handleSearchTaskSelect = (task: Task) => {
@@ -225,12 +273,9 @@ export default function App() {
 
 	return (
 		<ThemeContext.Provider value={{ isDark, toggle: toggleTheme }}>
-			<UserProvider>
-				<SidebarProvider>
+			<SidebarProvider>
 				<AppSidebar
 					currentPage={currentPage}
-					isDark={isDark}
-					onToggleTheme={toggleTheme}
 					onSearchClick={() => setShowCommandDialog(true)}
 				/>
 				<main className="flex flex-1 flex-col bg-background overflow-hidden">
@@ -239,10 +284,16 @@ export default function App() {
 						<SidebarTrigger className="-ml-1" />
 						<Separator orientation="vertical" className="mr-2 h-4" />
 						<div className="flex flex-1 items-center gap-2 text-sm">
-							<span className={`font-semibold ${isDark ? "text-gray-100" : "text-gray-900"}`}>
-								{projectName}
+							<span className="font-semibold text-foreground">
+								{config.name || "Knowns"}
 							</span>
 						</div>
+						<HeaderTimeTracker
+							onTaskClick={(taskId) => {
+								window.location.hash = `/kanban/${taskId}`;
+							}}
+						/>
+						<ThemeToggle isDark={isDark} onToggle={toggleTheme} size="sm" />
 						<NotificationBell />
 					</header>
 
@@ -266,7 +317,21 @@ export default function App() {
 				onDocSelect={handleSearchDocSelect}
 			/>
 			</SidebarProvider>
-			</UserProvider>
+			<Toaster />
 		</ThemeContext.Provider>
+	);
+}
+
+export default function App() {
+	return (
+		<ConfigProvider>
+			<UserProvider>
+				<UIPreferencesProvider>
+					<TimeTrackerProvider>
+						<AppContent />
+					</TimeTrackerProvider>
+				</UIPreferencesProvider>
+			</UserProvider>
+		</ConfigProvider>
 	);
 }

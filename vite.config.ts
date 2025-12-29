@@ -8,8 +8,8 @@ const pkg = JSON.parse(readFileSync(path.resolve(__dirname, "package.json"), "ut
 const isProd = process.env.NODE_ENV === "production";
 
 // Dev: use separate API server, Prod: use relative URLs (same server)
-const API_URL = isProd ? "" : (process.env.API_URL || "http://localhost:13333");
-const WS_URL = isProd ? "" : (process.env.WS_URL || "ws://localhost:13333");
+const API_URL = isProd ? "" : (process.env.API_URL || "http://localhost:6420");
+const WS_URL = isProd ? "" : (process.env.WS_URL || "ws://localhost:6420");
 
 export default defineConfig({
 	plugins: [react(), tailwindcss()],

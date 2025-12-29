@@ -11,9 +11,10 @@ import {
 	X,
 	Copy,
 } from "lucide-react";
-import { useTheme } from "../App";
-import { TiptapEditor, EditorRender } from "../components/editor";
+import { MDEditor, MDRender } from "../components/editor";
 import { ScrollArea } from "../components/ui/scroll-area";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
 import { getDocs, createDoc, updateDoc, connectWebSocket } from "../api/client";
 
 interface DocMetadata {
@@ -34,7 +35,6 @@ interface Doc {
 
 
 export default function DocsPage() {
-	const { isDark } = useTheme();
 	const [docs, setDocs] = useState<Doc[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [selectedDoc, setSelectedDoc] = useState<Doc | null>(null);
@@ -51,12 +51,6 @@ export default function DocsPage() {
 	const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(["(root)"]));
 	const [pathCopied, setPathCopied] = useState(false);
 	const markdownPreviewRef = useRef<HTMLDivElement>(null);
-
-	const bgColor = isDark ? "bg-gray-800" : "bg-white";
-	const textColor = isDark ? "text-gray-200" : "text-gray-900";
-	const textSecondary = isDark ? "text-gray-400" : "text-gray-600";
-	const borderColor = isDark ? "border-gray-700" : "border-gray-200";
-	const hoverBg = isDark ? "hover:bg-gray-700" : "hover:bg-gray-50";
 
 	useEffect(() => {
 		loadDocs();
@@ -371,13 +365,13 @@ export default function DocsPage() {
 					key={`folder-${node.path}`}
 					type="button"
 					onClick={() => toggleFolder(node.path)}
-					className={`w-full flex items-center gap-2 px-3 py-2 ${hoverBg} ${textColor} transition-colors`}
+					className="w-full flex items-center gap-2 px-3 py-2 hover:bg-accent text-foreground transition-colors"
 					style={{ paddingLeft }}
 				>
 					{isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
 					{isExpanded ? <FolderOpen className="w-4 h-4" /> : <Folder className="w-4 h-4" />}
 					<span className="text-sm font-medium">{node.name}</span>
-					<span className={`text-xs ${textSecondary}`}>({totalDocs})</span>
+					<span className="text-xs text-muted-foreground">({totalDocs})</span>
 				</button>
 			);
 		}
@@ -405,8 +399,8 @@ export default function DocsPage() {
 							// Navigate using hash to update URL
 							window.location.hash = `/docs/${doc.path}`;
 						}}
-						className={`w-full text-left px-3 py-2 flex items-center gap-2 ${hoverBg} ${textColor} transition-colors ${
-							selectedDoc?.path === doc.path ? (isDark ? "bg-gray-700" : "bg-gray-100") : ""
+						className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-accent text-foreground transition-colors ${
+							selectedDoc?.path === doc.path ? "bg-accent" : ""
 						}`}
 						style={{ paddingLeft: `${(level + 1) * 16}px` }}
 					>
@@ -414,7 +408,7 @@ export default function DocsPage() {
 						<div className="flex-1 min-w-0">
 							<div className="text-sm font-medium truncate">{doc.metadata.title}</div>
 							{doc.metadata.description && (
-								<div className={`text-xs ${textSecondary} truncate`}>
+								<div className="text-xs text-muted-foreground truncate">
 									{doc.metadata.description}
 								</div>
 							)}
@@ -430,7 +424,7 @@ export default function DocsPage() {
 	if (loading) {
 		return (
 			<div className="p-6 flex items-center justify-center h-64">
-				<div className={`text-lg ${textSecondary}`}>Loading documentation...</div>
+				<div className="text-lg text-muted-foreground">Loading documentation...</div>
 			</div>
 		);
 	}
@@ -439,23 +433,22 @@ export default function DocsPage() {
 		<div className="p-6 h-full flex flex-col overflow-hidden">
 			{/* Header */}
 			<div className="mb-6 flex items-center justify-between">
-				<h1 className={`text-2xl font-bold ${textColor}`}>Documentation</h1>
-				<button
-					type="button"
+				<h1 className="text-2xl font-bold">Documentation</h1>
+				<Button
 					onClick={() => setShowCreateModal(true)}
-					className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 flex items-center gap-2 transition-colors"
+					className="bg-green-600 hover:bg-green-700"
 				>
-					<Plus className="w-4 h-4" />
+					<Plus className="w-4 h-4 mr-2" />
 					New Document
-				</button>
+				</Button>
 			</div>
 
 			<div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0 overflow-hidden">
 				{/* Doc List */}
 				<div className="lg:col-span-1 flex flex-col min-h-0 overflow-hidden">
-					<div className={`${bgColor} rounded-lg border ${borderColor} overflow-hidden flex flex-col flex-1 min-h-0`}>
-						<div className={`p-4 border-b ${borderColor} shrink-0`}>
-							<h2 className={`font-semibold ${textColor}`}>All Documents ({docs.length})</h2>
+					<div className="bg-card rounded-lg border overflow-hidden flex flex-col flex-1 min-h-0">
+						<div className="p-4 border-b shrink-0">
+							<h2 className="font-semibold">All Documents ({docs.length})</h2>
 						</div>
 						<ScrollArea className="flex-1">
 							{renderFolderNode(buildFolderTree())}
@@ -463,10 +456,10 @@ export default function DocsPage() {
 					</div>
 
 					{docs.length === 0 && (
-						<div className={`${bgColor} rounded-lg border ${borderColor} p-8 text-center`}>
+						<div className="bg-card rounded-lg border p-8 text-center">
 							<FileText className="w-5 h-5" />
-							<p className={`mt-2 ${textSecondary}`}>No documentation found</p>
-							<p className={`text-sm ${textSecondary} mt-1`}>
+							<p className="mt-2 text-muted-foreground">No documentation found</p>
+							<p className="text-sm text-muted-foreground mt-1">
 								Create a doc with: <code className="font-mono">knowns doc create "Title"</code>
 							</p>
 						</div>
@@ -476,21 +469,21 @@ export default function DocsPage() {
 				{/* Doc Content */}
 				<div className="lg:col-span-2 flex flex-col min-h-0 overflow-hidden">
 					{selectedDoc ? (
-						<div className={`${bgColor} rounded-lg border ${borderColor} overflow-hidden flex flex-col flex-1 min-h-0`}>
+						<div className="bg-card rounded-lg border overflow-hidden flex flex-col flex-1 min-h-0">
 							{/* Header */}
-							<div className="p-6 border-b border-gray-700 flex items-start justify-between shrink-0">
+							<div className="p-6 border-b flex items-start justify-between shrink-0">
 								<div className="flex-1">
-									<h2 className={`text-2xl font-bold ${textColor} mb-2`}>
+									<h2 className="text-2xl font-bold mb-2">
 										{selectedDoc.metadata.title}
 									</h2>
 									{selectedDoc.metadata.description && (
-										<p className={`${textSecondary} mb-2`}>{selectedDoc.metadata.description}</p>
+										<p className="text-muted-foreground mb-2">{selectedDoc.metadata.description}</p>
 									)}
 									{/* Path display */}
 									<button
 										type="button"
 										onClick={handleCopyPath}
-										className={`flex items-center gap-2 px-2 py-1 rounded text-xs ${textSecondary} ${hoverBg} transition-colors group`}
+										className="flex items-center gap-2 px-2 py-1 rounded text-xs text-muted-foreground hover:bg-accent transition-colors group"
 										title="Click to copy URL"
 									>
 										<Folder className="w-4 h-4" />
@@ -499,7 +492,7 @@ export default function DocsPage() {
 											{pathCopied ? "✓" : <Copy className="w-4 h-4" />}
 										</span>
 									</button>
-									<div className={`text-sm ${textSecondary} mt-2`}>
+									<div className="text-sm text-muted-foreground mt-2">
 										Last updated: {new Date(selectedDoc.metadata.updatedAt).toLocaleString()}
 									</div>
 								</div>
@@ -507,34 +500,28 @@ export default function DocsPage() {
 								{/* Edit/Save/Cancel Buttons */}
 								<div className="flex gap-2 ml-4">
 									{!isEditing ? (
-										<button
-											type="button"
-											onClick={handleEdit}
-											className="px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 flex items-center gap-2 transition-colors"
-										>
-											<Pencil className="w-4 h-4" />
+										<Button onClick={handleEdit}>
+											<Pencil className="w-4 h-4 mr-2" />
 											Edit
-										</button>
+										</Button>
 									) : (
 										<>
-											<button
-												type="button"
+											<Button
 												onClick={handleSave}
 												disabled={saving}
-												className="px-3 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-2 transition-colors"
+												className="bg-green-600 hover:bg-green-700"
 											>
-												<Check className="w-4 h-4" />
+												<Check className="w-4 h-4 mr-2" />
 												{saving ? "Saving..." : "Save"}
-											</button>
-											<button
-												type="button"
+											</Button>
+											<Button
+												variant="secondary"
 												onClick={handleCancel}
 												disabled={saving}
-												className={`px-3 py-2 ${isDark ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"} ${textColor} text-sm font-medium rounded-lg disabled:opacity-50 flex items-center gap-2 transition-colors`}
 											>
-												<X className="w-4 h-4" />
+												<X className="w-4 h-4 mr-2" />
 												Cancel
-											</button>
+											</Button>
 										</>
 									)}
 								</div>
@@ -543,7 +530,7 @@ export default function DocsPage() {
 							{/* Content */}
 							{isEditing ? (
 								<div className="flex-1 p-6 overflow-hidden">
-									<TiptapEditor
+									<MDEditor
 										markdown={editedContent}
 										onChange={setEditedContent}
 										placeholder="Write your documentation here..."
@@ -552,19 +539,18 @@ export default function DocsPage() {
 								</div>
 							) : (
 								<ScrollArea className="flex-1">
-									<div className="p-6">
-										<EditorRender
+									<div className="p-6" ref={markdownPreviewRef}>
+										<MDRender
 											markdown={selectedDoc.content || ""}
-											className={textColor}
 										/>
 									</div>
 								</ScrollArea>
 							)}
 						</div>
 					) : (
-						<div className={`${bgColor} rounded-lg border ${borderColor} p-12 text-center`}>
+						<div className="bg-card rounded-lg border p-12 text-center">
 							<FileText className="w-5 h-5" />
-							<p className={`mt-4 ${textSecondary}`}>Select a document to view its content</p>
+							<p className="mt-4 text-muted-foreground">Select a document to view its content</p>
 						</div>
 					)}
 				</div>
@@ -572,80 +558,66 @@ export default function DocsPage() {
 
 			{/* Create Document Modal */}
 			{showCreateModal && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-					<div
-						className={`${bgColor} rounded-lg shadow-xl max-w-4xl w-full h-[90vh] flex flex-col`}
-					>
-						<div className={`p-6 border-b ${borderColor} shrink-0`}>
-							<h2 className={`text-xl font-bold ${textColor}`}>Create New Document</h2>
+				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+					<div className="bg-card rounded-lg shadow-xl max-w-4xl w-full h-[90vh] flex flex-col">
+						<div className="p-6 border-b shrink-0">
+							<h2 className="text-xl font-bold">Create New Document</h2>
 						</div>
 
 						<div className="p-6 space-y-4 flex-1 flex flex-col overflow-hidden">
 							{/* Title */}
 							<div className="shrink-0">
-								<label className={`block text-sm font-medium ${textColor} mb-2`}>Title *</label>
-								<input
+								<label className="block text-sm font-medium mb-2">Title *</label>
+								<Input
 									type="text"
 									value={newDocTitle}
 									onChange={(e) => setNewDocTitle(e.target.value)}
 									placeholder="Document title"
-									className={`w-full px-3 py-2 rounded-lg border ${borderColor} ${
-										isDark ? "bg-gray-700 text-gray-200" : "bg-white text-gray-900"
-									} focus:outline-none focus:ring-2 focus:ring-blue-500`}
 								/>
 							</div>
 
 							{/* Description */}
 							<div className="shrink-0">
-								<label className={`block text-sm font-medium ${textColor} mb-2`}>Description</label>
-								<input
+								<label className="block text-sm font-medium mb-2">Description</label>
+								<Input
 									type="text"
 									value={newDocDescription}
 									onChange={(e) => setNewDocDescription(e.target.value)}
 									placeholder="Brief description"
-									className={`w-full px-3 py-2 rounded-lg border ${borderColor} ${
-										isDark ? "bg-gray-700 text-gray-200" : "bg-white text-gray-900"
-									} focus:outline-none focus:ring-2 focus:ring-blue-500`}
 								/>
 							</div>
 
 							{/* Folder */}
 							<div className="shrink-0">
-								<label className={`block text-sm font-medium ${textColor} mb-2`}>
+								<label className="block text-sm font-medium mb-2">
 									Folder (optional)
 								</label>
-								<input
+								<Input
 									type="text"
 									value={newDocFolder}
 									onChange={(e) => setNewDocFolder(e.target.value)}
 									placeholder="api/auth, guides, etc. (leave empty for root)"
-									className={`w-full px-3 py-2 rounded-lg border ${borderColor} ${
-										isDark ? "bg-gray-700 text-gray-200" : "bg-white text-gray-900"
-									} focus:outline-none focus:ring-2 focus:ring-blue-500`}
 								/>
 							</div>
 
 							{/* Tags */}
 							<div className="shrink-0">
-								<label className={`block text-sm font-medium ${textColor} mb-2`}>
+								<label className="block text-sm font-medium mb-2">
 									Tags (comma-separated)
 								</label>
-								<input
+								<Input
 									type="text"
 									value={newDocTags}
 									onChange={(e) => setNewDocTags(e.target.value)}
 									placeholder="guide, tutorial, api"
-									className={`w-full px-3 py-2 rounded-lg border ${borderColor} ${
-										isDark ? "bg-gray-700 text-gray-200" : "bg-white text-gray-900"
-									} focus:outline-none focus:ring-2 focus:ring-blue-500`}
 								/>
 							</div>
 
 							{/* Content */}
 							<div className="flex-1 flex flex-col min-h-0">
-								<label className={`block text-sm font-medium ${textColor} mb-2`}>Content</label>
+								<label className="block text-sm font-medium mb-2">Content</label>
 								<div className="flex-1 min-h-[400px]">
-									<TiptapEditor
+									<MDEditor
 										markdown={newDocContent}
 										onChange={setNewDocContent}
 										placeholder="Write your documentation here..."
@@ -655,9 +627,9 @@ export default function DocsPage() {
 							</div>
 						</div>
 
-						<div className={`p-6 border-t ${borderColor} flex justify-end gap-3 shrink-0`}>
-							<button
-								type="button"
+						<div className="p-6 border-t flex justify-end gap-3 shrink-0">
+							<Button
+								variant="secondary"
 								onClick={() => {
 									setShowCreateModal(false);
 									setNewDocTitle("");
@@ -667,20 +639,16 @@ export default function DocsPage() {
 									setNewDocContent("");
 								}}
 								disabled={creating}
-								className={`px-4 py-2 ${
-									isDark ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"
-								} ${textColor} text-sm font-medium rounded-lg disabled:opacity-50 transition-colors`}
 							>
 								Cancel
-							</button>
-							<button
-								type="button"
+							</Button>
+							<Button
 								onClick={handleCreateDoc}
 								disabled={creating || !newDocTitle.trim()}
-								className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+								className="bg-green-600 hover:bg-green-700"
 							>
 								{creating ? "Creating..." : "Create Document"}
-							</button>
+							</Button>
 						</div>
 					</div>
 				</div>

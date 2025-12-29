@@ -11,8 +11,8 @@ import { FileStore } from "@storage/file-store";
 import { file, write } from "@utils/bun-compat";
 import { formatDocReferences, resolveDocReferences } from "@utils/doc-links";
 import { findProjectRoot } from "@utils/find-project-root";
-import { buildTaskMap, transformMentionsToRefs } from "@utils/mention-refs";
-import { notifyTaskUpdate } from "@utils/notify-server";
+import { buildTaskMap, normalizeRefs, transformMentionsToRefs } from "@utils/mention-refs";
+import { notifyRefresh, notifyTaskUpdate } from "@utils/notify-server";
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -584,10 +584,10 @@ const createCommand = new Command("create")
 					completed: false,
 				}));
 
-				// Create task
+				// Create task (normalize refs in description to ensure consistent storage)
 				const task = await fileStore.createTask({
 					title,
-					description: options.description,
+					description: options.description ? normalizeRefs(options.description) : undefined,
 					status: options.status as TaskStatus,
 					priority: options.priority as TaskPriority,
 					assignee: options.assignee,
@@ -777,9 +777,9 @@ const editCommand = new Command("edit")
 					updates.title = options.title;
 				}
 
-				// Update description
+				// Update description (normalize refs to ensure consistent storage)
 				if (options.description) {
-					updates.description = options.description;
+					updates.description = normalizeRefs(options.description);
 				}
 
 				// Update status
@@ -887,21 +887,21 @@ const editCommand = new Command("edit")
 					updates.acceptanceCriteria = criteria;
 				}
 
-				// Update implementation plan
+				// Update implementation plan (normalize refs to ensure consistent storage)
 				if (options.plan) {
-					updates.implementationPlan = options.plan;
+					updates.implementationPlan = normalizeRefs(options.plan);
 				}
 
-				// Update implementation notes
+				// Update implementation notes (normalize refs to ensure consistent storage)
 				if (options.notes) {
-					updates.implementationNotes = options.notes;
+					updates.implementationNotes = normalizeRefs(options.notes);
 				}
 
-				// Append to implementation notes
+				// Append to implementation notes (normalize refs to ensure consistent storage)
 				if (options.appendNotes) {
 					const existingNotes = task.implementationNotes || "";
 					const separator = existingNotes ? "\n\n" : "";
-					updates.implementationNotes = existingNotes + separator + options.appendNotes;
+					updates.implementationNotes = existingNotes + separator + normalizeRefs(options.appendNotes);
 				}
 
 				// Apply updates
@@ -993,6 +993,9 @@ const archiveCommand = new Command("archive")
 			// Delete original file
 			await unlink(oldPath);
 
+			// Notify web server for real-time updates
+			await notifyRefresh();
+
 			console.log(chalk.green(`✓ Archived task-${id}: ${task.title}`));
 		} catch (error) {
 			console.error(chalk.red("✗ Failed to archive task"));
@@ -1039,6 +1042,9 @@ const unarchiveCommand = new Command("unarchive")
 
 			// Delete from archive
 			await unlink(archivePath);
+
+			// Notify web server for real-time updates
+			await notifyRefresh();
 
 			console.log(chalk.green(`✓ Restored task-${id}`));
 		} catch (error) {
@@ -1644,7 +1650,36 @@ const restoreCommand = new Command("restore")
 // MAIN TASK COMMAND
 // ============================================================================
 
-export const taskCommand = new Command("task").description("Manage tasks");
+export const taskCommand = new Command("task")
+	.description("Manage tasks")
+	.argument("[id]", "Task ID (shorthand for 'task view <id>')")
+	.option("--plain", "Plain text output for AI")
+	.action(async (id: string | undefined, options: { plain?: boolean }) => {
+		// If no ID provided, show help
+		if (!id) {
+			taskCommand.help();
+			return;
+		}
+
+		// Shorthand: `task <id>` = `task view <id>`
+		try {
+			const fileStore = getFileStore();
+			const task = await fileStore.getTask(id);
+
+			if (!task) {
+				console.error(chalk.red(`✗ Task ${id} not found`));
+				process.exit(1);
+			}
+
+			console.log(await formatTask(task, fileStore, options.plain));
+		} catch (error) {
+			console.error(chalk.red("✗ Failed to view task"));
+			if (error instanceof Error) {
+				console.error(chalk.red(`  ${error.message}`));
+			}
+			process.exit(1);
+		}
+	});
 
 // Add subcommands
 taskCommand.addCommand(createCommand);

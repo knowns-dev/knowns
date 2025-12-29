@@ -52,17 +52,22 @@ const STATUS_COLORS: Record<string, { dot: string; text: string }> = {
 	done: { dot: "bg-green-400", text: "text-green-600" },
 };
 
+// Badge classes with dark: variants
+const taskBadgeClass =
+	"inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-sm font-medium transition-all bg-green-100/50 border border-green-500/30 text-green-700 hover:bg-green-100 hover:border-green-500/50 dark:bg-green-900/20 dark:text-green-300 dark:hover:bg-green-900/30";
+
+const docBadgeClass =
+	"inline-flex items-center gap-1 px-1 py-1 rounded-md text-sm font-medium transition-all hover:scale-105 bg-blue-100/50 border border-blue-500/30 text-blue-700 hover:bg-blue-100 hover:border-blue-500/50 dark:bg-blue-900/20 dark:text-blue-300 dark:hover:bg-blue-900/30";
+
 /**
  * Task mention badge that fetches and displays the task title and status
  */
 function TaskMentionBadge({
 	taskId,
 	onTaskLinkClick,
-	isDark,
 }: {
 	taskId: string;
 	onTaskLinkClick?: (taskId: string) => void;
-	isDark: boolean;
 }) {
 	const [title, setTitle] = useState<string | null>(null);
 	const [status, setStatus] = useState<string | null>(null);
@@ -71,10 +76,6 @@ function TaskMentionBadge({
 	const taskNumber = taskId.replace("task-", "");
 
 	const hashHref = `#/kanban/${taskNumber}`;
-
-	const badgeClass = isDark
-		? "inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-sm font-medium transition-all hover:scale-105 bg-green-900/20 border border-green-500/30 text-green-300 hover:bg-green-900/30 hover:border-green-500/50"
-		: "inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-sm font-medium transition-all hover:scale-105 bg-green-100/50 border border-green-500/30 text-green-700 hover:bg-green-100 hover:border-green-500/50";
 
 	// Extract task number from taskId (e.g., "task-33" -> "33")
 
@@ -116,7 +117,7 @@ function TaskMentionBadge({
 	const statusColors = status ? STATUS_COLORS[status] || STATUS_COLORS.todo : null;
 
 	return (
-		<a href={hashHref} className={badgeClass} data-task-id={taskNumber} onClick={handleClick}>
+		<a href={hashHref} className={taskBadgeClass} data-task-id={taskNumber} onClick={handleClick}>
 			<ClipboardCheck className="w-4 h-4 shrink-0" />
 			{loading ? (
 				<span className="opacity-70">#{taskNumber}</span>
@@ -142,20 +143,14 @@ function TaskMentionBadge({
 function DocMentionBadge({
 	docPath,
 	onDocLinkClick,
-	isDark,
 }: {
 	docPath: string;
 	onDocLinkClick?: (path: string) => void;
-	isDark: boolean;
 }) {
 	const [title, setTitle] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 
 	const hashHref = `#/docs/${docPath}`;
-
-	const badgeClass = isDark
-		? "inline-flex items-center gap-1 px-1 py-1 rounded-md text-sm font-medium transition-all hover:scale-105 bg-blue-900/20 border border-blue-500/30 text-blue-300 hover:bg-blue-900/30 hover:border-blue-500/50"
-		: "inline-flex items-center gap-1 px-1 py-1 rounded-md text-sm font-medium transition-all hover:scale-105 bg-blue-100/50 border border-blue-500/30 text-blue-700 hover:bg-blue-100 hover:border-blue-500/50";
 
 	useEffect(() => {
 		let cancelled = false;
@@ -195,7 +190,7 @@ function DocMentionBadge({
 	const shortPath = docPath.replace(/\.md$/, "").split("/").pop() || docPath;
 
 	return (
-		<a href={hashHref} className={badgeClass} data-doc-path={docPath} onClick={handleClick}>
+		<a href={hashHref} className={docBadgeClass} data-doc-path={docPath} onClick={handleClick}>
 			<FileText className="w-4 h-4 shrink-0" />
 			{loading ? (
 				<span className="opacity-70">{shortPath}</span>
@@ -240,19 +235,19 @@ const MDRender = forwardRef<MDRenderRef, MDRenderProps>(
 				// Check if this is a task mention (starts with @@task-)
 				if (text.startsWith("@@task-")) {
 					const taskId = text.slice(2); // Remove @@
-					return <TaskMentionBadge taskId={taskId} onTaskLinkClick={onTaskLinkClick} isDark={isDark} />;
+					return <TaskMentionBadge taskId={taskId} onTaskLinkClick={onTaskLinkClick} />;
 				}
 
 				// Check if this is a doc mention (starts with @@doc/)
 				if (text.startsWith("@@doc/")) {
 					const docPath = text.slice(6); // Remove @@doc/
-					return <DocMentionBadge docPath={docPath} onDocLinkClick={onDocLinkClick} isDark={isDark} />;
+					return <DocMentionBadge docPath={docPath} onDocLinkClick={onDocLinkClick} />;
 				}
 
 				// Regular link
 				return <a href={href}>{children}</a>;
 			};
-		}, [onDocLinkClick, onTaskLinkClick, isDark]);
+		}, [onDocLinkClick, onTaskLinkClick]);
 
 		if (!markdown) return null;
 

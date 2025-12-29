@@ -258,6 +258,69 @@ describe("Task CLI Integration Tests", () => {
 		test("throws error for non-existent task", async () => {
 			await expect(fileStore.updateTask("999", { title: "New" })).rejects.toThrow("Task 999 not found");
 		});
+
+		test("deletes old file when title changes", async () => {
+			const { readdir } = await import("node:fs/promises");
+			const { join } = await import("node:path");
+
+			const task = await fileStore.createTask({
+				title: "Original Title",
+				status: "todo",
+				priority: "medium",
+				labels: [],
+				subtasks: [],
+				acceptanceCriteria: [],
+				timeSpent: 0,
+				timeEntries: [],
+			});
+
+			// Check initial file exists
+			const tasksPath = join(tempDir, ".knowns", "tasks");
+			let files = await readdir(tasksPath);
+			let taskFiles = files.filter((f) => f.startsWith("task-1 -"));
+			expect(taskFiles).toHaveLength(1);
+			expect(taskFiles[0]).toContain("Original-Title");
+
+			// Update title
+			await fileStore.updateTask(task.id, {
+				title: "New Title",
+			});
+
+			// Check only new file exists, old file is deleted
+			files = await readdir(tasksPath);
+			taskFiles = files.filter((f) => f.startsWith("task-1 -"));
+			expect(taskFiles).toHaveLength(1);
+			expect(taskFiles[0]).toContain("New-Title");
+			expect(taskFiles[0]).not.toContain("Original-Title");
+		});
+
+		test("does not delete file when title unchanged", async () => {
+			const { readdir } = await import("node:fs/promises");
+			const { join } = await import("node:path");
+
+			const task = await fileStore.createTask({
+				title: "Same Title",
+				status: "todo",
+				priority: "medium",
+				labels: [],
+				subtasks: [],
+				acceptanceCriteria: [],
+				timeSpent: 0,
+				timeEntries: [],
+			});
+
+			// Update status only (not title)
+			await fileStore.updateTask(task.id, {
+				status: "in-progress",
+			});
+
+			// Check file still exists with same name
+			const tasksPath = join(tempDir, ".knowns", "tasks");
+			const files = await readdir(tasksPath);
+			const taskFiles = files.filter((f) => f.startsWith("task-1 -"));
+			expect(taskFiles).toHaveLength(1);
+			expect(taskFiles[0]).toContain("Same-Title");
+		});
 	});
 
 	describe("Task List and Search", () => {
