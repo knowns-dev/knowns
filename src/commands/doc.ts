@@ -9,6 +9,7 @@ import { FileStore } from "@storage/file-store";
 import { findProjectRoot } from "@utils/find-project-root";
 import { buildTaskMap, normalizeRefs, transformMentionsToRefs } from "@utils/mention-refs";
 import { notifyDocUpdate } from "@utils/notify-server";
+import { repairDoc, validateDoc } from "@utils/validate";
 import chalk from "chalk";
 import { Command } from "commander";
 import matter from "gray-matter";
@@ -178,9 +179,10 @@ const createCommand = new Command("create")
 // List command
 const listCommand = new Command("list")
 	.description("List all documentation files")
+	.argument("[path]", "Filter by path (e.g., 'guides/' or 'patterns/')")
 	.option("--plain", "Plain text output for AI")
 	.option("-t, --tag <tag>", "Filter by tag")
-	.action(async (options: { plain?: boolean; tag?: string }) => {
+	.action(async (path: string | undefined, options: { plain?: boolean; tag?: string }) => {
 		try {
 			await ensureDocsDir();
 
@@ -207,51 +209,114 @@ const listCommand = new Command("list")
 				});
 			}
 
-			// Filter by tag if specified
+			// Filter by path if specified
 			let filteredDocs = docs;
+			if (path) {
+				const normalizedPath = path.endsWith("/") ? path : `${path}/`;
+				filteredDocs = docs.filter((doc) => doc.filename.startsWith(normalizedPath));
+			}
+
+			// Filter by tag if specified
 			if (options.tag) {
-				filteredDocs = docs.filter((doc) => doc.metadata.tags?.includes(options.tag));
+				filteredDocs = filteredDocs.filter((doc) => doc.metadata.tags?.includes(options.tag));
 			}
 
 			if (filteredDocs.length === 0) {
+				const filterMsg = path ? `path: ${path}` : options.tag ? `tag: ${options.tag}` : "";
 				console.log(
-					options.plain ? "No documentation found" : chalk.yellow(`No documentation found with tag: ${options.tag}`),
+					options.plain
+						? "No documentation found"
+						: chalk.yellow(`No documentation found${filterMsg ? ` with ${filterMsg}` : ""}`),
 				);
 				return;
 			}
 
 			if (options.plain) {
-				const border = "=".repeat(50);
-				console.log(`Documentation Files (${filteredDocs.length})`);
-				console.log(border);
-				console.log();
+				// Tree format for token efficiency (folder name once, files indented)
+				const folders = new Map<string, Array<{ name: string; title: string }>>();
+				const rootDocs: Array<{ name: string; title: string }> = [];
 
 				for (const doc of filteredDocs) {
-					console.log(`${doc.filename} - ${doc.metadata.title}`);
-					if (doc.metadata.description) {
-						console.log(`  ${doc.metadata.description}`);
+					const parts = doc.filename.split("/");
+					if (parts.length === 1) {
+						rootDocs.push({
+							name: parts[0].replace(/\.md$/, ""),
+							title: doc.metadata.title,
+						});
+					} else {
+						const folder = parts.slice(0, -1).join("/");
+						const name = parts[parts.length - 1].replace(/\.md$/, "");
+						if (!folders.has(folder)) {
+							folders.set(folder, []);
+						}
+						folders.get(folder)?.push({ name, title: doc.metadata.title });
 					}
-					console.log(`  Created: ${doc.metadata.createdAt}`);
-					if (doc.metadata.tags && doc.metadata.tags.length > 0) {
-						console.log(`  Tags: ${doc.metadata.tags.join(", ")}`);
+				}
+
+				const sortedFolders = Array.from(folders.keys()).sort();
+				for (const folder of sortedFolders) {
+					console.log(`${folder}/`);
+					const docs = folders.get(folder)?.sort((a, b) => a.name.localeCompare(b.name));
+					for (const doc of docs) {
+						console.log(`  ${doc.name} - ${doc.title}`);
 					}
-					console.log();
+				}
+				if (rootDocs.length > 0) {
+					rootDocs.sort((a, b) => a.name.localeCompare(b.name));
+					for (const doc of rootDocs) {
+						console.log(`${doc.name} - ${doc.title}`);
+					}
 				}
 			} else {
-				console.log(chalk.bold("\n📚 Documentation\n"));
+				// List format for humans - grouped by folder
+				const folders = new Map<string, typeof filteredDocs>();
+				const rootDocs: typeof filteredDocs = [];
+
 				for (const doc of filteredDocs) {
-					console.log(chalk.cyan(`  ${doc.metadata.title}`));
-					if (doc.metadata.description) {
-						console.log(chalk.gray(`    ${doc.metadata.description}`));
+					const parts = doc.filename.split("/");
+					if (parts.length === 1) {
+						rootDocs.push(doc);
+					} else {
+						const folder = parts.slice(0, -1).join("/");
+						if (!folders.has(folder)) {
+							folders.set(folder, []);
+						}
+						folders.get(folder)?.push(doc);
 					}
-					console.log(chalk.gray(`    File: ${doc.filename}`));
-					if (doc.metadata.tags && doc.metadata.tags.length > 0) {
-						console.log(chalk.gray(`    Tags: ${doc.metadata.tags.join(", ")}`));
+				}
+
+				console.log(chalk.bold(`\nDocumentation (${filteredDocs.length})\n`));
+
+				const sortedFolders = Array.from(folders.keys()).sort();
+				for (const folder of sortedFolders) {
+					console.log(chalk.cyan.bold(`${folder}/`));
+					const docs = folders.get(folder)?.sort((a, b) => a.metadata.title.localeCompare(b.metadata.title));
+					for (const doc of docs) {
+						console.log(chalk.white(`  ${doc.metadata.title}`));
+						if (doc.metadata.description) {
+							console.log(chalk.gray(`    ${doc.metadata.description}`));
+						}
+						if (doc.metadata.tags && doc.metadata.tags.length > 0) {
+							console.log(chalk.gray(`    Tags: ${doc.metadata.tags.join(", ")}`));
+						}
 					}
-					console.log(chalk.gray(`    Updated: ${new Date(doc.metadata.updatedAt).toLocaleString()}`));
 					console.log();
 				}
-				console.log(chalk.gray(`Total: ${filteredDocs.length} document(s)\n`));
+
+				// Root docs
+				if (rootDocs.length > 0) {
+					rootDocs.sort((a, b) => a.metadata.title.localeCompare(b.metadata.title));
+					for (const doc of rootDocs) {
+						console.log(chalk.white(`${doc.metadata.title}`));
+						if (doc.metadata.description) {
+							console.log(chalk.gray(`  ${doc.metadata.description}`));
+						}
+						if (doc.metadata.tags && doc.metadata.tags.length > 0) {
+							console.log(chalk.gray(`  Tags: ${doc.metadata.tags.join(", ")}`));
+						}
+						console.log();
+					}
+				}
 			}
 		} catch (error) {
 			console.error(chalk.red("Error listing documentation:"), error instanceof Error ? error.message : String(error));
@@ -417,6 +482,8 @@ const editCommand = new Command("edit")
 	.option("--tags <tags>", "Comma-separated tags")
 	.option("-c, --content <text>", "Replace content")
 	.option("-a, --append <text>", "Append to content")
+	.option("--content-file <path>", "Replace content with file contents")
+	.option("--append-file <path>", "Append file contents to document")
 	.option("--plain", "Plain text output for AI")
 	.action(
 		async (
@@ -427,6 +494,8 @@ const editCommand = new Command("edit")
 				tags?: string;
 				content?: string;
 				append?: string;
+				contentFile?: string;
+				appendFile?: string;
 				plain?: boolean;
 			},
 		) => {
@@ -478,10 +547,32 @@ const editCommand = new Command("edit")
 
 				// Update content (normalize refs to ensure consistent storage)
 				let updatedContent = content;
-				if (options.content) {
-					updatedContent = normalizeRefs(options.content);
+				let sourceFile: string | undefined;
+
+				// Handle --content-file (replace content with file contents)
+				if (options.contentFile) {
+					if (!existsSync(options.contentFile)) {
+						console.error(chalk.red(`✗ File not found: ${options.contentFile}`));
+						process.exit(1);
+					}
+					const fileData = await readFile(options.contentFile, "utf-8");
+					updatedContent = normalizeRefs(fileData);
+					sourceFile = options.contentFile;
 				}
-				if (options.append) {
+				// Handle --append-file (append file contents)
+				else if (options.appendFile) {
+					if (!existsSync(options.appendFile)) {
+						console.error(chalk.red(`✗ File not found: ${options.appendFile}`));
+						process.exit(1);
+					}
+					const fileData = await readFile(options.appendFile, "utf-8");
+					updatedContent = `${content.trimEnd()}\n\n${normalizeRefs(fileData)}`;
+					sourceFile = options.appendFile;
+				}
+				// Original behavior with inline content
+				else if (options.content) {
+					updatedContent = normalizeRefs(options.content);
+				} else if (options.append) {
 					updatedContent = `${content.trimEnd()}\n\n${normalizeRefs(options.append)}`;
 				}
 
@@ -494,8 +585,14 @@ const editCommand = new Command("edit")
 
 				if (options.plain) {
 					console.log(`Updated: ${filename}`);
+					if (sourceFile) {
+						console.log(`Content from: ${sourceFile}`);
+					}
 				} else {
 					console.log(chalk.green(`✓ Updated documentation: ${chalk.bold(filename)}`));
+					if (sourceFile) {
+						console.log(chalk.gray(`  Content from: ${sourceFile}`));
+					}
 				}
 			} catch (error) {
 				console.error(
@@ -507,11 +604,371 @@ const editCommand = new Command("edit")
 		},
 	);
 
+// Validate command
+const validateCommand = new Command("validate")
+	.description("Validate a documentation file format")
+	.argument("<name>", "Document name or path")
+	.option("--plain", "Plain text output for AI")
+	.action(async (name: string, options: { plain?: boolean }) => {
+		try {
+			const resolved = await resolveDocPath(name);
+			if (!resolved) {
+				console.error(chalk.red(`✗ Documentation not found: ${name}`));
+				process.exit(1);
+			}
+
+			const content = await readFile(resolved.filepath, "utf-8");
+			const result = validateDoc(content);
+
+			if (options.plain) {
+				console.log(`Validating: ${resolved.filename}`);
+				console.log(`Valid: ${result.valid}`);
+				if (result.errors.length > 0) {
+					console.log("\nErrors:");
+					for (const error of result.errors) {
+						console.log(`  ✗ ${error.field}: ${error.message}${error.fixable ? " (fixable)" : ""}`);
+					}
+				}
+				if (result.warnings.length > 0) {
+					console.log("\nWarnings:");
+					for (const warning of result.warnings) {
+						console.log(`  ⚠ ${warning.field}: ${warning.message}`);
+					}
+				}
+				if (result.valid && result.warnings.length === 0) {
+					console.log("No issues found.");
+				}
+			} else {
+				console.log(chalk.bold(`\n📋 Validation: ${resolved.filename}\n`));
+				if (result.valid) {
+					console.log(chalk.green("✓ Document is valid"));
+				} else {
+					console.log(chalk.red("✗ Document has errors"));
+				}
+
+				if (result.errors.length > 0) {
+					console.log(chalk.red("\nErrors:"));
+					for (const error of result.errors) {
+						const fixable = error.fixable ? chalk.gray(" (fixable)") : "";
+						console.log(chalk.red(`  ✗ ${error.field}: ${error.message}${fixable}`));
+					}
+				}
+
+				if (result.warnings.length > 0) {
+					console.log(chalk.yellow("\nWarnings:"));
+					for (const warning of result.warnings) {
+						console.log(chalk.yellow(`  ⚠ ${warning.field}: ${warning.message}`));
+					}
+				}
+
+				if (result.valid && result.warnings.length === 0) {
+					console.log(chalk.gray("\nNo issues found."));
+				}
+				console.log();
+			}
+
+			process.exit(result.valid ? 0 : 1);
+		} catch (error) {
+			console.error(
+				chalk.red("Error validating documentation:"),
+				error instanceof Error ? error.message : String(error),
+			);
+			process.exit(1);
+		}
+	});
+
+// Repair command
+const repairCommand = new Command("repair")
+	.description("Repair a corrupted documentation file")
+	.argument("<name>", "Document name or path")
+	.option("--plain", "Plain text output for AI")
+	.action(async (name: string, options: { plain?: boolean }) => {
+		try {
+			const resolved = await resolveDocPath(name);
+			if (!resolved) {
+				console.error(chalk.red(`✗ Documentation not found: ${name}`));
+				process.exit(1);
+			}
+
+			const result = await repairDoc(resolved.filepath);
+
+			if (options.plain) {
+				console.log(`Repairing: ${resolved.filename}`);
+				console.log(`Success: ${result.success}`);
+				if (result.backupPath) {
+					console.log(`Backup: ${result.backupPath}`);
+				}
+				if (result.fixes.length > 0) {
+					console.log("\nFixes applied:");
+					for (const fix of result.fixes) {
+						console.log(`  ✓ ${fix}`);
+					}
+				}
+				if (result.errors.length > 0) {
+					console.log("\nErrors:");
+					for (const error of result.errors) {
+						console.log(`  ✗ ${error}`);
+					}
+				}
+			} else {
+				console.log(chalk.bold(`\n🔧 Repair: ${resolved.filename}\n`));
+
+				if (result.success) {
+					console.log(chalk.green("✓ Document repaired successfully"));
+				} else {
+					console.log(chalk.red("✗ Repair failed"));
+				}
+
+				if (result.backupPath) {
+					console.log(chalk.gray(`  Backup created: ${result.backupPath}`));
+				}
+
+				if (result.fixes.length > 0) {
+					console.log(chalk.green("\nFixes applied:"));
+					for (const fix of result.fixes) {
+						console.log(chalk.green(`  ✓ ${fix}`));
+					}
+				}
+
+				if (result.errors.length > 0) {
+					console.log(chalk.red("\nErrors:"));
+					for (const error of result.errors) {
+						console.log(chalk.red(`  ✗ ${error}`));
+					}
+				}
+				console.log();
+			}
+
+			// Notify server of update
+			if (result.success) {
+				await notifyDocUpdate(resolved.filename);
+			}
+
+			process.exit(result.success ? 0 : 1);
+		} catch (error) {
+			console.error(
+				chalk.red("Error repairing documentation:"),
+				error instanceof Error ? error.message : String(error),
+			);
+			process.exit(1);
+		}
+	});
+
+// Search-in command - search text within a document
+const searchInCommand = new Command("search-in")
+	.description("Search text within a specific document")
+	.argument("<name>", "Document name or path")
+	.argument("<query>", "Text to search for")
+	.option("--plain", "Plain text output for AI")
+	.option("-i, --ignore-case", "Case insensitive search")
+	.action(async (name: string, query: string, options: { plain?: boolean; ignoreCase?: boolean }) => {
+		try {
+			const resolved = await resolveDocPath(name);
+			if (!resolved) {
+				console.error(chalk.red(`✗ Documentation not found: ${name}`));
+				process.exit(1);
+			}
+
+			const fileContent = await readFile(resolved.filepath, "utf-8");
+			const { content } = matter(fileContent);
+			const lines = content.split("\n");
+
+			const matches: Array<{ lineNum: number; line: string; context: string }> = [];
+			const searchQuery = options.ignoreCase ? query.toLowerCase() : query;
+
+			for (let i = 0; i < lines.length; i++) {
+				const line = lines[i];
+				const searchLine = options.ignoreCase ? line.toLowerCase() : line;
+
+				if (searchLine.includes(searchQuery)) {
+					// Get context (1 line before and after)
+					const contextStart = Math.max(0, i - 1);
+					const contextEnd = Math.min(lines.length - 1, i + 1);
+					const context = lines.slice(contextStart, contextEnd + 1).join("\n");
+
+					matches.push({
+						lineNum: i + 1, // 1-indexed
+						line: line,
+						context: context,
+					});
+				}
+			}
+
+			if (options.plain) {
+				console.log(`Searching in: ${resolved.filename}`);
+				console.log(`Query: "${query}"`);
+				console.log(`Found: ${matches.length} match(es)`);
+				console.log();
+				for (const match of matches) {
+					console.log(`Line ${match.lineNum}: ${match.line.trim()}`);
+				}
+			} else {
+				console.log(chalk.bold(`\n🔍 Search in: ${resolved.filename}\n`));
+				console.log(chalk.gray(`Query: "${query}"`));
+				console.log(chalk.gray(`Found: ${matches.length} match(es)\n`));
+
+				for (const match of matches) {
+					console.log(chalk.cyan(`Line ${match.lineNum}:`));
+					console.log(chalk.white(`  ${match.line.trim()}`));
+					console.log();
+				}
+			}
+		} catch (error) {
+			console.error(chalk.red("Error searching document:"), error instanceof Error ? error.message : String(error));
+			process.exit(1);
+		}
+	});
+
+// Replace command - replace text in a document
+const replaceCommand = new Command("replace")
+	.description("Replace text in a document")
+	.argument("<name>", "Document name or path")
+	.argument("<old-text>", "Text to find")
+	.argument("<new-text>", "Text to replace with")
+	.option("--plain", "Plain text output for AI")
+	.option("-a, --all", "Replace all occurrences (default: first only)")
+	.action(async (name: string, oldText: string, newText: string, options: { plain?: boolean; all?: boolean }) => {
+		try {
+			const resolved = await resolveDocPath(name);
+			if (!resolved) {
+				console.error(chalk.red(`✗ Documentation not found: ${name}`));
+				process.exit(1);
+			}
+
+			const fileContent = await readFile(resolved.filepath, "utf-8");
+			const { data, content } = matter(fileContent);
+
+			// Check if old text exists
+			if (!content.includes(oldText)) {
+				if (options.plain) {
+					console.log(`Text not found: "${oldText}"`);
+				} else {
+					console.log(chalk.yellow(`⚠ Text not found: "${oldText}"`));
+				}
+				process.exit(1);
+			}
+
+			// Replace text
+			let newContent: string;
+			let count = 0;
+
+			if (options.all) {
+				// Replace all occurrences
+				const parts = content.split(oldText);
+				count = parts.length - 1;
+				newContent = parts.join(newText);
+			} else {
+				// Replace first occurrence only
+				newContent = content.replace(oldText, newText);
+				count = 1;
+			}
+
+			// Update metadata
+			const metadata = data as { updatedAt?: string };
+			metadata.updatedAt = new Date().toISOString();
+
+			// Write back
+			const updatedFileContent = matter.stringify(newContent, data);
+			await writeFile(resolved.filepath, updatedFileContent, "utf-8");
+
+			// Notify server
+			await notifyDocUpdate(resolved.filename);
+
+			if (options.plain) {
+				console.log(`Updated: ${resolved.filename}`);
+				console.log(`Replaced: ${count} occurrence(s)`);
+			} else {
+				console.log(chalk.green(`✓ Updated: ${resolved.filename}`));
+				console.log(chalk.gray(`  Replaced ${count} occurrence(s)`));
+			}
+		} catch (error) {
+			console.error(chalk.red("Error replacing text:"), error instanceof Error ? error.message : String(error));
+			process.exit(1);
+		}
+	});
+
+// Replace-section command - replace entire section by header
+const replaceSectionCommand = new Command("replace-section")
+	.description("Replace an entire section by its header")
+	.argument("<name>", "Document name or path")
+	.argument("<header>", "Section header (e.g., '## Section Name')")
+	.argument("<content>", "New section content (without header)")
+	.option("--plain", "Plain text output for AI")
+	.action(async (name: string, header: string, newSectionContent: string, options: { plain?: boolean }) => {
+		try {
+			const resolved = await resolveDocPath(name);
+			if (!resolved) {
+				console.error(chalk.red(`✗ Documentation not found: ${name}`));
+				process.exit(1);
+			}
+
+			const fileContent = await readFile(resolved.filepath, "utf-8");
+			const { data, content } = matter(fileContent);
+
+			// Find the section
+			const headerLevel = (header.match(/^#+/) || ["##"])[0];
+			const headerPattern = new RegExp(`^${header.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "m");
+
+			const headerMatch = content.match(headerPattern);
+			if (!headerMatch) {
+				if (options.plain) {
+					console.log(`Section not found: "${header}"`);
+				} else {
+					console.log(chalk.yellow(`⚠ Section not found: "${header}"`));
+				}
+				process.exit(1);
+			}
+
+			const headerIndex = content.indexOf(headerMatch[0]);
+
+			// Find the end of the section (next header of same or higher level, or end of content)
+			const afterHeader = content.substring(headerIndex + headerMatch[0].length);
+			const nextHeaderPattern = new RegExp(`^#{1,${headerLevel.length}}\\s+`, "m");
+			const nextHeaderMatch = afterHeader.match(nextHeaderPattern);
+
+			let sectionEnd: number;
+			if (nextHeaderMatch) {
+				sectionEnd = headerIndex + headerMatch[0].length + afterHeader.indexOf(nextHeaderMatch[0]);
+			} else {
+				sectionEnd = content.length;
+			}
+
+			// Build new content
+			const beforeSection = content.substring(0, headerIndex);
+			const afterSection = content.substring(sectionEnd);
+			const newContent = `${beforeSection}${header}\n\n${newSectionContent}\n\n${afterSection.trimStart()}`;
+
+			// Update metadata
+			const metadata = data as { updatedAt?: string };
+			metadata.updatedAt = new Date().toISOString();
+
+			// Write back
+			const updatedFileContent = matter.stringify(newContent.trim(), data);
+			await writeFile(resolved.filepath, updatedFileContent, "utf-8");
+
+			// Notify server
+			await notifyDocUpdate(resolved.filename);
+
+			if (options.plain) {
+				console.log(`Updated: ${resolved.filename}`);
+				console.log(`Replaced section: "${header}"`);
+			} else {
+				console.log(chalk.green(`✓ Updated: ${resolved.filename}`));
+				console.log(chalk.gray(`  Replaced section: "${header}"`));
+			}
+		} catch (error) {
+			console.error(chalk.red("Error replacing section:"), error instanceof Error ? error.message : String(error));
+			process.exit(1);
+		}
+	});
+
 // Main doc command
 export const docCommand = new Command("doc")
 	.description("Manage documentation")
 	.argument("[name]", "Document name (shorthand for 'doc view <name>')")
 	.option("--plain", "Plain text output for AI")
+	.enablePositionalOptions()
+	.passThroughOptions()
 	.action(async (name: string | undefined, options: { plain?: boolean }) => {
 		// If no name provided, show help
 		if (!name) {
@@ -641,3 +1098,8 @@ docCommand.addCommand(createCommand);
 docCommand.addCommand(listCommand);
 docCommand.addCommand(viewCommand);
 docCommand.addCommand(editCommand);
+docCommand.addCommand(validateCommand);
+docCommand.addCommand(repairCommand);
+docCommand.addCommand(searchInCommand);
+docCommand.addCommand(replaceCommand);
+docCommand.addCommand(replaceSectionCommand);

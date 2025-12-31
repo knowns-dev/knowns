@@ -98,7 +98,7 @@ knowns browser  # Open Web UI
 | **Documentation** | Nested folders with markdown support |
 | **Time Tracking** | Built-in timers and reports |
 | **Context Linking** | `@task-42` and `@doc/patterns/auth` references |
-| **AI Integration** | MCP Server for Claude, `--plain` output |
+| **AI Integration** | MCP Server, `--plain` output, guideline templates |
 | **Web UI** | Kanban board, doc browser, dark mode |
 
 ---
@@ -119,6 +119,11 @@ knowns doc "doc-name" --plain               # View doc (shorthand)
 # Time & Search
 knowns time start <id> && knowns time stop
 knowns search "query" --plain
+
+# AI Guidelines
+knowns agents sync                          # Sync CLAUDE.md, AGENTS.md
+knowns agents sync --gemini                 # Compact version for Gemini
+knowns agents sync --type mcp               # MCP tools format
 ```
 
 ---
@@ -134,6 +139,8 @@ knowns search "query" --plain
 | [MCP Integration](./docs/mcp-integration.md) | Claude Desktop setup |
 | [Configuration](./docs/configuration.md) | Project structure and options |
 | [AI Workflow](./docs/ai-workflow.md) | Guide for AI agents |
+| [Developer Guide](./docs/developer-guide.md) | Technical docs for contributors |
+| [Changelog](./CHANGELOG.md) | Version history |
 
 ---
 

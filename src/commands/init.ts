@@ -10,10 +10,7 @@ import { FileStore } from "@storage/file-store";
 import chalk from "chalk";
 import { Command } from "commander";
 import prompts from "prompts";
-// Import markdown templates as text (esbuild loader: "text")
-import KNOWNS_GUIDELINES_CLI from "../templates/knowns-guidelines-cli.md";
-import KNOWNS_GUIDELINES_MCP from "../templates/knowns-guidelines-mcp.md";
-import { type GuidelinesVersion, INSTRUCTION_FILES, updateInstructionFile } from "./agents";
+import { type GuidelinesType, INSTRUCTION_FILES, getGuidelines, updateInstructionFile } from "./agents";
 
 interface InitConfig {
 	name: string;
@@ -21,7 +18,7 @@ interface InitConfig {
 	defaultPriority: "low" | "medium" | "high";
 	defaultLabels: string[];
 	timeFormat: "12h" | "24h";
-	guidelinesVersion: GuidelinesVersion;
+	guidelinesType: GuidelinesType;
 	agentFiles: Array<{ path: string; name: string; selected: boolean }>;
 }
 
@@ -163,8 +160,8 @@ async function runWizard(): Promise<InitConfig | null> {
 			},
 			{
 				type: "select",
-				name: "guidelinesVersion",
-				message: "AI Guidelines version",
+				name: "guidelinesType",
+				message: "AI Guidelines type",
 				choices: [
 					{ title: "CLI", value: "cli", description: "Use CLI commands (knowns task edit, knowns doc view)" },
 					{ title: "MCP", value: "mcp", description: "Use MCP tools (mcp__knowns__update_task, etc.)" },
@@ -203,7 +200,7 @@ async function runWizard(): Promise<InitConfig | null> {
 		defaultPriority: response.defaultPriority,
 		defaultLabels: response.defaultLabels?.filter((l: string) => l.trim()) || [],
 		timeFormat: response.timeFormat,
-		guidelinesVersion: response.guidelinesVersion || "cli",
+		guidelinesType: response.guidelinesType || "cli",
 		agentFiles: response.agentFiles || [],
 	};
 }
@@ -253,7 +250,7 @@ export const initCommand = new Command("init")
 					defaultPriority: "medium",
 					defaultLabels: [],
 					timeFormat: "24h",
-					guidelinesVersion: "cli",
+					guidelinesType: "cli",
 					agentFiles: INSTRUCTION_FILES.filter((f) => f.selected),
 				};
 			}
@@ -284,9 +281,9 @@ export const initCommand = new Command("init")
 
 			// Update AI instruction files
 			if (config.agentFiles.length > 0) {
-				const guidelines = config.guidelinesVersion === "mcp" ? KNOWNS_GUIDELINES_MCP : KNOWNS_GUIDELINES_CLI;
+				const guidelines = getGuidelines(config.guidelinesType);
 
-				console.log(chalk.bold(`Updating AI instruction files (${config.guidelinesVersion.toUpperCase()} version)...`));
+				console.log(chalk.bold(`Updating AI instruction files (${config.guidelinesType.toUpperCase()} version)...`));
 				console.log();
 
 				let syncedCount = 0;

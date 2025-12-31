@@ -34,7 +34,15 @@ src/
 │   ├── time.ts                # Time tracking
 │   ├── search.ts              # Full-text search
 │   ├── browser.ts             # Web UI launcher
+│   ├── agents.ts              # AI guidelines management
 │   └── ...
+├── templates/                  # AI Agent Guidelines
+│   ├── cli/
+│   │   ├── general.md         # Full CLI guidelines (~15KB)
+│   │   └── gemini.md          # Compact CLI (~3KB)
+│   └── mcp/
+│       ├── general.md         # Full MCP guidelines (~12KB)
+│       └── gemini.md          # Compact MCP (~2.5KB)
 ├── models/                     # Domain Models
 │   ├── task.ts                # Task interface + helpers
 │   ├── project.ts             # Project configuration
@@ -331,6 +339,58 @@ case "my_new_tool": {
   return { content: [{ type: "text", text: JSON.stringify(result) }] };
 }
 ```
+
+---
+
+## Template System
+
+AI agent guidelines are embedded at build time using esbuild's text loader.
+
+### Template Matrix
+
+| Type | Variant | Size | Use Case |
+|------|---------|------|----------|
+| cli | general | ~15KB | Claude, GPT-4, large context models |
+| cli | gemini | ~3KB | Gemini 2.5 Flash, small context |
+| mcp | general | ~12KB | Claude Desktop, full MCP reference |
+| mcp | gemini | ~2.5KB | Gemini with MCP tools |
+
+### How It Works
+
+```typescript
+// src/commands/agents.ts
+import CLI_GENERAL from "../templates/cli/general.md";
+import CLI_GEMINI from "../templates/cli/gemini.md";
+import MCP_GENERAL from "../templates/mcp/general.md";
+import MCP_GEMINI from "../templates/mcp/gemini.md";
+
+export function getGuidelines(type: GuidelinesType, variant: GuidelinesVariant = "general"): string {
+  if (type === "mcp") {
+    return variant === "gemini" ? MCP_GEMINI : MCP_GENERAL;
+  }
+  return variant === "gemini" ? CLI_GEMINI : CLI_GENERAL;
+}
+```
+
+### Adding a New Template Variant
+
+1. Create template file in `src/templates/<type>/<variant>.md`
+2. Import in `src/commands/agents.ts`
+3. Update `getGuidelines()` function
+4. Add CLI option if needed (e.g., `--<variant>`)
+
+### Commander.js Option Inheritance
+
+When parent command has options that should pass to subcommands:
+
+```typescript
+const parentCommand = new Command("parent")
+  .enablePositionalOptions()
+  .passThroughOptions()
+  .option("--flag", "Description")
+```
+
+Also ensure `.enablePositionalOptions()` is on root program in `src/index.ts`.
 
 ---
 

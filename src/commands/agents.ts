@@ -8,9 +8,11 @@ import { dirname, join } from "node:path";
 import chalk from "chalk";
 import { Command } from "commander";
 import prompts from "prompts";
+import CLI_GEMINI from "../templates/cli/gemini.md";
 // Import markdown templates as text (esbuild loader: "text")
-import KNOWNS_GUIDELINES from "../templates/knowns-guidelines-cli.md";
-import KNOWNS_GUIDELINES_MCP from "../templates/knowns-guidelines-mcp.md";
+import CLI_GENERAL from "../templates/cli/general.md";
+import MCP_GEMINI from "../templates/mcp/gemini.md";
+import MCP_GENERAL from "../templates/mcp/general.md";
 
 const PROJECT_ROOT = process.cwd();
 
@@ -21,13 +23,17 @@ export const INSTRUCTION_FILES = [
 	{ path: ".github/copilot-instructions.md", name: "GitHub Copilot", selected: false },
 ];
 
-export type GuidelinesVersion = "cli" | "mcp";
+export type GuidelinesType = "cli" | "mcp";
+export type GuidelinesVariant = "general" | "gemini";
 
 /**
- * Get guidelines content by version
+ * Get guidelines content by type and variant
  */
-export function getGuidelines(version: GuidelinesVersion): string {
-	return version === "mcp" ? KNOWNS_GUIDELINES_MCP : KNOWNS_GUIDELINES;
+export function getGuidelines(type: GuidelinesType, variant: GuidelinesVariant = "general"): string {
+	if (type === "mcp") {
+		return variant === "gemini" ? MCP_GEMINI : MCP_GENERAL;
+	}
+	return variant === "gemini" ? CLI_GEMINI : CLI_GENERAL;
 }
 
 /**
@@ -79,15 +85,19 @@ export async function updateInstructionFile(
  */
 const agentsCommand = new Command("agents")
 	.description("Manage agent instruction files (CLAUDE.md, GEMINI.md, etc.)")
+	.enablePositionalOptions()
+	.passThroughOptions()
 	.option("--update-instructions", "Update agent instruction files (non-interactive)")
 	.option("--type <type>", "Guidelines type: cli or mcp", "cli")
+	.option("--gemini", "Use compact Gemini variant (smaller context)")
 	.option("--files <files>", "Comma-separated list of files to update")
-	.action(async (options: { updateInstructions?: boolean; type?: string; files?: string }) => {
+	.action(async (options: { updateInstructions?: boolean; type?: string; gemini?: boolean; files?: string }) => {
 		try {
 			// Non-interactive mode with --update-instructions flag
 			if (options.updateInstructions) {
-				const version = (options.type === "mcp" ? "mcp" : "cli") as GuidelinesVersion;
-				const guidelines = getGuidelines(version);
+				const type = (options.type === "mcp" ? "mcp" : "cli") as GuidelinesType;
+				const variant: GuidelinesVariant = options.gemini ? "gemini" : "general";
+				const guidelines = getGuidelines(type, variant);
 
 				// Determine which files to update
 				let filesToUpdate = INSTRUCTION_FILES;
@@ -98,7 +108,8 @@ const agentsCommand = new Command("agents")
 					);
 				}
 
-				console.log(chalk.bold(`\nUpdating agent instruction files (${version.toUpperCase()} version)...\n`));
+				const label = `${type.toUpperCase()}${variant === "gemini" ? " (Gemini)" : ""}`;
+				console.log(chalk.bold(`\nUpdating agent instruction files (${label})...\n`));
 				await updateFiles(filesToUpdate, guidelines);
 				return;
 			}
@@ -106,32 +117,57 @@ const agentsCommand = new Command("agents")
 			// Interactive mode
 			console.log(chalk.bold("\n🤖 Agent Instructions Manager\n"));
 
-			// Step 1: Select guidelines version
-			const versionResponse = await prompts({
+			// Step 1: Select guidelines type
+			const typeResponse = await prompts({
 				type: "select",
-				name: "version",
-				message: "Select guidelines version:",
+				name: "type",
+				message: "Select guidelines type:",
 				choices: [
 					{
 						title: "CLI",
 						value: "cli",
-						description: "Use CLI commands (knowns task edit, knowns doc view, etc.)",
+						description: "CLI commands (knowns task edit, knowns doc view, etc.)",
 					},
 					{
 						title: "MCP",
 						value: "mcp",
-						description: "Use MCP tools (mcp__knowns__update_task, mcp__knowns__get_doc, etc.)",
+						description: "MCP tools (mcp__knowns__update_task, etc.)",
 					},
 				],
 				initial: 0,
 			});
 
-			if (!versionResponse.version) {
+			if (!typeResponse.type) {
 				console.log(chalk.yellow("\n⚠️  Cancelled"));
 				return;
 			}
 
-			// Step 2: Select files to update
+			// Step 2: Select variant
+			const variantResponse = await prompts({
+				type: "select",
+				name: "variant",
+				message: "Select variant:",
+				choices: [
+					{
+						title: "General (Full)",
+						value: "general",
+						description: "Complete guidelines for Claude, GPT, etc.",
+					},
+					{
+						title: "Gemini (Compact)",
+						value: "gemini",
+						description: "Condensed version for Gemini 2.5 Flash (smaller context)",
+					},
+				],
+				initial: 0,
+			});
+
+			if (!variantResponse.variant) {
+				console.log(chalk.yellow("\n⚠️  Cancelled"));
+				return;
+			}
+
+			// Step 3: Select files to update
 			const filesResponse = await prompts({
 				type: "multiselect",
 				name: "files",
@@ -149,11 +185,12 @@ const agentsCommand = new Command("agents")
 				return;
 			}
 
-			// Step 3: Confirm
+			// Step 4: Confirm
+			const label = `${typeResponse.type.toUpperCase()}${variantResponse.variant === "gemini" ? " (Gemini)" : ""}`;
 			const confirmResponse = await prompts({
 				type: "confirm",
 				name: "confirm",
-				message: `Update ${filesResponse.files.length} file(s) with ${versionResponse.version.toUpperCase()} guidelines?`,
+				message: `Update ${filesResponse.files.length} file(s) with ${label} guidelines?`,
 				initial: true,
 			});
 
@@ -162,9 +199,12 @@ const agentsCommand = new Command("agents")
 				return;
 			}
 
-			// Step 4: Update files
-			const guidelines = getGuidelines(versionResponse.version as GuidelinesVersion);
-			console.log(chalk.bold(`\nUpdating files with ${versionResponse.version.toUpperCase()} guidelines...\n`));
+			// Step 5: Update files
+			const guidelines = getGuidelines(
+				typeResponse.type as GuidelinesType,
+				variantResponse.variant as GuidelinesVariant,
+			);
+			console.log(chalk.bold(`\nUpdating files with ${label} guidelines...\n`));
 			await updateFiles(filesResponse.files, guidelines);
 		} catch (error) {
 			console.error(chalk.red("Error:"), error instanceof Error ? error.message : String(error));
@@ -221,5 +261,33 @@ async function updateFiles(files: Array<{ path: string; name: string }>, guideli
 	}
 	console.log();
 }
+
+/**
+ * Sync subcommand - quickly update all default instruction files
+ */
+const syncCommand = new Command("sync")
+	.description("Sync/update all agent instruction files with latest guidelines")
+	.option("--type <type>", "Guidelines type: cli or mcp", "cli")
+	.option("--gemini", "Use compact Gemini variant (smaller context)")
+	.option("--all", "Update all instruction files (including Gemini, Copilot)")
+	.action(async (options: { type?: string; gemini?: boolean; all?: boolean }) => {
+		try {
+			const type = (options.type === "mcp" ? "mcp" : "cli") as GuidelinesType;
+			const variant: GuidelinesVariant = options.gemini ? "gemini" : "general";
+			const guidelines = getGuidelines(type, variant);
+
+			// Select files based on --all flag
+			const filesToUpdate = options.all ? INSTRUCTION_FILES : INSTRUCTION_FILES.filter((f) => f.selected); // Only default selected files
+
+			const label = `${type.toUpperCase()}${variant === "gemini" ? " (Gemini)" : ""}`;
+			console.log(chalk.bold(`\nSyncing agent instructions (${label})...\n`));
+			await updateFiles(filesToUpdate, guidelines);
+		} catch (error) {
+			console.error(chalk.red("Error:"), error instanceof Error ? error.message : String(error));
+			process.exit(1);
+		}
+	});
+
+agentsCommand.addCommand(syncCommand);
 
 export { agentsCommand };

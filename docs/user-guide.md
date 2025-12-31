@@ -378,6 +378,36 @@ When viewing with `--plain`, references appear as:
 - `@.knowns/tasks/task-42 - Title.md`
 - `@.knowns/docs/patterns/module.md`
 
+### AI Guidelines Management
+
+Sync AI instruction files with Knowns guidelines:
+
+```bash
+# Interactive mode
+knowns agents
+
+# Quick sync (CLAUDE.md, AGENTS.md)
+knowns agents sync
+
+# Sync all files
+knowns agents sync --all
+
+# Use compact Gemini variant
+knowns agents sync --gemini
+
+# Use MCP tools format
+knowns agents sync --type mcp
+```
+
+**Template variants:**
+
+| Type | Variant | Size | Use For |
+|------|---------|------|---------|
+| cli | general | ~15KB | Claude, GPT-4 |
+| cli | gemini | ~3KB | Gemini 2.5 Flash |
+| mcp | general | ~12KB | Claude Desktop |
+| mcp | gemini | ~2.5KB | Gemini + MCP |
+
 ---
 
 ## Troubleshooting
