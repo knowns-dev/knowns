@@ -620,6 +620,33 @@ A task is **Done** ONLY when **ALL** criteria are met:
 
 ---
 
+## Long Content Handling
+
+For long documentation content, append in chunks:
+
+```
+# 1. Create doc with initial content
+mcp__knowns__create_doc({
+  title: "Doc Title",
+  content: "## Overview\n\nShort intro."
+})
+
+# 2. Append each section separately
+mcp__knowns__update_doc({
+  path: "doc-title",
+  appendContent: "## Section 1\n\nContent for section 1..."
+})
+
+mcp__knowns__update_doc({
+  path: "doc-title",
+  appendContent: "## Section 2\n\nContent for section 2..."
+})
+```
+
+> **Tip**: Each `appendContent` adds content after existing content. Use this for large docs to avoid context limits.
+
+---
+
 ## Best Practices Checklist
 
 ### For AI Agents: Session Start

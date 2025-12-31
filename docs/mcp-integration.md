@@ -52,6 +52,23 @@ Add the Knowns MCP server:
 
 Close and reopen Claude Desktop to load the new configuration.
 
+### 4. Sync MCP Guidelines (Optional)
+
+Sync your instruction files with MCP-formatted guidelines:
+
+```bash
+# Sync with MCP guidelines (full version)
+knowns agents sync --type mcp
+
+# Sync with compact Gemini variant
+knowns agents sync --type mcp --gemini
+
+# Sync all files
+knowns agents sync --type mcp --all
+```
+
+This updates CLAUDE.md and other instruction files with MCP tool references instead of CLI commands.
+
 ## Usage
 
 Once configured, Claude can access your Knowns data automatically.

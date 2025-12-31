@@ -1,3 +1,5 @@
+/Users/howznguyen/Workspaces/Knowns/knowns/src/templates/knowns-guidelines-cli.md
+
 <!-- KNOWNS GUIDELINES START -->
 # Knowns CLI Guidelines
 
@@ -783,6 +785,26 @@ EOF
 - **Unix/macOS**: Use forward slashes: `./docs/api.md`
 - **Windows**: Both work, but prefer forward slashes for consistency
 
+### Windows Command Line Limit
+
+Windows has ~8191 character limit. For long content, append in chunks:
+
+```bash
+# 1. Create or reset with short content
+knowns doc edit "doc-name" -c "## Overview\n\nShort intro."
+
+# 2. Append each section separately
+knowns doc edit "doc-name" -a "## Section 1\n\nContent..."
+knowns doc edit "doc-name" -a "## Section 2\n\nMore content..."
+```
+
+Or use file-based options:
+
+```bash
+knowns doc edit "doc-name" --content-file ./content.md
+knowns doc edit "doc-name" --append-file ./more.md
+```
+
 ---
 
 ## Best Practices Checklist
@@ -878,14 +900,6 @@ knowns doc edit "doc-name" -a "Appended content"
 **Maintained By**: Knowns CLI Team
 
 <!-- KNOWNS GUIDELINES END -->
-
-
-
-
-
-
-
-
 
 
 

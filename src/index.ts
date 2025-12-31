@@ -56,7 +56,8 @@ const program = new Command();
 program
 	.name("knowns")
 	.description("CLI tool for dev teams to manage tasks, track time, and sync")
-	.version(packageJson.version);
+	.version(packageJson.version)
+	.enablePositionalOptions();
 
 // Add commands
 program.addCommand(initCommand);

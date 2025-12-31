@@ -171,6 +171,25 @@ export class FileStore {
 	}
 
 	/**
+	 * Skipped files due to parse errors (for graceful degradation)
+	 */
+	private skippedFiles: Array<{ file: string; error: string }> = [];
+
+	/**
+	 * Get list of skipped files from last load
+	 */
+	getSkippedFiles(): Array<{ file: string; error: string }> {
+		return this.skippedFiles;
+	}
+
+	/**
+	 * Clear skipped files list
+	 */
+	clearSkippedFiles(): void {
+		this.skippedFiles = [];
+	}
+
+	/**
 	 * Get all tasks
 	 */
 	async getAllTasks(): Promise<Task[]> {
@@ -181,26 +200,50 @@ export class FileStore {
 			// Load time entries once for all tasks
 			const allTimeEntries = await this.loadTimeEntries();
 
+			// Reset skipped files
+			this.skippedFiles = [];
+
 			// First pass: load all tasks without subtasks
 			const tasksMap = new Map<string, Task>();
 			for (const taskFile of taskFiles) {
-				const filePath = join(this.tasksPath, taskFile);
-				const content = await file(filePath).text();
-				const taskData = parseTaskMarkdown(content);
-				if (taskData.id) {
-					// Load time entries for this task
-					const timeEntries = (allTimeEntries[taskData.id] || []).map((e) => ({
-						...e,
-						startedAt: new Date(e.startedAt),
-						endedAt: e.endedAt ? new Date(e.endedAt) : undefined,
-					}));
+				try {
+					const filePath = join(this.tasksPath, taskFile);
+					const content = await file(filePath).text();
+					const taskData = parseTaskMarkdown(content);
+					if (taskData.id) {
+						// Load time entries for this task
+						const timeEntries = (allTimeEntries[taskData.id] || []).map((e) => ({
+							...e,
+							startedAt: new Date(e.startedAt),
+							endedAt: e.endedAt ? new Date(e.endedAt) : undefined,
+						}));
 
-					tasksMap.set(taskData.id, {
-						...taskData,
-						subtasks: [],
-						timeEntries,
-					} as Task);
+						tasksMap.set(taskData.id, {
+							...taskData,
+							subtasks: [],
+							timeEntries,
+						} as Task);
+					} else {
+						// Task parsed but no ID found
+						this.skippedFiles.push({
+							file: taskFile,
+							error: "Missing task ID in frontmatter",
+						});
+					}
+				} catch (parseError) {
+					// Skip corrupted file gracefully
+					this.skippedFiles.push({
+						file: taskFile,
+						error: parseError instanceof Error ? parseError.message : String(parseError),
+					});
 				}
+			}
+
+			// Log warning if files were skipped
+			if (this.skippedFiles.length > 0) {
+				console.warn(
+					`⚠ Skipped ${this.skippedFiles.length} corrupted task file(s). Run "knowns task validate <id>" or "knowns task repair <id>" to fix.`,
+				);
 			}
 
 			// Second pass: build subtasks arrays

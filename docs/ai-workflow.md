@@ -195,3 +195,44 @@ knowns task edit 42 --notes "Summary"
 knowns time stop
 knowns task edit 42 -s done
 ```
+
+## Guidelines Templates
+
+Knowns provides different guideline templates optimized for different AI models:
+
+### Template Matrix
+
+| Type | Variant | Size | Best For |
+|------|---------|------|----------|
+| cli | general | ~15KB | Claude, GPT-4, large context |
+| cli | gemini | ~3KB | Gemini 2.5 Flash |
+| mcp | general | ~12KB | Claude Desktop MCP |
+| mcp | gemini | ~2.5KB | Gemini with MCP |
+
+### Syncing Guidelines
+
+```bash
+# Interactive mode - select type, variant, files
+knowns agents
+
+# Quick sync with defaults (CLI general)
+knowns agents sync
+
+# Sync with compact Gemini variant
+knowns agents sync --gemini
+
+# Sync MCP guidelines
+knowns agents sync --type mcp
+
+# Sync all files (CLAUDE.md, AGENTS.md, GEMINI.md, Copilot)
+knowns agents sync --all
+
+# Combine options
+knowns agents sync --type mcp --gemini --all
+```
+
+### When to Use Gemini Variant
+
+- Models with smaller context windows
+- When token efficiency is critical
+- Quick reference without full examples

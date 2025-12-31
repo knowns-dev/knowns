@@ -3,7 +3,7 @@
  * Handles task create, list, view, edit operations
  */
 
-import { mkdir, readdir, unlink } from "node:fs/promises";
+import { mkdir, readFile, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { Task, TaskPriority, TaskStatus, TaskVersion } from "@models/index";
 import { DEFAULT_STATUSES, isValidTaskPriority, isValidTaskStatus } from "@models/index";
@@ -13,6 +13,7 @@ import { formatDocReferences, resolveDocReferences } from "@utils/doc-links";
 import { findProjectRoot } from "@utils/find-project-root";
 import { buildTaskMap, normalizeRefs, transformMentionsToRefs } from "@utils/mention-refs";
 import { notifyRefresh, notifyTaskUpdate } from "@utils/notify-server";
+import { extractTaskIdFromFilename, repairTask, validateTask } from "@utils/validate";
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -1647,6 +1648,183 @@ const restoreCommand = new Command("restore")
 	});
 
 // ============================================================================
+// ============================================================================
+// VALIDATE COMMAND
+// ============================================================================
+
+const validateCommand = new Command("validate")
+	.description("Validate a task file format")
+	.argument("<id>", "Task ID to validate")
+	.option("--plain", "Plain text output for AI")
+	.action(async (id: string, options: { plain?: boolean }) => {
+		try {
+			const projectRoot = findProjectRoot();
+			if (!projectRoot) {
+				console.error(chalk.red("✗ Not a knowns project"));
+				process.exit(1);
+			}
+
+			const tasksPath = join(projectRoot, ".knowns", "tasks");
+			const files = await readdir(tasksPath);
+			const taskFile = files.find((f) => f.startsWith(`task-${id} -`));
+
+			if (!taskFile) {
+				console.error(chalk.red(`✗ Task ${id} not found`));
+				process.exit(1);
+			}
+
+			const filePath = join(tasksPath, taskFile);
+			const content = await readFile(filePath, "utf-8");
+			const result = validateTask(content);
+
+			if (options.plain) {
+				console.log(`Validating: task-${id}`);
+				console.log(`Valid: ${result.valid}`);
+				if (result.errors.length > 0) {
+					console.log("\nErrors:");
+					for (const error of result.errors) {
+						console.log(`  ✗ ${error.field}: ${error.message}${error.fixable ? " (fixable)" : ""}`);
+					}
+				}
+				if (result.warnings.length > 0) {
+					console.log("\nWarnings:");
+					for (const warning of result.warnings) {
+						console.log(`  ⚠ ${warning.field}: ${warning.message}`);
+					}
+				}
+				if (result.valid && result.warnings.length === 0) {
+					console.log("No issues found.");
+				}
+			} else {
+				console.log(chalk.bold(`\n📋 Validation: Task ${id}\n`));
+				if (result.valid) {
+					console.log(chalk.green("✓ Task is valid"));
+				} else {
+					console.log(chalk.red("✗ Task has errors"));
+				}
+
+				if (result.errors.length > 0) {
+					console.log(chalk.red("\nErrors:"));
+					for (const error of result.errors) {
+						const fixable = error.fixable ? chalk.gray(" (fixable)") : "";
+						console.log(chalk.red(`  ✗ ${error.field}: ${error.message}${fixable}`));
+					}
+				}
+
+				if (result.warnings.length > 0) {
+					console.log(chalk.yellow("\nWarnings:"));
+					for (const warning of result.warnings) {
+						console.log(chalk.yellow(`  ⚠ ${warning.field}: ${warning.message}`));
+					}
+				}
+
+				if (result.valid && result.warnings.length === 0) {
+					console.log(chalk.gray("\nNo issues found."));
+				}
+				console.log();
+			}
+
+			process.exit(result.valid ? 0 : 1);
+		} catch (error) {
+			console.error(chalk.red("✗ Failed to validate task"));
+			if (error instanceof Error) {
+				console.error(chalk.red(`  ${error.message}`));
+			}
+			process.exit(1);
+		}
+	});
+
+// ============================================================================
+// REPAIR COMMAND
+// ============================================================================
+
+const repairCommand = new Command("repair")
+	.description("Repair a corrupted task file")
+	.argument("<id>", "Task ID to repair")
+	.option("--plain", "Plain text output for AI")
+	.action(async (id: string, options: { plain?: boolean }) => {
+		try {
+			const projectRoot = findProjectRoot();
+			if (!projectRoot) {
+				console.error(chalk.red("✗ Not a knowns project"));
+				process.exit(1);
+			}
+
+			const tasksPath = join(projectRoot, ".knowns", "tasks");
+			const files = await readdir(tasksPath);
+			const taskFile = files.find((f) => f.startsWith(`task-${id} -`));
+
+			if (!taskFile) {
+				console.error(chalk.red(`✗ Task ${id} not found`));
+				process.exit(1);
+			}
+
+			const filePath = join(tasksPath, taskFile);
+			const extractedId = extractTaskIdFromFilename(taskFile);
+			const result = await repairTask(filePath, extractedId);
+
+			if (options.plain) {
+				console.log(`Repairing: task-${id}`);
+				console.log(`Success: ${result.success}`);
+				if (result.backupPath) {
+					console.log(`Backup: ${result.backupPath}`);
+				}
+				if (result.fixes.length > 0) {
+					console.log("\nFixes applied:");
+					for (const fix of result.fixes) {
+						console.log(`  ✓ ${fix}`);
+					}
+				}
+				if (result.errors.length > 0) {
+					console.log("\nErrors:");
+					for (const err of result.errors) {
+						console.log(`  ✗ ${err}`);
+					}
+				}
+			} else {
+				console.log(chalk.bold(`\n🔧 Repair: Task ${id}\n`));
+
+				if (result.success) {
+					console.log(chalk.green("✓ Task repaired successfully"));
+				} else {
+					console.log(chalk.red("✗ Repair failed"));
+				}
+
+				if (result.backupPath) {
+					console.log(chalk.gray(`  Backup created: ${result.backupPath}`));
+				}
+
+				if (result.fixes.length > 0) {
+					console.log(chalk.green("\nFixes applied:"));
+					for (const fix of result.fixes) {
+						console.log(chalk.green(`  ✓ ${fix}`));
+					}
+				}
+
+				if (result.errors.length > 0) {
+					console.log(chalk.red("\nErrors:"));
+					for (const err of result.errors) {
+						console.log(chalk.red(`  ✗ ${err}`));
+					}
+				}
+				console.log();
+			}
+
+			// Notify server of update
+			if (result.success) {
+				await notifyTaskUpdate(id);
+			}
+
+			process.exit(result.success ? 0 : 1);
+		} catch (error) {
+			console.error(chalk.red("✗ Failed to repair task"));
+			if (error instanceof Error) {
+				console.error(chalk.red(`  ${error.message}`));
+			}
+			process.exit(1);
+		}
+	});
+
 // MAIN TASK COMMAND
 // ============================================================================
 
@@ -1654,6 +1832,8 @@ export const taskCommand = new Command("task")
 	.description("Manage tasks")
 	.argument("[id]", "Task ID (shorthand for 'task view <id>')")
 	.option("--plain", "Plain text output for AI")
+	.enablePositionalOptions()
+	.passThroughOptions()
 	.action(async (id: string | undefined, options: { plain?: boolean }) => {
 		// If no ID provided, show help
 		if (!id) {
@@ -1691,3 +1871,5 @@ taskCommand.addCommand(unarchiveCommand);
 taskCommand.addCommand(historyCommand);
 taskCommand.addCommand(diffCommand);
 taskCommand.addCommand(restoreCommand);
+taskCommand.addCommand(validateCommand);
+taskCommand.addCommand(repairCommand);

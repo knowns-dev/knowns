@@ -134,6 +134,30 @@ knowns task edit 42 --plan $'1. Research\n2. Implement\n3. Test'
 knowns task edit 42 --append-notes "Completed auth middleware"
 ```
 
+### `knowns task validate`
+
+Validate a task file format.
+
+```bash
+knowns task validate <id> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--plain` | Plain text output |
+
+### `knowns task repair`
+
+Repair a corrupted task file.
+
+```bash
+knowns task repair <id> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--plain` | Plain text output |
+
 ---
 
 ## Documentation Commands
@@ -189,13 +213,31 @@ knowns doc create "Auth Pattern" \
 List all documents.
 
 ```bash
-knowns doc list [options]
+knowns doc list [path] [options]
 ```
+
+| Argument | Description |
+|----------|-------------|
+| `[path]` | Filter by folder path (e.g., `guides/`, `patterns/`) |
 
 | Option | Description |
 |--------|-------------|
 | `--tag` | Filter by tag |
-| `--plain` | Plain text output |
+| `--plain` | Plain text output (tree format, token-efficient) |
+
+**Examples:**
+
+```bash
+# List all docs
+knowns doc list
+
+# List docs in specific folder
+knowns doc list "guides/"
+knowns doc list "patterns/" --plain
+
+# Filter by tag
+knowns doc list --tag architecture
+```
 
 ### `knowns doc view`
 
@@ -230,6 +272,84 @@ knowns doc edit <name-or-path> [options]
 | `--tags` | New tags |
 | `-c, --content` | Replace content |
 | `-a, --append` | Append to content |
+| `--content-file <path>` | Replace content with file contents |
+| `--append-file <path>` | Append file contents to document |
+
+**Examples:**
+
+```bash
+# Edit content directly
+knowns doc edit "README" -c "New content here"
+
+# Append content
+knowns doc edit "README" -a "## New Section"
+
+# Use file for long content (useful on Windows)
+knowns doc edit "README" --content-file ./new-content.md
+knowns doc edit "README" --append-file ./additional-section.md
+```
+
+### `knowns doc validate`
+
+Validate a documentation file format.
+
+```bash
+knowns doc validate <name> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--plain` | Plain text output |
+
+### `knowns doc repair`
+
+Repair a corrupted documentation file.
+
+```bash
+knowns doc repair <name> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--plain` | Plain text output |
+
+### `knowns doc search-in`
+
+Search text within a specific document.
+
+```bash
+knowns doc search-in <name> <query> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `-i, --ignore-case` | Case insensitive search |
+| `--plain` | Plain text output |
+
+### `knowns doc replace`
+
+Replace text in a document.
+
+```bash
+knowns doc replace <name> <old-text> <new-text> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `-a, --all` | Replace all occurrences |
+| `--plain` | Plain text output |
+
+### `knowns doc replace-section`
+
+Replace an entire section by its header.
+
+```bash
+knowns doc replace-section <name> <header> <content> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--plain` | Plain text output |
 
 ---
 
@@ -429,9 +549,10 @@ knowns agents [options]
 
 | Option | Description |
 |--------|-------------|
-| (none) | Interactive mode - prompts to select version and files |
+| (none) | Interactive mode - prompts to select type, variant, and files |
 | `--update-instructions` | Non-interactive update |
-| `--type <type>` | Guidelines version: `cli` or `mcp` (default: cli) |
+| `--type <type>` | Guidelines type: `cli` or `mcp` (default: cli) |
+| `--gemini` | Use compact Gemini variant (smaller context) |
 | `--files <files>` | Comma-separated list of files to update |
 
 **Supported files:**
@@ -446,14 +567,47 @@ knowns agents [options]
 **Examples:**
 
 ```bash
-# Interactive mode - select version and files
+# Interactive mode - select type, variant, and files
 knowns agents
 
 # Non-interactive update (uses defaults)
 knowns agents --update-instructions
 
+# Update with compact Gemini variant
+knowns agents --update-instructions --gemini
+
 # Update specific files with MCP version
 knowns agents --update-instructions --type mcp --files "CLAUDE.md,AGENTS.md"
+```
+
+### `knowns agents sync`
+
+Quick sync of agent instruction files with latest guidelines.
+
+```bash
+knowns agents sync [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--type <type>` | Guidelines type: `cli` or `mcp` (default: cli) |
+| `--gemini` | Use compact Gemini variant (smaller context) |
+| `--all` | Update all instruction files (including Gemini, Copilot) |
+
+**Examples:**
+
+```bash
+# Sync default files (CLAUDE.md, AGENTS.md) with CLI guidelines
+knowns agents sync
+
+# Sync all files
+knowns agents sync --all
+
+# Sync with MCP guidelines
+knowns agents sync --type mcp
+
+# Sync with compact Gemini variant
+knowns agents sync --gemini
 ```
 
 ---
