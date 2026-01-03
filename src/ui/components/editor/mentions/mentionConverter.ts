@@ -10,6 +10,14 @@ type InlineContentItem = {
 	href?: string;
 };
 
+// Table content structure - cells can be arrays or objects with content
+type TableCell = InlineContentItem[] | { content: InlineContentItem[] };
+type TableRow = { cells: TableCell[] };
+type TableContent = {
+	type: "tableContent";
+	rows: TableRow[];
+};
+
 // Regex patterns for mentions in markdown (input format)
 const TASK_MENTION_REGEX = /@(task-\d+(?:\.\d+)?)/g;
 const DOC_MENTION_REGEX = /@docs?\/([^\s,;:!?"'()[\]]+)/g;
@@ -24,6 +32,11 @@ const OUTPUT_DOC_REGEX = /@\.knowns\/docs\/([^\s@]+?)\.md(?:\s*-\s*[^@\n]+)?/g;
 const TASK_PLACEHOLDER_PREFIX = "[[TASK_MENTION:";
 const DOC_PLACEHOLDER_PREFIX = "[[DOC_MENTION:";
 const PLACEHOLDER_SUFFIX = "]]";
+
+// Placeholder for code blocks and inline code (to skip mention processing inside them)
+const CODE_BLOCK_PLACEHOLDER_PREFIX = "[[CODE_BLOCK:";
+const INLINE_CODE_PLACEHOLDER_PREFIX = "[[INLINE_CODE:";
+const CODE_PLACEHOLDER_SUFFIX = "]]";
 
 /**
  * Normalize output format refs to input format
@@ -46,12 +59,31 @@ function normalizeOutputFormat(markdown: string): string {
  * Preprocess markdown to convert @mentions to placeholders
  * This ensures mentions are preserved during tryParseMarkdownToBlocks
  * Also handles output format (@.knowns/...) by normalizing first
+ * Skips mentions inside code blocks and inline code
  */
 export function preprocessMarkdown(markdown: string): string {
 	// First normalize any output format refs to input format
 	let processed = normalizeOutputFormat(markdown);
 
-	// Convert @task-X to placeholder
+	// Step 1: Extract code blocks and inline code to protect them from mention processing
+	const codeBlocks: string[] = [];
+	const inlineCodes: string[] = [];
+
+	// Extract fenced code blocks (``` ... ```)
+	processed = processed.replace(/```[\s\S]*?```/g, (match) => {
+		const index = codeBlocks.length;
+		codeBlocks.push(match);
+		return `${CODE_BLOCK_PLACEHOLDER_PREFIX}${index}${CODE_PLACEHOLDER_SUFFIX}`;
+	});
+
+	// Extract inline code (` ... `) - but not inside already extracted code blocks
+	processed = processed.replace(/`[^`\n]+`/g, (match) => {
+		const index = inlineCodes.length;
+		inlineCodes.push(match);
+		return `${INLINE_CODE_PLACEHOLDER_PREFIX}${index}${CODE_PLACEHOLDER_SUFFIX}`;
+	});
+
+	// Step 2: Convert @task-X to placeholder (only in non-code areas now)
 	processed = processed.replace(TASK_MENTION_REGEX, (_match, taskId) => {
 		return `${TASK_PLACEHOLDER_PREFIX}${taskId}${PLACEHOLDER_SUFFIX}`;
 	});
@@ -65,6 +97,18 @@ export function preprocessMarkdown(markdown: string): string {
 		}
 		return `${DOC_PLACEHOLDER_PREFIX}${cleanPath}${PLACEHOLDER_SUFFIX}`;
 	});
+
+	// Step 3: Restore inline codes
+	processed = processed.replace(
+		new RegExp(`${escapeRegex(INLINE_CODE_PLACEHOLDER_PREFIX)}(\\d+)${escapeRegex(CODE_PLACEHOLDER_SUFFIX)}`, "g"),
+		(_match, index) => inlineCodes[Number.parseInt(index, 10)],
+	);
+
+	// Step 4: Restore code blocks
+	processed = processed.replace(
+		new RegExp(`${escapeRegex(CODE_BLOCK_PLACEHOLDER_PREFIX)}(\\d+)${escapeRegex(CODE_PLACEHOLDER_SUFFIX)}`, "g"),
+		(_match, index) => codeBlocks[Number.parseInt(index, 10)],
+	);
 
 	return processed;
 }
@@ -80,6 +124,16 @@ function processBlock(block: Block): Block {
 	// Process children blocks recursively
 	const processedChildren = block.children?.map((child) => processBlock(child as Block)) || [];
 
+	// Handle table content specially
+	if (block.type === "table" && isTableContent(block.content)) {
+		const processedContent = processTableContent(block.content);
+		return {
+			...block,
+			content: processedContent as typeof block.content,
+			children: processedChildren,
+		} as Block;
+	}
+
 	// Process content if it exists and is an array
 	const processedContent = Array.isArray(block.content)
 		? processInlineContent(block.content as InlineContentItem[])
@@ -90,6 +144,48 @@ function processBlock(block: Block): Block {
 		content: processedContent as typeof block.content,
 		children: processedChildren,
 	} as Block;
+}
+
+function isTableContent(content: unknown): content is TableContent {
+	return (
+		typeof content === "object" &&
+		content !== null &&
+		"type" in content &&
+		(content as TableContent).type === "tableContent" &&
+		"rows" in content &&
+		Array.isArray((content as TableContent).rows)
+	);
+}
+
+function getCellContent(cell: TableCell): InlineContentItem[] | null {
+	if (Array.isArray(cell)) {
+		return cell;
+	}
+	if (cell && typeof cell === "object" && "content" in cell && Array.isArray(cell.content)) {
+		return cell.content;
+	}
+	return null;
+}
+
+function processTableContent(content: TableContent): TableContent {
+	return {
+		...content,
+		rows: content.rows.map((row) => ({
+			...row,
+			cells: row.cells.map((cell) => {
+				const cellContent = getCellContent(cell);
+				if (cellContent) {
+					const processed = processInlineContent(cellContent);
+					// Return in the same format as input
+					if (Array.isArray(cell)) {
+						return processed;
+					}
+					return { ...cell, content: processed };
+				}
+				return cell;
+			}),
+		})),
+	};
 }
 
 function processInlineContent(content: InlineContentItem[]): InlineContentItem[] {
@@ -209,6 +305,16 @@ function prepareBlockForSerialization(block: Block): Block {
 	// Process children blocks recursively
 	const processedChildren = block.children?.map((child) => prepareBlockForSerialization(child as Block)) || [];
 
+	// Handle table content specially
+	if (block.type === "table" && isTableContent(block.content)) {
+		const processedContent = prepareTableContentForSerialization(block.content);
+		return {
+			...block,
+			content: processedContent as typeof block.content,
+			children: processedChildren,
+		} as Block;
+	}
+
 	// Process content if it exists and is an array
 	const processedContent = Array.isArray(block.content)
 		? replaceMentionsWithPlaceholders(block.content as InlineContentItem[])
@@ -219,6 +325,27 @@ function prepareBlockForSerialization(block: Block): Block {
 		content: processedContent as typeof block.content,
 		children: processedChildren,
 	} as Block;
+}
+
+function prepareTableContentForSerialization(content: TableContent): TableContent {
+	return {
+		...content,
+		rows: content.rows.map((row) => ({
+			...row,
+			cells: row.cells.map((cell) => {
+				const cellContent = getCellContent(cell);
+				if (cellContent) {
+					const processed = replaceMentionsWithPlaceholders(cellContent);
+					// Return in the same format as input
+					if (Array.isArray(cell)) {
+						return processed;
+					}
+					return { ...cell, content: processed };
+				}
+				return cell;
+			}),
+		})),
+	};
 }
 
 function replaceMentionsWithPlaceholders(content: InlineContentItem[]): InlineContentItem[] {
@@ -289,21 +416,35 @@ function escapeRegex(str: string): string {
 export function blocksToMentionMarkdown(blocks: Block[]): string {
 	const mentions: string[] = [];
 
+	function extractFromInlineContent(content: InlineContentItem[]) {
+		for (const item of content) {
+			if (item.type === "taskMention") {
+				const taskId = item.props?.taskId as string | undefined;
+				if (taskId) {
+					mentions.push(`@${taskId}`);
+				}
+			} else if (item.type === "docMention") {
+				const docPath = item.props?.docPath as string | undefined;
+				if (docPath) {
+					mentions.push(`@doc/${docPath}`);
+				}
+			}
+		}
+	}
+
 	function extractFromBlock(block: Block) {
-		if (Array.isArray(block.content)) {
-			for (const item of block.content as InlineContentItem[]) {
-				if (item.type === "taskMention") {
-					const taskId = item.props?.taskId as string | undefined;
-					if (taskId) {
-						mentions.push(`@${taskId}`);
-					}
-				} else if (item.type === "docMention") {
-					const docPath = item.props?.docPath as string | undefined;
-					if (docPath) {
-						mentions.push(`@doc/${docPath}`);
+		// Handle table content specially
+		if (block.type === "table" && isTableContent(block.content)) {
+			for (const row of block.content.rows) {
+				for (const cell of row.cells) {
+					const cellContent = getCellContent(cell);
+					if (cellContent) {
+						extractFromInlineContent(cellContent);
 					}
 				}
 			}
+		} else if (Array.isArray(block.content)) {
+			extractFromInlineContent(block.content as InlineContentItem[]);
 		}
 
 		if (block.children) {
