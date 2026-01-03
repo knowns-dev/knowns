@@ -10,9 +10,15 @@ type InlineContentItem = {
 	href?: string;
 };
 
-// Regex patterns for mentions in markdown
+// Regex patterns for mentions in markdown (input format)
 const TASK_MENTION_REGEX = /@(task-\d+(?:\.\d+)?)/g;
 const DOC_MENTION_REGEX = /@docs?\/([^\s,;:!?"'()[\]]+)/g;
+
+// Regex patterns for output format (need to normalize back to input format when loading)
+// Matches: @.knowns/tasks/task-55 - Title.md or @.knowns/tasks/task-55.md
+const OUTPUT_TASK_REGEX = /@\.knowns\/tasks\/task-(\d+(?:\.\d+)?)(?:\s*-\s*[^@\n]+?\.md|\.md)/g;
+// Matches: @.knowns/docs/path/to/doc.md or @.knowns/docs/README.md - Description
+const OUTPUT_DOC_REGEX = /@\.knowns\/docs\/([^\s@]+?)\.md(?:\s*-\s*[^@\n]+)?/g;
 
 // Placeholder format for preserving mentions during parsing
 const TASK_PLACEHOLDER_PREFIX = "[[TASK_MENTION:";
@@ -20,11 +26,30 @@ const DOC_PLACEHOLDER_PREFIX = "[[DOC_MENTION:";
 const PLACEHOLDER_SUFFIX = "]]";
 
 /**
+ * Normalize output format refs to input format
+ * @.knowns/tasks/task-X - Title.md → @task-X
+ * @.knowns/docs/path.md → @doc/path
+ */
+function normalizeOutputFormat(markdown: string): string {
+	let result = markdown;
+
+	// Normalize task refs: @.knowns/tasks/task-{id} - Title.md → @task-{id}
+	result = result.replace(OUTPUT_TASK_REGEX, (_match, taskId) => `@task-${taskId}`);
+
+	// Normalize doc refs: @.knowns/docs/{path}.md → @doc/{path}
+	result = result.replace(OUTPUT_DOC_REGEX, (_match, docPath) => `@doc/${docPath}`);
+
+	return result;
+}
+
+/**
  * Preprocess markdown to convert @mentions to placeholders
  * This ensures mentions are preserved during tryParseMarkdownToBlocks
+ * Also handles output format (@.knowns/...) by normalizing first
  */
 export function preprocessMarkdown(markdown: string): string {
-	let processed = markdown;
+	// First normalize any output format refs to input format
+	let processed = normalizeOutputFormat(markdown);
 
 	// Convert @task-X to placeholder
 	processed = processed.replace(TASK_MENTION_REGEX, (_match, taskId) => {
@@ -173,17 +198,74 @@ function splitByPlaceholders(text: string): TextPart[] {
 }
 
 /**
+ * Prepare blocks for markdown serialization by replacing mentions with placeholders
+ * This ensures mentions are properly serialized to markdown format
+ */
+export function prepareBlocksForSerialization(blocks: Block[]): Block[] {
+	return blocks.map((block) => prepareBlockForSerialization(block));
+}
+
+function prepareBlockForSerialization(block: Block): Block {
+	// Process children blocks recursively
+	const processedChildren = block.children?.map((child) => prepareBlockForSerialization(child as Block)) || [];
+
+	// Process content if it exists and is an array
+	const processedContent = Array.isArray(block.content)
+		? replaceMentionsWithPlaceholders(block.content as InlineContentItem[])
+		: block.content;
+
+	return {
+		...block,
+		content: processedContent as typeof block.content,
+		children: processedChildren,
+	} as Block;
+}
+
+function replaceMentionsWithPlaceholders(content: InlineContentItem[]): InlineContentItem[] {
+	const result: InlineContentItem[] = [];
+
+	for (const item of content) {
+		if (item.type === "taskMention") {
+			const taskId = item.props?.taskId as string | undefined;
+			if (taskId) {
+				// Replace with placeholder text that will be converted to @task-X
+				result.push({
+					type: "text",
+					text: `${TASK_PLACEHOLDER_PREFIX}${taskId}${PLACEHOLDER_SUFFIX}`,
+					styles: {},
+				});
+			}
+		} else if (item.type === "docMention") {
+			const docPath = item.props?.docPath as string | undefined;
+			if (docPath) {
+				// Replace with placeholder text that will be converted to @doc/path
+				result.push({
+					type: "text",
+					text: `${DOC_PLACEHOLDER_PREFIX}${docPath}${PLACEHOLDER_SUFFIX}`,
+					styles: {},
+				});
+			}
+		} else if (item.type === "link") {
+			// Process link content recursively
+			result.push({
+				...item,
+				content: replaceMentionsWithPlaceholders(item.content || []),
+			});
+		} else {
+			result.push(item);
+		}
+	}
+
+	return result;
+}
+
+/**
  * Serialize blocks back to markdown, converting mentions to @format
  */
-export function serializeMentionsInMarkdown(markdown: string, blocks: Block[]): string {
-	// The blocksToMarkdownLossy will output mentions as text
-	// We need to ensure our custom inline content is properly serialized
-
-	// For now, we rely on the blocks containing the right format
-	// and manually replace any mention placeholders that might remain
+export function serializeMentionsInMarkdown(markdown: string, _blocks: Block[]): string {
 	let result = markdown;
 
-	// Replace any remaining placeholders with proper @ format
+	// Replace placeholders with proper @ format
 	result = result.replace(
 		new RegExp(`${escapeRegex(TASK_PLACEHOLDER_PREFIX)}([^\\]]+)${escapeRegex(PLACEHOLDER_SUFFIX)}`, "g"),
 		"@$1",

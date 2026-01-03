@@ -9,6 +9,7 @@ import {
 	MentionSuggestionMenu,
 	preprocessMarkdown,
 	postprocessBlocks,
+	prepareBlocksForSerialization,
 	serializeMentionsInMarkdown,
 } from "./mentions";
 
@@ -77,10 +78,13 @@ const BlockNoteEditor = forwardRef<BlockNoteEditorRef, BlockNoteEditorProps>(
 			if (!editor || isInternalUpdate.current) return;
 
 			try {
-				// Convert blocks to markdown
-				const md = await editor.blocksToMarkdownLossy(editor.document);
+				// Prepare blocks by replacing mentions with placeholders
+				const preparedBlocks = prepareBlocksForSerialization(editor.document);
 
-				// Serialize mentions back to @ format
+				// Convert blocks to markdown (placeholders will be in the output)
+				const md = await editor.blocksToMarkdownLossy(preparedBlocks);
+
+				// Convert placeholders to @ format (@task-X, @doc/path)
 				const finalMarkdown = serializeMentionsInMarkdown(md, editor.document);
 
 				onChange(finalMarkdown);
