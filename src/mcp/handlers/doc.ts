@@ -5,6 +5,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { normalizePath } from "@utils/index";
 import { notifyDocUpdate } from "@utils/notify-server";
 import matter from "gray-matter";
 import { z } from "zod";
@@ -167,7 +168,8 @@ async function getAllMdFiles(dir: string, basePath = ""): Promise<string[]> {
 
 	for (const entry of entries) {
 		const fullPath = join(dir, entry.name);
-		const relativePath = basePath ? join(basePath, entry.name) : entry.name;
+		// Use forward slashes for cross-platform consistency (Windows uses backslash)
+		const relativePath = normalizePath(basePath ? join(basePath, entry.name) : entry.name);
 
 		if (entry.isDirectory()) {
 			const subFiles = await getAllMdFiles(fullPath, relativePath);

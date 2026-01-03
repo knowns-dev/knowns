@@ -1833,7 +1833,6 @@ export const taskCommand = new Command("task")
 	.argument("[id]", "Task ID (shorthand for 'task view <id>')")
 	.option("--plain", "Plain text output for AI")
 	.enablePositionalOptions()
-	.passThroughOptions()
 	.action(async (id: string | undefined, options: { plain?: boolean }) => {
 		// If no ID provided, show help
 		if (!id) {

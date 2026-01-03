@@ -53,10 +53,30 @@ function transformDocMention(docPath: string): string {
 /**
  * Transform all mentions in text to Claude-readable file references
  * Used for --plain output to help Claude understand file references
+ *
+ * IMPORTANT: Mentions inside code blocks (```) and inline code (`) are NOT transformed
+ * They remain as raw @task-X and @doc/path format
  */
 export function transformMentionsToRefs(text: string, tasks: Map<string, Task>): string {
-	let result = text;
+	// Step 1: Extract and protect code blocks and inline code
+	const codeBlocks: string[] = [];
+	const inlineCodes: string[] = [];
 
+	// Extract fenced code blocks (``` ... ```)
+	let result = text.replace(/```[\s\S]*?```/g, (match) => {
+		const index = codeBlocks.length;
+		codeBlocks.push(match);
+		return `__CODE_BLOCK_${index}__`;
+	});
+
+	// Extract inline code (` ... `)
+	result = result.replace(/`[^`]+`/g, (match) => {
+		const index = inlineCodes.length;
+		inlineCodes.push(match);
+		return `__INLINE_CODE_${index}__`;
+	});
+
+	// Step 2: Transform mentions only in non-code areas
 	// Transform @task-{id} mentions
 	result = result.replace(TASK_MENTION_REGEX, (match, taskId) => {
 		return transformTaskMention(taskId, tasks);
@@ -66,6 +86,10 @@ export function transformMentionsToRefs(text: string, tasks: Map<string, Task>):
 	result = result.replace(DOC_MENTION_REGEX, (match, docPath) => {
 		return transformDocMention(docPath);
 	});
+
+	// Step 3: Restore code blocks and inline code (with original content)
+	result = result.replace(/__INLINE_CODE_(\d+)__/g, (_, index) => inlineCodes[Number.parseInt(index)]);
+	result = result.replace(/__CODE_BLOCK_(\d+)__/g, (_, index) => codeBlocks[Number.parseInt(index)]);
 
 	return result;
 }

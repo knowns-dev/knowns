@@ -18,6 +18,7 @@ import {
 	type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { FileStore } from "@storage/file-store";
+import { normalizePath } from "@utils/index";
 import matter from "gray-matter";
 
 // Import handlers
@@ -152,7 +153,8 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
 
 			for (const entry of entries) {
 				const fullPath = join(dir, entry.name);
-				const relativePath = basePath ? join(basePath, entry.name) : entry.name;
+				// Use forward slashes for cross-platform consistency (Windows uses backslash)
+				const relativePath = normalizePath(basePath ? join(basePath, entry.name) : entry.name);
 
 				if (entry.isDirectory()) {
 					const subFiles = await getAllMdFiles(fullPath, relativePath);

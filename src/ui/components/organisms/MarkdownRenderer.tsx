@@ -35,8 +35,8 @@ const MarkdownRenderer = forwardRef<HTMLDivElement, MarkdownRendererProps>(
 			href?: string;
 			children?: React.ReactNode;
 		}) => {
-			// Check if it's a task reference (task-123, task-123.md, 123, or 123.md)
-			if (href && /^(task-)?\d+(\.md)?$/.test(href)) {
+			// Check if it's a task reference (task-123, task-123.1, task-123.md, 123, 123.1, or 123.md)
+			if (href && /^(task-)?\d+(\.\d+)?(\.md)?$/.test(href)) {
 				const taskId = href.replace(/^task-/, "").replace(/\.md$/, "");
 				const hashHref = `#/tasks/${taskId}`;
 				return (

@@ -11,7 +11,7 @@ import {
 	X,
 	Copy,
 } from "lucide-react";
-import { MDEditor, MDRender } from "../components/editor";
+import { BlockNoteEditor, MDRender } from "../components/editor";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -532,17 +532,18 @@ export default function DocsPage() {
 
 							{/* Content */}
 							{isEditing ? (
-								<div className="flex-1 p-6 overflow-hidden">
-									<MDEditor
-										markdown={editedContent}
-										onChange={setEditedContent}
-										placeholder="Write your documentation here..."
-										height="100%"
-									/>
+								<div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+									<div className="flex-1 p-6 min-h-0">
+										<BlockNoteEditor
+											markdown={editedContent}
+											onChange={setEditedContent}
+											placeholder="Write your documentation here..."
+										/>
+									</div>
 								</div>
 							) : (
 								<ScrollArea className="flex-1">
-									<div className="p-6" ref={markdownPreviewRef}>
+									<div className="p-6 prose prose-sm dark:prose-invert max-w-none" ref={markdownPreviewRef}>
 										<MDRender
 											markdown={selectedDoc.content || ""}
 										/>
@@ -620,11 +621,10 @@ export default function DocsPage() {
 							<div className="flex-1 flex flex-col min-h-0">
 								<label className="block text-sm font-medium mb-2">Content</label>
 								<div className="flex-1 min-h-[400px]">
-									<MDEditor
+									<BlockNoteEditor
 										markdown={newDocContent}
 										onChange={setNewDocContent}
 										placeholder="Write your documentation here..."
-										height="100%"
 									/>
 								</div>
 							</div>

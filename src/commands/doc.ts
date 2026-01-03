@@ -7,6 +7,7 @@ import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { FileStore } from "@storage/file-store";
 import { findProjectRoot } from "@utils/find-project-root";
+import { normalizePath } from "@utils/index";
 import { buildTaskMap, normalizeRefs, transformMentionsToRefs } from "@utils/mention-refs";
 import { notifyDocUpdate } from "@utils/notify-server";
 import { repairDoc, validateDoc } from "@utils/validate";
@@ -23,7 +24,8 @@ async function getAllMdFiles(dir: string, basePath = ""): Promise<string[]> {
 
 	for (const entry of entries) {
 		const fullPath = join(dir, entry.name);
-		const relativePath = basePath ? join(basePath, entry.name) : entry.name;
+		// Use forward slashes for cross-platform consistency (Windows uses backslash)
+		const relativePath = normalizePath(basePath ? join(basePath, entry.name) : entry.name);
 
 		if (entry.isDirectory()) {
 			// Recursively read subdirectories
@@ -968,7 +970,6 @@ export const docCommand = new Command("doc")
 	.argument("[name]", "Document name (shorthand for 'doc view <name>')")
 	.option("--plain", "Plain text output for AI")
 	.enablePositionalOptions()
-	.passThroughOptions()
 	.action(async (name: string | undefined, options: { plain?: boolean }) => {
 		// If no name provided, show help
 		if (!name) {
