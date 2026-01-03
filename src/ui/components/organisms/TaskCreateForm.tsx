@@ -8,7 +8,7 @@ import { useUIPreferences } from "../../contexts/UIPreferencesContext";
 import { createTask } from "../../api/client";
 import { toast } from "../ui/sonner";
 import AssigneeDropdown from "./AssigneeDropdown";
-import { MDEditor } from "../editor";
+import { BlockNoteEditor } from "../editor";
 import { ScrollArea } from "../ui/scroll-area";
 import { Sheet, SheetContent } from "../ui/sheet";
 import { Dialog, DialogContent, DialogTitle } from "../ui/dialog";
@@ -310,7 +310,7 @@ export default function TaskCreateForm({
 					<AlignLeft className="w-5 h-5 text-muted-foreground" />
 					<h3 className="font-semibold text-sm text-muted-foreground">Description</h3>
 				</div>
-				<MDEditor
+				<BlockNoteEditor
 					markdown={description}
 					onChange={setDescription}
 					placeholder="Add a more detailed description..."
@@ -423,7 +423,7 @@ export default function TaskCreateForm({
 					<h3 className="font-semibold text-sm text-muted-foreground">Implementation Plan</h3>
 					<span className="text-xs text-muted-foreground">(optional)</span>
 				</div>
-				<MDEditor
+				<BlockNoteEditor
 					markdown={implementationPlan}
 					onChange={setImplementationPlan}
 					placeholder="Describe how you plan to implement this task..."
@@ -438,7 +438,7 @@ export default function TaskCreateForm({
 					<h3 className="font-semibold text-sm text-muted-foreground">Implementation Notes</h3>
 					<span className="text-xs text-muted-foreground">(optional)</span>
 				</div>
-				<MDEditor
+				<BlockNoteEditor
 					markdown={implementationNotes}
 					onChange={setImplementationNotes}
 					placeholder="Add notes, observations, or any other relevant information..."

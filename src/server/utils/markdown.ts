@@ -4,6 +4,7 @@
 
 import { readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { normalizePath } from "@utils/index";
 
 /**
  * Recursively find all .md files in a directory
@@ -19,7 +20,8 @@ export async function findMarkdownFiles(dir: string, baseDir: string): Promise<s
 			const subFiles = await findMarkdownFiles(fullPath, baseDir);
 			files.push(...subFiles);
 		} else if (entry.isFile() && entry.name.endsWith(".md")) {
-			const relativePath = relative(baseDir, fullPath);
+			// Use forward slashes for cross-platform consistency (Windows uses backslash)
+			const relativePath = normalizePath(relative(baseDir, fullPath));
 			files.push(relativePath);
 		}
 	}

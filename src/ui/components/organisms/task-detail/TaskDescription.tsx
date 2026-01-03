@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { AlignLeft } from "lucide-react";
 import { Button } from "../../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../ui/card";
-import { MDEditor, MDRender } from "../../editor";
+import { BlockNoteEditor, BlockNoteRender } from "../../editor";
 import type { Task } from "../../../models/task";
 
 interface TaskDescriptionProps {
@@ -42,7 +42,7 @@ export function TaskDescription({ task, onSave, saving }: TaskDescriptionProps) 
 			<CardContent>
 				{editing ? (
 					<div className="space-y-3">
-						<MDEditor
+						<BlockNoteEditor
 							markdown={description}
 							onChange={setDescription}
 							placeholder="Add a more detailed description..."
@@ -66,7 +66,7 @@ export function TaskDescription({ task, onSave, saving }: TaskDescriptionProps) 
 						onKeyDown={(e) => e.key === "Enter" && setEditing(true)}
 					>
 						{task.description ? (
-							<MDRender markdown={task.description} className="text-sm" />
+							<BlockNoteRender markdown={task.description} className="text-sm" />
 						) : (
 							<span className="text-muted-foreground text-sm italic">
 								Click to add description...

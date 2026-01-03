@@ -11,6 +11,14 @@ export {
 	extractDocPaths,
 } from "./mention-refs";
 
+/**
+ * Normalize file path to use forward slashes (cross-platform)
+ * Windows uses backslash (\), but we want consistent forward slash (/)
+ */
+export function normalizePath(filePath: string): string {
+	return filePath.replace(/\\/g, "/");
+}
+
 // Future exports:
 // - generateId
 // - formatDuration

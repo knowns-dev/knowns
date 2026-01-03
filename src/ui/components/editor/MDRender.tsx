@@ -16,8 +16,10 @@ interface MDRenderProps {
 }
 
 // Regex patterns for mentions
-const TASK_MENTION_REGEX = /@(task-\d+)/g;
-const DOC_MENTION_REGEX = /@docs?\/([^\s)]+)/g;
+// Task: supports subtask IDs like task-42.1
+const TASK_MENTION_REGEX = /@(task-\d+(?:\.\d+)?)/g;
+// Doc: excludes trailing punctuation (comma, semicolon, colon, etc.)
+const DOC_MENTION_REGEX = /@docs?\/([^\s,;:!?"'()]+)/g;
 
 /**
  * Normalize doc path - ensure .md extension
@@ -36,7 +38,12 @@ function transformMentions(content: string): string {
 
 	// Transform @doc/path or @docs/path to [@@doc/path.md](#/docs/path.md)
 	transformed = transformed.replace(DOC_MENTION_REGEX, (_match, docPath) => {
-		const normalizedPath = normalizeDocPath(docPath);
+		// Strip trailing dot if not part of extension (e.g., "@doc/api." → "api")
+		let cleanPath = docPath;
+		if (cleanPath.endsWith(".") && !cleanPath.match(/\.\w+$/)) {
+			cleanPath = cleanPath.slice(0, -1);
+		}
+		const normalizedPath = normalizeDocPath(cleanPath);
 		return `[@@doc/${normalizedPath}](#/docs/${normalizedPath})`;
 	});
 
