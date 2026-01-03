@@ -5,6 +5,34 @@ All notable changes to Knowns will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2025-01-04
+
+### Added
+
+- **BlockNote Rich Text Editor**: Replace markdown textarea with BlockNote WYSIWYG editor
+  - Task description, implementation plan, and notes now use rich text
+  - Docs page uses BlockNote for editing
+- **Mentions System**: Reference tasks and docs with `@task-X` and `@doc/path`
+  - Autocomplete suggestions when typing `@`
+  - Clickable mention badges with live data (title, status)
+  - Works in both BlockNoteEditor and MDRender
+- **Error Boundary**: Gracefully handle BlockNote rendering errors
+
+### Fixed
+
+- **Mention serialization**: Correctly save mentions as `@task-X` format instead of display text
+- **Mentions in tables**: Delete/replace operations now work for mentions inside table cells
+- **Mentions in code blocks**: Preserve raw `@task-X`, `@doc/path` in code blocks and inline code
+  - UI: BlockNoteEditor and MDRender skip mention rendering in code
+  - CLI: `--plain` output keeps mentions raw inside code blocks
+
+### Changed
+
+- **Editor view mode**: Use MDRender for viewing, BlockNoteEditor for editing (better stability)
+- **Mention badge styles**: Synchronized between MDRender and BlockNoteEditor
+  - Task badges: green theme
+  - Doc badges: blue theme
+
 ## [0.4.0] - 2025-12-31
 
 ### Added
