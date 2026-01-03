@@ -104,4 +104,13 @@ mcp__knowns__create_doc({ title: "Title", content: "## Overview\n\nIntro." })
 mcp__knowns__update_doc({ path: "name", appendContent: "## Section 1\n\n..." })
 mcp__knowns__update_doc({ path: "name", appendContent: "## Section 2\n\n..." })
 ```
+
+## DIAGRAMS
+
+**Rules:**
+- Check project config for `diagramTool` (mermaid or plantuml)
+- Use configured syntax
+- Default: mermaid
+- Never use ASCII art - use proper diagram code blocks
+
 <!-- KNOWNS GUIDELINES END -->

@@ -1,8 +1,32 @@
-import { forwardRef, useImperativeHandle, useRef, useMemo, useState, useEffect, type ReactNode } from "react";
+import { forwardRef, useImperativeHandle, useRef, useMemo, useState, useEffect, type ReactNode, isValidElement } from "react";
 import MDEditor from "@uiw/react-md-editor";
 import { ClipboardCheck, FileText } from "lucide-react";
 import { useTheme } from "../../App";
 import { getTask, getDoc } from "../../api/client";
+import { MermaidRenderer } from "../atoms/MermaidRenderer";
+import { PlantUMLRenderer } from "../atoms/PlantUMLRenderer";
+
+/**
+ * Extract text content from React children (handles nested elements)
+ */
+function extractTextFromChildren(children: ReactNode): string {
+	if (typeof children === "string") {
+		return children;
+	}
+	if (typeof children === "number") {
+		return String(children);
+	}
+	if (Array.isArray(children)) {
+		return children.map(extractTextFromChildren).join("");
+	}
+	if (isValidElement(children)) {
+		const props = children.props as { children?: ReactNode };
+		if (props.children) {
+			return extractTextFromChildren(props.children);
+		}
+	}
+	return "";
+}
 
 export interface MDRenderRef {
 	getElement: () => HTMLElement | null;
@@ -266,6 +290,29 @@ const MDRender = forwardRef<MDRenderRef, MDRenderProps>(
 					}}
 					components={{
 						a: CustomLink,
+						code: ({ className, children, ...props }) => {
+							const match = /language-(\w+)/.exec(className || "");
+							const language = match ? match[1] : "";
+
+							// Render Mermaid diagrams
+							if (language === "mermaid") {
+								const chartText = extractTextFromChildren(children);
+								return <MermaidRenderer chart={chartText} />;
+							}
+
+							// Render PlantUML diagrams
+							if (language === "plantuml") {
+								const chartText = extractTextFromChildren(children);
+								return <PlantUMLRenderer chart={chartText.trim()} />;
+							}
+
+							// Default code rendering
+							return (
+								<code className={className} {...props}>
+									{children}
+								</code>
+							);
+						},
 					}}
 				/>
 			</div>

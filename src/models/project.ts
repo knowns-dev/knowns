@@ -12,11 +12,14 @@ export interface Project {
 	settings: ProjectSettings;
 }
 
+export type DiagramTool = "mermaid" | "plantuml" | "none";
+
 export interface ProjectSettings {
 	defaultAssignee?: string;
 	defaultPriority: TaskPriority;
 	defaultLabels?: string[];
 	timeFormat?: "12h" | "24h";
+	diagramTool?: DiagramTool;
 	statuses: TaskStatus[];
 	statusColors?: Record<string, string>;
 	visibleColumns?: TaskStatus[];

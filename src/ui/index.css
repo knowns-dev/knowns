@@ -658,3 +658,26 @@ body {
 .no-view-transition {
   view-transition-name: none;
 }
+
+/* ===== Mermaid Diagram Styles ===== */
+
+.mermaid-container {
+  background: transparent;
+}
+
+.mermaid-container svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Ensure text is readable in mermaid diagrams */
+.mermaid-container .nodeLabel,
+.mermaid-container .edgeLabel,
+.mermaid-container .label {
+  font-family: inherit;
+}
+
+/* Dark mode adjustments for better contrast */
+.dark .mermaid-container .nodeLabel {
+  fill: currentColor;
+}

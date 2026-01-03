@@ -18,6 +18,7 @@ const ConfigSchema = z.object({
 	defaultPriority: z.enum(["low", "medium", "high"]).optional(),
 	defaultLabels: z.array(z.string()).optional(),
 	timeFormat: z.enum(["12h", "24h"]).optional(),
+	diagramTool: z.enum(["mermaid", "plantuml", "none"]).optional(),
 	editor: z.string().optional(),
 	visibleColumns: z.array(z.enum(["todo", "in-progress", "in-review", "done", "blocked"])).optional(),
 	serverPort: z.number().optional(),
@@ -29,6 +30,7 @@ const DEFAULT_CONFIG: Config = {
 	defaultPriority: "medium",
 	defaultLabels: [],
 	timeFormat: "24h",
+	diagramTool: "mermaid",
 	visibleColumns: ["todo", "in-progress", "done"],
 	serverPort: 6420,
 };
@@ -228,6 +230,11 @@ const setCommand = new Command("set")
 			} else if (key === "timeFormat") {
 				if (!["12h", "24h"].includes(value)) {
 					console.error(chalk.red(`✗ Invalid timeFormat: ${value}. Must be: 12h or 24h`));
+					process.exit(1);
+				}
+			} else if (key === "diagramTool") {
+				if (!["mermaid", "plantuml", "none"].includes(value)) {
+					console.error(chalk.red(`✗ Invalid diagramTool: ${value}. Must be: mermaid, plantuml, or none`));
 					process.exit(1);
 				}
 			}
