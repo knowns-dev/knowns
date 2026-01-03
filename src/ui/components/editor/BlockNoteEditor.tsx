@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useCallback, useEffect, useMemo, useRef } from "react";
+import { forwardRef, useImperativeHandle, useCallback, useEffect, useMemo, useRef, Component, type ReactNode } from "react";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/shadcn";
 import "@blocknote/core/fonts/inter.css";
@@ -12,6 +12,51 @@ import {
 	prepareBlocksForSerialization,
 	serializeMentionsInMarkdown,
 } from "./mentions";
+
+/**
+ * Error boundary to catch BlockNote rendering errors
+ * Particularly for index out of range errors in tables with custom inline content
+ */
+class EditorErrorBoundary extends Component<
+	{ children: ReactNode; fallback?: ReactNode; onError?: (error: Error) => void },
+	{ hasError: boolean; error: Error | null }
+> {
+	constructor(props: { children: ReactNode; fallback?: ReactNode; onError?: (error: Error) => void }) {
+		super(props);
+		this.state = { hasError: false, error: null };
+	}
+
+	static getDerivedStateFromError(error: Error) {
+		return { hasError: true, error };
+	}
+
+	componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+		console.error("BlockNote Editor Error:", error, errorInfo);
+		this.props.onError?.(error);
+	}
+
+	render() {
+		if (this.state.hasError) {
+			if (this.props.fallback) {
+				return this.props.fallback;
+			}
+			// Default fallback with retry option
+			return (
+				<div className="flex flex-col items-center justify-center h-full p-4 text-muted-foreground">
+					<p className="text-sm">Editor encountered an error</p>
+					<button
+						type="button"
+						className="mt-2 text-xs underline hover:text-foreground"
+						onClick={() => this.setState({ hasError: false, error: null })}
+					>
+						Try again
+					</button>
+				</div>
+			);
+		}
+		return this.props.children;
+	}
+}
 
 interface BlockNoteEditorProps {
 	markdown: string;
@@ -113,17 +158,23 @@ const BlockNoteEditor = forwardRef<BlockNoteEditorRef, BlockNoteEditorProps>(
 		}, [className, isDark]);
 
 		return (
-			<div className={wrapperClass} style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-				<BlockNoteView
-					editor={editor}
-					editable={!readOnly}
-					onChange={handleChange}
-					theme={isDark ? "dark" : "light"}
-					data-placeholder={placeholder}
-				>
-					{!readOnly && <MentionSuggestionMenu editor={editor} />}
-				</BlockNoteView>
-			</div>
+			<EditorErrorBoundary>
+				<div className={wrapperClass} style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+					<BlockNoteView
+						editor={editor}
+						editable={!readOnly}
+						onChange={handleChange}
+						theme={isDark ? "dark" : "light"}
+						data-placeholder={placeholder}
+					>
+						{!readOnly && (
+							<EditorErrorBoundary>
+								<MentionSuggestionMenu editor={editor} />
+							</EditorErrorBoundary>
+						)}
+					</BlockNoteView>
+				</div>
+			</EditorErrorBoundary>
 		);
 	},
 );

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { FileText, Pencil } from "lucide-react";
 import { Button } from "../../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../ui/card";
-import { BlockNoteEditor, BlockNoteRender } from "../../editor";
+import { BlockNoteEditor, MDRender } from "../../editor";
 import type { Task } from "../../../models/task";
 
 interface TaskImplementationSectionProps {
@@ -93,7 +93,7 @@ export function TaskImplementationSection({
 						onKeyDown={(e) => e.key === "Enter" && setEditing(true)}
 					>
 						{fieldValue ? (
-							<BlockNoteRender markdown={fieldValue} className="text-sm" />
+							<MDRender markdown={fieldValue} className="text-sm prose prose-sm dark:prose-invert max-w-none" />
 						) : (
 							<span className="text-muted-foreground text-sm italic">{cfg.emptyText}</span>
 						)}

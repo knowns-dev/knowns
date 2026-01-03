@@ -150,6 +150,40 @@ function TaskMentionComponent({
 	);
 }
 
+// Type for table content structure
+interface TableCell {
+	content?: unknown[];
+}
+interface TableRow {
+	cells: (unknown[] | TableCell)[];
+}
+interface TableContent {
+	type: "tableContent";
+	rows: TableRow[];
+}
+
+// Helper to check if content is table content
+function isTableContent(content: unknown): content is TableContent {
+	return (
+		typeof content === "object" &&
+		content !== null &&
+		"type" in content &&
+		(content as TableContent).type === "tableContent" &&
+		"rows" in content
+	);
+}
+
+// Helper to get cell content from various formats
+function getCellContent(cell: unknown[] | TableCell): unknown[] | null {
+	if (Array.isArray(cell)) {
+		return cell;
+	}
+	if (cell && typeof cell === "object" && "content" in cell && Array.isArray(cell.content)) {
+		return cell.content;
+	}
+	return null;
+}
+
 /**
  * BlockNote inline content spec for task mentions
  * Format: @task-{id}
@@ -171,59 +205,119 @@ export const TaskMention = createReactInlineContentSpec(
 			const isEditable = editor?.isEditable ?? false;
 
 			const handleDelete = () => {
-				if (editor) {
-					// Find and remove this mention from the document
-					const blocks = editor.document;
-					for (const block of blocks) {
-						if (Array.isArray(block.content)) {
-							const newContent = (block.content as unknown[]).filter(
-								(item: unknown) => {
+				if (!editor) return;
+
+				const blocks = editor.document;
+				for (const block of blocks) {
+					// Handle table content
+					if (block.type === "table" && isTableContent(block.content)) {
+						let changed = false;
+						const newRows = block.content.rows.map((row) => ({
+							...row,
+							cells: row.cells.map((cell) => {
+								const cellContent = getCellContent(cell);
+								if (!cellContent) return cell;
+
+								const newCellContent = cellContent.filter((item: unknown) => {
 									const inline = item as { type?: string; props?: { taskId?: string } };
 									return !(inline.type === "taskMention" && inline.props?.taskId === taskId);
-								}
-							);
-							if (newContent.length !== (block.content as unknown[]).length) {
-								editor.updateBlock(block, {
-									content: newContent as typeof block.content,
 								});
-								break;
-							}
+
+								if (newCellContent.length !== cellContent.length) {
+									changed = true;
+									if (Array.isArray(cell)) {
+										return newCellContent;
+									}
+									return { ...(cell as TableCell), content: newCellContent };
+								}
+								return cell;
+							}),
+						}));
+
+						if (changed) {
+							editor.updateBlock(block, {
+								content: { ...block.content, rows: newRows } as typeof block.content,
+							});
+							return;
+						}
+					}
+
+					// Handle regular block content
+					if (Array.isArray(block.content)) {
+						const newContent = (block.content as unknown[]).filter((item: unknown) => {
+							const inline = item as { type?: string; props?: { taskId?: string } };
+							return !(inline.type === "taskMention" && inline.props?.taskId === taskId);
+						});
+						if (newContent.length !== (block.content as unknown[]).length) {
+							editor.updateBlock(block, {
+								content: newContent as typeof block.content,
+							});
+							return;
 						}
 					}
 				}
 			};
 
 			const handleReplace = (type: "task" | "doc", newId: string) => {
-				if (editor) {
-					// Find and replace this mention in the document
-					const blocks = editor.document;
-					for (const block of blocks) {
-						if (Array.isArray(block.content)) {
-							const newContent = (block.content as unknown[]).map(
-								(item: unknown) => {
+				if (!editor) return;
+
+				const blocks = editor.document;
+				for (const block of blocks) {
+					// Handle table content
+					if (block.type === "table" && isTableContent(block.content)) {
+						let changed = false;
+						const newRows = block.content.rows.map((row) => ({
+							...row,
+							cells: row.cells.map((cell) => {
+								const cellContent = getCellContent(cell);
+								if (!cellContent) return cell;
+
+								const newCellContent = cellContent.map((item: unknown) => {
 									const inline = item as { type?: string; props?: { taskId?: string } };
 									if (inline.type === "taskMention" && inline.props?.taskId === taskId) {
-										// Replace with new mention
+										changed = true;
 										if (type === "task") {
 											return { type: "taskMention", props: { taskId: newId } };
 										}
 										return { type: "docMention", props: { docPath: newId } };
 									}
 									return item;
-								}
-							);
-							const hasChanged = (block.content as unknown[]).some(
-								(item: unknown) => {
-									const inline = item as { type?: string; props?: { taskId?: string } };
-									return inline.type === "taskMention" && inline.props?.taskId === taskId;
-								}
-							);
-							if (hasChanged) {
-								editor.updateBlock(block, {
-									content: newContent as typeof block.content,
 								});
-								break;
+
+								if (Array.isArray(cell)) {
+									return newCellContent;
+								}
+								return { ...(cell as TableCell), content: newCellContent };
+							}),
+						}));
+
+						if (changed) {
+							editor.updateBlock(block, {
+								content: { ...block.content, rows: newRows } as typeof block.content,
+							});
+							return;
+						}
+					}
+
+					// Handle regular block content
+					if (Array.isArray(block.content)) {
+						let hasChanged = false;
+						const newContent = (block.content as unknown[]).map((item: unknown) => {
+							const inline = item as { type?: string; props?: { taskId?: string } };
+							if (inline.type === "taskMention" && inline.props?.taskId === taskId) {
+								hasChanged = true;
+								if (type === "task") {
+									return { type: "taskMention", props: { taskId: newId } };
+								}
+								return { type: "docMention", props: { docPath: newId } };
 							}
+							return item;
+						});
+						if (hasChanged) {
+							editor.updateBlock(block, {
+								content: newContent as typeof block.content,
+							});
+							return;
 						}
 					}
 				}

@@ -366,6 +366,20 @@ body {
   width: 100%;
 }
 
+/* ===== Shared Editor Typography ===== */
+/* These styles ensure consistent look between MDRender and BlockNoteEditor */
+/* Based on BlockNote's default styles for perfect alignment */
+
+:root {
+  --editor-font-size: 1rem; /* 16px - matches BlockNote default */
+  --editor-line-height: 1.5; /* matches BlockNote .bn-block-outer */
+  --editor-heading-line-height: 1.3;
+  --editor-code-font-size: 0.875em;
+  --editor-code-font: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --editor-font-family: Inter, "SF Pro Display", -apple-system, BlinkMacSystemFont, "Open Sans", "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  --editor-block-padding: 3px 0; /* matches BlockNote .bn-block-content padding */
+}
+
 /* ===== BlockNote Editor ===== */
 
 .blocknote-editor-wrapper {
@@ -387,6 +401,8 @@ body {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+  font-size: var(--editor-font-size);
+  line-height: var(--editor-line-height);
 }
 
 .blocknote-render-wrapper {
@@ -395,6 +411,83 @@ body {
 
 .blocknote-render-wrapper .bn-editor {
   min-height: auto;
+  font-size: var(--editor-font-size);
+  line-height: var(--editor-line-height);
+}
+
+/* BlockNote typography sync */
+.blocknote-editor-wrapper .bn-block-content,
+.blocknote-render-wrapper .bn-block-content {
+  font-size: var(--editor-font-size);
+  line-height: var(--editor-line-height);
+}
+
+.blocknote-editor-wrapper [data-content-type="heading"] h1,
+.blocknote-render-wrapper [data-content-type="heading"] h1 {
+  font-size: 1.875rem;
+  font-weight: 700;
+  line-height: var(--editor-heading-line-height);
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.blocknote-editor-wrapper [data-content-type="heading"] h2,
+.blocknote-render-wrapper [data-content-type="heading"] h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: var(--editor-heading-line-height);
+  margin-top: 1.25rem;
+  margin-bottom: 0.625rem;
+}
+
+.blocknote-editor-wrapper [data-content-type="heading"] h3,
+.blocknote-render-wrapper [data-content-type="heading"] h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: var(--editor-heading-line-height);
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+/* BlockNote code blocks */
+.blocknote-editor-wrapper [data-content-type="codeBlock"] pre,
+.blocknote-render-wrapper [data-content-type="codeBlock"] pre {
+  font-family: var(--editor-code-font);
+  font-size: var(--editor-code-font-size);
+  border-radius: 0.375rem;
+  padding: 1rem;
+}
+
+/* BlockNote inline code */
+.blocknote-editor-wrapper code:not(pre code),
+.blocknote-render-wrapper code:not(pre code) {
+  font-family: var(--editor-code-font);
+  font-size: var(--editor-code-font-size);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  background-color: var(--muted);
+}
+
+/* BlockNote tables */
+.blocknote-editor-wrapper table,
+.blocknote-render-wrapper table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--editor-font-size);
+}
+
+.blocknote-editor-wrapper th,
+.blocknote-editor-wrapper td,
+.blocknote-render-wrapper th,
+.blocknote-render-wrapper td {
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
+}
+
+.blocknote-editor-wrapper th,
+.blocknote-render-wrapper th {
+  background-color: var(--muted);
+  font-weight: 600;
 }
 
 /* Mention badge styles */
@@ -423,42 +516,124 @@ body {
   border-radius: 0 0 0.5rem 0.5rem !important;
 }
 
-/* Markdown preview styles */
-.wmde-markdown {
-  font-size: 1rem;
-  line-height: 1.75;
+/* ===== MDRender Styles (synchronized with BlockNote) ===== */
+
+.md-render-wrapper .wmde-markdown {
+  font-size: var(--editor-font-size);
+  line-height: var(--editor-line-height);
 }
 
-.wmde-markdown code {
-  font-family: "Fira Code", "Monaco", "Consolas", monospace;
+/* MDRender headings */
+.md-render-wrapper .wmde-markdown h1 {
+  font-size: 1.875rem;
+  font-weight: 700;
+  line-height: var(--editor-heading-line-height);
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
 }
 
-.wmde-markdown pre {
+.md-render-wrapper .wmde-markdown h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: var(--editor-heading-line-height);
+  margin-top: 1.25rem;
+  margin-bottom: 0.625rem;
+}
+
+.md-render-wrapper .wmde-markdown h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: var(--editor-heading-line-height);
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.md-render-wrapper .wmde-markdown h4,
+.md-render-wrapper .wmde-markdown h5,
+.md-render-wrapper .wmde-markdown h6 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: var(--editor-heading-line-height);
+  margin-top: 0.875rem;
+  margin-bottom: 0.5rem;
+}
+
+/* MDRender code */
+.md-render-wrapper .wmde-markdown code {
+  font-family: var(--editor-code-font);
+  font-size: var(--editor-code-font-size);
+}
+
+.md-render-wrapper .wmde-markdown code:not(pre code) {
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  background-color: var(--muted);
+}
+
+.md-render-wrapper .wmde-markdown pre {
   border-radius: 0.375rem;
   padding: 1rem;
 }
 
-.wmde-markdown blockquote {
+/* MDRender blockquote */
+.md-render-wrapper .wmde-markdown blockquote {
   border-left-width: 4px;
   padding-left: 1rem;
   margin-left: 0;
   font-style: italic;
 }
 
-.wmde-markdown table {
+/* MDRender table */
+.md-render-wrapper .wmde-markdown table {
   border-collapse: collapse;
   width: 100%;
+  font-size: var(--editor-font-size);
 }
 
-.wmde-markdown th,
-.wmde-markdown td {
+.md-render-wrapper .wmde-markdown th,
+.md-render-wrapper .wmde-markdown td {
   border: 1px solid var(--border);
   padding: 0.5rem 0.75rem;
 }
 
-.wmde-markdown th {
+.md-render-wrapper .wmde-markdown th {
   background-color: var(--muted);
   font-weight: 600;
+}
+
+/* MDRender lists */
+.md-render-wrapper .wmde-markdown ul,
+.md-render-wrapper .wmde-markdown ol {
+  padding-left: 1.5rem;
+  margin: 0.5rem 0;
+}
+
+.md-render-wrapper .wmde-markdown li {
+  margin: 0.25rem 0;
+}
+
+/* MDRender paragraphs */
+.md-render-wrapper .wmde-markdown p {
+  margin: 0.625rem 0;
+}
+
+/* MDRender mention badges - override default link colors */
+.md-render-wrapper .wmde-markdown a[data-task-id] {
+  color: rgb(21 128 61) !important; /* text-green-700 */
+  text-decoration: none !important;
+}
+
+.md-render-wrapper .wmde-markdown a[data-doc-path] {
+  color: rgb(29 78 216) !important; /* text-blue-700 */
+  text-decoration: none !important;
+}
+
+.dark .md-render-wrapper .wmde-markdown a[data-task-id] {
+  color: rgb(74 222 128) !important; /* dark:text-green-400 */
+}
+
+.dark .md-render-wrapper .wmde-markdown a[data-doc-path] {
+  color: rgb(96 165 250) !important; /* dark:text-blue-400 */
 }
 
 /* ===== View Transitions for Theme Toggle ===== */

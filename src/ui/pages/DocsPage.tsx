@@ -11,7 +11,7 @@ import {
 	X,
 	Copy,
 } from "lucide-react";
-import { BlockNoteEditor, BlockNoteRender } from "../components/editor";
+import { BlockNoteEditor, MDRender } from "../components/editor";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -543,8 +543,8 @@ export default function DocsPage() {
 								</div>
 							) : (
 								<ScrollArea className="flex-1">
-									<div className="p-6" ref={markdownPreviewRef}>
-										<BlockNoteRender
+									<div className="p-6 prose prose-sm dark:prose-invert max-w-none" ref={markdownPreviewRef}>
+										<MDRender
 											markdown={selectedDoc.content || ""}
 										/>
 									</div>

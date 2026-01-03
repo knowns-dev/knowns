@@ -50,21 +50,22 @@ function transformMentions(content: string): string {
 	return transformed;
 }
 
-// Status colors for task badges
-const STATUS_COLORS: Record<string, { dot: string; text: string }> = {
-	todo: { dot: "bg-gray-400", text: "text-gray-500" },
-	"in-progress": { dot: "bg-yellow-400", text: "text-yellow-600" },
-	"in-review": { dot: "bg-purple-400", text: "text-purple-600" },
-	blocked: { dot: "bg-red-400", text: "text-red-600" },
-	done: { dot: "bg-green-400", text: "text-green-600" },
+// Status colors for task badges - synchronized with BlockNote TaskMention.tsx
+const STATUS_STYLES: Record<string, string> = {
+	todo: "bg-muted-foreground/50",
+	"in-progress": "bg-yellow-500",
+	"in-review": "bg-purple-500",
+	blocked: "bg-red-500",
+	done: "bg-green-500",
 };
 
-// Badge classes with dark: variants
+// Badge classes - synchronized with BlockNote mention styles (DocMention.tsx, TaskMention.tsx)
+// Uses same styling as shadcn Badge variant="outline" with custom colors
 const taskBadgeClass =
-	"inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-sm font-medium transition-all bg-green-100/50 border border-green-500/30 text-green-700 hover:bg-green-100 hover:border-green-500/50 dark:bg-green-900/20 dark:text-green-300 dark:hover:bg-green-900/30";
+	"inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-sm font-medium transition-colors cursor-pointer select-none border border-green-500/30 bg-green-500/10 text-green-700 hover:bg-green-500/20 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-400 dark:hover:bg-green-500/20";
 
 const docBadgeClass =
-	"inline-flex items-center gap-1 px-1 py-1 rounded-md text-sm font-medium transition-all hover:scale-105 bg-blue-100/50 border border-blue-500/30 text-blue-700 hover:bg-blue-100 hover:border-blue-500/50 dark:bg-blue-900/20 dark:text-blue-300 dark:hover:bg-blue-900/30";
+	"inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-sm font-medium transition-colors cursor-pointer select-none border border-blue-500/30 bg-blue-500/10 text-blue-700 hover:bg-blue-500/20 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-400 dark:hover:bg-blue-500/20";
 
 /**
  * Task mention badge that fetches and displays the task title and status
@@ -121,21 +122,18 @@ function TaskMentionBadge({
 			window.location.hash = `/kanban/${taskNumber}`;
 		}
 	};
-	const statusColors = status ? STATUS_COLORS[status] || STATUS_COLORS.todo : null;
+
+	const statusStyle = status ? STATUS_STYLES[status] || STATUS_STYLES.todo : null;
 
 	return (
 		<a href={hashHref} className={taskBadgeClass} data-task-id={taskNumber} onClick={handleClick}>
-			<ClipboardCheck className="w-4 h-4 shrink-0" />
+			<ClipboardCheck className="w-3.5 h-3.5 shrink-0" />
 			{loading ? (
 				<span className="opacity-70">#{taskNumber}</span>
 			) : title ? (
 				<>
-					<span>#{taskNumber}: {title}</span>
-					{status && statusColors && (
-						<span className={`inline-flex items-center gap-1 ${statusColors.text}`}>
-							<span className={`w-2 h-2 rounded-full ${statusColors.dot}`} />
-						</span>
-					)}
+					<span className="max-w-[200px] truncate">#{taskNumber}: {title}</span>
+					{statusStyle && <span className={`w-2 h-2 rounded-full shrink-0 ${statusStyle}`} />}
 				</>
 			) : (
 				<span>#{taskNumber}</span>
@@ -198,13 +196,13 @@ function DocMentionBadge({
 
 	return (
 		<a href={hashHref} className={docBadgeClass} data-doc-path={docPath} onClick={handleClick}>
-			<FileText className="w-4 h-4 shrink-0" />
+			<FileText className="w-3.5 h-3.5 shrink-0" />
 			{loading ? (
 				<span className="opacity-70">{shortPath}</span>
 			) : title ? (
-				<span>{title}</span>
+				<span className="max-w-[200px] truncate">{title}</span>
 			) : (
-				<span>{shortPath}</span>
+				<span className="max-w-[200px] truncate">{shortPath}</span>
 			)}
 		</a>
 	);
