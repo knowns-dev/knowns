@@ -156,3 +156,46 @@ knowns agents --update-instructions --type mcp --files "CLAUDE.md,AGENTS.md"
 | Web UI port | 6420 |
 | Task priority | medium |
 | Task status | todo |
+
+## Diagram Tool Configuration
+
+Knowns supports multiple diagram syntaxes for documentation:
+
+**Get current diagram tool setting**
+```bash
+knowns config get diagramTool --plain
+# Output: mermaid
+```
+
+**Change diagram tool**
+```bash
+knowns config set diagramTool mermaid
+# Output: ✓ Updated config: diagramTool = mermaid
+knowns config set diagramTool plantuml
+# Output: ✓ Updated config: diagramTool = plantuml
+knowns config set diagramTool none
+# Output: ✓ Updated config: diagramTool = none
+```
+
+**Available options:**
+| Tool | Description | Use Case |
+|------|-------------|----------|
+| `mermaid` | Browser-native rendering | Default. Best for most users. |
+| `plantuml` | Rich UML diagrams | Advanced UML needs, requires server |
+| `none` | Text-based only | Minimal setup, no visual diagrams |
+
+**Example Mermaid diagram:**
+
+\`\`\`mermaid </br>
+graph TD </br>
+    &nbsp;&nbsp;&nbsp;&nbsp;A[Start] --> B[Process] </br>
+    &nbsp;&nbsp;&nbsp;&nbsp;B --> C[End] </br>
+\`\`\`
+
+**Example PlantUML diagram:**
+
+\`\`\`plantuml </br>
+@startuml </br>
+&nbsp;&nbsp;&nbsp;&nbsp;Bob -> Alice: Hello! </br>
+@enduml </br>
+\`\`\`

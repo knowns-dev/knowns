@@ -6,6 +6,7 @@
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
+import type { DiagramTool } from "@models/project";
 import { FileStore } from "@storage/file-store";
 import chalk from "chalk";
 import { Command } from "commander";
@@ -18,6 +19,7 @@ interface InitConfig {
 	defaultPriority: "low" | "medium" | "high";
 	defaultLabels: string[];
 	timeFormat: "12h" | "24h";
+	diagramTool: DiagramTool;
 	guidelinesType: GuidelinesType;
 	agentFiles: Array<{ path: string; name: string; selected: boolean }>;
 }
@@ -160,6 +162,17 @@ async function runWizard(): Promise<InitConfig | null> {
 			},
 			{
 				type: "select",
+				name: "diagramTool",
+				message: "Preferred diagram syntax for documentation",
+				choices: [
+					{ title: "Mermaid", value: "mermaid", description: "Modern, browser-native rendering" },
+					{ title: "PlantUML", value: "plantuml", description: "Rich features, requires server" },
+					{ title: "None", value: "none", description: "Use text-based diagrams only" },
+				],
+				initial: 0, // mermaid
+			},
+			{
+				type: "select",
 				name: "guidelinesType",
 				message: "AI Guidelines type",
 				choices: [
@@ -200,6 +213,7 @@ async function runWizard(): Promise<InitConfig | null> {
 		defaultPriority: response.defaultPriority,
 		defaultLabels: response.defaultLabels?.filter((l: string) => l.trim()) || [],
 		timeFormat: response.timeFormat,
+		diagramTool: response.diagramTool || "mermaid",
 		guidelinesType: response.guidelinesType || "cli",
 		agentFiles: response.agentFiles || [],
 	};
@@ -250,6 +264,7 @@ export const initCommand = new Command("init")
 					defaultPriority: "medium",
 					defaultLabels: [],
 					timeFormat: "24h",
+					diagramTool: "mermaid",
 					guidelinesType: "cli",
 					agentFiles: INSTRUCTION_FILES.filter((f) => f.selected),
 				};
@@ -262,6 +277,7 @@ export const initCommand = new Command("init")
 				defaultPriority: config.defaultPriority,
 				defaultLabels: config.defaultLabels,
 				timeFormat: config.timeFormat,
+				diagramTool: config.diagramTool,
 			});
 
 			console.log();
@@ -277,11 +293,14 @@ export const initCommand = new Command("init")
 				console.log(chalk.gray(`  Default Labels: ${config.defaultLabels.join(", ")}`));
 			}
 			console.log(chalk.gray(`  Time Format: ${config.timeFormat}`));
+			if (config.diagramTool !== "none") {
+				console.log(chalk.gray(`  Diagram Syntax: ${config.diagramTool}`));
+			}
 			console.log();
 
 			// Update AI instruction files
 			if (config.agentFiles.length > 0) {
-				const guidelines = getGuidelines(config.guidelinesType);
+				const guidelines = getGuidelines(config.guidelinesType, "general", projectRoot);
 
 				console.log(chalk.bold(`Updating AI instruction files (${config.guidelinesType.toUpperCase()} version)...`));
 				console.log();

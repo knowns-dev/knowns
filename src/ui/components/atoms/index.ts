@@ -16,3 +16,5 @@ export { Badge, badgeVariants, type BadgeProps } from "./Badge";
 export { Spinner } from "./Spinner";
 export { Icon, type IconName } from "./Icon";
 export { ThemeToggle } from "./ThemeToggle";
+export { MermaidRenderer } from "./MermaidRenderer";
+export { PlantUMLRenderer } from "./PlantUMLRenderer";

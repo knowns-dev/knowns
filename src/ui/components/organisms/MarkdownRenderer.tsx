@@ -1,9 +1,33 @@
-import { forwardRef } from "react";
+import { forwardRef, type ReactNode, isValidElement } from "react";
 import { ClipboardCheck, FileText } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { SectionMarkers } from "../../utils/markdown-sections";
 import { prepareMarkdownForEdit, stripHtmlComments } from "../../utils/markdown-sections";
+import { MermaidRenderer } from "../atoms/MermaidRenderer";
+import { PlantUMLRenderer } from "../atoms/PlantUMLRenderer";
+
+/**
+ * Extract text content from React children (handles nested elements)
+ */
+function extractTextFromChildren(children: ReactNode): string {
+	if (typeof children === "string") {
+		return children;
+	}
+	if (typeof children === "number") {
+		return String(children);
+	}
+	if (Array.isArray(children)) {
+		return children.map(extractTextFromChildren).join("");
+	}
+	if (isValidElement(children)) {
+		const props = children.props as { children?: ReactNode };
+		if (props.children) {
+			return extractTextFromChildren(props.children);
+		}
+	}
+	return "";
+}
 
 interface MarkdownRendererProps {
 	markdown: string;
@@ -92,9 +116,24 @@ const MarkdownRenderer = forwardRef<HTMLDivElement, MarkdownRendererProps>(
 						remarkPlugins={enableGFM ? [remarkGfm] : []}
 						components={{
 							a: LinkComponent,
-							// Better code block styling
+							// Better code block styling with Mermaid and PlantUML support
 							code: ({ className, children, ...props }) => {
+								const match = /language-(\w+)/.exec(className || "");
+								const language = match ? match[1] : "";
 								const isInline = !className;
+
+								// Render Mermaid diagrams
+								if (language === "mermaid") {
+									const chartText = extractTextFromChildren(children);
+									return <MermaidRenderer chart={chartText.trim()} />;
+								}
+
+								// Render PlantUML diagrams
+								if (language === "plantuml") {
+									const chartText = extractTextFromChildren(children);
+									return <PlantUMLRenderer chart={chartText.trim()} />;
+								}
+
 								if (isInline) {
 									return (
 										<code

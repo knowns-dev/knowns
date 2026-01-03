@@ -2,7 +2,7 @@
  * Agent instruction file management commands
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import chalk from "chalk";
@@ -16,6 +16,60 @@ import MCP_GENERAL from "../templates/mcp/general.md";
 
 const PROJECT_ROOT = process.cwd();
 
+/**
+ * Get project-specific preferences section based on config
+ */
+function getProjectPreferences(projectRoot: string): string {
+	try {
+		const configPath = join(projectRoot, ".knowns", "config.json");
+		if (!existsSync(configPath)) {
+			return "";
+		}
+
+		const config = JSON.parse(readFileSync(configPath, "utf-8"));
+		const settings = config.settings || {};
+
+		const sections: string[] = [];
+
+		// Diagram tool preference
+		if (settings.diagramTool && settings.diagramTool !== "none") {
+			const tool = settings.diagramTool as "mermaid" | "plantuml";
+			const example =
+				tool === "mermaid"
+					? `\`\`\`mermaid
+graph TD
+    A[Start] --> B[Process]
+    B --> C[End]
+\`\`\``
+					: `\`\`\`plantuml
+@startuml
+start
+:Process;
+stop
+@enduml
+\`\`\``;
+
+			sections.push(`## Project Preferences
+
+### Diagram Syntax: ${tool.toUpperCase()}
+
+When creating diagrams in documentation or task descriptions, ALWAYS use **${tool}** syntax.
+
+${example}
+
+**IMPORTANT:** Do NOT use ASCII art or text-based diagrams. Always use ${tool} code blocks for visual diagrams.`);
+		}
+
+		if (sections.length === 0) {
+			return "";
+		}
+
+		return `\n<!-- PROJECT PREFERENCES START -->\n${sections.join("\n\n")}\n<!-- PROJECT PREFERENCES END -->\n`;
+	} catch {
+		return "";
+	}
+}
+
 export const INSTRUCTION_FILES = [
 	{ path: "CLAUDE.md", name: "Claude Code", selected: true },
 	{ path: "AGENTS.md", name: "Agent SDK", selected: true },
@@ -28,12 +82,39 @@ export type GuidelinesVariant = "general" | "gemini";
 
 /**
  * Get guidelines content by type and variant
+ * @param type - Guidelines type: cli or mcp
+ * @param variant - Guidelines variant: general or gemini
+ * @param projectRoot - Optional project root path to include project-specific preferences
  */
-export function getGuidelines(type: GuidelinesType, variant: GuidelinesVariant = "general"): string {
+export function getGuidelines(
+	type: GuidelinesType,
+	variant: GuidelinesVariant = "general",
+	projectRoot?: string,
+): string {
+	let guidelines: string;
+
 	if (type === "mcp") {
-		return variant === "gemini" ? MCP_GEMINI : MCP_GENERAL;
+		guidelines = variant === "gemini" ? MCP_GEMINI : MCP_GENERAL;
+	} else {
+		guidelines = variant === "gemini" ? CLI_GEMINI : CLI_GENERAL;
 	}
-	return variant === "gemini" ? CLI_GEMINI : CLI_GENERAL;
+
+	// Append project-specific preferences if projectRoot provided
+	if (projectRoot) {
+		const preferences = getProjectPreferences(projectRoot);
+		if (preferences) {
+			// Insert before the closing marker
+			const endMarker = "<!-- KNOWNS GUIDELINES END -->";
+			if (guidelines.includes(endMarker)) {
+				guidelines = guidelines.replace(endMarker, `${preferences}\n${endMarker}`);
+			} else {
+				// No end marker, append at the end
+				guidelines = `${guidelines}\n${preferences}`;
+			}
+		}
+	}
+
+	return guidelines;
 }
 
 /**
@@ -97,7 +178,7 @@ const agentsCommand = new Command("agents")
 			if (options.updateInstructions) {
 				const type = (options.type === "mcp" ? "mcp" : "cli") as GuidelinesType;
 				const variant: GuidelinesVariant = options.gemini ? "gemini" : "general";
-				const guidelines = getGuidelines(type, variant);
+				const guidelines = getGuidelines(type, variant, PROJECT_ROOT);
 
 				// Determine which files to update
 				let filesToUpdate = INSTRUCTION_FILES;
@@ -203,6 +284,7 @@ const agentsCommand = new Command("agents")
 			const guidelines = getGuidelines(
 				typeResponse.type as GuidelinesType,
 				variantResponse.variant as GuidelinesVariant,
+				PROJECT_ROOT,
 			);
 			console.log(chalk.bold(`\nUpdating files with ${label} guidelines...\n`));
 			await updateFiles(filesResponse.files, guidelines);
@@ -274,7 +356,7 @@ const syncCommand = new Command("sync")
 		try {
 			const type = (options.type === "mcp" ? "mcp" : "cli") as GuidelinesType;
 			const variant: GuidelinesVariant = options.gemini ? "gemini" : "general";
-			const guidelines = getGuidelines(type, variant);
+			const guidelines = getGuidelines(type, variant, PROJECT_ROOT);
 
 			// Select files based on --all flag
 			const filesToUpdate = options.all ? INSTRUCTION_FILES : INSTRUCTION_FILES.filter((f) => f.selected); // Only default selected files

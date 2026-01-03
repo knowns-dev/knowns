@@ -805,6 +805,18 @@ knowns doc edit "doc-name" --append-file ./more.md
 
 ---
 
+## Diagram Creation
+
+When creating diagrams in documentation or task descriptions:
+
+1. **Check project preference**: `knowns config get diagramTool --plain`
+2. **Use the configured syntax** (mermaid or plantuml)
+3. **If not configured**, prefer mermaid as default
+
+**IMPORTANT:** Never use ASCII art diagrams - always use proper diagram code blocks (mermaid or plantuml) for visual diagrams.
+
+---
+
 ## Best Practices Checklist
 
 ### For AI Agents: Session Start

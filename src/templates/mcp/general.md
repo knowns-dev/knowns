@@ -647,6 +647,18 @@ mcp__knowns__update_doc({
 
 ---
 
+## Diagram Creation
+
+When creating diagrams in documentation or task descriptions:
+
+1. **Check project preference**: Use MCP config tool or check `.knowns/config.json` for `diagramTool` setting
+2. **Use the configured syntax** (mermaid or plantuml)
+3. **If not configured**, prefer mermaid as default
+
+**IMPORTANT:** Never use ASCII art diagrams - always use proper diagram code blocks (mermaid or plantuml) for visual diagrams.
+
+---
+
 ## Best Practices Checklist
 
 ### For AI Agents: Session Start
