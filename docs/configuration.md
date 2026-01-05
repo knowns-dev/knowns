@@ -19,6 +19,11 @@ Located at `.knowns/config.json`:
 |-----|------|-------------|
 | `project` | string | Project name |
 | `version` | string | Config version |
+| `defaultAssignee` | string | Default assignee for new tasks |
+| `defaultPriority` | string | Default priority (`low`, `medium`, `high`) |
+| `defaultLabels` | string[] | Default labels for new tasks |
+| `timeFormat` | string | Time format (`12h` or `24h`) |
+| `gitTrackingMode` | string | Git tracking mode (`git-tracked` or `git-ignored`) |
 
 ## Project Structure
 
@@ -91,16 +96,48 @@ This document describes our authentication pattern...
 
 ## Git Integration
 
-The `.knowns/` folder is designed to be committed to git:
+Knowns supports two git tracking modes, selected during `knowns init`:
+
+### Git Tracking Modes
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `git-tracked` | All `.knowns/` files tracked in git | Teams, shared context |
+| `git-ignored` | Only docs tracked, tasks/config ignored | Personal use |
+
+### Git-Tracked Mode (Default)
+
+The entire `.knowns/` folder is committed to git:
 
 ```bash
 git add .knowns/
 git commit -m "Add project knowledge base"
 ```
 
-### .gitignore
+**Benefits:**
+- Share tasks and docs with team
+- Version history for all changes
+- Code review includes task updates
 
-You may want to ignore certain files:
+### Git-Ignored Mode
+
+Only documentation is tracked. During init, Knowns automatically adds to `.gitignore`:
+
+```gitignore
+# knowns (ignore all except docs)
+.knowns/*
+!.knowns/docs/
+!.knowns/docs/**
+```
+
+**Benefits:**
+- Personal task tracking without cluttering team repo
+- Docs still shareable with team
+- No merge conflicts on tasks
+
+### .gitignore (Optional)
+
+You may want to ignore certain files regardless of mode:
 
 ```gitignore
 # Ignore time tracking state (optional)

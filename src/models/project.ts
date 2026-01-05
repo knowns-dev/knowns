@@ -12,11 +12,14 @@ export interface Project {
 	settings: ProjectSettings;
 }
 
+export type GitTrackingMode = "git-tracked" | "git-ignored";
+
 export interface ProjectSettings {
 	defaultAssignee?: string;
 	defaultPriority: TaskPriority;
 	defaultLabels?: string[];
 	timeFormat?: "12h" | "24h";
+	gitTrackingMode?: GitTrackingMode;
 	statuses: TaskStatus[];
 	statusColors?: Record<string, string>;
 	visibleColumns?: TaskStatus[];

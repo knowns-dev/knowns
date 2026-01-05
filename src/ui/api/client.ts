@@ -3,7 +3,6 @@ import type { TaskChange, TaskVersion } from "../../models/version";
 
 // Use env vars from Vite, fallback to relative paths for production
 const API_BASE = import.meta.env.API_URL || "";
-const WS_BASE = import.meta.env.WS_URL || "";
 
 interface TaskDTO {
 	id: string;
@@ -206,13 +205,6 @@ export interface ActiveTimer {
 	totalPausedMs: number;
 }
 
-interface WebSocketMessage {
-	type: string;
-	task?: Task;
-	tasks?: Task[];
-	active?: ActiveTimer | null;
-}
-
 export const {
 	createTask,
 	updateTask,
@@ -370,41 +362,3 @@ export const timeApi = {
 		return res.json();
 	},
 };
-
-// WebSocket connection
-export function connectWebSocket(onMessage: (data: WebSocketMessage) => void): WebSocket | null {
-	try {
-		// Use WS_BASE from env, fallback to current host
-		const wsUrl = WS_BASE
-			? `${WS_BASE}/ws`
-			: `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
-		const ws = new WebSocket(wsUrl);
-
-		ws.onmessage = (e) => {
-			try {
-				const rawData = JSON.parse(e.data);
-				// Parse task DTO to Task if present
-				const data: WebSocketMessage = {
-					...rawData,
-					task: rawData.task ? parseTaskDTO(rawData.task) : undefined,
-				};
-				onMessage(data);
-			} catch (error) {
-				console.error("Failed to parse WebSocket message:", error);
-			}
-		};
-
-		ws.onerror = (error) => {
-			console.error("WebSocket error:", error);
-		};
-
-		ws.onclose = () => {
-			console.log("WebSocket connection closed");
-		};
-
-		return ws;
-	} catch (error) {
-		console.error("Failed to create WebSocket connection:", error);
-		return null;
-	}
-}

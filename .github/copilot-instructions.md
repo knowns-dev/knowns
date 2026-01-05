@@ -559,6 +559,26 @@ knowns doc edit "Doc Name" -c "New content"        # Replace content
 knowns doc edit "Doc Name" -a "Appended content"   # Append to content
 ```
 
+#### Doc Organization
+
+| Doc Type | Location | Example |
+|----------|----------|---------|
+| **Important/Core docs** | Root `.knowns/docs/` | `README.md`, `ARCHITECTURE.md`, `CONVENTIONS.md` |
+| **Guides** | `.knowns/docs/guides/` | `guides/getting-started.md` |
+| **Patterns** | `.knowns/docs/patterns/` | `patterns/controller.md` |
+| **API docs** | `.knowns/docs/api/` | `api/endpoints.md` |
+| **Other categorized docs** | `.knowns/docs/<category>/` | `security/auth-patterns.md` |
+
+```bash
+# Important docs - at root (no -f flag)
+knowns doc create "README" -d "Project overview" -t "core"
+knowns doc create "ARCHITECTURE" -d "System design" -t "core"
+
+# Categorized docs - use -f for folder
+knowns doc create "Getting Started" -d "Setup guide" -t "guide" -f "guides"
+knowns doc create "Controller Pattern" -d "MVC pattern" -t "pattern" -f "patterns"
+```
+
 ### Search
 
 ```bash
@@ -744,6 +764,83 @@ Use **lowercase with hyphens**:
 | See `@.knowns/docs/...` but don't read | Use `knowns doc "<path>" --plain` |
 | See `@.knowns/tasks/task-X` but don't check | Use `knowns task X --plain` for context |
 | Follow only first-level refs | Recursively follow nested refs until complete |
+| Use `--plain` with `task create` | `--plain` is only for view/list commands |
+| Use `--plain` with `task edit` | `--plain` is only for view/list commands |
+| Use `--plain` with `doc create` | `--plain` is only for view/list commands |
+| Use `--plain` with `doc edit` | `--plain` is only for view/list commands |
+
+---
+
+## The `--plain` Flag (AI Agents)
+
+> **⚠️ CRITICAL FOR AI AGENTS**: The `--plain` flag is ONLY supported by **view/list/search** commands. Using it with create/edit commands will cause errors!
+
+### ✅ Commands that support `--plain`
+
+These are **read-only** commands - use `--plain` to get clean output:
+
+```bash
+# Task viewing/listing
+knowns task <id> --plain
+knowns task view <id> --plain
+knowns task list --plain
+knowns task list --status in-progress --plain
+
+# Doc viewing/listing
+knowns doc <path> --plain
+knowns doc view "<path>" --plain
+knowns doc list --plain
+knowns doc list --tag <tag> --plain
+
+# Search
+knowns search "<query>" --plain
+knowns search "<query>" --type task --plain
+knowns search "<query>" --type doc --plain
+
+# Config
+knowns config get <key> --plain
+```
+
+### ❌ Commands that do NOT support `--plain`
+
+These are **write** commands - NEVER use `--plain`:
+
+```bash
+# Task create/edit - NO --plain!
+knowns task create "Title" -d "Description"          # ✅ Correct
+knowns task create "Title" --plain                   # ❌ ERROR!
+knowns task edit <id> -s done                        # ✅ Correct
+knowns task edit <id> -s done --plain                # ❌ ERROR!
+
+# Doc create/edit - NO --plain!
+knowns doc create "Title" -d "Description"           # ✅ Correct
+knowns doc create "Title" --plain                    # ❌ ERROR!
+knowns doc edit "name" -c "content"                  # ✅ Correct
+knowns doc edit "name" -c "content" --plain          # ❌ ERROR!
+
+# Time tracking - NO --plain!
+knowns time start <id>                               # ✅ Correct
+knowns time stop                                     # ✅ Correct
+knowns time add <id> 2h                              # ✅ Correct
+```
+
+### Quick Reference Table
+
+| Command Type | Example | `--plain` Support |
+|-------------|---------|-------------------|
+| `task <id>` | `knowns task 42 --plain` | ✅ Yes |
+| `task list` | `knowns task list --plain` | ✅ Yes |
+| `task create` | `knowns task create "Title"` | ❌ No |
+| `task edit` | `knowns task edit 42 -s done` | ❌ No |
+| `doc <path>` | `knowns doc "README" --plain` | ✅ Yes |
+| `doc list` | `knowns doc list --plain` | ✅ Yes |
+| `doc create` | `knowns doc create "Title"` | ❌ No |
+| `doc edit` | `knowns doc edit "name" -c "..."` | ❌ No |
+| `search` | `knowns search "query" --plain` | ✅ Yes |
+| `time start/stop` | `knowns time start 42` | ❌ No |
+| `time add` | `knowns time add 42 2h` | ❌ No |
+| `config get` | `knowns config get key --plain` | ✅ Yes |
+| `config set` | `knowns config set key value` | ❌ No |
 
 ---
 
@@ -898,6 +995,7 @@ knowns doc edit "doc-name" -a "Appended content"
 **Maintained By**: Knowns CLI Team
 
 <!-- KNOWNS GUIDELINES END -->
+
 
 
 

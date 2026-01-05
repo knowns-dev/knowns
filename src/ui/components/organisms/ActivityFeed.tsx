@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Activity, Filter, RefreshCw } from "lucide-react";
-import { api, type Activity as ActivityType, connectWebSocket } from "../../api/client";
+import { api, type Activity as ActivityType } from "../../api/client";
+import { useSSEEvent } from "../../contexts/SSEContext";
 import Avatar from "../atoms/Avatar";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
@@ -117,18 +118,9 @@ export default function ActivityFeed({
 		loadActivities();
 	}, [loadActivities]);
 
-	// Subscribe to WebSocket for real-time updates
-	useEffect(() => {
-		const ws = connectWebSocket((data) => {
-			if (data.type === "tasks:updated") {
-				// Reload activities when a task is updated
-				loadActivities();
-			}
-		});
-
-		return () => {
-			if (ws) ws.close();
-		};
+	// Subscribe to SSE for real-time updates
+	useSSEEvent("tasks:updated", () => {
+		loadActivities();
 	}, [loadActivities]);
 
 	const handleRefresh = () => {

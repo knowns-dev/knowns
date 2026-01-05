@@ -1,20 +1,19 @@
 /**
  * Local Server
  * Serves Web UI via `knowns browser`
- * Uses Express + ws for Node.js compatibility
+ * Uses Express + SSE (Server-Sent Events) for real-time updates
  */
 
 import { spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { createServer } from "node:http";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FileStore } from "@storage/file-store";
 import cors from "cors";
 import express, { type Request, type Response } from "express";
-import { type WebSocket, WebSocketServer } from "ws";
 import { errorHandler } from "./middleware/error-handler";
 import { createRoutes } from "./routes";
+import { broadcast, createEventsRoute } from "./routes/events";
 
 // Check if running in Bun
 const isBun = typeof globalThis.Bun !== "undefined";
@@ -29,18 +28,10 @@ export async function startServer(options: ServerOptions) {
 	const { port, projectRoot, open } = options;
 	const store = new FileStore(projectRoot);
 
-	// Track WebSocket clients
-	const clients = new Set<WebSocket>();
-
-	// Broadcast to all connected clients
-	const broadcast = (data: object) => {
-		const msg = JSON.stringify(data);
-		for (const client of clients) {
-			if (client.readyState === 1) {
-				// WebSocket.OPEN
-				client.send(msg);
-			}
-		}
+	// Broadcast wrapper that extracts event type from data
+	const broadcastEvent = (data: { type: string; [key: string]: unknown }) => {
+		const { type, ...payload } = data;
+		broadcast(type, payload);
 	};
 
 	// Find the UI files in the installed package
@@ -76,31 +67,6 @@ export async function startServer(options: ServerOptions) {
 	app.use(cors());
 	app.use(express.json());
 
-	// Create HTTP server
-	const httpServer = createServer(app);
-
-	// Create WebSocket server
-	const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
-
-	// Handle WebSocket server errors (e.g., when HTTP server fails to start)
-	wss.on("error", () => {
-		// Error is already handled by httpServer.on('error')
-		// This prevents unhandled 'error' event crash
-	});
-
-	wss.on("connection", (ws) => {
-		clients.add(ws);
-
-		ws.on("close", () => {
-			clients.delete(ws);
-		});
-
-		ws.on("error", (error) => {
-			console.error("WebSocket error:", error);
-			clients.delete(ws);
-		});
-	});
-
 	// Serve static assets from Vite build (assets folder with hashed names)
 	app.use(
 		"/assets",
@@ -110,8 +76,11 @@ export async function startServer(options: ServerOptions) {
 		}),
 	);
 
+	// Mount SSE events endpoint
+	app.use("/api/events", createEventsRoute());
+
 	// Mount API routes
-	app.use("/api", createRoutes({ store, broadcast }));
+	app.use("/api", createRoutes({ store, broadcast: broadcastEvent }));
 
 	// Error handling middleware
 	app.use(errorHandler);
@@ -128,17 +97,7 @@ export async function startServer(options: ServerOptions) {
 
 	// Start server
 	return new Promise<{ close: () => void }>((resolve, reject) => {
-		httpServer.on("error", (err: NodeJS.ErrnoException) => {
-			if (err.code === "EADDRINUSE") {
-				console.error(`Error: Port ${port} is already in use`);
-				console.error("Please stop the process using this port or choose a different port");
-				reject(err);
-			} else {
-				reject(err);
-			}
-		});
-
-		httpServer.listen(port, () => {
+		const server = app.listen(port, () => {
 			console.log(`✓ Server running at http://localhost:${port}`);
 
 			if (open) {
@@ -163,10 +122,19 @@ export async function startServer(options: ServerOptions) {
 
 			resolve({
 				close: () => {
-					wss.close();
-					httpServer.close();
+					server.close();
 				},
 			});
+		});
+
+		server.on("error", (err: NodeJS.ErrnoException) => {
+			if (err.code === "EADDRINUSE") {
+				console.error(`Error: Port ${port} is already in use`);
+				console.error("Please stop the process using this port or choose a different port");
+				reject(err);
+			} else {
+				reject(err);
+			}
 		});
 	});
 }

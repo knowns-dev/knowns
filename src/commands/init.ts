@@ -3,7 +3,6 @@
  * Initialize .knowns/ folder in current directory
  */
 
-import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { FileStore } from "@storage/file-store";
@@ -12,96 +11,64 @@ import { Command } from "commander";
 import prompts from "prompts";
 import { type GuidelinesType, INSTRUCTION_FILES, getGuidelines, updateInstructionFile } from "./agents";
 
+import type { GitTrackingMode } from "@models/project";
+
 interface InitConfig {
 	name: string;
 	defaultAssignee?: string;
 	defaultPriority: "low" | "medium" | "high";
 	defaultLabels: string[];
 	timeFormat: "12h" | "24h";
+	gitTrackingMode: GitTrackingMode;
 	guidelinesType: GuidelinesType;
 	agentFiles: Array<{ path: string; name: string; selected: boolean }>;
 }
 
 /**
- * Check if git is initialized and prompt to initialize if not
+ * Check if git is initialized - exit if not
  */
-async function checkAndInitGit(projectRoot: string): Promise<void> {
+function checkGitExists(projectRoot: string): void {
 	const gitPath = join(projectRoot, ".git");
 
-	if (existsSync(gitPath)) {
-		return; // Git already initialized
-	}
-
-	console.log(chalk.yellow("⚠️  Git is not initialized in this project"));
-	console.log();
-
-	const response = await prompts({
-		type: "confirm",
-		name: "initGit",
-		message: "Would you like to initialize git?",
-		initial: true,
-	});
-
-	if (response.initGit) {
-		try {
-			execSync("git init", { cwd: projectRoot, stdio: "pipe" });
-			console.log(chalk.green("✓ Git initialized successfully"));
-
-			// Optionally add .knowns to .gitignore considerations
-			const gitignorePath = join(projectRoot, ".gitignore");
-			if (!existsSync(gitignorePath)) {
-				const addGitignore = await prompts({
-					type: "confirm",
-					name: "add",
-					message: "Create .gitignore with recommended exclusions?",
-					initial: true,
-				});
-
-				if (addGitignore.add) {
-					const { writeFileSync } = await import("node:fs");
-					const gitignoreContent = `# Dependencies
-node_modules/
-
-# Build output
-dist/
-
-# Environment files
-.env
-.env.local
-.env.*.local
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-npm-debug.log*
-
-# Optional: Exclude time tracking data (uncomment if desired)
-# .knowns/time/
-`;
-					writeFileSync(gitignorePath, gitignoreContent, "utf-8");
-					console.log(chalk.green("✓ Created .gitignore"));
-				}
-			}
-			console.log();
-		} catch (error) {
-			console.log(chalk.red("✗ Failed to initialize git"));
-			if (error instanceof Error) {
-				console.log(chalk.gray(`  ${error.message}`));
-			}
-			console.log();
-		}
-	} else {
-		console.log(chalk.gray("  Skipping git initialization"));
+	if (!existsSync(gitPath)) {
 		console.log();
+		console.log(chalk.red("✗ Not a git repository"));
+		console.log();
+		console.log(chalk.gray("  Knowns requires git for version control."));
+		console.log(chalk.gray("  Please initialize git first:"));
+		console.log();
+		console.log(chalk.cyan("    git init"));
+		console.log();
+		process.exit(1);
+	}
+}
+
+/**
+ * Update .gitignore for git-ignored mode
+ */
+async function updateGitignoreForIgnoredMode(projectRoot: string): Promise<void> {
+	const { appendFileSync, readFileSync, writeFileSync } = await import("node:fs");
+	const gitignorePath = join(projectRoot, ".gitignore");
+
+	const knownsIgnorePattern = `
+# knowns (ignore all except docs)
+.knowns/*
+!.knowns/docs/
+!.knowns/docs/**
+`;
+
+	if (existsSync(gitignorePath)) {
+		const content = readFileSync(gitignorePath, "utf-8");
+		// Check if pattern already exists
+		if (content.includes(".knowns/*")) {
+			console.log(chalk.gray("  .gitignore already has knowns pattern"));
+			return;
+		}
+		appendFileSync(gitignorePath, knownsIgnorePattern);
+		console.log(chalk.green("✓ Updated .gitignore with knowns pattern"));
+	} else {
+		writeFileSync(gitignorePath, `${knownsIgnorePattern.trim()}\n`, "utf-8");
+		console.log(chalk.green("✓ Created .gitignore with knowns pattern"));
 	}
 }
 
@@ -122,6 +89,24 @@ async function runWizard(): Promise<InitConfig | null> {
 				message: "Project name",
 				initial: defaultName,
 				validate: (value) => (value.trim() ? true : "Project name is required"),
+			},
+			{
+				type: "select",
+				name: "gitTrackingMode",
+				message: "Git tracking mode",
+				choices: [
+					{
+						title: "Git Tracked (recommended for teams)",
+						value: "git-tracked",
+						description: "All .knowns/ files tracked in git",
+					},
+					{
+						title: "Git Ignored (personal use)",
+						value: "git-ignored",
+						description: "Only docs tracked, tasks/config ignored",
+					},
+				],
+				initial: 0, // git-tracked
 			},
 			{
 				type: "text",
@@ -200,6 +185,7 @@ async function runWizard(): Promise<InitConfig | null> {
 		defaultPriority: response.defaultPriority,
 		defaultLabels: response.defaultLabels?.filter((l: string) => l.trim()) || [],
 		timeFormat: response.timeFormat,
+		gitTrackingMode: response.gitTrackingMode || "git-tracked",
 		guidelinesType: response.guidelinesType || "cli",
 		agentFiles: response.agentFiles || [],
 	};
@@ -229,8 +215,8 @@ export const initCommand = new Command("init")
 				console.log();
 			}
 
-			// Check and prompt for git initialization
-			await checkAndInitGit(projectRoot);
+			// Check git exists - exit if not
+			checkGitExists(projectRoot);
 
 			let config: InitConfig;
 
@@ -250,9 +236,15 @@ export const initCommand = new Command("init")
 					defaultPriority: "medium",
 					defaultLabels: [],
 					timeFormat: "24h",
+					gitTrackingMode: "git-tracked",
 					guidelinesType: "cli",
 					agentFiles: INSTRUCTION_FILES.filter((f) => f.selected),
 				};
+			}
+
+			// Handle git-ignored mode: update .gitignore
+			if (config.gitTrackingMode === "git-ignored") {
+				await updateGitignoreForIgnoredMode(projectRoot);
 			}
 
 			// Initialize project
@@ -262,12 +254,16 @@ export const initCommand = new Command("init")
 				defaultPriority: config.defaultPriority,
 				defaultLabels: config.defaultLabels,
 				timeFormat: config.timeFormat,
+				gitTrackingMode: config.gitTrackingMode,
 			});
 
 			console.log();
 			console.log(chalk.green("✓ Project initialized successfully!"));
 			console.log(chalk.gray(`  Name: ${project.name}`));
 			console.log(chalk.gray(`  Location: ${knownsPath}`));
+			console.log(
+				chalk.gray(`  Git Mode: ${config.gitTrackingMode === "git-tracked" ? "Tracked (team)" : "Ignored (personal)"}`),
+			);
 
 			if (config.defaultAssignee) {
 				console.log(chalk.gray(`  Default Assignee: ${config.defaultAssignee}`));

@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
-import { timeApi, connectWebSocket, type ActiveTimer } from "../api/client";
+import { timeApi, type ActiveTimer } from "../api/client";
+import { useSSEEvent } from "./SSEContext";
 
 interface TimeTrackerContextType {
 	activeTimer: ActiveTimer | null;
@@ -77,24 +78,20 @@ export function TimeTrackerProvider({ children }: { children: ReactNode }) {
 		};
 	}, [activeTimer, calculateElapsed]);
 
-	// Listen for WebSocket updates
-	useEffect(() => {
-		const ws = connectWebSocket((data) => {
-			if (data.type === "time:updated") {
-				const timeData = data as { type: string; active: ActiveTimer | null };
-				setActiveTimer(timeData.active || null);
-				if (timeData.active) {
-					setElapsedMs(calculateElapsed(timeData.active));
-				} else {
-					setElapsedMs(0);
-				}
-			}
-		});
-
-		return () => {
-			if (ws) ws.close();
-		};
+	// Listen for SSE time updates
+	useSSEEvent("time:updated", ({ active }) => {
+		setActiveTimer(active || null);
+		if (active) {
+			setElapsedMs(calculateElapsed(active));
+		} else {
+			setElapsedMs(0);
+		}
 	}, [calculateElapsed]);
+
+	// Listen for SSE reconnection to refetch timer state
+	useSSEEvent("time:refresh", () => {
+		fetchStatus();
+	}, [fetchStatus]);
 
 	const start = useCallback(async (taskId: string) => {
 		try {

@@ -1,3 +1,13 @@
+---
+title: User Guide
+createdAt: '2025-12-29T11:49:48.531Z'
+updatedAt: '2026-01-05T17:01:51.678Z'
+description: Comprehensive user documentation for Knowns CLI and Web UI
+tags:
+  - docs
+  - guide
+  - user
+---
 # Knowns User Guide
 
 Complete guide for using Knowns - a CLI-first knowledge layer and task management system for development teams.
@@ -375,8 +385,8 @@ Tasks and docs can reference each other:
 - `@doc/patterns/module` → Links to document
 
 When viewing with `--plain`, references appear as:
-- `@.knowns/tasks/task-42 - Title.md`
-- `@.knowns/docs/patterns/module.md`
+- `@task-42`
+- `@doc/patterns/module`
 
 ### AI Guidelines Management
 

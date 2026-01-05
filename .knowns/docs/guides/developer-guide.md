@@ -1,3 +1,13 @@
+---
+title: Developer Guide
+createdAt: '2025-12-29T11:50:54.275Z'
+updatedAt: '2026-01-05T17:02:45.976Z'
+description: Technical documentation for contributors and developers
+tags:
+  - docs
+  - developer
+  - architecture
+---
 # Knowns Developer Guide
 
 Technical documentation for contributors and developers building on Knowns.

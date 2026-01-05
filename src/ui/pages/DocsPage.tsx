@@ -15,7 +15,8 @@ import { BlockNoteEditor, MDRender } from "../components/editor";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { getDocs, createDoc, updateDoc, connectWebSocket } from "../api/client";
+import { getDocs, createDoc, updateDoc } from "../api/client";
+import { useSSEEvent } from "../contexts/SSEContext";
 import { normalizePath, toDisplayPath, normalizePathForAPI } from "../lib/utils";
 
 interface DocMetadata {
@@ -53,21 +54,19 @@ export default function DocsPage() {
 	const [pathCopied, setPathCopied] = useState(false);
 	const markdownPreviewRef = useRef<HTMLDivElement>(null);
 
+	// Initial docs load
 	useEffect(() => {
 		loadDocs();
-
-		// Listen for real-time updates from CLI/AI
-		const ws = connectWebSocket((data) => {
-			if (data.type === "docs:updated" || data.type === "docs:refresh") {
-				// Reload docs when CLI makes changes
-				loadDocs();
-			}
-		});
-
-		return () => {
-			if (ws) ws.close();
-		};
 	}, []);
+
+	// Subscribe to SSE for real-time updates from CLI/AI
+	useSSEEvent("docs:updated", () => {
+		loadDocs();
+	});
+
+	useSSEEvent("docs:refresh", () => {
+		loadDocs();
+	});
 
 	// Handle doc path from URL navigation (e.g., #/docs/patterns/controller.md)
 	const handleHashNavigation = useCallback(() => {

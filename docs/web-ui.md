@@ -90,12 +90,22 @@ Automatically follows system preference. Toggle manually in the UI.
 
 ## Real-time Sync
 
-Changes sync in real-time between:
+Changes sync in real-time using **Server-Sent Events (SSE)**:
+
 - Multiple browser tabs
 - CLI and Web UI
 - Team members (same network)
 
 When you run `knowns task edit` in CLI, the Web UI updates instantly.
+
+### Reconnection
+
+SSE automatically reconnects when:
+- Network connection is restored
+- Computer wakes from sleep
+- Server restarts
+
+On reconnection, the UI automatically refreshes data to ensure you see the latest state.
 
 ## Reference Badges
 
@@ -124,10 +134,12 @@ Direct links to specific views:
 ```
 Browser ←→ Express Server ←→ File System (.knowns/)
               ↕
-           WebSocket (real-time sync)
+           SSE (real-time sync)
 ```
 
 The Web UI connects to a local Express server that reads/writes to your `.knowns/` folder. All data stays on your machine.
+
+Real-time updates use Server-Sent Events (SSE) for efficient one-way push from server to client.
 
 ## Troubleshooting
 
@@ -148,4 +160,5 @@ knowns browser --no-open
 
 1. Check if server is running in terminal
 2. Refresh the browser
-3. Check browser console for WebSocket errors
+3. Check browser console for SSE connection errors
+4. Check the connection indicator in the UI (shows reconnecting status)
