@@ -3,7 +3,8 @@ import { Bell } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Button } from "../ui/button";
 import ActivityFeed from "./ActivityFeed";
-import { api, connectWebSocket } from "../../api/client";
+import { api } from "../../api/client";
+import { useSSEEvent } from "../../contexts/SSEContext";
 
 export default function NotificationBell() {
 	const [hasNew, setHasNew] = useState(false);
@@ -33,17 +34,11 @@ export default function NotificationBell() {
 		checkNewActivities();
 	}, [checkNewActivities]);
 
-	// Subscribe to WebSocket for real-time updates
-	useEffect(() => {
-		const ws = connectWebSocket((data) => {
-			if (data.type === "tasks:updated" && !open) {
-				setHasNew(true);
-			}
-		});
-
-		return () => {
-			if (ws) ws.close();
-		};
+	// Subscribe to SSE for real-time updates
+	useSSEEvent("tasks:updated", () => {
+		if (!open) {
+			setHasNew(true);
+		}
 	}, [open]);
 
 	// Mark as read when opening

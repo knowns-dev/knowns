@@ -519,6 +519,26 @@ mcp__knowns__search_docs({ query: "patterns" })
 mcp__knowns__search_docs({ query: "auth", tag: "security" })
 ```
 
+#### Doc Organization
+
+| Doc Type | Location | Example |
+|----------|----------|---------|
+| **Important/Core docs** | Root `.knowns/docs/` | `README.md`, `ARCHITECTURE.md`, `CONVENTIONS.md` |
+| **Guides** | `.knowns/docs/guides/` | `guides/getting-started.md` |
+| **Patterns** | `.knowns/docs/patterns/` | `patterns/controller.md` |
+| **API docs** | `.knowns/docs/api/` | `api/endpoints.md` |
+| **Other categorized docs** | `.knowns/docs/<category>/` | `security/auth-patterns.md` |
+
+```
+# Important docs - at root (no folder)
+mcp__knowns__create_doc({ title: "README", description: "Project overview", tags: ["core"] })
+mcp__knowns__create_doc({ title: "ARCHITECTURE", description: "System design", tags: ["core"] })
+
+# Categorized docs - use folder
+mcp__knowns__create_doc({ title: "Getting Started", description: "Setup guide", tags: ["guide"], folder: "guides" })
+mcp__knowns__create_doc({ title: "Controller Pattern", description: "MVC pattern", tags: ["pattern"], folder: "patterns" })
+```
+
 ### Board
 
 ```

@@ -65,6 +65,12 @@ mcp__knowns__update_doc({ path: "name", appendContent: "more content" })
 mcp__knowns__search_docs({ query: "keyword" })
 ```
 
+**Doc Organization:**
+| Type | Location |
+|------|----------|
+| Core docs | Root `.knowns/docs/` (no folder param) |
+| Categorized | `.knowns/docs/<folder>/` (use folder param) |
+
 ### Time
 ```
 mcp__knowns__start_time({ taskId: "<id>" })

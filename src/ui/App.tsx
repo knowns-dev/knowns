@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { Task } from "../models/task";
-import { api, connectWebSocket } from "./api/client";
+import { api } from "./api/client";
+import { SSEProvider, useSSEEvent } from "./contexts/SSEContext";
 import { AppSidebar, TaskCreateForm, SearchCommandDialog, NotificationBell } from "./components/organisms";
 import { ThemeToggle } from "./components/atoms";
 import { HeaderTimeTracker } from "./components/molecules";
@@ -114,6 +115,7 @@ function AppContent() {
 		return () => window.removeEventListener("keydown", handleKeyDown);
 	}, []);
 
+	// Initial tasks load
 	useEffect(() => {
 		api
 			.getTasks()
@@ -125,31 +127,27 @@ function AppContent() {
 				console.error("Failed to load tasks:", err);
 				setLoading(false);
 			});
-
-		const ws = connectWebSocket((data) => {
-			if (data.type === "tasks:updated" && data.task) {
-				// Update specific task instead of reloading all tasks
-				setTasks((prevTasks) => {
-					const existingIndex = prevTasks.findIndex((t) => t.id === data.task?.id);
-					if (existingIndex >= 0) {
-						// Update existing task
-						const newTasks = [...prevTasks];
-						newTasks[existingIndex] = data.task;
-						return newTasks;
-					}
-					// Add new task
-					return [...prevTasks, data.task];
-				});
-			} else if (data.type === "tasks:refresh") {
-				// Reload all tasks (CLI bulk operation)
-				api.getTasks().then(setTasks).catch(console.error);
-			}
-		});
-
-		return () => {
-			if (ws) ws.close();
-		};
 	}, []);
+
+	// Subscribe to SSE events for real-time task updates
+	useSSEEvent("tasks:updated", ({ task }) => {
+		setTasks((prevTasks) => {
+			const existingIndex = prevTasks.findIndex((t) => t.id === task.id);
+			if (existingIndex >= 0) {
+				// Update existing task
+				const newTasks = [...prevTasks];
+				newTasks[existingIndex] = task;
+				return newTasks;
+			}
+			// Add new task
+			return [...prevTasks, task];
+		});
+	});
+
+	// Subscribe to tasks:refresh for bulk operations
+	useSSEEvent("tasks:refresh", () => {
+		api.getTasks().then(setTasks).catch(console.error);
+	});
 
 	const handleTaskCreated = () => {
 		api.getTasks().then(setTasks).catch(console.error);
@@ -327,9 +325,11 @@ export default function App() {
 		<ConfigProvider>
 			<UserProvider>
 				<UIPreferencesProvider>
-					<TimeTrackerProvider>
-						<AppContent />
-					</TimeTrackerProvider>
+					<SSEProvider>
+						<TimeTrackerProvider>
+							<AppContent />
+						</TimeTrackerProvider>
+					</SSEProvider>
 				</UIPreferencesProvider>
 			</UserProvider>
 		</ConfigProvider>

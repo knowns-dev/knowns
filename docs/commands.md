@@ -450,6 +450,8 @@ knowns search <query> [options]
 
 Initialize Knowns in current directory with interactive wizard.
 
+**Requirement:** Git must be initialized first (`git init`).
+
 ```bash
 knowns init [project-name] [options]
 ```
@@ -475,12 +477,22 @@ knowns init --force
 
 **Wizard prompts:**
 - Project name
+- **Git tracking mode** (git-tracked or git-ignored)
 - Default assignee
 - Default priority
 - Default labels
 - Time format (12h/24h)
 - AI guidelines version (CLI/MCP)
 - AI agent files to sync (CLAUDE.md, GEMINI.md, etc.)
+
+**Git Tracking Modes:**
+
+| Mode | Description |
+|------|-------------|
+| `git-tracked` | All `.knowns/` files tracked in git (recommended for teams) |
+| `git-ignored` | Only docs tracked, tasks/config ignored (personal use) |
+
+When `git-ignored` is selected, Knowns automatically updates `.gitignore` to exclude task files while keeping docs tracked.
 
 ### `knowns config`
 

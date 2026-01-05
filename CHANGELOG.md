@@ -5,6 +5,39 @@ All notable changes to Knowns will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-01-06
+
+### Added
+
+- **Git Tracking Mode**: Select tracking mode during `knowns init`
+  - `git-tracked` (default): All `.knowns/` files tracked in git (recommended for teams)
+  - `git-ignored`: Only docs tracked, tasks/config ignored (personal use)
+  - Automatically updates `.gitignore` for git-ignored mode
+- **SSE Auto-Reconnection**: Web UI automatically refreshes data on reconnect
+  - Detects when connection is restored after sleep/wake
+  - Triggers `tasks:refresh`, `time:refresh`, `docs:refresh` events
+- **New Docs**: Added feature documentation
+  - `features/git-tracking-modes.md` - Git tracking modes explained
+  - `features/real-time-sync.md` - SSE sync and reconnection behavior
+
+### Changed
+
+- **WebSocket → SSE**: Migrated real-time updates from WebSocket to Server-Sent Events
+  - Simpler protocol with built-in auto-reconnect
+  - Better firewall compatibility (standard HTTP)
+- **Init requires Git**: `knowns init` now checks for `.git` directory and exits with helpful message if not found
+- **Documentation Updates**:
+  - All docs translated to English
+  - Updated architecture diagrams (WebSocket → SSE)
+  - Added `--plain` flag clarification (only for view/list/search commands)
+  - Added doc organization guide (core docs at root, categorized in folders)
+
+### Fixed
+
+- **Guidelines clarity**: Updated CLI/MCP templates to clarify `--plain` flag usage
+  - `--plain` only works with view/list/search commands
+  - Create/edit commands do NOT support `--plain`
+
 ## [0.5.0] - 2025-01-04
 
 ### Added

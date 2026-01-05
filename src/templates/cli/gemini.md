@@ -3,7 +3,7 @@
 
 ## RULES
 - NEVER edit .md files directly - use CLI only
-- ALWAYS use `--plain` flag
+- Use `--plain` flag for VIEW/LIST/SEARCH commands only (NOT for create/edit)
 - Read docs BEFORE coding
 - Start timer when taking task, stop when done
 
@@ -73,6 +73,12 @@ knowns doc search-in "name" "query" --plain
 knowns doc replace "name" "old" "new"
 ```
 
+**Doc Organization:**
+| Type | Location |
+|------|----------|
+| Core docs | Root `.knowns/docs/` (no -f flag) |
+| Categorized | `.knowns/docs/<folder>/` (use -f flag) |
+
 ### Time
 ```bash
 knowns time start <id>
@@ -102,6 +108,18 @@ knowns search "query" --type task --plain
 
 **Status:** `todo`, `in-progress`, `in-review`, `blocked`, `done`
 **Priority:** `low`, `medium`, `high`
+
+## --plain FLAG
+
+⚠️ **CRITICAL**: Only use `--plain` with VIEW/LIST/SEARCH commands!
+
+| ✅ Supports --plain | ❌ NO --plain |
+|---------------------|---------------|
+| `task <id> --plain` | `task create` |
+| `task list --plain` | `task edit` |
+| `doc <path> --plain` | `doc create` |
+| `doc list --plain` | `doc edit` |
+| `search --plain` | `time start/stop/add` |
 
 ## LONG CONTENT
 
