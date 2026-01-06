@@ -21,6 +21,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -43,23 +44,23 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Releasing version: $VERSION"
 
       - name: Update package.json version
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          bun run --bun -e "
-            const pkg = require('./package.json');
-            pkg.version = '$VERSION';
-            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
+          echo "Updating package.json to version $VERSION"
+          # Use npm version to update (--no-git-tag-version to avoid creating another tag)
+          npm version $VERSION --no-git-tag-version --allow-same-version
+          cat package.json | grep '"version"'
 
       - name: Commit version bump
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json
-          git commit -m "chore: bump version to ${{ steps.version.outputs.version }}" || echo "No changes to commit"
-          git push origin HEAD:main
+          git diff --cached --quiet || git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
+          git push origin main
 
       - name: Build project
         run: bun run build
