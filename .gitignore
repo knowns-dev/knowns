@@ -41,3 +41,5 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .knowns/*
 !.knowns/docs/
 !.knowns/docs/**
+.knowns/docs/.DS_Store
+.knowns/docs/readme.md

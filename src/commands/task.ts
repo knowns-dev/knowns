@@ -378,12 +378,16 @@ async function formatTaskTree(tasks: Task[], fileStore: FileStore, plain = false
 	const topLevelTasks = tasks.filter((t) => !t.parent);
 
 	if (topLevelTasks.length === 0) {
-		return chalk.gray("No tasks found");
+		return plain ? "No tasks found" : chalk.gray("No tasks found");
 	}
 
 	const output: string[] = [];
 
-	if (!plain) {
+	if (plain) {
+		output.push("Task Tree (Hierarchical View)");
+		output.push("=".repeat(50));
+		output.push("");
+	} else {
 		output.push(chalk.bold("📋 Tasks"));
 	}
 
@@ -405,6 +409,7 @@ async function formatTaskNode(
 	isLast: boolean,
 	output: string[],
 	plain: boolean,
+	depth = 0,
 ): Promise<void> {
 	const connector = isLast ? "└── " : "├── ";
 	const extension = isLast ? "    " : "│   ";
@@ -413,9 +418,13 @@ async function formatTaskNode(
 	const progress = await getSubtaskProgress(task, fileStore);
 
 	if (plain) {
-		// Plain format: depth,id,status,title,progress
-		const depth = task.id.split(".").length - 1;
-		output.push(`${depth},${task.id},${task.status},"${task.title}",${progress}`);
+		// Plain format: indented with marker for children, human-readable
+		// Format: "  > #ID [status] Title (progress)" for children
+		// Format: "#ID [status] Title (progress)" for root tasks
+		const indent = depth > 0 ? `${"  ".repeat(depth)}> ` : "";
+		const statusDisplay = task.status.toUpperCase().replace("-", "_");
+		const progressDisplay = progress ? ` ${progress}` : "";
+		output.push(`${indent}#${task.id} [${statusDisplay}] ${task.title}${progressDisplay}`);
 	} else {
 		const statusColor = getStatusColor(task.status);
 		const line = `${prefix}${connector}#${task.id} ${task.title} ${statusColor(`[${task.status}]`)} ${statusIcon}${progress}`;
@@ -429,10 +438,70 @@ async function formatTaskNode(
 			const subtask = await fileStore.getTask(subtaskId);
 			if (subtask) {
 				const isLastChild = i === task.subtasks.length - 1;
-				await formatTaskNode(subtask, fileStore, prefix + extension, isLastChild, output, plain);
+				await formatTaskNode(subtask, fileStore, prefix + extension, isLastChild, output, plain, depth + 1);
 			}
 		}
 	}
+}
+
+/**
+ * Format children of a task for display
+ */
+async function formatTaskChildren(task: Task, fileStore: FileStore, plain = false): Promise<string> {
+	const output: string[] = [];
+
+	if (plain) {
+		output.push(`Children of Task #${task.id}: ${task.title}`);
+		output.push("=".repeat(50));
+		output.push("");
+
+		if (task.subtasks.length === 0) {
+			output.push("No children tasks");
+			return output.join("\n");
+		}
+
+		// Calculate progress
+		let completed = 0;
+		const total = task.subtasks.length;
+
+		for (const subtaskId of task.subtasks) {
+			const subtask = await fileStore.getTask(subtaskId);
+			if (subtask) {
+				if (subtask.status === "done") completed++;
+				const statusDisplay = subtask.status.toUpperCase().replace("-", "_");
+				const priorityDisplay = subtask.priority.toUpperCase();
+				output.push(`#${subtask.id} [${statusDisplay}] [${priorityDisplay}] ${subtask.title}`);
+			}
+		}
+
+		output.push("");
+		output.push(`Progress: ${completed}/${total} completed`);
+	} else {
+		output.push(chalk.bold(`📋 Children of Task #${task.id}: ${task.title}`));
+		output.push("");
+
+		if (task.subtasks.length === 0) {
+			output.push(chalk.gray("No children tasks"));
+			return output.join("\n");
+		}
+
+		let completed = 0;
+
+		for (const subtaskId of task.subtasks) {
+			const subtask = await fileStore.getTask(subtaskId);
+			if (subtask) {
+				if (subtask.status === "done") completed++;
+				const statusIcon = getStatusIcon(subtask.status);
+				const statusColor = getStatusColor(subtask.status);
+				output.push(`  ${statusIcon} #${subtask.id} ${subtask.title} ${statusColor(`[${subtask.status}]`)}`);
+			}
+		}
+
+		output.push("");
+		output.push(chalk.gray(`Progress: ${completed}/${task.subtasks.length} completed`));
+	}
+
+	return output.join("\n");
 }
 
 /**
@@ -683,7 +752,8 @@ const viewCommand = new Command("view")
 	.description("View task details")
 	.argument("<id>", "Task ID")
 	.option("--plain", "Plain text output for AI")
-	.action(async (id: string, options: { plain?: boolean }) => {
+	.option("--children", "Show detailed list of child tasks")
+	.action(async (id: string, options: { plain?: boolean; children?: boolean }) => {
 		try {
 			const fileStore = getFileStore();
 			const task = await fileStore.getTask(id);
@@ -691,6 +761,12 @@ const viewCommand = new Command("view")
 			if (!task) {
 				console.error(chalk.red(`✗ Task ${id} not found`));
 				process.exit(1);
+			}
+
+			// If --children flag, show children details instead of full task
+			if (options.children) {
+				console.log(await formatTaskChildren(task, fileStore, options.plain));
+				return;
 			}
 
 			console.log(await formatTask(task, fileStore, options.plain));
@@ -1832,8 +1908,9 @@ export const taskCommand = new Command("task")
 	.description("Manage tasks")
 	.argument("[id]", "Task ID (shorthand for 'task view <id>')")
 	.option("--plain", "Plain text output for AI")
+	.option("--children", "Show detailed list of child tasks")
 	.enablePositionalOptions()
-	.action(async (id: string | undefined, options: { plain?: boolean }) => {
+	.action(async (id: string | undefined, options: { plain?: boolean; children?: boolean }) => {
 		// If no ID provided, show help
 		if (!id) {
 			taskCommand.help();
@@ -1848,6 +1925,12 @@ export const taskCommand = new Command("task")
 			if (!task) {
 				console.error(chalk.red(`✗ Task ${id} not found`));
 				process.exit(1);
+			}
+
+			// If --children flag, show children details instead of full task
+			if (options.children) {
+				console.log(await formatTaskChildren(task, fileStore, options.plain));
+				return;
 			}
 
 			console.log(await formatTask(task, fileStore, options.plain));

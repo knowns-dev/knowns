@@ -1,0 +1,155 @@
+# Release Drafter Configuration
+# Docs: https://github.com/release-drafter/release-drafter
+
+# Version resolver - auto bump version based on labels
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+
+# Categories based on PR labels or title prefixes
+# Using Keep a Changelog format: Added, Changed, Deprecated, Removed, Fixed, Security
+categories:
+  - title: '### Added'
+    labels:
+      - 'feature'
+      - 'enhancement'
+    collapse-after: 10
+  - title: '### Changed'
+    labels:
+      - 'chore'
+      - 'maintenance'
+      - 'dependencies'
+      - 'refactor'
+      - 'refactoring'
+      - 'performance'
+      - 'perf'
+  - title: '### Fixed'
+    labels:
+      - 'bug'
+      - 'fix'
+      - 'bugfix'
+    collapse-after: 10
+  - title: '### Security'
+    labels:
+      - 'security'
+  - title: '### Documentation'
+    labels:
+      - 'documentation'
+      - 'docs'
+  - title: '### Breaking Changes'
+    labels:
+      - 'breaking'
+      - 'breaking-change'
+
+# Auto-label PRs based on title (Conventional Commits)
+autolabeler:
+  - label: 'feature'
+    title:
+      - '/^feat(\(.+\))?:/i'
+      - '/^feature(\(.+\))?:/i'
+  - label: 'bug'
+    title:
+      - '/^fix(\(.+\))?:/i'
+      - '/^bugfix(\(.+\))?:/i'
+  - label: 'documentation'
+    title:
+      - '/^docs(\(.+\))?:/i'
+      - '/^doc(\(.+\))?:/i'
+    files:
+      - '*.md'
+      - 'docs/**/*'
+  - label: 'chore'
+    title:
+      - '/^chore(\(.+\))?:/i'
+      - '/^build(\(.+\))?:/i'
+  - label: 'refactor'
+    title:
+      - '/^refactor(\(.+\))?:/i'
+  - label: 'performance'
+    title:
+      - '/^perf(\(.+\))?:/i'
+  - label: 'test'
+    title:
+      - '/^test(\(.+\))?:/i'
+      - '/^tests(\(.+\))?:/i'
+  - label: 'dependencies'
+    title:
+      - '/^deps(\(.+\))?:/i'
+    files:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'bun.lockb'
+  - label: 'ci'
+    title:
+      - '/^ci(\(.+\))?:/i'
+    files:
+      - '.github/**/*'
+  - label: 'breaking-change'
+    title:
+      - '/^.+!:/i'
+    body:
+      - '/BREAKING CHANGE:/i'
+
+# Version bumping rules
+version-resolver:
+  major:
+    labels:
+      - 'breaking'
+      - 'breaking-change'
+  minor:
+    labels:
+      - 'feature'
+      - 'enhancement'
+  patch:
+    labels:
+      - 'bug'
+      - 'fix'
+      - 'bugfix'
+      - 'chore'
+      - 'documentation'
+      - 'refactor'
+      - 'performance'
+  default: patch
+
+# Exclude certain PRs
+exclude-labels:
+  - 'skip-changelog'
+  - 'no-changelog'
+
+# Release notes template (matches Keep a Changelog format)
+template: |
+  $CHANGES
+
+  ### Contributors
+
+  $CONTRIBUTORS
+
+  **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
+
+# Change template (each PR entry)
+change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
+change-title-escapes: '\<*_&'
+
+# No changes template
+no-changes-template: '- No changes'
+
+# Replacers for cleaning up PR titles
+replacers:
+  # Remove conventional commit prefixes for cleaner changelog
+  - search: '/^feat(\(.+\))?: /i'
+    replace: ''
+  - search: '/^fix(\(.+\))?: /i'
+    replace: ''
+  - search: '/^docs(\(.+\))?: /i'
+    replace: ''
+  - search: '/^chore(\(.+\))?: /i'
+    replace: ''
+  - search: '/^refactor(\(.+\))?: /i'
+    replace: ''
+  - search: '/^perf(\(.+\))?: /i'
+    replace: ''
+  - search: '/^test(\(.+\))?: /i'
+    replace: ''
+  - search: '/^ci(\(.+\))?: /i'
+    replace: ''
+  - search: '/^build(\(.+\))?: /i'
+    replace: ''

@@ -149,6 +149,9 @@ export function extractDocPaths(text: string): string[] {
 export function normalizeRefs(text: string): string {
 	let result = text;
 
+	// Parse escape sequences (for AI agents that pass literal \n instead of actual newlines)
+	result = parseEscapeSequences(result);
+
 	// Normalize task refs: @.knowns/tasks/task-{id} - Title.md → @task-{id}
 	result = result.replace(new RegExp(OUTPUT_TASK_REGEX.source, "g"), (match, taskId) => `@task-${taskId}`);
 
@@ -156,6 +159,15 @@ export function normalizeRefs(text: string): string {
 	result = result.replace(new RegExp(OUTPUT_DOC_REGEX.source, "g"), (match, docPath) => `@doc/${docPath}`);
 
 	return result;
+}
+
+/**
+ * Parse common escape sequences in text
+ * Converts literal \n, \t, etc. to actual characters
+ * This helps AI agents that pass "line1\nline2" instead of $'line1\nline2'
+ */
+export function parseEscapeSequences(text: string): string {
+	return text.replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\r/g, "\r");
 }
 
 /**
