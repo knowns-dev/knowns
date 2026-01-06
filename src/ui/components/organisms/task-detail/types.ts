@@ -1,4 +1,4 @@
-import type { Task, TaskPriority, TaskStatus } from "../../../models/task";
+import type { Task, TaskPriority, TaskStatus } from "@models/task";
 
 export interface TaskDetailProps {
 	task: Task;

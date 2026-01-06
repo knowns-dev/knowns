@@ -2,8 +2,9 @@ import { useState, useRef, useEffect } from "react";
 import { SheetHeader, SheetTitle } from "../../ui/sheet";
 import { Input } from "../../ui/input";
 import { Badge } from "../../ui/badge";
-import type { Task } from "../../../models/task";
-import { statusColors } from "./types";
+import type { Task } from "@models/task";
+import { useConfig } from "../../../contexts/ConfigContext";
+import { getStatusBadgeClasses, getStatusLabel, type ColorName } from "../../../utils/colors";
 
 interface TaskHeaderProps {
 	task: Task;
@@ -15,6 +16,8 @@ export function TaskHeader({ task, onSave, saving }: TaskHeaderProps) {
 	const [editing, setEditing] = useState(false);
 	const [title, setTitle] = useState(task.title);
 	const inputRef = useRef<HTMLInputElement>(null);
+	const { config } = useConfig();
+	const configStatusColors = (config.statusColors || {}) as Record<string, ColorName>;
 
 	useEffect(() => {
 		setTitle(task.title);
@@ -48,8 +51,8 @@ export function TaskHeader({ task, onSave, saving }: TaskHeaderProps) {
 				<Badge variant="outline" className="font-mono">
 					#{task.id}
 				</Badge>
-				<Badge className={statusColors[task.status]}>
-					{task.status.replace("-", " ").replace(/\b\w/g, (l) => l.toUpperCase())}
+				<Badge className={getStatusBadgeClasses(task.status, configStatusColors)}>
+					{getStatusLabel(task.status)}
 				</Badge>
 			</div>
 			{editing ? (

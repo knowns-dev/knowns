@@ -29,7 +29,7 @@ const DEFAULT_CONFIG: Config = {
 	name: "Knowns",
 	defaultPriority: "medium",
 	defaultLabels: [],
-	statuses: ["todo", "in-progress", "in-review", "done", "blocked"],
+	statuses: ["todo", "in-progress", "in-review", "done", "blocked", "on-hold", "urgent"],
 	visibleColumns: ["todo", "in-progress", "in-review", "done", "blocked"],
 	statusColors: {},
 };
