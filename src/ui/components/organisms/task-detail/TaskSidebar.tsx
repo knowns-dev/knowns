@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Plus, X, Archive, ArchiveRestore, Trash2, ArrowUp, Play, Square, Pause } from "lucide-react";
 import { Button } from "../../ui/button";
 import { Badge } from "../../ui/badge";
@@ -13,10 +13,12 @@ import {
 	SelectValue,
 } from "../../ui/select";
 import AssigneeDropdown from "../AssigneeDropdown";
-import type { Task, TaskStatus, TaskPriority } from "../../../models/task";
-import { statusOptions, priorityOptions, statusColors, priorityColors } from "./types";
+import type { Task, TaskStatus, TaskPriority } from "@models/task";
+import { priorityOptions, priorityColors } from "./types";
 import { cn } from "@/ui/lib/utils";
 import { useTimeTracker } from "../../../contexts/TimeTrackerContext";
+import { useConfig } from "../../../contexts/ConfigContext";
+import { buildStatusOptions, getStatusBadgeClasses, type ColorName } from "../../../utils/colors";
 
 interface TaskSidebarProps {
 	task: Task;
@@ -44,6 +46,16 @@ export function TaskSidebar({
 	const [addingLabel, setAddingLabel] = useState(false);
 	const [newLabel, setNewLabel] = useState("");
 	const { activeTimer, isRunning, isPaused, start, stop, pause, resume } = useTimeTracker();
+	const { config } = useConfig();
+
+	// Build status options from config
+	const statusOptions = useMemo(() => {
+		const statuses = config.statuses || ["todo", "in-progress", "in-review", "done", "blocked"];
+		return buildStatusOptions(statuses);
+	}, [config.statuses]);
+
+	// Get status colors from config
+	const configStatusColors = (config.statusColors || {}) as Record<string, ColorName>;
 
 	const isThisTaskActive = activeTimer?.taskId === task.id;
 	const canStartTimer = !isRunning || isThisTaskActive;
@@ -154,7 +166,7 @@ export function TaskSidebar({
 							onValueChange={(value) => onSave({ status: value as TaskStatus })}
 							disabled={saving}
 						>
-							<SelectTrigger className={cn("w-full h-9", statusColors[task.status])}>
+							<SelectTrigger className={cn("w-full h-9", getStatusBadgeClasses(task.status, configStatusColors))}>
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -396,7 +408,7 @@ export function TaskSidebar({
 					onValueChange={(value) => onSave({ status: value as TaskStatus })}
 					disabled={saving}
 				>
-					<SelectTrigger className={cn("w-full", statusColors[task.status])}>
+					<SelectTrigger className={cn("w-full", getStatusBadgeClasses(task.status, configStatusColors))}>
 						<SelectValue />
 					</SelectTrigger>
 					<SelectContent>

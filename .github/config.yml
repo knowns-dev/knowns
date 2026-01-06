@@ -1,0 +1,167 @@
+# Probot Apps Configuration
+# This file configures multiple Probot apps: Welcome, Request-Info, etc.
+
+# ============================================================================
+# WELCOME BOT
+# Docs: https://github.com/behaviorbot/welcome
+# Install: https://github.com/apps/welcome
+# ============================================================================
+
+# Comment on new issues
+newIssueWelcomeComment: |
+  Thanks for opening your first issue here! Welcome to the Knowns CLI community! :wave:
+
+  Please make sure you've read our [Contributing Guidelines](CONTRIBUTING.md) and provided all the necessary information to help us understand and reproduce the issue.
+
+  A maintainer will review your issue soon. In the meantime, feel free to explore the codebase or check out other open issues.
+
+# Comment on new PRs
+newPRWelcomeComment: |
+  Thanks for opening this pull request! :tada:
+
+  Please make sure:
+  - [ ] Your code follows our coding conventions
+  - [ ] You've added tests for your changes (if applicable)
+  - [ ] You've updated the documentation (if applicable)
+  - [ ] All CI checks pass
+
+  A maintainer will review your PR soon. Thanks for contributing to Knowns CLI!
+
+# Comment on merged PRs (first-time contributors)
+firstPRMergeComment: |
+  Congrats on getting your first pull request merged! :confetti_ball: :tada:
+
+  Thank you for your contribution to Knowns CLI! You're now officially a contributor! :star2:
+
+  We'd love to have you stick around. Check out our [good first issues](https://github.com/knowns-dev/knowns/labels/good%20first%20issue) if you want to contribute more!
+
+# ============================================================================
+# REQUEST-INFO BOT
+# Docs: https://github.com/behaviorbot/request-info
+# Install: https://github.com/apps/request-info
+# ============================================================================
+
+# Comment to post when an issue is opened without enough info
+requestInfoReplyComment: |
+  Thanks for opening this issue! :wave:
+
+  It looks like you haven't provided enough information for us to help you effectively.
+  Please update your issue with the following details:
+
+  **For bug reports:**
+  - Knowns CLI version (`knowns --version`)
+  - Operating system and version
+  - Node.js version (`node --version`)
+  - Steps to reproduce the issue
+  - Expected behavior vs actual behavior
+  - Error messages or logs (if any)
+
+  **For feature requests:**
+  - Clear description of the feature
+  - Use case / why this would be useful
+  - Any examples from other tools (if applicable)
+
+  This helps us understand and address your issue faster. Thanks! :pray:
+
+# Labels to check - if issue has these labels, don't request info
+requestInfoLabelToAdd: "needs-more-info"
+
+# Titles that trigger request for more info (empty title, default templates)
+requestInfoDefaultTitles:
+  - "Bug Report"
+  - "Feature Request"
+  - "Update"
+  - "Updates"
+  - "Question"
+  - "Help"
+  - "Issue"
+  - "Problem"
+
+# Only request info if body is shorter than this
+requestInfoMinimumBodyLength: 50
+
+# ============================================================================
+# FIRST-TIMERS BOT
+# Docs: https://github.com/first-timers/first-timers-bot
+# Install: https://github.com/apps/first-timers
+# Note: This bot creates issues from simple file changes for first-time contributors
+# ============================================================================
+
+# Labels to add to first-timer issues
+firstTimersLabels:
+  - "good first issue"
+  - "first-timers-only"
+  - "help wanted"
+
+# Files to watch for simple changes
+# firstTimersFiles:
+#   - "docs/**/*.md"
+#   - "README.md"
+#   - "CONTRIBUTING.md"
+
+# ============================================================================
+# AUTO-ASSIGN BOT
+# Docs: https://github.com/kentaro-m/auto-assign
+# Install: https://github.com/apps/auto-assign
+# ============================================================================
+
+# Reviewers to assign for PRs
+addReviewers: true
+addAssignees: true
+
+# Reviewers list (GitHub usernames)
+reviewers:
+  - knowns-dev
+  # Add more reviewers here
+
+# Assignees list (use 'author' to assign PR author)
+assignees:
+  - author
+
+# Number of reviewers to assign (0 = all)
+numberOfReviewers: 1
+
+# Review groups (optional - for teams)
+# reviewGroups:
+#   core:
+#     - reviewer1
+#     - reviewer2
+
+# Skip keywords - don't assign if PR title contains these
+skipKeywords:
+  - wip
+  - WIP
+  - draft
+  - Draft
+
+# ============================================================================
+# SENTIMENT BOT
+# Docs: https://github.com/behaviorbot/sentiment-bot
+# Install: https://github.com/apps/sentiment-bot
+# Uses Google Perspective API to detect toxic comments
+# ============================================================================
+
+# Message to reply when toxic comment detected
+sentimentBotReplyComment: |
+  :wave: Hi there!
+
+  We noticed your comment may come across differently than intended.
+  Please remember to keep discussions respectful and constructive.
+
+  Check out our [Code of Conduct](CODE_OF_CONDUCT.md) for community guidelines.
+
+  Let's work together to keep this a welcoming space for everyone! :heart:
+
+# Toxicity threshold (0.0 - 1.0, higher = more strict)
+sentimentBotToxicityThreshold: 0.7
+
+# ============================================================================
+# WIP (Work In Progress) BOT
+# Docs: https://github.com/wip/app
+# Install: https://github.com/apps/wip
+# Prevents merging PRs with WIP in title
+# ============================================================================
+
+# Terms that mark a PR as work in progress
+# Default: WIP, [WIP], wip, [wip], do not merge, do-not-merge
+# The bot will set PR status to "pending" if any of these are found in title

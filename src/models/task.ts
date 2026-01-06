@@ -64,7 +64,15 @@ export function createTask(
 }
 
 // Default statuses (fallback if config not available)
-export const DEFAULT_STATUSES: TaskStatus[] = ["todo", "in-progress", "in-review", "done", "blocked", "on-hold"];
+export const DEFAULT_STATUSES: TaskStatus[] = [
+	"todo",
+	"in-progress",
+	"in-review",
+	"done",
+	"blocked",
+	"on-hold",
+	"urgent",
+];
 
 // Helper to validate task status
 // Use with allowed statuses from config, or falls back to DEFAULT_STATUSES
