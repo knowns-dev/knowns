@@ -1,10 +1,11 @@
 import type React from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlignLeft, ClipboardCheck, Plus, Trash2, ArrowUp, Maximize2, Minimize2, X, FileText, StickyNote } from "lucide-react";
-import type { Task, TaskPriority, TaskStatus } from "../../models/task";
+import type { Task, TaskPriority, TaskStatus } from "@models/task";
 import { useCurrentUser } from "../../contexts/UserContext";
 import { useUIPreferences } from "../../contexts/UIPreferencesContext";
+import { useConfig } from "../../contexts/ConfigContext";
 import { createTask } from "../../api/client";
 import { toast } from "../ui/sonner";
 import AssigneeDropdown from "./AssigneeDropdown";
@@ -38,6 +39,7 @@ import {
 } from "../ui/command";
 import { cn } from "@/ui/lib/utils";
 import { Check, ChevronsUpDown } from "lucide-react";
+import { buildStatusOptions, getStatusBadgeClasses, type ColorName } from "../../utils/colors";
 
 interface TaskCreateFormProps {
 	isOpen: boolean;
@@ -46,27 +48,11 @@ interface TaskCreateFormProps {
 	onCreated: () => void;
 }
 
-const statusOptions: { value: TaskStatus; label: string }[] = [
-	{ value: "todo", label: "To Do" },
-	{ value: "in-progress", label: "In Progress" },
-	{ value: "in-review", label: "In Review" },
-	{ value: "done", label: "Done" },
-	{ value: "blocked", label: "Blocked" },
-];
-
 const priorityOptions: { value: TaskPriority; label: string }[] = [
 	{ value: "low", label: "Low" },
 	{ value: "medium", label: "Medium" },
 	{ value: "high", label: "High" },
 ];
-
-const statusColors: Record<TaskStatus, string> = {
-	todo: "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300",
-	"in-progress": "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
-	"in-review": "bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300",
-	done: "bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300",
-	blocked: "bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300",
-};
 
 const priorityColors: Record<TaskPriority, string> = {
 	low: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400",
@@ -81,8 +67,18 @@ export default function TaskCreateForm({
 	onCreated,
 }: TaskCreateFormProps) {
 	const { currentUser } = useCurrentUser();
+	const { config } = useConfig();
 	const titleInputRef = useRef<HTMLInputElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
+
+	// Build status options from config
+	const statusOptions = useMemo(() => {
+		const statuses = config.statuses || ["todo", "in-progress", "in-review", "done", "blocked"];
+		return buildStatusOptions(statuses);
+	}, [config.statuses]);
+
+	// Get status colors from config
+	const configStatusColors = (config.statusColors || {}) as Record<string, ColorName>;
 
 	// Form states
 	const [title, setTitle] = useState("");
@@ -461,7 +457,7 @@ export default function TaskCreateForm({
 					onValueChange={(value) => setStatus(value as TaskStatus)}
 					disabled={saving}
 				>
-					<SelectTrigger className={cn("w-full", statusColors[status])}>
+					<SelectTrigger className={cn("w-full", getStatusBadgeClasses(status, configStatusColors))}>
 						<SelectValue />
 					</SelectTrigger>
 					<SelectContent>
@@ -759,7 +755,7 @@ export default function TaskCreateForm({
 													onValueChange={(value) => setStatus(value as TaskStatus)}
 													disabled={saving}
 												>
-													<SelectTrigger className={cn("w-full h-9", statusColors[status])}>
+													<SelectTrigger className={cn("w-full h-9", getStatusBadgeClasses(status, configStatusColors))}>
 														<SelectValue />
 													</SelectTrigger>
 													<SelectContent>

@@ -165,3 +165,40 @@ export function getColumnClasses(
 	const colorName = statusColors[status] || "gray";
 	return COLUMN_CLASSES[colorName] || COLUMN_CLASSES.gray;
 }
+
+/**
+ * Default status labels mapping
+ */
+export const DEFAULT_STATUS_LABELS: Record<string, string> = {
+	todo: "To Do",
+	"in-progress": "In Progress",
+	"in-review": "In Review",
+	done: "Done",
+	blocked: "Blocked",
+	"on-hold": "On Hold",
+	urgent: "Urgent",
+};
+
+/**
+ * Get readable label from status slug
+ */
+export function getStatusLabel(status: string): string {
+	if (DEFAULT_STATUS_LABELS[status]) {
+		return DEFAULT_STATUS_LABELS[status];
+	}
+	// Fallback: convert slug to title case
+	return status
+		.split("-")
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+		.join(" ");
+}
+
+/**
+ * Build status options from config statuses
+ */
+export function buildStatusOptions(statuses: string[]): { value: string; label: string }[] {
+	return statuses.map((status) => ({
+		value: status,
+		label: getStatusLabel(status),
+	}));
+}
