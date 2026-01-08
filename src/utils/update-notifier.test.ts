@@ -35,8 +35,8 @@ describe("update notifier", () => {
 		});
 
 		expect(fetchLatest).not.toHaveBeenCalled();
-		expect(logs).toHaveLength(1);
-		expect(logs[0]).toContain("0.8.0");
+		expect(logs).toHaveLength(3); // empty line, message, empty line
+		expect(logs[1]).toContain("0.8.0");
 	});
 
 	test("fetches when cache is stale and updates cache", async () => {
@@ -55,8 +55,8 @@ describe("update notifier", () => {
 		});
 
 		expect(fetchLatest).toHaveBeenCalled();
-		expect(logs).toHaveLength(1);
-		expect(logs[0]).toContain("0.9.0");
+		expect(logs).toHaveLength(3); // empty line, message, empty line
+		expect(logs[1]).toContain("0.9.0");
 
 		const cached = JSON.parse(await readFile(cachePath, "utf-8"));
 		expect(cached.latestVersion).toBe("0.9.0");
