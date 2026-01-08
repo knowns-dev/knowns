@@ -1,13 +1,15 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { TaskPriority, TaskStatus } from "@models/index";
+import type { Task, TaskPriority, TaskStatus } from "@models/index";
 import { FileStore } from "@storage/file-store";
 /**
  * Integration Tests for Task CLI Commands
  * Tests the full flow of task operations using FileStore
  */
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+const randomIdPattern = /^[a-z0-9]{6}$/;
 
 describe("Task CLI Integration Tests", () => {
 	let tempDir: string;
@@ -38,7 +40,8 @@ describe("Task CLI Integration Tests", () => {
 				timeEntries: [],
 			});
 
-			expect(task.id).toBe("1");
+			expect(task.id).toMatch(randomIdPattern);
+			expect(task.id).toHaveLength(6);
 			expect(task.title).toBe("My First Task");
 			expect(task.status).toBe("todo");
 			expect(task.priority).toBe("medium");
@@ -63,6 +66,7 @@ describe("Task CLI Integration Tests", () => {
 				implementationNotes: "Notes here",
 			});
 
+			expect(task.id).toMatch(randomIdPattern);
 			expect(task.title).toBe("Complete Task");
 			expect(task.description).toBe("A detailed description");
 			expect(task.status).toBe("in-progress");
@@ -73,9 +77,9 @@ describe("Task CLI Integration Tests", () => {
 			expect(task.implementationPlan).toBe("Step 1: Do this");
 		});
 
-		test("generates sequential IDs", async () => {
-			const task1 = await fileStore.createTask({
-				title: "Task 1",
+		test("generates random 6-character base36 IDs", async () => {
+			const task = await fileStore.createTask({
+				title: "Random ID Task",
 				status: "todo",
 				priority: "medium",
 				labels: [],
@@ -85,34 +89,117 @@ describe("Task CLI Integration Tests", () => {
 				timeEntries: [],
 			});
 
-			const task2 = await fileStore.createTask({
-				title: "Task 2",
-				status: "todo",
-				priority: "medium",
-				labels: [],
-				subtasks: [],
-				acceptanceCriteria: [],
-				timeSpent: 0,
-				timeEntries: [],
-			});
-
-			const task3 = await fileStore.createTask({
-				title: "Task 3",
-				status: "todo",
-				priority: "medium",
-				labels: [],
-				subtasks: [],
-				acceptanceCriteria: [],
-				timeSpent: 0,
-				timeEntries: [],
-			});
-
-			expect(task1.id).toBe("1");
-			expect(task2.id).toBe("2");
-			expect(task3.id).toBe("3");
+			expect(task.id).toMatch(randomIdPattern);
 		});
 
-		test("creates subtask with hierarchical ID", async () => {
+		test("retries on ID collisions and succeeds", async () => {
+			const idSequence = ["aaaaaa", "aaaaaa", "bbbbbb"];
+			const spy = vi
+				.spyOn(fileStore as unknown as { generateRandomTaskId: () => string }, "generateRandomTaskId")
+				.mockImplementation(() => idSequence.shift() || "cccccc");
+
+			const first = await fileStore.createTask({
+				title: "Collision Task 1",
+				status: "todo",
+				priority: "medium",
+				labels: [],
+				subtasks: [],
+				acceptanceCriteria: [],
+				timeSpent: 0,
+				timeEntries: [],
+			});
+
+			const second = await fileStore.createTask({
+				title: "Collision Task 2",
+				status: "todo",
+				priority: "medium",
+				labels: [],
+				subtasks: [],
+				acceptanceCriteria: [],
+				timeSpent: 0,
+				timeEntries: [],
+			});
+
+			expect(first.id).toBe("aaaaaa");
+			expect(second.id).toBe("bbbbbb");
+			expect(spy).toHaveBeenCalledTimes(3);
+
+			spy.mockRestore();
+		});
+
+		test("throws after exhausting collision retries", async () => {
+			const spy = vi
+				.spyOn(fileStore as unknown as { generateRandomTaskId: () => string }, "generateRandomTaskId")
+				.mockReturnValue("aaaaaa");
+
+			await fileStore.createTask({
+				title: "Initial",
+				status: "todo",
+				priority: "medium",
+				labels: [],
+				subtasks: [],
+				acceptanceCriteria: [],
+				timeSpent: 0,
+				timeEntries: [],
+			});
+
+			await expect(
+				fileStore.createTask({
+					title: "Should Fail",
+					status: "todo",
+					priority: "medium",
+					labels: [],
+					subtasks: [],
+					acceptanceCriteria: [],
+					timeSpent: 0,
+					timeEntries: [],
+				}),
+			).rejects.toThrow("Failed to generate unique task ID after 10 attempts");
+
+			spy.mockRestore();
+		});
+
+		test("loads legacy sequential tasks and still generates random IDs", async () => {
+			const now = new Date();
+			const legacyTask: Task = {
+				id: "1",
+				title: "Legacy Task",
+				status: "todo",
+				priority: "medium",
+				labels: [],
+				subtasks: [],
+				acceptanceCriteria: [],
+				timeSpent: 0,
+				timeEntries: [],
+				createdAt: now,
+				updatedAt: now,
+			};
+
+			// Bypass private saveTask for test setup
+			await (fileStore as unknown as { saveTask: (task: Task) => Promise<void> }).saveTask(legacyTask);
+
+			const loaded = await fileStore.getTask("1");
+			expect(loaded?.id).toBe("1");
+
+			const newTask = await fileStore.createTask({
+				title: "New Random Task",
+				status: "todo",
+				priority: "medium",
+				labels: [],
+				subtasks: [],
+				acceptanceCriteria: [],
+				timeSpent: 0,
+				timeEntries: [],
+			});
+
+			expect(newTask.id).toMatch(randomIdPattern);
+
+			const allIds = (await fileStore.getAllTasks()).map((t) => t.id);
+			expect(allIds).toContain("1");
+			expect(allIds).toContain(newTask.id);
+		});
+
+		test("creates subtask and links parent", async () => {
 			const parent = await fileStore.createTask({
 				title: "Parent Task",
 				status: "todo",
@@ -136,12 +223,12 @@ describe("Task CLI Integration Tests", () => {
 				timeEntries: [],
 			});
 
-			expect(subtask.id).toBe("1.1");
-			expect(subtask.parent).toBe("1");
+			expect(subtask.id).toMatch(randomIdPattern);
+			expect(subtask.parent).toBe(parent.id);
 
 			// Verify parent has subtask reference
 			const updatedParent = await fileStore.getTask(parent.id);
-			expect(updatedParent?.subtasks).toContain("1.1");
+			expect(updatedParent?.subtasks).toContain(subtask.id);
 		});
 	});
 
@@ -277,7 +364,7 @@ describe("Task CLI Integration Tests", () => {
 			// Check initial file exists
 			const tasksPath = join(tempDir, ".knowns", "tasks");
 			let files = await readdir(tasksPath);
-			let taskFiles = files.filter((f) => f.startsWith("task-1 -"));
+			let taskFiles = files.filter((f) => f.startsWith(`task-${task.id} -`));
 			expect(taskFiles).toHaveLength(1);
 			expect(taskFiles[0]).toContain("Original-Title");
 
@@ -288,7 +375,7 @@ describe("Task CLI Integration Tests", () => {
 
 			// Check only new file exists, old file is deleted
 			files = await readdir(tasksPath);
-			taskFiles = files.filter((f) => f.startsWith("task-1 -"));
+			taskFiles = files.filter((f) => f.startsWith(`task-${task.id} -`));
 			expect(taskFiles).toHaveLength(1);
 			expect(taskFiles[0]).toContain("New-Title");
 			expect(taskFiles[0]).not.toContain("Original-Title");
@@ -317,48 +404,57 @@ describe("Task CLI Integration Tests", () => {
 			// Check file still exists with same name
 			const tasksPath = join(tempDir, ".knowns", "tasks");
 			const files = await readdir(tasksPath);
-			const taskFiles = files.filter((f) => f.startsWith("task-1 -"));
+			const taskFiles = files.filter((f) => f.startsWith(`task-${task.id} -`));
 			expect(taskFiles).toHaveLength(1);
 			expect(taskFiles[0]).toContain("Same-Title");
 		});
 	});
 
 	describe("Task List and Search", () => {
+		let createdTasks: Task[];
+
 		beforeEach(async () => {
+			createdTasks = [];
 			// Create several tasks for testing
-			await fileStore.createTask({
-				title: "Bug: Login issue",
-				status: "todo",
-				priority: "high",
-				labels: ["bug"],
-				subtasks: [],
-				acceptanceCriteria: [],
-				timeSpent: 0,
-				timeEntries: [],
-			});
+			createdTasks.push(
+				await fileStore.createTask({
+					title: "Bug: Login issue",
+					status: "todo",
+					priority: "high",
+					labels: ["bug"],
+					subtasks: [],
+					acceptanceCriteria: [],
+					timeSpent: 0,
+					timeEntries: [],
+				}),
+			);
 
-			await fileStore.createTask({
-				title: "Feature: Add dark mode",
-				status: "in-progress",
-				priority: "medium",
-				labels: ["feature", "ui"],
-				assignee: "@designer",
-				subtasks: [],
-				acceptanceCriteria: [],
-				timeSpent: 0,
-				timeEntries: [],
-			});
+			createdTasks.push(
+				await fileStore.createTask({
+					title: "Feature: Add dark mode",
+					status: "in-progress",
+					priority: "medium",
+					labels: ["feature", "ui"],
+					assignee: "@designer",
+					subtasks: [],
+					acceptanceCriteria: [],
+					timeSpent: 0,
+					timeEntries: [],
+				}),
+			);
 
-			await fileStore.createTask({
-				title: "Docs: Update README",
-				status: "done",
-				priority: "low",
-				labels: ["docs"],
-				subtasks: [],
-				acceptanceCriteria: [],
-				timeSpent: 0,
-				timeEntries: [],
-			});
+			createdTasks.push(
+				await fileStore.createTask({
+					title: "Docs: Update README",
+					status: "done",
+					priority: "low",
+					labels: ["docs"],
+					subtasks: [],
+					acceptanceCriteria: [],
+					timeSpent: 0,
+					timeEntries: [],
+				}),
+			);
 		});
 
 		test("lists all tasks", async () => {
@@ -368,7 +464,8 @@ describe("Task CLI Integration Tests", () => {
 		});
 
 		test("retrieves task by ID", async () => {
-			const task = await fileStore.getTask("1");
+			const targetId = createdTasks[0].id;
+			const task = await fileStore.getTask(targetId);
 
 			expect(task).not.toBeNull();
 			expect(task?.title).toBe("Bug: Login issue");
@@ -589,12 +686,12 @@ describe("Task CLI Integration Tests", () => {
 				timeEntries: [],
 			});
 
-			expect(child1.id).toBe("1.1");
-			expect(child2.id).toBe("1.2");
+			expect(child1.id).toMatch(randomIdPattern);
+			expect(child2.id).toMatch(randomIdPattern);
 
 			const updatedParent = await fileStore.getTask(parent.id);
-			expect(updatedParent?.subtasks).toContain("1.1");
-			expect(updatedParent?.subtasks).toContain("1.2");
+			expect(updatedParent?.subtasks).toContain(child1.id);
+			expect(updatedParent?.subtasks).toContain(child2.id);
 		});
 
 		test("creates deeply nested subtasks", async () => {
@@ -633,8 +730,9 @@ describe("Task CLI Integration Tests", () => {
 				timeEntries: [],
 			});
 
-			expect(level1.id).toBe("1.1");
-			expect(level2.id).toBe("1.1.1");
+			expect(level1.id).toMatch(randomIdPattern);
+			expect(level2.id).toMatch(randomIdPattern);
+			expect(level2.parent).toBe(level1.id);
 		});
 	});
 });

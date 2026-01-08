@@ -1,7 +1,7 @@
 ---
 title: Knowns CLI Guide
 createdAt: '2025-12-26T19:43:25.470Z'
-updatedAt: '2025-12-31T12:43:20.736Z'
+updatedAt: '2026-01-08T20:50:16.456Z'
 description: Complete guide for using Knowns CLI
 tags:
   - guide
@@ -256,3 +256,30 @@ knowns agents --update-instructions --type mcp --files "CLAUDE.md,AGENTS.md"
 | AGENTS.md | Agent SDK |
 | GEMINI.md | Google Gemini |
 | .github/copilot-instructions.md | GitHub Copilot |
+
+
+
+---
+
+## Update Notifier
+
+Knowns CLI automatically checks for updates (1-hour cache):
+
+```
+ UPDATE  v1.0.0 available (current v0.8.0) → npm i -g knowns
+```
+
+**Disable update check:**
+```bash
+NO_UPDATE_CHECK=1 knowns task list
+```
+
+**Force check:**
+```bash
+KNOWNS_UPDATE_CHECK=1 knowns task list
+```
+
+Update checks are skipped automatically on:
+- CI environments
+- `--plain` mode
+- When `NO_UPDATE_CHECK=1` is set
