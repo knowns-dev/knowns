@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import chalk from "chalk";
-import { findProjectRoot } from "./find-project-root";
 
 type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
 
@@ -77,11 +77,9 @@ function shouldSkip(args: string[] | undefined, force: boolean | undefined): boo
 	return false;
 }
 
-function getCachePath(cwd: string, explicit?: string): string | null {
+function getGlobalCachePath(explicit?: string): string {
 	if (explicit) return explicit;
-	const projectRoot = findProjectRoot(cwd);
-	if (!projectRoot) return null;
-	return join(projectRoot, ".knowns", "cli-cache.json");
+	return join(homedir(), ".knowns", "cli-cache.json");
 }
 
 function readCache(cachePath: string): CacheData | null {
@@ -141,12 +139,7 @@ export async function notifyCliUpdate(options: UpdateNotifierOptions): Promise<v
 		return;
 	}
 
-	const cachePath = getCachePath(cwd, explicitCachePath);
-	if (!cachePath) {
-		// No project context; skip silently
-		return;
-	}
-
+	const cachePath = getGlobalCachePath(explicitCachePath);
 	const pm = packageManager || detectPackageManager(cwd);
 
 	const cache = readCache(cachePath);
