@@ -15,7 +15,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Required for creating releases
+      contents: write # Required for committing version bump
       id-token: write # Required for npm provenance
 
     steps:
@@ -70,28 +70,3 @@ jobs:
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
-          body: |
-            ## Changes in ${{ github.ref_name }}
-
-            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
-
-            ### 📦 Installation
-
-            ```bash
-            npm install -g knowns@${{ github.ref_name }}
-            ```
-
-            ### 🔗 Links
-            - [npm package](https://www.npmjs.com/package/knowns)
-            - [Changelog](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
