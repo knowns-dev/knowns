@@ -1,6 +1,6 @@
 {
 	"name": "knowns",
-	"version": "0.7.0",
+	"version": "0.8.0",
 	"description": "CLI tool for dev teams to manage tasks and documentation",
 	"module": "index.ts",
 	"type": "module",
