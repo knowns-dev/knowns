@@ -235,23 +235,74 @@ export const searchCommand = new Command("search")
 
 				// Output results
 				if (options.plain) {
-					// Plain format
-					if (taskResults.length > 0) {
-						console.log("type,id,title,status,priority");
-						for (const task of taskResults) {
-							console.log(`task,${task.id},${task.title},${task.status},${task.priority}`);
-						}
-					}
-					if (docResults.length > 0) {
-						if (taskResults.length === 0) {
-							console.log("type,filename,title,description");
-						}
-						for (const doc of docResults) {
-							console.log(`doc,${doc.filename},"${doc.metadata.title}","${doc.metadata.description || ""}"`);
-						}
-					}
+					// Plain format - nested by type and status/path
 					if (taskResults.length === 0 && docResults.length === 0) {
 						console.log("No results found");
+					} else {
+						// Group tasks by status
+						if (taskResults.length > 0) {
+							console.log("Tasks:");
+							const statusGroups: Record<string, Task[]> = {};
+							const statusOrder = ["todo", "in-progress", "in-review", "blocked", "done"];
+							const statusNames: Record<string, string> = {
+								todo: "To Do",
+								"in-progress": "In Progress",
+								"in-review": "In Review",
+								blocked: "Blocked",
+								done: "Done",
+							};
+
+							for (const task of taskResults) {
+								if (!statusGroups[task.status]) {
+									statusGroups[task.status] = [];
+								}
+								statusGroups[task.status].push(task);
+							}
+
+							// Sort by priority within each group
+							const priorityOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
+							for (const status of statusOrder) {
+								const tasks = statusGroups[status];
+								if (!tasks || tasks.length === 0) continue;
+
+								tasks.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+
+								console.log(`  ${statusNames[status]}:`);
+								for (const task of tasks) {
+									console.log(`    [${task.priority.toUpperCase()}] ${task.id} - ${task.title}`);
+								}
+							}
+						}
+
+						// Group docs by path
+						if (docResults.length > 0) {
+							if (taskResults.length > 0) console.log("");
+							console.log("Docs:");
+
+							const pathGroups: Record<string, DocResult[]> = {};
+							for (const doc of docResults) {
+								const parts = doc.filename.split("/");
+								const folder = parts.length > 1 ? `${parts.slice(0, -1).join("/")}/` : "(root)";
+								if (!pathGroups[folder]) {
+									pathGroups[folder] = [];
+								}
+								pathGroups[folder].push(doc);
+							}
+
+							const sortedPaths = Object.keys(pathGroups).sort((a, b) => {
+								if (a === "(root)") return -1;
+								if (b === "(root)") return 1;
+								return a.localeCompare(b);
+							});
+
+							for (const path of sortedPaths) {
+								console.log(`  ${path}:`);
+								for (const doc of pathGroups[path]) {
+									const filename = doc.filename.split("/").pop() || doc.filename;
+									console.log(`    ${filename} - ${doc.metadata.title}`);
+								}
+							}
+						}
 					}
 				} else {
 					const totalResults = taskResults.length + docResults.length;

@@ -3,6 +3,7 @@
  * Main storage class that handles .knowns/ folder
  */
 
+import { randomInt } from "node:crypto";
 import { mkdir, readdir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { Project, ProjectSettings, Task, TaskVersion } from "@models/index";
@@ -456,24 +457,30 @@ export class FileStore {
 	}
 
 	/**
-	 * Generate next task ID
+	 * Generate a unique task ID (task-{6_char_base36}) with collision retries
 	 */
 	private async generateTaskId(parentId?: string): Promise<string> {
 		const tasks = await this.getAllTasks();
+		const existingIds = new Set(tasks.map((t) => t.id));
 
-		if (parentId) {
-			// Generate subtask ID (e.g., 7.1, 7.1.1)
-			const siblings = tasks.filter((t) => t.parent === parentId);
-			const maxSubId =
-				siblings.length > 0 ? Math.max(...siblings.map((t) => Number.parseInt(t.id.split(".").pop() || "0"))) : 0;
-			return `${parentId}.${maxSubId + 1}`;
+		const maxAttempts = 10;
+		for (let attempt = 0; attempt < maxAttempts; attempt++) {
+			const candidate = this.generateRandomTaskId();
+			if (!existingIds.has(candidate)) {
+				return candidate;
+			}
 		}
 
-		// Generate top-level task ID
-		const topLevelTasks = tasks.filter((t) => !t.parent);
-		const maxId =
-			topLevelTasks.length > 0 ? Math.max(...topLevelTasks.map((t) => Number.parseInt(t.id.split(".")[0] || "0"))) : 0;
-		return `${maxId + 1}`;
+		throw new Error("Failed to generate unique task ID after 10 attempts");
+	}
+
+	/**
+	 * Create a 6-character base36 task ID
+	 */
+	private generateRandomTaskId(): string {
+		const max = 36 ** 6; // 6-char base36 space
+		const value = randomInt(0, max); // upper bound exclusive
+		return value.toString(36).padStart(6, "0");
 	}
 
 	/**

@@ -11,7 +11,7 @@ export type TaskPriority = "low" | "medium" | "high";
 
 // Task interface
 export interface Task {
-	id: string; // "7" or "7.1" or "7.1.1" (hierarchical)
+	id: string; // task-{6_char_base36} for new tasks; legacy sequential IDs still supported
 	title: string;
 	description?: string;
 	status: TaskStatus;

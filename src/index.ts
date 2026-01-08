@@ -19,6 +19,7 @@ import {
 	taskCommand,
 	timeCommand,
 } from "@commands/index";
+import { notifyCliUpdate } from "@utils/update-notifier";
 import chalk from "chalk";
 import { Command } from "commander";
 import packageJson from "../package.json";
@@ -72,8 +73,14 @@ program.addCommand(agentsCommand);
 program.addCommand(mcpCommand);
 
 // Show banner if no arguments provided
-if (process.argv.length === 2) {
+const args = process.argv.slice(2);
+
+if (args.length === 0) {
 	showBanner();
+	await notifyCliUpdate({ currentVersion: packageJson.version, args });
 } else {
-	program.parse();
+	program.hook("postAction", async () => {
+		await notifyCliUpdate({ currentVersion: packageJson.version, args });
+	});
+	await program.parseAsync();
 }

@@ -571,15 +571,19 @@ function formatTaskList(tasks: Task[], plain = false): string {
 		return chalk.gray("No tasks found");
 	}
 
+	// Calculate max ID width for alignment
+	const maxIdWidth = Math.max(...tasks.map((t) => t.id.length), 4);
+
 	const output: string[] = [];
+	const sep = chalk.gray(" | ");
 
 	for (const task of tasks) {
 		const statusColor = getStatusColor(task.status);
 		const priorityColor = getPriorityColor(task.priority);
 
 		const parts = [
-			chalk.bold(task.id),
-			statusColor(task.status.padEnd(12)),
+			chalk.bold(task.id.padEnd(maxIdWidth)),
+			statusColor(task.status.padEnd(11)),
 			priorityColor(task.priority.padEnd(6)),
 			task.title,
 		];
@@ -588,7 +592,7 @@ function formatTaskList(tasks: Task[], plain = false): string {
 			parts.push(chalk.cyan(`(${task.assignee})`));
 		}
 
-		output.push(parts.join(" "));
+		output.push(parts.join(sep));
 	}
 
 	return output.join("\n");

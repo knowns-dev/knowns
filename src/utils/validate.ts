@@ -567,10 +567,12 @@ function isValidISODate(dateString: string): boolean {
 
 /**
  * Extract task ID from filename
+ * Supports sequential numeric IDs and new base36 IDs
  * e.g., "task-7 - Some Title.md" -> "7"
  * e.g., "task-7.1 - Some Title.md" -> "7.1"
+ * e.g., "task-a7f3k9 - Some Title.md" -> "a7f3k9"
  */
 export function extractTaskIdFromFilename(filename: string): string | undefined {
-	const match = filename.match(/^task-(\d+(?:\.\d+)*)\s*-/);
+	const match = filename.match(/^task-([a-z0-9]+(?:\.[a-z0-9]+)?)\s*-/i);
 	return match ? match[1] : undefined;
 }
