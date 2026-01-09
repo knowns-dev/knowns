@@ -1,7 +1,7 @@
 ---
 title: Knowns CLI - ID Strategy
 createdAt: '2026-01-08T08:48:57.016Z'
-updatedAt: '2026-01-08T08:53:21.152Z'
+updatedAt: '2026-01-09T07:46:23.699Z'
 description: ID generation and collision handling for Knowns CLI entities
 tags:
   - cli
@@ -126,3 +126,84 @@ References work consistently across all machines.
 ---
 
 Document version: 1.1
+
+
+
+---
+
+## 8. Subtask IDs
+
+### Subtask ID Generation
+
+When creating a subtask with `--parent`, the subtask receives a **random 6-character ID** (same format as regular tasks), NOT a hierarchical ID.
+
+```bash
+# Example: Creating subtask of task 48
+$ knowns task create "My Subtask" --parent 48
+✓ Created task-qkh5ne: My Subtask
+  Subtask of: 48
+```
+
+### Hierarchical IDs (Legacy)
+
+Some existing tasks have hierarchical IDs like `48.1`, `48.2`. These were created through:
+- Direct file creation
+- Import from other systems
+- Legacy versions of the CLI
+
+The current CLI does NOT automatically generate hierarchical IDs. All new subtasks get random IDs.
+
+### ID Types in Knowns
+
+| Type | Format | Example | Source |
+|------|--------|---------|--------|
+| Sequential | Numeric | `48`, `49`, `50` | Legacy tasks |
+| Hierarchical | Parent.N | `48.1`, `48.2` | Legacy subtasks |
+| Random | 6-char base36 | `qkh5ne`, `a7f3k9` | Current CLI |
+
+### Using `--parent` Flag
+
+The `--parent` flag accepts the **raw task ID** (not prefixed):
+
+```bash
+# ✅ Correct - use raw ID
+knowns task create "Subtask Title" --parent 48
+knowns task create "Subtask Title" --parent qkh5ne
+
+# ❌ Wrong - do NOT prefix with "task-"
+knowns task create "Subtask Title" --parent task-48    # ERROR
+knowns task create "Subtask Title" --parent task-qkh5ne  # ERROR
+```
+
+### Verifying Parent Task Exists
+
+Before using `--parent`, verify the task ID:
+
+```bash
+# Check if parent task exists
+$ knowns task 48 --plain
+# OR
+$ knowns task qkh5ne --plain
+
+# If you get "Task not found", the ID is wrong
+```
+
+### Task List Output Format
+
+When using `knowns task list --plain`, the output shows:
+
+```
+[PRIORITY] <id> - <title>
+```
+
+Example:
+```
+[HIGH] 48 - Hub Integration: CLI Commands
+[HIGH] qkh5ne - My Subtask
+```
+
+The ID is the first value after `[PRIORITY]`. Use this ID directly with `--parent`.
+
+---
+
+Document version: 1.2

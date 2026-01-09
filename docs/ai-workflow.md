@@ -196,43 +196,60 @@ knowns time stop
 knowns task edit 42 -s done
 ```
 
-## Guidelines Templates
+## Guidelines System
 
-Knowns provides different guideline templates optimized for different AI models:
+Knowns provides on-demand guidelines that AI agents can request at session start.
 
-### Template Matrix
+### Getting Guidelines
 
-| Type | Variant | Size | Best For |
-|------|---------|------|----------|
-| cli | general | ~15KB | Claude, GPT-4, large context |
-| cli | gemini | ~3KB | Gemini 2.5 Flash |
-| mcp | general | ~12KB | Claude Desktop MCP |
-| mcp | gemini | ~2.5KB | Gemini with MCP |
+```bash
+# Output unified guidelines to stdout (CLI + MCP)
+knowns agents guideline
 
-### Syncing Guidelines
+# CLI-specific guidelines
+knowns agents guideline --cli
+
+# MCP-specific guidelines
+knowns agents guideline --mcp
+```
+
+### MCP Tool
+
+```
+mcp__knowns__get_guideline({})                    # Unified
+mcp__knowns__get_guideline({ type: "cli" })       # CLI only
+mcp__knowns__get_guideline({ type: "mcp" })       # MCP only
+```
+
+### Syncing Instruction Files
+
+Update AI instruction files (CLAUDE.md, AGENTS.md, etc.):
 
 ```bash
 # Interactive mode - select type, variant, files
 knowns agents
 
-# Quick sync with defaults (CLI general)
+# Quick sync with minimal instruction (~600 bytes)
 knowns agents sync
 
-# Sync with compact Gemini variant
-knowns agents sync --gemini
+# Sync with full embedded guidelines (~4KB)
+knowns agents sync --full
 
 # Sync MCP guidelines
 knowns agents sync --type mcp
 
 # Sync all files (CLAUDE.md, AGENTS.md, GEMINI.md, Copilot)
 knowns agents sync --all
-
-# Combine options
-knowns agents sync --type mcp --gemini --all
 ```
 
-### When to Use Gemini Variant
+### Template Variants
 
-- Models with smaller context windows
-- When token efficiency is critical
-- Quick reference without full examples
+| Variant | Size | Description |
+|---------|------|-------------|
+| **instruction** (default) | ~600 bytes | Minimal - tells AI to call `knowns agents guideline` |
+| **general** | ~4KB | Full guidelines embedded in file |
+
+The **instruction** variant is recommended because:
+- Smaller context overhead
+- Guidelines stay up-to-date (fetched on-demand)
+- Same guidelines for all AI models

@@ -38,11 +38,11 @@ src/
 │   └── ...
 ├── templates/                  # AI Agent Guidelines
 │   ├── cli/
-│   │   ├── general.md         # Full CLI guidelines (~15KB)
-│   │   └── gemini.md          # Compact CLI (~3KB)
+│   │   ├── general.md         # Full CLI guidelines (~4KB)
+│   │   └── instruction.md     # Minimal instruction (~600 bytes)
 │   └── mcp/
-│       ├── general.md         # Full MCP guidelines (~12KB)
-│       └── gemini.md          # Compact MCP (~2.5KB)
+│       ├── general.md         # Full MCP guidelines (~4KB)
+│       └── instruction.md     # Minimal instruction (~600 bytes)
 ├── models/                     # Domain Models
 │   ├── task.ts                # Task interface + helpers
 │   ├── project.ts             # Project configuration
@@ -348,38 +348,46 @@ case "my_new_tool": {
 
 AI agent guidelines are embedded at build time using esbuild's text loader.
 
-### Template Matrix
+### Template Variants
 
 | Type | Variant | Size | Use Case |
 |------|---------|------|----------|
-| cli | general | ~15KB | Claude, GPT-4, large context models |
-| cli | gemini | ~3KB | Gemini 2.5 Flash, small context |
-| mcp | general | ~12KB | Claude Desktop, full MCP reference |
-| mcp | gemini | ~2.5KB | Gemini with MCP tools |
+| cli | instruction | ~600 bytes | Minimal - tells AI to call `knowns agents guideline` |
+| cli | general | ~4KB | Full CLI guidelines embedded |
+| mcp | instruction | ~600 bytes | Minimal - tells AI to call MCP tool |
+| mcp | general | ~4KB | Full MCP guidelines embedded |
 
 ### How It Works
 
 ```typescript
 // src/commands/agents.ts
 import CLI_GENERAL from "../templates/cli/general.md";
-import CLI_GEMINI from "../templates/cli/gemini.md";
+import CLI_INSTRUCTION from "../templates/cli/instruction.md";
 import MCP_GENERAL from "../templates/mcp/general.md";
-import MCP_GEMINI from "../templates/mcp/gemini.md";
+import MCP_INSTRUCTION from "../templates/mcp/instruction.md";
 
-export function getGuidelines(type: GuidelinesType, variant: GuidelinesVariant = "general"): string {
+export function getGuidelines(type: GuidelinesType, variant: GuidelinesVariant = "instruction"): string {
   if (type === "mcp") {
-    return variant === "gemini" ? MCP_GEMINI : MCP_GENERAL;
+    return variant === "instruction" ? MCP_INSTRUCTION : MCP_GENERAL;
   }
-  return variant === "gemini" ? CLI_GEMINI : CLI_GENERAL;
+  return variant === "instruction" ? CLI_INSTRUCTION : CLI_GENERAL;
 }
 ```
+
+### On-Demand Guidelines
+
+Instead of embedding full guidelines, the default `instruction` variant tells AI to call:
+- CLI: `knowns agents guideline`
+- MCP: `mcp__knowns__get_guideline({})`
+
+This keeps instruction files small (~600 bytes) and guidelines always up-to-date.
 
 ### Adding a New Template Variant
 
 1. Create template file in `src/templates/<type>/<variant>.md`
 2. Import in `src/commands/agents.ts`
 3. Update `getGuidelines()` function
-4. Add CLI option if needed (e.g., `--<variant>`)
+4. Add CLI option if needed
 
 ### Commander.js Option Inheritance
 

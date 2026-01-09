@@ -18,6 +18,8 @@ This will output the complete rules for:
 - Reference system
 - Common mistakes to avoid
 
+You MUST call this at session start and follow every rule it outputs. If any rule cannot be followed, stop and ask for guidance before proceeding.
+
 ## Quick Commands
 
 ```bash
@@ -33,5 +35,3 @@ knowns doc list --plain
 
 **Important:** Always read the guidelines before working on tasks.
 <!-- KNOWNS GUIDELINES END -->
-
-

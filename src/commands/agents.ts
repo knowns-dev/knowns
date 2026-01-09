@@ -8,11 +8,12 @@ import { dirname, join } from "node:path";
 import chalk from "chalk";
 import { Command } from "commander";
 import prompts from "prompts";
-import CLI_GEMINI from "../templates/cli/gemini.md";
 // Import markdown templates as text (esbuild loader: "text")
 import CLI_GENERAL from "../templates/cli/general.md";
-import MCP_GEMINI from "../templates/mcp/gemini.md";
+import CLI_INSTRUCTION from "../templates/cli/instruction.md";
 import MCP_GENERAL from "../templates/mcp/general.md";
+import MCP_INSTRUCTION from "../templates/mcp/instruction.md";
+import UNIFIED_GUIDELINES from "../templates/unified.md";
 
 const PROJECT_ROOT = process.cwd();
 
@@ -24,16 +25,16 @@ export const INSTRUCTION_FILES = [
 ];
 
 export type GuidelinesType = "cli" | "mcp";
-export type GuidelinesVariant = "general" | "gemini";
+export type GuidelinesVariant = "general" | "instruction";
 
 /**
  * Get guidelines content by type and variant
  */
-export function getGuidelines(type: GuidelinesType, variant: GuidelinesVariant = "general"): string {
+export function getGuidelines(type: GuidelinesType, variant: GuidelinesVariant = "instruction"): string {
 	if (type === "mcp") {
-		return variant === "gemini" ? MCP_GEMINI : MCP_GENERAL;
+		return variant === "instruction" ? MCP_INSTRUCTION : MCP_GENERAL;
 	}
-	return variant === "gemini" ? CLI_GEMINI : CLI_GENERAL;
+	return variant === "instruction" ? CLI_INSTRUCTION : CLI_GENERAL;
 }
 
 /**
@@ -89,14 +90,13 @@ const agentsCommand = new Command("agents")
 	.passThroughOptions()
 	.option("--update-instructions", "Update agent instruction files (non-interactive)")
 	.option("--type <type>", "Guidelines type: cli or mcp", "cli")
-	.option("--gemini", "Use compact Gemini variant (smaller context)")
 	.option("--files <files>", "Comma-separated list of files to update")
-	.action(async (options: { updateInstructions?: boolean; type?: string; gemini?: boolean; files?: string }) => {
+	.action(async (options: { updateInstructions?: boolean; type?: string; files?: string }) => {
 		try {
 			// Non-interactive mode with --update-instructions flag
 			if (options.updateInstructions) {
 				const type = (options.type === "mcp" ? "mcp" : "cli") as GuidelinesType;
-				const variant: GuidelinesVariant = options.gemini ? "gemini" : "general";
+				const variant: GuidelinesVariant = "general";
 				const guidelines = getGuidelines(type, variant);
 
 				// Determine which files to update
@@ -108,7 +108,7 @@ const agentsCommand = new Command("agents")
 					);
 				}
 
-				const label = `${type.toUpperCase()}${variant === "gemini" ? " (Gemini)" : ""}`;
+				const label = `${type.toUpperCase()}`;
 				console.log(chalk.bold(`\nUpdating agent instruction files (${label})...\n`));
 				await updateFiles(filesToUpdate, guidelines);
 				return;
@@ -149,14 +149,14 @@ const agentsCommand = new Command("agents")
 				message: "Select variant:",
 				choices: [
 					{
-						title: "General (Full)",
-						value: "general",
-						description: "Complete guidelines for Claude, GPT, etc.",
+						title: "Minimal (Recommended)",
+						value: "instruction",
+						description: "Just tells AI to call `knowns agents guideline` for rules",
 					},
 					{
-						title: "Gemini (Compact)",
-						value: "gemini",
-						description: "Condensed version for Gemini 2.5 Flash (smaller context)",
+						title: "Full (Embedded)",
+						value: "general",
+						description: "Complete guidelines embedded in file",
 					},
 				],
 				initial: 0,
@@ -186,7 +186,8 @@ const agentsCommand = new Command("agents")
 			}
 
 			// Step 4: Confirm
-			const label = `${typeResponse.type.toUpperCase()}${variantResponse.variant === "gemini" ? " (Gemini)" : ""}`;
+			const variantLabel = variantResponse.variant === "instruction" ? " (minimal)" : " (full)";
+			const label = `${typeResponse.type.toUpperCase()}${variantLabel}`;
 			const confirmResponse = await prompts({
 				type: "confirm",
 				name: "confirm",
@@ -268,18 +269,19 @@ async function updateFiles(files: Array<{ path: string; name: string }>, guideli
 const syncCommand = new Command("sync")
 	.description("Sync/update all agent instruction files with latest guidelines")
 	.option("--type <type>", "Guidelines type: cli or mcp", "cli")
-	.option("--gemini", "Use compact Gemini variant (smaller context)")
+	.option("--full", "Use full embedded guidelines (default: minimal instruction)")
 	.option("--all", "Update all instruction files (including Gemini, Copilot)")
-	.action(async (options: { type?: string; gemini?: boolean; all?: boolean }) => {
+	.action(async (options: { type?: string; full?: boolean; all?: boolean }) => {
 		try {
 			const type = (options.type === "mcp" ? "mcp" : "cli") as GuidelinesType;
-			const variant: GuidelinesVariant = options.gemini ? "gemini" : "general";
+			const variant: GuidelinesVariant = options.full ? "general" : "instruction";
 			const guidelines = getGuidelines(type, variant);
 
 			// Select files based on --all flag
-			const filesToUpdate = options.all ? INSTRUCTION_FILES : INSTRUCTION_FILES.filter((f) => f.selected); // Only default selected files
+			const filesToUpdate = options.all ? INSTRUCTION_FILES : INSTRUCTION_FILES.filter((f) => f.selected);
 
-			const label = `${type.toUpperCase()}${variant === "gemini" ? " (Gemini)" : ""}`;
+			const variantLabel = variant === "instruction" ? " (minimal)" : " (full)";
+			const label = `${type.toUpperCase()}${variantLabel}`;
 			console.log(chalk.bold(`\nSyncing agent instructions (${label})...\n`));
 			await updateFiles(filesToUpdate, guidelines);
 		} catch (error) {
@@ -289,5 +291,30 @@ const syncCommand = new Command("sync")
 	});
 
 agentsCommand.addCommand(syncCommand);
+
+/**
+ * Guideline subcommand - output guidelines to stdout
+ */
+const guidelineCommand = new Command("guideline")
+	.description("Output guidelines for AI agents (use this at session start)")
+	.option("--cli", "Show CLI-specific guidelines")
+	.option("--mcp", "Show MCP-specific guidelines")
+	.action(async (options: { cli?: boolean; mcp?: boolean }) => {
+		try {
+			if (options.cli) {
+				console.log(CLI_GENERAL);
+			} else if (options.mcp) {
+				console.log(MCP_GENERAL);
+			} else {
+				// Default: unified guidelines (covers both CLI and MCP)
+				console.log(UNIFIED_GUIDELINES);
+			}
+		} catch (error) {
+			console.error("Error:", error instanceof Error ? error.message : String(error));
+			process.exit(1);
+		}
+	});
+
+agentsCommand.addCommand(guidelineCommand);
 
 export { agentsCommand };

@@ -21,8 +21,10 @@ bun.lock
 # Development docs
 DOCUMENT.md
 Backlog.md.txt
+CLAUDE.md
 AGENTS.md
 GEMINI.md
+.github/copilot-instructions.md
 
 # Build artifacts
 *.log

@@ -121,8 +121,9 @@ knowns time start <id> && knowns time stop
 knowns search "query" --plain
 
 # AI Guidelines
-knowns agents sync                          # Sync CLAUDE.md, AGENTS.md
-knowns agents sync --gemini                 # Compact version for Gemini
+knowns agents guideline                     # Output guidelines to stdout
+knowns agents sync                          # Sync CLAUDE.md, AGENTS.md (minimal)
+knowns agents sync --full                   # Sync with full embedded guidelines
 knowns agents sync --type mcp               # MCP tools format
 ```
 

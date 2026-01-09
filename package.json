@@ -1,6 +1,6 @@
 {
 	"name": "knowns",
-	"version": "0.8.0",
+	"version": "0.8.1",
 	"description": "CLI tool for dev teams to manage tasks and documentation",
 	"module": "index.ts",
 	"type": "module",
@@ -9,7 +9,7 @@
 		"kn": "./dist/index.js"
 	},
 	"main": "./dist/index.js",
-	"files": ["dist", "CLAUDE.md", "README.md", "CHANGELOG.md", "LICENSE"],
+	"files": ["dist", "README.md", "CHANGELOG.md", "LICENSE"],
 	"keywords": ["cli", "task-management", "documentation", "knowledge-base", "team-tools", "developer-tools"],
 	"author": "howznguyen <howznguyen@knowns.dev>",
 	"license": "MIT",

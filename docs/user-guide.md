@@ -380,20 +380,23 @@ When viewing with `--plain`, references appear as:
 
 ### AI Guidelines Management
 
-Sync AI instruction files with Knowns guidelines:
+Get guidelines on-demand or sync instruction files:
 
 ```bash
-# Interactive mode
+# Output guidelines to stdout (AI agents call this at session start)
+knowns agents guideline
+
+# Interactive mode - select type, variant, files
 knowns agents
 
-# Quick sync (CLAUDE.md, AGENTS.md)
+# Quick sync (CLAUDE.md, AGENTS.md) with minimal instruction
 knowns agents sync
 
 # Sync all files
 knowns agents sync --all
 
-# Use compact Gemini variant
-knowns agents sync --gemini
+# Sync with full embedded guidelines
+knowns agents sync --full
 
 # Use MCP tools format
 knowns agents sync --type mcp
@@ -401,12 +404,10 @@ knowns agents sync --type mcp
 
 **Template variants:**
 
-| Type | Variant | Size | Use For |
-|------|---------|------|---------|
-| cli | general | ~15KB | Claude, GPT-4 |
-| cli | gemini | ~3KB | Gemini 2.5 Flash |
-| mcp | general | ~12KB | Claude Desktop |
-| mcp | gemini | ~2.5KB | Gemini + MCP |
+| Variant | Size | Description |
+|---------|------|-------------|
+| instruction (default) | ~600 bytes | Minimal - tells AI to call `knowns agents guideline` |
+| general (`--full`) | ~4KB | Full guidelines embedded in file |
 
 ---
 
