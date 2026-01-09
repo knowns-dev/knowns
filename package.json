@@ -9,7 +9,7 @@
 		"kn": "./dist/index.js"
 	},
 	"main": "./dist/index.js",
-	"files": ["dist", "CLAUDE.md", "README.md", "CHANGELOG.md", "LICENSE"],
+	"files": ["dist", "README.md", "CHANGELOG.md", "LICENSE"],
 	"keywords": ["cli", "task-management", "documentation", "knowledge-base", "team-tools", "developer-tools"],
 	"author": "howznguyen <howznguyen@knowns.dev>",
 	"license": "MIT",

@@ -33,3 +33,6 @@ export {
 	handleUpdateDoc,
 	handleSearchDocs,
 } from "./doc";
+
+// Guideline handlers
+export { guidelineTools, handleGetGuideline } from "./guideline";

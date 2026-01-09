@@ -25,11 +25,13 @@ import matter from "gray-matter";
 import {
 	boardTools,
 	docTools,
+	guidelineTools,
 	handleAddTime,
 	handleCreateDoc,
 	handleCreateTask,
 	handleGetBoard,
 	handleGetDoc,
+	handleGetGuideline,
 	handleGetTask,
 	handleGetTimeReport,
 	handleListDocs,
@@ -64,7 +66,7 @@ const server = new Server(
 );
 
 // Combine all tool definitions
-const tools: Tool[] = [...taskTools, ...timeTools, ...boardTools, ...docTools] as Tool[];
+const tools: Tool[] = [...taskTools, ...timeTools, ...boardTools, ...docTools, ...guidelineTools] as Tool[];
 
 // List available tools
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -114,6 +116,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 				return await handleUpdateDoc(args);
 			case "search_docs":
 				return await handleSearchDocs(args);
+
+			// Guideline handler
+			case "get_guideline":
+				return await handleGetGuideline(args);
 
 			default:
 				return errorResponse(`Unknown tool: ${name}`);

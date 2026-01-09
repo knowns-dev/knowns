@@ -57,17 +57,26 @@ Close and reopen Claude Desktop to load the new configuration.
 Sync your instruction files with MCP-formatted guidelines:
 
 ```bash
-# Sync with MCP guidelines (full version)
+# Sync with MCP guidelines (minimal instruction)
 knowns agents sync --type mcp
 
-# Sync with compact Gemini variant
-knowns agents sync --type mcp --gemini
+# Sync with full embedded MCP guidelines
+knowns agents sync --type mcp --full
 
 # Sync all files
 knowns agents sync --type mcp --all
 ```
 
 This updates CLAUDE.md and other instruction files with MCP tool references instead of CLI commands.
+
+### MCP Guideline Tool
+
+AI agents can also get guidelines on-demand via MCP:
+
+```
+mcp__knowns__get_guideline({})                    # Unified guidelines
+mcp__knowns__get_guideline({ type: "mcp" })       # MCP-specific
+```
 
 ## Usage
 

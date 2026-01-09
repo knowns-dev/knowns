@@ -553,7 +553,7 @@ knowns mcp --verbose
 
 ### `knowns agents`
 
-Manage AI agent instruction files. Syncs Knowns guidelines to various AI assistant configuration files.
+Manage AI agent instruction files and guidelines.
 
 ```bash
 knowns agents [options]
@@ -564,7 +564,6 @@ knowns agents [options]
 | (none) | Interactive mode - prompts to select type, variant, and files |
 | `--update-instructions` | Non-interactive update |
 | `--type <type>` | Guidelines type: `cli` or `mcp` (default: cli) |
-| `--gemini` | Use compact Gemini variant (smaller context) |
 | `--files <files>` | Comma-separated list of files to update |
 
 **Supported files:**
@@ -585,11 +584,35 @@ knowns agents
 # Non-interactive update (uses defaults)
 knowns agents --update-instructions
 
-# Update with compact Gemini variant
-knowns agents --update-instructions --gemini
-
 # Update specific files with MCP version
 knowns agents --update-instructions --type mcp --files "CLAUDE.md,AGENTS.md"
+```
+
+### `knowns agents guideline`
+
+Output guidelines to stdout. AI agents should call this at session start.
+
+```bash
+knowns agents guideline [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| (none) | Output unified guidelines (CLI + MCP) |
+| `--cli` | Output CLI-specific guidelines |
+| `--mcp` | Output MCP-specific guidelines |
+
+**Examples:**
+
+```bash
+# Output unified guidelines
+knowns agents guideline
+
+# CLI-specific
+knowns agents guideline --cli
+
+# MCP-specific
+knowns agents guideline --mcp
 ```
 
 ### `knowns agents sync`
@@ -603,23 +626,30 @@ knowns agents sync [options]
 | Option | Description |
 |--------|-------------|
 | `--type <type>` | Guidelines type: `cli` or `mcp` (default: cli) |
-| `--gemini` | Use compact Gemini variant (smaller context) |
+| `--full` | Use full embedded guidelines (default: minimal instruction) |
 | `--all` | Update all instruction files (including Gemini, Copilot) |
+
+**Template variants:**
+
+| Variant | Size | Description |
+|---------|------|-------------|
+| instruction (default) | ~600 bytes | Minimal - tells AI to call `knowns agents guideline` |
+| general (`--full`) | ~4KB | Full guidelines embedded in file |
 
 **Examples:**
 
 ```bash
-# Sync default files (CLAUDE.md, AGENTS.md) with CLI guidelines
+# Sync default files (CLAUDE.md, AGENTS.md) with minimal instruction
 knowns agents sync
 
 # Sync all files
 knowns agents sync --all
 
+# Sync with full embedded guidelines
+knowns agents sync --full
+
 # Sync with MCP guidelines
 knowns agents sync --type mcp
-
-# Sync with compact Gemini variant
-knowns agents sync --gemini
 ```
 
 ---

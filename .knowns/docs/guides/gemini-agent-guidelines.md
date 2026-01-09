@@ -1,163 +1,89 @@
 ---
-title: Gemini Agent Guidelines
+title: AI Agent Quick Reference
 createdAt: '2025-12-31T11:45:09.512Z'
-updatedAt: '2025-12-31T12:42:18.003Z'
+updatedAt: '2026-01-09T08:13:27.180Z'
 description: Condensed guidelines for Gemini 2.5 Flash AI agents
 tags:
   - ai
   - guidelines
   - gemini
 ---
-# Knowns CLI - Quick Reference for AI Agents
+# AI Agent Quick Reference
 
-Simplified guidelines for Gemini and other AI models with smaller context windows.
+Quick reference for AI agents using Knowns CLI/MCP.
 
-## CRITICAL RULES
+## First Step
 
-- NEVER edit .md files directly
-- ALWAYS use CLI commands
-- ALWAYS use --plain flag for output
-- Read docs BEFORE coding
-- Start timer when taking task
-- Stop timer when done
-
-## SESSION START
+Get the full guidelines:
 
 ```bash
-# List and read docs first
-knowns doc list --plain
-knowns doc "README" --plain
-knowns task list --plain
+# CLI
+knowns agents guideline
+
+# MCP
+mcp__knowns__get_guideline({})
 ```
 
-## TASK COMMANDS
+## Critical Rules
+
+| Rule | Description |
+|------|-------------|
+| **Never Edit .md** | Use CLI/MCP tools only |
+| **Docs First** | Read docs BEFORE coding |
+| **Time Tracking** | Always start/stop timer |
+| **--plain Flag** | Only for view/list/search |
+
+## Quick Commands
+
+### Tasks
 
 ```bash
-# View task
-knowns task <id> --plain
-
-# Take task
-knowns task edit <id> -s in-progress -a @me
-knowns time start <id>
-
-# Update task
-knowns task edit <id> --check-ac 1
-knowns task edit <id> --append-notes "Done: feature X"
-
-# Complete task
-knowns time stop
-knowns task edit <id> -s done
+knowns task <id> --plain              # View
+knowns task list --plain              # List
+knowns task edit <id> -s in-progress  # Update status
+knowns time start <id>                # Start timer
+knowns time stop                      # Stop timer
 ```
 
-## DOC COMMANDS
+### Docs
 
 ```bash
-# View doc
-knowns doc "path/name" --plain
-
-# Create doc
-knowns doc create "Title" -d "Description" -t "tags" -f "folder"
-
-# Edit doc (append for long content)
-knowns doc edit "name" -c "Short content"
-knowns doc edit "name" -a "Append section 1"
-knowns doc edit "name" -a "Append section 2"
+knowns doc list --plain               # List
+knowns doc "path" --plain             # View
+knowns search "query" --plain         # Search
 ```
 
-## SEARCH
+## Task ID Format
+
+Use raw ID only:
 
 ```bash
-knowns search "keyword" --plain
-knowns search "keyword" --type doc --plain
-knowns search "keyword" --type task --plain
+# ✅ Correct
+knowns task create "Title" --parent 48
+knowns task create "Title" --parent qkh5ne
+
+# ❌ Wrong
+knowns task create "Title" --parent task-48
 ```
 
-## FOLLOWING REFS
+## Status Values
 
-When you see refs in output, follow them:
+`todo` | `in-progress` | `in-review` | `blocked` | `done`
+
+## Priority Values
+
+`low` | `medium` | `high`
+
+## Following Refs
+
+When reading output:
 - `@.knowns/tasks/task-X - ...` → `knowns task X --plain`
 - `@doc/path` → `knowns doc "path" --plain`
 
-When writing refs:
+When writing:
 - Task ref: `@task-X`
 - Doc ref: `@doc/path`
 
-## STATUS VALUES
+## For More Details
 
-- todo
-- in-progress
-- in-review
-- done
-- blocked
-
-## PRIORITY VALUES
-
-- low
-- medium
-- high
-
-## WINDOWS TIPS
-
-For long content, append in chunks:
-```bash
-knowns doc edit "name" -a "Section 1..."
-knowns doc edit "name" -a "Section 2..."
-```
-
-Do NOT try to write everything in one command.
-
-## NEW COMMANDS
-
-### List docs by folder
-```bash
-knowns doc list "guides/" --plain
-knowns doc list "patterns/" --plain
-```
-
-### File-based edit (for long content)
-```bash
-knowns doc edit "name" --content-file ./file.md
-knowns doc edit "name" --append-file ./more.md
-```
-
-### Validate & Repair
-```bash
-knowns doc validate "name" --plain
-knowns doc repair "name" --plain
-knowns task validate <id> --plain
-knowns task repair <id> --plain
-```
-
-### Search & Replace in doc
-```bash
-knowns doc search-in "name" "query" --plain
-knowns doc replace "name" "old" "new"
-knowns doc replace-section "name" "## Header" "new content"
-```
-
-### Sync agent guidelines
-```bash
-knowns agents sync           # Sync CLAUDE.md, AGENTS.md
-knowns agents sync --all     # Include GEMINI.md, Copilot
-```
-
-## Template Variants (v0.3+)
-
-Knowns now has compact templates specifically for Gemini:
-
-```bash
-# Sync with compact Gemini variant (recommended for Gemini 2.5 Flash)
-knowns agents sync --gemini
-
-# MCP variant for Gemini
-knowns agents sync --type mcp --gemini
-
-# All files with Gemini variant
-knowns agents sync --all --gemini
-```
-
-The Gemini variant is ~10x smaller than full guidelines, containing:
-- Essential rules only
-- Command cheatsheet format
-- Minimal examples
-- Same workflow, less tokens
+Run `knowns agents guideline` for complete guidelines.
