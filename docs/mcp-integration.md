@@ -71,12 +71,18 @@ This updates CLAUDE.md and other instruction files with MCP tool references inst
 
 ### MCP Guideline Tool
 
-AI agents can also get guidelines on-demand via MCP:
+AI agents can get **modular guidelines** on-demand via MCP:
 
 ```
-mcp__knowns__get_guideline({})                    # Unified guidelines
-mcp__knowns__get_guideline({ type: "mcp" })       # MCP-specific
+mcp__knowns__get_guideline({})                    # Full guidelines (all sections)
+mcp__knowns__get_guideline({ type: "unified" })   # Same as above
 ```
+
+Guidelines include these sections:
+- **Core Rules** - Golden rules, must-follow principles
+- **Commands Reference** - CLI/MCP commands quick reference
+- **Workflow Creation/Execution/Completion** - Stage-specific guides
+- **Common Mistakes** - Anti-patterns and DO vs DON'T
 
 ## Usage
 

@@ -198,27 +198,48 @@ knowns task edit 42 -s done
 
 ## Guidelines System
 
-Knowns provides on-demand guidelines that AI agents can request at session start.
+Knowns provides **modular guidelines** that AI agents can request at session start.
+
+### Modular Structure
+
+Guidelines are organized into focused sections:
+
+| Section | Description |
+|---------|-------------|
+| **Core Rules** | Golden rules, must-follow principles |
+| **Commands Reference** | CLI/MCP commands quick reference |
+| **Workflow Creation** | Task creation workflow |
+| **Workflow Execution** | Task execution workflow |
+| **Workflow Completion** | Task completion workflow |
+| **Common Mistakes** | Anti-patterns and DO vs DON'T |
 
 ### Getting Guidelines
 
 ```bash
-# Output unified guidelines to stdout (CLI + MCP)
+# Full guidelines (all sections) - default
 knowns agents guideline
 
-# CLI-specific guidelines
-knowns agents guideline --cli
+# Compact (core rules + common mistakes only)
+knowns agents guideline --compact
 
-# MCP-specific guidelines
-knowns agents guideline --mcp
+# Stage-specific guidelines
+knowns agents guideline --stage creation    # When creating tasks
+knowns agents guideline --stage execution   # When implementing
+knowns agents guideline --stage completion  # When finishing
+
+# Individual sections
+knowns agents guideline --core       # Core rules only
+knowns agents guideline --commands   # Commands reference
+knowns agents guideline --mistakes   # Common mistakes
 ```
 
 ### MCP Tool
 
 ```
-mcp__knowns__get_guideline({})                    # Unified
-mcp__knowns__get_guideline({ type: "cli" })       # CLI only
-mcp__knowns__get_guideline({ type: "mcp" })       # MCP only
+mcp__knowns__get_guideline({})                    # Full guidelines
+mcp__knowns__get_guideline({ type: "unified" })   # Full guidelines
+mcp__knowns__get_guideline({ type: "cli" })       # (Legacy) Same as unified
+mcp__knowns__get_guideline({ type: "mcp" })       # (Legacy) Same as unified
 ```
 
 ### Syncing Instruction Files
@@ -229,14 +250,11 @@ Update AI instruction files (CLAUDE.md, AGENTS.md, etc.):
 # Interactive mode - select type, variant, files
 knowns agents
 
-# Quick sync with minimal instruction (~600 bytes)
+# Quick sync with minimal instruction (~1KB)
 knowns agents sync
 
-# Sync with full embedded guidelines (~4KB)
+# Sync with full embedded guidelines (~26KB)
 knowns agents sync --full
-
-# Sync MCP guidelines
-knowns agents sync --type mcp
 
 # Sync all files (CLAUDE.md, AGENTS.md, GEMINI.md, Copilot)
 knowns agents sync --all
@@ -246,10 +264,11 @@ knowns agents sync --all
 
 | Variant | Size | Description |
 |---------|------|-------------|
-| **instruction** (default) | ~600 bytes | Minimal - tells AI to call `knowns agents guideline` |
-| **general** | ~4KB | Full guidelines embedded in file |
+| **instruction** (default) | ~1KB | Minimal - tells AI to call `knowns agents guideline` |
+| **general** (`--full`) | ~26KB | Full modular guidelines embedded in file |
 
 The **instruction** variant is recommended because:
 - Smaller context overhead
 - Guidelines stay up-to-date (fetched on-demand)
 - Same guidelines for all AI models
+- Agent can request stage-specific guidelines as needed

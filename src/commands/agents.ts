@@ -8,12 +8,10 @@ import { dirname, join } from "node:path";
 import chalk from "chalk";
 import { Command } from "commander";
 import prompts from "prompts";
-// Import markdown templates as text (esbuild loader: "text")
-import CLI_GENERAL from "../templates/cli/general.md";
-import CLI_INSTRUCTION from "../templates/cli/instruction.md";
-import MCP_GENERAL from "../templates/mcp/general.md";
-import MCP_INSTRUCTION from "../templates/mcp/instruction.md";
-import UNIFIED_GUIDELINES from "../templates/unified.md";
+// Import modular guidelines
+import { Guidelines } from "../templates/guidelines";
+// Import instruction templates (with markers)
+import { CLI_INSTRUCTION, MCP_INSTRUCTION } from "../templates/instruction";
 
 const PROJECT_ROOT = process.cwd();
 
@@ -31,10 +29,12 @@ export type GuidelinesVariant = "general" | "instruction";
  * Get guidelines content by type and variant
  */
 export function getGuidelines(type: GuidelinesType, variant: GuidelinesVariant = "instruction"): string {
-	if (type === "mcp") {
-		return variant === "instruction" ? MCP_INSTRUCTION : MCP_GENERAL;
+	if (variant === "general") {
+		// Full guidelines with markers (for embedding in CLAUDE.md)
+		return Guidelines.getFull(true);
 	}
-	return variant === "instruction" ? CLI_INSTRUCTION : CLI_GENERAL;
+	// Instruction templates (already have markers from module)
+	return type === "mcp" ? MCP_INSTRUCTION : CLI_INSTRUCTION;
 }
 
 /**
@@ -297,23 +297,66 @@ agentsCommand.addCommand(syncCommand);
  */
 const guidelineCommand = new Command("guideline")
 	.description("Output guidelines for AI agents (use this at session start)")
-	.option("--cli", "Show CLI-specific guidelines")
-	.option("--mcp", "Show MCP-specific guidelines")
-	.action(async (options: { cli?: boolean; mcp?: boolean }) => {
-		try {
-			if (options.cli) {
-				console.log(CLI_GENERAL);
-			} else if (options.mcp) {
-				console.log(MCP_GENERAL);
-			} else {
-				// Default: unified guidelines (covers both CLI and MCP)
-				console.log(UNIFIED_GUIDELINES);
+	.option("--cli", "Show CLI-specific guidelines (legacy)")
+	.option("--mcp", "Show MCP-specific guidelines (legacy)")
+	.option("--full", "Show full guidelines (all sections)")
+	.option("--compact", "Show compact guidelines (core + mistakes only)")
+	.option("--stage <stage>", "Show guidelines for specific stage: creation, execution, completion")
+	.option("--core", "Show core rules only")
+	.option("--commands", "Show commands reference only")
+	.option("--mistakes", "Show common mistakes only")
+	.action(
+		async (options: {
+			cli?: boolean;
+			mcp?: boolean;
+			full?: boolean;
+			compact?: boolean;
+			stage?: string;
+			core?: boolean;
+			commands?: boolean;
+			mistakes?: boolean;
+		}) => {
+			try {
+				// Legacy options (now just output full guidelines)
+				if (options.cli || options.mcp) {
+					console.log(Guidelines.getFull());
+					return;
+				}
+
+				// Modular options
+				if (options.core) {
+					console.log(Guidelines.core);
+					return;
+				}
+				if (options.commands) {
+					console.log(Guidelines.commands);
+					return;
+				}
+				if (options.mistakes) {
+					console.log(Guidelines.mistakes);
+					return;
+				}
+				if (options.compact) {
+					console.log(Guidelines.getCompact());
+					return;
+				}
+				if (options.stage) {
+					const stage = options.stage as "creation" | "execution" | "completion";
+					if (!["creation", "execution", "completion"].includes(stage)) {
+						console.error("Error: Invalid stage. Use: creation, execution, or completion");
+						process.exit(1);
+					}
+					console.log(Guidelines.getForStage(stage));
+					return;
+				}
+				// Default: full guidelines (all sections)
+				console.log(Guidelines.getFull());
+			} catch (error) {
+				console.error("Error:", error instanceof Error ? error.message : String(error));
+				process.exit(1);
 			}
-		} catch (error) {
-			console.error("Error:", error instanceof Error ? error.message : String(error));
-			process.exit(1);
-		}
-	});
+		},
+	);
 
 agentsCommand.addCommand(guidelineCommand);
 

@@ -1,7 +1,7 @@
 ---
 title: AI Agent Quick Reference
 createdAt: '2025-12-31T11:45:09.512Z'
-updatedAt: '2026-01-09T08:13:27.180Z'
+updatedAt: '2026-01-11T08:59:19.311Z'
 description: Condensed guidelines for Gemini 2.5 Flash AI agents
 tags:
   - ai
@@ -14,15 +14,32 @@ Quick reference for AI agents using Knowns CLI/MCP.
 
 ## First Step
 
-Get the full guidelines:
+Get the guidelines:
 
 ```bash
-# CLI
+# CLI - Full guidelines (default)
 knowns agents guideline
+
+# CLI - Compact (core + mistakes only)
+knowns agents guideline --compact
+
+# CLI - Stage-specific
+knowns agents guideline --stage execution
 
 # MCP
 mcp__knowns__get_guideline({})
 ```
+
+## Modular Guidelines
+
+| Section | CLI Flag | Description |
+|---------|----------|-------------|
+| Core Rules | `--core` | Must-follow principles |
+| Commands | `--commands` | CLI/MCP reference |
+| Workflow Creation | `--stage creation` | Creating tasks |
+| Workflow Execution | `--stage execution` | Implementing |
+| Workflow Completion | `--stage completion` | Finishing tasks |
+| Common Mistakes | `--mistakes` | Anti-patterns |
 
 ## Critical Rules
 
@@ -32,6 +49,22 @@ mcp__knowns__get_guideline({})
 | **Docs First** | Read docs BEFORE coding |
 | **Time Tracking** | Always start/stop timer |
 | **--plain Flag** | Only for view/list/search |
+| **--ac not -a** | Use `--ac` for acceptance criteria |
+
+## Flag Confusion Warning
+
+| Flag | In `task create/edit` | In `doc edit` |
+|------|----------------------|---------------|
+| `-a` | Assignee | Append content |
+| `--ac` | Acceptance criteria | N/A |
+
+```bash
+# ✅ Correct - add acceptance criteria
+knowns task edit 42 --ac "User can login"
+
+# ❌ Wrong - this sets assignee!
+knowns task edit 42 -a "User can login"
+```
 
 ## Quick Commands
 
@@ -41,6 +74,8 @@ mcp__knowns__get_guideline({})
 knowns task <id> --plain              # View
 knowns task list --plain              # List
 knowns task edit <id> -s in-progress  # Update status
+knowns task edit <id> --ac "Criterion" # Add AC
+knowns task edit <id> --check-ac 1    # Check AC
 knowns time start <id>                # Start timer
 knowns time stop                      # Stop timer
 ```
@@ -73,17 +108,3 @@ knowns task create "Title" --parent task-48
 ## Priority Values
 
 `low` | `medium` | `high`
-
-## Following Refs
-
-When reading output:
-- `@.knowns/tasks/task-X - ...` → `knowns task X --plain`
-- `@doc/path` → `knowns doc "path" --plain`
-
-When writing:
-- Task ref: `@task-X`
-- Doc ref: `@doc/path`
-
-## For More Details
-
-Run `knowns agents guideline` for complete guidelines.
