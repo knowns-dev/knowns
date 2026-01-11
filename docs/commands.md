@@ -598,21 +598,45 @@ knowns agents guideline [options]
 
 | Option | Description |
 |--------|-------------|
-| (none) | Output unified guidelines (CLI + MCP) |
-| `--cli` | Output CLI-specific guidelines |
-| `--mcp` | Output MCP-specific guidelines |
+| (none) | Output full guidelines (all sections) |
+| `--full` | Output full guidelines (all sections) |
+| `--compact` | Output compact guidelines (core rules + common mistakes) |
+| `--stage <stage>` | Output guidelines for specific stage: `creation`, `execution`, `completion` |
+| `--core` | Output core rules only |
+| `--commands` | Output commands reference only |
+| `--mistakes` | Output common mistakes only |
+| `--cli` | (Legacy) Same as default |
+| `--mcp` | (Legacy) Same as default |
+
+**Guidelines Structure (Modular):**
+
+| Section | Description |
+|---------|-------------|
+| Core Rules | Golden rules, must-follow principles |
+| Commands Reference | CLI/MCP commands quick reference |
+| Workflow Creation | Task creation workflow |
+| Workflow Execution | Task execution workflow |
+| Workflow Completion | Task completion workflow |
+| Common Mistakes | Anti-patterns and DO vs DON'T |
 
 **Examples:**
 
 ```bash
-# Output unified guidelines
+# Full guidelines (default)
 knowns agents guideline
 
-# CLI-specific
-knowns agents guideline --cli
+# Compact for quick reference
+knowns agents guideline --compact
 
-# MCP-specific
-knowns agents guideline --mcp
+# Stage-specific guidelines
+knowns agents guideline --stage creation    # When creating tasks
+knowns agents guideline --stage execution   # When implementing
+knowns agents guideline --stage completion  # When finishing
+
+# Individual sections
+knowns agents guideline --core       # Core rules only
+knowns agents guideline --commands   # Commands reference
+knowns agents guideline --mistakes   # Common mistakes
 ```
 
 ### `knowns agents sync`
@@ -633,8 +657,8 @@ knowns agents sync [options]
 
 | Variant | Size | Description |
 |---------|------|-------------|
-| instruction (default) | ~600 bytes | Minimal - tells AI to call `knowns agents guideline` |
-| general (`--full`) | ~4KB | Full guidelines embedded in file |
+| instruction (default) | ~1KB | Minimal - tells AI to call `knowns agents guideline` |
+| general (`--full`) | ~26KB | Full modular guidelines embedded in file |
 
 **Examples:**
 

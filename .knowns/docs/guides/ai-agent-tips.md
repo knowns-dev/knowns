@@ -1,7 +1,7 @@
 ---
 title: AI Agent Tips
 createdAt: '2025-12-31T11:25:59.296Z'
-updatedAt: '2026-01-09T08:13:08.078Z'
+updatedAt: '2026-01-11T08:59:03.616Z'
 description: Tips and workarounds for AI agents using Knowns CLI
 tags:
   - ai
@@ -17,15 +17,35 @@ Tips and workarounds for AI agents using Knowns CLI across different platforms a
 Before working on any task, get the guidelines:
 
 ```bash
-# Output full guidelines to stdout
+# Full guidelines (all sections) - default
 knowns agents guideline
 
-# CLI-specific guidelines
-knowns agents guideline --cli
+# Compact (core rules + common mistakes only)
+knowns agents guideline --compact
 
-# MCP-specific guidelines
-knowns agents guideline --mcp
+# Stage-specific guidelines
+knowns agents guideline --stage creation    # When creating tasks
+knowns agents guideline --stage execution   # When implementing
+knowns agents guideline --stage completion  # When finishing
+
+# Individual sections
+knowns agents guideline --core       # Core rules only
+knowns agents guideline --commands   # Commands reference
+knowns agents guideline --mistakes   # Common mistakes
 ```
+
+## Modular Guidelines Structure
+
+Guidelines are organized into focused sections:
+
+| Section | Description |
+|---------|-------------|
+| **Core Rules** | Golden rules, must-follow principles |
+| **Commands Reference** | CLI/MCP commands quick reference |
+| **Workflow Creation** | Task creation workflow |
+| **Workflow Execution** | Task execution workflow |
+| **Workflow Completion** | Task completion workflow |
+| **Common Mistakes** | Anti-patterns and DO vs DON'T |
 
 ## Windows Command Line Limit
 
@@ -33,7 +53,7 @@ knowns agents guideline --mcp
 
 Windows has ~8191 character limit for command line. Long content with `knowns doc edit -c "..."` will fail.
 
-### Workaround: Append in chunks
+### Workaround 1: Append in chunks
 
 Instead of one long command, split content and append:
 
@@ -52,153 +72,79 @@ knowns doc edit "doc-name" -a "## Section 2
 Content for section 2..."
 ```
 
-Each append adds `
+Each append adds a newline automatically.
 
-` (blank line) before new content.
-
-### File-Based Content Options
-
-For very long content, use file-based options:
+### Workaround 2: Use file-based options
 
 ```bash
-# Replace content from file
-knowns doc edit "doc-name" --content-file ./my-content.md
+# Replace content with file contents
+knowns doc edit "doc-name" --content-file ./new-content.md
 
-# Append content from file
+# Append file contents
 knowns doc edit "doc-name" --append-file ./additional-section.md
 ```
 
-## Multi-line Content by Platform
+## Common Flag Confusion
 
-### Bash/Zsh (macOS, Linux)
+### `-a` vs `--ac`
+
+**CRITICAL**: The `-a` flag means different things in different commands!
+
+| Command | `-a` means | To add acceptance criteria |
+|---------|------------|---------------------------|
+| `task create` | Assignee | Use `--ac` |
+| `task edit` | Assignee | Use `--ac` |
+| `doc edit` | Append content | N/A |
+
+**Wrong:**
+```bash
+# This sets ASSIGNEE, not acceptance criteria!
+knowns task edit 42 -a "User can login"
+```
+
+**Correct:**
+```bash
+# Use --ac for acceptance criteria
+knowns task edit 42 --ac "User can login"
+
+# Use -a for assignee
+knowns task edit 42 -a @me
+```
+
+## Multi-line Input
+
+### Bash / Zsh
 
 ```bash
-knowns task edit <id> --plan $'1. Step one
+knowns task edit 42 --plan $'1. Step one
 2. Step two
 3. Step three'
 ```
 
-### PowerShell (Windows)
+### PowerShell
 
 ```powershell
-knowns task edit <id> --plan "1. Step one`n2. Step two`n3. Step three"
+knowns task edit 42 --plan "1. Step one`n2. Step two`n3. Step three"
 ```
 
-### Cross-platform (heredoc)
+### Using heredoc (for long content)
 
 ```bash
-knowns task edit <id> --plan "$(cat <<EOF
-1. Step one
-2. Step two
-3. Step three
+knowns task edit 42 --plan "$(cat <<EOF
+1. Research existing patterns
+2. Design solution
+3. Implement
+4. Write tests
+5. Update documentation
 EOF
 )"
 ```
 
-## Best Practices for AI Agents
+## MCP vs CLI Guidelines
 
-1. **Get guidelines first** - `knowns agents guideline`
-2. **Always use `--plain` flag** - Machine-readable output for view/list/search
-3. **Follow refs recursively** - `@.knowns/docs/...` and `@.knowns/tasks/...`
-4. **Read docs before coding** - Understand patterns first
-5. **Start timer when taking task** - `knowns time start <id>`
-6. **Check AC after completing work** - Not before
-7. **Append notes progressively** - `--append-notes` for each milestone
-8. **Stop timer when done** - `knowns time stop`
+Both CLI and MCP now use the same **unified modular guidelines**. The `--cli` and `--mcp` flags are legacy and return the same content.
 
-## Agent Instruction Files
-
-### Sync Command
-
-Update AI instruction files (CLAUDE.md, AGENTS.md, etc.):
-
-```bash
-# Sync default files (CLAUDE.md, AGENTS.md) with minimal instruction
-knowns agents sync
-
-# Sync all files
-knowns agents sync --all
-
-# Sync with full embedded guidelines
-knowns agents sync --full
-
-# Sync with MCP guidelines
-knowns agents sync --type mcp
+For MCP:
 ```
-
-### Template Variants
-
-| Variant | Size | Use Case |
-|---------|------|----------|
-| **instruction** (default) | ~600 bytes | Minimal - just tells AI to call `knowns agents guideline` |
-| **general** | ~4KB | Full guidelines embedded in file |
-
-### Interactive Mode
-
-```bash
-# Interactive wizard to select type, variant, and files
-knowns agents
-```
-
-## Task ID Handling
-
-### ID Formats
-
-Tasks have three ID formats (all work with CLI commands):
-
-| Format | Example | Notes |
-|--------|---------|-------|
-| Sequential | `48`, `49` | Legacy numeric IDs |
-| Hierarchical | `48.1`, `48.2` | Legacy subtask IDs |
-| Random | `qkh5ne`, `a7f3k9` | Current CLI generates these |
-
-### Common Mistakes with `--parent`
-
-```bash
-# ❌ WRONG: Do NOT prefix with "task-"
-knowns task create "Title" --parent task-48        # ERROR!
-
-# ✅ CORRECT: Use raw ID only
-knowns task create "Title" --parent 48
-knowns task create "Title" --parent qkh5ne
-```
-
-### New Subtasks Get Random IDs
-
-When you create a subtask, it gets a random 6-char ID (NOT hierarchical):
-
-```bash
-$ knowns task create "API Docs" --parent 48
-✓ Created task-qkh5ne: API Docs     # <-- Random ID, not 48.7
-  Subtask of: 48
-```
-
-## Doc List with Path Filter
-
-Filter docs by folder for focused context:
-
-```bash
-# List only guides
-knowns doc list "guides/" --plain
-
-# List patterns
-knowns doc list "patterns/" --plain
-```
-
-## The --plain Flag
-
-**CRITICAL**: The `--plain` flag is ONLY for view/list/search commands:
-
-```bash
-# ✅ Correct - view/list/search
-knowns task <id> --plain
-knowns task list --plain
-knowns doc "path" --plain
-knowns doc list --plain
-knowns search "query" --plain
-
-# ❌ Wrong - create/edit do NOT support --plain
-knowns task create "Title" --plain       # ERROR!
-knowns task edit <id> -s done --plain    # ERROR!
-knowns doc create "Title" --plain        # ERROR!
+mcp__knowns__get_guideline({})    # Full guidelines
 ```
