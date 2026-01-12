@@ -94,6 +94,37 @@ updatedAt: "2025-01-12T16:00:00Z"
 This document describes our authentication pattern...
 ```
 
+## Init Wizard
+
+When running `knowns init`, an interactive wizard guides you through setup:
+
+```
+🚀 Knowns Project Setup Wizard
+   Configure your project settings
+
+? Project name: my-project
+? Git tracking mode: Git Tracked (recommended for teams)
+? AI Guidelines type: CLI
+? Select AI agent files to create/update:
+  ◉ CLAUDE.md (Claude Code)
+  ◉ AGENTS.md (Agent SDK)
+```
+
+| Option | Description |
+|--------|-------------|
+| **Project name** | Name stored in config.json |
+| **Git tracking mode** | `git-tracked` (default) or `git-ignored` |
+| **AI Guidelines type** | `CLI` (commands) or `MCP` (tools) |
+| **Agent files** | Which instruction files to create |
+
+**When MCP is selected:**
+- Creates `.mcp.json` for Claude Code auto-discovery
+
+**Skip wizard:**
+```bash
+knowns init my-project --no-wizard  # Use defaults
+```
+
 ## Git Integration
 
 Knowns supports two git tracking modes, selected during `knowns init`:

@@ -15,7 +15,6 @@ import type { GitTrackingMode } from "@models/project";
 
 interface InitConfig {
 	name: string;
-	defaultAssignee?: string;
 	defaultPriority: "low" | "medium" | "high";
 	defaultLabels: string[];
 	timeFormat: "12h" | "24h";
@@ -40,6 +39,48 @@ function checkGitExists(projectRoot: string): void {
 		console.log(chalk.cyan("    git init"));
 		console.log();
 		process.exit(1);
+	}
+}
+
+/**
+ * Create .mcp.json file for Claude Code auto-discovery
+ */
+async function createMcpJsonFile(projectRoot: string): Promise<void> {
+	const { writeFileSync, readFileSync } = await import("node:fs");
+	const mcpJsonPath = join(projectRoot, ".mcp.json");
+
+	const mcpConfig = {
+		mcpServers: {
+			knowns: {
+				command: "npx",
+				args: ["-y", "knowns", "mcp"],
+			},
+		},
+	};
+
+	if (existsSync(mcpJsonPath)) {
+		// Check if knowns is already configured
+		try {
+			const existing = JSON.parse(readFileSync(mcpJsonPath, "utf-8"));
+			if (existing?.mcpServers?.knowns) {
+				console.log(chalk.gray("  .mcp.json already has knowns configuration"));
+				return;
+			}
+			// Merge with existing config
+			existing.mcpServers = {
+				...existing.mcpServers,
+				...mcpConfig.mcpServers,
+			};
+			writeFileSync(mcpJsonPath, JSON.stringify(existing, null, "\t"), "utf-8");
+			console.log(chalk.green("✓ Added knowns to existing .mcp.json"));
+		} catch {
+			// Invalid JSON, overwrite
+			writeFileSync(mcpJsonPath, JSON.stringify(mcpConfig, null, "\t"), "utf-8");
+			console.log(chalk.green("✓ Created .mcp.json (replaced invalid file)"));
+		}
+	} else {
+		writeFileSync(mcpJsonPath, JSON.stringify(mcpConfig, null, "\t"), "utf-8");
+		console.log(chalk.green("✓ Created .mcp.json for Claude Code MCP auto-discovery"));
 	}
 }
 
@@ -109,41 +150,6 @@ async function runWizard(): Promise<InitConfig | null> {
 				initial: 0, // git-tracked
 			},
 			{
-				type: "text",
-				name: "defaultAssignee",
-				message: "Default assignee (optional)",
-				initial: "",
-				format: (value) => (value.trim() ? value.trim() : undefined),
-			},
-			{
-				type: "select",
-				name: "defaultPriority",
-				message: "Default priority for new tasks",
-				choices: [
-					{ title: "Low", value: "low" },
-					{ title: "Medium", value: "medium" },
-					{ title: "High", value: "high" },
-				],
-				initial: 1, // medium
-			},
-			{
-				type: "list",
-				name: "defaultLabels",
-				message: "Default labels (comma-separated, optional)",
-				initial: "",
-				separator: ",",
-			},
-			{
-				type: "select",
-				name: "timeFormat",
-				message: "Time format",
-				choices: [
-					{ title: "24-hour (14:30)", value: "24h" },
-					{ title: "12-hour (2:30 PM)", value: "12h" },
-				],
-				initial: 0, // 24h
-			},
-			{
 				type: "select",
 				name: "guidelinesType",
 				message: "AI Guidelines type",
@@ -181,10 +187,9 @@ async function runWizard(): Promise<InitConfig | null> {
 
 	return {
 		name: response.name,
-		defaultAssignee: response.defaultAssignee,
-		defaultPriority: response.defaultPriority,
-		defaultLabels: response.defaultLabels?.filter((l: string) => l.trim()) || [],
-		timeFormat: response.timeFormat,
+		defaultPriority: "medium",
+		defaultLabels: [],
+		timeFormat: "24h",
 		gitTrackingMode: response.gitTrackingMode || "git-tracked",
 		guidelinesType: response.guidelinesType || "cli",
 		agentFiles: response.agentFiles || [],
@@ -247,10 +252,14 @@ export const initCommand = new Command("init")
 				await updateGitignoreForIgnoredMode(projectRoot);
 			}
 
+			// Create .mcp.json for Claude Code auto-discovery when MCP mode is selected
+			if (config.guidelinesType === "mcp") {
+				await createMcpJsonFile(projectRoot);
+			}
+
 			// Initialize project
 			const fileStore = new FileStore(projectRoot);
 			const project = await fileStore.initProject(config.name, {
-				defaultAssignee: config.defaultAssignee,
 				defaultPriority: config.defaultPriority,
 				defaultLabels: config.defaultLabels,
 				timeFormat: config.timeFormat,
@@ -258,55 +267,29 @@ export const initCommand = new Command("init")
 			});
 
 			console.log();
-			console.log(chalk.green("✓ Project initialized successfully!"));
-			console.log(chalk.gray(`  Name: ${project.name}`));
-			console.log(chalk.gray(`  Location: ${knownsPath}`));
-			console.log(
-				chalk.gray(`  Git Mode: ${config.gitTrackingMode === "git-tracked" ? "Tracked (team)" : "Ignored (personal)"}`),
-			);
-
-			if (config.defaultAssignee) {
-				console.log(chalk.gray(`  Default Assignee: ${config.defaultAssignee}`));
-			}
-			console.log(chalk.gray(`  Default Priority: ${config.defaultPriority}`));
-			if (config.defaultLabels.length > 0) {
-				console.log(chalk.gray(`  Default Labels: ${config.defaultLabels.join(", ")}`));
-			}
-			console.log(chalk.gray(`  Time Format: ${config.timeFormat}`));
-			console.log();
+			console.log(chalk.green(`✓ Project initialized: ${project.name}`));
 
 			// Update AI instruction files
 			if (config.agentFiles.length > 0) {
 				const guidelines = getGuidelines(config.guidelinesType);
 
-				console.log(chalk.bold(`Updating AI instruction files (${config.guidelinesType.toUpperCase()} version)...`));
-				console.log();
-
-				let syncedCount = 0;
 				for (const file of config.agentFiles) {
 					try {
 						const result = await updateInstructionFile(file.path, guidelines);
 						if (result.success) {
-							syncedCount++;
 							const action =
 								result.action === "created" ? "Created" : result.action === "appended" ? "Appended" : "Updated";
-							console.log(chalk.green(`✓ ${action} ${file.name}: ${file.path}`));
+							console.log(chalk.green(`✓ ${action}: ${file.path}`));
 						}
-					} catch (error) {
-						console.log(chalk.yellow(`⚠️  Skipped ${file.name}: ${file.path}`));
+					} catch {
+						console.log(chalk.yellow(`⚠️  Skipped: ${file.path}`));
 					}
 				}
-
-				console.log();
-				console.log(chalk.green(`✓ Synced guidelines to ${syncedCount} AI instruction file(s)`));
-			} else {
-				console.log(chalk.gray("Skipped AI instruction files (none selected)"));
 			}
+
 			console.log();
-			console.log(chalk.cyan("Next steps:"));
-			console.log(chalk.gray('  1. Create a task: knowns task create "My first task"'));
-			console.log(chalk.gray("  2. List tasks: knowns task list"));
-			console.log(chalk.gray("  3. Open web UI: knowns browser"));
+			console.log(chalk.cyan("Get started:"));
+			console.log(chalk.gray('  knowns task create "My first task"'));
 		} catch (error) {
 			console.error(chalk.red("✗ Failed to initialize project"));
 			if (error instanceof Error) {

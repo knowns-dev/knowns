@@ -3,10 +3,132 @@
  * Starts the Model Context Protocol server for AI agent integration
  */
 
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { startMcpServer } from "@mcp/server";
 import { findProjectRoot } from "@utils/find-project-root";
 import chalk from "chalk";
 import { Command } from "commander";
+
+/**
+ * Get MCP configuration for knowns
+ */
+function getMcpConfig() {
+	return {
+		command: "npx",
+		args: ["-y", "knowns", "mcp"],
+	};
+}
+
+/**
+ * Setup MCP in Claude Code via CLI
+ */
+async function setupClaudeCode(): Promise<boolean> {
+	const { spawnSync } = await import("node:child_process");
+
+	// Check if claude CLI is available
+	const claudeCheck = spawnSync("claude", ["--version"], { stdio: "pipe" });
+
+	if (claudeCheck.status !== 0) {
+		console.log(chalk.yellow("⚠️  Claude Code CLI not found"));
+		console.log(chalk.gray("  Install Claude Code first: https://claude.ai/code"));
+		console.log(chalk.gray("  After installing, run: knowns mcp setup"));
+		return false;
+	}
+
+	const config = getMcpConfig();
+	const configJson = JSON.stringify(config);
+
+	// Use spawnSync without shell to avoid security warnings
+	const result = spawnSync("claude", ["mcp", "add-json", "knowns", configJson], {
+		stdio: "inherit",
+	});
+
+	if (result.status === 0) {
+		console.log(chalk.green("✓ Added knowns MCP server to Claude Code"));
+		console.log(chalk.gray("  Restart Claude Code to activate the server"));
+		return true;
+	}
+
+	// Try alternative: claude mcp add command
+	const altResult = spawnSync("claude", ["mcp", "add", "knowns", "--", "npx", "-y", "knowns", "mcp"], {
+		stdio: "inherit",
+	});
+
+	if (altResult.status === 0) {
+		console.log(chalk.green("✓ Added knowns MCP server to Claude Code"));
+		console.log(chalk.gray("  Restart Claude Code to activate the server"));
+		return true;
+	}
+
+	console.log(chalk.red("✗ Failed to add MCP server to Claude Code"));
+	console.log(chalk.gray("  Try adding manually with:"));
+	console.log(chalk.cyan(`    claude mcp add-json knowns '${configJson}'`));
+	return false;
+}
+
+/**
+ * Create .mcp.json file in project root
+ */
+function createProjectMcpJson(projectRoot: string): boolean {
+	const mcpJsonPath = join(projectRoot, ".mcp.json");
+	const mcpConfig = {
+		mcpServers: {
+			knowns: getMcpConfig(),
+		},
+	};
+
+	if (existsSync(mcpJsonPath)) {
+		try {
+			const existing = JSON.parse(readFileSync(mcpJsonPath, "utf-8"));
+			if (existing?.mcpServers?.knowns) {
+				console.log(chalk.gray("  .mcp.json already has knowns configuration"));
+				return true;
+			}
+			existing.mcpServers = {
+				...existing.mcpServers,
+				...mcpConfig.mcpServers,
+			};
+			writeFileSync(mcpJsonPath, JSON.stringify(existing, null, "\t"), "utf-8");
+			console.log(chalk.green("✓ Added knowns to existing .mcp.json"));
+		} catch {
+			writeFileSync(mcpJsonPath, JSON.stringify(mcpConfig, null, "\t"), "utf-8");
+			console.log(chalk.green("✓ Created .mcp.json (replaced invalid file)"));
+		}
+	} else {
+		writeFileSync(mcpJsonPath, JSON.stringify(mcpConfig, null, "\t"), "utf-8");
+		console.log(chalk.green("✓ Created .mcp.json for Claude Code project-level auto-discovery"));
+	}
+
+	return true;
+}
+
+// Setup subcommand
+const setupCommand = new Command("setup")
+	.description("Setup knowns MCP server in Claude Code")
+	.option("--project", "Only create .mcp.json in project (skip Claude Code setup)")
+	.option("--global", "Only setup in Claude Code globally (skip .mcp.json)")
+	.action(async (options: { project?: boolean; global?: boolean }) => {
+		const projectRoot = findProjectRoot();
+
+		// Default: do both unless specific option is provided
+		const doProject = options.project || (!options.project && !options.global);
+		const doGlobal = options.global || (!options.project && !options.global);
+
+		// Create project-level .mcp.json
+		if (doProject) {
+			if (projectRoot) {
+				createProjectMcpJson(projectRoot);
+			} else {
+				console.log(chalk.yellow("⚠️  Not in a Knowns project. Run 'knowns init' first."));
+			}
+		}
+
+		// Setup in Claude Code globally
+		if (doGlobal) {
+			await setupClaudeCode();
+		}
+	});
 
 export const mcpCommand = new Command("mcp")
 	.description("Start MCP server for AI agent integration (Claude Desktop, etc.)")
@@ -35,7 +157,8 @@ export const mcpCommand = new Command("mcp")
 			console.error(chalk.red("Error:"), error instanceof Error ? error.message : error);
 			process.exit(1);
 		}
-	});
+	})
+	.addCommand(setupCommand);
 
 function showConfigInfo() {
 	const configExample = {

@@ -1,7 +1,7 @@
 ---
 title: Knowns CLI Guide
 createdAt: '2025-12-26T19:43:25.470Z'
-updatedAt: '2026-01-08T20:50:16.456Z'
+updatedAt: '2026-01-12T11:43:12.259Z'
 description: Complete guide for using Knowns CLI
 tags:
   - guide
@@ -15,14 +15,14 @@ Knowns is a CLI tool for managing tasks, documentation, and time tracking for de
 ## Installation
 
 ```bash
-# Clone and build
-git clone <repo>
-cd knowns
-bun install
-bun run build
+# Install globally via npm
+npm install -g knowns
 
-# Or install globally
-bun link
+# Or via bun
+bun add -g knowns
+
+# Or use npx (no installation)
+npx knowns <command>
 ```
 
 ## Initialize Project
@@ -31,10 +31,97 @@ bun link
 knowns init [project-name]
 ```
 
-This creates a `.knowns/` directory containing:
-- `tasks/` - Task files
-- `docs/` - Documentation files  
-- `config.json` - Project configuration
+### Interactive Wizard
+
+When running without a name, the wizard prompts for:
+
+```
+🚀 Knowns Project Setup Wizard
+   Configure your project settings
+
+? Project name › my-project
+? Git tracking mode › Git Tracked (recommended for teams)
+? AI Guidelines type › CLI / MCP
+? Select AI agent files › CLAUDE.md, AGENTS.md
+```
+
+**Example session:**
+```
+$ knowns init
+
+🚀 Knowns Project Setup Wizard
+   Configure your project settings
+
+? Project name › my-app
+? Git tracking mode › Git Tracked (recommended for teams)
+? AI Guidelines type › MCP
+? Select AI agent files › CLAUDE.md, AGENTS.md
+
+✓ Created .mcp.json for Claude Code MCP auto-discovery
+✓ Project initialized: my-app
+✓ Created: CLAUDE.md
+✓ Created: AGENTS.md
+
+Get started:
+  knowns task create "My first task"
+```
+
+### Wizard Options
+
+| Option | Description |
+|--------|-------------|
+| **Project name** | Name of your project |
+| **Git tracking mode** | `git-tracked` (team) or `git-ignored` (personal) |
+| **AI Guidelines type** | `CLI` (commands) or `MCP` (MCP tools) |
+| **AI agent files** | Files to update with guidelines |
+
+### Quick Init (Non-Interactive)
+
+```bash
+knowns init my-project --no-wizard
+```
+
+### MCP Auto-Setup
+
+When selecting **MCP** in the wizard, a `.mcp.json` file is automatically created:
+
+```json
+{
+  "mcpServers": {
+    "knowns": {
+      "command": "npx",
+      "args": ["-y", "knowns", "mcp"]
+    }
+  }
+}
+```
+
+This enables Claude Code to auto-discover the MCP server.
+
+---
+
+## MCP Setup
+
+### Quick Setup
+
+```bash
+# Setup both project (.mcp.json) and Claude Code globally
+knowns mcp setup
+
+# Only create .mcp.json in project
+knowns mcp setup --project
+
+# Only add to Claude Code globally
+knowns mcp setup --global
+```
+
+### Manual MCP Server Start
+
+```bash
+knowns mcp           # Start MCP server
+knowns mcp --verbose # With debug logging
+knowns mcp --info    # Show config instructions
+```
 
 ---
 
@@ -48,7 +135,7 @@ knowns task create "Title" -d "Description" --ac "Criterion 1" --ac "Criterion 2
 
 **Options:**
 - `-d, --description` - Task description
-- `--ac` - Acceptance criteria (can be used multiple times)
+- `--ac` - Acceptance criteria (repeatable)
 - `-l, --labels` - Labels (comma-separated)
 - `--priority` - low | medium | high
 - `-p, --parent` - Parent task ID
@@ -56,7 +143,8 @@ knowns task create "Title" -d "Description" --ac "Criterion 1" --ac "Criterion 2
 ### View Task
 
 ```bash
-knowns task view <id> --plain
+knowns task <id> --plain       # Shorthand
+knowns task view <id> --plain  # Full command
 ```
 
 ### List Tasks
@@ -64,8 +152,7 @@ knowns task view <id> --plain
 ```bash
 knowns task list --plain
 knowns task list --status in-progress --plain
-knowns task list --assignee @me --plain
-knowns task list --tree --plain  # Show tree hierarchy
+knowns task list --tree --plain
 ```
 
 ### Edit Task
@@ -73,17 +160,18 @@ knowns task list --tree --plain  # Show tree hierarchy
 ```bash
 # Metadata
 knowns task edit <id> -t "New title"
-knowns task edit <id> -s in-progress -a @me
+knowns task edit <id> -s in-progress
 
 # Acceptance Criteria
-knowns task edit <id> --ac "New criterion"      # Add
-knowns task edit <id> --check-ac 1              # Check (1-indexed)
-knowns task edit <id> --uncheck-ac 1            # Uncheck
+knowns task edit <id> --ac "New criterion"
+knowns task edit <id> --check-ac 1
+knowns task edit <id> --uncheck-ac 1
 
 # Plan & Notes  
-knowns task edit <id> --plan "1. Step 1\n2. Step 2"
-knowns task edit <id> --notes "Implementation summary"
-knowns task edit <id> --append-notes "Progress update"
+knowns task edit <id> --plan "1. Step 1
+2. Step 2"
+knowns task edit <id> --notes "Summary"
+knowns task edit <id> --append-notes "Progress"
 ```
 
 ---
@@ -99,17 +187,13 @@ knowns doc create "Title" -d "Description" -t "tags" -f "folder/path"
 ### View Doc
 
 ```bash
-knowns doc view "doc-name" --plain
-knowns doc view "folder/doc-name" --plain
+knowns doc <path> --plain           # Shorthand
+knowns doc view "folder/doc" --plain
 ```
 
 ### Edit Doc
 
 ```bash
-# Metadata
-knowns doc edit "doc-name" -t "New Title" --tags "new,tags"
-
-# Content
 knowns doc edit "doc-name" -c "New content"
 knowns doc edit "doc-name" -a "Appended content"
 ```
@@ -138,14 +222,13 @@ knowns time status
 ### Manual Entry
 
 ```bash
-knowns time add <task-id> 2h -n "Note" -d "2025-12-25"
+knowns time add <task-id> 2h -n "Note"
 ```
 
 ### Reports
 
 ```bash
 knowns time report --from "2025-12-01" --to "2025-12-31"
-knowns time report --by-label --csv > report.csv
 ```
 
 ---
@@ -156,29 +239,20 @@ knowns time report --by-label --csv > report.csv
 knowns search "query" --plain
 knowns search "auth" --type task --plain
 knowns search "patterns" --type doc --plain
-knowns search "bug" --status in-progress --priority high --plain
 ```
 
 ---
 
 ## Reference System
 
-Tasks and docs can contain references to each other:
-
-| Type | Format | Output |
-|------|--------|--------|
-| Task | `@task-<id>` | `@.knowns/tasks/task-<id> - <title>.md` |
-| Doc | `@doc/<path>` | `@.knowns/docs/<path>.md` |
-
-**Example:**
-```
-See @task-42 for implementation details.
-Follow patterns in @doc/patterns/module.md
-```
+| Type | Format | Example |
+|------|--------|---------|
+| Task | `@task-<id>` | `@task-42` |
+| Doc | `@doc/<path>` | `@doc/patterns/module` |
 
 ---
 
-## Status Values
+## Status & Priority
 
 | Status | Description |
 |--------|-------------|
@@ -188,98 +262,28 @@ Follow patterns in @doc/patterns/module.md
 | `blocked` | Waiting on dependency |
 | `done` | Completed |
 
-## Priority Values
-
 | Priority | Description |
 |----------|-------------|
-| `low` | Can wait, nice-to-have |
-| `medium` | Normal priority (default) |
-| `high` | Urgent, time-sensitive |
-
----
-
-## Tips
-
-1. **Always use `--plain`** when working with AI agents
-2. **Read docs first** before starting a new task
-3. **Track time** for accurate reports
-4. **Use references** (`@task-X`, `@doc/path`) to link related items
-5. **Follow refs recursively** - refs may contain nested refs
+| `low` | Nice-to-have |
+| `medium` | Normal (default) |
+| `high` | Urgent |
 
 ---
 
 ## AI Agent Instructions
 
-### Interactive Mode
+### View Guidelines
 
 ```bash
-knowns agents
+knowns agents guideline           # Default guidelines
+knowns agents guideline --full    # All sections
+knowns agents guideline --compact # Core rules only
 ```
 
-Prompts for:
-1. Guidelines type (CLI or MCP)
-2. Variant (General or Gemini compact)
-3. Files to update
-
-### Quick Sync
+### Sync to Files
 
 ```bash
-# Sync CLAUDE.md and AGENTS.md with CLI guidelines
-knowns agents sync
-
-# Sync all files (including GEMINI.md, Copilot)
-knowns agents sync --all
-
-# Use compact Gemini variant
-knowns agents sync --gemini
-
-# MCP guidelines
-knowns agents sync --type mcp
-
-# Combine options
-knowns agents sync --type mcp --gemini --all
+knowns agents sync                # CLAUDE.md, AGENTS.md
+knowns agents sync --all          # All supported files
+knowns agents sync --type mcp     # MCP guidelines
 ```
-
-### Non-Interactive Update
-
-```bash
-knowns agents --update-instructions
-knowns agents --update-instructions --gemini
-knowns agents --update-instructions --type mcp --files "CLAUDE.md,AGENTS.md"
-```
-
-### Supported Files
-
-| File | Description |
-|------|-------------|
-| CLAUDE.md | Claude Code instructions |
-| AGENTS.md | Agent SDK |
-| GEMINI.md | Google Gemini |
-| .github/copilot-instructions.md | GitHub Copilot |
-
-
-
----
-
-## Update Notifier
-
-Knowns CLI automatically checks for updates (1-hour cache):
-
-```
- UPDATE  v1.0.0 available (current v0.8.0) → npm i -g knowns
-```
-
-**Disable update check:**
-```bash
-NO_UPDATE_CHECK=1 knowns task list
-```
-
-**Force check:**
-```bash
-KNOWNS_UPDATE_CHECK=1 knowns task list
-```
-
-Update checks are skipped automatically on:
-- CI environments
-- `--plain` mode
-- When `NO_UPDATE_CHECK=1` is set

@@ -1,7 +1,7 @@
 ---
 title: User Guide
 createdAt: '2025-12-29T11:49:48.531Z'
-updatedAt: '2026-01-05T17:01:51.678Z'
+updatedAt: '2026-01-12T11:43:37.177Z'
 description: Comprehensive user documentation for Knowns CLI and Web UI
 tags:
   - docs
@@ -22,38 +22,81 @@ Complete guide for using Knowns - a CLI-first knowledge layer and task managemen
 # Install globally via npm
 npm install -g knowns
 
-# Or via npx (no installation)
+# Or via bun
+bun add -g knowns
+
+# Or use npx (no installation)
 npx knowns <command>
 ```
 
 ### Initialize a Project
 
 ```bash
-# In your project directory
 knowns init [project-name]
 ```
 
-This creates a `.knowns/` directory containing:
-- `tasks/` - Task files (Markdown with YAML frontmatter)
-- `docs/` - Documentation files
-- `config.json` - Project configuration
+#### Interactive Wizard
+
+The wizard prompts for 4 settings:
+
+```
+🚀 Knowns Project Setup Wizard
+   Configure your project settings
+
+? Project name › my-project
+? Git tracking mode › Git Tracked (recommended for teams)
+? AI Guidelines type › CLI
+? Select AI agent files › CLAUDE.md, AGENTS.md
+
+✓ Project initialized: my-project
+✓ Created: CLAUDE.md
+✓ Created: AGENTS.md
+
+Get started:
+  knowns task create "My first task"
+```
+
+#### Wizard Options
+
+| Option | Choices | Description |
+|--------|---------|-------------|
+| **Project name** | text | Your project name |
+| **Git tracking mode** | `Git Tracked` / `Git Ignored` | Track all or only docs in git |
+| **AI Guidelines type** | `CLI` / `MCP` | CLI commands or MCP tools |
+| **AI agent files** | multiselect | Files to update |
+
+#### MCP Mode
+
+When selecting **MCP**, a `.mcp.json` file is auto-created for Claude Code:
+
+```json
+{
+  "mcpServers": {
+    "knowns": {
+      "command": "npx",
+      "args": ["-y", "knowns", "mcp"]
+    }
+  }
+}
+```
+
+#### Skip Wizard
+
+```bash
+knowns init my-project --no-wizard
+```
 
 ### Quick Start
 
 ```bash
-# Create your first task
-knowns task create "Setup project" -d "Initial project setup"
-
-# View all tasks
+knowns task create "Setup project" -d "Initial setup"
 knowns task list
-
-# Start the Web UI
-knowns browser
+knowns browser  # Open Web UI
 ```
 
 ---
 
-## CLI Command Reference
+## CLI Commands
 
 ### Task Commands
 
@@ -62,296 +105,126 @@ knowns browser
 knowns task create "Title" [options]
 ```
 
-**Options:**
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--description` | `-d` | Task description |
 | `--ac` | | Acceptance criteria (repeatable) |
 | `--labels` | `-l` | Comma-separated labels |
-| `--priority` | | low \| medium \| high |
+| `--priority` | | low / medium / high |
 | `--parent` | `-p` | Parent task ID |
-| `--assignee` | `-a` | Assign to user (@me, @username) |
 
-**Examples:**
+**Example:**
 ```bash
-knowns task create "Add login" -d "Implement user login" --ac "Login form works" --ac "JWT tokens stored" -l "auth,feature" --priority high
+knowns task create "Add login" -d "User login feature" --ac "Form works" --ac "JWT stored" -l "auth" --priority high
 ```
 
 #### View Task
 ```bash
-knowns task <id> [--plain]           # Shorthand
-knowns task view <id> [--plain]      # Full command
+knowns task <id> --plain
 ```
-
-- `--plain` - Plain text output (for AI agents)
 
 #### List Tasks
 ```bash
-knowns task list [options]
-```
-
-**Options:**
-| Option | Description |
-|--------|-------------|
-| `--status` | Filter by status |
-| `--assignee` | Filter by assignee |
-| `--priority` | Filter by priority |
-| `--label` | Filter by label |
-| `--tree` | Show hierarchy tree |
-| `--plain` | Plain text output |
-
-**Examples:**
-```bash
-knowns task list --status in-progress --assignee @me
+knowns task list --plain
+knowns task list --status in-progress --plain
 knowns task list --tree --plain
 ```
 
 #### Edit Task
 ```bash
-knowns task edit <id> [options]
-```
-
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--title` | `-t` | Update title |
-| `--description` | `-d` | Update description |
-| `--status` | `-s` | Update status |
-| `--priority` | | Update priority |
-| `--assignee` | `-a` | Update assignee |
-| `--ac` | | Add acceptance criterion |
-| `--check-ac` | | Check AC by index (1-based) |
-| `--uncheck-ac` | | Uncheck AC by index |
-| `--remove-ac` | | Remove AC by index |
-| `--plan` | | Set implementation plan |
-| `--notes` | | Set implementation notes |
-| `--append-notes` | | Append to notes |
-
-**Examples:**
-```bash
-knowns task edit 42 -s in-progress -a @me
-knowns task edit 42 --check-ac 1 --check-ac 2
-knowns task edit 42 --append-notes "✓ Feature implemented"
+knowns task edit <id> -s in-progress
+knowns task edit <id> --check-ac 1
+knowns task edit <id> --append-notes "Progress update"
 ```
 
 ### Documentation Commands
 
-#### Create Document
+#### Create Doc
 ```bash
-knowns doc create "Title" [options]
+knowns doc create "Title" -d "Description" -t "tags" -f "folder"
 ```
 
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--description` | `-d` | Document description |
-| `--tags` | `-t` | Comma-separated tags |
-| `--folder` | `-f` | Folder path |
-
-#### View Document
+#### View Doc
 ```bash
-knowns doc <path> [--plain]          # Shorthand
-knowns doc view "path/name" [--plain] # Full command
+knowns doc <path> --plain
 ```
 
-#### Edit Document
+#### Edit Doc
 ```bash
-knowns doc edit "name" [options]
+knowns doc edit "name" -c "New content"
+knowns doc edit "name" -a "Appended content"
 ```
 
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--title` | `-t` | Update title |
-| `--tags` | | Update tags |
-| `--content` | `-c` | Replace content |
-| `--append` | `-a` | Append to content |
-
-#### List Documents
-```bash
-knowns doc list [--tag <tag>] [--plain]
-```
-
-### Time Tracking Commands
-
-#### Start Timer
-```bash
-knowns time start <task-id>
-```
-
-#### Stop Timer
-```bash
-knowns time stop
-```
-
-#### Pause/Resume Timer
-```bash
-knowns time pause
-knowns time resume
-```
-
-#### Check Timer Status
-```bash
-knowns time status
-```
-
-#### Add Manual Entry
-```bash
-knowns time add <task-id> <duration> [-n "note"] [-d "date"]
-```
-
-**Examples:**
-```bash
-knowns time add 42 2h -n "Code review"
-knowns time add 42 30m -d "2025-12-25"
-```
-
-#### Generate Report
-```bash
-knowns time report [options]
-```
-
-**Options:**
-| Option | Description |
-|--------|-------------|
-| `--from` | Start date (YYYY-MM-DD) |
-| `--to` | End date (YYYY-MM-DD) |
-| `--by-label` | Group by labels |
-| `--csv` | Export as CSV |
-
-### Search Commands
+### Time Tracking
 
 ```bash
-knowns search "query" [options]
+knowns time start <task-id>  # Start timer
+knowns time stop             # Stop timer
+knowns time pause            # Pause
+knowns time resume           # Resume
+knowns time status           # Check status
+knowns time add <id> 2h      # Manual entry
+knowns time report           # Generate report
 ```
 
-**Options:**
-| Option | Description |
-|--------|-------------|
-| `--type` | task \| doc |
-| `--status` | Filter by status |
-| `--priority` | Filter by priority |
-| `--plain` | Plain text output |
+### Search
+
+```bash
+knowns search "query" --plain
+knowns search "auth" --type task --plain
+knowns search "api" --type doc --plain
+```
 
 ---
 
-## Web UI Guide
+## Web UI
 
-### Starting the Web UI
+### Start
 
 ```bash
 knowns browser
 ```
 
-This opens `http://localhost:6420` in your browser.
-
-### Navigation
-
-The sidebar provides access to:
+Opens `http://localhost:6420` with:
 - **Kanban** - Visual task board
-- **Tasks** - Table view of all tasks
+- **Tasks** - Table view
 - **Docs** - Documentation browser
-- **Config** - Project settings
+- **Config** - Settings
 
-### Kanban Board
+### Features
 
-The Kanban board displays tasks in columns by status:
-- **Todo** - Tasks not yet started
-- **In Progress** - Tasks being worked on
-- **In Review** - Tasks in code review
-- **Blocked** - Tasks waiting on dependencies
-- **Done** - Completed tasks
-
-**Features:**
 - Drag and drop tasks between columns
-- Click task card to view details
-- "New Task" button to create tasks
-- "Batch Archive" to clean up old done tasks
-
-### Task Details
-
-Click any task to open the detail panel:
-- View/edit title, description
-- Check acceptance criteria
-- Change status, priority, assignee
-- View/add implementation notes
-- Track time with timer controls
-
-### Real-time Sync
-
-The Web UI syncs in real-time with CLI changes:
-- Tasks updated via CLI appear instantly
-- Multiple browser tabs stay synchronized
-- SSE connection for live updates (auto-reconnects on sleep/wake)
-
-### Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| `⌘K` / `Ctrl+K` | Open command search |
-| `Esc` | Close dialogs |
+- Real-time sync with CLI
+- Timer controls in task details
+- Keyboard shortcuts (`⌘K` for search)
 
 ---
 
-## Time Tracking Guide
+## MCP Integration
 
-### Workflow
-
-1. **Start work on a task:**
-   ```bash
-   knowns task edit 42 -s in-progress -a @me
-   knowns time start 42
-   ```
-
-2. **Take a break:**
-   ```bash
-   knowns time pause
-   # ... break ...
-   knowns time resume
-   ```
-
-3. **Finish work:**
-   ```bash
-   knowns time stop
-   knowns task edit 42 -s done
-   ```
-
-### Viewing Time Entries
+### Quick Setup
 
 ```bash
-# Check current timer
-knowns time status
+# Setup both project and Claude Code
+knowns mcp setup
 
-# View time report for this month
-knowns time report --from "2025-12-01" --to "2025-12-31"
+# Only create .mcp.json
+knowns mcp setup --project
 
-# Export to CSV
-knowns time report --csv > report.csv
+# Only add to Claude Code
+knowns mcp setup --global
 ```
 
-### Manual Entries
+### Manual Setup (Claude Desktop)
 
-For time worked without the timer:
-```bash
-knowns time add 42 1h30m -n "Pair programming session"
-```
-
----
-
-## MCP Integration Guide (for AI Agents)
-
-Knowns includes a Model Context Protocol (MCP) server for AI integration.
-
-### Setup with Claude Desktop
-
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "knowns": {
       "command": "npx",
-      "args": ["knowns", "mcp"]
+      "args": ["-y", "knowns", "mcp"]
     }
   }
 }
@@ -361,103 +234,61 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 
 | Tool | Description |
 |------|-------------|
-| `get_task` | Get task details by ID |
-| `list_tasks` | List tasks with filters |
 | `create_task` | Create a new task |
-| `update_task` | Update task fields |
-| `get_doc` | Get document content |
-| `list_docs` | List all documents |
-| `search` | Search tasks and docs |
+| `get_task` | Get task by ID |
+| `update_task` | Update task |
+| `list_tasks` | List tasks |
+| `search_tasks` | Search tasks |
+| `list_docs` | List documents |
+| `get_doc` | Get document |
+| `create_doc` | Create document |
+| `update_doc` | Update document |
+| `start_time` | Start timer |
+| `stop_time` | Stop timer |
+| `get_board` | Get kanban board |
 
 ### Plain Text Mode
 
-Always use `--plain` flag when AI agents call CLI commands:
+Always use `--plain` for AI agents:
 ```bash
-knowns task 42 --plain
-knowns task list --plain
-knowns doc "README" --plain
+knowns task <id> --plain
+knowns doc "path" --plain
 ```
 
-### Reference System
+---
 
-Tasks and docs can reference each other:
-- `@task-42` → Links to task 42
-- `@doc/patterns/module` → Links to document
+## AI Guidelines
 
-When viewing with `--plain`, references appear as:
-- `@task-42`
-- `@doc/patterns/module`
-
-### AI Guidelines Management
-
-Sync AI instruction files with Knowns guidelines:
+### View Guidelines
 
 ```bash
-# Interactive mode
-knowns agents
-
-# Quick sync (CLAUDE.md, AGENTS.md)
-knowns agents sync
-
-# Sync all files
-knowns agents sync --all
-
-# Use compact Gemini variant
-knowns agents sync --gemini
-
-# Use MCP tools format
-knowns agents sync --type mcp
+knowns agents guideline           # Default
+knowns agents guideline --full    # All sections
+knowns agents guideline --compact # Core + mistakes
 ```
 
-**Template variants:**
+### Sync to Files
 
-| Type | Variant | Size | Use For |
-|------|---------|------|---------|
-| cli | general | ~15KB | Claude, GPT-4 |
-| cli | gemini | ~3KB | Gemini 2.5 Flash |
-| mcp | general | ~12KB | Claude Desktop |
-| mcp | gemini | ~2.5KB | Gemini + MCP |
+```bash
+knowns agents sync                # CLAUDE.md, AGENTS.md
+knowns agents sync --all          # All files
+knowns agents sync --type mcp     # MCP version
+```
 
 ---
 
 ## Troubleshooting
 
-### Common Issues
+| Error | Solution |
+|-------|----------|
+| "Not initialized" | Run `knowns init` |
+| "Task not found" | Check ID with `knowns task list --plain` |
+| "Timer already running" | Run `knowns time stop` first |
+| Web UI won't start | Try `knowns browser --port 6421` |
 
-#### "Error: Not initialized"
-Run `knowns init` in your project directory first.
-
-#### "Error: Task not found"
-Check the task ID with `knowns task list --plain`.
-
-#### "Error: Timer already running"
-Stop the current timer with `knowns time stop` before starting a new one.
-
-#### Web UI won't start
-- Check if port 6420 is available
-- Try `knowns browser --port 6421`
-
-#### Tasks not syncing
-- Refresh the browser
-- Check SSE connection in browser dev tools
-- Wait for auto-reconnection if computer was asleep
-
-### Getting Help
+### Help
 
 ```bash
-# View help for any command
 knowns --help
 knowns task --help
-knowns task create --help
 ```
-
-### Debug Mode
-
-For detailed logging:
-```bash
-DEBUG=knowns:* knowns <command>
-```
-
-### Report Issues
-
-File issues at: https://github.com/knowns-dev/knowns/issues
