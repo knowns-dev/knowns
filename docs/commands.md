@@ -477,13 +477,12 @@ knowns init --force
 
 **Wizard prompts:**
 - Project name
-- **Git tracking mode** (git-tracked or git-ignored)
-- Default assignee
-- Default priority
-- Default labels
-- Time format (12h/24h)
-- AI guidelines version (CLI/MCP)
-- AI agent files to sync (CLAUDE.md, GEMINI.md, etc.)
+- Git tracking mode (`git-tracked` or `git-ignored`)
+- AI guidelines type (`CLI` or `MCP`)
+- AI agent files to sync (CLAUDE.md, AGENTS.md, etc.)
+
+**When MCP is selected:**
+- Automatically creates `.mcp.json` for Claude Code auto-discovery
 
 **Git Tracking Modes:**
 
@@ -549,6 +548,36 @@ knowns mcp --info
 
 # Start server with logging
 knowns mcp --verbose
+```
+
+### `knowns mcp setup`
+
+Setup Knowns MCP server in Claude Code.
+
+```bash
+knowns mcp setup [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--project` | Only create `.mcp.json` in project (skip Claude Code setup) |
+| `--global` | Only setup in Claude Code globally (skip `.mcp.json`) |
+
+**What happens:**
+- Creates `.mcp.json` in project root for auto-discovery
+- Runs `claude mcp add-json knowns` to add to Claude Code
+
+**Examples:**
+
+```bash
+# Setup both project .mcp.json and Claude Code global config
+knowns mcp setup
+
+# Only create .mcp.json in project
+knowns mcp setup --project
+
+# Only setup in Claude Code globally
+knowns mcp setup --global
 ```
 
 ### `knowns agents`

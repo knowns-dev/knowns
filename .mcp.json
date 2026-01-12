@@ -1,0 +1,8 @@
+{
+	"mcpServers": {
+		"knowns": {
+			"command": "npx",
+			"args": ["-y", "knowns", "mcp"]
+		}
+	}
+}

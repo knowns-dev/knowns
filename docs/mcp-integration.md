@@ -8,6 +8,36 @@ Integrate Knowns with Claude Desktop for seamless AI-assisted development.
 
 ## Setup
 
+### Option A: Auto Setup (Recommended)
+
+The easiest way to configure MCP:
+
+```bash
+# Setup both project .mcp.json and Claude Code global config
+knowns mcp setup
+
+# Only create .mcp.json in project (for Claude Code auto-discovery)
+knowns mcp setup --project
+
+# Only setup in Claude Code globally (skip .mcp.json)
+knowns mcp setup --global
+```
+
+**What happens:**
+- `--project`: Creates `.mcp.json` in project root for auto-discovery
+- `--global`: Runs `claude mcp add-json knowns` to add to Claude Code
+
+**Alternative: During `knowns init`**
+
+When you select **MCP** as the AI Guidelines type during init, Knowns automatically creates `.mcp.json`:
+
+```
+? AI Guidelines type: MCP
+✓ Created .mcp.json for Claude Code MCP auto-discovery
+```
+
+### Option B: Manual Setup
+
 ### 1. Install Knowns
 
 ```bash

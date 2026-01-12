@@ -23,10 +23,46 @@ npx knowns <command>
 knowns init [project-name]
 ```
 
-This creates a `.knowns/` directory containing:
-- `tasks/` - Task files (Markdown with YAML frontmatter)
-- `docs/` - Documentation files
-- `config.json` - Project configuration
+Running `knowns init` starts an interactive wizard:
+
+```
+🚀 Knowns Project Setup Wizard
+   Configure your project settings
+
+? Project name: my-project
+? Git tracking mode: Git Tracked (recommended for teams)
+? AI Guidelines type: CLI
+? Select AI agent files to create/update:
+  ◉ CLAUDE.md (Claude Code)
+  ◉ AGENTS.md (Agent SDK)
+  ◯ GEMINI.md (Google Gemini)
+  ◯ .github/copilot-instructions.md (GitHub Copilot)
+```
+
+**Wizard Options:**
+
+| Option | Choices | Description |
+|--------|---------|-------------|
+| **Project name** | Text | Name for your project |
+| **Git tracking mode** | `git-tracked` / `git-ignored` | How tasks are tracked in git |
+| **AI Guidelines type** | `CLI` / `MCP` | CLI commands or MCP tools format |
+| **Agent files** | Multi-select | Which AI instruction files to create |
+
+**What happens:**
+- Creates `.knowns/` directory with `tasks/`, `docs/`, `config.json`
+- If **MCP** selected: Creates `.mcp.json` for Claude Code auto-discovery
+- If **git-ignored** selected: Updates `.gitignore` to exclude tasks
+- Creates selected AI instruction files (CLAUDE.md, AGENTS.md, etc.)
+
+**Quick init (skip wizard):**
+
+```bash
+# Use defaults with custom name
+knowns init my-project --no-wizard
+
+# Force reinitialize existing project
+knowns init --force
+```
 
 ### Quick Start
 
@@ -332,7 +368,19 @@ knowns time add 42 1h30m -n "Pair programming session"
 
 Knowns includes a Model Context Protocol (MCP) server for AI integration.
 
-### Setup with Claude Desktop
+### Setup with Claude Code (Recommended)
+
+```bash
+# Auto setup - creates .mcp.json and configures Claude Code
+knowns mcp setup
+
+# Or during init, select "MCP" as AI Guidelines type
+knowns init
+# ? AI Guidelines type: MCP
+# ✓ Created .mcp.json for Claude Code MCP auto-discovery
+```
+
+### Manual Setup with Claude Desktop
 
 Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
