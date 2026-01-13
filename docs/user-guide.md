@@ -437,14 +437,14 @@ knowns agents guideline
 # Interactive mode - select type, variant, files
 knowns agents
 
-# Quick sync (CLAUDE.md, AGENTS.md) with minimal instruction
+# Quick sync (CLAUDE.md, AGENTS.md) with full guidelines
 knowns agents sync
 
 # Sync all files
 knowns agents sync --all
 
-# Sync with full embedded guidelines
-knowns agents sync --full
+# Sync with minimal instruction only
+knowns agents sync --minimal
 
 # Use MCP tools format
 knowns agents sync --type mcp
@@ -454,8 +454,8 @@ knowns agents sync --type mcp
 
 | Variant | Size | Description |
 |---------|------|-------------|
-| instruction (default) | ~600 bytes | Minimal - tells AI to call `knowns agents guideline` |
-| general (`--full`) | ~4KB | Full guidelines embedded in file |
+| general (default) | ~26KB | Full guidelines embedded in file |
+| instruction (`--minimal`) | ~1KB | Minimal - tells AI to call `knowns agents guideline` |
 
 ---
 

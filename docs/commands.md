@@ -679,27 +679,27 @@ knowns agents sync [options]
 | Option | Description |
 |--------|-------------|
 | `--type <type>` | Guidelines type: `cli` or `mcp` (default: cli) |
-| `--full` | Use full embedded guidelines (default: minimal instruction) |
+| `--minimal` | Use minimal instruction (default: full embedded guidelines) |
 | `--all` | Update all instruction files (including Gemini, Copilot) |
 
 **Template variants:**
 
 | Variant | Size | Description |
 |---------|------|-------------|
-| instruction (default) | ~1KB | Minimal - tells AI to call `knowns agents guideline` |
-| general (`--full`) | ~26KB | Full modular guidelines embedded in file |
+| general (default) | ~26KB | Full modular guidelines embedded in file |
+| instruction (`--minimal`) | ~1KB | Minimal - tells AI to call `knowns agents guideline` |
 
 **Examples:**
 
 ```bash
-# Sync default files (CLAUDE.md, AGENTS.md) with minimal instruction
+# Sync default files (CLAUDE.md, AGENTS.md) with full guidelines
 knowns agents sync
 
 # Sync all files
 knowns agents sync --all
 
-# Sync with full embedded guidelines
-knowns agents sync --full
+# Sync with minimal instruction only
+knowns agents sync --minimal
 
 # Sync with MCP guidelines
 knowns agents sync --type mcp

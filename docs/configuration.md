@@ -201,11 +201,11 @@ knowns agents guideline
 # Interactive mode - select type, variant, and files
 knowns agents
 
-# Quick sync with minimal instruction (~600 bytes)
+# Quick sync with full embedded guidelines (~26KB)
 knowns agents sync
 
-# Sync with full embedded guidelines (~4KB)
-knowns agents sync --full
+# Sync with minimal instruction only (~1KB)
+knowns agents sync --minimal
 
 # Sync all files with MCP guidelines
 knowns agents sync --type mcp --all
@@ -218,8 +218,8 @@ knowns agents sync --type mcp --all
 - `.github/copilot-instructions.md` - For GitHub Copilot
 
 **Template variants:**
-- `instruction` (default): Minimal - tells AI to call `knowns agents guideline`
-- `general` (`--full`): Full guidelines embedded in file
+- `general` (default): Full guidelines embedded in file
+- `instruction` (`--minimal`): Minimal - tells AI to call `knowns agents guideline`
 
 ## Environment Variables
 

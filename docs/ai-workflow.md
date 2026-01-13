@@ -250,11 +250,11 @@ Update AI instruction files (CLAUDE.md, AGENTS.md, etc.):
 # Interactive mode - select type, variant, files
 knowns agents
 
-# Quick sync with minimal instruction (~1KB)
+# Quick sync with full embedded guidelines (~26KB)
 knowns agents sync
 
-# Sync with full embedded guidelines (~26KB)
-knowns agents sync --full
+# Sync with minimal instruction only (~1KB)
+knowns agents sync --minimal
 
 # Sync all files (CLAUDE.md, AGENTS.md, GEMINI.md, Copilot)
 knowns agents sync --all
@@ -264,11 +264,11 @@ knowns agents sync --all
 
 | Variant | Size | Description |
 |---------|------|-------------|
-| **instruction** (default) | ~1KB | Minimal - tells AI to call `knowns agents guideline` |
-| **general** (`--full`) | ~26KB | Full modular guidelines embedded in file |
+| **general** (default) | ~26KB | Full modular guidelines embedded in file |
+| **instruction** (`--minimal`) | ~1KB | Minimal - tells AI to call `knowns agents guideline` |
 
-The **instruction** variant is recommended because:
-- Smaller context overhead
-- Guidelines stay up-to-date (fetched on-demand)
-- Same guidelines for all AI models
-- Agent can request stage-specific guidelines as needed
+The **general** (full) variant is recommended because:
+- AI has immediate access to all guidelines
+- No extra command execution required
+- Works reliably across all AI models
+- Ensures consistent behavior from the start
