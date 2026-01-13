@@ -1,5 +1,5 @@
 import { useState } from "react";
-import DiffViewer from "react-diff-viewer";
+import DiffViewer from "react-diff-viewer-continued-react19";
 import { Columns2, AlignJustify } from "lucide-react";
 import type { TaskChange } from "../../../models/version";
 import { useTheme } from "../../App";
