@@ -19,6 +19,9 @@ import workflowExecutionMd from "./workflow-execution.md";
 // Anti-patterns and common mistakes
 import commonMistakesMd from "./common-mistakes.md";
 
+// Context optimization for AI agents
+import contextOptimizationMd from "./context-optimization.md";
+
 // Export individual guidelines (trimmed)
 export const CORE_RULES = coreRulesMd.trim();
 export const COMMANDS_REFERENCE = commandsReferenceMd.trim();
@@ -26,6 +29,7 @@ export const WORKFLOW_CREATION = workflowCreationMd.trim();
 export const WORKFLOW_EXECUTION = workflowExecutionMd.trim();
 export const WORKFLOW_COMPLETION = workflowCompletionMd.trim();
 export const COMMON_MISTAKES = commonMistakesMd.trim();
+export const CONTEXT_OPTIMIZATION = contextOptimizationMd.trim();
 
 /**
  * Get guidelines by context/stage
@@ -47,12 +51,17 @@ export const Guidelines = {
 	// Common mistakes
 	mistakes: COMMON_MISTAKES,
 
+	// Context optimization
+	contextOptimization: CONTEXT_OPTIMIZATION,
+
 	/**
 	 * Get full guidelines (all sections combined)
 	 */
 	getFull(withMarkers = false): string {
 		const content = [
 			CORE_RULES,
+			"---",
+			CONTEXT_OPTIMIZATION,
 			"---",
 			COMMANDS_REFERENCE,
 			"---",
@@ -72,17 +81,17 @@ export const Guidelines = {
 	},
 
 	/**
-	 * Get compact guidelines (core + mistakes only)
+	 * Get compact guidelines (core + context optimization + mistakes only)
 	 */
 	getCompact(): string {
-		return [CORE_RULES, "---", COMMON_MISTAKES].join("\n\n");
+		return [CORE_RULES, "---", CONTEXT_OPTIMIZATION, "---", COMMON_MISTAKES].join("\n\n");
 	},
 
 	/**
 	 * Get guidelines for specific workflow stage
 	 */
 	getForStage(stage: "creation" | "execution" | "completion"): string {
-		const sections = [CORE_RULES, "---"];
+		const sections = [CORE_RULES, "---", CONTEXT_OPTIMIZATION, "---"];
 
 		switch (stage) {
 			case "creation":

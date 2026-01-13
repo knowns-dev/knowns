@@ -28,13 +28,13 @@ export type GuidelinesVariant = "general" | "instruction";
 /**
  * Get guidelines content by type and variant
  */
-export function getGuidelines(type: GuidelinesType, variant: GuidelinesVariant = "instruction"): string {
-	if (variant === "general") {
-		// Full guidelines with markers (for embedding in CLAUDE.md)
-		return Guidelines.getFull(true);
+export function getGuidelines(type: GuidelinesType, variant: GuidelinesVariant = "general"): string {
+	if (variant === "instruction") {
+		// Instruction templates (minimal, tells AI to call guideline command)
+		return type === "mcp" ? MCP_INSTRUCTION : CLI_INSTRUCTION;
 	}
-	// Instruction templates (already have markers from module)
-	return type === "mcp" ? MCP_INSTRUCTION : CLI_INSTRUCTION;
+	// Full guidelines with markers (for embedding in CLAUDE.md) - DEFAULT
+	return Guidelines.getFull(true);
 }
 
 /**
@@ -149,14 +149,14 @@ const agentsCommand = new Command("agents")
 				message: "Select variant:",
 				choices: [
 					{
-						title: "Minimal (Recommended)",
-						value: "instruction",
-						description: "Just tells AI to call `knowns agents guideline` for rules",
-					},
-					{
-						title: "Full (Embedded)",
+						title: "Full (Recommended)",
 						value: "general",
 						description: "Complete guidelines embedded in file",
+					},
+					{
+						title: "Minimal",
+						value: "instruction",
+						description: "Just tells AI to call `knowns agents guideline` for rules",
 					},
 				],
 				initial: 0,
@@ -269,12 +269,12 @@ async function updateFiles(files: Array<{ path: string; name: string }>, guideli
 const syncCommand = new Command("sync")
 	.description("Sync/update all agent instruction files with latest guidelines")
 	.option("--type <type>", "Guidelines type: cli or mcp", "cli")
-	.option("--full", "Use full embedded guidelines (default: minimal instruction)")
+	.option("--minimal", "Use minimal instruction (default: full embedded guidelines)")
 	.option("--all", "Update all instruction files (including Gemini, Copilot)")
-	.action(async (options: { type?: string; full?: boolean; all?: boolean }) => {
+	.action(async (options: { type?: string; minimal?: boolean; all?: boolean }) => {
 		try {
 			const type = (options.type === "mcp" ? "mcp" : "cli") as GuidelinesType;
-			const variant: GuidelinesVariant = options.full ? "general" : "instruction";
+			const variant: GuidelinesVariant = options.minimal ? "instruction" : "general";
 			const guidelines = getGuidelines(type, variant);
 
 			// Select files based on --all flag

@@ -87,11 +87,11 @@ Close and reopen Claude Desktop to load the new configuration.
 Sync your instruction files with MCP-formatted guidelines:
 
 ```bash
-# Sync with MCP guidelines (minimal instruction)
+# Sync with full embedded MCP guidelines (default)
 knowns agents sync --type mcp
 
-# Sync with full embedded MCP guidelines
-knowns agents sync --type mcp --full
+# Sync with minimal instruction only
+knowns agents sync --type mcp --minimal
 
 # Sync all files
 knowns agents sync --type mcp --all
