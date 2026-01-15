@@ -12,8 +12,8 @@ View a single task (shorthand for `knowns task view`).
 knowns task <id> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option    | Description                |
+| --------- | -------------------------- |
 | `--plain` | Plain text output (for AI) |
 
 **Examples:**
@@ -30,14 +30,14 @@ Create a new task.
 knowns task create "Title" [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `-d, --description` | Task description |
-| `--ac` | Acceptance criterion (repeatable) |
-| `-l, --labels` | Comma-separated labels |
-| `--priority` | `low`, `medium`, `high` |
-| `-a, --assignee` | Assignee (e.g., `@me`, `@john`) |
-| `--parent` | Parent task ID for subtasks |
+| Option              | Description                       |
+| ------------------- | --------------------------------- |
+| `-d, --description` | Task description                  |
+| `--ac`              | Acceptance criterion (repeatable) |
+| `-l, --labels`      | Comma-separated labels            |
+| `--priority`        | `low`, `medium`, `high`           |
+| `-a, --assignee`    | Assignee (e.g., `@me`, `@john`)   |
+| `--parent`          | Parent task ID for subtasks       |
 
 **Examples:**
 
@@ -65,14 +65,14 @@ List all tasks.
 knowns task list [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--status` | Filter by status |
-| `--priority` | Filter by priority |
-| `--assignee` | Filter by assignee |
-| `--label` | Filter by label |
-| `--tree` | Show as tree hierarchy |
-| `--plain` | Plain text output (for AI) |
+| Option       | Description                |
+| ------------ | -------------------------- |
+| `--status`   | Filter by status           |
+| `--priority` | Filter by priority         |
+| `--assignee` | Filter by assignee         |
+| `--label`    | Filter by label            |
+| `--tree`     | Show as tree hierarchy     |
+| `--plain`    | Plain text output (for AI) |
 
 **Examples:**
 
@@ -90,8 +90,8 @@ View a single task (full command form).
 knowns task view <id> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option    | Description                |
+| --------- | -------------------------- |
 | `--plain` | Plain text output (for AI) |
 
 ### `knowns task edit`
@@ -102,21 +102,21 @@ Edit an existing task.
 knowns task edit <id> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `-t, --title` | New title |
-| `-d, --description` | New description |
-| `-s, --status` | `todo`, `in-progress`, `in-review`, `blocked`, `done` |
-| `--priority` | `low`, `medium`, `high` |
-| `-a, --assignee` | Assignee |
-| `-l, --labels` | Labels (replaces existing) |
-| `--ac` | Add acceptance criterion |
-| `--check-ac` | Check criterion (1-indexed) |
-| `--uncheck-ac` | Uncheck criterion |
-| `--remove-ac` | Remove criterion |
-| `--plan` | Set implementation plan |
-| `--notes` | Set implementation notes |
-| `--append-notes` | Append to notes |
+| Option              | Description                                           |
+| ------------------- | ----------------------------------------------------- |
+| `-t, --title`       | New title                                             |
+| `-d, --description` | New description                                       |
+| `-s, --status`      | `todo`, `in-progress`, `in-review`, `blocked`, `done` |
+| `--priority`        | `low`, `medium`, `high`                               |
+| `-a, --assignee`    | Assignee                                              |
+| `-l, --labels`      | Labels (replaces existing)                            |
+| `--ac`              | Add acceptance criterion                              |
+| `--check-ac`        | Check criterion (1-indexed)                           |
+| `--uncheck-ac`      | Uncheck criterion                                     |
+| `--remove-ac`       | Remove criterion                                      |
+| `--plan`            | Set implementation plan                               |
+| `--notes`           | Set implementation notes                              |
+| `--append-notes`    | Append to notes                                       |
 
 **Examples:**
 
@@ -142,8 +142,8 @@ Validate a task file format.
 knowns task validate <id> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option    | Description       |
+| --------- | ----------------- |
 | `--plain` | Plain text output |
 
 ### `knowns task repair`
@@ -154,8 +154,8 @@ Repair a corrupted task file.
 knowns task repair <id> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option    | Description       |
+| --------- | ----------------- |
 | `--plain` | Plain text output |
 
 ---
@@ -170,15 +170,29 @@ View a document (shorthand for `knowns doc view`).
 knowns doc <name-or-path> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--plain` | Plain text output (for AI) |
+| Option              | Description                                      |
+| ------------------- | ------------------------------------------------ |
+| `--plain`           | Plain text output (for AI)                       |
+| `--info`            | Show document stats (size, tokens, headings)     |
+| `--toc`             | Show table of contents only                      |
+| `--section <title>` | Show specific section by heading title or number |
 
 **Examples:**
 
 ```bash
 knowns doc "README" --plain
 knowns doc "patterns/auth" --plain
+
+# For large documents - check size first
+knowns doc "README" --info --plain
+# Output: Size: 42,461 chars (~12,132 tokens) | Headings: 83
+
+# Get table of contents
+knowns doc "README" --toc --plain
+
+# Read specific section
+knowns doc "README" --section "2. Installation" --plain
+knowns doc "README" --section "2" --plain  # By number
 ```
 
 ### `knowns doc create`
@@ -189,11 +203,11 @@ Create a new document.
 knowns doc create "Title" [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `-d, --description` | Document description |
-| `-t, --tags` | Comma-separated tags |
-| `-f, --folder` | Folder path (e.g., `patterns`, `architecture/api`) |
+| Option              | Description                                        |
+| ------------------- | -------------------------------------------------- |
+| `-d, --description` | Document description                               |
+| `-t, --tags`        | Comma-separated tags                               |
+| `-f, --folder`      | Folder path (e.g., `patterns`, `architecture/api`) |
 
 **Examples:**
 
@@ -216,13 +230,13 @@ List all documents.
 knowns doc list [path] [options]
 ```
 
-| Argument | Description |
-|----------|-------------|
+| Argument | Description                                          |
+| -------- | ---------------------------------------------------- |
 | `[path]` | Filter by folder path (e.g., `guides/`, `patterns/`) |
 
-| Option | Description |
-|--------|-------------|
-| `--tag` | Filter by tag |
+| Option    | Description                                      |
+| --------- | ------------------------------------------------ |
+| `--tag`   | Filter by tag                                    |
 | `--plain` | Plain text output (tree format, token-efficient) |
 
 **Examples:**
@@ -247,15 +261,21 @@ View a document.
 knowns doc view <name-or-path> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--plain` | Plain text output |
+| Option              | Description                                      |
+| ------------------- | ------------------------------------------------ |
+| `--plain`           | Plain text output                                |
+| `--info`            | Show document stats (size, tokens, headings)     |
+| `--toc`             | Show table of contents only                      |
+| `--section <title>` | Show specific section by heading title or number |
 
 **Examples:**
 
 ```bash
 knowns doc view "auth-pattern" --plain
 knowns doc view "patterns/auth-pattern" --plain
+knowns doc view "README" --info --plain      # Check size first
+knowns doc view "README" --toc --plain       # Get TOC
+knowns doc view "README" --section "2" --plain  # Read section
 ```
 
 ### `knowns doc edit`
@@ -266,14 +286,15 @@ Edit a document.
 knowns doc edit <name-or-path> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `-t, --title` | New title |
-| `--tags` | New tags |
-| `-c, --content` | Replace content |
-| `-a, --append` | Append to content |
-| `--content-file <path>` | Replace content with file contents |
-| `--append-file <path>` | Append file contents to document |
+| Option                  | Description                                              |
+| ----------------------- | -------------------------------------------------------- |
+| `-t, --title`           | New title                                                |
+| `--tags`                | New tags                                                 |
+| `-c, --content`         | Replace content (or section content if `--section` used) |
+| `-a, --append`          | Append to content                                        |
+| `--section <title>`     | Target section to replace (use with `-c`)                |
+| `--content-file <path>` | Replace content with file contents                       |
+| `--append-file <path>`  | Append file contents to document                         |
 
 **Examples:**
 
@@ -283,6 +304,10 @@ knowns doc edit "README" -c "New content here"
 
 # Append content
 knowns doc edit "README" -a "## New Section"
+
+# Edit specific section only (context-efficient!)
+knowns doc edit "README" --section "2. Installation" -c "New section content"
+knowns doc edit "README" --section "2" -c "New content"  # By number
 
 # Use file for long content (useful on Windows)
 knowns doc edit "README" --content-file ./new-content.md
@@ -297,8 +322,8 @@ Validate a documentation file format.
 knowns doc validate <name> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option    | Description       |
+| --------- | ----------------- |
 | `--plain` | Plain text output |
 
 ### `knowns doc repair`
@@ -309,8 +334,8 @@ Repair a corrupted documentation file.
 knowns doc repair <name> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option    | Description       |
+| --------- | ----------------- |
 | `--plain` | Plain text output |
 
 ### `knowns doc search-in`
@@ -321,10 +346,10 @@ Search text within a specific document.
 knowns doc search-in <name> <query> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option              | Description             |
+| ------------------- | ----------------------- |
 | `-i, --ignore-case` | Case insensitive search |
-| `--plain` | Plain text output |
+| `--plain`           | Plain text output       |
 
 ### `knowns doc replace`
 
@@ -334,10 +359,10 @@ Replace text in a document.
 knowns doc replace <name> <old-text> <new-text> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option      | Description             |
+| ----------- | ----------------------- |
 | `-a, --all` | Replace all occurrences |
-| `--plain` | Plain text output |
+| `--plain`   | Plain text output       |
 
 ### `knowns doc replace-section`
 
@@ -347,8 +372,8 @@ Replace an entire section by its header.
 knowns doc replace-section <name> <header> <content> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option    | Description       |
+| --------- | ----------------- |
 | `--plain` | Plain text output |
 
 ---
@@ -396,9 +421,9 @@ Add manual time entry.
 knowns time add <task-id> <duration> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `-n, --note` | Note for entry |
+| Option       | Description       |
+| ------------ | ----------------- |
+| `-n, --note` | Note for entry    |
 | `-d, --date` | Date (YYYY-MM-DD) |
 
 **Examples:**
@@ -416,12 +441,12 @@ Generate time report.
 knowns time report [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--from` | Start date (YYYY-MM-DD) |
-| `--to` | End date (YYYY-MM-DD) |
-| `--by-label` | Group by label |
-| `--csv` | CSV output |
+| Option       | Description             |
+| ------------ | ----------------------- |
+| `--from`     | Start date (YYYY-MM-DD) |
+| `--to`       | End date (YYYY-MM-DD)   |
+| `--by-label` | Group by label          |
+| `--csv`      | CSV output              |
 
 ---
 
@@ -435,12 +460,12 @@ Search tasks and documentation.
 knowns search <query> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--type` | `task` or `doc` |
-| `--status` | Filter tasks by status |
+| Option       | Description              |
+| ------------ | ------------------------ |
+| `--type`     | `task` or `doc`          |
+| `--status`   | Filter tasks by status   |
 | `--priority` | Filter tasks by priority |
-| `--plain` | Plain text output |
+| `--plain`    | Plain text output        |
 
 ---
 
@@ -456,10 +481,10 @@ Initialize Knowns in current directory with interactive wizard.
 knowns init [project-name] [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--wizard` | Force interactive wizard mode |
-| `--no-wizard` | Skip wizard, use defaults |
+| Option        | Description                               |
+| ------------- | ----------------------------------------- |
+| `--wizard`    | Force interactive wizard mode             |
+| `--no-wizard` | Skip wizard, use defaults                 |
 | `-f, --force` | Reinitialize (overwrites existing config) |
 
 **Examples:**
@@ -476,20 +501,22 @@ knowns init --force
 ```
 
 **Wizard prompts:**
+
 - Project name
 - Git tracking mode (`git-tracked` or `git-ignored`)
 - AI guidelines type (`CLI` or `MCP`)
 - AI agent files to sync (CLAUDE.md, AGENTS.md, etc.)
 
 **When MCP is selected:**
+
 - Automatically creates `.mcp.json` for Claude Code auto-discovery
 
 **Git Tracking Modes:**
 
-| Mode | Description |
-|------|-------------|
+| Mode          | Description                                                 |
+| ------------- | ----------------------------------------------------------- |
 | `git-tracked` | All `.knowns/` files tracked in git (recommended for teams) |
-| `git-ignored` | Only docs tracked, tasks/config ignored (personal use) |
+| `git-ignored` | Only docs tracked, tasks/config ignored (personal use)      |
 
 When `git-ignored` is selected, Knowns automatically updates `.gitignore` to exclude task files while keeping docs tracked.
 
@@ -522,10 +549,10 @@ Open Web UI in browser.
 knowns browser [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option       | Description                 |
+| ------------ | --------------------------- |
 | `-p, --port` | Custom port (default: 6420) |
-| `--no-open` | Don't open browser |
+| `--no-open`  | Don't open browser          |
 
 ### `knowns mcp`
 
@@ -535,10 +562,10 @@ Start MCP server for Claude Desktop integration.
 knowns mcp [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--info` | Show configuration instructions |
-| `--verbose` | Enable verbose logging |
+| Option      | Description                     |
+| ----------- | ------------------------------- |
+| `--info`    | Show configuration instructions |
+| `--verbose` | Enable verbose logging          |
 
 **Examples:**
 
@@ -558,12 +585,13 @@ Setup Knowns MCP server in Claude Code.
 knowns mcp setup [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option      | Description                                                 |
+| ----------- | ----------------------------------------------------------- |
 | `--project` | Only create `.mcp.json` in project (skip Claude Code setup) |
-| `--global` | Only setup in Claude Code globally (skip `.mcp.json`) |
+| `--global`  | Only setup in Claude Code globally (skip `.mcp.json`)       |
 
 **What happens:**
+
 - Creates `.mcp.json` in project root for auto-discovery
 - Runs `claude mcp add-json knowns` to add to Claude Code
 
@@ -588,21 +616,21 @@ Manage AI agent instruction files and guidelines.
 knowns agents [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| (none) | Interactive mode - prompts to select type, variant, and files |
-| `--update-instructions` | Non-interactive update |
-| `--type <type>` | Guidelines type: `cli` or `mcp` (default: cli) |
-| `--files <files>` | Comma-separated list of files to update |
+| Option                  | Description                                                   |
+| ----------------------- | ------------------------------------------------------------- |
+| (none)                  | Interactive mode - prompts to select type, variant, and files |
+| `--update-instructions` | Non-interactive update                                        |
+| `--type <type>`         | Guidelines type: `cli` or `mcp` (default: cli)                |
+| `--files <files>`       | Comma-separated list of files to update                       |
 
 **Supported files:**
 
-| File | Description | Default |
-|------|-------------|---------|
-| `CLAUDE.md` | Claude Code instructions | ✓ |
-| `AGENTS.md` | Agent SDK | ✓ |
-| `GEMINI.md` | Google Gemini | |
-| `.github/copilot-instructions.md` | GitHub Copilot | |
+| File                              | Description              | Default |
+| --------------------------------- | ------------------------ | ------- |
+| `CLAUDE.md`                       | Claude Code instructions | ✓       |
+| `AGENTS.md`                       | Agent SDK                | ✓       |
+| `GEMINI.md`                       | Google Gemini            |         |
+| `.github/copilot-instructions.md` | GitHub Copilot           |         |
 
 **Examples:**
 
@@ -625,28 +653,28 @@ Output guidelines to stdout. AI agents should call this at session start.
 knowns agents guideline [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| (none) | Output full guidelines (all sections) |
-| `--full` | Output full guidelines (all sections) |
-| `--compact` | Output compact guidelines (core rules + common mistakes) |
+| Option            | Description                                                                 |
+| ----------------- | --------------------------------------------------------------------------- |
+| (none)            | Output full guidelines (all sections)                                       |
+| `--full`          | Output full guidelines (all sections)                                       |
+| `--compact`       | Output compact guidelines (core rules + common mistakes)                    |
 | `--stage <stage>` | Output guidelines for specific stage: `creation`, `execution`, `completion` |
-| `--core` | Output core rules only |
-| `--commands` | Output commands reference only |
-| `--mistakes` | Output common mistakes only |
-| `--cli` | (Legacy) Same as default |
-| `--mcp` | (Legacy) Same as default |
+| `--core`          | Output core rules only                                                      |
+| `--commands`      | Output commands reference only                                              |
+| `--mistakes`      | Output common mistakes only                                                 |
+| `--cli`           | (Legacy) Same as default                                                    |
+| `--mcp`           | (Legacy) Same as default                                                    |
 
 **Guidelines Structure (Modular):**
 
-| Section | Description |
-|---------|-------------|
-| Core Rules | Golden rules, must-follow principles |
-| Commands Reference | CLI/MCP commands quick reference |
-| Workflow Creation | Task creation workflow |
-| Workflow Execution | Task execution workflow |
-| Workflow Completion | Task completion workflow |
-| Common Mistakes | Anti-patterns and DO vs DON'T |
+| Section             | Description                          |
+| ------------------- | ------------------------------------ |
+| Core Rules          | Golden rules, must-follow principles |
+| Commands Reference  | CLI/MCP commands quick reference     |
+| Workflow Creation   | Task creation workflow               |
+| Workflow Execution  | Task execution workflow              |
+| Workflow Completion | Task completion workflow             |
+| Common Mistakes     | Anti-patterns and DO vs DON'T        |
 
 **Examples:**
 
@@ -676,18 +704,18 @@ Quick sync of agent instruction files with latest guidelines.
 knowns agents sync [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--type <type>` | Guidelines type: `cli` or `mcp` (default: cli) |
-| `--minimal` | Use minimal instruction (default: full embedded guidelines) |
-| `--all` | Update all instruction files (including Gemini, Copilot) |
+| Option          | Description                                                 |
+| --------------- | ----------------------------------------------------------- |
+| `--type <type>` | Guidelines type: `cli` or `mcp` (default: cli)              |
+| `--minimal`     | Use minimal instruction (default: full embedded guidelines) |
+| `--all`         | Update all instruction files (including Gemini, Copilot)    |
 
 **Template variants:**
 
-| Variant | Size | Description |
-|---------|------|-------------|
-| general (default) | ~26KB | Full modular guidelines embedded in file |
-| instruction (`--minimal`) | ~1KB | Minimal - tells AI to call `knowns agents guideline` |
+| Variant                   | Size  | Description                                          |
+| ------------------------- | ----- | ---------------------------------------------------- |
+| general (default)         | ~26KB | Full modular guidelines embedded in file             |
+| instruction (`--minimal`) | ~1KB  | Minimal - tells AI to call `knowns agents guideline` |
 
 **Examples:**
 

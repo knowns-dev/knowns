@@ -4,8 +4,8 @@
  */
 
 import { z } from "zod";
-// Import modular guidelines
-import { Guidelines } from "../../templates/guidelines";
+// Import modular guidelines (CLI and MCP variants)
+import { Guidelines, MCPGuidelines } from "../../templates/guidelines";
 
 export const getGuidelineSchema = z.object({
 	type: z.enum(["unified", "cli", "mcp"]).optional().default("unified"),
@@ -36,8 +36,20 @@ export const guidelineTools = [
 export async function handleGetGuideline(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
 	const input = getGuidelineSchema.parse(args || {});
 
-	// All types now return full modular guidelines
-	const guidelines = Guidelines.getFull();
+	// Return type-specific guidelines
+	let guidelines: string;
+	switch (input.type) {
+		case "mcp":
+			guidelines = MCPGuidelines.getFull();
+			break;
+		case "cli":
+			guidelines = Guidelines.getFull();
+			break;
+		default:
+			// For unified or unspecified, return MCP guidelines since this is called via MCP
+			guidelines = MCPGuidelines.getFull();
+			break;
+	}
 
 	return {
 		content: [

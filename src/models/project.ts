@@ -12,7 +12,7 @@ export interface Project {
 	settings: ProjectSettings;
 }
 
-export type GitTrackingMode = "git-tracked" | "git-ignored";
+export type GitTrackingMode = "git-tracked" | "git-ignored" | "none";
 
 export interface ProjectSettings {
 	defaultAssignee?: string;

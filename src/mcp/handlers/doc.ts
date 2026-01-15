@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { normalizePath } from "@utils/index";
+import { calculateDocStats, extractSection, extractToc, formatToc, replaceSection } from "@utils/markdown-toc";
 import { notifyDocUpdate } from "@utils/notify-server";
 import matter from "gray-matter";
 import { z } from "zod";
@@ -29,6 +30,9 @@ export const listDocsSchema = z.object({
 
 export const getDocSchema = z.object({
 	path: z.string(), // Document path (filename or folder/filename)
+	info: z.boolean().optional(), // Return document stats (size, tokens, headings) without content
+	toc: z.boolean().optional(), // Return table of contents only
+	section: z.string().optional(), // Return specific section by heading title or number
 });
 
 export const createDocSchema = z.object({
@@ -46,6 +50,7 @@ export const updateDocSchema = z.object({
 	content: z.string().optional(),
 	tags: z.array(z.string()).optional(),
 	appendContent: z.string().optional(), // Append to existing content
+	section: z.string().optional(), // Target section to replace (use with content)
 });
 
 export const searchDocsSchema = z.object({
@@ -67,13 +72,28 @@ export const docTools = [
 	},
 	{
 		name: "get_doc",
-		description: "Get a documentation file by path (filename or folder/filename)",
+		description:
+			"Get a documentation file by path. Use 'info: true' first to check size, then 'toc: true' for table of contents, then 'section' to read specific parts.",
 		inputSchema: {
 			type: "object",
 			properties: {
 				path: {
 					type: "string",
 					description: "Document path (e.g., 'readme', 'guides/setup', 'conventions/naming.md')",
+				},
+				info: {
+					type: "boolean",
+					description:
+						"Return document stats (size, tokens, headings) without content. Use this first to decide how to read.",
+				},
+				toc: {
+					type: "boolean",
+					description: "Return table of contents only (list of headings). Use this first for large documents.",
+				},
+				section: {
+					type: "string",
+					description:
+						"Return specific section by heading title or number (e.g., '2. Overview' or '2'). Use after viewing TOC.",
 				},
 			},
 			required: ["path"],
@@ -103,7 +123,8 @@ export const docTools = [
 	},
 	{
 		name: "update_doc",
-		description: "Update an existing documentation file",
+		description:
+			"Update an existing documentation file. Use 'section' with 'content' to replace only a specific section.",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -113,7 +134,10 @@ export const docTools = [
 				},
 				title: { type: "string", description: "New title" },
 				description: { type: "string", description: "New description" },
-				content: { type: "string", description: "Replace content" },
+				content: {
+					type: "string",
+					description: "Replace content (or section content if 'section' is specified)",
+				},
 				tags: {
 					type: "array",
 					items: { type: "string" },
@@ -122,6 +146,10 @@ export const docTools = [
 				appendContent: {
 					type: "string",
 					description: "Append to existing content",
+				},
+				section: {
+					type: "string",
+					description: "Target section to replace by heading title or number (use with 'content')",
 				},
 			},
 			required: ["path"],
@@ -282,6 +310,80 @@ export async function handleGetDoc(args: unknown) {
 	const { data, content } = matter(fileContent);
 	const metadata = data as DocMetadata;
 
+	// Handle --info option: return document stats without content
+	if (input.info) {
+		const stats = calculateDocStats(content);
+		let recommendation: string;
+		if (stats.estimatedTokens > 4000) {
+			recommendation = "Document is large. Use 'toc: true' first, then 'section' to read specific parts.";
+		} else if (stats.estimatedTokens > 2000) {
+			recommendation = "Consider using 'toc: true' and 'section' for specific info.";
+		} else {
+			recommendation = "Document is small enough to read directly.";
+		}
+
+		return successResponse({
+			doc: {
+				path: resolved.filename.replace(/\.md$/, ""),
+				title: metadata.title,
+				stats: {
+					chars: stats.chars,
+					words: stats.words,
+					lines: stats.lines,
+					estimatedTokens: stats.estimatedTokens,
+					headingCount: stats.headingCount,
+				},
+				recommendation,
+			},
+		});
+	}
+
+	// Handle --toc option: return table of contents only
+	if (input.toc) {
+		const toc = extractToc(content);
+		if (toc.length === 0) {
+			return successResponse({
+				doc: {
+					path: resolved.filename.replace(/\.md$/, ""),
+					title: metadata.title,
+					toc: [],
+					message: "No headings found in this document.",
+				},
+			});
+		}
+
+		return successResponse({
+			doc: {
+				path: resolved.filename.replace(/\.md$/, ""),
+				title: metadata.title,
+				toc: toc.map((entry, index) => ({
+					index: index + 1,
+					level: entry.level,
+					title: entry.title,
+				})),
+				hint: "Use 'section' parameter with a heading title or number to read specific content.",
+			},
+		});
+	}
+
+	// Handle --section option: return specific section only
+	if (input.section) {
+		const sectionContent = extractSection(content, input.section);
+		if (!sectionContent) {
+			return errorResponse(`Section not found: ${input.section}. Use 'toc: true' to see available sections.`);
+		}
+
+		return successResponse({
+			doc: {
+				path: resolved.filename.replace(/\.md$/, ""),
+				title: metadata.title,
+				section: input.section,
+				content: sectionContent,
+			},
+		});
+	}
+
+	// Default: return full document
 	return successResponse({
 		doc: {
 			path: resolved.filename.replace(/\.md$/, ""),
@@ -375,11 +477,24 @@ export async function handleUpdateDoc(args: unknown) {
 
 	// Update content
 	let updatedContent = content;
-	if (input.content) {
+	let sectionUpdated: string | undefined;
+
+	// Handle section replacement
+	if (input.section && input.content) {
+		const result = replaceSection(content, input.section, input.content);
+		if (!result) {
+			return errorResponse(
+				`Section not found: ${input.section}. Use 'toc: true' with get_doc to see available sections.`,
+			);
+		}
+		updatedContent = result;
+		sectionUpdated = input.section;
+	} else if (input.content) {
 		updatedContent = input.content;
 	}
+
 	if (input.appendContent) {
-		updatedContent = `${content.trimEnd()}\n\n${input.appendContent}`;
+		updatedContent = `${updatedContent.trimEnd()}\n\n${input.appendContent}`;
 	}
 
 	// Write back
@@ -390,13 +505,16 @@ export async function handleUpdateDoc(args: unknown) {
 	await notifyDocUpdate(resolved.filename);
 
 	return successResponse({
-		message: `Updated documentation: ${resolved.filename}`,
+		message: sectionUpdated
+			? `Updated section "${sectionUpdated}" in ${resolved.filename}`
+			: `Updated documentation: ${resolved.filename}`,
 		doc: {
 			path: resolved.filename.replace(/\.md$/, ""),
 			title: metadata.title,
 			description: metadata.description,
 			tags: metadata.tags,
 			updatedAt: metadata.updatedAt,
+			...(sectionUpdated && { section: sectionUpdated }),
 		},
 	});
 }

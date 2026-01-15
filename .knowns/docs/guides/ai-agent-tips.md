@@ -1,7 +1,7 @@
 ---
 title: AI Agent Tips
 createdAt: '2025-12-31T11:25:59.296Z'
-updatedAt: '2026-01-11T08:59:03.616Z'
+updatedAt: '2026-01-15T09:57:24.323Z'
 description: Tips and workarounds for AI agents using Knowns CLI
 tags:
   - ai
@@ -148,3 +148,41 @@ For MCP:
 ```
 mcp__knowns__get_guideline({})    # Full guidelines
 ```
+
+## Reading Large Documents
+
+For large documents (>2000 tokens), use the 3-step workflow:
+
+```bash
+# Step 1: Check size first
+knowns doc <path> --info --plain
+# Shows: chars, tokens, headings, recommendation
+
+# Step 2: Get table of contents (if >2000 tokens)
+knowns doc <path> --toc --plain
+
+# Step 3: Read specific section
+knowns doc <path> --section "2" --plain
+# Or by title: --section "Installation"
+```
+
+### MCP Equivalent
+
+```json
+// Step 1: Check size
+{ "path": "<path>", "info": true }
+
+// Step 2: Get TOC
+{ "path": "<path>", "toc": true }
+
+// Step 3: Read section
+{ "path": "<path>", "section": "2" }
+```
+
+### When to Use
+
+| Tokens | Action |
+|--------|--------|
+| <2000 | Read directly with `--plain` |
+| >2000 | Use `--info` → `--toc` → `--section` |
+| Edit | Use `--section` with `-c` to replace only one section |
