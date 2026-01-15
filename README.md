@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="images/cover.jpeg" alt="Knowns - Task & Documentation Management" width="100%">
+  <img src="images/cover.png" alt="Knowns - Task & Documentation Management" width="100%">
 </p>
 
 <h1 align="center">Knowns</h1>
 
 <p align="center">
-  <strong>Know what your team knows.</strong>
+  <strong>What your AI should have knowns.</strong>
 </p>
 
 <p align="center">
@@ -57,7 +57,7 @@ knowns task create "Add login" -d "Follow @doc/patterns/auth-pattern"
 
 1. **You plan** — Create tasks with acceptance criteria in Web UI or CLI
 2. **You link** — Reference docs like `@doc/patterns/auth` in task descriptions
-3. **AI executes** — Tell AI *"Work on task 42"*, it reads the task, follows the refs, and implements
+3. **AI executes** — Tell AI _"Work on task 42"_, it reads the task, follows the refs, and implements
 
 Knowns resolves `@doc/...` and `@task-...` into real files. AI reads them via [MCP](./docs/mcp-integration.md) or `--plain` output — no copy-paste needed.
 
@@ -79,27 +79,27 @@ knowns browser  # Open Web UI
 
 ## Why Knowns over Notion / Jira / Obsidian?
 
-| | Knowns | Notion/Jira | Obsidian |
-|---|--------|-------------|----------|
-| **AI-readable** | `--plain` output, MCP server | Copy-paste manually | Plugins needed |
-| **File-based** | Git-friendly `.knowns/` folder | Cloud-locked | Local files |
-| **CLI-first** | Full CLI + Web UI | Web only | GUI only |
-| **Context linking** | `@doc/...` `@task-42` refs | Manual links | Wiki links |
-| **Source of truth** | Local files (Git-versioned) | Remote database | Local vault |
-| **Minimal setup** | `knowns init` and done | Complex setup | Many plugins |
+|                     | Knowns                         | Notion/Jira         | Obsidian       |
+| ------------------- | ------------------------------ | ------------------- | -------------- |
+| **AI-readable**     | `--plain` output, MCP server   | Copy-paste manually | Plugins needed |
+| **File-based**      | Git-friendly `.knowns/` folder | Cloud-locked        | Local files    |
+| **CLI-first**       | Full CLI + Web UI              | Web only            | GUI only       |
+| **Context linking** | `@doc/...` `@task-42` refs     | Manual links        | Wiki links     |
+| **Source of truth** | Local files (Git-versioned)    | Remote database     | Local vault    |
+| **Minimal setup**   | `knowns init` and done         | Complex setup       | Many plugins   |
 
 **Best for:** Dev teams who pair with AI and want persistent project memory.
 
 ## Features
 
-| Feature | Description |
-|---------|-------------|
-| **Task Management** | Create, track tasks with acceptance criteria |
-| **Documentation** | Nested folders with markdown support |
-| **Time Tracking** | Built-in timers and reports |
-| **Context Linking** | `@task-42` and `@doc/patterns/auth` references |
-| **AI Integration** | MCP Server, `--plain` output, guideline templates |
-| **Web UI** | Kanban board, doc browser, dark mode |
+| Feature             | Description                                       |
+| ------------------- | ------------------------------------------------- |
+| **Task Management** | Create, track tasks with acceptance criteria      |
+| **Documentation**   | Nested folders with markdown support              |
+| **Time Tracking**   | Built-in timers and reports                       |
+| **Context Linking** | `@task-42` and `@doc/patterns/auth` references    |
+| **AI Integration**  | MCP Server, `--plain` output, guideline templates |
+| **Web UI**          | Kanban board, doc browser, dark mode              |
 
 ---
 
@@ -115,6 +115,9 @@ knowns task edit <id> -s in-progress -a @me
 # Documentation
 knowns doc create "Title" -d "Description" -f "folder"
 knowns doc "doc-name" --plain               # View doc (shorthand)
+knowns doc "doc-name" --info --plain        # Check size/tokens first
+knowns doc "doc-name" --toc --plain         # Get table of contents
+knowns doc "doc-name" --section "2" --plain # Read specific section
 
 # Time & Search
 knowns time start <id> && knowns time stop
@@ -131,17 +134,17 @@ knowns agents sync --type mcp               # MCP tools format
 
 ## Documentation
 
-| Guide | Description |
-|-------|-------------|
-| [Command Reference](./docs/commands.md) | All CLI commands with examples |
-| [Workflow Guide](./docs/workflow.md) | Task lifecycle from creation to completion |
-| [Reference System](./docs/reference-system.md) | How `@doc/` and `@task-` linking works |
-| [Web UI](./docs/web-ui.md) | Kanban board and document browser |
-| [MCP Integration](./docs/mcp-integration.md) | Claude Desktop setup |
-| [Configuration](./docs/configuration.md) | Project structure and options |
-| [AI Workflow](./docs/ai-workflow.md) | Guide for AI agents |
-| [Developer Guide](./docs/developer-guide.md) | Technical docs for contributors |
-| [Changelog](./CHANGELOG.md) | Version history |
+| Guide                                          | Description                                |
+| ---------------------------------------------- | ------------------------------------------ |
+| [Command Reference](./docs/commands.md)        | All CLI commands with examples             |
+| [Workflow Guide](./docs/workflow.md)           | Task lifecycle from creation to completion |
+| [Reference System](./docs/reference-system.md) | How `@doc/` and `@task-` linking works     |
+| [Web UI](./docs/web-ui.md)                     | Kanban board and document browser          |
+| [MCP Integration](./docs/mcp-integration.md)   | Claude Desktop setup                       |
+| [Configuration](./docs/configuration.md)       | Project structure and options              |
+| [AI Workflow](./docs/ai-workflow.md)           | Guide for AI agents                        |
+| [Developer Guide](./docs/developer-guide.md)   | Technical docs for contributors            |
+| [Changelog](./CHANGELOG.md)                    | Version history                            |
 
 ---
 
@@ -183,6 +186,6 @@ For technical details, see [Architecture](./ARCHITECTURE.md) and [Contributing](
 ---
 
 <p align="center">
-  <strong>Know what your team knows.</strong><br>
+  <strong>What your AI should have knowns.</strong><br>
   Built for dev teams who pair with AI.
 </p>
