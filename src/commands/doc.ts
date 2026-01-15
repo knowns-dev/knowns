@@ -8,6 +8,14 @@ import { join, relative } from "node:path";
 import { FileStore } from "@storage/file-store";
 import { findProjectRoot } from "@utils/find-project-root";
 import { normalizePath } from "@utils/index";
+import {
+	calculateDocStats,
+	extractSection,
+	extractToc,
+	formatDocStats,
+	formatToc,
+	replaceSection,
+} from "@utils/markdown-toc";
 import { buildTaskMap, normalizeRefs, transformMentionsToRefs } from "@utils/mention-refs";
 import { notifyDocUpdate } from "@utils/notify-server";
 import { repairDoc, validateDoc } from "@utils/validate";
@@ -117,66 +125,79 @@ const createCommand = new Command("create")
 	.option("-t, --tags <tags>", "Comma-separated tags")
 	.option("-f, --folder <path>", "Folder path (e.g., guides, patterns/auth)")
 	.option("--plain", "Plain text output for AI")
-	.action(async (title: string, options: { description?: string; tags?: string; folder?: string; plain?: boolean }) => {
-		try {
-			await ensureDocsDir();
+	.action(
+		async (
+			title: string,
+			options: {
+				description?: string;
+				tags?: string;
+				folder?: string;
+				plain?: boolean;
+			},
+		) => {
+			try {
+				await ensureDocsDir();
 
-			const filename = `${titleToFilename(title)}.md`;
+				const filename = `${titleToFilename(title)}.md`;
 
-			// Handle folder path
-			let targetDir = DOCS_DIR;
-			let relativePath = filename;
-			if (options.folder) {
-				const folderPath = options.folder.replace(/^\/|\/$/g, ""); // Remove leading/trailing slashes
-				targetDir = join(DOCS_DIR, folderPath);
-				relativePath = join(folderPath, filename);
-				// Ensure folder exists
-				if (!existsSync(targetDir)) {
-					await mkdir(targetDir, { recursive: true });
+				// Handle folder path
+				let targetDir = DOCS_DIR;
+				let relativePath = filename;
+				if (options.folder) {
+					const folderPath = options.folder.replace(/^\/|\/$/g, ""); // Remove leading/trailing slashes
+					targetDir = join(DOCS_DIR, folderPath);
+					relativePath = join(folderPath, filename);
+					// Ensure folder exists
+					if (!existsSync(targetDir)) {
+						await mkdir(targetDir, { recursive: true });
+					}
 				}
-			}
 
-			const filepath = join(targetDir, filename);
+				const filepath = join(targetDir, filename);
 
-			if (existsSync(filepath)) {
-				console.error(chalk.red(`✗ Document already exists: ${relativePath}`));
+				if (existsSync(filepath)) {
+					console.error(chalk.red(`✗ Document already exists: ${relativePath}`));
+					process.exit(1);
+				}
+
+				const now = new Date().toISOString();
+				const metadata: DocMetadata = {
+					title,
+					createdAt: now,
+					updatedAt: now,
+				};
+
+				// Normalize refs in description to ensure consistent storage
+				if (options.description) {
+					metadata.description = normalizeRefs(options.description);
+				}
+
+				if (options.tags) {
+					metadata.tags = options.tags.split(",").map((t) => t.trim());
+				}
+
+				const content = matter.stringify("# Content\n\nWrite your documentation here.\n", metadata);
+
+				await writeFile(filepath, content, "utf-8");
+
+				// Notify web server for real-time updates
+				await notifyDocUpdate(relativePath);
+
+				if (options.plain) {
+					console.log(`Created: ${relativePath}`);
+				} else {
+					console.log(chalk.green(`✓ Created documentation: ${chalk.bold(relativePath)}`));
+					console.log(chalk.gray(`  Location: ${filepath}`));
+				}
+			} catch (error) {
+				console.error(
+					chalk.red("Error creating documentation:"),
+					error instanceof Error ? error.message : String(error),
+				);
 				process.exit(1);
 			}
-
-			const now = new Date().toISOString();
-			const metadata: DocMetadata = {
-				title,
-				createdAt: now,
-				updatedAt: now,
-			};
-
-			// Normalize refs in description to ensure consistent storage
-			if (options.description) {
-				metadata.description = normalizeRefs(options.description);
-			}
-
-			if (options.tags) {
-				metadata.tags = options.tags.split(",").map((t) => t.trim());
-			}
-
-			const content = matter.stringify("# Content\n\nWrite your documentation here.\n", metadata);
-
-			await writeFile(filepath, content, "utf-8");
-
-			// Notify web server for real-time updates
-			await notifyDocUpdate(relativePath);
-
-			if (options.plain) {
-				console.log(`Created: ${relativePath}`);
-			} else {
-				console.log(chalk.green(`✓ Created documentation: ${chalk.bold(relativePath)}`));
-				console.log(chalk.gray(`  Location: ${filepath}`));
-			}
-		} catch (error) {
-			console.error(chalk.red("Error creating documentation:"), error instanceof Error ? error.message : String(error));
-			process.exit(1);
-		}
-	});
+		},
+	);
 
 // List command
 const listCommand = new Command("list")
@@ -331,149 +352,248 @@ const viewCommand = new Command("view")
 	.description("View a documentation file")
 	.argument("<name>", "Document name (filename or title or path)")
 	.option("--plain", "Plain text output for AI")
-	.action(async (name: string, options: { plain?: boolean }) => {
-		try {
-			await ensureDocsDir();
+	.option("--info", "Show document stats (size, tokens, headings) without content")
+	.option("--toc", "Show table of contents only")
+	.option("--section <title>", "Show specific section by heading title or number (e.g., '2. Overview' or '2')")
+	.action(
+		async (
+			name: string,
+			options: {
+				plain?: boolean;
+				info?: boolean;
+				toc?: boolean;
+				section?: string;
+			},
+		) => {
+			try {
+				await ensureDocsDir();
 
-			// Try multiple approaches to find the file
-			let filename = name.endsWith(".md") ? name : `${name}.md`;
-			let filepath = join(DOCS_DIR, filename);
+				// Try multiple approaches to find the file
+				let filename = name.endsWith(".md") ? name : `${name}.md`;
+				let filepath = join(DOCS_DIR, filename);
 
-			if (!existsSync(filepath)) {
-				// Try converting title to filename (root level only)
-				filename = `${titleToFilename(name)}.md`;
-				filepath = join(DOCS_DIR, filename);
-			}
-
-			if (!existsSync(filepath)) {
-				// Try searching in all md files
-				const allFiles = await getAllMdFiles(DOCS_DIR);
-				const searchName = name.toLowerCase().replace(/\.md$/, "");
-
-				const matchingFile = allFiles.find((file) => {
-					const fileNameOnly = file.toLowerCase().replace(/\.md$/, "");
-					const fileBaseName = file.split("/").pop()?.toLowerCase().replace(/\.md$/, "");
-					return fileNameOnly === searchName || fileBaseName === searchName || file === name;
-				});
-
-				if (matchingFile) {
-					filename = matchingFile;
-					filepath = join(DOCS_DIR, matchingFile);
+				if (!existsSync(filepath)) {
+					// Try converting title to filename (root level only)
+					filename = `${titleToFilename(name)}.md`;
+					filepath = join(DOCS_DIR, filename);
 				}
-			}
 
-			if (!existsSync(filepath)) {
-				console.error(chalk.red(`✗ Documentation not found: ${name}`));
+				if (!existsSync(filepath)) {
+					// Try searching in all md files
+					const allFiles = await getAllMdFiles(DOCS_DIR);
+					const searchName = name.toLowerCase().replace(/\.md$/, "");
+
+					const matchingFile = allFiles.find((file) => {
+						const fileNameOnly = file.toLowerCase().replace(/\.md$/, "");
+						const fileBaseName = file.split("/").pop()?.toLowerCase().replace(/\.md$/, "");
+						return fileNameOnly === searchName || fileBaseName === searchName || file === name;
+					});
+
+					if (matchingFile) {
+						filename = matchingFile;
+						filepath = join(DOCS_DIR, matchingFile);
+					}
+				}
+
+				if (!existsSync(filepath)) {
+					console.error(chalk.red(`✗ Documentation not found: ${name}`));
+					process.exit(1);
+				}
+
+				const fileContent = await readFile(filepath, "utf-8");
+				const { data, content } = matter(fileContent);
+				const metadata = data as DocMetadata;
+
+				// Handle --info option
+				if (options.info) {
+					const stats = calculateDocStats(content);
+					if (options.plain) {
+						console.log(formatDocStats(stats, metadata.title));
+					} else {
+						console.log(chalk.bold(`\n📊 ${metadata.title} - Document Info\n`));
+						console.log(
+							`Size: ${chalk.cyan(stats.chars.toLocaleString())} chars (~${chalk.yellow(stats.estimatedTokens.toLocaleString())} tokens)`,
+						);
+						console.log(`Words: ${stats.words.toLocaleString()}`);
+						console.log(`Lines: ${stats.lines.toLocaleString()}`);
+						console.log(`Headings: ${stats.headingCount}`);
+						console.log();
+						if (stats.estimatedTokens > 4000) {
+							console.log(chalk.yellow("⚠ Document is large. Use --toc first, then --section."));
+						} else if (stats.estimatedTokens > 2000) {
+							console.log(chalk.gray("Consider using --toc and --section for specific info."));
+						} else {
+							console.log(chalk.green("✓ Document is small enough to read directly."));
+						}
+						console.log();
+					}
+					return;
+				}
+
+				// Handle --toc option
+				if (options.toc) {
+					const toc = extractToc(content);
+					if (toc.length === 0) {
+						console.log(options.plain ? "No headings found." : chalk.yellow("No headings found in this document."));
+						return;
+					}
+
+					if (options.plain) {
+						console.log(`Table of Contents: ${metadata.title}`);
+						console.log("=".repeat(50));
+						console.log();
+						toc.forEach((entry, index) => {
+							const indent = "  ".repeat(entry.level - 1);
+							console.log(`${indent}${index + 1}. ${entry.title}`);
+						});
+						console.log();
+						console.log("Use --section <number or title> to view a specific section.");
+					} else {
+						console.log(chalk.bold(`\n📄 ${metadata.title} - Table of Contents\n`));
+						console.log(formatToc(toc));
+						console.log(chalk.gray("\nUse --section <number or title> to view a specific section."));
+					}
+					return;
+				}
+
+				// Handle --section option
+				if (options.section) {
+					const sectionContent = extractSection(content, options.section);
+					if (!sectionContent) {
+						console.error(
+							options.plain
+								? `Section not found: ${options.section}`
+								: chalk.red(`✗ Section not found: ${options.section}`),
+						);
+						console.log(
+							options.plain
+								? "Use --toc to see available sections."
+								: chalk.gray("Use --toc to see available sections."),
+						);
+						process.exit(1);
+					}
+
+					if (options.plain) {
+						console.log(`File: ${process.cwd()}/.knowns/docs/${filename}`);
+						console.log(`Section: ${options.section}`);
+						console.log("=".repeat(50));
+						console.log();
+						console.log(sectionContent);
+					} else {
+						console.log(chalk.bold(`\n📄 ${metadata.title} - Section\n`));
+						console.log(sectionContent);
+						console.log();
+					}
+					return;
+				}
+
+				if (options.plain) {
+					const border = "-".repeat(50);
+					const titleBorder = "=".repeat(50);
+
+					// File path
+					const projectRoot = process.cwd();
+					console.log(`File: ${projectRoot}/.knowns/docs/${filename}`);
+					console.log();
+
+					// Title
+					console.log(metadata.title);
+					console.log(titleBorder);
+					console.log();
+
+					// Metadata
+					console.log(`Created: ${metadata.createdAt}`);
+					console.log(`Updated: ${metadata.updatedAt}`);
+					if (metadata.tags && metadata.tags.length > 0) {
+						console.log(`Tags: ${metadata.tags.join(", ")}`);
+					}
+
+					// Description
+					if (metadata.description) {
+						console.log();
+						console.log("Description:");
+						console.log(border);
+						console.log(metadata.description);
+					}
+
+					// Content with resolved links
+					console.log();
+					console.log("Content:");
+					console.log(border);
+
+					// Parse and enhance markdown links
+					const linkPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
+					let enhancedContent = content.trimEnd();
+					const linksToAdd: Array<{ original: string; resolved: string }> = [];
+
+					let match: RegExpExecArray | null;
+					// biome-ignore lint/suspicious/noAssignInExpressions: Standard regex iteration pattern
+					while ((match = linkPattern.exec(content)) !== null) {
+						const _linkText = match[1];
+						const linkTarget = match[2];
+						const fullMatch = match[0];
+
+						// Skip external URLs
+						if (linkTarget.startsWith("http://") || linkTarget.startsWith("https://")) {
+							continue;
+						}
+
+						// Skip relative paths that go outside docs
+						if (linkTarget.startsWith("../")) {
+							continue;
+						}
+
+						// Normalize filename
+						let resolvedFilename = linkTarget.replace(/^\.\//, "");
+						if (!resolvedFilename.endsWith(".md")) {
+							resolvedFilename = `${resolvedFilename}.md`;
+						}
+
+						const resolvedPath = `@.knowns/docs/${resolvedFilename}`;
+						linksToAdd.push({
+							original: fullMatch,
+							resolved: resolvedPath,
+						});
+					}
+
+					// Replace each link with resolved path only
+					for (const { original, resolved } of linksToAdd) {
+						enhancedContent = enhancedContent.replace(original, resolved);
+					}
+
+					// Transform @task-{id} and @doc/{path} mentions
+					const knownProjectRoot = findProjectRoot();
+					if (knownProjectRoot) {
+						const fileStore = new FileStore(knownProjectRoot);
+						const allTasks = await fileStore.getAllTasks();
+						const taskMap = buildTaskMap(allTasks);
+						enhancedContent = transformMentionsToRefs(enhancedContent, taskMap);
+					}
+
+					console.log(enhancedContent);
+				} else {
+					console.log(chalk.bold(`\n📄 ${metadata.title}\n`));
+					if (metadata.description) {
+						console.log(chalk.gray(metadata.description));
+						console.log();
+					}
+					if (metadata.tags && metadata.tags.length > 0) {
+						console.log(chalk.gray(`Tags: ${metadata.tags.join(", ")}`));
+					}
+					console.log(chalk.gray(`Updated: ${new Date(metadata.updatedAt).toLocaleString()}`));
+					console.log(chalk.gray("-".repeat(60)));
+					console.log(content);
+					console.log();
+				}
+			} catch (error) {
+				console.error(
+					chalk.red("Error viewing documentation:"),
+					error instanceof Error ? error.message : String(error),
+				);
 				process.exit(1);
 			}
-
-			const fileContent = await readFile(filepath, "utf-8");
-			const { data, content } = matter(fileContent);
-			const metadata = data as DocMetadata;
-
-			if (options.plain) {
-				const border = "-".repeat(50);
-				const titleBorder = "=".repeat(50);
-
-				// File path
-				const projectRoot = process.cwd();
-				console.log(`File: ${projectRoot}/.knowns/docs/${filename}`);
-				console.log();
-
-				// Title
-				console.log(metadata.title);
-				console.log(titleBorder);
-				console.log();
-
-				// Metadata
-				console.log(`Created: ${metadata.createdAt}`);
-				console.log(`Updated: ${metadata.updatedAt}`);
-				if (metadata.tags && metadata.tags.length > 0) {
-					console.log(`Tags: ${metadata.tags.join(", ")}`);
-				}
-
-				// Description
-				if (metadata.description) {
-					console.log();
-					console.log("Description:");
-					console.log(border);
-					console.log(metadata.description);
-				}
-
-				// Content with resolved links
-				console.log();
-				console.log("Content:");
-				console.log(border);
-
-				// Parse and enhance markdown links
-				const linkPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
-				let enhancedContent = content.trimEnd();
-				const linksToAdd: Array<{ original: string; resolved: string }> = [];
-
-				let match: RegExpExecArray | null;
-				// biome-ignore lint/suspicious/noAssignInExpressions: Standard regex iteration pattern
-				while ((match = linkPattern.exec(content)) !== null) {
-					const _linkText = match[1];
-					const linkTarget = match[2];
-					const fullMatch = match[0];
-
-					// Skip external URLs
-					if (linkTarget.startsWith("http://") || linkTarget.startsWith("https://")) {
-						continue;
-					}
-
-					// Skip relative paths that go outside docs
-					if (linkTarget.startsWith("../")) {
-						continue;
-					}
-
-					// Normalize filename
-					let resolvedFilename = linkTarget.replace(/^\.\//, "");
-					if (!resolvedFilename.endsWith(".md")) {
-						resolvedFilename = `${resolvedFilename}.md`;
-					}
-
-					const resolvedPath = `@.knowns/docs/${resolvedFilename}`;
-					linksToAdd.push({
-						original: fullMatch,
-						resolved: resolvedPath,
-					});
-				}
-
-				// Replace each link with resolved path only
-				for (const { original, resolved } of linksToAdd) {
-					enhancedContent = enhancedContent.replace(original, resolved);
-				}
-
-				// Transform @task-{id} and @doc/{path} mentions
-				const knownProjectRoot = findProjectRoot();
-				if (knownProjectRoot) {
-					const fileStore = new FileStore(knownProjectRoot);
-					const allTasks = await fileStore.getAllTasks();
-					const taskMap = buildTaskMap(allTasks);
-					enhancedContent = transformMentionsToRefs(enhancedContent, taskMap);
-				}
-
-				console.log(enhancedContent);
-			} else {
-				console.log(chalk.bold(`\n📄 ${metadata.title}\n`));
-				if (metadata.description) {
-					console.log(chalk.gray(metadata.description));
-					console.log();
-				}
-				if (metadata.tags && metadata.tags.length > 0) {
-					console.log(chalk.gray(`Tags: ${metadata.tags.join(", ")}`));
-				}
-				console.log(chalk.gray(`Updated: ${new Date(metadata.updatedAt).toLocaleString()}`));
-				console.log(chalk.gray("-".repeat(60)));
-				console.log(content);
-				console.log();
-			}
-		} catch (error) {
-			console.error(chalk.red("Error viewing documentation:"), error instanceof Error ? error.message : String(error));
-			process.exit(1);
-		}
-	});
+		},
+	);
 
 // Edit command
 const editCommand = new Command("edit")
@@ -482,8 +602,9 @@ const editCommand = new Command("edit")
 	.option("-t, --title <text>", "New title")
 	.option("-d, --description <text>", "New description")
 	.option("--tags <tags>", "Comma-separated tags")
-	.option("-c, --content <text>", "Replace content")
+	.option("-c, --content <text>", "Replace content (or section content if --section used)")
 	.option("-a, --append <text>", "Append to content")
+	.option("--section <title>", "Target section to replace (use with -c)")
 	.option("--content-file <path>", "Replace content with file contents")
 	.option("--append-file <path>", "Append file contents to document")
 	.option("--plain", "Plain text output for AI")
@@ -496,6 +617,7 @@ const editCommand = new Command("edit")
 				tags?: string;
 				content?: string;
 				append?: string;
+				section?: string;
 				contentFile?: string;
 				appendFile?: string;
 				plain?: boolean;
@@ -571,6 +693,24 @@ const editCommand = new Command("edit")
 					updatedContent = `${content.trimEnd()}\n\n${normalizeRefs(fileData)}`;
 					sourceFile = options.appendFile;
 				}
+				// Handle --section with -c (replace specific section)
+				else if (options.section && options.content) {
+					const result = replaceSection(content, options.section, normalizeRefs(options.content));
+					if (!result) {
+						console.error(
+							options.plain
+								? `Section not found: ${options.section}`
+								: chalk.red(`✗ Section not found: ${options.section}`),
+						);
+						console.log(
+							options.plain
+								? "Use 'knowns doc <path> --toc --plain' to see available sections."
+								: chalk.gray("Use 'knowns doc <path> --toc --plain' to see available sections."),
+						);
+						process.exit(1);
+					}
+					updatedContent = result;
+				}
 				// Original behavior with inline content
 				else if (options.content) {
 					updatedContent = normalizeRefs(options.content);
@@ -587,11 +727,17 @@ const editCommand = new Command("edit")
 
 				if (options.plain) {
 					console.log(`Updated: ${filename}`);
+					if (options.section) {
+						console.log(`Section: ${options.section}`);
+					}
 					if (sourceFile) {
 						console.log(`Content from: ${sourceFile}`);
 					}
 				} else {
 					console.log(chalk.green(`✓ Updated documentation: ${chalk.bold(filename)}`));
+					if (options.section) {
+						console.log(chalk.gray(`  Section: ${options.section}`));
+					}
 					if (sourceFile) {
 						console.log(chalk.gray(`  Content from: ${sourceFile}`));
 					}
@@ -775,7 +921,11 @@ const searchInCommand = new Command("search-in")
 			const { content } = matter(fileContent);
 			const lines = content.split("\n");
 
-			const matches: Array<{ lineNum: number; line: string; context: string }> = [];
+			const matches: Array<{
+				lineNum: number;
+				line: string;
+				context: string;
+			}> = [];
 			const searchQuery = options.ignoreCase ? query.toLowerCase() : query;
 
 			for (let i = 0; i < lines.length; i++) {
@@ -969,130 +1119,229 @@ export const docCommand = new Command("doc")
 	.description("Manage documentation")
 	.argument("[name]", "Document name (shorthand for 'doc view <name>')")
 	.option("--plain", "Plain text output for AI")
+	.option("--info", "Show document stats (size, tokens, headings) without content")
+	.option("--toc", "Show table of contents only")
+	.option("--section <title>", "Show specific section by heading title or number")
 	.enablePositionalOptions()
-	.action(async (name: string | undefined, options: { plain?: boolean }) => {
-		// If no name provided, show help
-		if (!name) {
-			docCommand.help();
-			return;
-		}
+	.action(
+		async (
+			name: string | undefined,
+			options: {
+				plain?: boolean;
+				info?: boolean;
+				toc?: boolean;
+				section?: string;
+			},
+		) => {
+			// If no name provided, show help
+			if (!name) {
+				docCommand.help();
+				return;
+			}
 
-		// Shorthand: `doc <name>` = `doc view <name>`
-		try {
-			const resolved = await resolveDocPath(name);
-			if (!resolved) {
-				console.error(chalk.red(`✗ Documentation not found: ${name}`));
+			// Shorthand: `doc <name>` = `doc view <name>`
+			try {
+				const resolved = await resolveDocPath(name);
+				if (!resolved) {
+					console.error(chalk.red(`✗ Documentation not found: ${name}`));
+					process.exit(1);
+				}
+
+				const { filepath, filename } = resolved;
+				const fileContent = await readFile(filepath, "utf-8");
+				const { data, content } = matter(fileContent);
+				const metadata = data as DocMetadata;
+
+				// Handle --info option
+				if (options.info) {
+					const stats = calculateDocStats(content);
+					if (options.plain) {
+						console.log(formatDocStats(stats, metadata.title));
+					} else {
+						console.log(chalk.bold(`\n📊 ${metadata.title} - Document Info\n`));
+						console.log(
+							`Size: ${chalk.cyan(stats.chars.toLocaleString())} chars (~${chalk.yellow(stats.estimatedTokens.toLocaleString())} tokens)`,
+						);
+						console.log(`Words: ${stats.words.toLocaleString()}`);
+						console.log(`Lines: ${stats.lines.toLocaleString()}`);
+						console.log(`Headings: ${stats.headingCount}`);
+						console.log();
+						if (stats.estimatedTokens > 4000) {
+							console.log(chalk.yellow("⚠ Document is large. Use --toc first, then --section."));
+						} else if (stats.estimatedTokens > 2000) {
+							console.log(chalk.gray("Consider using --toc and --section for specific info."));
+						} else {
+							console.log(chalk.green("✓ Document is small enough to read directly."));
+						}
+						console.log();
+					}
+					return;
+				}
+
+				// Handle --toc option
+				if (options.toc) {
+					const toc = extractToc(content);
+					if (toc.length === 0) {
+						console.log(options.plain ? "No headings found." : chalk.yellow("No headings found in this document."));
+						return;
+					}
+
+					if (options.plain) {
+						console.log(`Table of Contents: ${metadata.title}`);
+						console.log("=".repeat(50));
+						console.log();
+						toc.forEach((entry, index) => {
+							const indent = "  ".repeat(entry.level - 1);
+							console.log(`${indent}${index + 1}. ${entry.title}`);
+						});
+						console.log();
+						console.log("Use --section <number or title> to view a specific section.");
+					} else {
+						console.log(chalk.bold(`\n📄 ${metadata.title} - Table of Contents\n`));
+						console.log(formatToc(toc));
+						console.log(chalk.gray("\nUse --section <number or title> to view a specific section."));
+					}
+					return;
+				}
+
+				// Handle --section option
+				if (options.section) {
+					const sectionContent = extractSection(content, options.section);
+					if (!sectionContent) {
+						console.error(
+							options.plain
+								? `Section not found: ${options.section}`
+								: chalk.red(`✗ Section not found: ${options.section}`),
+						);
+						console.log(
+							options.plain
+								? "Use --toc to see available sections."
+								: chalk.gray("Use --toc to see available sections."),
+						);
+						process.exit(1);
+					}
+
+					if (options.plain) {
+						console.log(`File: ${process.cwd()}/.knowns/docs/${filename}`);
+						console.log(`Section: ${options.section}`);
+						console.log("=".repeat(50));
+						console.log();
+						console.log(sectionContent);
+					} else {
+						console.log(chalk.bold(`\n📄 ${metadata.title} - Section\n`));
+						console.log(sectionContent);
+						console.log();
+					}
+					return;
+				}
+
+				if (options.plain) {
+					const border = "-".repeat(50);
+					const titleBorder = "=".repeat(50);
+
+					// File path
+					const projectRoot = process.cwd();
+					console.log(`File: ${projectRoot}/.knowns/docs/${filename}`);
+					console.log();
+
+					// Title
+					console.log(metadata.title);
+					console.log(titleBorder);
+					console.log();
+
+					// Metadata
+					console.log(`Created: ${metadata.createdAt}`);
+					console.log(`Updated: ${metadata.updatedAt}`);
+					if (metadata.tags && metadata.tags.length > 0) {
+						console.log(`Tags: ${metadata.tags.join(", ")}`);
+					}
+
+					// Description
+					if (metadata.description) {
+						console.log();
+						console.log("Description:");
+						console.log(border);
+						console.log(metadata.description);
+					}
+
+					// Content with resolved links
+					console.log();
+					console.log("Content:");
+					console.log(border);
+
+					// Parse and enhance markdown links
+					const linkPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
+					let enhancedContent = content.trimEnd();
+					const linksToAdd: Array<{ original: string; resolved: string }> = [];
+
+					let match: RegExpExecArray | null;
+					// biome-ignore lint/suspicious/noAssignInExpressions: Standard regex iteration pattern
+					while ((match = linkPattern.exec(content)) !== null) {
+						const _linkText = match[1];
+						const linkTarget = match[2];
+						const fullMatch = match[0];
+
+						// Skip external URLs
+						if (linkTarget.startsWith("http://") || linkTarget.startsWith("https://")) {
+							continue;
+						}
+
+						// Skip relative paths that go outside docs
+						if (linkTarget.startsWith("../")) {
+							continue;
+						}
+
+						// Normalize filename
+						let resolvedFilename = linkTarget.replace(/^\.\//, "");
+						if (!resolvedFilename.endsWith(".md")) {
+							resolvedFilename = `${resolvedFilename}.md`;
+						}
+
+						const resolvedPath = `@.knowns/docs/${resolvedFilename}`;
+						linksToAdd.push({
+							original: fullMatch,
+							resolved: resolvedPath,
+						});
+					}
+
+					// Replace each link with resolved path only
+					for (const { original, resolved } of linksToAdd) {
+						enhancedContent = enhancedContent.replace(original, resolved);
+					}
+
+					// Transform @task-{id} and @doc/{path} mentions
+					const knownProjectRoot = findProjectRoot();
+					if (knownProjectRoot) {
+						const fileStore = new FileStore(knownProjectRoot);
+						const allTasks = await fileStore.getAllTasks();
+						const taskMap = buildTaskMap(allTasks);
+						enhancedContent = transformMentionsToRefs(enhancedContent, taskMap);
+					}
+
+					console.log(enhancedContent);
+				} else {
+					console.log(chalk.bold(`\n📄 ${metadata.title}\n`));
+					if (metadata.description) {
+						console.log(chalk.gray(metadata.description));
+						console.log();
+					}
+					if (metadata.tags && metadata.tags.length > 0) {
+						console.log(chalk.gray(`Tags: ${metadata.tags.join(", ")}`));
+					}
+					console.log(chalk.gray(`Updated: ${new Date(metadata.updatedAt).toLocaleString()}`));
+					console.log(chalk.gray("-".repeat(60)));
+					console.log(content);
+					console.log();
+				}
+			} catch (error) {
+				console.error(
+					chalk.red("Error viewing documentation:"),
+					error instanceof Error ? error.message : String(error),
+				);
 				process.exit(1);
 			}
-
-			const { filepath, filename } = resolved;
-			const fileContent = await readFile(filepath, "utf-8");
-			const { data, content } = matter(fileContent);
-			const metadata = data as DocMetadata;
-
-			if (options.plain) {
-				const border = "-".repeat(50);
-				const titleBorder = "=".repeat(50);
-
-				// File path
-				const projectRoot = process.cwd();
-				console.log(`File: ${projectRoot}/.knowns/docs/${filename}`);
-				console.log();
-
-				// Title
-				console.log(metadata.title);
-				console.log(titleBorder);
-				console.log();
-
-				// Metadata
-				console.log(`Created: ${metadata.createdAt}`);
-				console.log(`Updated: ${metadata.updatedAt}`);
-				if (metadata.tags && metadata.tags.length > 0) {
-					console.log(`Tags: ${metadata.tags.join(", ")}`);
-				}
-
-				// Description
-				if (metadata.description) {
-					console.log();
-					console.log("Description:");
-					console.log(border);
-					console.log(metadata.description);
-				}
-
-				// Content with resolved links
-				console.log();
-				console.log("Content:");
-				console.log(border);
-
-				// Parse and enhance markdown links
-				const linkPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
-				let enhancedContent = content.trimEnd();
-				const linksToAdd: Array<{ original: string; resolved: string }> = [];
-
-				let match: RegExpExecArray | null;
-				// biome-ignore lint/suspicious/noAssignInExpressions: Standard regex iteration pattern
-				while ((match = linkPattern.exec(content)) !== null) {
-					const _linkText = match[1];
-					const linkTarget = match[2];
-					const fullMatch = match[0];
-
-					// Skip external URLs
-					if (linkTarget.startsWith("http://") || linkTarget.startsWith("https://")) {
-						continue;
-					}
-
-					// Skip relative paths that go outside docs
-					if (linkTarget.startsWith("../")) {
-						continue;
-					}
-
-					// Normalize filename
-					let resolvedFilename = linkTarget.replace(/^\.\//, "");
-					if (!resolvedFilename.endsWith(".md")) {
-						resolvedFilename = `${resolvedFilename}.md`;
-					}
-
-					const resolvedPath = `@.knowns/docs/${resolvedFilename}`;
-					linksToAdd.push({
-						original: fullMatch,
-						resolved: resolvedPath,
-					});
-				}
-
-				// Replace each link with resolved path only
-				for (const { original, resolved } of linksToAdd) {
-					enhancedContent = enhancedContent.replace(original, resolved);
-				}
-
-				// Transform @task-{id} and @doc/{path} mentions
-				const knownProjectRoot = findProjectRoot();
-				if (knownProjectRoot) {
-					const fileStore = new FileStore(knownProjectRoot);
-					const allTasks = await fileStore.getAllTasks();
-					const taskMap = buildTaskMap(allTasks);
-					enhancedContent = transformMentionsToRefs(enhancedContent, taskMap);
-				}
-
-				console.log(enhancedContent);
-			} else {
-				console.log(chalk.bold(`\n📄 ${metadata.title}\n`));
-				if (metadata.description) {
-					console.log(chalk.gray(metadata.description));
-					console.log();
-				}
-				if (metadata.tags && metadata.tags.length > 0) {
-					console.log(chalk.gray(`Tags: ${metadata.tags.join(", ")}`));
-				}
-				console.log(chalk.gray(`Updated: ${new Date(metadata.updatedAt).toLocaleString()}`));
-				console.log(chalk.gray("-".repeat(60)));
-				console.log(content);
-				console.log();
-			}
-		} catch (error) {
-			console.error(chalk.red("Error viewing documentation:"), error instanceof Error ? error.message : String(error));
-			process.exit(1);
-		}
-	});
+		},
+	);
 
 // Add subcommands
 docCommand.addCommand(createCommand);

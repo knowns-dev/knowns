@@ -11,7 +11,7 @@ tags:
 
 Knowns is a CLI-first knowledge layer and task management system for development teams. Designed to maintain persistent project context for AI assistance.
 
-**Tagline**: "Know what your team knows."
+**Tagline**: "What your AI should have knowns."
 
 ## Tech Stack
 

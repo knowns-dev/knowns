@@ -5,6 +5,7 @@ import {
 	Settings,
 	Search,
 } from "lucide-react";
+import logoImage from "../../public/logo.png";
 import {
 	Sidebar,
 	SidebarContent,
@@ -62,12 +63,14 @@ export function AppSidebar({
 					<SidebarMenuItem>
 						<SidebarMenuButton size="lg" asChild>
 							<a href="#/">
-								<div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-									<span className="text-lg font-bold">◆</span>
-								</div>
+								<img
+									src={logoImage}
+									alt="Knowns"
+									className="size-8 rounded-lg object-contain"
+								/>
 								<div className="grid flex-1 text-left text-sm leading-tight">
-									<span className="truncate font-semibold">Knowns.dev</span>
-									<span className="truncate text-xs">Task Management</span>
+									<span className="truncate font-semibold">Knowns</span>
+									<span className="truncate text-xs">AI-ready task management</span>
 								</div>
 							</a>
 						</SidebarMenuButton>

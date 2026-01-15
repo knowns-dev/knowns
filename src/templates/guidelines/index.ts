@@ -3,112 +3,29 @@
  *
  * Modular guidelines for AI agents using Knowns CLI/MCP.
  * Each guideline focuses on a specific aspect of the workflow.
+ *
+ * Two variants available:
+ * - CLI Guidelines: For agents using `knowns` CLI commands (./cli/)
+ * - MCP Guidelines: For agents using MCP tools mcp__knowns__* (./mcp/)
  */
 
-// Core rules and principles
-import coreRulesMd from "./core-rules.md";
+// Import from organized subdirectories
+import { CLIGuidelines } from "./cli";
+import { MCPGuidelines } from "./mcp";
 
-// Complete CLI/MCP commands reference
-import commandsReferenceMd from "./commands-reference.md";
+// Re-export both variants
+export { CLIGuidelines, MCPGuidelines };
 
-import workflowCompletionMd from "./workflow-completion.md";
-// Workflow stages
-import workflowCreationMd from "./workflow-creation.md";
-import workflowExecutionMd from "./workflow-execution.md";
+// Export CLI as default Guidelines for backwards compatibility
+export const Guidelines = CLIGuidelines;
 
-// Anti-patterns and common mistakes
-import commonMistakesMd from "./common-mistakes.md";
-
-// Context optimization for AI agents
-import contextOptimizationMd from "./context-optimization.md";
-
-// Export individual guidelines (trimmed)
-export const CORE_RULES = coreRulesMd.trim();
-export const COMMANDS_REFERENCE = commandsReferenceMd.trim();
-export const WORKFLOW_CREATION = workflowCreationMd.trim();
-export const WORKFLOW_EXECUTION = workflowExecutionMd.trim();
-export const WORKFLOW_COMPLETION = workflowCompletionMd.trim();
-export const COMMON_MISTAKES = commonMistakesMd.trim();
-export const CONTEXT_OPTIMIZATION = contextOptimizationMd.trim();
-
-/**
- * Get guidelines by context/stage
- */
-export const Guidelines = {
-	// Core rules - always needed
-	core: CORE_RULES,
-
-	// Commands reference
-	commands: COMMANDS_REFERENCE,
-
-	// Workflow stages
-	workflow: {
-		creation: WORKFLOW_CREATION,
-		execution: WORKFLOW_EXECUTION,
-		completion: WORKFLOW_COMPLETION,
-	},
-
-	// Common mistakes
-	mistakes: COMMON_MISTAKES,
-
-	// Context optimization
-	contextOptimization: CONTEXT_OPTIMIZATION,
-
-	/**
-	 * Get full guidelines (all sections combined)
-	 */
-	getFull(withMarkers = false): string {
-		const content = [
-			CORE_RULES,
-			"---",
-			CONTEXT_OPTIMIZATION,
-			"---",
-			COMMANDS_REFERENCE,
-			"---",
-			WORKFLOW_CREATION,
-			"---",
-			WORKFLOW_EXECUTION,
-			"---",
-			WORKFLOW_COMPLETION,
-			"---",
-			COMMON_MISTAKES,
-		].join("\n\n");
-
-		if (withMarkers) {
-			return `<!-- KNOWNS GUIDELINES START -->\n${content}\n<!-- KNOWNS GUIDELINES END -->`;
-		}
-		return content;
-	},
-
-	/**
-	 * Get compact guidelines (core + context optimization + mistakes only)
-	 */
-	getCompact(): string {
-		return [CORE_RULES, "---", CONTEXT_OPTIMIZATION, "---", COMMON_MISTAKES].join("\n\n");
-	},
-
-	/**
-	 * Get guidelines for specific workflow stage
-	 */
-	getForStage(stage: "creation" | "execution" | "completion"): string {
-		const sections = [CORE_RULES, "---", CONTEXT_OPTIMIZATION, "---"];
-
-		switch (stage) {
-			case "creation":
-				sections.push(WORKFLOW_CREATION);
-				break;
-			case "execution":
-				sections.push(WORKFLOW_EXECUTION);
-				sections.push("---", COMMANDS_REFERENCE);
-				break;
-			case "completion":
-				sections.push(WORKFLOW_COMPLETION);
-				break;
-		}
-
-		sections.push("---", COMMON_MISTAKES);
-		return sections.join("\n\n");
-	},
-};
+// Re-export individual CLI constants for backwards compatibility
+export const CORE_RULES = CLIGuidelines.core;
+export const COMMANDS_REFERENCE = CLIGuidelines.commands;
+export const WORKFLOW_CREATION = CLIGuidelines.workflow.creation;
+export const WORKFLOW_EXECUTION = CLIGuidelines.workflow.execution;
+export const WORKFLOW_COMPLETION = CLIGuidelines.workflow.completion;
+export const COMMON_MISTAKES = CLIGuidelines.mistakes;
+export const CONTEXT_OPTIMIZATION = CLIGuidelines.contextOptimization;
 
 export default Guidelines;

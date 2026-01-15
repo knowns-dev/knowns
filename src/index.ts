@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Knowns.dev CLI
- * "Know what your team knows."
+ * "What your AI should have knowns."
  *
  * Open-source CLI for dev teams
  * Tasks - Time - Sync
@@ -36,7 +36,7 @@ const BANNER = `
 function showBanner(): void {
 	console.log(chalk.cyan(BANNER));
 	console.log(chalk.bold("  Knowns CLI") + chalk.gray(` v${packageJson.version}`));
-	console.log(chalk.gray('  "Know what your team knows."'));
+	console.log(chalk.gray('  "What your AI should have knowns."'));
 	console.log();
 	console.log(chalk.gray("  Open-source CLI for dev teams"));
 	console.log(chalk.gray("  Tasks • Time • Docs • Sync"));

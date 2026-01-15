@@ -1,7 +1,7 @@
 ---
 title: Knowns CLI Guide
 createdAt: '2025-12-26T19:43:25.470Z'
-updatedAt: '2026-01-12T11:43:12.259Z'
+updatedAt: '2026-01-15T09:54:09.403Z'
 description: Complete guide for using Knowns CLI
 tags:
   - guide
@@ -286,4 +286,19 @@ knowns agents guideline --compact # Core rules only
 knowns agents sync                # CLAUDE.md, AGENTS.md
 knowns agents sync --all          # All supported files
 knowns agents sync --type mcp     # MCP guidelines
+```
+
+### Large Documents
+
+For large documents, use the 3-step workflow:
+
+```bash
+# Step 1: Check size
+knowns doc <path> --info --plain
+
+# Step 2: Get TOC (if >2000 tokens)
+knowns doc <path> --toc --plain
+
+# Step 3: Read section
+knowns doc <path> --section "2" --plain
 ```

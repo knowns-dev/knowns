@@ -85,23 +85,33 @@ async function createMcpJsonFile(projectRoot: string): Promise<void> {
 }
 
 /**
- * Update .gitignore for git-ignored mode
+ * Update .gitignore based on git tracking mode
  */
-async function updateGitignoreForIgnoredMode(projectRoot: string): Promise<void> {
+async function updateGitignore(projectRoot: string, mode: "git-ignored" | "none"): Promise<void> {
 	const { appendFileSync, readFileSync, writeFileSync } = await import("node:fs");
 	const gitignorePath = join(projectRoot, ".gitignore");
 
-	const knownsIgnorePattern = `
+	// Different patterns based on mode
+	const patterns = {
+		"git-ignored": `
 # knowns (ignore all except docs)
 .knowns/*
 !.knowns/docs/
 !.knowns/docs/**
-`;
+`,
+		none: `
+# knowns (ignore entire folder)
+.knowns/
+`,
+	};
+
+	const knownsIgnorePattern = patterns[mode];
+	const checkPattern = mode === "none" ? ".knowns/" : ".knowns/*";
 
 	if (existsSync(gitignorePath)) {
 		const content = readFileSync(gitignorePath, "utf-8");
 		// Check if pattern already exists
-		if (content.includes(".knowns/*")) {
+		if (content.includes(checkPattern)) {
 			console.log(chalk.gray("  .gitignore already has knowns pattern"));
 			return;
 		}
@@ -146,6 +156,11 @@ async function runWizard(): Promise<InitConfig | null> {
 						value: "git-ignored",
 						description: "Only docs tracked, tasks/config ignored",
 					},
+					{
+						title: "None (ignore all)",
+						value: "none",
+						description: "Entire .knowns/ folder ignored by git",
+					},
 				],
 				initial: 0, // git-tracked
 			},
@@ -154,8 +169,16 @@ async function runWizard(): Promise<InitConfig | null> {
 				name: "guidelinesType",
 				message: "AI Guidelines type",
 				choices: [
-					{ title: "CLI", value: "cli", description: "Use CLI commands (knowns task edit, knowns doc view)" },
-					{ title: "MCP", value: "mcp", description: "Use MCP tools (mcp__knowns__update_task, etc.)" },
+					{
+						title: "CLI",
+						value: "cli",
+						description: "Use CLI commands (knowns task edit, knowns doc view)",
+					},
+					{
+						title: "MCP",
+						value: "mcp",
+						description: "Use MCP tools (mcp__knowns__update_task, etc.)",
+					},
 				],
 				initial: 0, // CLI
 			},
@@ -247,9 +270,9 @@ export const initCommand = new Command("init")
 				};
 			}
 
-			// Handle git-ignored mode: update .gitignore
-			if (config.gitTrackingMode === "git-ignored") {
-				await updateGitignoreForIgnoredMode(projectRoot);
+			// Handle git-ignored or none mode: update .gitignore
+			if (config.gitTrackingMode === "git-ignored" || config.gitTrackingMode === "none") {
+				await updateGitignore(projectRoot, config.gitTrackingMode);
 			}
 
 			// Create .mcp.json for Claude Code auto-discovery when MCP mode is selected

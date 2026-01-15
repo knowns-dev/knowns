@@ -35,6 +35,27 @@ knowns doc list --plain
 knowns search "auth" --plain
 ```
 
+### 4. Large Document Handling
+
+**For large documents (>2000 tokens), use 3-step workflow:**
+
+```bash
+# Step 1: Check size first
+knowns doc "README" --info --plain
+# Output: Size: 42,461 chars (~12,132 tokens) | Headings: 83
+
+# Step 2: Get table of contents (if >2000 tokens)
+knowns doc "README" --toc --plain
+
+# Step 3: Read specific section only
+knowns doc "README" --section "2. Installation" --plain
+
+# Edit specific section (no need to read entire doc!)
+knowns doc edit "README" --section "2" -c "New content"
+```
+
+This reduces context usage significantly.
+
 ## Session Initialization
 
 When starting a new session:
@@ -147,10 +168,10 @@ knowns task edit 42 -s done
 
 When you see references in task output:
 
-| You see | Command to run |
-|---------|----------------|
-| `@.knowns/tasks/task-38 - Title.md` | `knowns task 38 --plain` |
-| `@.knowns/docs/patterns/auth.md` | `knowns doc "patterns/auth" --plain` |
+| You see                             | Command to run                       |
+| ----------------------------------- | ------------------------------------ |
+| `@.knowns/tasks/task-38 - Title.md` | `knowns task 38 --plain`             |
+| `@.knowns/docs/patterns/auth.md`    | `knowns doc "patterns/auth" --plain` |
 
 ## Context Checklist
 
@@ -165,13 +186,13 @@ Before writing ANY code:
 
 ## Common Mistakes
 
-| Wrong | Right |
-|-------|-------|
-| Edit .md files directly | Use `knowns task edit` |
-| Skip reading docs | Read ALL related docs first |
-| Forget `--plain` flag | Always use `--plain` |
-| Code before plan approval | Wait for approval |
-| Mark done without all criteria | Check ALL criteria first |
+| Wrong                          | Right                       |
+| ------------------------------ | --------------------------- |
+| Edit .md files directly        | Use `knowns task edit`      |
+| Skip reading docs              | Read ALL related docs first |
+| Forget `--plain` flag          | Always use `--plain`        |
+| Code before plan approval      | Wait for approval           |
+| Mark done without all criteria | Check ALL criteria first    |
 
 ## Quick Reference
 
@@ -204,14 +225,14 @@ Knowns provides **modular guidelines** that AI agents can request at session sta
 
 Guidelines are organized into focused sections:
 
-| Section | Description |
-|---------|-------------|
-| **Core Rules** | Golden rules, must-follow principles |
-| **Commands Reference** | CLI/MCP commands quick reference |
-| **Workflow Creation** | Task creation workflow |
-| **Workflow Execution** | Task execution workflow |
-| **Workflow Completion** | Task completion workflow |
-| **Common Mistakes** | Anti-patterns and DO vs DON'T |
+| Section                 | Description                          |
+| ----------------------- | ------------------------------------ |
+| **Core Rules**          | Golden rules, must-follow principles |
+| **Commands Reference**  | CLI/MCP commands quick reference     |
+| **Workflow Creation**   | Task creation workflow               |
+| **Workflow Execution**  | Task execution workflow              |
+| **Workflow Completion** | Task completion workflow             |
+| **Common Mistakes**     | Anti-patterns and DO vs DON'T        |
 
 ### Getting Guidelines
 
@@ -262,12 +283,13 @@ knowns agents sync --all
 
 ### Template Variants
 
-| Variant | Size | Description |
-|---------|------|-------------|
-| **general** (default) | ~26KB | Full modular guidelines embedded in file |
-| **instruction** (`--minimal`) | ~1KB | Minimal - tells AI to call `knowns agents guideline` |
+| Variant                       | Size  | Description                                          |
+| ----------------------------- | ----- | ---------------------------------------------------- |
+| **general** (default)         | ~26KB | Full modular guidelines embedded in file             |
+| **instruction** (`--minimal`) | ~1KB  | Minimal - tells AI to call `knowns agents guideline` |
 
 The **general** (full) variant is recommended because:
+
 - AI has immediate access to all guidelines
 - No extra command execution required
 - Works reliably across all AI models

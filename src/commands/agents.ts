@@ -9,7 +9,7 @@ import chalk from "chalk";
 import { Command } from "commander";
 import prompts from "prompts";
 // Import modular guidelines
-import { Guidelines } from "../templates/guidelines";
+import { Guidelines, MCPGuidelines } from "../templates/guidelines";
 // Import instruction templates (with markers)
 import { CLI_INSTRUCTION, MCP_INSTRUCTION } from "../templates/instruction";
 
@@ -19,7 +19,11 @@ export const INSTRUCTION_FILES = [
 	{ path: "CLAUDE.md", name: "Claude Code", selected: true },
 	{ path: "AGENTS.md", name: "Agent SDK", selected: true },
 	{ path: "GEMINI.md", name: "Gemini", selected: false },
-	{ path: ".github/copilot-instructions.md", name: "GitHub Copilot", selected: false },
+	{
+		path: ".github/copilot-instructions.md",
+		name: "GitHub Copilot",
+		selected: false,
+	},
 ];
 
 export type GuidelinesType = "cli" | "mcp";
@@ -34,7 +38,8 @@ export function getGuidelines(type: GuidelinesType, variant: GuidelinesVariant =
 		return type === "mcp" ? MCP_INSTRUCTION : CLI_INSTRUCTION;
 	}
 	// Full guidelines with markers (for embedding in CLAUDE.md) - DEFAULT
-	return Guidelines.getFull(true);
+	// Return type-specific guidelines (CLI or MCP)
+	return type === "mcp" ? MCPGuidelines.getFull(true) : Guidelines.getFull(true);
 }
 
 /**
@@ -91,127 +96,133 @@ const agentsCommand = new Command("agents")
 	.option("--update-instructions", "Update agent instruction files (non-interactive)")
 	.option("--type <type>", "Guidelines type: cli or mcp", "cli")
 	.option("--files <files>", "Comma-separated list of files to update")
-	.action(async (options: { updateInstructions?: boolean; type?: string; files?: string }) => {
-		try {
-			// Non-interactive mode with --update-instructions flag
-			if (options.updateInstructions) {
-				const type = (options.type === "mcp" ? "mcp" : "cli") as GuidelinesType;
-				const variant: GuidelinesVariant = "general";
-				const guidelines = getGuidelines(type, variant);
+	.action(
+		async (options: {
+			updateInstructions?: boolean;
+			type?: string;
+			files?: string;
+		}) => {
+			try {
+				// Non-interactive mode with --update-instructions flag
+				if (options.updateInstructions) {
+					const type = (options.type === "mcp" ? "mcp" : "cli") as GuidelinesType;
+					const variant: GuidelinesVariant = "general";
+					const guidelines = getGuidelines(type, variant);
 
-				// Determine which files to update
-				let filesToUpdate = INSTRUCTION_FILES;
-				if (options.files) {
-					const requestedFiles = options.files.split(",").map((f) => f.trim());
-					filesToUpdate = INSTRUCTION_FILES.filter(
-						(f) => requestedFiles.includes(f.path) || requestedFiles.includes(f.name),
-					);
+					// Determine which files to update
+					let filesToUpdate = INSTRUCTION_FILES;
+					if (options.files) {
+						const requestedFiles = options.files.split(",").map((f) => f.trim());
+						filesToUpdate = INSTRUCTION_FILES.filter(
+							(f) => requestedFiles.includes(f.path) || requestedFiles.includes(f.name),
+						);
+					}
+
+					const label = `${type.toUpperCase()}`;
+					console.log(chalk.bold(`\nUpdating agent instruction files (${label})...\n`));
+					await updateFiles(filesToUpdate, guidelines);
+					return;
 				}
 
-				const label = `${type.toUpperCase()}`;
-				console.log(chalk.bold(`\nUpdating agent instruction files (${label})...\n`));
-				await updateFiles(filesToUpdate, guidelines);
-				return;
+				// Interactive mode
+				console.log(chalk.bold("\n🤖 Agent Instructions Manager\n"));
+
+				// Step 1: Select guidelines type
+				const typeResponse = await prompts({
+					type: "select",
+					name: "type",
+					message: "Select guidelines type:",
+					choices: [
+						{
+							title: "CLI",
+							value: "cli",
+							description: "CLI commands (knowns task edit, knowns doc view, etc.)",
+						},
+						{
+							title: "MCP",
+							value: "mcp",
+							description: "MCP tools (mcp__knowns__update_task, etc.)",
+						},
+					],
+					initial: 0,
+				});
+
+				if (!typeResponse.type) {
+					console.log(chalk.yellow("\n⚠️  Cancelled"));
+					return;
+				}
+
+				// Step 2: Select variant
+				const variantResponse = await prompts({
+					type: "select",
+					name: "variant",
+					message: "Select variant:",
+					choices: [
+						{
+							title: "Full (Recommended)",
+							value: "general",
+							description: "Complete guidelines embedded in file",
+						},
+						{
+							title: "Minimal",
+							value: "instruction",
+							description: "Just tells AI to call `knowns agents guideline` for rules",
+						},
+					],
+					initial: 0,
+				});
+
+				if (!variantResponse.variant) {
+					console.log(chalk.yellow("\n⚠️  Cancelled"));
+					return;
+				}
+
+				// Step 3: Select files to update
+				const filesResponse = await prompts({
+					type: "multiselect",
+					name: "files",
+					message: "Select agent files to update:",
+					choices: INSTRUCTION_FILES.map((f) => ({
+						title: `${f.name} (${f.path})`,
+						value: f,
+						selected: f.selected,
+					})),
+					hint: "- Space to select. Return to submit",
+				});
+
+				if (!filesResponse.files || filesResponse.files.length === 0) {
+					console.log(chalk.yellow("\n⚠️  No files selected"));
+					return;
+				}
+
+				// Step 4: Confirm
+				const variantLabel = variantResponse.variant === "instruction" ? " (minimal)" : " (full)";
+				const label = `${typeResponse.type.toUpperCase()}${variantLabel}`;
+				const confirmResponse = await prompts({
+					type: "confirm",
+					name: "confirm",
+					message: `Update ${filesResponse.files.length} file(s) with ${label} guidelines?`,
+					initial: true,
+				});
+
+				if (!confirmResponse.confirm) {
+					console.log(chalk.yellow("\n⚠️  Cancelled"));
+					return;
+				}
+
+				// Step 5: Update files
+				const guidelines = getGuidelines(
+					typeResponse.type as GuidelinesType,
+					variantResponse.variant as GuidelinesVariant,
+				);
+				console.log(chalk.bold(`\nUpdating files with ${label} guidelines...\n`));
+				await updateFiles(filesResponse.files, guidelines);
+			} catch (error) {
+				console.error(chalk.red("Error:"), error instanceof Error ? error.message : String(error));
+				process.exit(1);
 			}
-
-			// Interactive mode
-			console.log(chalk.bold("\n🤖 Agent Instructions Manager\n"));
-
-			// Step 1: Select guidelines type
-			const typeResponse = await prompts({
-				type: "select",
-				name: "type",
-				message: "Select guidelines type:",
-				choices: [
-					{
-						title: "CLI",
-						value: "cli",
-						description: "CLI commands (knowns task edit, knowns doc view, etc.)",
-					},
-					{
-						title: "MCP",
-						value: "mcp",
-						description: "MCP tools (mcp__knowns__update_task, etc.)",
-					},
-				],
-				initial: 0,
-			});
-
-			if (!typeResponse.type) {
-				console.log(chalk.yellow("\n⚠️  Cancelled"));
-				return;
-			}
-
-			// Step 2: Select variant
-			const variantResponse = await prompts({
-				type: "select",
-				name: "variant",
-				message: "Select variant:",
-				choices: [
-					{
-						title: "Full (Recommended)",
-						value: "general",
-						description: "Complete guidelines embedded in file",
-					},
-					{
-						title: "Minimal",
-						value: "instruction",
-						description: "Just tells AI to call `knowns agents guideline` for rules",
-					},
-				],
-				initial: 0,
-			});
-
-			if (!variantResponse.variant) {
-				console.log(chalk.yellow("\n⚠️  Cancelled"));
-				return;
-			}
-
-			// Step 3: Select files to update
-			const filesResponse = await prompts({
-				type: "multiselect",
-				name: "files",
-				message: "Select agent files to update:",
-				choices: INSTRUCTION_FILES.map((f) => ({
-					title: `${f.name} (${f.path})`,
-					value: f,
-					selected: f.selected,
-				})),
-				hint: "- Space to select. Return to submit",
-			});
-
-			if (!filesResponse.files || filesResponse.files.length === 0) {
-				console.log(chalk.yellow("\n⚠️  No files selected"));
-				return;
-			}
-
-			// Step 4: Confirm
-			const variantLabel = variantResponse.variant === "instruction" ? " (minimal)" : " (full)";
-			const label = `${typeResponse.type.toUpperCase()}${variantLabel}`;
-			const confirmResponse = await prompts({
-				type: "confirm",
-				name: "confirm",
-				message: `Update ${filesResponse.files.length} file(s) with ${label} guidelines?`,
-				initial: true,
-			});
-
-			if (!confirmResponse.confirm) {
-				console.log(chalk.yellow("\n⚠️  Cancelled"));
-				return;
-			}
-
-			// Step 5: Update files
-			const guidelines = getGuidelines(
-				typeResponse.type as GuidelinesType,
-				variantResponse.variant as GuidelinesVariant,
-			);
-			console.log(chalk.bold(`\nUpdating files with ${label} guidelines...\n`));
-			await updateFiles(filesResponse.files, guidelines);
-		} catch (error) {
-			console.error(chalk.red("Error:"), error instanceof Error ? error.message : String(error));
-			process.exit(1);
-		}
-	});
+		},
+	);
 
 /**
  * Update multiple files with guidelines

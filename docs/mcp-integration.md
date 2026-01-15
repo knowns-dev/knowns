@@ -24,6 +24,7 @@ knowns mcp setup --global
 ```
 
 **What happens:**
+
 - `--project`: Creates `.mcp.json` in project root for auto-discovery
 - `--global`: Runs `claude mcp add-json knowns` to add to Claude Code
 
@@ -53,11 +54,13 @@ npm install -g knowns
 Edit Claude's configuration file:
 
 **macOS:**
+
 ```
 ~/Library/Application Support/Claude/claude_desktop_config.json
 ```
 
 **Windows:**
+
 ```
 %APPDATA%\Claude\claude_desktop_config.json
 ```
@@ -109,6 +112,7 @@ mcp__knowns__get_guideline({ type: "unified" })   # Same as above
 ```
 
 Guidelines include these sections:
+
 - **Core Rules** - Golden rules, must-follow principles
 - **Commands Reference** - CLI/MCP commands quick reference
 - **Workflow Creation/Execution/Completion** - Stage-specific guides
@@ -145,38 +149,52 @@ Starting timer and beginning implementation..."
 
 ### Task Management
 
-| Tool | Description | Parameters |
-|------|-------------|------------|
-| `create_task` | Create a new task | `title`, `description?`, `status?`, `priority?`, `labels?`, `assignee?` |
-| `get_task` | Get task by ID | `taskId` |
-| `update_task` | Update task fields | `taskId`, `title?`, `description?`, `status?`, `priority?`, `assignee?`, `labels?` |
-| `list_tasks` | List tasks with filters | `status?`, `priority?`, `assignee?`, `label?` |
-| `search_tasks` | Search tasks by query | `query` |
+| Tool           | Description             | Parameters                                                                         |
+| -------------- | ----------------------- | ---------------------------------------------------------------------------------- |
+| `create_task`  | Create a new task       | `title`, `description?`, `status?`, `priority?`, `labels?`, `assignee?`            |
+| `get_task`     | Get task by ID          | `taskId`                                                                           |
+| `update_task`  | Update task fields      | `taskId`, `title?`, `description?`, `status?`, `priority?`, `assignee?`, `labels?` |
+| `list_tasks`   | List tasks with filters | `status?`, `priority?`, `assignee?`, `label?`                                      |
+| `search_tasks` | Search tasks by query   | `query`                                                                            |
 
 ### Time Tracking
 
-| Tool | Description | Parameters |
-|------|-------------|------------|
-| `start_time` | Start timer for task | `taskId` |
-| `stop_time` | Stop active timer | `taskId` |
-| `add_time` | Manual time entry | `taskId`, `duration`, `note?`, `date?` |
-| `get_time_report` | Generate time report | `from?`, `to?`, `groupBy?` |
+| Tool              | Description          | Parameters                             |
+| ----------------- | -------------------- | -------------------------------------- |
+| `start_time`      | Start timer for task | `taskId`                               |
+| `stop_time`       | Stop active timer    | `taskId`                               |
+| `add_time`        | Manual time entry    | `taskId`, `duration`, `note?`, `date?` |
+| `get_time_report` | Generate time report | `from?`, `to?`, `groupBy?`             |
 
 ### Documentation
 
-| Tool | Description | Parameters |
-|------|-------------|------------|
-| `list_docs` | List all docs | `tag?` |
-| `get_doc` | Get doc content | `path` |
-| `create_doc` | Create new doc | `title`, `description?`, `content?`, `tags?`, `folder?` |
-| `update_doc` | Update doc | `path`, `title?`, `description?`, `content?`, `appendContent?`, `tags?` |
-| `search_docs` | Search docs | `query`, `tag?` |
+| Tool          | Description     | Parameters                                                                          |
+| ------------- | --------------- | ----------------------------------------------------------------------------------- |
+| `list_docs`   | List all docs   | `tag?`                                                                              |
+| `get_doc`     | Get doc content | `path`, `info?`, `toc?`, `section?`                                                 |
+| `create_doc`  | Create new doc  | `title`, `description?`, `content?`, `tags?`, `folder?`                             |
+| `update_doc`  | Update doc      | `path`, `title?`, `description?`, `content?`, `appendContent?`, `tags?`, `section?` |
+| `search_docs` | Search docs     | `query`, `tag?`                                                                     |
+
+**Large Document Workflow:**
+
+```json
+// Step 1: Check size
+{ "path": "readme", "info": true }  // → estimatedTokens: 12132
+
+// Step 2: Get TOC (if >2000 tokens)
+{ "path": "readme", "toc": true }
+
+// Step 3: Read/Edit specific section
+{ "path": "readme", "section": "2" }  // Read section
+// update_doc with section + content replaces only that section
+```
 
 ### Board
 
-| Tool | Description | Parameters |
-|------|-------------|------------|
-| `get_board` | Get kanban board state | - |
+| Tool        | Description            | Parameters |
+| ----------- | ---------------------- | ---------- |
+| `get_board` | Get kanban board state | -          |
 
 ## Benefits
 
