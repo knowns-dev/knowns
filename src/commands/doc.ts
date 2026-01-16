@@ -11,6 +11,7 @@ import { normalizePath } from "@utils/index";
 import {
 	calculateDocStats,
 	extractSection,
+	extractSectionByIndex,
 	extractToc,
 	formatDocStats,
 	formatToc,
@@ -221,14 +222,20 @@ const listCommand = new Command("list")
 				return;
 			}
 
-			const docs: Array<{ filename: string; metadata: DocMetadata }> = [];
+			const docs: Array<{
+				filename: string;
+				metadata: DocMetadata;
+				tokens: number;
+			}> = [];
 
 			for (const file of mdFiles) {
-				const content = await readFile(join(DOCS_DIR, file), "utf-8");
-				const { data } = matter(content);
+				const fileContent = await readFile(join(DOCS_DIR, file), "utf-8");
+				const { data, content } = matter(fileContent);
+				const stats = calculateDocStats(content);
 				docs.push({
 					filename: file,
 					metadata: data as DocMetadata,
+					tokens: stats.estimatedTokens,
 				});
 			}
 
@@ -256,8 +263,12 @@ const listCommand = new Command("list")
 
 			if (options.plain) {
 				// Tree format for token efficiency (folder name once, files indented)
-				const folders = new Map<string, Array<{ name: string; title: string }>>();
-				const rootDocs: Array<{ name: string; title: string }> = [];
+				const folders = new Map<string, Array<{ name: string; title: string; tokens: number }>>();
+				const rootDocs: Array<{
+					name: string;
+					title: string;
+					tokens: number;
+				}> = [];
 
 				for (const doc of filteredDocs) {
 					const parts = doc.filename.split("/");
@@ -265,6 +276,7 @@ const listCommand = new Command("list")
 						rootDocs.push({
 							name: parts[0].replace(/\.md$/, ""),
 							title: doc.metadata.title,
+							tokens: doc.tokens,
 						});
 					} else {
 						const folder = parts.slice(0, -1).join("/");
@@ -272,7 +284,7 @@ const listCommand = new Command("list")
 						if (!folders.has(folder)) {
 							folders.set(folder, []);
 						}
-						folders.get(folder)?.push({ name, title: doc.metadata.title });
+						folders.get(folder)?.push({ name, title: doc.metadata.title, tokens: doc.tokens });
 					}
 				}
 
@@ -281,13 +293,13 @@ const listCommand = new Command("list")
 					console.log(`${folder}/`);
 					const docs = folders.get(folder)?.sort((a, b) => a.name.localeCompare(b.name));
 					for (const doc of docs) {
-						console.log(`  ${doc.name} - ${doc.title}`);
+						console.log(`  ${doc.name} - ${doc.title} (~${doc.tokens} tokens)`);
 					}
 				}
 				if (rootDocs.length > 0) {
 					rootDocs.sort((a, b) => a.name.localeCompare(b.name));
 					for (const doc of rootDocs) {
-						console.log(`${doc.name} - ${doc.title}`);
+						console.log(`${doc.name} - ${doc.title} (~${doc.tokens} tokens)`);
 					}
 				}
 			} else {
@@ -355,6 +367,7 @@ const viewCommand = new Command("view")
 	.option("--info", "Show document stats (size, tokens, headings) without content")
 	.option("--toc", "Show table of contents only")
 	.option("--section <title>", "Show specific section by heading title or number (e.g., '2. Overview' or '2')")
+	.option("--smart", "Smart mode: auto-return full content if small, or stats+TOC if large (>2000 tokens)")
 	.action(
 		async (
 			name: string,
@@ -363,6 +376,7 @@ const viewCommand = new Command("view")
 				info?: boolean;
 				toc?: boolean;
 				section?: string;
+				smart?: boolean;
 			},
 		) => {
 			try {
@@ -403,6 +417,50 @@ const viewCommand = new Command("view")
 				const fileContent = await readFile(filepath, "utf-8");
 				const { data, content } = matter(fileContent);
 				const metadata = data as DocMetadata;
+
+				// Handle --smart option: auto-decide based on document size
+				if (options.smart) {
+					const stats = calculateDocStats(content);
+					const SMART_THRESHOLD = 2000; // tokens
+
+					if (stats.estimatedTokens <= SMART_THRESHOLD) {
+						// Small doc: return full content (fall through to default behavior)
+						// Don't return here, let it continue to the default content output
+					} else {
+						// Large doc: return stats + TOC
+						const toc = extractToc(content);
+
+						if (options.plain) {
+							console.log(`Document: ${metadata.title}`);
+							console.log("=".repeat(50));
+							console.log();
+							console.log(
+								`Size: ${stats.chars.toLocaleString()} chars (~${stats.estimatedTokens.toLocaleString()} tokens)`,
+							);
+							console.log(`Headings: ${stats.headingCount}`);
+							console.log();
+							console.log("Table of Contents:");
+							console.log("-".repeat(50));
+							toc.forEach((entry, index) => {
+								const indent = "  ".repeat(entry.level - 1);
+								console.log(`${indent}${index + 1}. ${entry.title}`);
+							});
+							console.log();
+							console.log("Document is large. Use --section <number> to read a specific section.");
+						} else {
+							console.log(chalk.bold(`\n📄 ${metadata.title} (Smart Mode)\n`));
+							console.log(
+								`Size: ${chalk.cyan(stats.chars.toLocaleString())} chars (~${chalk.yellow(stats.estimatedTokens.toLocaleString())} tokens)`,
+							);
+							console.log();
+							console.log(chalk.bold("Table of Contents:"));
+							console.log(formatToc(toc));
+							console.log();
+							console.log(chalk.yellow("⚠ Document is large. Use --section <number> to read a specific section."));
+						}
+						return;
+					}
+				}
 
 				// Handle --info option
 				if (options.info) {
@@ -458,7 +516,12 @@ const viewCommand = new Command("view")
 
 				// Handle --section option
 				if (options.section) {
-					const sectionContent = extractSection(content, options.section);
+					// Check if section is a pure number (index from TOC display)
+					const sectionIndex = /^\d+$/.test(options.section) ? Number.parseInt(options.section, 10) : null;
+					const sectionContent =
+						sectionIndex !== null
+							? extractSectionByIndex(content, sectionIndex)
+							: extractSection(content, options.section);
 					if (!sectionContent) {
 						console.error(
 							options.plain
@@ -1122,6 +1185,7 @@ export const docCommand = new Command("doc")
 	.option("--info", "Show document stats (size, tokens, headings) without content")
 	.option("--toc", "Show table of contents only")
 	.option("--section <title>", "Show specific section by heading title or number")
+	.option("--smart", "Smart mode: auto-return full content if small, or stats+TOC if large (>2000 tokens)")
 	.enablePositionalOptions()
 	.action(
 		async (
@@ -1131,6 +1195,7 @@ export const docCommand = new Command("doc")
 				info?: boolean;
 				toc?: boolean;
 				section?: string;
+				smart?: boolean;
 			},
 		) => {
 			// If no name provided, show help
@@ -1151,6 +1216,50 @@ export const docCommand = new Command("doc")
 				const fileContent = await readFile(filepath, "utf-8");
 				const { data, content } = matter(fileContent);
 				const metadata = data as DocMetadata;
+
+				// Handle --smart option: auto-decide based on document size
+				if (options.smart) {
+					const stats = calculateDocStats(content);
+					const SMART_THRESHOLD = 2000; // tokens
+
+					if (stats.estimatedTokens <= SMART_THRESHOLD) {
+						// Small doc: return full content (fall through to default behavior)
+						// Don't return here, let it continue to the default content output
+					} else {
+						// Large doc: return stats + TOC
+						const toc = extractToc(content);
+
+						if (options.plain) {
+							console.log(`Document: ${metadata.title}`);
+							console.log("=".repeat(50));
+							console.log();
+							console.log(
+								`Size: ${stats.chars.toLocaleString()} chars (~${stats.estimatedTokens.toLocaleString()} tokens)`,
+							);
+							console.log(`Headings: ${stats.headingCount}`);
+							console.log();
+							console.log("Table of Contents:");
+							console.log("-".repeat(50));
+							toc.forEach((entry, index) => {
+								const indent = "  ".repeat(entry.level - 1);
+								console.log(`${indent}${index + 1}. ${entry.title}`);
+							});
+							console.log();
+							console.log("Document is large. Use --section <number> to read a specific section.");
+						} else {
+							console.log(chalk.bold(`\n📄 ${metadata.title} (Smart Mode)\n`));
+							console.log(
+								`Size: ${chalk.cyan(stats.chars.toLocaleString())} chars (~${chalk.yellow(stats.estimatedTokens.toLocaleString())} tokens)`,
+							);
+							console.log();
+							console.log(chalk.bold("Table of Contents:"));
+							console.log(formatToc(toc));
+							console.log();
+							console.log(chalk.yellow("⚠ Document is large. Use --section <number> to read a specific section."));
+						}
+						return;
+					}
+				}
 
 				// Handle --info option
 				if (options.info) {
@@ -1206,7 +1315,12 @@ export const docCommand = new Command("doc")
 
 				// Handle --section option
 				if (options.section) {
-					const sectionContent = extractSection(content, options.section);
+					// Check if section is a pure number (index from TOC display)
+					const sectionIndex = /^\d+$/.test(options.section) ? Number.parseInt(options.section, 10) : null;
+					const sectionContent =
+						sectionIndex !== null
+							? extractSectionByIndex(content, sectionIndex)
+							: extractSection(content, options.section);
 					if (!sectionContent) {
 						console.error(
 							options.plain

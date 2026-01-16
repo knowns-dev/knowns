@@ -43,26 +43,27 @@ Read file with offset=100 limit=50
 
 ---
 
-## Large Documents (--info, --toc, --section)
+## Reading Documents (--smart)
 
-For large documents, check size first with `--info`:
+**ALWAYS use `--smart` when reading documents.** It automatically handles both small and large docs:
 
 ```bash
-# ❌ Reading entire large document (may be truncated)
+# ❌ Reading without --smart (may get truncated large doc)
 knowns doc readme --plain
 
-# ✅ Step 1: Check document size first
-knowns doc readme --info --plain
-# Output: Size: 42,461 chars (~12,132 tokens) | Headings: 83
+# ✅ Always use --smart
+knowns doc readme --plain --smart
+# Small doc → returns full content
+# Large doc → returns stats + TOC
 
-# ✅ Step 2: View table of contents (if >2000 tokens)
-knowns doc readme --toc --plain
-
-# ✅ Step 3: Read only the section you need
-knowns doc readme --section "3. Config" --plain
+# ✅ If doc is large, read specific section:
+knowns doc readme --plain --section 3
 ```
 
-**Decision flow:** `--info` → check tokens → if >2000, use `--toc` then `--section`
+**`--smart` behavior:**
+
+- **≤2000 tokens**: Returns full content automatically
+- **>2000 tokens**: Returns stats + TOC, then use `--section <number>`
 
 ---
 
@@ -104,9 +105,9 @@ knowns task edit 42 --append-notes "✓ Auth middleware + JWT validation done"
 ## Quick Rules
 
 1. **Always `--plain`** - Never use `--json` unless specifically needed
-2. **Search first** - Don't read all docs hoping to find info
-3. **Read selectively** - Use offset/limit for large files
-4. **Use --info first** - Check doc size before reading, then --toc/--section if needed
+2. **Always `--smart`** - Use `--smart` when reading docs (auto-handles size)
+3. **Search first** - Don't read all docs hoping to find info
+4. **Read selectively** - Use offset/limit for large files
 5. **Write concise** - Compact notes, not essays
 6. **Don't repeat** - Reference context already loaded
 7. **Summarize** - Key points, not full quotes
