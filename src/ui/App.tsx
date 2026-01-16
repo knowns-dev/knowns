@@ -3,7 +3,7 @@ import type { Task } from "../models/task";
 import { api } from "./api/client";
 import { SSEProvider, useSSEEvent } from "./contexts/SSEContext";
 import { AppSidebar, TaskCreateForm, SearchCommandDialog, NotificationBell } from "./components/organisms";
-import { ThemeToggle } from "./components/atoms";
+import { ConnectionStatus, ThemeToggle } from "./components/atoms";
 import { HeaderTimeTracker } from "./components/molecules";
 import { SidebarProvider, SidebarTrigger } from "./components/ui/sidebar";
 import { Separator } from "./components/ui/separator";
@@ -281,6 +281,7 @@ function AppContent() {
 					<header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
 						<SidebarTrigger className="-ml-1" />
 						<Separator orientation="vertical" className="mr-2 h-4" />
+						<ConnectionStatus />
 						<div className="flex flex-1 items-center gap-2 text-sm">
 							<span className="font-semibold text-foreground">
 								{config.name || "Knowns"}

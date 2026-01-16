@@ -13,6 +13,7 @@ export { Separator } from "../ui/separator";
 // Custom atoms
 export { default as Avatar } from "./Avatar";
 export { Badge, badgeVariants, type BadgeProps } from "./Badge";
+export { ConnectionStatus } from "./ConnectionStatus";
 export { Spinner } from "./Spinner";
 export { Icon, type IconName } from "./Icon";
 export { ThemeToggle } from "./ThemeToggle";
