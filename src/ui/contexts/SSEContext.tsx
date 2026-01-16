@@ -12,6 +12,7 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode } from "react";
 import type { Task } from "../../models/task";
 import type { ActiveTimer } from "../api/client";
+import { toast } from "../components/ui/sonner";
 
 // Event types that can be received from server
 export type SSEEventType =
@@ -75,6 +76,8 @@ export function SSEProvider({ children }: { children: ReactNode }) {
 	const listenersRef = useRef<Map<SSEEventType, Set<SSEEventCallback<SSEEventType>>>>(new Map());
 	// Track if we've been connected before (to detect reconnects vs initial connect)
 	const wasConnectedRef = useRef(false);
+	// Track disconnect toast ID so we can dismiss it on reconnect
+	const disconnectToastIdRef = useRef<string | number | null>(null);
 
 	// Subscribe to an event type
 	const subscribe = useCallback(<T extends SSEEventType>(
@@ -122,6 +125,25 @@ export function SSEProvider({ children }: { children: ReactNode }) {
 				// Trigger refresh events so components can refetch data they may have missed
 				if (wasConnectedRef.current) {
 					console.log("[SSE] Reconnected - triggering data refresh");
+					// Dismiss disconnect toast and show success toast
+					if (disconnectToastIdRef.current) {
+						toast.dismiss(disconnectToastIdRef.current);
+						disconnectToastIdRef.current = null;
+					}
+					toast("Back online", {
+						description: "Connection restored",
+						duration: 2000,
+						position: "top-center",
+						className: "bg-emerald-50 dark:bg-emerald-950 border-emerald-200 dark:border-emerald-800",
+						icon: (
+							<svg className="w-4 h-4 text-emerald-600 dark:text-emerald-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+								<path d="M12 20h.01" />
+								<path d="M2 8.82a15 15 0 0 1 20 0" />
+								<path d="M5 12.859a10 10 0 0 1 14 0" />
+								<path d="M8.5 16.429a5 5 0 0 1 7 0" />
+							</svg>
+						),
+					});
 					// Small delay to ensure connection is stable
 					setTimeout(() => {
 						emit("tasks:refresh", {});
@@ -135,6 +157,28 @@ export function SSEProvider({ children }: { children: ReactNode }) {
 			eventSource.onerror = () => {
 				setIsConnected(false);
 				console.log("[SSE] Connection lost - will auto-reconnect");
+
+				// Show disconnect toast only once (when we have been connected before)
+				// wasConnectedRef tracks if we've ever connected, preventing toast on initial failure
+				if (wasConnectedRef.current && !disconnectToastIdRef.current) {
+					disconnectToastIdRef.current = toast("Offline", {
+						description: "Reconnecting...",
+						duration: Number.POSITIVE_INFINITY,
+						position: "top-center",
+						className: "bg-amber-50 dark:bg-amber-950 border-amber-200 dark:border-amber-800",
+						icon: (
+							<svg className="w-4 h-4 text-amber-600 dark:text-amber-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+								<path d="M12 20h.01" />
+								<path d="M8.5 16.429a5 5 0 0 1 7 0" />
+								<path d="M5 12.859a10 10 0 0 1 5.17-2.69" />
+								<path d="M13.83 10.17A10 10 0 0 1 19 12.859" />
+								<path d="M2 8.82a15 15 0 0 1 4.17-2.65" />
+								<path d="M10.66 5a15 15 0 0 1 11.34 3.82" />
+								<path d="m2 2 20 20" />
+							</svg>
+						),
+					});
+				}
 				// EventSource will auto-reconnect automatically
 			};
 
