@@ -113,42 +113,45 @@ Get a documentation file by path.
 
 Path can be filename or folder/filename (without .md extension).
 
-### Large Documents (info, toc, section)
+### Reading Documents (smart)
 
-For large documents, check size first with `info`, then use `toc` and `section`:
+**ALWAYS use `smart: true` when reading documents.** It automatically handles both small and large docs:
 
 ```json
-// Step 1: Check document size and token count
+// Always use smart (recommended)
 {
   "path": "readme",
-  "info": true
-}
-// Response: { stats: { chars: 42461, estimatedTokens: 12132, headingCount: 83 }, recommendation: "..." }
-
-// Step 2: Get table of contents
-{
-  "path": "readme",
-  "toc": true
-}
-
-// Step 3: Read specific section by title or number
-{
-  "path": "readme",
-  "section": "5. Sync"
+  "smart": true
 }
 ```
 
-| Parameter | Description                                              |
-| --------- | -------------------------------------------------------- |
-| `info`    | Set `true` to get stats (size, tokens, headings) only    |
-| `toc`     | Set `true` to get table of contents only                 |
-| `section` | Section title or number to read (e.g., "5. Sync" or "3") |
+**Behavior:**
 
-**Decision flow:**
+- **Small doc (≤2000 tokens)**: Returns full content automatically
+- **Large doc (>2000 tokens)**: Returns stats + TOC with numbered sections
 
-- `info: true` → Check estimatedTokens → If >2000, use toc/section
-- `toc: true` → Get heading list → Choose section to read
-- `section: "X"` → Read only what you need
+```json
+// If doc is large, smart returns TOC, then read specific section:
+{
+  "path": "readme",
+  "section": "3"
+}
+```
+
+| Parameter | Description                                                    |
+| --------- | -------------------------------------------------------------- |
+| `smart`   | **Recommended.** Auto-return full content or TOC based on size |
+| `section` | Read specific section by number (e.g., "3") or title           |
+
+### Manual Control (info, toc, section)
+
+If you need manual control instead of `smart`:
+
+```json
+{ "path": "readme", "info": true }     // Check size/tokens
+{ "path": "readme", "toc": true }      // View table of contents
+{ "path": "readme", "section": "3" }   // Read specific section
+```
 
 ---
 
@@ -220,15 +223,10 @@ Step-by-step guide...
 **Reading workflow:**
 
 ```json
-// Step 1: Check size first
-{ "path": "<path>", "info": true }
-// → If estimatedTokens <2000: read directly (no options)
-// → If estimatedTokens >2000: continue to step 2
+// Always use smart (handles both small and large docs automatically)
+{ "path": "<path>", "smart": true }
 
-// Step 2: Get table of contents
-{ "path": "<path>", "toc": true }
-
-// Step 3: Read specific section
+// If doc is large, smart returns TOC, then read specific section:
 { "path": "<path>", "section": "2" }
 ```
 

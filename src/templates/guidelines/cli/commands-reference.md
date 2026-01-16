@@ -111,16 +111,11 @@ Step-by-step guide...
 **Reading workflow:**
 
 ```bash
-# Step 1: Check size first
-knowns doc <path> --info --plain
-# → If <2000 tokens: read directly with --plain
-# → If >2000 tokens: continue to step 2
+# Always use --smart (handles both small and large docs automatically)
+knowns doc <path> --plain --smart
 
-# Step 2: Get table of contents
-knowns doc <path> --toc --plain
-
-# Step 3: Read specific section
-knowns doc <path> --section "2" --plain
+# If doc is large, --smart returns TOC, then read specific section:
+knowns doc <path> --plain --section "2"
 ```
 
 ---
@@ -169,29 +164,39 @@ knowns doc list --plain               # List all
 knowns doc list --tag api --plain     # Filter by tag
 ```
 
-### Large Documents (--info, --toc, --section)
+### Reading Documents (--smart)
 
-For large documents, check size first with `--info`, then use `--toc` and `--section`:
+**ALWAYS use `--smart` when reading documents.** It automatically handles both small and large docs:
 
 ```bash
-# Step 1: Check document size and token count
-knowns doc readme --info --plain
-# Output: Size: 42,461 chars (~12,132 tokens) | Headings: 83
-# Recommendation: Document is large. Use --toc first, then --section.
-
-# Step 2: View table of contents
-knowns doc readme --toc --plain
-
-# Step 3: Read specific section by title or number
-knowns doc readme --section "5. Sync" --plain
-knowns doc readme --section "3" --plain
+# Always use --smart (recommended)
+knowns doc <path> --plain --smart
 ```
 
-**Decision flow:**
+**Behavior:**
 
-- `--info` → Check size (~tokens) → If >2000 tokens, use --toc/--section
-- `--toc` → Get heading list → Choose section to read
-- `--section` → Read only what you need
+- **Small doc (≤2000 tokens)**: Returns full content automatically
+- **Large doc (>2000 tokens)**: Returns stats + TOC, then use `--section` to read specific parts
+
+```bash
+# Example with large doc:
+knowns doc readme --plain --smart
+# Output: Size: ~12,132 tokens | TOC with numbered sections
+# Hint: Use --section <number> to read specific section
+
+# Then read specific section:
+knowns doc readme --plain --section 3
+```
+
+### Manual Control (--info, --toc, --section)
+
+If you need manual control instead of `--smart`:
+
+```bash
+knowns doc <path> --info --plain     # Check size/tokens
+knowns doc <path> --toc --plain      # View table of contents
+knowns doc <path> --section "3" --plain  # Read specific section
+```
 
 ---
 

@@ -34,26 +34,27 @@ mcp__knowns__list_tasks({
 
 ---
 
-## Large Documents (info, toc, section)
+## Reading Documents (smart)
 
-For large documents, check size first with `info`:
+**ALWAYS use `smart: true` when reading documents.** It automatically handles both small and large docs:
 
 ```json
-// DON'T: Read entire large document (may be truncated)
+// DON'T: Read without smart (may get truncated large doc)
 mcp__knowns__get_doc({ "path": "readme" })
 
-// DO: Step 1 - Check document size first
-mcp__knowns__get_doc({ "path": "readme", "info": true })
-// Response: { stats: { estimatedTokens: 12132 }, recommendation: "..." }
+// DO: Always use smart
+mcp__knowns__get_doc({ "path": "readme", "smart": true })
+// Small doc → returns full content
+// Large doc → returns stats + TOC
 
-// DO: Step 2 - Get table of contents (if >2000 tokens)
-mcp__knowns__get_doc({ "path": "readme", "toc": true })
-
-// DO: Step 3 - Read only the section you need
-mcp__knowns__get_doc({ "path": "readme", "section": "3. Config" })
+// DO: If doc is large, read specific section
+mcp__knowns__get_doc({ "path": "readme", "section": "3" })
 ```
 
-**Decision flow:** `info: true` → check tokens → if >2000, use `toc` then `section`
+**`smart: true` behavior:**
+
+- **≤2000 tokens**: Returns full content automatically
+- **>2000 tokens**: Returns stats + TOC, then use `section` parameter
 
 ---
 
@@ -93,10 +94,10 @@ knowns task edit 42 --append-notes "Done: Auth middleware + JWT validation"
 
 ## Quick Rules
 
-1. **Search first** - Don't read all docs hoping to find info
-2. **Use filters** - Don't list everything then filter manually
-3. **Read selectively** - Only fetch what you need
-4. **Use info first** - Check doc size before reading, then toc/section if needed
+1. **Always `smart: true`** - Use smart when reading docs (auto-handles size)
+2. **Search first** - Don't read all docs hoping to find info
+3. **Use filters** - Don't list everything then filter manually
+4. **Read selectively** - Only fetch what you need
 5. **Write concise** - Compact notes, not essays
 6. **Don't repeat** - Reference context already loaded
 7. **Summarize** - Key points, not full quotes

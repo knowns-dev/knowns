@@ -6,7 +6,14 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { normalizePath } from "@utils/index";
-import { calculateDocStats, extractSection, extractToc, formatToc, replaceSection } from "@utils/markdown-toc";
+import {
+	calculateDocStats,
+	extractSection,
+	extractSectionByIndex,
+	extractToc,
+	formatToc,
+	replaceSection,
+} from "@utils/markdown-toc";
 import { notifyDocUpdate } from "@utils/notify-server";
 import matter from "gray-matter";
 import { z } from "zod";
@@ -33,6 +40,7 @@ export const getDocSchema = z.object({
 	info: z.boolean().optional(), // Return document stats (size, tokens, headings) without content
 	toc: z.boolean().optional(), // Return table of contents only
 	section: z.string().optional(), // Return specific section by heading title or number
+	smart: z.boolean().optional(), // Smart mode: auto-return full content if small, or stats+TOC if large
 });
 
 export const createDocSchema = z.object({
@@ -73,13 +81,18 @@ export const docTools = [
 	{
 		name: "get_doc",
 		description:
-			"Get a documentation file by path. Use 'info: true' first to check size, then 'toc: true' for table of contents, then 'section' to read specific parts.",
+			"Get a documentation file by path. Use 'smart: true' for auto-optimized reading (recommended for AI), or 'info/toc/section' for manual control.",
 		inputSchema: {
 			type: "object",
 			properties: {
 				path: {
 					type: "string",
 					description: "Document path (e.g., 'readme', 'guides/setup', 'conventions/naming.md')",
+				},
+				smart: {
+					type: "boolean",
+					description:
+						"Smart mode (recommended): auto-return full content if small (≤2000 tokens), or stats+TOC if large. Use this by default.",
 				},
 				info: {
 					type: "boolean",
@@ -270,13 +283,15 @@ export async function handleListDocs(args: unknown) {
 		title: string;
 		description?: string;
 		tags?: string[];
+		tokens: number;
 		updatedAt: string;
 	}> = [];
 
 	for (const file of mdFiles) {
-		const content = await readFile(join(DOCS_DIR, file), "utf-8");
-		const { data } = matter(content);
+		const fileContent = await readFile(join(DOCS_DIR, file), "utf-8");
+		const { data, content } = matter(fileContent);
 		const metadata = data as DocMetadata;
+		const stats = calculateDocStats(content);
 
 		// Filter by tag if specified
 		if (input.tag && !metadata.tags?.includes(input.tag)) {
@@ -288,6 +303,7 @@ export async function handleListDocs(args: unknown) {
 			title: metadata.title || file.replace(/\.md$/, ""),
 			description: metadata.description,
 			tags: metadata.tags,
+			tokens: stats.estimatedTokens,
 			updatedAt: metadata.updatedAt,
 		});
 	}
@@ -309,6 +325,38 @@ export async function handleGetDoc(args: unknown) {
 	const fileContent = await readFile(resolved.filepath, "utf-8");
 	const { data, content } = matter(fileContent);
 	const metadata = data as DocMetadata;
+
+	// Handle --smart option: auto-decide based on document size
+	if (input.smart) {
+		const stats = calculateDocStats(content);
+		const SMART_THRESHOLD = 2000; // tokens
+
+		if (stats.estimatedTokens <= SMART_THRESHOLD) {
+			// Small doc: return full content (fall through to default behavior at end)
+		} else {
+			// Large doc: return stats + TOC
+			const toc = extractToc(content);
+			return successResponse({
+				doc: {
+					path: resolved.filename.replace(/\.md$/, ""),
+					title: metadata.title,
+					smart: true,
+					isLarge: true,
+					stats: {
+						chars: stats.chars,
+						estimatedTokens: stats.estimatedTokens,
+						headingCount: stats.headingCount,
+					},
+					toc: toc.map((entry, index) => ({
+						index: index + 1,
+						level: entry.level,
+						title: entry.title,
+					})),
+					hint: "Document is large. Use 'section' parameter with a number (e.g., section: '1') to read specific content.",
+				},
+			});
+		}
+	}
 
 	// Handle --info option: return document stats without content
 	if (input.info) {
@@ -368,7 +416,10 @@ export async function handleGetDoc(args: unknown) {
 
 	// Handle --section option: return specific section only
 	if (input.section) {
-		const sectionContent = extractSection(content, input.section);
+		// Check if section is a pure number (index from TOC display)
+		const sectionIndex = /^\d+$/.test(input.section) ? Number.parseInt(input.section, 10) : null;
+		const sectionContent =
+			sectionIndex !== null ? extractSectionByIndex(content, sectionIndex) : extractSection(content, input.section);
 		if (!sectionContent) {
 			return errorResponse(`Section not found: ${input.section}. Use 'toc: true' to see available sections.`);
 		}
