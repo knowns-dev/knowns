@@ -1,7 +1,7 @@
 ---
 title: Command Pattern
 createdAt: '2025-12-29T07:01:51.223Z'
-updatedAt: '2026-01-03T22:25:43.706Z'
+updatedAt: '2026-01-17T06:21:42.756Z'
 description: Documentation for the Command Pattern used in CLI architecture
 tags:
   - architecture
@@ -205,13 +205,5 @@ program.addCommand(myCommand);
 
 ## Related Docs
 
-* @doc/patterns/mcp-server-pattern - MCP Server Pattern
-
-* @doc/patterns/storage-pattern - File-Based Storage Pattern
-
-@doc/guides/gemini-agent-guidelines
-
-|                         |                  |   |
-| ----------------------- | ---------------- | - |
-|                         |                  |   |
-| gemini-agent-guidelines | knowns-cli-guide |   |
+- @doc/patterns/mcp-server-pattern - MCP Server Pattern
+- @doc/patterns/storage-pattern - File-Based Storage Pattern

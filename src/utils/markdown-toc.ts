@@ -149,8 +149,51 @@ export function replaceSection(markdown: string, sectionTitle: string, newConten
 	const beforeSection = lines.slice(0, startLine);
 	const afterSection = lines.slice(endLine);
 
-	// Construct new section: heading + newContent
-	const newSection = `${originalHeading}\n\n${newContent.trim()}`;
+	// Check if newContent already starts with a heading
+	const trimmedContent = newContent.trim();
+	const contentStartsWithHeading = /^#{1,6}\s+/.test(trimmedContent);
+
+	// Construct new section: only prepend heading if content doesn't already have one
+	const newSection = contentStartsWithHeading ? trimmedContent : `${originalHeading}\n\n${trimmedContent}`;
+
+	return [...beforeSection, newSection, ...afterSection].join("\n");
+}
+
+/**
+ * Replace section by index (1-based)
+ * Useful when there are multiple headings with the same title
+ */
+export function replaceSectionByIndex(markdown: string, index: number, newContent: string): string | null {
+	const toc = extractToc(markdown);
+	if (index < 1 || index > toc.length) {
+		return null;
+	}
+
+	const lines = markdown.split("\n");
+	const targetEntry = toc[index - 1];
+	const startLine = targetEntry.line - 1; // Convert to 0-based
+	const startLevel = targetEntry.level;
+	const originalHeading = lines[startLine];
+
+	// Find end line (next heading of same or higher level)
+	let endLine = lines.length;
+	for (let i = index; i < toc.length; i++) {
+		if (toc[i].level <= startLevel) {
+			endLine = toc[i].line - 1; // Convert to 0-based
+			break;
+		}
+	}
+
+	// Build new content
+	const beforeSection = lines.slice(0, startLine);
+	const afterSection = lines.slice(endLine);
+
+	// Check if newContent already starts with a heading
+	const trimmedContent = newContent.trim();
+	const contentStartsWithHeading = /^#{1,6}\s+/.test(trimmedContent);
+
+	// Construct new section: only prepend heading if content doesn't already have one
+	const newSection = contentStartsWithHeading ? trimmedContent : `${originalHeading}\n\n${trimmedContent}`;
 
 	return [...beforeSection, newSection, ...afterSection].join("\n");
 }

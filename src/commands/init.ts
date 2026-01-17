@@ -9,6 +9,7 @@ import { FileStore } from "@storage/file-store";
 import chalk from "chalk";
 import { Command } from "commander";
 import prompts from "prompts";
+import { SKILLS } from "../templates/skills";
 import { type GuidelinesType, INSTRUCTION_FILES, getGuidelines, updateInstructionFile } from "./agents";
 
 import type { GitTrackingMode } from "@models/project";
@@ -123,6 +124,47 @@ async function updateGitignore(projectRoot: string, mode: "git-ignored" | "none"
 	}
 }
 
+/**
+ * Create Claude Code skills in .claude/skills/ directory
+ */
+async function createClaudeSkills(projectRoot: string): Promise<void> {
+	const { mkdirSync, writeFileSync } = await import("node:fs");
+	const skillsDir = join(projectRoot, ".claude", "skills");
+
+	// Create .claude/skills directory
+	if (!existsSync(skillsDir)) {
+		mkdirSync(skillsDir, { recursive: true });
+	}
+
+	let createdCount = 0;
+	let skippedCount = 0;
+
+	for (const skill of SKILLS) {
+		const skillFolder = join(skillsDir, skill.folderName);
+		const skillFile = join(skillFolder, "SKILL.md");
+
+		// Skip if skill already exists
+		if (existsSync(skillFile)) {
+			skippedCount++;
+			continue;
+		}
+
+		// Create skill folder and file
+		if (!existsSync(skillFolder)) {
+			mkdirSync(skillFolder, { recursive: true });
+		}
+		writeFileSync(skillFile, skill.content, "utf-8");
+		createdCount++;
+	}
+
+	if (createdCount > 0) {
+		console.log(chalk.green(`✓ Created ${createdCount} Claude Code skills in .claude/skills/`));
+	}
+	if (skippedCount > 0) {
+		console.log(chalk.gray(`  Skipped ${skippedCount} existing skills`));
+	}
+}
+
 async function runWizard(): Promise<InitConfig | null> {
 	const projectRoot = process.cwd();
 	const defaultName = basename(projectRoot);
@@ -170,9 +212,14 @@ async function runWizard(): Promise<InitConfig | null> {
 				message: "AI Guidelines type",
 				choices: [
 					{
-						title: "CLI",
+						title: "Skills (recommended)",
+						value: "skills",
+						description: "Minimal CLAUDE.md + built-in /knowns:* skills",
+					},
+					{
+						title: "CLI (full guidelines)",
 						value: "cli",
-						description: "Use CLI commands (knowns task edit, knowns doc view)",
+						description: "Full CLI guidelines embedded in CLAUDE.md",
 					},
 					{
 						title: "MCP",
@@ -180,7 +227,7 @@ async function runWizard(): Promise<InitConfig | null> {
 						description: "Use MCP tools (mcp__knowns__update_task, etc.)",
 					},
 				],
-				initial: 0, // CLI
+				initial: 0, // Skills
 			},
 			{
 				type: "multiselect",
@@ -214,7 +261,7 @@ async function runWizard(): Promise<InitConfig | null> {
 		defaultLabels: [],
 		timeFormat: "24h",
 		gitTrackingMode: response.gitTrackingMode || "git-tracked",
-		guidelinesType: response.guidelinesType || "cli",
+		guidelinesType: response.guidelinesType || "skills",
 		agentFiles: response.agentFiles || [],
 	};
 }
@@ -265,7 +312,7 @@ export const initCommand = new Command("init")
 					defaultLabels: [],
 					timeFormat: "24h",
 					gitTrackingMode: "git-tracked",
-					guidelinesType: "cli",
+					guidelinesType: "skills",
 					agentFiles: INSTRUCTION_FILES.filter((f) => f.selected),
 				};
 			}
@@ -291,6 +338,9 @@ export const initCommand = new Command("init")
 
 			console.log();
 			console.log(chalk.green(`✓ Project initialized: ${project.name}`));
+
+			// Create Claude Code skills
+			await createClaudeSkills(projectRoot);
 
 			// Update AI instruction files
 			if (config.agentFiles.length > 0) {

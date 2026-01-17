@@ -29,7 +29,7 @@ knowns task edit 35 --ac "Criterion text"
 | Code before plan approval | Wait for user approval |
 | Code before reading docs | Read docs FIRST |
 | Skip time tracking | Always `time start`/`stop` |
-| Ignore task refs | Follow ALL `@.knowns/...` refs |
+| Ignore task refs | Follow ALL `@task-xxx` and `@doc/xxx` refs |
 
 ---
 

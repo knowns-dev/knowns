@@ -16,6 +16,7 @@ import {
 	initCommand,
 	mcpCommand,
 	searchCommand,
+	syncCommand,
 	taskCommand,
 	timeCommand,
 } from "@commands/index";
@@ -69,6 +70,7 @@ program.addCommand(searchCommand);
 program.addCommand(timeCommand);
 program.addCommand(docCommand);
 program.addCommand(configCommand);
+program.addCommand(syncCommand);
 program.addCommand(agentsCommand);
 program.addCommand(mcpCommand);
 

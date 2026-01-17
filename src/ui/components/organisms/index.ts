@@ -13,5 +13,4 @@ export { default as SearchCommandDialog } from "./SearchCommandDialog";
 export { default as TaskHistoryPanel } from "./TaskHistoryPanel";
 export { default as VersionDiffViewer } from "./VersionDiffViewer";
 export { default as AssigneeDropdown } from "./AssigneeDropdown";
-export { default as MarkdownRenderer } from "./MarkdownRenderer";
 export { TaskDataTable } from "./TaskDataTable";

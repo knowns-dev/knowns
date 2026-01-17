@@ -13,6 +13,7 @@ import {
 	extractToc,
 	formatToc,
 	replaceSection,
+	replaceSectionByIndex,
 } from "@utils/markdown-toc";
 import { notifyDocUpdate } from "@utils/notify-server";
 import matter from "gray-matter";
@@ -532,7 +533,12 @@ export async function handleUpdateDoc(args: unknown) {
 
 	// Handle section replacement
 	if (input.section && input.content) {
-		const result = replaceSection(content, input.section, input.content);
+		// Check if section is a pure number (index from TOC display)
+		const sectionIndex = /^\d+$/.test(input.section) ? Number.parseInt(input.section, 10) : null;
+		const result =
+			sectionIndex !== null
+				? replaceSectionByIndex(content, sectionIndex, input.content)
+				: replaceSection(content, input.section, input.content);
 		if (!result) {
 			return errorResponse(
 				`Section not found: ${input.section}. Use 'toc: true' with get_doc to see available sections.`,
