@@ -5,142 +5,70 @@ description: Use when committing code changes with proper conventional commit fo
 
 # Committing Changes
 
-Create well-formatted commits following conventional commit standards.
+Your task is to help the user to generate a commit message and commit the changes using git.
 
-**Announce at start:** "I'm using the knowns.commit skill to commit changes."
+## Guidelines
 
-**Core principle:** VERIFY BEFORE COMMITTING - run tests, check lint.
+- DO NOT add any ads such as "Generated with [Claude Code](https://claude.ai/code)"
+- DO NOT add Co-Authored-By line
+- Only generate the message for staged files/changes
+- Don't add any files using `git add`. The user will decide what to add.
+- Follow the rules below for the commit message.
 
-## The Process
-
-### Step 1: Review Changes
-
-```bash
-# Check status
-git status
-
-# View changes
-git diff --stat
-git diff
-```
-
-### Step 2: Verify Quality
-
-**Before committing, verify:**
-
-```bash
-# Tests pass
-npm test  # or pytest, etc.
-
-# Lint clean
-npm run lint
-
-# Build succeeds (if applicable)
-npm run build
-```
-
-**Don't commit if any verification fails.**
-
-### Step 3: Stage Changes
-
-```bash
-# Stage specific files
-git add <files>
-
-# Or stage all
-git add .
-```
-
-**Never commit:**
-- Secrets (.env, credentials)
-- Build artifacts
-- Large binary files
-
-### Step 4: Draft Commit Message
-
-**Conventional commit format:**
-```
-<type>(<scope>): <description>
-
-<body>
-```
-
-**Types:**
-| Type | Use for |
-|------|---------|
-| `feat` | New feature |
-| `fix` | Bug fix |
-| `docs` | Documentation only |
-| `style` | Formatting, no code change |
-| `refactor` | Code restructuring |
-| `perf` | Performance improvement |
-| `test` | Adding tests |
-| `chore` | Maintenance |
-
-### Step 5: Ask for Confirmation (REQUIRED)
-
-**Present the commit message to user and ASK:**
+## Format
 
 ```
-Ready to commit with this message:
+<type>:<space><message title>
 
-feat(auth): add JWT token refresh
-
-- Added refresh token endpoint
-- Tokens expire after 1 hour
-- Automatic refresh before expiry
-
-Proceed with commit? (yes/no/edit)
+<bullet points summarizing what was updated>
 ```
 
-**Wait for user approval before executing git commit.**
+## Example Titles
 
-### Step 6: Commit (after approval)
-
-```bash
-git commit -m "$(cat <<'EOF'
-feat(auth): add JWT token refresh
-
-- Added refresh token endpoint
-- Tokens expire after 1 hour
-- Automatic refresh before expiry
-EOF
-)"
+```
+feat(auth): add JWT login flow
+fix(ui): handle null pointer in sidebar
+refactor(api): split user controller logic
+docs(readme): add usage section
 ```
 
-### Step 7: Verify Commit
+## Example with Title and Body
 
-```bash
-git log -1
-git show --stat
+```
+feat(auth): add JWT login flow
+
+- Implemented JWT token validation logic
+- Added documentation for the validation component
 ```
 
-## Commit Message Guidelines
+## Rules
 
-**Good:**
-- `feat(api): add user profile endpoint`
-- `fix(auth): handle expired token gracefully`
-- `docs(readme): update installation steps`
+* Title is lowercase, no period at the end.
+* Title should be a clear summary, max 50 characters.
+* Use the body (optional) to explain *why*, not just *what*.
+* Bullet points should be concise and high-level.
 
-**Bad:**
-- `update code` (too vague)
-- `WIP` (not ready to commit)
-- `fix bug` (which bug?)
+**Avoid:**
+* Vague titles like: "update", "fix stuff"
+* Overly long or unfocused titles
+* Excessive detail in bullet points
 
-## When to Stop
+## Allowed Types
 
-**Don't commit if:**
-- Tests are failing
-- Lint errors exist
-- Build is broken
-- Changes are incomplete
+| Type     | Description                           |
+| -------- | ------------------------------------- |
+| feat     | New feature                           |
+| fix      | Bug fix                               |
+| chore    | Maintenance (e.g., tooling, deps)     |
+| docs     | Documentation changes                 |
+| refactor | Code restructure (no behavior change) |
+| test     | Adding or refactoring tests           |
+| style    | Code formatting (no logic change)     |
+| perf     | Performance improvements              |
 
-**Fix issues first, then commit.**
+## Process
 
-## Remember
-
-- Verify before committing (tests, lint)
-- Ask user for confirmation before commit
-- Use conventional commit format
-- Keep commits focused and atomic
-- Never commit secrets
+1. Run `git status` and `git diff --staged` to see staged changes
+2. Generate commit message following the format above
+3. Show the message to user and ask for confirmation
+4. Commit with `git commit -m "message"`
