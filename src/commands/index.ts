@@ -12,4 +12,5 @@ export { browserCommand } from "./browser";
 export { docCommand } from "./doc";
 export { configCommand } from "./config";
 export { agentsCommand } from "./agents";
+export { syncCommand } from "./sync";
 export { mcpCommand } from "./mcp";

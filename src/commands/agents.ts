@@ -11,7 +11,7 @@ import prompts from "prompts";
 // Import modular guidelines
 import { Guidelines, MCPGuidelines } from "../templates/guidelines";
 // Import instruction templates (with markers)
-import { CLI_INSTRUCTION, MCP_INSTRUCTION } from "../templates/instruction";
+import { CLI_INSTRUCTION, MCP_INSTRUCTION, SKILLS_INSTRUCTION } from "../templates/instruction";
 
 const PROJECT_ROOT = process.cwd();
 
@@ -26,13 +26,18 @@ export const INSTRUCTION_FILES = [
 	},
 ];
 
-export type GuidelinesType = "cli" | "mcp";
+export type GuidelinesType = "cli" | "mcp" | "skills";
 export type GuidelinesVariant = "general" | "instruction";
 
 /**
  * Get guidelines content by type and variant
  */
 export function getGuidelines(type: GuidelinesType, variant: GuidelinesVariant = "general"): string {
+	// Skills type always uses the minimal skills instruction
+	if (type === "skills") {
+		return SKILLS_INSTRUCTION;
+	}
+
 	if (variant === "instruction") {
 		// Instruction templates (minimal, tells AI to call guideline command)
 		return type === "mcp" ? MCP_INSTRUCTION : CLI_INSTRUCTION;
@@ -273,35 +278,6 @@ async function updateFiles(files: Array<{ path: string; name: string }>, guideli
 	}
 	console.log();
 }
-
-/**
- * Sync subcommand - quickly update all default instruction files
- */
-const syncCommand = new Command("sync")
-	.description("Sync/update all agent instruction files with latest guidelines")
-	.option("--type <type>", "Guidelines type: cli or mcp", "cli")
-	.option("--minimal", "Use minimal instruction (default: full embedded guidelines)")
-	.option("--all", "Update all instruction files (including Gemini, Copilot)")
-	.action(async (options: { type?: string; minimal?: boolean; all?: boolean }) => {
-		try {
-			const type = (options.type === "mcp" ? "mcp" : "cli") as GuidelinesType;
-			const variant: GuidelinesVariant = options.minimal ? "instruction" : "general";
-			const guidelines = getGuidelines(type, variant);
-
-			// Select files based on --all flag
-			const filesToUpdate = options.all ? INSTRUCTION_FILES : INSTRUCTION_FILES.filter((f) => f.selected);
-
-			const variantLabel = variant === "instruction" ? " (minimal)" : " (full)";
-			const label = `${type.toUpperCase()}${variantLabel}`;
-			console.log(chalk.bold(`\nSyncing agent instructions (${label})...\n`));
-			await updateFiles(filesToUpdate, guidelines);
-		} catch (error) {
-			console.error(chalk.red("Error:"), error instanceof Error ? error.message : String(error));
-			process.exit(1);
-		}
-	});
-
-agentsCommand.addCommand(syncCommand);
 
 /**
  * Guideline subcommand - output guidelines to stdout
