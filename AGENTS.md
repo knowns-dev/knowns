@@ -102,26 +102,27 @@ mcp__knowns__list_tasks({
 
 ---
 
-## Large Documents (info, toc, section)
+## Reading Documents (smart)
 
-For large documents, check size first with `info`:
+**ALWAYS use `smart: true` when reading documents.** It automatically handles both small and large docs:
 
 ```json
-// DON'T: Read entire large document (may be truncated)
+// DON'T: Read without smart (may get truncated large doc)
 mcp__knowns__get_doc({ "path": "readme" })
 
-// DO: Step 1 - Check document size first
-mcp__knowns__get_doc({ "path": "readme", "info": true })
-// Response: { stats: { estimatedTokens: 12132 }, recommendation: "..." }
+// DO: Always use smart
+mcp__knowns__get_doc({ "path": "readme", "smart": true })
+// Small doc → returns full content
+// Large doc → returns stats + TOC
 
-// DO: Step 2 - Get table of contents (if >2000 tokens)
-mcp__knowns__get_doc({ "path": "readme", "toc": true })
-
-// DO: Step 3 - Read only the section you need
-mcp__knowns__get_doc({ "path": "readme", "section": "3. Config" })
+// DO: If doc is large, read specific section
+mcp__knowns__get_doc({ "path": "readme", "section": "3" })
 ```
 
-**Decision flow:** `info: true` → check tokens → if >2000, use `toc` then `section`
+**`smart: true` behavior:**
+
+- **≤2000 tokens**: Returns full content automatically
+- **>2000 tokens**: Returns stats + TOC, then use `section` parameter
 
 ---
 
@@ -161,10 +162,10 @@ knowns task edit 42 --append-notes "Done: Auth middleware + JWT validation"
 
 ## Quick Rules
 
-1. **Search first** - Don't read all docs hoping to find info
-2. **Use filters** - Don't list everything then filter manually
-3. **Read selectively** - Only fetch what you need
-4. **Use info first** - Check doc size before reading, then toc/section if needed
+1. **Always `smart: true`** - Use smart when reading docs (auto-handles size)
+2. **Search first** - Don't read all docs hoping to find info
+3. **Use filters** - Don't list everything then filter manually
+4. **Read selectively** - Only fetch what you need
 5. **Write concise** - Compact notes, not essays
 6. **Don't repeat** - Reference context already loaded
 7. **Summarize** - Key points, not full quotes
@@ -286,42 +287,45 @@ Get a documentation file by path.
 
 Path can be filename or folder/filename (without .md extension).
 
-### Large Documents (info, toc, section)
+### Reading Documents (smart)
 
-For large documents, check size first with `info`, then use `toc` and `section`:
+**ALWAYS use `smart: true` when reading documents.** It automatically handles both small and large docs:
 
 ```json
-// Step 1: Check document size and token count
+// Always use smart (recommended)
 {
   "path": "readme",
-  "info": true
-}
-// Response: { stats: { chars: 42461, estimatedTokens: 12132, headingCount: 83 }, recommendation: "..." }
-
-// Step 2: Get table of contents
-{
-  "path": "readme",
-  "toc": true
-}
-
-// Step 3: Read specific section by title or number
-{
-  "path": "readme",
-  "section": "5. Sync"
+  "smart": true
 }
 ```
 
-| Parameter | Description                                              |
-| --------- | -------------------------------------------------------- |
-| `info`    | Set `true` to get stats (size, tokens, headings) only    |
-| `toc`     | Set `true` to get table of contents only                 |
-| `section` | Section title or number to read (e.g., "5. Sync" or "3") |
+**Behavior:**
 
-**Decision flow:**
+- **Small doc (≤2000 tokens)**: Returns full content automatically
+- **Large doc (>2000 tokens)**: Returns stats + TOC with numbered sections
 
-- `info: true` → Check estimatedTokens → If >2000, use toc/section
-- `toc: true` → Get heading list → Choose section to read
-- `section: "X"` → Read only what you need
+```json
+// If doc is large, smart returns TOC, then read specific section:
+{
+  "path": "readme",
+  "section": "3"
+}
+```
+
+| Parameter | Description                                                    |
+| --------- | -------------------------------------------------------------- |
+| `smart`   | **Recommended.** Auto-return full content or TOC based on size |
+| `section` | Read specific section by number (e.g., "3") or title           |
+
+### Manual Control (info, toc, section)
+
+If you need manual control instead of `smart`:
+
+```json
+{ "path": "readme", "info": true }     // Check size/tokens
+{ "path": "readme", "toc": true }      // View table of contents
+{ "path": "readme", "section": "3" }   // Read specific section
+```
 
 ---
 
@@ -393,15 +397,10 @@ Step-by-step guide...
 **Reading workflow:**
 
 ```json
-// Step 1: Check size first
-{ "path": "<path>", "info": true }
-// → If estimatedTokens <2000: read directly (no options)
-// → If estimatedTokens >2000: continue to step 2
+// Always use smart (handles both small and large docs automatically)
+{ "path": "<path>", "smart": true }
 
-// Step 2: Get table of contents
-{ "path": "<path>", "toc": true }
-
-// Step 3: Read specific section
+// If doc is large, smart returns TOC, then read specific section:
 { "path": "<path>", "section": "2" }
 ```
 
@@ -423,6 +422,24 @@ Update an existing documentation file.
 ```
 
 Use either `content` (replace) or `appendContent` (append), not both.
+
+### Section Edit (Context-Efficient)
+
+Replace only a specific section instead of entire document:
+
+```json
+// Step 1: View TOC to find section
+{ "path": "readme", "toc": true }
+
+// Step 2: Edit only that section
+{
+  "path": "readme",
+  "section": "2. Installation",
+  "content": "New content here..."
+}
+```
+
+This reduces context usage significantly - no need to read/write entire document.
 
 ---
 

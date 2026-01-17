@@ -1,5 +1,4 @@
 <!-- KNOWNS GUIDELINES START -->
-
 # Core Rules (MCP)
 
 You MUST follow these rules. If you cannot follow any rule, stop and ask for guidance before proceeding.
@@ -16,21 +15,21 @@ Why? Direct file editing breaks metadata synchronization, Git tracking, and rela
 
 ## Core Principles
 
-| Rule                    | Description                                                     |
-| ----------------------- | --------------------------------------------------------------- |
-| **MCP Tools Only**      | Use MCP tools for ALL operations. NEVER edit .md files directly |
-| **Docs First**          | Read project docs BEFORE planning or coding                     |
-| **Time Tracking**       | Always start timer when taking task, stop when done             |
-| **Plan Approval**       | Share plan with user, WAIT for approval before coding           |
-| **Check AC After Work** | Only mark acceptance criteria done AFTER completing the work    |
+| Rule | Description |
+|------|-------------|
+| **MCP Tools Only** | Use MCP tools for ALL operations. NEVER edit .md files directly |
+| **Docs First** | Read project docs BEFORE planning or coding |
+| **Time Tracking** | Always start timer when taking task, stop when done |
+| **Plan Approval** | Share plan with user, WAIT for approval before coding |
+| **Check AC After Work** | Only mark acceptance criteria done AFTER completing the work |
 
 ---
 
 ## Reference System
 
-| Context              | Task Format                | Doc Format                |
-| -------------------- | -------------------------- | ------------------------- |
-| **Writing** (input)  | `@task-<id>`               | `@doc/<path>`             |
+| Context | Task Format | Doc Format |
+|---------|-------------|------------|
+| **Writing** (input) | `@task-<id>` | `@doc/<path>` |
 | **Reading** (output) | `@.knowns/tasks/task-<id>` | `@.knowns/docs/<path>.md` |
 
 Follow refs recursively until complete context gathered.
@@ -39,11 +38,11 @@ Follow refs recursively until complete context gathered.
 
 ## Task IDs
 
-| Format       | Example        | Notes            |
-| ------------ | -------------- | ---------------- |
-| Sequential   | `48`, `49`     | Legacy numeric   |
-| Hierarchical | `48.1`, `48.2` | Legacy subtasks  |
-| Random       | `qkh5ne`       | Current (6-char) |
+| Format | Example | Notes |
+|--------|---------|-------|
+| Sequential | `48`, `49` | Legacy numeric |
+| Hierarchical | `48.1`, `48.2` | Legacy subtasks |
+| Random | `qkh5ne` | Current (6-char) |
 
 **CRITICAL:** Use raw ID (string) for all MCP tool calls.
 
@@ -51,19 +50,19 @@ Follow refs recursively until complete context gathered.
 
 ## Status & Priority
 
-| Status        | When                  |
-| ------------- | --------------------- |
-| `todo`        | Not started (default) |
-| `in-progress` | Currently working     |
-| `in-review`   | PR submitted          |
-| `blocked`     | Waiting on dependency |
-| `done`        | All criteria met      |
+| Status | When |
+|--------|------|
+| `todo` | Not started (default) |
+| `in-progress` | Currently working |
+| `in-review` | PR submitted |
+| `blocked` | Waiting on dependency |
+| `done` | All criteria met |
 
-| Priority | Level            |
-| -------- | ---------------- |
-| `low`    | Nice-to-have     |
+| Priority | Level |
+|----------|-------|
+| `low` | Nice-to-have |
 | `medium` | Normal (default) |
-| `high`   | Urgent           |
+| `high` | Urgent |
 
 ---
 
@@ -103,26 +102,27 @@ mcp__knowns__list_tasks({
 
 ---
 
-## Large Documents (info, toc, section)
+## Reading Documents (smart)
 
-For large documents, check size first with `info`:
+**ALWAYS use `smart: true` when reading documents.** It automatically handles both small and large docs:
 
 ```json
-// DON'T: Read entire large document (may be truncated)
+// DON'T: Read without smart (may get truncated large doc)
 mcp__knowns__get_doc({ "path": "readme" })
 
-// DO: Step 1 - Check document size first
-mcp__knowns__get_doc({ "path": "readme", "info": true })
-// Response: { stats: { estimatedTokens: 12132 }, recommendation: "..." }
+// DO: Always use smart
+mcp__knowns__get_doc({ "path": "readme", "smart": true })
+// Small doc → returns full content
+// Large doc → returns stats + TOC
 
-// DO: Step 2 - Get table of contents (if >2000 tokens)
-mcp__knowns__get_doc({ "path": "readme", "toc": true })
-
-// DO: Step 3 - Read only the section you need
-mcp__knowns__get_doc({ "path": "readme", "section": "3. Config" })
+// DO: If doc is large, read specific section
+mcp__knowns__get_doc({ "path": "readme", "section": "3" })
 ```
 
-**Decision flow:** `info: true` → check tokens → if >2000, use `toc` then `section`
+**`smart: true` behavior:**
+
+- **≤2000 tokens**: Returns full content automatically
+- **>2000 tokens**: Returns stats + TOC, then use `section` parameter
 
 ---
 
@@ -162,10 +162,10 @@ knowns task edit 42 --append-notes "Done: Auth middleware + JWT validation"
 
 ## Quick Rules
 
-1. **Search first** - Don't read all docs hoping to find info
-2. **Use filters** - Don't list everything then filter manually
-3. **Read selectively** - Only fetch what you need
-4. **Use info first** - Check doc size before reading, then toc/section if needed
+1. **Always `smart: true`** - Use smart when reading docs (auto-handles size)
+2. **Search first** - Don't read all docs hoping to find info
+3. **Use filters** - Don't list everything then filter manually
+4. **Read selectively** - Only fetch what you need
 5. **Write concise** - Compact notes, not essays
 6. **Don't repeat** - Reference context already loaded
 7. **Summarize** - Key points, not full quotes
@@ -287,42 +287,45 @@ Get a documentation file by path.
 
 Path can be filename or folder/filename (without .md extension).
 
-### Large Documents (info, toc, section)
+### Reading Documents (smart)
 
-For large documents, check size first with `info`, then use `toc` and `section`:
+**ALWAYS use `smart: true` when reading documents.** It automatically handles both small and large docs:
 
 ```json
-// Step 1: Check document size and token count
+// Always use smart (recommended)
 {
   "path": "readme",
-  "info": true
-}
-// Response: { stats: { chars: 42461, estimatedTokens: 12132, headingCount: 83 }, recommendation: "..." }
-
-// Step 2: Get table of contents
-{
-  "path": "readme",
-  "toc": true
-}
-
-// Step 3: Read specific section by title or number
-{
-  "path": "readme",
-  "section": "5. Sync"
+  "smart": true
 }
 ```
 
-| Parameter | Description                                              |
-| --------- | -------------------------------------------------------- |
-| `info`    | Set `true` to get stats (size, tokens, headings) only    |
-| `toc`     | Set `true` to get table of contents only                 |
-| `section` | Section title or number to read (e.g., "5. Sync" or "3") |
+**Behavior:**
 
-**Decision flow:**
+- **Small doc (≤2000 tokens)**: Returns full content automatically
+- **Large doc (>2000 tokens)**: Returns stats + TOC with numbered sections
 
-- `info: true` → Check estimatedTokens → If >2000, use toc/section
-- `toc: true` → Get heading list → Choose section to read
-- `section: "X"` → Read only what you need
+```json
+// If doc is large, smart returns TOC, then read specific section:
+{
+  "path": "readme",
+  "section": "3"
+}
+```
+
+| Parameter | Description                                                    |
+| --------- | -------------------------------------------------------------- |
+| `smart`   | **Recommended.** Auto-return full content or TOC based on size |
+| `section` | Read specific section by number (e.g., "3") or title           |
+
+### Manual Control (info, toc, section)
+
+If you need manual control instead of `smart`:
+
+```json
+{ "path": "readme", "info": true }     // Check size/tokens
+{ "path": "readme", "toc": true }      // View table of contents
+{ "path": "readme", "section": "3" }   // Read specific section
+```
 
 ---
 
@@ -394,15 +397,10 @@ Step-by-step guide...
 **Reading workflow:**
 
 ```json
-// Step 1: Check size first
-{ "path": "<path>", "info": true }
-// → If estimatedTokens <2000: read directly (no options)
-// → If estimatedTokens >2000: continue to step 2
+// Always use smart (handles both small and large docs automatically)
+{ "path": "<path>", "smart": true }
 
-// Step 2: Get table of contents
-{ "path": "<path>", "toc": true }
-
-// Step 3: Read specific section
+// If doc is large, smart returns TOC, then read specific section:
 { "path": "<path>", "section": "2" }
 ```
 
@@ -424,6 +422,24 @@ Update an existing documentation file.
 ```
 
 Use either `content` (replace) or `appendContent` (append), not both.
+
+### Section Edit (Context-Efficient)
+
+Replace only a specific section instead of entire document:
+
+```json
+// Step 1: View TOC to find section
+{ "path": "readme", "toc": true }
+
+// Step 2: Edit only that section
+{
+  "path": "readme",
+  "section": "2. Installation",
+  "content": "New content here..."
+}
+```
+
+This reduces context usage significantly - no need to read/write entire document.
 
 ---
 
@@ -530,7 +546,6 @@ mcp__knowns__create_task({
 ```
 
 **Note:** Add acceptance criteria after creation using CLI:
-
 ```bash
 knowns task edit <id> --ac "Outcome 1" --ac "Outcome 2"
 ```
@@ -540,25 +555,22 @@ knowns task edit <id> --ac "Outcome 1" --ac "Outcome 2"
 ## Quality Guidelines
 
 ### Title
-
-| Bad           | Good                   |
-| ------------- | ---------------------- |
+| Bad | Good |
+|-----|------|
 | Do auth stuff | Add JWT authentication |
-| Fix bug       | Fix login timeout      |
+| Fix bug | Fix login timeout |
 
 ### Description
-
 Explain WHY. Include doc refs: `@doc/security-patterns`
 
 ### Acceptance Criteria
-
 **Outcome-focused, NOT implementation steps:**
 
-| Bad                        | Good                            |
-| -------------------------- | ------------------------------- |
-| Add handleLogin() function | User can login                  |
-| Use bcrypt                 | Passwords are hashed            |
-| Add try-catch              | Errors return proper HTTP codes |
+| Bad | Good |
+|-----|------|
+| Add handleLogin() function | User can login |
+| Use bcrypt | Passwords are hashed |
+| Add try-catch | Errors return proper HTTP codes |
 
 ---
 
@@ -627,7 +639,6 @@ mcp__knowns__list_tasks({ "status": "done" })
 ## Step 3: Plan (BEFORE coding!)
 
 Use CLI for implementation plan:
-
 ```bash
 knowns task edit <id> --plan $'1. Research (see @doc/xxx)
 2. Implement
@@ -642,7 +653,6 @@ knowns task edit <id> --plan $'1. Research (see @doc/xxx)
 ## Step 4: Implement
 
 Use CLI for checking acceptance criteria:
-
 ```bash
 # Check AC only AFTER work is done
 knowns task edit <id> --check-ac 1
@@ -689,13 +699,13 @@ mcp__knowns__create_task({
 
 A task is **Done** when ALL of these are complete:
 
-| Requirement    | How                                            |
-| -------------- | ---------------------------------------------- |
-| All AC checked | CLI: `knowns task edit <id> --check-ac N`      |
-| Notes added    | CLI: `knowns task edit <id> --notes "Summary"` |
-| Timer stopped  | MCP: `mcp__knowns__stop_time`                  |
-| Status = done  | MCP: `mcp__knowns__update_task`                |
-| Tests pass     | Run test suite                                 |
+| Requirement | How |
+|-------------|-----|
+| All AC checked | CLI: `knowns task edit <id> --check-ac N` |
+| Notes added | CLI: `knowns task edit <id> --notes "Summary"` |
+| Timer stopped | MCP: `mcp__knowns__stop_time` |
+| Status = done | MCP: `mcp__knowns__update_task` |
+| Tests pass | Run test suite |
 
 ---
 
@@ -764,15 +774,15 @@ Then follow completion steps again.
 
 ## Quick Reference
 
-| DON'T                     | DO                              |
-| ------------------------- | ------------------------------- |
-| Edit .md files directly   | Use MCP tools                   |
-| Skip time tracking        | Always `start_time`/`stop_time` |
-| Check AC before work done | Check AC AFTER work done        |
-| Code before plan approval | Wait for user approval          |
-| Code before reading docs  | Read docs FIRST                 |
-| Ignore task refs          | Follow ALL `@.knowns/...` refs  |
-| Use wrong task ID format  | Use raw ID string               |
+| DON'T | DO |
+|-------|-----|
+| Edit .md files directly | Use MCP tools |
+| Skip time tracking | Always `start_time`/`stop_time` |
+| Check AC before work done | Check AC AFTER work done |
+| Code before plan approval | Wait for user approval |
+| Code before reading docs | Read docs FIRST |
+| Ignore task refs | Follow ALL `@.knowns/...` refs |
+| Use wrong task ID format | Use raw ID string |
 
 ---
 
@@ -780,26 +790,25 @@ Then follow completion steps again.
 
 Some operations require CLI (not available in MCP):
 
-| Operation                       | Tool                              |
-| ------------------------------- | --------------------------------- |
-| Add acceptance criteria         | CLI: `--ac`                       |
-| Check/uncheck AC                | CLI: `--check-ac`, `--uncheck-ac` |
-| Set implementation plan         | CLI: `--plan`                     |
-| Add/append notes                | CLI: `--notes`, `--append-notes`  |
-| Create/update task basic fields | MCP tools                         |
-| Time tracking                   | MCP tools                         |
-| Read tasks/docs                 | MCP tools                         |
-| Search                          | MCP tools                         |
+| Operation | Tool |
+|-----------|------|
+| Add acceptance criteria | CLI: `--ac` |
+| Check/uncheck AC | CLI: `--check-ac`, `--uncheck-ac` |
+| Set implementation plan | CLI: `--plan` |
+| Add/append notes | CLI: `--notes`, `--append-notes` |
+| Create/update task basic fields | MCP tools |
+| Time tracking | MCP tools |
+| Read tasks/docs | MCP tools |
+| Search | MCP tools |
 
 ---
 
 ## Error Recovery
 
-| Problem              | Solution                                    |
-| -------------------- | ------------------------------------------- |
-| Forgot to stop timer | `mcp__knowns__add_time` with duration       |
-| Wrong status         | `mcp__knowns__update_task` to fix           |
-| Task not found       | `mcp__knowns__list_tasks` to find ID        |
-| Need to uncheck AC   | CLI: `knowns task edit <id> --uncheck-ac N` |
-
+| Problem | Solution |
+|---------|----------|
+| Forgot to stop timer | `mcp__knowns__add_time` with duration |
+| Wrong status | `mcp__knowns__update_task` to fix |
+| Task not found | `mcp__knowns__list_tasks` to find ID |
+| Need to uncheck AC | CLI: `knowns task edit <id> --uncheck-ac N` |
 <!-- KNOWNS GUIDELINES END -->
