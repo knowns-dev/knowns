@@ -9,7 +9,7 @@
 | Check AC before work done | Check AC AFTER work done |
 | Code before plan approval | Wait for user approval |
 | Code before reading docs | Read docs FIRST |
-| Ignore task refs | Follow ALL `@.knowns/...` refs |
+| Ignore task refs | Follow ALL `@task-xxx` and `@doc/xxx` refs |
 | Use wrong task ID format | Use raw ID string |
 
 ---

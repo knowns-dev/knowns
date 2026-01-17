@@ -72,10 +72,10 @@ knowns doc edit "name" -c "..." --plain  # ERROR!
 
 ## Reference System
 
-| Context | Task Format | Doc Format |
-|---------|-------------|------------|
-| **Writing** (input) | `@task-<id>` | `@doc/<path>` |
-| **Reading** (output) | `@.knowns/tasks/task-<id>` | `@.knowns/docs/<path>.md` |
+| Type | Format | Example |
+|------|--------|---------|
+| **Task ref** | `@task-<id>` | `@task-pdyd2e` |
+| **Doc ref** | `@doc/<path>` | `@doc/patterns/auth` |
 
 Follow refs recursively until complete context gathered.
 

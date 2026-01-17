@@ -14,8 +14,8 @@ knowns time start <id>    # REQUIRED!
 ```bash
 # Read task and follow ALL refs
 knowns task <id> --plain
-# @.knowns/docs/xxx.md → knowns doc "xxx" --plain
-# @.knowns/tasks/task-YY → knowns task YY --plain
+# @doc/xxx → knowns doc "xxx" --plain
+# @task-YY → knowns task YY --plain
 
 # Search related docs
 knowns search "keyword" --type doc --plain

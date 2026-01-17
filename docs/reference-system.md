@@ -12,16 +12,15 @@ Knowns uses `@` references to create links between tasks and documentation. This
 
 | Format | Example | Description |
 |--------|---------|-------------|
-| User input | `@task-42` | Short format |
-| System output | `@.knowns/tasks/task-42 - Title.md` | Full path format |
+| Task ref | `@task-42` | Links to task 42 |
+| Task ref | `@task-pdyd2e` | Links to task pdyd2e |
 
 ### Document References
 
 | Format | Example | Description |
 |--------|---------|-------------|
-| User input | `@doc/patterns/auth` | Without .md extension |
-| User input | `@doc/patterns/auth.md` | With .md extension |
-| System output | `@.knowns/docs/patterns/auth.md` | Full path format |
+| Doc ref | `@doc/patterns/auth` | Without .md extension |
+| Doc ref | `@doc/patterns/auth.md` | With .md extension |
 
 ## Usage Examples
 

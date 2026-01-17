@@ -4,12 +4,7 @@
  */
 
 export { findProjectRoot } from "./find-project-root";
-export {
-	transformMentionsToRefs,
-	buildTaskMap,
-	extractTaskIds,
-	extractDocPaths,
-} from "./mention-refs";
+export { normalizeRefs, parseEscapeSequences } from "./mention-refs";
 
 /**
  * Normalize file path to use forward slashes (cross-platform)

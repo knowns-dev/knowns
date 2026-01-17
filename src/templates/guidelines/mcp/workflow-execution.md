@@ -22,10 +22,10 @@ mcp__knowns__start_time({ "taskId": "abc123" })
 // Read task and follow ALL refs
 mcp__knowns__get_task({ "taskId": "abc123" })
 
-// @.knowns/docs/xxx.md -> read the doc
+// @doc/xxx -> read the doc
 mcp__knowns__get_doc({ "path": "xxx" })
 
-// @.knowns/tasks/task-YY -> read the task
+// @task-YY -> read the task
 mcp__knowns__get_task({ "taskId": "YY" })
 
 // Search related docs

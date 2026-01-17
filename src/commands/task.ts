@@ -11,7 +11,7 @@ import { FileStore } from "@storage/file-store";
 import { file, write } from "@utils/bun-compat";
 import { formatDocReferences, resolveDocReferences } from "@utils/doc-links";
 import { findProjectRoot } from "@utils/find-project-root";
-import { buildTaskMap, normalizeRefs, transformMentionsToRefs } from "@utils/mention-refs";
+import { normalizeRefs } from "@utils/mention-refs";
 import { notifyRefresh, notifyTaskUpdate } from "@utils/notify-server";
 import { extractTaskIdFromFilename, repairTask, validateTask } from "@utils/validate";
 import chalk from "chalk";
@@ -78,13 +78,6 @@ async function formatTask(task: Task, fileStore: FileStore, plain = false): Prom
 		const border = "-".repeat(50);
 		const titleBorder = "=".repeat(50);
 		const output: string[] = [];
-
-		// Build task map for mention transformation
-		const allTasks = await fileStore.getAllTasks();
-		const taskMap = buildTaskMap(allTasks);
-
-		// Helper to transform mentions in text
-		const transformText = (text: string) => transformMentionsToRefs(text, taskMap);
 
 		// File path
 		const projectRoot = findProjectRoot();
@@ -153,38 +146,38 @@ async function formatTask(task: Task, fileStore: FileStore, plain = false): Prom
 
 		output.push("");
 
-		// Description (with mention transformation)
+		// Description
 		if (task.description) {
 			output.push("Description:");
 			output.push(border);
-			output.push(transformText(task.description));
+			output.push(task.description);
 			output.push("");
 		}
 
-		// Acceptance Criteria (with mention transformation)
+		// Acceptance Criteria
 		if (task.acceptanceCriteria.length > 0) {
 			output.push("Acceptance Criteria:");
 			output.push(border);
 			for (const [i, ac] of task.acceptanceCriteria.entries()) {
 				const checkbox = ac.completed ? "[x]" : "[ ]";
-				output.push(`- ${checkbox} #${i + 1} ${transformText(ac.text)}`);
+				output.push(`- ${checkbox} #${i + 1} ${ac.text}`);
 			}
 			output.push("");
 		}
 
-		// Implementation Plan (with mention transformation)
+		// Implementation Plan
 		if (task.implementationPlan) {
 			output.push("Implementation Plan:");
 			output.push(border);
-			output.push(transformText(task.implementationPlan));
+			output.push(task.implementationPlan);
 			output.push("");
 		}
 
-		// Implementation Notes (with mention transformation)
+		// Implementation Notes
 		if (task.implementationNotes) {
 			output.push("Implementation Notes:");
 			output.push(border);
-			output.push(transformText(task.implementationNotes));
+			output.push(task.implementationNotes);
 			output.push("");
 		}
 

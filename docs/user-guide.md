@@ -422,9 +422,7 @@ Tasks and docs can reference each other:
 - `@task-42` → Links to task 42
 - `@doc/patterns/module` → Links to document
 
-When viewing with `--plain`, references appear as:
-- `@.knowns/tasks/task-42 - Title.md`
-- `@.knowns/docs/patterns/module.md`
+References maintain their simple format in all outputs.
 
 ### AI Guidelines Management
 

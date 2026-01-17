@@ -168,10 +168,10 @@ knowns task edit 42 -s done
 
 When you see references in task output:
 
-| You see                             | Command to run                       |
-| ----------------------------------- | ------------------------------------ |
-| `@.knowns/tasks/task-38 - Title.md` | `knowns task 38 --plain`             |
-| `@.knowns/docs/patterns/auth.md`    | `knowns doc "patterns/auth" --plain` |
+| You see                  | Command to run                       |
+| ------------------------ | ------------------------------------ |
+| `@task-38`               | `knowns task 38 --plain`             |
+| `@doc/patterns/auth`     | `knowns doc "patterns/auth" --plain` |
 
 ## Context Checklist
 

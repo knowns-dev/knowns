@@ -16,8 +16,9 @@ import {
 	formatDocStats,
 	formatToc,
 	replaceSection,
+	replaceSectionByIndex,
 } from "@utils/markdown-toc";
-import { buildTaskMap, normalizeRefs, transformMentionsToRefs } from "@utils/mention-refs";
+import { normalizeRefs } from "@utils/mention-refs";
 import { notifyDocUpdate } from "@utils/notify-server";
 import { repairDoc, validateDoc } from "@utils/validate";
 import chalk from "chalk";
@@ -624,15 +625,6 @@ const viewCommand = new Command("view")
 						enhancedContent = enhancedContent.replace(original, resolved);
 					}
 
-					// Transform @task-{id} and @doc/{path} mentions
-					const knownProjectRoot = findProjectRoot();
-					if (knownProjectRoot) {
-						const fileStore = new FileStore(knownProjectRoot);
-						const allTasks = await fileStore.getAllTasks();
-						const taskMap = buildTaskMap(allTasks);
-						enhancedContent = transformMentionsToRefs(enhancedContent, taskMap);
-					}
-
 					console.log(enhancedContent);
 				} else {
 					console.log(chalk.bold(`\n📄 ${metadata.title}\n`));
@@ -758,7 +750,12 @@ const editCommand = new Command("edit")
 				}
 				// Handle --section with -c (replace specific section)
 				else if (options.section && options.content) {
-					const result = replaceSection(content, options.section, normalizeRefs(options.content));
+					// Check if section is a pure number (index from TOC display)
+					const sectionIndex = /^\d+$/.test(options.section) ? Number.parseInt(options.section, 10) : null;
+					const result =
+						sectionIndex !== null
+							? replaceSectionByIndex(content, sectionIndex, normalizeRefs(options.content))
+							: replaceSection(content, options.section, normalizeRefs(options.content));
 					if (!result) {
 						console.error(
 							options.plain
@@ -1421,15 +1418,6 @@ export const docCommand = new Command("doc")
 					// Replace each link with resolved path only
 					for (const { original, resolved } of linksToAdd) {
 						enhancedContent = enhancedContent.replace(original, resolved);
-					}
-
-					// Transform @task-{id} and @doc/{path} mentions
-					const knownProjectRoot = findProjectRoot();
-					if (knownProjectRoot) {
-						const fileStore = new FileStore(knownProjectRoot);
-						const allTasks = await fileStore.getAllTasks();
-						const taskMap = buildTaskMap(allTasks);
-						enhancedContent = transformMentionsToRefs(enhancedContent, taskMap);
 					}
 
 					console.log(enhancedContent);
