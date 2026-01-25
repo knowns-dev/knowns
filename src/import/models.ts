@@ -81,6 +81,8 @@ export interface ImportOptions {
 	noSave?: boolean;
 	/** Dry run - preview only */
 	dryRun?: boolean;
+	/** Internal: This is a sync operation, bypass "already exists" check */
+	isSync?: boolean;
 }
 
 /**

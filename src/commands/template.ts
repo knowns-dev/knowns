@@ -16,6 +16,7 @@ import {
 	loadTemplateByName,
 	runTemplateByName,
 } from "../codegen";
+import { listAllTemplates } from "../import";
 
 const TEMPLATES_DIR = ".knowns/templates";
 
@@ -70,24 +71,22 @@ export const templateCommand = new Command("template")
  * List templates subcommand
  */
 const listCommand = new Command("list")
-	.description("List available templates")
+	.description("List available templates (local + imported)")
 	.option("--plain", "Plain text output for AI")
-	.action(async (options: { plain?: boolean }) => {
+	.option("--local", "Show only local templates")
+	.option("--imported", "Show only imported templates")
+	.action(async (options: { plain?: boolean; local?: boolean; imported?: boolean }) => {
 		try {
 			const projectRoot = getProjectRoot();
-			const templatesDir = getTemplatesDir(projectRoot);
+			const allTemplates = await listAllTemplates(projectRoot);
 
-			if (!existsSync(templatesDir)) {
-				if (options.plain) {
-					console.log("No templates found");
-				} else {
-					console.log(chalk.yellow("No templates found"));
-					console.log(chalk.gray("  Create one with: knowns template create <name>"));
-				}
-				return;
+			// Filter by source
+			let templates = allTemplates;
+			if (options.local) {
+				templates = allTemplates.filter((t) => !t.isImported);
+			} else if (options.imported) {
+				templates = allTemplates.filter((t) => t.isImported);
 			}
-
-			const templates = await listTemplates(templatesDir);
 
 			if (templates.length === 0) {
 				if (options.plain) {
@@ -99,28 +98,109 @@ const listCommand = new Command("list")
 				return;
 			}
 
+			// Load template configs for descriptions
+			const templatesWithDesc: Array<{
+				ref: string;
+				name: string;
+				source: string;
+				sourceUrl?: string;
+				isImported: boolean;
+				description: string;
+			}> = [];
+
+			for (const t of templates) {
+				try {
+					const loaded = await listTemplates(join(t.path, ".."));
+					const match = loaded.find((l) => l.name === t.name);
+					templatesWithDesc.push({
+						ref: t.ref,
+						name: t.name,
+						source: t.source,
+						sourceUrl: t.sourceUrl,
+						isImported: t.isImported,
+						description: match?.description || "No description",
+					});
+				} catch {
+					templatesWithDesc.push({
+						ref: t.ref,
+						name: t.name,
+						source: t.source,
+						sourceUrl: t.sourceUrl,
+						isImported: t.isImported,
+						description: "No description",
+					});
+				}
+			}
+
 			if (options.plain) {
-				for (const template of templates) {
-					console.log(`${template.name} - ${template.description || "No description"}`);
+				// Group by source
+				const sources = new Map<string, typeof templatesWithDesc>();
+				for (const t of templatesWithDesc) {
+					const sourceKey = t.isImported ? `[${t.source}]` : "[local]";
+					if (!sources.has(sourceKey)) {
+						sources.set(sourceKey, []);
+					}
+					sources.get(sourceKey)?.push(t);
+				}
+
+				// Sort: local first
+				const sortedSources = Array.from(sources.keys()).sort((a, b) => {
+					if (a === "[local]") return -1;
+					if (b === "[local]") return 1;
+					return a.localeCompare(b);
+				});
+
+				for (const sourceKey of sortedSources) {
+					const sourceTemplates = sources.get(sourceKey) || [];
+					// Get sourceUrl from first template in this source group
+					const sourceUrl = sourceTemplates[0]?.sourceUrl;
+					if (sourceUrl) {
+						console.log(`${sourceKey} (${sourceUrl})`);
+					} else {
+						console.log(sourceKey);
+					}
+					for (const t of sourceTemplates) {
+						console.log(`  ${t.name} - ${t.description}`);
+					}
 				}
 			} else {
 				console.log(chalk.bold("\nTemplates:\n"));
 
-				// Calculate column widths
-				const maxNameLen = Math.max(...templates.map((t) => t.name.length), 4);
-
-				// Header
-				console.log(chalk.gray(`${"Name".padEnd(maxNameLen + 2)}Description`));
-				console.log(chalk.gray("─".repeat(60)));
-
-				// Rows
-				for (const template of templates) {
-					const name = chalk.cyan(template.name.padEnd(maxNameLen + 2));
-					const desc = template.description || chalk.gray("No description");
-					console.log(`${name}${desc}`);
+				// Group by source
+				const sources = new Map<string, typeof templatesWithDesc>();
+				for (const t of templatesWithDesc) {
+					const sourceKey = t.isImported ? t.source : "local";
+					if (!sources.has(sourceKey)) {
+						sources.set(sourceKey, []);
+					}
+					sources.get(sourceKey)?.push(t);
 				}
 
-				console.log();
+				// Sort: local first
+				const sortedSources = Array.from(sources.keys()).sort((a, b) => {
+					if (a === "local") return -1;
+					if (b === "local") return 1;
+					return a.localeCompare(b);
+				});
+
+				for (const sourceKey of sortedSources) {
+					const sourceTemplates = sources.get(sourceKey) || [];
+					const sourceUrl = sourceTemplates[0]?.sourceUrl;
+					const sourceLabel = sourceKey === "local" ? "Local" : `Import: ${sourceKey}`;
+					if (sourceUrl) {
+						console.log(chalk.magenta.bold(`[${sourceLabel}]`) + chalk.gray(` ${sourceUrl}`));
+					} else {
+						console.log(chalk.magenta.bold(`[${sourceLabel}]`));
+					}
+					const maxNameLen = Math.max(...sourceTemplates.map((t) => t.name.length), 4);
+
+					for (const t of sourceTemplates) {
+						const name = chalk.cyan(t.name.padEnd(maxNameLen + 2));
+						const desc = t.description || chalk.gray("No description");
+						console.log(`  ${name}${desc}`);
+					}
+					console.log();
+				}
 			}
 		} catch (error) {
 			console.error(chalk.red("Error:"), error instanceof Error ? error.message : String(error));

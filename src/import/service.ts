@@ -157,8 +157,8 @@ export async function importSource(
 		throw new ImportError(nameValidation.error || "Invalid name", ImportErrorCode.NAME_CONFLICT);
 	}
 
-	// Check for name conflict
-	if (!options.force && (await importExists(projectRoot, name))) {
+	// Check for name conflict (skip check if this is a sync operation)
+	if (!options.force && !options.isSync && (await importExists(projectRoot, name))) {
 		throw new ImportError(
 			`Import "${name}" already exists`,
 			ImportErrorCode.NAME_CONFLICT,
@@ -401,20 +401,26 @@ export async function syncImport(projectRoot: string, name: string, options: Syn
 		force: options.force,
 		dryRun: options.dryRun,
 		noSave: true, // Don't update config on sync
+		isSync: true, // Bypass "already exists" check
 	});
 }
 
 /**
  * Sync all imports
  */
-export async function syncAllImports(projectRoot: string, options: SyncOptions = {}): Promise<ImportResult[]> {
+export async function syncAllImports(
+	projectRoot: string,
+	options: SyncOptions & { autoOnly?: boolean } = {},
+): Promise<ImportResult[]> {
 	const { getImportConfigs } = await import("./config");
 	const configs = await getImportConfigs(projectRoot);
 
 	const results: ImportResult[] = [];
 
 	for (const config of configs) {
-		if (config.autoSync === false && !options.force) {
+		// Only skip non-autoSync imports if autoOnly mode (e.g., scheduled sync)
+		// Manual `import sync` should sync all imports
+		if (options.autoOnly && config.autoSync === false) {
 			continue;
 		}
 

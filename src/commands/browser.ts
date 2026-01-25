@@ -6,6 +6,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ImportConfig } from "@import/models";
 import { startServer } from "@server/index";
 import { findProjectRoot } from "@utils/find-project-root";
 import chalk from "chalk";
@@ -27,15 +28,21 @@ async function saveServerPort(projectRoot: string, port: number): Promise<void> 
 	}
 
 	try {
-		// Read existing config or create new
-		let config: Record<string, unknown> = {};
+		// Read existing config or create new (preserves imports and other fields)
+		let config: {
+			name?: string;
+			id?: string;
+			createdAt?: string;
+			imports?: ImportConfig[];
+			settings?: Record<string, unknown>;
+		} = {};
 		if (existsSync(configPath)) {
 			const content = await readFile(configPath, "utf-8");
 			config = JSON.parse(content);
 		}
 
-		// Update settings.serverPort
-		const settings = (config.settings as Record<string, unknown>) || {};
+		// Update settings.serverPort (preserves existing settings)
+		const settings = config.settings || {};
 		settings.serverPort = port;
 		config.settings = settings;
 

@@ -8,7 +8,7 @@
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { getImportsDir } from "./config";
+import { getImportConfigs, getImportsDir } from "./config";
 
 const KNOWNS_DIR = ".knowns";
 const TEMPLATES_DIR = "templates";
@@ -279,12 +279,23 @@ export async function listAllTemplates(projectRoot: string): Promise<
 		name: string; // Template name (e.g., "component")
 		ref: string; // Full reference (e.g., "component" or "shared/component")
 		source: string; // "local" or import name
+		sourceUrl?: string; // Original source URL for imports
 		path: string; // Full filesystem path
 		isImported: boolean;
 	}>
 > {
 	const directories = await getTemplateDirectories(projectRoot);
-	const results: Array<{ name: string; ref: string; source: string; path: string; isImported: boolean }> = [];
+	const importConfigs = await getImportConfigs(projectRoot);
+	const sourceUrlMap = new Map(importConfigs.map((c) => [c.name, c.source]));
+
+	const results: Array<{
+		name: string;
+		ref: string;
+		source: string;
+		sourceUrl?: string;
+		path: string;
+		isImported: boolean;
+	}> = [];
 
 	for (const dir of directories) {
 		try {
@@ -300,6 +311,7 @@ export async function listAllTemplates(projectRoot: string): Promise<
 					name: entry.name,
 					ref,
 					source: dir.source,
+					sourceUrl: dir.isImported ? sourceUrlMap.get(dir.source) : undefined,
 					path: join(dir.path, entry.name),
 					isImported: dir.isImported,
 				});
@@ -321,12 +333,23 @@ export async function listAllDocs(projectRoot: string): Promise<
 		name: string; // Doc path without import prefix (e.g., "patterns/auth")
 		ref: string; // Full reference (e.g., "patterns/auth" or "shared/patterns/auth")
 		source: string; // "local" or import name
+		sourceUrl?: string; // Original source URL for imports
 		fullPath: string; // Full filesystem path
 		isImported: boolean;
 	}>
 > {
 	const directories = await getDocDirectories(projectRoot);
-	const results: Array<{ name: string; ref: string; source: string; fullPath: string; isImported: boolean }> = [];
+	const importConfigs = await getImportConfigs(projectRoot);
+	const sourceUrlMap = new Map(importConfigs.map((c) => [c.name, c.source]));
+
+	const results: Array<{
+		name: string;
+		ref: string;
+		source: string;
+		sourceUrl?: string;
+		fullPath: string;
+		isImported: boolean;
+	}> = [];
 
 	async function scanDir(baseDir: string, relativePath: string, source: string, isImported: boolean) {
 		const currentDir = join(baseDir, relativePath);
@@ -350,6 +373,7 @@ export async function listAllDocs(projectRoot: string): Promise<
 						name: docPath,
 						ref,
 						source,
+						sourceUrl: isImported ? sourceUrlMap.get(source) : undefined,
 						fullPath: join(currentDir, entry.name),
 						isImported,
 					});

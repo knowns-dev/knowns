@@ -18,7 +18,7 @@ import {
 import { notifyDocUpdate } from "@utils/notify-server";
 import matter from "gray-matter";
 import { z } from "zod";
-import { validateRefs } from "../../import";
+import { listAllDocs, validateRefs } from "../../import";
 import { errorResponse, successResponse } from "../utils";
 
 const DOCS_DIR = join(process.cwd(), ".knowns", "docs");
@@ -270,9 +270,10 @@ export async function handleListDocs(args: unknown) {
 	const input = listDocsSchema.parse(args);
 	await ensureDocsDir();
 
-	const mdFiles = await getAllMdFiles(DOCS_DIR);
+	const projectRoot = process.cwd();
+	const allDocs = await listAllDocs(projectRoot);
 
-	if (mdFiles.length === 0) {
+	if (allDocs.length === 0) {
 		return successResponse({
 			count: 0,
 			docs: [],
@@ -287,27 +288,37 @@ export async function handleListDocs(args: unknown) {
 		tags?: string[];
 		tokens: number;
 		updatedAt: string;
+		source: string;
+		sourceUrl?: string;
+		isImported: boolean;
 	}> = [];
 
-	for (const file of mdFiles) {
-		const fileContent = await readFile(join(DOCS_DIR, file), "utf-8");
-		const { data, content } = matter(fileContent);
-		const metadata = data as DocMetadata;
-		const stats = calculateDocStats(content);
+	for (const doc of allDocs) {
+		try {
+			const fileContent = await readFile(doc.fullPath, "utf-8");
+			const { data, content } = matter(fileContent);
+			const metadata = data as DocMetadata;
+			const stats = calculateDocStats(content);
 
-		// Filter by tag if specified
-		if (input.tag && !metadata.tags?.includes(input.tag)) {
-			continue;
+			// Filter by tag if specified
+			if (input.tag && !metadata.tags?.includes(input.tag)) {
+				continue;
+			}
+
+			docs.push({
+				path: doc.ref, // Use full ref path (includes import prefix if imported)
+				title: metadata.title || doc.name,
+				description: metadata.description,
+				tags: metadata.tags,
+				tokens: stats.estimatedTokens,
+				updatedAt: metadata.updatedAt,
+				source: doc.source,
+				sourceUrl: doc.sourceUrl,
+				isImported: doc.isImported,
+			});
+		} catch {
+			// Skip files that can't be read
 		}
-
-		docs.push({
-			path: file.replace(/\.md$/, ""),
-			title: metadata.title || file.replace(/\.md$/, ""),
-			description: metadata.description,
-			tags: metadata.tags,
-			tokens: stats.estimatedTokens,
-			updatedAt: metadata.updatedAt,
-		});
 	}
 
 	return successResponse({

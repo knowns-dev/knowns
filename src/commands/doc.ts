@@ -24,7 +24,7 @@ import { repairDoc, validateDoc } from "@utils/validate";
 import chalk from "chalk";
 import { Command } from "commander";
 import matter from "gray-matter";
-import { resolveDocWithContext, validateRefs } from "../import";
+import { listAllDocs, resolveDocWithContext, validateRefs } from "../import";
 
 const DOCS_DIR = join(process.cwd(), ".knowns", "docs");
 
@@ -220,162 +220,244 @@ const createCommand = new Command("create")
 
 // List command
 const listCommand = new Command("list")
-	.description("List all documentation files")
+	.description("List all documentation files (local + imported)")
 	.argument("[path]", "Filter by path (e.g., 'guides/' or 'patterns/')")
 	.option("--plain", "Plain text output for AI")
 	.option("-t, --tag <tag>", "Filter by tag")
-	.action(async (path: string | undefined, options: { plain?: boolean; tag?: string }) => {
-		try {
-			await ensureDocsDir();
+	.option("--local", "Show only local docs")
+	.option("--imported", "Show only imported docs")
+	.action(
+		async (
+			path: string | undefined,
+			options: { plain?: boolean; tag?: string; local?: boolean; imported?: boolean },
+		) => {
+			try {
+				await ensureDocsDir();
 
-			const mdFiles = await getAllMdFiles(DOCS_DIR);
+				const projectRoot = (await findProjectRoot()) || process.cwd();
+				const allDocs = await listAllDocs(projectRoot);
 
-			if (mdFiles.length === 0) {
-				if (options.plain) {
-					console.log("No documentation found");
-				} else {
-					console.log(chalk.yellow("No documentation files found."));
-					console.log(chalk.gray(`Create one with: knowns doc create "Title"`));
+				if (allDocs.length === 0) {
+					if (options.plain) {
+						console.log("No documentation found");
+					} else {
+						console.log(chalk.yellow("No documentation files found."));
+						console.log(chalk.gray(`Create one with: knowns doc create "Title"`));
+					}
+					return;
 				}
-				return;
-			}
 
-			const docs: Array<{
-				filename: string;
-				metadata: DocMetadata;
-				tokens: number;
-			}> = [];
-
-			for (const file of mdFiles) {
-				const fileContent = await readFile(join(DOCS_DIR, file), "utf-8");
-				const { data, content } = matter(fileContent);
-				const stats = calculateDocStats(content);
-				docs.push({
-					filename: file,
-					metadata: data as DocMetadata,
-					tokens: stats.estimatedTokens,
-				});
-			}
-
-			// Filter by path if specified
-			let filteredDocs = docs;
-			if (path) {
-				const normalizedPath = path.endsWith("/") ? path : `${path}/`;
-				filteredDocs = docs.filter((doc) => doc.filename.startsWith(normalizedPath));
-			}
-
-			// Filter by tag if specified
-			if (options.tag) {
-				filteredDocs = filteredDocs.filter((doc) => doc.metadata.tags?.includes(options.tag));
-			}
-
-			if (filteredDocs.length === 0) {
-				const filterMsg = path ? `path: ${path}` : options.tag ? `tag: ${options.tag}` : "";
-				console.log(
-					options.plain
-						? "No documentation found"
-						: chalk.yellow(`No documentation found${filterMsg ? ` with ${filterMsg}` : ""}`),
-				);
-				return;
-			}
-
-			if (options.plain) {
-				// Tree format for token efficiency (folder name once, files indented)
-				const folders = new Map<string, Array<{ name: string; title: string; tokens: number }>>();
-				const rootDocs: Array<{
+				// Load metadata for each doc
+				const docs: Array<{
+					ref: string;
 					name: string;
-					title: string;
+					source: string;
+					sourceUrl?: string;
+					isImported: boolean;
+					fullPath: string;
+					metadata: DocMetadata;
 					tokens: number;
 				}> = [];
 
-				for (const doc of filteredDocs) {
-					const parts = doc.filename.split("/");
-					if (parts.length === 1) {
-						rootDocs.push({
-							name: parts[0].replace(/\.md$/, ""),
-							title: doc.metadata.title,
-							tokens: doc.tokens,
+				for (const doc of allDocs) {
+					try {
+						const fileContent = await readFile(doc.fullPath, "utf-8");
+						const { data, content } = matter(fileContent);
+						const stats = calculateDocStats(content);
+						docs.push({
+							ref: doc.ref,
+							name: doc.name,
+							source: doc.source,
+							sourceUrl: doc.sourceUrl,
+							isImported: doc.isImported,
+							fullPath: doc.fullPath,
+							metadata: data as DocMetadata,
+							tokens: stats.estimatedTokens,
 						});
-					} else {
-						const folder = parts.slice(0, -1).join("/");
-						const name = parts[parts.length - 1].replace(/\.md$/, "");
-						if (!folders.has(folder)) {
-							folders.set(folder, []);
-						}
-						folders.get(folder)?.push({ name, title: doc.metadata.title, tokens: doc.tokens });
+					} catch {
+						// Skip files that can't be read
 					}
 				}
 
-				const sortedFolders = Array.from(folders.keys()).sort();
-				for (const folder of sortedFolders) {
-					console.log(`${folder}/`);
-					const docs = folders.get(folder)?.sort((a, b) => a.name.localeCompare(b.name));
-					for (const doc of docs) {
-						console.log(`  ${doc.name} - ${doc.title} (~${doc.tokens} tokens)`);
-					}
-				}
-				if (rootDocs.length > 0) {
-					rootDocs.sort((a, b) => a.name.localeCompare(b.name));
-					for (const doc of rootDocs) {
-						console.log(`${doc.name} - ${doc.title} (~${doc.tokens} tokens)`);
-					}
-				}
-			} else {
-				// List format for humans - grouped by folder
-				const folders = new Map<string, typeof filteredDocs>();
-				const rootDocs: typeof filteredDocs = [];
-
-				for (const doc of filteredDocs) {
-					const parts = doc.filename.split("/");
-					if (parts.length === 1) {
-						rootDocs.push(doc);
-					} else {
-						const folder = parts.slice(0, -1).join("/");
-						if (!folders.has(folder)) {
-							folders.set(folder, []);
-						}
-						folders.get(folder)?.push(doc);
-					}
+				// Filter by source
+				let filteredDocs = docs;
+				if (options.local) {
+					filteredDocs = docs.filter((doc) => !doc.isImported);
+				} else if (options.imported) {
+					filteredDocs = docs.filter((doc) => doc.isImported);
 				}
 
-				console.log(chalk.bold(`\nDocumentation (${filteredDocs.length})\n`));
-
-				const sortedFolders = Array.from(folders.keys()).sort();
-				for (const folder of sortedFolders) {
-					console.log(chalk.cyan.bold(`${folder}/`));
-					const docs = folders.get(folder)?.sort((a, b) => a.metadata.title.localeCompare(b.metadata.title));
-					for (const doc of docs) {
-						console.log(chalk.white(`  ${doc.metadata.title}`));
-						if (doc.metadata.description) {
-							console.log(chalk.gray(`    ${doc.metadata.description}`));
-						}
-						if (doc.metadata.tags && doc.metadata.tags.length > 0) {
-							console.log(chalk.gray(`    Tags: ${doc.metadata.tags.join(", ")}`));
-						}
-					}
-					console.log();
+				// Filter by path if specified
+				if (path) {
+					const normalizedPath = path.endsWith("/") ? path : `${path}/`;
+					filteredDocs = filteredDocs.filter(
+						(doc) => doc.ref.startsWith(normalizedPath) || doc.name.startsWith(normalizedPath),
+					);
 				}
 
-				// Root docs
-				if (rootDocs.length > 0) {
-					rootDocs.sort((a, b) => a.metadata.title.localeCompare(b.metadata.title));
-					for (const doc of rootDocs) {
-						console.log(chalk.white(`${doc.metadata.title}`));
-						if (doc.metadata.description) {
-							console.log(chalk.gray(`  ${doc.metadata.description}`));
+				// Filter by tag if specified
+				if (options.tag) {
+					filteredDocs = filteredDocs.filter((doc) => doc.metadata.tags?.includes(options.tag));
+				}
+
+				if (filteredDocs.length === 0) {
+					const filterMsg = path ? `path: ${path}` : options.tag ? `tag: ${options.tag}` : "";
+					console.log(
+						options.plain
+							? "No documentation found"
+							: chalk.yellow(`No documentation found${filterMsg ? ` with ${filterMsg}` : ""}`),
+					);
+					return;
+				}
+
+				if (options.plain) {
+					// Group by source first, then by folder
+					const sources = new Map<string, typeof filteredDocs>();
+					for (const doc of filteredDocs) {
+						const sourceKey = doc.isImported ? `[${doc.source}]` : "[local]";
+						if (!sources.has(sourceKey)) {
+							sources.set(sourceKey, []);
 						}
-						if (doc.metadata.tags && doc.metadata.tags.length > 0) {
-							console.log(chalk.gray(`  Tags: ${doc.metadata.tags.join(", ")}`));
+						sources.get(sourceKey)?.push(doc);
+					}
+
+					// Sort: local first, then imports alphabetically
+					const sortedSources = Array.from(sources.keys()).sort((a, b) => {
+						if (a === "[local]") return -1;
+						if (b === "[local]") return 1;
+						return a.localeCompare(b);
+					});
+
+					for (const sourceKey of sortedSources) {
+						const sourceDocs = sources.get(sourceKey) || [];
+						// Get sourceUrl from first doc in this source group
+						const sourceUrl = sourceDocs[0]?.sourceUrl;
+						if (sourceUrl) {
+							console.log(`${sourceKey} (${sourceUrl})`);
+						} else {
+							console.log(`${sourceKey}`);
+						}
+
+						// Group by folder within source
+						const folders = new Map<string, Array<{ name: string; title: string; tokens: number }>>();
+						const rootDocs: Array<{ name: string; title: string; tokens: number }> = [];
+
+						for (const doc of sourceDocs) {
+							const parts = doc.name.split("/");
+							if (parts.length === 1) {
+								rootDocs.push({
+									name: parts[0],
+									title: doc.metadata.title || parts[0],
+									tokens: doc.tokens,
+								});
+							} else {
+								const folder = parts.slice(0, -1).join("/");
+								const name = parts[parts.length - 1];
+								if (!folders.has(folder)) {
+									folders.set(folder, []);
+								}
+								folders.get(folder)?.push({ name, title: doc.metadata.title || name, tokens: doc.tokens });
+							}
+						}
+
+						const sortedFolders = Array.from(folders.keys()).sort();
+						for (const folder of sortedFolders) {
+							console.log(`  ${folder}/`);
+							const folderDocs = folders.get(folder)?.sort((a, b) => a.name.localeCompare(b.name));
+							for (const doc of folderDocs || []) {
+								console.log(`    ${doc.name} - ${doc.title} (~${doc.tokens} tokens)`);
+							}
+						}
+						if (rootDocs.length > 0) {
+							rootDocs.sort((a, b) => a.name.localeCompare(b.name));
+							for (const doc of rootDocs) {
+								console.log(`  ${doc.name} - ${doc.title} (~${doc.tokens} tokens)`);
+							}
+						}
+					}
+				} else {
+					// Human-friendly format grouped by source
+					const sources = new Map<string, typeof filteredDocs>();
+					for (const doc of filteredDocs) {
+						const sourceKey = doc.isImported ? doc.source : "local";
+						if (!sources.has(sourceKey)) {
+							sources.set(sourceKey, []);
+						}
+						sources.get(sourceKey)?.push(doc);
+					}
+
+					// Sort: local first, then imports alphabetically
+					const sortedSources = Array.from(sources.keys()).sort((a, b) => {
+						if (a === "local") return -1;
+						if (b === "local") return 1;
+						return a.localeCompare(b);
+					});
+
+					console.log(chalk.bold(`\nDocumentation (${filteredDocs.length})\n`));
+
+					for (const sourceKey of sortedSources) {
+						const sourceDocs = sources.get(sourceKey) || [];
+						const sourceUrl = sourceDocs[0]?.sourceUrl;
+						const sourceLabel = sourceKey === "local" ? "Local" : `Import: ${sourceKey}`;
+						if (sourceUrl) {
+							console.log(chalk.magenta.bold(`[${sourceLabel}]`) + chalk.gray(` ${sourceUrl}`));
+						} else {
+							console.log(chalk.magenta.bold(`[${sourceLabel}]`));
+						}
+
+						// Group by folder within source
+						const folders = new Map<string, typeof sourceDocs>();
+						const rootDocs: typeof sourceDocs = [];
+
+						for (const doc of sourceDocs) {
+							const parts = doc.name.split("/");
+							if (parts.length === 1) {
+								rootDocs.push(doc);
+							} else {
+								const folder = parts.slice(0, -1).join("/");
+								if (!folders.has(folder)) {
+									folders.set(folder, []);
+								}
+								folders.get(folder)?.push(doc);
+							}
+						}
+
+						const sortedFolders = Array.from(folders.keys()).sort();
+						for (const folder of sortedFolders) {
+							console.log(chalk.cyan.bold(`  ${folder}/`));
+							const folderDocs = folders
+								.get(folder)
+								?.sort((a, b) => (a.metadata.title || "").localeCompare(b.metadata.title || ""));
+							for (const doc of folderDocs || []) {
+								console.log(chalk.white(`    ${doc.metadata.title || doc.name}`));
+								if (doc.metadata.description) {
+									console.log(chalk.gray(`      ${doc.metadata.description}`));
+								}
+							}
+						}
+
+						// Root docs
+						if (rootDocs.length > 0) {
+							rootDocs.sort((a, b) => (a.metadata.title || "").localeCompare(b.metadata.title || ""));
+							for (const doc of rootDocs) {
+								console.log(chalk.white(`  ${doc.metadata.title || doc.name}`));
+								if (doc.metadata.description) {
+									console.log(chalk.gray(`    ${doc.metadata.description}`));
+								}
+							}
 						}
 						console.log();
 					}
 				}
+			} catch (error) {
+				console.error(
+					chalk.red("Error listing documentation:"),
+					error instanceof Error ? error.message : String(error),
+				);
+				process.exit(1);
 			}
-		} catch (error) {
-			console.error(chalk.red("Error listing documentation:"), error instanceof Error ? error.message : String(error));
-			process.exit(1);
-		}
-	});
+		},
+	);
 
 // View command
 const viewCommand = new Command("view")

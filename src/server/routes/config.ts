@@ -5,6 +5,7 @@
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ImportConfig } from "@import/models";
 import { type Request, type Response, Router } from "express";
 import type { RouteContext } from "../types";
 
@@ -33,11 +34,12 @@ export function createConfigRoutes(ctx: RouteContext): Router {
 			const data = JSON.parse(content);
 			const settings = data.settings || {};
 
-			// Merge root-level properties (name, id, createdAt) with settings
+			// Merge root-level properties (name, id, createdAt, imports) with settings
 			const config = {
 				name: data.name,
 				id: data.id,
 				createdAt: data.createdAt,
+				imports: data.imports,
 				...settings,
 			};
 
@@ -58,20 +60,29 @@ export function createConfigRoutes(ctx: RouteContext): Router {
 		try {
 			const config = req.body;
 
-			// Read existing file to preserve project metadata
-			let existingData: { name?: string; id?: string; createdAt?: string; settings?: Record<string, unknown> } = {};
+			// Read existing file to preserve project metadata and imports
+			let existingData: {
+				name?: string;
+				id?: string;
+				createdAt?: string;
+				imports?: ImportConfig[];
+				settings?: Record<string, unknown>;
+			} = {};
 			if (existsSync(configPath)) {
 				const content = await readFile(configPath, "utf-8");
 				existingData = JSON.parse(content);
 			}
 
-			// Extract name if provided, put it at top level
-			const { name, ...settings } = config;
+			// Extract root-level fields from request, put rest into settings
+			const { name, imports, id, createdAt, ...settings } = config;
 
-			// Merge: update name if provided, update settings
+			// Merge: update root-level fields if provided, update settings
 			const merged = {
 				...existingData,
 				name: name || existingData.name,
+				id: id || existingData.id,
+				createdAt: createdAt || existingData.createdAt,
+				imports: imports !== undefined ? imports : existingData.imports,
 				settings: settings,
 			};
 
