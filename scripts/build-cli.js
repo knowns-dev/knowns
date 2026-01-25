@@ -36,10 +36,10 @@ const stripShebangPlugin = {
 const shebang = "#!/usr/bin/env node\n";
 
 // Banner to create require for ESM (shebang added after build)
-const esmBanner = `import { createRequire } from 'module';
+const esmBanner = `import { createRequire as __createRequire } from 'module';
 import { fileURLToPath as __fileURLToPath } from 'url';
 import { dirname as __dirname_fn } from 'path';
-const require = createRequire(import.meta.url);
+const require = __createRequire(import.meta.url);
 const __filename = __fileURLToPath(import.meta.url);
 const __dirname = __dirname_fn(__filename);
 `;
