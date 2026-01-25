@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import MDEditor from "@uiw/react-md-editor";
-import { ClipboardCheck, FileText } from "lucide-react";
+import { ClipboardCheck, FileText, AlertTriangle } from "lucide-react";
 import { useTheme } from "../../App";
 import { getTask, getDoc } from "../../api/client";
 
@@ -72,11 +72,18 @@ const STATUS_STYLES: Record<string, string> = {
 const taskBadgeClass =
   "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-sm font-medium transition-colors cursor-pointer select-none border border-green-500/30 bg-green-500/10 text-green-700 hover:bg-green-500/20 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-400 dark:hover:bg-green-500/20";
 
+const taskBadgeBrokenClass =
+  "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-sm font-medium transition-colors cursor-pointer select-none border border-red-500/30 bg-red-500/10 text-red-700 hover:bg-red-500/20 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20";
+
 const docBadgeClass =
   "inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-sm font-medium transition-colors cursor-pointer select-none border border-blue-500/30 bg-blue-500/10 text-blue-700 hover:bg-blue-500/20 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-400 dark:hover:bg-blue-500/20";
 
+const docBadgeBrokenClass =
+  "inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-sm font-medium transition-colors cursor-pointer select-none border border-red-500/30 bg-red-500/10 text-red-700 hover:bg-red-500/20 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20";
+
 /**
  * Task mention badge that fetches and displays the task title and status
+ * Shows red warning style when task is not found
  */
 function TaskMentionBadge({
   taskId,
@@ -88,12 +95,11 @@ function TaskMentionBadge({
   const [title, setTitle] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
 
   const taskNumber = taskId.replace("task-", "");
 
   const hashHref = `#/kanban/${taskNumber}`;
-
-  // Extract task number from taskId (e.g., "task-33" -> "33")
 
   useEffect(() => {
     let cancelled = false;
@@ -104,6 +110,7 @@ function TaskMentionBadge({
         if (!cancelled) {
           setTitle(task.title);
           setStatus(task.status);
+          setNotFound(false);
           setLoading(false);
         }
       })
@@ -111,6 +118,7 @@ function TaskMentionBadge({
         if (!cancelled) {
           setTitle(null);
           setStatus(null);
+          setNotFound(true);
           setLoading(false);
         }
       });
@@ -123,6 +131,8 @@ function TaskMentionBadge({
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    // Don't navigate if task not found
+    if (notFound) return;
     if (onTaskLinkClick) {
       onTaskLinkClick(taskNumber);
     } else {
@@ -134,14 +144,22 @@ function TaskMentionBadge({
     ? STATUS_STYLES[status] || STATUS_STYLES.todo
     : null;
 
+  // Use red styling for broken refs
+  const badgeClass = notFound ? taskBadgeBrokenClass : taskBadgeClass;
+
   return (
-    <a
-      href={hashHref}
-      className={taskBadgeClass}
+    <span
+      role={notFound ? undefined : "link"}
+      className={`${badgeClass} ${notFound ? "cursor-not-allowed" : ""}`}
       data-task-id={taskNumber}
       onClick={handleClick}
+      title={notFound ? `Task not found: ${taskNumber}` : undefined}
     >
-      <ClipboardCheck className="w-3.5 h-3.5 shrink-0" />
+      {notFound ? (
+        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+      ) : (
+        <ClipboardCheck className="w-3.5 h-3.5 shrink-0" />
+      )}
       {loading ? (
         <span className="opacity-70">#{taskNumber}</span>
       ) : title ? (
@@ -156,12 +174,13 @@ function TaskMentionBadge({
       ) : (
         <span>#{taskNumber}</span>
       )}
-    </a>
+    </span>
   );
 }
 
 /**
  * Doc mention badge that fetches and displays the doc title
+ * Shows red warning style when doc is not found
  */
 function DocMentionBadge({
   docPath,
@@ -172,6 +191,7 @@ function DocMentionBadge({
 }) {
   const [title, setTitle] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
 
   const hashHref = `#/docs/${docPath}`;
 
@@ -182,14 +202,17 @@ function DocMentionBadge({
       .then((doc) => {
         if (!cancelled && doc) {
           setTitle(doc.title || null);
+          setNotFound(false);
           setLoading(false);
         } else if (!cancelled) {
+          setNotFound(true);
           setLoading(false);
         }
       })
       .catch(() => {
         if (!cancelled) {
           setTitle(null);
+          setNotFound(true);
           setLoading(false);
         }
       });
@@ -202,6 +225,8 @@ function DocMentionBadge({
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    // Don't navigate if doc not found
+    if (notFound) return;
     if (onDocLinkClick) {
       onDocLinkClick(docPath);
     } else {
@@ -212,14 +237,22 @@ function DocMentionBadge({
   // Display filename without extension for shorter display
   const shortPath = docPath.replace(/\.md$/, "").split("/").pop() || docPath;
 
+  // Use red styling for broken refs
+  const badgeClass = notFound ? docBadgeBrokenClass : docBadgeClass;
+
   return (
-    <a
-      href={hashHref}
-      className={docBadgeClass}
+    <span
+      role={notFound ? undefined : "link"}
+      className={`${badgeClass} ${notFound ? "cursor-not-allowed" : ""}`}
       data-doc-path={docPath}
       onClick={handleClick}
+      title={notFound ? `Document not found: ${docPath}` : undefined}
     >
-      <FileText className="w-3.5 h-3.5 shrink-0" />
+      {notFound ? (
+        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+      ) : (
+        <FileText className="w-3.5 h-3.5 shrink-0" />
+      )}
       {loading ? (
         <span className="opacity-70">{shortPath}</span>
       ) : title ? (
@@ -227,7 +260,7 @@ function DocMentionBadge({
       ) : (
         <span className="max-w-[200px] truncate">{shortPath}</span>
       )}
-    </a>
+    </span>
   );
 }
 

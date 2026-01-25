@@ -2,6 +2,8 @@ import {
 	LayoutDashboard,
 	ListTodo,
 	FileText,
+	FileCode,
+	Download,
 	Settings,
 	Search,
 } from "lucide-react";
@@ -45,6 +47,18 @@ const menuItems = [
 		label: "Docs",
 		icon: FileText,
 		href: "#/docs",
+	},
+	{
+		id: "templates",
+		label: "Templates",
+		icon: FileCode,
+		href: "#/templates",
+	},
+	{
+		id: "imports",
+		label: "Imports",
+		icon: Download,
+		href: "#/imports",
 	},
 ];
 

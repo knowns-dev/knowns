@@ -7,43 +7,85 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type Request, type Response, Router } from "express";
 import matter from "gray-matter";
+import { listAllDocs, resolveDocWithContext } from "../../import";
 import type { DocResult, RouteContext } from "../types";
 import { findMarkdownFiles } from "../utils/markdown";
+
+/**
+ * Transform @doc/xxx refs to include import prefix for imported docs
+ */
+function transformRefs(content: string, source: string, isImported: boolean): string {
+	if (!isImported || !source) return content;
+
+	// Match @doc/path but not already prefixed paths
+	const docRefPattern = /@doc\/(?![\w-]+\/[\w-]+\/)([\w\-\/]+)/g;
+	return content.replace(docRefPattern, `@doc/${source}/$1`);
+}
 
 export function createDocRoutes(ctx: RouteContext): Router {
 	const router = Router();
 	const { store, broadcast } = ctx;
 	const docsDir = join(store.projectRoot, ".knowns", "docs");
 
-	// GET /api/docs - List all docs
+	// GET /api/docs - List all docs (local + imported)
 	router.get("/", async (_req: Request, res: Response) => {
 		try {
-			if (!existsSync(docsDir)) {
-				res.json({ docs: [] });
-				return;
+			const docs: DocResult[] = [];
+
+			// Get local docs
+			if (existsSync(docsDir)) {
+				const mdFiles = await findMarkdownFiles(docsDir, docsDir);
+
+				const localDocs = await Promise.all(
+					mdFiles.map(async (relativePath) => {
+						const fullPath = join(docsDir, relativePath);
+						const content = await readFile(fullPath, "utf-8");
+						const { data, content: docContent } = matter(content);
+
+						const pathParts = relativePath.split("/");
+						const filename = pathParts[pathParts.length - 1];
+						const folder = pathParts.length > 1 ? pathParts.slice(0, -1).join("/") : "";
+
+						return {
+							filename,
+							path: relativePath,
+							folder,
+							metadata: data,
+							content: docContent,
+							isImported: false,
+							source: "local",
+						} as DocResult;
+					}),
+				);
+				docs.push(...localDocs);
 			}
 
-			const mdFiles = await findMarkdownFiles(docsDir, docsDir);
+			// Get imported docs
+			const importedDocs = await listAllDocs(store.projectRoot);
+			for (const imported of importedDocs) {
+				if (!imported.isImported) continue;
 
-			const docs: DocResult[] = await Promise.all(
-				mdFiles.map(async (relativePath) => {
-					const fullPath = join(docsDir, relativePath);
-					const content = await readFile(fullPath, "utf-8");
+				try {
+					const content = await readFile(imported.fullPath, "utf-8");
 					const { data, content: docContent } = matter(content);
 
-					const pathParts = relativePath.split("/");
-					const filename = pathParts[pathParts.length - 1];
+					const pathParts = imported.name.split("/");
+					const filename = `${pathParts[pathParts.length - 1]}.md`;
 					const folder = pathParts.length > 1 ? pathParts.slice(0, -1).join("/") : "";
 
-					return {
+					docs.push({
 						filename,
-						path: relativePath,
+						path: imported.ref, // Use full ref path (import-name/path)
 						folder,
 						metadata: data,
-						content: docContent,
-					};
-				}),
-			);
+						content: transformRefs(docContent, imported.source, true),
+						isImported: true,
+						source: imported.source,
+					} as DocResult);
+				} catch {
+					// Skip files that can't be read
+				}
+			}
 
 			res.json({ docs });
 		} catch (error) {
@@ -52,10 +94,41 @@ export function createDocRoutes(ctx: RouteContext): Router {
 		}
 	});
 
-	// GET /api/docs/:path - Get single doc by path (supports nested paths)
+	// GET /api/docs/:path - Get single doc by path (supports nested paths and imports)
 	router.get("/{*path}", async (req: Request, res: Response) => {
 		try {
 			const docPath = Array.isArray(req.params.path) ? req.params.path.join("/") : req.params.path;
+
+			// Try to resolve using import resolver first (imports → local)
+			const resolved = await resolveDocWithContext(store.projectRoot, docPath);
+
+			if (resolved) {
+				// Found via resolver (could be imported or local)
+				const content = await readFile(resolved.path, "utf-8");
+				const { data, content: docContent } = matter(content);
+
+				const pathParts = docPath.split("/");
+				const filename = pathParts[pathParts.length - 1];
+				const folder = pathParts.length > 1 ? pathParts.slice(0, -1).join("/") : "";
+
+				const doc = {
+					filename: filename.endsWith(".md") ? filename : `${filename}.md`,
+					path: docPath,
+					folder,
+					title: data.title || filename.replace(/\.md$/, ""),
+					description: data.description || "",
+					tags: data.tags || [],
+					metadata: data,
+					content: transformRefs(docContent, resolved.source, resolved.isImported),
+					isImported: resolved.isImported,
+					source: resolved.source,
+				};
+
+				res.json(doc);
+				return;
+			}
+
+			// Fallback: try local docs directory directly
 			const fullPath = join(docsDir, docPath);
 
 			// Security: ensure path doesn't escape docs directory
@@ -85,6 +158,8 @@ export function createDocRoutes(ctx: RouteContext): Router {
 				tags: data.tags || [],
 				metadata: data,
 				content: docContent,
+				isImported: false,
+				source: "local",
 			};
 
 			res.json(doc);

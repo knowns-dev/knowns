@@ -10,6 +10,8 @@ import {
 	Check,
 	X,
 	Copy,
+	Download,
+	Package,
 } from "lucide-react";
 import { BlockNoteEditor, MDRender } from "../components/editor";
 import { ScrollArea } from "../components/ui/scroll-area";
@@ -33,6 +35,8 @@ interface Doc {
 	folder: string;
 	metadata: DocMetadata;
 	content: string;
+	isImported?: boolean;
+	source?: string;
 }
 
 
@@ -50,7 +54,7 @@ export default function DocsPage() {
 	const [newDocFolder, setNewDocFolder] = useState("");
 	const [newDocContent, setNewDocContent] = useState("");
 	const [creating, setCreating] = useState(false);
-	const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(["(root)"]));
+	const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(["(root)", "__local__", "__imports__"]));
 	const [pathCopied, setPathCopied] = useState(false);
 	const markdownPreviewRef = useRef<HTMLDivElement>(null);
 
@@ -301,28 +305,36 @@ export default function DocsPage() {
 		path: string;
 		docs: Doc[];
 		children: Map<string, FolderNode>;
+		isImportRoot?: boolean;
 	}
 
-	const buildFolderTree = (): FolderNode => {
+	const buildFolderTreeFromDocs = (docList: Doc[], pathPrefix = ""): FolderNode => {
 		const root: FolderNode = {
 			name: "(root)",
-			path: "",
+			path: pathPrefix,
 			docs: [],
 			children: new Map(),
 		};
 
-		for (const doc of docs) {
-			if (!doc.folder) {
-				// Root level doc
+		for (const doc of docList) {
+			// For imported docs, extract folder from the path after import name
+			let folder = doc.folder;
+			if (doc.isImported && doc.source) {
+				// Path is like "import-name/patterns/xxx", folder should be "patterns"
+				const pathWithoutImport = doc.path.replace(`${doc.source}/`, "");
+				const parts = pathWithoutImport.split("/");
+				folder = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
+			}
+
+			if (!folder) {
 				root.docs.push(doc);
 			} else {
-				// Nested doc
-				const parts = doc.folder.split("/");
+				const parts = folder.split("/");
 				let currentNode = root;
 
 				for (let i = 0; i < parts.length; i++) {
 					const part = parts[i];
-					const pathSoFar = parts.slice(0, i + 1).join("/");
+					const pathSoFar = pathPrefix ? `${pathPrefix}/${parts.slice(0, i + 1).join("/")}` : parts.slice(0, i + 1).join("/");
 
 					if (!currentNode.children.has(part)) {
 						currentNode.children.set(part, {
@@ -342,6 +354,18 @@ export default function DocsPage() {
 
 		return root;
 	};
+
+	// Separate local and imported docs
+	const localDocs = docs.filter(d => !d.isImported);
+	const importedDocs = docs.filter(d => d.isImported);
+
+	// Group imported docs by source
+	const importsBySource = importedDocs.reduce((acc, doc) => {
+		const source = doc.source || "unknown";
+		if (!acc[source]) acc[source] = [];
+		acc[source].push(doc);
+		return acc;
+	}, {} as Record<string, Doc[]>);
 
 	// Count total docs in folder and subfolders
 	const countDocs = (node: FolderNode): number => {
@@ -406,9 +430,16 @@ export default function DocsPage() {
 						}`}
 						style={{ paddingLeft: `${(level + 1) * 16}px` }}
 					>
-						<FileText className="w-5 h-5" />
+						<FileText className={`w-5 h-5 ${doc.isImported ? "text-blue-500" : ""}`} />
 						<div className="flex-1 min-w-0">
-							<div className="text-sm font-medium truncate">{doc.metadata.title}</div>
+							<div className="flex items-center gap-1.5">
+								<span className="text-sm font-medium truncate">{doc.metadata.title}</span>
+								{doc.isImported && (
+									<span className="shrink-0 px-1 py-0.5 text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 rounded">
+										imported
+									</span>
+								)}
+							</div>
 							{doc.metadata.description && (
 								<div className="text-xs text-muted-foreground truncate">
 									{doc.metadata.description}
@@ -453,7 +484,62 @@ export default function DocsPage() {
 							<h2 className="font-semibold">All Documents ({docs.length})</h2>
 						</div>
 						<ScrollArea className="flex-1">
-							{renderFolderNode(buildFolderTree())}
+							{/* Local Docs Section */}
+							{localDocs.length > 0 && (
+								<div>
+									<button
+										type="button"
+										onClick={() => toggleFolder("__local__")}
+										className="w-full flex items-center gap-2 px-3 py-2 hover:bg-accent text-foreground transition-colors bg-muted/50"
+									>
+										{expandedFolders.has("__local__") ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+										<Folder className="w-4 h-4" />
+										<span className="text-sm font-semibold">Local</span>
+										<span className="text-xs text-muted-foreground">({localDocs.length})</span>
+									</button>
+									{expandedFolders.has("__local__") && renderFolderNode(buildFolderTreeFromDocs(localDocs))}
+								</div>
+							)}
+
+							{/* Imported Docs Section */}
+							{Object.keys(importsBySource).length > 0 && (
+								<div>
+									<button
+										type="button"
+										onClick={() => toggleFolder("__imports__")}
+										className="w-full flex items-center gap-2 px-3 py-2 hover:bg-accent text-foreground transition-colors bg-blue-50 dark:bg-blue-950/30"
+									>
+										{expandedFolders.has("__imports__") ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+										<Download className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+										<span className="text-sm font-semibold text-blue-700 dark:text-blue-300">Imports</span>
+										<span className="text-xs text-blue-600 dark:text-blue-400">({importedDocs.length})</span>
+									</button>
+									{expandedFolders.has("__imports__") && (
+										<div>
+											{Object.entries(importsBySource).map(([source, sourceDocs]) => (
+												<div key={source}>
+													<button
+														type="button"
+														onClick={() => toggleFolder(`__import_${source}__`)}
+														className="w-full flex items-center gap-2 px-3 py-2 hover:bg-accent text-foreground transition-colors"
+														style={{ paddingLeft: "16px" }}
+													>
+														{expandedFolders.has(`__import_${source}__`) ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+														<Package className="w-4 h-4 text-blue-500" />
+														<span className="text-sm font-medium truncate">{source}</span>
+														<span className="text-xs text-muted-foreground">({sourceDocs.length})</span>
+													</button>
+													{expandedFolders.has(`__import_${source}__`) && (
+														<div style={{ paddingLeft: "16px" }}>
+															{renderFolderNode(buildFolderTreeFromDocs(sourceDocs, `__import_${source}__`), 1)}
+														</div>
+													)}
+												</div>
+											))}
+										</div>
+									)}
+								</div>
+							)}
 						</ScrollArea>
 					</div>
 
@@ -475,9 +561,21 @@ export default function DocsPage() {
 							{/* Header */}
 							<div className="p-6 border-b flex items-start justify-between shrink-0">
 								<div className="flex-1">
-									<h2 className="text-2xl font-bold mb-2">
-										{selectedDoc.metadata.title}
-									</h2>
+									<div className="flex items-center gap-2 mb-2">
+										<h2 className="text-2xl font-bold">
+											{selectedDoc.metadata.title}
+										</h2>
+										{selectedDoc.isImported && (
+											<span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded">
+												Imported
+											</span>
+										)}
+									</div>
+									{selectedDoc.isImported && selectedDoc.source && (
+										<p className="text-sm text-blue-600 dark:text-blue-400 mb-2">
+											From: {selectedDoc.source}
+										</p>
+									)}
 									{selectedDoc.metadata.description && (
 										<p className="text-muted-foreground mb-2">{selectedDoc.metadata.description}</p>
 									)}
@@ -502,7 +600,11 @@ export default function DocsPage() {
 								{/* Edit/Save/Cancel Buttons */}
 								<div className="flex gap-2 ml-4">
 									{!isEditing ? (
-										<Button onClick={handleEdit}>
+										<Button
+											onClick={handleEdit}
+											disabled={selectedDoc.isImported}
+											title={selectedDoc.isImported ? "Imported docs are read-only" : "Edit document"}
+										>
 											<Pencil className="w-4 h-4 mr-2" />
 											Edit
 										</Button>

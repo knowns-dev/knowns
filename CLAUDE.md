@@ -1,7 +1,8 @@
 <!-- KNOWNS GUIDELINES START -->
-# Core Rules (MCP)
 
-You MUST follow these rules. If you cannot follow any rule, stop and ask for guidance before proceeding.
+# Core Rules
+
+> These rules are NON-NEGOTIABLE. Violating them leads to data corruption and lost work.
 
 ---
 
@@ -9,64 +10,48 @@ You MUST follow these rules. If you cannot follow any rule, stop and ask for gui
 
 **If you want to change ANYTHING in a task or doc, use MCP tools. NEVER edit .md files directly.**
 
-Why? Direct file editing breaks metadata synchronization, Git tracking, and relationships.
-
 ---
 
-## Core Principles
+## Quick Reference
 
-| Rule | Description |
-|------|-------------|
+| Rule               | Description                                                     |
+| ------------------ | --------------------------------------------------------------- |
 | **MCP Tools Only** | Use MCP tools for ALL operations. NEVER edit .md files directly |
-| **Docs First** | Read project docs BEFORE planning or coding |
-| **Time Tracking** | Always start timer when taking task, stop when done |
-| **Plan Approval** | Share plan with user, WAIT for approval before coding |
-| **Check AC After Work** | Only mark acceptance criteria done AFTER completing the work |
+| **Docs First**     | Read project docs BEFORE planning or coding                     |
+| **Time Tracking**  | Start timer when taking task, stop when done                    |
+| **Plan Approval**  | Share plan with user, WAIT for approval before coding           |
+| **Check AC After** | Only mark criteria done AFTER completing work                   |
 
 ---
 
 ## Reference System
 
-| Context | Task Format | Doc Format |
-|---------|-------------|------------|
-| **Writing** (input) | `@task-<id>` | `@doc/<path>` |
-| **Reading** (output) | `@.knowns/tasks/task-<id>` | `@.knowns/docs/<path>.md` |
+Tasks, docs, and templates can reference each other:
 
-Follow refs recursively until complete context gathered.
+| Type     | Writing (Input)    | Reading (Output)            |
+| -------- | ------------------ | --------------------------- |
+| Task     | `@task-<id>`       | `@.knowns/tasks/task-<id>`  |
+| Doc      | `@doc/<path>`      | `@.knowns/docs/<path>.md`   |
+| Template | `@template/<name>` | `@.knowns/templates/<name>` |
+
+**Always follow refs recursively** to gather complete context before planning.
 
 ---
 
-## Task IDs
+## Subtasks
 
-| Format | Example | Notes |
-|--------|---------|-------|
-| Sequential | `48`, `49` | Legacy numeric |
-| Hierarchical | `48.1`, `48.2` | Legacy subtasks |
-| Random | `qkh5ne` | Current (6-char) |
+```json
+mcp__knowns__create_task({
+  "title": "Subtask title",
+  "parent": "parent-task-id"
+})
+```
 
 **CRITICAL:** Use raw ID (string) for all MCP tool calls.
 
 ---
 
-## Status & Priority
-
-| Status | When |
-|--------|------|
-| `todo` | Not started (default) |
-| `in-progress` | Currently working |
-| `in-review` | PR submitted |
-| `blocked` | Waiting on dependency |
-| `done` | All criteria met |
-
-| Priority | Level |
-|----------|-------|
-| `low` | Nice-to-have |
-| `medium` | Normal (default) |
-| `high` | Urgent |
-
----
-
-# Context Optimization (MCP)
+# Context Optimization
 
 Optimize your context usage to work more efficiently within token limits.
 
@@ -78,11 +63,10 @@ Optimize your context usage to work more efficiently within token limits.
 // DON'T: Read all docs hoping to find info
 mcp__knowns__get_doc({ "path": "doc1" })
 mcp__knowns__get_doc({ "path": "doc2" })
-mcp__knowns__get_doc({ "path": "doc3" })
 
 // DO: Search first, then read only relevant docs
 mcp__knowns__search_docs({ "query": "authentication" })
-mcp__knowns__get_doc({ "path": "security-patterns" })  // Only the relevant one
+mcp__knowns__get_doc({ "path": "security-patterns" })
 ```
 
 ---
@@ -90,7 +74,7 @@ mcp__knowns__get_doc({ "path": "security-patterns" })  // Only the relevant one
 ## Use Filters
 
 ```json
-// DON'T: List all tasks then filter manually
+// DON'T: List all then filter manually
 mcp__knowns__list_tasks({})
 
 // DO: Use filters in the query
@@ -102,27 +86,27 @@ mcp__knowns__list_tasks({
 
 ---
 
-## Reading Documents (smart)
+## Reading Documents
 
-**ALWAYS use `smart: true` when reading documents.** It automatically handles both small and large docs:
+**ALWAYS use `smart: true`** - auto-handles both small and large docs:
 
 ```json
-// DON'T: Read without smart (may get truncated large doc)
+// DON'T: Read without smart
 mcp__knowns__get_doc({ "path": "readme" })
 
 // DO: Always use smart
 mcp__knowns__get_doc({ "path": "readme", "smart": true })
-// Small doc → returns full content
-// Large doc → returns stats + TOC
+// Small doc → full content
+// Large doc → stats + TOC
 
-// DO: If doc is large, read specific section
+// If large, read specific section:
 mcp__knowns__get_doc({ "path": "readme", "section": "3" })
 ```
 
-**`smart: true` behavior:**
+**Behavior:**
 
 - **≤2000 tokens**: Returns full content automatically
-- **>2000 tokens**: Returns stats + TOC, then use `section` parameter
+- **>2000 tokens**: Returns stats + TOC, then use section parameter
 
 ---
 
@@ -140,11 +124,11 @@ knowns task edit 42 --append-notes "Done: Auth middleware + JWT validation"
 
 ## Avoid Redundant Operations
 
-| Don't                                 | Do Instead                  |
-| ------------------------------------- | --------------------------- |
-| Re-read tasks/docs already in context | Reference from memory       |
-| List tasks/docs multiple times        | List once, remember results |
-| Fetch same task repeatedly            | Cache the result            |
+| Don't                            | Do Instead                  |
+| -------------------------------- | --------------------------- |
+| Re-read files already in context | Reference from memory       |
+| List tasks/docs multiple times   | List once, remember results |
+| Quote entire file contents       | Summarize key points        |
 
 ---
 
@@ -152,7 +136,7 @@ knowns task edit 42 --append-notes "Done: Auth middleware + JWT validation"
 
 | Phase          | Context-Efficient Approach     |
 | -------------- | ------------------------------ |
-| **Research**   | Search -> Read only matches    |
+| **Research**   | Search → Read only matches     |
 | **Planning**   | Brief plan, not detailed prose |
 | **Coding**     | Read only files being modified |
 | **Notes**      | Bullet points, not paragraphs  |
@@ -162,21 +146,19 @@ knowns task edit 42 --append-notes "Done: Auth middleware + JWT validation"
 
 ## Quick Rules
 
-1. **Always `smart: true`** - Use smart when reading docs (auto-handles size)
+1. **Always `smart: true`** - Auto-handles doc size
 2. **Search first** - Don't read all docs hoping to find info
-3. **Use filters** - Don't list everything then filter manually
-4. **Read selectively** - Only fetch what you need
-5. **Write concise** - Compact notes, not essays
-6. **Don't repeat** - Reference context already loaded
-7. **Summarize** - Key points, not full quotes
+3. **Read selectively** - Only fetch what you need
+4. **Write concise** - Compact notes, not essays
+5. **Don't repeat** - Reference context already loaded
 
 ---
 
 # MCP Tools Reference
 
-## mcp**knowns**create_task
+## Task Tools
 
-Create a new task.
+### mcp**knowns**create_task
 
 ```json
 {
@@ -184,346 +166,174 @@ Create a new task.
   "description": "Task description",
   "status": "todo",
   "priority": "medium",
-  "labels": ["label1", "label2"],
+  "labels": ["label1"],
   "assignee": "@me",
-  "parent": "parent-task-id"
+  "parent": "parent-id"
 }
 ```
 
-| Parameter     | Required | Description                             |
-| ------------- | -------- | --------------------------------------- |
-| `title`       | Yes      | Task title                              |
-| `description` | No       | Task description                        |
-| `status`      | No       | todo/in-progress/in-review/blocked/done |
-| `priority`    | No       | low/medium/high                         |
-| `labels`      | No       | Array of labels                         |
-| `assignee`    | No       | Assignee (use @me for self)             |
-| `parent`      | No       | Parent task ID for subtasks             |
-
-**Note:** Acceptance criteria must be added via `mcp__knowns__update_task` after creation.
-
----
-
-## mcp**knowns**update_task
-
-Update task fields.
+### mcp**knowns**update_task
 
 ```json
 {
-  "taskId": "abc123",
-  "title": "New title",
-  "description": "New description",
+  "taskId": "<id>",
   "status": "in-progress",
-  "priority": "high",
-  "labels": ["updated"],
   "assignee": "@me"
 }
 ```
 
-| Parameter     | Required | Description       |
-| ------------- | -------- | ----------------- |
-| `taskId`      | Yes      | Task ID to update |
-| `title`       | No       | New title         |
-| `description` | No       | New description   |
-| `status`      | No       | New status        |
-| `priority`    | No       | New priority      |
-| `labels`      | No       | New labels array  |
-| `assignee`    | No       | New assignee      |
-
-**Note:** For acceptance criteria, implementation plan, and notes - use CLI commands or edit task file directly through knowns CLI.
-
----
-
-## mcp**knowns**get_task
-
-Get a task by ID.
+### mcp**knowns**get_task
 
 ```json
-{
-  "taskId": "abc123"
-}
+{ "taskId": "<id>" }
+```
+
+### mcp**knowns**list_tasks
+
+```json
+{ "status": "in-progress", "assignee": "@me" }
+```
+
+### mcp**knowns**search_tasks
+
+```json
+{ "query": "keyword" }
 ```
 
 ---
 
-## mcp**knowns**list_tasks
+## Doc Tools
 
-List tasks with optional filters.
+### mcp**knowns**get_doc
 
-```json
-{
-  "status": "in-progress",
-  "priority": "high",
-  "assignee": "@me",
-  "label": "bug"
-}
-```
-
-All parameters are optional filters.
-
----
-
-## mcp**knowns**search_tasks
-
-Search tasks by query string.
+**ALWAYS use `smart: true`** - auto-handles small/large docs:
 
 ```json
-{
-  "query": "authentication"
-}
+{ "path": "readme", "smart": true }
 ```
 
----
-
-## mcp**knowns**get_doc
-
-Get a documentation file by path.
+If large, returns TOC. Then read section:
 
 ```json
-{
-  "path": "README"
-}
+{ "path": "readme", "section": "3" }
 ```
 
-Path can be filename or folder/filename (without .md extension).
-
-### Reading Documents (smart)
-
-**ALWAYS use `smart: true` when reading documents.** It automatically handles both small and large docs:
+### mcp**knowns**list_docs
 
 ```json
-// Always use smart (recommended)
-{
-  "path": "readme",
-  "smart": true
-}
+{ "tag": "api" }
 ```
 
-**Behavior:**
-
-- **Small doc (≤2000 tokens)**: Returns full content automatically
-- **Large doc (>2000 tokens)**: Returns stats + TOC with numbered sections
-
-```json
-// If doc is large, smart returns TOC, then read specific section:
-{
-  "path": "readme",
-  "section": "3"
-}
-```
-
-| Parameter | Description                                                    |
-| --------- | -------------------------------------------------------------- |
-| `smart`   | **Recommended.** Auto-return full content or TOC based on size |
-| `section` | Read specific section by number (e.g., "3") or title           |
-
-### Manual Control (info, toc, section)
-
-If you need manual control instead of `smart`:
-
-```json
-{ "path": "readme", "info": true }     // Check size/tokens
-{ "path": "readme", "toc": true }      // View table of contents
-{ "path": "readme", "section": "3" }   // Read specific section
-```
-
----
-
-## mcp**knowns**list_docs
-
-List all documentation files.
-
-```json
-{
-  "tag": "api"
-}
-```
-
-Optional `tag` parameter to filter by tag.
-
----
-
-## mcp**knowns**create_doc
-
-Create a new documentation file.
+### mcp**knowns**create_doc
 
 ```json
 {
   "title": "Doc Title",
-  "description": "Doc description",
-  "tags": ["tag1", "tag2"],
+  "description": "Description",
+  "tags": ["tag1"],
   "folder": "guides",
   "content": "Initial content"
 }
 ```
 
-### Document Structure Best Practice
-
-When creating/updating docs, use clear heading structure for `toc` and `section` to work properly:
-
-```markdown
-# Main Title (H1 - only one)
-
-## 1. Overview
-
-Brief introduction...
-
-## 2. Installation
-
-Step-by-step guide...
-
-## 3. Configuration
-
-### 3.1 Basic Config
-
-...
-
-### 3.2 Advanced Config
-
-...
-
-## 4. API Reference
-
-...
-```
-
-**Writing rules:**
-
-- Use numbered headings (`## 1. Overview`) for easy `section: "1"` access
-- Keep H1 for title only, use H2 for main sections
-- Use H3 for subsections within H2
-- Each section should be self-contained (readable without context)
-
-**Reading workflow:**
+### mcp**knowns**update_doc
 
 ```json
-// Always use smart (handles both small and large docs automatically)
-{ "path": "<path>", "smart": true }
-
-// If doc is large, smart returns TOC, then read specific section:
-{ "path": "<path>", "section": "2" }
-```
-
----
-
-## mcp**knowns**update_doc
-
-Update an existing documentation file.
-
-```json
-{
-  "path": "README",
-  "title": "New Title",
-  "description": "New description",
-  "tags": ["new", "tags"],
-  "content": "Replace content",
-  "appendContent": "Append to existing"
-}
-```
-
-Use either `content` (replace) or `appendContent` (append), not both.
-
-### Section Edit (Context-Efficient)
-
-Replace only a specific section instead of entire document:
-
-```json
-// Step 1: View TOC to find section
-{ "path": "readme", "toc": true }
-
-// Step 2: Edit only that section
 {
   "path": "readme",
-  "section": "2. Installation",
-  "content": "New content here..."
+  "content": "Replace content",
+  "section": "2"
 }
 ```
 
-This reduces context usage significantly - no need to read/write entire document.
-
----
-
-## mcp**knowns**search_docs
-
-Search documentation by query.
+### mcp**knowns**search_docs
 
 ```json
-{
-  "query": "authentication",
-  "tag": "api"
-}
+{ "query": "keyword", "tag": "api" }
 ```
 
 ---
 
-## mcp**knowns**start_time
+## Time Tools
 
-Start time tracking for a task.
+### mcp**knowns**start_time
 
 ```json
-{
-  "taskId": "abc123"
-}
+{ "taskId": "<id>" }
 ```
 
----
-
-## mcp**knowns**stop_time
-
-Stop time tracking.
+### mcp**knowns**stop_time
 
 ```json
-{
-  "taskId": "abc123"
-}
+{ "taskId": "<id>" }
 ```
 
----
-
-## mcp**knowns**add_time
-
-Manually add a time entry.
+### mcp**knowns**add_time
 
 ```json
 {
-  "taskId": "abc123",
+  "taskId": "<id>",
   "duration": "2h30m",
-  "note": "Optional note",
+  "note": "Note",
   "date": "2025-01-15"
 }
 ```
 
----
-
-## mcp**knowns**get_time_report
-
-Get time tracking report.
+### mcp**knowns**get_time_report
 
 ```json
-{
-  "from": "2025-01-01",
-  "to": "2025-01-31",
-  "groupBy": "task"
-}
+{ "from": "2025-01-01", "to": "2025-01-31", "groupBy": "task" }
 ```
-
-`groupBy` can be: task, label, or status.
 
 ---
 
-## mcp**knowns**get_board
+## Template Tools
 
-Get current board state with tasks grouped by status.
+### mcp**knowns**list_templates
 
 ```json
 {}
 ```
 
-No parameters required.
+### mcp**knowns**get_template
+
+```json
+{ "name": "template-name" }
+```
+
+### mcp**knowns**run_template
+
+```json
+{
+  "name": "template-name",
+  "variables": { "name": "MyComponent" },
+  "dryRun": true
+}
+```
+
+### mcp**knowns**create_template
+
+```json
+{
+  "name": "my-template",
+  "description": "Description",
+  "doc": "patterns/my-pattern"
+}
+```
 
 ---
 
-# Task Creation (MCP)
+## Other
+
+### mcp**knowns**get_board
+
+```json
+{}
+```
+
+---
+
+# Task Creation
 
 ## Before Creating
 
@@ -545,7 +355,8 @@ mcp__knowns__create_task({
 })
 ```
 
-**Note:** Add acceptance criteria after creation using CLI:
+**Note:** Add acceptance criteria after creation:
+
 ```bash
 knowns task edit <id> --ac "Outcome 1" --ac "Outcome 2"
 ```
@@ -555,22 +366,25 @@ knowns task edit <id> --ac "Outcome 1" --ac "Outcome 2"
 ## Quality Guidelines
 
 ### Title
-| Bad | Good |
-|-----|------|
+
+| Bad           | Good                   |
+| ------------- | ---------------------- |
 | Do auth stuff | Add JWT authentication |
-| Fix bug | Fix login timeout |
+| Fix bug       | Fix login timeout      |
 
 ### Description
+
 Explain WHY. Include doc refs: `@doc/security-patterns`
 
 ### Acceptance Criteria
+
 **Outcome-focused, NOT implementation steps:**
 
-| Bad | Good |
-|-----|------|
-| Add handleLogin() function | User can login |
-| Use bcrypt | Passwords are hashed |
-| Add try-catch | Errors return proper HTTP codes |
+| Bad                        | Good                            |
+| -------------------------- | ------------------------------- |
+| Add handleLogin() function | User can login                  |
+| Use bcrypt                 | Passwords are hashed            |
+| Add try-catch              | Errors return proper HTTP codes |
 
 ---
 
@@ -597,20 +411,20 @@ mcp__knowns__create_task({
 
 ---
 
-# Task Execution (MCP)
+# Task Execution
 
 ## Step 1: Take Task
 
 ```json
 // Update status and assignee
 mcp__knowns__update_task({
-  "taskId": "abc123",
+  "taskId": "<id>",
   "status": "in-progress",
   "assignee": "@me"
 })
 
 // Start timer (REQUIRED!)
-mcp__knowns__start_time({ "taskId": "abc123" })
+mcp__knowns__start_time({ "taskId": "<id>" })
 ```
 
 ---
@@ -619,26 +433,22 @@ mcp__knowns__start_time({ "taskId": "abc123" })
 
 ```json
 // Read task and follow ALL refs
-mcp__knowns__get_task({ "taskId": "abc123" })
+mcp__knowns__get_task({ "taskId": "<id>" })
 
-// @.knowns/docs/xxx.md -> read the doc
-mcp__knowns__get_doc({ "path": "xxx" })
+// @doc/xxx -> read the doc
+mcp__knowns__get_doc({ "path": "xxx", "smart": true })
 
-// @.knowns/tasks/task-YY -> read the task
+// @task-YY -> read the task
 mcp__knowns__get_task({ "taskId": "YY" })
 
 // Search related docs
 mcp__knowns__search_docs({ "query": "keyword" })
-
-// Check similar done tasks
-mcp__knowns__list_tasks({ "status": "done" })
 ```
 
 ---
 
 ## Step 3: Plan (BEFORE coding!)
 
-Use CLI for implementation plan:
 ```bash
 knowns task edit <id> --plan $'1. Research (see @doc/xxx)
 2. Implement
@@ -652,7 +462,6 @@ knowns task edit <id> --plan $'1. Research (see @doc/xxx)
 
 ## Step 4: Implement
 
-Use CLI for checking acceptance criteria:
 ```bash
 # Check AC only AFTER work is done
 knowns task edit <id> --check-ac 1
@@ -669,11 +478,10 @@ If new requirements emerge during work:
 # Small: Add to current task
 knowns task edit <id> --ac "New requirement"
 knowns task edit <id> --append-notes "Scope updated: reason"
-
-# Large: Ask user first, then create follow-up
 ```
 
 ```json
+// Large: Ask user first, then create follow-up
 mcp__knowns__create_task({
   "title": "Follow-up: feature",
   "description": "From task <id>"
@@ -693,19 +501,19 @@ mcp__knowns__create_task({
 
 ---
 
-# Task Completion (MCP)
+# Task Completion
 
 ## Definition of Done
 
 A task is **Done** when ALL of these are complete:
 
-| Requirement | How |
-|-------------|-----|
-| All AC checked | CLI: `knowns task edit <id> --check-ac N` |
-| Notes added | CLI: `knowns task edit <id> --notes "Summary"` |
-| Timer stopped | MCP: `mcp__knowns__stop_time` |
-| Status = done | MCP: `mcp__knowns__update_task` |
-| Tests pass | Run test suite |
+| Requirement    | How                                       |
+| -------------- | ----------------------------------------- |
+| All AC checked | `knowns task edit <id> --check-ac N`      |
+| Notes added    | `knowns task edit <id> --notes "Summary"` |
+| Timer stopped  | `mcp__knowns__stop_time`                  |
+| Status = done  | `mcp__knowns__update_task`                |
+| Tests pass     | Run test suite                            |
 
 ---
 
@@ -713,22 +521,22 @@ A task is **Done** when ALL of these are complete:
 
 ```json
 // 1. Verify all AC are checked
-mcp__knowns__get_task({ "taskId": "abc123" })
+mcp__knowns__get_task({ "taskId": "<id>" })
 ```
 
 ```bash
-# 2. Add implementation notes (use CLI)
-knowns task edit abc123 --notes $'## Summary
+# 2. Add implementation notes
+knowns task edit <id> --notes $'## Summary
 What was done and key decisions.'
 ```
 
 ```json
 // 3. Stop timer (REQUIRED!)
-mcp__knowns__stop_time({ "taskId": "abc123" })
+mcp__knowns__stop_time({ "taskId": "<id>" })
 
 // 4. Mark done
 mcp__knowns__update_task({
-  "taskId": "abc123",
+  "taskId": "<id>",
   "status": "done"
 })
 ```
@@ -742,18 +550,18 @@ If user requests changes after task is done:
 ```json
 // 1. Reopen task
 mcp__knowns__update_task({
-  "taskId": "abc123",
+  "taskId": "<id>",
   "status": "in-progress"
 })
 
 // 2. Restart timer
-mcp__knowns__start_time({ "taskId": "abc123" })
+mcp__knowns__start_time({ "taskId": "<id>" })
 ```
 
 ```bash
 # 3. Add AC for the fix
-knowns task edit abc123 --ac "Fix: description"
-knowns task edit abc123 --append-notes "Reopened: reason"
+knowns task edit <id> --ac "Fix: description"
+knowns task edit <id> --append-notes "Reopened: reason"
 ```
 
 Then follow completion steps again.
@@ -762,53 +570,52 @@ Then follow completion steps again.
 
 ## Checklist
 
-- [ ] All AC checked (CLI `--check-ac`)
-- [ ] Notes added (CLI `--notes`)
+- [ ] All AC checked (`--check-ac`)
+- [ ] Notes added (`--notes`)
 - [ ] Timer stopped (`mcp__knowns__stop_time`)
 - [ ] Tests pass
 - [ ] Status = done (`mcp__knowns__update_task`)
 
 ---
 
-# Common Mistakes (MCP)
+# Common Mistakes
 
 ## Quick Reference
 
-| DON'T | DO |
-|-------|-----|
-| Edit .md files directly | Use MCP tools |
-| Skip time tracking | Always `start_time`/`stop_time` |
-| Check AC before work done | Check AC AFTER work done |
-| Code before plan approval | Wait for user approval |
-| Code before reading docs | Read docs FIRST |
-| Ignore task refs | Follow ALL `@.knowns/...` refs |
-| Use wrong task ID format | Use raw ID string |
+| DON'T                     | DO                                                       |
+| ------------------------- | -------------------------------------------------------- |
+| Edit .md files directly   | Use MCP tools                                            |
+| Check AC before work done | Check AC AFTER work done                                 |
+| Code before plan approval | Wait for user approval                                   |
+| Code before reading docs  | Read docs FIRST                                          |
+| Skip time tracking        | Always start/stop timer                                  |
+| Ignore refs               | Follow ALL `@task-xxx`, `@doc/xxx`, `@template/xxx` refs |
 
 ---
 
 ## MCP vs CLI Usage
 
-Some operations require CLI (not available in MCP):
+Some operations require CLI:
 
-| Operation | Tool |
-|-----------|------|
-| Add acceptance criteria | CLI: `--ac` |
-| Check/uncheck AC | CLI: `--check-ac`, `--uncheck-ac` |
-| Set implementation plan | CLI: `--plan` |
-| Add/append notes | CLI: `--notes`, `--append-notes` |
-| Create/update task basic fields | MCP tools |
-| Time tracking | MCP tools |
-| Read tasks/docs | MCP tools |
-| Search | MCP tools |
+| Operation               | Tool                             |
+| ----------------------- | -------------------------------- |
+| Add acceptance criteria | CLI: `--ac`                      |
+| Check/uncheck AC        | CLI: `--check-ac`                |
+| Set implementation plan | CLI: `--plan`                    |
+| Add/append notes        | CLI: `--notes`, `--append-notes` |
+| Basic task fields       | MCP tools                        |
+| Time tracking           | MCP tools                        |
+| Read tasks/docs         | MCP tools                        |
 
 ---
 
 ## Error Recovery
 
-| Problem | Solution |
-|---------|----------|
-| Forgot to stop timer | `mcp__knowns__add_time` with duration |
-| Wrong status | `mcp__knowns__update_task` to fix |
-| Task not found | `mcp__knowns__list_tasks` to find ID |
-| Need to uncheck AC | CLI: `knowns task edit <id> --uncheck-ac N` |
+| Problem              | Solution                                    |
+| -------------------- | ------------------------------------------- |
+| Forgot to stop timer | `mcp__knowns__add_time` with duration       |
+| Wrong status         | `mcp__knowns__update_task` to fix           |
+| Task not found       | `mcp__knowns__list_tasks` to find ID        |
+| Need to uncheck AC   | CLI: `knowns task edit <id> --uncheck-ac N` |
+
 <!-- KNOWNS GUIDELINES END -->

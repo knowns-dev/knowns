@@ -36,9 +36,12 @@ After `knowns init`, your project contains:
 │   ├── task-1 - First Task.md
 │   └── task-2 - Second Task.md
 └── docs/             # Documentation
-    ├── patterns/
-    ├── architecture/
-    └── guides/
+    ├── ai/           # AI integration
+    ├── architecture/ # Technical patterns
+    ├── core/         # Core concepts
+    ├── development/  # For contributors
+    ├── guides/       # User guides
+    └── templates/    # Template system
 ```
 
 ### Task Files
@@ -134,7 +137,7 @@ Knowns supports two git tracking modes, selected during `knowns init`:
 | Mode | Description | Use Case |
 |------|-------------|----------|
 | `git-tracked` | All `.knowns/` files tracked in git | Teams, shared context |
-| `git-ignored` | Only docs tracked, tasks/config ignored | Personal use |
+| `git-ignored` | Only docs/templates tracked, tasks/config ignored | Personal use |
 
 ### Git-Tracked Mode (Default)
 
@@ -152,18 +155,20 @@ git commit -m "Add project knowledge base"
 
 ### Git-Ignored Mode
 
-Only documentation is tracked. During init, Knowns automatically adds to `.gitignore`:
+Only documentation and templates are tracked. During init, Knowns automatically adds to `.gitignore`:
 
 ```gitignore
-# knowns (ignore all except docs)
+# knowns (ignore all except docs and templates)
 .knowns/*
 !.knowns/docs/
 !.knowns/docs/**
+!.knowns/templates/
+!.knowns/templates/**
 ```
 
 **Benefits:**
 - Personal task tracking without cluttering team repo
-- Docs still shareable with team
+- Docs and templates still shareable with team
 - No merge conflicts on tasks
 
 ### .gitignore (Optional)

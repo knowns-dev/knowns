@@ -13,11 +13,14 @@ import {
 	browserCommand,
 	configCommand,
 	docCommand,
+	importCommand,
 	initCommand,
 	mcpCommand,
 	searchCommand,
+	skillCommand,
 	syncCommand,
 	taskCommand,
+	templateCommand,
 	timeCommand,
 } from "@commands/index";
 import { notifyCliUpdate } from "@utils/update-notifier";
@@ -73,6 +76,9 @@ program.addCommand(configCommand);
 program.addCommand(syncCommand);
 program.addCommand(agentsCommand);
 program.addCommand(mcpCommand);
+program.addCommand(templateCommand);
+program.addCommand(skillCommand);
+program.addCommand(importCommand);
 
 // Show banner if no arguments provided
 const args = process.argv.slice(2);

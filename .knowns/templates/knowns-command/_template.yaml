@@ -1,0 +1,60 @@
+# Template: knowns-command
+name: knowns-command
+description: Generate a new Knowns CLI command following the Command Pattern
+version: 1.0.0
+
+# Link to documentation - AI should read this before generating
+doc: patterns/command-pattern
+
+# Base destination path
+destination: src/commands
+
+# Interactive prompts
+prompts:
+  - name: name
+    type: text
+    message: "Command name? (e.g., 'export', 'import')"
+    validate: required
+
+  - name: description
+    type: text
+    message: "Command description?"
+
+  - name: hasSubcommands
+    type: confirm
+    message: "Will this command have subcommands?"
+    initial: true
+
+  - name: subcommands
+    type: text
+    message: "Subcommand names? (comma-separated, e.g., 'list,create,view')"
+    when: "{{hasSubcommands}}"
+
+# File generation actions
+actions:
+  - type: add
+    template: "command.ts.hbs"
+    path: "{{kebabCase name}}.ts"
+    skipIfExists: true
+
+  - type: add
+    template: "command.test.ts.hbs"
+    path: "{{kebabCase name}}.test.ts"
+    skipIfExists: true
+
+# Success message
+messages:
+  success: |
+    ✓ Created command: {{name}}
+
+    Files created:
+      - src/commands/{{kebabCase name}}.ts
+      - src/commands/{{kebabCase name}}.test.ts
+
+    Next steps:
+      1. Review the generated code
+      2. Add command to src/commands/index.ts
+      3. Implement subcommand handlers
+      4. Run tests: bun test src/commands/{{kebabCase name}}.test.ts
+
+    📚 See @doc/patterns/command-pattern for the full pattern

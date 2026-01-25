@@ -23,7 +23,9 @@
 			"@storage/*": ["src/storage/*"],
 			"@server/*": ["src/server/*"],
 			"@utils/*": ["src/utils/*"],
-			"@mcp/*": ["src/mcp/*"]
+			"@mcp/*": ["src/mcp/*"],
+			"@codegen/*": ["src/codegen/*"],
+			"@instructions/*": ["src/instructions/*"]
 		},
 
 		"strict": true,

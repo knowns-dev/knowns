@@ -29,13 +29,17 @@ import {
 	handleAddTime,
 	handleCreateDoc,
 	handleCreateTask,
+	handleCreateTemplate,
 	handleGetBoard,
 	handleGetDoc,
 	handleGetGuideline,
 	handleGetTask,
+	handleGetTemplate,
 	handleGetTimeReport,
 	handleListDocs,
 	handleListTasks,
+	handleListTemplates,
+	handleRunTemplate,
 	handleSearchDocs,
 	handleSearchTasks,
 	handleStartTime,
@@ -43,6 +47,7 @@ import {
 	handleUpdateDoc,
 	handleUpdateTask,
 	taskTools,
+	templateTools,
 	timeTools,
 } from "./handlers";
 
@@ -66,7 +71,14 @@ const server = new Server(
 );
 
 // Combine all tool definitions
-const tools: Tool[] = [...taskTools, ...timeTools, ...boardTools, ...docTools, ...guidelineTools] as Tool[];
+const tools: Tool[] = [
+	...taskTools,
+	...timeTools,
+	...boardTools,
+	...docTools,
+	...guidelineTools,
+	...templateTools,
+] as Tool[];
 
 // List available tools
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -120,6 +132,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 			// Guideline handler
 			case "get_guideline":
 				return await handleGetGuideline(args);
+
+			// Template handlers
+			case "list_templates":
+				return await handleListTemplates(args);
+			case "get_template":
+				return await handleGetTemplate(args);
+			case "run_template":
+				return await handleRunTemplate(args);
+			case "create_template":
+				return await handleCreateTemplate(args);
 
 			default:
 				return errorResponse(`Unknown tool: ${name}`);

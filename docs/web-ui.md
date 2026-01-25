@@ -53,13 +53,18 @@ Tree view of all documentation:
 
 ```
 docs/
-├── patterns/
-│   ├── auth.md
-│   └── caching.md
+├── ai/
+│   ├── overview.md
+│   └── skills.md
 ├── architecture/
-│   └── overview.md
-└── guides/
-    └── getting-started.md
+│   ├── overview.md
+│   └── patterns/
+├── core/
+│   └── time-tracking.md
+├── guides/
+│   └── user-guide.md
+└── templates/
+    └── overview.md
 ```
 
 **Features:**

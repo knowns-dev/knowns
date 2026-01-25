@@ -1,0 +1,40 @@
+/**
+ * {{pascalCase name}} Command
+ *
+ * {{description}}
+ *
+ * @see @doc/patterns/command-pattern for the pattern documentation
+ */
+import { Command } from "commander";
+import { getProjectRoot } from "../utils/path.js";
+import { FileStore } from "../storage/file-store.js";
+
+{{#if hasSubcommands}}
+// TODO: Add subcommands ({{subcommands}})
+// Example subcommand:
+const listCommand = new Command("list")
+  .description("List {{name}}")
+  .option("--plain", "Plain output for scripts")
+  .action(async (options) => {
+    const projectRoot = getProjectRoot();
+    const store = new FileStore(projectRoot);
+
+    // TODO: Implement list logic
+    console.log("list command executed");
+  });
+
+{{/if}}
+/**
+ * Main {{name}} command
+ */
+export const {{camelCase name}}Command = new Command("{{kebabCase name}}")
+  .description("{{description}}"){{#if hasSubcommands}}
+  .addCommand(listCommand);
+  // TODO: Add more subcommands: {{subcommands}}{{else}}
+  .action(async (options) => {
+    const projectRoot = getProjectRoot();
+    const store = new FileStore(projectRoot);
+
+    // TODO: Implement {{name}} logic
+    console.log("{{name}} command executed");
+  });{{/if}}

@@ -5,7 +5,7 @@ Complete guide for managing tasks from creation to completion.
 ## Overview
 
 ```
-Create → Take → Plan → Implement → Complete
+Create → Take → Plan → Implement (+ Templates) → Complete
 ```
 
 ## Step 1: Create Task
@@ -14,7 +14,7 @@ Create a task with clear acceptance criteria:
 
 ```bash
 knowns task create "Add user authentication" \
-  -d "Implement JWT auth following @doc/patterns/auth" \
+  -d "Implement JWT auth following @doc/architecture/patterns/command" \
   --ac "User can login with email/password" \
   --ac "JWT token is returned on success" \
   --ac "Invalid credentials return 401" \
@@ -58,8 +58,8 @@ Before planning, gather context from documentation:
 knowns search "authentication" --type doc --plain
 
 # Read relevant documentation
-knowns doc "patterns/auth" --plain
-knowns doc "api-guidelines" --plain
+knowns doc "architecture/patterns/command" --plain
+knowns doc "guides/user-guide" --plain
 
 # Check similar completed tasks
 knowns search "auth" --type task --status done --plain
@@ -70,7 +70,7 @@ knowns search "auth" --type task --status done --plain
 Add a plan to the task:
 
 ```bash
-knowns task edit <id> --plan $'1. Review auth patterns in @doc/patterns/auth
+knowns task edit <id> --plan $'1. Review patterns in @doc/architecture/patterns/command
 2. Design token structure (access + refresh)
 3. Implement login endpoint
 4. Implement token refresh endpoint
@@ -83,7 +83,33 @@ knowns task edit <id> --plan $'1. Review auth patterns in @doc/patterns/auth
 
 ## Step 6: Implement
 
-Work through your plan, checking criteria as you complete them:
+Work through your plan. Use templates for scaffolding when applicable:
+
+### Using Templates for Code Generation
+
+```bash
+# List available templates
+knowns template list
+
+# Generate component from template
+knowns template run react-component --name LoginForm
+
+# Generate API endpoint
+knowns template run api-endpoint --name auth
+
+# Preview before creating (dry run)
+knowns template run react-component --name LoginForm --dry-run
+```
+
+Templates link to documentation for context:
+```bash
+# View template details and linked docs
+knowns template view react-component --with-doc
+```
+
+### Tracking Progress
+
+Check criteria as you complete them:
 
 ```bash
 # Check first criterion
@@ -194,15 +220,73 @@ knowns task edit <id> --append-notes "Unblocked: API spec received"
 
 ---
 
+## Using Templates
+
+Templates accelerate implementation by generating boilerplate code.
+
+### When to Use Templates
+
+| Scenario | Template |
+|----------|----------|
+| New React component | `react-component` |
+| New API endpoint | `api-endpoint` |
+| New CLI command | `knowns-command` |
+| Feature module | `feature-module` |
+
+### Template Workflow
+
+```bash
+# 1. Find relevant template
+knowns template list
+knowns template view <name>
+
+# 2. Check linked documentation
+knowns template view <name> --with-doc
+
+# 3. Preview generated files
+knowns template run <name> --dry-run
+
+# 4. Generate files
+knowns template run <name>
+
+# 5. Customize generated code as needed
+```
+
+### Creating Project Templates
+
+If you find yourself creating similar files repeatedly:
+
+```bash
+# Create a new template
+knowns template create my-template
+
+# Edit the config
+# .knowns/templates/my-template/_template.yaml
+
+# Link to documentation (optional)
+knowns doc create "patterns/my-pattern" -d "Pattern for my-template"
+```
+
+See [templates.md](./templates.md) for full template documentation.
+
+---
+
 ## Quick Reference
 
 ```bash
-# Full workflow in one view
+# Full workflow
 knowns task edit <id> -s in-progress -a @me  # Take
 knowns time start <id>                        # Timer
 knowns task edit <id> --plan "..."            # Plan
-knowns task edit <id> --check-ac 1            # Check
+knowns template run <name>                    # Generate code
+knowns task edit <id> --check-ac 1            # Check AC
 knowns task edit <id> --append-notes "..."    # Progress
 knowns time stop                              # Stop timer
 knowns task edit <id> -s done                 # Complete
+
+# Template commands
+knowns template list                          # List templates
+knowns template run <name> --dry-run          # Preview
+knowns template run <name>                    # Generate
+knowns template create <name>                 # Create new
 ```

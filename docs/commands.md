@@ -469,6 +469,190 @@ knowns search <query> [options]
 
 ---
 
+## Template Commands
+
+### `knowns template list`
+
+List available templates.
+
+```bash
+knowns template list [options]
+```
+
+| Option    | Description       |
+| --------- | ----------------- |
+| `--plain` | Plain text output |
+
+**Examples:**
+
+```bash
+knowns template list
+knowns template list --plain
+```
+
+### `knowns template run`
+
+Run a template to generate files.
+
+```bash
+knowns template run <name> [options]
+```
+
+| Option            | Description                    |
+| ----------------- | ------------------------------ |
+| `--dry-run`       | Preview without creating files |
+| `--<variable>`    | Pre-fill prompt variables      |
+| `--no-<variable>` | Set boolean variable to false  |
+
+**Examples:**
+
+```bash
+# Interactive mode
+knowns template run react-component
+
+# With pre-filled variables
+knowns template run react-component --name UserProfile --withTest
+
+# Preview only
+knowns template run react-component --dry-run
+
+# Boolean flags
+knowns template run react-component --name Card --no-withTest
+```
+
+### `knowns template view`
+
+View template details.
+
+```bash
+knowns template view <name> [options]
+```
+
+| Option       | Description                     |
+| ------------ | ------------------------------- |
+| `--with-doc` | Include linked doc content      |
+| `--plain`    | Plain text output               |
+
+**Examples:**
+
+```bash
+knowns template view react-component
+knowns template view react-component --with-doc
+knowns template view react-component --plain
+```
+
+### `knowns template create`
+
+Create a new template.
+
+```bash
+knowns template create <name> [options]
+```
+
+| Option              | Description                |
+| ------------------- | -------------------------- |
+| `-d, --description` | Template description       |
+| `--doc`             | Link to existing doc path  |
+
+**Examples:**
+
+```bash
+# Basic template
+knowns template create my-component
+
+# With description and linked doc
+knowns template create api-service \
+  -d "REST API service class" \
+  --doc patterns/api-service
+```
+
+### `knowns template validate`
+
+Validate template configuration.
+
+```bash
+knowns template validate <name>
+```
+
+**Validates:**
+- Config file syntax
+- All template files exist
+- Handlebars syntax valid
+- Prompt names used in templates
+
+---
+
+## Skill Commands
+
+### `knowns skill list`
+
+List available skills.
+
+```bash
+knowns skill list [options]
+```
+
+| Option    | Description       |
+| --------- | ----------------- |
+| `--plain` | Plain text output |
+
+### `knowns skill create`
+
+Create a new skill.
+
+```bash
+knowns skill create <name> [options]
+```
+
+| Option              | Description       |
+| ------------------- | ----------------- |
+| `-d, --description` | Skill description |
+
+**Examples:**
+
+```bash
+knowns skill create my-workflow -d "Custom workflow skill"
+```
+
+### `knowns skill sync`
+
+Sync skills to AI platforms.
+
+```bash
+knowns skill sync [options]
+```
+
+| Option       | Description                              |
+| ------------ | ---------------------------------------- |
+| `--platform` | Target platforms (comma-separated)       |
+| `--all`      | Sync to all detected platforms           |
+
+**Supported platforms:**
+- `claude` - Claude Code (`.claude/skills/`)
+- `antigravity` - Antigravity (`.agent/skills/`)
+- `cursor` - Cursor (`.cursor/rules/`)
+- `gemini` - Gemini CLI (`~/.gemini/commands/`)
+
+**Examples:**
+
+```bash
+# Sync to all platforms
+knowns skill sync
+
+# Sync to specific platforms
+knowns skill sync --platform claude,cursor
+```
+
+### `knowns skill status`
+
+Show sync status for all platforms.
+
+```bash
+knowns skill status
+```
+
+---
+
 ## Other Commands
 
 ### `knowns init`
@@ -516,9 +700,9 @@ knowns init --force
 | Mode          | Description                                                 |
 | ------------- | ----------------------------------------------------------- |
 | `git-tracked` | All `.knowns/` files tracked in git (recommended for teams) |
-| `git-ignored` | Only docs tracked, tasks/config ignored (personal use)      |
+| `git-ignored` | Only docs/templates tracked, tasks/config ignored (personal use) |
 
-When `git-ignored` is selected, Knowns automatically updates `.gitignore` to exclude task files while keeping docs tracked.
+When `git-ignored` is selected, Knowns automatically updates `.gitignore` to exclude task files while keeping docs and templates tracked.
 
 ### `knowns config`
 

@@ -36,13 +36,12 @@ src/
 │   ├── browser.ts             # Web UI launcher
 │   ├── agents.ts              # AI guidelines management
 │   └── ...
-├── templates/                  # AI Agent Guidelines
-│   ├── cli/
-│   │   ├── general.md         # Full CLI guidelines (~4KB)
-│   │   └── instruction.md     # Minimal instruction (~600 bytes)
-│   └── mcp/
-│       ├── general.md         # Full MCP guidelines (~4KB)
-│       └── instruction.md     # Minimal instruction (~600 bytes)
+├── instructions/               # AI Agent Guidelines
+│   └── guidelines/
+│       └── unified/           # Single source for CLI/MCP
+│           ├── index.ts       # Renders both variants
+│           ├── core-rules.md  # Uses {{#if mcp}} conditionals
+│           └── ...            # Other guideline templates
 ├── models/                     # Domain Models
 │   ├── task.ts                # Task interface + helpers
 │   ├── project.ts             # Project configuration
@@ -144,11 +143,18 @@ interface ProjectConfig {
 │       └── task-2/
 │           └── v1.json
 └── docs/
-    ├── README.md
-    ├── guides/
-    │   └── getting-started.md
-    └── patterns/
-        └── architecture.md
+    ├── readme.md
+    ├── ai/                   # AI integration docs
+    ├── architecture/         # Technical patterns & features
+    │   ├── patterns/
+    │   └── features/
+    ├── core/                 # Core concepts
+    ├── development/          # For contributors
+    │   └── conventions/
+    ├── github/               # GitHub-specific
+    ├── guides/               # User guides
+    ├── roadmap/              # Future plans
+    └── templates/            # Template system
 ```
 
 ### Markdown + Frontmatter Format
@@ -344,50 +350,65 @@ case "my_new_tool": {
 
 ---
 
-## Template System
+## Guidelines System
 
-AI agent guidelines are embedded at build time using esbuild's text loader.
+AI agent guidelines use a unified template system with Handlebars conditionals for CLI/MCP variants.
 
-### Template Variants
+### Unified Templates
 
-| Type | Variant | Size | Use Case |
-|------|---------|------|----------|
-| cli | instruction | ~600 bytes | Minimal - tells AI to call `knowns agents guideline` |
-| cli | general | ~4KB | Full CLI guidelines embedded |
-| mcp | instruction | ~600 bytes | Minimal - tells AI to call MCP tool |
-| mcp | general | ~4KB | Full MCP guidelines embedded |
+All guidelines are defined once in `src/instructions/guidelines/unified/`:
+
+```
+src/instructions/guidelines/unified/
+├── index.ts                 # Renders CLI/MCP variants
+├── core-rules.md           # {{#if mcp}}...{{else}}...{{/if}}
+├── commands-reference.md
+├── context-optimization.md
+├── workflow-creation.md
+├── workflow-execution.md
+├── workflow-completion.md
+└── common-mistakes.md
+```
 
 ### How It Works
 
 ```typescript
-// src/commands/agents.ts
-import CLI_GENERAL from "../templates/cli/general.md";
-import CLI_INSTRUCTION from "../templates/cli/instruction.md";
-import MCP_GENERAL from "../templates/mcp/general.md";
-import MCP_INSTRUCTION from "../templates/mcp/instruction.md";
+// src/instructions/guidelines/unified/index.ts
+import { renderString } from "../../../codegen/renderer";
 
-export function getGuidelines(type: GuidelinesType, variant: GuidelinesVariant = "instruction"): string {
-  if (type === "mcp") {
-    return variant === "instruction" ? MCP_INSTRUCTION : MCP_GENERAL;
-  }
-  return variant === "instruction" ? CLI_INSTRUCTION : CLI_GENERAL;
+function createGuidelines(mode: "cli" | "mcp") {
+  return {
+    core: render(coreRulesMd, mode),
+    commands: render(commandsReferenceMd, mode),
+    // ...
+    getFull(withMarkers = false): string { ... },
+    getCompact(): string { ... },
+    getForStage(stage): string { ... },
+  };
 }
+
+export const CLIGuidelines = createGuidelines("cli");
+export const MCPGuidelines = createGuidelines("mcp");
 ```
 
-### On-Demand Guidelines
+### Handlebars Conditionals
 
-Instead of embedding full guidelines, the default `instruction` variant tells AI to call:
-- CLI: `knowns agents guideline`
-- MCP: `mcp__knowns__get_guideline({})`
+Use `{{#if mcp}}` and `{{#unless mcp}}` for variant-specific content:
 
-This keeps instruction files small (~600 bytes) and guidelines always up-to-date.
+```markdown
+{{#if mcp}}
+**Use MCP tools for ALL operations.**
+{{else}}
+**Use CLI commands for ALL operations.**
+{{/if}}
+```
 
-### Adding a New Template Variant
+### Adding New Guidelines
 
-1. Create template file in `src/templates/<type>/<variant>.md`
-2. Import in `src/commands/agents.ts`
-3. Update `getGuidelines()` function
-4. Add CLI option if needed
+1. Edit the unified template in `src/instructions/guidelines/unified/`
+2. Use `{{#if mcp}}` for MCP-specific content
+3. Use `{{#unless mcp}}` for CLI-only content
+4. Run `knowns sync` to update CLAUDE.md and AGENTS.md
 
 ### Commander.js Option Inheritance
 

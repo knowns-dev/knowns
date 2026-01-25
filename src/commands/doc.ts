@@ -24,6 +24,7 @@ import { repairDoc, validateDoc } from "@utils/validate";
 import chalk from "chalk";
 import { Command } from "commander";
 import matter from "gray-matter";
+import { resolveDocWithContext, validateRefs } from "../import";
 
 const DOCS_DIR = join(process.cwd(), ".knowns", "docs");
 
@@ -82,10 +83,26 @@ function filenameToTitle(filename: string): string {
 }
 
 // Resolve doc name to filepath and filename
-async function resolveDocPath(name: string): Promise<{ filepath: string; filename: string } | null> {
+async function resolveDocPath(
+	name: string,
+	context?: string,
+): Promise<{ filepath: string; filename: string; isImported?: boolean; source?: string } | null> {
 	await ensureDocsDir();
+	const projectRoot = findProjectRoot() || process.cwd();
 
-	// Try multiple approaches to find the file
+	// Try imports first (with context-aware resolution)
+	// This prioritizes imported docs over local docs
+	const resolved = await resolveDocWithContext(projectRoot, name, context);
+	if (resolved) {
+		return {
+			filepath: resolved.path,
+			filename: name.endsWith(".md") ? name : `${name}.md`,
+			isImported: resolved.isImported,
+			source: resolved.source,
+		};
+	}
+
+	// Then try local docs with fuzzy matching (title search, etc.)
 	let filename = name.endsWith(".md") ? name : `${name}.md`;
 	let filepath = join(DOCS_DIR, filename);
 
@@ -381,39 +398,13 @@ const viewCommand = new Command("view")
 			},
 		) => {
 			try {
-				await ensureDocsDir();
-
-				// Try multiple approaches to find the file
-				let filename = name.endsWith(".md") ? name : `${name}.md`;
-				let filepath = join(DOCS_DIR, filename);
-
-				if (!existsSync(filepath)) {
-					// Try converting title to filename (root level only)
-					filename = `${titleToFilename(name)}.md`;
-					filepath = join(DOCS_DIR, filename);
-				}
-
-				if (!existsSync(filepath)) {
-					// Try searching in all md files
-					const allFiles = await getAllMdFiles(DOCS_DIR);
-					const searchName = name.toLowerCase().replace(/\.md$/, "");
-
-					const matchingFile = allFiles.find((file) => {
-						const fileNameOnly = file.toLowerCase().replace(/\.md$/, "");
-						const fileBaseName = file.split("/").pop()?.toLowerCase().replace(/\.md$/, "");
-						return fileNameOnly === searchName || fileBaseName === searchName || file === name;
-					});
-
-					if (matchingFile) {
-						filename = matchingFile;
-						filepath = join(DOCS_DIR, matchingFile);
-					}
-				}
-
-				if (!existsSync(filepath)) {
+				const resolved = await resolveDocPath(name);
+				if (!resolved) {
 					console.error(chalk.red(`✗ Documentation not found: ${name}`));
 					process.exit(1);
 				}
+
+				const { filepath, filename, isImported, source } = resolved;
 
 				const fileContent = await readFile(filepath, "utf-8");
 				const { data, content } = matter(fileContent);
@@ -538,7 +529,7 @@ const viewCommand = new Command("view")
 					}
 
 					if (options.plain) {
-						console.log(`File: ${process.cwd()}/.knowns/docs/${filename}`);
+						console.log(`File: ${filepath}`);
 						console.log(`Section: ${options.section}`);
 						console.log("=".repeat(50));
 						console.log();
@@ -556,8 +547,8 @@ const viewCommand = new Command("view")
 					const titleBorder = "=".repeat(50);
 
 					// File path
-					const projectRoot = process.cwd();
-					console.log(`File: ${projectRoot}/.knowns/docs/${filename}`);
+					console.log(`File: ${filepath}`);
+					if (isImported) console.log(`Source: ${source} (imported)`);
 					console.log();
 
 					// Title
@@ -585,7 +576,7 @@ const viewCommand = new Command("view")
 					console.log("Content:");
 					console.log(border);
 
-					// Parse and enhance markdown links
+					// Parse and enhance markdown links and refs
 					const linkPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
 					let enhancedContent = content.trimEnd();
 					const linksToAdd: Array<{ original: string; resolved: string }> = [];
@@ -613,7 +604,11 @@ const viewCommand = new Command("view")
 							resolvedFilename = `${resolvedFilename}.md`;
 						}
 
-						const resolvedPath = `@.knowns/docs/${resolvedFilename}`;
+						// For imported docs, prefix with import source
+						const resolvedPath =
+							isImported && source
+								? `@.knowns/imports/${source}/docs/${resolvedFilename}`
+								: `@.knowns/docs/${resolvedFilename}`;
 						linksToAdd.push({
 							original: fullMatch,
 							resolved: resolvedPath,
@@ -625,7 +620,29 @@ const viewCommand = new Command("view")
 						enhancedContent = enhancedContent.replace(original, resolved);
 					}
 
+					// For imported docs, transform @doc/xxx refs to include import prefix
+					// This makes refs explicit and context-aware
+					if (isImported && source) {
+						// Match @doc/path but not already prefixed paths
+						const docRefPattern = /@doc\/(?![\w-]+\/[\w-]+\/)([\w\-\/]+)/g;
+						enhancedContent = enhancedContent.replace(docRefPattern, `@doc/${source}/$1`);
+					}
+
 					console.log(enhancedContent);
+
+					// Validate refs and show broken ones
+					const projectRoot = findProjectRoot() || process.cwd();
+					const tasksDir = join(projectRoot, ".knowns", "tasks");
+					const refs = await validateRefs(projectRoot, enhancedContent, tasksDir);
+					const brokenRefs = refs.filter((r) => !r.exists);
+
+					if (brokenRefs.length > 0) {
+						console.log("\n---");
+						console.log("BROKEN REFS:");
+						for (const ref of brokenRefs) {
+							console.log(`  ✗ ${ref.ref} (not found)`);
+						}
+					}
 				} else {
 					console.log(chalk.bold(`\n📄 ${metadata.title}\n`));
 					if (metadata.description) {
@@ -637,7 +654,27 @@ const viewCommand = new Command("view")
 					}
 					console.log(chalk.gray(`Updated: ${new Date(metadata.updatedAt).toLocaleString()}`));
 					console.log(chalk.gray("-".repeat(60)));
-					console.log(content);
+
+					// Transform refs for imported docs
+					let displayContent = content;
+					if (isImported && source) {
+						const docRefPattern = /@doc\/(?![\w-]+\/[\w-]+\/)([\w\-\/]+)/g;
+						displayContent = displayContent.replace(docRefPattern, `@doc/${source}/$1`);
+					}
+					console.log(displayContent);
+
+					// Validate refs and show broken ones (non-plain mode)
+					const projectRoot = findProjectRoot() || process.cwd();
+					const tasksDir = join(projectRoot, ".knowns", "tasks");
+					const refs = await validateRefs(projectRoot, displayContent, tasksDir);
+					const brokenRefs = refs.filter((r) => !r.exists);
+
+					if (brokenRefs.length > 0) {
+						console.log(chalk.yellow("\n⚠️  Broken refs found:"));
+						for (const ref of brokenRefs) {
+							console.log(chalk.red(`   ✗ ${ref.ref}`));
+						}
+					}
 					console.log();
 				}
 			} catch (error) {
@@ -1209,7 +1246,7 @@ export const docCommand = new Command("doc")
 					process.exit(1);
 				}
 
-				const { filepath, filename } = resolved;
+				const { filepath, filename, isImported, source } = resolved;
 				const fileContent = await readFile(filepath, "utf-8");
 				const { data, content } = matter(fileContent);
 				const metadata = data as DocMetadata;
@@ -1333,7 +1370,7 @@ export const docCommand = new Command("doc")
 					}
 
 					if (options.plain) {
-						console.log(`File: ${process.cwd()}/.knowns/docs/${filename}`);
+						console.log(`File: ${filepath}`);
 						console.log(`Section: ${options.section}`);
 						console.log("=".repeat(50));
 						console.log();
@@ -1351,8 +1388,8 @@ export const docCommand = new Command("doc")
 					const titleBorder = "=".repeat(50);
 
 					// File path
-					const projectRoot = process.cwd();
-					console.log(`File: ${projectRoot}/.knowns/docs/${filename}`);
+					console.log(`File: ${filepath}`);
+					if (isImported) console.log(`Source: ${source} (imported)`);
 					console.log();
 
 					// Title
@@ -1380,7 +1417,7 @@ export const docCommand = new Command("doc")
 					console.log("Content:");
 					console.log(border);
 
-					// Parse and enhance markdown links
+					// Parse and enhance markdown links and refs
 					const linkPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
 					let enhancedContent = content.trimEnd();
 					const linksToAdd: Array<{ original: string; resolved: string }> = [];
@@ -1408,7 +1445,11 @@ export const docCommand = new Command("doc")
 							resolvedFilename = `${resolvedFilename}.md`;
 						}
 
-						const resolvedPath = `@.knowns/docs/${resolvedFilename}`;
+						// For imported docs, prefix with import source
+						const resolvedPath =
+							isImported && source
+								? `@.knowns/imports/${source}/docs/${resolvedFilename}`
+								: `@.knowns/docs/${resolvedFilename}`;
 						linksToAdd.push({
 							original: fullMatch,
 							resolved: resolvedPath,
@@ -1420,7 +1461,29 @@ export const docCommand = new Command("doc")
 						enhancedContent = enhancedContent.replace(original, resolved);
 					}
 
+					// For imported docs, transform @doc/xxx refs to include import prefix
+					// This makes refs explicit and context-aware
+					if (isImported && source) {
+						// Match @doc/path but not already prefixed paths
+						const docRefPattern = /@doc\/(?![\w-]+\/[\w-]+\/)([\w\-\/]+)/g;
+						enhancedContent = enhancedContent.replace(docRefPattern, `@doc/${source}/$1`);
+					}
+
 					console.log(enhancedContent);
+
+					// Validate refs and show broken ones
+					const projectRoot = findProjectRoot() || process.cwd();
+					const tasksDir = join(projectRoot, ".knowns", "tasks");
+					const refs = await validateRefs(projectRoot, enhancedContent, tasksDir);
+					const brokenRefs = refs.filter((r) => !r.exists);
+
+					if (brokenRefs.length > 0) {
+						console.log("\n---");
+						console.log("BROKEN REFS:");
+						for (const ref of brokenRefs) {
+							console.log(`  ✗ ${ref.ref} (not found)`);
+						}
+					}
 				} else {
 					console.log(chalk.bold(`\n📄 ${metadata.title}\n`));
 					if (metadata.description) {
@@ -1432,7 +1495,27 @@ export const docCommand = new Command("doc")
 					}
 					console.log(chalk.gray(`Updated: ${new Date(metadata.updatedAt).toLocaleString()}`));
 					console.log(chalk.gray("-".repeat(60)));
-					console.log(content);
+
+					// Transform refs for imported docs
+					let displayContent = content;
+					if (isImported && source) {
+						const docRefPattern = /@doc\/(?![\w-]+\/[\w-]+\/)([\w\-\/]+)/g;
+						displayContent = displayContent.replace(docRefPattern, `@doc/${source}/$1`);
+					}
+					console.log(displayContent);
+
+					// Validate refs and show broken ones (non-plain mode)
+					const projectRoot = findProjectRoot() || process.cwd();
+					const tasksDir = join(projectRoot, ".knowns", "tasks");
+					const refs = await validateRefs(projectRoot, displayContent, tasksDir);
+					const brokenRefs = refs.filter((r) => !r.exists);
+
+					if (brokenRefs.length > 0) {
+						console.log(chalk.yellow("\n⚠️  Broken refs found:"));
+						for (const ref of brokenRefs) {
+							console.log(chalk.red(`   ✗ ${ref.ref}`));
+						}
+					}
 					console.log();
 				}
 			} catch (error) {

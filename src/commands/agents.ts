@@ -9,9 +9,7 @@ import chalk from "chalk";
 import { Command } from "commander";
 import prompts from "prompts";
 // Import modular guidelines
-import { Guidelines, MCPGuidelines } from "../templates/guidelines";
-// Import instruction templates (with markers)
-import { CLI_INSTRUCTION, MCP_INSTRUCTION, SKILLS_INSTRUCTION } from "../templates/instruction";
+import { Guidelines, MCPGuidelines } from "../instructions/guidelines";
 
 const PROJECT_ROOT = process.cwd();
 
@@ -26,24 +24,12 @@ export const INSTRUCTION_FILES = [
 	},
 ];
 
-export type GuidelinesType = "cli" | "mcp" | "skills";
-export type GuidelinesVariant = "general" | "instruction";
+export type GuidelinesType = "cli" | "mcp";
 
 /**
- * Get guidelines content by type and variant
+ * Get guidelines content by type
  */
-export function getGuidelines(type: GuidelinesType, variant: GuidelinesVariant = "general"): string {
-	// Skills type always uses the minimal skills instruction
-	if (type === "skills") {
-		return SKILLS_INSTRUCTION;
-	}
-
-	if (variant === "instruction") {
-		// Instruction templates (minimal, tells AI to call guideline command)
-		return type === "mcp" ? MCP_INSTRUCTION : CLI_INSTRUCTION;
-	}
-	// Full guidelines with markers (for embedding in CLAUDE.md) - DEFAULT
-	// Return type-specific guidelines (CLI or MCP)
+export function getGuidelines(type: GuidelinesType): string {
 	return type === "mcp" ? MCPGuidelines.getFull(true) : Guidelines.getFull(true);
 }
 
@@ -111,8 +97,7 @@ const agentsCommand = new Command("agents")
 				// Non-interactive mode with --update-instructions flag
 				if (options.updateInstructions) {
 					const type = (options.type === "mcp" ? "mcp" : "cli") as GuidelinesType;
-					const variant: GuidelinesVariant = "general";
-					const guidelines = getGuidelines(type, variant);
+					const guidelines = getGuidelines(type);
 
 					// Determine which files to update
 					let filesToUpdate = INSTRUCTION_FILES;
@@ -157,32 +142,7 @@ const agentsCommand = new Command("agents")
 					return;
 				}
 
-				// Step 2: Select variant
-				const variantResponse = await prompts({
-					type: "select",
-					name: "variant",
-					message: "Select variant:",
-					choices: [
-						{
-							title: "Full (Recommended)",
-							value: "general",
-							description: "Complete guidelines embedded in file",
-						},
-						{
-							title: "Minimal",
-							value: "instruction",
-							description: "Just tells AI to call `knowns agents guideline` for rules",
-						},
-					],
-					initial: 0,
-				});
-
-				if (!variantResponse.variant) {
-					console.log(chalk.yellow("\n⚠️  Cancelled"));
-					return;
-				}
-
-				// Step 3: Select files to update
+				// Step 2: Select files to update
 				const filesResponse = await prompts({
 					type: "multiselect",
 					name: "files",
@@ -200,9 +160,8 @@ const agentsCommand = new Command("agents")
 					return;
 				}
 
-				// Step 4: Confirm
-				const variantLabel = variantResponse.variant === "instruction" ? " (minimal)" : " (full)";
-				const label = `${typeResponse.type.toUpperCase()}${variantLabel}`;
+				// Step 3: Confirm
+				const label = typeResponse.type.toUpperCase();
 				const confirmResponse = await prompts({
 					type: "confirm",
 					name: "confirm",
@@ -215,11 +174,8 @@ const agentsCommand = new Command("agents")
 					return;
 				}
 
-				// Step 5: Update files
-				const guidelines = getGuidelines(
-					typeResponse.type as GuidelinesType,
-					variantResponse.variant as GuidelinesVariant,
-				);
+				// Step 4: Update files
+				const guidelines = getGuidelines(typeResponse.type as GuidelinesType);
 				console.log(chalk.bold(`\nUpdating files with ${label} guidelines...\n`));
 				await updateFiles(filesResponse.files, guidelines);
 			} catch (error) {

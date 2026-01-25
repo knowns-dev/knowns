@@ -1,10 +1,10 @@
 # Reference System
 
-How to link tasks and documentation using `@` syntax.
+How to link tasks, documentation, and templates using `@` syntax.
 
 ## Overview
 
-Knowns uses `@` references to create links between tasks and documentation. This allows AI assistants to automatically fetch related context.
+Knowns uses `@` references to create links between tasks, documentation, and templates. This allows AI assistants to automatically fetch related context.
 
 ## Reference Formats
 
@@ -21,6 +21,13 @@ Knowns uses `@` references to create links between tasks and documentation. This
 |--------|---------|-------------|
 | Doc ref | `@doc/patterns/auth` | Without .md extension |
 | Doc ref | `@doc/patterns/auth.md` | With .md extension |
+
+### Template References
+
+| Format | Example | Description |
+|--------|---------|-------------|
+| Template ref | `@template/react-component` | Links to template |
+| Template ref | `@template/api-endpoint` | Links to template |
 
 ## Usage Examples
 
@@ -45,6 +52,20 @@ This guide covers our authentication patterns.
 ## See Also
 - @doc/patterns/jwt-tokens
 - @doc/security/best-practices
+
+## Related Templates
+- @template/api-endpoint - Generate auth endpoints
+```
+
+### In Template Config
+
+Templates can link to documentation:
+
+```yaml
+# .knowns/templates/react-component/_template.yaml
+name: react-component
+description: React functional component
+doc: architecture/patterns/ui    # Links to @doc/architecture/patterns/ui
 ```
 
 ### In Implementation Plan
@@ -106,6 +127,36 @@ AI: "I see this task requires JWT authentication.
 | `@doc/patterns/auth` | `.knowns/docs/patterns/auth.md` |
 | `@doc/patterns/auth.md` | `.knowns/docs/patterns/auth.md` |
 
+### Template References
+
+| Input | Resolves To |
+|-------|-------------|
+| `@template/react-component` | `.knowns/templates/react-component/` |
+| `@template/api-endpoint` | `.knowns/templates/api-endpoint/` |
+
+## Template-Doc Bidirectional Linking
+
+Templates and docs can reference each other:
+
+```
+┌─────────────────────────────────────┐
+│  Doc: patterns/react-component      │
+│  ─────────────────────────────────  │
+│  Use @template/react-component      │──────┐
+│  to generate components.            │      │
+└─────────────────────────────────────┘      │
+         ▲                                   │
+         │ doc: patterns/react-component     ▼
+         │                          ┌────────────────────────────┐
+         └──────────────────────────│  Template: react-component │
+                                    │  ────────────────────────  │
+                                    │  _template.yaml            │
+                                    │  doc: patterns/react-...   │
+                                    └────────────────────────────┘
+```
+
+AI can follow links in both directions to understand context.
+
 ## Best Practices
 
 ### 1. Reference Early
@@ -144,22 +195,31 @@ Organize docs in folders for clarity:
 
 ```
 .knowns/docs/
-├── patterns/
-│   ├── auth.md
-│   ├── caching.md
-│   └── error-handling.md
+├── readme.md
+├── ai/
+│   ├── overview.md
+│   ├── platforms.md
+│   └── skills.md
 ├── architecture/
 │   ├── overview.md
-│   └── api-design.md
-└── guides/
-    ├── getting-started.md
-    └── deployment.md
+│   ├── patterns/
+│   │   ├── command.md
+│   │   └── storage.md
+│   └── features/
+│       └── init-process.md
+├── core/
+│   └── time-tracking.md
+├── guides/
+│   └── user-guide.md
+└── templates/
+    └── overview.md
 ```
 
 Reference with full path:
-- `@doc/patterns/auth`
-- `@doc/architecture/api-design`
-- `@doc/guides/deployment`
+- `@doc/ai/skills`
+- `@doc/architecture/patterns/command`
+- `@doc/guides/user-guide`
+- `@template/react-component`
 
 ### 4. Cross-Reference Related Items
 
@@ -198,5 +258,39 @@ Related: @task-38 @task-39
 References render as clickable badges:
 - Task refs: Green badges with task number and title
 - Doc refs: Blue badges with document title
+- Template refs: Purple badges with template name
 
 Click to navigate to the referenced item.
+
+## How AI Uses Template References
+
+When an AI sees a template reference:
+
+```
+1. AI reads doc with @template/react-component
+2. AI fetches template config and linked doc
+3. AI understands:
+   - What files will be generated
+   - What prompts are needed
+   - Related patterns from linked doc
+4. AI can run the template with proper inputs
+```
+
+### Example: Using Template Reference
+
+```
+You: "Create a new UserProfile component"
+
+AI: [Sees @template/react-component in patterns doc]
+    [Fetches template config]
+    [Fetches linked doc: patterns/react-component]
+
+AI: "I'll use the react-component template.
+    Based on the pattern doc, I'll include:
+    - TypeScript props interface
+    - Unit test file
+
+    Running template..."
+
+    $ knowns template run react-component --name UserProfile --withTest
+```

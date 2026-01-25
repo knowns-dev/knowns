@@ -14,3 +14,6 @@ export { configCommand } from "./config";
 export { agentsCommand } from "./agents";
 export { syncCommand } from "./sync";
 export { mcpCommand } from "./mcp";
+export { templateCommand } from "./template";
+export { skillCommand } from "./skill";
+export { importCommand } from "./import";

@@ -5,7 +5,7 @@
 
 import { z } from "zod";
 // Import modular guidelines (CLI and MCP variants)
-import { Guidelines, MCPGuidelines } from "../../templates/guidelines";
+import { Guidelines, MCPGuidelines } from "../../instructions/guidelines";
 
 export const getGuidelineSchema = z.object({
 	type: z.enum(["unified", "cli", "mcp"]).optional().default("unified"),

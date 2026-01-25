@@ -1,0 +1,9 @@
+{
+	"mcpServers": {
+		"knowns": {
+			"command": "npx",
+			"args": ["knowns", "mcp"],
+			"env": {}
+		}
+	}
+}

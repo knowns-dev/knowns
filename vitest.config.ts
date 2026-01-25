@@ -29,6 +29,8 @@ export default defineConfig({
 			"@storage": resolve(__dirname, "src/storage"),
 			"@server": resolve(__dirname, "src/server"),
 			"@utils": resolve(__dirname, "src/utils"),
+			"@codegen": resolve(__dirname, "src/codegen"),
+			"@instructions": resolve(__dirname, "src/instructions"),
 		},
 	},
 });
