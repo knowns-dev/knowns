@@ -31,6 +31,15 @@ export const updateTaskSchema = z.object({
 	priority: z.enum(["low", "medium", "high"]).optional(),
 	assignee: z.string().optional(),
 	labels: z.array(z.string()).optional(),
+	// AC operations
+	addAc: z.array(z.string()).optional(), // Add new acceptance criteria
+	checkAc: z.array(z.number()).optional(), // Check AC by index (1-based)
+	uncheckAc: z.array(z.number()).optional(), // Uncheck AC by index (1-based)
+	removeAc: z.array(z.number()).optional(), // Remove AC by index (1-based)
+	// Plan and notes
+	plan: z.string().optional(), // Set implementation plan
+	notes: z.string().optional(), // Set implementation notes (replaces)
+	appendNotes: z.string().optional(), // Append to implementation notes
 });
 
 export const listTasksSchema = z.object({
@@ -88,7 +97,8 @@ export const taskTools = [
 	},
 	{
 		name: "update_task",
-		description: "Update task fields",
+		description:
+			"Update task fields including acceptance criteria, plan, and notes. Use addAc to add criteria, checkAc/uncheckAc to toggle completion (1-based index).",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -111,6 +121,29 @@ export const taskTools = [
 					items: { type: "string" },
 					description: "New labels",
 				},
+				addAc: {
+					type: "array",
+					items: { type: "string" },
+					description: "Add new acceptance criteria",
+				},
+				checkAc: {
+					type: "array",
+					items: { type: "number" },
+					description: "Check AC by index (1-based)",
+				},
+				uncheckAc: {
+					type: "array",
+					items: { type: "number" },
+					description: "Uncheck AC by index (1-based)",
+				},
+				removeAc: {
+					type: "array",
+					items: { type: "number" },
+					description: "Remove AC by index (1-based, processed in reverse order)",
+				},
+				plan: { type: "string", description: "Set implementation plan" },
+				notes: { type: "string", description: "Set implementation notes (replaces existing)" },
+				appendNotes: { type: "string", description: "Append to implementation notes" },
 			},
 			required: ["taskId"],
 		},
@@ -192,6 +225,8 @@ export async function handleGetTask(args: unknown, fileStore: FileStore) {
 			assignee: task.assignee,
 			labels: task.labels,
 			acceptanceCriteria: task.acceptanceCriteria,
+			implementationPlan: task.implementationPlan,
+			implementationNotes: task.implementationNotes,
 			createdAt: task.createdAt,
 			updatedAt: task.updatedAt,
 			linkedDocumentation: linkedDocs,
@@ -201,14 +236,89 @@ export async function handleGetTask(args: unknown, fileStore: FileStore) {
 
 export async function handleUpdateTask(args: unknown, fileStore: FileStore) {
 	const input = updateTaskSchema.parse(args);
+
+	// Get current task for AC operations
+	const currentTask = await fileStore.getTask(input.taskId);
+	if (!currentTask) {
+		return errorResponse(`Task ${input.taskId} not found`);
+	}
+
 	const updates: Partial<Task> = {};
 
+	// Basic field updates
 	if (input.title) updates.title = input.title;
 	if (input.description) updates.description = input.description;
 	if (input.status) updates.status = input.status as TaskStatus;
 	if (input.priority) updates.priority = input.priority as TaskPriority;
 	if (input.assignee) updates.assignee = input.assignee;
 	if (input.labels) updates.labels = input.labels;
+
+	// AC operations
+	const criteria = [...currentTask.acceptanceCriteria];
+	let acModified = false;
+
+	// Add new AC
+	if (input.addAc && input.addAc.length > 0) {
+		for (const text of input.addAc) {
+			criteria.push({ text, completed: false });
+		}
+		acModified = true;
+	}
+
+	// Check AC (1-based index)
+	if (input.checkAc && input.checkAc.length > 0) {
+		for (const index of input.checkAc) {
+			const i = index - 1;
+			const ac = criteria[i];
+			if (i >= 0 && i < criteria.length && ac) {
+				ac.completed = true;
+				acModified = true;
+			}
+		}
+	}
+
+	// Uncheck AC (1-based index)
+	if (input.uncheckAc && input.uncheckAc.length > 0) {
+		for (const index of input.uncheckAc) {
+			const i = index - 1;
+			const ac = criteria[i];
+			if (i >= 0 && i < criteria.length && ac) {
+				ac.completed = false;
+				acModified = true;
+			}
+		}
+	}
+
+	// Remove AC (1-based index, process in reverse to maintain indices)
+	if (input.removeAc && input.removeAc.length > 0) {
+		const sortedIndices = [...input.removeAc].sort((a, b) => b - a);
+		for (const index of sortedIndices) {
+			const i = index - 1;
+			if (i >= 0 && i < criteria.length) {
+				criteria.splice(i, 1);
+				acModified = true;
+			}
+		}
+	}
+
+	if (acModified) {
+		updates.acceptanceCriteria = criteria;
+	}
+
+	// Plan and notes
+	if (input.plan !== undefined) {
+		updates.implementationPlan = input.plan;
+	}
+
+	if (input.notes !== undefined) {
+		updates.implementationNotes = input.notes;
+	}
+
+	if (input.appendNotes) {
+		const existingNotes = currentTask.implementationNotes || "";
+		const separator = existingNotes ? "\n\n" : "";
+		updates.implementationNotes = existingNotes + separator + input.appendNotes;
+	}
 
 	const task = await fileStore.updateTask(input.taskId, updates);
 
@@ -221,6 +331,9 @@ export async function handleUpdateTask(args: unknown, fileStore: FileStore) {
 			title: task.title,
 			status: task.status,
 			priority: task.priority,
+			acceptanceCriteria: task.acceptanceCriteria,
+			...(task.implementationPlan && { hasPlan: true }),
+			...(task.implementationNotes && { hasNotes: true }),
 		},
 	});
 }

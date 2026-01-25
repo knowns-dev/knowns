@@ -36,3 +36,15 @@ export {
 
 // Guideline handlers
 export { guidelineTools, handleGetGuideline } from "./guideline";
+
+// Template handlers
+export {
+	templateTools,
+	handleListTemplates,
+	handleGetTemplate,
+	handleRunTemplate,
+	handleCreateTemplate,
+} from "./template";
+
+// Unified Search handler
+export { searchTools, handleSearch } from "./search";

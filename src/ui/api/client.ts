@@ -306,6 +306,274 @@ export async function search(query: string): Promise<{ tasks: Task[]; docs: unkn
 	};
 }
 
+// Template API
+export interface TemplatePrompt {
+	name: string;
+	message: string;
+	type: string;
+	required: boolean;
+	default?: string | boolean | number;
+	choices?: Array<{ value: string; label: string }>;
+}
+
+export interface TemplateFileAdd {
+	type: "add";
+	template: string;
+	destination: string;
+	condition?: string;
+}
+
+export interface TemplateFileAddMany {
+	type: "addMany";
+	source: string;
+	destination: string;
+	globPattern?: string;
+	condition?: string;
+}
+
+export type TemplateFile = TemplateFileAdd | TemplateFileAddMany;
+
+export interface TemplateListItem {
+	name: string;
+	description?: string;
+	doc?: string;
+	promptCount: number;
+	fileCount: number;
+}
+
+export interface TemplateDetail {
+	name: string;
+	description?: string;
+	doc?: string;
+	destination: string;
+	prompts: TemplatePrompt[];
+	files: TemplateFile[];
+	messages?: {
+		success?: string;
+	};
+}
+
+export interface TemplateRunResult {
+	success: boolean;
+	dryRun: boolean;
+	template: string;
+	variables: Record<string, string>;
+	files: Array<{
+		path: string;
+		action: string;
+		skipped?: boolean;
+		skipReason?: string;
+	}>;
+	message: string;
+}
+
+export const templateApi = {
+	async list(): Promise<{ templates: TemplateListItem[]; count: number }> {
+		const res = await fetch(`${API_BASE}/api/templates`);
+		if (!res.ok) {
+			throw new Error("Failed to fetch templates");
+		}
+		return res.json();
+	},
+
+	async get(name: string): Promise<{ template: TemplateDetail }> {
+		const res = await fetch(`${API_BASE}/api/templates/${encodeURIComponent(name)}`);
+		if (!res.ok) {
+			if (res.status === 404) {
+				throw new Error(`Template not found: ${name}`);
+			}
+			throw new Error(`Failed to fetch template ${name}`);
+		}
+		return res.json();
+	},
+
+	async run(name: string, variables: Record<string, string>, dryRun = true): Promise<TemplateRunResult> {
+		const res = await fetch(`${API_BASE}/api/templates/${encodeURIComponent(name)}/run`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ variables, dryRun }),
+		});
+		if (!res.ok) {
+			const data = await res.json();
+			throw new Error(data.error || `Failed to run template ${name}`);
+		}
+		return res.json();
+	},
+
+	async create(data: {
+		name: string;
+		description?: string;
+		doc?: string;
+	}): Promise<{ success: boolean; template: { name: string; path: string } }> {
+		const res = await fetch(`${API_BASE}/api/templates`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(data),
+		});
+		if (!res.ok) {
+			const error = await res.json();
+			throw new Error(error.error || "Failed to create template");
+		}
+		return res.json();
+	},
+
+	async previewFile(
+		name: string,
+		templateFile: string,
+		variables: Record<string, string>,
+	): Promise<{ success: boolean; templateFile: string; destinationPath: string; content: string }> {
+		const res = await fetch(`${API_BASE}/api/templates/${encodeURIComponent(name)}/preview`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ templateFile, variables }),
+		});
+		if (!res.ok) {
+			const data = await res.json();
+			throw new Error(data.error || "Failed to preview template file");
+		}
+		return res.json();
+	},
+};
+
+// Import API
+export interface Import {
+	name: string;
+	source: string;
+	type: "git" | "npm" | "local" | "registry";
+	ref?: string;
+	link: boolean;
+	autoSync: boolean;
+	lastSync?: string;
+	fileCount: number;
+	importedAt?: string;
+}
+
+export interface ImportDetail extends Import {
+	include?: string[];
+	exclude?: string[];
+	commit?: string;
+	version?: string;
+	files: string[];
+}
+
+export interface ImportChange {
+	path: string;
+	action: "add" | "update" | "skip";
+	skipReason?: string;
+}
+
+export interface ImportResult {
+	success: boolean;
+	dryRun: boolean;
+	import: {
+		name: string;
+		source: string;
+		type: string;
+	};
+	changes: ImportChange[];
+	summary: {
+		added: number;
+		updated: number;
+		skipped: number;
+		modifiedLocally?: number;
+	};
+	warnings?: string[];
+	error?: string;
+}
+
+export const importApi = {
+	async list(): Promise<{ imports: Import[]; count: number }> {
+		const res = await fetch(`${API_BASE}/api/imports`);
+		if (!res.ok) {
+			throw new Error("Failed to fetch imports");
+		}
+		return res.json();
+	},
+
+	async get(name: string): Promise<{ import: ImportDetail }> {
+		const res = await fetch(`${API_BASE}/api/imports/${encodeURIComponent(name)}`);
+		if (!res.ok) {
+			if (res.status === 404) {
+				throw new Error(`Import not found: ${name}`);
+			}
+			throw new Error(`Failed to fetch import ${name}`);
+		}
+		return res.json();
+	},
+
+	async add(data: {
+		source: string;
+		name?: string;
+		type?: string;
+		ref?: string;
+		include?: string[];
+		exclude?: string[];
+		link?: boolean;
+		force?: boolean;
+		dryRun?: boolean;
+	}): Promise<ImportResult> {
+		const res = await fetch(`${API_BASE}/api/imports`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(data),
+		});
+		if (!res.ok) {
+			const error = await res.json();
+			throw new Error(error.error || "Failed to add import");
+		}
+		return res.json();
+	},
+
+	async sync(name: string, options?: { force?: boolean; dryRun?: boolean }): Promise<ImportResult> {
+		const res = await fetch(`${API_BASE}/api/imports/${encodeURIComponent(name)}/sync`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(options || {}),
+		});
+		if (!res.ok) {
+			const error = await res.json();
+			throw new Error(error.error || `Failed to sync import ${name}`);
+		}
+		return res.json();
+	},
+
+	async syncAll(options?: { force?: boolean; dryRun?: boolean }): Promise<{
+		success: boolean;
+		dryRun: boolean;
+		results: Array<{
+			name: string;
+			source: string;
+			type: string;
+			success: boolean;
+			error?: string;
+			summary?: { added: number; updated: number; skipped: number };
+		}>;
+		summary: { total: number; successful: number; failed: number };
+	}> {
+		const res = await fetch(`${API_BASE}/api/imports/sync-all`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(options || {}),
+		});
+		if (!res.ok) {
+			const error = await res.json();
+			throw new Error(error.error || "Failed to sync imports");
+		}
+		return res.json();
+	},
+
+	async remove(name: string, deleteFiles = false): Promise<{ success: boolean; filesDeleted: boolean }> {
+		const res = await fetch(`${API_BASE}/api/imports/${encodeURIComponent(name)}?delete=${deleteFiles}`, {
+			method: "DELETE",
+		});
+		if (!res.ok) {
+			const error = await res.json();
+			throw new Error(error.error || `Failed to remove import ${name}`);
+		}
+		return res.json();
+	},
+};
+
 // Time Tracking API
 export const timeApi = {
 	async getStatus(): Promise<{ active: ActiveTimer | null }> {

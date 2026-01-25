@@ -1,0 +1,31 @@
+/**
+ * Tests for {{pascalCase name}} Command
+ */
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { {{camelCase name}}Command } from "./{{kebabCase name}}.js";
+
+describe("{{camelCase name}}Command", () => {
+  it("should be defined", () => {
+    expect({{camelCase name}}Command).toBeDefined();
+  });
+
+  it("should have correct name", () => {
+    expect({{camelCase name}}Command.name()).toBe("{{kebabCase name}}");
+  });
+
+  it("should have description", () => {
+    expect({{camelCase name}}Command.description()).toBe("{{description}}");
+  });
+
+{{#if hasSubcommands}}
+  describe("subcommands", () => {
+    const subcommandNames = {{camelCase name}}Command.commands.map(c => c.name());
+
+    it("should have subcommands", () => {
+      expect({{camelCase name}}Command.commands.length).toBeGreaterThan(0);
+    });
+
+    // TODO: Add specific subcommand tests
+  });
+{{/if}}
+});

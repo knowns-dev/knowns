@@ -76,6 +76,14 @@ export async function startServer(options: ServerOptions) {
 		}),
 	);
 
+	// Serve root-level static files (favicon, logo, etc.)
+	app.use(
+		express.static(uiDistPath, {
+			maxAge: "1d",
+			index: false, // Don't serve index.html automatically
+		}),
+	);
+
 	// Mount SSE events endpoint
 	app.use("/api/events", createEventsRoute());
 

@@ -14,8 +14,10 @@ import { UIPreferencesProvider } from "./contexts/UIPreferencesContext";
 import { TimeTrackerProvider } from "./contexts/TimeTrackerContext";
 import ConfigPage from "./pages/ConfigPage";
 import DocsPage from "./pages/DocsPage";
+import ImportsPage from "./pages/ImportsPage";
 import KanbanPage from "./pages/KanbanPage";
 import TasksPage from "./pages/TasksPage";
+import TemplatesPage from "./pages/TemplatesPage";
 
 // Dark mode context
 interface ThemeContextType {
@@ -60,6 +62,8 @@ function AppContent() {
 		const hash = window.location.hash.slice(1); // Remove #
 		if (hash.startsWith("/tasks")) return "tasks";
 		if (hash.startsWith("/docs")) return "docs";
+		if (hash.startsWith("/templates")) return "templates";
+		if (hash.startsWith("/imports")) return "imports";
 		if (hash.startsWith("/config")) return "config";
 		if (hash.startsWith("/kanban")) return "kanban";
 		if (hash === "/" || hash === "") return "kanban";
@@ -255,6 +259,10 @@ function AppContent() {
 			}
 			case "docs":
 				return <DocsPage />;
+			case "templates":
+				return <TemplatesPage />;
+			case "imports":
+				return <ImportsPage />;
 			case "config":
 				return <ConfigPage />;
 			default:

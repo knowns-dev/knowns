@@ -18,6 +18,7 @@ import {
 import { notifyDocUpdate } from "@utils/notify-server";
 import matter from "gray-matter";
 import { z } from "zod";
+import { validateRefs } from "../../import";
 import { errorResponse, successResponse } from "../utils";
 
 const DOCS_DIR = join(process.cwd(), ".knowns", "docs");
@@ -435,6 +436,12 @@ export async function handleGetDoc(args: unknown) {
 		});
 	}
 
+	// Validate refs and collect broken ones
+	const projectRoot = process.cwd();
+	const tasksDir = join(projectRoot, ".knowns", "tasks");
+	const refs = await validateRefs(projectRoot, content, tasksDir);
+	const brokenRefs = refs.filter((r) => !r.exists).map((r) => r.ref);
+
 	// Default: return full document
 	return successResponse({
 		doc: {
@@ -445,6 +452,7 @@ export async function handleGetDoc(args: unknown) {
 			createdAt: metadata.createdAt,
 			updatedAt: metadata.updatedAt,
 			content: content.trim(),
+			...(brokenRefs.length > 0 && { brokenRefs }),
 		},
 	});
 }

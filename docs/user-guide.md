@@ -49,9 +49,9 @@ Running `knowns init` starts an interactive wizard:
 | **Agent files** | Multi-select | Which AI instruction files to create |
 
 **What happens:**
-- Creates `.knowns/` directory with `tasks/`, `docs/`, `config.json`
+- Creates `.knowns/` directory with `tasks/`, `docs/`, `templates/`, `config.json`
 - If **MCP** selected: Creates `.mcp.json` for Claude Code auto-discovery
-- If **git-ignored** selected: Updates `.gitignore` to exclude tasks
+- If **git-ignored** selected: Updates `.gitignore` to exclude tasks (docs/templates still tracked)
 - Creates selected AI instruction files (CLAUDE.md, AGENTS.md, etc.)
 
 **Quick init (skip wizard):**
@@ -259,6 +259,189 @@ knowns search "query" [options]
 | `--priority` | Filter by priority |
 | `--plain` | Plain text output |
 
+### Template Commands
+
+Templates help you generate boilerplate code consistently.
+
+#### List Templates
+```bash
+knowns template list [--plain]
+```
+
+#### Run Template
+```bash
+knowns template run <name> [options]
+```
+
+**Options:**
+| Option | Description |
+|--------|-------------|
+| `--dry-run` | Preview without creating files |
+| `--<variable>` | Pre-fill prompt variable |
+| `--no-<variable>` | Set boolean to false |
+
+**Examples:**
+```bash
+# Interactive mode
+knowns template run react-component
+
+# With pre-filled values
+knowns template run react-component --name UserProfile --withTest
+
+# Preview only
+knowns template run react-component --dry-run
+```
+
+#### View Template
+```bash
+knowns template view <name> [--with-doc] [--plain]
+```
+
+#### Create Template
+```bash
+knowns template create <name> [-d "description"] [--doc <path>]
+```
+
+**Example:**
+```bash
+knowns template create api-service -d "REST API service" --doc patterns/api
+```
+
+### Skill Commands
+
+Skills are AI workflow instructions that sync across platforms.
+
+#### List Skills
+```bash
+knowns skill list [--plain]
+```
+
+#### Create Skill
+```bash
+knowns skill create <name> [-d "description"]
+```
+
+#### Sync Skills
+```bash
+knowns skill sync [--platform <platforms>]
+```
+
+**Supported platforms:** `claude`, `antigravity`, `cursor`, `gemini`
+
+**Examples:**
+```bash
+# Sync to all platforms
+knowns skill sync
+
+# Sync to specific platforms
+knowns skill sync --platform claude,cursor
+```
+
+#### Check Status
+```bash
+knowns skill status
+```
+
+---
+
+## Template Guide
+
+### What are Templates?
+
+Templates are code generators that create files from Handlebars templates with interactive prompts. They help you:
+- Generate consistent boilerplate code
+- Follow project patterns automatically
+- Speed up repetitive file creation
+
+### Template Structure
+
+```
+.knowns/templates/
+└── react-component/
+    ├── _template.yaml          # Config: prompts, actions
+    ├── {{pascalCase name}}.tsx.hbs
+    └── {{pascalCase name}}.test.tsx.hbs
+```
+
+### Using Templates
+
+```bash
+# 1. See available templates
+knowns template list
+
+# 2. Preview what will be created
+knowns template run react-component --dry-run
+
+# 3. Generate files
+knowns template run react-component
+# ? Component name? UserProfile
+# ? Include test? Yes
+# ✓ Created src/components/UserProfile.tsx
+# ✓ Created src/components/UserProfile.test.tsx
+```
+
+### Creating Your Own Template
+
+```bash
+# Create template scaffold
+knowns template create my-component
+
+# Edit config
+# .knowns/templates/my-component/_template.yaml
+```
+
+**Example `_template.yaml`:**
+```yaml
+name: my-component
+description: My custom component
+
+destination: src/components
+
+prompts:
+  - name: name
+    type: text
+    message: "Component name?"
+    validate: required
+
+  - name: withTest
+    type: confirm
+    message: "Include test?"
+    initial: true
+
+actions:
+  - type: add
+    template: "component.tsx.hbs"
+    path: "{{pascalCase name}}.tsx"
+
+  - type: add
+    template: "component.test.tsx.hbs"
+    path: "{{pascalCase name}}.test.tsx"
+    when: "{{withTest}}"
+```
+
+### Handlebars Helpers
+
+| Helper | Example | Output |
+|--------|---------|--------|
+| `pascalCase` | `{{pascalCase "user profile"}}` | `UserProfile` |
+| `camelCase` | `{{camelCase "user profile"}}` | `userProfile` |
+| `kebabCase` | `{{kebabCase "user profile"}}` | `user-profile` |
+| `snakeCase` | `{{snakeCase "user profile"}}` | `user_profile` |
+
+### Template-Doc Linking
+
+Link templates to documentation for context:
+
+```yaml
+# In _template.yaml
+doc: patterns/react-component
+```
+
+```markdown
+# In doc
+Related: @template/react-component
+```
+
 ---
 
 ## Web UI Guide
@@ -405,7 +588,12 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 | `update_task` | Update task fields |
 | `get_doc` | Get document content |
 | `list_docs` | List all documents |
-| `search` | Search tasks and docs |
+| `search_tasks` | Search tasks |
+| `search_docs` | Search docs |
+| `list_templates` | List available templates |
+| `get_template` | Get template config |
+| `run_template` | Run template (use `dryRun: true` first) |
+| `create_template` | Create new template |
 
 ### Plain Text Mode
 
@@ -418,9 +606,10 @@ knowns doc "README" --plain
 
 ### Reference System
 
-Tasks and docs can reference each other:
+Tasks, docs, and templates can reference each other:
 - `@task-42` → Links to task 42
 - `@doc/patterns/module` → Links to document
+- `@template/react-component` → Links to template
 
 References maintain their simple format in all outputs.
 

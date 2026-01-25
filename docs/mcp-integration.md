@@ -190,6 +190,39 @@ Starting timer and beginning implementation..."
 // update_doc with section + content replaces only that section
 ```
 
+### Templates
+
+| Tool              | Description           | Parameters                            |
+| ----------------- | --------------------- | ------------------------------------- |
+| `list_templates`  | List all templates    | -                                     |
+| `get_template`    | Get template config   | `name`                                |
+| `run_template`    | Run template          | `name`, `variables`, `dryRun?`        |
+| `create_template` | Create new template   | `name`, `description?`, `doc?`        |
+
+**Template Workflow:**
+
+```json
+// Step 1: List available templates
+mcp__knowns__list_templates({})
+
+// Step 2: Get template details
+mcp__knowns__get_template({ "name": "react-component" })
+
+// Step 3: Preview (dry run)
+mcp__knowns__run_template({
+  "name": "react-component",
+  "variables": { "name": "UserProfile", "withTest": true },
+  "dryRun": true
+})
+
+// Step 4: Generate files
+mcp__knowns__run_template({
+  "name": "react-component",
+  "variables": { "name": "UserProfile", "withTest": true },
+  "dryRun": false
+})
+```
+
 ### Board
 
 | Tool        | Description            | Parameters |

@@ -9,10 +9,76 @@ import { FileStore } from "@storage/file-store";
 import chalk from "chalk";
 import { Command } from "commander";
 import prompts from "prompts";
-import { SKILLS } from "../templates/skills";
+import { renderString } from "../codegen/renderer";
+import { Guidelines } from "../instructions/guidelines";
+import { type IDEConfig, IDE_CONFIGS } from "../instructions/ide";
+import { SKILLS } from "../instructions/skills";
 import { type GuidelinesType, INSTRUCTION_FILES, getGuidelines, updateInstructionFile } from "./agents";
 
 import type { GitTrackingMode } from "@models/project";
+
+/**
+ * Instruction mode for skills
+ */
+type InstructionMode = "mcp" | "cli";
+
+/**
+ * Render skill content with mode context
+ */
+function renderSkillContent(content: string, mode: InstructionMode): string {
+	try {
+		return renderString(content, { mcp: mode === "mcp", cli: mode === "cli" });
+	} catch {
+		// If rendering fails, return original
+		return content;
+	}
+}
+
+/**
+ * Platform definitions for init
+ */
+interface Platform {
+	id: string;
+	name: string;
+	description: string;
+	hasSkills: boolean;
+	ideConfig?: IDEConfig;
+}
+
+const PLATFORMS: Platform[] = [
+	{
+		id: "claude-code",
+		name: "Claude Code",
+		description: "Skills + MCP + CLI (recommended)",
+		hasSkills: true,
+	},
+	{
+		id: "antigravity",
+		name: "Antigravity (Gemini CLI)",
+		description: "Skills + MCP + CLI",
+		hasSkills: true,
+	},
+	{
+		id: "cursor",
+		name: "Cursor",
+		description: "MCP + Rules",
+		hasSkills: false,
+		ideConfig: IDE_CONFIGS.find((c) => c.name === "cursor"),
+	},
+	{
+		id: "windsurf",
+		name: "Windsurf",
+		description: "Rules",
+		hasSkills: false,
+		ideConfig: IDE_CONFIGS.find((c) => c.name === "windsurf"),
+	},
+	{
+		id: "generic",
+		name: "Generic AI",
+		description: "AGENTS.md only",
+		hasSkills: false,
+	},
+];
 
 interface InitConfig {
 	name: string;
@@ -20,8 +86,7 @@ interface InitConfig {
 	defaultLabels: string[];
 	timeFormat: "12h" | "24h";
 	gitTrackingMode: GitTrackingMode;
-	guidelinesType: GuidelinesType;
-	agentFiles: Array<{ path: string; name: string; selected: boolean }>;
+	platforms: string[];
 }
 
 /**
@@ -125,9 +190,104 @@ async function updateGitignore(projectRoot: string, mode: "git-ignored" | "none"
 }
 
 /**
- * Create Claude Code skills in .claude/skills/ directory
+ * Create AGENTS.md in project root
  */
-async function createClaudeSkills(projectRoot: string): Promise<void> {
+async function createAgentsMd(projectRoot: string): Promise<void> {
+	const { writeFileSync } = await import("node:fs");
+	const agentsMdPath = join(projectRoot, "AGENTS.md");
+
+	if (existsSync(agentsMdPath)) {
+		console.log(chalk.gray("  AGENTS.md already exists"));
+		return;
+	}
+
+	writeFileSync(agentsMdPath, Guidelines.getFull(true), "utf-8");
+	console.log(chalk.green("✓ Created AGENTS.md (full AI guidelines)"));
+}
+
+/**
+ * Create IDE-specific configuration files
+ */
+async function createIDEConfig(projectRoot: string, ideConfig: IDEConfig): Promise<void> {
+	const { mkdirSync, writeFileSync } = await import("node:fs");
+	const targetDir = join(projectRoot, ideConfig.targetDir);
+
+	let createdCount = 0;
+	let skippedCount = 0;
+
+	for (const file of ideConfig.files) {
+		const filePath = join(targetDir, file.filename);
+		const fileDir = join(targetDir, ...file.filename.split("/").slice(0, -1));
+		const content = file.isJson ? `${JSON.stringify(file.content, null, 2)}\n` : String(file.content);
+
+		if (existsSync(filePath)) {
+			skippedCount++;
+			continue;
+		}
+
+		if (!existsSync(fileDir)) {
+			mkdirSync(fileDir, { recursive: true });
+		}
+		writeFileSync(filePath, content, "utf-8");
+		createdCount++;
+	}
+
+	if (createdCount > 0) {
+		console.log(chalk.green(`✓ Created ${createdCount} ${ideConfig.name} config files in ${ideConfig.targetDir}/`));
+	}
+	if (skippedCount > 0) {
+		console.log(chalk.gray(`  Skipped ${skippedCount} existing ${ideConfig.name} files`));
+	}
+}
+
+/**
+ * Create local skills in .knowns/skills/ directory (source of truth)
+ * Local skills keep Handlebars templates for future sync with different modes
+ */
+async function createLocalSkills(projectRoot: string): Promise<void> {
+	const { mkdirSync, writeFileSync } = await import("node:fs");
+	const skillsDir = join(projectRoot, ".knowns", "skills");
+
+	// Create .knowns/skills directory
+	if (!existsSync(skillsDir)) {
+		mkdirSync(skillsDir, { recursive: true });
+	}
+
+	let createdCount = 0;
+	let skippedCount = 0;
+
+	for (const skill of SKILLS) {
+		const skillFolder = join(skillsDir, skill.folderName);
+		const skillFile = join(skillFolder, "SKILL.md");
+
+		// Skip if skill already exists
+		if (existsSync(skillFile)) {
+			skippedCount++;
+			continue;
+		}
+
+		// Create skill folder and file
+		// Keep original content with Handlebars templates (source of truth)
+		if (!existsSync(skillFolder)) {
+			mkdirSync(skillFolder, { recursive: true });
+		}
+		writeFileSync(skillFile, skill.content, "utf-8");
+		createdCount++;
+	}
+
+	if (createdCount > 0) {
+		console.log(chalk.green(`✓ Created ${createdCount} skills in .knowns/skills/ (source of truth)`));
+	}
+	if (skippedCount > 0) {
+		console.log(chalk.gray(`  Skipped ${skippedCount} existing local skills`));
+	}
+}
+
+/**
+ * Create Claude Code skills in .claude/skills/ directory
+ * Skills are rendered with MCP mode (Claude Code uses MCP by default)
+ */
+async function createClaudeSkills(projectRoot: string, mode: InstructionMode = "mcp"): Promise<void> {
 	const { mkdirSync, writeFileSync } = await import("node:fs");
 	const skillsDir = join(projectRoot, ".claude", "skills");
 
@@ -150,15 +310,19 @@ async function createClaudeSkills(projectRoot: string): Promise<void> {
 		}
 
 		// Create skill folder and file
+		// Render content with specified mode (MCP or CLI)
+		const renderedContent = renderSkillContent(skill.content, mode);
 		if (!existsSync(skillFolder)) {
 			mkdirSync(skillFolder, { recursive: true });
 		}
-		writeFileSync(skillFile, skill.content, "utf-8");
+		writeFileSync(skillFile, renderedContent, "utf-8");
 		createdCount++;
 	}
 
 	if (createdCount > 0) {
-		console.log(chalk.green(`✓ Created ${createdCount} Claude Code skills in .claude/skills/`));
+		console.log(
+			chalk.green(`✓ Created ${createdCount} Claude Code skills in .claude/skills/ (${mode.toUpperCase()} mode)`),
+		);
 	}
 	if (skippedCount > 0) {
 		console.log(chalk.gray(`  Skipped ${skippedCount} existing skills`));
@@ -184,6 +348,18 @@ async function runWizard(): Promise<InitConfig | null> {
 				validate: (value) => (value.trim() ? true : "Project name is required"),
 			},
 			{
+				type: "multiselect",
+				name: "platforms",
+				message: "Select AI platforms to configure",
+				choices: PLATFORMS.map((p) => ({
+					title: `${p.name} (${p.description})`,
+					value: p.id,
+					selected: p.id === "claude-code",
+				})),
+				hint: "- Space to select. Return to submit",
+				min: 1,
+			},
+			{
 				type: "select",
 				name: "gitTrackingMode",
 				message: "Git tracking mode",
@@ -196,7 +372,7 @@ async function runWizard(): Promise<InitConfig | null> {
 					{
 						title: "Git Ignored (personal use)",
 						value: "git-ignored",
-						description: "Only docs tracked, tasks/config ignored",
+						description: "Only docs/templates tracked, tasks/config ignored",
 					},
 					{
 						title: "None (ignore all)",
@@ -205,40 +381,6 @@ async function runWizard(): Promise<InitConfig | null> {
 					},
 				],
 				initial: 0, // git-tracked
-			},
-			{
-				type: "select",
-				name: "guidelinesType",
-				message: "AI Guidelines type",
-				choices: [
-					{
-						title: "Skills (recommended)",
-						value: "skills",
-						description: "Minimal CLAUDE.md + built-in /knowns:* skills",
-					},
-					{
-						title: "CLI (full guidelines)",
-						value: "cli",
-						description: "Full CLI guidelines embedded in CLAUDE.md",
-					},
-					{
-						title: "MCP",
-						value: "mcp",
-						description: "Use MCP tools (mcp__knowns__update_task, etc.)",
-					},
-				],
-				initial: 0, // Skills
-			},
-			{
-				type: "multiselect",
-				name: "agentFiles",
-				message: "Select AI agent files to create/update",
-				choices: INSTRUCTION_FILES.map((f) => ({
-					title: `${f.name} (${f.path})`,
-					value: f,
-					selected: f.selected,
-				})),
-				hint: "- Space to select. Return to submit",
 			},
 		],
 		{
@@ -261,8 +403,7 @@ async function runWizard(): Promise<InitConfig | null> {
 		defaultLabels: [],
 		timeFormat: "24h",
 		gitTrackingMode: response.gitTrackingMode || "git-tracked",
-		guidelinesType: response.guidelinesType || "skills",
-		agentFiles: response.agentFiles || [],
+		platforms: response.platforms || ["claude-code"],
 	};
 }
 
@@ -312,19 +453,13 @@ export const initCommand = new Command("init")
 					defaultLabels: [],
 					timeFormat: "24h",
 					gitTrackingMode: "git-tracked",
-					guidelinesType: "skills",
-					agentFiles: INSTRUCTION_FILES.filter((f) => f.selected),
+					platforms: ["claude-code"],
 				};
 			}
 
 			// Handle git-ignored or none mode: update .gitignore
 			if (config.gitTrackingMode === "git-ignored" || config.gitTrackingMode === "none") {
 				await updateGitignore(projectRoot, config.gitTrackingMode);
-			}
-
-			// Create .mcp.json for Claude Code auto-discovery when MCP mode is selected
-			if (config.guidelinesType === "mcp") {
-				await createMcpJsonFile(projectRoot);
 			}
 
 			// Initialize project
@@ -339,30 +474,57 @@ export const initCommand = new Command("init")
 			console.log();
 			console.log(chalk.green(`✓ Project initialized: ${project.name}`));
 
-			// Create Claude Code skills
-			await createClaudeSkills(projectRoot);
+			// Always create agents.md (full guidelines for all platforms)
+			await createAgentsMd(projectRoot);
 
-			// Update AI instruction files
-			if (config.agentFiles.length > 0) {
-				const guidelines = getGuidelines(config.guidelinesType);
+			// Check platform types
+			const selectedPlatforms = config.platforms.map((id) => PLATFORMS.find((p) => p.id === id)).filter(Boolean);
+			const hasSkillsPlatform = selectedPlatforms.some((p) => p?.hasSkills);
+			const hasNonSkillsPlatform = selectedPlatforms.some((p) => !p?.hasSkills);
 
-				for (const file of config.agentFiles) {
-					try {
-						const result = await updateInstructionFile(file.path, guidelines);
-						if (result.success) {
-							const action =
-								result.action === "created" ? "Created" : result.action === "appended" ? "Appended" : "Updated";
-							console.log(chalk.green(`✓ ${action}: ${file.path}`));
-						}
-					} catch {
-						console.log(chalk.yellow(`⚠️  Skipped: ${file.path}`));
+			// Skills platform setup (Claude Code, Antigravity)
+			if (hasSkillsPlatform) {
+				// Create local skills in .knowns/skills/ (source of truth)
+				await createLocalSkills(projectRoot);
+
+				// Create skills in .claude/skills/
+				await createClaudeSkills(projectRoot);
+
+				// Create .mcp.json for MCP auto-discovery
+				await createMcpJsonFile(projectRoot);
+
+				// Create CLAUDE.md with MCP guidelines
+				const guidelines = getGuidelines("mcp");
+				try {
+					const result = await updateInstructionFile("CLAUDE.md", guidelines);
+					if (result.success) {
+						const action =
+							result.action === "created" ? "Created" : result.action === "appended" ? "Appended" : "Updated";
+						console.log(chalk.green(`✓ ${action}: CLAUDE.md`));
 					}
+				} catch {
+					console.log(chalk.yellow("⚠️  Skipped: CLAUDE.md"));
+				}
+			}
+
+			// IDE platform setups (Cursor, Windsurf)
+			for (const platform of selectedPlatforms) {
+				if (platform?.ideConfig) {
+					await createIDEConfig(projectRoot, platform.ideConfig);
 				}
 			}
 
 			console.log();
 			console.log(chalk.cyan("Get started:"));
 			console.log(chalk.gray('  knowns task create "My first task"'));
+
+			// Show platform-specific tips
+			if (hasSkillsPlatform) {
+				console.log(chalk.gray("  Use /knowns.init to start a session"));
+			}
+			if (hasNonSkillsPlatform) {
+				console.log(chalk.gray("  See AGENTS.md for full AI guidelines"));
+			}
 		} catch (error) {
 			console.error(chalk.red("✗ Failed to initialize project"));
 			if (error instanceof Error) {

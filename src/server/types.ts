@@ -15,4 +15,6 @@ export interface DocResult {
 	folder: string;
 	metadata: Record<string, unknown>;
 	content: string;
+	isImported?: boolean;
+	source?: string;
 }
