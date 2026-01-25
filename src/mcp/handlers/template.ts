@@ -13,6 +13,7 @@ import {
 	loadTemplateByName,
 	runTemplate,
 } from "../../codegen";
+import { listAllTemplates } from "../../import";
 import { errorResponse, successResponse } from "../utils";
 
 const TEMPLATES_DIR = join(process.cwd(), ".knowns", "templates");
@@ -114,32 +115,60 @@ export const templateTools = [
 export async function handleListTemplates(_args: unknown) {
 	listTemplatesSchema.parse(_args);
 
-	if (!existsSync(TEMPLATES_DIR)) {
-		return successResponse({
-			count: 0,
-			templates: [],
-			message: "No templates directory found. Create templates in .knowns/templates/",
-		});
-	}
+	const projectRoot = process.cwd();
 
 	try {
-		const templates = await listTemplates(TEMPLATES_DIR);
+		const allTemplates = await listAllTemplates(projectRoot);
 
-		if (templates.length === 0) {
+		if (allTemplates.length === 0) {
 			return successResponse({
 				count: 0,
 				templates: [],
-				message: "No templates found in .knowns/templates/",
+				message: "No templates found. Create templates in .knowns/templates/",
 			});
 		}
 
-		const templateList = templates.map((t) => ({
-			name: t.name,
-			description: t.description,
-			doc: t.doc, // Linked documentation
-			promptCount: t.prompts?.length || 0,
-			fileCount: t.files?.length || 0,
-		}));
+		// Load template configs for descriptions
+		const templateList: Array<{
+			name: string;
+			ref: string;
+			description: string;
+			doc?: string;
+			promptCount: number;
+			fileCount: number;
+			source: string;
+			sourceUrl?: string;
+			isImported: boolean;
+		}> = [];
+
+		for (const t of allTemplates) {
+			try {
+				const loaded = await listTemplates(join(t.path, ".."));
+				const match = loaded.find((l) => l.name === t.name);
+				templateList.push({
+					name: t.name,
+					ref: t.ref,
+					description: match?.description || "No description",
+					doc: match?.doc,
+					promptCount: match?.prompts?.length || 0,
+					fileCount: match?.files?.length || 0,
+					source: t.source,
+					sourceUrl: t.sourceUrl,
+					isImported: t.isImported,
+				});
+			} catch {
+				templateList.push({
+					name: t.name,
+					ref: t.ref,
+					description: "No description",
+					promptCount: 0,
+					fileCount: 0,
+					source: t.source,
+					sourceUrl: t.sourceUrl,
+					isImported: t.isImported,
+				});
+			}
+		}
 
 		return successResponse({
 			count: templateList.length,

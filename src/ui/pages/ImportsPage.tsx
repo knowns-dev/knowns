@@ -23,6 +23,7 @@ import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
 import { importApi, type Import, type ImportDetail, type ImportResult } from "../api/client";
 import { useSSEEvent } from "../contexts/SSEContext";
+import { toast } from "../components/ui/sonner";
 
 // Helper to format date
 function formatDate(isoDate: string | undefined): string {
@@ -170,8 +171,14 @@ export default function ImportsPage() {
 			if (selectedName === name) {
 				loadImportDetail(name);
 			}
+			toast.success(`Synced "${name}"`, {
+				description: `Added: ${result.summary.added}, Updated: ${result.summary.updated}, Skipped: ${result.summary.skipped}`,
+			});
 		} catch (err) {
 			console.error("Failed to sync:", err);
+			toast.error(`Failed to sync "${name}"`, {
+				description: err instanceof Error ? err.message : String(err),
+			});
 		} finally {
 			setSyncing(null);
 		}
@@ -181,13 +188,28 @@ export default function ImportsPage() {
 	const handleSyncAll = async () => {
 		setSyncingAll(true);
 		try {
-			await importApi.syncAll();
+			const result = await importApi.syncAll();
 			loadImports();
 			if (selectedName) {
 				loadImportDetail(selectedName);
 			}
+			const { summary } = result;
+			if (summary.total === 0) {
+				toast.info("No imports to sync");
+			} else if (summary.failed > 0) {
+				toast.warning(`Synced ${summary.successful} of ${summary.total} imports`, {
+					description: `${summary.failed} failed`,
+				});
+			} else {
+				toast.success(`Synced ${summary.successful} import${summary.successful > 1 ? "s" : ""}`, {
+					description: "All imports are up to date",
+				});
+			}
 		} catch (err) {
 			console.error("Failed to sync all:", err);
+			toast.error("Failed to sync imports", {
+				description: err instanceof Error ? err.message : String(err),
+			});
 		} finally {
 			setSyncingAll(false);
 		}

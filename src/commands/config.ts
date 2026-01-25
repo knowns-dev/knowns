@@ -5,6 +5,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ImportConfig } from "@import/models";
 import { findProjectRoot } from "@utils/find-project-root";
 import chalk from "chalk";
 import { Command } from "commander";
@@ -85,8 +86,13 @@ async function saveConfig(projectRoot: string, config: Config): Promise<void> {
 	}
 
 	try {
-		// Read existing file to preserve project metadata
-		let existingData: { name?: string; id?: string; createdAt?: string } = {};
+		// Read existing file to preserve project metadata and imports
+		let existingData: {
+			name?: string;
+			id?: string;
+			createdAt?: string;
+			imports?: ImportConfig[];
+		} = {};
 		if (existsSync(configPath)) {
 			const content = await readFile(configPath, "utf-8");
 			existingData = JSON.parse(content);

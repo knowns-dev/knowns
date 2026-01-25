@@ -84,14 +84,22 @@ export default function DocsPage() {
 			const docPath = decodeURIComponent(match[1]);
 			// Normalize path - convert backslashes to forward slashes and clean up
 			const normalizedDocPath = normalizePath(docPath).replace(/^\.\//, "").replace(/^\//, "");
+			// Also create a version without .md for comparison
+			const normalizedDocPathNoExt = normalizedDocPath.replace(/\.md$/, "");
 
 			// Find document - normalize both sides for comparison
 			const targetDoc = docs.find((doc) => {
 				const normalizedStoredPath = normalizePath(doc.path);
+				const normalizedStoredPathNoExt = normalizedStoredPath.replace(/\.md$/, "");
 				return (
 					normalizedStoredPath === normalizedDocPath ||
+					normalizedStoredPath === normalizedDocPathNoExt ||
+					normalizedStoredPathNoExt === normalizedDocPath ||
+					normalizedStoredPathNoExt === normalizedDocPathNoExt ||
 					normalizedStoredPath.endsWith(`/${normalizedDocPath}`) ||
-					doc.filename === normalizedDocPath
+					normalizedStoredPath.endsWith(`/${normalizedDocPathNoExt}`) ||
+					doc.filename === normalizedDocPath ||
+					doc.filename === normalizedDocPathNoExt
 				);
 			});
 
@@ -109,24 +117,38 @@ export default function DocsPage() {
 
 	// Auto-expand parent folders when a doc is selected
 	useEffect(() => {
-		if (!selectedDoc || !selectedDoc.folder) return;
+		if (!selectedDoc) return;
 
-		// Get all parent folder paths
-		const folderParts = selectedDoc.folder.split("/");
-		const parentPaths: string[] = [];
-
-		let currentPath = "";
-		for (const part of folderParts) {
-			currentPath = currentPath ? `${currentPath}/${part}` : part;
-			parentPaths.push(currentPath);
-		}
-
-		// Expand all parent folders
 		setExpandedFolders((prev) => {
 			const newExpanded = new Set(prev);
-			for (const path of parentPaths) {
-				newExpanded.add(path);
+
+			// For imported docs, expand the imports section and source folder
+			if (selectedDoc.isImported && selectedDoc.source) {
+				newExpanded.add("__imports__");
+				newExpanded.add(`__import_${selectedDoc.source}__`);
+
+				// Get folder path within the import (e.g., "conventions" from "import-name/conventions/file.md")
+				const pathWithoutImport = selectedDoc.path.replace(`${selectedDoc.source}/`, "");
+				const parts = pathWithoutImport.split("/");
+				if (parts.length > 1) {
+					// Build folder paths within the import context
+					const importPrefix = `__import_${selectedDoc.source}__`;
+					let currentPath = importPrefix;
+					for (let i = 0; i < parts.length - 1; i++) {
+						currentPath = `${currentPath}/${parts.slice(0, i + 1).join("/")}`;
+						newExpanded.add(currentPath);
+					}
+				}
+			} else if (selectedDoc.folder) {
+				// For local docs, expand parent folders
+				const folderParts = selectedDoc.folder.split("/");
+				let currentPath = "";
+				for (const part of folderParts) {
+					currentPath = currentPath ? `${currentPath}/${part}` : part;
+					newExpanded.add(currentPath);
+				}
 			}
+
 			return newExpanded;
 		});
 	}, [selectedDoc]);
@@ -151,17 +173,25 @@ export default function DocsPage() {
 				const anchor = target as HTMLAnchorElement;
 				const href = anchor.getAttribute("href");
 
-				// Handle task links
-				if (href && /^task-\d+(.md)?$/.test(href)) {
+				// Handle task links (task-xxx or @task-xxx)
+				if (href && /^@?task-[\w.]+(.md)?$/.test(href)) {
 					e.preventDefault();
-					const taskId = href.replace(".md", "");
+					const taskId = href.replace(/^@/, "").replace(".md", "");
 
 					// Navigate to tasks page with hash
 					window.location.hash = `/tasks?task=${taskId}`;
 					return;
 				}
 
-				// Handle document links
+				// Handle @doc/xxx format links
+				if (href && href.startsWith("@doc/")) {
+					e.preventDefault();
+					const docPath = href.replace("@doc/", "");
+					window.location.hash = `/docs/${docPath}.md`;
+					return;
+				}
+
+				// Handle document links (.md extension)
 				if (href && (href.endsWith(".md") || href.includes(".md#"))) {
 					e.preventDefault();
 
@@ -531,7 +561,7 @@ export default function DocsPage() {
 													</button>
 													{expandedFolders.has(`__import_${source}__`) && (
 														<div style={{ paddingLeft: "16px" }}>
-															{renderFolderNode(buildFolderTreeFromDocs(sourceDocs, `__import_${source}__`), 1)}
+															{renderFolderNode(buildFolderTreeFromDocs(sourceDocs, `__import_${source}__`), 0)}
 														</div>
 													)}
 												</div>

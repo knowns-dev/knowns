@@ -282,7 +282,7 @@ export const searchCommand = new Command("search")
 							const pathGroups: Record<string, DocResult[]> = {};
 							for (const doc of docResults) {
 								const parts = doc.filename.split("/");
-								const folder = parts.length > 1 ? `${parts.slice(0, -1).join("/")}/` : "(root)";
+								const folder = parts.length > 1 ? `${parts.slice(0, -1).join("/")}/` : "";
 								if (!pathGroups[folder]) {
 									pathGroups[folder] = [];
 								}
@@ -290,16 +290,19 @@ export const searchCommand = new Command("search")
 							}
 
 							const sortedPaths = Object.keys(pathGroups).sort((a, b) => {
-								if (a === "(root)") return -1;
-								if (b === "(root)") return 1;
+								if (a === "") return -1;
+								if (b === "") return 1;
 								return a.localeCompare(b);
 							});
 
 							for (const path of sortedPaths) {
-								console.log(`  ${path}:`);
+								if (path) {
+									console.log(`  ${path}:`);
+								}
+								const indent = path ? "    " : "  ";
 								for (const doc of pathGroups[path]) {
 									const filename = doc.filename.split("/").pop() || doc.filename;
-									console.log(`    ${filename} - ${doc.metadata.title}`);
+									console.log(`${indent}${filename} - ${doc.metadata.title}`);
 								}
 							}
 						}

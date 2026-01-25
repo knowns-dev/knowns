@@ -1,9 +1,25 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
 import { getConfig, saveConfig } from "../api/client";
 
+// Import config type
+interface ImportConfig {
+	name: string;
+	source: string;
+	type: "git" | "npm" | "local" | "registry";
+	ref?: string;
+	version?: string;
+	include?: string[];
+	exclude?: string[];
+	autoSync?: boolean;
+	link?: boolean;
+}
+
 // Config interface (matches ConfigPage.tsx)
 export interface Config {
 	name?: string;
+	id?: string;
+	createdAt?: string;
+	imports?: ImportConfig[];
 	defaultAssignee?: string;
 	defaultPriority?: "low" | "medium" | "high";
 	defaultLabels?: string[];
