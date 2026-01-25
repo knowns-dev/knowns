@@ -58,12 +58,21 @@ knowns search "keyword" --type task --status done --plain
 
 ## Step 3: Plan (BEFORE coding!)
 
+{{#if mcp}}
+```json
+mcp__knowns__update_task({
+  "taskId": "<id>",
+  "plan": "1. Research (see @doc/xxx)\n2. Implement\n3. Test\n4. Document"
+})
+```
+{{else}}
 ```bash
 knowns task edit <id> --plan $'1. Research (see @doc/xxx)
 2. Implement
 3. Test
 4. Document'
 ```
+{{/if}}
 
 **Share plan with user. WAIT for approval before coding.**
 
@@ -71,11 +80,22 @@ knowns task edit <id> --plan $'1. Research (see @doc/xxx)
 
 ## Step 4: Implement
 
+{{#if mcp}}
+```json
+// Check AC only AFTER work is done
+mcp__knowns__update_task({
+  "taskId": "<id>",
+  "checkAc": [1],
+  "appendNotes": "Done: feature X"
+})
+```
+{{else}}
 ```bash
 # Check AC only AFTER work is done
 knowns task edit <id> --check-ac 1
 knowns task edit <id> --append-notes "Done: feature X"
 ```
+{{/if}}
 
 ---
 
@@ -83,14 +103,15 @@ knowns task edit <id> --append-notes "Done: feature X"
 
 If new requirements emerge during work:
 
-```bash
-# Small: Add to current task
-knowns task edit <id> --ac "New requirement"
-knowns task edit <id> --append-notes "Scope updated: reason"
-```
-
 {{#if mcp}}
 ```json
+// Small: Add to current task
+mcp__knowns__update_task({
+  "taskId": "<id>",
+  "addAc": ["New requirement"],
+  "appendNotes": "Scope updated: reason"
+})
+
 // Large: Ask user first, then create follow-up
 mcp__knowns__create_task({
   "title": "Follow-up: feature",
@@ -99,6 +120,10 @@ mcp__knowns__create_task({
 ```
 {{else}}
 ```bash
+# Small: Add to current task
+knowns task edit <id> --ac "New requirement"
+knowns task edit <id> --append-notes "Scope updated: reason"
+
 # Large: Ask user first, then create follow-up
 knowns task create "Follow-up: feature" -d "From task <id>"
 ```

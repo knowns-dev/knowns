@@ -40,12 +40,14 @@ import {
 	handleListTasks,
 	handleListTemplates,
 	handleRunTemplate,
+	handleSearch,
 	handleSearchDocs,
 	handleSearchTasks,
 	handleStartTime,
 	handleStopTime,
 	handleUpdateDoc,
 	handleUpdateTask,
+	searchTools,
 	taskTools,
 	templateTools,
 	timeTools,
@@ -78,6 +80,7 @@ const tools: Tool[] = [
 	...docTools,
 	...guidelineTools,
 	...templateTools,
+	...searchTools,
 ] as Tool[];
 
 // List available tools
@@ -142,6 +145,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 				return await handleRunTemplate(args);
 			case "create_template":
 				return await handleCreateTemplate(args);
+
+			// Unified search handler
+			case "search":
+				return await handleSearch(args, fileStore);
 
 			default:
 				return errorResponse(`Unknown tool: ${name}`);

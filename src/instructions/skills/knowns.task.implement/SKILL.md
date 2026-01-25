@@ -81,11 +81,9 @@ For each step in the plan:
 // After completing work for AC #1:
 mcp__knowns__update_task({
   "taskId": "$ARGUMENTS",
-  "checkAc": 1
+  "checkAc": [1],
+  "appendNotes": "✓ Done: brief description"
 })
-```
-```bash
-knowns task edit $ARGUMENTS --append-notes "✓ Done: brief description"
 ```
 {{else}}
 ```bash
@@ -100,10 +98,20 @@ knowns task edit $ARGUMENTS --append-notes "✓ Done: brief description"
 If new requirements emerge during implementation:
 
 **Small change:**
+{{#if mcp}}
+```json
+mcp__knowns__update_task({
+  "taskId": "$ARGUMENTS",
+  "addAc": ["New requirement"],
+  "appendNotes": "⚠️ Scope: added requirement per user"
+})
+```
+{{else}}
 ```bash
 knowns task edit $ARGUMENTS --ac "New requirement"
 knowns task edit $ARGUMENTS --append-notes "⚠️ Scope: added requirement per user"
 ```
+{{/if}}
 
 **Large change:**
 - Stop and ask user
@@ -125,8 +133,16 @@ npm run build   # if applicable
 
 **2. Add implementation notes (REQUIRED for audit):**
 
-Document all changes made for audit trail. **Use --append-notes to preserve history:**
+Document all changes made for audit trail. **Use appendNotes to preserve history:**
 
+{{#if mcp}}
+```json
+mcp__knowns__update_task({
+  "taskId": "$ARGUMENTS",
+  "appendNotes": "## Implementation Complete\n\n### Files Changed\n- `src/path/file.ts` - Added X\n- `src/path/other.ts` - Modified Y\n\n### Key Changes\n- Change 1: description\n\n### Testing\n- Test coverage / manual testing done"
+})
+```
+{{else}}
 ```bash
 knowns task edit $ARGUMENTS --append-notes $'
 ## Implementation Complete
@@ -144,8 +160,9 @@ knowns task edit $ARGUMENTS --append-notes $'
 - Test coverage / manual testing done
 '
 ```
+{{/if}}
 
-**IMPORTANT:** Always use `--append-notes` (not `--notes`) to preserve audit trail.
+**IMPORTANT:** Always use `appendNotes` (not `notes`) to preserve audit trail.
 
 **3. Stop timer and mark done:**
 
@@ -178,6 +195,21 @@ If generalizable patterns were discovered:
 
 Use concise notes:
 
+{{#if mcp}}
+```json
+// Good
+mcp__knowns__update_task({
+  "taskId": "$ARGUMENTS",
+  "appendNotes": "✓ Auth middleware implemented"
+})
+
+// Bad (too verbose)
+mcp__knowns__update_task({
+  "taskId": "$ARGUMENTS",
+  "appendNotes": "I have successfully completed..."
+})
+```
+{{else}}
 ```bash
 # Good
 knowns task edit $ARGUMENTS --append-notes "✓ Auth middleware implemented"
@@ -185,6 +217,7 @@ knowns task edit $ARGUMENTS --append-notes "✓ Auth middleware implemented"
 # Bad (too verbose)
 knowns task edit $ARGUMENTS --append-notes "I have successfully completed..."
 ```
+{{/if}}
 
 ## Completion Checklist
 

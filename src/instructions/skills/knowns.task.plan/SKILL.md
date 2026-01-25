@@ -124,11 +124,12 @@ Shall I proceed with this plan?
 ### Step 5: Save Plan (after approval)
 
 {{#if mcp}}
-```bash
-# Use CLI for complex plans
-knowns task edit $ARGUMENTS --plan $'1. Step one
-2. Step two
-3. Add unit tests'
+```json
+mcp__knowns__update_task({
+  "taskId": "$ARGUMENTS",
+  "plan": "1. Step one (see @doc/xxx)\n2. Step two\n3. Add unit tests\n4. Update API docs",
+  "appendNotes": "📋 Plan approved, starting implementation"
+})
 ```
 {{else}}
 ```bash
@@ -136,12 +137,9 @@ knowns task edit $ARGUMENTS --plan $'1. Step one (see @doc/xxx)
 2. Step two
 3. Add unit tests
 4. Update API docs'
-```
-{{/if}}
-
-```bash
 knowns task edit $ARGUMENTS --append-notes "📋 Plan approved, starting implementation"
 ```
+{{/if}}
 
 ## Plan Quality Checklist
 

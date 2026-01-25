@@ -23,9 +23,26 @@
 {
   "taskId": "<id>",
   "status": "in-progress",
-  "assignee": "@me"
+  "assignee": "@me",
+  "addAc": ["Criterion 1", "Criterion 2"],
+  "checkAc": [1, 2],
+  "uncheckAc": [3],
+  "removeAc": [4],
+  "plan": "1. Step one\n2. Step two",
+  "notes": "Implementation notes",
+  "appendNotes": "Additional notes"
 }
 ```
+
+| Field | Purpose |
+|-------|---------|
+| `addAc` | Add new acceptance criteria |
+| `checkAc` | Mark AC done (1-based index) |
+| `uncheckAc` | Unmark AC (1-based index) |
+| `removeAc` | Remove AC (1-based index) |
+| `plan` | Set implementation plan |
+| `notes` | Replace implementation notes |
+| `appendNotes` | Append to notes |
 
 ### mcp__knowns__get_task
 
@@ -95,6 +112,28 @@ If large, returns TOC. Then read section:
 ```json
 { "query": "keyword", "tag": "api" }
 ```
+
+### mcp__knowns__search (Unified)
+
+```json
+{
+  "query": "keyword",
+  "type": "all",
+  "status": "in-progress",
+  "priority": "high",
+  "assignee": "@me",
+  "label": "feature",
+  "tag": "api",
+  "limit": 20
+}
+```
+
+| Field | Purpose |
+|-------|---------|
+| `type` | "all", "task", or "doc" |
+| `status/priority/assignee/label` | Task filters |
+| `tag` | Doc filter |
+| `limit` | Max results (default: 20) |
 
 ---
 

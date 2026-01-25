@@ -45,3 +45,6 @@ export {
 	handleRunTemplate,
 	handleCreateTemplate,
 } from "./template";
+
+// Unified Search handler
+export { searchTools, handleSearch } from "./search";

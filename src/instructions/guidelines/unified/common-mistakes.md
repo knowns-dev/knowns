@@ -40,19 +40,21 @@ knowns task edit 35 --ac "Criterion text"
 {{#if mcp}}
 ---
 
-## MCP vs CLI Usage
+## MCP Task Operations
 
-Some operations require CLI:
+All task operations are available via MCP:
 
-| Operation | Tool |
-|-----------|------|
-| Add acceptance criteria | CLI: `--ac` |
-| Check/uncheck AC | CLI: `--check-ac` |
-| Set implementation plan | CLI: `--plan` |
-| Add/append notes | CLI: `--notes`, `--append-notes` |
-| Basic task fields | MCP tools |
-| Time tracking | MCP tools |
-| Read tasks/docs | MCP tools |
+| Operation | MCP Field |
+|-----------|-----------|
+| Add acceptance criteria | `addAc: ["criterion"]` |
+| Check AC | `checkAc: [1, 2]` (1-based) |
+| Uncheck AC | `uncheckAc: [1]` (1-based) |
+| Remove AC | `removeAc: [1]` (1-based) |
+| Set plan | `plan: "..."` |
+| Set notes | `notes: "..."` |
+| Append notes | `appendNotes: "..."` |
+| Change status | `status: "in-progress"` |
+| Assign | `assignee: "@me"` |
 {{/if}}
 
 ---
@@ -65,7 +67,8 @@ Some operations require CLI:
 | Forgot to stop timer | `mcp__knowns__add_time` with duration |
 | Wrong status | `mcp__knowns__update_task` to fix |
 | Task not found | `mcp__knowns__list_tasks` to find ID |
-| Need to uncheck AC | CLI: `knowns task edit <id> --uncheck-ac N` |
+| Need to uncheck AC | `mcp__knowns__update_task` with `uncheckAc: [N]` |
+| Checked AC too early | `mcp__knowns__update_task` with `uncheckAc: [N]` |
 {{else}}
 | Set assignee to AC text | `knowns task edit <id> -a @me` |
 | Forgot to stop timer | `knowns time add <id> <duration>` |

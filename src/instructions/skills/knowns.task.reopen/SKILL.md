@@ -55,9 +55,18 @@ knowns time start $ARGUMENTS
 
 ### Step 3: Document Reopen Reason
 
+{{#if mcp}}
+```json
+mcp__knowns__update_task({
+  "taskId": "$ARGUMENTS",
+  "appendNotes": "🔄 Reopened: <reason>"
+})
+```
+{{else}}
 ```bash
 knowns task edit $ARGUMENTS --append-notes "🔄 Reopened: <reason>"
 ```
+{{/if}}
 
 **Common reasons:**
 - User requested changes
@@ -67,14 +76,31 @@ knowns task edit $ARGUMENTS --append-notes "🔄 Reopened: <reason>"
 
 ### Step 4: Add New Requirements
 
+{{#if mcp}}
+```json
+mcp__knowns__update_task({
+  "taskId": "$ARGUMENTS",
+  "addAc": ["New requirement 1", "Fix: issue description"]
+})
+```
+{{else}}
 ```bash
 # Add new acceptance criteria
 knowns task edit $ARGUMENTS --ac "New requirement 1"
 knowns task edit $ARGUMENTS --ac "Fix: issue description"
 ```
+{{/if}}
 
 ### Step 5: Update Plan (if needed)
 
+{{#if mcp}}
+```json
+mcp__knowns__update_task({
+  "taskId": "$ARGUMENTS",
+  "plan": "Previous plan + new steps:\n1. Original step (done)\n2. Original step (done)\n3. NEW: Address new requirement\n4. NEW: Fix reported issue"
+})
+```
+{{else}}
 ```bash
 knowns task edit $ARGUMENTS --plan $'Previous plan + new steps:
 1. Original step (done)
@@ -82,6 +108,7 @@ knowns task edit $ARGUMENTS --plan $'Previous plan + new steps:
 3. NEW: Address new requirement
 4. NEW: Fix reported issue'
 ```
+{{/if}}
 
 **Present updated plan and WAIT for approval.**
 
@@ -94,7 +121,8 @@ Follow normal task completion flow:
 // Check new ACs as completed
 mcp__knowns__update_task({
   "taskId": "$ARGUMENTS",
-  "checkAc": <new-index>
+  "checkAc": [<new-index>],
+  "appendNotes": "✓ Done: new requirement"
 })
 
 // Stop timer

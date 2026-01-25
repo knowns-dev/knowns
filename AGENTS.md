@@ -179,6 +179,7 @@ knowns task edit 42 --append-notes "Done: Auth middleware + JWT validation"
 {
   "taskId": "<id>",
   "status": "in-progress",
+<<<<<<< Updated upstream
   "assignee": "@me"
 }
 ```
@@ -195,6 +196,41 @@ knowns task edit 42 --append-notes "Done: Auth middleware + JWT validation"
 { "status": "in-progress", "assignee": "@me" }
 ```
 
+=======
+  "assignee": "@me",
+  "addAc": ["Criterion 1", "Criterion 2"],
+  "checkAc": [1, 2],
+  "uncheckAc": [3],
+  "removeAc": [4],
+  "plan": "1. Step one\n2. Step two",
+  "notes": "Implementation notes",
+  "appendNotes": "Additional notes"
+}
+```
+
+| Field | Purpose |
+|-------|---------|
+| `addAc` | Add new acceptance criteria |
+| `checkAc` | Mark AC done (1-based index) |
+| `uncheckAc` | Unmark AC (1-based index) |
+| `removeAc` | Remove AC (1-based index) |
+| `plan` | Set implementation plan |
+| `notes` | Replace implementation notes |
+| `appendNotes` | Append to notes |
+
+### mcp__knowns__get_task
+
+```json
+{ "taskId": "<id>" }
+```
+
+### mcp__knowns__list_tasks
+
+```json
+{ "status": "in-progress", "assignee": "@me" }
+```
+
+>>>>>>> Stashed changes
 ### mcp__knowns__search_tasks
 
 ```json
@@ -250,7 +286,31 @@ If large, returns TOC. Then read section:
 
 ```json
 { "query": "keyword", "tag": "api" }
+<<<<<<< Updated upstream
+=======
 ```
+
+### mcp__knowns__search (Unified)
+
+```json
+{
+  "query": "keyword",
+  "type": "all",
+  "status": "in-progress",
+  "priority": "high",
+  "assignee": "@me",
+  "label": "feature",
+  "tag": "api",
+  "limit": 20
+}
+```
+
+| Field | Purpose |
+|-------|---------|
+| `type` | "all", "task", or "doc" |
+| `status/priority/assignee/label` | Task filters |
+| `tag` | Doc filter |
+| `limit` | Max results (default: 20) |
 
 ---
 
@@ -283,10 +343,80 @@ If large, returns TOC. Then read section:
 
 ```json
 { "from": "2025-01-01", "to": "2025-01-31", "groupBy": "task" }
+>>>>>>> Stashed changes
 ```
 
 ---
 
+<<<<<<< Updated upstream
+## Time Tools
+
+### mcp__knowns__start_time
+
+```json
+{ "taskId": "<id>" }
+```
+
+### mcp__knowns__stop_time
+
+```json
+{ "taskId": "<id>" }
+```
+
+### mcp__knowns__add_time
+
+```json
+{
+  "taskId": "<id>",
+  "duration": "2h30m",
+  "note": "Note",
+  "date": "2025-01-15"
+}
+```
+
+### mcp__knowns__get_time_report
+
+```json
+{ "from": "2025-01-01", "to": "2025-01-31", "groupBy": "task" }
+=======
+## Template Tools
+
+### mcp__knowns__list_templates
+
+```json
+{}
+```
+
+### mcp__knowns__get_template
+
+```json
+{ "name": "template-name" }
+```
+
+### mcp__knowns__run_template
+
+```json
+{
+  "name": "template-name",
+  "variables": { "name": "MyComponent" },
+  "dryRun": true
+}
+```
+
+### mcp__knowns__create_template
+
+```json
+{
+  "name": "my-template",
+  "description": "Description",
+  "doc": "patterns/my-pattern"
+}
+>>>>>>> Stashed changes
+```
+
+---
+
+<<<<<<< Updated upstream
 ## Template Tools
 
 ### mcp__knowns__list_templates
@@ -327,6 +457,12 @@ If large, returns TOC. Then read section:
 
 ### mcp__knowns__get_board
 
+=======
+## Other
+
+### mcp__knowns__get_board
+
+>>>>>>> Stashed changes
 ```json
 {}
 ```
@@ -445,11 +581,11 @@ mcp__knowns__search_docs({ "query": "keyword" })
 
 ## Step 3: Plan (BEFORE coding!)
 
-```bash
-knowns task edit <id> --plan $'1. Research (see @doc/xxx)
-2. Implement
-3. Test
-4. Document'
+```json
+mcp__knowns__update_task({
+  "taskId": "<id>",
+  "plan": "1. Research (see @doc/xxx)\n2. Implement\n3. Test\n4. Document"
+})
 ```
 
 **Share plan with user. WAIT for approval before coding.**
@@ -458,10 +594,20 @@ knowns task edit <id> --plan $'1. Research (see @doc/xxx)
 
 ## Step 4: Implement
 
+<<<<<<< Updated upstream
 ```bash
 # Check AC only AFTER work is done
 knowns task edit <id> --check-ac 1
 knowns task edit <id> --append-notes "Done: feature X"
+=======
+```json
+// Check AC only AFTER work is done
+mcp__knowns__update_task({
+  "taskId": "<id>",
+  "checkAc": [1],
+  "appendNotes": "Done: feature X"
+})
+>>>>>>> Stashed changes
 ```
 
 ---
@@ -470,6 +616,7 @@ knowns task edit <id> --append-notes "Done: feature X"
 
 If new requirements emerge during work:
 
+<<<<<<< Updated upstream
 ```bash
 # Small: Add to current task
 knowns task edit <id> --ac "New requirement"
@@ -484,6 +631,23 @@ mcp__knowns__create_task({
 })
 ```
 
+=======
+```json
+// Small: Add to current task
+mcp__knowns__update_task({
+  "taskId": "<id>",
+  "addAc": ["New requirement"],
+  "appendNotes": "Scope updated: reason"
+})
+
+// Large: Ask user first, then create follow-up
+mcp__knowns__create_task({
+  "title": "Follow-up: feature",
+  "description": "From task <id>"
+})
+```
+
+>>>>>>> Stashed changes
 **Don't silently expand scope. Ask user first.**
 
 ---
@@ -505,10 +669,17 @@ A task is **Done** when ALL of these are complete:
 
 | Requirement | How |
 |-------------|-----|
+<<<<<<< Updated upstream
 | All AC checked | `knowns task edit <id> --check-ac N` |
 | Notes added | `knowns task edit <id> --notes "Summary"` |
 | Timer stopped | `mcp__knowns__stop_time` |
 | Status = done | `mcp__knowns__update_task` |
+=======
+| All AC checked | `mcp__knowns__update_task` with `checkAc` |
+| Notes added | `mcp__knowns__update_task` with `notes` |
+| Timer stopped | `mcp__knowns__stop_time` |
+| Status = done | `mcp__knowns__update_task` with `status: "done"` |
+>>>>>>> Stashed changes
 | Tests pass | Run test suite |
 
 ---
@@ -518,6 +689,7 @@ A task is **Done** when ALL of these are complete:
 ```json
 // 1. Verify all AC are checked
 mcp__knowns__get_task({ "taskId": "<id>" })
+<<<<<<< Updated upstream
 ```
 
 ```bash
@@ -527,6 +699,15 @@ What was done and key decisions.'
 ```
 
 ```json
+=======
+
+// 2. Add implementation notes
+mcp__knowns__update_task({
+  "taskId": "<id>",
+  "notes": "## Summary\nWhat was done and key decisions."
+})
+
+>>>>>>> Stashed changes
 // 3. Stop timer (REQUIRED!)
 mcp__knowns__stop_time({ "taskId": "<id>" })
 
@@ -552,6 +733,7 @@ mcp__knowns__update_task({
 
 // 2. Restart timer
 mcp__knowns__start_time({ "taskId": "<id>" })
+<<<<<<< Updated upstream
 ```
 
 ```bash
@@ -560,14 +742,30 @@ knowns task edit <id> --ac "Fix: description"
 knowns task edit <id> --append-notes "Reopened: reason"
 ```
 
+=======
+
+// 3. Add AC for the fix
+mcp__knowns__update_task({
+  "taskId": "<id>",
+  "addAc": ["Fix: description"],
+  "appendNotes": "Reopened: reason"
+})
+```
+
+>>>>>>> Stashed changes
 Then follow completion steps again.
 
 ---
 
 ## Checklist
 
+<<<<<<< Updated upstream
 - [ ] All AC checked (`--check-ac`)
 - [ ] Notes added (`--notes`)
+=======
+- [ ] All AC checked (`checkAc`)
+- [ ] Notes added (`notes`)
+>>>>>>> Stashed changes
 - [ ] Timer stopped (`mcp__knowns__stop_time`)
 - [ ] Tests pass
 - [ ] Status = done (`mcp__knowns__update_task`)
@@ -590,6 +788,7 @@ Then follow completion steps again.
 
 ---
 
+<<<<<<< Updated upstream
 ## MCP vs CLI Usage
 
 Some operations require CLI:
@@ -603,6 +802,23 @@ Some operations require CLI:
 | Basic task fields | MCP tools |
 | Time tracking | MCP tools |
 | Read tasks/docs | MCP tools |
+=======
+## MCP Task Operations
+
+All task operations are available via MCP:
+
+| Operation | MCP Field |
+|-----------|-----------|
+| Add acceptance criteria | `addAc: ["criterion"]` |
+| Check AC | `checkAc: [1, 2]` (1-based) |
+| Uncheck AC | `uncheckAc: [1]` (1-based) |
+| Remove AC | `removeAc: [1]` (1-based) |
+| Set plan | `plan: "..."` |
+| Set notes | `notes: "..."` |
+| Append notes | `appendNotes: "..."` |
+| Change status | `status: "in-progress"` |
+| Assign | `assignee: "@me"` |
+>>>>>>> Stashed changes
 
 ---
 
@@ -613,5 +829,10 @@ Some operations require CLI:
 | Forgot to stop timer | `mcp__knowns__add_time` with duration |
 | Wrong status | `mcp__knowns__update_task` to fix |
 | Task not found | `mcp__knowns__list_tasks` to find ID |
+<<<<<<< Updated upstream
 | Need to uncheck AC | CLI: `knowns task edit <id> --uncheck-ac N` |
+=======
+| Need to uncheck AC | `mcp__knowns__update_task` with `uncheckAc: [N]` |
+| Checked AC too early | `mcp__knowns__update_task` with `uncheckAc: [N]` |
+>>>>>>> Stashed changes
 <!-- KNOWNS GUIDELINES END -->

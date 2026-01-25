@@ -92,14 +92,16 @@ knowns browser  # Open Web UI
 
 ## Features
 
-| Feature             | Description                                       |
-| ------------------- | ------------------------------------------------- |
-| **Task Management** | Create, track tasks with acceptance criteria      |
-| **Documentation**   | Nested folders with markdown support              |
-| **Time Tracking**   | Built-in timers and reports                       |
-| **Context Linking** | `@task-42` and `@doc/patterns/auth` references    |
-| **AI Integration**  | MCP Server, `--plain` output, guideline templates |
-| **Web UI**          | Kanban board, doc browser, dark mode              |
+| Feature              | Description                                        |
+| -------------------- | -------------------------------------------------- |
+| **Task Management**  | Create, track tasks with acceptance criteria       |
+| **Documentation**    | Nested folders with markdown support               |
+| **Time Tracking**    | Built-in timers and reports                        |
+| **Context Linking**  | `@task-42` and `@doc/patterns/auth` references     |
+| **Template System**  | Code generation with Handlebars (`.hbs`) templates |
+| **Import System**    | Import docs/templates from git, npm, or local      |
+| **AI Integration**   | Full MCP Server with AC/plan/notes operations      |
+| **Web UI**           | Kanban board, doc browser, templates page          |
 
 ---
 
@@ -111,22 +113,30 @@ knowns task create "Title" -d "Description" --ac "Criterion"
 knowns task list --plain
 knowns task <id> --plain                    # View task (shorthand)
 knowns task edit <id> -s in-progress -a @me
+knowns task edit <id> --check-ac 1          # Mark AC as done
 
 # Documentation
 knowns doc create "Title" -d "Description" -f "folder"
 knowns doc "doc-name" --plain               # View doc (shorthand)
-knowns doc "doc-name" --info --plain        # Check size/tokens first
-knowns doc "doc-name" --toc --plain         # Get table of contents
+knowns doc "doc-name" --smart --plain       # Auto-handle small/large docs
 knowns doc "doc-name" --section "2" --plain # Read specific section
+
+# Templates
+knowns template list                        # List available templates
+knowns template run <name> --name "X"       # Generate from template
+knowns template create <name>               # Create new template
+
+# Imports
+knowns import add <name> <source>           # Add import
+knowns import sync                          # Sync all imports
+knowns import list                          # List imports
 
 # Time & Search
 knowns time start <id> && knowns time stop
 knowns search "query" --plain
 
 # AI Guidelines
-knowns agents guideline                     # Output guidelines to stdout
-knowns agents sync                          # Sync CLAUDE.md, AGENTS.md (minimal)
-knowns agents sync --full                   # Sync with full embedded guidelines
+knowns agents sync                          # Sync CLAUDE.md, AGENTS.md
 knowns agents sync --type mcp               # MCP tools format
 ```
 
@@ -139,10 +149,10 @@ knowns agents sync --type mcp               # MCP tools format
 | [Command Reference](./docs/commands.md)        | All CLI commands with examples             |
 | [Workflow Guide](./docs/workflow.md)           | Task lifecycle from creation to completion |
 | [Reference System](./docs/reference-system.md) | How `@doc/` and `@task-` linking works     |
+| [Templates](./docs/templates.md)               | Code generation with Handlebars            |
 | [Web UI](./docs/web-ui.md)                     | Kanban board and document browser          |
-| [MCP Integration](./docs/mcp-integration.md)   | Claude Desktop setup                       |
+| [MCP Integration](./docs/mcp-integration.md)   | Claude Desktop setup with full MCP tools   |
 | [Configuration](./docs/configuration.md)       | Project structure and options              |
-| [AI Workflow](./docs/ai-workflow.md)           | Guide for AI agents                        |
 | [Developer Guide](./docs/developer-guide.md)   | Technical docs for contributors            |
 | [Changelog](./CHANGELOG.md)                    | Version history                            |
 
