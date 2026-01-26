@@ -412,6 +412,41 @@ describe('{{pascalCase name}}', () => {
 
 ---
 
+## Common Pitfalls
+
+### JavaScript Template Literals + Handlebars
+
+When generating JavaScript/TypeScript code with template literals (`${}`), be careful not to create `${{{` which Handlebars interprets as triple-brace (unescaped output):
+
+```handlebars
+{{!-- ❌ WRONG - Handlebars sees {{{ as triple-brace --}}
+this.logger.log(`Created with id: ${{{camelCase entity}}.id}`);
+{{!-- Parse error: Expecting 'CLOSE_UNESCAPED'... --}}
+
+{{!-- ✅ CORRECT - Add space, use ~ to trim whitespace --}}
+this.logger.log(`Created with id: ${ {{~camelCase entity~}}.id}`);
+{{!-- Output: this.logger.log(`Created with id: ${product.id}`); --}}
+```
+
+**Rules:**
+- Never write `${{{` - always add space: `${ {{`
+- Use `~` (tilde) to trim whitespace: `{{~helper~}}`
+- The `~` removes whitespace on that side of the expression
+
+### Other Syntax Conflicts
+
+```handlebars
+{{!-- Escaping literal braces --}}
+\{{notHandlebars}}  {{!-- Outputs: {{notHandlebars}} --}}
+
+{{!-- Raw blocks (no processing inside) --}}
+{{{{raw}}}}
+  This {{will not}} be processed
+{{{{/raw}}}}
+```
+
+---
+
 ## Best Practices
 
 1. **One template = one purpose** - Keep templates focused
@@ -419,3 +454,4 @@ describe('{{pascalCase name}}', () => {
 3. **Use validation** - Add `validate: required` for important fields
 4. **Provide defaults** - Set `initial:` for better UX
 5. **Add success messages** - Help users know what to do next
+6. **Avoid `${{{`** - When using JS template literals with Handlebars, add space: `${ {{~helper~}}`
