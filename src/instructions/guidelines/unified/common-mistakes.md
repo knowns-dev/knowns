@@ -59,6 +59,29 @@ All task operations are available via MCP:
 
 ---
 
+## Template Syntax Pitfalls
+
+When writing `.hbs` templates, **NEVER** create `$` followed by triple-brace - Handlebars interprets triple-brace as unescaped output:
+
+```
+// ❌ WRONG - Parse error!
+this.logger.log(`Created: $` + `{` + `{` + `{camelCase entity}.id}`);
+
+// ✅ CORRECT - Add space between ${ and double-brace, use ~ to trim whitespace
+this.logger.log(`Created: ${ \{{~camelCase entity~}}.id}`);
+```
+
+| DON'T | DO |
+|-------|-----|
+| `$` + triple-brace | `${ \{{~helper~}}}` (space + escaped) |
+
+**Rules:**
+- Add space between `${` and double-brace
+- Use `~` (tilde) to trim whitespace in output
+- Escape literal braces with backslash
+
+---
+
 ## Error Recovery
 
 | Problem | Solution |

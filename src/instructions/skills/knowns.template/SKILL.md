@@ -168,6 +168,26 @@ Templates use Handlebars with built-in helpers:
 | `upperCase` | `{{upperCase "name"}}` | `NAME` |
 | `lowerCase` | `{{lowerCase "NAME"}}` | `name` |
 
+## CRITICAL: Template Syntax Pitfalls
+
+### JavaScript Template Literals + Handlebars
+
+**NEVER write `$` followed by triple-brace** - Handlebars interprets triple-brace as unescaped output:
+
+```
+// ❌ WRONG - Parse error!
+this.logger.log(`Created: $` + `\{{\{camelCase entity}.id}`);
+
+// ✅ CORRECT - Add space, use ~ to trim whitespace
+this.logger.log(`Created: ${ \{{~camelCase entity~}}.id}`);
+// Output: this.logger.log(`Created: ${product.id}`);
+```
+
+**Rules when writing .hbs templates:**
+1. Never `$` + triple-brace - always add space: `${ \{{`
+2. Use `~` (tilde) to trim whitespace: `\{{~helper~}}`
+3. For literal braces, escape with backslash
+
 ## When to Use Templates
 
 | Scenario | Action |
@@ -230,3 +250,4 @@ Context → Identify Pattern → Create Doc → Create Template → Link Both
 - Check `doc:` link in template for context
 - Templates ensure consistent code structure
 - Create new templates for repeated patterns
+- **NEVER write `$` + triple-brace** - use `${ \{{~helper~}}` instead (add space, use tilde)

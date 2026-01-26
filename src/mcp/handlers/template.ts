@@ -187,7 +187,7 @@ export async function handleGetTemplate(args: unknown) {
 	}
 
 	try {
-		const template = await loadTemplateByName(input.name, TEMPLATES_DIR);
+		const template = await loadTemplateByName(TEMPLATES_DIR, input.name);
 
 		if (!template) {
 			return errorResponse(`Template not found: ${input.name}`);
@@ -197,18 +197,28 @@ export async function handleGetTemplate(args: unknown) {
 		const prompts = template.config.prompts?.map((p) => ({
 			name: p.name,
 			message: p.message,
-			type: p.type || "input",
+			type: p.type || "text",
 			required: p.validate === "required",
-			default: p.default,
+			default: p.initial,
 			choices: p.choices,
 		}));
 
-		// Format files for display
-		const files = template.config.files?.map((f) => ({
-			template: f.template,
-			destination: f.destination,
-			condition: f.condition,
-		}));
+		// Format actions for display
+		const actions = template.config.actions?.map((a) => {
+			if (a.type === "add") {
+				return { type: a.type, template: a.template, path: a.path, skipIfExists: a.skipIfExists };
+			}
+			if (a.type === "addMany") {
+				return { type: a.type, source: a.source, destination: a.destination, globPattern: a.globPattern };
+			}
+			if (a.type === "modify") {
+				return { type: a.type, path: a.path, pattern: a.pattern };
+			}
+			if (a.type === "append") {
+				return { type: a.type, path: a.path, unique: a.unique };
+			}
+			return a;
+		});
 
 		return successResponse({
 			template: {
@@ -216,7 +226,7 @@ export async function handleGetTemplate(args: unknown) {
 				description: template.config.description,
 				doc: template.config.doc, // Linked documentation - AI should read this
 				prompts: prompts || [],
-				files: files || [],
+				actions: actions || [],
 				messages: template.config.messages,
 			},
 			hint: template.config.doc
@@ -237,7 +247,7 @@ export async function handleRunTemplate(args: unknown) {
 	}
 
 	try {
-		const template = await loadTemplateByName(input.name, TEMPLATES_DIR);
+		const template = await loadTemplateByName(TEMPLATES_DIR, input.name);
 
 		if (!template) {
 			return errorResponse(`Template not found: ${input.name}`);
@@ -258,8 +268,8 @@ export async function handleRunTemplate(args: unknown) {
 		for (const prompt of template.config.prompts || []) {
 			if (input.variables?.[prompt.name]) {
 				values[prompt.name] = input.variables[prompt.name];
-			} else if (prompt.default) {
-				values[prompt.name] = String(prompt.default);
+			} else if (prompt.initial !== undefined) {
+				values[prompt.name] = String(prompt.initial);
 			}
 		}
 
@@ -274,23 +284,22 @@ export async function handleRunTemplate(args: unknown) {
 			return errorResponse(`Template failed: ${result.error}`);
 		}
 
-		// Format output
-		const filesCreated = result.files?.map((f) => ({
-			path: f.path,
-			action: f.action,
-			skipped: f.skipped,
-			skipReason: f.skipReason,
-		}));
+		// Format output - result has created, modified, skipped arrays
+		const totalCreated = result.created?.length || 0;
+		const totalModified = result.modified?.length || 0;
+		const totalSkipped = result.skipped?.length || 0;
 
 		return successResponse({
 			success: true,
 			dryRun,
 			template: input.name,
 			variables: values,
-			files: filesCreated || [],
+			created: result.created || [],
+			modified: result.modified || [],
+			skipped: result.skipped || [],
 			message: dryRun
-				? `Dry run complete. ${filesCreated?.length || 0} files would be created. Set dryRun: false to write files.`
-				: `Template executed. ${filesCreated?.filter((f) => !f.skipped).length || 0} files created.`,
+				? `Dry run complete. ${totalCreated} files would be created, ${totalModified} modified. Set dryRun: false to write files.`
+				: `Template executed. ${totalCreated} files created, ${totalModified} modified, ${totalSkipped} skipped.`,
 		});
 	} catch (error) {
 		return errorResponse(`Failed to run template: ${error instanceof Error ? error.message : String(error)}`);
