@@ -23,6 +23,7 @@
   <a href="#"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=flat-square" alt="platform"></a>
   <a href="https://github.com/knowns-dev/knowns/stargazers"><img src="https://img.shields.io/github/stars/knowns-dev/knowns?style=flat-square" alt="GitHub stars"></a>
   <a href="#"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome"></a>
+  <a href="https://discord.knowns.dev"><img src="https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
 </p>
 
 ---
@@ -187,6 +188,7 @@ npm run test     # Test
 
 - [npm](https://www.npmjs.com/package/knowns)
 - [GitHub](https://github.com/knowns-dev/knowns)
+- [Discord](https://discord.knowns.dev)
 - [Changelog](./CHANGELOG.md)
 
 For design principles and long-term direction, see [Philosophy](./PHILOSOPHY.md).

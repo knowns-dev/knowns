@@ -51,8 +51,9 @@ function showBanner(): void {
 	console.log(chalk.gray("    knowns browser        Open web UI"));
 	console.log(chalk.gray("    knowns --help         Show all commands"));
 	console.log();
-	console.log(chalk.gray("  Homepage:  ") + chalk.cyan("https://knowns.dev"));
+	console.log(chalk.gray("  Homepage:  ") + chalk.cyan("https://cli.knowns.dev"));
 	console.log(chalk.gray("  Documents: ") + chalk.cyan("https://cli.knowns.dev/docs"));
+	console.log(chalk.gray("  Discord:   ") + chalk.cyan("https://discord.knowns.dev"));
 	console.log();
 }
 
