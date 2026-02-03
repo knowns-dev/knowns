@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { Task } from "@models/task";
 import { extractDocPaths, resolveDocReferences } from "@utils/doc-links";
 import matter from "gray-matter";
+import { getProjectRoot } from "./handlers/project";
 
 // Helper function to parse duration strings (e.g., "2h", "30m", "1h30m")
 export function parseDuration(durationStr: string): number {
@@ -55,7 +56,7 @@ export function formatDuration(seconds: number): string {
 
 // Helper function to fetch linked documentation from a task
 export async function fetchLinkedDocs(task: Task): Promise<Array<{ path: string; title: string; content: string }>> {
-	const projectRoot = process.cwd();
+	const projectRoot = getProjectRoot();
 	const docsDir = join(projectRoot, ".knowns", "docs");
 
 	// Combine all task content to search for doc references

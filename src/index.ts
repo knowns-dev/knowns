@@ -8,7 +8,6 @@
  */
 
 import {
-	agentsCommand,
 	boardCommand,
 	browserCommand,
 	configCommand,
@@ -75,7 +74,6 @@ program.addCommand(timeCommand);
 program.addCommand(docCommand);
 program.addCommand(configCommand);
 program.addCommand(syncCommand);
-program.addCommand(agentsCommand);
 program.addCommand(mcpCommand);
 program.addCommand(templateCommand);
 program.addCommand(skillCommand);

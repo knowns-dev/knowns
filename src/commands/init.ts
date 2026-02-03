@@ -146,6 +146,58 @@ async function createMcpJsonFile(projectRoot: string, force = false): Promise<vo
 }
 
 /**
+ * Create/update Antigravity MCP config at ~/.gemini/antigravity/mcp_config.json
+ */
+async function createAntigravityMcpConfig(force = false): Promise<void> {
+	const { mkdirSync, writeFileSync, readFileSync } = await import("node:fs");
+	const { homedir } = await import("node:os");
+
+	const homeDir = homedir();
+	const antigravityDir = join(homeDir, ".gemini", "antigravity");
+	const mcpConfigPath = join(antigravityDir, "mcp_config.json");
+
+	const mcpConfig = {
+		mcpServers: {
+			knowns: {
+				command: "npx",
+				args: ["-y", "knowns", "mcp"],
+			},
+		},
+	};
+
+	// Ensure directory exists
+	if (!existsSync(antigravityDir)) {
+		mkdirSync(antigravityDir, { recursive: true });
+	}
+
+	if (existsSync(mcpConfigPath)) {
+		// Check if knowns is already configured
+		try {
+			const existing = JSON.parse(readFileSync(mcpConfigPath, "utf-8"));
+			if (existing?.mcpServers?.knowns && !force) {
+				console.log(chalk.gray("  Antigravity MCP already has knowns configuration"));
+				return;
+			}
+			// Merge with existing config (or update if force)
+			existing.mcpServers = {
+				...existing.mcpServers,
+				...mcpConfig.mcpServers,
+			};
+			writeFileSync(mcpConfigPath, JSON.stringify(existing, null, "\t"), "utf-8");
+			const action = force ? "Updated" : "Added";
+			console.log(chalk.green(`✓ ${action} knowns in Antigravity MCP config`));
+		} catch {
+			// Invalid JSON, overwrite
+			writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, "\t"), "utf-8");
+			console.log(chalk.green("✓ Created Antigravity MCP config (replaced invalid file)"));
+		}
+	} else {
+		writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, "\t"), "utf-8");
+		console.log(chalk.green("✓ Created Antigravity MCP config (~/.gemini/antigravity/mcp_config.json)"));
+	}
+}
+
+/**
  * Update .gitignore based on git tracking mode
  */
 async function updateGitignore(projectRoot: string, mode: "git-ignored" | "none"): Promise<void> {
@@ -431,20 +483,49 @@ export const initCommand = new Command("init")
 					}
 				}
 
-				// Create .mcp.json for MCP auto-discovery
-				await createMcpJsonFile(projectRoot, options.force);
+				// Check which platforms are selected
+				const hasClaudeCode = config.platforms.includes("claude-code");
+				const hasAntigravity = config.platforms.includes("antigravity");
 
-				// Create CLAUDE.md with unified guidelines (CLI + MCP)
+				// Create .mcp.json for Claude Code MCP auto-discovery
+				if (hasClaudeCode) {
+					await createMcpJsonFile(projectRoot, options.force);
+				}
+
+				// Create Antigravity MCP config at ~/.gemini/antigravity/mcp_config.json
+				if (hasAntigravity) {
+					await createAntigravityMcpConfig(options.force);
+				}
+
+				// Create platform-specific instruction files
 				const guidelines = UnifiedGuidelines.getFull(true);
-				try {
-					const result = await updateInstructionFile("CLAUDE.md", guidelines);
-					if (result.success) {
-						const action =
-							result.action === "created" ? "Created" : result.action === "appended" ? "Appended" : "Updated";
-						console.log(chalk.green(`✓ ${action}: CLAUDE.md (unified CLI + MCP guidelines)`));
+
+				// Create CLAUDE.md for Claude Code
+				if (hasClaudeCode) {
+					try {
+						const result = await updateInstructionFile("CLAUDE.md", guidelines);
+						if (result.success) {
+							const action =
+								result.action === "created" ? "Created" : result.action === "appended" ? "Appended" : "Updated";
+							console.log(chalk.green(`✓ ${action}: CLAUDE.md (unified CLI + MCP guidelines)`));
+						}
+					} catch {
+						console.log(chalk.yellow("⚠️  Skipped: CLAUDE.md"));
 					}
-				} catch {
-					console.log(chalk.yellow("⚠️  Skipped: CLAUDE.md"));
+				}
+
+				// Create GEMINI.md for Antigravity
+				if (hasAntigravity) {
+					try {
+						const result = await updateInstructionFile("GEMINI.md", guidelines);
+						if (result.success) {
+							const action =
+								result.action === "created" ? "Created" : result.action === "appended" ? "Appended" : "Updated";
+							console.log(chalk.green(`✓ ${action}: GEMINI.md (unified CLI + MCP guidelines)`));
+						}
+					} catch {
+						console.log(chalk.yellow("⚠️  Skipped: GEMINI.md"));
+					}
 				}
 			}
 

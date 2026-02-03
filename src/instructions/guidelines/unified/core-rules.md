@@ -18,6 +18,32 @@
 {{/if}}
 {{/if}}
 
+{{#if mcp}}
+---
+
+## Session Initialization (MCP)
+
+**CRITICAL: At the START of every session, run these tools to initialize the project:**
+
+```json
+// Step 1: Detect available projects
+mcp__knowns__detect_projects({})
+
+// Step 2: Set the project you want to work with
+mcp__knowns__set_project({ "projectRoot": "/path/to/project" })
+
+// Step 3: Verify project is set correctly
+mcp__knowns__get_current_project({})
+```
+
+**Why?** The MCP server may not know which project you're working in. These tools:
+- `detect_projects` - Scans common workspace directories for Knowns projects
+- `set_project` - Sets the active project for all subsequent operations
+- `get_current_project` - Verifies the current project path
+
+**If you skip this step**, other tools like `list_tasks`, `get_doc`, etc. may fail or work on the wrong project.
+{{/if}}
+
 {{#if cli}}
 ---
 

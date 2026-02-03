@@ -34,9 +34,6 @@ export {
 	handleSearchDocs,
 } from "./doc";
 
-// Guideline handlers
-export { guidelineTools, handleGetGuideline } from "./guideline";
-
 // Template handlers
 export {
 	templateTools,
@@ -48,3 +45,13 @@ export {
 
 // Unified Search handler
 export { searchTools, handleSearch } from "./search";
+
+// Project detection handlers
+export {
+	projectTools,
+	handleDetectProjects,
+	handleSetProject,
+	handleGetCurrentProject,
+	getProjectRoot,
+	setProjectRoot,
+} from "./project";

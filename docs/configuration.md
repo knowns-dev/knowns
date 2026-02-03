@@ -197,23 +197,20 @@ knowns config list
 
 ## AI Agent Guidelines
 
-Knowns provides on-demand guidelines and instruction file sync:
+Knowns provides instruction file sync and on-demand guidelines via MCP:
 
 ```bash
-# Output guidelines to stdout (AI agents call this at session start)
-knowns agents guideline
-
-# Interactive mode - select type, variant, and files
-knowns agents
-
 # Quick sync with full embedded guidelines (~26KB)
-knowns agents sync
+knowns sync
 
 # Sync with minimal instruction only (~1KB)
-knowns agents sync --minimal
+knowns sync --minimal
 
 # Sync all files with MCP guidelines
-knowns agents sync --type mcp --all
+knowns sync --type mcp --all
+
+# Use unified guidelines (CLI + MCP)
+knowns sync --type unified
 ```
 
 **Supported files:**
@@ -221,10 +218,6 @@ knowns agents sync --type mcp --all
 - `AGENTS.md` - For Agent SDK (default)
 - `GEMINI.md` - For Google Gemini
 - `.github/copilot-instructions.md` - For GitHub Copilot
-
-**Template variants:**
-- `general` (default): Full guidelines embedded in file
-- `instruction` (`--minimal`): Minimal - tells AI to call `knowns agents guideline`
 
 ## Environment Variables
 

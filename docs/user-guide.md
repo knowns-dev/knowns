@@ -615,34 +615,25 @@ References maintain their simple format in all outputs.
 
 ### AI Guidelines Management
 
-Get guidelines on-demand or sync instruction files:
+Sync instruction files with Knowns guidelines:
 
 ```bash
-# Output guidelines to stdout (AI agents call this at session start)
-knowns agents guideline
-
-# Interactive mode - select type, variant, files
-knowns agents
-
 # Quick sync (CLAUDE.md, AGENTS.md) with full guidelines
-knowns agents sync
+knowns sync
 
 # Sync all files
-knowns agents sync --all
+knowns sync --all
 
 # Sync with minimal instruction only
-knowns agents sync --minimal
+knowns sync --minimal
 
 # Use MCP tools format
-knowns agents sync --type mcp
+knowns sync --type mcp
+
+# Use unified guidelines (CLI + MCP)
+knowns sync --type unified
 ```
 
-**Template variants:**
-
-| Variant | Size | Description |
-|---------|------|-------------|
-| general (default) | ~26KB | Full guidelines embedded in file |
-| instruction (`--minimal`) | ~1KB | Minimal - tells AI to call `knowns agents guideline` |
 
 ---
 

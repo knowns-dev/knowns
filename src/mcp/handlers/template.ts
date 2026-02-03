@@ -16,9 +16,12 @@ import {
 } from "../../codegen";
 import { listAllTemplates, resolveTemplate } from "../../import";
 import { errorResponse, successResponse } from "../utils";
+import { getProjectRoot } from "./project";
 
-const TEMPLATES_DIR = join(process.cwd(), ".knowns", "templates");
-const PROJECT_ROOT = process.cwd();
+// Get templates directory dynamically based on current project
+function getTemplatesDir(): string {
+	return join(getProjectRoot(), ".knowns", "templates");
+}
 
 // Schemas
 export const listTemplatesSchema = z.object({});
@@ -186,7 +189,7 @@ export async function handleGetTemplate(args: unknown) {
 
 	try {
 		// Resolve template (supports local and imported templates with prefix like "knowns/component")
-		const resolved = await resolveTemplate(PROJECT_ROOT, input.name);
+		const resolved = await resolveTemplate(getProjectRoot(), input.name);
 
 		if (!resolved) {
 			return errorResponse(`Template not found: ${input.name}. Use list_templates to see available templates.`);
@@ -252,7 +255,7 @@ export async function handleRunTemplate(args: unknown) {
 
 	try {
 		// Resolve template (supports local and imported templates with prefix like "knowns/component")
-		const resolved = await resolveTemplate(PROJECT_ROOT, input.name);
+		const resolved = await resolveTemplate(getProjectRoot(), input.name);
 
 		if (!resolved) {
 			return errorResponse(`Template not found: ${input.name}. Use list_templates to see available templates.`);
@@ -287,7 +290,7 @@ export async function handleRunTemplate(args: unknown) {
 
 		// Run template
 		const result = await runTemplate(template, {
-			projectRoot: PROJECT_ROOT,
+			projectRoot: getProjectRoot(),
 			values,
 			dryRun,
 		});
@@ -325,11 +328,11 @@ export async function handleCreateTemplate(args: unknown) {
 
 	try {
 		// Ensure templates directory exists
-		if (!existsSync(TEMPLATES_DIR)) {
-			await mkdir(TEMPLATES_DIR, { recursive: true });
+		if (!existsSync(getTemplatesDir())) {
+			await mkdir(getTemplatesDir(), { recursive: true });
 		}
 
-		const templateDir = join(TEMPLATES_DIR, input.name);
+		const templateDir = join(getTemplatesDir(), input.name);
 
 		if (existsSync(templateDir)) {
 			return errorResponse(`Template "${input.name}" already exists`);

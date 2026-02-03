@@ -1,10 +1,38 @@
-# Claude Desktop MCP Integration
+# MCP Integration
 
-Integrate Knowns with Claude Desktop for seamless AI-assisted development.
+Integrate Knowns with AI assistants via Model Context Protocol (MCP).
 
 ## What is MCP?
 
-[Model Context Protocol (MCP)](https://modelcontextprotocol.io/) is a standard for connecting AI assistants to external tools and data sources. Knowns implements an MCP server that allows Claude to read and manage your tasks and documentation directly.
+[Model Context Protocol (MCP)](https://modelcontextprotocol.io/) is a standard for connecting AI assistants to external tools and data sources. Knowns implements an MCP server that allows AI assistants to read and manage your tasks and documentation directly.
+
+## Supported Platforms
+
+| Platform | Config File | Scope | Auto-discover |
+|----------|-------------|-------|---------------|
+| **Claude Code** | `.mcp.json` | Per-project | ✅ |
+| **Antigravity** | `~/.gemini/antigravity/mcp_config.json` | Global | ✅ |
+| **Gemini CLI** | `~/.gemini/settings.json` | Global | ✅ |
+| **Cursor** | `.cursor/mcp.json` | Per-project | ⚠️ Manual |
+| **Cline** | `.cline/mcp.json` | Per-project | ⚠️ Manual |
+| **Continue** | `.continue/config.json` | Per-project | ⚠️ Manual |
+
+## Session Initialization (CRITICAL for Global Configs)
+
+For platforms with **global MCP config** (Antigravity, Gemini CLI), the MCP server doesn't know which project to work with. **Run these tools at session start:**
+
+```json
+// 1. Detect available Knowns projects
+mcp__knowns__detect_projects({})
+
+// 2. Set the active project
+mcp__knowns__set_project({ "projectRoot": "/path/to/project" })
+
+// 3. Verify project is set
+mcp__knowns__get_current_project({})
+```
+
+> **Note:** Claude Code uses per-project `.mcp.json`, so session initialization is not required.
 
 ## Setup
 
@@ -49,23 +77,47 @@ bun install -g knowns
 npm install -g knowns
 ```
 
-### 2. Configure Claude Desktop
+### 2. Configure Your Platform
+
+#### Claude Code (Per-project)
+
+Create `.mcp.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "knowns": {
+      "command": "npx",
+      "args": ["-y", "knowns", "mcp"]
+    }
+  }
+}
+```
+
+#### Antigravity (Global)
+
+Edit `~/.gemini/antigravity/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "knowns": {
+      "command": "npx",
+      "args": ["-y", "knowns", "mcp"]
+    }
+  }
+}
+```
+
+> **Note:** Antigravity uses global config. Use `detect_projects` and `set_project` tools at session start.
+
+#### Claude Desktop (Global)
 
 Edit Claude's configuration file:
 
-**macOS:**
+**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 
-```
-~/Library/Application Support/Claude/claude_desktop_config.json
-```
-
-**Windows:**
-
-```
-%APPDATA%\Claude\claude_desktop_config.json
-```
-
-Add the Knowns MCP server:
+**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
@@ -81,6 +133,21 @@ Add the Knowns MCP server:
 
 > **Note**: Replace `/path/to/your/project` with your actual project path where `.knowns/` folder exists.
 
+#### Cursor (Per-project)
+
+Create `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "knowns": {
+      "command": "npx",
+      "args": ["-y", "knowns", "mcp"]
+    }
+  }
+}
+```
+
 ### 3. Restart Claude Desktop
 
 Close and reopen Claude Desktop to load the new configuration.
@@ -90,33 +157,20 @@ Close and reopen Claude Desktop to load the new configuration.
 Sync your instruction files with MCP-formatted guidelines:
 
 ```bash
-# Sync with full embedded MCP guidelines (default)
-knowns agents sync --type mcp
+# Sync with full embedded unified guidelines (default)
+knowns sync
+
+# Sync with MCP-only guidelines
+knowns sync --type mcp
 
 # Sync with minimal instruction only
-knowns agents sync --type mcp --minimal
+knowns sync --minimal
 
 # Sync all files
-knowns agents sync --type mcp --all
+knowns sync --all
 ```
 
-This updates CLAUDE.md and other instruction files with MCP tool references instead of CLI commands.
-
-### MCP Guideline Tool
-
-AI agents can get **modular guidelines** on-demand via MCP:
-
-```
-mcp__knowns__get_guideline({})                    # Full guidelines (all sections)
-mcp__knowns__get_guideline({ type: "unified" })   # Same as above
-```
-
-Guidelines include these sections:
-
-- **Core Rules** - Golden rules, must-follow principles
-- **Commands Reference** - CLI/MCP commands quick reference
-- **Workflow Creation/Execution/Completion** - Stage-specific guides
-- **Common Mistakes** - Anti-patterns and DO vs DON'T
+This updates CLAUDE.md and other instruction files with MCP tool references.
 
 ## Usage
 
@@ -147,15 +201,37 @@ Starting timer and beginning implementation..."
 
 ## Available MCP Tools
 
+### Project Tools (Session Initialization)
+
+| Tool                  | Description             | Parameters                |
+| --------------------- | ----------------------- | ------------------------- |
+| `detect_projects`     | Scan for Knowns projects| `searchPaths?`, `maxDepth?` |
+| `set_project`         | Set active project      | `projectRoot`             |
+| `get_current_project` | Get current project     | -                         |
+
+> **Required for global MCP configs** (Antigravity, Gemini CLI). Call at session start.
+
 ### Task Management
 
 | Tool           | Description             | Parameters                                                                         |
 | -------------- | ----------------------- | ---------------------------------------------------------------------------------- |
-| `create_task`  | Create a new task       | `title`, `description?`, `status?`, `priority?`, `labels?`, `assignee?`            |
+| `create_task`  | Create a new task       | `title`, `description?`, `status?`, `priority?`, `labels?`, `assignee?`, `parent?` |
 | `get_task`     | Get task by ID          | `taskId`                                                                           |
-| `update_task`  | Update task fields      | `taskId`, `title?`, `description?`, `status?`, `priority?`, `assignee?`, `labels?` |
+| `update_task`  | Update task fields      | `taskId`, `status?`, `priority?`, `assignee?`, `labels?`, `addAc?`, `checkAc?`, `uncheckAc?`, `removeAc?`, `plan?`, `notes?`, `appendNotes?` |
 | `list_tasks`   | List tasks with filters | `status?`, `priority?`, `assignee?`, `label?`                                      |
 | `search_tasks` | Search tasks by query   | `query`                                                                            |
+
+**update_task extended fields:**
+
+| Field | Description |
+| ----- | ----------- |
+| `addAc` | Add acceptance criteria (array of strings) |
+| `checkAc` | Check AC by index (1-based, array of numbers) |
+| `uncheckAc` | Uncheck AC by index (1-based) |
+| `removeAc` | Remove AC by index (1-based) |
+| `plan` | Set implementation plan |
+| `notes` | Replace implementation notes |
+| `appendNotes` | Append to implementation notes |
 
 ### Time Tracking
 

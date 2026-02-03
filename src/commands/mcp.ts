@@ -141,15 +141,15 @@ export const mcpCommand = new Command("mcp")
 			return;
 		}
 
+		// Try to find project root, but don't require it
+		// With detect_projects and set_project tools, the AI agent can select project at runtime
 		const projectRoot = findProjectRoot();
-		if (!projectRoot) {
-			console.error(chalk.red("Error: Not in a Knowns project"));
-			console.error(chalk.gray("Run 'knowns init' to initialize a project"));
-			process.exit(1);
+		if (projectRoot) {
+			// Change to project root if found (for backward compatibility)
+			process.chdir(projectRoot);
 		}
-
-		// Change to project root for FileStore
-		process.chdir(projectRoot);
+		// If no project found, server will still start
+		// AI agent can use detect_projects + set_project to select a project
 
 		try {
 			await startMcpServer({ verbose: options.verbose });
