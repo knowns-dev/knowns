@@ -14,32 +14,12 @@ Quick reference for AI agents using Knowns CLI/MCP.
 
 ## First Step
 
-Get the guidelines:
+Guidelines are embedded in CLAUDE.md/AGENTS.md. Sync with:
 
 ```bash
-# CLI - Full guidelines (default)
-knowns agents guideline
-
-# CLI - Compact (core + mistakes only)
-knowns agents guideline --compact
-
-# CLI - Stage-specific
-knowns agents guideline --stage execution
-
-# MCP
-mcp__knowns__get_guideline({})
+knowns sync           # Sync with unified guidelines
+knowns sync --all     # Sync all instruction files
 ```
-
-## Modular Guidelines
-
-| Section | CLI Flag | Description |
-|---------|----------|-------------|
-| Core Rules | `--core` | Must-follow principles |
-| Commands | `--commands` | CLI/MCP reference |
-| Workflow Creation | `--stage creation` | Creating tasks |
-| Workflow Execution | `--stage execution` | Implementing |
-| Workflow Completion | `--stage completion` | Finishing tasks |
-| Common Mistakes | `--mistakes` | Anti-patterns |
 
 ## Critical Rules
 

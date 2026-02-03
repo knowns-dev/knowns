@@ -34,7 +34,7 @@ src/
 │   ├── time.ts                # Time tracking
 │   ├── search.ts              # Full-text search
 │   ├── browser.ts             # Web UI launcher
-│   ├── agents.ts              # AI guidelines management
+│   ├── agents.ts              # AI guidelines utilities (used by init/sync)
 │   └── ...
 ├── instructions/               # AI Agent Guidelines
 │   └── guidelines/

@@ -1,6 +1,40 @@
 {{#if mcp}}
 # MCP Tools Reference
 
+## Project Tools (Session Init)
+
+**CRITICAL: Call these at session start to initialize the project.**
+
+### mcp__knowns__detect_projects
+
+Scan for all Knowns projects on the system:
+
+```json
+{}
+```
+
+Returns: `{ projects: [{ path, name }], currentProject, note }`
+
+### mcp__knowns__set_project
+
+Set the active project for all operations:
+
+```json
+{ "projectRoot": "/absolute/path/to/project" }
+```
+
+### mcp__knowns__get_current_project
+
+Check current project status:
+
+```json
+{}
+```
+
+Returns: `{ projectRoot, isExplicitlySet, isValid, source }`
+
+---
+
 ## Task Tools
 
 ### mcp__knowns__create_task

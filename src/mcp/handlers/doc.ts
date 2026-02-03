@@ -20,8 +20,12 @@ import matter from "gray-matter";
 import { z } from "zod";
 import { listAllDocs, validateRefs } from "../../import";
 import { errorResponse, successResponse } from "../utils";
+import { getProjectRoot } from "./project";
 
-const DOCS_DIR = join(process.cwd(), ".knowns", "docs");
+// Get docs directory dynamically based on current project
+function getDocsDir(): string {
+	return join(getProjectRoot(), ".knowns", "docs");
+}
 
 // Document metadata interface
 interface DocMetadata {
@@ -186,8 +190,8 @@ export const docTools = [
 
 // Helper: Ensure docs directory exists
 async function ensureDocsDir(): Promise<void> {
-	if (!existsSync(DOCS_DIR)) {
-		await mkdir(DOCS_DIR, { recursive: true });
+	if (!existsSync(getDocsDir())) {
+		await mkdir(getDocsDir(), { recursive: true });
 	}
 }
 
@@ -231,7 +235,7 @@ async function resolveDocPath(name: string): Promise<{ filepath: string; filenam
 
 	// Try multiple approaches to find the file
 	let filename = name.endsWith(".md") ? name : `${name}.md`;
-	let filepath = join(DOCS_DIR, filename);
+	let filepath = join(getDocsDir(), filename);
 
 	if (existsSync(filepath)) {
 		return { filepath, filename };
@@ -239,14 +243,14 @@ async function resolveDocPath(name: string): Promise<{ filepath: string; filenam
 
 	// Try converting title to filename (root level only)
 	filename = `${titleToFilename(name)}.md`;
-	filepath = join(DOCS_DIR, filename);
+	filepath = join(getDocsDir(), filename);
 
 	if (existsSync(filepath)) {
 		return { filepath, filename };
 	}
 
 	// Try searching in all md files
-	const allFiles = await getAllMdFiles(DOCS_DIR);
+	const allFiles = await getAllMdFiles(getDocsDir());
 	const searchName = name.toLowerCase().replace(/\.md$/, "");
 
 	const matchingFile = allFiles.find((file) => {
@@ -257,7 +261,7 @@ async function resolveDocPath(name: string): Promise<{ filepath: string; filenam
 
 	if (matchingFile) {
 		return {
-			filepath: join(DOCS_DIR, matchingFile),
+			filepath: join(getDocsDir(), matchingFile),
 			filename: matchingFile,
 		};
 	}
@@ -270,7 +274,7 @@ export async function handleListDocs(args: unknown) {
 	const input = listDocsSchema.parse(args);
 	await ensureDocsDir();
 
-	const projectRoot = process.cwd();
+	const projectRoot = getProjectRoot();
 	const allDocs = await listAllDocs(projectRoot);
 
 	if (allDocs.length === 0) {
@@ -448,7 +452,7 @@ export async function handleGetDoc(args: unknown) {
 	}
 
 	// Validate refs and collect broken ones
-	const projectRoot = process.cwd();
+	const projectRoot = getProjectRoot();
 	const tasksDir = join(projectRoot, ".knowns", "tasks");
 	const refs = await validateRefs(projectRoot, content, tasksDir);
 	const brokenRefs = refs.filter((r) => !r.exists).map((r) => r.ref);
@@ -475,12 +479,12 @@ export async function handleCreateDoc(args: unknown) {
 	const filename = `${titleToFilename(input.title)}.md`;
 
 	// Handle folder path
-	let targetDir = DOCS_DIR;
+	let targetDir = getDocsDir();
 	let relativePath = filename;
 
 	if (input.folder) {
 		const folderPath = input.folder.replace(/^\/|\/$/g, "");
-		targetDir = join(DOCS_DIR, folderPath);
+		targetDir = join(getDocsDir(), folderPath);
 		relativePath = join(folderPath, filename);
 
 		if (!existsSync(targetDir)) {
@@ -599,7 +603,7 @@ export async function handleSearchDocs(args: unknown) {
 	const input = searchDocsSchema.parse(args);
 	await ensureDocsDir();
 
-	const mdFiles = await getAllMdFiles(DOCS_DIR);
+	const mdFiles = await getAllMdFiles(getDocsDir());
 	const query = input.query.toLowerCase();
 
 	const results: Array<{
@@ -611,7 +615,7 @@ export async function handleSearchDocs(args: unknown) {
 	}> = [];
 
 	for (const file of mdFiles) {
-		const fileContent = await readFile(join(DOCS_DIR, file), "utf-8");
+		const fileContent = await readFile(join(getDocsDir(), file), "utf-8");
 		const { data, content } = matter(fileContent);
 		const metadata = data as DocMetadata;
 

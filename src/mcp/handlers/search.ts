@@ -11,6 +11,7 @@ import type { FileStore } from "@storage/file-store";
 import matter from "gray-matter";
 import { z } from "zod";
 import { successResponse } from "../utils";
+import { getProjectRoot } from "./project";
 
 // Schema
 export const searchSchema = z.object({
@@ -302,7 +303,7 @@ export async function handleSearch(args: unknown, fileStore: FileStore) {
 	const input = searchSchema.parse(args);
 	const searchType = input.type || "all";
 	const limit = input.limit || 20;
-	const docsDir = join(process.cwd(), ".knowns", "docs");
+	const docsDir = join(getProjectRoot(), ".knowns", "docs");
 
 	let taskResults: TaskResult[] = [];
 	let docResults: DocResult[] = [];

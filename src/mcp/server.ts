@@ -25,14 +25,15 @@ import matter from "gray-matter";
 import {
 	boardTools,
 	docTools,
-	guidelineTools,
+	getProjectRoot,
 	handleAddTime,
 	handleCreateDoc,
 	handleCreateTask,
 	handleCreateTemplate,
+	handleDetectProjects,
 	handleGetBoard,
+	handleGetCurrentProject,
 	handleGetDoc,
-	handleGetGuideline,
 	handleGetTask,
 	handleGetTemplate,
 	handleGetTimeReport,
@@ -43,10 +44,12 @@ import {
 	handleSearch,
 	handleSearchDocs,
 	handleSearchTasks,
+	handleSetProject,
 	handleStartTime,
 	handleStopTime,
 	handleUpdateDoc,
 	handleUpdateTask,
+	projectTools,
 	searchTools,
 	taskTools,
 	templateTools,
@@ -55,8 +58,21 @@ import {
 
 import { errorResponse } from "./utils";
 
-// Initialize FileStore
-const fileStore = new FileStore(process.cwd());
+// FileStore cache - lazily initialized per project
+const fileStoreCache = new Map<string, FileStore>();
+
+/**
+ * Get FileStore for current project (cached)
+ */
+function getFileStore(): FileStore {
+	const projectRoot = getProjectRoot();
+	let store = fileStoreCache.get(projectRoot);
+	if (!store) {
+		store = new FileStore(projectRoot);
+		fileStoreCache.set(projectRoot, store);
+	}
+	return store;
+}
 
 // Initialize MCP Server
 const server = new Server(
@@ -74,11 +90,11 @@ const server = new Server(
 
 // Combine all tool definitions
 const tools: Tool[] = [
+	...projectTools,
 	...taskTools,
 	...timeTools,
 	...boardTools,
 	...docTools,
-	...guidelineTools,
 	...templateTools,
 	...searchTools,
 ] as Tool[];
@@ -94,31 +110,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 	try {
 		switch (name) {
+			// Project handlers (no FileStore needed)
+			case "detect_projects":
+				return { content: [{ type: "text", text: JSON.stringify(handleDetectProjects(args || {}), null, 2) }] };
+			case "set_project":
+				return {
+					content: [{ type: "text", text: JSON.stringify(handleSetProject(args as { projectRoot: string }), null, 2) }],
+				};
+			case "get_current_project":
+				return { content: [{ type: "text", text: JSON.stringify(handleGetCurrentProject(), null, 2) }] };
+
 			// Task handlers
 			case "create_task":
-				return await handleCreateTask(args, fileStore);
+				return await handleCreateTask(args, getFileStore());
 			case "get_task":
-				return await handleGetTask(args, fileStore);
+				return await handleGetTask(args, getFileStore());
 			case "update_task":
-				return await handleUpdateTask(args, fileStore);
+				return await handleUpdateTask(args, getFileStore());
 			case "list_tasks":
-				return await handleListTasks(args, fileStore);
+				return await handleListTasks(args, getFileStore());
 			case "search_tasks":
-				return await handleSearchTasks(args, fileStore);
+				return await handleSearchTasks(args, getFileStore());
 
 			// Time handlers
 			case "start_time":
-				return await handleStartTime(args, fileStore);
+				return await handleStartTime(args, getFileStore());
 			case "stop_time":
-				return await handleStopTime(args, fileStore);
+				return await handleStopTime(args, getFileStore());
 			case "add_time":
-				return await handleAddTime(args, fileStore);
+				return await handleAddTime(args, getFileStore());
 			case "get_time_report":
-				return await handleGetTimeReport(args, fileStore);
+				return await handleGetTimeReport(args, getFileStore());
 
 			// Board handlers
 			case "get_board":
-				return await handleGetBoard(fileStore);
+				return await handleGetBoard(getFileStore());
 
 			// Doc handlers
 			case "list_docs":
@@ -132,10 +158,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 			case "search_docs":
 				return await handleSearchDocs(args);
 
-			// Guideline handler
-			case "get_guideline":
-				return await handleGetGuideline(args);
-
 			// Template handlers
 			case "list_templates":
 				return await handleListTemplates(args);
@@ -148,7 +170,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 			// Unified search handler
 			case "search":
-				return await handleSearch(args, fileStore);
+				return await handleSearch(args, getFileStore());
 
 			default:
 				return errorResponse(`Unknown tool: ${name}`);
@@ -160,8 +182,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // List available resources (tasks and docs)
 server.setRequestHandler(ListResourcesRequestSchema, async () => {
-	const tasks = await fileStore.getAllTasks();
-	const docsDir = join(process.cwd(), ".knowns", "docs");
+	const tasks = await getFileStore().getAllTasks();
+	const docsDir = join(getProjectRoot(), ".knowns", "docs");
 
 	// Task resources
 	const taskResources = tasks.map((task) => ({
@@ -231,7 +253,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 	const taskMatch = uri.match(/^knowns:\/\/task\/(.+)$/);
 	if (taskMatch) {
 		const taskId = taskMatch[1];
-		const task = await fileStore.getTask(taskId);
+		const task = await getFileStore().getTask(taskId);
 
 		if (!task) {
 			throw new Error(`Task ${taskId} not found`);
@@ -252,7 +274,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 	const docMatch = uri.match(/^knowns:\/\/doc\/(.+)$/);
 	if (docMatch) {
 		const docPath = docMatch[1];
-		const docsDir = join(process.cwd(), ".knowns", "docs");
+		const docsDir = join(getProjectRoot(), ".knowns", "docs");
 		const filepath = join(docsDir, `${docPath}.md`);
 
 		if (!existsSync(filepath)) {

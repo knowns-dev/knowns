@@ -140,15 +140,6 @@ EOF
 )"
 ```
 
-## MCP vs CLI Guidelines
-
-Both CLI and MCP now use the same **unified modular guidelines**. The `--cli` and `--mcp` flags are legacy and return the same content.
-
-For MCP:
-```
-mcp__knowns__get_guideline({})    # Full guidelines
-```
-
 ## Reading Large Documents
 
 For large documents (>2000 tokens), use the 3-step workflow:

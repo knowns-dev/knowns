@@ -792,20 +792,19 @@ knowns mcp setup --project
 knowns mcp setup --global
 ```
 
-### `knowns agents`
+### `knowns sync`
 
-Manage AI agent instruction files and guidelines.
+Sync AI agent instruction files with latest guidelines.
 
 ```bash
-knowns agents [options]
+knowns sync [options]
 ```
 
-| Option                  | Description                                                   |
-| ----------------------- | ------------------------------------------------------------- |
-| (none)                  | Interactive mode - prompts to select type, variant, and files |
-| `--update-instructions` | Non-interactive update                                        |
-| `--type <type>`         | Guidelines type: `cli` or `mcp` (default: cli)                |
-| `--files <files>`       | Comma-separated list of files to update                       |
+| Option          | Description                                                 |
+| --------------- | ----------------------------------------------------------- |
+| `--type <type>` | Guidelines type: `cli`, `mcp`, or `unified` (default: unified) |
+| `--minimal`     | Use minimal instruction (default: full embedded guidelines) |
+| `--all`         | Update all instruction files (including Gemini, Copilot)    |
 
 **Supported files:**
 
@@ -819,102 +818,20 @@ knowns agents [options]
 **Examples:**
 
 ```bash
-# Interactive mode - select type, variant, and files
-knowns agents
-
-# Non-interactive update (uses defaults)
-knowns agents --update-instructions
-
-# Update specific files with MCP version
-knowns agents --update-instructions --type mcp --files "CLAUDE.md,AGENTS.md"
-```
-
-### `knowns agents guideline`
-
-Output guidelines to stdout. AI agents should call this at session start.
-
-```bash
-knowns agents guideline [options]
-```
-
-| Option            | Description                                                                 |
-| ----------------- | --------------------------------------------------------------------------- |
-| (none)            | Output full guidelines (all sections)                                       |
-| `--full`          | Output full guidelines (all sections)                                       |
-| `--compact`       | Output compact guidelines (core rules + common mistakes)                    |
-| `--stage <stage>` | Output guidelines for specific stage: `creation`, `execution`, `completion` |
-| `--core`          | Output core rules only                                                      |
-| `--commands`      | Output commands reference only                                              |
-| `--mistakes`      | Output common mistakes only                                                 |
-| `--cli`           | (Legacy) Same as default                                                    |
-| `--mcp`           | (Legacy) Same as default                                                    |
-
-**Guidelines Structure (Modular):**
-
-| Section             | Description                          |
-| ------------------- | ------------------------------------ |
-| Core Rules          | Golden rules, must-follow principles |
-| Commands Reference  | CLI/MCP commands quick reference     |
-| Workflow Creation   | Task creation workflow               |
-| Workflow Execution  | Task execution workflow              |
-| Workflow Completion | Task completion workflow             |
-| Common Mistakes     | Anti-patterns and DO vs DON'T        |
-
-**Examples:**
-
-```bash
-# Full guidelines (default)
-knowns agents guideline
-
-# Compact for quick reference
-knowns agents guideline --compact
-
-# Stage-specific guidelines
-knowns agents guideline --stage creation    # When creating tasks
-knowns agents guideline --stage execution   # When implementing
-knowns agents guideline --stage completion  # When finishing
-
-# Individual sections
-knowns agents guideline --core       # Core rules only
-knowns agents guideline --commands   # Commands reference
-knowns agents guideline --mistakes   # Common mistakes
-```
-
-### `knowns agents sync`
-
-Quick sync of agent instruction files with latest guidelines.
-
-```bash
-knowns agents sync [options]
-```
-
-| Option          | Description                                                 |
-| --------------- | ----------------------------------------------------------- |
-| `--type <type>` | Guidelines type: `cli` or `mcp` (default: cli)              |
-| `--minimal`     | Use minimal instruction (default: full embedded guidelines) |
-| `--all`         | Update all instruction files (including Gemini, Copilot)    |
-
-**Template variants:**
-
-| Variant                   | Size  | Description                                          |
-| ------------------------- | ----- | ---------------------------------------------------- |
-| general (default)         | ~26KB | Full modular guidelines embedded in file             |
-| instruction (`--minimal`) | ~1KB  | Minimal - tells AI to call `knowns agents guideline` |
-
-**Examples:**
-
-```bash
 # Sync default files (CLAUDE.md, AGENTS.md) with full guidelines
-knowns agents sync
+knowns sync
 
 # Sync all files
-knowns agents sync --all
+knowns sync --all
 
 # Sync with minimal instruction only
-knowns agents sync --minimal
+knowns sync --minimal
 
 # Sync with MCP guidelines
-knowns agents sync --type mcp
+knowns sync --type mcp
+
+# Sync with unified guidelines (CLI + MCP)
+knowns sync --type unified
 ```
 
 ---
