@@ -28,6 +28,9 @@ export interface UpdateNotifierOptions {
 const DEFAULT_TTL_MS = 60 * 60 * 1000; // 1 hour
 const DEFAULT_TIMEOUT_MS = 2000;
 
+// Track if we've already shown the update notification in this process
+let hasNotifiedThisProcess = false;
+
 /**
  * Detect package manager from env and lockfiles
  */
@@ -121,6 +124,11 @@ async function fetchLatestVersion(packageName: string): Promise<string | null> {
 }
 
 export async function notifyCliUpdate(options: UpdateNotifierOptions): Promise<void> {
+	// Prevent duplicate notifications in the same process
+	if (hasNotifiedThisProcess) {
+		return;
+	}
+
 	const {
 		currentVersion,
 		args,
@@ -177,7 +185,7 @@ export async function notifyCliUpdate(options: UpdateNotifierOptions): Promise<v
 		chalk.yellowBright(` v${latest} available (current v${currentVersion}) `) +
 		chalk.gray(`→ ${installCmd}`);
 
+	hasNotifiedThisProcess = true;
 	logger("");
 	logger(message);
-	logger("");
 }

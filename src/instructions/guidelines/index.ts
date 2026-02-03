@@ -6,10 +6,10 @@
  */
 
 // Import from unified source
-import { CLIGuidelines, Guidelines, MCPGuidelines } from "./unified";
+import { CLIGuidelines, Guidelines, MCPGuidelines, UnifiedGuidelines } from "./unified";
 
-// Re-export both variants
-export { CLIGuidelines, MCPGuidelines, Guidelines };
+// Re-export all variants
+export { CLIGuidelines, MCPGuidelines, UnifiedGuidelines, Guidelines };
 
 // Re-export individual CLI constants for backwards compatibility
 export const CORE_RULES = CLIGuidelines.core;

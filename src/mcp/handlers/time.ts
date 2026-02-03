@@ -1,8 +1,13 @@
 /**
  * Time tracking MCP handlers
+ * Supports multiple concurrent timers (one per task)
  */
 
+import { existsSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { FileStore } from "@storage/file-store";
+import { normalizeTaskId } from "@utils/normalize-id";
 import { notifyTaskUpdate, notifyTimeUpdate } from "@utils/notify-server";
 import { z } from "zod";
 import { errorResponse, formatDuration, parseDuration, successResponse } from "../utils";
@@ -91,105 +96,162 @@ export const timeTools = [
 	},
 ];
 
+// Active timer types
+interface ActiveTimer {
+	taskId: string;
+	taskTitle?: string;
+	startedAt: string;
+	pausedAt: string | null;
+	totalPausedMs: number;
+}
+
+interface TimeData {
+	active: ActiveTimer[];
+}
+
+/**
+ * Load time data from file with migration from old format
+ */
+async function loadTimeData(projectRoot: string): Promise<TimeData> {
+	const timePath = join(projectRoot, ".knowns", "time.json");
+	if (!existsSync(timePath)) {
+		return { active: [] };
+	}
+	const content = await readFile(timePath, "utf-8");
+	const data = JSON.parse(content);
+
+	// Migrate from old format
+	if (data.active && !Array.isArray(data.active)) {
+		return { active: [data.active] };
+	}
+
+	if (data.active === null) {
+		return { active: [] };
+	}
+
+	return data;
+}
+
+/**
+ * Save time data to file
+ */
+async function saveTimeData(projectRoot: string, data: TimeData): Promise<void> {
+	const timePath = join(projectRoot, ".knowns", "time.json");
+	await writeFile(timePath, JSON.stringify(data, null, 2), "utf-8");
+}
+
 // Handlers
 export async function handleStartTime(args: unknown, fileStore: FileStore) {
 	const input = startTimeSchema.parse(args);
-	const task = await fileStore.getTask(input.taskId);
+	const taskId = normalizeTaskId(input.taskId);
+	const task = await fileStore.getTask(taskId);
 
 	if (!task) {
-		return errorResponse(`Task ${input.taskId} not found`);
+		return errorResponse(`Task ${taskId} not found`);
 	}
 
-	// Check if already tracking
-	const activeEntry = task.timeEntries.find((e) => !e.endedAt);
-	if (activeEntry) {
-		return errorResponse("Time tracking already active for this task");
+	// Load time data
+	const data = await loadTimeData(fileStore.projectRoot);
+
+	// Check if timer already running for this task
+	const existingTimer = data.active.find((t) => t.taskId === taskId);
+	if (existingTimer) {
+		return errorResponse(`Timer already running for task ${taskId}`);
 	}
 
-	// Create new time entry
-	const newEntry = {
-		id: `entry-${Date.now()}`,
-		startedAt: new Date(),
-		duration: 0,
-		note: "Started via MCP",
-	};
-
-	await fileStore.updateTask(input.taskId, {
-		timeEntries: [...task.timeEntries, newEntry],
-	});
-
-	// Notify web server for real-time updates
-	await notifyTaskUpdate(input.taskId);
-	await notifyTimeUpdate({
-		taskId: input.taskId,
+	// Add new timer
+	const newTimer: ActiveTimer = {
+		taskId,
 		taskTitle: task.title,
-		startedAt: newEntry.startedAt.toISOString(),
+		startedAt: new Date().toISOString(),
 		pausedAt: null,
 		totalPausedMs: 0,
-	});
+	};
+	data.active.push(newTimer);
+	await saveTimeData(fileStore.projectRoot, data);
+
+	// Notify web server for real-time updates
+	await notifyTaskUpdate(taskId);
+	await notifyTimeUpdate(data.active);
 
 	return successResponse({
-		message: `Started tracking time for task ${input.taskId}`,
-		startedAt: newEntry.startedAt,
+		message: `Started tracking time for task ${taskId}`,
+		startedAt: newTimer.startedAt,
+		activeTimers: data.active.length,
 	});
 }
 
 export async function handleStopTime(args: unknown, fileStore: FileStore) {
 	const input = stopTimeSchema.parse(args);
-	const task = await fileStore.getTask(input.taskId);
+	const taskId = normalizeTaskId(input.taskId);
+	const task = await fileStore.getTask(taskId);
 
 	if (!task) {
-		return errorResponse(`Task ${input.taskId} not found`);
+		return errorResponse(`Task ${taskId} not found`);
 	}
 
-	// Find active entry
-	const activeIndex = task.timeEntries.findIndex((e) => !e.endedAt);
-	if (activeIndex === -1) {
-		return errorResponse("No active time tracking for this task");
+	// Load time data
+	const data = await loadTimeData(fileStore.projectRoot);
+
+	// Find timer for this task
+	const timerIndex = data.active.findIndex((t) => t.taskId === taskId);
+	if (timerIndex === -1) {
+		return errorResponse(`No active timer for task ${taskId}`);
 	}
 
-	const endTime = new Date();
-	const startTime = task.timeEntries[activeIndex].startedAt;
-	const duration = Math.floor((endTime.getTime() - new Date(startTime).getTime()) / 1000);
+	const timer = data.active[timerIndex];
+	const { startedAt, pausedAt, totalPausedMs } = timer;
 
-	const updatedEntries = [...task.timeEntries];
-	updatedEntries[activeIndex] = {
-		...updatedEntries[activeIndex],
+	// Calculate duration
+	const endTime = pausedAt ? new Date(pausedAt) : new Date();
+	const elapsed = endTime.getTime() - new Date(startedAt).getTime() - totalPausedMs;
+	const duration = Math.floor(elapsed / 1000);
+
+	// Save time entry to task
+	const newEntry = {
+		id: `te-${Date.now()}-${taskId}`,
+		startedAt: new Date(startedAt),
 		endedAt: endTime,
 		duration,
 	};
 
 	const newTimeSpent = task.timeSpent + duration;
 
-	await fileStore.updateTask(input.taskId, {
-		timeEntries: updatedEntries,
+	await fileStore.updateTask(taskId, {
+		timeEntries: [...task.timeEntries, newEntry],
 		timeSpent: newTimeSpent,
 	});
 
+	// Remove timer from active list
+	data.active.splice(timerIndex, 1);
+	await saveTimeData(fileStore.projectRoot, data);
+
 	// Notify web server for real-time updates
-	await notifyTaskUpdate(input.taskId);
-	await notifyTimeUpdate(null); // Clear active timer
+	await notifyTaskUpdate(taskId);
+	await notifyTimeUpdate(data.active.length > 0 ? data.active : null);
 
 	return successResponse({
-		message: `Stopped tracking time for task ${input.taskId}`,
+		message: `Stopped tracking time for task ${taskId}`,
 		duration: formatDuration(duration),
 		totalTime: formatDuration(newTimeSpent),
+		activeTimers: data.active.length,
 	});
 }
 
 export async function handleAddTime(args: unknown, fileStore: FileStore) {
 	const input = addTimeSchema.parse(args);
-	const task = await fileStore.getTask(input.taskId);
+	const taskId = normalizeTaskId(input.taskId);
+	const task = await fileStore.getTask(taskId);
 
 	if (!task) {
-		return errorResponse(`Task ${input.taskId} not found`);
+		return errorResponse(`Task ${taskId} not found`);
 	}
 
 	const duration = parseDuration(input.duration);
 	const startDate = input.date ? new Date(input.date) : new Date();
 
 	const newEntry = {
-		id: `entry-${Date.now()}`,
+		id: `te-${Date.now()}`,
 		startedAt: startDate,
 		endedAt: new Date(startDate.getTime() + duration * 1000),
 		duration,
@@ -198,16 +260,16 @@ export async function handleAddTime(args: unknown, fileStore: FileStore) {
 
 	const newTimeSpent = task.timeSpent + duration;
 
-	await fileStore.updateTask(input.taskId, {
+	await fileStore.updateTask(taskId, {
 		timeEntries: [...task.timeEntries, newEntry],
 		timeSpent: newTimeSpent,
 	});
 
 	// Notify web server for real-time updates
-	await notifyTaskUpdate(input.taskId);
+	await notifyTaskUpdate(taskId);
 
 	return successResponse({
-		message: `Added ${formatDuration(duration)} to task ${input.taskId}`,
+		message: `Added ${formatDuration(duration)} to task ${taskId}`,
 		totalTime: formatDuration(newTimeSpent),
 	});
 }

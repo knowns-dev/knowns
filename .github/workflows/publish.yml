@@ -71,15 +71,19 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Get changelog for this version
+      - name: Get changelog from GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         id: changelog
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
-          # Extract changelog section for this version (between two version headers)
-          CHANGELOG=$(awk "/^## \[?${VERSION}\]?/,/^## \[?[0-9]+\.[0-9]+\.[0-9]+\]?/{if(/^## \[?[0-9]+\.[0-9]+\.[0-9]+\]?/ && !/^## \[?${VERSION}\]?/)exit; print}" CHANGELOG.md 2>/dev/null | tail -n +2 || echo "")
+          # Get release notes from GitHub Release
+          CHANGELOG=$(gh release view "v${VERSION}" --repo ${{ github.repository }} --json body -q '.body' 2>/dev/null || echo "")
+          # Remove "Full Changelog" link line
+          CHANGELOG=$(echo "$CHANGELOG" | sed '/^\*\*Full Changelog\*\*:/d')
           if [ -z "$CHANGELOG" ]; then
-            CHANGELOG="No changelog available for this version."
+            CHANGELOG="See full release notes on GitHub."
           fi
           # Truncate if too long (Discord limit ~2000 chars for embed description)
           if [ ${#CHANGELOG} -gt 1500 ]; then

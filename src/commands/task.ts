@@ -12,6 +12,7 @@ import { file, write } from "@utils/bun-compat";
 import { formatDocReferences, resolveDocReferences } from "@utils/doc-links";
 import { findProjectRoot } from "@utils/find-project-root";
 import { normalizeRefs } from "@utils/mention-refs";
+import { normalizeTaskId } from "@utils/normalize-id";
 import { notifyRefresh, notifyTaskUpdate } from "@utils/notify-server";
 import { extractTaskIdFromFilename, repairTask, validateTask } from "@utils/validate";
 import chalk from "chalk";
@@ -750,8 +751,9 @@ const viewCommand = new Command("view")
 	.argument("<id>", "Task ID")
 	.option("--plain", "Plain text output for AI")
 	.option("--children", "Show detailed list of child tasks")
-	.action(async (id: string, options: { plain?: boolean; children?: boolean }) => {
+	.action(async (rawId: string, options: { plain?: boolean; children?: boolean }) => {
 		try {
+			const id = normalizeTaskId(rawId);
 			const fileStore = getFileStore();
 			const task = await fileStore.getTask(id);
 
@@ -813,7 +815,7 @@ const editCommand = new Command("edit")
 	.option("--append-notes <text>", "Append to implementation notes")
 	.action(
 		async (
-			id: string,
+			rawId: string,
 			options: {
 				title?: string;
 				description?: string;
@@ -832,6 +834,7 @@ const editCommand = new Command("edit")
 			},
 		) => {
 			try {
+				const id = normalizeTaskId(rawId);
 				const fileStore = getFileStore();
 				const task = await fileStore.getTask(id);
 
@@ -1026,8 +1029,9 @@ const editCommand = new Command("edit")
 const archiveCommand = new Command("archive")
 	.description("Archive a task")
 	.argument("<id>", "Task ID")
-	.action(async (id: string) => {
+	.action(async (rawId: string) => {
 		try {
+			const id = normalizeTaskId(rawId);
 			const projectRoot = findProjectRoot();
 			if (!projectRoot) {
 				console.error(chalk.red("✗ Not a knowns project"));
@@ -1086,8 +1090,9 @@ const archiveCommand = new Command("archive")
 const unarchiveCommand = new Command("unarchive")
 	.description("Restore archived task")
 	.argument("<id>", "Task ID")
-	.action(async (id: string) => {
+	.action(async (rawId: string) => {
 		try {
+			const id = normalizeTaskId(rawId);
 			const projectRoot = findProjectRoot();
 			if (!projectRoot) {
 				console.error(chalk.red("✗ Not a knowns project"));
@@ -1138,8 +1143,9 @@ const historyCommand = new Command("history")
 	.argument("<id>", "Task ID")
 	.option("--plain", "Plain text output for AI")
 	.option("--limit <n>", "Limit number of entries", Number.parseInt)
-	.action(async (id: string, options: { plain?: boolean; limit?: number }) => {
+	.action(async (rawId: string, options: { plain?: boolean; limit?: number }) => {
 		try {
+			const id = normalizeTaskId(rawId);
 			const fileStore = getFileStore();
 			const task = await fileStore.getTask(id);
 
@@ -1332,8 +1338,9 @@ const diffCommand = new Command("diff")
 	.option("--from <v>", "Start version for comparison", Number.parseInt)
 	.option("--to <v>", "End version for comparison", Number.parseInt)
 	.option("--plain", "Plain text output for AI")
-	.action(async (id: string, options: { ver?: number; from?: number; to?: number; plain?: boolean }) => {
+	.action(async (rawId: string, options: { ver?: number; from?: number; to?: number; plain?: boolean }) => {
 		try {
+			const id = normalizeTaskId(rawId);
 			const fileStore = getFileStore();
 			const task = await fileStore.getTask(id);
 
@@ -1607,8 +1614,9 @@ const restoreCommand = new Command("restore")
 	.requiredOption("-v, --ver <n>", "Version to restore to", Number.parseInt)
 	.option("-y, --yes", "Skip confirmation")
 	.option("--dry-run", "Preview changes without applying")
-	.action(async (id: string, options: { ver: number; yes?: boolean; dryRun?: boolean }) => {
+	.action(async (rawId: string, options: { ver: number; yes?: boolean; dryRun?: boolean }) => {
 		try {
+			const id = normalizeTaskId(rawId);
 			const fileStore = getFileStore();
 			const task = await fileStore.getTask(id);
 
@@ -1729,8 +1737,9 @@ const validateCommand = new Command("validate")
 	.description("Validate a task file format")
 	.argument("<id>", "Task ID to validate")
 	.option("--plain", "Plain text output for AI")
-	.action(async (id: string, options: { plain?: boolean }) => {
+	.action(async (rawId: string, options: { plain?: boolean }) => {
 		try {
+			const id = normalizeTaskId(rawId);
 			const projectRoot = findProjectRoot();
 			if (!projectRoot) {
 				console.error(chalk.red("✗ Not a knowns project"));
@@ -1815,8 +1824,9 @@ const repairCommand = new Command("repair")
 	.description("Repair a corrupted task file")
 	.argument("<id>", "Task ID to repair")
 	.option("--plain", "Plain text output for AI")
-	.action(async (id: string, options: { plain?: boolean }) => {
+	.action(async (rawId: string, options: { plain?: boolean }) => {
 		try {
+			const id = normalizeTaskId(rawId);
 			const projectRoot = findProjectRoot();
 			if (!projectRoot) {
 				console.error(chalk.red("✗ Not a knowns project"));
@@ -1907,15 +1917,16 @@ export const taskCommand = new Command("task")
 	.option("--plain", "Plain text output for AI")
 	.option("--children", "Show detailed list of child tasks")
 	.enablePositionalOptions()
-	.action(async (id: string | undefined, options: { plain?: boolean; children?: boolean }) => {
+	.action(async (rawId: string | undefined, options: { plain?: boolean; children?: boolean }) => {
 		// If no ID provided, show help
-		if (!id) {
+		if (!rawId) {
 			taskCommand.help();
 			return;
 		}
 
 		// Shorthand: `task <id>` = `task view <id>`
 		try {
+			const id = normalizeTaskId(rawId);
 			const fileStore = getFileStore();
 			const task = await fileStore.getTask(id);
 

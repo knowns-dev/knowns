@@ -7,12 +7,18 @@
 ## The Golden Rule
 
 {{#if mcp}}
-**If you want to change ANYTHING in a task or doc, use MCP tools. NEVER edit .md files directly.**
+{{#if cli}}
+**If you want to change ANYTHING in a task or doc, use MCP tools (preferred) or CLI commands (fallback). NEVER edit .md files directly.**
 {{else}}
+**If you want to change ANYTHING in a task or doc, use MCP tools. NEVER edit .md files directly.**
+{{/if}}
+{{else}}
+{{#if cli}}
 **If you want to change ANYTHING in a task or doc, use CLI commands. NEVER edit .md files directly.**
 {{/if}}
+{{/if}}
 
-{{#unless mcp}}
+{{#if cli}}
 ---
 
 ## CRITICAL: The -a Flag Confusion
@@ -35,7 +41,7 @@ knowns task edit 35 -a "- [ ] Criterion"    # Sets assignee to garbage!
 knowns task edit 35 --ac "Criterion one"
 knowns task create "Title" --ac "Criterion one" --ac "Criterion two"
 ```
-{{/unless}}
+{{/if}}
 
 ---
 
@@ -44,16 +50,22 @@ knowns task create "Title" --ac "Criterion one" --ac "Criterion two"
 | Rule | Description |
 |------|-------------|
 {{#if mcp}}
-| **MCP Tools Only** | Use MCP tools for ALL operations. NEVER edit .md files directly |
+{{#if cli}}
+| **MCP Tools (preferred)** | Use MCP tools for ALL operations. Fallback to CLI if needed. NEVER edit .md files directly |
 {{else}}
+| **MCP Tools Only** | Use MCP tools for ALL operations. NEVER edit .md files directly |
+{{/if}}
+{{else}}
+{{#if cli}}
 | **CLI Only** | Use commands for ALL operations. NEVER edit .md files directly |
+{{/if}}
 {{/if}}
 | **Docs First** | Read project docs BEFORE planning or coding |
 | **Time Tracking** | Start timer when taking task, stop when done |
 | **Plan Approval** | Share plan with user, WAIT for approval before coding |
 | **Check AC After** | Only mark criteria done AFTER completing work |
 
-{{#unless mcp}}
+{{#if cli}}
 ---
 
 ## The --plain Flag
@@ -71,7 +83,7 @@ knowns search "query" --plain
 knowns task create "Title" --plain       # ERROR!
 knowns task edit <id> -s done --plain    # ERROR!
 ```
-{{/unless}}
+{{/if}}
 
 ---
 
@@ -91,16 +103,8 @@ Tasks, docs, and templates can reference each other:
 
 ## Subtasks
 
-{{#if mcp}}
-```json
-mcp__knowns__create_task({
-  "title": "Subtask title",
-  "parent": "parent-task-id"
-})
-```
-
-**CRITICAL:** Use raw ID (string) for all MCP tool calls.
-{{else}}
+{{#if cli}}
+### CLI
 ```bash
 knowns task create "Subtask title" --parent 48
 ```
@@ -113,4 +117,15 @@ knowns task create "Title" --parent 48
 # WRONG
 knowns task create "Title" --parent task-48
 ```
+{{/if}}
+{{#if mcp}}
+### MCP
+```json
+mcp__knowns__create_task({
+  "title": "Subtask title",
+  "parent": "parent-task-id"
+})
+```
+
+**CRITICAL:** Use raw ID (string) for all MCP tool calls.
 {{/if}}

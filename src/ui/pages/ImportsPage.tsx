@@ -7,6 +7,7 @@ import {
 	GitBranch,
 	Package,
 	FolderOpen,
+	Folder,
 	Link,
 	AlertCircle,
 	Check,
@@ -21,6 +22,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
+import { TreeView, type TreeDataItem } from "../components/ui/tree-view";
 import { importApi, type Import, type ImportDetail, type ImportResult } from "../api/client";
 import { useSSEEvent } from "../contexts/SSEContext";
 import { toast } from "../components/ui/sonner";
@@ -50,6 +52,120 @@ function ImportTypeIcon({ type }: { type: string }) {
 		default:
 			return <Download className="w-5 h-5 text-gray-500" />;
 	}
+}
+
+// Build TreeDataItem[] from file paths
+function buildFileTreeData(files: string[]): TreeDataItem[] {
+	interface TempNode {
+		id: string;
+		name: string;
+		isFile: boolean;
+		children: Map<string, TempNode>;
+	}
+
+	const root: Map<string, TempNode> = new Map();
+
+	for (const filePath of files) {
+		const parts = filePath.split("/");
+		let currentMap = root;
+
+		for (let i = 0; i < parts.length; i++) {
+			const part = parts[i];
+			const isFile = i === parts.length - 1;
+			const currentPath = parts.slice(0, i + 1).join("/");
+
+			if (!currentMap.has(part)) {
+				currentMap.set(part, {
+					id: currentPath,
+					name: part,
+					isFile,
+					children: new Map(),
+				});
+			}
+			currentMap = currentMap.get(part)!.children;
+		}
+	}
+
+	// Convert TempNode to TreeDataItem
+	const convertToTreeData = (nodeMap: Map<string, TempNode>): TreeDataItem[] => {
+		return Array.from(nodeMap.values())
+			.sort((a, b) => {
+				// Folders first, then files
+				if (a.isFile !== b.isFile) return a.isFile ? 1 : -1;
+				return a.name.localeCompare(b.name);
+			})
+			.map((node): TreeDataItem => ({
+				id: node.id,
+				name: node.name,
+				icon: node.isFile ? FileText : Folder,
+				openIcon: node.isFile ? FileText : FolderOpen,
+				children: node.children.size > 0 ? convertToTreeData(node.children) : undefined,
+			}));
+	};
+
+	return convertToTreeData(root);
+}
+
+// Icon components for preview actions
+const AddIcon = ({ className }: { className?: string }) => (
+	<Check className={`${className} text-green-600`} />
+);
+const SkipIcon = ({ className }: { className?: string }) => (
+	<X className={`${className} text-muted-foreground`} />
+);
+
+// Build TreeDataItem[] from import preview changes
+function buildPreviewTreeData(changes: Array<{ action: string; path: string }>): TreeDataItem[] {
+	interface TempNode {
+		id: string;
+		name: string;
+		isFile: boolean;
+		action?: string;
+		children: Map<string, TempNode>;
+	}
+
+	const root: Map<string, TempNode> = new Map();
+
+	for (const change of changes) {
+		const parts = change.path.split("/");
+		let currentMap = root;
+
+		for (let i = 0; i < parts.length; i++) {
+			const part = parts[i];
+			const isFile = i === parts.length - 1;
+			const currentPath = parts.slice(0, i + 1).join("/");
+
+			if (!currentMap.has(part)) {
+				currentMap.set(part, {
+					id: currentPath,
+					name: part,
+					isFile,
+					action: isFile ? change.action : undefined,
+					children: new Map(),
+				});
+			}
+			currentMap = currentMap.get(part)!.children;
+		}
+	}
+
+	// Convert TempNode to TreeDataItem
+	const convertToTreeData = (nodeMap: Map<string, TempNode>): TreeDataItem[] => {
+		return Array.from(nodeMap.values())
+			.sort((a, b) => {
+				// Folders first, then files
+				if (a.isFile !== b.isFile) return a.isFile ? 1 : -1;
+				return a.name.localeCompare(b.name);
+			})
+			.map((node): TreeDataItem => ({
+				id: node.id,
+				name: node.name,
+				icon: node.isFile ? (node.action === "skip" ? SkipIcon : AddIcon) : Folder,
+				openIcon: node.isFile ? (node.action === "skip" ? SkipIcon : AddIcon) : FolderOpen,
+				children: node.children.size > 0 ? convertToTreeData(node.children) : undefined,
+			}));
+	};
+
+	return convertToTreeData(root);
 }
 
 export default function ImportsPage() {
@@ -463,20 +579,59 @@ export default function ImportsPage() {
 										</div>
 									)}
 
-									{/* Files */}
+									{/* Files - separated by type */}
 									<div>
 										<h3 className="font-semibold mb-3">Imported Files</h3>
-										<div className="rounded-lg border bg-muted/30 max-h-64 overflow-y-auto">
-											{selectedImport.files.map((file, idx) => (
-												<div
-													key={idx}
-													className="px-4 py-2 flex items-center gap-2 border-b last:border-b-0 text-sm"
-												>
-													<FileText className="w-4 h-4 text-muted-foreground shrink-0" />
-													<code className="font-mono truncate">{file}</code>
-												</div>
-											))}
-											{selectedImport.files.length === 0 && (
+										<div className="rounded-lg border bg-muted/30 max-h-80 overflow-y-auto">
+											{selectedImport.files.length > 0 ? (
+												(() => {
+													// Separate files by type
+													const templateFiles = selectedImport.files.filter(f => f.startsWith("templates/"));
+													const docFiles = selectedImport.files.filter(f => f.startsWith("docs/"));
+													const otherFiles = selectedImport.files.filter(f => !f.startsWith("templates/") && !f.startsWith("docs/"));
+
+													const treeData: TreeDataItem[] = [];
+
+													if (templateFiles.length > 0) {
+														treeData.push({
+															id: "__templates__",
+															name: `Templates (${templateFiles.length})`,
+															icon: Folder,
+															openIcon: FolderOpen,
+															children: buildFileTreeData(templateFiles.map(f => f.replace(/^templates\//, ""))),
+														});
+													}
+
+													if (docFiles.length > 0) {
+														treeData.push({
+															id: "__docs__",
+															name: `Docs (${docFiles.length})`,
+															icon: Folder,
+															openIcon: FolderOpen,
+															children: buildFileTreeData(docFiles.map(f => f.replace(/^docs\//, ""))),
+														});
+													}
+
+													if (otherFiles.length > 0) {
+														treeData.push({
+															id: "__other__",
+															name: `Other (${otherFiles.length})`,
+															icon: Folder,
+															openIcon: FolderOpen,
+															children: buildFileTreeData(otherFiles),
+														});
+													}
+
+													return (
+														<TreeView
+															data={treeData}
+															expandAll
+															defaultNodeIcon={Folder}
+															defaultLeafIcon={FileText}
+														/>
+													);
+												})()
+											) : (
 												<div className="px-4 py-8 text-center text-muted-foreground">
 													No files imported
 												</div>
@@ -618,22 +773,54 @@ export default function ImportsPage() {
 												{addResult.summary.added} files to add, {addResult.summary.updated} to update, {addResult.summary.skipped} skipped
 											</div>
 											{addResult.dryRun && addResult.changes.length > 0 && (
-												<div className="mt-3 max-h-32 overflow-y-auto text-sm">
-													{addResult.changes.slice(0, 10).map((c, i) => (
-														<div key={i} className="flex items-center gap-2 py-0.5">
-															{c.action === "skip" ? (
-																<X className="w-3 h-3 text-muted-foreground" />
-															) : (
-																<Check className="w-3 h-3 text-green-600" />
-															)}
-															<code className="font-mono text-xs truncate">{c.path}</code>
-														</div>
-													))}
-													{addResult.changes.length > 10 && (
-														<div className="text-muted-foreground mt-1">
-															...and {addResult.changes.length - 10} more
-														</div>
-													)}
+												<div className="mt-3 max-h-48 overflow-y-auto rounded border bg-muted/30">
+													{(() => {
+														// Separate changes by type
+														const templateChanges = addResult.changes.filter(c => c.path.startsWith("templates/"));
+														const docChanges = addResult.changes.filter(c => c.path.startsWith("docs/"));
+														const otherChanges = addResult.changes.filter(c => !c.path.startsWith("templates/") && !c.path.startsWith("docs/"));
+
+														const treeData: TreeDataItem[] = [];
+
+														if (templateChanges.length > 0) {
+															treeData.push({
+																id: "__templates__",
+																name: `Templates (${templateChanges.length})`,
+																icon: Folder,
+																openIcon: FolderOpen,
+																children: buildPreviewTreeData(templateChanges.map(c => ({ ...c, path: c.path.replace(/^templates\//, "") }))),
+															});
+														}
+
+														if (docChanges.length > 0) {
+															treeData.push({
+																id: "__docs__",
+																name: `Docs (${docChanges.length})`,
+																icon: Folder,
+																openIcon: FolderOpen,
+																children: buildPreviewTreeData(docChanges.map(c => ({ ...c, path: c.path.replace(/^docs\//, "") }))),
+															});
+														}
+
+														if (otherChanges.length > 0) {
+															treeData.push({
+																id: "__other__",
+																name: `Other (${otherChanges.length})`,
+																icon: Folder,
+																openIcon: FolderOpen,
+																children: buildPreviewTreeData(otherChanges),
+															});
+														}
+
+														return (
+															<TreeView
+																data={treeData}
+																expandAll
+																defaultNodeIcon={Folder}
+																defaultLeafIcon={FileText}
+															/>
+														);
+													})()}
 												</div>
 											)}
 											{addResult.dryRun && (

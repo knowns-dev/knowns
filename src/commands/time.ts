@@ -1,11 +1,14 @@
 /**
  * Time Tracking Command
  * Track time spent on tasks with start/stop/pause/resume
+ * Supports multiple concurrent timers (one per task)
  */
 
+import { select } from "@inquirer/prompts";
 import { FileStore } from "@storage/file-store";
 import { file, write } from "@utils/bun-compat";
 import { findProjectRoot } from "@utils/find-project-root";
+import { normalizeTaskId } from "@utils/normalize-id";
 import { notifyTaskUpdate, notifyTimeUpdate } from "@utils/notify-server";
 import chalk from "chalk";
 import { Command } from "commander";
@@ -15,6 +18,7 @@ import { Command } from "commander";
  */
 interface ActiveTimer {
 	taskId: string;
+	taskTitle?: string;
 	startedAt: string;
 	pausedAt: string | null;
 	totalPausedMs: number;
@@ -22,9 +26,10 @@ interface ActiveTimer {
 
 /**
  * Time tracking data stored in .knowns/time.json
+ * Supports multiple concurrent timers (one per task)
  */
 interface TimeData {
-	active: ActiveTimer | null;
+	active: ActiveTimer[];
 }
 
 /**
@@ -55,14 +60,28 @@ function getProjectRoot(): string {
 
 /**
  * Load time tracking data
+ * Handles migration from old single-timer format to multi-timer format
  */
 async function loadTimeData(projectRoot: string): Promise<TimeData> {
 	const f = file(`${projectRoot}/.knowns/time.json`);
 	if (await f.exists()) {
 		const content = await f.text();
-		return JSON.parse(content);
+		const data = JSON.parse(content);
+
+		// Migrate from old format (active: ActiveTimer | null) to new format (active: ActiveTimer[])
+		if (data.active && !Array.isArray(data.active)) {
+			// Old format: single timer
+			return { active: [data.active] };
+		}
+
+		// Handle null case (no active timers)
+		if (data.active === null) {
+			return { active: [] };
+		}
+
+		return data;
 	}
-	return { active: null };
+	return { active: [] };
 }
 
 /**
@@ -89,13 +108,72 @@ function formatDuration(seconds: number): string {
 }
 
 /**
+ * Format elapsed time as HH:MM:SS
+ */
+function formatElapsed(ms: number): string {
+	const totalSeconds = Math.floor(ms / 1000);
+	const hours = Math.floor(totalSeconds / 3600);
+	const minutes = Math.floor((totalSeconds % 3600) / 60);
+	const seconds = totalSeconds % 60;
+	return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+}
+
+/**
+ * Calculate elapsed time for a timer
+ */
+function calculateElapsed(timer: ActiveTimer): number {
+	const startTime = new Date(timer.startedAt).getTime();
+	const currentTime = timer.pausedAt ? new Date(timer.pausedAt).getTime() : Date.now();
+	return currentTime - startTime - timer.totalPausedMs;
+}
+
+/**
+ * Interactive timer selection
+ */
+async function selectTimer(timers: ActiveTimer[], action: string, allowAll = false): Promise<string | "all" | null> {
+	if (timers.length === 0) {
+		return null;
+	}
+
+	if (timers.length === 1) {
+		return timers[0].taskId;
+	}
+
+	const choices = timers.map((timer) => {
+		const elapsed = formatElapsed(calculateElapsed(timer));
+		const status = timer.pausedAt ? chalk.yellow("(paused)") : chalk.green("(running)");
+		return {
+			name: `#${timer.taskId}: ${timer.taskTitle || "Unknown"} ${elapsed} ${status}`,
+			value: timer.taskId,
+		};
+	});
+
+	if (allowAll) {
+		choices.push({
+			name: chalk.cyan(`[All] ${action} all timers`),
+			value: "all",
+		});
+	}
+
+	console.log(chalk.yellow(`\nMultiple timers running. Which one to ${action}?\n`));
+
+	const selected = await select({
+		message: "Select timer:",
+		choices,
+	});
+
+	return selected;
+}
+
+/**
  * knowns time start
  */
 const startCommand = new Command("start")
 	.description("Start timer for a task")
 	.argument("<taskId>", "Task ID")
-	.action(async (taskId: string) => {
+	.action(async (rawTaskId: string) => {
 		try {
+			const taskId = normalizeTaskId(rawTaskId);
 			const projectRoot = getProjectRoot();
 			const fileStore = getFileStore();
 
@@ -106,33 +184,37 @@ const startCommand = new Command("start")
 				process.exit(1);
 			}
 
-			// Check for active timer
+			// Load time data
 			const data = await loadTimeData(projectRoot);
-			if (data.active) {
-				console.error(chalk.yellow(`Timer already running for task #${data.active.taskId}`));
-				console.error(chalk.gray("  Stop the current timer first with: knowns time stop"));
+
+			// Check if timer already running for this task
+			const existingTimer = data.active.find((t) => t.taskId === taskId);
+			if (existingTimer) {
+				console.error(chalk.yellow(`Timer already running for task #${taskId}`));
+				console.error(chalk.gray(`  Stop it first with: knowns time stop ${taskId}`));
 				process.exit(1);
 			}
 
-			// Start new timer
-			data.active = {
+			// Add new timer
+			const newTimer: ActiveTimer = {
 				taskId,
+				taskTitle: task.title,
 				startedAt: new Date().toISOString(),
 				pausedAt: null,
 				totalPausedMs: 0,
 			};
+			data.active.push(newTimer);
 			await saveTimeData(projectRoot, data);
 
 			// Notify web server for real-time updates
-			await notifyTimeUpdate({
-				taskId,
-				taskTitle: task.title,
-				startedAt: data.active.startedAt,
-				pausedAt: null,
-				totalPausedMs: 0,
-			});
+			await notifyTimeUpdate(data.active);
 
 			console.log(chalk.green(`⏱  Started timer for #${taskId}: ${task.title}`));
+
+			// Show count if multiple timers
+			if (data.active.length > 1) {
+				console.log(chalk.gray(`   ${data.active.length} timers now running`));
+			}
 		} catch (error) {
 			console.error(chalk.red("✗ Failed to start timer"));
 			if (error instanceof Error) {
@@ -145,186 +227,322 @@ const startCommand = new Command("start")
 /**
  * knowns time stop
  */
-const stopCommand = new Command("stop").description("Stop current timer and save time entry").action(async () => {
-	try {
-		const projectRoot = getProjectRoot();
-		const fileStore = getFileStore();
+const stopCommand = new Command("stop")
+	.description("Stop timer and save time entry")
+	.argument("[taskId]", "Task ID (optional - prompts if multiple timers)")
+	.option("-a, --all", "Stop all timers")
+	.action(async (rawTaskId?: string, options?: { all?: boolean }) => {
+		try {
+			const projectRoot = getProjectRoot();
+			const fileStore = getFileStore();
 
-		const data = await loadTimeData(projectRoot);
-		if (!data.active) {
-			console.log(chalk.yellow("No active timer"));
-			return;
+			const data = await loadTimeData(projectRoot);
+			if (data.active.length === 0) {
+				console.log(chalk.yellow("No active timers"));
+				return;
+			}
+
+			let timersToStop: ActiveTimer[] = [];
+
+			if (options?.all) {
+				// Stop all timers
+				timersToStop = [...data.active];
+			} else if (rawTaskId) {
+				// Stop specific timer
+				const taskId = normalizeTaskId(rawTaskId);
+				const timer = data.active.find((t) => t.taskId === taskId);
+				if (!timer) {
+					console.error(chalk.red(`✗ No active timer for task #${taskId}`));
+					process.exit(1);
+				}
+				timersToStop = [timer];
+			} else {
+				// Interactive selection
+				const selected = await selectTimer(data.active, "stop", true);
+				if (selected === null) {
+					console.log(chalk.yellow("No active timers"));
+					return;
+				}
+
+				if (selected === "all") {
+					timersToStop = [...data.active];
+				} else {
+					const timer = data.active.find((t) => t.taskId === selected);
+					if (timer) {
+						timersToStop = [timer];
+					}
+				}
+			}
+
+			// Stop each timer
+			for (const timer of timersToStop) {
+				const { taskId, startedAt, pausedAt, totalPausedMs } = timer;
+
+				// Calculate duration
+				const endTime = pausedAt ? new Date(pausedAt) : new Date();
+				const elapsed = endTime.getTime() - new Date(startedAt).getTime() - totalPausedMs;
+				const seconds = Math.floor(elapsed / 1000);
+
+				// Save time entry to task
+				const task = await fileStore.getTask(taskId);
+				if (task) {
+					const entry = {
+						id: `te-${Date.now()}-${taskId}`,
+						startedAt: new Date(startedAt),
+						endedAt: endTime,
+						duration: seconds,
+					};
+					task.timeEntries.push(entry);
+					task.timeSpent += seconds;
+					await fileStore.updateTask(taskId, {
+						timeEntries: task.timeEntries,
+						timeSpent: task.timeSpent,
+					});
+
+					// Notify web server for real-time updates
+					await notifyTaskUpdate(taskId);
+				}
+
+				// Remove timer from active list
+				const index = data.active.findIndex((t) => t.taskId === taskId);
+				if (index !== -1) {
+					data.active.splice(index, 1);
+				}
+
+				console.log(chalk.green(`⏹  Stopped timer for #${taskId}`));
+				console.log(chalk.gray(`   Duration: ${formatDuration(seconds)}`));
+			}
+
+			await saveTimeData(projectRoot, data);
+
+			// Notify web server
+			await notifyTimeUpdate(data.active.length > 0 ? data.active : null);
+		} catch (error) {
+			console.error(chalk.red("✗ Failed to stop timer"));
+			if (error instanceof Error) {
+				console.error(chalk.red(`  ${error.message}`));
+			}
+			process.exit(1);
 		}
-
-		const { taskId, startedAt, pausedAt, totalPausedMs } = data.active;
-
-		// Calculate duration
-		const endTime = pausedAt ? new Date(pausedAt) : new Date();
-		const elapsed = endTime.getTime() - new Date(startedAt).getTime() - totalPausedMs;
-		const seconds = Math.floor(elapsed / 1000);
-
-		// Save time entry to task
-		const task = await fileStore.getTask(taskId);
-		if (task) {
-			const entry = {
-				id: `te-${Date.now()}`,
-				startedAt: new Date(startedAt),
-				endedAt: endTime,
-				duration: seconds,
-			};
-			task.timeEntries.push(entry);
-			task.timeSpent += seconds;
-			await fileStore.updateTask(taskId, {
-				timeEntries: task.timeEntries,
-				timeSpent: task.timeSpent,
-			});
-
-			// Notify web server for real-time updates
-			await notifyTaskUpdate(taskId);
-		}
-
-		// Clear active timer
-		data.active = null;
-		await saveTimeData(projectRoot, data);
-
-		// Notify web server that timer stopped
-		await notifyTimeUpdate(null);
-
-		console.log(chalk.green(`⏹  Stopped timer for #${taskId}`));
-		console.log(chalk.gray(`   Duration: ${formatDuration(seconds)}`));
-	} catch (error) {
-		console.error(chalk.red("✗ Failed to stop timer"));
-		if (error instanceof Error) {
-			console.error(chalk.red(`  ${error.message}`));
-		}
-		process.exit(1);
-	}
-});
+	});
 
 /**
  * knowns time pause
  */
-const pauseCommand = new Command("pause").description("Pause current timer").action(async () => {
-	try {
-		const projectRoot = getProjectRoot();
-		const fileStore = getFileStore();
+const pauseCommand = new Command("pause")
+	.description("Pause timer")
+	.argument("[taskId]", "Task ID (optional - prompts if multiple timers)")
+	.option("-a, --all", "Pause all running timers")
+	.action(async (rawTaskId?: string, options?: { all?: boolean }) => {
+		try {
+			const projectRoot = getProjectRoot();
+			const fileStore = getFileStore();
 
-		const data = await loadTimeData(projectRoot);
-		if (!data.active) {
-			console.log(chalk.yellow("No active timer"));
-			return;
+			const data = await loadTimeData(projectRoot);
+			if (data.active.length === 0) {
+				console.log(chalk.yellow("No active timers"));
+				return;
+			}
+
+			// Filter to only running (not paused) timers
+			const runningTimers = data.active.filter((t) => !t.pausedAt);
+			if (runningTimers.length === 0) {
+				console.log(chalk.yellow("All timers are already paused"));
+				return;
+			}
+
+			let timersToPause: ActiveTimer[] = [];
+
+			if (options?.all) {
+				timersToPause = runningTimers;
+			} else if (rawTaskId) {
+				const taskId = normalizeTaskId(rawTaskId);
+				const timer = data.active.find((t) => t.taskId === taskId);
+				if (!timer) {
+					console.error(chalk.red(`✗ No active timer for task #${taskId}`));
+					process.exit(1);
+				}
+				if (timer.pausedAt) {
+					console.log(chalk.yellow(`Timer for task #${taskId} is already paused`));
+					return;
+				}
+				timersToPause = [timer];
+			} else {
+				const selected = await selectTimer(runningTimers, "pause", true);
+				if (selected === null) {
+					console.log(chalk.yellow("No running timers"));
+					return;
+				}
+
+				if (selected === "all") {
+					timersToPause = runningTimers;
+				} else {
+					const timer = data.active.find((t) => t.taskId === selected);
+					if (timer) {
+						timersToPause = [timer];
+					}
+				}
+			}
+
+			// Pause each timer
+			const pauseTime = new Date().toISOString();
+			for (const timer of timersToPause) {
+				timer.pausedAt = pauseTime;
+				console.log(chalk.yellow(`⏸  Paused timer for #${timer.taskId}`));
+			}
+
+			await saveTimeData(projectRoot, data);
+
+			// Notify web server
+			await notifyTimeUpdate(data.active);
+		} catch (error) {
+			console.error(chalk.red("✗ Failed to pause timer"));
+			if (error instanceof Error) {
+				console.error(chalk.red(`  ${error.message}`));
+			}
+			process.exit(1);
 		}
-
-		if (data.active.pausedAt) {
-			console.log(chalk.yellow("Timer is already paused"));
-			return;
-		}
-
-		data.active.pausedAt = new Date().toISOString();
-		await saveTimeData(projectRoot, data);
-
-		// Notify web server
-		const task = await fileStore.getTask(data.active.taskId);
-		await notifyTimeUpdate({
-			taskId: data.active.taskId,
-			taskTitle: task?.title || "",
-			startedAt: data.active.startedAt,
-			pausedAt: data.active.pausedAt,
-			totalPausedMs: data.active.totalPausedMs,
-		});
-
-		console.log(chalk.yellow(`⏸  Paused timer for #${data.active.taskId}`));
-	} catch (error) {
-		console.error(chalk.red("✗ Failed to pause timer"));
-		if (error instanceof Error) {
-			console.error(chalk.red(`  ${error.message}`));
-		}
-		process.exit(1);
-	}
-});
+	});
 
 /**
  * knowns time resume
  */
-const resumeCommand = new Command("resume").description("Resume paused timer").action(async () => {
-	try {
-		const projectRoot = getProjectRoot();
-		const fileStore = getFileStore();
+const resumeCommand = new Command("resume")
+	.description("Resume paused timer")
+	.argument("[taskId]", "Task ID (optional - prompts if multiple timers)")
+	.option("-a, --all", "Resume all paused timers")
+	.action(async (rawTaskId?: string, options?: { all?: boolean }) => {
+		try {
+			const projectRoot = getProjectRoot();
+			const fileStore = getFileStore();
 
-		const data = await loadTimeData(projectRoot);
-		if (!data.active) {
-			console.log(chalk.yellow("No active timer"));
-			return;
+			const data = await loadTimeData(projectRoot);
+			if (data.active.length === 0) {
+				console.log(chalk.yellow("No active timers"));
+				return;
+			}
+
+			// Filter to only paused timers
+			const pausedTimers = data.active.filter((t) => t.pausedAt);
+			if (pausedTimers.length === 0) {
+				console.log(chalk.yellow("No paused timers"));
+				return;
+			}
+
+			let timersToResume: ActiveTimer[] = [];
+
+			if (options?.all) {
+				timersToResume = pausedTimers;
+			} else if (rawTaskId) {
+				const taskId = normalizeTaskId(rawTaskId);
+				const timer = data.active.find((t) => t.taskId === taskId);
+				if (!timer) {
+					console.error(chalk.red(`✗ No active timer for task #${taskId}`));
+					process.exit(1);
+				}
+				if (!timer.pausedAt) {
+					console.log(chalk.yellow(`Timer for task #${taskId} is already running`));
+					return;
+				}
+				timersToResume = [timer];
+			} else {
+				const selected = await selectTimer(pausedTimers, "resume", true);
+				if (selected === null) {
+					console.log(chalk.yellow("No paused timers"));
+					return;
+				}
+
+				if (selected === "all") {
+					timersToResume = pausedTimers;
+				} else {
+					const timer = data.active.find((t) => t.taskId === selected);
+					if (timer) {
+						timersToResume = [timer];
+					}
+				}
+			}
+
+			// Resume each timer
+			const now = Date.now();
+			for (const timer of timersToResume) {
+				if (timer.pausedAt) {
+					const pausedDuration = now - new Date(timer.pausedAt).getTime();
+					timer.totalPausedMs += pausedDuration;
+					timer.pausedAt = null;
+				}
+				console.log(chalk.green(`▶  Resumed timer for #${timer.taskId}`));
+			}
+
+			await saveTimeData(projectRoot, data);
+
+			// Notify web server
+			await notifyTimeUpdate(data.active);
+		} catch (error) {
+			console.error(chalk.red("✗ Failed to resume timer"));
+			if (error instanceof Error) {
+				console.error(chalk.red(`  ${error.message}`));
+			}
+			process.exit(1);
 		}
-
-		if (!data.active.pausedAt) {
-			console.log(chalk.yellow("Timer is not paused"));
-			return;
-		}
-
-		// Add paused duration to total
-		const pausedDuration = Date.now() - new Date(data.active.pausedAt).getTime();
-		data.active.totalPausedMs += pausedDuration;
-		data.active.pausedAt = null;
-		await saveTimeData(projectRoot, data);
-
-		// Notify web server
-		const task = await fileStore.getTask(data.active.taskId);
-		await notifyTimeUpdate({
-			taskId: data.active.taskId,
-			taskTitle: task?.title || "",
-			startedAt: data.active.startedAt,
-			pausedAt: null,
-			totalPausedMs: data.active.totalPausedMs,
-		});
-
-		console.log(chalk.green(`▶  Resumed timer for #${data.active.taskId}`));
-	} catch (error) {
-		console.error(chalk.red("✗ Failed to resume timer"));
-		if (error instanceof Error) {
-			console.error(chalk.red(`  ${error.message}`));
-		}
-		process.exit(1);
-	}
-});
+	});
 
 /**
  * knowns time status
  */
-const statusCommand = new Command("status").description("Show active timer status").action(async () => {
-	try {
-		const projectRoot = getProjectRoot();
-		const fileStore = getFileStore();
+const statusCommand = new Command("status")
+	.description("Show active timer status")
+	.option("--plain", "Plain text output for AI")
+	.action(async (options?: { plain?: boolean }) => {
+		try {
+			const projectRoot = getProjectRoot();
+			const fileStore = getFileStore();
 
-		const data = await loadTimeData(projectRoot);
-		if (!data.active) {
-			console.log(chalk.gray("No active timer"));
-			return;
+			const data = await loadTimeData(projectRoot);
+			if (data.active.length === 0) {
+				console.log(options?.plain ? "No active timers" : chalk.gray("No active timers"));
+				return;
+			}
+
+			if (options?.plain) {
+				console.log(`Active timers: ${data.active.length}`);
+				console.log("");
+				for (const timer of data.active) {
+					const elapsed = calculateElapsed(timer);
+					const seconds = Math.floor(elapsed / 1000);
+					const status = timer.pausedAt ? "PAUSED" : "RUNNING";
+					console.log(`#${timer.taskId}: ${timer.taskTitle || "Unknown"}`);
+					console.log(`  Status: ${status}`);
+					console.log(`  Elapsed: ${formatDuration(seconds)}`);
+					console.log("");
+				}
+			} else {
+				console.log(chalk.bold(`\n⏱  Active Timers (${data.active.length})\n`));
+
+				for (const timer of data.active) {
+					const elapsed = calculateElapsed(timer);
+					const seconds = Math.floor(elapsed / 1000);
+					const status = timer.pausedAt ? chalk.yellow("(paused)") : chalk.green("(running)");
+
+					// Get task title if not cached
+					let title = timer.taskTitle;
+					if (!title) {
+						const task = await fileStore.getTask(timer.taskId);
+						title = task?.title || "Unknown";
+					}
+
+					console.log(`  #${timer.taskId}: ${title}`);
+					console.log(`    ${formatDuration(seconds)} ${status}`);
+					console.log("");
+				}
+			}
+		} catch (error) {
+			console.error(chalk.red("✗ Failed to get timer status"));
+			if (error instanceof Error) {
+				console.error(chalk.red(`  ${error.message}`));
+			}
+			process.exit(1);
 		}
-
-		const { taskId, startedAt, pausedAt, totalPausedMs } = data.active;
-
-		// Calculate elapsed time
-		const currentTime = pausedAt ? new Date(pausedAt).getTime() : Date.now();
-		const elapsed = currentTime - new Date(startedAt).getTime() - totalPausedMs;
-		const seconds = Math.floor(elapsed / 1000);
-
-		// Get task details
-		const task = await fileStore.getTask(taskId);
-		const taskTitle = task ? task.title : "Unknown";
-
-		// Format output
-		const status = pausedAt ? chalk.yellow("(paused)") : chalk.green("(running)");
-		console.log(`⏱  #${taskId}: ${taskTitle}`);
-		console.log(`   ${formatDuration(seconds)} ${status}`);
-	} catch (error) {
-		console.error(chalk.red("✗ Failed to get timer status"));
-		if (error instanceof Error) {
-			console.error(chalk.red(`  ${error.message}`));
-		}
-		process.exit(1);
-	}
-});
+	});
 
 /**
  * knowns time log
@@ -332,8 +550,9 @@ const statusCommand = new Command("status").description("Show active timer statu
 const logCommand = new Command("log")
 	.description("Show time log for a task")
 	.argument("<taskId>", "Task ID")
-	.action(async (taskId: string) => {
+	.action(async (rawTaskId: string) => {
 		try {
+			const taskId = normalizeTaskId(rawTaskId);
 			const fileStore = getFileStore();
 
 			const task = await fileStore.getTask(taskId);
@@ -410,8 +629,9 @@ const addCommand = new Command("add")
 	.argument("<duration>", "Duration (e.g., 2h, 30m, 1h30m)")
 	.option("-n, --note <text>", "Note for this time entry")
 	.option("-d, --date <date>", "Date for time entry (default: now)")
-	.action(async (taskId: string, durationStr: string, options: { note?: string; date?: string }) => {
+	.action(async (rawTaskId: string, durationStr: string, options: { note?: string; date?: string }) => {
 		try {
+			const taskId = normalizeTaskId(rawTaskId);
 			const fileStore = getFileStore();
 
 			const task = await fileStore.getTask(taskId);

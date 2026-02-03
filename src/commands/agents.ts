@@ -9,14 +9,13 @@ import chalk from "chalk";
 import { Command } from "commander";
 import prompts from "prompts";
 // Import modular guidelines
-import { Guidelines, MCPGuidelines } from "../instructions/guidelines";
+import { Guidelines, MCPGuidelines, UnifiedGuidelines } from "../instructions/guidelines";
 
 const PROJECT_ROOT = process.cwd();
 
 export const INSTRUCTION_FILES = [
 	{ path: "CLAUDE.md", name: "Claude Code", selected: true },
 	{ path: "AGENTS.md", name: "Agent SDK", selected: true },
-	{ path: "GEMINI.md", name: "Gemini", selected: false },
 	{
 		path: ".github/copilot-instructions.md",
 		name: "GitHub Copilot",
@@ -24,13 +23,20 @@ export const INSTRUCTION_FILES = [
 	},
 ];
 
-export type GuidelinesType = "cli" | "mcp";
+export type GuidelinesType = "cli" | "mcp" | "unified";
 
 /**
  * Get guidelines content by type
  */
 export function getGuidelines(type: GuidelinesType): string {
-	return type === "mcp" ? MCPGuidelines.getFull(true) : Guidelines.getFull(true);
+	switch (type) {
+		case "mcp":
+			return MCPGuidelines.getFull(true);
+		case "unified":
+			return UnifiedGuidelines.getFull(true);
+		default:
+			return Guidelines.getFull(true);
+	}
 }
 
 /**

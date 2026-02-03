@@ -339,6 +339,8 @@ export interface TemplateListItem {
 	doc?: string;
 	promptCount: number;
 	fileCount: number;
+	isImported?: boolean;
+	source?: string;
 }
 
 export interface TemplateDetail {
@@ -377,7 +379,9 @@ export const templateApi = {
 	},
 
 	async get(name: string): Promise<{ template: TemplateDetail }> {
-		const res = await fetch(`${API_BASE}/api/templates/${encodeURIComponent(name)}`);
+		// Don't encode '/' - server uses wildcard route that handles path segments
+		const encodedName = name.split("/").map(encodeURIComponent).join("/");
+		const res = await fetch(`${API_BASE}/api/templates/${encodedName}`);
 		if (!res.ok) {
 			if (res.status === 404) {
 				throw new Error(`Template not found: ${name}`);
@@ -388,10 +392,10 @@ export const templateApi = {
 	},
 
 	async run(name: string, variables: Record<string, string>, dryRun = true): Promise<TemplateRunResult> {
-		const res = await fetch(`${API_BASE}/api/templates/${encodeURIComponent(name)}/run`, {
+		const res = await fetch(`${API_BASE}/api/templates/run`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ variables, dryRun }),
+			body: JSON.stringify({ name, variables, dryRun }),
 		});
 		if (!res.ok) {
 			const data = await res.json();
@@ -422,10 +426,10 @@ export const templateApi = {
 		templateFile: string,
 		variables: Record<string, string>,
 	): Promise<{ success: boolean; templateFile: string; destinationPath: string; content: string }> {
-		const res = await fetch(`${API_BASE}/api/templates/${encodeURIComponent(name)}/preview`, {
+		const res = await fetch(`${API_BASE}/api/templates/preview`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ templateFile, variables }),
+			body: JSON.stringify({ name, templateFile, variables }),
 		});
 		if (!res.ok) {
 			const data = await res.json();
@@ -574,9 +578,9 @@ export const importApi = {
 	},
 };
 
-// Time Tracking API
+// Time Tracking API - Multi-timer support
 export const timeApi = {
-	async getStatus(): Promise<{ active: ActiveTimer | null }> {
+	async getStatus(): Promise<{ active: ActiveTimer[] }> {
 		const res = await fetch(`${API_BASE}/api/time/status`);
 		if (!res.ok) {
 			throw new Error("Failed to fetch time status");
@@ -584,7 +588,7 @@ export const timeApi = {
 		return res.json();
 	},
 
-	async start(taskId: string): Promise<{ success: boolean; active: ActiveTimer }> {
+	async start(taskId: string): Promise<{ success: boolean; active: ActiveTimer[]; timer: ActiveTimer }> {
 		const res = await fetch(`${API_BASE}/api/time/start`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -597,9 +601,18 @@ export const timeApi = {
 		return res.json();
 	},
 
-	async stop(): Promise<{ success: boolean; duration: number; taskId: string }> {
+	async stop(
+		taskId?: string,
+		all?: boolean,
+	): Promise<{
+		success: boolean;
+		stopped: Array<{ taskId: string; duration: number }>;
+		active: ActiveTimer[];
+	}> {
 		const res = await fetch(`${API_BASE}/api/time/stop`, {
 			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ taskId, all }),
 		});
 		if (!res.ok) {
 			const data = await res.json();
@@ -608,9 +621,18 @@ export const timeApi = {
 		return res.json();
 	},
 
-	async pause(): Promise<{ success: boolean; active: ActiveTimer }> {
+	async pause(
+		taskId?: string,
+		all?: boolean,
+	): Promise<{
+		success: boolean;
+		paused: string[];
+		active: ActiveTimer[];
+	}> {
 		const res = await fetch(`${API_BASE}/api/time/pause`, {
 			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ taskId, all }),
 		});
 		if (!res.ok) {
 			const data = await res.json();
@@ -619,9 +641,18 @@ export const timeApi = {
 		return res.json();
 	},
 
-	async resume(): Promise<{ success: boolean; active: ActiveTimer }> {
+	async resume(
+		taskId?: string,
+		all?: boolean,
+	): Promise<{
+		success: boolean;
+		resumed: string[];
+		active: ActiveTimer[];
+	}> {
 		const res = await fetch(`${API_BASE}/api/time/resume`, {
 			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ taskId, all }),
 		});
 		if (!res.ok) {
 			const data = await res.json();

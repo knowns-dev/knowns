@@ -13,10 +13,11 @@ import {
 	type LoadedTemplate,
 	type TemplateResult,
 	listTemplates,
+	loadTemplate,
 	loadTemplateByName,
-	runTemplateByName,
+	runTemplate,
 } from "../codegen";
-import { listAllTemplates } from "../import";
+import { listAllTemplates, resolveTemplate } from "../import";
 
 const TEMPLATES_DIR = ".knowns/templates";
 
@@ -213,7 +214,7 @@ const listCommand = new Command("list")
  */
 const runCommand = new Command("run")
 	.description("Run a template to generate files")
-	.argument("<name>", "Template name")
+	.argument("<name>", "Template name (supports import prefix, e.g., 'knowns/component')")
 	.option("--dry-run", "Preview without writing files")
 	.option("-f, --force", "Overwrite existing files")
 	.option("--plain", "Plain text output for AI")
@@ -221,7 +222,21 @@ const runCommand = new Command("run")
 	.action(async (name: string, options: { dryRun?: boolean; force?: boolean; plain?: boolean }, command: Command) => {
 		try {
 			const projectRoot = getProjectRoot();
-			const templatesDir = getTemplatesDir(projectRoot);
+
+			// Resolve template (supports local and imported templates)
+			const resolved = await resolveTemplate(projectRoot, name);
+			if (!resolved) {
+				console.error(chalk.red(`✗ Template not found: ${name}`));
+				console.error(chalk.gray("  Use 'knowns template list' to see available templates"));
+				process.exit(1);
+			}
+
+			// Load the template from resolved path
+			const template = await loadTemplate(resolved.path);
+			if (!template) {
+				console.error(chalk.red(`✗ Failed to load template: ${name}`));
+				process.exit(1);
+			}
 
 			// Parse pre-filled values from unknown options
 			const values: Record<string, unknown> = {};
@@ -251,7 +266,11 @@ const runCommand = new Command("run")
 				console.log(chalk.cyan("\n🔍 Dry run mode - no files will be written\n"));
 			}
 
-			const result = await runTemplateByName(templatesDir, name, {
+			if (resolved.isImported && !options.plain) {
+				console.log(chalk.gray(`  (from import: ${resolved.source})\n`));
+			}
+
+			const result = await runTemplate(template, {
 				projectRoot,
 				values,
 				dryRun: options.dryRun,
@@ -392,17 +411,36 @@ export function {{camelCase name}}() {
  */
 const viewCommand = new Command("view")
 	.description("View template details")
-	.argument("<name>", "Template name")
+	.argument("<name>", "Template name (supports import prefix, e.g., 'knowns/component')")
 	.option("--plain", "Plain text output for AI")
 	.action(async (name: string, options: { plain?: boolean }) => {
 		try {
 			const projectRoot = getProjectRoot();
-			const templatesDir = getTemplatesDir(projectRoot);
-			const template = await loadTemplateByName(templatesDir, name);
+
+			// Resolve template (supports local and imported templates)
+			const resolved = await resolveTemplate(projectRoot, name);
+			if (!resolved) {
+				console.error(chalk.red(`✗ Template not found: ${name}`));
+				console.error(chalk.gray("  Use 'knowns template list' to see available templates"));
+				process.exit(1);
+			}
+
+			// Load the template from resolved path
+			const template = await loadTemplate(resolved.path);
+			if (!template) {
+				console.error(chalk.red(`✗ Failed to load template: ${name}`));
+				process.exit(1);
+			}
 
 			if (options.plain) {
+				if (resolved.isImported) {
+					console.log(`Source: ${resolved.source}`);
+				}
 				printTemplatePlain(template);
 			} else {
+				if (resolved.isImported) {
+					console.log(chalk.gray(`\n(from import: ${resolved.source})`));
+				}
 				printTemplateFormatted(template);
 			}
 		} catch (error) {
@@ -534,7 +572,8 @@ templateCommand
 	.action(async (name: string | undefined, options: { plain?: boolean }) => {
 		if (name) {
 			// Shorthand: knowns template <name> -> knowns template view <name>
-			await viewCommand.parseAsync(["view", name, ...(options.plain ? ["--plain"] : [])], { from: "user" });
+			// Note: with { from: "user" }, the array should contain only arguments, not the command name
+			await viewCommand.parseAsync([name, ...(options.plain ? ["--plain"] : [])], { from: "user" });
 		} else {
 			// No name provided, show help
 			templateCommand.help();

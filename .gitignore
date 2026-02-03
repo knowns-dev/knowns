@@ -36,6 +36,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Claude Code settings
 .claude/
+.clinerules/
+.cursor
+.windsurfrules
 
 # knowns (ignore all except docs)
 .knowns/*

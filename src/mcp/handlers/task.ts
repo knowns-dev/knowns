@@ -4,6 +4,7 @@
 
 import type { Task, TaskPriority, TaskStatus } from "@models/task";
 import type { FileStore } from "@storage/file-store";
+import { normalizeTaskId } from "@utils/normalize-id";
 import { notifyTaskUpdate } from "@utils/notify-server";
 import { z } from "zod";
 import { errorResponse, fetchLinkedDocs, successResponse } from "../utils";
@@ -206,10 +207,11 @@ export async function handleCreateTask(args: unknown, fileStore: FileStore) {
 
 export async function handleGetTask(args: unknown, fileStore: FileStore) {
 	const input = getTaskSchema.parse(args);
-	const task = await fileStore.getTask(input.taskId);
+	const taskId = normalizeTaskId(input.taskId);
+	const task = await fileStore.getTask(taskId);
 
 	if (!task) {
-		return errorResponse(`Task ${input.taskId} not found`);
+		return errorResponse(`Task ${taskId} not found`);
 	}
 
 	// Fetch linked documentation
@@ -236,11 +238,12 @@ export async function handleGetTask(args: unknown, fileStore: FileStore) {
 
 export async function handleUpdateTask(args: unknown, fileStore: FileStore) {
 	const input = updateTaskSchema.parse(args);
+	const taskId = normalizeTaskId(input.taskId);
 
 	// Get current task for AC operations
-	const currentTask = await fileStore.getTask(input.taskId);
+	const currentTask = await fileStore.getTask(taskId);
 	if (!currentTask) {
-		return errorResponse(`Task ${input.taskId} not found`);
+		return errorResponse(`Task ${taskId} not found`);
 	}
 
 	const updates: Partial<Task> = {};
@@ -320,7 +323,7 @@ export async function handleUpdateTask(args: unknown, fileStore: FileStore) {
 		updates.implementationNotes = existingNotes + separator + input.appendNotes;
 	}
 
-	const task = await fileStore.updateTask(input.taskId, updates);
+	const task = await fileStore.updateTask(taskId, updates);
 
 	// Notify web server for real-time updates
 	await notifyTaskUpdate(task.id);

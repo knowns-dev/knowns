@@ -214,7 +214,8 @@ If large, returns TOC. Then read section:
 {}
 ```
 
-{{else}}
+{{/if}}
+{{#if cli}}
 # CLI Commands Reference
 
 ## task create

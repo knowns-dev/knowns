@@ -248,7 +248,6 @@ describe("Skill Sync", () => {
 			expect(ids).toContain("claude");
 			expect(ids).toContain("cursor");
 			expect(ids).toContain("windsurf");
-			expect(ids).toContain("gemini");
 		});
 	});
 
@@ -317,26 +316,6 @@ Instructions here.
 			const targetFile = join(projectRoot, ".windsurfrules");
 			expect(existsSync(targetFile)).toBe(true);
 			const content = readFileSync(targetFile, "utf-8");
-			expect(content).toContain("test-skill");
-		});
-
-		it("should sync skills to gemini platform (append pattern)", async () => {
-			const results = await syncSkills({
-				projectRoot,
-				skillsDir,
-				platforms: ["gemini"],
-			});
-
-			expect(results).toHaveLength(1);
-			expect(results[0].platform).toBe("gemini");
-			expect(results[0].created).toBe(1);
-
-			// Verify file created with markers
-			const targetFile = join(projectRoot, "GEMINI.md");
-			expect(existsSync(targetFile)).toBe(true);
-			const content = readFileSync(targetFile, "utf-8");
-			expect(content).toContain("<!-- KNOWNS SKILLS START -->");
-			expect(content).toContain("<!-- KNOWNS SKILLS END -->");
 			expect(content).toContain("test-skill");
 		});
 

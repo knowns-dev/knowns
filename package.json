@@ -9,7 +9,7 @@
 		"kn": "./dist/index.js"
 	},
 	"main": "./dist/index.js",
-	"files": ["dist", "README.md", "CHANGELOG.md", "LICENSE"],
+	"files": ["dist", "README.md", "LICENSE"],
 	"keywords": ["cli", "task-management", "documentation", "knowledge-base", "team-tools", "developer-tools"],
 	"author": "howznguyen <howznguyen@knowns.dev>",
 	"license": "MIT",
@@ -45,7 +45,9 @@
 		"@dnd-kit/core": "^6.3.1",
 		"@dnd-kit/sortable": "^10.0.0",
 		"@dnd-kit/utilities": "^3.2.2",
+		"@inquirer/prompts": "^8.2.0",
 		"@modelcontextprotocol/sdk": "^1.25.1",
+		"@radix-ui/react-accordion": "^1.2.12",
 		"@radix-ui/react-checkbox": "^1.3.3",
 		"@radix-ui/react-collapsible": "^1.1.12",
 		"@radix-ui/react-dialog": "^1.1.15",
