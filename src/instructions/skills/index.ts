@@ -17,7 +17,9 @@ import knImplementMd from "./kn:implement/SKILL.md";
 import knInitMd from "./kn:init/SKILL.md";
 import knPlanMd from "./kn:plan/SKILL.md";
 import knResearchMd from "./kn:research/SKILL.md";
+import knSpecMd from "./kn:spec/SKILL.md";
 import knTemplateMd from "./kn:template/SKILL.md";
+import knVerifyMd from "./kn:verify/SKILL.md";
 
 /**
  * Skill definition
@@ -78,6 +80,8 @@ export const SKILL_COMMIT = createSkill(knCommitMd, "kn:commit");
 export const SKILL_EXTRACT = createSkill(knExtractMd, "kn:extract");
 export const SKILL_DOC = createSkill(knDocMd, "kn:doc");
 export const SKILL_TEMPLATE = createSkill(knTemplateMd, "kn:template");
+export const SKILL_SPEC = createSkill(knSpecMd, "kn:spec");
+export const SKILL_VERIFY = createSkill(knVerifyMd, "kn:verify");
 
 /**
  * All built-in skills
@@ -91,6 +95,8 @@ export const SKILLS: Skill[] = [
 	SKILL_EXTRACT,
 	SKILL_DOC,
 	SKILL_TEMPLATE,
+	SKILL_SPEC,
+	SKILL_VERIFY,
 ];
 
 /**

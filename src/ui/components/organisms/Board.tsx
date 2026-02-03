@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { Eye, EyeOff, ClipboardList, ChevronDown, ChevronUp } from "lucide-react";
+import { Eye, EyeOff, ClipboardList, ChevronDown, ChevronUp, FileText } from "lucide-react";
 import type { Task, TaskStatus } from "../../models/task";
 import { api } from "../../api/client";
 import { useConfig } from "../../contexts/ConfigContext";
@@ -234,7 +234,7 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 	};
 
 	const handleModalClose = () => {
-		window.location.hash = "/";
+		window.location.hash = "/kanban";
 	};
 
 	const handleTaskUpdate = (updatedTask: Task) => {
@@ -477,6 +477,18 @@ function TaskKanbanCard({ item, statusColors, onClick }: TaskKanbanCardProps) {
 							</span>
 						))}
 					</div>
+				)}
+
+				{/* Spec link */}
+				{task.spec && (
+					<a
+						href={`#/docs/${task.spec}`}
+						onClick={(e) => e.stopPropagation()}
+						className="flex items-center gap-1.5 text-xs mb-2 text-purple-600 dark:text-purple-400 hover:underline"
+					>
+						<FileText className="w-3 h-3" aria-hidden="true" />
+						<span className="truncate">{task.spec.replace(/^specs\//, "")}</span>
+					</a>
 				)}
 
 				{task.assignee && (

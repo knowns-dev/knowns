@@ -20,6 +20,7 @@ export interface Task {
 	labels: string[];
 	parent?: string; // Parent task ID for subtasks
 	subtasks: string[]; // Child task IDs
+	spec?: string; // Linked spec document path (e.g., "specs/user-auth" for @doc/specs/user-auth)
 	createdAt: Date;
 	updatedAt: Date;
 

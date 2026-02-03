@@ -21,6 +21,7 @@ interface TaskFrontmatter {
 	assignee?: string;
 	labels: string[];
 	parent?: string;
+	spec?: string;
 	createdAt: string;
 	updatedAt: string;
 	timeSpent: number;
@@ -47,6 +48,7 @@ export function parseTaskMarkdown(content: string): Partial<Task> {
 		assignee: frontmatter.assignee,
 		labels: frontmatter.labels || [],
 		parent: frontmatter.parent,
+		spec: frontmatter.spec,
 		subtasks: [], // Will be populated by FileStore
 		createdAt: new Date(frontmatter.createdAt),
 		updatedAt: new Date(frontmatter.updatedAt),
@@ -78,6 +80,7 @@ export function serializeTaskMarkdown(task: Task): string {
 	// Add optional fields only if defined
 	if (task.assignee) frontmatter.assignee = task.assignee;
 	if (task.parent) frontmatter.parent = task.parent;
+	if (task.spec) frontmatter.spec = task.spec;
 
 	// Build body sections
 	let body = "";

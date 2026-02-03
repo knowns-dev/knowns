@@ -20,14 +20,15 @@ export const validateTools = [
 	{
 		name: "validate",
 		description:
-			"Validate tasks, docs, and templates for reference integrity and quality. Returns errors, warnings, and info about broken refs, missing AC, orphan docs, etc.",
+			"Validate tasks, docs, and templates for reference integrity and quality. Returns errors, warnings, and info about broken refs, missing AC, orphan docs, etc. Use scope='sdd' for SDD (Spec-Driven Development) validation.",
 		inputSchema: {
 			type: "object",
 			properties: {
-				type: {
+				scope: {
 					type: "string",
-					enum: ["task", "doc", "template"],
-					description: "Entity type to validate (optional, validates all if not specified)",
+					enum: ["all", "tasks", "docs", "templates", "sdd"],
+					description:
+						"Validation scope: 'all' (default), 'tasks', 'docs', 'templates', or 'sdd' for spec-driven checks",
 				},
 				strict: {
 					type: "boolean",
@@ -66,6 +67,25 @@ interface FixResult {
 	rule: string;
 	action: string;
 	success: boolean;
+}
+
+interface SDDStats {
+	specs: { total: number; approved: number; draft: number };
+	tasks: { total: number; done: number; inProgress: number; todo: number; withSpec: number; withoutSpec: number };
+	coverage: { linked: number; total: number; percent: number };
+	acCompletion: Record<string, { total: number; completed: number; percent: number }>;
+}
+
+interface SDDWarning {
+	type: "task-no-spec" | "spec-broken-link" | "spec-ac-incomplete";
+	entity: string;
+	message: string;
+}
+
+interface SDDResult {
+	stats: SDDStats;
+	warnings: SDDWarning[];
+	passed: string[];
 }
 
 // Helpers
@@ -602,13 +622,143 @@ async function applyFixes(issues: ValidationIssue[]): Promise<FixResult[]> {
 	return results;
 }
 
+/**
+ * Run SDD (Spec-Driven Development) validation
+ */
+async function runSDDValidation(projectRoot: string, fileStore: FileStore): Promise<SDDResult> {
+	const tasks = await fileStore.getAllTasks();
+	const docsDir = join(projectRoot, ".knowns", "docs");
+
+	const stats: SDDStats = {
+		specs: { total: 0, approved: 0, draft: 0 },
+		tasks: { total: tasks.length, done: 0, inProgress: 0, todo: 0, withSpec: 0, withoutSpec: 0 },
+		coverage: { linked: 0, total: tasks.length, percent: 0 },
+		acCompletion: {},
+	};
+
+	const warnings: SDDWarning[] = [];
+	const passed: string[] = [];
+
+	// Count task statuses
+	for (const task of tasks) {
+		if (task.status === "done") stats.tasks.done++;
+		else if (task.status === "in-progress") stats.tasks.inProgress++;
+		else stats.tasks.todo++;
+
+		if (task.spec) {
+			stats.tasks.withSpec++;
+		} else {
+			stats.tasks.withoutSpec++;
+			warnings.push({
+				type: "task-no-spec",
+				entity: `task-${task.id}`,
+				message: `${task.title} has no spec reference`,
+			});
+		}
+	}
+
+	stats.coverage.linked = stats.tasks.withSpec;
+	stats.coverage.percent = stats.tasks.total > 0 ? Math.round((stats.tasks.withSpec / stats.tasks.total) * 100) : 0;
+
+	// Scan specs folder
+	const specsDir = join(docsDir, "specs");
+	if (existsSync(specsDir)) {
+		async function scanSpecs(dir: string, relativePath: string) {
+			const entries = await readdir(dir, { withFileTypes: true });
+			for (const entry of entries) {
+				if (entry.name.startsWith(".")) continue;
+				const entryRelPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+				if (entry.isDirectory()) {
+					await scanSpecs(join(dir, entry.name), entryRelPath);
+				} else if (entry.name.endsWith(".md")) {
+					stats.specs.total++;
+					const specPath = `specs/${entryRelPath.replace(/\.md$/, "")}`;
+
+					try {
+						const content = await readFile(join(dir, entry.name), "utf-8");
+						const { data } = matter(content);
+
+						if (data.status === "approved" || data.status === "implemented") {
+							stats.specs.approved++;
+						} else {
+							stats.specs.draft++;
+						}
+
+						const linkedTasks = tasks.filter((t) => t.spec === specPath);
+						if (linkedTasks.length > 0) {
+							let totalAC = 0;
+							let completedAC = 0;
+							for (const task of linkedTasks) {
+								totalAC += task.acceptanceCriteria.length;
+								completedAC += task.acceptanceCriteria.filter((ac) => ac.completed).length;
+							}
+							const percent = totalAC > 0 ? Math.round((completedAC / totalAC) * 100) : 100;
+							stats.acCompletion[specPath] = { total: totalAC, completed: completedAC, percent };
+
+							if (percent < 100 && totalAC > 0) {
+								warnings.push({
+									type: "spec-ac-incomplete",
+									entity: specPath,
+									message: `${completedAC}/${totalAC} ACs complete (${percent}%)`,
+								});
+							}
+						}
+					} catch {
+						// Skip files that can't be parsed
+					}
+				}
+			}
+		}
+		await scanSpecs(specsDir, "");
+	}
+
+	// Validate spec links
+	for (const task of tasks) {
+		if (task.spec) {
+			const specDocPath = join(docsDir, `${task.spec}.md`);
+			if (!existsSync(specDocPath)) {
+				warnings.push({
+					type: "spec-broken-link",
+					entity: `task-${task.id}`,
+					message: `Broken spec reference: @doc/${task.spec}`,
+				});
+			}
+		}
+	}
+
+	// Generate passed messages
+	if (warnings.filter((w) => w.type === "spec-broken-link").length === 0) {
+		passed.push("All spec references resolve");
+	}
+
+	for (const [specPath, completion] of Object.entries(stats.acCompletion)) {
+		if (completion.percent === 100) {
+			passed.push(`${specPath}: fully implemented`);
+		}
+	}
+
+	return { stats, warnings, passed };
+}
+
 // Handler
 export async function handleValidate(
-	args: { type?: string; strict?: boolean; fix?: boolean } | undefined,
+	args: { scope?: string; type?: string; strict?: boolean; fix?: boolean } | undefined,
 	fileStore: FileStore,
 ) {
 	try {
 		const projectRoot = getProjectRoot();
+
+		// Check for SDD validation scope
+		if (args?.scope === "sdd") {
+			const sddResult = await runSDDValidation(projectRoot, fileStore);
+			return successResponse({
+				mode: "sdd",
+				stats: sddResult.stats,
+				warnings: sddResult.warnings,
+				passed: sddResult.passed,
+			});
+		}
+
 		const validateConfig = await loadValidateConfig(projectRoot);
 
 		const allIssues: ValidationIssue[] = [];

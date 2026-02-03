@@ -138,6 +138,11 @@ async function formatTask(task: Task, fileStore: FileStore, plain = false): Prom
 			output.push(`Subtasks: ${task.subtasks.join(", ")}`);
 		}
 
+		// Spec
+		if (task.spec) {
+			output.push(`Spec: @doc/${task.spec}`);
+		}
+
 		// Time tracking
 		if (task.timeSpent > 0) {
 			const hours = Math.floor(task.timeSpent / 3600);
@@ -225,6 +230,10 @@ async function formatTask(task: Task, fileStore: FileStore, plain = false): Prom
 
 	if (task.parent) {
 		output.push(`${chalk.gray("Parent:")} ${chalk.yellow(task.parent)}`);
+	}
+
+	if (task.spec) {
+		output.push(`${chalk.gray("Spec:")} ${chalk.magenta(`@doc/${task.spec}`)}`);
 	}
 
 	output.push("");
@@ -609,6 +618,7 @@ const createCommand = new Command("create")
 	.option("--priority <level>", "Priority: low, medium, high", "medium")
 	.option("-s, --status <status>", "Status", "todo")
 	.option("--parent <id>", "Parent task ID for subtasks")
+	.option("--spec <path>", "Link to spec document (e.g., specs/user-auth)")
 	.action(
 		async (
 			title: string,
@@ -620,6 +630,7 @@ const createCommand = new Command("create")
 				priority: string;
 				status: string;
 				parent?: string;
+				spec?: string;
 			},
 		) => {
 			try {
@@ -661,6 +672,7 @@ const createCommand = new Command("create")
 					assignee: options.assignee,
 					labels,
 					parent: options.parent,
+					spec: options.spec,
 					acceptanceCriteria,
 					subtasks: [],
 					timeSpent: 0,
@@ -694,6 +706,7 @@ const listCommand = new Command("list")
 	.option("--assignee <name>", "Filter by assignee")
 	.option("-l, --labels <labels>", "Filter by labels (comma-separated)")
 	.option("--priority <level>", "Filter by priority")
+	.option("--spec <path>", "Filter by spec document path")
 	.option("--tree", "Display tasks as tree hierarchy")
 	.option("--plain", "Plain text output for AI")
 	.action(
@@ -702,6 +715,7 @@ const listCommand = new Command("list")
 			assignee?: string;
 			labels?: string;
 			priority?: string;
+			spec?: string;
 			tree?: boolean;
 			plain?: boolean;
 		}) => {
@@ -725,6 +739,10 @@ const listCommand = new Command("list")
 				if (options.labels) {
 					const filterLabels = options.labels.split(",").map((l) => l.trim());
 					tasks = tasks.filter((t) => filterLabels.some((label) => t.labels.includes(label)));
+				}
+
+				if (options.spec) {
+					tasks = tasks.filter((t) => t.spec === options.spec);
 				}
 
 				// Display tree view or list view
@@ -813,6 +831,7 @@ const editCommand = new Command("edit")
 	.option("--plan <text>", "Implementation plan")
 	.option("--notes <text>", "Implementation notes (replaces existing)")
 	.option("--append-notes <text>", "Append to implementation notes")
+	.option("--spec <path>", "Link to spec document (use 'none' to remove)")
 	.action(
 		async (
 			rawId: string,
@@ -831,6 +850,7 @@ const editCommand = new Command("edit")
 				plan?: string;
 				notes?: string;
 				appendNotes?: string;
+				spec?: string;
 			},
 		) => {
 			try {
@@ -910,6 +930,15 @@ const editCommand = new Command("edit")
 						}
 
 						updates.parent = options.parent;
+					}
+				}
+
+				// Handle spec change
+				if (options.spec !== undefined) {
+					if (options.spec.toLowerCase() === "none") {
+						updates.spec = undefined;
+					} else {
+						updates.spec = options.spec;
 					}
 				}
 
@@ -1009,6 +1038,13 @@ const editCommand = new Command("edit")
 				if (options.plan) changes.push("updated implementation plan");
 				if (options.notes) changes.push("updated implementation notes");
 				if (options.appendNotes) changes.push("appended to implementation notes");
+				if (options.spec !== undefined) {
+					if (options.spec.toLowerCase() === "none") {
+						changes.push("spec removed");
+					} else {
+						changes.push(`spec → ${options.spec}`);
+					}
+				}
 
 				if (changes.length > 0) {
 					console.log(chalk.gray(`  ${changes.join(", ")}`));

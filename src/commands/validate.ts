@@ -64,6 +64,25 @@ interface FixResult {
 	success: boolean;
 }
 
+interface SDDStats {
+	specs: { total: number; approved: number; draft: number };
+	tasks: { total: number; done: number; inProgress: number; todo: number; withSpec: number; withoutSpec: number };
+	coverage: { linked: number; total: number; percent: number };
+	acCompletion: Map<string, { total: number; completed: number; percent: number }>;
+}
+
+interface SDDWarning {
+	type: "task-no-spec" | "spec-broken-link" | "spec-ac-incomplete";
+	entity: string;
+	message: string;
+}
+
+interface SDDResult {
+	stats: SDDStats;
+	warnings: SDDWarning[];
+	passed: string[];
+}
+
 // ============================================================================
 // HELPERS
 // ============================================================================
@@ -664,6 +683,188 @@ async function validateTemplates(projectRoot: string, validateConfig: ValidateCo
 }
 
 /**
+ * Run SDD (Spec-Driven Development) validation
+ * Checks spec coverage, AC completion, and task-spec linkage
+ */
+async function runSDDValidation(projectRoot: string, fileStore: FileStore): Promise<SDDResult> {
+	const tasks = await fileStore.getAllTasks();
+	const docsDir = join(projectRoot, ".knowns", "docs");
+
+	// Initialize stats
+	const stats: SDDStats = {
+		specs: { total: 0, approved: 0, draft: 0 },
+		tasks: { total: tasks.length, done: 0, inProgress: 0, todo: 0, withSpec: 0, withoutSpec: 0 },
+		coverage: { linked: 0, total: tasks.length, percent: 0 },
+		acCompletion: new Map(),
+	};
+
+	const warnings: SDDWarning[] = [];
+	const passed: string[] = [];
+
+	// Count task statuses
+	for (const task of tasks) {
+		if (task.status === "done") stats.tasks.done++;
+		else if (task.status === "in-progress") stats.tasks.inProgress++;
+		else stats.tasks.todo++;
+
+		if (task.spec) {
+			stats.tasks.withSpec++;
+		} else {
+			stats.tasks.withoutSpec++;
+			warnings.push({
+				type: "task-no-spec",
+				entity: `task-${task.id}`,
+				message: `${task.title} has no spec reference`,
+			});
+		}
+	}
+
+	stats.coverage.linked = stats.tasks.withSpec;
+	stats.coverage.percent = stats.tasks.total > 0 ? Math.round((stats.tasks.withSpec / stats.tasks.total) * 100) : 0;
+
+	// Scan specs folder for spec documents
+	const specsDir = join(docsDir, "specs");
+	if (existsSync(specsDir)) {
+		async function scanSpecs(dir: string, relativePath: string) {
+			const entries = await readdir(dir, { withFileTypes: true });
+			for (const entry of entries) {
+				if (entry.name.startsWith(".")) continue;
+				const entryRelPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+				if (entry.isDirectory()) {
+					await scanSpecs(join(dir, entry.name), entryRelPath);
+				} else if (entry.name.endsWith(".md")) {
+					stats.specs.total++;
+					const specPath = `specs/${entryRelPath.replace(/\.md$/, "")}`;
+
+					try {
+						const content = await readFile(join(dir, entry.name), "utf-8");
+						const { data } = matter(content);
+
+						// Check spec status (draft vs approved)
+						if (data.status === "approved" || data.status === "implemented") {
+							stats.specs.approved++;
+						} else {
+							stats.specs.draft++;
+						}
+
+						// Calculate AC completion for tasks linked to this spec
+						const linkedTasks = tasks.filter((t) => t.spec === specPath);
+						if (linkedTasks.length > 0) {
+							let totalAC = 0;
+							let completedAC = 0;
+							for (const task of linkedTasks) {
+								totalAC += task.acceptanceCriteria.length;
+								completedAC += task.acceptanceCriteria.filter((ac) => ac.completed).length;
+							}
+							const percent = totalAC > 0 ? Math.round((completedAC / totalAC) * 100) : 100;
+							stats.acCompletion.set(specPath, { total: totalAC, completed: completedAC, percent });
+
+							if (percent < 100 && totalAC > 0) {
+								warnings.push({
+									type: "spec-ac-incomplete",
+									entity: specPath,
+									message: `${completedAC}/${totalAC} ACs complete (${percent}%)`,
+								});
+							}
+						}
+					} catch {
+						// Skip files that can't be parsed
+					}
+				}
+			}
+		}
+		await scanSpecs(specsDir, "");
+	}
+
+	// Validate spec links in tasks
+	for (const task of tasks) {
+		if (task.spec) {
+			const specDocPath = join(docsDir, `${task.spec}.md`);
+			if (!existsSync(specDocPath)) {
+				warnings.push({
+					type: "spec-broken-link",
+					entity: `task-${task.id}`,
+					message: `Broken spec reference: @doc/${task.spec}`,
+				});
+			}
+		}
+	}
+
+	// Generate passed messages
+	if (warnings.filter((w) => w.type === "spec-broken-link").length === 0) {
+		passed.push("All spec references resolve");
+	}
+
+	// Check for fully implemented specs
+	for (const [specPath, completion] of stats.acCompletion) {
+		if (completion.percent === 100) {
+			passed.push(`${specPath}: fully implemented`);
+		}
+	}
+
+	return { stats, warnings, passed };
+}
+
+/**
+ * Format SDD validation report
+ */
+function formatSDDReport(result: SDDResult, plain: boolean): void {
+	const { stats, warnings, passed } = result;
+
+	if (plain) {
+		console.log("\nSDD Status Report");
+		console.log("=".repeat(50));
+		console.log(`Specs:    ${stats.specs.total} total | ${stats.specs.approved} approved | ${stats.specs.draft} draft`);
+		console.log(
+			`Tasks:    ${stats.tasks.total} total | ${stats.tasks.done} done | ${stats.tasks.inProgress} in-progress | ${stats.tasks.todo} todo`,
+		);
+		console.log(
+			`Coverage: ${stats.coverage.linked}/${stats.coverage.total} tasks linked to specs (${stats.coverage.percent}%)`,
+		);
+
+		if (warnings.length > 0) {
+			console.log("\nWarnings:");
+			for (const w of warnings) {
+				console.log(`  - ${w.entity}: ${w.message}`);
+			}
+		}
+
+		if (passed.length > 0) {
+			console.log("\nPassed:");
+			for (const p of passed) {
+				console.log(`  - ${p}`);
+			}
+		}
+	} else {
+		console.log(chalk.bold("\n📋 SDD Status Report"));
+		console.log(chalk.gray("═".repeat(50)));
+		console.log(
+			`${chalk.gray("Specs:")}    ${stats.specs.total} total | ${chalk.green(`${stats.specs.approved} approved`)} | ${chalk.yellow(`${stats.specs.draft} draft`)}`,
+		);
+		console.log(
+			`${chalk.gray("Tasks:")}    ${stats.tasks.total} total | ${chalk.green(`${stats.tasks.done} done`)} | ${chalk.yellow(`${stats.tasks.inProgress} in-progress`)} | ${chalk.gray(`${stats.tasks.todo} todo`)}`,
+		);
+		console.log(
+			`${chalk.gray("Coverage:")} ${stats.coverage.linked}/${stats.coverage.total} tasks linked to specs (${stats.coverage.percent >= 75 ? chalk.green(`${stats.coverage.percent}%`) : chalk.yellow(`${stats.coverage.percent}%`)})`,
+		);
+
+		if (warnings.length > 0) {
+			console.log(chalk.bold.yellow("\n⚠️ Warnings:"));
+			for (const w of warnings) {
+				console.log(`  ${chalk.yellow("•")} ${chalk.bold(w.entity)}: ${w.message}`);
+			}
+		}
+
+		if (passed.length > 0) {
+			console.log(chalk.bold.green("\n✅ Passed:"));
+			for (const p of passed) {
+				console.log(`  ${chalk.green("•")} ${p}`);
+			}
+		}
+	}
+}
+
+/**
  * Run all validations
  */
 async function runValidation(options: {
@@ -844,6 +1045,7 @@ export const validateCommand = new Command("validate")
 	.option("--strict", "Treat warnings as errors")
 	.option("--json", "Output results as JSON")
 	.option("--fix", "Auto-fix supported issues (doc renames, stale refs)")
+	.option("--sdd", "Run SDD (Spec-Driven Development) validation checks")
 	.option("--plain", "Plain text output for AI")
 	.action(
 		async (options: {
@@ -851,6 +1053,7 @@ export const validateCommand = new Command("validate")
 			strict?: boolean;
 			json?: boolean;
 			fix?: boolean;
+			sdd?: boolean;
 			plain?: boolean;
 		}) => {
 			try {
@@ -861,7 +1064,37 @@ export const validateCommand = new Command("validate")
 					process.exit(1);
 				}
 
+				const projectRoot = getProjectRoot();
+				const fileStore = getFileStore();
 				const startTime = Date.now();
+
+				// SDD validation mode
+				if (options.sdd) {
+					const sddResult = await runSDDValidation(projectRoot, fileStore);
+					const elapsed = Date.now() - startTime;
+
+					if (options.json) {
+						const jsonOutput = {
+							mode: "sdd",
+							stats: {
+								specs: sddResult.stats.specs,
+								tasks: sddResult.stats.tasks,
+								coverage: sddResult.stats.coverage,
+								acCompletion: Object.fromEntries(sddResult.stats.acCompletion),
+							},
+							warnings: sddResult.warnings,
+							passed: sddResult.passed,
+							elapsed,
+						};
+						console.log(JSON.stringify(jsonOutput, null, 2));
+					} else {
+						formatSDDReport(sddResult, !!options.plain);
+						console.log(options.plain ? `\nTime: ${elapsed}ms` : chalk.gray(`\nTime: ${elapsed}ms`));
+					}
+
+					// SDD always exits 0 (warn, never block)
+					process.exit(0);
+				}
 
 				const result = await runValidation({
 					type: options.type,
