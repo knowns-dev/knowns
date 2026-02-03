@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { detectPackageManager, notifyCliUpdate } from "./update-notifier";
+import { detectPackageManager, notifyCliUpdate, resetNotificationFlag } from "./update-notifier";
 
 describe("update notifier", () => {
 	let tempDir: string;
@@ -12,6 +12,7 @@ describe("update notifier", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "knowns-update-"));
 		cachePath = join(tempDir, "cli-cache.json");
+		resetNotificationFlag(); // Reset between tests
 	});
 
 	afterEach(async () => {
@@ -35,7 +36,7 @@ describe("update notifier", () => {
 		});
 
 		expect(fetchLatest).not.toHaveBeenCalled();
-		expect(logs).toHaveLength(3); // empty line, message, empty line
+		expect(logs).toHaveLength(2); // empty line, message
 		expect(logs[1]).toContain("0.8.0");
 	});
 
@@ -55,7 +56,7 @@ describe("update notifier", () => {
 		});
 
 		expect(fetchLatest).toHaveBeenCalled();
-		expect(logs).toHaveLength(3); // empty line, message, empty line
+		expect(logs).toHaveLength(2); // empty line, message
 		expect(logs[1]).toContain("0.9.0");
 
 		const cached = JSON.parse(await readFile(cachePath, "utf-8"));

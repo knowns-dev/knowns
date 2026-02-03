@@ -32,6 +32,13 @@ const DEFAULT_TIMEOUT_MS = 2000;
 let hasNotifiedThisProcess = false;
 
 /**
+ * Reset the notification flag (for testing purposes)
+ */
+export function resetNotificationFlag(): void {
+	hasNotifiedThisProcess = false;
+}
+
+/**
  * Detect package manager from env and lockfiles
  */
 export function detectPackageManager(cwd: string): PackageManager {

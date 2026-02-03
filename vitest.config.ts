@@ -1,10 +1,30 @@
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vitest/config";
+import { type Plugin, defineConfig } from "vitest/config";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+/**
+ * Plugin to handle .md file imports in tests
+ */
+function mdLoaderPlugin(): Plugin {
+	return {
+		name: "md-loader",
+		transform(code, id) {
+			if (id.endsWith(".md")) {
+				const content = readFileSync(id, "utf-8");
+				return {
+					code: `export default ${JSON.stringify(content)};`,
+					map: null,
+				};
+			}
+		},
+	};
+}
+
 export default defineConfig({
+	plugins: [mdLoaderPlugin()],
 	test: {
 		include: ["src/**/*.test.ts"],
 		exclude: ["src/ui/**", "node_modules/**"],
