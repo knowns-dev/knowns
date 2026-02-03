@@ -1,7 +1,7 @@
 ---
 title: MCP Configuration
 createdAt: '2026-01-23T04:07:55.764Z'
-updatedAt: '2026-02-03T07:52:11.395Z'
+updatedAt: '2026-02-03T16:21:54.315Z'
 description: MCP server setup for all AI platforms
 tags:
   - feature
@@ -187,14 +187,16 @@ knowns mcp status
 | `mcp__knowns__run_template` | Run template |
 | `mcp__knowns__create_template` | Create template scaffold |
 
+### Validation
+| Tool | Description |
+|------|-------------|
+| `mcp__knowns__validate` | Validate tasks, docs, templates for broken refs and quality |
+
 ### Other
 | Tool | Description |
 |------|-------------|
 | `mcp__knowns__search` | Unified search (tasks + docs) |
 | `mcp__knowns__get_board` | Get kanban board |
-
----
-
 ## MCP vs CLI
 
 | Aspect | MCP | CLI |
@@ -227,10 +229,8 @@ knowns mcp status
 | Update doc | ✅ | ✅ |
 | Search | ✅ | ✅ |
 | Templates | ✅ | ✅ |
+| **Validate** | ✅ | ✅ |
 | **Project detection** | N/A | ✅ |
-
----
-
 ## Example: Full Task Workflow via MCP
 
 ```json
@@ -286,3 +286,37 @@ mcp__knowns__update_task({
   "status": "done"
 })
 ```
+
+
+
+---
+
+## Example: Validate Before Planning
+
+```json
+// Check for broken refs before starting work
+mcp__knowns__validate({})
+
+// Returns:
+{
+  "success": true,
+  "valid": true,  // or false if errors
+  "stats": { "tasks": 48, "docs": 38, "templates": 2 },
+  "summary": { "errors": 0, "warnings": 2, "info": 5 },
+  "issues": [...]
+}
+
+// Validate specific type only
+mcp__knowns__validate({ "type": "task" })
+
+// Strict mode (warnings → errors)
+mcp__knowns__validate({ "strict": true })
+
+// Auto-fix broken refs
+mcp__knowns__validate({ "fix": true })
+```
+
+**Use cases:**
+- Before planning: check if refs in task description are valid
+- After editing docs: verify no broken links introduced
+- CI/CD integration: fail build if validation errors exist

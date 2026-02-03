@@ -1,7 +1,7 @@
 ---
 title: Claude Code Skills
 createdAt: '2026-01-17T06:06:37.006Z'
-updatedAt: '2026-01-17T06:15:17.546Z'
+updatedAt: '2026-02-03T16:45:00.000Z'
 description: Pattern for creating and managing Claude Code skills in Knowns CLI
 tags:
   - pattern
@@ -10,34 +10,34 @@ tags:
 ---
 ## Overview
 
-Knowns CLI integrates with Claude Code skills - workflow templates that can be invoked via `/knowns.<skill>` commands.
+Knowns CLI integrates with Claude Code skills - workflow templates that can be invoked via `/kn:<skill>` commands.
 
 ## Skill Structure
 
 ```
-src/templates/skills/
+src/instructions/skills/
 ├── index.ts                    # Export all skills
-├── knowns.task/
+├── kn:init/
 │   └── SKILL.md               # Skill content with frontmatter
-├── knowns.task.brainstorm/
+├── kn:plan/
 │   └── SKILL.md
-├── knowns.doc/
+├── kn:implement/
 │   └── SKILL.md
 └── ...
 ```
 
 ## Naming Convention
 
-- **Folder name**: `knowns.<domain>` or `knowns.<domain>.<action>`
-- **Examples**: `knowns.task`, `knowns.task.brainstorm`, `knowns.doc`
-- **Dot notation** creates clear hierarchy in Claude Code UI
+- **Folder name**: `kn:<skill>`
+- **Examples**: `kn:init`, `kn:plan`, `kn:implement`
+- **Colon notation** creates clear namespace in Claude Code UI
 
 ## SKILL.md Format
 
 ```yaml
 ---
-name: knowns.task
-description: Execute Knowns task workflow
+name: kn:init
+description: Initialize session with project context
 ---
 
 # Instructions
@@ -49,14 +49,20 @@ description: Execute Knowns task workflow
 
 | Skill | Description |
 |-------|-------------|
-| `knowns.task` | Full task workflow (view, take, plan, implement, complete) |
-| `knowns.task.brainstorm` | Brainstorm and create new tasks |
-| `knowns.task.reopen` | Reopen completed task to add requirements |
-| `knowns.task.extract` | Extract knowledge from completed tasks to docs |
-| `knowns.doc` | Create and update documentation |
-| `knowns.commit` | Generate commit message and commit changes |
-| `knowns.init` | Initialize session (read docs, list tasks) |
-| `knowns.research` | Research mode - explore without modifying |
+| `kn:init` | Initialize session (read docs, list tasks) |
+| `kn:plan` | Plan task implementation |
+| `kn:implement` | Implement task (includes reopen logic) |
+| `kn:research` | Research codebase before implementation |
+| `kn:commit` | Generate commit message and commit changes |
+| `kn:extract` | Extract knowledge to documentation |
+| `kn:doc` | Create and update documentation |
+| `kn:template` | Generate code from templates |
+
+## Workflow
+
+```
+/kn:init → /kn:research → /kn:plan <id> → /kn:implement <id> → /kn:commit → /kn:extract <id>
+```
 
 ## Sync Commands
 
@@ -74,34 +80,16 @@ knowns sync agent --all       # Include Gemini, Copilot
 ### index.ts Pattern
 
 ```typescript
-import knownsTaskMd from "./knowns.task/SKILL.md";
+import knInitMd from "./kn:init/SKILL.md";
 
 function createSkill(content: string, folderName: string): Skill {
   const { name, description } = parseSkillFrontmatter(content);
   return { name, folderName, description, content };
 }
 
-export const SKILL_TASK = createSkill(knownsTaskMd, "knowns.task");
+export const SKILL_INIT = createSkill(knInitMd, "kn:init");
 ```
 
 ### Sync Function
 
 Skills are synced to `.claude/skills/<folder-name>/SKILL.md` in the project.
-
-### Commander.js Subcommand Options
-
-When parent command has subcommands, add `.enablePositionalOptions()` for options to be parsed correctly:
-
-```typescript
-export const syncCommand = new Command("sync")
-  .enablePositionalOptions()  // Required for subcommand options
-  .option("-f, --force", "Force overwrite")
-  .action(...)
-```
-
-## Source Tasks
-
-- @task-4sv3rh - Add skill sync command and change naming to dot notation
-- @task-pdyd2e - Add knowns.task.reopen and knowns.task.extract skills
-- @task-pqyhuh - Merge overlapping skills (13 → 8)
-- @task-x4d1yw - Restructure sync commands

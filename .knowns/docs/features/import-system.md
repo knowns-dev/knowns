@@ -243,9 +243,9 @@ Import name is used as folder prefix in references:
 | Location | Reference |
 |----------|-----------|
 | `.knowns/docs/readme.md` | `@doc/readme` |
-| `.knowns/docs/patterns/auth.md` | `@doc/patterns/auth` |
-| `.knowns/imports/shared/docs/patterns/api.md` | `@doc/shared/patterns/api` |
-| `.knowns/imports/company/docs/guides/setup.md` | `@doc/company/guides/setup` |
+| `.knowns/docs/patterns/auth.md` | `@doc/architecture/patterns/command` |
+| `.knowns/imports/shared/docs/patterns/api.md` | `@doc/architecture/patterns/command` |
+| `.knowns/imports/company/docs/guides/setup.md` | `@doc/guides/cli-guide` |
 
 **Templates:**
 

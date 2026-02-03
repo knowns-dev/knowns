@@ -2,7 +2,7 @@
  * Knowns Skills Module
  *
  * Built-in skills for Claude Code integration.
- * Skills are workflow templates that can be invoked via /knowns.<skill> commands.
+ * Skills are workflow templates that can be invoked via /kn:<skill> commands.
  *
  * Structure follows superpowers pattern:
  * - Each skill is in a subfolder with SKILL.md
@@ -10,24 +10,20 @@
  * - Content is the skill instructions
  */
 
-import knownsCommitMd from "./knowns.commit/SKILL.md";
-import knownsDocMd from "./knowns.doc/SKILL.md";
-import knownsExtractMd from "./knowns.extract/SKILL.md";
-import knownsInitMd from "./knowns.init/SKILL.md";
-import knownsResearchMd from "./knowns.research/SKILL.md";
-import knownsTaskBrainstormMd from "./knowns.task.brainstorm/SKILL.md";
-import knownsTaskImplementMd from "./knowns.task.implement/SKILL.md";
-import knownsTaskPlanMd from "./knowns.task.plan/SKILL.md";
-import knownsTaskReopenMd from "./knowns.task.reopen/SKILL.md";
-// Import skill templates
-import knownsTaskMd from "./knowns.task/SKILL.md";
-import knownsTemplateMd from "./knowns.template/SKILL.md";
+import knCommitMd from "./kn:commit/SKILL.md";
+import knDocMd from "./kn:doc/SKILL.md";
+import knExtractMd from "./kn:extract/SKILL.md";
+import knImplementMd from "./kn:implement/SKILL.md";
+import knInitMd from "./kn:init/SKILL.md";
+import knPlanMd from "./kn:plan/SKILL.md";
+import knResearchMd from "./kn:research/SKILL.md";
+import knTemplateMd from "./kn:template/SKILL.md";
 
 /**
  * Skill definition
  */
 export interface Skill {
-	/** Skill name (e.g., "knowns.task") */
+	/** Skill name (e.g., "kn:init") */
 	name: string;
 	/** Folder name for .claude/skills/ */
 	folderName: string;
@@ -74,38 +70,26 @@ function createSkill(content: string, folderName: string): Skill {
 }
 
 // Export individual skills
-export const SKILL_TASK = createSkill(knownsTaskMd, "knowns.task");
-export const SKILL_TASK_PLAN = createSkill(knownsTaskPlanMd, "knowns.task.plan");
-export const SKILL_TASK_IMPLEMENT = createSkill(knownsTaskImplementMd, "knowns.task.implement");
-export const SKILL_TASK_BRAINSTORM = createSkill(knownsTaskBrainstormMd, "knowns.task.brainstorm");
-export const SKILL_TASK_REOPEN = createSkill(knownsTaskReopenMd, "knowns.task.reopen");
-export const SKILL_EXTRACT = createSkill(knownsExtractMd, "knowns.extract");
-export const SKILL_DOC = createSkill(knownsDocMd, "knowns.doc");
-export const SKILL_COMMIT = createSkill(knownsCommitMd, "knowns.commit");
-export const SKILL_INIT = createSkill(knownsInitMd, "knowns.init");
-export const SKILL_RESEARCH = createSkill(knownsResearchMd, "knowns.research");
-export const SKILL_TEMPLATE = createSkill(knownsTemplateMd, "knowns.template");
+export const SKILL_INIT = createSkill(knInitMd, "kn:init");
+export const SKILL_PLAN = createSkill(knPlanMd, "kn:plan");
+export const SKILL_IMPLEMENT = createSkill(knImplementMd, "kn:implement");
+export const SKILL_RESEARCH = createSkill(knResearchMd, "kn:research");
+export const SKILL_COMMIT = createSkill(knCommitMd, "kn:commit");
+export const SKILL_EXTRACT = createSkill(knExtractMd, "kn:extract");
+export const SKILL_DOC = createSkill(knDocMd, "kn:doc");
+export const SKILL_TEMPLATE = createSkill(knTemplateMd, "kn:template");
 
 /**
  * All built-in skills
  */
 export const SKILLS: Skill[] = [
-	// Task skills
-	SKILL_TASK,
-	SKILL_TASK_PLAN,
-	SKILL_TASK_IMPLEMENT,
-	SKILL_TASK_BRAINSTORM,
-	SKILL_TASK_REOPEN,
-	// Extract skill
-	SKILL_EXTRACT,
-	// Doc skills
-	SKILL_DOC,
-	// Git skills
-	SKILL_COMMIT,
-	// Session skills
 	SKILL_INIT,
+	SKILL_PLAN,
+	SKILL_IMPLEMENT,
 	SKILL_RESEARCH,
-	// Template skill
+	SKILL_COMMIT,
+	SKILL_EXTRACT,
+	SKILL_DOC,
 	SKILL_TEMPLATE,
 ];
 

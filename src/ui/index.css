@@ -351,15 +351,35 @@ body {
   flex-direction: column;
 }
 
+/* Full height mode - when using height="100%" */
+.md-editor-wrapper.h-full {
+  height: 100%;
+  min-height: 0;
+}
+
 .md-editor-wrapper .w-md-editor {
   flex: 1 !important;
   display: flex !important;
   flex-direction: column !important;
+  min-height: 0 !important;
 }
 
 .md-editor-wrapper .w-md-editor-content {
   flex: 1 !important;
   overflow: auto !important;
+  min-height: 0 !important;
+}
+
+/* Ensure the textarea and preview areas scroll properly */
+.md-editor-wrapper .w-md-editor-text,
+.md-editor-wrapper .w-md-editor-preview {
+  height: 100% !important;
+  overflow: auto !important;
+}
+
+.md-editor-wrapper .w-md-editor-text-pre,
+.md-editor-wrapper .w-md-editor-text-input {
+  min-height: 100% !important;
 }
 
 .md-render-wrapper {

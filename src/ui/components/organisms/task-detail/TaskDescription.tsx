@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { AlignLeft } from "lucide-react";
 import { Button } from "../../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../ui/card";
-import { BlockNoteEditor, MDRender } from "../../editor";
+import { MDEditor, MDRender } from "../../editor";
 import type { Task } from "../../../models/task";
 
 interface TaskDescriptionProps {
@@ -42,11 +42,12 @@ export function TaskDescription({ task, onSave, saving }: TaskDescriptionProps) 
 			<CardContent>
 				{editing ? (
 					<div className="space-y-3">
-						<BlockNoteEditor
+						<MDEditor
 							markdown={description}
 							onChange={setDescription}
 							placeholder="Add a more detailed description..."
 							readOnly={saving}
+							height={200}
 						/>
 						<div className="flex gap-2">
 							<Button size="sm" onClick={handleSave} disabled={saving}>

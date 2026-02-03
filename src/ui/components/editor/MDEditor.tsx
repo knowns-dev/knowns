@@ -9,6 +9,8 @@ interface MDEditorComponentProps {
 	readOnly?: boolean;
 	className?: string;
 	height?: number | string;
+	/** Preview mode: "edit" (no preview), "live" (split), "preview" (read-only) */
+	preview?: "edit" | "live" | "preview";
 }
 
 export interface MDEditorRef {
@@ -17,14 +19,25 @@ export interface MDEditorRef {
 }
 
 const MDEditorComponent = forwardRef<MDEditorRef, MDEditorComponentProps>(
-	({ markdown, onChange, placeholder = "Write your content here...", readOnly = false, className = "", height = 400 }, ref) => {
+	(
+		{
+			markdown,
+			onChange,
+			placeholder = "Write your content here...",
+			readOnly = false,
+			className = "",
+			height = 400,
+			preview: previewMode,
+		},
+		ref,
+	) => {
 		const { isDark } = useTheme();
 
 		const handleChange = useCallback(
 			(value?: string) => {
 				onChange(value || "");
 			},
-			[onChange]
+			[onChange],
 		);
 
 		// Expose ref methods
@@ -36,19 +49,21 @@ const MDEditorComponent = forwardRef<MDEditorRef, MDEditorComponentProps>(
 				},
 				getMarkdown: () => markdown,
 			}),
-			[markdown, onChange]
+			[markdown, onChange],
 		);
+
+		// Determine preview mode
+		const preview = previewMode ?? (readOnly ? "preview" : "edit");
 
 		return (
 			<div
 				className={`md-editor-wrapper ${className}`}
 				data-color-mode={isDark ? "dark" : "light"}
-				style={{ height: typeof height === "string" ? height : undefined }}
 			>
 				<MDEditor
 					value={markdown}
 					onChange={handleChange}
-					preview={readOnly ? "preview" : "live"}
+					preview={preview}
 					hideToolbar={readOnly}
 					textareaProps={{
 						placeholder,
@@ -58,7 +73,7 @@ const MDEditorComponent = forwardRef<MDEditorRef, MDEditorComponentProps>(
 				/>
 			</div>
 		);
-	}
+	},
 );
 
 MDEditorComponent.displayName = "MDEditor";

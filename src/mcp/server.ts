@@ -49,11 +49,13 @@ import {
 	handleStopTime,
 	handleUpdateDoc,
 	handleUpdateTask,
+	handleValidate,
 	projectTools,
 	searchTools,
 	taskTools,
 	templateTools,
 	timeTools,
+	validateTools,
 } from "./handlers";
 
 import { errorResponse } from "./utils";
@@ -97,6 +99,7 @@ const tools: Tool[] = [
 	...docTools,
 	...templateTools,
 	...searchTools,
+	...validateTools,
 ] as Tool[];
 
 // List available tools
@@ -171,6 +174,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 			// Unified search handler
 			case "search":
 				return await handleSearch(args, getFileStore());
+
+			// Validate handler
+			case "validate":
+				return await handleValidate(args, getFileStore());
 
 			default:
 				return errorResponse(`Unknown tool: ${name}`);

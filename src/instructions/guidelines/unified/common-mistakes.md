@@ -80,6 +80,7 @@ mcp__knowns__update_task({
 | Code before plan approval | Wait for user approval |
 | Code before reading docs | Read docs FIRST |
 | Skip time tracking | Always start/stop timer |
+| Skip validation | Run validate before completing |
 | Ignore refs | Follow ALL `@task-xxx`, `@doc/xxx`, `@template/xxx` refs |
 
 {{#if mcp}}
@@ -137,6 +138,7 @@ this.logger.log(`Created: ${ \{{~camelCase entity~}}.id}`);
 | Checked AC too early | `knowns task edit <id> --uncheck-ac N` |
 | Task not found | `knowns task list --plain` |
 | Replaced notes by mistake | Cannot recover - notes are lost. Use `--append-notes` next time |
+| Broken refs in task/doc | Run `knowns validate`, fix refs, validate again |
 {{/if}}
 {{#if mcp}}
 | Forgot to stop timer | `mcp__knowns__add_time` with duration |
@@ -145,4 +147,5 @@ this.logger.log(`Created: ${ \{{~camelCase entity~}}.id}`);
 | Need to uncheck AC | `mcp__knowns__update_task` with `uncheckAc: [N]` |
 | Checked AC too early | `mcp__knowns__update_task` with `uncheckAc: [N]` |
 | Replaced notes by mistake | Cannot recover - notes are lost. Use `appendNotes` next time |
+| Broken refs in task/doc | Run `mcp__knowns__validate`, fix refs, validate again |
 {{/if}}

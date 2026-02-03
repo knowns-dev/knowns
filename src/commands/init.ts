@@ -542,7 +542,7 @@ export const initCommand = new Command("init")
 
 			// Show platform-specific tips
 			if (hasSkillsPlatform) {
-				console.log(chalk.gray("  Use /knowns.init to start a session"));
+				console.log(chalk.gray("  Use /kn:init to start a session"));
 			}
 			if (hasNonSkillsPlatform) {
 				console.log(chalk.gray("  See AGENTS.md for full AI guidelines"));

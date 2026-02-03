@@ -82,7 +82,7 @@ New task files use random IDs:
 - task-m2x8p4.md
 - task-k9y2z7.md
 
-References work for both `@task-1` and `@task-a7f3k9`. No migration required.
+References work for both `[removed [removed [removed @task-1]]]` and `[removed [removed [removed @task-a7f3k9]]]`. No migration required.
 
 Docs/plans/repo tasks keep their path/slug-based identifiers untouched.
 
@@ -102,7 +102,7 @@ Docs/plans/repo tasks keep their path/slug-based identifiers untouched.
 Use `@` prefix to reference items:
 
 ```markdown
-Tasks: @task-a7f3k9
+Tasks: [removed [removed [removed @task-a7f3k9]]]
 Docs:  @doc/api/spec
 Plans: @doc/planning/q1-roadmap  # path-based
 ```
