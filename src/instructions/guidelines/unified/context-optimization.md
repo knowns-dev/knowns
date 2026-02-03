@@ -4,7 +4,7 @@ Optimize your context usage to work more efficiently within token limits.
 
 ---
 
-{{#unless mcp}}
+{{#if cli}}
 ## Output Format
 
 ```bash
@@ -16,21 +16,12 @@ knowns task 42 --plain
 ```
 
 ---
-{{/unless}}
+{{/if}}
 
 ## Search Before Read
 
-{{#if mcp}}
-```json
-// DON'T: Read all docs hoping to find info
-mcp__knowns__get_doc({ "path": "doc1" })
-mcp__knowns__get_doc({ "path": "doc2" })
-
-// DO: Search first, then read only relevant docs
-mcp__knowns__search_docs({ "query": "authentication" })
-mcp__knowns__get_doc({ "path": "security-patterns" })
-```
-{{else}}
+{{#if cli}}
+### CLI
 ```bash
 # DON'T: Read all docs hoping to find info
 knowns doc "doc1" --plain
@@ -39,6 +30,18 @@ knowns doc "doc2" --plain
 # DO: Search first, then read only relevant docs
 knowns search "authentication" --type doc --plain
 knowns doc "security-patterns" --plain
+```
+{{/if}}
+{{#if mcp}}
+### MCP
+```json
+// DON'T: Read all docs hoping to find info
+mcp__knowns__get_doc({ "path": "doc1" })
+mcp__knowns__get_doc({ "path": "doc2" })
+
+// DO: Search first, then read only relevant docs
+mcp__knowns__search_docs({ "query": "authentication" })
+mcp__knowns__get_doc({ "path": "security-patterns" })
 ```
 {{/if}}
 
@@ -63,22 +66,8 @@ mcp__knowns__list_tasks({
 
 ## Reading Documents
 
-{{#if mcp}}
-**ALWAYS use `smart: true`** - auto-handles both small and large docs:
-
-```json
-// DON'T: Read without smart
-mcp__knowns__get_doc({ "path": "readme" })
-
-// DO: Always use smart
-mcp__knowns__get_doc({ "path": "readme", "smart": true })
-// Small doc → full content
-// Large doc → stats + TOC
-
-// If large, read specific section:
-mcp__knowns__get_doc({ "path": "readme", "section": "3" })
-```
-{{else}}
+{{#if cli}}
+### CLI
 **ALWAYS use `--smart`** - auto-handles both small and large docs:
 
 ```bash
@@ -92,6 +81,23 @@ knowns doc readme --plain --smart
 
 # If large, read specific section:
 knowns doc readme --plain --section 3
+```
+{{/if}}
+{{#if mcp}}
+### MCP
+**ALWAYS use `smart: true`** - auto-handles both small and large docs:
+
+```json
+// DON'T: Read without smart
+mcp__knowns__get_doc({ "path": "readme" })
+
+// DO: Always use smart
+mcp__knowns__get_doc({ "path": "readme", "smart": true })
+// Small doc → full content
+// Large doc → stats + TOC
+
+// If large, read specific section:
+mcp__knowns__get_doc({ "path": "readme", "section": "3" })
 ```
 {{/if}}
 
@@ -137,11 +143,12 @@ knowns task edit 42 --append-notes "Done: Auth middleware + JWT validation"
 
 ## Quick Rules
 
-{{#if mcp}}
-1. **Always `smart: true`** - Auto-handles doc size
-{{else}}
+{{#if cli}}
 1. **Always `--plain`** - Never use `--json` unless needed
 2. **Always `--smart`** - Auto-handles doc size
+{{/if}}
+{{#if mcp}}
+1. **Always `smart: true`** - Auto-handles doc size
 {{/if}}
 3. **Search first** - Don't read all docs hoping to find info
 4. **Read selectively** - Only fetch what you need

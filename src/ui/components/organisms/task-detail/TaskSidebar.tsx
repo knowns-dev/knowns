@@ -45,7 +45,7 @@ export function TaskSidebar({
 }: TaskSidebarProps) {
 	const [addingLabel, setAddingLabel] = useState(false);
 	const [newLabel, setNewLabel] = useState("");
-	const { activeTimer, isRunning, isPaused, start, stop, pause, resume } = useTimeTracker();
+	const { isTaskRunning, isTaskPaused, start, stop, pause, resume } = useTimeTracker();
 	const { config } = useConfig();
 
 	// Build status options from config
@@ -57,11 +57,11 @@ export function TaskSidebar({
 	// Get status colors from config
 	const configStatusColors = (config.statusColors || {}) as Record<string, ColorName>;
 
-	const isThisTaskActive = activeTimer?.taskId === task.id;
-	const canStartTimer = !isRunning || isThisTaskActive;
+	const isThisTaskActive = isTaskRunning(task.id);
+	const isPaused = isTaskPaused(task.id);
 
 	const handleStartTimer = async () => {
-		if (!canStartTimer || isThisTaskActive) return;
+		if (isThisTaskActive) return;
 		try {
 			await start(task.id);
 		} catch (error) {
@@ -71,7 +71,7 @@ export function TaskSidebar({
 
 	const handleStopTimer = async () => {
 		try {
-			await stop();
+			await stop(task.id);
 		} catch (error) {
 			console.error("Failed to stop timer:", error);
 		}
@@ -80,9 +80,9 @@ export function TaskSidebar({
 	const handlePauseResumeTimer = async () => {
 		try {
 			if (isPaused) {
-				await resume();
+				await resume(task.id);
 			} else {
-				await pause();
+				await pause(task.id);
 			}
 		} catch (error) {
 			console.error("Failed to pause/resume timer:", error);
@@ -143,14 +143,13 @@ export function TaskSidebar({
 						</div>
 					) : (
 						<Button
-							variant={canStartTimer ? "default" : "secondary"}
+							variant="default"
 							size="sm"
 							className="h-8"
 							onClick={handleStartTimer}
-							disabled={!canStartTimer}
 						>
 							<Play className="w-3.5 h-3.5 mr-1.5" />
-							{isRunning ? "Timer Active" : "Start Timer"}
+							Start Timer
 						</Button>
 					)}
 				</div>
@@ -386,14 +385,13 @@ export function TaskSidebar({
 					</div>
 				) : (
 					<Button
-						variant={canStartTimer ? "default" : "secondary"}
+						variant="default"
 						size="sm"
 						className="w-full"
 						onClick={handleStartTimer}
-						disabled={!canStartTimer}
 					>
 						<Play className="w-4 h-4 mr-2" />
-						{isRunning ? "Timer Active" : "Start Timer"}
+						Start Timer
 					</Button>
 				)}
 			</div>

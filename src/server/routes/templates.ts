@@ -6,8 +6,9 @@ import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type Request, type Response, Router } from "express";
-import { listTemplates, loadTemplateByName, renderFile, renderPath, runTemplate } from "../../codegen";
+import { listTemplates, loadTemplate, loadTemplateByName, renderFile, renderPath, runTemplate } from "../../codegen";
 import type { AddAction, AddManyAction, TemplateAction } from "../../codegen/models";
+import { listAllTemplates, resolveTemplate } from "../../import";
 import type { RouteContext } from "../types";
 
 /**
@@ -51,23 +52,27 @@ export function createTemplateRoutes(ctx: RouteContext): Router {
 	const { store, broadcast } = ctx;
 	const templatesDir = join(store.projectRoot, ".knowns", "templates");
 
-	// GET /api/templates - List all templates
+	// GET /api/templates - List all templates (local + imported)
 	router.get("/", async (_req: Request, res: Response) => {
 		try {
-			if (!existsSync(templatesDir)) {
-				res.json({ templates: [], count: 0 });
-				return;
-			}
+			// Use listAllTemplates to get both local and imported templates
+			const allTemplates = await listAllTemplates(store.projectRoot);
 
-			const templates = await listTemplates(templatesDir);
-
-			const templateList = templates.map((t) => ({
-				name: t.name,
-				description: t.description,
-				doc: t.doc,
-				promptCount: t.prompts?.length || 0,
-				fileCount: countFileActions(t.actions),
-			}));
+			const templateList = await Promise.all(
+				allTemplates.map(async (t) => {
+					// Load full template to get details
+					const template = await loadTemplate(t.path);
+					return {
+						name: t.ref, // Use ref as name (includes import prefix for imported)
+						description: template?.config.description || "",
+						doc: template?.config.doc,
+						promptCount: template?.config.prompts?.length || 0,
+						fileCount: countFileActions(template?.config.actions),
+						isImported: t.isImported,
+						source: t.source,
+					};
+				}),
+			);
 
 			res.json({ templates: templateList, count: templateList.length });
 		} catch (error) {
@@ -76,65 +81,25 @@ export function createTemplateRoutes(ctx: RouteContext): Router {
 		}
 	});
 
-	// GET /api/templates/:name - Get template details
-	router.get("/:name", async (req: Request, res: Response) => {
+	// POST /api/templates/run - Run template (supports imported templates with paths like "import/template")
+	router.post("/run", async (req: Request, res: Response) => {
 		try {
-			const { name } = req.params;
+			const { name, variables = {}, dryRun = true } = req.body;
 
-			if (!existsSync(templatesDir)) {
-				res.status(404).json({ error: "Templates directory not found" });
+			if (!name) {
+				res.status(400).json({ error: "Template name is required" });
 				return;
 			}
 
-			const template = await loadTemplateByName(templatesDir, name);
+			// Use resolveTemplate to find local or imported template
+			const resolved = await resolveTemplate(store.projectRoot, name);
 
-			if (!template) {
+			if (!resolved) {
 				res.status(404).json({ error: `Template not found: ${name}` });
 				return;
 			}
 
-			// Format prompts for display
-			const prompts = template.config.prompts?.map((p) => ({
-				name: p.name,
-				message: p.message,
-				type: p.type || "input",
-				required: p.validate === "required",
-				default: p.initial,
-				choices: p.choices,
-			}));
-
-			// Extract files from actions
-			const files = extractFilesFromActions(template.config.actions);
-
-			res.json({
-				template: {
-					name: template.config.name,
-					description: template.config.description,
-					doc: template.config.doc,
-					destination: template.config.destination || "./",
-					prompts: prompts || [],
-					files: files || [],
-					messages: template.config.messages,
-				},
-			});
-		} catch (error) {
-			console.error("Error getting template:", error);
-			res.status(500).json({ error: String(error) });
-		}
-	});
-
-	// POST /api/templates/:name/run - Run template
-	router.post("/:name/run", async (req: Request, res: Response) => {
-		try {
-			const { name } = req.params;
-			const { variables = {}, dryRun = true } = req.body;
-
-			if (!existsSync(templatesDir)) {
-				res.status(404).json({ error: "Templates directory not found" });
-				return;
-			}
-
-			const template = await loadTemplateByName(templatesDir, name);
+			const template = await loadTemplate(resolved.path);
 
 			if (!template) {
 				res.status(404).json({ error: `Template not found: ${name}` });
@@ -206,23 +171,30 @@ export function createTemplateRoutes(ctx: RouteContext): Router {
 		}
 	});
 
-	// POST /api/templates/:name/preview - Preview rendered file content
-	router.post("/:name/preview", async (req: Request, res: Response) => {
+	// POST /api/templates/preview - Preview rendered file content (supports imported templates)
+	router.post("/preview", async (req: Request, res: Response) => {
 		try {
-			const { name } = req.params;
-			const { variables = {}, templateFile } = req.body;
+			const { name, variables = {}, templateFile } = req.body;
+
+			if (!name) {
+				res.status(400).json({ error: "Template name is required" });
+				return;
+			}
 
 			if (!templateFile) {
 				res.status(400).json({ error: "templateFile is required" });
 				return;
 			}
 
-			if (!existsSync(templatesDir)) {
-				res.status(404).json({ error: "Templates directory not found" });
+			// Use resolveTemplate to find local or imported template
+			const resolved = await resolveTemplate(store.projectRoot, name);
+
+			if (!resolved) {
+				res.status(404).json({ error: `Template not found: ${name}` });
 				return;
 			}
 
-			const template = await loadTemplateByName(templatesDir, name);
+			const template = await loadTemplate(resolved.path);
 
 			if (!template) {
 				res.status(404).json({ error: `Template not found: ${name}` });
@@ -348,6 +320,57 @@ export function {{camelCase name}}() {
 			});
 		} catch (error) {
 			console.error("Error creating template:", error);
+			res.status(500).json({ error: String(error) });
+		}
+	});
+
+	// GET /api/templates/:name - Get template details (MUST be last - wildcard catches all)
+	// Supports imported templates with paths like "import/template"
+	router.get("/{*name}", async (req: Request, res: Response) => {
+		try {
+			const name = Array.isArray(req.params.name) ? req.params.name.join("/") : req.params.name;
+
+			// Use resolveTemplate to find local or imported template
+			const resolved = await resolveTemplate(store.projectRoot, name);
+
+			if (!resolved) {
+				res.status(404).json({ error: `Template not found: ${name}` });
+				return;
+			}
+
+			const template = await loadTemplate(resolved.path);
+
+			if (!template) {
+				res.status(404).json({ error: `Template not found: ${name}` });
+				return;
+			}
+
+			// Format prompts for display
+			const prompts = template.config.prompts?.map((p) => ({
+				name: p.name,
+				message: p.message,
+				type: p.type || "input",
+				required: p.validate === "required",
+				default: p.initial,
+				choices: p.choices,
+			}));
+
+			// Extract files from actions
+			const files = extractFilesFromActions(template.config.actions);
+
+			res.json({
+				template: {
+					name: template.config.name,
+					description: template.config.description,
+					doc: template.config.doc,
+					destination: template.config.destination || "./",
+					prompts: prompts || [],
+					files: files || [],
+					messages: template.config.messages,
+				},
+			});
+		} catch (error) {
+			console.error("Error getting template:", error);
 			res.status(500).json({ error: String(error) });
 		}
 	});

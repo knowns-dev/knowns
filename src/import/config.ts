@@ -7,7 +7,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { ImportConfig, ImportMetadata } from "./models";
+import type { ImportConfig, ImportMetadata, ImportType } from "./models";
 
 const CONFIG_FILE = "config.json";
 const IMPORTS_DIR = "imports";
@@ -182,16 +182,51 @@ export async function writeMetadata(projectRoot: string, name: string, metadata:
 
 /**
  * Get all imports with their metadata
+ * Includes both configured imports AND orphaned imports (on disk but not in config)
  */
 export async function getImportsWithMetadata(
 	projectRoot: string,
 ): Promise<Array<{ config: ImportConfig; metadata: ImportMetadata | null }>> {
 	const configs = await getImportConfigs(projectRoot);
+	const configuredNames = new Set(configs.map((c) => c.name));
 
-	return Promise.all(
-		configs.map(async (config) => ({
+	const results: Array<{ config: ImportConfig; metadata: ImportMetadata | null }> = [];
+
+	// Add configured imports
+	for (const config of configs) {
+		results.push({
 			config,
 			metadata: await readMetadata(projectRoot, config.name),
-		})),
-	);
+		});
+	}
+
+	// Scan imports directory for orphaned imports (exist on disk but not in config)
+	const importsDir = getImportsDir(projectRoot);
+	if (existsSync(importsDir)) {
+		const { readdir } = await import("node:fs/promises");
+		try {
+			const entries = await readdir(importsDir, { withFileTypes: true });
+			for (const entry of entries) {
+				if (!entry.isDirectory()) continue;
+				if (entry.name.startsWith(".")) continue;
+				if (configuredNames.has(entry.name)) continue; // Already in config
+
+				// Found orphaned import - create synthetic config from metadata if available
+				const metadata = await readMetadata(projectRoot, entry.name);
+
+				results.push({
+					config: {
+						name: entry.name,
+						source: metadata?.source || "unknown",
+						type: (metadata?.type as ImportType) || "local",
+					},
+					metadata,
+				});
+			}
+		} catch {
+			// Ignore errors
+		}
+	}
+
+	return results;
 }

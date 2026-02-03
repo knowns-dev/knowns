@@ -5,6 +5,7 @@
 
 export { findProjectRoot } from "./find-project-root";
 export { normalizeRefs, parseEscapeSequences } from "./mention-refs";
+export { normalizeTaskId, normalizeDocPath } from "./normalize-id";
 
 /**
  * Normalize file path to use forward slashes (cross-platform)

@@ -123,6 +123,8 @@ Shall I proceed with this plan?
 
 ### Step 5: Save Plan (after approval)
 
+> ⚠️ **Use `appendNotes` (NOT `notes`)** to preserve audit trail:
+
 {{#if mcp}}
 ```json
 mcp__knowns__update_task({

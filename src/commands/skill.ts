@@ -13,6 +13,7 @@ import {
 	PLATFORMS,
 	type Platform,
 	type Skill,
+	detectPlatforms,
 	getPlatform,
 	getPlatformIds,
 	listSkills,
@@ -250,7 +251,7 @@ const syncCommand = new Command("sync")
 				process.exit(1);
 			}
 
-			// Parse platforms
+			// Parse platforms or auto-detect
 			let platforms: Platform[] | undefined;
 			if (options.platform) {
 				platforms = options.platform.split(",").map((p) => p.trim()) as Platform[];
@@ -262,6 +263,16 @@ const syncCommand = new Command("sync")
 						process.exit(1);
 					}
 				}
+			} else {
+				// Auto-detect platforms present in the project
+				const detected = detectPlatforms(projectRoot);
+				if (detected.length > 0) {
+					platforms = detected;
+					if (!options.plain) {
+						console.log(chalk.gray(`  Auto-detected platforms: ${detected.join(", ")}`));
+					}
+				}
+				// If nothing detected, will sync to all platforms (default behavior)
 			}
 
 			if (!options.plain) {

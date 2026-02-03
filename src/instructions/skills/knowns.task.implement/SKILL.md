@@ -133,7 +133,9 @@ npm run build   # if applicable
 
 **2. Add implementation notes (REQUIRED for audit):**
 
-Document all changes made for audit trail. **Use appendNotes to preserve history:**
+Document all changes made for audit trail.
+
+> ⚠️ **CRITICAL**: Use `appendNotes` (NOT `notes`). Using `notes` will DESTROY the audit trail!
 
 {{#if mcp}}
 ```json

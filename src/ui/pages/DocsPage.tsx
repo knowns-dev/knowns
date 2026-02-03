@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	Plus,
 	FileText,
 	Folder,
 	FolderOpen,
-	ChevronRight,
-	ChevronDown,
 	Pencil,
 	Check,
 	X,
@@ -17,6 +15,7 @@ import { BlockNoteEditor, MDRender } from "../components/editor";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { TreeView, type TreeDataItem } from "../components/ui/tree-view";
 import { getDocs, createDoc, updateDoc } from "../api/client";
 import { useSSEEvent } from "../contexts/SSEContext";
 import { normalizePath, toDisplayPath, normalizePathForAPI } from "../lib/utils";
@@ -54,7 +53,6 @@ export default function DocsPage() {
 	const [newDocFolder, setNewDocFolder] = useState("");
 	const [newDocContent, setNewDocContent] = useState("");
 	const [creating, setCreating] = useState(false);
-	const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(["(root)", "__local__", "__imports__"]));
 	const [pathCopied, setPathCopied] = useState(false);
 	const markdownPreviewRef = useRef<HTMLDivElement>(null);
 
@@ -115,43 +113,6 @@ export default function DocsPage() {
 		handleHashNavigation();
 	}, [handleHashNavigation]);
 
-	// Auto-expand parent folders when a doc is selected
-	useEffect(() => {
-		if (!selectedDoc) return;
-
-		setExpandedFolders((prev) => {
-			const newExpanded = new Set(prev);
-
-			// For imported docs, expand the imports section and source folder
-			if (selectedDoc.isImported && selectedDoc.source) {
-				newExpanded.add("__imports__");
-				newExpanded.add(`__import_${selectedDoc.source}__`);
-
-				// Get folder path within the import (e.g., "conventions" from "import-name/conventions/file.md")
-				const pathWithoutImport = selectedDoc.path.replace(`${selectedDoc.source}/`, "");
-				const parts = pathWithoutImport.split("/");
-				if (parts.length > 1) {
-					// Build folder paths within the import context
-					const importPrefix = `__import_${selectedDoc.source}__`;
-					let currentPath = importPrefix;
-					for (let i = 0; i < parts.length - 1; i++) {
-						currentPath = `${currentPath}/${parts.slice(0, i + 1).join("/")}`;
-						newExpanded.add(currentPath);
-					}
-				}
-			} else if (selectedDoc.folder) {
-				// For local docs, expand parent folders
-				const folderParts = selectedDoc.folder.split("/");
-				let currentPath = "";
-				for (const part of folderParts) {
-					currentPath = currentPath ? `${currentPath}/${part}` : part;
-					newExpanded.add(currentPath);
-				}
-			}
-
-			return newExpanded;
-		});
-	}, [selectedDoc]);
 
 	// Handle hash changes (when user navigates or changes URL)
 	useEffect(() => {
@@ -317,73 +278,87 @@ export default function DocsPage() {
 		setEditedContent("");
 	};
 
-	const toggleFolder = (folderPath: string) => {
-		setExpandedFolders((prev) => {
-			const newSet = new Set(prev);
-			if (newSet.has(folderPath)) {
-				newSet.delete(folderPath);
-			} else {
-				newSet.add(folderPath);
-			}
-			return newSet;
-		});
-	};
+	// Build TreeDataItem[] from docs
+	const buildDocsTreeData = useCallback((docList: Doc[], onSelectDoc: (doc: Doc) => void): TreeDataItem[] => {
+		interface TempNode {
+			id: string;
+			name: string;
+			isDoc: boolean;
+			doc?: Doc;
+			children: Map<string, TempNode>;
+		}
 
-	// Build folder tree structure
-	interface FolderNode {
-		name: string;
-		path: string;
-		docs: Doc[];
-		children: Map<string, FolderNode>;
-		isImportRoot?: boolean;
-	}
-
-	const buildFolderTreeFromDocs = (docList: Doc[], pathPrefix = ""): FolderNode => {
-		const root: FolderNode = {
-			name: "(root)",
-			path: pathPrefix,
-			docs: [],
-			children: new Map(),
-		};
+		const root: Map<string, TempNode> = new Map();
 
 		for (const doc of docList) {
 			// For imported docs, extract folder from the path after import name
 			let folder = doc.folder;
 			if (doc.isImported && doc.source) {
-				// Path is like "import-name/patterns/xxx", folder should be "patterns"
 				const pathWithoutImport = doc.path.replace(`${doc.source}/`, "");
 				const parts = pathWithoutImport.split("/");
 				folder = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
 			}
 
-			if (!folder) {
-				root.docs.push(doc);
-			} else {
-				const parts = folder.split("/");
-				let currentNode = root;
+			const parts = folder ? folder.split("/") : [];
+			let currentMap = root;
 
-				for (let i = 0; i < parts.length; i++) {
-					const part = parts[i];
-					const pathSoFar = pathPrefix ? `${pathPrefix}/${parts.slice(0, i + 1).join("/")}` : parts.slice(0, i + 1).join("/");
+			// Build folder hierarchy
+			for (let i = 0; i < parts.length; i++) {
+				const part = parts[i];
+				const currentPath = parts.slice(0, i + 1).join("/");
 
-					if (!currentNode.children.has(part)) {
-						currentNode.children.set(part, {
-							name: part,
-							path: pathSoFar,
-							docs: [],
-							children: new Map(),
-						});
-					}
-
-					currentNode = currentNode.children.get(part)!;
+				if (!currentMap.has(part)) {
+					currentMap.set(part, {
+						id: currentPath,
+						name: part,
+						isDoc: false,
+						children: new Map(),
+					});
 				}
-
-				currentNode.docs.push(doc);
+				currentMap = currentMap.get(part)!.children;
 			}
+
+			// Add doc as leaf
+			currentMap.set(doc.path, {
+				id: doc.path,
+				name: doc.metadata.title,
+				isDoc: true,
+				doc,
+				children: new Map(),
+			});
 		}
 
-		return root;
-	};
+		// Convert TempNode to TreeDataItem
+		const convertToTreeData = (nodeMap: Map<string, TempNode>): TreeDataItem[] => {
+			return Array.from(nodeMap.values())
+				.sort((a, b) => {
+					// Folders first, then docs
+					if (a.isDoc !== b.isDoc) return a.isDoc ? 1 : -1;
+					return a.name.localeCompare(b.name);
+				})
+				.map((node): TreeDataItem => {
+					if (node.isDoc && node.doc) {
+						return {
+							id: node.id,
+							name: node.name,
+							icon: FileText,
+							onClick: () => {
+								window.location.hash = `/docs/${toDisplayPath(node.doc!.path)}`;
+							},
+						};
+					}
+					return {
+						id: node.id,
+						name: node.name,
+						icon: Folder,
+						openIcon: FolderOpen,
+						children: node.children.size > 0 ? convertToTreeData(node.children) : undefined,
+					};
+				});
+		};
+
+		return convertToTreeData(root);
+	}, []);
 
 	// Separate local and imported docs
 	const localDocs = docs.filter(d => !d.isImported);
@@ -397,92 +372,25 @@ export default function DocsPage() {
 		return acc;
 	}, {} as Record<string, Doc[]>);
 
-	// Count total docs in folder and subfolders
-	const countDocs = (node: FolderNode): number => {
-		let count = node.docs.length;
-		for (const child of node.children.values()) {
-			count += countDocs(child);
-		}
-		return count;
-	};
+	// Build tree data for local docs
+	const localTreeData = useMemo(() =>
+		buildDocsTreeData(localDocs, (doc) => {
+			window.location.hash = `/docs/${toDisplayPath(doc.path)}`;
+		}),
+		[localDocs, buildDocsTreeData]
+	);
 
-	// Render folder tree recursively
-	const renderFolderNode = (node: FolderNode, level = 0): JSX.Element[] => {
-		const elements: JSX.Element[] = [];
-		// Root is always expanded
-		const isExpanded = level === 0 || expandedFolders.has(node.path);
-		const paddingLeft = `${level * 16}px`;
-
-		// Don't render root folder header
-		if (level > 0) {
-			const totalDocs = countDocs(node);
-			elements.push(
-				<button
-					key={`folder-${node.path}`}
-					type="button"
-					onClick={() => toggleFolder(node.path)}
-					className="w-full flex items-center gap-2 px-3 py-2 hover:bg-accent text-foreground transition-colors"
-					style={{ paddingLeft }}
-				>
-					{isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-					{isExpanded ? <FolderOpen className="w-4 h-4" /> : <Folder className="w-4 h-4" />}
-					<span className="text-sm font-medium">{node.name}</span>
-					<span className="text-xs text-muted-foreground">({totalDocs})</span>
-				</button>
-			);
-		}
-
-		// Render child folders and docs (if expanded or root)
-		if (isExpanded || level === 0) {
-			// Render child folders first
-			const sortedChildren = Array.from(node.children.values()).sort((a, b) =>
-				a.name.localeCompare(b.name)
-			);
-			for (const child of sortedChildren) {
-				elements.push(...renderFolderNode(child, level + 1));
-			}
-
-			// Then render docs in this folder (sorted by title)
-			const sortedDocs = [...node.docs].sort((a, b) =>
-				a.metadata.title.localeCompare(b.metadata.title)
-			);
-			for (const doc of sortedDocs) {
-				elements.push(
-					<button
-						key={`doc-${doc.path}`}
-						type="button"
-						onClick={() => {
-							// Navigate using hash to update URL - normalize path for cross-platform
-							window.location.hash = `/docs/${toDisplayPath(doc.path)}`;
-						}}
-						className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-accent text-foreground transition-colors ${
-							selectedDoc?.path === doc.path ? "bg-accent" : ""
-						}`}
-						style={{ paddingLeft: `${(level + 1) * 16}px` }}
-					>
-						<FileText className={`w-5 h-5 ${doc.isImported ? "text-blue-500" : ""}`} />
-						<div className="flex-1 min-w-0">
-							<div className="flex items-center gap-1.5">
-								<span className="text-sm font-medium truncate">{doc.metadata.title}</span>
-								{doc.isImported && (
-									<span className="shrink-0 px-1 py-0.5 text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 rounded">
-										imported
-									</span>
-								)}
-							</div>
-							{doc.metadata.description && (
-								<div className="text-xs text-muted-foreground truncate">
-									{doc.metadata.description}
-								</div>
-							)}
-						</div>
-					</button>
-				);
-			}
-		}
-
-		return elements;
-	};
+	// Build tree data for each import source
+	const importsTreeData = useMemo(() => {
+		return Object.entries(importsBySource).map(([source, sourceDocs]): TreeDataItem => ({
+			id: `__import_${source}__`,
+			name: source,
+			icon: Package,
+			children: buildDocsTreeData(sourceDocs, (doc) => {
+				window.location.hash = `/docs/${toDisplayPath(doc.path)}`;
+			}),
+		}));
+	}, [importsBySource, buildDocsTreeData]);
 
 	if (loading) {
 		return (
@@ -516,59 +424,34 @@ export default function DocsPage() {
 						<ScrollArea className="flex-1">
 							{/* Local Docs Section */}
 							{localDocs.length > 0 && (
-								<div>
-									<button
-										type="button"
-										onClick={() => toggleFolder("__local__")}
-										className="w-full flex items-center gap-2 px-3 py-2 hover:bg-accent text-foreground transition-colors bg-muted/50"
-									>
-										{expandedFolders.has("__local__") ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-										<Folder className="w-4 h-4" />
-										<span className="text-sm font-semibold">Local</span>
-										<span className="text-xs text-muted-foreground">({localDocs.length})</span>
-									</button>
-									{expandedFolders.has("__local__") && renderFolderNode(buildFolderTreeFromDocs(localDocs))}
-								</div>
+								<TreeView
+									data={{
+										id: "__local__",
+										name: `Local (${localDocs.length})`,
+										icon: Folder,
+										openIcon: FolderOpen,
+										children: localTreeData,
+									}}
+									defaultNodeIcon={Folder}
+									defaultLeafIcon={FileText}
+									initialSelectedItemId={selectedDoc?.path}
+								/>
 							)}
 
 							{/* Imported Docs Section */}
-							{Object.keys(importsBySource).length > 0 && (
-								<div>
-									<button
-										type="button"
-										onClick={() => toggleFolder("__imports__")}
-										className="w-full flex items-center gap-2 px-3 py-2 hover:bg-accent text-foreground transition-colors bg-blue-50 dark:bg-blue-950/30"
-									>
-										{expandedFolders.has("__imports__") ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-										<Download className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-										<span className="text-sm font-semibold text-blue-700 dark:text-blue-300">Imports</span>
-										<span className="text-xs text-blue-600 dark:text-blue-400">({importedDocs.length})</span>
-									</button>
-									{expandedFolders.has("__imports__") && (
-										<div>
-											{Object.entries(importsBySource).map(([source, sourceDocs]) => (
-												<div key={source}>
-													<button
-														type="button"
-														onClick={() => toggleFolder(`__import_${source}__`)}
-														className="w-full flex items-center gap-2 px-3 py-2 hover:bg-accent text-foreground transition-colors"
-														style={{ paddingLeft: "16px" }}
-													>
-														{expandedFolders.has(`__import_${source}__`) ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-														<Package className="w-4 h-4 text-blue-500" />
-														<span className="text-sm font-medium truncate">{source}</span>
-														<span className="text-xs text-muted-foreground">({sourceDocs.length})</span>
-													</button>
-													{expandedFolders.has(`__import_${source}__`) && (
-														<div style={{ paddingLeft: "16px" }}>
-															{renderFolderNode(buildFolderTreeFromDocs(sourceDocs, `__import_${source}__`), 0)}
-														</div>
-													)}
-												</div>
-											))}
-										</div>
-									)}
-								</div>
+							{importsTreeData.length > 0 && (
+								<TreeView
+									data={{
+										id: "__imports__",
+										name: `Imports (${importedDocs.length})`,
+										icon: Download,
+										openIcon: Download,
+										children: importsTreeData,
+									}}
+									defaultNodeIcon={Folder}
+									defaultLeafIcon={FileText}
+									initialSelectedItemId={selectedDoc?.path}
+								/>
 							)}
 						</ScrollArea>
 					</div>

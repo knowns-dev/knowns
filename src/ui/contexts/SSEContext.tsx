@@ -35,7 +35,7 @@ export interface SSEEventPayloads {
 	"tasks:archived": { task: Task };
 	"tasks:unarchived": { task: Task };
 	"tasks:batch-archived": { tasks: Task[] };
-	"time:updated": { active: ActiveTimer | null };
+	"time:updated": { active: ActiveTimer[] };
 	"time:refresh": Record<string, never>;
 	"docs:updated": { docPath: string };
 	"docs:refresh": Record<string, never>;

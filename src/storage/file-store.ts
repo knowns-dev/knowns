@@ -274,12 +274,12 @@ export class FileStore {
 			throw new Error(`Task ${id} not found`);
 		}
 
-		// Handle parent change
+		// Handle parent change - only if parent is explicitly provided in updates
 		const oldParent = task.parent;
 		const newParent = updates.parent;
 
-		// If parent changed, update parent-child relationships
-		if (oldParent !== newParent) {
+		// If parent explicitly changed, update parent-child relationships
+		if ("parent" in updates && oldParent !== newParent) {
 			// Remove from old parent's subtasks
 			if (oldParent) {
 				await this.removeSubtask(oldParent, id);

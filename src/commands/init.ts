@@ -9,35 +9,29 @@ import { FileStore } from "@storage/file-store";
 import chalk from "chalk";
 import { Command } from "commander";
 import prompts from "prompts";
-import { renderString } from "../codegen/renderer";
-import { Guidelines } from "../instructions/guidelines";
+import { type Platform, syncSkills } from "../codegen/skill-sync";
+import { UnifiedGuidelines } from "../instructions/guidelines";
 import { type IDEConfig, IDE_CONFIGS } from "../instructions/ide";
-import { SKILLS } from "../instructions/skills";
-import { type GuidelinesType, INSTRUCTION_FILES, getGuidelines, updateInstructionFile } from "./agents";
+import { INSTRUCTION_FILES, updateInstructionFile } from "./agents";
 
 import type { GitTrackingMode } from "@models/project";
 
 /**
- * Instruction mode for skills
+ * Map init platform IDs to skill-sync platform IDs
  */
-type InstructionMode = "mcp" | "cli";
-
-/**
- * Render skill content with mode context
- */
-function renderSkillContent(content: string, mode: InstructionMode): string {
-	try {
-		return renderString(content, { mcp: mode === "mcp", cli: mode === "cli" });
-	} catch {
-		// If rendering fails, return original
-		return content;
-	}
+function mapPlatformId(initId: string): Platform | null {
+	const mapping: Record<string, Platform> = {
+		"claude-code": "claude",
+		antigravity: "antigravity",
+		cursor: "cursor",
+	};
+	return mapping[initId] || null;
 }
 
 /**
  * Platform definitions for init
  */
-interface Platform {
+interface InitPlatform {
 	id: string;
 	name: string;
 	description: string;
@@ -45,7 +39,7 @@ interface Platform {
 	ideConfig?: IDEConfig;
 }
 
-const PLATFORMS: Platform[] = [
+const PLATFORMS: InitPlatform[] = [
 	{
 		id: "claude-code",
 		name: "Claude Code",
@@ -111,7 +105,7 @@ function checkGitExists(projectRoot: string): void {
 /**
  * Create .mcp.json file for Claude Code auto-discovery
  */
-async function createMcpJsonFile(projectRoot: string): Promise<void> {
+async function createMcpJsonFile(projectRoot: string, force = false): Promise<void> {
 	const { writeFileSync, readFileSync } = await import("node:fs");
 	const mcpJsonPath = join(projectRoot, ".mcp.json");
 
@@ -128,17 +122,18 @@ async function createMcpJsonFile(projectRoot: string): Promise<void> {
 		// Check if knowns is already configured
 		try {
 			const existing = JSON.parse(readFileSync(mcpJsonPath, "utf-8"));
-			if (existing?.mcpServers?.knowns) {
+			if (existing?.mcpServers?.knowns && !force) {
 				console.log(chalk.gray("  .mcp.json already has knowns configuration"));
 				return;
 			}
-			// Merge with existing config
+			// Merge with existing config (or update if force)
 			existing.mcpServers = {
 				...existing.mcpServers,
 				...mcpConfig.mcpServers,
 			};
 			writeFileSync(mcpJsonPath, JSON.stringify(existing, null, "\t"), "utf-8");
-			console.log(chalk.green("✓ Added knowns to existing .mcp.json"));
+			const action = force ? "Updated" : "Added";
+			console.log(chalk.green(`✓ ${action} knowns in .mcp.json`));
 		} catch {
 			// Invalid JSON, overwrite
 			writeFileSync(mcpJsonPath, JSON.stringify(mcpConfig, null, "\t"), "utf-8");
@@ -192,35 +187,39 @@ async function updateGitignore(projectRoot: string, mode: "git-ignored" | "none"
 /**
  * Create AGENTS.md in project root
  */
-async function createAgentsMd(projectRoot: string): Promise<void> {
+async function createAgentsMd(projectRoot: string, force = false): Promise<void> {
 	const { writeFileSync } = await import("node:fs");
 	const agentsMdPath = join(projectRoot, "AGENTS.md");
+	const exists = existsSync(agentsMdPath);
 
-	if (existsSync(agentsMdPath)) {
+	if (exists && !force) {
 		console.log(chalk.gray("  AGENTS.md already exists"));
 		return;
 	}
 
-	writeFileSync(agentsMdPath, Guidelines.getFull(true), "utf-8");
-	console.log(chalk.green("✓ Created AGENTS.md (full AI guidelines)"));
+	writeFileSync(agentsMdPath, UnifiedGuidelines.getFull(true), "utf-8");
+	const action = exists ? "Updated" : "Created";
+	console.log(chalk.green(`✓ ${action} AGENTS.md (unified CLI + MCP guidelines)`));
 }
 
 /**
  * Create IDE-specific configuration files
  */
-async function createIDEConfig(projectRoot: string, ideConfig: IDEConfig): Promise<void> {
+async function createIDEConfig(projectRoot: string, ideConfig: IDEConfig, force = false): Promise<void> {
 	const { mkdirSync, writeFileSync } = await import("node:fs");
 	const targetDir = join(projectRoot, ideConfig.targetDir);
 
 	let createdCount = 0;
+	let updatedCount = 0;
 	let skippedCount = 0;
 
 	for (const file of ideConfig.files) {
 		const filePath = join(targetDir, file.filename);
 		const fileDir = join(targetDir, ...file.filename.split("/").slice(0, -1));
 		const content = file.isJson ? `${JSON.stringify(file.content, null, 2)}\n` : String(file.content);
+		const exists = existsSync(filePath);
 
-		if (existsSync(filePath)) {
+		if (exists && !force) {
 			skippedCount++;
 			continue;
 		}
@@ -229,103 +228,22 @@ async function createIDEConfig(projectRoot: string, ideConfig: IDEConfig): Promi
 			mkdirSync(fileDir, { recursive: true });
 		}
 		writeFileSync(filePath, content, "utf-8");
-		createdCount++;
+
+		if (exists) {
+			updatedCount++;
+		} else {
+			createdCount++;
+		}
 	}
 
 	if (createdCount > 0) {
 		console.log(chalk.green(`✓ Created ${createdCount} ${ideConfig.name} config files in ${ideConfig.targetDir}/`));
 	}
+	if (updatedCount > 0) {
+		console.log(chalk.green(`✓ Updated ${updatedCount} ${ideConfig.name} config files in ${ideConfig.targetDir}/`));
+	}
 	if (skippedCount > 0) {
 		console.log(chalk.gray(`  Skipped ${skippedCount} existing ${ideConfig.name} files`));
-	}
-}
-
-/**
- * Create local skills in .knowns/skills/ directory (source of truth)
- * Local skills keep Handlebars templates for future sync with different modes
- */
-async function createLocalSkills(projectRoot: string): Promise<void> {
-	const { mkdirSync, writeFileSync } = await import("node:fs");
-	const skillsDir = join(projectRoot, ".knowns", "skills");
-
-	// Create .knowns/skills directory
-	if (!existsSync(skillsDir)) {
-		mkdirSync(skillsDir, { recursive: true });
-	}
-
-	let createdCount = 0;
-	let skippedCount = 0;
-
-	for (const skill of SKILLS) {
-		const skillFolder = join(skillsDir, skill.folderName);
-		const skillFile = join(skillFolder, "SKILL.md");
-
-		// Skip if skill already exists
-		if (existsSync(skillFile)) {
-			skippedCount++;
-			continue;
-		}
-
-		// Create skill folder and file
-		// Keep original content with Handlebars templates (source of truth)
-		if (!existsSync(skillFolder)) {
-			mkdirSync(skillFolder, { recursive: true });
-		}
-		writeFileSync(skillFile, skill.content, "utf-8");
-		createdCount++;
-	}
-
-	if (createdCount > 0) {
-		console.log(chalk.green(`✓ Created ${createdCount} skills in .knowns/skills/ (source of truth)`));
-	}
-	if (skippedCount > 0) {
-		console.log(chalk.gray(`  Skipped ${skippedCount} existing local skills`));
-	}
-}
-
-/**
- * Create Claude Code skills in .claude/skills/ directory
- * Skills are rendered with MCP mode (Claude Code uses MCP by default)
- */
-async function createClaudeSkills(projectRoot: string, mode: InstructionMode = "mcp"): Promise<void> {
-	const { mkdirSync, writeFileSync } = await import("node:fs");
-	const skillsDir = join(projectRoot, ".claude", "skills");
-
-	// Create .claude/skills directory
-	if (!existsSync(skillsDir)) {
-		mkdirSync(skillsDir, { recursive: true });
-	}
-
-	let createdCount = 0;
-	let skippedCount = 0;
-
-	for (const skill of SKILLS) {
-		const skillFolder = join(skillsDir, skill.folderName);
-		const skillFile = join(skillFolder, "SKILL.md");
-
-		// Skip if skill already exists
-		if (existsSync(skillFile)) {
-			skippedCount++;
-			continue;
-		}
-
-		// Create skill folder and file
-		// Render content with specified mode (MCP or CLI)
-		const renderedContent = renderSkillContent(skill.content, mode);
-		if (!existsSync(skillFolder)) {
-			mkdirSync(skillFolder, { recursive: true });
-		}
-		writeFileSync(skillFile, renderedContent, "utf-8");
-		createdCount++;
-	}
-
-	if (createdCount > 0) {
-		console.log(
-			chalk.green(`✓ Created ${createdCount} Claude Code skills in .claude/skills/ (${mode.toUpperCase()} mode)`),
-		);
-	}
-	if (skippedCount > 0) {
-		console.log(chalk.gray(`  Skipped ${skippedCount} existing skills`));
 	}
 }
 
@@ -354,7 +272,7 @@ async function runWizard(): Promise<InitConfig | null> {
 				choices: PLATFORMS.map((p) => ({
 					title: `${p.name} (${p.description})`,
 					value: p.id,
-					selected: p.id === "claude-code",
+					selected: p.id === "claude-code" || p.id === "antigravity",
 				})),
 				hint: "- Space to select. Return to submit",
 				min: 1,
@@ -475,7 +393,7 @@ export const initCommand = new Command("init")
 			console.log(chalk.green(`✓ Project initialized: ${project.name}`));
 
 			// Always create agents.md (full guidelines for all platforms)
-			await createAgentsMd(projectRoot);
+			await createAgentsMd(projectRoot, options.force);
 
 			// Check platform types
 			const selectedPlatforms = config.platforms.map((id) => PLATFORMS.find((p) => p.id === id)).filter(Boolean);
@@ -484,23 +402,46 @@ export const initCommand = new Command("init")
 
 			// Skills platform setup (Claude Code, Antigravity)
 			if (hasSkillsPlatform) {
-				// Create local skills in .knowns/skills/ (source of truth)
-				await createLocalSkills(projectRoot);
+				// Map selected platforms to skill-sync platform IDs and sync skills
+				const skillPlatforms = config.platforms.map(mapPlatformId).filter((p): p is Platform => p !== null);
 
-				// Create skills in .claude/skills/
-				await createClaudeSkills(projectRoot);
+				if (skillPlatforms.length > 0) {
+					// Sync built-in skills directly to platform folders (no .knowns/skills/)
+					const results = await syncSkills({
+						projectRoot,
+						platforms: skillPlatforms,
+						mode: "mcp",
+						force: options.force,
+						useBuiltIn: true,
+					});
+
+					for (const result of results) {
+						if (result.created > 0) {
+							console.log(chalk.green(`✓ Created ${result.created} skills for ${result.platform}`));
+						}
+						if (result.updated > 0) {
+							console.log(chalk.green(`✓ Updated ${result.updated} skills for ${result.platform}`));
+						}
+						if (result.skipped > 0) {
+							console.log(chalk.gray(`  Skipped ${result.skipped} existing ${result.platform} skills`));
+						}
+						if (result.errors.length > 0) {
+							console.log(chalk.yellow(`  Errors: ${result.errors.join(", ")}`));
+						}
+					}
+				}
 
 				// Create .mcp.json for MCP auto-discovery
-				await createMcpJsonFile(projectRoot);
+				await createMcpJsonFile(projectRoot, options.force);
 
-				// Create CLAUDE.md with MCP guidelines
-				const guidelines = getGuidelines("mcp");
+				// Create CLAUDE.md with unified guidelines (CLI + MCP)
+				const guidelines = UnifiedGuidelines.getFull(true);
 				try {
 					const result = await updateInstructionFile("CLAUDE.md", guidelines);
 					if (result.success) {
 						const action =
 							result.action === "created" ? "Created" : result.action === "appended" ? "Appended" : "Updated";
-						console.log(chalk.green(`✓ ${action}: CLAUDE.md`));
+						console.log(chalk.green(`✓ ${action}: CLAUDE.md (unified CLI + MCP guidelines)`));
 					}
 				} catch {
 					console.log(chalk.yellow("⚠️  Skipped: CLAUDE.md"));
@@ -510,7 +451,7 @@ export const initCommand = new Command("init")
 			// IDE platform setups (Cursor, Windsurf)
 			for (const platform of selectedPlatforms) {
 				if (platform?.ideConfig) {
-					await createIDEConfig(projectRoot, platform.ideConfig);
+					await createIDEConfig(projectRoot, platform.ideConfig, options.force);
 				}
 			}
 

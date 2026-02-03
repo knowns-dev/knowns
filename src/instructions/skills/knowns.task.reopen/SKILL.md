@@ -55,6 +55,8 @@ knowns time start $ARGUMENTS
 
 ### Step 3: Document Reopen Reason
 
+> ⚠️ **Use `appendNotes` (NOT `notes`)** to preserve existing audit trail:
+
 {{#if mcp}}
 ```json
 mcp__knowns__update_task({

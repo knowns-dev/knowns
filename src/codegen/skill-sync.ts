@@ -7,13 +7,14 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { SKILLS as BUILTIN_SKILLS } from "../instructions/skills";
 import { renderString } from "./renderer";
 import { type Skill, listSkills } from "./skill-parser";
 
 /**
  * Supported AI platforms
  */
-export type Platform = "claude" | "antigravity" | "cursor" | "gemini" | "windsurf" | "cline";
+export type Platform = "claude" | "antigravity" | "cursor" | "windsurf" | "cline";
 
 /**
  * Platform configuration
@@ -59,14 +60,6 @@ export const PLATFORMS: PlatformConfig[] = [
 		targetDir: ".cursor/rules",
 		filePattern: "folder",
 		extension: "SKILL.md",
-		supportsMcp: true,
-	},
-	{
-		id: "gemini",
-		name: "Gemini CLI",
-		targetDir: ".",
-		filePattern: "append",
-		extension: "GEMINI.md",
 		supportsMcp: true,
 	},
 	{
@@ -123,8 +116,8 @@ export type InstructionMode = "mcp" | "cli";
 export interface SyncOptions {
 	/** Project root directory */
 	projectRoot: string;
-	/** Skills directory */
-	skillsDir: string;
+	/** Skills directory (optional if useBuiltIn is true) */
+	skillsDir?: string;
 	/** Platforms to sync (default: all) */
 	platforms?: Platform[];
 	/** Force overwrite */
@@ -133,6 +126,8 @@ export interface SyncOptions {
 	dryRun?: boolean;
 	/** Instruction mode: mcp or cli (default: determined by platform) */
 	mode?: InstructionMode;
+	/** Use built-in skills instead of reading from skillsDir */
+	useBuiltIn?: boolean;
 }
 
 /**
@@ -164,7 +159,8 @@ function prepareSkillsForPlatform(skills: Skill[], platform: PlatformConfig, mod
  * Sync skills to all specified platforms
  */
 export async function syncSkills(options: SyncOptions): Promise<SyncResult[]> {
-	const skills = await listSkills(options.skillsDir);
+	// Use built-in skills or read from skillsDir
+	const skills = options.useBuiltIn ? BUILTIN_SKILLS : await listSkills(options.skillsDir || "");
 	const platforms = options.platforms || getPlatformIds();
 	const results: SyncResult[] = [];
 

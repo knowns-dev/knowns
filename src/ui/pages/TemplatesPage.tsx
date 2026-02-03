@@ -14,6 +14,7 @@ import {
 	HelpCircle,
 	Sparkles,
 	FolderOpen,
+	Folder,
 	Loader2,
 } from "lucide-react";
 import { ScrollArea } from "../components/ui/scroll-area";
@@ -21,6 +22,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
+import { TreeView, type TreeDataItem } from "../components/ui/tree-view";
 import {
 	templateApi,
 	type TemplateListItem,
@@ -45,6 +47,64 @@ const toCamelCase = (str: string) =>
 	str
 		.replace(/[-_\s]+(.)?/g, (_, c) => (c ? c.toUpperCase() : ""))
 		.replace(/^(.)/, (c) => c.toLowerCase());
+
+// Build TreeDataItem[] from templates
+function buildTemplateTreeData(
+	templates: TemplateListItem[],
+	onSelect: (name: string) => void
+): TreeDataItem[] {
+	interface TempNode {
+		id: string;
+		name: string;
+		isTemplate: boolean;
+		template?: TemplateListItem;
+		children: Map<string, TempNode>;
+	}
+
+	const root: Map<string, TempNode> = new Map();
+
+	for (const template of templates) {
+		const parts = template.name.split("/");
+		let currentMap = root;
+
+		for (let i = 0; i < parts.length; i++) {
+			const part = parts[i];
+			const isTemplate = i === parts.length - 1;
+			const currentPath = parts.slice(0, i + 1).join("/");
+
+			if (!currentMap.has(part)) {
+				currentMap.set(part, {
+					id: currentPath,
+					name: part,
+					isTemplate,
+					template: isTemplate ? template : undefined,
+					children: new Map(),
+				});
+			}
+			currentMap = currentMap.get(part)!.children;
+		}
+	}
+
+	// Convert TempNode to TreeDataItem
+	const convertToTreeData = (nodeMap: Map<string, TempNode>): TreeDataItem[] => {
+		return Array.from(nodeMap.values())
+			.sort((a, b) => {
+				// Folders first, then templates
+				if (a.isTemplate !== b.isTemplate) return a.isTemplate ? 1 : -1;
+				return a.name.localeCompare(b.name);
+			})
+			.map((node): TreeDataItem => ({
+				id: node.id,
+				name: node.name,
+				icon: node.isTemplate ? FileCode : Folder,
+				openIcon: node.isTemplate ? FileCode : FolderOpen,
+				children: node.children.size > 0 ? convertToTreeData(node.children) : undefined,
+				onClick: node.isTemplate ? () => onSelect(node.id) : undefined,
+			}));
+	};
+
+	return convertToTreeData(root);
+}
 
 export default function TemplatesPage() {
 	const [templates, setTemplates] = useState<TemplateListItem[]>([]);
@@ -207,7 +267,9 @@ export default function TemplatesPage() {
 
 	// Select template
 	const handleSelectTemplate = (name: string) => {
-		window.location.hash = `/templates/${encodeURIComponent(name)}`;
+		// Encode each path segment separately to preserve `/` in URL
+		const encodedName = name.split('/').map(encodeURIComponent).join('/');
+		window.location.hash = `/templates/${encodedName}`;
 	};
 
 	// Copy reference
@@ -354,51 +416,105 @@ export default function TemplatesPage() {
 				{/* Template List */}
 				<div className="lg:col-span-1 flex flex-col min-h-0 overflow-hidden">
 					<div className="bg-card rounded-lg border overflow-hidden flex flex-col flex-1 min-h-0">
-						<div className="p-4 border-b shrink-0">
-							<h2 className="font-semibold">Available Templates ({templates.length})</h2>
-						</div>
 						<ScrollArea className="flex-1">
-							{templates.map((template) => (
-								<button
-									key={template.name}
-									type="button"
-									onClick={() => handleSelectTemplate(template.name)}
-									className={`w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-accent text-foreground transition-colors border-b ${
-										selectedName === template.name ? "bg-accent" : ""
-									}`}
-								>
-									<FileCode className="w-5 h-5 mt-0.5 shrink-0 text-blue-500" />
-									<div className="flex-1 min-w-0">
-										<div className="font-medium truncate">{template.name}</div>
-										{template.description && (
-											<div className="text-sm text-muted-foreground line-clamp-2">
-												{template.description}
-											</div>
-										)}
-									</div>
-									<ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-								</button>
-							))}
+							{(() => {
+								// Separate local and imported templates
+								const localTemplates = templates.filter((t) => !t.isImported);
+								const importedTemplates = templates.filter((t) => t.isImported);
+
+								// Group imported templates by source
+								const importedBySource = importedTemplates.reduce(
+									(acc, t) => {
+										const source = t.source || "unknown";
+										if (!acc[source]) acc[source] = [];
+										acc[source].push(t);
+										return acc;
+									},
+									{} as Record<string, typeof importedTemplates>,
+								);
+
+								const treeData: TreeDataItem[] = [];
+
+								// Local templates
+								if (localTemplates.length > 0) {
+									treeData.push({
+										id: "__local__",
+										name: `Local (${localTemplates.length})`,
+										icon: Folder,
+										openIcon: FolderOpen,
+										children: buildTemplateTreeData(localTemplates, handleSelectTemplate),
+									});
+								}
+
+								// Imported templates grouped by source
+								const importSources = Object.keys(importedBySource);
+								if (importSources.length > 0) {
+									const importChildren: TreeDataItem[] = importSources.map((source) => {
+										// Strip source prefix from template names for display
+										// but keep mapping to original name for selection
+										// e.g., "knowns/knowns-command" displays as "knowns-command"
+										const originalNames = new Map<string, string>();
+										const templatesWithStrippedNames = importedBySource[source].map((t) => {
+											const strippedName = t.name.startsWith(`${source}/`)
+												? t.name.slice(source.length + 1)
+												: t.name;
+											originalNames.set(strippedName, t.name);
+											return { ...t, name: strippedName };
+										});
+										// Wrapper to map stripped name back to original
+										const selectWithOriginalName = (name: string) => {
+											const original = originalNames.get(name) || name;
+											handleSelectTemplate(original);
+										};
+										return {
+											id: `__import_${source}__`,
+											name: `${source} (${importedBySource[source].length})`,
+											icon: Folder,
+											openIcon: FolderOpen,
+											children: buildTemplateTreeData(templatesWithStrippedNames, selectWithOriginalName),
+										};
+									});
+
+									treeData.push({
+										id: "__imports__",
+										name: `Imports (${importedTemplates.length})`,
+										icon: Folder,
+										openIcon: FolderOpen,
+										children: importChildren,
+									});
+								}
+
+								if (treeData.length === 0) {
+									return (
+										<div className="p-8 text-center">
+											<FileCode className="w-12 h-12 mx-auto text-muted-foreground" />
+											<p className="mt-2 font-medium">No templates yet</p>
+											<p className="text-sm text-muted-foreground mt-1">
+												Templates help you generate consistent code quickly
+											</p>
+											<Button
+												onClick={() => setShowCreateModal(true)}
+												className="mt-4"
+												variant="outline"
+											>
+												<Plus className="w-4 h-4 mr-2" />
+												Create your first template
+											</Button>
+										</div>
+									);
+								}
+
+								return (
+									<TreeView
+										data={treeData}
+										defaultNodeIcon={Folder}
+										defaultLeafIcon={FileCode}
+										initialSelectedItemId={selectedName || undefined}
+									/>
+								);
+							})()}
 						</ScrollArea>
 					</div>
-
-					{templates.length === 0 && (
-						<div className="bg-card rounded-lg border p-8 text-center">
-							<FileCode className="w-12 h-12 mx-auto text-muted-foreground" />
-							<p className="mt-2 font-medium">No templates yet</p>
-							<p className="text-sm text-muted-foreground mt-1">
-								Templates help you generate consistent code quickly
-							</p>
-							<Button
-								onClick={() => setShowCreateModal(true)}
-								className="mt-4"
-								variant="outline"
-							>
-								<Plus className="w-4 h-4 mr-2" />
-								Create your first template
-							</Button>
-						</div>
-					)}
 				</div>
 
 				{/* Template Detail & Runner */}

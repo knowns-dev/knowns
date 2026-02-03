@@ -10,13 +10,15 @@ import {
 	type LoadedTemplate,
 	type TemplateResult,
 	listTemplates,
+	loadTemplate,
 	loadTemplateByName,
 	runTemplate,
 } from "../../codegen";
-import { listAllTemplates } from "../../import";
+import { listAllTemplates, resolveTemplate } from "../../import";
 import { errorResponse, successResponse } from "../utils";
 
 const TEMPLATES_DIR = join(process.cwd(), ".knowns", "templates");
+const PROJECT_ROOT = process.cwd();
 
 // Schemas
 export const listTemplatesSchema = z.object({});
@@ -56,7 +58,7 @@ export const templateTools = [
 			properties: {
 				name: {
 					type: "string",
-					description: "Template name (folder name in .knowns/templates/)",
+					description: "Template name. Supports import prefix (e.g., 'knowns/component' for imported template)",
 				},
 			},
 			required: ["name"],
@@ -71,7 +73,7 @@ export const templateTools = [
 			properties: {
 				name: {
 					type: "string",
-					description: "Template name to run",
+					description: "Template name to run. Supports import prefix (e.g., 'knowns/component' for imported template)",
 				},
 				variables: {
 					type: "object",
@@ -182,15 +184,19 @@ export async function handleListTemplates(_args: unknown) {
 export async function handleGetTemplate(args: unknown) {
 	const input = getTemplateSchema.parse(args);
 
-	if (!existsSync(TEMPLATES_DIR)) {
-		return errorResponse("No templates directory found");
-	}
-
 	try {
-		const template = await loadTemplateByName(TEMPLATES_DIR, input.name);
+		// Resolve template (supports local and imported templates with prefix like "knowns/component")
+		const resolved = await resolveTemplate(PROJECT_ROOT, input.name);
+
+		if (!resolved) {
+			return errorResponse(`Template not found: ${input.name}. Use list_templates to see available templates.`);
+		}
+
+		// Load the template from resolved path
+		const template = await loadTemplate(resolved.path);
 
 		if (!template) {
-			return errorResponse(`Template not found: ${input.name}`);
+			return errorResponse(`Failed to load template: ${input.name}`);
 		}
 
 		// Format prompts for display
@@ -229,6 +235,8 @@ export async function handleGetTemplate(args: unknown) {
 				actions: actions || [],
 				messages: template.config.messages,
 			},
+			source: resolved.isImported ? resolved.source : "local",
+			isImported: resolved.isImported,
 			hint: template.config.doc
 				? `This template links to @doc/${template.config.doc}. Read the doc for context before running.`
 				: undefined,
@@ -242,15 +250,19 @@ export async function handleRunTemplate(args: unknown) {
 	const input = runTemplateSchema.parse(args);
 	const dryRun = input.dryRun !== false; // Default to true for safety
 
-	if (!existsSync(TEMPLATES_DIR)) {
-		return errorResponse("No templates directory found");
-	}
-
 	try {
-		const template = await loadTemplateByName(TEMPLATES_DIR, input.name);
+		// Resolve template (supports local and imported templates with prefix like "knowns/component")
+		const resolved = await resolveTemplate(PROJECT_ROOT, input.name);
+
+		if (!resolved) {
+			return errorResponse(`Template not found: ${input.name}. Use list_templates to see available templates.`);
+		}
+
+		// Load the template from resolved path
+		const template = await loadTemplate(resolved.path);
 
 		if (!template) {
-			return errorResponse(`Template not found: ${input.name}`);
+			return errorResponse(`Failed to load template: ${input.name}`);
 		}
 
 		// Check required variables
@@ -275,7 +287,7 @@ export async function handleRunTemplate(args: unknown) {
 
 		// Run template
 		const result = await runTemplate(template, {
-			projectRoot: process.cwd(),
+			projectRoot: PROJECT_ROOT,
 			values,
 			dryRun,
 		});
@@ -293,6 +305,8 @@ export async function handleRunTemplate(args: unknown) {
 			success: true,
 			dryRun,
 			template: input.name,
+			source: resolved.isImported ? resolved.source : "local",
+			isImported: resolved.isImported,
 			variables: values,
 			created: result.created || [],
 			modified: result.modified || [],

@@ -23,15 +23,14 @@ function formatDuration(seconds: number): string {
 }
 
 export function TimeTrackingLogs({ taskId, timeEntries, timeSpent }: TimeTrackingLogsProps) {
-	const { activeTimer, isRunning, start } = useTimeTracker();
+	const { isTaskRunning, start } = useTimeTracker();
 
-	const isThisTaskActive = activeTimer?.taskId === taskId;
-	const canStartTimer = !isRunning || isThisTaskActive;
+	const isThisTaskActive = isTaskRunning(taskId);
 
 	const completedEntries = timeEntries.filter((e) => e.endedAt);
 
 	const handleStartTimer = async () => {
-		if (!canStartTimer || isThisTaskActive) return;
+		if (isThisTaskActive) return;
 		try {
 			await start(taskId);
 		} catch (error) {
@@ -54,13 +53,12 @@ export function TimeTrackingLogs({ taskId, timeEntries, timeSpent }: TimeTrackin
 						{!isThisTaskActive && (
 							<Button
 								size="sm"
-								variant={canStartTimer ? "default" : "secondary"}
-								disabled={!canStartTimer}
+								variant="default"
 								onClick={handleStartTimer}
 								className="gap-1.5"
 							>
 								<Play className="w-3.5 h-3.5" />
-								{isRunning ? "Timer Active" : "Start Timer"}
+								Start Timer
 							</Button>
 						)}
 						{isThisTaskActive && (

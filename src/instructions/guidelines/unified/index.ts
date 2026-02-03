@@ -16,15 +16,15 @@ import workflowCompletionMd from "./workflow-completion.md";
 import workflowCreationMd from "./workflow-creation.md";
 import workflowExecutionMd from "./workflow-execution.md";
 
-type Mode = "cli" | "mcp";
+type Mode = "cli" | "mcp" | "unified";
 
 /**
  * Render a template with the given mode
  */
 function render(template: string, mode: Mode): string {
 	return renderString(template, {
-		mcp: mode === "mcp",
-		cli: mode === "cli",
+		mcp: mode === "mcp" || mode === "unified",
+		cli: mode === "cli" || mode === "unified",
 	}).trim();
 }
 
@@ -100,9 +100,10 @@ function createGuidelines(mode: Mode) {
 	};
 }
 
-// Export both variants
+// Export all variants
 export const CLIGuidelines = createGuidelines("cli");
 export const MCPGuidelines = createGuidelines("mcp");
+export const UnifiedGuidelines = createGuidelines("unified");
 
 // Default export
 export const Guidelines = CLIGuidelines;
