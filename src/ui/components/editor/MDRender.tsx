@@ -6,11 +6,14 @@ import {
   useState,
   useEffect,
   type ReactNode,
+  Children,
+  isValidElement,
 } from "react";
 import MDEditor from "@uiw/react-md-editor";
 import { ClipboardCheck, FileText, AlertTriangle } from "lucide-react";
 import { useTheme } from "../../App";
 import { getTask, getDoc } from "../../api/client";
+import { MermaidBlock } from "./MermaidBlock";
 
 export interface MDRenderRef {
   getElement: () => HTMLElement | null;
@@ -58,7 +61,7 @@ function transformMentions(content: string): string {
   return transformed;
 }
 
-// Status colors for task badges - synchronized with BlockNote TaskMention.tsx
+// Status colors for task badges
 const STATUS_STYLES: Record<string, string> = {
   todo: "bg-muted-foreground/50",
   "in-progress": "bg-yellow-500",
@@ -67,7 +70,7 @@ const STATUS_STYLES: Record<string, string> = {
   done: "bg-green-500",
 };
 
-// Badge classes - synchronized with BlockNote mention styles (DocMention.tsx, TaskMention.tsx)
+// Badge classes for mentions
 // Uses same styling as shadcn Badge variant="outline" with custom colors
 const taskBadgeClass =
   "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-sm font-medium transition-colors cursor-pointer select-none border border-green-500/30 bg-green-500/10 text-green-700 hover:bg-green-500/20 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-400 dark:hover:bg-green-500/20";
@@ -98,8 +101,6 @@ function TaskMentionBadge({
   const [notFound, setNotFound] = useState(false);
 
   const taskNumber = taskId.replace("task-", "");
-
-  const hashHref = `#/kanban/${taskNumber}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -193,8 +194,6 @@ function DocMentionBadge({
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
-  const hashHref = `#/docs/${docPath}`;
-
   useEffect(() => {
     let cancelled = false;
 
@@ -265,6 +264,25 @@ function DocMentionBadge({
 }
 
 /**
+ * Extract text content from React children recursively
+ */
+function getTextContent(children: ReactNode): string {
+  if (typeof children === "string") return children;
+  if (typeof children === "number") return String(children);
+  if (!children) return "";
+
+  if (Array.isArray(children)) {
+    return children.map(getTextContent).join("");
+  }
+
+  if (isValidElement(children) && children.props?.children) {
+    return getTextContent(children.props.children);
+  }
+
+  return "";
+}
+
+/**
  * Read-only markdown renderer with mention badge support
  */
 const MDRender = forwardRef<MDRenderRef, MDRenderProps>(
@@ -320,6 +338,38 @@ const MDRender = forwardRef<MDRenderRef, MDRenderProps>(
       };
     }, [onDocLinkClick, onTaskLinkClick]);
 
+    // Custom pre component that handles mermaid code blocks
+    const CustomPre = useMemo(() => {
+      return function CustomPreComponent({
+        children,
+        ...props
+      }: {
+        children?: ReactNode;
+      } & React.HTMLAttributes<HTMLPreElement>) {
+        // Check if this pre contains a code element with mermaid language
+        const codeChild = Children.toArray(children).find(
+          (child) => isValidElement(child) && child.type === "code"
+        );
+
+        if (isValidElement(codeChild)) {
+          const codeProps = codeChild.props as { className?: string; children?: ReactNode };
+          const className = codeProps.className || "";
+          const match = /language-(\w+)/.exec(className);
+          const language = match?.[1];
+
+          if (language === "mermaid") {
+            const code = getTextContent(codeProps.children);
+            if (code) {
+              return <MermaidBlock code={code} />;
+            }
+          }
+        }
+
+        // Regular pre block
+        return <pre {...props}>{children}</pre>;
+      };
+    }, []);
+
     if (!markdown) return null;
 
     return (
@@ -336,6 +386,7 @@ const MDRender = forwardRef<MDRenderRef, MDRenderProps>(
           }}
           components={{
             a: CustomLink,
+            pre: CustomPre,
           }}
         />
       </div>

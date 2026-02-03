@@ -96,13 +96,14 @@ knowns browser  # Open Web UI
 | Feature              | Description                                        |
 | -------------------- | -------------------------------------------------- |
 | **Task Management**  | Create, track tasks with acceptance criteria       |
-| **Documentation**    | Nested folders with markdown support               |
+| **Documentation**    | Nested folders with markdown + mermaid support     |
 | **Time Tracking**    | Built-in timers and reports                        |
 | **Context Linking**  | `@task-42` and `@doc/patterns/auth` references     |
+| **Validation**       | Check broken refs with `knowns validate`           |
 | **Template System**  | Code generation with Handlebars (`.hbs`) templates |
 | **Import System**    | Import docs/templates from git, npm, or local      |
 | **AI Integration**   | Full MCP Server with AC/plan/notes operations      |
-| **Web UI**           | Kanban board, doc browser, templates page          |
+| **Web UI**           | Kanban board, doc browser, mermaid diagrams        |
 
 ---
 
@@ -132,14 +133,79 @@ knowns import add <name> <source>           # Add import
 knowns import sync                          # Sync all imports
 knowns import list                          # List imports
 
-# Time & Search
+# Time, Search & Validate
 knowns time start <id> && knowns time stop
 knowns search "query" --plain
+knowns validate                             # Check broken refs
 
 # AI Guidelines
 knowns agents sync                          # Sync CLAUDE.md, AGENTS.md
 knowns agents sync --type mcp               # MCP tools format
 ```
+
+---
+
+## Claude Code Skills Workflow
+
+When using Claude Code with Knowns, use skills (slash commands) for a guided workflow:
+
+```
+/kn:init     → Read project docs, understand context
+/kn:plan     → Take task, gather context, create plan (wait for approval)
+/kn:implement → Follow plan, check ACs, track progress
+/kn:commit   → Commit with conventional format
+```
+
+### Example Session
+
+```
+You: /kn:init
+Claude: [Reads README, ARCHITECTURE, checks task backlog]
+        "Project uses NestJS with CQRS pattern. 3 tasks in-progress..."
+
+You: /kn:plan 42
+Claude: [Takes task, reads refs, searches docs]
+        "Task #42: Add user authentication
+
+         ## Implementation Plan
+         1. Review @doc/patterns/auth
+         2. Create AuthModule with JWT strategy
+         3. Add login/register endpoints
+         4. Write unit tests
+
+         Approve this plan?"
+
+You: Yes
+
+You: /kn:implement 42
+Claude: [Follows plan, generates code, checks ACs]
+        "✓ AC1: User can login - DONE
+         ✓ AC2: JWT token returned - DONE
+         ✓ AC3: Tests pass - DONE
+
+         All acceptance criteria complete. Ready to commit?"
+
+You: /kn:commit
+Claude: [Creates conventional commit]
+        "feat(auth): add JWT authentication
+
+         - Add AuthModule with passport JWT strategy
+         - Add login/register endpoints
+         - Add unit tests (94% coverage)"
+```
+
+### All Skills
+
+| Skill | Description |
+|-------|-------------|
+| `/kn:init` | Initialize session - read docs, understand project |
+| `/kn:plan <id>` | Take task, gather context, create implementation plan |
+| `/kn:implement <id>` | Execute plan, track progress, check acceptance criteria |
+| `/kn:research` | Search codebase, find patterns, explore before coding |
+| `/kn:commit` | Create conventional commit with verification |
+| `/kn:doc` | Create or update documentation |
+| `/kn:extract` | Extract reusable patterns into docs/templates |
+| `/kn:template` | List, run, or create code templates |
 
 ---
 

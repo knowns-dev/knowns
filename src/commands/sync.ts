@@ -3,8 +3,9 @@
  * Sync skills and agent instruction files
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
 import chalk from "chalk";
 import { Command } from "commander";
 import { renderString } from "../codegen/renderer";
@@ -32,12 +33,49 @@ function renderSkillContent(content: string, mode: InstructionMode): string {
 }
 
 /**
+ * Clean up deprecated skill folders (any folder starting with "knowns.")
+ */
+function cleanupDeprecatedSkills(skillsDir: string): number {
+	let removed = 0;
+
+	// Remove any folder starting with "knowns." in .claude/skills/
+	if (existsSync(skillsDir)) {
+		const entries = readdirSync(skillsDir, { withFileTypes: true });
+		for (const entry of entries) {
+			if (entry.isDirectory() && entry.name.startsWith("knowns.")) {
+				const deprecatedPath = join(skillsDir, entry.name);
+				rmSync(deprecatedPath, { recursive: true, force: true });
+				console.log(chalk.yellow(`✓ Removed deprecated: ${entry.name}`));
+				removed++;
+			}
+		}
+	}
+
+	// Also check .agent/skills/ if it exists
+	const agentSkillsDir = join(PROJECT_ROOT, ".agent", "skills");
+	if (existsSync(agentSkillsDir)) {
+		const entries = readdirSync(agentSkillsDir, { withFileTypes: true });
+		for (const entry of entries) {
+			if (entry.isDirectory() && entry.name.startsWith("knowns.")) {
+				const deprecatedPath = join(agentSkillsDir, entry.name);
+				rmSync(deprecatedPath, { recursive: true, force: true });
+				console.log(chalk.yellow(`✓ Removed deprecated: .agent/skills/${entry.name}`));
+				removed++;
+			}
+		}
+	}
+
+	return removed;
+}
+
+/**
  * Sync skills to .claude/skills/
  */
 async function syncSkills(options: { force?: boolean; mode?: InstructionMode }): Promise<{
 	created: number;
 	updated: number;
 	skipped: number;
+	removed: number;
 }> {
 	const skillsDir = join(PROJECT_ROOT, ".claude", "skills");
 	const mode = options.mode ?? "mcp"; // Default to MCP for Claude Code
@@ -47,6 +85,9 @@ async function syncSkills(options: { force?: boolean; mode?: InstructionMode }):
 		mkdirSync(skillsDir, { recursive: true });
 		console.log(chalk.green("✓ Created .claude/skills/"));
 	}
+
+	// Clean up deprecated skill folders first
+	const removed = cleanupDeprecatedSkills(skillsDir);
 
 	let created = 0;
 	let updated = 0;
@@ -82,7 +123,7 @@ async function syncSkills(options: { force?: boolean; mode?: InstructionMode }):
 		}
 	}
 
-	return { created, updated, skipped };
+	return { created, updated, skipped, removed };
 }
 
 /**
@@ -179,8 +220,9 @@ async function syncIDE(options: { force?: boolean; ide?: string }): Promise<{
 /**
  * Print summary
  */
-function printSummary(label: string, stats: { created: number; updated: number; skipped: number }) {
+function printSummary(label: string, stats: { created: number; updated: number; skipped: number; removed?: number }) {
 	console.log(chalk.bold(`\n${label}:`));
+	if (stats.removed && stats.removed > 0) console.log(chalk.yellow(`  Removed: ${stats.removed}`));
 	if (stats.created > 0) console.log(chalk.green(`  Created: ${stats.created}`));
 	if (stats.updated > 0) console.log(chalk.green(`  Updated: ${stats.updated}`));
 	if (stats.skipped > 0) console.log(chalk.gray(`  Skipped: ${stats.skipped}`));

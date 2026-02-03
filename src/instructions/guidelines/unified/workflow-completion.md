@@ -10,6 +10,7 @@ A task is **Done** when ALL of these are complete:
 |-------------|---------|
 | All AC checked | `knowns task edit <id> --check-ac N` |
 | Notes added | `knowns task edit <id> --notes "Summary"` |
+| Refs validated | `knowns validate` |
 | Timer stopped | `knowns time stop` |
 | Status = done | `knowns task edit <id> -s done` |
 | Tests pass | Run test suite |
@@ -20,6 +21,7 @@ A task is **Done** when ALL of these are complete:
 |-------------|-----|
 | All AC checked | `mcp__knowns__update_task` with `checkAc` |
 | Notes added | `mcp__knowns__update_task` with `notes` |
+| Refs validated | `mcp__knowns__validate` |
 | Timer stopped | `mcp__knowns__stop_time` |
 | Status = done | `mcp__knowns__update_task` with `status: "done"` |
 | Tests pass | Run test suite |
@@ -39,10 +41,13 @@ knowns task <id> --plain
 knowns task edit <id> --notes $'## Summary
 What was done and key decisions.'
 
-# 3. Stop timer (REQUIRED!)
+# 3. Validate refs (catch broken @doc/ @task- refs)
+knowns validate
+
+# 4. Stop timer (REQUIRED!)
 knowns time stop
 
-# 4. Mark done
+# 5. Mark done
 knowns task edit <id> -s done
 ```
 {{/if}}
@@ -58,10 +63,13 @@ mcp__knowns__update_task({
   "notes": "## Summary\nWhat was done and key decisions."
 })
 
-// 3. Stop timer (REQUIRED!)
+// 3. Validate refs (catch broken @doc/ @task- refs)
+mcp__knowns__validate({})
+
+// 4. Stop timer (REQUIRED!)
 mcp__knowns__stop_time({ "taskId": "<id>" })
 
-// 4. Mark done
+// 5. Mark done
 mcp__knowns__update_task({
   "taskId": "<id>",
   "status": "done"
@@ -115,6 +123,7 @@ Then follow completion steps again.
 ### CLI
 - [ ] All AC checked (`--check-ac`)
 - [ ] Notes added (`--notes`)
+- [ ] Refs validated (`knowns validate`)
 - [ ] Timer stopped (`time stop`)
 - [ ] Tests pass
 - [ ] Status = done (`-s done`)
@@ -123,6 +132,7 @@ Then follow completion steps again.
 ### MCP
 - [ ] All AC checked (`checkAc`)
 - [ ] Notes added (`notes`)
+- [ ] Refs validated (`mcp__knowns__validate`)
 - [ ] Timer stopped (`mcp__knowns__stop_time`)
 - [ ] Tests pass
 - [ ] Status = done (`mcp__knowns__update_task`)

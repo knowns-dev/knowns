@@ -235,7 +235,7 @@ When Claude calls `get_task`, the server automatically fetches docs linked in th
 ```typescript
 async function fetchLinkedDocs(description: string): Promise<DocContent[]> {
   const refs = extractDocReferences(description);
-  // @doc/patterns/auth -> .knowns/docs/patterns/auth.md
+  // @doc/architecture/patterns/command -> .knowns/docs/patterns/auth.md
 
   const docs = [];
   for (const ref of refs) {

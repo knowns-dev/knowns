@@ -27,6 +27,15 @@ function getDocsDir(): string {
 	return join(getProjectRoot(), ".knowns", "docs");
 }
 
+/**
+ * Normalize literal \n sequences to actual newlines.
+ * Some MCP clients send escaped newlines as literal backslash-n.
+ */
+function normalizeNewlines(text: string | undefined): string | undefined {
+	if (!text) return text;
+	return text.replace(/\\n/g, "\n");
+}
+
 // Document metadata interface
 interface DocMetadata {
 	title: string;
@@ -513,7 +522,7 @@ export async function handleCreateDoc(args: unknown) {
 		metadata.tags = input.tags;
 	}
 
-	const initialContent = input.content || "# Content\n\nWrite your documentation here.";
+	const initialContent = normalizeNewlines(input.content) || "# Content\n\nWrite your documentation here.";
 	const fileContent = matter.stringify(initialContent, metadata);
 
 	await writeFile(filepath, fileContent, "utf-8");
@@ -550,18 +559,20 @@ export async function handleUpdateDoc(args: unknown) {
 	if (input.tags) metadata.tags = input.tags;
 	metadata.updatedAt = new Date().toISOString();
 
-	// Update content
+	// Update content (normalize literal \n to actual newlines)
 	let updatedContent = content;
 	let sectionUpdated: string | undefined;
+	const normalizedContent = normalizeNewlines(input.content);
+	const normalizedAppend = normalizeNewlines(input.appendContent);
 
 	// Handle section replacement
-	if (input.section && input.content) {
+	if (input.section && normalizedContent) {
 		// Check if section is a pure number (index from TOC display)
 		const sectionIndex = /^\d+$/.test(input.section) ? Number.parseInt(input.section, 10) : null;
 		const result =
 			sectionIndex !== null
-				? replaceSectionByIndex(content, sectionIndex, input.content)
-				: replaceSection(content, input.section, input.content);
+				? replaceSectionByIndex(content, sectionIndex, normalizedContent)
+				: replaceSection(content, input.section, normalizedContent);
 		if (!result) {
 			return errorResponse(
 				`Section not found: ${input.section}. Use 'toc: true' with get_doc to see available sections.`,
@@ -569,12 +580,12 @@ export async function handleUpdateDoc(args: unknown) {
 		}
 		updatedContent = result;
 		sectionUpdated = input.section;
-	} else if (input.content) {
-		updatedContent = input.content;
+	} else if (normalizedContent) {
+		updatedContent = normalizedContent;
 	}
 
-	if (input.appendContent) {
-		updatedContent = `${updatedContent.trimEnd()}\n\n${input.appendContent}`;
+	if (normalizedAppend) {
+		updatedContent = `${updatedContent.trimEnd()}\n\n${normalizedAppend}`;
 	}
 
 	// Write back

@@ -82,6 +82,29 @@ Search across:
 - Document titles and content
 - Acceptance criteria
 
+### Mermaid Diagrams
+
+The Web UI renders Mermaid diagrams in markdown preview:
+
+````markdown
+```mermaid
+graph TD
+    A[Start] --> B{Decision}
+    B -->|Yes| C[Action]
+    B -->|No| D[End]
+```
+````
+
+**Supported diagram types:**
+- Flowcharts (`graph`, `flowchart`)
+- Sequence diagrams
+- Class diagrams
+- State diagrams
+- Entity relationships
+- Gantt charts
+
+Diagrams render automatically when viewing docs or task descriptions. When editing, you see the raw markdown code.
+
 ### Dark Mode
 
 Automatically follows system preference. Toggle manually in the UI.

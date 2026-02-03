@@ -1,6 +1,6 @@
 ---
 title: "Implementation Checklist"
-description: ""
+description: "Step-by-step checklist for implementing new features following DDD patterns"
 createdAt: "2025-12-25T15:16:58.867Z"
 updatedAt: "2025-12-25T15:25:52.985Z"
 tags: ["conventions"]

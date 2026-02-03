@@ -27,6 +27,7 @@ interface TaskDTO {
 	}>;
 	implementationPlan?: string;
 	implementationNotes?: string;
+	spec?: string;
 }
 
 interface TaskVersionDTO {
@@ -304,6 +305,44 @@ export async function search(query: string): Promise<{ tasks: Task[]; docs: unkn
 		tasks: (data.tasks || []).map(parseTaskDTO),
 		docs: data.docs || [],
 	};
+}
+
+// Get tasks linked to a spec
+export async function getTasksBySpec(specPath: string): Promise<Task[]> {
+	const tasks = await api.getTasks();
+	// Normalize spec path for comparison (remove .md extension, handle both formats)
+	const normalizedSpec = specPath.replace(/\.md$/, "").replace(/^specs\//, "");
+	return tasks.filter((task) => {
+		if (!task.spec) return false;
+		const taskSpec = task.spec.replace(/\.md$/, "").replace(/^specs\//, "");
+		return taskSpec === normalizedSpec;
+	});
+}
+
+// SDD (Spec-Driven Development) Stats
+export interface SDDStats {
+	specs: { total: number; approved: number; draft: number; implemented: number };
+	tasks: { total: number; done: number; inProgress: number; todo: number; withSpec: number; withoutSpec: number };
+	coverage: { linked: number; total: number; percent: number };
+	acCompletion: Record<string, { total: number; completed: number; percent: number }>;
+}
+
+export interface SDDWarning {
+	type: "task-no-spec" | "spec-broken-link" | "spec-ac-incomplete";
+	entity: string;
+	message: string;
+}
+
+export interface SDDResult {
+	stats: SDDStats;
+	warnings: SDDWarning[];
+	passed: string[];
+}
+
+export async function getSDDStats(): Promise<SDDResult> {
+	const res = await fetch(`${API_BASE}/api/validate/sdd`);
+	if (!res.ok) throw new Error("Failed to fetch SDD stats");
+	return res.json();
 }
 
 // Template API

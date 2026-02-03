@@ -1,6 +1,6 @@
 ---
 title: "Naming Conventions"
-description: ""
+description: "File and code naming conventions for the project"
 createdAt: "2025-12-25T15:16:58.868Z"
 updatedAt: "2025-12-25T15:25:52.985Z"
 tags: ["conventions"]

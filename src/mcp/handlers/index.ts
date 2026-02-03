@@ -55,3 +55,6 @@ export {
 	getProjectRoot,
 	setProjectRoot,
 } from "./project";
+
+// Validate handler
+export { validateTools, handleValidate } from "./validate";

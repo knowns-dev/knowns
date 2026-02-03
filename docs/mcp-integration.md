@@ -299,6 +299,29 @@ mcp__knowns__run_template({
 })
 ```
 
+### Validation
+
+| Tool       | Description                        | Parameters        |
+| ---------- | ---------------------------------- | ----------------- |
+| `validate` | Validate refs and file integrity   | `scope?`, `fix?`  |
+
+**validate parameters:**
+
+| Parameter | Description |
+| --------- | ----------- |
+| `scope`   | `all`, `tasks`, or `docs` (default: `all`) |
+| `fix`     | Attempt to auto-fix issues (default: `false`) |
+
+**Example:**
+
+```json
+// Validate all refs
+mcp__knowns__validate({})
+
+// Validate only tasks
+mcp__knowns__validate({ "scope": "tasks" })
+```
+
 ### Board
 
 | Tool        | Description            | Parameters |

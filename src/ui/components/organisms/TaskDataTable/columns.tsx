@@ -1,4 +1,5 @@
 import type { ColumnDef } from "@tanstack/react-table";
+import { FileText } from "lucide-react";
 import { Checkbox } from "@/ui/components/ui/checkbox";
 import { DataTableColumnHeader } from "@/ui/components/ui/data-table";
 import { StatusBadge, PriorityBadge, LabelList } from "@/ui/components/molecules";
@@ -120,6 +121,36 @@ export const taskColumns: ColumnDef<Task>[] = [
 			return value.some((v: string) => labels.includes(v));
 		},
 		enableSorting: false,
+	},
+	{
+		accessorKey: "spec",
+		header: ({ column }) => <DataTableColumnHeader column={column} title="Spec" />,
+		cell: ({ row }) => {
+			const spec = row.original.spec;
+			if (!spec) return <span className="text-muted-foreground text-sm">-</span>;
+			// Display spec name (last part of path)
+			const specName = spec.split("/").pop() || spec;
+			return (
+				<button
+					type="button"
+					onClick={(e) => {
+						e.stopPropagation();
+						window.location.hash = `/docs/${spec}.md`;
+					}}
+					className="flex items-center gap-1 text-xs text-purple-600 dark:text-purple-400 hover:underline"
+					title={`@doc/${spec}`}
+				>
+					<FileText className="w-3 h-3" />
+					{specName}
+				</button>
+			);
+		},
+		filterFn: (row, id, value) => {
+			const spec = row.original.spec;
+			if (!spec) return value.includes("none");
+			return value.includes(spec);
+		},
+		enableSorting: true,
 	},
 	{
 		accessorKey: "acceptanceCriteria",

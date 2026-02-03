@@ -143,9 +143,9 @@ Time entries are stored in `.knowns/time-entries.json`:
 
 **Cause**: Mismatch between seconds (CLI) and milliseconds (Web UI).
 
-**Solution**: Ensure all duration calculations use seconds. See @task-55 for details.
+**Solution**: Ensure all duration calculations use seconds. See [removed [removed [removed ~task-55]]] for details.
 
 ## Related
 
 - @docs/README - Project overview
-- @task-55 - Bug fix for duration units
+- [removed [removed [removed ~task-55]]] - Bug fix for duration units

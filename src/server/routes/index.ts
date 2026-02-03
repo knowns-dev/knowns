@@ -13,6 +13,7 @@ import { createSearchRoutes } from "./search";
 import { createTaskRoutes } from "./tasks";
 import { createTemplateRoutes } from "./templates";
 import { createTimeRoutes } from "./time";
+import { createValidateRoutes } from "./validate";
 
 export function createRoutes(ctx: RouteContext): Router {
 	const router = Router();
@@ -26,6 +27,7 @@ export function createRoutes(ctx: RouteContext): Router {
 	router.use("/notify", createNotifyRoutes(ctx));
 	router.use("/time", createTimeRoutes(ctx));
 	router.use("/imports", createImportRoutes(ctx));
+	router.use("/validate", createValidateRoutes(ctx));
 
 	return router;
 }

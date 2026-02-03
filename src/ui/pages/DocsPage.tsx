@@ -10,33 +10,24 @@ import {
 	Copy,
 	Download,
 	Package,
+	ListChecks,
+	Filter,
+	ClipboardCheck,
+	ChevronDown,
+	ChevronUp,
+	ExternalLink,
 } from "lucide-react";
-import { BlockNoteEditor, MDRender } from "../components/editor";
+import type { Task } from "../../models/task";
+import { MDEditor, MDRender } from "../components/editor";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { TreeView, type TreeDataItem } from "../components/ui/tree-view";
-import { getDocs, createDoc, updateDoc } from "../api/client";
+import { Badge } from "../components/ui/badge";
+import { Progress } from "../components/ui/progress";
+import { getDocs, createDoc, updateDoc, getTasksBySpec } from "../api/client";
 import { useSSEEvent } from "../contexts/SSEContext";
-import { normalizePath, toDisplayPath, normalizePathForAPI } from "../lib/utils";
-
-interface DocMetadata {
-	title: string;
-	description?: string;
-	createdAt: string;
-	updatedAt: string;
-	tags?: string[];
-}
-
-interface Doc {
-	filename: string;
-	path: string;
-	folder: string;
-	metadata: DocMetadata;
-	content: string;
-	isImported?: boolean;
-	source?: string;
-}
+import { normalizePath, toDisplayPath, normalizePathForAPI, isSpec, getSpecStatus, getSpecStatusOrder, parseACProgress, type Doc } from "../lib/utils";
 
 
 export default function DocsPage() {
@@ -54,12 +45,27 @@ export default function DocsPage() {
 	const [newDocContent, setNewDocContent] = useState("");
 	const [creating, setCreating] = useState(false);
 	const [pathCopied, setPathCopied] = useState(false);
+	const [linkedTasks, setLinkedTasks] = useState<Task[]>([]);
+	const [linkedTasksExpanded, setLinkedTasksExpanded] = useState(false);
+	const [showSpecsOnly, setShowSpecsOnly] = useState(false);
 	const markdownPreviewRef = useRef<HTMLDivElement>(null);
 
 	// Initial docs load
 	useEffect(() => {
 		loadDocs();
 	}, []);
+
+	// Fetch linked tasks when a spec is selected
+	useEffect(() => {
+		if (selectedDoc && isSpec(selectedDoc)) {
+			const specPath = toDisplayPath(selectedDoc.path).replace(/\.md$/, "");
+			getTasksBySpec(specPath)
+				.then((tasks) => setLinkedTasks(tasks))
+				.catch(() => setLinkedTasks([]));
+		} else {
+			setLinkedTasks([]);
+		}
+	}, [selectedDoc]);
 
 	// Subscribe to SSE for real-time updates from CLI/AI
 	useSSEEvent("docs:updated", () => {
@@ -338,10 +344,19 @@ export default function DocsPage() {
 				})
 				.map((node): TreeDataItem => {
 					if (node.isDoc && node.doc) {
+						// For specs, show AC progress in the name and use different icon
+						let displayName = node.name;
+						const docIsSpec = isSpec(node.doc);
+						if (docIsSpec) {
+							const acProgress = parseACProgress(node.doc.content);
+							if (acProgress.total > 0) {
+								displayName = `${node.name} (${acProgress.completed}/${acProgress.total})`;
+							}
+						}
 						return {
 							id: node.id,
-							name: node.name,
-							icon: FileText,
+							name: displayName,
+							icon: docIsSpec ? ClipboardCheck : FileText,
 							onClick: () => {
 								window.location.hash = `/docs/${toDisplayPath(node.doc!.path)}`;
 							},
@@ -360,9 +375,25 @@ export default function DocsPage() {
 		return convertToTreeData(root);
 	}, []);
 
-	// Separate local and imported docs
-	const localDocs = docs.filter(d => !d.isImported);
-	const importedDocs = docs.filter(d => d.isImported);
+	// Separate local and imported docs, optionally filter to specs only
+	const localDocs = useMemo(() => {
+		let filtered = docs.filter(d => !d.isImported);
+		if (showSpecsOnly) {
+			filtered = filtered.filter(d => isSpec(d));
+			// Sort by status: draft -> approved -> implemented
+			filtered.sort((a, b) => getSpecStatusOrder(a) - getSpecStatusOrder(b));
+		}
+		return filtered;
+	}, [docs, showSpecsOnly]);
+
+	const importedDocs = useMemo(() => {
+		let filtered = docs.filter(d => d.isImported);
+		if (showSpecsOnly) {
+			filtered = filtered.filter(d => isSpec(d));
+			filtered.sort((a, b) => getSpecStatusOrder(a) - getSpecStatusOrder(b));
+		}
+		return filtered;
+	}, [docs, showSpecsOnly]);
 
 	// Group imported docs by source
 	const importsBySource = importedDocs.reduce((acc, doc) => {
@@ -418,8 +449,19 @@ export default function DocsPage() {
 				{/* Doc List */}
 				<div className="lg:col-span-1 flex flex-col min-h-0 overflow-hidden">
 					<div className="bg-card rounded-lg border overflow-hidden flex flex-col flex-1 min-h-0">
-						<div className="p-4 border-b shrink-0">
-							<h2 className="font-semibold">All Documents ({docs.length})</h2>
+						<div className="p-4 border-b shrink-0 flex items-center justify-between">
+							<h2 className="font-semibold">
+								{showSpecsOnly ? "Specs Only" : "All Documents"} ({showSpecsOnly ? localDocs.length + importedDocs.length : docs.length})
+							</h2>
+							<Button
+								variant={showSpecsOnly ? "default" : "outline"}
+								size="sm"
+								onClick={() => setShowSpecsOnly(!showSpecsOnly)}
+								title={showSpecsOnly ? "Show all documents" : "Show specs only"}
+							>
+								<Filter className="w-4 h-4 mr-1" />
+								Specs
+							</Button>
 						</div>
 						<ScrollArea className="flex-1">
 							{/* Local Docs Section */}
@@ -478,12 +520,96 @@ export default function DocsPage() {
 										<h2 className="text-2xl font-bold">
 											{selectedDoc.metadata.title}
 										</h2>
+										{/* Spec badges */}
+										{isSpec(selectedDoc) && (
+											<Badge className="bg-purple-600 hover:bg-purple-700 text-white">
+												SPEC
+											</Badge>
+										)}
+										{isSpec(selectedDoc) && getSpecStatus(selectedDoc) && (
+											<Badge
+												className={
+													getSpecStatus(selectedDoc) === "approved"
+														? "bg-green-600 hover:bg-green-700 text-white"
+														: getSpecStatus(selectedDoc) === "implemented"
+															? "bg-blue-600 hover:bg-blue-700 text-white"
+															: "bg-yellow-600 hover:bg-yellow-700 text-white"
+												}
+											>
+												{getSpecStatus(selectedDoc)?.charAt(0).toUpperCase() + getSpecStatus(selectedDoc)?.slice(1)}
+											</Badge>
+										)}
 										{selectedDoc.isImported && (
 											<span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded">
 												Imported
 											</span>
 										)}
 									</div>
+									{/* Spec AC Progress & Linked Tasks */}
+									{isSpec(selectedDoc) && (() => {
+										const acProgress = parseACProgress(selectedDoc.content);
+										return (
+											<>
+												<div className="flex items-center gap-6 mb-3">
+													{acProgress.total > 0 && (
+														<div className="flex items-center gap-2">
+															<ListChecks className="w-4 h-4 text-muted-foreground" />
+															<Progress value={Math.round((acProgress.completed / acProgress.total) * 100)} className="w-32 h-2" />
+															<span className="text-sm text-muted-foreground">
+																{acProgress.completed}/{acProgress.total} ACs
+															</span>
+														</div>
+													)}
+													{/* Linked tasks */}
+													<button
+														type="button"
+														onClick={() => setLinkedTasksExpanded(!linkedTasksExpanded)}
+														className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+													>
+														<FileText className="w-4 h-4" />
+														<span>{linkedTasks.length} tasks linked</span>
+														{linkedTasks.length > 0 && (
+															linkedTasksExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
+														)}
+													</button>
+												</div>
+												{/* Expanded linked tasks list */}
+												{linkedTasksExpanded && linkedTasks.length > 0 && (
+													<div className="mb-3 p-3 rounded-lg bg-muted/50 border">
+														<div className="space-y-2">
+															{linkedTasks.map((task) => (
+																<a
+																	key={task.id}
+																	href={`#/kanban/${task.id}`}
+																	className="flex items-center justify-between p-2 rounded hover:bg-background transition-colors group"
+																>
+																	<div className="flex items-center gap-2 min-w-0">
+																		<span className={`w-2 h-2 rounded-full shrink-0 ${
+																			task.status === "done" ? "bg-green-500" :
+																			task.status === "in-progress" ? "bg-yellow-500" :
+																			task.status === "blocked" ? "bg-red-500" : "bg-gray-400"
+																		}`} />
+																		<span className="text-xs font-mono text-muted-foreground">#{task.id}</span>
+																		<span className="text-sm truncate">{task.title}</span>
+																	</div>
+																	<div className="flex items-center gap-2 shrink-0">
+																		<span className={`text-xs px-1.5 py-0.5 rounded ${
+																			task.status === "done" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
+																			task.status === "in-progress" ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" :
+																			"bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400"
+																		}`}>
+																			{task.status}
+																		</span>
+																		<ExternalLink className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+																	</div>
+																</a>
+															))}
+														</div>
+													</div>
+												)}
+											</>
+										);
+									})()}
 									{selectedDoc.isImported && selectedDoc.source && (
 										<p className="text-sm text-blue-600 dark:text-blue-400 mb-2">
 											From: {selectedDoc.source}
@@ -546,14 +672,14 @@ export default function DocsPage() {
 
 							{/* Content */}
 							{isEditing ? (
-								<div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-									<div className="flex-1 p-6 min-h-0">
-										<BlockNoteEditor
-											markdown={editedContent}
-											onChange={setEditedContent}
-											placeholder="Write your documentation here..."
-										/>
-									</div>
+								<div className="flex-1 min-h-0 overflow-hidden p-6">
+									<MDEditor
+										markdown={editedContent}
+										onChange={setEditedContent}
+										placeholder="Write your documentation here..."
+										height="100%"
+										className="h-full"
+									/>
 								</div>
 							) : (
 								<ScrollArea className="flex-1">
@@ -634,11 +760,13 @@ export default function DocsPage() {
 							{/* Content */}
 							<div className="flex-1 flex flex-col min-h-0">
 								<label className="block text-sm font-medium mb-2">Content</label>
-								<div className="flex-1 min-h-[400px]">
-									<BlockNoteEditor
+								<div className="flex-1 min-h-0">
+									<MDEditor
 										markdown={newDocContent}
 										onChange={setNewDocContent}
 										placeholder="Write your documentation here..."
+										height="100%"
+										className="h-full"
 									/>
 								</div>
 							</div>

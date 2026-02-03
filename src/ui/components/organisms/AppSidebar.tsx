@@ -1,5 +1,6 @@
 import {
 	LayoutDashboard,
+	LayoutGrid,
 	ListTodo,
 	FileText,
 	FileCode,
@@ -31,10 +32,16 @@ interface AppSidebarProps {
 
 const menuItems = [
 	{
-		id: "kanban",
-		label: "Kanban",
+		id: "dashboard",
+		label: "Dashboard",
 		icon: LayoutDashboard,
 		href: "#/",
+	},
+	{
+		id: "kanban",
+		label: "Kanban",
+		icon: LayoutGrid,
+		href: "#/kanban",
 	},
 	{
 		id: "tasks",

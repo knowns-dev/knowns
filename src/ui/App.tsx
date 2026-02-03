@@ -13,6 +13,7 @@ import { UserProvider } from "./contexts/UserContext";
 import { UIPreferencesProvider } from "./contexts/UIPreferencesContext";
 import { TimeTrackerProvider } from "./contexts/TimeTrackerContext";
 import ConfigPage from "./pages/ConfigPage";
+import DashboardPage from "./pages/DashboardPage";
 import DocsPage from "./pages/DocsPage";
 import ImportsPage from "./pages/ImportsPage";
 import KanbanPage from "./pages/KanbanPage";
@@ -60,14 +61,15 @@ function AppContent() {
 	// Get current route from hash
 	const getCurrentRoute = () => {
 		const hash = window.location.hash.slice(1); // Remove #
+		if (hash.startsWith("/dashboard")) return "dashboard";
 		if (hash.startsWith("/tasks")) return "tasks";
 		if (hash.startsWith("/docs")) return "docs";
 		if (hash.startsWith("/templates")) return "templates";
 		if (hash.startsWith("/imports")) return "imports";
 		if (hash.startsWith("/config")) return "config";
 		if (hash.startsWith("/kanban")) return "kanban";
-		if (hash === "/" || hash === "") return "kanban";
-		return "kanban"; // default
+		if (hash === "/" || hash === "") return "dashboard";
+		return "dashboard"; // default
 	};
 
 	// Extract task ID from hash (e.g., #/tasks/42, #/kanban/42, or #/tasks?id=42)
@@ -229,6 +231,13 @@ function AppContent() {
 	// Render current page
 	const renderPage = () => {
 		switch (currentPage) {
+			case "dashboard":
+				return (
+					<DashboardPage
+						tasks={tasks}
+						loading={loading}
+					/>
+				);
 			case "kanban":
 				return (
 					<KanbanPage
@@ -267,11 +276,9 @@ function AppContent() {
 				return <ConfigPage />;
 			default:
 				return (
-					<KanbanPage
+					<DashboardPage
 						tasks={tasks}
 						loading={loading}
-						onTasksUpdate={handleTasksUpdate}
-						onNewTask={() => setShowCreateForm(true)}
 					/>
 				);
 		}

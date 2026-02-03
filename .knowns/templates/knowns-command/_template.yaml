@@ -4,7 +4,7 @@ description: Generate a new Knowns CLI command following the Command Pattern
 version: 1.0.0
 
 # Link to documentation - AI should read this before generating
-doc: patterns/command-pattern
+doc: architecture/patterns/command
 
 # Base destination path
 destination: src/commands
@@ -57,4 +57,4 @@ messages:
       3. Implement subcommand handlers
       4. Run tests: bun test src/commands/{{kebabCase name}}.test.ts
 
-    📚 See @doc/patterns/command-pattern for the full pattern
+    📚 See @doc/architecture/patterns/command for the full pattern

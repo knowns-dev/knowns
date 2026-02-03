@@ -4,7 +4,7 @@
  * Sync skills from .knowns/skills/ to various AI platforms.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { SKILLS as BUILTIN_SKILLS } from "../instructions/skills";
@@ -213,6 +213,28 @@ async function syncToPlatform(skills: Skill[], platform: PlatformConfig, options
 }
 
 /**
+ * Clean up deprecated skill folders (any folder starting with "knowns.")
+ */
+function cleanupDeprecatedSkills(targetDir: string, dryRun?: boolean): number {
+	let removed = 0;
+
+	if (existsSync(targetDir)) {
+		const entries = readdirSync(targetDir, { withFileTypes: true });
+		for (const entry of entries) {
+			if (entry.isDirectory() && entry.name.startsWith("knowns.")) {
+				if (!dryRun) {
+					const deprecatedPath = join(targetDir, entry.name);
+					rmSync(deprecatedPath, { recursive: true, force: true });
+				}
+				removed++;
+			}
+		}
+	}
+
+	return removed;
+}
+
+/**
  * Sync to folder pattern (each skill in its own folder)
  * Used by: Claude Code, Antigravity, Cursor, Cline
  */
@@ -228,6 +250,9 @@ async function syncToFolderPattern(
 	if (!options.dryRun && !existsSync(targetDir)) {
 		await mkdir(targetDir, { recursive: true });
 	}
+
+	// Clean up deprecated skill folders (starting with "knowns.")
+	cleanupDeprecatedSkills(targetDir, options.dryRun);
 
 	for (const skill of skills) {
 		const skillFolder = join(targetDir, skill.folderName);

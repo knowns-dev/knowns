@@ -21,6 +21,7 @@ import {
 	taskCommand,
 	templateCommand,
 	timeCommand,
+	validateCommand,
 } from "@commands/index";
 import { notifyCliUpdate } from "@utils/update-notifier";
 import chalk from "chalk";
@@ -78,6 +79,7 @@ program.addCommand(mcpCommand);
 program.addCommand(templateCommand);
 program.addCommand(skillCommand);
 program.addCommand(importCommand);
+program.addCommand(validateCommand);
 
 // Show banner if no arguments provided
 const args = process.argv.slice(2);

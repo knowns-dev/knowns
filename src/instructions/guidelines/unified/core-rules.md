@@ -90,6 +90,7 @@ knowns task create "Title" --ac "Criterion one" --ac "Criterion two"
 | **Time Tracking** | Start timer when taking task, stop when done |
 | **Plan Approval** | Share plan with user, WAIT for approval before coding |
 | **Check AC After** | Only mark criteria done AFTER completing work |
+| **Validate** | Run validate before completing task |
 
 {{#if cli}}
 ---

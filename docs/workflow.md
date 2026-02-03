@@ -150,7 +150,17 @@ Implemented JWT authentication with access and refresh tokens.
 - Updated API.md with auth endpoints'
 ```
 
-## Step 8: Stop Timer and Complete
+## Step 8: Validate References
+
+Before completing, validate all references are valid:
+
+```bash
+knowns validate
+```
+
+This checks for broken `@doc/...` and `@task-...` references in your tasks and docs. Fix any errors before marking done.
+
+## Step 9: Stop Timer and Complete
 
 ```bash
 knowns time stop
@@ -167,6 +177,7 @@ A task is **Done** only when ALL criteria are met:
 
 - [ ] All acceptance criteria checked
 - [ ] Implementation notes added
+- [ ] References validated (`knowns validate`)
 - [ ] Timer stopped
 - [ ] Status set to done
 
@@ -281,6 +292,7 @@ knowns task edit <id> --plan "..."            # Plan
 knowns template run <name>                    # Generate code
 knowns task edit <id> --check-ac 1            # Check AC
 knowns task edit <id> --append-notes "..."    # Progress
+knowns validate                               # Validate refs
 knowns time stop                              # Stop timer
 knowns task edit <id> -s done                 # Complete
 

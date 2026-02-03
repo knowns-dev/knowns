@@ -9,6 +9,15 @@ import { notifyTaskUpdate } from "@utils/notify-server";
 import { z } from "zod";
 import { errorResponse, fetchLinkedDocs, successResponse } from "../utils";
 
+/**
+ * Normalize literal \n sequences to actual newlines.
+ * Some MCP clients send escaped newlines as literal backslash-n.
+ */
+function normalizeNewlines(text: string | undefined): string | undefined {
+	if (!text) return text;
+	return text.replace(/\\n/g, "\n");
+}
+
 // Schemas
 export const createTaskSchema = z.object({
 	title: z.string(),
@@ -18,6 +27,7 @@ export const createTaskSchema = z.object({
 	assignee: z.string().optional(),
 	labels: z.array(z.string()).optional(),
 	parent: z.string().optional(),
+	spec: z.string().optional(),
 });
 
 export const getTaskSchema = z.object({
@@ -32,6 +42,7 @@ export const updateTaskSchema = z.object({
 	priority: z.enum(["low", "medium", "high"]).optional(),
 	assignee: z.string().optional(),
 	labels: z.array(z.string()).optional(),
+	spec: z.string().nullable().optional(), // Spec document path (null to remove)
 	// AC operations
 	addAc: z.array(z.string()).optional(), // Add new acceptance criteria
 	checkAc: z.array(z.number()).optional(), // Check AC by index (1-based)
@@ -48,6 +59,7 @@ export const listTasksSchema = z.object({
 	priority: z.string().optional(),
 	assignee: z.string().optional(),
 	label: z.string().optional(),
+	spec: z.string().optional(),
 });
 
 export const searchTasksSchema = z.object({
@@ -81,6 +93,7 @@ export const taskTools = [
 					description: "Task labels",
 				},
 				parent: { type: "string", description: "Parent task ID for subtasks" },
+				spec: { type: "string", description: "Spec document path (e.g., 'specs/user-auth')" },
 			},
 			required: ["title"],
 		},
@@ -122,6 +135,7 @@ export const taskTools = [
 					items: { type: "string" },
 					description: "New labels",
 				},
+				spec: { type: "string", description: "Spec document path (set to null to remove)" },
 				addAc: {
 					type: "array",
 					items: { type: "string" },
@@ -159,6 +173,7 @@ export const taskTools = [
 				priority: { type: "string", description: "Filter by priority" },
 				assignee: { type: "string", description: "Filter by assignee" },
 				label: { type: "string", description: "Filter by label" },
+				spec: { type: "string", description: "Filter by spec document path" },
 			},
 		},
 	},
@@ -180,12 +195,13 @@ export async function handleCreateTask(args: unknown, fileStore: FileStore) {
 	const input = createTaskSchema.parse(args);
 	const task = await fileStore.createTask({
 		title: input.title,
-		description: input.description,
+		description: normalizeNewlines(input.description),
 		status: (input.status as TaskStatus) || "todo",
 		priority: (input.priority as TaskPriority) || "medium",
 		assignee: input.assignee,
 		labels: input.labels || [],
 		parent: input.parent,
+		spec: input.spec,
 		subtasks: [],
 		acceptanceCriteria: [],
 		timeSpent: 0,
@@ -226,6 +242,7 @@ export async function handleGetTask(args: unknown, fileStore: FileStore) {
 			priority: task.priority,
 			assignee: task.assignee,
 			labels: task.labels,
+			spec: task.spec,
 			acceptanceCriteria: task.acceptanceCriteria,
 			implementationPlan: task.implementationPlan,
 			implementationNotes: task.implementationNotes,
@@ -250,11 +267,16 @@ export async function handleUpdateTask(args: unknown, fileStore: FileStore) {
 
 	// Basic field updates
 	if (input.title) updates.title = input.title;
-	if (input.description) updates.description = input.description;
+	if (input.description) updates.description = normalizeNewlines(input.description);
 	if (input.status) updates.status = input.status as TaskStatus;
 	if (input.priority) updates.priority = input.priority as TaskPriority;
 	if (input.assignee) updates.assignee = input.assignee;
 	if (input.labels) updates.labels = input.labels;
+
+	// Spec update (null removes, string sets)
+	if (input.spec !== undefined) {
+		updates.spec = input.spec === null ? undefined : input.spec;
+	}
 
 	// AC operations
 	const criteria = [...currentTask.acceptanceCriteria];
@@ -308,19 +330,19 @@ export async function handleUpdateTask(args: unknown, fileStore: FileStore) {
 		updates.acceptanceCriteria = criteria;
 	}
 
-	// Plan and notes
+	// Plan and notes (normalize literal \n to actual newlines)
 	if (input.plan !== undefined) {
-		updates.implementationPlan = input.plan;
+		updates.implementationPlan = normalizeNewlines(input.plan);
 	}
 
 	if (input.notes !== undefined) {
-		updates.implementationNotes = input.notes;
+		updates.implementationNotes = normalizeNewlines(input.notes);
 	}
 
 	if (input.appendNotes) {
 		const existingNotes = currentTask.implementationNotes || "";
 		const separator = existingNotes ? "\n\n" : "";
-		updates.implementationNotes = existingNotes + separator + input.appendNotes;
+		updates.implementationNotes = existingNotes + separator + normalizeNewlines(input.appendNotes);
 	}
 
 	const task = await fileStore.updateTask(taskId, updates);
@@ -358,6 +380,9 @@ export async function handleListTasks(args: unknown, fileStore: FileStore) {
 	if (input.label) {
 		tasks = tasks.filter((t) => t.labels.includes(input.label as string));
 	}
+	if (input.spec) {
+		tasks = tasks.filter((t) => t.spec === input.spec);
+	}
 
 	return successResponse({
 		count: tasks.length,
@@ -368,6 +393,7 @@ export async function handleListTasks(args: unknown, fileStore: FileStore) {
 			priority: t.priority,
 			assignee: t.assignee,
 			labels: t.labels,
+			spec: t.spec,
 		})),
 	});
 }

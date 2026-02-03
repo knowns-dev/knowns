@@ -23,6 +23,9 @@ interface TaskDataTableToolbarProps {
 	setStatusFilter: (value: string) => void;
 	priorityFilter: string;
 	setPriorityFilter: (value: string) => void;
+	specFilter: string;
+	setSpecFilter: (value: string) => void;
+	availableSpecs: string[];
 	onNewTask?: () => void;
 }
 
@@ -33,9 +36,12 @@ function TaskDataTableToolbar({
 	setStatusFilter,
 	priorityFilter,
 	setPriorityFilter,
+	specFilter,
+	setSpecFilter,
+	availableSpecs,
 	onNewTask,
 }: TaskDataTableToolbarProps) {
-	const isFiltered = globalFilter || statusFilter !== "all" || priorityFilter !== "all";
+	const isFiltered = globalFilter || statusFilter !== "all" || priorityFilter !== "all" || specFilter !== "all";
 
 	return (
 		<div className="flex items-center justify-between gap-4">
@@ -73,6 +79,22 @@ function TaskDataTableToolbar({
 						<SelectItem value="low">Low</SelectItem>
 					</SelectContent>
 				</Select>
+				{availableSpecs.length > 0 && (
+					<Select value={specFilter} onValueChange={setSpecFilter}>
+						<SelectTrigger className="w-[150px]">
+							<SelectValue placeholder="Spec" />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="all">All Specs</SelectItem>
+							<SelectItem value="none">No Spec</SelectItem>
+							{availableSpecs.map((spec) => (
+								<SelectItem key={spec} value={spec}>
+									{spec.split("/").pop()}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+				)}
 				{isFiltered && (
 					<Button
 						variant="ghost"
@@ -80,6 +102,7 @@ function TaskDataTableToolbar({
 							setGlobalFilter("");
 							setStatusFilter("all");
 							setPriorityFilter("all");
+							setSpecFilter("all");
 						}}
 						className="h-8 px-2 lg:px-3"
 					>
@@ -114,6 +137,16 @@ export function TaskDataTable({
 	const [globalFilter, setGlobalFilter] = React.useState("");
 	const [statusFilter, setStatusFilter] = React.useState("all");
 	const [priorityFilter, setPriorityFilter] = React.useState("all");
+	const [specFilter, setSpecFilter] = React.useState("all");
+
+	// Extract unique specs from tasks
+	const availableSpecs = React.useMemo(() => {
+		const specs = new Set<string>();
+		for (const task of tasks) {
+			if (task.spec) specs.add(task.spec);
+		}
+		return Array.from(specs).sort();
+	}, [tasks]);
 
 	// Filter tasks based on all filters
 	const filteredTasks = React.useMemo(() => {
@@ -142,8 +175,17 @@ export function TaskDataTable({
 			result = result.filter((task) => task.priority === priorityFilter);
 		}
 
+		// Spec filter
+		if (specFilter !== "all") {
+			if (specFilter === "none") {
+				result = result.filter((task) => !task.spec);
+			} else {
+				result = result.filter((task) => task.spec === specFilter);
+			}
+		}
+
 		return result;
-	}, [tasks, globalFilter, statusFilter, priorityFilter]);
+	}, [tasks, globalFilter, statusFilter, priorityFilter, specFilter]);
 
 	return (
 		<DataTable
@@ -163,6 +205,9 @@ export function TaskDataTable({
 					setStatusFilter={setStatusFilter}
 					priorityFilter={priorityFilter}
 					setPriorityFilter={setPriorityFilter}
+					specFilter={specFilter}
+					setSpecFilter={setSpecFilter}
+					availableSpecs={availableSpecs}
 					onNewTask={onNewTask}
 				/>
 			}

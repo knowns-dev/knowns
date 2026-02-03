@@ -450,6 +450,44 @@ knowns time report [options]
 
 ---
 
+## Validate Command
+
+### `knowns validate`
+
+Validate references and file integrity across tasks and docs.
+
+```bash
+knowns validate [options]
+```
+
+| Option    | Description                          |
+| --------- | ------------------------------------ |
+| `--scope` | `all`, `tasks`, or `docs`            |
+| `--fix`   | Attempt to auto-fix issues           |
+| `--plain` | Plain text output                    |
+
+**What it checks:**
+
+- Broken `@doc/...` references
+- Broken `@task-...` references
+- File format integrity
+- Missing required fields
+
+**Examples:**
+
+```bash
+# Validate everything
+knowns validate
+
+# Validate only tasks
+knowns validate --scope tasks
+
+# Validate with plain output (for AI)
+knowns validate --plain
+```
+
+---
+
 ## Search Commands
 
 ### `knowns search`

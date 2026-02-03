@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Plus, X, Archive, ArchiveRestore, Trash2, ArrowUp, Play, Square, Pause } from "lucide-react";
+import { Plus, X, Archive, ArchiveRestore, Trash2, ArrowUp, Play, Square, Pause, FileText } from "lucide-react";
 import { Button } from "../../ui/button";
 import { Badge } from "../../ui/badge";
 import { Input } from "../../ui/input";
@@ -323,6 +323,26 @@ export function TaskSidebar({
 					</div>
 				</div>
 
+				{/* Linked Spec (compact) */}
+				{task.spec && (
+					<div className="flex items-center gap-2">
+						<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground shrink-0">
+							Spec:
+						</Label>
+						<button
+							type="button"
+							onClick={() => {
+								window.location.hash = `/docs/${task.spec}.md`;
+							}}
+							className="flex items-center gap-1 text-sm text-purple-600 dark:text-purple-400 hover:underline"
+							title={`@doc/${task.spec}`}
+						>
+							<FileText className="w-4 h-4" />
+							{task.spec.split("/").pop()}
+						</button>
+					</div>
+				)}
+
 				{/* Parent/Subtasks summary (if any) */}
 				{(parentTask || task.subtasks.length > 0) && (
 					<div className="flex items-center gap-4 text-xs text-muted-foreground">
@@ -517,6 +537,28 @@ export function TaskSidebar({
 					</Button>
 				)}
 			</div>
+
+			{/* Linked Spec */}
+			{task.spec && (
+				<div className="space-y-2">
+					<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+						Linked Spec
+					</Label>
+					<Button
+						variant="outline"
+						className="w-full justify-start h-auto py-2"
+						onClick={() => {
+							window.location.hash = `/docs/${task.spec}.md`;
+						}}
+						title={`@doc/${task.spec}`}
+					>
+						<FileText className="w-4 h-4 mr-2 text-purple-600 dark:text-purple-400" />
+						<span className="text-purple-600 dark:text-purple-400">
+							{task.spec.split("/").pop()}
+						</span>
+					</Button>
+				</div>
+			)}
 
 			{/* Parent Task */}
 			{parentTask && (

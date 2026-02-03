@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { FileText, Pencil } from "lucide-react";
 import { Button } from "../../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../ui/card";
-import { BlockNoteEditor, MDRender } from "../../editor";
+import { MDEditor, MDRender } from "../../editor";
 import type { Task } from "../../../models/task";
 
 interface TaskImplementationSectionProps {
@@ -69,11 +69,12 @@ export function TaskImplementationSection({
 			<CardContent>
 				{editing ? (
 					<div className="space-y-3">
-						<BlockNoteEditor
+						<MDEditor
 							markdown={content}
 							onChange={setContent}
 							placeholder={cfg.placeholder}
 							readOnly={saving}
+							height={200}
 						/>
 						<div className="flex gap-2">
 							<Button size="sm" onClick={handleSave} disabled={saving}>
