@@ -145,48 +145,50 @@ jobs:
           git clone https://x-access-token:${GH_TOKEN}@github.com/knowns-dev/homebrew-tap.git
           cd homebrew-tap
 
-          # Update formula
-          cat > Formula/knowns.rb << EOF
-class Knowns < Formula
-  desc "AI-first CLI for task management and documentation"
-  homepage "https://cli.knowns.dev"
-  version "${VERSION}"
-  license "MIT"
+          # Update formula using node script
+          node -e "
+          const fs = require('fs');
+          const formula = \`class Knowns < Formula
+            desc \"AI-first CLI for task management and documentation\"
+            homepage \"https://cli.knowns.dev\"
+            version \"${VERSION}\"
+            license \"MIT\"
 
-  on_macos do
-    on_arm do
-      url "https://github.com/knowns-dev/knowns/releases/download/v${VERSION}/knowns-darwin-arm64.tar.gz"
-      sha256 "${SHA_DARWIN_ARM64}"
-    end
-    on_intel do
-      url "https://github.com/knowns-dev/knowns/releases/download/v${VERSION}/knowns-darwin-x64.tar.gz"
-      sha256 "${SHA_DARWIN_X64}"
-    end
-  end
+            on_macos do
+              on_arm do
+                url \"https://github.com/knowns-dev/knowns/releases/download/v${VERSION}/knowns-darwin-arm64.tar.gz\"
+                sha256 \"${SHA_DARWIN_ARM64}\"
+              end
+              on_intel do
+                url \"https://github.com/knowns-dev/knowns/releases/download/v${VERSION}/knowns-darwin-x64.tar.gz\"
+                sha256 \"${SHA_DARWIN_X64}\"
+              end
+            end
 
-  on_linux do
-    on_intel do
-      url "https://github.com/knowns-dev/knowns/releases/download/v${VERSION}/knowns-linux-x64.tar.gz"
-      sha256 "${SHA_LINUX_X64}"
-    end
-  end
+            on_linux do
+              on_intel do
+                url \"https://github.com/knowns-dev/knowns/releases/download/v${VERSION}/knowns-linux-x64.tar.gz\"
+                sha256 \"${SHA_LINUX_X64}\"
+              end
+            end
 
-  def install
-    if OS.mac? && Hardware::CPU.arm?
-      bin.install "knowns-darwin-arm64" => "knowns"
-    elsif OS.mac? && Hardware::CPU.intel?
-      bin.install "knowns-darwin-x64" => "knowns"
-    elsif OS.linux? && Hardware::CPU.intel?
-      bin.install "knowns-linux-x64" => "knowns"
-    end
-    bin.install_symlink "knowns" => "kn"
-  end
+            def install
+              if OS.mac? && Hardware::CPU.arm?
+                bin.install \"knowns-darwin-arm64\" => \"knowns\"
+              elsif OS.mac? && Hardware::CPU.intel?
+                bin.install \"knowns-darwin-x64\" => \"knowns\"
+              elsif OS.linux? && Hardware::CPU.intel?
+                bin.install \"knowns-linux-x64\" => \"knowns\"
+              end
+              bin.install_symlink \"knowns\" => \"kn\"
+            end
 
-  test do
-    assert_match version.to_s, shell_output("#{bin}/knowns --version")
-  end
-end
-EOF
+            test do
+              assert_match version.to_s, shell_output(\"#{bin}/knowns --version\")
+            end
+          end\`;
+          fs.writeFileSync('Formula/knowns.rb', formula.replace(/^  /gm, ''));
+          "
 
           # Commit and push
           git config user.name "github-actions[bot]"
