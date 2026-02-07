@@ -12,22 +12,9 @@ on:
         type: string
 
 jobs:
-  # Build standalone binaries for all platforms
+  # Build standalone binaries for all platforms (cross-compile from Linux)
   build-binaries:
-    strategy:
-      matrix:
-        include:
-          - os: macos-14
-            target: bun-darwin-arm64
-            artifact: knowns-darwin-arm64
-          - os: macos-12
-            target: bun-darwin-x64
-            artifact: knowns-darwin-x64
-          - os: ubuntu-latest
-            target: bun-linux-x64
-            artifact: knowns-linux-x64
-
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -40,26 +27,49 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Build standalone binary
+      - name: Build all binaries (cross-compile)
         run: |
-          bun build --compile --target=${{ matrix.target }} ./src/index.ts --outfile=${{ matrix.artifact }}
-          chmod +x ${{ matrix.artifact }}
+          # Build for all targets
+          bun build --compile --target=bun-darwin-arm64 ./src/index.ts --outfile=knowns-darwin-arm64
+          bun build --compile --target=bun-darwin-x64 ./src/index.ts --outfile=knowns-darwin-x64
+          bun build --compile --target=bun-linux-x64 ./src/index.ts --outfile=knowns-linux-x64
 
-      - name: Test binary
-        run: ./${{ matrix.artifact }} --version
+          # Make executable
+          chmod +x knowns-darwin-arm64 knowns-darwin-x64 knowns-linux-x64
 
-      - name: Create tarball
+      - name: Test Linux binary
+        run: ./knowns-linux-x64 --version
+
+      - name: Create tarballs
         run: |
-          tar -czvf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
-          shasum -a 256 ${{ matrix.artifact }}.tar.gz > ${{ matrix.artifact }}.tar.gz.sha256
+          for bin in knowns-darwin-arm64 knowns-darwin-x64 knowns-linux-x64; do
+            tar -czvf ${bin}.tar.gz ${bin}
+            sha256sum ${bin}.tar.gz > ${bin}.tar.gz.sha256
+          done
 
-      - name: Upload artifact
+      - name: Upload darwin-arm64
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
+          name: knowns-darwin-arm64
           path: |
-            ${{ matrix.artifact }}.tar.gz
-            ${{ matrix.artifact }}.tar.gz.sha256
+            knowns-darwin-arm64.tar.gz
+            knowns-darwin-arm64.tar.gz.sha256
+
+      - name: Upload darwin-x64
+        uses: actions/upload-artifact@v4
+        with:
+          name: knowns-darwin-x64
+          path: |
+            knowns-darwin-x64.tar.gz
+            knowns-darwin-x64.tar.gz.sha256
+
+      - name: Upload linux-x64
+        uses: actions/upload-artifact@v4
+        with:
+          name: knowns-linux-x64
+          path: |
+            knowns-linux-x64.tar.gz
+            knowns-linux-x64.tar.gz.sha256
 
   # Publish to npm and upload binaries to release
   publish:
