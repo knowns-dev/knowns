@@ -1,5 +1,5 @@
 /**
- * Notify the web server about task changes from CLI
+ * Notify the web server about task changes from CLI/MCP
  * This allows real-time updates in the Web UI when AI/CLI modifies tasks
  */
 
@@ -9,16 +9,29 @@ import { findProjectRoot } from "./find-project-root";
 
 const DEFAULT_PORT = 6420;
 
+// Cache the project root for MCP context where process.cwd() is not reliable
+let cachedProjectRoot: string | null = null;
+
+/**
+ * Set the project root for notification functions
+ * Call this when initializing MCP to ensure notifications find the right port file
+ */
+export function setNotifyProjectRoot(projectRoot: string): void {
+	cachedProjectRoot = projectRoot;
+}
+
 /**
  * Get server port from port file, config, or use default
+ * @param projectRoot - Optional project root override (for MCP context)
  */
-function getServerPort(): number {
+function getServerPort(projectRoot?: string): number {
 	try {
-		const projectRoot = findProjectRoot();
-		if (!projectRoot) return DEFAULT_PORT;
+		// Priority: explicit param > cached > findProjectRoot
+		const root = projectRoot || cachedProjectRoot || findProjectRoot();
+		if (!root) return DEFAULT_PORT;
 
 		// First, check for running server's port file
-		const portFilePath = join(projectRoot, ".knowns/.server-port");
+		const portFilePath = join(root, ".knowns/.server-port");
 		if (existsSync(portFilePath)) {
 			const portFromFile = Number.parseInt(readFileSync(portFilePath, "utf-8").trim(), 10);
 			if (!Number.isNaN(portFromFile) && portFromFile > 0) {
@@ -27,7 +40,7 @@ function getServerPort(): number {
 		}
 
 		// Fall back to config
-		const configPath = join(projectRoot, ".knowns/config.json");
+		const configPath = join(root, ".knowns/config.json");
 		if (!existsSync(configPath)) return DEFAULT_PORT;
 
 		const content = readFileSync(configPath, "utf-8");

@@ -19,6 +19,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { FileStore } from "@storage/file-store";
 import { normalizePath } from "@utils/index";
+import { setNotifyProjectRoot } from "@utils/notify-server";
 import matter from "gray-matter";
 
 // Import handlers
@@ -68,6 +69,10 @@ const fileStoreCache = new Map<string, FileStore>();
  */
 function getFileStore(): FileStore {
 	const projectRoot = getProjectRoot();
+
+	// Ensure notify-server knows the project root for real-time web updates
+	setNotifyProjectRoot(projectRoot);
+
 	let store = fileStoreCache.get(projectRoot);
 	if (!store) {
 		store = new FileStore(projectRoot);
