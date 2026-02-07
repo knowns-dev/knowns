@@ -65,11 +65,17 @@ Knowns resolves `@doc/...` and `@task-...` into real files. AI reads them via [M
 ## Install
 
 ```bash
-# using npm
+# Homebrew (macOS/Linux) - no Node.js required
+brew install knowns-dev/tap/knowns
+
+# npm
 npm install -g knowns
 
-# using bun
+# bun
 bun install -g knowns
+
+# npx (no install)
+npx knowns
 
 
 knowns init
@@ -150,20 +156,20 @@ knowns agents sync --type mcp               # MCP tools format
 When using Claude Code with Knowns, use skills (slash commands) for a guided workflow:
 
 ```
-/kn:init     → Read project docs, understand context
-/kn:plan     → Take task, gather context, create plan (wait for approval)
-/kn:implement → Follow plan, check ACs, track progress
-/kn:commit   → Commit with conventional format
+/kn-init     → Read project docs, understand context
+/kn-plan     → Take task, gather context, create plan (wait for approval)
+/kn-implement → Follow plan, check ACs, track progress
+/kn-commit   → Commit with conventional format
 ```
 
 ### Example Session
 
 ```
-You: /kn:init
+You: /kn-init
 Claude: [Reads README, ARCHITECTURE, checks task backlog]
         "Project uses NestJS with CQRS pattern. 3 tasks in-progress..."
 
-You: /kn:plan 42
+You: /kn-plan 42
 Claude: [Takes task, reads refs, searches docs]
         "Task #42: Add user authentication
 
@@ -177,7 +183,7 @@ Claude: [Takes task, reads refs, searches docs]
 
 You: Yes
 
-You: /kn:implement 42
+You: /kn-implement 42
 Claude: [Follows plan, generates code, checks ACs]
         "✓ AC1: User can login - DONE
          ✓ AC2: JWT token returned - DONE
@@ -185,7 +191,7 @@ Claude: [Follows plan, generates code, checks ACs]
 
          All acceptance criteria complete. Ready to commit?"
 
-You: /kn:commit
+You: /kn-commit
 Claude: [Creates conventional commit]
         "feat(auth): add JWT authentication
 
@@ -198,14 +204,14 @@ Claude: [Creates conventional commit]
 
 | Skill | Description |
 |-------|-------------|
-| `/kn:init` | Initialize session - read docs, understand project |
-| `/kn:plan <id>` | Take task, gather context, create implementation plan |
-| `/kn:implement <id>` | Execute plan, track progress, check acceptance criteria |
-| `/kn:research` | Search codebase, find patterns, explore before coding |
-| `/kn:commit` | Create conventional commit with verification |
-| `/kn:doc` | Create or update documentation |
-| `/kn:extract` | Extract reusable patterns into docs/templates |
-| `/kn:template` | List, run, or create code templates |
+| `/kn-init` | Initialize session - read docs, understand project |
+| `/kn-plan <id>` | Take task, gather context, create implementation plan |
+| `/kn-implement <id>` | Execute plan, track progress, check acceptance criteria |
+| `/kn-research` | Search codebase, find patterns, explore before coding |
+| `/kn-commit` | Create conventional commit with verification |
+| `/kn-doc` | Create or update documentation |
+| `/kn-extract` | Extract reusable patterns into docs/templates |
+| `/kn-template` | List, run, or create code templates |
 
 ---
 

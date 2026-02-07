@@ -10,16 +10,16 @@
  * - Content is the skill instructions
  */
 
-import knCommitMd from "./kn:commit/SKILL.md";
-import knDocMd from "./kn:doc/SKILL.md";
-import knExtractMd from "./kn:extract/SKILL.md";
-import knImplementMd from "./kn:implement/SKILL.md";
-import knInitMd from "./kn:init/SKILL.md";
-import knPlanMd from "./kn:plan/SKILL.md";
-import knResearchMd from "./kn:research/SKILL.md";
-import knSpecMd from "./kn:spec/SKILL.md";
-import knTemplateMd from "./kn:template/SKILL.md";
-import knVerifyMd from "./kn:verify/SKILL.md";
+import knCommitMd from "./kn-commit/SKILL.md";
+import knDocMd from "./kn-doc/SKILL.md";
+import knExtractMd from "./kn-extract/SKILL.md";
+import knImplementMd from "./kn-implement/SKILL.md";
+import knInitMd from "./kn-init/SKILL.md";
+import knPlanMd from "./kn-plan/SKILL.md";
+import knResearchMd from "./kn-research/SKILL.md";
+import knSpecMd from "./kn-spec/SKILL.md";
+import knTemplateMd from "./kn-template/SKILL.md";
+import knVerifyMd from "./kn-verify/SKILL.md";
 
 /**
  * Skill definition
@@ -72,16 +72,16 @@ function createSkill(content: string, folderName: string): Skill {
 }
 
 // Export individual skills
-export const SKILL_INIT = createSkill(knInitMd, "kn:init");
-export const SKILL_PLAN = createSkill(knPlanMd, "kn:plan");
-export const SKILL_IMPLEMENT = createSkill(knImplementMd, "kn:implement");
-export const SKILL_RESEARCH = createSkill(knResearchMd, "kn:research");
-export const SKILL_COMMIT = createSkill(knCommitMd, "kn:commit");
-export const SKILL_EXTRACT = createSkill(knExtractMd, "kn:extract");
-export const SKILL_DOC = createSkill(knDocMd, "kn:doc");
-export const SKILL_TEMPLATE = createSkill(knTemplateMd, "kn:template");
-export const SKILL_SPEC = createSkill(knSpecMd, "kn:spec");
-export const SKILL_VERIFY = createSkill(knVerifyMd, "kn:verify");
+export const SKILL_INIT = createSkill(knInitMd, "kn-init");
+export const SKILL_PLAN = createSkill(knPlanMd, "kn-plan");
+export const SKILL_IMPLEMENT = createSkill(knImplementMd, "kn-implement");
+export const SKILL_RESEARCH = createSkill(knResearchMd, "kn-research");
+export const SKILL_COMMIT = createSkill(knCommitMd, "kn-commit");
+export const SKILL_EXTRACT = createSkill(knExtractMd, "kn-extract");
+export const SKILL_DOC = createSkill(knDocMd, "kn-doc");
+export const SKILL_TEMPLATE = createSkill(knTemplateMd, "kn-template");
+export const SKILL_SPEC = createSkill(knSpecMd, "kn-spec");
+export const SKILL_VERIFY = createSkill(knVerifyMd, "kn-verify");
 
 /**
  * All built-in skills

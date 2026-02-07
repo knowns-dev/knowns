@@ -9,10 +9,16 @@ Complete guide for using Knowns - a CLI-first knowledge layer and task managemen
 ### Installation
 
 ```bash
-# Install globally via npm
+# Homebrew (macOS/Linux) - no Node.js required
+brew install knowns-dev/tap/knowns
+
+# npm (requires Node.js 18+)
 npm install -g knowns
 
-# Or via npx (no installation)
+# bun
+bun install -g knowns
+
+# npx (no installation, requires Node.js)
 npx knowns <command>
 ```
 

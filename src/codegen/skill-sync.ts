@@ -213,7 +213,15 @@ async function syncToPlatform(skills: Skill[], platform: PlatformConfig, options
 }
 
 /**
- * Clean up deprecated skill folders (any folder starting with "knowns.")
+ * Check if folder is a deprecated skill folder
+ * Deprecated formats: "knowns.*" and "kn:*" (colon not valid on Windows)
+ */
+function isDeprecatedSkillFolder(name: string): boolean {
+	return name.startsWith("knowns.") || name.startsWith("kn:");
+}
+
+/**
+ * Clean up deprecated skill folders (any folder starting with "knowns." or "kn:")
  */
 function cleanupDeprecatedSkills(targetDir: string, dryRun?: boolean): number {
 	let removed = 0;
@@ -221,7 +229,7 @@ function cleanupDeprecatedSkills(targetDir: string, dryRun?: boolean): number {
 	if (existsSync(targetDir)) {
 		const entries = readdirSync(targetDir, { withFileTypes: true });
 		for (const entry of entries) {
-			if (entry.isDirectory() && entry.name.startsWith("knowns.")) {
+			if (entry.isDirectory() && isDeprecatedSkillFolder(entry.name)) {
 				if (!dryRun) {
 					const deprecatedPath = join(targetDir, entry.name);
 					rmSync(deprecatedPath, { recursive: true, force: true });

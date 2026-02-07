@@ -70,11 +70,14 @@ When you select **MCP** as the AI Guidelines type during init, Knowns automatica
 ### 1. Install Knowns
 
 ```bash
-# Using bun (recommended)
-bun install -g knowns
+# Homebrew (macOS/Linux)
+brew install knowns-dev/tap/knowns
 
-# Or using npm
+# npm
 npm install -g knowns
+
+# bun
+bun install -g knowns
 ```
 
 ### 2. Configure Your Platform

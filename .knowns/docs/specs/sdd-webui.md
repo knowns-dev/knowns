@@ -30,7 +30,7 @@ Extend existing WebUI to support Spec-Driven Development (SDD). Reuse Task and D
 - Display status badge (Draft/Approved/Implemented)
 - Show AC progress bar (X/Y completed)
 - Show linked tasks count
-- Action buttons: "Approve", "Create Tasks" (calls `/kn:plan --from`)
+- Action buttons: "Approve", "Create Tasks" (calls `/kn-plan --from`)
 
 #### FR-3: Spec List View
 - Filter docs to show only specs (folder: specs/ OR tag: spec)
