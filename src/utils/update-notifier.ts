@@ -178,8 +178,13 @@ export async function notifyCliUpdate(options: UpdateNotifierOptions): Promise<v
 		return;
 	}
 
-	const installCmd =
-		pm === "pnpm"
+	// Detect if installed via Homebrew
+	const execPath = process.execPath;
+	const isHomebrew = execPath.includes("/homebrew/") || execPath.includes("/Cellar/");
+
+	const installCmd = isHomebrew
+		? "brew upgrade knowns"
+		: pm === "pnpm"
 			? "pnpm add -g knowns"
 			: pm === "yarn"
 				? "yarn global add knowns"

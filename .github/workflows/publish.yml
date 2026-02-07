@@ -12,68 +12,7 @@ on:
         type: string
 
 jobs:
-  # Build standalone binaries for all platforms (cross-compile from Linux)
-  build-binaries:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Build all binaries (cross-compile)
-        run: |
-          # Build for all targets
-          bun build --compile --target=bun-darwin-arm64 ./src/index.ts --outfile=knowns-darwin-arm64
-          bun build --compile --target=bun-darwin-x64 ./src/index.ts --outfile=knowns-darwin-x64
-          bun build --compile --target=bun-linux-x64 ./src/index.ts --outfile=knowns-linux-x64
-
-          # Make executable
-          chmod +x knowns-darwin-arm64 knowns-darwin-x64 knowns-linux-x64
-
-      - name: Test Linux binary
-        run: ./knowns-linux-x64 --version
-
-      - name: Create tarballs
-        run: |
-          for bin in knowns-darwin-arm64 knowns-darwin-x64 knowns-linux-x64; do
-            tar -czvf ${bin}.tar.gz ${bin}
-            sha256sum ${bin}.tar.gz > ${bin}.tar.gz.sha256
-          done
-
-      - name: Upload darwin-arm64
-        uses: actions/upload-artifact@v4
-        with:
-          name: knowns-darwin-arm64
-          path: |
-            knowns-darwin-arm64.tar.gz
-            knowns-darwin-arm64.tar.gz.sha256
-
-      - name: Upload darwin-x64
-        uses: actions/upload-artifact@v4
-        with:
-          name: knowns-darwin-x64
-          path: |
-            knowns-darwin-x64.tar.gz
-            knowns-darwin-x64.tar.gz.sha256
-
-      - name: Upload linux-x64
-        uses: actions/upload-artifact@v4
-        with:
-          name: knowns-linux-x64
-          path: |
-            knowns-linux-x64.tar.gz
-            knowns-linux-x64.tar.gz.sha256
-
-  # Publish to npm and upload binaries to release
   publish:
-    needs: build-binaries
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -85,6 +24,19 @@ jobs:
         with:
           fetch-depth: 0
 
+      # ============================================
+      # Step 1: Update version from tag
+      # ============================================
+      - name: Update version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Updating to version $VERSION"
+
+      # ============================================
+      # Step 2: Build npm dist (Node.js)
+      # ============================================
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -92,8 +44,12 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           cache: "npm"
 
-      - name: Install dependencies
+      - name: Install dependencies (npm)
         run: npm ci
+
+      - name: Update package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npm version $VERSION --no-git-tag-version --allow-same-version
 
       - name: Run linter
         run: npm run lint
@@ -101,123 +57,138 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Update version from tag
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          npm version $VERSION --no-git-tag-version --allow-same-version
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "Updated package.json to version $VERSION"
-
-      - name: Build project
+      - name: Build npm dist
         run: npm run build
 
-      - name: Commit version bump
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          git config user.name "howznguyen"
-          git config user.email "howznguyen@knowns.dev"
-          git add package.json package-lock.json
-          git commit -m "chore: bump version to ${{ env.VERSION }}" || echo "No changes to commit"
-          git push origin HEAD:main
-
-      - name: Verify build output
+      - name: Verify npm build
         run: |
           ls -la dist/
-          echo "Checking if dist/index.js exists..."
           test -f dist/index.js || (echo "Error: dist/index.js not found" && exit 1)
 
+      # ============================================
+      # Step 3: Build standalone binaries (Bun cross-compile)
+      # ============================================
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies (bun)
+        run: bun install
+
+      - name: Build standalone binaries
+        run: |
+          echo "Building standalone binaries for v$VERSION..."
+          bun build --compile --target=bun-darwin-arm64 ./src/index.ts --outfile=knowns-darwin-arm64
+          bun build --compile --target=bun-darwin-x64 ./src/index.ts --outfile=knowns-darwin-x64
+          bun build --compile --target=bun-linux-x64 ./src/index.ts --outfile=knowns-linux-x64
+          chmod +x knowns-darwin-arm64 knowns-darwin-x64 knowns-linux-x64
+
+      - name: Test Linux binary
+        run: |
+          ./knowns-linux-x64 --version
+          ./knowns-linux-x64 --version | grep -q "$VERSION" || echo "Warning: Version mismatch"
+
+      - name: Create tarballs
+        run: |
+          for bin in knowns-darwin-arm64 knowns-darwin-x64 knowns-linux-x64; do
+            tar -czvf ${bin}.tar.gz ${bin}
+            sha256sum ${bin}.tar.gz > ${bin}.tar.gz.sha256
+          done
+          ls -la *.tar.gz
+
+      # ============================================
+      # Step 4: Publish to npm
+      # ============================================
       - name: Publish to npm
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: binaries
-
-      - name: Upload binaries to GitHub Release
+      # ============================================
+      # Step 5: Upload binaries to GitHub Release
+      # ============================================
+      - name: Upload binaries to Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-
-          # Upload each binary
-          for dir in binaries/*/; do
-            for file in "$dir"*.tar.gz; do
-              if [ -f "$file" ]; then
-                echo "Uploading $file..."
-                gh release upload "v${VERSION}" "$file" --clobber
-              fi
-            done
-            for file in "$dir"*.sha256; do
-              if [ -f "$file" ]; then
-                echo "Uploading $file..."
-                gh release upload "v${VERSION}" "$file" --clobber
-              fi
-            done
+          for file in *.tar.gz *.sha256; do
+            echo "Uploading $file..."
+            gh release upload "v${VERSION}" "$file" --clobber
           done
 
+      # ============================================
+      # Step 6: Update Homebrew tap
+      # ============================================
       - name: Update Homebrew tap
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          if [ -z "$GH_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN not set, skipping Homebrew update"
+            exit 0
+          fi
 
           # Get SHA256 for each platform
-          SHA_DARWIN_ARM64=$(cat binaries/knowns-darwin-arm64/knowns-darwin-arm64.tar.gz.sha256 | awk '{print $1}')
-          SHA_DARWIN_X64=$(cat binaries/knowns-darwin-x64/knowns-darwin-x64.tar.gz.sha256 | awk '{print $1}')
-          SHA_LINUX_X64=$(cat binaries/knowns-linux-x64/knowns-linux-x64.tar.gz.sha256 | awk '{print $1}')
+          SHA_DARWIN_ARM64=$(cat knowns-darwin-arm64.tar.gz.sha256 | awk '{print $1}')
+          SHA_DARWIN_X64=$(cat knowns-darwin-x64.tar.gz.sha256 | awk '{print $1}')
+          SHA_LINUX_X64=$(cat knowns-linux-x64.tar.gz.sha256 | awk '{print $1}')
+
+          echo "SHA256 checksums:"
+          echo "  darwin-arm64: $SHA_DARWIN_ARM64"
+          echo "  darwin-x64: $SHA_DARWIN_X64"
+          echo "  linux-x64: $SHA_LINUX_X64"
 
           # Clone homebrew tap repo
           git clone https://x-access-token:${GH_TOKEN}@github.com/knowns-dev/homebrew-tap.git
           cd homebrew-tap
 
-          # Update formula
-          cat > Formula/knowns.rb << EOF
-          class Knowns < Formula
-            desc "AI-first CLI for task management and documentation"
-            homepage "https://cli.knowns.dev"
-            version "${VERSION}"
-            license "MIT"
+          # Update formula using node script
+          node -e "
+          const fs = require('fs');
+          const formula = \`class Knowns < Formula
+            desc \"AI-first CLI for task management and documentation\"
+            homepage \"https://cli.knowns.dev\"
+            version \"${VERSION}\"
+            license \"MIT\"
 
             on_macos do
               on_arm do
-                url "https://github.com/knowns-dev/knowns/releases/download/v${VERSION}/knowns-darwin-arm64.tar.gz"
-                sha256 "${SHA_DARWIN_ARM64}"
+                url \"https://github.com/knowns-dev/knowns/releases/download/v${VERSION}/knowns-darwin-arm64.tar.gz\"
+                sha256 \"${SHA_DARWIN_ARM64}\"
               end
               on_intel do
-                url "https://github.com/knowns-dev/knowns/releases/download/v${VERSION}/knowns-darwin-x64.tar.gz"
-                sha256 "${SHA_DARWIN_X64}"
+                url \"https://github.com/knowns-dev/knowns/releases/download/v${VERSION}/knowns-darwin-x64.tar.gz\"
+                sha256 \"${SHA_DARWIN_X64}\"
               end
             end
 
             on_linux do
               on_intel do
-                url "https://github.com/knowns-dev/knowns/releases/download/v${VERSION}/knowns-linux-x64.tar.gz"
-                sha256 "${SHA_LINUX_X64}"
+                url \"https://github.com/knowns-dev/knowns/releases/download/v${VERSION}/knowns-linux-x64.tar.gz\"
+                sha256 \"${SHA_LINUX_X64}\"
               end
             end
 
             def install
               if OS.mac? && Hardware::CPU.arm?
-                bin.install "knowns-darwin-arm64" => "knowns"
+                bin.install \"knowns-darwin-arm64\" => \"knowns\"
               elsif OS.mac? && Hardware::CPU.intel?
-                bin.install "knowns-darwin-x64" => "knowns"
+                bin.install \"knowns-darwin-x64\" => \"knowns\"
               elsif OS.linux? && Hardware::CPU.intel?
-                bin.install "knowns-linux-x64" => "knowns"
+                bin.install \"knowns-linux-x64\" => \"knowns\"
               end
-              bin.install_symlink "knowns" => "kn"
+              bin.install_symlink \"knowns\" => \"kn\"
             end
 
             test do
-              assert_match version.to_s, shell_output("#{bin}/knowns --version")
+              assert_match version.to_s, shell_output(\"#{bin}/knowns --version\")
             end
-          end
-          EOF
+          end\`;
+          fs.writeFileSync('Formula/knowns.rb', formula.replace(/^  /gm, ''));
+          "
 
           # Commit and push
           git config user.name "github-actions[bot]"
@@ -226,13 +197,27 @@ jobs:
           git commit -m "Update knowns to v${VERSION}"
           git push
 
-      - name: Get changelog from GitHub Release
+      # ============================================
+      # Step 7: Commit version bump to main
+      # ============================================
+      - name: Commit version bump
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          git config user.name "howznguyen"
+          git config user.email "howznguyen@knowns.dev"
+          git add package.json package-lock.json
+          git commit -m "chore: bump version to $VERSION" || echo "No changes to commit"
+          git push origin HEAD:main
+
+      # ============================================
+      # Step 8: Discord notification
+      # ============================================
+      - name: Get changelog from Release
         if: startsWith(github.ref, 'refs/tags/v')
         id: changelog
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
           CHANGELOG=$(gh release view "v${VERSION}" --repo ${{ github.repository }} --json body -q '.body' 2>/dev/null || echo "")
           CHANGELOG=$(echo "$CHANGELOG" | sed '/^\*\*Full Changelog\*\*:/d')
           if [ -z "$CHANGELOG" ]; then
@@ -266,12 +251,12 @@ jobs:
                 \"fields\": [
                   {
                     \"name\": \"📦 Install/Update\",
-                    \"value\": \"\`\`\`bash\n# npm\nnpm install -g knowns@${VERSION}\n\n# Homebrew\nbrew install knowns-dev/tap/knowns\n\`\`\`\",
+                    \"value\": \"\`\`\`bash\n# Homebrew (macOS/Linux)\nbrew install knowns-dev/tap/knowns\n\n# npm\nnpm install -g knowns@${VERSION}\n\`\`\`\",
                     \"inline\": false
                   },
                   {
                     \"name\": \"🔗 Links\",
-                    \"value\": \"[npm](https://www.npmjs.com/package/knowns/v/${VERSION}) • [GitHub Release](https://github.com/knowns-dev/knowns/releases/tag/v${VERSION}) • [Changelog](https://cli.knowns.dev/changelog)\",
+                    \"value\": \"[npm](https://www.npmjs.com/package/knowns/v/${VERSION}) • [GitHub Release](https://github.com/knowns-dev/knowns/releases/tag/v${VERSION}) • [Docs](https://cli.knowns.dev)\",
                     \"inline\": false
                   }
                 ],
