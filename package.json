@@ -1,6 +1,6 @@
 {
 	"name": "knowns",
-	"version": "0.11.0",
+	"version": "0.11.1",
 	"description": "AI-native task and documentation management for dev teams",
 	"module": "index.ts",
 	"type": "module",
