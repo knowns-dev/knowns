@@ -49,7 +49,9 @@ jobs:
 
       - name: Update package.json version
         if: startsWith(github.ref, 'refs/tags/v')
-        run: npm version $VERSION --no-git-tag-version --allow-same-version
+        run: |
+          npm version $VERSION --no-git-tag-version --allow-same-version
+          npx biome format --write package.json
 
       - name: Run linter
         run: npm run lint
