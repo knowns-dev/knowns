@@ -33,16 +33,24 @@ function renderSkillContent(content: string, mode: InstructionMode): string {
 }
 
 /**
- * Clean up deprecated skill folders (any folder starting with "knowns.")
+ * Check if folder is a deprecated skill folder
+ * Deprecated formats: "knowns.*" and "kn:*" (colon not valid on Windows)
+ */
+function isDeprecatedSkillFolder(name: string): boolean {
+	return name.startsWith("knowns.") || name.startsWith("kn:");
+}
+
+/**
+ * Clean up deprecated skill folders (any folder starting with "knowns." or "kn:")
  */
 function cleanupDeprecatedSkills(skillsDir: string): number {
 	let removed = 0;
 
-	// Remove any folder starting with "knowns." in .claude/skills/
+	// Remove deprecated folders in .claude/skills/
 	if (existsSync(skillsDir)) {
 		const entries = readdirSync(skillsDir, { withFileTypes: true });
 		for (const entry of entries) {
-			if (entry.isDirectory() && entry.name.startsWith("knowns.")) {
+			if (entry.isDirectory() && isDeprecatedSkillFolder(entry.name)) {
 				const deprecatedPath = join(skillsDir, entry.name);
 				rmSync(deprecatedPath, { recursive: true, force: true });
 				console.log(chalk.yellow(`✓ Removed deprecated: ${entry.name}`));
@@ -56,7 +64,7 @@ function cleanupDeprecatedSkills(skillsDir: string): number {
 	if (existsSync(agentSkillsDir)) {
 		const entries = readdirSync(agentSkillsDir, { withFileTypes: true });
 		for (const entry of entries) {
-			if (entry.isDirectory() && entry.name.startsWith("knowns.")) {
+			if (entry.isDirectory() && isDeprecatedSkillFolder(entry.name)) {
 				const deprecatedPath = join(agentSkillsDir, entry.name);
 				rmSync(deprecatedPath, { recursive: true, force: true });
 				console.log(chalk.yellow(`✓ Removed deprecated: .agent/skills/${entry.name}`));

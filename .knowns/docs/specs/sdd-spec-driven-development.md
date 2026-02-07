@@ -119,7 +119,7 @@ knowns task list --spec specs/user-auth  # Filter by spec
 
 ## Skills
 
-### `/kn:spec <name>`
+### `/kn-spec <name>`
 
 Create a spec document in `specs/` folder.
 
@@ -129,9 +129,9 @@ Create a spec document in `specs/` folder.
 3. Include: Overview, Requirements, ACs, Scenarios
 4. Ask: "Review. Approve, edit, or add more?"
 5. When approved, set `status: approved`
-6. Suggest: "Create tasks? (`/kn:plan --from @doc/specs/<name>`)"
+6. Suggest: "Create tasks? (`/kn-plan --from @doc/specs/<name>`)"
 
-### `/kn:verify`
+### `/kn-verify`
 
 Run validation with SDD-awareness.
 
@@ -162,7 +162,7 @@ Coverage: 6/8 tasks linked to specs (75%)
 
 **Exit code:** Always 0 (warn, never block)
 
-### `/kn:plan --from @doc/specs/<name>`
+### `/kn-plan --from @doc/specs/<name>`
 
 Generate tasks from spec.
 
@@ -181,27 +181,27 @@ Generate tasks from spec.
 ### Full SDD (large features)
 
 ```
-/kn:spec user-auth                    → Create spec in specs/
-/kn:plan --from @doc/specs/user-auth  → Generate tasks
-/kn:init                              → Read context
-/kn:implement 42                      → Code (AI reads spec via MCP)
-/kn:verify                            → Check completion
-/kn:commit                            → Ship
+/kn-spec user-auth                    → Create spec in specs/
+/kn-plan --from @doc/specs/user-auth  → Generate tasks
+/kn-init                              → Read context
+/kn-implement 42                      → Code (AI reads spec via MCP)
+/kn-verify                            → Check completion
+/kn-commit                            → Ship
 ```
 
 ### Normal Flow (small features)
 
 ```
-/kn:plan 42                           → Plan from task
-/kn:implement 42                      → Code
-/kn:commit                            → Ship (verify runs auto)
+/kn-plan 42                           → Plan from task
+/kn-implement 42                      → Code
+/kn-commit                            → Ship (verify runs auto)
 ```
 
 ### Quick Fix (bugs)
 
 ```
-/kn:implement 42                      → Just code
-/kn:commit                            → Ship
+/kn-implement 42                      → Just code
+/kn-commit                            → Ship
 ```
 
 ## CLI Changes Required
@@ -239,9 +239,9 @@ Related Tasks (same spec):
 
 - [ ] Task schema: add `spec` field
 - [ ] Validate: add SDD checks
-- [ ] `/kn:spec` skill
-- [ ] `/kn:verify` skill
-- [ ] `/kn:plan --from` support
+- [ ] `/kn-spec` skill
+- [ ] `/kn-verify` skill
+- [ ] `/kn-plan --from` support
 
 ### Phase 2: Web UI
 
@@ -258,7 +258,7 @@ Related Tasks (same spec):
 ## Example Session
 
 ```
-You: /kn:spec user-auth
+You: /kn-spec user-auth
 
 Claude: 📋 Creating spec in specs/user-auth.md
 
@@ -288,7 +288,7 @@ Claude: ✅ Spec approved. Generated 4 tasks:
         - task-45: Token refresh (spec: specs/user-auth)
         - task-46: Auth middleware (spec: specs/user-auth)
 
-You: /kn:implement 43
+You: /kn-implement 43
 
 Claude: [Reads @doc/specs/user-auth via MCP, implements, checks ACs]
 
@@ -296,7 +296,7 @@ Claude: [Reads @doc/specs/user-auth via MCP, implements, checks ACs]
         ✓ AC-1.2: DONE
         ✓ AC-1.3: DONE
 
-You: /kn:verify
+You: /kn-verify
 
 Claude: SDD Status: specs/user-auth 25% complete (1/4 tasks)
         ✅ REQ-1: all ACs met

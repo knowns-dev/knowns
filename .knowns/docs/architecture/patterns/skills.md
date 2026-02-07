@@ -10,33 +10,33 @@ tags:
 ---
 ## Overview
 
-Knowns CLI integrates with Claude Code skills - workflow templates that can be invoked via `/kn:<skill>` commands.
+Knowns CLI integrates with Claude Code skills - workflow templates that can be invoked via `/kn-<skill>` commands.
 
 ## Skill Structure
 
 ```
 src/instructions/skills/
 ├── index.ts                    # Export all skills
-├── kn:init/
+├── kn-init/
 │   └── SKILL.md               # Skill content with frontmatter
-├── kn:plan/
+├── kn-plan/
 │   └── SKILL.md
-├── kn:implement/
+├── kn-implement/
 │   └── SKILL.md
 └── ...
 ```
 
 ## Naming Convention
 
-- **Folder name**: `kn:<skill>`
-- **Examples**: `kn:init`, `kn:plan`, `kn:implement`
+- **Folder name**: `kn-<skill>`
+- **Examples**: `kn-init`, `kn-plan`, `kn-implement`
 - **Colon notation** creates clear namespace in Claude Code UI
 
 ## SKILL.md Format
 
 ```yaml
 ---
-name: kn:init
+name: kn-init
 description: Initialize session with project context
 ---
 
@@ -49,19 +49,19 @@ description: Initialize session with project context
 
 | Skill | Description |
 |-------|-------------|
-| `kn:init` | Initialize session (read docs, list tasks) |
-| `kn:plan` | Plan task implementation |
-| `kn:implement` | Implement task (includes reopen logic) |
-| `kn:research` | Research codebase before implementation |
-| `kn:commit` | Generate commit message and commit changes |
-| `kn:extract` | Extract knowledge to documentation |
-| `kn:doc` | Create and update documentation |
-| `kn:template` | Generate code from templates |
+| `kn-init` | Initialize session (read docs, list tasks) |
+| `kn-plan` | Plan task implementation |
+| `kn-implement` | Implement task (includes reopen logic) |
+| `kn-research` | Research codebase before implementation |
+| `kn-commit` | Generate commit message and commit changes |
+| `kn-extract` | Extract knowledge to documentation |
+| `kn-doc` | Create and update documentation |
+| `kn-template` | Generate code from templates |
 
 ## Workflow
 
 ```
-/kn:init → /kn:research → /kn:plan <id> → /kn:implement <id> → /kn:commit → /kn:extract <id>
+/kn-init → /kn-research → /kn-plan <id> → /kn-implement <id> → /kn-commit → /kn-extract <id>
 ```
 
 ## Sync Commands
@@ -80,14 +80,14 @@ knowns sync agent --all       # Include Gemini, Copilot
 ### index.ts Pattern
 
 ```typescript
-import knInitMd from "./kn:init/SKILL.md";
+import knInitMd from "./kn-init/SKILL.md";
 
 function createSkill(content: string, folderName: string): Skill {
   const { name, description } = parseSkillFrontmatter(content);
   return { name, folderName, description, content };
 }
 
-export const SKILL_INIT = createSkill(knInitMd, "kn:init");
+export const SKILL_INIT = createSkill(knInitMd, "kn-init");
 ```
 
 ### Sync Function
