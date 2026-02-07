@@ -5,7 +5,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FileStore } from "@storage/file-store";
@@ -18,6 +18,16 @@ import { broadcast, createEventsRoute } from "./routes/events";
 // Check if running in Bun
 const isBun = typeof globalThis.Bun !== "undefined";
 
+// Check if running as Bun standalone binary (virtual filesystem)
+const isBunStandalone = (): boolean => {
+	try {
+		const url = import.meta.url;
+		return url.includes("/$bunfs/") || url.includes("\\$bunfs\\");
+	} catch {
+		return false;
+	}
+};
+
 interface ServerOptions {
 	port: number;
 	projectRoot: string;
@@ -26,6 +36,19 @@ interface ServerOptions {
 
 export async function startServer(options: ServerOptions) {
 	const { port, projectRoot, open } = options;
+
+	// Check if running as standalone binary - Web UI not supported
+	if (isBunStandalone()) {
+		throw new Error(
+			"Web UI is not available in standalone binary mode.\n" +
+				"Use npx instead:\n" +
+				"  npx knowns browser\n\n" +
+				"Or install globally:\n" +
+				"  npm install -g knowns\n" +
+				"  knowns browser",
+		);
+	}
+
 	const store = new FileStore(projectRoot);
 
 	// Broadcast wrapper that extracts event type from data
@@ -103,46 +126,79 @@ export async function startServer(options: ServerOptions) {
 		}
 	});
 
-	// Start server
-	return new Promise<{ close: () => void }>((resolve, reject) => {
-		const server = app.listen(port, () => {
-			console.log(`✓ Server running at http://localhost:${port}`);
-
-			if (open) {
-				// Open browser (platform-specific)
-				try {
-					const url = `http://localhost:${port}`;
-					if (isBun) {
-						const openCommand =
-							process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-						Bun.spawn([openCommand, url]);
-					} else if (process.platform === "darwin") {
-						spawn("open", [url], { stdio: "ignore" });
-					} else if (process.platform === "win32") {
-						spawn("cmd", ["/c", "start", "", url], { stdio: "ignore" });
-					} else {
-						spawn("xdg-open", [url], { stdio: "ignore" });
-					}
-				} catch (error) {
-					console.error("Failed to open browser:", error);
-				}
+	// Open browser helper
+	const openBrowser = (url: string) => {
+		try {
+			if (isBun) {
+				const openCommand =
+					process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+				Bun.spawn([openCommand, url]);
+			} else if (process.platform === "darwin") {
+				spawn("open", [url], { stdio: "ignore" });
+			} else if (process.platform === "win32") {
+				spawn("cmd", ["/c", "start", "", url], { stdio: "ignore" });
+			} else {
+				spawn("xdg-open", [url], { stdio: "ignore" });
 			}
+		} catch (error) {
+			console.error("Failed to open browser:", error);
+		}
+	};
 
-			resolve({
-				close: () => {
-					server.close();
-				},
+	// Try to start server, auto-increment port if in use
+	const maxRetries = 10;
+	let currentPort = port;
+
+	// Write port file so CLI can find the running server
+	const portFilePath = join(projectRoot, ".knowns", ".server-port");
+
+	const tryListen = (): Promise<{ close: () => void }> => {
+		return new Promise((resolve, reject) => {
+			const server = app.listen(currentPort, () => {
+				if (currentPort !== port) {
+					console.log(`⚠ Port ${port} in use, using ${currentPort} instead`);
+				}
+				console.log(`✓ Server running at http://localhost:${currentPort}`);
+
+				// Write port to file for CLI to read
+				try {
+					writeFileSync(portFilePath, String(currentPort), "utf-8");
+				} catch {
+					// Ignore write errors
+				}
+
+				if (open) {
+					openBrowser(`http://localhost:${currentPort}`);
+				}
+
+				resolve({
+					close: () => {
+						// Cleanup port file
+						try {
+							unlinkSync(portFilePath);
+						} catch {
+							// Ignore cleanup errors
+						}
+						server.close();
+					},
+				});
+			});
+
+			server.on("error", (err: NodeJS.ErrnoException) => {
+				if (err.code === "EADDRINUSE") {
+					if (currentPort - port < maxRetries) {
+						currentPort++;
+						resolve(tryListen());
+					} else {
+						console.error(`Error: Ports ${port}-${currentPort} are all in use`);
+						reject(err);
+					}
+				} else {
+					reject(err);
+				}
 			});
 		});
+	};
 
-		server.on("error", (err: NodeJS.ErrnoException) => {
-			if (err.code === "EADDRINUSE") {
-				console.error(`Error: Port ${port} is already in use`);
-				console.error("Please stop the process using this port or choose a different port");
-				reject(err);
-			} else {
-				reject(err);
-			}
-		});
-	});
+	return tryListen();
 }

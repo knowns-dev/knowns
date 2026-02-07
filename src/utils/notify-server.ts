@@ -10,13 +10,23 @@ import { findProjectRoot } from "./find-project-root";
 const DEFAULT_PORT = 6420;
 
 /**
- * Get server port from config or use default
+ * Get server port from port file, config, or use default
  */
 function getServerPort(): number {
 	try {
 		const projectRoot = findProjectRoot();
 		if (!projectRoot) return DEFAULT_PORT;
 
+		// First, check for running server's port file
+		const portFilePath = join(projectRoot, ".knowns/.server-port");
+		if (existsSync(portFilePath)) {
+			const portFromFile = Number.parseInt(readFileSync(portFilePath, "utf-8").trim(), 10);
+			if (!Number.isNaN(portFromFile) && portFromFile > 0) {
+				return portFromFile;
+			}
+		}
+
+		// Fall back to config
 		const configPath = join(projectRoot, ".knowns/config.json");
 		if (!existsSync(configPath)) return DEFAULT_PORT;
 
