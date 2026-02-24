@@ -28,6 +28,7 @@ interface TaskDTO {
 	implementationPlan?: string;
 	implementationNotes?: string;
 	spec?: string;
+	fulfills?: string[]; // Spec ACs this task fulfills (e.g., ["AC-1", "AC-2"])
 }
 
 interface TaskVersionDTO {

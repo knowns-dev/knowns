@@ -24,6 +24,56 @@ Located at `.knowns/config.json`:
 | `defaultLabels` | string[] | Default labels for new tasks |
 | `timeFormat` | string | Time format (`12h` or `24h`) |
 | `gitTrackingMode` | string | Git tracking mode (`git-tracked` or `git-ignored`) |
+| `settings.semanticSearch` | object | Semantic search configuration (see below) |
+
+### Semantic Search Settings
+
+The `settings.semanticSearch` object configures the embedding model for semantic search:
+
+```json
+{
+  "settings": {
+    "semanticSearch": {
+      "enabled": true,
+      "model": "gte-small",
+      "huggingFaceId": "Xenova/gte-small",
+      "dimensions": 384,
+      "maxTokens": 512
+    }
+  }
+}
+```
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `enabled` | boolean | Enable/disable semantic search |
+| `model` | string | Model ID (e.g., `gte-small`, `gte-base`) |
+| `huggingFaceId` | string | Full HuggingFace model ID (optional, for custom models) |
+| `dimensions` | number | Embedding vector dimensions (optional) |
+| `maxTokens` | number | Max input tokens (optional) |
+
+**Managing models via CLI:**
+
+```bash
+# List available models
+knowns model list
+
+# Download and set a model
+knowns model download gte-base
+knowns model set gte-base
+
+# Add custom HuggingFace model
+knowns model add Xenova/bge-large-en-v1.5 --dims 1024
+
+# Rebuild search index after changing model
+knowns search --reindex
+```
+
+**Model storage:**
+
+Models are stored globally at `~/.knowns/models/` and shared across all projects.
+
+Custom models are tracked in `~/.knowns/custom-models.json`.
 
 ## Project Structure
 

@@ -85,6 +85,8 @@ mcp__knowns__update_task({
 })
 ```
 
+**Note:** When task is marked done (or AC is checked), matching ACs in the linked spec document are automatically checked. No manual spec update needed.
+
 ## Step 6: Extract Knowledge (optional)
 
 If patterns discovered: `/kn-extract $ARGUMENTS`

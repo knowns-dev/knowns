@@ -86,9 +86,34 @@ If errors found (broken `@doc/...` or `@task-...`), fix before asking approval.
 
 Present plan and **WAIT for explicit approval**.
 
-## Next Step
+---
 
-After approval: `/kn-implement $ARGUMENTS`
+## CRITICAL: Next Step Suggestion
+
+**You MUST suggest the next action. User won't know what to do next.**
+
+After user approves the plan:
+
+```
+Plan approved! Ready to implement.
+
+Run: /kn-implement $ARGUMENTS
+```
+
+**If user wants to review first:**
+```
+Take your time to review. When ready:
+
+Run: /kn-implement $ARGUMENTS
+```
+
+---
+
+## Related Skills
+
+- `/kn-research` - Research before planning
+- `/kn-implement <id>` - Implement after plan approved
+- `/kn-spec` - Create spec for complex features
 
 ## Checklist
 
@@ -98,6 +123,7 @@ After approval: `/kn-implement $ARGUMENTS`
 - [ ] Templates checked
 - [ ] **Validated (no broken refs)**
 - [ ] User approved
+- [ ] **Next step suggested**
 
 ---
 
@@ -137,6 +163,7 @@ For each requirement/group, create task structure:
   - [ ] AC from spec
   - [ ] AC from spec
 - **Spec:** specs/<name>
+- **Fulfills:** AC-1, AC-2 (maps to Spec ACs this task completes)
 - **Priority:** medium
 
 ### Task 2: [Requirement Title]
@@ -144,11 +171,15 @@ For each requirement/group, create task structure:
 - **ACs:**
   - [ ] AC from spec
 - **Spec:** specs/<name>
+- **Fulfills:** AC-3
 - **Priority:** medium
 
 ---
 Total: X tasks to create
 ```
+
+> **CRITICAL:** The `fulfills` field maps Task → Spec ACs. When the task is marked done,
+> the matching Spec ACs will be auto-checked in the spec document.
 
 ## Step 4: Ask for Approval
 
@@ -161,25 +192,32 @@ Total: X tasks to create
 
 ## Step 5: Create Tasks
 
-When approved:
+When approved, create tasks with `fulfills` to link Task → Spec ACs:
 
 ```json
 mcp__knowns__create_task({
   "title": "<requirement title>",
   "description": "<from spec>",
   "spec": "specs/<name>",
+  "fulfills": ["AC-1", "AC-2"],
   "priority": "medium",
   "labels": ["from-spec"]
 })
 ```
 
-Then add ACs:
+Then add implementation ACs (task-level criteria, different from spec ACs):
 ```json
 mcp__knowns__update_task({
   "taskId": "<new-id>",
-  "addAc": ["AC 1", "AC 2", "AC 3"]
+  "addAc": ["Implementation step 1", "Implementation step 2", "Tests added"]
 })
 ```
+
+> **Key Concept:**
+> - `fulfills`: Which **Spec ACs** (AC-1, AC-2, etc.) this task satisfies
+> - `addAc`: **Implementation ACs** - specific steps to complete the task
+>
+> When task status → "done", the `fulfills` ACs are auto-checked in the spec document.
 
 Repeat for each task.
 
@@ -204,7 +242,8 @@ Next steps:
 
 - [ ] Spec document read
 - [ ] Requirements parsed
+- [ ] **Tasks include `fulfills` mapping to Spec ACs**
 - [ ] Tasks previewed
 - [ ] User approved
-- [ ] Tasks created with spec link
+- [ ] Tasks created with spec link and fulfills
 - [ ] Summary shown

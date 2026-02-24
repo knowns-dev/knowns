@@ -1,7 +1,7 @@
 ---
 title: Init Process
 createdAt: '2026-01-23T04:13:12.738Z'
-updatedAt: '2026-01-23T04:13:55.323Z'
+updatedAt: '2026-02-24T07:31:50.449Z'
 description: Detailed init wizard flow and configuration steps
 tags:
   - feature
@@ -10,7 +10,7 @@ tags:
 ---
 ## Overview
 
-`knowns init` là wizard để setup Knowns trong project. Doc này mô tả chi tiết từng bước.
+`knowns init` is a wizard to setup Knowns in a project. This doc describes each step in detail.
 
 ---
 
@@ -20,7 +20,7 @@ tags:
 # Interactive (full wizard)
 knowns init
 
-# Quick init với defaults
+# Quick init with defaults
 knowns init my-project --no-wizard
 
 # Specific AI platforms
@@ -126,37 +126,34 @@ knowns init --ai claude,antigravity,cursor
 
 ---
 
-## Step 3: AI Platforms
+## Step 3: AI Platforms (Auto-Configured)
 
-```bash
-? Select AI platforms to configure:
-  ◉ Claude Code
-  ◉ Google Antigravity
-  ◉ Gemini CLI
-  ◉ Cursor
-  ◯ Cline
-  ◯ Continue
-  ◯ Windsurf
-  ◯ GitHub Copilot
-  
-  (Space to select, Enter to confirm)
-```
+**As of v0.11.3+**, AI platforms are auto-configured without selection.
 
-**Generated per platform:**
+All major platforms are initialized automatically:
 
 | Platform | Files Created |
 |----------|---------------|
-| Claude Code | `.claude/CLAUDE.md`, `.claude/skills/`, `.mcp.json` |
-| Antigravity | `.agent/skills/`, `.agent/rules/`, `.agent/settings.json` |
-| Gemini CLI | `GEMINI.md`, updates `~/.gemini/settings.json` |
-| Cursor | `.cursor/rules/`, `.cursor/mcp.json` |
-| Cline | `.clinerules/`, `.cline/mcp.json` |
-| Continue | `.continue/config.json` |
-| Windsurf | `.windsurfrules` |
+| Claude Code | `.claude/skills/`, `.mcp.json`, `CLAUDE.md` |
+| Antigravity | `.agent/skills/`, `~/.gemini/antigravity/mcp_config.json`, `GEMINI.md` |
 | GitHub Copilot | `.github/copilot-instructions.md` |
+| Generic | `AGENTS.md` |
+
+**Why auto-configure?**
+- Reduces wizard friction
+- Most users want all major platforms
+- Version tracking enables auto-sync later
+
+**Version tracking:**
+After init, each platform directory has `.version`:
+```
+.claude/skills/.version
+.agent/skills/.version
+```
+
+This enables auto-sync when CLI is upgraded. See @doc/architecture/patterns/auto-sync-version-tracking
 
 ---
-
 ## Step 4: Skill Mode
 
 ```bash
@@ -207,7 +204,7 @@ knowns init --ai claude,antigravity,cursor
 **Claude Code:**
 ```
 .claude/
-├── CLAUDE.md                # Instructions (với guidelines)
+├── CLAUDE.md                # Instructions (with guidelines)
 ├── settings.json
 └── skills/                  # Synced from .knowns/skills/
     ├── knowns-task/SKILL.md
@@ -244,7 +241,7 @@ GEMINI.md                    # Project instructions
 
 ### 5.3 MCP Configuration
 
-Tự động tạo MCP config cho mỗi platform đã chọn.
+Automatically creates MCP config for each selected platform.
 
 ---
 
@@ -385,12 +382,6 @@ knowns status
 # List skills
 knowns skill list
 
-# Check AI platform status
-knowns ai status
-
-# Check MCP status
-knowns mcp status
-
 # Sync skills if needed
 knowns skill sync --all
 ```
@@ -400,14 +391,12 @@ knowns skill sync --all
 ## Updating Configuration
 
 ```bash
-# Add new AI platform later
-knowns ai add gemini
-knowns skill sync --platform gemini
-
 # Change skill mode
 knowns config set skills.mode cli
-knowns skill sync --regenerate
 
-# Add new platform and configure
-knowns init --add-platform cline
+# Sync skills after config change
+knowns skill sync --all
+
+# Re-run init to add new platforms
+knowns init --force
 ```

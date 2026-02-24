@@ -10,7 +10,7 @@ tags:
 ---
 ## Overview
 
-Tài liệu này mô tả cấu trúc và cấu hình của templates trong Knowns CLI.
+This document describes the structure and configuration of templates in Knowns CLI.
 
 **Related docs:**
 - @doc/templates/overview - Overview
@@ -21,7 +21,7 @@ Tài liệu này mô tả cấu trúc và cấu hình của templates trong Know
 
 ## Template Structure
 
-Mỗi template là một folder chứa config file và template files:
+Each template is a folder containing config file and template files:
 
 ```
 .knowns/templates/
@@ -162,7 +162,7 @@ prompts:
 ### Syntax
 
 ```handlebars
-{{!-- Comment: không xuất hiện trong output --}}
+{{!-- Comment: does not appear in output --}}
 
 {{!-- Variable interpolation --}}
 export function {{pascalCase name}}() {
@@ -202,7 +202,7 @@ import styles from "./{{pascalCase name}}.module.css";
 
 ### File Naming
 
-File names cũng dùng Handlebars syntax:
+File names also use Handlebars syntax:
 
 ```
 {{pascalCase name}}.tsx.hbs        → UserProfile.tsx
@@ -210,7 +210,7 @@ File names cũng dùng Handlebars syntax:
 {{snakeCase name}}_test.py.hbs     → user_profile_test.py
 ```
 
-**Note:** Extension `.hbs` được remove sau khi render.
+**Note:** Extension `.hbs` is removed after rendering.
 
 ---
 
@@ -223,7 +223,7 @@ actions:
   - type: add
     template: "component.tsx.hbs"    # Source template
     path: "{{pascalCase name}}.tsx"  # Destination path
-    skipIfExists: true               # Không overwrite
+    skipIfExists: true               # Don't overwrite
     when: "{{condition}}"            # Conditional
 ```
 
@@ -257,14 +257,14 @@ actions:
     path: "src/components/index.ts"
     template: |
       export { {{pascalCase name}} } from "./{{pascalCase name}}";
-    unique: true                     # Không duplicate
+    unique: true                     # Don't duplicate
 ```
 
 ---
 
 ## Template-Doc Linking
 
-Templates có thể link với Knowns docs:
+Templates can link with Knowns docs:
 
 ### In Template Config
 

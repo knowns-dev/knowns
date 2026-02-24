@@ -10,7 +10,7 @@ tags:
 ---
 ## Overview
 
-Import templates và docs từ external sources: GitHub, NPM, local folders.
+Import templates and docs from external sources: GitHub, NPM, local folders.
 
 **Related docs:**
 - @doc/templates/overview - Overview
@@ -34,22 +34,22 @@ Import templates và docs từ external sources: GitHub, NPM, local folders.
 ### `knowns template import`
 
 ```bash
-# Import từ GitHub repo
+# Import from GitHub repo
 knowns template import github:company/templates/react-component
 
-# Import với version tag
+# Import with version tag
 knowns template import github:company/templates/react-component@v2.0.0
 
-# Import từ subfolder
+# Import from subfolder
 knowns template import github:company/knowns-templates/templates/api-endpoint
 
-# Import từ local folder
+# Import from local folder
 knowns template import file:../shared-project/.knowns/templates/component
 
-# Import từ NPM
+# Import from NPM
 knowns template import npm:@company/knowns-templates/react-component
 
-# Import với custom name
+# Import with custom name
 knowns template import github:company/templates/component --as my-component
 
 # Dry run
@@ -62,17 +62,17 @@ knowns template import github:company/templates/react --dry-run
 # Import single doc
 knowns doc import github:company/standards/docs/api-conventions.md
 
-# Import với custom path
+# Import with custom path
 knowns doc import github:company/standards/docs/api-conventions.md \
   --to "conventions/api"
 
 # Import entire docs folder
 knowns doc import github:company/standards/docs/ --all
 
-# Import với tag filter
+# Import with tag filter
 knowns doc import github:company/standards/docs/ --tag "convention"
 
-# Import và link to template
+# Import and link to template
 knowns doc import github:company/standards/docs/react-patterns.md \
   --link-template react-component
 ```
@@ -123,7 +123,7 @@ $ knowns template sync react-component --force
 
 ## Source Repository Structure
 
-Recommended structure cho template source repo:
+Recommended structure for template source repo:
 
 ```
 knowns-templates/                    # Repository root
@@ -161,7 +161,7 @@ knowns-templates/                    # Repository root
 
 ## Local Overrides
 
-Sau khi import, có thể override mà không mất sync:
+After import, you can override without losing sync:
 
 ```yaml
 # _template.yaml
@@ -190,7 +190,7 @@ _overrides:
 
 ## Authentication
 
-Cho private repos:
+For private repos:
 
 ```bash
 # Set GitHub token

@@ -5,6 +5,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { getIndexService } from "@search/index-service";
 import { normalizePath } from "@utils/index";
 import {
 	calculateDocStats,
@@ -530,10 +531,23 @@ export async function handleCreateDoc(args: unknown) {
 	// Notify web server for real-time updates
 	await notifyDocUpdate(relativePath);
 
+	// Index doc for semantic search (fire and forget)
+	const docPath = relativePath.replace(/\.md$/, "");
+	getIndexService(getProjectRoot())
+		.indexDoc(docPath, initialContent, {
+			path: docPath,
+			title: metadata.title,
+			description: metadata.description,
+			tags: metadata.tags,
+		})
+		.catch(() => {
+			// Silently ignore indexing errors
+		});
+
 	return successResponse({
 		message: `Created documentation: ${relativePath}`,
 		doc: {
-			path: relativePath.replace(/\.md$/, ""),
+			path: docPath,
 			title: metadata.title,
 			description: metadata.description,
 			tags: metadata.tags,
@@ -595,12 +609,25 @@ export async function handleUpdateDoc(args: unknown) {
 	// Notify web server for real-time updates
 	await notifyDocUpdate(resolved.filename);
 
+	// Index doc for semantic search (fire and forget)
+	const docPath = resolved.filename.replace(/\.md$/, "");
+	getIndexService(getProjectRoot())
+		.indexDoc(docPath, updatedContent, {
+			path: docPath,
+			title: metadata.title,
+			description: metadata.description,
+			tags: metadata.tags,
+		})
+		.catch(() => {
+			// Silently ignore indexing errors
+		});
+
 	return successResponse({
 		message: sectionUpdated
 			? `Updated section "${sectionUpdated}" in ${resolved.filename}`
 			: `Updated documentation: ${resolved.filename}`,
 		doc: {
-			path: resolved.filename.replace(/\.md$/, ""),
+			path: docPath,
 			title: metadata.title,
 			description: metadata.description,
 			tags: metadata.tags,

@@ -10,26 +10,26 @@ tags:
 ---
 ## Overview
 
-Template System là một lightweight code generator cho phép tạo files/folders từ templates có sẵn. Inspired by [Plop.js](https://plopjs.com/) nhưng được thiết kế đơn giản hơn, phù hợp với Knowns patterns.
+Template System is a lightweight code generator that allows creating files/folders from predefined templates. Inspired by [Plop.js](https://plopjs.com/) but designed simpler, suitable for Knowns patterns.
 
 ### Problem Statement
 
-Khi làm việc với codebase, developers thường phải:
-- Copy-paste code từ file cũ rồi sửa lại
-- Nhớ cấu trúc folder cho từng loại file
-- Đảm bảo naming conventions nhất quán
-- Tạo nhiều files liên quan (component + test + styles)
+When working with codebases, developers often have to:
+- Copy-paste code from old files and modify
+- Remember folder structure for each file type
+- Ensure naming conventions are consistent
+- Create multiple related files (component + test + styles)
 
-Template System giải quyết bằng cách cho phép định nghĩa **generators** - bộ prompts + templates để tạo code một cách nhất quán.
+Template System solves this by allowing definition of **generators** - sets of prompts + templates to create code consistently.
 
 ### Goals
 
-- **Simple**: Dễ tạo và maintain templates
-- **Local-first**: Templates lưu trong project, versioned với git
-- **Interactive**: Hỏi user các options cần thiết
-- **Flexible**: Hỗ trợ conditional files, nested folders
-- **AI-friendly**: Có thể dùng từ CLI hoặc MCP tools
-- **Multi-platform**: Export skills sang Claude, Antigravity, Cursor, Gemini
+- **Simple**: Easy to create and maintain templates
+- **Local-first**: Templates stored in project, versioned with git
+- **Interactive**: Ask user for required options
+- **Flexible**: Support conditional files, nested folders
+- **AI-friendly**: Can be used from CLI or MCP tools
+- **Multi-platform**: Export skills to Claude, Antigravity, Cursor, Gemini
 
 ---
 
@@ -111,7 +111,7 @@ knowns skill sync
 | **Windsurf** | `.windsurfrules` | ⚠️ |
 | **Cline** | `.clinerules/` | ✅ |
 
-> **Note:** Claude Code và Antigravity dùng cùng SKILL.md format - portable\!
+> **Note:** Claude Code and Antigravity use the same SKILL.md format - portable\!
 
 ---
 
@@ -127,11 +127,11 @@ doc: patterns/react-component
 @template/react-component
 ```
 
-AI có thể follow links để hiểu context trước khi generate.
+AI can follow links to understand context before generating.
 
 ---
 
-## Import từ External Sources
+## Import from External Sources
 
 ```bash
 # GitHub

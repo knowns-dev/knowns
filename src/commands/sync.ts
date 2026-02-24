@@ -8,10 +8,13 @@ import { join } from "node:path";
 
 import chalk from "chalk";
 import { Command } from "commander";
+import packageJson from "../../package.json";
 import { renderString } from "../codegen/renderer";
 import { type IDEConfig, IDE_CONFIGS, getIDEConfig, getIDENames } from "../instructions/ide";
 import { SKILLS } from "../instructions/skills";
 import { type GuidelinesType, INSTRUCTION_FILES, getGuidelines, updateInstructionFile } from "./agents";
+
+const CLI_VERSION = packageJson.version;
 
 const PROJECT_ROOT = process.cwd();
 
@@ -77,6 +80,18 @@ function cleanupDeprecatedSkills(skillsDir: string): number {
 }
 
 /**
+ * Write version file after syncing skills
+ */
+function writeVersionFile(skillsDir: string): void {
+	const versionFile = join(skillsDir, ".version");
+	const info = {
+		cliVersion: CLI_VERSION,
+		syncedAt: new Date().toISOString(),
+	};
+	writeFileSync(versionFile, JSON.stringify(info, null, 2), "utf-8");
+}
+
+/**
  * Sync skills to .claude/skills/
  */
 async function syncSkills(options: { force?: boolean; mode?: InstructionMode }): Promise<{
@@ -131,19 +146,23 @@ async function syncSkills(options: { force?: boolean; mode?: InstructionMode }):
 		}
 	}
 
+	// Write version file after syncing
+	writeVersionFile(skillsDir);
+
 	return { created, updated, skipped, removed };
 }
 
 /**
  * Sync agent instruction files
+ * Always uses unified guidelines (compact, with reference to `knowns guidelines`)
  */
-async function syncAgents(options: { force?: boolean; type?: string; all?: boolean }): Promise<{
+async function syncAgents(options: { force?: boolean; all?: boolean }): Promise<{
 	created: number;
 	updated: number;
 	skipped: number;
 }> {
-	const type = (options.type === "mcp" ? "mcp" : "cli") as GuidelinesType;
-	const guidelines = getGuidelines(type);
+	// Always use unified guidelines (both CLI + MCP)
+	const guidelines = getGuidelines("unified");
 	const filesToUpdate = options.all ? INSTRUCTION_FILES : INSTRUCTION_FILES.filter((f) => f.selected);
 
 	let created = 0;
@@ -244,10 +263,9 @@ export const syncCommand = new Command("sync")
 	.enablePositionalOptions()
 	.option("-f, --force", "Force overwrite existing files")
 	.option("--mode <mode>", "Skill instruction mode: mcp or cli", "mcp")
-	.option("--type <type>", "Guidelines type for agents: cli, mcp, or skills", "skills")
 	.option("--all", "Update all agent files (including Gemini, Copilot)")
 	.option("--ide", "Also sync IDE configurations")
-	.action(async (options: { force?: boolean; mode?: string; type?: string; all?: boolean; ide?: boolean }) => {
+	.action(async (options: { force?: boolean; mode?: string; all?: boolean; ide?: boolean }) => {
 		try {
 			const mode = (options.mode === "cli" ? "cli" : "mcp") as InstructionMode;
 			console.log(chalk.bold(`\nSyncing all (skills: ${mode.toUpperCase()})...\n`));
@@ -306,12 +324,10 @@ const skillsSubcommand = new Command("skills")
 const agentSubcommand = new Command("agent")
 	.description("Sync agent instruction files only (CLAUDE.md, AGENTS.md, etc.)")
 	.option("--force", "Force overwrite existing files")
-	.option("--type <type>", "Guidelines type: cli, mcp, or skills", "skills")
 	.option("--all", "Update all agent files (including Gemini, Copilot)")
-	.action(async (options: { force?: boolean; type?: string; all?: boolean }) => {
+	.action(async (options: { force?: boolean; all?: boolean }) => {
 		try {
-			const type = options.type === "mcp" ? "mcp" : options.type === "cli" ? "cli" : "skills";
-			console.log(chalk.bold(`\nSyncing agent files (${type.toUpperCase()})...\n`));
+			console.log(chalk.bold("\nSyncing agent files (UNIFIED)...\n"));
 			const stats = await syncAgents(options);
 			printSummary("Summary", stats);
 			console.log();

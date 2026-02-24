@@ -159,10 +159,11 @@ Direct links to specific views:
 
 ## Architecture
 
-```
-Browser ←→ Express Server ←→ File System (.knowns/)
-              ↕
-           SSE (real-time sync)
+```mermaid
+graph LR
+    A[Browser] <-->|HTTP| B[Express Server]
+    B <-->|Read/Write| C[".knowns/"]
+    B -->|SSE Push| A
 ```
 
 The Web UI connects to a local Express server that reads/writes to your `.knowns/` folder. All data stays on your machine.

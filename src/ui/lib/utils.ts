@@ -54,6 +54,7 @@ export interface DocMetadata {
 	tags?: string[];
 	type?: string; // 'spec', 'guide', etc.
 	status?: string; // 'draft', 'approved', 'implemented'
+	order?: number; // Manual ordering for display (lower = first)
 }
 
 export interface Doc {

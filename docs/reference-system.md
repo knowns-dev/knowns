@@ -138,21 +138,10 @@ AI: "I see this task requires JWT authentication.
 
 Templates and docs can reference each other:
 
-```
-┌─────────────────────────────────────┐
-│  Doc: patterns/react-component      │
-│  ─────────────────────────────────  │
-│  Use @template/react-component      │──────┐
-│  to generate components.            │      │
-└─────────────────────────────────────┘      │
-         ▲                                   │
-         │ doc: patterns/react-component     ▼
-         │                          ┌────────────────────────────┐
-         └──────────────────────────│  Template: react-component │
-                                    │  ────────────────────────  │
-                                    │  _template.yaml            │
-                                    │  doc: patterns/react-...   │
-                                    └────────────────────────────┘
+```mermaid
+graph LR
+    A["Doc: patterns/react-component"] <-->|"@template/react-component"| B["Template: react-component"]
+    B -->|"doc: patterns/react-component"| A
 ```
 
 AI can follow links in both directions to understand context.

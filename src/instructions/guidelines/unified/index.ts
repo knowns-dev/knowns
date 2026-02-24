@@ -51,8 +51,39 @@ function createGuidelines(mode: Mode) {
 		mistakes,
 		contextOptimization,
 
+		/**
+		 * Get minimal guidelines for CLAUDE.md/GEMINI.md/AGENTS.md
+		 * Only includes preventive rules that MUST be known before acting
+		 */
 		getFull(withMarkers = false): string {
+			// Minimal version: only core rules + reference to full guidelines
 			const content = [
+				core,
+				"",
+				"---",
+				"",
+				"> **Full reference:** Run `knowns guidelines --plain` for complete documentation",
+			].join("\n");
+
+			if (withMarkers) {
+				return `<!-- KNOWNS GUIDELINES START -->\n${content}\n<!-- KNOWNS GUIDELINES END -->`;
+			}
+			return content;
+		},
+
+		/**
+		 * Get compact version (core + context optimization)
+		 */
+		getCompact(): string {
+			return [core, "---", contextOptimization].join("\n\n");
+		},
+
+		/**
+		 * Get full reference for `knowns guidelines` command
+		 * Includes ALL documentation
+		 */
+		getFullReference(): string {
+			return [
 				core,
 				"---",
 				contextOptimization,
@@ -67,15 +98,6 @@ function createGuidelines(mode: Mode) {
 				"---",
 				mistakes,
 			].join("\n\n");
-
-			if (withMarkers) {
-				return `<!-- KNOWNS GUIDELINES START -->\n${content}\n<!-- KNOWNS GUIDELINES END -->`;
-			}
-			return content;
-		},
-
-		getCompact(): string {
-			return [core, "---", contextOptimization, "---", mistakes].join("\n\n");
 		},
 
 		getForStage(stage: "creation" | "execution" | "completion"): string {

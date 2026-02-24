@@ -11,7 +11,7 @@ tags:
 ---
 ## Overview
 
-Knowns hỗ trợ nhiều AI platforms. Skills định nghĩa một lần trong `.knowns/skills/`, sync sang tất cả platforms.
+Knowns supports multiple AI platforms. Skills are defined once in `.knowns/skills/`, synced to all platforms.
 
 ---
 
@@ -50,7 +50,7 @@ Knowns hỗ trợ nhiều AI platforms. Skills định nghĩa một lần trong 
 ## Quick Start
 
 ```bash
-# Init với AI platforms
+# Init with AI platforms
 knowns init --ai claude,antigravity,cursor,gemini
 
 # Create skill
@@ -60,10 +60,7 @@ knowns skill create my-skill
 knowns skill sync --all
 
 # Setup MCP
-knowns mcp init --all
-
-# Check status
-knowns ai status
+knowns mcp setup
 ```
 
 ---
@@ -81,14 +78,8 @@ knowns ai status
 ## Key Concepts
 
 ### Skills
-Instructions cho AI workflows. Portable format (`SKILL.md`) giữa Claude Code và Antigravity.
+Instructions for AI workflows. Portable format (`SKILL.md`) between Claude Code and Antigravity.
 
 ### MCP (Model Context Protocol)
-Cho phép AI gọi trực tiếp Knowns functions thay vì CLI commands.
+Allows AI to call Knowns functions directly instead of CLI commands.
 
-### Platform Detection
-```bash
-knowns ai detect
-```
-
-Auto-detect AI platforms trong project và suggest next steps.

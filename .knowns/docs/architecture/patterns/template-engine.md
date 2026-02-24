@@ -10,7 +10,7 @@ tags:
 ---
 ## Overview
 
-Template Engine là core module xử lý code generation trong Knowns. Document này mô tả internal architecture cho developers.
+Template Engine is the core module that handles code generation in Knowns. This document describes the internal architecture for developers.
 
 **Related:**
 - @doc/templates/overview - User-facing overview

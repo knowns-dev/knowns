@@ -64,11 +64,26 @@ interface FixResult {
 	success: boolean;
 }
 
+interface SpecAC {
+	id: string; // AC-1, AC-2, etc.
+	text: string;
+	checked: boolean;
+	fulfilledBy?: string; // task ID that fulfills this AC
+}
+
+interface SpecACStatus {
+	total: number;
+	checked: number;
+	percent: number;
+	acs: SpecAC[];
+}
+
 interface SDDStats {
 	specs: { total: number; approved: number; draft: number };
 	tasks: { total: number; done: number; inProgress: number; todo: number; withSpec: number; withoutSpec: number };
 	coverage: { linked: number; total: number; percent: number };
-	acCompletion: Map<string, { total: number; completed: number; percent: number }>;
+	acCompletion: Map<string, { total: number; completed: number; percent: number }>; // Task ACs (legacy)
+	specACs: Map<string, SpecACStatus>; // Spec ACs with fulfills mapping
 }
 
 interface SDDWarning {
@@ -683,6 +698,42 @@ async function validateTemplates(projectRoot: string, validateConfig: ValidateCo
 }
 
 /**
+ * Extract AC identifier from spec AC line
+ * e.g., "- [ ] AC-1: description" → "AC-1"
+ * e.g., "- [x] AC-2: description" → "AC-2"
+ */
+function extractSpecACId(acText: string): string | null {
+	// Match patterns: AC-1, AC-2, AC1, AC2, etc.
+	const match = acText.match(/^(AC-?\d+)/i);
+	return match ? match[1].toUpperCase().replace(/^AC(\d)/, "AC-$1") : null;
+}
+
+/**
+ * Parse Spec ACs from document content
+ * Returns list of ACs with their checked status
+ */
+function parseSpecACs(content: string): SpecAC[] {
+	const acs: SpecAC[] = [];
+	// Match both checked and unchecked ACs: - [ ] AC-X: desc or - [x] AC-X: desc
+	const acPattern = /^[ \t]*-\s*\[([ x])\]\s*(.+)$/gm;
+
+	for (const match of content.matchAll(acPattern)) {
+		const checked = match[1]?.toLowerCase() === "x";
+		const acText = match[2] || "";
+		const acId = extractSpecACId(acText);
+		if (acId) {
+			acs.push({
+				id: acId,
+				text: acText,
+				checked,
+			});
+		}
+	}
+
+	return acs;
+}
+
+/**
  * Run SDD (Spec-Driven Development) validation
  * Checks spec coverage, AC completion, and task-spec linkage
  */
@@ -696,6 +747,7 @@ async function runSDDValidation(projectRoot: string, fileStore: FileStore): Prom
 		tasks: { total: tasks.length, done: 0, inProgress: 0, todo: 0, withSpec: 0, withoutSpec: 0 },
 		coverage: { linked: 0, total: tasks.length, percent: 0 },
 		acCompletion: new Map(),
+		specACs: new Map(),
 	};
 
 	const warnings: SDDWarning[] = [];
@@ -722,6 +774,23 @@ async function runSDDValidation(projectRoot: string, fileStore: FileStore): Prom
 	stats.coverage.linked = stats.tasks.withSpec;
 	stats.coverage.percent = stats.tasks.total > 0 ? Math.round((stats.tasks.withSpec / stats.tasks.total) * 100) : 0;
 
+	// Build fulfills mapping: task.fulfills → task.id
+	// Maps "specs/xxx" → Map<AC-id, task-id>
+	const fulfillsMap = new Map<string, Map<string, string>>();
+	for (const task of tasks) {
+		if (task.spec && task.fulfills && task.fulfills.length > 0 && task.status === "done") {
+			if (!fulfillsMap.has(task.spec)) {
+				fulfillsMap.set(task.spec, new Map());
+			}
+			const specFulfills = fulfillsMap.get(task.spec);
+			for (const acId of task.fulfills) {
+				// Normalize AC ID
+				const normalizedId = acId.toUpperCase().replace(/^AC(\d)/, "AC-$1");
+				specFulfills?.set(normalizedId, task.id);
+			}
+		}
+	}
+
 	// Scan specs folder for spec documents
 	const specsDir = join(docsDir, "specs");
 	if (existsSync(specsDir)) {
@@ -738,7 +807,7 @@ async function runSDDValidation(projectRoot: string, fileStore: FileStore): Prom
 
 					try {
 						const content = await readFile(join(dir, entry.name), "utf-8");
-						const { data } = matter(content);
+						const { data, content: docContent } = matter(content);
 
 						// Check spec status (draft vs approved)
 						if (data.status === "approved" || data.status === "implemented") {
@@ -747,7 +816,33 @@ async function runSDDValidation(projectRoot: string, fileStore: FileStore): Prom
 							stats.specs.draft++;
 						}
 
-						// Calculate AC completion for tasks linked to this spec
+						// Parse Spec ACs from document
+						const specACs = parseSpecACs(docContent);
+						if (specACs.length > 0) {
+							const specFulfills = fulfillsMap.get(specPath);
+							// Map fulfills to each AC
+							for (const ac of specACs) {
+								ac.fulfilledBy = specFulfills?.get(ac.id);
+							}
+							const checkedCount = specACs.filter((ac) => ac.checked).length;
+							const percent = Math.round((checkedCount / specACs.length) * 100);
+							stats.specACs.set(specPath, {
+								total: specACs.length,
+								checked: checkedCount,
+								percent,
+								acs: specACs,
+							});
+
+							if (percent < 100) {
+								warnings.push({
+									type: "spec-ac-incomplete",
+									entity: specPath,
+									message: `Spec ACs: ${checkedCount}/${specACs.length} complete (${percent}%)`,
+								});
+							}
+						}
+
+						// Calculate Task AC completion for tasks linked to this spec (legacy)
 						const linkedTasks = tasks.filter((t) => t.spec === specPath);
 						if (linkedTasks.length > 0) {
 							let totalAC = 0;
@@ -758,14 +853,6 @@ async function runSDDValidation(projectRoot: string, fileStore: FileStore): Prom
 							}
 							const percent = totalAC > 0 ? Math.round((completedAC / totalAC) * 100) : 100;
 							stats.acCompletion.set(specPath, { total: totalAC, completed: completedAC, percent });
-
-							if (percent < 100 && totalAC > 0) {
-								warnings.push({
-									type: "spec-ac-incomplete",
-									entity: specPath,
-									message: `${completedAC}/${totalAC} ACs complete (${percent}%)`,
-								});
-							}
 						}
 					} catch {
 						// Skip files that can't be parsed
@@ -795,10 +882,10 @@ async function runSDDValidation(projectRoot: string, fileStore: FileStore): Prom
 		passed.push("All spec references resolve");
 	}
 
-	// Check for fully implemented specs
-	for (const [specPath, completion] of stats.acCompletion) {
-		if (completion.percent === 100) {
-			passed.push(`${specPath}: fully implemented`);
+	// Check for fully implemented specs (based on Spec ACs)
+	for (const [specPath, specACStatus] of stats.specACs) {
+		if (specACStatus.percent === 100) {
+			passed.push(`${specPath}: fully implemented (${specACStatus.total} ACs complete)`);
 		}
 	}
 
@@ -821,6 +908,22 @@ function formatSDDReport(result: SDDResult, plain: boolean): void {
 		console.log(
 			`Coverage: ${stats.coverage.linked}/${stats.coverage.total} tasks linked to specs (${stats.coverage.percent}%)`,
 		);
+
+		// Show Spec AC details
+		if (stats.specACs.size > 0) {
+			console.log("\nSpec AC Status:");
+			for (const [specPath, acStatus] of stats.specACs) {
+				const statusIcon = acStatus.percent === 100 ? "✓" : "○";
+				console.log(`  ${statusIcon} ${specPath}: ${acStatus.checked}/${acStatus.total} (${acStatus.percent}%)`);
+				for (const ac of acStatus.acs) {
+					const checkMark = ac.checked ? "[x]" : "[ ]";
+					const fulfilledInfo = ac.fulfilledBy ? ` (task-${ac.fulfilledBy})` : "";
+					console.log(
+						`      ${checkMark} ${ac.id}: ${ac.text.substring(0, 50)}${ac.text.length > 50 ? "..." : ""}${fulfilledInfo}`,
+					);
+				}
+			}
+		}
 
 		if (warnings.length > 0) {
 			console.log("\nWarnings:");
@@ -847,6 +950,25 @@ function formatSDDReport(result: SDDResult, plain: boolean): void {
 		console.log(
 			`${chalk.gray("Coverage:")} ${stats.coverage.linked}/${stats.coverage.total} tasks linked to specs (${stats.coverage.percent >= 75 ? chalk.green(`${stats.coverage.percent}%`) : chalk.yellow(`${stats.coverage.percent}%`)})`,
 		);
+
+		// Show Spec AC details
+		if (stats.specACs.size > 0) {
+			console.log(chalk.bold("\n📝 Spec AC Status:"));
+			for (const [specPath, acStatus] of stats.specACs) {
+				const statusColor = acStatus.percent === 100 ? chalk.green : chalk.yellow;
+				const statusIcon = acStatus.percent === 100 ? "✓" : "○";
+				console.log(
+					`  ${statusColor(statusIcon)} ${chalk.bold(specPath)}: ${statusColor(`${acStatus.checked}/${acStatus.total}`)} (${acStatus.percent}%)`,
+				);
+				for (const ac of acStatus.acs) {
+					const checkMark = ac.checked ? chalk.green("[x]") : chalk.gray("[ ]");
+					const acIdColor = ac.checked ? chalk.green : chalk.gray;
+					const fulfilledInfo = ac.fulfilledBy ? chalk.dim(` → task-${ac.fulfilledBy}`) : "";
+					const truncatedText = ac.text.substring(0, 50) + (ac.text.length > 50 ? "..." : "");
+					console.log(`      ${checkMark} ${acIdColor(ac.id)}: ${truncatedText}${fulfilledInfo}`);
+				}
+			}
+		}
 
 		if (warnings.length > 0) {
 			console.log(chalk.bold.yellow("\n⚠️ Warnings:"));
@@ -1074,13 +1196,38 @@ export const validateCommand = new Command("validate")
 					const elapsed = Date.now() - startTime;
 
 					if (options.json) {
+						// Convert specACs Map to object for JSON
+						const specACsObj: Record<
+							string,
+							{
+								total: number;
+								checked: number;
+								percent: number;
+								acs: Array<{ id: string; text: string; checked: boolean; fulfilledBy?: string }>;
+							}
+						> = {};
+						for (const [specPath, acStatus] of sddResult.stats.specACs) {
+							specACsObj[specPath] = {
+								total: acStatus.total,
+								checked: acStatus.checked,
+								percent: acStatus.percent,
+								acs: acStatus.acs.map((ac) => ({
+									id: ac.id,
+									text: ac.text,
+									checked: ac.checked,
+									fulfilledBy: ac.fulfilledBy,
+								})),
+							};
+						}
+
 						const jsonOutput = {
 							mode: "sdd",
 							stats: {
 								specs: sddResult.stats.specs,
 								tasks: sddResult.stats.tasks,
 								coverage: sddResult.stats.coverage,
-								acCompletion: Object.fromEntries(sddResult.stats.acCompletion),
+								taskAcCompletion: Object.fromEntries(sddResult.stats.acCompletion),
+								specACs: specACsObj,
 							},
 							warnings: sddResult.warnings,
 							passed: sddResult.passed,

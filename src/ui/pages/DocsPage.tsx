@@ -340,6 +340,30 @@ export default function DocsPage() {
 				.sort((a, b) => {
 					// Folders first, then docs
 					if (a.isDoc !== b.isDoc) return a.isDoc ? 1 : -1;
+
+					// For docs: sort by order first, then createdAt, then alphabetically
+					if (a.isDoc && b.isDoc && a.doc && b.doc) {
+						const orderA = a.doc.metadata.order;
+						const orderB = b.doc.metadata.order;
+
+						// Both have order: sort by order
+						if (orderA !== undefined && orderB !== undefined) {
+							return orderA - orderB;
+						}
+						// Only one has order: ordered items come first
+						if (orderA !== undefined) return -1;
+						if (orderB !== undefined) return 1;
+
+						// Neither has order: sort by createdAt, then alphabetically
+						const createdA = a.doc.metadata.createdAt;
+						const createdB = b.doc.metadata.createdAt;
+						if (createdA && createdB) {
+							const dateCompare = new Date(createdA).getTime() - new Date(createdB).getTime();
+							if (dateCompare !== 0) return dateCompare;
+						}
+					}
+
+					// Final fallback: alphabetical by name
 					return a.name.localeCompare(b.name);
 				})
 				.map((node): TreeDataItem => {
@@ -591,6 +615,16 @@ export default function DocsPage() {
 																		}`} />
 																		<span className="text-xs font-mono text-muted-foreground">#{task.id}</span>
 																		<span className="text-sm truncate">{task.title}</span>
+																		{/* Show fulfills badges */}
+																		{task.fulfills && task.fulfills.length > 0 && (
+																			<span className="flex gap-1 ml-1">
+																				{task.fulfills.map((ac) => (
+																					<Badge key={ac} variant="outline" className="text-[10px] px-1 py-0 h-4">
+																						{ac}
+																					</Badge>
+																				))}
+																			</span>
+																		)}
 																	</div>
 																	<div className="flex items-center gap-2 shrink-0">
 																		<span className={`text-xs px-1.5 py-0.5 rounded ${

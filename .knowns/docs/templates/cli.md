@@ -10,7 +10,7 @@ tags:
 ---
 ## Overview
 
-CLI commands cho template management trong Knowns.
+CLI commands for template management in Knowns.
 
 **Related docs:**
 - @doc/templates/overview - Overview
@@ -23,7 +23,7 @@ CLI commands cho template management trong Knowns.
 
 ### `knowns template list`
 
-Liệt kê tất cả templates:
+List all templates:
 
 ```bash
 $ knowns template list
@@ -47,7 +47,7 @@ feature-module - Complete feature module
 
 ### `knowns template run <name>`
 
-Chạy template generator:
+Run template generator:
 
 ```bash
 # Interactive mode
@@ -76,7 +76,7 @@ Would create:
 
 ### `knowns template create <name>`
 
-Tạo template mới:
+Create new template:
 
 ```bash
 $ knowns template create my-service
@@ -91,7 +91,7 @@ Edit _template.yaml to configure prompts and actions.
 
 ### `knowns template view <name>`
 
-Xem chi tiết template:
+View template details:
 
 ```bash
 $ knowns template view react-component
@@ -141,7 +141,7 @@ Template is valid\!
 
 ### `knowns template doc <name>`
 
-Mở linked doc của template:
+Open linked doc of template:
 
 ```bash
 $ knowns template doc react-component
@@ -204,40 +204,9 @@ Cursor          .cursor/rules/        12        ✅ Synced
 Gemini CLI      ~/.gemini/commands/   12        ✅ Synced
 ```
 
-### `knowns skill export`
-
-Export skills to specific platform format:
-
-```bash
-$ knowns skill export --platform cursor
-$ knowns skill export --platform antigravity
-$ knowns skill export --platform gemini
-$ knowns skill export --platform all
-```
-
 ---
 
-## AI Platform Detection
-
-### `knowns ai detect`
-
-```bash
-$ knowns ai detect
-
-Detected AI platforms:
-  ✓ Claude Code (found .claude/)
-  ✓ Antigravity (found .agent/)
-  ✓ Cursor (found .cursor/)
-  ✗ Gemini CLI (not found)
-  ✗ Windsurf (not found)
-
-Recommendation:
-  Run `knowns skill sync` to update all platforms.
-```
-
----
-
-## Init với AI Platforms
+## Init with AI Platforms
 
 ```bash
 # Interactive (asks which platforms)

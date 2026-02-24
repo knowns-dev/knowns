@@ -47,11 +47,11 @@ AI is powerful — but fundamentally **stateless**.
 
 Every session forces developers to:
 
-- Re-explain architecture  
-- Paste documentation  
-- Repeat conventions  
-- Clarify past decisions  
-- Rebuild context  
+- Re-explain architecture
+- Paste documentation
+- Repeat conventions
+- Clarify past decisions
+- Rebuild context
 
 This breaks flow and limits AI’s effectiveness.
 
@@ -71,11 +71,11 @@ Think of it as your project's **external brain**.
 
 Knowns connects:
 
-- Specs  
-- Tasks  
-- Documentation  
-- Decisions  
-- Team knowledge  
+- Specs
+- Tasks
+- Documentation
+- Decisions
+- Team knowledge
 
 So AI doesn’t just generate code — it understands what it’s building.
 
@@ -84,18 +84,23 @@ So AI doesn’t just generate code — it understands what it’s building.
 ## Core Capabilities
 
 ### 🧠 Persistent Project Memory
+
 Give AI long-term understanding of your codebase and workflows.
 
 ### 🔗 Structured Knowledge
+
 Connect specs, tasks, and docs into a unified context layer.
 
 ### ⚡ Smart Context Delivery
+
 Automatically provide relevant context to AI — reducing noise and token usage.
 
 ### 🤝 AI-Native Workflow
+
 Transform AI from a tool into a true engineering collaborator.
 
 ### 🔐 Self-Hostable
+
 Keep your knowledge private and fully under your control.
 
 ---
@@ -108,10 +113,10 @@ Your stack stays the same.
 
 But now:
 
-- Specs → understood  
-- Tasks → connected  
-- Docs → usable  
-- Decisions → remembered  
+- Specs → understood
+- Tasks → connected
+- Docs → usable
+- Decisions → remembered
 
 AI stops guessing — and starts contributing.
 
@@ -120,9 +125,6 @@ AI stops guessing — and starts contributing.
 ## Installation
 
 ```bash
-# Homebrew (macOS/Linux) - no Node.js required
-brew install knowns-dev/tap/knowns
-
 # npm
 npm install -g knowns
 
@@ -132,7 +134,6 @@ bun install -g knowns
 # npx (no install)
 npx knowns
 
-
 knowns init
 knowns browser  # Open Web UI
 ```
@@ -141,17 +142,18 @@ knowns browser  # Open Web UI
 
 ## What You Can Build With Knowns
 
-| Feature              | Description                                        |
-| -------------------- | -------------------------------------------------- |
-| **Task Management**  | Create, track tasks with acceptance criteria       |
-| **Documentation**    | Nested folders with markdown + mermaid support     |
-| **Time Tracking**    | Built-in timers and reports                        |
-| **Context Linking**  | `@task-42` and `@doc/patterns/auth` references     |
-| **Validation**       | Check broken refs with `knowns validate`           |
-| **Template System**  | Code generation with Handlebars (`.hbs`) templates |
-| **Import System**    | Import docs/templates from git, npm, or local      |
-| **AI Integration**   | Full MCP Server with AC/plan/notes operations      |
-| **Web UI**           | Kanban board, doc browser, mermaid diagrams        |
+| Feature             | Description                                        |
+| ------------------- | -------------------------------------------------- |
+| **Task Management** | Create, track tasks with acceptance criteria       |
+| **Documentation**   | Nested folders with markdown + mermaid support     |
+| **Semantic Search** | Search by meaning with local AI models (offline)   |
+| **Time Tracking**   | Built-in timers and reports                        |
+| **Context Linking** | `@task-42` and `@doc/patterns/auth` references     |
+| **Validation**      | Check broken refs with `knowns validate`           |
+| **Template System** | Code generation with Handlebars (`.hbs`) templates |
+| **Import System**   | Import docs/templates from git, npm, or local      |
+| **AI Integration**  | Full MCP Server with AC/plan/notes operations      |
+| **Web UI**          | Kanban board, doc browser, mermaid diagrams        |
 
 ---
 
@@ -244,16 +246,18 @@ Claude: [Creates conventional commit]
 
 ### All Skills
 
-| Skill | Description |
-|-------|-------------|
-| `/kn-init` | Initialize session - read docs, understand project |
-| `/kn-plan <id>` | Take task, gather context, create implementation plan |
+| Skill                | Description                                             |
+| -------------------- | ------------------------------------------------------- |
+| `/kn-init`           | Initialize session - read docs, understand project      |
+| `/kn-plan <id>`      | Take task, gather context, create implementation plan   |
 | `/kn-implement <id>` | Execute plan, track progress, check acceptance criteria |
-| `/kn-research` | Search codebase, find patterns, explore before coding |
-| `/kn-commit` | Create conventional commit with verification |
-| `/kn-doc` | Create or update documentation |
-| `/kn-extract` | Extract reusable patterns into docs/templates |
-| `/kn-template` | List, run, or create code templates |
+| `/kn-research`       | Search codebase, find patterns, explore before coding   |
+| `/kn-commit`         | Create conventional commit with verification            |
+| `/kn-spec`           | Create specification document for features (SDD)        |
+| `/kn-verify`         | Run SDD verification and coverage report                |
+| `/kn-doc`            | Create or update documentation                          |
+| `/kn-extract`        | Extract reusable patterns into docs/templates           |
+| `/kn-template`       | List, run, or create code templates                     |
 
 ---
 
@@ -264,6 +268,7 @@ Claude: [Creates conventional commit]
 | [Command Reference](./docs/commands.md)        | All CLI commands with examples             |
 | [Workflow Guide](./docs/workflow.md)           | Task lifecycle from creation to completion |
 | [Reference System](./docs/reference-system.md) | How `@doc/` and `@task-` linking works     |
+| [Semantic Search](./docs/semantic-search.md)   | Setup and usage of AI-powered search       |
 | [Templates](./docs/templates.md)               | Code generation with Handlebars            |
 | [Web UI](./docs/web-ui.md)                     | Kanban board and document browser          |
 | [MCP Integration](./docs/mcp-integration.md)   | Claude Desktop setup with full MCP tools   |

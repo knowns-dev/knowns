@@ -619,6 +619,7 @@ const createCommand = new Command("create")
 	.option("-s, --status <status>", "Status", "todo")
 	.option("--parent <id>", "Parent task ID for subtasks")
 	.option("--spec <path>", "Link to spec document (e.g., specs/user-auth)")
+	.option("--fulfills <acs>", "Spec ACs this task fulfills (comma-separated, e.g., AC-1,AC-2)")
 	.action(
 		async (
 			title: string,
@@ -631,6 +632,7 @@ const createCommand = new Command("create")
 				status: string;
 				parent?: string;
 				spec?: string;
+				fulfills?: string;
 			},
 		) => {
 			try {
@@ -663,6 +665,9 @@ const createCommand = new Command("create")
 					completed: false,
 				}));
 
+				// Parse fulfills
+				const fulfills = options.fulfills ? options.fulfills.split(",").map((f) => f.trim()) : undefined;
+
 				// Create task (normalize refs in description to ensure consistent storage)
 				const task = await fileStore.createTask({
 					title,
@@ -673,6 +678,7 @@ const createCommand = new Command("create")
 					labels,
 					parent: options.parent,
 					spec: options.spec,
+					fulfills,
 					acceptanceCriteria,
 					subtasks: [],
 					timeSpent: 0,
@@ -832,6 +838,10 @@ const editCommand = new Command("edit")
 	.option("--notes <text>", "Implementation notes (replaces existing)")
 	.option("--append-notes <text>", "Append to implementation notes")
 	.option("--spec <path>", "Link to spec document (use 'none' to remove)")
+	.option("--fulfills <acs>", "Spec ACs this task fulfills (comma-separated, e.g., AC-1,AC-2; use 'none' to remove)")
+	.option("--order <n>", "Display order (lower = first, use 'none' to remove)", (val) =>
+		val === "none" ? null : Number.parseInt(val, 10),
+	)
 	.action(
 		async (
 			rawId: string,
@@ -851,6 +861,8 @@ const editCommand = new Command("edit")
 				notes?: string;
 				appendNotes?: string;
 				spec?: string;
+				fulfills?: string;
+				order?: number | null;
 			},
 		) => {
 			try {
@@ -939,6 +951,24 @@ const editCommand = new Command("edit")
 						updates.spec = undefined;
 					} else {
 						updates.spec = options.spec;
+					}
+				}
+
+				// Handle fulfills change
+				if (options.fulfills !== undefined) {
+					if (options.fulfills.toLowerCase() === "none") {
+						updates.fulfills = undefined;
+					} else {
+						updates.fulfills = options.fulfills.split(",").map((f) => f.trim());
+					}
+				}
+
+				// Handle order change
+				if (options.order !== undefined) {
+					if (options.order === null) {
+						updates.order = undefined;
+					} else {
+						updates.order = options.order;
 					}
 				}
 
@@ -1043,6 +1073,20 @@ const editCommand = new Command("edit")
 						changes.push("spec removed");
 					} else {
 						changes.push(`spec → ${options.spec}`);
+					}
+				}
+				if (options.fulfills !== undefined) {
+					if (options.fulfills.toLowerCase() === "none") {
+						changes.push("fulfills removed");
+					} else {
+						changes.push(`fulfills → ${options.fulfills}`);
+					}
+				}
+				if (options.order !== undefined) {
+					if (options.order === null) {
+						changes.push("order removed");
+					} else {
+						changes.push(`order → ${options.order}`);
 					}
 				}
 

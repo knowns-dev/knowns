@@ -15,11 +15,7 @@ export const INSTRUCTION_FILES = [
 	{ path: "CLAUDE.md", name: "Claude Code", selected: true },
 	{ path: "GEMINI.md", name: "Antigravity (Gemini)", selected: true },
 	{ path: "AGENTS.md", name: "Agent SDK", selected: true },
-	{
-		path: ".github/copilot-instructions.md",
-		name: "GitHub Copilot",
-		selected: false,
-	},
+	{ path: ".github/copilot-instructions.md", name: "GitHub Copilot", selected: true },
 ];
 
 export type GuidelinesType = "cli" | "mcp" | "unified";

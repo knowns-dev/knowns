@@ -6,12 +6,20 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ImportConfig } from "@import/models";
+import type { EmbeddingModel } from "@models/project";
 import { findProjectRoot } from "@utils/find-project-root";
 import chalk from "chalk";
 import { Command } from "commander";
+import prompts from "prompts";
 import { z } from "zod";
 
 const CONFIG_FILE = ".knowns/config.json";
+
+// Semantic search settings schema
+const SemanticSearchSchema = z.object({
+	enabled: z.boolean().optional(),
+	model: z.enum(["gte-small", "all-MiniLM-L6-v2", "gte-base"]).optional(),
+});
 
 // Config schema
 const ConfigSchema = z.object({
@@ -22,9 +30,31 @@ const ConfigSchema = z.object({
 	editor: z.string().optional(),
 	visibleColumns: z.array(z.enum(["todo", "in-progress", "in-review", "done", "blocked"])).optional(),
 	serverPort: z.number().optional(),
+	semanticSearch: SemanticSearchSchema.optional(),
 });
 
 type Config = z.infer<typeof ConfigSchema>;
+
+/**
+ * Available embedding models for semantic search
+ */
+const EMBEDDING_MODELS: Array<{ value: EmbeddingModel; title: string; description: string }> = [
+	{
+		value: "gte-small",
+		title: "gte-small (recommended)",
+		description: "384 dimensions, 67MB - best balance of speed and quality",
+	},
+	{
+		value: "all-MiniLM-L6-v2",
+		title: "all-MiniLM-L6-v2",
+		description: "384 dimensions, 45MB - fastest, slightly lower quality",
+	},
+	{
+		value: "gte-base",
+		title: "gte-base",
+		description: "768 dimensions, 220MB - highest quality, larger download",
+	},
+];
 
 const DEFAULT_CONFIG: Config = {
 	defaultPriority: "medium",
@@ -32,6 +62,10 @@ const DEFAULT_CONFIG: Config = {
 	timeFormat: "24h",
 	visibleColumns: ["todo", "in-progress", "done"],
 	serverPort: 6420,
+	semanticSearch: {
+		enabled: false,
+		model: "gte-small",
+	},
 };
 
 /**
@@ -118,21 +152,52 @@ async function saveConfig(projectRoot: string, config: Config): Promise<void> {
  * Get nested config value by dot notation key
  */
 function getNestedValue(obj: Config, key: string): unknown {
-	if (key in obj) {
-		return obj[key as keyof Config];
+	const parts = key.split(".");
+	let current: unknown = obj;
+
+	for (const part of parts) {
+		if (current === null || current === undefined || typeof current !== "object") {
+			return undefined;
+		}
+		current = (current as Record<string, unknown>)[part];
 	}
-	return undefined;
+
+	return current;
 }
 
 /**
  * Set nested config value by dot notation key
  */
 function setNestedValue(obj: Config, key: string, value: unknown): void {
-	const validKeys = Object.keys(ConfigSchema.shape);
-	if (validKeys.includes(key)) {
-		(obj as Record<string, unknown>)[key] = value;
-	} else {
-		throw new Error(`Unknown config key: ${key}. Valid keys: ${validKeys.join(", ")}`);
+	const parts = key.split(".");
+
+	// Handle top-level keys
+	if (parts.length === 1) {
+		const validKeys = Object.keys(ConfigSchema.shape);
+		if (validKeys.includes(key)) {
+			(obj as Record<string, unknown>)[key] = value;
+		} else {
+			throw new Error(`Unknown config key: ${key}. Valid keys: ${validKeys.join(", ")}`);
+		}
+		return;
+	}
+
+	// Handle nested keys (e.g., "semanticSearch.enabled")
+	let current: Record<string, unknown> = obj as Record<string, unknown>;
+
+	for (let i = 0; i < parts.length - 1; i++) {
+		const part = parts[i];
+		if (!part) continue;
+
+		if (current[part] === undefined || current[part] === null) {
+			current[part] = {};
+		}
+		current = current[part] as Record<string, unknown>;
+	}
+
+	const lastPart = parts[parts.length - 1];
+	if (lastPart) {
+		current[lastPart] = value;
 	}
 }
 
@@ -174,6 +239,29 @@ const listCommand = new Command("list")
 		}
 	});
 
+/**
+ * Check if a key is valid in the config schema
+ */
+function isValidConfigKey(key: string): boolean {
+	const parts = key.split(".");
+	const topLevelKey = parts[0];
+
+	// Check if top-level key is valid
+	const validTopLevelKeys = Object.keys(ConfigSchema.shape);
+	if (!topLevelKey || !validTopLevelKeys.includes(topLevelKey)) {
+		return false;
+	}
+
+	// For nested keys like "semanticSearch.enabled", validate against nested schema
+	if (parts.length > 1 && topLevelKey === "semanticSearch") {
+		const nestedKey = parts[1];
+		const validNestedKeys = Object.keys(SemanticSearchSchema.shape);
+		return nestedKey ? validNestedKeys.includes(nestedKey) : false;
+	}
+
+	return true;
+}
+
 // Get command
 const getCommand = new Command("get")
 	.description("Get a configuration value")
@@ -181,14 +269,27 @@ const getCommand = new Command("get")
 	.option("--plain", "Plain text output for AI")
 	.action(async (key: string, options: { plain?: boolean }) => {
 		try {
+			// First check if the key is valid in the schema
+			if (!isValidConfigKey(key)) {
+				const validKeys = Object.keys(ConfigSchema.shape);
+				console.error(chalk.red(`✗ Unknown config key: ${key}`));
+				console.error(chalk.gray(`  Valid keys: ${validKeys.join(", ")}`));
+				process.exit(1);
+			}
+
 			const projectRoot = getProjectRoot();
 			const config = await loadConfig(projectRoot);
 			const value = getNestedValue(config, key);
 
+			// Key is valid but value is not set
 			if (value === undefined) {
-				console.error(chalk.red(`✗ Config key not found: ${key}`));
-				console.error(chalk.gray("  Run 'knowns config list' to see all keys"));
-				process.exit(1);
+				if (options.plain) {
+					// Return empty string for plain mode (allows scripts to handle gracefully)
+					console.log("");
+				} else {
+					console.log(`${chalk.cyan(key)}: ${chalk.gray("(not set)")}`);
+				}
+				return;
 			}
 
 			if (options.plain) {
@@ -210,6 +311,114 @@ const getCommand = new Command("get")
 		}
 	});
 
+/**
+ * Add search-index to .gitignore (always ignored - rebuild on demand)
+ */
+async function addSearchIndexToGitignore(projectRoot: string): Promise<void> {
+	const { appendFileSync, readFileSync, writeFileSync } = await import("node:fs");
+	const gitignorePath = join(projectRoot, ".gitignore");
+
+	const searchIndexPattern = `
+# knowns search index (rebuilt on demand)
+.knowns/search-index/
+`;
+
+	if (existsSync(gitignorePath)) {
+		const content = readFileSync(gitignorePath, "utf-8");
+		// Check if pattern already exists
+		if (content.includes(".knowns/search-index/")) {
+			return; // Already has the pattern
+		}
+		appendFileSync(gitignorePath, searchIndexPattern);
+		console.log(chalk.green("✓ Added search-index to .gitignore"));
+	} else {
+		writeFileSync(gitignorePath, `${searchIndexPattern.trim()}\n`, "utf-8");
+		console.log(chalk.green("✓ Created .gitignore with search-index pattern"));
+	}
+}
+
+/**
+ * Handle enabling semantic search
+ * - Prompt for model selection if not configured
+ * - Download model if missing
+ * - Auto-run reindex after enabling
+ */
+async function enableSemanticSearch(projectRoot: string, config: Config): Promise<void> {
+	// Initialize semanticSearch if not present
+	if (!config.semanticSearch) {
+		config.semanticSearch = { enabled: true };
+	} else {
+		config.semanticSearch.enabled = true;
+	}
+
+	// Prompt for model selection if not configured
+	if (!config.semanticSearch.model) {
+		console.log();
+		const response = await prompts({
+			type: "select",
+			name: "model",
+			message: "Select embedding model",
+			choices: EMBEDDING_MODELS.map((m) => ({
+				title: m.title,
+				value: m.value,
+				description: m.description,
+			})),
+			initial: 0, // gte-small
+		});
+
+		if (!response.model) {
+			console.log(chalk.yellow("Model selection cancelled"));
+			process.exit(0);
+		}
+
+		config.semanticSearch.model = response.model as EmbeddingModel;
+	}
+
+	// Save config first
+	await saveConfig(projectRoot, config);
+	console.log(chalk.green(`✓ Semantic search enabled with model: ${config.semanticSearch.model}`));
+
+	// Add search-index to .gitignore
+	await addSearchIndexToGitignore(projectRoot);
+
+	// Download model if missing
+	console.log();
+	console.log(chalk.cyan("Checking embedding model..."));
+	try {
+		const { createEmbeddingService } = await import("../search/embedding");
+		const { createModelDownloadProgress } = await import("../utils/progress-bar");
+		const embeddingService = createEmbeddingService({ model: config.semanticSearch.model });
+
+		if (!embeddingService.isModelDownloaded()) {
+			console.log(chalk.cyan("Downloading embedding model..."));
+			const progress = createModelDownloadProgress(config.semanticSearch.model);
+			try {
+				await embeddingService.loadModel(progress.onProgress);
+				progress.complete();
+			} catch (err) {
+				progress.error("Download failed");
+				throw err;
+			}
+		} else {
+			console.log(chalk.green(`✓ Model already downloaded: ${config.semanticSearch.model}`));
+		}
+
+		// Auto-run reindex
+		console.log();
+		console.log(chalk.cyan("Building search index..."));
+
+		const { rebuildIndex } = await import("./search");
+		await rebuildIndex(projectRoot, config.semanticSearch.model);
+		console.log(chalk.green("✓ Search index built"));
+	} catch (error) {
+		console.log();
+		console.log(chalk.yellow(`⚠️  Setup incomplete. Run "knowns search --reindex" later.`));
+		if (error instanceof Error) {
+			console.log(chalk.gray(`  ${error.message}`));
+		}
+	}
+}
+
 // Set command
 const setCommand = new Command("set")
 	.description("Set a configuration value")
@@ -222,6 +431,13 @@ const setCommand = new Command("set")
 
 			// Parse value
 			let parsedValue: unknown = value;
+
+			// Handle boolean values
+			if (value === "true") {
+				parsedValue = true;
+			} else if (value === "false") {
+				parsedValue = false;
+			}
 
 			// Handle special cases
 			if (key === "defaultLabels") {
@@ -236,6 +452,18 @@ const setCommand = new Command("set")
 					console.error(chalk.red(`✗ Invalid timeFormat: ${value}. Must be: 12h or 24h`));
 					process.exit(1);
 				}
+			} else if (key === "semanticSearch.model") {
+				const validModels = EMBEDDING_MODELS.map((m) => m.value);
+				if (!validModels.includes(value as EmbeddingModel)) {
+					console.error(chalk.red(`✗ Invalid model: ${value}. Must be one of: ${validModels.join(", ")}`));
+					process.exit(1);
+				}
+			}
+
+			// Special handling for enabling semantic search
+			if (key === "semanticSearch.enabled" && parsedValue === true) {
+				await enableSemanticSearch(projectRoot, config);
+				return;
 			}
 
 			// Set value

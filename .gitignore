@@ -46,3 +46,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 !.knowns/docs/**
 !.knowns/templates/
 !.knowns/templates/**
+
+# knowns search index (rebuilt on demand)
+.knowns/search-index/

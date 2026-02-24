@@ -17,3 +17,5 @@ export { templateCommand } from "./template";
 export { skillCommand } from "./skill";
 export { importCommand } from "./import";
 export { validateCommand } from "./validate";
+export { modelCommand } from "./model";
+export { guidelinesCommand } from "./guidelines";

@@ -350,6 +350,139 @@ case "my_new_tool": {
 
 ---
 
+## Search & Embedding Module
+
+### Architecture
+
+The search module provides hybrid semantic search using local embedding models.
+
+```
+src/search/
+├── types.ts           # Types: Chunk, ModelConfig, EmbeddingResult
+├── embedding.ts       # EmbeddingService - model loading & inference
+├── chunker.ts         # Document/Task chunking
+├── store.ts           # SearchIndexStore - SQLite-based index
+├── engine.ts          # HybridSearchEngine - semantic + keyword
+└── index-service.ts   # Incremental index updates
+```
+
+### Embedding Service
+
+```typescript
+import { EmbeddingService, ExtendedEmbeddingConfig } from "@search/embedding";
+
+// Create service with config
+const config: ExtendedEmbeddingConfig = {
+  model: "gte-small",
+  huggingFaceId: "Xenova/gte-small",  // Optional for custom models
+  dimensions: 384,                      // Optional
+  maxTokens: 512,                       // Optional
+};
+
+const service = new EmbeddingService(config);
+
+// Load model (downloads if not present)
+await service.loadModel((progress) => {
+  console.log(`Download progress: ${progress}%`);
+});
+
+// Generate embeddings
+const result = await service.embed("Some text to embed");
+// result = { embedding: number[], tokenCount: number }
+
+// Embed chunks with attached embeddings
+const embeddedChunks = await service.embedChunks(chunks);
+
+// Check model status
+const status = await service.getModelStatus();
+// { model, downloaded, valid, path, sizeBytes, fileCount }
+```
+
+### Model Resolution
+
+Models are resolved in this priority order:
+
+1. **Built-in models** (`EMBEDDING_MODELS` in `types.ts`)
+2. **Custom models** (`~/.knowns/custom-models.json`)
+3. **Project config** (`huggingFaceId` in settings)
+
+```typescript
+// Built-in models
+const EMBEDDING_MODELS = {
+  "gte-small": {
+    name: "gte-small",
+    dimensions: 384,
+    maxTokens: 512,
+    huggingFaceId: "Xenova/gte-small",
+  },
+  // ...
+};
+
+// Custom models format (~/.knowns/custom-models.json)
+[
+  {
+    "id": "my-custom-model",
+    "huggingFaceId": "Xenova/some-model",
+    "dimensions": 1024,
+    "maxTokens": 512,
+    "custom": true
+  }
+]
+```
+
+### Adding a New Built-in Model
+
+1. Add config to `EMBEDDING_MODELS` in `src/search/types.ts`
+2. Add to `RECOMMENDED_MODELS` in `src/commands/model.ts`
+
+```typescript
+// src/search/types.ts
+export const EMBEDDING_MODELS: Record<string, ModelConfig> = {
+  // ...existing models...
+  "new-model": {
+    name: "new-model",
+    dimensions: 768,
+    maxTokens: 512,
+    huggingFaceId: "Xenova/new-model",
+  },
+};
+```
+
+### Search Index
+
+The search index uses SQLite for persistence:
+
+```typescript
+import { SearchIndexStore } from "@search/store";
+
+const store = new SearchIndexStore(projectRoot, model);
+
+// Initialize database
+await store.initDatabase();
+
+// Add chunks
+await store.addChunks(embeddedChunks);
+
+// Save to disk
+await store.save(embeddedChunks);
+
+// Search
+const results = await store.search(queryEmbedding, {
+  type: "all",
+  limit: 20,
+});
+```
+
+### Model Storage
+
+Models are stored globally:
+
+- **Location**: `~/.knowns/models/<huggingFaceId>/`
+- **Format**: Transformers.js ONNX format
+- **Shared**: All projects use the same downloaded models
+
+---
+
 ## Guidelines System
 
 AI agent guidelines use a unified template system with Handlebars conditionals for CLI/MCP variants.

@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { type Request, type Response, Router } from "express";
 import matter from "gray-matter";
 import { listAllDocs, resolveDocWithContext } from "../../import";
+import { getIndexService } from "../../search/index-service";
 import type { DocResult, RouteContext } from "../types";
 import { findMarkdownFiles } from "../utils/markdown";
 
@@ -86,6 +87,33 @@ export function createDocRoutes(ctx: RouteContext): Router {
 					// Skip files that can't be read
 				}
 			}
+
+			// Sort docs: by order first (if exists), then by createdAt, then alphabetically
+			docs.sort((a, b) => {
+				const orderA = a.metadata?.order;
+				const orderB = b.metadata?.order;
+
+				// Both have order: sort by order
+				if (orderA !== undefined && orderB !== undefined) {
+					return orderA - orderB;
+				}
+				// Only one has order: ordered items come first
+				if (orderA !== undefined) return -1;
+				if (orderB !== undefined) return 1;
+
+				// Neither has order: sort by createdAt, then alphabetically
+				const createdA = a.metadata?.createdAt;
+				const createdB = b.metadata?.createdAt;
+				if (createdA && createdB) {
+					const dateCompare = new Date(createdA).getTime() - new Date(createdB).getTime();
+					if (dateCompare !== 0) return dateCompare;
+				}
+
+				// Final fallback: alphabetical by title
+				const titleA = a.metadata?.title || a.filename;
+				const titleB = b.metadata?.title || b.filename;
+				return titleA.localeCompare(titleB);
+			});
 
 			res.json({ docs });
 		} catch (error) {
@@ -226,6 +254,17 @@ export function createDocRoutes(ctx: RouteContext): Router {
 			const markdown = matter.stringify(content || "", frontmatter);
 			await writeFile(filepath, markdown, "utf-8");
 
+			// Index doc for semantic search (fire and forget)
+			const docPath = (folder ? `${folder}/${filename}` : filename).replace(/\.md$/, "");
+			getIndexService(store.projectRoot)
+				.indexDoc(docPath, content || "", {
+					path: docPath,
+					title,
+					description,
+					tags,
+				})
+				.catch(() => {});
+
 			res.status(201).json({
 				success: true,
 				filename,
@@ -292,6 +331,17 @@ export function createDocRoutes(ctx: RouteContext): Router {
 				metadata: updatedFrontmatter,
 				content: content ?? "",
 			};
+
+			// Index doc for semantic search (fire and forget)
+			const normalizedPath = docPath.replace(/\.md$/, "");
+			getIndexService(store.projectRoot)
+				.indexDoc(normalizedPath, content ?? "", {
+					path: normalizedPath,
+					title: updatedFrontmatter.title,
+					description: updatedFrontmatter.description,
+					tags: updatedFrontmatter.tags,
+				})
+				.catch(() => {});
 
 			broadcast({ type: "docs:updated", doc: updatedDoc });
 			res.json(updatedDoc);

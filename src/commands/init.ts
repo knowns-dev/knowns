@@ -3,18 +3,44 @@
  * Initialize .knowns/ folder in current directory
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { FileStore } from "@storage/file-store";
 import chalk from "chalk";
 import { Command } from "commander";
 import prompts from "prompts";
+import packageJson from "../../package.json";
 import { type Platform, syncSkills } from "../codegen/skill-sync";
 import { UnifiedGuidelines } from "../instructions/guidelines";
 import { type IDEConfig, IDE_CONFIGS } from "../instructions/ide";
 import { INSTRUCTION_FILES, updateInstructionFile } from "./agents";
 
 import type { GitTrackingMode } from "@models/project";
+
+const CLI_VERSION = packageJson.version;
+
+/**
+ * Platform skill directories
+ */
+const SKILL_DIRS = [".claude/skills", ".agent/skills"];
+
+/**
+ * Write version file after syncing skills (for all platforms)
+ */
+function writeSkillsVersionFile(projectRoot: string): void {
+	const info = {
+		cliVersion: CLI_VERSION,
+		syncedAt: new Date().toISOString(),
+	};
+
+	for (const dir of SKILL_DIRS) {
+		const skillsDir = join(projectRoot, dir);
+		if (existsSync(skillsDir)) {
+			const versionFile = join(skillsDir, ".version");
+			writeFileSync(versionFile, JSON.stringify(info, null, 2), "utf-8");
+		}
+	}
+}
 
 /**
  * Map init platform IDs to skill-sync platform IDs
@@ -74,6 +100,29 @@ const PLATFORMS: InitPlatform[] = [
 	},
 ];
 
+import type { EmbeddingModel } from "@models/project";
+
+/**
+ * Available embedding models for semantic search
+ */
+const EMBEDDING_MODELS: Array<{ value: EmbeddingModel; title: string; description: string }> = [
+	{
+		value: "gte-small",
+		title: "gte-small (recommended)",
+		description: "384 dimensions, 67MB - best balance of speed and quality",
+	},
+	{
+		value: "all-MiniLM-L6-v2",
+		title: "all-MiniLM-L6-v2",
+		description: "384 dimensions, 45MB - fastest, slightly lower quality",
+	},
+	{
+		value: "gte-base",
+		title: "gte-base",
+		description: "768 dimensions, 220MB - highest quality, larger download",
+	},
+];
+
 interface InitConfig {
 	name: string;
 	defaultPriority: "low" | "medium" | "high";
@@ -81,6 +130,10 @@ interface InitConfig {
 	timeFormat: "12h" | "24h";
 	gitTrackingMode: GitTrackingMode;
 	platforms: string[];
+	semanticSearch?: {
+		enabled: boolean;
+		model: EmbeddingModel;
+	};
 }
 
 /**
@@ -237,21 +290,29 @@ async function updateGitignore(projectRoot: string, mode: "git-ignored" | "none"
 }
 
 /**
- * Create AGENTS.md in project root
+ * Add search-index to .gitignore (always ignored - rebuild on demand)
  */
-async function createAgentsMd(projectRoot: string, force = false): Promise<void> {
-	const { writeFileSync } = await import("node:fs");
-	const agentsMdPath = join(projectRoot, "AGENTS.md");
-	const exists = existsSync(agentsMdPath);
+async function addSearchIndexToGitignore(projectRoot: string): Promise<void> {
+	const { appendFileSync, readFileSync, writeFileSync } = await import("node:fs");
+	const gitignorePath = join(projectRoot, ".gitignore");
 
-	if (exists && !force) {
-		console.log(chalk.gray("  AGENTS.md already exists"));
-		return;
+	const searchIndexPattern = `
+# knowns search index (rebuilt on demand)
+.knowns/search-index/
+`;
+
+	if (existsSync(gitignorePath)) {
+		const content = readFileSync(gitignorePath, "utf-8");
+		// Check if pattern already exists
+		if (content.includes(".knowns/search-index/")) {
+			return; // Already has the pattern
+		}
+		appendFileSync(gitignorePath, searchIndexPattern);
+		console.log(chalk.green("✓ Added search-index to .gitignore"));
+	} else {
+		writeFileSync(gitignorePath, `${searchIndexPattern.trim()}\n`, "utf-8");
+		console.log(chalk.green("✓ Created .gitignore with search-index pattern"));
 	}
-
-	writeFileSync(agentsMdPath, UnifiedGuidelines.getFull(true), "utf-8");
-	const action = exists ? "Updated" : "Created";
-	console.log(chalk.green(`✓ ${action} AGENTS.md (unified CLI + MCP guidelines)`));
 }
 
 /**
@@ -304,8 +365,8 @@ async function runWizard(): Promise<InitConfig | null> {
 	const defaultName = basename(projectRoot);
 
 	console.log();
-	console.log(chalk.bold.cyan("🚀 Knowns Project Setup Wizard"));
-	console.log(chalk.gray("   Configure your project settings"));
+	console.log(chalk.bold.cyan("🚀 Knowns Project Setup"));
+	console.log(chalk.gray("   Quick configuration"));
 	console.log();
 
 	const response = await prompts(
@@ -316,18 +377,6 @@ async function runWizard(): Promise<InitConfig | null> {
 				message: "Project name",
 				initial: defaultName,
 				validate: (value) => (value.trim() ? true : "Project name is required"),
-			},
-			{
-				type: "multiselect",
-				name: "platforms",
-				message: "Select AI platforms to configure",
-				choices: PLATFORMS.map((p) => ({
-					title: `${p.name} (${p.description})`,
-					value: p.id,
-					selected: p.id === "claude-code" || p.id === "antigravity",
-				})),
-				hint: "- Space to select. Return to submit",
-				min: 1,
 			},
 			{
 				type: "select",
@@ -352,6 +401,23 @@ async function runWizard(): Promise<InitConfig | null> {
 				],
 				initial: 0, // git-tracked
 			},
+			{
+				type: "confirm",
+				name: "enableSemanticSearch",
+				message: "Enable semantic search? (requires model download)",
+				initial: false,
+			},
+			{
+				type: (prev) => (prev ? "select" : null),
+				name: "semanticModel",
+				message: "Select embedding model",
+				choices: EMBEDDING_MODELS.map((m) => ({
+					title: m.title,
+					value: m.value,
+					description: m.description,
+				})),
+				initial: 0, // gte-small
+			},
 		],
 		{
 			onCancel: () => {
@@ -367,13 +433,20 @@ async function runWizard(): Promise<InitConfig | null> {
 		return null;
 	}
 
+	// Auto-configure all platforms (no selection needed)
 	return {
 		name: response.name,
 		defaultPriority: "medium",
 		defaultLabels: [],
 		timeFormat: "24h",
 		gitTrackingMode: response.gitTrackingMode || "git-tracked",
-		platforms: response.platforms || ["claude-code"],
+		platforms: ["claude-code", "antigravity"], // Auto-configure both
+		semanticSearch: response.enableSemanticSearch
+			? {
+					enabled: true,
+					model: response.semanticModel || "gte-small",
+				}
+			: undefined,
 	};
 }
 
@@ -416,14 +489,14 @@ export const initCommand = new Command("init")
 				}
 				config = wizardResult;
 			} else {
-				// Use provided name or default
+				// Use provided name or default - auto-configure all platforms
 				config = {
 					name: name || basename(projectRoot),
 					defaultPriority: "medium",
 					defaultLabels: [],
 					timeFormat: "24h",
 					gitTrackingMode: "git-tracked",
-					platforms: ["claude-code"],
+					platforms: ["claude-code", "antigravity"], // Auto-configure both
 				};
 			}
 
@@ -439,13 +512,42 @@ export const initCommand = new Command("init")
 				defaultLabels: config.defaultLabels,
 				timeFormat: config.timeFormat,
 				gitTrackingMode: config.gitTrackingMode,
+				semanticSearch: config.semanticSearch,
 			});
 
 			console.log();
 			console.log(chalk.green(`✓ Project initialized: ${project.name}`));
 
-			// Always create agents.md (full guidelines for all platforms)
-			await createAgentsMd(projectRoot, options.force);
+			// Handle semantic search setup
+			if (config.semanticSearch?.enabled) {
+				console.log(chalk.cyan(`  Semantic search: ${config.semanticSearch.model}`));
+
+				// Add search-index to .gitignore (always ignored - rebuilt on demand)
+				await addSearchIndexToGitignore(projectRoot);
+
+				// Trigger model download
+				console.log();
+				console.log(chalk.cyan("Downloading embedding model..."));
+				try {
+					const { createEmbeddingService } = await import("../search/embedding");
+					const { createModelDownloadProgress } = await import("../utils/progress-bar");
+					const embeddingService = createEmbeddingService({ model: config.semanticSearch.model });
+
+					const progress = createModelDownloadProgress(config.semanticSearch.model);
+					try {
+						await embeddingService.loadModel(progress.onProgress);
+						progress.complete();
+					} catch (err) {
+						progress.error("Download failed");
+						throw err;
+					}
+				} catch (error) {
+					console.log(chalk.yellow(`⚠️  Model download failed. Run "knowns search --rebuild" later.`));
+					if (error instanceof Error) {
+						console.log(chalk.gray(`  ${error.message}`));
+					}
+				}
+			}
 
 			// Check platform types
 			const selectedPlatforms = config.platforms.map((id) => PLATFORMS.find((p) => p.id === id)).filter(Boolean);
@@ -481,6 +583,9 @@ export const initCommand = new Command("init")
 							console.log(chalk.yellow(`  Errors: ${result.errors.join(", ")}`));
 						}
 					}
+
+					// Write version file so auto-sync doesn't re-sync
+					writeSkillsVersionFile(projectRoot);
 				}
 
 				// Check which platforms are selected
@@ -496,36 +601,20 @@ export const initCommand = new Command("init")
 				if (hasAntigravity) {
 					await createAntigravityMcpConfig(options.force);
 				}
+			}
 
-				// Create platform-specific instruction files
-				const guidelines = UnifiedGuidelines.getFull(true);
-
-				// Create CLAUDE.md for Claude Code
-				if (hasClaudeCode) {
-					try {
-						const result = await updateInstructionFile("CLAUDE.md", guidelines);
-						if (result.success) {
-							const action =
-								result.action === "created" ? "Created" : result.action === "appended" ? "Appended" : "Updated";
-							console.log(chalk.green(`✓ ${action}: CLAUDE.md (unified CLI + MCP guidelines)`));
-						}
-					} catch {
-						console.log(chalk.yellow("⚠️  Skipped: CLAUDE.md"));
+			// Create ALL instruction files (AGENTS.md, CLAUDE.md, GEMINI.md, copilot-instructions.md)
+			const guidelines = UnifiedGuidelines.getFull(true);
+			for (const file of INSTRUCTION_FILES.filter((f) => f.selected)) {
+				try {
+					const result = await updateInstructionFile(file.path, guidelines);
+					if (result.success) {
+						const action =
+							result.action === "created" ? "Created" : result.action === "appended" ? "Appended" : "Updated";
+						console.log(chalk.green(`✓ ${action}: ${file.path}`));
 					}
-				}
-
-				// Create GEMINI.md for Antigravity
-				if (hasAntigravity) {
-					try {
-						const result = await updateInstructionFile("GEMINI.md", guidelines);
-						if (result.success) {
-							const action =
-								result.action === "created" ? "Created" : result.action === "appended" ? "Appended" : "Updated";
-							console.log(chalk.green(`✓ ${action}: GEMINI.md (unified CLI + MCP guidelines)`));
-						}
-					} catch {
-						console.log(chalk.yellow("⚠️  Skipped: GEMINI.md"));
-					}
+				} catch {
+					console.log(chalk.yellow(`⚠️  Skipped: ${file.path}`));
 				}
 			}
 
@@ -539,14 +628,7 @@ export const initCommand = new Command("init")
 			console.log();
 			console.log(chalk.cyan("Get started:"));
 			console.log(chalk.gray('  knowns task create "My first task"'));
-
-			// Show platform-specific tips
-			if (hasSkillsPlatform) {
-				console.log(chalk.gray("  Use /kn:init to start a session"));
-			}
-			if (hasNonSkillsPlatform) {
-				console.log(chalk.gray("  See AGENTS.md for full AI guidelines"));
-			}
+			console.log(chalk.gray("  Use /kn-init to start an AI session"));
 		} catch (error) {
 			console.error(chalk.red("✗ Failed to initialize project"));
 			if (error instanceof Error) {

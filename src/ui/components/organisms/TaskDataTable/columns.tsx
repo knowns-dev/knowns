@@ -42,6 +42,28 @@ export const taskColumns: ColumnDef<Task>[] = [
 		enableHiding: false,
 	},
 	{
+		accessorKey: "order",
+		header: ({ column }) => <DataTableColumnHeader column={column} title="#" />,
+		cell: ({ row }) => {
+			const order = row.original.order;
+			return order !== undefined ? (
+				<span className="text-xs text-muted-foreground">{order}</span>
+			) : (
+				<span className="text-muted-foreground text-xs">-</span>
+			);
+		},
+		enableSorting: true,
+		sortingFn: (rowA, rowB) => {
+			const orderA = rowA.original.order;
+			const orderB = rowB.original.order;
+			// Tasks with order come before those without
+			if (orderA === undefined && orderB === undefined) return 0;
+			if (orderA === undefined) return 1;
+			if (orderB === undefined) return -1;
+			return orderA - orderB;
+		},
+	},
+	{
 		accessorKey: "title",
 		header: ({ column }) => <DataTableColumnHeader column={column} title="Title" />,
 		cell: ({ row }) => {

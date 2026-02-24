@@ -265,6 +265,60 @@ knowns search "query" [options]
 | `--priority` | Filter by priority |
 | `--plain` | Plain text output |
 
+### Model Commands
+
+Manage embedding models for semantic search.
+
+#### List Models
+```bash
+knowns model list
+```
+
+Shows all available models (built-in + custom) with download status.
+
+#### Download Model
+```bash
+knowns model download <model-id>
+```
+
+**Built-in models:**
+| Model | Quality | Dimensions | Best for |
+|-------|---------|------------|----------|
+| `gte-small` ★ | Balanced | 384 | Most projects |
+| `all-MiniLM-L6-v2` | Fast | 384 | Large codebases |
+| `gte-base` | Quality | 768 | High accuracy |
+| `bge-small-en-v1.5` | Balanced | 384 | English text |
+| `e5-small-v2` | Balanced | 384 | General use |
+
+#### Set Model for Project
+```bash
+knowns model set <model-id>
+```
+
+After changing models, rebuild the search index:
+```bash
+knowns search --reindex
+```
+
+#### Add Custom Model
+```bash
+knowns model add <huggingface-id> [--dims <n>] [--tokens <n>]
+```
+
+**Example:**
+```bash
+knowns model add Xenova/bge-large-en-v1.5 --dims 1024 --tokens 512
+knowns model download bge-large-en-v1.5
+knowns model set bge-large-en-v1.5
+```
+
+#### Check Status
+```bash
+knowns model status
+```
+
+Shows downloaded models, disk usage, and current project configuration.
+
 ### Template Commands
 
 Templates help you generate boilerplate code consistently.

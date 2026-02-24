@@ -10,6 +10,45 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "..");
+const srcDir = join(rootDir, "src");
+
+// Path alias mapping (mirrors tsconfig.json)
+const pathAliases = {
+	"@/": "src/",
+	"@commands/": "src/commands/",
+	"@models/": "src/models/",
+	"@storage/": "src/storage/",
+	"@server/": "src/server/",
+	"@utils/": "src/utils/",
+	"@mcp/": "src/mcp/",
+	"@codegen/": "src/codegen/",
+	"@instructions/": "src/instructions/",
+	"@search/": "src/search/",
+};
+
+// Plugin to resolve path aliases
+const aliasPlugin = {
+	name: "alias",
+	setup(build) {
+		// Build regex from aliases
+		const aliasRegex = new RegExp(`^(${Object.keys(pathAliases).map(k => k.replace("/", "\\/")).join("|")})`);
+
+		build.onResolve({ filter: aliasRegex }, async (args) => {
+			for (const [alias, target] of Object.entries(pathAliases)) {
+				if (args.path.startsWith(alias)) {
+					const relativePath = args.path.slice(alias.length);
+					const targetPath = join(rootDir, target, relativePath);
+					// Let esbuild resolve the actual file (adds .ts extension, etc)
+					const result = await build.resolve("./" + relativePath, {
+						kind: args.kind,
+						resolveDir: join(rootDir, target.replace(/\/$/, "")),
+					});
+					return result;
+				}
+			}
+		});
+	},
+};
 
 // Ensure dist directories exist
 mkdirSync(join(rootDir, "dist", "mcp"), { recursive: true });
@@ -66,13 +105,20 @@ const commonOptions = {
 	format: "esm",
 	sourcemap: false,
 	minify: false,
-	plugins: [stripShebangPlugin],
+	plugins: [aliasPlugin, stripShebangPlugin],
 	banner: {
 		js: esmBanner,
 	},
 	loader: {
 		".md": "text", // Load markdown files as text strings
 	},
+	// External packages with native modules (not bundleable)
+	external: [
+		"@xenova/transformers",
+		"onnxruntime-node",
+		"onnxruntime-web",
+		"sharp",
+	],
 };
 
 async function build() {

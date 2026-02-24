@@ -10,7 +10,7 @@ tags:
 ---
 ## Overview
 
-Các ví dụ templates cho Knowns CLI.
+Example templates for Knowns CLI.
 
 **Related docs:**
 - @doc/templates/overview - Overview

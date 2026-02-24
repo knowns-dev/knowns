@@ -12,9 +12,11 @@ import {
 	browserCommand,
 	configCommand,
 	docCommand,
+	guidelinesCommand,
 	importCommand,
 	initCommand,
 	mcpCommand,
+	modelCommand,
 	searchCommand,
 	skillCommand,
 	syncCommand,
@@ -23,6 +25,7 @@ import {
 	timeCommand,
 	validateCommand,
 } from "@commands/index";
+import { checkAndAutoSync } from "@utils/auto-sync";
 import { notifyCliUpdate } from "@utils/update-notifier";
 import chalk from "chalk";
 import { Command } from "commander";
@@ -80,6 +83,8 @@ program.addCommand(templateCommand);
 program.addCommand(skillCommand);
 program.addCommand(importCommand);
 program.addCommand(validateCommand);
+program.addCommand(modelCommand);
+program.addCommand(guidelinesCommand);
 
 // Show banner if no arguments provided
 const args = process.argv.slice(2);
@@ -88,6 +93,12 @@ if (args.length === 0) {
 	showBanner();
 	await notifyCliUpdate({ currentVersion: packageJson.version, args });
 } else {
+	// Auto-sync skills if version changed (runs once before any command)
+	const autoSyncResult = checkAndAutoSync(packageJson.version);
+	if (autoSyncResult.synced && autoSyncResult.message) {
+		console.log(chalk.cyan(autoSyncResult.message));
+	}
+
 	program.hook("postAction", async () => {
 		await notifyCliUpdate({ currentVersion: packageJson.version, args });
 	});

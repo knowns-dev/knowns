@@ -8,12 +8,76 @@ import {
   type ReactNode,
   Children,
   isValidElement,
+  Component,
+  type ErrorInfo,
 } from "react";
 import MDEditor from "@uiw/react-md-editor";
-import { ClipboardCheck, FileText, AlertTriangle } from "lucide-react";
+import { ClipboardCheck, FileText, AlertTriangle, RefreshCw } from "lucide-react";
 import { useTheme } from "../../App";
 import { getTask, getDoc } from "../../api/client";
 import { MermaidBlock } from "./MermaidBlock";
+
+/**
+ * Error boundary to catch render errors in markdown content
+ */
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+interface ErrorBoundaryProps {
+  children: ReactNode;
+  fallback?: ReactNode;
+  onReset?: () => void;
+}
+
+class MarkdownErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("Markdown render error:", error, errorInfo);
+  }
+
+  handleReset = () => {
+    this.setState({ hasError: false, error: null });
+    this.props.onReset?.();
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        this.props.fallback || (
+          <div className="p-4 rounded-lg border border-red-500/30 bg-red-500/10">
+            <div className="flex items-center gap-2 text-red-600 dark:text-red-400 mb-2">
+              <AlertTriangle className="w-4 h-4" />
+              <span className="font-medium">Failed to render markdown</span>
+            </div>
+            <p className="text-sm text-muted-foreground mb-3">
+              {this.state.error?.message || "An error occurred while rendering the content."}
+            </p>
+            <button
+              type="button"
+              onClick={this.handleReset}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-muted hover:bg-muted/80 transition-colors"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Try again
+            </button>
+          </div>
+        )
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 export interface MDRenderRef {
   getElement: () => HTMLElement | null;
@@ -378,17 +442,19 @@ const MDRender = forwardRef<MDRenderRef, MDRenderProps>(
         className={`md-render-wrapper ${className}`}
         data-color-mode={isDark ? "dark" : "light"}
       >
-        <MDEditor.Markdown
-          source={transformedMarkdown}
-          style={{
-            backgroundColor: "transparent",
-            padding: 0,
-          }}
-          components={{
-            a: CustomLink,
-            pre: CustomPre,
-          }}
-        />
+        <MarkdownErrorBoundary>
+          <MDEditor.Markdown
+            source={transformedMarkdown}
+            style={{
+              backgroundColor: "transparent",
+              padding: 0,
+            }}
+            components={{
+              a: CustomLink,
+              pre: CustomPre,
+            }}
+          />
+        </MarkdownErrorBoundary>
       </div>
     );
   },

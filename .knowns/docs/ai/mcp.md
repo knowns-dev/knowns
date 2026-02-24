@@ -10,7 +10,7 @@ tags:
 ---
 ## Overview
 
-MCP (Model Context Protocol) cho phép AI gọi trực tiếp Knowns functions.
+MCP (Model Context Protocol) allows AI to call Knowns functions directly.
 
 **Related:** @doc/ai/platforms
 
@@ -135,11 +135,7 @@ mcp__knowns__get_current_project({})
 
 ```bash
 # Auto-generate MCP config
-knowns mcp init --all
-knowns mcp init --platform claude,cursor
-
-# Check status
-knowns mcp status
+knowns mcp setup
 ```
 
 ---

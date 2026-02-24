@@ -10,7 +10,7 @@ tags:
 ---
 ## Overview
 
-Cấu hình cho từng AI platform.
+Configuration for each AI platform.
 
 **Related:** @doc/ai/mcp, @doc/ai/skills
 
@@ -67,7 +67,7 @@ Cấu hình cho từng AI platform.
 }
 ```
 
-> **Portable:** Claude Code ↔ Antigravity dùng cùng SKILL.md format
+> **Portable:** Claude Code ↔ Antigravity use the same SKILL.md format
 
 ---
 

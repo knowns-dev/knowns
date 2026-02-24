@@ -507,6 +507,187 @@ knowns search <query> [options]
 
 ---
 
+## Model Commands
+
+Manage embedding models for semantic search.
+
+### `knowns model` (Shorthand)
+
+Show current model status (shorthand for `knowns model status`).
+
+```bash
+knowns model
+```
+
+### `knowns model list`
+
+List all available embedding models (built-in + custom).
+
+```bash
+knowns model list
+```
+
+**Output shows:**
+- Model ID and name
+- Quality tier (Fast, Balanced, Quality)
+- HuggingFace ID
+- Dimensions and max tokens
+- Download status
+- Recommended models marked with ★
+
+**Examples:**
+
+```bash
+knowns model list
+knowns model ls  # Alias
+```
+
+### `knowns model download`
+
+Download an embedding model.
+
+```bash
+knowns model download <model-id>
+```
+
+| Argument     | Description                        |
+| ------------ | ---------------------------------- |
+| `<model-id>` | Model ID or HuggingFace ID         |
+
+**Built-in models:**
+
+| Model ID            | Quality   | Dimensions | Size    |
+| ------------------- | --------- | ---------- | ------- |
+| `gte-small` ★       | Balanced  | 384        | ~50MB   |
+| `all-MiniLM-L6-v2`  | Fast      | 384        | ~45MB   |
+| `gte-base`          | Quality   | 768        | ~110MB  |
+| `bge-small-en-v1.5` | Balanced  | 384        | ~50MB   |
+| `bge-base-en-v1.5`  | Quality   | 768        | ~110MB  |
+| `e5-small-v2`       | Balanced  | 384        | ~50MB   |
+
+**Examples:**
+
+```bash
+# Download default recommended model
+knowns model download gte-small
+
+# Download higher quality model
+knowns model download gte-base
+
+# Download by HuggingFace ID
+knowns model download Xenova/bge-small-en-v1.5
+```
+
+### `knowns model set`
+
+Set the embedding model for the current project.
+
+```bash
+knowns model set <model-id>
+```
+
+| Argument     | Description                |
+| ------------ | -------------------------- |
+| `<model-id>` | Model ID to use            |
+
+**Note:** If the model is not downloaded, it will be downloaded automatically.
+
+**Examples:**
+
+```bash
+# Set model for current project
+knowns model set gte-small
+
+# Set higher quality model
+knowns model set gte-base
+```
+
+**After setting a new model:**
+
+```bash
+# Rebuild search index with new model
+knowns search --reindex
+```
+
+### `knowns model status`
+
+Show detailed status of models and current project configuration.
+
+```bash
+knowns model status
+```
+
+**Output shows:**
+- Global models directory location
+- Number of downloaded models
+- Total disk usage
+- List of downloaded models with sizes
+- Current project's model configuration
+
+### `knowns model add`
+
+Add a custom HuggingFace embedding model.
+
+```bash
+knowns model add <huggingface-id> [options]
+```
+
+| Argument          | Description                              |
+| ----------------- | ---------------------------------------- |
+| `<huggingface-id>`| Full HuggingFace model ID (e.g., `Xenova/model-name`) |
+
+| Option          | Description                      |
+| --------------- | -------------------------------- |
+| `--dims`        | Embedding dimensions (default: 384) |
+| `--tokens`      | Max input tokens (default: 512)  |
+| `--name`        | Display name for the model       |
+
+**Examples:**
+
+```bash
+# Add a custom model
+knowns model add Xenova/bge-large-en-v1.5 --dims 1024 --tokens 512
+
+# Add with custom name
+knowns model add Xenova/multilingual-e5-small --name "E5 Multilingual" --dims 384
+
+# After adding, download and set it
+knowns model download bge-large-en-v1.5
+knowns model set bge-large-en-v1.5
+```
+
+**Note:** The model must be a `feature-extraction` pipeline compatible with Transformers.js.
+
+### `knowns model remove`
+
+Remove a custom model.
+
+```bash
+knowns model remove <model-id> [options]
+```
+
+| Argument     | Description             |
+| ------------ | ----------------------- |
+| `<model-id>` | Custom model ID         |
+
+| Option      | Description                        |
+| ----------- | ---------------------------------- |
+| `-f, --force` | Also delete downloaded model files |
+
+**Note:** Only custom models can be removed. Built-in models cannot be removed.
+
+**Examples:**
+
+```bash
+# Remove from list only (keep files)
+knowns model remove my-custom-model
+
+# Remove and delete files
+knowns model remove my-custom-model --force
+```
+
+---
+
 ## Template Commands
 
 ### `knowns template list`

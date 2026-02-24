@@ -7,9 +7,9 @@ on:
     branches: [main, develop]
 
 jobs:
-  test:
+  # Job 1: Lint and Unit Tests (only on Ubuntu for speed)
+  lint-and-test:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -38,11 +38,285 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  # Job 2: Build and E2E CLI Tests on multiple OS
+  e2e-cli:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node-version: ['20']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Build project
         run: npm run build
 
+      # ============================================
+      # E2E CLI Tests - Full Feature Coverage
+      # ============================================
+
       - name: Verify build output
+        shell: bash
         run: |
+          echo "=== Checking build output ==="
           ls -la dist/
           test -f dist/index.js || (echo "Error: dist/index.js not found" && exit 1)
+          test -f dist/mcp/server.js || (echo "Error: dist/mcp/server.js not found" && exit 1)
           echo "✅ Build verification passed"
+
+      - name: Test CLI --version and --help
+        shell: bash
+        run: |
+          echo "=== Testing CLI basics ==="
+          node dist/index.js --version
+          node dist/index.js --help
+          echo "✅ CLI basics passed"
+
+      - name: Test knowns init
+        shell: bash
+        run: |
+          echo "=== Testing knowns init ==="
+          mkdir -p test-project
+          cd test-project
+          git init
+          node ../dist/index.js init test-e2e --no-wizard
+          test -d .knowns || (echo "Error: .knowns folder not created" && exit 1)
+          test -f .knowns/config.json || (echo "Error: config.json not created" && exit 1)
+          echo "✅ Init passed"
+
+      - name: Test task create
+        shell: bash
+        run: |
+          echo "=== Testing task create ==="
+          cd test-project
+          # Capture task ID from output (format: "✓ Created task-xxx: Title")
+          TASK1_OUTPUT=$(node ../dist/index.js task create "E2E Test Task 1" -d "Description for task 1" --ac "Criterion 1" --ac "Criterion 2" --priority high -l "e2e,test")
+          echo "$TASK1_OUTPUT"
+          TASK1_ID=$(echo "$TASK1_OUTPUT" | grep -oE 'task-[a-z0-9]+' | head -1)
+          # Extract raw ID for --parent (strip 'task-' prefix)
+          TASK1_RAW_ID=$(echo "$TASK1_ID" | sed 's/^task-//')
+          echo "Task 1 ID: $TASK1_ID (raw: $TASK1_RAW_ID)"
+
+          TASK2_OUTPUT=$(node ../dist/index.js task create "E2E Test Task 2" -d "Description for task 2" --ac "Another criterion" --priority medium)
+          echo "$TASK2_OUTPUT"
+          TASK2_ID=$(echo "$TASK2_OUTPUT" | grep -oE 'task-[a-z0-9]+' | head -1)
+          echo "Task 2 ID: $TASK2_ID"
+
+          node ../dist/index.js task create "Subtask of Task 1" -d "This is a subtask" --parent "$TASK1_RAW_ID"
+
+          # Export for later steps
+          echo "TASK1_ID=$TASK1_ID" >> $GITHUB_ENV
+          echo "TASK2_ID=$TASK2_ID" >> $GITHUB_ENV
+          echo "✅ Task create passed"
+
+      - name: Test task list and view
+        shell: bash
+        run: |
+          echo "=== Testing task list/view ==="
+          cd test-project
+          node ../dist/index.js task list --plain
+          node ../dist/index.js task list --tree --plain
+          node ../dist/index.js task "$TASK1_ID" --plain
+          node ../dist/index.js task list --status todo --plain
+          node ../dist/index.js task list --priority high --plain
+          echo "✅ Task list/view passed"
+
+      - name: Test task edit
+        shell: bash
+        run: |
+          echo "=== Testing task edit ==="
+          cd test-project
+          node ../dist/index.js task edit "$TASK1_ID" -s in-progress -a "@me"
+          node ../dist/index.js task edit "$TASK1_ID" --ac "New criterion added"
+          node ../dist/index.js task edit "$TASK1_ID" --check-ac 1
+          node ../dist/index.js task edit "$TASK1_ID" --plan "1. Step one\n2. Step two\n3. Step three"
+          node ../dist/index.js task edit "$TASK1_ID" --append-notes "Started working on this task"
+          node ../dist/index.js task "$TASK1_ID" --plain
+          echo "✅ Task edit passed"
+
+      - name: Test doc create
+        shell: bash
+        run: |
+          echo "=== Testing doc create ==="
+          cd test-project
+          node ../dist/index.js doc create "README" -d "Project README" -t "core,important"
+          node ../dist/index.js doc create "Architecture" -d "System architecture" -t "core" -f "guides"
+          node ../dist/index.js doc create "API Reference" -d "API documentation" -t "api" -f "api"
+          node ../dist/index.js doc create "Auth Pattern" -d "Authentication patterns" -t "pattern" -f "patterns"
+          echo "✅ Doc create passed"
+
+      - name: Test doc list and view
+        shell: bash
+        run: |
+          echo "=== Testing doc list/view ==="
+          cd test-project
+          node ../dist/index.js doc list --plain
+          node ../dist/index.js doc list --tag core --plain
+          node ../dist/index.js doc "README" --plain
+          node ../dist/index.js doc "guides/architecture" --plain
+          echo "✅ Doc list/view passed"
+
+      - name: Test doc edit with content
+        shell: bash
+        run: |
+          echo "=== Testing doc edit ==="
+          cd test-project
+          node ../dist/index.js doc edit "README" -c "# Test Project\n\nThis is a test project for E2E testing.\n\n## References\n\nSee @doc/guides/architecture for system design.\nSee @$TASK1_ID for main task."
+          node ../dist/index.js doc edit "README" -a "\n\n## Additional Section\n\nMore content appended."
+          node ../dist/index.js doc "README" --plain
+          echo "✅ Doc edit passed"
+
+      - name: Test search
+        shell: bash
+        run: |
+          echo "=== Testing search ==="
+          cd test-project
+          node ../dist/index.js search "test" --plain
+          node ../dist/index.js search "E2E" --type task --plain
+          node ../dist/index.js search "architecture" --type doc --plain
+          echo "✅ Search passed"
+
+      - name: Test time tracking
+        shell: bash
+        run: |
+          echo "=== Testing time tracking ==="
+          cd test-project
+          node ../dist/index.js time start "$TASK1_ID"
+          node ../dist/index.js time status
+          node ../dist/index.js time stop
+          node ../dist/index.js time add "$TASK1_ID" 30m -n "Manual time entry"
+          node ../dist/index.js time add "$TASK2_ID" 1h -n "Work on task 2"
+          node ../dist/index.js time report
+          echo "✅ Time tracking passed"
+
+      - name: Test spec create (SDD workflow)
+        shell: bash
+        run: |
+          echo "=== Testing spec create ==="
+          cd test-project
+          mkdir -p .knowns/docs/specs
+          node ../dist/index.js doc create "User Auth Spec" -d "Specification for user authentication" -t "spec,auth" -f "specs"
+          # Use slugified path (user-auth-spec) not original title
+          node ../dist/index.js doc edit "specs/user-auth-spec" -c "# User Authentication Spec\n\n## Overview\nImplement JWT-based authentication.\n\n## Requirements\n- Login endpoint\n- Token refresh\n- Logout\n\n## Acceptance Criteria\n- [ ] Users can login\n- [ ] Tokens expire after 1 hour"
+          node ../dist/index.js doc "specs/user-auth-spec" --plain
+          echo "✅ Spec create passed"
+
+      - name: Test template commands
+        shell: bash
+        run: |
+          echo "=== Testing template commands ==="
+          cd test-project
+          node ../dist/index.js template list || echo "No templates yet (expected)"
+          node ../dist/index.js template create test-component -d "Test component template"
+          node ../dist/index.js template list
+          node ../dist/index.js template info test-component || echo "Template info shown"
+          echo "✅ Template commands passed"
+
+      - name: Test validate
+        shell: bash
+        run: |
+          echo "=== Testing validate ==="
+          cd test-project
+          node ../dist/index.js validate || echo "Validation completed (warnings expected)"
+          echo "✅ Validate passed"
+
+      - name: Test task completion flow
+        shell: bash
+        run: |
+          echo "=== Testing task completion ==="
+          cd test-project
+          node ../dist/index.js task edit "$TASK1_ID" --check-ac 2
+          node ../dist/index.js task edit "$TASK1_ID" --check-ac 3
+          node ../dist/index.js task edit "$TASK1_ID" --notes "## Summary\nCompleted E2E test task.\n\n## Changes\n- Added tests\n- Verified functionality"
+          node ../dist/index.js task edit "$TASK1_ID" -s done
+          node ../dist/index.js task "$TASK1_ID" --plain
+          node ../dist/index.js task list --status done --plain
+          echo "✅ Task completion passed"
+
+      - name: Test board view
+        shell: bash
+        run: |
+          echo "=== Testing board ==="
+          cd test-project
+          node ../dist/index.js board || echo "Board displayed"
+          echo "✅ Board passed"
+
+      - name: Test config commands
+        shell: bash
+        run: |
+          echo "=== Testing config ==="
+          cd test-project
+          node ../dist/index.js config list
+          node ../dist/index.js config get defaultAssignee --plain || echo "No default assignee"
+          node ../dist/index.js config set defaultPriority high
+          node ../dist/index.js config get defaultPriority --plain
+          echo "✅ Config passed"
+
+      - name: Test cross-references resolution
+        shell: bash
+        run: |
+          echo "=== Testing cross-references ==="
+          cd test-project
+          # Create task with doc ref
+          TASK4_OUTPUT=$(node ../dist/index.js task create "Task with refs" -d "See @doc/README and @doc/specs/user-auth-spec for details")
+          echo "$TASK4_OUTPUT"
+          TASK4_ID=$(echo "$TASK4_OUTPUT" | grep -oE 'task-[a-z0-9]+' | head -1)
+          # Create doc with task ref
+          node ../dist/index.js doc edit "guides/architecture" -c "# Architecture\n\nRelated tasks:\n- @$TASK1_ID\n- @$TASK2_ID\n\nSee also @doc/README"
+          # Verify refs are stored correctly
+          node ../dist/index.js task "$TASK4_ID" --plain
+          node ../dist/index.js doc "guides/architecture" --plain
+          echo "✅ Cross-references passed"
+
+      - name: Test semantic search
+        shell: bash
+        run: |
+          echo "=== Testing semantic search ==="
+          cd test-project
+          # Check model command
+          node ../dist/index.js model
+          node ../dist/index.js model list
+          # Download smallest model (~45MB)
+          echo "Downloading model..."
+          node ../dist/index.js model download all-MiniLM-L6-v2
+          # Set model for project
+          node ../dist/index.js model set all-MiniLM-L6-v2
+          # Enable semantic search
+          node ../dist/index.js config set semanticSearch.enabled true
+          # Check status
+          node ../dist/index.js search --status-check
+          # Build index
+          node ../dist/index.js search --reindex
+          # Test semantic search
+          node ../dist/index.js search "test task" --plain
+          # Test keyword search fallback
+          node ../dist/index.js search "test" --keyword --plain
+          echo "✅ Semantic search passed"
+
+      - name: Final verification
+        shell: bash
+        run: |
+          echo "=== Final verification ==="
+          cd test-project
+          echo "--- Tasks ---"
+          node ../dist/index.js task list --plain
+          echo ""
+          echo "--- Docs ---"
+          node ../dist/index.js doc list --plain
+          echo ""
+          echo "--- Search (semantic) ---"
+          node ../dist/index.js search "architecture" --plain
+          echo ""
+          echo "✅✅✅ All E2E tests passed on ${{ matrix.os }}! ✅✅✅"

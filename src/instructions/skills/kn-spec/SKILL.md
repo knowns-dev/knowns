@@ -103,15 +103,44 @@ mcp__knowns__update_doc({
 })
 ```
 
-Then suggest:
-> Spec approved! Ready to create tasks?
-> Run: `/kn-plan --from @doc/specs/<name>`
-
 **If edit requested:**
 Update the spec based on feedback and return to Step 4.
 
 **If add more:**
 Gather additional requirements and update spec.
+
+---
+
+## CRITICAL: Next Step Suggestion
+
+**You MUST suggest the next action. User won't know what to do next.**
+
+After spec is approved:
+
+```
+✓ Spec approved: @doc/specs/<name>
+
+This spec will generate multiple tasks. Ready to create them?
+
+Run: /kn-plan --from @doc/specs/<name>
+```
+
+**Show what will happen:**
+```
+This will:
+1. Parse requirements from spec
+2. Generate tasks with ACs
+3. Link all tasks to this spec
+4. You review and approve before creation
+```
+
+---
+
+## Related Skills
+
+- `/kn-plan --from @doc/specs/<name>` - Generate tasks from this spec
+- `/kn-plan <id>` - Plan individual task
+- `/kn-verify` - Verify implementation against spec
 
 ## Checklist
 
@@ -121,11 +150,11 @@ Gather additional requirements and update spec.
 - [ ] Includes: Overview, Requirements, ACs, Scenarios
 - [ ] User reviewed
 - [ ] Status updated (draft → approved)
-- [ ] Next step suggested (/kn-plan --from)
+- [ ] **Next step suggested** (/kn-plan --from)
 
 ## Red Flags
 
 - Creating spec without user input
 - Skipping review step
 - Approving without explicit user confirmation
-- Not suggesting task creation after approval
+- **Not suggesting task creation after approval**

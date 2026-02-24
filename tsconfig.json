@@ -25,7 +25,8 @@
 			"@utils/*": ["src/utils/*"],
 			"@mcp/*": ["src/mcp/*"],
 			"@codegen/*": ["src/codegen/*"],
-			"@instructions/*": ["src/instructions/*"]
+			"@instructions/*": ["src/instructions/*"],
+			"@search/*": ["src/search/*"]
 		},
 
 		"strict": true,

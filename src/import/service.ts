@@ -8,6 +8,8 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { getIndexService } from "@search/index-service";
+import matter from "gray-matter";
 import { glob } from "tinyglobby";
 import {
 	getImportConfig,
@@ -33,6 +35,42 @@ import { getProvider, localProvider } from "./providers";
 import { detectImportType, generateImportName, validateImportName } from "./validator";
 
 const KNOWNS_DIR = ".knowns";
+
+/**
+ * Index imported docs for semantic search
+ */
+async function indexImportedDocs(projectRoot: string, importName: string): Promise<void> {
+	try {
+		const indexService = getIndexService(projectRoot);
+		const isEnabled = await indexService.isEnabled();
+		if (!isEnabled) return;
+
+		const docsDir = join(getImportDir(projectRoot, importName), "docs");
+		if (!existsSync(docsDir)) return;
+
+		// Get all md files recursively
+		const mdFiles = await glob(["**/*.md"], {
+			cwd: docsDir,
+			onlyFiles: true,
+		});
+
+		for (const file of mdFiles) {
+			const fullPath = join(docsDir, file);
+			const content = await readFile(fullPath, "utf-8");
+			const { data, content: docContent } = matter(content);
+			const docPath = `${importName}/${file.replace(/\.md$/, "")}`;
+
+			await indexService.indexDoc(docPath, docContent, {
+				path: docPath,
+				title: (data as { title?: string }).title || file.replace(/\.md$/, ""),
+				description: (data as { description?: string }).description,
+				tags: (data as { tags?: string[] }).tags,
+			});
+		}
+	} catch {
+		// Silently ignore indexing errors
+	}
+}
 
 /**
  * Calculate file hash for conflict detection
@@ -295,6 +333,9 @@ export async function importSource(
 		// Cleanup
 		await provider.cleanup(tempDir);
 
+		// Index imported docs for semantic search (fire and forget)
+		indexImportedDocs(projectRoot, name).catch(() => {});
+
 		return {
 			success: true,
 			name,
@@ -359,6 +400,9 @@ async function importLocalLink(
 		};
 		await saveImportConfig(projectRoot, config);
 	}
+
+	// Index imported docs for semantic search (fire and forget)
+	indexImportedDocs(projectRoot, name).catch(() => {});
 
 	return {
 		success: true,

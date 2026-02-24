@@ -10,7 +10,7 @@ tags:
 ---
 ## Overview
 
-Skills là instructions cho AI workflows. Định nghĩa một lần, sync sang nhiều platforms.
+Skills are instructions for AI workflows. Define once, sync to multiple platforms.
 
 **Related:** @doc/ai/platforms
 
@@ -61,13 +61,13 @@ Instructions here...
 
 ## Portable Format
 
-**Claude Code** và **Antigravity** dùng cùng SKILL.md format:
+**Claude Code** and **Antigravity** use the same SKILL.md format:
 
 ```bash
-# Symlink để share
+# Symlink to share
 ln -s .claude/skills .agent/skills
 
-# Hoặc dùng Knowns sync
+# Or use Knowns sync
 knowns skill sync
 ```
 
@@ -99,9 +99,6 @@ knowns skill view knowns-task
 # Sync to platforms
 knowns skill sync --all
 knowns skill sync --platform claude,antigravity
-
-# Export to specific format
-knowns skill export --platform cursor
 
 # Check status
 knowns skill status
@@ -151,12 +148,12 @@ triggers:
 
 ## Platform Conversion
 
-Khi sync, skills được convert sang format phù hợp:
+When syncing, skills are converted to the appropriate format:
 
 | Platform | Output Format |
 |----------|---------------|
-| Claude Code | `SKILL.md` (giữ nguyên) |
-| Antigravity | `SKILL.md` (giữ nguyên) |
+| Claude Code | `SKILL.md` (unchanged) |
+| Antigravity | `SKILL.md` (unchanged) |
 | Cursor | `.mdc` (frontmatter converted) |
 | Gemini CLI | `.md` command file |
 | Windsurf | Appended to `.windsurfrules` |
@@ -166,7 +163,7 @@ Khi sync, skills được convert sang format phù hợp:
 
 ## Skill Modes: MCP vs CLI
 
-Khi init, user chọn skill mode. Skills sẽ được generate với instructions phù hợp.
+During init, user chooses skill mode. Skills will be generated with appropriate instructions.
 
 ### Init Options
 
@@ -321,7 +318,7 @@ knowns time stop
 
 ## Auto-Detection
 
-Skills có thể detect MCP availability:
+Skills can detect MCP availability:
 
 ```markdown
 # In skill instructions
@@ -339,7 +336,7 @@ Skills có thể detect MCP availability:
 
 ## Platform-Specific Generation
 
-Khi sync, skills adapt theo platform capabilities:
+When syncing, skills adapt to platform capabilities:
 
 | Platform | MCP Support | Generated Mode |
 |----------|-------------|----------------|
@@ -370,11 +367,8 @@ knowns skill sync --all
 # Change mode globally
 knowns config set skills.mode mcp
 
-# Regenerate all skills
-knowns skill sync --regenerate
-
-# Or per-skill override
-knowns skill edit my-skill --mode cli
+# Sync all skills with new mode
+knowns skill sync --all
 ```
 
 
@@ -382,7 +376,7 @@ knowns skill edit my-skill --mode cli
 
 ## Full MCP Support (Updated)
 
-Với extended MCP tools, **MCP có thể làm mọi thứ CLI làm được**.
+With extended MCP tools, **MCP can do everything CLI can do**.
 
 ### Updated Feature Matrix
 
@@ -487,11 +481,11 @@ mcp__knowns__update_task({
 
 ### Fallback Strategy
 
-Nếu platform không hỗ trợ MCP, skills auto-convert sang CLI:
+If platform does not support MCP, skills auto-convert to CLI:
 
 ```bash
 knowns skill sync --all
 
-# Platform có MCP → MCP instructions
-# Platform không có MCP → CLI instructions (auto-converted)
+# Platform with MCP → MCP instructions
+# Platform without MCP → CLI instructions (auto-converted)
 ```

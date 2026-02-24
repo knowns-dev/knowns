@@ -4,8 +4,23 @@ Complete guide for managing tasks from creation to completion.
 
 ## Overview
 
+```mermaid
+graph LR
+    A[Create] --> B[Take]
+    B --> C[Plan]
+    C --> D[Implement]
+    D --> E[Complete]
 ```
-Create → Take → Plan → Implement (+ Templates) → Complete
+
+### Task Status Flow
+
+```mermaid
+graph LR
+    A[todo] --> B[in-progress]
+    B --> C[in-review]
+    C --> D[done]
+    B --> E[blocked]
+    E --> B
 ```
 
 ## Step 1: Create Task

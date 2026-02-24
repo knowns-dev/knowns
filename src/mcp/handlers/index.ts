@@ -44,7 +44,7 @@ export {
 } from "./template";
 
 // Unified Search handler
-export { searchTools, handleSearch } from "./search";
+export { searchTools, handleSearch, handleReindexSearch } from "./search";
 
 // Project detection handlers
 export {

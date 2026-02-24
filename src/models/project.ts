@@ -14,6 +14,26 @@ export interface Project {
 
 export type GitTrackingMode = "git-tracked" | "git-ignored" | "none";
 
+/**
+ * Supported embedding models for semantic search
+ * Now uses string type to support custom HuggingFace models
+ */
+export type EmbeddingModel = string;
+
+/**
+ * Semantic search configuration
+ */
+export interface SemanticSearchSettings {
+	enabled: boolean;
+	model: EmbeddingModel;
+	/** Full HuggingFace model ID (e.g., "Xenova/gte-small") */
+	huggingFaceId?: string;
+	/** Embedding dimensions */
+	dimensions?: number;
+	/** Max tokens for input */
+	maxTokens?: number;
+}
+
 export interface ProjectSettings {
 	defaultAssignee?: string;
 	defaultPriority: TaskPriority;
@@ -23,6 +43,8 @@ export interface ProjectSettings {
 	statuses: TaskStatus[];
 	statusColors?: Record<string, string>;
 	visibleColumns?: TaskStatus[];
+	/** Semantic search configuration */
+	semanticSearch?: SemanticSearchSettings;
 }
 
 // Helper to create default project settings

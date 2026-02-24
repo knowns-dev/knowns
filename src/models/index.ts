@@ -8,7 +8,7 @@ export type { Task, AcceptanceCriterion, TimeEntry, TaskStatus, TaskPriority } f
 export { DEFAULT_STATUSES, createTask, isValidTaskStatus, isValidTaskPriority } from "./task";
 
 // Project exports
-export type { Project, ProjectSettings } from "./project";
+export type { Project, ProjectSettings, SemanticSearchSettings, EmbeddingModel, GitTrackingMode } from "./project";
 export { createProject, createDefaultProjectSettings } from "./project";
 
 // Version exports

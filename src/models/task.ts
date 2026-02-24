@@ -21,6 +21,8 @@ export interface Task {
 	parent?: string; // Parent task ID for subtasks
 	subtasks: string[]; // Child task IDs
 	spec?: string; // Linked spec document path (e.g., "specs/user-auth" for @doc/specs/user-auth)
+	fulfills?: string[]; // Spec ACs this task fulfills (e.g., ["AC-1", "AC-2"])
+	order?: number; // Manual ordering for display (lower = first)
 	createdAt: Date;
 	updatedAt: Date;
 

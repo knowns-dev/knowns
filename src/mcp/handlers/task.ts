@@ -3,11 +3,14 @@
  */
 
 import type { Task, TaskPriority, TaskStatus } from "@models/task";
+import { getIndexService } from "@search/index-service";
 import type { FileStore } from "@storage/file-store";
 import { normalizeTaskId } from "@utils/normalize-id";
 import { notifyTaskUpdate } from "@utils/notify-server";
+import { syncSpecACs } from "@utils/sync-spec-acs";
 import { z } from "zod";
 import { errorResponse, fetchLinkedDocs, successResponse } from "../utils";
+import { getProjectRoot } from "./project";
 
 /**
  * Normalize literal \n sequences to actual newlines.
@@ -28,6 +31,8 @@ export const createTaskSchema = z.object({
 	labels: z.array(z.string()).optional(),
 	parent: z.string().optional(),
 	spec: z.string().optional(),
+	fulfills: z.array(z.string()).optional(), // Spec ACs this task fulfills (e.g., ["AC-1", "AC-2"])
+	order: z.number().optional(),
 });
 
 export const getTaskSchema = z.object({
@@ -43,6 +48,8 @@ export const updateTaskSchema = z.object({
 	assignee: z.string().optional(),
 	labels: z.array(z.string()).optional(),
 	spec: z.string().nullable().optional(), // Spec document path (null to remove)
+	fulfills: z.array(z.string()).nullable().optional(), // Spec ACs this task fulfills (null to remove)
+	order: z.number().nullable().optional(), // Display order (null to remove)
 	// AC operations
 	addAc: z.array(z.string()).optional(), // Add new acceptance criteria
 	checkAc: z.array(z.number()).optional(), // Check AC by index (1-based)
@@ -94,6 +101,11 @@ export const taskTools = [
 				},
 				parent: { type: "string", description: "Parent task ID for subtasks" },
 				spec: { type: "string", description: "Spec document path (e.g., 'specs/user-auth')" },
+				fulfills: {
+					type: "array",
+					items: { type: "string" },
+					description: "Spec ACs this task fulfills (e.g., ['AC-1', 'AC-2'])",
+				},
 			},
 			required: ["title"],
 		},
@@ -136,6 +148,12 @@ export const taskTools = [
 					description: "New labels",
 				},
 				spec: { type: "string", description: "Spec document path (set to null to remove)" },
+				fulfills: {
+					type: "array",
+					items: { type: "string" },
+					description: "Spec ACs this task fulfills (e.g., ['AC-1', 'AC-2'], set to null to remove)",
+				},
+				order: { type: "number", description: "Display order (lower = first, set to null to remove)" },
 				addAc: {
 					type: "array",
 					items: { type: "string" },
@@ -202,6 +220,7 @@ export async function handleCreateTask(args: unknown, fileStore: FileStore) {
 		labels: input.labels || [],
 		parent: input.parent,
 		spec: input.spec,
+		fulfills: input.fulfills,
 		subtasks: [],
 		acceptanceCriteria: [],
 		timeSpent: 0,
@@ -210,6 +229,13 @@ export async function handleCreateTask(args: unknown, fileStore: FileStore) {
 
 	// Notify web server for real-time updates
 	await notifyTaskUpdate(task.id);
+
+	// Index task for semantic search (fire and forget)
+	getIndexService(getProjectRoot())
+		.indexTask(task)
+		.catch(() => {
+			// Silently ignore indexing errors
+		});
 
 	return successResponse({
 		task: {
@@ -276,6 +302,16 @@ export async function handleUpdateTask(args: unknown, fileStore: FileStore) {
 	// Spec update (null removes, string sets)
 	if (input.spec !== undefined) {
 		updates.spec = input.spec === null ? undefined : input.spec;
+	}
+
+	// Fulfills update (null removes, array sets)
+	if (input.fulfills !== undefined) {
+		updates.fulfills = input.fulfills === null ? undefined : input.fulfills;
+	}
+
+	// Order update (null removes, number sets)
+	if (input.order !== undefined) {
+		updates.order = input.order === null ? undefined : input.order;
 	}
 
 	// AC operations
@@ -349,6 +385,23 @@ export async function handleUpdateTask(args: unknown, fileStore: FileStore) {
 
 	// Notify web server for real-time updates
 	await notifyTaskUpdate(task.id);
+
+	// Sync spec ACs when task ACs are updated, fulfills is updated, or task is done
+	const fulfillsUpdated = input.fulfills !== undefined;
+	if (acModified || fulfillsUpdated || input.status === "done") {
+		const syncResult = await syncSpecACs(task, getProjectRoot());
+		if (syncResult.synced) {
+			// Notify that the spec doc was updated
+			await notifyTaskUpdate(task.id); // Re-notify to refresh spec in UI
+		}
+	}
+
+	// Index task for semantic search (fire and forget)
+	getIndexService(getProjectRoot())
+		.indexTask(task)
+		.catch(() => {
+			// Silently ignore indexing errors
+		});
 
 	return successResponse({
 		task: {

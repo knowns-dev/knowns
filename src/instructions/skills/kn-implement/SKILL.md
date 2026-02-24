@@ -85,9 +85,104 @@ mcp__knowns__update_task({
 })
 ```
 
+**Note:** When task is marked done (or AC is checked), matching ACs in the linked spec document are automatically checked. No manual spec update needed.
+
+## Step 5.5: SDD Workflow (if task has spec)
+
+**Check if task has `spec` field.** If yes, run SDD workflow:
+
+### 1. Get Sibling Tasks
+
+```json
+mcp__knowns__list_tasks({ "spec": "<spec-path-from-task>" })
+```
+
+### 2. Analyze Status
+
+Count tasks by status:
+- `done`: completed tasks
+- `todo` / `in-progress`: pending tasks
+
+### 3. Branch Based on Results
+
+**If pending tasks exist:**
+```
+✓ Task done! This task is part of spec: specs/xxx
+
+Remaining tasks (Y of Z):
+- task-YY: Title (todo)
+- task-ZZ: Title (in-progress)
+
+Next: /kn-plan <first-todo-id>
+```
+
+**If this is the LAST task (all others done):**
+```
+✓ Task done! All tasks for specs/xxx complete!
+
+Running SDD verification...
+```
+
+Then auto-run:
+```json
+mcp__knowns__validate({ "scope": "sdd" })
+```
+
+Display SDD Coverage Report:
+```
+SDD Coverage Report
+═══════════════════════════════════════
+Spec: specs/xxx
+Tasks: X/X complete (100%)
+ACs: Y/Z verified
+
+✅ Spec fully implemented!
+```
+
 ## Step 6: Extract Knowledge (optional)
 
-If patterns discovered: `/kn-extract $ARGUMENTS`
+If patterns discovered: `/kn-extract`
+
+---
+
+## CRITICAL: Next Step Suggestion
+
+**You MUST suggest the next action. User won't know what to do next.**
+
+After task completion, check for:
+
+1. **More tasks from same spec?**
+   ```json
+   mcp__knowns__list_tasks({ "spec": "<spec-path>", "status": "todo" })
+   ```
+
+2. **Suggest based on context:**
+
+| Situation | Suggest |
+|-----------|---------|
+| More tasks in spec | "Next: `/kn-plan <next-task-id>` for [task title]" |
+| All spec tasks done | "All tasks complete! Run `/kn-verify` to verify against spec" |
+| Standalone task | "Task done. Run `/kn-extract` to extract patterns, or `/kn-commit` to commit" |
+| Patterns discovered | "Consider `/kn-extract` to document this pattern" |
+
+**Example output:**
+```
+✓ Task #43 complete!
+
+Next task from @doc/specs/user-auth:
+→ Task #44: Add refresh token rotation
+
+Run: /kn-plan 44
+```
+
+---
+
+## Related Skills
+
+- `/kn-plan <id>` - Create plan before implementing
+- `/kn-verify` - Verify all tasks against spec
+- `/kn-extract` - Extract patterns to docs
+- `/kn-commit` - Commit with verification
 
 ## Checklist
 
@@ -97,6 +192,8 @@ If patterns discovered: `/kn-extract $ARGUMENTS`
 - [ ] Notes added
 - [ ] Timer stopped
 - [ ] Status = done
+- [ ] **SDD workflow handled (if spec linked)**
+- [ ] **Next step suggested**
 
 ## Red Flags
 
@@ -105,3 +202,6 @@ If patterns discovered: `/kn-extract $ARGUMENTS`
 - Skipping validation
 - Using `notes` instead of `appendNotes`
 - Marking done without verification
+- **Not checking sibling tasks when spec linked**
+- **Not running SDD verify when spec complete**
+- **Not suggesting next step**

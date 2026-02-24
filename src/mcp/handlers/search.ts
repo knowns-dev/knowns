@@ -1,22 +1,29 @@
 /**
  * Unified Search MCP handler
  * Search tasks and docs with filters
+ * Supports hybrid semantic search when enabled
  */
 
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import type { EmbeddingModel, SemanticSearchSettings } from "@models/project";
 import type { Task } from "@models/task";
+import { chunkDocument, chunkTask } from "@search/chunker";
+import { EmbeddingService } from "@search/embedding";
+import { HybridSearchEngine, type SearchMode, type SearchResult } from "@search/engine";
+import { SearchIndexStore } from "@search/store";
 import type { FileStore } from "@storage/file-store";
 import matter from "gray-matter";
 import { z } from "zod";
-import { successResponse } from "../utils";
+import { errorResponse, successResponse } from "../utils";
 import { getProjectRoot } from "./project";
 
 // Schema
 export const searchSchema = z.object({
 	query: z.string(),
 	type: z.enum(["all", "task", "doc"]).optional(), // Default: all
+	mode: z.enum(["hybrid", "semantic", "keyword"]).optional(), // Default: hybrid
 	// Task filters
 	status: z.string().optional(),
 	priority: z.string().optional(),
@@ -28,11 +35,13 @@ export const searchSchema = z.object({
 	limit: z.number().optional(),
 });
 
+export const reindexSearchSchema = z.object({});
+
 // Tool definition
 export const searchTools = [
 	{
 		name: "search",
-		description: "Unified search across tasks and docs with filters",
+		description: "Unified search across tasks and docs with filters. Supports hybrid semantic search when enabled.",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -42,6 +51,11 @@ export const searchTools = [
 					enum: ["all", "task", "doc"],
 					description: "Search type (default: all)",
 				},
+				mode: {
+					type: "string",
+					enum: ["hybrid", "semantic", "keyword"],
+					description: "Search mode: hybrid (semantic + keyword), semantic only, or keyword only (default: hybrid)",
+				},
 				status: { type: "string", description: "Filter tasks by status" },
 				priority: { type: "string", description: "Filter tasks by priority" },
 				assignee: { type: "string", description: "Filter tasks by assignee" },
@@ -50,6 +64,15 @@ export const searchTools = [
 				limit: { type: "number", description: "Limit results (default: 20)" },
 			},
 			required: ["query"],
+		},
+	},
+	{
+		name: "reindex_search",
+		description:
+			"Rebuild the semantic search index from all tasks and docs. Use when index is out of sync or after enabling semantic search.",
+		inputSchema: {
+			type: "object",
+			properties: {},
 		},
 	},
 ];
@@ -297,30 +320,194 @@ async function searchDocs(docsDir: string, query: string, tagFilter?: string): P
 }
 
 /**
+ * Get semantic search settings from project config
+ */
+async function getSemanticSearchSettings(projectRoot: string): Promise<SemanticSearchSettings | null> {
+	try {
+		const configPath = join(projectRoot, ".knowns", "config.json");
+		if (!existsSync(configPath)) {
+			return null;
+		}
+
+		const content = await readFile(configPath, "utf-8");
+		const config = JSON.parse(content);
+		return config.settings?.semanticSearch || null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Perform hybrid/semantic search using HybridSearchEngine
+ * Auto-rebuilds index if missing (for clone/gitignore scenarios)
+ */
+async function performHybridSearch(
+	query: string,
+	projectRoot: string,
+	model: EmbeddingModel,
+	searchMode: SearchMode,
+	searchType: "all" | "task" | "doc",
+	limit: number,
+): Promise<{ taskResults: SearchResult[]; docResults: SearchResult[]; warning?: string }> {
+	const embeddingService = new EmbeddingService({ model });
+	const store = new SearchIndexStore(projectRoot, model);
+	let warning: string | undefined;
+
+	// Check if model is downloaded
+	if (!embeddingService.isModelDownloaded()) {
+		throw new Error(
+			"Embedding model not downloaded. Run 'knowns search --reindex' or 'mcp__knowns__reindex_search' to set up.",
+		);
+	}
+
+	// Load model
+	await embeddingService.loadModel();
+
+	// Check if index exists - auto-rebuild if missing
+	let db = await store.getDatabase();
+
+	if (!db) {
+		// Auto-rebuild the index
+		warning = "Search index was missing and has been auto-rebuilt";
+		const { rebuildIndex } = await import("../../commands/search");
+		await rebuildIndex(projectRoot, model);
+
+		// Reload the store after rebuild
+		db = await store.getDatabase();
+		if (!db) {
+			throw new Error("Failed to rebuild search index");
+		}
+	}
+
+	const engine = new HybridSearchEngine(embeddingService, db);
+
+	let taskResults: SearchResult[] = [];
+	let docResults: SearchResult[] = [];
+
+	// Search based on type
+	if (searchType === "all" || searchType === "task") {
+		taskResults = await engine.search(query, {
+			mode: searchMode,
+			limit,
+			type: "task",
+		});
+	}
+
+	if (searchType === "all" || searchType === "doc") {
+		docResults = await engine.search(query, {
+			mode: searchMode,
+			limit,
+			type: "doc",
+		});
+	}
+
+	// Dispose embedding service
+	embeddingService.dispose();
+
+	return { taskResults, docResults, warning };
+}
+
+/**
  * Handle unified search
  */
 export async function handleSearch(args: unknown, fileStore: FileStore) {
 	const input = searchSchema.parse(args);
 	const searchType = input.type || "all";
+	const searchMode = input.mode || "hybrid";
 	const limit = input.limit || 20;
-	const docsDir = join(getProjectRoot(), ".knowns", "docs");
+	const projectRoot = getProjectRoot();
+	const docsDir = join(projectRoot, ".knowns", "docs");
+
+	// Check if semantic search is enabled
+	const settings = await getSemanticSearchSettings(projectRoot);
+	const useHybrid = settings?.enabled === true && settings.model && searchMode !== "keyword";
 
 	let taskResults: TaskResult[] = [];
 	let docResults: DocResult[] = [];
 
-	// Search tasks
-	if (searchType === "all" || searchType === "task") {
-		taskResults = await searchTasks(fileStore, input.query, {
-			status: input.status,
-			priority: input.priority,
-			assignee: input.assignee,
-			label: input.label,
-		});
-	}
+	let searchWarning: string | undefined;
 
-	// Search docs
-	if (searchType === "all" || searchType === "doc") {
-		docResults = await searchDocs(docsDir, input.query, input.tag);
+	if (useHybrid && settings?.model) {
+		// Use hybrid/semantic search
+		try {
+			const hybridMode: SearchMode = searchMode === "semantic" ? "semantic" : "hybrid";
+			const {
+				taskResults: hybridTasks,
+				docResults: hybridDocs,
+				warning,
+			} = await performHybridSearch(input.query, projectRoot, settings.model, hybridMode, searchType, limit);
+
+			searchWarning = warning;
+
+			// Convert SearchResult to TaskResult/DocResult format
+			taskResults = hybridTasks.map((r) => ({
+				id: r.id,
+				title: r.title,
+				status: r.metadata?.status || "unknown",
+				priority: r.metadata?.priority || "medium",
+				assignee: r.metadata?.assignee,
+				labels: r.metadata?.labels || [],
+				score: r.score,
+			}));
+
+			docResults = hybridDocs.map((r) => ({
+				path: r.path || r.id,
+				title: r.title,
+				description: r.snippet,
+				tags: r.metadata?.tags,
+				score: r.score,
+				matchContext: r.snippet,
+			}));
+
+			// Apply task filters (semantic search doesn't filter, so we do it here)
+			if (input.status) {
+				taskResults = taskResults.filter((t) => t.status === input.status);
+			}
+			if (input.priority) {
+				taskResults = taskResults.filter((t) => t.priority === input.priority);
+			}
+			if (input.assignee) {
+				taskResults = taskResults.filter((t) => t.assignee === input.assignee);
+			}
+			if (input.label) {
+				taskResults = taskResults.filter((t) => t.labels.includes(input.label as string));
+			}
+
+			// Apply doc tag filter
+			if (input.tag) {
+				docResults = docResults.filter((d) => d.tags?.includes(input.tag as string));
+			}
+		} catch (error) {
+			// Fall back to keyword search on error
+			searchWarning = `Hybrid search failed, using keyword search: ${error instanceof Error ? error.message : String(error)}`;
+
+			if (searchType === "all" || searchType === "task") {
+				taskResults = await searchTasks(fileStore, input.query, {
+					status: input.status,
+					priority: input.priority,
+					assignee: input.assignee,
+					label: input.label,
+				});
+			}
+
+			if (searchType === "all" || searchType === "doc") {
+				docResults = await searchDocs(docsDir, input.query, input.tag);
+			}
+		}
+	} else {
+		// Use keyword search
+		if (searchType === "all" || searchType === "task") {
+			taskResults = await searchTasks(fileStore, input.query, {
+				status: input.status,
+				priority: input.priority,
+				assignee: input.assignee,
+				label: input.label,
+			});
+		}
+
+		if (searchType === "all" || searchType === "doc") {
+			docResults = await searchDocs(docsDir, input.query, input.tag);
+		}
 	}
 
 	// Apply limit
@@ -330,6 +517,8 @@ export async function handleSearch(args: unknown, fileStore: FileStore) {
 	return successResponse({
 		query: input.query,
 		type: searchType,
+		mode: useHybrid ? searchMode : "keyword",
+		...(searchWarning && { warning: searchWarning }),
 		tasks: {
 			count: taskResults.length,
 			results: taskResults,
@@ -340,4 +529,32 @@ export async function handleSearch(args: unknown, fileStore: FileStore) {
 		},
 		totalCount: taskResults.length + docResults.length,
 	});
+}
+
+/**
+ * Handle reindex search
+ */
+export async function handleReindexSearch(args: unknown, fileStore: FileStore) {
+	reindexSearchSchema.parse(args);
+	const projectRoot = getProjectRoot();
+
+	// Check if semantic search is enabled
+	const settings = await getSemanticSearchSettings(projectRoot);
+	if (!settings?.enabled || !settings.model) {
+		return errorResponse(
+			"Semantic search is not enabled. Enable it with: knowns config set semanticSearch.enabled true",
+		);
+	}
+
+	try {
+		const { rebuildIndex } = await import("../../commands/search");
+		await rebuildIndex(projectRoot, settings.model);
+
+		return successResponse({
+			message: "Search index rebuilt successfully",
+			model: settings.model,
+		});
+	} catch (error) {
+		return errorResponse(`Failed to rebuild index: ${error instanceof Error ? error.message : String(error)}`);
+	}
 }
