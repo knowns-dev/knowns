@@ -7,6 +7,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { setNotifyProjectRoot } from "@utils/notify-server";
 
 // Global state for current project
 let currentProjectRoot: string | null = null;
@@ -30,6 +31,8 @@ export function getProjectRoot(): string {
  */
 export function setProjectRoot(path: string): void {
 	currentProjectRoot = path;
+	// Also update notify-server so MCP notifications can find the correct port file
+	setNotifyProjectRoot(path);
 }
 
 /**

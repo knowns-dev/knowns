@@ -45,6 +45,8 @@ body {
 	margin: 0;
 	min-height: 100svh;
 	height: 100svh;
+	background-color: var(--background);
+	color: var(--foreground);
 }
 
 #root {

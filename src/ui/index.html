@@ -9,6 +9,15 @@
 		<title>Knowns</title>
 	</head>
 	<body>
+		<!-- Prevent flash of wrong theme -->
+		<script>
+			(function() {
+				var saved = localStorage.getItem('theme');
+				if (saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+					document.documentElement.classList.add('dark');
+				}
+			})();
+		</script>
 		<div id="root"></div>
 		<script type="module" src="./main.tsx"></script>
 	</body>
