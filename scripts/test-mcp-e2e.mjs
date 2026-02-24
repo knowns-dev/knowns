@@ -5,66 +5,59 @@
  * Uses isolated temp project folder for clean testing
  */
 
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync } from "node:fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, "..");
 
-const TIMEOUT_MS = 180000; // 3 minutes for full test including reindex
+const TIMEOUT_MS = 300000; // 5 minutes for full test including model download
 
 /**
- * Create isolated test project folder
+ * Create isolated test project using CLI (ensures semantic search is configured)
  */
-function createTestProject() {
+function createTestProject(useBuilt) {
   // Use fixed folder name for consistent test environment
-  const testDir = join(projectRoot, "test-project-cli-e2e");
-  const knownsDir = join(testDir, ".knowns");
+  const testDir = join(projectRoot, "test-project-mcp-e2e");
 
   // Clean up existing test project first
   if (existsSync(testDir)) {
     rmSync(testDir, { recursive: true, force: true });
   }
 
-  // Create all required directories
-  mkdirSync(join(knownsDir, "tasks"), { recursive: true });
-  mkdirSync(join(knownsDir, "docs"), { recursive: true });
-  mkdirSync(join(knownsDir, "templates"), { recursive: true });
-  mkdirSync(join(knownsDir, "versions"), { recursive: true });
+  mkdirSync(testDir, { recursive: true });
 
-  // Create config.json with semantic search enabled
-  const config = {
-    name: "mcp-e2e-test",
-    version: "1.0.0",
-    settings: {
-      semanticSearch: {
-        enabled: true,
-        model: "gte-small",
-      },
-    },
-  };
-  writeFileSync(
-    join(knownsDir, "config.json"),
-    JSON.stringify(config, null, 2),
-  );
+  // Determine CLI command
+  const cliCmd = useBuilt
+    ? `node ${join(projectRoot, "dist/index.js")}`
+    : `npx tsx --import ./scripts/md-loader.mjs src/index.ts`;
 
-  // Create a basic README doc
-  const readmeContent = `---
-title: README
-description: Test project for MCP E2E tests
-createdAt: ${new Date().toISOString()}
-updatedAt: ${new Date().toISOString()}
-tags:
-  - test
----
+  console.log("Creating test project with CLI...");
 
-# MCP E2E Test Project
+  // Initialize project
+  execSync(`${cliCmd} init mcp-e2e-test --no-wizard`, {
+    cwd: testDir,
+    stdio: "inherit",
+  });
 
-This is an isolated test project created for MCP E2E testing.
-`;
-  writeFileSync(join(knownsDir, "docs", "readme.md"), readmeContent);
+  // Initialize git (required for knowns)
+  execSync("git init", { cwd: testDir, stdio: "pipe" });
+
+  // Enable semantic search and download model
+  console.log("Setting up semantic search (downloading model)...");
+  execSync(`${cliCmd} model set all-MiniLM-L6-v2`, {
+    cwd: testDir,
+    stdio: "inherit",
+  });
+
+  // Reindex to build semantic index
+  console.log("Building search index...");
+  execSync(`${cliCmd} search --reindex`, {
+    cwd: testDir,
+    stdio: "inherit",
+  });
 
   console.log(`Created test project: ${testDir}`);
   return testDir;
@@ -174,13 +167,14 @@ async function test(name, fn) {
 async function main() {
   console.log("=== MCP E2E Workflow Tests ===\n");
 
-  // Create isolated test project
-  const useExistingProject = process.argv.includes("--use-current");
+  const useBuilt = process.argv.includes("--built");
+
+  // Create isolated test project OR use existing (from CI)
+  const useExistingProject =
+    process.argv.includes("--use-current") || process.env.TEST_PROJECT_PATH;
   const testProjectPath = useExistingProject
     ? process.env.TEST_PROJECT_PATH || projectRoot
-    : createTestProject();
-
-  const useBuilt = process.argv.includes("--built");
+    : createTestProject(useBuilt);
   const serverCmd = useBuilt
     ? ["node", [join(projectRoot, "dist/mcp/server.js")]]
     : [
