@@ -1,7 +1,7 @@
 ---
 title: Validate Command
 createdAt: '2026-02-03T15:32:39.328Z'
-updatedAt: '2026-02-03T16:22:02.528Z'
+updatedAt: '2026-02-25T06:36:53.729Z'
 description: >-
   Spec for knowns validate command - checks task/doc/template references and
   quality
@@ -29,6 +29,52 @@ This leverages Knowns' unique reference system to catch errors *before* AI start
 ## 2. CLI Usage
 
 ```bash
+# Basic validation (all entities)
+knowns validate
+
+# Validate specific type
+knowns validate --type task
+knowns validate --type doc
+knowns validate --type template
+
+# Validate specific entity (saves tokens for AI)
+knowns validate --entity 6vbpda           # Task by ID
+knowns validate --entity specs/user-auth  # Doc by path
+
+# Strict mode (warnings become errors)
+knowns validate --strict
+
+# JSON output (for CI/CD)
+knowns validate --json
+
+# Fix auto-fixable issues
+knowns validate --fix
+
+# SDD (Spec-Driven Development) validation
+knowns validate --sdd
+```
+
+### Entity Filter (`--entity`)
+
+Validate a single task or doc instead of the entire project. Useful for:
+- **AI agents**: Save tokens by validating only the entity being worked on
+- **Quick checks**: Validate specific item before committing
+
+**Format detection:**
+| Input | Type | Example |
+|-------|------|---------|
+| 6-char alphanumeric | Task ID | `vw6ajg` |
+| Path with `/` or longer | Doc path | `specs/user-auth`, `guides/setup` |
+
+```bash
+# Validate single task
+knowns validate --entity vw6ajg --plain
+# Output: Tasks: 1 checked, Docs: 0 checked
+
+# Validate single doc
+knowns validate --entity ai/overview --plain
+# Output: Tasks: 0 checked, Docs: 1 checked
+```
 # Basic validation (all entities)
 knowns validate
 
@@ -228,21 +274,38 @@ Validate is also available as MCP tool for AI agents:
 
 ```json
 mcp__knowns__validate({
-  "type": "task",     // optional: "task" | "doc" | "template"
-  "strict": false,    // optional: treat warnings as errors
-  "fix": false        // optional: auto-fix broken refs
+  "scope": "all",        // optional: "all" | "tasks" | "docs" | "templates" | "sdd"
+  "entity": "vw6ajg",    // optional: validate single entity (task ID or doc path)
+  "strict": false,       // optional: treat warnings as errors
+  "fix": false           // optional: auto-fix broken refs
 })
 ```
+
+### Entity Parameter
+
+Use `entity` to validate a single task or doc instead of everything:
+
+```json
+// Validate single task
+mcp__knowns__validate({ "entity": "vw6ajg" })
+
+// Validate single doc
+mcp__knowns__validate({ "entity": "specs/user-auth" })
+```
+
+**Auto-detection:**
+- 6-char alphanumeric → Task ID (`vw6ajg`)
+- Path format → Doc path (`specs/user-auth`, `guides/setup`)
 
 **Returns:**
 ```json
 {
   "success": true,
   "valid": true,
-  "stats": { "tasks": 48, "docs": 38, "templates": 2 },
-  "summary": { "errors": 0, "warnings": 2, "info": 5 },
-  "issues": [...],
-  "fixes": [...]  // if fix=true
+  "stats": { "tasks": 1, "docs": 0, "templates": 0 },
+  "summary": { "errors": 0, "warnings": 0, "info": 0 },
+  "issues": [],
+  "fixes": []  // if fix=true
 }
 ```
 

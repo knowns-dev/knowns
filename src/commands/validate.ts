@@ -268,12 +268,16 @@ async function validateTasks(
 	projectRoot: string,
 	fileStore: FileStore,
 	validateConfig: ValidateConfig,
+	filterTaskId?: string,
 ): Promise<ValidationIssue[]> {
 	const issues: ValidationIssue[] = [];
 	const tasks = await fileStore.getAllTasks();
 	const taskIds = new Set(tasks.map((t) => t.id));
 
-	for (const task of tasks) {
+	// Filter to specific task if provided
+	const tasksToValidate = filterTaskId ? tasks.filter((t) => t.id === filterTaskId) : tasks;
+
+	for (const task of tasksToValidate) {
 		const taskRef = `task-${task.id}`;
 
 		// Check if this task should be ignored
@@ -435,6 +439,7 @@ async function validateDocs(
 	projectRoot: string,
 	fileStore: FileStore,
 	validateConfig: ValidateConfig,
+	filterDocPath?: string,
 ): Promise<ValidationIssue[]> {
 	const issues: ValidationIssue[] = [];
 	const docsDir = join(projectRoot, ".knowns", "docs");
@@ -471,6 +476,9 @@ async function validateDocs(
 			} else if (entry.name.endsWith(".md")) {
 				const docPath = entryRelPath.replace(/\.md$/, "");
 				const docRef = `docs/${docPath}`;
+
+				// Skip if filtering for specific doc and this isn't it
+				if (filterDocPath && docPath !== filterDocPath) continue;
 
 				// Check if this doc should be ignored
 				if (shouldIgnore(docRef, validateConfig)) continue;
@@ -991,6 +999,7 @@ function formatSDDReport(result: SDDResult, plain: boolean): void {
  */
 async function runValidation(options: {
 	type?: string;
+	entity?: string;
 	strict?: boolean;
 }): Promise<ValidationResult> {
 	const projectRoot = getProjectRoot();
@@ -1000,40 +1009,60 @@ async function runValidation(options: {
 	const allIssues: ValidationIssue[] = [];
 	const stats = { tasks: 0, docs: 0, templates: 0 };
 
+	// Parse entity filter if provided
+	const entityFilter = options.entity ? parseEntityFilter(options.entity) : null;
+
 	// Validate tasks
-	if (!options.type || options.type === "task") {
+	if ((!options.type || options.type === "task") && (!entityFilter || entityFilter.type === "task")) {
 		const tasks = await fileStore.getAllTasks();
-		stats.tasks = tasks.length;
-		const taskIssues = await validateTasks(projectRoot, fileStore, validateConfig);
+		const tasksToValidate = entityFilter?.type === "task" ? tasks.filter((t) => t.id === entityFilter.id) : tasks;
+		stats.tasks = tasksToValidate.length;
+		const taskIssues = await validateTasks(
+			projectRoot,
+			fileStore,
+			validateConfig,
+			entityFilter?.type === "task" ? entityFilter.id : undefined,
+		);
 		allIssues.push(...taskIssues);
 	}
 
 	// Validate docs
-	if (!options.type || options.type === "doc") {
+	if ((!options.type || options.type === "doc") && (!entityFilter || entityFilter.type === "doc")) {
 		const docsDir = join(projectRoot, ".knowns", "docs");
 		if (existsSync(docsDir)) {
-			// Count docs
-			async function countDocs(dir: string): Promise<number> {
-				let count = 0;
-				const entries = await readdir(dir, { withFileTypes: true });
-				for (const entry of entries) {
-					if (entry.name.startsWith(".")) continue;
-					if (entry.isDirectory()) {
-						count += await countDocs(join(dir, entry.name));
-					} else if (entry.name.endsWith(".md")) {
-						count++;
+			if (entityFilter?.type === "doc") {
+				// Only count the specific doc
+				const docPath = join(docsDir, `${entityFilter.id}.md`);
+				stats.docs = existsSync(docPath) ? 1 : 0;
+			} else {
+				// Count all docs
+				async function countDocs(dir: string): Promise<number> {
+					let count = 0;
+					const entries = await readdir(dir, { withFileTypes: true });
+					for (const entry of entries) {
+						if (entry.name.startsWith(".")) continue;
+						if (entry.isDirectory()) {
+							count += await countDocs(join(dir, entry.name));
+						} else if (entry.name.endsWith(".md")) {
+							count++;
+						}
 					}
+					return count;
 				}
-				return count;
+				stats.docs = await countDocs(docsDir);
 			}
-			stats.docs = await countDocs(docsDir);
 		}
-		const docIssues = await validateDocs(projectRoot, fileStore, validateConfig);
+		const docIssues = await validateDocs(
+			projectRoot,
+			fileStore,
+			validateConfig,
+			entityFilter?.type === "doc" ? entityFilter.id : undefined,
+		);
 		allIssues.push(...docIssues);
 	}
 
-	// Validate templates
-	if (!options.type || options.type === "template") {
+	// Validate templates (skip if entity filter is set - templates don't have entity filter yet)
+	if ((!options.type || options.type === "template") && !entityFilter) {
 		const templates = await listAllTemplates(projectRoot);
 		stats.templates = templates.length;
 		const templateIssues = await validateTemplates(projectRoot, validateConfig);
@@ -1161,9 +1190,28 @@ function formatJson(result: ValidationResult): void {
 // CLI COMMAND
 // ============================================================================
 
+/**
+ * Parse entity string to determine type and id
+ * Auto-detects type based on format:
+ * - Task ID: 6-char alphanumeric (nanoid pattern)
+ * - Doc path: contains "/" or longer string
+ */
+function parseEntityFilter(entity: string): { type: "task" | "doc"; id: string } {
+	const taskIdPattern = /^[a-zA-Z0-9]{6}$/;
+
+	if (taskIdPattern.test(entity)) {
+		return { type: "task", id: entity };
+	}
+
+	// Everything else is a doc path
+	const docPath = entity.startsWith("docs/") ? entity.replace("docs/", "") : entity;
+	return { type: "doc", id: docPath };
+}
+
 export const validateCommand = new Command("validate")
 	.description("Validate tasks, docs, and templates for quality and reference integrity")
 	.option("--type <type>", "Entity type to validate: task, doc, template")
+	.option("--entity <id>", "Validate specific entity only (task ID or doc path)")
 	.option("--strict", "Treat warnings as errors")
 	.option("--json", "Output results as JSON")
 	.option("--fix", "Auto-fix supported issues (doc renames, stale refs)")
@@ -1172,6 +1220,7 @@ export const validateCommand = new Command("validate")
 	.action(
 		async (options: {
 			type?: string;
+			entity?: string;
 			strict?: boolean;
 			json?: boolean;
 			fix?: boolean;
@@ -1245,6 +1294,7 @@ export const validateCommand = new Command("validate")
 
 				const result = await runValidation({
 					type: options.type,
+					entity: options.entity,
 					strict: options.strict,
 				});
 

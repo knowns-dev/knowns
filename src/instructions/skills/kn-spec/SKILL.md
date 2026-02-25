@@ -85,6 +85,14 @@ Optional implementation hints or constraints.
 - [ ] Question 2?
 ```
 
+## Step 3.5: Validate Spec
+
+**CRITICAL:** After creating spec, validate to catch issues:
+
+```json
+mcp__knowns__validate({ "entity": "specs/<name>" })
+```
+
 ## Step 4: Ask for Review
 
 Present the spec and ask:

@@ -68,10 +68,10 @@ mcp__knowns__update_task({
 ## Step 5: Validate & Complete
 
 1. Run tests/lint/build
-2. **Validate** to catch broken refs:
+2. **Validate task** to catch broken refs (uses entity filter to save tokens):
 
 ```json
-mcp__knowns__validate({})
+mcp__knowns__validate({ "entity": "$ARGUMENTS" })
 ```
 
 3. Add implementation notes (use `appendNotes`, NOT `notes`!)

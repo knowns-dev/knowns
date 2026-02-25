@@ -9,6 +9,7 @@ import { existsSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FileStore } from "@storage/file-store";
+import chalk from "chalk";
 import cors from "cors";
 import express, { type Request, type Response } from "express";
 import { errorHandler } from "./middleware/error-handler";
@@ -155,7 +156,8 @@ export async function startServer(options: ServerOptions) {
 	const tryListen = (): Promise<{ close: () => void }> => {
 		return new Promise((resolve, reject) => {
 			const server = app.listen(currentPort, () => {
-				if (currentPort !== port) {
+				const portChanged = currentPort !== port;
+				if (portChanged) {
 					console.log(`⚠ Port ${port} in use, using ${currentPort} instead`);
 				}
 				console.log(`✓ Server running at http://localhost:${currentPort}`);
@@ -167,8 +169,12 @@ export async function startServer(options: ServerOptions) {
 					// Ignore write errors
 				}
 
-				if (open) {
+				// Only open browser if we got the requested port
+				// If port changed, another server might already be running on original port
+				if (open && !portChanged) {
 					openBrowser(`http://localhost:${currentPort}`);
+				} else if (open && portChanged) {
+					console.log(chalk.gray("Browser not opened (port was changed). Open manually if needed."));
 				}
 
 				resolve({

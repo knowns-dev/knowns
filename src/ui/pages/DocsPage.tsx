@@ -27,10 +27,12 @@ import { Badge } from "../components/ui/badge";
 import { Progress } from "../components/ui/progress";
 import { getDocs, createDoc, updateDoc, getTasksBySpec } from "../api/client";
 import { useSSEEvent } from "../contexts/SSEContext";
+import { useGlobalTask } from "../contexts/GlobalTaskContext";
 import { normalizePath, toDisplayPath, normalizePathForAPI, isSpec, getSpecStatus, getSpecStatusOrder, parseACProgress, type Doc } from "../lib/utils";
 
 
 export default function DocsPage() {
+	const { openTask } = useGlobalTask();
 	const [docs, setDocs] = useState<Doc[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [selectedDoc, setSelectedDoc] = useState<Doc | null>(null);
@@ -143,10 +145,10 @@ export default function DocsPage() {
 				// Handle task links (task-xxx or @task-xxx)
 				if (href && /^@?task-[\w.]+(.md)?$/.test(href)) {
 					e.preventDefault();
-					const taskId = href.replace(/^@/, "").replace(".md", "");
+					const taskId = href.replace(/^@/, "").replace(/^task-/, "").replace(".md", "");
 
-					// Navigate to tasks page with hash
-					window.location.hash = `/tasks?task=${taskId}`;
+					// Open task in global modal (stays on current page)
+					openTask(taskId);
 					return;
 				}
 
@@ -602,10 +604,11 @@ export default function DocsPage() {
 													<div className="mb-3 p-3 rounded-lg bg-muted/50 border">
 														<div className="space-y-2">
 															{linkedTasks.map((task) => (
-																<a
+																<button
+																	type="button"
 																	key={task.id}
-																	href={`#/kanban/${task.id}`}
-																	className="flex items-center justify-between p-2 rounded hover:bg-background transition-colors group"
+																	onClick={() => openTask(task.id)}
+																	className="flex items-center justify-between p-2 rounded hover:bg-background transition-colors group w-full text-left"
 																>
 																	<div className="flex items-center gap-2 min-w-0">
 																		<span className={`w-2 h-2 rounded-full shrink-0 ${
@@ -636,7 +639,7 @@ export default function DocsPage() {
 																		</span>
 																		<ExternalLink className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
 																	</div>
-																</a>
+																</button>
 															))}
 														</div>
 													</div>

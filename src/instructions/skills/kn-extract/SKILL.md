@@ -64,7 +64,7 @@ mcp__knowns__update_doc({
 **CRITICAL:** After creating doc/template, validate to catch broken refs:
 
 ```json
-mcp__knowns__validate({})
+mcp__knowns__validate({ "entity": "patterns/<name>" })
 ```
 
 If errors found, fix before continuing.

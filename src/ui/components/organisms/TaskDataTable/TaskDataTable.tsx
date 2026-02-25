@@ -14,6 +14,8 @@ import {
 import { DataTable } from "@/ui/components/ui/data-table";
 import { taskColumns } from "./columns";
 import type { Task } from "@/models/task";
+import { useConfig } from "@/ui/contexts/ConfigContext";
+import { buildStatusOptions } from "@/ui/utils/colors";
 
 interface TaskDataTableToolbarProps {
 	table: Table<Task>;
@@ -26,6 +28,7 @@ interface TaskDataTableToolbarProps {
 	specFilter: string;
 	setSpecFilter: (value: string) => void;
 	availableSpecs: string[];
+	statusOptions: { value: string; label: string }[];
 	onNewTask?: () => void;
 }
 
@@ -39,6 +42,7 @@ function TaskDataTableToolbar({
 	specFilter,
 	setSpecFilter,
 	availableSpecs,
+	statusOptions,
 	onNewTask,
 }: TaskDataTableToolbarProps) {
 	const isFiltered = globalFilter || statusFilter !== "all" || priorityFilter !== "all" || specFilter !== "all";
@@ -61,11 +65,11 @@ function TaskDataTableToolbar({
 					</SelectTrigger>
 					<SelectContent>
 						<SelectItem value="all">All Status</SelectItem>
-						<SelectItem value="todo">To Do</SelectItem>
-						<SelectItem value="in-progress">In Progress</SelectItem>
-						<SelectItem value="in-review">In Review</SelectItem>
-						<SelectItem value="blocked">Blocked</SelectItem>
-						<SelectItem value="done">Done</SelectItem>
+						{statusOptions.map((opt) => (
+							<SelectItem key={opt.value} value={opt.value}>
+								{opt.label}
+							</SelectItem>
+						))}
 					</SelectContent>
 				</Select>
 				<Select value={priorityFilter} onValueChange={setPriorityFilter}>
@@ -134,10 +138,17 @@ export function TaskDataTable({
 	onSelectionChange,
 	onNewTask,
 }: TaskDataTableProps) {
+	const { config } = useConfig();
 	const [globalFilter, setGlobalFilter] = React.useState("");
 	const [statusFilter, setStatusFilter] = React.useState("all");
 	const [priorityFilter, setPriorityFilter] = React.useState("all");
 	const [specFilter, setSpecFilter] = React.useState("all");
+
+	// Build status options from config
+	const statusOptions = React.useMemo(() => {
+		const statuses = config.statuses || ["todo", "in-progress", "in-review", "done", "blocked"];
+		return buildStatusOptions(statuses);
+	}, [config.statuses]);
 
 	// Extract unique specs from tasks
 	const availableSpecs = React.useMemo(() => {
@@ -208,6 +219,7 @@ export function TaskDataTable({
 					specFilter={specFilter}
 					setSpecFilter={setSpecFilter}
 					availableSpecs={availableSpecs}
+					statusOptions={statusOptions}
 					onNewTask={onNewTask}
 				/>
 			}

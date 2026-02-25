@@ -63,12 +63,22 @@ export const EMBEDDING_MODELS: Record<string, ModelConfig> = {
 };
 
 /**
+ * Supported dtype options for model inference
+ * - fp32: Full precision (default for CPU, most compatible)
+ * - fp16: Half precision (faster on GPU, not recommended for CPU)
+ * - q8: 8-bit quantized (smaller, faster, slightly less accurate)
+ * - q4: 4-bit quantized (smallest, fastest, less accurate)
+ */
+export type ModelDtype = "fp32" | "fp16" | "q8" | "q4";
+
+/**
  * Embedding configuration stored in project config
  */
 export interface EmbeddingConfig {
 	enabled: boolean;
 	model: EmbeddingModel;
 	modelPath: string; // e.g., "~/.knowns/models/gte-small"
+	dtype?: ModelDtype; // Default: "fp32"
 }
 
 /**

@@ -3,6 +3,7 @@
  * Opens web UI for task management
  */
 
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -11,6 +12,50 @@ import { startServer } from "@server/index";
 import { findProjectRoot } from "@utils/find-project-root";
 import chalk from "chalk";
 import { Command } from "commander";
+
+// Check if running in Bun
+const isBun = typeof globalThis.Bun !== "undefined";
+
+/**
+ * Check if a Knowns server is already running on the given port
+ * Returns true only if it's a Knowns server (responds to /api/events)
+ */
+async function isKnownsServerRunning(port: number): Promise<boolean> {
+	try {
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), 1000);
+
+		const response = await fetch(`http://localhost:${port}/api/events`, {
+			method: "HEAD",
+			signal: controller.signal,
+		});
+
+		clearTimeout(timeout);
+		return response.ok || response.status === 405; // 405 = Method Not Allowed (SSE endpoint)
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Open browser to a URL
+ */
+function openBrowser(url: string): void {
+	try {
+		if (isBun) {
+			const openCommand = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+			Bun.spawn([openCommand, url]);
+		} else if (process.platform === "darwin") {
+			spawn("open", [url], { stdio: "ignore" });
+		} else if (process.platform === "win32") {
+			spawn("cmd", ["/c", "start", "", url], { stdio: "ignore" });
+		} else {
+			spawn("xdg-open", [url], { stdio: "ignore" });
+		}
+	} catch (error) {
+		console.error("Failed to open browser:", error);
+	}
+}
 
 const DEFAULT_PORT = 6420;
 const CONFIG_FILE = ".knowns/config.json";
@@ -65,6 +110,35 @@ export const browserCommand = new Command("browser")
 		}
 
 		const port = Number.parseInt(options.port);
+		const portFilePath = join(projectRoot, ".knowns", ".server-port");
+
+		// Check multiple possible ports where Knowns server might be running
+		const portsToCheck: number[] = [port];
+
+		// Also check port from file if it exists
+		if (existsSync(portFilePath)) {
+			try {
+				const filePort = Number.parseInt(await readFile(portFilePath, "utf-8"));
+				if (!portsToCheck.includes(filePort)) {
+					portsToCheck.push(filePort);
+				}
+			} catch {
+				// Ignore parse errors
+			}
+		}
+
+		// Check if Knowns server is already running on any of these ports
+		for (const checkPort of portsToCheck) {
+			if (await isKnownsServerRunning(checkPort)) {
+				const url = `http://localhost:${checkPort}`;
+				console.log(chalk.green(`✓ Server already running at ${url}`));
+				if (options.open) {
+					console.log(chalk.gray("Opening browser..."));
+					openBrowser(url);
+				}
+				return;
+			}
+		}
 
 		// Always save port to config so notify-server stays in sync
 		await saveServerPort(projectRoot, port);
