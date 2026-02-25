@@ -19,7 +19,7 @@ import {
 import { notifyDocUpdate } from "@utils/notify-server";
 import matter from "gray-matter";
 import { z } from "zod";
-import { listAllDocs, validateRefs } from "../../import";
+import { listAllDocs, resolveDoc, validateRefs } from "../../import";
 import { errorResponse, successResponse } from "../utils";
 import { getProjectRoot } from "./project";
 
@@ -326,15 +326,24 @@ export async function handleListDocs(args: unknown) {
 
 export async function handleGetDoc(args: unknown) {
 	const input = getDocSchema.parse(args);
-	const resolved = await resolveDocPath(input.path);
+
+	// Use import resolver to find both local and imported docs
+	const projectRoot = getProjectRoot();
+	const resolved = await resolveDoc(projectRoot, input.path);
 
 	if (!resolved) {
 		return errorResponse(`Documentation not found: ${input.path}`);
 	}
 
-	const fileContent = await readFile(resolved.filepath, "utf-8");
+	const fileContent = await readFile(resolved.path, "utf-8");
 	const { data, content } = matter(fileContent);
 	const metadata = data as DocMetadata;
+
+	// Build doc path for response
+	// If imported and input doesn't already have the import prefix, add it
+	const inputPath = input.path.replace(/\.md$/, "");
+	const docPath =
+		resolved.isImported && !inputPath.startsWith(`${resolved.source}/`) ? `${resolved.source}/${inputPath}` : inputPath;
 
 	// Handle --smart option: auto-decide based on document size
 	if (input.smart) {
@@ -348,7 +357,7 @@ export async function handleGetDoc(args: unknown) {
 			const toc = extractToc(content);
 			return successResponse({
 				doc: {
-					path: resolved.filename.replace(/\.md$/, ""),
+					path: docPath,
 					title: metadata.title,
 					smart: true,
 					isLarge: true,
@@ -382,7 +391,7 @@ export async function handleGetDoc(args: unknown) {
 
 		return successResponse({
 			doc: {
-				path: resolved.filename.replace(/\.md$/, ""),
+				path: docPath,
 				title: metadata.title,
 				stats: {
 					chars: stats.chars,
@@ -402,7 +411,7 @@ export async function handleGetDoc(args: unknown) {
 		if (toc.length === 0) {
 			return successResponse({
 				doc: {
-					path: resolved.filename.replace(/\.md$/, ""),
+					path: docPath,
 					title: metadata.title,
 					toc: [],
 					message: "No headings found in this document.",
@@ -412,7 +421,7 @@ export async function handleGetDoc(args: unknown) {
 
 		return successResponse({
 			doc: {
-				path: resolved.filename.replace(/\.md$/, ""),
+				path: docPath,
 				title: metadata.title,
 				toc: toc.map((entry, index) => ({
 					index: index + 1,
@@ -436,7 +445,7 @@ export async function handleGetDoc(args: unknown) {
 
 		return successResponse({
 			doc: {
-				path: resolved.filename.replace(/\.md$/, ""),
+				path: docPath,
 				title: metadata.title,
 				section: input.section,
 				content: sectionContent,
@@ -445,7 +454,6 @@ export async function handleGetDoc(args: unknown) {
 	}
 
 	// Validate refs and collect broken ones
-	const projectRoot = getProjectRoot();
 	const tasksDir = join(projectRoot, ".knowns", "tasks");
 	const refs = await validateRefs(projectRoot, content, tasksDir);
 	const brokenRefs = refs.filter((r) => !r.exists).map((r) => r.ref);
@@ -453,7 +461,7 @@ export async function handleGetDoc(args: unknown) {
 	// Default: return full document
 	return successResponse({
 		doc: {
-			path: resolved.filename.replace(/\.md$/, ""),
+			path: docPath,
 			title: metadata.title,
 			description: metadata.description,
 			tags: metadata.tags,
@@ -536,13 +544,23 @@ export async function handleCreateDoc(args: unknown) {
 
 export async function handleUpdateDoc(args: unknown) {
 	const input = updateDocSchema.parse(args);
-	const resolved = await resolveDocPath(input.path);
+
+	// Use import resolver to find both local and imported docs
+	const projectRoot = getProjectRoot();
+	const resolved = await resolveDoc(projectRoot, input.path);
 
 	if (!resolved) {
 		return errorResponse(`Documentation not found: ${input.path}`);
 	}
 
-	const fileContent = await readFile(resolved.filepath, "utf-8");
+	// Imported docs are read-only
+	if (resolved.isImported) {
+		return errorResponse(
+			`Cannot update imported documentation: ${input.path}. Imported docs are read-only. To modify, copy to local docs first.`,
+		);
+	}
+
+	const fileContent = await readFile(resolved.path, "utf-8");
 	const { data, content } = matter(fileContent);
 	const metadata = data as DocMetadata;
 
@@ -583,14 +601,19 @@ export async function handleUpdateDoc(args: unknown) {
 
 	// Write back
 	const newFileContent = matter.stringify(updatedContent, metadata);
-	await writeFile(resolved.filepath, newFileContent, "utf-8");
+	await writeFile(resolved.path, newFileContent, "utf-8");
+
+	// Build doc path for response
+	// If imported and input doesn't already have the import prefix, add it
+	const inputPath = input.path.replace(/\.md$/, "");
+	const docPath =
+		resolved.isImported && !inputPath.startsWith(`${resolved.source}/`) ? `${resolved.source}/${inputPath}` : inputPath;
 
 	// Notify web server for real-time updates
-	await notifyDocUpdate(resolved.filename);
+	await notifyDocUpdate(docPath);
 
 	// Index doc for semantic search
-	const docPath = resolved.filename.replace(/\.md$/, "");
-	await getIndexService(getProjectRoot()).indexDoc(docPath, updatedContent, {
+	await getIndexService(projectRoot).indexDoc(docPath, updatedContent, {
 		path: docPath,
 		title: metadata.title,
 		description: metadata.description,
@@ -598,9 +621,7 @@ export async function handleUpdateDoc(args: unknown) {
 	});
 
 	return successResponse({
-		message: sectionUpdated
-			? `Updated section "${sectionUpdated}" in ${resolved.filename}`
-			: `Updated documentation: ${resolved.filename}`,
+		message: sectionUpdated ? `Updated section "${sectionUpdated}" in ${docPath}` : `Updated documentation: ${docPath}`,
 		doc: {
 			path: docPath,
 			title: metadata.title,

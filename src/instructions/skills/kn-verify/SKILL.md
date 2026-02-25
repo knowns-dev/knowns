@@ -65,8 +65,11 @@ Based on warnings, suggest specific fixes:
 
 **For tasks without spec:**
 > Link task to spec:
-> ```bash
-> knowns task edit <id> --spec specs/<name>
+> ```json
+> mcp__knowns__update_task({
+>   "taskId": "<id>",
+>   "spec": "specs/<name>"
+> })
 > ```
 
 **For incomplete ACs:**
@@ -80,6 +83,18 @@ Based on warnings, suggest specific fixes:
 > ```
 > /kn-plan --from @doc/specs/<name>
 > ```
+
+## Entity-Specific Validation (Optional)
+
+To validate a single task or doc (saves tokens):
+
+```json
+// Validate single task
+mcp__knowns__validate({ "entity": "abc123" })
+
+// Validate single doc
+mcp__knowns__validate({ "entity": "specs/user-auth" })
+```
 
 ## Checklist
 

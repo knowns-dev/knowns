@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState } from "react";
 import type { Task } from "../models/task";
 import { api } from "./api/client";
 import { SSEProvider, useSSEEvent } from "./contexts/SSEContext";
-import { AppSidebar, TaskCreateForm, SearchCommandDialog, NotificationBell } from "./components/organisms";
+import { AppSidebar, TaskCreateForm, SearchCommandDialog, NotificationBell, TaskDetailSheet } from "./components/organisms";
 import { ConnectionStatus, ThemeToggle } from "./components/atoms";
 import { HeaderTimeTracker } from "./components/molecules";
 import { SidebarProvider, SidebarTrigger } from "./components/ui/sidebar";
@@ -12,6 +12,7 @@ import { ConfigProvider, useConfig } from "./contexts/ConfigContext";
 import { UserProvider } from "./contexts/UserContext";
 import { UIPreferencesProvider } from "./contexts/UIPreferencesContext";
 import { TimeTrackerProvider } from "./contexts/TimeTrackerContext";
+import { GlobalTaskProvider, useGlobalTask } from "./contexts/GlobalTaskContext";
 import ConfigPage from "./pages/ConfigPage";
 import DashboardPage from "./pages/DashboardPage";
 import DocsPage from "./pages/DocsPage";
@@ -45,6 +46,7 @@ export const useTheme = () => useContext(ThemeContext);
 
 function AppContent() {
 	const { config } = useConfig();
+	const { currentTaskId, closeTask } = useGlobalTask();
 	const [tasks, setTasks] = useState<Task[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [showCreateForm, setShowCreateForm] = useState(false);
@@ -330,6 +332,25 @@ function AppContent() {
 				onTaskSelect={handleSearchTaskSelect}
 				onDocSelect={handleSearchDocSelect}
 			/>
+
+			{/* Global Task Detail Modal - opens from any page without navigation */}
+			<TaskDetailSheet
+				task={currentTaskId ? tasks.find((t) => t.id === currentTaskId) || null : null}
+				allTasks={tasks}
+				onClose={closeTask}
+				onUpdate={(updatedTask) => {
+					setTasks((prev) => prev.map((t) => (t.id === updatedTask.id ? updatedTask : t)));
+				}}
+				onArchive={async (taskId) => {
+					try {
+						await api.archiveTask(taskId);
+						setTasks((prev) => prev.filter((t) => t.id !== taskId));
+						closeTask();
+					} catch (error) {
+						console.error("Failed to archive task:", error);
+					}
+				}}
+			/>
 			</SidebarProvider>
 			<Toaster />
 		</ThemeContext.Provider>
@@ -343,7 +364,9 @@ export default function App() {
 				<UIPreferencesProvider>
 					<SSEProvider>
 						<TimeTrackerProvider>
-							<AppContent />
+							<GlobalTaskProvider>
+								<AppContent />
+							</GlobalTaskProvider>
 						</TimeTrackerProvider>
 					</SSEProvider>
 				</UIPreferencesProvider>

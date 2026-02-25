@@ -431,15 +431,48 @@ This document describes security patterns for the application.
     console.log('\n    ✅ Semantic search workflow completed!\n');
 
     // =========================================================
-    // WORKFLOW 5: Validation
+    // WORKFLOW 5: Validation (Comprehensive)
     // =========================================================
-    console.log('[5] Validation Workflow\n');
+    console.log('[5] Validation Workflow');
+    console.log('    (all → tasks → docs → templates → sdd → strict)\n');
 
-    await test('Validate all', async () => {
-      const result = runCli('validate');
-      // Warnings are OK
+    await test('Validate all entities', async () => {
+      const result = runCli('validate --plain');
+      // Warnings are OK (exit code 1), only errors are > 1
       if (result.code > 1) throw new Error(result.error);
-      console.log('\n    → Validation completed');
+      console.log('\n    → All entities validated');
+    });
+
+    await test('Validate tasks only', async () => {
+      const result = runCli('validate --scope tasks --plain');
+      if (result.code > 1) throw new Error(result.error);
+      console.log('\n    → Tasks validated');
+    });
+
+    await test('Validate docs only', async () => {
+      const result = runCli('validate --scope docs --plain');
+      if (result.code > 1) throw new Error(result.error);
+      console.log('\n    → Docs validated');
+    });
+
+    await test('Validate templates only', async () => {
+      const result = runCli('validate --scope templates --plain');
+      if (result.code > 1) throw new Error(result.error);
+      console.log('\n    → Templates validated');
+    });
+
+    await test('SDD validation', async () => {
+      const result = runCli('validate --scope sdd --plain');
+      // SDD may show warnings about missing specs
+      if (result.code > 1) throw new Error(result.error);
+      console.log('\n    → SDD validation completed');
+    });
+
+    await test('Strict mode validation', async () => {
+      const result = runCli('validate --strict --plain');
+      // In strict mode, warnings become errors - may fail, that's OK
+      // Just verify it runs
+      console.log(`\n    → Strict mode completed (code: ${result.code})`);
     });
 
     console.log('\n    ✅ Validation workflow completed!\n');

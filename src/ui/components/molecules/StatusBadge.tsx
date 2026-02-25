@@ -1,27 +1,20 @@
 import { Badge } from "../atoms";
 import { cn } from "@/ui/lib/utils";
-
-type TaskStatus = "todo" | "in-progress" | "in-review" | "blocked" | "done";
+import { useConfig } from "../../contexts/ConfigContext";
+import { getStatusBadgeClasses, getStatusLabel, type ColorName } from "../../utils/colors";
 
 interface StatusBadgeProps {
-	status: TaskStatus;
+	status: string;
 	className?: string;
 }
 
-const statusConfig: Record<TaskStatus, { label: string; variant: "default" | "warning" | "info" | "destructive" | "success" }> = {
-	todo: { label: "To Do", variant: "default" },
-	"in-progress": { label: "In Progress", variant: "warning" },
-	"in-review": { label: "In Review", variant: "info" },
-	blocked: { label: "Blocked", variant: "destructive" },
-	done: { label: "Done", variant: "success" },
-};
-
 export function StatusBadge({ status, className }: StatusBadgeProps) {
-	const config = statusConfig[status] || statusConfig.todo;
+	const { config } = useConfig();
+	const statusColors = (config.statusColors || {}) as Record<string, ColorName>;
 
 	return (
-		<Badge variant={config.variant} className={cn("capitalize", className)}>
-			{config.label}
+		<Badge className={cn(getStatusBadgeClasses(status, statusColors), className)}>
+			{getStatusLabel(status)}
 		</Badge>
 	);
 }

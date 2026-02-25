@@ -85,6 +85,10 @@ mcp__knowns__update_doc({
 **CRITICAL:** After creating/updating docs, validate:
 
 ```json
+// Validate specific doc (saves tokens)
+mcp__knowns__validate({ "entity": "<doc-path>" })
+
+// Or validate all docs
 mcp__knowns__validate({ "scope": "docs" })
 ```
 

@@ -20,7 +20,7 @@ export const validateTools = [
 	{
 		name: "validate",
 		description:
-			"Validate tasks, docs, and templates for reference integrity and quality. Returns errors, warnings, and info about broken refs, missing AC, orphan docs, etc. Use scope='sdd' for SDD (Spec-Driven Development) validation.",
+			"Validate tasks, docs, and templates for reference integrity and quality. Returns errors, warnings, and info about broken refs, missing AC, orphan docs, etc. Use scope='sdd' for SDD (Spec-Driven Development) validation. Use 'entity' to validate a specific task or doc only.",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -29,6 +29,11 @@ export const validateTools = [
 					enum: ["all", "tasks", "docs", "templates", "sdd"],
 					description:
 						"Validation scope: 'all' (default), 'tasks', 'docs', 'templates', or 'sdd' for spec-driven checks",
+				},
+				entity: {
+					type: "string",
+					description:
+						"Validate a specific entity only. Use task ID directly (e.g., '6vbpda') or doc path (e.g., 'specs/user-auth'). Auto-detects type based on format.",
 				},
 				strict: {
 					type: "boolean",
@@ -219,12 +224,16 @@ async function validateTasks(
 	projectRoot: string,
 	fileStore: FileStore,
 	validateConfig: ValidateConfig,
+	filterTaskId?: string,
 ): Promise<ValidationIssue[]> {
 	const issues: ValidationIssue[] = [];
 	const tasks = await fileStore.getAllTasks();
 	const taskIds = new Set(tasks.map((t) => t.id));
 
-	for (const task of tasks) {
+	// Filter to specific task if provided
+	const tasksToValidate = filterTaskId ? tasks.filter((t) => t.id === filterTaskId) : tasks;
+
+	for (const task of tasksToValidate) {
 		const taskRef = `task-${task.id}`;
 		if (shouldIgnore(taskRef, validateConfig)) continue;
 
@@ -370,6 +379,7 @@ async function validateDocs(
 	projectRoot: string,
 	fileStore: FileStore,
 	validateConfig: ValidateConfig,
+	filterDocPath?: string,
 ): Promise<ValidationIssue[]> {
 	const issues: ValidationIssue[] = [];
 	const docsDir = join(projectRoot, ".knowns", "docs");
@@ -402,6 +412,9 @@ async function validateDocs(
 			} else if (entry.name.endsWith(".md")) {
 				const docPath = entryRelPath.replace(/\.md$/, "");
 				const docRef = `docs/${docPath}`;
+
+				// Skip if filtering for specific doc and this isn't it
+				if (filterDocPath && docPath !== filterDocPath) continue;
 
 				if (shouldIgnore(docRef, validateConfig) || shouldIgnore(docPath, validateConfig)) continue;
 
@@ -820,9 +833,33 @@ async function runSDDValidation(projectRoot: string, fileStore: FileStore): Prom
 	return { stats, warnings, passed };
 }
 
+/**
+ * Parse entity string to determine type and id
+ * Auto-detects type based on format:
+ * - Task ID: 6-char alphanumeric (nanoid pattern)
+ * - Doc path: contains "/" or longer string
+ *
+ * @param entity - Entity string like "6vbpda" (task) or "specs/user-auth" (doc)
+ * @returns { type: "task" | "doc", id: string }
+ */
+function parseEntity(entity: string): { type: "task" | "doc"; id: string } {
+	// Task IDs are 6-char alphanumeric (nanoid pattern)
+	// Doc paths typically contain "/" or are longer/have different patterns
+	const taskIdPattern = /^[a-zA-Z0-9]{6}$/;
+
+	if (taskIdPattern.test(entity)) {
+		return { type: "task", id: entity };
+	}
+
+	// Everything else is a doc path
+	// Strip "docs/" prefix if present for consistency
+	const docPath = entity.startsWith("docs/") ? entity.replace("docs/", "") : entity;
+	return { type: "doc", id: docPath };
+}
+
 // Handler
 export async function handleValidate(
-	args: { scope?: string; type?: string; strict?: boolean; fix?: boolean } | undefined,
+	args: { scope?: string; type?: string; entity?: string; strict?: boolean; fix?: boolean } | undefined,
 	fileStore: FileStore,
 ) {
 	try {
@@ -844,39 +881,68 @@ export async function handleValidate(
 		const allIssues: ValidationIssue[] = [];
 		const stats = { tasks: 0, docs: 0, templates: 0 };
 
+		// Parse entity filter if provided
+		const entityFilter = args?.entity ? parseEntity(args.entity) : null;
+
 		// Validate tasks
-		if (!args?.type || args.type === "task") {
-			const tasks = await fileStore.getAllTasks();
-			stats.tasks = tasks.length;
-			const taskIssues = await validateTasks(projectRoot, fileStore, validateConfig);
-			allIssues.push(...taskIssues);
+		if (!args?.scope || args.scope === "tasks" || args.scope === "all" || entityFilter?.type === "task") {
+			// Skip if entity filter is for docs
+			if (!entityFilter || entityFilter.type === "task") {
+				const tasks = await fileStore.getAllTasks();
+
+				// Filter to specific task if entity provided
+				const tasksToValidate = entityFilter?.type === "task" ? tasks.filter((t) => t.id === entityFilter.id) : tasks;
+
+				stats.tasks = tasksToValidate.length;
+				const taskIssues = await validateTasks(
+					projectRoot,
+					fileStore,
+					validateConfig,
+					entityFilter?.type === "task" ? entityFilter.id : undefined,
+				);
+				allIssues.push(...taskIssues);
+			}
 		}
 
 		// Validate docs
-		if (!args?.type || args.type === "doc") {
-			const docsDir = join(projectRoot, ".knowns", "docs");
-			if (existsSync(docsDir)) {
-				async function countDocs(dir: string): Promise<number> {
-					let count = 0;
-					const entries = await readdir(dir, { withFileTypes: true });
-					for (const entry of entries) {
-						if (entry.name.startsWith(".")) continue;
-						if (entry.isDirectory()) {
-							count += await countDocs(join(dir, entry.name));
-						} else if (entry.name.endsWith(".md")) {
-							count++;
+		if (!args?.scope || args.scope === "docs" || args.scope === "all" || entityFilter?.type === "doc") {
+			// Skip if entity filter is for tasks
+			if (!entityFilter || entityFilter.type === "doc") {
+				const docsDir = join(projectRoot, ".knowns", "docs");
+				if (existsSync(docsDir)) {
+					if (entityFilter?.type === "doc") {
+						// Only count the specific doc
+						const docPath = join(docsDir, `${entityFilter.id}.md`);
+						stats.docs = existsSync(docPath) ? 1 : 0;
+					} else {
+						async function countDocs(dir: string): Promise<number> {
+							let count = 0;
+							const entries = await readdir(dir, { withFileTypes: true });
+							for (const entry of entries) {
+								if (entry.name.startsWith(".")) continue;
+								if (entry.isDirectory()) {
+									count += await countDocs(join(dir, entry.name));
+								} else if (entry.name.endsWith(".md")) {
+									count++;
+								}
+							}
+							return count;
 						}
+						stats.docs = await countDocs(docsDir);
 					}
-					return count;
 				}
-				stats.docs = await countDocs(docsDir);
+				const docIssues = await validateDocs(
+					projectRoot,
+					fileStore,
+					validateConfig,
+					entityFilter?.type === "doc" ? entityFilter.id : undefined,
+				);
+				allIssues.push(...docIssues);
 			}
-			const docIssues = await validateDocs(projectRoot, fileStore, validateConfig);
-			allIssues.push(...docIssues);
 		}
 
-		// Validate templates
-		if (!args?.type || args.type === "template") {
+		// Validate templates (skip if entity filter is set - templates don't have entity filter yet)
+		if ((!args?.scope || args.scope === "templates" || args.scope === "all") && !entityFilter) {
 			const templates = await listAllTemplates(projectRoot);
 			stats.templates = templates.length;
 			const templateIssues = await validateTemplates(projectRoot, validateConfig);

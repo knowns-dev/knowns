@@ -7,7 +7,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Chunk, EmbeddingConfig, EmbeddingModel, EmbeddingResult, ModelConfig } from "./types";
+import type { Chunk, EmbeddingConfig, EmbeddingModel, EmbeddingResult, ModelConfig, ModelDtype } from "./types";
 import { EMBEDDING_MODELS } from "./types";
 
 /**
@@ -101,6 +101,7 @@ export interface ExtendedEmbeddingConfig extends Partial<EmbeddingConfig> {
 	huggingFaceId?: string;
 	dimensions?: number;
 	maxTokens?: number;
+	dtype?: ModelDtype;
 }
 
 /**
@@ -407,8 +408,11 @@ export class EmbeddingService {
 
 			// Create pipeline with progress callback
 			// Use quantized model for smaller size and faster inference
+			// dtype: fp32 (default) for CPU, can be configured for other options
+			const dtype = this.providedConfig?.dtype || "fp32";
 			this.pipeline = await pipeline("feature-extraction", modelConfig.huggingFaceId, {
 				quantized: true,
+				dtype,
 				progress_callback: (data: { progress?: number }) => {
 					if (onProgress && typeof data.progress === "number") {
 						onProgress(data.progress);

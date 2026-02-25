@@ -85,9 +85,16 @@ $` + `{` + `{` + `{camelCase name}`
 ${ {{~camelCase name~}}}
 ```
 
+## Step 6: Validate (after creating template)
+
+```json
+mcp__knowns__validate({ "scope": "templates" })
+```
+
 ## Checklist
 
 - [ ] Listed available templates
 - [ ] Read linked documentation
 - [ ] Ran dry run first
 - [ ] Verified generated files
+- [ ] **Validated (if created new template)**

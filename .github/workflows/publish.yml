@@ -258,7 +258,7 @@ jobs:
                 \"fields\": [
                   {
                     \"name\": \"📦 Install/Update\",
-                    \"value\": \"\`\`\`bash\n# Homebrew (macOS/Linux)\nbrew install knowns-dev/tap/knowns\n\n# npm\nnpm install -g knowns@${VERSION}\n\`\`\`\",
+                    \"value\": \"\`\`\`bash\n# npm\nnpm install -g knowns@${VERSION}\n\n# bun\nbun add -g knowns@${VERSION}\n\`\`\`\",
                     \"inline\": false
                   },
                   {

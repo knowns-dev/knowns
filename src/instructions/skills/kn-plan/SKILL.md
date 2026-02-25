@@ -76,8 +76,8 @@ mcp__knowns__update_task({
 
 **CRITICAL:** After saving plan with refs, validate to catch broken refs:
 
-```bash
-knowns validate --plain
+```json
+mcp__knowns__validate({ "entity": "$ARGUMENTS" })
 ```
 
 If errors found (broken `@doc/...` or `@task-...`), fix before asking approval.

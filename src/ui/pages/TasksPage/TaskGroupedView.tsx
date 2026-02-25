@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Plus, Filter, ClipboardList } from "lucide-react";
 import type { Task } from "@/models/task";
 import { ScrollArea } from "@/ui/components/ui/scroll-area";
@@ -11,29 +11,8 @@ import {
 } from "@/ui/components/ui/select";
 import { Button } from "@/ui/components/ui/button";
 import { StatusBadge, PriorityBadge, LabelList } from "@/ui/components/molecules";
-
-// Default status labels
-const DEFAULT_STATUS_LABELS: Record<string, string> = {
-	todo: "To Do",
-	"in-progress": "In Progress",
-	"in-review": "In Review",
-	done: "Done",
-	blocked: "Blocked",
-	"on-hold": "On Hold",
-	urgent: "Urgent",
-};
-
-// Get status label with fallback
-function getStatusLabel(status: string): string {
-	if (DEFAULT_STATUS_LABELS[status]) {
-		return DEFAULT_STATUS_LABELS[status];
-	}
-	// Auto-generate: "my-status" → "My Status"
-	return status
-		.split("-")
-		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-		.join(" ");
-}
+import { useConfig } from "@/ui/contexts/ConfigContext";
+import { getStatusLabel, buildStatusOptions } from "@/ui/utils/colors";
 
 interface TaskGroupedViewProps {
 	tasks: Task[];
@@ -42,9 +21,20 @@ interface TaskGroupedViewProps {
 }
 
 export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedViewProps) {
+	const { config } = useConfig();
 	const [statusFilter, setStatusFilter] = useState<string>("all");
 	const [parentFilter, setParentFilter] = useState<string>("all");
 	const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
+
+	// Get statuses from config
+	const availableStatuses = useMemo(() => {
+		return (config?.statuses as string[]) || ["todo", "in-progress", "in-review", "done", "blocked"];
+	}, [config?.statuses]);
+
+	// Build status options for filter dropdown
+	const statusOptions = useMemo(() => {
+		return buildStatusOptions(availableStatuses);
+	}, [availableStatuses]);
 
 	// Get list of parent tasks (tasks that have subtasks)
 	const parentTasks = tasks.filter((t) => t.subtasks && t.subtasks.length > 0);
@@ -59,30 +49,33 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 		filteredTasks = filteredTasks.filter((t) => t.parent === parentFilter);
 	}
 
-	// Group by status
-	const groupedTasks: Record<string, Task[]> = {
-		todo: [],
-		"in-progress": [],
-		"in-review": [],
-		blocked: [],
-		done: [],
-	};
-
-	for (const task of filteredTasks) {
-		if (groupedTasks[task.status]) {
-			groupedTasks[task.status].push(task);
+	// Group by status - dynamically from config
+	const groupedTasks: Record<string, Task[]> = useMemo(() => {
+		const groups: Record<string, Task[]> = {};
+		// Initialize all statuses from config
+		for (const status of availableStatuses) {
+			groups[status] = [];
 		}
-	}
-
-	// Sort by priority within each group
-	const priorityOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
-	for (const status in groupedTasks) {
-		groupedTasks[status].sort((a, b) => {
-			const diff = priorityOrder[a.priority] - priorityOrder[b.priority];
-			if (diff !== 0) return diff;
-			return a.id.localeCompare(b.id, undefined, { numeric: true });
-		});
-	}
+		// Group filtered tasks
+		for (const task of filteredTasks) {
+			if (groups[task.status]) {
+				groups[task.status].push(task);
+			} else {
+				// Handle tasks with unknown status (not in config)
+				groups[task.status] = [task];
+			}
+		}
+		// Sort by priority within each group
+		const priorityOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
+		for (const status in groups) {
+			groups[status].sort((a, b) => {
+				const diff = (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2);
+				if (diff !== 0) return diff;
+				return a.id.localeCompare(b.id, undefined, { numeric: true });
+			});
+		}
+		return groups;
+	}, [availableStatuses, filteredTasks]);
 
 	return (
 		<div className="h-full flex flex-col">
@@ -98,11 +91,11 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 						</SelectTrigger>
 						<SelectContent>
 							<SelectItem value="all">All Status</SelectItem>
-							<SelectItem value="todo">To Do</SelectItem>
-							<SelectItem value="in-progress">In Progress</SelectItem>
-							<SelectItem value="in-review">In Review</SelectItem>
-							<SelectItem value="blocked">Blocked</SelectItem>
-							<SelectItem value="done">Done</SelectItem>
+							{statusOptions.map((opt) => (
+								<SelectItem key={opt.value} value={opt.value}>
+									{opt.label}
+								</SelectItem>
+							))}
 						</SelectContent>
 					</Select>
 
@@ -165,7 +158,7 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 															<span className="text-xs text-muted-foreground font-mono">
 																#{task.id}
 															</span>
-															<StatusBadge status={task.status as "todo" | "in-progress" | "in-review" | "blocked" | "done"} />
+															<StatusBadge status={task.status} />
 															<PriorityBadge priority={task.priority} />
 
 															{/* Parent/Subtask badges */}

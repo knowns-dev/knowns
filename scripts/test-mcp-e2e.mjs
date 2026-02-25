@@ -29,6 +29,9 @@ function createTestProject(useBuilt) {
 
   mkdirSync(testDir, { recursive: true });
 
+  // Initialize git FIRST (required for knowns)
+  execSync("git init", { cwd: testDir, stdio: "pipe" });
+
   // Determine CLI command
   const cliCmd = useBuilt
     ? `node ${join(projectRoot, "dist/index.js")}`
@@ -41,9 +44,6 @@ function createTestProject(useBuilt) {
     cwd: testDir,
     stdio: "inherit",
   });
-
-  // Initialize git (required for knowns)
-  execSync("git init", { cwd: testDir, stdio: "pipe" });
 
   // Enable semantic search and download model
   console.log("Setting up semantic search (downloading model)...");
@@ -616,17 +616,27 @@ Testing the document creation and update workflow.
     console.log("\n    ✅ Board workflow completed!\n");
 
     // =========================================================
-    // WORKFLOW 5: Validation
+    // WORKFLOW 5: Validation (Comprehensive)
     // =========================================================
-    console.log("[5] Validation Workflow\n");
+    console.log("[5] Validation Workflow");
+    console.log("    (all → tasks → docs → templates → sdd → strict)\n");
 
-    await test("Validate all", async () => {
+    await test("Validate all entities", async () => {
       const result = await callTool(serverProcess, "validate", {
         scope: "all",
       });
+      if (typeof result.valid !== "boolean") {
+        throw new Error("Expected valid boolean");
+      }
+      if (!result.stats) {
+        throw new Error("Expected stats object");
+      }
       console.log(`\n    → Valid: ${result.valid}`);
       console.log(
-        `    → Errors: ${result.errors?.length || 0}, Warnings: ${result.warnings?.length || 0}`,
+        `    → Stats: ${result.stats.tasks} tasks, ${result.stats.docs} docs, ${result.stats.templates} templates`,
+      );
+      console.log(
+        `    → Issues: ${result.summary?.errors || 0} errors, ${result.summary?.warnings || 0} warnings`,
       );
     });
 
@@ -634,14 +644,60 @@ Testing the document creation and update workflow.
       const result = await callTool(serverProcess, "validate", {
         scope: "tasks",
       });
-      console.log(`\n    → Tasks valid: ${result.valid}`);
+      if (result.stats.docs !== 0) {
+        throw new Error("Should not validate docs when scope=tasks");
+      }
+      if (result.stats.templates !== 0) {
+        throw new Error("Should not validate templates when scope=tasks");
+      }
+      console.log(`\n    → Validated ${result.stats.tasks} tasks`);
     });
 
     await test("Validate docs only", async () => {
       const result = await callTool(serverProcess, "validate", {
         scope: "docs",
       });
-      console.log(`\n    → Docs valid: ${result.valid}`);
+      if (result.stats.tasks !== 0) {
+        throw new Error("Should not validate tasks when scope=docs");
+      }
+      console.log(`\n    → Validated ${result.stats.docs} docs`);
+    });
+
+    await test("Validate templates only", async () => {
+      const result = await callTool(serverProcess, "validate", {
+        scope: "templates",
+      });
+      if (result.stats.tasks !== 0) {
+        throw new Error("Should not validate tasks when scope=templates");
+      }
+      if (result.stats.docs !== 0) {
+        throw new Error("Should not validate docs when scope=templates");
+      }
+      console.log(`\n    → Validated ${result.stats.templates} templates`);
+    });
+
+    await test("SDD validation", async () => {
+      const result = await callTool(serverProcess, "validate", {
+        scope: "sdd",
+      });
+      if (result.mode !== "sdd") {
+        throw new Error(`Expected SDD mode, got ${result.mode}`);
+      }
+      console.log(`\n    → Mode: ${result.mode}`);
+      console.log(
+        `    → Specs: ${result.stats.specs?.total || 0} total, ${result.stats.specs?.approved || 0} approved`,
+      );
+      console.log(`    → Coverage: ${result.stats.coverage?.percent || 0}%`);
+    });
+
+    await test("Strict mode validation", async () => {
+      const result = await callTool(serverProcess, "validate", {
+        scope: "all",
+        strict: true,
+      });
+      // In strict mode, warnings should be elevated to errors
+      // Just verify it runs without crashing
+      console.log(`\n    → Strict mode valid: ${result.valid}`);
     });
 
     console.log("\n    ✅ Validation workflow completed!\n");
