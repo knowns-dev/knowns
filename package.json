@@ -85,7 +85,7 @@
 		"gray-matter": "^4.0.3",
 		"handlebars": "^4.7.8",
 		"highlight.js": "^11.11.1",
-		"lucide-react": "^0.562.0",
+		"lucide-react": "^0.575.0",
 		"marked": "^17.0.1",
 		"mermaid": "^11.12.2",
 		"pluralize": "^8.0.0",
