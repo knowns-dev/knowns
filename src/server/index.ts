@@ -90,7 +90,7 @@ export async function startServer(options: ServerOptions) {
 
 	// Create Express app
 	const app = express();
-	
+
 	// SECURITY FIX: Restrict CORS with flexible configuration for development
 	// Default: localhost only (secure)
 	// Dev mode: Allow custom origins via options
@@ -104,7 +104,7 @@ export async function startServer(options: ServerOptions) {
 		],
 		credentials: options.corsCredentials ?? true,
 	};
-	
+
 	app.use(cors(corsOptions));
 	app.use(express.json());
 

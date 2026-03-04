@@ -311,10 +311,10 @@ export class SearchStore {
 			WHERE v.embedding MATCH ? AND k = ${k}
 		`;
 
-		const params: any[] = [embeddingBlob];
+		const params: unknown[] = [embeddingBlob];
 
 		if (type !== "all") {
-			sql += ` AND c.type = ?`;
+			sql += " AND c.type = ?";
 			params.push(type);
 		}
 
@@ -413,10 +413,10 @@ export class SearchStore {
 	 */
 	getAllChunks(type?: "doc" | "task"): Chunk[] {
 		let sql = "SELECT * FROM chunks";
-		const params: any[] = [];
-		
+		const params: unknown[] = [];
+
 		if (type) {
-			sql += ` WHERE type = ?`;
+			sql += " WHERE type = ?";
 			params.push(type);
 		}
 
@@ -446,10 +446,10 @@ export class SearchStore {
 	 */
 	count(type?: "doc" | "task"): number {
 		let sql = "SELECT COUNT(*) as count FROM chunks";
-		const params: any[] = [];
-		
+		const params: unknown[] = [];
+
 		if (type) {
-			sql += ` WHERE type = ?`;
+			sql += " WHERE type = ?";
 			params.push(type);
 		}
 		const result = this.db.prepare(sql).get(...params) as { count: number };

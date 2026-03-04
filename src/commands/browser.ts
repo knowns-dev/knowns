@@ -148,7 +148,7 @@ export const browserCommand = new Command("browser")
 
 		// Configure CORS options
 		let corsOrigin: string | string[] | undefined;
-		
+
 		if (options.strictCors) {
 			// Strict mode: localhost only
 			corsOrigin = "http://localhost:3000";
