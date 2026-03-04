@@ -88,7 +88,13 @@ export async function startServer(options: ServerOptions) {
 
 	// Create Express app
 	const app = express();
-	app.use(cors());
+	
+	// SECURITY FIX: Restrict CORS to localhost only
+	app.use(cors({
+		origin: "http://localhost:3000",
+		credentials: true,
+	}));
+	
 	app.use(express.json());
 
 	// Serve static assets from Vite build (assets folder with hashed names)

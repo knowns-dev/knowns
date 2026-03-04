@@ -1,7 +1,8 @@
 /**
- * Git Import Provider
+ * Git Import Provider - SECURED VERSION
  *
  * Imports from git repositories using sparse checkout when possible.
+ * Security fix: Replaced execSync with spawnSync to prevent command injection
  */
 
 import { execSync, spawnSync } from "node:child_process";
@@ -49,7 +50,7 @@ function getGitInfo(): { available: boolean; version: string; supportsSparse: bo
 /**
  * Git import provider
  */
-export class GitProvider extends ImportProvider {
+export class GitProviders extends ImportProvider {
 	readonly type: ImportType = "git";
 
 	private gitInfo = getGitInfo();
@@ -148,37 +149,39 @@ export class GitProvider extends ImportProvider {
 
 	/**
 	 * Sparse checkout - only fetch .knowns/ directory
+	 * SECURITY FIX: Use spawnSync with args array instead of execSync to prevent command injection
 	 */
 	private async sparseCheckout(source: string, tempDir: string, ref: string): Promise<void> {
 		// Initialize repo with sparse checkout
-		execSync("git init", { cwd: tempDir, stdio: "pipe" });
-		execSync(`git remote add origin "${source}"`, { cwd: tempDir, stdio: "pipe" });
+		spawnSync("git", ["init"], { cwd: tempDir, stdio: "pipe" });
+		spawnSync("git", ["remote", "add", "origin", source], { cwd: tempDir, stdio: "pipe" });
 
 		// Configure sparse checkout
-		execSync("git config core.sparseCheckout true", { cwd: tempDir, stdio: "pipe" });
-		execSync("git sparse-checkout init --cone", { cwd: tempDir, stdio: "pipe" });
-		execSync(`git sparse-checkout set ${KNOWNS_DIR}`, { cwd: tempDir, stdio: "pipe" });
+		spawnSync("git", ["config", "core.sparseCheckout", "true"], { cwd: tempDir, stdio: "pipe" });
+		spawnSync("git", ["sparse-checkout", "init", "--cone"], { cwd: tempDir, stdio: "pipe" });
+		spawnSync("git", ["sparse-checkout", "set", KNOWNS_DIR], { cwd: tempDir, stdio: "pipe" });
 
 		// Fetch only what we need
 		const fetchRef = ref === "HEAD" ? "HEAD" : ref;
-		execSync(`git fetch --depth=1 origin ${fetchRef}`, { cwd: tempDir, stdio: "pipe" });
+		spawnSync("git", ["fetch", "--depth=1", "origin", fetchRef], { cwd: tempDir, stdio: "pipe" });
 
 		// Checkout
 		if (ref === "HEAD") {
-			execSync("git checkout FETCH_HEAD", { cwd: tempDir, stdio: "pipe" });
+			spawnSync("git", ["checkout", "FETCH_HEAD"], { cwd: tempDir, stdio: "pipe" });
 		} else {
-			execSync(`git checkout ${ref}`, { cwd: tempDir, stdio: "pipe" });
+			spawnSync("git", ["checkout", ref], { cwd: tempDir, stdio: "pipe" });
 		}
 	}
 
 	/**
 	 * Full clone - fallback for older git versions
+	 * SECURITY FIX: Use spawnSync with args array instead of execSync to prevent command injection
 	 */
 	private async fullClone(source: string, tempDir: string, ref: string): Promise<void> {
 		if (ref === "HEAD") {
-			execSync(`git clone --depth=1 "${source}" .`, { cwd: tempDir, stdio: "pipe" });
+			spawnSync("git", ["clone", "--depth=1", source, "."], { cwd: tempDir, stdio: "pipe" });
 		} else {
-			execSync(`git clone --depth=1 --branch "${ref}" "${source}" .`, { cwd: tempDir, stdio: "pipe" });
+			spawnSync("git", ["clone", "--depth=1", "--branch", ref, source, "."], { cwd: tempDir, stdio: "pipe" });
 		}
 	}
 
@@ -210,4 +213,4 @@ export class GitProvider extends ImportProvider {
 /**
  * Default git provider instance
  */
-export const gitProvider = new GitProvider();
+export const gitProvider = new GitProviders();

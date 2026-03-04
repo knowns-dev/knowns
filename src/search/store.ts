@@ -282,6 +282,7 @@ export class SearchStore {
 
 	/**
 	 * Search for similar chunks using sqlite-vec native vector search
+	 * SECURITY FIX: Use parameterized queries to prevent SQL injection
 	 */
 	search(
 		queryEmbedding: number[],
@@ -310,15 +311,18 @@ export class SearchStore {
 			WHERE v.embedding MATCH ? AND k = ${k}
 		`;
 
+		const params: any[] = [embeddingBlob];
+
 		if (type !== "all") {
-			sql += ` AND c.type = '${type}'`;
+			sql += ` AND c.type = ?`;
+			params.push(type);
 		}
 
 		sql += `
 			ORDER BY v.distance
 		`;
 
-		const rows = this.db.prepare(sql).all(embeddingBlob) as Array<{
+		const rows = this.db.prepare(sql).all(...params) as Array<{
 			vec_rowid: number;
 			distance: number;
 			id: string;
@@ -405,14 +409,18 @@ export class SearchStore {
 
 	/**
 	 * Get all chunks (for keyword search fallback)
+	 * SECURITY FIX: Use parameterized queries to prevent SQL injection
 	 */
 	getAllChunks(type?: "doc" | "task"): Chunk[] {
 		let sql = "SELECT * FROM chunks";
+		const params: any[] = [];
+		
 		if (type) {
-			sql += ` WHERE type = '${type}'`;
+			sql += ` WHERE type = ?`;
+			params.push(type);
 		}
 
-		const rows = this.db.prepare(sql).all() as Array<{
+		const rows = this.db.prepare(sql).all(...params) as Array<{
 			id: string;
 			type: string;
 			content: string;
@@ -434,13 +442,17 @@ export class SearchStore {
 
 	/**
 	 * Count chunks
+	 * SECURITY FIX: Use parameterized queries to prevent SQL injection
 	 */
 	count(type?: "doc" | "task"): number {
 		let sql = "SELECT COUNT(*) as count FROM chunks";
+		const params: any[] = [];
+		
 		if (type) {
-			sql += ` WHERE type = '${type}'`;
+			sql += ` WHERE type = ?`;
+			params.push(type);
 		}
-		const result = this.db.prepare(sql).get() as { count: number };
+		const result = this.db.prepare(sql).get(...params) as { count: number };
 		return result.count;
 	}
 
