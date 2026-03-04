@@ -101,6 +101,9 @@ export const browserCommand = new Command("browser")
 	.description("Open web UI for task management")
 	.option("-p, --port <port>", "Port number", String(DEFAULT_PORT))
 	.option("--no-open", "Don't open browser automatically")
+	.option("--cors-origin <origin>", "Custom CORS origin(s) for development (comma-separated)")
+	.option("--cors-credentials", "Enable CORS credentials (default: true)", true)
+	.option("--strict-cors", "Use strict CORS (localhost only, no dev origins)")
 	.action(async (options) => {
 		const projectRoot = findProjectRoot();
 		if (!projectRoot) {
@@ -143,7 +146,26 @@ export const browserCommand = new Command("browser")
 		// Always save port to config so notify-server stays in sync
 		await saveServerPort(projectRoot, port);
 
+		// Configure CORS options
+		let corsOrigin: string | string[] | undefined;
+		
+		if (options.strictCors) {
+			// Strict mode: localhost only
+			corsOrigin = "http://localhost:3000";
+		} else if (options.corsOrigin) {
+			// Custom origins from CLI
+			corsOrigin = options.corsOrigin.split(",").map((o: string) => o.trim());
+		}
+		// else: use default dev origins (localhost:3000, localhost:5173, etc.)
+
 		console.log(chalk.cyan("◆ Starting Knowns.dev Web UI..."));
+		if (options.corsOrigin) {
+			console.log(chalk.gray(`  CORS origins: ${options.corsOrigin}`));
+		} else if (options.strictCors) {
+			console.log(chalk.gray("  CORS: Strict mode (localhost:3000 only)"));
+		} else {
+			console.log(chalk.gray("  CORS: Development mode (localhost + common dev ports)"));
+		}
 		console.log("");
 
 		try {
@@ -151,6 +173,8 @@ export const browserCommand = new Command("browser")
 				port,
 				projectRoot,
 				open: options.open,
+				corsOrigin,
+				corsCredentials: options.corsCredentials,
 			});
 
 			console.log("");
