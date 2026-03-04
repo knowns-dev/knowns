@@ -50,7 +50,7 @@ function getGitInfo(): { available: boolean; version: string; supportsSparse: bo
 /**
  * Git import provider
  */
-export class GitProviders extends ImportProvider {
+export class GitProvider extends ImportProvider {
 	readonly type: ImportType = "git";
 
 	private gitInfo = getGitInfo();
@@ -213,4 +213,4 @@ export class GitProviders extends ImportProvider {
 /**
  * Default git provider instance
  */
-export const gitProvider = new GitProviders();
+export const gitProvider = new GitProvider();
