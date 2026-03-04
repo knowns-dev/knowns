@@ -33,6 +33,8 @@ interface ServerOptions {
 	port: number;
 	projectRoot: string;
 	open: boolean;
+	corsOrigin?: string | string[]; // Custom CORS origin(s) for development
+	corsCredentials?: boolean; // Enable credentials for CORS (default: true)
 }
 
 export async function startServer(options: ServerOptions) {
@@ -88,7 +90,22 @@ export async function startServer(options: ServerOptions) {
 
 	// Create Express app
 	const app = express();
-	app.use(cors());
+
+	// SECURITY FIX: Restrict CORS with flexible configuration for development
+	// Default: localhost only (secure)
+	// Dev mode: Allow custom origins via options
+	const corsOptions = {
+		origin: options.corsOrigin || [
+			"http://localhost:3000",
+			"http://127.0.0.1:3000",
+			// Allow common Vite dev ports
+			"http://localhost:5173",
+			"http://127.0.0.1:5173",
+		],
+		credentials: options.corsCredentials ?? true,
+	};
+
+	app.use(cors(corsOptions));
 	app.use(express.json());
 
 	// Serve static assets from Vite build (assets folder with hashed names)
