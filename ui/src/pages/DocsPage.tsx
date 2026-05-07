@@ -27,7 +27,20 @@ import { DocsCreateView } from "./docs/DocsCreateView";
 import { DocsEmptyState } from "./docs/DocsEmptyState";
 import { MDRenderWithHighlight } from "../components/editor/MDRenderWithHighlight";
 
+import { AnnotationProvider, useAnnotationContext } from "../contexts/AnnotationContext";
+import { AnnotationSelectionToolbar } from "../components/annotations/AnnotationSelectionToolbar";
+import { AnnotationHighlighter } from "../components/annotations/AnnotationHighlighter";
+import { AnnotationBubble } from "../components/annotations/AnnotationBubble";
+
 export default function DocsPage() {
+	return (
+		<AnnotationProvider>
+			<DocsPageInner />
+		</AnnotationProvider>
+	);
+}
+
+function DocsPageInner() {
 	const location = useRouterState({ select: (state) => state.location });
 	const { openTask } = useGlobalTask();
 	const docsContext = useDocsOptional();
@@ -65,6 +78,10 @@ export default function DocsPage() {
 	const scrollPositions = useRef<Map<string, number>>(new Map());
 	const scrollAnimationRef = useRef<number | null>(null);
 	const lineHighlightRef = useRef<HTMLDivElement>(null);
+	const docViewerRef = useRef<HTMLDivElement>(null);
+
+	// Annotation context
+	const annotationCtx = useAnnotationContext();
 
 	// --- Scroll helpers ---
 	const scrollToHeading = useCallback((headingId: string, behavior: ScrollBehavior = "smooth") => {
@@ -276,6 +293,19 @@ export default function DocsPage() {
 		window.history.replaceState(window.history.state, "", window.location.pathname + window.location.hash);
 	};
 
+	// Annotation handler
+	const handleAnnotate = useCallback(
+		(selectedText: string, type: "comment" | "replace" | "delete", content: string, contextBefore: string, contextAfter: string, startLine: number, startChar: number, endLine: number, endChar: number) => {
+			if (!selectedDoc) return;
+			const docPath = toDisplayPath(selectedDoc.path).replace(/\.md$/, "");
+			annotationCtx.add(docPath, selectedText, type, content, contextBefore, contextAfter, startLine, startChar, endLine, endChar);
+		},
+		[selectedDoc, annotationCtx],
+	);
+
+	const currentDocPath = selectedDoc ? toDisplayPath(selectedDoc.path).replace(/\.md$/, "") : "";
+	const currentDocAnnotations = selectedDoc ? annotationCtx.getByDoc(currentDocPath) : [];
+
 	const sidebarContent = (
 		<DocsFileManager
 			onCreateDoc={openCreateView}
@@ -364,8 +394,8 @@ export default function DocsPage() {
 								<MDEditor markdown={editedContent} onChange={setEditedContent} placeholder="Write your documentation here..." height="100%" className="h-full" />
 							</div>
 						) : (
-							<div className="flex-1 overflow-y-auto" ref={scrollContainerRef}>
-								<div className="flex justify-center">
+							<div className="flex-1 overflow-y-auto relative" ref={scrollContainerRef}>
+								<div ref={docViewerRef} className="flex justify-center relative">
 									<article key={selectedDoc.path} className={`w-full px-6 sm:px-8 py-10 sm:py-12 transition-[max-width] duration-300 ease-in-out animate-doc-in ${wideMode ? "max-w-[1040px]" : "max-w-[760px]"}`}>
 										<DocsDocHeader
 											selectedDoc={selectedDoc}
@@ -377,7 +407,7 @@ export default function DocsPage() {
 											linkedTasksExpanded={linkedTasksExpanded} setLinkedTasksExpanded={setLinkedTasksExpanded}
 											openTask={openTask}
 										/>
-										<div ref={markdownPreviewRef} className="prose-neutral dark:prose-invert">
+										<div ref={markdownPreviewRef} className="prose-neutral dark:prose-invert relative">
 											<MDRenderWithHighlight
 												ref={lineHighlightRef}
 												content={selectedDoc.content || ""}
@@ -388,6 +418,24 @@ export default function DocsPage() {
 												onHeadingAnchorClick={navigateToHeading}
 												showHeadingAnchors
 											/>
+											{/* Annotation highlights */}
+											<AnnotationHighlighter
+												containerRef={markdownPreviewRef}
+												annotations={currentDocAnnotations}
+												docContent={selectedDoc.content || ""}
+												active={true}
+												onEdit={(ann, changes) => {
+													annotationCtx.update(ann.id, changes);
+												}}
+												onRemove={annotationCtx.remove}
+											/>
+											{/* Annotation selection toolbar */}
+											<AnnotationSelectionToolbar
+												containerRef={markdownPreviewRef}
+												active={true}
+												docContent={selectedDoc.content || ""}
+												onAnnotate={handleAnnotate}
+											/>
 										</div>
 									</article>
 									{!isEditing && (
@@ -397,6 +445,11 @@ export default function DocsPage() {
 											</div>
 										</div>
 									)}
+									{/* Annotation bubble */}
+									<AnnotationBubble
+										containerRef={scrollContainerRef}
+										onNavigateToDoc={(docPath) => navigateTo(`/docs/${docPath}`)}
+									/>
 								</div>
 							</div>
 						)}

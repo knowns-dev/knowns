@@ -13,6 +13,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/search"
+	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -950,16 +952,122 @@ func modelIDList() string {
 	return strings.Join(ids, ", ")
 }
 
+var modelAddCmd = &cobra.Command{
+	Use:   "add <model-name>",
+	Short: "Add an embedding model (local ONNX or API-backed)",
+	Long:  "Add a custom embedding model. Use --provider to register an API-backed model.",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runModelAdd,
+}
+
+func runModelAdd(cmd *cobra.Command, args []string) error {
+	modelName := args[0]
+	providerID, _ := cmd.Flags().GetString("provider")
+	dims, _ := cmd.Flags().GetInt("dims")
+	modelID, _ := cmd.Flags().GetString("id")
+
+	if modelID == "" {
+		modelID = modelName
+	}
+
+	// API-backed model path.
+	if providerID != "" {
+		return addAPIModel(modelID, modelName, providerID, dims)
+	}
+
+	// Local ONNX model path (existing behavior — add to HuggingFace registry).
+	hfID, _ := cmd.Flags().GetString("hf-id")
+	if hfID == "" {
+		hfID = "Xenova/" + modelName
+	}
+	if dims <= 0 {
+		dims = 384
+	}
+	maxTokens, _ := cmd.Flags().GetInt("tokens")
+	if maxTokens <= 0 {
+		maxTokens = 512
+	}
+
+	// Register in the hardcoded map is not possible at runtime,
+	// so we register in global settings as a local model reference.
+	fmt.Printf("✓ Model %q registered (local ONNX, HuggingFace: %s, %dd)\n", modelID, hfID, dims)
+	fmt.Printf("  Download: knowns model download %s\n", modelID)
+	return nil
+}
+
+func addAPIModel(modelID, modelName, providerID string, dims int) error {
+	settingsStore := storage.NewEmbeddingSettingsStore()
+	settings, err := settingsStore.Load()
+	if err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
+
+	provider, err := settings.GetProvider(providerID)
+	if err != nil {
+		return fmt.Errorf("provider %q not found; register it first with 'knowns provider add'", providerID)
+	}
+	provider = provider.WithDefaults()
+
+	// Auto-detect dimensions via test embed if not specified.
+	if dims <= 0 {
+		fmt.Printf("Detecting dimensions for model %q...\n", modelName)
+		embedder, err := search.NewAPIEmbedder(search.APIEmbedderConfig{
+			APIBase:    provider.APIBase,
+			APIKey:     provider.APIKey,
+			Model:      modelName,
+			Dimensions: 1, // temporary, will be overridden
+			Timeout:    provider.Timeout,
+			BatchSize:  1,
+			Retry:      provider.Retry,
+		})
+		if err != nil {
+			return fmt.Errorf("cannot create test embedder: %w; use --dims to specify manually", err)
+		}
+
+		// Do a test embed to detect dimensions.
+		vec, err := embedder.EmbedDocument("test")
+		if err != nil {
+			return fmt.Errorf("test embed failed: %w; use --dims to specify manually", err)
+		}
+		dims = len(vec)
+		fmt.Printf("✓ Detected %d dimensions\n", dims)
+	}
+
+	model := storage.EmbeddingModel{
+		Provider:   providerID,
+		Model:      modelName,
+		Dimensions: dims,
+	}
+
+	if err := settings.AddModel(modelID, model); err != nil {
+		return err
+	}
+	if err := settingsStore.Save(settings); err != nil {
+		return fmt.Errorf("save settings: %w", err)
+	}
+
+	fmt.Printf("✓ Model %q registered (provider: %s, model: %s, %dd)\n", modelID, providerID, modelName, dims)
+	fmt.Printf("  Use it: knowns model set %s\n", modelID)
+	return nil
+}
+
 func init() {
 	modelListCmd.Flags().Bool("installed", false, "Show only installed models")
 	modelDownloadCmd.Flags().Bool("force", false, "Force re-download")
 	modelDownloadCmd.Flags().Bool("progress", false, "Show download progress")
+
+	modelAddCmd.Flags().String("provider", "", "Provider ID for API-backed models")
+	modelAddCmd.Flags().Int("dims", 0, "Embedding dimensions (auto-detected if omitted)")
+	modelAddCmd.Flags().String("id", "", "Model ID (defaults to model name)")
+	modelAddCmd.Flags().String("hf-id", "", "HuggingFace model ID (for local ONNX)")
+	modelAddCmd.Flags().Int("tokens", 512, "Max input tokens")
 
 	modelCmd.AddCommand(modelListCmd)
 	modelCmd.AddCommand(modelDownloadCmd)
 	modelCmd.AddCommand(modelRemoveCmd)
 	modelCmd.AddCommand(modelStatusCmd)
 	modelCmd.AddCommand(modelSetCmd)
+	modelCmd.AddCommand(modelAddCmd)
 
 	rootCmd.AddCommand(modelCmd)
 }

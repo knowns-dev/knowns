@@ -39,11 +39,13 @@ Examples:
 var ingestDryRun bool
 var ingestIncludeTests bool
 var ingestBackground bool
+var ingestFull bool
 
 func registerIngestFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&ingestDryRun, "dry-run", false, "Print what would be indexed without writing to disk")
 	cmd.Flags().BoolVar(&ingestIncludeTests, "include-tests", false, "Include test files in indexing")
 	cmd.Flags().BoolVar(&ingestBackground, "background", false, "Enqueue to shared runtime daemon and return; follow with `knowns runtime ps --watch`")
+	cmd.Flags().BoolVar(&ingestFull, "full", false, "Force full re-ingest, ignoring cached hashes")
 }
 
 func init() {
@@ -193,12 +195,15 @@ func (m *ingestModel) View() tea.View {
 }
 
 // runIngestWithProgress runs the ingest with a bubbletea progress UI.
-func runIngestWithProgress(projectRoot string, includeTests bool) (symCount, fileCount, edgeCount int, err error) {
+// When forceFull is false, it uses two-tier delta detection:
+//   - Tier 1: file hash (SHA-256) to skip parsing unchanged files
+//   - Tier 2: chunk content hash to skip re-embedding unchanged symbols
+func runIngestWithProgress(projectRoot string, includeTests bool, forceFull bool) (symCount, fileCount, edgeCount int, err error) {
 	candidates, err := search.ListCodeCandidateFiles(projectRoot, includeTests)
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	state := &ingestState{phase: "parsing files", total: len(candidates)}
+	state := &ingestState{phase: "scanning files", total: len(candidates)}
 	if state.total == 0 {
 		state.total = 1
 	}
@@ -215,22 +220,6 @@ func runIngestWithProgress(projectRoot string, includeTests bool) (symCount, fil
 	m.prog = p
 
 	go func() {
-		syms, edges, err := search.IndexAllFilesWithProgress(projectRoot, includeTests, func(string) {
-			state.processed++
-		})
-		if err != nil {
-			p.Send(ingestDoneMsg{err: err})
-			return
-		}
-
-		fileCount = countUniqueFiles(syms)
-
-		// Phase 2: embed chunks
-		p.Send(reindexTickMsg{}) // trigger phase label update
-		state.phase = "embedding"
-		state.total = len(syms)
-		state.processed = 0
-
 		store := getStore()
 		embedder, vecStore, err := search.InitSemantic(store)
 		if err != nil {
@@ -240,50 +229,234 @@ func runIngestWithProgress(projectRoot string, includeTests bool) (symCount, fil
 		defer embedder.Close()
 		defer vecStore.Close()
 
-		vecStore.RemoveByPrefix("code::")
+		db := store.SemanticDBWritable()
 
-		// Pre-compute chunks and sort by content length to minimize padding
-		// waste in ORT batch inference (all texts in a batch are padded to
-		// the longest one).
+		// Load cached file hashes (nil if first run or --full).
+		var cachedHashes map[string]search.CodeFileHash
+		if !forceFull && db != nil {
+			cachedHashes, _ = search.LoadCodeFileHashes(db)
+		}
+
+		// ── Tier 1: File-level delta detection ──────────────────────
+		var delta *search.DeltaResult
+
+		if cachedHashes != nil && len(cachedHashes) > 0 {
+			delta, err = search.ComputeFileDelta(projectRoot, candidates, cachedHashes)
+			if err != nil {
+				p.Send(ingestDoneMsg{err: fmt.Errorf("compute delta: %w", err)})
+				return
+			}
+		}
+
+		var allSymbols []search.CodeSymbol
+		var allEdges []search.CodeEdge
+		filesToParse := candidates // default: parse all
+
+		if delta != nil {
+			// Only parse changed + new files.
+			filesToParse = append(delta.ChangedFiles, delta.NewFiles...)
+
+			// For unchanged files, we need their symbols for edge resolution.
+			// Re-parse them (fast, no embedding needed) to get symbol data.
+			// This is necessary because we don't cache symbol data, only hashes.
+			for _, rel := range delta.UnchangedFiles {
+				absPath := filepath.Join(projectRoot, filepath.FromSlash(rel))
+				syms, eds, parseErr := search.IndexFile(rel, absPath)
+				if parseErr == nil {
+					allSymbols = append(allSymbols, syms...)
+					allEdges = append(allEdges, eds...)
+				}
+				state.processed++
+			}
+		}
+
+		// ── Phase 1: Parse changed/new files ────────────────────────
+		state.phase = "parsing files"
+		state.total = len(filesToParse)
+		if delta != nil {
+			state.total = len(candidates)
+			// Already processed unchanged files above.
+		}
+		if state.total == 0 {
+			state.total = 1
+		}
+		p.Send(reindexTickMsg{})
+
+		var changedSyms []search.CodeSymbol
+		var changedEdges []search.CodeEdge
+		for _, rel := range filesToParse {
+			absPath := filepath.Join(projectRoot, filepath.FromSlash(rel))
+			syms, eds, parseErr := search.IndexFile(rel, absPath)
+			if parseErr == nil {
+				changedSyms = append(changedSyms, syms...)
+				changedEdges = append(changedEdges, eds...)
+			}
+			state.processed++
+		}
+
+		allSymbols = append(allSymbols, changedSyms...)
+		allEdges = append(allEdges, changedEdges...)
+		fileCount = countUniqueFiles(allSymbols)
+
+		// ── Phase 2: Embed (with chunk-level delta) ─────────────────
+		p.Send(reindexTickMsg{})
+		state.phase = "embedding"
+		state.processed = 0
+
+		// Determine which chunks need embedding.
 		type indexedChunk struct {
 			idx   int
 			chunk search.Chunk
 		}
-		preChunks := make([]indexedChunk, 0, len(syms))
-		for i, sym := range syms {
-			preChunks = append(preChunks, indexedChunk{idx: i, chunk: sym.ToChunk()})
+
+		// Build all chunks from all symbols.
+		allChunks := make([]indexedChunk, 0, len(allSymbols))
+		for i, sym := range allSymbols {
+			allChunks = append(allChunks, indexedChunk{idx: i, chunk: sym.ToChunk()})
 		}
 
-		// Truncate embedding content to ~2000 chars. The model uses max 512
-		// tokens (~2000 chars for code). Sending longer text only wastes
-		// tokenizer CPU without improving the embedding vector.
+		// Truncate embedding content.
 		const maxEmbedChars = 2000
-		for i := range preChunks {
-			if len(preChunks[i].chunk.Content) > maxEmbedChars {
-				preChunks[i].chunk.Content = preChunks[i].chunk.Content[:maxEmbedChars]
+		for i := range allChunks {
+			if len(allChunks[i].chunk.Content) > maxEmbedChars {
+				allChunks[i].chunk.Content = allChunks[i].chunk.Content[:maxEmbedChars]
 			}
 		}
 
-		sort.Slice(preChunks, func(a, b int) bool {
-			return len(preChunks[a].chunk.Content) < len(preChunks[b].chunk.Content)
+		// ── Tier 2: Chunk-level delta detection ─────────────────────
+		var chunksToEmbed []indexedChunk
+		var cachedChunks []search.Chunk
+		newFileHashes := make(map[string]search.CodeFileHash)
+
+		if delta != nil && !forceFull {
+			// Build chunk hashes for all symbols and compare against cache.
+			// Unchanged files: all their chunks are cached (skip embed).
+			// Changed/new files: compare chunk hashes.
+			unchangedFileSet := make(map[string]bool, len(delta.UnchangedFiles))
+			for _, f := range delta.UnchangedFiles {
+				unchangedFileSet[f] = true
+			}
+
+			for _, ic := range allChunks {
+				contentHash := search.HashString(ic.chunk.Content)
+				docPath := ic.chunk.DocPath
+
+				// Track hash for saving later.
+				fh, ok := newFileHashes[docPath]
+				if !ok {
+					absPath := filepath.Join(projectRoot, filepath.FromSlash(docPath))
+					fileHash, _ := search.HashFileContent(absPath)
+					fh = search.CodeFileHash{
+						FilePath:    docPath,
+						FileHash:    fileHash,
+						ChunkHashes: make(map[string]string),
+					}
+				}
+				fh.ChunkHashes[ic.chunk.ID] = contentHash
+				newFileHashes[docPath] = fh
+
+				if unchangedFileSet[docPath] {
+					// Unchanged file — chunk is cached, no re-embed needed.
+					cachedChunks = append(cachedChunks, ic.chunk)
+					continue
+				}
+
+				// Changed or new file — check chunk hash.
+				if prev, exists := cachedHashes[docPath]; exists {
+					if prevHash, ok := prev.ChunkHashes[ic.chunk.ID]; ok && prevHash == contentHash {
+						// Chunk content unchanged — skip embed.
+						cachedChunks = append(cachedChunks, ic.chunk)
+						continue
+					}
+				}
+
+				// Needs embedding.
+				chunksToEmbed = append(chunksToEmbed, ic)
+			}
+
+			// Remove deleted files from vector store.
+			if len(delta.DeletedFiles) > 0 {
+				var idsToRemove []string
+				for _, delFile := range delta.DeletedFiles {
+					if prev, exists := cachedHashes[delFile]; exists {
+						for chunkID := range prev.ChunkHashes {
+							idsToRemove = append(idsToRemove, chunkID)
+						}
+					}
+					// Also remove file-level chunk.
+					idsToRemove = append(idsToRemove, search.CodeChunkID(delFile, ""))
+				}
+				vecStore.RemoveByIDs(idsToRemove)
+			}
+
+			// Remove stale chunks from changed files (symbols that no longer exist).
+			for _, changedFile := range delta.ChangedFiles {
+				if prev, exists := cachedHashes[changedFile]; exists {
+					newChunkIDs := make(map[string]bool)
+					if fh, ok := newFileHashes[changedFile]; ok {
+						for id := range fh.ChunkHashes {
+							newChunkIDs[id] = true
+						}
+					}
+					var staleIDs []string
+					for oldID := range prev.ChunkHashes {
+						if !newChunkIDs[oldID] {
+							staleIDs = append(staleIDs, oldID)
+						}
+					}
+					if len(staleIDs) > 0 {
+						vecStore.RemoveByIDs(staleIDs)
+					}
+				}
+			}
+		} else {
+			// Full ingest: embed everything, clear old data.
+			vecStore.RemoveByPrefix("code::")
+			chunksToEmbed = allChunks
+
+			// Build file hashes for saving.
+			for _, ic := range allChunks {
+				contentHash := search.HashString(ic.chunk.Content)
+				docPath := ic.chunk.DocPath
+				fh, ok := newFileHashes[docPath]
+				if !ok {
+					absPath := filepath.Join(projectRoot, filepath.FromSlash(docPath))
+					fileHash, _ := search.HashFileContent(absPath)
+					fh = search.CodeFileHash{
+						FilePath:    docPath,
+						FileHash:    fileHash,
+						ChunkHashes: make(map[string]string),
+					}
+				}
+				fh.ChunkHashes[ic.chunk.ID] = contentHash
+				newFileHashes[docPath] = fh
+			}
+		}
+
+		state.total = len(chunksToEmbed)
+		if state.total == 0 {
+			state.total = 1
+		}
+		p.Send(reindexTickMsg{})
+
+		// Sort by content length for efficient batching.
+		sort.Slice(chunksToEmbed, func(a, b int) bool {
+			return len(chunksToEmbed[a].chunk.Content) < len(chunksToEmbed[b].chunk.Content)
 		})
 
-		// Batch embed for much better throughput.
-		// Use adaptive batch size: larger batches for short content,
-		// smaller for long content to manage memory.
-		var chunks []search.Chunk
+		// Batch embed changed chunks.
+		var embeddedChunks []search.Chunk
 		i := 0
-		for i < len(preChunks) {
-			// Adaptive batch size based on content length of first item.
+		for i < len(chunksToEmbed) {
 			batchSize := 64
-			if len(preChunks[i].chunk.Content) > 1000 {
+			if len(chunksToEmbed[i].chunk.Content) > 1000 {
 				batchSize = 32
 			}
 			end := i + batchSize
-			if end > len(preChunks) {
-				end = len(preChunks)
+			if end > len(chunksToEmbed) {
+				end = len(chunksToEmbed)
 			}
-			batch := preChunks[i:end]
+			batch := chunksToEmbed[i:end]
 
 			texts := make([]string, len(batch))
 			for j, ic := range batch {
@@ -292,14 +465,13 @@ func runIngestWithProgress(projectRoot string, includeTests bool) (symCount, fil
 
 			vecs, err := embedder.EmbedDocumentBatch(texts)
 			if err != nil {
-				// Fallback: embed one-by-one on batch failure
 				for j, ic := range batch {
 					vec, err := embedder.EmbedDocument(ic.chunk.Content)
 					if err != nil {
 						continue
 					}
 					ic.chunk.Embedding = vec
-					chunks = append(chunks, ic.chunk)
+					embeddedChunks = append(embeddedChunks, ic.chunk)
 					state.processed = i + j + 1
 				}
 				i = end
@@ -308,30 +480,56 @@ func runIngestWithProgress(projectRoot string, includeTests bool) (symCount, fil
 
 			for j := range batch {
 				batch[j].chunk.Embedding = vecs[j]
-				chunks = append(chunks, batch[j].chunk)
+				embeddedChunks = append(embeddedChunks, batch[j].chunk)
 			}
 			state.processed = end
 			i = end
 		}
 
-		vecStore.AddChunks(chunks)
+		// For cached chunks that were not re-embedded, we need to keep them
+		// in the vector store. They're already there from the previous run,
+		// so we only need to add newly embedded chunks.
+		// But for unchanged chunks in changed files that we skipped embedding,
+		// they might have been removed by RemoveByIDs of stale chunks.
+		// Actually, we only removed stale (deleted) chunk IDs, not cached ones.
+		// So cached chunks from changed files are still in the store.
+
+		// Add newly embedded chunks to vector store.
+		// First remove any existing entries for these IDs (in case of re-embed).
+		if len(embeddedChunks) > 0 {
+			reembedIDs := make([]string, len(embeddedChunks))
+			for i, c := range embeddedChunks {
+				reembedIDs[i] = c.ID
+			}
+			vecStore.RemoveByIDs(reembedIDs)
+			vecStore.AddChunks(embeddedChunks)
+		}
+
 		if err := vecStore.Save(); err != nil {
 			p.Send(ingestDoneMsg{err: fmt.Errorf("save index: %w", err)})
 			return
 		}
 
-		// Save code edges
-		db := store.SemanticDBWritable()
-		if db != nil && len(edges) > 0 {
-			resolvedEdges := search.ResolveCodeEdges(syms, edges)
+		// ── Phase 3: Edge resolution (always full) ──────────────────
+		if db != nil && len(allEdges) > 0 {
+			resolvedEdges := search.ResolveCodeEdges(allSymbols, allEdges)
 			if dbErr := search.SaveCodeEdges(db, resolvedEdges); dbErr == nil {
 				edgeCount = len(resolvedEdges)
 			}
 		}
 
+		// ── Save file hashes ────────────────────────────────────────
+		if db != nil {
+			search.SaveCodeFileHashes(db, newFileHashes)
+		}
+
+		totalEmbedded := len(embeddedChunks)
+		totalCached := len(cachedChunks)
+		_ = totalCached
+
 		p.Send(ingestDoneMsg{
 			err:       nil,
-			symCount:  len(chunks),
+			symCount:  totalEmbedded + totalCached,
 			fileCount: fileCount,
 			edgeCount: edgeCount,
 		})
@@ -384,7 +582,7 @@ func runIngest(cmd *cobra.Command, args []string) error {
 	// `--background` routes through the shared runtime daemon and returns
 	// immediately so the user can follow with `knowns runtime ps --watch`.
 	if !ingestBackground || ingestIncludeTests || runtimequeue.ShouldBypassDaemon() {
-		symCount, fileCount, edgeCount, err := runIngestWithProgress(projectRoot, ingestIncludeTests)
+		symCount, fileCount, edgeCount, err := runIngestWithProgress(projectRoot, ingestIncludeTests, ingestFull)
 		if err != nil {
 			return err
 		}

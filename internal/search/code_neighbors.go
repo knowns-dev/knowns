@@ -36,7 +36,7 @@ type codeNeighborCandidate struct {
 	bucketLimit int
 }
 
-func SearchCodeWithNeighbors(store *storage.Store, embedder *Embedder, vecStore VectorStore, opts models.RetrievalOptions, edgeTypes []string, maxNeighbors int) (*CodeSearchGraphResult, error) {
+func SearchCodeWithNeighbors(store *storage.Store, embedder EmbedderProvider, vecStore VectorStore, opts models.RetrievalOptions, edgeTypes []string, maxNeighbors int) (*CodeSearchGraphResult, error) {
 	db := store.SemanticDB()
 	if db == nil {
 		return &CodeSearchGraphResult{Matches: []models.SearchResult{}, Nodes: []Chunk{}, Edges: []CodeNeighborEdge{}}, nil

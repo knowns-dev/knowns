@@ -40,7 +40,7 @@ func ExecuteRuntimeJob(storeRoot string, job runtimequeue.Job) error {
 	case runtimequeue.JobIndexFile:
 		projectRoot := filepath.Dir(storeRoot)
 		absPath := filepath.Join(projectRoot, job.Target)
-		return executeRuntimeCode(store, string(job.Kind)+" "+job.Target, func(embedder *Embedder, vecStore VectorStore) error {
+		return executeRuntimeCode(store, string(job.Kind)+" "+job.Target, func(embedder EmbedderProvider, vecStore VectorStore) error {
 			syms, _, err := IndexFile(job.Target, absPath)
 			if err != nil || len(syms) == 0 {
 				return err
@@ -74,7 +74,7 @@ func ExecuteRuntimeJob(storeRoot string, job runtimequeue.Job) error {
 			return SaveCodeEdges(db, ResolveCodeEdges(allSyms, allEdges))
 		})
 	case runtimequeue.JobRemoveFile:
-		return executeRuntimeCode(store, string(job.Kind)+" "+job.Target, func(_ *Embedder, vecStore VectorStore) error {
+		return executeRuntimeCode(store, string(job.Kind)+" "+job.Target, func(_ EmbedderProvider, vecStore VectorStore) error {
 			projectRoot := filepath.Dir(storeRoot)
 			vecStore.RemoveByPrefix(fmt.Sprintf("code::%s::", job.Target))
 			if err := vecStore.Save(); err != nil {
@@ -94,7 +94,7 @@ func ExecuteRuntimeJob(storeRoot string, job runtimequeue.Job) error {
 		})
 	case runtimequeue.JobIndexAll:
 		projectRoot := filepath.Dir(storeRoot)
-		return executeRuntimeCode(store, string(job.Kind)+" "+projectRoot, func(embedder *Embedder, vecStore VectorStore) error {
+		return executeRuntimeCode(store, string(job.Kind)+" "+projectRoot, func(embedder EmbedderProvider, vecStore VectorStore) error {
 			_ = runtimequeue.ReportProgress(storeRoot, job.ID, "parsing", 0, 0)
 			syms, edges, err := IndexAllFiles(projectRoot, false)
 			if err != nil {
@@ -169,7 +169,7 @@ func executeRuntimeEntity(store *storage.Store, action string, fn func(*IndexSer
 	return fn(NewIndexService(store, embedder, vecStore))
 }
 
-func executeRuntimeCode(store *storage.Store, action string, fn func(*Embedder, VectorStore) error) error {
+func executeRuntimeCode(store *storage.Store, action string, fn func(EmbedderProvider, VectorStore) error) error {
 	if store == nil {
 		return nil
 	}

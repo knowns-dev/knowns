@@ -3,10 +3,12 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
@@ -14,6 +16,7 @@ import (
 	"github.com/howznguyen/knowns/internal/codegen"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/runtimeinstall"
+	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/server"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/spf13/cobra"
@@ -198,6 +201,7 @@ type initConfig struct {
 	GitTrackingMode string
 	EnableSemantic  bool
 	SemanticModel   string
+	EmbeddingSource string // "local" or "api"
 	Platforms       []string
 	EnableChatUI    bool
 }
@@ -265,14 +269,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if interactive && len(args) == 0 {
 		// Load any existing config to pre-populate wizard defaults.
 		var existingPlatforms []string
-		var existingEnableChatUI *bool
 		var existingName string
 		var existingGitTrackingMode string
 		var existingSemanticEnabled *bool
 		var existingSemanticModel string
 		if existingCfg, err := storage.NewStore(root).Config.Load(); err == nil {
 			existingPlatforms = existingCfg.Settings.Platforms
-			existingEnableChatUI = existingCfg.Settings.EnableChatUI
 			existingName = existingCfg.Name
 			existingGitTrackingMode = existingCfg.Settings.GitTrackingMode
 			if existingCfg.Settings.SemanticSearch != nil {
@@ -283,7 +285,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 
 		// Run full wizard with huh
-		wizardCfg, err := runWizard(cwd, gitTracked, gitIgnored, gitAvailable, existingPlatforms, existingEnableChatUI, existingName, existingGitTrackingMode, existingSemanticEnabled, existingSemanticModel)
+		wizardCfg, err := runWizard(cwd, gitTracked, gitIgnored, gitAvailable, existingPlatforms, existingName, existingGitTrackingMode, existingSemanticEnabled, existingSemanticModel)
 		if err != nil {
 			if err == huh.ErrUserAborted {
 				fmt.Println(warnStyle.Render("Setup cancelled."))
@@ -335,14 +337,33 @@ func runInit(cmd *cobra.Command, args []string) error {
 					project.Settings.GitTrackingMode = cfg.GitTrackingMode
 				}
 				if cfg.EnableSemantic && cfg.SemanticModel != "" {
-					m := findEmbeddingModel(cfg.SemanticModel)
-					if m != nil {
+					if cfg.EmbeddingSource == "api" {
+						// API provider: reference model from global settings.
 						project.Settings.SemanticSearch = &models.SemanticSearchSettings{
-							Enabled:       true,
-							Model:         m.ID,
-							HuggingFaceID: m.HuggingFaceID,
-							Dimensions:    m.Dimensions,
-							MaxTokens:     m.MaxTokens,
+							Enabled:  true,
+							Provider: "api",
+							Model:    cfg.SemanticModel,
+						}
+					} else {
+						// Local ONNX: existing behavior.
+						m := findEmbeddingModel(cfg.SemanticModel)
+						if m != nil {
+							project.Settings.SemanticSearch = &models.SemanticSearchSettings{
+								Enabled:       true,
+								Model:         m.ID,
+								HuggingFaceID: m.HuggingFaceID,
+								Dimensions:    m.Dimensions,
+								MaxTokens:     m.MaxTokens,
+							}
+						} else if mc, ok := search.EmbeddingModels[cfg.SemanticModel]; ok {
+							// Custom model registered at runtime.
+							project.Settings.SemanticSearch = &models.SemanticSearchSettings{
+								Enabled:       true,
+								Model:         cfg.SemanticModel,
+								HuggingFaceID: mc.HuggingFaceID,
+								Dimensions:    mc.Dimensions,
+								MaxTokens:     mc.MaxTokens,
+							}
 						}
 					}
 				}
@@ -371,8 +392,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}}, steps...)
 	}
 
-	// Conditional semantic download steps
-	if cfg.EnableSemantic {
+	// Conditional semantic download steps (only for local ONNX with built-in models)
+	isBuiltinModel := findSupportedModel(cfg.SemanticModel) != nil
+	if cfg.EnableSemantic && cfg.EmbeddingSource != "api" && isBuiltinModel {
 		dlSteps, alreadyInstalled, err := buildSemanticDownloadSteps(cfg.SemanticModel)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: semantic search setup failed: %v\n", err)
@@ -387,7 +409,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if cfg.EnableSemantic {
+	if cfg.EnableSemantic && cfg.EmbeddingSource != "api" && isBuiltinModel {
 		steps = append(steps, initStep{
 			label: "Preparing project and global semantic stores",
 			run: func() error {
@@ -396,15 +418,27 @@ func runInit(cmd *cobra.Command, args []string) error {
 				return err
 			},
 		})
-	}
-
-	// OpenCode install check (before config steps)
-	if hasPlatform(cfg.Platforms, "opencode") {
-		fmt.Println()
-		if err := maybeInstallOpenCode(force); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: OpenCode setup issue: %v\n", err)
-		}
-		fmt.Println()
+	} else if cfg.EnableSemantic && cfg.EmbeddingSource == "local" && !isBuiltinModel {
+		// Custom HuggingFace model: auto-download ONNX files.
+		customModelID := cfg.SemanticModel
+		steps = append(steps, initStep{
+			label: fmt.Sprintf("Downloading custom model %q from HuggingFace", customModelID),
+			run: func() error {
+				mc, ok := search.EmbeddingModels[customModelID]
+				if !ok {
+					return fmt.Errorf("model %q not registered", customModelID)
+				}
+				err := downloadCustomHuggingFaceModel(mc.HuggingFaceID)
+				if err != nil && strings.Contains(err.Error(), "no .onnx files found") {
+					fmt.Printf("\n%s This model has no ONNX export — cannot use for local inference.\n", warnStyle.Render("⚠"))
+					fmt.Println(dimStyle.Render("  Use it via API instead: knowns provider add, then knowns model set"))
+					fmt.Println(dimStyle.Render("  Or choose a Xenova/* model which includes ONNX files."))
+					fmt.Println(dimStyle.Render("  Falling back to keyword-only search for now."))
+					return nil // non-fatal
+				}
+				return err
+			},
+		})
 	}
 
 	steps = append(steps,
@@ -529,7 +563,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	return maybeOpenBrowser(cwd, openFlag, noOpen)
 }
 
-func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, existingPlatforms []string, existingEnableChatUI *bool, existingName string, existingGitTrackingMode string, existingSemanticEnabled *bool, existingSemanticModel string) (*initConfig, error) {
+func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, existingPlatforms []string, existingName string, existingGitTrackingMode string, existingSemanticEnabled *bool, existingSemanticModel string) (*initConfig, error) {
 	defaultName := filepath.Base(cwd)
 	if existingName != "" {
 		defaultName = existingName
@@ -615,35 +649,6 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 			Value(&cfg.Platforms),
 	)
 
-	// --- Group 3: Chat UI ---
-	if existingEnableChatUI != nil {
-		cfg.EnableChatUI = *existingEnableChatUI
-	} else {
-		cfg.EnableChatUI = hasPlatform(existingPlatforms, "opencode")
-	}
-	if hasPlatform(cfg.Platforms, "opencode") {
-		cfg.EnableChatUI = true
-	}
-	chatUIDesc := "Enables Chat UI with AI code sessions, task-linked conversations,\n" +
-		"and live coding assistance powered by OpenCode.\n"
-	if hasPlatform(cfg.Platforms, "opencode") {
-		chatUIDesc += runtimeinstall.RuntimePickerDescription("opencode", runtimeinstall.DefaultOptions())
-	} else {
-		chatUIDesc += "Select OpenCode above if you want Knowns to configure its runtime plugin as part of init."
-	}
-	group3 := huh.NewGroup(
-		huh.NewConfirm().
-			Title("Enable Chat UI?").
-			Description(chatUIDesc).
-			Value(&cfg.EnableChatUI),
-	).WithHideFunc(func() bool {
-		if hasPlatform(cfg.Platforms, "opencode") {
-			cfg.EnableChatUI = true
-			return true
-		}
-		return false
-	})
-
 	// --- Group 4: Semantic search ---
 	cfg.EnableSemantic = true
 	cfg.SemanticModel = "multilingual-e5-small"
@@ -660,18 +665,34 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 			Value(&cfg.EnableSemantic),
 	)
 
-	// --- Group 6: Model selection (only shown if semantic enabled) ---
-	modelOptions := make([]huh.Option[string], len(supportedEmbeddingModels))
+	// --- Group 5b: Embedding source selection (only shown if semantic enabled) ---
+	cfg.EmbeddingSource = "local"
+	embeddingSourceOptions := []huh.Option[string]{
+		huh.NewOption("Local ONNX (offline, bundled)", "local"),
+		huh.NewOption("API Provider (Ollama, OpenAI, etc.)", "api"),
+	}
+	group5b := huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Select embedding source").
+			Options(embeddingSourceOptions...).
+			Value(&cfg.EmbeddingSource),
+	).WithHideFunc(func() bool {
+		return !cfg.EnableSemantic
+	})
+
+	// --- Group 6: Model selection (only shown if semantic enabled AND local source) ---
+	modelOptions := make([]huh.Option[string], len(supportedEmbeddingModels)+1)
 	for i, m := range supportedEmbeddingModels {
 		modelOptions[i] = huh.NewOption(fmt.Sprintf("%s — %s", m.Title, m.Description), m.ID)
 	}
+	modelOptions[len(supportedEmbeddingModels)] = huh.NewOption("Custom HuggingFace model...", "__custom__")
 	group6 := huh.NewGroup(
 		huh.NewSelect[string]().
 			Title("Select embedding model").
 			Options(modelOptions...).
 			Value(&cfg.SemanticModel),
 	).WithHideFunc(func() bool {
-		return !cfg.EnableSemantic
+		return !cfg.EnableSemantic || cfg.EmbeddingSource != "local"
 	})
 
 	// Run form
@@ -679,7 +700,7 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 	if gitGroup != nil {
 		groups = append(groups, gitGroup)
 	}
-	groups = append(groups, group2, group3, group5, group6)
+	groups = append(groups, group2, group5, group5b, group6)
 
 	form := huh.NewForm(groups...).
 		WithTheme(huh.ThemeCatppuccin()).
@@ -689,11 +710,413 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 		return nil, err
 	}
 
-	if cfg.EnableChatUI && !hasPlatform(cfg.Platforms, "opencode") {
-		cfg.Platforms = append(cfg.Platforms, "opencode")
+	// Always enable Chat UI when opencode platform is selected.
+	cfg.EnableChatUI = hasPlatform(cfg.Platforms, "opencode")
+
+	// If custom HuggingFace model selected, prompt for model ID.
+	if cfg.EnableSemantic && cfg.EmbeddingSource == "local" && cfg.SemanticModel == "__custom__" {
+		if err := initCustomHuggingFaceModel(&cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: custom model setup failed: %v\n", err)
+			fmt.Println(dimStyle.Render("  Falling back to multilingual-e5-small"))
+			cfg.SemanticModel = "multilingual-e5-small"
+		}
+	}
+
+	// If API source selected, run Ollama detection post-wizard.
+	if cfg.EnableSemantic && cfg.EmbeddingSource == "api" {
+		if err := initAPIProviderFlow(&cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: API provider setup failed: %v\n", err)
+			fmt.Println(dimStyle.Render("  You can configure later: knowns provider add"))
+			// Fall back to local.
+			cfg.EmbeddingSource = "local"
+			cfg.SemanticModel = "multilingual-e5-small"
+		}
 	}
 
 	return &cfg, nil
+}
+
+// initAPIProviderFlow detects Ollama, registers provider+model, and sets config.
+func initAPIProviderFlow(cfg *initConfig) error {
+	detector := search.NewOllamaDetector(search.OllamaDefaultBase)
+	running, version := detector.IsRunning()
+	if !running {
+		return fmt.Errorf("no Ollama detected at %s. Start Ollama first or use 'knowns provider add' manually", search.OllamaDefaultBase)
+	}
+
+	fmt.Printf("\n%s Detected Ollama %s at %s\n", successStyle.Render("✓"), version, search.OllamaDefaultBase)
+
+	models, err := detector.ListEmbeddingModels()
+	if err != nil || len(models) == 0 {
+		return fmt.Errorf("no embedding models found in Ollama. Pull one first: ollama pull nomic-embed-text")
+	}
+
+	fmt.Println("  Available embedding models:")
+	for _, m := range models {
+		fmt.Printf("    • %s (%dd)\n", m.ShortName, m.Dimensions)
+	}
+	fmt.Println()
+
+	// Let user choose embedding model.
+	modelOpts := make([]huh.Option[string], len(models))
+	for i, m := range models {
+		modelOpts[i] = huh.NewOption(fmt.Sprintf("%s (%dd)", m.ShortName, m.Dimensions), m.ShortName)
+	}
+	var selectedName string
+	selectForm := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Select Ollama embedding model").
+			Options(modelOpts...).
+			Value(&selectedName),
+	)).WithTheme(huh.ThemeCatppuccin())
+	if err := selectForm.Run(); err != nil {
+		return err
+	}
+	var selected search.OllamaEmbeddingModel
+	for _, m := range models {
+		if m.ShortName == selectedName {
+			selected = m
+			break
+		}
+	}
+	if selected.ShortName == "" {
+		selected = models[0]
+	}
+
+	// Register provider and model in global settings.
+	settingsStore := storage.NewEmbeddingSettingsStore()
+	settings, err := settingsStore.Load()
+	if err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
+
+	// Add provider if not exists.
+	providerID := "ollama"
+	if _, exists := settings.Providers[providerID]; !exists {
+		provider := storage.EmbeddingProvider{
+			Name:    "Ollama Local",
+			APIBase: search.OllamaDefaultBase + "/v1",
+		}
+		_ = settings.AddProvider(providerID, provider.WithDefaults())
+	}
+
+	// Add model.
+	modelID := selected.ShortName
+	settings.Models[modelID] = storage.EmbeddingModel{
+		Provider:   providerID,
+		Model:      selected.Name,
+		Dimensions: selected.Dimensions,
+	}
+
+	if err := settingsStore.Save(settings); err != nil {
+		return fmt.Errorf("save settings: %w", err)
+	}
+
+	cfg.SemanticModel = modelID
+	fmt.Printf("%s Provider \"ollama\" and model %q registered (%dd)\n", successStyle.Render("✓"), modelID, selected.Dimensions)
+	return nil
+}
+
+// initCustomHuggingFaceModel prompts for a HuggingFace model ID and fetches dimensions.
+func initCustomHuggingFaceModel(cfg *initConfig) error {
+	// Fetch trending embedding models from HuggingFace.
+	fmt.Println("Fetching trending embedding models from HuggingFace...")
+	trending, err := fetchTrendingEmbeddingModels(10)
+
+	var hfID string
+	if err == nil && len(trending) > 0 {
+		// Show trending models as options + manual entry.
+		opts := make([]huh.Option[string], 0, len(trending)+1)
+		for _, m := range trending {
+			label := fmt.Sprintf("%s (%s downloads)", m.ID, formatDownloads(m.Downloads))
+			opts = append(opts, huh.NewOption(label, m.ID))
+		}
+		opts = append(opts, huh.NewOption("Enter model ID manually...", "__manual__"))
+
+		selectForm := huh.NewForm(huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Select HuggingFace embedding model").
+				Options(opts...).
+				Value(&hfID),
+		)).WithTheme(huh.ThemeCatppuccin())
+		if err := selectForm.Run(); err != nil {
+			return err
+		}
+	}
+
+	// Manual entry fallback.
+	if hfID == "" || hfID == "__manual__" {
+		hfID = "" // clear __manual__ value
+		inputForm := huh.NewForm(huh.NewGroup(
+			huh.NewInput().
+				Title("HuggingFace model ID").
+				Description("e.g. Xenova/bge-m3, sentence-transformers/all-MiniLM-L6-v2").
+				Placeholder("Xenova/model-name").
+				Value(&hfID),
+		)).WithTheme(huh.ThemeCatppuccin())
+		if err := inputForm.Run(); err != nil {
+			return err
+		}
+	}
+
+	if hfID == "" {
+		return fmt.Errorf("no model ID provided")
+	}
+
+	// Fetch dimensions from HuggingFace config.json.
+	fmt.Printf("Fetching model config for %s...\n", hfID)
+	dims, err := fetchHuggingFaceDimensions(hfID)
+	if err != nil {
+		fmt.Printf("%s Could not auto-detect dimensions: %v\n", warnStyle.Render("⚠"), err)
+		// Ask user to input manually.
+		var dimsStr string
+		dimsForm := huh.NewForm(huh.NewGroup(
+			huh.NewInput().
+				Title("Embedding dimensions").
+				Description("Check the model card for this value").
+				Placeholder("384").
+				Value(&dimsStr),
+		)).WithTheme(huh.ThemeCatppuccin())
+		if err := dimsForm.Run(); err != nil {
+			return err
+		}
+		fmt.Sscanf(dimsStr, "%d", &dims)
+		if dims <= 0 {
+			dims = 384
+		}
+	} else {
+		fmt.Printf("%s Detected %d dimensions\n", successStyle.Render("✓"), dims)
+	}
+
+	// Derive a short model ID from the HuggingFace ID.
+	modelID := hfID
+	if idx := strings.LastIndex(hfID, "/"); idx >= 0 {
+		modelID = hfID[idx+1:]
+	}
+
+	// Register in the EmbeddingModels map at runtime so init can use it.
+	search.EmbeddingModels[modelID] = search.EmbeddingModelConfig{
+		Name:          modelID,
+		Dimensions:    dims,
+		MaxTokens:     512,
+		HuggingFaceID: hfID,
+	}
+
+	cfg.SemanticModel = modelID
+	fmt.Printf("%s Custom model %q registered (%s, %dd)\n", successStyle.Render("✓"), modelID, hfID, dims)
+	return nil
+}
+
+// hfTrendingModel represents a trending model from HuggingFace.
+type hfTrendingModel struct {
+	ID        string
+	Dims      int
+	Downloads int
+}
+
+// fetchTrendingEmbeddingModels fetches top N embedding models from HuggingFace sorted by downloads.
+func fetchTrendingEmbeddingModels(limit int) ([]hfTrendingModel, error) {
+	url := fmt.Sprintf("https://huggingface.co/api/models?pipeline_tag=feature-extraction&sort=downloads&direction=-1&limit=%d&filter=onnx", limit)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("fetch trending models: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HuggingFace API returned HTTP %d", resp.StatusCode)
+	}
+
+	var models []struct {
+		ModelID   string `json:"modelId"`
+		Downloads int    `json:"downloads"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&models); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+
+	result := make([]hfTrendingModel, 0, len(models))
+	for _, m := range models {
+		result = append(result, hfTrendingModel{
+			ID:        m.ModelID,
+			Downloads: m.Downloads,
+		})
+	}
+	return result, nil
+}
+
+// formatDownloads formats a download count as human-readable (e.g. "12M", "500K").
+func formatDownloads(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%dM", n/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%dK", n/1_000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
+// fetchHuggingFaceDimensions fetches the hidden_size from a HuggingFace model's config.json.
+func fetchHuggingFaceDimensions(hfID string) (int, error) {
+	url := fmt.Sprintf("https://huggingface.co/%s/resolve/main/config.json", hfID)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return 0, fmt.Errorf("fetch config.json: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return 0, fmt.Errorf("HTTP %d from HuggingFace", resp.StatusCode)
+	}
+
+	var config map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
+		return 0, fmt.Errorf("parse config.json: %w", err)
+	}
+
+	// Try common dimension fields.
+	for _, key := range []string{"hidden_size", "dim", "d_model", "embedding_dimension"} {
+		if v, ok := config[key]; ok {
+			if f, ok := v.(float64); ok && f > 0 {
+				return int(f), nil
+			}
+		}
+	}
+
+	return 0, fmt.Errorf("no dimension field found in config.json")
+}
+
+// downloadCustomHuggingFaceModel downloads ONNX model files from HuggingFace.
+func downloadCustomHuggingFaceModel(hfID string) error {
+	home, _ := os.UserHomeDir()
+	modelDir := filepath.Join(home, ".knowns", "models", hfID)
+
+	// First, find the ONNX file path by listing the repo tree.
+	onnxPath, err := findHuggingFaceONNXPath(hfID)
+	if err != nil {
+		return fmt.Errorf("could not find ONNX model file in %s: %w\nThis model may not have an ONNX export. Try a Xenova/* model instead.", hfID, err)
+	}
+
+	// Standard files + discovered ONNX path.
+	files := []struct {
+		remote   string
+		local    string
+		optional bool
+	}{
+		{"config.json", "config.json", false},
+		{"tokenizer.json", "tokenizer.json", false},
+		{"tokenizer_config.json", "tokenizer_config.json", true},
+		{onnxPath, onnxPath, false},
+	}
+
+	for _, file := range files {
+		dst := filepath.Join(modelDir, file.local)
+		if _, err := os.Stat(dst); err == nil {
+			continue // already exists
+		}
+
+		url := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", hfID, file.remote)
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			return fmt.Errorf("create dir for %s: %w", file.local, err)
+		}
+
+		fmt.Printf("    Downloading %s...\n", file.remote)
+		_, err := downloadSimple(url, dst)
+		if err != nil {
+			if file.optional {
+				continue
+			}
+			return fmt.Errorf("download %s: %w", file.remote, err)
+		}
+	}
+	return nil
+}
+
+// findHuggingFaceONNXPath finds the ONNX model file path in a HuggingFace repo.
+func findHuggingFaceONNXPath(hfID string) (string, error) {
+	// Try common paths first without API call.
+	commonPaths := []string{
+		"onnx/model_quantized.onnx",
+		"onnx/model.onnx",
+		"model.onnx",
+		"model_quantized.onnx",
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	for _, p := range commonPaths {
+		url := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", hfID, p)
+		req, _ := http.NewRequest("HEAD", url, nil)
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode == 200 {
+			return p, nil
+		}
+	}
+
+	// Fallback: list repo files via API.
+	url := fmt.Sprintf("https://huggingface.co/api/models/%s/tree/main", hfID)
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("list repo files: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("HuggingFace API returned HTTP %d", resp.StatusCode)
+	}
+
+	var files []struct {
+		Path string `json:"path"`
+		Type string `json:"type"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
+		return "", fmt.Errorf("parse file list: %w", err)
+	}
+
+	// Find any .onnx file, prefer quantized.
+	var onnxFiles []string
+	for _, f := range files {
+		if f.Type == "file" && strings.HasSuffix(f.Path, ".onnx") {
+			onnxFiles = append(onnxFiles, f.Path)
+		}
+	}
+
+	if len(onnxFiles) == 0 {
+		// Check onnx/ subdirectory.
+		subURL := fmt.Sprintf("https://huggingface.co/api/models/%s/tree/main/onnx", hfID)
+		subResp, err := client.Get(subURL)
+		if err == nil && subResp.StatusCode == 200 {
+			var subFiles []struct {
+				Path string `json:"path"`
+				Type string `json:"type"`
+			}
+			json.NewDecoder(subResp.Body).Decode(&subFiles)
+			subResp.Body.Close()
+			for _, f := range subFiles {
+				if f.Type == "file" && strings.HasSuffix(f.Path, ".onnx") {
+					onnxFiles = append(onnxFiles, f.Path)
+				}
+			}
+		}
+	}
+
+	if len(onnxFiles) == 0 {
+		return "", fmt.Errorf("no .onnx files found")
+	}
+
+	// Prefer quantized > regular.
+	for _, f := range onnxFiles {
+		if strings.Contains(f, "quantized") {
+			return f, nil
+		}
+	}
+	return onnxFiles[0], nil
 }
 
 func findEmbeddingModel(id string) *embeddingModelInfo {

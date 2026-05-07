@@ -32,13 +32,13 @@ type SearchOptions struct {
 // Engine provides keyword, semantic, and hybrid search across tasks and docs.
 type Engine struct {
 	store    *storage.Store
-	embedder *Embedder   // nil if semantic not available
-	vecStore VectorStore // nil if semantic not available
+	embedder EmbedderProvider // nil if semantic not available
+	vecStore VectorStore      // nil if semantic not available
 }
 
 // NewEngine creates a search engine backed by the given store.
 // Pass nil embedder/vecStore for keyword-only mode.
-func NewEngine(store *storage.Store, embedder *Embedder, vecStore VectorStore) *Engine {
+func NewEngine(store *storage.Store, embedder EmbedderProvider, vecStore VectorStore) *Engine {
 	return &Engine{
 		store:    store,
 		embedder: embedder,
@@ -874,7 +874,7 @@ func (e *Engine) semanticSearchSingleStore(query string, opts SearchOptions, mem
 type memorySemanticStore struct {
 	engine      *Engine
 	store       *storage.Store
-	embedder    *Embedder
+	embedder    EmbedderProvider
 	vecStore    VectorStore
 	memoryLayer string
 	storeName   string
