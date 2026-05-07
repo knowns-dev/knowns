@@ -179,6 +179,13 @@ CREATE INDEX IF NOT EXISTS idx_chunks_doc_path ON chunks(doc_path);
 CREATE INDEX IF NOT EXISTS idx_chunks_task_id ON chunks(task_id);
 CREATE INDEX IF NOT EXISTS idx_code_edges_from ON code_edges(from_id);
 CREATE INDEX IF NOT EXISTS idx_code_edges_to ON code_edges(to_id);
+
+CREATE TABLE IF NOT EXISTS code_file_hashes (
+    file_path    TEXT PRIMARY KEY,
+    file_hash    TEXT NOT NULL,
+    chunk_hashes TEXT NOT NULL DEFAULT '{}',
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return err
@@ -449,6 +456,42 @@ func (s *SQLiteVectorStore) RemoveByPrefix(prefix string) {
 
 	for _, entry := range s.index {
 		if len(entry.ID) >= len(prefix) && entry.ID[:len(prefix)] == prefix {
+			continue
+		}
+		start := entry.Offset
+		end := start + s.dimensions
+		if end > len(s.vecs) {
+			continue
+		}
+
+		newOffset := len(newVecs)
+		newVecs = append(newVecs, s.vecs[start:end]...)
+		entry.Offset = newOffset
+		newIndex = append(newIndex, entry)
+	}
+
+	s.index = newIndex
+	s.vecs = newVecs
+}
+
+// RemoveByIDs removes chunks whose IDs are in the given set.
+func (s *SQLiteVectorStore) RemoveByIDs(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	remove := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		remove[id] = true
+	}
+
+	var newIndex []indexEntry
+	var newVecs []float32
+
+	for _, entry := range s.index {
+		if remove[entry.ID] {
 			continue
 		}
 		start := entry.Offset

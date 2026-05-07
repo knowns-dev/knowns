@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
 )
 
@@ -16,7 +17,7 @@ var ErrSemanticNotConfigured = fmt.Errorf("semantic search not configured or dis
 // If the index is outdated (model or chunk version changed), it auto-reindexes.
 // On success, the caller is responsible for calling vecStore.Close() and
 // embedder.Close() when done.
-func InitSemantic(store *storage.Store) (*Embedder, VectorStore, error) {
+func InitSemantic(store *storage.Store) (EmbedderProvider, VectorStore, error) {
 	cfg, err := store.Config.Load()
 	if err != nil {
 		return nil, nil, fmt.Errorf("load config: %w", err)
@@ -30,6 +31,64 @@ func InitSemantic(store *storage.Store) (*Embedder, VectorStore, error) {
 		return nil, nil, ErrSemanticNotConfigured
 	}
 
+	// Branch: API provider vs local ONNX.
+	if ss.Provider == "api" {
+		return initSemanticAPI(store, ss)
+	}
+	return initSemanticLocal(store, ss)
+}
+
+// initSemanticAPI initializes semantic search using an OpenAI-compatible API provider.
+func initSemanticAPI(store *storage.Store, ss *models.SemanticSearchSettings) (EmbedderProvider, VectorStore, error) {
+	settingsStore := storage.NewEmbeddingSettingsStore()
+	settings, err := settingsStore.Load()
+	if err != nil {
+		return nil, nil, fmt.Errorf("load embedding settings: %w", err)
+	}
+
+	model, err := settings.GetModel(ss.Model)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve embedding model: %w", err)
+	}
+
+	provider, err := settings.GetProvider(model.Provider)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve embedding provider: %w", err)
+	}
+	provider = provider.WithDefaults()
+
+	embedder, err := NewAPIEmbedder(APIEmbedderConfig{
+		APIBase:    provider.APIBase,
+		APIKey:     provider.APIKey,
+		Model:      model.Model,
+		Dimensions: model.Dimensions,
+		Timeout:    provider.Timeout,
+		BatchSize:  provider.BatchSize,
+		Retry:      provider.Retry,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("init API embedder: %w", err)
+	}
+
+	searchDir := filepath.Join(store.Root, ".search")
+	vecStore := NewSQLiteVectorStore(searchDir, ss.Model, model.Dimensions)
+	if err := vecStore.Load(); err != nil {
+		return nil, nil, fmt.Errorf("load vector store: %w", err)
+	}
+
+	// Auto-reindex if model changed.
+	if vecStore.NeedsRebuild(ss.Model) && vecStore.Count() > 0 {
+		svc := NewIndexService(store, embedder, vecStore)
+		if err := svc.Reindex(nil); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: auto-reindex failed: %v\n", err)
+		}
+	}
+
+	return embedder, vecStore, nil
+}
+
+// initSemanticLocal initializes semantic search using the local ONNX runtime.
+func initSemanticLocal(store *storage.Store, ss *models.SemanticSearchSettings) (EmbedderProvider, VectorStore, error) {
 	modelConfig, ok := EmbeddingModels[ss.Model]
 	if !ok {
 		return nil, nil, fmt.Errorf("unknown embedding model %q", ss.Model)

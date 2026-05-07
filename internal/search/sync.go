@@ -194,7 +194,7 @@ func memoryIndexTarget(store *storage.Store, memoryID string) (*storage.Store, s
 // No-op if semantic search is not configured.
 func BestEffortIndexAll(store *storage.Store, projectRoot string) {
 	if enqueueRuntimeJob(store, runtimequeue.JobIndexAll, projectRoot, func() {
-		scheduleBestEffortCode(store, "index-all-files", projectRoot, func(embedder *Embedder, vecStore VectorStore) error {
+		scheduleBestEffortCode(store, "index-all-files", projectRoot, func(embedder EmbedderProvider, vecStore VectorStore) error {
 			syms, edges, err := IndexAllFiles(projectRoot, false)
 			if err != nil {
 				return err
@@ -236,7 +236,7 @@ func BestEffortIndexAll(store *storage.Store, projectRoot string) {
 	}) {
 		return
 	}
-	scheduleBestEffortCode(store, "index-all-files", projectRoot, func(embedder *Embedder, vecStore VectorStore) error {
+	scheduleBestEffortCode(store, "index-all-files", projectRoot, func(embedder EmbedderProvider, vecStore VectorStore) error {
 		syms, edges, err := IndexAllFiles(projectRoot, false)
 		if err != nil {
 			return err
@@ -280,7 +280,7 @@ func BestEffortIndexAll(store *storage.Store, projectRoot string) {
 // BestEffortIndexFile parses and indexes a single code file.
 func BestEffortIndexFile(store *storage.Store, docPath, absPath string) {
 	if enqueueRuntimeJob(store, runtimequeue.JobIndexFile, docPath, func() {
-		scheduleBestEffortCode(store, "index-file", docPath, func(embedder *Embedder, vecStore VectorStore) error {
+		scheduleBestEffortCode(store, "index-file", docPath, func(embedder EmbedderProvider, vecStore VectorStore) error {
 			projectRoot := filepath.Dir(store.Root)
 			syms, _, err := IndexFile(docPath, absPath)
 			if err != nil || len(syms) == 0 {
@@ -317,7 +317,7 @@ func BestEffortIndexFile(store *storage.Store, docPath, absPath string) {
 	}) {
 		return
 	}
-	scheduleBestEffortCode(store, "index-file", docPath, func(embedder *Embedder, vecStore VectorStore) error {
+	scheduleBestEffortCode(store, "index-file", docPath, func(embedder EmbedderProvider, vecStore VectorStore) error {
 		projectRoot := filepath.Dir(store.Root)
 		syms, _, err := IndexFile(docPath, absPath)
 		if err != nil || len(syms) == 0 {
@@ -358,7 +358,7 @@ func BestEffortIndexFile(store *storage.Store, docPath, absPath string) {
 // BestEffortRemoveFile removes all code chunks for a file from the vector store.
 func BestEffortRemoveFile(store *storage.Store, docPath string) {
 	if enqueueRuntimeJob(store, runtimequeue.JobRemoveFile, docPath, func() {
-		scheduleBestEffortCode(store, "remove-file", docPath, func(embedder *Embedder, vecStore VectorStore) error {
+		scheduleBestEffortCode(store, "remove-file", docPath, func(embedder EmbedderProvider, vecStore VectorStore) error {
 			projectRoot := filepath.Dir(store.Root)
 			prefix := fmt.Sprintf("code::%s::", docPath)
 			vecStore.RemoveByPrefix(prefix)
@@ -380,7 +380,7 @@ func BestEffortRemoveFile(store *storage.Store, docPath string) {
 	}) {
 		return
 	}
-	scheduleBestEffortCode(store, "remove-file", docPath, func(embedder *Embedder, vecStore VectorStore) error {
+	scheduleBestEffortCode(store, "remove-file", docPath, func(embedder EmbedderProvider, vecStore VectorStore) error {
 		projectRoot := filepath.Dir(store.Root)
 		prefix := fmt.Sprintf("code::%s::", docPath)
 		vecStore.RemoveByPrefix(prefix)
@@ -426,7 +426,7 @@ func scheduleBestEffort(store *storage.Store, action, target string, fn func(*In
 	})
 }
 
-func scheduleBestEffortCode(store *storage.Store, action, target string, fn func(*Embedder, VectorStore) error) {
+func scheduleBestEffortCode(store *storage.Store, action, target string, fn func(EmbedderProvider, VectorStore) error) {
 	if store == nil {
 		return
 	}
@@ -435,7 +435,7 @@ func scheduleBestEffortCode(store *storage.Store, action, target string, fn func
 	})
 }
 
-func runBestEffortCode(store *storage.Store, action string, fn func(*Embedder, VectorStore) error) {
+func runBestEffortCode(store *storage.Store, action string, fn func(EmbedderProvider, VectorStore) error) {
 	if store == nil {
 		return
 	}

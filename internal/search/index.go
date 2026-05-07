@@ -12,12 +12,12 @@ import (
 // IndexService orchestrates chunking, embedding, and storage of vectors.
 type IndexService struct {
 	store    *storage.Store
-	embedder *Embedder
+	embedder EmbedderProvider
 	vecStore VectorStore
 }
 
 // NewIndexService creates an IndexService.
-func NewIndexService(store *storage.Store, embedder *Embedder, vecStore VectorStore) *IndexService {
+func NewIndexService(store *storage.Store, embedder EmbedderProvider, vecStore VectorStore) *IndexService {
 	return &IndexService{
 		store:    store,
 		embedder: embedder,
@@ -277,12 +277,32 @@ func (s *IndexService) memoryEntryForIndex(memoryID string) (*models.MemoryEntry
 }
 
 func (s *IndexService) embedAndStore(chunks []Chunk) error {
+	if len(chunks) == 0 {
+		return nil
+	}
+
+	// Batch embed all chunks at once.
+	texts := make([]string, len(chunks))
 	for i := range chunks {
-		vec, err := s.embedder.EmbedDocument(chunks[i].Content)
-		if err != nil {
-			return fmt.Errorf("embed chunk %s: %w", chunks[i].ID, err)
+		texts[i] = chunks[i].Content
+	}
+
+	vecs, err := s.embedder.EmbedDocumentBatch(texts)
+	if err != nil {
+		// Fallback: try one by one if batch fails.
+		for i := range chunks {
+			vec, err2 := s.embedder.EmbedDocument(chunks[i].Content)
+			if err2 != nil {
+				continue // skip failed chunks
+			}
+			chunks[i].Embedding = vec
 		}
-		chunks[i].Embedding = vec
+		s.vecStore.AddChunks(chunks)
+		return nil
+	}
+
+	for i := range chunks {
+		chunks[i].Embedding = vecs[i]
 	}
 	s.vecStore.AddChunks(chunks)
 	return nil

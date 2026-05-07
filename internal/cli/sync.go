@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/howznguyen/knowns/internal/codegen"
+	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/spf13/cobra"
 )
@@ -191,10 +192,16 @@ func runSyncPlatformConfigs(projectRoot string, force bool, platforms []string) 
 }
 
 // runSyncModel downloads the embedding model configured in config.json if not already installed.
+// For API providers, verifies reachability instead of downloading.
 func runSyncModel(store *storage.Store, force bool) error {
 	cfg, err := store.Config.Load()
 	if err != nil {
 		return nil // no config, skip silently
+	}
+
+	// API provider path: verify reachability instead of downloading model files.
+	if cfg.Settings.SemanticSearch != nil && cfg.Settings.SemanticSearch.Provider == "api" {
+		return runSyncModelAPI(cfg)
 	}
 
 	defaultModelID := "multilingual-e5-small"
@@ -210,6 +217,43 @@ func runSyncModel(store *storage.Store, force bool) error {
 			fmt.Printf("%s Model %s already installed.\n", StyleSuccess.Render("✓"), model.Name)
 		}
 	}
+	return nil
+}
+
+// runSyncModelAPI verifies API provider reachability and model availability during sync.
+func runSyncModelAPI(cfg *models.Project) error {
+	ss := cfg.Settings.SemanticSearch
+	settingsStore := storage.NewEmbeddingSettingsStore()
+	settings, err := settingsStore.Load()
+	if err != nil {
+		fmt.Printf("%s Could not load embedding settings: %v\n", StyleWarning.Render("⚠"), err)
+		fmt.Println(StyleDim.Render("  Falling back to keyword-only search."))
+		return nil
+	}
+
+	model, err := settings.GetModel(ss.Model)
+	if err != nil {
+		fmt.Printf("%s Embedding model %q not found in ~/.knowns/settings.json\n", StyleWarning.Render("⚠"), ss.Model)
+		fmt.Println(StyleDim.Render("  Configure it: knowns model add --provider <id> <model-name>"))
+		return nil
+	}
+
+	provider, err := settings.GetProvider(model.Provider)
+	if err != nil {
+		fmt.Printf("%s Provider %q not found in ~/.knowns/settings.json\n", StyleWarning.Render("⚠"), model.Provider)
+		fmt.Println(StyleDim.Render("  Configure it: knowns provider add"))
+		return nil
+	}
+
+	// Test connectivity.
+	if err := testProviderConnectivity(provider.APIBase, provider.APIKey); err != nil {
+		fmt.Printf("%s Provider %q unreachable at %s\n", StyleWarning.Render("⚠"), model.Provider, provider.APIBase)
+		fmt.Println(StyleDim.Render("  Falling back to keyword-only search."))
+		return nil
+	}
+
+	fmt.Printf("%s Semantic search ready (api: %s, model: %s, %dd)\n",
+		StyleSuccess.Render("✓"), model.Provider, model.Model, model.Dimensions)
 	return nil
 }
 

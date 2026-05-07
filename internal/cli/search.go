@@ -490,7 +490,7 @@ func formatMemoryScope(layer, store string) string {
 // ─── semantic search initialization ──────────────────────────────────
 
 // initSemanticSearchReal attempts to create an embedder and vector store.
-func initSemanticSearchReal() (*search.Embedder, search.VectorStore, error) {
+func initSemanticSearchReal() (search.EmbedderProvider, search.VectorStore, error) {
 	store := getStore()
 	embedder, vecStore, err := search.InitSemantic(store)
 	return embedder, vecStore, err

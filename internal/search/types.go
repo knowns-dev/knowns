@@ -74,6 +74,20 @@ type VectorSearchOpts struct {
 	ChunkType ChunkType
 }
 
+// EmbedderProvider is the interface for all embedding backends (local ONNX and API).
+type EmbedderProvider interface {
+	Embed(text string) ([]float32, error)
+	EmbedDocument(text string) ([]float32, error)
+	EmbedQuery(text string) ([]float32, error)
+	EmbedBatch(texts []string) ([][]float32, error)
+	EmbedDocumentBatch(texts []string) ([][]float32, error)
+	EmbedQueryBatch(texts []string) ([][]float32, error)
+	Dimensions() int
+	ModelConfig() EmbeddingModelConfig
+	GetTokenizer() Tokenizer
+	Close()
+}
+
 // MatchMethod describes how a result was found.
 type MatchMethod string
 

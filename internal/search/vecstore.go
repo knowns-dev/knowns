@@ -19,6 +19,7 @@ type VectorStore interface {
 	Clear() error
 	AddChunks(chunks []Chunk)
 	RemoveByPrefix(prefix string)
+	RemoveByIDs(ids []string)
 	Search(queryVec []float32, opts VectorSearchOpts) []ScoredChunk
 	Count() int
 	NeedsRebuild(model string) bool
@@ -263,6 +264,42 @@ func (s *FileVectorStore) RemoveByPrefix(prefix string) {
 		end := start + s.dimensions
 		if end > len(s.vecs) {
 			continue // corrupted entry
+		}
+
+		newOffset := len(newVecs)
+		newVecs = append(newVecs, s.vecs[start:end]...)
+		entry.Offset = newOffset
+		newIndex = append(newIndex, entry)
+	}
+
+	s.index = newIndex
+	s.vecs = newVecs
+}
+
+// RemoveByIDs removes chunks whose IDs are in the given set.
+func (s *FileVectorStore) RemoveByIDs(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	remove := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		remove[id] = true
+	}
+
+	var newIndex []indexEntry
+	var newVecs []float32
+
+	for _, entry := range s.index {
+		if remove[entry.ID] {
+			continue
+		}
+		start := entry.Offset
+		end := start + s.dimensions
+		if end > len(s.vecs) {
+			continue
 		}
 
 		newOffset := len(newVecs)
