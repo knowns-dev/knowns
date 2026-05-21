@@ -235,8 +235,30 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// Check if already initialized
 	if _, err := os.Stat(root); err == nil {
 		if !force {
+			// Allow changing git tracking mode without --force
+			if gitTracked || gitIgnored {
+				mode := "git-tracked"
+				if gitIgnored {
+					mode = "git-ignored"
+				}
+				store := storage.NewStore(root)
+				project, err := store.Config.Load()
+				if err != nil {
+					return err
+				}
+				project.Settings.GitTrackingMode = mode
+				if err := store.Config.Save(project); err != nil {
+					return err
+				}
+				if err := writeKnownsGitignore(cwd, mode); err != nil {
+					return err
+				}
+				fmt.Printf("✓ Git tracking mode updated to %q\n", mode)
+				return nil
+			}
 			fmt.Println(warnStyle.Render("Project already initialized (.knowns/ directory exists)."))
 			fmt.Println(dimStyle.Render("  Use --force to reinitialize."))
+			fmt.Println(dimStyle.Render("  Use --git-tracked or --git-ignored to change tracking mode."))
 			return nil
 		}
 		fmt.Println(warnStyle.Render("Reinitializing existing project (--force)"))

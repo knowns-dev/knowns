@@ -19,11 +19,10 @@ Compatibility entrypoint for runtimes that auto-detect `CLAUDE.md`.
 ## Minimum Rules
 
 - Use Knowns as the canonical system for tasks, docs, templates, and workflow state.
-- Call `initial` at session start; use `help("tool.action")` or `help("tool.*")` for detailed tool docs.
 - Never manually edit Knowns-managed task or doc markdown.
 - Search first, then read only relevant docs and code.
 - Use `search` for discovery; use MCP `retrieve` tool when a workflow needs structured context with citations. Fall back to CLI `knowns retrieve` if MCP is unavailable.
-- For code context retrieval, prefer MCP tools over CLI: use `code({ action: "search" })` first, then `code({ action: "symbols" })`, then `code({ action: "deps" })`. Treat CLI `knowns code ...` as fallback for manual inspection or debugging.
+- For code operations, use `code` tool: `symbols` for structure, `find` for search, `references`/`definition` for navigation, `rename`/`replace`/`insert`/`delete` for editing. Use `help("code.*")` for details.
 - Plan before implementation unless the user explicitly overrides that workflow.
 - Validate before considering work complete.
 - Use memory tools: `memory({ action: "list" })` at session start, `memory({ action: "add" })` after tasks for reusable knowledge.

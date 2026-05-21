@@ -114,3 +114,14 @@ func requireMinVersion(output, name string, minMajor, minMinor int) error {
 	}
 	return nil
 }
+
+// preferredCmd returns the first available command from candidates.
+// Each candidate is checked via exec.LookPath in order of preference.
+func preferredCmd(candidates ...string) string {
+	for _, c := range candidates {
+		if _, err := exec.LookPath(c); err == nil {
+			return c
+		}
+	}
+	return candidates[len(candidates)-1]
+}

@@ -34,8 +34,10 @@
     ],
     "semanticSearch": {
       "enabled": true,
-      "model": "qwen3-embedding",
-      "provider": "api"
+      "model": "multilingual-e5-small",
+      "huggingFaceId": "Xenova/multilingual-e5-small",
+      "dimensions": 384,
+      "maxTokens": 512
     },
     "serverPort": 6420,
     "platforms": [

@@ -14,6 +14,7 @@ func AllAdapters() []lsp.LanguageAdapter {
 		NewRoslynAdapter(),
 		NewRubyLspAdapter(),
 		NewIntelephenseAdapter(),
+		NewScssAdapter(),
 	}
 }
 

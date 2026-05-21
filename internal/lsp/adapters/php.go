@@ -34,9 +34,14 @@ func (a *IntelephenseAdapter) InstallGuide() lsp.InstallGuide {
 func (a *IntelephenseAdapter) CanInstall() bool                     { return true }
 func (a *IntelephenseAdapter) RuntimeDeps() []lsp.RuntimeDependency { return nil }
 func (a *IntelephenseAdapter) Install(ctx context.Context, targetDir string) (string, error) {
-	cmd := exec.CommandContext(ctx, "npm", "install", "-g", "intelephense")
+	pm := preferredCmd("bun", "pnpm", "npm")
+	args := []string{"install", "-g", "intelephense"}
+	if pm == "bun" {
+		args = []string{"add", "--global", "intelephense"}
+	}
+	cmd := exec.CommandContext(ctx, pm, args...)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("npm install failed: %w: %s", err, output)
+		return "", fmt.Errorf("%s install failed: %w: %s", pm, err, output)
 	}
 	path, err := exec.LookPath("intelephense")
 	if err != nil {

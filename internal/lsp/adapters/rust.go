@@ -3,6 +3,7 @@ package adapters
 import (
 	"context"
 	"fmt"
+	"os/exec"
 
 	"github.com/howznguyen/knowns/internal/lsp"
 )
@@ -17,27 +18,26 @@ func (a *RustAnalyzerAdapter) Extensions() []string { return []string{".rs"} }
 func (a *RustAnalyzerAdapter) Binaries() []lsp.BinaryCandidate {
 	return []lsp.BinaryCandidate{{Name: "rust-analyzer", CheckArgs: []string{"--version"}}}
 }
-func (a *RustAnalyzerAdapter) Prerequisites() []lsp.Prerequisite            { return nil }
-func (a *RustAnalyzerAdapter) CheckPrerequisites(ctx context.Context) error { return nil }
+func (a *RustAnalyzerAdapter) Prerequisites() []lsp.Prerequisite {
+	return []lsp.Prerequisite{{Name: "rustup", CheckCmd: "rustup --version", InstallHint: "Install Rust via https://rustup.rs/"}}
+}
+func (a *RustAnalyzerAdapter) CheckPrerequisites(ctx context.Context) error {
+	_, err := commandOutput(ctx, "rustup", "--version")
+	return err
+}
 func (a *RustAnalyzerAdapter) InstallGuide() lsp.InstallGuide {
-	return lsp.InstallGuide{Command: "rustup component add rust-analyzer", KnownsCmd: "knowns lsp install rust", URL: "https://rust-analyzer.github.io/", Notes: "Standalone binaries can be installed by Knowns for supported platforms"}
+	return lsp.InstallGuide{Command: "rustup component add rust-analyzer", KnownsCmd: "knowns lsp install rust", URL: "https://rust-analyzer.github.io/", Notes: "Requires rustup installed"}
 }
-func (a *RustAnalyzerAdapter) CanInstall() bool { return true }
-func (a *RustAnalyzerAdapter) RuntimeDeps() []lsp.RuntimeDependency {
-	// TODO: update SHA-256 values for the pinned rust-analyzer release assets.
-	return []lsp.RuntimeDependency{
-		{ID: "2024-01-01", PlatformID: "darwin-arm64", URL: "https://github.com/rust-lang/rust-analyzer/releases/download/2024-01-01/rust-analyzer-aarch64-apple-darwin.gz", SHA256: "TODO", ArchiveType: "binary", BinaryName: "rust-analyzer"},
-		{ID: "2024-01-01", PlatformID: "darwin-amd64", URL: "https://github.com/rust-lang/rust-analyzer/releases/download/2024-01-01/rust-analyzer-x86_64-apple-darwin.gz", SHA256: "TODO", ArchiveType: "binary", BinaryName: "rust-analyzer"},
-		{ID: "2024-01-01", PlatformID: "linux-amd64", URL: "https://github.com/rust-lang/rust-analyzer/releases/download/2024-01-01/rust-analyzer-x86_64-unknown-linux-gnu.gz", SHA256: "TODO", ArchiveType: "binary", BinaryName: "rust-analyzer"},
-		{ID: "2024-01-01", PlatformID: "linux-arm64", URL: "https://github.com/rust-lang/rust-analyzer/releases/download/2024-01-01/rust-analyzer-aarch64-unknown-linux-gnu.gz", SHA256: "TODO", ArchiveType: "binary", BinaryName: "rust-analyzer"},
-		{ID: "2024-01-01", PlatformID: "windows-amd64", URL: "https://github.com/rust-lang/rust-analyzer/releases/download/2024-01-01/rust-analyzer-x86_64-pc-windows-msvc.gz", SHA256: "TODO", ArchiveType: "binary", BinaryName: "rust-analyzer"},
-	}
-}
+func (a *RustAnalyzerAdapter) CanInstall() bool                     { return true }
+func (a *RustAnalyzerAdapter) RuntimeDeps() []lsp.RuntimeDependency { return nil }
 func (a *RustAnalyzerAdapter) Install(ctx context.Context, targetDir string) (string, error) {
-	installer := lsp.NewInstaller(targetDir)
-	path, err := installer.Install(ctx, a)
+	cmd := exec.CommandContext(ctx, "rustup", "component", "add", "rust-analyzer")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("rustup install failed: %w: %s", err, output)
+	}
+	path, err := exec.LookPath("rust-analyzer")
 	if err != nil {
-		return "", fmt.Errorf("install rust-analyzer: %w", err)
+		return "", fmt.Errorf("rust-analyzer installed but not found in PATH: %w", err)
 	}
 	return path, nil
 }

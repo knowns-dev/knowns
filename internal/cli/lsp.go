@@ -100,19 +100,43 @@ func runLspInstall(cmd *cobra.Command, args []string) error {
 
 	ctx := cmd.Context()
 	if err := adapter.CheckPrerequisites(ctx); err != nil {
-		return err
-	}
-	if err := validateRuntimeDeps(adapter); err != nil {
+		fmt.Printf("Prerequisite check failed: %s\n\n", err)
 		printInstallGuide(adapter)
-		return err
+		prereqs := adapter.Prerequisites()
+		if len(prereqs) > 0 {
+			fmt.Println("\nRequired prerequisites:")
+			for _, p := range prereqs {
+				fmt.Printf("  • %s\n", p.Name)
+				if p.InstallHint != "" {
+					fmt.Printf("    %s\n", p.InstallHint)
+				}
+			}
+		}
+		return fmt.Errorf("prerequisites not met for %s", adapter.ID())
 	}
 
-	installer := lsp.NewInstaller(lspBaseDir())
 	fmt.Printf("Installing %s for %s...\n", firstBinaryName(adapter), adapter.Name())
-	path, err := installer.Install(ctx, adapter)
-	if err != nil {
-		return fmt.Errorf("install %s: %w", adapter.ID(), err)
+
+	var path string
+	if len(adapter.RuntimeDeps()) == 0 {
+		var err error
+		path, err = adapter.Install(ctx, lspBaseDir())
+		if err != nil {
+			return fmt.Errorf("install %s: %w", adapter.ID(), err)
+		}
+	} else {
+		if err := validateRuntimeDeps(adapter); err != nil {
+			printInstallGuide(adapter)
+			return err
+		}
+		installer := lsp.NewInstaller(lspBaseDir())
+		var err error
+		path, err = installer.Install(ctx, adapter)
+		if err != nil {
+			return fmt.Errorf("install %s: %w", adapter.ID(), err)
+		}
 	}
+
 	fmt.Printf("✓ Installed %s to %s\n", filepath.Base(path), path)
 	return nil
 }

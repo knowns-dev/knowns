@@ -34,9 +34,14 @@ func (a *TypeScriptAdapter) InstallGuide() lsp.InstallGuide {
 func (a *TypeScriptAdapter) CanInstall() bool                     { return true }
 func (a *TypeScriptAdapter) RuntimeDeps() []lsp.RuntimeDependency { return nil }
 func (a *TypeScriptAdapter) Install(ctx context.Context, targetDir string) (string, error) {
-	cmd := exec.CommandContext(ctx, "npm", "install", "-g", "typescript-language-server", "typescript")
+	pm := preferredCmd("bun", "pnpm", "npm")
+	args := []string{"install", "-g", "typescript-language-server", "typescript"}
+	if pm == "bun" {
+		args = []string{"add", "--global", "typescript-language-server", "typescript"}
+	}
+	cmd := exec.CommandContext(ctx, pm, args...)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("npm install failed: %w: %s", err, output)
+		return "", fmt.Errorf("%s install failed: %w: %s", pm, err, output)
 	}
 	path, err := exec.LookPath("typescript-language-server")
 	if err != nil {

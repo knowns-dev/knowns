@@ -17,6 +17,7 @@ func TestAdaptersSatisfyLanguageAdapter(t *testing.T) {
 	var _ lsp.LanguageAdapter = NewRoslynAdapter()
 	var _ lsp.LanguageAdapter = NewRubyLspAdapter()
 	var _ lsp.LanguageAdapter = NewIntelephenseAdapter()
+	var _ lsp.LanguageAdapter = NewScssAdapter()
 }
 
 func TestAdapterMetadata(t *testing.T) {
@@ -35,8 +36,9 @@ func TestAdapterMetadata(t *testing.T) {
 		{name: "c_cpp", adapter: NewClangdAdapter(), id: "c_cpp", displayName: "C/C++", extensions: []string{".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"}, canInstall: true},
 		{name: "java", adapter: NewJdtlsAdapter(), id: "java", displayName: "Java", extensions: []string{".java"}, canInstall: true},
 		{name: "csharp", adapter: NewRoslynAdapter(), id: "csharp", displayName: "C#", extensions: []string{".cs"}, canInstall: true},
-		{name: "ruby", adapter: NewRubyLspAdapter(), id: "ruby", displayName: "Ruby", extensions: []string{".rb", ".rake", ".gemspec"}, canInstall: false},
+		{name: "ruby", adapter: NewRubyLspAdapter(), id: "ruby", displayName: "Ruby", extensions: []string{".rb", ".rake", ".gemspec"}, canInstall: true},
 		{name: "php", adapter: NewIntelephenseAdapter(), id: "php", displayName: "PHP", extensions: []string{".php"}, canInstall: true},
+		{name: "scss", adapter: NewScssAdapter(), id: "scss", displayName: "SCSS/Sass/CSS", extensions: []string{".scss", ".sass", ".css"}, canInstall: true},
 	}
 
 	for _, tt := range tests {
@@ -63,14 +65,14 @@ func TestAdapterMetadata(t *testing.T) {
 
 func TestAllAdapters(t *testing.T) {
 	adapters := AllAdapters()
-	if len(adapters) != 9 {
-		t.Fatalf("AllAdapters() returned %d adapters, want 9", len(adapters))
+	if len(adapters) != 10 {
+		t.Fatalf("AllAdapters() returned %d adapters, want 10", len(adapters))
 	}
 	ids := make(map[string]bool, len(adapters))
 	for _, adapter := range adapters {
 		ids[adapter.ID()] = true
 	}
-	for _, id := range []string{"go", "typescript", "python", "rust", "c_cpp", "java", "csharp", "ruby", "php"} {
+	for _, id := range []string{"go", "typescript", "python", "rust", "c_cpp", "java", "csharp", "ruby", "php", "scss"} {
 		if !ids[id] {
 			t.Fatalf("AllAdapters() missing %q", id)
 		}

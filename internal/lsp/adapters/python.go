@@ -40,9 +40,14 @@ func (a *PythonAdapter) InstallGuide() lsp.InstallGuide {
 func (a *PythonAdapter) CanInstall() bool                     { return true }
 func (a *PythonAdapter) RuntimeDeps() []lsp.RuntimeDependency { return nil }
 func (a *PythonAdapter) Install(ctx context.Context, targetDir string) (string, error) {
-	cmd := exec.CommandContext(ctx, "pip", "install", "python-lsp-server")
+	pm := preferredCmd("uv", "pip3", "pip")
+	args := []string{"install", "python-lsp-server"}
+	if pm == "uv" {
+		args = []string{"tool", "install", "python-lsp-server"}
+	}
+	cmd := exec.CommandContext(ctx, pm, args...)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("pip install failed: %w: %s", err, output)
+		return "", fmt.Errorf("%s install failed: %w: %s", pm, err, output)
 	}
 	path, err := exec.LookPath("pylsp")
 	if err != nil {

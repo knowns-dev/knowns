@@ -34,7 +34,7 @@ Canonical repository guidance for agents working in this project.
 ## TL;DR
 
 - Read `KNOWNS.md` first.
-- Call `initial` at session start to check project readiness, available capabilities, and knowledge counts.
+- Call `initial` at session start — it returns project readiness, knowledge counts, code intelligence rules, workflow guidance, and available tools.
 - Use Knowns as the memory layer for humans and the AI-friendly working layer for agents.
 - Search before reading; read only the sections and docs relevant to the current task.
 - Never manually edit Knowns-managed task or doc markdown.
@@ -63,10 +63,10 @@ Canonical repository guidance for agents working in this project.
 
 ## Tool Selection
 
-- Use `initial` at session start; it includes project readiness and available capabilities.
+- Call `initial` at session start — it includes project readiness, capabilities, and code intelligence rules.
 - Use `help("tool.action")` or `help("tool.*")` for detailed per-action documentation on demand.
 - Use Knowns MCP tools first for tasks, docs, templates, validation, and time tracking.
-- Use file reading and search tools for local code and text inspection.
+- Use Knowns `code` tools for code discovery, structure, and editing — not built-in Read/Grep/Edit.
 - Use shell commands for git, tests, builds, generators, and other terminal operations.
 - Prefer targeted retrieval over loading large files in full.
 - Use `knowns search` for discovery and quick relevance checks.

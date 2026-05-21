@@ -3,6 +3,7 @@ package adapters
 import (
 	"context"
 	"fmt"
+	"os/exec"
 
 	"github.com/howznguyen/knowns/internal/lsp"
 )
@@ -30,10 +31,18 @@ func (a *RubyLspAdapter) CheckPrerequisites(ctx context.Context) error {
 func (a *RubyLspAdapter) InstallGuide() lsp.InstallGuide {
 	return lsp.InstallGuide{Command: "gem install ruby-lsp", URL: "https://github.com/Shopify/ruby-lsp", Notes: "Requires Ruby 3.1+"}
 }
-func (a *RubyLspAdapter) CanInstall() bool                     { return false }
+func (a *RubyLspAdapter) CanInstall() bool                     { return true }
 func (a *RubyLspAdapter) RuntimeDeps() []lsp.RuntimeDependency { return nil }
 func (a *RubyLspAdapter) Install(ctx context.Context, targetDir string) (string, error) {
-	return "", fmt.Errorf("ruby-lsp install is not supported by knowns; run gem install ruby-lsp")
+	cmd := exec.CommandContext(ctx, "gem", "install", "ruby-lsp")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("gem install failed: %w: %s", err, output)
+	}
+	path, err := exec.LookPath("ruby-lsp")
+	if err != nil {
+		return "", fmt.Errorf("ruby-lsp installed but not found in PATH: %w", err)
+	}
+	return path, nil
 }
 func (a *RubyLspAdapter) InstalledPath() (string, bool) {
 	return installedPath(a.ID(), a.RuntimeDeps())

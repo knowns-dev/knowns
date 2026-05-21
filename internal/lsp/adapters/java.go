@@ -32,13 +32,17 @@ func (a *JdtlsAdapter) InstallGuide() lsp.InstallGuide {
 }
 func (a *JdtlsAdapter) CanInstall() bool { return true }
 func (a *JdtlsAdapter) RuntimeDeps() []lsp.RuntimeDependency {
-	// TODO: update SHA-256 values for the pinned jdtls release asset.
+	const (
+		version = "1.58.0"
+		url     = "https://download.eclipse.org/jdtls/milestones/1.58.0/jdt-language-server-1.58.0-202604151538.tar.gz"
+		sha256  = "2a5bbe55ec91b4325392050dc422cead3220a2459b3766be35e1fff45b4a50d9"
+	)
 	return []lsp.RuntimeDependency{
-		{ID: "1.40.0", PlatformID: "darwin-arm64", URL: "https://download.eclipse.org/jdtls/milestones/1.40.0/jdt-language-server-1.40.0-202501301015.tar.gz", SHA256: "TODO", ArchiveType: "tar.gz", BinaryName: "jdtls", ExtractPath: ""},
-		{ID: "1.40.0", PlatformID: "darwin-amd64", URL: "https://download.eclipse.org/jdtls/milestones/1.40.0/jdt-language-server-1.40.0-202501301015.tar.gz", SHA256: "TODO", ArchiveType: "tar.gz", BinaryName: "jdtls", ExtractPath: ""},
-		{ID: "1.40.0", PlatformID: "linux-amd64", URL: "https://download.eclipse.org/jdtls/milestones/1.40.0/jdt-language-server-1.40.0-202501301015.tar.gz", SHA256: "TODO", ArchiveType: "tar.gz", BinaryName: "jdtls", ExtractPath: ""},
-		{ID: "1.40.0", PlatformID: "linux-arm64", URL: "https://download.eclipse.org/jdtls/milestones/1.40.0/jdt-language-server-1.40.0-202501301015.tar.gz", SHA256: "TODO", ArchiveType: "tar.gz", BinaryName: "jdtls", ExtractPath: ""},
-		{ID: "1.40.0", PlatformID: "windows-amd64", URL: "https://download.eclipse.org/jdtls/milestones/1.40.0/jdt-language-server-1.40.0-202501301015.tar.gz", SHA256: "TODO", ArchiveType: "tar.gz", BinaryName: "jdtls", ExtractPath: ""},
+		{ID: version, PlatformID: "darwin-arm64", URL: url, SHA256: sha256, ArchiveType: "tar.gz", BinaryName: "jdtls", ExtractPath: "bin/jdtls"},
+		{ID: version, PlatformID: "darwin-amd64", URL: url, SHA256: sha256, ArchiveType: "tar.gz", BinaryName: "jdtls", ExtractPath: "bin/jdtls"},
+		{ID: version, PlatformID: "linux-amd64", URL: url, SHA256: sha256, ArchiveType: "tar.gz", BinaryName: "jdtls", ExtractPath: "bin/jdtls"},
+		{ID: version, PlatformID: "linux-arm64", URL: url, SHA256: sha256, ArchiveType: "tar.gz", BinaryName: "jdtls", ExtractPath: "bin/jdtls"},
+		{ID: version, PlatformID: "windows-amd64", URL: url, SHA256: sha256, ArchiveType: "tar.gz", BinaryName: "jdtls", ExtractPath: "bin/jdtls"},
 	}
 }
 func (a *JdtlsAdapter) Install(ctx context.Context, targetDir string) (string, error) {
