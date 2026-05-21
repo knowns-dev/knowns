@@ -191,6 +191,10 @@ jobs:
         if: runner.os != 'Windows'
         run: cd ui && bunx playwright install --with-deps chromium
 
+      - name: Install Playwright browsers (Windows)
+        if: runner.os == 'Windows'
+        run: cd ui && bunx playwright install --with-deps chromium
+
       - name: Verify binary (Unix)
         if: runner.os != 'Windows'
         run: |
@@ -229,3 +233,8 @@ jobs:
       - name: Run UI Playwright tests (Unix)
         if: runner.os != 'Windows'
         run: cd ui && TEST_BINARY=../bin/knowns bun test:e2e
+
+      - name: Run UI Playwright tests (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cd ui && TEST_BINARY=../bin/knowns.exe bun test:e2e
