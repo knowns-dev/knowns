@@ -38,6 +38,7 @@ func (a *JdtlsAdapter) RuntimeDeps() []lsp.RuntimeDependency {
 		{ID: "1.40.0", PlatformID: "darwin-amd64", URL: "https://download.eclipse.org/jdtls/milestones/1.40.0/jdt-language-server-1.40.0-202501301015.tar.gz", SHA256: "TODO", ArchiveType: "tar.gz", BinaryName: "jdtls", ExtractPath: ""},
 		{ID: "1.40.0", PlatformID: "linux-amd64", URL: "https://download.eclipse.org/jdtls/milestones/1.40.0/jdt-language-server-1.40.0-202501301015.tar.gz", SHA256: "TODO", ArchiveType: "tar.gz", BinaryName: "jdtls", ExtractPath: ""},
 		{ID: "1.40.0", PlatformID: "linux-arm64", URL: "https://download.eclipse.org/jdtls/milestones/1.40.0/jdt-language-server-1.40.0-202501301015.tar.gz", SHA256: "TODO", ArchiveType: "tar.gz", BinaryName: "jdtls", ExtractPath: ""},
+		{ID: "1.40.0", PlatformID: "windows-amd64", URL: "https://download.eclipse.org/jdtls/milestones/1.40.0/jdt-language-server-1.40.0-202501301015.tar.gz", SHA256: "TODO", ArchiveType: "tar.gz", BinaryName: "jdtls", ExtractPath: ""},
 	}
 }
 func (a *JdtlsAdapter) Install(ctx context.Context, targetDir string) (string, error) {

@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -418,9 +416,5 @@ func (s *Server) wait(cmd *exec.Cmd, exited chan struct{}) {
 }
 
 func fileURI(path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		abs = path
-	}
-	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String()
+	return FileURI(path)
 }

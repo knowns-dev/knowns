@@ -99,6 +99,9 @@ func (i *Installer) Install(ctx context.Context, adapter LanguageAdapter) (strin
 
 	// Extract or copy the binary.
 	binaryPath := filepath.Join(versionDir, dep.BinaryName)
+	if runtime.GOOS == "windows" {
+		binaryPath += ".exe"
+	}
 	if err := i.extract(tmpFile, binaryPath, dep); err != nil {
 		os.RemoveAll(versionDir)
 		return "", fmt.Errorf("extract: %w", err)

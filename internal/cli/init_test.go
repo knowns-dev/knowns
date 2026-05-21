@@ -557,9 +557,9 @@ func TestRuntimeInstallHelpersExposeAvailabilitySummary(t *testing.T) {
 
 func TestWriteKnownsGitignoreGitIgnoredTracksDocsAndTemplatesOnly(t *testing.T) {
 	dir := t.TempDir()
-	gitignorePath := filepath.Join(dir, ".gitignore")
+	rootGitignorePath := filepath.Join(dir, ".gitignore")
 
-	if err := os.WriteFile(gitignorePath, []byte("bin/\n"), 0644); err != nil {
+	if err := os.WriteFile(rootGitignorePath, []byte("bin/\n"), 0644); err != nil {
 		t.Fatalf("seed .gitignore: %v", err)
 	}
 
@@ -567,21 +567,28 @@ func TestWriteKnownsGitignoreGitIgnoredTracksDocsAndTemplatesOnly(t *testing.T) 
 		t.Fatalf("writeKnownsGitignore returned error: %v", err)
 	}
 
-	content := readTextFile(t, gitignorePath)
-	assertContains(t, content, "bin/\n")
-	assertContains(t, content, ".knowns/*")
-	assertContains(t, content, "!.knowns/docs/")
-	assertContains(t, content, "!.knowns/docs/**")
-	assertContains(t, content, "!.knowns/templates/")
-	assertContains(t, content, "!.knowns/templates/**")
-	assertContains(t, content, knownsGitignoreBegin)
-	assertContains(t, content, knownsGitignoreEnd)
-	assertNotContains(t, content, ".knowns/\n")
+	// Root .gitignore should be unchanged (no legacy block to remove).
+	rootContent := readTextFile(t, rootGitignorePath)
+	if rootContent != "bin/\n" {
+		t.Fatalf("root .gitignore modified unexpectedly:\n%s", rootContent)
+	}
+
+	// .knowns/.gitignore should ignore everything except tracked dirs.
+	knownsGitignore := filepath.Join(dir, ".knowns", ".gitignore")
+	content := readTextFile(t, knownsGitignore)
+	assertContains(t, content, "*")
+	assertContains(t, content, "!docs/")
+	assertContains(t, content, "!docs/**")
+	assertContains(t, content, "!templates/")
+	assertContains(t, content, "!templates/**")
+	assertContains(t, content, "!tasks/")
+	assertContains(t, content, "!tasks/**")
+	assertContains(t, content, "!config.json")
 }
 
 func TestWriteKnownsGitignoreGitTrackedRemovesManagedBlock(t *testing.T) {
 	dir := t.TempDir()
-	gitignorePath := filepath.Join(dir, ".gitignore")
+	rootGitignorePath := filepath.Join(dir, ".gitignore")
 	seed := strings.Join([]string{
 		"bin/",
 		knownsGitignoreBegin,
@@ -591,7 +598,7 @@ func TestWriteKnownsGitignoreGitTrackedRemovesManagedBlock(t *testing.T) {
 		"tmp/",
 	}, "\n") + "\n"
 
-	if err := os.WriteFile(gitignorePath, []byte(seed), 0644); err != nil {
+	if err := os.WriteFile(rootGitignorePath, []byte(seed), 0644); err != nil {
 		t.Fatalf("seed .gitignore: %v", err)
 	}
 
@@ -599,10 +606,18 @@ func TestWriteKnownsGitignoreGitTrackedRemovesManagedBlock(t *testing.T) {
 		t.Fatalf("writeKnownsGitignore returned error: %v", err)
 	}
 
-	content := readTextFile(t, gitignorePath)
-	if want := "bin/\ntmp/\n"; content != want {
-		t.Fatalf("unexpected .gitignore content:\nwant:\n%s\n got:\n%s", want, content)
+	// Legacy block should be removed from root .gitignore.
+	rootContent := readTextFile(t, rootGitignorePath)
+	if want := "bin/\ntmp/\n"; rootContent != want {
+		t.Fatalf("unexpected root .gitignore content:\nwant:\n%s\n got:\n%s", want, rootContent)
 	}
+
+	// .knowns/.gitignore should contain runtime/cache ignores.
+	knownsGitignore := filepath.Join(dir, ".knowns", ".gitignore")
+	content := readTextFile(t, knownsGitignore)
+	assertContains(t, content, ".search/")
+	assertContains(t, content, "runtime/")
+	assertContains(t, content, ".server-port")
 }
 
 func TestWriteKnownsGitignoreNoneLeavesGitignoreUnmanaged(t *testing.T) {

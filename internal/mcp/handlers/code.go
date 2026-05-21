@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -268,11 +267,7 @@ func locationResult(root string, loc lsp.Location) map[string]any {
 }
 
 func pathFromURI(uri string) string {
-	u, err := url.Parse(uri)
-	if err != nil || u.Scheme != "file" {
-		return uri
-	}
-	return u.Path
+	return lsp.PathFromFileURI(uri)
 }
 
 func relPath(root, path string) string {

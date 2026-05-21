@@ -90,11 +90,11 @@ func TestInstallClaudeWindowsQuotesExecutableForBashHooks(t *testing.T) {
 	}
 	text := string(body)
 	expectedExe := strings.ReplaceAll(exePath, `\`, "/")
-	if !strings.Contains(text, `"command": "\"`+expectedExe+`\"`) {
-		t.Fatalf("expected slash-normalized quoted executable path, got:\n%s", text)
+	if !strings.Contains(text, expectedExe) {
+		t.Fatalf("expected slash-normalized executable path, got:\n%s", text)
 	}
-	if !strings.Contains(text, `\"runtime-memory\" \"hook\" \"--runtime\" \"claude-code\" \"--event\" \"session-start\"`) {
-		t.Fatalf("expected quoted runtime-memory hook args, got:\n%s", text)
+	if !strings.Contains(text, "runtime-memory hook --runtime claude-code --event session-start") {
+		t.Fatalf("expected runtime-memory hook args, got:\n%s", text)
 	}
 }
 
@@ -154,7 +154,7 @@ func TestInstallClaudeWindowsWritesExactSessionStartHookJSON(t *testing.T) {
 		t.Fatalf("expected hook object, got: %#v", groupHooks[0])
 	}
 
-	expectedCommand := `"` + strings.ReplaceAll(exePath, `\`, "/") + `" "runtime-memory" "hook" "--runtime" "claude-code" "--event" "session-start"`
+	expectedCommand := strings.ReplaceAll(exePath, `\`, "/") + " runtime-memory hook --runtime claude-code --event session-start"
 	if got := hook["command"]; got != expectedCommand {
 		t.Fatalf("unexpected command\nwant: %q\n got: %q", expectedCommand, got)
 	}

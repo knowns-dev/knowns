@@ -1827,6 +1827,13 @@ func writeKnownsGitignore(dir, mode string) error {
 	gitignorePath := filepath.Join(knownsDir, ".gitignore")
 
 	switch mode {
+	case "git-tracked", "git-ignored":
+		if err := os.MkdirAll(knownsDir, 0755); err != nil {
+			return err
+		}
+	}
+
+	switch mode {
 	case "git-tracked":
 		// Track all .knowns/ content; only ignore runtime/cache files.
 		content := "# Managed by Knowns CLI — do not edit manually.\n" +

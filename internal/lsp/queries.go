@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode"
@@ -57,8 +55,8 @@ type TextDocumentEdit struct {
 }
 
 type WorkspaceEdit struct {
-	Changes         map[string][]TextEdit  `json:"changes"`
-	DocumentChanges []TextDocumentEdit     `json:"documentChanges"`
+	Changes         map[string][]TextEdit `json:"changes"`
+	DocumentChanges []TextDocumentEdit    `json:"documentChanges"`
 }
 
 // AllChanges returns a unified map of URI → edits, merging both Changes and DocumentChanges.
@@ -276,19 +274,7 @@ func positionParams(path string, line, col int) map[string]any {
 }
 
 func sameFileURI(uri, path string) bool {
-	u, err := url.Parse(uri)
-	if err == nil && u.Scheme == "file" {
-		if p, err := filepath.Abs(u.Path); err == nil {
-			uri = p
-		} else {
-			uri = u.Path
-		}
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		abs = path
-	}
-	return filepath.Clean(uri) == filepath.Clean(abs)
+	return SameFileURI(uri, path)
 }
 
 func codeOnlyLine(line string, inBlockComment bool) (string, bool) {

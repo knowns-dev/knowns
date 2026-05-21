@@ -68,7 +68,7 @@ func initializationOptions(settings map[string]any) map[string]any {
 
 func initializeParams(root string, settings map[string]any) map[string]any {
 	return map[string]any{
-		"rootUri":               "file://" + root,
+		"rootUri":               lsp.FileURI(root),
 		"initializationOptions": initializationOptions(settings),
 	}
 }

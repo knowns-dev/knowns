@@ -32,6 +32,7 @@ func (a *ClangdAdapter) RuntimeDeps() []lsp.RuntimeDependency {
 		{ID: "18.1.3", PlatformID: "darwin-amd64", URL: "https://github.com/clangd/clangd/releases/download/18.1.3/clangd-mac-18.1.3.zip", SHA256: "TODO", ArchiveType: "zip", BinaryName: "clangd", ExtractPath: "clangd_18.1.3/bin"},
 		{ID: "18.1.3", PlatformID: "linux-amd64", URL: "https://github.com/clangd/clangd/releases/download/18.1.3/clangd-linux-18.1.3.zip", SHA256: "TODO", ArchiveType: "zip", BinaryName: "clangd", ExtractPath: "clangd_18.1.3/bin"},
 		{ID: "18.1.3", PlatformID: "linux-arm64", URL: "https://github.com/clangd/clangd/releases/download/18.1.3/clangd-linux-18.1.3.zip", SHA256: "TODO", ArchiveType: "zip", BinaryName: "clangd", ExtractPath: "clangd_18.1.3/bin"},
+		{ID: "18.1.3", PlatformID: "windows-amd64", URL: "https://github.com/clangd/clangd/releases/download/18.1.3/clangd-windows-18.1.3.zip", SHA256: "TODO", ArchiveType: "zip", BinaryName: "clangd", ExtractPath: "clangd_18.1.3/bin"},
 	}
 }
 func (a *ClangdAdapter) Install(ctx context.Context, targetDir string) (string, error) {

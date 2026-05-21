@@ -148,9 +148,9 @@ func TestInstall_Binary(t *testing.T) {
 		t.Fatalf("binary not found at %s: %v", path, err)
 	}
 
-	// Verify it's executable.
+	// Verify it's executable (skip on Windows where permission bits are not meaningful).
 	info, _ := os.Stat(path)
-	if info.Mode()&0111 == 0 {
+	if runtime.GOOS != "windows" && info.Mode()&0111 == 0 {
 		t.Error("binary is not executable")
 	}
 

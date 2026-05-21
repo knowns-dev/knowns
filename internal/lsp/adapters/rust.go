@@ -30,6 +30,7 @@ func (a *RustAnalyzerAdapter) RuntimeDeps() []lsp.RuntimeDependency {
 		{ID: "2024-01-01", PlatformID: "darwin-amd64", URL: "https://github.com/rust-lang/rust-analyzer/releases/download/2024-01-01/rust-analyzer-x86_64-apple-darwin.gz", SHA256: "TODO", ArchiveType: "binary", BinaryName: "rust-analyzer"},
 		{ID: "2024-01-01", PlatformID: "linux-amd64", URL: "https://github.com/rust-lang/rust-analyzer/releases/download/2024-01-01/rust-analyzer-x86_64-unknown-linux-gnu.gz", SHA256: "TODO", ArchiveType: "binary", BinaryName: "rust-analyzer"},
 		{ID: "2024-01-01", PlatformID: "linux-arm64", URL: "https://github.com/rust-lang/rust-analyzer/releases/download/2024-01-01/rust-analyzer-aarch64-unknown-linux-gnu.gz", SHA256: "TODO", ArchiveType: "binary", BinaryName: "rust-analyzer"},
+		{ID: "2024-01-01", PlatformID: "windows-amd64", URL: "https://github.com/rust-lang/rust-analyzer/releases/download/2024-01-01/rust-analyzer-x86_64-pc-windows-msvc.gz", SHA256: "TODO", ArchiveType: "binary", BinaryName: "rust-analyzer"},
 	}
 }
 func (a *RustAnalyzerAdapter) Install(ctx context.Context, targetDir string) (string, error) {

@@ -802,14 +802,14 @@ func TestMCP_InitialTool(t *testing.T) {
 		if raw == "" {
 			t.Fatal("initial tool returned empty result")
 		}
-		if !strings.Contains(raw, "Operating Instructions") {
+		if !strings.Contains(raw, "Session Ready") {
 			t.Fatalf("initial tool result missing expected content, got: %s", raw[:min(len(raw), 200)])
 		}
-		if !strings.Contains(raw, "Critical Rules") {
-			t.Fatal("initial tool result missing Critical Rules section")
+		if !strings.Contains(raw, "Code Intelligence Rules") {
+			t.Fatal("initial tool result missing Code Intelligence Rules section")
 		}
-		if !strings.Contains(raw, "Tool Selection") {
-			t.Fatal("initial tool result missing Tool Selection section")
+		if !strings.Contains(raw, "Workflow") {
+			t.Fatal("initial tool result missing Workflow section")
 		}
 	})
 }
