@@ -129,6 +129,9 @@ func (i *Installer) IsInstalled(adapter LanguageAdapter) (string, bool) {
 
 	versionDir := filepath.Join(i.baseDir, adapter.ID(), dep.BinaryName+"-"+dep.ID)
 	binaryPath := filepath.Join(versionDir, dep.BinaryName)
+	if runtime.GOOS == "windows" {
+		binaryPath += ".exe"
+	}
 
 	if _, err := os.Stat(binaryPath); err == nil {
 		return binaryPath, true

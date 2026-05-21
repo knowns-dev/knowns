@@ -12,7 +12,7 @@ func TestPathFromFileURI(t *testing.T) {
 		wantUnix string
 		wantWin  string
 	}{
-		{"unix path", "file:///home/user/main.go", "/home/user/main.go", "/home/user/main.go"},
+		{"unix path", "file:///home/user/main.go", "/home/user/main.go", `\home\user\main.go`},
 		{"windows drive", "file:///C:/Users/dev/main.go", "/C:/Users/dev/main.go", `C:\Users\dev\main.go`},
 		{"not file URI", "https://example.com/path", "https://example.com/path", "https://example.com/path"},
 		{"invalid URI", "://broken", "://broken", "://broken"},
