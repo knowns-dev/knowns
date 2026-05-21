@@ -90,8 +90,7 @@ test.describe("Doc Creation with Full Fields", () => {
 	test("creates doc via CLI and views it in UI", async ({ page }) => {
 		await test.step("Create doc via CLI with content", async () => {
 			server.cli('doc create "Setup Guide" -d "How to set up the project" -t guide -t setup');
-			// Use $'...' quoting so shell interprets \n as real newlines
-			server.cli("doc edit \"setup-guide\" -c $'## Getting Started\\n\\nFollow these steps to set up the project.\\n\\n### Prerequisites\\n\\n- Node.js 18+\\n- Go 1.21+'");
+			server.cli('doc edit "setup-guide" -c "## Getting Started\\n\\nFollow these steps to set up the project.\\n\\n### Prerequisites\\n\\n- Node.js 18+\\n- Go 1.21+"');
 		});
 
 		await test.step("Navigate to docs and open the doc", async () => {
@@ -115,7 +114,7 @@ test.describe("Doc Content Editing", () => {
 		test("edits doc content via Edit button and saves", async ({ page }) => {
 			await test.step("Create doc via CLI", async () => {
 				server.cli('doc create "Editable Doc" -d "Test editing content" -t test');
-				server.cli("doc edit \"editable-doc\" -c $'## Original Content\\n\\nThis is the original text.'");
+				server.cli('doc edit "editable-doc" -c "## Original Content\\n\\nThis is the original text."');
 			});
 
 		await test.step("Navigate and open doc", async () => {
@@ -165,7 +164,7 @@ test.describe("Doc Content Editing", () => {
 		test("editing and saving preserves changes", async ({ page }) => {
 			await test.step("Create doc via CLI", async () => {
 				server.cli('doc create "Save Test" -d "Test saving" -t test');
-				server.cli("doc edit \"save-test\" -c $'## Before Edit\\n\\nInitial content here.'");
+				server.cli('doc edit "save-test" -c "## Before Edit\\n\\nInitial content here."');
 			});
 
 		await test.step("Open doc", async () => {
@@ -197,7 +196,7 @@ test.describe("Doc Content Editing", () => {
 		});
 
 		await test.step("Edit via CLI and verify UI updates", async () => {
-			server.cli("doc edit \"save-test\" -c $'## After Edit\\n\\nUpdated content here.'");
+			server.cli('doc edit "save-test" -c "## After Edit\\n\\nUpdated content here."');
 			await page.reload();
 			await page.waitForTimeout(1000);
 			await openDocFromList(page, "Save Test");

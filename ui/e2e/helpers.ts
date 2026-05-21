@@ -2,7 +2,7 @@
  * E2E test helpers — start/stop knowns server with isolated project
  */
 
-import { execSync, spawn, type ChildProcess } from "node:child_process";
+import { execSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -141,15 +141,22 @@ export async function startServer(): Promise<TestServer> {
 
 	const cleanup = () => {
 		serverProcess.kill("SIGTERM");
-		// Give process time to exit, then force kill
-		setTimeout(() => {
-			try {
-				serverProcess.kill("SIGKILL");
-			} catch {
-				// already dead
-			}
-		}, 2000);
-		rmSync(projectDir, { recursive: true, force: true });
+		// Wait for process to fully exit before removing files
+		if (isWindows) {
+			spawnSync("powershell", ["-Command", "Start-Sleep -Seconds 3"], { stdio: "ignore" });
+		} else {
+			spawnSync("sleep", ["1"], { stdio: "ignore" });
+		}
+		try {
+			serverProcess.kill("SIGKILL");
+		} catch {
+			// already dead
+		}
+		try {
+			rmSync(projectDir, { recursive: true, force: true });
+		} catch {
+			// EBUSY on Windows — best effort cleanup
+		}
 	};
 
 	return { baseURL, port, projectDir, cli, cleanup };
