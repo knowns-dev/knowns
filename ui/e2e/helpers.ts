@@ -131,6 +131,17 @@ export async function startServer(): Promise<TestServer> {
 	}
 
 	const cli = (args: string): string => {
+		if (isWindows) {
+			// On Windows, cmd.exe mangles nested double quotes.
+			// Use shell: "bash" (Git Bash available on CI) for consistent quoting.
+			return execSync(`${BINARY} ${args}`, {
+				cwd: projectDir,
+				encoding: "utf-8",
+				timeout: 10000,
+				shell: "bash",
+				env: { ...process.env, NO_COLOR: "1" },
+			}).trim();
+		}
 		return execSync(`${BINARY} ${args}`, {
 			cwd: projectDir,
 			encoding: "utf-8",

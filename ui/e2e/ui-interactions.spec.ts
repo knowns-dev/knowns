@@ -302,10 +302,11 @@ test.describe("Document Interactions via UI", () => {
 
 		await test.step("Click on the document", async () => {
 			await page.getByText("Architecture Guide").first().click();
+			await page.waitForTimeout(1000);
 		});
 
 		await test.step("Document heading is visible", async () => {
-			await expect(page.getByRole("heading", { name: "Components" })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Components" })).toBeVisible();
 		});
 
 		await test.step("Document body text is visible", async () => {
