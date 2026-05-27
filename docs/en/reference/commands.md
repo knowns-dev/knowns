@@ -20,14 +20,25 @@ knowns init my-project --no-wizard
 knowns init --force
 ```
 
-What `init` can configure:
+What `init` configures:
 
 - project name
-- git tracking mode
-- AI platforms to integrate
-- optional Chat UI
+- git tracking mode (with per-section toggles)
 - semantic search
 - embedding model
+
+### `knowns setup`
+
+Configures AI tool integrations for an initialized project.
+
+```bash
+knowns setup              # Interactive platform selector
+knowns setup claude       # Claude Code: CLAUDE.md, .mcp.json, skills, hooks
+knowns setup opencode     # OpenCode: OPENCODE.md, opencode.json, skills, hooks
+knowns setup kiro         # Kiro: .kiro steering/settings, skills, hooks
+knowns setup copilot      # GitHub Copilot: .github/copilot-instructions.md
+knowns setup all          # All supported platforms
+```
 
 ### `knowns sync`
 
@@ -249,11 +260,12 @@ knowns browser --port 6421
 ## Agent and guidance files
 
 ```bash
-knowns agents
-knowns agents --sync
+knowns setup
+knowns sync --skills
+knowns sync --instructions
 ```
 
-Use this when you specifically want to inspect or regenerate compatibility instruction files.
+Use `knowns setup` to generate AI integration files, or `knowns sync` to refresh them.
 
 ## Model management
 

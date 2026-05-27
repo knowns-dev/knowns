@@ -2,13 +2,13 @@
 title: Skills System
 description: Skill definition, sharing, and sync across platforms
 createdAt: '2026-01-23T04:07:56.363Z'
-updatedAt: '2026-04-24T14:35:58.729Z'
+updatedAt: '2026-05-27T16:25:29.884Z'
 tags: []
 ---
 
 ## Overview
 
-Skills are AI workflow instructions bundled with Knowns. They are embedded in the binary and synced to platform-specific directories (`.claude/skills/`, `.agents/skills/`, `.agent/skills/`, etc.) during `knowns init` or `knowns sync`.
+Skills are AI workflow instructions bundled with Knowns. They are embedded in the binary and synced to platform-specific directories during `knowns setup` or `knowns sync`.
 
 **Related:** @doc/ai/platforms
 
@@ -17,40 +17,44 @@ Skills are AI workflow instructions bundled with Knowns. They are embedded in th
 ## How Skills Work
 
 1. Skills are embedded in the Knowns binary as SKILL.md files
-2. During `knowns init`, skills are copied to the platform directories you selected
+2. During `knowns setup <target>`, skills are copied to the platform directories you selected
 3. `knowns sync --skills` re-syncs skills from the binary to platform dirs
-4. AI assistants (Claude Code, Codex, OpenCode, Antigravity, Kiro, etc.) discover skills from their platform directory
+4. AI assistants discover skills from their platform directory
+
+> **Note:** `knowns init` no longer generates AI integration files or syncs skills. Use `knowns setup` after init to configure AI platforms.
 
 ---
 
 ## Synced Locations
 
 ```
-# Platform directories (auto-synced by knowns)
+# Platform directories (synced by knowns setup / knowns sync)
 .claude/skills/              # Claude Code
-.agents/skills/              # Codex / OpenCode / Antigravity
+.agents/skills/              # OpenCode / Antigravity / Codex / Generic Agents
 .kiro/skills/                # Kiro
-.agent/skills/               # Legacy generic-agent compatibility
 ```
 
-Skills are synced as SKILL.md files. Claude Code uses `.claude/skills/`. Codex, OpenCode, and Antigravity use `.agents/skills/`. Knowns still syncs an existing `.agent/skills/` directory for backwards compatibility with older projects.
+Skills are synced as SKILL.md files. Claude Code uses `.claude/skills/`. OpenCode, Antigravity, Codex, and Generic Agents use `.agents/skills/`. Kiro uses `.kiro/skills/`.
 
 ---
 
-## CLI Commands
+## Setup Command
 
 ```bash
-# Sync skills + instructions from binary to platform dirs
+# Configure AI integrations (interactive selector)
+knowns setup
+
+# Configure specific platform
+knowns setup claude
+knowns setup opencode
+knowns setup kiro
+knowns setup copilot
+knowns setup all
+
+# Re-sync skills and instructions
 knowns sync
-
-# Sync skills only
 knowns sync --skills
-
-# Sync instruction files only
 knowns sync --instructions
-
-# Sync a specific platform's instruction file
-knowns sync --instructions --platform claude
 ```
 
 ---

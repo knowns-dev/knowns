@@ -17,9 +17,9 @@ Knowns uses one canonical file plus several compatibility files for AI runtimes.
 ## Refresh generated content
 
 ```bash
+knowns setup
 knowns sync
 knowns sync --instructions
-knowns agents --sync
 ```
 
-There is no standalone `knowns guidelines` CLI command anymore.
+Use `knowns setup` to generate platform files initially, or `knowns sync` to refresh them.

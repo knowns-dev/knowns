@@ -17,18 +17,16 @@ CLI, MCP server, và Web UI đều thao tác trên cùng một project state.
 ## `knowns init` làm gì?
 
 - Chạy interactive wizard
-- Cài OpenCode nếu cần
 - Sau wizard:
   - tạo cấu trúc project
   - apply config
-  - sync skills
-  - tạo MCP/config files
-  - cài runtime hooks
-  - build semantic index
+  - cấu hình git integration
+  - build semantic index (nếu bật)
+
+Sau init, chạy `knowns setup` để cấu hình AI platform integrations (skills, MCP configs, instruction files).
 
 ## Terminal
 
-- Terminal quá hẹp → Knowns chuyển sang non-interactive defaults
 - Wizard dùng alternate screen để giảm lỗi hiển thị khi resize
 - Output từ installer bên thứ ba có thể khá ồn
 

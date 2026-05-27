@@ -1,6 +1,6 @@
 # Platforms
 
-Knowns generate và sync artifacts khác nhau cho từng AI platform.
+Knowns generate và sync artifacts khác nhau cho từng AI platform qua `knowns setup <target>`.
 
 ## Platform IDs
 
@@ -26,9 +26,21 @@ Knowns generate và sync artifacts khác nhau cho từng AI platform.
 | Cursor | none by default | `.cursor/mcp.json` | no |
 | Gemini CLI | none by default | platform-managed/global | no |
 | GitHub Copilot | instruction only | no | no |
-| Generic agents | `.agent/skills` (legacy) | no | no |
+| Generic agents | `.agents/skills` | no | no |
+
+## Setup
+
+AI integration files được tạo qua `knowns setup`, không phải trong `knowns init`:
+
+```bash
+knowns setup claude    # CLAUDE.md, .mcp.json, skills, hooks
+knowns setup opencode  # OPENCODE.md, opencode.json, skills, hooks
+knowns setup kiro      # .kiro steering/settings, skills, hooks
+knowns setup copilot   # .github/copilot-instructions.md
+knowns setup all       # Tất cả platforms
+```
 
 ## Ghi chú
 
 - `.agents/skills` là primary path cho agent-compatible platforms
-- `.agent/skills` giữ cho legacy/generic compatibility
+- `knowns init` không còn generate AI integration files — dùng `knowns setup` sau init

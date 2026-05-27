@@ -22,4 +22,4 @@ knowns update
 
 ## Legacy note
 
-If an older project still uses `.agent/skills`, Knowns continues syncing it for compatibility and may print a warning.
+The `.agent/skills` legacy path has been removed. All agent-compatible platforms now use `.agents/skills`.

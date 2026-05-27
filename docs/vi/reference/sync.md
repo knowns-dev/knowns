@@ -7,9 +7,10 @@
 Chạy `knowns sync` sau khi:
 
 - clone repo có sẵn `.knowns/`
-- đổi platforms
 - upgrade CLI
 - muốn generated files khớp lại với config
+
+Để cấu hình AI platforms (skills, instructions, MCP configs), dùng `knowns setup`.
 
 ## Các dạng dùng
 

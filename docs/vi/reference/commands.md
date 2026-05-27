@@ -14,6 +14,10 @@ Dùng `knowns <command> --help` để xem syntax chính xác. Trang này là t�
 knowns init
 knowns init my-project --no-wizard
 knowns init --force
+knowns setup
+knowns setup claude
+knowns setup opencode
+knowns setup all
 knowns sync
 knowns sync --skills
 knowns sync --instructions
@@ -150,8 +154,9 @@ knowns browser --port 6421
 ## Guidance files
 
 ```bash
-knowns agents
-knowns agents --sync
+knowns setup
+knowns sync --skills
+knowns sync --instructions
 ```
 
 ## Model

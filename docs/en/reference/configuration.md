@@ -11,12 +11,17 @@ This file describes what the project wants Knowns to manage locally, including p
   "name": "my-project",
   "settings": {
     "gitTrackingMode": "git-tracked",
+    "gitTracking": {
+      "tasks": true,
+      "docs": true,
+      "templates": true,
+      "memories": false
+    },
     "semanticSearch": {
       "enabled": true,
       "model": "multilingual-e5-small",
-      "huggingFaceId": "Xenova/multilingual-e5-small",
-      "dimensions": 384,
-      "maxTokens": 512
+      "provider": "local",
+      "dimensions": 384
     },
     "platforms": [
       "claude-code",
@@ -29,8 +34,9 @@ This file describes what the project wants Knowns to manage locally, including p
       "copilot",
       "agents"
     ],
-    "enableChatUI": true,
-    "autoSyncOnUpdate": true
+    "lsp": {
+      "enabled": true
+    }
   }
 }
 ```
@@ -57,6 +63,17 @@ Behavior:
 - `git-ignored`: keep config/docs/templates tracked while leaving some local data out of Git depending on generated ignore rules
 - `none`: do not let Knowns manage `.gitignore`
 
+### `settings.gitTracking`
+
+Per-section git tracking toggles. Controls which `.knowns/` subdirectories are included or excluded in `.gitignore`.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `tasks` | `true` | Track task markdown files |
+| `docs` | `true` | Track documentation files |
+| `templates` | `true` | Track code generation templates |
+| `memories` | `false` | Track AI memory entries |
+
 ### `settings.semanticSearch`
 
 Controls local semantic search.
@@ -65,15 +82,20 @@ Relevant fields:
 
 - `enabled`
 - `model`
-- `huggingFaceId`
+- `provider` (`"local"` or `"ollama"`)
 - `dimensions`
-- `maxTokens`
 
 Common behavior:
 
 - `knowns init` can set these values
 - `knowns sync` can re-apply the semantic setup
 - `knowns search --reindex` rebuilds the local index
+
+### `settings.lsp`
+
+Controls LSP-based code intelligence.
+
+- `enabled`: whether LSP servers are started for code navigation
 
 ### `settings.platforms`
 
@@ -91,7 +113,7 @@ Supported values:
 - `copilot`
 - `agents`
 
-This setting affects what `knowns init`, `knowns sync`, and `knowns update` create or refresh.
+This setting affects what `knowns setup`, `knowns sync`, and `knowns update` create or refresh.
 
 Examples of managed artifacts:
 
@@ -115,15 +137,40 @@ Controls whether generated artifacts should be refreshed after upgrading the CLI
 
 You can edit `.knowns/config.json` directly if you know what you are doing, but the normal path is:
 
-- `knowns init` for first-time setup
+- `knowns init` for first-time setup (project structure + git tracking)
+- `knowns setup` for AI platform integrations
+- `knowns config set` to toggle features
 - `knowns sync` to re-apply config to the current machine
+
+### Config toggle shorthands
+
+```bash
+# Interactive feature toggle UI
+knowns config toggle
+# Shows:
+#   AI Chat  [off]
+#   LSP (Experimental)  [on]
+#   Semantic Search  [on]
+#   Done
+
+# Or set directly via CLI
+knowns config set embedding true       # Enable semantic search
+knowns config set lsp true             # Enable LSP globally
+knowns config set lsp.go true          # Enable LSP for Go
+knowns config set enableChatUI true    # Enable chat UI
+
+# Git Tracking (per-section)
+knowns config set gitTracking.tasks true
+knowns config set gitTracking.memories false
+```
+
+Changing `gitTracking.*` toggles automatically regenerates `.gitignore`.
 
 ### When to use `knowns sync`
 
 Use `knowns sync` after:
 
 - cloning a repo with existing `.knowns/`
-- changing selected platforms
 - updating the CLI
 - wanting to restore generated artifacts to match config
 
@@ -132,17 +179,17 @@ Use `knowns sync` after:
 Current skills mapping:
 
 - `.claude/skills` -> Claude Code
-- `.agents/skills` -> OpenCode, Codex, Antigravity
+- `.agents/skills` -> OpenCode, Codex, Antigravity, Generic Agents
 - `.kiro/skills` -> Kiro
-- `.agent/skills` -> legacy/generic compatibility only
-
-If an older project already has `.agent/skills`, Knowns keeps compatibility during sync.
 
 ## Related commands
 
 ```bash
 knowns init
+knowns setup
 knowns sync
+knowns config set <key> <value>
+knowns config get <key>
 knowns model list
 knowns model download multilingual-e5-small
 knowns search --status-check

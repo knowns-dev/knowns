@@ -451,7 +451,7 @@ knowns lsp install <language>
 # Use the MCP code tool for symbols, definitions, references, diagnostics, and edits
 
 # AI Guidelines
-knowns agents --sync
+knowns setup
 knowns sync
 ```
 

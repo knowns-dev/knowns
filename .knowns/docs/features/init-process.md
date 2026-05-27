@@ -2,13 +2,17 @@
 title: Init Process
 description: Detailed init wizard flow and configuration steps
 createdAt: '2026-01-23T04:13:12.738Z'
-updatedAt: '2026-04-24T15:25:23.756Z'
+updatedAt: '2026-05-27T16:26:40.802Z'
 tags: []
 ---
 
 ## Overview
 
+## Overview
+
 `knowns init` is an interactive wizard to set up Knowns in a project. Written in Go using the Cobra CLI framework, the init command guides users through project configuration and then executes post-wizard steps with progressive animation.
+
+> **Note:** Since v0.22, `knowns init` focuses only on project structure, git tracking, and semantic search setup. AI integration files (instructions, MCP configs, skills) are now handled by the separate `knowns setup` command.
 
 **Key technologies:**
 - **Cobra** (`github.com/spf13/cobra`) — CLI command framework
@@ -20,6 +24,7 @@ tags: []
 - `internal/cli/init.go` — Main init command, wizard form, config types
 - `internal/cli/init_steps.go` — Progressive step runner, goroutine spinner
 - `internal/cli/download_setup.go` — Download steps with bubbletea progress bars
+- `internal/cli/setup.go` — AI platform setup command (separate from init)
 
 ---
 
@@ -176,23 +181,54 @@ Defaults to `true`. If disabled, Group 3 is hidden and no download steps are add
 
 ## Group 3: Model Selection
 
-Only shown when semantic search is enabled (uses `WithHideFunc`).
+## Post-Wizard Steps (In Order)
+
+### 1. Creating project structure
+
+Creates the `.knowns/` directory tree via `storage.NewStore(root).Init(name)`:
 
 ```
-? Select embedding model:
-  > gte-small (recommended) — 384 dims, 67MB — best balance
-    all-MiniLM-L6-v2 — 384 dims, 45MB — fastest
-    gte-base — 768 dims, 220MB — highest quality
-    bge-small-en-v1.5 — 384 dims, 67MB — strong retrieval
-    bge-base-en-v1.5 — 768 dims, 220MB — top retrieval quality
-    nomic-embed-text-v1.5 — 768 dims, 274MB — long context (8192 tokens)
-    multilingual-e5-small — 384 dims, 471MB — multilingual support
+.knowns/
+├── config.json              # Project config
+├── tasks/                   # Task files
+├── docs/                    # Documentation
+└── templates/               # Code templates
 ```
 
-The selected model determines which files are downloaded in the post-wizard phase and is saved to `config.json` under `settings.semanticSearch`.
+### 2. Applying settings
+
+Loads the config created in step 1, then applies wizard answers:
+- Sets `gitTrackingMode` from wizard selection
+- Sets `gitTracking` per-section toggles (tasks, docs, templates, memories)
+- If semantic search is enabled, saves `semanticSearch` settings with model ID, provider, and dimensions
+
+### 3. Configuring git integration
+
+Based on the selected git tracking mode and per-section toggles:
+
+| Mode | Behavior |
+|------|----------|
+| `git-tracked` | All sections tracked (respects per-section toggles) |
+| `git-ignored` | Only sections with `gitTracking.<section>: true` are tracked |
+| `none` | Everything in `.knowns/` is ignored |
+
+If semantic search is enabled, `.knowns/search-index/` is always added to `.gitignore`.
+
+### 4. Semantic search downloads (conditional)
+
+Only runs if semantic search was enabled. Three possible outcomes:
+
+- **Already installed**: Shows a single "Semantic search (already installed)" task step
+- **Needs download**: Adds download steps for ONNX Runtime and model files
+- **Setup failed**: Prints warning and suggests `knowns model download <model>`
+
+Download steps include:
+- **ONNX Runtime** (`{os}/{arch}`): Downloaded as `.tgz`, extracted via `postHook` to `~/.knowns/lib/`
+- **Model files**: Downloaded from HuggingFace to `~/.knowns/models/{huggingface-id}/`
+
+> **Note:** Steps 5-7 from previous versions (syncing skills, creating MCP config, creating instruction files) have been moved to `knowns setup`. Init no longer generates AI integration files.
 
 ---
-
 
 ## Post-Wizard Steps (In Order)
 

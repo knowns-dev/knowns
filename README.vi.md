@@ -451,7 +451,7 @@ knowns lsp install <language>
 knowns lsp cleanup
 
 # AI Guidelines
-knowns agents --sync
+knowns setup
 knowns sync
 ```
 

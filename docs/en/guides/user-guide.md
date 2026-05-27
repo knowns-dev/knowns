@@ -17,18 +17,16 @@ The CLI, MCP server, and browser UI all operate on the same project state.
 ## What you will see during `knowns init`
 
 - an interactive wizard
-- optional installer output if OpenCode needs to be installed or upgraded
 - post-wizard steps such as:
   - project structure creation
   - settings application
-  - skill sync
-  - MCP/config generation
-  - runtime hook installation
-  - semantic index building
+  - git integration configuration
+  - semantic index building (if enabled)
+
+After init, run `knowns setup` to configure AI platform integrations (skills, MCP configs, instruction files).
 
 ## Terminal behavior
 
-- on narrow terminals, Knowns may fall back to non-interactive defaults
 - the wizard uses an alternate screen to reduce redraw glitches during resize
 - third-party installer output can still be noisy
 

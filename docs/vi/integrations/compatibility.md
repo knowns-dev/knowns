@@ -18,17 +18,12 @@ Khi integrations thay đổi, project cũ có thể còn layout trước đây. 
 Mapping chính:
 
 - `.claude/skills` → Claude Code
-- `.agents/skills` → OpenCode, Codex, Antigravity
+- `.agents/skills` → OpenCode, Codex, Antigravity, Generic Agents
 - `.kiro/skills` → Kiro
-- `.agent/skills` → legacy/generic only
 
 ### Legacy
 
-Project cũ có `.agent/skills` → Knowns vẫn sync.
-
-- Project mới nên dùng `.agents/skills`
-- Project cũ không bị break ngay
-- `knowns sync` có thể in warning khi phát hiện legacy path
+Path `.agent/skills` đã bị xóa. Tất cả agent-compatible platforms giờ dùng `.agents/skills`.
 
 ## MCP config
 
@@ -44,11 +39,15 @@ Antigravity dùng global config:
 
 - `~/.gemini/antigravity/mcp_config.json`
 
-## Init, sync, update
+## Init, setup, sync, update
 
 ### `knowns init`
 
-Tạo platform artifacts cho project mới.
+Tạo project structure, git tracking, và semantic search setup.
+
+### `knowns setup`
+
+Tạo AI platform artifacts (skills, instructions, MCP configs, runtime hooks).
 
 ### `knowns sync`
 
@@ -57,7 +56,6 @@ Re-apply `.knowns/config.json` lên máy hiện tại.
 Dùng sau khi:
 
 - clone repo
-- đổi platforms
 - muốn generated files khớp lại với config
 
 ### `knowns update`

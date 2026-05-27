@@ -17,9 +17,9 @@ Knowns dùng một file canonical và nhiều compatibility files cho các AI ru
 ## Refresh
 
 ```bash
+knowns setup
 knowns sync
 knowns sync --instructions
-knowns agents --sync
 ```
 
-Không còn command riêng `knowns guidelines` nữa.
+Dùng `knowns setup` để tạo platform files lần đầu, hoặc `knowns sync` để refresh.

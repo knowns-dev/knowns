@@ -1,6 +1,6 @@
 # Platforms
 
-Knowns can generate and sync different artifacts for different AI platforms.
+Knowns can generate and sync different artifacts for different AI platforms via `knowns setup <target>`.
 
 ## Platform IDs
 
@@ -26,9 +26,21 @@ Knowns can generate and sync different artifacts for different AI platforms.
 | Cursor | none by default | `.cursor/mcp.json` | no |
 | Gemini CLI | none by default | platform-managed/global | no |
 | GitHub Copilot | instruction only | no | no |
-| Generic agents | `.agent/skills` (legacy) | no | no |
+| Generic agents | `.agents/skills` | no | no |
+
+## Setup
+
+AI integration files are generated via `knowns setup`, not during `knowns init`:
+
+```bash
+knowns setup claude    # CLAUDE.md, .mcp.json, skills, hooks
+knowns setup opencode  # OPENCODE.md, opencode.json, skills, hooks
+knowns setup kiro      # .kiro steering/settings, skills, hooks
+knowns setup copilot   # .github/copilot-instructions.md
+knowns setup all       # All supported platforms
+```
 
 ## Notes
 
 - `.agents/skills` is the primary path for agent-compatible platforms
-- `.agent/skills` is kept for legacy/generic compatibility
+- `knowns init` no longer generates AI integration files — use `knowns setup` after init

@@ -22,4 +22,4 @@ knowns update
 
 ## Legacy
 
-Project cũ vẫn dùng `.agent/skills` → Knowns tiếp tục sync để giữ tương thích, có thể in warning.
+Path `.agent/skills` đã bị xóa. Tất cả agent-compatible platforms giờ dùng `.agents/skills`.

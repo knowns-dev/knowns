@@ -10,16 +10,14 @@ knowns init
 npx knowns init
 ```
 
-The init flow can configure:
+The init flow configures:
 
 - project name
-- git tracking mode
-- AI platforms to integrate
-- optional OpenCode-powered chat UI
+- git tracking mode (with per-section toggles)
 - semantic search
 - embedding model
 
-If the terminal is too narrow, Knowns may fall back to non-interactive defaults instead of rendering the full wizard.
+> **Note:** AI platform integrations (instructions, MCP configs, skills) are configured separately via `knowns setup`.
 
 ## 2. Create a task
 

@@ -7,9 +7,10 @@
 Use `knowns sync` after:
 
 - cloning a repository with existing `.knowns/`
-- changing selected platforms
 - upgrading the CLI
 - wanting generated files to match config again
+
+For AI platform setup (skills, instructions, MCP configs), use `knowns setup` instead.
 
 ## Common forms
 

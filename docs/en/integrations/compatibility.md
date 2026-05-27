@@ -18,19 +18,12 @@ As integrations evolve, older projects may still contain previously generated la
 Current primary mapping:
 
 - `.claude/skills` -> Claude Code
-- `.agents/skills` -> OpenCode, Codex, Antigravity
+- `.agents/skills` -> OpenCode, Codex, Antigravity, Generic Agents
 - `.kiro/skills` -> Kiro
-- `.agent/skills` -> legacy/generic compatibility only
 
 ### Legacy behavior
 
-If an older project already contains `.agent/skills`, Knowns continues syncing it for compatibility.
-
-This means:
-
-- new projects should prefer `.agents/skills` for agent-compatible platforms
-- old projects are not forced to break immediately
-- `knowns sync` may print a warning when it detects the legacy path
+The `.agent/skills` legacy path has been removed. All agent-compatible platforms now use `.agents/skills`.
 
 ## Platform-specific MCP compatibility
 
@@ -50,7 +43,11 @@ For Antigravity, the MCP config is global:
 
 ### `knowns init`
 
-Creates the selected platform artifacts for a project from scratch.
+Creates the project structure, git tracking, and semantic search setup.
+
+### `knowns setup`
+
+Generates AI platform artifacts (skills, instructions, MCP configs, runtime hooks).
 
 ### `knowns sync`
 
@@ -59,7 +56,6 @@ Re-applies `.knowns/config.json` to the current machine.
 Use it after:
 
 - cloning a repository
-- changing selected platforms
 - wanting generated files to match the current config again
 
 ### `knowns update`

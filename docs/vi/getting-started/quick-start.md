@@ -13,13 +13,11 @@ npx knowns init
 Init wizard cho phép cấu hình:
 
 - tên project
-- git tracking mode
-- AI platforms cần tích hợp
-- Chat UI qua OpenCode (tùy chọn)
+- git tracking mode (với per-section toggles)
 - semantic search
 - embedding model
 
-Nếu terminal quá hẹp, Knowns tự chuyển sang non-interactive defaults.
+> **Lưu ý:** AI platform integrations (instructions, MCP configs, skills) được cấu hình riêng qua `knowns setup`.
 
 ## 2. Tạo task
 
@@ -46,7 +44,7 @@ knowns sync
 knowns update
 ```
 
-Chạy `knowns sync` sau khi clone repo, đổi platform, hoặc update CLI.
+Chạy `knowns sync` sau khi clone repo hoặc update CLI. Dùng `knowns setup` để cấu hình AI platforms.
 
 ## 6. Mở lại Web UI
 
