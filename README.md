@@ -91,7 +91,7 @@ Knowns is a **local-first, self-hostable project context layer** for AI-native d
 It stores your project knowledge in structured, AI-readable files - and exposes them to AI assistants through CLI and [MCP (Model Context Protocol)](https://modelcontextprotocol.io/).
 
 <p align="center">
-  <img src="./images/knowledge-graph.svg" alt="Knowns Knowledge Graph" width="100%">
+  <img src="./images/how-knowns-works.png" alt="How Knowns Works" width="100%">
 </p>
 
 Concretely, Knowns manages:
@@ -122,7 +122,7 @@ Everything lives in a `.knowns/` directory in your repo. Plain files. Committabl
 Knowns sits alongside your existing tools. Your stack stays the same.
 
 <p align="center">
-  <img src="./images/architecture.svg" alt="Knowns Architecture" width="100%">
+  <img src="./images/architecture.png" alt="Knowns Architecture" width="100%">
 </p>
 
 1. **You structure your project knowledge** - tasks, docs, specs, decisions - using the Knowns CLI or Web UI
@@ -279,7 +279,7 @@ knowns browser --open
 When using Claude Code with Knowns, skills (slash commands) provide a guided workflow:
 
 <p align="center">
-  <img src="./images/workflow.svg" alt="Knowns AI Workflow" width="100%">
+  <img src="./images/workflow.png" alt="Knowns AI Workflow" width="100%">
 </p>
 
 ```

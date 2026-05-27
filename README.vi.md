@@ -91,7 +91,7 @@ Knowns là **local-first, self-hostable project context layer** cho AI-native de
 Lưu project knowledge dưới dạng structured, AI-readable files — và expose cho AI assistants qua CLI và [MCP (Model Context Protocol)](https://modelcontextprotocol.io/).
 
 <p align="center">
-  <img src="./images/knowledge-graph.svg" alt="Knowns Knowledge Graph" width="100%">
+  <img src="./images/how-knowns-works.png" alt="How Knowns Works" width="100%">
 </p>
 
 Cụ thể, Knowns quản lý:
@@ -122,7 +122,7 @@ Tất cả nằm trong `.knowns/` của repo. Plain files. Commit vào Git đư�
 Knowns nằm cạnh tools bạn đang dùng. Stack hiện tại không cần đổi.
 
 <p align="center">
-  <img src="./images/architecture.svg" alt="Knowns Architecture" width="100%">
+  <img src="./images/architecture.png" alt="Knowns Architecture" width="100%">
 </p>
 
 1. **Bạn cấu trúc project knowledge** — task, doc, spec, decision — bằng CLI hoặc Web UI
@@ -279,7 +279,7 @@ knowns browser --open
 Khi dùng Claude Code với Knowns, skills (slash commands) tạo guided workflow:
 
 <p align="center">
-  <img src="./images/workflow.svg" alt="Knowns AI Workflow" width="100%">
+  <img src="./images/workflow.png" alt="Knowns AI Workflow" width="100%">
 </p>
 
 ```
