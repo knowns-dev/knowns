@@ -13,9 +13,9 @@ PLATFORMS := \
 	windows/amd64 \
 	windows/arm64
 
-.PHONY: all build clean test test-e2e test-e2e-semantic test-e2e-ui lint dev dev-go dev-ui dev-all install cross-compile ui embed npm-build release sidecar
+.PHONY: all build clean test test-e2e test-e2e-semantic test-e2e-ui lint dev dev-go dev-ui dev-all install cross-compile ui embed npm-build release
 
-all: ui sidecar build
+all: ui build
 
 # Development build (current platform)
 build:
@@ -105,20 +105,13 @@ npm-build: clean
 ui:
 	cd ui && bun install && bun run build
 
-# Build sidecar binaries for non-Windows platforms and prepare Windows runtime assets
-sidecar:
-	cd sidecar && bun install --frozen-lockfile && bun run build.ts
 
-sidecar-windows:
-	cd sidecar && bun install --frozen-lockfile
-
-# Full release build: UI + sidecar + cross-compiled Go binaries + npm staging
-release: clean ui sidecar cross-compile npm-build
+# Full release build: UI + cross-compiled Go binaries + npm staging
+release: clean ui cross-compile npm-build
 	@echo "Release artifacts ready in $(BUILD_DIR)/ and npm/"
 
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -rf sidecar/dist
 	rm -f npm/knowns-*/knowns npm/knowns-*/knowns.exe
 	rm -f npm/knowns-*/knowns-embed npm/knowns-*/knowns-embed.exe
 

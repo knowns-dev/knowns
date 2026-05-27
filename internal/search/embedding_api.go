@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/howznguyen/knowns/internal/storage"
@@ -254,7 +255,10 @@ func (e *APIEmbedder) embedBatchRaw(texts []string) ([][]float32, error) {
 
 // doRequest performs a single HTTP request and returns vectors, whether to retry, and any error.
 func (e *APIEmbedder) doRequest(body []byte) ([][]float32, bool, error) {
-	url := e.config.APIBase + "/embeddings"
+	url := strings.TrimRight(e.config.APIBase, "/")
+	if !strings.HasSuffix(url, "/embeddings") {
+		url += "/embeddings"
+	}
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, false, fmt.Errorf("create request: %w", err)

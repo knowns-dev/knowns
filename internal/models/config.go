@@ -16,6 +16,7 @@ type Project struct {
 
 // ProjectSettings holds all user-configurable options for a project.
 type LSPSettings struct {
+	Enabled   *bool                          `json:"enabled,omitempty"`
 	Languages map[string]LSPLanguageSettings `json:"languages,omitempty"`
 }
 
@@ -24,6 +25,42 @@ type LSPLanguageSettings struct {
 	Binary   string         `json:"binary,omitempty"`
 	Version  string         `json:"version,omitempty"`
 	Settings map[string]any `json:"settings,omitempty"`
+}
+
+// GitTracking holds per-section git tracking toggles. A nil pointer means
+// "use the default for this section" (tasks/docs/templates=true, memories=false).
+type GitTracking struct {
+	Tasks     *bool `json:"tasks,omitempty"`
+	Docs      *bool `json:"docs,omitempty"`
+	Templates *bool `json:"templates,omitempty"`
+	Memories  *bool `json:"memories,omitempty"`
+}
+
+// GitTrackingDefaults returns the default per-section tracking values.
+func GitTrackingDefaults() GitTracking {
+	t, d, tmpl := true, true, true
+	m := false
+	return GitTracking{
+		Tasks:     &t,
+		Docs:      &d,
+		Templates: &tmpl,
+		Memories:  &m,
+	}
+}
+
+// GitTrackingDefaults returns defaults suitable for a given mode string.
+func GitTrackingModeDefaults(mode string) GitTracking {
+	switch mode {
+	case "git-ignored":
+		// In git-ignored mode, only docs, templates, and tasks are tracked by
+		// default (the old hard-coded behavior). Memories remain off.
+		t, d, tmpl := true, true, true
+		m := false
+		return GitTracking{Tasks: &t, Docs: &d, Templates: &tmpl, Memories: &m}
+	default:
+		// git-tracked and any other mode: same as GitTrackingDefaults.
+		return GitTrackingDefaults()
+	}
 }
 
 type ProjectSettings struct {
@@ -38,9 +75,16 @@ type ProjectSettings struct {
 	// TimeFormat is "12h" or "24h".
 	TimeFormat string `json:"timeFormat,omitempty"`
 
+	// Editor is the preferred editor command (e.g., "code", "vim", "nano").
+	Editor string `json:"editor,omitempty"`
+
 	// GitTrackingMode controls whether .knowns/ files are git-tracked.
 	// Allowed values: "git-tracked", "git-ignored", "none".
 	GitTrackingMode string `json:"gitTrackingMode,omitempty"`
+
+	// GitTracking holds per-section git tracking toggles that override the
+	// default behavior of GitTrackingMode. When nil, mode defaults apply.
+	GitTracking *GitTracking `json:"gitTracking,omitempty"`
 
 	// Statuses is the ordered list of valid task statuses for this project.
 	Statuses []string `json:"statuses"`

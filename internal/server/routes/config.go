@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/howznguyen/knowns/internal/agents/opencode"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
 )
@@ -88,8 +89,24 @@ func (cr *ConfigRoutes) get(w http.ResponseWriter, r *http.Request) {
 	if s.EnableChatUI != nil {
 		flat["enableChatUI"] = *s.EnableChatUI
 	}
+	flat["opencodeInstalled"] = opencode.DetectOpenCode().Installed
 	if s.RuntimeMemory != nil {
 		flat["runtimeMemory"] = s.RuntimeMemory
+	}
+	if s.SemanticSearch != nil {
+		flat["semanticSearch"] = s.SemanticSearch
+	}
+	if s.LSP != nil {
+		flat["lsp"] = s.LSP
+	}
+	if s.CodeIntelligenceIgnore != nil {
+		flat["codeIntelligenceIgnore"] = s.CodeIntelligenceIgnore
+	}
+	if s.GitTrackingMode != "" {
+		flat["gitTrackingMode"] = s.GitTrackingMode
+	}
+	if s.Editor != "" {
+		flat["editor"] = s.Editor
 	}
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
@@ -231,6 +248,27 @@ func applySettingsUpdate(settings *models.ProjectSettings, payload map[string]js
 				return err
 			}
 			settings.RuntimeMemory = cfg
+		}
+	}
+	if raw, ok := payload["lsp"]; ok {
+		if string(raw) == "null" {
+			settings.LSP = nil
+		} else {
+			cfg := new(models.LSPSettings)
+			if err := json.Unmarshal(raw, cfg); err != nil {
+				return err
+			}
+			settings.LSP = cfg
+		}
+	}
+	if raw, ok := payload["codeIntelligenceIgnore"]; ok {
+		if err := json.Unmarshal(raw, &settings.CodeIntelligenceIgnore); err != nil {
+			return err
+		}
+	}
+	if raw, ok := payload["editor"]; ok {
+		if err := json.Unmarshal(raw, &settings.Editor); err != nil {
+			return err
 		}
 	}
 	if raw, ok := payload["enableChatUI"]; ok {

@@ -39,3 +39,16 @@ func isProcessAlive(pid int) bool {
 	}
 	return code == windowsStillActive
 }
+
+func forceKillDaemon() error {
+	pid, err := readPID()
+	if err != nil {
+		return err
+	}
+	handle, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid))
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(handle)
+	return windows.TerminateProcess(handle, 1)
+}

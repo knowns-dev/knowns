@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/runtimeinstall"
 )
 
@@ -275,7 +276,7 @@ func TestCreateAntigravityRulesQuietCreatesRuleFile(t *testing.T) {
 		t.Fatalf("createAntigravityRulesQuiet returned error: %v", err)
 	}
 
-	content := readTextFile(t, filepath.Join(projectRoot, ".agent", "rules", "knowns.md"))
+	content := readTextFile(t, filepath.Join(projectRoot, ".agents", "rules", "knowns.md"))
 	assertContains(t, content, "trigger: always_on")
 	assertContains(t, content, "Read `KNOWNS.md` first")
 	assertContains(t, content, "Prefer Knowns MCP tools")
@@ -337,8 +338,8 @@ func TestRunSyncPlatformConfigsSkipsWhenPlatformsUnset(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(projectRoot, ".cursor", "mcp.json")); !os.IsNotExist(err) {
 		t.Fatalf("expected .cursor/mcp.json not to be created, got err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(projectRoot, ".agent", "rules", "knowns.md")); !os.IsNotExist(err) {
-		t.Fatalf("expected .agent/rules/knowns.md not to be created, got err=%v", err)
+	if _, err := os.Stat(filepath.Join(projectRoot, ".agents", "rules", "knowns.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected .agents/rules/knowns.md not to be created, got err=%v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".gemini", "antigravity", "mcp_config.json")); !os.IsNotExist(err) {
 		t.Fatalf("expected antigravity MCP config not to be created, got err=%v", err)
@@ -361,7 +362,7 @@ func TestRunSyncPlatformConfigsCreatesCursorAndAntigravityArtifacts(t *testing.T
 	}
 
 	_ = readJSONFile(t, filepath.Join(projectRoot, ".cursor", "mcp.json"))
-	assertContains(t, readTextFile(t, filepath.Join(projectRoot, ".agent", "rules", "knowns.md")), "trigger: always_on")
+	assertContains(t, readTextFile(t, filepath.Join(projectRoot, ".agents", "rules", "knowns.md")), "trigger: always_on")
 	config := readJSONFile(t, filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"))
 	mcpServers := getMap(t, config, "mcpServers")
 	knowns := getMap(t, mcpServers, "knowns")
@@ -563,7 +564,7 @@ func TestWriteKnownsGitignoreGitIgnoredTracksDocsAndTemplatesOnly(t *testing.T) 
 		t.Fatalf("seed .gitignore: %v", err)
 	}
 
-	if err := writeKnownsGitignore(dir, "git-ignored"); err != nil {
+	if err := writeKnownsGitignore(dir, "git-ignored", nil); err != nil {
 		t.Fatalf("writeKnownsGitignore returned error: %v", err)
 	}
 
@@ -602,7 +603,7 @@ func TestWriteKnownsGitignoreGitTrackedRemovesManagedBlock(t *testing.T) {
 		t.Fatalf("seed .gitignore: %v", err)
 	}
 
-	if err := writeKnownsGitignore(dir, "git-tracked"); err != nil {
+	if err := writeKnownsGitignore(dir, "git-tracked", nil); err != nil {
 		t.Fatalf("writeKnownsGitignore returned error: %v", err)
 	}
 
@@ -635,7 +636,7 @@ func TestWriteKnownsGitignoreNoneLeavesGitignoreUnmanaged(t *testing.T) {
 		t.Fatalf("seed .gitignore: %v", err)
 	}
 
-	if err := writeKnownsGitignore(dir, "none"); err != nil {
+	if err := writeKnownsGitignore(dir, "none", nil); err != nil {
 		t.Fatalf("writeKnownsGitignore returned error: %v", err)
 	}
 
@@ -702,6 +703,62 @@ func assertContains(t *testing.T, content, want string) {
 	if !strings.Contains(content, want) {
 		t.Fatalf("expected content to contain %q, got:\n%s", want, content)
 	}
+}
+
+func TestWriteKnownsGitignoreTrackedWithExplicitDisabled(t *testing.T) {
+	dir := t.TempDir()
+
+	trackDocs := false
+	trackMemories := true
+	tracking := &models.GitTracking{
+		Docs:     &trackDocs,
+		Memories: &trackMemories,
+	}
+
+	if err := writeKnownsGitignore(dir, "git-tracked", tracking); err != nil {
+		t.Fatalf("writeKnownsGitignore returned error: %v", err)
+	}
+
+	content := readTextFile(t, filepath.Join(dir, ".knowns", ".gitignore"))
+
+	assertContains(t, content, "docs/")
+	assertNotContains(t, content, "memories/")
+	assertNotContains(t, content, "tasks/")
+	assertNotContains(t, content, "templates/")
+}
+
+func TestWriteKnownsGitignoreIgnoredWithDisabledDocs(t *testing.T) {
+	dir := t.TempDir()
+
+	trackDocs := false
+	tracking := &models.GitTracking{
+		Docs: &trackDocs,
+	}
+
+	if err := writeKnownsGitignore(dir, "git-ignored", tracking); err != nil {
+		t.Fatalf("writeKnownsGitignore returned error: %v", err)
+	}
+
+	content := readTextFile(t, filepath.Join(dir, ".knowns", ".gitignore"))
+
+	assertNotContains(t, content, "!docs/")
+	assertContains(t, content, "!tasks/")
+	assertContains(t, content, "!templates/")
+}
+
+func TestWriteKnownsGitignoreTrackedMemoriesDisabledByDefault(t *testing.T) {
+	dir := t.TempDir()
+
+	if err := writeKnownsGitignore(dir, "git-tracked", nil); err != nil {
+		t.Fatalf("writeKnownsGitignore returned error: %v", err)
+	}
+
+	content := readTextFile(t, filepath.Join(dir, ".knowns", ".gitignore"))
+
+	assertContains(t, content, "memories/")
+	assertNotContains(t, content, "tasks/")
+	assertNotContains(t, content, "docs/")
+	assertNotContains(t, content, "templates/")
 }
 
 func assertNotContains(t *testing.T, content, want string) {

@@ -344,8 +344,21 @@ func EnsureDaemon() error {
 	if IsRunning() {
 		if v := runningDaemonVersion(); v != "" && v != util.Version {
 			if err := requestDaemonShutdown(10 * time.Second); err != nil {
-				return fmt.Errorf("stop outdated runtime (v%s, want v%s): %w", v, util.Version, err)
+				if killErr := forceKillDaemon(); killErr != nil {
+					return fmt.Errorf("stop outdated runtime (v%s, want v%s): %w", v, util.Version, err)
+				}
+				deadline := time.Now().Add(5 * time.Second)
+				for time.Now().Before(deadline) {
+					if !IsRunning() {
+						break
+					}
+					time.Sleep(100 * time.Millisecond)
+				}
+				if IsRunning() {
+					return fmt.Errorf("stop outdated runtime (v%s, want v%s): %w", v, util.Version, err)
+				}
 			}
+			// Fall through to start new daemon
 		} else {
 			return nil
 		}

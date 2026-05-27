@@ -13,7 +13,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/ui/lib/utils";
 import { useRuntimeMonitor } from "@/ui/hooks/useRuntimeMonitor";
-import type { RuntimeJob, RuntimeJobResult, RuntimeProjectSnapshot } from "@/ui/api/client";
+import { getRuntimeServices } from "@/ui/api/client";
+import type { RuntimeJob, RuntimeJobResult, RuntimeProjectSnapshot, RuntimeService } from "@/ui/api/client";
 
 const MIN_HEIGHT = 120;
 const MAX_HEIGHT = 400;
@@ -47,6 +48,30 @@ function KindBadge({ kind }: { kind: string }) {
 		<span className="inline-flex shrink-0 items-center rounded-md border border-border/60 bg-muted/50 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
 			{kind}
 		</span>
+	);
+}
+
+function ServiceRow({ service }: { service: RuntimeService }) {
+	const statusColor = {
+		running: "text-emerald-500",
+		stopped: "text-muted-foreground",
+		disabled: "text-muted-foreground",
+		error: "text-destructive",
+	}[service.status];
+
+	return (
+		<div className={cn("border-b border-border/40 px-3 py-2 last:border-b-0", service.status !== "running" && "opacity-60")}>
+			<div className="flex items-center gap-2">
+				<Circle className={cn("h-2.5 w-2.5 fill-current", statusColor)} />
+				<span className="font-medium text-foreground">{service.name}</span>
+			</div>
+			<div className="mt-0.5 pl-[18px] text-[11px] text-muted-foreground">
+				{service.status}
+				{service.pid ? ` · pid=${service.pid}` : ""}
+				{service.port ? ` · :${service.port}` : ""}
+				{service.uptime ? ` · ${service.uptime}` : ""}
+			</div>
+		</div>
 	);
 }
 
@@ -144,8 +169,21 @@ export function RuntimeMonitorPanel() {
 	const { data, isLoading, totalActive } = useRuntimeMonitor();
 	const [isExpanded, setIsExpanded] = useState(false);
 	const [panelHeight, setPanelHeight] = useState(DEFAULT_HEIGHT);
+	const [services, setServices] = useState<RuntimeService[]>([]);
 	const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
 	const dragHandlersRef = useRef<{ move: (ev: MouseEvent) => void; up: () => void } | null>(null);
+
+	useEffect(() => {
+		let cancelled = false;
+		const fetchServices = () => {
+			getRuntimeServices()
+				.then((res) => { if (!cancelled) setServices(res.services ?? []); })
+				.catch(() => {});
+		};
+		fetchServices();
+		const interval = setInterval(fetchServices, 7000);
+		return () => { cancelled = true; clearInterval(interval); };
+	}, []);
 
 	useEffect(() => {
 		return () => {
@@ -236,7 +274,11 @@ export function RuntimeMonitorPanel() {
 					<ChevronDown className="h-4 w-4" />
 				</button>
 			</div>
-			<div className="grid min-h-0 flex-1 grid-cols-4 overflow-hidden text-xs">
+			<div className="grid min-h-0 flex-1 grid-cols-5 overflow-hidden text-xs">
+				<div className="min-h-0 overflow-auto border-r border-border/60">
+					<div className="sticky top-0 bg-background/95 px-3 py-2 font-medium">Services ({services.length})</div>
+					{services.length ? services.map((svc) => <ServiceRow key={`${svc.type}-${svc.name}`} service={svc} />) : <EmptyState label="No services detected" />}
+				</div>
 				<div className="min-h-0 overflow-auto border-r border-border/60">
 					<div className="sticky top-0 bg-background/95 px-3 py-2 font-medium">Clients ({data?.status.clients.length ?? 0})</div>
 					{data?.status.clients.length ? data.status.clients.map((client) => (

@@ -494,6 +494,29 @@ export async function getRuntimePs(): Promise<RuntimeStatusResponse> {
 	return res.json();
 }
 
+export interface RuntimeService {
+	name: string;
+	type: string;
+	status: "running" | "stopped" | "disabled" | "error";
+	pid?: number;
+	port?: number;
+	uptime?: string;
+	enabledInConfig: boolean;
+	details?: Record<string, unknown>;
+}
+
+export interface RuntimeServicesResponse {
+	services: RuntimeService[];
+}
+
+export async function getRuntimeServices(): Promise<RuntimeServicesResponse> {
+	const res = await fetch(`${API_BASE}/api/runtime/services`);
+	if (!res.ok) {
+		throw new Error("Failed to fetch runtime services");
+	}
+	return res.json();
+}
+
 // Import API
 export interface Import {
 	name: string;
@@ -1409,6 +1432,47 @@ export const opencodeApi = {
 };
 
 // Status API
+// Embedding Models API
+export interface EmbeddingModelInfo {
+	name: string;
+	huggingFaceId?: string;
+	dimensions: number;
+	maxTokens?: number;
+	installed?: boolean;
+	source?: string;
+	provider?: string;
+	id?: string;
+	model?: string;
+}
+
+export interface EmbeddingModelsResponse {
+	local: EmbeddingModelInfo[];
+	api: EmbeddingModelInfo[];
+	configured: EmbeddingModelInfo[];
+}
+
+export async function getEmbeddingModels(): Promise<EmbeddingModelsResponse> {
+	const res = await fetch(`${API_BASE}/api/embedding-models`);
+	if (!res.ok) throw new Error("Failed to fetch embedding models");
+	return res.json();
+}
+
+export interface EmbeddingModelTestResult {
+	success: boolean;
+	dimensions?: number;
+	model?: string;
+	error?: string;
+}
+
+export async function testEmbeddingModel(params: { apiBase: string; apiKey: string; model: string }): Promise<EmbeddingModelTestResult> {
+	const res = await fetch(`${API_BASE}/api/embedding-models/test`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(params),
+	});
+	return res.json();
+}
+
 export interface ProjectStatus {
 	active: boolean;
 	projectName: string;

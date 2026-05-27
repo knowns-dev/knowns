@@ -49,7 +49,7 @@ func InitSemantic(store *storage.Store) (EmbedderProvider, VectorStore, error) {
 	}
 
 	// Branch: API provider vs local ONNX.
-	if ss.Provider == "api" {
+	if ss.Provider == "api" || ss.Provider == "ollama" {
 		return initSemanticAPI(store, ss)
 	}
 	return initSemanticLocal(store, ss)

@@ -29,6 +29,7 @@ export default defineConfig({
   },
   server: {
     port: 6421,
+    allowedHosts: "all",
   },
   build: {
     outDir: path.resolve(__dirname, "dist"),

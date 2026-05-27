@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
@@ -287,18 +288,32 @@ func (s *IndexService) embedAndStore(chunks []Chunk) error {
 		texts[i] = chunks[i].Content
 	}
 
+	if os.Getenv("KNOWNS_DEBUG") == "1" {
+		fmt.Fprintf(os.Stderr, "[embed] batch %d chunks...\n", len(chunks))
+	}
+
 	vecs, err := s.embedder.EmbedDocumentBatch(texts)
 	if err != nil {
+		if os.Getenv("KNOWNS_DEBUG") == "1" {
+			fmt.Fprintf(os.Stderr, "[embed] batch failed: %v, falling back to one-by-one\n", err)
+		}
 		// Fallback: try one by one if batch fails.
 		for i := range chunks {
 			vec, err2 := s.embedder.EmbedDocument(chunks[i].Content)
 			if err2 != nil {
+				if os.Getenv("KNOWNS_DEBUG") == "1" {
+					fmt.Fprintf(os.Stderr, "[embed] chunk %d failed: %v\n", i, err2)
+				}
 				continue // skip failed chunks
 			}
 			chunks[i].Embedding = vec
 		}
 		s.vecStore.AddChunks(chunks)
 		return nil
+	}
+
+	if os.Getenv("KNOWNS_DEBUG") == "1" {
+		fmt.Fprintf(os.Stderr, "[embed] batch success: %d vectors\n", len(vecs))
 	}
 
 	for i := range chunks {

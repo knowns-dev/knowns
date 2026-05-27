@@ -17,3 +17,11 @@ func isProcessAlive(pid int) bool {
 	}
 	return syscall.Kill(pid, 0) == nil
 }
+
+func forceKillDaemon() error {
+	pid, err := readPID()
+	if err != nil {
+		return err
+	}
+	return syscall.Kill(pid, syscall.SIGKILL)
+}

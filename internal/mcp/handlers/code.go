@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -15,6 +16,11 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
+
+// projectRoot returns the project root directory (parent of .knowns/).
+func projectRoot(store *storage.Store) string {
+	return filepath.Dir(store.Root)
+}
 
 // RegisterCodeTool registers the consolidated code intelligence MCP tool.
 func RegisterCodeTool(s *server.MCPServer, getStore func() *storage.Store, getLSPManager ...func() *lsp.Manager) {
@@ -119,7 +125,7 @@ func handleCodeDefinition(ctx context.Context, getStore func() *storage.Store, g
 	if err != nil {
 		return errResult(err.Error())
 	}
-	out, _ := json.MarshalIndent(locationResult(store.Root, loc), "", "  ")
+	out, _ := json.MarshalIndent(locationResult(projectRoot(store), loc), "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }
 
@@ -143,9 +149,9 @@ func handleCodeReferences(ctx context.Context, getStore func() *storage.Store, g
 	}
 	items := make([]map[string]any, 0, len(locs))
 	for _, loc := range locs {
-		item := locationResult(store.Root, loc)
+		item := locationResult(projectRoot(store), loc)
 		if file, ok := item["file"].(string); ok {
-			item["snippet"] = lsp.Snippet(filepath.Join(store.Root, file), loc.Range.Start.Line)
+			item["snippet"] = lsp.Snippet(filepath.Join(projectRoot(store), file), loc.Range.Start.Line)
 		}
 		items = append(items, item)
 	}
@@ -173,9 +179,9 @@ func handleCodeImplementations(ctx context.Context, getStore func() *storage.Sto
 	}
 	items := make([]map[string]any, 0, len(locs))
 	for _, loc := range locs {
-		item := locationResult(store.Root, loc)
+		item := locationResult(projectRoot(store), loc)
 		if file, ok := item["file"].(string); ok {
-			item["name"] = lsp.NameAt(filepath.Join(store.Root, file), loc.Range.Start.Line, loc.Range.Start.Character)
+			item["name"] = lsp.NameAt(filepath.Join(projectRoot(store), file), loc.Range.Start.Line, loc.Range.Start.Character)
 		}
 		items = append(items, item)
 	}
@@ -206,7 +212,7 @@ func handleCodeDiagnostics(ctx context.Context, getStore func() *storage.Store, 
 			continue
 		}
 		items = append(items, map[string]any{
-			"file":     relPath(store.Root, absPath),
+			"file":     relPath(projectRoot(store), absPath),
 			"line":     diag.Range.Start.Line + 1,
 			"column":   diag.Range.Start.Character + 1,
 			"severity": severity,
@@ -247,7 +253,7 @@ func lspPathRequest(ctx context.Context, getStore func() *storage.Store, getLSPM
 	}
 	absPath := path
 	if !filepath.IsAbs(absPath) {
-		absPath = filepath.Join(store.Root, absPath)
+		absPath = filepath.Join(projectRoot(store), absPath)
 	}
 	if srv, ok, err := mgr.ServerForPath(ctx, absPath); err != nil {
 		return nil, nil, "", err
@@ -347,7 +353,7 @@ func handleCodeRename(ctx context.Context, getStore func() *storage.Store, getLS
 		return errResult(err.Error())
 	}
 	for i := range filesChanged {
-		filesChanged[i] = relPath(store.Root, filesChanged[i])
+		filesChanged[i] = relPath(projectRoot(store), filesChanged[i])
 	}
 	out, _ := json.MarshalIndent(map[string]any{"success": true, "files_changed": filesChanged, "total_edits": totalEdits}, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
@@ -378,7 +384,7 @@ func handleCodeReplace(ctx context.Context, getStore func() *storage.Store, getL
 	allowMultiple := boolArg(args, "allow_multiple_occurrences")
 	absPath := path
 	if !filepath.IsAbs(absPath) {
-		absPath = filepath.Join(store.Root, absPath)
+		absPath = filepath.Join(projectRoot(store), absPath)
 	}
 	data, err := os.ReadFile(absPath)
 	if err != nil {
@@ -410,7 +416,7 @@ func handleCodeReplace(ctx context.Context, getStore func() *storage.Store, getL
 	if err := os.WriteFile(absPath, []byte(next), 0644); err != nil {
 		return errResult(err.Error())
 	}
-	out, _ := json.MarshalIndent(map[string]any{"success": true, "path": relPath(store.Root, absPath), "replacements": replacements, "mode": mode}, "", "  ")
+	out, _ := json.MarshalIndent(map[string]any{"success": true, "path": relPath(projectRoot(store), absPath), "replacements": replacements, "mode": mode}, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }
 
@@ -453,7 +459,7 @@ func handleCodeReplaceBody(ctx context.Context, getStore func() *storage.Store, 
 	if err := notifyDidChange(ctx, srvUsed, absPath); err != nil {
 		return errResult(err.Error())
 	}
-	out, _ := json.MarshalIndent(map[string]any{"success": true, "path": relPath(store.Root, absPath), "symbol": name, "lines_replaced": linesReplaced}, "", "  ")
+	out, _ := json.MarshalIndent(map[string]any{"success": true, "path": relPath(projectRoot(store), absPath), "symbol": name, "lines_replaced": linesReplaced}, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }
 
@@ -503,7 +509,7 @@ func handleCodeInsert(ctx context.Context, getStore func() *storage.Store, getLS
 	if err := notifyDidChange(ctx, srvUsed, absPath); err != nil {
 		return errResult(err.Error())
 	}
-	out, _ := json.MarshalIndent(map[string]any{"success": true, "path": relPath(store.Root, absPath), "position": position, "anchor": name, "lines_inserted": inserted}, "", "  ")
+	out, _ := json.MarshalIndent(map[string]any{"success": true, "path": relPath(projectRoot(store), absPath), "position": position, "anchor": name, "lines_inserted": inserted}, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }
 
@@ -544,7 +550,7 @@ func handleCodeDelete(ctx context.Context, getStore func() *storage.Store, getLS
 		return errResult(err.Error())
 	}
 	if !force {
-		external := externalReferences(store.Root, absPath, sym.Range, refs)
+		external := externalReferences(projectRoot(store), absPath, sym.Range, refs)
 		if len(external) > 0 {
 			out, _ := json.MarshalIndent(map[string]any{"error": "symbol has external references", "references": external}, "", "  ")
 			return mcp.NewToolResultText(string(out)), nil
@@ -557,7 +563,7 @@ func handleCodeDelete(ctx context.Context, getStore func() *storage.Store, getLS
 	if err := notifyDidChange(ctx, srvUsed, absPath); err != nil {
 		return errResult(err.Error())
 	}
-	out, _ := json.MarshalIndent(map[string]any{"success": true, "path": relPath(store.Root, absPath), "symbol": name, "lines_deleted": deleted}, "", "  ")
+	out, _ := json.MarshalIndent(map[string]any{"success": true, "path": relPath(projectRoot(store), absPath), "symbol": name, "lines_deleted": deleted}, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }
 
@@ -582,26 +588,95 @@ func handleCodeFind(ctx context.Context, getStore func() *storage.Store, getLSPM
 	if !ok || limit <= 0 {
 		limit = 20
 	}
-	files, err := findCodeFiles(store.Root, path)
+
+	root := projectRoot(store)
+	results := []map[string]any{}
+
+	// Try workspace/symbol first — fast, single request
+	if path == "" {
+		wsResults := tryWorkspaceSymbol(ctx, mgr, root, query, limit)
+		if len(wsResults) > 0 {
+			resp := map[string]any{"results": wsResults, "total": len(wsResults)}
+			out, _ := json.MarshalIndent(resp, "", "  ")
+			return mcp.NewToolResultText(string(out)), nil
+		}
+	}
+
+	// Fallback: scan files with DocumentSymbols
+	files, err := findCodeFiles(root, path)
 	if err != nil {
 		return errResult(err.Error())
 	}
-	results := []map[string]any{}
+	var lastErr error
+	collectLimit := limit * 3
 	for _, file := range files {
-		if len(results) >= limit {
+		if len(results) >= collectLimit {
 			break
 		}
-		_ = mgr.WithFile(ctx, file, func(srv *lsp.Server) error {
+		if err := mgr.WithFile(ctx, file, func(srv *lsp.Server) error {
 			symbols, e := srv.DocumentSymbols(ctx, file)
 			if e != nil {
 				return nil
 			}
-			appendSymbolMatches(&results, store.Root, file, symbols, query, includeBody, depth, limit)
+			appendSymbolMatches(&results, root, file, symbols, query, includeBody, depth, collectLimit)
 			return nil
-		})
+		}); err != nil {
+			lastErr = err
+		}
 	}
-	out, _ := json.MarshalIndent(map[string]any{"results": results, "total": len(results)}, "", "  ")
+	sort.Slice(results, func(i, j int) bool {
+		si, _ := results[i]["score"].(float64)
+		sj, _ := results[j]["score"].(float64)
+		return si > sj
+	})
+	if len(results) > limit {
+		results = results[:limit]
+	}
+	resp := map[string]any{"results": results, "total": len(results)}
+	if len(results) == 0 && lastErr != nil {
+		resp["error"] = lastErr.Error()
+	}
+	out, _ := json.MarshalIndent(resp, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+func tryWorkspaceSymbol(ctx context.Context, mgr *lsp.Manager, root, query string, limit int) []map[string]any {
+	var results []map[string]any
+	mgr.WithAnyServer(ctx, func(srv *lsp.Server) error {
+		symbols, err := srv.WorkspaceSymbol(ctx, query)
+		if err != nil || len(symbols) == 0 {
+			return err
+		}
+		for _, sym := range symbols {
+			if len(results) >= limit {
+				break
+			}
+			file := pathFromURI(sym.Location.URI)
+			relFile, _ := filepath.Rel(root, file)
+			if relFile == "" {
+				relFile = file
+			}
+			entry := map[string]any{
+				"name":      sym.Name,
+				"kind":      sym.Kind,
+				"file":      relFile,
+				"line":      sym.Location.Range.Start.Line + 1,
+				"column":    sym.Location.Range.Start.Character + 1,
+				"full_name": sym.Name,
+				"score":     1.0,
+				"body_location": map[string]int{
+					"start_line": sym.Location.Range.Start.Line + 1,
+					"end_line":   sym.Location.Range.End.Line + 1,
+				},
+			}
+			if sym.ContainerName != "" {
+				entry["full_name"] = sym.ContainerName + "." + sym.Name
+			}
+			results = append(results, entry)
+		}
+		return nil
+	})
+	return results
 }
 
 func applyWorkspaceEdit(changes map[string][]lsp.TextEdit) ([]string, int, error) {
@@ -827,9 +902,35 @@ func findCodeFiles(root, path string) ([]string, error) {
 	if !info.IsDir() {
 		return []string{base}, nil
 	}
+
+	// Try git ls-files first — much faster than WalkDir
+	cmd := exec.CommandContext(context.Background(), "git", "ls-files", "--cached", "--others", "--exclude-standard")
+	cmd.Dir = base
+	out, err := cmd.Output()
+	if err == nil && len(out) > 0 {
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		files := make([]string, 0, len(lines))
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+			abs := filepath.Join(base, line)
+			if isSourceFile(abs) {
+				files = append(files, abs)
+			}
+			if len(files) >= 200 {
+				break
+			}
+		}
+		if len(files) > 0 {
+			return files, nil
+		}
+	}
+
+	// Fallback: WalkDir
 	files := []string{}
 	err = filepath.WalkDir(base, func(p string, d os.DirEntry, err error) error {
-		if err != nil || len(files) >= 50 {
+		if err != nil || len(files) >= 200 {
 			return err
 		}
 		if d.IsDir() {
@@ -864,14 +965,17 @@ func appendOneSymbolMatch(results *[]map[string]any, root, file string, sym lsp.
 	if parent != "" {
 		full = parent + "." + sym.Name
 	}
-	matched := strings.Contains(strings.ToLower(sym.Name), strings.ToLower(query)) || strings.Contains(strings.ToLower(full), strings.ToLower(query))
-	if !matched {
+	score := symbolScore(query, sym.Name)
+	if s := symbolScore(query, full); s > score {
+		score = s
+	}
+	if score < symbolScoreThreshold {
 		for _, child := range sym.Children {
 			appendOneSymbolMatch(results, root, file, child, full, query, includeBody, depth)
 		}
 		return
 	}
-	item := map[string]any{"name": sym.Name, "full_name": full, "file": relPath(root, file), "line": sym.Range.Start.Line + 1, "column": sym.Range.Start.Character + 1, "kind": sym.Kind}
+	item := map[string]any{"name": sym.Name, "full_name": full, "file": relPath(root, file), "line": sym.Range.Start.Line + 1, "column": sym.Range.Start.Character + 1, "kind": sym.Kind, "score": score, "body_location": map[string]int{"start_line": sym.Range.Start.Line + 1, "end_line": sym.Range.End.Line + 1}}
 	if includeBody {
 		item["body"] = sourceForRange(file, sym.Range)
 	}

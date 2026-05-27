@@ -248,7 +248,7 @@ func NewMCPServer(projectHint string) *MCPServer {
 		s.lspManager = nil
 		if store != nil {
 			if cfg, err := store.Config.Load(); err == nil {
-				manager := lsp.NewManager(store.Root, lsp.ConfigFromProject(cfg))
+				manager := lsp.NewManager(root, lsp.ConfigFromProject(cfg))
 				for _, adapter := range adapters.All() {
 					manager.RegisterAdapter(adapter)
 				}

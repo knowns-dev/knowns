@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -157,6 +158,23 @@ func (m *Manager) WithFile(ctx context.Context, path string, fn func(*Server) er
 		return err
 	}
 	return srv.WithFile(ctx, path, func() error { return fn(srv) })
+}
+
+// WithAnyServer calls fn with any running server. Used for workspace-level queries.
+func (m *Manager) WithAnyServer(ctx context.Context, fn func(*Server) error) error {
+	m.mu.Lock()
+	var srv *Server
+	for _, s := range m.servers {
+		if s != nil {
+			srv = s
+			break
+		}
+	}
+	m.mu.Unlock()
+	if srv == nil {
+		return fmt.Errorf("no LSP server available")
+	}
+	return fn(srv)
 }
 
 // StartAll starts all detected and adapter-registered servers in parallel.

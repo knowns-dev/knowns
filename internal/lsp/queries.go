@@ -41,6 +41,13 @@ type DocumentSymbol struct {
 	Children       []DocumentSymbol `json:"children,omitempty"`
 }
 
+type WorkspaceSymbolResult struct {
+	Name          string   `json:"name"`
+	Kind          int      `json:"kind"`
+	Location      Location `json:"location"`
+	ContainerName string   `json:"containerName,omitempty"`
+}
+
 type TextEdit struct {
 	Range   Range  `json:"range"`
 	NewText string `json:"newText"`
@@ -145,6 +152,25 @@ func (s *Server) DocumentSymbols(ctx context.Context, path string) ([]DocumentSy
 		return nil, err
 	}
 	return symbols, nil
+}
+
+func (s *Server) WorkspaceSymbol(ctx context.Context, query string) ([]WorkspaceSymbolResult, error) {
+	if err := s.Start(ctx); err != nil {
+		return nil, err
+	}
+	params := map[string]any{"query": query}
+	var raw json.RawMessage
+	if err := s.request(ctx, "workspace/symbol", params, &raw); err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var results []WorkspaceSymbolResult
+	if err := json.Unmarshal(raw, &results); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 func (s *Server) Rename(ctx context.Context, path string, line, col int, newName string) (*WorkspaceEdit, error) {

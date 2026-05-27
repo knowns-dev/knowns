@@ -15,6 +15,7 @@ import (
 	"github.com/howznguyen/knowns/internal/runtimeinstall"
 	"github.com/howznguyen/knowns/internal/runtimequeue"
 	"github.com/howznguyen/knowns/internal/search"
+	"github.com/howznguyen/knowns/internal/services"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/spf13/cobra"
 )
@@ -139,8 +140,11 @@ func runRuntimePs(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if isJSON(cmd) {
+			store, _ := getStoreErr()
+			svcStatuses := services.DetectAll(store)
 			printJSON(map[string]any{
 				"status":   status,
+				"services": svcStatuses,
 				"projects": collectProjectJobs(status),
 			})
 			return nil
@@ -216,6 +220,13 @@ func renderRuntimePs(cmd *cobra.Command, status *runtimequeue.Status, plain bool
 		StyleBold.Render("Runtime"),
 		tag,
 		StyleDim.Render(fmt.Sprintf("pid=%d  v%s", status.PID, status.Version)))
+
+	// ── Services box ────────────────────────────────────────
+	store, _ := getStoreErr()
+	svcStatuses := services.DetectAll(store)
+	servicesLines := formatServiceLines(svcStatuses)
+	fmt.Fprintln(w, renderBox(fmt.Sprintf("Services (%d)", len(svcStatuses)), servicesLines))
+	fmt.Fprintln(w)
 
 	if !status.Running && len(status.Clients) == 0 && len(status.Project) == 0 {
 		return
@@ -345,6 +356,69 @@ func renderRuntimePs(cmd *cobra.Command, status *runtimequeue.Status, plain bool
 		jobLines = []string{StyleDim.Render("(no activity)")}
 	}
 	fmt.Fprintln(w, renderBox(jobsTitle, jobLines))
+}
+
+func formatServiceLines(ss []services.ServiceStatus) []string {
+	var lines []string
+	for _, s := range ss {
+		bullet := "○"
+		style := StyleDim
+		if s.Status == "running" {
+			bullet = "●"
+			style = StyleSuccess
+		}
+		name := style.Render(s.Name)
+
+		var detail string
+		switch {
+		case s.Status == "running":
+			parts := []string{StyleDim.Render(s.Status)}
+			if s.PID > 0 {
+				parts = append(parts, StyleDim.Render(fmt.Sprintf("pid=%d", s.PID)))
+			}
+			if s.Port > 0 {
+				parts = append(parts, StyleDim.Render(fmt.Sprintf(":%d", s.Port)))
+			}
+			if s.Uptime > 0 {
+				parts = append(parts, StyleDim.Render(fmt.Sprintf("uptime=%s", humanDuration(s.Uptime))))
+			}
+			if version := s.Details["version"]; version != "" {
+				parts = append(parts, StyleDim.Render(fmt.Sprintf("v=%s", shorten(version))))
+			}
+			if url := s.Details["url"]; url != "" {
+				parts = append(parts, StyleDim.Render(url))
+			}
+			detail = strings.Join(parts, "  ")
+		default:
+			statusStr := s.Status
+			if s.Status == "stopped" {
+				statusStr = "stopped"
+			}
+			reason := s.Details["reason"]
+			if reason == "" {
+				reason = s.Details["note"]
+			}
+			if reason != "" {
+				detail = StyleDim.Render(statusStr + " (" + reason + ")")
+			} else {
+				detail = StyleDim.Render(statusStr)
+			}
+		}
+
+		// Append type-specific details
+		if s.Type == "embedding" && s.Details["model"] != "" {
+			detail += "  " + StyleDim.Render("model="+s.Details["model"])
+		}
+		if s.Type == "opencode" && s.Details["mode"] != "" {
+			detail += "  " + StyleDim.Render("mode="+s.Details["mode"])
+		}
+
+		lines = append(lines, fmt.Sprintf("  %s %s  %s", bullet, name, detail))
+	}
+	if len(lines) == 0 {
+		lines = []string{StyleDim.Render("  (no services)")}
+	}
+	return lines
 }
 
 func renderRuntimePsPlain(cmd *cobra.Command, status *runtimequeue.Status) {

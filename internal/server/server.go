@@ -35,6 +35,7 @@ import (
 	"github.com/howznguyen/knowns/internal/runtimememory"
 	"github.com/howznguyen/knowns/internal/runtimequeue"
 	"github.com/howznguyen/knowns/internal/server/routes"
+	"github.com/howznguyen/knowns/internal/services"
 	"github.com/howznguyen/knowns/internal/storage"
 	ui "github.com/howznguyen/knowns/ui"
 	"github.com/rs/cors"
@@ -67,7 +68,10 @@ type Server struct {
 	runtimeStatusMu  sync.RWMutex
 	shutdownCh       chan struct{}      // Signals graceful shutdown from /api/shutdown endpoint
 	cancelSSEFwd     context.CancelFunc // Cancels the OpenCode SSE forwarder goroutine
-	cancelRuntimeMon context.CancelFunc
+	cancelRuntimeMon  context.CancelFunc
+	cancelServiceMon  context.CancelFunc
+	prevServiceStatus []services.ServiceStatus
+	prevServiceMu     sync.RWMutex
 }
 
 type openCodeConfigResolution struct {
@@ -78,6 +82,7 @@ type openCodeConfigResolution struct {
 }
 
 const openCodeHealthMonitorInterval = 15 * time.Second
+const serviceStatusMonitorInterval = 7 * time.Second
 
 func deriveOpenCodePortCandidates(browserPort int, defaultPort int) []int {
 	seen := make(map[int]struct{})
@@ -296,16 +301,26 @@ func NewServer(store *storage.Store, projectRoot string, port int, opts Options)
 		log.SetOutput(io.Discard)
 	}
 
-	runtimeOpenCode, daemon, runtimeStatus := initializeOpenCodeRuntime(store, port)
-	if opts.Dev && runtimeStatus.Configured {
-		switch runtimeStatus.State {
-		case opencode.RuntimeStateReady:
-			log.Printf("[server] OpenCode runtime %s ready on %s:%d", runtimeStatus.Mode, runtimeStatus.Host, runtimeStatus.Port)
-		case opencode.RuntimeStateDegraded:
-			log.Printf("[server] OpenCode runtime %s degraded: %s", runtimeStatus.Mode, runtimeStatus.LastError)
-		default:
-			if runtimeStatus.LastError != "" {
-				log.Printf("[server] OpenCode unavailable: %s", runtimeStatus.LastError)
+	// Only initialize OpenCode runtime if Chat UI is enabled
+	project, _ := store.Config.Load()
+	chatEnabled := project != nil && (project.Settings.EnableChatUI == nil || *project.Settings.EnableChatUI)
+
+	var runtimeOpenCode *opencode.Config
+	var daemon *opencode.Daemon
+	var runtimeStatus opencode.RuntimeStatus
+
+	if chatEnabled {
+		runtimeOpenCode, daemon, runtimeStatus = initializeOpenCodeRuntime(store, port)
+		if opts.Dev && runtimeStatus.Configured {
+			switch runtimeStatus.State {
+			case opencode.RuntimeStateReady:
+				log.Printf("[server] OpenCode runtime %s ready on %s:%d", runtimeStatus.Mode, runtimeStatus.Host, runtimeStatus.Port)
+			case opencode.RuntimeStateDegraded:
+				log.Printf("[server] OpenCode runtime %s degraded: %s", runtimeStatus.Mode, runtimeStatus.LastError)
+			default:
+				if runtimeStatus.LastError != "" {
+					log.Printf("[server] OpenCode unavailable: %s", runtimeStatus.LastError)
+				}
 			}
 		}
 	}
@@ -358,6 +373,9 @@ func NewServer(store *storage.Store, projectRoot string, port int, opts Options)
 	monitorCtx, monitorCancel := context.WithCancel(context.Background())
 	s.cancelRuntimeMon = monitorCancel
 	s.startOpenCodeRuntimeMonitor(monitorCtx)
+	svcCtx, svcCancel := context.WithCancel(context.Background())
+	s.cancelServiceMon = svcCancel
+	s.startServiceStatusMonitor(svcCtx)
 
 	return s
 }
@@ -422,6 +440,9 @@ func (s *Server) serve(listener net.Listener) error {
 	if s.cancelRuntimeMon != nil {
 		s.cancelRuntimeMon()
 	}
+	if s.cancelServiceMon != nil {
+		s.cancelServiceMon()
+	}
 	s.cleanupOpenCodeServer()
 
 	log.Printf("[server] Shutdown complete")
@@ -438,6 +459,9 @@ func (s *Server) reinitOpenCode(projectPath string) {
 	}
 	if s.cancelRuntimeMon != nil {
 		s.cancelRuntimeMon()
+	}
+	if s.cancelServiceMon != nil {
+		s.cancelServiceMon()
 	}
 
 	store := s.manager.GetStore()
@@ -461,6 +485,10 @@ func (s *Server) reinitOpenCode(projectPath string) {
 	s.cancelRuntimeMon = monCancel
 	s.startOpenCodeRuntimeMonitor(monCtx)
 
+	svcCtx, svcCancel := context.WithCancel(context.Background())
+	s.cancelServiceMon = svcCancel
+	s.startServiceStatusMonitor(svcCtx)
+
 	// Broadcast updated runtime status so the UI reflects the new state
 	// without requiring a full page reload.
 	s.sse.Broadcast(routes.SSEEvent{
@@ -475,6 +503,93 @@ func (s *Server) cleanupOpenCodeServer() {
 			log.Printf("[server] Failed to stop OpenCode daemon: %v", err)
 		}
 	}
+}
+
+type serviceStatusChange struct {
+	Name           string                  `json:"name"`
+	Type           string                  `json:"type"`
+	PreviousStatus string                  `json:"previousStatus"`
+	Status         string                  `json:"status"`
+	Timestamp      time.Time               `json:"timestamp"`
+	Service        services.ServiceStatus  `json:"service"`
+}
+
+func serviceStatusKey(status services.ServiceStatus) string {
+	if language := status.Details["language"]; language != "" {
+		return status.Type + ":" + language
+	}
+	return status.Type + ":" + status.Name
+}
+
+func serviceStatusChanged(prev, next services.ServiceStatus) bool {
+	return prev.Status != next.Status || prev.PID != next.PID || prev.Port != next.Port || prev.EnabledInConfig != next.EnabledInConfig
+}
+
+func (s *Server) detectChangedServices(next []services.ServiceStatus) []serviceStatusChange {
+	s.prevServiceMu.Lock()
+	defer s.prevServiceMu.Unlock()
+
+	prevByKey := make(map[string]services.ServiceStatus, len(s.prevServiceStatus))
+	for _, status := range s.prevServiceStatus {
+		prevByKey[serviceStatusKey(status)] = status
+	}
+
+	now := time.Now().UTC()
+	changes := make([]serviceStatusChange, 0)
+	for _, status := range next {
+		key := serviceStatusKey(status)
+		prev, seen := prevByKey[key]
+		if !seen || !serviceStatusChanged(prev, status) {
+			continue
+		}
+		changes = append(changes, serviceStatusChange{
+			Name:           status.Name,
+			Type:           status.Type,
+			PreviousStatus: prev.Status,
+			Status:         status.Status,
+			Timestamp:      now,
+			Service:        status,
+		})
+	}
+	s.prevServiceStatus = next
+	return changes
+}
+
+func (s *Server) startServiceStatusMonitor(ctx context.Context) {
+	store := s.activeStore()
+	if store == nil {
+		return
+	}
+
+	s.prevServiceMu.Lock()
+	s.prevServiceStatus = services.DetectAll(store)
+	s.prevServiceMu.Unlock()
+
+	go func() {
+		ticker := time.NewTicker(serviceStatusMonitorInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+
+			store := s.activeStore()
+			if store == nil {
+				continue
+			}
+			changes := s.detectChangedServices(services.DetectAll(store))
+			if len(changes) == 0 {
+				continue
+			}
+			s.sse.Broadcast(routes.SSEEvent{
+				Type: "service:status",
+				Data: changes,
+			})
+		}
+	}()
 }
 
 func (s *Server) setRuntimeStatus(status opencode.RuntimeStatus) {

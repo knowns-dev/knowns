@@ -911,9 +911,9 @@ func runModelSet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unknown model %q (available: %s)", modelID, modelIDList())
 	}
 
-	// Verify embedding sidecar is available.
-	if !ensureSidecar() {
-		fmt.Println(modelWarnStyle.Render("  Warning: knowns-embed sidecar not found"))
+	// Verify ONNX runtime is available.
+	if !ensureONNXRuntime() {
+		fmt.Println(modelWarnStyle.Render("  Warning: ONNX runtime not found"))
 		fmt.Println()
 	}
 

@@ -20,6 +20,13 @@ import {
 	ChevronRight,
 	RefreshCw,
 	X,
+	Monitor,
+	Power,
+	PowerOff,
+	Activity,
+	Search,
+	Code2,
+	Wrench,
 	type LucideIcon,
 } from "lucide-react";
 import { ScrollArea } from "../components/ui/ScrollArea";
@@ -28,19 +35,20 @@ import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
 import { Separator } from "../components/ui/separator";
 import { Label } from "../components/ui/label";
+import { Badge } from "../components/ui/badge";
 import { useConfig, type Config } from "../contexts/ConfigContext";
 import { useOpenCode } from "../contexts/OpenCodeContext";
 import { useOpenCodeModelManager } from "../hooks/useOpencodeModelManager";
 import { OpenCodeModelManager } from "../components/organisms/OpenCodeModelManager";
 import { toast } from "../components/ui/sonner";
-import { importApi, saveUserPreferences, type Import, type ImportDetail, type ImportResult } from "../api/client";
+import { importApi, saveUserPreferences, getRuntimeServices, getEmbeddingModels, testEmbeddingModel, type EmbeddingModelInfo, type EmbeddingModelsResponse, type EmbeddingModelTestResult, type Import, type ImportDetail, type ImportResult, type RuntimeService } from "../api/client";
 
 const DEFAULT_STATUSES = ["todo", "in-progress", "in-review", "done", "blocked", "on-hold", "urgent"];
 const COLOR_OPTIONS = ["gray", "blue", "green", "yellow", "red", "purple", "orange", "pink", "cyan", "indigo"];
 
 // ── Category definitions ──────────────────────────────────────────
 
-type Category = "general" | "board" | "ai";
+type Category = "general" | "board" | "search" | "code" | "ai" | "imports" | "runtime" | "advanced";
 
 interface CategoryDef {
 	id: Category;
@@ -49,10 +57,15 @@ interface CategoryDef {
 	description: string;
 }
 
-const CATEGORIES: CategoryDef[] = [
+const ALL_CATEGORIES: CategoryDef[] = [
 	{ id: "general", label: "General", icon: Settings, description: "Project name, defaults, and preferences" },
 	{ id: "board", label: "Board", icon: Columns3, description: "Kanban statuses, colors, and visible columns" },
+	{ id: "search", label: "Search", icon: Search, description: "Semantic search configuration" },
+	{ id: "code", label: "Code", icon: Code2, description: "LSP servers and code intelligence" },
 	{ id: "ai", label: "AI", icon: Bot, description: "OpenCode connection used by Chat UI" },
+	{ id: "imports", label: "Imports", icon: Download, description: "Imported templates and docs" },
+	{ id: "runtime", label: "Runtime", icon: Monitor, description: "Runtime services and sub-processes" },
+	{ id: "advanced", label: "Advanced", icon: Wrench, description: "Git tracking, server, platforms, and JSON" },
 ];
 
 // ── Auto-save hook ────────────────────────────────────────────────
@@ -79,7 +92,6 @@ function useAutoSave(config: Config, updateConfig: (c: Partial<Config>) => Promi
 		[updateConfig],
 	);
 
-	// Set initial snapshot so first render doesn't trigger save
 	useEffect(() => {
 		if (initialized) {
 			prevRef.current = JSON.stringify(config);
@@ -123,12 +135,11 @@ export default function ConfigPage() {
 	const { config: globalConfig, loading, updateConfig, chatUIEnabled } = useConfig();
 	const [config, setConfig] = useState<Config>({});
 	const [activeCategory, setActiveCategory] = useState<Category>("general");
-	const [viewMode, setViewMode] = useState<"form" | "json">("form");
+	const [initialized, setInitialized] = useState(false);
+	const [saving, setSaving] = useState(false);
 	const [jsonText, setJsonText] = useState("");
 	const [jsonError, setJsonError] = useState<string | null>(null);
 	const [newStatus, setNewStatus] = useState("");
-	const [initialized, setInitialized] = useState(false);
-	const [saving, setSaving] = useState(false);
 	const { status: openCodeStatus, statusLoading: openCodeStatusLoading, providerResponse, providersLoading, lastLoadedAt, refreshAll } =
 		useOpenCode();
 
@@ -275,13 +286,6 @@ export default function ConfigPage() {
 		}
 	}, [initialized, refreshAll]);
 
-	// Sync JSON text when switching to JSON mode
-	useEffect(() => {
-		if (viewMode === "json") {
-			setJsonText(JSON.stringify(config, null, 2));
-		}
-	}, [viewMode]); // eslint-disable-line react-hooks/exhaustive-deps
-
 	// Update helper — updates local state + triggers auto-save
 	const update = useCallback(
 		(patch: Partial<Config>) => {
@@ -362,6 +366,115 @@ export default function ConfigPage() {
 		},
 	});
 
+	// Runtime services state
+	const [services, setServices] = useState<RuntimeService[]>([]);
+	const [servicesLoading, setServicesLoading] = useState(true);
+
+	// Embedding models state
+	const [embeddingModels, setEmbeddingModels] = useState<EmbeddingModelsResponse | null>(null);
+	const [modelsLoading, setModelsLoading] = useState(true);
+
+	// API endpoint test state
+	const [apiBase, setApiBase] = useState("");
+	const [apiKey, setApiKey] = useState("");
+	const [testModelName, setTestModelName] = useState("");
+	const [testing, setTesting] = useState(false);
+	const [testResult, setTestResult] = useState<EmbeddingModelTestResult | null>(null);
+
+	const loadRuntimeServices = useCallback(async () => {
+		try {
+			setServicesLoading(true);
+			const data = await getRuntimeServices();
+			setServices(data.services);
+		} catch {
+			setServices([]);
+		} finally {
+			setServicesLoading(false);
+		}
+	}, []);
+
+	// Load embedding models on mount and when provider changes
+	const loadEmbeddingModels = useCallback(async () => {
+		try {
+			setModelsLoading(true);
+			const data = await getEmbeddingModels();
+			setEmbeddingModels(data);
+		} catch (err) {
+			console.error("Failed to load embedding models:", err);
+		} finally {
+			setModelsLoading(false);
+		}
+	}, []);
+
+	useEffect(() => {
+		void loadEmbeddingModels();
+	}, [loadEmbeddingModels]);
+
+	useEffect(() => {
+		if (!initialized || config.semanticSearch?.provider !== "api") return;
+		setApiBase((current) => current || "http://localhost:11434/v1");
+		setTestModelName((current) => current || config.semanticSearch?.model || "");
+	}, [initialized, config.semanticSearch?.provider, config.semanticSearch?.model]);
+
+	// Select embedding model and update config
+	const selectEmbeddingModel = useCallback((model: EmbeddingModelInfo) => {
+		const isApi = model.source === "ollama" || model.provider !== undefined;
+		const modelName = model.name;
+		const patch: Partial<Config> = {
+			semanticSearch: {
+				...(config.semanticSearch || {}),
+				model: modelName,
+				dimensions: model.dimensions || config.semanticSearch?.dimensions || 384,
+				...(isApi ? {
+					huggingFaceId: "",
+				} : {
+					huggingFaceId: model.huggingFaceId || "",
+				}),
+			},
+		};
+		setConfig(prev => {
+			const next = { ...prev, ...patch };
+			autoSave(next);
+			return next;
+		});
+	}, [config.semanticSearch, autoSave]);
+
+	// Test embedding API endpoint
+	const handleTestEmbedding = async () => {
+		if (!apiBase.trim() || !testModelName.trim()) return;
+		setTesting(true);
+		setTestResult(null);
+		try {
+			const data = await testEmbeddingModel({
+				apiBase: apiBase.trim(),
+				apiKey: apiKey.trim(),
+				model: testModelName.trim(),
+			});
+			setTestResult(data);
+			if (data.success) {
+				update({
+					semanticSearch: {
+						...(config.semanticSearch || {}),
+						model: testModelName.trim(),
+						dimensions: data.dimensions,
+					},
+				});
+				toast.success(`Model works! ${data.dimensions} dimensions detected.`);
+			}
+		} catch (err) {
+			setTestResult({ success: false, error: err instanceof Error ? err.message : "Request failed" });
+		} finally {
+			setTesting(false);
+		}
+	};
+
+	// Helper to determine if a model is selected
+	const isModelSelected = useCallback((model: EmbeddingModelInfo): boolean => {
+		const ss = config.semanticSearch;
+		if (!ss?.model) return false;
+		return ss.model === model.name;
+	}, [config.semanticSearch]);
+
 	if (loading) {
 		return (
 			<div className="p-6 flex items-center justify-center h-64">
@@ -372,6 +485,10 @@ export default function ConfigPage() {
 
 	const statuses = config.statuses || DEFAULT_STATUSES;
 	const statusColors = config.statusColors || {};
+
+	// ── Filter categories based on chatUI visibility ──────────────
+
+	const categories = ALL_CATEGORIES.filter((cat) => cat.id !== "ai" || chatUIEnabled);
 
 	// ── Render category content ───────────────────────────────────
 
@@ -425,56 +542,6 @@ export default function ConfigPage() {
 					placeholder="frontend, backend, ui"
 				/>
 			</FieldRow>
-
-			<Separator className="my-1" />
-
-			<SectionHeader icon={Download} title="Imports" description="Imported templates and docs" />
-
-			{importsLoading ? (
-				<div className="flex items-center justify-center py-6">
-					<Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-				</div>
-			) : imports.length === 0 ? (
-				<div className="py-4 text-center border rounded-lg bg-muted/20">
-					<Download className="w-8 h-8 mx-auto text-muted-foreground" />
-					<p className="mt-2 text-sm text-muted-foreground">No imports yet</p>
-					<Button onClick={() => setShowAddModal(true)} variant="outline" size="sm" className="mt-2">
-						<Plus className="w-4 h-4 mr-2" />
-						Add Import
-					</Button>
-				</div>
-			) : (
-				<div className="space-y-2 mb-4">
-					{imports.map((imp) => (
-						<div
-							key={imp.name}
-							className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors cursor-pointer"
-							onClick={() => loadImportDetail(imp.name)}
-						>
-							<div className="flex items-center gap-3 min-w-0">
-								<Package className="w-4 h-4 text-muted-foreground shrink-0" />
-								<div className="min-w-0">
-									<div className="text-sm font-medium truncate">{imp.name}</div>
-									<div className="text-xs text-muted-foreground truncate">{imp.source}</div>
-								</div>
-							</div>
-							<div className="flex items-center gap-2">
-								<span className="text-xs text-muted-foreground">{imp.fileCount} files</span>
-								<ChevronRight className="w-4 h-4 text-muted-foreground" />
-							</div>
-						</div>
-					))}
-				</div>
-			)}
-
-			{imports.length > 0 && (
-				<div className="flex justify-end mb-4">
-					<Button onClick={() => setShowAddModal(true)} size="sm" variant="outline">
-						<Plus className="w-4 h-4 mr-2" />
-						Add
-					</Button>
-				</div>
-			)}
 
 			<Separator className="my-1" />
 
@@ -579,6 +646,230 @@ export default function ConfigPage() {
 		</div>
 	);
 
+	const renderEmbeddingModels = () => {
+		const provider = config.semanticSearch?.provider || "local";
+		const models = provider === "local"
+			? embeddingModels?.local || []
+			: provider === "ollama"
+				? embeddingModels?.api || []
+				: embeddingModels?.configured || [];
+
+		const hintByProvider: Record<string, string> = {
+			local: "Select a local ONNX model",
+			ollama: "Select an Ollama embedding model",
+			api: "Select a configured API model",
+		};
+
+		return (
+			<FieldRow label="Model" hint={hintByProvider[provider] || "Select a model"}>
+				{modelsLoading ? (
+					<div className="flex items-center justify-center py-4">
+						<Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+					</div>
+				) : models.length === 0 ? (
+					<div className="text-sm text-muted-foreground py-2">
+						{provider === "ollama"
+							? "No Ollama embedding models found. Ensure Ollama is running and has embedding models pulled."
+							: provider === "api"
+								? "No configured API models. Use the endpoint config below to test and add one."
+								: "No local models found."}
+					</div>
+				) : (
+					<div className="space-y-2">
+						{models.map((model) => {
+							const selected = isModelSelected(model);
+							return (
+								<div
+									key={model.name}
+									className={`flex items-center gap-3 p-3 rounded-lg border bg-card hover:bg-accent/50 cursor-pointer transition-colors ${selected ? "ring-2 ring-primary" : ""}`}
+									onClick={() => selectEmbeddingModel(model)}
+								>
+									<div className="flex-1">
+										<div className="text-sm font-medium">{model.name}</div>
+										<div className="text-xs text-muted-foreground">{model.dimensions}d{model.maxTokens ? `, ${model.maxTokens} tokens` : ""}</div>
+									</div>
+									{"installed" in model && model.installed !== undefined ? (
+										model.installed ? (
+											<Badge variant="default">Installed</Badge>
+										) : (
+											<Badge variant="outline">Not installed</Badge>
+										)
+									) : null}
+									{selected && <Check className="w-4 h-4 text-primary" />}
+								</div>
+							);
+						})}
+					</div>
+				)}
+			</FieldRow>
+		);
+	};
+
+	const renderSearch = () => (
+		<div>
+			<SectionHeader icon={Search} title="Semantic Search" description="Configure embedding model and provider for semantic search" />
+
+			<FieldRow label="Enabled">
+				<Switch
+					checked={config.semanticSearch?.enabled ?? false}
+					onCheckedChange={(checked) => update({ semanticSearch: { ...(config.semanticSearch || {}), enabled: checked } })}
+				/>
+			</FieldRow>
+
+			<FieldRow label="Provider" hint="local = ONNX built-in, ollama = local Ollama server, api = custom endpoint">
+				<select
+					value={config.semanticSearch?.provider || "local"}
+					onChange={(e) => {
+						update({ semanticSearch: { ...(config.semanticSearch || {}), provider: e.target.value } });
+						void loadEmbeddingModels();
+					}}
+					className="w-full px-3 py-2 rounded-md border bg-input text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+				>
+					<option value="local">Local (ONNX)</option>
+					<option value="ollama">Ollama</option>
+					<option value="api">API (OpenAI-compatible)</option>
+				</select>
+			</FieldRow>
+
+			{renderEmbeddingModels()}
+
+			{config.semanticSearch?.provider === "api" && (
+				<>
+					<Separator className="my-4" />
+					<SectionHeader icon={Search} title="API Endpoint" description="Configure a custom OpenAI-compatible embedding endpoint" />
+
+					<FieldRow label="API Base URL" hint="e.g. http://localhost:11434/v1">
+						<Input value={apiBase} onChange={(e) => setApiBase(e.target.value)} placeholder="http://localhost:11434/v1" />
+					</FieldRow>
+
+					<FieldRow label="API Key" hint="Optional Bearer token">
+						<Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="Leave empty for local providers" />
+					</FieldRow>
+
+					<FieldRow label="Model name" hint="Model to send in API request">
+						<div className="flex gap-2">
+							<Input value={testModelName} onChange={(e) => setTestModelName(e.target.value)} placeholder="e.g. text-embedding-3-small" className="flex-1" />
+							<Button onClick={() => void handleTestEmbedding()} disabled={testing} variant="outline" size="sm">
+								{testing ? <Loader2 className="w-4 h-4 animate-spin" /> : "Test"}
+							</Button>
+						</div>
+					</FieldRow>
+
+					{testResult && (
+						<div className={`ml-[calc(11rem+1rem)] rounded-lg border p-3 text-sm ${testResult.success ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"}`}>
+							{testResult.success ? `Detected ${testResult.dimensions} dimensions` : testResult.error}
+						</div>
+					)}
+				</>
+			)}
+
+			{(!config.semanticSearch?.provider || config.semanticSearch.provider === "local") && (
+				<FieldRow label="HuggingFace ID" hint="Full HuggingFace model identifier (read-only when model is selected)">
+					<Input
+						value={config.semanticSearch?.huggingFaceId || ""}
+						onChange={(e) => update({ semanticSearch: { ...(config.semanticSearch || {}), huggingFaceId: e.target.value } })}
+						placeholder="Select a model above"
+						readOnly={!!config.semanticSearch?.huggingFaceId}
+					/>
+				</FieldRow>
+			)}
+
+			<FieldRow label="Dimensions" hint="Embedding vector size">
+				<Input
+					type="number"
+					value={config.semanticSearch?.dimensions ?? 384}
+					onChange={(e) => update({ semanticSearch: { ...(config.semanticSearch || {}), dimensions: parseInt(e.target.value, 10) || 384 } })}
+				/>
+			</FieldRow>
+
+			<FieldRow label="Max Tokens" hint="Maximum tokens per chunk">
+				<Input
+					type="number"
+					value={config.semanticSearch?.maxTokens ?? 512}
+					onChange={(e) => update({ semanticSearch: { ...(config.semanticSearch || {}), maxTokens: parseInt(e.target.value, 10) || 512 } })}
+				/>
+			</FieldRow>
+		</div>
+	);
+
+	const renderCode = () => {
+		const languages = config.lsp?.languages || {};
+		const languageEntries = Object.entries(languages);
+
+		return (
+			<div>
+				<SectionHeader icon={Code2} title="Language Server Protocol" description="LSP servers for code intelligence" />
+
+				<FieldRow label="Enabled">
+					<Switch
+						checked={config.lsp?.enabled ?? false}
+						onCheckedChange={(checked) =>
+							update({ lsp: { ...(config.lsp || {}), enabled: checked } })
+						}
+					/>
+				</FieldRow>
+
+				{languageEntries.length > 0 && (
+					<>
+						<Separator className="my-2" />
+						<div className="ml-[30px] mb-3">
+							<div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Languages</div>
+						</div>
+						<div className="ml-[30px] space-y-2">
+							{languageEntries.map(([lang, langConfig]) => (
+								<div key={lang} className="flex items-center gap-3 p-3 rounded-lg border bg-card">
+									<Switch
+										checked={langConfig.enabled ?? false}
+										onCheckedChange={(checked) =>
+											update({
+												lsp: {
+													...(config.lsp || {}),
+													languages: {
+														...languages,
+														[lang]: { ...langConfig, enabled: checked },
+													},
+												},
+											})
+										}
+									/>
+									<div className="flex-1 min-w-0">
+										<div className="text-sm font-medium capitalize">{lang}</div>
+										{langConfig.version && (
+											<div className="text-xs text-muted-foreground">v{langConfig.version}</div>
+										)}
+										{langConfig.binary && (
+											<div className="text-xs text-muted-foreground font-mono">{langConfig.binary}</div>
+										)}
+									</div>
+								</div>
+							))}
+						</div>
+					</>
+				)}
+
+				<Separator className="my-4" />
+
+				<SectionHeader icon={Code2} title="Code Intelligence Ignore" description="Patterns to exclude from code analysis" />
+
+				<FieldRow label="Ignore patterns" hint="One pattern per line">
+					<textarea
+						value={(config.codeIntelligenceIgnore || []).join("\n")}
+						onChange={(e) =>
+							update({
+								codeIntelligenceIgnore: e.target.value
+									.split("\n")
+									.map((l) => l.trim())
+									.filter(Boolean),
+							})
+						}
+						className="w-full h-32 px-3 py-2 rounded-md border bg-input text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+						placeholder={"node_modules/\ndist/\n*.test.ts\n*.spec.ts"}
+					/>
+				</FieldRow>
+			</div>
+		);
+	};
+
 	const renderAI = () => {
 		const statusTone = openCodeStatusLoading
 			? "border-border bg-muted/40 text-muted-foreground"
@@ -652,38 +943,284 @@ export default function ConfigPage() {
 		);
 	};
 
+	const renderImports = () => (
+		<div>
+			<SectionHeader icon={Download} title="Imports" description="Imported templates and docs" />
+
+			{importsLoading ? (
+				<div className="flex items-center justify-center py-6">
+					<Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+				</div>
+			) : imports.length === 0 ? (
+				<div className="py-4 text-center border rounded-lg bg-muted/20">
+					<Download className="w-8 h-8 mx-auto text-muted-foreground" />
+					<p className="mt-2 text-sm text-muted-foreground">No imports yet</p>
+					<Button onClick={() => setShowAddModal(true)} variant="outline" size="sm" className="mt-2">
+						<Plus className="w-4 h-4 mr-2" />
+						Add Import
+					</Button>
+				</div>
+			) : (
+				<div className="space-y-2 mb-4">
+					{imports.map((imp) => (
+						<div
+							key={imp.name}
+							className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors cursor-pointer"
+							onClick={() => loadImportDetail(imp.name)}
+						>
+							<div className="flex items-center gap-3 min-w-0">
+								<Package className="w-4 h-4 text-muted-foreground shrink-0" />
+								<div className="min-w-0">
+									<div className="text-sm font-medium truncate">{imp.name}</div>
+									<div className="text-xs text-muted-foreground truncate">{imp.source}</div>
+								</div>
+							</div>
+							<div className="flex items-center gap-2">
+								<span className="text-xs text-muted-foreground">{imp.fileCount} files</span>
+								<ChevronRight className="w-4 h-4 text-muted-foreground" />
+							</div>
+						</div>
+					))}
+				</div>
+			)}
+
+			{imports.length > 0 && (
+				<div className="flex justify-end mb-4">
+					<Button onClick={() => setShowAddModal(true)} size="sm" variant="outline">
+						<Plus className="w-4 h-4 mr-2" />
+						Add
+					</Button>
+				</div>
+			)}
+		</div>
+	);
+
+	const statusDotClass = (status: RuntimeService["status"]) => {
+		switch (status) {
+			case "running":
+				return "bg-emerald-500";
+			case "error":
+				return "bg-red-500";
+			default:
+				return "bg-gray-400";
+		}
+	};
+
+	const renderRuntime = () => (
+		<div>
+			<SectionHeader icon={Monitor} title="Runtime Services" description="Managed sub-processes for this project" />
+
+			<FieldRow label="Services" hint="Live process status from runtime">
+				<div className="space-y-3">
+					<div className="flex justify-end">
+						<Button variant="outline" size="sm" onClick={() => void loadRuntimeServices()} disabled={servicesLoading}>
+							{servicesLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+							Refresh
+						</Button>
+					</div>
+
+					{servicesLoading ? (
+						<div className="flex items-center justify-center py-6 rounded-lg border bg-muted/20">
+							<Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+						</div>
+					) : services.length === 0 ? (
+						<div className="py-6 text-center border rounded-lg bg-muted/20">
+							<Activity className="w-8 h-8 mx-auto text-muted-foreground" />
+							<p className="mt-2 text-sm text-muted-foreground">No runtime services reported</p>
+						</div>
+					) : (
+						<div className="space-y-2">
+							{services.map((service) => {
+								const running = service.status === "running";
+								const disabled = service.status === "disabled" || !service.enabledInConfig;
+								return (
+									<div key={`${service.type}-${service.name}`} className="rounded-lg border bg-card p-3">
+										<div className="flex items-start justify-between gap-3">
+											<div className="flex items-start gap-3 min-w-0">
+												<span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${statusDotClass(service.status)}`} />
+												<div className="min-w-0">
+													<div className="flex flex-wrap items-center gap-2">
+														<span className="text-sm font-medium truncate">{service.name}</span>
+														<span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground capitalize">{service.status}</span>
+														{disabled && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">disabled</span>}
+													</div>
+													<div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+														{running && service.pid ? <span>pid={service.pid}</span> : null}
+														{running && service.port ? <span>:{service.port}</span> : null}
+														{running && service.uptime ? <span>uptime={service.uptime}</span> : null}
+													</div>
+													{disabled && (
+														<div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+															<PowerOff className="h-3.5 w-3.5" />
+															Enable via settings/config toggle to start this service.
+														</div>
+													)}
+												</div>
+											</div>
+											{running ? <Power className="h-4 w-4 text-emerald-600" /> : <PowerOff className="h-4 w-4 text-muted-foreground" />}
+										</div>
+									</div>
+								);
+							})}
+						</div>
+					)}
+				</div>
+			</FieldRow>
+
+			<Separator className="my-4" />
+
+			<SectionHeader icon={Monitor} title="Memory Limits" description="Control runtime memory process queue sizing" />
+
+			<FieldRow label="Mode">
+				<select
+					value={config.runtimeMemory?.mode || "auto"}
+					onChange={(e) =>
+						update({ runtimeMemory: { ...(config.runtimeMemory || {}), mode: e.target.value } })
+					}
+					className="w-full px-3 py-2 rounded-md border bg-input text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+				>
+					<option value="off">Off</option>
+					<option value="auto">Auto</option>
+					<option value="manual">Manual</option>
+					<option value="debug">Debug</option>
+				</select>
+			</FieldRow>
+
+			<FieldRow label="Max Items" hint="Maximum queued items (0 = unlimited)">
+				<Input
+					type="number"
+					value={config.runtimeMemory?.maxItems ?? 0}
+					onChange={(e) =>
+						update({ runtimeMemory: { ...(config.runtimeMemory || {}), maxItems: parseInt(e.target.value, 10) || 0 } })
+					}
+				/>
+			</FieldRow>
+
+			<FieldRow label="Max Bytes" hint="Maximum memory in bytes (0 = unlimited)">
+				<Input
+					type="number"
+					value={config.runtimeMemory?.maxBytes ?? 0}
+					onChange={(e) =>
+						update({ runtimeMemory: { ...(config.runtimeMemory || {}), maxBytes: parseInt(e.target.value, 10) || 0 } })
+					}
+				/>
+			</FieldRow>
+		</div>
+	);
+
+	const PLATFORM_OPTIONS = [
+		{ id: "claude-code", label: "Claude Code" },
+		{ id: "opencode", label: "OpenCode" },
+		{ id: "gemini", label: "Gemini" },
+		{ id: "copilot", label: "Copilot" },
+		{ id: "agents", label: "Agents" },
+	];
+
+	const renderAdvanced = () => (
+		<div>
+			<SectionHeader icon={Wrench} title="Git Tracking" description="Control how the .knowns directory interacts with git" />
+
+			<FieldRow label="Mode">
+				<select
+					value={config.gitTrackingMode || "none"}
+					onChange={(e) => update({ gitTrackingMode: e.target.value })}
+					className="w-full px-3 py-2 rounded-md border bg-input text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+				>
+					<option value="git-tracked">Git Tracked</option>
+					<option value="git-ignored">Git Ignored</option>
+					<option value="none">None</option>
+				</select>
+			</FieldRow>
+
+			<Separator className="my-1" />
+
+			<SectionHeader icon={Settings} title="Server" description="Network configuration" />
+
+			<FieldRow label="Server Port" hint="Port for the Knowns server">
+				<Input
+					type="number"
+					value={config.serverPort ?? 0}
+					onChange={(e) => update({ serverPort: parseInt(e.target.value, 10) || 0 })}
+				/>
+			</FieldRow>
+
+			<Separator className="my-1" />
+
+			<SectionHeader icon={Settings} title="Platforms" description="Select which AI platforms are active" />
+
+			<FieldRow label="Enabled platforms">
+				<div className="space-y-2">
+					{PLATFORM_OPTIONS.map((platform) => {
+						const checked = (config.platforms || []).includes(platform.id);
+						return (
+							<div key={platform.id} className="flex items-center gap-3">
+								<Switch
+									checked={checked}
+									onCheckedChange={(c) => {
+										const current = config.platforms || [];
+										const updated = c
+											? [...current, platform.id]
+											: current.filter((p) => p !== platform.id);
+										update({ platforms: updated });
+									}}
+								/>
+								<Label className="text-sm cursor-pointer">{platform.label}</Label>
+							</div>
+						);
+					})}
+				</div>
+			</FieldRow>
+
+			<Separator className="my-1" />
+
+			<SectionHeader icon={Settings} title="Chat UI" description="Enable or disable the chat interface" />
+
+			<FieldRow label="Enable Chat UI">
+				<Switch
+					checked={config.enableChatUI ?? true}
+					onCheckedChange={(checked) => update({ enableChatUI: checked })}
+				/>
+			</FieldRow>
+
+			<Separator className="my-4" />
+
+			<SectionHeader icon={Terminal} title="JSON Editor" description="Raw config.json editing" />
+
+			<div className="space-y-4">
+				<div>
+					<label className="block text-sm font-medium mb-2 flex items-center gap-2">
+						<Terminal className="w-4 h-4 text-muted-foreground" />
+						config.json
+					</label>
+					<textarea
+						value={jsonText}
+						onChange={(e) => {
+							setJsonText(e.target.value);
+							setJsonError(null);
+						}}
+						className="w-full h-[calc(100vh-480px)] min-h-[300px] px-4 py-3 rounded-lg border bg-input font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+						spellCheck={false}
+					/>
+					{jsonError && <p className="mt-2 text-sm text-destructive">{jsonError}</p>}
+				</div>
+				<Button onClick={handleJsonSave} disabled={saving}>
+					<Check className="w-4 h-4 mr-2" />
+					{saving ? "Saving..." : "Save"}
+				</Button>
+			</div>
+		</div>
+	);
+
 	const contentByCategory: Record<Category, () => React.ReactNode> = {
 		general: renderGeneral,
 		board: renderBoard,
+		search: renderSearch,
+		code: renderCode,
 		ai: renderAI,
+		imports: renderImports,
+		runtime: renderRuntime,
+		advanced: renderAdvanced,
 	};
-
-	// ── JSON mode ─────────────────────────────────────────────────
-
-	const renderJsonMode = () => (
-		<div className="space-y-4">
-			<div>
-				<label className="block text-sm font-medium mb-2 flex items-center gap-2">
-					<Terminal className="w-4 h-4 text-muted-foreground" />
-					config.json
-				</label>
-				<textarea
-					value={jsonText}
-					onChange={(e) => {
-						setJsonText(e.target.value);
-						setJsonError(null);
-					}}
-					className="w-full h-[calc(100vh-280px)] min-h-[300px] px-4 py-3 rounded-lg border bg-input font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none"
-					spellCheck={false}
-				/>
-				{jsonError && <p className="mt-2 text-sm text-destructive">{jsonError}</p>}
-			</div>
-			<Button onClick={handleJsonSave} disabled={saving}>
-				<Check className="w-4 h-4 mr-2" />
-				{saving ? "Saving..." : "Save"}
-			</Button>
-		</div>
-	);
 
 	// ── Main layout ───────────────────────────────────────────────
 
@@ -692,66 +1229,16 @@ export default function ConfigPage() {
 			{/* Top bar */}
 			<div className="px-6 py-4 border-b shrink-0 flex items-center justify-between">
 				<h1 className="text-lg font-semibold">Settings</h1>
-				<div className="flex rounded-md border overflow-hidden">
-					<button
-						type="button"
-						onClick={() => setViewMode("form")}
-						className={`px-3 py-1 text-xs font-medium transition-colors ${
-							viewMode === "form"
-								? "bg-primary text-primary-foreground"
-								: "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-						}`}
-					>
-						Form
-					</button>
-					<button
-						type="button"
-						onClick={() => setViewMode("json")}
-						className={`px-3 py-1 text-xs font-medium transition-colors ${
-							viewMode === "json"
-								? "bg-primary text-primary-foreground"
-								: "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-						}`}
-					>
-						JSON
-					</button>
-				</div>
+				<Badge variant="outline" className="text-xs">
+					{config.name || "Unknown"}
+				</Badge>
 			</div>
 
-			{viewMode === "json" ? (
-				<ScrollArea className="flex-1">
-					<div className="p-6 max-w-3xl">{renderJsonMode()}</div>
-				</ScrollArea>
-			) : (
-				<div className="flex-1 flex min-h-0">
-					{/* Sidebar */}
-					<nav className="w-52 shrink-0 border-r bg-accent/30 p-3 hidden md:block">
-						<div className="space-y-0.5">
-							{CATEGORIES.filter((cat) => cat.id !== "ai" || chatUIEnabled).map((cat) => {
-								const Icon = cat.icon;
-								const isActive = activeCategory === cat.id;
-								return (
-									<button
-										key={cat.id}
-										type="button"
-										onClick={() => setActiveCategory(cat.id)}
-										className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors text-left ${
-											isActive
-												? "bg-accent font-medium"
-												: "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-										}`}
-									>
-										<Icon className="w-4 h-4 shrink-0" />
-										{cat.label}
-									</button>
-								);
-							})}
-						</div>
-					</nav>
-
-					{/* Mobile tabs (visible on small screens) */}
-					<div className="md:hidden border-b px-4 pt-2 flex gap-1 shrink-0">
-						{CATEGORIES.filter((cat) => cat.id !== "ai" || chatUIEnabled).map((cat) => {
+			<div className="flex-1 flex min-h-0">
+				{/* Sidebar (desktop) */}
+				<nav className="w-52 shrink-0 border-r bg-accent/30 p-3 hidden md:block">
+					<div className="space-y-0.5">
+						{categories.map((cat) => {
 							const Icon = cat.icon;
 							const isActive = activeCategory === cat.id;
 							return (
@@ -759,27 +1246,50 @@ export default function ConfigPage() {
 									key={cat.id}
 									type="button"
 									onClick={() => setActiveCategory(cat.id)}
-									className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-md transition-colors ${
+									className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors text-left ${
 										isActive
-											? "bg-background border border-b-0 text-foreground"
-											: "text-muted-foreground hover:text-foreground"
+											? "bg-accent font-medium"
+											: "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
 									}`}
 								>
-									<Icon className="w-3.5 h-3.5" />
+									<Icon className="w-4 h-4 shrink-0" />
 									{cat.label}
 								</button>
 							);
 						})}
 					</div>
+				</nav>
 
-					{/* Content */}
-					<ScrollArea className="flex-1">
-						<div className="p-6 max-w-2xl">
-							{contentByCategory[activeCategory]()}
-						</div>
-					</ScrollArea>
+				{/* Mobile tabs */}
+				<div className="md:hidden border-b px-4 pt-2 flex gap-1 shrink-0 overflow-x-auto">
+					{categories.map((cat) => {
+						const Icon = cat.icon;
+						const isActive = activeCategory === cat.id;
+						return (
+							<button
+								key={cat.id}
+								type="button"
+								onClick={() => setActiveCategory(cat.id)}
+								className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-md transition-colors whitespace-nowrap ${
+									isActive
+										? "bg-background border border-b-0 text-foreground"
+										: "text-muted-foreground hover:text-foreground"
+								}`}
+							>
+								<Icon className="w-3.5 h-3.5" />
+								{cat.label}
+							</button>
+						);
+					})}
 				</div>
-			)}
+
+				{/* Content */}
+				<ScrollArea className="flex-1">
+					<div className="p-6 max-w-2xl">
+						{contentByCategory[activeCategory]()}
+					</div>
+				</ScrollArea>
+			</div>
 
 			{/* Add Import Modal */}
 			{showAddModal && (

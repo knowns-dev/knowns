@@ -18,7 +18,6 @@ func SkillsOutOfSync(projectRoot string) bool {
 	candidates := []string{
 		filepath.Join(projectRoot, ".claude", "skills"),
 		filepath.Join(projectRoot, ".agents", "skills"),
-		filepath.Join(projectRoot, ".agent", "skills"),
 		filepath.Join(projectRoot, ".kiro", "skills"),
 	}
 
@@ -74,39 +73,9 @@ func platformNeedsClaudeSkills(p string) bool {
 	return p == "claude-code"
 }
 
-// platformNeedsLegacyAgentSkills returns true if the platform writes to
-// .agent/skills/.
-func platformNeedsLegacyAgentSkills(p string) bool {
-	return p == "agents"
-}
-
-// platformNeedsRepoAgentSkills returns true if the platform writes to
-// .agents/skills/.
-func platformNeedsRepoAgentSkills(p string) bool {
-	return p == "opencode" || p == "antigravity" || p == "codex"
-}
-
-func platformSupportsLegacyAgentSkills(p string) bool {
-	return p == "opencode" || p == "antigravity" || p == "codex"
-}
-
-func legacyAgentSkillsDirExists(projectRoot string) bool {
-	info, err := os.Stat(filepath.Join(projectRoot, ".agent", "skills"))
-	return err == nil && info.IsDir()
-}
-
-// UsesLegacyAgentSkillsDir returns true when the selected platforms still rely on
-// an existing legacy .agent/skills directory for backwards compatibility.
-func UsesLegacyAgentSkillsDir(projectRoot string, platforms []string) bool {
-	if !legacyAgentSkillsDirExists(projectRoot) {
-		return false
-	}
-	for _, p := range platforms {
-		if platformNeedsLegacyAgentSkills(p) || platformSupportsLegacyAgentSkills(p) {
-			return true
-		}
-	}
-	return false
+// platformNeedsAgentSkills returns true if the platform writes to .agents/skills/.
+func platformNeedsAgentSkills(p string) bool {
+	return p == "agents" || p == "opencode" || p == "antigravity" || p == "codex"
 }
 
 // platformNeedsKiroSkills returns true if the platform writes to .kiro/skills/.
@@ -119,22 +88,14 @@ func platformNeedsKiroSkills(p string) bool {
 // (backwards-compatible behaviour matching SyncSkills).
 func SyncSkillsForPlatforms(projectRoot string, platforms []string) error {
 	wantClaude := len(platforms) == 0
-	wantLegacyAgent := len(platforms) == 0
-	wantRepoAgent := len(platforms) == 0
+	wantAgent := len(platforms) == 0
 	wantKiro := len(platforms) == 0
-	legacyAgentDirExists := legacyAgentSkillsDirExists(projectRoot)
 	for _, p := range platforms {
 		if platformNeedsClaudeSkills(p) {
 			wantClaude = true
 		}
-		if platformNeedsLegacyAgentSkills(p) {
-			wantLegacyAgent = true
-		}
-		if platformNeedsRepoAgentSkills(p) {
-			wantRepoAgent = true
-			if legacyAgentDirExists && platformSupportsLegacyAgentSkills(p) {
-				wantLegacyAgent = true
-			}
+		if platformNeedsAgentSkills(p) {
+			wantAgent = true
 		}
 		if platformNeedsKiroSkills(p) {
 			wantKiro = true
@@ -145,11 +106,8 @@ func SyncSkillsForPlatforms(projectRoot string, platforms []string) error {
 	if wantClaude {
 		targets = append(targets, filepath.Join(projectRoot, ".claude", "skills"))
 	}
-	if wantRepoAgent {
+	if wantAgent {
 		targets = append(targets, filepath.Join(projectRoot, ".agents", "skills"))
-	}
-	if wantLegacyAgent {
-		targets = append(targets, filepath.Join(projectRoot, ".agent", "skills"))
 	}
 	if wantKiro {
 		targets = append(targets, filepath.Join(projectRoot, ".kiro", "skills"))
@@ -190,7 +148,6 @@ func SyncSkills(projectRoot string) error {
 	targets := []string{
 		filepath.Join(projectRoot, ".claude", "skills"),
 		filepath.Join(projectRoot, ".agents", "skills"),
-		filepath.Join(projectRoot, ".agent", "skills"),
 		filepath.Join(projectRoot, ".kiro", "skills"),
 	}
 

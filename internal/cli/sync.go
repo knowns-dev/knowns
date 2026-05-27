@@ -93,7 +93,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	if !specificFlag {
 		if cfg.Settings.GitTrackingMode != "" {
 			fmt.Println(RenderField("Git tracking mode", StyleBold.Render(cfg.Settings.GitTrackingMode)))
-			if err := writeKnownsGitignore(projectRoot, cfg.Settings.GitTrackingMode); err != nil {
+			if err := writeKnownsGitignore(projectRoot, cfg.Settings.GitTrackingMode, nil); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: git integration failed: %v\n", err)
 			} else {
 				fmt.Println(RenderSuccess("Git integration configured."))
@@ -188,7 +188,7 @@ func runSyncPlatformConfigs(projectRoot string, force bool, platforms []string) 
 		if err := createAntigravityRulesQuiet(projectRoot, force); err != nil {
 			return err
 		}
-		fmt.Printf("  %s %s\n", StyleSuccess.Render("[antigravity]"), StyleDim.Render(".agent/rules/knowns.md synced."))
+		fmt.Printf("  %s %s\n", StyleSuccess.Render("[antigravity]"), StyleDim.Render(".agents/rules/knowns.md synced."))
 
 		if err := createAntigravityMCPConfigQuiet(projectRoot); err != nil {
 			return err
@@ -207,8 +207,8 @@ func runSyncModel(store *storage.Store, force bool) error {
 		return nil // no config, skip silently
 	}
 
-	// API provider path: verify reachability instead of downloading model files.
-	if cfg.Settings.SemanticSearch != nil && cfg.Settings.SemanticSearch.Provider == "api" {
+	// API/Ollama provider path: verify reachability instead of downloading model files.
+	if cfg.Settings.SemanticSearch != nil && (cfg.Settings.SemanticSearch.Provider == "api" || cfg.Settings.SemanticSearch.Provider == "ollama") {
 		return runSyncModelAPI(cfg)
 	}
 
@@ -278,9 +278,6 @@ func runSyncSkillsForPlatforms(projectRoot string, force bool, platforms []strin
 	}
 
 	fmt.Printf("%s\n", RenderInfo(fmt.Sprintf("Syncing %s skill(s)...", StyleBold.Render(fmt.Sprintf("%d", count)))))
-	if codegen.UsesLegacyAgentSkillsDir(projectRoot, platforms) {
-		fmt.Printf("  %s\n", StyleWarning.Render("Legacy .agent/skills detected. Knowns will continue syncing it for compatibility, but new projects should use .agents/skills."))
-	}
 
 	if err := codegen.SyncSkillsForPlatforms(projectRoot, platforms); err != nil {
 		return err

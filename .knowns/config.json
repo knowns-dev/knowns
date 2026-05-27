@@ -1,5 +1,5 @@
 {
-  "name": "knowns-go",
+  "name": "Knowns",
   "id": "knowns-go",
   "createdAt": "2026-03-08T17:15:18.432Z",
   "settings": {
@@ -7,6 +7,12 @@
     "defaultPriority": "medium",
     "timeFormat": "24h",
     "gitTrackingMode": "git-ignored",
+    "gitTracking": {
+      "tasks": false,
+      "docs": true,
+      "templates": true,
+      "memories": false
+    },
     "statuses": [
       "todo",
       "in-progress",
@@ -28,16 +34,15 @@
     "visibleColumns": [
       "todo",
       "in-progress",
-      "blocked",
+      "in-review",
       "done",
-      "in-review"
+      "blocked"
     ],
     "semanticSearch": {
       "enabled": true,
-      "model": "multilingual-e5-small",
-      "huggingFaceId": "Xenova/multilingual-e5-small",
-      "dimensions": 384,
-      "maxTokens": 512
+      "model": "qwen3-embedding:0.6b",
+      "provider": "ollama",
+      "dimensions": 1024
     },
     "serverPort": 6420,
     "platforms": [
@@ -49,7 +54,7 @@
       "copilot",
       "agents"
     ],
-    "enableChatUI": true,
+    "enableChatUI": false,
     "opencodeModels": {
       "version": 1,
       "defaultModel": {
@@ -64,6 +69,9 @@
         "anthropic:claude-sonnet-4-5",
         "knowns-hub:cx/gpt-5.4"
       ]
+    },
+    "lsp": {
+      "enabled": true
     }
   }
 }

@@ -79,7 +79,7 @@ func resolveProject(cmd *cobra.Command) (store *storage.Store, projectRoot strin
 }
 
 const defaultBrowserPort = 6420
-const maxBrowserPortAttempts = 3
+const maxBrowserPortAttempts = 10
 
 func runBrowser(cmd *cobra.Command, args []string) error {
 	port, _ := cmd.Flags().GetInt("port")
@@ -210,6 +210,12 @@ func getLocalIP() string {
 func bindBrowserPort(startPort int, attempts int) (net.Listener, int, error) {
 	for offset := 0; offset < attempts; offset++ {
 		port := startPort + offset
+		// First check if anything is already listening (catches IPv4/IPv6 conflicts)
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			continue // port in use by another process
+		}
 		listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 		if err == nil {
 			return listener, port, nil

@@ -39,6 +39,31 @@ export interface Config {
 	opencodeModels?: OpenCodeModelSettings;
 	platforms?: string[];
 	enableChatUI?: boolean;
+	opencodeInstalled?: boolean;
+	semanticSearch?: {
+		enabled?: boolean;
+		model?: string;
+		provider?: string;
+		huggingFaceId?: string;
+		dimensions?: number;
+		maxTokens?: number;
+	};
+	lsp?: {
+		enabled?: boolean;
+		languages?: Record<string, {
+			enabled?: boolean;
+			binary?: string;
+			version?: string;
+			settings?: Record<string, any>;
+		}>;
+	};
+	codeIntelligenceIgnore?: string[];
+	gitTrackingMode?: string;
+	runtimeMemory?: {
+		mode?: string;
+		maxItems?: number;
+		maxBytes?: number;
+	};
 }
 
 interface ConfigContextType {
@@ -107,7 +132,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
 				error,
 				updateConfig,
 				refetch: fetchConfig,
-				chatUIEnabled: config.enableChatUI !== false,
+				chatUIEnabled: config.enableChatUI !== false && config.opencodeInstalled !== false,
 			}}
 		>
 			{children}

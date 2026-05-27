@@ -43,6 +43,10 @@ func SetupRoutes(r chi.Router, store *storage.Store, sse Broadcaster, projectRoo
 		cr := &ConfigRoutes{store: store, mgr: manager}
 		cr.Register(r)
 
+		// Runtime services
+		rsr := &RuntimeServicesRoutes{store: store, mgr: manager}
+		rsr.Register(r)
+
 		// Time tracking
 		timr := &TimeRoutes{store: store, mgr: manager, sse: sse}
 		timr.Register(r)
@@ -83,6 +87,10 @@ func SetupRoutes(r chi.Router, store *storage.Store, sse Broadcaster, projectRoo
 		// Graph
 		ggr := &GraphRoutes{store: store, mgr: manager}
 		ggr.Register(r)
+
+		// Embedding models (project-scoped, reads from global paths)
+		emr := &EmbeddingModelRoutes{}
+		emr.Register(r)
 
 		// Memory
 		mr := &MemoryRoutes{store: store, mgr: manager, sse: sse}

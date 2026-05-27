@@ -13,7 +13,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 
-	"github.com/howznguyen/knowns/internal/codegen"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/runtimeinstall"
 	"github.com/howznguyen/knowns/internal/search"
@@ -132,13 +131,13 @@ func platformLabel(id string) string {
 	case "gemini":
 		return "Google Gemini  (GEMINI.md)"
 	case "antigravity":
-		return "Antigravity  (.agent/rules/knowns.md, ~/.gemini/antigravity/mcp_config.json)"
+		return "Antigravity  (.agents/rules/knowns.md, ~/.gemini/antigravity/mcp_config.json)"
 	case "cursor":
 		return "Cursor  (.cursor/mcp.json)"
 	case "copilot":
 		return "GitHub Copilot  (.github/copilot-instructions.md)"
 	case "agents":
-		return "Generic Agents  (AGENTS.md, .agent/skills/)"
+		return "Generic Agents  (AGENTS.md, .agents/skills/)"
 	default:
 		return id
 	}
@@ -199,6 +198,7 @@ func hasPlatform(platforms []string, id string) bool {
 type initConfig struct {
 	Name            string
 	GitTrackingMode string
+	GitTracking     models.GitTracking
 	EnableSemantic  bool
 	SemanticModel   string
 	EmbeddingSource string // "local" or "api"
@@ -247,10 +247,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 					return err
 				}
 				project.Settings.GitTrackingMode = mode
+				gtDefaults := models.GitTrackingDefaults()
+				project.Settings.GitTracking = &gtDefaults
 				if err := store.Config.Save(project); err != nil {
 					return err
 				}
-				if err := writeKnownsGitignore(cwd, mode); err != nil {
+				if err := writeKnownsGitignore(cwd, mode, nil); err != nil {
 					return err
 				}
 				fmt.Printf("✓ Git tracking mode updated to %q\n", mode)
@@ -290,15 +292,17 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	if interactive && len(args) == 0 {
 		// Load any existing config to pre-populate wizard defaults.
-		var existingPlatforms []string
 		var existingName string
 		var existingGitTrackingMode string
+		var existingGitTracking *models.GitTracking
 		var existingSemanticEnabled *bool
 		var existingSemanticModel string
 		if existingCfg, err := storage.NewStore(root).Config.Load(); err == nil {
-			existingPlatforms = existingCfg.Settings.Platforms
 			existingName = existingCfg.Name
 			existingGitTrackingMode = existingCfg.Settings.GitTrackingMode
+			if existingCfg.Settings.GitTracking != nil {
+				existingGitTracking = existingCfg.Settings.GitTracking
+			}
 			if existingCfg.Settings.SemanticSearch != nil {
 				enabled := existingCfg.Settings.SemanticSearch.Enabled
 				existingSemanticEnabled = &enabled
@@ -307,7 +311,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 
 		// Run full wizard with huh
-		wizardCfg, err := runWizard(cwd, gitTracked, gitIgnored, gitAvailable, existingPlatforms, existingName, existingGitTrackingMode, existingSemanticEnabled, existingSemanticModel)
+		wizardCfg, err := runWizard(cwd, gitTracked, gitIgnored, gitAvailable, existingName, existingGitTrackingMode, existingGitTracking, existingSemanticEnabled, existingSemanticModel)
 		if err != nil {
 			if err == huh.ErrUserAborted {
 				fmt.Println(warnStyle.Render("Setup cancelled."))
@@ -331,6 +335,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		cfg = initConfig{
 			Name:            name,
 			GitTrackingMode: gitMode,
+			GitTracking:     models.GitTrackingDefaults(),
 			EnableSemantic:  isTTY(),
 			SemanticModel:   "multilingual-e5-small",
 			Platforms:       []string{"claude-code", "agents"},
@@ -357,6 +362,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 				}
 				if cfg.GitTrackingMode != "" {
 					project.Settings.GitTrackingMode = cfg.GitTrackingMode
+				}
+				if cfg.GitTrackingMode != "none" {
+					project.Settings.GitTracking = &cfg.GitTracking
 				}
 				if cfg.EnableSemantic && cfg.SemanticModel != "" {
 					if cfg.EmbeddingSource == "api" {
@@ -400,7 +408,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		{
 			label: "Configuring git integration",
 			run: func() error {
-				return writeKnownsGitignore(cwd, cfg.GitTrackingMode)
+				return writeKnownsGitignore(cwd, cfg.GitTrackingMode, &cfg.GitTracking)
 			},
 		},
 	}
@@ -463,102 +471,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	steps = append(steps,
-		initStep{
-			label: "Syncing skills",
-			run: func() error {
-				return codegen.SyncSkillsForPlatforms(cwd, cfg.Platforms)
-			},
-		},
-	)
-	if hasPlatform(cfg.Platforms, "claude-code") {
-		steps = append(steps, initStep{
-			label: "Creating MCP config",
-			run: func() error {
-				return createMCPJsonFileQuiet(cwd, force)
-			},
-		})
-	}
-	if hasPlatform(cfg.Platforms, "opencode") {
-		steps = append(steps, initStep{
-			label: "Creating OpenCode config",
-			run: func() error {
-				return createOpenCodeConfigQuiet(cwd)
-			},
-		})
-	}
-	if hasPlatform(cfg.Platforms, "kiro") {
-		steps = append(steps, initStep{
-			label: "Creating Kiro steering",
-			run: func() error {
-				return createKiroSteeringQuiet(cwd, force)
-			},
-		})
-		steps = append(steps, initStep{
-			label: "Creating Kiro MCP config",
-			run: func() error {
-				return createKiroMCPConfigQuiet(cwd)
-			},
-		})
-	}
-	if hasPlatform(cfg.Platforms, "codex") {
-		steps = append(steps, initStep{
-			label: "Creating Codex MCP config",
-			run: func() error {
-				return createCodexMCPConfigQuiet(cwd)
-			},
-		})
-	}
-	if hasPlatform(cfg.Platforms, "cursor") {
-		steps = append(steps, initStep{
-			label: "Creating Cursor MCP config",
-			run: func() error {
-				return createCursorMCPConfigQuiet(cwd)
-			},
-		})
-	}
-	if hasPlatform(cfg.Platforms, "antigravity") {
-		steps = append(steps, initStep{
-			label: "Creating Antigravity rules",
-			run: func() error {
-				return createAntigravityRulesQuiet(cwd, force)
-			},
-		})
-		steps = append(steps, initStep{
-			label: "Creating Antigravity MCP config",
-			run: func() error {
-				return createAntigravityMCPConfigQuiet(cwd)
-			},
-		})
-	}
-	for _, runtimeName := range []string{"claude-code", "codex", "kiro", "opencode"} {
-		if !hasPlatform(cfg.Platforms, runtimeName) {
-			continue
-		}
-		selectedRuntime := runtimeName
-		opts := runtimeinstall.DefaultOptions()
-		// Skip runtimes that are unavailable and cannot be auto-installed.
-		if !runtimeinstall.CanAutoInstall(selectedRuntime) {
-			st, err := runtimeinstall.StatusFor(selectedRuntime, opts)
-			if err != nil || !st.Available {
-				continue
-			}
-		}
-		steps = append(steps, initStep{
-			label: fmt.Sprintf("Installing %s runtime hooks", runtimeinstall.RuntimePickerLabel(selectedRuntime, opts)),
-			run: func() error {
-				return runtimeinstall.Install(selectedRuntime, opts)
-			},
-		})
-	}
-	steps = append(steps,
-		initStep{
-			label: "Creating instruction files",
-			run: func() error {
-				return createInstructionFilesForPlatforms(cwd, force, cfg.Platforms)
-			},
-		},
-	)
 	if cfg.EnableSemantic {
 		steps = append(steps, initStep{
 			label: "Building project and global semantic indices",
@@ -577,6 +489,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Println(titleStyle.Render("Get started:"))
 	fmt.Println(dimStyle.Render("  knowns task create \"My first task\""))
+	printSetupSuggestion(cwd)
 	fmt.Println(dimStyle.Render("  Use /kn-init to start an AI session"))
 	if cfg.EnableChatUI {
 		fmt.Println(dimStyle.Render("  knowns browser --open   # Launch Chat UI"))
@@ -585,7 +498,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	return maybeOpenBrowser(cwd, openFlag, noOpen)
 }
 
-func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, existingPlatforms []string, existingName string, existingGitTrackingMode string, existingSemanticEnabled *bool, existingSemanticModel string) (*initConfig, error) {
+func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, existingName string, existingGitTrackingMode string, existingGitTracking *models.GitTracking, existingSemanticEnabled *bool, existingSemanticModel string) (*initConfig, error) {
 	defaultName := filepath.Base(cwd)
 	if existingName != "" {
 		defaultName = existingName
@@ -638,40 +551,7 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 		cfg.GitTrackingMode = "git-ignored"
 	}
 
-	// --- Group 2: AI platform selection ---
-	defaultPlatforms := []string{"claude-code", "opencode", "agents"}
-	if len(existingPlatforms) > 0 {
-		defaultPlatforms = append([]string(nil), existingPlatforms...)
-		if len(defaultPlatforms) == 0 {
-			defaultPlatforms = []string{"claude-code", "opencode", "agents"}
-		}
-	}
-	cfg.Platforms = append([]string(nil), defaultPlatforms...)
-	selectedSet := make(map[string]bool, len(defaultPlatforms))
-	for _, p := range defaultPlatforms {
-		selectedSet[p] = true
-	}
-	platformOptions := make([]huh.Option[string], len(wizardPlatformIDs))
-	for i, id := range wizardPlatformIDs {
-		platformOptions[i] = huh.NewOption(platformLabel(id), id).Selected(selectedSet[id])
-	}
-	runtimeSummary := compactRuntimeCoverageSummary(runtimeinstall.DefaultOptions())
-	group2 := huh.NewGroup(
-		huh.NewMultiSelect[string]().
-			Title("AI platforms to integrate").
-			Description("Choose which platforms to generate config and instruction files for.\n" +
-				"At least one platform must be selected.\n\n" + runtimeSummary).
-			Options(platformOptions...).
-			Validate(func(selected []string) error {
-				if len(selected) == 0 {
-					return fmt.Errorf("select at least one platform")
-				}
-				return nil
-			}).
-			Value(&cfg.Platforms),
-	)
-
-	// --- Group 4: Semantic search ---
+	// --- Group 2: Semantic search ---
 	cfg.EnableSemantic = true
 	cfg.SemanticModel = "multilingual-e5-small"
 	if existingSemanticEnabled != nil {
@@ -680,49 +560,11 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 	if existingSemanticModel != "" {
 		cfg.SemanticModel = existingSemanticModel
 	}
-	group5 := huh.NewGroup(
-		huh.NewConfirm().
-			Title("Enable semantic search?").
-			Description("Requires embedding model download").
-			Value(&cfg.EnableSemantic),
-	)
-
-	// --- Group 5b: Embedding source selection (only shown if semantic enabled) ---
-	cfg.EmbeddingSource = "local"
-	embeddingSourceOptions := []huh.Option[string]{
-		huh.NewOption("Local ONNX (offline, bundled)", "local"),
-		huh.NewOption("API Provider (Ollama, OpenAI, etc.)", "api"),
-	}
-	group5b := huh.NewGroup(
-		huh.NewSelect[string]().
-			Title("Select embedding source").
-			Options(embeddingSourceOptions...).
-			Value(&cfg.EmbeddingSource),
-	).WithHideFunc(func() bool {
-		return !cfg.EnableSemantic
-	})
-
-	// --- Group 6: Model selection (only shown if semantic enabled AND local source) ---
-	modelOptions := make([]huh.Option[string], len(supportedEmbeddingModels)+1)
-	for i, m := range supportedEmbeddingModels {
-		modelOptions[i] = huh.NewOption(fmt.Sprintf("%s — %s", m.Title, m.Description), m.ID)
-	}
-	modelOptions[len(supportedEmbeddingModels)] = huh.NewOption("Custom HuggingFace model...", "__custom__")
-	group6 := huh.NewGroup(
-		huh.NewSelect[string]().
-			Title("Select embedding model").
-			Options(modelOptions...).
-			Value(&cfg.SemanticModel),
-	).WithHideFunc(func() bool {
-		return !cfg.EnableSemantic || cfg.EmbeddingSource != "local"
-	})
-
 	// Run form
 	groups := []*huh.Group{nameField}
 	if gitGroup != nil {
 		groups = append(groups, gitGroup)
 	}
-	groups = append(groups, group2, group5, group5b, group6)
 
 	form := huh.NewForm(groups...).
 		WithTheme(huh.ThemeCatppuccin()).
@@ -732,30 +574,79 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 		return nil, err
 	}
 
-	// Always enable Chat UI when opencode platform is selected.
-	cfg.EnableChatUI = hasPlatform(cfg.Platforms, "opencode")
-
-	// If custom HuggingFace model selected, prompt for model ID.
-	if cfg.EnableSemantic && cfg.EmbeddingSource == "local" && cfg.SemanticModel == "__custom__" {
-		if err := initCustomHuggingFaceModel(&cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: custom model setup failed: %v\n", err)
-			fmt.Println(dimStyle.Render("  Falling back to multilingual-e5-small"))
-			cfg.SemanticModel = "multilingual-e5-small"
-		}
+	// Seed per-section toggles from existing config.
+	if existingGitTracking != nil {
+		cfg.GitTracking = *existingGitTracking
+	} else {
+		cfg.GitTracking = models.GitTrackingDefaults()
 	}
-
-	// If API source selected, run Ollama detection post-wizard.
-	if cfg.EnableSemantic && cfg.EmbeddingSource == "api" {
-		if err := initAPIProviderFlow(&cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: API provider setup failed: %v\n", err)
-			fmt.Println(dimStyle.Render("  You can configure later: knowns provider add"))
-			// Fall back to local.
-			cfg.EmbeddingSource = "local"
-			cfg.SemanticModel = "multilingual-e5-small"
+	if cfg.GitTrackingMode != "none" {
+		selected := gitTrackingSelectedSections(&cfg.GitTracking)
+		trackingForm := huh.NewForm(
+			huh.NewGroup(
+				huh.NewMultiSelect[string]().
+					Title("Knowns sections to track in git").
+					Description("Choose sections under .knowns/ that should be committed.").
+					Options(
+						huh.NewOption("Tasks", "tasks").Selected(sectionSelected(selected, "tasks")),
+						huh.NewOption("Docs", "docs").Selected(sectionSelected(selected, "docs")),
+						huh.NewOption("Templates", "templates").Selected(sectionSelected(selected, "templates")),
+						huh.NewOption("Memories", "memories").Selected(sectionSelected(selected, "memories")),
+					).
+					Value(&selected),
+			),
+		).WithTheme(huh.ThemeCatppuccin())
+		if err := trackingForm.Run(); err != nil {
+			return nil, err
 		}
+		cfg.GitTracking = gitTrackingFromSelectedSections(selected)
 	}
 
 	return &cfg, nil
+}
+
+func gitTrackingSelectedSections(tracking *models.GitTracking) []string {
+	defaults := models.GitTrackingDefaults()
+	gt := tracking
+	if gt == nil {
+		gt = &defaults
+	}
+	selected := []string{}
+	if gt.Tasks != nil && *gt.Tasks || gt.Tasks == nil && *defaults.Tasks {
+		selected = append(selected, "tasks")
+	}
+	if gt.Docs != nil && *gt.Docs || gt.Docs == nil && *defaults.Docs {
+		selected = append(selected, "docs")
+	}
+	if gt.Templates != nil && *gt.Templates || gt.Templates == nil && *defaults.Templates {
+		selected = append(selected, "templates")
+	}
+	if gt.Memories != nil && *gt.Memories || gt.Memories == nil && *defaults.Memories {
+		selected = append(selected, "memories")
+	}
+	return selected
+}
+
+func sectionSelected(selected []string, section string) bool {
+	for _, s := range selected {
+		if s == section {
+			return true
+		}
+	}
+	return false
+}
+
+func gitTrackingFromSelectedSections(selected []string) models.GitTracking {
+	tasks := sectionSelected(selected, "tasks")
+	docs := sectionSelected(selected, "docs")
+	templates := sectionSelected(selected, "templates")
+	memories := sectionSelected(selected, "memories")
+	return models.GitTracking{
+		Tasks:     &tasks,
+		Docs:      &docs,
+		Templates: &templates,
+		Memories:  &memories,
+	}
 }
 
 // initAPIProviderFlow detects Ollama, registers provider+model, and sets config.
@@ -1395,9 +1286,9 @@ func createCodexMCPConfigQuiet(projectRoot string) error {
 }
 
 func createAntigravityRulesQuiet(projectRoot string, force bool) error {
-	rulesDir := filepath.Join(projectRoot, ".agent", "rules")
+	rulesDir := filepath.Join(projectRoot, ".agents", "rules")
 	if err := os.MkdirAll(rulesDir, 0755); err != nil {
-		return fmt.Errorf("create .agent/rules: %w", err)
+		return fmt.Errorf("create .agents/rules: %w", err)
 	}
 
 	rulePath := filepath.Join(rulesDir, "knowns.md")
@@ -1840,8 +1731,9 @@ const (
 )
 
 // writeKnownsGitignore creates .knowns/.gitignore with ignore rules based on
-// the git tracking mode. Also removes any legacy marker block from root .gitignore.
-func writeKnownsGitignore(dir, mode string) error {
+// the git tracking mode and per-section toggles. Also removes any legacy marker
+// block from root .gitignore.
+func writeKnownsGitignore(dir, mode string, tracking *models.GitTracking) error {
 	// Remove legacy marker block from root .gitignore if present.
 	removeLegacyGitignoreBlock(dir)
 
@@ -1855,36 +1747,96 @@ func writeKnownsGitignore(dir, mode string) error {
 		}
 	}
 
+	// Resolve per-section tracking: explicit toggle > mode default.
+	modeDefaults := models.GitTrackingModeDefaults(mode)
+	gt := tracking
+	if gt == nil {
+		gt = &models.GitTracking{}
+	}
+	sectionTracked := func(section string) bool {
+		var explicit *bool
+		switch section {
+		case "tasks":
+			explicit = gt.Tasks
+		case "docs":
+			explicit = gt.Docs
+		case "templates":
+			explicit = gt.Templates
+		case "memories":
+			explicit = gt.Memories
+		}
+		if explicit != nil {
+			return *explicit
+		}
+		switch section {
+		case "tasks":
+			return *modeDefaults.Tasks
+		case "docs":
+			return *modeDefaults.Docs
+		case "templates":
+			return *modeDefaults.Templates
+		case "memories":
+			return *modeDefaults.Memories
+		}
+		return false
+	}
+
 	switch mode {
 	case "git-tracked":
-		// Track all .knowns/ content; only ignore runtime/cache files.
-		content := "# Managed by Knowns CLI — do not edit manually.\n" +
-			"# Run 'knowns init' to regenerate.\n\n" +
-			"# Runtime & cache\n" +
-			".search/\n" +
-			".working-memory/\n" +
-			"runtime/\n" +
-			"worktrees/\n" +
-			".server-port\n" +
-			".DS_Store\n"
-		return os.WriteFile(gitignorePath, []byte(content), 0644)
+		// Track all .knowns/ content; only ignore runtime/cache files and
+		// sections explicitly disabled.
+		var buf strings.Builder
+		buf.WriteString("# Managed by Knowns CLI — do not edit manually.\n")
+		buf.WriteString("# Run 'knowns init' to regenerate.\n\n")
+		buf.WriteString("# Runtime & cache\n")
+		buf.WriteString(".search/\n")
+		buf.WriteString(".working-memory/\n")
+		buf.WriteString("runtime/\n")
+		buf.WriteString("worktrees/\n")
+		buf.WriteString(".server-port\n")
+		buf.WriteString(".DS_Store\n")
+		if !sectionTracked("tasks") {
+			buf.WriteString("\n# Per-section tracking disabled\n")
+			buf.WriteString("tasks/\n")
+		}
+		if !sectionTracked("docs") {
+			buf.WriteString("docs/\n")
+		}
+		if !sectionTracked("templates") {
+			buf.WriteString("templates/\n")
+		}
+		if !sectionTracked("memories") {
+			buf.WriteString("memories/\n")
+		}
+		return os.WriteFile(gitignorePath, []byte(buf.String()), 0644)
 
 	case "git-ignored":
-		// Only track config, docs, templates, tasks; ignore everything else.
-		content := "# Managed by Knowns CLI — do not edit manually.\n" +
-			"# Run 'knowns init' to regenerate.\n\n" +
-			"# Ignore everything by default\n" +
-			"*\n\n" +
-			"# Track these\n" +
-			"!.gitignore\n" +
-			"!config.json\n" +
-			"!docs/\n" +
-			"!docs/**\n" +
-			"!templates/\n" +
-			"!templates/**\n" +
-			"!tasks/\n" +
-			"!tasks/**\n"
-		return os.WriteFile(gitignorePath, []byte(content), 0644)
+		// Ignore everything by default, then un-ignore sections that are enabled.
+		var buf strings.Builder
+		buf.WriteString("# Managed by Knowns CLI — do not edit manually.\n")
+		buf.WriteString("# Run 'knowns init' to regenerate.\n\n")
+		buf.WriteString("# Ignore everything by default\n")
+		buf.WriteString("*\n\n")
+		buf.WriteString("# Track these\n")
+		buf.WriteString("!.gitignore\n")
+		buf.WriteString("!config.json\n")
+		if sectionTracked("docs") {
+			buf.WriteString("!docs/\n")
+			buf.WriteString("!docs/**\n")
+		}
+		if sectionTracked("templates") {
+			buf.WriteString("!templates/\n")
+			buf.WriteString("!templates/**\n")
+		}
+		if sectionTracked("tasks") {
+			buf.WriteString("!tasks/\n")
+			buf.WriteString("!tasks/**\n")
+		}
+		if sectionTracked("memories") {
+			buf.WriteString("!memories/\n")
+			buf.WriteString("!memories/**\n")
+		}
+		return os.WriteFile(gitignorePath, []byte(buf.String()), 0644)
 
 	case "none":
 		// Remove .knowns/.gitignore if it exists.
