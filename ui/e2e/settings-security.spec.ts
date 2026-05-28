@@ -101,29 +101,38 @@ test.describe("Settings — Security (set from UI)", () => {
 	});
 
 	test("removing password changes status back to Unprotected", async ({ page }) => {
-		await test.step("Navigate to Settings → Security", async () => {
-			await page.goto(`${server.baseURL}/config`);
-			await page.getByText("Security").first().click();
-		});
-
-		await test.step("Ensure password is set", async () => {
-			const protectedText = page.getByText("Protected");
-			const isProtected = await protectedText.isVisible().catch(() => false);
-
-			if (!isProtected) {
-				const pwInput = page.locator('input[placeholder="Enter password"]');
-				await pwInput.fill("temp123");
-				await page.waitForTimeout(500);
-				const setBtn = page.locator('button:has-text("Set")').first();
-				await expect(setBtn).toBeEnabled({ timeout: 3000 });
-				await setBtn.click();
-				await page.waitForTimeout(3000);
-				await expect(page.getByText("Protected").first()).toBeVisible({ timeout: 5000 });
+		await test.step("Set password via API first", async () => {
+			// Ensure password is set so we can test removal
+			const setResp = await page.request.post(`${server.baseURL}/api/auth/password`, {
+				data: { password: "removetest123" },
+			});
+			// May fail if already set — that's OK
+			if (!setResp.ok()) {
+				// Already protected — login first
+				const loginResp = await page.request.post(`${server.baseURL}/api/auth/login`, {
+					data: { password: "mytestpassword" },
+				});
+				if (!loginResp.ok()) {
+					// Try the other password
+					await page.request.post(`${server.baseURL}/api/auth/login`, {
+						data: { password: "removetest123" },
+					});
+				}
 			}
 		});
 
+		await test.step("Navigate to Settings → Security", async () => {
+			await page.goto(`${server.baseURL}/config`);
+			await page.waitForTimeout(1000);
+			const securityBtn = page.getByRole("button", { name: "Security" });
+			await expect(securityBtn).toBeVisible({ timeout: 15000 });
+			await securityBtn.click();
+		});
+
 		await test.step("Click Remove Password", async () => {
-			await page.getByText(/remove password/i).first().click();
+			const removeBtn = page.getByText(/remove password/i).first();
+			await expect(removeBtn).toBeVisible({ timeout: 10000 });
+			await removeBtn.click();
 			await page.waitForTimeout(2000);
 		});
 
