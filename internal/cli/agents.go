@@ -43,15 +43,9 @@ func runAgents(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	doSync, _ := cmd.Flags().GetBool("sync")
-	force, _ := cmd.Flags().GetBool("force")
 	jsonOut := isJSON(cmd)
 
 	projectRoot := filepath.Dir(store.Root)
-
-	if doSync {
-		return runAgentsSync(projectRoot, force)
-	}
 
 	return runAgentsStatus(cmd, projectRoot, jsonOut)
 }
@@ -138,53 +132,6 @@ func runAgentsStatus(cmd *cobra.Command, projectRoot string, jsonOut bool) error
 	return nil
 }
 
-// runAgentsSync syncs/generates agent instruction files from project config.
-func runAgentsSync(projectRoot string, force bool) error {
-	fmt.Println(StyleBold.Render("Syncing agent instruction files..."))
-
-	synced := 0
-	skipped := 0
-
-	for _, p := range knownPlatforms {
-		fullPath := filepath.Join(projectRoot, p.FileName)
-		exists := false
-		if _, err := os.Stat(fullPath); err == nil {
-			exists = true
-		}
-
-		if exists && !force {
-			fmt.Printf("  %s %s %s\n", StyleDim.Render("["+p.Name+"]"), p.FileName, StyleDim.Render("(skipped, use --force to overwrite)"))
-			skipped++
-			continue
-		}
-
-		// Ensure parent directory exists (needed for .github/copilot-instructions.md)
-		dir := filepath.Dir(fullPath)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("create directory %s: %w", dir, err)
-		}
-
-		content := generateInstructionContent(p.FileName, p.Label, projectRoot)
-		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-			return fmt.Errorf("write %s: %w", p.FileName, err)
-		}
-
-		action := "created"
-		if exists {
-			action = "overwritten"
-		}
-		fmt.Printf("  %s %s %s.\n", StyleSuccess.Render("["+p.Name+"]"), p.FileName, action)
-		synced++
-	}
-
-	fmt.Println()
-	fmt.Println(RenderSuccess(fmt.Sprintf("Sync complete: %d synced, %d skipped.", synced, skipped)))
-	return nil
-}
-
 func init() {
-	agentsCmd.Flags().Bool("sync", false, "Sync/generate instruction files from templates")
-	agentsCmd.Flags().Bool("force", false, "Force overwrite existing instruction files")
-
 	rootCmd.AddCommand(agentsCmd)
 }

@@ -30,7 +30,7 @@ func RegisterCodeTool(s *server.MCPServer, getStore func() *storage.Store, getLS
 	}
 	s.AddTool(
 		mcp.NewTool("code",
-			mcp.WithDescription("Code intelligence operations. Use 'action' to specify: symbols, find, definition, references, implementations, diagnostics, rename, replace, replace_body, insert, delete."),
+			mcp.WithDescription("Code intelligence operations. Use 'action' to specify: symbols, find, definition, references, implementations, diagnostics, rename, replace, replace_body, insert, delete. Symbols and find return compact JSON by default; set verbose=true for raw/full LSP-style output."),
 			mcp.WithString("action",
 				mcp.Required(),
 				mcp.Description("Action to perform"),
@@ -64,6 +64,9 @@ func RegisterCodeTool(s *server.MCPServer, getStore func() *storage.Store, getLS
 			mcp.WithString("severity",
 				mcp.Description("Optional diagnostics severity filter: error, warning, info, hint"),
 				mcp.Enum("error", "warning", "info", "hint"),
+			),
+			mcp.WithString("verbose",
+				mcp.Description("When true, return full LSP-style output instead of compact format. Supported by: symbols, find."),
 			),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -298,12 +301,77 @@ func lspSeverity(severity int) string {
 	}
 }
 
+// symbolKindString converts LSP SymbolKind numeric code to human-readable string.
+func symbolKindString(kind int) string {
+	switch kind {
+	case 1:
+		return "File"
+	case 2:
+		return "Module"
+	case 3:
+		return "Namespace"
+	case 4:
+		return "Package"
+	case 5:
+		return "Class"
+	case 6:
+		return "Method"
+	case 7:
+		return "Property"
+	case 8:
+		return "Field"
+	case 9:
+		return "Constructor"
+	case 10:
+		return "Enum"
+	case 11:
+		return "Interface"
+	case 12:
+		return "Function"
+	case 13:
+		return "Variable"
+	case 14:
+		return "Constant"
+	case 15:
+		return "String"
+	case 16:
+		return "Number"
+	case 17:
+		return "Boolean"
+	case 18:
+		return "Array"
+	case 19:
+		return "Object"
+	case 20:
+		return "Key"
+	case 21:
+		return "Null"
+	case 22:
+		return "EnumMember"
+	case 23:
+		return "Struct"
+	case 24:
+		return "Event"
+	case 25:
+		return "Operator"
+	case 26:
+		return "TypeParameter"
+	default:
+		return "Unknown"
+	}
+}
+
 func handleCodeSymbols(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getLSPManager, req)
 	if err != nil {
 		return errResult(err.Error())
 	}
-	_ = store
+	args := req.GetArguments()
+	depth, _ := intArg(args, "depth")
+	includeBody := boolArg(args, "include_body")
+	verbose := boolArg(args, "verbose")
+	kindFilter, _ := stringArg(args, "kind")
+
 	var symbols []lsp.DocumentSymbol
 	err = mgr.WithFile(ctx, absPath, func(srv *lsp.Server) error {
 		var callErr error
@@ -313,8 +381,103 @@ func handleCodeSymbols(ctx context.Context, getStore func() *storage.Store, getL
 	if err != nil {
 		return errResult(err.Error())
 	}
-	out, _ := json.MarshalIndent(symbols, "", "  ")
+	if kindFilter != "" {
+		symbols = filterSymbolsByKind(symbols, kindFilter)
+	}
+	if verbose {
+		out, _ := json.MarshalIndent(symbols, "", "  ")
+		return mcp.NewToolResultText(string(out)), nil
+	}
+	var resp any
+	if includeBody {
+		resp = detailedSymbols(projectRoot(store), absPath, symbols)
+	} else if depth > 0 {
+		resp = nestedSymbols(symbols, depth)
+	} else {
+		resp = groupedSymbolNames(symbols)
+	}
+	out, _ := json.MarshalIndent(resp, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+// groupedSymbolNames produces {kind: [name1, name2, ...]} — compact default.
+func groupedSymbolNames(symbols []lsp.DocumentSymbol) map[string][]string {
+	grouped := make(map[string][]string)
+	for _, sym := range symbols {
+		groupSymbolNames(grouped, "", sym)
+	}
+	return grouped
+}
+
+func groupSymbolNames(grouped map[string][]string, parent string, sym lsp.DocumentSymbol) {
+	name := sym.Name
+	if parent != "" {
+		name = parent + "." + sym.Name
+	}
+	kind := symbolKindString(sym.Kind)
+	grouped[kind] = append(grouped[kind], name)
+	for _, child := range sym.Children {
+		groupSymbolNames(grouped, name, child)
+	}
+}
+
+// nestedSymbols returns symbols with children up to given depth, flat kind strings.
+func nestedSymbols(symbols []lsp.DocumentSymbol, depth int) []map[string]any {
+	result := make([]map[string]any, 0, len(symbols))
+	for _, sym := range symbols {
+		item := map[string]any{
+			"name": sym.Name,
+			"kind": symbolKindString(sym.Kind),
+			"line": sym.Range.Start.Line + 1,
+		}
+		if depth > 0 && len(sym.Children) > 0 {
+			item["children"] = nestedSymbols(sym.Children, depth-1)
+		}
+		result = append(result, item)
+	}
+	return result
+}
+
+// detailedSymbols returns per-symbol detail with compact location and body source.
+func detailedSymbols(root, absPath string, symbols []lsp.DocumentSymbol) []map[string]any {
+	result := make([]map[string]any, 0, len(symbols))
+	for _, sym := range symbols {
+		item := detailedSymbol(root, absPath, sym)
+		result = append(result, item)
+	}
+	return result
+}
+
+func detailedSymbol(root, absPath string, sym lsp.DocumentSymbol) map[string]any {
+	item := map[string]any{
+		"name": sym.Name,
+		"kind": symbolKindString(sym.Kind),
+		"file": relPath(root, absPath),
+		"body_location": map[string]int{
+			"start_line": sym.Range.Start.Line + 1,
+			"end_line":   sym.Range.End.Line + 1,
+		},
+		"body": sourceForRange(absPath, sym.Range),
+	}
+	if len(sym.Children) > 0 {
+		children := make([]map[string]any, 0, len(sym.Children))
+		for _, child := range sym.Children {
+			children = append(children, detailedSymbol(root, absPath, child))
+		}
+		item["children"] = children
+	}
+	return item
+}
+
+// filterSymbolsByKind returns symbols matching a kind string filter.
+func filterSymbolsByKind(symbols []lsp.DocumentSymbol, kind string) []lsp.DocumentSymbol {
+	out := make([]lsp.DocumentSymbol, 0)
+	for _, sym := range symbols {
+		if strings.EqualFold(symbolKindString(sym.Kind), kind) {
+			out = append(out, sym)
+		}
+	}
+	return out
 }
 
 func handleCodeRename(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -583,6 +746,7 @@ func handleCodeFind(ctx context.Context, getStore func() *storage.Store, getLSPM
 	}
 	path, _ := stringArg(args, "path")
 	includeBody := boolArg(args, "include_body")
+	verbose := boolArg(args, "verbose")
 	depth, _ := intArg(args, "depth")
 	limit, ok := intArg(args, "limit")
 	if !ok || limit <= 0 {
@@ -594,7 +758,7 @@ func handleCodeFind(ctx context.Context, getStore func() *storage.Store, getLSPM
 
 	// Try workspace/symbol first — fast, single request
 	if path == "" {
-		wsResults := tryWorkspaceSymbol(ctx, mgr, root, query, limit)
+		wsResults := tryWorkspaceSymbol(ctx, mgr, root, query, limit, verbose)
 		if len(wsResults) > 0 {
 			resp := map[string]any{"results": wsResults, "total": len(wsResults)}
 			out, _ := json.MarshalIndent(resp, "", "  ")
@@ -618,7 +782,7 @@ func handleCodeFind(ctx context.Context, getStore func() *storage.Store, getLSPM
 			if e != nil {
 				return nil
 			}
-			appendSymbolMatches(&results, root, file, symbols, query, includeBody, depth, collectLimit)
+			appendSymbolMatches(&results, root, file, symbols, query, includeBody, depth, verbose, collectLimit)
 			return nil
 		}); err != nil {
 			lastErr = err
@@ -640,7 +804,7 @@ func handleCodeFind(ctx context.Context, getStore func() *storage.Store, getLSPM
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func tryWorkspaceSymbol(ctx context.Context, mgr *lsp.Manager, root, query string, limit int) []map[string]any {
+func tryWorkspaceSymbol(ctx context.Context, mgr *lsp.Manager, root, query string, limit int, verbose bool) []map[string]any {
 	var results []map[string]any
 	mgr.WithAnyServer(ctx, func(srv *lsp.Server) error {
 		symbols, err := srv.WorkspaceSymbol(ctx, query)
@@ -658,7 +822,7 @@ func tryWorkspaceSymbol(ctx context.Context, mgr *lsp.Manager, root, query strin
 			}
 			entry := map[string]any{
 				"name":      sym.Name,
-				"kind":      sym.Kind,
+				"kind":      symbolKindString(sym.Kind),
 				"file":      relFile,
 				"line":      sym.Location.Range.Start.Line + 1,
 				"column":    sym.Location.Range.Start.Character + 1,
@@ -668,6 +832,10 @@ func tryWorkspaceSymbol(ctx context.Context, mgr *lsp.Manager, root, query strin
 					"start_line": sym.Location.Range.Start.Line + 1,
 					"end_line":   sym.Location.Range.End.Line + 1,
 				},
+			}
+			if verbose {
+				entry["range"] = sym.Location.Range
+				entry["container_name"] = sym.ContainerName
 			}
 			if sym.ContainerName != "" {
 				entry["full_name"] = sym.ContainerName + "." + sym.Name
@@ -950,17 +1118,17 @@ func findCodeFiles(root, path string) ([]string, error) {
 	return files, err
 }
 
-func appendSymbolMatches(results *[]map[string]any, root, file string, symbols []lsp.DocumentSymbol, query string, includeBody bool, depth, limit int) {
+func appendSymbolMatches(results *[]map[string]any, root, file string, symbols []lsp.DocumentSymbol, query string, includeBody bool, depth int, verbose bool, limit int) {
 	for _, sym := range symbols {
 		if len(*results) >= limit {
 			return
 		}
-		appendOneSymbolMatch(results, root, file, sym, "", query, includeBody, depth)
-		appendSymbolMatches(results, root, file, sym.Children, query, includeBody, depth, limit)
+		appendOneSymbolMatch(results, root, file, sym, "", query, includeBody, depth, verbose)
+		appendSymbolMatches(results, root, file, sym.Children, query, includeBody, depth, verbose, limit)
 	}
 }
 
-func appendOneSymbolMatch(results *[]map[string]any, root, file string, sym lsp.DocumentSymbol, parent, query string, includeBody bool, depth int) {
+func appendOneSymbolMatch(results *[]map[string]any, root, file string, sym lsp.DocumentSymbol, parent, query string, includeBody bool, depth int, verbose bool) {
 	full := sym.Name
 	if parent != "" {
 		full = parent + "." + sym.Name
@@ -971,11 +1139,16 @@ func appendOneSymbolMatch(results *[]map[string]any, root, file string, sym lsp.
 	}
 	if score < symbolScoreThreshold {
 		for _, child := range sym.Children {
-			appendOneSymbolMatch(results, root, file, child, full, query, includeBody, depth)
+			appendOneSymbolMatch(results, root, file, child, full, query, includeBody, depth, verbose)
 		}
 		return
 	}
-	item := map[string]any{"name": sym.Name, "full_name": full, "file": relPath(root, file), "line": sym.Range.Start.Line + 1, "column": sym.Range.Start.Character + 1, "kind": sym.Kind, "score": score, "body_location": map[string]int{"start_line": sym.Range.Start.Line + 1, "end_line": sym.Range.End.Line + 1}}
+	item := map[string]any{"name": sym.Name, "full_name": full, "file": relPath(root, file), "line": sym.Range.Start.Line + 1, "column": sym.Range.Start.Character + 1, "kind": symbolKindString(sym.Kind), "score": score, "body_location": map[string]int{"start_line": sym.Range.Start.Line + 1, "end_line": sym.Range.End.Line + 1}}
+	if verbose {
+		item["detail"] = sym.Detail
+		item["range"] = sym.Range
+		item["selectionRange"] = sym.SelectionRange
+	}
 	if includeBody {
 		item["body"] = sourceForRange(file, sym.Range)
 	}
@@ -988,7 +1161,7 @@ func appendOneSymbolMatch(results *[]map[string]any, root, file string, sym lsp.
 func symbolChildren(symbols []lsp.DocumentSymbol, depth int) []map[string]any {
 	children := make([]map[string]any, 0, len(symbols))
 	for _, sym := range symbols {
-		item := map[string]any{"name": sym.Name, "line": sym.Range.Start.Line + 1, "column": sym.Range.Start.Character + 1, "kind": sym.Kind}
+		item := map[string]any{"name": sym.Name, "line": sym.Range.Start.Line + 1, "column": sym.Range.Start.Character + 1, "kind": symbolKindString(sym.Kind)}
 		if depth > 0 && len(sym.Children) > 0 {
 			item["children"] = symbolChildren(sym.Children, depth-1)
 		}

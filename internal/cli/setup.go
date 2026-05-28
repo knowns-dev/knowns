@@ -24,13 +24,22 @@ Targets:
   opencode  Generate OPENCODE.md, KNOWNS.md, opencode.json, skills, and runtime hooks
   copilot   Generate .github/copilot-instructions.md and KNOWNS.md
   kiro      Generate .kiro steering/settings, KNOWNS.md, skills, and runtime hooks
-  all       Generate all supported AI integration files`,
+  all       Generate all supported AI integration files
+
+Use --global to install at user-level paths (no project required).
+Global MCP uses 'knowns mcp --stdio' without --project flag.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runSetupCmd,
 }
 
 func runSetupCmd(cmd *cobra.Command, args []string) error {
 	force, _ := cmd.Flags().GetBool("force")
+
+	// Check --global first, before .knowns check
+	global, _ := cmd.Flags().GetBool("global")
+	if global {
+		return runGlobalSetup(cmd, args, force)
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -69,10 +78,18 @@ func runSetupCmd(cmd *cobra.Command, args []string) error {
 			platforms = []string{"copilot"}
 		case "kiro":
 			platforms = []string{"kiro"}
+		case "codex":
+			platforms = []string{"codex"}
+		case "cursor":
+			platforms = []string{"cursor"}
+		case "gemini":
+			platforms = []string{"gemini"}
+		case "antigravity":
+			platforms = []string{"antigravity"}
 		case "all":
 			platforms = allPlatformIDs
 		default:
-			return fmt.Errorf("unknown setup target %q (expected: claude, opencode, copilot, kiro, all)", target)
+			return fmt.Errorf("unknown setup target %q (expected: claude, opencode, copilot, kiro, codex, cursor, gemini, antigravity, all)", target)
 		}
 	}
 
@@ -260,5 +277,6 @@ func printSetupSuggestion(projectRoot string) {
 
 func init() {
 	setupCmd.Flags().BoolP("force", "f", false, "Overwrite generated files where supported")
+	setupCmd.Flags().Bool("global", false, "Install to user-level paths (no project required)")
 	rootCmd.AddCommand(setupCmd)
 }

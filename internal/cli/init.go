@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 
+	"github.com/howznguyen/knowns/internal/lsp"
+	"github.com/howznguyen/knowns/internal/lsp/adapters"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/runtimeinstall"
 	"github.com/howznguyen/knowns/internal/search"
@@ -164,10 +167,6 @@ func compactRuntimePickerLabel(id string, opts runtimeinstall.Options) string {
 		return id
 	}
 	return fmt.Sprintf("%s %s", runtimeStatusDot(status), specLabel)
-}
-
-func compactRuntimeCoverageSummary(opts runtimeinstall.Options) string {
-	return ""
 }
 
 func runtimeStatusDot(status string) string {
@@ -481,6 +480,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 		})
 	}
 
+	steps = append(steps, initStep{
+		label: "Installing language servers",
+		run: func() error {
+			return autoInstallLSPServers(cwd)
+		},
+	})
+
 	fmt.Println()
 	if err := runInitSteps(steps); err != nil {
 		return fmt.Errorf("init failed: %w", err)
@@ -647,259 +653,6 @@ func gitTrackingFromSelectedSections(selected []string) models.GitTracking {
 		Templates: &templates,
 		Memories:  &memories,
 	}
-}
-
-// initAPIProviderFlow detects Ollama, registers provider+model, and sets config.
-func initAPIProviderFlow(cfg *initConfig) error {
-	detector := search.NewOllamaDetector(search.OllamaDefaultBase)
-	running, version := detector.IsRunning()
-	if !running {
-		return fmt.Errorf("no Ollama detected at %s. Start Ollama first or use 'knowns provider add' manually", search.OllamaDefaultBase)
-	}
-
-	fmt.Printf("\n%s Detected Ollama %s at %s\n", successStyle.Render("✓"), version, search.OllamaDefaultBase)
-
-	models, err := detector.ListEmbeddingModels()
-	if err != nil || len(models) == 0 {
-		return fmt.Errorf("no embedding models found in Ollama. Pull one first: ollama pull nomic-embed-text")
-	}
-
-	fmt.Println("  Available embedding models:")
-	for _, m := range models {
-		fmt.Printf("    • %s (%dd)\n", m.ShortName, m.Dimensions)
-	}
-	fmt.Println()
-
-	// Let user choose embedding model.
-	modelOpts := make([]huh.Option[string], len(models))
-	for i, m := range models {
-		modelOpts[i] = huh.NewOption(fmt.Sprintf("%s (%dd)", m.ShortName, m.Dimensions), m.ShortName)
-	}
-	var selectedName string
-	selectForm := huh.NewForm(huh.NewGroup(
-		huh.NewSelect[string]().
-			Title("Select Ollama embedding model").
-			Options(modelOpts...).
-			Value(&selectedName),
-	)).WithTheme(huh.ThemeCatppuccin())
-	if err := selectForm.Run(); err != nil {
-		return err
-	}
-	var selected search.OllamaEmbeddingModel
-	for _, m := range models {
-		if m.ShortName == selectedName {
-			selected = m
-			break
-		}
-	}
-	if selected.ShortName == "" {
-		selected = models[0]
-	}
-
-	// Register provider and model in global settings.
-	settingsStore := storage.NewEmbeddingSettingsStore()
-	settings, err := settingsStore.Load()
-	if err != nil {
-		return fmt.Errorf("load settings: %w", err)
-	}
-
-	// Add provider if not exists.
-	providerID := "ollama"
-	if _, exists := settings.Providers[providerID]; !exists {
-		provider := storage.EmbeddingProvider{
-			Name:    "Ollama Local",
-			APIBase: search.OllamaDefaultBase + "/v1",
-		}
-		_ = settings.AddProvider(providerID, provider.WithDefaults())
-	}
-
-	// Add model.
-	modelID := selected.ShortName
-	settings.Models[modelID] = storage.EmbeddingModel{
-		Provider:   providerID,
-		Model:      selected.Name,
-		Dimensions: selected.Dimensions,
-	}
-
-	if err := settingsStore.Save(settings); err != nil {
-		return fmt.Errorf("save settings: %w", err)
-	}
-
-	cfg.SemanticModel = modelID
-	fmt.Printf("%s Provider \"ollama\" and model %q registered (%dd)\n", successStyle.Render("✓"), modelID, selected.Dimensions)
-	return nil
-}
-
-// initCustomHuggingFaceModel prompts for a HuggingFace model ID and fetches dimensions.
-func initCustomHuggingFaceModel(cfg *initConfig) error {
-	// Fetch trending embedding models from HuggingFace.
-	fmt.Println("Fetching trending embedding models from HuggingFace...")
-	trending, err := fetchTrendingEmbeddingModels(10)
-
-	var hfID string
-	if err == nil && len(trending) > 0 {
-		// Show trending models as options + manual entry.
-		opts := make([]huh.Option[string], 0, len(trending)+1)
-		for _, m := range trending {
-			label := fmt.Sprintf("%s (%s downloads)", m.ID, formatDownloads(m.Downloads))
-			opts = append(opts, huh.NewOption(label, m.ID))
-		}
-		opts = append(opts, huh.NewOption("Enter model ID manually...", "__manual__"))
-
-		selectForm := huh.NewForm(huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("Select HuggingFace embedding model").
-				Options(opts...).
-				Value(&hfID),
-		)).WithTheme(huh.ThemeCatppuccin())
-		if err := selectForm.Run(); err != nil {
-			return err
-		}
-	}
-
-	// Manual entry fallback.
-	if hfID == "" || hfID == "__manual__" {
-		hfID = "" // clear __manual__ value
-		inputForm := huh.NewForm(huh.NewGroup(
-			huh.NewInput().
-				Title("HuggingFace model ID").
-				Description("e.g. Xenova/bge-m3, sentence-transformers/all-MiniLM-L6-v2").
-				Placeholder("Xenova/model-name").
-				Value(&hfID),
-		)).WithTheme(huh.ThemeCatppuccin())
-		if err := inputForm.Run(); err != nil {
-			return err
-		}
-	}
-
-	if hfID == "" {
-		return fmt.Errorf("no model ID provided")
-	}
-
-	// Fetch dimensions from HuggingFace config.json.
-	fmt.Printf("Fetching model config for %s...\n", hfID)
-	dims, err := fetchHuggingFaceDimensions(hfID)
-	if err != nil {
-		fmt.Printf("%s Could not auto-detect dimensions: %v\n", warnStyle.Render("⚠"), err)
-		// Ask user to input manually.
-		var dimsStr string
-		dimsForm := huh.NewForm(huh.NewGroup(
-			huh.NewInput().
-				Title("Embedding dimensions").
-				Description("Check the model card for this value").
-				Placeholder("384").
-				Value(&dimsStr),
-		)).WithTheme(huh.ThemeCatppuccin())
-		if err := dimsForm.Run(); err != nil {
-			return err
-		}
-		fmt.Sscanf(dimsStr, "%d", &dims)
-		if dims <= 0 {
-			dims = 384
-		}
-	} else {
-		fmt.Printf("%s Detected %d dimensions\n", successStyle.Render("✓"), dims)
-	}
-
-	// Derive a short model ID from the HuggingFace ID.
-	modelID := hfID
-	if idx := strings.LastIndex(hfID, "/"); idx >= 0 {
-		modelID = hfID[idx+1:]
-	}
-
-	// Register in the EmbeddingModels map at runtime so init can use it.
-	search.EmbeddingModels[modelID] = search.EmbeddingModelConfig{
-		Name:          modelID,
-		Dimensions:    dims,
-		MaxTokens:     512,
-		HuggingFaceID: hfID,
-	}
-
-	cfg.SemanticModel = modelID
-	fmt.Printf("%s Custom model %q registered (%s, %dd)\n", successStyle.Render("✓"), modelID, hfID, dims)
-	return nil
-}
-
-// hfTrendingModel represents a trending model from HuggingFace.
-type hfTrendingModel struct {
-	ID        string
-	Dims      int
-	Downloads int
-}
-
-// fetchTrendingEmbeddingModels fetches top N embedding models from HuggingFace sorted by downloads.
-func fetchTrendingEmbeddingModels(limit int) ([]hfTrendingModel, error) {
-	url := fmt.Sprintf("https://huggingface.co/api/models?pipeline_tag=feature-extraction&sort=downloads&direction=-1&limit=%d&filter=onnx", limit)
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("fetch trending models: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HuggingFace API returned HTTP %d", resp.StatusCode)
-	}
-
-	var models []struct {
-		ModelID   string `json:"modelId"`
-		Downloads int    `json:"downloads"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&models); err != nil {
-		return nil, fmt.Errorf("parse response: %w", err)
-	}
-
-	result := make([]hfTrendingModel, 0, len(models))
-	for _, m := range models {
-		result = append(result, hfTrendingModel{
-			ID:        m.ModelID,
-			Downloads: m.Downloads,
-		})
-	}
-	return result, nil
-}
-
-// formatDownloads formats a download count as human-readable (e.g. "12M", "500K").
-func formatDownloads(n int) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%dM", n/1_000_000)
-	case n >= 1_000:
-		return fmt.Sprintf("%dK", n/1_000)
-	default:
-		return fmt.Sprintf("%d", n)
-	}
-}
-
-// fetchHuggingFaceDimensions fetches the hidden_size from a HuggingFace model's config.json.
-func fetchHuggingFaceDimensions(hfID string) (int, error) {
-	url := fmt.Sprintf("https://huggingface.co/%s/resolve/main/config.json", hfID)
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return 0, fmt.Errorf("fetch config.json: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return 0, fmt.Errorf("HTTP %d from HuggingFace", resp.StatusCode)
-	}
-
-	var config map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
-		return 0, fmt.Errorf("parse config.json: %w", err)
-	}
-
-	// Try common dimension fields.
-	for _, key := range []string{"hidden_size", "dim", "d_model", "embedding_dimension"} {
-		if v, ok := config[key]; ok {
-			if f, ok := v.(float64); ok && f > 0 {
-				return int(f), nil
-			}
-		}
-	}
-
-	return 0, fmt.Errorf("no dimension field found in config.json")
 }
 
 // downloadCustomHuggingFaceModel downloads ONNX model files from HuggingFace.
@@ -1399,65 +1152,6 @@ func createInstructionFilesQuiet(projectRoot string, force bool) error {
 	return nil
 }
 
-// createMCPJsonFile creates .mcp.json for Claude Code MCP auto-discovery.
-func createMCPJsonFile(projectRoot string, force bool) {
-	mcpPath := filepath.Join(projectRoot, ".mcp.json")
-	if _, err := os.Stat(mcpPath); err == nil && !force {
-		return
-	}
-
-	cmd, args := mcpCommand()
-	mcpConfig := map[string]interface{}{
-		"mcpServers": map[string]interface{}{
-			"knowns": map[string]interface{}{
-				"command": cmd,
-				"args":    args,
-			},
-		},
-	}
-
-	data, err := json.MarshalIndent(mcpConfig, "", "  ")
-	if err != nil {
-		return
-	}
-
-	if err := os.WriteFile(mcpPath, data, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not create .mcp.json: %v\n", err)
-	} else {
-		fmt.Println(successStyle.Render("✓ Created .mcp.json") + dimStyle.Render(" (Claude Code MCP auto-discovery)"))
-	}
-}
-
-// createInstructionFiles generates agent instruction files.
-func createInstructionFiles(projectRoot string, force bool) {
-	canonicalPath := filepath.Join(projectRoot, canonicalInstructionFile)
-	canonicalExists := false
-	if _, err := os.Stat(canonicalPath); err == nil {
-		canonicalExists = true
-	}
-	if err := writeInstructionFile(projectRoot, canonicalInstructionFile, "Knowns", force); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not create %s: %v\n", canonicalInstructionFile, err)
-	} else if canonicalExists && !force {
-		fmt.Println(dimStyle.Render(fmt.Sprintf("  Skipped: %s (already exists)", canonicalInstructionFile)))
-	} else {
-		fmt.Println(successStyle.Render(fmt.Sprintf("✓ Created: %s", canonicalInstructionFile)))
-	}
-
-	for _, f := range defaultInstructionFiles {
-		filePath := filepath.Join(projectRoot, f.Path)
-		if _, err := os.Stat(filePath); err == nil && !force {
-			fmt.Println(dimStyle.Render(fmt.Sprintf("  Skipped: %s (already exists)", f.Path)))
-			continue
-		}
-
-		if err := writeInstructionFile(projectRoot, f.Path, f.Platform, force); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not create %s: %v\n", f.Path, err)
-		} else {
-			fmt.Println(successStyle.Render(fmt.Sprintf("✓ Created: %s", f.Path)))
-		}
-	}
-}
-
 func writeInstructionFile(projectRoot, relativePath, platform string, force bool) error {
 	filePath := filepath.Join(projectRoot, relativePath)
 	fileExists := false
@@ -1917,6 +1611,76 @@ func maybeOpenBrowser(cwd string, openFlag, noOpen bool) error {
 	fmt.Printf("  %s  %s\n", StyleInfo.Render("→"), StyleBold.Render(url))
 	fmt.Println()
 	return srv.Start()
+}
+
+// autoInstallLSPServers detects languages in cwd and installs LSP servers
+// for any that are not already on PATH. Non-blocking: always returns nil.
+func autoInstallLSPServers(cwd string) error {
+	if cwd == "" {
+		return nil
+	}
+
+	// Build a registry from all adapters to cover extra languages beyond builtins.
+	reg := lsp.NewRegistry(nil)
+	for _, adapter := range adapters.All() {
+		reg.Register(lsp.Language{
+			ID:         adapter.ID(),
+			Name:       adapter.Name(),
+			Extensions: adapter.Extensions(),
+			Binaries:   lspBinariesFromAdapter(adapter),
+		})
+	}
+
+	detector := lsp.NewDetector(reg)
+	detected, err := detector.DetectedLanguages(cwd, lsp.Config{})
+	if err != nil {
+		return nil // non-blocking
+	}
+	if len(detected) == 0 {
+		return nil
+	}
+
+	ctx := context.Background()
+	targetDir := lspBaseDir()
+
+	adapterByID := make(map[string]lsp.LanguageAdapter, len(adapters.All()))
+	for _, a := range adapters.All() {
+		adapterByID[a.ID()] = a
+	}
+
+	for _, lang := range detected {
+		adapter, ok := adapterByID[lang.ID]
+		if !ok || !adapter.CanInstall() {
+			continue
+		}
+		if _, found := findLspBinary(ctx, adapter, ""); found {
+			continue
+		}
+		if err := adapter.CheckPrerequisites(ctx); err != nil {
+			fmt.Printf("  ⚠ %s — prerequisites not met: %v\n", adapter.Name(), err)
+			continue
+		}
+		path, err := adapter.Install(ctx, targetDir)
+		if err != nil {
+			fmt.Printf("  ⚠ %s — install failed: %v\n", adapter.Name(), err)
+			continue
+		}
+		fmt.Printf("  ✓ Installed %s → %s\n", adapter.Name(), path)
+	}
+
+	return nil
+}
+
+func lspBinariesFromAdapter(adapter lsp.LanguageAdapter) []lsp.Binary {
+	var out []lsp.Binary
+	for _, c := range adapter.Binaries() {
+		out = append(out, lsp.Binary{
+			Name:      c.Name,
+			Args:      c.Args,
+			CheckArgs: c.CheckArgs,
+		})
+	}
+	return out
 }
 
 func init() {

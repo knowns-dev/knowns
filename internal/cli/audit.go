@@ -248,19 +248,6 @@ func sortedKeys(m map[string]int) []string {
 	return keys
 }
 
-func resultStyle(result string) string {
-	switch result {
-	case "success":
-		return StyleSuccess.Render(result)
-	case "error":
-		return StyleError.Render(result)
-	case "denied":
-		return StyleWarning.Render(result)
-	default:
-		return result
-	}
-}
-
 func init() {
 	auditRecentCmd.Flags().Int("limit", 50, "Maximum number of events to show")
 	auditRecentCmd.Flags().String("tool", "", "Filter by tool name")

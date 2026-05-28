@@ -71,12 +71,6 @@ func printJSON(v any) {
 	fmt.Println(string(data))
 }
 
-// printError prints an error message to stderr with red styling.
-func printError(format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintln(os.Stderr, StyleError.Render("Error: "+msg))
-}
-
 // formatDuration formats a duration in seconds to a human-readable string.
 func formatDuration(seconds int) string {
 	if seconds <= 0 {

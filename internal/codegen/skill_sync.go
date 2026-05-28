@@ -75,7 +75,7 @@ func platformNeedsClaudeSkills(p string) bool {
 
 // platformNeedsAgentSkills returns true if the platform writes to .agents/skills/.
 func platformNeedsAgentSkills(p string) bool {
-	return p == "agents" || p == "opencode" || p == "antigravity" || p == "codex"
+	return p == "agents" || p == "opencode" || p == "antigravity" || p == "codex" || p == "cursor" || p == "gemini"
 }
 
 // platformNeedsKiroSkills returns true if the platform writes to .kiro/skills/.
@@ -122,6 +122,38 @@ func SyncSkillsForPlatforms(projectRoot string, platforms []string) error {
 	}
 
 	for _, targetDir := range targets {
+		if err := os.MkdirAll(targetDir, 0755); err != nil {
+			return fmt.Errorf("create target dir %s: %w", targetDir, err)
+		}
+		for _, skillDir := range skillDirs {
+			dst := filepath.Join(targetDir, skillDir)
+			if err := os.RemoveAll(dst); err != nil {
+				return fmt.Errorf("reset target skill %s: %w", dst, err)
+			}
+			if err := copyEmbeddedDir(skillDir, dst); err != nil {
+				return fmt.Errorf("copy skill %s to %s: %w", skillDir, targetDir, err)
+			}
+		}
+	}
+	return nil
+}
+
+// SyncSkillsToTargets syncs embedded skills to arbitrary target directories.
+// The targets map is keyed by platform name (e.g., "claude-code") with values being absolute paths.
+func SyncSkillsToTargets(targets map[string]string) error {
+	if len(targets) == 0 {
+		return nil
+	}
+
+	skillDirs, err := listSkillDirs()
+	if err != nil {
+		return fmt.Errorf("list embedded skills: %w", err)
+	}
+
+	for platform, targetDir := range targets {
+		if !platformNeedsClaudeSkills(platform) && !platformNeedsAgentSkills(platform) && !platformNeedsKiroSkills(platform) {
+			continue
+		}
 		if err := os.MkdirAll(targetDir, 0755); err != nil {
 			return fmt.Errorf("create target dir %s: %w", targetDir, err)
 		}

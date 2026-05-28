@@ -47,6 +47,17 @@ func (m *Manager) RegisterAdapter(adapter LanguageAdapter) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.adapters[adapter.ID()] = adapter
+
+	var binaries []Binary
+	for _, b := range adapter.Binaries() {
+		binaries = append(binaries, Binary{Name: b.Name, Args: b.Args, CheckArgs: b.CheckArgs})
+	}
+	m.registry.Register(Language{
+		ID:         adapter.ID(),
+		Name:       adapter.Name(),
+		Extensions: adapter.Extensions(),
+		Binaries:   binaries,
+	})
 }
 
 func (m *Manager) SetDetector(detector *Detector) {
