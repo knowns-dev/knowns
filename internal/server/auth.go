@@ -92,6 +92,12 @@ func (am *AuthManager) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// Allow setting password when none exists (first-time setup)
+		if path == "/api/auth/password" && r.Method == "POST" && !am.HasPassword() {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// Non-API requests (static UI assets, HTML pages) bypass auth
 		// so the frontend LoginGate can handle the auth flow
 		if !strings.HasPrefix(path, "/api/") && !strings.HasPrefix(path, "/ws/") {

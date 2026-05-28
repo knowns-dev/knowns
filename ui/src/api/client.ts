@@ -1905,13 +1905,14 @@ export const authApi = {
 		return res.json();
 	},
 
-	async setPassword(password: string): Promise<void> {
+	async setPassword(password: string): Promise<{ success: boolean; token?: string }> {
 		const res = await apiFetch(`${API_BASE}/api/auth/password`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ password }),
 		});
 		if (!res.ok) throw new Error("Failed to set password");
+		return res.json();
 	},
 
 	async removePassword(): Promise<void> {

@@ -64,7 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 	const setPassword = useCallback(async (password: string) => {
 		const res = await authApi.setPassword(password);
-		const t = (res as unknown as { token?: string }).token || null;
+		const t = res?.token || null;
 		setToken(t);
 		if (t) sessionStorage.setItem(TOKEN_KEY, t);
 		setIsProtected(true);
