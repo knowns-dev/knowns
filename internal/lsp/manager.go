@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os/exec"
 	"sync"
 	"time"
 )
@@ -47,6 +48,17 @@ func (m *Manager) RegisterAdapter(adapter LanguageAdapter) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.adapters[adapter.ID()] = adapter
+
+	var binaries []Binary
+	for _, b := range adapter.Binaries() {
+		binaries = append(binaries, Binary{Name: b.Name, Args: b.Args, CheckArgs: b.CheckArgs})
+	}
+	m.registry.Register(Language{
+		ID:         adapter.ID(),
+		Name:       adapter.Name(),
+		Extensions: adapter.Extensions(),
+		Binaries:   binaries,
+	})
 }
 
 func (m *Manager) SetDetector(detector *Detector) {
@@ -247,6 +259,153 @@ func (m *Manager) StopAll(ctx context.Context) error {
 	}
 	m.mu.Unlock()
 	return nil
+}
+
+// LanguageInfo describes an available language adapter with its runtime status.
+type LanguageInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Binary      string `json:"binary"`
+	Installed   bool   `json:"installed"`
+	Running     bool   `json:"running"`
+	InstallHint string `json:"installHint,omitempty"`
+}
+
+// StartLanguage starts a single language server by adapter ID.
+func (m *Manager) StartLanguage(ctx context.Context, langID string) error {
+	m.mu.Lock()
+	adapter := m.adapters[langID]
+	if adapter == nil {
+		m.mu.Unlock()
+		return fmt.Errorf("no adapter registered for language %q", langID)
+	}
+	binaries := adapter.Binaries()
+	m.mu.Unlock()
+
+	if len(binaries) == 0 {
+		return fmt.Errorf("language %q has no binary candidates", langID)
+	}
+
+	var lastErr error
+	for _, b := range binaries {
+		path, err := exec.LookPath(b.Name)
+		if err != nil {
+			lastErr = fmt.Errorf("%s: %w", b.Name, err)
+			continue
+		}
+		if lastErr != nil {
+			lastErr = nil
+		}
+		cmd := ServerCommand{
+			Language: langID,
+			Name:     b.Name,
+			Path:     path,
+			Args:     append([]string(nil), b.Args...),
+		}
+
+		m.mu.Lock()
+		srv, exists := m.servers[langID]
+		if !exists {
+			srv = NewServer(m.root, cmd)
+			m.servers[langID] = srv
+		} else {
+			srv.Command = cmd
+		}
+		m.status[langID] = StatusStarting
+		m.mu.Unlock()
+
+		startCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		err = srv.Start(startCtx)
+		cancel()
+		if err != nil {
+			m.mu.Lock()
+			m.status[langID] = StatusCrashed
+			m.mu.Unlock()
+			return err
+		}
+		m.mu.Lock()
+		m.status[langID] = StatusRunning
+		m.mu.Unlock()
+		return nil
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("all binary candidates failed version check")
+	}
+	return lastErr
+}
+
+// StopLanguage gracefully stops the language server for langID.
+func (m *Manager) StopLanguage(langID string) error {
+	m.mu.Lock()
+	srv := m.servers[langID]
+	if srv == nil {
+		m.mu.Unlock()
+		return nil
+	}
+	m.status[langID] = StatusDisabled
+	m.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := srv.Stop(ctx)
+
+	m.mu.Lock()
+	delete(m.servers, langID)
+	m.mu.Unlock()
+	return err
+}
+
+// AvailableLanguages returns all registered adapters with their install and
+// running status.
+func (m *Manager) AvailableLanguages() []LanguageInfo {
+	m.mu.Lock()
+	adapters := make(map[string]LanguageAdapter, len(m.adapters))
+	for id, a := range m.adapters {
+		adapters[id] = a
+	}
+	status := make(map[string]ServerStatus, len(m.status))
+	for id, s := range m.status {
+		status[id] = s
+	}
+	servers := make(map[string]*Server, len(m.servers))
+	for id, s := range m.servers {
+		servers[id] = s
+	}
+	m.mu.Unlock()
+
+	out := make([]LanguageInfo, 0, len(adapters))
+	for _, adapter := range adapters {
+		langID := adapter.ID()
+		binaries := adapter.Binaries()
+		binaryName := ""
+		installed := false
+		if len(binaries) > 0 {
+			binaryName = binaries[0].Name
+			if _, err := exec.LookPath(binaryName); err == nil {
+				installed = true
+			}
+		}
+		running := false
+		if srv := servers[langID]; srv != nil && srv.Alive() {
+			running = true
+		}
+		info := LanguageInfo{
+			ID:        langID,
+			Name:      adapter.Name(),
+			Binary:    binaryName,
+			Installed: installed,
+			Running:   running,
+		}
+		if !installed {
+			guide := adapter.InstallGuide()
+			if guide.Command != "" {
+				info.InstallHint = guide.Command
+			}
+		}
+		out = append(out, info)
+	}
+	return out
 }
 
 // MissingServers returns languages detected in the project that don't have an available binary.

@@ -397,10 +397,6 @@ func recommendedUpdateCommand() string {
 	return "knowns update"
 }
 
-func isHomebrewInstallCommand(cmd string) bool {
-	return strings.HasPrefix(strings.TrimSpace(cmd), "brew ")
-}
-
 func runHomebrewUpgrade(installCmd string) error {
 	updateBin, err := exec.LookPath("brew")
 	if err != nil {

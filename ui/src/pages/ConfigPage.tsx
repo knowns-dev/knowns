@@ -27,6 +27,9 @@ import {
 	Search,
 	Code2,
 	Wrench,
+	Globe,
+	Shield,
+	Copy,
 	type LucideIcon,
 } from "lucide-react";
 import { ScrollArea } from "../components/ui/ScrollArea";
@@ -37,18 +40,19 @@ import { Separator } from "../components/ui/separator";
 import { Label } from "../components/ui/label";
 import { Badge } from "../components/ui/badge";
 import { useConfig, type Config } from "../contexts/ConfigContext";
+import { useAuth } from "../contexts/AuthContext";
 import { useOpenCode } from "../contexts/OpenCodeContext";
 import { useOpenCodeModelManager } from "../hooks/useOpencodeModelManager";
 import { OpenCodeModelManager } from "../components/organisms/OpenCodeModelManager";
 import { toast } from "../components/ui/sonner";
-import { importApi, saveUserPreferences, getRuntimeServices, getEmbeddingModels, testEmbeddingModel, type EmbeddingModelInfo, type EmbeddingModelsResponse, type EmbeddingModelTestResult, type Import, type ImportDetail, type ImportResult, type RuntimeService } from "../api/client";
+import { importApi, saveUserPreferences, getRuntimeServices, getEmbeddingModels, testEmbeddingModel, tunnelApi, lspApi, type EmbeddingModelInfo, type EmbeddingModelsResponse, type EmbeddingModelTestResult, type Import, type ImportDetail, type ImportResult, type RuntimeService, type LSPLanguageInfo } from "../api/client";
 
 const DEFAULT_STATUSES = ["todo", "in-progress", "in-review", "done", "blocked", "on-hold", "urgent"];
 const COLOR_OPTIONS = ["gray", "blue", "green", "yellow", "red", "purple", "orange", "pink", "cyan", "indigo"];
 
 // ── Category definitions ──────────────────────────────────────────
 
-type Category = "general" | "board" | "search" | "code" | "ai" | "imports" | "runtime" | "advanced";
+type Category = "general" | "board" | "search" | "code" | "ai" | "imports" | "runtime" | "tunnel" | "security" | "advanced";
 
 interface CategoryDef {
 	id: Category;
@@ -65,6 +69,8 @@ const ALL_CATEGORIES: CategoryDef[] = [
 	{ id: "ai", label: "AI", icon: Bot, description: "OpenCode connection used by Chat UI" },
 	{ id: "imports", label: "Imports", icon: Download, description: "Imported templates and docs" },
 	{ id: "runtime", label: "Runtime", icon: Monitor, description: "Runtime services and sub-processes" },
+	{ id: "tunnel", label: "Tunnel", icon: Globe, description: "Cloudflare Tunnel for remote access" },
+	{ id: "security", label: "Security", icon: Shield, description: "Password protection" },
 	{ id: "advanced", label: "Advanced", icon: Wrench, description: "Git tracking, server, platforms, and JSON" },
 ];
 
@@ -373,6 +379,29 @@ export default function ConfigPage() {
 	// Embedding models state
 	const [embeddingModels, setEmbeddingModels] = useState<EmbeddingModelsResponse | null>(null);
 	const [modelsLoading, setModelsLoading] = useState(true);
+
+	// LSP language management state
+	const [availableLangs, setAvailableLangs] = useState<LSPLanguageInfo[]>([]);
+	const [showAddDropdown, setShowAddDropdown] = useState(false);
+	const [lspActionsLoading, setLspActionsLoading] = useState<Record<string, boolean>>({});
+	const dropdownRef = useRef<HTMLDivElement>(null);
+
+	// Close LSP dropdown on outside click
+	useEffect(() => {
+		if (!showAddDropdown) return;
+		const handler = (e: MouseEvent) => {
+			if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+				setShowAddDropdown(false);
+			}
+		};
+		document.addEventListener("mousedown", handler);
+		return () => document.removeEventListener("mousedown", handler);
+	}, [showAddDropdown]);
+
+	// Load available LSP languages
+	useEffect(() => {
+		lspApi.getLanguages().then((data) => setAvailableLangs(data.languages || [])).catch(() => {});
+	}, []);
 
 	// API endpoint test state
 	const [apiBase, setApiBase] = useState("");
@@ -796,6 +825,74 @@ export default function ConfigPage() {
 		const languages = config.lsp?.languages || {};
 		const languageEntries = Object.entries(languages);
 
+		const handleAddLanguage = async (langId: string) => {
+			setLspActionsLoading((prev) => ({ ...prev, [langId]: true }));
+			setShowAddDropdown(false);
+			try {
+				await lspApi.addLanguage(langId);
+				setConfig((prev) => {
+					const newLangs = {
+						...(prev.lsp?.languages || {}),
+						[langId]: { ...(prev.lsp?.languages?.[langId] || {}), enabled: true },
+					};
+					const next = { ...prev, lsp: { ...(prev.lsp || {}), enabled: true, languages: newLangs } };
+					autoSave(next);
+					return next;
+				});
+				toast.success(`Added ${langId} language server`);
+			} catch (err) {
+				toast.error(err instanceof Error ? err.message : "Failed to add language");
+			} finally {
+				setLspActionsLoading((prev) => ({ ...prev, [langId]: false }));
+				lspApi.getLanguages().then((data) => setAvailableLangs(data.languages)).catch(() => {});
+			}
+		};
+
+		const handleToggleLanguage = async (langId: string, enabled: boolean) => {
+			setLspActionsLoading((prev) => ({ ...prev, [langId]: true }));
+			try {
+				await lspApi.toggleLanguage(langId, enabled);
+				setConfig((prev) => {
+					const langConfig = prev.lsp?.languages?.[langId];
+					if (langConfig) {
+						const newLangs = { ...prev.lsp!.languages, [langId]: { ...langConfig, enabled } };
+						const next = { ...prev, lsp: { ...(prev.lsp || {}), languages: newLangs } };
+						autoSave(next);
+						return next;
+					}
+					return prev;
+				});
+			} catch (err) {
+				toast.error(err instanceof Error ? err.message : "Failed to toggle language");
+			} finally {
+				setLspActionsLoading((prev) => ({ ...prev, [langId]: false }));
+			}
+		};
+
+		const handleRemoveLanguage = async (langId: string) => {
+			setLspActionsLoading((prev) => ({ ...prev, [langId]: true }));
+			try {
+				await lspApi.removeLanguage(langId);
+				setConfig((prev) => {
+					const newLangs = { ...(prev.lsp?.languages || {}) };
+					delete newLangs[langId];
+					const next = { ...prev, lsp: { ...(prev.lsp || {}), languages: newLangs } };
+					autoSave(next);
+					return next;
+				});
+				toast.success(`Removed ${langId} language server`);
+			} catch (err) {
+				toast.error(err instanceof Error ? err.message : "Failed to remove language");
+			} finally {
+				setLspActionsLoading((prev) => ({ ...prev, [langId]: false }));
+				lspApi.getLanguages().then((data) => setAvailableLangs(data.languages)).catch(() => {});
+			}
+		};
+
+		// Map of available languages not yet in config
+		const configuredIds = new Set(Object.keys(languages));
+		const unconfiguredLangs = availableLangs.filter((lang) => !configuredIds.has(lang.id));
+
 		return (
 			<div>
 				<SectionHeader icon={Code2} title="Language Server Protocol" description="LSP servers for code intelligence" />
@@ -809,42 +906,98 @@ export default function ConfigPage() {
 					/>
 				</FieldRow>
 
-				{languageEntries.length > 0 && (
-					<>
-						<Separator className="my-2" />
-						<div className="ml-[30px] mb-3">
-							<div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Languages</div>
-						</div>
-						<div className="ml-[30px] space-y-2">
-							{languageEntries.map(([lang, langConfig]) => (
+				<Separator className="my-2" />
+				<div className="ml-[30px] mb-3 flex items-center justify-between">
+					<div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Languages</div>
+					<div className="relative" ref={dropdownRef}>
+						<Button
+							size="sm"
+							variant="outline"
+							onClick={() => setShowAddDropdown(!showAddDropdown)}
+							disabled={unconfiguredLangs.length === 0}
+						>
+							<Plus className="w-3.5 h-3.5 mr-1" />
+							Add
+						</Button>
+						{showAddDropdown && (
+							<div className="absolute right-0 top-full mt-1 z-50 min-w-48 rounded-lg border bg-popover shadow-lg">
+								{unconfiguredLangs.length === 0 ? (
+									<div className="px-3 py-2 text-xs text-muted-foreground">No languages available</div>
+								) : (
+									<div className="py-1">
+										{unconfiguredLangs.map((lang) => (
+											<button
+												key={lang.id}
+												type="button"
+												className="w-full text-left px-3 py-2 text-sm hover:bg-accent flex items-center gap-2"
+												onClick={() => handleAddLanguage(lang.id)}
+											>
+												<span className="capitalize flex-1">{lang.name}</span>
+												{!lang.installed && (
+													<span className="text-xs text-muted-foreground">(not installed)</span>
+												)}
+											</button>
+										))}
+									</div>
+								)}
+							</div>
+						)}
+					</div>
+				</div>
+
+				{languageEntries.length === 0 ? (
+					<div className="ml-[30px] py-4 text-center border rounded-lg bg-muted/20">
+						<Code2 className="w-8 h-8 mx-auto text-muted-foreground" />
+						<p className="mt-2 text-sm text-muted-foreground">No language servers configured</p>
+						<p className="text-xs text-muted-foreground mt-1">Click "Add" above to configure an LSP language</p>
+					</div>
+				) : (
+					<div className="ml-[30px] space-y-2">
+						{languageEntries.map(([lang, langConfig]) => {
+							const info = availableLangs.find((a) => a.id === lang);
+							const isRunning = info?.running ?? false;
+							const isInstalled = info?.installed ?? langConfig.binary !== undefined;
+							const loading = lspActionsLoading[lang] ?? false;
+
+							return (
 								<div key={lang} className="flex items-center gap-3 p-3 rounded-lg border bg-card">
 									<Switch
 										checked={langConfig.enabled ?? false}
-										onCheckedChange={(checked) =>
-											update({
-												lsp: {
-													...(config.lsp || {}),
-													languages: {
-														...languages,
-														[lang]: { ...langConfig, enabled: checked },
-													},
-												},
-											})
-										}
+										onCheckedChange={(checked) => handleToggleLanguage(lang, checked)}
+										disabled={loading}
 									/>
 									<div className="flex-1 min-w-0">
-										<div className="text-sm font-medium capitalize">{lang}</div>
+										<div className="flex items-center gap-2">
+											<span className="text-sm font-medium capitalize">{lang}</span>
+											{loading && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+										</div>
 										{langConfig.version && (
 											<div className="text-xs text-muted-foreground">v{langConfig.version}</div>
 										)}
 										{langConfig.binary && (
 											<div className="text-xs text-muted-foreground font-mono">{langConfig.binary}</div>
 										)}
+										{info?.installHint && !isInstalled && (
+											<div className="text-xs text-muted-foreground">Install: <code className="text-xs">{info.installHint}</code></div>
+										)}
+									</div>
+									<div className="flex items-center gap-2">
+										<Badge variant={isRunning ? "default" : isInstalled ? "outline" : "secondary"} className="text-xs">
+											{isRunning ? "Running" : isInstalled ? "Installed" : "Not installed"}
+										</Badge>
+										<button
+											type="button"
+											onClick={() => handleRemoveLanguage(lang)}
+											className="p-1 text-muted-foreground hover:text-destructive rounded transition-colors"
+											disabled={loading}
+										>
+											<Trash2 className="w-3.5 h-3.5" />
+										</button>
 									</div>
 								</div>
-							))}
-						</div>
-					</>
+							);
+						})}
+					</div>
 				)}
 
 				<Separator className="my-4" />
@@ -1116,6 +1269,166 @@ export default function ConfigPage() {
 		{ id: "agents", label: "Agents" },
 	];
 
+	// ── Tunnel state ──────────────────────────────────────────────────
+	const [tunnelStatus, setTunnelStatus] = useState<{ running: boolean; url?: string }>({ running: false });
+	const [tunnelLoading, setTunnelLoading] = useState(false);
+	const [tunnelError, setTunnelError] = useState<string | null>(null);
+
+	useEffect(() => {
+		tunnelApi.getStatus().then(setTunnelStatus).catch(() => {});
+	}, []);
+
+	const handleTunnelStart = async () => {
+		setTunnelLoading(true);
+		setTunnelError(null);
+		try {
+			const result = await tunnelApi.start();
+			setTunnelStatus({ running: true, url: result.url });
+			toast.success(`Tunnel active: ${result.url}`);
+		} catch (err) {
+			setTunnelError(err instanceof Error ? err.message : "Failed to start tunnel");
+		} finally {
+			setTunnelLoading(false);
+		}
+	};
+
+	const handleTunnelStop = async () => {
+		setTunnelLoading(true);
+		setTunnelError(null);
+		try {
+			await tunnelApi.stop();
+			setTunnelStatus({ running: false });
+			toast.success("Tunnel stopped");
+		} catch (err) {
+			setTunnelError(err instanceof Error ? err.message : "Failed to stop tunnel");
+		} finally {
+			setTunnelLoading(false);
+		}
+	};
+
+	const renderTunnel = () => (
+		<div>
+			<SectionHeader icon={Globe} title="Cloudflare Tunnel" description="Expose this server to the internet via Cloudflare Quick Tunnel" />
+
+			<FieldRow label="Status">
+				<div className="flex items-center gap-3">
+					<div className={`w-2.5 h-2.5 rounded-full ${tunnelStatus.running ? "bg-green-500" : "bg-gray-400"}`} />
+					<span className="text-sm">{tunnelStatus.running ? "Running" : "Stopped"}</span>
+				</div>
+			</FieldRow>
+
+			{tunnelStatus.running && tunnelStatus.url && (
+				<FieldRow label="Public URL">
+					<div className="flex items-center gap-2">
+						<code className="text-sm bg-muted px-2 py-1 rounded flex-1 truncate">{tunnelStatus.url}</code>
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => {
+								navigator.clipboard.writeText(tunnelStatus.url!);
+								toast.success("URL copied");
+							}}
+						>
+							<Copy className="w-3.5 h-3.5" />
+						</Button>
+					</div>
+				</FieldRow>
+			)}
+
+			{tunnelError && (
+				<FieldRow label="">
+					<p className="text-sm text-destructive">{tunnelError}</p>
+				</FieldRow>
+			)}
+
+			<FieldRow label="Control">
+				{tunnelStatus.running ? (
+					<Button variant="outline" onClick={handleTunnelStop} disabled={tunnelLoading}>
+						{tunnelLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <PowerOff className="w-4 h-4 mr-2" />}
+						Stop Tunnel
+					</Button>
+				) : (
+					<Button onClick={handleTunnelStart} disabled={tunnelLoading}>
+						{tunnelLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Power className="w-4 h-4 mr-2" />}
+						Start Tunnel
+					</Button>
+				)}
+			</FieldRow>
+		</div>
+	);
+
+	// ── Security state ────────────────────────────────────────────────
+	const { isProtected, setPassword: authSetPassword, removePassword: authRemovePassword } = useAuth();
+	const [newPassword, setNewPassword] = useState("");
+	const [securityLoading, setSecurityLoading] = useState(false);
+
+	const handleSetPassword = async () => {
+		if (!newPassword) return;
+		setSecurityLoading(true);
+		try {
+			await authSetPassword(newPassword);
+			setNewPassword("");
+			toast.success("Password protection enabled");
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "Failed to set password");
+		} finally {
+			setSecurityLoading(false);
+		}
+	};
+
+	const handleRemovePassword = async () => {
+		setSecurityLoading(true);
+		try {
+			await authRemovePassword();
+			toast.success("Password protection disabled");
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "Failed to remove password");
+		} finally {
+			setSecurityLoading(false);
+		}
+	};
+
+	const renderSecurity = () => (
+		<div>
+			<SectionHeader icon={Shield} title="Password Protection" description="Protect WebUI access with a password (in-memory, not persisted)" />
+
+			<FieldRow label="Status">
+				<div className="flex items-center gap-3">
+					<div className={`w-2.5 h-2.5 rounded-full ${isProtected ? "bg-green-500" : "bg-yellow-500"}`} />
+					<span className="text-sm">{isProtected ? "Protected" : "Unprotected"}</span>
+					{!isProtected && tunnelStatus.running && (
+						<span className="text-xs text-destructive">(tunnel active without password)</span>
+					)}
+				</div>
+			</FieldRow>
+
+			{isProtected ? (
+				<FieldRow label="Action">
+					<Button variant="outline" onClick={handleRemovePassword} disabled={securityLoading}>
+						{securityLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <PowerOff className="w-4 h-4 mr-2" />}
+						Remove Password
+					</Button>
+				</FieldRow>
+			) : (
+				<FieldRow label="Set Password">
+					<div className="flex items-center gap-2">
+						<Input
+							type="password"
+							value={newPassword}
+							onChange={(e) => setNewPassword(e.target.value)}
+							placeholder="Enter password"
+							onKeyDown={(e) => { if (e.key === "Enter") handleSetPassword(); }}
+						/>
+						<Button onClick={handleSetPassword} disabled={securityLoading || !newPassword}>
+							{securityLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Check className="w-4 h-4 mr-2" />}
+							Set
+						</Button>
+					</div>
+				</FieldRow>
+			)}
+		</div>
+	);
+
 	const renderAdvanced = () => (
 		<div>
 			<SectionHeader icon={Wrench} title="Git Tracking" description="Control how the .knowns directory interacts with git" />
@@ -1219,6 +1532,8 @@ export default function ConfigPage() {
 		ai: renderAI,
 		imports: renderImports,
 		runtime: renderRuntime,
+		tunnel: renderTunnel,
+		security: renderSecurity,
 		advanced: renderAdvanced,
 	};
 

@@ -289,9 +289,10 @@ func NewMCPServer(projectHint string) *MCPServer {
 		"knowns",
 		version,
 		server.WithToolCapabilities(false),
+		server.WithResourceCapabilities(false, false),
 		server.WithRecovery(),
 		server.WithToolHandlerMiddleware(permissions.NewGuardMiddleware(permConfigLoader)),
-		server.WithHooks(newLifecycleHooks(auditStore, getRoot, getLSPManager)),
+		server.WithHooks(newLifecycleHooks(auditStore, getRoot, getLSPManager, getStore)),
 		server.WithInstructions("CRITICAL: Call the `initial` tool at the start of every session before performing any work to receive operating instructions."),
 	)
 

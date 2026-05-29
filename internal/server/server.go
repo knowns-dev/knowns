@@ -29,6 +29,8 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/howznguyen/knowns/internal/agents/opencode"
+	"github.com/howznguyen/knowns/internal/lsp"
+	"github.com/howznguyen/knowns/internal/lsp/adapters"
 	"github.com/howznguyen/knowns/internal/models"
 	serverreadiness "github.com/howznguyen/knowns/internal/readiness"
 	"github.com/howznguyen/knowns/internal/registry"
@@ -48,7 +50,9 @@ var wsUpgrader = websocket.Upgrader{
 
 // Options configures the server behaviour.
 type Options struct {
-	Dev bool // enable verbose logging (HTTP requests, WebSocket, etc.)
+	Dev      bool   // enable verbose logging (HTTP requests, WebSocket, etc.)
+	Tunnel   bool   // start tunnel automatically on server boot
+	Password string // initial password for WebUI protection (in-memory only)
 }
 
 // Server is the top-level HTTP server.
@@ -72,6 +76,9 @@ type Server struct {
 	cancelServiceMon  context.CancelFunc
 	prevServiceStatus []services.ServiceStatus
 	prevServiceMu     sync.RWMutex
+	tunnel            *ServerTunnelManager
+	auth              *AuthManager
+	lspManager        *lsp.Manager
 }
 
 type openCodeConfigResolution struct {
@@ -335,6 +342,8 @@ func NewServer(store *storage.Store, projectRoot string, port int, opts Options)
 		runtimeOpenCode: runtimeOpenCode,
 		runtimeStatus:   runtimeStatus,
 		shutdownCh:      make(chan struct{}, 1),
+		tunnel:          NewServerTunnelManager(port),
+		auth:            NewAuthManager(opts.Password),
 	}
 
 	// Create multi-project manager wrapping the initial store.
@@ -343,6 +352,17 @@ func NewServer(store *storage.Store, projectRoot string, port int, opts Options)
 		log.Printf("warn: could not load project registry: %v", err)
 	}
 	s.manager = storage.NewManager(store, reg)
+
+	// Create LSP manager if a project store is available.
+	if store != nil {
+		if cfg, err := store.Config.Load(); err == nil {
+			lspManager := lsp.NewManager(projectRoot, lsp.ConfigFromProject(cfg))
+			for _, adapter := range adapters.All() {
+				lspManager.RegisterAdapter(adapter)
+			}
+			s.lspManager = lspManager
+		}
+	}
 
 	// Build shared proxy singleton once at startup.
 	if runtimeOpenCode != nil {
@@ -407,6 +427,11 @@ func (s *Server) serve(listener net.Listener) error {
 
 	srv := &http.Server{Handler: s.router}
 
+	// Auto-start tunnel if requested.
+	if s.opts.Tunnel {
+		go s.autoStartTunnel()
+	}
+
 	serverErr := make(chan error, 1)
 	go func() {
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
@@ -444,6 +469,19 @@ func (s *Server) serve(listener net.Listener) error {
 		s.cancelServiceMon()
 	}
 	s.cleanupOpenCodeServer()
+
+	// Stop tunnel if it was started by this server
+	if s.tunnel != nil {
+		status := s.tunnel.Status()
+		if status.Running && status.StartedByUs {
+			s.tunnel.Stop()
+		}
+	}
+
+	// Stop all LSP servers
+	if s.lspManager != nil {
+		s.lspManager.StopAll(context.Background())
+	}
 
 	log.Printf("[server] Shutdown complete")
 	return nil
@@ -732,6 +770,25 @@ func (s *Server) writePortFile() error {
 	return os.WriteFile(portFile, []byte(strconv.Itoa(s.port)), 0644)
 }
 
+// autoStartTunnel starts the tunnel and broadcasts initial status.
+func (s *Server) autoStartTunnel() {
+	tunnel := s.tunnel
+	if tunnel == nil {
+		return
+	}
+	url, err := tunnel.Start()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  %s  %s\n", "✗", "tunnel failed to start: "+err.Error())
+		return
+	}
+	status := tunnel.Status()
+	if s.sse != nil {
+		s.sse.Broadcast(routes.SSEEvent{Type: "tunnel:status", Data: status})
+	}
+	fmt.Printf("  %s  %s  %s\n", "⇄", url, "(cloudflared)")
+	fmt.Println()
+}
+
 // cleanupPortFile removes the .server-port file on shutdown so stale port
 // references don't linger after the server exits.
 func (s *Server) cleanupPortFile() {
@@ -868,16 +925,24 @@ func (s *Server) buildRouter() chi.Router {
 		r.Use(middleware.Logger)
 	}
 
-	// CORS: allow all origins for development.
+	// CORS: reflect origin when credentials are used.
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"*"},
+		AllowOriginFunc:  func(origin string) bool { return true },
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 		ExposedHeaders:   []string{"Link"},
-		AllowCredentials: false,
+		AllowCredentials: true,
 		MaxAge:           300,
 	})
 	r.Use(c.Handler)
+
+	// --- Auth middleware (no-op when no password is set) ---
+	r.Use(s.auth.Middleware)
+
+	// --- Auth routes (always accessible, bypasses auth middleware) ---
+	r.Route("/api/auth", func(r chi.Router) {
+		routes.SetupAuthRoutes(r, s.auth, s.sse)
+	})
 
 	// --- SSE endpoint ---
 	r.Get("/api/events", s.sse.Subscribe)
@@ -893,6 +958,20 @@ func (s *Server) buildRouter() chi.Router {
 	r.Route("/api", func(r chi.Router) {
 		routes.SetupRoutes(r, s.store, s.sse, s.projectRoot, s.manager, s.reinitOpenCode)
 	})
+
+	// --- LSP language management routes ---
+	if s.lspManager != nil {
+		r.Route("/api/lsp", func(r chi.Router) {
+			routes.SetupLSPRoutes(r, s.lspManager, s.store, s.manager, s.sse)
+		})
+	}
+
+	// --- Tunnel routes (cloudflared tunnel control) ---
+	if s.tunnel != nil {
+		r.Route("/api/tunnel", func(r chi.Router) {
+			routes.SetupTunnelRoutes(r, s.tunnel, s.sse)
+		})
+	}
 
 	// --- Agent status (CLI installation check) ---
 	r.Get("/api/agent/status", s.getAgentStatus)
@@ -1007,13 +1086,13 @@ func (s *Server) proxyOpenCode(w http.ResponseWriter, r *http.Request) {
 		if message == "" {
 			message = "OpenCode runtime is not ready"
 		}
-		http.Error(w, message, http.StatusServiceUnavailable)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": message})
 		return
 	}
 
 	cfg, configured := s.openCodeConfig()
 	if !configured {
-		http.Error(w, "OpenCode server is not configured", http.StatusServiceUnavailable)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "OpenCode server is not configured"})
 		return
 	}
 

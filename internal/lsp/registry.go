@@ -55,6 +55,19 @@ func BuiltinLanguages() []Language {
 	}
 }
 
+func (r *Registry) Register(lang Language) {
+	if len(lang.Extensions) == 0 {
+		return
+	}
+	if _, exists := r.byExt[strings.ToLower(lang.Extensions[0])]; exists {
+		return
+	}
+	r.languages = append(r.languages, lang)
+	for _, ext := range lang.Extensions {
+		r.byExt[strings.ToLower(ext)] = lang
+	}
+}
+
 func (r *Registry) Languages() []Language {
 	return append([]Language(nil), r.languages...)
 }

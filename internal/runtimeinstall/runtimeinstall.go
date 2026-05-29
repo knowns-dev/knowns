@@ -405,7 +405,9 @@ func installCodex(spec runtimeSpec, opts Options) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(configPath, []byte(setCodexFeature(configBody, "codex_hooks", true)), 0644); err != nil {
+	configBody = setCodexFeature(configBody, "codex_hooks", true)
+	configBody = SetCodexMCPServer(configBody, "knowns", []string{"mcp", "--stdio"})
+	if err := os.WriteFile(configPath, []byte(configBody), 0644); err != nil {
 		return err
 	}
 	hooks, err := readJSONMap(hooksPath)
@@ -577,6 +579,19 @@ func installOpenCode(spec runtimeSpec, opts Options) error {
 		return fmt.Errorf("read OpenCode config: %w", err)
 	}
 	config["$schema"] = "https://opencode.ai/config.json"
+
+	// Ensure MCP config with correct format
+	mcp, _ := config["mcp"].(map[string]any)
+	if mcp == nil {
+		mcp = make(map[string]any)
+	}
+	mcp["knowns"] = map[string]any{
+		"type":    "local",
+		"command": []string{"knowns", "mcp", "--stdio"},
+		"enabled": true,
+	}
+	config["mcp"] = mcp
+
 	if err := writeJSONMap(configPath, config); err != nil {
 		return err
 	}

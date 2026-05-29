@@ -204,17 +204,6 @@ type downloadModel struct {
 	dst       string
 }
 
-func newDownloadModel(fileName, url, dst string) downloadModel {
-	bar := NewBrandProgressBar()
-	return downloadModel{
-		bar:       bar,
-		fileName:  fileName,
-		url:       url,
-		dst:       dst,
-		startTime: time.Now(),
-	}
-}
-
 func (m downloadModel) Init() tea.Cmd {
 	return m.startDownload()
 }
@@ -311,101 +300,6 @@ func (m *downloadModel) startDownload() tea.Cmd {
 		}
 		return progressDoneMsg{}
 	}
-}
-
-// ─── multi-file download with overall progress bar ───────────────────
-
-type fileDownloadResult struct {
-	file string
-	size int64
-	err  error
-}
-
-// downloadWithProgress downloads a file while showing a bubbletea progress bar.
-func downloadWithProgress(label, url, dst string) (int64, error) {
-	client := &http.Client{Timeout: 30 * time.Minute}
-
-	// HEAD request first to get Content-Length
-	headResp, err := client.Head(url)
-	if err != nil {
-		// Fall back to download without size
-		return downloadSimple(url, dst)
-	}
-	headResp.Body.Close()
-	totalSize := headResp.ContentLength
-
-	if totalSize <= 0 {
-		return downloadSimple(url, dst)
-	}
-
-	resp, err := client.Get(url)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	outFile, err := os.Create(dst)
-	if err != nil {
-		return 0, err
-	}
-	defer outFile.Close()
-
-	// Create progress writer
-	pw := &progressWriter{
-		total:   totalSize,
-		writer:  outFile,
-		started: time.Now(),
-		label:   label,
-	}
-
-	// Create bubbletea program
-	bar := NewBrandProgressBar(
-		progress.WithoutPercentage(),
-	)
-
-	m := &dlProgressModel{
-		bar:   bar,
-		pw:    pw,
-		label: label,
-	}
-
-	pw.onProgress = func(pct float64) {
-		if m.prog != nil {
-			m.prog.Send(tickMsg{})
-		}
-	}
-
-	p := tea.NewProgram(m)
-	m.prog = p
-
-	// Download in background goroutine
-	doneCh := make(chan error, 1)
-	go func() {
-		_, err := io.Copy(pw, resp.Body)
-		doneCh <- err
-	}()
-
-	// Run TUI — it blocks until Quit
-	go func() {
-		err := <-doneCh
-		pw.done = true
-		pw.err = err
-		p.Send(downloadCompleteMsg{err: err})
-	}()
-
-	if _, err := p.Run(); err != nil {
-		return 0, err
-	}
-
-	if pw.err != nil {
-		return 0, pw.err
-	}
-
-	return pw.written, nil
 }
 
 func downloadSimple(url, dst string) (int64, error) {
@@ -702,16 +596,6 @@ func runModelDownload(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
-}
-
-func checkHuggingFaceOnline() bool {
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Head("https://huggingface.co/api/models")
-	if err != nil {
-		return false
-	}
-	resp.Body.Close()
-	return true
 }
 
 func formatBytes(b int64) string {

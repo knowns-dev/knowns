@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"charm.land/bubbles/v2/progress"
 	tea "charm.land/bubbletea/v2"
@@ -948,79 +947,6 @@ func reindexSemanticStore(store *storage.Store, label string) error {
 	return nil
 }
 
-// ─── scoring helpers (CLI-local, used for non-engine paths) ──────────
-
-func scoreTaskCLI(query string, t *models.Task) (float64, string) {
-	tokens := tokenizeCLI(query)
-	if len(tokens) == 0 {
-		return 0, ""
-	}
-
-	score := 0.0
-	snippet := ""
-
-	for _, tok := range tokens {
-		if containsTokenCI(t.Title, tok) {
-			score += 3.0
-		}
-		if containsTokenCI(t.Description, tok) {
-			score += 1.5
-			if snippet == "" {
-				snippet = excerptAround(t.Description, tok, 80)
-			}
-		}
-		for _, ac := range t.AcceptanceCriteria {
-			if containsTokenCI(ac.Text, tok) {
-				score += 0.5
-			}
-		}
-		if containsTokenCI(t.ImplementationNotes, tok) {
-			score += 0.5
-		}
-		if containsTokenCI(t.ImplementationPlan, tok) {
-			score += 0.5
-		}
-		for _, l := range t.Labels {
-			if containsTokenCI(l, tok) {
-				score += 0.5
-			}
-		}
-	}
-
-	return score / float64(len(tokens)), snippet
-}
-
-func tokenizeCLI(query string) []string {
-	words := strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
-	})
-	return words
-}
-
-func containsTokenCI(text, token string) bool {
-	return strings.Contains(strings.ToLower(text), token)
-}
-
-func excerptAround(text, token string, maxLen int) string {
-	lower := strings.ToLower(text)
-	idx := strings.Index(lower, token)
-	if idx < 0 {
-		if len(text) > maxLen {
-			return text[:maxLen]
-		}
-		return text
-	}
-	start := idx - 30
-	if start < 0 {
-		start = 0
-	}
-	end := idx + len(token) + 50
-	if end > len(text) {
-		end = len(text)
-	}
-	return strings.TrimSpace(text[start:end])
-}
-
 func scoreToPercent(score, maxScore float64) int {
 	if maxScore <= 0 {
 		return 0
@@ -1042,14 +968,6 @@ func truncate(s string, maxLen int) string {
 		return s[:maxLen] + "..."
 	}
 	return s
-}
-
-func sortSearchResults(results []models.SearchResult) {
-	for i := 1; i < len(results); i++ {
-		for j := i; j > 0 && results[j].Score > results[j-1].Score; j-- {
-			results[j], results[j-1] = results[j-1], results[j]
-		}
-	}
 }
 
 func init() {

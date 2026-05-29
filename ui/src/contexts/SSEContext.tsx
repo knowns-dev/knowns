@@ -136,7 +136,10 @@ export function SSEProvider({ children }: { children: ReactNode }) {
 
 	// Setup SSE connection
 	useEffect(() => {
-		const sseUrl = `${API_BASE}/api/events`;
+		const token = sessionStorage.getItem("knowns_auth_token");
+		const sseUrl = token
+			? `${API_BASE}/api/events?token=${encodeURIComponent(token)}`
+			: `${API_BASE}/api/events`;
 
 		// Store named handler references for proper cleanup
 		const handlers: Array<{ event: string; handler: (e: MessageEvent) => void }> = [];

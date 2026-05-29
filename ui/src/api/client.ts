@@ -4,6 +4,11 @@ import type { TaskChange, TaskVersion } from "@/ui/models/version";
 // Use env vars from Vite, fallback to relative paths for production
 const API_BASE = import.meta.env.API_URL || "";
 
+// Wrapper that always sends credentials (cookies) with requests
+function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+	return fetch(input, { ...init, credentials: "include" });
+}
+
 interface TaskDTO {
 	id: string;
 	title: string;
@@ -94,7 +99,7 @@ function parseTaskDTO(dto: TaskDTO): Task {
 
 export const api = {
 	async getTasks(): Promise<Task[]> {
-		const res = await fetch(`${API_BASE}/api/tasks`);
+		const res = await apiFetch(`${API_BASE}/api/tasks`);
 		if (!res.ok) {
 			throw new Error("Failed to fetch tasks");
 		}
@@ -103,7 +108,7 @@ export const api = {
 	},
 
 	async getTask(id: string): Promise<Task> {
-		const res = await fetch(`${API_BASE}/api/tasks/${id}`);
+		const res = await apiFetch(`${API_BASE}/api/tasks/${id}`);
 		if (!res.ok) {
 			throw new Error(`Failed to fetch task ${id}`);
 		}
@@ -112,7 +117,7 @@ export const api = {
 	},
 
 	async updateTask(id: string, updates: Partial<Task>): Promise<Task> {
-		const res = await fetch(`${API_BASE}/api/tasks/${id}`, {
+		const res = await apiFetch(`${API_BASE}/api/tasks/${id}`, {
 			method: "PUT",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(updates),
@@ -126,7 +131,7 @@ export const api = {
 	},
 
 	async createTask(data: Partial<Task>): Promise<Task> {
-		const res = await fetch(`${API_BASE}/api/tasks`, {
+		const res = await apiFetch(`${API_BASE}/api/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(data),
@@ -139,7 +144,7 @@ export const api = {
 	},
 
 	async getTaskHistory(id: string): Promise<TaskVersion[]> {
-		const res = await fetch(`${API_BASE}/api/tasks/${id}/history`);
+		const res = await apiFetch(`${API_BASE}/api/tasks/${id}/history`);
 		if (!res.ok) {
 			throw new Error(`Failed to fetch history for task ${id}`);
 		}
@@ -149,7 +154,7 @@ export const api = {
 	},
 
 	async archiveTask(id: string): Promise<{ success: boolean; task: Task }> {
-		const res = await fetch(`${API_BASE}/api/tasks/${id}/archive`, {
+		const res = await apiFetch(`${API_BASE}/api/tasks/${id}/archive`, {
 			method: "POST",
 		});
 		if (!res.ok) {
@@ -161,7 +166,7 @@ export const api = {
 	},
 
 	async unarchiveTask(id: string): Promise<{ success: boolean; task: Task }> {
-		const res = await fetch(`${API_BASE}/api/tasks/${id}/unarchive`, {
+		const res = await apiFetch(`${API_BASE}/api/tasks/${id}/unarchive`, {
 			method: "POST",
 		});
 		if (!res.ok) {
@@ -173,7 +178,7 @@ export const api = {
 	},
 
 	async batchArchiveTasks(olderThanMs: number): Promise<{ success: boolean; count: number; tasks: Task[] }> {
-		const res = await fetch(`${API_BASE}/api/tasks/batch-archive`, {
+		const res = await apiFetch(`${API_BASE}/api/tasks/batch-archive`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ olderThanMs }),
@@ -191,7 +196,7 @@ export const api = {
 	},
 
 	async reorderTasks(orders: Array<{ id: string; order: number }>): Promise<void> {
-		const res = await fetch(`${API_BASE}/api/tasks/reorder`, {
+		const res = await apiFetch(`${API_BASE}/api/tasks/reorder`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ orders }),
@@ -207,7 +212,7 @@ export const api = {
 		if (options?.limit) params.set("limit", options.limit.toString());
 		if (options?.type) params.set("type", options.type);
 
-		const res = await fetch(`${API_BASE}/api/activities?${params.toString()}`);
+		const res = await apiFetch(`${API_BASE}/api/activities?${params.toString()}`);
 		if (!res.ok) {
 			throw new Error("Failed to fetch activities");
 		}
@@ -238,8 +243,62 @@ export const {
 } = api;
 
 // Config API
+export interface LSPLanguageInfo {
+	id: string;
+	name: string;
+	binary: string;
+	installed: boolean;
+	running: boolean;
+	installHint?: string;
+}
+
+export const lspApi = {
+	async getLanguages(): Promise<{ languages: LSPLanguageInfo[] }> {
+		const res = await apiFetch(`${API_BASE}/api/lsp/languages`);
+		if (!res.ok) throw new Error("Failed to fetch LSP languages");
+		return res.json();
+	},
+
+	async addLanguage(language: string): Promise<{ language: string; status: string; action: string }> {
+		const res = await apiFetch(`${API_BASE}/api/lsp/languages`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ language }),
+		});
+		if (!res.ok) {
+			const data = await res.json().catch(() => ({}));
+			throw new Error(data.error || "Failed to add LSP language");
+		}
+		return res.json();
+	},
+
+	async toggleLanguage(lang: string, enabled: boolean): Promise<{ language: string; status: string; action: string }> {
+		const res = await apiFetch(`${API_BASE}/api/lsp/languages/${encodeURIComponent(lang)}`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ enabled }),
+		});
+		if (!res.ok) {
+			const data = await res.json().catch(() => ({}));
+			throw new Error(data.error || "Failed to toggle LSP language");
+		}
+		return res.json();
+	},
+
+	async removeLanguage(lang: string): Promise<{ language: string; status: string; action: string }> {
+		const res = await apiFetch(`${API_BASE}/api/lsp/languages/${encodeURIComponent(lang)}`, {
+			method: "DELETE",
+		});
+		if (!res.ok) {
+			const data = await res.json().catch(() => ({}));
+			throw new Error(data.error || "Failed to remove LSP language");
+		}
+		return res.json();
+	},
+};
+
 export async function getConfig(): Promise<Record<string, unknown>> {
-	const res = await fetch(`${API_BASE}/api/config`);
+	const res = await apiFetch(`${API_BASE}/api/config`);
 	if (!res.ok) {
 		throw new Error("Failed to fetch config");
 	}
@@ -248,7 +307,7 @@ export async function getConfig(): Promise<Record<string, unknown>> {
 }
 
 export async function saveConfig(config: Record<string, unknown>): Promise<void> {
-	const res = await fetch(`${API_BASE}/api/config`, {
+	const res = await apiFetch(`${API_BASE}/api/config`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(config),
@@ -260,7 +319,7 @@ export async function saveConfig(config: Record<string, unknown>): Promise<void>
 
 // User Preferences API (user-level, cross-project)
 export async function getUserPreferences(): Promise<Record<string, unknown>> {
-	const res = await fetch(`${API_BASE}/api/user-preferences`);
+	const res = await apiFetch(`${API_BASE}/api/user-preferences`);
 	if (!res.ok) {
 		throw new Error("Failed to fetch user preferences");
 	}
@@ -268,7 +327,7 @@ export async function getUserPreferences(): Promise<Record<string, unknown>> {
 }
 
 export async function saveUserPreferences(prefs: Record<string, unknown>): Promise<void> {
-	const res = await fetch(`${API_BASE}/api/user-preferences`, {
+	const res = await apiFetch(`${API_BASE}/api/user-preferences`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(prefs),
@@ -288,7 +347,7 @@ export interface Doc {
 }
 
 export async function getDocs(): Promise<Doc[]> {
-	const res = await fetch(`${API_BASE}/api/docs`);
+	const res = await apiFetch(`${API_BASE}/api/docs`);
 	if (!res.ok) {
 		throw new Error("Failed to fetch docs");
 	}
@@ -299,7 +358,7 @@ export async function getDocs(): Promise<Doc[]> {
 export async function getDoc(path: string): Promise<Doc | null> {
 	// Encode each path segment separately to preserve '/' for the wildcard route.
 	const encodedPath = path.split("/").map(encodeURIComponent).join("/");
-	const res = await fetch(`${API_BASE}/api/docs/${encodedPath}`);
+	const res = await apiFetch(`${API_BASE}/api/docs/${encodedPath}`);
 	if (!res.ok) {
 		if (res.status === 404) return null;
 		throw new Error(`Failed to fetch doc ${path}`);
@@ -315,7 +374,7 @@ export async function getDoc(path: string): Promise<Doc | null> {
 }
 
 export async function createDoc(data: Record<string, unknown>): Promise<unknown> {
-	const res = await fetch(`${API_BASE}/api/docs`, {
+	const res = await apiFetch(`${API_BASE}/api/docs`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(data),
@@ -331,7 +390,7 @@ export async function updateDoc(
 	data: { content?: string; title?: string; description?: string; tags?: string[] },
 ): Promise<Doc> {
 	const encodedPath = path.split("/").map(encodeURIComponent).join("/");
-	const res = await fetch(`${API_BASE}/api/docs/${encodedPath}`, {
+	const res = await apiFetch(`${API_BASE}/api/docs/${encodedPath}`, {
 		method: "PUT",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(data),
@@ -345,7 +404,7 @@ export async function updateDoc(
 
 // Search API
 export async function search(query: string): Promise<{ tasks: Task[]; docs: unknown[] }> {
-	const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}`);
+	const res = await apiFetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}`);
 	if (!res.ok) {
 		throw new Error("Failed to search");
 	}
@@ -419,7 +478,7 @@ export interface SDDResult {
 }
 
 export async function getSDDStats(): Promise<SDDResult> {
-	const res = await fetch(`${API_BASE}/api/validate/sdd`);
+	const res = await apiFetch(`${API_BASE}/api/validate/sdd`);
 	if (!res.ok) throw new Error("Failed to fetch SDD stats");
 	return res.json();
 }
@@ -487,7 +546,7 @@ export interface RuntimeStatusResponse {
 }
 
 export async function getRuntimePs(): Promise<RuntimeStatusResponse> {
-	const res = await fetch(`${API_BASE}/api/runtime/ps`);
+	const res = await apiFetch(`${API_BASE}/api/runtime/ps`);
 	if (!res.ok) {
 		throw new Error("Failed to fetch runtime status");
 	}
@@ -510,7 +569,7 @@ export interface RuntimeServicesResponse {
 }
 
 export async function getRuntimeServices(): Promise<RuntimeServicesResponse> {
-	const res = await fetch(`${API_BASE}/api/runtime/services`);
+	const res = await apiFetch(`${API_BASE}/api/runtime/services`);
 	if (!res.ok) {
 		throw new Error("Failed to fetch runtime services");
 	}
@@ -565,7 +624,7 @@ export interface ImportResult {
 
 export const importApi = {
 	async list(): Promise<{ imports: Import[]; count: number }> {
-		const res = await fetch(`${API_BASE}/api/imports`);
+		const res = await apiFetch(`${API_BASE}/api/imports`);
 		if (!res.ok) {
 			throw new Error("Failed to fetch imports");
 		}
@@ -573,7 +632,7 @@ export const importApi = {
 	},
 
 	async get(name: string): Promise<{ import: ImportDetail }> {
-		const res = await fetch(`${API_BASE}/api/imports/${encodeURIComponent(name)}`);
+		const res = await apiFetch(`${API_BASE}/api/imports/${encodeURIComponent(name)}`);
 		if (!res.ok) {
 			if (res.status === 404) {
 				throw new Error(`Import not found: ${name}`);
@@ -594,7 +653,7 @@ export const importApi = {
 		force?: boolean;
 		dryRun?: boolean;
 	}): Promise<ImportResult> {
-		const res = await fetch(`${API_BASE}/api/imports`, {
+		const res = await apiFetch(`${API_BASE}/api/imports`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(data),
@@ -607,7 +666,7 @@ export const importApi = {
 	},
 
 	async sync(name: string, options?: { force?: boolean; dryRun?: boolean }): Promise<ImportResult> {
-		const res = await fetch(`${API_BASE}/api/imports/${encodeURIComponent(name)}/sync`, {
+		const res = await apiFetch(`${API_BASE}/api/imports/${encodeURIComponent(name)}/sync`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(options || {}),
@@ -632,7 +691,7 @@ export const importApi = {
 		}>;
 		summary: { total: number; successful: number; failed: number };
 	}> {
-		const res = await fetch(`${API_BASE}/api/imports/sync-all`, {
+		const res = await apiFetch(`${API_BASE}/api/imports/sync-all`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(options || {}),
@@ -645,7 +704,7 @@ export const importApi = {
 	},
 
 	async remove(name: string, deleteFiles = false): Promise<{ success: boolean; filesDeleted: boolean }> {
-		const res = await fetch(`${API_BASE}/api/imports/${encodeURIComponent(name)}?delete=${deleteFiles}`, {
+		const res = await apiFetch(`${API_BASE}/api/imports/${encodeURIComponent(name)}?delete=${deleteFiles}`, {
 			method: "DELETE",
 		});
 		if (!res.ok) {
@@ -659,7 +718,7 @@ export const importApi = {
 // Time Tracking API - Multi-timer support
 export const timeApi = {
 	async getStatus(): Promise<{ active: ActiveTimer[] }> {
-		const res = await fetch(`${API_BASE}/api/time/status`);
+		const res = await apiFetch(`${API_BASE}/api/time/status`);
 		if (!res.ok) {
 			throw new Error("Failed to fetch time status");
 		}
@@ -667,7 +726,7 @@ export const timeApi = {
 	},
 
 	async start(taskId: string): Promise<{ success: boolean; active: ActiveTimer[]; timer: ActiveTimer }> {
-		const res = await fetch(`${API_BASE}/api/time/start`, {
+		const res = await apiFetch(`${API_BASE}/api/time/start`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ taskId }),
@@ -687,7 +746,7 @@ export const timeApi = {
 		stopped: Array<{ taskId: string; duration: number }>;
 		active: ActiveTimer[];
 	}> {
-		const res = await fetch(`${API_BASE}/api/time/stop`, {
+		const res = await apiFetch(`${API_BASE}/api/time/stop`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ taskId, all }),
@@ -707,7 +766,7 @@ export const timeApi = {
 		paused: string[];
 		active: ActiveTimer[];
 	}> {
-		const res = await fetch(`${API_BASE}/api/time/pause`, {
+		const res = await apiFetch(`${API_BASE}/api/time/pause`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ taskId, all }),
@@ -727,7 +786,7 @@ export const timeApi = {
 		resumed: string[];
 		active: ActiveTimer[];
 	}> {
-		const res = await fetch(`${API_BASE}/api/time/resume`, {
+		const res = await apiFetch(`${API_BASE}/api/time/resume`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ taskId, all }),
@@ -745,13 +804,13 @@ import type { ChatSession, AgentInfo, AgentModelDef } from "@/ui/models/chat";
 
 export const chatApi = {
 	async getSessions(): Promise<ChatSession[]> {
-		const res = await fetch(`${API_BASE}/api/chats`);
+		const res = await apiFetch(`${API_BASE}/api/chats`);
 		if (!res.ok) throw new Error("Failed to fetch chat sessions");
 		return res.json();
 	},
 
 	async getSession(id: string): Promise<ChatSession> {
-		const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(id)}`);
+		const res = await apiFetch(`${API_BASE}/api/chats/${encodeURIComponent(id)}`);
 		if (!res.ok) throw new Error(`Failed to fetch chat session ${id}`);
 		return res.json();
 	},
@@ -762,7 +821,7 @@ export const chatApi = {
 		title?: string;
 		taskId?: string;
 	}): Promise<ChatSession> {
-		const res = await fetch(`${API_BASE}/api/chats`, {
+		const res = await apiFetch(`${API_BASE}/api/chats`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(data),
@@ -775,7 +834,7 @@ export const chatApi = {
 	},
 
 	async updateSession(id: string, data: { title?: string; model?: string }): Promise<ChatSession> {
-		const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(id)}`, {
+		const res = await apiFetch(`${API_BASE}/api/chats/${encodeURIComponent(id)}`, {
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(data),
@@ -785,14 +844,14 @@ export const chatApi = {
 	},
 
 	async deleteSession(id: string): Promise<void> {
-		const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(id)}`, {
+		const res = await apiFetch(`${API_BASE}/api/chats/${encodeURIComponent(id)}`, {
 			method: "DELETE",
 		});
 		if (!res.ok) throw new Error("Failed to delete session");
 	},
 
 	async sendMessage(id: string, content: string): Promise<{ status: string; message: unknown }> {
-		const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(id)}/send`, {
+		const res = await apiFetch(`${API_BASE}/api/chats/${encodeURIComponent(id)}/send`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ content }),
@@ -805,20 +864,20 @@ export const chatApi = {
 	},
 
 	async stopChat(id: string): Promise<void> {
-		const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(id)}/stop`, {
+		const res = await apiFetch(`${API_BASE}/api/chats/${encodeURIComponent(id)}/stop`, {
 			method: "POST",
 		});
 		if (!res.ok) throw new Error("Failed to stop chat");
 	},
 
 	async getQueue(id: string): Promise<{ queueSize: number; maxSize: number; messages: string[] }> {
-		const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(id)}/queue`);
+		const res = await apiFetch(`${API_BASE}/api/chats/${encodeURIComponent(id)}/queue`);
 		if (!res.ok) throw new Error("Failed to get queue");
 		return res.json();
 	},
 
 	async processQueue(id: string): Promise<{ hasMore: boolean; message: string; queueSize: number }> {
-		const res = await fetch(`${API_BASE}/api/chats/${encodeURIComponent(id)}/process-queue`, {
+		const res = await apiFetch(`${API_BASE}/api/chats/${encodeURIComponent(id)}/process-queue`, {
 			method: "POST",
 		});
 		if (!res.ok) throw new Error("Failed to process queue");
@@ -826,7 +885,7 @@ export const chatApi = {
 	},
 
 	async getAgents(): Promise<{ agents: AgentInfo[]; models: AgentModelDef[] }> {
-		const res = await fetch(`${API_BASE}/api/chats/agents`);
+		const res = await apiFetch(`${API_BASE}/api/chats/agents`);
 		if (!res.ok) throw new Error("Failed to fetch agents");
 		return res.json();
 	},
@@ -1068,25 +1127,25 @@ async function readOpenCodeResponsePayload(res: Response): Promise<{ message?: s
 
 export const opencodeApi = {
 	async getStatus(): Promise<OpenCodeStatus> {
-		const res = await fetch(`${OPENCODE_BASE}/status`);
+		const res = await apiFetch(`${OPENCODE_BASE}/status`);
 		if (!res.ok) throw new Error("Failed to fetch OpenCode status");
 		return res.json();
 	},
 
 	async listSessions(): Promise<OpenCodeSession[]> {
-		const res = await fetch(`${OPENCODE_BASE}/session`);
+		const res = await apiFetch(`${OPENCODE_BASE}/session`);
 		if (!res.ok) throw new Error("Failed to fetch sessions");
 		return res.json();
 	},
 
 	async getSession(id: string): Promise<OpenCodeSession> {
-		const res = await fetch(`${OPENCODE_BASE}/session/${encodeURIComponent(id)}`);
+		const res = await apiFetch(`${OPENCODE_BASE}/session/${encodeURIComponent(id)}`);
 		if (!res.ok) throw new Error(`Failed to fetch session ${id}`);
 		return res.json();
 	},
 
 	async createSession(data?: { model?: OpenCodeModelSelection | null; title?: string }): Promise<OpenCodeSession> {
-		const res = await fetch(`${OPENCODE_BASE}/session`, {
+		const res = await apiFetch(`${OPENCODE_BASE}/session`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(data || {}),
@@ -1096,14 +1155,14 @@ export const opencodeApi = {
 	},
 
 	async deleteSession(id: string): Promise<void> {
-		const res = await fetch(`${OPENCODE_BASE}/session/${encodeURIComponent(id)}`, {
+		const res = await apiFetch(`${OPENCODE_BASE}/session/${encodeURIComponent(id)}`, {
 			method: "DELETE",
 		});
 		if (!res.ok) throw new Error(`Failed to delete session ${id}`);
 	},
 
 	async updateSession(id: string, data: { model?: OpenCodeModelSelection; title?: string }): Promise<OpenCodeSession> {
-		const res = await fetch(`${OPENCODE_BASE}/session/${encodeURIComponent(id)}`, {
+		const res = await apiFetch(`${OPENCODE_BASE}/session/${encodeURIComponent(id)}`, {
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(data),
@@ -1119,7 +1178,7 @@ export const opencodeApi = {
 		system?: string,
 		variant?: string,
 	): Promise<any> {
-		const res = await fetch(`${OPENCODE_BASE}/session/${encodeURIComponent(sessionId)}/message`, {
+		const res = await apiFetch(`${OPENCODE_BASE}/session/${encodeURIComponent(sessionId)}/message`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
@@ -1143,7 +1202,7 @@ export const opencodeApi = {
 		system?: string,
 		variant?: string,
 	): Promise<OpenCodeAsyncPromptResponse> {
-		const res = await fetch(`${OPENCODE_BASE}/session/${encodeURIComponent(sessionId)}/prompt_async`, {
+		const res = await apiFetch(`${OPENCODE_BASE}/session/${encodeURIComponent(sessionId)}/prompt_async`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
@@ -1172,25 +1231,25 @@ export const opencodeApi = {
 	},
 
 	async getMessages(sessionId: string): Promise<OpenCodeMessage[]> {
-		const res = await fetch(`${OPENCODE_BASE}/session/${encodeURIComponent(sessionId)}/message`);
+		const res = await apiFetch(`${OPENCODE_BASE}/session/${encodeURIComponent(sessionId)}/message`);
 		if (!res.ok) throw new Error(`Failed to fetch messages for ${sessionId}`);
 		return res.json();
 	},
 
 	async getTodos(sessionId: string): Promise<OpenCodeTodo[]> {
-		const res = await fetch(`${OPENCODE_BASE}/session/${encodeURIComponent(sessionId)}/todo`);
+		const res = await apiFetch(`${OPENCODE_BASE}/session/${encodeURIComponent(sessionId)}/todo`);
 		if (!res.ok) throw new Error(`Failed to fetch todos for ${sessionId}`);
 		return res.json();
 	},
 
 	async listPendingQuestions(): Promise<OpenCodePendingQuestion[]> {
-		const res = await fetch(`${OPENCODE_BASE}/question`);
+		const res = await apiFetch(`${OPENCODE_BASE}/question`);
 		if (!res.ok) return [];
 		return res.json();
 	},
 
 	async replyQuestion(questionId: string, payload: OpenCodeQuestionReplyPayload): Promise<unknown> {
-		const res = await fetch(`${OPENCODE_BASE}/question/${encodeURIComponent(questionId)}/reply`, {
+		const res = await apiFetch(`${OPENCODE_BASE}/question/${encodeURIComponent(questionId)}/reply`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(payload),
@@ -1207,7 +1266,7 @@ export const opencodeApi = {
 	},
 
 	async rejectQuestion(questionId: string): Promise<unknown> {
-		const res = await fetch(`${OPENCODE_BASE}/question/${encodeURIComponent(questionId)}/reject`, {
+		const res = await apiFetch(`${OPENCODE_BASE}/question/${encodeURIComponent(questionId)}/reject`, {
 			method: "POST",
 		});
 		if (!res.ok) {
@@ -1222,7 +1281,7 @@ export const opencodeApi = {
 	},
 
 	async listPendingPermissions(): Promise<OpenCodePendingPermission[]> {
-		const res = await fetch(`${OPENCODE_BASE}/permission`);
+		const res = await apiFetch(`${OPENCODE_BASE}/permission`);
 		if (!res.ok) return [];
 		return res.json();
 	},
@@ -1232,7 +1291,7 @@ export const opencodeApi = {
 		permissionId: string,
 		response: OpenCodePermissionResponse,
 	): Promise<unknown> {
-		const res = await fetch(
+		const res = await apiFetch(
 			`${OPENCODE_BASE}/session/${encodeURIComponent(sessionId)}/permissions/${encodeURIComponent(permissionId)}`,
 			{
 				method: "POST",
@@ -1268,13 +1327,13 @@ export const opencodeApi = {
 		location: string;
 		content: string;
 	}>> {
-		const res = await fetch(`${OPENCODE_BASE}/skill`);
+		const res = await apiFetch(`${OPENCODE_BASE}/skill`);
 		if (!res.ok) throw new Error("Failed to fetch skills");
 		return res.json();
 	},
 
 	async listCommands(directory?: string | null): Promise<OpenCodeCommandDefinition[]> {
-		const res = await fetch(`${OPENCODE_BASE}/command`, {
+		const res = await apiFetch(`${OPENCODE_BASE}/command`, {
 			headers: getOpenCodeHeaders(directory),
 		});
 		if (!res.ok) throw new Error("Failed to fetch commands");
@@ -1287,7 +1346,7 @@ export const opencodeApi = {
 			commandUrl.searchParams.set("directory", payload.directory);
 		}
 
-		const res = await fetch(commandUrl.toString(), {
+		const res = await apiFetch(commandUrl.toString(), {
 			method: "POST",
 			headers: getOpenCodeHeaders(payload.directory || null, "application/json"),
 			body: JSON.stringify({
@@ -1319,7 +1378,7 @@ export const opencodeApi = {
 		payload: OpenCodeSummarizeSessionRequest,
 		directory?: string | null,
 	): Promise<unknown> {
-		const res = await fetch(`${OPENCODE_BASE}/session/${encodeURIComponent(sessionId)}/summarize`, {
+		const res = await apiFetch(`${OPENCODE_BASE}/session/${encodeURIComponent(sessionId)}/summarize`, {
 			method: "POST",
 			headers: getOpenCodeHeaders(directory, "application/json"),
 			body: JSON.stringify(payload),
@@ -1343,21 +1402,21 @@ export const opencodeApi = {
 
 	// List available providers from OpenCode (for model selector)
 	async listProviders(): Promise<OpenCodeProviderResponse> {
-		const res = await fetch(`${OPENCODE_BASE}/provider`);
+		const res = await apiFetch(`${OPENCODE_BASE}/provider`);
 		if (!res.ok) throw new Error("Failed to fetch providers");
 		return res.json();
 	},
 
 	// Get auth methods available for each provider
 	async getProviderAuth(): Promise<Record<string, ProviderAuthMethod[]>> {
-		const res = await fetch(`${OPENCODE_BASE}/provider/auth`);
+		const res = await apiFetch(`${OPENCODE_BASE}/provider/auth`);
 		if (!res.ok) throw new Error("Failed to fetch provider auth methods");
 		return res.json();
 	},
 
 	// Set credentials for a provider (API key or OAuth token)
 	async setAuth(id: string, auth: OpenCodeAuth): Promise<boolean> {
-		const res = await fetch(`${OPENCODE_BASE}/auth/${encodeURIComponent(id)}`, {
+		const res = await apiFetch(`${OPENCODE_BASE}/auth/${encodeURIComponent(id)}`, {
 			method: "PUT",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(auth),
@@ -1368,7 +1427,7 @@ export const opencodeApi = {
 
 	// Remove credentials for a provider (disconnect)
 	async deleteAuth(id: string): Promise<boolean> {
-		const res = await fetch(`${OPENCODE_BASE}/auth/${encodeURIComponent(id)}`, {
+		const res = await apiFetch(`${OPENCODE_BASE}/auth/${encodeURIComponent(id)}`, {
 			method: "DELETE",
 		});
 		if (!res.ok) throw new Error(`Failed to disconnect provider ${id}`);
@@ -1377,7 +1436,7 @@ export const opencodeApi = {
 
 	// Initiate OAuth flow for a provider — returns authorization URL + method
 	async oauthAuthorize(id: string, method: number): Promise<ProviderAuthAuthorization> {
-		const res = await fetch(`${OPENCODE_BASE}/provider/${encodeURIComponent(id)}/oauth/authorize`, {
+		const res = await apiFetch(`${OPENCODE_BASE}/provider/${encodeURIComponent(id)}/oauth/authorize`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ method }),
@@ -1388,7 +1447,7 @@ export const opencodeApi = {
 
 	// Complete OAuth flow (code exchange or auto-detection)
 	async oauthCallback(id: string, method: number, code?: string): Promise<boolean> {
-		const res = await fetch(`${OPENCODE_BASE}/provider/${encodeURIComponent(id)}/oauth/callback`, {
+		const res = await apiFetch(`${OPENCODE_BASE}/provider/${encodeURIComponent(id)}/oauth/callback`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ method, ...(code ? { code } : {}) }),
@@ -1399,13 +1458,13 @@ export const opencodeApi = {
 
 	// Dispose global OpenCode instance
 	async globalDispose(): Promise<void> {
-		const res = await fetch(`${OPENCODE_BASE}/global/dispose`, { method: "POST" });
+		const res = await apiFetch(`${OPENCODE_BASE}/global/dispose`, { method: "POST" });
 		if (!res.ok) throw new Error("Failed to dispose OpenCode instance");
 	},
 
 	// Patch OpenCode config (e.g. register custom providers)
 	async patchConfig(config: Record<string, unknown>): Promise<void> {
-		const res = await fetch(`${OPENCODE_BASE}/config`, {
+		const res = await apiFetch(`${OPENCODE_BASE}/config`, {
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(config),
@@ -1415,14 +1474,14 @@ export const opencodeApi = {
 
 	// Stop a running session via OpenCode abort endpoint
 	async stopSession(id: string): Promise<void> {
-		const res = await fetch(`${OPENCODE_BASE}/session/${encodeURIComponent(id)}/abort`, {
+		const res = await apiFetch(`${OPENCODE_BASE}/session/${encodeURIComponent(id)}/abort`, {
 			method: "POST",
 		});
 		if (!res.ok) throw new Error(`Failed to stop session ${id}`);
 	},
 
 	async revertMessage(sessionId: string, messageId: string): Promise<void> {
-		const res = await fetch(`${OPENCODE_BASE}/session/${encodeURIComponent(sessionId)}/revert`, {
+		const res = await apiFetch(`${OPENCODE_BASE}/session/${encodeURIComponent(sessionId)}/revert`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ messageID: messageId }),
@@ -1452,7 +1511,7 @@ export interface EmbeddingModelsResponse {
 }
 
 export async function getEmbeddingModels(): Promise<EmbeddingModelsResponse> {
-	const res = await fetch(`${API_BASE}/api/embedding-models`);
+	const res = await apiFetch(`${API_BASE}/api/embedding-models`);
 	if (!res.ok) throw new Error("Failed to fetch embedding models");
 	return res.json();
 }
@@ -1465,7 +1524,7 @@ export interface EmbeddingModelTestResult {
 }
 
 export async function testEmbeddingModel(params: { apiBase: string; apiKey: string; model: string }): Promise<EmbeddingModelTestResult> {
-	const res = await fetch(`${API_BASE}/api/embedding-models/test`, {
+	const res = await apiFetch(`${API_BASE}/api/embedding-models/test`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(params),
@@ -1481,7 +1540,7 @@ export interface ProjectStatus {
 }
 
 export async function getProjectStatus(): Promise<ProjectStatus> {
-	const res = await fetch(`${API_BASE}/api/status`);
+	const res = await apiFetch(`${API_BASE}/api/status`);
 	if (!res.ok) throw new Error("Failed to fetch status");
 	return res.json();
 }
@@ -1503,13 +1562,13 @@ export interface DirEntry {
 
 export const workspaceApi = {
 	async list(): Promise<WorkspaceProject[]> {
-		const res = await fetch(`${API_BASE}/api/workspaces`);
+		const res = await apiFetch(`${API_BASE}/api/workspaces`);
 		if (!res.ok) throw new Error("Failed to fetch workspaces");
 		return res.json();
 	},
 
 	async switchProject(id: string): Promise<WorkspaceProject> {
-		const res = await fetch(`${API_BASE}/api/workspaces/switch`, {
+		const res = await apiFetch(`${API_BASE}/api/workspaces/switch`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ id }),
@@ -1519,7 +1578,7 @@ export const workspaceApi = {
 	},
 
 	async switchByPath(path: string): Promise<WorkspaceProject> {
-		const res = await fetch(`${API_BASE}/api/workspaces/switch`, {
+		const res = await apiFetch(`${API_BASE}/api/workspaces/switch`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ path }),
@@ -1529,7 +1588,7 @@ export const workspaceApi = {
 	},
 
 	async scan(dirs: string[]): Promise<WorkspaceProject[]> {
-		const res = await fetch(`${API_BASE}/api/workspaces/scan`, {
+		const res = await apiFetch(`${API_BASE}/api/workspaces/scan`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ dirs }),
@@ -1539,14 +1598,14 @@ export const workspaceApi = {
 	},
 
 	async remove(id: string): Promise<void> {
-		const res = await fetch(`${API_BASE}/api/workspaces/${encodeURIComponent(id)}`, {
+		const res = await apiFetch(`${API_BASE}/api/workspaces/${encodeURIComponent(id)}`, {
 			method: "DELETE",
 		});
 		if (!res.ok) throw new Error("Failed to remove workspace");
 	},
 
 	async autoScan(): Promise<WorkspaceProject[]> {
-		const res = await fetch(`${API_BASE}/api/workspaces/auto-scan`, {
+		const res = await apiFetch(`${API_BASE}/api/workspaces/auto-scan`, {
 			method: "POST",
 		});
 		if (!res.ok) throw new Error("Failed to auto-scan workspaces");
@@ -1557,7 +1616,7 @@ export const workspaceApi = {
 		const url = path
 			? `${API_BASE}/api/workspaces/browse?path=${encodeURIComponent(path)}`
 			: `${API_BASE}/api/workspaces/browse`;
-		const res = await fetch(url);
+		const res = await apiFetch(url);
 		if (!res.ok) throw new Error("Failed to browse directory");
 		return res.json();
 	},
@@ -1600,7 +1659,7 @@ export interface GraphData {
 }
 
 export async function getGraph(): Promise<GraphData> {
-	const res = await fetch(`${API_BASE}/api/graph`);
+	const res = await apiFetch(`${API_BASE}/api/graph`);
 	if (!res.ok) throw new Error("Failed to fetch graph");
 	return res.json();
 }
@@ -1646,7 +1705,7 @@ export interface SemanticResolution {
 
 export async function resolveReference(ref: string): Promise<SemanticResolution> {
 	const params = new URLSearchParams({ ref });
-	const res = await fetch(`${API_BASE}/api/resolve?${params.toString()}`);
+	const res = await apiFetch(`${API_BASE}/api/resolve?${params.toString()}`);
 	if (!res.ok) {
 		throw new Error(`Failed to resolve reference ${ref}`);
 	}
@@ -1673,19 +1732,19 @@ export const memoryApi = {
 	async list(layer?: PersistentMemoryLayer): Promise<MemoryEntry[]> {
 		const params = new URLSearchParams();
 		if (layer) params.set("layer", layer);
-		const res = await fetch(`${API_BASE}/api/memories?${params.toString()}`);
+		const res = await apiFetch(`${API_BASE}/api/memories?${params.toString()}`);
 		if (!res.ok) throw new Error("Failed to fetch memories");
 		return res.json();
 	},
 
 	async get(id: string): Promise<MemoryEntry> {
-		const res = await fetch(`${API_BASE}/api/memories/${encodeURIComponent(id)}`);
+		const res = await apiFetch(`${API_BASE}/api/memories/${encodeURIComponent(id)}`);
 		if (!res.ok) throw new Error(`Failed to fetch memory ${id}`);
 		return res.json();
 	},
 
 	async create(data: Partial<MemoryEntry>): Promise<MemoryEntry> {
-		const res = await fetch(`${API_BASE}/api/memories`, {
+		const res = await apiFetch(`${API_BASE}/api/memories`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(data),
@@ -1695,7 +1754,7 @@ export const memoryApi = {
 	},
 
 	async update(id: string, data: Partial<MemoryEntry>): Promise<MemoryEntry> {
-		const res = await fetch(`${API_BASE}/api/memories/${encodeURIComponent(id)}`, {
+		const res = await apiFetch(`${API_BASE}/api/memories/${encodeURIComponent(id)}`, {
 			method: "PUT",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(data),
@@ -1705,14 +1764,14 @@ export const memoryApi = {
 	},
 
 	async delete(id: string): Promise<void> {
-		const res = await fetch(`${API_BASE}/api/memories/${encodeURIComponent(id)}`, {
+		const res = await apiFetch(`${API_BASE}/api/memories/${encodeURIComponent(id)}`, {
 			method: "DELETE",
 		});
 		if (!res.ok) throw new Error(`Failed to delete memory ${id}`);
 	},
 
 	async promote(id: string): Promise<MemoryEntry> {
-		const res = await fetch(`${API_BASE}/api/memories/${encodeURIComponent(id)}/promote`, {
+		const res = await apiFetch(`${API_BASE}/api/memories/${encodeURIComponent(id)}/promote`, {
 			method: "POST",
 		});
 		if (!res.ok) throw new Error(`Failed to promote memory ${id}`);
@@ -1720,7 +1779,7 @@ export const memoryApi = {
 	},
 
 	async demote(id: string): Promise<MemoryEntry> {
-		const res = await fetch(`${API_BASE}/api/memories/${encodeURIComponent(id)}/demote`, {
+		const res = await apiFetch(`${API_BASE}/api/memories/${encodeURIComponent(id)}/demote`, {
 			method: "POST",
 		});
 		if (!res.ok) throw new Error(`Failed to demote memory ${id}`);
@@ -1730,19 +1789,19 @@ export const memoryApi = {
 
 export const workingMemoryApi = {
 	async list(): Promise<MemoryEntry[]> {
-		const res = await fetch(`${API_BASE}/api/working-memories`);
+		const res = await apiFetch(`${API_BASE}/api/working-memories`);
 		if (!res.ok) throw new Error("Failed to fetch working memory");
 		return res.json();
 	},
 
 	async get(id: string): Promise<MemoryEntry> {
-		const res = await fetch(`${API_BASE}/api/working-memories/${encodeURIComponent(id)}`);
+		const res = await apiFetch(`${API_BASE}/api/working-memories/${encodeURIComponent(id)}`);
 		if (!res.ok) throw new Error(`Failed to fetch working memory ${id}`);
 		return res.json();
 	},
 
 	async create(data: Partial<MemoryEntry>): Promise<MemoryEntry> {
-		const res = await fetch(`${API_BASE}/api/working-memories`, {
+		const res = await apiFetch(`${API_BASE}/api/working-memories`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(data),
@@ -1752,14 +1811,14 @@ export const workingMemoryApi = {
 	},
 
 	async delete(id: string): Promise<void> {
-		const res = await fetch(`${API_BASE}/api/working-memories/${encodeURIComponent(id)}`, {
+		const res = await apiFetch(`${API_BASE}/api/working-memories/${encodeURIComponent(id)}`, {
 			method: "DELETE",
 		});
 		if (!res.ok) throw new Error(`Failed to delete working memory ${id}`);
 	},
 
 	async clean(): Promise<{ cleaned: number }> {
-		const res = await fetch(`${API_BASE}/api/working-memories/clean`, {
+		const res = await apiFetch(`${API_BASE}/api/working-memories/clean`, {
 			method: "POST",
 		});
 		if (!res.ok) throw new Error("Failed to clear working memory");
@@ -1806,7 +1865,7 @@ export const auditApi = {
 		if (options?.result) params.set("result", options.result);
 		if (options?.project) params.set("project", options.project);
 
-		const res = await fetch(`${API_BASE}/api/audit/recent?${params.toString()}`);
+		const res = await apiFetch(`${API_BASE}/api/audit/recent?${params.toString()}`);
 		if (!res.ok) throw new Error("Failed to fetch audit events");
 		return res.json();
 	},
@@ -1819,8 +1878,74 @@ export const auditApi = {
 		if (options?.tool) params.set("tool", options.tool);
 		if (options?.project) params.set("project", options.project);
 
-		const res = await fetch(`${API_BASE}/api/audit/stats?${params.toString()}`);
+		const res = await apiFetch(`${API_BASE}/api/audit/stats?${params.toString()}`);
 		if (!res.ok) throw new Error("Failed to fetch audit stats");
 		return res.json();
+	},
+};
+
+// Auth API
+export const authApi = {
+	async getStatus(): Promise<{ protected: boolean; authenticated: boolean }> {
+		const res = await apiFetch(`${API_BASE}/api/auth/status`);
+		if (!res.ok) throw new Error("Failed to fetch auth status");
+		return res.json();
+	},
+
+	async login(password: string): Promise<{ success: boolean }> {
+		const res = await apiFetch(`${API_BASE}/api/auth/login`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ password }),
+		});
+		if (!res.ok) {
+			const data = await res.json().catch(() => ({}));
+			throw new Error(data.error || "Login failed");
+		}
+		return res.json();
+	},
+
+	async setPassword(password: string): Promise<{ success: boolean; token?: string }> {
+		const res = await apiFetch(`${API_BASE}/api/auth/password`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ password }),
+		});
+		if (!res.ok) throw new Error("Failed to set password");
+		return res.json();
+	},
+
+	async removePassword(): Promise<void> {
+		const res = await apiFetch(`${API_BASE}/api/auth/password`, {
+			method: "DELETE",
+		});
+		if (!res.ok) throw new Error("Failed to remove password");
+	},
+};
+
+// Tunnel API
+export const tunnelApi = {
+	async getStatus(): Promise<{ running: boolean; url?: string; pid?: number; startedByUs?: boolean }> {
+		const res = await apiFetch(`${API_BASE}/api/tunnel/status`);
+		if (!res.ok) throw new Error("Failed to fetch tunnel status");
+		return res.json();
+	},
+
+	async start(): Promise<{ url: string; status: string }> {
+		const res = await apiFetch(`${API_BASE}/api/tunnel/start`, {
+			method: "POST",
+		});
+		if (!res.ok) {
+			const data = await res.json().catch(() => ({}));
+			throw new Error(data.error || "Failed to start tunnel");
+		}
+		return res.json();
+	},
+
+	async stop(): Promise<void> {
+		const res = await apiFetch(`${API_BASE}/api/tunnel/stop`, {
+			method: "POST",
+		});
+		if (!res.ok) throw new Error("Failed to stop tunnel");
 	},
 };

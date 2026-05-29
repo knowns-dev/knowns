@@ -9,6 +9,8 @@ import { ChatProvider } from "./contexts/ChatContext";
 import { GlobalTaskProvider } from "./contexts/GlobalTaskContext";
 import { OpenCodeProvider } from "./contexts/OpenCodeContext";
 import { OpenCodeEventProvider } from "./contexts/OpenCodeEventContext";
+import { AuthProvider } from "./contexts/AuthContext";
+import { LoginGate } from "./components/LoginGate";
 import { router } from "./router";
 import { Agentation } from "agentation";
 
@@ -35,25 +37,29 @@ export const useTheme = () => useContext(ThemeContext);
 
 export default function App() {
 	return (
-		<ConfigProvider>
-			<UserProvider>
-				<UIPreferencesProvider>
-					<SSEProvider>
-						<OpenCodeProvider>
-							<OpenCodeEventProvider>
-								<TimeTrackerProvider>
-									<ChatProvider>
-										<GlobalTaskProvider>
-											<RouterProvider router={router} />
-											{import.meta.env.DEV && <Agentation />}
-										</GlobalTaskProvider>
-									</ChatProvider>
-								</TimeTrackerProvider>
-							</OpenCodeEventProvider>
-						</OpenCodeProvider>
-					</SSEProvider>
-				</UIPreferencesProvider>
-			</UserProvider>
-		</ConfigProvider>
+		<AuthProvider>
+			<LoginGate>
+				<ConfigProvider>
+					<UserProvider>
+						<UIPreferencesProvider>
+							<SSEProvider>
+								<OpenCodeProvider>
+									<OpenCodeEventProvider>
+										<TimeTrackerProvider>
+											<ChatProvider>
+												<GlobalTaskProvider>
+													<RouterProvider router={router} />
+													{import.meta.env.DEV && <Agentation />}
+												</GlobalTaskProvider>
+											</ChatProvider>
+										</TimeTrackerProvider>
+									</OpenCodeEventProvider>
+								</OpenCodeProvider>
+							</SSEProvider>
+						</UIPreferencesProvider>
+					</UserProvider>
+				</ConfigProvider>
+			</LoginGate>
+		</AuthProvider>
 	);
 }

@@ -20,7 +20,6 @@ import (
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/server"
 	"github.com/howznguyen/knowns/internal/storage"
-	"github.com/howznguyen/knowns/internal/tunnel/cloudflared"
 	"github.com/howznguyen/knowns/internal/util"
 )
 
@@ -89,6 +88,7 @@ func runBrowser(cmd *cobra.Command, args []string) error {
 	dev, _ := cmd.Flags().GetBool("dev")
 	watchFlag, _ := cmd.Flags().GetBool("watch")
 	tunnelFlag, _ := cmd.Flags().GetBool("tunnel")
+	passwordFlag, _ := cmd.Flags().GetString("password")
 
 	store, projectRoot := resolveProject(cmd)
 
@@ -124,7 +124,7 @@ func runBrowser(cmd *cobra.Command, args []string) error {
 	// Determine whether to open browser: --open enables, --no-open disables
 	shouldOpen := openFlag && !noOpen
 
-	srv := server.NewServer(store, projectRoot, port, server.Options{Dev: dev})
+	srv := server.NewServer(store, projectRoot, port, server.Options{Dev: dev, Tunnel: tunnelFlag, Password: passwordFlag})
 
 	url := fmt.Sprintf("http://localhost:%d", port)
 	fmt.Println()
@@ -141,14 +141,8 @@ func runBrowser(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
-	if tunnelFlag {
-		if err := startTunnel(port); err != nil {
-			fmt.Printf("  %s  %s\n", StyleError.Render("✗"), StyleError.Render("tunnel failed"))
-			for _, line := range strings.Split(err.Error(), "\n") {
-				fmt.Printf("     %s\n", StyleDim.Render(line))
-			}
-			fmt.Println()
-		}
+	if passwordFlag != "" {
+		fmt.Printf("  %s  %s\n", StyleSuccess.Render("🔒"), "Password protection active")
 	}
 
 	// Start file watcher if --watch is enabled
@@ -321,27 +315,8 @@ func init() {
 	browserCmd.Flags().String("scan", "", "Comma-separated directories to scan for projects")
 	browserCmd.Flags().Bool("watch", false, "Enable file watcher for auto-indexing on code changes")
 	browserCmd.Flags().Bool("tunnel", false, "Expose via a Cloudflare Quick Tunnel (requires cloudflared)")
+	browserCmd.Flags().String("password", "", "Protect WebUI with a password (in-memory only)")
 
 	rootCmd.AddCommand(browserCmd)
 }
 
-func startTunnel(port int) error {
-	d := cloudflared.NewDaemon(port)
-	if err := d.EnsureRunning(); err != nil {
-		return err
-	}
-	url, err := d.PublicURL()
-	if err != nil {
-		return fmt.Errorf("tunnel started but no URL captured: %w", err)
-	}
-	tag := "reused"
-	if d.StartedByUs() {
-		tag = "new"
-	}
-	fmt.Printf("  %s  %s  %s\n",
-		StyleSuccess.Render("⇄"),
-		StyleBold.Render(url),
-		StyleDim.Render("(cloudflared "+tag+")"))
-	fmt.Println()
-	return nil
-}

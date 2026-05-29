@@ -10,72 +10,12 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/howznguyen/knowns/internal/runtimequeue"
-	"github.com/spf13/cobra"
 
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 )
 
-var watchCmd = &cobra.Command{
-	Use:   "watch",
-	Short: "Watch code files and auto-index on changes",
-	Long: `Start a file watcher that monitors code files and automatically
-re-indexes them when they change.
-
-The watcher runs in the foreground. Press Ctrl+C to stop.
-
-Examples:
-  knowns code watch                 # Watch with default 1500ms debounce
-  knowns code watch --debounce 500  # Use 500ms debounce`,
-	RunE: runWatch,
-}
-
-var watchDebounceMs int
-
-func registerWatchFlags(cmd *cobra.Command) {
-	cmd.Flags().IntVar(&watchDebounceMs, "debounce", 1500, "Debounce delay in milliseconds")
-}
-
-func init() {
-	registerWatchFlags(watchCmd)
-}
-
-func runWatch(cmd *cobra.Command, args []string) error {
-	knDir, err := findProjectRoot()
-	if err != nil {
-		return fmt.Errorf("find project root: %w", err)
-	}
-
-	if _, err := os.Stat(knDir); err != nil {
-		return fmt.Errorf("not a knowns project (no .knowns/ directory): %w", err)
-	}
-
-	store := storage.NewStore(knDir)
-
-	// Check semantic search is configured
-	semanticEnabled, err := isSemanticSearchEnabled(store)
-	if err != nil {
-		return fmt.Errorf("check semantic search: %w", err)
-	}
-	if !semanticEnabled {
-		fmt.Printf("Warning: semantic search not enabled. Run 'knowns code ingest' first to enable code indexing.\n")
-	}
-
-	// projectRoot is the parent of knDir
-	projectRoot := filepath.Dir(knDir)
-	debounce := time.Duration(watchDebounceMs) * time.Millisecond
-	handle, err := runtimequeue.AcquireClient("cli-watch", knDir, true)
-	if err != nil {
-		return fmt.Errorf("start shared runtime watch: %w", err)
-	}
-	defer handle.Release()
-	runtimequeue.StartHeartbeat(cmd.Context(), handle)
-	fmt.Printf("Watching code files in %s (debounce: %v)...\n", projectRoot, debounce)
-	fmt.Println("Shared runtime watcher active. Press Ctrl+C to stop.")
-	<-cmd.Context().Done()
-	return nil
-}
+const watchDebounceMs = 1500
 
 // watchDirs recursively adds directories to the watcher.
 func watchDirs(watcher *fsnotify.Watcher, dir string) error {

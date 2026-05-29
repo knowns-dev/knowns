@@ -71,7 +71,24 @@
       ]
     },
     "lsp": {
-      "enabled": true
+      "enabled": true,
+      "languages": {
+        "go": {
+          "enabled": true
+        },
+        "javascript": {
+          "enabled": true
+        },
+        "scss": {
+          "enabled": true
+        },
+        "typescript": {
+          "enabled": true
+        },
+        "typescriptreact": {
+          "enabled": true
+        }
+      }
     }
   }
 }

@@ -97,6 +97,7 @@ func SetupRoutes(r chi.Router, store *storage.Store, sse Broadcaster, projectRoo
 		mr.Register(r)
 	})
 
+
 	// Skills (project-root based, not store-dependent)
 	skr := NewSkillRoutes(projectRoot)
 	skr.Register(r)

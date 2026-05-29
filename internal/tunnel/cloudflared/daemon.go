@@ -41,7 +41,8 @@ func NewDaemon(localPort int) *Daemon {
 	}
 }
 
-func (d *Daemon) StartedByUs() bool { return d.startedByUs }
+func (d *Daemon) StartedByUs() bool  { return d.startedByUs }
+func (d *Daemon) IsHealthy() bool     { return d.isHealthy() }
 
 // InstallHint returns OS-specific install instructions for cloudflared.
 func InstallHint() string {
