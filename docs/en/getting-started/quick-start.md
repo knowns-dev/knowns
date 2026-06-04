@@ -14,10 +14,11 @@ The init flow configures:
 
 - project name
 - git tracking mode (with per-section toggles)
+- project instruction files (`KNOWNS.md`, default `CLAUDE.md` + `AGENTS.md`)
 - semantic search
 - embedding model
 
-> **Note:** AI platform integrations (instructions, MCP configs, skills) are configured separately via `knowns setup`.
+> **Note:** `knowns init` creates project guidance files. AI platform integrations such as MCP configs, skills, and runtime hooks are configured separately via `knowns setup`.
 
 ## 2. Create a task
 

@@ -14,10 +14,11 @@ Init wizard cho phép cấu hình:
 
 - tên project
 - git tracking mode (với per-section toggles)
+- project instruction files (`KNOWNS.md`, mặc định `CLAUDE.md` + `AGENTS.md`)
 - semantic search
 - embedding model
 
-> **Lưu ý:** AI platform integrations (instructions, MCP configs, skills) được cấu hình riêng qua `knowns setup`.
+> **Lưu ý:** `knowns init` tạo project guidance files. AI platform integrations như MCP configs, skills, runtime hooks được cấu hình riêng qua `knowns setup`.
 
 ## 2. Tạo task
 

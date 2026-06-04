@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/charmbracelet/huh"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/howznguyen/knowns/internal/codegen"
 	"github.com/howznguyen/knowns/internal/runtimeinstall"
 	"github.com/spf13/cobra"
@@ -24,6 +24,7 @@ Targets:
   opencode  Generate OPENCODE.md, KNOWNS.md, opencode.json, skills, and runtime hooks
   copilot   Generate .github/copilot-instructions.md and KNOWNS.md
   kiro      Generate .kiro steering/settings, KNOWNS.md, skills, and runtime hooks
+  agents    Generate AGENTS.md and KNOWNS.md
   all       Generate all supported AI integration files
 
 Use --global to install at user-level paths (no project required).
@@ -84,12 +85,14 @@ func runSetupCmd(cmd *cobra.Command, args []string) error {
 			platforms = []string{"cursor"}
 		case "gemini":
 			platforms = []string{"gemini"}
+		case "agents":
+			platforms = []string{"agents"}
 		case "antigravity":
 			platforms = []string{"antigravity"}
 		case "all":
 			platforms = allPlatformIDs
 		default:
-			return fmt.Errorf("unknown setup target %q (expected: claude, opencode, copilot, kiro, codex, cursor, gemini, antigravity, all)", target)
+			return fmt.Errorf("unknown setup target %q (expected: claude, opencode, copilot, kiro, codex, cursor, gemini, antigravity, agents, all)", target)
 		}
 	}
 
@@ -125,7 +128,7 @@ func runSetupSelector() ([]string, error) {
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
 				Title("AI platforms to integrate").
-				Description("Choose which platforms to generate config and instruction files for.\n"+
+				Description("Choose which platforms to generate config and instruction files for.\n" +
 					"At least one platform must be selected.").
 				Options(platformOptions...).
 				Validate(func(s []string) error {

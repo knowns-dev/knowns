@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/howznguyen/knowns/internal/models"
 )
 
 // RetryConfig configures exponential backoff for API rate limiting.
@@ -36,9 +38,16 @@ type EmbeddingModel struct {
 
 // EmbeddingSettings holds the global embedding provider and model registry.
 type EmbeddingSettings struct {
-	Providers            map[string]EmbeddingProvider `json:"embeddingProviders,omitempty"`
-	Models               map[string]EmbeddingModel    `json:"embeddingModels,omitempty"`
-	DefaultEmbeddingModel string                      `json:"defaultEmbeddingModel,omitempty"`
+	Providers             map[string]EmbeddingProvider `json:"embeddingProviders,omitempty"`
+	Models                map[string]EmbeddingModel    `json:"embeddingModels,omitempty"`
+	DefaultEmbeddingModel string                       `json:"defaultEmbeddingModel,omitempty"`
+	ProjectDefaults       *ProjectDefaults             `json:"projectDefaults,omitempty"`
+}
+
+// ProjectDefaults are user-level defaults applied by future `knowns init` runs.
+type ProjectDefaults struct {
+	ProjectName string                 `json:"projectName,omitempty"`
+	Settings    models.ProjectSettings `json:"settings,omitempty"`
 }
 
 // EmbeddingSettingsStore reads and writes ~/.knowns/settings.json.

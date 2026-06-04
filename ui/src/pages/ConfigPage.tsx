@@ -1205,7 +1205,7 @@ export default function ConfigPage() {
 													{disabled && (
 														<div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
 															<PowerOff className="h-3.5 w-3.5" />
-															Enable via settings/config toggle to start this service.
+															Enable via settings or config set to start this service.
 														</div>
 													)}
 												</div>

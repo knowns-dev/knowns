@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -52,7 +53,7 @@ func TestCreateOpenCodeConfigQuietCreatesConfig(t *testing.T) {
 	}
 }
 
-func TestRunInitFallsBackWhenTerminalTooNarrow(t *testing.T) {
+func TestRunInitStopsWhenTerminalTooNarrow(t *testing.T) {
 	projectRoot := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -105,12 +106,118 @@ func TestRunInitFallsBackWhenTerminalTooNarrow(t *testing.T) {
 	_ = w.Close()
 	<-done
 
-	if !strings.Contains(stdout.String(), "Terminal width is too small for the interactive setup wizard") {
+	if !strings.Contains(stdout.String(), "Terminal is too small for the interactive setup wizard") {
 		t.Fatalf("expected narrow-terminal warning, got:\n%s", stdout.String())
 	}
-	if _, err := os.Stat(filepath.Join(projectRoot, ".knowns", "config.json")); err != nil {
-		t.Fatalf("expected init to continue with defaults, config missing: %v", err)
+	if !strings.Contains(stdout.String(), "knowns init --no-wizard") {
+		t.Fatalf("expected no-wizard guidance, got:\n%s", stdout.String())
 	}
+	if _, err := os.Stat(filepath.Join(projectRoot, ".knowns", "config.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected init to stop without config creation, got err: %v", err)
+	}
+}
+
+func TestRunInitNoWizardUsesGlobalDefaults(t *testing.T) {
+	home := t.TempDir()
+	projectRoot := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+	if err := os.Chdir(projectRoot); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	oldHome := os.Getenv("HOME")
+	oldUserProfile := os.Getenv("USERPROFILE")
+	if err := os.Setenv("HOME", home); err != nil {
+		t.Fatalf("set HOME: %v", err)
+	}
+	if err := os.Setenv("USERPROFILE", home); err != nil {
+		t.Fatalf("set USERPROFILE: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Setenv("HOME", oldHome)
+		_ = os.Setenv("USERPROFILE", oldUserProfile)
+	})
+
+	settingsPath := filepath.Join(home, ".knowns", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		t.Fatalf("mkdir settings dir: %v", err)
+	}
+	writeJSONFile(t, settingsPath, map[string]any{
+		"projectDefaults": map[string]any{
+			"projectName": "global-default-project",
+			"settings": map[string]any{
+				"gitTrackingMode": "git-ignored",
+				"platforms":       []string{"codex", "agents"},
+				"enableChatUI":    false,
+			},
+		},
+	})
+
+	execLookPath = func(string) (string, error) { return "", os.ErrNotExist }
+	t.Cleanup(func() { execLookPath = defaultExecLookPath })
+	setInitBoolFlag(t, "no-wizard", true)
+	setInitBoolFlag(t, "no-open", true)
+	setInitBoolFlag(t, "git-tracked", false)
+	setInitBoolFlag(t, "git-ignored", false)
+	setInitBoolFlag(t, "force", false)
+
+	if err := runInit(initCmd, nil); err != nil {
+		t.Fatalf("runInit returned error: %v", err)
+	}
+
+	config := readJSONFile(t, filepath.Join(projectRoot, ".knowns", "config.json"))
+	if got := config["name"]; got != "global-default-project" {
+		t.Fatalf("expected global project name, got %#v", got)
+	}
+	settings := getMap(t, config, "settings")
+	if got := settings["gitTrackingMode"]; got != "git-ignored" {
+		t.Fatalf("expected global gitTrackingMode, got %#v", got)
+	}
+	if got := settings["enableChatUI"]; got != false {
+		t.Fatalf("expected global enableChatUI false, got %#v", got)
+	}
+	platforms, ok := settings["platforms"].([]any)
+	if !ok || len(platforms) != 2 || platforms[0] != "codex" || platforms[1] != "agents" {
+		t.Fatalf("expected global platforms, got %#v", settings["platforms"])
+	}
+	assertContains(t, readTextFile(t, filepath.Join(projectRoot, "KNOWNS.md")), "# KNOWNS")
+	assertContains(t, readTextFile(t, filepath.Join(projectRoot, "AGENTS.md")), "Compatibility entrypoint")
+	if _, err := os.Stat(filepath.Join(projectRoot, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected CLAUDE.md not to be created when global defaults select codex+agents, got err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectRoot, ".codex", "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("expected init not to create project Codex config, got err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectRoot, ".mcp.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected init not to create project MCP config, got err=%v", err)
+	}
+}
+
+func TestSettingsCommandSurface(t *testing.T) {
+	if settingsCmd.Flags().Lookup("global") == nil {
+		t.Fatalf("expected settings --global flag to be registered")
+	}
+	for _, child := range configCmd.Commands() {
+		if child.Name() == "toggle" {
+			t.Fatalf("knowns config toggle must not be registered")
+		}
+	}
+}
+
+func setInitBoolFlag(t *testing.T, name string, value bool) {
+	t.Helper()
+	flag := initCmd.Flags().Lookup(name)
+	if flag == nil {
+		t.Fatalf("missing init flag %q", name)
+	}
+	old := flag.Value.String()
+	if err := initCmd.Flags().Set(name, strconv.FormatBool(value)); err != nil {
+		t.Fatalf("set flag %s: %v", name, err)
+	}
+	t.Cleanup(func() { _ = initCmd.Flags().Set(name, old) })
 }
 
 func TestCreateMCPJsonFileQuietUsesNpxKnowns(t *testing.T) {
@@ -507,6 +614,20 @@ func TestCreateInstructionFilesQuietIncludesOpenCode(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(projectRoot, "OPENCODE.md")); err != nil {
 		t.Fatalf("expected OPENCODE.md to be created: %v", err)
+	}
+}
+
+func TestCreateInstructionFilesForCodexCreatesAgentsShimOnly(t *testing.T) {
+	projectRoot := t.TempDir()
+
+	if err := createInstructionFilesForPlatforms(projectRoot, false, []string{"codex"}); err != nil {
+		t.Fatalf("createInstructionFilesForPlatforms returned error: %v", err)
+	}
+
+	assertContains(t, readTextFile(t, filepath.Join(projectRoot, "KNOWNS.md")), "# KNOWNS")
+	assertContains(t, readTextFile(t, filepath.Join(projectRoot, "AGENTS.md")), "Compatibility entrypoint")
+	if _, err := os.Stat(filepath.Join(projectRoot, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected CLAUDE.md not to be created for codex-only instructions, got err=%v", err)
 	}
 }
 

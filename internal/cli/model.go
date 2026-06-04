@@ -258,7 +258,7 @@ func (m *downloadModel) startDownload() tea.Cmd {
 	dst := m.dst
 	return func() tea.Msg {
 		client := &http.Client{Timeout: 30 * time.Minute}
-		resp, err := client.Get(url)
+		resp, err := downloadGetWithRetry(client, url)
 		if err != nil {
 			return progressErrMsg{err}
 		}
@@ -302,9 +302,63 @@ func (m *downloadModel) startDownload() tea.Cmd {
 	}
 }
 
+func downloadGetWithRetry(client *http.Client, url string) (*http.Response, error) {
+	const maxAttempts = 4
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		resp, err := client.Get(url)
+		if err != nil {
+			lastErr = err
+		} else if !downloadRetryableStatus(resp.StatusCode) {
+			return resp, nil
+		} else {
+			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+			if attempt == maxAttempts {
+				return resp, nil
+			}
+			delay := downloadRetryDelay(attempt, resp)
+			resp.Body.Close()
+			time.Sleep(delay)
+			continue
+		}
+
+		if attempt == maxAttempts {
+			break
+		}
+		time.Sleep(downloadRetryDelay(attempt, nil))
+	}
+
+	return nil, lastErr
+}
+
+func downloadRetryableStatus(statusCode int) bool {
+	return statusCode == http.StatusRequestTimeout ||
+		statusCode == http.StatusTooManyRequests ||
+		statusCode >= http.StatusInternalServerError
+}
+
+func downloadRetryDelay(attempt int, resp *http.Response) time.Duration {
+	if resp != nil {
+		if retryAfter := strings.TrimSpace(resp.Header.Get("Retry-After")); retryAfter != "" {
+			if seconds, err := time.ParseDuration(retryAfter + "s"); err == nil && seconds > 0 {
+				return min(seconds, 30*time.Second)
+			}
+			if when, err := http.ParseTime(retryAfter); err == nil {
+				if delay := time.Until(when); delay > 0 {
+					return min(delay, 30*time.Second)
+				}
+			}
+		}
+	}
+
+	delay := time.Duration(attempt*attempt) * time.Second
+	return min(delay, 15*time.Second)
+}
+
 func downloadSimple(url, dst string) (int64, error) {
 	client := &http.Client{Timeout: 30 * time.Minute}
-	resp, err := client.Get(url)
+	resp, err := downloadGetWithRetry(client, url)
 	if err != nil {
 		return 0, err
 	}
@@ -318,7 +372,11 @@ func downloadSimple(url, dst string) (int64, error) {
 	}
 	defer out.Close()
 	n, err := io.Copy(out, resp.Body)
-	return n, err
+	if err != nil {
+		_ = os.Remove(dst)
+		return 0, err
+	}
+	return n, nil
 }
 
 // progressWriter wraps an io.Writer and tracks bytes written.

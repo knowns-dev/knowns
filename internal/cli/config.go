@@ -23,6 +23,14 @@ var configCmd = &cobra.Command{
 	Short: "Manage project configuration",
 }
 
+var runSemanticSetupForSettings = runSemanticSetup
+
+type localONNXModelChoice struct {
+	Model     *embeddingModel
+	Label     string
+	Installed bool
+}
+
 // --- config get ---
 
 var configGetCmd = &cobra.Command{
@@ -347,15 +355,20 @@ func runConfigReset(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// --- config toggle ---
+// --- settings ---
 
-var configToggleCmd = &cobra.Command{
-	Use:   "toggle",
-	Short: "Interactively toggle features on/off",
-	RunE:  runConfigToggle,
+var settingsCmd = &cobra.Command{
+	Use:   "settings",
+	Short: "Open interactive project settings",
+	RunE:  runSettings,
 }
 
-func runConfigToggle(cmd *cobra.Command, args []string) error {
+func runSettings(cmd *cobra.Command, args []string) error {
+	global, _ := cmd.Flags().GetBool("global")
+	if global {
+		return runGlobalSettings()
+	}
+
 	store := getStore()
 
 	project, err := store.Config.Load()
@@ -363,34 +376,24 @@ func runConfigToggle(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	chatUI := project.Settings.EnableChatUI == nil || *project.Settings.EnableChatUI
-	lspEnabled := project.Settings.LSP != nil && project.Settings.LSP.Enabled != nil && *project.Settings.LSP.Enabled
-	embeddingEnabled := project.Settings.SemanticSearch != nil && project.Settings.SemanticSearch.Enabled
-
-	// Build status labels
-	statusLabel := func(enabled bool) string {
-		if enabled {
-			return "on"
-		}
-		return "off"
-	}
-
 	var choice string
-	options := []huh.Option[string]{
-		huh.NewOption(fmt.Sprintf("AI Chat  [%s]", statusLabel(chatUI)), "chat"),
-		huh.NewOption(fmt.Sprintf("LSP (Experimental)  [%s]", statusLabel(lspEnabled)), "lsp"),
-		huh.NewOption(fmt.Sprintf("Semantic Search  [%s]", statusLabel(embeddingEnabled)), "embedding"),
-		huh.NewOption("Done", "done"),
-	}
-
 	for {
 		choice = ""
 		form := huh.NewForm(
 			huh.NewGroup(
 				huh.NewSelect[string]().
-					Title("Feature Settings").
-					Description("Select a feature to configure").
-					Options(options...).
+					Title("Project Settings").
+					Description(fmt.Sprintf("Current project: %s", project.Name)).
+					Options(
+						huh.NewOption("Project", "project"),
+						huh.NewOption("Git Tracking", "git"),
+						huh.NewOption("AI Platforms", "platforms"),
+						huh.NewOption("Search", "search"),
+						huh.NewOption("Code Intelligence", "code"),
+						huh.NewOption("Browser / Chat UI", "chat"),
+						huh.NewOption("Maintenance", "maintenance"),
+						huh.NewOption("Done", "done"),
+					).
 					Value(&choice),
 			),
 		).WithTheme(huh.ThemeCatppuccin())
@@ -407,25 +410,519 @@ func runConfigToggle(cmd *cobra.Command, args []string) error {
 		case "done":
 			fmt.Println(RenderSuccess("Settings saved."))
 			return nil
-		case "chat":
-			if err := toggleChatUI(store, &chatUI); err != nil {
+		case "project":
+			if err := configureProjectIdentity(store, project); err != nil {
 				return err
 			}
-		case "lsp":
-			if err := toggleLSP(store, &lspEnabled); err != nil {
+		case "git":
+			if err := configureGitTracking(store, project); err != nil {
 				return err
 			}
-		case "embedding":
+		case "platforms":
+			if err := configurePlatforms(store, project); err != nil {
+				return err
+			}
+		case "search":
+			embeddingEnabled := project.Settings.SemanticSearch != nil && project.Settings.SemanticSearch.Enabled
 			if err := toggleEmbedding(store, project, &embeddingEnabled); err != nil {
 				return err
 			}
+		case "code":
+			if err := configureCodeIntelligence(store, project); err != nil {
+				return err
+			}
+		case "chat":
+			chatUI := project.Settings.EnableChatUI == nil || *project.Settings.EnableChatUI
+			if err := toggleChatUI(store, &chatUI); err != nil {
+				return err
+			}
+		case "maintenance":
+			if err := showSettingsMaintenance(project); err != nil {
+				return err
+			}
+		}
+		project, err = store.Config.Load()
+		if err != nil {
+			return fmt.Errorf("reload config: %w", err)
+		}
+	}
+}
+
+func runGlobalSettings() error {
+	embStore := storage.NewEmbeddingSettingsStore()
+	settings, err := embStore.Load()
+	if err != nil {
+		return err
+	}
+	if settings.ProjectDefaults == nil {
+		settings.ProjectDefaults = &storage.ProjectDefaults{
+			Settings: models.DefaultProjectSettings(),
+		}
+	}
+
+	var choice string
+	for {
+		choice = ""
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Global Settings").
+					Description("Defaults for new projects created by knowns init").
+					Options(
+						huh.NewOption("Project Defaults", "project"),
+						huh.NewOption("Default Git Tracking", "git"),
+						huh.NewOption("Default AI Platforms", "platforms"),
+						huh.NewOption("Default Search", "search"),
+						huh.NewOption("Default Code Intelligence", "code"),
+						huh.NewOption("Default Browser / Chat UI", "chat"),
+						huh.NewOption("Done", "done"),
+					).
+					Value(&choice),
+			),
+		).WithTheme(huh.ThemeCatppuccin())
+
+		if err := form.Run(); err != nil {
+			if err == huh.ErrUserAborted {
+				fmt.Println("Aborted.")
+				return nil
+			}
+			return err
 		}
 
-		// Refresh option labels
-		options[0] = huh.NewOption(fmt.Sprintf("AI Chat  [%s]", statusLabel(chatUI)), "chat")
-		options[1] = huh.NewOption(fmt.Sprintf("LSP (Experimental)  [%s]", statusLabel(lspEnabled)), "lsp")
-		options[2] = huh.NewOption(fmt.Sprintf("Semantic Search  [%s]", statusLabel(embeddingEnabled)), "embedding")
+		defaults := settings.ProjectDefaults
+		switch choice {
+		case "done":
+			if err := embStore.Save(settings); err != nil {
+				return err
+			}
+			fmt.Println(RenderSuccess("Global settings saved."))
+			fmt.Println(RenderHint("Run: knowns init to use these defaults in a new project."))
+			return nil
+		case "project":
+			name := defaults.ProjectName
+			form := huh.NewForm(huh.NewGroup(
+				huh.NewInput().
+					Title("Default project name").
+					Description("Leave blank to use the directory name.").
+					Value(&name),
+			)).WithTheme(huh.ThemeCatppuccin())
+			if err := form.Run(); err != nil {
+				if err == huh.ErrUserAborted {
+					return nil
+				}
+				return err
+			}
+			defaults.ProjectName = strings.TrimSpace(name)
+		case "git":
+			if err := configureGitTrackingSettings(&defaults.Settings); err != nil {
+				return err
+			}
+		case "platforms":
+			if err := configurePlatformSettings(&defaults.Settings); err != nil {
+				return err
+			}
+		case "search":
+			if err := configureSemanticDefaults(&defaults.Settings); err != nil {
+				return err
+			}
+		case "code":
+			if err := configureLSPSettings(&defaults.Settings); err != nil {
+				return err
+			}
+		case "chat":
+			enabled := defaults.Settings.EnableChatUI == nil || *defaults.Settings.EnableChatUI
+			form := huh.NewForm(huh.NewGroup(
+				huh.NewConfirm().
+					Title("Enable Chat UI by default").
+					Value(&enabled),
+			)).WithTheme(huh.ThemeCatppuccin())
+			if err := form.Run(); err != nil {
+				if err == huh.ErrUserAborted {
+					return nil
+				}
+				return err
+			}
+			defaults.Settings.EnableChatUI = &enabled
+		}
+		if err := embStore.Save(settings); err != nil {
+			return err
+		}
 	}
+}
+
+func configureProjectIdentity(store *storage.Store, project *models.Project) error {
+	name := project.Name
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title("Project name").
+			Value(&name).
+			Validate(func(s string) error {
+				if strings.TrimSpace(s) == "" {
+					return fmt.Errorf("project name is required")
+				}
+				return nil
+			}),
+	)).WithTheme(huh.ThemeCatppuccin())
+	if err := form.Run(); err != nil {
+		if err == huh.ErrUserAborted {
+			return nil
+		}
+		return err
+	}
+	project.Name = strings.TrimSpace(name)
+	return store.Config.Save(project)
+}
+
+func configureGitTracking(store *storage.Store, project *models.Project) error {
+	if err := configureGitTrackingSettings(&project.Settings); err != nil {
+		return err
+	}
+	if err := store.Config.Save(project); err != nil {
+		return err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	return writeKnownsGitignore(cwd, project.Settings.GitTrackingMode, project.Settings.GitTracking)
+}
+
+func configureGitTrackingSettings(settings *models.ProjectSettings) error {
+	mode := settings.GitTrackingMode
+	if mode == "" {
+		mode = "git-tracked"
+	}
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Git tracking mode").
+			Options(
+				huh.NewOption("Git Tracked", "git-tracked"),
+				huh.NewOption("Git Ignored", "git-ignored"),
+				huh.NewOption("None", "none"),
+			).
+			Value(&mode),
+	)).WithTheme(huh.ThemeCatppuccin())
+	if err := form.Run(); err != nil {
+		if err == huh.ErrUserAborted {
+			return nil
+		}
+		return err
+	}
+	settings.GitTrackingMode = mode
+	if mode == "none" {
+		settings.GitTracking = nil
+		return nil
+	}
+	tracking := models.GitTrackingDefaults()
+	if settings.GitTracking != nil {
+		tracking = *settings.GitTracking
+	}
+	selected := gitTrackingSelectedSections(&tracking)
+	sectionForm := huh.NewForm(huh.NewGroup(
+		huh.NewMultiSelect[string]().
+			Title("Knowns sections to track in git").
+			Options(
+				huh.NewOption("Tasks", "tasks").Selected(sectionSelected(selected, "tasks")),
+				huh.NewOption("Docs", "docs").Selected(sectionSelected(selected, "docs")),
+				huh.NewOption("Templates", "templates").Selected(sectionSelected(selected, "templates")),
+				huh.NewOption("Memories", "memories").Selected(sectionSelected(selected, "memories")),
+			).
+			Value(&selected),
+	)).WithTheme(huh.ThemeCatppuccin())
+	if err := sectionForm.Run(); err != nil {
+		if err == huh.ErrUserAborted {
+			return nil
+		}
+		return err
+	}
+	tracking = gitTrackingFromSelectedSections(selected)
+	settings.GitTracking = &tracking
+	return nil
+}
+
+func configurePlatforms(store *storage.Store, project *models.Project) error {
+	if err := configurePlatformSettings(&project.Settings); err != nil {
+		return err
+	}
+	if err := store.Config.Save(project); err != nil {
+		return err
+	}
+	fmt.Println(RenderHint("Run: knowns sync to apply platform changes to generated files."))
+	return nil
+}
+
+func configurePlatformSettings(settings *models.ProjectSettings) error {
+	selected := settings.Platforms
+	if len(selected) == 0 {
+		selected = []string{"claude-code", "agents"}
+	}
+	options := make([]huh.Option[string], 0, len(wizardPlatformIDs))
+	for _, id := range wizardPlatformIDs {
+		options = append(options, huh.NewOption(platformLabel(id), id).Selected(sectionSelected(selected, id)))
+	}
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewMultiSelect[string]().
+			Title("AI platforms").
+			Description("Select generated instruction and integration targets.").
+			Options(options...).
+			Value(&selected),
+	)).WithTheme(huh.ThemeCatppuccin())
+	if err := form.Run(); err != nil {
+		if err == huh.ErrUserAborted {
+			return nil
+		}
+		return err
+	}
+	settings.Platforms = selected
+	return nil
+}
+
+func configureCodeIntelligence(store *storage.Store, project *models.Project) error {
+	if err := configureLSPSettings(&project.Settings); err != nil {
+		return err
+	}
+	if err := store.Config.Save(project); err != nil {
+		return err
+	}
+	fmt.Println(RenderHint("Run: knowns lsp status for missing server install guidance."))
+	return nil
+}
+
+func configureSemanticDefaults(settings *models.ProjectSettings) error {
+	enabled := settings.SemanticSearch != nil && settings.SemanticSearch.Enabled
+	provider := "local"
+	model := "multilingual-e5-small"
+	if settings.SemanticSearch != nil {
+		if settings.SemanticSearch.Provider != "" {
+			provider = settings.SemanticSearch.Provider
+		}
+		if settings.SemanticSearch.Model != "" {
+			model = settings.SemanticSearch.Model
+		}
+	}
+
+	providerForm := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Enable semantic search by default").
+				Value(&enabled),
+		),
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Default provider").
+				Options(
+					huh.NewOption("Local ONNX (offline)", "local"),
+					huh.NewOption("Ollama (local API)", "ollama"),
+					huh.NewOption("API (OpenAI-compatible)", "api"),
+				).
+				Value(&provider),
+		).WithHideFunc(func() bool { return !enabled }),
+	).WithTheme(huh.ThemeCatppuccin())
+	if err := providerForm.Run(); err != nil {
+		if err == huh.ErrUserAborted {
+			return nil
+		}
+		return err
+	}
+	if !enabled {
+		settings.SemanticSearch = &models.SemanticSearchSettings{Enabled: false, Model: model, Provider: provider}
+		return nil
+	}
+	if provider != "local" {
+		modelForm := huh.NewForm(huh.NewGroup(
+			huh.NewInput().
+				Title("Default model").
+				Value(&model),
+		)).WithTheme(huh.ThemeCatppuccin())
+		if err := modelForm.Run(); err != nil {
+			if err == huh.ErrUserAborted {
+				return nil
+			}
+			return err
+		}
+	}
+	ss := &models.SemanticSearchSettings{Enabled: true, Provider: provider, Model: model}
+	if provider == "local" {
+		if err := selectLocalONNXModel(&model); err != nil {
+			if err == huh.ErrUserAborted {
+				return nil
+			}
+			return err
+		}
+		selected := findSupportedModel(model)
+		if selected == nil {
+			return fmt.Errorf("unknown local ONNX model %q", model)
+		}
+		if !isModelInstalled(selected) {
+			download := false
+			confirmForm := huh.NewForm(huh.NewGroup(
+				huh.NewConfirm().
+					Title(fmt.Sprintf("Download %s now?", selected.ID)).
+					Description("Global defaults can use a missing model, but downloading now prepares this machine for future projects.").
+					Value(&download),
+			)).WithTheme(huh.ThemeCatppuccin())
+			if err := confirmForm.Run(); err != nil {
+				if err == huh.ErrUserAborted {
+					return nil
+				}
+				return err
+			}
+			if download {
+				if err := runSemanticSetupForSettings(selected.ID, false); err != nil {
+					return err
+				}
+			}
+		}
+		ss = semanticSettingsForLocalONNX(selected)
+	}
+	settings.SemanticSearch = ss
+	return nil
+}
+
+func configureLSPSettings(settings *models.ProjectSettings) error {
+	if settings.LSP == nil {
+		settings.LSP = &models.LSPSettings{Languages: map[string]models.LSPLanguageSettings{}}
+	}
+	enabled := settings.LSP.Enabled != nil && *settings.LSP.Enabled
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title("Enable code intelligence").
+			Description("Language servers power code symbols, references, and diagnostics.").
+			Value(&enabled),
+	)).WithTheme(huh.ThemeCatppuccin())
+	if err := form.Run(); err != nil {
+		if err == huh.ErrUserAborted {
+			return nil
+		}
+		return err
+	}
+	settings.LSP.Enabled = &enabled
+	if settings.LSP.Languages == nil {
+		settings.LSP.Languages = map[string]models.LSPLanguageSettings{}
+	}
+	for _, id := range []string{"go", "typescript", "python", "rust", "c_cpp", "java", "csharp", "ruby", "php"} {
+		lang := settings.LSP.Languages[id]
+		if lang.Enabled == nil {
+			lang.Enabled = &enabled
+		}
+		settings.LSP.Languages[id] = lang
+	}
+	return nil
+}
+
+func showSettingsMaintenance(project *models.Project) error {
+	fmt.Println(RenderSectionHeader("Maintenance"))
+	fmt.Println(RenderHint("Run: knowns sync to apply generated files, git rules, models, and MCP configs."))
+	if project.Settings.SemanticSearch != nil && project.Settings.SemanticSearch.Enabled {
+		fmt.Println(RenderHint("Run: knowns search --reindex after changing search settings."))
+	}
+	fmt.Println(RenderHint("Run: knowns config list --plain for scriptable inspection."))
+	return nil
+}
+
+func localONNXModelChoices(currentModel string) []localONNXModelChoice {
+	choices := make([]localONNXModelChoice, 0, len(supportedModels))
+	for i := range supportedModels {
+		m := &supportedModels[i]
+		installed := isModelInstalled(m)
+		status := "not downloaded"
+		if installed {
+			status = "downloaded"
+		}
+		current := ""
+		if currentModel == m.ID {
+			current = ", current"
+		}
+		choices = append(choices, localONNXModelChoice{
+			Model:     m,
+			Installed: installed,
+			Label: fmt.Sprintf("%s - %s (%dd, %d tokens, %dMB, %s%s)",
+				m.ID, m.Name, m.Dimensions, m.MaxTokens, m.SizeMB, status, current),
+		})
+	}
+	return choices
+}
+
+func localONNXModelSelectOptions(currentModel string) []huh.Option[string] {
+	choices := localONNXModelChoices(currentModel)
+	options := make([]huh.Option[string], 0, len(choices))
+	for _, choice := range choices {
+		options = append(options, huh.NewOption(choice.Label, choice.Model.ID))
+	}
+	return options
+}
+
+func selectLocalONNXModel(model *string) error {
+	if model == nil {
+		return fmt.Errorf("model value is required")
+	}
+	if findSupportedModel(*model) == nil {
+		*model = "multilingual-e5-small"
+	}
+	modelForm := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Local ONNX model").
+				Description("Downloaded models are ready for offline semantic search. Missing models can be downloaded after selection.").
+				Options(localONNXModelSelectOptions(*model)...).
+				Value(model),
+		),
+	).WithTheme(huh.ThemeCatppuccin())
+
+	if err := modelForm.Run(); err != nil {
+		if err == huh.ErrUserAborted {
+			return err
+		}
+		return err
+	}
+	return nil
+}
+
+func semanticSettingsForLocalONNX(model *embeddingModel) *models.SemanticSearchSettings {
+	return &models.SemanticSearchSettings{
+		Enabled:       true,
+		Provider:      "local",
+		Model:         model.ID,
+		HuggingFaceID: model.HuggingFace,
+		Dimensions:    model.Dimensions,
+		MaxTokens:     model.MaxTokens,
+	}
+}
+
+func saveLocalONNXSemanticSettings(store *storage.Store, project *models.Project, model *embeddingModel) error {
+	if store == nil {
+		return fmt.Errorf("store is required")
+	}
+	if project == nil {
+		return fmt.Errorf("project is required")
+	}
+	project.Settings.SemanticSearch = semanticSettingsForLocalONNX(model)
+	return store.Config.Save(project)
+}
+
+func applyLocalONNXSelection(store *storage.Store, project *models.Project, modelID string, confirmDownload func(*embeddingModel) (bool, error)) (bool, error) {
+	selected := findSupportedModel(modelID)
+	if selected == nil {
+		return false, fmt.Errorf("unknown local ONNX model %q", modelID)
+	}
+	if !isModelInstalled(selected) {
+		download, err := confirmDownload(selected)
+		if err != nil {
+			return false, err
+		}
+		if !download {
+			fmt.Println(RenderWarning(fmt.Sprintf("Kept previous Local ONNX model; %q was not downloaded.", selected.ID)))
+			fmt.Println(RenderHint("Run: " + RenderCmd(fmt.Sprintf("knowns model download %s", selected.ID)) + " and select it again."))
+			return false, nil
+		}
+		if err := runSemanticSetupForSettings(selected.ID, false); err != nil {
+			return false, err
+		}
+	}
+	if err := saveLocalONNXSemanticSettings(store, project, selected); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func toggleChatUI(store *storage.Store, chatUI *bool) error {
@@ -505,30 +1002,6 @@ func toggleChatUI(store *storage.Store, chatUI *bool) error {
 			_ = store.Config.Set("settings.opencodeServer.password", password)
 		}
 	}
-	return nil
-}
-
-func toggleLSP(store *storage.Store, lspEnabled *bool) error {
-	enabled := *lspEnabled
-
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewConfirm().
-				Title("Enable LSP (Experimental)").
-				Description("Language Server Protocol for code intelligence").
-				Value(&enabled),
-		),
-	).WithTheme(huh.ThemeCatppuccin())
-
-	if err := form.Run(); err != nil {
-		if err == huh.ErrUserAborted {
-			return nil
-		}
-		return err
-	}
-
-	*lspEnabled = enabled
-	_ = store.Config.Set("settings.lsp.enabled", enabled)
 	return nil
 }
 
@@ -654,27 +1127,34 @@ func toggleEmbedding(store *storage.Store, project *models.Project, embeddingEna
 
 	// Local ONNX
 	if provider == "local" {
-		modelForm := huh.NewForm(
-			huh.NewGroup(
-				huh.NewInput().
-					Title("Model").
-					Placeholder("e.g. gte-small").
-					Value(&model),
-			),
-		).WithTheme(huh.ThemeCatppuccin())
-
-		if err := modelForm.Run(); err != nil {
+		if err := selectLocalONNXModel(&model); err != nil {
 			if err == huh.ErrUserAborted {
 				return nil
 			}
 			return err
 		}
 
-		*embeddingEnabled = true
-		_ = store.Config.Set("settings.semanticSearch.enabled", true)
-		_ = store.Config.Set("settings.semanticSearch.provider", provider)
-		if model != "" {
-			_ = store.Config.Set("settings.semanticSearch.model", model)
+		saved, err := applyLocalONNXSelection(store, project, model, func(selected *embeddingModel) (bool, error) {
+			download := false
+			confirmForm := huh.NewForm(huh.NewGroup(
+				huh.NewConfirm().
+					Title(fmt.Sprintf("Download %s now?", selected.ID)).
+					Description(fmt.Sprintf("%s is not downloaded. Download it before saving this Local ONNX setting.", selected.Name)).
+					Value(&download),
+			)).WithTheme(huh.ThemeCatppuccin())
+			if err := confirmForm.Run(); err != nil {
+				if err == huh.ErrUserAborted {
+					return false, nil
+				}
+				return false, err
+			}
+			return download, nil
+		})
+		if err != nil {
+			return err
+		}
+		if saved {
+			*embeddingEnabled = true
 		}
 		return nil
 	}
@@ -916,15 +1396,16 @@ func listAPIModels(baseURL, apiKey string) ([]string, error) {
 	return names, nil
 }
 
-
 func init() {
+	settingsCmd.Flags().Bool("global", false, "Edit global defaults for future knowns init runs")
+
 	configResetCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
 	configCmd.AddCommand(configGetCmd)
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configListCmd)
 	configCmd.AddCommand(configResetCmd)
-	configCmd.AddCommand(configToggleCmd)
 
 	rootCmd.AddCommand(configCmd)
+	rootCmd.AddCommand(settingsCmd)
 }

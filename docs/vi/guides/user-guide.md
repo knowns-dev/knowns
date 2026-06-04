@@ -21,9 +21,10 @@ CLI, MCP server, và Web UI đều thao tác trên cùng một project state.
   - tạo cấu trúc project
   - apply config
   - cấu hình git integration
+  - tạo project instruction files (`KNOWNS.md`, mặc định `CLAUDE.md` + `AGENTS.md`)
   - build semantic index (nếu bật)
 
-Sau init, chạy `knowns setup` để cấu hình AI platform integrations (skills, MCP configs, instruction files).
+Sau init, chạy `knowns setup <target>` để cấu hình AI platform integrations như skills, MCP configs, runtime hooks. Dùng `knowns setup agents` nếu chỉ cần `KNOWNS.md` + `AGENTS.md`.
 
 ## Terminal
 

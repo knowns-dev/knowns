@@ -1,13 +1,14 @@
 ---
 title: Knowns CLI Guide
-createdAt: '2025-12-26T19:43:25.470Z'
-updatedAt: '2026-03-08T18:22:39.448Z'
 description: Complete guide for using Knowns CLI
+createdAt: '2025-12-26T19:43:25.470Z'
+updatedAt: '2026-06-04T09:57:29.075Z'
 tags:
   - guide
   - cli
   - tutorial
 ---
+
 # Knowns CLI Guide
 
 Knowns is a CLI tool for managing tasks, documentation, and time tracking for development teams.
@@ -33,37 +34,38 @@ knowns init [project-name]
 
 ### Interactive Wizard
 
-When running without a name, the wizard prompts for:
+When running without a name, the wizard prompts for project basics and project instruction files:
 
-```
-Knowns Project Setup Wizard
-   Configure your project settings
+```text
+Knowns Project Setup
+   Quick configuration
 
 ? Project name > my-project
-? Git tracking mode > Git Tracked (recommended for teams)
-? AI Guidelines type > CLI / MCP
-? Select AI agent files > CLAUDE.md, AGENTS.md
+? Git tracking mode > Git Tracked  · tasks, docs, templates
+? Project instruction files > CLAUDE.md, AGENTS.md
 ```
+
+`KNOWNS.md` is always created as the canonical project guidance file when instruction shims are created. Compatibility shims such as `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `OPENCODE.md`, and `.github/copilot-instructions.md` defer behavior rules back to `KNOWNS.md`.
 
 **Example session:**
-```
+```text
 $ knowns init
 
-Knowns Project Setup Wizard
-   Configure your project settings
+Knowns Project Setup
+   Quick configuration
 
 ? Project name > my-app
-? Git tracking mode > Git Tracked (recommended for teams)
-? AI Guidelines type > MCP
-? Select AI agent files > CLAUDE.md, AGENTS.md
+? Git tracking mode > Git Tracked  · tasks, docs, templates
+? Project instruction files > CLAUDE.md, AGENTS.md
 
-Created .mcp.json for Claude Code MCP auto-discovery
 Project initialized: my-app
+Created: KNOWNS.md
 Created: CLAUDE.md
 Created: AGENTS.md
 
 Get started:
   knowns task create "My first task"
+  knowns setup all
 ```
 
 ### Wizard Options
@@ -71,9 +73,8 @@ Get started:
 | Option | Description |
 |--------|-------------|
 | **Project name** | Name of your project |
-| **Git tracking mode** | `git-tracked` (team) or `git-ignored` (personal) |
-| **AI Guidelines type** | `CLI` (commands) or `MCP` (MCP tools) |
-| **AI agent files** | Files to update with guidelines |
+| **Git tracking mode** | `git-tracked`, `git-ignored`, or `none` |
+| **Project instruction files** | Compatibility shims to create; defaults to `CLAUDE.md` and `AGENTS.md` |
 
 ### Quick Init (Non-Interactive)
 
@@ -81,25 +82,21 @@ Get started:
 knowns init my-project --no-wizard
 ```
 
-### MCP Auto-Setup
+Non-interactive init uses global project defaults when configured, otherwise it creates the default project guidance set: `KNOWNS.md`, `CLAUDE.md`, and `AGENTS.md`.
 
-When selecting **MCP** in the wizard, a `.mcp.json` file is automatically created:
+### AI Integration Setup
 
-```json
-{
-  "mcpServers": {
-    "knowns": {
-      "command": "knowns",
-      "args": ["mcp"]
-    }
-  }
-}
+`knowns init` does not create project-level AI integration config such as `.mcp.json`, `.codex/config.toml`, or runtime hooks. Use `knowns setup` for those artifacts:
+
+```bash
+knowns setup all            # configure all selected project integrations
+knowns setup agents         # create/sync KNOWNS.md + AGENTS.md only
+knowns setup codex --global # install Codex integration at user scope
 ```
 
-This enables Claude Code to auto-discover the MCP server.
+This keeps global runtime setup separate from repo-specific project guidance.
 
 ---
-
 ## MCP Setup
 
 ### Quick Setup

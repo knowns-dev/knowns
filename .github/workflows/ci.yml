@@ -127,6 +127,12 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Cache semantic models
+        uses: actions/cache@v4
+        with:
+          path: ~/.knowns/models
+          key: semantic-models-${{ runner.os }}-all-MiniLM-L6-v2-v1
+
       - name: Install llvm-mingw toolchain
         if: runner.os == 'Windows'
         shell: bash

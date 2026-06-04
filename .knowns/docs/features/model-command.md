@@ -1,10 +1,8 @@
 ---
 title: Model Command
+description: CLI command for managing embedding models - list, download, set, add custom models
 createdAt: '2026-02-24T07:29:13.547Z'
-updatedAt: '2026-03-08T18:22:07.249Z'
-description: >-
-  CLI command for managing embedding models - list, download, set, add custom
-  models
+updatedAt: '2026-06-04T04:50:30.572Z'
 tags:
   - feature
   - cli
@@ -12,6 +10,7 @@ tags:
   - embedding
   - search
 ---
+
 # Model Command
 
 Manage embedding models for semantic search.
@@ -241,3 +240,8 @@ knowns search --reindex
 
 - @doc/specs/semantic-search - Semantic search specification
 - @doc/guides/cli-guide - CLI usage guide
+
+
+### `knowns settings` Local ONNX picker
+
+`knowns settings` also manages semantic search. When the provider is Local ONNX, the settings flow shows all supported ONNX models with dimensions, max tokens, approximate size, and downloaded/not downloaded status. Selecting a missing model asks for confirmation and can download it with the existing semantic model download flow before saving the full local semantic config.

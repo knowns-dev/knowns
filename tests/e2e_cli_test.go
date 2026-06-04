@@ -421,14 +421,22 @@ func TestCLI_SemanticSearch(t *testing.T) {
 	})
 
 	// Step 2: Model download (180s timeout for network download)
+	modelDownloaded := false
 	t.Run("model download", func(t *testing.T) {
 		res := runCliWithTimeout(t, dir, 180*time.Second, "model", "download", "all-MiniLM-L6-v2")
-		requireSuccess(t, res)
 		output := res.Stdout + res.Stderr
+		if res.ExitCode != 0 && strings.Contains(output, "HTTP 429") {
+			t.Skipf("skipping semantic search test: model download was rate limited: %s", truncate(output, 300))
+		}
+		requireSuccess(t, res)
+		modelDownloaded = true
 		if !strings.Contains(output, "downloaded") && !strings.Contains(output, "already installed") {
 			t.Logf("download output: %s", truncate(output, 500))
 		}
 	})
+	if !modelDownloaded {
+		t.Skip("skipping semantic search test: embedding model is unavailable")
+	}
 
 	// Step 3: Model set
 	t.Run("model set", func(t *testing.T) {
@@ -519,4 +527,3 @@ func TestCLI_Board(t *testing.T) {
 		requireSuccess(t, res)
 	})
 }
-

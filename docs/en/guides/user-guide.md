@@ -21,9 +21,10 @@ The CLI, MCP server, and browser UI all operate on the same project state.
   - project structure creation
   - settings application
   - git integration configuration
+  - project instruction file creation (`KNOWNS.md`, default `CLAUDE.md` + `AGENTS.md`)
   - semantic index building (if enabled)
 
-After init, run `knowns setup` to configure AI platform integrations (skills, MCP configs, instruction files).
+After init, run `knowns setup <target>` to configure AI platform integrations such as skills, MCP configs, and runtime hooks. Use `knowns setup agents` if you only need `KNOWNS.md` + `AGENTS.md`.
 
 ## Terminal behavior
 

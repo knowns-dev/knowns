@@ -46,12 +46,6 @@
     },
     "serverPort": 6420,
     "platforms": [
-      "claude-code",
-      "opencode",
-      "codex",
-      "kiro",
-      "gemini",
-      "copilot",
       "agents"
     ],
     "enableChatUI": false,

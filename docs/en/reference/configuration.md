@@ -88,6 +88,8 @@ Relevant fields:
 Common behavior:
 
 - `knowns init` can set these values
+- `knowns settings` shows supported Local ONNX models with downloaded/not downloaded status
+- Selecting a missing Local ONNX model in `knowns settings` asks before downloading and saving it
 - `knowns sync` can re-apply the semantic setup
 - `knowns search --reindex` rebuilds the local index
 
@@ -138,22 +140,33 @@ Controls whether generated artifacts should be refreshed after upgrading the CLI
 You can edit `.knowns/config.json` directly if you know what you are doing, but the normal path is:
 
 - `knowns init` for first-time setup (project structure + git tracking)
-- `knowns setup` for AI platform integrations
-- `knowns config set` to toggle features
+- `knowns init` also creates selected project instruction shims (`KNOWNS.md`, default `CLAUDE.md` + `AGENTS.md`)
+- `knowns setup` for AI platform integrations such as MCP/config files, skills, and runtime hooks
+- `knowns setup agents` when you only need `KNOWNS.md` + `AGENTS.md`
+- `knowns settings` for the interactive project settings center
+- `knowns settings --global` for defaults reused by future `knowns init` runs
+- `knowns config get/set/list/reset` for scriptable config access
 - `knowns sync` to re-apply config to the current machine
 
-### Config toggle shorthands
+### Settings and config shorthands
 
 ```bash
-# Interactive feature toggle UI
-knowns config toggle
+# Interactive project settings UI
+knowns settings
 # Shows:
-#   AI Chat  [off]
-#   LSP (Experimental)  [on]
-#   Semantic Search  [on]
+#   Project
+#   Git Tracking
+#   AI Platforms
+#   Search
+#   Code Intelligence
+#   Browser / Chat UI
+#   Maintenance
 #   Done
 
-# Or set directly via CLI
+# Defaults for future projects
+knowns settings --global
+
+# Or set directly via the scriptable config API
 knowns config set embedding true       # Enable semantic search
 knowns config set lsp true             # Enable LSP globally
 knowns config set lsp.go true          # Enable LSP for Go
@@ -165,6 +178,8 @@ knowns config set gitTracking.memories false
 ```
 
 Changing `gitTracking.*` toggles automatically regenerates `.gitignore`.
+
+Interactive `knowns init` needs a terminal at least 90 columns wide. If the terminal is too small, Knowns prints resize and `--no-wizard` guidance and stops without initializing by defaults.
 
 ### When to use `knowns sync`
 
@@ -187,6 +202,7 @@ Current skills mapping:
 ```bash
 knowns init
 knowns setup
+knowns settings
 knowns sync
 knowns config set <key> <value>
 knowns config get <key>

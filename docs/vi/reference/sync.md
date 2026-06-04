@@ -10,7 +10,7 @@ Chạy `knowns sync` sau khi:
 - upgrade CLI
 - muốn generated files khớp lại với config
 
-Để cấu hình AI platforms (skills, instructions, MCP configs), dùng `knowns setup`.
+Để tạo project guidance files ban đầu, dùng `knowns init` hoặc `knowns setup agents`. Để cấu hình AI platforms đầy đủ (skills, MCP configs, runtime hooks), dùng `knowns setup <target>`.
 
 ## Các dạng dùng
 

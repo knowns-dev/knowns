@@ -43,12 +43,14 @@ func runGlobalSetup(cmd *cobra.Command, args []string, force bool) error {
 			platforms = []string{"cursor"}
 		case "gemini":
 			platforms = []string{"gemini"}
+		case "agents":
+			platforms = []string{"agents"}
 		case "antigravity":
 			platforms = []string{"antigravity"}
 		case "all":
 			platforms = allPlatformIDs
 		default:
-			return fmt.Errorf("unknown setup target %q (expected: claude, opencode, copilot, kiro, codex, cursor, gemini, antigravity, all)", target)
+			return fmt.Errorf("unknown setup target %q (expected: claude, opencode, copilot, kiro, codex, cursor, gemini, antigravity, agents, all)", target)
 		}
 	}
 
@@ -67,7 +69,7 @@ func buildGlobalSetupSteps(force bool, platforms []string) []initStep {
 	var steps []initStep
 
 	// 1. Global skills
-	if hasPlatform(platforms, "claude-code") || hasPlatform(platforms, "kiro") || hasPlatform(platforms, "codex") || hasPlatform(platforms, "opencode") || hasPlatform(platforms, "antigravity") || hasPlatform(platforms, "cursor") || hasPlatform(platforms, "gemini") {
+	if hasPlatform(platforms, "claude-code") || hasPlatform(platforms, "kiro") || hasPlatform(platforms, "codex") || hasPlatform(platforms, "opencode") || hasPlatform(platforms, "antigravity") || hasPlatform(platforms, "cursor") || hasPlatform(platforms, "gemini") || hasPlatform(platforms, "agents") {
 		steps = append(steps, initStep{
 			label: "Syncing global skills",
 			run: func() error {
@@ -343,6 +345,7 @@ func setupGlobalCodexMCP(home string) error {
 
 	return os.WriteFile(configPath, []byte(content), 0644)
 }
+
 // --- Global skills ---
 
 func syncGlobalSkills(home string, platforms []string) error {
@@ -354,7 +357,7 @@ func syncGlobalSkills(home string, platforms []string) error {
 		targets["kiro"] = filepath.Join(home, ".kiro", "skills")
 	}
 	// All other platforms share ~/.agents/skills/ (agentskills.io standard)
-	for _, p := range []string{"codex", "opencode", "antigravity", "gemini", "cursor"} {
+	for _, p := range []string{"codex", "opencode", "antigravity", "gemini", "cursor", "agents"} {
 		if hasPlatform(platforms, p) {
 			targets["agents"] = filepath.Join(home, ".agents", "skills")
 			break

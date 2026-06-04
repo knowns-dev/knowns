@@ -236,7 +236,7 @@ func (m *setupModel) startCurrentStep() tea.Cmd {
 			return setupStepDoneMsg{err: err}
 		}
 
-		resp, err := client.Get(url)
+		resp, err := downloadGetWithRetry(client, url)
 		if err != nil {
 			return setupStepDoneMsg{err: err}
 		}

@@ -30,17 +30,21 @@ Knowns generate và sync artifacts khác nhau cho từng AI platform qua `knowns
 
 ## Setup
 
-AI integration files được tạo qua `knowns setup`, không phải trong `knowns init`:
+`knowns init` tạo project guidance files để agent đọc rule của repo ngay. AI integration artifacts được tạo qua `knowns setup`:
 
 ```bash
 knowns setup claude    # CLAUDE.md, .mcp.json, skills, hooks
 knowns setup opencode  # OPENCODE.md, opencode.json, skills, hooks
+knowns setup codex     # AGENTS.md, .codex/config.toml, skills, hooks
 knowns setup kiro      # .kiro steering/settings, skills, hooks
 knowns setup copilot   # .github/copilot-instructions.md
+knowns setup agents    # chỉ KNOWNS.md + AGENTS.md
 knowns setup all       # Tất cả platforms
 ```
 
 ## Ghi chú
 
 - `.agents/skills` là primary path cho agent-compatible platforms
-- `knowns init` không còn generate AI integration files — dùng `knowns setup` sau init
+- `knowns init` tạo selected instruction shims mặc định (`KNOWNS.md`, `CLAUDE.md`, `AGENTS.md`)
+- dùng `knowns setup <target>` cho project-level MCP/config files, skills, runtime hooks
+- dùng `knowns setup codex --global` khi Codex integration chỉ nên nằm ở user scope

@@ -69,6 +69,8 @@ Per-section git tracking toggles. Kiểm soát subdirectories nào trong `.known
 Config cho local semantic search: `enabled`, `model`, `provider`, `dimensions`.
 
 - `knowns init` set các giá trị này
+- `knowns settings` hiển thị Local ONNX models kèm trạng thái downloaded/not downloaded
+- Nếu chọn Local ONNX model chưa download trong `knowns settings`, Knowns hỏi xác nhận rồi download trước khi lưu
 - `knowns sync` re-apply semantic setup
 - `knowns search --reindex` rebuild local index
 
@@ -91,22 +93,33 @@ Supported: `claude-code`, `opencode`, `codex`, `kiro`, `antigravity`, `cursor`, 
 Có thể edit `.knowns/config.json` trực tiếp, nhưng flow thường là:
 
 - `knowns init` cho lần đầu (project structure + git tracking)
-- `knowns setup` cho AI platform integrations
-- `knowns config set` để toggle features
+- `knowns init` cũng tạo selected project instruction shims (`KNOWNS.md`, mặc định `CLAUDE.md` + `AGENTS.md`)
+- `knowns setup` cho AI platform integrations như MCP/config files, skills, runtime hooks
+- `knowns setup agents` khi chỉ cần `KNOWNS.md` + `AGENTS.md`
+- `knowns settings` để mở settings center tương tác cho project hiện tại
+- `knowns settings --global` để lưu defaults dùng lại cho các lần `knowns init` sau
+- `knowns config get/set/list/reset` cho script hoặc agent
 - `knowns sync` để re-apply config
 
-## Config toggle shorthands
+## Settings và config shorthands
 
 ```bash
-# Interactive feature toggle UI
-knowns config toggle
+# Interactive project settings UI
+knowns settings
 # Hiển thị:
-#   AI Chat  [off]
-#   LSP (Experimental)  [on]
-#   Semantic Search  [on]
+#   Project
+#   Git Tracking
+#   AI Platforms
+#   Search
+#   Code Intelligence
+#   Browser / Chat UI
+#   Maintenance
 #   Done
 
-# Hoặc set trực tiếp qua CLI
+# Defaults cho project mới
+knowns settings --global
+
+# Hoặc set trực tiếp qua config API
 knowns config set embedding true       # Bật semantic search
 knowns config set lsp true             # Bật LSP toàn cục
 knowns config set lsp.go true          # Bật LSP cho Go
@@ -118,3 +131,5 @@ knowns config set gitTracking.memories false
 ```
 
 Thay đổi `gitTracking.*` sẽ tự động regenerate `.gitignore`.
+
+Interactive `knowns init` cần terminal rộng tối thiểu 90 cột. Nếu terminal quá nhỏ, Knowns hiển thị hướng dẫn resize hoặc dùng `knowns init --no-wizard`, rồi dừng mà không tự init bằng defaults.

@@ -24,8 +24,11 @@ What `init` configures:
 
 - project name
 - git tracking mode (with per-section toggles)
+- project instruction files (`KNOWNS.md`, default `CLAUDE.md` + `AGENTS.md`)
 - semantic search
 - embedding model
+
+`knowns init` creates project guidance files, but leaves MCP configs, skills, and runtime hooks to `knowns setup`.
 
 ### `knowns setup`
 
@@ -35,8 +38,11 @@ Configures AI tool integrations for an initialized project.
 knowns setup              # Interactive platform selector
 knowns setup claude       # Claude Code: CLAUDE.md, .mcp.json, skills, hooks
 knowns setup opencode     # OpenCode: OPENCODE.md, opencode.json, skills, hooks
+knowns setup codex        # Codex: AGENTS.md, .codex/config.toml, skills, hooks
 knowns setup kiro         # Kiro: .kiro steering/settings, skills, hooks
 knowns setup copilot      # GitHub Copilot: .github/copilot-instructions.md
+knowns setup agents       # KNOWNS.md + AGENTS.md only
+knowns setup codex --global # Codex user-level MCP/skills/hooks
 knowns setup all          # All supported platforms
 ```
 
@@ -68,6 +74,17 @@ Updates the CLI and syncs project artifacts afterward.
 knowns update
 knowns update --check
 ```
+
+### `knowns settings`
+
+Opens the interactive project settings center.
+
+```bash
+knowns settings
+knowns settings --global
+```
+
+Use `knowns settings` for human-friendly project edits: project name, git tracking, AI platforms, search, code intelligence, Browser/Chat UI, and maintenance guidance. In Search settings, Local ONNX models are listed with downloaded/not downloaded status; selecting a missing model can download it before saving. Use `knowns settings --global` for defaults reused by future `knowns init` runs. Use `knowns config get/set/list/reset` when you need scriptable config access.
 
 ## Tasks
 
