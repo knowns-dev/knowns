@@ -4,11 +4,13 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/howznguyen/knowns/internal/models"
 )
 
-var referenceRE = regexp.MustCompile(`@(task-[A-Za-z0-9.-]+(?:\{[a-z-]+\})?|memory-[A-Za-z0-9-]+(?:\{[a-z-]+\})?|doc/[^\s\)]+)`)
+var taskReferenceRE = regexp.MustCompile(`^@task-[A-Za-z0-9.-]+(?:\{[a-z-]+\})?`)
+var memoryReferenceRE = regexp.MustCompile(`^@memory-[A-Za-z0-9-]+(?:\{[a-z-]+\})?`)
 var docRangeSuffixRE = regexp.MustCompile(`:(\d+)-(\d+)$`)
 var docLineSuffixRE = regexp.MustCompile(`:(\d+)$`)
 
@@ -40,19 +42,41 @@ func AllowedRelation(relation string) bool {
 }
 
 func Extract(content string) []models.SemanticReference {
-	matches := referenceRE.FindAllString(content, -1)
-	refs := make([]models.SemanticReference, 0, len(matches))
-	for _, match := range matches {
+	refs := []models.SemanticReference{}
+	inCodeBlock := false
+
+	for i := 0; i < len(content); {
+		if isLineStart(content, i) && strings.HasPrefix(content[i:], "```") {
+			inCodeBlock = !inCodeBlock
+			i += 3
+			continue
+		}
+		if inCodeBlock {
+			i++
+			continue
+		}
+		if content[i] != '@' {
+			i++
+			continue
+		}
+
+		match := extractReferenceAt(content[i:])
+		if match == "" {
+			i++
+			continue
+		}
+
 		ref, ok := Parse(match)
 		if ok {
 			refs = append(refs, ref)
 		}
+		i += len(match)
 	}
 	return refs
 }
 
 func Parse(raw string) (models.SemanticReference, bool) {
-	raw = strings.TrimSpace(strings.TrimRight(raw, ".,;"))
+	raw = strings.TrimSpace(trimTrailingPunctuation(raw))
 	if raw == "" || !strings.HasPrefix(raw, "@") {
 		return models.SemanticReference{}, false
 	}
@@ -116,9 +140,154 @@ func parseDocTarget(value string) (string, *models.DocReferenceFragment) {
 		value = strings.TrimSuffix(value, m[0])
 	}
 
-	value = strings.TrimRight(value, ".,;")
+	value = trimTrailingPunctuation(value)
 	if fragment.Raw == "" {
 		fragment = nil
 	}
 	return value, fragment
+}
+
+func extractReferenceAt(content string) string {
+	switch {
+	case strings.HasPrefix(content, "@doc/"):
+		return extractDocReferenceAt(content)
+	case strings.HasPrefix(content, "@task-"):
+		return taskReferenceRE.FindString(content)
+	case strings.HasPrefix(content, "@memory-"):
+		return memoryReferenceRE.FindString(content)
+	default:
+		return ""
+	}
+}
+
+func extractDocReferenceAt(content string) string {
+	i := len("@doc/")
+	if i >= len(content) || !isDocPathChar(rune(content[i])) {
+		return ""
+	}
+
+	for i < len(content) {
+		r := rune(content[i])
+		switch {
+		case isDocPathChar(r):
+			i++
+		case r == '#':
+			next := consumeDocHeading(content, i)
+			if next == i {
+				return content[:i]
+			}
+			i = next
+		case r == ':':
+			next := consumeDocLineSuffix(content, i)
+			if next == i {
+				return content[:i]
+			}
+			i = next
+		case r == '{':
+			next := consumeRelationSuffix(content, i)
+			if next == i {
+				return content[:i]
+			}
+			i = next
+			return content[:i]
+		default:
+			return content[:i]
+		}
+	}
+
+	return content[:i]
+}
+
+func consumeDocHeading(content string, start int) int {
+	i := start + 1
+	for i < len(content) {
+		r := rune(content[i])
+		if !isDocHeadingChar(r) {
+			break
+		}
+		i++
+	}
+	if i == start+1 {
+		return start
+	}
+	return i
+}
+
+func consumeDocLineSuffix(content string, start int) int {
+	i := start + 1
+	rangeSeparatorSeen := false
+	digitsBeforeSeparator := 0
+	digitsAfterSeparator := 0
+
+	for i < len(content) {
+		r := rune(content[i])
+		switch {
+		case r >= '0' && r <= '9':
+			if rangeSeparatorSeen {
+				digitsAfterSeparator++
+			} else {
+				digitsBeforeSeparator++
+			}
+			i++
+		case r == '-' && !rangeSeparatorSeen && digitsBeforeSeparator > 0:
+			rangeSeparatorSeen = true
+			i++
+		default:
+			goto done
+		}
+	}
+
+done:
+	if digitsBeforeSeparator == 0 || (rangeSeparatorSeen && digitsAfterSeparator == 0) {
+		return start
+	}
+	return i
+}
+
+func consumeRelationSuffix(content string, start int) int {
+	i := start + 1
+	for i < len(content) {
+		r := rune(content[i])
+		if (r >= 'a' && r <= 'z') || r == '-' {
+			i++
+			continue
+		}
+		break
+	}
+	if i == start+1 || i >= len(content) || content[i] != '}' {
+		return start
+	}
+	return i + 1
+}
+
+func isDocPathChar(r rune) bool {
+	return (r >= 'A' && r <= 'Z') ||
+		(r >= 'a' && r <= 'z') ||
+		(r >= '0' && r <= '9') ||
+		r == '/' ||
+		r == '_' ||
+		r == '-' ||
+		r == '.'
+}
+
+func isDocHeadingChar(r rune) bool {
+	return (r >= 'A' && r <= 'Z') ||
+		(r >= 'a' && r <= 'z') ||
+		(r >= '0' && r <= '9') ||
+		r == '_' ||
+		r == '-' ||
+		r == '.'
+}
+
+func isLineStart(content string, i int) bool {
+	if i == 0 {
+		return true
+	}
+	return content[i-1] == '\n'
+}
+
+func trimTrailingPunctuation(value string) string {
+	return strings.TrimRightFunc(value, func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune(".,;:!?`'\"", r)
+	})
 }
