@@ -2,12 +2,65 @@ package search
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
 )
+
+type stubEmbedder struct{}
+
+func (stubEmbedder) Embed(string) ([]float32, error)         { return []float32{1}, nil }
+func (stubEmbedder) EmbedDocument(string) ([]float32, error) { return []float32{1}, nil }
+func (stubEmbedder) EmbedQuery(string) ([]float32, error)    { return []float32{1}, nil }
+func (stubEmbedder) EmbedBatch(texts []string) ([][]float32, error) {
+	return stubVectors(len(texts)), nil
+}
+func (stubEmbedder) EmbedDocumentBatch(texts []string) ([][]float32, error) {
+	return stubVectors(len(texts)), nil
+}
+func (stubEmbedder) EmbedQueryBatch(texts []string) ([][]float32, error) {
+	return stubVectors(len(texts)), nil
+}
+func (stubEmbedder) Dimensions() int { return 1 }
+func (stubEmbedder) ModelConfig() EmbeddingModelConfig {
+	return EmbeddingModelConfig{Name: "stub", Dimensions: 1}
+}
+func (stubEmbedder) GetTokenizer() Tokenizer { return nil }
+func (stubEmbedder) Close()                  {}
+
+func stubVectors(count int) [][]float32 {
+	vecs := make([][]float32, count)
+	for i := range vecs {
+		vecs[i] = []float32{1}
+	}
+	return vecs
+}
+
+type stubVectorStore struct {
+	chunks []ScoredChunk
+}
+
+func (s *stubVectorStore) Load() error           { return nil }
+func (s *stubVectorStore) Save() error           { return nil }
+func (s *stubVectorStore) Clear() error          { s.chunks = nil; return nil }
+func (s *stubVectorStore) AddChunks([]Chunk)     {}
+func (s *stubVectorStore) RemoveByPrefix(string) {}
+func (s *stubVectorStore) RemoveByIDs([]string)  {}
+func (s *stubVectorStore) Search([]float32, VectorSearchOpts) []ScoredChunk {
+	return s.chunks
+}
+func (s *stubVectorStore) Count() int                           { return len(s.chunks) }
+func (s *stubVectorStore) NeedsRebuild(string) bool             { return false }
+func (s *stubVectorStore) Stats() (int, string, time.Time)      { return len(s.chunks), "stub", time.Time{} }
+func (s *stubVectorStore) Close() error                         { return nil }
+func (s *stubVectorStore) Model() string                        { return "stub" }
+func (s *stubVectorStore) GetContentHash(string) string         { return "" }
+func (s *stubVectorStore) SetContentHash(string, string)        {}
+func (s *stubVectorStore) DeleteContentHash(string)             {}
+func (s *stubVectorStore) ListContentHashes() map[string]string { return nil }
 
 // --- Model Prefix Config Tests ---
 
@@ -648,6 +701,110 @@ func TestMergeStoreMemoryResultsPreservesProjectAndGlobalHits(t *testing.T) {
 	}
 	if results[0].MemoryLayer == "" || results[1].MemoryLayer == "" {
 		t.Fatalf("expected memory layer provenance, got %+v", results)
+	}
+}
+
+func TestEngineSearch_HybridUsesBM25KeywordSideAndCompatibleMatchedBy(t *testing.T) {
+	store := newRetrievalTestStore(t)
+	engine := NewEngine(store, stubEmbedder{}, &stubVectorStore{chunks: []ScoredChunk{
+		{
+			Chunk: Chunk{
+				ID:      "doc:guides/retrieval-foundation:0",
+				Type:    ChunkTypeDoc,
+				DocPath: "guides/retrieval-foundation",
+				Section: "semantic retrieval foundation section",
+			},
+			Score: 0.9,
+		},
+		{
+			Chunk: Chunk{
+				ID:      "doc:guides/semantic-only:0",
+				Type:    ChunkTypeDoc,
+				DocPath: "guides/semantic-only",
+				Section: "semantic-only section",
+			},
+			Score: 0.7,
+		},
+	}})
+
+	results, err := engine.Search(SearchOptions{Query: "retrieval foundation", Mode: string(ModeHybrid), Limit: 10})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	var mergedDoc, lexicalOnly, semanticOnly *models.SearchResult
+	for i := range results {
+		result := &results[i]
+		switch {
+		case result.Type == "doc" && result.ID == "guides/retrieval-foundation":
+			mergedDoc = result
+		case result.Type == "memory" && result.ID == "mem001":
+			lexicalOnly = result
+		case result.Type == "doc" && result.ID == "guides/semantic-only":
+			semanticOnly = result
+		}
+	}
+	if mergedDoc == nil {
+		t.Fatalf("expected merged doc result, got %+v", results)
+	}
+	if got := strings.Join(mergedDoc.MatchedBy, ","); got != "semantic,keyword" {
+		t.Fatalf("merged MatchedBy = %q, want semantic,keyword", got)
+	}
+	if lexicalOnly == nil || strings.Join(lexicalOnly.MatchedBy, ",") != "keyword" {
+		t.Fatalf("expected BM25 lexical-only memory result with keyword MatchedBy, got %+v", lexicalOnly)
+	}
+	if semanticOnly == nil || strings.Join(semanticOnly.MatchedBy, ",") != "semantic" {
+		t.Fatalf("expected semantic-only result with semantic MatchedBy, got %+v", semanticOnly)
+	}
+}
+
+func TestEngineSearch_UnknownModeFallsBackToBM25Keyword(t *testing.T) {
+	store := newRetrievalTestStore(t)
+	results, err := NewEngine(store, nil, nil).Search(SearchOptions{
+		Query: "retrieval foundation",
+		Mode:  "not-public",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected keyword fallback results")
+	}
+	for _, result := range results {
+		if strings.Join(result.MatchedBy, ",") != "keyword" {
+			t.Fatalf("fallback MatchedBy = %v, want keyword", result.MatchedBy)
+		}
+	}
+}
+
+func TestEngineRetrieve_PreservesRequestedSemanticModeWhenAvailable(t *testing.T) {
+	store := newRetrievalTestStore(t)
+	engine := NewEngine(store, stubEmbedder{}, &stubVectorStore{chunks: []ScoredChunk{
+		{
+			Chunk: Chunk{
+				ID:      "doc:guides/retrieval-foundation:0",
+				Type:    ChunkTypeDoc,
+				DocPath: "guides/retrieval-foundation",
+				Section: "semantic retrieval foundation section",
+			},
+			Score: 0.9,
+		},
+	}})
+
+	resp, err := engine.Retrieve(models.RetrievalOptions{
+		Query: "retrieval foundation",
+		Mode:  string(ModeSemantic),
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("Retrieve: %v", err)
+	}
+	if resp.Mode != string(ModeSemantic) {
+		t.Fatalf("response mode = %q, want semantic", resp.Mode)
+	}
+	if len(resp.Candidates) == 0 || strings.Join(resp.Candidates[0].MatchedBy, ",") != "semantic" {
+		t.Fatalf("expected semantic retrieval candidate, got %+v", resp.Candidates)
 	}
 }
 

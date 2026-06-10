@@ -31,19 +31,22 @@ type SearchOptions struct {
 
 // Engine provides keyword, semantic, and hybrid search across tasks and docs.
 type Engine struct {
-	store    *storage.Store
-	embedder EmbedderProvider // nil if semantic not available
-	vecStore VectorStore      // nil if semantic not available
+	store          *storage.Store
+	embedder       EmbedderProvider // nil if semantic not available
+	vecStore       VectorStore      // nil if semantic not available
+	lexicalBackend lexicalBackend
 }
 
 // NewEngine creates a search engine backed by the given store.
 // Pass nil embedder/vecStore for keyword-only mode.
 func NewEngine(store *storage.Store, embedder EmbedderProvider, vecStore VectorStore) *Engine {
-	return &Engine{
+	e := &Engine{
 		store:    store,
 		embedder: embedder,
 		vecStore: vecStore,
 	}
+	e.lexicalBackend = newBM25LexicalBackend(store)
+	return e
 }
 
 // SemanticAvailable returns true if the engine can perform semantic search.
@@ -542,6 +545,13 @@ func (e *Engine) extractReferenceCandidates(content string, source models.Retrie
 // ─── keyword search (existing logic) ─────────────────────────────────
 
 func (e *Engine) keywordSearch(query string, opts SearchOptions) ([]models.SearchResult, error) {
+	if e.lexicalBackend == nil {
+		e.lexicalBackend = newBM25LexicalBackend(e.store)
+	}
+	return e.lexicalBackend.Search(query, opts)
+}
+
+func (e *Engine) heuristicKeywordSearch(query string, opts SearchOptions) ([]models.SearchResult, error) {
 	if opts.Type == "memory" {
 		return e.keywordSearchMemories(query, strings.Fields(strings.ToLower(query)), opts)
 	}
@@ -835,7 +845,7 @@ func (e *Engine) semanticMemorySearch(query string, opts SearchOptions) ([]model
 }
 
 func (e *Engine) hybridMemorySearch(query string, opts SearchOptions) ([]models.SearchResult, error) {
-	kwResults, err := e.keywordSearchMemories(strings.ToLower(query), strings.Fields(strings.ToLower(query)), opts)
+	kwResults, err := e.keywordSearch(query, opts)
 	if err != nil {
 		return nil, err
 	}

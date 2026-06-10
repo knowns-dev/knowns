@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/howznguyen/knowns/internal/lsp"
+	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -747,104 +748,109 @@ func handleCodeFind(ctx context.Context, getStore func() *storage.Store, getLSPM
 	path, _ := stringArg(args, "path")
 	includeBody := boolArg(args, "include_body")
 	verbose := boolArg(args, "verbose")
-	depth, _ := intArg(args, "depth")
 	limit, ok := intArg(args, "limit")
 	if !ok || limit <= 0 {
 		limit = 20
 	}
 
 	root := projectRoot(store)
-	results := []map[string]any{}
+	var summaries []search.CodeSummary
 
-	// Try workspace/symbol first — fast, single request
-	if path == "" {
-		wsResults := tryWorkspaceSymbol(ctx, mgr, root, query, limit, verbose)
-		if len(wsResults) > 0 {
-			resp := map[string]any{"results": wsResults, "total": len(wsResults)}
-			out, _ := json.MarshalIndent(resp, "", "  ")
-			return mcp.NewToolResultText(string(out)), nil
+	if path != "" {
+		absPath := path
+		if !filepath.IsAbs(absPath) {
+			absPath = filepath.Join(root, absPath)
+		}
+		fileSummaries, err := buildFileSummaries(ctx, mgr, root, absPath)
+		if err != nil {
+			return errResult(err.Error())
+		}
+		summaries = fileSummaries
+	} else {
+		files, err := findCodeFiles(root, "")
+		if err != nil {
+			return errResult(err.Error())
+		}
+		for _, file := range files {
+			fileSummaries, err := buildFileSummaries(ctx, mgr, root, file)
+			if err != nil {
+				continue
+			}
+			summaries = append(summaries, fileSummaries...)
+			if len(summaries) > 5000 {
+				break
+			}
 		}
 	}
 
-	// Fallback: scan files with DocumentSymbols
-	files, err := findCodeFiles(root, path)
+	scorer := search.NewCodeBM25Scorer(summaries)
+	bm25Results, err := scorer.Search(query, limit)
 	if err != nil {
 		return errResult(err.Error())
 	}
-	var lastErr error
-	collectLimit := limit * 3
-	for _, file := range files {
-		if len(results) >= collectLimit {
-			break
-		}
-		if err := mgr.WithFile(ctx, file, func(srv *lsp.Server) error {
-			symbols, e := srv.DocumentSymbols(ctx, file)
-			if e != nil {
-				return nil
-			}
-			appendSymbolMatches(&results, root, file, symbols, query, includeBody, depth, verbose, collectLimit)
-			return nil
-		}); err != nil {
-			lastErr = err
+
+	// Normalize scores to 0-100 for output.
+	maxScore := 0.0
+	for _, r := range bm25Results {
+		if r.Score > maxScore {
+			maxScore = r.Score
 		}
 	}
-	sort.Slice(results, func(i, j int) bool {
-		si, _ := results[i]["score"].(float64)
-		sj, _ := results[j]["score"].(float64)
-		return si > sj
-	})
-	if len(results) > limit {
-		results = results[:limit]
+
+	// Convert BM25 results to the same format expected by consumers.
+	results := make([]map[string]any, 0, len(bm25Results))
+	for _, r := range bm25Results {
+		item := map[string]any{
+			"name":      r.Name,
+			"full_name": fullName(r),
+			"file":      r.Path,
+			"line":      r.StartLine,
+			"column":    r.StartCharacter,
+			"kind":      r.Kind,
+			"score":     normalizeScore(r.Score, maxScore),
+			"body_location": map[string]int{
+				"start_line": r.StartLine,
+				"end_line":   r.EndLine,
+			},
+		}
+		if verbose {
+			item["signature"] = r.Signature
+			item["snippet"] = r.Snippet
+		}
+		if includeBody {
+			absPath := filepath.Join(root, r.Path)
+			item["body"] = sourceForRange(absPath, lsp.Range{
+				Start: lsp.Position{Line: r.StartLine - 1, Character: r.StartCharacter - 1},
+				End:   lsp.Position{Line: r.EndLine - 1, Character: 0},
+			})
+		}
+		results = append(results, item)
 	}
-	resp := map[string]any{"results": results, "total": len(results)}
-	if len(results) == 0 && lastErr != nil {
-		resp["error"] = lastErr.Error()
-	}
+
+	resp := map[string]any{"results": results, "total": len(results), "mode": "bm25"}
 	out, _ := json.MarshalIndent(resp, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func tryWorkspaceSymbol(ctx context.Context, mgr *lsp.Manager, root, query string, limit int, verbose bool) []map[string]any {
-	var results []map[string]any
-	mgr.WithAnyServer(ctx, func(srv *lsp.Server) error {
-		symbols, err := srv.WorkspaceSymbol(ctx, query)
-		if err != nil || len(symbols) == 0 {
-			return err
-		}
-		for _, sym := range symbols {
-			if len(results) >= limit {
-				break
-			}
-			file := pathFromURI(sym.Location.URI)
-			relFile, _ := filepath.Rel(root, file)
-			if relFile == "" {
-				relFile = file
-			}
-			entry := map[string]any{
-				"name":      sym.Name,
-				"kind":      symbolKindString(sym.Kind),
-				"file":      relFile,
-				"line":      sym.Location.Range.Start.Line + 1,
-				"column":    sym.Location.Range.Start.Character + 1,
-				"full_name": sym.Name,
-				"score":     1.0,
-				"body_location": map[string]int{
-					"start_line": sym.Location.Range.Start.Line + 1,
-					"end_line":   sym.Location.Range.End.Line + 1,
-				},
-			}
-			if verbose {
-				entry["range"] = sym.Location.Range
-				entry["container_name"] = sym.ContainerName
-			}
-			if sym.ContainerName != "" {
-				entry["full_name"] = sym.ContainerName + "." + sym.Name
-			}
-			results = append(results, entry)
-		}
-		return nil
-	})
-	return results
+func fullName(r search.CodeBM25Result) string {
+	if r.Container != "" {
+		return r.Container + "." + r.Name
+	}
+	return r.Name
+}
+
+func normalizeScore(score, maxScore float64) float64 {
+	if maxScore <= 0 {
+		return 0
+	}
+	n := score / maxScore
+	if n > 1 {
+		return 1
+	}
+	if n < 0.01 && score > 0 {
+		return 0.01
+	}
+	return float64(int(n*10000+0.5)) / 10000
 }
 
 func applyWorkspaceEdit(changes map[string][]lsp.TextEdit) ([]string, int, error) {
@@ -1118,58 +1124,6 @@ func findCodeFiles(root, path string) ([]string, error) {
 	return files, err
 }
 
-func appendSymbolMatches(results *[]map[string]any, root, file string, symbols []lsp.DocumentSymbol, query string, includeBody bool, depth int, verbose bool, limit int) {
-	for _, sym := range symbols {
-		if len(*results) >= limit {
-			return
-		}
-		appendOneSymbolMatch(results, root, file, sym, "", query, includeBody, depth, verbose)
-		appendSymbolMatches(results, root, file, sym.Children, query, includeBody, depth, verbose, limit)
-	}
-}
-
-func appendOneSymbolMatch(results *[]map[string]any, root, file string, sym lsp.DocumentSymbol, parent, query string, includeBody bool, depth int, verbose bool) {
-	full := sym.Name
-	if parent != "" {
-		full = parent + "." + sym.Name
-	}
-	score := symbolScore(query, sym.Name)
-	if s := symbolScore(query, full); s > score {
-		score = s
-	}
-	if score < symbolScoreThreshold {
-		for _, child := range sym.Children {
-			appendOneSymbolMatch(results, root, file, child, full, query, includeBody, depth, verbose)
-		}
-		return
-	}
-	item := map[string]any{"name": sym.Name, "full_name": full, "file": relPath(root, file), "line": sym.Range.Start.Line + 1, "column": sym.Range.Start.Character + 1, "kind": symbolKindString(sym.Kind), "score": score, "body_location": map[string]int{"start_line": sym.Range.Start.Line + 1, "end_line": sym.Range.End.Line + 1}}
-	if verbose {
-		item["detail"] = sym.Detail
-		item["range"] = sym.Range
-		item["selectionRange"] = sym.SelectionRange
-	}
-	if includeBody {
-		item["body"] = sourceForRange(file, sym.Range)
-	}
-	if depth > 0 && len(sym.Children) > 0 {
-		item["children"] = symbolChildren(sym.Children, depth-1)
-	}
-	*results = append(*results, item)
-}
-
-func symbolChildren(symbols []lsp.DocumentSymbol, depth int) []map[string]any {
-	children := make([]map[string]any, 0, len(symbols))
-	for _, sym := range symbols {
-		item := map[string]any{"name": sym.Name, "line": sym.Range.Start.Line + 1, "column": sym.Range.Start.Character + 1, "kind": symbolKindString(sym.Kind)}
-		if depth > 0 && len(sym.Children) > 0 {
-			item["children"] = symbolChildren(sym.Children, depth-1)
-		}
-		children = append(children, item)
-	}
-	return children
-}
-
 func sourceForRange(path string, rng lsp.Range) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -1193,4 +1147,23 @@ func isSourceFile(path string) bool {
 	default:
 		return false
 	}
+}
+
+func buildFileSummaries(ctx context.Context, mgr *lsp.Manager, root, absPath string) ([]search.CodeSummary, error) {
+	var symbols []lsp.DocumentSymbol
+	err := mgr.WithFile(ctx, absPath, func(srv *lsp.Server) error {
+		var callErr error
+		symbols, callErr = srv.DocumentSymbols(ctx, absPath)
+		return callErr
+	})
+	if err != nil || len(symbols) == 0 {
+		return nil, err
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return nil, err
+	}
+	relPath, _ := filepath.Rel(root, absPath)
+	return search.BuildCodeSummaries(filepath.ToSlash(relPath), symbols, string(data)), nil
 }
