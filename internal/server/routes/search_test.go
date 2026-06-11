@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,36 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
 )
+
+func TestSearchRoute_ModeHybridKeepsKeywordOnlyCompatibility(t *testing.T) {
+	store := newSearchRouteTestStore(t)
+	r := chi.NewRouter()
+	(&SearchRoutes{store: store}).Register(r)
+
+	req := httptest.NewRequest("GET", "/search?q=retrieval+foundation&mode=hybrid&limit=5", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /search status = %d, want 200", w.Code)
+	}
+
+	var resp struct {
+		Tasks []models.SearchResult `json:"tasks"`
+		Docs  []models.SearchResult `json:"docs"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Docs) == 0 {
+		t.Fatal("expected doc search results")
+	}
+	for _, result := range append(resp.Docs, resp.Tasks...) {
+		if strings.Join(result.MatchedBy, ",") != "keyword" {
+			t.Fatalf("HTTP /search MatchedBy = %v, want keyword", result.MatchedBy)
+		}
+	}
+}
 
 func TestRetrieveRoute_ReturnsCandidatesAndContextPack(t *testing.T) {
 	store := newSearchRouteTestStore(t)

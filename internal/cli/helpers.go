@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/howznguyen/knowns/internal/lsp"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/spf13/cobra"
 )
@@ -133,4 +134,8 @@ func unescapeText(s string) string {
 	s = strings.ReplaceAll(s, `\n`, "\n")
 	s = strings.ReplaceAll(s, `\t`, "\t")
 	return s
+}
+
+func getLSPManagerForRoot(root string) *lsp.Manager {
+	return lsp.NewManager(root, lsp.Config{})
 }

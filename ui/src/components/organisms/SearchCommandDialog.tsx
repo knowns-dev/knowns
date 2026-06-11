@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { FileText, ListTodo } from "lucide-react";
 import {
 	Command,
-	CommandEmpty,
 	CommandGroup,
 	CommandInput,
 	CommandItem,
@@ -64,6 +63,9 @@ export default function SearchCommandDialog({
 	const [results, setResults] = useState<SearchResult>({ tasks: [], docs: [] });
 	const [loading, setLoading] = useState(false);
 
+	const hasResults = results.tasks.length > 0 || results.docs.length > 0;
+	const showEmpty = !loading && !!search.trim() && !hasResults;
+
 	// Search using API with debounce
 	useEffect(() => {
 		if (!open) {
@@ -121,9 +123,21 @@ export default function SearchCommandDialog({
 						onValueChange={setSearch}
 					/>
 					<CommandList>
-						<CommandEmpty>
-							{loading ? "Searching..." : search ? "No results found." : "Type to search..."}
-						</CommandEmpty>
+						{showEmpty && (
+							<div className="py-6 text-center text-sm text-muted-foreground">
+								No results found.
+							</div>
+						)}
+						{!search.trim() && !loading && (
+							<div className="py-6 text-center text-sm text-muted-foreground">
+								Type to search...
+							</div>
+						)}
+						{loading && (
+							<div className="py-6 text-center text-sm text-muted-foreground">
+								Searching...
+							</div>
+						)}
 
 						{results.tasks.length > 0 && (
 							<CommandGroup heading="Tasks">

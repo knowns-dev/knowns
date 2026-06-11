@@ -1,0 +1,173 @@
+[
+  {
+    "id": "exact-semantic-search",
+    "category": "exact_lookup",
+    "query": "semantic search",
+    "expected": ["specs/semantic-search", "guides/semantic-search-guide"],
+    "failureHints": ["title underweight", "common-term inflation"],
+    "notes": "exact title/spec-guide lookup",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "exact-rag-retrieval-foundation",
+    "category": "exact_lookup",
+    "query": "rag retrieval foundation",
+    "expected": ["specs/rag-retrieval-foundation"],
+    "failureHints": ["title underweight", "multi-word weakness"],
+    "notes": "exact approved spec lookup",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "exact-memory-system",
+    "category": "exact_lookup",
+    "query": "3 layer memory system",
+    "expected": ["specs/3-layer-memory-system", "learnings/learning-3-layer-memory-system"],
+    "failureHints": ["multi-word weakness", "common-term inflation"],
+    "notes": "phrase variation without punctuation",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "exact-semantic-guide-path",
+    "category": "exact_lookup",
+    "query": "guides/semantic-search-guide",
+    "expected": ["guides/semantic-search-guide"],
+    "failureHints": ["path underweight"],
+    "notes": "path-aware lookup",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "exact-knowns-go-rewrite",
+    "category": "exact_lookup",
+    "query": "knowns-go rewrite",
+    "expected": ["specs/knowns-go-rewrite"],
+    "failureHints": ["substring noise", "title underweight"],
+    "notes": "dashed title/path lookup",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "common-search",
+    "category": "common_terms",
+    "query": "search",
+    "expected": ["specs/semantic-search", "guides/semantic-search-guide"],
+    "failureHints": ["common-term inflation", "long-doc bias"],
+    "notes": "common term stress test",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "common-task",
+    "category": "common_terms",
+    "query": "task",
+    "expected": ["guides/workflow-guide", "features/global-task-modal"],
+    "failureHints": ["common-term inflation", "task/doc skew"],
+    "notes": "generic task term",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "common-memory",
+    "category": "common_terms",
+    "query": "memory",
+    "expected": ["specs/3-layer-memory-system", "learnings/learning-3-layer-memory-system"],
+    "failureHints": ["common-term inflation", "memory under-rank"],
+    "notes": "generic memory term",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "common-spec",
+    "category": "common_terms",
+    "query": "spec",
+    "expected": ["specs/semantic-search", "specs/rag-retrieval-foundation"],
+    "failureHints": ["common-term inflation", "long-doc bias"],
+    "notes": "generic repo vocabulary",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "intent-search-quality",
+    "category": "multi_word_intent",
+    "query": "search quality improvements",
+    "expected": ["specs/semantic-search-quality-improvements"],
+    "failureHints": ["multi-word weakness", "title underweight"],
+    "notes": "multi-word lexical intent",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "intent-memory-integration",
+    "category": "multi_word_intent",
+    "query": "memory entries search integration",
+    "expected": ["szd42a"],
+    "failureHints": ["task/doc skew", "multi-word weakness"],
+    "notes": "descriptive task query",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "intent-heuristic-reranker",
+    "category": "multi_word_intent",
+    "query": "heuristic reranker search pipeline",
+    "expected": ["x6db7x"],
+    "failureHints": ["task/doc skew", "title underweight"],
+    "notes": "implementation task query",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "intent-chunking-research",
+    "category": "multi_word_intent",
+    "query": "chunking strategies research",
+    "expected": ["research/rag-chunking-strategies-research"],
+    "failureHints": ["multi-word weakness", "path underweight"],
+    "notes": "research doc specificity",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "source-retrieval-orchestration",
+    "category": "source_balance",
+    "query": "retrieval orchestration",
+    "expected": ["511yfk", "specs/rag-retrieval-foundation"],
+    "failureHints": ["task/doc skew"],
+    "notes": "doc/task balance",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "source-decision-memory",
+    "category": "source_balance",
+    "query": "decision memory",
+    "expected": ["specs/3-layer-memory-system"],
+    "failureHints": ["memory under-rank", "task/doc skew"],
+    "notes": "memory entries should appear competitively",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "source-graph-code-ux",
+    "category": "source_balance",
+    "query": "graph code ux",
+    "expected": ["research/research-graph-code-ux"],
+    "failureHints": ["long-doc bias", "multi-word weakness"],
+    "notes": "specialized research doc against broad graph docs",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "boundary-rag",
+    "category": "token_boundary",
+    "query": "rag",
+    "expected": ["specs/rag-retrieval-foundation", "research/rag-chunking-strategies-research"],
+    "failureHints": ["substring noise", "common-term inflation"],
+    "notes": "short token noise",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "boundary-plan",
+    "category": "token_boundary",
+    "query": "plan",
+    "expected": ["guides/workflow-guide", "specs/sdd-spec-driven-development"],
+    "failureHints": ["substring noise", "long-doc bias"],
+    "notes": "short token boundary risk",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  },
+  {
+    "id": "boundary-init",
+    "category": "token_boundary",
+    "query": "init",
+    "expected": ["guides/quick-start", "reference/commands"],
+    "failureHints": ["substring noise"],
+    "notes": "short init token should not match arbitrary substrings",
+    "ignoreDocPaths": ["research/keyword-search-benchmark-matrix"]
+  }
+]

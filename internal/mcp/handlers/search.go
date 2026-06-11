@@ -176,6 +176,7 @@ func handleSearch(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp
 		return mcp.NewToolResultText(string(out)), nil
 	}
 
+	normalizeSearchScores(results)
 	out, _ := json.MarshalIndent(results, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }
@@ -230,8 +231,57 @@ func handleRetrieve(getStore func() *storage.Store, req mcp.CallToolRequest) (*m
 		return errResult(err.Error())
 	}
 
+	normalizeRetrievalScores(response.Candidates)
 	out, _ := json.MarshalIndent(response, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+func normalizeSearchScores(results []models.SearchResult) {
+	max := maxSearchScore(results)
+	for i := range results {
+		results[i].Score = scoreToNorm(results[i].Score, max)
+	}
+}
+
+func normalizeRetrievalScores(candidates []models.RetrievalCandidate) {
+	max := maxRetrievalScore(candidates)
+	for i := range candidates {
+		candidates[i].Score = scoreToNorm(candidates[i].Score, max)
+	}
+}
+
+func maxSearchScore(results []models.SearchResult) float64 {
+	max := 0.0
+	for _, r := range results {
+		if r.Score > max {
+			max = r.Score
+		}
+	}
+	return max
+}
+
+func maxRetrievalScore(candidates []models.RetrievalCandidate) float64 {
+	max := 0.0
+	for _, c := range candidates {
+		if c.Score > max {
+			max = c.Score
+		}
+	}
+	return max
+}
+
+func scoreToNorm(score, maxScore float64) float64 {
+	if maxScore <= 0 {
+		return 0
+	}
+	n := score / maxScore
+	if n > 1 {
+		return 1
+	}
+	if n < 0.01 && score > 0 {
+		return 0.01
+	}
+	return float64(int(n*10000+0.5)) / 10000
 }
 
 func handleResolve(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

@@ -1,10 +1,23 @@
 package cli
+
 import (
 	"strings"
 	"testing"
 
 	"github.com/howznguyen/knowns/internal/models"
 )
+
+func TestSearchCommandPublicCompatibilityFlags(t *testing.T) {
+	if searchCmd.Flags().Lookup("keyword") == nil {
+		t.Fatal("expected search --keyword compatibility flag")
+	}
+	if searchCmd.Flags().Lookup("mode") != nil {
+		t.Fatal("search should not expose a public --mode flag")
+	}
+	if searchCmd.Flags().Lookup("bm25") != nil {
+		t.Fatal("search should not expose BM25 as a public flag")
+	}
+}
 
 func TestSprintPlainRetrieval(t *testing.T) {
 	resp := &models.RetrievalResponse{
