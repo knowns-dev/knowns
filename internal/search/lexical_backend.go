@@ -217,6 +217,19 @@ func (b *bm25LexicalBackend) scoreDocument(doc lexicalDoc, query string, queryTo
 		}
 	}
 	details.RerankBoost, details.Boosts = bm25RerankBoost(doc, query, queryTokens)
+	// Only apply source-type tie-breaking boost when there is a real BM25 match.
+	// Without this guard, every document would receive a positive FinalScore
+	// (0 + 0.20/0.30) for any query, causing gibberish queries to return all results.
+	if details.BM25Score > 0 {
+		switch doc.Type {
+		case "doc":
+			details.RerankBoost += 0.20
+		case "task":
+			details.RerankBoost += 0.30
+		case "memory":
+			details.RerankBoost += 0.05
+		}
+	}
 	details.FinalScore = details.BM25Score + details.RerankBoost
 	return details
 }
@@ -419,15 +432,6 @@ func bm25RerankBoost(doc lexicalDoc, query string, queryTokens []string) (float6
 	}
 	if matchedTitleTerms > 0 && len(queryTokens) > 1 {
 		add(float64(matchedTitleTerms)/float64(len(uniqueTokens(queryTokens)))*6.0, "title_terms")
-	}
-
-	switch doc.Type {
-	case "doc":
-		add(0.20, "source_doc")
-	case "task":
-		add(0.30, "source_task")
-	case "memory":
-		add(0.05, "source_memory")
 	}
 
 	return boost, signals
