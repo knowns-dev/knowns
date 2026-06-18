@@ -45,15 +45,15 @@ const (
 )
 
 type Job struct {
-	ID          string     `json:"id"`
-	Key         string     `json:"key"`
-	Kind        JobKind    `json:"kind"`
-	Target      string     `json:"target,omitempty"`
-	RequestedAt time.Time  `json:"requestedAt"`
-	RunAfter    time.Time  `json:"runAfter"`
-	StartedAt   *time.Time `json:"startedAt,omitempty"`
-	Attempts    int        `json:"attempts,omitempty"`
-	LastError   string     `json:"lastError,omitempty"`
+	ID          string      `json:"id"`
+	Key         string      `json:"key"`
+	Kind        JobKind     `json:"kind"`
+	Target      string      `json:"target,omitempty"`
+	RequestedAt time.Time   `json:"requestedAt"`
+	RunAfter    time.Time   `json:"runAfter"`
+	StartedAt   *time.Time  `json:"startedAt,omitempty"`
+	Attempts    int         `json:"attempts,omitempty"`
+	LastError   string      `json:"lastError,omitempty"`
 	Phase       string      `json:"phase,omitempty"`
 	Processed   int         `json:"processed,omitempty"`
 	Total       int         `json:"total,omitempty"`
@@ -215,7 +215,12 @@ func ShouldBypassDaemon() bool {
 	if os.Getenv("KNOWNS_RUNTIME_INLINE") == "1" {
 		return true
 	}
-	return strings.HasSuffix(os.Args[0], ".test")
+	return isGoTestBinary(os.Args[0])
+}
+
+func isGoTestBinary(path string) bool {
+	path = strings.ToLower(path)
+	return strings.HasSuffix(path, ".test") || strings.HasSuffix(path, ".test.exe")
 }
 
 func GlobalRoot() string {

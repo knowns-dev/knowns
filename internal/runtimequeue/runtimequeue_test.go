@@ -7,6 +7,21 @@ import (
 	"time"
 )
 
+func TestIsGoTestBinaryRecognizesWindowsExe(t *testing.T) {
+	tests := map[string]bool{
+		"/tmp/routes.test":                   true,
+		`C:\Temp\TestRoutes\routes.test.exe`: true,
+		"/tmp/routes.test.exe":               true,
+		"/tmp/routes-test.exe":               false,
+		"/tmp/routes.testify.exe":            false,
+	}
+	for path, want := range tests {
+		if got := isGoTestBinary(path); got != want {
+			t.Fatalf("isGoTestBinary(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
 func TestEnqueueCoalescesDuplicateJobs(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
