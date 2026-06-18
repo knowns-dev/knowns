@@ -12,6 +12,7 @@ func AllAdapters() []lsp.LanguageAdapter {
 		NewClangdAdapter(),
 		NewJdtlsAdapter(),
 		NewRoslynAdapter(),
+		NewDartAdapter(),
 		NewRubyLspAdapter(),
 		NewIntelephenseAdapter(),
 		NewScssAdapter(),

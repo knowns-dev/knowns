@@ -21,30 +21,34 @@ type LSPSettings struct {
 }
 
 type LSPLanguageSettings struct {
-	Enabled  *bool          `json:"enabled,omitempty"`
-	Binary   string         `json:"binary,omitempty"`
-	Version  string         `json:"version,omitempty"`
-	Settings map[string]any `json:"settings,omitempty"`
+	Enabled     *bool          `json:"enabled,omitempty"`
+	Binary      string         `json:"binary,omitempty"`
+	Version     string         `json:"version,omitempty"`
+	Backend     string         `json:"backend,omitempty"`
+	ProjectPath string         `json:"projectPath,omitempty"`
+	Settings    map[string]any `json:"settings,omitempty"`
 }
 
 // GitTracking holds per-section git tracking toggles. A nil pointer means
-// "use the default for this section" (tasks/docs/templates=true, memories=false).
+// "use the default for this section" (tasks/docs/templates/decisions=true, memories=false).
 type GitTracking struct {
 	Tasks     *bool `json:"tasks,omitempty"`
 	Docs      *bool `json:"docs,omitempty"`
 	Templates *bool `json:"templates,omitempty"`
 	Memories  *bool `json:"memories,omitempty"`
+	Decisions *bool `json:"decisions,omitempty"`
 }
 
 // GitTrackingDefaults returns the default per-section tracking values.
 func GitTrackingDefaults() GitTracking {
-	t, d, tmpl := true, true, true
+	t, d, tmpl, dec := true, true, true, true
 	m := false
 	return GitTracking{
 		Tasks:     &t,
 		Docs:      &d,
 		Templates: &tmpl,
 		Memories:  &m,
+		Decisions: &dec,
 	}
 }
 
@@ -52,11 +56,11 @@ func GitTrackingDefaults() GitTracking {
 func GitTrackingModeDefaults(mode string) GitTracking {
 	switch mode {
 	case "git-ignored":
-		// In git-ignored mode, only docs, templates, and tasks are tracked by
-		// default (the old hard-coded behavior). Memories remain off.
-		t, d, tmpl := true, true, true
+		// In git-ignored mode, docs, templates, tasks, and decisions are tracked
+		// by default. Memories remain off.
+		t, d, tmpl, dec := true, true, true, true
 		m := false
-		return GitTracking{Tasks: &t, Docs: &d, Templates: &tmpl, Memories: &m}
+		return GitTracking{Tasks: &t, Docs: &d, Templates: &tmpl, Memories: &m, Decisions: &dec}
 	default:
 		// git-tracked and any other mode: same as GitTrackingDefaults.
 		return GitTrackingDefaults()
@@ -129,6 +133,9 @@ type ProjectSettings struct {
 type RuntimeMemorySettings struct {
 	// Mode controls runtime memory behavior: off, auto, manual, debug.
 	Mode string `json:"mode,omitempty"`
+
+	// Capture controls runtime memory auto-capture independently from Mode.
+	Capture string `json:"capture,omitempty"`
 
 	// MaxItems limits the number of injected memory items.
 	MaxItems int `json:"maxItems,omitempty"`

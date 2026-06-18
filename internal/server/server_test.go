@@ -370,11 +370,11 @@ func TestProxyOpenCodeInjectsRuntimeMemoryInAutoMode(t *testing.T) {
 	if !strings.Contains(gotBody, "Knowns Guidance") || !strings.Contains(gotBody, "memory({ action:") || !strings.Contains(gotBody, "KNOWNS.md") {
 		t.Fatalf("expected lightweight injected memory guidance in body, got %s", gotBody)
 	}
-	if strings.Contains(gotBody, "Runtime queue pattern") {
-		t.Fatalf("did not expect individual memory titles in body, got %s", gotBody)
+	if !strings.Contains(gotBody, "Runtime queue pattern") || !strings.Contains(gotBody, "Use the runtime queue pattern when handling prompt execution.") {
+		t.Fatalf("expected compact memory fact card in body, got %s", gotBody)
 	}
-	if strings.Contains(gotBody, "Keep runtime prompt hooks small and ranked by relevance.") {
-		t.Fatalf("did not expect full memory content in body, got %s", gotBody)
+	if strings.Contains(gotBody, "Score:") || strings.Contains(gotBody, "Reasons:") || strings.Contains(gotBody, "keyword-overlap") {
+		t.Fatalf("did not expect debug scoring metadata in body, got %s", gotBody)
 	}
 	if rr.Header().Get(runtimememory.HeaderStatus) != runtimememory.StatusInjected {
 		t.Fatalf("status header = %q, want %q", rr.Header().Get(runtimememory.HeaderStatus), runtimememory.StatusInjected)

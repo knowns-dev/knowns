@@ -1,9 +1,14 @@
 package validate
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/storage"
 )
 
 func TestValidateTask_NoTitle(t *testing.T) {
@@ -228,6 +233,176 @@ func TestValidateDoc_ValidDoc(t *testing.T) {
 	}
 }
 
+func TestValidateDoc_DecisionRefs(t *testing.T) {
+	store := newValidateTestStore(t)
+	now := time.Now().UTC()
+	decisionID := "20260618-1024-use-qdrant-as-default-vector-db"
+	if err := store.Decisions.Create(&models.DecisionEntry{
+		ID:        decisionID,
+		Title:     "Use Qdrant as default vector DB",
+		Status:    models.DecisionStatusAccepted,
+		Sources:   []string{"@doc/readme"},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}, storage.DecisionCreateOptions{Now: now}); err != nil {
+		t.Fatalf("create decision: %v", err)
+	}
+
+	doc := &models.Doc{
+		Path:        "readme",
+		Title:       "README",
+		Description: "desc",
+		Content:     "See @decision/20260618-1024-use-qdrant-as-default-vector-db and @decision/20260618-1024-missing.",
+	}
+	issues := validateDoc(doc, nil, nil, nil, store)
+	assertNoIssueMessageContains(t, issues, decisionID)
+	assertHasCode(t, issues, "BROKEN_DECISION_REF")
+}
+
+func TestValidateDoc_TemplateRefs(t *testing.T) {
+	store := newValidateTestStore(t)
+	templateDir := filepath.Join(store.Root, "templates", "go-feature")
+	if err := os.MkdirAll(templateDir, 0o755); err != nil {
+		t.Fatalf("create template dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(templateDir, "_template.yaml"), []byte("name: go-feature\ndescription: Go feature\nversion: 1.0.0\n"), 0o644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+
+	doc := &models.Doc{
+		Path:        "readme",
+		Title:       "README",
+		Description: "desc",
+		Content:     "Use @template/go-feature and avoid @template/missing-feature.",
+	}
+	issues := validateDoc(doc, nil, nil, nil, store)
+	assertNoIssueMessageContains(t, issues, "@template/go-feature")
+	assertHasCode(t, issues, "BROKEN_TEMPLATE_REF")
+}
+
+// --- Memory validation ---
+
+func TestValidateMemory_LifecycleWarnings(t *testing.T) {
+	oldVerified := time.Now().UTC().Add(-48 * time.Hour)
+	memory := &models.MemoryEntry{
+		ID:           "mem1",
+		Title:        "Memory",
+		Layer:        models.MemoryLayerProject,
+		Status:       "invalid",
+		Confidence:   "certain",
+		LastVerified: oldVerified,
+		TTLDays:      1,
+		Sources:      []string{"@doc/missing", "@task-missing", "@memory-missing"},
+		Content:      strings.Repeat("x", memoryContentMaxRunes+1),
+	}
+	issues := validateMemory(memory, nil, nil, nil, nil)
+	assertHasCode(t, issues, "MEMORY_INVALID_STATUS")
+	assertHasCode(t, issues, "MEMORY_INVALID_CONFIDENCE")
+	assertHasCode(t, issues, "MEMORY_TTL_EXPIRED")
+	assertHasCode(t, issues, "MEMORY_BROKEN_SOURCE_REF")
+	assertHasCode(t, issues, "MEMORY_CONTENT_TOO_LONG")
+}
+
+func TestValidateMemory_LegacyMissingTrustMetadata(t *testing.T) {
+	memory := &models.MemoryEntry{
+		ID:                       "legacy",
+		Title:                    "Legacy",
+		Layer:                    models.MemoryLayerProject,
+		Status:                   models.MemoryStatusActive,
+		LifecycleMetadataMissing: []string{"status", "confidence", "lastVerified", "ttlDays", "sources"},
+		Content:                  "legacy",
+	}
+	issues := validateMemory(memory, nil, nil, nil, nil)
+	assertHasCode(t, issues, "MEMORY_MISSING_TRUST_METADATA")
+	assertHasCode(t, issues, "MEMORY_MISSING_SOURCE")
+	assertNoCode(t, issues, "MEMORY_INVALID_STATUS")
+}
+
+func TestValidateMemory_OldProposed(t *testing.T) {
+	old := time.Now().UTC().Add(-40 * 24 * time.Hour)
+	memory := &models.MemoryEntry{
+		ID:           "proposed",
+		Title:        "Proposed",
+		Layer:        models.MemoryLayerProject,
+		Status:       models.MemoryStatusProposed,
+		Confidence:   models.MemoryConfidenceMedium,
+		LastVerified: time.Now().UTC(),
+		TTLDays:      90,
+		Sources:      []string{"@doc/source"},
+		CreatedAt:    old,
+		UpdatedAt:    old,
+		Content:      "proposal",
+	}
+	issues := validateMemory(memory, nil, map[string]bool{"source": true}, nil, nil)
+	assertHasCode(t, issues, "MEMORY_OLD_PROPOSED")
+	assertNoCode(t, issues, "MEMORY_MISSING_TRUST_METADATA")
+	assertNoCode(t, issues, "MEMORY_BROKEN_SOURCE_REF")
+}
+
+func TestValidateMemory_ResolutionMetadata(t *testing.T) {
+	base := models.MemoryEntry{
+		ID:           "resolution",
+		Title:        "Resolution",
+		Layer:        models.MemoryLayerProject,
+		Confidence:   models.MemoryConfidenceHigh,
+		LastVerified: time.Now().UTC(),
+		TTLDays:      90,
+		Sources:      []string{"@doc/source"},
+		Content:      "resolution",
+	}
+	merged := base
+	merged.Status = models.MemoryStatusMerged
+	issues := validateMemory(&merged, nil, map[string]bool{"source": true}, nil, nil)
+	assertHasCode(t, issues, "MEMORY_MERGED_MISSING_TARGET")
+
+	rejected := base
+	rejected.Status = models.MemoryStatusRejected
+	issues = validateMemory(&rejected, nil, map[string]bool{"source": true}, nil, nil)
+	assertHasCode(t, issues, "MEMORY_REJECTED_MISSING_REASON")
+}
+
+func TestValidateMemory_DecisionSourceRefs(t *testing.T) {
+	store := newValidateTestStore(t)
+	now := time.Now().UTC()
+	supersededID := "20260618-1024-use-qdrant-as-default-vector-db"
+	if err := store.Decisions.Create(&models.DecisionEntry{
+		ID:           supersededID,
+		Title:        "Use Qdrant as default vector DB",
+		Status:       models.DecisionStatusSuperseded,
+		SupersededBy: []string{"20260618-1030-use-sqlite-vec"},
+		Sources:      []string{"@doc/source"},
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}, storage.DecisionCreateOptions{Now: now}); err != nil {
+		t.Fatalf("create superseded decision: %v", err)
+	}
+	memory := &models.MemoryEntry{
+		ID:           "decision-source",
+		Title:        "Decision source",
+		Layer:        models.MemoryLayerProject,
+		Status:       models.MemoryStatusActive,
+		Confidence:   models.MemoryConfidenceHigh,
+		LastVerified: now,
+		TTLDays:      90,
+		Sources:      []string{"@decision/" + supersededID, "@decision/20260618-1111-missing"},
+		Content:      "Decision sourced memory.",
+	}
+
+	issues := validateMemory(memory, nil, nil, nil, store)
+	assertHasCode(t, issues, "MEMORY_SOURCE_DECISION_SUPERSEDED")
+	assertHasCode(t, issues, "MEMORY_BROKEN_SOURCE_REF")
+}
+
+func newValidateTestStore(t *testing.T) *storage.Store {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("validate-test"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+	return store
+}
+
 // --- LooksLikeTaskID ---
 
 func TestLooksLikeTaskID(t *testing.T) {
@@ -313,6 +488,15 @@ func assertNoCode(t *testing.T, issues []Issue, code string) {
 	for _, iss := range issues {
 		if iss.Code == code {
 			t.Errorf("expected no issue with code %q, but found: %v", code, iss)
+		}
+	}
+}
+
+func assertNoIssueMessageContains(t *testing.T, issues []Issue, text string) {
+	t.Helper()
+	for _, issue := range issues {
+		if strings.Contains(issue.Message, text) {
+			t.Fatalf("unexpected issue containing %q: %+v", text, issue)
 		}
 	}
 }

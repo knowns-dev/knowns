@@ -1,9 +1,9 @@
 ---
 name: kn-go
-description: Use when implementing all tasks from an approved spec in one continuous run without manual review gates
+description: Use only when the user explicitly wants the legacy no-review-gates pipeline for an approved spec; prefer kn-flow for normal spec orchestration
 ---
 
-# Go Mode — Full Pipeline Execution
+# Go Mode — Legacy Full Pipeline Execution
 
 Run the entire SDD pipeline from an approved spec: generate tasks → plan each → implement each → verify → commit. No manual review gates between steps.
 
@@ -13,20 +13,25 @@ Run the entire SDD pipeline from an approved spec: generate tasks → plan each 
 
 ## When to Use
 
-- User has an approved spec and wants to execute everything in one shot
-- User says "run all", "go mode", "execute everything", or similar
+- User explicitly asks for `kn-go`, "go mode", or a no-review-gates auto pipeline
+- User has an approved spec and wants to execute everything in one shot without per-task review gates
 - The spec is already approved (tag: `spec`, `approved`)
 
 ## When NOT to Use
 
 - Spec is still draft — redirect to `/kn-spec` first
 - User wants to review each task individually — use `/kn-plan <id>` + `/kn-implement <id>`
+- User wants normal approved-spec orchestration, sub-agents, parallel gating, or review — use `/kn-flow @doc/<spec-path>`
 - Spec has unresolved open questions — resolve them first
 
 ## Inputs
 
 - Spec path: `specs/<name>` (from `$ARGUMENTS` or ask user)
 - Optional: `--dry-run` to preview tasks without executing
+
+## Preferred Modern Path
+
+For most approved specs, use `/kn-flow @doc/<spec-path>` instead. `kn-flow` schedules tasks, gates parallel work, runs implementation and review together, and performs combined verification before commit.
 
 ## Process
 
@@ -255,6 +260,15 @@ For `kn-go`, the key details should cover:
 
 ---
 
+## Related Skills
+
+- `/kn-flow @doc/<spec-path>` — preferred approved-spec orchestration path
+- `/kn-plan --from @doc/<spec-path>` — generate tasks only
+- `/kn-review <id>` — review implemented task or integrated wave
+- `/kn-verify` — final SDD verification
+
+---
+
 ## Dry Run Mode
 
 With `--dry-run`:
@@ -280,6 +294,7 @@ Show what would be created and ask user to confirm before running for real.
 ## Red Flags
 
 - Running on a draft spec
+- Using `kn-go` when `/kn-flow` is expected for review/sub-agent orchestration
 - Skipping task validation between tasks
 - Not checking ACs before marking done
 - Committing without user approval

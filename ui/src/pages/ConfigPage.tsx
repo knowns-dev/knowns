@@ -49,6 +49,44 @@ import { importApi, saveUserPreferences, getRuntimeServices, getEmbeddingModels,
 
 const DEFAULT_STATUSES = ["todo", "in-progress", "in-review", "done", "blocked", "on-hold", "urgent"];
 const COLOR_OPTIONS = ["gray", "blue", "green", "yellow", "red", "purple", "orange", "pink", "cyan", "indigo"];
+const CSHARP_BACKENDS = ["auto", "roslyn-ls", "csharp-ls", "omnisharp"];
+
+type LSPLogKind = "runtime" | "trace";
+
+interface LSPConfigDraft {
+	backend?: string;
+	projectPath?: string;
+	version?: string;
+	binary?: string;
+}
+
+interface LSPLogPanelState {
+	kind: LSPLogKind;
+	content: string;
+	path?: string;
+	loading?: boolean;
+}
+
+function displayValue(value?: string) {
+	return value && value.trim() ? value : "-";
+}
+
+function statusVariant(status?: string): "default" | "secondary" | "destructive" | "outline" {
+	switch (status) {
+		case "running":
+		case "ready":
+		case "installed":
+			return "default";
+		case "crashed":
+		case "error":
+			return "destructive";
+		case "starting":
+		case "indexing":
+			return "secondary";
+		default:
+			return "outline";
+	}
+}
 
 // ── Category definitions ──────────────────────────────────────────
 
@@ -384,6 +422,9 @@ export default function ConfigPage() {
 	const [availableLangs, setAvailableLangs] = useState<LSPLanguageInfo[]>([]);
 	const [showAddDropdown, setShowAddDropdown] = useState(false);
 	const [lspActionsLoading, setLspActionsLoading] = useState<Record<string, boolean>>({});
+	const [lspConfigDrafts, setLspConfigDrafts] = useState<Record<string, LSPConfigDraft>>({});
+	const [lspLogPanels, setLspLogPanels] = useState<Record<string, LSPLogPanelState>>({});
+	const [lspTraceEnabled, setLspTraceEnabled] = useState<Record<string, boolean>>({});
 	const dropdownRef = useRef<HTMLDivElement>(null);
 
 	// Close LSP dropdown on outside click
@@ -398,10 +439,24 @@ export default function ConfigPage() {
 		return () => document.removeEventListener("mousedown", handler);
 	}, [showAddDropdown]);
 
+	const refreshLspLanguages = useCallback(async () => {
+		const data = await lspApi.getLanguages();
+		const languages = data.languages || [];
+		setAvailableLangs(languages);
+		setLspTraceEnabled((prev) => {
+			const next = { ...prev };
+			for (const lang of languages) {
+				next[lang.id] = lang.traceEnabled ?? false;
+			}
+			return next;
+		});
+		return languages;
+	}, []);
+
 	// Load available LSP languages
 	useEffect(() => {
-		lspApi.getLanguages().then((data) => setAvailableLangs(data.languages || [])).catch(() => {});
-	}, []);
+		refreshLspLanguages().catch(() => {});
+	}, [refreshLspLanguages]);
 
 	// API endpoint test state
 	const [apiBase, setApiBase] = useState("");
@@ -825,8 +880,22 @@ export default function ConfigPage() {
 		const languages = config.lsp?.languages || {};
 		const languageEntries = Object.entries(languages);
 
+		const setActionLoading = (key: string, value: boolean) => {
+			setLspActionsLoading((prev) => ({ ...prev, [key]: value }));
+		};
+
+		const updateLocalLanguage = (langId: string, nextConfig: Record<string, unknown>) => {
+			setConfig((prev) => {
+				const newLangs = {
+					...(prev.lsp?.languages || {}),
+					[langId]: { ...(prev.lsp?.languages?.[langId] || {}), ...nextConfig },
+				};
+				return { ...prev, lsp: { ...(prev.lsp || {}), enabled: true, languages: newLangs } };
+			});
+		};
+
 		const handleAddLanguage = async (langId: string) => {
-			setLspActionsLoading((prev) => ({ ...prev, [langId]: true }));
+			setActionLoading(langId, true);
 			setShowAddDropdown(false);
 			try {
 				await lspApi.addLanguage(langId);
@@ -843,13 +912,13 @@ export default function ConfigPage() {
 			} catch (err) {
 				toast.error(err instanceof Error ? err.message : "Failed to add language");
 			} finally {
-				setLspActionsLoading((prev) => ({ ...prev, [langId]: false }));
-				lspApi.getLanguages().then((data) => setAvailableLangs(data.languages)).catch(() => {});
+				setActionLoading(langId, false);
+				refreshLspLanguages().catch(() => {});
 			}
 		};
 
 		const handleToggleLanguage = async (langId: string, enabled: boolean) => {
-			setLspActionsLoading((prev) => ({ ...prev, [langId]: true }));
+			setActionLoading(langId, true);
 			try {
 				await lspApi.toggleLanguage(langId, enabled);
 				setConfig((prev) => {
@@ -865,12 +934,13 @@ export default function ConfigPage() {
 			} catch (err) {
 				toast.error(err instanceof Error ? err.message : "Failed to toggle language");
 			} finally {
-				setLspActionsLoading((prev) => ({ ...prev, [langId]: false }));
+				setActionLoading(langId, false);
+				refreshLspLanguages().catch(() => {});
 			}
 		};
 
 		const handleRemoveLanguage = async (langId: string) => {
-			setLspActionsLoading((prev) => ({ ...prev, [langId]: true }));
+			setActionLoading(langId, true);
 			try {
 				await lspApi.removeLanguage(langId);
 				setConfig((prev) => {
@@ -884,12 +954,116 @@ export default function ConfigPage() {
 			} catch (err) {
 				toast.error(err instanceof Error ? err.message : "Failed to remove language");
 			} finally {
-				setLspActionsLoading((prev) => ({ ...prev, [langId]: false }));
-				lspApi.getLanguages().then((data) => setAvailableLangs(data.languages)).catch(() => {});
+				setActionLoading(langId, false);
+				refreshLspLanguages().catch(() => {});
 			}
 		};
 
-		// Map of available languages not yet in config
+		const handleRestartLanguage = async (langId: string) => {
+			const key = `${langId}:restart`;
+			setActionLoading(key, true);
+			try {
+				await lspApi.restartLanguage(langId);
+				toast.success(`Restarted ${langId}`);
+				await refreshLspLanguages();
+			} catch (err) {
+				toast.error(err instanceof Error ? err.message : "Failed to restart language server");
+			} finally {
+				await refreshLspLanguages().catch(() => []);
+				setActionLoading(key, false);
+			}
+		};
+
+		const handleInstallLanguage = async (langId: string, action: "install" | "update") => {
+			const key = `${langId}:${action}`;
+			setActionLoading(key, true);
+			try {
+				await lspApi.installLanguage(langId, action);
+				toast.success(`${action === "install" ? "Installed" : "Updated"} ${langId}`);
+				await refreshLspLanguages();
+			} catch (err) {
+				toast.error(err instanceof Error ? err.message : `Failed to ${action} dependency`);
+			} finally {
+				await refreshLspLanguages().catch(() => []);
+				setActionLoading(key, false);
+			}
+		};
+
+		const handleCleanupLanguage = async (langId: string) => {
+			const key = `${langId}:cleanup`;
+			setActionLoading(key, true);
+			try {
+				await lspApi.cleanupLanguage(langId);
+				toast.success(`Cleaned ${langId} dependencies`);
+				await refreshLspLanguages();
+			} catch (err) {
+				toast.error(err instanceof Error ? err.message : "Failed to cleanup dependencies");
+			} finally {
+				await refreshLspLanguages().catch(() => []);
+				setActionLoading(key, false);
+			}
+		};
+
+		const handleConfigDraft = (langId: string, field: keyof LSPConfigDraft, value: string) => {
+			setLspConfigDrafts((prev) => ({ ...prev, [langId]: { ...(prev[langId] || {}), [field]: value } }));
+		};
+
+		const handleApplyLanguageConfig = async (langId: string, langConfig: Record<string, any>, info: LSPLanguageInfo | undefined, apply: boolean) => {
+			const key = `${langId}:config`;
+			const draft = lspConfigDrafts[langId] || {};
+			const patch = {
+				backend: draft.backend ?? langConfig.backend ?? "auto",
+				projectPath: draft.projectPath ?? langConfig.projectPath ?? "",
+				version: draft.version ?? langConfig.version ?? info?.version ?? "",
+				binary: draft.binary ?? langConfig.binary ?? "",
+				apply,
+			};
+			setActionLoading(key, true);
+			try {
+				await lspApi.updateLanguageConfig(langId, patch);
+				const { apply: _apply, ...localPatch } = patch;
+				updateLocalLanguage(langId, localPatch);
+				setLspConfigDrafts((prev) => ({ ...prev, [langId]: {} }));
+				toast.success(apply ? `Applied and restarted ${langId}` : `Updated ${langId} settings`);
+				await refreshLspLanguages();
+			} catch (err) {
+				toast.error(err instanceof Error ? err.message : "Failed to update LSP config");
+			} finally {
+				await refreshLspLanguages().catch(() => []);
+				setActionLoading(key, false);
+			}
+		};
+
+		const handleLoadLogs = async (langId: string, kind: LSPLogKind = lspLogPanels[langId]?.kind || "runtime") => {
+			setLspLogPanels((prev) => ({ ...prev, [langId]: { ...(prev[langId] || { kind, content: "" }), kind, loading: true } }));
+			try {
+				const data = await lspApi.getLanguageLogs(langId, kind, 200);
+				setLspLogPanels((prev) => ({
+					...prev,
+					[langId]: { kind: data.kind, content: data.content, path: data.logPath, loading: false },
+				}));
+			} catch (err) {
+				setLspLogPanels((prev) => ({ ...prev, [langId]: { kind, content: err instanceof Error ? err.message : "Failed to load logs", loading: false } }));
+			}
+		};
+
+		const handleTraceToggle = async (langId: string, enabled: boolean) => {
+			const key = `${langId}:trace`;
+			setActionLoading(key, true);
+			try {
+				const data = await lspApi.setLanguageTrace(langId, enabled);
+				setLspTraceEnabled((prev) => ({ ...prev, [langId]: data.enabled }));
+				toast.success(data.enabled ? `Trace enabled for ${langId}` : `Trace disabled for ${langId}`);
+				if (data.enabled) {
+					await handleLoadLogs(langId, "trace");
+				}
+			} catch (err) {
+				toast.error(err instanceof Error ? err.message : "Failed to update trace");
+			} finally {
+				setActionLoading(key, false);
+			}
+		};
+
 		const configuredIds = new Set(Object.keys(languages));
 		const unconfiguredLangs = availableLangs.filter((lang) => !configuredIds.has(lang.id));
 
@@ -952,48 +1126,184 @@ export default function ConfigPage() {
 						<p className="text-xs text-muted-foreground mt-1">Click "Add" above to configure an LSP language</p>
 					</div>
 				) : (
-					<div className="ml-[30px] space-y-2">
+					<div className="ml-[30px] space-y-3">
 						{languageEntries.map(([lang, langConfig]) => {
 							const info = availableLangs.find((a) => a.id === lang);
+							const draft = lspConfigDrafts[lang] || {};
+							const logPanel = lspLogPanels[lang];
 							const isRunning = info?.running ?? false;
 							const isInstalled = info?.installed ?? langConfig.binary !== undefined;
-							const loading = lspActionsLoading[lang] ?? false;
+							const langEnabled = langConfig.enabled ?? true;
+							const busy = Object.entries(lspActionsLoading).some(([key, value]) => value && key.startsWith(lang));
+							const configBusy = lspActionsLoading[`${lang}:config`] ?? false;
+							const traceOn = lspTraceEnabled[lang] ?? info?.traceEnabled ?? false;
 
 							return (
-								<div key={lang} className="flex items-center gap-3 p-3 rounded-lg border bg-card">
-									<Switch
-										checked={langConfig.enabled ?? false}
-										onCheckedChange={(checked) => handleToggleLanguage(lang, checked)}
-										disabled={loading}
-									/>
-									<div className="flex-1 min-w-0">
-										<div className="flex items-center gap-2">
-											<span className="text-sm font-medium capitalize">{lang}</span>
-											{loading && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+								<div key={lang} className="overflow-hidden rounded-lg border bg-card">
+									<div className="border-l-2 border-primary/50">
+										<div className="border-b bg-muted/20 px-3 py-2.5">
+											<div className="flex min-w-0 items-start gap-3">
+												<Switch
+													checked={langConfig.enabled ?? false}
+													onCheckedChange={(checked) => handleToggleLanguage(lang, checked)}
+													disabled={busy}
+												/>
+												<div className="min-w-0 space-y-1.5">
+													<div className="flex flex-wrap items-center gap-2">
+														<span className={`mt-0.5 h-2 w-2 rounded-full ${isRunning ? "bg-emerald-500" : langEnabled ? "bg-amber-500" : "bg-muted-foreground/50"}`} />
+														<span className="truncate text-sm font-semibold">{info?.name || lang}</span>
+														{busy && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+													</div>
+													<div className="flex flex-wrap gap-1.5">
+														<Badge variant={statusVariant(info?.runningState || info?.status)} className="text-[11px] font-medium">
+															{displayValue(info?.runningState || info?.status)}
+														</Badge>
+														<Badge variant={statusVariant(info?.installState)} className="text-[11px] font-medium">
+															{displayValue(info?.installState)}
+														</Badge>
+														<Badge variant={statusVariant(info?.readinessState)} className="text-[11px] font-medium">
+															{displayValue(info?.readinessState)}
+														</Badge>
+													</div>
+												</div>
+											</div>
+											<div className="mt-2 flex items-start gap-1.5">
+												<div className="grid min-w-0 flex-1 grid-cols-[repeat(auto-fit,minmax(6.5rem,1fr))] gap-1.5">
+													<Button className="h-7 px-2" size="sm" variant="outline" onClick={() => handleRestartLanguage(lang)} disabled={busy || !langEnabled}>
+														<RefreshCw className="w-3.5 h-3.5 mr-1" />
+														Restart
+													</Button>
+													<Button className="h-7 px-2" size="sm" variant="outline" onClick={() => handleInstallLanguage(lang, "install")} disabled={busy || !info?.installHint}>
+														<Download className="w-3.5 h-3.5 mr-1" />
+														Install
+													</Button>
+													<Button className="h-7 px-2" size="sm" variant="outline" onClick={() => handleInstallLanguage(lang, "update")} disabled={busy || !isInstalled}>
+														<Package className="w-3.5 h-3.5 mr-1" />
+														Update
+													</Button>
+													<Button className="h-7 px-2" size="sm" variant="outline" onClick={() => handleCleanupLanguage(lang)} disabled={busy || !info?.cleanupEligible}>
+														<X className="w-3.5 h-3.5 mr-1" />
+														Cleanup
+													</Button>
+													<Button className="h-7 px-2" size="sm" variant="outline" onClick={() => handleLoadLogs(lang)} disabled={busy}>
+														<Terminal className="w-3.5 h-3.5 mr-1" />
+														Logs
+													</Button>
+													<Button className="h-7 px-2" size="sm" variant={traceOn ? "default" : "outline"} onClick={() => handleTraceToggle(lang, !traceOn)} disabled={busy}>
+														<Activity className="w-3.5 h-3.5 mr-1" />
+														Trace
+													</Button>
+												</div>
+												<Button aria-label={`Remove ${info?.name || lang}`} className="h-7 w-7 shrink-0 px-0 text-muted-foreground hover:text-destructive" size="sm" variant="outline" onClick={() => handleRemoveLanguage(lang)} disabled={busy}>
+													<Trash2 className="h-3.5 w-3.5" />
+												</Button>
+											</div>
 										</div>
-										{langConfig.version && (
-											<div className="text-xs text-muted-foreground">v{langConfig.version}</div>
-										)}
-										{langConfig.binary && (
-											<div className="text-xs text-muted-foreground font-mono">{langConfig.binary}</div>
-										)}
+
+										<div className="grid grid-cols-[repeat(auto-fit,minmax(11.5rem,1fr))] gap-2 p-3">
+											<div className="min-w-0 rounded-md border bg-background/60 px-2.5 py-2">
+												<div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Backend</div>
+												<div className="mt-1 break-words font-mono text-[11px] leading-5 text-foreground">{displayValue(info?.backend)}{info?.backendSource ? ` (${info.backendSource})` : ""}</div>
+											</div>
+											<div className="min-w-0 rounded-md border bg-background/60 px-2.5 py-2">
+												<div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Project</div>
+												<div className="mt-1 break-words font-mono text-[11px] leading-5 text-foreground">{displayValue(info?.projectPath)}{info?.projectKind ? ` (${info.projectKind})` : ""}</div>
+											</div>
+											<div className="min-w-0 rounded-md border bg-background/60 px-2.5 py-2">
+												<div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Binary</div>
+												<div className="mt-1 break-words font-mono text-[11px] leading-5 text-foreground">{displayValue(info?.binaryPath || info?.binary || langConfig.binary)}</div>
+											</div>
+											<div className="min-w-0 rounded-md border bg-background/60 px-2.5 py-2">
+												<div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Version</div>
+												<div className="mt-1 break-words font-mono text-[11px] leading-5 text-foreground">{displayValue(info?.version || langConfig.version)}</div>
+											</div>
+											<div className="min-w-0 rounded-md border bg-background/60 px-2.5 py-2">
+												<div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Cache</div>
+												<div className="mt-1 break-words font-mono text-[11px] leading-5 text-foreground">{displayValue(info?.cachePath)}</div>
+											</div>
+											<div className="min-w-0 rounded-md border bg-background/60 px-2.5 py-2">
+												<div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Log</div>
+												<div className="mt-1 break-words font-mono text-[11px] leading-5 text-foreground">{displayValue(info?.logPath)}</div>
+											</div>
+										</div>
+
 										{info?.installHint && !isInstalled && (
-											<div className="text-xs text-muted-foreground">Install: <code className="text-xs">{info.installHint}</code></div>
+											<div className="mx-3 mb-3 rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">Install: <code className="text-xs">{info.installHint}</code></div>
+										)}
+										{(info?.installError || info?.updateError) && (
+											<div className="mx-3 mb-3 flex items-start gap-1.5 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+												<AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+												<span>{info.installError || info.updateError}</span>
+											</div>
+										)}
+										{info?.attempts && info.attempts.length > 0 && (
+											<div className="mx-3 mb-3 flex flex-wrap gap-1.5">
+												{info.attempts.map((attempt, index) => (
+													<Badge key={`${attempt.backend}-${index}`} variant={statusVariant(attempt.status)} className="text-xs font-normal">
+														{attempt.backend}: {attempt.status}{attempt.reason ? ` - ${attempt.reason}` : ""}
+													</Badge>
+												))}
+											</div>
 										)}
 									</div>
-									<div className="flex items-center gap-2">
-										<Badge variant={isRunning ? "default" : isInstalled ? "outline" : "secondary"} className="text-xs">
-											{isRunning ? "Running" : isInstalled ? "Installed" : "Not installed"}
-										</Badge>
-										<button
-											type="button"
-											onClick={() => handleRemoveLanguage(lang)}
-											className="p-1 text-muted-foreground hover:text-destructive rounded transition-colors"
-											disabled={loading}
-										>
-											<Trash2 className="w-3.5 h-3.5" />
-										</button>
-									</div>
+
+									{lang === "csharp" && (
+										<div className="m-3 mt-0 grid grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))] gap-2 rounded-md border bg-muted/20 p-3">
+											<select
+												value={draft.backend ?? langConfig.backend ?? "auto"}
+												onChange={(e) => handleConfigDraft(lang, "backend", e.target.value)}
+												className="px-3 py-2 rounded-md border bg-input text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+												disabled={configBusy}
+											>
+												{CSHARP_BACKENDS.map((backend) => (
+													<option key={backend} value={backend}>{backend}</option>
+												))}
+											</select>
+											<Input
+												value={draft.projectPath ?? langConfig.projectPath ?? ""}
+												onChange={(e) => handleConfigDraft(lang, "projectPath", e.target.value)}
+												placeholder={info?.projectPath || "solution or project path"}
+												disabled={configBusy}
+											/>
+											<Input
+												value={draft.version ?? langConfig.version ?? ""}
+												onChange={(e) => handleConfigDraft(lang, "version", e.target.value)}
+												placeholder="version override"
+												disabled={configBusy}
+											/>
+											<Button size="sm" onClick={() => handleApplyLanguageConfig(lang, langConfig, info, true)} disabled={configBusy || !langEnabled}>
+												{configBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <CheckCircle2 className="w-3.5 h-3.5 mr-1" />}
+												Apply
+											</Button>
+										</div>
+									)}
+
+									{logPanel && (
+										<div className="m-3 mt-0 overflow-hidden rounded-md border bg-muted/20">
+											<div className="grid gap-2 border-b px-3 py-2 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center">
+												<div className="flex items-center gap-1">
+													<Button className="h-7 px-2" size="sm" variant={logPanel.kind === "runtime" ? "default" : "outline"} onClick={() => handleLoadLogs(lang, "runtime")}>
+														Runtime
+													</Button>
+													<Button className="h-7 px-2" size="sm" variant={logPanel.kind === "trace" ? "default" : "outline"} onClick={() => handleLoadLogs(lang, "trace")}>
+														Trace
+													</Button>
+												</div>
+												<span className="min-w-0 truncate rounded bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground">{displayValue(logPanel.path || info?.logPath)}</span>
+												<div className="flex items-center gap-1 justify-self-start sm:justify-self-end">
+													<Button className="h-7 w-7 px-0" size="sm" variant="outline" onClick={() => navigator.clipboard?.writeText(logPanel.path || info?.logPath || "")}>
+														<Copy className="h-3.5 w-3.5" />
+													</Button>
+													<Button className="h-7 w-7 px-0" size="sm" variant="outline" onClick={() => handleLoadLogs(lang, logPanel.kind)} disabled={logPanel.loading}>
+														{logPanel.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+													</Button>
+												</div>
+											</div>
+											<pre className="max-h-64 overflow-auto whitespace-pre-wrap p-3 text-xs font-mono text-muted-foreground">
+												{logPanel.loading ? "Loading..." : logPanel.content || "No log output"}
+											</pre>
+										</div>
+									)}
 								</div>
 							);
 						})}
@@ -1600,7 +1910,7 @@ export default function ConfigPage() {
 
 				{/* Content */}
 				<ScrollArea className="flex-1">
-					<div className="p-6 max-w-2xl">
+					<div className={`p-6 ${activeCategory === "code" ? "max-w-4xl" : "max-w-2xl"}`}>
 						{contentByCategory[activeCategory]()}
 					</div>
 				</ScrollArea>

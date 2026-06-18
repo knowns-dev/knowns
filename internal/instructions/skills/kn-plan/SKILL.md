@@ -11,7 +11,7 @@ description: Use when creating an implementation plan for a task
 
 ## Inputs
 
-- Task ID, or `--from @doc/specs/<name>` for SDD task generation
+- Task ID, `--new "<work summary>"` for direct task creation, or `--from @doc/<spec-path>` for SDD task generation
 - Existing task refs, spec refs, template refs, and user constraints
 
 ## Preflight
@@ -20,12 +20,54 @@ description: Use when creating an implementation plan for a task
 - Follow every explicit `@task-`, `@doc/`, and `@template/` ref before finalizing the plan
 - Search for adjacent docs/tasks only after reading the primary source
 - Do not write a plan that assumes undocumented architecture decisions
+- If the user wants an approved spec or multiple linked tasks executed end to end, route to `/kn-flow @doc/<spec-path>` instead of planning one task at a time
 
 ## Mode Detection
 
 Check if `$ARGUMENTS` contains `--from`:
-- **Yes** → Go to "Generate Tasks from Spec" section
-- **No** → Continue with normal planning flow
+- **Yes** → Go to "Generate Tasks from Spec" section. This creates tasks only; use `/kn-flow @doc/<spec-path>` after approval when the goal is execution.
+- **No** → Check if `$ARGUMENTS` contains `--new`
+  - **Yes** → Go to "Create Task Then Plan" section
+  - **No** → Continue with normal planning flow
+
+---
+
+# Create Task Then Plan
+
+Use this mode when the work is too small for a spec or the user has a work summary but no task ID yet.
+
+When `$ARGUMENTS` contains `--new "<work summary>"`:
+
+**Announce:** "Using kn-plan to create and plan a new task."
+
+## Step 0: Create Task
+
+Extract the work summary and classify the lane:
+- `tiny` for narrow docs/copy/config/low-risk bug fixes
+- `normal` for story-sized work with bounded impact
+- `high-risk` only when the summary touches auth, authorization, data migration/loss, external providers, public contracts, security/audit, or broad cross-module behavior
+
+If the work is high-risk, stop and recommend `/kn-spec` unless the user explicitly asked to bypass spec creation.
+
+For tiny/normal work, create the task first:
+
+```json
+mcp_knowns_tasks({ "action": "create", "title": "<short task title>",
+  "description": "<work summary>",
+  "priority": "medium",
+  "labels": ["<lane>"]
+})
+```
+
+If the work needs a short reusable note or convention, create/update the supporting doc or memory before planning and reference it in the task description or plan.
+
+## Step 0.5: Continue With New Task ID
+
+Use the returned `taskId` as `$ARGUMENTS` and continue with Normal Planning Flow.
+
+In the final response, include both:
+- the created task ID
+- the plan approval status
 
 ---
 
@@ -52,7 +94,7 @@ mcp_knowns_tasks({ "action": "get", "taskId": "<id>" })
 
 If the task links to a spec, use structural resolve to find related tasks and dependencies:
 ```json
-mcp_knowns_search({ "action": "resolve", "ref": "@doc/specs/<name>{implements}", "direction": "inbound", "entityTypes": "task" })
+mcp_knowns_search({ "action": "resolve", "ref": "@doc/<spec-path>{implements}", "direction": "inbound", "entityTypes": "task" })
 ```
 
 Search related (unified search includes docs and memories):
@@ -158,7 +200,7 @@ Present plan and **WAIT for explicit approval**.
 
 ## Final Response Contract
 
-All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-plan`, `kn-research`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
+All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-plan`, `kn-research`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
 
 Required order for the final user-facing response:
 
@@ -191,6 +233,8 @@ Plan approved! Ready to implement.
 Run: /kn-implement $ARGUMENTS
 ```
 
+If the plan is part of an active `/kn-flow`, return control to that flow so the task can be implemented, reviewed, and verified in schedule order.
+
 **If user wants to review first:**
 ```
 Take your time to review. When ready:
@@ -202,24 +246,30 @@ Run: /kn-implement $ARGUMENTS
 
 ## Related Skills
 
+- `/kn-flow @doc/<spec-path>` - Orchestrate an approved spec or task wave after tasks exist
 - `/kn-research` - Research before planning
 - `/kn-implement <id>` - Implement after plan approved
 - `/kn-spec` - Create spec for complex features
+- `/kn-plan --new "<work summary>"` - Create a direct task before planning
 
 ## Checklist
 
+- [ ] New task created first when using `--new`
 - [ ] Ownership taken
 - [ ] Timer started
 - [ ] Refs followed
 - [ ] Templates checked
 - [ ] **Validated (no broken refs)**
 - [ ] **Pre-execution plan check passed**
+- [ ] Routed spec-wide execution to `/kn-flow` when appropriate
 - [ ] User approved
 - [ ] **Next step suggested**
 
 ## Failure Modes
 
 - Missing task/spec -> stop and report the missing ID/path
+- `--new` request is high-risk -> recommend `/kn-spec` instead of creating a vague task
+- User asks to execute an approved spec -> recommend `/kn-flow @doc/<spec-path>` instead of serial manual planning
 - Broken refs -> fix or replace them before asking approval
 - Scope too large for one task -> recommend splitting instead of hiding complexity inside one plan
 
@@ -227,17 +277,24 @@ Run: /kn-implement $ARGUMENTS
 
 # Generate Tasks from Spec
 
-When `$ARGUMENTS` contains `--from @doc/specs/<name>`:
+When `$ARGUMENTS` contains `--from @doc/<spec-path>`:
 
 **Announce:** "Using kn-plan to generate tasks from spec [name]."
 
 ## Step 1: Read Spec Document
 
-Extract spec path from arguments (e.g., `--from @doc/specs/user-auth` → `specs/user-auth`).
+Extract the exact spec path from arguments:
+- `--from @doc/specs/2026-06-17/user-auth` → `specs/2026-06-17/user-auth`
+- Legacy paths such as `--from @doc/specs/user-auth` are still valid if that spec already exists.
 
 ```json
-mcp_knowns_docs({ "action": "get", "path": "specs/<name>", "smart": true })
+mcp_knowns_docs({ "action": "get", "path": "<spec-path>", "smart": true })
 ```
+
+Derive a task prefix from the spec path:
+- If path is `specs/2026-06-17/user-auth`, use `[user-auth-NN]`.
+- If path is legacy `specs/user-auth`, also use `[user-auth-NN]`.
+- Keep `NN` zero-padded (`01`, `02`, `03`) so task titles sort correctly.
 
 ## Step 2: Parse Requirements
 
@@ -248,29 +305,36 @@ Scan spec for:
 
 Group related items into logical tasks.
 
+Token control rules:
+- Generate tasks in Knowns Tasks, not as a long task list inside the spec body.
+- Keep task descriptions concise; put implementation detail in each task plan later.
+- The spec should only receive or keep a short `Task Links` section after task creation.
+
 ## Step 3: Generate Task Preview
 
 For each requirement/group, create task structure:
 
 ```markdown
-## Generated Tasks from specs/<name>
+## Generated Tasks from <spec-path>
 
-### Task 1: [Requirement Title]
+### [user-auth-01] [Requirement Title]
 - **Description:** [From spec]
 - **ACs:**
   - [ ] AC from spec
   - [ ] AC from spec
-- **Spec:** specs/<name>
+- **Spec:** <spec-path>
 - **Fulfills:** AC-1, AC-2 (maps to Spec ACs this task completes)
 - **Priority:** medium
+- **Order:** 10
 
-### Task 2: [Requirement Title]
+### [user-auth-02] [Requirement Title]
 - **Description:** [From spec]
 - **ACs:**
   - [ ] AC from spec
-- **Spec:** specs/<name>
+- **Spec:** <spec-path>
 - **Fulfills:** AC-3
 - **Priority:** medium
+- **Order:** 20
 
 ---
 Total: X tasks to create
@@ -293,12 +357,13 @@ Total: X tasks to create
 When approved, create tasks with `fulfills` to link Task → Spec ACs:
 
 ```json
-mcp_knowns_tasks({ "action": "create", "title": "<requirement title>",
+mcp_knowns_tasks({ "action": "create", "title": "[<slug>-NN] <requirement title>",
   "description": "<from spec>",
-  "spec": "specs/<name>",
+  "spec": "<spec-path>",
   "fulfills": ["AC-1", "AC-2"],
   "priority": "medium",
-  "labels": ["from-spec"]
+  "labels": ["from-spec", "spec:<slug>", "spec-date:<yyyy-mm-dd>"],
+  "order": 10
 })
 ```
 
@@ -320,23 +385,27 @@ Repeat for each task.
 Creation rules:
 
 - Group requirements into tasks that can be reviewed and completed independently
+- Create task titles with the same compact prefix format: `[<slug>-NN]`.
+- Set `order` as `NN * 10` so the board can sort tasks in spec order.
+- Add labels `from-spec`, `spec:<slug>`, and `spec-date:<yyyy-mm-dd>` for filtering.
 - Keep task ACs implementation-oriented, while `fulfills` stays mapped to spec AC IDs
 - Reuse existing tasks if the spec overlaps current in-progress work; do not silently duplicate scope
 - If the spec depends on broad domain knowledge, create/update a supporting doc and reference it from the spec or generated tasks
 - If the spec reveals general platform work, create a dedicated task and reference it instead of hiding it inside an unrelated feature task
+- After creating tasks, update the spec's `Task Links` section with only short links, e.g. `- @task-abc123 [user-auth-01] Add login validation`.
 
 ## Step 6: Summary
 
 ```markdown
-Goal/result: created X tasks linked to `specs/<name>`.
+Goal/result: created X tasks linked to `<spec-path>`.
 
 Key details:
-- task-xxx: Requirement 1 (3 ACs)
-- task-yyy: Requirement 2 (2 ACs)
+- task-xxx: [user-auth-01] Requirement 1 (3 ACs)
+- task-yyy: [user-auth-02] Requirement 2 (2 ACs)
 - validation/approval status, if relevant
 
 Next action:
-- `/kn-plan <first-task-id>`
+- `/kn-flow @doc/<spec-path>` to execute the task set, or `/kn-plan <first-task-id>` for manual task-by-task planning
 ```
 
 ## Checklist (--from mode)
@@ -344,7 +413,11 @@ Next action:
 - [ ] Spec document read
 - [ ] Requirements parsed
 - [ ] **Tasks include `fulfills` mapping to Spec ACs**
+- [ ] **Task titles include shared compact prefix**
+- [ ] **Task labels and order are set**
 - [ ] Tasks previewed
 - [ ] User approved
 - [ ] Tasks created with spec link and fulfills
+- [ ] Spec `Task Links` section updated concisely
+- [ ] Next action points to `/kn-flow` for spec-wide execution
 - [ ] Summary shown

@@ -2,8 +2,6 @@ package adapters
 
 import (
 	"context"
-	"fmt"
-	"os/exec"
 
 	"github.com/howznguyen/knowns/internal/lsp"
 )
@@ -31,23 +29,19 @@ func (a *IntelephenseAdapter) CheckPrerequisites(ctx context.Context) error {
 func (a *IntelephenseAdapter) InstallGuide() lsp.InstallGuide {
 	return lsp.InstallGuide{Command: "npm install -g intelephense", KnownsCmd: "knowns lsp install php", URL: "https://intelephense.com/", Notes: "Requires Node.js 18+"}
 }
-func (a *IntelephenseAdapter) CanInstall() bool                     { return true }
-func (a *IntelephenseAdapter) RuntimeDeps() []lsp.RuntimeDependency { return nil }
+func (a *IntelephenseAdapter) CanInstall() bool { return true }
+func (a *IntelephenseAdapter) RuntimeDeps() []lsp.RuntimeDependency {
+	return []lsp.RuntimeDependency{{
+		ID:          "intelephense",
+		Version:     "latest",
+		Source:      "npm",
+		ArchiveType: "npm",
+		BinaryName:  "intelephense",
+		PackageName: "intelephense",
+	}}
+}
 func (a *IntelephenseAdapter) Install(ctx context.Context, targetDir string) (string, error) {
-	pm := preferredCmd("bun", "pnpm", "npm")
-	args := []string{"install", "-g", "intelephense"}
-	if pm == "bun" {
-		args = []string{"add", "--global", "intelephense"}
-	}
-	cmd := exec.CommandContext(ctx, pm, args...)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("%s install failed: %w: %s", pm, err, output)
-	}
-	path, err := exec.LookPath("intelephense")
-	if err != nil {
-		return "", fmt.Errorf("intelephense installed but not found in PATH: %w", err)
-	}
-	return path, nil
+	return lsp.NewInstaller(targetDir).Install(ctx, a)
 }
 func (a *IntelephenseAdapter) InstalledPath() (string, bool) {
 	return installedPath(a.ID(), a.RuntimeDeps())

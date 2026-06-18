@@ -2,19 +2,30 @@
 title: 3-Layer Memory System
 description: Specification for Working/Project/Global memory system — persistent knowledge layers for AI agents and users
 createdAt: '2026-04-02T07:40:13.536Z'
-updatedAt: '2026-04-06T07:03:42.551Z'
+updatedAt: '2026-06-17T10:34:12.409Z'
 tags:
   - spec
-  - approved
+  - superseded
   - memory
   - ai
+  - historical
 ---
 
 ## Overview
 
+> **⚠️ SUPERSEDED** — Spec lịch sử. Model 3-layer đã giảm xuống 2-layer (project|global) tại commit `adaa9fb` (2026-04-23). Working layer + MCP working-memory handlers bị xóa. D2, D4, D5, D7 + nhiều AC/Scenario ref working layer không còn đúng.
+>
+> **Replacement (TBD):** `@doc/specs/memory-decision-model`
+>
+> **Vẫn đúng:** D1 (file format), D3 (unified search), D6 (ID preservation), D8 (ref format), FR-1..FR-8 trừ working, FR-10..FR-16.
+>
+> **Status:** superseded — effective 2026-06-17. Không implement feature mới theo spec này.
+
+---
+
 A 3-layer memory system that allows AI agents and users to store, retrieve, and promote knowledge across sessions and projects. Memory entries are free-form markdown with metadata, searchable alongside tasks and docs.
 
-**Layers:**
+**Layers (historical — see banner above):**
 - **Working** — ephemeral, session-scoped. Caches active context to avoid re-reading.
 - **Project** — persistent, per-project. Patterns, decisions, conventions shared with team.
 - **Global** — persistent, cross-project. Personal preferences and reusable knowledge.

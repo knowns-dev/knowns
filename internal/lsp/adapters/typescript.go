@@ -2,8 +2,6 @@ package adapters
 
 import (
 	"context"
-	"fmt"
-	"os/exec"
 
 	"github.com/howznguyen/knowns/internal/lsp"
 )
@@ -31,23 +29,20 @@ func (a *TypeScriptAdapter) CheckPrerequisites(ctx context.Context) error {
 func (a *TypeScriptAdapter) InstallGuide() lsp.InstallGuide {
 	return lsp.InstallGuide{Command: "npm install -g typescript-language-server typescript", KnownsCmd: "knowns lsp install typescript", Notes: "Requires Node.js 18+ installed"}
 }
-func (a *TypeScriptAdapter) CanInstall() bool                     { return true }
-func (a *TypeScriptAdapter) RuntimeDeps() []lsp.RuntimeDependency { return nil }
+func (a *TypeScriptAdapter) CanInstall() bool { return true }
+func (a *TypeScriptAdapter) RuntimeDeps() []lsp.RuntimeDependency {
+	return []lsp.RuntimeDependency{{
+		ID:          "typescript-language-server",
+		Version:     "latest",
+		Source:      "npm",
+		ArchiveType: "npm",
+		BinaryName:  "typescript-language-server",
+		PackageName: "typescript-language-server",
+		Packages:    []string{"typescript-language-server", "typescript"},
+	}}
+}
 func (a *TypeScriptAdapter) Install(ctx context.Context, targetDir string) (string, error) {
-	pm := preferredCmd("bun", "pnpm", "npm")
-	args := []string{"install", "-g", "typescript-language-server", "typescript"}
-	if pm == "bun" {
-		args = []string{"add", "--global", "typescript-language-server", "typescript"}
-	}
-	cmd := exec.CommandContext(ctx, pm, args...)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("%s install failed: %w: %s", pm, err, output)
-	}
-	path, err := exec.LookPath("typescript-language-server")
-	if err != nil {
-		return "", fmt.Errorf("typescript-language-server installed but not found in PATH: %w", err)
-	}
-	return path, nil
+	return lsp.NewInstaller(targetDir).Install(ctx, a)
 }
 func (a *TypeScriptAdapter) InstalledPath() (string, bool) {
 	return installedPath(a.ID(), a.RuntimeDeps())

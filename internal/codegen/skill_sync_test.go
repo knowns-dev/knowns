@@ -3,6 +3,7 @@ package codegen
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -34,6 +35,7 @@ func TestSyncSkillsForPlatformsGenericAgentsUsesAgentsDir(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(projectRoot, ".agents", "skills")); err != nil {
 		t.Fatalf("expected .agents/skills to exist: %v", err)
 	}
+	assertKnFlowSkillSynced(t, filepath.Join(projectRoot, ".agents", "skills"))
 }
 
 func TestSyncSkillsForPlatformsClaudeWritesToClaudeDir(t *testing.T) {
@@ -49,6 +51,7 @@ func TestSyncSkillsForPlatformsClaudeWritesToClaudeDir(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(projectRoot, ".agents", "skills")); !os.IsNotExist(err) {
 		t.Fatalf("expected .agents/skills not to be created for claude-code, got err=%v", err)
 	}
+	assertKnFlowSkillSynced(t, filepath.Join(projectRoot, ".claude", "skills"))
 }
 
 func TestSyncSkillsForPlatformsKiroWritesToKiroDir(t *testing.T) {
@@ -63,5 +66,29 @@ func TestSyncSkillsForPlatformsKiroWritesToKiroDir(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(projectRoot, ".agents", "skills")); !os.IsNotExist(err) {
 		t.Fatalf("expected .agents/skills not to be created for kiro, got err=%v", err)
+	}
+	assertKnFlowSkillSynced(t, filepath.Join(projectRoot, ".kiro", "skills"))
+}
+
+func TestSyncSkillsToTargetsIncludesKnFlowSkill(t *testing.T) {
+	projectRoot := t.TempDir()
+	target := filepath.Join(projectRoot, "global", ".agents", "skills")
+
+	if err := SyncSkillsToTargets(map[string]string{"codex": target}); err != nil {
+		t.Fatalf("SyncSkillsToTargets returned error: %v", err)
+	}
+
+	assertKnFlowSkillSynced(t, target)
+}
+
+func assertKnFlowSkillSynced(t *testing.T, skillsDir string) {
+	t.Helper()
+
+	data, err := os.ReadFile(filepath.Join(skillsDir, "kn-flow", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("expected kn-flow skill to sync into %s: %v", skillsDir, err)
+	}
+	if !strings.Contains(string(data), "name: kn-flow") {
+		t.Fatalf("expected kn-flow skill frontmatter in %s", skillsDir)
 	}
 }

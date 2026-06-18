@@ -9,16 +9,24 @@ import (
 )
 
 type Detector struct {
-	Registry *Registry
-	LookPath func(string) (string, error)
-	RunCheck func(context.Context, string, ...string) error
+	Registry   *Registry
+	LookPath   func(string) (string, error)
+	RunCheck   func(context.Context, string, ...string) error
+	RunCommand func(context.Context, string, ...string) ([]byte, error)
+	Installer  *Installer
 }
 
 func NewDetector(registry *Registry) *Detector {
 	if registry == nil {
 		registry = NewRegistry(nil)
 	}
-	return &Detector{Registry: registry, LookPath: exec.LookPath, RunCheck: runVersionCheck}
+	return &Detector{
+		Registry:   registry,
+		LookPath:   exec.LookPath,
+		RunCheck:   runVersionCheck,
+		RunCommand: defaultRunCommand,
+		Installer:  NewInstaller(DefaultLSPBaseDir()),
+	}
 }
 
 func (d *Detector) Detect(ctx context.Context, root string, cfg Config) ([]ServerCommand, error) {
@@ -29,8 +37,27 @@ func (d *Detector) Detect(ctx context.Context, root string, cfg Config) ([]Serve
 
 	var commands []ServerCommand
 	for _, lang := range languages {
-		cmd, ok := d.resolve(ctx, lang, cfg.BinaryOverride(lang.ID))
+		if lang.ID == CSharpLanguageID && cfg.BinaryOverride(lang.ID) == "" {
+			cmd, ok := ResolveCSharpBackendWithOptions(ctx, root, cfg, CSharpResolveOptions{
+				LookPath:   d.LookPath,
+				RunCheck:   d.RunCheck,
+				RunCommand: d.RunCommand,
+				Installer:  d.Installer,
+			})
+			if ok {
+				commands = append(commands, cmd)
+			}
+			continue
+		}
+		cmd, ok := d.resolve(ctx, root, lang, cfg.BinaryOverride(lang.ID))
 		if ok {
+			if lang.ID == CSharpLanguageID {
+				cmd.Backend = cfg.BackendOverride(lang.ID)
+				if cmd.Backend == "" {
+					cmd.Backend = "custom"
+				}
+				cmd.ProjectPath = DiscoverCSharpProject(root, cfg.ProjectPathOverride(lang.ID)).Path
+			}
 			commands = append(commands, cmd)
 		}
 	}
@@ -72,7 +99,7 @@ func (d *Detector) DetectedLanguages(root string, cfg Config) ([]Language, error
 	return languages, nil
 }
 
-func (d *Detector) resolve(ctx context.Context, lang Language, override string) (ServerCommand, bool) {
+func (d *Detector) resolve(ctx context.Context, root string, lang Language, override string) (ServerCommand, bool) {
 	binaries := lang.Binaries
 	if override != "" {
 		binaries = []Binary{{Name: override}}
@@ -90,7 +117,7 @@ func (d *Detector) resolve(ctx context.Context, lang Language, override string) 
 				continue
 			}
 		}
-		return ServerCommand{Language: lang.ID, Name: binary.Name, Path: path, Args: append([]string(nil), binary.Args...)}, true
+		return ServerCommand{Language: lang.ID, Name: binary.Name, Path: path, Args: append([]string(nil), binary.Args...), LogPath: LanguageLogPath(root, lang.ID)}, true
 	}
 	return ServerCommand{}, false
 }

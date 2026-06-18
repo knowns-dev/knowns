@@ -55,6 +55,22 @@ export function buildStylesheet(isDark: boolean): cytoscape.StylesheetStyle[] {
 			} as any,
 		},
 		{
+			selector: 'node[nodeType="decision"]',
+			style: {
+				shape: "diamond",
+				width: 26,
+				height: 26,
+			} as any,
+		},
+		{
+			selector: 'node[nodeType="template"]',
+			style: {
+				shape: "round-rectangle",
+				width: 26,
+				height: 24,
+			} as any,
+		},
+		{
 			selector: 'node[nodeType="code"]',
 			style: {
 				shape: "ellipse",

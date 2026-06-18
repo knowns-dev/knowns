@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,69 @@ import (
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/spf13/cobra"
 )
+
+func TestRunMemoryCreateWritesProposedAndListHidesByDefault(t *testing.T) {
+	projectRoot := setupEmptyMemoryCLIProject(t)
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(projectRoot); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(origDir)
+
+	createCmd := &cobra.Command{}
+	createCmd.Flags().String("layer", "", "")
+	createCmd.Flags().String("category", "", "")
+	createCmd.Flags().StringArrayP("tag", "t", nil, "")
+	createCmd.Flags().StringP("content", "c", "", "")
+	createCmd.Flags().String("status", "", "")
+	createCmd.Flags().Bool("create-anyway", false, "")
+	if err := createCmd.Flags().Set("category", "decision"); err != nil {
+		t.Fatalf("set category: %v", err)
+	}
+	if err := createCmd.Flags().Set("content", "Use proposed status for CLI-created memories."); err != nil {
+		t.Fatalf("set content: %v", err)
+	}
+	captureMemoryStdout(t, func() {
+		if err := runMemoryCreate(createCmd, []string{"CLI", "review", "memory"}); err != nil {
+			t.Fatalf("runMemoryCreate: %v", err)
+		}
+	})
+
+	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
+	entries, err := store.Memory.ListPersistent(models.MemoryLayerProject)
+	if err != nil {
+		t.Fatalf("list persistent: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if entries[0].Status != models.MemoryStatusProposed {
+		t.Fatalf("status = %q, want proposed", entries[0].Status)
+	}
+
+	listCmd := &cobra.Command{}
+	listCmd.Flags().String("layer", "", "")
+	listCmd.Flags().String("category", "", "")
+	listCmd.Flags().String("tag", "", "")
+	listCmd.Flags().String("status", "", "")
+	listCmd.Flags().Bool("all-statuses", false, "")
+	listCmd.Flags().Bool("json", false, "")
+	if err := listCmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("set json: %v", err)
+	}
+	output := captureMemoryStdout(t, func() {
+		if err := runMemoryList(listCmd, nil); err != nil {
+			t.Fatalf("runMemoryList: %v", err)
+		}
+	})
+	var listed []models.MemoryEntry
+	if err := json.Unmarshal([]byte(output), &listed); err != nil {
+		t.Fatalf("unmarshal list output: %v\n%s", err, output)
+	}
+	if len(listed) != 0 {
+		t.Fatalf("default list should exclude proposed memory, got %+v", listed)
+	}
+}
 
 func TestRunMemoryCleanupPlain(t *testing.T) {
 	projectRoot := setupMemoryCleanupCLIProject(t)
@@ -87,4 +151,31 @@ func setupMemoryCleanupCLIProject(t *testing.T) string {
 		t.Fatalf("create fresh memory: %v", err)
 	}
 	return projectRoot
+}
+
+func setupEmptyMemoryCLIProject(t *testing.T) string {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	projectRoot := t.TempDir()
+	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
+	if err := store.Init("memory-cli-test"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+	return projectRoot
+}
+
+func captureMemoryStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	origStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	fn()
+	_ = w.Close()
+	os.Stdout = origStdout
+	var out bytes.Buffer
+	_, _ = out.ReadFrom(r)
+	return out.String()
 }

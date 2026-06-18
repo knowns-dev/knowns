@@ -665,7 +665,7 @@ func TestEngineRetrieve_ExpandsReferences(t *testing.T) {
 
 	resp, err := engine.Retrieve(models.RetrievalOptions{
 		Query:            "doc only retrieval",
-		SourceTypes:      []string{"doc", "task", "memory"},
+		SourceTypes:      []string{"doc", "task", "memory", "decision"},
 		ExpandReferences: true,
 	})
 	if err != nil {
@@ -673,17 +673,24 @@ func TestEngineRetrieve_ExpandsReferences(t *testing.T) {
 	}
 
 	foundExpanded := false
+	foundDecision := false
 	for _, candidate := range resp.Candidates {
 		if len(candidate.ExpandedFrom) == 0 {
 			continue
 		}
 		if candidate.ExpandedFrom[0] != "doc:guides/doc-only-retrieval" {
-			t.Fatalf("expanded candidate origin = %q, want doc:guides/doc-only-retrieval", candidate.ExpandedFrom[0])
+			continue
+		}
+		if candidate.Type == "decision" && candidate.ID == "20260618-1024-use-qdrant-as-default-vector-db" {
+			foundDecision = true
 		}
 		foundExpanded = true
 	}
 	if !foundExpanded {
 		t.Fatal("expected at least one expanded candidate")
+	}
+	if !foundDecision {
+		t.Fatalf("expected decision expanded candidate, got %+v", resp.Candidates)
 	}
 }
 
@@ -832,7 +839,7 @@ func newRetrievalTestStore(t *testing.T) *storage.Store {
 		Path:        "guides/doc-only-retrieval",
 		Title:       "Doc Only Retrieval",
 		Description: "This doc is a direct match and links other sources",
-		Content:     "Doc only retrieval links @task-rag001{implements} and @memory-mem001 for extra context.",
+		Content:     "Doc only retrieval links @task/rag001{implements}, @memory-mem001, and @decision/20260618-1024-use-qdrant-as-default-vector-db for extra context.",
 		Tags:        []string{"rag"},
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -862,6 +869,16 @@ func newRetrievalTestStore(t *testing.T) *storage.Store {
 		UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("create memory: %v", err)
+	}
+	if err := store.Decisions.Create(&models.DecisionEntry{
+		ID:        "20260618-1024-use-qdrant-as-default-vector-db",
+		Title:     "Use Qdrant as default vector DB",
+		Status:    models.DecisionStatusAccepted,
+		Sources:   []string{"@doc/guides/retrieval-foundation"},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}, storage.DecisionCreateOptions{Now: now}); err != nil {
+		t.Fatalf("create decision: %v", err)
 	}
 
 	return store

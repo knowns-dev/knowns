@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,8 +19,12 @@ type Server struct {
 	Command ServerCommand
 	Root    string
 
+	LogWriter   io.Writer
+	TraceWriter io.Writer
+
 	mu          sync.Mutex
 	cmd         *exec.Cmd
+	logFile     *os.File
 	stdin       io.WriteCloser
 	reader      *bufio.Reader
 	nextID      atomic.Int64
@@ -48,13 +53,26 @@ func (s *Server) WaitReady(ctx context.Context) {
 	}
 }
 
+// ReadinessState reports the current readiness/indexing state without blocking.
+func (s *Server) ReadinessState() string {
+	if !s.Alive() {
+		return RuntimeReadinessNotApplicable
+	}
+	select {
+	case <-s.ready:
+		return RuntimeReadinessReady
+	default:
+		return RuntimeReadinessIndexing
+	}
+}
+
 func (s *Server) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.running {
 		s.mu.Unlock()
 		return nil
 	}
-	cmd := exec.CommandContext(ctx, s.Command.Path, s.Command.Args...)
+	cmd := exec.Command(s.Command.Path, s.Command.Args...)
 	cmd.Dir = s.Root
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -66,12 +84,32 @@ func (s *Server) Start(ctx context.Context) error {
 		s.mu.Unlock()
 		return err
 	}
-	cmd.Stderr = os.Stderr
+	var logFile *os.File
+	if s.LogWriter != nil {
+		cmd.Stderr = s.LogWriter
+	} else if s.Command.LogPath != "" {
+		if err := os.MkdirAll(filepath.Dir(s.Command.LogPath), 0755); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+		logFile, err = os.OpenFile(s.Command.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			s.mu.Unlock()
+			return err
+		}
+		cmd.Stderr = logFile
+	} else {
+		cmd.Stderr = os.Stderr
+	}
 	if err := cmd.Start(); err != nil {
+		if logFile != nil {
+			_ = logFile.Close()
+		}
 		s.mu.Unlock()
 		return err
 	}
 	s.cmd = cmd
+	s.logFile = logFile
 	s.stdin = stdin
 	s.reader = bufio.NewReader(stdout)
 	s.exited = make(chan struct{})
@@ -80,13 +118,32 @@ func (s *Server) Start(ctx context.Context) error {
 	s.mu.Unlock()
 
 	go s.wait(cmd, exited)
+	var startupComplete atomic.Bool
+	startupDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			if !startupComplete.Load() && cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+		case <-startupDone:
+		}
+	}()
+	defer close(startupDone)
 	if err := s.initialize(ctx); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err = ctxErr
+		}
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
 		<-exited
 		s.mu.Lock()
 		if s.cmd == cmd {
+			if s.logFile != nil {
+				_ = s.logFile.Close()
+				s.logFile = nil
+			}
 			s.cmd = nil
 			s.stdin = nil
 			s.reader = nil
@@ -102,12 +159,19 @@ func (s *Server) Start(ctx context.Context) error {
 	s.initialized = true
 	s.mu.Unlock()
 	if err := s.notify(ctx, "initialized", map[string]any{}); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err = ctxErr
+		}
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
 		<-exited
 		s.mu.Lock()
 		if s.cmd == cmd {
+			if s.logFile != nil {
+				_ = s.logFile.Close()
+				s.logFile = nil
+			}
 			s.cmd = nil
 			s.stdin = nil
 			s.reader = nil
@@ -118,6 +182,7 @@ func (s *Server) Start(ctx context.Context) error {
 		s.mu.Unlock()
 		return err
 	}
+	startupComplete.Store(true)
 	// Fallback: mark ready after 3s if no $/progress "end" received
 	time.AfterFunc(3*time.Second, func() {
 		s.readyOnce.Do(func() { close(s.ready) })
@@ -139,9 +204,11 @@ func (s *Server) Stop(ctx context.Context) error {
 	_ = s.notifyLocked(ctx, "exit", nil)
 	cmd := s.cmd
 	exited := s.exited
+	logFile := s.logFile
 	s.running = false
 	s.initialized = false
 	s.cmd = nil
+	s.logFile = nil
 	s.stdin = nil
 	s.reader = nil
 	s.exited = nil
@@ -149,10 +216,16 @@ func (s *Server) Stop(ctx context.Context) error {
 
 	select {
 	case <-exited:
+		if logFile != nil {
+			_ = logFile.Close()
+		}
 		return nil
 	case <-ctx.Done():
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
+		}
+		if logFile != nil {
+			_ = logFile.Close()
 		}
 		return ctx.Err()
 	}
@@ -282,6 +355,9 @@ func (s *Server) writeLocked(ctx context.Context, msg any) error {
 	default:
 	}
 	_, err = fmt.Fprintf(s.stdin, "Content-Length: %d\r\n\r\n%s", len(data), data)
+	if err == nil {
+		s.traceLocked("-->", data)
+	}
 	return err
 }
 
@@ -298,6 +374,7 @@ func (s *Server) readResponseLocked(ctx context.Context, id int64, result any) e
 			s.initialized = false
 			return err
 		}
+		s.traceLocked("<--", msg)
 		var envelope struct {
 			ID     *int64           `json:"id"`
 			Method string           `json:"method"`
@@ -312,7 +389,7 @@ func (s *Server) readResponseLocked(ctx context.Context, id int64, result any) e
 			s.handleNotificationLocked(envelope.Method, envelope.Params)
 			// Server-to-client request (has both method and id) — respond with empty result
 			if envelope.ID != nil && *envelope.ID != id {
-				_ = s.writeLocked(ctx, map[string]any{"jsonrpc": "2.0", "id": *envelope.ID, "result": nil})
+				_ = s.writeLocked(ctx, map[string]any{"jsonrpc": "2.0", "id": *envelope.ID, "result": serverRequestResult(envelope.Method)})
 			}
 		}
 		if envelope.ID == nil || *envelope.ID != id {
@@ -324,6 +401,24 @@ func (s *Server) readResponseLocked(ctx context.Context, id int64, result any) e
 		if result != nil && len(envelope.Result) > 0 {
 			return json.Unmarshal(envelope.Result, result)
 		}
+		return nil
+	}
+}
+
+func (s *Server) traceLocked(direction string, payload []byte) {
+	if s.TraceWriter == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(s.TraceWriter, "%s %s\n", direction, payload)
+}
+
+func serverRequestResult(method string) any {
+	switch method {
+	case "workspace/configuration":
+		return []any{}
+	case "window/workDoneProgress/create", "client/registerCapability", "client/unregisterCapability":
+		return nil
+	default:
 		return nil
 	}
 }
@@ -405,6 +500,10 @@ func (s *Server) wait(cmd *exec.Cmd, exited chan struct{}) {
 	_ = cmd.Wait()
 	s.mu.Lock()
 	if s.cmd == cmd {
+		if s.logFile != nil {
+			_ = s.logFile.Close()
+			s.logFile = nil
+		}
 		s.running = false
 		s.initialized = false
 		s.cmd = nil

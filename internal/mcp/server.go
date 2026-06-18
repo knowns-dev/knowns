@@ -248,9 +248,18 @@ func NewMCPServer(projectHint string) *MCPServer {
 		s.lspManager = nil
 		if store != nil {
 			if cfg, err := store.Config.Load(); err == nil {
-				manager := lsp.NewManager(root, lsp.ConfigFromProject(cfg))
+				var defaults *storage.ProjectDefaults
+				if settings, err := storage.NewEmbeddingSettingsStore().Load(); err == nil {
+					defaults = settings.ProjectDefaults
+				}
+				manager := lsp.NewManager(root, lsp.ConfigFromProjectWithDefaults(cfg, defaults))
 				for _, adapter := range adapters.All() {
-					manager.RegisterAdapter(adapter)
+					if err := manager.RegisterAdapter(adapter); err != nil {
+						log.Printf("warn: could not register LSP adapter %s: %v", adapter.ID(), err)
+					}
+				}
+				for _, loadErr := range manager.RegisterPluginAdapters(lsp.PluginAdapterLoadOptions{}) {
+					log.Printf("warn: could not load LSP plugin adapter: %v", loadErr)
 				}
 				s.lspManager = manager
 			}
@@ -308,9 +317,36 @@ func NewMCPServer(projectHint string) *MCPServer {
 	})
 
 	// Register all tool groups.
-	handlers.RegisterProjectTool(s, getStore, setStore, getRoot)
+	handlers.RegisterProjectTool(s, getStore, setStore, getRoot, getLSPManager)
 	handlers.RegisterTaskTool(s, getStore)
 	handlers.RegisterDocTool(s.srv, getStore)
+	s.RegisterHelp("docs.get", handlers.HelpEntry{
+		When: "Read documentation without loading more content than needed.",
+		Params: map[string]string{
+			"path":    "Required doc path.",
+			"smart":   "Optional boolean. Returns full content for small docs, otherwise stats/TOC.",
+			"toc":     "Optional boolean. Return only table of contents.",
+			"section": "Optional heading title or section number to read one section.",
+			"info":    "Optional boolean. Return stats without content.",
+			"line":    "Optional line or range such as 42 or 10-20.",
+		},
+		Why: "Use smart/toc/section to keep context small and avoid reading a full long doc.",
+		Examples: []string{
+			`{"action":"get","path":"guides/cli-guide","smart":true}`,
+			`{"action":"get","path":"guides/cli-guide","toc":true}`,
+			`{"action":"get","path":"guides/cli-guide","section":"Installation"}`,
+		},
+	})
+	s.RegisterHelp("workflow.doc-read", handlers.HelpEntry{
+		When: "Use before reading large or unfamiliar docs.",
+		Params: map[string]string{
+			"step1": "docs.get with smart=true.",
+			"step2": "If output is a TOC/stats or the doc is large, use toc=true.",
+			"step3": "Read only the relevant section with section=<number-or-heading>.",
+			"step4": "Use line=<range> only for narrow citations/debugging.",
+		},
+		Flow: "Prefer section retrieval over full-doc reads. Search first, then smart get, then TOC/section.",
+	})
 	handlers.RegisterTimeTool(s, getStore)
 	handlers.RegisterSearchTool(s, getStore)
 	handlers.RegisterCodeTool(s.srv, getStore, getLSPManager)
@@ -346,19 +382,59 @@ func NewMCPServer(projectHint string) *MCPServer {
 		Why:      "Prevents deleting symbols still used elsewhere.",
 		Examples: []string{`{"action":"delete","path":"internal/mcp/server.go","symbol":"NewMCPServer"}`},
 	})
-	s.RegisterHelp("code.replace_symbol", handlers.HelpEntry{
+	s.RegisterHelp("code.replace", handlers.HelpEntry{
+		When: "Replace exact text in a target code file after code tools locate the edit site.",
+		Params: map[string]string{
+			"path":                       "Required target file path.",
+			"needle":                     "Required exact text or regex pattern to replace.",
+			"repl":                       "Required replacement text.",
+			"mode":                       "Optional literal or regex. Defaults to literal.",
+			"allow_multiple_occurrences": "Optional boolean. Defaults to false to avoid broad accidental edits.",
+		},
+		Why:      "Use for small, precise code edits where a symbol-body replacement is too broad.",
+		Examples: []string{`{"action":"replace","path":"internal/mcp/server.go","needle":"old","repl":"new"}`},
+	})
+	s.RegisterHelp("code.replace_body", handlers.HelpEntry{
 		When: "Replace an entire symbol body by name using LSP documentSymbol range.",
 		Params: map[string]string{
 			"path":   "Required file path.",
 			"symbol": "Required symbol name; nested names use dots like Type.Method.",
 			"body":   "Required replacement source code.",
 		},
-		Examples: []string{`{"action":"replace_symbol","path":"internal/mcp/server.go","symbol":"NewMCPServer","body":"func NewMCPServer(projectHint string) *MCPServer { ... }"}`},
+		Why:      "Use for functions, methods, classes, or structs when the whole symbol implementation should change.",
+		Examples: []string{`{"action":"replace_body","path":"internal/mcp/server.go","symbol":"NewMCPServer","body":"func NewMCPServer(projectHint string) *MCPServer { ... }"}`},
+	})
+	s.RegisterHelp("workflow.code-edit", handlers.HelpEntry{
+		When: "Use before changing source code when the model has only partial MCP context.",
+		Params: map[string]string{
+			"step1": "code.find or code.symbols to locate the target.",
+			"step2": "code.references/definition/diagnostics when impact or correctness matters.",
+			"step3": "code.rename, code.replace, code.replace_body, code.insert, or code.delete for the edit.",
+			"step4": "code.diagnostics plus tests/build as verification.",
+		},
+		Flow: "Never start code changes with blind file edits. Discover with code tools, edit with code tools, then verify.",
+		Examples: []string{
+			`{"queries":["code.find","code.replace","code.replace_body"]}`,
+			`{"action":"replace_body","path":"internal/mcp/handlers/initial.go","symbol":"writeWorkflow","body":"func writeWorkflow(...) { ... }"}`,
+		},
+	})
+	s.RegisterHelp("workflow.plan-new", handlers.HelpEntry{
+		When: "Create a direct task and plan it when work is too small for a spec.",
+		Flow: `/kn-plan --new "<work summary>" creates a task, classifies tiny/normal/high-risk, then continues normal planning.`,
+	})
+	s.RegisterHelp("workflow.spec", handlers.HelpEntry{
+		When: "Create a dated spec for normal or high-risk feature work.",
+		Flow: "Use /kn-spec for ambiguous or high-risk work. New specs use specs/<yyyy-mm-dd>/<slug>; generated tasks use compact [slug-NN] titles.",
+	})
+	s.RegisterHelp("workflow.verify", handlers.HelpEntry{
+		When: "Verify task/doc/spec state before declaring work complete.",
+		Flow: "Use validate(entity) for focused checks, validate(scope:\"sdd\") for spec coverage, and run tests/build for code changes.",
 	})
 	// Board view is now part of RegisterTaskTool (action: board).
 	handlers.RegisterTemplateTool(s, getStore)
 	handlers.RegisterValidateTools(s, getStore)
 	handlers.RegisterMemoryTool(s.srv, getStore)
+	handlers.RegisterDecisionTool(s, getStore)
 
 	// Auto-detect project from hint or cwd.
 	s.autoDetectProject(setStore, projectHint)

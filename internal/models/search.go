@@ -3,9 +3,9 @@ package models
 import "time"
 
 // SearchResult is a single hit returned by the search engine across tasks,
-// docs, memories, and code.
+// docs, memories, decisions, and code.
 type SearchResult struct {
-	// Type is one of "task", "doc", "memory", or "code".
+	// Type is one of "task", "doc", "memory", "decision", or "code".
 	Type string `json:"type"`
 
 	// ID is the source identifier for the result type.
@@ -43,16 +43,17 @@ type SearchResult struct {
 
 // RetrievalOptions configures mixed-source retrieval and context assembly.
 type RetrievalOptions struct {
-	Query            string   `json:"query"`
-	Mode             string   `json:"mode,omitempty"`
-	Limit            int      `json:"limit,omitempty"`
-	SourceTypes      []string `json:"sourceTypes,omitempty"`
-	ExpandReferences bool     `json:"expandReferences,omitempty"`
-	Tag              string   `json:"tag,omitempty"`
-	Status           string   `json:"status,omitempty"`
-	Priority         string   `json:"priority,omitempty"`
-	Assignee         string   `json:"assignee,omitempty"`
-	Label            string   `json:"label,omitempty"`
+	Query             string   `json:"query"`
+	Mode              string   `json:"mode,omitempty"`
+	Limit             int      `json:"limit,omitempty"`
+	SourceTypes       []string `json:"sourceTypes,omitempty"`
+	ExpandReferences  bool     `json:"expandReferences,omitempty"`
+	Tag               string   `json:"tag,omitempty"`
+	Status            string   `json:"status,omitempty"`
+	Priority          string   `json:"priority,omitempty"`
+	Assignee          string   `json:"assignee,omitempty"`
+	Label             string   `json:"label,omitempty"`
+	IncludeHistorical bool     `json:"includeHistorical,omitempty"`
 }
 
 // RetrievalResponse contains both ranked results and a context pack.

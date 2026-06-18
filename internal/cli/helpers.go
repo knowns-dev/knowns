@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/howznguyen/knowns/internal/lsp"
+	"github.com/howznguyen/knowns/internal/lsp/adapters"
+	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/spf13/cobra"
 )
@@ -137,5 +139,24 @@ func unescapeText(s string) string {
 }
 
 func getLSPManagerForRoot(root string) *lsp.Manager {
-	return lsp.NewManager(root, lsp.Config{})
+	store := storage.NewStore(root)
+	project, _ := store.Config.Load()
+	manager := lsp.NewManager(root, lspConfigWithGlobalDefaults(project))
+	for _, adapter := range adapters.All() {
+		if err := manager.RegisterAdapter(adapter); err != nil {
+			fmt.Fprintf(os.Stderr, "warn: could not register LSP adapter %s: %v\n", adapter.ID(), err)
+		}
+	}
+	for _, loadErr := range manager.RegisterPluginAdapters(lsp.PluginAdapterLoadOptions{}) {
+		fmt.Fprintf(os.Stderr, "warn: could not load LSP plugin adapter: %v\n", loadErr)
+	}
+	return manager
+}
+
+func lspConfigWithGlobalDefaults(project *models.Project) lsp.Config {
+	var defaults *storage.ProjectDefaults
+	if settings, err := storage.NewEmbeddingSettingsStore().Load(); err == nil {
+		defaults = settings.ProjectDefaults
+	}
+	return lsp.ConfigFromProjectWithDefaults(project, defaults)
 }

@@ -6,9 +6,7 @@ package readiness
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/howznguyen/knowns/internal/lsp"
@@ -75,12 +73,30 @@ type RuntimeStatus struct {
 
 // LSPStatus reports per-language LSP server availability.
 type LSPStatus struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	Binary     string `json:"binary,omitempty"`
-	Source     string `json:"source,omitempty"`
-	InstallCmd string `json:"installCmd,omitempty"`
+	ID              string               `json:"id"`
+	Name            string               `json:"name"`
+	Enabled         bool                 `json:"enabled"`
+	Detected        bool                 `json:"detected"`
+	Status          string               `json:"status"`
+	InstallState    string               `json:"installState"`
+	RunningState    string               `json:"runningState"`
+	ReadinessState  string               `json:"readinessState"`
+	Binary          string               `json:"binary,omitempty"`
+	BinaryPath      string               `json:"binaryPath,omitempty"`
+	Source          string               `json:"source,omitempty"`
+	Version         string               `json:"version,omitempty"`
+	CachePath       string               `json:"cachePath,omitempty"`
+	SelectedPath    string               `json:"selectedPath,omitempty"`
+	CleanupEligible bool                 `json:"cleanupEligible,omitempty"`
+	InstallError    string               `json:"installError,omitempty"`
+	UpdateError     string               `json:"updateError,omitempty"`
+	InstallCmd      string               `json:"installCmd,omitempty"`
+	Backend         string               `json:"backend,omitempty"`
+	BackendSource   string               `json:"backendSource,omitempty"`
+	ProjectPath     string               `json:"projectPath,omitempty"`
+	ProjectKind     string               `json:"projectKind,omitempty"`
+	LogPath         string               `json:"logPath,omitempty"`
+	Attempts        []lsp.BackendAttempt `json:"attempts,omitempty"`
 }
 
 // PermissionStatus reports the active AI permission policy.
@@ -96,6 +112,9 @@ type Options struct {
 	// Runtime is an optional pre-built runtime snapshot (from server cache).
 	// When nil, runtime section is omitted or shows disabled.
 	Runtime *RuntimeStatus
+	// LSP is an optional pre-built LSP runtime snapshot from a live manager.
+	// When nil, BuildReadiness performs side-effect-light static inspection.
+	LSP []lsp.LanguageRuntimeStatus
 }
 
 // BuildReadiness collects all readiness sections from the given store.
@@ -115,7 +134,7 @@ func BuildReadiness(store *storage.Store, opts Options) Payload {
 	p.Knowledge = buildKnowledge(store)
 	p.Search = buildSearch(store)
 	p.Runtime = opts.Runtime
-	p.LSP = buildLSP(projectPath, store)
+	p.LSP = buildLSP(projectPath, store, opts.LSP)
 	p.Permissions = buildPermissions(store)
 	p.Capabilities = buildCapabilities(p.Search, p.Runtime)
 
@@ -217,109 +236,55 @@ func buildSearch(store *storage.Store) *SearchStatus {
 	return ss
 }
 
-func buildLSP(projectPath string, store *storage.Store) []LSPStatus {
-	project, _ := store.Config.Load()
-	cfg := lsp.ConfigFromProject(project)
-	detected := detectLSPLanguages(projectPath)
-
-	statuses := make([]LSPStatus, 0, len(adapters.All()))
-	for _, adapter := range adapters.All() {
-		status := "not-installed"
-		binary := ""
-		source := ""
-		installCmd := ""
-
-		if !cfg.Enabled(adapter.ID()) {
-			status = "disabled"
-		} else if path, ok := findLSPBinary(adapter, cfg.BinaryOverride(adapter.ID())); ok {
-			binary = firstLSPBinaryName(adapter)
-			source = lspBinarySource(path, cfg.BinaryOverride(adapter.ID()))
-			status = "installed"
-			if detected[adapter.ID()] {
-				status = "running"
-			}
-		} else if guide := adapter.InstallGuide(); guide.KnownsCmd != "" {
-			installCmd = guide.KnownsCmd
-		} else if adapter.CanInstall() {
-			installCmd = "knowns lsp install " + adapter.ID()
+func buildLSP(projectPath string, store *storage.Store, runtimeStatuses []lsp.LanguageRuntimeStatus) []LSPStatus {
+	if runtimeStatuses == nil {
+		project, _ := store.Config.Load()
+		var defaults *storage.ProjectDefaults
+		if settings, err := storage.NewEmbeddingSettingsStore().Load(); err == nil {
+			defaults = settings.ProjectDefaults
 		}
-
-		statuses = append(statuses, LSPStatus{
-			ID:         adapter.ID(),
-			Name:       adapter.Name(),
-			Status:     status,
-			Binary:     binary,
-			Source:     source,
-			InstallCmd: installCmd,
+		cfg := lsp.ConfigFromProjectWithDefaults(project, defaults)
+		runtimeStatuses = lsp.CollectRuntimeStatuses(context.Background(), lsp.RuntimeStatusOptions{
+			Root:     projectPath,
+			Config:   cfg,
+			Adapters: adapters.All(),
 		})
+	}
+
+	statuses := make([]LSPStatus, 0, len(runtimeStatuses))
+	for _, status := range runtimeStatuses {
+		statuses = append(statuses, lspStatusFromRuntime(status))
 	}
 	return statuses
 }
 
-func detectLSPLanguages(root string) map[string]bool {
-	seen := make(map[string]bool)
-	extToLang := make(map[string]string)
-	for _, adapter := range adapters.All() {
-		for _, ext := range adapter.Extensions() {
-			extToLang[strings.ToLower(ext)] = adapter.ID()
-		}
+func lspStatusFromRuntime(status lsp.LanguageRuntimeStatus) LSPStatus {
+	return LSPStatus{
+		ID:              status.ID,
+		Name:            status.Name,
+		Enabled:         status.Enabled,
+		Detected:        status.Detected,
+		Status:          status.Status,
+		InstallState:    status.InstallState,
+		RunningState:    status.RunningState,
+		ReadinessState:  status.ReadinessState,
+		Binary:          status.Binary,
+		BinaryPath:      status.BinaryPath,
+		Source:          status.Source,
+		Version:         status.Version,
+		CachePath:       status.CachePath,
+		SelectedPath:    status.SelectedPath,
+		CleanupEligible: status.CleanupEligible,
+		InstallError:    status.InstallError,
+		UpdateError:     status.UpdateError,
+		InstallCmd:      status.InstallCmd,
+		Backend:         status.Backend,
+		BackendSource:   status.BackendSource,
+		ProjectPath:     status.ProjectPath,
+		ProjectKind:     status.ProjectKind,
+		LogPath:         status.LogPath,
+		Attempts:        status.Attempts,
 	}
-	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if entry.IsDir() {
-			switch entry.Name() {
-			case ".git", ".knowns", "node_modules", "vendor", "target", "dist", "build":
-				if path != root {
-					return filepath.SkipDir
-				}
-			}
-			return nil
-		}
-		if lang, ok := extToLang[strings.ToLower(filepath.Ext(path))]; ok {
-			seen[lang] = true
-		}
-		return nil
-	})
-	return seen
-}
-
-func findLSPBinary(adapter lsp.LanguageAdapter, override string) (string, bool) {
-	binaries := adapter.Binaries()
-	if override != "" {
-		binaries = []lsp.BinaryCandidate{{Name: override}}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	for _, binary := range binaries {
-		path, err := exec.LookPath(binary.Name)
-		if err != nil {
-			continue
-		}
-		if len(binary.CheckArgs) > 0 {
-			if err := exec.CommandContext(ctx, path, binary.CheckArgs...).Run(); err != nil {
-				continue
-			}
-		}
-		return path, true
-	}
-	return "", false
-}
-
-func firstLSPBinaryName(adapter lsp.LanguageAdapter) string {
-	binaries := adapter.Binaries()
-	if len(binaries) == 0 {
-		return adapter.ID()
-	}
-	return binaries[0].Name
-}
-
-func lspBinarySource(_ string, override string) string {
-	if override != "" {
-		return "config"
-	}
-	return "PATH"
 }
 
 func buildCapabilities(ss *SearchStatus, rs *RuntimeStatus) []string {

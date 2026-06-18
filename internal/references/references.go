@@ -14,6 +14,14 @@ var memoryReferenceRE = regexp.MustCompile(`^@memory-[A-Za-z0-9-]+(?:\{[a-z-]+\}
 var docRangeSuffixRE = regexp.MustCompile(`:(\d+)-(\d+)$`)
 var docLineSuffixRE = regexp.MustCompile(`:(\d+)$`)
 
+var slashNamespaces = map[string]string{
+	"task/":     "task",
+	"memory/":   "memory",
+	"decision/": "decision",
+	"doc/":      "doc",
+	"template/": "template",
+}
+
 var allowedRelations = map[string]struct{}{
 	"implements":    {},
 	"depends":       {},
@@ -104,21 +112,50 @@ func Parse(raw string) (models.SemanticReference, bool) {
 	case strings.HasPrefix(body, "task-"):
 		ref.Type = "task"
 		ref.Target = strings.TrimPrefix(body, "task-")
+		ref.Legacy = true
 	case strings.HasPrefix(body, "memory-"):
 		ref.Type = "memory"
 		ref.Target = strings.TrimPrefix(body, "memory-")
+		ref.Legacy = true
 	case strings.HasPrefix(body, "doc/"):
 		ref.Type = "doc"
 		ref.Target, ref.Fragment = parseDocTarget(strings.TrimPrefix(body, "doc/"))
 	default:
-		return models.SemanticReference{}, false
+		for prefix, typ := range slashNamespaces {
+			if !strings.HasPrefix(body, prefix) {
+				continue
+			}
+			ref.Type = typ
+			target := strings.TrimPrefix(body, prefix)
+			if typ == "doc" {
+				ref.Target, ref.Fragment = parseDocTarget(target)
+			} else {
+				ref.Target = trimTrailingPunctuation(strings.TrimSpace(target))
+			}
+			break
+		}
+		if ref.Type == "" {
+			return models.SemanticReference{}, false
+		}
 	}
 
 	if strings.TrimSpace(ref.Target) == "" {
 		return models.SemanticReference{}, false
 	}
 
+	ref.Canonical = canonicalReference(ref)
 	return ref, true
+}
+
+func canonicalReference(ref models.SemanticReference) string {
+	body := "@" + ref.Type + "/" + ref.Target
+	if ref.Fragment != nil {
+		body += ref.Fragment.Raw
+	}
+	if ref.ExplicitRelation {
+		body += "{" + ref.Relation + "}"
+	}
+	return body
 }
 
 func parseDocTarget(value string) (string, *models.DocReferenceFragment) {
@@ -151,6 +188,14 @@ func extractReferenceAt(content string) string {
 	switch {
 	case strings.HasPrefix(content, "@doc/"):
 		return extractDocReferenceAt(content)
+	case strings.HasPrefix(content, "@task/"):
+		return extractNamespacedReferenceAt(content, len("@task/"))
+	case strings.HasPrefix(content, "@memory/"):
+		return extractNamespacedReferenceAt(content, len("@memory/"))
+	case strings.HasPrefix(content, "@decision/"):
+		return extractNamespacedReferenceAt(content, len("@decision/"))
+	case strings.HasPrefix(content, "@template/"):
+		return extractNamespacedReferenceAt(content, len("@template/"))
 	case strings.HasPrefix(content, "@task-"):
 		return taskReferenceRE.FindString(content)
 	case strings.HasPrefix(content, "@memory-"):
@@ -183,6 +228,31 @@ func extractDocReferenceAt(content string) string {
 				return content[:i]
 			}
 			i = next
+		case r == '{':
+			next := consumeRelationSuffix(content, i)
+			if next == i {
+				return content[:i]
+			}
+			i = next
+			return content[:i]
+		default:
+			return content[:i]
+		}
+	}
+
+	return content[:i]
+}
+
+func extractNamespacedReferenceAt(content string, i int) string {
+	if i >= len(content) || !isNamespacedTargetChar(rune(content[i])) {
+		return ""
+	}
+
+	for i < len(content) {
+		r := rune(content[i])
+		switch {
+		case isNamespacedTargetChar(r):
+			i++
 		case r == '{':
 			next := consumeRelationSuffix(content, i)
 			if next == i {
@@ -274,6 +344,16 @@ func isDocHeadingChar(r rune) bool {
 	return (r >= 'A' && r <= 'Z') ||
 		(r >= 'a' && r <= 'z') ||
 		(r >= '0' && r <= '9') ||
+		r == '_' ||
+		r == '-' ||
+		r == '.'
+}
+
+func isNamespacedTargetChar(r rune) bool {
+	return (r >= 'A' && r <= 'Z') ||
+		(r >= 'a' && r <= 'z') ||
+		(r >= '0' && r <= '9') ||
+		r == '/' ||
 		r == '_' ||
 		r == '-' ||
 		r == '.'

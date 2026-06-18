@@ -54,6 +54,8 @@ export interface Config {
 			enabled?: boolean;
 			binary?: string;
 			version?: string;
+			backend?: string;
+			projectPath?: string;
 			settings?: Record<string, any>;
 		}>;
 	};

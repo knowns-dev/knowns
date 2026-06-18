@@ -224,7 +224,6 @@ func runCodeSearch(cmd *cobra.Command, args []string) error {
 	root := filepath.Dir(store.Root)
 
 	var summaries []search.CodeSummary
-	lspUsed := false
 	lspMgr := getLSPManagerForRoot(root)
 
 	if lspMgr != nil {
@@ -232,9 +231,6 @@ func runCodeSearch(cmd *cobra.Command, args []string) error {
 		targetFiles := resolveTargetFiles(root, path)
 		for _, file := range targetFiles {
 			syms := extractFileLSP(ctx, lspMgr, root, file)
-			if len(syms) > 0 {
-				lspUsed = true
-			}
 			summaries = append(summaries, syms...)
 			if len(summaries) > 5000 {
 				break
@@ -242,17 +238,8 @@ func runCodeSearch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if len(summaries) == 0 {
-		for _, file := range resolveTargetFiles(root, path) {
-			summaries = append(summaries, extractFileRegex(file, root)...)
-			if len(summaries) > 5000 {
-				break
-			}
-		}
-	}
-
 	mode := "bm25"
-	if lspUsed {
+	if len(summaries) > 0 {
 		mode = "bm25+lsp"
 	}
 
@@ -260,24 +247,6 @@ func runCodeSearch(cmd *cobra.Command, args []string) error {
 	results, err := scorer.Search(query, limit)
 	if err != nil {
 		return err
-	}
-
-	if len(results) == 0 && lspUsed {
-		summaries = nil
-		for _, file := range resolveTargetFiles(root, path) {
-			summaries = append(summaries, extractFileRegex(file, root)...)
-			if len(summaries) > 5000 {
-				break
-			}
-		}
-		scorer = search.NewCodeBM25Scorer(summaries)
-		results, err = scorer.Search(query, limit)
-		if err != nil {
-			return err
-		}
-		if len(results) > 0 {
-			mode = "bm25"
-		}
 	}
 
 	maxScore := 0.0

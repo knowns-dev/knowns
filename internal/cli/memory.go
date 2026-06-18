@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/howznguyen/knowns/internal/memoryreview"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/spf13/cobra"
@@ -40,10 +41,15 @@ func runMemoryList(cmd *cobra.Command, args []string) error {
 	layer, _ := cmd.Flags().GetString("layer")
 	category, _ := cmd.Flags().GetString("category")
 	tagFilter, _ := cmd.Flags().GetString("tag")
+	statusFilter, _ := cmd.Flags().GetString("status")
+	allStatuses, _ := cmd.Flags().GetBool("all-statuses")
 
 	entries, err := store.Memory.List(layer)
 	if err != nil {
 		return fmt.Errorf("list memory: %w", err)
+	}
+	if statusFilter != "" && !models.ValidMemoryStatus(statusFilter) {
+		return fmt.Errorf("invalid memory status: %q", statusFilter)
 	}
 
 	// Apply filters.
@@ -51,6 +57,23 @@ func runMemoryList(cmd *cobra.Command, args []string) error {
 		filtered := entries[:0]
 		for _, e := range entries {
 			if e.Category == category {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	}
+	if statusFilter != "" {
+		filtered := entries[:0]
+		for _, e := range entries {
+			if e.Status == statusFilter {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	} else if !allStatuses {
+		filtered := entries[:0]
+		for _, e := range entries {
+			if e.CurrentForDefaultRetrieval() {
 				filtered = append(filtered, e)
 			}
 		}
@@ -317,6 +340,11 @@ func runMemoryCreate(cmd *cobra.Command, args []string) error {
 	tags, _ := cmd.Flags().GetStringArray("tag")
 	content, _ := cmd.Flags().GetString("content")
 	content = unescapeText(content)
+	createAnyway, _ := cmd.Flags().GetBool("create-anyway")
+	status, _ := cmd.Flags().GetString("status")
+	if status != "" && !models.ValidMemoryStatus(status) {
+		return fmt.Errorf("invalid memory status: %q", status)
+	}
 
 	if layer == "" {
 		layer = models.MemoryLayerProject
@@ -342,14 +370,65 @@ func runMemoryCreate(cmd *cobra.Command, args []string) error {
 		entry.Tags = []string{}
 	}
 
-	if err := store.Memory.Create(entry); err != nil {
+	svc := memoryreview.New(store)
+	var result *memoryreview.Result
+	var err error
+	if createAnyway {
+		result, err = svc.Add(entry, memoryreview.AddOptions{SkipReview: true, Status: firstNonEmpty(status, models.MemoryStatusProposed)})
+	} else {
+		result, err = svc.Add(entry, memoryreview.AddOptions{Status: status})
+	}
+	if err != nil {
 		return fmt.Errorf("create memory: %w", err)
 	}
+	if result.Status == memoryreview.ResultReviewRequired {
+		if isJSON(cmd) {
+			printJSON(result)
+			return nil
+		}
+		printMemoryReviewRequired(cmd, result)
+		return nil
+	}
 
-	search.BestEffortIndexMemory(store, entry.ID)
+	for _, id := range result.ChangedIDs {
+		search.BestEffortIndexMemory(store, id)
+	}
 
-	fmt.Println(RenderSuccess(fmt.Sprintf("Created memory: %s (%s, layer: %s)", entry.ID, entry.Title, entry.Layer)))
+	fmt.Println(RenderSuccess(fmt.Sprintf("Created memory: %s (%s, layer: %s, status: %s)", result.Memory.ID, result.Memory.Title, result.Memory.Layer, result.Memory.Status)))
 	return nil
+}
+
+func printMemoryReviewRequired(cmd *cobra.Command, result *memoryreview.Result) {
+	var b strings.Builder
+	fmt.Fprintln(&b, RenderWarning("Memory review required: similar memories already exist."))
+	for _, match := range result.Matches {
+		fmt.Fprintf(&b, "MEMORY: %s\n", match.ID)
+		fmt.Fprintf(&b, "  TITLE: %s\n", match.Title)
+		fmt.Fprintf(&b, "  LAYER: %s\n", match.Layer)
+		if match.Category != "" {
+			fmt.Fprintf(&b, "  CATEGORY: %s\n", match.Category)
+		}
+		if match.Status != "" {
+			fmt.Fprintf(&b, "  STATUS: %s\n", match.Status)
+		}
+		fmt.Fprintf(&b, "  SCORE: %.2f\n", match.Score)
+		if len(match.MatchedBy) > 0 {
+			fmt.Fprintf(&b, "  MATCHED_BY: %s\n", strings.Join(match.MatchedBy, ", "))
+		}
+		fmt.Fprintln(&b)
+	}
+	fmt.Fprintf(&b, "Allowed resolutions: %s\n", strings.Join(result.AllowedResolutions, ", "))
+	fmt.Fprintln(&b, "Use --create-anyway to create this memory explicitly.")
+	printPaged(cmd, b.String())
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 // --- memory edit ---
@@ -547,6 +626,8 @@ func init() {
 	memoryListCmd.Flags().String("layer", "", "Filter by layer (working, project, global)")
 	memoryListCmd.Flags().String("category", "", "Filter by category")
 	memoryListCmd.Flags().String("tag", "", "Filter by tag")
+	memoryListCmd.Flags().String("status", "", "Filter by memory status")
+	memoryListCmd.Flags().Bool("all-statuses", false, "Include non-active memory statuses")
 
 	// memory cleanup flags
 	memoryCleanupCmd.Flags().Int("older-than", 7, "Minimum stale age in days")
@@ -558,6 +639,8 @@ func init() {
 	memoryCreateCmd.Flags().String("category", "", "Memory category (pattern, decision, convention, preference)")
 	memoryCreateCmd.Flags().StringArrayP("tag", "t", nil, "Memory tag (repeatable)")
 	memoryCreateCmd.Flags().StringP("content", "c", "", "Memory content")
+	memoryCreateCmd.Flags().String("status", "", "Explicit memory status for human create/override")
+	memoryCreateCmd.Flags().Bool("create-anyway", false, "Create even when duplicate review candidates are found")
 
 	// memory edit flags
 	memoryEditCmd.Flags().StringP("title", "t", "", "New title")

@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,27 +23,28 @@ import (
 // mockAdapter implements LanguageAdapter for testing.
 type mockAdapter struct {
 	id          string
+	extensions  []string
 	runtimeDeps []RuntimeDependency
 }
 
-func (m *mockAdapter) ID() string                        { return m.id }
-func (m *mockAdapter) Name() string                      { return m.id }
-func (m *mockAdapter) Extensions() []string              { return nil }
-func (m *mockAdapter) Binaries() []BinaryCandidate       { return nil }
-func (m *mockAdapter) Prerequisites() []Prerequisite     { return nil }
-func (m *mockAdapter) CheckPrerequisites(context.Context) error { return nil }
-func (m *mockAdapter) InstallGuide() InstallGuide        { return InstallGuide{} }
-func (m *mockAdapter) CanInstall() bool                  { return true }
-func (m *mockAdapter) RuntimeDeps() []RuntimeDependency  { return m.runtimeDeps }
-func (m *mockAdapter) Install(_ context.Context, _ string) (string, error) { return "", nil }
-func (m *mockAdapter) InstalledPath() (string, bool)     { return "", false }
-func (m *mockAdapter) DefaultArgs() []string             { return nil }
+func (m *mockAdapter) ID() string                                                 { return m.id }
+func (m *mockAdapter) Name() string                                               { return m.id }
+func (m *mockAdapter) Extensions() []string                                       { return m.extensions }
+func (m *mockAdapter) Binaries() []BinaryCandidate                                { return nil }
+func (m *mockAdapter) Prerequisites() []Prerequisite                              { return nil }
+func (m *mockAdapter) CheckPrerequisites(context.Context) error                   { return nil }
+func (m *mockAdapter) InstallGuide() InstallGuide                                 { return InstallGuide{} }
+func (m *mockAdapter) CanInstall() bool                                           { return true }
+func (m *mockAdapter) RuntimeDeps() []RuntimeDependency                           { return m.runtimeDeps }
+func (m *mockAdapter) Install(_ context.Context, _ string) (string, error)        { return "", nil }
+func (m *mockAdapter) InstalledPath() (string, bool)                              { return "", false }
+func (m *mockAdapter) DefaultArgs() []string                                      { return nil }
 func (m *mockAdapter) InitializeParams(_ string, _ map[string]any) map[string]any { return nil }
-func (m *mockAdapter) InitializationOptions(_ map[string]any) map[string]any { return nil }
-func (m *mockAdapter) IsIgnoredDir(_ string) bool        { return false }
-func (m *mockAdapter) NormalizeSymbolName(n string) string { return n }
-func (m *mockAdapter) SupportsImplementation() bool      { return false }
-func (m *mockAdapter) SupportsReferences() bool          { return false }
+func (m *mockAdapter) InitializationOptions(_ map[string]any) map[string]any      { return nil }
+func (m *mockAdapter) IsIgnoredDir(_ string) bool                                 { return false }
+func (m *mockAdapter) NormalizeSymbolName(n string) string                        { return n }
+func (m *mockAdapter) SupportsImplementation() bool                               { return false }
+func (m *mockAdapter) SupportsReferences() bool                                   { return false }
 
 // createTestBinary creates a simple binary content and returns it with its SHA-256 hash.
 func createTestBinary() ([]byte, string) {
@@ -86,6 +89,34 @@ func createTestTarGz(fileName string, content []byte) ([]byte, error) {
 		return nil, err
 	}
 	return buf, nil
+}
+
+func createTestZip(files map[string][]byte) ([]byte, error) {
+	tmpFile, err := os.CreateTemp("", "test-zip-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmpFile.Name())
+	zw := zip.NewWriter(tmpFile)
+	for name, content := range files {
+		w, err := zw.Create(name)
+		if err != nil {
+			tmpFile.Close()
+			return nil, err
+		}
+		if _, err := w.Write(content); err != nil {
+			tmpFile.Close()
+			return nil, err
+		}
+	}
+	if err := zw.Close(); err != nil {
+		tmpFile.Close()
+		return nil, err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(tmpFile.Name())
 }
 
 func TestIsInstalled_NotInstalled(t *testing.T) {
@@ -161,6 +192,157 @@ func TestInstall_Binary(t *testing.T) {
 	}
 	if installedPath != path {
 		t.Errorf("IsInstalled path mismatch: got %s, want %s", installedPath, path)
+	}
+
+	status := installer.Status(adapter)
+	if !status.Installed {
+		t.Fatal("expected status to report installed")
+	}
+	if status.Source != "binary" {
+		t.Fatalf("status source = %q, want binary", status.Source)
+	}
+	if status.Version != "v1.0.0" {
+		t.Fatalf("status version = %q, want v1.0.0", status.Version)
+	}
+	if status.CachePath == "" || status.SelectedPath != path {
+		t.Fatalf("status paths not populated: %#v", status)
+	}
+}
+
+func TestInstall_NPMDependencyUsesManagedCache(t *testing.T) {
+	baseDir := t.TempDir()
+	installer := NewInstaller(baseDir)
+	installer.runCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "npm" {
+			t.Fatalf("runner command = %q, want npm", name)
+		}
+		var prefix string
+		for i, arg := range args {
+			if arg == "--prefix" && i+1 < len(args) {
+				prefix = args[i+1]
+				break
+			}
+		}
+		if prefix == "" {
+			t.Fatalf("npm args missing --prefix: %#v", args)
+		}
+		binDir := filepath.Join(prefix, "node_modules", ".bin")
+		if err := os.MkdirAll(binDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(binDir, "test-ls"), []byte("#!/bin/sh\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		return []byte("ok"), nil
+	}
+
+	adapter := &mockAdapter{
+		id: "npmtest",
+		runtimeDeps: []RuntimeDependency{{
+			ID:          "test-ls",
+			Version:     "1.2.3",
+			Source:      "npm",
+			ArchiveType: "npm",
+			BinaryName:  "test-ls",
+			Packages:    []string{"test-ls", "typescript"},
+		}},
+	}
+
+	path, err := installer.Install(context.Background(), adapter)
+	if err != nil {
+		t.Fatalf("Install failed: %v", err)
+	}
+	if !strings.Contains(path, filepath.Join("npmtest", "test-ls-1.2.3", "node_modules", ".bin", "test-ls")) {
+		t.Fatalf("installed path %q does not use managed npm cache", path)
+	}
+	status := installer.Status(adapter)
+	if !status.Installed || status.Source != "npm" || status.Version != "1.2.3" {
+		t.Fatalf("unexpected status: %#v", status)
+	}
+	if status.SelectedPath != path || status.CachePath == "" {
+		t.Fatalf("status paths not populated: %#v", status)
+	}
+}
+
+func TestInstall_NPMDependencyRecordsInstallError(t *testing.T) {
+	baseDir := t.TempDir()
+	installer := NewInstaller(baseDir)
+	installer.runCommand = func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("network down"), fmt.Errorf("exit 1")
+	}
+	adapter := &mockAdapter{
+		id: "npmfail",
+		runtimeDeps: []RuntimeDependency{{
+			ID:          "broken-ls",
+			Version:     "latest",
+			Source:      "npm",
+			ArchiveType: "npm",
+			BinaryName:  "broken-ls",
+			PackageName: "broken-ls",
+		}},
+	}
+
+	if _, err := installer.Install(context.Background(), adapter); err == nil {
+		t.Fatal("expected install error")
+	}
+	status := installer.Status(adapter)
+	if status.InstallError == "" || !strings.Contains(status.InstallError, "network down") {
+		t.Fatalf("status InstallError = %q, want npm output", status.InstallError)
+	}
+	if status.Installed {
+		t.Fatal("failed install should not be selected")
+	}
+}
+
+func TestInstall_NuGetDependencyExtractsPackage(t *testing.T) {
+	rid := "linux-x64"
+	serverPath := "content/LanguageServer/" + rid + "/Microsoft.CodeAnalysis.LanguageServer.dll"
+	content, err := createTestZip(map[string][]byte{
+		serverPath:                          []byte("dll"),
+		"content/LanguageServer/readme.txt": []byte("keep package contents"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(content)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(content)
+	}))
+	defer server.Close()
+
+	baseDir := t.TempDir()
+	installer := NewInstaller(baseDir)
+	adapter := &mockAdapter{
+		id: "csharp",
+		runtimeDeps: []RuntimeDependency{{
+			ID:          "Microsoft.CodeAnalysis.LanguageServer.linux-x64",
+			Version:     "5.0.0-test",
+			Source:      "nuget",
+			ArchiveType: "nupkg",
+			PackageName: "Microsoft.CodeAnalysis.LanguageServer.linux-x64",
+			URL:         server.URL + "/package.nupkg",
+			SHA256:      hex.EncodeToString(hash[:]),
+			BinaryName:  "Microsoft.CodeAnalysis.LanguageServer.dll",
+			ExtractPath: serverPath,
+		}},
+	}
+
+	path, err := installer.Install(context.Background(), adapter)
+	if err != nil {
+		t.Fatalf("Install failed: %v", err)
+	}
+	if !strings.HasSuffix(filepath.ToSlash(path), serverPath) {
+		t.Fatalf("installed path = %q, want suffix %q", path, serverPath)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(filepath.Dir(path)), "readme.txt")); err != nil {
+		t.Fatalf("expected full NuGet package contents to be extracted: %v", err)
+	}
+	status := installer.Status(adapter)
+	if !status.Installed || status.Source != "nuget" || status.Version != "5.0.0-test" {
+		t.Fatalf("unexpected status: %#v", status)
+	}
+	if status.SelectedPath != path || status.CachePath == "" {
+		t.Fatalf("status paths not populated: %#v", status)
 	}
 }
 
@@ -313,48 +495,77 @@ func TestInstall_ConcurrentPrevention(t *testing.T) {
 	}
 }
 
-func TestCleanup_RemovesOldVersions(t *testing.T) {
+func TestCleanup_RemovesOldVersionsOnlyAfterNewerSelection(t *testing.T) {
 	baseDir := t.TempDir()
 	installer := NewInstaller(baseDir)
 
 	langDir := filepath.Join(baseDir, "cleantest")
 
-	// Create multiple version directories with different mod times.
 	dirs := []string{"server-v1.0.0", "server-v2.0.0", "server-v3.0.0"}
-	for i, d := range dirs {
+	for _, d := range dirs {
 		dirPath := filepath.Join(langDir, d)
 		if err := os.MkdirAll(dirPath, 0755); err != nil {
 			t.Fatal(err)
 		}
-		// Write a file so the directory isn't empty.
 		os.WriteFile(filepath.Join(dirPath, "server"), []byte("bin"), 0755)
-		// Set different mod times (v3 is newest).
-		modTime := time.Now().Add(time.Duration(i) * time.Hour)
-		os.Chtimes(dirPath, modTime, modTime)
 	}
 
-	err := installer.Cleanup("cleantest")
-	if err != nil {
+	if err := installer.Cleanup("cleantest"); err != nil {
 		t.Fatalf("Cleanup failed: %v", err)
 	}
+	if got := countDirs(t, langDir); got != 3 {
+		t.Fatalf("cleanup without selected version removed dirs, got %d", got)
+	}
 
-	// Only the newest (v3.0.0) should remain.
+	adapter := &mockAdapter{
+		id: "cleantest",
+		runtimeDeps: []RuntimeDependency{{
+			ID:          "v3.0.0",
+			PlatformID:  CurrentPlatformID(),
+			ArchiveType: "binary",
+			BinaryName:  "server",
+		}},
+	}
+	selectedPath := filepath.Join(langDir, "server-v3.0.0", "server")
+	if err := installer.writeSelection(adapter, adapter.runtimeDeps[0], selectedPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := installer.Cleanup("cleantest"); err != nil {
+		t.Fatalf("Cleanup failed: %v", err)
+	}
+	var names []string
 	entries, err := os.ReadDir(langDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	if len(entries) != 1 {
-		names := make([]string, len(entries))
-		for i, e := range entries {
-			names[i] = e.Name()
+	for _, entry := range entries {
+		if entry.IsDir() {
+			names = append(names, entry.Name())
 		}
-		t.Errorf("expected 1 directory after cleanup, got %d: %v", len(entries), names)
+	}
+	if len(names) != 1 {
+		t.Errorf("expected 1 directory after cleanup, got %d: %v", len(names), names)
 	}
 
-	if entries[0].Name() != "server-v3.0.0" {
-		t.Errorf("expected server-v3.0.0 to remain, got %s", entries[0].Name())
+	if names[0] != "server-v3.0.0" {
+		t.Errorf("expected server-v3.0.0 to remain, got %s", names[0])
 	}
+}
+
+func countDirs(t *testing.T, path string) int {
+	t.Helper()
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			count++
+		}
+	}
+	return count
 }
 
 func TestRemove(t *testing.T) {

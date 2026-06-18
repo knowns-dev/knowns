@@ -64,6 +64,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	tagFilter, _ := cmd.Flags().GetString("tag")
 	assigneeFilter, _ := cmd.Flags().GetString("assignee")
 	keywordOnly, _ := cmd.Flags().GetBool("keyword")
+	includeHistorical, _ := cmd.Flags().GetBool("include-historical")
 	limit, _ := cmd.Flags().GetInt("limit")
 	if limit <= 0 {
 		limit = 20
@@ -82,15 +83,16 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	embedder, vecStore, _ := initSemanticSearchReal()
 
 	opts := search.SearchOptions{
-		Query:    query,
-		Type:     typeFilter,
-		Mode:     mode,
-		Status:   statusFilter,
-		Priority: priorityFilter,
-		Assignee: assigneeFilter,
-		Label:    labelFilter,
-		Tag:      tagFilter,
-		Limit:    limit,
+		Query:             query,
+		Type:              typeFilter,
+		Mode:              mode,
+		Status:            statusFilter,
+		Priority:          priorityFilter,
+		Assignee:          assigneeFilter,
+		Label:             labelFilter,
+		Tag:               tagFilter,
+		Limit:             limit,
+		IncludeHistorical: includeHistorical,
 	}
 
 	engine := search.NewEngine(store, embedder, vecStore)
@@ -127,7 +129,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	var taskResults, docResults, memoryResults []models.SearchResult
+	var taskResults, docResults, memoryResults, decisionResults []models.SearchResult
 	filteredResults := make([]models.SearchResult, 0, len(results))
 	for _, r := range results {
 		switch r.Type {
@@ -140,14 +142,17 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		case "memory":
 			memoryResults = append(memoryResults, r)
 			filteredResults = append(filteredResults, r)
+		case "decision":
+			decisionResults = append(decisionResults, r)
+			filteredResults = append(filteredResults, r)
 		}
 	}
 
 	if plain {
-		content := sprintPlainResults(taskResults, docResults, memoryResults, maxScore)
+		content := sprintPlainResults(taskResults, docResults, memoryResults, decisionResults, maxScore)
 		printPaged(cmd, content)
 	} else {
-		content := renderPrettyResults(query, actualMode, filteredResults, taskResults, docResults, memoryResults, maxScore)
+		content := renderPrettyResults(query, actualMode, filteredResults, taskResults, docResults, memoryResults, decisionResults, maxScore)
 		renderOrPage(cmd, fmt.Sprintf("Search: %s", query), content)
 	}
 	return nil
@@ -167,6 +172,7 @@ func runRetrieve(cmd *cobra.Command, args []string) error {
 	tagFilter, _ := cmd.Flags().GetString("tag")
 	assigneeFilter, _ := cmd.Flags().GetString("assignee")
 	keywordOnly, _ := cmd.Flags().GetBool("keyword")
+	includeHistorical, _ := cmd.Flags().GetBool("include-historical")
 	expandReferences, _ := cmd.Flags().GetBool("expand-references")
 	sourceTypes := splitCSV(getFlagString(cmd, "source-types"))
 	limit, _ := cmd.Flags().GetInt("limit")
@@ -192,16 +198,17 @@ func runRetrieve(cmd *cobra.Command, args []string) error {
 
 	engine := search.NewEngine(store, embedder, vecStore)
 	resp, err := engine.Retrieve(models.RetrievalOptions{
-		Query:            query,
-		Mode:             mode,
-		Limit:            limit,
-		SourceTypes:      sourceTypes,
-		ExpandReferences: expandReferences,
-		Status:           statusFilter,
-		Priority:         priorityFilter,
-		Assignee:         assigneeFilter,
-		Label:            labelFilter,
-		Tag:              tagFilter,
+		Query:             query,
+		Mode:              mode,
+		Limit:             limit,
+		SourceTypes:       sourceTypes,
+		ExpandReferences:  expandReferences,
+		Status:            statusFilter,
+		Priority:          priorityFilter,
+		Assignee:          assigneeFilter,
+		Label:             labelFilter,
+		Tag:               tagFilter,
+		IncludeHistorical: includeHistorical,
 	})
 	if err != nil {
 		return err
@@ -229,7 +236,7 @@ func runRetrieve(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func sprintPlainResults(taskResults, docResults, memoryResults []models.SearchResult, maxScore float64) string {
+func sprintPlainResults(taskResults, docResults, memoryResults, decisionResults []models.SearchResult, maxScore float64) string {
 	var b strings.Builder
 	if len(taskResults) > 0 {
 		fmt.Fprintln(&b, "Tasks:")
@@ -271,10 +278,23 @@ func sprintPlainResults(taskResults, docResults, memoryResults []models.SearchRe
 		}
 		fmt.Fprintln(&b)
 	}
+	if len(decisionResults) > 0 {
+		fmt.Fprintln(&b, "Decisions:")
+		for _, r := range decisionResults {
+			pct := scoreToPercent(r.Score, maxScore)
+			fmt.Fprintf(&b, "  %s [%s] (%d%%)\n", r.ID, r.Status, pct)
+			if r.Snippet != "" {
+				snip := truncate(r.Snippet, 100)
+				fmt.Fprintf(&b, "    %s\n", snip)
+			}
+			fmt.Fprintf(&b, "    Matched by: %s\n", formatMatchedBy(r.MatchedBy))
+		}
+		fmt.Fprintln(&b)
+	}
 	return b.String()
 }
 
-func renderPrettyResults(query, mode string, results []models.SearchResult, taskResults, docResults, memoryResults []models.SearchResult, maxScore float64) string {
+func renderPrettyResults(query, mode string, results []models.SearchResult, taskResults, docResults, memoryResults, decisionResults []models.SearchResult, maxScore float64) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %s %s\n\n",
 		StyleBold.Render(fmt.Sprintf("Found %d result(s)", len(results))),
@@ -345,6 +365,25 @@ func renderPrettyResults(query, mode string, results []models.SearchResult, task
 			fmt.Fprintln(&b)
 		}
 	}
+	if len(decisionResults) > 0 {
+		fmt.Fprintln(&b, RenderSectionHeader("Decisions"))
+		fmt.Fprintln(&b)
+		for _, r := range decisionResults {
+			pct := scoreToPercent(r.Score, maxScore)
+			fmt.Fprintf(&b, "  %s %s %s %s %s\n",
+				RenderBadge("DECISION", colorCyan),
+				StyleID.Render(r.ID),
+				StyleBold.Render("— "+r.Title),
+				RenderStatusBadge(r.Status),
+				StyleDim.Render(fmt.Sprintf("(%d%%)", pct)))
+			if r.Snippet != "" {
+				snip := truncate(r.Snippet, 100)
+				fmt.Fprintf(&b, "    %s\n", StyleDim.Render(snip))
+			}
+			fmt.Fprintf(&b, "    %s\n", StyleDim.Render("Matched by: "+formatMatchedBy(r.MatchedBy)))
+			fmt.Fprintln(&b)
+		}
+	}
 	return b.String()
 }
 
@@ -366,6 +405,9 @@ func sprintPlainRetrieval(resp *models.RetrievalResponse) string {
 		fmt.Fprintf(&b, "    Citation: %s\n", formatRetrievalCitation(candidate.Citation))
 		if candidate.Type == "memory" {
 			fmt.Fprintf(&b, "    Scope: %s\n", formatMemoryScope(candidate.MemoryLayer, candidate.MemoryStore))
+		}
+		if candidate.Type == "decision" && candidate.Status != "" {
+			fmt.Fprintf(&b, "    Status: %s\n", candidate.Status)
 		}
 		if candidate.Snippet != "" {
 			fmt.Fprintf(&b, "    %s\n", truncate(candidate.Snippet, 120))
@@ -405,6 +447,8 @@ func renderPrettyRetrieval(resp *models.RetrievalResponse) string {
 			badgeColor = colorMagenta
 		case "memory":
 			badgeColor = colorPurple
+		case "decision":
+			badgeColor = colorCyan
 		}
 		fmt.Fprintf(&b, "  %s %s %s %s\n",
 			RenderBadge(strings.ToUpper(candidate.Type), badgeColor),
@@ -414,6 +458,9 @@ func renderPrettyRetrieval(resp *models.RetrievalResponse) string {
 		fmt.Fprintf(&b, "    %s\n", StyleDim.Render("Citation: "+formatRetrievalCitation(candidate.Citation)))
 		if candidate.Type == "memory" {
 			fmt.Fprintf(&b, "    %s\n", StyleDim.Render("Scope: "+formatMemoryScope(candidate.MemoryLayer, candidate.MemoryStore)))
+		}
+		if candidate.Type == "decision" && candidate.Status != "" {
+			fmt.Fprintf(&b, "    %s\n", StyleDim.Render("Status: "+candidate.Status))
 		}
 		fmt.Fprintf(&b, "    %s\n", StyleDim.Render(fmt.Sprintf("Direct match: %t", candidate.DirectMatch)))
 		if len(candidate.ExpandedFrom) > 0 {
@@ -434,6 +481,8 @@ func renderPrettyRetrieval(resp *models.RetrievalResponse) string {
 			badgeColor = colorMagenta
 		case "memory":
 			badgeColor = colorPurple
+		case "decision":
+			badgeColor = colorCyan
 		}
 		fmt.Fprintf(&b, "  %s %s %s\n",
 			RenderBadge(strings.ToUpper(item.Type), badgeColor),
@@ -600,7 +649,6 @@ func runSetup() error {
 
 	return nil
 }
-
 
 // ─── reindex with bubbletea progress ─────────────────────────────────
 
@@ -823,12 +871,14 @@ func runReindex() error {
 
 	tasks, _ := store.Tasks.List()
 	docs, _ := store.Docs.List()
+	decisions, _ := store.Decisions.List()
 	taskCount := len(tasks)
 	docCount := len(docs)
-	total := taskCount + docCount
+	decisionCount := len(decisions)
+	total := taskCount + docCount + decisionCount
 
 	if total == 0 {
-		fmt.Println(RenderWarning("No tasks or docs to index."))
+		fmt.Println(RenderWarning("No tasks, docs, or decisions to index."))
 		return nil
 	}
 
@@ -846,7 +896,7 @@ func runReindex() error {
 		if err != nil {
 			return fmt.Errorf("enqueue reindex: %w", err)
 		}
-		fmt.Printf("%s\n\n", RenderInfo(fmt.Sprintf("Queued runtime reindex (%d tasks, %d docs)...", taskCount, docCount)))
+		fmt.Printf("%s\n\n", RenderInfo(fmt.Sprintf("Queued runtime reindex (%d tasks, %d docs, %d decisions)...", taskCount, docCount, decisionCount)))
 		if err := runRuntimeReindexWithProgress(store.Root, job.ID); err != nil {
 			return fmt.Errorf("reindex failed: %w", err)
 		}
@@ -854,7 +904,7 @@ func runReindex() error {
 		vs := search.NewSQLiteVectorStore(searchDir, "", 0)
 		count, _, _ := vs.Stats()
 		fmt.Println(searchSuccessStyle.Render(
-			fmt.Sprintf("✓ Search index rebuilt via runtime (%d tasks, %d docs, %d chunks)", taskCount, docCount, count)))
+			fmt.Sprintf("✓ Search index rebuilt via runtime (%d tasks, %d docs, %d decisions, %d chunks)", taskCount, docCount, decisionCount, count)))
 		return nil
 	}
 
@@ -911,7 +961,7 @@ func runReindex() error {
 		))
 	}
 	fmt.Println(searchDimStyle.Render("Keyword search does not require indexing (scans tasks/docs on each query)."))
-	fmt.Println(RenderInfo(fmt.Sprintf("Found %d tasks and %d docs available for keyword search.", taskCount, docCount)))
+	fmt.Println(RenderInfo(fmt.Sprintf("Found %d tasks, %d docs, and %d decisions available for keyword search.", taskCount, docCount, decisionCount)))
 	return nil
 }
 
@@ -971,26 +1021,28 @@ func truncate(s string, maxLen int) string {
 }
 
 func init() {
-	searchCmd.Flags().String("type", "", "Search type: all|task|doc|memory (default: all)")
-	searchCmd.Flags().String("status", "", "Filter tasks by status")
+	searchCmd.Flags().String("type", "", "Search type: all|task|doc|memory|decision (default: all)")
+	searchCmd.Flags().String("status", "", "Filter by task, memory, or decision status")
 	searchCmd.Flags().String("priority", "", "Filter tasks by priority")
 	searchCmd.Flags().String("label", "", "Filter tasks by label")
-	searchCmd.Flags().String("tag", "", "Filter docs by tag")
+	searchCmd.Flags().String("tag", "", "Filter docs, memories, or decisions by tag")
 	searchCmd.Flags().String("assignee", "", "Filter tasks by assignee")
 	searchCmd.Flags().Bool("keyword", false, "Force keyword-only search")
+	searchCmd.Flags().Bool("include-historical", false, "Include non-active memories and non-current decisions")
 	searchCmd.Flags().Int("limit", 20, "Limit search results")
 	searchCmd.Flags().Bool("reindex", false, "Rebuild the search index")
 	searchCmd.Flags().Bool("setup", false, "Set up semantic search")
 	searchCmd.Flags().Bool("status-check", false, "Show semantic search status")
 
-	retrieveCmd.Flags().String("status", "", "Filter tasks by status")
+	retrieveCmd.Flags().String("status", "", "Filter by task, memory, or decision status")
 	retrieveCmd.Flags().String("priority", "", "Filter tasks by priority")
 	retrieveCmd.Flags().String("label", "", "Filter tasks by label")
-	retrieveCmd.Flags().String("tag", "", "Filter docs or memories by tag")
+	retrieveCmd.Flags().String("tag", "", "Filter docs, memories, or decisions by tag")
 	retrieveCmd.Flags().String("assignee", "", "Filter tasks by assignee")
 	retrieveCmd.Flags().Bool("keyword", false, "Force keyword-only retrieval")
-	retrieveCmd.Flags().Bool("expand-references", false, "Expand @doc/@task/@memory references into the result")
-	retrieveCmd.Flags().String("source-types", "", "Comma-separated source types: doc,task,memory")
+	retrieveCmd.Flags().Bool("expand-references", false, "Expand @doc/@task/@memory/@decision references into the result")
+	retrieveCmd.Flags().Bool("include-historical", false, "Include non-active memories and non-current decisions")
+	retrieveCmd.Flags().String("source-types", "", "Comma-separated source types: doc,task,memory,decision")
 	retrieveCmd.Flags().Int("limit", 20, "Limit ranked candidates")
 
 	rootCmd.AddCommand(searchCmd)

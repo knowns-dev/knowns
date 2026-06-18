@@ -18,15 +18,16 @@ const memoryStoreGlobal = "global-store"
 
 // SearchOptions configures a search query.
 type SearchOptions struct {
-	Query    string
-	Type     string // "all", "task", "doc", "memory"
-	Mode     string // "keyword", "semantic", "hybrid"
-	Status   string
-	Priority string
-	Assignee string
-	Label    string
-	Tag      string
-	Limit    int
+	Query             string
+	Type              string // "all", "task", "doc", "memory", "decision"
+	Mode              string // "keyword", "semantic", "hybrid"
+	Status            string
+	Priority          string
+	Assignee          string
+	Label             string
+	Tag               string
+	Limit             int
+	IncludeHistorical bool
 }
 
 // Engine provides keyword, semantic, and hybrid search across tasks and docs.
@@ -114,15 +115,16 @@ func (e *Engine) Search(opts SearchOptions) ([]models.SearchResult, error) {
 func (e *Engine) Retrieve(opts models.RetrievalOptions) (*models.RetrievalResponse, error) {
 	semanticAvailable := e.semanticAvailableForType(typeFilterFromSources(opts.SourceTypes))
 	searchOpts := SearchOptions{
-		Query:    opts.Query,
-		Mode:     opts.Mode,
-		Limit:    opts.Limit,
-		Tag:      opts.Tag,
-		Status:   opts.Status,
-		Priority: opts.Priority,
-		Assignee: opts.Assignee,
-		Label:    opts.Label,
-		Type:     typeFilterFromSources(opts.SourceTypes),
+		Query:             opts.Query,
+		Mode:              opts.Mode,
+		Limit:             opts.Limit,
+		Tag:               opts.Tag,
+		Status:            opts.Status,
+		Priority:          opts.Priority,
+		Assignee:          opts.Assignee,
+		Label:             opts.Label,
+		Type:              typeFilterFromSources(opts.SourceTypes),
+		IncludeHistorical: opts.IncludeHistorical,
 	}
 
 	results, err := e.Search(searchOpts)
@@ -159,6 +161,8 @@ func (e *Engine) semanticAvailableForType(searchType string) bool {
 	switch searchType {
 	case "memory":
 		return e.memorySemanticAvailable()
+	case "decision":
+		return e.SemanticAvailable()
 	case "", "all":
 		return e.SemanticAvailable() || e.memorySemanticAvailable()
 	default:
@@ -196,7 +200,7 @@ func filterSearchResultsByType(results []models.SearchResult, searchType string)
 func typeFilterFromSources(sourceTypes []string) string {
 	if len(sourceTypes) == 1 {
 		switch sourceTypes[0] {
-		case "task", "doc", "memory":
+		case "task", "doc", "memory", "decision":
 			return sourceTypes[0]
 		}
 	}
@@ -343,6 +347,12 @@ func (e *Engine) contextContent(candidate models.RetrievalCandidate) string {
 			parts = append([]string{entry.Title + " [" + entry.Category + "]"}, entry.Content)
 		}
 		return strings.TrimSpace(strings.Join(parts, "\n\n"))
+	case "decision":
+		decision, err := e.store.Decisions.Get(candidate.ID)
+		if err != nil {
+			return candidate.Snippet
+		}
+		return decisionText(decision)
 	default:
 		return candidate.Snippet
 	}
@@ -361,12 +371,14 @@ func sourcePreference(sourceType string) int {
 	switch sourceType {
 	case "doc":
 		return 0
-	case "task":
+	case "decision":
 		return 1
-	case "memory":
+	case "task":
 		return 2
-	default:
+	case "memory":
 		return 3
+	default:
+		return 4
 	}
 }
 
@@ -398,6 +410,12 @@ func (e *Engine) sourceRecord(result models.SearchResult) models.SourceRecord {
 		if entry, err := e.store.Memory.Get(result.ID); err == nil {
 			record.UpdatedAt = timePtr(entry.UpdatedAt)
 		}
+	case "decision":
+		if decision, err := e.store.Decisions.Get(result.ID); err == nil {
+			record.Status = decision.Status
+			record.Tags = decision.Tags
+			record.UpdatedAt = timePtr(decision.UpdatedAt)
+		}
 	}
 	return record
 }
@@ -416,7 +434,7 @@ func (e *Engine) expandCandidateReferences(candidates []models.RetrievalCandidat
 	seen := map[string]bool{}
 	for _, candidate := range candidates {
 		content := e.referenceContent(candidate)
-		for _, expandedCandidate := range e.extractReferenceCandidates(content, candidate, allowed) {
+		for _, expandedCandidate := range e.extractReferenceCandidates(content, candidate, allowed, opts) {
 			key := expandedCandidate.Type + ":" + expandedCandidate.ID
 			if seen[key] {
 				continue
@@ -430,7 +448,7 @@ func (e *Engine) expandCandidateReferences(candidates []models.RetrievalCandidat
 
 func allowedSourceSet(sourceTypes []string) map[string]bool {
 	if len(sourceTypes) == 0 {
-		return map[string]bool{"doc": true, "task": true, "memory": true}
+		return map[string]bool{"doc": true, "task": true, "memory": true, "decision": true}
 	}
 	allowed := make(map[string]bool, len(sourceTypes))
 	for _, sourceType := range sourceTypes {
@@ -453,11 +471,15 @@ func (e *Engine) referenceContent(candidate models.RetrievalCandidate) string {
 		if entry, err := e.store.Memory.Get(candidate.ID); err == nil {
 			return entry.Content
 		}
+	case "decision":
+		if decision, err := e.store.Decisions.Get(candidate.ID); err == nil {
+			return decisionText(decision)
+		}
 	}
 	return ""
 }
 
-func (e *Engine) extractReferenceCandidates(content string, source models.RetrievalCandidate, allowed map[string]bool) []models.RetrievalCandidate {
+func (e *Engine) extractReferenceCandidates(content string, source models.RetrievalCandidate, allowed map[string]bool, opts models.RetrievalOptions) []models.RetrievalCandidate {
 	var expanded []models.RetrievalCandidate
 	for _, ref := range references.Extract(content) {
 		if !ref.ValidRelation || !allowed[ref.Type] {
@@ -513,7 +535,13 @@ func (e *Engine) extractReferenceCandidates(content string, source models.Retrie
 				})
 			}
 		case "memory":
-			if entry, err := e.store.Memory.Get(ref.Target); err == nil {
+			if entry, err := e.store.Memory.ResolveReferenceTarget(ref.Target); err == nil {
+				if !memoryVisibleForSearch(entry, SearchOptions{
+					Status:            opts.Status,
+					IncludeHistorical: opts.IncludeHistorical,
+				}) {
+					continue
+				}
 				expanded = append(expanded, models.RetrievalCandidate{
 					Type:             "memory",
 					ID:               entry.ID,
@@ -523,6 +551,7 @@ func (e *Engine) extractReferenceCandidates(content string, source models.Retrie
 					Citation:         models.Citation{Type: "memory", ID: entry.ID},
 					DirectMatch:      false,
 					ExpandedFrom:     []string{source.Type + ":" + source.ID},
+					Status:           entry.Status,
 					Tags:             entry.Tags,
 					MemoryLayer:      entry.Layer,
 					Category:         entry.Category,
@@ -530,10 +559,40 @@ func (e *Engine) extractReferenceCandidates(content string, source models.Retrie
 					Metadata: models.SourceRecord{
 						Type:        "memory",
 						ID:          entry.ID,
+						Status:      entry.Status,
 						Tags:        entry.Tags,
 						MemoryLayer: entry.Layer,
 						Category:    entry.Category,
 						UpdatedAt:   timePtr(entry.UpdatedAt),
+					},
+				})
+			}
+		case "decision":
+			if decision, err := e.store.Decisions.Get(ref.Target); err == nil {
+				if !decisionVisibleForSearch(decision, SearchOptions{
+					Status:            opts.Status,
+					IncludeHistorical: opts.IncludeHistorical,
+				}) {
+					continue
+				}
+				expanded = append(expanded, models.RetrievalCandidate{
+					Type:             "decision",
+					ID:               decision.ID,
+					Title:            decision.Title,
+					Score:            source.Score * 0.5,
+					Snippet:          truncateStr(decisionText(decision), 150),
+					Citation:         models.Citation{Type: "decision", ID: decision.ID},
+					DirectMatch:      false,
+					ExpandedFrom:     []string{source.Type + ":" + source.ID},
+					Status:           decision.Status,
+					Tags:             decision.Tags,
+					SourcePreference: sourcePreference("decision"),
+					Metadata: models.SourceRecord{
+						Type:      "decision",
+						ID:        decision.ID,
+						Status:    decision.Status,
+						Tags:      decision.Tags,
+						UpdatedAt: timePtr(decision.UpdatedAt),
 					},
 				})
 			}
@@ -582,6 +641,14 @@ func (e *Engine) heuristicKeywordSearch(query string, opts SearchOptions) ([]mod
 			return nil, err
 		}
 		results = append(results, memResults...)
+	}
+
+	if opts.Type == "all" || opts.Type == "decision" {
+		decisionResults, err := e.keywordSearchDecisions(queryLower, words, opts)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, decisionResults...)
 	}
 
 	return results, nil
@@ -676,6 +743,9 @@ func (e *Engine) keywordSearchMemories(query string, words []string, opts Search
 
 	var results []models.SearchResult
 	for _, entry := range entries {
+		if !memoryVisibleForSearch(entry, opts) {
+			continue
+		}
 		if opts.Tag != "" && !containsStr(entry.Tags, opts.Tag) {
 			continue
 		}
@@ -696,11 +766,51 @@ func (e *Engine) keywordSearchMemories(query string, words []string, opts Search
 			Title:       entry.Title,
 			Score:       score,
 			Snippet:     snippet,
+			Status:      entry.Status,
 			MemoryLayer: entry.Layer,
 			Category:    entry.Category,
 			MemoryStore: memoryStoreForLayer(entry.Layer),
 			Tags:        entry.Tags,
 			MatchedBy:   []string{"keyword"},
+		})
+	}
+	return results, nil
+}
+
+func (e *Engine) keywordSearchDecisions(query string, words []string, opts SearchOptions) ([]models.SearchResult, error) {
+	decisions, err := e.store.Decisions.List()
+	if err != nil {
+		return nil, err
+	}
+
+	var results []models.SearchResult
+	for _, decision := range decisions {
+		if !decisionVisibleForSearch(decision, opts) {
+			continue
+		}
+		if opts.Tag != "" && !containsStr(decision.Tags, opts.Tag) {
+			continue
+		}
+
+		score := scoreDecision(decision, query, words)
+		if score <= 0 {
+			continue
+		}
+
+		snippet := extractSnippet(decisionText(decision), query, 150)
+		if snippet == "" {
+			snippet = truncateStr(decisionText(decision), 150)
+		}
+
+		results = append(results, models.SearchResult{
+			Type:      "decision",
+			ID:        decision.ID,
+			Title:     decision.Title,
+			Score:     score,
+			Snippet:   snippet,
+			Status:    decision.Status,
+			Tags:      decision.Tags,
+			MatchedBy: []string{"keyword"},
 		})
 	}
 	return results, nil
@@ -980,6 +1090,8 @@ func chunkTypeForSearchType(searchType string) ChunkType {
 		return ChunkTypeTask
 	case "doc":
 		return ChunkTypeDoc
+	case "decision":
+		return ChunkTypeDecision
 	default:
 		return ""
 	}
@@ -1160,11 +1272,16 @@ func (e *Engine) scoredChunksToResults(scored []ScoredChunk, opts SearchOptions,
 			title := sc.MemoryID
 			memLayer := sc.MemoryLayer
 			memStore := sc.MemoryStore
+			memStatus := ""
 			var category string
 			var tags []string
 			if entry, err := e.memoryEntryForChunk(sc); err == nil {
+				if !memoryVisibleForSearch(entry, opts) {
+					continue
+				}
 				title = entry.Title
 				memLayer = entry.Layer
+				memStatus = entry.Status
 				category = entry.Category
 				tags = entry.Tags
 			}
@@ -1177,11 +1294,41 @@ func (e *Engine) scoredChunksToResults(scored []ScoredChunk, opts SearchOptions,
 				ID:          sc.MemoryID,
 				Title:       title,
 				Score:       chunkScore,
+				Status:      memStatus,
 				MemoryLayer: memLayer,
 				Category:    category,
 				MemoryStore: memStore,
 				Tags:        tags,
 				MatchedBy:   []string{method},
+			}
+
+		case ChunkTypeDecision:
+			key = "decision:" + sc.DecisionID
+
+			if opts.Type != "" && opts.Type != "all" && opts.Type != "decision" {
+				continue
+			}
+
+			title := sc.DecisionID
+			decisionStatus := sc.Status
+			var tags []string
+			if decision, err := e.store.Decisions.Get(sc.DecisionID); err == nil {
+				if !decisionVisibleForSearch(decision, opts) {
+					continue
+				}
+				title = decision.Title
+				decisionStatus = decision.Status
+				tags = decision.Tags
+			}
+
+			result = models.SearchResult{
+				Type:      "decision",
+				ID:        sc.DecisionID,
+				Title:     title,
+				Score:     chunkScore,
+				Status:    decisionStatus,
+				Tags:      tags,
+				MatchedBy: []string{method},
 			}
 
 		case ChunkTypeCode:
@@ -1236,6 +1383,32 @@ func (e *Engine) memoryEntryForChunk(sc ScoredChunk) (*models.MemoryEntry, error
 		return e.store.Memory.GetInLayer(sc.MemoryID, models.MemoryLayerGlobal)
 	}
 	return e.store.Memory.Get(sc.MemoryID)
+}
+
+func memoryVisibleForSearch(entry *models.MemoryEntry, opts SearchOptions) bool {
+	if entry == nil {
+		return false
+	}
+	if opts.Status != "" && models.ValidMemoryStatus(opts.Status) {
+		return entry.Status == opts.Status
+	}
+	if opts.IncludeHistorical {
+		return true
+	}
+	return entry.CurrentForDefaultRetrieval()
+}
+
+func decisionVisibleForSearch(decision *models.DecisionEntry, opts SearchOptions) bool {
+	if decision == nil {
+		return false
+	}
+	if opts.Status != "" && models.ValidDecisionStatus(opts.Status) {
+		return decision.Status == opts.Status
+	}
+	if opts.IncludeHistorical {
+		return true
+	}
+	return decision.CurrentForDefaultRetrieval()
 }
 
 // ─── scoring helpers ──────────────────────────────────────────────────
@@ -1468,6 +1641,53 @@ func scoreMemory(entry *models.MemoryEntry, query string, words []string) float6
 			if wordBoundaryCount(entry.Content, w) > 0 {
 				wordScore += 1.0
 			} else if strings.Contains(contentLower, w) {
+				wordScore += 0.3
+			}
+		}
+		score += wordScore / float64(len(words)) * 20
+	}
+	return score
+}
+
+func scoreDecision(entry *models.DecisionEntry, query string, words []string) float64 {
+	text := decisionText(entry)
+	score := 0.0
+	titleLower := strings.ToLower(entry.Title)
+	textLower := strings.ToLower(text)
+
+	if phraseMatch(entry.Title, query) {
+		if titleLower == query {
+			score += 100
+		} else {
+			score += 60
+		}
+	} else if strings.Contains(titleLower, query) {
+		score += 30
+	}
+
+	if phraseMatch(text, query) {
+		score += 20
+	} else if strings.Contains(textLower, query) {
+		score += 10
+	}
+
+	for _, tag := range entry.Tags {
+		if strings.Contains(strings.ToLower(tag), query) {
+			score += 10
+		}
+	}
+
+	if len(words) > 1 {
+		wordScore := 0.0
+		for _, w := range words {
+			if wordBoundaryCount(entry.Title, w) > 0 {
+				wordScore += 2.0
+			} else if strings.Contains(titleLower, w) {
+				wordScore += 0.5
+			}
+			if wordBoundaryCount(text, w) > 0 {
+				wordScore += 1.0
+			} else if strings.Contains(textLower, w) {
 				wordScore += 0.3
 			}
 		}

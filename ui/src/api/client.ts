@@ -246,10 +246,61 @@ export const {
 export interface LSPLanguageInfo {
 	id: string;
 	name: string;
+	status?: string;
 	binary: string;
+	binaryPath?: string;
+	source?: string;
 	installed: boolean;
 	running: boolean;
+	installState?: string;
+	runningState?: string;
+	readinessState?: string;
+	version?: string;
+	cachePath?: string;
+	selectedPath?: string;
+	cleanupEligible?: boolean;
+	installError?: string;
+	updateError?: string;
 	installHint?: string;
+	backend?: string;
+	backendSource?: string;
+	projectPath?: string;
+	projectKind?: string;
+	logPath?: string;
+	traceEnabled?: boolean;
+	attempts?: Array<{ backend: string; status: string; reason?: string }>;
+}
+
+export interface LSPLanguageConfigPatch {
+	backend?: string;
+	projectPath?: string;
+	version?: string;
+	binary?: string;
+	settings?: Record<string, unknown>;
+	apply?: boolean;
+}
+
+export interface LSPActionResponse {
+	language: string;
+	status: string;
+	action: string;
+	info?: LSPLanguageInfo;
+	error?: string;
+}
+
+export interface LSPLogResponse {
+	language: string;
+	kind: "runtime" | "trace";
+	logPath: string;
+	content: string;
+}
+
+async function parseLSPActionResponse<T extends { error?: string }>(res: Response, fallback: string): Promise<T> {
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data.error) {
+		throw new Error(data.error || fallback);
+	}
+	return data as T;
 }
 
 export const lspApi = {
@@ -294,6 +345,57 @@ export const lspApi = {
 			throw new Error(data.error || "Failed to remove LSP language");
 		}
 		return res.json();
+	},
+
+	async restartLanguage(lang: string): Promise<LSPActionResponse> {
+		const res = await apiFetch(`${API_BASE}/api/lsp/languages/${encodeURIComponent(lang)}/restart`, {
+			method: "POST",
+		});
+		return parseLSPActionResponse<LSPActionResponse>(res, "Failed to restart LSP language");
+	},
+
+	async updateLanguageConfig(lang: string, patch: LSPLanguageConfigPatch): Promise<LSPActionResponse> {
+		const res = await apiFetch(`${API_BASE}/api/lsp/languages/${encodeURIComponent(lang)}/config`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(patch),
+		});
+		return parseLSPActionResponse<LSPActionResponse>(res, "Failed to update LSP language config");
+	},
+
+	async installLanguage(lang: string, action: "install" | "update" = "install"): Promise<LSPActionResponse> {
+		const res = await apiFetch(`${API_BASE}/api/lsp/languages/${encodeURIComponent(lang)}/install`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ action }),
+		});
+		return parseLSPActionResponse<LSPActionResponse>(res, `Failed to ${action} LSP dependency`);
+	},
+
+	async cleanupLanguage(lang: string): Promise<LSPActionResponse> {
+		const res = await apiFetch(`${API_BASE}/api/lsp/languages/${encodeURIComponent(lang)}/cleanup`, {
+			method: "POST",
+		});
+		return parseLSPActionResponse<LSPActionResponse>(res, "Failed to cleanup LSP dependency");
+	},
+
+	async getLanguageLogs(lang: string, kind: "runtime" | "trace" = "runtime", tail = 200): Promise<LSPLogResponse> {
+		const params = new URLSearchParams({ kind, tail: String(tail) });
+		const res = await apiFetch(`${API_BASE}/api/lsp/languages/${encodeURIComponent(lang)}/logs?${params}`);
+		if (!res.ok) {
+			const data = await res.json().catch(() => ({}));
+			throw new Error(data.error || "Failed to fetch LSP logs");
+		}
+		return res.json();
+	},
+
+	async setLanguageTrace(lang: string, enabled: boolean): Promise<LSPActionResponse & { enabled: boolean; tracePath?: string }> {
+		const res = await apiFetch(`${API_BASE}/api/lsp/languages/${encodeURIComponent(lang)}/trace`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ enabled }),
+		});
+		return parseLSPActionResponse<LSPActionResponse & { enabled: boolean; tracePath?: string }>(res, "Failed to update LSP trace");
 	},
 };
 
@@ -1626,7 +1728,7 @@ export const workspaceApi = {
 
 export interface GraphNode {
 	id: string;
-	type: "task" | "doc" | "template" | "memory" | "code";
+	type: "task" | "doc" | "template" | "memory" | "decision" | "code";
 	label: string;
 	data: Record<string, unknown>;
 }
@@ -1675,11 +1777,13 @@ export interface SemanticDocReferenceFragment {
 
 export interface SemanticReference {
 	raw: string;
+	canonical: string;
 	type: string;
 	target: string;
 	relation: string;
 	explicitRelation?: boolean;
 	validRelation: boolean;
+	legacy?: boolean;
 	fragment?: SemanticDocReferenceFragment;
 }
 
@@ -1712,6 +1816,136 @@ export async function resolveReference(ref: string): Promise<SemanticResolution>
 	return res.json();
 }
 
+// --- Decision API ---
+
+export type DecisionStatus = "draft" | "accepted" | "superseded" | "rejected" | "archived";
+export type DecisionReviewResolution =
+	| "supersede_existing"
+	| "create_draft"
+	| "link_as_related"
+	| "reject_new";
+
+export interface DecisionEntry {
+	id: string;
+	title: string;
+	status: DecisionStatus;
+	supersedes?: string[];
+	supersededBy?: string[];
+	tags?: string[];
+	sources?: string[];
+	relatedDocs?: string[];
+	relatedTasks?: string[];
+	createdAt: string;
+	updatedAt: string;
+	context?: string;
+	decision?: string;
+	alternativesConsidered?: string;
+	consequences?: string;
+	content?: string;
+}
+
+export interface DecisionReviewMatch {
+	id: string;
+	title: string;
+	status?: DecisionStatus;
+	score: number;
+	kind?: "duplicate" | "conflict" | string;
+	matchedBy?: string[];
+	snippet?: string;
+	tags?: string[];
+}
+
+export interface DecisionReviewResult {
+	status: "created" | "review_required" | "resolved";
+	resolution?: DecisionReviewResolution;
+	candidate?: DecisionEntry;
+	matches?: DecisionReviewMatch[];
+	allowedResolutions?: DecisionReviewResolution[];
+	decision?: DecisionEntry;
+	superseded?: DecisionEntry;
+	current?: DecisionEntry;
+	changedIds?: string[];
+}
+
+export interface DecisionResolveRequest extends Partial<DecisionEntry> {
+	resolution: DecisionReviewResolution;
+	targetId?: string;
+	replacementId?: string;
+	status?: DecisionStatus;
+}
+
+export class DecisionReviewRequiredError extends Error {
+	result: DecisionReviewResult;
+
+	constructor(result: DecisionReviewResult) {
+		super("Decision review required");
+		this.name = "DecisionReviewRequiredError";
+		this.result = result;
+	}
+}
+
+export const decisionApi = {
+	async list(options?: { status?: DecisionStatus; includeAll?: boolean; tag?: string }): Promise<DecisionEntry[]> {
+		const params = new URLSearchParams();
+		if (options?.status) params.set("status", options.status);
+		if (options?.includeAll) params.set("includeAll", "true");
+		if (options?.tag) params.set("tag", options.tag);
+		const query = params.toString();
+		const res = await apiFetch(`${API_BASE}/api/decisions${query ? `?${query}` : ""}`);
+		if (!res.ok) throw new Error("Failed to fetch decisions");
+		return res.json();
+	},
+
+	async get(id: string): Promise<DecisionEntry> {
+		const res = await apiFetch(`${API_BASE}/api/decisions/${encodeURIComponent(id)}`);
+		if (!res.ok) throw new Error(`Failed to fetch decision ${id}`);
+		return res.json();
+	},
+
+	async create(data: Partial<DecisionEntry>): Promise<DecisionEntry> {
+		const res = await apiFetch(`${API_BASE}/api/decisions`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(data),
+		});
+		if (res.status === 409) {
+			const result = (await res.json()) as DecisionReviewResult;
+			throw new DecisionReviewRequiredError(result);
+		}
+		if (!res.ok) {
+			const error = await res.json().catch(() => ({ error: "Failed to create decision" }));
+			throw new Error(error.error || "Failed to create decision");
+		}
+		return res.json();
+	},
+
+	async supersede(oldId: string, newId: string): Promise<{ superseded: DecisionEntry; current: DecisionEntry }> {
+		const res = await apiFetch(`${API_BASE}/api/decisions/${encodeURIComponent(oldId)}/supersede`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ newId }),
+		});
+		if (!res.ok) {
+			const error = await res.json().catch(() => ({ error: `Failed to supersede decision ${oldId}` }));
+			throw new Error(error.error || `Failed to supersede decision ${oldId}`);
+		}
+		return res.json();
+	},
+
+	async resolveReview(data: DecisionResolveRequest): Promise<DecisionReviewResult> {
+		const res = await apiFetch(`${API_BASE}/api/decisions/review/resolve`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(data),
+		});
+		if (!res.ok) {
+			const error = await res.json().catch(() => ({ error: "Failed to resolve decision review" }));
+			throw new Error(error.error || "Failed to resolve decision review");
+		}
+		return res.json();
+	},
+};
+
 // --- Memory API ---
 
 export type PersistentMemoryLayer = "project" | "global";
@@ -1722,10 +1956,112 @@ export interface MemoryEntry {
 	content: string;
 	layer: "working" | PersistentMemoryLayer;
 	category?: string;
+	status?: MemoryStatus;
+	confidence?: MemoryConfidence;
+	lastVerified?: string;
+	ttlDays?: number;
+	sources?: string[];
+	mergedInto?: string;
+	rejectedReason?: string;
 	tags?: string[];
 	metadata?: Record<string, string>;
+	lifecycleMetadataMissing?: string[];
 	createdAt: string;
 	updatedAt: string;
+}
+
+export type MemoryStatus = "proposed" | "active" | "stale" | "deprecated" | "archived" | "rejected" | "merged";
+export type MemoryConfidence = "low" | "medium" | "high";
+export type MemoryReviewReason =
+	| "proposed"
+	| "duplicate_review"
+	| "stale_ttl"
+	| "missing_source"
+	| "source_missing"
+	| "source_decision_superseded";
+export type MemoryBulkAction = "verify" | "archive" | "reject_proposed";
+export type MemoryItemAction = "verify" | "archive" | "reject" | "link_source" | "repair_source";
+export type MemoryReviewResolution =
+	| "update_existing"
+	| "archive_existing_create_new"
+	| "create_proposed"
+	| "reject_new"
+	| "merge_existing";
+
+export interface MemoryReviewMatch {
+	id: string;
+	title: string;
+	layer: PersistentMemoryLayer;
+	category?: string;
+	status?: MemoryStatus;
+	score: number;
+	matchedBy?: string[];
+	snippet?: string;
+	tags?: string[];
+}
+
+export interface MemoryReviewResult {
+	status: "created" | "review_required" | "resolved";
+	resolution?: MemoryReviewResolution;
+	candidate?: MemoryEntry;
+	matches?: MemoryReviewMatch[];
+	allowedResolutions?: MemoryReviewResolution[];
+	memory?: MemoryEntry;
+	changedIds?: string[];
+}
+
+export interface MemoryReviewIssue {
+	code: string;
+	message: string;
+	source?: string;
+	targetId?: string;
+	replacementId?: string;
+}
+
+export interface MemorySourceRepair {
+	source: string;
+	replacement: string;
+	decisionId: string;
+	replacementDecisionId: string;
+}
+
+export interface MemoryReviewItem {
+	memory: MemoryEntry;
+	reasons: MemoryReviewReason[];
+	issues?: MemoryReviewIssue[];
+	matches?: MemoryReviewMatch[];
+	repairSources?: MemorySourceRepair[];
+}
+
+export interface MemoryReviewInboxResponse {
+	memories: MemoryEntry[];
+	items: MemoryReviewItem[];
+	counts: Record<MemoryReviewReason, number>;
+}
+
+export interface MemoryResolveRequest extends Partial<MemoryEntry> {
+	resolution: MemoryReviewResolution;
+	targetId?: string;
+	status?: MemoryStatus;
+	rejectedReason?: string;
+}
+
+export interface MemoryActionRequest {
+	action: MemoryItemAction;
+	sources?: string[];
+	source?: string;
+	replacement?: string;
+	rejectedReason?: string;
+}
+
+export class MemoryReviewRequiredError extends Error {
+	result: MemoryReviewResult;
+
+	constructor(result: MemoryReviewResult) {
+		super("Memory review required");
+		this.name = "MemoryReviewRequiredError";
+		this.result = result;
+	}
 }
 
 export const memoryApi = {
@@ -1743,13 +2079,36 @@ export const memoryApi = {
 		return res.json();
 	},
 
-	async create(data: Partial<MemoryEntry>): Promise<MemoryEntry> {
+	async create(data: Partial<MemoryEntry> & { skipReview?: boolean }): Promise<MemoryEntry> {
 		const res = await apiFetch(`${API_BASE}/api/memories`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(data),
 		});
+		if (res.status === 409) {
+			const result = (await res.json()) as MemoryReviewResult;
+			throw new MemoryReviewRequiredError(result);
+		}
 		if (!res.ok) throw new Error("Failed to create memory");
+		return res.json();
+	},
+
+	async reviewInbox(): Promise<MemoryReviewInboxResponse> {
+		const res = await apiFetch(`${API_BASE}/api/memories/review`);
+		if (!res.ok) throw new Error("Failed to fetch memory review inbox");
+		return res.json();
+	},
+
+	async resolveReview(data: MemoryResolveRequest): Promise<MemoryReviewResult> {
+		const res = await apiFetch(`${API_BASE}/api/memories/review/resolve`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(data),
+		});
+		if (!res.ok) {
+			const error = await res.json().catch(() => ({ error: "Failed to resolve memory review" }));
+			throw new Error(error.error || "Failed to resolve memory review");
+		}
 		return res.json();
 	},
 
@@ -1760,6 +2119,32 @@ export const memoryApi = {
 			body: JSON.stringify(data),
 		});
 		if (!res.ok) throw new Error(`Failed to update memory ${id}`);
+		return res.json();
+	},
+
+	async action(id: string, data: MemoryActionRequest): Promise<MemoryEntry> {
+		const res = await apiFetch(`${API_BASE}/api/memories/${encodeURIComponent(id)}/action`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(data),
+		});
+		if (!res.ok) {
+			const error = await res.json().catch(() => ({ error: `Failed to update memory ${id}` }));
+			throw new Error(error.error || `Failed to update memory ${id}`);
+		}
+		return res.json();
+	},
+
+	async bulkAction(action: MemoryBulkAction, ids: string[], rejectedReason?: string): Promise<{ updated: MemoryEntry[]; count: number }> {
+		const res = await apiFetch(`${API_BASE}/api/memories/bulk`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ action, ids, rejectedReason }),
+		});
+		if (!res.ok) {
+			const error = await res.json().catch(() => ({ error: "Failed to update memories" }));
+			throw new Error(error.error || "Failed to update memories");
+		}
 		return res.json();
 	},
 

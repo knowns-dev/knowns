@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { Brain, FileText } from "lucide-react";
+import { Brain, FileCode, FileText, GitBranch } from "lucide-react";
 import { resolveReference, type SemanticResolution } from "../../api/client";
 import { navigateTo } from "../../lib/navigation";
 import {
   STATUS_STYLES,
   docMentionBrokenClass,
   docMentionClass,
+  decisionMentionClass,
   memoryMentionClass,
   normalizeDocPath,
   semanticFragmentClass,
   semanticRelationClass,
   taskMentionBrokenClass,
   taskMentionClass,
+  templateMentionClass,
 } from "./mentionUtils";
 
 interface SemanticReferenceBadgeProps {
@@ -43,7 +45,7 @@ function docTargetBase(target: string): string {
 }
 
 function unresolvedDisplay(rawRef: string): string {
-  return rawRef.replace(/^@(?:doc|task-|memory-)/, "");
+  return rawRef.replace(/^@(?:doc\/|task[-/]|memory[-/]|decision\/|template\/)/, "");
 }
 
 export function SemanticReferenceBadge({ rawRef, onDocLinkClick, onTaskLinkClick }: SemanticReferenceBadgeProps) {
@@ -91,6 +93,7 @@ export function SemanticReferenceBadge({ rawRef, onDocLinkClick, onTaskLinkClick
         label: loading ? `#${taskId}` : resolution?.entity?.title || `#${taskId}`,
         title: notFound ? `Task not found: ${taskId}` : resolution?.entity?.title || taskId,
         dataAttrs: { "data-task-id": taskId },
+        interactive: true,
         onClick: (e: ReactMouseEvent<HTMLSpanElement>) => {
           e.preventDefault();
           e.stopPropagation();
@@ -113,11 +116,48 @@ export function SemanticReferenceBadge({ rawRef, onDocLinkClick, onTaskLinkClick
         label: loading ? unresolvedDisplay(rawRef) : resolution?.entity?.title || resolvedMemoryId,
         title: notFound ? `Memory not found: ${memoryId}` : resolution?.entity?.title || resolvedMemoryId,
         dataAttrs: { "data-memory-id": memoryId },
+        interactive: true,
         onClick: (e: ReactMouseEvent<HTMLSpanElement>) => {
           e.preventDefault();
           e.stopPropagation();
           if (notFound) return;
           navigateTo("/memory");
+        },
+      };
+    }
+
+    if (entityType === "decision") {
+      const decisionId = resolution?.entity?.id ?? target;
+      return {
+        className: notFound ? docMentionBrokenClass : decisionMentionClass,
+        icon: <GitBranch className="w-3 h-3 shrink-0 opacity-60" />,
+        label: loading ? unresolvedDisplay(rawRef) : resolution?.entity?.title || decisionId,
+        title: notFound ? `Decision not found: ${decisionId}` : resolution?.entity?.title || decisionId,
+        dataAttrs: { "data-decision-id": decisionId },
+        interactive: false,
+        onClick: (e: ReactMouseEvent<HTMLSpanElement>) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (notFound) return;
+          navigateTo(`/decisions/${decisionId}`);
+        },
+      };
+    }
+
+    if (entityType === "template") {
+      const templateName = resolution?.entity?.id ?? target;
+      return {
+        className: notFound ? docMentionBrokenClass : templateMentionClass,
+        icon: <FileCode className="w-3 h-3 shrink-0 opacity-60" />,
+        label: loading ? unresolvedDisplay(rawRef) : resolution?.entity?.title || templateName,
+        title: notFound ? `Template not found: ${templateName}` : resolution?.entity?.title || templateName,
+        dataAttrs: { "data-template-name": templateName },
+        interactive: false,
+        onClick: (e: ReactMouseEvent<HTMLSpanElement>) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (notFound) return;
+          navigateTo("/config");
         },
       };
     }
@@ -131,6 +171,7 @@ export function SemanticReferenceBadge({ rawRef, onDocLinkClick, onTaskLinkClick
         : `${resolution?.entity?.title || docTargetBase(target)}`,
       title: notFound ? `Document not found: ${docTargetBase(target)}` : resolution?.entity?.title || docTargetBase(target),
       dataAttrs: { "data-doc-path": docPath },
+      interactive: true,
       onClick: (e: ReactMouseEvent<HTMLSpanElement>) => {
         e.preventDefault();
         e.stopPropagation();
@@ -146,7 +187,7 @@ export function SemanticReferenceBadge({ rawRef, onDocLinkClick, onTaskLinkClick
     };
   }, [fragmentSuffix, loading, notFound, onDocLinkClick, onTaskLinkClick, rawRef, relation, resolution]);
 
-  const role = notFound ? undefined : "link";
+  const role = !notFound && badgeMeta.interactive ? "link" : undefined;
   const tooltip = `${badgeMeta.title} · ${relation}`;
 
   return (
@@ -154,7 +195,7 @@ export function SemanticReferenceBadge({ rawRef, onDocLinkClick, onTaskLinkClick
       role={role}
       className={badgeMeta.className}
       title={tooltip}
-      onClick={badgeMeta.onClick}
+      onClick={badgeMeta.interactive ? badgeMeta.onClick : undefined}
       {...badgeMeta.dataAttrs}
     >
       {badgeMeta.icon}

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -41,8 +42,8 @@ func RegisterCodeTool(s *server.MCPServer, getStore func() *storage.Store, getLS
 				mcp.Description("Search or symbol query (required for search, definition, references, implementations)"),
 			),
 			mcp.WithString("mode",
-				mcp.Description("Search mode: hybrid, semantic, or keyword (default: hybrid)"),
-				mcp.Enum("hybrid", "semantic", "keyword"),
+				mcp.Description("Mode: find uses hybrid/semantic/keyword; replace uses literal/regex"),
+				mcp.Enum("hybrid", "semantic", "keyword", "literal", "regex"),
 			),
 			mcp.WithNumber("limit",
 				mcp.Description("Limit results (default: 10 for search, 100 for symbols, 200 for deps)"),
@@ -68,6 +69,25 @@ func RegisterCodeTool(s *server.MCPServer, getStore func() *storage.Store, getLS
 			),
 			mcp.WithString("verbose",
 				mcp.Description("When true, return full LSP-style output instead of compact format. Supported by: symbols, find."),
+			),
+			mcp.WithString("symbol",
+				mcp.Description("Symbol name for rename, replace_body, insert, or delete. Nested names may use dots like Type.Method."),
+			),
+			mcp.WithString("needle",
+				mcp.Description("Text or regex pattern to replace for action=replace."),
+			),
+			mcp.WithString("repl",
+				mcp.Description("Replacement text for action=replace."),
+			),
+			mcp.WithBoolean("allow_multiple_occurrences",
+				mcp.Description("For action=replace, allow replacing multiple matches. Defaults to false."),
+			),
+			mcp.WithString("body",
+				mcp.Description("Replacement or inserted source for replace_body or insert."),
+			),
+			mcp.WithString("position",
+				mcp.Description("For action=insert, insertion position: before or after."),
+				mcp.Enum("before", "after"),
 			),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -121,9 +141,9 @@ func handleCodeDefinition(ctx context.Context, getStore func() *storage.Store, g
 		return errResult(err.Error())
 	}
 	var loc lsp.Location
-	err = mgr.WithFile(ctx, absPath, func(srv *lsp.Server) error {
+	err = mgr.WithSession(ctx, absPath, func(session lsp.Session) error {
 		var callErr error
-		loc, callErr = srv.Definition(ctx, absPath, line, col)
+		loc, callErr = session.Definition(ctx, absPath, line, col)
 		return callErr
 	})
 	if err != nil {
@@ -143,9 +163,9 @@ func handleCodeReferences(ctx context.Context, getStore func() *storage.Store, g
 		return errResult(err.Error())
 	}
 	var locs []lsp.Location
-	err = mgr.WithFile(ctx, absPath, func(srv *lsp.Server) error {
+	err = mgr.WithSession(ctx, absPath, func(session lsp.Session) error {
 		var callErr error
-		locs, callErr = srv.References(ctx, absPath, line, col)
+		locs, callErr = session.References(ctx, absPath, line, col)
 		return callErr
 	})
 	if err != nil {
@@ -173,9 +193,9 @@ func handleCodeImplementations(ctx context.Context, getStore func() *storage.Sto
 		return errResult(err.Error())
 	}
 	var locs []lsp.Location
-	err = mgr.WithFile(ctx, absPath, func(srv *lsp.Server) error {
+	err = mgr.WithSession(ctx, absPath, func(session lsp.Session) error {
 		var callErr error
-		locs, callErr = srv.Implementations(ctx, absPath, line, col)
+		locs, callErr = session.Implementations(ctx, absPath, line, col)
 		return callErr
 	})
 	if err != nil {
@@ -201,9 +221,9 @@ func handleCodeDiagnostics(ctx context.Context, getStore func() *storage.Store, 
 	args := req.GetArguments()
 	severityFilter, _ := stringArg(args, "severity")
 	var diagnostics []lsp.Diagnostic
-	err = mgr.WithFile(ctx, absPath, func(srv *lsp.Server) error {
+	err = mgr.WithSession(ctx, absPath, func(session lsp.Session) error {
 		var callErr error
-		diagnostics, callErr = srv.Diagnostics(ctx, absPath)
+		diagnostics, callErr = session.Diagnostics(ctx, absPath)
 		return callErr
 	})
 	if err != nil {
@@ -365,6 +385,9 @@ func symbolKindString(kind int) string {
 func handleCodeSymbols(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getLSPManager, req)
 	if err != nil {
+		if result, ok := lspRuntimeErrResult(err); ok {
+			return result, nil
+		}
 		return errResult(err.Error())
 	}
 	args := req.GetArguments()
@@ -374,12 +397,18 @@ func handleCodeSymbols(ctx context.Context, getStore func() *storage.Store, getL
 	kindFilter, _ := stringArg(args, "kind")
 
 	var symbols []lsp.DocumentSymbol
-	err = mgr.WithFile(ctx, absPath, func(srv *lsp.Server) error {
+	err = mgr.WithSession(ctx, absPath, func(session lsp.Session) error {
 		var callErr error
-		symbols, callErr = srv.DocumentSymbols(ctx, absPath)
+		symbols, callErr = session.DocumentSymbols(ctx, absPath)
 		return callErr
 	})
 	if err != nil {
+		if runtimeErr := mgr.DescribeRuntimeError(absPath, err); runtimeErr != nil {
+			return lspRuntimeErrPayloadResult(runtimeErr), nil
+		}
+		if result, ok := lspRuntimeErrResult(err); ok {
+			return result, nil
+		}
 		return errResult(err.Error())
 	}
 	if kindFilter != "" {
@@ -399,6 +428,19 @@ func handleCodeSymbols(ctx context.Context, getStore func() *storage.Store, getL
 	}
 	out, _ := json.MarshalIndent(resp, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+func lspRuntimeErrResult(err error) (*mcp.CallToolResult, bool) {
+	var runtimeErr *lsp.RuntimeError
+	if errors.As(err, &runtimeErr) {
+		return lspRuntimeErrPayloadResult(runtimeErr), true
+	}
+	return nil, false
+}
+
+func lspRuntimeErrPayloadResult(runtimeErr *lsp.RuntimeError) *mcp.CallToolResult {
+	out, _ := json.MarshalIndent(runtimeErr.Payload(), "", "  ")
+	return mcp.NewToolResultError(string(out))
 }
 
 // groupedSymbolNames produces {kind: [name1, name2, ...]} — compact default.
@@ -500,9 +542,9 @@ func handleCodeRename(ctx context.Context, getStore func() *storage.Store, getLS
 		return errResult("newName is required")
 	}
 	var edit *lsp.WorkspaceEdit
-	err = mgr.WithFile(ctx, absPath, func(srv *lsp.Server) error {
+	err = mgr.WithSession(ctx, absPath, func(session lsp.Session) error {
 		var callErr error
-		edit, callErr = srv.Rename(ctx, absPath, line, character, newName)
+		edit, callErr = session.Rename(ctx, absPath, line, character, newName)
 		return callErr
 	})
 	if err != nil {
@@ -599,18 +641,21 @@ func handleCodeReplaceBody(ctx context.Context, getStore func() *storage.Store, 
 		return errResult("body is required")
 	}
 	var sym lsp.DocumentSymbol
-	var srvUsed *lsp.Server
-	err = mgr.WithFile(ctx, absPath, func(srv *lsp.Server) error {
-		symbols, e := srv.DocumentSymbols(ctx, absPath)
+	var sessionUsed lsp.Session
+	err = mgr.WithSession(ctx, absPath, func(session lsp.Session) error {
+		symbols, e := session.DocumentSymbols(ctx, absPath)
 		if e != nil {
 			return e
 		}
 		var found bool
-		sym, found = findSymbolByName(symbols, name)
+		sym, found, e = findSymbolByName(symbols, name)
+		if e != nil {
+			return e
+		}
 		if !found {
 			return fmt.Errorf("symbol %q not found", name)
 		}
-		srvUsed = srv
+		sessionUsed = session
 		return nil
 	})
 	if err != nil {
@@ -620,7 +665,7 @@ func handleCodeReplaceBody(ctx context.Context, getStore func() *storage.Store, 
 	if err != nil {
 		return errResult(err.Error())
 	}
-	if err := notifyDidChange(ctx, srvUsed, absPath); err != nil {
+	if err := notifyDidChange(ctx, sessionUsed, absPath); err != nil {
 		return errResult(err.Error())
 	}
 	out, _ := json.MarshalIndent(map[string]any{"success": true, "path": relPath(projectRoot(store), absPath), "symbol": name, "lines_replaced": linesReplaced}, "", "  ")
@@ -649,18 +694,21 @@ func handleCodeInsert(ctx context.Context, getStore func() *storage.Store, getLS
 		return errResult("body is required")
 	}
 	var sym lsp.DocumentSymbol
-	var srvUsed *lsp.Server
-	err = mgr.WithFile(ctx, absPath, func(srv *lsp.Server) error {
-		symbols, e := srv.DocumentSymbols(ctx, absPath)
+	var sessionUsed lsp.Session
+	err = mgr.WithSession(ctx, absPath, func(session lsp.Session) error {
+		symbols, e := session.DocumentSymbols(ctx, absPath)
 		if e != nil {
 			return e
 		}
 		var found bool
-		sym, found = findSymbolByName(symbols, name)
+		sym, found, e = findSymbolByName(symbols, name)
+		if e != nil {
+			return e
+		}
 		if !found {
 			return fmt.Errorf("symbol %q not found", name)
 		}
-		srvUsed = srv
+		sessionUsed = session
 		return nil
 	})
 	if err != nil {
@@ -670,7 +718,7 @@ func handleCodeInsert(ctx context.Context, getStore func() *storage.Store, getLS
 	if err != nil {
 		return errResult(err.Error())
 	}
-	if err := notifyDidChange(ctx, srvUsed, absPath); err != nil {
+	if err := notifyDidChange(ctx, sessionUsed, absPath); err != nil {
 		return errResult(err.Error())
 	}
 	out, _ := json.MarshalIndent(map[string]any{"success": true, "path": relPath(projectRoot(store), absPath), "position": position, "anchor": name, "lines_inserted": inserted}, "", "  ")
@@ -690,24 +738,27 @@ func handleCodeDelete(ctx context.Context, getStore func() *storage.Store, getLS
 	force := boolArg(args, "force")
 	var sym lsp.DocumentSymbol
 	var refs []lsp.Location
-	var srvUsed *lsp.Server
-	err = mgr.WithFile(ctx, absPath, func(srv *lsp.Server) error {
-		symbols, e := srv.DocumentSymbols(ctx, absPath)
+	var sessionUsed lsp.Session
+	err = mgr.WithSession(ctx, absPath, func(session lsp.Session) error {
+		symbols, e := session.DocumentSymbols(ctx, absPath)
 		if e != nil {
 			return e
 		}
 		var found bool
-		sym, found = findSymbolByName(symbols, name)
+		sym, found, e = findSymbolByName(symbols, name)
+		if e != nil {
+			return e
+		}
 		if !found {
 			return fmt.Errorf("symbol %q not found", name)
 		}
 		if !force {
-			refs, e = srv.References(ctx, absPath, sym.SelectionRange.Start.Line, sym.SelectionRange.Start.Character)
+			refs, e = session.References(ctx, absPath, sym.SelectionRange.Start.Line, sym.SelectionRange.Start.Character)
 			if e != nil {
 				return e
 			}
 		}
-		srvUsed = srv
+		sessionUsed = session
 		return nil
 	})
 	if err != nil {
@@ -724,7 +775,7 @@ func handleCodeDelete(ctx context.Context, getStore func() *storage.Store, getLS
 	if err != nil {
 		return errResult(err.Error())
 	}
-	if err := notifyDidChange(ctx, srvUsed, absPath); err != nil {
+	if err := notifyDidChange(ctx, sessionUsed, absPath); err != nil {
 		return errResult(err.Error())
 	}
 	out, _ := json.MarshalIndent(map[string]any{"success": true, "path": relPath(projectRoot(store), absPath), "symbol": name, "lines_deleted": deleted}, "", "  ")
@@ -959,9 +1010,29 @@ func utf16OffsetToByteOffset(s string, target int) (int, error) {
 	return 0, fmt.Errorf("character %d out of range", target)
 }
 
-func findSymbolByName(symbols []lsp.DocumentSymbol, name string) (lsp.DocumentSymbol, bool) {
-	parts := strings.Split(strings.TrimSpace(name), ".")
-	return findSymbolByParts(symbols, parts)
+func findSymbolByName(symbols []lsp.DocumentSymbol, name string) (lsp.DocumentSymbol, bool, error) {
+	name = strings.TrimSpace(name)
+	parts := strings.Split(name, ".")
+	if sym, ok := findSymbolByParts(symbols, parts); ok {
+		return sym, true, nil
+	}
+	if name == "" || strings.Contains(name, ".") {
+		return lsp.DocumentSymbol{}, false, nil
+	}
+	matches := collectBareSymbolMatches(symbols, name, nil)
+	switch len(matches) {
+	case 0:
+		return lsp.DocumentSymbol{}, false, nil
+	case 1:
+		return matches[0], true, nil
+	default:
+		names := make([]string, 0, len(matches))
+		for _, match := range matches {
+			names = append(names, match.Name)
+		}
+		sort.Strings(names)
+		return lsp.DocumentSymbol{}, false, fmt.Errorf("symbol %q is ambiguous; matches: %s", name, strings.Join(names, ", "))
+	}
 }
 
 func findSymbolByParts(symbols []lsp.DocumentSymbol, parts []string) (lsp.DocumentSymbol, bool) {
@@ -982,6 +1053,28 @@ func findSymbolByParts(symbols []lsp.DocumentSymbol, parts []string) (lsp.Docume
 	return lsp.DocumentSymbol{}, false
 }
 
+func collectBareSymbolMatches(symbols []lsp.DocumentSymbol, name string, matches []lsp.DocumentSymbol) []lsp.DocumentSymbol {
+	for _, sym := range symbols {
+		if isCallableSymbol(sym.Kind) && symbolBareName(sym.Name) == name {
+			matches = append(matches, sym)
+		}
+		matches = collectBareSymbolMatches(sym.Children, name, matches)
+	}
+	return matches
+}
+
+func isCallableSymbol(kind int) bool {
+	return kind == 6 || kind == 9 || kind == 12
+}
+
+func symbolBareName(name string) string {
+	name = strings.TrimSpace(name)
+	if idx := strings.Index(name, "("); idx >= 0 {
+		name = name[:idx]
+	}
+	return strings.TrimSpace(name)
+}
+
 func replaceLines(path string, start, end int, body string) (int, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -991,8 +1084,8 @@ func replaceLines(path string, start, end int, body string) (int, error) {
 	if start < 0 || end < start || start >= len(lines) {
 		return 0, fmt.Errorf("invalid symbol range")
 	}
-	if end >= len(lines) {
-		end = len(lines) - 1
+	if end > len(lines) {
+		end = len(lines)
 	}
 	replacement := []string{}
 	if body != "" {
@@ -1000,8 +1093,8 @@ func replaceLines(path string, start, end int, body string) (int, error) {
 	}
 	next := append([]string{}, lines[:start]...)
 	next = append(next, replacement...)
-	next = append(next, lines[end+1:]...)
-	return end - start + 1, os.WriteFile(path, []byte(strings.Join(next, "\n")), 0644)
+	next = append(next, lines[end:]...)
+	return end - start, os.WriteFile(path, []byte(strings.Join(next, "\n")), 0644)
 }
 
 func insertLines(path string, sym lsp.DocumentSymbol, position, body string) (int, error) {
@@ -1024,15 +1117,15 @@ func insertLines(path string, sym lsp.DocumentSymbol, position, body string) (in
 	return len(insert), os.WriteFile(path, []byte(strings.Join(next, "\n")), 0644)
 }
 
-func notifyDidChange(ctx context.Context, srv *lsp.Server, path string) error {
-	if srv == nil {
+func notifyDidChange(ctx context.Context, session lsp.Session, path string) error {
+	if session == nil {
 		return nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	return srv.DidChange(ctx, path, string(data))
+	return session.DidChange(ctx, path, string(data))
 }
 
 func externalReferences(root, selfPath string, rng lsp.Range, refs []lsp.Location) []map[string]any {
@@ -1151,9 +1244,9 @@ func isSourceFile(path string) bool {
 
 func buildFileSummaries(ctx context.Context, mgr *lsp.Manager, root, absPath string) ([]search.CodeSummary, error) {
 	var symbols []lsp.DocumentSymbol
-	err := mgr.WithFile(ctx, absPath, func(srv *lsp.Server) error {
+	err := mgr.WithSession(ctx, absPath, func(session lsp.Session) error {
 		var callErr error
-		symbols, callErr = srv.DocumentSymbols(ctx, absPath)
+		symbols, callErr = session.DocumentSymbols(ctx, absPath)
 		return callErr
 	})
 	if err != nil || len(symbols) == 0 {

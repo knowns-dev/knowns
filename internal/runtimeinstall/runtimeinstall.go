@@ -33,16 +33,34 @@ const (
 	defaultHookEvent = "user-prompt-submit"
 )
 
-func sessionStartEvent(runtime string) string {
+func runtimeHookEvent(runtime string) string {
 	switch strings.TrimSpace(strings.ToLower(runtime)) {
 	case "claude-code", "codex":
-		return "session-start"
+		return defaultHookEvent
 	case "kiro":
 		return "promptsubmit"
 	case "opencode":
 		return "session.created"
 	default:
 		return defaultHookEvent
+	}
+}
+
+func baselineHookEvent(runtime string) string {
+	switch strings.TrimSpace(strings.ToLower(runtime)) {
+	case "opencode":
+		return "session.created"
+	default:
+		return "session-start"
+	}
+}
+
+func nativePromptHookKey(runtime string) (string, bool) {
+	switch strings.TrimSpace(strings.ToLower(runtime)) {
+	case "claude-code", "codex":
+		return "UserPromptSubmit", true
+	default:
+		return "", false
 	}
 }
 
@@ -271,13 +289,21 @@ func hookCommandPath(spec runtimeSpec, opts Options) string {
 }
 
 func hookCommandArgs(spec runtimeSpec, opts Options) []string {
+	return hookCommandArgsForEvent(spec, opts, runtimeHookEvent(spec.Runtime))
+}
+
+func baselineHookCommandPath(spec runtimeSpec, opts Options) string {
+	return shellCommandString(hookCommandArgsForEvent(spec, opts, baselineHookEvent(spec.Runtime)), opts.GOOS)
+}
+
+func hookCommandArgsForEvent(spec runtimeSpec, opts Options, event string) []string {
 	exe := opts.ExecutablePath
 	if opts.LookPath != nil {
 		if _, err := opts.LookPath("knowns"); err == nil {
 			exe = "knowns"
 		}
 	}
-	return []string{exe, "runtime-memory", "hook", "--runtime", spec.Runtime, "--event", sessionStartEvent(spec.Runtime)}
+	return []string{exe, "runtime-memory", "hook", "--runtime", spec.Runtime, "--event", event}
 }
 
 func legacyPromptCommandPath(spec runtimeSpec, opts Options) string {
@@ -337,14 +363,15 @@ func installClaude(spec runtimeSpec, opts Options) error {
 	if hooks == nil {
 		hooks = map[string]any{}
 	}
-	if legacy := removeCommandHookGroup(hooks["UserPromptSubmit"], legacyPromptCommandPath(spec, opts)); legacy == nil {
-		delete(hooks, "UserPromptSubmit")
+	promptKey, _ := nativePromptHookKey(spec.Runtime)
+	if legacy := removeCommandHookGroup(hooks[promptKey], legacyPromptCommandPath(spec, opts)); legacy == nil {
+		delete(hooks, promptKey)
 	} else {
-		hooks["UserPromptSubmit"] = legacy
+		hooks[promptKey] = legacy
 	}
-	// Remove all stale/broken Knowns hook variants before writing the current one.
-	hooks["SessionStart"] = removeManagedHookGroups(hooks["SessionStart"], managedStatus)
-	hooks["SessionStart"] = ensureCommandHookGroup(hooks["SessionStart"], hookCommandPath(spec, opts), managedStatus)
+	setOrDeleteHookGroups(hooks, "SessionStart", removeManagedHookGroups(hooks["SessionStart"], managedStatus))
+	hooks[promptKey] = removeManagedHookGroups(hooks[promptKey], managedStatus)
+	hooks[promptKey] = ensureCommandHookGroup(hooks[promptKey], hookCommandPath(spec, opts), managedStatus)
 	config["hooks"] = hooks
 	return writeJSONMap(path, config)
 }
@@ -359,12 +386,14 @@ func uninstallClaude(spec runtimeSpec, opts Options) error {
 	if hooks == nil {
 		return nil
 	}
-	updated := removeCommandHookGroup(hooks["SessionStart"], hookCommandPath(spec, opts))
-	if updated == nil {
-		delete(hooks, "SessionStart")
-	} else {
-		hooks["SessionStart"] = updated
-	}
+	promptKey, _ := nativePromptHookKey(spec.Runtime)
+	updated := removeCommandHookGroup(hooks[promptKey], hookCommandPath(spec, opts))
+	updated = removeCommandHookGroup(updated, legacyPromptCommandPath(spec, opts))
+	updated = removeManagedHookGroups(updated, managedStatus)
+	setOrDeleteHookGroups(hooks, promptKey, updated)
+	sessionStart := removeCommandHookGroup(hooks["SessionStart"], baselineHookCommandPath(spec, opts))
+	sessionStart = removeManagedHookGroups(sessionStart, managedStatus)
+	setOrDeleteHookGroups(hooks, "SessionStart", sessionStart)
 	if len(hooks) == 0 {
 		delete(config, "hooks")
 	} else {
@@ -383,16 +412,17 @@ func populateClaudeStatus(status *Status, spec runtimeSpec, opts Options) {
 		return
 	}
 	hooks, _ := config["hooks"].(map[string]any)
-	if hooks == nil || !hasCommandHookGroup(hooks["SessionStart"], hookCommandPath(spec, opts)) {
+	promptKey, _ := nativePromptHookKey(spec.Runtime)
+	if hooks == nil || !hasCommandHookGroup(hooks[promptKey], hookCommandPath(spec, opts)) {
 		status.State = StateDrifted
-		status.Summary = "helper script present, Claude hook missing"
-		status.Details = append(status.Details, "SessionStart hook not installed")
+		status.Summary = "helper script present, Claude prompt hook missing"
+		status.Details = append(status.Details, promptKey+" prompt-aware hook not installed")
 		return
 	}
 	status.Installed = true
 	status.State = StateInstalled
 	status.Summary = "installed"
-	status.Details = append(status.Details, "SessionStart hook installed in ~/.claude/settings.json")
+	status.Details = append(status.Details, promptKey+" prompt-aware hook installed in ~/.claude/settings.json")
 }
 
 func installCodex(spec runtimeSpec, opts Options) error {
@@ -405,7 +435,7 @@ func installCodex(spec runtimeSpec, opts Options) error {
 	if err != nil {
 		return err
 	}
-	configBody = setCodexFeature(configBody, "codex_hooks", true)
+	configBody = normalizeCodexHooksFeature(configBody)
 	configBody = SetCodexMCPServer(configBody, "knowns", []string{"mcp", "--stdio"})
 	if err := os.WriteFile(configPath, []byte(configBody), 0644); err != nil {
 		return err
@@ -418,13 +448,15 @@ func installCodex(spec runtimeSpec, opts Options) error {
 	if hookRoot == nil {
 		hookRoot = map[string]any{}
 	}
-	if legacy := removeCommandHookGroup(hookRoot["UserPromptSubmit"], legacyPromptCommandPath(spec, opts)); legacy == nil {
-		delete(hookRoot, "UserPromptSubmit")
+	promptKey, _ := nativePromptHookKey(spec.Runtime)
+	if legacy := removeCommandHookGroup(hookRoot[promptKey], legacyPromptCommandPath(spec, opts)); legacy == nil {
+		delete(hookRoot, promptKey)
 	} else {
-		hookRoot["UserPromptSubmit"] = legacy
+		hookRoot[promptKey] = legacy
 	}
-	hookRoot["SessionStart"] = removeManagedHookGroups(hookRoot["SessionStart"], managedStatus)
-	hookRoot["SessionStart"] = ensureCommandHookGroup(hookRoot["SessionStart"], hookCommandPath(spec, opts), managedStatus)
+	setOrDeleteHookGroups(hookRoot, "SessionStart", removeManagedHookGroups(hookRoot["SessionStart"], managedStatus))
+	hookRoot[promptKey] = removeManagedHookGroups(hookRoot[promptKey], managedStatus)
+	hookRoot[promptKey] = ensureCommandHookGroup(hookRoot[promptKey], hookCommandPath(spec, opts), managedStatus)
 	hooks["hooks"] = hookRoot
 	return writeJSONMap(hooksPath, hooks)
 }
@@ -433,7 +465,7 @@ func uninstallCodex(spec runtimeSpec, opts Options) error {
 	configPath := filepath.Join(opts.HomeDir, ".codex", codexConfig)
 	hooksPath := filepath.Join(opts.HomeDir, ".codex", codexHooksFile)
 	if body, err := readTextIfExists(configPath); err == nil && body != "" {
-		_ = os.WriteFile(configPath, []byte(setCodexFeature(body, "codex_hooks", false)), 0644)
+		_ = os.WriteFile(configPath, []byte(normalizeCodexHooksFeature(body)), 0644)
 	}
 	hooks, err := readJSONMap(hooksPath)
 	if err != nil {
@@ -443,12 +475,14 @@ func uninstallCodex(spec runtimeSpec, opts Options) error {
 	if hookRoot == nil {
 		return nil
 	}
-	updated := removeCommandHookGroup(hookRoot["SessionStart"], hookCommandPath(spec, opts))
-	if updated == nil {
-		delete(hookRoot, "SessionStart")
-	} else {
-		hookRoot["SessionStart"] = updated
-	}
+	promptKey, _ := nativePromptHookKey(spec.Runtime)
+	updated := removeCommandHookGroup(hookRoot[promptKey], hookCommandPath(spec, opts))
+	updated = removeCommandHookGroup(updated, legacyPromptCommandPath(spec, opts))
+	updated = removeManagedHookGroups(updated, managedStatus)
+	setOrDeleteHookGroups(hookRoot, promptKey, updated)
+	sessionStart := removeCommandHookGroup(hookRoot["SessionStart"], baselineHookCommandPath(spec, opts))
+	sessionStart = removeManagedHookGroups(sessionStart, managedStatus)
+	setOrDeleteHookGroups(hookRoot, "SessionStart", sessionStart)
 	if len(hookRoot) == 0 {
 		delete(hooks, "hooks")
 	} else {
@@ -462,10 +496,16 @@ func populateCodexStatus(status *Status, spec runtimeSpec, opts Options) {
 	hooksPath := filepath.Join(opts.HomeDir, ".codex", codexHooksFile)
 	status.Paths = []string{configPath, hooksPath}
 	body, err := readTextIfExists(configPath)
-	if err != nil || !strings.Contains(body, "codex_hooks = true") {
+	if err != nil {
 		status.State = StateDrifted
-		status.Summary = "Codex config missing managed feature flag"
-		status.Details = append(status.Details, "codex_hooks feature not enabled")
+		status.Summary = "Codex config missing"
+		status.Details = append(status.Details, "~/.codex/config.toml not found")
+		return
+	}
+	if strings.Contains(body, "hooks = false") || strings.Contains(body, "codex_hooks = false") {
+		status.State = StateDrifted
+		status.Summary = "Codex hooks disabled in config"
+		status.Details = append(status.Details, "hooks feature disabled")
 		return
 	}
 	hooks, err := readJSONMap(hooksPath)
@@ -476,16 +516,17 @@ func populateCodexStatus(status *Status, spec runtimeSpec, opts Options) {
 		return
 	}
 	hookRoot, _ := hooks["hooks"].(map[string]any)
-	if hookRoot == nil || !hasCommandHookGroup(hookRoot["SessionStart"], hookCommandPath(spec, opts)) {
+	promptKey, _ := nativePromptHookKey(spec.Runtime)
+	if hookRoot == nil || !hasCommandHookGroup(hookRoot[promptKey], hookCommandPath(spec, opts)) {
 		status.State = StateDrifted
 		status.Summary = "Codex feature enabled, hook missing"
-		status.Details = append(status.Details, "SessionStart hook not installed")
+		status.Details = append(status.Details, promptKey+" prompt-aware hook not installed")
 		return
 	}
 	status.Installed = true
 	status.State = StateInstalled
 	status.Summary = "installed"
-	status.Details = append(status.Details, "SessionStart hook installed in ~/.codex/hooks.json")
+	status.Details = append(status.Details, promptKey+" prompt-aware hook installed in ~/.codex/hooks.json")
 }
 
 func installKiro(spec runtimeSpec, opts Options) error {
@@ -508,13 +549,13 @@ func installKiro(spec runtimeSpec, opts Options) error {
 		"version":     "1.0.0",
 		"enabled":     true,
 		"name":        managedStatus,
-		"description": "Inject bounded Knowns memory when the session starts.",
+		"description": "Inject bounded Knowns memory when a prompt is submitted.",
 		"when": map[string]any{
 			"type": "promptSubmit",
 		},
 		"then": map[string]any{
 			"type":    "runCommand",
-			"command": cmdPath + " runtime-memory hook --runtime " + spec.Runtime + " --event " + sessionStartEvent(spec.Runtime),
+			"command": cmdPath + " runtime-memory hook --runtime " + spec.Runtime + " --event " + runtimeHookEvent(spec.Runtime),
 		},
 	}
 	if err := writeJSONMap(hookPath, config); err != nil {
@@ -555,12 +596,12 @@ func populateKiroStatus(status *Status, spec runtimeSpec, opts Options) {
 	when, _ := config["when"].(map[string]any)
 	then, _ := config["then"].(map[string]any)
 	cmd := stringValue(then["command"])
-	expectedSuffix := "runtime-memory hook --runtime " + spec.Runtime + " --event " + sessionStartEvent(spec.Runtime)
+	expectedSuffix := "runtime-memory hook --runtime " + spec.Runtime + " --event " + runtimeHookEvent(spec.Runtime)
 	if stringValue(when["type"]) == "promptSubmit" && strings.EqualFold(stringValue(then["type"]), "runCommand") && strings.HasSuffix(cmd, expectedSuffix) {
 		status.Installed = true
 		status.State = StateInstalled
 		status.Summary = "installed"
-		status.Details = append(status.Details, "promptSubmit hook installed in workspace .kiro/hooks/knowns-runtime-memory.kiro.hook")
+		status.Details = append(status.Details, "promptSubmit prompt-aware hook installed in workspace .kiro/hooks/knowns-runtime-memory.kiro.hook")
 		return
 	}
 	status.State = StateDrifted
@@ -618,9 +659,9 @@ func populateOpenCodeStatus(status *Status, spec runtimeSpec, opts Options) {
 	status.State = StateInstalled
 	status.Summary = "installed"
 	if fileExists(configPath) {
-		status.Details = append(status.Details, "global plugin installed in ~/.config/opencode/plugins")
+		status.Details = append(status.Details, "session-created baseline plugin installed in ~/.config/opencode/plugins")
 	} else {
-		status.Details = append(status.Details, "plugin installed; global OpenCode config not present")
+		status.Details = append(status.Details, "session-created baseline plugin installed; global OpenCode config not present")
 	}
 }
 
@@ -718,6 +759,14 @@ func writeJSONMap(path string, value map[string]any) error {
 		return err
 	}
 	return os.WriteFile(path, append(data, '\n'), 0644)
+}
+
+func setOrDeleteHookGroups(hooks map[string]any, key string, groups []any) {
+	if groups == nil {
+		delete(hooks, key)
+		return
+	}
+	hooks[key] = groups
 }
 
 func ensureCommandHookGroup(existing any, commandPath, statusMessage string) []any {
@@ -828,9 +877,8 @@ func kiroHookCommand(entry map[string]any) string {
 	return stringValue(action["command"])
 }
 
-func setCodexFeature(body, key string, enabled bool) string {
+func normalizeCodexHooksFeature(body string) string {
 	lines := strings.Split(body, "\n")
-	valueLine := key + " = " + map[bool]string{true: "true", false: "false"}[enabled]
 	featuresStart := -1
 	featuresEnd := -1
 	for i, line := range lines {
@@ -849,25 +897,42 @@ func setCodexFeature(body, key string, enabled bool) string {
 		}
 	}
 	if featuresStart == -1 {
-		body = strings.TrimRight(body, "\n")
-		if body != "" {
-			body += "\n\n"
-		}
-		return body + "[features]\n" + valueLine + "\n"
+		return body
 	}
+
+	hasHooks := false
+	hasCodexHooks := false
+	codexHooksDisabled := false
+	featureLines := make([]string, 0, featuresEnd-featuresStart-1)
 	for i := featuresStart + 1; i < featuresEnd; i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(trimmed, key+" =") {
-			lines[i] = valueLine
-			return strings.Join(lines, "\n")
+		if strings.HasPrefix(trimmed, "hooks =") {
+			hasHooks = true
 		}
+		if strings.HasPrefix(trimmed, "codex_hooks =") {
+			hasCodexHooks = true
+			codexHooksDisabled = strings.EqualFold(strings.TrimSpace(strings.TrimPrefix(trimmed, "codex_hooks =")), "false")
+			continue
+		}
+		featureLines = append(featureLines, lines[i])
 	}
-	insertAt := featuresEnd
-	lines = append(lines[:insertAt], append([]string{valueLine}, lines[insertAt:]...)...)
-	return strings.Join(lines, "\n")
+
+	if !hasCodexHooks {
+		return body
+	}
+	if codexHooksDisabled && !hasHooks {
+		featureLines = append(featureLines, "hooks = false")
+	}
+
+	result := make([]string, 0, len(lines))
+	result = append(result, lines[:featuresStart+1]...)
+	result = append(result, featureLines...)
+	result = append(result, lines[featuresEnd:]...)
+	return strings.Join(result, "\n")
 }
 
 func SetCodexMCPServer(body, command string, args []string) string {
+	body = normalizeCodexHooksFeature(body)
 	lines := strings.Split(body, "\n")
 	sectionStart := -1
 	sectionEnd := len(lines)

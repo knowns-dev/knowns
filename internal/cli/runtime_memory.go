@@ -29,6 +29,7 @@ func runRuntimeMemoryHook(cmd *cobra.Command, args []string) error {
 	eventName, _ := cmd.Flags().GetString("event")
 	projectRoot, _ := cmd.Flags().GetString("project")
 	mode, _ := cmd.Flags().GetString("mode")
+	capture, _ := cmd.Flags().GetString("capture")
 	workingDir, _ := cmd.Flags().GetString("cwd")
 	maxItems, _ := cmd.Flags().GetInt("max-items")
 	maxBytes, _ := cmd.Flags().GetInt("max-bytes")
@@ -59,6 +60,9 @@ func runRuntimeMemoryHook(cmd *cobra.Command, args []string) error {
 	if normalized := runtimememory.NormalizeMode(mode); normalized != "" {
 		settings.Mode = normalized
 	}
+	if strings.TrimSpace(capture) != "" {
+		settings.Capture = runtimememory.NormalizeCaptureMode(capture)
+	}
 	if maxItems > 0 {
 		settings.MaxItems = maxItems
 	}
@@ -69,33 +73,32 @@ func runRuntimeMemoryHook(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	pack, err := runtimememory.Build(store, runtimememory.Input{
+	input := runtimememory.Input{
 		Runtime:     runtimeName,
 		ProjectRoot: projectRoot,
 		WorkingDir:  workingDir,
 		ActionType:  eventName,
 		UserPrompt:  prompt,
 		Mode:        settings.Mode,
+		Capture:     settings.Capture,
 		MaxItems:    settings.MaxItems,
 		MaxBytes:    settings.MaxBytes,
-	})
+	}
+	pack, err := runtimememory.Build(store, input)
 	if err != nil {
 		return err
 	}
-	if _, _, err := runtimememory.Capture(store, runtimememory.Input{
-		Runtime:     runtimeName,
-		ProjectRoot: projectRoot,
-		WorkingDir:  workingDir,
-		ActionType:  eventName,
-		UserPrompt:  prompt,
-		Mode:        settings.Mode,
-		MaxItems:    settings.MaxItems,
-		MaxBytes:    settings.MaxBytes,
-	}); err != nil {
+	if _, outcome, err := runtimememory.CaptureWithOutcome(store, input); err != nil {
 		return err
+	} else {
+		pack.Capture = &outcome
 	}
 	if isJSON(cmd) {
-		printJSON(pack)
+		data, err := json.MarshalIndent(pack, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), string(data))
 		return nil
 	}
 	if strings.TrimSpace(pack.Serialized) == "" {
@@ -144,6 +147,7 @@ func init() {
 	runtimeMemoryHookCmd.Flags().String("project", "", "Project root (defaults to detected project)")
 	runtimeMemoryHookCmd.Flags().String("cwd", "", "Working directory for scoring context")
 	runtimeMemoryHookCmd.Flags().String("mode", "", "Override runtime memory mode")
+	runtimeMemoryHookCmd.Flags().String("capture", "", "Override runtime memory capture mode")
 	runtimeMemoryHookCmd.Flags().Int("max-items", 0, "Override maximum number of memory items")
 	runtimeMemoryHookCmd.Flags().Int("max-bytes", 0, "Override maximum serialized bytes")
 	runtimeMemoryCmd.AddCommand(runtimeMemoryHookCmd)

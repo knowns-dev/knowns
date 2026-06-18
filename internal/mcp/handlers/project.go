@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/howznguyen/knowns/internal/lsp"
 	"github.com/howznguyen/knowns/internal/readiness"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -17,6 +18,7 @@ func RegisterProjectTool(
 	getStore func() *storage.Store,
 	setStore func(*storage.Store, string),
 	getRoot func() string,
+	getLSPManager ...func() *lsp.Manager,
 ) {
 	s.AddTool(
 		mcp.NewTool("project",
@@ -53,7 +55,11 @@ func RegisterProjectTool(
 			case "set":
 				return handleProjectSet(setStore, req)
 			case "status":
-				return handleProjectStatus(getStore)
+				var manager func() *lsp.Manager
+				if len(getLSPManager) > 0 {
+					manager = getLSPManager[0]
+				}
+				return handleProjectStatus(ctx, getStore, manager)
 			default:
 				return errResultf("unknown project action: %s", action)
 			}
@@ -195,14 +201,20 @@ func handleProjectSet(setStore func(*storage.Store, string), req mcp.CallToolReq
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func handleProjectStatus(getStore func() *storage.Store) (*mcp.CallToolResult, error) {
+func handleProjectStatus(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager) (*mcp.CallToolResult, error) {
 	store := getStore()
 	if store == nil {
 		out, _ := json.MarshalIndent(readiness.InactivePayload(), "", "  ")
 		return mcp.NewToolResultText(string(out)), nil
 	}
 
-	payload := readiness.BuildReadiness(store, readiness.Options{})
+	opts := readiness.Options{}
+	if getLSPManager != nil {
+		if manager := getLSPManager(); manager != nil {
+			opts.LSP = manager.RuntimeStatuses(ctx)
+		}
+	}
+	payload := readiness.BuildReadiness(store, opts)
 	out, _ := json.MarshalIndent(payload, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }

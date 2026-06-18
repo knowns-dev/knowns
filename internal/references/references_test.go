@@ -17,6 +17,39 @@ func TestParse_TaskSemanticRef(t *testing.T) {
 	if ref.Relation != "blocked-by" || !ref.ExplicitRelation || !ref.ValidRelation {
 		t.Fatalf("unexpected task relation parsing: %+v", ref)
 	}
+	if !ref.Legacy || ref.Canonical != "@task/rag001{blocked-by}" {
+		t.Fatalf("unexpected legacy canonical task ref: %+v", ref)
+	}
+}
+
+func TestParse_CanonicalSlashRefs(t *testing.T) {
+	tests := []struct {
+		raw       string
+		wantType  string
+		wantID    string
+		canonical string
+	}{
+		{"@task/rag001{blocked-by}", "task", "rag001", "@task/rag001{blocked-by}"},
+		{"@memory/mem001{follows}", "memory", "mem001", "@memory/mem001{follows}"},
+		{"@decision/20260618-1024-use-qdrant-as-default-vector-db", "decision", "20260618-1024-use-qdrant-as-default-vector-db", "@decision/20260618-1024-use-qdrant-as-default-vector-db"},
+		{"@template/go-feature", "template", "go-feature", "@template/go-feature"},
+	}
+
+	for _, tt := range tests {
+		ref, ok := Parse(tt.raw)
+		if !ok {
+			t.Fatalf("Parse(%q) failed", tt.raw)
+		}
+		if ref.Type != tt.wantType || ref.Target != tt.wantID {
+			t.Fatalf("Parse(%q) = %+v", tt.raw, ref)
+		}
+		if ref.Legacy {
+			t.Fatalf("Parse(%q) unexpectedly marked legacy: %+v", tt.raw, ref)
+		}
+		if ref.Canonical != tt.canonical {
+			t.Fatalf("canonical = %q, want %q", ref.Canonical, tt.canonical)
+		}
+	}
 }
 
 func TestParse_DocRefDefaultsToReferences(t *testing.T) {
@@ -69,11 +102,20 @@ func TestParse_InvalidRelation(t *testing.T) {
 }
 
 func TestExtract_MixedSemanticRefs(t *testing.T) {
-	refs := Extract("See @doc/guides/setup{implements}, @task-rag001, and @memory-mem001{follows}.")
-	if len(refs) != 3 {
-		t.Fatalf("ref count = %d, want 3", len(refs))
+	refs := Extract("See @doc/guides/setup{implements}, @task/rag001, @task-legacy, @memory/mem001, @memory-old{follows}, and @decision/20260618-1024-use-qdrant-as-default-vector-db.")
+	if len(refs) != 6 {
+		t.Fatalf("ref count = %d, want 6: %+v", len(refs), refs)
 	}
 	if refs[1].Relation != models.SemanticReferenceRelationReferences {
 		t.Fatalf("plain task ref should default to references, got %+v", refs[1])
+	}
+	if refs[2].Canonical != "@task/legacy" || !refs[2].Legacy {
+		t.Fatalf("legacy task ref not normalized: %+v", refs[2])
+	}
+	if refs[4].Canonical != "@memory/old{follows}" || !refs[4].Legacy {
+		t.Fatalf("legacy memory ref not normalized: %+v", refs[4])
+	}
+	if refs[5].Type != "decision" {
+		t.Fatalf("decision ref not extracted: %+v", refs[5])
 	}
 }

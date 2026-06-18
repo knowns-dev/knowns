@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 
@@ -30,22 +29,7 @@ func checkBinary(ctx context.Context, name string, args ...string) error {
 }
 
 func installedPath(adapterID string, deps []lsp.RuntimeDependency) (string, bool) {
-	platformID := lsp.CurrentPlatformID()
-	for _, dep := range deps {
-		if dep.PlatformID != platformID {
-			continue
-		}
-		path := filepath.Join(homeLSPDir(), adapterID, dep.BinaryName+"-"+dep.ID, dep.BinaryName)
-		if runtime.GOOS == "windows" {
-			if _, err := os.Stat(path + ".exe"); err == nil {
-				return path + ".exe", true
-			}
-		}
-		if _, err := os.Stat(path); err == nil {
-			return path, true
-		}
-	}
-	return "", false
+	return lsp.NewInstaller(homeLSPDir()).IsInstalled(staticAdapter{id: adapterID, deps: deps})
 }
 
 func homeLSPDir() string {
@@ -125,3 +109,24 @@ func preferredCmd(candidates ...string) string {
 	}
 	return candidates[len(candidates)-1]
 }
+
+type staticAdapter struct {
+	lsp.BaseAdapter
+	id   string
+	deps []lsp.RuntimeDependency
+}
+
+func (a staticAdapter) ID() string                                             { return a.id }
+func (a staticAdapter) Name() string                                           { return a.id }
+func (a staticAdapter) Extensions() []string                                   { return nil }
+func (a staticAdapter) Binaries() []lsp.BinaryCandidate                        { return nil }
+func (a staticAdapter) Prerequisites() []lsp.Prerequisite                      { return nil }
+func (a staticAdapter) CheckPrerequisites(context.Context) error               { return nil }
+func (a staticAdapter) InstallGuide() lsp.InstallGuide                         { return lsp.InstallGuide{} }
+func (a staticAdapter) CanInstall() bool                                       { return len(a.deps) > 0 }
+func (a staticAdapter) RuntimeDeps() []lsp.RuntimeDependency                   { return a.deps }
+func (a staticAdapter) Install(context.Context, string) (string, error)        { return "", nil }
+func (a staticAdapter) InstalledPath() (string, bool)                          { return "", false }
+func (a staticAdapter) DefaultArgs() []string                                  { return nil }
+func (a staticAdapter) InitializeParams(string, map[string]any) map[string]any { return nil }
+func (a staticAdapter) InitializationOptions(map[string]any) map[string]any    { return nil }

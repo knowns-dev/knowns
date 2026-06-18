@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/howznguyen/knowns/internal/codegen"
 	"github.com/howznguyen/knowns/internal/models"
@@ -55,6 +56,11 @@ var (
 	validPriorities = map[string]bool{
 		"low": true, "medium": true, "high": true,
 	}
+)
+
+const (
+	memoryContentMaxRunes      = 12000
+	proposedMemoryMaxAgeInDays = 30
 )
 
 // Run executes all validation checks according to opts and returns the result.
@@ -138,12 +144,12 @@ func Run(store *storage.Store, opts Options) *Result {
 
 	// --- Templates ---
 	if opts.Scope == "all" || opts.Scope == "templates" {
-		templates, err := store.Templates.List()
-		if err != nil {
+		templates, templateListErr := store.Templates.List()
+		if templateListErr != nil {
 			issues = append(issues, Issue{
 				Level:   "error",
 				Code:    "TEMPLATE_LIST_ERROR",
-				Message: fmt.Sprintf("Failed to list templates: %s", err.Error()),
+				Message: fmt.Sprintf("Failed to list templates: %s", templateListErr.Error()),
 			})
 		} else {
 			projectRoot := filepath.Dir(store.Root)
@@ -288,7 +294,7 @@ func validateTask(t *models.Task, taskIDs, docPaths, memoryIDs map[string]bool, 
 
 	// Inline refs in description, plan, notes.
 	checkText := t.Description + " " + t.ImplementationPlan + " " + t.ImplementationNotes
-	issues = append(issues, validateSemanticRefs(checkText, t.ID, "warning", taskIDs, docPaths, memoryIDs)...)
+	issues = append(issues, validateSemanticRefs(checkText, t.ID, "warning", taskIDs, docPaths, memoryIDs, store)...)
 
 	// @code/ references — check against AST index when it exists.
 	issues = append(issues, validateCodeRefs(checkText, t.ID, store)...)
@@ -347,7 +353,7 @@ func validateDoc(d *models.Doc, taskIDs, docPaths, memoryIDs map[string]bool, st
 	}
 
 	// Inline refs in doc content.
-	issues = append(issues, validateSemanticRefs(d.Content, d.Path, "info", taskIDs, docPaths, memoryIDs)...)
+	issues = append(issues, validateSemanticRefs(d.Content, d.Path, "info", taskIDs, docPaths, memoryIDs, store)...)
 
 	// @code/ references — check against AST index when it exists.
 	issues = append(issues, validateCodeRefs(d.Content, d.Path, store)...)
@@ -381,13 +387,179 @@ func validateMemory(m *models.MemoryEntry, taskIDs, docPaths, memoryIDs map[stri
 		})
 	}
 
+	if m.Status == "" {
+		issues = append(issues, Issue{
+			Level: "warning", Code: "MEMORY_MISSING_STATUS",
+			Message: "Memory entry has no lifecycle status", Entity: m.ID,
+		})
+	} else if !models.ValidMemoryStatus(m.Status) {
+		issues = append(issues, Issue{
+			Level: "warning", Code: "MEMORY_INVALID_STATUS",
+			Message: fmt.Sprintf("Memory entry has invalid lifecycle status: %q", m.Status), Entity: m.ID,
+		})
+	}
+
+	if m.Confidence != "" && !models.ValidMemoryConfidence(m.Confidence) {
+		issues = append(issues, Issue{
+			Level: "warning", Code: "MEMORY_INVALID_CONFIDENCE",
+			Message: fmt.Sprintf("Memory entry has invalid confidence: %q", m.Confidence), Entity: m.ID,
+		})
+	}
+
+	if missing := m.MissingTrustMetadata(); len(missing) > 0 {
+		issues = append(issues, Issue{
+			Level:   "warning",
+			Code:    "MEMORY_MISSING_TRUST_METADATA",
+			Message: fmt.Sprintf("Memory entry is missing trust metadata: %s", strings.Join(missing, ", ")),
+			Entity:  m.ID,
+		})
+	}
+
+	if m.TTLDays > 0 && !m.LastVerified.IsZero() {
+		expiresAt := m.LastVerified.Add(time.Duration(m.TTLDays) * 24 * time.Hour)
+		if time.Now().UTC().After(expiresAt) {
+			issues = append(issues, Issue{
+				Level: "warning", Code: "MEMORY_TTL_EXPIRED",
+				Message: fmt.Sprintf("Memory TTL expired on %s", expiresAt.Format("2006-01-02")), Entity: m.ID,
+			})
+		}
+	}
+
+	if len(m.Sources) == 0 {
+		issues = append(issues, Issue{
+			Level: "warning", Code: "MEMORY_MISSING_SOURCE",
+			Message: "Memory entry has no source references", Entity: m.ID,
+		})
+	} else {
+		issues = append(issues, validateMemorySources(m, taskIDs, docPaths, memoryIDs, store)...)
+	}
+
+	if len([]rune(m.Content)) > memoryContentMaxRunes {
+		issues = append(issues, Issue{
+			Level: "warning", Code: "MEMORY_CONTENT_TOO_LONG",
+			Message: fmt.Sprintf("Memory content is longer than %d characters", memoryContentMaxRunes), Entity: m.ID,
+		})
+	}
+
+	if m.Status == models.MemoryStatusProposed {
+		effective := m.UpdatedAt
+		if effective.IsZero() {
+			effective = m.CreatedAt
+		}
+		if !effective.IsZero() && effective.Before(time.Now().UTC().Add(-proposedMemoryMaxAgeInDays*24*time.Hour)) {
+			issues = append(issues, Issue{
+				Level: "warning", Code: "MEMORY_OLD_PROPOSED",
+				Message: fmt.Sprintf("Proposed memory is older than %d days", proposedMemoryMaxAgeInDays), Entity: m.ID,
+			})
+		}
+	}
+
+	if m.Status == models.MemoryStatusMerged && m.MergedInto == "" {
+		issues = append(issues, Issue{
+			Level: "warning", Code: "MEMORY_MERGED_MISSING_TARGET",
+			Message: "Merged memory tombstone must point to mergedInto", Entity: m.ID,
+		})
+	}
+
+	if m.Status == models.MemoryStatusRejected && m.RejectedReason == "" {
+		issues = append(issues, Issue{
+			Level: "warning", Code: "MEMORY_REJECTED_MISSING_REASON",
+			Message: "Rejected memory should record rejectedReason", Entity: m.ID,
+		})
+	}
+
 	// Inline refs in memory content.
-	issues = append(issues, validateSemanticRefs(m.Content, m.ID, "info", taskIDs, docPaths, memoryIDs)...)
+	issues = append(issues, validateSemanticRefs(m.Content, m.ID, "info", taskIDs, docPaths, memoryIDs, store)...)
 
 	// @code/ references — check against AST index when it exists.
 	issues = append(issues, validateCodeRefs(m.Content, m.ID, store)...)
 
 	return issues
+}
+
+func validateMemorySources(m *models.MemoryEntry, taskIDs, docPaths, memoryIDs map[string]bool, store *storage.Store) []Issue {
+	var issues []Issue
+	for _, source := range m.Sources {
+		ref, ok := parseMemorySourceRef(source)
+		if !ok {
+			continue
+		}
+		switch ref.Type {
+		case "task":
+			if !taskIDs[ref.Target] {
+				issues = append(issues, brokenMemorySourceIssue(m.ID, source))
+			}
+		case "doc":
+			if !docPaths[ref.Target] {
+				issues = append(issues, brokenMemorySourceIssue(m.ID, source))
+			}
+		case "memory":
+			if ref.Target != m.ID && !memoryIDs[ref.Target] {
+				issues = append(issues, brokenMemorySourceIssue(m.ID, source))
+			}
+		case "decision":
+			issues = append(issues, validateMemoryDecisionSource(m.ID, ref.Target, source, store)...)
+		}
+	}
+	return issues
+}
+
+type memorySourceRef struct {
+	Type   string
+	Target string
+}
+
+func parseMemorySourceRef(source string) (memorySourceRef, bool) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return memorySourceRef{}, false
+	}
+	if ref, ok := references.Parse(source); ok {
+		return memorySourceRef{Type: ref.Type, Target: ref.Target}, true
+	}
+	for _, prefix := range []struct {
+		raw string
+		typ string
+	}{
+		{"@task/", "task"},
+		{"@memory/", "memory"},
+		{"@decision/", "decision"},
+	} {
+		if !strings.HasPrefix(source, prefix.raw) {
+			continue
+		}
+		target := strings.TrimSpace(strings.TrimPrefix(source, prefix.raw))
+		target = strings.TrimRight(target, ".,;)")
+		if target == "" {
+			return memorySourceRef{}, false
+		}
+		return memorySourceRef{Type: prefix.typ, Target: target}, true
+	}
+	return memorySourceRef{}, false
+}
+
+func brokenMemorySourceIssue(entityID, source string) Issue {
+	return Issue{
+		Level: "warning", Code: "MEMORY_BROKEN_SOURCE_REF",
+		Message: fmt.Sprintf("Memory source reference is broken: %s", strings.TrimSpace(source)), Entity: entityID,
+	}
+}
+
+func validateMemoryDecisionSource(entityID, decisionID, source string, store *storage.Store) []Issue {
+	if store == nil || store.Decisions == nil {
+		return nil
+	}
+	decision, err := store.Decisions.Get(decisionID)
+	if err != nil {
+		return []Issue{brokenMemorySourceIssue(entityID, source)}
+	}
+	if decision.Status == models.DecisionStatusSuperseded || len(decision.SupersededBy) > 0 {
+		return []Issue{{
+			Level: "warning", Code: "MEMORY_SOURCE_DECISION_SUPERSEDED",
+			Message: fmt.Sprintf("Memory source decision is superseded: %s", strings.TrimSpace(source)), Entity: entityID,
+		}}
+	}
+	return nil
 }
 
 // ---------- Template validation ----------
@@ -494,7 +666,7 @@ func validateCodeRefs(content, entityID string, store *storage.Store) []Issue {
 	return issues
 }
 
-func validateSemanticRefs(content, entityID, level string, taskIDs, docPaths, memoryIDs map[string]bool) []Issue {
+func validateSemanticRefs(content, entityID, level string, taskIDs, docPaths, memoryIDs map[string]bool, store *storage.Store) []Issue {
 	var issues []Issue
 	for _, ref := range references.Extract(content) {
 		if !ref.ValidRelation {
@@ -511,21 +683,41 @@ func validateSemanticRefs(content, entityID, level string, taskIDs, docPaths, me
 			if !taskIDs[ref.Target] {
 				issues = append(issues, Issue{
 					Level: level, Code: "BROKEN_TASK_REF",
-					Message: fmt.Sprintf("Referenced task @task-%s not found", ref.Target), Entity: entityID,
+					Message: fmt.Sprintf("Referenced task %s not found", ref.Canonical), Entity: entityID,
 				})
 			}
 		case "doc":
 			if !docPaths[ref.Target] {
 				issues = append(issues, Issue{
 					Level: level, Code: "BROKEN_DOC_REF",
-					Message: fmt.Sprintf("Referenced doc @doc/%s not found", ref.Target), Entity: entityID,
+					Message: fmt.Sprintf("Referenced doc %s not found", ref.Canonical), Entity: entityID,
 				})
 			}
 		case "memory":
 			if ref.Target != entityID && !memoryIDs[ref.Target] {
 				issues = append(issues, Issue{
 					Level: level, Code: "BROKEN_MEMORY_REF",
-					Message: fmt.Sprintf("Referenced memory @memory-%s not found", ref.Target), Entity: entityID,
+					Message: fmt.Sprintf("Referenced memory %s not found", ref.Canonical), Entity: entityID,
+				})
+			}
+		case "decision":
+			if store == nil || store.Decisions == nil {
+				continue
+			}
+			if _, err := store.Decisions.Get(ref.Target); err != nil {
+				issues = append(issues, Issue{
+					Level: level, Code: "BROKEN_DECISION_REF",
+					Message: fmt.Sprintf("Referenced decision %s not found", ref.Canonical), Entity: entityID,
+				})
+			}
+		case "template":
+			if store == nil || store.Templates == nil {
+				continue
+			}
+			if _, err := store.Templates.Get(ref.Target); err != nil {
+				issues = append(issues, Issue{
+					Level: level, Code: "BROKEN_TEMPLATE_REF",
+					Message: fmt.Sprintf("Referenced template %s not found", ref.Canonical), Entity: entityID,
 				})
 			}
 		}

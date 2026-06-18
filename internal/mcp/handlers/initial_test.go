@@ -53,6 +53,8 @@ func TestBuildInitialInstructionsContainsExpectedSections(t *testing.T) {
 		"**CRITICAL**",
 		"**FORBIDDEN**",
 		"## Workflow",
+		"## Knowledge Lifecycle",
+		"semantic review before becoming trusted",
 		"## Tools",
 	}
 	for _, want := range expectedSections {
@@ -133,5 +135,37 @@ func TestLspWarningsLineNoneMissing(t *testing.T) {
 	got := lspWarningsLine(manager)
 	if got != "" {
 		t.Errorf("expected empty string when no LSP servers missing, got: %s", got)
+	}
+}
+
+func TestLspWarningsLineIncludesCSharpRuntimeState(t *testing.T) {
+	root := t.TempDir()
+	manager := lsp.NewManager(root, lsp.Config{})
+	manager.RegisterAdapter(initialMockAdapter{
+		id:       lsp.CSharpLanguageID,
+		name:     "C#",
+		binaries: []lsp.BinaryCandidate{{Name: "roslyn-ls"}, {Name: "csharp-ls"}, {Name: "omnisharp"}},
+		guide:    lsp.InstallGuide{KnownsCmd: "knowns lsp install csharp"},
+	})
+	manager.SetDetector(&lsp.Detector{
+		Registry: lsp.NewRegistry([]lsp.Language{{ID: lsp.CSharpLanguageID, Extensions: []string{".cs"}, Binaries: []lsp.Binary{{Name: "csharp-ls"}}}}),
+		LookPath: func(name string) (string, error) {
+			if name == "csharp-ls" {
+				return "/bin/csharp-ls", nil
+			}
+			return "", errInitialNotFound{}
+		},
+		RunCheck:  func(context.Context, string, ...string) error { return nil },
+		Installer: lsp.NewInstaller(t.TempDir()),
+	})
+	if err := os.WriteFile(filepath.Join(root, "Program.cs"), []byte("class Program {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := lspWarningsLine(manager)
+	for _, want := range []string{"csharp", "backend=csharp-ls", "install=installed", "readiness=unknown", "log="} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in LSP runtime line, got: %s", want, got)
+		}
 	}
 }

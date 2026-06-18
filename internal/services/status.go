@@ -16,6 +16,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/agents/opencode"
 	"github.com/howznguyen/knowns/internal/lsp"
+	"github.com/howznguyen/knowns/internal/lsp/adapters"
 	"github.com/howznguyen/knowns/internal/models"
 	goruntime "runtime"
 
@@ -183,13 +184,14 @@ func detectOpenCode(proj *models.Project) []ServiceStatus {
 // ----- LSP Server Detection -----
 
 func detectLSP(proj *models.Project, projectRoot string) []ServiceStatus {
-	ctx, cancel := context.WithTimeout(context.Background(), detectionTimeout)
-	defer cancel()
-
 	var results []ServiceStatus
 
 	// Determine which languages are configured.
-	lspConfig := lsp.ConfigFromProject(proj)
+	var defaults *storage.ProjectDefaults
+	if settings, err := storage.NewEmbeddingSettingsStore().Load(); err == nil {
+		defaults = settings.ProjectDefaults
+	}
+	lspConfig := lsp.ConfigFromProjectWithDefaults(proj, defaults)
 
 	// If LSP is globally disabled, report one disabled entry.
 	if proj != nil && proj.Settings.LSP != nil && proj.Settings.LSP.Enabled != nil && !*proj.Settings.LSP.Enabled {
@@ -203,47 +205,12 @@ func detectLSP(proj *models.Project, projectRoot string) []ServiceStatus {
 		return results
 	}
 
-	// Get configured languages; if none configured, try to detect from project.
-	registry := lsp.NewRegistry(nil)
-	var languages []lsp.Language
-
-	if proj != nil && proj.Settings.LSP != nil && len(proj.Settings.LSP.Languages) > 0 {
-		for langID := range proj.Settings.LSP.Languages {
-			all := registry.Languages()
-			for _, lang := range all {
-				if lang.ID == langID {
-					languages = append(languages, lang)
-					break
-				}
-			}
-		}
-	}
-
-	// Also try to detect languages from the project root.
-	if proj != nil && len(languages) == 0 {
-		detector := lsp.NewDetector(registry)
-		detected, err := detector.Detect(ctx, projectRoot, lspConfig)
-		if err == nil {
-			seen := make(map[string]bool)
-			for _, lang := range languages {
-				seen[lang.ID] = true
-			}
-			for _, cmd := range detected {
-				if !seen[cmd.Language] {
-					all := registry.Languages()
-					for _, lang := range all {
-						if lang.ID == cmd.Language {
-							languages = append(languages, lang)
-							break
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// If still nothing, add a generic disabled entry.
-	if len(languages) == 0 {
+	statuses := lsp.CollectRuntimeStatuses(context.Background(), lsp.RuntimeStatusOptions{
+		Root:     projectRoot,
+		Config:   lspConfig,
+		Adapters: adapters.All(),
+	})
+	if len(statuses) == 0 {
 		results = append(results, ServiceStatus{
 			Name:            "LSP",
 			Type:            "lsp",
@@ -254,60 +221,56 @@ func detectLSP(proj *models.Project, projectRoot string) []ServiceStatus {
 		return results
 	}
 
-	for _, lang := range languages {
+	for _, runtimeStatus := range statuses {
 		ss := ServiceStatus{
-			Name:            "LSP (" + lang.ID + ")",
+			Name:            "LSP (" + runtimeStatus.ID + ")",
 			Type:            "lsp",
-			Status:          "stopped",
-			EnabledInConfig: true,
+			Status:          serviceStatusFromLSP(runtimeStatus),
+			EnabledInConfig: runtimeStatus.Enabled,
 			Details: map[string]string{
-				"language": lang.ID,
+				"language":        runtimeStatus.ID,
+				"install_state":   runtimeStatus.InstallState,
+				"running_state":   runtimeStatus.RunningState,
+				"readiness_state": runtimeStatus.ReadinessState,
 			},
 		}
-
-		// Check if explicitly disabled in config.
-		if proj != nil && proj.Settings.LSP != nil {
-			if langCfg, ok := proj.Settings.LSP.Languages[lang.ID]; ok && langCfg.Enabled != nil && !*langCfg.Enabled {
-				ss.Status = "disabled"
-				ss.EnabledInConfig = false
-				results = append(results, ss)
-				continue
+		addDetail := func(key, value string) {
+			if value != "" {
+				ss.Details[key] = value
 			}
 		}
-
-		// Check if binary is available.
-		if _, err := exec.LookPath(lang.ID); err != nil {
-			// Try common binary names for this language.
-			found := false
-			for _, bin := range lang.Binaries {
-				if _, err := exec.LookPath(bin.Name); err == nil {
-					ss.Details["binary"] = bin.Name
-					found = true
-					break
-				}
-			}
-			if !found {
-				ss.Details["reason"] = "binary not installed"
-				results = append(results, ss)
-				continue
-			}
-		} else {
-			ss.Details["binary"] = lang.ID
-		}
-
-		// Binary exists — check if LSP server process is running.
-		binaryName := ss.Details["binary"]
-		if binaryName != "" && isProcessRunning(binaryName) {
-			ss.Status = "running"
-		} else {
-			ss.Status = "stopped"
-			ss.Details["note"] = "binary available, server not started"
+		addDetail("binary", runtimeStatus.Binary)
+		addDetail("source", runtimeStatus.Source)
+		addDetail("backend", runtimeStatus.Backend)
+		addDetail("backend_source", runtimeStatus.BackendSource)
+		addDetail("version", runtimeStatus.Version)
+		addDetail("selected_path", runtimeStatus.SelectedPath)
+		addDetail("project_path", runtimeStatus.ProjectPath)
+		addDetail("log_path", runtimeStatus.LogPath)
+		addDetail("install_cmd", runtimeStatus.InstallCmd)
+		addDetail("install_error", runtimeStatus.InstallError)
+		addDetail("update_error", runtimeStatus.UpdateError)
+		if runtimeStatus.InstallState != lsp.RuntimeInstallInstalled {
+			ss.Details["reason"] = runtimeStatus.InstallState
 		}
 
 		results = append(results, ss)
 	}
 
 	return results
+}
+
+func serviceStatusFromLSP(status lsp.LanguageRuntimeStatus) string {
+	switch status.Status {
+	case lsp.RuntimeRunningRunning:
+		return "running"
+	case lsp.RuntimeRunningCrashed, lsp.RuntimeInstallError:
+		return "error"
+	case lsp.RuntimeInstallDisabled:
+		return "disabled"
+	default:
+		return "stopped"
+	}
 }
 
 // ----- Cloudflared Tunnel Detection -----

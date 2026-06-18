@@ -45,6 +45,7 @@ const TasksPage = lazyWithRetry(() => import("./pages/TasksPage"));
 const ChatPage = lazyWithRetry(() => import("./pages/ChatPage"));
 const GraphPage = lazyWithRetry(() => import("./pages/GraphPage"));
 const MemoryPage = lazyWithRetry(() => import("./pages/MemoryPage"));
+const DecisionPage = lazyWithRetry(() => import("./pages/DecisionPage"));
 const AuditPage = lazyWithRetry(() => import("./pages/AuditPage"));
 
 function PageLoading() {
@@ -65,6 +66,7 @@ function getCurrentPage(pathname: string) {
 	if (pathname.startsWith("/imports")) return "imports";
 	if (pathname.startsWith("/graph")) return "graph";
 	if (pathname.startsWith("/memory")) return "memory";
+	if (pathname.startsWith("/decisions")) return "decisions";
 	if (pathname.startsWith("/audit")) return "audit";
 	if (pathname.startsWith("/chat")) return "chat";
 	if (pathname.startsWith("/config")) return "config";
@@ -115,6 +117,7 @@ export default function AppShell() {
 			docs: "Docs",
 			graph: "Graph",
 			memory: "Memories",
+			decisions: "Decisions",
 			audit: "Audit Trail",
 			imports: "Imports",
 			chat: "Chat",
@@ -293,6 +296,8 @@ export default function AppShell() {
 				return <GraphPage />;
 			case "memory":
 				return <MemoryPage />;
+			case "decisions":
+				return <DecisionPage />;
 			case "audit":
 				return <AuditPage />;
 			case "imports":

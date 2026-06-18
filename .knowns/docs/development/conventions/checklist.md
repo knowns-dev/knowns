@@ -2,7 +2,7 @@
 title: Implementation Checklist
 description: Step-by-step checklist for implementing new features in the Go codebase
 createdAt: '2025-12-25T15:16:58.867Z'
-updatedAt: '2026-03-08T18:22:51.606Z'
+updatedAt: '2026-06-18T09:52:21.854Z'
 tags:
   - conventions
 ---
@@ -55,6 +55,14 @@ tags:
 - [ ] Lint: `make lint` or `golangci-lint run`
 - [ ] Format: `gofmt -w .` or `goimports -w .`
 
+### Knowledge Capture
+
+- [ ] Ask whether the feature created, changed, or superseded durable project guidance
+- [ ] Create a Decision for stable choices: architecture, product behavior, workflow convention, naming, storage model, API contract, or explicit tradeoff
+- [ ] Link each Decision to a source task, source doc, or related reference
+- [ ] Supersede older Decisions instead of overwriting them when guidance changes
+- [ ] Use Memory for concise reusable recall and Docs for long-form explanations
+
 ### Package Structure
 
 ```
@@ -85,5 +93,6 @@ internal/
 - [ ] Log errors at the CLI layer, return them from internal packages
 ## Related Docs
 
+- @doc/guides/workflow-guide - Task workflow and durable knowledge capture
 - @doc/architecture/patterns/command - Cobra Command Pattern
 - @doc/architecture/patterns/storage - File-Based Storage Pattern

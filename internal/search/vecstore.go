@@ -74,6 +74,9 @@ type indexEntry struct {
 	MemoryLayer string `json:"memoryLayer,omitempty"`
 	MemoryStore string `json:"memoryStore,omitempty"`
 
+	// Decision fields.
+	DecisionID string `json:"decisionId,omitempty"`
+
 	// Code fields (populated when Type == ChunkTypeCode).
 	Name       string `json:"name,omitempty"`
 	Signature  string `json:"signature,omitempty"`
@@ -241,6 +244,7 @@ func (s *FileVectorStore) AddChunks(chunks []Chunk) {
 			Labels:       c.Labels,
 			MemoryLayer:  c.MemoryLayer,
 			MemoryStore:  c.MemoryStore,
+			DecisionID:   c.DecisionID,
 			Name:         c.Name,
 			Signature:    c.Signature,
 			Content:      c.Content,
@@ -381,6 +385,7 @@ func (s *FileVectorStore) Search(queryVec []float32, opts VectorSearchOpts) []Sc
 				Labels:       entry.Labels,
 				MemoryLayer:  entry.MemoryLayer,
 				MemoryStore:  entry.MemoryStore,
+				DecisionID:   entry.DecisionID,
 				Name:         entry.Name,
 				Signature:    entry.Signature,
 				Content:      entry.Content,

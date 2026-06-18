@@ -35,35 +35,57 @@ func (s ServerStatus) String() string {
 
 // InstallGuide provides user-facing installation instructions for a language server.
 type InstallGuide struct {
-	Command   string // e.g. "go install golang.org/x/tools/gopls@latest"
-	URL       string // e.g. "https://pkg.go.dev/golang.org/x/tools/gopls"
-	KnownsCmd string // e.g. "knowns lsp install go" (empty if not downloadable)
-	Notes     string // e.g. "Requires Go 1.21+ installed"
+	Command   string `json:"command,omitempty"`    // e.g. "go install golang.org/x/tools/gopls@latest"
+	URL       string `json:"url,omitempty"`        // e.g. "https://pkg.go.dev/golang.org/x/tools/gopls"
+	KnownsCmd string `json:"knowns_cmd,omitempty"` // e.g. "knowns lsp install go" (empty if not downloadable)
+	Notes     string `json:"notes,omitempty"`      // e.g. "Requires Go 1.21+ installed"
 }
 
 // RuntimeDependency describes a downloadable binary dependency for a language server.
 type RuntimeDependency struct {
-	ID          string
-	PlatformID  string // "darwin-arm64", "linux-amd64", etc.
-	URL         string
-	SHA256      string
-	ArchiveType string // "tar.gz", "zip", "binary"
-	BinaryName  string
-	ExtractPath string
+	ID            string   `json:"id,omitempty"`
+	PlatformID    string   `json:"platform_id,omitempty"` // "darwin-arm64", "linux-amd64", etc.
+	Version       string   `json:"version,omitempty"`
+	Source        string   `json:"source,omitempty"` // "archive", "binary", "npm", "nuget", etc.
+	URL           string   `json:"url,omitempty"`
+	SHA256        string   `json:"sha256,omitempty"`
+	SHA512        string   `json:"sha512,omitempty"`
+	PackageSource string   `json:"package_source,omitempty"`
+	ArchiveType   string   `json:"archive_type,omitempty"` // "tar.gz", "zip", "binary", "npm", "nupkg"
+	BinaryName    string   `json:"binary_name,omitempty"`
+	ExtractPath   string   `json:"extract_path,omitempty"`
+	PackageName   string   `json:"package_name,omitempty"`
+	Packages      []string `json:"packages,omitempty"`
+}
+
+// ManagedDependencyStatus reports the selected managed dependency state for a
+// language server.
+type ManagedDependencyStatus struct {
+	LanguageID        string `json:"language_id"`
+	Version           string `json:"version,omitempty"`
+	Source            string `json:"source,omitempty"`
+	CachePath         string `json:"cache_path,omitempty"`
+	SelectedPath      string `json:"selected_path,omitempty"`
+	CleanupEligible   bool   `json:"cleanup_eligible"`
+	InstallError      string `json:"install_error,omitempty"`
+	UpdateError       string `json:"update_error,omitempty"`
+	Installed         bool   `json:"installed"`
+	Installable       bool   `json:"installable"`
+	SelectedVersionID string `json:"selected_version_id,omitempty"`
 }
 
 // Prerequisite describes a system requirement that must be satisfied before a language server can run.
 type Prerequisite struct {
-	Name        string // "Java JDK 17+"
-	CheckCmd    string // "java -version"
-	InstallHint string // "Install from https://..."
+	Name        string `json:"name,omitempty"`         // "Java JDK 17+"
+	CheckCmd    string `json:"check_cmd,omitempty"`    // "java -version"
+	InstallHint string `json:"install_hint,omitempty"` // "Install from https://..."
 }
 
 // BinaryCandidate describes a possible binary name and arguments for a language server.
 type BinaryCandidate struct {
-	Name      string
-	Args      []string
-	CheckArgs []string
+	Name      string   `json:"name,omitempty"`
+	Args      []string `json:"args,omitempty"`
+	CheckArgs []string `json:"check_args,omitempty"`
 }
 
 // LanguageAdapter defines the interface that each language server adapter must implement.

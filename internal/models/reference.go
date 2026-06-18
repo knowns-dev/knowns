@@ -15,11 +15,13 @@ type DocReferenceFragment struct {
 // SemanticReference is a parsed inline Knowns reference.
 type SemanticReference struct {
 	Raw              string                `json:"raw"`
+	Canonical        string                `json:"canonical"`
 	Type             string                `json:"type"`
 	Target           string                `json:"target"`
 	Relation         string                `json:"relation"`
 	ExplicitRelation bool                  `json:"explicitRelation,omitempty"`
 	ValidRelation    bool                  `json:"validRelation"`
+	Legacy           bool                  `json:"legacy,omitempty"`
 	Fragment         *DocReferenceFragment `json:"fragment,omitempty"`
 }
 

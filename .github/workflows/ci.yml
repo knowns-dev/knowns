@@ -109,6 +109,77 @@ jobs:
           CGO_ENABLED: '1'
         run: go test -v -race -count=1 ./...
 
+  lsp-fixtures:
+    runs-on: ${{ matrix.os }}
+    needs: [test]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    name: LSP Fixture Smoke (${{ matrix.os }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            6.0.x
+            10.0.x
+
+      - name: Install llvm-mingw toolchain
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          curl -L --retry 5 --retry-delay 5 \
+            -o llvm-mingw.zip \
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/20260407/llvm-mingw-20260407-ucrt-x86_64.zip"
+          unzip -q llvm-mingw.zip -d "$RUNNER_TEMP/llvm-mingw"
+          TOOLCHAIN_DIR=$(find "$RUNNER_TEMP/llvm-mingw" -mindepth 1 -maxdepth 1 -type d | head -n 1)
+          if [ -z "$TOOLCHAIN_DIR" ]; then
+            echo "Failed to extract llvm-mingw toolchain"
+            exit 1
+          fi
+          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
+          echo "CC=x86_64-w64-mingw32-clang" >> "$GITHUB_ENV"
+          echo "CXX=x86_64-w64-mingw32-clang++" >> "$GITHUB_ENV"
+          echo "AR=x86_64-w64-mingw32-ar" >> "$GITHUB_ENV"
+
+      - name: Install C# language server (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          dotnet tool install --global csharp-ls --version 0.25.0
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Install C# language server (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          dotnet tool install --global csharp-ls --version 0.25.0
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build Go binary (Unix)
+        if: runner.os != 'Windows'
+        run: go build -ldflags "-s -w -X github.com/howznguyen/knowns/internal/util.Version=${GITHUB_SHA}" -o bin/knowns ./cmd/knowns
+
+      - name: Build Go binary (Windows)
+        if: runner.os == 'Windows'
+        env:
+          CGO_ENABLED: '1'
+        run: go build -ldflags "-s -w -X github.com/howznguyen/knowns/internal/util.Version=${env:GITHUB_SHA}" -o bin/knowns.exe ./cmd/knowns
+
+      - name: Run .NET Web API LSP fixture (Unix)
+        if: runner.os != 'Windows'
+        run: TEST_LSP_FIXTURES=1 TEST_BINARY="$PWD/bin/knowns" go test -v -timeout 8m -count=1 ./tests/lspfixtures
+
+      - name: Run .NET Web API LSP fixture (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          CGO_ENABLED: '1'
+        run: TEST_LSP_FIXTURES=1 TEST_BINARY="$PWD/bin/knowns.exe" go test -v -timeout 8m -count=1 ./tests/lspfixtures
+
   build-and-e2e:
     runs-on: ${{ matrix.os }}
     needs: [test]

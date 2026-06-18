@@ -472,8 +472,8 @@ export function ChatInput({
   }, [referencePopupOpen, searchQuery]);
 
   const insertMention = (type: "task" | "doc", id: string, label: string) => {
-    const mentionText = type === "task" ? `@task-${id}` : `@doc/${id}`;
-    const match = value.match(/@(?<prefix>task-|doc\/)?(?<suffix>[a-zA-Z0-9.-]*)$/);
+    const mentionText = type === "task" ? `@task/${id}` : `@doc/${id}`;
+    const match = value.match(/@(?<prefix>task[-/]|doc\/)?(?<suffix>[a-zA-Z0-9.-]*)$/);
     if (match) {
       const prefix = match.groups?.prefix || "";
       const insertPosition = value.length - (match[0].length - prefix.length);

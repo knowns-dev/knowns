@@ -2,8 +2,6 @@ package adapters
 
 import (
 	"context"
-	"fmt"
-	"os/exec"
 
 	"github.com/howznguyen/knowns/internal/lsp"
 )
@@ -31,23 +29,19 @@ func (a *ScssAdapter) CheckPrerequisites(ctx context.Context) error {
 func (a *ScssAdapter) InstallGuide() lsp.InstallGuide {
 	return lsp.InstallGuide{Command: "npm install -g some-sass-language-server", KnownsCmd: "knowns lsp install scss", Notes: "Requires Node.js 18+; handles .scss, .sass, and .css files"}
 }
-func (a *ScssAdapter) CanInstall() bool                     { return true }
-func (a *ScssAdapter) RuntimeDeps() []lsp.RuntimeDependency { return nil }
+func (a *ScssAdapter) CanInstall() bool { return true }
+func (a *ScssAdapter) RuntimeDeps() []lsp.RuntimeDependency {
+	return []lsp.RuntimeDependency{{
+		ID:          "some-sass-language-server",
+		Version:     "latest",
+		Source:      "npm",
+		ArchiveType: "npm",
+		BinaryName:  "some-sass-language-server",
+		PackageName: "some-sass-language-server",
+	}}
+}
 func (a *ScssAdapter) Install(ctx context.Context, targetDir string) (string, error) {
-	pm := preferredCmd("bun", "pnpm", "npm")
-	args := []string{"install", "-g", "some-sass-language-server"}
-	if pm == "bun" {
-		args = []string{"add", "--global", "some-sass-language-server"}
-	}
-	cmd := exec.CommandContext(ctx, pm, args...)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("%s install failed: %w: %s", pm, err, output)
-	}
-	path, err := exec.LookPath("some-sass-language-server")
-	if err != nil {
-		return "", fmt.Errorf("some-sass-language-server installed but not found in PATH: %w", err)
-	}
-	return path, nil
+	return lsp.NewInstaller(targetDir).Install(ctx, a)
 }
 func (a *ScssAdapter) InstalledPath() (string, bool) { return installedPath(a.ID(), a.RuntimeDeps()) }
 func (a *ScssAdapter) DefaultArgs() []string         { return []string{"--stdio"} }

@@ -15,7 +15,10 @@ Post-implementation quality review. Run after `kn-implement`, before `kn-commit`
 
 - After implementing a task, before committing
 - When user says "review my code", "check this", "review before commit"
+- As the review step inside `/kn-flow` after each task or integrated wave
 - As part of `/kn-go` pipeline (optional — can be enabled)
+
+If the user asks to review and finish a whole approved spec or task wave, route to `/kn-flow @doc/<spec-path>` so review is paired with implementation and combined verification.
 
 ## Inputs
 
@@ -137,6 +140,7 @@ Do NOT proceed to commit. Do NOT offer to skip P1.
 >
 > Options:
 > - Fix P2s now, then `/kn-commit`
+> - If running inside `/kn-flow`, return to the flow after fixing or explicitly deferring P2s
 > - Commit as-is: `/kn-commit`
 > - Create follow-up task for P2s
 
@@ -197,6 +201,7 @@ For `kn-review`, the key details should cover:
 
 ## Related Skills
 
+- `/kn-flow @doc/<spec-path>` — orchestrate review as part of full spec/task-wave execution
 - `/kn-implement <id>` — implement before review
 - `/kn-commit` — commit after review passes
 - `/kn-verify` — SDD-level verification (broader than code review)
@@ -207,6 +212,7 @@ For `kn-review`, the key details should cover:
 - [ ] Findings triaged by severity
 - [ ] P1 findings block commit
 - [ ] Artifact verification done (if spec linked)
+- [ ] Returned control to `/kn-flow` when reviewing inside an active flow
 - [ ] Next step suggested
 
 ## Red Flags
@@ -216,3 +222,4 @@ For `kn-review`, the key details should cover:
 - Not checking the actual diff (reviewing from memory)
 - Severity inflation — calling everything P1
 - Skipping security perspective
+- Reviewing one task as if the whole spec is complete when `/kn-flow` is needed

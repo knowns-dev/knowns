@@ -90,7 +90,12 @@ Based on warnings, add the most relevant fixes inside the key-details section, t
 > ```
 
 **For approved specs without tasks:**
-> Create tasks from spec:
+> Continue the approved spec through orchestration:
+> ```
+> /kn-flow @doc/specs/<name>
+> ```
+>
+> If the user only wants task generation:
 > ```
 > /kn-plan --from @doc/specs/<name>
 > ```
@@ -109,7 +114,7 @@ mcp_knowns_validate({ "entity": "specs/user-auth" })
 
 ## Shared Output Contract
 
-All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-plan`, `kn-research`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
+All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-plan`, `kn-research`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
 
 Required order for the final user-facing response:
 
@@ -130,12 +135,19 @@ For `kn-verify`, the key details should cover:
 
 When verification reveals a clear follow-up, include the best next command. If the project is already healthy and no immediate workflow continuation is obvious, stop after the result and key details.
 
+## Related Skills
+
+- `/kn-flow @doc/<spec-path>` - Continue an approved spec with pending or missing task execution
+- `/kn-plan --from @doc/<spec-path>` - Generate tasks only when verification shows an approved spec has none
+- `/kn-review <id>` - Review implemented work before final verification
+
 ## Checklist
 
 - [ ] Ran validate --sdd
 - [ ] Presented status report
 - [ ] Analyzed coverage level
 - [ ] Suggested specific fixes for warnings
+- [ ] Suggested `/kn-flow` when an approved spec has pending execution
 
 ## Red Flags
 
@@ -143,3 +155,4 @@ When verification reveals a clear follow-up, include the best next command. If t
 - Not suggesting actionable fixes
 - Skipping coverage analysis
 - Claiming coverage is healthy without showing evidence
+- Suggesting manual task-by-task work when `/kn-flow` is the better approved-spec handoff

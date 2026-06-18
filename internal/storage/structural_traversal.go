@@ -26,6 +26,8 @@ func (s *Store) StructuralResolve(raw string, params models.StructuralParams) (m
 		root.Title = resolution.Entity.Title
 		if resolution.Entity.Path != "" {
 			root.ID = resolution.Entity.Path
+		} else if resolution.Entity.ID != "" {
+			root.ID = resolution.Entity.ID
 		}
 	}
 

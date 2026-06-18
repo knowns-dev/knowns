@@ -15,6 +15,7 @@ func TestAdaptersSatisfyLanguageAdapter(t *testing.T) {
 	var _ lsp.LanguageAdapter = NewClangdAdapter()
 	var _ lsp.LanguageAdapter = NewJdtlsAdapter()
 	var _ lsp.LanguageAdapter = NewRoslynAdapter()
+	var _ lsp.LanguageAdapter = NewDartAdapter()
 	var _ lsp.LanguageAdapter = NewRubyLspAdapter()
 	var _ lsp.LanguageAdapter = NewIntelephenseAdapter()
 	var _ lsp.LanguageAdapter = NewScssAdapter()
@@ -36,6 +37,7 @@ func TestAdapterMetadata(t *testing.T) {
 		{name: "c_cpp", adapter: NewClangdAdapter(), id: "c_cpp", displayName: "C/C++", extensions: []string{".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"}, canInstall: true},
 		{name: "java", adapter: NewJdtlsAdapter(), id: "java", displayName: "Java", extensions: []string{".java"}, canInstall: true},
 		{name: "csharp", adapter: NewRoslynAdapter(), id: "csharp", displayName: "C#", extensions: []string{".cs"}, canInstall: true},
+		{name: "dart", adapter: NewDartAdapter(), id: "dart", displayName: "Dart", extensions: []string{".dart"}, canInstall: false},
 		{name: "ruby", adapter: NewRubyLspAdapter(), id: "ruby", displayName: "Ruby", extensions: []string{".rb", ".rake", ".gemspec"}, canInstall: true},
 		{name: "php", adapter: NewIntelephenseAdapter(), id: "php", displayName: "PHP", extensions: []string{".php"}, canInstall: true},
 		{name: "scss", adapter: NewScssAdapter(), id: "scss", displayName: "SCSS/Sass/CSS", extensions: []string{".scss", ".sass", ".css"}, canInstall: true},
@@ -65,14 +67,14 @@ func TestAdapterMetadata(t *testing.T) {
 
 func TestAllAdapters(t *testing.T) {
 	adapters := AllAdapters()
-	if len(adapters) != 10 {
-		t.Fatalf("AllAdapters() returned %d adapters, want 10", len(adapters))
+	if len(adapters) != 11 {
+		t.Fatalf("AllAdapters() returned %d adapters, want 11", len(adapters))
 	}
 	ids := make(map[string]bool, len(adapters))
 	for _, adapter := range adapters {
 		ids[adapter.ID()] = true
 	}
-	for _, id := range []string{"go", "typescript", "python", "rust", "c_cpp", "java", "csharp", "ruby", "php", "scss"} {
+	for _, id := range []string{"go", "typescript", "python", "rust", "c_cpp", "java", "csharp", "dart", "ruby", "php", "scss"} {
 		if !ids[id] {
 			t.Fatalf("AllAdapters() missing %q", id)
 		}
@@ -87,7 +89,8 @@ func TestPhase1AdapterPrerequisites(t *testing.T) {
 	}{
 		{name: "c_cpp", adapter: NewClangdAdapter(), want: nil},
 		{name: "java", adapter: NewJdtlsAdapter(), want: []lsp.Prerequisite{{Name: "Java JDK 17+", CheckCmd: "java -version", InstallHint: "Install JDK 17+ from https://adoptium.net/"}}},
-		{name: "csharp", adapter: NewRoslynAdapter(), want: []lsp.Prerequisite{{Name: ".NET SDK 8+", CheckCmd: "dotnet --version", InstallHint: "Install .NET SDK 8+ from https://dotnet.microsoft.com/download"}}},
+		{name: "csharp", adapter: NewRoslynAdapter(), want: []lsp.Prerequisite{{Name: ".NET SDK 10+", CheckCmd: "dotnet --version", InstallHint: "Install .NET SDK 10+ from https://dotnet.microsoft.com/download"}}},
+		{name: "dart", adapter: NewDartAdapter(), want: []lsp.Prerequisite{{Name: "Dart SDK", CheckCmd: "dart --version", InstallHint: "Install Dart SDK from https://dart.dev/get-dart"}}},
 		{name: "ruby", adapter: NewRubyLspAdapter(), want: []lsp.Prerequisite{{Name: "Ruby 3.1+", CheckCmd: "ruby --version", InstallHint: "Install Ruby 3.1+ from https://www.ruby-lang.org/en/downloads/"}}},
 		{name: "php", adapter: NewIntelephenseAdapter(), want: []lsp.Prerequisite{{Name: "Node.js 18+", CheckCmd: "node --version", InstallHint: "Install Node.js 18+ from https://nodejs.org/"}}},
 	}
@@ -98,6 +101,64 @@ func TestPhase1AdapterPrerequisites(t *testing.T) {
 				t.Fatalf("Prerequisites() = %#v, want %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDartAdapterCommand(t *testing.T) {
+	adapter := NewDartAdapter()
+	binaries := adapter.Binaries()
+	if len(binaries) != 1 {
+		t.Fatalf("Binaries() returned %d candidates, want 1", len(binaries))
+	}
+	if binaries[0].Name != "dart" || !reflect.DeepEqual(binaries[0].Args, []string{"language-server"}) {
+		t.Fatalf("dart candidate = %#v, want dart language-server", binaries[0])
+	}
+	if !reflect.DeepEqual(adapter.DefaultArgs(), []string{"language-server"}) {
+		t.Fatalf("DefaultArgs() = %#v, want language-server", adapter.DefaultArgs())
+	}
+	if adapter.CanInstall() {
+		t.Fatal("CanInstall() = true, want false for SDK-managed Dart")
+	}
+}
+
+func TestNPMAdaptersUseManagedRuntimeDependencies(t *testing.T) {
+	for _, adapter := range []lsp.LanguageAdapter{
+		NewTypeScriptAdapter(),
+		NewIntelephenseAdapter(),
+		NewScssAdapter(),
+	} {
+		t.Run(adapter.ID(), func(t *testing.T) {
+			deps := adapter.RuntimeDeps()
+			if len(deps) == 0 {
+				t.Fatal("RuntimeDeps() is empty")
+			}
+			if deps[0].Source != "npm" || deps[0].ArchiveType != "npm" {
+				t.Fatalf("dependency source = %q/%q, want npm/npm", deps[0].Source, deps[0].ArchiveType)
+			}
+			if deps[0].BinaryName == "" {
+				t.Fatal("dependency BinaryName is empty")
+			}
+		})
+	}
+}
+
+func TestCSharpAdapterBackendCandidates(t *testing.T) {
+	adapter := NewRoslynAdapter()
+	binaries := adapter.Binaries()
+	if len(binaries) != 3 {
+		t.Fatalf("Binaries() returned %d candidates, want 3", len(binaries))
+	}
+	if binaries[0].Name != "roslyn-ls" || len(binaries[0].Args) != 0 {
+		t.Fatalf("roslyn candidate = %#v, want roslyn-ls without default args", binaries[0])
+	}
+	if binaries[1].Name != "csharp-ls" || len(binaries[1].Args) != 0 {
+		t.Fatalf("csharp-ls candidate = %#v, want no args; csharp-ls uses stdio by default", binaries[1])
+	}
+	if binaries[2].Name != "omnisharp" || !reflect.DeepEqual(binaries[2].Args, []string{"--languageserver"}) {
+		t.Fatalf("omnisharp candidate = %#v, want --languageserver", binaries[2])
+	}
+	if got := adapter.DefaultArgs(); len(got) != 0 {
+		t.Fatalf("DefaultArgs() = %#v, want no generic C# args", got)
 	}
 }
 

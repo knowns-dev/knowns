@@ -4,6 +4,8 @@ import type cytoscape from "cytoscape";
 export const TASK_COLOR = "#6366f1";
 export const DOC_COLOR = "#f59e0b";
 export const MEMORY_COLOR = "#22c55e";
+export const DECISION_COLOR = "#e11d48";
+export const TEMPLATE_COLOR = "#06b6d4";
 
 export const statusBorderColors: Record<string, string> = {
 	todo: "#6b7280",
@@ -29,6 +31,8 @@ export interface FilterState {
 	tasks: boolean;
 	docs: boolean;
 	memories: boolean;
+	decisions: boolean;
+	templates: boolean;
 	showIsolated: boolean;
 	showEdges: boolean;
 	edgeParent: boolean;
@@ -45,6 +49,8 @@ export const KNOWLEDGE_FILTERS: FilterState = {
 	tasks: true,
 	docs: true,
 	memories: true,
+	decisions: true,
+	templates: true,
 	showIsolated: true,
 	showEdges: true,
 	edgeParent: true,
@@ -119,6 +125,8 @@ export function buildElements(data: GraphData, filters: FilterState): cytoscape.
 	if (filters.tasks) visibleTypes.add("task");
 	if (filters.docs) visibleTypes.add("doc");
 	if (filters.memories) visibleTypes.add("memory");
+	if (filters.decisions) visibleTypes.add("decision");
+	if (filters.templates) visibleTypes.add("template");
 
 	const typeFilteredIds = new Set(data.nodes.filter((n) => visibleTypes.has(n.type)).map((n) => n.id));
 
@@ -151,9 +159,13 @@ export function buildElements(data: GraphData, filters: FilterState): cytoscape.
 					? TASK_COLOR
 					: n.type === "code"
 						? CODE_COLOR
-						: n.type === "memory"
-							? memoryLayerColors[(n.data.layer as string) || "project"] || MEMORY_COLOR
-							: DOC_COLOR;
+					: n.type === "memory"
+						? memoryLayerColors[(n.data.layer as string) || "project"] || MEMORY_COLOR
+						: n.type === "decision"
+							? DECISION_COLOR
+							: n.type === "template"
+								? TEMPLATE_COLOR
+								: DOC_COLOR;
 			const borderColor =
 				n.type === "task"
 					? statusBorderColors[(n.data.status as string) || "todo"] || "#6b7280"

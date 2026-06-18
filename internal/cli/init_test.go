@@ -371,7 +371,8 @@ func TestCreateCodexMCPConfigQuietMergesExistingConfig(t *testing.T) {
 	content := readTextFile(t, configPath)
 	assertContains(t, content, `model = "gpt-5.4"`)
 	assertContains(t, content, `[features]`)
-	assertContains(t, content, `codex_hooks = true`)
+	assertNotContains(t, content, `hooks = true`)
+	assertNotContains(t, content, `codex_hooks`)
 	assertContains(t, content, `[mcp_servers.knowns]`)
 	assertContains(t, content, `args = ["mcp", "--stdio"]`)
 }
@@ -385,7 +386,7 @@ func TestCreateAntigravityRulesQuietCreatesRuleFile(t *testing.T) {
 
 	content := readTextFile(t, filepath.Join(projectRoot, ".agents", "rules", "knowns.md"))
 	assertContains(t, content, "trigger: always_on")
-	assertContains(t, content, "Read `KNOWNS.md` first")
+	assertContains(t, content, "Start with Knowns MCP `initial`")
 	assertContains(t, content, "Prefer Knowns MCP tools")
 	assertContains(t, content, "`knowns`")
 }
@@ -497,6 +498,7 @@ func TestResolveSyncPlatformTargets(t *testing.T) {
 		wantError bool
 	}{
 		{name: "config defaults", platform: "", config: []string{"cursor"}, want: []string{"cursor"}},
+		{name: "codex override", platform: "codex", config: []string{"agents"}, want: []string{"codex"}},
 		{name: "cursor override", platform: "cursor", config: []string{"agents"}, want: []string{"cursor"}},
 		{name: "antigravity override", platform: "antigravity", config: nil, want: []string{"antigravity"}},
 		{name: "instruction-only platform returns none", platform: "claude", config: []string{"claude-code"}, want: nil},
@@ -524,6 +526,75 @@ func TestResolveSyncPlatformTargets(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestResolveSyncPlatformSelection(t *testing.T) {
+	tests := []struct {
+		name      string
+		platform  string
+		config    []string
+		want      []string
+		wantError bool
+	}{
+		{name: "config defaults", platform: "", config: []string{"codex", "agents"}, want: []string{"codex", "agents"}},
+		{name: "claude alias", platform: "claude", config: nil, want: []string{"claude-code"}},
+		{name: "codex target", platform: "codex", config: []string{"agents"}, want: []string{"codex"}},
+		{name: "all target", platform: "all", config: nil, want: allPlatformIDs},
+		{name: "unknown platform errors", platform: "unknown", config: nil, wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveSyncPlatformSelection(tt.platform, tt.config)
+			if tt.wantError {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveSyncPlatformSelection returned error: %v", err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("expected %d targets, got %d (%v)", len(tt.want), len(got), got)
+			}
+			for i, want := range tt.want {
+				if got[i] != want {
+					t.Fatalf("expected target[%d] = %q, got %q", i, want, got[i])
+				}
+			}
+		})
+	}
+}
+
+func TestRunSyncInstructionsCreatesAgentsForCodexConfig(t *testing.T) {
+	projectRoot := t.TempDir()
+
+	if err := runSyncInstructions(projectRoot, "", true, []string{"codex"}); err != nil {
+		t.Fatalf("runSyncInstructions returned error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(projectRoot, "AGENTS.md")); err != nil {
+		t.Fatalf("expected AGENTS.md to be created for codex config: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectRoot, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected CLAUDE.md not to be created for codex-only sync, got err=%v", err)
+	}
+}
+
+func TestRunSyncInstructionsCreatesAgentsForCodexPlatform(t *testing.T) {
+	projectRoot := t.TempDir()
+
+	if err := runSyncInstructions(projectRoot, "codex", true, nil); err != nil {
+		t.Fatalf("runSyncInstructions returned error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(projectRoot, "AGENTS.md")); err != nil {
+		t.Fatalf("expected AGENTS.md to be created for --platform codex: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectRoot, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected CLAUDE.md not to be created for --platform codex, got err=%v", err)
 	}
 }
 
@@ -637,14 +708,15 @@ func TestRenderCanonicalInstructionContentIncludesProactiveMemoryRules(t *testin
 	assertContains(t, content, "- Proactively save durable memory without waiting for the user to say \"save this\" when confidence is high.")
 	assertContains(t, content, "- Use `global` for stable user preferences or workflow rules that should carry across repositories and future sessions.")
 	assertContains(t, content, "- If the user states a stable collaboration preference, default to saving it as `global` memory unless they clearly scoped it to this repository only.")
-	assertContains(t, content, "- Compatibility shim files must stay lightweight and must direct agents back to `KNOWNS.md` for behavioral rules instead of restating divergent guidance.")
+	assertContains(t, content, "- Compatibility shim files must stay lightweight and must direct agents to MCP `initial`/`help` first, with `KNOWNS.md` as fallback reference.")
 }
 
 func TestRenderCompatibilityInstructionContentDefersBehaviorToKnowns(t *testing.T) {
 	content := renderCompatibilityInstructionContent("AGENTS.md", "Generic AI", "/tmp/example-project")
 
-	assertContains(t, content, "- Load behavior, memory policy, and workflow rules from `KNOWNS.md`; treat this file only as a compatibility entrypoint.")
-	assertContains(t, content, "- Proactively capture durable memory based on `KNOWNS.md` memory rules; do not wait for an explicit user instruction to save memory when scope and durability are clear.")
+	assertContains(t, content, "Start with Knowns MCP `initial`")
+	assertContains(t, content, "- `KNOWNS.md` is a human-readable reference and fallback, not a required startup read.")
+	assertContains(t, content, "- Proactively capture durable memory when scope and durability are clear.")
 }
 
 func TestPlatformLabelUsesUnifiedRuntimeArtifactSummary(t *testing.T) {
@@ -677,7 +749,7 @@ func TestRuntimeInstallHelpersExposeAvailabilitySummary(t *testing.T) {
 	}
 }
 
-func TestWriteKnownsGitignoreGitIgnoredTracksDocsAndTemplatesOnly(t *testing.T) {
+func TestWriteKnownsGitignoreGitIgnoredTracksKnowledgeSections(t *testing.T) {
 	dir := t.TempDir()
 	rootGitignorePath := filepath.Join(dir, ".gitignore")
 
@@ -705,7 +777,10 @@ func TestWriteKnownsGitignoreGitIgnoredTracksDocsAndTemplatesOnly(t *testing.T) 
 	assertContains(t, content, "!templates/**")
 	assertContains(t, content, "!tasks/")
 	assertContains(t, content, "!tasks/**")
+	assertContains(t, content, "!decisions/")
+	assertContains(t, content, "!decisions/**")
 	assertContains(t, content, "!config.json")
+	assertNotContains(t, content, "!memories/")
 }
 
 func TestWriteKnownsGitignoreGitTrackedRemovesManagedBlock(t *testing.T) {
@@ -831,9 +906,11 @@ func TestWriteKnownsGitignoreTrackedWithExplicitDisabled(t *testing.T) {
 
 	trackDocs := false
 	trackMemories := true
+	trackDecisions := false
 	tracking := &models.GitTracking{
-		Docs:     &trackDocs,
-		Memories: &trackMemories,
+		Docs:      &trackDocs,
+		Memories:  &trackMemories,
+		Decisions: &trackDecisions,
 	}
 
 	if err := writeKnownsGitignore(dir, "git-tracked", tracking); err != nil {
@@ -843,6 +920,7 @@ func TestWriteKnownsGitignoreTrackedWithExplicitDisabled(t *testing.T) {
 	content := readTextFile(t, filepath.Join(dir, ".knowns", ".gitignore"))
 
 	assertContains(t, content, "docs/")
+	assertContains(t, content, "decisions/")
 	assertNotContains(t, content, "memories/")
 	assertNotContains(t, content, "tasks/")
 	assertNotContains(t, content, "templates/")
@@ -865,6 +943,27 @@ func TestWriteKnownsGitignoreIgnoredWithDisabledDocs(t *testing.T) {
 	assertNotContains(t, content, "!docs/")
 	assertContains(t, content, "!tasks/")
 	assertContains(t, content, "!templates/")
+	assertContains(t, content, "!decisions/")
+}
+
+func TestWriteKnownsGitignoreIgnoredWithDisabledDecisions(t *testing.T) {
+	dir := t.TempDir()
+
+	trackDecisions := false
+	tracking := &models.GitTracking{
+		Decisions: &trackDecisions,
+	}
+
+	if err := writeKnownsGitignore(dir, "git-ignored", tracking); err != nil {
+		t.Fatalf("writeKnownsGitignore returned error: %v", err)
+	}
+
+	content := readTextFile(t, filepath.Join(dir, ".knowns", ".gitignore"))
+
+	assertNotContains(t, content, "!decisions/")
+	assertContains(t, content, "!tasks/")
+	assertContains(t, content, "!templates/")
+	assertContains(t, content, "!docs/")
 }
 
 func TestWriteKnownsGitignoreTrackedMemoriesDisabledByDefault(t *testing.T) {
@@ -877,9 +976,37 @@ func TestWriteKnownsGitignoreTrackedMemoriesDisabledByDefault(t *testing.T) {
 	content := readTextFile(t, filepath.Join(dir, ".knowns", ".gitignore"))
 
 	assertContains(t, content, "memories/")
+	assertNotContains(t, content, "decisions/")
 	assertNotContains(t, content, "tasks/")
 	assertNotContains(t, content, "docs/")
 	assertNotContains(t, content, "templates/")
+}
+
+func TestSyncGitIntegrationPreservesSectionToggles(t *testing.T) {
+	dir := t.TempDir()
+	trackDecisions := false
+	trackMemories := true
+	cfg := &models.Project{
+		Settings: models.ProjectSettings{
+			GitTrackingMode: "git-ignored",
+			GitTracking: &models.GitTracking{
+				Decisions: &trackDecisions,
+				Memories:  &trackMemories,
+			},
+		},
+	}
+
+	if err := syncGitIntegration(dir, cfg); err != nil {
+		t.Fatalf("syncGitIntegration returned error: %v", err)
+	}
+
+	content := readTextFile(t, filepath.Join(dir, ".knowns", ".gitignore"))
+
+	assertNotContains(t, content, "!decisions/")
+	assertContains(t, content, "!memories/")
+	assertContains(t, content, "!tasks/")
+	assertContains(t, content, "!docs/")
+	assertContains(t, content, "!templates/")
 }
 
 func assertNotContains(t *testing.T, content, want string) {

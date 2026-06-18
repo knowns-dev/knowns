@@ -8,7 +8,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"github.com/howznguyen/knowns/internal/memoryreview"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
@@ -20,9 +22,28 @@ const (
 	ModeManual = "manual"
 	ModeDebug  = "debug"
 
+	CaptureDisabled       = "disabled"
+	CapturePropose        = "propose"
+	CaptureHighConfidence = "high-confidence"
+
 	StatusNone      = "none"
 	StatusCandidate = "candidate"
 	StatusInjected  = "injected"
+
+	SkipReasonModeOff            = "mode_off"
+	SkipReasonDebugMode          = "debug_mode"
+	SkipReasonLowSignalPrompt    = "low_signal_prompt"
+	SkipReasonNoCandidates       = "no_candidates"
+	SkipReasonBelowThreshold     = "below_threshold"
+	SkipReasonMissingStore       = "missing_store"
+	SkipReasonNoCaptureCandidate = "no_capture_candidate"
+	SkipReasonDuplicateCapture   = "duplicate_capture"
+	SkipReasonReviewRequired     = "review_required"
+	SkipReasonCaptureDisabled    = "capture_disabled"
+	SkipReasonCaptureConfidence  = "capture_below_confidence"
+
+	CaptureStatusSkipped = "skipped"
+	CaptureStatusCreated = "created"
 
 	HookNative            = "native"
 	HookProxyPreExecution = "proxy-pre-execution"
@@ -45,6 +66,8 @@ const (
 	defaultMaxBytes  = 2500
 	maxPreviewBody   = 320
 	baselineMaxItems = 4
+
+	minHighConfidenceCapture = 0.80
 )
 
 var tokenRE = regexp.MustCompile(`[a-z0-9]+`)
@@ -173,6 +196,7 @@ type captureCandidate struct {
 
 type Settings struct {
 	Mode     string
+	Capture  string
 	MaxItems int
 	MaxBytes int
 }
@@ -184,6 +208,7 @@ type Input struct {
 	ActionType  string
 	UserPrompt  string
 	Mode        string
+	Capture     string
 	MaxItems    int
 	MaxBytes    int
 }
@@ -193,6 +218,7 @@ type Item struct {
 	Title     string    `json:"title"`
 	Category  string    `json:"category"`
 	Layer     string    `json:"layer"`
+	Status    string    `json:"status,omitempty"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	Content   string    `json:"content"`
 	Score     float64   `json:"score"`
@@ -219,10 +245,24 @@ type Pack struct {
 	Mode    string `json:"mode"`
 	Status  string `json:"status"`
 
-	Warning    string `json:"warning"`
-	Items      []Item `json:"items"`
-	Serialized string `json:"serialized,omitempty"`
-	Bytes      int    `json:"bytes"`
+	Warning        string          `json:"warning"`
+	Items          []Item          `json:"items"`
+	Candidates     []Item          `json:"candidates,omitempty"`
+	Serialized     string          `json:"serialized,omitempty"`
+	Bytes          int             `json:"bytes"`
+	SkipReason     string          `json:"skipReason,omitempty"`
+	CandidateCount int             `json:"candidateCount"`
+	SelectedCount  int             `json:"selectedCount"`
+	RetrievalMode  string          `json:"retrievalMode,omitempty"`
+	Capture        *CaptureOutcome `json:"capture,omitempty"`
+}
+
+type CaptureOutcome struct {
+	Status       string `json:"status"`
+	Reason       string `json:"reason,omitempty"`
+	Created      bool   `json:"created"`
+	MemoryID     string `json:"memoryId,omitempty"`
+	MemoryStatus string `json:"memoryStatus,omitempty"`
 }
 
 type Adapter struct {
@@ -283,6 +323,7 @@ func LookupAdapter(runtime string) (Adapter, bool) {
 func NormalizeSettings(cfg *models.RuntimeMemorySettings) Settings {
 	settings := Settings{
 		Mode:     ModeAuto,
+		Capture:  CaptureHighConfidence,
 		MaxItems: defaultMaxItems,
 		MaxBytes: defaultMaxBytes,
 	}
@@ -292,6 +333,7 @@ func NormalizeSettings(cfg *models.RuntimeMemorySettings) Settings {
 	if mode := NormalizeMode(cfg.Mode); mode != "" {
 		settings.Mode = mode
 	}
+	settings.Capture = NormalizeCaptureMode(cfg.Capture)
 	if cfg.MaxItems > 0 {
 		settings.MaxItems = cfg.MaxItems
 	}
@@ -316,21 +358,41 @@ func NormalizeMode(mode string) string {
 	}
 }
 
+func NormalizeCaptureMode(capture string) string {
+	switch strings.ToLower(strings.TrimSpace(capture)) {
+	case CaptureDisabled, "off", "none", "false":
+		return CaptureDisabled
+	case CapturePropose, "proposed":
+		return CapturePropose
+	case "", "auto", CaptureHighConfidence, "high_confidence", "highconfidence":
+		return CaptureHighConfidence
+	default:
+		return CaptureHighConfidence
+	}
+}
+
 func Build(store *storage.Store, input Input) (Pack, error) {
+	mode := NormalizeMode(input.Mode)
 	pack := Pack{
 		Runtime: input.Runtime,
-		Mode:    NormalizeMode(input.Mode),
+		Mode:    mode,
 		Status:  StatusNone,
 		Warning: canonicalityWarning,
 	}
+	if mode == ModeOff {
+		pack.SkipReason = SkipReasonModeOff
+		return pack, nil
+	}
 	if store == nil {
+		pack.SkipReason = SkipReasonMissingStore
 		return pack, nil
 	}
 	if _, ok := LookupAdapter(input.Runtime); !ok {
 		return pack, fmt.Errorf("unsupported runtime adapter: %s", input.Runtime)
 	}
 	isSessionBaseline := shouldUseSessionBaseline(input.ActionType, input.UserPrompt)
-	if shouldSkipPrompt(input.UserPrompt) && !isSessionBaseline {
+	if reason := promptSkipReason(input.UserPrompt); reason != "" && !isSessionBaseline {
+		pack.SkipReason = reason
 		return pack, nil
 	}
 	maxItems := input.MaxItems
@@ -367,45 +429,115 @@ func Build(store *storage.Store, input Input) (Pack, error) {
 		}
 		selected = append(selected, candidate.item)
 	}
+	pack.CandidateCount = len(candidates)
+	pack.RetrievalMode = retrievalModeForItems(selected)
 
-	serialized := serializePrefix(input.Runtime)
-	if isSessionBaseline || len(selected) > 0 {
+	if mode == ModeDebug {
+		pack.Candidates = selected
+		if len(selected) == 0 {
+			pack.SkipReason = SkipReasonNoCandidates
+			return pack, nil
+		}
+		pack.Status = StatusCandidate
+		return pack, nil
+	}
+
+	prefix := trimToByteLimit(serializePrefix(input.Runtime), maxBytes)
+	serialized := prefix
+
+	if len(selected) == 0 {
+		if isSessionBaseline {
+			block := serializeKNOWNSSummary(store, maxBytes-len(serialized))
+			if block != "" {
+				serialized += block
+			}
+		}
+		if strings.TrimSpace(serialized) == strings.TrimSpace(prefix) {
+			pack.SkipReason = SkipReasonNoCandidates
+			pack.Bytes = len(prefix)
+			return pack, nil
+		}
+		pack.Serialized = trimToByteLimit(serialized, maxBytes)
+		pack.Bytes = len(pack.Serialized)
+		pack.Status = StatusCandidate
+		pack.SelectedCount = len(pack.Items)
+		return pack, nil
+	}
+	if !isSessionBaseline && len(selected) > 0 && !passesInjectionThreshold(selected) {
+		pack.Candidates = selected
+		pack.SkipReason = SkipReasonBelowThreshold
+		pack.Bytes = len(prefix)
+		return pack, nil
+	}
+
+	serializedItems := make([]Item, 0, len(selected))
+	itemBlock := serializeItems(selected, maxBytes-len(serialized), &serializedItems)
+	if itemBlock != "" {
+		serialized += itemBlock
+	}
+	if isSessionBaseline || len(serializedItems) > 0 {
 		block := serializeKNOWNSSummary(store, maxBytes-len(serialized))
 		if block != "" {
 			serialized += block
 		}
 	}
-
-	if len(selected) == 0 && strings.TrimSpace(serialized) == strings.TrimSpace(serializePrefix(input.Runtime)) {
-		pack.Bytes = len(serializePrefix(input.Runtime))
-		return pack, nil
-	}
-	if !isSessionBaseline && len(selected) > 0 && !passesInjectionThreshold(selected) {
-		pack.Bytes = len(serializePrefix(input.Runtime))
+	if len(serializedItems) == 0 && !isSessionBaseline {
+		pack.Bytes = len(prefix)
 		return pack, nil
 	}
 
-	pack.Items = selected
+	pack.Items = serializedItems
 	pack.Serialized = serialized
 	pack.Bytes = len(serialized)
 	pack.Status = StatusCandidate
+	pack.SelectedCount = len(serializedItems)
 	return pack, nil
 }
 
 func Capture(store *storage.Store, input Input) (*models.MemoryEntry, bool, error) {
-	if store == nil || shouldSkipPrompt(input.UserPrompt) {
-		return nil, false, nil
+	entry, outcome, err := CaptureWithOutcome(store, input)
+	return entry, outcome.Created, err
+}
+
+func CaptureWithOutcome(store *storage.Store, input Input) (*models.MemoryEntry, CaptureOutcome, error) {
+	outcome := CaptureOutcome{Status: CaptureStatusSkipped}
+	if store == nil {
+		outcome.Reason = SkipReasonMissingStore
+		return nil, outcome, nil
+	}
+	captureMode := NormalizeCaptureMode(input.Capture)
+	switch NormalizeMode(input.Mode) {
+	case ModeOff:
+		outcome.Reason = SkipReasonModeOff
+		return nil, outcome, nil
+	case ModeDebug:
+		outcome.Reason = SkipReasonDebugMode
+		return nil, outcome, nil
+	}
+	if captureMode == CaptureDisabled {
+		outcome.Reason = SkipReasonCaptureDisabled
+		return nil, outcome, nil
+	}
+	if reason := promptSkipReason(input.UserPrompt); reason != "" {
+		outcome.Reason = reason
+		return nil, outcome, nil
 	}
 	candidate, ok := inferCaptureCandidate(input)
 	if !ok {
-		return nil, false, nil
+		outcome.Reason = SkipReasonNoCaptureCandidate
+		return nil, outcome, nil
+	}
+	if captureMode == CaptureHighConfidence && candidate.Confidence < minHighConfidenceCapture {
+		outcome.Reason = SkipReasonCaptureConfidence
+		return nil, outcome, nil
 	}
 	entries, err := store.Memory.List("")
 	if err != nil {
-		return nil, false, err
+		return nil, outcome, err
 	}
 	if hasDuplicateCapture(entries, candidate) {
-		return nil, false, nil
+		outcome.Reason = SkipReasonDuplicateCapture
+		return nil, outcome, nil
 	}
 	entry := &models.MemoryEntry{
 		Title:    candidate.Title,
@@ -414,10 +546,19 @@ func Capture(store *storage.Store, input Input) (*models.MemoryEntry, bool, erro
 		Content:  candidate.Content,
 		Tags:     append([]string(nil), candidate.Tags...),
 	}
-	if err := store.Memory.Create(entry); err != nil {
-		return nil, false, err
+	result, err := memoryreview.New(store).Add(entry, memoryreview.AddOptions{})
+	if err != nil {
+		return nil, outcome, err
 	}
-	return entry, true, nil
+	if result.Status == memoryreview.ResultReviewRequired || result.Memory == nil {
+		outcome.Reason = SkipReasonReviewRequired
+		return nil, outcome, nil
+	}
+	outcome.Status = CaptureStatusCreated
+	outcome.Created = true
+	outcome.MemoryID = result.Memory.ID
+	outcome.MemoryStatus = result.Memory.Status
+	return result.Memory, outcome, nil
 }
 
 func buildCandidates(store *storage.Store, input Input, maxItems int, baseline bool) ([]candidate, error) {
@@ -426,7 +567,7 @@ func buildCandidates(store *storage.Store, input Input, maxItems int, baseline b
 		if err != nil {
 			return nil, err
 		}
-		return buildBaselineItems(entries), nil
+		return buildBaselineItems(entries, input), nil
 	}
 	limit := max(maxItems*4, 20)
 	if hybrid, ok := lookupHybridCandidates(store, input, limit); ok {
@@ -443,9 +584,22 @@ func buildCandidates(store *storage.Store, input Input, maxItems int, baseline b
 	return buildHeuristicItems(entries, input), nil
 }
 
-func buildBaselineItems(entries []*models.MemoryEntry) []candidate {
+func memoryVisibleForRuntime(entry *models.MemoryEntry, input Input) bool {
+	if entry == nil {
+		return false
+	}
+	if NormalizeMode(input.Mode) == ModeDebug {
+		return true
+	}
+	return entry.CurrentForDefaultRetrieval()
+}
+
+func buildBaselineItems(entries []*models.MemoryEntry, input Input) []candidate {
 	candidates := make([]candidate, 0, len(entries))
 	for _, entry := range entries {
+		if !memoryVisibleForRuntime(entry, input) {
+			continue
+		}
 		if !allowedCategory(entry.Category) {
 			continue
 		}
@@ -464,6 +618,7 @@ func buildBaselineItems(entries []*models.MemoryEntry) []candidate {
 			Title:     entry.Title,
 			Category:  entry.Category,
 			Layer:     entry.Layer,
+			Status:    entry.Status,
 			UpdatedAt: entry.UpdatedAt,
 			Content:   normalizeWhitespace(entry.Content),
 			Score:     score,
@@ -661,6 +816,9 @@ func uniqueStrings(values []string) []string {
 func buildHeuristicItems(entries []*models.MemoryEntry, input Input) []candidate {
 	candidates := make([]candidate, 0, len(entries))
 	for _, entry := range entries {
+		if !memoryVisibleForRuntime(entry, input) {
+			continue
+		}
 		if !allowedCategory(entry.Category) {
 			continue
 		}
@@ -673,6 +831,7 @@ func buildHeuristicItems(entries []*models.MemoryEntry, input Input) []candidate
 			Title:     entry.Title,
 			Category:  entry.Category,
 			Layer:     entry.Layer,
+			Status:    entry.Status,
 			UpdatedAt: entry.UpdatedAt,
 			Content:   normalizeWhitespace(entry.Content),
 			Score:     score,
@@ -687,7 +846,7 @@ func buildHeuristicItems(entries []*models.MemoryEntry, input Input) []candidate
 func buildHybridItems(hits []hybridCandidate, input Input) []candidate {
 	candidates := make([]candidate, 0, len(hits))
 	for _, hit := range hits {
-		if hit.entry == nil || !allowedCategory(hit.entry.Category) {
+		if hit.entry == nil || !memoryVisibleForRuntime(hit.entry, input) || !allowedCategory(hit.entry.Category) {
 			continue
 		}
 		if !containsString(hit.matchedBy, "semantic") {
@@ -711,6 +870,7 @@ func buildHybridItems(hits []hybridCandidate, input Input) []candidate {
 			Title:     hit.entry.Title,
 			Category:  hit.entry.Category,
 			Layer:     hit.entry.Layer,
+			Status:    hit.entry.Status,
 			UpdatedAt: hit.entry.UpdatedAt,
 			Content:   normalizeWhitespace(hit.entry.Content),
 			Score:     score,
@@ -742,10 +902,11 @@ func defaultHybridCandidates(store *storage.Store, input Input, limit int) ([]hy
 		return nil, false
 	}
 	results, err := engine.Search(search.SearchOptions{
-		Query: strings.TrimSpace(input.UserPrompt),
-		Type:  "memory",
-		Mode:  string(search.ModeHybrid),
-		Limit: limit,
+		Query:             strings.TrimSpace(input.UserPrompt),
+		Type:              "memory",
+		Mode:              string(search.ModeHybrid),
+		Limit:             limit,
+		IncludeHistorical: NormalizeMode(input.Mode) == ModeDebug,
 	})
 	if err != nil {
 		return nil, true
@@ -812,7 +973,7 @@ func serializeKNOWNSSummary(store *storage.Store, remaining int) string {
 	if store == nil || remaining <= 0 {
 		return ""
 	}
-	block := "\nKnowns is the repository memory and workflow layer for tasks, docs, templates, references, and reusable knowledge.\n\n- Read `KNOWNS.md` in the repository root for canonical project guidance and workflow rules.\n- Use Knowns docs, tasks, and memories as operating context for this repository.\n- Treat memories as supplemental context only. They do not override `KNOWNS.md`, source-of-truth docs, tasks, or source files.\n- Use MCP `memory({ action: \"list\" })` first to inspect relevant memory summaries before calling `memory({ action: \"get\" })`.\n- Prefer updating or reusing relevant existing memories instead of creating duplicates.\n- If you need deeper project behavior, conventions, or workflow details, read `KNOWNS.md`.\n- If you have not checked project readiness yet, call MCP `project({ action: \"status\" })` to see knowledge counts, search state, runtime health, and available capabilities.\n"
+	block := "\nKnowns is the repository memory and workflow layer for tasks, docs, templates, references, and reusable knowledge.\n\n- Use MCP `initial` first when available; use `help(\"tool.*\")` or `help(\"workflow.*\")` for domain details.\n- Use Knowns docs, tasks, and memories as operating context for this repository.\n- Treat memories as supplemental context only. They do not override source-of-truth docs, tasks, or source files.\n- Use MCP `memory({ action: \"list\" })` first to inspect relevant memory summaries before calling `memory({ action: \"get\" })`.\n- Prefer updating or reusing relevant existing memories instead of creating duplicates.\n- If MCP bootstrap is unavailable, read `KNOWNS.md` as a human-readable fallback reference.\n- If you have not checked project readiness yet, call MCP `project({ action: \"status\" })` to see knowledge counts, search state, runtime health, and available capabilities.\n"
 	if len(block) <= remaining {
 		return block
 	}
@@ -826,10 +987,105 @@ func serializeKNOWNSSummary(store *storage.Store, remaining int) string {
 	return trimmed
 }
 
+func serializeItems(items []Item, remaining int, serializedItems *[]Item) string {
+	if remaining <= 0 || len(items) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	builder.WriteString("\n")
+	remaining--
+	for _, item := range items {
+		block := serializeItem(item, remaining)
+		if block == "" {
+			break
+		}
+		builder.WriteString(block)
+		remaining -= len(block)
+		if serializedItems != nil {
+			*serializedItems = append(*serializedItems, item)
+		}
+	}
+	if serializedItems != nil && len(*serializedItems) == 0 {
+		return ""
+	}
+	return builder.String()
+}
+
 func serializeItem(item Item, remaining int) string {
-	_ = item
-	_ = remaining
-	return ""
+	if remaining <= 0 {
+		return ""
+	}
+	ref := memoryReference(item)
+	layer := strings.TrimSpace(item.Layer)
+	if layer == "" {
+		layer = "unknown"
+	}
+	category := strings.TrimSpace(item.Category)
+	if category == "" {
+		category = "uncategorized"
+	}
+	title := normalizeWhitespace(item.Title)
+	if title == "" {
+		title = "Untitled memory"
+	}
+	content := normalizeWhitespace(item.Content)
+
+	header := fmt.Sprintf("- %s [%s/%s] %s\n", ref, layer, category, title)
+	contentPrefix := "  "
+	trailer := "\n"
+	overhead := len(header) + len(contentPrefix) + len(trailer)
+	if overhead > remaining {
+		return ""
+	}
+	contentBudget := remaining - overhead
+	if contentBudget <= 0 {
+		return ""
+	}
+	content = truncateText(content, contentBudget)
+	if content == "" {
+		return ""
+	}
+	return header + contentPrefix + content + trailer
+}
+
+func memoryReference(item Item) string {
+	id := strings.TrimSpace(item.ID)
+	if id == "" {
+		id = "unknown"
+	}
+	return "@memory/" + id
+}
+
+func truncateText(text string, maxBytes int) string {
+	text = normalizeWhitespace(text)
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(text) <= maxBytes {
+		return text
+	}
+	if maxBytes <= 3 {
+		return trimToByteLimit(text, maxBytes)
+	}
+	trimmed := strings.TrimSpace(trimToByteLimit(text, maxBytes-3))
+	if trimmed == "" {
+		return trimToByteLimit(text, maxBytes)
+	}
+	return trimmed + "..."
+}
+
+func trimToByteLimit(text string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(text) <= maxBytes {
+		return text
+	}
+	trimmed := text[:maxBytes]
+	for !utf8.ValidString(trimmed) && len(trimmed) > 0 {
+		trimmed = trimmed[:len(trimmed)-1]
+	}
+	return trimmed
 }
 
 func allowedCategory(category string) bool {
@@ -842,26 +1098,30 @@ func allowedCategory(category string) bool {
 }
 
 func shouldSkipPrompt(prompt string) bool {
+	return promptSkipReason(prompt) != ""
+}
+
+func promptSkipReason(prompt string) string {
 	normalized := strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(prompt))), " ")
 	if normalized == "" {
-		return true
+		return SkipReasonLowSignalPrompt
 	}
 	if len(normalized) < 3 {
-		return true
+		return SkipReasonLowSignalPrompt
 	}
 	tokens := tokenRE.FindAllString(normalized, -1)
 	if len(tokens) == 0 {
-		return true
+		return SkipReasonLowSignalPrompt
 	}
 	if len(tokens) > 2 {
-		return false
+		return ""
 	}
 	for _, token := range tokens {
 		if _, ok := lowSignalPromptTokens[token]; !ok {
-			return false
+			return ""
 		}
 	}
-	return true
+	return SkipReasonLowSignalPrompt
 }
 
 func shouldUseSessionBaseline(actionType, prompt string) bool {
@@ -1031,6 +1291,24 @@ func hybridSearchBoost(raw float64) float64 {
 		return 1.2
 	}
 	return raw
+}
+
+func retrievalModeForItems(items []Item) string {
+	mode := ""
+	for _, item := range items {
+		retrieval := strings.TrimSpace(item.Retrieval)
+		if retrieval == "" {
+			continue
+		}
+		if mode == "" {
+			mode = retrieval
+			continue
+		}
+		if mode != retrieval {
+			return "mixed"
+		}
+	}
+	return mode
 }
 
 func containsString(values []string, target string) bool {

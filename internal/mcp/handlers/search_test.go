@@ -60,6 +60,99 @@ func TestHandleSearchHybridFallsBackToKeywordCompatibleResults(t *testing.T) {
 	}
 }
 
+func TestHandleSearchAndRetrieveIncludeHistoricalDecisions(t *testing.T) {
+	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("search-mcp-test"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+
+	now := time.Now().UTC()
+	for _, decision := range []*models.DecisionEntry{
+		{
+			ID:        "20260618-1024-use-qdrant",
+			Title:     "Use Qdrant as default vector DB",
+			Status:    models.DecisionStatusAccepted,
+			Tags:      []string{"vector"},
+			Sources:   []string{"@doc/specs/2026-06-18/memory-decision-review-ui"},
+			Decision:  "Use Qdrant for vector db search guidance.",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:           "20260618-0900-use-chroma",
+			Title:        "Use Chroma as vector DB",
+			Status:       models.DecisionStatusSuperseded,
+			SupersededBy: []string{"20260618-1024-use-qdrant"},
+			Tags:         []string{"vector"},
+			Decision:     "Use Chroma for vector db search guidance.",
+			CreatedAt:    now.Add(-time.Hour),
+			UpdatedAt:    now.Add(-time.Hour),
+		},
+	} {
+		if err := store.Decisions.Create(decision, storage.DecisionCreateOptions{}); err != nil {
+			t.Fatalf("create decision %s: %v", decision.ID, err)
+		}
+	}
+
+	searchResult, err := handleSearch(func() *storage.Store { return store }, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{Arguments: map[string]any{
+			"query":             "vector db",
+			"type":              "decision",
+			"mode":              "keyword",
+			"includeHistorical": true,
+			"limit":             10,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("handleSearch: %v", err)
+	}
+	searchText, ok := searchResult.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("unexpected search content: %#v", searchResult.Content[0])
+	}
+	var results []models.SearchResult
+	if err := json.Unmarshal([]byte(searchText.Text), &results); err != nil {
+		t.Fatalf("decode search result: %v\n%s", err, searchText.Text)
+	}
+	if len(results) != 2 {
+		t.Fatalf("search results = %+v, want accepted and superseded decisions", results)
+	}
+	for _, result := range results {
+		if result.Status == "" {
+			t.Fatalf("search result missing status metadata: %+v", result)
+		}
+	}
+
+	retrieveResult, err := handleRetrieve(func() *storage.Store { return store }, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{Arguments: map[string]any{
+			"query":             "vector db",
+			"sourceTypes":       []any{"decision"},
+			"mode":              "keyword",
+			"includeHistorical": true,
+			"limit":             10,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("handleRetrieve: %v", err)
+	}
+	retrieveText, ok := retrieveResult.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("unexpected retrieve content: %#v", retrieveResult.Content[0])
+	}
+	var response models.RetrievalResponse
+	if err := json.Unmarshal([]byte(retrieveText.Text), &response); err != nil {
+		t.Fatalf("decode retrieve response: %v\n%s", err, retrieveText.Text)
+	}
+	if len(response.Candidates) != 2 {
+		t.Fatalf("retrieve candidates = %+v, want accepted and superseded decisions", response.Candidates)
+	}
+	for _, candidate := range response.Candidates {
+		if candidate.Status == "" || candidate.Metadata.Status == "" {
+			t.Fatalf("retrieve candidate missing status metadata: %+v", candidate)
+		}
+	}
+}
+
 func TestResolveReferenceJSON(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

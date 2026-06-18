@@ -11,16 +11,17 @@ const (
 
 // ChunkVersion is incremented when chunking/embedding logic changes,
 // triggering auto-reindex on next search initialization.
-const ChunkVersion = 2
+const ChunkVersion = 3
 
 // ChunkType indicates whether a chunk came from a doc or a task.
 type ChunkType string
 
 const (
-	ChunkTypeDoc    ChunkType = "doc"
-	ChunkTypeTask   ChunkType = "task"
-	ChunkTypeMemory ChunkType = "memory"
-	ChunkTypeCode   ChunkType = "code"
+	ChunkTypeDoc      ChunkType = "doc"
+	ChunkTypeTask     ChunkType = "task"
+	ChunkTypeMemory   ChunkType = "memory"
+	ChunkTypeDecision ChunkType = "decision"
+	ChunkTypeCode     ChunkType = "code"
 )
 
 // Chunk is a piece of a task or document prepared for embedding.
@@ -49,6 +50,9 @@ type Chunk struct {
 	MemoryID    string `json:"memoryId,omitempty"`
 	MemoryLayer string `json:"memoryLayer,omitempty"`
 	MemoryStore string `json:"memoryStore,omitempty"`
+
+	// Decision fields (populated when Type == ChunkTypeDecision).
+	DecisionID string `json:"decisionId,omitempty"`
 
 	// Code fields (populated when Type == ChunkTypeCode).
 	Name       string `json:"name,omitempty"`       // symbol name e.g. "getGraph"

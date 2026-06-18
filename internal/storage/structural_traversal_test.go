@@ -200,6 +200,67 @@ func TestStructuralResolve_MultiHopBlockedChain(t *testing.T) {
 	}
 }
 
+func TestStructuralResolve_CanonicalAndLegacyRefs(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := filepath.Join(t.TempDir(), ".knowns")
+	store := NewStore(root)
+	if err := store.Init("canonical-ref-test"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := store.Tasks.Create(&models.Task{
+		ID:          "source",
+		Title:       "Source",
+		Status:      "todo",
+		Priority:    "medium",
+		Description: "See @task/target{related}, @memory-note{follows}, and @decision/20260618-1024-use-qdrant-as-default-vector-db{depends}.",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}); err != nil {
+		t.Fatalf("create source task: %v", err)
+	}
+	if err := store.Tasks.Create(&models.Task{ID: "target", Title: "Target", Status: "todo", Priority: "medium", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("create target task: %v", err)
+	}
+	if err := store.Memory.Create(&models.MemoryEntry{ID: "mem001", Title: "Note", Layer: models.MemoryLayerProject, Category: "pattern", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("create memory: %v", err)
+	}
+	if err := store.Decisions.Create(&models.DecisionEntry{
+		ID:        "20260618-1024-use-qdrant-as-default-vector-db",
+		Title:     "Use Qdrant as default vector DB",
+		Status:    models.DecisionStatusAccepted,
+		Sources:   []string{"@task/source"},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}, DecisionCreateOptions{Now: now}); err != nil {
+		t.Fatalf("create decision: %v", err)
+	}
+
+	result, err := store.StructuralResolve("@task/source", models.StructuralParams{
+		Direction: "outbound",
+		Depth:     1,
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	wantTargets := map[string]bool{
+		"task:target":   false,
+		"memory:mem001": false,
+		"decision:20260618-1024-use-qdrant-as-default-vector-db": false,
+	}
+	for _, edge := range result.Edges {
+		key := edge.Target.Kind + ":" + edge.Target.ID
+		if _, ok := wantTargets[key]; ok {
+			wantTargets[key] = true
+		}
+	}
+	for target, found := range wantTargets {
+		if !found {
+			t.Fatalf("missing structural target %s in edges: %+v", target, result.Edges)
+		}
+	}
+}
+
 // Scenario 3: Mixed origins — deduplication (field-backed wins over inline).
 func TestStructuralResolve_MixedOriginDedup(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

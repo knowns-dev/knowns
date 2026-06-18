@@ -516,3 +516,123 @@ func ChunkMemory(entry *models.MemoryEntry, maxTokens int, tok Tokenizer) ChunkR
 
 	return ChunkResult{Chunks: chunks, TotalTokens: totalTokens}
 }
+
+// ChunkDecision splits a decision entry into chunks for embedding.
+func ChunkDecision(entry *models.DecisionEntry, maxTokens int, tok Tokenizer) ChunkResult {
+	if entry == nil {
+		return ChunkResult{}
+	}
+	if maxTokens <= 0 {
+		maxTokens = 512
+	}
+
+	text := decisionText(entry)
+	if text == "" {
+		return ChunkResult{}
+	}
+
+	var chunks []Chunk
+	totalTokens := 0
+	tc := countTokens(text, tok)
+
+	if tc > maxTokens {
+		paragraphs := splitParagraphs(text)
+		partIdx := 0
+		currentContent := ""
+		currentTokens := 0
+
+		for _, para := range paragraphs {
+			paraTokens := countTokens(para, tok)
+			if currentTokens+paraTokens > maxTokens && currentContent != "" {
+				suffix := ""
+				if partIdx > 0 {
+					suffix = fmt.Sprintf(":%d", partIdx)
+				}
+				chunks = append(chunks, Chunk{
+					ID:         fmt.Sprintf("decision:%s:chunk:content%s", entry.ID, suffix),
+					Type:       ChunkTypeDecision,
+					DecisionID: entry.ID,
+					Status:     entry.Status,
+					Content:    currentContent,
+					TokenCount: currentTokens,
+				})
+				totalTokens += currentTokens
+				partIdx++
+				currentContent = para
+				currentTokens = paraTokens
+			} else {
+				if currentContent != "" {
+					currentContent += "\n\n" + para
+				} else {
+					currentContent = para
+				}
+				currentTokens += paraTokens
+			}
+		}
+		if currentContent != "" {
+			suffix := ""
+			if partIdx > 0 {
+				suffix = fmt.Sprintf(":%d", partIdx)
+			}
+			chunks = append(chunks, Chunk{
+				ID:         fmt.Sprintf("decision:%s:chunk:content%s", entry.ID, suffix),
+				Type:       ChunkTypeDecision,
+				DecisionID: entry.ID,
+				Status:     entry.Status,
+				Content:    currentContent,
+				TokenCount: currentTokens,
+			})
+			totalTokens += currentTokens
+		}
+	} else {
+		chunks = append(chunks, Chunk{
+			ID:         fmt.Sprintf("decision:%s:chunk:content", entry.ID),
+			Type:       ChunkTypeDecision,
+			DecisionID: entry.ID,
+			Status:     entry.Status,
+			Content:    text,
+			TokenCount: tc,
+		})
+		totalTokens = tc
+	}
+
+	return ChunkResult{Chunks: chunks, TotalTokens: totalTokens}
+}
+
+func decisionText(entry *models.DecisionEntry) string {
+	if entry == nil {
+		return ""
+	}
+	parts := []string{entry.Title}
+	if entry.Status != "" {
+		parts = append(parts, "Status: "+entry.Status)
+	}
+	if len(entry.Tags) > 0 {
+		parts = append(parts, "Tags: "+strings.Join(entry.Tags, ", "))
+	}
+	if len(entry.Sources) > 0 {
+		parts = append(parts, "Sources: "+strings.Join(entry.Sources, ", "))
+	}
+	if len(entry.RelatedDocs) > 0 {
+		parts = append(parts, "Related docs: "+strings.Join(entry.RelatedDocs, ", "))
+	}
+	if len(entry.RelatedTasks) > 0 {
+		parts = append(parts, "Related tasks: "+strings.Join(entry.RelatedTasks, ", "))
+	}
+	for _, section := range []struct {
+		heading string
+		body    string
+	}{
+		{"Context", entry.Context},
+		{"Decision", entry.Decision},
+		{"Alternatives Considered", entry.AlternativesConsidered},
+		{"Consequences", entry.Consequences},
+		{"Content", entry.Content},
+	} {
+		if strings.TrimSpace(section.body) == "" {
+			continue
+		}
+		parts = append(parts, "## "+section.heading+"\n\n"+section.body)
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+}

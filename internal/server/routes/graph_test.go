@@ -42,11 +42,11 @@ func TestExtractMentions_UsesSemanticRelations(t *testing.T) {
 	routes := &GraphRoutes{store: store}
 	edges := routes.extractMentions(
 		"doc:guides/source",
-		"See @task-rag001{implements}, @memory-mem001, and @doc/guides/source{related}.",
+		"See @task/rag001{implements}, @memory-mem001, @decision/20260618-1024-use-qdrant-as-default-vector-db, and @doc/guides/source{related}.",
 	)
 
-	if len(edges) != 2 {
-		t.Fatalf("edge count = %d, want 2", len(edges))
+	if len(edges) != 3 {
+		t.Fatalf("edge count = %d, want 3", len(edges))
 	}
 	if edges[0].Type != "implements" {
 		t.Fatalf("first edge type = %q, want implements", edges[0].Type)
@@ -54,8 +54,11 @@ func TestExtractMentions_UsesSemanticRelations(t *testing.T) {
 	if edges[1].Type != models.SemanticReferenceRelationReferences {
 		t.Fatalf("second edge type = %q, want references", edges[1].Type)
 	}
-	if raw, _ := edges[0].Data["raw"].(string); raw != "@task-rag001{implements}" {
+	if raw, _ := edges[0].Data["raw"].(string); raw != "@task/rag001{implements}" {
 		t.Fatalf("raw edge data = %q, want semantic ref", raw)
+	}
+	if edges[2].Target != "decision:20260618-1024-use-qdrant-as-default-vector-db" {
+		t.Fatalf("decision edge target = %q", edges[2].Target)
 	}
 }
 
@@ -86,5 +89,13 @@ func seedSemanticGraphData(t *testing.T, store *storage.Store) {
 	}
 	if err := store.Memory.Create(&models.MemoryEntry{ID: "mem001", Title: "Security Pattern", Layer: models.MemoryLayerProject, Category: "pattern"}); err != nil {
 		t.Fatalf("create memory: %v", err)
+	}
+	if err := store.Decisions.Create(&models.DecisionEntry{
+		ID:      "20260618-1024-use-qdrant-as-default-vector-db",
+		Title:   "Use Qdrant as default vector DB",
+		Status:  models.DecisionStatusAccepted,
+		Sources: []string{"@doc/guides/source"},
+	}, storage.DecisionCreateOptions{}); err != nil {
+		t.Fatalf("create decision: %v", err)
 	}
 }

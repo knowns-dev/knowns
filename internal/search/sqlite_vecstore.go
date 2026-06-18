@@ -108,7 +108,7 @@ func (s *SQLiteVectorStore) createSchema() error {
 		}
 	}
 
-	for _, col := range []string{"memory_layer", "memory_store"} {
+	for _, col := range []string{"memory_layer", "memory_store", "decision_id"} {
 		var hasCol int
 		row = s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('chunks') WHERE name=?`, col)
 		if err := row.Scan(&hasCol); err == nil && hasCol == 0 {
@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS chunks (
 
 	    memory_layer    TEXT,
 	    memory_store    TEXT,
+	    decision_id     TEXT,
 
 	    name            TEXT,
 	    signature       TEXT,
@@ -186,7 +187,6 @@ CREATE TABLE IF NOT EXISTS code_file_hashes (
 		}
 	}
 
-
 	return nil
 }
 
@@ -195,7 +195,7 @@ func (s *SQLiteVectorStore) loadIntoMemory() error {
 		SELECT id, type, content, token_count, embedding,
 		       doc_path, section, heading_level, header_path, position,
 		       task_id, field, status, priority, labels,
-		       COALESCE(memory_layer, ''), COALESCE(memory_store, ''),
+		       COALESCE(memory_layer, ''), COALESCE(memory_store, ''), COALESCE(decision_id, ''),
 		       COALESCE(name, ''), COALESCE(signature, ''), COALESCE(visibility, ''), COALESCE(detail, '')
 		FROM chunks
 	`)
@@ -214,14 +214,14 @@ func (s *SQLiteVectorStore) loadIntoMemory() error {
 		var docPath, section, parentSection sql.NullString
 		var headingLevel, position sql.NullInt64
 		var taskID, field, status, priority, labels sql.NullString
-		var memoryLayer, memoryStore string
+		var memoryLayer, memoryStore, decisionID string
 		var name, signature, visibility, detail string
 
 		if err := rows.Scan(
 			&entry.ID, &entry.Type, &content, &entry.TokenCount, &embBlob,
 			&docPath, &section, &headingLevel, &parentSection, &position,
 			&taskID, &field, &status, &priority, &labels,
-			&memoryLayer, &memoryStore,
+			&memoryLayer, &memoryStore, &decisionID,
 			&name, &signature, &visibility, &detail,
 		); err != nil {
 			return err
@@ -238,6 +238,7 @@ func (s *SQLiteVectorStore) loadIntoMemory() error {
 		entry.Priority = priority.String
 		entry.MemoryLayer = memoryLayer
 		entry.MemoryStore = memoryStore
+		entry.DecisionID = decisionID
 		entry.Content = content.String
 		entry.Name = name
 		entry.Signature = signature
@@ -288,9 +289,9 @@ func (s *SQLiteVectorStore) Save() error {
 		INSERT OR REPLACE INTO chunks (id, type, content, token_count, embedding,
 		    doc_path, section, heading_level, header_path, position,
 		    task_id, field, status, priority, labels,
-		    memory_layer, memory_store,
+		    memory_layer, memory_store, decision_id,
 		    name, signature, visibility, detail)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return err
@@ -324,7 +325,7 @@ func (s *SQLiteVectorStore) Save() error {
 			nullStr(entry.TaskID), nullStr(entry.Field),
 			nullStr(entry.Status), nullStr(entry.Priority),
 			labelsJSON,
-			nullStr(entry.MemoryLayer), nullStr(entry.MemoryStore),
+			nullStr(entry.MemoryLayer), nullStr(entry.MemoryStore), nullStr(entry.DecisionID),
 			nullStr(entry.Name), nullStr(entry.Signature), nullStr(entry.Visibility), nullStr(entry.Detail),
 		); err != nil {
 			return err

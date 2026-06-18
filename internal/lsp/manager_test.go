@@ -3,8 +3,12 @@ package lsp
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -57,6 +61,100 @@ func TestRegisterAdapter(t *testing.T) {
 	}
 	if got.ID() != "go" {
 		t.Fatalf("expected adapter ID 'go', got %q", got.ID())
+	}
+}
+
+func TestRuntimeBinariesForAdapterPrefersManagedSelectedPath(t *testing.T) {
+	installer := NewInstaller(t.TempDir())
+	selectedPath := filepath.Join(t.TempDir(), "managed-ls")
+	if err := os.WriteFile(selectedPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &mockAdapter{
+		id: "managed",
+		runtimeDeps: []RuntimeDependency{{
+			ID:         "v1.0.0",
+			PlatformID: CurrentPlatformID(),
+			BinaryName: "managed-ls",
+		}},
+	}
+	if err := installer.writeSelection(adapter, adapter.runtimeDeps[0], selectedPath); err != nil {
+		t.Fatal(err)
+	}
+
+	binaries := runtimeBinariesForAdapter(adapter, installer)
+	if len(binaries) == 0 || binaries[0].Name != selectedPath {
+		t.Fatalf("runtimeBinariesForAdapter() = %#v, want selected path first", binaries)
+	}
+}
+
+func TestManagerStartAndRestartRejectDisabledLanguage(t *testing.T) {
+	enabled := false
+	m := NewManager(t.TempDir(), Config{Languages: map[string]LanguageConfig{
+		"go": {Enabled: &enabled},
+	}})
+	if err := m.RegisterAdapter(&mgrMockAdapter{id: "go", name: "Go"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.StartLanguage(context.Background(), "go"); err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("StartLanguage disabled error = %v, want disabled", err)
+	}
+	if err := m.RestartLanguage(context.Background(), "go"); err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("RestartLanguage disabled error = %v, want disabled", err)
+	}
+}
+
+func TestInstallLanguageRefreshesRegistryWithManagedPath(t *testing.T) {
+	root := t.TempDir()
+	installer := NewInstaller(t.TempDir())
+	content, sha := createTestBinary()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(content)
+	}))
+	defer server.Close()
+	adapter := &mockAdapter{
+		id:         "managed",
+		extensions: []string{".managed"},
+		runtimeDeps: []RuntimeDependency{{
+			ID:          "v1.0.0",
+			PlatformID:  CurrentPlatformID(),
+			URL:         server.URL + "/managed-ls",
+			SHA256:      sha,
+			ArchiveType: "binary",
+			BinaryName:  "managed-ls",
+		}},
+	}
+	m := NewManager(root, Config{})
+	m.SetDetector(&Detector{Registry: m.registry, Installer: installer})
+	if err := m.RegisterAdapter(adapter); err != nil {
+		t.Fatal(err)
+	}
+	path, err := m.InstallLanguage(context.Background(), "managed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lang, ok := m.registry.ForPath(filepath.Join(root, "main.managed"))
+	if !ok || len(lang.Binaries) == 0 || lang.Binaries[0].Name != path {
+		t.Fatalf("registry language after install = %#v, ok=%v; want selected managed path %q", lang, ok, path)
+	}
+}
+
+func TestTailLogFileReturnsBoundedSuffix(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runtime.log")
+	var b strings.Builder
+	for i := 1; i <= 1000; i++ {
+		fmt.Fprintf(&b, "line-%04d\n", i)
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lines, err := tailLogFile(path, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 3 || lines[0] != "line-0998" || lines[2] != "line-1000" {
+		t.Fatalf("tailLogFile() = %#v, want last 3 lines", lines)
 	}
 }
 

@@ -27,6 +27,7 @@ Check `$ARGUMENTS`:
 - Extract patterns, decisions, AND failures — not just code patterns
 - Prefer updating an existing doc over creating a duplicate
 - Link the extracted knowledge back to the source task or source doc
+- Create or supersede a first-class Decision when the extracted knowledge is durable guidance for future work
 - Only create a template if the pattern is genuinely reusable for generation
 - Promote critical learnings to `learnings/critical-patterns` for future `kn-init` sessions
 
@@ -41,7 +42,7 @@ Look for three categories:
 | Category | What to look for |
 |----------|-----------------|
 | **Patterns** | Reusable code patterns, architecture approaches, integration techniques |
-| **Decisions** | Good calls, bad calls, trade-offs, surprises |
+| **Decisions** | Durable choices, supersessions, good calls, bad calls, trade-offs, surprises |
 | **Failures** | Bugs, wrong assumptions, wasted effort, missing prerequisites |
 
 ## Step 2: Search for Existing Docs
@@ -79,6 +80,28 @@ Identify failures and wasted effort:
 
 ---
 
+### 3d. First-Class Decisions
+
+If a decision is current guidance rather than only a retrospective learning, capture it as a Decision:
+
+- Use Decision for stable project guidance: architecture, product behavior, workflow convention, naming, storage model, API contract, or explicit tradeoff
+- Link the Decision to the source task, source doc, or related reference
+- Supersede existing Decisions when new guidance replaces old guidance
+- Do not create Decisions for routine progress notes, one-off bugs, local implementation details, or unresolved ideas
+
+```bash
+knowns decision create "<decision title>" \
+  --task <task-id> \
+  --doc <doc-path> \
+  --decision "<current guidance>"
+```
+
+```bash
+knowns decision supersede <old-decision-id> <new-decision-id>
+```
+
+---
+
 ## Step 4: Create/Update Documentation
 
 ### For patterns → pattern doc (same as before)
@@ -91,7 +114,7 @@ mcp_knowns_docs({ "action": "create", "title": "Pattern: <Name>",
 })
 ```
 
-### For decisions + failures → learning doc
+### For retrospective decisions + failures → learning doc
 
 ```json
 mcp_knowns_docs({ "action": "create", "title": "Learning: <feature/domain>",
@@ -143,8 +166,9 @@ mcp_knowns_memory({ "action": "add", "title": "<pattern/decision name>",
 })
 ```
 
-Memory = fast agent recall in future sessions. Doc = full structured reference.
+Memory = fast agent recall in future sessions. Decision = durable guidance. Doc = full structured reference.
 Do NOT duplicate the entire doc content — store a summary and link to the doc.
+If a first-class Decision was created, include its `@decision/<id>` ref in the memory or task note when useful.
 Skip this step if the extraction produced nothing generalizable.
 
 ## Step 6: Create Template (if code-generatable)
@@ -316,7 +340,8 @@ If the work is too specific to generalize, say so explicitly and do not force a 
 |--------|------------|-----------|
 | Code pattern | Pattern doc | ✅ Yes |
 | API pattern | Integration guide | ✅ Yes |
-| Decision (good/bad) | Learning doc | ❌ No |
+| Durable decision / supersession | Decision | ❌ No |
+| Retrospective decision (good/bad) | Learning doc | ❌ No |
 | Failure / debugging | Learning doc | ❌ No |
 | Error solution | Troubleshooting | ❌ No |
 | Security approach | Guidelines | ❌ No |
@@ -325,6 +350,7 @@ If the work is too specific to generalize, say so explicitly and do not force a 
 
 - [ ] Three categories analyzed (patterns, decisions, failures)
 - [ ] Knowledge is generalizable
+- [ ] Durable guidance captured as Decision when applicable
 - [ ] Includes working example (for patterns)
 - [ ] Links back to source
 - [ ] Critical learnings promoted (if applicable)

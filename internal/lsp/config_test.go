@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/storage"
 )
 
 func TestConfigFromProject(t *testing.T) {
@@ -36,7 +37,7 @@ func TestVersionOverride(t *testing.T) {
 
 func TestLanguageSettings(t *testing.T) {
 	settings := map[string]any{
-		"analyses": map[string]any{"unusedparams": true},
+		"analyses":   map[string]any{"unusedparams": true},
 		"buildFlags": []any{"-tags=integration"},
 	}
 	cfg := Config{Languages: map[string]LanguageConfig{
@@ -121,5 +122,57 @@ func TestConfigFromProjectWithNewFields(t *testing.T) {
 	}
 	if !cfg.IsDisabled("go") {
 		t.Fatal("IsDisabled(go) = false, want true")
+	}
+}
+
+func TestConfigFromProjectWithDefaultsProjectOverridesGlobal(t *testing.T) {
+	globalEnabled := true
+	projectEnabled := false
+	defaults := &storage.ProjectDefaults{Settings: models.ProjectSettings{LSP: &models.LSPSettings{
+		Languages: map[string]models.LSPLanguageSettings{
+			CSharpLanguageID: {
+				Enabled:     &globalEnabled,
+				Backend:     CSharpBackendRoslyn,
+				ProjectPath: "global.sln",
+				Settings:    map[string]any{"globalOnly": true, "shared": "global"},
+			},
+		},
+	}}}
+	project := &models.Project{Settings: models.ProjectSettings{LSP: &models.LSPSettings{
+		Languages: map[string]models.LSPLanguageSettings{
+			CSharpLanguageID: {
+				Enabled:     &projectEnabled,
+				Backend:     CSharpBackendOmni,
+				ProjectPath: "project.sln",
+				Settings:    map[string]any{"projectOnly": true, "shared": "project"},
+			},
+		},
+	}}}
+
+	cfg := ConfigFromProjectWithDefaults(project, defaults)
+	if cfg.Enabled(CSharpLanguageID) {
+		t.Fatal("Enabled(csharp) = true, want project override false")
+	}
+	if got := cfg.BackendOverride(CSharpLanguageID); got != CSharpBackendOmni {
+		t.Fatalf("BackendOverride(csharp) = %q, want %q", got, CSharpBackendOmni)
+	}
+	if got := cfg.ProjectPathOverride(CSharpLanguageID); got != "project.sln" {
+		t.Fatalf("ProjectPathOverride(csharp) = %q, want project.sln", got)
+	}
+	settings := cfg.LanguageSettings(CSharpLanguageID)
+	if settings["globalOnly"] != true || settings["projectOnly"] != true || settings["shared"] != "project" {
+		t.Fatalf("merged settings = %#v, want global+project with project shared value", settings)
+	}
+}
+
+func TestBackendAndProjectPathOverrides(t *testing.T) {
+	cfg := Config{Languages: map[string]LanguageConfig{
+		CSharpLanguageID: {Backend: CSharpBackendCSharp, ProjectPath: "src/App.sln"},
+	}}
+	if got := cfg.BackendOverride(CSharpLanguageID); got != CSharpBackendCSharp {
+		t.Fatalf("BackendOverride(csharp) = %q, want %q", got, CSharpBackendCSharp)
+	}
+	if got := cfg.ProjectPathOverride(CSharpLanguageID); got != "src/App.sln" {
+		t.Fatalf("ProjectPathOverride(csharp) = %q, want src/App.sln", got)
 	}
 }

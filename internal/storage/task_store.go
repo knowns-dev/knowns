@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -331,9 +332,12 @@ func renderTask(task *models.Task) string {
 }
 
 // yamlScalar returns a YAML-safe scalar value for a string.
-// Strings requiring quoting are single-quoted (matching TypeScript yaml output).
+// Bracket-containing values use double quotes to keep generated task titles readable.
 func yamlScalar(s string) string {
 	if needsYAMLQuoting(s) {
+		if strings.ContainsAny(s, "[]") {
+			return strconv.Quote(s)
+		}
 		return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 	}
 	return s
@@ -350,7 +354,7 @@ func needsYAMLQuoting(s string) bool {
 		return true
 	}
 	for _, r := range s {
-		if strings.ContainsRune(":#{}&*!|>'\"%@`", r) {
+		if strings.ContainsRune(":#{}[]&*!|>'\"%@`", r) {
 			return true
 		}
 	}

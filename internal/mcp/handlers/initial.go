@@ -42,6 +42,8 @@ func buildInitialInstructions(getStore func() *storage.Store, manager *lsp.Manag
 	b.WriteString("\n")
 	writeWorkflow(&b)
 	b.WriteString("\n")
+	writeKnowledgeLifecycle(&b)
+	b.WriteString("\n")
 	writeToolsSummary(&b)
 
 	return b.String()
@@ -56,11 +58,11 @@ func writeProjectState(b *strings.Builder, store *storage.Store, manager *lsp.Ma
 
 	payload := readiness.BuildReadiness(store, readiness.Options{})
 	inProgress := countInProgressTasks(store)
-	b.WriteString(fmt.Sprintf("Project: %s\n", payload.ProjectName))
+	fmt.Fprintf(b, "Project: %s\n", payload.ProjectName)
 	if payload.Knowledge != nil {
 		k := payload.Knowledge
-		b.WriteString(fmt.Sprintf("Knowledge: docs: %d | tasks: %d (%d in-progress) | templates: %d | memories: %dp, %dg\n",
-			k.Docs, k.Tasks, inProgress, k.Templates, k.Memories.Project, k.Memories.Global))
+		fmt.Fprintf(b, "Knowledge: docs: %d | tasks: %d (%d in-progress) | templates: %d | memories: %dp, %dg\n",
+			k.Docs, k.Tasks, inProgress, k.Templates, k.Memories.Project, k.Memories.Global)
 	}
 
 	if timerLine := activeTimerLine(store); timerLine != "" {
@@ -73,7 +75,7 @@ func writeProjectState(b *strings.Builder, store *storage.Store, manager *lsp.Ma
 	}
 
 	symbols, relations := codeIndexCounts(store)
-	b.WriteString(fmt.Sprintf("Code index: symbols: %d | relations: %d\n", symbols, relations))
+	fmt.Fprintf(b, "Code index: symbols: %d | relations: %d\n", symbols, relations)
 }
 
 func countInProgressTasks(store *storage.Store) int {
@@ -129,19 +131,47 @@ func lspWarningsLine(manager *lsp.Manager) string {
 	if manager == nil {
 		return ""
 	}
-	missing := manager.MissingServers()
-	if len(missing) == 0 {
+	statuses := manager.RuntimeStatuses(context.Background())
+	parts := make([]string, 0, len(statuses))
+	for _, status := range statuses {
+		if status.ID == lsp.CSharpLanguageID {
+			parts = append(parts, formatInitialLSPStatus(status))
+			continue
+		}
+		if !status.Detected && status.Status != lsp.RuntimeRunningCrashed {
+			continue
+		}
+		if status.InstallState != lsp.RuntimeInstallInstalled || status.Status == lsp.RuntimeRunningCrashed {
+			parts = append(parts, formatInitialLSPStatus(status))
+		}
+	}
+	if len(parts) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, len(missing))
-	for _, server := range missing {
-		binary := server.BinaryName
-		if binary == "" {
-			binary = server.Name
-		}
-		parts = append(parts, fmt.Sprintf("%s (%s)", server.LanguageID, binary))
+	return "LSP runtime: " + strings.Join(parts, "; ")
+}
+
+func formatInitialLSPStatus(status lsp.LanguageRuntimeStatus) string {
+	parts := []string{status.ID}
+	if status.Backend != "" {
+		parts = append(parts, "backend="+status.Backend)
 	}
-	return "⚠ Missing LSP servers: " + strings.Join(parts, ", ")
+	if status.Source != "" {
+		parts = append(parts, "source="+status.Source)
+	}
+	if status.InstallState != "" {
+		parts = append(parts, "install="+status.InstallState)
+	}
+	if status.ReadinessState != "" && status.ReadinessState != lsp.RuntimeReadinessNotApplicable {
+		parts = append(parts, "readiness="+status.ReadinessState)
+	}
+	if status.InstallState != lsp.RuntimeInstallInstalled && status.InstallCmd != "" {
+		parts = append(parts, "run="+status.InstallCmd)
+	}
+	if status.LogPath != "" {
+		parts = append(parts, "log="+status.LogPath)
+	}
+	return strings.Join(parts, " ")
 }
 
 func codeIndexCounts(store *storage.Store) (symbols int, relations int) {
@@ -160,39 +190,54 @@ func codeIndexCounts(store *storage.Store) (symbols int, relations int) {
 
 func writeCodeIntelligenceRules(b *strings.Builder) {
 	b.WriteString(`## Code Intelligence Rules
-**CRITICAL**: You MUST use Knowns code tools for ALL code-related operations. This is NOT optional.
+**CRITICAL**: Use Knowns code actions for code discovery, navigation, and structural edits. This is the operating path for code work.
 
-Knowns code tools provide capabilities that built-in tools CANNOT:
-- symbols(path): structured symbol tree — not raw text
-- definition(pos): jump to definition via LSP — not grep
-- references(pos): all usages across workspace — not grep missing dynamic refs
-- find(query): semantic symbol search with body — not reading whole files
-- rename/replace/insert/delete: safe structural edits — not blind find-and-replace
+Discovery and navigation:
+- code.find: search symbols before opening files
+- code.symbols: inspect file structure
+- code.definition / code.references / code.implementations: navigate with LSP precision
+- code.diagnostics: inspect current language-server errors
 
-**FORBIDDEN** on code files:
-- Read for discovery or understanding structure
-- Grep/find for locating symbols or patterns
-- Built-in Edit for renaming or replacing → use code(rename) or code(replace)
+Editing actions:
+- code.rename: rename symbols with LSP workspace edits
+- code.replace: replace exact text after code tools locate the target
+- code.replace_body: replace an entire symbol body by name
+- code.insert / code.delete: structural insert/delete by symbol anchor
 
-**ONLY** exception — built-in Read:
-- Non-code files (config, markdown, docs)
-- After code tools located target, AND you need surrounding context
+**FORBIDDEN**: Do not use built-in read/grep/edit as the first step for code. Use them only for shell/tests or after code tools identify the target and surrounding context is needed.
+
+If an action schema is not visible, call help("code.*") or help("workflow.code-edit") before editing.
 `)
 }
 
 func writeWorkflow(b *strings.Builder) {
 	b.WriteString(`## Workflow
+Bootstrap:     initial → help("workflow.*") or help("<domain>.*") as needed
 Discovery:     search(query) → docs/tasks(get) for details
-Code context:  code(find) → code(symbols) → code(references)
-Task flow:     tasks(get) → follow refs → plan → implement → validate → done
+Docs:          docs.get(smart:true) → docs.get(toc:true) → docs.get(section:"...") for large docs
+Code context:  code.find → code.symbols → code.references/definition
+Code edits:    code.rename/replace/replace_body/insert/delete → diagnostics/tests
+Task flow:     tasks(get/create) → follow refs → plan → implement → validate → done
 Time:          time(start) when taking task, time(stop) when done
 Progress:      tasks(update, appendNotes:"...") — not notes (replaces)
 
-For detailed usage of any tool: help("tool.action") or help("tool.*")
+Use help on demand instead of assuming the visible MCP tool schema is complete.
+`)
+}
+
+func writeKnowledgeLifecycle(b *strings.Builder) {
+	b.WriteString(`## Knowledge Lifecycle
+Memory and Decision writes use semantic review before becoming trusted.
+
+- Agent/MCP Memory writes default to proposed unless explicitly resolved; default retrieval only uses active Memories.
+- Decision writes are review-gated; accepted/current Decisions use supersession links instead of overwrite/delete.
+- Default retrieval/search returns active Memories and accepted non-superseded Decisions.
+- Use review/resolution commands or the WebUI inbox before treating new or conflicting knowledge as trusted.
 `)
 }
 
 func writeToolsSummary(b *strings.Builder) {
-	b.WriteString("## Tools (use help for details)\n")
-	b.WriteString("code (7) | tasks (7) | docs (6) | search (3) | time (4) | templates (4) | validate (1) | memory (7) | project (4) | help (1)")
+	b.WriteString("## Tools (discover with help)\n")
+	b.WriteString("code | tasks | docs | search | time | templates | validate | memory | project | help\n")
+	b.WriteString("Recipes: help(\"workflow.code-edit\"), help(\"workflow.doc-read\"), help(\"workflow.plan-new\"), help(\"workflow.spec\"), help(\"workflow.verify\")")
 }

@@ -1,4 +1,6 @@
 import { test, expect } from "@playwright/test";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { startServer, type TestServer } from "./helpers";
 
 let server: TestServer;
@@ -206,6 +208,55 @@ test.describe("Semantic Reference Badges", () => {
 			await expect(badge).toContainText("Security Pattern");
 			await expect(badge).toContainText("follows");
 			await expect(badge).toHaveAttribute("role", "link");
+		});
+	});
+
+	test("canonical slash refs render task memory and decision badges", async ({ page }) => {
+		let taskId = "";
+		let decisionId = "";
+
+		await test.step("Create canonical ref targets", async () => {
+			const taskOutput = server.cli('task create "Canonical Target" -d "Target task"');
+			taskId = taskOutput.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			expect(taskId).toBeTruthy();
+
+			server.cli('memory create "Canonical Memory" --layer project --category pattern -c "Remember canonical refs"');
+			server.cli('doc create "Decision Source" -d "Decision source" -t "decision"');
+			decisionId = "20260618-1024-use-canonical-slash-refs";
+			const decisionsDir = join(server.projectDir, ".knowns", "decisions");
+			mkdirSync(decisionsDir, { recursive: true });
+			writeFileSync(
+				join(decisionsDir, `${decisionId}.md`),
+				`---\nid: ${decisionId}\ntitle: Use Canonical Slash Refs\nstatus: accepted\nsources:\n  - '@doc/decision-source'\ncreatedAt: '2026-06-18T10:24:00Z'\nupdatedAt: '2026-06-18T10:24:00Z'\n---\n\n## Context\n\nCanonical refs should render.\n\n## Decision\n\nUse slash refs in UI examples.\n`,
+			);
+		});
+
+		await test.step("Create task using canonical slash refs", async () => {
+			server.cli(
+				`task create "Canonical Ref Consumer" -d "See @task/${taskId}{related}, @memory/canonical-memory{follows}, and @decision/${decisionId}{depends}"`,
+			);
+		});
+
+		await test.step("Open task from kanban", async () => {
+			await page.goto(`${server.baseURL}/kanban`);
+			await page.getByText("Canonical Ref Consumer").first().click();
+		});
+
+		await test.step("Canonical badges show resolved labels and relations", async () => {
+			const taskBadge = page.locator(`[data-task-id="${taskId}"]`);
+			const memoryBadge = page.locator('[data-memory-id="canonical-memory"]');
+			const decisionBadge = page.locator(`[data-decision-id="${decisionId}"]`);
+
+			await expect(taskBadge).toBeVisible({ timeout: 5000 });
+			await expect(memoryBadge).toBeVisible({ timeout: 5000 });
+			await expect(decisionBadge).toBeVisible({ timeout: 5000 });
+			await expect(taskBadge).toContainText("Canonical Target");
+			await expect(taskBadge).toContainText("related");
+			await expect(memoryBadge).toContainText("Canonical Memory");
+			await expect(memoryBadge).toContainText("follows");
+			await expect(decisionBadge).toContainText("Use Canonical Slash Refs");
+			await expect(decisionBadge).toContainText("depends");
+			await expect(decisionBadge).not.toHaveAttribute("role", "link");
 		});
 	});
 

@@ -19,8 +19,8 @@ func RegisterSearchTool(s toolRegistrar, getStore func() *storage.Store) {
 		mcp.NewTool("search",
 			mcp.WithDescription(`Search and retrieval operations. Use 'action' to specify: search, retrieve, resolve.
 
-- search: Search docs, tasks, and memories. Required: query. Optional: type (all, task, doc, memory), mode (hybrid, semantic, keyword), limit, status, priority, assignee, label, tag. Returns: ranked search results with entity type, path or ID, title, snippet, and score.
-- retrieve: Build a context pack from relevant docs, tasks, and memories. Required: query. Optional: sourceTypes, mode, limit, expandReferences, status, priority, assignee, label, tag. Returns: assembled context items with citations, metadata, and optional expanded references.
+- search: Search docs, tasks, memories, and decisions. Required: query. Optional: type (all, task, doc, memory, decision), mode (hybrid, semantic, keyword), limit, status, priority, assignee, label, tag, includeHistorical. Returns: ranked search results with entity type, path or ID, title, snippet, and score.
+- retrieve: Build a context pack from relevant docs, tasks, memories, and decisions. Required: query. Optional: sourceTypes, mode, limit, expandReferences, status, priority, assignee, label, tag, includeHistorical. Returns: assembled context items with citations, metadata, and optional expanded references.
 - resolve: Traverse semantic references and graph relationships. Required: ref. Optional: direction (outbound, inbound, both), depth (1-3), relationTypes, entityTypes, limit. Returns: resolved root entity and related entities/relations matching traversal filters.
 `),
 			mcp.WithString("action",
@@ -33,8 +33,8 @@ func RegisterSearchTool(s toolRegistrar, getStore func() *storage.Store) {
 				mcp.Description("Search/retrieval query (required for search, retrieve)"),
 			),
 			mcp.WithString("type",
-				mcp.Description("Search type: all, task, doc, or memory (search)"),
-				mcp.Enum("all", "task", "doc", "memory"),
+				mcp.Description("Search type: all, task, doc, memory, or decision (search)"),
+				mcp.Enum("all", "task", "doc", "memory", "decision"),
 			),
 			mcp.WithString("mode",
 				mcp.Description("Search mode: hybrid (semantic + keyword), semantic only, or keyword only (default: hybrid)"),
@@ -44,7 +44,7 @@ func RegisterSearchTool(s toolRegistrar, getStore func() *storage.Store) {
 				mcp.Description("Limit results (default: 20)"),
 			),
 			mcp.WithString("status",
-				mcp.Description("Filter tasks by status"),
+				mcp.Description("Filter tasks, memories, or decisions by status"),
 			),
 			mcp.WithString("priority",
 				mcp.Description("Filter tasks by priority"),
@@ -56,12 +56,15 @@ func RegisterSearchTool(s toolRegistrar, getStore func() *storage.Store) {
 				mcp.Description("Filter tasks by label"),
 			),
 			mcp.WithString("tag",
-				mcp.Description("Filter docs or memories by tag"),
+				mcp.Description("Filter docs, memories, or decisions by tag"),
+			),
+			mcp.WithBoolean("includeHistorical",
+				mcp.Description("Include non-active memories and non-current decisions with status metadata"),
 			),
 			// retrieve-specific params
 			mcp.WithArray("sourceTypes",
-				mcp.Description("Optional source types: doc, task, memory (retrieve)"),
-				mcp.WithStringEnumItems([]string{"doc", "task", "memory"}),
+				mcp.Description("Optional source types: doc, task, memory, decision (retrieve)"),
+				mcp.WithStringEnumItems([]string{"doc", "task", "memory", "decision"}),
 			),
 			mcp.WithBoolean("expandReferences",
 				mcp.Description("Whether to include linked docs/tasks/memories as expanded context (retrieve)"),
@@ -103,8 +106,8 @@ func RegisterSearchTool(s toolRegistrar, getStore func() *storage.Store) {
 		},
 	)
 
-	registerHelp(s, "search.search", HelpEntry{When: "Discover relevant docs, tasks, or memories by query before reading detailed context.", Params: map[string]string{"query": "required — search terms", "type": "all | task | doc | memory", "mode": "hybrid | semantic | keyword", "limit": "maximum result count", "status": "filter tasks by status", "priority": "filter tasks by priority", "assignee": "filter tasks by assignee", "label": "filter tasks by label", "tag": "filter docs or memories by tag"}, Why: "Use search for discovery. Use retrieve when you need assembled context with citations.", Examples: []string{`search({ action: "search", query: "auth patterns", type: "doc", limit: 5 })`}})
-	registerHelp(s, "search.retrieve", HelpEntry{When: "Build an assembled context pack from relevant docs, tasks, and memories for planning or synthesis.", Params: map[string]string{"query": "required — retrieval query", "sourceTypes": "optional list: doc, task, memory", "mode": "hybrid | semantic | keyword", "limit": "maximum item count", "expandReferences": "include linked docs/tasks/memories", "status": "filter tasks by status", "priority": "filter tasks by priority", "assignee": "filter tasks by assignee", "label": "filter tasks by label", "tag": "filter docs or memories by tag"}, Why: "Use retrieve after search when you need cited, expanded context rather than a ranked result list."})
+	registerHelp(s, "search.search", HelpEntry{When: "Discover relevant docs, tasks, memories, or decisions by query before reading detailed context.", Params: map[string]string{"query": "required — search terms", "type": "all | task | doc | memory | decision", "mode": "hybrid | semantic | keyword", "limit": "maximum result count", "status": "filter tasks, memories, or decisions by status", "priority": "filter tasks by priority", "assignee": "filter tasks by assignee", "label": "filter tasks by label", "tag": "filter docs, memories, or decisions by tag", "includeHistorical": "include non-active memories and non-current decisions"}, Why: "Use search for discovery. Use retrieve when you need assembled context with citations.", Examples: []string{`search({ action: "search", query: "auth patterns", type: "doc", limit: 5 })`}})
+	registerHelp(s, "search.retrieve", HelpEntry{When: "Build an assembled context pack from relevant docs, tasks, memories, and decisions for planning or synthesis.", Params: map[string]string{"query": "required — retrieval query", "sourceTypes": "optional list: doc, task, memory, decision", "mode": "hybrid | semantic | keyword", "limit": "maximum item count", "expandReferences": "include linked docs/tasks/memories/decisions", "status": "filter tasks, memories, or decisions by status", "priority": "filter tasks by priority", "assignee": "filter tasks by assignee", "label": "filter tasks by label", "tag": "filter docs, memories, or decisions by tag", "includeHistorical": "include non-active memories and non-current decisions"}, Why: "Use retrieve after search when you need cited, expanded context rather than a ranked result list."})
 	registerHelp(s, "search.resolve", HelpEntry{When: "Traverse semantic refs and graph relationships from a @doc, @task, or @template reference.", Params: map[string]string{"ref": "required — semantic reference expression", "direction": "outbound | inbound | both", "depth": "max hops 1-3", "relationTypes": "comma-separated relation kinds", "entityTypes": "comma-separated entity kinds", "limit": "maximum result count"}, Examples: []string{`search({ action: "resolve", ref: "@doc/specs/auth{implements}", depth: 2 })`}})
 }
 
@@ -130,21 +133,23 @@ func handleSearch(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp
 	assigneeFilter, _ := stringArg(args, "assignee")
 	labelFilter, _ := stringArg(args, "label")
 	tagFilter, _ := stringArg(args, "tag")
+	includeHistorical := boolArg(args, "includeHistorical")
 	limit := 20
 	if v, ok := intArg(args, "limit"); ok && v > 0 {
 		limit = v
 	}
 
 	opts := search.SearchOptions{
-		Query:    query,
-		Type:     searchType,
-		Mode:     mode,
-		Status:   statusFilter,
-		Priority: priorityFilter,
-		Assignee: assigneeFilter,
-		Label:    labelFilter,
-		Tag:      tagFilter,
-		Limit:    limit,
+		Query:             query,
+		Type:              searchType,
+		Mode:              mode,
+		Status:            statusFilter,
+		Priority:          priorityFilter,
+		Assignee:          assigneeFilter,
+		Label:             labelFilter,
+		Tag:               tagFilter,
+		Limit:             limit,
+		IncludeHistorical: includeHistorical,
 	}
 
 	embedder, vecStore, _ := search.InitSemantic(store)
@@ -199,6 +204,7 @@ func handleRetrieve(getStore func() *storage.Store, req mcp.CallToolRequest) (*m
 	assigneeFilter, _ := stringArg(args, "assignee")
 	labelFilter, _ := stringArg(args, "label")
 	tagFilter, _ := stringArg(args, "tag")
+	includeHistorical := boolArg(args, "includeHistorical")
 	limit := 20
 	if v, ok := intArg(args, "limit"); ok && v > 0 {
 		limit = v
@@ -216,16 +222,17 @@ func handleRetrieve(getStore func() *storage.Store, req mcp.CallToolRequest) (*m
 
 	engine := search.NewEngine(store, embedder, vecStore)
 	response, err := engine.Retrieve(models.RetrievalOptions{
-		Query:            query,
-		Mode:             mode,
-		Limit:            limit,
-		SourceTypes:      sourceTypes,
-		ExpandReferences: expandRefs,
-		Status:           statusFilter,
-		Priority:         priorityFilter,
-		Assignee:         assigneeFilter,
-		Label:            labelFilter,
-		Tag:              tagFilter,
+		Query:             query,
+		Mode:              mode,
+		Limit:             limit,
+		SourceTypes:       sourceTypes,
+		ExpandReferences:  expandRefs,
+		Status:            statusFilter,
+		Priority:          priorityFilter,
+		Assignee:          assigneeFilter,
+		Label:             labelFilter,
+		Tag:               tagFilter,
+		IncludeHistorical: includeHistorical,
 	})
 	if err != nil {
 		return errResult(err.Error())

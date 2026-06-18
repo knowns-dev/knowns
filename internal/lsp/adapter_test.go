@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -55,6 +56,25 @@ func TestBaseAdapter_SupportsReferences(t *testing.T) {
 	b := BaseAdapter{}
 	if !b.SupportsReferences() {
 		t.Error("BaseAdapter.SupportsReferences should return true by default")
+	}
+}
+
+func TestLanguageAdapterExcludesRuntimeSessionOperations(t *testing.T) {
+	adapterType := reflect.TypeOf((*LanguageAdapter)(nil)).Elem()
+	for _, name := range []string{
+		"Start",
+		"Stop",
+		"WithFile",
+		"WaitReady",
+		"Definition",
+		"References",
+		"Diagnostics",
+		"DocumentSymbols",
+		"Rename",
+	} {
+		if _, ok := adapterType.MethodByName(name); ok {
+			t.Fatalf("LanguageAdapter includes runtime/session method %q; keep lifecycle/protocol behavior in Session", name)
+		}
 	}
 }
 

@@ -17,10 +17,10 @@ interface GraphLegendProps {
 }
 
 function countKnowledgeNodeTypes(data: GraphData | null) {
-	const counts = { task: 0, doc: 0, memory: 0 };
+	const counts = { task: 0, doc: 0, memory: 0, decision: 0, template: 0 };
 	if (!data) return counts;
 	for (const node of data.nodes) {
-		if (node.type === "task" || node.type === "doc" || node.type === "memory") counts[node.type] += 1;
+		if (node.type === "task" || node.type === "doc" || node.type === "memory" || node.type === "decision" || node.type === "template") counts[node.type] += 1;
 	}
 	return counts;
 }
@@ -62,6 +62,8 @@ export function GraphLegend({ data, filters, onToggleFilter }: GraphLegendProps)
 					{ key: "tasks" as const, label: "Tasks", color: "#6366f1", active: filters.tasks, count: nodeCounts.task },
 					{ key: "docs" as const, label: "Docs", color: "#f59e0b", active: filters.docs, count: nodeCounts.doc },
 					{ key: "memories" as const, label: "Memories", color: "#22c55e", active: filters.memories, count: nodeCounts.memory },
+					{ key: "decisions" as const, label: "Decisions", color: "#e11d48", active: filters.decisions, count: nodeCounts.decision },
+					{ key: "templates" as const, label: "Templates", color: "#06b6d4", active: filters.templates, count: nodeCounts.template },
 				].map((item) => (
 					<button
 						key={item.key}
@@ -132,4 +134,3 @@ export function GraphLegend({ data, filters, onToggleFilter }: GraphLegendProps)
 		</div>
 	);
 }
-

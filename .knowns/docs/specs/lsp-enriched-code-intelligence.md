@@ -2,7 +2,7 @@
 title: LSP-Enriched Code Intelligence
 description: Specification for replacing heuristic code graph with LSP-backed precise code intelligence, removing code embedding, and exposing LSP capabilities via MCP tools
 createdAt: '2026-05-20T08:35:06.856Z'
-updatedAt: '2026-05-20T08:42:38.373Z'
+updatedAt: '2026-06-15T04:28:40.168Z'
 tags:
   - spec
   - approved
@@ -21,16 +21,15 @@ This spec also removes the code graph WebUI visualization and `code({ action: "g
 
 - D1: LSP enriches the code graph AND exposes real-time capabilities via existing `code({ action: "..." })` MCP tool — new actions: `references`, `definition`, `implementations`, `diagnostics`
 - D2: Hybrid LSP lifecycle — servers start when MCP session begins, keep-alive during session, shutdown when no MCP clients remain connected
-- D3: Auto-detect languages from project file extensions + check PATH for LSP binaries. Config override in `.knowns/config.json`. No binary found → fallback to tree-sitter heuristic edges silently
+- D3: Auto-detect languages from project file extensions + check PATH for LSP binaries. Config override in `.knowns/config.json`. No binary found → report structured unavailable status/error with install guidance.
 - D4: Remove code embedding entirely. Code search uses keyword matching + LSP-enriched graph traversal only. ONNX embedding reserved for docs/tasks/memories
 - D5: Delegate workspace sync to LSP servers. Send `rootUri` on initialize, LSP server indexes workspace itself. On-demand `didOpen` (ref-counted) when querying specific files, `didClose` when done
 - D6: Remove code graph visualization from WebUI
 - D7: Remove `code({ action: "graph" })` MCP tool
-- D8: `code({ action: "symbols" })` uses cached data from SQLite. Background enrichment from LSP `textDocument/documentSymbol` when available (type info, visibility, generics). Fallback to tree-sitter extraction when LSP unavailable. Query time always reads cache, never calls LSP real-time
+- D8: `code({ action: "symbols" })` uses LSP-backed symbol data when available. If LSP is unavailable for the language, return a structured unavailable error rather than falling back to tree-sitter extraction.
 - D9: Add `code({ action: "diagnostics" })` to expose LSP compile/type errors and warnings. Returns errors/warnings grouped by file, filterable by severity
 - D10: No limit on concurrent LSP servers — start all detected languages. Practically rarely exceeds 4-5 servers
 - D11: No TTL for edges. Delta detection handles staleness — file changed → re-enrich. Edges valid until file changes
-
 ## Requirements
 
 ### Functional Requirements
@@ -38,9 +37,9 @@ This spec also removes the code graph WebUI visualization and `code({ action: "g
 - FR-1: Knowns MUST spawn and manage LSP server processes (gopls, typescript-language-server, etc.) as child processes communicating via JSON-RPC over stdio
 - FR-2: Knowns MUST auto-detect project languages by scanning file extensions and checking PATH for corresponding LSP binaries
 - FR-3: Users MUST be able to override/disable language detection via `.knowns/config.json` (field: `lsp.languages`)
-- FR-4: When no LSP binary is found for a language, Knowns MUST fall back to tree-sitter heuristic edges silently (no error, no warning to user)
+- FR-4: When no LSP binary is found for a language, Knowns MUST return structured unavailable status/errors with install guidance; it MUST NOT silently fall back to tree-sitter.
 - FR-5: LSP servers MUST start when the first MCP client connects and shutdown when no clients remain
-- FR-6: `code({ action: "search" })` MUST continue to work using keyword matching + graph traversal with LSP-enriched edges
+- FR-6: `code({ action: "search" })` MUST continue to work using keyword matching + graph traversal with LSP-enriched edges where available
 - FR-7: New MCP action `code({ action: "definition" })` MUST return the exact file + location of a symbol's definition via LSP `textDocument/definition`
 - FR-8: New MCP action `code({ action: "references" })` MUST return all references to a symbol via LSP `textDocument/references`
 - FR-9: New MCP action `code({ action: "implementations" })` MUST return all implementations of an interface/abstract via LSP `textDocument/implementation`
@@ -51,18 +50,16 @@ This spec also removes the code graph WebUI visualization and `code({ action: "g
 - FR-14: `code_edges` table MUST be retained and populated with LSP-resolved edges during background indexing
 - FR-15: LSP workspace sync MUST delegate to the language server — send `rootUri` on initialize, use on-demand `didOpen`/`didClose` with ref-counting for queries
 - FR-16: LSP servers that crash MUST be automatically restarted on next query (lazy restart)
-- FR-17: `code({ action: "symbols" })` MUST use cached data from SQLite, enriched by LSP `documentSymbol` in background when available
+- FR-17: `code({ action: "symbols" })` MUST use LSP-backed symbol data when available and return a structured unavailable error when no LSP capability is available for that language
 - FR-18: No limit on concurrent LSP servers — start all detected languages
 - FR-19: No TTL for cached edges — delta detection (file hash change) triggers re-enrichment
-
 ### Non-Functional Requirements
 
-- NFR-1: LSP server startup MUST NOT block MCP tool responses — if server is still initializing, return fallback (tree-sitter) results
+- NFR-1: LSP server startup MUST NOT block MCP tool responses; if a required server is unavailable or still initializing, actions MUST return structured pending/unavailable responses with guidance.
 - NFR-2: Real-time LSP queries (`definition`, `references`, `implementations`, `diagnostics`) MUST respond within 5 seconds for typical files
 - NFR-3: Background edge enrichment MUST be incremental — only re-query files that changed since last index (leverage existing delta detection from @doc/specs/delta-based-code-re-indexing)
 - NFR-4: Memory usage of LSP servers SHOULD be monitored — log warnings if total exceeds configurable threshold
 - NFR-5: The system MUST work on macOS, Linux, and Windows
-
 ## Acceptance Criteria
 
 - [ ] AC-1: `code({ action: "definition", query: "functionName", path: "file.go" })` returns exact file + line of definition
@@ -71,7 +68,7 @@ This spec also removes the code graph WebUI visualization and `code({ action: "g
 - [ ] AC-4: `code({ action: "diagnostics", path: "file.go" })` returns compile errors and warnings with line numbers and severity
 - [ ] AC-5: `code({ action: "search" })` returns results using keyword + enriched graph (no embedding)
 - [ ] AC-6: Running `knowns code search "query"` on a Go project with gopls installed produces results with resolved cross-file edges
-- [ ] AC-7: Running on a project without any LSP binary installed falls back to tree-sitter edges without errors
+- [ ] AC-7: Running on a project without the required LSP binary returns structured unavailable errors with install guidance and does not invoke tree-sitter
 - [ ] AC-8: Code indexing no longer invokes ONNX embedding for code symbols
 - [ ] AC-9: WebUI no longer shows code graph visualization page/component
 - [ ] AC-10: `code({ action: "graph" })` returns an error or is not listed in available actions
@@ -80,7 +77,6 @@ This spec also removes the code graph WebUI visualization and `code({ action: "g
 - [ ] AC-13: `.knowns/config.json` supports `lsp.languages` override (enable/disable specific languages)
 - [ ] AC-14: `code({ action: "symbols" })` returns enriched symbol data (type info, visibility) when LSP available
 - [ ] AC-15: `code({ action: "deps" })` continues to work with enriched edge data
-
 ## Scenarios
 
 ### Scenario 1: Agent queries function references
@@ -89,11 +85,12 @@ This spec also removes the code graph WebUI visualization and `code({ action: "g
 **When** agent calls `code({ action: "references", query: "HandleAuth", path: "internal/auth/handler.go" })`
 **Then** returns all files and locations that call `HandleAuth`, with exact line numbers
 
-### Scenario 2: Fallback when no LSP available
+### Scenario 2: No LSP available
 
 **Given** a Rust project with no rust-analyzer on PATH
-**When** code indexing runs
-**Then** tree-sitter extracts symbols and heuristic edges as before, no error shown, `code({ action: "search" })` works with heuristic edges
+**When** agent calls an LSP-backed code action for Rust
+**Then** Knowns returns a structured unavailable error with install guidance
+**And** Knowns does not invoke tree-sitter.
 
 ### Scenario 3: LSP server crash recovery
 
@@ -105,19 +102,20 @@ This spec also removes the code graph WebUI visualization and `code({ action: "g
 
 **Given** a project with `.go`, `.ts`, and `.py` files
 **When** MCP session starts
-**Then** Knowns detects Go + TypeScript + Python, checks PATH for gopls/typescript-language-server/pylsp, starts only those found, logs which languages have LSP support
+**Then** Knowns detects Go + TypeScript + Python, checks PATH for gopls/typescript-language-server/pylsp, starts only those found, logs which languages have LSP support, and reports unavailable status for missing servers
 
 ### Scenario 5: Code search without embedding
 
 **Given** code index has been built (symbols + LSP-enriched edges, no embeddings)
 **When** agent calls `code({ action: "search", query: "authentication middleware" })`
-**Then** keyword matching finds relevant symbols, graph traversal expands neighbors via precise edges, returns ranked results
+**Then** keyword matching finds relevant symbols, graph traversal expands neighbors via precise edges where available, returns ranked results
 
 ### Scenario 6: Config override disables a language
 
 **Given** `.knowns/config.json` contains `{ "lsp": { "languages": { "typescript": false } } }`
 **When** MCP session starts on a project with .ts and .go files
-**Then** only gopls is started, TypeScript files use tree-sitter fallback
+**Then** only gopls is started
+**And** TypeScript LSP-backed code intelligence reports disabled/unavailable status without invoking tree-sitter
 
 ### Scenario 7: Agent checks diagnostics after edit
 
@@ -156,7 +154,7 @@ Extensible via `.knowns/config.json` `lsp.languages` field.
 
 - @doc/specs/delta-based-code-re-indexing — reuse delta detection for incremental LSP re-enrichment
 - @doc/specs/ast-code-intelligence — this spec supersedes the edge resolution parts
-- @doc/specs/tree-sitter-sidecar — tree-sitter remains for symbol extraction, LSP adds edge precision
+- @doc/specs/remove-tree-sitter-lsp-only-code-intelligence — later design removes tree-sitter from code intelligence; LSP-backed code intelligence should return structured unavailable errors when required LSP capability is missing
 
 ## Open Questions
 

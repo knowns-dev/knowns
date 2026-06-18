@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/howznguyen/knowns/internal/memoryreview"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
@@ -18,11 +19,11 @@ import (
 func RegisterMemoryTool(s *server.MCPServer, getStore func() *storage.Store) {
 	s.AddTool(
 		mcp.NewTool("memory",
-			mcp.WithDescription("Persistent memory operations. Use 'action' to specify: add, get, update, delete, list, promote, demote, cleanup."),
+			mcp.WithDescription("Persistent memory operations. Use 'action' to specify: add, get, update, delete, list, promote, demote, cleanup, resolve."),
 			mcp.WithString("action",
 				mcp.Required(),
 				mcp.Description("Action to perform"),
-				mcp.Enum("add", "get", "update", "delete", "list", "promote", "demote", "cleanup"),
+				mcp.Enum("add", "get", "update", "delete", "list", "promote", "demote", "cleanup", "resolve"),
 			),
 			mcp.WithString("id",
 				mcp.Description("Memory entry ID (required for get, update, delete, promote, demote)"),
@@ -42,6 +43,34 @@ func RegisterMemoryTool(s *server.MCPServer, getStore func() *storage.Store) {
 			mcp.WithArray("tags",
 				mcp.Description("Tags for the memory entry (add, update)"),
 				mcp.WithStringItems(),
+			),
+			mcp.WithArray("sources",
+				mcp.Description("Source refs for the memory entry (resolve)"),
+				mcp.WithStringItems(),
+			),
+			mcp.WithString("status",
+				mcp.Description("Memory status filter (list) or selected replacement status (resolve)"),
+				mcp.Enum("proposed", "active", "stale", "deprecated", "archived", "rejected", "merged"),
+			),
+			mcp.WithString("confidence",
+				mcp.Description("Memory confidence metadata (resolve)"),
+				mcp.Enum("low", "medium", "high"),
+			),
+			mcp.WithNumber("ttlDays",
+				mcp.Description("Memory TTL in days (resolve)"),
+			),
+			mcp.WithString("resolution",
+				mcp.Description("Review resolution (resolve)"),
+				mcp.Enum("update_existing", "archive_existing_create_new", "create_proposed", "reject_new", "merge_existing"),
+			),
+			mcp.WithString("targetId",
+				mcp.Description("Existing memory ID selected for duplicate resolution"),
+			),
+			mcp.WithString("rejectedReason",
+				mcp.Description("Reason recorded for reject_new resolution"),
+			),
+			mcp.WithBoolean("includeAll",
+				mcp.Description("Include non-active memories in list results (default: false)"),
 			),
 			mcp.WithString("tag",
 				mcp.Description("Filter by tag (list)"),
@@ -82,6 +111,8 @@ func RegisterMemoryTool(s *server.MCPServer, getStore func() *storage.Store) {
 				return handleMemoryDemote(getStore, req)
 			case "cleanup":
 				return handleMemoryCleanup(getStore, req)
+			case "resolve":
+				return handleMemoryResolve(getStore, req)
 			default:
 				return errResultf("unknown memory action: %s", action)
 			}
@@ -128,14 +159,19 @@ func handleMemoryAdd(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 		entry.Tags = []string{}
 	}
 
-	if err := store.Memory.Create(entry); err != nil {
+	result, err := memoryreview.New(store).Add(entry, memoryreview.AddOptions{})
+	if err != nil {
 		return errFailed("create memory", err)
 	}
+	if result.Status == memoryreview.ResultReviewRequired {
+		out, _ := json.MarshalIndent(result, "", "  ")
+		return mcp.NewToolResultText(string(out)), nil
+	}
 
-	search.BestEffortIndexMemory(store, entry.ID)
+	indexMemoryReviewChanges(store, result.ChangedIDs)
 	go notifyServer(store, "notify/refresh")
 
-	out, _ := json.MarshalIndent(entry, "", "  ")
+	out, _ := json.MarshalIndent(result.Memory, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }
 
@@ -169,9 +205,14 @@ func handleMemoryList(getStore func() *storage.Store, req mcp.CallToolRequest) (
 	layer, _ := stringArg(args, "layer")
 	category, _ := stringArg(args, "category")
 	tag, _ := stringArg(args, "tag")
+	status, _ := stringArg(args, "status")
+	includeAll := boolArg(args, "includeAll")
 
 	if layer != "" && !models.ValidPersistentMemoryLayer(layer) {
 		return errResult("layer must be 'project' or 'global'")
+	}
+	if status != "" && !models.ValidMemoryStatus(status) {
+		return errResult("status must be a valid memory status")
 	}
 
 	entries, err := store.Memory.ListPersistent(layer)
@@ -200,12 +241,30 @@ func handleMemoryList(getStore func() *storage.Store, req mcp.CallToolRequest) (
 		}
 		entries = filtered
 	}
+	if status != "" {
+		filtered := entries[:0]
+		for _, e := range entries {
+			if e.Status == status {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	} else if !includeAll {
+		filtered := entries[:0]
+		for _, e := range entries {
+			if e.CurrentForDefaultRetrieval() {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	}
 
 	type memorySummary struct {
 		ID        string   `json:"id"`
 		Title     string   `json:"title"`
 		Layer     string   `json:"layer"`
 		Category  string   `json:"category,omitempty"`
+		Status    string   `json:"status,omitempty"`
 		Tags      []string `json:"tags,omitempty"`
 		CreatedAt string   `json:"createdAt"`
 		UpdatedAt string   `json:"updatedAt"`
@@ -217,6 +276,7 @@ func handleMemoryList(getStore func() *storage.Store, req mcp.CallToolRequest) (
 			Title:     e.Title,
 			Layer:     e.Layer,
 			Category:  e.Category,
+			Status:    e.Status,
 			Tags:      e.Tags,
 			CreatedAt: e.CreatedAt.Format(time.RFC3339),
 			UpdatedAt: e.UpdatedAt.Format(time.RFC3339),
@@ -225,6 +285,71 @@ func handleMemoryList(getStore func() *storage.Store, req mcp.CallToolRequest) (
 
 	out, _ := json.MarshalIndent(summaries, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+func handleMemoryResolve(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store := getStore()
+	if store == nil {
+		return noProjectError()
+	}
+
+	args := req.GetArguments()
+	resolution, ok := stringArg(args, "resolution")
+	if !ok || resolution == "" {
+		return errResult("resolution is required")
+	}
+	targetID, _ := stringArg(args, "targetId")
+	status, _ := stringArg(args, "status")
+	rejectedReason, _ := stringArg(args, "rejectedReason")
+
+	candidate := memoryCandidateFromArgs(args)
+	result, err := memoryreview.New(store).Resolve(candidate, memoryreview.ResolveOptions{
+		Resolution:     resolution,
+		TargetID:       targetID,
+		Status:         status,
+		RejectedReason: rejectedReason,
+	})
+	if err != nil {
+		return errFailed("resolve memory review", err)
+	}
+
+	indexMemoryReviewChanges(store, result.ChangedIDs)
+	go notifyServer(store, "notify/refresh")
+
+	out, _ := json.MarshalIndent(result, "", "  ")
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+func memoryCandidateFromArgs(args map[string]any) *models.MemoryEntry {
+	id, _ := stringArg(args, "id")
+	title, _ := stringArg(args, "title")
+	layer, _ := stringArg(args, "layer")
+	category, _ := stringArg(args, "category")
+	content, _ := textArg(args, "content")
+	tags, _ := stringSliceArg(args, "tags")
+	sources, _ := stringSliceArg(args, "sources")
+	confidence, _ := stringArg(args, "confidence")
+	ttlDays, _ := intArg(args, "ttlDays")
+	return &models.MemoryEntry{
+		ID:         id,
+		Title:      title,
+		Layer:      layer,
+		Category:   category,
+		Content:    content,
+		Tags:       tags,
+		Sources:    sources,
+		Confidence: confidence,
+		TTLDays:    ttlDays,
+	}
+}
+
+func indexMemoryReviewChanges(store *storage.Store, ids []string) {
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		search.BestEffortIndexMemory(store, id)
+	}
 }
 
 type memoryCleanupCandidate struct {

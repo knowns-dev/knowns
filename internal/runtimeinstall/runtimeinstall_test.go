@@ -46,8 +46,8 @@ func TestInstallClaudeMergesExistingSettingsAndStatus(t *testing.T) {
 	if !strings.Contains(text, `"theme": "dark"`) {
 		t.Fatalf("expected existing setting preserved, got:\n%s", text)
 	}
-	if !strings.Contains(text, `"SessionStart"`) {
-		t.Fatalf("expected SessionStart hook added, got:\n%s", text)
+	if !strings.Contains(text, `"UserPromptSubmit"`) {
+		t.Fatalf("expected UserPromptSubmit hook added, got:\n%s", text)
 	}
 	status, err := StatusFor("claude-code", opts)
 	if err != nil {
@@ -55,6 +55,9 @@ func TestInstallClaudeMergesExistingSettingsAndStatus(t *testing.T) {
 	}
 	if !status.Installed || status.State != StateInstalled {
 		t.Fatalf("unexpected status: %+v", status)
+	}
+	if !strings.Contains(strings.Join(status.Details, "\n"), "UserPromptSubmit prompt-aware hook installed") {
+		t.Fatalf("expected prompt-aware status detail, got: %+v", status.Details)
 	}
 }
 
@@ -93,12 +96,12 @@ func TestInstallClaudeWindowsQuotesExecutableForBashHooks(t *testing.T) {
 	if !strings.Contains(text, expectedExe) {
 		t.Fatalf("expected slash-normalized executable path, got:\n%s", text)
 	}
-	if !strings.Contains(text, "runtime-memory hook --runtime claude-code --event session-start") {
+	if !strings.Contains(text, "runtime-memory hook --runtime claude-code --event user-prompt-submit") {
 		t.Fatalf("expected runtime-memory hook args, got:\n%s", text)
 	}
 }
 
-func TestInstallClaudeWindowsWritesExactSessionStartHookJSON(t *testing.T) {
+func TestInstallClaudeWindowsWritesExactPromptSubmitHookJSON(t *testing.T) {
 	home := t.TempDir()
 	claudeDir := filepath.Join(home, ".claude")
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
@@ -137,13 +140,16 @@ func TestInstallClaudeWindowsWritesExactSessionStartHookJSON(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected hooks object, got: %#v", settings["hooks"])
 	}
-	sessionStart, ok := hooks["SessionStart"].([]any)
-	if !ok || len(sessionStart) != 1 {
-		t.Fatalf("expected one SessionStart hook group, got: %#v", hooks["SessionStart"])
+	if _, ok := hooks["SessionStart"]; ok {
+		t.Fatalf("expected no SessionStart managed hook for prompt-aware Claude, got: %#v", hooks["SessionStart"])
 	}
-	group, ok := sessionStart[0].(map[string]any)
+	userPromptSubmit, ok := hooks["UserPromptSubmit"].([]any)
+	if !ok || len(userPromptSubmit) != 1 {
+		t.Fatalf("expected one UserPromptSubmit hook group, got: %#v", hooks["UserPromptSubmit"])
+	}
+	group, ok := userPromptSubmit[0].(map[string]any)
 	if !ok {
-		t.Fatalf("expected SessionStart group object, got: %#v", sessionStart[0])
+		t.Fatalf("expected UserPromptSubmit group object, got: %#v", userPromptSubmit[0])
 	}
 	groupHooks, ok := group["hooks"].([]any)
 	if !ok || len(groupHooks) != 1 {
@@ -154,7 +160,7 @@ func TestInstallClaudeWindowsWritesExactSessionStartHookJSON(t *testing.T) {
 		t.Fatalf("expected hook object, got: %#v", groupHooks[0])
 	}
 
-	expectedCommand := strings.ReplaceAll(exePath, `\`, "/") + " runtime-memory hook --runtime claude-code --event session-start"
+	expectedCommand := strings.ReplaceAll(exePath, `\`, "/") + " runtime-memory hook --runtime claude-code --event user-prompt-submit"
 	if got := hook["command"]; got != expectedCommand {
 		t.Fatalf("unexpected command\nwant: %q\n got: %q", expectedCommand, got)
 	}
@@ -166,19 +172,26 @@ func TestInstallClaudeWindowsWritesExactSessionStartHookJSON(t *testing.T) {
 	}
 }
 
-func TestInstallCodexEnablesFeatureAndUninstallRemovesManagedHookOnly(t *testing.T) {
+func TestInstallCodexNormalizesDeprecatedFeatureAndUninstallRemovesManagedHookOnly(t *testing.T) {
 	home := t.TempDir()
 	codexDir := filepath.Join(home, ".codex")
 	if err := os.MkdirAll(codexDir, 0755); err != nil {
 		t.Fatalf("mkdir codex: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(codexDir, codexConfig), []byte("model = \"gpt-5.4\"\n"), 0644); err != nil {
+	seedConfig := strings.Join([]string{
+		"model = \"gpt-5.4\"",
+		"",
+		"[features]",
+		"codex_hooks = true",
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(codexDir, codexConfig), []byte(seedConfig), 0644); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
 	hooks := `{
   "hooks": {
     "SessionStart": [
-      {"hooks": [{"type": "command", "command": "/tmp/existing-hook.sh"}]}
+      {"hooks": [{"type": "command", "command": "/tmp/existing-hook.sh"}]},
+      {"hooks": [{"type": "command", "command": "/tmp/old-knowns runtime-memory hook --runtime codex --event session-start", "statusMessage": "Knowns runtime memory"}]}
     ]
   }
 }`
@@ -203,17 +216,57 @@ func TestInstallCodexEnablesFeatureAndUninstallRemovesManagedHookOnly(t *testing
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if !strings.Contains(string(configBody), "codex_hooks = true") {
-		t.Fatalf("expected codex_hooks flag enabled, got:\n%s", string(configBody))
+	if strings.Contains(string(configBody), "hooks = true") {
+		t.Fatalf("expected hooks=true not to be added because hooks are enabled by default, got:\n%s", string(configBody))
+	}
+	if strings.Contains(string(configBody), "codex_hooks") {
+		t.Fatalf("expected deprecated codex_hooks flag to be absent, got:\n%s", string(configBody))
+	}
+	hooksBody, err := os.ReadFile(filepath.Join(codexDir, codexHooksFile))
+	if err != nil {
+		t.Fatalf("read hooks after install: %v", err)
+	}
+	text := string(hooksBody)
+	if !strings.Contains(text, `"UserPromptSubmit"`) {
+		t.Fatalf("expected Codex UserPromptSubmit hook, got:\n%s", text)
+	}
+	if !strings.Contains(text, "runtime-memory hook --runtime codex --event user-prompt-submit") {
+		t.Fatalf("expected Codex prompt-aware hook command, got:\n%s", text)
+	}
+	if !strings.Contains(text, "/tmp/existing-hook.sh") {
+		t.Fatalf("expected unrelated SessionStart hook preserved after install, got:\n%s", text)
+	}
+	if strings.Contains(text, "/tmp/old-knowns") || strings.Contains(text, "--event session-start") {
+		t.Fatalf("expected stale managed SessionStart hook removed after install, got:\n%s", text)
+	}
+	status, err := StatusFor("codex", opts)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !status.Installed || status.State != StateInstalled {
+		t.Fatalf("unexpected status: %+v", status)
+	}
+	if !strings.Contains(strings.Join(status.Details, "\n"), "UserPromptSubmit prompt-aware hook installed") {
+		t.Fatalf("expected prompt-aware status detail, got: %+v", status.Details)
 	}
 	if err := Uninstall("codex", opts); err != nil {
 		t.Fatalf("uninstall codex: %v", err)
 	}
-	hooksBody, err := os.ReadFile(filepath.Join(codexDir, codexHooksFile))
+	configBody, err = os.ReadFile(filepath.Join(codexDir, codexConfig))
+	if err != nil {
+		t.Fatalf("read config after uninstall: %v", err)
+	}
+	if strings.Contains(string(configBody), "hooks = false") {
+		t.Fatalf("expected uninstall not to disable all Codex hooks, got:\n%s", string(configBody))
+	}
+	if strings.Contains(string(configBody), "codex_hooks") {
+		t.Fatalf("expected deprecated codex_hooks flag to remain absent after uninstall, got:\n%s", string(configBody))
+	}
+	hooksBody, err = os.ReadFile(filepath.Join(codexDir, codexHooksFile))
 	if err != nil {
 		t.Fatalf("read hooks after uninstall: %v", err)
 	}
-	text := string(hooksBody)
+	text = string(hooksBody)
 	if !strings.Contains(text, "/tmp/existing-hook.sh") {
 		t.Fatalf("expected unrelated hook preserved, got:\n%s", text)
 	}
@@ -222,6 +275,26 @@ func TestInstallCodexEnablesFeatureAndUninstallRemovesManagedHookOnly(t *testing
 	}
 	if strings.Contains(text, managedStatus) {
 		t.Fatalf("expected managed hook removed, got:\n%s", text)
+	}
+}
+
+func TestNormalizeCodexHooksFeaturePreservesDeprecatedDisableIntent(t *testing.T) {
+	body := strings.Join([]string{
+		"model = \"gpt-5.4\"",
+		"",
+		"[features]",
+		"codex_hooks = false",
+		"",
+		"[mcp_servers.knowns]",
+		"command = \"knowns\"",
+	}, "\n") + "\n"
+
+	normalized := normalizeCodexHooksFeature(body)
+	if strings.Contains(normalized, "codex_hooks") {
+		t.Fatalf("expected deprecated codex_hooks flag removed, got:\n%s", normalized)
+	}
+	if !strings.Contains(normalized, "hooks = false") {
+		t.Fatalf("expected disabled hook intent preserved with canonical hooks=false, got:\n%s", normalized)
 	}
 }
 
@@ -243,12 +316,21 @@ func TestInstallOpenCodeCreatesPluginAndStatusInstalled(t *testing.T) {
 	if !strings.Contains(string(plugin), "runtime-memory") {
 		t.Fatalf("expected runtime-memory hook command in plugin, got:\n%s", string(plugin))
 	}
+	if !strings.Contains(string(plugin), "\"--event\", \"session.created\"") {
+		t.Fatalf("expected session-created baseline event in plugin, got:\n%s", string(plugin))
+	}
+	if strings.Contains(string(plugin), "user-prompt-submit") {
+		t.Fatalf("expected OpenCode to keep baseline plugin behavior, got:\n%s", string(plugin))
+	}
 	status, err := StatusFor("opencode", opts)
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
 	if !status.Installed || status.State != StateInstalled {
 		t.Fatalf("unexpected status: %+v", status)
+	}
+	if !strings.Contains(strings.Join(status.Details, "\n"), "session-created baseline plugin installed") {
+		t.Fatalf("expected baseline plugin status detail, got: %+v", status.Details)
 	}
 }
 
@@ -293,6 +375,16 @@ func TestInstallKiroCreatesWorkspaceIDEHook(t *testing.T) {
 	}
 	if !strings.Contains(text, "runtime-memory hook --runtime kiro --event promptsubmit") {
 		t.Fatalf("expected runtime-memory hook command, got:\n%s", text)
+	}
+	status, err := StatusFor("kiro", opts)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !status.Installed || status.State != StateInstalled {
+		t.Fatalf("unexpected status: %+v", status)
+	}
+	if !strings.Contains(strings.Join(status.Details, "\n"), "promptSubmit prompt-aware hook installed") {
+		t.Fatalf("expected prompt-aware Kiro status detail, got: %+v", status.Details)
 	}
 }
 

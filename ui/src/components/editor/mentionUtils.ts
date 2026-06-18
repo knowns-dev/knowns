@@ -1,7 +1,9 @@
 import { normalizeKnownsTaskReferences } from "../../lib/knownsReferences";
 
-const TASK_MENTION_REGEX = /@(task-[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)?(?:\{[a-z-]+\})?)/g;
-const MEMORY_MENTION_REGEX = /@(memory-[a-zA-Z0-9-]+(?:\{[a-z-]+\})?)/g;
+const TASK_MENTION_REGEX = /@(task[-/][a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)?(?:\{[a-z-]+\})?)/g;
+const MEMORY_MENTION_REGEX = /@(memory[-/][a-zA-Z0-9-]+(?:\{[a-z-]+\})?)/g;
+const DECISION_MENTION_REGEX = /@(decision\/[a-z0-9]+(?:-[a-z0-9]+)*(?:\{[a-z-]+\})?)/g;
+const TEMPLATE_MENTION_REGEX = /@(template\/[a-zA-Z0-9_./-]+(?:\{[a-z-]+\})?)/g;
 const DOC_MENTION_REGEX = /@docs?\/([^\s,;!?"'(){}]+(?:\{[a-z-]+\})?)/g;
 const KNOWNS_DOC_PATH_REGEX = /(^|[\s(])(\.knowns\/docs\/[^\s,;!?"'()]+\.md)\b/g;
 const SEMANTIC_LINK_PREFIX = "knowns-ref:";
@@ -122,11 +124,29 @@ export function canonicalizeSemanticReference(raw: string): string | null {
 
   if (!value || value.includes("<") || value.includes(">")) return null;
 
-  if (/^@task-[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)?(?:\{[a-z-]+\})?$/.test(value)) {
+  const taskLegacy = value.match(/^@task-([a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)?)(\{[a-z-]+\})?$/);
+  if (taskLegacy) {
+    return `@task/${taskLegacy[1]}${taskLegacy[2] || ""}`;
+  }
+
+  if (/^@task\/[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)?(?:\{[a-z-]+\})?$/.test(value)) {
     return value;
   }
 
-  if (/^@memory-[a-zA-Z0-9-]+(?:\{[a-z-]+\})?$/.test(value)) {
+  const memoryLegacy = value.match(/^@memory-([a-zA-Z0-9-]+)(\{[a-z-]+\})?$/);
+  if (memoryLegacy) {
+    return `@memory/${memoryLegacy[1]}${memoryLegacy[2] || ""}`;
+  }
+
+  if (/^@memory\/[a-zA-Z0-9-]+(?:\{[a-z-]+\})?$/.test(value)) {
+    return value;
+  }
+
+  if (/^@decision\/[a-z0-9]+(?:-[a-z0-9]+)*(?:\{[a-z-]+\})?$/.test(value)) {
+    return value;
+  }
+
+  if (/^@template\/[a-zA-Z0-9_./-]+(?:\{[a-z-]+\})?$/.test(value)) {
     return value;
   }
 
@@ -199,6 +219,16 @@ function transformMentionsInText(text: string): string {
     return canonical ? semanticMarkdownLink(canonical) : match;
   });
 
+  transformed = transformed.replace(DECISION_MENTION_REGEX, (match, decisionRef) => {
+    const canonical = canonicalizeSemanticReference(`@${decisionRef}`);
+    return canonical ? semanticMarkdownLink(canonical) : match;
+  });
+
+  transformed = transformed.replace(TEMPLATE_MENTION_REGEX, (match, templateRef) => {
+    const canonical = canonicalizeSemanticReference(`@${templateRef}`);
+    return canonical ? semanticMarkdownLink(canonical) : match;
+  });
+
   transformed = transformed.replace(DOC_MENTION_REGEX, (match, docPath) => {
     const canonical = canonicalizeSemanticReference(`@doc/${docPath}`);
     return canonical ? semanticMarkdownLink(canonical) : match;
@@ -229,6 +259,12 @@ export const docMentionBrokenClass =
 
 export const memoryMentionClass =
   `${mentionBase} bg-purple-500/8 text-purple-700 hover:bg-purple-500/15 hover:underline decoration-purple-500/40 dark:text-purple-400`;
+
+export const decisionMentionClass =
+  `${mentionBase} bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 hover:underline decoration-amber-500/40 dark:text-amber-300`;
+
+export const templateMentionClass =
+  `${mentionBase} bg-cyan-500/10 text-cyan-700 hover:bg-cyan-500/20 hover:underline decoration-cyan-500/40 dark:text-cyan-300`;
 
 export const semanticRelationClass =
   "ml-1 rounded-sm bg-black/5 px-1 py-0 text-[0.8em] font-semibold uppercase tracking-wide dark:bg-white/10";

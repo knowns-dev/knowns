@@ -57,21 +57,21 @@ type Options struct {
 
 // Server is the top-level HTTP server.
 type Server struct {
-	store            *storage.Store
-	manager          *storage.Manager // Multi-project store manager (may be nil)
-	router           chi.Router
-	sse              *SSEBroker
-	port             int
-	projectRoot      string
-	opts             Options
-	opencodeDaemon   *opencode.Daemon // Shared OpenCode daemon (may be nil if not configured)
-	runtimeOpenCode  *opencode.Config
-	opencodeProxy    *httputil.ReverseProxy // Shared proxy singleton — reused across requests
-	opencodeProxyMu  sync.RWMutex
-	runtimeStatus    opencode.RuntimeStatus
-	runtimeStatusMu  sync.RWMutex
-	shutdownCh       chan struct{}      // Signals graceful shutdown from /api/shutdown endpoint
-	cancelSSEFwd     context.CancelFunc // Cancels the OpenCode SSE forwarder goroutine
+	store             *storage.Store
+	manager           *storage.Manager // Multi-project store manager (may be nil)
+	router            chi.Router
+	sse               *SSEBroker
+	port              int
+	projectRoot       string
+	opts              Options
+	opencodeDaemon    *opencode.Daemon // Shared OpenCode daemon (may be nil if not configured)
+	runtimeOpenCode   *opencode.Config
+	opencodeProxy     *httputil.ReverseProxy // Shared proxy singleton — reused across requests
+	opencodeProxyMu   sync.RWMutex
+	runtimeStatus     opencode.RuntimeStatus
+	runtimeStatusMu   sync.RWMutex
+	shutdownCh        chan struct{}      // Signals graceful shutdown from /api/shutdown endpoint
+	cancelSSEFwd      context.CancelFunc // Cancels the OpenCode SSE forwarder goroutine
 	cancelRuntimeMon  context.CancelFunc
 	cancelServiceMon  context.CancelFunc
 	prevServiceStatus []services.ServiceStatus
@@ -356,9 +356,18 @@ func NewServer(store *storage.Store, projectRoot string, port int, opts Options)
 	// Create LSP manager if a project store is available.
 	if store != nil {
 		if cfg, err := store.Config.Load(); err == nil {
-			lspManager := lsp.NewManager(projectRoot, lsp.ConfigFromProject(cfg))
+			var defaults *storage.ProjectDefaults
+			if settings, err := storage.NewEmbeddingSettingsStore().Load(); err == nil {
+				defaults = settings.ProjectDefaults
+			}
+			lspManager := lsp.NewManager(projectRoot, lsp.ConfigFromProjectWithDefaults(cfg, defaults))
 			for _, adapter := range adapters.All() {
-				lspManager.RegisterAdapter(adapter)
+				if err := lspManager.RegisterAdapter(adapter); err != nil {
+					log.Printf("warn: could not register LSP adapter %s: %v", adapter.ID(), err)
+				}
+			}
+			for _, loadErr := range lspManager.RegisterPluginAdapters(lsp.PluginAdapterLoadOptions{}) {
+				log.Printf("warn: could not load LSP plugin adapter: %v", loadErr)
 			}
 			s.lspManager = lspManager
 		}
@@ -544,12 +553,12 @@ func (s *Server) cleanupOpenCodeServer() {
 }
 
 type serviceStatusChange struct {
-	Name           string                  `json:"name"`
-	Type           string                  `json:"type"`
-	PreviousStatus string                  `json:"previousStatus"`
-	Status         string                  `json:"status"`
-	Timestamp      time.Time               `json:"timestamp"`
-	Service        services.ServiceStatus  `json:"service"`
+	Name           string                 `json:"name"`
+	Type           string                 `json:"type"`
+	PreviousStatus string                 `json:"previousStatus"`
+	Status         string                 `json:"status"`
+	Timestamp      time.Time              `json:"timestamp"`
+	Service        services.ServiceStatus `json:"service"`
 }
 
 func serviceStatusKey(status services.ServiceStatus) string {
@@ -836,9 +845,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	payload := serverreadiness.BuildReadiness(store, serverreadiness.Options{
-		Runtime: rtStatus,
-	})
+	readinessOpts := serverreadiness.Options{Runtime: rtStatus}
+	if s.lspManager != nil {
+		readinessOpts.LSP = s.lspManager.RuntimeStatuses(r.Context())
+	}
+	payload := serverreadiness.BuildReadiness(store, readinessOpts)
 	writeJSON(w, http.StatusOK, payload)
 }
 
@@ -1166,6 +1177,7 @@ func (s *Server) prepareOpenCodeRuntimeMemory(r *http.Request, activeRoot string
 	inspection.Mode = mode
 	inspection.Pack = runtimememory.Pack{Runtime: "opencode", Mode: mode, Status: runtimememory.StatusNone}
 	if mode == runtimememory.ModeOff {
+		inspection.Pack.SkipReason = runtimememory.SkipReasonModeOff
 		return inspection, nil
 	}
 
@@ -1194,7 +1206,7 @@ func (s *Server) prepareOpenCodeRuntimeMemory(r *http.Request, activeRoot string
 	if err != nil {
 		return inspection, err
 	}
-	if _, _, err := runtimememory.Capture(store, runtimememory.Input{
+	if _, outcome, err := runtimememory.CaptureWithOutcome(store, runtimememory.Input{
 		Runtime:     "opencode",
 		ProjectRoot: activeRoot,
 		WorkingDir:  activeRoot,
@@ -1205,6 +1217,8 @@ func (s *Server) prepareOpenCodeRuntimeMemory(r *http.Request, activeRoot string
 		MaxBytes:    settings.MaxBytes,
 	}); err != nil {
 		return inspection, err
+	} else {
+		pack.Capture = &outcome
 	}
 	inspection.Pack = pack
 	if len(pack.Items) == 0 {

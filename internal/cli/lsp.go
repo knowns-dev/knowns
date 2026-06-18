@@ -4,12 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"github.com/howznguyen/knowns/internal/lsp"
 	"github.com/howznguyen/knowns/internal/lsp/adapters"
@@ -17,12 +14,30 @@ import (
 )
 
 type lspListRow struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	Binary     string `json:"binary,omitempty"`
-	Source     string `json:"source,omitempty"`
-	InstallCmd string `json:"install_cmd,omitempty"`
+	ID              string               `json:"id"`
+	Name            string               `json:"name"`
+	Enabled         bool                 `json:"enabled"`
+	Detected        bool                 `json:"detected"`
+	Status          string               `json:"status"`
+	InstallState    string               `json:"install_state"`
+	RunningState    string               `json:"running_state"`
+	ReadinessState  string               `json:"readiness_state"`
+	Binary          string               `json:"binary,omitempty"`
+	BinaryPath      string               `json:"binary_path,omitempty"`
+	Source          string               `json:"source,omitempty"`
+	Version         string               `json:"version,omitempty"`
+	CachePath       string               `json:"cache_path,omitempty"`
+	SelectedPath    string               `json:"selected_path,omitempty"`
+	CleanupEligible bool                 `json:"cleanup_eligible,omitempty"`
+	InstallError    string               `json:"install_error,omitempty"`
+	UpdateError     string               `json:"update_error,omitempty"`
+	InstallCmd      string               `json:"install_cmd,omitempty"`
+	Backend         string               `json:"backend,omitempty"`
+	BackendSource   string               `json:"backend_source,omitempty"`
+	ProjectPath     string               `json:"project_path,omitempty"`
+	ProjectKind     string               `json:"project_kind,omitempty"`
+	LogPath         string               `json:"log_path,omitempty"`
+	Attempts        []lsp.BackendAttempt `json:"attempts,omitempty"`
 }
 
 func newLspCmd() *cobra.Command {
@@ -69,20 +84,40 @@ func runLspList(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "Language\tStatus\tBinary\tInstall")
+	fmt.Fprintln(w, "Language\tStatus\tBackend\tRuntime\tInstall\tLog")
 	for _, row := range rows {
-		binary := "—"
-		if row.Binary != "" {
-			binary = row.Binary
-			if row.Source != "" {
-				binary += " (" + row.Source + ")"
+		backend := "-"
+		if row.Backend != "" {
+			backend = row.Backend
+			if row.BackendSource != "" {
+				backend += " (" + row.BackendSource + ")"
 			}
+		}
+		runtime := "-"
+		if row.Binary != "" {
+			runtime = row.Binary
+			if row.Source != "" {
+				runtime += " (" + row.Source + ")"
+			}
+		}
+		if row.Version != "" && row.Source == lsp.RuntimeSourceKnowns {
+			runtime += " " + row.Version
+		}
+		if row.ReadinessState != "" && row.ReadinessState != lsp.RuntimeReadinessNotApplicable {
+			runtime += " readiness=" + row.ReadinessState
+		}
+		if row.ProjectPath != "" {
+			runtime += " project=" + filepath.Base(row.ProjectPath)
 		}
 		install := row.InstallCmd
 		if install == "" {
-			install = "—"
+			install = row.InstallState
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", row.ID, row.Status, binary, install)
+		logPath := row.LogPath
+		if logPath == "" {
+			logPath = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", row.ID, row.Status, backend, runtime, install, logPath)
 	}
 	return w.Flush()
 }
@@ -145,11 +180,12 @@ func runLspCleanup(cmd *cobra.Command, args []string) error {
 	installer := lsp.NewInstaller(lspBaseDir())
 	var cleaned []string
 	for _, adapter := range adapters.All() {
-		langDir := filepath.Join(lspBaseDir(), adapter.ID())
-		before := countLspVersionDirs(langDir)
-		if before == 0 {
+		status := installer.Status(adapter)
+		if !status.CleanupEligible {
 			continue
 		}
+		langDir := filepath.Join(lspBaseDir(), adapter.ID())
+		before := countLspVersionDirs(langDir)
 		if err := installer.Cleanup(adapter.ID()); err != nil {
 			return fmt.Errorf("cleanup %s: %w", adapter.ID(), err)
 		}
@@ -174,53 +210,42 @@ func runLspCleanup(cmd *cobra.Command, args []string) error {
 }
 
 func collectLspRows(ctx context.Context) []lspListRow {
-	cfg := currentLspConfig()
 	projectRoot := currentProjectRoot()
-	detected := detectLspLanguages(projectRoot)
-	installer := lsp.NewInstaller(lspBaseDir())
-
-	rows := make([]lspListRow, 0, len(adapters.All()))
-	for _, adapter := range adapters.All() {
-		status := "not-installed"
-		binary := ""
-		source := ""
-		installCmd := ""
-
-		if !cfg.Enabled(adapter.ID()) {
-			status = "disabled"
-		} else if path, ok := findLspBinary(ctx, adapter, cfg.BinaryOverride(adapter.ID())); ok {
-			binary = firstBinaryName(adapter)
-			source = lspBinarySource(path, cfg.BinaryOverride(adapter.ID()))
-			status = "installed"
-			if detected[adapter.ID()] {
-				status = "running"
-			}
-		} else if path, ok := installer.IsInstalled(adapter); ok {
-			binary = filepath.Base(path)
-			source = "knowns"
-			status = "installed"
-		} else if guide := adapter.InstallGuide(); guide.KnownsCmd != "" {
-			installCmd = guide.KnownsCmd
-		} else if adapter.CanInstall() {
-			installCmd = "knowns lsp install " + adapter.ID()
-		}
-
-		rows = append(rows, lspListRow{ID: adapter.ID(), Name: adapter.Name(), Status: status, Binary: binary, Source: source, InstallCmd: installCmd})
+	statuses := getLSPManagerForRoot(projectRoot).RuntimeStatuses(ctx)
+	rows := make([]lspListRow, 0, len(statuses))
+	for _, status := range statuses {
+		rows = append(rows, lspRowFromRuntime(status))
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
 	return rows
 }
 
-func currentLspConfig() lsp.Config {
-	store, err := getStoreErr()
-	if err != nil {
-		return lsp.Config{}
+func lspRowFromRuntime(status lsp.LanguageRuntimeStatus) lspListRow {
+	return lspListRow{
+		ID:              status.ID,
+		Name:            status.Name,
+		Enabled:         status.Enabled,
+		Detected:        status.Detected,
+		Status:          status.Status,
+		InstallState:    status.InstallState,
+		RunningState:    status.RunningState,
+		ReadinessState:  status.ReadinessState,
+		Binary:          status.Binary,
+		BinaryPath:      status.BinaryPath,
+		Source:          status.Source,
+		Version:         status.Version,
+		CachePath:       status.CachePath,
+		SelectedPath:    status.SelectedPath,
+		CleanupEligible: status.CleanupEligible,
+		InstallError:    status.InstallError,
+		UpdateError:     status.UpdateError,
+		InstallCmd:      status.InstallCmd,
+		Backend:         status.Backend,
+		BackendSource:   status.BackendSource,
+		ProjectPath:     status.ProjectPath,
+		ProjectKind:     status.ProjectKind,
+		LogPath:         status.LogPath,
+		Attempts:        status.Attempts,
 	}
-	project, err := store.Config.Load()
-	if err != nil {
-		return lsp.Config{}
-	}
-	return lsp.ConfigFromProject(project)
 }
 
 func currentProjectRoot() string {
@@ -232,61 +257,6 @@ func currentProjectRoot() string {
 	return filepath.Dir(store.Root)
 }
 
-func detectLspLanguages(root string) map[string]bool {
-	seen := make(map[string]bool)
-	if root == "" {
-		return seen
-	}
-	extToLang := make(map[string]string)
-	for _, adapter := range adapters.All() {
-		for _, ext := range adapter.Extensions() {
-			extToLang[strings.ToLower(ext)] = adapter.ID()
-		}
-	}
-	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if entry.IsDir() {
-			switch entry.Name() {
-			case ".git", ".knowns", "node_modules", "vendor", "target", "dist", "build":
-				if path != root {
-					return filepath.SkipDir
-				}
-			}
-			return nil
-		}
-		if lang, ok := extToLang[strings.ToLower(filepath.Ext(path))]; ok {
-			seen[lang] = true
-		}
-		return nil
-	})
-	return seen
-}
-
-func findLspBinary(ctx context.Context, adapter lsp.LanguageAdapter, override string) (string, bool) {
-	binaries := adapter.Binaries()
-	if override != "" {
-		binaries = []lsp.BinaryCandidate{{Name: override}}
-	}
-	for _, binary := range binaries {
-		path, err := exec.LookPath(binary.Name)
-		if err != nil {
-			continue
-		}
-		if len(binary.CheckArgs) > 0 {
-			checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-			err = exec.CommandContext(checkCtx, path, binary.CheckArgs...).Run()
-			cancel()
-			if err != nil {
-				continue
-			}
-		}
-		return path, true
-	}
-	return "", false
-}
-
 func firstBinaryName(adapter lsp.LanguageAdapter) string {
 	binaries := adapter.Binaries()
 	if len(binaries) == 0 {
@@ -295,8 +265,34 @@ func firstBinaryName(adapter lsp.LanguageAdapter) string {
 	return binaries[0].Name
 }
 
+func findLspBinary(ctx context.Context, adapter lsp.LanguageAdapter, override string) (string, bool) {
+	cfg := lsp.Config{}
+	if override != "" {
+		cfg.Languages = map[string]lsp.LanguageConfig{adapter.ID(): {Binary: override}}
+	}
+	statuses := lsp.CollectRuntimeStatuses(ctx, lsp.RuntimeStatusOptions{
+		Root:     currentProjectRoot(),
+		Config:   cfg,
+		Adapters: []lsp.LanguageAdapter{adapter},
+	})
+	if len(statuses) == 0 {
+		return "", false
+	}
+	status := statuses[0]
+	if status.InstallState == lsp.RuntimeInstallInstalled && status.BinaryPath != "" {
+		return status.BinaryPath, true
+	}
+	return "", false
+}
+
 func validateRuntimeDeps(adapter lsp.LanguageAdapter) error {
 	for _, dep := range adapter.RuntimeDeps() {
+		if strings.EqualFold(dep.Source, "nuget") || strings.EqualFold(dep.ArchiveType, "nupkg") {
+			continue
+		}
+		if strings.EqualFold(dep.Source, "npm") || strings.EqualFold(dep.ArchiveType, "npm") {
+			continue
+		}
 		if dep.SHA256 == "" || strings.EqualFold(dep.SHA256, "TODO") {
 			return fmt.Errorf("auto-install metadata for %s is incomplete: missing SHA-256 for %s", adapter.ID(), dep.PlatformID)
 		}
@@ -318,22 +314,8 @@ func printInstallGuide(adapter lsp.LanguageAdapter) {
 	}
 }
 
-func lspBinarySource(path, override string) string {
-	if override != "" {
-		return "config"
-	}
-	if filepath.IsAbs(path) {
-		return "PATH"
-	}
-	return "PATH"
-}
-
 func lspBaseDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return filepath.Join(".knowns", "lsp-servers")
-	}
-	return filepath.Join(home, ".knowns", "lsp-servers")
+	return lsp.DefaultLSPBaseDir()
 }
 
 func countLspVersionDirs(path string) int {

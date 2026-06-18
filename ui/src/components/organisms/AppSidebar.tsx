@@ -12,6 +12,7 @@ import {
 	ArrowRightLeft,
 	Network,
 	Brain,
+	ScrollText,
 	Activity,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
@@ -81,6 +82,12 @@ const topNavItems = [
 		label: "Memories",
 		icon: Brain,
 		to: "/memory",
+	},
+	{
+		id: "decisions",
+		label: "Decisions",
+		icon: ScrollText,
+		to: "/decisions",
 	},
 	{
 		id: "audit",

@@ -7,7 +7,7 @@ description: Use at the start of a new session to read project docs, understand 
 
 **Announce:** "Using kn-init to initialize session."
 
-**Core principle:** READ DOCS BEFORE DOING ANYTHING ELSE.
+**Core principle:** BOOTSTRAP WITH MCP INITIAL → DISCOVER WITH HELP → READ ONLY RELEVANT DOCS.
 
 ## Inputs
 
@@ -17,32 +17,47 @@ description: Use at the start of a new session to read project docs, understand 
 ## Preflight
 
 - Confirm this is a Knowns project
+- Call MCP `initial` first when available; it is the runtime bootstrap
+- Use `help("tool.*")` or `help("workflow.*")` when an action schema or workflow route is not visible
 - Prefer project docs over guessing from code structure
 - If `README`, `ARCHITECTURE`, or `CONVENTIONS` do not exist, choose the closest equivalents from the docs list
 - If a doc is large, read its TOC first and only open the relevant sections
 
-## Step 1: List Docs
+## Step 1: Runtime Bootstrap
+
+```json
+mcp_knowns_initial({})
+```
+
+If the MCP client exposes the tool as `initial` rather than `mcp_knowns_initial`, call that tool. Summarize project state, tool domains, active timer, and any warnings.
+
+## Step 2: List Docs
 
 ```json
 mcp_knowns_docs({ "action": "list" })
 ```
 
-## Step 2: Read Core Docs
+## Step 3: Read Core Docs
 
 ```json
 mcp_knowns_docs({ "action": "get", "path": "README", "smart": true })
-mcp_knowns_docs({ "action": "get", "path": "ARCHITECTURE", "smart": true })
-mcp_knowns_docs({ "action": "get", "path": "CONVENTIONS", "smart": true })
 ```
 
-## Step 3: Check Current State
+For large docs, do not read the whole file. Use:
+
+```json
+mcp_knowns_docs({ "action": "get", "path": "<path>", "toc": true })
+mcp_knowns_docs({ "action": "get", "path": "<path>", "section": "<heading-or-number>" })
+```
+
+## Step 4: Check Current State
 
 ```json
 mcp_knowns_tasks({ "action": "list", "status": "in-progress" })
 mcp_knowns_tasks({ "action": "board" })
 ```
 
-## Step 3.5: Load Critical Learnings
+## Step 4.5: Load Critical Learnings
 
 Check for accumulated critical learnings from past work:
 
@@ -57,7 +72,7 @@ mcp_knowns_docs({ "action": "get", "path": "learnings/critical-patterns", "smart
 
 These are promoted learnings that cost the most to discover and save the most by knowing. Include a brief summary in the session context if any exist.
 
-## Step 3.6: Load Project Memory
+## Step 4.6: Load Project Memory
 
 ```json
 mcp_knowns_memory({ "action": "list", "layer": "project" })
@@ -80,7 +95,7 @@ Project memories contain accumulated patterns, decisions, and conventions from p
 
 ## Final Response Contract
 
-All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-plan`, `kn-research`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
+All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-plan`, `kn-research`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
 
 Required order for the final user-facing response:
 
@@ -103,11 +118,13 @@ For `kn-init`, the key details should cover:
 
 - If task search/list is unavailable, state that clearly and continue with docs + codebase context
 - If core docs are missing, say which docs were not found and which substitutes were used
+- If `initial` is unavailable, fall back to `project({ action: "status" })` and targeted docs
 - Do not invent project conventions that were not found in docs or code
 
 When a follow-up is natural, recommend exactly one next command such as:
 
 ```
 /kn-plan <task-id>
+/kn-flow @doc/<approved-spec-path>
 /kn-research <query>
 ```

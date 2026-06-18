@@ -191,10 +191,29 @@ func (b *bm25LexicalBackend) buildCorpus(opts SearchOptions) ([]lexicalDoc, erro
 			return nil, err
 		}
 		for _, entry := range entries {
+			if !memoryVisibleForSearch(entry, opts) {
+				continue
+			}
 			if opts.Tag != "" && !containsStr(entry.Tags, opts.Tag) {
 				continue
 			}
 			corpus = append(corpus, lexicalDocFromMemory(entry))
+		}
+	}
+
+	if opts.Type == "all" || opts.Type == "decision" {
+		decisions, err := b.store.Decisions.List()
+		if err != nil {
+			return nil, err
+		}
+		for _, decision := range decisions {
+			if !decisionVisibleForSearch(decision, opts) {
+				continue
+			}
+			if opts.Tag != "" && !containsStr(decision.Tags, opts.Tag) {
+				continue
+			}
+			corpus = append(corpus, lexicalDocFromDecision(decision))
 		}
 	}
 
@@ -228,6 +247,8 @@ func (b *bm25LexicalBackend) scoreDocument(doc lexicalDoc, query string, queryTo
 			details.RerankBoost += 0.30
 		case "memory":
 			details.RerankBoost += 0.05
+		case "decision":
+			details.RerankBoost += 0.18
 		}
 	}
 	details.FinalScore = details.BM25Score + details.RerankBoost
@@ -289,6 +310,7 @@ func lexicalDocFromMemory(entry *models.MemoryEntry) lexicalDoc {
 		ID:          entry.ID,
 		Title:       entry.Title,
 		Snippet:     firstNonEmpty(entry.Content, entry.Category),
+		Status:      entry.Status,
 		Tags:        append([]string{}, entry.Tags...),
 		MemoryLayer: entry.Layer,
 		Category:    entry.Category,
@@ -299,6 +321,30 @@ func lexicalDocFromMemory(entry *models.MemoryEntry) lexicalDoc {
 			newLexicalField("tags", strings.Join(entry.Tags, " "), 2.2),
 			newLexicalField("content", entry.Content, 1.2),
 			newLexicalField("layer", entry.Layer, 0.4),
+		},
+	}
+	lex.Snippet = snippetForLexicalDoc(lex, lex.Snippet)
+	return lex
+}
+
+func lexicalDocFromDecision(entry *models.DecisionEntry) lexicalDoc {
+	text := decisionText(entry)
+	lex := lexicalDoc{
+		Type:    "decision",
+		ID:      entry.ID,
+		Title:   entry.Title,
+		Snippet: firstNonEmpty(entry.Decision, entry.Context, entry.Content, text),
+		Status:  entry.Status,
+		Tags:    append([]string{}, entry.Tags...),
+		Fields: []lexicalField{
+			newLexicalField("title", entry.Title, 4.0),
+			newLexicalField("id", entry.ID, 3.2),
+			newLexicalField("status", entry.Status, 0.6),
+			newLexicalField("tags", strings.Join(entry.Tags, " "), 2.2),
+			newLexicalField("sources", strings.Join(entry.Sources, " "), 1.0),
+			newLexicalField("related_docs", strings.Join(entry.RelatedDocs, " "), 1.0),
+			newLexicalField("related_tasks", strings.Join(entry.RelatedTasks, " "), 1.0),
+			newLexicalField("content", text, 1.2),
 		},
 	}
 	lex.Snippet = snippetForLexicalDoc(lex, lex.Snippet)

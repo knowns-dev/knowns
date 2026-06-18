@@ -27,6 +27,7 @@ This is the recommended command after cloning a repo with Knowns:
 It reads config.json and sets up everything locally:
   • Skills — copies built-in skills to platform directories
   • Instructions — generates agent instruction files (KNOWNS.md, CLAUDE.md, etc.)
+  • Runtime hooks — installs current memory hooks for configured runtimes
   • Model — downloads the configured embedding model (if not installed)
   • Search index — rebuilds the semantic search index
   • Git integration — applies .gitignore rules for the configured tracking mode
@@ -62,12 +63,16 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	projectRoot := filepath.Dir(store.Root)
 	configPlatforms := cfg.Settings.Platforms
+	selectedPlatforms, err := resolveSyncPlatformSelection(platform, configPlatforms)
+	if err != nil {
+		return err
+	}
 
 	fmt.Printf("%s\n\n", RenderInfo(fmt.Sprintf("Syncing project %s from config.json...", StyleBold.Render(cfg.Name))))
 
 	// 1. Skills
 	if syncSkills {
-		if err := runSyncSkillsForPlatforms(projectRoot, force, configPlatforms); err != nil {
+		if err := runSyncSkillsForPlatforms(projectRoot, force, selectedPlatforms); err != nil {
 			return fmt.Errorf("sync skills: %w", err)
 		}
 		fmt.Println()
@@ -76,10 +81,13 @@ func runSync(cmd *cobra.Command, args []string) error {
 	// 2. Instructions
 	if syncInstructions {
 		effectivePlatform := platform
-		if err := runSyncInstructions(projectRoot, effectivePlatform, force, configPlatforms); err != nil {
+		if strings.EqualFold(strings.TrimSpace(platform), "all") {
+			effectivePlatform = ""
+		}
+		if err := runSyncInstructions(projectRoot, effectivePlatform, force, selectedPlatforms); err != nil {
 			return fmt.Errorf("sync instructions: %w", err)
 		}
-		platformsForConfigs, err := resolveSyncPlatformTargets(effectivePlatform, configPlatforms)
+		platformsForConfigs, err := resolveSyncPlatformTargets(effectivePlatform, selectedPlatforms)
 		if err != nil {
 			return fmt.Errorf("resolve platform configs: %w", err)
 		}
@@ -93,7 +101,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	if !specificFlag {
 		if cfg.Settings.GitTrackingMode != "" {
 			fmt.Println(RenderField("Git tracking mode", StyleBold.Render(cfg.Settings.GitTrackingMode)))
-			if err := writeKnownsGitignore(projectRoot, cfg.Settings.GitTrackingMode, nil); err != nil {
+			if err := syncGitIntegration(projectRoot, cfg); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: git integration failed: %v\n", err)
 			} else {
 				fmt.Println(RenderSuccess("Git integration configured."))
@@ -136,13 +144,46 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	// 8. Sync runtime hooks (remove stale hooks, install current ones)
 	if !specificFlag {
-		if err := runSyncRuntimeHooks(configPlatforms); err != nil {
+		if err := runSyncRuntimeHooks(selectedPlatforms); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: runtime hooks sync failed: %v\n", err)
 		}
 	}
 
 	fmt.Println(RenderSuccess("Sync complete."))
 	return nil
+}
+
+func syncGitIntegration(projectRoot string, cfg *models.Project) error {
+	if cfg == nil {
+		return nil
+	}
+	return writeKnownsGitignore(projectRoot, cfg.Settings.GitTrackingMode, cfg.Settings.GitTracking)
+}
+
+type syncInstructionPlatformDef struct {
+	name      string
+	label     string
+	filePath  string
+	configIDs []string
+	aliases   []string
+}
+
+func resolveSyncPlatformSelection(platform string, configPlatforms []string) ([]string, error) {
+	if platform == "" {
+		return configPlatforms, nil
+	}
+
+	normalized := strings.ToLower(strings.TrimSpace(platform))
+	switch normalized {
+	case "all":
+		return allPlatformIDs, nil
+	case "claude":
+		return []string{"claude-code"}, nil
+	case "claude-code", "opencode", "codex", "kiro", "antigravity", "cursor", "gemini", "copilot", "agents":
+		return []string{normalized}, nil
+	default:
+		return nil, fmt.Errorf("unknown platform %q (available: claude, opencode, codex, kiro, antigravity, cursor, gemini, copilot, agents, all)", platform)
+	}
 }
 
 func resolveSyncPlatformTargets(platform string, configPlatforms []string) ([]string, error) {
@@ -152,9 +193,11 @@ func resolveSyncPlatformTargets(platform string, configPlatforms []string) ([]st
 
 	normalized := strings.ToLower(strings.TrimSpace(platform))
 	switch normalized {
-	case "cursor", "antigravity":
+	case "codex", "cursor", "antigravity":
 		return []string{normalized}, nil
-	case "claude", "opencode", "gemini", "copilot", "agents":
+	case "all":
+		return configPlatforms, nil
+	case "claude", "claude-code", "opencode", "kiro", "gemini", "copilot", "agents":
 		return nil, nil
 	default:
 		return nil, fmt.Errorf("unknown platform %q", platform)
@@ -295,40 +338,25 @@ func runSyncSkillsForPlatforms(projectRoot string, force bool, platforms []strin
 // platform filters to a single platform by name (overrides configPlatforms).
 // configPlatforms restricts which platforms are active (empty = all).
 func runSyncInstructions(projectRoot string, platform string, force bool, configPlatforms []string) error {
-	// Define the known platforms and their instruction file paths
-	type platformDef struct {
-		name     string
-		label    string
-		filePath string
-	}
-
-	platforms := []platformDef{
-		{name: "claude", label: "Claude Code", filePath: filepath.Join(projectRoot, "CLAUDE.md")},
-		{name: "opencode", label: "OpenCode", filePath: filepath.Join(projectRoot, "OPENCODE.md")},
-		{name: "gemini", label: "Gemini CLI", filePath: filepath.Join(projectRoot, "GEMINI.md")},
-		{name: "copilot", label: "GitHub Copilot", filePath: filepath.Join(projectRoot, ".github", "copilot-instructions.md")},
-		{name: "agents", label: "Generic AI", filePath: filepath.Join(projectRoot, "AGENTS.md")},
-	}
-
-	// configID maps sync platform name → config platform ID (allPlatformIDs format).
-	configIDOf := map[string]string{
-		"claude":   "claude-code",
-		"opencode": "opencode",
-		"gemini":   "gemini",
-		"copilot":  "copilot",
-		"agents":   "agents",
+	// Define the known platforms and their instruction file paths.
+	platforms := []syncInstructionPlatformDef{
+		{name: "claude", label: "Claude Code", filePath: filepath.Join(projectRoot, "CLAUDE.md"), configIDs: []string{"claude-code"}, aliases: []string{"claude", "claude-code"}},
+		{name: "opencode", label: "OpenCode", filePath: filepath.Join(projectRoot, "OPENCODE.md"), configIDs: []string{"opencode"}, aliases: []string{"opencode"}},
+		{name: "gemini", label: "Gemini CLI", filePath: filepath.Join(projectRoot, "GEMINI.md"), configIDs: []string{"gemini"}, aliases: []string{"gemini"}},
+		{name: "copilot", label: "GitHub Copilot", filePath: filepath.Join(projectRoot, ".github", "copilot-instructions.md"), configIDs: []string{"copilot"}, aliases: []string{"copilot"}},
+		{name: "agents", label: "Generic AI", filePath: filepath.Join(projectRoot, "AGENTS.md"), configIDs: []string{"agents", "codex"}, aliases: []string{"agents", "codex"}},
 	}
 
 	// Filter by --platform flag first (single platform override).
 	if platform != "" {
-		var filtered []platformDef
+		var filtered []syncInstructionPlatformDef
 		for _, p := range platforms {
-			if strings.EqualFold(p.name, platform) {
+			if syncPlatformDefMatches(p, platform) {
 				filtered = append(filtered, p)
 			}
 		}
 		if len(filtered) == 0 {
-			return fmt.Errorf("unknown platform %q (available: claude, opencode, gemini, copilot, agents)", platform)
+			return fmt.Errorf("unknown platform %q (available: claude, opencode, codex, gemini, copilot, agents)", platform)
 		}
 		platforms = filtered
 	} else if len(configPlatforms) > 0 {
@@ -337,9 +365,9 @@ func runSyncInstructions(projectRoot string, platform string, force bool, config
 		for _, id := range configPlatforms {
 			configSet[id] = true
 		}
-		var filtered []platformDef
+		var filtered []syncInstructionPlatformDef
 		for _, p := range platforms {
-			if configSet[configIDOf[p.name]] {
+			if syncPlatformDefConfigured(p, configSet) {
 				filtered = append(filtered, p)
 			}
 		}
@@ -385,6 +413,24 @@ func runSyncInstructions(projectRoot string, platform string, force bool, config
 	}
 
 	return nil
+}
+
+func syncPlatformDefMatches(p syncInstructionPlatformDef, platform string) bool {
+	for _, alias := range p.aliases {
+		if strings.EqualFold(alias, platform) {
+			return true
+		}
+	}
+	return false
+}
+
+func syncPlatformDefConfigured(p syncInstructionPlatformDef, configSet map[string]bool) bool {
+	for _, id := range p.configIDs {
+		if configSet[id] {
+			return true
+		}
+	}
+	return false
 }
 
 const (
@@ -533,7 +579,7 @@ func init() {
 	syncCmd.Flags().Bool("skills", false, "Sync skills only")
 	syncCmd.Flags().Bool("instructions", false, "Sync instruction files only")
 	syncCmd.Flags().Bool("model", false, "Download embedding model only")
-	syncCmd.Flags().String("platform", "", "Sync specific platform (claude, gemini, copilot, agents)")
+	syncCmd.Flags().String("platform", "", "Sync specific platform (claude, opencode, codex, kiro, antigravity, cursor, gemini, copilot, agents, all)")
 
 	rootCmd.AddCommand(syncCmd)
 }

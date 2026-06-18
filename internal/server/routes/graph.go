@@ -74,6 +74,8 @@ func (gr *GraphRoutes) graph(w http.ResponseWriter, r *http.Request) {
 
 	// Load memory entries.
 	memories, _ := gr.getStore().Memory.List("")
+	decisions, _ := gr.getStore().Decisions.List()
+	templates, _ := gr.getStore().Templates.List()
 
 	var nodes []GraphNode
 	var edges []GraphEdge
@@ -122,6 +124,37 @@ func (gr *GraphRoutes) graph(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// --- Decision nodes ---
+	for _, d := range decisions {
+		nodes = append(nodes, GraphNode{
+			ID:    "decision:" + d.ID,
+			Type:  "decision",
+			Label: d.Title,
+			Data: map[string]interface{}{
+				"status": d.Status,
+				"tags":   d.Tags,
+			},
+		})
+	}
+
+	// --- Template nodes ---
+	for _, tmpl := range templates {
+		id := tmpl.Name
+		if tmpl.IsImported && tmpl.ImportName != "" {
+			id = tmpl.ImportName + "/" + tmpl.Name
+		}
+		nodes = append(nodes, GraphNode{
+			ID:    "template:" + id,
+			Type:  "template",
+			Label: tmpl.Name,
+			Data: map[string]interface{}{
+				"description": tmpl.Description,
+				"imported":    tmpl.IsImported,
+				"source":      tmpl.ImportName,
+			},
+		})
+	}
+
 	// --- Edges from task fields ---
 	for _, t := range tasks {
 		src := "task:" + t.ID
@@ -151,6 +184,22 @@ func (gr *GraphRoutes) graph(w http.ResponseWriter, r *http.Request) {
 	for _, m := range memories {
 		src := "memory:" + m.ID
 		edges = append(edges, gr.extractMentions(src, m.Content)...)
+	}
+
+	// --- Edges from decision content ---
+	for _, d := range decisions {
+		src := "decision:" + d.ID
+		content := strings.Join([]string{
+			d.Context,
+			d.Decision,
+			d.AlternativesConsidered,
+			d.Consequences,
+			d.Content,
+			strings.Join(d.Sources, "\n"),
+			strings.Join(d.RelatedDocs, "\n"),
+			strings.Join(d.RelatedTasks, "\n"),
+		}, "\n")
+		edges = append(edges, gr.extractMentions(src, content)...)
 	}
 
 	// Ensure non-nil slices for JSON.
@@ -191,6 +240,10 @@ func (gr *GraphRoutes) extractMentions(src, content string) []GraphEdge {
 			target = "doc:" + resolution.Entity.Path
 		case "memory":
 			target = "memory:" + resolution.Entity.ID
+		case "decision":
+			target = "decision:" + resolution.Entity.ID
+		case "template":
+			target = "template:" + resolution.Entity.ID
 		default:
 			continue
 		}

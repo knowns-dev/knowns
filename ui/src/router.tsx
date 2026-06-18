@@ -85,6 +85,12 @@ const memoryRoute = createRoute({
 	component: EmptyRoute,
 });
 
+const decisionsRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/decisions",
+	component: EmptyRoute,
+});
+
 const auditRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/audit",
@@ -114,6 +120,7 @@ const routeTree = rootRoute.addChildren([
 	importsRoute,
 	graphRoute,
 	memoryRoute,
+	decisionsRoute,
 	auditRoute,
 	chatRoute,
 	chatSessionRoute,

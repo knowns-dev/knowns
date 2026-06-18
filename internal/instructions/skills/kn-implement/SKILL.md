@@ -22,6 +22,8 @@ Execute the implementation plan, track progress, and complete the task.
 - Confirm a plan exists; if not, redirect to `/kn-plan <id>` first unless user explicitly overrides
 - Read task notes and pending ACs before changing code
 - Identify whether the task is standalone or linked to a spec
+- If the request is to complete an approved spec or multiple linked tasks, route to `/kn-flow @doc/<spec-path>` instead of implementing a single task in isolation
+- If linked to a spec, load the spec only as needed for requirements/AC context; do not pull a long task list into the prompt
 - Decide what verification is required: tests, lint, build, validation, manual checks
 
 ## Step 1: Review Task
@@ -92,8 +94,9 @@ mcp_knowns_tasks({ "action": "update", "taskId": "$ARGUMENTS",
 mcp_knowns_validate({ "entity": "$ARGUMENTS" })
 ```
 
-3. Add implementation notes (use `appendNotes`, NOT `notes`!)
-4. Stop timer + mark done
+3. Decide whether the task created, changed, or superseded durable guidance that needs capture as a Decision, Memory, or Doc
+4. Add implementation notes (use `appendNotes`, NOT `notes`!)
+5. Stop timer + mark done
 
 ```json
 mcp_knowns_time({ "action": "stop", "taskId": "$ARGUMENTS" })
@@ -114,6 +117,13 @@ mcp_knowns_tasks({ "action": "update", "taskId": "$ARGUMENTS",
 mcp_knowns_tasks({ "action": "list", "spec": "<spec-path-from-task>" })
 ```
 
+Use the returned task metadata as a compact sibling summary. Sort siblings by:
+1. `order` when present
+2. the shared title prefix `[<slug>-NN]`
+3. title as fallback
+
+Do not fetch every sibling task body unless a dependency or status inconsistency requires it.
+
 ### 2. Analyze Status
 
 Count tasks by status:
@@ -124,18 +134,18 @@ Count tasks by status:
 
 **If pending tasks exist:**
 ```
-✓ Task done! This task is part of spec: specs/xxx
+✓ Task done! This task is part of spec: <spec-path>
 
 Remaining tasks (Y of Z):
-- task-YY: Title (todo)
-- task-ZZ: Title (in-progress)
+- task-YY: [user-auth-02] Title (todo)
+- task-ZZ: [user-auth-03] Title (in-progress)
 
-Next: /kn-plan <first-todo-id>
+Next: /kn-flow @doc/<spec-path> to orchestrate the remaining tasks, or /kn-plan <first-todo-id> for manual task-by-task work
 ```
 
 **If this is the LAST task (all others done):**
 ```
-✓ Task done! All tasks for specs/xxx complete!
+✓ Task done! All tasks for <spec-path> complete!
 
 Running SDD verification...
 ```
@@ -149,18 +159,24 @@ Display SDD Coverage Report:
 ```
 SDD Coverage Report
 ═══════════════════════════════════════
-Spec: specs/xxx
+Spec: <spec-path>
 Tasks: X/X complete (100%)
 ACs: Y/Z verified
 
 ✅ Spec fully implemented!
 ```
 
-## Step 6: Extract Knowledge (optional)
+## Step 6: Capture Durable Knowledge (optional)
 
-If patterns discovered: `/kn-extract`
+Before final response, ask whether the work produced guidance future tasks should follow:
 
-If a quick insight is worth remembering but doesn't warrant a full doc:
+- Use a first-class Decision for stable choices: architecture, product behavior, workflow convention, naming, storage model, API contract, or explicit tradeoff. Link it to the source task/doc/reference, and supersede older Decisions instead of overwriting them.
+- Use Memory for concise reusable recall that should surface quickly in future sessions.
+- Use Docs for long-form explanations, examples, or broader knowledge.
+
+If patterns, decisions, or failures need structured extraction: `/kn-extract`
+
+If a quick insight is worth remembering but does not warrant a full doc:
 ```json
 mcp_knowns_memory({ "action": "add", "title": "<insight>",
   "content": "<2-3 sentence summary>",
@@ -172,7 +188,7 @@ mcp_knowns_memory({ "action": "add", "title": "<insight>",
 
 ## Final Response Contract
 
-All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-plan`, `kn-research`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
+All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-plan`, `kn-research`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
 
 Required order for the final user-facing response:
 
@@ -202,12 +218,13 @@ After task completion, check for:
    ```json
    mcp_knowns_tasks({ "action": "list", "spec": "<spec-path>", "status": "todo" })
    ```
+   Sort results by `order` or `[<slug>-NN]` before choosing the next task.
 
 2. **Suggest based on context:**
 
 | Situation | Suggest |
 |-----------|---------|
-| More tasks in spec | "Next: `/kn-plan <next-task-id>` for [task title]" |
+| More tasks in spec | "Next: `/kn-flow @doc/<spec-path>` to orchestrate remaining tasks, or `/kn-plan <next-task-id>` for manual flow" |
 | All spec tasks done | "All tasks complete! Run `/kn-verify` to verify against spec" |
 | Standalone task | "Task done. Run `/kn-extract` to extract patterns, or `/kn-commit` to commit" |
 | Patterns discovered | "Consider `/kn-extract` to document this pattern" |
@@ -216,8 +233,8 @@ After task completion, check for:
 ```
 ✓ Task #43 complete!
 
-Next task from @doc/specs/user-auth:
-→ Task #44: Add refresh token rotation
+Next task from @doc/specs/2026-06-17/user-auth:
+→ Task #44: [user-auth-02] Add refresh token rotation
 
 Run: /kn-plan 44
 ```
@@ -226,6 +243,7 @@ Run: /kn-plan 44
 
 ## Related Skills
 
+- `/kn-flow @doc/<spec-path>` - Continue or complete the surrounding spec/task wave
 - `/kn-plan <id>` - Create plan before implementing
 - `/kn-verify` - Verify all tasks against spec
 - `/kn-extract` - Extract patterns to docs
@@ -236,10 +254,12 @@ Run: /kn-plan 44
 - [ ] All ACs checked
 - [ ] Tests pass
 - [ ] **Validated (no broken refs)**
+- [ ] Durable guidance capture considered (Decision/Memory/Doc)
 - [ ] Notes added
 - [ ] Timer stopped
 - [ ] Status = done
-- [ ] **SDD workflow handled (if spec linked)**
+- [ ] **SDD workflow handled with sorted sibling summary (if spec linked)**
+- [ ] Routed remaining spec work to `/kn-flow` when appropriate
 - [ ] **Next step suggested**
 
 ## Red Flags

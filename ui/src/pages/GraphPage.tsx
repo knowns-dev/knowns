@@ -68,6 +68,10 @@ function getNodeColor(node: GraphNode): string {
 		return "#f59e0b";
 	case "memory":
 		return "#22c55e";
+	case "decision":
+		return "#e11d48";
+	case "template":
+		return "#06b6d4";
 	default:
 		return "#94a3b8";
 	}
@@ -92,7 +96,14 @@ function getEdgeColor(edge: GraphEdge): string {
 function filterGraphData(data: GraphData, filters: FilterState): GraphData {
 	const visibleNodeIds = new Set(
 		data.nodes
-			.filter((n) => (n.type === "task" && filters.tasks) || (n.type === "doc" && filters.docs) || (n.type === "memory" && filters.memories))
+			.filter(
+				(n) =>
+					(n.type === "task" && filters.tasks) ||
+					(n.type === "doc" && filters.docs) ||
+					(n.type === "memory" && filters.memories) ||
+					(n.type === "decision" && filters.decisions) ||
+					(n.type === "template" && filters.templates),
+			)
 			.map((n) => n.id),
 	);
 	const visibleEdges = filters.showEdges
@@ -163,7 +174,7 @@ function buildForceData(data: GraphData, searchQuery: string): {
 		return {
 			...node,
 			color: active ? baseColor : "rgba(148,163,184,0.25)",
-			val: node.type === "task" ? 7 : node.type === "doc" ? 6.5 : 6,
+			val: node.type === "task" ? 7 : node.type === "doc" || node.type === "decision" || node.type === "template" ? 6.5 : 6,
 			highlighted: active,
 		};
 	});

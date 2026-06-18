@@ -216,6 +216,28 @@ func (s *Store) collectInlineRefEdges() []rawEdge {
 		}
 	}
 
+	// From decisions.
+	decisions, _ := s.Decisions.List()
+	for _, d := range decisions {
+		content := strings.Join([]string{
+			d.Context,
+			d.Decision,
+			d.AlternativesConsidered,
+			d.Consequences,
+			d.Content,
+			strings.Join(d.Sources, "\n"),
+			strings.Join(d.RelatedDocs, "\n"),
+			strings.Join(d.RelatedTasks, "\n"),
+		}, "\n")
+		for _, ref := range references.Extract(content) {
+			if !ref.ValidRelation {
+				continue
+			}
+			e := s.refToEdge("decision", d.ID, d.Title, ref, models.OriginInline)
+			edges = append(edges, e)
+		}
+	}
+
 	return edges
 }
 
@@ -234,6 +256,8 @@ func (s *Store) refToEdge(srcKind, srcID, srcTitle string, ref models.SemanticRe
 		targetTitle = resolution.Entity.Title
 		if resolution.Entity.Path != "" {
 			targetID = resolution.Entity.Path
+		} else if resolution.Entity.ID != "" {
+			targetID = resolution.Entity.ID
 		}
 	}
 
@@ -254,8 +278,6 @@ func (s *Store) refToEdge(srcKind, srcID, srcTitle string, ref models.SemanticRe
 		rawRef:      ref.Raw,
 	}
 }
-
-
 
 // deduplicateRawEdges keeps the highest-priority origin per (source, target, relation).
 func deduplicateRawEdges(edges []rawEdge) []rawEdge {

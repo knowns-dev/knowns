@@ -1,14 +1,15 @@
 ---
 title: Workflow Guide
-createdAt: '2026-02-24T08:45:15.515Z'
-updatedAt: '2026-02-24T08:49:02.746Z'
 description: Task lifecycle and development workflow with Knowns
+createdAt: '2026-02-24T08:45:15.515Z'
+updatedAt: '2026-06-18T09:52:02.163Z'
 tags:
   - guide
   - workflow
   - task
   - process
 ---
+
 # Workflow Guide
 
 Task lifecycle from creation to completion. Full docs: `./docs/workflow.md`
@@ -34,7 +35,11 @@ graph TD
     D -->|Yes| E[Implement]
     D -->|No| C
     E --> F[Check ACs]
-    F --> G[Complete]
+    F --> G[Validate]
+    G --> H{Durable guidance?}
+    H -->|Yes| I[Capture Decision/Memory/Doc]
+    H -->|No| J[Complete]
+    I --> J
 ```
 
 ### 1. Take Task
@@ -65,7 +70,31 @@ knowns task edit <id> --check-ac 1
 knowns task edit <id> --append-notes "Completed step 1"
 ```
 
-### 5. Complete
+### 5. Capture Durable Knowledge
+
+Before marking work complete, ask: did this task create, change, or supersede guidance that future work should follow?
+
+Use:
+
+- **Decision** for durable project guidance: architecture choices, product behavior, workflow conventions, naming rules, storage models, API contracts, or explicit tradeoffs.
+- **Memory** for concise reusable recall: implementation patterns, recurring failures, conventions, or facts that help future agents quickly.
+- **Doc** for long-form knowledge: explanations, guides, patterns with examples, or domain references.
+
+Decision rules:
+
+- Create a Decision only when the choice is stable enough to guide future work.
+- Link each Decision to at least one source, related doc, or related task so it has context.
+- Supersede an older Decision when the new guidance replaces it; do not overwrite the old Decision.
+- Do not create a Decision for routine progress notes, local implementation details, one-off bugs, or unresolved ideas.
+
+```bash
+knowns decision create "Use Qdrant as default vector DB" \
+  --task <id> \
+  --doc specs/vector-search \
+  --decision "Use Qdrant for the default vector database."
+```
+
+### 6. Complete
 ```bash
 knowns time stop
 knowns task edit <id> -s done
@@ -86,7 +115,8 @@ knowns time add <id> 2h   # Manual entry
 2. **Plan before code** - Get approval on approach
 3. **Track time** - Start/stop timer for each task
 4. **Check ACs** - Only after work is actually done
-5. **Add notes** - Document progress and decisions
+5. **Capture durable guidance** - Use Decision for stable choices, Memory for quick recall, Doc for long-form knowledge
+6. **Add notes** - Document progress and task-specific context
 
 ## AI Agent Checklist
 
@@ -95,4 +125,6 @@ knowns time add <id> 2h   # Manual entry
 - [ ] Search related docs
 - [ ] Create plan, wait for approval
 - [ ] Implement, check ACs progressively
+- [ ] Validate tests/build/refs
+- [ ] Decide whether durable guidance needs a Decision, Memory, or Doc
 - [ ] Stop timer, mark done

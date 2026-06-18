@@ -199,6 +199,12 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 				if ls.Binary != "" {
 					fmt.Printf("settings.lsp.languages.%s.binary: %s\n", lang, ls.Binary)
 				}
+				if ls.Backend != "" {
+					fmt.Printf("settings.lsp.languages.%s.backend: %s\n", lang, ls.Backend)
+				}
+				if ls.ProjectPath != "" {
+					fmt.Printf("settings.lsp.languages.%s.projectPath: %s\n", lang, ls.ProjectPath)
+				}
 			}
 		}
 		if project.Settings.OpenCodeServerConfig != nil {
@@ -252,6 +258,12 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 				}
 				if ls.Binary != "" {
 					fmt.Printf("  %s %s\n", StyleDim.Render(fmt.Sprintf("%-14s", lang+".binary:")), ls.Binary)
+				}
+				if ls.Backend != "" {
+					fmt.Printf("  %s %s\n", StyleDim.Render(fmt.Sprintf("%-14s", lang+".backend:")), ls.Backend)
+				}
+				if ls.ProjectPath != "" {
+					fmt.Printf("  %s %s\n", StyleDim.Render(fmt.Sprintf("%-14s", lang+".project:")), ls.ProjectPath)
 				}
 			}
 		}
@@ -625,6 +637,7 @@ func configureGitTrackingSettings(settings *models.ProjectSettings) error {
 				huh.NewOption("Tasks", "tasks").Selected(sectionSelected(selected, "tasks")),
 				huh.NewOption("Docs", "docs").Selected(sectionSelected(selected, "docs")),
 				huh.NewOption("Templates", "templates").Selected(sectionSelected(selected, "templates")),
+				huh.NewOption("Decisions", "decisions").Selected(sectionSelected(selected, "decisions")),
 				huh.NewOption("Memories", "memories").Selected(sectionSelected(selected, "memories")),
 			).
 			Value(&selected),

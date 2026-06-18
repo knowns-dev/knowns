@@ -2,7 +2,7 @@
 title: Advanced LSP Language Support
 description: Specification for expanding Knowns LSP module with auto-download, per-language adapters, parallel startup, auto-restart, and broad language coverage
 createdAt: '2026-05-20T10:53:19.385Z'
-updatedAt: '2026-05-20T11:09:15.933Z'
+updatedAt: '2026-06-15T04:28:19.325Z'
 tags:
   - spec,lsp,code-intelligence
 ---
@@ -236,9 +236,8 @@ When MCP session starts and languages are detected but binaries missing, include
   • typescript: typescript-language-server not found
     → Run: npm install -g typescript-language-server
 
-Code intelligence for these languages will use tree-sitter fallback until installed.
+Code intelligence for these languages is unavailable until the required LSP servers are installed or configured.
 ```
-
 ## Acceptance Criteria
 
 - [ ] AC-1: `LanguageAdapter` interface is defined and at least Go, TypeScript, Python, Rust adapters implement it
@@ -289,9 +288,9 @@ LSP Servers:
 ```
 ⚠ Missing LSP servers:
   • java: jdtls not found → Run: knowns lsp install java
-Code intelligence for java will use tree-sitter fallback.
 ```
-Go LSP works normally.
+**And** Java code intelligence returns a structured unavailable error until jdtls is installed or configured
+**And** Go LSP works normally.
 
 ### Scenario 4: Custom binary path
 
@@ -336,8 +335,8 @@ c_cpp        not-installed   —                               knowns lsp instal
 
 **Given** project with Java files, jdtls not installed
 **When** MCP session starts
-**Then** NO download is triggered. Only guidance message shown. Tree-sitter fallback used.
-
+**Then** NO download is triggered
+**And** only guidance plus structured unavailable status are shown for Java code intelligence.
 ## Technical Notes
 
 ### Phase 1 Adapters (Priority)
@@ -373,7 +372,7 @@ c_cpp        not-installed   —                               knowns lsp instal
 1. Check config `lsp.languages.<id>.binary` override → use if set
 2. Check `InstalledPath()` in `~/.knowns/lsp-servers/` → use if found
 3. Check PATH via `LookPath` → use if found
-4. None found → add to missing list, show guidance, use tree-sitter fallback
+4. None found → add to missing list, show guidance, and return a structured unavailable error for that language's LSP-backed code intelligence
 
 ### Migration from Current System
 
@@ -387,8 +386,7 @@ c_cpp        not-installed   —                               knowns lsp instal
 
 - @doc/specs/lsp-enriched-code-intelligence — this spec extends the LSP infrastructure defined there
 - @doc/specs/delta-based-code-re-indexing — unchanged, works with any LSP server
-- @doc/specs/tree-sitter-sidecar — tree-sitter remains fallback when LSP unavailable
-
+- @doc/specs/remove-tree-sitter-lsp-only-code-intelligence — later design removes tree-sitter from code intelligence; missing LSP servers should surface install guidance and structured unavailable errors
 ## Resolved Questions
 
 - RQ-1: `knowns lsp cleanup` automatically removes old versions when a new version is successfully installed via `knowns lsp install`

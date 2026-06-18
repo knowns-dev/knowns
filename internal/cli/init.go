@@ -758,7 +758,7 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 	groups = append(groups, huh.NewGroup(
 		huh.NewMultiSelect[string]().
 			Title("Project instruction files").
-			Description("KNOWNS.md is always created as the canonical project guidance. Choose compatibility shims for agents that read project files.").
+			Description("KNOWNS.md is always created as a human-readable fallback reference. Choose compatibility shims for agents that read project files.").
 			Options(instructionPlatformOptions(cfg.Platforms)...).
 			Validate(func(s []string) error {
 				if len(s) == 0 {
@@ -794,6 +794,7 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 						huh.NewOption("Tasks", "tasks").Selected(sectionSelected(selected, "tasks")),
 						huh.NewOption("Docs", "docs").Selected(sectionSelected(selected, "docs")),
 						huh.NewOption("Templates", "templates").Selected(sectionSelected(selected, "templates")),
+						huh.NewOption("Decisions", "decisions").Selected(sectionSelected(selected, "decisions")),
 						huh.NewOption("Memories", "memories").Selected(sectionSelected(selected, "memories")),
 					).
 					Value(&selected),
@@ -827,6 +828,9 @@ func gitTrackingSelectedSections(tracking *models.GitTracking) []string {
 	if gt.Memories != nil && *gt.Memories || gt.Memories == nil && *defaults.Memories {
 		selected = append(selected, "memories")
 	}
+	if gt.Decisions != nil && *gt.Decisions || gt.Decisions == nil && *defaults.Decisions {
+		selected = append(selected, "decisions")
+	}
 	return selected
 }
 
@@ -844,11 +848,13 @@ func gitTrackingFromSelectedSections(selected []string) models.GitTracking {
 	docs := sectionSelected(selected, "docs")
 	templates := sectionSelected(selected, "templates")
 	memories := sectionSelected(selected, "memories")
+	decisions := sectionSelected(selected, "decisions")
 	return models.GitTracking{
 		Tasks:     &tasks,
 		Docs:      &docs,
 		Templates: &templates,
 		Memories:  &memories,
+		Decisions: &decisions,
 	}
 }
 
@@ -1110,9 +1116,8 @@ func createOpenCodeConfigQuiet(projectRoot string) error {
 	return os.WriteFile(configPath, append(data, '\n'), 0644)
 }
 
-// createKiroSteeringQuiet creates .kiro/steering/knowns.md that references
-// KNOWNS.md via Kiro's #[[file:...]] directive so the agent always loads the
-// canonical guidelines automatically.
+// createKiroSteeringQuiet creates .kiro/steering/knowns.md with lightweight
+// Knowns MCP bootstrap guidance.
 func createKiroSteeringQuiet(projectRoot string, force bool) error {
 	steeringDir := filepath.Join(projectRoot, ".kiro", "steering")
 	if err := os.MkdirAll(steeringDir, 0755); err != nil {
@@ -1125,14 +1130,14 @@ func createKiroSteeringQuiet(projectRoot string, force bool) error {
 	}
 
 	content := `---
-description: Knowns project guidelines — always included so the agent follows repo conventions.
+description: Knowns project guidelines — prefer MCP initial/help and Knowns tools.
 ---
 
 # Knowns Guidelines
 
-This steering file ensures the agent reads the canonical project guidance on every interaction.
+Start with Knowns MCP ` + "`initial`" + ` when available. Use ` + "`help(\"tool.*\")`" + ` or ` + "`help(\"workflow.*\")`" + ` for domain details on demand.
 
-#[[file:KNOWNS.md]]
+Use Knowns docs, tasks, search, memory, and validation as the project working layer. If MCP is unavailable, use ` + "`KNOWNS.md`" + ` as a human-readable fallback reference.
 `
 	return os.WriteFile(steeringPath, []byte(content), 0644)
 }
@@ -1248,15 +1253,16 @@ func createAntigravityRulesQuiet(projectRoot string, force bool) error {
 
 	content := `---
 trigger: always_on
-description: Always load Knowns project guidance and prefer Knowns tools for project context.
+description: Prefer Knowns MCP initial/help and Knowns tools for project context.
 ---
 
 # Knowns Project Guidance
 
-- Read ` + "`KNOWNS.md`" + ` first. It is the canonical source of truth for this repository.
+- Start with Knowns MCP ` + "`initial`" + ` when available.
+- Use ` + "`help(\"tool.*\")`" + ` or ` + "`help(\"workflow.*\")`" + ` for domain details on demand.
 - Treat Knowns docs, tasks, and memory as the working layer for the project.
 - Prefer Knowns MCP tools for docs, tasks, search, and validation when available.
-- If MCP is unavailable, fall back to the ` + "`knowns`" + ` CLI.
+- If MCP is unavailable, fall back to ` + "`KNOWNS.md`" + ` and the ` + "`knowns`" + ` CLI.
 `
 
 	return os.WriteFile(rulePath, []byte(content), 0644)
@@ -1391,7 +1397,7 @@ func generateInstructionContent(relativePath, platform, projectRoot string) stri
 func renderCanonicalInstructionContent() string {
 	var sb strings.Builder
 	sb.WriteString("# KNOWNS\n\n")
-	sb.WriteString("Canonical repository guidance for agents working in this project.\n\n")
+	sb.WriteString("Human-readable repository guidance for agents working in this project. Runtime-critical AI bootstrap guidance is provided by Knowns MCP `initial` and on-demand `help`.\n\n")
 	sb.WriteString("## Table of Contents\n\n")
 	sb.WriteString("- [Source of Truth](#source-of-truth)\n")
 	sb.WriteString("- [TL;DR](#tldr)\n")
@@ -1408,18 +1414,21 @@ func renderCanonicalInstructionContent() string {
 	sb.WriteString("- [Compatibility Pattern](#compatibility-pattern)\n")
 	sb.WriteString("- [Maintenance Rules](#maintenance-rules)\n\n")
 	sb.WriteString("## Source of Truth\n\n")
-	sb.WriteString("- `KNOWNS.md` is the canonical repo-level guidance file.\n")
+	sb.WriteString("- MCP `initial` is the primary runtime bootstrap for AI agents.\n")
+	sb.WriteString("- MCP `help(\"tool.*\")` and `help(\"workflow.*\")` are the primary on-demand sources for tool schemas and workflow recipes.\n")
+	sb.WriteString("- `KNOWNS.md` is a human-readable project reference and fallback when MCP is unavailable.\n")
 	sb.WriteString("- `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `OPENCODE.md`, and `.github/copilot-instructions.md` are compatibility shims for runtimes that auto-detect those filenames.\n")
 	sb.WriteString("- If guidance appears in multiple places, follow this precedence order:\n")
 	sb.WriteString("  1. System instructions\n")
 	sb.WriteString("  2. Developer instructions\n")
-	sb.WriteString("  3. `KNOWNS.md`\n")
-	sb.WriteString("  4. Compatibility shim files\n")
-	sb.WriteString("  5. Other repository docs\n")
-	sb.WriteString("- If a shim file and `KNOWNS.md` differ, treat `KNOWNS.md` as correct.\n\n")
+	sb.WriteString("  3. MCP `initial` / `help`\n")
+	sb.WriteString("  4. Skills\n")
+	sb.WriteString("  5. `KNOWNS.md`\n")
+	sb.WriteString("  6. Compatibility shim files\n")
+	sb.WriteString("  7. Other repository docs\n\n")
 	sb.WriteString("## TL;DR\n\n")
-	sb.WriteString("- Read `KNOWNS.md` first.\n")
 	sb.WriteString("- Call `initial` at session start — it returns project readiness, knowledge counts, code intelligence rules, workflow guidance, and available tools.\n")
+	sb.WriteString("- Use `help(\"tool.action\")`, `help(\"tool.*\")`, or `help(\"workflow.*\")` when a domain/action schema is not visible.\n")
 	sb.WriteString("- Use Knowns as the memory layer for humans and the AI-friendly working layer for agents.\n")
 	sb.WriteString("- Search before reading; read only the sections and docs relevant to the current task.\n")
 	sb.WriteString("- Never manually edit Knowns-managed task or doc markdown.\n")
@@ -1431,10 +1440,12 @@ func renderCanonicalInstructionContent() string {
 	sb.WriteString("- Knowns is the project's memory layer for humans and the AI-friendly operating layer for agents.\n")
 	sb.WriteString("- Knowns manages tasks, docs, templates, specs, references, and workflow state in one place.\n")
 	sb.WriteString("- Tasks and docs may reference each other using `@task-<id>`, `@doc/<path>`, and `@template/<name>`.\n")
-	sb.WriteString("- `KNOWNS.md` defines repo-level operating rules; skills define step-by-step execution flows.\n")
+	sb.WriteString("- MCP `initial` defines runtime operating rules; skills define step-by-step execution flows.\n")
+	sb.WriteString("- `KNOWNS.md` provides a stable human-readable reference for those conventions.\n")
 	sb.WriteString("- Long guidance should be retrieved by section, not blindly injected in full on every request.\n\n")
 	sb.WriteString("## How Agents Should Read This File\n\n")
-	sb.WriteString("- Always read `## Source of Truth` and `## TL;DR` first.\n")
+	sb.WriteString("- Prefer MCP `initial` and `help` first. Read this file when MCP guidance is unavailable or deeper project context is needed.\n")
+	sb.WriteString("- If reading this file, start with `## Source of Truth` and `## TL;DR`.\n")
 	sb.WriteString("- For short or obvious tasks, use the summary sections plus the relevant section only.\n")
 	sb.WriteString("- For tool usage questions, read `## Tool Selection` and `## Common Mistakes`.\n")
 	sb.WriteString("- For safety-sensitive work, read `## Critical Rules` and `## Git Safety`.\n")
@@ -1481,7 +1492,7 @@ func renderCanonicalInstructionContent() string {
 	sb.WriteString("- Use `appendNotes` for progress updates; `notes` replaces existing notes and should only be used intentionally.\n")
 	sb.WriteString("- Validate before marking work complete.\n")
 	sb.WriteString("- Use skills for detailed workflow execution instead of duplicating step-by-step process here.\n")
-	sb.WriteString("- Compatibility shim files must stay lightweight and must direct agents back to `KNOWNS.md` for behavioral rules instead of restating divergent guidance.\n\n")
+	sb.WriteString("- Compatibility shim files must stay lightweight and must direct agents to MCP `initial`/`help` first, with `KNOWNS.md` as fallback reference.\n\n")
 	sb.WriteString("## Git Safety\n\n")
 	sb.WriteString("- Assume the worktree may already contain user changes.\n")
 	sb.WriteString("- Never revert or overwrite unrelated user changes unless explicitly requested.\n")
@@ -1490,7 +1501,7 @@ func renderCanonicalInstructionContent() string {
 	sb.WriteString("- Do not create commits unless the user explicitly asks for a commit.\n")
 	sb.WriteString("- Do not push unless the user explicitly asks for it.\n\n")
 	sb.WriteString("## Context Retrieval Strategy\n\n")
-	sb.WriteString("- Treat `KNOWNS.md` as an indexed manual, not a prompt to fully inject every time.\n")
+	sb.WriteString("- Treat `KNOWNS.md` as an indexed manual, not a required startup prompt or content to fully inject every time.\n")
 	sb.WriteString("- Read in this order when context is limited:\n")
 	sb.WriteString("  1. `## Source of Truth`\n")
 	sb.WriteString("  2. `## TL;DR`\n")
@@ -1525,18 +1536,18 @@ func renderCanonicalInstructionContent() string {
 	sb.WriteString("- Do not repeatedly list the same tasks or docs if the needed context is already loaded.\n")
 	sb.WriteString("- Do not quote large file contents when a concise summary is enough.\n\n")
 	sb.WriteString("## Recommended File Roles\n\n")
-	sb.WriteString("- `KNOWNS.md`: canonical repo-level guide.\n")
-	sb.WriteString("- Compatibility shim files: lightweight entrypoints that introduce Knowns and redirect runtimes to `KNOWNS.md`.\n")
+	sb.WriteString("- `KNOWNS.md`: human-readable repo-level reference and fallback.\n")
+	sb.WriteString("- Compatibility shim files: lightweight entrypoints that introduce Knowns and redirect runtimes to MCP `initial`/`help`.\n")
 	sb.WriteString("- Other docs: deeper domain, feature, or workflow references.\n\n")
 	sb.WriteString("## Compatibility Pattern\n\n")
 	sb.WriteString("- Keep shim files short.\n")
-	sb.WriteString("- In every shim file, explicitly say that `KNOWNS.md` is canonical.\n")
+	sb.WriteString("- In every shim file, explicitly say MCP `initial` is the primary bootstrap and `KNOWNS.md` is optional fallback/reference.\n")
 	sb.WriteString("- Preserve the `<!-- KNOWNS GUIDELINES START -->` and `<!-- KNOWNS GUIDELINES END -->` markers in shim files so tooling can detect and sync them reliably.\n\n")
 	sb.WriteString("## Maintenance Rules\n\n")
 	sb.WriteString("- Update the Knowns generator when the repository's operational rules change.\n")
 	sb.WriteString("- Keep top sections stable so automated loaders can depend on them.\n")
 	sb.WriteString("- Prefer adding new sections over bloating the TL;DR.\n")
-	sb.WriteString("- Keep workflow details in skills when possible; keep `KNOWNS.md` focused on rules, conventions, and routing.\n")
+	sb.WriteString("- Keep workflow details in skills and MCP `help` when possible; keep `KNOWNS.md` focused on human-readable rules, conventions, and routing.\n")
 
 	return sb.String()
 }
@@ -1548,28 +1559,23 @@ func renderCompatibilityInstructionContent(relativePath, platform, projectRoot s
 	sb.WriteString(fmt.Sprintf("Compatibility entrypoint for runtimes that auto-detect `%s`.\n\n", relativePath))
 	sb.WriteString("<!-- KNOWNS GUIDELINES START -->\n\n")
 
-	// Platform-specific file import directive so the runtime actually loads KNOWNS.md.
-	if relativePath == "CLAUDE.md" || relativePath == "GEMINI.md" {
-		sb.WriteString("@KNOWNS.md\n\n")
-	}
-
-	sb.WriteString("**CRITICAL: You MUST read and follow `KNOWNS.md` in the repository root before doing any work. It is the canonical source of truth for all agent behavior in this project.**\n\n")
-	sb.WriteString("## Canonical Guidance\n\n")
+	sb.WriteString("**CRITICAL: Start with Knowns MCP `initial` when available. Use `help(\"tool.*\")` or `help(\"workflow.*\")` for domain details on demand.**\n\n")
+	sb.WriteString("## Runtime Guidance\n\n")
 	sb.WriteString("- Knowns is the repository memory layer for humans and the AI-friendly working layer for agents.\n")
-	sb.WriteString("- The source of truth for repo-level agent guidance is `KNOWNS.md`.\n")
-	sb.WriteString("- Read `KNOWNS.md` first whenever the runtime supports reading repository files.\n")
-	sb.WriteString("- Load behavior, memory policy, and workflow rules from `KNOWNS.md`; treat this file only as a compatibility entrypoint.\n")
-	sb.WriteString("- If this file and `KNOWNS.md` differ, follow `KNOWNS.md`.\n\n")
+	sb.WriteString("- MCP `initial` is the primary AI bootstrap: project state, tool domains, code rules, and workflow routing.\n")
+	sb.WriteString("- MCP `help` is the primary on-demand source for action schemas and recipes.\n")
+	sb.WriteString("- `KNOWNS.md` is a human-readable reference and fallback, not a required startup read.\n")
+	sb.WriteString("- Treat this file only as a lightweight compatibility entrypoint.\n\n")
 	sb.WriteString("## Minimum Rules\n\n")
 	sb.WriteString("- Use Knowns as the canonical system for tasks, docs, templates, and workflow state.\n")
 	sb.WriteString("- Never manually edit Knowns-managed task or doc markdown.\n")
 	sb.WriteString("- Search first, then read only relevant docs and code.\n")
 	sb.WriteString("- Use `search` for discovery; use MCP `retrieve` tool when a workflow needs structured context with citations. Fall back to CLI `knowns retrieve` if MCP is unavailable.\n")
-	sb.WriteString("- For code operations, use `code` tool: `symbols` for structure, `find` for search, `references`/`definition` for navigation, `rename`/`replace`/`insert`/`delete` for editing. Use `help(\"code.*\")` for details.\n")
+	sb.WriteString("- For code operations, use `code` tool: `find`/`symbols` for structure, `references`/`definition` for navigation, `rename`/`replace`/`replace_body`/`insert`/`delete` for editing. Use `help(\"code.*\")` or `help(\"workflow.code-edit\")` for details.\n")
 	sb.WriteString("- Plan before implementation unless the user explicitly overrides that workflow.\n")
 	sb.WriteString("- Validate before considering work complete.\n")
 	sb.WriteString("- Use memory tools: `memory({ action: \"list\" })` at session start, `memory({ action: \"add\" })` after tasks for reusable knowledge.\n")
-	sb.WriteString("- Proactively capture durable memory based on `KNOWNS.md` memory rules; do not wait for an explicit user instruction to save memory when scope and durability are clear.\n\n")
+	sb.WriteString("- Proactively capture durable memory when scope and durability are clear.\n\n")
 	sb.WriteString("## Quick Reference\n\n")
 	sb.WriteString("```bash\n")
 	sb.WriteString("knowns doc list --plain               # List docs\n")
@@ -1655,6 +1661,8 @@ func writeKnownsGitignore(dir, mode string, tracking *models.GitTracking) error 
 			explicit = gt.Templates
 		case "memories":
 			explicit = gt.Memories
+		case "decisions":
+			explicit = gt.Decisions
 		}
 		if explicit != nil {
 			return *explicit
@@ -1668,6 +1676,8 @@ func writeKnownsGitignore(dir, mode string, tracking *models.GitTracking) error 
 			return *modeDefaults.Templates
 		case "memories":
 			return *modeDefaults.Memories
+		case "decisions":
+			return *modeDefaults.Decisions
 		}
 		return false
 	}
@@ -1699,6 +1709,9 @@ func writeKnownsGitignore(dir, mode string, tracking *models.GitTracking) error 
 		if !sectionTracked("memories") {
 			buf.WriteString("memories/\n")
 		}
+		if !sectionTracked("decisions") {
+			buf.WriteString("decisions/\n")
+		}
 		return os.WriteFile(gitignorePath, []byte(buf.String()), 0644)
 
 	case "git-ignored":
@@ -1726,6 +1739,10 @@ func writeKnownsGitignore(dir, mode string, tracking *models.GitTracking) error 
 		if sectionTracked("memories") {
 			buf.WriteString("!memories/\n")
 			buf.WriteString("!memories/**\n")
+		}
+		if sectionTracked("decisions") {
+			buf.WriteString("!decisions/\n")
+			buf.WriteString("!decisions/**\n")
 		}
 		return os.WriteFile(gitignorePath, []byte(buf.String()), 0644)
 

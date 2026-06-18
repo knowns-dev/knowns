@@ -45,14 +45,21 @@ func (ms *MemoryStore) dirForLayer(layer string) (string, error) {
 
 // memoryFrontmatter mirrors the YAML frontmatter in every memory file.
 type memoryFrontmatter struct {
-	ID        string            `yaml:"id"`
-	Title     string            `yaml:"title"`
-	Layer     string            `yaml:"layer"`
-	Category  string            `yaml:"category,omitempty"`
-	Tags      []string          `yaml:"tags,omitempty"`
-	Metadata  map[string]string `yaml:"metadata,omitempty"`
-	CreatedAt string            `yaml:"createdAt"`
-	UpdatedAt string            `yaml:"updatedAt"`
+	ID             string            `yaml:"id"`
+	Title          string            `yaml:"title"`
+	Layer          string            `yaml:"layer"`
+	Category       string            `yaml:"category,omitempty"`
+	Status         string            `yaml:"status,omitempty"`
+	Confidence     string            `yaml:"confidence,omitempty"`
+	LastVerified   string            `yaml:"lastVerified,omitempty"`
+	TTLDays        int               `yaml:"ttlDays,omitempty"`
+	Sources        []string          `yaml:"sources,omitempty"`
+	MergedInto     string            `yaml:"mergedInto,omitempty"`
+	RejectedReason string            `yaml:"rejectedReason,omitempty"`
+	Tags           []string          `yaml:"tags,omitempty"`
+	Metadata       map[string]string `yaml:"metadata,omitempty"`
+	CreatedAt      string            `yaml:"createdAt"`
+	UpdatedAt      string            `yaml:"updatedAt"`
 }
 
 // List returns memory entries, optionally filtered by layer.
@@ -218,6 +225,7 @@ func (ms *MemoryStore) Create(entry *models.MemoryEntry) error {
 	if entry.ID == "" {
 		entry.ID = models.NewTaskID()
 	}
+	entry.ApplyLifecycleDefaults()
 
 	now := time.Now().UTC()
 	if entry.CreatedAt.IsZero() {
@@ -255,6 +263,7 @@ func (ms *MemoryStore) Update(entry *models.MemoryEntry) error {
 	if entry.CreatedAt.IsZero() {
 		entry.CreatedAt = existing.CreatedAt
 	}
+	entry.ApplyLifecycleDefaults()
 
 	dir, err := ms.dirForLayer(existing.Layer)
 	if err != nil {
@@ -419,6 +428,8 @@ func parseMemoryContent(content, layer string) (*models.MemoryEntry, error) {
 	}
 
 	if yamlBlock == "" {
+		entry.LifecycleMetadataMissing = missingMemoryLifecycleFields(nil)
+		entry.ApplyLifecycleDefaults()
 		return entry, nil
 	}
 
@@ -426,10 +437,22 @@ func parseMemoryContent(content, layer string) (*models.MemoryEntry, error) {
 	if err := yaml.Unmarshal([]byte(yamlBlock), &fm); err != nil {
 		return nil, fmt.Errorf("parse memory frontmatter: %w", err)
 	}
+	var raw map[string]any
+	_ = yaml.Unmarshal([]byte(yamlBlock), &raw)
 
 	entry.ID = fm.ID
 	entry.Title = fm.Title
 	entry.Category = fm.Category
+	entry.Status = fm.Status
+	entry.Confidence = fm.Confidence
+	entry.LastVerified, _ = parseISO(fm.LastVerified)
+	entry.TTLDays = fm.TTLDays
+	entry.Sources = fm.Sources
+	if entry.Sources == nil {
+		entry.Sources = []string{}
+	}
+	entry.MergedInto = fm.MergedInto
+	entry.RejectedReason = fm.RejectedReason
 	entry.Tags = fm.Tags
 	if entry.Tags == nil {
 		entry.Tags = []string{}
@@ -442,8 +465,23 @@ func parseMemoryContent(content, layer string) (*models.MemoryEntry, error) {
 	if fm.Layer != "" {
 		entry.Layer = fm.Layer
 	}
+	entry.LifecycleMetadataMissing = missingMemoryLifecycleFields(raw)
+	entry.ApplyLifecycleDefaults()
 
 	return entry, nil
+}
+
+func missingMemoryLifecycleFields(raw map[string]any) []string {
+	if raw == nil {
+		return []string{"status", "confidence", "lastVerified", "ttlDays", "sources"}
+	}
+	var missing []string
+	for _, field := range []string{"status", "confidence", "lastVerified", "ttlDays", "sources"} {
+		if _, ok := raw[field]; !ok {
+			missing = append(missing, field)
+		}
+	}
+	return missing
 }
 
 // renderMemory produces the canonical markdown content for a memory file.
@@ -467,6 +505,30 @@ func renderMemory(entry *models.MemoryEntry) string {
 
 	if entry.Category != "" {
 		fmt.Fprintf(&b, "category: %s\n", yamlScalar(entry.Category))
+	}
+	if entry.Status != "" {
+		fmt.Fprintf(&b, "status: %s\n", yamlScalar(entry.Status))
+	}
+	if entry.Confidence != "" {
+		fmt.Fprintf(&b, "confidence: %s\n", yamlScalar(entry.Confidence))
+	}
+	if !entry.LastVerified.IsZero() {
+		fmt.Fprintf(&b, "lastVerified: '%s'\n", formatISO(entry.LastVerified))
+	}
+	if entry.TTLDays > 0 {
+		fmt.Fprintf(&b, "ttlDays: %d\n", entry.TTLDays)
+	}
+	if len(entry.Sources) > 0 {
+		b.WriteString("sources:\n")
+		for _, source := range entry.Sources {
+			fmt.Fprintf(&b, "  - %s\n", yamlScalar(source))
+		}
+	}
+	if entry.MergedInto != "" {
+		fmt.Fprintf(&b, "mergedInto: %s\n", yamlScalar(entry.MergedInto))
+	}
+	if entry.RejectedReason != "" {
+		fmt.Fprintf(&b, "rejectedReason: %s\n", yamlScalar(entry.RejectedReason))
 	}
 
 	if len(entry.Tags) == 0 {

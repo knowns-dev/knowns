@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
@@ -46,6 +47,10 @@ func (s *IndexService) Reindex(progress ReindexProgress) error {
 	allDocs, err := s.store.Docs.List()
 	if err != nil {
 		return fmt.Errorf("list docs: %w", err)
+	}
+	decisions, err := s.store.Decisions.List()
+	if err != nil {
+		return fmt.Errorf("list decisions: %w", err)
 	}
 
 	// Split docs into local and imported.
@@ -155,7 +160,27 @@ func (s *IndexService) Reindex(progress ReindexProgress) error {
 		s.vecStore.SetContentHash(sourceID, hash)
 	}
 
-	// Phase 4: Clean up orphaned entries (deleted tasks/docs/memories).
+	// Phase 5: Index decisions.
+	for i, decision := range decisions {
+		if progress != nil {
+			progress("decisions", i+1, len(decisions))
+		}
+		sourceID := "decision:" + decision.ID
+		currentIDs[sourceID] = true
+
+		hash := contentHash(decisionContentForHash(decision))
+		if s.vecStore.GetContentHash(sourceID) == hash {
+			continue
+		}
+
+		s.vecStore.RemoveByPrefix(fmt.Sprintf("decision:%s:", decision.ID))
+		if err := s.embedAndStoreDecision(decision); err != nil {
+			continue
+		}
+		s.vecStore.SetContentHash(sourceID, hash)
+	}
+
+	// Phase 6: Clean up orphaned entries (deleted tasks/docs/memories/decisions).
 	for id := range s.vecStore.ListContentHashes() {
 		if !currentIDs[id] {
 			// Extract prefix for chunk removal (e.g. "task:abc" → "task:abc:")
@@ -215,6 +240,9 @@ func (s *IndexService) IndexMemory(memoryID string) error {
 	if err != nil {
 		return err
 	}
+	if !entry.CurrentForDefaultRetrieval() {
+		return s.vecStore.Save()
+	}
 	if err := s.embedAndStoreMemory(entry); err != nil {
 		return err
 	}
@@ -224,6 +252,26 @@ func (s *IndexService) IndexMemory(memoryID string) error {
 // RemoveMemory removes all chunks for a memory entry from the vector store.
 func (s *IndexService) RemoveMemory(memoryID string) error {
 	s.vecStore.RemoveByPrefix(fmt.Sprintf("memory:%s:", memoryID))
+	return s.vecStore.Save()
+}
+
+// IndexDecision incrementally indexes a single decision (removes old chunks first).
+func (s *IndexService) IndexDecision(decisionID string) error {
+	s.vecStore.RemoveByPrefix(fmt.Sprintf("decision:%s:", decisionID))
+
+	decision, err := s.store.Decisions.Get(decisionID)
+	if err != nil {
+		return err
+	}
+	if err := s.embedAndStoreDecision(decision); err != nil {
+		return err
+	}
+	return s.vecStore.Save()
+}
+
+// RemoveDecision removes all chunks for a decision from the vector store.
+func (s *IndexService) RemoveDecision(decisionID string) error {
+	s.vecStore.RemoveByPrefix(fmt.Sprintf("decision:%s:", decisionID))
 	return s.vecStore.Save()
 }
 
@@ -254,14 +302,23 @@ func (s *IndexService) embedAndStoreMemory(entry *models.MemoryEntry) error {
 	return s.embedAndStore(result.Chunks)
 }
 
+func (s *IndexService) embedAndStoreDecision(decision *models.DecisionEntry) error {
+	maxTokens := 512
+	if cfg, ok := EmbeddingModels[s.vecStore.Model()]; ok {
+		maxTokens = cfg.MaxTokens
+	}
+	result := ChunkDecision(decision, maxTokens, s.embedder.GetTokenizer())
+	return s.embedAndStore(result.Chunks)
+}
+
 func (s *IndexService) memoryEntriesForIndex() ([]*models.MemoryEntry, error) {
 	if s.store == nil || s.store.Memory == nil {
 		return nil, nil
 	}
 	if s.store.Root == storage.GlobalSemanticStoreRoot() {
-		return s.store.Memory.ListGlobalOnly()
+		return currentMemoryEntries(s.store.Memory.ListGlobalOnly())
 	}
-	return s.store.Memory.ListLocal()
+	return currentMemoryEntries(s.store.Memory.ListLocal())
 }
 
 func (s *IndexService) memoryEntryForIndex(memoryID string) (*models.MemoryEntry, error) {
@@ -275,6 +332,19 @@ func (s *IndexService) memoryEntryForIndex(memoryID string) (*models.MemoryEntry
 		return entry, nil
 	}
 	return s.store.Memory.GetInLayer(memoryID, models.MemoryLayerGlobal)
+}
+
+func currentMemoryEntries(entries []*models.MemoryEntry, err error) ([]*models.MemoryEntry, error) {
+	if err != nil {
+		return nil, err
+	}
+	filtered := entries[:0]
+	for _, entry := range entries {
+		if entry.CurrentForDefaultRetrieval() {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered, nil
 }
 
 func (s *IndexService) embedAndStore(chunks []Chunk) error {
@@ -335,4 +405,26 @@ func taskContentForHash(task *models.Task) string {
 	}
 	s += "\n" + task.ImplementationPlan + "\n" + task.ImplementationNotes
 	return s
+}
+
+func decisionContentForHash(decision *models.DecisionEntry) string {
+	if decision == nil {
+		return ""
+	}
+	parts := []string{
+		decision.Title,
+		decision.Status,
+		strings.Join(decision.Supersedes, "\n"),
+		strings.Join(decision.SupersededBy, "\n"),
+		strings.Join(decision.Tags, "\n"),
+		strings.Join(decision.Sources, "\n"),
+		strings.Join(decision.RelatedDocs, "\n"),
+		strings.Join(decision.RelatedTasks, "\n"),
+		decision.Context,
+		decision.Decision,
+		decision.AlternativesConsidered,
+		decision.Consequences,
+		decision.Content,
+	}
+	return strings.Join(parts, "\n")
 }

@@ -13,6 +13,8 @@ const pageLabels: Record<string, string> = {
 	tasks: "Tasks",
 	docs: "Docs",
 	graph: "Graph",
+	memory: "Memories",
+	decisions: "Decisions",
 	templates: "Templates",
 	imports: "Imports",
 	chat: "AI Chat",

@@ -89,7 +89,7 @@ grep -r "<pattern>" --include="*.ts" -l | head -20
 
 ## Shared Output Contract
 
-All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-plan`, `kn-research`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
+All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-plan`, `kn-research`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
 
 Required order for the final user-facing response:
 
@@ -140,5 +140,6 @@ If the research uncovers a broad follow-up topic that should be tracked independ
 Only suggest a next command when the findings clearly lead somewhere:
 
 - research for an active task -> `/kn-plan <task-id>`
+- research confirms an approved spec/task wave is ready to execute -> `/kn-flow @doc/<spec-path>`
 - research uncovered reusable knowledge -> `/kn-extract <task-id>` if the source task is complete
 - no clear handoff -> stop after the findings without forcing a next command
