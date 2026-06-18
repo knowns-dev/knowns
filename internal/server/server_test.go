@@ -367,7 +367,7 @@ func TestProxyOpenCodeInjectsRuntimeMemoryInAutoMode(t *testing.T) {
 	if gotHeader != projectRoot {
 		t.Fatalf("x-opencode-directory = %q, want %q", gotHeader, projectRoot)
 	}
-	if !strings.Contains(gotBody, "Knowns Guidance") || !strings.Contains(gotBody, "memory({ action:") || !strings.Contains(gotBody, "KNOWNS.md") {
+	if !strings.Contains(gotBody, "Knowns Guidance") || !strings.Contains(gotBody, "memory({ action:") {
 		t.Fatalf("expected lightweight injected memory guidance in body, got %s", gotBody)
 	}
 	if !strings.Contains(gotBody, "Runtime queue pattern") || !strings.Contains(gotBody, "Use the runtime queue pattern when handling prompt execution.") {

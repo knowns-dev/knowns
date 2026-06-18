@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/howznguyen/knowns/internal/lsp"
@@ -96,6 +97,11 @@ func TestLSPRoutesRestartLogsAndTrace(t *testing.T) {
 	store := setupLSPRouteStore(t)
 	root := filepath.Dir(store.Root)
 	manager := lsp.NewManager(root, lsp.Config{})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = manager.StopAll(ctx)
+	})
 	t.Setenv("KNOWNS_ROUTE_LSP_HELPER", "1")
 	if err := manager.RegisterAdapter(routeLSPAdapter{
 		id:   "toy",

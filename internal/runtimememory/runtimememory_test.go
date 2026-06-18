@@ -1,7 +1,6 @@
 package runtimememory
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -412,7 +411,7 @@ func TestHighConfidenceCaptureCreatesProposedOnly(t *testing.T) {
 		ProjectRoot: projectRoot,
 		WorkingDir:  projectRoot,
 		ActionType:  "user-prompt-submit",
-		UserPrompt:  "AGENTS.md must read behavior from KNOWNS.md in this repo",
+		UserPrompt:  "AGENTS.md should start with Knowns MCP initial in this repo",
 		Mode:        ModeAuto,
 		Capture:     CaptureHighConfidence,
 	}
@@ -510,15 +509,12 @@ func TestSerializePrefixAddsSilentInstructionForOpenCode(t *testing.T) {
 	}
 }
 
-func TestBuildSessionBaselineIncludesKNOWNSSummary(t *testing.T) {
+func TestBuildSessionBaselineIncludesProjectGuidance(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {
 		t.Fatalf("init store: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(projectRoot, "KNOWNS.md"), []byte("# KNOWNS\n\n- Canonical guidance\n- Read this first\n"), 0644); err != nil {
-		t.Fatalf("write KNOWNS.md: %v", err)
 	}
 	entry := &models.MemoryEntry{Title: "Response style", Layer: models.MemoryLayerProject, Category: "preference", Content: "Answer directly and keep formatting flat.", Tags: []string{"style", "preference"}, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 	if err := store.Memory.Create(entry); err != nil {
@@ -537,9 +533,6 @@ func TestBuildSessionBaselineIncludesKNOWNSSummary(t *testing.T) {
 	}
 	if !strings.Contains(pack.Serialized, "memory({ action: \"list\" })") {
 		t.Fatalf("expected MCP memory hint in baseline pack, got %q", pack.Serialized)
-	}
-	if strings.Contains(pack.Serialized, "Canonical guidance") {
-		t.Fatalf("did not expect inlined KNOWNS contents, got %q", pack.Serialized)
 	}
 }
 
@@ -896,7 +889,7 @@ func TestCaptureStoresStableGlobalPreference(t *testing.T) {
 	}
 }
 
-func TestCaptureStoresProjectDecisionForKnownsSourceOfTruth(t *testing.T) {
+func TestCaptureStoresProjectDecisionForMCPShimGuidance(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
@@ -909,7 +902,7 @@ func TestCaptureStoresProjectDecisionForKnownsSourceOfTruth(t *testing.T) {
 		ProjectRoot: projectRoot,
 		WorkingDir:  projectRoot,
 		ActionType:  "user-prompt-submit",
-		UserPrompt:  "AGENTS.md must read behavior from KNOWNS.md in this repo",
+		UserPrompt:  "AGENTS.md should start with Knowns MCP initial in this repo",
 		Mode:        ModeAuto,
 	})
 	if err != nil {
@@ -927,7 +920,7 @@ func TestCaptureStoresProjectDecisionForKnownsSourceOfTruth(t *testing.T) {
 	if entry.Status != models.MemoryStatusProposed {
 		t.Fatalf("status = %q, want proposed", entry.Status)
 	}
-	if !strings.Contains(entry.Content, "Compatibility shim files") {
+	if !strings.Contains(entry.Content, "AGENTS.md should start with Knowns MCP initial") {
 		t.Fatalf("unexpected content: %q", entry.Content)
 	}
 }

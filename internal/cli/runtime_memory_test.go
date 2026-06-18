@@ -188,7 +188,7 @@ func TestRuntimeMemoryHookCaptureDisabledConfigStillInjects(t *testing.T) {
 
 func TestRuntimeMemoryHookCaptureDisabledFlagSkipsCapture(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("KNOWNS_RUNTIME_PROMPT", "AGENTS.md must read behavior from KNOWNS.md in this repo")
+	t.Setenv("KNOWNS_RUNTIME_PROMPT", "AGENTS.md should start with Knowns MCP initial in this repo")
 	projectRoot, store := setupRuntimeMemoryHookStore(t)
 
 	var out bytes.Buffer
@@ -216,7 +216,7 @@ func TestRuntimeMemoryHookCaptureDisabledFlagSkipsCapture(t *testing.T) {
 
 func TestRuntimeMemoryHookHighConfidenceCaptureCreatesProposedOnly(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("KNOWNS_RUNTIME_PROMPT", "AGENTS.md must read behavior from KNOWNS.md in this repo")
+	t.Setenv("KNOWNS_RUNTIME_PROMPT", "AGENTS.md should start with Knowns MCP initial in this repo")
 	projectRoot, store := setupRuntimeMemoryHookStore(t)
 
 	var out bytes.Buffer

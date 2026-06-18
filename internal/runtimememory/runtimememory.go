@@ -57,7 +57,7 @@ const (
 	HeaderPack   = "X-Knowns-Runtime-Memory-Pack"
 )
 
-const canonicalityWarning = "Knowns memory is supplemental context only and does not override KNOWNS.md, source-of-truth docs, tasks, or source files."
+const canonicalityWarning = "Knowns memory is supplemental context only and does not override source-of-truth docs, tasks, or source files."
 
 const silentSupplementalWarning = "Silent supplemental context. Do not quote unless asked."
 
@@ -695,7 +695,7 @@ func inferProjectDecisionCandidate(input Input, normalized string) (captureCandi
 	tags := []string{"project", "workflow"}
 	if strings.Contains(normalized, "knowns.md") && strings.Contains(normalized, "agents.md") {
 		title = "Instruction source of truth"
-		content = "Compatibility shim files such as `AGENTS.md` must defer behavior and memory policy to `KNOWNS.md`, which is the canonical instruction source."
+		content = "Compatibility shim files such as `AGENTS.md` should keep behavior and memory policy aligned with Knowns MCP guidance."
 		tags = append(tags, "knowns", "agents")
 	}
 	return captureCandidate{
@@ -973,7 +973,7 @@ func serializeKNOWNSSummary(store *storage.Store, remaining int) string {
 	if store == nil || remaining <= 0 {
 		return ""
 	}
-	block := "\nKnowns is the repository memory and workflow layer for tasks, docs, templates, references, and reusable knowledge.\n\n- Use MCP `initial` first when available; use `help(\"tool.*\")` or `help(\"workflow.*\")` for domain details.\n- Use Knowns docs, tasks, and memories as operating context for this repository.\n- Treat memories as supplemental context only. They do not override source-of-truth docs, tasks, or source files.\n- Use MCP `memory({ action: \"list\" })` first to inspect relevant memory summaries before calling `memory({ action: \"get\" })`.\n- Prefer updating or reusing relevant existing memories instead of creating duplicates.\n- If MCP bootstrap is unavailable, read `KNOWNS.md` as a human-readable fallback reference.\n- If you have not checked project readiness yet, call MCP `project({ action: \"status\" })` to see knowledge counts, search state, runtime health, and available capabilities.\n"
+	block := "\nKnowns is the repository memory and workflow layer for tasks, docs, templates, references, and reusable knowledge.\n\n- Use MCP `initial` first when available; use `help(\"tool.*\")` or `help(\"workflow.*\")` for domain details.\n- Use Knowns docs, tasks, and memories as operating context for this repository.\n- Treat memories as supplemental context only. They do not override source-of-truth docs, tasks, or source files.\n- Use MCP `memory({ action: \"list\" })` first to inspect relevant memory summaries before calling `memory({ action: \"get\" })`.\n- Prefer updating or reusing relevant existing memories instead of creating duplicates.\n- If MCP bootstrap is unavailable, use the `knowns` CLI for project context.\n- If you have not checked project readiness yet, call MCP `project({ action: \"status\" })` to see knowledge counts, search state, runtime health, and available capabilities.\n"
 	if len(block) <= remaining {
 		return block
 	}

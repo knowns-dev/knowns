@@ -1137,7 +1137,7 @@ description: Knowns project guidelines — prefer MCP initial/help and Knowns to
 
 Start with Knowns MCP ` + "`initial`" + ` when available. Use ` + "`help(\"tool.*\")`" + ` or ` + "`help(\"workflow.*\")`" + ` for domain details on demand.
 
-Use Knowns docs, tasks, search, memory, and validation as the project working layer. If MCP is unavailable, use ` + "`KNOWNS.md`" + ` as a human-readable fallback reference.
+Use Knowns docs, tasks, search, memory, and validation as the project working layer. If MCP is unavailable, use the ` + "`knowns`" + ` CLI for project context.
 `
 	return os.WriteFile(steeringPath, []byte(content), 0644)
 }
@@ -1262,7 +1262,7 @@ description: Prefer Knowns MCP initial/help and Knowns tools for project context
 - Use ` + "`help(\"tool.*\")`" + ` or ` + "`help(\"workflow.*\")`" + ` for domain details on demand.
 - Treat Knowns docs, tasks, and memory as the working layer for the project.
 - Prefer Knowns MCP tools for docs, tasks, search, and validation when available.
-- If MCP is unavailable, fall back to ` + "`KNOWNS.md`" + ` and the ` + "`knowns`" + ` CLI.
+- If MCP is unavailable, fall back to the ` + "`knowns`" + ` CLI.
 `
 
 	return os.WriteFile(rulePath, []byte(content), 0644)
@@ -1564,7 +1564,6 @@ func renderCompatibilityInstructionContent(relativePath, platform, projectRoot s
 	sb.WriteString("- Knowns is the repository memory layer for humans and the AI-friendly working layer for agents.\n")
 	sb.WriteString("- MCP `initial` is the primary AI bootstrap: project state, tool domains, code rules, and workflow routing.\n")
 	sb.WriteString("- MCP `help` is the primary on-demand source for action schemas and recipes.\n")
-	sb.WriteString("- `KNOWNS.md` is a human-readable reference and fallback, not a required startup read.\n")
 	sb.WriteString("- Treat this file only as a lightweight compatibility entrypoint.\n\n")
 	sb.WriteString("## Minimum Rules\n\n")
 	sb.WriteString("- Use Knowns as the canonical system for tasks, docs, templates, and workflow state.\n")

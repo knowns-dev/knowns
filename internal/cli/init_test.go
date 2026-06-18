@@ -711,11 +711,11 @@ func TestRenderCanonicalInstructionContentIncludesProactiveMemoryRules(t *testin
 	assertContains(t, content, "- Compatibility shim files must stay lightweight and must direct agents to MCP `initial`/`help` first, with `KNOWNS.md` as fallback reference.")
 }
 
-func TestRenderCompatibilityInstructionContentDefersBehaviorToKnowns(t *testing.T) {
+func TestRenderCompatibilityInstructionContentUsesMCPBootstrap(t *testing.T) {
 	content := renderCompatibilityInstructionContent("AGENTS.md", "Generic AI", "/tmp/example-project")
 
 	assertContains(t, content, "Start with Knowns MCP `initial`")
-	assertContains(t, content, "- `KNOWNS.md` is a human-readable reference and fallback, not a required startup read.")
+	assertNotContains(t, content, "KNOWNS.md")
 	assertContains(t, content, "- Proactively capture durable memory when scope and durability are clear.")
 }
 

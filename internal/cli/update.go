@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,8 @@ import (
 )
 
 const updateDownloadTimeout = 30 * time.Second
+
+var updateRuntimeGOOS = runtime.GOOS
 
 var updateCmd = &cobra.Command{
 	Use:   "update",
@@ -70,6 +73,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// 2. Detect install method and run upgrade
 	fmt.Println()
 	if err := runUpgrade(); err != nil {
+		if errors.Is(err, errUpdateDeferred) {
+			return nil
+		}
 		return err
 	}
 
@@ -145,6 +151,11 @@ func runUpgrade() error {
 	// Homebrew: delegate to brew.
 	if method == util.InstallMethodBrew {
 		return runHomebrewUpgrade(installCmd)
+	}
+
+	if packageManagerUpgradeRequiresExternalShell(method) {
+		printPackageManagerExternalUpdateGuidance(method, installCmd)
+		return errUpdateDeferred
 	}
 
 	// Package manager (npm/bun/pnpm/yarn): run the upgrade command.
@@ -248,6 +259,10 @@ func (m *confirmModel) View() tea.View {
 
 // errUpdateCancelled is returned when the user cancels the update.
 var errUpdateCancelled = fmt.Errorf("update cancelled")
+
+// errUpdateDeferred is returned after the command has printed manual update
+// guidance for package-manager installs that cannot be safely upgraded in-place.
+var errUpdateDeferred = errors.New("update deferred to external package manager")
 
 // promptInstallMethod shows a selectable list using bubbletea.
 // Returns InstallMethodUnknown if the user cancels.
@@ -378,9 +393,37 @@ func installMethodLabel(method util.InstallMethod) string {
 	}
 }
 
+func packageManagerUpgradeRequiresExternalShell(method util.InstallMethod) bool {
+	if updateRuntimeGOOS != "windows" {
+		return false
+	}
+	switch method {
+	case util.InstallMethodNPM, util.InstallMethodBun, util.InstallMethodPNPM, util.InstallMethodYarn:
+		return true
+	default:
+		return false
+	}
+}
+
+func printPackageManagerExternalUpdateGuidance(method util.InstallMethod, installCmd string) {
+	printPackageManagerExternalUpdateGuidanceTo(os.Stdout, method, installCmd)
+}
+
+func printPackageManagerExternalUpdateGuidanceTo(w io.Writer, method util.InstallMethod, installCmd string) {
+	fmt.Fprintf(w, "  %s Windows cannot safely run %s while this knowns.exe process is active.\n",
+		StyleWarning.Render("!"),
+		StyleBold.Render(installMethodLabel(method)),
+	)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  Close terminals/agents that are using Knowns, then run this in a fresh PowerShell:")
+	fmt.Fprintf(w, "  %s\n", StyleInfo.Render(installCmd))
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "  After it finishes, run %s to sync configs and rebuild indexes.\n", StyleBold.Render("knowns sync"))
+}
+
 // scriptInstallCmd returns the install script command for the current platform.
 func scriptInstallCmd() string {
-	if runtime.GOOS == "windows" {
+	if updateRuntimeGOOS == "windows" {
 		return "irm https://knowns.sh/script/install.ps1 | iex"
 	}
 	return "curl -fsSL https://knowns.sh/script/install | sh"
