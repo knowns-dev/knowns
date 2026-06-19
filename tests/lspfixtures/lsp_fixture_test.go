@@ -63,14 +63,11 @@ func TestLSPFixture_ASPNETCoreWebAPI(t *testing.T) {
 		client.initialize(t)
 		client.setProject(t, projectDir)
 
-		symbols := client.callTool(t, "code", map[string]any{
+		client.callToolUntilRawContains(t, 60*time.Second, csharpProbeSymbol, "code", map[string]any{
 			"action": "symbols",
 			"path":   csharpProbeFile,
 			"depth":  2,
 		})
-		if !strings.Contains(symbols.raw, csharpProbeSymbol) {
-			t.Fatalf("expected symbols to contain %q, got: %s", csharpProbeSymbol, truncate(symbols.raw, 1200))
-		}
 
 		definition := client.callTool(t, "code", map[string]any{
 			"action": "definition",
@@ -424,6 +421,22 @@ func (c *mcpClient) callTool(t *testing.T, name string, args map[string]any) too
 	_ = json.Unmarshal([]byte(raw), &payload.object)
 	_ = json.Unmarshal([]byte(raw), &payload.array)
 	return payload
+}
+
+func (c *mcpClient) callToolUntilRawContains(t *testing.T, timeout time.Duration, want, name string, args map[string]any) toolPayload {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var payload toolPayload
+	for {
+		payload = c.callTool(t, name, args)
+		if strings.Contains(payload.raw, want) {
+			return payload
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected %s to contain %q, got: %s", name, want, truncate(payload.raw, 1200))
+		}
+		time.Sleep(time.Second)
+	}
 }
 
 func (c *mcpClient) request(t *testing.T, method string, params any) map[string]any {
