@@ -28,6 +28,7 @@ const (
 	csharpProbeSymbol    = "MapSpeakerEndpoints"
 	csharpEditFile       = "BackEnd/Endpoints/SearchEndpoints.cs"
 	csharpEditSymbol     = "MapSearchEndpoints"
+	csharpSymbolWait     = 3 * time.Minute
 )
 
 func TestLSPFixture_ASPNETCoreWebAPI(t *testing.T) {
@@ -43,6 +44,7 @@ func TestLSPFixture_ASPNETCoreWebAPI(t *testing.T) {
 	projectDir := cloneASPNetFixture(t)
 	initKnownsProject(t, binary, projectDir, env)
 	restoreDotnetProject(t, projectDir, env)
+	var csharpLogPath string
 
 	t.Run("cli runtime status", func(t *testing.T) {
 		statuses := runKnownsJSON[[]languageStatus](t, binary, projectDir, env, 90*time.Second, "lsp", "list", "--json")
@@ -56,6 +58,7 @@ func TestLSPFixture_ASPNETCoreWebAPI(t *testing.T) {
 		if csharp.LogPath == "" {
 			t.Fatalf("expected csharp log path in status: %+v", csharp)
 		}
+		csharpLogPath = csharp.LogPath
 	})
 
 	t.Run("mcp code tools", func(t *testing.T) {
@@ -63,10 +66,12 @@ func TestLSPFixture_ASPNETCoreWebAPI(t *testing.T) {
 		client.initialize(t)
 		client.setProject(t, projectDir)
 
-		client.callToolUntilRawContains(t, 60*time.Second, csharpProbeSymbol, "code", map[string]any{
+		client.callToolUntilRawContains(t, csharpSymbolWait, csharpProbeSymbol, "code", map[string]any{
 			"action": "symbols",
 			"path":   csharpProbeFile,
 			"depth":  2,
+		}, func() string {
+			return readFailureFile("csharp-ls log", csharpLogPath, 4000)
 		})
 
 		definition := client.callTool(t, "code", map[string]any{
@@ -423,7 +428,7 @@ func (c *mcpClient) callTool(t *testing.T, name string, args map[string]any) too
 	return payload
 }
 
-func (c *mcpClient) callToolUntilRawContains(t *testing.T, timeout time.Duration, want, name string, args map[string]any) toolPayload {
+func (c *mcpClient) callToolUntilRawContains(t *testing.T, timeout time.Duration, want, name string, args map[string]any, diagnostics ...func() string) toolPayload {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	var payload toolPayload
@@ -433,6 +438,18 @@ func (c *mcpClient) callToolUntilRawContains(t *testing.T, timeout time.Duration
 			return payload
 		}
 		if time.Now().After(deadline) {
+			var details []string
+			for _, diagnostic := range diagnostics {
+				if diagnostic == nil {
+					continue
+				}
+				if detail := strings.TrimSpace(diagnostic()); detail != "" {
+					details = append(details, detail)
+				}
+			}
+			if len(details) > 0 {
+				t.Fatalf("expected %s to contain %q, got: %s\n%s", name, want, truncate(payload.raw, 1200), strings.Join(details, "\n"))
+			}
 			t.Fatalf("expected %s to contain %q, got: %s", name, want, truncate(payload.raw, 1200))
 		}
 		time.Sleep(time.Second)
@@ -557,4 +574,15 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "..."
+}
+
+func readFailureFile(label, path string, max int) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Sprintf("%s unavailable at %s: %v", label, path, err)
+	}
+	return fmt.Sprintf("%s (%s):\n%s", label, path, truncate(string(data), max))
 }
