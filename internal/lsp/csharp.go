@@ -35,7 +35,7 @@ type BackendAttempt struct {
 type CSharpBackend struct {
 	ID        string
 	Binary    Binary
-	BuildArgs func(CSharpProjectSelection) []string
+	BuildArgs func(string, CSharpProjectSelection) []string
 }
 
 type CSharpProjectSelection struct {
@@ -138,7 +138,7 @@ func ResolveCSharpBackendWithOptions(ctx context.Context, root string, cfg Confi
 		}
 		args := append([]string(nil), backend.Binary.Args...)
 		if backend.BuildArgs != nil {
-			args = append(args, backend.BuildArgs(selection)...)
+			args = append(args, backend.BuildArgs(root, selection)...)
 		}
 		attempts = append(attempts, BackendAttempt{Backend: backend.ID, Status: BackendAttemptChosen, Path: path})
 		if autoMode {
@@ -227,11 +227,19 @@ func roslynDotnetArgs(serverPath string, _ CSharpProjectSelection) []string {
 	return []string{serverPath, "--stdio"}
 }
 
-func csharpLSArgs(selection CSharpProjectSelection) []string {
+func csharpLSArgs(root string, selection CSharpProjectSelection) []string {
 	if selection.Kind != "sln" || selection.Path == "" {
 		return nil
 	}
-	return []string{"--solution", selection.Path}
+	return []string{"--solution", csharpLSProjectPath(root, selection.Path)}
+}
+
+func csharpLSProjectPath(root, projectPath string) string {
+	rel, err := filepath.Rel(root, projectPath)
+	if err != nil || rel == "." || rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return projectPath
+	}
+	return rel
 }
 
 func CSharpRoslynRuntimeDependency(cfg Config) RuntimeDependency {

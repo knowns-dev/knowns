@@ -24,10 +24,7 @@ func PathFromFileURI(uri string) string {
 
 // FileURI converts a filesystem path to a file:// URI.
 func FileURI(path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		abs = path
-	}
+	abs := canonicalAbsPath(path)
 	slashed := filepath.ToSlash(abs)
 	if runtime.GOOS == "windows" && len(slashed) >= 2 && slashed[1] == ':' {
 		slashed = "/" + slashed
@@ -38,19 +35,22 @@ func FileURI(path string) string {
 // SameFileURI reports whether a file:// URI and a filesystem path refer to the same file.
 func SameFileURI(uri, path string) bool {
 	uriPath := PathFromFileURI(uri)
-	abs1, err := filepath.Abs(uriPath)
-	if err != nil {
-		abs1 = uriPath
-	}
-	abs2, err := filepath.Abs(path)
-	if err != nil {
-		abs2 = path
-	}
-	clean1 := filepath.Clean(abs1)
-	clean2 := filepath.Clean(abs2)
+	clean1 := filepath.Clean(canonicalAbsPath(uriPath))
+	clean2 := filepath.Clean(canonicalAbsPath(path))
 	if runtime.GOOS == "windows" {
 		clean1 = strings.ToLower(clean1)
 		clean2 = strings.ToLower(clean2)
 	}
 	return clean1 == clean2
+}
+
+func canonicalAbsPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
 }

@@ -1,6 +1,8 @@
 package lsp
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 )
@@ -52,6 +54,26 @@ func TestFileURI(t *testing.T) {
 	}
 }
 
+func TestFileURIEvaluatesSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink privileges vary on Windows")
+	}
+	realDir := t.TempDir()
+	file := filepath.Join(realDir, "main.go")
+	if err := os.WriteFile(file, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkDir := filepath.Join(filepath.Dir(realDir), filepath.Base(realDir)+"-link")
+	if err := os.Symlink(realDir, linkDir); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(linkDir) })
+
+	if got, want := FileURI(filepath.Join(linkDir, "main.go")), FileURI(file); got != want {
+		t.Fatalf("FileURI(symlinked path) = %q, want %q", got, want)
+	}
+}
+
 func TestSameFileURI(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("platform-specific test")
@@ -72,5 +94,25 @@ func TestSameFileURI(t *testing.T) {
 				t.Errorf("SameFileURI(%q, %q) = %v, want %v", tt.uri, tt.path, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSameFileURIEvaluatesSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink privileges vary on Windows")
+	}
+	realDir := t.TempDir()
+	file := filepath.Join(realDir, "main.go")
+	if err := os.WriteFile(file, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkDir := filepath.Join(filepath.Dir(realDir), filepath.Base(realDir)+"-link")
+	if err := os.Symlink(realDir, linkDir); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(linkDir) })
+
+	if !SameFileURI(FileURI(file), filepath.Join(linkDir, "main.go")) {
+		t.Fatalf("SameFileURI should match canonical and symlinked paths")
 	}
 }

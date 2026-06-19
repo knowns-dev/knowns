@@ -164,8 +164,30 @@ func TestResolveCSharpBackendCSharpLSPUsesDiscoveredSolution(t *testing.T) {
 	if cmd.Backend != CSharpBackendCSharp || cmd.Path != "/bin/csharp-ls" {
 		t.Fatalf("command = %#v, want selected csharp-ls", cmd)
 	}
-	if !reflect.DeepEqual(cmd.Args, []string{"--solution", solutionPath}) {
-		t.Fatalf("csharp-ls args = %#v, want --solution %s", cmd.Args, solutionPath)
+	if !reflect.DeepEqual(cmd.Args, []string{"--solution", "App.sln"}) {
+		t.Fatalf("csharp-ls args = %#v, want --solution App.sln", cmd.Args)
+	}
+}
+
+func TestCSharpLSProjectPathUsesRelativeSolutionWithinRoot(t *testing.T) {
+	root := t.TempDir()
+	nestedSolutionPath := filepath.Join(root, "src", "App.sln")
+
+	got := csharpLSProjectPath(root, nestedSolutionPath)
+	want := filepath.Join("src", "App.sln")
+	if got != want {
+		t.Fatalf("csharpLSProjectPath() = %q, want %q", got, want)
+	}
+}
+
+func TestCSharpLSProjectPathKeepsSolutionOutsideRoot(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	outsideSolutionPath := filepath.Join(base, "other", "App.sln")
+
+	got := csharpLSProjectPath(root, outsideSolutionPath)
+	if got != outsideSolutionPath {
+		t.Fatalf("csharpLSProjectPath() = %q, want absolute outside-root path %q", got, outsideSolutionPath)
 	}
 }
 
