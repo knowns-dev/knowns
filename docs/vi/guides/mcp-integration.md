@@ -1,12 +1,15 @@
 # MCP
 
-Knowns expose MCP server để AI assistants truy cập trực tiếp task, doc, memory, search, validation, và code tools.
+Knowns expose MCP server để AI assistants truy cập trực tiếp task, doc, memory, decision, template, time tracking, search, validation, project state, help, và code tools.
 
 ## Server command
 
 ```bash
 knowns mcp --stdio
+knowns mcp --stdio --project /path/to/project
 ```
+
+Nếu không truyền `--project`, Knowns sẽ cố auto-detect project từ current working directory.
 
 ## Platform support
 
@@ -73,9 +76,15 @@ args = ["mcp", "--stdio"]
 
 ## Lưu ý với global MCP clients
 
-Với config MCP global, server có thể không biết project nào cần dùng lúc bắt đầu session.
+Với config MCP global, server có thể không biết project nào cần dùng nếu client start server ngoài repo.
 
-Set active project trước:
+Ưu tiên server command có project rõ ràng khi client hỗ trợ:
+
+```bash
+knowns mcp --stdio --project /path/to/project
+```
+
+Hoặc set active project bằng MCP `project` tool:
 
 ```json
 { "action": "detect" }
@@ -99,9 +108,9 @@ Không cần gọi `project({ action: "status" })` riêng — `initial` đã bao
 Dùng `help` để xem hướng dẫn chi tiết cho từng action:
 
 ```json
-{ "action": "query", "queries": ["code.find"] }
-{ "action": "query", "queries": ["code.*"] }
-{ "action": "query", "queries": ["insert"] }
+{ "queries": ["code.find"] }
+{ "queries": ["code.*"] }
+{ "queries": ["insert"] }
 ```
 
 Trả về JSON dạng `{ tool: { action: { when, params, ... } } }`.

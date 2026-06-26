@@ -1,6 +1,6 @@
 # Platforms
 
-Knowns generate và sync artifacts khác nhau cho từng AI platform qua `knowns setup <target>`.
+Knowns generate và sync artifacts khác nhau cho từng AI platform qua `knowns setup <target> --global` cho user-level setup, hoặc `knowns setup <target>` cho repo-local setup.
 
 ## Platform IDs
 
@@ -30,21 +30,23 @@ Knowns generate và sync artifacts khác nhau cho từng AI platform qua `knowns
 
 ## Setup
 
-`knowns init` tạo project guidance files để agent đọc rule của repo ngay. AI integration artifacts được tạo qua `knowns setup`:
+`knowns init` tạo lightweight project shims để agent route tới MCP `initial`/`help` ngay. Với personal assistant setup thông thường, tạo AI integration artifacts ở user scope:
 
 ```bash
-knowns setup claude    # CLAUDE.md, .mcp.json, skills, hooks
-knowns setup opencode  # OPENCODE.md, opencode.json, skills, hooks
-knowns setup codex     # AGENTS.md, .codex/config.toml, skills, hooks
-knowns setup kiro      # .kiro steering/settings, skills, hooks
-knowns setup copilot   # .github/copilot-instructions.md
-knowns setup agents    # chỉ KNOWNS.md + AGENTS.md
-knowns setup all       # Tất cả platforms
+knowns setup claude --global      # Claude user-level MCP/skills/hooks
+knowns setup opencode --global    # OpenCode user-level MCP/skills/hooks
+knowns setup codex --global       # Codex user-level MCP/skills/hooks
+knowns setup kiro --global        # Kiro user-level MCP/skills/hooks
+knowns setup antigravity --global # Antigravity/Gemini global MCP config
+knowns setup cursor --global      # Cursor user-level MCP config
+knowns setup gemini --global      # Gemini global MCP config
+knowns setup all --global         # Tất cả platforms ở user scope
+knowns setup agents               # chỉ lightweight repo-local agent shims
 ```
 
 ## Ghi chú
 
 - `.agents/skills` là primary path cho agent-compatible platforms
-- `knowns init` tạo selected instruction shims mặc định (`KNOWNS.md`, `CLAUDE.md`, `AGENTS.md`)
-- dùng `knowns setup <target>` cho project-level MCP/config files, skills, runtime hooks
-- dùng `knowns setup codex --global` khi Codex integration chỉ nên nằm ở user scope
+- `knowns init` tạo selected lightweight instruction shims mặc định, như `CLAUDE.md` và `AGENTS.md`
+- dùng `knowns setup <target> --global` cho personal assistant setup thông thường trên nhiều repository
+- chỉ dùng `knowns setup <target>` khi bạn chủ ý muốn project-level MCP/config files, skills, runtime hooks

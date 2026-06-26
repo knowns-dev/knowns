@@ -49,7 +49,7 @@ If you believe AI should truly understand software projects, consider giving **K
 - [Quick Start](#quick-start)
 - [Core Capabilities](#core-capabilities)
 - [What You Can Build](#what-you-can-build-with-knowns)
-- [Claude Code Skills Workflow](#claude-code-skills-workflow)
+- [Agent Skills Workflow](#agent-skills-workflow)
 - [Installation](#installation)
 - [Documentation](#documentation)
 - [Roadmap](#roadmap)
@@ -155,7 +155,7 @@ knowns --version
 # Initialize in your project
 cd your-project
 knowns init
-# Creates .knowns/ plus KNOWNS.md, CLAUDE.md, and AGENTS.md by default
+# Creates .knowns/ plus lightweight agent shims such as CLAUDE.md/AGENTS.md
 
 # or run without a global install
 npx knowns init
@@ -280,9 +280,9 @@ knowns browser --open
 
 ---
 
-## Claude Code Skills Workflow
+## Agent Skills Workflow
 
-When using Claude Code with Knowns, skills (slash commands) provide a guided workflow:
+When using Knowns with an agent runtime such as Claude Code or Codex, skills provide a guided workflow:
 
 <p align="center">
   <img src="./images/workflow.png" alt="Knowns AI Workflow" width="100%">
@@ -296,6 +296,8 @@ When using Claude Code with Knowns, skills (slash commands) provide a guided wor
 ```
 
 ### Example Session
+
+Claude Code example:
 
 ```
 You: /kn-init
@@ -335,15 +337,25 @@ Claude: [Creates conventional commit]
 
 ### All Skills
 
+Skills are agent workflow commands, not MCP tools. MCP tools show up in `codex mcp` as domain tools such as `tasks`, `docs`, `memory`, `search`, and `code`; skills are synced separately to the agent's skills directory.
+
+| Platform | Invocation |
+|---|---|
+| Claude Code | `/kn-spec`, `/kn-flow`, `/kn-review` |
+| Codex | `$kn-spec`, `$kn-flow`, `$kn-review` |
+
+The table below uses Claude Code's `/kn-*` syntax. In Codex, use the same skill name with `$` instead of `/`.
+
 | Skill | Description |
 |---|---|
 | `/kn-init` | Initialize session - read docs, load memory, understand project |
 | `/kn-plan <id>` | Take task, gather context, create implementation plan |
 | `/kn-implement <id>` | Execute plan, track progress, check acceptance criteria |
-| `/kn-research` | Search codebase, find patterns, explore before coding |
+| `/kn-research` | Research project context, code, and relevant external MCP/web sources |
 | `/kn-commit` | Create conventional commit with verification |
 | `/kn-spec` | Create specification document for features (SDD) |
-| `/kn-go <spec>` | Full pipeline from approved spec (no review gates) |
+| `/kn-flow @doc/<spec-path>` | Recommended full approved-spec flow: plan, implement, review, verify |
+| `/kn-go <spec>` | Legacy full pipeline from approved spec without review gates |
 | `/kn-verify` | Run SDD verification and coverage report |
 | `/kn-review` | Multi-perspective code review (P1/P2/P3 severity) |
 | `/kn-doc` | Create or update documentation |
@@ -382,7 +394,7 @@ irm https://knowns.sh/script/install.ps1 | iex
 $env:KNOWNS_VERSION = "0.18.0"; irm https://knowns.sh/script/install.ps1 | iex
 ```
 
-The shell installer on macOS/Linux and the PowerShell installer on Windows both auto-run `knowns search --install-runtime` after installing the binary. If that step fails, rerun it manually.
+If semantic search reports a missing local model, run `knowns search --setup` or download one explicitly with `knowns model download <model-id>`, then rebuild with `knowns search --reindex`.
 
 ### npm
 
@@ -457,9 +469,10 @@ knowns lsp install <language>
 # Use the MCP code tool for symbols, definitions, references, diagnostics, and edits
 
 # AI setup
-knowns setup agents        # KNOWNS.md + AGENTS.md only
+knowns setup agents        # lightweight repo-local agent shims only
 knowns setup codex --global # user-level Codex MCP/skills/hooks
-knowns setup               # full interactive project integration setup
+knowns setup --global      # interactive user-level AI integration setup
+knowns setup               # interactive project integration setup
 knowns sync
 ```
 
@@ -539,7 +552,7 @@ tests/               # E2E tests
 - [npm](https://www.npmjs.com/package/knowns)
 - [GitHub](https://github.com/knowns-dev/knowns)
 - [Discord](https://discord.knowns.dev)
-- [Changelog](./CHANGELOG.md)
+- [Releases](https://github.com/knowns-dev/knowns/releases)
 
 For design principles and long-term direction, see [Philosophy](./PHILOSOPHY.md).
 

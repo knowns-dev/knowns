@@ -77,7 +77,10 @@ func TestBuildSelectsRelevantProjectAndGlobalMemories(t *testing.T) {
 			t.Fatalf("expected memory content for %q in serialized payload, got %q", entry.Title, pack.Serialized)
 		}
 	}
-	if strings.Contains(pack.Serialized, "Score:") || strings.Contains(pack.Serialized, "Reasons:") || strings.Contains(pack.Serialized, "keyword-overlap") {
+	if !strings.Contains(pack.Serialized, "score=") || !strings.Contains(pack.Serialized, "trust=active") {
+		t.Fatalf("expected score/trust metadata in serialized payload, got %q", pack.Serialized)
+	}
+	if strings.Contains(pack.Serialized, "Reasons:") || strings.Contains(pack.Serialized, "keyword-overlap") {
 		t.Fatalf("did not expect debug scoring metadata in serialized payload, got %q", pack.Serialized)
 	}
 }
@@ -422,6 +425,12 @@ func TestHighConfidenceCaptureCreatesProposedOnly(t *testing.T) {
 	if !outcome.Created || outcome.Status != CaptureStatusCreated {
 		t.Fatalf("capture outcome = %+v, want created", outcome)
 	}
+	if outcome.Score < minHighConfidenceCapture || outcome.Threshold != minHighConfidenceCapture {
+		t.Fatalf("capture score metadata = score:%v threshold:%v, want score >= %v and threshold %v", outcome.Score, outcome.Threshold, minHighConfidenceCapture, minHighConfidenceCapture)
+	}
+	if outcome.Trusted {
+		t.Fatalf("trusted = true, want false for proposed memory")
+	}
 	if entry == nil {
 		t.Fatal("expected created memory")
 	}
@@ -575,7 +584,10 @@ func TestBuildHonorsItemAndByteLimits(t *testing.T) {
 	if strings.Contains(pack.Serialized, "ranking reasons for repeated prompt execution") {
 		t.Fatalf("expected long content tail to be truncated, got %q", pack.Serialized)
 	}
-	if strings.Contains(pack.Serialized, "Score:") || strings.Contains(pack.Serialized, "Reasons:") || strings.Contains(pack.Serialized, "heuristic-fallback") {
+	if !strings.Contains(pack.Serialized, "score=") || !strings.Contains(pack.Serialized, "trust=active") {
+		t.Fatalf("expected score/trust metadata in serialized payload, got %q", pack.Serialized)
+	}
+	if strings.Contains(pack.Serialized, "Reasons:") || strings.Contains(pack.Serialized, "heuristic-fallback") {
 		t.Fatalf("did not expect debug metadata in serialized payload, got %q", pack.Serialized)
 	}
 

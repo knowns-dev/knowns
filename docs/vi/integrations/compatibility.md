@@ -43,11 +43,11 @@ Antigravity dùng global config:
 
 ### `knowns init`
 
-Tạo project structure, git tracking, semantic search setup, và selected project instruction shims (`KNOWNS.md`, mặc định `CLAUDE.md` + `AGENTS.md`).
+Tạo project structure, git tracking, semantic search setup, và selected lightweight project instruction shims như `CLAUDE.md` và `AGENTS.md`.
 
 ### `knowns setup`
 
-Tạo AI platform artifacts như skills, MCP configs, platform-specific configs, runtime hooks, và instruction files bổ sung cho target được chọn. Dùng `knowns setup agents` khi chỉ cần `KNOWNS.md` + `AGENTS.md`.
+Tạo AI platform artifacts như skills, MCP configs, platform-specific configs, runtime hooks, và instruction files bổ sung cho target được chọn. Dùng `knowns setup <target> --global` cho personal assistant setup thông thường. Chỉ dùng setup không có `--global` khi bạn chủ ý muốn repo-local integration files. Dùng `knowns setup agents` khi chỉ cần lightweight repo-local agent shims.
 
 ### `knowns sync`
 

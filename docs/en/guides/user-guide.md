@@ -2,17 +2,19 @@
 
 This guide is for people using Knowns in an actual project, not just trying the CLI once.
 
+Knowns is most useful when you treat it as the shared project context beside your source code. The CLI, MCP server, and Web UI all read and update the same project state, so work created in one surface is visible in the others.
+
 ## Core model
 
 Knowns works best when you think of it as a project context layer with five connected parts:
 
-- tasks
-- docs
-- memory
-- templates
-- search / retrieval
+- **tasks** for planned work, status, acceptance criteria, implementation plans, and notes
+- **docs** for durable project knowledge such as architecture, specs, decisions, and onboarding
+- **memory** for short reusable context such as team conventions or assistant preferences
+- **templates** for repeated project scaffolding
+- **search / retrieval** for finding the relevant context when people or AI need it
 
-The CLI, MCP server, and browser UI all operate on the same project state.
+The important habit is to put reusable context into Knowns instead of leaving it only in chat messages.
 
 ## What you will see during `knowns init`
 
@@ -21,10 +23,21 @@ The CLI, MCP server, and browser UI all operate on the same project state.
   - project structure creation
   - settings application
   - git integration configuration
-  - project instruction file creation (`KNOWNS.md`, default `CLAUDE.md` + `AGENTS.md`)
+  - lightweight project instruction shim creation, such as `CLAUDE.md` and `AGENTS.md`
   - semantic index building (if enabled)
 
-After init, run `knowns setup <target>` to configure AI platform integrations such as skills, MCP configs, and runtime hooks. Use `knowns setup agents` if you only need `KNOWNS.md` + `AGENTS.md`.
+After init, run `knowns setup <target> --global` to configure user-level AI platform integrations such as skills, MCP configs, and runtime hooks. This is the recommended setup for personal assistant usage across repositories. Use `knowns setup <target>` only when you intentionally want repo-local integration files, or `knowns setup agents` if you only need lightweight repo-local shims such as `AGENTS.md`.
+
+## Common first-week workflow
+
+1. Create one task for the next real change.
+2. Add acceptance criteria that make success observable.
+3. Create or update a doc for architecture or product context the task depends on.
+4. Use `knowns search` or `knowns retrieve` to confirm the context can be found.
+5. Let your AI assistant read the task, docs, and memory through MCP or lightweight shim files.
+6. Validate before marking the work done.
+
+You do not need to document everything on day one. Start with the work that is active, then add docs and memory when repeated explanations become obvious.
 
 ## Terminal behavior
 
@@ -68,6 +81,13 @@ knowns validate --plain
 ```bash
 knowns sync
 ```
+
+## Choosing a surface
+
+- Use the CLI when you want fast commands, scripts, or terminal-first work.
+- Use the Web UI when you want a board, doc browser, graph view, config pages, or chat workflow.
+- Use MCP when an AI assistant needs structured access to tasks, docs, search, memory, templates, and validation.
+- Use skills when you want agent-side workflows such as spec creation, implementation, review, or full flow orchestration.
 
 ## Recommended next reads
 

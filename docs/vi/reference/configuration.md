@@ -66,11 +66,14 @@ Per-section git tracking toggles. Kiểm soát subdirectories nào trong `.known
 
 ### `settings.semanticSearch`
 
-Config cho local semantic search: `enabled`, `model`, `provider`, `dimensions`.
+Config cho semantic search: `enabled`, `model`, `provider`, `dimensions`.
+
+`provider` có thể là `local`, `ollama`, hoặc provider ID đã đăng ký bằng `knowns provider add`.
 
 - `knowns init` set các giá trị này
 - `knowns settings` hiển thị Local ONNX models kèm trạng thái downloaded/not downloaded
 - Nếu chọn Local ONNX model chưa download trong `knowns settings`, Knowns hỏi xác nhận rồi download trước khi lưu
+- `knowns provider add` và `knowns model add --provider <id> <model-name>` cấu hình API-backed embedding models
 - `knowns sync` re-apply semantic setup
 - `knowns search --reindex` rebuild local index
 
@@ -93,9 +96,10 @@ Supported: `claude-code`, `opencode`, `codex`, `kiro`, `antigravity`, `cursor`, 
 Có thể edit `.knowns/config.json` trực tiếp, nhưng flow thường là:
 
 - `knowns init` cho lần đầu (project structure + git tracking)
-- `knowns init` cũng tạo selected project instruction shims (`KNOWNS.md`, mặc định `CLAUDE.md` + `AGENTS.md`)
-- `knowns setup` cho AI platform integrations như MCP/config files, skills, runtime hooks
-- `knowns setup agents` khi chỉ cần `KNOWNS.md` + `AGENTS.md`
+- `knowns init` cũng tạo selected lightweight project instruction shims như `CLAUDE.md` và `AGENTS.md`
+- `knowns setup <target> --global` cho personal AI platform integrations thông thường như MCP/config files, skills, runtime hooks
+- `knowns setup <target>` chỉ khi bạn chủ ý muốn repo-local integration files
+- `knowns setup agents` khi chỉ cần repo-local agent shims
 - `knowns settings` để mở settings center tương tác cho project hiện tại
 - `knowns settings --global` để lưu defaults dùng lại cho các lần `knowns init` sau
 - `knowns config get/set/list/reset` cho script hoặc agent

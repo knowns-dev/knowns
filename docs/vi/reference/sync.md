@@ -10,7 +10,7 @@ Chạy `knowns sync` sau khi:
 - upgrade CLI
 - muốn generated files khớp lại với config
 
-Để tạo project guidance files ban đầu, dùng `knowns init` hoặc `knowns setup agents`. Để cấu hình AI platforms đầy đủ (skills, MCP configs, runtime hooks), dùng `knowns setup <target>`.
+Để tạo lightweight project shims ban đầu, dùng `knowns init` hoặc `knowns setup agents`. Với personal AI platform setup thông thường (skills, MCP configs, runtime hooks), dùng `knowns setup <target> --global`. Chỉ dùng setup không có `--global` khi bạn chủ ý muốn repo-local integration files.
 
 ## Các dạng dùng
 

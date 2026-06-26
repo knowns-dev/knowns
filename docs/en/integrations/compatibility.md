@@ -43,11 +43,11 @@ For Antigravity, the MCP config is global:
 
 ### `knowns init`
 
-Creates the project structure, git tracking, semantic search setup, and selected project instruction shims (`KNOWNS.md`, default `CLAUDE.md` + `AGENTS.md`).
+Creates the project structure, git tracking, semantic search setup, and selected lightweight project instruction shims such as `CLAUDE.md` and `AGENTS.md`.
 
 ### `knowns setup`
 
-Generates AI platform artifacts such as skills, MCP configs, platform-specific configs, runtime hooks, and any additional instruction files for the selected target. Use `knowns setup agents` when you only need `KNOWNS.md` + `AGENTS.md`.
+Generates AI platform artifacts such as skills, MCP configs, platform-specific configs, runtime hooks, and any additional instruction files for the selected target. Use `knowns setup <target> --global` for normal personal assistant setup. Use non-global setup only when you intentionally want repo-local integration files. Use `knowns setup agents` when you only need lightweight repo-local agent shims.
 
 ### `knowns sync`
 

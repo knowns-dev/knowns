@@ -44,7 +44,7 @@
       "provider": "ollama",
       "dimensions": 1024
     },
-    "serverPort": 6420,
+    "serverPort": 6427,
     "platforms": [
       "agents"
     ],

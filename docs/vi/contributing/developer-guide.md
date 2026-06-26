@@ -4,9 +4,9 @@ Bắt đầu từ đây nếu muốn đóng góp cho Knowns.
 
 ## Đọc trước
 
-1. `KNOWNS.md`
-2. `README.md`
-3. `docs/en/README.md`
+1. `README.md`
+2. `docs/en/README.md`
+3. MCP `initial` và on-demand `help` output khi làm việc qua AI assistant
 
 ## Thư mục quan trọng
 

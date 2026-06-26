@@ -1,6 +1,6 @@
 ---
 name: kn-research
-description: Use when you need to understand existing code, find patterns, or explore the codebase before implementation
+description: Use when you need to understand existing code, find patterns, search project knowledge, use web research for external/current facts, or explore a large codebase before implementation
 ---
 
 # Researching the Codebase
@@ -21,6 +21,39 @@ description: Use when you need to understand existing code, find patterns, or ex
 3. Completed or related tasks (keyword search for gaps)
 4. Existing code paths and implementations
 5. Adjacent tests, templates, and validation logic
+6. External MCP providers when repo context depends on current/upstream facts
+7. General web search only when specialized MCP/external providers are unavailable or insufficient
+
+## Research Scope Policy
+
+Use the narrowest search surface that can answer the question, then widen deliberately.
+
+- Use Knowns `search` first for project context: docs, tasks, memories, and decisions.
+- Use `retrieve` when the next consumer needs a cited context pack, not for every lookup.
+- Use MCP/code intelligence (`code.find`, `code.symbols`, `code.references`, `code.definition`) for code structure before raw file reads.
+- Use specialized external MCP providers when available and relevant, before general web search. Examples: Context7/library-doc MCP for framework or package docs, GitHub/source MCP for issues or repository state, official-docs MCP for vendor APIs.
+- Use web/internet search only when specialized MCP providers are unavailable, insufficient, or the user explicitly asks to search online.
+- Prefer primary sources for external research: official docs, source repos, release notes, specifications, issue threads, or MCP results backed by those sources. Cite sources in findings when the tool exposes them.
+- Do not let external results override local source code, project docs, task ACs, or explicit user instructions without calling out the conflict.
+
+## Large Research / Sub-Agent Delegation
+
+If the research surface is too large for one pass, split it into independent tracks before reading everything.
+
+Use sub-agents when all are true:
+
+- the runtime exposes sub-agent/delegation tools and current runtime policy allows them
+- the tracks can be answered independently
+- each worker has a concrete question, bounded read scope, and expected output
+- the worker output will materially reduce the main context load
+
+Good delegated research tracks:
+
+- "Find existing auth middleware patterns and tests."
+- "Inspect Web UI docs/API routes for current behavior."
+- "Use Context7 or an official-docs MCP to inspect current library behavior."
+
+Avoid delegating overlapping broad asks like "research the whole repo." While workers run, continue non-overlapping local research. Inspect worker findings before relying on them. If sub-agent tools are unavailable or not allowed, execute the same split sequentially in the main context.
 
 ## Step 1: Search Documentation and Memory
 
@@ -61,12 +94,43 @@ mcp_knowns_tasks({ "action": "get", "taskId": "<id>" })
 
 If Step 2 already found related tasks via structural resolve, focus keyword search on gaps — tasks that might be related but not formally linked.
 
-## Step 4: Search Codebase
+## Step 4: Search Codebase Through MCP
+
+Use MCP code tools as the primary code research path:
+
+```json
+mcp_knowns_code({ "action": "find", "query": "<symbol/topic>", "limit": 20 })
+mcp_knowns_code({ "action": "symbols", "path": "<file>" })
+mcp_knowns_code({ "action": "references", "query": "<symbol>", "path": "<file>" })
+```
+
+Only fall back to raw shell search when MCP/code tools are unavailable, or when MCP/code search returns no useful entry point after narrowing the query. Prefer `rg` over slower shell search tools:
 
 ```bash
-find . -name "*<pattern>*" -type f | grep -v node_modules | head -20
-grep -r "<pattern>" --include="*.ts" -l | head -20
+rg --files | rg "<pattern>"
+rg -n "<pattern>" --glob '!node_modules/**'
 ```
+
+After an `rg` fallback finds likely files or symbols, return to MCP code tools (`symbols`, `definition`, `references`, `diagnostics`) before drawing conclusions.
+
+## Step 4b: Search External MCP / Web Sources When Needed
+
+Use external MCP providers first when local repo context is not enough because the topic depends on current or external information.
+
+Examples:
+
+- current GitHub issue status or release behavior
+- official API/library docs
+- framework behavior that may have changed
+- standards, specs, pricing, schedules, or regulations
+
+Rules:
+
+- use specialized MCP providers such as Context7 before broad web search when they match the domain
+- prefer official or primary sources
+- compare dates for current information
+- include links or source names in findings
+- state clearly when an external source conflicts with repo behavior
 
 ## Step 5: Document Findings
 

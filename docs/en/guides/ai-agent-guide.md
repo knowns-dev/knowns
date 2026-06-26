@@ -41,6 +41,17 @@ Store reusable decisions, conventions, and failures in memory so they can be rec
 
 Validation should be part of the normal workflow.
 
+## Research source order
+
+When an AI needs to understand a codebase or upstream behavior, it should search in this order:
+
+1. Knowns `search` and `retrieve` for local project context.
+2. Knowns `code` tools for code structure, symbols, definitions, references, diagnostics, and edits.
+3. External MCP providers such as Context7/library docs, GitHub/source MCP, or official docs MCP when current upstream facts matter.
+4. General web search when specialized MCP providers are unavailable, insufficient, or explicitly requested.
+
+External research should be cited and reconciled with local source-of-truth files instead of overriding them silently.
+
 ## MCP vs CLI
 
 ### Prefer MCP when:

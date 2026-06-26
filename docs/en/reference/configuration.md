@@ -82,7 +82,7 @@ Relevant fields:
 
 - `enabled`
 - `model`
-- `provider` (`"local"` or `"ollama"`)
+- `provider` (`"local"`, `"ollama"`, or a provider ID registered with `knowns provider add`)
 - `dimensions`
 
 Common behavior:
@@ -90,6 +90,7 @@ Common behavior:
 - `knowns init` can set these values
 - `knowns settings` shows supported Local ONNX models with downloaded/not downloaded status
 - Selecting a missing Local ONNX model in `knowns settings` asks before downloading and saving it
+- `knowns provider add` and `knowns model add --provider <id> <model-name>` configure API-backed embedding models
 - `knowns sync` can re-apply the semantic setup
 - `knowns search --reindex` rebuilds the local index
 
@@ -140,9 +141,10 @@ Controls whether generated artifacts should be refreshed after upgrading the CLI
 You can edit `.knowns/config.json` directly if you know what you are doing, but the normal path is:
 
 - `knowns init` for first-time setup (project structure + git tracking)
-- `knowns init` also creates selected project instruction shims (`KNOWNS.md`, default `CLAUDE.md` + `AGENTS.md`)
-- `knowns setup` for AI platform integrations such as MCP/config files, skills, and runtime hooks
-- `knowns setup agents` when you only need `KNOWNS.md` + `AGENTS.md`
+- `knowns init` also creates selected lightweight project instruction shims such as `CLAUDE.md` and `AGENTS.md`
+- `knowns setup <target> --global` for normal personal AI platform integrations such as MCP/config files, skills, and runtime hooks
+- `knowns setup <target>` only when you intentionally want repo-local integration files
+- `knowns setup agents` when you only need repo-local agent shims
 - `knowns settings` for the interactive project settings center
 - `knowns settings --global` for defaults reused by future `knowns init` runs
 - `knowns config get/set/list/reset` for scriptable config access

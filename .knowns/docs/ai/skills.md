@@ -2,13 +2,20 @@
 title: Skills System
 description: Skill definition, sharing, and sync across platforms
 createdAt: '2026-01-23T04:07:56.363Z'
-updatedAt: '2026-05-27T16:25:29.884Z'
+updatedAt: '2026-06-26T03:39:42.320Z'
 tags: []
 ---
 
 ## Overview
 
 Skills are AI workflow instructions bundled with Knowns. They are embedded in the binary and synced to platform-specific directories during `knowns setup` or `knowns sync`.
+
+Skills are separate from MCP tools. MCP tools appear in AI clients as structured domain tools such as `tasks`, `docs`, `memory`, `search`, and `code`; skills are invoked through each agent's skill-command syntax.
+
+| Platform | Skill syntax |
+|---|---|
+| Claude Code | `/kn-spec`, `/kn-flow`, `/kn-review` |
+| Codex | `$kn-spec`, `$kn-flow`, `$kn-review` |
 
 **Related:** @doc/ai/platforms
 
@@ -27,8 +34,9 @@ Skills are AI workflow instructions bundled with Knowns. They are embedded in th
 
 ## Synced Locations
 
-```
-# Platform directories (synced by knowns setup / knowns sync)
+Platform directories synced by `knowns setup` / `knowns sync`:
+
+```text
 .claude/skills/              # Claude Code
 .agents/skills/              # OpenCode / Antigravity / Codex / Generic Agents
 .kiro/skills/                # Kiro
@@ -40,18 +48,26 @@ Skills are synced as SKILL.md files. Claude Code uses `.claude/skills/`. OpenCod
 
 ## Setup Command
 
-```bash
-# Configure AI integrations (interactive selector)
-knowns setup
+Configure AI integrations with the interactive selector:
 
-# Configure specific platform
+```bash
+knowns setup
+```
+
+Configure a specific platform:
+
+```bash
 knowns setup claude
 knowns setup opencode
+knowns setup codex
 knowns setup kiro
 knowns setup copilot
 knowns setup all
+```
 
-# Re-sync skills and instructions
+Re-sync skills and instructions:
+
+```bash
 knowns sync
 knowns sync --skills
 knowns sync --instructions
@@ -65,6 +81,7 @@ knowns sync --instructions
 |-------|-------------|
 | `kn-init` | Initialize session, read docs, load memory, understand project |
 | `kn-spec` | Create specification document for features (SDD) |
+| `kn-flow` | Recommended approved-spec orchestration: plan, implement, review, verify |
 | `kn-plan` | Take task, gather context, create implementation plan |
 | `kn-research` | Search codebase, find patterns, explore before coding |
 | `kn-implement` | Execute plan, track progress, check acceptance criteria |
@@ -74,8 +91,26 @@ knowns sync --instructions
 | `kn-doc` | Create and update documentation |
 | `kn-template` | List, run, or create code templates |
 | `kn-verify` | Run SDD verification and coverage report |
-| `kn-go` | Full pipeline from approved spec (no review gates) |
-| `kn-debug` | Structured debugging: triage → fix → learn |
+| `kn-go` | Legacy full pipeline from approved spec without review gates |
+| `kn-debug` | Structured debugging: triage -> fix -> learn |
+
+---
+
+## SDD Workflow
+
+Recommended approved-spec path:
+
+```text
+Claude Code:
+/kn-spec <feature-name>
+/kn-flow @doc/<spec-path>
+
+Codex:
+$kn-spec <feature-name>
+$kn-flow @doc/<spec-path>
+```
+
+Use `kn-go` only when you explicitly want the older no-review-gates pipeline.
 
 ---
 
@@ -86,8 +121,6 @@ knowns sync --instructions
 name: kn-init
 description: Initialize session - read docs, load memory, understand project
 ---
-
-# Session Init
 
 Instructions for the AI workflow...
 ```
@@ -104,9 +137,8 @@ Instructions for the AI workflow...
 ## Memory Integration
 
 All skills participate in the memory loop:
-- **Read skills** (init, research, plan, spec, go, review, debug): search `type: "memory"` via unified search
+- **Read skills** (init, research, plan, spec, flow, go, review, debug): search `type: "memory"` via unified search
 - **Write skills** (implement, extract, debug): save patterns/decisions/failures with `memory({ action: "add", layer: "project" })`
-- The global rule in KNOWNS.md `## Memory Usage` encourages all skills to save knowledge as it emerges
 
 ---
 
@@ -119,4 +151,4 @@ Skills use MCP tools when available, with CLI as fallback:
 - **Searching**: MCP `search({ action: "search" })` or CLI `knowns search "query" --plain`
 - **Time tracking**: MCP `time({ action: "start" })` or CLI `knowns time start <id>`
 
-MCP is preferred when available because it's faster (direct call vs spawning a process) and returns structured JSON.
+MCP is preferred when available because it is faster (direct call vs spawning a process) and returns structured JSON.

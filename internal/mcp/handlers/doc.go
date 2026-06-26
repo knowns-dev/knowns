@@ -20,14 +20,14 @@ import (
 func RegisterDocTool(s *server.MCPServer, getStore func() *storage.Store) {
 	s.AddTool(
 		mcp.NewTool("docs",
-			mcp.WithDescription("Documentation operations. Use 'action' to specify: create, get, update, delete, list, history."),
+			mcp.WithDescription("Documentation operations. Use 'action' to specify: create, get, update, delete, list, history, diff, restore."),
 			mcp.WithString("action",
 				mcp.Required(),
 				mcp.Description("Action to perform"),
-				mcp.Enum("create", "get", "update", "delete", "list", "history"),
+				mcp.Enum("create", "get", "update", "delete", "list", "history", "diff", "restore"),
 			),
 			mcp.WithString("path",
-				mcp.Description("Document path (required for get, update, delete, history)"),
+				mcp.Description("Document path (required for get, update, delete, history, diff, restore)"),
 			),
 			mcp.WithString("title",
 				mcp.Description("Document title (required for create, optional for update)"),
@@ -48,6 +48,9 @@ func RegisterDocTool(s *server.MCPServer, getStore func() *storage.Store) {
 			mcp.WithBoolean("smart",
 				mcp.Description("Smart mode: auto-return full content if small, else stats+TOC (get)"),
 			),
+			mcp.WithBoolean("includeHistory",
+				mcp.Description("Include structured revision history metadata with get responses"),
+			),
 			mcp.WithBoolean("info",
 				mcp.Description("Return document stats without content (get)"),
 			),
@@ -65,6 +68,15 @@ func RegisterDocTool(s *server.MCPServer, getStore func() *storage.Store) {
 			),
 			mcp.WithString("newPath",
 				mcp.Description("Rename document to new path (update)"),
+			),
+			mcp.WithString("revision",
+				mcp.Description("Revision ID or number for diff/restore (defaults to latest for diff)"),
+			),
+			mcp.WithString("revisionId",
+				mcp.Description("Alias for revision ID used by API clients"),
+			),
+			mcp.WithString("mode",
+				mcp.Description("Restore mode: document (default) or section"),
 			),
 			mcp.WithArray("clear",
 				mcp.Description("Clear string fields like title, description, or content (update)"),
@@ -95,6 +107,10 @@ func RegisterDocTool(s *server.MCPServer, getStore func() *storage.Store) {
 				return handleDocList(getStore, req)
 			case "history":
 				return handleDocHistory(getStore, req)
+			case "diff":
+				return handleDocDiff(getStore, req)
+			case "restore":
+				return handleDocRestore(getStore, req)
 			default:
 				return errResultf("unknown docs action: %s", action)
 			}
@@ -163,6 +179,7 @@ func handleDocGet(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp
 	smart := boolArg(args, "smart")
 	info := boolArg(args, "info")
 	tocOnly := boolArg(args, "toc")
+	includeHistory := boolArg(args, "includeHistory")
 	section, hasSection := stringArg(args, "section")
 	lineParam, hasLine := stringArg(args, "line")
 
@@ -227,6 +244,9 @@ func handleDocGet(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp
 	if smart {
 		const smartThreshold = 2000
 		if approxTokens <= smartThreshold {
+			if includeHistory {
+				return docWithHistoryResult(store, doc)
+			}
 			out, _ := json.MarshalIndent(doc, "", "  ")
 			return mcp.NewToolResultText(string(out)), nil
 		}
@@ -243,6 +263,10 @@ func handleDocGet(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp
 		}
 		out, _ := json.MarshalIndent(result, "", "  ")
 		return mcp.NewToolResultText(string(out)), nil
+	}
+
+	if includeHistory {
+		return docWithHistoryResult(store, doc)
 	}
 
 	out, _ := json.MarshalIndent(doc, "", "  ")
@@ -295,10 +319,12 @@ func handleDocCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 
 	search.BestEffortIndexDoc(store, doc.Path)
 
-	_ = store.Versions.SaveDocVersion(doc.Path, models.DocVersion{
-		Changes:  store.Versions.TrackDocChanges(nil, doc),
-		Snapshot: storage.DocToSnapshot(doc),
-	})
+	if err := store.Versions.SaveDocRevisionWithOptions(nil, doc, storage.DocRevisionOptions{
+		Actor:  "mcp",
+		Source: "mcp",
+	}); err != nil {
+		return errFailed("save doc history", err)
+	}
 
 	go notifyDocUpdated(store, doc.Path)
 
@@ -386,12 +412,12 @@ func handleDocUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 
 	search.BestEffortIndexDoc(store, doc.Path)
 
-	changes := store.Versions.TrackDocChanges(&oldDoc, doc)
-	if len(changes) > 0 {
-		_ = store.Versions.SaveDocVersion(doc.Path, models.DocVersion{
-			Changes:  changes,
-			Snapshot: storage.DocToSnapshot(doc),
-		})
+	if err := store.Versions.SaveDocRevisionWithOptions(&oldDoc, doc, storage.DocRevisionOptions{
+		Section: sectionTarget,
+		Actor:   "mcp",
+		Source:  "mcp",
+	}); err != nil {
+		return errFailed("save doc history", err)
 	}
 
 	if oldPath != doc.Path {
@@ -422,6 +448,93 @@ func handleDocHistory(getStore func() *storage.Store, req mcp.CallToolRequest) (
 
 	out, _ := json.MarshalIndent(history, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+func handleDocDiff(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store := getStore()
+	if store == nil {
+		return noProjectError()
+	}
+
+	path, err := req.RequireString("path")
+	if err != nil {
+		return errResult(ErrPathReq)
+	}
+
+	diff, err := store.Versions.GetDocRevisionDiff(path, docRevisionArg(req.GetArguments()))
+	if err != nil {
+		return errFailed("get doc revision diff", err)
+	}
+
+	out, _ := json.MarshalIndent(diff, "", "  ")
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+func handleDocRestore(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store := getStore()
+	if store == nil {
+		return noProjectError()
+	}
+
+	path, err := req.RequireString("path")
+	if err != nil {
+		return errResult(ErrPathReq)
+	}
+
+	args := req.GetArguments()
+	revision := docRevisionArg(args)
+	if revision == "" {
+		return errResult("revision is required")
+	}
+	section, _ := stringArg(args, "section")
+	mode, _ := stringArg(args, "mode")
+	mode = strings.ToLower(strings.TrimSpace(mode))
+
+	opts := storage.DocRevisionOptions{Actor: "mcp", Source: "mcp"}
+	var restored *models.Doc
+	if section != "" || mode == "section" {
+		restored, err = store.RestoreDocSection(path, revision, section, opts)
+	} else if mode == "" || mode == "document" || mode == "whole_doc" || mode == "whole-doc" {
+		restored, err = store.RestoreDoc(path, revision, opts)
+	} else {
+		return errResultf("unknown restore mode: %s", mode)
+	}
+	if err != nil {
+		return errFailed("restore doc", err)
+	}
+
+	search.BestEffortIndexDoc(store, restored.Path)
+	go notifyDocUpdated(store, restored.Path)
+
+	history, _ := store.Versions.GetDocHistory(restored.Path)
+	out, _ := json.MarshalIndent(map[string]any{
+		"restored": true,
+		"doc":      restored,
+		"history":  history,
+	}, "", "  ")
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+func docWithHistoryResult(store *storage.Store, doc *models.Doc) (*mcp.CallToolResult, error) {
+	history, err := store.Versions.GetDocHistory(doc.Path)
+	if err != nil {
+		return errFailed("get doc history", err)
+	}
+	out, _ := json.MarshalIndent(map[string]any{
+		"doc":     doc,
+		"history": history,
+	}, "", "  ")
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+func docRevisionArg(args map[string]any) string {
+	if revision, ok := stringArg(args, "revision"); ok && strings.TrimSpace(revision) != "" {
+		return strings.TrimSpace(revision)
+	}
+	if revision, ok := stringArg(args, "revisionId"); ok && strings.TrimSpace(revision) != "" {
+		return strings.TrimSpace(revision)
+	}
+	return ""
 }
 
 func handleDocDelete(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -659,7 +772,14 @@ func replaceSection(content, sectionTarget, newContent string) string {
 
 	var result []string
 	result = append(result, lines[:startLine]...)
-	result = append(result, newContent)
+	replacementLines := strings.Split(newContent, "\n")
+	currentSectionLines := lines[startLine:endLine]
+	for i := len(currentSectionLines) - 1; i >= 0 && strings.TrimSpace(currentSectionLines[i]) == ""; i-- {
+		if len(replacementLines) == 0 || strings.TrimSpace(replacementLines[len(replacementLines)-1]) != "" {
+			replacementLines = append(replacementLines, "")
+		}
+	}
+	result = append(result, replacementLines...)
 	result = append(result, lines[endLine:]...)
 	return strings.Join(result, "\n")
 }

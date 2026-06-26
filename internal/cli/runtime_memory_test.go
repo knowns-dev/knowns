@@ -233,6 +233,12 @@ func TestRuntimeMemoryHookHighConfidenceCaptureCreatesProposedOnly(t *testing.T)
 	if pack.Capture == nil || pack.Capture.Status != runtimememory.CaptureStatusCreated || pack.Capture.MemoryStatus != models.MemoryStatusProposed {
 		t.Fatalf("capture = %+v, want proposed memory created", pack.Capture)
 	}
+	if pack.Capture.Score < 0.80 || pack.Capture.Threshold != 0.80 {
+		t.Fatalf("capture score metadata = score:%v threshold:%v, want score >= 0.80 and threshold 0.80", pack.Capture.Score, pack.Capture.Threshold)
+	}
+	if pack.Capture.Trusted {
+		t.Fatalf("trusted = true, want false for proposed memory")
+	}
 	entries, err := store.Memory.List("")
 	if err != nil {
 		t.Fatalf("list memory: %v", err)

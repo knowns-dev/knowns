@@ -41,6 +41,17 @@ Lưu decision, convention, failure vào memory để gọi lại sau.
 
 Validation nên là phần bình thường của workflow.
 
+## Thứ tự nguồn khi research
+
+Khi AI cần hiểu codebase hoặc upstream behavior, nên search theo thứ tự:
+
+1. Knowns `search` và `retrieve` cho local project context.
+2. Knowns `code` tools cho code structure, symbols, definitions, references, diagnostics, và edits.
+3. External MCP providers như Context7/library docs, GitHub/source MCP, hoặc official docs MCP khi cần current upstream facts.
+4. General web search khi specialized MCP providers không có, không đủ, hoặc user yêu cầu rõ.
+
+External research nên có citation và phải reconcile với local source-of-truth files, không silently override chúng.
+
 ## MCP hay CLI?
 
 ### Ưu tiên MCP khi:

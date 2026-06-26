@@ -448,6 +448,84 @@ export interface Doc {
 	content?: string;
 }
 
+export interface DocChange {
+	field: string;
+	oldValue?: unknown;
+	newValue?: unknown;
+}
+
+export interface DocChangeScope {
+	type: string;
+	field?: string;
+	section?: string;
+	summary?: string;
+	oldBytes?: number;
+	newBytes?: number;
+	deltaBytes?: number;
+}
+
+export interface DocHistoryGap {
+	type: string;
+	reason: string;
+	count: number;
+	beforeVersion?: string;
+	afterVersion?: string;
+	appliedAt: string;
+}
+
+export interface DocVersion {
+	id: string;
+	docId?: string;
+	docPath: string;
+	currentPath?: string;
+	previousPath?: string;
+	version: number;
+	timestamp: string;
+	author?: string;
+	actor?: string;
+	source?: string;
+	auditEventId?: string;
+	sessionId?: string;
+	baseHash?: string;
+	newHash?: string;
+	checkpoint?: boolean;
+	changes: DocChange[];
+	changedScopes?: DocChangeScope[];
+	snapshot?: Record<string, unknown>;
+}
+
+export interface DocVersionHistory {
+	docId?: string;
+	docPath: string;
+	currentPath?: string;
+	currentVersion: number;
+	versions: DocVersion[];
+	retentionGaps?: DocHistoryGap[];
+}
+
+export interface DocRevisionDiff {
+	docId?: string;
+	docPath: string;
+	currentPath?: string;
+	revisionId: string;
+	previousRevisionId?: string;
+	version: DocVersion;
+	checkpoint: boolean;
+	changes: DocChange[];
+	changedScopes?: DocChangeScope[];
+	retentionGaps?: DocHistoryGap[];
+}
+
+export interface RestoreDocRevisionResponse {
+	restored: boolean;
+	doc: Doc;
+	history: DocVersionHistory;
+}
+
+function encodeDocPath(path: string): string {
+	return path.split("/").map(encodeURIComponent).join("/");
+}
+
 export async function getDocs(): Promise<Doc[]> {
 	const res = await apiFetch(`${API_BASE}/api/docs`);
 	if (!res.ok) {
@@ -459,7 +537,7 @@ export async function getDocs(): Promise<Doc[]> {
 
 export async function getDoc(path: string): Promise<Doc | null> {
 	// Encode each path segment separately to preserve '/' for the wildcard route.
-	const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+	const encodedPath = encodeDocPath(path);
 	const res = await apiFetch(`${API_BASE}/api/docs/${encodedPath}`);
 	if (!res.ok) {
 		if (res.status === 404) return null;
@@ -491,7 +569,7 @@ export async function updateDoc(
 	path: string,
 	data: { content?: string; title?: string; description?: string; tags?: string[] },
 ): Promise<Doc> {
-	const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+	const encodedPath = encodeDocPath(path);
 	const res = await apiFetch(`${API_BASE}/api/docs/${encodedPath}`, {
 		method: "PUT",
 		headers: { "Content-Type": "application/json" },
@@ -500,6 +578,42 @@ export async function updateDoc(
 	if (!res.ok) {
 		const error = await res.json().catch(() => ({ error: "Failed to update doc" }));
 		throw new Error(error.error || "Failed to update doc");
+	}
+	return res.json();
+}
+
+export async function getDocHistory(path: string): Promise<DocVersionHistory> {
+	const encodedPath = encodeDocPath(path);
+	const res = await apiFetch(`${API_BASE}/api/docs/${encodedPath}/history`);
+	if (!res.ok) {
+		throw new Error(`Failed to fetch doc history for ${path}`);
+	}
+	return res.json();
+}
+
+export async function getDocRevisionDiff(path: string, revisionId: string): Promise<DocRevisionDiff> {
+	const encodedPath = encodeDocPath(path);
+	const encodedRevision = encodeURIComponent(revisionId);
+	const res = await apiFetch(`${API_BASE}/api/docs/${encodedPath}/history/${encodedRevision}/diff`);
+	if (!res.ok) {
+		throw new Error(`Failed to fetch doc revision ${revisionId}`);
+	}
+	return res.json();
+}
+
+export async function restoreDocRevision(
+	path: string,
+	data: { revisionId: string; mode?: "document" | "section"; section?: string },
+): Promise<RestoreDocRevisionResponse> {
+	const encodedPath = encodeDocPath(path);
+	const res = await apiFetch(`${API_BASE}/api/docs/${encodedPath}/restore`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(data),
+	});
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: "Failed to restore doc revision" }));
+		throw new Error(error.error || "Failed to restore doc revision");
 	}
 	return res.json();
 }

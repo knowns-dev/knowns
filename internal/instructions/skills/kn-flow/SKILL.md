@@ -80,7 +80,7 @@ For each task or parallel-safe wave:
 4. Fix P1 findings. Fix P2 findings when practical, or explicitly defer them with a follow-up task.
 5. Validate the task before marking the wave complete.
 
-If sub-agent tools are available, use them only after the parallel gate marks tasks safe. If sub-agent tools are unavailable, execute the same schedule sequentially in the main context.
+If sub-agent tools are available, use them only after the parallel gate marks tasks safe. In Codex, discover multi-agent/sub-agent tools before declaring them unavailable. If `--sequential` is set, tools are unavailable, or the parallel gate is unsafe, execute the same schedule sequentially in the main context and state why sub-agents were not spawned.
 
 ## Worker Prompt
 

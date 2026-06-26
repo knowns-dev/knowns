@@ -1,16 +1,15 @@
 ---
 title: SDD (Spec-Driven Development)
+description: Spec-Driven Development workflow - flexible, opt-in approach to write specs before code
 createdAt: '2026-02-03T18:03:17.210Z'
-updatedAt: '2026-02-03T18:03:54.018Z'
-description: >-
-  Spec-Driven Development workflow - flexible, opt-in approach to write specs
-  before code
+updatedAt: '2026-06-26T03:46:40.055Z'
 tags:
   - feature
   - spec
   - sdd
   - workflow
 ---
+
 # SDD (Spec-Driven Development)
 
 ## Overview
@@ -119,7 +118,9 @@ knowns task list --spec specs/user-auth  # Filter by spec
 
 ## Skills
 
-### `/kn-spec <name>`
+Skills are workflow commands, not MCP tools. Claude Code invokes them as `/kn-*`; Codex invokes the same skills as `$kn-*`.
+
+### `kn-spec <name>`
 
 Create a spec document in `specs/` folder.
 
@@ -129,79 +130,105 @@ Create a spec document in `specs/` folder.
 3. Include: Overview, Requirements, ACs, Scenarios
 4. Ask: "Review. Approve, edit, or add more?"
 5. When approved, set `status: approved`
-6. Suggest: "Create tasks? (`/kn-plan --from @doc/specs/<name>`)"
+6. Suggest the next path:
+   - normal approved-spec execution: `kn-flow @doc/specs/<name>`
+   - task generation only: `kn-plan --from @doc/specs/<name>`
+   - legacy no-review-gates pipeline: `kn-go specs/<name>`
 
-### `/kn-verify`
+### `kn-flow @doc/specs/<name>`
+
+Recommended approved-spec orchestration path.
+
+**Behavior:**
+1. Read the approved spec and linked tasks
+2. Generate/preview tasks if the spec has none
+3. Schedule tasks by dependency and write ownership
+4. Run plan -> implement -> review for each task or safe wave
+5. Run final SDD verification
+
+### `kn-verify`
 
 Run validation with SDD-awareness.
 
 **Checks:**
-- Tasks linked to spec → ✅
-- Tasks WITHOUT spec → ⚠️ warning
-- Spec `approved` but no tasks → ⚠️ warning
-- Spec `implemented` but tasks not done → ⚠️ warning
-- All ACs checked → ✅
-- ACs incomplete → ⚠️ warning
-
-**Output:**
-```
-SDD Status Report
-═══════════════════════════════════════
-Specs:    3 total | 2 approved | 1 draft
-Tasks:    8 total | 5 done | 2 in-progress | 1 todo
-Coverage: 6/8 tasks linked to specs (75%)
-
-⚠️ Warnings:
-  - task-12 has no spec reference
-  - specs/payment: 1/3 ACs incomplete
-
-✅ Passed:
-  - All references resolve
-  - specs/user-auth: fully implemented
-```
+- Tasks linked to spec -> pass
+- Tasks WITHOUT spec -> warning
+- Spec `approved` but no tasks -> warning
+- Spec `implemented` but tasks not done -> warning
+- All ACs checked -> pass
+- ACs incomplete -> warning
 
 **Exit code:** Always 0 (warn, never block)
 
-### `/kn-plan --from @doc/specs/<name>`
+### `kn-plan --from @doc/specs/<name>`
 
-Generate tasks from spec.
+Generate tasks from spec without executing them.
 
 **Behavior:**
 1. Read spec document
 2. Break requirements into tasks
-3. Each task gets:
-   - Title from requirement
-   - ACs copied from spec
-   - `spec: specs/<name>` field
-4. Show generated tasks, ask approval
-5. Add to backlog
+3. Each task gets title, ACs, `spec: specs/<name>`, and `fulfills`
+4. Show generated tasks and ask approval
+5. Add approved tasks to backlog
+
+Use this when you want manual task-by-task execution. Use `kn-flow` when the goal is to execute the approved spec end to end.
 
 ## Workflow Flows
 
 ### Full SDD (large features)
 
+Recommended path for approved specs:
+
+```text
+Claude Code:
+/kn-spec user-auth                    -> Create and approve spec
+/kn-flow @doc/specs/user-auth         -> Plan, implement, review, verify
+/kn-commit                            -> Ship when flow is clean
+
+Codex:
+$kn-spec user-auth
+$kn-flow @doc/specs/user-auth
 ```
-/kn-spec user-auth                    → Create spec in specs/
-/kn-plan --from @doc/specs/user-auth  → Generate tasks
-/kn-init                              → Read context
-/kn-implement 42                      → Code (AI reads spec via MCP)
-/kn-verify                            → Check completion
-/kn-commit                            → Ship
+
+`kn-flow` discovers or generates linked tasks, schedules safe execution, runs plan -> implement -> review, then verifies the integrated result.
+
+### Manual SDD (task-by-task)
+
+Use this when you only want task generation or manual checkpoints:
+
+```text
+/kn-spec user-auth                    -> Create and approve spec
+/kn-plan --from @doc/specs/user-auth  -> Generate tasks
+/kn-plan <task-id>                    -> Plan one task
+/kn-implement <task-id>               -> Code one task
+/kn-review <task-id>                  -> Review one task
+/kn-verify                            -> Check completion
+/kn-commit                            -> Ship
+```
+
+### Legacy go mode
+
+Use only when you explicitly want the older no-review-gates pipeline:
+
+```text
+/kn-go specs/user-auth
 ```
 
 ### Normal Flow (small features)
 
-```
-/kn-plan 42                           → Plan from task
-/kn-implement 42                      → Code
-/kn-commit                            → Ship (verify runs auto)
+```text
+/kn-plan 42                           -> Plan from task
+/kn-implement 42                      -> Code
+/kn-review 42                         -> Review
+/kn-commit                            -> Ship
 ```
 
 ### Quick Fix (bugs)
 
-```
-/kn-implement 42                      → Just code
-/kn-commit                            → Ship
+```text
+/kn-implement 42                      -> Just code
+/kn-review 42                         -> Review fix
+/kn-commit                            -> Ship
 ```
 
 ## CLI Changes Required
@@ -240,6 +267,7 @@ Related Tasks (same spec):
 - [ ] Task schema: add `spec` field
 - [ ] Validate: add SDD checks
 - [ ] `/kn-spec` skill
+- [ ] `/kn-flow` skill
 - [ ] `/kn-verify` skill
 - [ ] `/kn-plan --from` support
 
@@ -257,50 +285,52 @@ Related Tasks (same spec):
 
 ## Example Session
 
-```
+```text
 You: /kn-spec user-auth
 
-Claude: 📋 Creating spec in specs/user-auth.md
+Claude: Creating spec in specs/user-auth.md
 
-        # User Authentication
+        User Authentication
 
-        ## Overview
+        Overview
         JWT-based auth with login, register, token refresh.
 
-        ## Requirements
+        Requirements
 
-        ### REQ-1: User Registration
+        REQ-1: User Registration
         - [ ] AC-1.1: POST /auth/register creates user
         - [ ] AC-1.2: Password hashed with bcrypt
         - [ ] AC-1.3: Duplicate email returns 409
 
-        ### REQ-2: User Login
+        REQ-2: User Login
         ...
 
         Saved to .knowns/docs/specs/user-auth.md
         Approve, edit, or add more?
 
-You: Approve. Create tasks.
+You: Approve. Run the flow.
 
-Claude: ✅ Spec approved. Generated 4 tasks:
+Claude: Spec approved. Starting /kn-flow @doc/specs/user-auth.
+        Generated or confirmed 4 linked tasks:
         - task-43: Registration (spec: specs/user-auth)
         - task-44: Login (spec: specs/user-auth)
         - task-45: Token refresh (spec: specs/user-auth)
         - task-46: Auth middleware (spec: specs/user-auth)
 
-You: /kn-implement 43
+Claude: [Plans safe task waves, implements tasks, reviews each wave]
 
-Claude: [Reads @doc/specs/user-auth via MCP, implements, checks ACs]
+        Registration: reviewed and complete
+        Login: reviewed and complete
+        Token refresh: reviewed and complete
+        Auth middleware: reviewed and complete
 
-        ✓ AC-1.1: DONE
-        ✓ AC-1.2: DONE
-        ✓ AC-1.3: DONE
+Claude: SDD Status: specs/user-auth complete (4/4 tasks)
+        All linked task ACs are checked.
+        Ready for /kn-commit.
 
-You: /kn-verify
-
-Claude: SDD Status: specs/user-auth 25% complete (1/4 tasks)
-        ✅ REQ-1: all ACs met
-        ⚠️ REQ-2, REQ-3, REQ-4: not started
+Codex equivalent:
+$kn-spec user-auth
+$kn-flow @doc/specs/user-auth
 ```
 
 ## Design Decisions

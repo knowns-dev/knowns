@@ -1,12 +1,15 @@
 # MCP Integration
 
-Knowns exposes an MCP server so AI assistants can access tasks, docs, memory, search, validation, and code tools directly.
+Knowns exposes an MCP server so AI assistants can access tasks, docs, memory, decisions, templates, time tracking, search, validation, project state, help, and code tools directly.
 
 ## Server command
 
 ```bash
 knowns mcp --stdio
+knowns mcp --stdio --project /path/to/project
 ```
+
+If `--project` is not set, Knowns attempts to auto-detect the project from the current working directory.
 
 ## Current platform support
 
@@ -73,9 +76,15 @@ args = ["mcp", "--stdio"]
 
 ## Important note for global MCP clients
 
-For global MCP configs, the server may not know which project to use at session start.
+For global MCP configs, the server may not know which project to use at session start if the client starts it outside your repo.
 
-Set the active project first:
+Prefer a project-aware server command when the client supports it:
+
+```bash
+knowns mcp --stdio --project /path/to/project
+```
+
+Or set the active project with the MCP `project` tool:
 
 ```json
 { "action": "detect" }
@@ -99,9 +108,9 @@ No need to call `project({ action: "status" })` separately — `initial` covers 
 Use `help` for detailed per-action documentation:
 
 ```json
-{ "action": "query", "queries": ["code.find"] }
-{ "action": "query", "queries": ["code.*"] }
-{ "action": "query", "queries": ["insert"] }
+{ "queries": ["code.find"] }
+{ "queries": ["code.*"] }
+{ "queries": ["insert"] }
 ```
 
 Returns JSON structured as `{ tool: { action: { when, params, ... } } }`.

@@ -300,11 +300,12 @@ func runDocCreate(cmd *cobra.Command, args []string) error {
 
 	search.BestEffortIndexDoc(store, doc.Path)
 
-	// Save initial version.
-	_ = store.Versions.SaveDocVersion(doc.Path, models.DocVersion{
-		Changes:  store.Versions.TrackDocChanges(nil, doc),
-		Snapshot: storage.DocToSnapshot(doc),
-	})
+	if err := store.Versions.SaveDocRevisionWithOptions(nil, doc, storage.DocRevisionOptions{
+		Actor:  "cli",
+		Source: "cli",
+	}); err != nil {
+		return fmt.Errorf("save doc history: %w", err)
+	}
 
 	fmt.Println(RenderSuccess(fmt.Sprintf("Created doc: %s", docPath)))
 	return nil
@@ -388,13 +389,12 @@ func runDocEdit(cmd *cobra.Command, args []string) error {
 
 	search.BestEffortIndexDoc(store, doc.Path)
 
-	// Save version if something changed.
-	changes := store.Versions.TrackDocChanges(&oldDoc, doc)
-	if len(changes) > 0 {
-		_ = store.Versions.SaveDocVersion(doc.Path, models.DocVersion{
-			Changes:  changes,
-			Snapshot: storage.DocToSnapshot(doc),
-		})
+	if err := store.Versions.SaveDocRevisionWithOptions(&oldDoc, doc, storage.DocRevisionOptions{
+		Section: targetSection,
+		Actor:   "cli",
+		Source:  "cli",
+	}); err != nil {
+		return fmt.Errorf("save doc history: %w", err)
 	}
 
 	fmt.Println(RenderSuccess(fmt.Sprintf("Updated doc: %s", doc.Path)))
@@ -468,21 +468,7 @@ var docHistoryCmd = &cobra.Command{
 		}
 
 		if plain {
-			var hb strings.Builder
-			fmt.Fprintf(&hb, "DOC: %s\n", args[0])
-			fmt.Fprintf(&hb, "VERSIONS: %d\n\n", history.CurrentVersion)
-			for _, v := range history.Versions {
-				fmt.Fprintf(&hb, "VERSION: %s\n", v.ID)
-				fmt.Fprintf(&hb, "TIMESTAMP: %s\n", v.Timestamp.Format(time.RFC3339))
-				if v.Author != "" {
-					fmt.Fprintf(&hb, "AUTHOR: %s\n", v.Author)
-				}
-				for _, ch := range v.Changes {
-					fmt.Fprintf(&hb, "  CHANGE: %s: %v -> %v\n", ch.Field, ch.OldValue, ch.NewValue)
-				}
-				fmt.Fprintln(&hb)
-			}
-			printPaged(cmd, hb.String())
+			printPaged(cmd, renderPlainDocHistory(args[0], history))
 		} else {
 			content := renderDocHistory(args[0], history)
 			renderOrPage(cmd, "Doc History", content)
@@ -491,17 +477,95 @@ var docHistoryCmd = &cobra.Command{
 	},
 }
 
+func renderPlainDocHistory(docPath string, history *models.DocVersionHistory) string {
+	var hb strings.Builder
+	path := history.DocPath
+	if path == "" {
+		path = docPath
+	}
+	fmt.Fprintf(&hb, "DOC: %s\n", path)
+	if history.DocID != "" {
+		fmt.Fprintf(&hb, "DOC_ID: %s\n", history.DocID)
+	}
+	if history.CurrentPath != "" && history.CurrentPath != history.DocPath {
+		fmt.Fprintf(&hb, "CURRENT_PATH: %s\n", history.CurrentPath)
+	}
+	fmt.Fprintf(&hb, "VERSIONS: %d\n\n", history.CurrentVersion)
+	for _, gap := range history.RetentionGaps {
+		fmt.Fprintf(&hb, "RETENTION_GAP: type=%s reason=%s count=%d before=%s after=%s applied=%s\n",
+			gap.Type, gap.Reason, gap.Count, gap.BeforeVersion, gap.AfterVersion, gap.AppliedAt.Format(time.RFC3339))
+	}
+	if len(history.RetentionGaps) > 0 {
+		fmt.Fprintln(&hb)
+	}
+	for _, v := range history.Versions {
+		fmt.Fprintf(&hb, "VERSION: %s\n", v.ID)
+		fmt.Fprintf(&hb, "TIMESTAMP: %s\n", v.Timestamp.Format(time.RFC3339))
+		fmt.Fprintf(&hb, "CHECKPOINT: %t\n", v.Checkpoint)
+		if v.Actor != "" {
+			fmt.Fprintf(&hb, "ACTOR: %s\n", v.Actor)
+		} else if v.Author != "" {
+			fmt.Fprintf(&hb, "AUTHOR: %s\n", v.Author)
+		}
+		if v.Source != "" {
+			fmt.Fprintf(&hb, "SOURCE: %s\n", v.Source)
+		}
+		if v.AuditEventID != "" {
+			fmt.Fprintf(&hb, "AUDIT_EVENT_ID: %s\n", v.AuditEventID)
+		}
+		if v.SessionID != "" {
+			fmt.Fprintf(&hb, "SESSION_ID: %s\n", v.SessionID)
+		}
+		if v.BaseHash != "" {
+			fmt.Fprintf(&hb, "BASE_HASH: %s\n", v.BaseHash)
+		}
+		if v.NewHash != "" {
+			fmt.Fprintf(&hb, "NEW_HASH: %s\n", v.NewHash)
+		}
+		for _, scope := range v.ChangedScopes {
+			fmt.Fprintf(&hb, "  SCOPE: %s\n", formatDocHistoryScope(scope))
+		}
+		for _, ch := range v.Changes {
+			fmt.Fprintf(&hb, "  CHANGE: %s: %v -> %v\n", ch.Field, ch.OldValue, ch.NewValue)
+		}
+		fmt.Fprintln(&hb)
+	}
+	return hb.String()
+}
+
 func renderDocHistory(docPath string, history *models.DocVersionHistory) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %s\n\n",
 		StyleID.Render(docPath),
 		StyleDim.Render(fmt.Sprintf("— %d version(s)", history.CurrentVersion)))
+	for _, gap := range history.RetentionGaps {
+		fmt.Fprintf(&b, "%s %s\n",
+			StyleDim.Render("retention gap"),
+			fmt.Sprintf("%s removed %d version(s) before %s", gap.Reason, gap.Count, gap.AfterVersion))
+	}
+	if len(history.RetentionGaps) > 0 {
+		fmt.Fprintln(&b)
+	}
 	for _, v := range history.Versions {
 		header := StyleDim.Render("["+v.ID+"]") + " " + v.Timestamp.Format("2006-01-02 15:04:05")
-		if v.Author != "" {
+		if v.Actor != "" {
+			header += StyleDim.Render(" by ") + v.Actor
+		} else if v.Author != "" {
 			header += StyleDim.Render(" by ") + v.Author
 		}
+		if v.Source != "" {
+			header += StyleDim.Render(" via ") + v.Source
+		}
+		if v.Checkpoint {
+			header += StyleDim.Render(" checkpoint")
+		}
 		fmt.Fprintln(&b, header)
+		if v.AuditEventID != "" || v.SessionID != "" || v.BaseHash != "" || v.NewHash != "" {
+			fmt.Fprintf(&b, "  %s %s\n", StyleDim.Render("meta"), formatDocHistoryMeta(v))
+		}
+		for _, scope := range v.ChangedScopes {
+			fmt.Fprintf(&b, "  %s %s\n", StyleDim.Render("scope"), formatDocHistoryScope(scope))
+		}
 		for _, ch := range v.Changes {
 			fmt.Fprintf(&b, "  %s %s: %v → %v\n",
 				StyleDim.Render("•"),
@@ -511,6 +575,49 @@ func renderDocHistory(docPath string, history *models.DocVersionHistory) string 
 		fmt.Fprintln(&b)
 	}
 	return b.String()
+}
+
+func formatDocHistoryMeta(v models.DocVersion) string {
+	var parts []string
+	if v.AuditEventID != "" {
+		parts = append(parts, "audit="+v.AuditEventID)
+	}
+	if v.SessionID != "" {
+		parts = append(parts, "session="+v.SessionID)
+	}
+	if v.BaseHash != "" {
+		parts = append(parts, "base="+shortDocHistoryHash(v.BaseHash))
+	}
+	if v.NewHash != "" {
+		parts = append(parts, "new="+shortDocHistoryHash(v.NewHash))
+	}
+	return strings.Join(parts, " ")
+}
+
+func formatDocHistoryScope(scope models.DocChangeScope) string {
+	var parts []string
+	kind := scope.Type
+	if scope.Field != "" {
+		kind += ":" + scope.Field
+	}
+	if scope.Section != "" {
+		kind += ":" + strconv.Quote(scope.Section)
+	}
+	parts = append(parts, kind)
+	if scope.Summary != "" {
+		parts = append(parts, "summary="+strconv.Quote(scope.Summary))
+	}
+	if scope.OldBytes != 0 || scope.NewBytes != 0 || scope.DeltaBytes != 0 {
+		parts = append(parts, fmt.Sprintf("bytes=%d->%d (%+d)", scope.OldBytes, scope.NewBytes, scope.DeltaBytes))
+	}
+	return strings.Join(parts, " ")
+}
+
+func shortDocHistoryHash(hash string) string {
+	if len(hash) <= 12 {
+		return hash
+	}
+	return hash[:12]
 }
 
 // ---- list view helpers ----

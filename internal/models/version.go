@@ -57,13 +57,24 @@ type TaskSnapshot struct {
 
 // DocVersion represents a snapshot of a doc at a specific point in time.
 type DocVersion struct {
-	ID        string         `json:"id"`
-	DocPath   string         `json:"docPath"`
-	Version   int            `json:"version"`
-	Timestamp time.Time      `json:"timestamp"`
-	Author    string         `json:"author,omitempty"`
-	Changes   []DocChange    `json:"changes"`
-	Snapshot  map[string]any `json:"snapshot"`
+	ID            string           `json:"id"`
+	DocID         string           `json:"docId,omitempty"`
+	DocPath       string           `json:"docPath"`
+	CurrentPath   string           `json:"currentPath,omitempty"`
+	PreviousPath  string           `json:"previousPath,omitempty"`
+	Version       int              `json:"version"`
+	Timestamp     time.Time        `json:"timestamp"`
+	Author        string           `json:"author,omitempty"`
+	Actor         string           `json:"actor,omitempty"`
+	Source        string           `json:"source,omitempty"`
+	AuditEventID  string           `json:"auditEventId,omitempty"`
+	SessionID     string           `json:"sessionId,omitempty"`
+	BaseHash      string           `json:"baseHash,omitempty"`
+	NewHash       string           `json:"newHash,omitempty"`
+	Checkpoint    bool             `json:"checkpoint,omitempty"`
+	Changes       []DocChange      `json:"changes"`
+	ChangedScopes []DocChangeScope `json:"changedScopes,omitempty"`
+	Snapshot      map[string]any   `json:"snapshot"`
 }
 
 // DocChange describes a mutation of a single field between two doc versions.
@@ -73,9 +84,48 @@ type DocChange struct {
 	NewValue any    `json:"newValue"`
 }
 
+// DocChangeScope describes the document area affected by a revision.
+type DocChangeScope struct {
+	Type       string `json:"type"`
+	Field      string `json:"field,omitempty"`
+	Section    string `json:"section,omitempty"`
+	Summary    string `json:"summary,omitempty"`
+	OldBytes   int    `json:"oldBytes,omitempty"`
+	NewBytes   int    `json:"newBytes,omitempty"`
+	DeltaBytes int    `json:"deltaBytes,omitempty"`
+}
+
 // DocVersionHistory is the complete audit trail for one document.
 type DocVersionHistory struct {
-	DocPath        string       `json:"docPath"`
-	CurrentVersion int          `json:"currentVersion"`
-	Versions       []DocVersion `json:"versions"`
+	DocID          string          `json:"docId,omitempty"`
+	DocPath        string          `json:"docPath"`
+	CurrentPath    string          `json:"currentPath,omitempty"`
+	CurrentVersion int             `json:"currentVersion"`
+	Versions       []DocVersion    `json:"versions"`
+	RetentionGaps  []DocHistoryGap `json:"retentionGaps,omitempty"`
+}
+
+// DocHistoryGap explains history ranges whose full detail is no longer stored.
+type DocHistoryGap struct {
+	Type          string    `json:"type"`
+	Reason        string    `json:"reason"`
+	Count         int       `json:"count"`
+	BeforeVersion string    `json:"beforeVersion,omitempty"`
+	AfterVersion  string    `json:"afterVersion,omitempty"`
+	AppliedAt     time.Time `json:"appliedAt"`
+}
+
+// DocRevisionDiff is a structured, API-friendly view of one revision's change
+// set and the history context needed to render unavailable retained ranges.
+type DocRevisionDiff struct {
+	DocID              string           `json:"docId,omitempty"`
+	DocPath            string           `json:"docPath"`
+	CurrentPath        string           `json:"currentPath,omitempty"`
+	RevisionID         string           `json:"revisionId"`
+	PreviousRevisionID string           `json:"previousRevisionId,omitempty"`
+	Version            DocVersion       `json:"version"`
+	Checkpoint         bool             `json:"checkpoint"`
+	Changes            []DocChange      `json:"changes"`
+	ChangedScopes      []DocChangeScope `json:"changedScopes,omitempty"`
+	RetentionGaps      []DocHistoryGap  `json:"retentionGaps,omitempty"`
 }

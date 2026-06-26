@@ -1,6 +1,6 @@
 # Cài đặt
 
-Cài qua package manager hoặc build từ source.
+Cài `knowns` CLI trước. Việc cài đặt chỉ làm cho command khả dụng; bạn vẫn cần chạy `knowns init` trong từng repository muốn quản lý bằng Knowns.
 
 ## Yêu cầu
 
@@ -49,6 +49,8 @@ Dùng khi đang dev chính Knowns.
 ```bash
 knowns --version
 ```
+
+Nếu command in ra version, CLI đã cài xong. Tiếp theo, vào repository bạn muốn quản lý và chạy quick start.
 
 ## Không muốn cài global?
 

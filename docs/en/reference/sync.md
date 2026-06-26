@@ -10,7 +10,7 @@ Use `knowns sync` after:
 - upgrading the CLI
 - wanting generated files to match config again
 
-For initial project guidance files, use `knowns init` or `knowns setup agents`. For full AI platform setup (skills, MCP configs, runtime hooks), use `knowns setup <target>`.
+For initial lightweight project shims, use `knowns init` or `knowns setup agents`. For normal personal AI platform setup (skills, MCP configs, runtime hooks), use `knowns setup <target> --global`. Use non-global setup only when you intentionally want repo-local integration files.
 
 ## Common forms
 

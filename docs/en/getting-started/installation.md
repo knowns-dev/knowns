@@ -1,6 +1,6 @@
 # Installation
 
-Knowns can be installed through package managers or built from source.
+Install the `knowns` CLI first. Installation only makes the command available; you still need to run `knowns init` inside each repository where you want Knowns-managed project context.
 
 ## Requirements
 
@@ -49,6 +49,8 @@ Best option when developing Knowns itself.
 ```bash
 knowns --version
 ```
+
+If the command prints a version, the CLI is installed. Next, move into the repository you want to manage and run the quick start.
 
 ## No-global-install option
 

@@ -24,27 +24,28 @@ What `init` configures:
 
 - project name
 - git tracking mode (with per-section toggles)
-- project instruction files (`KNOWNS.md`, default `CLAUDE.md` + `AGENTS.md`)
+- lightweight project instruction shims such as `CLAUDE.md` and `AGENTS.md`
 - semantic search
 - embedding model
 
-`knowns init` creates project guidance files, but leaves MCP configs, skills, and runtime hooks to `knowns setup`.
+`knowns init` creates lightweight project shims, but leaves MCP configs, skills, and runtime hooks to `knowns setup`.
 
 ### `knowns setup`
 
 Configures AI tool integrations for an initialized project.
 
 ```bash
-knowns setup              # Interactive platform selector
-knowns setup claude       # Claude Code: CLAUDE.md, .mcp.json, skills, hooks
-knowns setup opencode     # OpenCode: OPENCODE.md, opencode.json, skills, hooks
-knowns setup codex        # Codex: AGENTS.md, .codex/config.toml, skills, hooks
-knowns setup kiro         # Kiro: .kiro steering/settings, skills, hooks
-knowns setup copilot      # GitHub Copilot: .github/copilot-instructions.md
-knowns setup agents       # KNOWNS.md + AGENTS.md only
-knowns setup codex --global # Codex user-level MCP/skills/hooks
-knowns setup all          # All supported platforms
+knowns setup --global        # Interactive user-level platform selector
+knowns setup claude --global # Claude user-level MCP/skills/hooks
+knowns setup codex --global  # Codex user-level MCP/skills/hooks
+knowns setup all --global    # All supported platforms at user scope
+knowns setup agents          # Lightweight repo-local agent shims only
+knowns setup                 # Interactive project-level platform selector
+knowns setup claude          # Project-level Claude files
+knowns setup codex           # Project-level Codex files
 ```
+
+Use `--global` for normal personal assistant setup. It updates user-level MCP config, skills, and runtime hooks, so the integration follows you across repositories. Use project-level setup only when you intentionally want repo-local platform artifacts.
 
 ### `knowns sync`
 
@@ -207,6 +208,18 @@ knowns memory edit <id> --append "More detail"
 
 Memory is useful for persistent project-level or global knowledge that AI should recall later.
 
+## Decisions
+
+```bash
+knowns decision create "Use Postgres for metadata"
+knowns decision list --plain
+knowns decision get <id> --plain
+knowns decision link <id> --doc architecture/storage
+knowns decision supersede <old-id> <new-id>
+```
+
+Use decisions for durable architectural choices that may later be superseded rather than edited in place.
+
 ## Templates
 
 ```bash
@@ -246,6 +259,16 @@ Code intelligence is LSP-based and accessed through the MCP `code` tool:
 - `insert` — insert code before/after a symbol
 - `delete` — safe delete with reference check
 
+### Code index inspection (CLI)
+
+```bash
+knowns code symbols --plain
+knowns code search "AuthService" --plain
+knowns code deps --plain
+```
+
+Use CLI code commands for inspecting indexed symbol/dependency data. Use the MCP `code` tool for structured navigation and edits.
+
 ## Validation
 
 ```bash
@@ -274,6 +297,16 @@ knowns browser --open
 knowns browser --port 6421
 ```
 
+## Project status and audit
+
+```bash
+knowns status
+knowns audit recent
+knowns audit stats
+```
+
+Use `status` for project readiness and `audit` to inspect recent MCP tool calls.
+
 ## Agent and guidance files
 
 ```bash
@@ -287,11 +320,47 @@ Use `knowns setup` to generate AI integration files, or `knowns sync` to refresh
 ## Model management
 
 ```bash
+knowns model add <model-name>
 knowns model list
 knowns model download multilingual-e5-small
 knowns model set multilingual-e5-small
 knowns model status
+knowns model remove <id>
 ```
+
+## Providers and runtime adapters
+
+```bash
+knowns provider list
+knowns provider add --id openai --name "OpenAI" --api-base https://api.openai.com/v1 --api-key <key>
+knowns provider test <id>
+knowns provider remove <id>
+
+knowns runtime status
+knowns runtime install codex
+knowns runtime ps
+knowns runtime logs
+knowns runtime stop
+knowns runtime uninstall codex
+
+knowns runtime-memory hook
+knowns runtime-memory hook --json
+```
+
+Use providers for API-backed embedding providers. Use runtime commands to install and inspect runtime memory adapters and the shared runtime.
+
+The default hook output is plain prompt context for runtime adapters. Each injected memory includes inline score/trust metadata, for example `score=0.92; trust=active`, so the assistant can weigh supplemental context.
+
+Use `knowns runtime-memory hook --json` when a caller needs structured metadata instead of prompt text. JSON output includes retrieval item scores and capture trust metadata such as `capture.score`, `capture.threshold`, `capture.trusted`, and review `capture.matches` when review is required.
+
+## Tunnels
+
+```bash
+knowns tunnel status
+knowns tunnel stop
+```
+
+Use tunnel commands to inspect or stop Cloudflare Quick Tunnels created for local server sharing.
 
 ## Imports
 

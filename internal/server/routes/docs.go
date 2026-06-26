@@ -78,18 +78,33 @@ func (dr *DocRoutes) Register(r chi.Router) {
 	r.Post("/docs", dr.create)
 	// Wildcard routes must come after specific ones.
 	r.Get("/docs/*", dr.getOrHistory)
+	r.Post("/docs/*", dr.postDocAction)
 	r.Put("/docs/*", dr.update)
 }
 
-// getOrHistory dispatches to the history handler if the path ends with /history,
-// otherwise falls through to the regular get handler.
+// getOrHistory dispatches to history/diff handlers when the wildcard path uses
+// a doc-history action suffix, otherwise it falls through to the regular get handler.
 func (dr *DocRoutes) getOrHistory(w http.ResponseWriter, r *http.Request) {
-	raw := chi.URLParam(r, "*")
-	if strings.HasSuffix(raw, "/history") {
-		dr.history(w, r)
+	raw := decodedDocWildcard(r)
+	if path, revision, ok := splitDocHistoryDiffPath(raw); ok {
+		dr.diff(w, r, path, revision)
+		return
+	}
+	if path, ok := splitDocHistoryPath(raw); ok {
+		dr.history(w, r, path)
 		return
 	}
 	dr.get(w, r)
+}
+
+// postDocAction dispatches wildcard POST requests such as doc restore.
+func (dr *DocRoutes) postDocAction(w http.ResponseWriter, r *http.Request) {
+	raw := decodedDocWildcard(r)
+	if path, ok := splitDocRestorePath(raw); ok {
+		dr.restore(w, r, path)
+		return
+	}
+	respondError(w, http.StatusNotFound, "unknown doc action")
 }
 
 // list returns all documents.
@@ -114,14 +129,52 @@ func (dr *DocRoutes) list(w http.ResponseWriter, r *http.Request) {
 // docPathParam extracts the wildcard path parameter and normalises it.
 // Handles URL-encoded paths (e.g. ai%2Fplatforms.md → ai/platforms).
 func docPathParam(r *http.Request) string {
+	return cleanDocPath(decodedDocWildcard(r))
+}
+
+func decodedDocWildcard(r *http.Request) string {
 	raw := chi.URLParam(r, "*")
-	// URL-decode in case the client used encodeURIComponent (e.g. %2F → /).
 	if decoded, err := url.PathUnescape(raw); err == nil {
 		raw = decoded
 	}
+	return strings.TrimPrefix(raw, "/")
+}
+
+func cleanDocPath(raw string) string {
 	raw = strings.TrimPrefix(raw, "/")
 	raw = strings.TrimSuffix(raw, ".md")
-	return raw
+	return strings.Trim(raw, "/")
+}
+
+func splitDocHistoryPath(raw string) (string, bool) {
+	if !strings.HasSuffix(raw, "/history") {
+		return "", false
+	}
+	path := cleanDocPath(strings.TrimSuffix(raw, "/history"))
+	return path, path != ""
+}
+
+func splitDocHistoryDiffPath(raw string) (string, string, bool) {
+	if !strings.HasSuffix(raw, "/diff") {
+		return "", "", false
+	}
+	withoutDiff := strings.TrimSuffix(raw, "/diff")
+	marker := "/history/"
+	idx := strings.LastIndex(withoutDiff, marker)
+	if idx < 0 {
+		return "", "", false
+	}
+	path := cleanDocPath(withoutDiff[:idx])
+	revision := strings.Trim(withoutDiff[idx+len(marker):], "/")
+	return path, revision, path != "" && revision != ""
+}
+
+func splitDocRestorePath(raw string) (string, bool) {
+	if !strings.HasSuffix(raw, "/restore") {
+		return "", false
+	}
+	path := cleanDocPath(strings.TrimSuffix(raw, "/restore"))
+	return path, path != ""
 }
 
 // get retrieves a single doc by path.
@@ -177,11 +230,13 @@ func (dr *DocRoutes) create(w http.ResponseWriter, r *http.Request) {
 
 	search.BestEffortIndexDoc(dr.getStore(), doc.Path)
 
-	// Record initial version.
-	_ = dr.getStore().Versions.SaveDocVersion(doc.Path, models.DocVersion{
-		Changes:  dr.getStore().Versions.TrackDocChanges(nil, &doc),
-		Snapshot: storage.DocToSnapshot(&doc),
-	})
+	if err := dr.getStore().Versions.SaveDocRevisionWithOptions(nil, &doc, storage.DocRevisionOptions{
+		Actor:  "webui",
+		Source: "webui",
+	}); err != nil {
+		respondError(w, http.StatusInternalServerError, "save doc history: "+err.Error())
+		return
+	}
 
 	dr.sse.Broadcast(SSEEvent{Type: "docs:updated", Data: map[string]string{"path": doc.Path}})
 	respondJSON(w, http.StatusCreated, toDocResponse(&doc))
@@ -206,6 +261,7 @@ func (dr *DocRoutes) update(w http.ResponseWriter, r *http.Request) {
 		Content     *string   `json:"content"`
 		Tags        *[]string `json:"tags"`
 		Path        *string   `json:"path"`
+		Section     *string   `json:"section"`
 	}
 	if err := decodeJSON(r, &payload); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -254,13 +310,17 @@ func (dr *DocRoutes) update(w http.ResponseWriter, r *http.Request) {
 
 	search.BestEffortIndexDoc(dr.getStore(), doc.Path)
 
-	// Save version if something changed.
-	changes := dr.getStore().Versions.TrackDocChanges(&oldDoc, &doc)
-	if len(changes) > 0 {
-		_ = dr.getStore().Versions.SaveDocVersion(doc.Path, models.DocVersion{
-			Changes:  changes,
-			Snapshot: storage.DocToSnapshot(&doc),
-		})
+	section := ""
+	if payload.Section != nil {
+		section = *payload.Section
+	}
+	if err := dr.getStore().Versions.SaveDocRevisionWithOptions(&oldDoc, &doc, storage.DocRevisionOptions{
+		Section: section,
+		Actor:   "webui",
+		Source:  "webui",
+	}); err != nil {
+		respondError(w, http.StatusInternalServerError, "save doc history: "+err.Error())
+		return
 	}
 
 	if oldPath != doc.Path {
@@ -274,17 +334,74 @@ func (dr *DocRoutes) update(w http.ResponseWriter, r *http.Request) {
 // history returns the version history for a document.
 //
 // GET /api/docs/*/history
-func (dr *DocRoutes) history(w http.ResponseWriter, r *http.Request) {
-	raw := chi.URLParam(r, "*")
-	// Strip the trailing /history suffix to get the doc path.
-	path := strings.TrimSuffix(raw, "/history")
-	path = strings.TrimPrefix(path, "/")
-	path = strings.TrimSuffix(path, ".md")
-
+func (dr *DocRoutes) history(w http.ResponseWriter, r *http.Request, path string) {
 	h, err := dr.getStore().Versions.GetDocHistory(path)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	respondJSON(w, http.StatusOK, h)
+}
+
+// diff returns the structured change set for a retained document revision.
+//
+// GET /api/docs/*/history/{revision}/diff
+func (dr *DocRoutes) diff(w http.ResponseWriter, r *http.Request, path, revision string) {
+	diff, err := dr.getStore().Versions.GetDocRevisionDiff(path, revision)
+	if err != nil {
+		respondError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, diff)
+}
+
+// restore restores a document or section from a retained revision.
+//
+// POST /api/docs/*/restore
+func (dr *DocRoutes) restore(w http.ResponseWriter, r *http.Request, path string) {
+	var payload struct {
+		Revision   string `json:"revision"`
+		RevisionID string `json:"revisionId"`
+		Section    string `json:"section"`
+		Mode       string `json:"mode"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	revision := firstNonEmptyString(payload.RevisionID, payload.Revision)
+	if revision == "" {
+		respondError(w, http.StatusBadRequest, "revision is required")
+		return
+	}
+	mode := strings.ToLower(strings.TrimSpace(payload.Mode))
+	opts := storage.DocRevisionOptions{Actor: "webui", Source: "webui"}
+
+	var (
+		doc *models.Doc
+		err error
+	)
+	if payload.Section != "" || mode == "section" {
+		doc, err = dr.getStore().RestoreDocSection(path, revision, payload.Section, opts)
+	} else if mode == "" || mode == "document" || mode == "whole_doc" || mode == "whole-doc" {
+		doc, err = dr.getStore().RestoreDoc(path, revision, opts)
+	} else {
+		respondError(w, http.StatusBadRequest, "unknown restore mode: "+mode)
+		return
+	}
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	search.BestEffortIndexDoc(dr.getStore(), doc.Path)
+	dr.sse.Broadcast(SSEEvent{Type: "docs:updated", Data: map[string]string{"path": doc.Path}})
+
+	history, _ := dr.getStore().Versions.GetDocHistory(doc.Path)
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"restored": true,
+		"doc":      toDocResponse(doc),
+		"history":  history,
+	})
 }

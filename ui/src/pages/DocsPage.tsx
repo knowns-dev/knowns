@@ -9,6 +9,7 @@ import {
 	Maximize2,
 	Minimize2,
 	Menu,
+	History,
 } from "lucide-react";
 import { MDEditor } from "../components/editor";
 import { Button } from "../components/ui/button";
@@ -26,6 +27,7 @@ import { DocsDocHeader } from "./docs/DocsDocHeader";
 import { DocsCreateView } from "./docs/DocsCreateView";
 import { DocsEmptyState } from "./docs/DocsEmptyState";
 import { DocMiniGraph } from "./docs/DocMiniGraph";
+import { DocHistorySheet } from "./docs/DocHistorySheet";
 import { MDRenderWithHighlight } from "../components/editor/MDRenderWithHighlight";
 
 import { AnnotationProvider, useAnnotationContext } from "../contexts/AnnotationContext";
@@ -70,6 +72,7 @@ function DocsPageInner() {
 	const [docSearchQuery, setDocSearchQuery] = useState("");
 	const [lineHighlight, setLineHighlight] = useState<{ start: number; end: number } | null>(null);
 	const [wideMode, setWideMode] = useState(() => localStorage.getItem("docs-wide-mode") === "true");
+	const [historyOpen, setHistoryOpen] = useState(false);
 	const [metaTitle, setMetaTitle] = useState("");
 	const [metaDescription, setMetaDescription] = useState("");
 	const [metaTags, setMetaTags] = useState("");
@@ -374,6 +377,11 @@ function DocsPageInner() {
 									{wideMode ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
 								</Button>
 							)}
+							{!isEditing && (
+								<Button variant="ghost" size="sm" onClick={() => setHistoryOpen(true)} className="h-7 px-2 text-muted-foreground hover:text-foreground" title="Document history">
+									<History className="w-3.5 h-3.5 sm:mr-1" /><span className="hidden sm:inline text-xs">History</span>
+								</Button>
+							)}
 							{!isEditing ? (
 								<Button size="sm" variant="ghost" onClick={handleEdit} disabled={selectedDoc.isImported} className="h-7 px-2" title={selectedDoc.isImported ? "Imported docs are read-only" : "Edit document"}>
 									<Pencil className="w-3.5 h-3.5 sm:mr-1" /><span className="hidden sm:inline text-xs">Edit</span>
@@ -467,6 +475,18 @@ function DocsPageInner() {
 					<DocsEmptyState currentFolder={currentFolder} onCreateDoc={openCreateView} onOpenMobileSidebar={() => setMobileSidebarOpen(true)} />
 				)}
 			</div>
+			{selectedDoc && (
+				<DocHistorySheet
+					open={historyOpen}
+					onOpenChange={setHistoryOpen}
+					docPath={selectedDoc.path}
+					docTitle={selectedDoc.metadata.title || selectedDoc.path}
+					readOnly={selectedDoc.isImported}
+					onRestored={() => {
+						void loadDocs();
+					}}
+				/>
+			)}
 			<TaskPreviewDialog taskId={previewTaskId} open={!!previewTaskId} onOpenChange={(open) => { if (!open) setPreviewTaskId(null); }} />
 		</div>
 	);

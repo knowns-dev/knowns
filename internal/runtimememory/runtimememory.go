@@ -258,11 +258,16 @@ type Pack struct {
 }
 
 type CaptureOutcome struct {
-	Status       string `json:"status"`
-	Reason       string `json:"reason,omitempty"`
-	Created      bool   `json:"created"`
-	MemoryID     string `json:"memoryId,omitempty"`
-	MemoryStatus string `json:"memoryStatus,omitempty"`
+	Status       string               `json:"status"`
+	Reason       string               `json:"reason,omitempty"`
+	Created      bool                 `json:"created"`
+	MemoryID     string               `json:"memoryId,omitempty"`
+	MemoryStatus string               `json:"memoryStatus,omitempty"`
+	Score        float64              `json:"score,omitempty"`
+	Threshold    float64              `json:"threshold,omitempty"`
+	Trusted      bool                 `json:"trusted"`
+	TrustReason  string               `json:"trustReason,omitempty"`
+	Matches      []memoryreview.Match `json:"matches,omitempty"`
 }
 
 type Adapter struct {
@@ -527,6 +532,10 @@ func CaptureWithOutcome(store *storage.Store, input Input) (*models.MemoryEntry,
 		outcome.Reason = SkipReasonNoCaptureCandidate
 		return nil, outcome, nil
 	}
+	outcome.Score = candidate.Confidence
+	if captureMode == CaptureHighConfidence {
+		outcome.Threshold = minHighConfidenceCapture
+	}
 	if captureMode == CaptureHighConfidence && candidate.Confidence < minHighConfidenceCapture {
 		outcome.Reason = SkipReasonCaptureConfidence
 		return nil, outcome, nil
@@ -552,12 +561,17 @@ func CaptureWithOutcome(store *storage.Store, input Input) (*models.MemoryEntry,
 	}
 	if result.Status == memoryreview.ResultReviewRequired || result.Memory == nil {
 		outcome.Reason = SkipReasonReviewRequired
+		outcome.Matches = append([]memoryreview.Match(nil), result.Matches...)
 		return nil, outcome, nil
 	}
 	outcome.Status = CaptureStatusCreated
 	outcome.Created = true
 	outcome.MemoryID = result.Memory.ID
 	outcome.MemoryStatus = result.Memory.Status
+	outcome.Trusted = result.Memory.CurrentForDefaultRetrieval()
+	if !outcome.Trusted {
+		outcome.TrustReason = "memory_not_active_for_default_retrieval"
+	}
 	return result.Memory, outcome, nil
 }
 
@@ -1030,7 +1044,7 @@ func serializeItem(item Item, remaining int) string {
 	}
 	content := normalizeWhitespace(item.Content)
 
-	header := fmt.Sprintf("- %s [%s/%s] %s\n", ref, layer, category, title)
+	header := fmt.Sprintf("- %s [%s/%s] %s%s\n", ref, layer, category, title, serializeItemTrustMetadata(item))
 	contentPrefix := "  "
 	trailer := "\n"
 	overhead := len(header) + len(contentPrefix) + len(trailer)
@@ -1046,6 +1060,28 @@ func serializeItem(item Item, remaining int) string {
 		return ""
 	}
 	return header + contentPrefix + content + trailer
+}
+
+func serializeItemTrustMetadata(item Item) string {
+	parts := make([]string, 0, 2)
+	if item.Score > 0 {
+		parts = append(parts, fmt.Sprintf("score=%.2f", item.Score))
+	}
+	status := strings.TrimSpace(item.Status)
+	if status == "" {
+		status = models.MemoryStatusActive
+	}
+	trust := "supplemental"
+	if status == models.MemoryStatusActive {
+		trust = "active"
+	} else if status != "" {
+		trust = status
+	}
+	parts = append(parts, "trust="+trust)
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, "; ") + ")"
 }
 
 func memoryReference(item Item) string {

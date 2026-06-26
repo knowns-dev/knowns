@@ -4,9 +4,9 @@ Start here if you are contributing to Knowns.
 
 ## Read first
 
-1. `KNOWNS.md`
-2. `README.md`
-3. `docs/en/README.md`
+1. `README.md`
+2. `docs/en/README.md`
+3. MCP `initial` and on-demand `help` output when working through an AI assistant
 
 ## Important directories
 
