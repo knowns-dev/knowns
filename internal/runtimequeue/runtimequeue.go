@@ -229,6 +229,9 @@ func isGoTestBinary(path string) bool {
 }
 
 func GlobalRoot() string {
+	if home := os.Getenv("HOME"); home != "" {
+		return filepath.Join(home, ".knowns")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return filepath.Join(os.TempDir(), ".knowns")

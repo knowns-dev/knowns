@@ -35,6 +35,17 @@ func TestNewIDIsUniqueAcrossConcurrentCalls(t *testing.T) {
 	}
 }
 
+func TestGlobalRootHonorsHOMEOverride(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", t.TempDir())
+
+	want := filepath.Join(home, ".knowns")
+	if got := GlobalRoot(); got != want {
+		t.Fatalf("GlobalRoot() = %q, want HOME override %q", got, want)
+	}
+}
+
 func TestIsGoTestBinaryRecognizesWindowsExe(t *testing.T) {
 	tests := map[string]bool{
 		"/tmp/routes.test":                   true,
