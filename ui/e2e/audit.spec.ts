@@ -49,7 +49,7 @@ test.describe("Audit Trail", () => {
 
 	test("performing MCP actions creates audit events", async ({ page }) => {
 		await test.step("Perform an MCP action", async () => {
-			const output = server.mcp("task", {
+			const output = server.mcp("tasks", {
 				action: "create",
 				title: "Audit Trail Test",
 				description: "Should appear in audit",

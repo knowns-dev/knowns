@@ -48,7 +48,7 @@ test.describe("Search Command Dialog", () => {
 
 		await test.step("Results show matching tasks and docs", async () => {
 			// Should find "Auth Module" task and "Auth Guide" doc
-			await expect(page.getByText("Auth Module").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Auth Module").first()).toBeVisible();
 		});
 
 		await test.step("Close search with Escape", async () => {
@@ -64,7 +64,7 @@ test.describe("Search Command Dialog", () => {
 		});
 
 		await test.step("Task with matching description found", async () => {
-			await expect(page.getByText("Auth Module").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Auth Module").first()).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -114,7 +114,7 @@ test.describe("Search Command Dialog", () => {
 		});
 
 		await test.step("Task detail opens", async () => {
-			await expect(page.getByRole("heading", { name: "Login Page", exact: true })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Login Page", exact: true })).toBeVisible();
 		});
 	});
 });
@@ -123,7 +123,7 @@ test.describe("Sidebar Search", () => {
 	test("sidebar search input filters navigation", async ({ page }) => {
 		await test.step("Navigate to dashboard", async () => {
 			await page.goto(server.baseURL);
-			await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 		});
 
 		await test.step("Find search button or input in sidebar", async () => {

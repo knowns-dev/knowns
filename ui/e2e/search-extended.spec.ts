@@ -30,11 +30,11 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 		});
 
 		await test.step("Search dialog and input are visible", async () => {
-			await expect(page.getByPlaceholder("Search tasks and docs...")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByPlaceholder("Search tasks and docs...")).toBeVisible();
 		});
 
 		await test.step("Initial empty state shown", async () => {
-			await expect(page.getByText("Type to search...")).toBeVisible({ timeout: 3000 });
+			await expect(page.getByText("Type to search...")).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -54,7 +54,7 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 		});
 
 		await test.step("Dialog is visible", async () => {
-			await expect(page.getByPlaceholder("Search tasks and docs...")).toBeVisible({ timeout: 3000 });
+			await expect(page.getByPlaceholder("Search tasks and docs...")).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -71,7 +71,7 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 		await test.step("Open then close with same shortcut", async () => {
 			await page.keyboard.press("Meta+k");
 			await page.waitForTimeout(300);
-			await expect(page.getByPlaceholder("Search tasks and docs...")).toBeVisible({ timeout: 3000 });
+			await expect(page.getByPlaceholder("Search tasks and docs...")).toBeVisible();
 			await page.keyboard.press("Meta+k");
 			await page.waitForTimeout(300);
 			await expect(page.getByPlaceholder("Search tasks and docs...")).not.toBeVisible();
@@ -92,15 +92,15 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 		});
 
 		await test.step("Task group heading appears", async () => {
-			await expect(page.getByText("Tasks").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Tasks").first()).toBeVisible();
 		});
 
 		await test.step("Matching task result visible", async () => {
-			await expect(page.getByText("Search Auth Module").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Search Auth Module").first()).toBeVisible();
 		});
 
 		await test.step("Status badge shown on result", async () => {
-			await expect(page.getByText("To Do").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("To Do").first()).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -122,7 +122,7 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 		});
 
 		await test.step("Task with matching description appears", async () => {
-			await expect(page.getByText("Search Auth Module").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Search Auth Module").first()).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -171,8 +171,8 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 		});
 
 		await test.step("Both groups appear", async () => {
-			await expect(page.getByText("Tasks").first()).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("Documentation").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Tasks").first()).toBeVisible();
+			await expect(page.getByText("Documentation").first()).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -194,7 +194,7 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 		});
 
 		await test.step("No results message shown", async () => {
-			await expect(page.getByText("No results found.")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("No results found.")).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -242,13 +242,13 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 			await page.getByPlaceholder("Search tasks and docs...").fill("Login UI");
 			await page.waitForTimeout(600);
 			const resultItem = page.locator('[role="option"]').filter({ hasText: "Search Login UI" }).first();
-			await expect(resultItem).toBeVisible({ timeout: 5000 });
+			await expect(resultItem).toBeVisible();
 			await resultItem.click();
 		});
 
 		await test.step("Dialog closes and task detail opens", async () => {
-			await expect(page.getByPlaceholder("Search tasks and docs...")).not.toBeVisible({ timeout: 3000 });
-			await expect(page.getByRole("heading", { name: "Search Login UI", exact: true })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByPlaceholder("Search tasks and docs...")).not.toBeVisible();
+			await expect(page.getByRole("heading", { name: "Search Login UI", exact: true })).toBeVisible();
 		});
 	});
 
@@ -294,7 +294,7 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 		});
 
 		await test.step("Dialog is gone", async () => {
-			await expect(page.getByPlaceholder("Search tasks and docs...")).not.toBeVisible({ timeout: 3000 });
+			await expect(page.getByPlaceholder("Search tasks and docs...")).not.toBeVisible();
 		});
 	});
 
@@ -310,13 +310,13 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 		});
 
 		await test.step("Dialog visible", async () => {
-			await expect(page.getByPlaceholder("Search tasks and docs...")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByPlaceholder("Search tasks and docs...")).toBeVisible();
 		});
 
 		await test.step("Search works", async () => {
 			await page.getByPlaceholder("Search tasks and docs...").fill("Auth");
 			await page.waitForTimeout(600);
-			await expect(page.getByText("Search Auth Module").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Search Auth Module").first()).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -339,7 +339,7 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 		await test.step("Fresh task appears in results", async () => {
 			await page.getByPlaceholder("Search tasks and docs...").fill("Fresh Task");
 			await page.waitForTimeout(600);
-			await expect(page.getByText("Search Fresh Task").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Search Fresh Task").first()).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -362,7 +362,7 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 
 		await test.step("Task ID visible in result (e.g., #<id>)", async () => {
 			// Results show "#{id}" in font-mono text
-			await expect(page.locator('[role="option"] .font-mono').first()).toBeVisible({ timeout: 5000 });
+			await expect(page.locator('[role="option"] .font-mono').first()).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {

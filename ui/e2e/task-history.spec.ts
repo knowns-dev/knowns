@@ -21,9 +21,9 @@ async function expandHistory(page: import("@playwright/test").Page) {
 	const dialog = page.locator('[role="dialog"]');
 	const historyHeading = dialog.getByRole("heading", { name: "History", level: 3 });
 	await historyHeading.scrollIntoViewIfNeeded();
-	await expect(historyHeading).toBeVisible({ timeout: 5000 });
+	await expect(historyHeading).toBeVisible();
 	const triggerBtn = historyHeading.locator("xpath=preceding-sibling::button[1]");
-	await expect(triggerBtn).toBeVisible({ timeout: 5000 });
+	await expect(triggerBtn).toBeVisible();
 	await triggerBtn.click();
 	await page.waitForTimeout(500);
 }
@@ -42,7 +42,7 @@ test.describe("Task History Panel", () => {
 
 		await test.step("Open task detail", async () => {
 			await page.goto(`${server.baseURL}/kanban/${taskId}`);
-			await expect(page.getByRole("heading", { name: "History Task", exact: true })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "History Task", exact: true })).toBeVisible();
 		});
 
 		await test.step("Expand history via chevron button", async () => {
@@ -50,7 +50,7 @@ test.describe("Task History Panel", () => {
 		});
 
 		await test.step("History shows changes count", async () => {
-			await expect(page.getByText(/\d+ change/).first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/\d+ change/).first()).toBeVisible();
 		});
 	});
 
@@ -66,17 +66,17 @@ test.describe("Task History Panel", () => {
 
 		await test.step("Open task detail", async () => {
 			await page.goto(`${server.baseURL}/kanban/${taskId}`);
-			await expect(page.getByRole("heading", { name: "Renamed Version Task", exact: true })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Renamed Version Task", exact: true })).toBeVisible();
 		});
 
 		await test.step("History summary count is visible", async () => {
 			const dialog = page.locator('[role="dialog"]');
-			await expect(dialog.getByText(/\(3 changes\)|\(\d+ changes\)/).first()).toBeVisible({ timeout: 5000 });
+			await expect(dialog.getByText(/\(3 changes\)|\(\d+ changes\)/).first()).toBeVisible();
 		});
 
 		await test.step("History heading remains visible", async () => {
 			const dialog = page.locator('[role="dialog"]');
-			await expect(dialog.getByRole("heading", { name: "History", level: 3 })).toBeVisible({ timeout: 5000 });
+			await expect(dialog.getByRole("heading", { name: "History", level: 3 })).toBeVisible();
 		});
 	});
 
@@ -91,7 +91,7 @@ test.describe("Task History Panel", () => {
 
 		await test.step("Open task detail and expand history", async () => {
 			await page.goto(`${server.baseURL}/kanban/${taskId}`);
-			await expect(page.getByRole("heading", { name: "Diff Task", exact: true })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Diff Task", exact: true })).toBeVisible();
 			await expandHistory(page);
 		});
 
@@ -125,14 +125,14 @@ test.describe("Task History Panel", () => {
 
 		await test.step("Open task and verify history summary", async () => {
 			await page.goto(`${server.baseURL}/kanban/${taskId}`);
-			await expect(page.getByRole("heading", { name: "Filter Task", exact: true })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Filter Task", exact: true })).toBeVisible();
 			const dialog = page.locator('[role="dialog"]');
-			await expect(dialog.getByText(/\(4 changes\)|\(\d+ changes\)/).first()).toBeVisible({ timeout: 5000 });
+			await expect(dialog.getByText(/\(4 changes\)|\(\d+ changes\)/).first()).toBeVisible();
 		});
 
 		await test.step("History section is visible", async () => {
 			const dialog = page.locator('[role="dialog"]');
-			await expect(dialog.getByRole("heading", { name: "History", level: 3 })).toBeVisible({ timeout: 5000 });
+			await expect(dialog.getByRole("heading", { name: "History", level: 3 })).toBeVisible();
 		});
 	});
 });

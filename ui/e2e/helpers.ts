@@ -196,13 +196,27 @@ export async function startServer(): Promise<TestServer> {
 			.map((message) => JSON.stringify(message))
 			.join("\n");
 
-		return execFileSync(BINARY, ["mcp"], {
+		const output = execFileSync(BINARY, ["mcp"], {
 			cwd: projectDir,
 			encoding: "utf-8",
 			timeout: 30000,
 			env: testEnv,
 			input: `${input}\n`,
 		}).trim();
+		const responses = output
+			.split(/\r?\n/)
+			.filter(Boolean)
+			.map((line) => JSON.parse(line));
+		const callResponse = responses.find((response) => response.id === 2);
+		if (!callResponse) {
+			throw new Error(`MCP tool ${tool} returned no response: ${output}`);
+		}
+		if (callResponse.error || callResponse.result?.isError) {
+			throw new Error(
+				`MCP tool ${tool} failed: ${JSON.stringify(callResponse.error ?? callResponse.result)}`,
+			);
+		}
+		return output;
 	};
 
 	const cleanup = () => {

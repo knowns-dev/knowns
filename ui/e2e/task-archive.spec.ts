@@ -22,13 +22,13 @@ test.describe("Task Archive", () => {
 
 		await test.step("Open task detail", async () => {
 			await page.goto(`${server.baseURL}/kanban/${taskId}`);
-			await expect(page.getByRole("heading", { name: "Archive Target", exact: true })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Archive Target", exact: true })).toBeVisible();
 		});
 
 		await test.step("Archive Task button is visible", async () => {
 			const archiveBtn = page.getByText("Archive Task").first();
 			await archiveBtn.scrollIntoViewIfNeeded();
-			await expect(archiveBtn).toBeVisible({ timeout: 3000 });
+			await expect(archiveBtn).toBeVisible();
 		});
 	});
 
@@ -42,7 +42,7 @@ test.describe("Task Archive", () => {
 
 		await test.step("Verify task visible on kanban", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.getByText("Soon Archived").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Soon Archived").first()).toBeVisible();
 		});
 
 		await test.step("Archive via CLI", async () => {
@@ -80,7 +80,7 @@ test.describe("Task Archive", () => {
 		await test.step("Reload and verify task is back on kanban", async () => {
 			await page.reload();
 			await page.waitForTimeout(1000);
-			await expect(page.getByText("Revived Task").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Revived Task").first()).toBeVisible();
 		});
 	});
 
@@ -94,7 +94,7 @@ test.describe("Task Archive", () => {
 
 		await test.step("Verify task on tasks page", async () => {
 			await page.goto(`${server.baseURL}/tasks`);
-			await expect(page.getByText("Hidden Task").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Hidden Task").first()).toBeVisible();
 		});
 
 		await test.step("Archive and reload", async () => {
@@ -121,7 +121,7 @@ test.describe("Task Delete", () => {
 
 		await test.step("Verify task on kanban", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.getByText("Delete Me").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Delete Me").first()).toBeVisible();
 		});
 
 		await test.step("Delete via CLI", async () => {
