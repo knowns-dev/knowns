@@ -21,9 +21,13 @@ type pendingCall struct {
 	action    string
 }
 
+type auditAppender interface {
+	Append(event *models.AuditEvent) error
+}
+
 // auditRecorder records MCP tool calls as structured audit events.
 type auditRecorder struct {
-	auditStore *storage.AuditStore
+	auditStore auditAppender
 	getRoot    func() string
 
 	mu      sync.Mutex
@@ -114,12 +118,11 @@ func (ar *auditRecorder) afterCallTool(_ context.Context, id any, req *gomcp.Cal
 		ArgumentSummary: summarizeArgs(pc.toolName, args),
 	}
 
-	// Write asynchronously to avoid slowing down the tool response.
-	go func() {
-		if err := ar.auditStore.Append(event); err != nil {
-			mcpLog.Printf("audit: write failed: %v", err)
-		}
-	}()
+	// Persist before returning from the hook. Stdio clients commonly make one
+	// request and exit, which can abandon an asynchronous write at process exit.
+	if err := ar.auditStore.Append(event); err != nil {
+		mcpLog.Printf("audit: write failed: %v", err)
+	}
 }
 
 // classifyAction maps tool+action to an action class using the shared registry.
