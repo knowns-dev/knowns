@@ -221,34 +221,7 @@ func upsertGlobalMCPJSON(configPath string, serverKey string) error {
 }
 
 func setupGlobalClaudeCodeMCP(home string) error {
-	configPath := filepath.Join(home, ".claude", "settings.json")
-	dir := filepath.Dir(configPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	config := map[string]any{}
-	if data, err := os.ReadFile(configPath); err == nil {
-		_ = json.Unmarshal(data, &config)
-	}
-
-	servers, ok := config["mcpServers"].(map[string]any)
-	if !ok || servers == nil {
-		servers = make(map[string]any)
-	}
-
-	cmd, args := mcpCommand()
-	servers["knowns"] = map[string]any{
-		"command": cmd,
-		"args":    args,
-	}
-	config["mcpServers"] = servers
-
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(configPath, append(data, '\n'), 0644)
+	return upsertGlobalMCPJSON(filepath.Join(home, ".claude.json"), "knowns")
 }
 
 func setupGlobalClaudeDesktopMCP(home string) error {
