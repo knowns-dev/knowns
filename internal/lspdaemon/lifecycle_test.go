@@ -30,6 +30,21 @@ func TestEnsureClientDisabledByEnv(t *testing.T) {
 	}
 }
 
+func TestIsGoTestBinaryRecognizesWindowsExe(t *testing.T) {
+	tests := map[string]bool{
+		"/tmp/lspdaemon.test":            true,
+		`C:\Temp\lspdaemon.test.exe`:     true,
+		"/tmp/lspdaemon.test.exe":        true,
+		"/tmp/lspdaemon-test.exe":        false,
+		"/tmp/lspdaemon.test-helper.exe": false,
+	}
+	for path, want := range tests {
+		if got := isGoTestBinary(path); got != want {
+			t.Fatalf("isGoTestBinary(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
 func TestClientRecoversOnceAfterSocketFailure(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix socket test")

@@ -91,6 +91,7 @@ type openCodeConfigResolution struct {
 
 const openCodeHealthMonitorInterval = 15 * time.Second
 const serviceStatusMonitorInterval = 7 * time.Second
+const defaultLSPLeaseCleanupTimeout = 2 * time.Second
 
 func deriveOpenCodePortCandidates(browserPort int, defaultPort int) []int {
 	seen := make(map[int]struct{})
@@ -427,6 +428,8 @@ func (s *Server) StartWithListener(listener net.Listener) error {
 }
 
 func (s *Server) serve(listener net.Listener) error {
+	defer s.releaseLSPDaemonLease()
+
 	// Port is bound — now safe to write the port file.
 	if err := s.writePortFile(); err != nil {
 		fmt.Fprintf(os.Stderr, "warn: could not write .server-port: %v\n", err)
@@ -495,6 +498,28 @@ func (s *Server) serve(listener net.Listener) error {
 
 	log.Printf("[server] Shutdown complete")
 	return nil
+}
+
+func (s *Server) releaseLSPDaemonLease() {
+	roots := make(map[string]struct{}, 2)
+	if s.projectRoot != "" {
+		roots[s.projectRoot] = struct{}{}
+	}
+	if s.manager != nil {
+		if store := s.manager.GetStore(); store != nil && store.Root != "" {
+			roots[filepath.Dir(store.Root)] = struct{}{}
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultLSPLeaseCleanupTimeout)
+	defer cancel()
+	for root := range roots {
+		client, err := lspdaemon.NewClient(root)
+		if err != nil {
+			continue
+		}
+		_ = client.TryReleaseLease(ctx, "webui")
+	}
 }
 
 // reinitOpenCode tears down the existing OpenCode runtime and starts a fresh

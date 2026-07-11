@@ -143,6 +143,17 @@ func (c *Client) ReleaseLease(ctx context.Context, owner string) error {
 	return err
 }
 
+// TryReleaseLease releases a lease only when the daemon is already running.
+// It deliberately avoids recovery so shutdown cleanup cannot start a daemon.
+func (c *Client) TryReleaseLease(ctx context.Context, owner string) error {
+	owner, err := validateLeaseOwner(owner)
+	if err != nil {
+		return err
+	}
+	_, err = c.callOnce(ctx, Request{Operation: OperationReleaseLease, Owner: owner})
+	return err
+}
+
 func (c *Client) call(ctx context.Context, req Request) (Response, error) {
 	resp, err := c.callOnce(ctx, req)
 	if err == nil {
@@ -170,15 +181,9 @@ func (c *Client) callOnce(ctx context.Context, req Request) (Response, error) {
 	}
 	req.Handshake = Handshake{ProjectRoot: c.identity.Root, Token: c.token}
 
-	endpoint := c.paths.Endpoint()
-	if endpoint.Kind != TransportUnixSocket {
-		return Response{}, fmt.Errorf("unsupported LSP daemon transport %q", endpoint.Kind)
-	}
-
-	dialer := net.Dialer{}
 	dialCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout)
 	defer cancel()
-	conn, err := dialer.DialContext(dialCtx, "unix", endpoint.Address)
+	conn, err := dialEndpoint(dialCtx, c.paths.Endpoint())
 	if err != nil {
 		return Response{}, err
 	}
@@ -228,6 +233,14 @@ func recoverableDaemonError(err error) bool {
 }
 
 func (c *Client) startDaemon(ctx context.Context) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if isGoTestBinary(exe) {
+		return fmt.Errorf("automatic LSP daemon startup is disabled from Go test binary %q", filepath.Base(exe))
+	}
+
 	lock, err := AcquireProjectLock(c.paths, LockOptions{Timeout: defaultStartTimeout, StaleAge: 30 * time.Second})
 	if err != nil {
 		if pingErr := c.Ping(ctx); pingErr == nil {
@@ -241,10 +254,6 @@ func (c *Client) startDaemon(ctx context.Context) error {
 		return nil
 	}
 
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
 	logFile, err := openLogFile(c.paths.LogPath)
 	if err != nil {
 		return err
@@ -260,6 +269,11 @@ func (c *Client) startDaemon(ctx context.Context) error {
 		return fmt.Errorf("start LSP daemon: %w", err)
 	}
 	return c.waitReady(ctx, defaultStartTimeout)
+}
+
+func isGoTestBinary(path string) bool {
+	path = strings.ToLower(path)
+	return strings.HasSuffix(path, ".test") || strings.HasSuffix(path, ".test.exe")
 }
 
 func (c *Client) waitReady(ctx context.Context, timeout time.Duration) error {

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/howznguyen/knowns/internal/util"
 )
 
@@ -1106,5 +1107,5 @@ func appendIfMissing(values []string, value string) []string {
 }
 
 func newID() string {
-	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), os.Getpid())
+	return uuid.NewString()
 }

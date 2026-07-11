@@ -3,9 +3,37 @@ package runtimequeue
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
+
+func TestNewIDIsUniqueAcrossConcurrentCalls(t *testing.T) {
+	const workers = 32
+	const idsPerWorker = 256
+
+	ids := make(chan string, workers*idsPerWorker)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range idsPerWorker {
+				ids <- newID()
+			}
+		}()
+	}
+	wg.Wait()
+	close(ids)
+
+	seen := make(map[string]struct{}, workers*idsPerWorker)
+	for id := range ids {
+		if _, exists := seen[id]; exists {
+			t.Fatalf("duplicate ID generated: %s", id)
+		}
+		seen[id] = struct{}{}
+	}
+}
 
 func TestIsGoTestBinaryRecognizesWindowsExe(t *testing.T) {
 	tests := map[string]bool{
