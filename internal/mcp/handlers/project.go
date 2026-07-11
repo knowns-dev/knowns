@@ -20,6 +20,17 @@ func RegisterProjectTool(
 	getRoot func() string,
 	getLSPManager ...func() *lsp.Manager,
 ) {
+	RegisterProjectToolWithStatusProvider(s, getStore, setStore, getRoot, nil, getLSPManager...)
+}
+
+func RegisterProjectToolWithStatusProvider(
+	s toolRegistrar,
+	getStore func() *storage.Store,
+	setStore func(*storage.Store, string),
+	getRoot func() string,
+	getLSPStatuses func(context.Context) []lsp.LanguageRuntimeStatus,
+	getLSPManager ...func() *lsp.Manager,
+) {
 	s.AddTool(
 		mcp.NewTool("project",
 			mcp.WithDescription(`Project management operations. Use 'action' to specify: detect, current, set, status.
@@ -59,7 +70,7 @@ func RegisterProjectTool(
 				if len(getLSPManager) > 0 {
 					manager = getLSPManager[0]
 				}
-				return handleProjectStatus(ctx, getStore, manager)
+				return handleProjectStatus(ctx, getStore, manager, getLSPStatuses)
 			default:
 				return errResultf("unknown project action: %s", action)
 			}
@@ -201,7 +212,7 @@ func handleProjectSet(setStore func(*storage.Store, string), req mcp.CallToolReq
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func handleProjectStatus(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager) (*mcp.CallToolResult, error) {
+func handleProjectStatus(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, getLSPStatuses ...func(context.Context) []lsp.LanguageRuntimeStatus) (*mcp.CallToolResult, error) {
 	store := getStore()
 	if store == nil {
 		out, _ := json.MarshalIndent(readiness.InactivePayload(), "", "  ")
@@ -209,8 +220,11 @@ func handleProjectStatus(ctx context.Context, getStore func() *storage.Store, ge
 	}
 
 	opts := readiness.Options{}
+	if len(getLSPStatuses) > 0 && getLSPStatuses[0] != nil {
+		opts.LSP = getLSPStatuses[0](ctx)
+	}
 	if getLSPManager != nil {
-		if manager := getLSPManager(); manager != nil {
+		if manager := getLSPManager(); manager != nil && len(opts.LSP) == 0 {
 			opts.LSP = manager.RuntimeStatuses(ctx)
 		}
 	}

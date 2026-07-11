@@ -22,6 +22,8 @@ type MissingServer struct {
 	Guide      InstallGuide
 }
 
+var ErrServerUnavailable = errors.New("LSP not available for this language")
+
 type Manager struct {
 	root     string
 	registry *Registry
@@ -206,28 +208,43 @@ func (m *Manager) ServerForPath(ctx context.Context, path string) (*Server, bool
 		m.mu.Unlock()
 		return srv, true, nil
 	}
-	commands, err := m.detector.Detect(ctx, m.root, m.config)
-	if err != nil {
+	cmd, ok, err := m.resolveLanguageCommand(ctx, lang)
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	if err := m.startCommand(ctx, lang.ID, cmd); err != nil {
 		return nil, false, err
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, cmd := range commands {
-		if _, exists := m.servers[cmd.Language]; !exists {
-			srv := NewServer(m.root, cmd)
-			m.configureTraceLocked(cmd.Language, srv)
-			m.servers[cmd.Language] = srv
-		}
-	}
-
 	srv = m.servers[lang.ID]
+	m.mu.Unlock()
 	if srv == nil {
 		return nil, false, nil
 	}
-	if err := srv.Start(ctx); err != nil {
-		return nil, false, m.runtimeErrorForCommand(srv.Command, err)
-	}
 	return srv, true, nil
+}
+
+func (m *Manager) resolveLanguageCommand(ctx context.Context, lang Language) (ServerCommand, bool, error) {
+	m.mu.Lock()
+	detector := m.detector
+	root := m.root
+	cfg := m.config
+	m.mu.Unlock()
+	if detector == nil {
+		detector = NewDetector(nil)
+	}
+	cmd, ok := detector.resolve(ctx, root, lang, cfg.BinaryOverride(lang.ID))
+	if !ok {
+		return ServerCommand{}, false, nil
+	}
+	if lang.ID == CSharpLanguageID {
+		cmd.Backend = cfg.BackendOverride(lang.ID)
+		if cmd.Backend == "" {
+			cmd.Backend = "custom"
+		}
+		cmd.ProjectPath = DiscoverCSharpProject(root, cfg.ProjectPathOverride(lang.ID)).Path
+	}
+	return cmd, true, nil
 }
 
 func primaryBinaryName(adapter LanguageAdapter) string {
@@ -252,8 +269,11 @@ func (m *Manager) WithFile(ctx context.Context, path string, fn func(*Server) er
 // fn, and exposes only the shared runtime/session surface to callers.
 func (m *Manager) WithSession(ctx context.Context, path string, fn func(Session) error) error {
 	srv, ok, err := m.ServerForPath(ctx, path)
-	if err != nil || !ok {
+	if err != nil {
 		return err
+	}
+	if !ok {
+		return ErrServerUnavailable
 	}
 	return srv.WithFile(ctx, path, func() error { return fn(srv) })
 }
@@ -352,31 +372,42 @@ func (m *Manager) StopAll(ctx context.Context) error {
 
 // LanguageInfo describes an available language adapter with its runtime status.
 type LanguageInfo struct {
-	ID              string           `json:"id"`
-	Name            string           `json:"name"`
-	Status          string           `json:"status,omitempty"`
-	Binary          string           `json:"binary"`
-	BinaryPath      string           `json:"binaryPath,omitempty"`
-	Source          string           `json:"source,omitempty"`
-	Installed       bool             `json:"installed"`
-	Running         bool             `json:"running"`
-	InstallState    string           `json:"installState,omitempty"`
-	RunningState    string           `json:"runningState,omitempty"`
-	ReadinessState  string           `json:"readinessState,omitempty"`
-	Version         string           `json:"version,omitempty"`
-	CachePath       string           `json:"cachePath,omitempty"`
-	SelectedPath    string           `json:"selectedPath,omitempty"`
-	CleanupEligible bool             `json:"cleanupEligible,omitempty"`
-	InstallError    string           `json:"installError,omitempty"`
-	UpdateError     string           `json:"updateError,omitempty"`
-	InstallHint     string           `json:"installHint,omitempty"`
-	Backend         string           `json:"backend,omitempty"`
-	BackendSource   string           `json:"backendSource,omitempty"`
-	ProjectPath     string           `json:"projectPath,omitempty"`
-	ProjectKind     string           `json:"projectKind,omitempty"`
-	LogPath         string           `json:"logPath,omitempty"`
-	Attempts        []BackendAttempt `json:"attempts,omitempty"`
-	TraceEnabled    bool             `json:"traceEnabled,omitempty"`
+	ID                 string           `json:"id"`
+	Name               string           `json:"name"`
+	Enabled            bool             `json:"enabled"`
+	Detected           bool             `json:"detected"`
+	Status             string           `json:"status,omitempty"`
+	Binary             string           `json:"binary"`
+	BinaryPath         string           `json:"binaryPath,omitempty"`
+	Source             string           `json:"source,omitempty"`
+	Installed          bool             `json:"installed"`
+	Running            bool             `json:"running"`
+	InstallState       string           `json:"installState,omitempty"`
+	RunningState       string           `json:"runningState,omitempty"`
+	ReadinessState     string           `json:"readinessState,omitempty"`
+	Version            string           `json:"version,omitempty"`
+	CachePath          string           `json:"cachePath,omitempty"`
+	SelectedPath       string           `json:"selectedPath,omitempty"`
+	CleanupEligible    bool             `json:"cleanupEligible,omitempty"`
+	InstallError       string           `json:"installError,omitempty"`
+	UpdateError        string           `json:"updateError,omitempty"`
+	InstallHint        string           `json:"installHint,omitempty"`
+	Backend            string           `json:"backend,omitempty"`
+	BackendSource      string           `json:"backendSource,omitempty"`
+	ProjectPath        string           `json:"projectPath,omitempty"`
+	ProjectKind        string           `json:"projectKind,omitempty"`
+	LogPath            string           `json:"logPath,omitempty"`
+	Attempts           []BackendAttempt `json:"attempts,omitempty"`
+	TraceEnabled       bool             `json:"traceEnabled,omitempty"`
+	Owner              string           `json:"owner,omitempty"`
+	DaemonState        string           `json:"daemonState,omitempty"`
+	DaemonPID          int              `json:"daemonPid,omitempty"`
+	DaemonClients      int              `json:"daemonClients,omitempty"`
+	DaemonTransport    string           `json:"daemonTransport,omitempty"`
+	DaemonEndpoint     string           `json:"daemonEndpoint,omitempty"`
+	DaemonIdleDeadline string           `json:"daemonIdleDeadline,omitempty"`
+	DaemonLeaseCount   int              `json:"daemonLeaseCount,omitempty"`
+	DaemonLeaseOwners  []string         `json:"daemonLeaseOwners,omitempty"`
 }
 
 // StartLanguage starts a single language server by adapter ID.
@@ -737,38 +768,53 @@ func (m *Manager) AvailableLanguages() []LanguageInfo {
 	statuses := m.RuntimeStatuses(context.Background())
 	out := make([]LanguageInfo, 0, len(statuses))
 	for _, status := range statuses {
-		info := LanguageInfo{
-			ID:              status.ID,
-			Name:            status.Name,
-			Status:          status.Status,
-			Binary:          status.Binary,
-			BinaryPath:      status.BinaryPath,
-			Source:          status.Source,
-			Installed:       status.InstallState == RuntimeInstallInstalled,
-			Running:         status.RunningState == RuntimeRunningRunning,
-			InstallState:    status.InstallState,
-			RunningState:    status.RunningState,
-			ReadinessState:  status.ReadinessState,
-			Version:         status.Version,
-			CachePath:       status.CachePath,
-			SelectedPath:    status.SelectedPath,
-			CleanupEligible: status.CleanupEligible,
-			InstallError:    status.InstallError,
-			UpdateError:     status.UpdateError,
-			Backend:         status.Backend,
-			BackendSource:   status.BackendSource,
-			ProjectPath:     status.ProjectPath,
-			ProjectKind:     status.ProjectKind,
-			LogPath:         status.LogPath,
-			Attempts:        status.Attempts,
-			TraceEnabled:    m.isTraceEnabled(status.ID),
-		}
+		info := LanguageInfoFromRuntimeStatus(status)
+		info.TraceEnabled = m.isTraceEnabled(status.ID)
 		if status.InstallState != RuntimeInstallInstalled {
 			info.InstallHint = status.InstallCmd
 		}
 		out = append(out, info)
 	}
 	return out
+}
+
+func LanguageInfoFromRuntimeStatus(status LanguageRuntimeStatus) LanguageInfo {
+	return LanguageInfo{
+		ID:                 status.ID,
+		Name:               status.Name,
+		Enabled:            status.Enabled,
+		Detected:           status.Detected,
+		Status:             status.Status,
+		Binary:             status.Binary,
+		BinaryPath:         status.BinaryPath,
+		Source:             status.Source,
+		Installed:          status.InstallState == RuntimeInstallInstalled,
+		Running:            status.RunningState == RuntimeRunningRunning,
+		InstallState:       status.InstallState,
+		RunningState:       status.RunningState,
+		ReadinessState:     status.ReadinessState,
+		Version:            status.Version,
+		CachePath:          status.CachePath,
+		SelectedPath:       status.SelectedPath,
+		CleanupEligible:    status.CleanupEligible,
+		InstallError:       status.InstallError,
+		UpdateError:        status.UpdateError,
+		Backend:            status.Backend,
+		BackendSource:      status.BackendSource,
+		ProjectPath:        status.ProjectPath,
+		ProjectKind:        status.ProjectKind,
+		LogPath:            status.LogPath,
+		Attempts:           status.Attempts,
+		Owner:              status.Owner,
+		DaemonState:        status.DaemonState,
+		DaemonPID:          status.DaemonPID,
+		DaemonClients:      status.DaemonClients,
+		DaemonTransport:    status.DaemonTransport,
+		DaemonEndpoint:     status.DaemonEndpoint,
+		DaemonIdleDeadline: status.DaemonIdleDeadline,
+		DaemonLeaseCount:   status.DaemonLeaseCount,
+		DaemonLeaseOwners:  append([]string(nil), status.DaemonLeaseOwners...),
+	}
 }
 
 func (m *Manager) registerAdapterLocked(adapter LanguageAdapter) error {

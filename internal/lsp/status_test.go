@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 type statusMockAdapter struct {
@@ -111,6 +112,50 @@ func TestCollectRuntimeStatusesCSharpIncludesBackendProjectLogAndAttempts(t *tes
 	}
 }
 
+func TestCollectRuntimeStatusesBinaryCheckUsesTimeout(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	adapter := statusMockAdapter{
+		id:         "go",
+		name:       "Go",
+		extensions: []string{".go"},
+		binaries:   []BinaryCandidate{{Name: "gopls", CheckArgs: []string{"version"}}},
+	}
+	detector := &Detector{
+		Registry: NewRegistry([]Language{{ID: "go", Name: "Go", Extensions: []string{".go"}}}),
+		LookPath: func(name string) (string, error) {
+			if name == "gopls" {
+				return "/opt/knowns/bin/gopls", nil
+			}
+			return "", errors.New("missing")
+		},
+		RunCheck: func(ctx context.Context, path string, args ...string) error {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatalf("RunCheck context has no deadline")
+			}
+			if remaining := time.Until(deadline); remaining <= 0 || remaining > runtimeStatusProbeTimeout+time.Second {
+				t.Fatalf("RunCheck deadline remaining = %s, want near %s", remaining, runtimeStatusProbeTimeout)
+			}
+			return nil
+		},
+	}
+
+	statuses := CollectRuntimeStatuses(context.Background(), RuntimeStatusOptions{
+		Root:     root,
+		Adapters: []LanguageAdapter{adapter},
+		Detector: detector,
+	})
+	if len(statuses) != 1 {
+		t.Fatalf("statuses = %#v, want one Go status", statuses)
+	}
+	if statuses[0].InstallState != RuntimeInstallInstalled {
+		t.Fatalf("InstallState = %q, want installed", statuses[0].InstallState)
+	}
+}
+
 func TestCollectRuntimeStatusesDartIncludesSDKProjectAndLog(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "pubspec.yaml"), []byte("name: sample\n"), 0o644); err != nil {
@@ -138,7 +183,10 @@ func TestCollectRuntimeStatusesDartIncludesSDKProjectAndLog(t *testing.T) {
 			return "", errors.New("missing")
 		},
 		RunCheck: func(context.Context, string, ...string) error { return nil },
-		RunCommand: func(_ context.Context, path string, args ...string) ([]byte, error) {
+		RunCommand: func(ctx context.Context, path string, args ...string) ([]byte, error) {
+			if _, ok := ctx.Deadline(); !ok {
+				t.Fatalf("RunCommand context has no deadline")
+			}
 			if path != "/opt/dart/bin/dart" || !reflect.DeepEqual(args, []string{"--version"}) {
 				t.Fatalf("RunCommand(%q, %#v), want dart --version", path, args)
 			}

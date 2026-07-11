@@ -52,12 +52,25 @@ type MemoryCounts struct {
 
 // SearchStatus reports semantic search readiness.
 type SearchStatus struct {
-	SemanticEnabled   bool       `json:"semanticEnabled"`
-	ModelConfigured   bool       `json:"modelConfigured"`
-	ModelInstalled    bool       `json:"modelInstalled"`
-	ProjectIndexReady bool       `json:"projectIndexReady"`
-	GlobalIndexReady  bool       `json:"globalIndexReady"`
-	LastReindex       *time.Time `json:"lastReindex,omitempty"`
+	SemanticEnabled   bool                      `json:"semanticEnabled"`
+	ModelConfigured   bool                      `json:"modelConfigured"`
+	ModelInstalled    bool                      `json:"modelInstalled"`
+	ProjectIndexReady bool                      `json:"projectIndexReady"`
+	GlobalIndexReady  bool                      `json:"globalIndexReady"`
+	LastReindex       *time.Time                `json:"lastReindex,omitempty"`
+	SemanticRuntime   *SemanticRuntimeReadiness `json:"semanticRuntime,omitempty"`
+}
+
+// SemanticRuntimeReadiness reports the shared semantic embedding runtime state.
+type SemanticRuntimeReadiness struct {
+	Enabled         bool       `json:"enabled"`
+	DisabledBy      string     `json:"disabledBy,omitempty"`
+	Loaded          bool       `json:"loaded"`
+	Entries         int        `json:"entries"`
+	ActiveSessions  int        `json:"activeSessions,omitempty"`
+	Consumers       int        `json:"consumers,omitempty"`
+	IdleTimeout     string     `json:"idleTimeout,omitempty"`
+	IdleUnloadAfter *time.Time `json:"idleUnloadAfter,omitempty"`
 }
 
 // RuntimeStatus reports runtime health. This is typically injected from a
@@ -73,30 +86,39 @@ type RuntimeStatus struct {
 
 // LSPStatus reports per-language LSP server availability.
 type LSPStatus struct {
-	ID              string               `json:"id"`
-	Name            string               `json:"name"`
-	Enabled         bool                 `json:"enabled"`
-	Detected        bool                 `json:"detected"`
-	Status          string               `json:"status"`
-	InstallState    string               `json:"installState"`
-	RunningState    string               `json:"runningState"`
-	ReadinessState  string               `json:"readinessState"`
-	Binary          string               `json:"binary,omitempty"`
-	BinaryPath      string               `json:"binaryPath,omitempty"`
-	Source          string               `json:"source,omitempty"`
-	Version         string               `json:"version,omitempty"`
-	CachePath       string               `json:"cachePath,omitempty"`
-	SelectedPath    string               `json:"selectedPath,omitempty"`
-	CleanupEligible bool                 `json:"cleanupEligible,omitempty"`
-	InstallError    string               `json:"installError,omitempty"`
-	UpdateError     string               `json:"updateError,omitempty"`
-	InstallCmd      string               `json:"installCmd,omitempty"`
-	Backend         string               `json:"backend,omitempty"`
-	BackendSource   string               `json:"backendSource,omitempty"`
-	ProjectPath     string               `json:"projectPath,omitempty"`
-	ProjectKind     string               `json:"projectKind,omitempty"`
-	LogPath         string               `json:"logPath,omitempty"`
-	Attempts        []lsp.BackendAttempt `json:"attempts,omitempty"`
+	ID                 string               `json:"id"`
+	Name               string               `json:"name"`
+	Enabled            bool                 `json:"enabled"`
+	Detected           bool                 `json:"detected"`
+	Status             string               `json:"status"`
+	InstallState       string               `json:"installState"`
+	RunningState       string               `json:"runningState"`
+	ReadinessState     string               `json:"readinessState"`
+	Binary             string               `json:"binary,omitempty"`
+	BinaryPath         string               `json:"binaryPath,omitempty"`
+	Source             string               `json:"source,omitempty"`
+	Version            string               `json:"version,omitempty"`
+	CachePath          string               `json:"cachePath,omitempty"`
+	SelectedPath       string               `json:"selectedPath,omitempty"`
+	CleanupEligible    bool                 `json:"cleanupEligible,omitempty"`
+	InstallError       string               `json:"installError,omitempty"`
+	UpdateError        string               `json:"updateError,omitempty"`
+	InstallCmd         string               `json:"installCmd,omitempty"`
+	Backend            string               `json:"backend,omitempty"`
+	BackendSource      string               `json:"backendSource,omitempty"`
+	ProjectPath        string               `json:"projectPath,omitempty"`
+	ProjectKind        string               `json:"projectKind,omitempty"`
+	LogPath            string               `json:"logPath,omitempty"`
+	Attempts           []lsp.BackendAttempt `json:"attempts,omitempty"`
+	Owner              string               `json:"owner,omitempty"`
+	DaemonState        string               `json:"daemonState,omitempty"`
+	DaemonPID          int                  `json:"daemonPid,omitempty"`
+	DaemonClients      int                  `json:"daemonClients,omitempty"`
+	DaemonTransport    string               `json:"daemonTransport,omitempty"`
+	DaemonEndpoint     string               `json:"daemonEndpoint,omitempty"`
+	DaemonIdleDeadline string               `json:"daemonIdleDeadline,omitempty"`
+	DaemonLeaseCount   int                  `json:"daemonLeaseCount,omitempty"`
+	DaemonLeaseOwners  []string             `json:"daemonLeaseOwners,omitempty"`
 }
 
 // PermissionStatus reports the active AI permission policy.
@@ -201,6 +223,7 @@ func buildKnowledge(store *storage.Store) *KnowledgeStatus {
 
 func buildSearch(store *storage.Store) *SearchStatus {
 	ss := &SearchStatus{}
+	ss.SemanticRuntime = buildSemanticRuntimeReadiness()
 
 	cfg, err := store.Config.Load()
 	if err != nil {
@@ -236,6 +259,31 @@ func buildSearch(store *storage.Store) *SearchStatus {
 	return ss
 }
 
+func buildSemanticRuntimeReadiness() *SemanticRuntimeReadiness {
+	status := search.ObservedSemanticRuntimeStatus()
+	readiness := &SemanticRuntimeReadiness{
+		Enabled:     status.Enabled,
+		DisabledBy:  status.DisabledBy,
+		Entries:     len(status.Entries),
+		IdleTimeout: status.IdleTimeout.Round(time.Second).String(),
+	}
+	var idleUnloadAfter time.Time
+	for _, entry := range status.Entries {
+		if entry.Loaded {
+			readiness.Loaded = true
+		}
+		readiness.ActiveSessions += entry.ActiveSessions
+		readiness.Consumers += len(entry.StoreConsumers)
+		if entry.IdleUnloadAfter.After(idleUnloadAfter) {
+			idleUnloadAfter = entry.IdleUnloadAfter
+		}
+	}
+	if !idleUnloadAfter.IsZero() {
+		readiness.IdleUnloadAfter = &idleUnloadAfter
+	}
+	return readiness
+}
+
 func buildLSP(projectPath string, store *storage.Store, runtimeStatuses []lsp.LanguageRuntimeStatus) []LSPStatus {
 	if runtimeStatuses == nil {
 		project, _ := store.Config.Load()
@@ -260,30 +308,39 @@ func buildLSP(projectPath string, store *storage.Store, runtimeStatuses []lsp.La
 
 func lspStatusFromRuntime(status lsp.LanguageRuntimeStatus) LSPStatus {
 	return LSPStatus{
-		ID:              status.ID,
-		Name:            status.Name,
-		Enabled:         status.Enabled,
-		Detected:        status.Detected,
-		Status:          status.Status,
-		InstallState:    status.InstallState,
-		RunningState:    status.RunningState,
-		ReadinessState:  status.ReadinessState,
-		Binary:          status.Binary,
-		BinaryPath:      status.BinaryPath,
-		Source:          status.Source,
-		Version:         status.Version,
-		CachePath:       status.CachePath,
-		SelectedPath:    status.SelectedPath,
-		CleanupEligible: status.CleanupEligible,
-		InstallError:    status.InstallError,
-		UpdateError:     status.UpdateError,
-		InstallCmd:      status.InstallCmd,
-		Backend:         status.Backend,
-		BackendSource:   status.BackendSource,
-		ProjectPath:     status.ProjectPath,
-		ProjectKind:     status.ProjectKind,
-		LogPath:         status.LogPath,
-		Attempts:        status.Attempts,
+		ID:                 status.ID,
+		Name:               status.Name,
+		Enabled:            status.Enabled,
+		Detected:           status.Detected,
+		Status:             status.Status,
+		InstallState:       status.InstallState,
+		RunningState:       status.RunningState,
+		ReadinessState:     status.ReadinessState,
+		Binary:             status.Binary,
+		BinaryPath:         status.BinaryPath,
+		Source:             status.Source,
+		Version:            status.Version,
+		CachePath:          status.CachePath,
+		SelectedPath:       status.SelectedPath,
+		CleanupEligible:    status.CleanupEligible,
+		InstallError:       status.InstallError,
+		UpdateError:        status.UpdateError,
+		InstallCmd:         status.InstallCmd,
+		Backend:            status.Backend,
+		BackendSource:      status.BackendSource,
+		ProjectPath:        status.ProjectPath,
+		ProjectKind:        status.ProjectKind,
+		LogPath:            status.LogPath,
+		Attempts:           status.Attempts,
+		Owner:              status.Owner,
+		DaemonState:        status.DaemonState,
+		DaemonPID:          status.DaemonPID,
+		DaemonClients:      status.DaemonClients,
+		DaemonTransport:    status.DaemonTransport,
+		DaemonEndpoint:     status.DaemonEndpoint,
+		DaemonIdleDeadline: status.DaemonIdleDeadline,
+		DaemonLeaseCount:   status.DaemonLeaseCount,
+		DaemonLeaseOwners:  append([]string(nil), status.DaemonLeaseOwners...),
 	}
 }
 

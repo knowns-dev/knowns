@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
@@ -32,33 +33,44 @@ const (
 	RuntimeSourceAuto   = "auto"
 )
 
+const runtimeStatusProbeTimeout = 2 * time.Second
+
 // LanguageRuntimeStatus is the canonical per-language LSP runtime snapshot used
 // by CLI, MCP/API status, and server routes.
 type LanguageRuntimeStatus struct {
-	ID              string           `json:"id"`
-	Name            string           `json:"name"`
-	Enabled         bool             `json:"enabled"`
-	Detected        bool             `json:"detected"`
-	Status          string           `json:"status"`
-	InstallState    string           `json:"install_state"`
-	RunningState    string           `json:"running_state"`
-	ReadinessState  string           `json:"readiness_state"`
-	Binary          string           `json:"binary,omitempty"`
-	BinaryPath      string           `json:"binary_path,omitempty"`
-	Source          string           `json:"source,omitempty"`
-	Version         string           `json:"version,omitempty"`
-	CachePath       string           `json:"cache_path,omitempty"`
-	SelectedPath    string           `json:"selected_path,omitempty"`
-	CleanupEligible bool             `json:"cleanup_eligible,omitempty"`
-	InstallError    string           `json:"install_error,omitempty"`
-	UpdateError     string           `json:"update_error,omitempty"`
-	InstallCmd      string           `json:"install_cmd,omitempty"`
-	Backend         string           `json:"backend,omitempty"`
-	BackendSource   string           `json:"backend_source,omitempty"`
-	ProjectPath     string           `json:"project_path,omitempty"`
-	ProjectKind     string           `json:"project_kind,omitempty"`
-	LogPath         string           `json:"log_path,omitempty"`
-	Attempts        []BackendAttempt `json:"attempts,omitempty"`
+	ID                 string           `json:"id"`
+	Name               string           `json:"name"`
+	Enabled            bool             `json:"enabled"`
+	Detected           bool             `json:"detected"`
+	Status             string           `json:"status"`
+	InstallState       string           `json:"install_state"`
+	RunningState       string           `json:"running_state"`
+	ReadinessState     string           `json:"readiness_state"`
+	Binary             string           `json:"binary,omitempty"`
+	BinaryPath         string           `json:"binary_path,omitempty"`
+	Source             string           `json:"source,omitempty"`
+	Version            string           `json:"version,omitempty"`
+	CachePath          string           `json:"cache_path,omitempty"`
+	SelectedPath       string           `json:"selected_path,omitempty"`
+	CleanupEligible    bool             `json:"cleanup_eligible,omitempty"`
+	InstallError       string           `json:"install_error,omitempty"`
+	UpdateError        string           `json:"update_error,omitempty"`
+	InstallCmd         string           `json:"install_cmd,omitempty"`
+	Backend            string           `json:"backend,omitempty"`
+	BackendSource      string           `json:"backend_source,omitempty"`
+	ProjectPath        string           `json:"project_path,omitempty"`
+	ProjectKind        string           `json:"project_kind,omitempty"`
+	LogPath            string           `json:"log_path,omitempty"`
+	Attempts           []BackendAttempt `json:"attempts,omitempty"`
+	Owner              string           `json:"owner,omitempty"`
+	DaemonState        string           `json:"daemon_state,omitempty"`
+	DaemonPID          int              `json:"daemon_pid,omitempty"`
+	DaemonClients      int              `json:"daemon_clients,omitempty"`
+	DaemonTransport    string           `json:"daemon_transport,omitempty"`
+	DaemonEndpoint     string           `json:"daemon_endpoint,omitempty"`
+	DaemonIdleDeadline string           `json:"daemon_idle_deadline,omitempty"`
+	DaemonLeaseCount   int              `json:"daemon_lease_count,omitempty"`
+	DaemonLeaseOwners  []string         `json:"daemon_lease_owners,omitempty"`
 }
 
 // RuntimeStatusOptions configures side-effect-light LSP runtime inspection.
@@ -265,7 +277,10 @@ func resolveAdapterBinary(ctx context.Context, adapter LanguageAdapter, override
 			continue
 		}
 		if runCheck != nil && len(candidate.CheckArgs) > 0 {
-			if err := runCheck(ctx, path, candidate.CheckArgs...); err != nil {
+			checkCtx, cancel := context.WithTimeout(ctx, runtimeStatusProbeTimeout)
+			err := runCheck(checkCtx, path, candidate.CheckArgs...)
+			cancel()
+			if err != nil {
 				continue
 			}
 		}
@@ -354,7 +369,9 @@ func applyDartStatus(ctx context.Context, status *LanguageRuntimeStatus, opts Ru
 	if status.BinaryPath == "" || runCommand == nil {
 		return
 	}
-	output, err := runCommand(ctx, status.BinaryPath, "--version")
+	checkCtx, cancel := context.WithTimeout(ctx, runtimeStatusProbeTimeout)
+	output, err := runCommand(checkCtx, status.BinaryPath, "--version")
+	cancel()
 	if err != nil {
 		return
 	}

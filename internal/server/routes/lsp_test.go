@@ -54,6 +54,7 @@ func (a routeLSPAdapter) SupportsImplementation() bool                          
 func (a routeLSPAdapter) SupportsReferences() bool                               { return true }
 
 func TestLSPRoutesPatchConfigPersistsAndRefreshesManager(t *testing.T) {
+	t.Setenv("KNOWNS_LSP_DAEMON", "0")
 	store := setupLSPRouteStore(t)
 	root := filepath.Dir(store.Root)
 	manager := lsp.NewManager(root, lsp.Config{})
@@ -93,6 +94,7 @@ func TestLSPRoutesRestartLogsAndTrace(t *testing.T) {
 		runRouteFakeLSPServer()
 		return
 	}
+	t.Setenv("KNOWNS_LSP_DAEMON", "0")
 
 	store := setupLSPRouteStore(t)
 	root := filepath.Dir(store.Root)

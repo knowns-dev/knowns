@@ -6,6 +6,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/decisionreview"
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/search"
 	"github.com/spf13/cobra"
 )
 
@@ -78,6 +79,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	decision = result.Decision
+	search.BestEffortIndexDecision(store, decision.ID)
 	if isJSON(cmd) {
 		printJSON(decision)
 		return nil
@@ -173,6 +175,7 @@ func runDecisionLink(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("link decision: %w", err)
 	}
+	search.BestEffortIndexDecision(store, decision.ID)
 	if isJSON(cmd) {
 		printJSON(decision)
 		return nil
@@ -187,6 +190,8 @@ func runDecisionSupersede(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("supersede decision: %w", err)
 	}
+	search.BestEffortIndexDecision(store, oldDecision.ID)
+	search.BestEffortIndexDecision(store, newDecision.ID)
 	result := map[string]any{
 		"superseded": oldDecision,
 		"current":    newDecision,

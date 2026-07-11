@@ -303,18 +303,7 @@ func (s *Service) semanticMatches(candidate *models.DecisionEntry) ([]Match, err
 	if s.SemanticSearch != nil {
 		return s.SemanticSearch(candidate, s.limit())
 	}
-	embedder, vecStore, err := search.InitSemantic(s.Store)
-	if err != nil {
-		return nil, err
-	}
-	if embedder != nil {
-		defer embedder.Close()
-	}
-	if vecStore != nil {
-		defer vecStore.Close()
-	}
-	engine := search.NewEngine(s.Store, embedder, vecStore)
-	results, err := engine.Search(search.SearchOptions{
+	response, err := search.SearchWithRuntime(s.Store, search.SearchOptions{
 		Query: candidateSearchText(candidate),
 		Type:  "decision",
 		Mode:  string(search.ModeSemantic),
@@ -323,8 +312,8 @@ func (s *Service) semanticMatches(candidate *models.DecisionEntry) ([]Match, err
 	if err != nil {
 		return nil, err
 	}
-	matches := make([]Match, 0, len(results))
-	for _, result := range results {
+	matches := make([]Match, 0, len(response.Results))
+	for _, result := range response.Results {
 		if result.ID == "" || result.ID == candidate.ID || result.Type != "decision" || result.Score < s.threshold() {
 			continue
 		}

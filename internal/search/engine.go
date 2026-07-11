@@ -73,7 +73,10 @@ func (e *Engine) Search(opts SearchOptions) ([]models.SearchResult, error) {
 	}
 
 	mode := SearchMode(opts.Mode)
-	semanticAvailable := e.semanticAvailableForType(opts.Type)
+	semanticAvailable := false
+	if mode != ModeKeyword {
+		semanticAvailable = e.semanticAvailableForType(opts.Type)
+	}
 
 	// Auto-detect mode: if semantic not available, fall back to keyword.
 	if mode != ModeKeyword && !semanticAvailable {
@@ -113,7 +116,10 @@ func (e *Engine) Search(opts SearchOptions) ([]models.SearchResult, error) {
 
 // Retrieve executes mixed-source retrieval and assembles a context pack.
 func (e *Engine) Retrieve(opts models.RetrievalOptions) (*models.RetrievalResponse, error) {
-	semanticAvailable := e.semanticAvailableForType(typeFilterFromSources(opts.SourceTypes))
+	semanticAvailable := false
+	if opts.Mode != string(ModeKeyword) {
+		semanticAvailable = e.semanticAvailableForType(typeFilterFromSources(opts.SourceTypes))
+	}
 	searchOpts := SearchOptions{
 		Query:             opts.Query,
 		Mode:              opts.Mode,
@@ -994,8 +1000,7 @@ func (e *Engine) semanticSearchSingleStore(query string, opts SearchOptions, mem
 type memorySemanticStore struct {
 	engine      *Engine
 	store       *storage.Store
-	embedder    EmbedderProvider
-	vecStore    VectorStore
+	session     *SemanticSession
 	memoryLayer string
 	storeName   string
 }
@@ -1005,23 +1010,21 @@ func initMemorySemanticStores(projectStore *storage.Store) ([]memorySemanticStor
 	if projectStore == nil {
 		return stores, nil
 	}
-	if embedder, vecStore, err := InitSemantic(projectStore); err == nil && embedder != nil && vecStore != nil {
+	if session, err := InitSemanticRuntimeSession(projectStore); err == nil && session != nil && session.Embedder != nil && session.VecStore != nil {
 		stores = append(stores, memorySemanticStore{
-			engine:      NewEngine(projectStore, embedder, vecStore),
+			engine:      session.Engine(projectStore),
 			store:       projectStore,
-			embedder:    embedder,
-			vecStore:    vecStore,
+			session:     session,
 			memoryLayer: models.MemoryLayerProject,
 			storeName:   memoryStoreProject,
 		})
 	}
 	globalStore := storage.NewGlobalSemanticStore()
-	if embedder, vecStore, err := InitSemantic(globalStore); err == nil && embedder != nil && vecStore != nil {
+	if session, err := InitSemanticRuntimeSession(globalStore); err == nil && session != nil && session.Embedder != nil && session.VecStore != nil {
 		stores = append(stores, memorySemanticStore{
-			engine:      NewEngine(globalStore, embedder, vecStore),
+			engine:      session.Engine(globalStore),
 			store:       globalStore,
-			embedder:    embedder,
-			vecStore:    vecStore,
+			session:     session,
 			memoryLayer: models.MemoryLayerGlobal,
 			storeName:   memoryStoreGlobal,
 		})
@@ -1031,11 +1034,8 @@ func initMemorySemanticStores(projectStore *storage.Store) ([]memorySemanticStor
 
 func closeMemorySemanticStores(stores []memorySemanticStore) {
 	for _, semStore := range stores {
-		if semStore.embedder != nil {
-			semStore.embedder.Close()
-		}
-		if semStore.vecStore != nil {
-			semStore.vecStore.Close()
+		if semStore.session != nil {
+			_ = semStore.session.Close()
 		}
 	}
 }

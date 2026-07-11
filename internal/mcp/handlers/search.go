@@ -152,19 +152,11 @@ func handleSearch(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp
 		IncludeHistorical: includeHistorical,
 	}
 
-	embedder, vecStore, _ := search.InitSemantic(store)
-	if embedder != nil {
-		defer embedder.Close()
-	}
-	if vecStore != nil {
-		defer vecStore.Close()
-	}
-
-	engine := search.NewEngine(store, embedder, vecStore)
-	results, err := engine.Search(opts)
+	response, err := search.SearchWithRuntime(store, opts)
 	if err != nil {
 		return errResult(err.Error())
 	}
+	results := response.Results
 	if results == nil {
 		results = []models.SearchResult{}
 	}
@@ -176,6 +168,9 @@ func handleSearch(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp
 			"results":      results,
 			"_projectRoot": store.Root,
 			"_hint":        "Search returned 0 results. Verify the active project is correct via project({ action: \"current\" }). Use project({ action: \"set\" }) to switch if needed.",
+		}
+		if response.Runtime != nil {
+			wrapper["_runtime"] = response.Runtime
 		}
 		out, _ := json.MarshalIndent(wrapper, "", "  ")
 		return mcp.NewToolResultText(string(out)), nil
@@ -212,16 +207,7 @@ func handleRetrieve(getStore func() *storage.Store, req mcp.CallToolRequest) (*m
 	expandRefs := boolArg(args, "expandReferences")
 	sourceTypes := stringArrayArg(args, "sourceTypes")
 
-	embedder, vecStore, _ := search.InitSemantic(store)
-	if embedder != nil {
-		defer embedder.Close()
-	}
-	if vecStore != nil {
-		defer vecStore.Close()
-	}
-
-	engine := search.NewEngine(store, embedder, vecStore)
-	response, err := engine.Retrieve(models.RetrievalOptions{
+	response, runtimeMeta, err := search.RetrieveWithRuntime(store, models.RetrievalOptions{
 		Query:             query,
 		Mode:              mode,
 		Limit:             limit,
@@ -239,6 +225,17 @@ func handleRetrieve(getStore func() *storage.Store, req mcp.CallToolRequest) (*m
 	}
 
 	normalizeRetrievalScores(response.Candidates)
+	if runtimeMeta != nil {
+		wrapper := map[string]any{
+			"query":       response.Query,
+			"mode":        response.Mode,
+			"candidates":  response.Candidates,
+			"contextPack": response.ContextPack,
+			"_runtime":    runtimeMeta,
+		}
+		out, _ := json.MarshalIndent(wrapper, "", "  ")
+		return mcp.NewToolResultText(string(out)), nil
+	}
 	out, _ := json.MarshalIndent(response, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }

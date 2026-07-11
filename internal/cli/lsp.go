@@ -10,34 +10,44 @@ import (
 
 	"github.com/howznguyen/knowns/internal/lsp"
 	"github.com/howznguyen/knowns/internal/lsp/adapters"
+	"github.com/howznguyen/knowns/internal/lspdaemon"
 	"github.com/spf13/cobra"
 )
 
 type lspListRow struct {
-	ID              string               `json:"id"`
-	Name            string               `json:"name"`
-	Enabled         bool                 `json:"enabled"`
-	Detected        bool                 `json:"detected"`
-	Status          string               `json:"status"`
-	InstallState    string               `json:"install_state"`
-	RunningState    string               `json:"running_state"`
-	ReadinessState  string               `json:"readiness_state"`
-	Binary          string               `json:"binary,omitempty"`
-	BinaryPath      string               `json:"binary_path,omitempty"`
-	Source          string               `json:"source,omitempty"`
-	Version         string               `json:"version,omitempty"`
-	CachePath       string               `json:"cache_path,omitempty"`
-	SelectedPath    string               `json:"selected_path,omitempty"`
-	CleanupEligible bool                 `json:"cleanup_eligible,omitempty"`
-	InstallError    string               `json:"install_error,omitempty"`
-	UpdateError     string               `json:"update_error,omitempty"`
-	InstallCmd      string               `json:"install_cmd,omitempty"`
-	Backend         string               `json:"backend,omitempty"`
-	BackendSource   string               `json:"backend_source,omitempty"`
-	ProjectPath     string               `json:"project_path,omitempty"`
-	ProjectKind     string               `json:"project_kind,omitempty"`
-	LogPath         string               `json:"log_path,omitempty"`
-	Attempts        []lsp.BackendAttempt `json:"attempts,omitempty"`
+	ID                 string               `json:"id"`
+	Name               string               `json:"name"`
+	Enabled            bool                 `json:"enabled"`
+	Detected           bool                 `json:"detected"`
+	Status             string               `json:"status"`
+	InstallState       string               `json:"install_state"`
+	RunningState       string               `json:"running_state"`
+	ReadinessState     string               `json:"readiness_state"`
+	Binary             string               `json:"binary,omitempty"`
+	BinaryPath         string               `json:"binary_path,omitempty"`
+	Source             string               `json:"source,omitempty"`
+	Version            string               `json:"version,omitempty"`
+	CachePath          string               `json:"cache_path,omitempty"`
+	SelectedPath       string               `json:"selected_path,omitempty"`
+	CleanupEligible    bool                 `json:"cleanup_eligible,omitempty"`
+	InstallError       string               `json:"install_error,omitempty"`
+	UpdateError        string               `json:"update_error,omitempty"`
+	InstallCmd         string               `json:"install_cmd,omitempty"`
+	Backend            string               `json:"backend,omitempty"`
+	BackendSource      string               `json:"backend_source,omitempty"`
+	ProjectPath        string               `json:"project_path,omitempty"`
+	ProjectKind        string               `json:"project_kind,omitempty"`
+	LogPath            string               `json:"log_path,omitempty"`
+	Attempts           []lsp.BackendAttempt `json:"attempts,omitempty"`
+	Owner              string               `json:"owner,omitempty"`
+	DaemonState        string               `json:"daemon_state,omitempty"`
+	DaemonPID          int                  `json:"daemon_pid,omitempty"`
+	DaemonClients      int                  `json:"daemon_clients,omitempty"`
+	DaemonTransport    string               `json:"daemon_transport,omitempty"`
+	DaemonEndpoint     string               `json:"daemon_endpoint,omitempty"`
+	DaemonIdleDeadline string               `json:"daemon_idle_deadline,omitempty"`
+	DaemonLeaseCount   int                  `json:"daemon_lease_count,omitempty"`
+	DaemonLeaseOwners  []string             `json:"daemon_lease_owners,omitempty"`
 }
 
 func newLspCmd() *cobra.Command {
@@ -84,8 +94,15 @@ func runLspList(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "Language\tStatus\tBackend\tRuntime\tInstall\tLog")
+	fmt.Fprintln(w, "Language\tStatus\tOwner\tBackend\tRuntime\tInstall\tLog")
 	for _, row := range rows {
+		owner := row.Owner
+		if owner == "" {
+			owner = "-"
+		}
+		if row.DaemonState != "" {
+			owner += " (" + row.DaemonState + ")"
+		}
 		backend := "-"
 		if row.Backend != "" {
 			backend = row.Backend
@@ -117,7 +134,7 @@ func runLspList(cmd *cobra.Command, args []string) error {
 		if logPath == "" {
 			logPath = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", row.ID, row.Status, backend, runtime, install, logPath)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.ID, row.Status, owner, backend, runtime, install, logPath)
 	}
 	return w.Flush()
 }
@@ -211,7 +228,20 @@ func runLspCleanup(cmd *cobra.Command, args []string) error {
 
 func collectLspRows(ctx context.Context) []lspListRow {
 	projectRoot := currentProjectRoot()
-	statuses := getLSPManagerForRoot(projectRoot).RuntimeStatuses(ctx)
+	if lspdaemon.DisabledByEnv() {
+		fmt.Fprintln(os.Stderr, "warn: "+lspdaemon.DisabledWarning())
+		statuses := lspdaemon.AnnotateLocalStatuses(getLSPManagerForRoot(projectRoot).RuntimeStatuses(ctx), lspdaemon.DaemonStateDisabledByEnv)
+		rows := make([]lspListRow, 0, len(statuses))
+		for _, status := range statuses {
+			rows = append(rows, lspRowFromRuntime(status))
+		}
+		return rows
+	}
+	statuses, err := collectDaemonLSPStatuses(ctx, projectRoot)
+	if err != nil {
+		statuses = getLSPManagerForRoot(projectRoot).RuntimeStatuses(ctx)
+		statuses = lspdaemon.AnnotateLocalStatuses(statuses, lspdaemon.DaemonStateUnavailable)
+	}
 	rows := make([]lspListRow, 0, len(statuses))
 	for _, status := range statuses {
 		rows = append(rows, lspRowFromRuntime(status))
@@ -219,32 +249,49 @@ func collectLspRows(ctx context.Context) []lspListRow {
 	return rows
 }
 
+func collectDaemonLSPStatuses(ctx context.Context, projectRoot string) ([]lsp.LanguageRuntimeStatus, error) {
+	client, err := lspdaemon.EnsureClient(ctx, projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	return client.RuntimeStatuses(ctx)
+}
+
 func lspRowFromRuntime(status lsp.LanguageRuntimeStatus) lspListRow {
 	return lspListRow{
-		ID:              status.ID,
-		Name:            status.Name,
-		Enabled:         status.Enabled,
-		Detected:        status.Detected,
-		Status:          status.Status,
-		InstallState:    status.InstallState,
-		RunningState:    status.RunningState,
-		ReadinessState:  status.ReadinessState,
-		Binary:          status.Binary,
-		BinaryPath:      status.BinaryPath,
-		Source:          status.Source,
-		Version:         status.Version,
-		CachePath:       status.CachePath,
-		SelectedPath:    status.SelectedPath,
-		CleanupEligible: status.CleanupEligible,
-		InstallError:    status.InstallError,
-		UpdateError:     status.UpdateError,
-		InstallCmd:      status.InstallCmd,
-		Backend:         status.Backend,
-		BackendSource:   status.BackendSource,
-		ProjectPath:     status.ProjectPath,
-		ProjectKind:     status.ProjectKind,
-		LogPath:         status.LogPath,
-		Attempts:        status.Attempts,
+		ID:                 status.ID,
+		Name:               status.Name,
+		Enabled:            status.Enabled,
+		Detected:           status.Detected,
+		Status:             status.Status,
+		InstallState:       status.InstallState,
+		RunningState:       status.RunningState,
+		ReadinessState:     status.ReadinessState,
+		Binary:             status.Binary,
+		BinaryPath:         status.BinaryPath,
+		Source:             status.Source,
+		Version:            status.Version,
+		CachePath:          status.CachePath,
+		SelectedPath:       status.SelectedPath,
+		CleanupEligible:    status.CleanupEligible,
+		InstallError:       status.InstallError,
+		UpdateError:        status.UpdateError,
+		InstallCmd:         status.InstallCmd,
+		Backend:            status.Backend,
+		BackendSource:      status.BackendSource,
+		ProjectPath:        status.ProjectPath,
+		ProjectKind:        status.ProjectKind,
+		LogPath:            status.LogPath,
+		Attempts:           status.Attempts,
+		Owner:              status.Owner,
+		DaemonState:        status.DaemonState,
+		DaemonPID:          status.DaemonPID,
+		DaemonClients:      status.DaemonClients,
+		DaemonTransport:    status.DaemonTransport,
+		DaemonEndpoint:     status.DaemonEndpoint,
+		DaemonIdleDeadline: status.DaemonIdleDeadline,
+		DaemonLeaseCount:   status.DaemonLeaseCount,
+		DaemonLeaseOwners:  append([]string(nil), status.DaemonLeaseOwners...),
 	}
 }
 

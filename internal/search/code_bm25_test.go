@@ -53,9 +53,9 @@ func (s *Session) Validate() bool {
 			},
 			Children: []lsp.DocumentSymbol{
 				{
-					Name: "Validate",
+					Name:   "Validate",
 					Detail: "func (s *Session) Validate() bool",
-					Kind: 6, // Method
+					Kind:   6, // Method
 					Range: lsp.Range{
 						Start: lsp.Position{Line: 13, Character: 0},
 						End:   lsp.Position{Line: 15, Character: 1},

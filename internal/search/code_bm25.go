@@ -70,19 +70,19 @@ func codeSymbolKindString(kind int) string {
 
 // CodeSummary is a BM25-indexable summary of a single LSP symbol.
 type CodeSummary struct {
-	Name           string   // symbol name e.g. "handleCodeFind"
-	Kind           string   // human-readable kind e.g. "Function", "Method", "Class"
-	Container      string   // owner/parent e.g. "handlers" or "Server"
-	Signature      string   // detail/type info from LSP
-	Path           string   // relative file path
-	Package        string   // directory or module context
-	Comments       string   // docstrings/comments extracted from source
-	Relationships  string   // cheap relationship context (calls, imports, implements keywords found in body)
-	StartLine      int      // 1-based start line for LSP navigation
-	EndLine        int      // 1-based end line for LSP navigation
-	StartCharacter int      // 1-based start character
-	SelectionStart int      // 1-based selection start line
-	SelectionChar  int      // 1-based selection start character
+	Name           string // symbol name e.g. "handleCodeFind"
+	Kind           string // human-readable kind e.g. "Function", "Method", "Class"
+	Container      string // owner/parent e.g. "handlers" or "Server"
+	Signature      string // detail/type info from LSP
+	Path           string // relative file path
+	Package        string // directory or module context
+	Comments       string // docstrings/comments extracted from source
+	Relationships  string // cheap relationship context (calls, imports, implements keywords found in body)
+	StartLine      int    // 1-based start line for LSP navigation
+	EndLine        int    // 1-based end line for LSP navigation
+	StartCharacter int    // 1-based start character
+	SelectionStart int    // 1-based selection start line
+	SelectionChar  int    // 1-based selection start character
 }
 
 // CodeBM25Result is a single BM25 code discovery result with LSP navigation metadata.

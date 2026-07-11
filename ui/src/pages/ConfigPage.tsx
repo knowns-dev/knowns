@@ -1458,20 +1458,55 @@ export default function ConfigPage() {
 		</div>
 	);
 
-	const statusDotClass = (status: RuntimeService["status"]) => {
-		switch (status) {
-			case "running":
-				return "bg-emerald-500";
+		const statusDotClass = (status: RuntimeService["status"]) => {
+			switch (status) {
+				case "running":
+					return "bg-emerald-500";
 			case "error":
 				return "bg-red-500";
 			default:
 				return "bg-gray-400";
-		}
-	};
+			}
+		};
 
-	const renderRuntime = () => (
-		<div>
-			<SectionHeader icon={Monitor} title="Runtime Services" description="Managed sub-processes for this project" />
+		const runtimeDetailValue = (service: RuntimeService, key: string) => {
+			const value = service.details?.[key];
+			if (value === undefined || value === null || value === "") return "";
+			return String(value);
+		};
+
+		const runtimeServiceDetails = (service: RuntimeService) => {
+			const items: Array<{ key: string; label: string; title?: string; destructive?: boolean }> = [];
+			const add = (key: string, label: string, options: { title?: string; destructive?: boolean } = {}) => {
+				const value = runtimeDetailValue(service, key);
+				if (value) items.push({ key, label: `${label}=${value}`, ...options });
+			};
+			add("provider", "provider");
+			add("model", "model");
+			add("dimensions", "dims");
+			add("runtime_loaded", "loaded");
+			add("active_sessions", "sessions");
+			const consumers = runtimeDetailValue(service, "consumers");
+			if (consumers) {
+				const count = consumers.split(",").filter((item) => item.trim()).length;
+				items.push({ key: "consumers", label: `consumers=${count}`, title: consumers });
+			}
+			add("running_jobs", "jobs");
+			add("queued_jobs", "queued");
+			add("idle_unload_after", "idle");
+			if (runtimeDetailValue(service, "degraded") === "true") {
+				items.push({ key: "degraded", label: "degraded", destructive: true });
+			}
+			const error = runtimeDetailValue(service, "last_error") || runtimeDetailValue(service, "error");
+			if (error) items.push({ key: "error", label: `error=${error}`, title: error, destructive: true });
+			const log = runtimeDetailValue(service, "runtime_log");
+			if (log) items.push({ key: "runtime_log", label: `log=${log}`, title: log });
+			return items;
+		};
+
+		const renderRuntime = () => (
+			<div>
+				<SectionHeader icon={Monitor} title="Runtime Services" description="Managed sub-processes for this project" />
 
 			<FieldRow label="Services" hint="Live process status from runtime">
 				<div className="space-y-3">
@@ -1493,12 +1528,13 @@ export default function ConfigPage() {
 						</div>
 					) : (
 						<div className="space-y-2">
-							{services.map((service) => {
-								const running = service.status === "running";
-								const disabled = service.status === "disabled" || !service.enabledInConfig;
-								return (
-									<div key={`${service.type}-${service.name}`} className="rounded-lg border bg-card p-3">
-										<div className="flex items-start justify-between gap-3">
+								{services.map((service) => {
+									const running = service.status === "running";
+									const disabled = service.status === "disabled" || !service.enabledInConfig;
+									const details = runtimeServiceDetails(service);
+									return (
+										<div key={`${service.type}-${service.name}`} className="rounded-lg border bg-card p-3">
+											<div className="flex items-start justify-between gap-3">
 											<div className="flex items-start gap-3 min-w-0">
 												<span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${statusDotClass(service.status)}`} />
 												<div className="min-w-0">
@@ -1509,12 +1545,29 @@ export default function ConfigPage() {
 													</div>
 													<div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
 														{running && service.pid ? <span>pid={service.pid}</span> : null}
-														{running && service.port ? <span>:{service.port}</span> : null}
-														{running && service.uptime ? <span>uptime={service.uptime}</span> : null}
-													</div>
-													{disabled && (
-														<div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-															<PowerOff className="h-3.5 w-3.5" />
+															{running && service.port ? <span>:{service.port}</span> : null}
+															{running && service.uptime ? <span>uptime={service.uptime}</span> : null}
+														</div>
+														{details.length > 0 && (
+															<div className="mt-2 flex flex-wrap gap-1.5">
+																{details.map((item) => (
+																	<span
+																		key={item.key}
+																		title={item.title || item.label}
+																		className={`max-w-full truncate rounded-md border px-2 py-0.5 text-xs ${
+																			item.destructive
+																				? "border-destructive/40 bg-destructive/10 text-destructive"
+																				: "border-border bg-muted/40 text-muted-foreground"
+																		}`}
+																	>
+																		{item.label}
+																	</span>
+																))}
+															</div>
+														)}
+														{disabled && (
+															<div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+																<PowerOff className="h-3.5 w-3.5" />
 															Enable via settings or config set to start this service.
 														</div>
 													)}

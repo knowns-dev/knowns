@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/howznguyen/knowns/internal/decisionreview"
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 )
 
@@ -114,6 +115,7 @@ func (dr *DecisionRoutes) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	decision := result.Decision
+	search.BestEffortIndexDecision(dr.getStore(), decision.ID)
 	if dr.sse != nil {
 		dr.sse.Broadcast(SSEEvent{Type: "decisions:created", Data: map[string]any{"decision": decision}})
 	}
@@ -164,6 +166,7 @@ func (dr *DecisionRoutes) link(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	search.BestEffortIndexDecision(dr.getStore(), decision.ID)
 	if dr.sse != nil {
 		dr.sse.Broadcast(SSEEvent{Type: "decisions:updated", Data: map[string]any{"decision": decision}})
 	}
@@ -186,6 +189,8 @@ func (dr *DecisionRoutes) supersede(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	search.BestEffortIndexDecision(dr.getStore(), oldDecision.ID)
+	search.BestEffortIndexDecision(dr.getStore(), newDecision.ID)
 	if dr.sse != nil {
 		dr.sse.Broadcast(SSEEvent{Type: "decisions:updated", Data: map[string]any{"superseded": oldDecision, "current": newDecision}})
 	}
@@ -232,6 +237,9 @@ func (dr *DecisionRoutes) resolve(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	for _, id := range result.ChangedIDs {
+		search.BestEffortIndexDecision(dr.getStore(), id)
 	}
 	if dr.sse != nil && len(result.ChangedIDs) > 0 {
 		dr.sse.Broadcast(SSEEvent{Type: "decisions:updated", Data: map[string]any{"result": result}})

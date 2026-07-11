@@ -30,6 +30,14 @@ func RegisterCodeTool(s *server.MCPServer, getStore func() *storage.Store, getLS
 	if len(getLSPManager) > 0 && getLSPManager[0] != nil {
 		lspManager = getLSPManager[0]
 	}
+	RegisterCodeToolWithRuntime(s, getStore, codeRuntimeFromLSPManagerProvider(lspManager))
+}
+
+// RegisterCodeToolWithRuntime registers code tools against an abstract runtime.
+func RegisterCodeToolWithRuntime(s *server.MCPServer, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime) {
+	if getCodeRuntime == nil {
+		getCodeRuntime = func() CodeRuntime { return nil }
+	}
 	s.AddTool(
 		mcp.NewTool("code",
 			mcp.WithDescription("Code intelligence operations. Use 'action' to specify: symbols, find, definition, references, implementations, diagnostics, rename, replace, replace_body, insert, delete. Symbols and find return compact JSON by default; set verbose=true for raw/full LSP-style output."),
@@ -97,7 +105,7 @@ func RegisterCodeTool(s *server.MCPServer, getStore func() *storage.Store, getLS
 			}
 			switch action {
 			case "symbols":
-				return handleCodeSymbols(ctx, getStore, lspManager, req)
+				return handleCodeSymbols(ctx, getStore, getCodeRuntime, req)
 			case "search":
 				return errResult("Action 'search' has been removed. Use LSP actions: symbols, definition, references, implementations, diagnostics.")
 			case "deps":
@@ -105,25 +113,25 @@ func RegisterCodeTool(s *server.MCPServer, getStore func() *storage.Store, getLS
 			case "graph":
 				return errResult("Action 'graph' has been removed.")
 			case "definition":
-				return handleCodeDefinition(ctx, getStore, lspManager, req)
+				return handleCodeDefinition(ctx, getStore, getCodeRuntime, req)
 			case "references":
-				return handleCodeReferences(ctx, getStore, lspManager, req)
+				return handleCodeReferences(ctx, getStore, getCodeRuntime, req)
 			case "implementations":
-				return handleCodeImplementations(ctx, getStore, lspManager, req)
+				return handleCodeImplementations(ctx, getStore, getCodeRuntime, req)
 			case "diagnostics":
-				return handleCodeDiagnostics(ctx, getStore, lspManager, req)
+				return handleCodeDiagnostics(ctx, getStore, getCodeRuntime, req)
 			case "rename":
-				return handleCodeRename(ctx, getStore, lspManager, req)
+				return handleCodeRename(ctx, getStore, getCodeRuntime, req)
 			case "replace":
-				return handleCodeReplace(ctx, getStore, lspManager, req)
+				return handleCodeReplace(ctx, getStore, getCodeRuntime, req)
 			case "replace_body":
-				return handleCodeReplaceBody(ctx, getStore, lspManager, req)
+				return handleCodeReplaceBody(ctx, getStore, getCodeRuntime, req)
 			case "insert":
-				return handleCodeInsert(ctx, getStore, lspManager, req)
+				return handleCodeInsert(ctx, getStore, getCodeRuntime, req)
 			case "delete":
-				return handleCodeDelete(ctx, getStore, lspManager, req)
+				return handleCodeDelete(ctx, getStore, getCodeRuntime, req)
 			case "find":
-				return handleCodeFind(ctx, getStore, lspManager, req)
+				return handleCodeFind(ctx, getStore, getCodeRuntime, req)
 			default:
 				return errResultf("unsupported action: %s", action)
 			}
@@ -131,8 +139,8 @@ func RegisterCodeTool(s *server.MCPServer, getStore func() *storage.Store, getLS
 	)
 }
 
-func handleCodeDefinition(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	store, mgr, absPath, query, err := lspSymbolRequest(ctx, getStore, getLSPManager, req)
+func handleCodeDefinition(ctx context.Context, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store, mgr, absPath, query, err := lspSymbolRequest(ctx, getStore, getCodeRuntime, req)
 	if err != nil {
 		return errResult(err.Error())
 	}
@@ -153,8 +161,8 @@ func handleCodeDefinition(ctx context.Context, getStore func() *storage.Store, g
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func handleCodeReferences(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	store, mgr, absPath, query, err := lspSymbolRequest(ctx, getStore, getLSPManager, req)
+func handleCodeReferences(ctx context.Context, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store, mgr, absPath, query, err := lspSymbolRequest(ctx, getStore, getCodeRuntime, req)
 	if err != nil {
 		return errResult(err.Error())
 	}
@@ -183,8 +191,8 @@ func handleCodeReferences(ctx context.Context, getStore func() *storage.Store, g
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func handleCodeImplementations(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	store, mgr, absPath, query, err := lspSymbolRequest(ctx, getStore, getLSPManager, req)
+func handleCodeImplementations(ctx context.Context, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store, mgr, absPath, query, err := lspSymbolRequest(ctx, getStore, getCodeRuntime, req)
 	if err != nil {
 		return errResult(err.Error())
 	}
@@ -213,8 +221,8 @@ func handleCodeImplementations(ctx context.Context, getStore func() *storage.Sto
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func handleCodeDiagnostics(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getLSPManager, req)
+func handleCodeDiagnostics(ctx context.Context, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getCodeRuntime, req)
 	if err != nil {
 		return errResult(err.Error())
 	}
@@ -247,8 +255,8 @@ func handleCodeDiagnostics(ctx context.Context, getStore func() *storage.Store, 
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func lspSymbolRequest(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, req mcp.CallToolRequest) (*storage.Store, *lsp.Manager, string, string, error) {
-	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getLSPManager, req)
+func lspSymbolRequest(ctx context.Context, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime, req mcp.CallToolRequest) (*storage.Store, CodeRuntime, string, string, error) {
+	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getCodeRuntime, req)
 	if err != nil {
 		return nil, nil, "", "", err
 	}
@@ -259,17 +267,10 @@ func lspSymbolRequest(ctx context.Context, getStore func() *storage.Store, getLS
 	return store, mgr, absPath, strings.TrimSpace(query), nil
 }
 
-func lspPathRequest(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, req mcp.CallToolRequest) (*storage.Store, *lsp.Manager, string, error) {
+func lspPathRequest(ctx context.Context, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime, req mcp.CallToolRequest) (*storage.Store, CodeRuntime, string, error) {
 	store := getStore()
 	if store == nil {
 		return nil, nil, "", fmt.Errorf("no project loaded")
-	}
-	if getLSPManager == nil {
-		return nil, nil, "", fmt.Errorf("LSP not available for this project")
-	}
-	mgr := getLSPManager()
-	if mgr == nil {
-		return nil, nil, "", fmt.Errorf("LSP not available for this project")
 	}
 	path, err := req.RequireString("path")
 	if err != nil || strings.TrimSpace(path) == "" {
@@ -279,10 +280,12 @@ func lspPathRequest(ctx context.Context, getStore func() *storage.Store, getLSPM
 	if !filepath.IsAbs(absPath) {
 		absPath = filepath.Join(projectRoot(store), absPath)
 	}
-	if srv, ok, err := mgr.ServerForPath(ctx, absPath); err != nil {
-		return nil, nil, "", err
-	} else if !ok || srv == nil {
-		return nil, nil, "", fmt.Errorf("LSP not available for this language")
+	if getCodeRuntime == nil {
+		return nil, nil, "", fmt.Errorf("LSP not available for this project")
+	}
+	mgr := getCodeRuntime()
+	if mgr == nil {
+		return nil, nil, "", fmt.Errorf("LSP not available for this project")
 	}
 	return store, mgr, absPath, nil
 }
@@ -382,8 +385,8 @@ func symbolKindString(kind int) string {
 	}
 }
 
-func handleCodeSymbols(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getLSPManager, req)
+func handleCodeSymbols(ctx context.Context, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getCodeRuntime, req)
 	if err != nil {
 		if result, ok := lspRuntimeErrResult(err); ok {
 			return result, nil
@@ -523,8 +526,8 @@ func filterSymbolsByKind(symbols []lsp.DocumentSymbol, kind string) []lsp.Docume
 	return out
 }
 
-func handleCodeRename(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getLSPManager, req)
+func handleCodeRename(ctx context.Context, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getCodeRuntime, req)
 	if err != nil {
 		return errResult(err.Error())
 	}
@@ -565,7 +568,7 @@ func handleCodeRename(ctx context.Context, getStore func() *storage.Store, getLS
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func handleCodeReplace(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func handleCodeReplace(ctx context.Context, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	store := getStore()
 	if store == nil {
 		return errResult("no project loaded")
@@ -626,8 +629,8 @@ func handleCodeReplace(ctx context.Context, getStore func() *storage.Store, getL
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func handleCodeReplaceBody(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getLSPManager, req)
+func handleCodeReplaceBody(ctx context.Context, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getCodeRuntime, req)
 	if err != nil {
 		return errResult(err.Error())
 	}
@@ -672,8 +675,8 @@ func handleCodeReplaceBody(ctx context.Context, getStore func() *storage.Store, 
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func handleCodeInsert(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getLSPManager, req)
+func handleCodeInsert(ctx context.Context, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getCodeRuntime, req)
 	if err != nil {
 		return errResult(err.Error())
 	}
@@ -725,8 +728,8 @@ func handleCodeInsert(ctx context.Context, getStore func() *storage.Store, getLS
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func handleCodeDelete(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getLSPManager, req)
+func handleCodeDelete(ctx context.Context, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getCodeRuntime, req)
 	if err != nil {
 		return errResult(err.Error())
 	}
@@ -782,23 +785,27 @@ func handleCodeDelete(ctx context.Context, getStore func() *storage.Store, getLS
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func handleCodeFind(ctx context.Context, getStore func() *storage.Store, getLSPManager func() *lsp.Manager, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func handleCodeFind(ctx context.Context, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	store := getStore()
 	if store == nil {
 		return errResult("no project loaded")
-	}
-	mgr := getLSPManager()
-	if mgr == nil {
-		return errResult("LSP not available for this project")
 	}
 	args := req.GetArguments()
 	query, ok := stringArg(args, "query")
 	if !ok || strings.TrimSpace(query) == "" {
 		return errResult("query is required")
 	}
+	if getCodeRuntime == nil {
+		return errResult("LSP not available for this project")
+	}
+	mgr := getCodeRuntime()
+	if mgr == nil {
+		return errResult("LSP not available for this project")
+	}
 	path, _ := stringArg(args, "path")
 	includeBody := boolArg(args, "include_body")
 	verbose := boolArg(args, "verbose")
+	publicMode := "keyword"
 	limit, ok := intArg(args, "limit")
 	if !ok || limit <= 0 {
 		limit = 20
@@ -807,31 +814,66 @@ func handleCodeFind(ctx context.Context, getStore func() *storage.Store, getLSPM
 	root := projectRoot(store)
 	var summaries []search.CodeSummary
 
-	if path != "" {
-		absPath := path
-		if !filepath.IsAbs(absPath) {
-			absPath = filepath.Join(root, absPath)
-		}
-		fileSummaries, err := buildFileSummaries(ctx, mgr, root, absPath)
+	files, err := findCodeFiles(root, path)
+	if err != nil {
+		return errResult(err.Error())
+	}
+	if len(files) == 0 {
+		out, _ := json.MarshalIndent(map[string]any{
+			"error":         "no_code_files",
+			"message":       "keyword code search requires LSP DocumentSymbols, but no source files matched the requested path",
+			"mode":          publicMode,
+			"results":       []map[string]any{},
+			"total":         0,
+			"files_scanned": 0,
+		}, "", "  ")
+		return mcp.NewToolResultError(string(out)), nil
+	}
+	type failedFile struct {
+		File  string `json:"file"`
+		Error string `json:"error"`
+	}
+	failedFiles := make([]failedFile, 0)
+	filesWithoutSymbols := 0
+	for _, file := range files {
+		fileSummaries, err := buildFileSummaries(ctx, mgr, root, file)
 		if err != nil {
-			return errResult(err.Error())
-		}
-		summaries = fileSummaries
-	} else {
-		files, err := findCodeFiles(root, "")
-		if err != nil {
-			return errResult(err.Error())
-		}
-		for _, file := range files {
-			fileSummaries, err := buildFileSummaries(ctx, mgr, root, file)
-			if err != nil {
-				continue
+			if len(failedFiles) < 5 {
+				failedFiles = append(failedFiles, failedFile{
+					File:  relPath(root, file),
+					Error: err.Error(),
+				})
 			}
-			summaries = append(summaries, fileSummaries...)
-			if len(summaries) > 5000 {
-				break
-			}
+			filesWithoutSymbols++
+			continue
 		}
+		if len(fileSummaries) == 0 {
+			filesWithoutSymbols++
+			continue
+		}
+		summaries = append(summaries, fileSummaries...)
+		if len(summaries) > 5000 {
+			break
+		}
+	}
+	if len(summaries) == 0 {
+		errCode := "no_lsp_symbols"
+		message := "keyword code search requires LSP DocumentSymbols, but LSP returned no symbols for the scanned files"
+		if len(failedFiles) > 0 && filesWithoutSymbols == len(files) {
+			errCode = "lsp_symbols_unavailable"
+			message = "keyword code search requires LSP DocumentSymbols, but LSP symbol requests failed or returned no symbols for all scanned files"
+		}
+		out, _ := json.MarshalIndent(map[string]any{
+			"error":                 errCode,
+			"message":               message,
+			"mode":                  publicMode,
+			"results":               []map[string]any{},
+			"total":                 0,
+			"files_scanned":         len(files),
+			"files_without_symbols": filesWithoutSymbols,
+			"failed_files":          failedFiles,
+		}, "", "  ")
+		return mcp.NewToolResultError(string(out)), nil
 	}
 
 	scorer := search.NewCodeBM25Scorer(summaries)
@@ -878,7 +920,7 @@ func handleCodeFind(ctx context.Context, getStore func() *storage.Store, getLSPM
 		results = append(results, item)
 	}
 
-	resp := map[string]any{"results": results, "total": len(results), "mode": "bm25"}
+	resp := map[string]any{"results": results, "total": len(results), "mode": publicMode}
 	out, _ := json.MarshalIndent(resp, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }
@@ -1242,15 +1284,18 @@ func isSourceFile(path string) bool {
 	}
 }
 
-func buildFileSummaries(ctx context.Context, mgr *lsp.Manager, root, absPath string) ([]search.CodeSummary, error) {
+func buildFileSummaries(ctx context.Context, mgr CodeRuntime, root, absPath string) ([]search.CodeSummary, error) {
 	var symbols []lsp.DocumentSymbol
 	err := mgr.WithSession(ctx, absPath, func(session lsp.Session) error {
 		var callErr error
 		symbols, callErr = session.DocumentSymbols(ctx, absPath)
 		return callErr
 	})
-	if err != nil || len(symbols) == 0 {
+	if err != nil {
 		return nil, err
+	}
+	if len(symbols) == 0 {
+		return nil, nil
 	}
 
 	data, err := os.ReadFile(absPath)
@@ -1258,5 +1303,7 @@ func buildFileSummaries(ctx context.Context, mgr *lsp.Manager, root, absPath str
 		return nil, err
 	}
 	relPath, _ := filepath.Rel(root, absPath)
-	return search.BuildCodeSummaries(filepath.ToSlash(relPath), symbols, string(data)), nil
+	relPath = filepath.ToSlash(relPath)
+
+	return search.BuildCodeSummaries(relPath, symbols, string(data)), nil
 }

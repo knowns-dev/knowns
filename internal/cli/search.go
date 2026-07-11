@@ -79,9 +79,6 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		mode = "keyword"
 	}
 
-	// Try to create embedder for semantic search.
-	embedder, vecStore, _ := initSemanticSearchReal()
-
 	opts := search.SearchOptions{
 		Query:             query,
 		Type:              typeFilter,
@@ -95,15 +92,18 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		IncludeHistorical: includeHistorical,
 	}
 
-	engine := search.NewEngine(store, embedder, vecStore)
-	results, err := engine.Search(opts)
+	response, err := search.SearchWithRuntime(store, opts)
 	if err != nil {
 		return err
 	}
+	results := response.Results
 
 	if jsonOut {
 		printJSON(results)
 		return nil
+	}
+	if response.Runtime != nil && response.Runtime.Degraded {
+		fmt.Println(searchWarnStyle.Render(response.Runtime.Message))
 	}
 
 	if len(results) == 0 {
@@ -116,9 +116,9 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	// Detect actual mode used.
-	actualMode := "keyword"
-	if engine.SemanticAvailable() && !keywordOnly {
-		actualMode = "hybrid"
+	actualMode := mode
+	if response.Runtime != nil && response.Runtime.Degraded {
+		actualMode = string(search.ModeKeyword)
 	}
 
 	// Normalize scores for percentage display.
@@ -188,16 +188,7 @@ func runRetrieve(cmd *cobra.Command, args []string) error {
 		mode = "keyword"
 	}
 
-	embedder, vecStore, _ := initSemanticSearchReal()
-	if embedder != nil {
-		defer embedder.Close()
-	}
-	if vecStore != nil {
-		defer vecStore.Close()
-	}
-
-	engine := search.NewEngine(store, embedder, vecStore)
-	resp, err := engine.Retrieve(models.RetrievalOptions{
+	resp, runtimeMeta, err := search.RetrieveWithRuntime(store, models.RetrievalOptions{
 		Query:             query,
 		Mode:              mode,
 		Limit:             limit,
@@ -215,8 +206,21 @@ func runRetrieve(cmd *cobra.Command, args []string) error {
 	}
 
 	if jsonOut {
+		if runtimeMeta != nil {
+			printJSON(struct {
+				*models.RetrievalResponse
+				Runtime *search.RuntimeMetadata `json:"_runtime,omitempty"`
+			}{
+				RetrievalResponse: resp,
+				Runtime:           runtimeMeta,
+			})
+			return nil
+		}
 		printJSON(resp)
 		return nil
+	}
+	if runtimeMeta != nil && runtimeMeta.Degraded {
+		fmt.Println(searchWarnStyle.Render(runtimeMeta.Message))
 	}
 
 	if len(resp.Candidates) == 0 {
@@ -533,15 +537,6 @@ func formatMemoryScope(layer, store string) string {
 		return "unknown"
 	}
 	return strings.Join(parts, " / ")
-}
-
-// ─── semantic search initialization ──────────────────────────────────
-
-// initSemanticSearchReal attempts to create an embedder and vector store.
-func initSemanticSearchReal() (search.EmbedderProvider, search.VectorStore, error) {
-	store := getStore()
-	embedder, vecStore, err := search.InitSemantic(store)
-	return embedder, vecStore, err
 }
 
 // ─── status check ────────────────────────────────────────────────────

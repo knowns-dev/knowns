@@ -43,6 +43,40 @@ function projectName(root: string) {
 	return root.split(/[\\/]/).filter(Boolean).pop() || root;
 }
 
+function detailValue(service: RuntimeService, key: string) {
+	const value = service.details?.[key];
+	if (value === undefined || value === null || value === "") return "";
+	return String(value);
+}
+
+function commaCount(value: string) {
+	return value.split(",").filter((item) => item.trim()).length;
+}
+
+function serviceDetailItems(service: RuntimeService) {
+	const items: Array<{ key: string; label: string; title?: string; destructive?: boolean }> = [];
+	const add = (key: string, label: string, options: { title?: string; destructive?: boolean } = {}) => {
+		const value = detailValue(service, key);
+		if (value) items.push({ key, label: `${label}=${value}`, ...options });
+	};
+	add("provider", "provider");
+	add("model", "model");
+	add("dimensions", "dims");
+	add("runtime_loaded", "loaded");
+	add("active_sessions", "sessions");
+	const consumers = detailValue(service, "consumers");
+	if (consumers) items.push({ key: "consumers", label: `consumers=${commaCount(consumers)}`, title: consumers });
+	add("running_jobs", "jobs");
+	add("queued_jobs", "queued");
+	add("idle_unload_after", "idle");
+	if (detailValue(service, "degraded") === "true") items.push({ key: "degraded", label: "degraded", destructive: true });
+	const lastError = detailValue(service, "last_error") || detailValue(service, "error");
+	if (lastError) items.push({ key: "error", label: `error=${lastError}`, title: lastError, destructive: true });
+	const log = detailValue(service, "runtime_log");
+	if (log) items.push({ key: "runtime_log", label: `log=${log}`, title: log });
+	return items;
+}
+
 function KindBadge({ kind }: { kind: string }) {
 	return (
 		<span className="inline-flex shrink-0 items-center rounded-md border border-border/60 bg-muted/50 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -58,6 +92,7 @@ function ServiceRow({ service }: { service: RuntimeService }) {
 		disabled: "text-muted-foreground",
 		error: "text-destructive",
 	}[service.status];
+	const details = serviceDetailItems(service);
 
 	return (
 		<div className={cn("border-b border-border/40 px-3 py-2 last:border-b-0", service.status !== "running" && "opacity-60")}>
@@ -68,10 +103,26 @@ function ServiceRow({ service }: { service: RuntimeService }) {
 			<div className="mt-0.5 pl-[18px] text-[11px] text-muted-foreground">
 				{service.status}
 				{service.pid ? ` · pid=${service.pid}` : ""}
-				{service.port ? ` · :${service.port}` : ""}
-				{service.uptime ? ` · ${service.uptime}` : ""}
+					{service.port ? ` · :${service.port}` : ""}
+					{service.uptime ? ` · ${service.uptime}` : ""}
+				</div>
+				{details.length > 0 && (
+					<div className="mt-1 flex flex-wrap gap-1 pl-[18px]">
+						{details.map((item) => (
+							<span
+								key={item.key}
+								title={item.title || item.label}
+								className={cn(
+									"max-w-full truncate rounded border border-border/50 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground",
+									item.destructive && "border-destructive/40 bg-destructive/10 text-destructive",
+								)}
+							>
+								{item.label}
+							</span>
+						))}
+					</div>
+				)}
 			</div>
-		</div>
 	);
 }
 

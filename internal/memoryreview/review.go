@@ -354,18 +354,7 @@ func (s *Service) semanticMatches(candidate *models.MemoryEntry) ([]Match, error
 	if s.SemanticSearch != nil {
 		return s.SemanticSearch(candidate, s.limit())
 	}
-	embedder, vecStore, err := search.InitSemantic(s.Store)
-	if err != nil {
-		return nil, err
-	}
-	if embedder != nil {
-		defer embedder.Close()
-	}
-	if vecStore != nil {
-		defer vecStore.Close()
-	}
-	engine := search.NewEngine(s.Store, embedder, vecStore)
-	results, err := engine.Search(search.SearchOptions{
+	response, err := search.SearchWithRuntime(s.Store, search.SearchOptions{
 		Query: candidateSearchText(candidate),
 		Type:  "memory",
 		Mode:  string(search.ModeSemantic),
@@ -374,21 +363,32 @@ func (s *Service) semanticMatches(candidate *models.MemoryEntry) ([]Match, error
 	if err != nil {
 		return nil, err
 	}
-	matches := make([]Match, 0, len(results))
-	for _, result := range results {
+	matches := make([]Match, 0, len(response.Results))
+	for _, result := range response.Results {
 		if result.ID == "" || result.ID == candidate.ID || !contains(result.MatchedBy, "semantic") {
 			continue
 		}
 		if result.Score < s.threshold() {
 			continue
 		}
-		entry, err := s.Store.Memory.Get(result.ID)
+		entry, err := s.memoryEntryForResult(result)
 		if err != nil || !entry.CurrentForDefaultRetrieval() {
 			continue
 		}
 		matches = append(matches, matchFromEntry(entry, result.Score, append([]string(nil), result.MatchedBy...), result.Snippet))
 	}
 	return matches, nil
+}
+
+func (s *Service) memoryEntryForResult(result models.SearchResult) (*models.MemoryEntry, error) {
+	layer := result.MemoryLayer
+	if layer == "" && result.MemoryStore == "global-store" {
+		layer = models.MemoryLayerGlobal
+	}
+	if layer == models.MemoryLayerGlobal {
+		return s.Store.Memory.GetInLayer(result.ID, models.MemoryLayerGlobal)
+	}
+	return s.Store.Memory.Get(result.ID)
 }
 
 func (s *Service) lexicalMatches(candidate *models.MemoryEntry) []Match {

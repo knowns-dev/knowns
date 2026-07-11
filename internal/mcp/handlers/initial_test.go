@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/howznguyen/knowns/internal/lsp"
+	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 )
 
@@ -69,6 +71,34 @@ func TestBuildInitialInstructionsLineLimit(t *testing.T) {
 	lines := strings.Split(got, "\n")
 	if len(lines) > 80 {
 		t.Errorf("initial output has %d lines, expected ≤ 80", len(lines))
+	}
+}
+
+func TestSemanticRuntimeLineIncludesStatus(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	search.DefaultSemanticRuntime().Close()
+	t.Cleanup(search.DefaultSemanticRuntime().Close)
+	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	project := &models.Project{
+		Name: "initial-test",
+		ID:   "initial-test",
+		Settings: models.ProjectSettings{
+			SemanticSearch: &models.SemanticSearchSettings{
+				Enabled:  true,
+				Provider: "api",
+				Model:    "api-model",
+			},
+		},
+	}
+	if err := store.Config.Save(project); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	got := semanticRuntimeLine(store)
+	for _, want := range []string{"Semantic runtime:", "enabled=true", "provider=api", "model=api-model", "loaded=false", "log="} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in semantic runtime line, got: %s", want, got)
+		}
 	}
 }
 
@@ -164,6 +194,21 @@ func TestLspWarningsLineIncludesCSharpRuntimeState(t *testing.T) {
 
 	got := lspWarningsLine(manager)
 	for _, want := range []string{"csharp", "backend=csharp-ls", "install=installed", "readiness=unknown", "log="} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in LSP runtime line, got: %s", want, got)
+		}
+	}
+}
+
+func TestLspWarningsLineIncludesDaemonOwner(t *testing.T) {
+	got := lspWarningsLineFromStatuses([]lsp.LanguageRuntimeStatus{{
+		ID:             lsp.CSharpLanguageID,
+		InstallState:   lsp.RuntimeInstallInstalled,
+		ReadinessState: lsp.RuntimeReadinessUnknown,
+		Owner:          "daemon",
+		DaemonState:    "running",
+	}})
+	for _, want := range []string{"owner=daemon", "daemon=running"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in LSP runtime line, got: %s", want, got)
 		}

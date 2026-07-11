@@ -18,6 +18,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/lsp"
 	"github.com/howznguyen/knowns/internal/lsp/adapters"
+	"github.com/howznguyen/knowns/internal/lspdaemon"
 	"github.com/howznguyen/knowns/internal/mcp/handlers"
 	"github.com/howznguyen/knowns/internal/permissions"
 	"github.com/howznguyen/knowns/internal/runtimequeue"
@@ -28,6 +29,7 @@ import (
 
 // mcpLog writes to stderr and a log file without touching stdout JSON-RPC transport.
 var mcpLog = newMCPLogger()
+var lspDaemonDisabledWarnOnce sync.Once
 
 const version = "0.1.0"
 
@@ -278,6 +280,41 @@ func NewMCPServer(projectHint string) *MCPServer {
 		return s.lspManager
 	}
 
+	getCodeRuntime := func() handlers.CodeRuntime {
+		store := getStore()
+		if store == nil {
+			return nil
+		}
+		if lspdaemon.DisabledByEnv() {
+			lspDaemonDisabledWarnOnce.Do(func() { mcpLog.Print("warn: " + lspdaemon.DisabledWarning()) })
+			return handlers.NewManagerCodeRuntime(getLSPManager())
+		}
+		return lspdaemon.NewRuntime(context.Background(), filepath.Dir(store.Root))
+	}
+
+	getLSPStatuses := func(ctx context.Context) []lsp.LanguageRuntimeStatus {
+		store := getStore()
+		if store == nil {
+			return nil
+		}
+		if lspdaemon.DisabledByEnv() {
+			lspDaemonDisabledWarnOnce.Do(func() { mcpLog.Print("warn: " + lspdaemon.DisabledWarning()) })
+			if manager := getLSPManager(); manager != nil {
+				return lspdaemon.AnnotateLocalStatuses(manager.RuntimeStatuses(ctx), lspdaemon.DaemonStateDisabledByEnv)
+			}
+			return nil
+		}
+		if client, err := lspdaemon.EnsureClient(ctx, filepath.Dir(store.Root)); err == nil {
+			if statuses, err := client.RuntimeStatuses(ctx); err == nil {
+				return statuses
+			}
+		}
+		if manager := getLSPManager(); manager != nil {
+			return lspdaemon.AnnotateLocalStatuses(manager.RuntimeStatuses(ctx), lspdaemon.DaemonStateUnavailable)
+		}
+		return nil
+	}
+
 	// Create global audit store at ~/.knowns/audit.jsonl.
 	auditStore := storage.NewGlobalAuditStore()
 
@@ -301,12 +338,12 @@ func NewMCPServer(projectHint string) *MCPServer {
 		server.WithResourceCapabilities(false, false),
 		server.WithRecovery(),
 		server.WithToolHandlerMiddleware(permissions.NewGuardMiddleware(permConfigLoader)),
-		server.WithHooks(newLifecycleHooks(auditStore, getRoot, getLSPManager, getStore)),
+		server.WithHooks(newLifecycleHooks(auditStore, getRoot)),
 		server.WithInstructions("CRITICAL: Call the `initial` tool at the start of every session before performing any work to receive operating instructions."),
 	)
 
 	// Register initial instructions tool (should be called first by agents).
-	handlers.RegisterInitialTool(s.srv, getStore, getLSPManager)
+	handlers.RegisterInitialToolWithStatusProvider(s.srv, getStore, getLSPStatuses, getLSPManager)
 	handlers.RegisterHelpTool(s.srv, s.getHelpRegistry)
 	s.RegisterHelp("help.query", handlers.HelpEntry{
 		When: "Use when you need detailed guidance for a tool action, a tool prefix, or a keyword.",
@@ -317,7 +354,7 @@ func NewMCPServer(projectHint string) *MCPServer {
 	})
 
 	// Register all tool groups.
-	handlers.RegisterProjectTool(s, getStore, setStore, getRoot, getLSPManager)
+	handlers.RegisterProjectToolWithStatusProvider(s, getStore, setStore, getRoot, getLSPStatuses, getLSPManager)
 	handlers.RegisterTaskTool(s, getStore)
 	handlers.RegisterDocTool(s.srv, getStore)
 	s.RegisterHelp("docs.get", handlers.HelpEntry{
@@ -349,7 +386,7 @@ func NewMCPServer(projectHint string) *MCPServer {
 	})
 	handlers.RegisterTimeTool(s, getStore)
 	handlers.RegisterSearchTool(s, getStore)
-	handlers.RegisterCodeTool(s.srv, getStore, getLSPManager)
+	handlers.RegisterCodeToolWithRuntime(s.srv, getStore, getCodeRuntime)
 	s.RegisterHelp("code.find", handlers.HelpEntry{
 		When: "Search symbols by name pattern using LSP documentSymbol.",
 		Params: map[string]string{

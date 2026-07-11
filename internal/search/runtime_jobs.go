@@ -1,6 +1,7 @@
 package search
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -11,6 +12,9 @@ import (
 // ExecuteRuntimeJob runs a queued runtime job synchronously inside the shared runtime.
 func ExecuteRuntimeJob(storeRoot string, job runtimequeue.Job) error {
 	store := storage.NewStore(storeRoot)
+	defer func() {
+		_ = PersistDefaultSemanticRuntimeStatus()
+	}()
 	switch job.Kind {
 	case runtimequeue.JobIndexTask:
 		return executeRuntimeEntity(store, string(job.Kind)+" "+job.Target, func(svc *IndexService) error {
@@ -36,20 +40,29 @@ func ExecuteRuntimeJob(storeRoot string, job runtimequeue.Job) error {
 		return executeRuntimeEntity(store, string(job.Kind)+" "+job.Target, func(svc *IndexService) error {
 			return svc.RemoveMemory(job.Target)
 		})
+	case runtimequeue.JobIndexDecision:
+		return executeRuntimeEntity(store, string(job.Kind)+" "+job.Target, func(svc *IndexService) error {
+			return svc.IndexDecision(job.Target)
+		})
+	case runtimequeue.JobRemoveDecision:
+		return executeRuntimeEntity(store, string(job.Kind)+" "+job.Target, func(svc *IndexService) error {
+			return svc.RemoveDecision(job.Target)
+		})
+	case runtimequeue.JobSemanticSearch:
+		return executeRuntimeSemanticSearch(storeRoot, store, job)
 	case runtimequeue.JobReindex:
-		embedder, vecStore, err := InitSemantic(store)
+		session, err := InitSemanticRuntimeSession(store)
 		if err != nil {
-			if errors.Is(err, ErrSemanticNotConfigured) {
+			if errors.Is(err, ErrSemanticNotConfigured) || errors.Is(err, ErrSemanticRuntimeDisabled) {
 				return nil
 			}
 			return err
 		}
-		if embedder == nil || vecStore == nil {
+		if session == nil || session.Embedder == nil || session.VecStore == nil {
 			return nil
 		}
-		defer embedder.Close()
-		defer vecStore.Close()
-		return NewEngine(store, embedder, vecStore).Reindex(func(phase string, current, total int) {
+		defer session.Close()
+		return session.Engine(store).Reindex(func(phase string, current, total int) {
 			_ = runtimequeue.ReportProgress(storeRoot, job.ID, phase, current, total)
 		})
 	case runtimequeue.JobIndexFile, runtimequeue.JobRemoveFile, runtimequeue.JobIndexAll:
@@ -59,18 +72,36 @@ func ExecuteRuntimeJob(storeRoot string, job runtimequeue.Job) error {
 	}
 }
 
+func executeRuntimeSemanticSearch(storeRoot string, store *storage.Store, job runtimequeue.Job) error {
+	req, err := readSemanticSearchRuntimeRequest(job.Target)
+	if err != nil {
+		return fmt.Errorf("read semantic search request: %w", err)
+	}
+	resp, err := searchWithLocalRuntime(store, req.Options)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return fmt.Errorf("encode semantic search response: %w", err)
+	}
+	return runtimequeue.ReportDetails(storeRoot, job.ID, runtimequeue.JobDetails{
+		Phase:  "semantic-search",
+		Result: data,
+	})
+}
+
 func executeRuntimeEntity(store *storage.Store, action string, fn func(*IndexService) error) error {
 	if store == nil {
 		return nil
 	}
-	embedder, vecStore, err := InitSemantic(store)
+	session, err := InitSemanticRuntimeSession(store)
 	if err != nil {
-		if errors.Is(err, ErrSemanticNotConfigured) {
+		if errors.Is(err, ErrSemanticNotConfigured) || errors.Is(err, ErrSemanticRuntimeDisabled) {
 			return nil
 		}
 		return fmt.Errorf("could not %s: %w", action, err)
 	}
-	defer embedder.Close()
-	defer vecStore.Close()
-	return fn(NewIndexService(store, embedder, vecStore))
+	defer session.Close()
+	return fn(session.IndexService(store))
 }

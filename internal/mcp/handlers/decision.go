@@ -7,6 +7,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/decisionreview"
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -165,6 +166,9 @@ func handleDecisionCreate(getStore func() *storage.Store, req mcp.CallToolReques
 	if result.Status == decisionreview.ResultReviewRequired {
 		return decisionResult(result)
 	}
+	if result.Decision != nil {
+		search.BestEffortIndexDecision(store, result.Decision.ID)
+	}
 	return decisionResult(result.Decision)
 }
 
@@ -234,6 +238,7 @@ func handleDecisionLink(getStore func() *storage.Store, req mcp.CallToolRequest)
 	if err != nil {
 		return errFailed("link decision", err)
 	}
+	search.BestEffortIndexDecision(store, decision.ID)
 	return decisionResult(decision)
 }
 
@@ -252,6 +257,8 @@ func handleDecisionSupersede(getStore func() *storage.Store, req mcp.CallToolReq
 	if err != nil {
 		return errFailed("supersede decision", err)
 	}
+	search.BestEffortIndexDecision(store, oldDecision.ID)
+	search.BestEffortIndexDecision(store, newDecision.ID)
 	return decisionResult(map[string]any{
 		"superseded": oldDecision,
 		"current":    newDecision,
@@ -287,6 +294,9 @@ func handleDecisionResolve(getStore func() *storage.Store, req mcp.CallToolReque
 	})
 	if err != nil {
 		return errFailed("resolve decision review", err)
+	}
+	for _, id := range result.ChangedIDs {
+		search.BestEffortIndexDecision(store, id)
 	}
 	return decisionResult(result)
 }

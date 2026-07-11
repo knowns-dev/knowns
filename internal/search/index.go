@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/howznguyen/knowns/internal/models"
@@ -352,45 +353,73 @@ func (s *IndexService) embedAndStore(chunks []Chunk) error {
 		return nil
 	}
 
-	// Batch embed all chunks at once.
+	batchSize := embedBatchSize(len(chunks))
 	texts := make([]string, len(chunks))
 	for i := range chunks {
 		texts[i] = chunks[i].Content
 	}
 
-	if os.Getenv("KNOWNS_DEBUG") == "1" {
-		fmt.Fprintf(os.Stderr, "[embed] batch %d chunks...\n", len(chunks))
-	}
+	for start := 0; start < len(chunks); start += batchSize {
+		end := start + batchSize
+		if end > len(chunks) {
+			end = len(chunks)
+		}
 
-	vecs, err := s.embedder.EmbedDocumentBatch(texts)
-	if err != nil {
 		if os.Getenv("KNOWNS_DEBUG") == "1" {
-			fmt.Fprintf(os.Stderr, "[embed] batch failed: %v, falling back to one-by-one\n", err)
+			fmt.Fprintf(os.Stderr, "[embed] batch %d:%d of %d chunks...\n", start, end, len(chunks))
 		}
-		// Fallback: try one by one if batch fails.
-		for i := range chunks {
-			vec, err2 := s.embedder.EmbedDocument(chunks[i].Content)
-			if err2 != nil {
-				if os.Getenv("KNOWNS_DEBUG") == "1" {
-					fmt.Fprintf(os.Stderr, "[embed] chunk %d failed: %v\n", i, err2)
+
+		vecs, err := s.embedder.EmbedDocumentBatch(texts[start:end])
+		if err != nil || len(vecs) != end-start {
+			if os.Getenv("KNOWNS_DEBUG") == "1" {
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[embed] batch failed: %v, falling back to one-by-one\n", err)
+				} else {
+					fmt.Fprintf(os.Stderr, "[embed] batch returned %d vectors for %d chunks, falling back to one-by-one\n", len(vecs), end-start)
 				}
-				continue // skip failed chunks
 			}
-			chunks[i].Embedding = vec
+
+			for i := start; i < end; i++ {
+				vec, err2 := s.embedder.EmbedDocument(chunks[i].Content)
+				if err2 != nil {
+					if os.Getenv("KNOWNS_DEBUG") == "1" {
+						fmt.Fprintf(os.Stderr, "[embed] chunk %d failed: %v\n", i, err2)
+					}
+					continue // skip failed chunks
+				}
+				chunks[i].Embedding = vec
+			}
+			s.vecStore.AddChunks(chunks[start:end])
+			continue
 		}
-		s.vecStore.AddChunks(chunks)
-		return nil
-	}
 
-	if os.Getenv("KNOWNS_DEBUG") == "1" {
-		fmt.Fprintf(os.Stderr, "[embed] batch success: %d vectors\n", len(vecs))
-	}
+		if os.Getenv("KNOWNS_DEBUG") == "1" {
+			fmt.Fprintf(os.Stderr, "[embed] batch success: %d vectors\n", len(vecs))
+		}
 
-	for i := range chunks {
-		chunks[i].Embedding = vecs[i]
+		for i := start; i < end; i++ {
+			chunks[i].Embedding = vecs[i-start]
+		}
+		s.vecStore.AddChunks(chunks[start:end])
 	}
-	s.vecStore.AddChunks(chunks)
 	return nil
+}
+
+func embedBatchSize(total int) int {
+	const defaultBatchSize = 16
+	if total <= 0 {
+		return defaultBatchSize
+	}
+	batchSize := defaultBatchSize
+	if raw := os.Getenv("KNOWNS_EMBED_BATCH_SIZE"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			batchSize = parsed
+		}
+	}
+	if batchSize > total {
+		return total
+	}
+	return batchSize
 }
 
 func contentHash(content string) string {

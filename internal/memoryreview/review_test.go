@@ -1,6 +1,9 @@
 package memoryreview
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
 	"testing"
 	"time"
@@ -191,6 +194,16 @@ func TestArchiveCreateValidatesReplacementBeforeArchivingExisting(t *testing.T) 
 	}
 }
 
+func TestSemanticReviewUsesRuntimeSearchPath(t *testing.T) {
+	calls := reviewSelectorCalls(t)
+	if calls["search.InitSemantic"] {
+		t.Fatal("memory review must not initialize semantic providers inline")
+	}
+	if !calls["search.SearchWithRuntime"] {
+		t.Fatal("memory review should route semantic matching through search.SearchWithRuntime")
+	}
+}
+
 func newReviewTestStore(t *testing.T) *storage.Store {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
@@ -221,4 +234,30 @@ func countReviewMemories(t *testing.T, store *storage.Store) int {
 		t.Fatalf("list memories: %v", err)
 	}
 	return len(entries)
+}
+
+func reviewSelectorCalls(t *testing.T) map[string]bool {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), "review.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse review.go: %v", err)
+	}
+	calls := make(map[string]bool)
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		ident, ok := selector.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		calls[ident.Name+"."+selector.Sel.Name] = true
+		return true
+	})
+	return calls
 }

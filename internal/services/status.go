@@ -18,6 +18,7 @@ import (
 	"github.com/howznguyen/knowns/internal/lsp"
 	"github.com/howznguyen/knowns/internal/lsp/adapters"
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/runtimequeue"
 	goruntime "runtime"
 
 	"github.com/howznguyen/knowns/internal/search"
@@ -73,7 +74,11 @@ func DetectAll(store *storage.Store) []ServiceStatus {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		add(detectLSP(proj, filepath.Dir(store.Root)))
+		projectRoot := ""
+		if store != nil {
+			projectRoot = filepath.Dir(store.Root)
+		}
+		add(detectLSP(proj, projectRoot))
 	}()
 
 	wg.Add(1)
@@ -386,9 +391,6 @@ func detectCloudflared() []ServiceStatus {
 // ----- Embedding Sidecar Detection -----
 
 func detectEmbedding(store *storage.Store) []ServiceStatus {
-	ctx, cancel := context.WithTimeout(context.Background(), detectionTimeout)
-	defer cancel()
-
 	ss := ServiceStatus{
 		Name:            "Embedding",
 		Type:            "embedding",
@@ -396,6 +398,16 @@ func detectEmbedding(store *storage.Store) []ServiceStatus {
 		EnabledInConfig: true,
 		Details:         make(map[string]string),
 	}
+	runtimeStatus := search.ObservedSemanticRuntimeStatus()
+	addSemanticRuntimeDetails(&ss, runtimeStatus)
+	ss.Details["runtime_log"] = runtimequeue.RuntimeLogPath()
+	if store == nil {
+		ss.Status = "disabled"
+		ss.EnabledInConfig = false
+		ss.Details["reason"] = "project store unavailable"
+		return []ServiceStatus{ss}
+	}
+	addSemanticJobDetails(&ss, store)
 
 	// Check project-level semantic search config.
 	proj, err := store.Config.Load()
@@ -413,6 +425,17 @@ func detectEmbedding(store *storage.Store) []ServiceStatus {
 		ss.Details["reason"] = "semantic search not enabled in project config"
 		return []ServiceStatus{ss}
 	}
+	if semCfg.Model == "" {
+		ss.Status = "error"
+		ss.Details["error"] = "semantic model not configured"
+		ss.Details["degraded"] = "true"
+		return []ServiceStatus{ss}
+	}
+	if !runtimeStatus.Enabled {
+		ss.Status = "disabled"
+		ss.Details["reason"] = "semantic runtime disabled"
+		return []ServiceStatus{ss}
+	}
 
 	ss.EnabledInConfig = true
 	ss.Details["provider"] = semCfg.Provider
@@ -422,7 +445,6 @@ func detectEmbedding(store *storage.Store) []ServiceStatus {
 
 	switch semCfg.Provider {
 	case "api", "ollama":
-		// Check API provider connectivity.
 		embStore := storage.NewEmbeddingSettingsStore()
 		settings, err := embStore.Load()
 		if err != nil {
@@ -431,21 +453,11 @@ func detectEmbedding(store *storage.Store) []ServiceStatus {
 			return []ServiceStatus{ss}
 		}
 
-		modelID := semCfg.Model
-		if modelID == "" {
-			modelID = settings.DefaultEmbeddingModel
-		}
-		if modelID == "" {
-			ss.Status = "stopped"
-			ss.Details["reason"] = "no embedding model configured"
-			return []ServiceStatus{ss}
-		}
-		ss.Details["model"] = modelID
-
-		model, err := settings.GetModel(modelID)
+		model, err := settings.GetModel(semCfg.Model)
 		if err != nil {
 			ss.Status = "error"
-			ss.Details["error"] = "model " + modelID + " not found"
+			ss.Details["error"] = "model " + semCfg.Model + " not found"
+			ss.Details["degraded"] = "true"
 			return []ServiceStatus{ss}
 		}
 
@@ -453,76 +465,214 @@ func detectEmbedding(store *storage.Store) []ServiceStatus {
 		if err != nil {
 			ss.Status = "error"
 			ss.Details["error"] = "provider " + model.Provider + " not found"
+			ss.Details["degraded"] = "true"
 			return []ServiceStatus{ss}
 		}
+		provider = provider.WithDefaults()
 
+		ss.Details["model_id"] = semCfg.Model
 		ss.Details["model"] = model.Model
+		ss.Details["provider_id"] = model.Provider
 		ss.Details["api_base"] = provider.APIBase
 		ss.Details["dimensions"] = strconv.Itoa(model.Dimensions)
-
-		// Probe API with timeout.
-		embedderCh := make(chan bool, 1)
-		go func() {
-			cfg := search.APIEmbedderConfig{
-				APIBase:    provider.APIBase,
-				APIKey:     provider.APIKey,
-				Model:      model.Model,
-				Dimensions: model.Dimensions,
-				Timeout:    provider.Timeout,
-				BatchSize:  provider.BatchSize,
-			}
-			emb, err := search.NewAPIEmbedder(cfg)
-			if err != nil {
-				embedderCh <- false
-				return
-			}
-			embedderCh <- emb.IsReachable()
-		}()
-
-		select {
-		case reachable := <-embedderCh:
-			if reachable {
-				ss.Status = "running"
-			} else {
-				ss.Status = "error"
-				ss.Details["error"] = "API endpoint not reachable"
-			}
-		case <-ctx.Done():
-			ss.Status = "error"
-			ss.Details["error"] = "health check timed out"
-		}
+		setEmbeddingRuntimeActivityStatus(&ss)
 
 	case "local", "":
-		// Check ONNX runtime model availability.
-		ss.Details["model"] = semCfg.HuggingFaceID
-		if semCfg.Dimensions > 0 {
-			ss.Details["dimensions"] = strconv.Itoa(semCfg.Dimensions)
+		modelCfg, ok := search.EmbeddingModels[semCfg.Model]
+		if !ok {
+			ss.Status = "error"
+			ss.Details["error"] = "unknown embedding model: " + semCfg.Model
+			ss.Details["degraded"] = "true"
+			return []ServiceStatus{ss}
 		}
-
-		// Check if ONNX model files exist.
-		modelDir := filepath.Join(storage.GlobalRootPath(), ".search", "models", semCfg.HuggingFaceID)
-		if _, err := os.Stat(modelDir); err == nil {
-			// Check for .onnx file.
-			entries, err := os.ReadDir(modelDir)
-			if err == nil {
-				for _, e := range entries {
-					if strings.HasSuffix(e.Name(), ".onnx") {
-						ss.Status = "stopped"
-						ss.Details["note"] = "model available, runtime not active"
-						return []ServiceStatus{ss}
-					}
-				}
-			}
+		ss.Details["model"] = semCfg.Model
+		ss.Details["hugging_face_id"] = modelCfg.HuggingFaceID
+		dims := semCfg.Dimensions
+		if dims <= 0 {
+			dims = modelCfg.Dimensions
+		}
+		ss.Details["dimensions"] = strconv.Itoa(dims)
+		home, _ := os.UserHomeDir()
+		modelDir := filepath.Join(home, ".knowns", "models", modelCfg.HuggingFaceID)
+		if localONNXModelAvailable(modelDir) {
+			ss.Details["model_available"] = "true"
+			setEmbeddingRuntimeActivityStatus(&ss)
+			return []ServiceStatus{ss}
 		}
 		ss.Status = "stopped"
+		ss.Details["model_available"] = "false"
 		ss.Details["reason"] = "local model not downloaded"
 
 	default:
 		ss.Status = "stopped"
 		ss.Details["reason"] = "unknown provider: " + semCfg.Provider
+		ss.Details["degraded"] = "true"
 	}
 
 	return []ServiceStatus{ss}
+}
+
+func addSemanticRuntimeDetails(ss *ServiceStatus, runtimeStatus search.SemanticRuntimeStatus) {
+	ss.Details["runtime_enabled"] = strconv.FormatBool(runtimeStatus.Enabled)
+	if runtimeStatus.DisabledBy != "" {
+		ss.Details["runtime_disabled_by"] = runtimeStatus.DisabledBy
+	}
+	if runtimeStatus.IdleTimeout > 0 {
+		ss.Details["runtime_idle_timeout"] = runtimeStatus.IdleTimeout.Round(time.Millisecond).String()
+	}
+	ss.Details["runtime_entries"] = strconv.Itoa(len(runtimeStatus.Entries))
+	ss.Details["runtime_loaded"] = "false"
+	if len(runtimeStatus.Entries) == 0 {
+		return
+	}
+
+	loaded := false
+	activeSessions := 0
+	var consumers []string
+	var idleUnloadAfter time.Time
+	var idleFor time.Duration
+	for _, entry := range runtimeStatus.Entries {
+		if entry.Loaded {
+			loaded = true
+		}
+		activeSessions += entry.ActiveSessions
+		consumers = append(consumers, entry.StoreConsumers...)
+		if entry.IdleUnloadAfter.After(idleUnloadAfter) {
+			idleUnloadAfter = entry.IdleUnloadAfter
+		}
+		if entry.IdleFor > idleFor {
+			idleFor = entry.IdleFor
+		}
+		if ss.Details["provider"] == "" && entry.Provider != "" {
+			ss.Details["provider"] = entry.Provider
+		}
+		if ss.Details["model"] == "" && entry.Model != "" {
+			ss.Details["model"] = entry.Model
+		}
+		if ss.Details["dimensions"] == "" && entry.Dimensions > 0 {
+			ss.Details["dimensions"] = strconv.Itoa(entry.Dimensions)
+		}
+		if ss.Details["provider_identity"] == "" && entry.ProviderIdentity != "" {
+			ss.Details["provider_identity"] = entry.ProviderIdentity
+		}
+	}
+	ss.Details["runtime_loaded"] = strconv.FormatBool(loaded)
+	if activeSessions > 0 {
+		ss.Details["active_sessions"] = strconv.Itoa(activeSessions)
+	}
+	if len(consumers) > 0 {
+		ss.Details["consumers"] = strings.Join(uniqueStrings(consumers), ",")
+	}
+	if !idleUnloadAfter.IsZero() {
+		ss.Details["idle_unload_after"] = idleUnloadAfter.Format(time.RFC3339)
+	}
+	if idleFor > 0 {
+		ss.Details["idle_for"] = idleFor.Round(time.Second).String()
+	}
+}
+
+func setEmbeddingRuntimeActivityStatus(ss *ServiceStatus) {
+	if ss.Details["runtime_loaded"] == "true" {
+		ss.Status = "running"
+		return
+	}
+	if ss.Details["degraded"] == "true" {
+		ss.Status = "error"
+		return
+	}
+	ss.Status = "stopped"
+	ss.Details["note"] = "runtime idle; model not loaded"
+}
+
+func addSemanticJobDetails(ss *ServiceStatus, store *storage.Store) {
+	queue, err := runtimequeue.LoadQueue(store.Root)
+	if err != nil {
+		ss.Details["job_status_error"] = err.Error()
+		return
+	}
+	var running, queued, recent, failed int
+	lastErr := ""
+	for _, job := range queue.Jobs {
+		if job == nil || !isSemanticRuntimeJob(job.Kind) {
+			continue
+		}
+		if job.StartedAt != nil {
+			running++
+		} else {
+			queued++
+		}
+	}
+	for _, result := range queue.Recent {
+		if !isSemanticRuntimeJob(result.Kind) {
+			continue
+		}
+		recent++
+		if !result.Success {
+			failed++
+			if lastErr == "" {
+				lastErr = result.Error
+			}
+		}
+	}
+	if running > 0 {
+		ss.Details["running_jobs"] = strconv.Itoa(running)
+	}
+	if queued > 0 {
+		ss.Details["queued_jobs"] = strconv.Itoa(queued)
+	}
+	if recent > 0 {
+		ss.Details["recent_jobs"] = strconv.Itoa(recent)
+	}
+	if failed > 0 {
+		ss.Details["recent_failed_jobs"] = strconv.Itoa(failed)
+		ss.Details["degraded"] = "true"
+		if lastErr != "" {
+			ss.Details["last_error"] = lastErr
+		}
+	}
+}
+
+func isSemanticRuntimeJob(kind runtimequeue.JobKind) bool {
+	switch kind {
+	case runtimequeue.JobIndexTask,
+		runtimequeue.JobIndexDoc,
+		runtimequeue.JobRemoveTask,
+		runtimequeue.JobRemoveDoc,
+		runtimequeue.JobIndexMemory,
+		runtimequeue.JobRemoveMemory,
+		runtimequeue.JobIndexDecision,
+		runtimequeue.JobRemoveDecision,
+		runtimequeue.JobSemanticSearch,
+		runtimequeue.JobReindex:
+		return true
+	default:
+		return false
+	}
+}
+
+func localONNXModelAvailable(modelDir string) bool {
+	for _, name := range []string{
+		filepath.Join(modelDir, "onnx", "model_quantized.onnx"),
+		filepath.Join(modelDir, "onnx", "model.onnx"),
+	} {
+		if _, err := os.Stat(name); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 // ----- Helper: PID Liveness Check -----

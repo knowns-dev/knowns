@@ -307,6 +307,108 @@ func TestServerForPath_AutoRestart(t *testing.T) {
 	}
 }
 
+func TestServerForPathResolvesOnlyRequestedLanguage(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "Program.cs"), []byte("class Program {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	binaryName, binaryDir := fakePluginLSPExecutable(t)
+	t.Setenv("KNOWNS_FAKE_LSP_SERVER", "1")
+	t.Setenv("PATH", binaryDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	goBinary := binaryName
+	m := NewManager(root, Config{Languages: map[string]LanguageConfig{
+		"go":             {Binary: goBinary},
+		CSharpLanguageID: {Binary: "csharp-ls"},
+	}})
+	if err := m.RegisterAdapter(&mgrMockAdapter{id: "go", name: "Go", extensions: []string{".go"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RegisterAdapter(&mgrMockAdapter{id: CSharpLanguageID, name: "C#", extensions: []string{".cs"}}); err != nil {
+		t.Fatal(err)
+	}
+	var lookedUp []string
+	m.SetDetector(&Detector{
+		Registry: m.registry,
+		LookPath: func(name string) (string, error) {
+			lookedUp = append(lookedUp, name)
+			return filepath.Join(binaryDir, binaryName), nil
+		},
+	})
+
+	srv, ok, err := m.ServerForPath(context.Background(), filepath.Join(root, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || srv == nil {
+		t.Fatal("ServerForPath did not return Go server")
+	}
+	defer m.StopAll(context.Background())
+	if containsString(lookedUp, "csharp-ls") {
+		t.Fatalf("lookups = %#v, C# backend should not be resolved for Go request", lookedUp)
+	}
+	if !containsString(lookedUp, goBinary) {
+		t.Fatalf("lookups = %#v, want Go binary lookup %q", lookedUp, goBinary)
+	}
+}
+
+func TestServerForPathCSharpDirectAccessStartsAndReusesCustomBackend(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Program.cs"), []byte("class Program {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	binaryName, binaryDir := fakePluginLSPExecutable(t)
+	t.Setenv("KNOWNS_FAKE_LSP_SERVER", "1")
+	t.Setenv("PATH", binaryDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	m := NewManager(root, Config{Languages: map[string]LanguageConfig{
+		CSharpLanguageID: {Binary: binaryName},
+	}})
+	if err := m.RegisterAdapter(&mgrMockAdapter{id: CSharpLanguageID, name: "C#", extensions: []string{".cs"}}); err != nil {
+		t.Fatal(err)
+	}
+	var lookups int
+	m.SetDetector(&Detector{
+		Registry: m.registry,
+		LookPath: func(name string) (string, error) {
+			lookups++
+			return filepath.Join(binaryDir, binaryName), nil
+		},
+	})
+
+	path := filepath.Join(root, "Program.cs")
+	first, ok, err := m.ServerForPath(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || first == nil || !first.Alive() {
+		t.Fatalf("first server = %#v ok=%v alive=%v", first, ok, first != nil && first.Alive())
+	}
+	second, ok, err := m.ServerForPath(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || second != first {
+		t.Fatalf("second server = %#v ok=%v, want same server %#v", second, ok, first)
+	}
+	defer m.StopAll(context.Background())
+	if lookups != 1 {
+		t.Fatalf("lookups = %d, want one direct C# backend resolution", lookups)
+	}
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
+}
+
 func TestMissingServers(t *testing.T) {
 	root := t.TempDir()
 	m := NewManager(root, Config{})

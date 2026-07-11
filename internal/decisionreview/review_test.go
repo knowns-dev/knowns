@@ -1,6 +1,9 @@
 package decisionreview
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -165,6 +168,16 @@ func TestResolveCreateDraftAndLinkAsRelatedAreNonDestructive(t *testing.T) {
 	}
 }
 
+func TestSemanticReviewUsesRuntimeSearchPath(t *testing.T) {
+	calls := reviewSelectorCalls(t)
+	if calls["search.InitSemantic"] {
+		t.Fatal("decision review must not initialize semantic providers inline")
+	}
+	if !calls["search.SearchWithRuntime"] {
+		t.Fatal("decision review should route semantic matching through search.SearchWithRuntime")
+	}
+}
+
 func newDecisionReviewTestStore(t *testing.T) *storage.Store {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
@@ -197,4 +210,30 @@ func countReviewDecisions(t *testing.T, store *storage.Store) int {
 
 func fixedDecisionReviewTime() time.Time {
 	return time.Date(2026, 6, 18, 10, 24, 0, 0, time.FixedZone("ICT", 7*60*60))
+}
+
+func reviewSelectorCalls(t *testing.T) map[string]bool {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), "review.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse review.go: %v", err)
+	}
+	calls := make(map[string]bool)
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		ident, ok := selector.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		calls[ident.Name+"."+selector.Sel.Name] = true
+		return true
+	})
+	return calls
 }

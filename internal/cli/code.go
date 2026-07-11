@@ -17,7 +17,7 @@ var codeCmd = &cobra.Command{
 	Long: `Code intelligence commands for AST-based indexing and graph analysis.
 
 Recommended context flow:
-  1. Use 'knowns code search <query>' for BM25 lexical code discovery across the project.
+  1. Use 'knowns code search <query>' for keyword code discovery across LSP symbols.
   2. Use 'knowns code symbols' to verify what was actually indexed in a file or scope.
   3. Use 'knowns code deps' to inspect raw relationships such as calls, imports, ownership, and inheritance.
 
@@ -42,7 +42,7 @@ var codeSymbolsCmd = &cobra.Command{
 
 var codeSearchCmd = &cobra.Command{
 	Use:   "search <query>",
-	Short: "BM25 lexical search across code symbols",
+	Short: "Keyword search across LSP code symbols",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runCodeSearch,
 }
@@ -238,10 +238,7 @@ func runCodeSearch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	mode := "bm25"
-	if len(summaries) > 0 {
-		mode = "bm25+lsp"
-	}
+	mode := "keyword"
 
 	scorer := search.NewCodeBM25Scorer(summaries)
 	results, err := scorer.Search(query, limit)
@@ -281,7 +278,7 @@ func runCodeSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\n", StyleBold.Render("Code Search (BM25)"))
+	fmt.Fprintf(&b, "%s\n\n", StyleBold.Render("Code Search"))
 	fmt.Fprintf(&b, "%s\n", RenderField("Query", query))
 	fmt.Fprintf(&b, "%s\n", RenderField("Mode", mode))
 	fmt.Fprintf(&b, "%s\n", RenderField("Results", fmt.Sprintf("%d", len(items))))
@@ -310,7 +307,7 @@ func runCodeSearch(cmd *cobra.Command, args []string) error {
 	if isPlain(cmd) {
 		printPaged(cmd, b.String())
 	} else {
-		renderOrPage(cmd, "Code Search (BM25)", b.String())
+		renderOrPage(cmd, "Code Search", b.String())
 	}
 	return nil
 }

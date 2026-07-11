@@ -21,16 +21,19 @@ import (
 type JobKind string
 
 const (
-	JobIndexTask    JobKind = "index-task"
-	JobIndexDoc     JobKind = "index-doc"
-	JobRemoveTask   JobKind = "remove-task"
-	JobRemoveDoc    JobKind = "remove-doc"
-	JobIndexMemory  JobKind = "index-memory"
-	JobRemoveMemory JobKind = "remove-memory"
-	JobIndexAll     JobKind = "index-all-files"
-	JobIndexFile    JobKind = "index-file"
-	JobRemoveFile   JobKind = "remove-file"
-	JobReindex      JobKind = "reindex-search"
+	JobIndexTask      JobKind = "index-task"
+	JobIndexDoc       JobKind = "index-doc"
+	JobRemoveTask     JobKind = "remove-task"
+	JobRemoveDoc      JobKind = "remove-doc"
+	JobIndexMemory    JobKind = "index-memory"
+	JobRemoveMemory   JobKind = "remove-memory"
+	JobIndexDecision  JobKind = "index-decision"
+	JobRemoveDecision JobKind = "remove-decision"
+	JobSemanticSearch JobKind = "semantic-search"
+	JobIndexAll       JobKind = "index-all-files"
+	JobIndexFile      JobKind = "index-file"
+	JobRemoveFile     JobKind = "remove-file"
+	JobReindex        JobKind = "reindex-search"
 )
 
 const (
@@ -61,10 +64,11 @@ type Job struct {
 }
 
 type JobDetails struct {
-	Phase     string         `json:"phase,omitempty"`
-	Processed int            `json:"processed,omitempty"`
-	Total     int            `json:"total,omitempty"`
-	Stats     map[string]int `json:"stats,omitempty"`
+	Phase     string          `json:"phase,omitempty"`
+	Processed int             `json:"processed,omitempty"`
+	Total     int             `json:"total,omitempty"`
+	Stats     map[string]int  `json:"stats,omitempty"`
+	Result    json.RawMessage `json:"result,omitempty"`
 }
 
 type JobResult struct {
@@ -559,37 +563,40 @@ func ReportDetails(storeRoot, jobID string, details JobDetails) error {
 
 func CompleteJob(storeRoot string, job Job, err error) error {
 	return updateQueue(storeRoot, func(state *QueueState) error {
+		finalJob := job
 		jobs := state.Jobs[:0]
 		for _, queued := range state.Jobs {
 			if queued.ID != job.ID {
 				jobs = append(jobs, queued)
+				continue
 			}
+			finalJob = *queued
 		}
 		state.Jobs = jobs
-		startedAt := job.RequestedAt
-		if job.StartedAt != nil {
-			startedAt = *job.StartedAt
+		startedAt := finalJob.RequestedAt
+		if finalJob.StartedAt != nil {
+			startedAt = *finalJob.StartedAt
 		}
 		result := JobResult{
-			JobID:        job.ID,
-			Key:          job.Key,
-			Kind:         job.Kind,
-			Target:       job.Target,
+			JobID:        finalJob.ID,
+			Key:          finalJob.Key,
+			Kind:         finalJob.Kind,
+			Target:       finalJob.Target,
 			Success:      err == nil,
 			CompletedAt:  time.Now().UTC(),
-			RequestedAt:  job.RequestedAt,
+			RequestedAt:  finalJob.RequestedAt,
 			StartedAt:    startedAt,
-			AttemptCount: job.Attempts,
+			AttemptCount: finalJob.Attempts,
 		}
 		if err != nil {
 			result.Error = err.Error()
 		}
-		result.Details = job.Details
-		if result.Details == nil && (job.Phase != "" || job.Processed > 0) {
+		result.Details = finalJob.Details
+		if result.Details == nil && (finalJob.Phase != "" || finalJob.Processed > 0) {
 			result.Details = &JobDetails{
-				Phase:     job.Phase,
-				Processed: job.Processed,
-				Total:     job.Total,
+				Phase:     finalJob.Phase,
+				Processed: finalJob.Processed,
+				Total:     finalJob.Total,
 			}
 		}
 		state.Recent = append([]JobResult{result}, state.Recent...)
@@ -1051,6 +1058,9 @@ func rotateLogFiles(path string, maxBytes int64, backups int) {
 }
 
 func debounceFor(kind JobKind) time.Duration {
+	if kind == JobSemanticSearch {
+		return 0
+	}
 	switch kind {
 	case JobRemoveTask, JobRemoveDoc, JobRemoveMemory, JobRemoveFile, JobIndexAll, JobReindex:
 		return 0

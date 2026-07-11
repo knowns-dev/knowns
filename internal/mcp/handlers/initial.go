@@ -9,11 +9,17 @@ import (
 
 	"github.com/howznguyen/knowns/internal/lsp"
 	"github.com/howznguyen/knowns/internal/readiness"
+	"github.com/howznguyen/knowns/internal/runtimequeue"
+	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func RegisterInitialTool(s *server.MCPServer, getStore func() *storage.Store, getLSPManager ...func() *lsp.Manager) {
+	RegisterInitialToolWithStatusProvider(s, getStore, nil, getLSPManager...)
+}
+
+func RegisterInitialToolWithStatusProvider(s *server.MCPServer, getStore func() *storage.Store, getLSPStatuses func(context.Context) []lsp.LanguageRuntimeStatus, getLSPManager ...func() *lsp.Manager) {
 	s.AddTool(
 		mcp.NewTool("initial",
 			mcp.WithDescription(`Provides the Knowns session-ready instructions for AI agents.
@@ -26,17 +32,28 @@ func RegisterInitialTool(s *server.MCPServer, getStore func() *storage.Store, ge
 			if len(getLSPManager) > 0 && getLSPManager[0] != nil {
 				manager = getLSPManager[0]()
 			}
-			return mcp.NewToolResultText(buildInitialInstructions(getStore, manager)), nil
+			var statuses []lsp.LanguageRuntimeStatus
+			if getLSPStatuses != nil {
+				statuses = getLSPStatuses(ctx)
+			}
+			return mcp.NewToolResultText(buildInitialInstructionsWithStatuses(getStore, manager, statuses)), nil
 		},
 	)
 }
 
 func buildInitialInstructions(getStore func() *storage.Store, manager *lsp.Manager) string {
+	return buildInitialInstructionsWithStatuses(getStore, manager, nil)
+}
+
+func buildInitialInstructionsWithStatuses(getStore func() *storage.Store, manager *lsp.Manager, statuses []lsp.LanguageRuntimeStatus) string {
 	var b strings.Builder
 	store := getStore()
+	if len(statuses) == 0 && manager != nil {
+		statuses = manager.RuntimeStatuses(context.Background())
+	}
 
 	b.WriteString("# Knowns MCP — Session Ready\n\n")
-	writeProjectState(&b, store, manager)
+	writeProjectState(&b, store, statuses)
 	b.WriteString("\n")
 	writeCodeIntelligenceRules(&b)
 	b.WriteString("\n")
@@ -49,7 +66,7 @@ func buildInitialInstructions(getStore func() *storage.Store, manager *lsp.Manag
 	return b.String()
 }
 
-func writeProjectState(b *strings.Builder, store *storage.Store, manager *lsp.Manager) {
+func writeProjectState(b *strings.Builder, store *storage.Store, statuses []lsp.LanguageRuntimeStatus) {
 	b.WriteString("## Project State\n")
 	if store == nil {
 		b.WriteString("Project: not connected\n")
@@ -69,8 +86,12 @@ func writeProjectState(b *strings.Builder, store *storage.Store, manager *lsp.Ma
 		b.WriteString(timerLine)
 		b.WriteString("\n")
 	}
-	if lspLine := lspWarningsLine(manager); lspLine != "" {
+	if lspLine := lspWarningsLineFromStatuses(statuses); lspLine != "" {
 		b.WriteString(lspLine)
+		b.WriteString("\n")
+	}
+	if semanticLine := semanticRuntimeLine(store); semanticLine != "" {
+		b.WriteString(semanticLine)
 		b.WriteString("\n")
 	}
 
@@ -131,7 +152,10 @@ func lspWarningsLine(manager *lsp.Manager) string {
 	if manager == nil {
 		return ""
 	}
-	statuses := manager.RuntimeStatuses(context.Background())
+	return lspWarningsLineFromStatuses(manager.RuntimeStatuses(context.Background()))
+}
+
+func lspWarningsLineFromStatuses(statuses []lsp.LanguageRuntimeStatus) string {
 	parts := make([]string, 0, len(statuses))
 	for _, status := range statuses {
 		if status.ID == lsp.CSharpLanguageID {
@@ -162,6 +186,18 @@ func formatInitialLSPStatus(status lsp.LanguageRuntimeStatus) string {
 	if status.InstallState != "" {
 		parts = append(parts, "install="+status.InstallState)
 	}
+	if status.Owner != "" {
+		parts = append(parts, "owner="+status.Owner)
+	}
+	if status.DaemonState != "" {
+		parts = append(parts, "daemon="+status.DaemonState)
+	}
+	if status.DaemonIdleDeadline != "" {
+		parts = append(parts, "idle="+status.DaemonIdleDeadline)
+	}
+	if status.DaemonLeaseCount > 0 {
+		parts = append(parts, fmt.Sprintf("leases=%d", status.DaemonLeaseCount))
+	}
 	if status.ReadinessState != "" && status.ReadinessState != lsp.RuntimeReadinessNotApplicable {
 		parts = append(parts, "readiness="+status.ReadinessState)
 	}
@@ -172,6 +208,67 @@ func formatInitialLSPStatus(status lsp.LanguageRuntimeStatus) string {
 		parts = append(parts, "log="+status.LogPath)
 	}
 	return strings.Join(parts, " ")
+}
+
+func semanticRuntimeLine(store *storage.Store) string {
+	if store == nil {
+		return ""
+	}
+	status := search.ObservedSemanticRuntimeStatus()
+	parts := []string{fmt.Sprintf("enabled=%v", status.Enabled)}
+	if status.DisabledBy != "" {
+		parts = append(parts, "disabled_by="+status.DisabledBy)
+	}
+	if status.IdleTimeout > 0 {
+		parts = append(parts, "idle_timeout="+status.IdleTimeout.Round(time.Second).String())
+	}
+	if project, err := store.Config.Load(); err == nil && project != nil && project.Settings.SemanticSearch != nil {
+		cfg := project.Settings.SemanticSearch
+		if !cfg.Enabled {
+			parts = append(parts, "config=disabled")
+		} else {
+			provider := cfg.Provider
+			if provider == "" {
+				provider = "local"
+			}
+			parts = append(parts, "provider="+provider)
+			if cfg.Model != "" {
+				parts = append(parts, "model="+cfg.Model)
+			}
+			if cfg.Dimensions > 0 {
+				parts = append(parts, fmt.Sprintf("dims=%d", cfg.Dimensions))
+			}
+		}
+	} else {
+		parts = append(parts, "config=unavailable")
+	}
+	loaded := false
+	activeSessions := 0
+	consumers := 0
+	var idleUnloadAfter time.Time
+	for _, entry := range status.Entries {
+		if entry.Loaded {
+			loaded = true
+		}
+		activeSessions += entry.ActiveSessions
+		consumers += len(entry.StoreConsumers)
+		if entry.IdleUnloadAfter.After(idleUnloadAfter) {
+			idleUnloadAfter = entry.IdleUnloadAfter
+		}
+	}
+	parts = append(parts, fmt.Sprintf("loaded=%v", loaded))
+	parts = append(parts, fmt.Sprintf("entries=%d", len(status.Entries)))
+	if activeSessions > 0 {
+		parts = append(parts, fmt.Sprintf("sessions=%d", activeSessions))
+	}
+	if consumers > 0 {
+		parts = append(parts, fmt.Sprintf("consumers=%d", consumers))
+	}
+	if !idleUnloadAfter.IsZero() {
+		parts = append(parts, "idle="+idleUnloadAfter.Format(time.RFC3339))
+	}
+	parts = append(parts, "log="+runtimequeue.RuntimeLogPath())
+	return "Semantic runtime: " + strings.Join(parts, " ")
 }
 
 func codeIndexCounts(store *storage.Store) (symbols int, relations int) {

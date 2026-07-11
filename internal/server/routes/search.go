@@ -56,13 +56,12 @@ func (sr *SearchRoutes) searchHandler(w http.ResponseWriter, r *http.Request) {
 		Limit:    limit,
 	}
 
-	// Create engine (keyword-only from HTTP for now; embedder wired at server level later).
-	engine := search.NewEngine(sr.getStore(), nil, nil)
-	results, err := engine.Search(opts)
+	response, err := search.SearchWithRuntime(sr.getStore(), opts)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	results := response.Results
 
 	// Group results by type into {tasks: [...], docs: [...]} shape expected by UI.
 	taskResults := []models.SearchResult{}
@@ -78,10 +77,14 @@ func (sr *SearchRoutes) searchHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{
+	payload := map[string]interface{}{
 		"tasks": taskResults,
 		"docs":  docResults,
-	})
+	}
+	if response.Runtime != nil {
+		payload["_runtime"] = response.Runtime
+	}
+	respondJSON(w, http.StatusOK, payload)
 }
 
 // retrieveHandler executes mixed-source retrieval and returns ranked candidates
@@ -119,16 +122,7 @@ func (sr *SearchRoutes) retrieveHandler(w http.ResponseWriter, r *http.Request) 
 		expandRefs = strings.EqualFold(raw, "true") || raw == "1"
 	}
 
-	embedder, vecStore, _ := search.InitSemantic(sr.getStore())
-	if embedder != nil {
-		defer embedder.Close()
-	}
-	if vecStore != nil {
-		defer vecStore.Close()
-	}
-
-	engine := search.NewEngine(sr.getStore(), embedder, vecStore)
-	response, err := engine.Retrieve(models.RetrievalOptions{
+	response, runtimeMeta, err := search.RetrieveWithRuntime(sr.getStore(), models.RetrievalOptions{
 		Query:            q.Get("q"),
 		Mode:             q.Get("mode"),
 		Limit:            limit,
@@ -145,5 +139,15 @@ func (sr *SearchRoutes) retrieveHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if runtimeMeta != nil {
+		respondJSON(w, http.StatusOK, map[string]any{
+			"query":       response.Query,
+			"mode":        response.Mode,
+			"candidates":  response.Candidates,
+			"contextPack": response.ContextPack,
+			"_runtime":    runtimeMeta,
+		})
+		return
+	}
 	respondJSON(w, http.StatusOK, response)
 }

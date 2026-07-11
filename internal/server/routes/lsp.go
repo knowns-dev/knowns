@@ -2,12 +2,15 @@
 package routes
 
 import (
+	"errors"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/howznguyen/knowns/internal/lsp"
+	"github.com/howznguyen/knowns/internal/lspdaemon"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
 )
@@ -25,6 +28,69 @@ func (lr *LSPRoutes) getStore() *storage.Store {
 		return lr.mgr.GetStore()
 	}
 	return lr.store
+}
+
+func (lr *LSPRoutes) daemonClient(r *http.Request) (*lspdaemon.Client, bool, error) {
+	store := lr.getStore()
+	if store == nil || lspdaemon.DisabledByEnv() {
+		return nil, false, nil
+	}
+	client, err := lspdaemon.EnsureClient(r.Context(), filepath.Dir(store.Root))
+	if err != nil {
+		return nil, true, err
+	}
+	_, _ = client.AcquireLease(r.Context(), "webui", lspdaemon.LeaseTTLFromEnv())
+	return client, true, nil
+}
+
+func (lr *LSPRoutes) daemonStatuses(r *http.Request) ([]lsp.LanguageRuntimeStatus, bool) {
+	if lspdaemon.DisabledByEnv() {
+		if lr.lspMgr == nil {
+			return nil, false
+		}
+		return lspdaemon.AnnotateLocalStatuses(lr.lspMgr.RuntimeStatuses(r.Context()), lspdaemon.DaemonStateDisabledByEnv), true
+	}
+	client, ok, err := lr.daemonClient(r)
+	if err != nil {
+		if lr.lspMgr == nil {
+			return nil, false
+		}
+		return lspdaemon.AnnotateLocalStatuses(lr.lspMgr.RuntimeStatuses(r.Context()), lspdaemon.DaemonStateUnavailable), true
+	}
+	if !ok {
+		return nil, false
+	}
+	statuses, err := client.RuntimeStatuses(r.Context())
+	return statuses, err == nil
+}
+
+func languageInfosFromStatuses(statuses []lsp.LanguageRuntimeStatus) []lsp.LanguageInfo {
+	infos := make([]lsp.LanguageInfo, 0, len(statuses))
+	for _, status := range statuses {
+		info := lsp.LanguageInfoFromRuntimeStatus(status)
+		if status.InstallState != lsp.RuntimeInstallInstalled {
+			info.InstallHint = status.InstallCmd
+		}
+		infos = append(infos, info)
+	}
+	return infos
+}
+
+func annotateLocalLanguageInfos(infos []lsp.LanguageInfo, daemonState string) []lsp.LanguageInfo {
+	for i := range infos {
+		infos[i].Owner = "local"
+		infos[i].DaemonState = daemonState
+	}
+	return infos
+}
+
+func respondDaemonUnavailable(w http.ResponseWriter, err error) bool {
+	var daemonErr *lspdaemon.DaemonError
+	if errors.As(err, &daemonErr) {
+		respondError(w, http.StatusServiceUnavailable, daemonErr.Error())
+		return true
+	}
+	return false
 }
 
 // Register wires the LSP language routes onto r at /languages prefix.
@@ -53,6 +119,18 @@ func SetupLSPRoutes(r chi.Router, lspMgr *lsp.Manager, store *storage.Store, mgr
 func (lr *LSPRoutes) list(w http.ResponseWriter, r *http.Request) {
 	if lr.lspMgr == nil {
 		respondJSON(w, http.StatusOK, map[string][]lsp.LanguageInfo{"languages": nil})
+		return
+	}
+	if lspdaemon.DisabledByEnv() {
+		respondJSON(w, http.StatusOK, map[string][]lsp.LanguageInfo{
+			"languages": annotateLocalLanguageInfos(lr.lspMgr.AvailableLanguages(), lspdaemon.DaemonStateDisabledByEnv),
+		})
+		return
+	}
+	if statuses, ok := lr.daemonStatuses(r); ok {
+		respondJSON(w, http.StatusOK, map[string][]lsp.LanguageInfo{
+			"languages": languageInfosFromStatuses(statuses),
+		})
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string][]lsp.LanguageInfo{
@@ -119,10 +197,29 @@ func (lr *LSPRoutes) add(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lr.refreshManagerConfig(project)
+	daemonClient, _, daemonErr := lr.daemonClient(r)
+	if daemonErr != nil {
+		respondError(w, http.StatusServiceUnavailable, daemonErr.Error())
+		return
+	}
+	if daemonClient != nil {
+		if _, err := daemonClient.ApplyConfig(r.Context()); respondDaemonUnavailable(w, err) {
+			return
+		}
+	}
 
 	// Start LSP server (best effort — config is persisted regardless).
 	var status string
-	if err := lr.lspMgr.StartLanguage(r.Context(), langID); err != nil {
+	if daemonClient != nil {
+		if _, err := daemonClient.StartLanguage(r.Context(), langID); err != nil {
+			if respondDaemonUnavailable(w, err) {
+				return
+			}
+			status = "not_installed"
+		} else {
+			status = "running"
+		}
+	} else if err := lr.lspMgr.StartLanguage(r.Context(), langID); err != nil {
 		status = "not_installed"
 	} else {
 		status = "running"
@@ -185,16 +282,39 @@ func (lr *LSPRoutes) toggle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lr.refreshManagerConfig(project)
+	var daemonClient *lspdaemon.Client
+	if client, _, err := lr.daemonClient(r); err != nil {
+		respondError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	} else if client != nil {
+		daemonClient = client
+		if _, err := daemonClient.ApplyConfig(r.Context()); respondDaemonUnavailable(w, err) {
+			return
+		}
+	}
 
 	var status string
 	if req.Enabled {
-		if err := lr.lspMgr.StartLanguage(r.Context(), langID); err != nil {
+		if daemonClient != nil {
+			if _, err := daemonClient.StartLanguage(r.Context(), langID); err != nil {
+				if respondDaemonUnavailable(w, err) {
+					return
+				}
+				status = "not_installed"
+			} else {
+				status = "running"
+			}
+		} else if err := lr.lspMgr.StartLanguage(r.Context(), langID); err != nil {
 			status = "not_installed"
 		} else {
 			status = "running"
 		}
 	} else {
-		_ = lr.lspMgr.StopLanguage(langID)
+		if daemonClient != nil {
+			_, _ = daemonClient.StopLanguage(r.Context(), langID)
+		} else {
+			_ = lr.lspMgr.StopLanguage(langID)
+		}
 		status = "stopped"
 	}
 
@@ -236,9 +356,25 @@ func (lr *LSPRoutes) remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lr.refreshManagerConfig(project)
+	var daemonClient *lspdaemon.Client
+	if client, _, err := lr.daemonClient(r); err != nil {
+		respondError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	} else if client != nil {
+		daemonClient = client
+		if _, err := daemonClient.ApplyConfig(r.Context()); respondDaemonUnavailable(w, err) {
+			return
+		}
+	}
 
 	// Stop LSP server (best effort).
-	_ = lr.lspMgr.StopLanguage(langID)
+	if daemonClient != nil {
+		if _, err := daemonClient.StopLanguage(r.Context(), langID); respondDaemonUnavailable(w, err) {
+			return
+		}
+	} else {
+		_ = lr.lspMgr.StopLanguage(langID)
+	}
 
 	broadcastLSPEvent(lr.sse, langID, "removed", "removed")
 	respondJSON(w, http.StatusOK, map[string]string{
@@ -266,7 +402,18 @@ func (lr *LSPRoutes) restart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := lr.lspMgr.RestartLanguage(r.Context(), langID)
+	var err error
+	if client, _, daemonErr := lr.daemonClient(r); daemonErr != nil {
+		respondError(w, http.StatusServiceUnavailable, daemonErr.Error())
+		return
+	} else if client != nil {
+		_, err = client.RestartLanguage(r.Context(), langID)
+	} else {
+		err = lr.lspMgr.RestartLanguage(r.Context(), langID)
+	}
+	if respondDaemonUnavailable(w, err) {
+		return
+	}
 	lr.respondLanguageAction(w, langID, "restarted", err, nil)
 }
 
@@ -344,10 +491,27 @@ func (lr *LSPRoutes) patchConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lr.refreshManagerConfig(project)
+	var daemonClient *lspdaemon.Client
+	if client, _, err := lr.daemonClient(r); err != nil {
+		respondError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	} else if client != nil {
+		daemonClient = client
+		if _, err := daemonClient.ApplyConfig(r.Context()); respondDaemonUnavailable(w, err) {
+			return
+		}
+	}
 
 	var applyErr error
 	if req.Apply {
-		applyErr = lr.lspMgr.RestartLanguage(r.Context(), langID)
+		if daemonClient != nil {
+			_, applyErr = daemonClient.RestartLanguage(r.Context(), langID)
+		} else {
+			applyErr = lr.lspMgr.RestartLanguage(r.Context(), langID)
+		}
+	}
+	if respondDaemonUnavailable(w, applyErr) {
+		return
 	}
 	lr.respondLanguageAction(w, langID, "configured", applyErr, map[string]any{"applied": req.Apply})
 }

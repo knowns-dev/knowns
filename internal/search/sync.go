@@ -172,6 +172,32 @@ func BestEffortRemoveMemory(store *storage.Store, memoryID string) {
 	})
 }
 
+func BestEffortIndexDecision(store *storage.Store, decisionID string) {
+	if enqueueRuntimeJob(store, runtimequeue.JobIndexDecision, decisionID, func() {
+		scheduleBestEffort(store, "index-decision", decisionID, func(svc *IndexService) error {
+			return svc.IndexDecision(decisionID)
+		})
+	}) {
+		return
+	}
+	scheduleBestEffort(store, "index-decision", decisionID, func(svc *IndexService) error {
+		return svc.IndexDecision(decisionID)
+	})
+}
+
+func BestEffortRemoveDecision(store *storage.Store, decisionID string) {
+	if enqueueRuntimeJob(store, runtimequeue.JobRemoveDecision, decisionID, func() {
+		scheduleBestEffort(store, "remove-decision", decisionID, func(svc *IndexService) error {
+			return svc.RemoveDecision(decisionID)
+		})
+	}) {
+		return
+	}
+	scheduleBestEffort(store, "remove-decision", decisionID, func(svc *IndexService) error {
+		return svc.RemoveDecision(decisionID)
+	})
+}
+
 func memoryIndexTarget(store *storage.Store, memoryID string) (*storage.Store, string) {
 	if store == nil || store.Memory == nil {
 		return nil, ""

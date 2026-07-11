@@ -170,7 +170,7 @@ func maybeAutoSetup() {
 }
 
 func shouldSkipCLIWarnings(args []string) bool {
-	for _, name := range []string{"runtime", "runtime-memory", "__runtime"} {
+	for _, name := range []string{"runtime", "runtime-memory", "__runtime", "__lsp-daemon"} {
 		if slices.Contains(args, name) {
 			return true
 		}

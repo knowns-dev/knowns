@@ -24,6 +24,9 @@ func TestLspRowFromRuntimeIncludesRuntimeFields(t *testing.T) {
 		ProjectKind:    "sln",
 		LogPath:        "/repo/.knowns/logs/lsp/csharp-csharp-ls.log",
 		Attempts:       []lsp.BackendAttempt{{Backend: lsp.CSharpBackendCSharp, Status: lsp.BackendAttemptChosen}},
+		Owner:          "daemon",
+		DaemonState:    "running",
+		DaemonPID:      1234,
 	})
 	if row.Backend != lsp.CSharpBackendCSharp || row.BackendSource != lsp.RuntimeSourceAuto {
 		t.Fatalf("backend fields missing: %#v", row)
@@ -33,5 +36,8 @@ func TestLspRowFromRuntimeIncludesRuntimeFields(t *testing.T) {
 	}
 	if row.ProjectPath == "" || row.LogPath == "" || len(row.Attempts) != 1 {
 		t.Fatalf("project/log/attempt fields missing: %#v", row)
+	}
+	if row.Owner != "daemon" || row.DaemonState != "running" || row.DaemonPID != 1234 {
+		t.Fatalf("daemon fields missing: %#v", row)
 	}
 }

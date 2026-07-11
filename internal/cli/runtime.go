@@ -172,9 +172,9 @@ func runRuntimePs(cmd *cobra.Command, args []string) error {
 }
 
 type projectSnapshot struct {
-	Root    string                  `json:"root"`
-	Running []runtimequeue.Job      `json:"running"`
-	Queued  []runtimequeue.Job      `json:"queued"`
+	Root    string                   `json:"root"`
+	Running []runtimequeue.Job       `json:"running"`
+	Queued  []runtimequeue.Job       `json:"queued"`
 	Recent  []runtimequeue.JobResult `json:"recent"`
 }
 
@@ -406,8 +406,11 @@ func formatServiceLines(ss []services.ServiceStatus) []string {
 		}
 
 		// Append type-specific details
-		if s.Type == "embedding" && s.Details["model"] != "" {
-			detail += "  " + StyleDim.Render("model="+s.Details["model"])
+		if s.Type == "embedding" {
+			parts := embeddingServiceParts(s)
+			if len(parts) > 0 {
+				detail += "  " + strings.Join(parts, "  ")
+			}
 		}
 		if s.Type == "opencode" && s.Details["mode"] != "" {
 			detail += "  " + StyleDim.Render("mode="+s.Details["mode"])
@@ -419,6 +422,59 @@ func formatServiceLines(ss []services.ServiceStatus) []string {
 		lines = []string{StyleDim.Render("  (no services)")}
 	}
 	return lines
+}
+
+func embeddingServiceParts(s services.ServiceStatus) []string {
+	var parts []string
+	add := func(key, label string) {
+		if value := s.Details[key]; value != "" {
+			parts = append(parts, StyleDim.Render(label+"="+shorten(value)))
+		}
+	}
+	add("provider", "provider")
+	add("model", "model")
+	add("dimensions", "dims")
+	if loaded := s.Details["runtime_loaded"]; loaded != "" {
+		parts = append(parts, StyleDim.Render("loaded="+loaded))
+	}
+	if sessions := s.Details["active_sessions"]; sessions != "" {
+		parts = append(parts, StyleDim.Render("sessions="+sessions))
+	}
+	if consumers := s.Details["consumers"]; consumers != "" {
+		parts = append(parts, StyleDim.Render(fmt.Sprintf("consumers=%d", countCommaList(consumers))))
+	}
+	if idle := s.Details["idle_unload_after"]; idle != "" {
+		parts = append(parts, StyleDim.Render("idle="+shorten(idle)))
+	}
+	if queued := s.Details["queued_jobs"]; queued != "" {
+		parts = append(parts, StyleDim.Render("queued="+queued))
+	}
+	if running := s.Details["running_jobs"]; running != "" {
+		parts = append(parts, StyleDim.Render("jobs="+running))
+	}
+	if s.Details["degraded"] == "true" {
+		parts = append(parts, StyleError.Render("degraded"))
+	}
+	if errMsg := s.Details["last_error"]; errMsg != "" {
+		parts = append(parts, StyleError.Render("error="+shorten(errMsg)))
+	} else if errMsg := s.Details["error"]; errMsg != "" {
+		parts = append(parts, StyleError.Render("error="+shorten(errMsg)))
+	}
+	add("runtime_log", "log")
+	return parts
+}
+
+func countCommaList(value string) int {
+	if value == "" {
+		return 0
+	}
+	count := 0
+	for _, part := range strings.Split(value, ",") {
+		if strings.TrimSpace(part) != "" {
+			count++
+		}
+	}
+	return count
 }
 
 func renderRuntimePsPlain(cmd *cobra.Command, status *runtimequeue.Status) {
