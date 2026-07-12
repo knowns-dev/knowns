@@ -9,6 +9,7 @@
   <a href="https://www.npmjs.com/package/knowns"><img src="https://img.shields.io/npm/v/knowns.svg?style=flat-square" alt="npm"></a>
   <a href="https://github.com/knowns-dev/knowns/actions/workflows/ci.yml"><img src="https://github.com/knowns-dev/knowns/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="#installation"><img src="https://img.shields.io/badge/platform-win%20%7C%20mac%20%7C%20linux-lightgrey?style=flat-square" alt="Platform"></a>
+  <a href="https://discord.knowns.dev"><img src="https://img.shields.io/badge/Discord-Join%20community-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/knowns-dev/knowns?style=flat-square" alt="License"></a>
 </p>
 
@@ -289,10 +290,11 @@ When using Knowns with an agent runtime such as Claude Code or Codex, skills pro
 </p>
 
 ```
-/kn-init      -> Read project docs, understand context
-/kn-plan      -> Take task, gather context, create plan (wait for approval)
-/kn-implement -> Follow plan, check ACs, track progress
-/kn-commit    -> Commit with conventional format
+Tiny change:
+/kn-init -> /kn-research -> /kn-plan -> /kn-implement -> /kn-review -> /kn-commit
+
+Feature / approved spec:
+/kn-init -> /kn-research -> /kn-spec -> /kn-flow -> /kn-commit
 ```
 
 ### Example Session

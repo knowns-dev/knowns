@@ -9,6 +9,7 @@
   <a href="https://www.npmjs.com/package/knowns"><img src="https://img.shields.io/npm/v/knowns.svg?style=flat-square" alt="npm"></a>
   <a href="https://github.com/knowns-dev/knowns/actions/workflows/ci.yml"><img src="https://github.com/knowns-dev/knowns/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="#cài-đặt"><img src="https://img.shields.io/badge/platform-win%20%7C%20mac%20%7C%20linux-lightgrey?style=flat-square" alt="Platform"></a>
+  <a href="https://discord.knowns.dev"><img src="https://img.shields.io/badge/Discord-Community-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/knowns-dev/knowns?style=flat-square" alt="License"></a>
 </p>
 
@@ -289,10 +290,11 @@ Khi dùng Knowns với agent runtime như Claude Code hoặc Codex, skills tạo
 </p>
 
 ```
-/kn-init      -> Đọc project docs, hiểu context
-/kn-plan      -> Nhận task, gom context, tạo plan (chờ approve)
-/kn-implement -> Follow plan, check AC, track progress
-/kn-commit    -> Commit theo conventional format
+Thay đổi nhỏ:
+/kn-init -> /kn-research -> /kn-plan -> /kn-implement -> /kn-review -> /kn-commit
+
+Feature / spec đã được duyệt:
+/kn-init -> /kn-research -> /kn-spec -> /kn-flow -> /kn-commit
 ```
 
 ### Ví dụ session

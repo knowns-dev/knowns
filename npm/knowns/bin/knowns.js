@@ -40,6 +40,55 @@ function getInstallHint(pkgName) {
   );
 }
 
+function getWindowsRuntimeCacheRoot() {
+  if (process.env.LOCALAPPDATA) {
+    return path.join(process.env.LOCALAPPDATA, "Knowns", "npm-runtime");
+  }
+  return path.join(os.homedir(), ".knowns", "cache", "npm-runtime");
+}
+
+function stageWindowsBinary(binary, options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform !== "win32") {
+    return binary;
+  }
+
+  const arch = options.arch || process.arch;
+  const sourceDir = path.dirname(binary);
+  const packageJsonPath = path.join(sourceDir, "package.json");
+  let version = "unknown";
+  try {
+    version = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")).version || version;
+  } catch {}
+
+  const cacheRoot = options.cacheRoot || getWindowsRuntimeCacheRoot();
+  const cacheDir = path.join(cacheRoot, `${version}-${arch}`);
+  const cachedBinary = path.join(cacheDir, path.basename(binary));
+  if (fs.existsSync(cachedBinary)) {
+    return cachedBinary;
+  }
+
+  fs.mkdirSync(cacheRoot, { recursive: true });
+  const stagingDir = fs.mkdtempSync(path.join(cacheRoot, ".staging-"));
+  try {
+    fs.cpSync(sourceDir, stagingDir, { recursive: true, force: true });
+    try {
+      fs.renameSync(stagingDir, cacheDir);
+    } catch (error) {
+      if (!fs.existsSync(cachedBinary)) {
+        throw error;
+      }
+    }
+  } finally {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+  }
+
+  if (!fs.existsSync(cachedBinary)) {
+    throw new Error(`Failed to stage Knowns Windows runtime at ${cachedBinary}`);
+  }
+  return cachedBinary;
+}
+
 function getBinaryPath() {
   const platform = os.platform();
   const arch = os.arch();
@@ -110,18 +159,30 @@ function getBinaryPath() {
   process.exit(1);
 }
 
-const binary = getBinaryPath();
-const args = process.argv.slice(2);
+function main() {
+  const binary = stageWindowsBinary(getBinaryPath());
+  const args = process.argv.slice(2);
 
-try {
-  ensureExecutable(binary);
-  execFileSync(binary, args, {
-    stdio: "inherit",
-    env: process.env,
-  });
-} catch (err) {
-  if (err.status !== undefined) {
-    process.exit(err.status);
+  try {
+    ensureExecutable(binary);
+    execFileSync(binary, args, {
+      stdio: "inherit",
+      env: process.env,
+    });
+  } catch (err) {
+    if (err.status !== undefined) {
+      process.exit(err.status);
+    }
+    throw err;
   }
-  throw err;
 }
+
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  getBinaryPath,
+  getWindowsRuntimeCacheRoot,
+  stageWindowsBinary,
+};
