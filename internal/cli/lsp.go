@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -15,39 +16,51 @@ import (
 )
 
 type lspListRow struct {
-	ID                 string               `json:"id"`
-	Name               string               `json:"name"`
-	Enabled            bool                 `json:"enabled"`
-	Detected           bool                 `json:"detected"`
-	Status             string               `json:"status"`
-	InstallState       string               `json:"install_state"`
-	RunningState       string               `json:"running_state"`
-	ReadinessState     string               `json:"readiness_state"`
-	Binary             string               `json:"binary,omitempty"`
-	BinaryPath         string               `json:"binary_path,omitempty"`
-	Source             string               `json:"source,omitempty"`
-	Version            string               `json:"version,omitempty"`
-	CachePath          string               `json:"cache_path,omitempty"`
-	SelectedPath       string               `json:"selected_path,omitempty"`
-	CleanupEligible    bool                 `json:"cleanup_eligible,omitempty"`
-	InstallError       string               `json:"install_error,omitempty"`
-	UpdateError        string               `json:"update_error,omitempty"`
-	InstallCmd         string               `json:"install_cmd,omitempty"`
-	Backend            string               `json:"backend,omitempty"`
-	BackendSource      string               `json:"backend_source,omitempty"`
-	ProjectPath        string               `json:"project_path,omitempty"`
-	ProjectKind        string               `json:"project_kind,omitempty"`
-	LogPath            string               `json:"log_path,omitempty"`
-	Attempts           []lsp.BackendAttempt `json:"attempts,omitempty"`
-	Owner              string               `json:"owner,omitempty"`
-	DaemonState        string               `json:"daemon_state,omitempty"`
-	DaemonPID          int                  `json:"daemon_pid,omitempty"`
-	DaemonClients      int                  `json:"daemon_clients,omitempty"`
-	DaemonTransport    string               `json:"daemon_transport,omitempty"`
-	DaemonEndpoint     string               `json:"daemon_endpoint,omitempty"`
-	DaemonIdleDeadline string               `json:"daemon_idle_deadline,omitempty"`
-	DaemonLeaseCount   int                  `json:"daemon_lease_count,omitempty"`
-	DaemonLeaseOwners  []string             `json:"daemon_lease_owners,omitempty"`
+	ID                     string               `json:"id"`
+	Name                   string               `json:"name"`
+	Enabled                bool                 `json:"enabled"`
+	Detected               bool                 `json:"detected"`
+	Status                 string               `json:"status"`
+	InstallState           string               `json:"install_state"`
+	RunningState           string               `json:"running_state"`
+	ReadinessState         string               `json:"readiness_state"`
+	Binary                 string               `json:"binary,omitempty"`
+	BinaryPath             string               `json:"binary_path,omitempty"`
+	Source                 string               `json:"source,omitempty"`
+	Version                string               `json:"version,omitempty"`
+	RequestedVersion       string               `json:"requested_version,omitempty"`
+	ResolvedVersion        string               `json:"resolved_version,omitempty"`
+	SourceLocation         string               `json:"source_location,omitempty"`
+	Integrity              string               `json:"integrity,omitempty"`
+	InstalledAt            string               `json:"installed_at,omitempty"`
+	Verified               bool                 `json:"verified"`
+	CachePath              string               `json:"cache_path,omitempty"`
+	SelectedPath           string               `json:"selected_path,omitempty"`
+	CleanupEligible        bool                 `json:"cleanup_eligible,omitempty"`
+	InstallError           string               `json:"install_error,omitempty"`
+	UpdateError            string               `json:"update_error,omitempty"`
+	InstallCmd             string               `json:"install_cmd,omitempty"`
+	Backend                string               `json:"backend,omitempty"`
+	BackendSource          string               `json:"backend_source,omitempty"`
+	ProjectPath            string               `json:"project_path,omitempty"`
+	ProjectKind            string               `json:"project_kind,omitempty"`
+	LogPath                string               `json:"log_path,omitempty"`
+	Attempts               []lsp.BackendAttempt `json:"attempts,omitempty"`
+	Owner                  string               `json:"owner,omitempty"`
+	DaemonState            string               `json:"daemon_state,omitempty"`
+	DaemonPID              int                  `json:"daemon_pid,omitempty"`
+	DaemonClients          int                  `json:"daemon_clients,omitempty"`
+	DaemonTransport        string               `json:"daemon_transport,omitempty"`
+	DaemonEndpoint         string               `json:"daemon_endpoint,omitempty"`
+	DaemonIdleDeadline     string               `json:"daemon_idle_deadline,omitempty"`
+	DaemonLeaseCount       int                  `json:"daemon_lease_count,omitempty"`
+	DaemonLeaseOwners      []string             `json:"daemon_lease_owners,omitempty"`
+	CapabilitiesKnown      bool                 `json:"capabilities_known,omitempty"`
+	Capabilities           []string             `json:"capabilities,omitempty"`
+	AdvertisedCapabilities []string             `json:"advertised_capabilities,omitempty"`
+	ObservedCapabilities   []string             `json:"observed_capabilities,omitempty"`
+	RequiredCapabilities   []string             `json:"required_capabilities,omitempty"`
+	MissingCapabilities    []string             `json:"missing_capabilities,omitempty"`
 }
 
 func newLspCmd() *cobra.Command {
@@ -70,12 +83,17 @@ func newLspListCmd() *cobra.Command {
 }
 
 func newLspInstallCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "install <language>",
 		Short: "Install an LSP language server",
 		Args:  cobra.ExactArgs(1),
 		RunE:  runLspInstall,
 	}
+	cmd.Flags().Bool("latest", false, "Install the latest upstream version (requires confirmation)")
+	cmd.Flags().String("version", "", "Install an explicit upstream version or tag (requires confirmation)")
+	cmd.Flags().BoolP("yes", "y", false, "Confirm a non-recommended version selection")
+	cmd.MarkFlagsMutuallyExclusive("latest", "version")
+	return cmd
 }
 
 func newLspCleanupCmd() *cobra.Command {
@@ -94,7 +112,7 @@ func runLspList(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "Language\tStatus\tOwner\tBackend\tRuntime\tInstall\tLog")
+	fmt.Fprintln(w, "Language\tStatus\tOwner\tBackend\tRuntime\tInstall\tCapabilities\tLog")
 	for _, row := range rows {
 		owner := row.Owner
 		if owner == "" {
@@ -134,7 +152,14 @@ func runLspList(cmd *cobra.Command, args []string) error {
 		if logPath == "" {
 			logPath = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.ID, row.Status, owner, backend, runtime, install, logPath)
+		capabilities := strings.Join(row.Capabilities, ",")
+		if len(row.MissingCapabilities) > 0 {
+			capabilities = "missing:" + strings.Join(row.MissingCapabilities, ",")
+		}
+		if capabilities == "" {
+			capabilities = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.ID, row.Status, owner, backend, runtime, install, capabilities, logPath)
 	}
 	return w.Flush()
 }
@@ -151,6 +176,24 @@ func runLspInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := cmd.Context()
+	latest, err := cmd.Flags().GetBool("latest")
+	if err != nil {
+		return err
+	}
+	version, err := cmd.Flags().GetString("version")
+	if err != nil {
+		return err
+	}
+	yes, err := cmd.Flags().GetBool("yes")
+	if err != nil {
+		return err
+	}
+	selector := lsp.InstallSelector{Latest: latest, Version: strings.TrimSpace(version)}
+	if latest || selector.Version != "" {
+		if err := confirmLSPInstall(cmd, selector, yes); err != nil {
+			return err
+		}
+	}
 	if err := adapter.CheckPrerequisites(ctx); err != nil {
 		fmt.Printf("Prerequisite check failed: %s\n\n", err)
 		printInstallGuide(adapter)
@@ -171,6 +214,9 @@ func runLspInstall(cmd *cobra.Command, args []string) error {
 
 	var path string
 	if len(adapter.RuntimeDeps()) == 0 {
+		if latest || selector.Version != "" {
+			return fmt.Errorf("language %q does not support managed version selection", adapter.ID())
+		}
 		var err error
 		path, err = adapter.Install(ctx, lspBaseDir())
 		if err != nil {
@@ -183,7 +229,7 @@ func runLspInstall(cmd *cobra.Command, args []string) error {
 		}
 		installer := lsp.NewInstaller(lspBaseDir())
 		var err error
-		path, err = installer.Install(ctx, adapter)
+		path, err = installer.InstallWithOptions(ctx, adapter, lsp.InstallOptions{Selector: selector})
 		if err != nil {
 			return fmt.Errorf("install %s: %w", adapter.ID(), err)
 		}
@@ -191,6 +237,37 @@ func runLspInstall(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("✓ Installed %s to %s\n", filepath.Base(path), path)
 	return nil
+}
+
+func confirmLSPInstall(cmd *cobra.Command, selector lsp.InstallSelector, yes bool) error {
+	requested := selector.Version
+	if selector.Latest {
+		requested = "latest"
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: %s is not the recommended Knowns-verified LSP version.\n", requested)
+	if yes {
+		return nil
+	}
+	input := cmd.InOrStdin()
+	if file, ok := input.(*os.File); !ok || !isInteractiveInput(file) {
+		return fmt.Errorf("non-interactive installation of %s requires --yes", requested)
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "Continue with %s? [y/N] ", requested)
+	answer, err := bufio.NewReader(input).ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("read confirmation: %w", err)
+	}
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "y", "yes":
+		return nil
+	default:
+		return fmt.Errorf("installation cancelled")
+	}
+}
+
+func isInteractiveInput(file *os.File) bool {
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 func runLspCleanup(cmd *cobra.Command, args []string) error {
@@ -259,39 +336,51 @@ func collectDaemonLSPStatuses(ctx context.Context, projectRoot string) ([]lsp.La
 
 func lspRowFromRuntime(status lsp.LanguageRuntimeStatus) lspListRow {
 	return lspListRow{
-		ID:                 status.ID,
-		Name:               status.Name,
-		Enabled:            status.Enabled,
-		Detected:           status.Detected,
-		Status:             status.Status,
-		InstallState:       status.InstallState,
-		RunningState:       status.RunningState,
-		ReadinessState:     status.ReadinessState,
-		Binary:             status.Binary,
-		BinaryPath:         status.BinaryPath,
-		Source:             status.Source,
-		Version:            status.Version,
-		CachePath:          status.CachePath,
-		SelectedPath:       status.SelectedPath,
-		CleanupEligible:    status.CleanupEligible,
-		InstallError:       status.InstallError,
-		UpdateError:        status.UpdateError,
-		InstallCmd:         status.InstallCmd,
-		Backend:            status.Backend,
-		BackendSource:      status.BackendSource,
-		ProjectPath:        status.ProjectPath,
-		ProjectKind:        status.ProjectKind,
-		LogPath:            status.LogPath,
-		Attempts:           status.Attempts,
-		Owner:              status.Owner,
-		DaemonState:        status.DaemonState,
-		DaemonPID:          status.DaemonPID,
-		DaemonClients:      status.DaemonClients,
-		DaemonTransport:    status.DaemonTransport,
-		DaemonEndpoint:     status.DaemonEndpoint,
-		DaemonIdleDeadline: status.DaemonIdleDeadline,
-		DaemonLeaseCount:   status.DaemonLeaseCount,
-		DaemonLeaseOwners:  append([]string(nil), status.DaemonLeaseOwners...),
+		ID:                     status.ID,
+		Name:                   status.Name,
+		Enabled:                status.Enabled,
+		Detected:               status.Detected,
+		Status:                 status.Status,
+		InstallState:           status.InstallState,
+		RunningState:           status.RunningState,
+		ReadinessState:         status.ReadinessState,
+		Binary:                 status.Binary,
+		BinaryPath:             status.BinaryPath,
+		Source:                 status.Source,
+		Version:                status.Version,
+		RequestedVersion:       status.RequestedVersion,
+		ResolvedVersion:        status.ResolvedVersion,
+		SourceLocation:         status.SourceLocation,
+		Integrity:              status.Integrity,
+		InstalledAt:            status.InstalledAt,
+		Verified:               status.Verified,
+		CachePath:              status.CachePath,
+		SelectedPath:           status.SelectedPath,
+		CleanupEligible:        status.CleanupEligible,
+		InstallError:           status.InstallError,
+		UpdateError:            status.UpdateError,
+		InstallCmd:             status.InstallCmd,
+		Backend:                status.Backend,
+		BackendSource:          status.BackendSource,
+		ProjectPath:            status.ProjectPath,
+		ProjectKind:            status.ProjectKind,
+		LogPath:                status.LogPath,
+		Attempts:               status.Attempts,
+		Owner:                  status.Owner,
+		DaemonState:            status.DaemonState,
+		DaemonPID:              status.DaemonPID,
+		DaemonClients:          status.DaemonClients,
+		DaemonTransport:        status.DaemonTransport,
+		DaemonEndpoint:         status.DaemonEndpoint,
+		DaemonIdleDeadline:     status.DaemonIdleDeadline,
+		DaemonLeaseCount:       status.DaemonLeaseCount,
+		DaemonLeaseOwners:      append([]string(nil), status.DaemonLeaseOwners...),
+		CapabilitiesKnown:      status.CapabilitiesKnown,
+		Capabilities:           append([]string(nil), status.Capabilities...),
+		AdvertisedCapabilities: append([]string(nil), status.AdvertisedCapabilities...),
+		ObservedCapabilities:   append([]string(nil), status.ObservedCapabilities...),
+		RequiredCapabilities:   append([]string(nil), status.RequiredCapabilities...),
+		MissingCapabilities:    append([]string(nil), status.MissingCapabilities...),
 	}
 }
 

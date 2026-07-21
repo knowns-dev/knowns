@@ -269,6 +269,12 @@ export interface LSPLanguageInfo {
 	logPath?: string;
 	traceEnabled?: boolean;
 	attempts?: Array<{ backend: string; status: string; reason?: string }>;
+	capabilitiesKnown?: boolean;
+	capabilities?: string[];
+	advertisedCapabilities?: string[];
+	observedCapabilities?: string[];
+	requiredCapabilities?: string[];
+	missingCapabilities?: string[];
 }
 
 export interface LSPLanguageConfigPatch {

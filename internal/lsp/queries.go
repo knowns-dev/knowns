@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -79,6 +80,15 @@ func (w *WorkspaceEdit) AllChanges() map[string][]TextEdit {
 }
 
 func (s *Server) Definition(ctx context.Context, path string, line, col int) (Location, error) {
+	if err := s.requirePathCapability(path, "definition", CapabilityDefinition); err != nil {
+		return Location{}, err
+	}
+	if err := s.Start(ctx); err != nil {
+		return Location{}, err
+	}
+	if err := s.requireCapability("definition", CapabilityDefinition); err != nil {
+		return Location{}, err
+	}
 	locs, err := s.locations(ctx, "textDocument/definition", path, line, col)
 	if err != nil {
 		return Location{}, err
@@ -90,16 +100,40 @@ func (s *Server) Definition(ctx context.Context, path string, line, col int) (Lo
 }
 
 func (s *Server) References(ctx context.Context, path string, line, col int) ([]Location, error) {
+	if err := s.requirePathCapability(path, "references", CapabilityReferences); err != nil {
+		return nil, err
+	}
+	if err := s.Start(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.requireCapability("references", CapabilityReferences); err != nil {
+		return nil, err
+	}
 	params := positionParams(path, line, col)
 	params["context"] = map[string]any{"includeDeclaration": false}
 	return s.locationsWithParams(ctx, "textDocument/references", params)
 }
 
 func (s *Server) Implementations(ctx context.Context, path string, line, col int) ([]Location, error) {
+	if err := s.requirePathCapability(path, "implementations", CapabilityImplementation); err != nil {
+		return nil, err
+	}
+	if err := s.Start(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.requireCapability("implementations", CapabilityImplementation); err != nil {
+		return nil, err
+	}
 	return s.locations(ctx, "textDocument/implementation", path, line, col)
 }
 func (s *Server) Diagnostics(ctx context.Context, path string) ([]Diagnostic, error) {
+	if err := s.requirePathCapability(path, "diagnostics", CapabilityDiagnostics); err != nil {
+		return nil, err
+	}
 	if err := s.Start(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.requireCapability("diagnostics", CapabilityDiagnostics); err != nil {
 		return nil, err
 	}
 	if err := s.files.Open(path); err != nil {
@@ -107,11 +141,86 @@ func (s *Server) Diagnostics(ctx context.Context, path string) ([]Diagnostic, er
 	}
 	defer func() { _ = s.files.Close(path) }()
 
+	if hasCapability(s.CapabilitySnapshot().Advertised, CapabilityDiagnostics) {
+		return s.pullDiagnostics(ctx, path)
+	}
+	if diagnostics := s.cachedDiagnostics(path); diagnostics != nil {
+		return diagnostics, nil
+	}
+	return s.pumpLegacyDiagnostics(ctx, path)
+}
+
+type documentDiagnosticReport struct {
+	Kind     string       `json:"kind"`
+	ResultID string       `json:"resultId,omitempty"`
+	Items    []Diagnostic `json:"items,omitempty"`
+}
+
+func (s *Server) pullDiagnostics(ctx context.Context, path string) ([]Diagnostic, error) {
+	params := map[string]any{"textDocument": map[string]any{"uri": fileURI(path)}}
+	if previousResultID := s.cachedDiagnosticResultID(path); previousResultID != "" {
+		params["previousResultId"] = previousResultID
+	}
+
+	var raw json.RawMessage
+	if err := s.request(ctx, "textDocument/diagnostic", params, &raw); err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return s.cachedDiagnostics(path), nil
+	}
+
+	var report documentDiagnosticReport
+	if err := json.Unmarshal(raw, &report); err != nil {
+		return nil, fmt.Errorf("decode document diagnostics: %w", err)
+	}
+	switch report.Kind {
+	case "full", "":
+		s.cachePulledDiagnostics(path, report.ResultID, report.Items)
+		return cloneDiagnostics(report.Items), nil
+	case "unchanged":
+		s.cacheDiagnosticResultID(path, report.ResultID)
+		return s.cachedDiagnostics(path), nil
+	default:
+		return nil, fmt.Errorf("unsupported document diagnostic report kind %q", report.Kind)
+	}
+}
+
+const legacyDiagnosticSettleDelay = 400 * time.Millisecond
+
+// Legacy push-diagnostic servers may publish after didOpen and after the
+// response to an earlier request. The synchronous protocol reader only drains
+// notifications while a request is active, so issue the adapter baseline's
+// document-symbol request after a short validation window to pump any queued
+// publishDiagnostics notification.
+func (s *Server) pumpLegacyDiagnostics(ctx context.Context, path string) ([]Diagnostic, error) {
+	if !hasCapability(s.CapabilitySnapshot().Advertised, CapabilityDocumentSymbols) {
+		return s.cachedDiagnostics(path), nil
+	}
+	timer := time.NewTimer(legacyDiagnosticSettleDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+	}
+
+	params := map[string]any{"textDocument": map[string]any{"uri": fileURI(path)}}
+	var raw json.RawMessage
+	if err := s.request(ctx, "textDocument/documentSymbol", params, &raw); err != nil {
+		return nil, err
+	}
 	return s.cachedDiagnostics(path), nil
 }
 
 func (s *Server) DocumentSymbols(ctx context.Context, path string) ([]DocumentSymbol, error) {
+	if err := s.requirePathCapability(path, "symbols", CapabilityDocumentSymbols); err != nil {
+		return nil, err
+	}
 	if err := s.Start(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.requireCapability("symbols", CapabilityDocumentSymbols); err != nil {
 		return nil, err
 	}
 	if err := s.files.Open(path); err != nil {
@@ -158,6 +267,9 @@ func (s *Server) WorkspaceSymbol(ctx context.Context, query string) ([]Workspace
 	if err := s.Start(ctx); err != nil {
 		return nil, err
 	}
+	if err := s.requireCapability("symbols", CapabilityWorkspaceSymbols); err != nil {
+		return nil, err
+	}
 	params := map[string]any{"query": query}
 	var raw json.RawMessage
 	if err := s.request(ctx, "workspace/symbol", params, &raw); err != nil {
@@ -174,6 +286,15 @@ func (s *Server) WorkspaceSymbol(ctx context.Context, query string) ([]Workspace
 }
 
 func (s *Server) Rename(ctx context.Context, path string, line, col int, newName string) (*WorkspaceEdit, error) {
+	if err := s.requirePathCapability(path, "rename", CapabilityRename); err != nil {
+		return nil, err
+	}
+	if err := s.Start(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.requireCapability("rename", CapabilityRename); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err == nil {
 		lines := strings.Split(string(data), "\n")

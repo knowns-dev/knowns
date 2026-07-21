@@ -1,6 +1,7 @@
 package readiness
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/howznguyen/knowns/internal/lsp"
@@ -9,23 +10,28 @@ import (
 
 func TestLSPStatusFromRuntimeIncludesRuntimeFields(t *testing.T) {
 	got := lspStatusFromRuntime(lsp.LanguageRuntimeStatus{
-		ID:             lsp.CSharpLanguageID,
-		Name:           "C#",
-		Enabled:        true,
-		Detected:       true,
-		Status:         lsp.RuntimeInstallInstalled,
-		InstallState:   lsp.RuntimeInstallInstalled,
-		RunningState:   lsp.RuntimeRunningUnknown,
-		ReadinessState: lsp.RuntimeReadinessUnknown,
-		Backend:        lsp.CSharpBackendCSharp,
-		BackendSource:  lsp.RuntimeSourceAuto,
-		ProjectPath:    "/repo/App.sln",
-		ProjectKind:    "sln",
-		LogPath:        "/repo/.knowns/logs/lsp/csharp-csharp-ls.log",
-		Attempts:       []lsp.BackendAttempt{{Backend: lsp.CSharpBackendCSharp, Status: lsp.BackendAttemptChosen}},
-		Owner:          "daemon",
-		DaemonState:    "running",
-		DaemonPID:      1234,
+		ID:                     lsp.CSharpLanguageID,
+		Name:                   "C#",
+		Enabled:                true,
+		Detected:               true,
+		Status:                 lsp.RuntimeInstallInstalled,
+		InstallState:           lsp.RuntimeInstallInstalled,
+		RunningState:           lsp.RuntimeRunningUnknown,
+		ReadinessState:         lsp.RuntimeReadinessUnknown,
+		Backend:                lsp.CSharpBackendCSharp,
+		BackendSource:          lsp.RuntimeSourceAuto,
+		ProjectPath:            "/repo/App.sln",
+		ProjectKind:            "sln",
+		LogPath:                "/repo/.knowns/logs/lsp/csharp-csharp-ls.log",
+		Attempts:               []lsp.BackendAttempt{{Backend: lsp.CSharpBackendCSharp, Status: lsp.BackendAttemptChosen}},
+		Owner:                  "daemon",
+		DaemonState:            "running",
+		DaemonPID:              1234,
+		CapabilitiesKnown:      true,
+		Capabilities:           []string{lsp.CapabilityDocumentSymbols, lsp.CapabilityReferences},
+		AdvertisedCapabilities: []string{lsp.CapabilityDocumentSymbols},
+		RequiredCapabilities:   []string{lsp.CapabilityDefinition, lsp.CapabilityDocumentSymbols, lsp.CapabilityReferences},
+		MissingCapabilities:    []string{lsp.CapabilityDefinition},
 	})
 	if got.Backend != lsp.CSharpBackendCSharp || got.BackendSource != lsp.RuntimeSourceAuto {
 		t.Fatalf("backend fields missing: %#v", got)
@@ -38,6 +44,9 @@ func TestLSPStatusFromRuntimeIncludesRuntimeFields(t *testing.T) {
 	}
 	if got.Owner != "daemon" || got.DaemonState != "running" || got.DaemonPID != 1234 {
 		t.Fatalf("daemon fields missing: %#v", got)
+	}
+	if !got.CapabilitiesKnown || !reflect.DeepEqual(got.MissingCapabilities, []string{lsp.CapabilityDefinition}) || !reflect.DeepEqual(got.AdvertisedCapabilities, []string{lsp.CapabilityDocumentSymbols}) {
+		t.Fatalf("capability fields missing: %#v", got)
 	}
 }
 

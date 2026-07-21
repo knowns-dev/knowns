@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 // CurrentPlatformID returns the current platform identifier (e.g. "darwin-arm64").
@@ -28,10 +29,11 @@ func CurrentPlatformID() string {
 
 // Installer handles downloading, extracting, and verifying LSP server binaries.
 type Installer struct {
-	baseDir    string // ~/.knowns/lsp-servers/
-	mu         sync.Mutex
-	installing map[string]chan struct{} // prevent concurrent installs of same language
-	runCommand func(context.Context, string, ...string) ([]byte, error)
+	baseDir                string // ~/.knowns/lsp-servers/
+	mu                     sync.Mutex
+	installing             map[string]chan struct{} // prevent concurrent installs of same language
+	runCommand             func(context.Context, string, ...string) ([]byte, error)
+	writeSelectionOverride func(LanguageAdapter, DependencyResolution, string) error
 }
 
 // NewInstaller creates a new Installer with the given base directory.
@@ -47,6 +49,23 @@ func NewInstaller(baseDir string) *Installer {
 // Returns the path to the installed binary.
 // User-initiated only (called from `knowns lsp install`).
 func (i *Installer) Install(ctx context.Context, adapter LanguageAdapter) (string, error) {
+	return i.InstallWithOptions(ctx, adapter, InstallOptions{})
+}
+
+// InstallWithOptions installs a concrete dependency selected from the
+// adapter's recommended version, latest upstream version, or an explicit tag.
+// Install remains the backward-compatible recommended/default entry point.
+func (i *Installer) InstallWithOptions(ctx context.Context, adapter LanguageAdapter, opts InstallOptions) (string, error) {
+	return i.installWithOptions(ctx, adapter, opts, false)
+}
+
+func (i *Installer) installWithOptions(ctx context.Context, adapter LanguageAdapter, opts InstallOptions, coalesceExisting bool) (string, error) {
+	if err := validateInstallSelector(opts.Selector); err != nil {
+		return "", err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	langID := adapter.ID()
 
 	// Concurrent install prevention: if another goroutine is installing the same language, wait.
@@ -55,12 +74,7 @@ func (i *Installer) Install(ctx context.Context, adapter LanguageAdapter) (strin
 		i.mu.Unlock()
 		select {
 		case <-ch:
-			// Previous install finished, check if it succeeded.
-			path, ok := i.IsInstalled(adapter)
-			if !ok {
-				return "", fmt.Errorf("concurrent install of %s failed", langID)
-			}
-			return path, nil
+			return i.installWithOptions(ctx, adapter, opts, true)
 		case <-ctx.Done():
 			return "", ctx.Err()
 		}
@@ -76,24 +90,79 @@ func (i *Installer) Install(ctx context.Context, adapter LanguageAdapter) (strin
 		i.mu.Unlock()
 	}()
 
+	unlock, waited, err := acquireLanguageInstallLock(ctx, i.baseDir, langID)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+
 	dep, err := i.findDep(adapter)
 	if err != nil {
 		_ = i.writeLastError(langID, "install", err)
 		return "", err
 	}
+	if coalesceExisting || waited {
+		if selection, ok := i.readSelection(langID); ok && selectionSatisfiesRequest(selection, dep, opts.Selector) {
+			if _, err := os.Stat(selection.SelectedPath); err == nil {
+				if opts.BeforeCleanup != nil {
+					if err := opts.BeforeCleanup(selection.SelectedPath); err != nil {
+						return "", err
+					}
+				}
+				_ = i.cleanupLocked(langID)
+				_ = i.clearLastError(langID)
+				return selection.SelectedPath, nil
+			}
+		}
+	}
+	previousSelection := i.snapshotSelection(langID)
 
-	path, err := i.installDependency(ctx, adapter, dep)
+	resolution, err := i.resolveDependency(ctx, adapter, dep, opts)
 	if err != nil {
 		_ = i.writeLastError(langID, "install", err)
 		return "", err
 	}
-	if err := i.writeSelection(adapter, dep, path); err != nil {
+
+	path, rollback, commit, err := i.installResolvedDependency(ctx, adapter, resolution.Dependency)
+	if err != nil {
 		_ = i.writeLastError(langID, "install", err)
 		return "", err
 	}
+	writeSelection := i.writeSelectionResolution
+	if i.writeSelectionOverride != nil {
+		writeSelection = i.writeSelectionOverride
+	}
+	if err := writeSelection(adapter, resolution, path); err != nil {
+		rollback()
+		_ = i.writeLastError(langID, "install", err)
+		return "", err
+	}
+	if opts.BeforeCleanup != nil {
+		if err := opts.BeforeCleanup(path); err != nil {
+			rollback()
+			if restoreErr := i.restoreSelection(langID, previousSelection); restoreErr != nil {
+				err = fmt.Errorf("%w (restore previous selection: %v)", err, restoreErr)
+			}
+			_ = i.writeLastError(langID, "install", err)
+			return "", err
+		}
+	}
+	commit()
 	_ = i.clearLastError(langID)
-	_ = i.Cleanup(langID)
+	_ = i.cleanupLocked(langID)
 	return path, nil
+}
+
+func selectionSatisfiesRequest(selection dependencySelection, dep RuntimeDependency, selector InstallSelector) bool {
+	if selection.RequestedVersion != requestedVersionForDependency(dep, selector) {
+		return false
+	}
+	if !selector.Latest && strings.TrimSpace(selector.Version) == "" && dep.RecommendedVersion != "" {
+		return selection.ResolvedVersion == dep.RecommendedVersion &&
+			selection.Integrity == dep.RecommendedIntegrity &&
+			selection.Verified
+	}
+	return true
 }
 
 // IsInstalled checks if the adapter's LSP server is already installed.
@@ -108,6 +177,9 @@ func (i *Installer) IsInstalled(adapter LanguageAdapter) (string, bool) {
 	dep, err := i.findDep(adapter)
 	if err != nil {
 		return "", false
+	}
+	if dep.RecommendedVersion != "" {
+		dep.Version = dep.RecommendedVersion
 	}
 
 	binaryPath := i.expectedBinaryPath(adapter.ID(), dep)
@@ -132,13 +204,26 @@ func (i *Installer) Status(adapter LanguageAdapter) ManagedDependencyStatus {
 		}
 		return status
 	}
-	status.Version = dependencyVersion(dep)
+	selectedDep := dep
+	if dep.RecommendedVersion != "" {
+		selectedDep.Version = dep.RecommendedVersion
+	}
+	status.Version = dependencyVersion(selectedDep)
 	status.Source = dependencySource(dep)
-	status.CachePath = i.versionDir(adapter.ID(), dep)
-	status.SelectedVersionID = dependencyVersionID(dep)
+	status.CachePath = i.versionDir(adapter.ID(), selectedDep)
+	status.SelectedVersionID = dependencyVersionID(selectedDep)
 	if selection, ok := i.readSelection(adapter.ID()); ok {
 		status.Version = selection.Version
+		status.RequestedVersion = selection.RequestedVersion
+		status.ResolvedVersion = selection.ResolvedVersion
+		if status.ResolvedVersion == "" {
+			status.ResolvedVersion = selection.Version
+		}
 		status.Source = selection.Source
+		status.SourceLocation = selection.SourceLocation
+		status.Integrity = selection.Integrity
+		status.InstalledAt = selection.InstalledAt
+		status.Verified = selection.Verified
 		status.CachePath = selection.CachePath
 		status.SelectedPath = selection.SelectedPath
 		status.SelectedVersionID = selection.VersionID
@@ -167,6 +252,15 @@ func (i *Installer) Remove(languageID string) error {
 // the runtime-selected one. Without a selected version, cleanup is intentionally
 // a no-op so a failed install/update cannot remove the last working server.
 func (i *Installer) Cleanup(languageID string) error {
+	unlock, _, err := acquireLanguageInstallLock(context.Background(), i.baseDir, languageID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return i.cleanupLocked(languageID)
+}
+
+func (i *Installer) cleanupLocked(languageID string) error {
 	langDir := filepath.Join(i.baseDir, languageID)
 	selection, ok := i.readSelection(languageID)
 	if !ok || selection.SelectedPath == "" {
@@ -205,11 +299,284 @@ func (i *Installer) findDep(adapter LanguageAdapter) (RuntimeDependency, error) 
 	return RuntimeDependency{}, fmt.Errorf("no runtime dependency for platform %s", platform)
 }
 
-func (i *Installer) installDependency(ctx context.Context, adapter LanguageAdapter, dep RuntimeDependency) (string, error) {
-	versionDir := i.versionDir(adapter.ID(), dep)
-	if err := os.MkdirAll(versionDir, 0755); err != nil {
-		return "", fmt.Errorf("create version dir: %w", err)
+func validateInstallSelector(selector InstallSelector) error {
+	selector.Version = strings.TrimSpace(selector.Version)
+	if selector.Latest && selector.Version != "" {
+		return fmt.Errorf("latest and explicit version selectors are mutually exclusive")
 	}
+	return nil
+}
+
+func requestedVersionForDependency(dep RuntimeDependency, selector InstallSelector) string {
+	if selector.Latest {
+		return "latest"
+	}
+	if version := strings.TrimSpace(selector.Version); version != "" {
+		return version
+	}
+	if strings.TrimSpace(dep.RecommendedVersion) != "" {
+		return "recommended"
+	}
+	return "legacy-default"
+}
+
+func (i *Installer) resolveDependency(ctx context.Context, adapter LanguageAdapter, dep RuntimeDependency, opts InstallOptions) (DependencyResolution, error) {
+	resolver := opts.ReleaseResolver
+	if isNPMDependency(dep) {
+		resolver = opts.NPMResolver
+		if resolver == nil {
+			resolver = i.resolveNPMDependency
+		}
+	} else if resolver == nil {
+		if provider, ok := adapter.(RuntimeDependencyResolverProvider); ok {
+			resolver = provider.ResolveRuntimeDependency
+		}
+	}
+	if resolver != nil {
+		resolution, err := resolver(ctx, dep, opts.Selector)
+		if err != nil {
+			return DependencyResolution{}, err
+		}
+		return normalizeResolution(dep, opts.Selector, resolution)
+	}
+	return resolveStaticDependency(dep, opts.Selector)
+}
+
+func resolveStaticDependency(dep RuntimeDependency, selector InstallSelector) (DependencyResolution, error) {
+	requested := requestedVersionForDependency(dep, selector)
+	resolved := strings.TrimSpace(dep.Version)
+	if dep.RecommendedVersion != "" && !selector.Latest && strings.TrimSpace(selector.Version) == "" {
+		resolved = dep.RecommendedVersion
+	}
+	if version := strings.TrimSpace(selector.Version); version != "" {
+		if dep.RecommendedVersion != version && dep.Version != version {
+			return DependencyResolution{}, fmt.Errorf("release version %q requires a dependency resolver", version)
+		}
+		resolved = version
+	}
+	if selector.Latest {
+		return DependencyResolution{}, fmt.Errorf("latest release requires a dependency resolver")
+	}
+	if resolved == "" {
+		resolved = dependencyVersion(dep)
+	}
+	resolvedDep := dep
+	resolvedDep.Version = resolved
+	resolvedDep.URL = expandVersionTemplate(dep.URL, resolved)
+	resolvedDep.ExtractPath = expandVersionTemplate(dep.ExtractPath, resolved)
+	return normalizeResolution(dep, selector, DependencyResolution{
+		Dependency:       resolvedDep,
+		RequestedVersion: requested,
+		ResolvedVersion:  resolved,
+		Source:           dependencySourceLocation(resolvedDep),
+		Integrity:        dependencyIntegrity(resolvedDep),
+		Verified:         dep.RecommendedVersion != "" && resolved == dep.RecommendedVersion,
+	})
+}
+
+func (i *Installer) resolveNPMDependency(ctx context.Context, dep RuntimeDependency, selector InstallSelector) (DependencyResolution, error) {
+	requested := requestedVersionForDependency(dep, selector)
+	target := strings.TrimSpace(selector.Version)
+	shouldResolve := target != "" || selector.Latest || dep.RecommendedVersion != ""
+	if selector.Latest {
+		target = "latest"
+	} else if target == "" && dep.RecommendedVersion != "" {
+		target = dep.RecommendedVersion
+	} else if target == "" {
+		target = dependencyVersion(dep)
+	}
+	if !shouldResolve {
+		resolvedDep := dep
+		return normalizeResolution(dep, selector, DependencyResolution{
+			Dependency:       resolvedDep,
+			RequestedVersion: requested,
+			ResolvedVersion:  dependencyVersion(resolvedDep),
+			Source:           dependencySourceLocation(resolvedDep),
+			Integrity:        dependencyIntegrity(resolvedDep),
+			Verified:         false,
+		})
+	}
+
+	packages := npmPackages(dep)
+	if len(packages) == 0 || strings.TrimSpace(packages[0]) == "" {
+		return DependencyResolution{}, fmt.Errorf("npm dependency has no package name")
+	}
+	packageSpec := npmPackageSpec(packages[0], target)
+	output, err := i.runCommand(ctx, "npm", "view", packageSpec, "version", "dist.integrity", "--json")
+	if err != nil {
+		return DependencyResolution{}, fmt.Errorf("resolve npm package %s: %w: %s", packageSpec, err, strings.TrimSpace(string(output)))
+	}
+	resolvedVersion, integrity, err := parseNPMMetadata(output)
+	if err != nil {
+		return DependencyResolution{}, fmt.Errorf("parse npm metadata for %s: %w", packageSpec, err)
+	}
+	if resolvedVersion == "" {
+		return DependencyResolution{}, fmt.Errorf("npm metadata for %s did not include a resolved version", packageSpec)
+	}
+	if integrity == "" {
+		return DependencyResolution{}, fmt.Errorf("npm metadata for %s did not include integrity", packageSpec)
+	}
+	resolvedDep := dep
+	resolvedDep.Version = resolvedVersion
+	return normalizeResolution(dep, selector, DependencyResolution{
+		Dependency:       resolvedDep,
+		RequestedVersion: requested,
+		ResolvedVersion:  resolvedVersion,
+		Source:           packageSpec,
+		Integrity:        integrity,
+		Verified:         dep.RecommendedVersion != "" && resolvedVersion == dep.RecommendedVersion,
+	})
+}
+
+func parseNPMMetadata(data []byte) (string, string, error) {
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return "", "", err
+	}
+	version, integrity := npmMetadataFromValue(value)
+	return version, integrity, nil
+}
+
+func npmMetadataFromValue(value any) (string, string) {
+	switch typed := value.(type) {
+	case map[string]any:
+		version, _ := typed["version"].(string)
+		integrity, _ := typed["dist.integrity"].(string)
+		if integrity == "" {
+			if dist, ok := typed["dist"].(map[string]any); ok {
+				integrity, _ = dist["integrity"].(string)
+			}
+		}
+		return version, integrity
+	case []any:
+		for index := len(typed) - 1; index >= 0; index-- {
+			version, integrity := npmMetadataFromValue(typed[index])
+			if version != "" || integrity != "" {
+				return version, integrity
+			}
+		}
+	}
+	return "", ""
+}
+
+func normalizeResolution(original RuntimeDependency, selector InstallSelector, resolution DependencyResolution) (DependencyResolution, error) {
+	if err := validateInstallSelector(selector); err != nil {
+		return DependencyResolution{}, err
+	}
+	if resolution.Dependency.BinaryName == "" {
+		return DependencyResolution{}, fmt.Errorf("resolved dependency has no binary name")
+	}
+	resolution.RequestedVersion = requestedVersionForDependency(original, selector)
+	if resolution.ResolvedVersion == "" {
+		resolution.ResolvedVersion = dependencyVersion(resolution.Dependency)
+	}
+	resolution.Dependency.Version = resolution.ResolvedVersion
+	if resolution.Source == "" {
+		resolution.Source = dependencySourceLocation(resolution.Dependency)
+	}
+	resolution.Verified = false
+	if isNPMDependency(original) {
+		// npm's dist.integrity is an SRI value and therefore case-sensitive.
+		resolution.Verified = original.RecommendedVersion != "" &&
+			original.RecommendedIntegrity != "" &&
+			resolution.ResolvedVersion == original.RecommendedVersion &&
+			resolution.Integrity == original.RecommendedIntegrity
+	} else {
+		// Release provenance is the checksum the installer will actually use,
+		// never a resolver-provided assertion.
+		resolution.Integrity = dependencyIntegrity(resolution.Dependency)
+		resolution.Verified = original.RecommendedVersion != "" &&
+			original.RecommendedIntegrity != "" &&
+			resolution.ResolvedVersion == original.RecommendedVersion &&
+			strings.EqualFold(resolution.Integrity, original.RecommendedIntegrity)
+	}
+	if !selector.Latest && strings.TrimSpace(selector.Version) == "" && original.RecommendedVersion != "" && !resolution.Verified {
+		if original.RecommendedIntegrity == "" {
+			return DependencyResolution{}, fmt.Errorf("recommended version %s is missing pinned integrity metadata", original.RecommendedVersion)
+		}
+		return DependencyResolution{}, fmt.Errorf("recommended version %s integrity mismatch: expected %s, got %s", original.RecommendedVersion, original.RecommendedIntegrity, resolution.Integrity)
+	}
+	return resolution, nil
+}
+
+func expandVersionTemplate(value, version string) string {
+	for _, token := range []string{"{{version}}", "${version}", "{version}"} {
+		value = strings.ReplaceAll(value, token, version)
+	}
+	return value
+}
+
+func dependencySourceLocation(dep RuntimeDependency) string {
+	if dep.URL != "" {
+		return dep.URL
+	}
+	packages := npmPackages(dep)
+	return strings.Join(packages, ",")
+}
+
+func dependencyIntegrity(dep RuntimeDependency) string {
+	if dep.SHA512 != "" && !strings.EqualFold(dep.SHA512, "TODO") {
+		return "sha512:" + dep.SHA512
+	}
+	if dep.SHA256 != "" && !strings.EqualFold(dep.SHA256, "TODO") {
+		return "sha256:" + dep.SHA256
+	}
+	return ""
+}
+
+func (i *Installer) installResolvedDependency(ctx context.Context, adapter LanguageAdapter, dep RuntimeDependency) (string, func(), func(), error) {
+	langDir := filepath.Join(i.baseDir, adapter.ID())
+	if err := os.MkdirAll(langDir, 0755); err != nil {
+		return "", nil, nil, fmt.Errorf("create language dir: %w", err)
+	}
+	stagingDir, err := os.MkdirTemp(langDir, ".install-")
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("create staging dir: %w", err)
+	}
+	stagedPath, err := i.installDependencyAt(ctx, stagingDir, dep)
+	if err != nil {
+		_ = os.RemoveAll(stagingDir)
+		return "", nil, nil, err
+	}
+	relPath, err := filepath.Rel(stagingDir, stagedPath)
+	if err != nil || strings.HasPrefix(relPath, "..") {
+		_ = os.RemoveAll(stagingDir)
+		return "", nil, nil, fmt.Errorf("installed binary escaped staging dir")
+	}
+
+	versionDir := i.versionDir(adapter.ID(), dep)
+	backupDir := versionDir + ".previous"
+	_ = os.RemoveAll(backupDir)
+	hadPrevious := false
+	if _, statErr := os.Stat(versionDir); statErr == nil {
+		if err := os.Rename(versionDir, backupDir); err != nil {
+			_ = os.RemoveAll(stagingDir)
+			return "", nil, nil, fmt.Errorf("preserve selected version: %w", err)
+		}
+		hadPrevious = true
+	} else if !os.IsNotExist(statErr) {
+		_ = os.RemoveAll(stagingDir)
+		return "", nil, nil, fmt.Errorf("inspect selected version: %w", statErr)
+	}
+	if err := os.Rename(stagingDir, versionDir); err != nil {
+		if hadPrevious {
+			_ = os.Rename(backupDir, versionDir)
+		}
+		_ = os.RemoveAll(stagingDir)
+		return "", nil, nil, fmt.Errorf("select installed version: %w", err)
+	}
+
+	rollback := func() {
+		_ = os.RemoveAll(versionDir)
+		if hadPrevious {
+			_ = os.Rename(backupDir, versionDir)
+		}
+	}
+	commit := func() { _ = os.RemoveAll(backupDir) }
+	return filepath.Join(versionDir, relPath), rollback, commit, nil
+}
+
+func (i *Installer) installDependencyAt(ctx context.Context, versionDir string, dep RuntimeDependency) (string, error) {
 	if isNuGetDependency(dep) {
 		return i.installNuGet(ctx, versionDir, dep)
 	}
@@ -317,9 +684,13 @@ func (i *Installer) expectedBinaryPath(languageID string, dep RuntimeDependency)
 }
 
 func (i *Installer) binaryPath(versionDir string, dep RuntimeDependency) string {
+	return dependencyBinaryPath(versionDir, dep, runtime.GOOS)
+}
+
+func dependencyBinaryPath(versionDir string, dep RuntimeDependency, goos string) string {
 	if isNPMDependency(dep) {
 		name := dep.BinaryName
-		if runtime.GOOS == "windows" {
+		if goos == "windows" {
 			name += ".cmd"
 		}
 		return filepath.Join(versionDir, "node_modules", ".bin", name)
@@ -331,7 +702,7 @@ func (i *Installer) binaryPath(versionDir string, dep RuntimeDependency) string 
 		return filepath.Join(versionDir, dep.BinaryName)
 	}
 	binaryPath := filepath.Join(versionDir, dep.BinaryName)
-	if runtime.GOOS == "windows" {
+	if goos == "windows" {
 		binaryPath += ".exe"
 	}
 	return binaryPath
@@ -572,11 +943,22 @@ func (i *Installer) copyBinary(srcPath, dstPath string) error {
 }
 
 type dependencySelection struct {
-	Version      string `json:"version"`
-	VersionID    string `json:"version_id"`
-	Source       string `json:"source"`
-	CachePath    string `json:"cache_path"`
-	SelectedPath string `json:"selected_path"`
+	Version          string `json:"version"`
+	VersionID        string `json:"version_id"`
+	Source           string `json:"source"`
+	CachePath        string `json:"cache_path"`
+	SelectedPath     string `json:"selected_path"`
+	RequestedVersion string `json:"requested_version,omitempty"`
+	ResolvedVersion  string `json:"resolved_version,omitempty"`
+	SourceLocation   string `json:"source_location,omitempty"`
+	Integrity        string `json:"integrity,omitempty"`
+	InstalledAt      string `json:"installed_at,omitempty"`
+	Verified         bool   `json:"verified"`
+}
+
+type dependencySelectionSnapshot struct {
+	data   []byte
+	exists bool
 }
 
 type dependencyLastError struct {
@@ -589,22 +971,100 @@ func defaultRunCommand(ctx context.Context, name string, args ...string) ([]byte
 }
 
 func (i *Installer) writeSelection(adapter LanguageAdapter, dep RuntimeDependency, selectedPath string) error {
+	return i.writeSelectionResolution(adapter, DependencyResolution{
+		Dependency:       dep,
+		RequestedVersion: dependencyVersion(dep),
+		ResolvedVersion:  dependencyVersion(dep),
+		Source:           dependencySourceLocation(dep),
+		Integrity:        dependencyIntegrity(dep),
+		Verified:         false,
+	}, selectedPath)
+}
+
+func (i *Installer) writeSelectionResolution(adapter LanguageAdapter, resolution DependencyResolution, selectedPath string) error {
+	dep := resolution.Dependency
 	selection := dependencySelection{
-		Version:      dependencyVersion(dep),
-		VersionID:    dependencyVersionID(dep),
-		Source:       dependencySource(dep),
-		CachePath:    i.versionDir(adapter.ID(), dep),
-		SelectedPath: selectedPath,
+		Version:          resolution.ResolvedVersion,
+		VersionID:        dependencyVersionID(dep),
+		Source:           dependencySource(dep),
+		CachePath:        i.versionDir(adapter.ID(), dep),
+		SelectedPath:     selectedPath,
+		RequestedVersion: resolution.RequestedVersion,
+		ResolvedVersion:  resolution.ResolvedVersion,
+		SourceLocation:   resolution.Source,
+		Integrity:        resolution.Integrity,
+		InstalledAt:      time.Now().UTC().Format(time.RFC3339Nano),
+		Verified:         resolution.Verified,
 	}
 	data, err := json.MarshalIndent(selection, "", "  ")
 	if err != nil {
 		return err
 	}
-	langDir := filepath.Join(i.baseDir, adapter.ID())
+	return i.writeSelectionData(adapter.ID(), data)
+}
+
+func (i *Installer) writeSelectionData(languageID string, data []byte) error {
+	langDir := filepath.Join(i.baseDir, languageID)
 	if err := os.MkdirAll(langDir, 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(langDir, ".selected.json"), data, 0644)
+	tmp, err := os.CreateTemp(langDir, ".selected-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0644); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	target := filepath.Join(langDir, ".selected.json")
+	if err := os.Rename(tmpPath, target); err == nil {
+		return nil
+	}
+	// Windows does not replace an existing file with Rename. Keep the old
+	// selection recoverable until the new file is in place.
+	backup := target + ".previous"
+	_ = os.Remove(backup)
+	if err := os.Rename(target, backup); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		_ = os.Rename(backup, target)
+		return err
+	}
+	_ = os.Remove(backup)
+	return nil
+}
+
+func (i *Installer) snapshotSelection(languageID string) dependencySelectionSnapshot {
+	data, err := os.ReadFile(filepath.Join(i.baseDir, languageID, ".selected.json"))
+	if err != nil {
+		return dependencySelectionSnapshot{}
+	}
+	return dependencySelectionSnapshot{data: data, exists: true}
+}
+
+func (i *Installer) restoreSelection(languageID string, snapshot dependencySelectionSnapshot) error {
+	if snapshot.exists {
+		return i.writeSelectionData(languageID, snapshot.data)
+	}
+	err := os.Remove(filepath.Join(i.baseDir, languageID, ".selected.json"))
+	if err == nil || os.IsNotExist(err) {
+		return nil
+	}
+	return err
 }
 
 func (i *Installer) readSelection(languageID string) (dependencySelection, bool) {
@@ -699,7 +1159,12 @@ func dependencyVersion(dep RuntimeDependency) string {
 
 func dependencyVersionID(dep RuntimeDependency) string {
 	version := dependencyVersion(dep)
-	return strings.NewReplacer("/", "_", "\\", "_", ":", "_", "@", "_").Replace(version)
+	normalized := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "@", "_").Replace(version)
+	if normalized == version {
+		return normalized
+	}
+	digest := sha256.Sum256([]byte(version))
+	return normalized + "-" + hex.EncodeToString(digest[:6])
 }
 
 func dependencyCacheName(dep RuntimeDependency) string {

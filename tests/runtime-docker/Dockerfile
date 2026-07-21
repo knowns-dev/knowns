@@ -4,11 +4,13 @@ ARG GO_VERSION=1.24.2
 ARG BUN_IMAGE=oven/bun:1-debian
 ARG NODE_IMAGE=node:20-bookworm-slim
 ARG DOTNET_IMAGE=mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim
+ARG TERRAFORM_IMAGE=hashicorp/terraform:1.14.6
 ARG ORT_VERSION=1.25.0
 ARG GOPLS_VERSION=v0.20.0
 
 FROM ${BUN_IMAGE} AS bun-source
 FROM ${DOTNET_IMAGE} AS dotnet-source
+FROM ${TERRAFORM_IMAGE} AS terraform-source
 
 FROM golang:${GO_VERSION}-bookworm AS builder
 ARG VERSION=dev-docker
@@ -52,7 +54,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
   --mount=type=cache,target=/root/.cache/go-build \
   --mount=type=cache,target=/root/.bun/install/cache \
   make all VERSION=${VERSION} \
-  && cp bin/knowns /out/knowns
+  && cp bin/knowns /out/knowns \
+  && go test -c -o /out/lspfixtures.test ./tests/lspfixtures
 
 RUN set -eux; \
   build_arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
@@ -68,7 +71,7 @@ RUN set -eux; \
   cp "/tmp/onnxruntime-linux-${ort_arch}-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION}" /out/libonnxruntime.so; \
   rm -rf "/tmp/${archive}" "/tmp/onnxruntime-linux-${ort_arch}-${ORT_VERSION}"
 
-FROM ${NODE_IMAGE} AS runtime
+FROM ${NODE_IMAGE} AS runtime-base
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -133,3 +136,32 @@ USER knowns
 WORKDIR /workspace
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/bin/zsh", "-l", "/opt/knowns/smoke.zsh"]
+
+FROM runtime-base AS lsp-fixtures
+
+COPY --from=terraform-source /bin/terraform /usr/local/bin/terraform
+COPY --from=builder --chown=knowns:knowns /out/lspfixtures.test /opt/knowns/bin/lspfixtures.test
+COPY --chown=knowns:knowns tests/runtime-docker/lsp_fixtures.zsh /opt/knowns/lsp_fixtures.zsh
+
+RUN chmod +x /opt/knowns/bin/lspfixtures.test /opt/knowns/lsp_fixtures.zsh \
+  && for language in markdown bash json terraform yaml; do \
+    /opt/knowns/bin/knowns lsp install "${language}"; \
+  done \
+  && /opt/knowns/bin/knowns lsp list --json >/tmp/knowns-lsp-status.json \
+  && jq -e '\
+    [.[] | select(.id == "markdown" or .id == "bash" or .id == "json" or .id == "terraform" or .id == "yaml")] as $rows \
+    | ($rows | length) == 5 \
+      and all($rows[]; \
+        .install_state == "installed" \
+        and .requested_version == "recommended" \
+        and (.resolved_version | type == "string" and length > 0) \
+        and (.source_location | type == "string" and length > 0) \
+        and (.integrity | type == "string" and length > 0) \
+        and (.selected_path | type == "string" and length > 0) \
+        and .verified == true)\
+  ' /tmp/knowns-lsp-status.json >/dev/null \
+  && rm -f /tmp/knowns-lsp-status.json
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/bin/zsh", "-l", "/opt/knowns/lsp_fixtures.zsh"]
+
+FROM runtime-base AS runtime

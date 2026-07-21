@@ -162,10 +162,10 @@ func lspWarningsLineFromStatuses(statuses []lsp.LanguageRuntimeStatus) string {
 			parts = append(parts, formatInitialLSPStatus(status))
 			continue
 		}
-		if !status.Detected && status.Status != lsp.RuntimeRunningCrashed {
+		if !status.Detected && status.Status != lsp.RuntimeRunningCrashed && status.Status != lsp.RuntimeStatusDegraded {
 			continue
 		}
-		if status.InstallState != lsp.RuntimeInstallInstalled || status.Status == lsp.RuntimeRunningCrashed {
+		if status.InstallState != lsp.RuntimeInstallInstalled || status.Status == lsp.RuntimeRunningCrashed || status.Status == lsp.RuntimeStatusDegraded {
 			parts = append(parts, formatInitialLSPStatus(status))
 		}
 	}
@@ -200,6 +200,15 @@ func formatInitialLSPStatus(status lsp.LanguageRuntimeStatus) string {
 	}
 	if status.ReadinessState != "" && status.ReadinessState != lsp.RuntimeReadinessNotApplicable {
 		parts = append(parts, "readiness="+status.ReadinessState)
+	}
+	if status.Status == lsp.RuntimeStatusDegraded {
+		parts = append(parts, "status="+lsp.RuntimeStatusDegraded)
+	}
+	if len(status.Capabilities) > 0 {
+		parts = append(parts, "capabilities="+strings.Join(status.Capabilities, ","))
+	}
+	if len(status.MissingCapabilities) > 0 {
+		parts = append(parts, "missing="+strings.Join(status.MissingCapabilities, ","))
 	}
 	if status.InstallState != lsp.RuntimeInstallInstalled && status.InstallCmd != "" {
 		parts = append(parts, "run="+status.InstallCmd)

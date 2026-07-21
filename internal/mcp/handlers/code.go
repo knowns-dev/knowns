@@ -155,7 +155,7 @@ func handleCodeDefinition(ctx context.Context, getStore func() *storage.Store, g
 		return callErr
 	})
 	if err != nil {
-		return errResult(err.Error())
+		return codeRuntimeErrorResult(mgr, absPath, "definition", err), nil
 	}
 	out, _ := json.MarshalIndent(locationResult(projectRoot(store), loc), "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
@@ -177,7 +177,7 @@ func handleCodeReferences(ctx context.Context, getStore func() *storage.Store, g
 		return callErr
 	})
 	if err != nil {
-		return errResult(err.Error())
+		return codeRuntimeErrorResult(mgr, absPath, "references", err), nil
 	}
 	items := make([]map[string]any, 0, len(locs))
 	for _, loc := range locs {
@@ -207,7 +207,7 @@ func handleCodeImplementations(ctx context.Context, getStore func() *storage.Sto
 		return callErr
 	})
 	if err != nil {
-		return errResult(err.Error())
+		return codeRuntimeErrorResult(mgr, absPath, "implementations", err), nil
 	}
 	items := make([]map[string]any, 0, len(locs))
 	for _, loc := range locs {
@@ -235,7 +235,7 @@ func handleCodeDiagnostics(ctx context.Context, getStore func() *storage.Store, 
 		return callErr
 	})
 	if err != nil {
-		return errResult(err.Error())
+		return codeRuntimeErrorResult(mgr, absPath, "diagnostics", err), nil
 	}
 	items := make([]map[string]any, 0, len(diagnostics))
 	for _, diag := range diagnostics {
@@ -406,13 +406,7 @@ func handleCodeSymbols(ctx context.Context, getStore func() *storage.Store, getC
 		return callErr
 	})
 	if err != nil {
-		if runtimeErr := mgr.DescribeRuntimeError(absPath, err); runtimeErr != nil {
-			return lspRuntimeErrPayloadResult(runtimeErr), nil
-		}
-		if result, ok := lspRuntimeErrResult(err); ok {
-			return result, nil
-		}
-		return errResult(err.Error())
+		return codeRuntimeErrorResult(mgr, absPath, "symbols", err), nil
 	}
 	if kindFilter != "" {
 		symbols = filterSymbolsByKind(symbols, kindFilter)
@@ -439,6 +433,29 @@ func lspRuntimeErrResult(err error) (*mcp.CallToolResult, bool) {
 		return lspRuntimeErrPayloadResult(runtimeErr), true
 	}
 	return nil, false
+}
+
+func codeRuntimeErrResult(runtime CodeRuntime, path, action string, err error) (*mcp.CallToolResult, bool) {
+	var runtimeErr *lsp.RuntimeError
+	if runtime != nil {
+		runtimeErr = runtime.DescribeRuntimeError(path, err)
+	}
+	if runtimeErr == nil && !errors.As(err, &runtimeErr) {
+		return nil, false
+	}
+	copy := *runtimeErr
+	if action != "" {
+		copy.Action = action
+	}
+	return lspRuntimeErrPayloadResult(&copy), true
+}
+
+func codeRuntimeErrorResult(runtime CodeRuntime, path, action string, err error) *mcp.CallToolResult {
+	if result, ok := codeRuntimeErrResult(runtime, path, action, err); ok {
+		return result
+	}
+	result, _ := errResult(err.Error())
+	return result
 }
 
 func lspRuntimeErrPayloadResult(runtimeErr *lsp.RuntimeError) *mcp.CallToolResult {
@@ -551,7 +568,7 @@ func handleCodeRename(ctx context.Context, getStore func() *storage.Store, getCo
 		return callErr
 	})
 	if err != nil {
-		return errResult(err.Error())
+		return codeRuntimeErrorResult(mgr, absPath, "rename", err), nil
 	}
 	changes := map[string][]lsp.TextEdit{}
 	if edit != nil {
@@ -662,7 +679,7 @@ func handleCodeReplaceBody(ctx context.Context, getStore func() *storage.Store, 
 		return nil
 	})
 	if err != nil {
-		return errResult(err.Error())
+		return codeRuntimeErrorResult(mgr, absPath, "replace_body", err), nil
 	}
 	linesReplaced, err := replaceLines(absPath, sym.Range.Start.Line, sym.Range.End.Line, body)
 	if err != nil {
@@ -715,7 +732,7 @@ func handleCodeInsert(ctx context.Context, getStore func() *storage.Store, getCo
 		return nil
 	})
 	if err != nil {
-		return errResult(err.Error())
+		return codeRuntimeErrorResult(mgr, absPath, "insert", err), nil
 	}
 	inserted, err := insertLines(absPath, sym, position, body)
 	if err != nil {
@@ -765,7 +782,7 @@ func handleCodeDelete(ctx context.Context, getStore func() *storage.Store, getCo
 		return nil
 	})
 	if err != nil {
-		return errResult(err.Error())
+		return codeRuntimeErrorResult(mgr, absPath, "delete", err), nil
 	}
 	if !force {
 		external := externalReferences(projectRoot(store), absPath, sym.Range, refs)
@@ -838,6 +855,9 @@ func handleCodeFind(ctx context.Context, getStore func() *storage.Store, getCode
 	for _, file := range files {
 		fileSummaries, err := buildFileSummaries(ctx, mgr, root, file)
 		if err != nil {
+			if result, ok := codeRuntimeErrResult(mgr, file, "find", err); ok {
+				return result, nil
+			}
 			if len(failedFiles) < 5 {
 				failedFiles = append(failedFiles, failedFile{
 					File:  relPath(root, file),

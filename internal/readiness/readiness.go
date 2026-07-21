@@ -86,39 +86,45 @@ type RuntimeStatus struct {
 
 // LSPStatus reports per-language LSP server availability.
 type LSPStatus struct {
-	ID                 string               `json:"id"`
-	Name               string               `json:"name"`
-	Enabled            bool                 `json:"enabled"`
-	Detected           bool                 `json:"detected"`
-	Status             string               `json:"status"`
-	InstallState       string               `json:"installState"`
-	RunningState       string               `json:"runningState"`
-	ReadinessState     string               `json:"readinessState"`
-	Binary             string               `json:"binary,omitempty"`
-	BinaryPath         string               `json:"binaryPath,omitempty"`
-	Source             string               `json:"source,omitempty"`
-	Version            string               `json:"version,omitempty"`
-	CachePath          string               `json:"cachePath,omitempty"`
-	SelectedPath       string               `json:"selectedPath,omitempty"`
-	CleanupEligible    bool                 `json:"cleanupEligible,omitempty"`
-	InstallError       string               `json:"installError,omitempty"`
-	UpdateError        string               `json:"updateError,omitempty"`
-	InstallCmd         string               `json:"installCmd,omitempty"`
-	Backend            string               `json:"backend,omitempty"`
-	BackendSource      string               `json:"backendSource,omitempty"`
-	ProjectPath        string               `json:"projectPath,omitempty"`
-	ProjectKind        string               `json:"projectKind,omitempty"`
-	LogPath            string               `json:"logPath,omitempty"`
-	Attempts           []lsp.BackendAttempt `json:"attempts,omitempty"`
-	Owner              string               `json:"owner,omitempty"`
-	DaemonState        string               `json:"daemonState,omitempty"`
-	DaemonPID          int                  `json:"daemonPid,omitempty"`
-	DaemonClients      int                  `json:"daemonClients,omitempty"`
-	DaemonTransport    string               `json:"daemonTransport,omitempty"`
-	DaemonEndpoint     string               `json:"daemonEndpoint,omitempty"`
-	DaemonIdleDeadline string               `json:"daemonIdleDeadline,omitempty"`
-	DaemonLeaseCount   int                  `json:"daemonLeaseCount,omitempty"`
-	DaemonLeaseOwners  []string             `json:"daemonLeaseOwners,omitempty"`
+	ID                     string               `json:"id"`
+	Name                   string               `json:"name"`
+	Enabled                bool                 `json:"enabled"`
+	Detected               bool                 `json:"detected"`
+	Status                 string               `json:"status"`
+	InstallState           string               `json:"installState"`
+	RunningState           string               `json:"runningState"`
+	ReadinessState         string               `json:"readinessState"`
+	Binary                 string               `json:"binary,omitempty"`
+	BinaryPath             string               `json:"binaryPath,omitempty"`
+	Source                 string               `json:"source,omitempty"`
+	Version                string               `json:"version,omitempty"`
+	CachePath              string               `json:"cachePath,omitempty"`
+	SelectedPath           string               `json:"selectedPath,omitempty"`
+	CleanupEligible        bool                 `json:"cleanupEligible,omitempty"`
+	InstallError           string               `json:"installError,omitempty"`
+	UpdateError            string               `json:"updateError,omitempty"`
+	InstallCmd             string               `json:"installCmd,omitempty"`
+	Backend                string               `json:"backend,omitempty"`
+	BackendSource          string               `json:"backendSource,omitempty"`
+	ProjectPath            string               `json:"projectPath,omitempty"`
+	ProjectKind            string               `json:"projectKind,omitempty"`
+	LogPath                string               `json:"logPath,omitempty"`
+	Attempts               []lsp.BackendAttempt `json:"attempts,omitempty"`
+	Owner                  string               `json:"owner,omitempty"`
+	DaemonState            string               `json:"daemonState,omitempty"`
+	DaemonPID              int                  `json:"daemonPid,omitempty"`
+	DaemonClients          int                  `json:"daemonClients,omitempty"`
+	DaemonTransport        string               `json:"daemonTransport,omitempty"`
+	DaemonEndpoint         string               `json:"daemonEndpoint,omitempty"`
+	DaemonIdleDeadline     string               `json:"daemonIdleDeadline,omitempty"`
+	DaemonLeaseCount       int                  `json:"daemonLeaseCount,omitempty"`
+	DaemonLeaseOwners      []string             `json:"daemonLeaseOwners,omitempty"`
+	CapabilitiesKnown      bool                 `json:"capabilitiesKnown,omitempty"`
+	Capabilities           []string             `json:"capabilities,omitempty"`
+	AdvertisedCapabilities []string             `json:"advertisedCapabilities,omitempty"`
+	ObservedCapabilities   []string             `json:"observedCapabilities,omitempty"`
+	RequiredCapabilities   []string             `json:"requiredCapabilities,omitempty"`
+	MissingCapabilities    []string             `json:"missingCapabilities,omitempty"`
 }
 
 // PermissionStatus reports the active AI permission policy.
@@ -308,39 +314,45 @@ func buildLSP(projectPath string, store *storage.Store, runtimeStatuses []lsp.La
 
 func lspStatusFromRuntime(status lsp.LanguageRuntimeStatus) LSPStatus {
 	return LSPStatus{
-		ID:                 status.ID,
-		Name:               status.Name,
-		Enabled:            status.Enabled,
-		Detected:           status.Detected,
-		Status:             status.Status,
-		InstallState:       status.InstallState,
-		RunningState:       status.RunningState,
-		ReadinessState:     status.ReadinessState,
-		Binary:             status.Binary,
-		BinaryPath:         status.BinaryPath,
-		Source:             status.Source,
-		Version:            status.Version,
-		CachePath:          status.CachePath,
-		SelectedPath:       status.SelectedPath,
-		CleanupEligible:    status.CleanupEligible,
-		InstallError:       status.InstallError,
-		UpdateError:        status.UpdateError,
-		InstallCmd:         status.InstallCmd,
-		Backend:            status.Backend,
-		BackendSource:      status.BackendSource,
-		ProjectPath:        status.ProjectPath,
-		ProjectKind:        status.ProjectKind,
-		LogPath:            status.LogPath,
-		Attempts:           status.Attempts,
-		Owner:              status.Owner,
-		DaemonState:        status.DaemonState,
-		DaemonPID:          status.DaemonPID,
-		DaemonClients:      status.DaemonClients,
-		DaemonTransport:    status.DaemonTransport,
-		DaemonEndpoint:     status.DaemonEndpoint,
-		DaemonIdleDeadline: status.DaemonIdleDeadline,
-		DaemonLeaseCount:   status.DaemonLeaseCount,
-		DaemonLeaseOwners:  append([]string(nil), status.DaemonLeaseOwners...),
+		ID:                     status.ID,
+		Name:                   status.Name,
+		Enabled:                status.Enabled,
+		Detected:               status.Detected,
+		Status:                 status.Status,
+		InstallState:           status.InstallState,
+		RunningState:           status.RunningState,
+		ReadinessState:         status.ReadinessState,
+		Binary:                 status.Binary,
+		BinaryPath:             status.BinaryPath,
+		Source:                 status.Source,
+		Version:                status.Version,
+		CachePath:              status.CachePath,
+		SelectedPath:           status.SelectedPath,
+		CleanupEligible:        status.CleanupEligible,
+		InstallError:           status.InstallError,
+		UpdateError:            status.UpdateError,
+		InstallCmd:             status.InstallCmd,
+		Backend:                status.Backend,
+		BackendSource:          status.BackendSource,
+		ProjectPath:            status.ProjectPath,
+		ProjectKind:            status.ProjectKind,
+		LogPath:                status.LogPath,
+		Attempts:               status.Attempts,
+		Owner:                  status.Owner,
+		DaemonState:            status.DaemonState,
+		DaemonPID:              status.DaemonPID,
+		DaemonClients:          status.DaemonClients,
+		DaemonTransport:        status.DaemonTransport,
+		DaemonEndpoint:         status.DaemonEndpoint,
+		DaemonIdleDeadline:     status.DaemonIdleDeadline,
+		DaemonLeaseCount:       status.DaemonLeaseCount,
+		DaemonLeaseOwners:      append([]string(nil), status.DaemonLeaseOwners...),
+		CapabilitiesKnown:      status.CapabilitiesKnown,
+		Capabilities:           append([]string(nil), status.Capabilities...),
+		AdvertisedCapabilities: append([]string(nil), status.AdvertisedCapabilities...),
+		ObservedCapabilities:   append([]string(nil), status.ObservedCapabilities...),
+		RequiredCapabilities:   append([]string(nil), status.RequiredCapabilities...),
+		MissingCapabilities:    append([]string(nil), status.MissingCapabilities...),
 	}
 }
 

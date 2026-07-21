@@ -24,6 +24,19 @@ type MissingServer struct {
 
 var ErrServerUnavailable = errors.New("LSP not available for this language")
 
+// PathMatcherAdapter optionally provides ordered routing signals beyond the
+// legacy extension list. Adapters that do not implement it remain extension
+// routed exactly as before.
+type PathMatcherAdapter interface {
+	PathMatchers() []PathMatcher
+}
+
+// LazyStartAdapter opts an adapter out of project-activation startup. Its
+// server is resolved and started only by an explicit matching file request.
+type LazyStartAdapter interface {
+	LazyStart() bool
+}
+
 type Manager struct {
 	root     string
 	registry *Registry
@@ -158,6 +171,19 @@ func (m *Manager) ServerForPath(ctx context.Context, path string) (*Server, bool
 	m.mu.Lock()
 	srv := m.servers[lang.ID]
 	status := m.status[lang.ID]
+	adapter := m.adapters[lang.ID]
+	if pathCapabilityBlocksAll(adapter, path) {
+		if srv == nil {
+			backend := primaryBinaryName(adapter)
+			srv = NewServer(m.root, ServerCommand{Language: lang.ID, Name: backend, Backend: backend})
+			m.configureServerCapabilityProfileLocked(lang.ID, srv)
+			m.configureServerDocumentSyncLocked(lang.ID, srv)
+			m.configureServerPathCapabilityLocked(lang.ID, srv)
+			m.configureTraceLocked(lang.ID, srv)
+		}
+		m.mu.Unlock()
+		return srv, true, nil
+	}
 	m.mu.Unlock()
 
 	// Auto-restart: if server exists but is not alive, restart it transparently.
@@ -193,12 +219,14 @@ func (m *Manager) ServerForPath(ctx context.Context, path string) (*Server, bool
 		srv = m.servers[lang.ID]
 		if srv == nil {
 			srv = NewServer(m.root, cmd)
-			m.configureTraceLocked(lang.ID, srv)
 			m.servers[lang.ID] = srv
 		} else {
 			srv.Command = cmd
-			m.configureTraceLocked(lang.ID, srv)
 		}
+		m.configureServerCapabilityProfileLocked(lang.ID, srv)
+		m.configureServerDocumentSyncLocked(lang.ID, srv)
+		m.configureServerPathCapabilityLocked(lang.ID, srv)
+		m.configureTraceLocked(lang.ID, srv)
 		m.mu.Unlock()
 		if err := srv.Start(ctx); err != nil {
 			return nil, false, m.runtimeErrorForCommand(cmd, err)
@@ -305,11 +333,21 @@ func (m *Manager) StartAll(ctx context.Context) error {
 
 	m.mu.Lock()
 	for _, cmd := range commands {
+		lang, registered := m.registry.Language(cmd.Language)
+		if registered && lang.LazyStart {
+			if _, exists := m.status[cmd.Language]; !exists {
+				m.status[cmd.Language] = StatusInstalled
+			}
+			continue
+		}
 		if _, exists := m.servers[cmd.Language]; !exists {
 			srv := NewServer(m.root, cmd)
 			m.configureTraceLocked(cmd.Language, srv)
 			m.servers[cmd.Language] = srv
 		}
+		m.configureServerCapabilityProfileLocked(cmd.Language, m.servers[cmd.Language])
+		m.configureServerDocumentSyncLocked(cmd.Language, m.servers[cmd.Language])
+		m.configureServerPathCapabilityLocked(cmd.Language, m.servers[cmd.Language])
 		if _, exists := m.status[cmd.Language]; !exists {
 			m.status[cmd.Language] = StatusInstalled
 		}
@@ -321,6 +359,9 @@ func (m *Manager) StartAll(ctx context.Context) error {
 	}
 	var items []startItem
 	for langID, srv := range m.servers {
+		if lang, registered := m.registry.Language(langID); registered && lang.LazyStart {
+			continue
+		}
 		if m.status[langID] != StatusDisabled {
 			m.configureTraceLocked(langID, srv)
 			items = append(items, startItem{langID: langID, srv: srv})
@@ -372,42 +413,54 @@ func (m *Manager) StopAll(ctx context.Context) error {
 
 // LanguageInfo describes an available language adapter with its runtime status.
 type LanguageInfo struct {
-	ID                 string           `json:"id"`
-	Name               string           `json:"name"`
-	Enabled            bool             `json:"enabled"`
-	Detected           bool             `json:"detected"`
-	Status             string           `json:"status,omitempty"`
-	Binary             string           `json:"binary"`
-	BinaryPath         string           `json:"binaryPath,omitempty"`
-	Source             string           `json:"source,omitempty"`
-	Installed          bool             `json:"installed"`
-	Running            bool             `json:"running"`
-	InstallState       string           `json:"installState,omitempty"`
-	RunningState       string           `json:"runningState,omitempty"`
-	ReadinessState     string           `json:"readinessState,omitempty"`
-	Version            string           `json:"version,omitempty"`
-	CachePath          string           `json:"cachePath,omitempty"`
-	SelectedPath       string           `json:"selectedPath,omitempty"`
-	CleanupEligible    bool             `json:"cleanupEligible,omitempty"`
-	InstallError       string           `json:"installError,omitempty"`
-	UpdateError        string           `json:"updateError,omitempty"`
-	InstallHint        string           `json:"installHint,omitempty"`
-	Backend            string           `json:"backend,omitempty"`
-	BackendSource      string           `json:"backendSource,omitempty"`
-	ProjectPath        string           `json:"projectPath,omitempty"`
-	ProjectKind        string           `json:"projectKind,omitempty"`
-	LogPath            string           `json:"logPath,omitempty"`
-	Attempts           []BackendAttempt `json:"attempts,omitempty"`
-	TraceEnabled       bool             `json:"traceEnabled,omitempty"`
-	Owner              string           `json:"owner,omitempty"`
-	DaemonState        string           `json:"daemonState,omitempty"`
-	DaemonPID          int              `json:"daemonPid,omitempty"`
-	DaemonClients      int              `json:"daemonClients,omitempty"`
-	DaemonTransport    string           `json:"daemonTransport,omitempty"`
-	DaemonEndpoint     string           `json:"daemonEndpoint,omitempty"`
-	DaemonIdleDeadline string           `json:"daemonIdleDeadline,omitempty"`
-	DaemonLeaseCount   int              `json:"daemonLeaseCount,omitempty"`
-	DaemonLeaseOwners  []string         `json:"daemonLeaseOwners,omitempty"`
+	ID                     string           `json:"id"`
+	Name                   string           `json:"name"`
+	Enabled                bool             `json:"enabled"`
+	Detected               bool             `json:"detected"`
+	Status                 string           `json:"status,omitempty"`
+	Binary                 string           `json:"binary"`
+	BinaryPath             string           `json:"binaryPath,omitempty"`
+	Source                 string           `json:"source,omitempty"`
+	Installed              bool             `json:"installed"`
+	Running                bool             `json:"running"`
+	InstallState           string           `json:"installState,omitempty"`
+	RunningState           string           `json:"runningState,omitempty"`
+	ReadinessState         string           `json:"readinessState,omitempty"`
+	Version                string           `json:"version,omitempty"`
+	RequestedVersion       string           `json:"requestedVersion,omitempty"`
+	ResolvedVersion        string           `json:"resolvedVersion,omitempty"`
+	SourceLocation         string           `json:"sourceLocation,omitempty"`
+	Integrity              string           `json:"integrity,omitempty"`
+	InstalledAt            string           `json:"installedAt,omitempty"`
+	Verified               bool             `json:"verified"`
+	CachePath              string           `json:"cachePath,omitempty"`
+	SelectedPath           string           `json:"selectedPath,omitempty"`
+	CleanupEligible        bool             `json:"cleanupEligible,omitempty"`
+	InstallError           string           `json:"installError,omitempty"`
+	UpdateError            string           `json:"updateError,omitempty"`
+	InstallHint            string           `json:"installHint,omitempty"`
+	Backend                string           `json:"backend,omitempty"`
+	BackendSource          string           `json:"backendSource,omitempty"`
+	ProjectPath            string           `json:"projectPath,omitempty"`
+	ProjectKind            string           `json:"projectKind,omitempty"`
+	LogPath                string           `json:"logPath,omitempty"`
+	Attempts               []BackendAttempt `json:"attempts,omitempty"`
+	TraceEnabled           bool             `json:"traceEnabled,omitempty"`
+	Owner                  string           `json:"owner,omitempty"`
+	DaemonState            string           `json:"daemonState,omitempty"`
+	DaemonPID              int              `json:"daemonPid,omitempty"`
+	DaemonClients          int              `json:"daemonClients,omitempty"`
+	DaemonTransport        string           `json:"daemonTransport,omitempty"`
+	DaemonEndpoint         string           `json:"daemonEndpoint,omitempty"`
+	DaemonIdleDeadline     string           `json:"daemonIdleDeadline,omitempty"`
+	DaemonLeaseCount       int              `json:"daemonLeaseCount,omitempty"`
+	DaemonLeaseOwners      []string         `json:"daemonLeaseOwners,omitempty"`
+	CapabilitiesKnown      bool             `json:"capabilitiesKnown,omitempty"`
+	Capabilities           []string         `json:"capabilities,omitempty"`
+	AdvertisedCapabilities []string         `json:"advertisedCapabilities,omitempty"`
+	ObservedCapabilities   []string         `json:"observedCapabilities,omitempty"`
+	RequiredCapabilities   []string         `json:"requiredCapabilities,omitempty"`
+	MissingCapabilities    []string         `json:"missingCapabilities,omitempty"`
 }
 
 // StartLanguage starts a single language server by adapter ID.
@@ -478,7 +531,9 @@ func runtimeBinariesForAdapter(adapter LanguageAdapter, installer *Installer) []
 	}
 	status := installer.Status(adapter)
 	if status.Installed && status.SelectedPath != "" {
-		return append([]BinaryCandidate{{Name: status.SelectedPath, Args: adapter.DefaultArgs()}}, binaries...)
+		// Config overrides are handled by Detector.resolve. Keep compatible
+		// user PATH binaries ahead of the Knowns-managed fallback here.
+		return append(binaries, BinaryCandidate{Name: status.SelectedPath, Args: adapter.DefaultArgs()})
 	}
 	return binaries
 }
@@ -492,6 +547,9 @@ func (m *Manager) startCommand(ctx context.Context, langID string, cmd ServerCom
 	} else {
 		srv.Command = cmd
 	}
+	m.configureServerCapabilityProfileLocked(langID, srv)
+	m.configureServerDocumentSyncLocked(langID, srv)
+	m.configureServerPathCapabilityLocked(langID, srv)
 	m.configureTraceLocked(langID, srv)
 	m.status[langID] = StatusStarting
 	m.mu.Unlock()
@@ -649,6 +707,12 @@ func (m *Manager) stopLanguage(ctx context.Context, langID string, stoppedStatus
 // InstallLanguage installs or updates the managed runtime dependency for a
 // language using the existing adapter/installer path.
 func (m *Manager) InstallLanguage(ctx context.Context, langID string) (string, error) {
+	return m.InstallLanguageWithOptions(ctx, langID, InstallOptions{})
+}
+
+// InstallLanguageWithOptions installs a selected managed runtime version while
+// preserving InstallLanguage as the recommended/default compatibility API.
+func (m *Manager) InstallLanguageWithOptions(ctx context.Context, langID string, opts InstallOptions) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -671,10 +735,16 @@ func (m *Manager) InstallLanguage(ctx context.Context, langID string) (string, e
 		}
 	}
 	if len(installAdapter.RuntimeDeps()) > 0 {
-		path, err := installer.Install(ctx, installAdapter)
-		if err == nil {
-			m.refreshAdapterRegistration(langID)
+		callerBeforeCleanup := opts.BeforeCleanup
+		opts.BeforeCleanup = func(path string) error {
+			if callerBeforeCleanup != nil {
+				if err := callerBeforeCleanup(path); err != nil {
+					return err
+				}
+			}
+			return m.refreshAdapterRegistration(langID)
 		}
+		path, err := installer.InstallWithOptions(ctx, installAdapter, opts)
 		return path, err
 	}
 	if !adapter.CanInstall() {
@@ -682,7 +752,7 @@ func (m *Manager) InstallLanguage(ctx context.Context, langID string) (string, e
 	}
 	path, err := adapter.Install(ctx, installer.baseDir)
 	if err == nil {
-		m.refreshAdapterRegistration(langID)
+		err = m.refreshAdapterRegistration(langID)
 	}
 	return path, err
 }
@@ -780,40 +850,52 @@ func (m *Manager) AvailableLanguages() []LanguageInfo {
 
 func LanguageInfoFromRuntimeStatus(status LanguageRuntimeStatus) LanguageInfo {
 	return LanguageInfo{
-		ID:                 status.ID,
-		Name:               status.Name,
-		Enabled:            status.Enabled,
-		Detected:           status.Detected,
-		Status:             status.Status,
-		Binary:             status.Binary,
-		BinaryPath:         status.BinaryPath,
-		Source:             status.Source,
-		Installed:          status.InstallState == RuntimeInstallInstalled,
-		Running:            status.RunningState == RuntimeRunningRunning,
-		InstallState:       status.InstallState,
-		RunningState:       status.RunningState,
-		ReadinessState:     status.ReadinessState,
-		Version:            status.Version,
-		CachePath:          status.CachePath,
-		SelectedPath:       status.SelectedPath,
-		CleanupEligible:    status.CleanupEligible,
-		InstallError:       status.InstallError,
-		UpdateError:        status.UpdateError,
-		Backend:            status.Backend,
-		BackendSource:      status.BackendSource,
-		ProjectPath:        status.ProjectPath,
-		ProjectKind:        status.ProjectKind,
-		LogPath:            status.LogPath,
-		Attempts:           status.Attempts,
-		Owner:              status.Owner,
-		DaemonState:        status.DaemonState,
-		DaemonPID:          status.DaemonPID,
-		DaemonClients:      status.DaemonClients,
-		DaemonTransport:    status.DaemonTransport,
-		DaemonEndpoint:     status.DaemonEndpoint,
-		DaemonIdleDeadline: status.DaemonIdleDeadline,
-		DaemonLeaseCount:   status.DaemonLeaseCount,
-		DaemonLeaseOwners:  append([]string(nil), status.DaemonLeaseOwners...),
+		ID:                     status.ID,
+		Name:                   status.Name,
+		Enabled:                status.Enabled,
+		Detected:               status.Detected,
+		Status:                 status.Status,
+		Binary:                 status.Binary,
+		BinaryPath:             status.BinaryPath,
+		Source:                 status.Source,
+		Installed:              status.InstallState == RuntimeInstallInstalled,
+		Running:                status.RunningState == RuntimeRunningRunning,
+		InstallState:           status.InstallState,
+		RunningState:           status.RunningState,
+		ReadinessState:         status.ReadinessState,
+		Version:                status.Version,
+		RequestedVersion:       status.RequestedVersion,
+		ResolvedVersion:        status.ResolvedVersion,
+		SourceLocation:         status.SourceLocation,
+		Integrity:              status.Integrity,
+		InstalledAt:            status.InstalledAt,
+		Verified:               status.Verified,
+		CachePath:              status.CachePath,
+		SelectedPath:           status.SelectedPath,
+		CleanupEligible:        status.CleanupEligible,
+		InstallError:           status.InstallError,
+		UpdateError:            status.UpdateError,
+		Backend:                status.Backend,
+		BackendSource:          status.BackendSource,
+		ProjectPath:            status.ProjectPath,
+		ProjectKind:            status.ProjectKind,
+		LogPath:                status.LogPath,
+		Attempts:               status.Attempts,
+		Owner:                  status.Owner,
+		DaemonState:            status.DaemonState,
+		DaemonPID:              status.DaemonPID,
+		DaemonClients:          status.DaemonClients,
+		DaemonTransport:        status.DaemonTransport,
+		DaemonEndpoint:         status.DaemonEndpoint,
+		DaemonIdleDeadline:     status.DaemonIdleDeadline,
+		DaemonLeaseCount:       status.DaemonLeaseCount,
+		DaemonLeaseOwners:      append([]string(nil), status.DaemonLeaseOwners...),
+		CapabilitiesKnown:      status.CapabilitiesKnown,
+		Capabilities:           append([]string(nil), status.Capabilities...),
+		AdvertisedCapabilities: append([]string(nil), status.AdvertisedCapabilities...),
+		ObservedCapabilities:   append([]string(nil), status.ObservedCapabilities...),
+		RequiredCapabilities:   append([]string(nil), status.RequiredCapabilities...),
+		MissingCapabilities:    append([]string(nil), status.MissingCapabilities...),
 	}
 }
 
@@ -822,11 +904,21 @@ func (m *Manager) registerAdapterLocked(adapter LanguageAdapter) error {
 	for _, b := range runtimeBinariesForAdapter(adapter, m.installerLocked()) {
 		binaries = append(binaries, Binary{Name: b.Name, Args: b.Args, CheckArgs: b.CheckArgs})
 	}
+	var matchers []PathMatcher
+	if provider, ok := adapter.(PathMatcherAdapter); ok {
+		matchers = provider.PathMatchers()
+	}
+	lazyStart := false
+	if provider, ok := adapter.(LazyStartAdapter); ok {
+		lazyStart = provider.LazyStart()
+	}
 	if err := m.registry.Register(Language{
 		ID:         adapter.ID(),
 		Name:       adapter.Name(),
 		Extensions: adapter.Extensions(),
 		Binaries:   binaries,
+		Matchers:   matchers,
+		LazyStart:  lazyStart,
 	}); err != nil {
 		return err
 	}
@@ -834,12 +926,13 @@ func (m *Manager) registerAdapterLocked(adapter LanguageAdapter) error {
 	return nil
 }
 
-func (m *Manager) refreshAdapterRegistration(langID string) {
+func (m *Manager) refreshAdapterRegistration(langID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if adapter := m.adapters[langID]; adapter != nil {
-		_ = m.registerAdapterLocked(adapter)
+		return m.registerAdapterLocked(adapter)
 	}
+	return nil
 }
 
 func (m *Manager) isTraceEnabled(langID string) bool {
@@ -936,6 +1029,40 @@ func (m *Manager) configureTraceLocked(langID string, srv *Server) {
 	srv.TraceWriter = nil
 }
 
+func (m *Manager) configureServerCapabilityProfileLocked(langID string, srv *Server) {
+	if srv == nil {
+		return
+	}
+	if adapter := m.adapters[langID]; adapter != nil {
+		srv.SetCapabilityProfile(capabilityProfileForAdapter(adapter))
+	}
+}
+
+func (m *Manager) configureServerDocumentSyncLocked(langID string, srv *Server) {
+	if srv == nil {
+		return
+	}
+	provider, _ := m.adapters[langID].(PathDocumentSyncAdapter)
+	srv.setDocumentSyncAdapter(langID, provider)
+}
+
+func (m *Manager) configureServerPathCapabilityLocked(langID string, srv *Server) {
+	if srv == nil {
+		return
+	}
+	provider, _ := m.adapters[langID].(PathCapabilityAdapter)
+	srv.setPathCapabilityAdapter(provider)
+}
+
+func pathCapabilityBlocksAll(adapter LanguageAdapter, path string) bool {
+	provider, ok := adapter.(PathCapabilityAdapter)
+	if !ok {
+		return false
+	}
+	decision, handled := provider.PathCapabilityForAction(path, "", "")
+	return handled && !decision.Supported
+}
+
 func (m *Manager) logPathForLanguage(langID, kind string) (string, error) {
 	m.mu.Lock()
 	if m.adapters[langID] == nil {
@@ -970,14 +1097,22 @@ func (m *Manager) startDetected(ctx context.Context) error {
 	var servers []*Server
 	m.mu.Lock()
 	for _, cmd := range commands {
+		lang, registered := m.registry.Language(cmd.Language)
+		if registered && lang.LazyStart {
+			if _, exists := m.status[cmd.Language]; !exists {
+				m.status[cmd.Language] = StatusInstalled
+			}
+			continue
+		}
 		srv := m.servers[cmd.Language]
 		if srv == nil {
 			srv = NewServer(m.root, cmd)
-			m.configureTraceLocked(cmd.Language, srv)
 			m.servers[cmd.Language] = srv
-		} else {
-			m.configureTraceLocked(cmd.Language, srv)
 		}
+		m.configureServerCapabilityProfileLocked(cmd.Language, srv)
+		m.configureServerDocumentSyncLocked(cmd.Language, srv)
+		m.configureServerPathCapabilityLocked(cmd.Language, srv)
+		m.configureTraceLocked(cmd.Language, srv)
 		servers = append(servers, srv)
 	}
 	m.mu.Unlock()

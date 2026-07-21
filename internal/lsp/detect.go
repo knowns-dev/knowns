@@ -5,8 +5,30 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
+
+var autoDetectionIgnoredDirs = map[string]struct{}{
+	".git":         {},
+	".hg":          {},
+	".knowns":      {},
+	".svn":         {},
+	"build":        {},
+	"dist":         {},
+	"fixture":      {},
+	"fixtures":     {},
+	"gen":          {},
+	"generated":    {},
+	"node_modules": {},
+	"out":          {},
+	"target":       {},
+	"test-data":    {},
+	"testdata":     {},
+	"third_party":  {},
+	"vendor":       {},
+	"vendored":     {},
+}
 
 type Detector struct {
 	Registry   *Registry
@@ -72,15 +94,12 @@ func (d *Detector) DetectedLanguages(root string, cfg Config) ([]Language, error
 			return nil
 		}
 		if entry.IsDir() {
-			switch entry.Name() {
-			case ".git", ".knowns", "node_modules", "vendor", "target", "dist", "build":
-				if path != root {
-					return filepath.SkipDir
-				}
+			if path != root && isAutoDetectionIgnoredDir(entry.Name()) {
+				return filepath.SkipDir
 			}
 			return nil
 		}
-		lang, ok := d.Registry.ForPath(path)
+		lang, ok := d.Registry.ForDetection(path)
 		if ok {
 			seen[lang.ID] = true
 		}
@@ -99,17 +118,26 @@ func (d *Detector) DetectedLanguages(root string, cfg Config) ([]Language, error
 	return languages, nil
 }
 
+func isAutoDetectionIgnoredDir(name string) bool {
+	_, ignored := autoDetectionIgnoredDirs[strings.ToLower(strings.TrimSpace(name))]
+	return ignored
+}
+
 func (d *Detector) resolve(ctx context.Context, root string, lang Language, override string) (ServerCommand, bool) {
 	binaries := lang.Binaries
 	if override != "" {
-		binaries = []Binary{{Name: override}}
+		binary := Binary{Name: override}
+		if len(binaries) > 0 {
+			binary.CheckArgs = append([]string(nil), binaries[0].CheckArgs...)
+		}
+		binaries = []Binary{binary}
 	}
 	for _, binary := range binaries {
 		path, err := d.LookPath(binary.Name)
 		if err != nil {
 			continue
 		}
-		if d.RunCheck != nil {
+		if d.RunCheck != nil && len(binary.CheckArgs) > 0 {
 			checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			err = d.RunCheck(checkCtx, path, binary.CheckArgs...)
 			cancel()

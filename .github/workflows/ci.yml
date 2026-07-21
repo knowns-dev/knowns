@@ -113,10 +113,13 @@ jobs:
   lsp-fixtures:
     runs-on: ${{ matrix.os }}
     needs: [test]
+    timeout-minutes: 30
+    env:
+      KNOWNS_LSP_DAEMON: '0'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     name: LSP Fixture Smoke (${{ matrix.os }})
     steps:
       - uses: actions/checkout@v4
@@ -132,6 +135,10 @@ jobs:
           dotnet-version: |
             6.0.x
             10.0.x
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: '1.14.6'
+          terraform_wrapper: false
 
       - name: Install llvm-mingw toolchain
         if: runner.os == 'Windows'
@@ -177,16 +184,65 @@ jobs:
           CGO_ENABLED: '1'
         run: go build -ldflags "-s -w -X github.com/howznguyen/knowns/internal/util.Version=${env:GITHUB_SHA}" -o bin/knowns.exe ./cmd/knowns
 
-      - name: Run .NET Web API LSP fixture (Unix)
-        if: runner.os != 'Windows'
-        run: TEST_LSP_FIXTURES=1 TEST_BINARY="$PWD/bin/knowns" go test -v -timeout 8m -count=1 ./tests/lspfixtures
+      - name: Install managed LSP fixtures and expose selected binaries
+        shell: bash
+        run: |
+          KNOWNS_BINARY="$PWD/bin/knowns"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            KNOWNS_BINARY="$PWD/bin/knowns.exe"
+          fi
 
-      - name: Run .NET Web API LSP fixture (Windows)
+          for language in markdown bash json terraform yaml; do
+            "$KNOWNS_BINARY" lsp install "$language"
+          done
+
+          STATUS_FILE="$RUNNER_TEMP/knowns-lsp-status.json"
+          "$KNOWNS_BINARY" lsp list --json > "$STATUS_FILE"
+          node - "$STATUS_FILE" <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+
+          const statusFile = process.argv[2];
+          const expected = new Set(['markdown', 'bash', 'json', 'terraform', 'yaml']);
+          const rows = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
+          const selected = rows.filter((row) => expected.has(row.id));
+          const missing = [...expected].filter(
+            (id) => !selected.some((row) => row.id === id && row.selected_path),
+          );
+          if (missing.length > 0) {
+            throw new Error(`managed LSP selected_path missing for: ${missing.join(', ')}`);
+          }
+
+          const invalidProvenance = selected.filter((row) =>
+            row.install_state !== 'installed' ||
+            row.requested_version !== 'recommended' ||
+            !row.resolved_version ||
+            !row.source_location ||
+            !row.integrity ||
+            !row.installed_at ||
+            Number.isNaN(Date.parse(row.installed_at)) ||
+            row.verified !== true
+          );
+          if (invalidProvenance.length > 0) {
+            throw new Error(
+              `managed LSP provenance incomplete for: ${invalidProvenance.map((row) => row.id).join(', ')}`,
+            );
+          }
+
+          const directories = [...new Set(selected.map((row) => path.dirname(row.selected_path)))];
+          fs.appendFileSync(process.env.GITHUB_PATH, `${directories.join('\n')}\n`);
+          NODE
+
+      - name: Run LSP fixtures (Unix)
+        if: runner.os != 'Windows'
+        run: TEST_LSP_FIXTURES=1 TEST_BINARY="$PWD/bin/knowns" go test -v -timeout 15m -count=1 ./tests/lspfixtures
+
+      - name: Run LSP fixtures (Windows)
         if: runner.os == 'Windows'
         shell: bash
         env:
           CGO_ENABLED: '1'
-        run: TEST_LSP_FIXTURES=1 TEST_BINARY="$PWD/bin/knowns.exe" go test -v -timeout 8m -count=1 ./tests/lspfixtures
+        run: TEST_LSP_FIXTURES=1 TEST_BINARY="$PWD/bin/knowns.exe" go test -v -timeout 15m -count=1 ./tests/lspfixtures
 
   build-and-e2e:
     runs-on: ${{ matrix.os }}

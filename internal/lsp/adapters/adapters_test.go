@@ -1,6 +1,9 @@
 package adapters
 
 import (
+	"context"
+	"errors"
+	"os"
 	"reflect"
 	"testing"
 
@@ -19,6 +22,11 @@ func TestAdaptersSatisfyLanguageAdapter(t *testing.T) {
 	var _ lsp.LanguageAdapter = NewRubyLspAdapter()
 	var _ lsp.LanguageAdapter = NewIntelephenseAdapter()
 	var _ lsp.LanguageAdapter = NewScssAdapter()
+	var _ lsp.LanguageAdapter = NewMarksmanAdapter()
+	var _ lsp.LanguageAdapter = NewBashAdapter()
+	var _ lsp.LanguageAdapter = NewJSONAdapter()
+	var _ lsp.LanguageAdapter = NewTerraformLSAdapter()
+	var _ lsp.LanguageAdapter = NewYAMLAdapter()
 }
 
 func TestAdapterMetadata(t *testing.T) {
@@ -41,6 +49,11 @@ func TestAdapterMetadata(t *testing.T) {
 		{name: "ruby", adapter: NewRubyLspAdapter(), id: "ruby", displayName: "Ruby", extensions: []string{".rb", ".rake", ".gemspec"}, canInstall: true},
 		{name: "php", adapter: NewIntelephenseAdapter(), id: "php", displayName: "PHP", extensions: []string{".php"}, canInstall: true},
 		{name: "scss", adapter: NewScssAdapter(), id: "scss", displayName: "SCSS/Sass/CSS", extensions: []string{".scss", ".sass", ".css"}, canInstall: true},
+		{name: "markdown", adapter: NewMarksmanAdapter(), id: "markdown", displayName: "Markdown", extensions: []string{".md", ".markdown"}, canInstall: true},
+		{name: "bash", adapter: NewBashAdapter(), id: "bash", displayName: "Bash", extensions: []string{".sh", ".bash"}, canInstall: true},
+		{name: "json", adapter: NewJSONAdapter(), id: "json", displayName: "JSON/JSONC", extensions: []string{".json", ".jsonc"}, canInstall: true},
+		{name: "terraform", adapter: NewTerraformLSAdapter(), id: "terraform", displayName: "Terraform", extensions: []string{".tf", ".tfvars", ".tf.json", ".tfvars.json"}, canInstall: true},
+		{name: "yaml", adapter: NewYAMLAdapter(), id: "yaml", displayName: "YAML", extensions: []string{".yaml", ".yml"}, canInstall: true},
 	}
 
 	for _, tt := range tests {
@@ -67,17 +80,75 @@ func TestAdapterMetadata(t *testing.T) {
 
 func TestAllAdapters(t *testing.T) {
 	adapters := AllAdapters()
-	if len(adapters) != 11 {
-		t.Fatalf("AllAdapters() returned %d adapters, want 11", len(adapters))
+	if len(adapters) != 16 {
+		t.Fatalf("AllAdapters() returned %d adapters, want 16", len(adapters))
 	}
 	ids := make(map[string]bool, len(adapters))
 	for _, adapter := range adapters {
 		ids[adapter.ID()] = true
 	}
-	for _, id := range []string{"go", "typescript", "python", "rust", "c_cpp", "java", "csharp", "dart", "ruby", "php", "scss"} {
+	for _, id := range []string{"go", "typescript", "python", "rust", "c_cpp", "java", "csharp", "dart", "ruby", "php", "scss", "markdown", "bash", "json", "terraform", "yaml"} {
 		if !ids[id] {
 			t.Fatalf("AllAdapters() missing %q", id)
 		}
+	}
+}
+
+func TestPriorityAdaptersExposeSharedRuntimeAndInstallMetadata(t *testing.T) {
+	root := t.TempDir()
+	detector := lsp.NewDetector(nil)
+	detector.LookPath = func(string) (string, error) { return "", os.ErrNotExist }
+	detector.RunCheck = func(context.Context, string, ...string) error { return errors.New("not installed") }
+	detector.RunCommand = func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("not installed")
+	}
+	statuses := lsp.CollectRuntimeStatuses(context.Background(), lsp.RuntimeStatusOptions{
+		Root:      root,
+		Config:    lsp.Config{},
+		Adapters:  All(),
+		Detector:  detector,
+		Installer: lsp.NewInstaller(t.TempDir()),
+	})
+	statusByID := make(map[string]lsp.LanguageRuntimeStatus, len(statuses))
+	for _, status := range statuses {
+		statusByID[status.ID] = status
+	}
+
+	for _, id := range []string{"markdown", "bash", "json", "terraform", "yaml"} {
+		t.Run(id, func(t *testing.T) {
+			adapter, ok := Find(id)
+			if !ok {
+				t.Fatalf("Find(%q) did not expose the built-in adapter", id)
+			}
+			if !adapter.CanInstall() {
+				t.Fatal("CanInstall() = false, want managed installation")
+			}
+			if guide := adapter.InstallGuide(); guide.KnownsCmd != "knowns lsp install "+id {
+				t.Fatalf("InstallGuide().KnownsCmd = %q", guide.KnownsCmd)
+			}
+			deps := adapter.RuntimeDeps()
+			if len(deps) == 0 || deps[0].RecommendedVersion == "" || deps[0].RecommendedIntegrity == "" {
+				t.Fatalf("RuntimeDeps() lacks pinned install metadata: %#v", deps)
+			}
+			lazy, ok := adapter.(lsp.LazyStartAdapter)
+			if !ok || !lazy.LazyStart() {
+				t.Fatal("adapter is not registered as lazy-start")
+			}
+
+			status, ok := statusByID[id]
+			if !ok {
+				t.Fatal("shared runtime status is missing")
+			}
+			if status.InstallCmd != "knowns lsp install "+id {
+				t.Fatalf("runtime InstallCmd = %q", status.InstallCmd)
+			}
+			if status.Backend == "" {
+				t.Fatal("runtime status does not expose the expected backend")
+			}
+			if len(status.RequiredCapabilities) == 0 {
+				t.Fatal("runtime status does not expose the required capability baseline")
+			}
+		})
 	}
 }
 
@@ -126,6 +197,9 @@ func TestNPMAdaptersUseManagedRuntimeDependencies(t *testing.T) {
 		NewTypeScriptAdapter(),
 		NewIntelephenseAdapter(),
 		NewScssAdapter(),
+		NewBashAdapter(),
+		NewJSONAdapter(),
+		NewYAMLAdapter(),
 	} {
 		t.Run(adapter.ID(), func(t *testing.T) {
 			deps := adapter.RuntimeDeps()

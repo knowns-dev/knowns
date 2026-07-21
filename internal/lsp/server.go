@@ -22,23 +22,41 @@ type Server struct {
 	LogWriter   io.Writer
 	TraceWriter io.Writer
 
-	mu          sync.Mutex
-	cmd         *exec.Cmd
-	logFile     *os.File
-	stdin       io.WriteCloser
-	reader      *bufio.Reader
-	nextID      atomic.Int64
-	running     bool
-	initialized bool
-	exited      chan struct{}
-	files       *FileSync
-	diagnostics map[string][]Diagnostic
-	ready       chan struct{}
-	readyOnce   sync.Once
+	startMu             sync.Mutex
+	mu                  sync.Mutex
+	cmd                 *exec.Cmd
+	logFile             *os.File
+	stdin               io.WriteCloser
+	reader              *bufio.Reader
+	nextID              atomic.Int64
+	running             bool
+	initialized         bool
+	exited              chan struct{}
+	files               *FileSync
+	diagnostics         map[string][]Diagnostic
+	diagnosticResultIDs map[string]string
+	ready               chan struct{}
+	readyOnce           sync.Once
+
+	capabilitiesKnown      bool
+	advertisedCapabilities []string
+	observedCapabilities   map[string]struct{}
+	capabilityProfile      CapabilityProfile
+	documentSyncLanguageID string
+	documentSyncAdapter    PathDocumentSyncAdapter
+	pathCapabilityAdapter  PathCapabilityAdapter
 }
 
 func NewServer(root string, command ServerCommand) *Server {
-	s := &Server{Root: root, Command: command, diagnostics: make(map[string][]Diagnostic), ready: make(chan struct{})}
+	s := &Server{
+		Root:                   root,
+		Command:                command,
+		diagnostics:            make(map[string][]Diagnostic),
+		diagnosticResultIDs:    make(map[string]string),
+		ready:                  make(chan struct{}),
+		observedCapabilities:   make(map[string]struct{}),
+		documentSyncLanguageID: command.Language,
+	}
 	s.files = NewFileSync(s.didOpen, s.didClose)
 	return s
 }
@@ -67,11 +85,30 @@ func (s *Server) ReadinessState() string {
 }
 
 func (s *Server) Start(ctx context.Context) error {
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
+
 	s.mu.Lock()
 	if s.running {
 		s.mu.Unlock()
 		return nil
 	}
+	staleCmd := s.cmd
+	staleExited := s.exited
+	s.mu.Unlock()
+	if staleCmd != nil && staleExited != nil {
+		select {
+		case <-staleExited:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if s.files != nil {
+		s.files.Reset()
+	}
+	s.mu.Lock()
+	s.clearCapabilitiesLocked()
+	s.clearDiagnosticsLocked()
 	cmd := exec.Command(s.Command.Path, s.Command.Args...)
 	cmd.Dir = s.Root
 	stdout, err := cmd.StdoutPipe()
@@ -150,14 +187,11 @@ func (s *Server) Start(ctx context.Context) error {
 			s.exited = nil
 			s.running = false
 			s.initialized = false
+			s.clearCapabilitiesLocked()
 		}
 		s.mu.Unlock()
 		return err
 	}
-
-	s.mu.Lock()
-	s.initialized = true
-	s.mu.Unlock()
 	if err := s.notify(ctx, "initialized", map[string]any{}); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			err = ctxErr
@@ -178,11 +212,15 @@ func (s *Server) Start(ctx context.Context) error {
 			s.exited = nil
 			s.running = false
 			s.initialized = false
+			s.clearCapabilitiesLocked()
 		}
 		s.mu.Unlock()
 		return err
 	}
 	startupComplete.Store(true)
+	s.mu.Lock()
+	s.initialized = true
+	s.mu.Unlock()
 	// Fallback: mark ready after 3s if no $/progress "end" received
 	time.AfterFunc(3*time.Second, func() {
 		s.readyOnce.Do(func() { close(s.ready) })
@@ -207,6 +245,8 @@ func (s *Server) Stop(ctx context.Context) error {
 	logFile := s.logFile
 	s.running = false
 	s.initialized = false
+	s.clearCapabilitiesLocked()
+	s.clearDiagnosticsLocked()
 	s.cmd = nil
 	s.logFile = nil
 	s.stdin = nil
@@ -242,6 +282,12 @@ func (s *Server) Alive() bool {
 }
 
 func (s *Server) WithFile(ctx context.Context, path string, fn func() error) error {
+	if s.pathCapabilityBlocksAll(path) {
+		if fn == nil {
+			return nil
+		}
+		return fn()
+	}
 	if err := s.Start(ctx); err != nil {
 		return err
 	}
@@ -265,10 +311,24 @@ func (s *Server) initialize(ctx context.Context) error {
 			},
 		},
 	}
-	return s.request(ctx, "initialize", params, nil)
+	var result struct {
+		Capabilities map[string]json.RawMessage `json:"capabilities"`
+	}
+	if err := s.request(ctx, "initialize", params, &result); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.capabilitiesKnown = true
+	s.advertisedCapabilities = normalizeInitializeCapabilities(result.Capabilities)
+	s.mu.Unlock()
+	return nil
 }
 
 func (s *Server) didOpen(path string) error {
+	syncOptions := s.documentSyncForPath(path)
+	if syncOptions.Suppress {
+		return nil
+	}
 	if err := s.requireInitialized(); err != nil {
 		return err
 	}
@@ -276,11 +336,14 @@ func (s *Server) didOpen(path string) error {
 	if err != nil {
 		return err
 	}
-	params := map[string]any{"textDocument": map[string]any{"uri": fileURI(path), "languageId": s.Command.Language, "version": 1, "text": string(text)}}
+	params := map[string]any{"textDocument": map[string]any{"uri": fileURI(path), "languageId": syncOptions.LanguageID, "version": 1, "text": string(text)}}
 	return s.notify(context.Background(), "textDocument/didOpen", params)
 }
 
 func (s *Server) DidChange(ctx context.Context, path, text string) error {
+	if s.documentSyncForPath(path).Suppress {
+		return nil
+	}
 	if err := s.requireInitialized(); err != nil {
 		return err
 	}
@@ -292,11 +355,43 @@ func (s *Server) DidChange(ctx context.Context, path, text string) error {
 }
 
 func (s *Server) didClose(path string) error {
+	if s.documentSyncForPath(path).Suppress {
+		return nil
+	}
 	if err := s.requireInitialized(); err != nil {
 		return err
 	}
 	params := map[string]any{"textDocument": map[string]any{"uri": fileURI(path)}}
 	return s.notify(context.Background(), "textDocument/didClose", params)
+}
+
+func (s *Server) setDocumentSyncAdapter(languageID string, adapter PathDocumentSyncAdapter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.documentSyncLanguageID = languageID
+	s.documentSyncAdapter = adapter
+}
+
+func (s *Server) setPathCapabilityAdapter(adapter PathCapabilityAdapter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pathCapabilityAdapter = adapter
+}
+
+func (s *Server) documentSyncForPath(path string) DocumentSyncOptions {
+	s.mu.Lock()
+	languageID := s.documentSyncLanguageID
+	adapter := s.documentSyncAdapter
+	s.mu.Unlock()
+
+	options := DocumentSyncOptions{LanguageID: languageID}
+	if adapter != nil {
+		options = adapter.DocumentSyncForPath(path)
+		if options.LanguageID == "" {
+			options.LanguageID = languageID
+		}
+	}
+	return options
 }
 
 func (s *Server) notify(ctx context.Context, method string, params any) error {
@@ -316,8 +411,13 @@ func (s *Server) request(ctx context.Context, method string, params any, result 
 		}
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.requestLocked(ctx, method, params, result)
+	err := s.requestLocked(ctx, method, params, result)
+	protocolFailed := err != nil && !s.running
+	s.mu.Unlock()
+	if protocolFailed && s.files != nil {
+		s.files.Reset()
+	}
+	return err
 }
 
 func (s *Server) requestLocked(ctx context.Context, method string, params any, result any) error {
@@ -374,8 +474,7 @@ func (s *Server) readResponseLocked(ctx context.Context, id int64, result any) e
 		}
 		msg, err := s.readMessageLocked()
 		if err != nil {
-			s.running = false
-			s.initialized = false
+			s.markProtocolFailureLocked()
 			return err
 		}
 		s.traceLocked("<--", msg)
@@ -387,6 +486,7 @@ func (s *Server) readResponseLocked(ctx context.Context, id int64, result any) e
 			Result json.RawMessage  `json:"result"`
 		}
 		if err := json.Unmarshal(msg, &envelope); err != nil {
+			s.markProtocolFailureLocked()
 			return err
 		}
 		if envelope.Method != "" {
@@ -403,9 +503,22 @@ func (s *Server) readResponseLocked(ctx context.Context, id int64, result any) e
 			return fmt.Errorf("lsp %s: %s", s.Command.Language, string(*envelope.Error))
 		}
 		if result != nil && len(envelope.Result) > 0 {
-			return json.Unmarshal(envelope.Result, result)
+			if err := json.Unmarshal(envelope.Result, result); err != nil {
+				s.markProtocolFailureLocked()
+				return err
+			}
 		}
 		return nil
+	}
+}
+
+func (s *Server) markProtocolFailureLocked() {
+	s.running = false
+	s.initialized = false
+	s.clearCapabilitiesLocked()
+	s.clearDiagnosticsLocked()
+	if s.cmd != nil && s.cmd.Process != nil {
+		_ = s.cmd.Process.Kill()
 	}
 }
 
@@ -443,6 +556,7 @@ func (s *Server) handleNotificationLocked(method string, params json.RawMessage)
 		if s.diagnostics == nil {
 			s.diagnostics = make(map[string][]Diagnostic)
 		}
+		s.observeCapabilityLocked(CapabilityDiagnostics)
 		s.diagnostics[payload.URI] = payload.Diagnostics
 	case "$/progress":
 		if len(params) == 0 {
@@ -471,10 +585,68 @@ func (s *Server) cachedDiagnostics(path string) []Diagnostic {
 	defer s.mu.Unlock()
 	for uri, diagnostics := range s.diagnostics {
 		if sameFileURI(uri, path) {
-			return append([]Diagnostic(nil), diagnostics...)
+			return cloneDiagnostics(diagnostics)
 		}
 	}
 	return nil
+}
+
+func cloneDiagnostics(diagnostics []Diagnostic) []Diagnostic {
+	if diagnostics == nil {
+		return nil
+	}
+	cloned := make([]Diagnostic, len(diagnostics))
+	copy(cloned, diagnostics)
+	return cloned
+}
+
+func (s *Server) clearDiagnosticsLocked() {
+	s.diagnostics = make(map[string][]Diagnostic)
+	s.diagnosticResultIDs = make(map[string]string)
+}
+
+func (s *Server) cachedDiagnosticResultID(path string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for uri, resultID := range s.diagnosticResultIDs {
+		if sameFileURI(uri, path) {
+			return resultID
+		}
+	}
+	return ""
+}
+
+func (s *Server) cacheDiagnosticResultID(path, resultID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.diagnosticResultIDs == nil {
+		s.diagnosticResultIDs = make(map[string]string)
+	}
+	uri := fileURI(path)
+	if resultID == "" {
+		delete(s.diagnosticResultIDs, uri)
+		return
+	}
+	s.diagnosticResultIDs[uri] = resultID
+}
+
+func (s *Server) cachePulledDiagnostics(path, resultID string, diagnostics []Diagnostic) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	uri := fileURI(path)
+	if s.diagnostics == nil {
+		s.diagnostics = make(map[string][]Diagnostic)
+	}
+	s.diagnostics[uri] = cloneDiagnostics(diagnostics)
+	if s.diagnosticResultIDs == nil {
+		s.diagnosticResultIDs = make(map[string]string)
+	}
+	if resultID != "" {
+		s.diagnosticResultIDs[uri] = resultID
+	} else {
+		delete(s.diagnosticResultIDs, uri)
+	}
+	s.observeCapabilityLocked(CapabilityDiagnostics)
 }
 
 func (s *Server) readMessageLocked() ([]byte, error) {
@@ -510,6 +682,8 @@ func (s *Server) wait(cmd *exec.Cmd, exited chan struct{}) {
 		}
 		s.running = false
 		s.initialized = false
+		s.clearCapabilitiesLocked()
+		s.clearDiagnosticsLocked()
 		s.cmd = nil
 		s.stdin = nil
 		s.reader = nil

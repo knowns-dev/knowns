@@ -7,14 +7,18 @@ import (
 
 // RuntimeError is an actionable LSP runtime failure suitable for MCP/CLI output.
 type RuntimeError struct {
-	Code        string
-	Language    string
-	Backend     string
-	Message     string
-	Remediation string
-	LogPath     string
-	Attempts    []BackendAttempt
-	Cause       error
+	Code                   string
+	Language               string
+	Backend                string
+	Action                 string
+	Message                string
+	Explanation            string
+	Capabilities           []string
+	AdvertisedCapabilities []string
+	Remediation            string
+	LogPath                string
+	Attempts               []BackendAttempt
+	Cause                  error
 }
 
 func (e *RuntimeError) Error() string {
@@ -47,6 +51,20 @@ func (e *RuntimeError) Payload() map[string]any {
 	}
 	if e.Backend != "" {
 		payload["backend"] = e.Backend
+	}
+	if e.Action != "" {
+		payload["action"] = e.Action
+	}
+	if e.Explanation != "" {
+		payload["explanation"] = e.Explanation
+	}
+	if len(e.Capabilities) > 0 {
+		payload["capabilities"] = e.Capabilities
+	}
+	if len(e.AdvertisedCapabilities) > 0 {
+		payload["advertised_capabilities"] = e.AdvertisedCapabilities
+	} else if e.Code == "unsupported_capability" {
+		payload["advertised_capabilities"] = []string{}
 	}
 	if e.LogPath != "" {
 		payload["log_path"] = e.LogPath

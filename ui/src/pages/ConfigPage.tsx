@@ -82,6 +82,7 @@ function statusVariant(status?: string): "default" | "secondary" | "destructive"
 			return "destructive";
 		case "starting":
 		case "indexing":
+		case "degraded":
 			return "secondary";
 		default:
 			return "outline";
@@ -1155,8 +1156,8 @@ export default function ConfigPage() {
 														{busy && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
 													</div>
 													<div className="flex flex-wrap gap-1.5">
-														<Badge variant={statusVariant(info?.runningState || info?.status)} className="text-[11px] font-medium">
-															{displayValue(info?.runningState || info?.status)}
+												<Badge variant={statusVariant(info?.status || info?.runningState)} className="text-[11px] font-medium">
+													{displayValue(info?.status || info?.runningState)}
 														</Badge>
 														<Badge variant={statusVariant(info?.installState)} className="text-[11px] font-medium">
 															{displayValue(info?.installState)}
@@ -1225,6 +1226,10 @@ export default function ConfigPage() {
 												<div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Log</div>
 												<div className="mt-1 break-words font-mono text-[11px] leading-5 text-foreground">{displayValue(info?.logPath)}</div>
 											</div>
+											<div className="min-w-0 rounded-md border bg-background/60 px-2.5 py-2">
+												<div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Capabilities</div>
+												<div className="mt-1 break-words font-mono text-[11px] leading-5 text-foreground">{displayValue(info?.capabilities?.join(", "))}</div>
+											</div>
 										</div>
 
 										{info?.installHint && !isInstalled && (
@@ -1234,6 +1239,12 @@ export default function ConfigPage() {
 											<div className="mx-3 mb-3 flex items-start gap-1.5 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
 												<AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
 												<span>{info.installError || info.updateError}</span>
+											</div>
+										)}
+										{info?.missingCapabilities && info.missingCapabilities.length > 0 && (
+											<div className="mx-3 mb-3 flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+												<AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+												<span>Missing required capabilities: {info.missingCapabilities.join(", ")}</span>
 											</div>
 										)}
 										{info?.attempts && info.attempts.length > 0 && (

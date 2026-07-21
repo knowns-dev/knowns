@@ -97,6 +97,20 @@ func (f *FileSync) CloseAll() error {
 	return nil
 }
 
+// Reset forgets synchronized documents without notifying a server that has
+// already failed. The next healthy server session will send fresh didOpen
+// notifications for subsequent file operations.
+func (f *FileSync) Reset() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, entry := range f.files {
+		if entry.timer != nil {
+			entry.timer.Stop()
+		}
+	}
+	f.files = make(map[string]*fileEntry)
+}
+
 func (f *FileSync) RefCount(path string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -136,4 +150,3 @@ func (f *FileSync) closeIfIdle(path string, lastAccess time.Time) {
 		_ = closeFn(path)
 	}
 }
-

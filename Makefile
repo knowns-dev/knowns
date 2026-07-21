@@ -5,6 +5,8 @@ LDFLAGS := -s -w -X $(MODULE)/internal/util.Version=$(VERSION)
 BUILD_DIR := bin
 RUNTIME_DOCKER_IMAGE ?= knowns-runtime-smoke
 RUNTIME_DOCKER_CONTAINER ?= knowns-runtime-smoke-run
+RUNTIME_DOCKER_LSP_IMAGE ?= knowns-lsp-fixtures
+RUNTIME_DOCKER_LSP_CONTAINER ?= knowns-lsp-fixtures-run
 RUNTIME_DOCKER_VERSION ?= dev-$(shell git rev-parse --short HEAD 2>/dev/null || echo local)-$(shell date +%s)
 RUNTIME_DOCKER_MEMORY ?= 768m
 RUNTIME_DOCKER_PIDS ?= 512
@@ -38,7 +40,7 @@ PLATFORMS := \
 	windows/amd64 \
 	windows/arm64
 
-.PHONY: all build clean test test-e2e test-e2e-semantic test-e2e-ui lint dev dev-go dev-ui dev-all install cross-compile ui embed npm-build release runtime-docker-build runtime-docker-smoke runtime-docker-project-stress runtime-docker-ai-stress runtime-docker-shell
+.PHONY: all build clean test test-e2e test-e2e-semantic test-e2e-ui lint dev dev-go dev-ui dev-all install cross-compile ui embed npm-build release runtime-docker-build runtime-docker-smoke runtime-docker-project-stress runtime-docker-ai-stress runtime-docker-shell runtime-docker-lsp-build runtime-docker-lsp-fixtures
 
 all: ui build
 
@@ -52,10 +54,40 @@ build:
 runtime-docker-build:
 	docker build \
 		-f tests/runtime-docker/Dockerfile \
+		--target runtime \
 		--build-arg VERSION=$(RUNTIME_DOCKER_VERSION) \
 		--build-arg GOPLS_VERSION=$(RUNTIME_DOCKER_GOPLS_VERSION) \
 		-t $(RUNTIME_DOCKER_IMAGE) \
 		.
+
+# Build and run the Linux image that installs the five managed recommended
+# LSPs and executes their real external-server fixture suite.
+runtime-docker-lsp-build:
+	docker build \
+		-f tests/runtime-docker/Dockerfile \
+		--target lsp-fixtures \
+		--build-arg VERSION=$(RUNTIME_DOCKER_VERSION) \
+		--build-arg GOPLS_VERSION=$(RUNTIME_DOCKER_GOPLS_VERSION) \
+		-t $(RUNTIME_DOCKER_LSP_IMAGE) \
+		.
+
+runtime-docker-lsp-fixtures: runtime-docker-lsp-build
+	@docker rm -f $(RUNTIME_DOCKER_LSP_CONTAINER) >/dev/null 2>&1 || true
+	@set +e; \
+	docker run \
+		--pull=never \
+		--name $(RUNTIME_DOCKER_LSP_CONTAINER) \
+		--memory=$(RUNTIME_DOCKER_MEMORY) \
+		--memory-swap=$(RUNTIME_DOCKER_MEMORY) \
+		--pids-limit=$(RUNTIME_DOCKER_PIDS) \
+		$(RUNTIME_DOCKER_LSP_IMAGE); \
+	status=$$?; \
+	echo "=== docker inspect OOM state ==="; \
+	docker inspect -f 'oom={{.State.OOMKilled}} exit={{.State.ExitCode}} error={{.State.Error}}' $(RUNTIME_DOCKER_LSP_CONTAINER) || true; \
+	oom=$$(docker inspect -f '{{.State.OOMKilled}}' $(RUNTIME_DOCKER_LSP_CONTAINER) 2>/dev/null || echo false); \
+	docker rm -f $(RUNTIME_DOCKER_LSP_CONTAINER) >/dev/null 2>&1 || true; \
+	if [ "$$oom" = "true" ]; then exit 137; fi; \
+	exit $$status
 
 # Run the runtime/daemon smoke test from the already-built local image under
 # a memory and PID cap, then print Docker's OOM state even if the smoke exits

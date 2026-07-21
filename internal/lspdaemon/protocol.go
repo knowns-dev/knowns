@@ -54,14 +54,18 @@ type Response struct {
 }
 
 type RuntimeErrorPayload struct {
-	Code        string               `json:"code,omitempty"`
-	Language    string               `json:"language,omitempty"`
-	Backend     string               `json:"backend,omitempty"`
-	Message     string               `json:"message,omitempty"`
-	Remediation string               `json:"remediation,omitempty"`
-	LogPath     string               `json:"log_path,omitempty"`
-	Attempts    []lsp.BackendAttempt `json:"attempts,omitempty"`
-	Cause       string               `json:"cause,omitempty"`
+	Code                   string               `json:"code,omitempty"`
+	Language               string               `json:"language,omitempty"`
+	Backend                string               `json:"backend,omitempty"`
+	Action                 string               `json:"action,omitempty"`
+	Message                string               `json:"message,omitempty"`
+	Explanation            string               `json:"explanation,omitempty"`
+	Capabilities           []string             `json:"capabilities,omitempty"`
+	AdvertisedCapabilities []string             `json:"advertised_capabilities,omitempty"`
+	Remediation            string               `json:"remediation,omitempty"`
+	LogPath                string               `json:"log_path,omitempty"`
+	Attempts               []lsp.BackendAttempt `json:"attempts,omitempty"`
+	Cause                  string               `json:"cause,omitempty"`
 }
 
 func runtimeErrorPayload(err *lsp.RuntimeError) *RuntimeErrorPayload {
@@ -69,13 +73,17 @@ func runtimeErrorPayload(err *lsp.RuntimeError) *RuntimeErrorPayload {
 		return nil
 	}
 	payload := &RuntimeErrorPayload{
-		Code:        err.Code,
-		Language:    err.Language,
-		Backend:     err.Backend,
-		Message:     err.Message,
-		Remediation: err.Remediation,
-		LogPath:     err.LogPath,
-		Attempts:    append([]lsp.BackendAttempt(nil), err.Attempts...),
+		Code:                   err.Code,
+		Language:               err.Language,
+		Backend:                err.Backend,
+		Action:                 err.Action,
+		Message:                err.Message,
+		Explanation:            err.Explanation,
+		Capabilities:           append([]string(nil), err.Capabilities...),
+		AdvertisedCapabilities: append([]string(nil), err.AdvertisedCapabilities...),
+		Remediation:            err.Remediation,
+		LogPath:                err.LogPath,
+		Attempts:               append([]lsp.BackendAttempt(nil), err.Attempts...),
 	}
 	if err.Cause != nil {
 		payload.Cause = err.Cause.Error()
@@ -92,14 +100,18 @@ func (p *RuntimeErrorPayload) toError() *lsp.RuntimeError {
 		cause = errors.New(p.Cause)
 	}
 	return &lsp.RuntimeError{
-		Code:        p.Code,
-		Language:    p.Language,
-		Backend:     p.Backend,
-		Message:     p.Message,
-		Remediation: p.Remediation,
-		LogPath:     p.LogPath,
-		Attempts:    append([]lsp.BackendAttempt(nil), p.Attempts...),
-		Cause:       cause,
+		Code:                   p.Code,
+		Language:               p.Language,
+		Backend:                p.Backend,
+		Action:                 p.Action,
+		Message:                p.Message,
+		Explanation:            p.Explanation,
+		Capabilities:           append([]string(nil), p.Capabilities...),
+		AdvertisedCapabilities: append([]string(nil), p.AdvertisedCapabilities...),
+		Remediation:            p.Remediation,
+		LogPath:                p.LogPath,
+		Attempts:               append([]lsp.BackendAttempt(nil), p.Attempts...),
+		Cause:                  cause,
 	}
 }
 

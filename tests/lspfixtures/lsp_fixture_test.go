@@ -144,20 +144,30 @@ func TestLSPFixture_ASPNETCoreWebAPI(t *testing.T) {
 }
 
 type languageStatus struct {
-	ID             string           `json:"id"`
-	Name           string           `json:"name"`
-	Status         string           `json:"status"`
-	InstallState   string           `json:"install_state"`
-	InstallStateV2 string           `json:"installState"`
-	RunningState   string           `json:"running_state"`
-	RunningStateV2 string           `json:"runningState"`
-	ReadinessState string           `json:"readiness_state"`
-	Backend        string           `json:"backend"`
-	BackendSource  string           `json:"backend_source"`
-	BackendSource2 string           `json:"backendSource"`
-	LogPath        string           `json:"log_path"`
-	LogPath2       string           `json:"logPath"`
-	Attempts       []map[string]any `json:"attempts"`
+	ID                       string           `json:"id"`
+	Name                     string           `json:"name"`
+	Status                   string           `json:"status"`
+	InstallState             string           `json:"install_state"`
+	InstallStateV2           string           `json:"installState"`
+	RunningState             string           `json:"running_state"`
+	RunningStateV2           string           `json:"runningState"`
+	ReadinessState           string           `json:"readiness_state"`
+	ReadinessStateV2         string           `json:"readinessState"`
+	Backend                  string           `json:"backend"`
+	BackendSource            string           `json:"backend_source"`
+	BackendSource2           string           `json:"backendSource"`
+	LogPath                  string           `json:"log_path"`
+	LogPath2                 string           `json:"logPath"`
+	Attempts                 []map[string]any `json:"attempts"`
+	CapabilitiesKnown        bool             `json:"capabilities_known"`
+	CapabilitiesKnownV2      bool             `json:"capabilitiesKnown"`
+	Capabilities             []string         `json:"capabilities"`
+	AdvertisedCapabilities   []string         `json:"advertised_capabilities"`
+	AdvertisedCapabilitiesV2 []string         `json:"advertisedCapabilities"`
+	RequiredCapabilities     []string         `json:"required_capabilities"`
+	RequiredCapabilitiesV2   []string         `json:"requiredCapabilities"`
+	MissingCapabilities      []string         `json:"missing_capabilities"`
+	MissingCapabilitiesV2    []string         `json:"missingCapabilities"`
 }
 
 type languageListResponse struct {
@@ -171,11 +181,26 @@ func (s languageStatus) normalized() languageStatus {
 	if s.RunningState == "" {
 		s.RunningState = s.RunningStateV2
 	}
+	if s.ReadinessState == "" {
+		s.ReadinessState = s.ReadinessStateV2
+	}
 	if s.BackendSource == "" {
 		s.BackendSource = s.BackendSource2
 	}
 	if s.LogPath == "" {
 		s.LogPath = s.LogPath2
+	}
+	if !s.CapabilitiesKnown {
+		s.CapabilitiesKnown = s.CapabilitiesKnownV2
+	}
+	if len(s.AdvertisedCapabilities) == 0 {
+		s.AdvertisedCapabilities = s.AdvertisedCapabilitiesV2
+	}
+	if len(s.RequiredCapabilities) == 0 {
+		s.RequiredCapabilities = s.RequiredCapabilitiesV2
+	}
+	if len(s.MissingCapabilities) == 0 {
+		s.MissingCapabilities = s.MissingCapabilitiesV2
 	}
 	return s
 }
@@ -190,6 +215,108 @@ func requireLanguage(t *testing.T, statuses []languageStatus, id string) languag
 	}
 	t.Fatalf("language %q not found in statuses: %+v", id, statuses)
 	return languageStatus{}
+}
+
+func requireLiveCapabilityStatus(t *testing.T, client *mcpClient, languageID string, required ...string) languageStatus {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	var last languageStatus
+	for {
+		payload := client.callTool(t, "project", map[string]any{"action": "status"})
+		var snapshot struct {
+			LSP []languageStatus `json:"lsp"`
+		}
+		if err := json.Unmarshal([]byte(payload.raw), &snapshot); err != nil {
+			t.Fatalf("decode MCP project status: %v\nraw: %s", err, payload.raw)
+		}
+		found := false
+		for _, status := range snapshot.LSP {
+			if status.ID != languageID {
+				continue
+			}
+			last = status.normalized()
+			found = true
+			break
+		}
+		if found && last.RunningState == "running" && last.CapabilitiesKnown && last.Status != "degraded" && len(last.MissingCapabilities) == 0 && containsAllStrings(last.RequiredCapabilities, required) && containsAllStrings(last.Capabilities, required) {
+			if last.Backend == "" {
+				t.Fatalf("language %q live capability status has no backend: %+v", languageID, last)
+			}
+			return last
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("language %q did not report a healthy live capability baseline %v: %+v", languageID, required, last)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+func requireUnsupportedCodeAction(t *testing.T, client *mcpClient, status languageStatus, path, query, action, explanationContains string, matchAdvertised bool) {
+	t.Helper()
+	payload := client.callTool(t, "code", map[string]any{
+		"action": action,
+		"path":   path,
+		"query":  query,
+	})
+	if got, _ := payload.object["error"].(string); got != "unsupported_capability" {
+		t.Fatalf("%s returned error %q, want unsupported_capability without fallback: %s", action, got, payload.raw)
+	}
+	for field, want := range map[string]string{
+		"language": status.ID,
+		"backend":  status.Backend,
+		"action":   action,
+	} {
+		if got, _ := payload.object[field].(string); got != want {
+			t.Fatalf("unsupported %s %s = %q, want %q: %s", action, field, got, want, payload.raw)
+		}
+	}
+	explanation, _ := payload.object["explanation"].(string)
+	if strings.TrimSpace(explanation) == "" || (explanationContains != "" && !strings.Contains(explanation, explanationContains)) {
+		t.Fatalf("unsupported %s explanation = %q, want non-empty text containing %q: %s", action, explanation, explanationContains, payload.raw)
+	}
+	advertised, ok := stringSliceValue(payload.object["advertised_capabilities"])
+	if !ok {
+		t.Fatalf("unsupported %s payload is missing advertised_capabilities: %s", action, payload.raw)
+	}
+	if matchAdvertised && !sameStringSet(advertised, status.AdvertisedCapabilities) {
+		t.Fatalf("unsupported %s advertised capabilities = %v, want live snapshot %v: %s", action, advertised, status.AdvertisedCapabilities, payload.raw)
+	}
+}
+
+func containsAllStrings(values, required []string) bool {
+	for _, want := range required {
+		found := false
+		for _, value := range values {
+			if value == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func stringSliceValue(value any) ([]string, bool) {
+	items, ok := value.([]any)
+	if !ok {
+		return nil, false
+	}
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		text, ok := item.(string)
+		if !ok {
+			return nil, false
+		}
+		values = append(values, text)
+	}
+	return values, true
+}
+
+func sameStringSet(left, right []string) bool {
+	return len(left) == len(right) && containsAllStrings(left, right) && containsAllStrings(right, left)
 }
 
 func requireTool(t *testing.T, name string) {

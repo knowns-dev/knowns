@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,13 +20,36 @@ type mgrMockAdapter struct {
 	id         string
 	name       string
 	extensions []string
+	matchers   []PathMatcher
+	lazyStart  bool
+	binaries   []BinaryCandidate
 	guide      InstallGuide
+}
+
+type mgrDocumentSyncAdapter struct {
+	*mgrMockAdapter
+	resolveDocumentSync func(string) DocumentSyncOptions
+	resolveCapability   func(string, string, string) (PathCapabilityDecision, bool)
+}
+
+func (a *mgrDocumentSyncAdapter) DocumentSyncForPath(path string) DocumentSyncOptions {
+	if a.resolveDocumentSync == nil {
+		return DocumentSyncOptions{}
+	}
+	return a.resolveDocumentSync(path)
+}
+
+func (a *mgrDocumentSyncAdapter) PathCapabilityForAction(path, action, capability string) (PathCapabilityDecision, bool) {
+	if a.resolveCapability == nil {
+		return PathCapabilityDecision{}, false
+	}
+	return a.resolveCapability(path, action, capability)
 }
 
 func (a *mgrMockAdapter) ID() string                                             { return a.id }
 func (a *mgrMockAdapter) Name() string                                           { return a.name }
 func (a *mgrMockAdapter) Extensions() []string                                   { return a.extensions }
-func (a *mgrMockAdapter) Binaries() []BinaryCandidate                            { return nil }
+func (a *mgrMockAdapter) Binaries() []BinaryCandidate                            { return a.binaries }
 func (a *mgrMockAdapter) Prerequisites() []Prerequisite                          { return nil }
 func (a *mgrMockAdapter) CheckPrerequisites(context.Context) error               { return nil }
 func (a *mgrMockAdapter) InstallGuide() InstallGuide                             { return a.guide }
@@ -47,6 +71,8 @@ func (errMgrNotFound) Is(target error) bool { return errors.Is(target, os.ErrNot
 
 func (a *mgrMockAdapter) SupportsImplementation() bool { return true }
 func (a *mgrMockAdapter) SupportsReferences() bool     { return true }
+func (a *mgrMockAdapter) PathMatchers() []PathMatcher  { return a.matchers }
+func (a *mgrMockAdapter) LazyStart() bool              { return a.lazyStart }
 
 func TestRegisterAdapter(t *testing.T) {
 	m := NewManager(t.TempDir(), Config{})
@@ -64,14 +90,291 @@ func TestRegisterAdapter(t *testing.T) {
 	}
 }
 
-func TestRuntimeBinariesForAdapterPrefersManagedSelectedPath(t *testing.T) {
+func TestRegisterAdapterPreservesOptionalRoutingContract(t *testing.T) {
+	m := NewManager(t.TempDir(), Config{})
+	adapter := &mgrMockAdapter{
+		id:         "bash",
+		name:       "Bash",
+		extensions: []string{".sh"},
+		matchers: []PathMatcher{{
+			Kind:     PathMatcherShebang,
+			Pattern:  "bash",
+			Priority: 100,
+		}},
+		lazyStart: true,
+	}
+	if err := m.RegisterAdapter(adapter); err != nil {
+		t.Fatal(err)
+	}
+
+	lang, ok := m.registry.Language("bash")
+	if !ok || !lang.LazyStart {
+		t.Fatalf("registered language = %#v, %v; want lazy bash", lang, ok)
+	}
+	if len(lang.Matchers) != 2 {
+		t.Fatalf("registered matchers = %#v, want extension plus shebang", lang.Matchers)
+	}
+}
+
+func TestLazyAdaptersAreNotStartedDuringProjectActivation(t *testing.T) {
+	activations := map[string]func(context.Context, *Manager) error{
+		"StartAll": func(ctx context.Context, m *Manager) error {
+			return m.StartAll(ctx)
+		},
+		"ClientConnected": func(ctx context.Context, m *Manager) error {
+			return m.ClientConnected(ctx)
+		},
+	}
+
+	for name, activate := range activations {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			for file, content := range map[string]string{
+				"README.md":     "# Project\n",
+				"settings.json": "{}\n",
+				"workflow.yml":  "name: ci\n",
+			} {
+				if err := os.WriteFile(filepath.Join(root, file), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			m := NewManager(root, Config{})
+			adapters := []*mgrMockAdapter{
+				{id: "markdown", name: "Markdown", extensions: []string{".md"}, lazyStart: true, binaries: []BinaryCandidate{{Name: "marksman"}}},
+				{id: "json", name: "JSON", extensions: []string{".json"}, lazyStart: true, binaries: []BinaryCandidate{{Name: "json-ls"}}},
+				{id: "yaml", name: "YAML", extensions: []string{".yaml", ".yml"}, lazyStart: true, binaries: []BinaryCandidate{{Name: "yaml-ls"}}},
+			}
+			for _, adapter := range adapters {
+				if err := m.RegisterAdapter(adapter); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var lookups atomic.Int32
+			m.SetDetector(&Detector{
+				Registry: m.registry,
+				LookPath: func(string) (string, error) {
+					lookups.Add(1)
+					return "/fake/marksman", nil
+				},
+			})
+
+			if err := activate(context.Background(), m); err != nil {
+				t.Fatal(err)
+			}
+			if lookups.Load() != int32(len(adapters)) {
+				t.Fatalf("binary lookups = %d, want one detection lookup per adapter", lookups.Load())
+			}
+			m.mu.Lock()
+			serverCount := len(m.servers)
+			statuses := make(map[string]ServerStatus, len(m.status))
+			for id, status := range m.status {
+				statuses[id] = status
+			}
+			m.mu.Unlock()
+			if serverCount != 0 {
+				t.Fatalf("project activation created %d lazy servers", serverCount)
+			}
+			for _, adapter := range adapters {
+				if status := statuses[adapter.id]; status != StatusInstalled {
+					t.Fatalf("lazy %s status = %v, want installed without starting", adapter.id, status)
+				}
+			}
+		})
+	}
+}
+
+func TestLazyAdapterStartsOnExplicitPathAndReusesServer(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "document.lazy")
+	if err := os.WriteFile(path, []byte("example\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	binaryName, binaryDir := fakePluginLSPExecutable(t)
+	t.Setenv("KNOWNS_FAKE_LSP_SERVER", "1")
+	t.Setenv("PATH", binaryDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	m := NewManager(root, Config{})
+	if err := m.RegisterAdapter(&mgrMockAdapter{
+		id:         "lazy",
+		name:       "Lazy",
+		extensions: []string{".lazy"},
+		lazyStart:  true,
+		binaries:   []BinaryCandidate{{Name: binaryName}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var lookups atomic.Int32
+	m.SetDetector(&Detector{
+		Registry: m.registry,
+		LookPath: func(name string) (string, error) {
+			lookups.Add(1)
+			return filepath.Join(binaryDir, name), nil
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := m.StartAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	serverCount := len(m.servers)
+	m.mu.Unlock()
+	if serverCount != 0 {
+		t.Fatalf("StartAll created %d lazy servers, want none", serverCount)
+	}
+	if lookups.Load() != 1 {
+		t.Fatalf("activation lookups = %d, want one detection lookup", lookups.Load())
+	}
+
+	first, ok, err := m.ServerForPath(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || first == nil || !first.Alive() {
+		t.Fatalf("first explicit server = %#v, ok=%v, alive=%v", first, ok, first != nil && first.Alive())
+	}
+	second, ok, err := m.ServerForPath(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || second != first {
+		t.Fatalf("second explicit server = %#v, ok=%v; want reused %#v", second, ok, first)
+	}
+	if lookups.Load() != 2 {
+		t.Fatalf("total lookups = %d, want activation plus one lazy resolution", lookups.Load())
+	}
+	m.mu.Lock()
+	serverCount = len(m.servers)
+	status := m.status["lazy"]
+	m.mu.Unlock()
+	if serverCount != 1 || status != StatusRunning {
+		t.Fatalf("lazy runtime servers=%d status=%v, want one running server", serverCount, status)
+	}
+	if err := m.StopAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestManagerConfiguresPathDocumentSyncAdapter(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "production.tfvars")
+	if err := os.WriteFile(path, []byte("fixture_name = \"example\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	binaryName, binaryDir := fakePluginLSPExecutable(t)
+	t.Setenv("KNOWNS_FAKE_LSP_SERVER", "1")
+	t.Setenv("PATH", binaryDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	adapter := &mgrDocumentSyncAdapter{
+		mgrMockAdapter: &mgrMockAdapter{
+			id:         "terraform",
+			name:       "Terraform",
+			extensions: []string{".tfvars"},
+			lazyStart:  true,
+			binaries:   []BinaryCandidate{{Name: binaryName}},
+		},
+		resolveDocumentSync: func(string) DocumentSyncOptions {
+			return DocumentSyncOptions{LanguageID: "terraform-vars"}
+		},
+	}
+	m := NewManager(root, Config{})
+	if err := m.RegisterAdapter(adapter); err != nil {
+		t.Fatal(err)
+	}
+	m.SetDetector(&Detector{
+		Registry: m.registry,
+		LookPath: func(name string) (string, error) {
+			return filepath.Join(binaryDir, name), nil
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	srv, ok, err := m.ServerForPath(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || srv == nil {
+		t.Fatal("Terraform server was not created")
+	}
+	if got, want := srv.documentSyncForPath(path), (DocumentSyncOptions{LanguageID: "terraform-vars"}); got != want {
+		t.Fatalf("document sync options = %#v, want %#v", got, want)
+	}
+	if err := m.StopAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestManagerPathCapabilityGateAvoidsServerStart(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "network.tf.json")
+	if err := os.WriteFile(path, []byte(`{"resource": {}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &mgrDocumentSyncAdapter{
+		mgrMockAdapter: &mgrMockAdapter{
+			id:         "terraform",
+			name:       "Terraform",
+			extensions: []string{".tf.json"},
+			lazyStart:  true,
+			binaries:   []BinaryCandidate{{Name: "terraform-ls"}},
+		},
+		resolveDocumentSync: func(string) DocumentSyncOptions {
+			return DocumentSyncOptions{LanguageID: "terraform", Suppress: true}
+		},
+		resolveCapability: func(_ string, action, _ string) (PathCapabilityDecision, bool) {
+			return PathCapabilityDecision{Explanation: "terraform-ls does not support Terraform JSON for " + action}, true
+		},
+	}
+	m := NewManager(root, Config{})
+	if err := m.RegisterAdapter(adapter); err != nil {
+		t.Fatal(err)
+	}
+	var lookups atomic.Int32
+	m.SetDetector(&Detector{
+		Registry: m.registry,
+		LookPath: func(string) (string, error) {
+			lookups.Add(1)
+			return "", errMgrNotFound{}
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	srv, ok, err := m.ServerForPath(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || srv == nil || srv.Alive() {
+		t.Fatalf("ServerForPath() = %#v, %v; want routed but unstarted server", srv, ok)
+	}
+	if lookups.Load() != 0 {
+		t.Fatalf("binary lookups = %d, want no server resolution", lookups.Load())
+	}
+
+	err = m.WithSession(ctx, path, func(session Session) error {
+		_, queryErr := session.DocumentSymbols(ctx, path)
+		return queryErr
+	})
+	var runtimeErr *RuntimeError
+	if !errors.As(err, &runtimeErr) || runtimeErr.Code != "unsupported_capability" || runtimeErr.Action != "symbols" {
+		t.Fatalf("WithSession() error = %#v, want structured symbols capability error", err)
+	}
+	if lookups.Load() != 0 {
+		t.Fatalf("binary lookups after query = %d, want no server start", lookups.Load())
+	}
+}
+
+func TestRuntimeBinariesForAdapterPrefersPATHBeforeManagedSelectedPath(t *testing.T) {
 	installer := NewInstaller(t.TempDir())
 	selectedPath := filepath.Join(t.TempDir(), "managed-ls")
 	if err := os.WriteFile(selectedPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	adapter := &mockAdapter{
-		id: "managed",
+		id:       "managed",
+		binaries: []BinaryCandidate{{Name: "path-ls", CheckArgs: []string{"--version"}}},
 		runtimeDeps: []RuntimeDependency{{
 			ID:         "v1.0.0",
 			PlatformID: CurrentPlatformID(),
@@ -83,8 +386,8 @@ func TestRuntimeBinariesForAdapterPrefersManagedSelectedPath(t *testing.T) {
 	}
 
 	binaries := runtimeBinariesForAdapter(adapter, installer)
-	if len(binaries) == 0 || binaries[0].Name != selectedPath {
-		t.Fatalf("runtimeBinariesForAdapter() = %#v, want selected path first", binaries)
+	if len(binaries) != 2 || binaries[0].Name != "path-ls" || binaries[1].Name != selectedPath {
+		t.Fatalf("runtimeBinariesForAdapter() = %#v, want PATH candidate before selected path", binaries)
 	}
 }
 
@@ -134,8 +437,8 @@ func TestInstallLanguageRefreshesRegistryWithManagedPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	lang, ok := m.registry.ForPath(filepath.Join(root, "main.managed"))
-	if !ok || len(lang.Binaries) == 0 || lang.Binaries[0].Name != path {
-		t.Fatalf("registry language after install = %#v, ok=%v; want selected managed path %q", lang, ok, path)
+	if !ok || len(lang.Binaries) == 0 || lang.Binaries[len(lang.Binaries)-1].Name != path {
+		t.Fatalf("registry language after install = %#v, ok=%v; want selected managed fallback %q", lang, ok, path)
 	}
 }
 
@@ -572,5 +875,29 @@ func TestStartAll_ParallelExecution(t *testing.T) {
 	m.mu.Unlock()
 	if crashed.Load() != 3 {
 		t.Errorf("expected 3 crashed servers, got %d", crashed.Load())
+	}
+}
+
+func TestLanguageInfoFromRuntimeStatusIncludesCapabilities(t *testing.T) {
+	status := LanguageRuntimeStatus{
+		ID:                     "bash",
+		Name:                   "Bash",
+		Status:                 RuntimeStatusDegraded,
+		InstallState:           RuntimeInstallInstalled,
+		RunningState:           RuntimeRunningRunning,
+		CapabilitiesKnown:      true,
+		Capabilities:           []string{CapabilityDocumentSymbols, CapabilityReferences},
+		AdvertisedCapabilities: []string{CapabilityDocumentSymbols},
+		ObservedCapabilities:   []string{CapabilityReferences},
+		RequiredCapabilities:   []string{CapabilityDefinition, CapabilityDocumentSymbols, CapabilityReferences},
+		MissingCapabilities:    []string{CapabilityDefinition},
+	}
+
+	info := LanguageInfoFromRuntimeStatus(status)
+	if info.Status != RuntimeStatusDegraded || !info.Running || !info.CapabilitiesKnown {
+		t.Fatalf("LanguageInfo = %#v", info)
+	}
+	if !reflect.DeepEqual(info.Capabilities, status.Capabilities) || !reflect.DeepEqual(info.AdvertisedCapabilities, status.AdvertisedCapabilities) || !reflect.DeepEqual(info.MissingCapabilities, status.MissingCapabilities) {
+		t.Fatalf("capability mapping = %#v, want %#v", info, status)
 	}
 }

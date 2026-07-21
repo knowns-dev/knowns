@@ -400,6 +400,80 @@ func TestCodeSymbolsCSharpStartupFailureReturnsStructuredRuntimeError(t *testing
 	}
 }
 
+func TestLSPBackedCodeActionsPreserveUnsupportedCapabilityPayload(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".knowns"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc Target() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := storage.NewStore(filepath.Join(root, ".knowns"))
+	runtimeErr := &lsp.RuntimeError{
+		Code:                   "unsupported_capability",
+		Language:               "go",
+		Backend:                "limited-ls",
+		Action:                 "definition",
+		Message:                "LSP action is unavailable",
+		Explanation:            "backend did not advertise definition",
+		Capabilities:           []string{lsp.CapabilityDocumentSymbols},
+		AdvertisedCapabilities: []string{lsp.CapabilityDocumentSymbols},
+	}
+
+	type handlerFunc func(context.Context, func() *storage.Store, func() CodeRuntime, mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	tests := []struct {
+		name    string
+		handler handlerFunc
+		args    map[string]any
+	}{
+		{name: "definition", handler: handleCodeDefinition, args: map[string]any{"path": "main.go", "query": "Target"}},
+		{name: "references", handler: handleCodeReferences, args: map[string]any{"path": "main.go", "query": "Target"}},
+		{name: "implementations", handler: handleCodeImplementations, args: map[string]any{"path": "main.go", "query": "Target"}},
+		{name: "diagnostics", handler: handleCodeDiagnostics, args: map[string]any{"path": "main.go"}},
+		{name: "symbols", handler: handleCodeSymbols, args: map[string]any{"path": "main.go"}},
+		{name: "rename", handler: handleCodeRename, args: map[string]any{"path": "main.go", "line": 2, "character": 5, "newName": "Renamed"}},
+		{name: "replace_body", handler: handleCodeReplaceBody, args: map[string]any{"path": "main.go", "symbol": "Target", "body": "func Target() {}"}},
+		{name: "insert", handler: handleCodeInsert, args: map[string]any{"path": "main.go", "symbol": "Target", "position": "after", "body": "func Added() {}"}},
+		{name: "delete", handler: handleCodeDelete, args: map[string]any{"path": "main.go", "symbol": "Target", "force": true}},
+		{name: "find", handler: handleCodeFind, args: map[string]any{"path": "main.go", "query": "Target"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runtime := &fakeCodeRuntime{err: runtimeErr}
+			result, err := tc.handler(t.Context(), func() *storage.Store { return store }, func() CodeRuntime { return runtime }, mcp.CallToolRequest{
+				Params: mcp.CallToolParams{Arguments: tc.args},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result == nil || !result.IsError || len(result.Content) != 1 {
+				t.Fatalf("result = %#v", result)
+			}
+			text, ok := result.Content[0].(mcp.TextContent)
+			if !ok {
+				t.Fatalf("content = %#v", result.Content[0])
+			}
+			var payload map[string]any
+			if err := json.Unmarshal([]byte(text.Text), &payload); err != nil {
+				t.Fatalf("payload is not JSON: %s", text.Text)
+			}
+			if payload["error"] != "unsupported_capability" || payload["language"] != "go" || payload["backend"] != "limited-ls" {
+				t.Fatalf("payload = %#v", payload)
+			}
+			if payload["action"] != tc.name {
+				t.Fatalf("action = %#v, want %q; payload=%#v", payload["action"], tc.name, payload)
+			}
+			if _, ok := payload["advertised_capabilities"]; !ok {
+				t.Fatalf("payload missing advertised capabilities: %#v", payload)
+			}
+			if payload["error"] == "lsp_symbols_unavailable" {
+				t.Fatalf("unsupported capability was collapsed into fallback: %#v", payload)
+			}
+		})
+	}
+}
+
 type fakeCodeRuntime struct {
 	session lsp.Session
 	paths   []string

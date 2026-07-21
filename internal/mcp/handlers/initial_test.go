@@ -214,3 +214,18 @@ func TestLspWarningsLineIncludesDaemonOwner(t *testing.T) {
 		}
 	}
 }
+
+func TestLspWarningsLineIncludesDegradedCapabilities(t *testing.T) {
+	got := lspWarningsLineFromStatuses([]lsp.LanguageRuntimeStatus{{
+		ID:                  "bash",
+		Detected:            true,
+		Status:              lsp.RuntimeStatusDegraded,
+		InstallState:        lsp.RuntimeInstallInstalled,
+		RunningState:        lsp.RuntimeRunningRunning,
+		Capabilities:        []string{lsp.CapabilityDocumentSymbols, lsp.CapabilityReferences},
+		MissingCapabilities: []string{lsp.CapabilityDefinition},
+	}})
+	if !strings.Contains(got, "bash") || !strings.Contains(got, "status=degraded") || !strings.Contains(got, "capabilities=document_symbols,references") || !strings.Contains(got, "missing=definition") {
+		t.Fatalf("degraded status line = %q", got)
+	}
+}

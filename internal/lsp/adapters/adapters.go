@@ -2,7 +2,7 @@ package adapters
 
 import "github.com/howznguyen/knowns/internal/lsp"
 
-// AllAdapters returns all Phase 1 adapters.
+// AllAdapters returns all built-in language adapters.
 func AllAdapters() []lsp.LanguageAdapter {
 	return []lsp.LanguageAdapter{
 		NewGoAdapter(),
@@ -16,6 +16,11 @@ func AllAdapters() []lsp.LanguageAdapter {
 		NewRubyLspAdapter(),
 		NewIntelephenseAdapter(),
 		NewScssAdapter(),
+		NewMarksmanAdapter(),
+		NewBashAdapter(),
+		NewJSONAdapter(),
+		NewTerraformLSAdapter(),
+		NewYAMLAdapter(),
 	}
 }
 
