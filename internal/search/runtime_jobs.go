@@ -77,6 +77,10 @@ func executeRuntimeSemanticSearch(storeRoot string, store *storage.Store, job ru
 	if err != nil {
 		return fmt.Errorf("read semantic search request: %w", err)
 	}
+	if req.HasTaskSnapshot {
+		req.Options.taskSnapshot = taskSnapshotFromValues(req.TaskSnapshot)
+		req.Options.taskVisibility = taskVisibility(req.TaskVisibility)
+	}
 	resp, err := searchWithLocalRuntime(store, req.Options)
 	if err != nil {
 		return err

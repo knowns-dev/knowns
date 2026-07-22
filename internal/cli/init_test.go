@@ -11,6 +11,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/runtimeinstall"
+	"github.com/howznguyen/knowns/internal/storage"
 	"gopkg.in/yaml.v3"
 )
 
@@ -153,6 +154,9 @@ func TestRunInitNoWizardUsesGlobalDefaults(t *testing.T) {
 				"gitTrackingMode": "git-ignored",
 				"platforms":       []string{"codex", "agents"},
 				"enableChatUI":    false,
+				"taskLifecycle": map[string]any{
+					"autoArchive": false,
+				},
 			},
 		},
 	})
@@ -180,6 +184,16 @@ func TestRunInitNoWizardUsesGlobalDefaults(t *testing.T) {
 	if got := settings["enableChatUI"]; got != false {
 		t.Fatalf("expected global enableChatUI false, got %#v", got)
 	}
+	taskLifecycle := getMap(t, settings, "taskLifecycle")
+	if got := taskLifecycle["autoArchive"]; got != false {
+		t.Fatalf("expected global autoArchive false, got %#v", got)
+	}
+	if got := taskLifecycle["excludeDoneFromDefaultRetrieval"]; got != true {
+		t.Fatalf("expected partial global lifecycle to inherit excludeDone=true, got %#v", got)
+	}
+	if got := taskLifecycle["archiveAfter"]; got != "30d" {
+		t.Fatalf("expected partial global lifecycle to inherit archiveAfter=30d, got %#v", got)
+	}
 	platforms, ok := settings["platforms"].([]any)
 	if !ok || len(platforms) != 2 || platforms[0] != "codex" || platforms[1] != "agents" {
 		t.Fatalf("expected global platforms, got %#v", settings["platforms"])
@@ -194,6 +208,31 @@ func TestRunInitNoWizardUsesGlobalDefaults(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(projectRoot, ".mcp.json")); !os.IsNotExist(err) {
 		t.Fatalf("expected init not to create project MCP config, got err=%v", err)
+	}
+}
+
+func TestLifecycleSeedForForcedInitPreservesExistingProject(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".knowns")
+	store := storage.NewStore(root)
+	if err := store.Init("existing"); err != nil {
+		t.Fatalf("Init existing project: %v", err)
+	}
+	project, err := store.Config.Load()
+	if err != nil {
+		t.Fatalf("Load existing project: %v", err)
+	}
+	project.Settings.TaskLifecycle.AutoArchive = false
+	project.Settings.TaskLifecycle.ArchiveAfter = "7d"
+	if err := store.Config.Save(project); err != nil {
+		t.Fatalf("Save existing project: %v", err)
+	}
+
+	globalLifecycle := models.DefaultTaskLifecycleSettings()
+	globalLifecycle.ArchiveAfter = "1d"
+	defaults := &storage.ProjectDefaults{Settings: models.ProjectSettings{TaskLifecycle: &globalLifecycle}}
+	seed := lifecycleSeedForInit(root, true, defaults)
+	if seed == nil || seed.AutoArchive || seed.ArchiveAfter != "7d" {
+		t.Fatalf("forced-init lifecycle seed = %#v, want existing project settings", seed)
 	}
 }
 
@@ -866,6 +905,9 @@ func TestWriteKnownsGitignoreGitIgnoredTracksKnowledgeSections(t *testing.T) {
 	assertContains(t, content, "!templates/**")
 	assertContains(t, content, "!tasks/")
 	assertContains(t, content, "!tasks/**")
+	assertContains(t, content, "!tombstones/")
+	assertContains(t, content, "!tombstones/tasks/")
+	assertContains(t, content, "!tombstones/tasks/**")
 	assertContains(t, content, "!decisions/")
 	assertContains(t, content, "!decisions/**")
 	assertContains(t, content, "!config.json")
@@ -1049,6 +1091,27 @@ func TestWriteKnownsGitignoreIgnoredWithDisabledDocs(t *testing.T) {
 	assertContains(t, content, "!tasks/")
 	assertContains(t, content, "!templates/")
 	assertContains(t, content, "!decisions/")
+}
+
+func TestWriteKnownsGitignoreTaskToggleControlsTaskTombstones(t *testing.T) {
+	dir := t.TempDir()
+	trackTasks := false
+	tracking := &models.GitTracking{Tasks: &trackTasks}
+
+	if err := writeKnownsGitignore(dir, "git-ignored", tracking); err != nil {
+		t.Fatalf("writeKnownsGitignore git-ignored: %v", err)
+	}
+	content := readTextFile(t, filepath.Join(dir, ".knowns", ".gitignore"))
+	assertNotContains(t, content, "!tasks/")
+	assertNotContains(t, content, "!tombstones/")
+	assertNotContains(t, content, "!tombstones/tasks/")
+
+	if err := writeKnownsGitignore(dir, "git-tracked", tracking); err != nil {
+		t.Fatalf("writeKnownsGitignore git-tracked: %v", err)
+	}
+	content = readTextFile(t, filepath.Join(dir, ".knowns", ".gitignore"))
+	assertContains(t, content, "tasks/")
+	assertContains(t, content, "tombstones/tasks/")
 }
 
 func TestWriteKnownsGitignoreIgnoredWithDisabledDecisions(t *testing.T) {

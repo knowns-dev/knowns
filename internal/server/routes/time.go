@@ -1,11 +1,14 @@
 package routes
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/tasklifecycle"
 )
 
 // TimeRoutes handles /api/time endpoints.
@@ -27,6 +30,7 @@ func (tr *TimeRoutes) Register(r chi.Router) {
 	r.Get("/time/status", tr.status)
 	r.Post("/time/start", tr.start)
 	r.Post("/time/stop", tr.stop)
+	r.Post("/time/add", tr.add)
 	r.Post("/time/pause", tr.pause)
 	r.Post("/time/resume", tr.resume)
 }
@@ -106,15 +110,10 @@ func (tr *TimeRoutes) stop(w http.ResponseWriter, r *http.Request) {
 		}
 		var stopped []string
 		for _, a := range state.Active {
-			entry, err := tr.getStore().Time.Stop(a.TaskID)
+			entry, err := tasklifecycle.New(tr.getStore()).StopTimer(r.Context(), a.TaskID, "api")
 			if err == nil {
 				stopped = append(stopped, a.TaskID)
-				// Update task's timeSpent
-				if task, taskErr := tr.getStore().Tasks.Get(a.TaskID); taskErr == nil {
-					task.TimeSpent += entry.Duration
-					task.UpdatedAt = time.Now().UTC()
-					_ = tr.getStore().Tasks.Update(task)
-				}
+				_ = entry
 			}
 		}
 		newState, _ := tr.getStore().Time.GetState()
@@ -130,16 +129,10 @@ func (tr *TimeRoutes) stop(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "taskId is required (or set all:true)")
 		return
 	}
-	entry, err := tr.getStore().Time.Stop(req.TaskID)
+	entry, err := tasklifecycle.New(tr.getStore()).StopTimer(r.Context(), req.TaskID, "api")
 	if err != nil {
 		respondError(w, http.StatusNotFound, err.Error())
 		return
-	}
-	// Update task's timeSpent
-	if task, taskErr := tr.getStore().Tasks.Get(req.TaskID); taskErr == nil {
-		task.TimeSpent += entry.Duration
-		task.UpdatedAt = time.Now().UTC()
-		_ = tr.getStore().Tasks.Update(task)
 	}
 	state, _ := tr.getStore().Time.GetState()
 	tr.sse.Broadcast(SSEEvent{Type: "time:updated", Data: state})
@@ -147,6 +140,46 @@ func (tr *TimeRoutes) stop(w http.ResponseWriter, r *http.Request) {
 		"stopped": []interface{}{entry},
 		"active":  state.Active,
 	})
+}
+
+type addTimeRequest struct {
+	TaskID    string     `json:"taskId"`
+	Duration  int        `json:"duration"`
+	Note      string     `json:"note,omitempty"`
+	StartedAt *time.Time `json:"startedAt,omitempty"`
+}
+
+// add appends a manual entry and updates Task.TimeSpent atomically.
+func (tr *TimeRoutes) add(w http.ResponseWriter, r *http.Request) {
+	var req addTimeRequest
+	if err := decodeJSON(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if req.TaskID == "" {
+		respondError(w, http.StatusBadRequest, "taskId is required")
+		return
+	}
+	if req.Duration < 0 {
+		respondError(w, http.StatusBadRequest, "duration must be non-negative")
+		return
+	}
+	startedAt := time.Now().UTC()
+	if req.StartedAt != nil {
+		startedAt = req.StartedAt.UTC()
+	}
+	endedAt := startedAt.Add(time.Duration(req.Duration) * time.Second)
+	entry := models.TimeEntry{ID: fmt.Sprintf("te-%d-%s", startedAt.UnixNano(), req.TaskID), StartedAt: startedAt, EndedAt: &endedAt, Duration: req.Duration, Note: req.Note}
+	recorded, err := tasklifecycle.New(tr.getStore()).AddTimeEntry(r.Context(), req.TaskID, tasklifecycle.TimeMutationOptions{Actor: "api", Entry: entry})
+	if err != nil {
+		respondError(w, http.StatusConflict, err.Error())
+		return
+	}
+	state, _ := tr.getStore().Time.GetState()
+	if tr.sse != nil {
+		tr.sse.Broadcast(SSEEvent{Type: "time:updated", Data: state})
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"taskId": req.TaskID, "entry": recorded, "duration": req.Duration})
 }
 
 // pauseResumeRequest is the body for /api/time/pause and /api/time/resume.

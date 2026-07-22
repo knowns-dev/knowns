@@ -280,6 +280,7 @@ type initConfig struct {
 	EmbeddingSource string // "local" or "api"
 	Platforms       []string
 	EnableChatUI    bool
+	TaskLifecycle   *models.TaskLifecycleSettings
 }
 
 // Aliases for centralized styles (see styles.go)
@@ -360,6 +361,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to load global settings: %v\n", err)
 	}
+	taskLifecycleSeed := lifecycleSeedForInit(root, force, globalDefaults)
 
 	// Determine if interactive mode
 	interactive := !noWizard
@@ -484,6 +486,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			EnableChatUI:    enableChatUI,
 		}
 	}
+	cfg.TaskLifecycle = taskLifecycleSeed
 
 	// Build init steps
 	steps := []initStep{
@@ -541,6 +544,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 				}
 				if len(cfg.Platforms) > 0 {
 					project.Settings.Platforms = cfg.Platforms
+				}
+				if cfg.TaskLifecycle != nil {
+					project.Settings.TaskLifecycle = copyTaskLifecycleSettings(cfg.TaskLifecycle)
 				}
 				enableChatUI := cfg.EnableChatUI
 				project.Settings.EnableChatUI = &enableChatUI
@@ -660,6 +666,31 @@ func loadGlobalProjectDefaults() (*storage.ProjectDefaults, error) {
 		return nil, err
 	}
 	return settings.ProjectDefaults, nil
+}
+
+func lifecycleSeedForInit(root string, force bool, defaults *storage.ProjectDefaults) *models.TaskLifecycleSettings {
+	if force {
+		if existing, err := storage.NewStore(root).Config.Load(); err == nil {
+			effective := existing.Settings.EffectiveTaskLifecycle()
+			return &effective
+		}
+	}
+	if defaults == nil {
+		return nil
+	}
+	return copyTaskLifecycleSettings(defaults.Settings.TaskLifecycle)
+}
+
+func copyTaskLifecycleSettings(settings *models.TaskLifecycleSettings) *models.TaskLifecycleSettings {
+	if settings == nil {
+		return nil
+	}
+	clone := *settings
+	if settings.PurgeAfter != nil {
+		purgeAfter := *settings.PurgeAfter
+		clone.PurgeAfter = &purgeAfter
+	}
+	return &clone
 }
 
 func defaultsForWizard(cwd string, defaults *storage.ProjectDefaults) (string, string, *models.GitTracking, *bool, string, []string) {
@@ -1700,6 +1731,7 @@ func writeKnownsGitignore(dir, mode string, tracking *models.GitTracking) error 
 		if !sectionTracked("tasks") {
 			buf.WriteString("\n# Per-section tracking disabled\n")
 			buf.WriteString("tasks/\n")
+			buf.WriteString("tombstones/tasks/\n")
 		}
 		if !sectionTracked("docs") {
 			buf.WriteString("docs/\n")
@@ -1736,6 +1768,9 @@ func writeKnownsGitignore(dir, mode string, tracking *models.GitTracking) error 
 		if sectionTracked("tasks") {
 			buf.WriteString("!tasks/\n")
 			buf.WriteString("!tasks/**\n")
+			buf.WriteString("!tombstones/\n")
+			buf.WriteString("!tombstones/tasks/\n")
+			buf.WriteString("!tombstones/tasks/**\n")
 		}
 		if sectionTracked("memories") {
 			buf.WriteString("!memories/\n")

@@ -29,6 +29,7 @@ import {
 	Wrench,
 	Globe,
 	Shield,
+	Archive,
 	Copy,
 	type LucideIcon,
 } from "lucide-react";
@@ -39,7 +40,7 @@ import { Switch } from "../components/ui/switch";
 import { Separator } from "../components/ui/separator";
 import { Label } from "../components/ui/label";
 import { Badge } from "../components/ui/badge";
-import { useConfig, type Config } from "../contexts/ConfigContext";
+import { useConfig, type Config, type ConfigPatch } from "../contexts/ConfigContext";
 import { useAuth } from "../contexts/AuthContext";
 import { useOpenCode } from "../contexts/OpenCodeContext";
 import { useOpenCodeModelManager } from "../hooks/useOpencodeModelManager";
@@ -91,7 +92,7 @@ function statusVariant(status?: string): "default" | "secondary" | "destructive"
 
 // ── Category definitions ──────────────────────────────────────────
 
-type Category = "general" | "board" | "search" | "code" | "ai" | "imports" | "runtime" | "tunnel" | "security" | "advanced";
+type Category = "general" | "tasks" | "board" | "search" | "code" | "ai" | "imports" | "runtime" | "tunnel" | "security" | "advanced";
 
 interface CategoryDef {
 	id: Category;
@@ -102,6 +103,7 @@ interface CategoryDef {
 
 const ALL_CATEGORIES: CategoryDef[] = [
 	{ id: "general", label: "General", icon: Settings, description: "Project name, defaults, and preferences" },
+	{ id: "tasks", label: "Task lifecycle", icon: Archive, description: "Retrieval, retention, and automatic archival" },
 	{ id: "board", label: "Board", icon: Columns3, description: "Kanban statuses, colors, and visible columns" },
 	{ id: "search", label: "Search", icon: Search, description: "Semantic search configuration" },
 	{ id: "code", label: "Code", icon: Code2, description: "LSP servers and code intelligence" },
@@ -115,22 +117,43 @@ const ALL_CATEGORIES: CategoryDef[] = [
 
 // ── Auto-save hook ────────────────────────────────────────────────
 
-function useAutoSave(config: Config, updateConfig: (c: Partial<Config>) => Promise<void>, initialized: boolean) {
+function mergeConfigPatch(base: ConfigPatch, patch: ConfigPatch): ConfigPatch {
+	return {
+		...base,
+		...patch,
+		...(base.taskLifecycle || patch.taskLifecycle
+			? { taskLifecycle: { ...(base.taskLifecycle || {}), ...(patch.taskLifecycle || {}) } }
+			: {}),
+	};
+}
+
+function applyConfigPatch(base: Config, patch: ConfigPatch): Config {
+	const { taskLifecycle, ...flatPatch } = patch;
+	return {
+		...base,
+		...flatPatch,
+		...(taskLifecycle
+			? { taskLifecycle: { ...(base.taskLifecycle || {}), ...taskLifecycle } as NonNullable<Config["taskLifecycle"]> }
+			: {}),
+	};
+}
+
+function useAutoSave(updateConfig: (c: ConfigPatch) => Promise<void>) {
 	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const prevRef = useRef<string>("");
+	const pendingPatchRef = useRef<ConfigPatch>({});
 
 	const save = useCallback(
-		(cfg: Config) => {
+		(patch: ConfigPatch) => {
+			pendingPatchRef.current = mergeConfigPatch(pendingPatchRef.current, patch);
 			if (timerRef.current) clearTimeout(timerRef.current);
 			timerRef.current = setTimeout(async () => {
-				const serialized = JSON.stringify(cfg);
-				if (serialized === prevRef.current) return;
-				prevRef.current = serialized;
+				const patchToSave = pendingPatchRef.current;
+				pendingPatchRef.current = {};
 				try {
-					await updateConfig(cfg);
+					await updateConfig(patchToSave);
 					toast.success("Saved", { duration: 1500, position: "bottom-right" });
-				} catch {
-					toast.error("Failed to save settings", { position: "bottom-right" });
+				} catch (error) {
+					toast.error(error instanceof Error ? error.message : "Failed to save settings", { position: "bottom-right" });
 				}
 			}, 600);
 		},
@@ -138,12 +161,23 @@ function useAutoSave(config: Config, updateConfig: (c: Partial<Config>) => Promi
 	);
 
 	useEffect(() => {
-		if (initialized) {
-			prevRef.current = JSON.stringify(config);
-		}
-	}, [initialized]); // eslint-disable-line react-hooks/exhaustive-deps
+		return () => {
+			if (timerRef.current) clearTimeout(timerRef.current);
+		};
+	}, []);
 
 	return save;
+}
+
+function editableConfig(config: Config): Config {
+	const {
+		capabilities: _readOnlyCapabilities,
+		id: _readOnlyID,
+		createdAt: _readOnlyCreatedAt,
+		opencodeInstalled: _readOnlyOpenCodeInstalled,
+		...editable
+	} = config;
+	return editable;
 }
 
 // ── Section header component ──────────────────────────────────────
@@ -314,14 +348,15 @@ export default function ConfigPage() {
 		loadImports();
 	}, [loadImports]);
 
-	const autoSave = useAutoSave(config, updateConfig, initialized);
+	const autoSave = useAutoSave(updateConfig);
 
-	// Initialize from global config
+	// Keep the local draft aligned with the latest effective server config.
+	// Validation failures trigger a GET rollback in ConfigContext, which flows here.
 	useEffect(() => {
-		if (!loading && !initialized) {
+		if (!loading) {
 			setConfig(globalConfig);
-			setJsonText(JSON.stringify(globalConfig, null, 2));
-			setInitialized(true);
+			setJsonText(JSON.stringify(editableConfig(globalConfig), null, 2));
+			if (!initialized) setInitialized(true);
 		}
 	}, [globalConfig, loading, initialized]);
 
@@ -333,12 +368,9 @@ export default function ConfigPage() {
 
 	// Update helper — updates local state + triggers auto-save
 	const update = useCallback(
-		(patch: Partial<Config>) => {
-			setConfig((prev) => {
-				const next = { ...prev, ...patch };
-				autoSave(next);
-				return next;
-			});
+		(patch: ConfigPatch) => {
+			setConfig((prev) => applyConfigPatch(prev, patch));
+			autoSave(patch);
 		},
 		[autoSave],
 	);
@@ -372,8 +404,9 @@ export default function ConfigPage() {
 	const handleJsonSave = async () => {
 		setSaving(true);
 		try {
-			const parsed = JSON.parse(jsonText);
-			setConfig(parsed);
+			const parsed = editableConfig(JSON.parse(jsonText) as Config);
+			setConfig((current) => ({ ...current, ...parsed }));
+			setJsonText(JSON.stringify(parsed, null, 2));
 			setJsonError(null);
 			await updateConfig(parsed);
 			toast.success("Saved", { duration: 1500, position: "bottom-right" });
@@ -381,7 +414,7 @@ export default function ConfigPage() {
 			if (e instanceof SyntaxError) {
 				setJsonError("Invalid JSON syntax");
 			} else {
-				toast.error("Failed to save");
+				toast.error(e instanceof Error ? e.message : "Failed to save");
 			}
 		} finally {
 			setSaving(false);
@@ -517,11 +550,8 @@ export default function ConfigPage() {
 				}),
 			},
 		};
-		setConfig(prev => {
-			const next = { ...prev, ...patch };
-			autoSave(next);
-			return next;
-		});
+		setConfig(prev => ({ ...prev, ...patch }));
+		autoSave(patch);
 	}, [config.semanticSearch, autoSave]);
 
 	// Test embedding API endpoint
@@ -730,6 +760,65 @@ export default function ConfigPage() {
 			</div>
 		</div>
 	);
+
+	const renderTaskLifecycle = () => {
+		const lifecycle = config.taskLifecycle || {
+			excludeDoneFromDefaultRetrieval: true,
+			autoArchive: true,
+			archiveAfter: "30d",
+			purgeAfter: null,
+		};
+		const updateLifecycle = (patch: Partial<NonNullable<Config["taskLifecycle"]>>) => {
+			update({ taskLifecycle: patch });
+		};
+
+		return (
+			<div data-testid="task-lifecycle-settings">
+				<SectionHeader
+					icon={Archive}
+					title="Task lifecycle"
+					description="Keep completed and archived work out of default AI context while preserving it for explicit historical access"
+				/>
+
+				<FieldRow label="Exclude done from AI retrieval" hint="Human task views still show done Tasks by default">
+					<Switch
+						aria-label="Exclude done Tasks from default AI retrieval"
+						checked={lifecycle.excludeDoneFromDefaultRetrieval}
+						onCheckedChange={(checked) => updateLifecycle({ excludeDoneFromDefaultRetrieval: checked })}
+					/>
+				</FieldRow>
+
+				<FieldRow label="Auto-archive" hint="When disabled, completed Tasks remain in the done lifecycle state">
+					<Switch
+						aria-label="Enable automatic Task archival"
+						checked={lifecycle.autoArchive}
+						onCheckedChange={(checked) => updateLifecycle({ autoArchive: checked })}
+					/>
+				</FieldRow>
+
+				<FieldRow label="Archive after" hint="Backend duration, for example 0d, 30d, or 720h">
+					<div className="space-y-1.5">
+						<Input
+							aria-label="Archive completed Tasks after"
+							value={lifecycle.archiveAfter}
+							onChange={(event) => updateLifecycle({ archiveAfter: event.target.value })}
+							disabled={!lifecycle.autoArchive}
+							placeholder="30d"
+						/>
+						<p className="text-xs text-muted-foreground">
+							Zero means archive immediately after all backend eligibility checks pass; turning Auto-archive off disables the sweep.
+						</p>
+					</div>
+				</FieldRow>
+
+				<FieldRow label="Automatic purge" hint="Archived Task content is retained until an explicit guarded hard-delete">
+					<div className="rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground" data-testid="task-purge-disabled">
+						Disabled ({lifecycle.purgeAfter === null ? "project default" : lifecycle.purgeAfter})
+					</div>
+				</FieldRow>
+			</div>
+		);
+	};
 
 	const renderEmbeddingModels = () => {
 		const provider = config.semanticSearch?.provider || "local";
@@ -1900,6 +1989,7 @@ export default function ConfigPage() {
 
 	const contentByCategory: Record<Category, () => React.ReactNode> = {
 		general: renderGeneral,
+		tasks: renderTaskLifecycle,
 		board: renderBoard,
 		search: renderSearch,
 		code: renderCode,

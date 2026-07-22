@@ -13,7 +13,8 @@ import {
 import { Button } from "../../ui/button";
 import { ScrollArea } from "../../ui/ScrollArea";
 import type { Task } from "@/ui/models/task";
-import { updateTask } from "../../../api/client";
+import { api, LifecycleAPIError, updateTask } from "../../../api/client";
+import type { TaskLifecycleResponse } from "../../../models/taskLifecycle";
 import { navigateTo } from "../../../lib/navigation";
 import { toast } from "../../ui/sonner";
 import { useCurrentUser } from "../../../contexts/UserContext";
@@ -26,6 +27,9 @@ import { TaskImplementationSection } from "./TaskImplementationSection";
 import { TaskSidebar } from "./TaskSidebar";
 import { TimeTrackingLogs } from "../../molecules";
 import TaskHistoryPanel from "../TaskHistoryPanel";
+import { TaskLifecycleDialog } from "../TaskLifecycleDialog";
+import { TaskHardDeleteDialog } from "../TaskHardDeleteDialog";
+import { useConfig } from "../../../contexts/ConfigContext";
 
 interface TaskDetailSheetProps {
 	task: Task | null;
@@ -33,8 +37,17 @@ interface TaskDetailSheetProps {
 	onClose: () => void;
 	onUpdate: (task: Task) => void;
 	onDelete?: (taskId: string) => void;
-	onArchive?: (taskId: string) => void;
+	onLifecycleChange?: () => void;
 	onNavigateToTask?: (taskId: string) => void;
+}
+
+interface LifecyclePreviewState {
+	taskId: string;
+	taskTitle: string;
+	operation: "archive" | "unarchive";
+	generation: number;
+	response: TaskLifecycleResponse | null;
+	phase: "preview" | "execute";
 }
 
 export function TaskDetailSheet({
@@ -43,7 +56,7 @@ export function TaskDetailSheet({
 	onClose,
 	onUpdate,
 	onDelete,
-	onArchive,
+	onLifecycleChange,
 	onNavigateToTask,
 }: TaskDetailSheetProps) {
 	const { currentUser } = useCurrentUser();
@@ -51,7 +64,30 @@ export function TaskDetailSheet({
 	const [saving, setSaving] = useState(false);
 	const isMaximized = preferences.taskDetailLayout === "maximized";
 	const isMobile = useIsMobile();
+	const { config } = useConfig();
 	const contentRef = useRef<HTMLDivElement>(null);
+	const [lifecyclePreview, setLifecyclePreview] = useState<LifecyclePreviewState | null>(null);
+	const [lifecycleError, setLifecycleError] = useState<string | null>(null);
+	const [lifecycleLoading, setLifecycleLoading] = useState(false);
+	const lifecycleGenerationRef = useRef(0);
+	const lifecycleRequestRef = useRef<AbortController | null>(null);
+	const lifecycleInFlightRef = useRef(false);
+	const taskIDRef = useRef(task?.id);
+	taskIDRef.current = task?.id;
+	const [hardDeleteOpen, setHardDeleteOpen] = useState(false);
+	const [hardDeleteError, setHardDeleteError] = useState<string | null>(null);
+
+	useEffect(() => {
+		++lifecycleGenerationRef.current;
+		lifecycleRequestRef.current?.abort();
+		lifecycleRequestRef.current = null;
+		lifecycleInFlightRef.current = false;
+		setLifecyclePreview(null);
+		setLifecycleError(null);
+		setLifecycleLoading(false);
+		setHardDeleteOpen(false);
+		setHardDeleteError(null);
+	}, [task?.id]);
 	// Animation variants
 	const contentVariants = {
 		hidden: { opacity: 0, y: 20, scale: 0.98 },
@@ -90,6 +126,108 @@ export function TaskDetailSheet({
 		},
 		[task, onUpdate]
 	);
+
+	const reconcileLifecycle = useCallback(async (taskId: string) => {
+		try {
+			onUpdate(await api.getTask(taskId));
+		} catch {
+			// Hard-delete intentionally makes direct retrieval fail.
+		}
+		onLifecycleChange?.();
+	}, [onUpdate, onLifecycleChange]);
+
+	const previewLifecycle = useCallback(async (operation: "archive" | "unarchive") => {
+		if (!task) return;
+		lifecycleRequestRef.current?.abort();
+		const controller = new AbortController();
+		const generation = ++lifecycleGenerationRef.current;
+		const preview: LifecyclePreviewState = { taskId: task.id, taskTitle: task.title, operation, generation, response: null, phase: "preview" };
+		lifecycleRequestRef.current = controller;
+		setLifecyclePreview(preview);
+		setLifecycleError(null);
+		setLifecycleLoading(true);
+		try {
+			const response = operation === "archive"
+				? await api.archiveTask(task.id, false, controller.signal)
+				: await api.unarchiveTask(task.id, false, undefined, controller.signal);
+			if (lifecycleGenerationRef.current === generation && taskIDRef.current === task.id) {
+				setLifecyclePreview({ ...preview, response });
+			}
+		} catch (error) {
+			if (lifecycleGenerationRef.current !== generation || taskIDRef.current !== task.id) return;
+			if (!(error instanceof DOMException && error.name === "AbortError")) {
+				setLifecyclePreview({ ...preview, response: error instanceof LifecycleAPIError ? error.response || null : null });
+				setLifecycleError(error instanceof Error ? error.message : "Lifecycle preview failed");
+			}
+		} finally {
+			if (lifecycleGenerationRef.current === generation) setLifecycleLoading(false);
+		}
+	}, [task]);
+
+	const executeLifecycle = useCallback(async () => {
+		const preview = lifecyclePreview;
+		if (!preview || taskIDRef.current !== preview.taskId || lifecycleInFlightRef.current) return;
+		lifecycleRequestRef.current?.abort();
+		const controller = new AbortController();
+		const generation = ++lifecycleGenerationRef.current;
+		const executing: LifecyclePreviewState = { ...preview, generation, phase: "execute" };
+		lifecycleRequestRef.current = controller;
+		lifecycleInFlightRef.current = true;
+		setLifecyclePreview(executing);
+		setLifecycleLoading(true);
+		setLifecycleError(null);
+		try {
+			const response = preview.operation === "archive"
+				? await api.archiveTask(preview.taskId, true, controller.signal)
+				: await api.unarchiveTask(preview.taskId, true, undefined, controller.signal);
+			if (lifecycleGenerationRef.current !== generation || taskIDRef.current !== preview.taskId) return;
+			setLifecyclePreview({ ...executing, response });
+			await reconcileLifecycle(preview.taskId);
+			if (!response.failedTaskId) {
+				toast.success(preview.operation === "archive" ? "Task archived" : "Task restored", { description: `#${preview.taskId} ${preview.taskTitle}` });
+			}
+		} catch (error) {
+			if (lifecycleGenerationRef.current === generation && taskIDRef.current === preview.taskId) {
+				if (!(error instanceof DOMException && error.name === "AbortError")) {
+					setLifecyclePreview({ ...executing, response: error instanceof LifecycleAPIError ? error.response || null : null });
+					setLifecycleError(error instanceof Error ? error.message : "Lifecycle operation failed");
+				}
+				await reconcileLifecycle(preview.taskId);
+			}
+		} finally {
+			lifecycleInFlightRef.current = false;
+			if (lifecycleGenerationRef.current === generation) setLifecycleLoading(false);
+		}
+	}, [lifecyclePreview, reconcileLifecycle]);
+
+	const closeLifecycleDialog = useCallback(() => {
+		++lifecycleGenerationRef.current;
+		lifecycleRequestRef.current?.abort();
+		lifecycleRequestRef.current = null;
+		lifecycleInFlightRef.current = false;
+		setLifecyclePreview(null);
+		setLifecycleError(null);
+		setLifecycleLoading(false);
+	}, []);
+
+	const executeHardDelete = useCallback(async (reason: string) => {
+		if (!task) return;
+		setLifecycleLoading(true);
+		setHardDeleteError(null);
+		try {
+			await api.hardDeleteTask(task.id, reason, true);
+			setHardDeleteOpen(false);
+			toast.success(`Task #${task.id} permanently deleted`);
+			onLifecycleChange?.();
+			onClose();
+		} catch (error) {
+			const response = error instanceof LifecycleAPIError ? error.response : undefined;
+			const permission = response?.items.some((item) => item.reasons.some((reasonItem) => reasonItem.code === "permission_required"));
+			setHardDeleteError(permission ? "Permission required. Your trusted session does not allow permanent Task deletion." : error instanceof Error ? error.message : "Permanent deletion failed");
+		} finally {
+			setLifecycleLoading(false);
+		}
+	}, [task, onLifecycleChange, onClose]);
 
 	// Handle markdown link clicks for internal navigation
 	useEffect(() => {
@@ -222,10 +360,45 @@ export function TaskDetailSheet({
 			currentUser={currentUser}
 			onSave={handleSave}
 			onDelete={onDelete}
-			onArchive={onArchive}
+			onArchive={() => previewLifecycle("archive")}
+			onUnarchive={() => previewLifecycle("unarchive")}
+			onHardDelete={() => {
+				setHardDeleteError(null);
+				setHardDeleteOpen(true);
+			}}
+			canHardDelete={config.capabilities?.taskHardDelete === true}
 			onNavigateToTask={onNavigateToTask}
-			saving={saving}
+			saving={saving || lifecycleLoading}
 		/>
+	);
+
+	const LifecycleDialogs = (
+		<>
+			<TaskLifecycleDialog
+				open={lifecyclePreview !== null}
+				onOpenChange={(open) => {
+					if (!open) closeLifecycleDialog();
+				}}
+				title={lifecyclePreview?.operation === "archive" ? `Archive Task #${lifecyclePreview.taskId}` : `Restore Task #${lifecyclePreview?.taskId || task.id}`}
+				description="Eligibility, skip reasons, retention deadlines, and durable-knowledge warnings are evaluated by the backend."
+				response={lifecyclePreview?.response || null}
+				loading={lifecycleLoading}
+				error={lifecycleError}
+				confirmLabel={lifecyclePreview?.operation === "archive" ? "Archive Task" : "Restore Task"}
+				onConfirm={executeLifecycle}
+				allowCancelWhileLoading={lifecyclePreview?.phase === "preview"}
+			/>
+			{config.capabilities?.taskHardDelete === true && (
+				<TaskHardDeleteDialog
+					task={task}
+					open={hardDeleteOpen}
+					onOpenChange={setHardDeleteOpen}
+					loading={lifecycleLoading}
+					error={hardDeleteError}
+					onConfirm={executeHardDelete}
+				/>
+			)}
+		</>
 	);
 
 	// Centered Dialog mode (default) - Sidebar on RIGHT
@@ -262,7 +435,8 @@ export function TaskDetailSheet({
 									</div>
 								</div>
 							</motion.div>
-						</DialogContent>
+								{LifecycleDialogs}
+							</DialogContent>
 					</Dialog>
 				)}
 			</AnimatePresence>
@@ -298,9 +472,15 @@ export function TaskDetailSheet({
 											currentUser={currentUser}
 											onSave={handleSave}
 											onDelete={onDelete}
-											onArchive={onArchive}
+											onArchive={() => previewLifecycle("archive")}
+											onUnarchive={() => previewLifecycle("unarchive")}
+											onHardDelete={() => {
+												setHardDeleteError(null);
+												setHardDeleteOpen(true);
+											}}
+											canHardDelete={config.capabilities?.taskHardDelete === true}
 											onNavigateToTask={onNavigateToTask}
-											saving={saving}
+											saving={saving || lifecycleLoading}
 											compact
 										/>
 									</div>
@@ -311,7 +491,8 @@ export function TaskDetailSheet({
 								</ScrollArea>
 							</div>
 						</motion.div>
-					</SheetContent>
+					{LifecycleDialogs}
+				</SheetContent>
 				</Sheet>
 			)}
 		</AnimatePresence>

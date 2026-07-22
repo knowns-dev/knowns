@@ -36,7 +36,7 @@ test.describe("Task Archive", () => {
 		let taskId = "";
 
 		await test.step("Create task", async () => {
-			const output = server.cli('task create "Soon Archived" -d "Will be archived"');
+			const output = server.cli('task create "Soon Archived" -d "Will be archived" --status done');
 			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
 		});
 
@@ -46,7 +46,7 @@ test.describe("Task Archive", () => {
 		});
 
 		await test.step("Archive via CLI", async () => {
-			server.cli(`task archive ${taskId}`);
+			server.cli(`task archive ${taskId} --yes`);
 		});
 
 		await test.step("Reload and verify task gone from kanban", async () => {
@@ -61,9 +61,9 @@ test.describe("Task Archive", () => {
 		let taskId = "";
 
 		await test.step("Create and archive task", async () => {
-			const output = server.cli('task create "Revived Task" -d "Will be unarchived"');
+			const output = server.cli('task create "Revived Task" -d "Will be unarchived" --status done');
 			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
-			server.cli(`task archive ${taskId}`);
+			server.cli(`task archive ${taskId} --yes`);
 		});
 
 		await test.step("Verify task NOT on kanban", async () => {
@@ -74,7 +74,7 @@ test.describe("Task Archive", () => {
 		});
 
 		await test.step("Unarchive via CLI", async () => {
-			server.cli(`task unarchive ${taskId}`);
+			server.cli(`task unarchive ${taskId} --yes`);
 		});
 
 		await test.step("Reload and verify task is back on kanban", async () => {
@@ -88,7 +88,7 @@ test.describe("Task Archive", () => {
 		let taskId = "";
 
 		await test.step("Create task", async () => {
-			const output = server.cli('task create "Hidden Task" -d "Should not appear after archive"');
+			const output = server.cli('task create "Hidden Task" -d "Should not appear after archive" --status done');
 			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
 		});
 
@@ -98,7 +98,7 @@ test.describe("Task Archive", () => {
 		});
 
 		await test.step("Archive and reload", async () => {
-			server.cli(`task archive ${taskId}`);
+			server.cli(`task archive ${taskId} --yes`);
 			await page.reload();
 			await page.waitForTimeout(1000);
 		});
@@ -125,7 +125,7 @@ test.describe("Task Delete", () => {
 		});
 
 		await test.step("Delete via CLI", async () => {
-			server.cli(`task delete ${taskId} --force`);
+			server.cli(`task hard-delete ${taskId} --allow-hard-delete --yes --reason "E2E cleanup"`);
 		});
 
 		await test.step("Reload and verify task gone", async () => {

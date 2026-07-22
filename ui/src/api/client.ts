@@ -1,5 +1,12 @@
 import type { Task, TimeEntry } from "@/ui/models/task";
 import type { TaskChange, TaskVersion } from "@/ui/models/version";
+import type {
+	TaskLifecycleEvent,
+	TaskLifecycleReason,
+	TaskLifecycleRequest,
+	TaskLifecycleResponse,
+	TaskLifecycleResult,
+} from "@/ui/models/taskLifecycle";
 
 // Use env vars from Vite, fallback to relative paths for production
 const API_BASE = import.meta.env.API_URL || "";
@@ -21,6 +28,10 @@ interface TaskDTO {
 	subtasks: string[];
 	createdAt: string;
 	updatedAt: string;
+	completedAt?: string;
+	archivedAt?: string;
+	archived: boolean;
+	lifecycleState: Task["lifecycleState"];
 	acceptanceCriteria: Array<{ text: string; completed: boolean }>;
 	timeSpent: number;
 	timeEntries: Array<{
@@ -89,6 +100,10 @@ function parseTaskDTO(dto: TaskDTO): Task {
 		acceptanceCriteria: dto.acceptanceCriteria || [],
 		createdAt: new Date(dto.createdAt),
 		updatedAt: new Date(dto.updatedAt),
+		completedAt: dto.completedAt ? new Date(dto.completedAt) : undefined,
+		archivedAt: dto.archivedAt ? new Date(dto.archivedAt) : undefined,
+		archived: dto.archived ?? dto.lifecycleState === "archived",
+		lifecycleState: dto.lifecycleState,
 		timeEntries: (dto.timeEntries || []).map((entry) => ({
 			...entry,
 			startedAt: new Date(entry.startedAt),
@@ -97,9 +112,85 @@ function parseTaskDTO(dto: TaskDTO): Task {
 	};
 }
 
+interface TaskLifecycleReasonDTO extends Omit<TaskLifecycleReason, "deadline"> {
+	deadline?: string;
+}
+
+interface TaskLifecycleEventDTO extends Omit<TaskLifecycleEvent, "at"> {
+	at: string;
+}
+
+interface TaskLifecycleResultDTO extends Omit<TaskLifecycleResult, "reasons" | "event" | "completedAt" | "archivedAt" | "deadline"> {
+	reasons: TaskLifecycleReasonDTO[];
+	event?: TaskLifecycleEventDTO;
+	completedAt?: string;
+	archivedAt?: string;
+	deadline?: string;
+}
+
+interface TaskLifecycleResponseDTO extends Omit<TaskLifecycleResponse, "items"> {
+	items: TaskLifecycleResultDTO[];
+}
+
+function parseLifecycleResponse(dto: TaskLifecycleResponseDTO): TaskLifecycleResponse {
+	return {
+		...dto,
+		items: (dto.items || []).map((item) => ({
+			...item,
+			reasons: (item.reasons || []).map((reason) => ({
+				...reason,
+				deadline: reason.deadline ? new Date(reason.deadline) : undefined,
+			})),
+			event: item.event ? { ...item.event, at: new Date(item.event.at) } : undefined,
+			completedAt: item.completedAt ? new Date(item.completedAt) : undefined,
+			archivedAt: item.archivedAt ? new Date(item.archivedAt) : undefined,
+			deadline: item.deadline ? new Date(item.deadline) : undefined,
+		})),
+	};
+}
+
+export class LifecycleAPIError extends Error {
+	constructor(
+		message: string,
+		readonly status: number,
+		readonly response?: TaskLifecycleResponse,
+	) {
+		super(message);
+		this.name = "LifecycleAPIError";
+	}
+}
+
+async function lifecycleFetch(
+	path: string,
+	request: Omit<TaskLifecycleRequest, "operation">,
+	signal?: AbortSignal,
+): Promise<TaskLifecycleResponse> {
+	const res = await apiFetch(`${API_BASE}${path}`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(request),
+		signal,
+	});
+	let response: TaskLifecycleResponse | undefined;
+	try {
+		response = parseLifecycleResponse((await res.json()) as TaskLifecycleResponseDTO);
+	} catch {
+		// Preserve the HTTP failure even if an intermediary returned non-contract JSON.
+	}
+	if (!res.ok) {
+		const reason = response?.items.flatMap((item) => item.reasons)[0];
+		throw new LifecycleAPIError(reason?.message || `Lifecycle request failed (${res.status})`, res.status, response);
+	}
+	if (!response) throw new LifecycleAPIError("Lifecycle response was invalid", res.status);
+	return response;
+}
+
 export const api = {
-	async getTasks(): Promise<Task[]> {
-		const res = await apiFetch(`${API_BASE}/api/tasks`);
+	async getTasks(options?: { includeHistorical?: boolean; signal?: AbortSignal }): Promise<Task[]> {
+		const params = new URLSearchParams();
+		if (options?.includeHistorical) params.set("includeHistorical", "true");
+		const query = params.size ? `?${params.toString()}` : "";
+		const res = await apiFetch(`${API_BASE}/api/tasks${query}`, { signal: options?.signal });
 		if (!res.ok) {
 			throw new Error("Failed to fetch tasks");
 		}
@@ -107,8 +198,8 @@ export const api = {
 		return data.map(parseTaskDTO);
 	},
 
-	async getTask(id: string): Promise<Task> {
-		const res = await apiFetch(`${API_BASE}/api/tasks/${id}`);
+	async getTask(id: string, options?: { signal?: AbortSignal }): Promise<Task> {
+		const res = await apiFetch(`${API_BASE}/api/tasks/${id}`, { signal: options?.signal });
 		if (!res.ok) {
 			throw new Error(`Failed to fetch task ${id}`);
 		}
@@ -153,46 +244,29 @@ export const api = {
 		return versions.map(parseVersionDTO);
 	},
 
-	async archiveTask(id: string): Promise<{ success: boolean; task: Task }> {
-		const res = await apiFetch(`${API_BASE}/api/tasks/${id}/archive`, {
-			method: "POST",
-		});
-		if (!res.ok) {
-			const text = await res.text();
-			throw new Error(`Failed to archive task ${id}: ${text}`);
-		}
-		const data = await res.json();
-		return { success: data.success, task: parseTaskDTO(data.task) };
+	async archiveTask(id: string, execute = false, signal?: AbortSignal): Promise<TaskLifecycleResponse> {
+		return lifecycleFetch(`/api/tasks/${encodeURIComponent(id)}/archive`, { taskId: id, execute }, signal);
 	},
 
-	async unarchiveTask(id: string): Promise<{ success: boolean; task: Task }> {
-		const res = await apiFetch(`${API_BASE}/api/tasks/${id}/unarchive`, {
-			method: "POST",
-		});
-		if (!res.ok) {
-			const text = await res.text();
-			throw new Error(`Failed to unarchive task ${id}: ${text}`);
-		}
-		const data = await res.json();
-		return { success: data.success, task: parseTaskDTO(data.task) };
+	async unarchiveTask(id: string, execute = false, status?: string, signal?: AbortSignal): Promise<TaskLifecycleResponse> {
+		return lifecycleFetch(`/api/tasks/${encodeURIComponent(id)}/unarchive`, { taskId: id, execute, status }, signal);
 	},
 
-	async batchArchiveTasks(olderThanMs: number): Promise<{ success: boolean; count: number; tasks: Task[] }> {
-		const res = await apiFetch(`${API_BASE}/api/tasks/batch-archive`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ olderThanMs }),
+	async batchArchiveTasks(request: { ids?: string[]; execute?: boolean; minimumAgeMs?: number } = {}): Promise<TaskLifecycleResponse> {
+		return lifecycleFetch("/api/tasks/batch-archive", { ...request, execute: request.execute ?? false });
+	},
+
+	async batchUnarchiveTasks(ids: string[], execute = false, status?: string): Promise<TaskLifecycleResponse> {
+		return lifecycleFetch("/api/tasks/batch-unarchive", { ids, execute, status });
+	},
+
+	async hardDeleteTask(id: string, reason: string, confirmed: boolean): Promise<TaskLifecycleResponse> {
+		return lifecycleFetch(`/api/tasks/${encodeURIComponent(id)}/hard-delete`, {
+			taskId: id,
+			execute: confirmed,
+			confirmed,
+			reason,
 		});
-		if (!res.ok) {
-			const text = await res.text();
-			throw new Error(`Failed to batch archive tasks: ${text}`);
-		}
-		const data = await res.json();
-		return {
-			success: data.success,
-			count: data.count,
-			tasks: data.tasks.map(parseTaskDTO),
-		};
 	},
 
 	async reorderTasks(orders: Array<{ id: string; order: number }>): Promise<void> {
@@ -239,6 +313,8 @@ export const {
 	archiveTask,
 	unarchiveTask,
 	batchArchiveTasks,
+	batchUnarchiveTasks,
+	hardDeleteTask,
 	reorderTasks,
 } = api;
 
@@ -414,15 +490,24 @@ export async function getConfig(): Promise<Record<string, unknown>> {
 	return data.config || {};
 }
 
-export async function saveConfig(config: Record<string, unknown>): Promise<void> {
+export async function patchConfig(patch: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const res = await apiFetch(`${API_BASE}/api/config`, {
-		method: "POST",
+		method: "PATCH",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(config),
+		body: JSON.stringify(patch),
 	});
 	if (!res.ok) {
-		throw new Error("Failed to save config");
+		let message = "Failed to save config";
+		try {
+			const body = (await res.json()) as { error?: string };
+			if (body.error) message = body.error;
+		} catch {
+			// Keep the stable fallback when a proxy returns a non-JSON error.
+		}
+		throw new Error(message);
 	}
+	const data = await res.json();
+	return data.config || {};
 }
 
 // User Preferences API (user-level, cross-project)

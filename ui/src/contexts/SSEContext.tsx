@@ -13,6 +13,7 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, ty
 import type { Task } from "@/ui/models/task";
 import type { ChatSession, ChatMessage } from "@/ui/models/chat";
 import type { ActiveTimer } from "../api/client";
+import type { TaskLifecycleEvent } from "../models/taskLifecycle";
 import { toast } from "../components/ui/sonner";
 
 // Event types that can be received from server
@@ -23,6 +24,8 @@ export type SSEEventType =
 	| "tasks:archived"
 	| "tasks:unarchived"
 	| "tasks:batch-archived"
+	| "tasks:lifecycle"
+	| "tasks:lifecycle-sweep"
 	| "time:updated"
 	| "time:refresh"
 	| "docs:updated"
@@ -43,6 +46,8 @@ export interface SSEEventPayloads {
 	"tasks:archived": { task: Task };
 	"tasks:unarchived": { task: Task };
 	"tasks:batch-archived": { tasks: Task[] };
+	"tasks:lifecycle": { event: TaskLifecycleEvent };
+	"tasks:lifecycle-sweep": { result?: unknown; error?: string };
 	"time:updated": { active: ActiveTimer[] };
 	"time:refresh": Record<string, never>;
 	"docs:updated": { docPath: string };
@@ -81,6 +86,10 @@ function parseTaskDTO(dto: Record<string, unknown>): Task {
 		fulfills: (dto.fulfills as string[]) || [],
 		createdAt: new Date(dto.createdAt as string),
 		updatedAt: new Date(dto.updatedAt as string),
+		completedAt: dto.completedAt ? new Date(dto.completedAt as string) : undefined,
+		archivedAt: dto.archivedAt ? new Date(dto.archivedAt as string) : undefined,
+		archived: (dto.archived as boolean) ?? dto.lifecycleState === "archived",
+		lifecycleState: dto.lifecycleState as Task["lifecycleState"],
 		timeEntries: ((dto.timeEntries as Array<Record<string, unknown>>) || []).map((entry) => ({
 			...entry,
 			startedAt: new Date(entry.startedAt as string),
@@ -102,6 +111,7 @@ export function SSEProvider({ children }: { children: ReactNode }) {
 	const disconnectToastIdRef = useRef<string | number | null>(null);
 	// Track when disconnect started
 	const disconnectStartTimeRef = useRef<number | null>(null);
+	const seenLifecycleEventIDsRef = useRef<Set<string>>(new Set());
 
 	// Subscribe to an event type
 	const subscribe = useCallback(<T extends SSEEventType>(
@@ -274,6 +284,22 @@ export function SSEProvider({ children }: { children: ReactNode }) {
 				emit("tasks:batch-archived", {
 					tasks: data.tasks.map(parseTaskDTO),
 				});
+			});
+
+			addHandler(eventSource, "tasks:lifecycle", (e) => {
+				const data = JSON.parse(e.data) as Omit<TaskLifecycleEvent, "at"> & { at: string };
+				if (!data.id || seenLifecycleEventIDsRef.current.has(data.id)) return;
+				seenLifecycleEventIDsRef.current.add(data.id);
+				if (seenLifecycleEventIDsRef.current.size > 512) {
+					const oldest = seenLifecycleEventIDsRef.current.values().next().value;
+					if (oldest) seenLifecycleEventIDsRef.current.delete(oldest);
+				}
+				emit("tasks:lifecycle", { event: { ...data, at: new Date(data.at) } });
+				emit("tasks:refresh", {});
+			});
+
+			addHandler(eventSource, "tasks:lifecycle-sweep", (e) => {
+				emit("tasks:lifecycle-sweep", JSON.parse(e.data));
 			});
 
 			addHandler(eventSource, "time:updated", (e) => {

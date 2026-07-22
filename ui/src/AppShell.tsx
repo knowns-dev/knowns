@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, lazy, Suspense } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, lazy, Suspense } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import type { Task } from "./models/task";
 import { api, getProjectStatus } from "./api/client";
@@ -89,7 +89,10 @@ export default function AppShell() {
 	const navigate = useNavigate();
 	const location = useRouterState({ select: (state) => state.location });
 	const [tasks, setTasks] = useState<Task[]>([]);
+	const [directTask, setDirectTask] = useState<Task | null>(null);
 	const [loading, setLoading] = useState(true);
+	const currentRequestRef = useRef<{ generation: number; controller?: AbortController }>({ generation: 0 });
+	const directRequestRef = useRef<{ generation: number; controller?: AbortController }>({ generation: 0 });
 	const [projectActive, setProjectActive] = useState<boolean | null>(null);
 	const [serverVersion, setServerVersion] = useState<string>("");
 	const [showCreateForm, setShowCreateForm] = useState(false);
@@ -107,6 +110,31 @@ export default function AppShell() {
 
 	const currentPage = getCurrentPage(location.pathname);
 	const isChatPage = currentPage === "chat";
+	const currentTasks = tasks;
+	const routeTaskId = currentPage === "tasks"
+		? getTaskIdFromLocation(location.pathname, location.searchStr, "tasks")
+		: null;
+	const requestedDirectTaskId = currentTaskId || routeTaskId;
+
+	const loadCurrentTasks = useCallback(async (showLoading = false) => {
+		currentRequestRef.current.controller?.abort();
+		const controller = new AbortController();
+		const generation = currentRequestRef.current.generation + 1;
+		currentRequestRef.current = { generation, controller };
+		if (showLoading) setLoading(true);
+		try {
+			const data = await api.getTasks({ signal: controller.signal });
+			if (currentRequestRef.current.generation === generation) {
+				setTasks(data.filter((task) => task.lifecycleState !== "archived"));
+			}
+		} catch (error) {
+			if (!(error instanceof DOMException && error.name === "AbortError")) {
+				console.error("Failed to load tasks:", error);
+			}
+		} finally {
+			if (currentRequestRef.current.generation === generation) setLoading(false);
+		}
+	}, []);
 
 	// Update document title based on current page
 	useEffect(() => {
@@ -164,21 +192,38 @@ export default function AppShell() {
 	}, []);
 
 	useEffect(() => {
-		api
-			.getTasks()
-			.then((data) => {
-				setTasks(data);
-				setLoading(false);
+		void loadCurrentTasks(true);
+		return () => currentRequestRef.current.controller?.abort();
+	}, [loadCurrentTasks]);
+
+	useEffect(() => {
+		directRequestRef.current.controller?.abort();
+		const generation = directRequestRef.current.generation + 1;
+		if (!requestedDirectTaskId || tasks.some((task) => task.id === requestedDirectTaskId)) {
+			directRequestRef.current = { generation };
+			setDirectTask(null);
+			return;
+		}
+		const controller = new AbortController();
+		directRequestRef.current = { generation, controller };
+		api.getTask(requestedDirectTaskId, { signal: controller.signal })
+			.then((task) => {
+				if (directRequestRef.current.generation === generation) setDirectTask(task);
 			})
-			.catch((err) => {
-				console.error("Failed to load tasks:", err);
-				setLoading(false);
+			.catch((error) => {
+				if (!(error instanceof DOMException && error.name === "AbortError")) setDirectTask(null);
 			});
-	}, []);
+		return () => controller.abort();
+	}, [requestedDirectTaskId, tasks]);
 
 	useSSEEvent("tasks:updated", ({ task }) => {
+		currentRequestRef.current.controller?.abort();
+		currentRequestRef.current = { generation: currentRequestRef.current.generation + 1 };
 		setTasks((prevTasks) => {
 			const existingIndex = prevTasks.findIndex((t) => t.id === task.id);
+			if (task.lifecycleState === "archived") {
+				return existingIndex >= 0 ? prevTasks.filter((item) => item.id !== task.id) : prevTasks;
+			}
 			if (existingIndex >= 0) {
 				const newTasks = [...prevTasks];
 				newTasks[existingIndex] = task;
@@ -186,10 +231,11 @@ export default function AppShell() {
 			}
 			return [...prevTasks, task];
 		});
+		setDirectTask((current) => current?.id === task.id ? task : current);
 	});
 
 	useSSEEvent("tasks:refresh", () => {
-		api.getTasks().then(setTasks).catch(console.error);
+		void loadCurrentTasks();
 	});
 
 	// Handle workspace switch — full page reload for clean state
@@ -200,11 +246,13 @@ export default function AppShell() {
 	}, []);
 
 	const handleTaskCreated = () => {
-		api.getTasks().then(setTasks).catch(console.error);
+		void loadCurrentTasks();
 	};
 
 	const handleTasksUpdate = (updatedTasks: Task[]) => {
-		setTasks(updatedTasks);
+		currentRequestRef.current.controller?.abort();
+		currentRequestRef.current = { generation: currentRequestRef.current.generation + 1 };
+		setTasks(updatedTasks.filter((task) => task.lifecycleState !== "archived"));
 	};
 
 	const toggleTheme = async (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -263,23 +311,24 @@ export default function AppShell() {
 	const renderPage = () => {
 		switch (currentPage) {
 			case "dashboard":
-				return <DashboardPage tasks={tasks} loading={loading} />;
+				return <DashboardPage tasks={currentTasks} loading={loading} />;
 			case "kanban":
 				return (
 					<KanbanPage
-						tasks={tasks}
+						tasks={currentTasks}
 						loading={loading}
 						onTasksUpdate={handleTasksUpdate}
 						onNewTask={() => setShowCreateForm(true)}
 					/>
 				);
 			case "tasks": {
-				const taskId = getTaskIdFromLocation(location.pathname, location.searchStr, "tasks");
-				const selectedTask = taskId ? tasks.find((t) => t.id === taskId) : null;
+				const selectedTask = routeTaskId
+					? tasks.find((task) => task.id === routeTaskId) || (directTask?.id === routeTaskId ? directTask : null)
+					: null;
 
 				return (
 					<TasksPage
-						tasks={tasks}
+					tasks={currentTasks}
 						loading={loading}
 						onTasksUpdate={handleTaskCreated}
 						selectedTask={selectedTask}
@@ -307,7 +356,7 @@ export default function AppShell() {
 			case "config":
 				return <ConfigPage />;
 			default:
-				return <DashboardPage tasks={tasks} loading={loading} />;
+				return <DashboardPage tasks={currentTasks} loading={loading} />;
 		}
 	};
 
@@ -383,7 +432,7 @@ export default function AppShell() {
 
 					<TaskCreateForm
 					isOpen={showCreateForm}
-					allTasks={tasks}
+					allTasks={currentTasks}
 					onClose={() => setShowCreateForm(false)}
 					onCreated={handleTaskCreated}
 				/>
@@ -402,21 +451,13 @@ export default function AppShell() {
 				/>
 
 				<TaskDetailSheet
-					task={currentTaskId ? tasks.find((t) => t.id === currentTaskId) || null : null}
-					allTasks={tasks}
+					task={currentTaskId ? tasks.find((t) => t.id === currentTaskId) || (directTask?.id === currentTaskId ? directTask : null) : null}
+					allTasks={currentTasks}
 					onClose={closeTask}
 					onUpdate={(updatedTask) => {
 						setTasks((prev) => prev.map((t) => (t.id === updatedTask.id ? updatedTask : t)));
 					}}
-					onArchive={async (taskId) => {
-						try {
-							await api.archiveTask(taskId);
-							setTasks((prev) => prev.filter((t) => t.id !== taskId));
-							closeTask();
-						} catch (error) {
-							console.error("Failed to archive task:", error);
-						}
-					}}
+					onLifecycleChange={handleTaskCreated}
 				/>
 			</SidebarProvider>
 			)}

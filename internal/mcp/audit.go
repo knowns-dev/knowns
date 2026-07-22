@@ -93,7 +93,7 @@ func (ar *auditRecorder) afterCallTool(_ context.Context, id any, req *gomcp.Cal
 			if tc, ok := c.(gomcp.TextContent); ok {
 				errorMsg = tc.Text
 				// Detect permission denial from the guard middleware.
-				if strings.Contains(errorMsg, `"denied":`) && strings.Contains(errorMsg, `"policyRef":`) {
+				if (strings.Contains(errorMsg, `"denied":`) && strings.Contains(errorMsg, `"policyRef":`)) || strings.Contains(errorMsg, `"code": "permission_required"`) {
 					resultStatus = "denied"
 				}
 				if len(errorMsg) > 200 {
@@ -110,7 +110,7 @@ func (ar *auditRecorder) afterCallTool(_ context.Context, id any, req *gomcp.Cal
 		Action:          pc.action,
 		ActionClass:     classifyAction(pc.toolName, pc.action),
 		ProjectRoot:     ar.getRoot(),
-		DryRun:          isDryRun(args),
+		DryRun:          isDryRun(args) || lifecycleAuditPreview(pc.action, args),
 		Result:          resultStatus,
 		DurationMs:      duration.Milliseconds(),
 		ErrorMessage:    errorMsg,
@@ -122,6 +122,16 @@ func (ar *auditRecorder) afterCallTool(_ context.Context, id any, req *gomcp.Cal
 	// request and exit, which can abandon an asynchronous write at process exit.
 	if err := ar.auditStore.Append(event); err != nil {
 		mcpLog.Printf("audit: write failed: %v", err)
+	}
+}
+
+func lifecycleAuditPreview(action string, args map[string]any) bool {
+	switch action {
+	case "archive", "unarchive", "batch_archive", "batch_unarchive":
+		execute, _ := args["execute"].(bool)
+		return !execute
+	default:
+		return false
 	}
 }
 

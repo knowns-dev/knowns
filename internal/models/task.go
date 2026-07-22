@@ -34,6 +34,16 @@ type Task struct {
 	CreatedAt time.Time `json:"createdAt" yaml:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt" yaml:"updatedAt"`
 
+	// CompletedAt records when the Task most recently entered the done state.
+	// ArchivedAt records the archive transition when it is known. Existing
+	// archived Task files may not have an ArchivedAt value.
+	CompletedAt *time.Time `json:"completedAt,omitempty" yaml:"completedAt,omitempty"`
+	ArchivedAt  *time.Time `json:"archivedAt,omitempty"  yaml:"archivedAt,omitempty"`
+
+	// Archived is derived from the Task file location when loaded. It is never
+	// persisted in frontmatter because the archive directory is canonical.
+	Archived bool `json:"archived" yaml:"-"`
+
 	// AcceptanceCriteria lives in the markdown body, not the YAML frontmatter.
 	AcceptanceCriteria []AcceptanceCriterion `json:"acceptanceCriteria" yaml:"-"`
 
@@ -45,6 +55,36 @@ type Task struct {
 	// ImplementationPlan and ImplementationNotes live in the markdown body.
 	ImplementationPlan  string `json:"implementationPlan,omitempty"  yaml:"-"`
 	ImplementationNotes string `json:"implementationNotes,omitempty" yaml:"-"`
+}
+
+// TaskLifecycleState is the externally meaningful lifecycle group for a Task.
+type TaskLifecycleState string
+
+const (
+	TaskLifecycleActive   TaskLifecycleState = "active"
+	TaskLifecycleDone     TaskLifecycleState = "done"
+	TaskLifecycleArchived TaskLifecycleState = "archived"
+)
+
+// LifecycleState derives lifecycle state from canonical storage location and
+// status. Archived wins over status so legacy archived Tasks remain historical.
+func (t *Task) LifecycleState() TaskLifecycleState {
+	if t.Archived {
+		return TaskLifecycleArchived
+	}
+	if t.Status == "done" {
+		return TaskLifecycleDone
+	}
+	return TaskLifecycleActive
+}
+
+// TaskTombstone reserves the identity of a hard-deleted Task without retaining
+// its title, body, plan, notes, acceptance criteria, or history.
+type TaskTombstone struct {
+	ID        string    `json:"id"`
+	DeletedAt time.Time `json:"deletedAt"`
+	Actor     string    `json:"actor,omitempty"`
+	Reason    string    `json:"reason"`
 }
 
 // AcceptanceCriterion is a single checkbox item in the Acceptance Criteria

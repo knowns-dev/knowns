@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,28 +17,34 @@ import (
 
 // TaskStore reads and writes task files from .knowns/tasks/ and .knowns/archive/.
 type TaskStore struct {
-	root string
+	root          string
+	lifecycleLock *taskLifecycleLock
 }
 
 func (ts *TaskStore) tasksDir() string   { return filepath.Join(ts.root, "tasks") }
 func (ts *TaskStore) archiveDir() string { return filepath.Join(ts.root, "archive") }
+func (ts *TaskStore) tombstonesDir() string {
+	return filepath.Join(ts.root, "tombstones", "tasks")
+}
 
 // taskFrontmatter mirrors the YAML frontmatter in every task file.
 // Fields use yaml tags that match the TypeScript output exactly.
 type taskFrontmatter struct {
-	ID        string   `yaml:"id"`
-	Title     string   `yaml:"title"`
-	Status    string   `yaml:"status"`
-	Priority  string   `yaml:"priority"`
-	Labels    []string `yaml:"labels"`
-	CreatedAt string   `yaml:"createdAt"`
-	UpdatedAt string   `yaml:"updatedAt"`
-	TimeSpent int      `yaml:"timeSpent"`
-	Assignee  string   `yaml:"assignee,omitempty"`
-	Parent    string   `yaml:"parent,omitempty"`
-	Spec      string   `yaml:"spec,omitempty"`
-	Fulfills  []string `yaml:"fulfills,omitempty"`
-	Order     *int     `yaml:"order,omitempty"`
+	ID          string   `yaml:"id"`
+	Title       string   `yaml:"title"`
+	Status      string   `yaml:"status"`
+	Priority    string   `yaml:"priority"`
+	Labels      []string `yaml:"labels"`
+	CreatedAt   string   `yaml:"createdAt"`
+	UpdatedAt   string   `yaml:"updatedAt"`
+	CompletedAt string   `yaml:"completedAt,omitempty"`
+	ArchivedAt  string   `yaml:"archivedAt,omitempty"`
+	TimeSpent   int      `yaml:"timeSpent"`
+	Assignee    string   `yaml:"assignee,omitempty"`
+	Parent      string   `yaml:"parent,omitempty"`
+	Spec        string   `yaml:"spec,omitempty"`
+	Fulfills    []string `yaml:"fulfills,omitempty"`
+	Order       *int     `yaml:"order,omitempty"`
 }
 
 // List returns all tasks from .knowns/tasks/.
@@ -143,8 +151,22 @@ func (ts *TaskStore) scanForID(dir, id string) (string, error) {
 
 // Create writes a new task file to .knowns/tasks/.
 func (ts *TaskStore) Create(task *models.Task) error {
+	return ts.withLifecycleLock(func() error { return ts.createUnlocked(task) })
+}
+
+func (ts *TaskStore) createUnlocked(task *models.Task) error {
 	if task.ID == "" {
 		return fmt.Errorf("task ID is required")
+	}
+	if _, err := ts.findFile(task.ID); err == nil {
+		return fmt.Errorf("task ID %q already exists", task.ID)
+	}
+	reserved, err := ts.IsIDReserved(task.ID)
+	if err != nil {
+		return fmt.Errorf("check reserved task ID: %w", err)
+	}
+	if reserved {
+		return fmt.Errorf("task ID %q is reserved by a deletion tombstone", task.ID)
 	}
 	if err := os.MkdirAll(ts.tasksDir(), 0755); err != nil {
 		return fmt.Errorf("create task dir: %w", err)
@@ -157,15 +179,23 @@ func (ts *TaskStore) Create(task *models.Task) error {
 // The file is NOT renamed when the title changes — the title lives in
 // frontmatter, so the original filename remains stable and avoids duplicates.
 func (ts *TaskStore) Update(task *models.Task) error {
+	return ts.withLifecycleLock(func() error { return ts.updateUnlocked(task) })
+}
+
+func (ts *TaskStore) updateUnlocked(task *models.Task) error {
 	oldPath, err := ts.findFile(task.ID)
 	if err != nil {
-		return ts.Create(task)
+		return ts.createUnlocked(task)
 	}
 	return ts.writeFile(oldPath, task)
 }
 
 // Delete removes a task file from tasks/ or archive/.
 func (ts *TaskStore) Delete(id string) error {
+	return ts.withLifecycleLock(func() error { return ts.deleteUnlocked(id) })
+}
+
+func (ts *TaskStore) deleteUnlocked(id string) error {
 	path, err := ts.findFile(id)
 	if err != nil {
 		return err
@@ -173,8 +203,42 @@ func (ts *TaskStore) Delete(id string) error {
 	return os.Remove(path)
 }
 
+// deleteAllUnlocked removes every active or archived file that resolves to the
+// ID. Lifecycle hard-delete uses this to clean up legacy duplicate filenames.
+func (ts *TaskStore) deleteAllUnlocked(id string) (int, error) {
+	if _, err := ts.tombstonePath(id); err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, dir := range []string{ts.tasksDir(), ts.archiveDir()} {
+		entries, err := os.ReadDir(dir)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return removed, err
+		}
+		prefix := "task-" + id + " - "
+		exact := "task-" + id + ".md"
+		for _, entry := range entries {
+			if entry.IsDir() || (entry.Name() != exact && !strings.HasPrefix(entry.Name(), prefix)) {
+				continue
+			}
+			if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !os.IsNotExist(err) {
+				return removed, err
+			}
+			removed++
+		}
+	}
+	return removed, nil
+}
+
 // Archive moves a task from tasks/ to archive/.
 func (ts *TaskStore) Archive(id string) error {
+	return ts.withLifecycleLock(func() error { return ts.archiveUnlocked(id) })
+}
+
+func (ts *TaskStore) archiveUnlocked(id string) error {
 	src, err := ts.scanForID(ts.tasksDir(), id)
 	if err != nil {
 		return fmt.Errorf("archive: %w", err)
@@ -182,11 +246,18 @@ func (ts *TaskStore) Archive(id string) error {
 	if err := os.MkdirAll(ts.archiveDir(), 0755); err != nil {
 		return err
 	}
+	if _, err := ts.scanForID(ts.archiveDir(), id); err == nil {
+		return fmt.Errorf("archive: task %q already exists in archive", id)
+	}
 	return os.Rename(src, filepath.Join(ts.archiveDir(), filepath.Base(src)))
 }
 
 // Unarchive moves a task from archive/ back to tasks/.
 func (ts *TaskStore) Unarchive(id string) error {
+	return ts.withLifecycleLock(func() error { return ts.unarchiveUnlocked(id) })
+}
+
+func (ts *TaskStore) unarchiveUnlocked(id string) error {
 	src, err := ts.scanForID(ts.archiveDir(), id)
 	if err != nil {
 		return fmt.Errorf("unarchive: %w", err)
@@ -194,7 +265,141 @@ func (ts *TaskStore) Unarchive(id string) error {
 	if err := os.MkdirAll(ts.tasksDir(), 0755); err != nil {
 		return err
 	}
+	if _, err := ts.scanForID(ts.tasksDir(), id); err == nil {
+		return fmt.Errorf("unarchive: task %q already exists in active storage", id)
+	}
 	return os.Rename(src, filepath.Join(ts.tasksDir(), filepath.Base(src)))
+}
+
+// SaveTombstone persists a content-free identity reservation for a deleted Task.
+func (ts *TaskStore) SaveTombstone(tombstone *models.TaskTombstone) error {
+	return ts.withLifecycleLock(func() error { return ts.saveTombstoneUnlocked(tombstone) })
+}
+
+func (ts *TaskStore) saveTombstoneUnlocked(tombstone *models.TaskTombstone) error {
+	if tombstone == nil {
+		return fmt.Errorf("task tombstone is required")
+	}
+	path, err := ts.tombstonePath(tombstone.ID)
+	if err != nil {
+		return err
+	}
+	if tombstone.DeletedAt.IsZero() {
+		return fmt.Errorf("task tombstone deletedAt is required")
+	}
+	if strings.TrimSpace(tombstone.Reason) == "" {
+		return fmt.Errorf("task tombstone reason is required")
+	}
+	if err := os.MkdirAll(ts.tombstonesDir(), 0755); err != nil {
+		return fmt.Errorf("create task tombstone dir: %w", err)
+	}
+	data, err := json.MarshalIndent(tombstone, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal task tombstone: %w", err)
+	}
+	data = append(data, '\n')
+	if err := writeFileExclusiveAtomic(path, data); err == nil {
+		return nil
+	} else if !os.IsExist(err) {
+		return fmt.Errorf("persist task tombstone %q: %w", tombstone.ID, err)
+	}
+
+	existing, err := ts.GetTombstone(tombstone.ID)
+	if err != nil {
+		return fmt.Errorf("validate existing task tombstone %q: %w", tombstone.ID, err)
+	}
+	if sameTaskTombstone(existing, tombstone) {
+		return nil
+	}
+	return fmt.Errorf("task tombstone %q already exists with different audit metadata", tombstone.ID)
+}
+
+func (ts *TaskStore) withLifecycleLock(fn func() error) error {
+	if ts.lifecycleLock == nil {
+		return fn()
+	}
+	return ts.lifecycleLock.with(context.Background(), fn)
+}
+
+func writeFileExclusiveAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".tombstone-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	writeErr := func() error {
+		if err := tmp.Chmod(0o644); err != nil {
+			return err
+		}
+		if _, err := tmp.Write(data); err != nil {
+			return err
+		}
+		return tmp.Sync()
+	}()
+	closeErr := tmp.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return os.Link(tmpPath, path)
+}
+
+func sameTaskTombstone(a, b *models.TaskTombstone) bool {
+	return a != nil && b != nil &&
+		a.ID == b.ID &&
+		a.DeletedAt.Equal(b.DeletedAt) &&
+		a.Actor == b.Actor &&
+		a.Reason == b.Reason
+}
+
+// GetTombstone loads the identity reservation for a hard-deleted Task.
+func (ts *TaskStore) GetTombstone(id string) (*models.TaskTombstone, error) {
+	path, err := ts.tombstonePath(id)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("task tombstone %q not found", id)
+		}
+		return nil, fmt.Errorf("read task tombstone %q: %w", id, err)
+	}
+	var tombstone models.TaskTombstone
+	if err := json.Unmarshal(data, &tombstone); err != nil {
+		return nil, fmt.Errorf("parse task tombstone %q: %w", id, err)
+	}
+	if tombstone.ID != id {
+		return nil, fmt.Errorf("task tombstone identity mismatch: got %q, want %q", tombstone.ID, id)
+	}
+	return &tombstone, nil
+}
+
+// IsIDReserved reports whether a hard-delete tombstone prevents ID reuse.
+func (ts *TaskStore) IsIDReserved(id string) (bool, error) {
+	path, err := ts.tombstonePath(id)
+	if err != nil {
+		return false, err
+	}
+	_, err = os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("stat task tombstone %q: %w", id, err)
+}
+
+func (ts *TaskStore) tombstonePath(id string) (string, error) {
+	if id == "" || id == "." || id == ".." || filepath.Base(id) != id || strings.ContainsAny(id, `/\\`) || strings.IndexByte(id, 0) >= 0 {
+		return "", fmt.Errorf("invalid task ID %q", id)
+	}
+	return filepath.Join(ts.tombstonesDir(), id+".json"), nil
 }
 
 // parseFile reads and parses a task markdown file.
@@ -203,7 +408,12 @@ func (ts *TaskStore) parseFile(path string) (*models.Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parseFile %s: %w", path, err)
 	}
-	return parseTaskContent(string(data))
+	task, err := parseTaskContent(string(data))
+	if err != nil {
+		return nil, err
+	}
+	task.Archived = filepath.Clean(filepath.Dir(path)) == filepath.Clean(ts.archiveDir())
+	return task, nil
 }
 
 // ParseTaskContent parses the raw content of a task file into a models.Task.
@@ -241,12 +451,83 @@ func parseTaskContent(content string) (*models.Task, error) {
 	}
 	task.CreatedAt, _ = parseISO(fm.CreatedAt)
 	task.UpdatedAt, _ = parseISO(fm.UpdatedAt)
+	completedAt, err := parseOptionalISO(fm.CompletedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse completedAt: %w", err)
+	}
+	task.CompletedAt = completedAt
+	archivedAt, err := parseOptionalISO(fm.ArchivedAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse archivedAt: %w", err)
+	}
+	task.ArchivedAt = archivedAt
 	return task, nil
 }
 
 // writeFile serialises a Task and writes it to path.
 func (ts *TaskStore) writeFile(path string, task *models.Task) error {
 	return atomicWrite(path, []byte(renderTask(task)))
+}
+
+// patchLifecycleUnlocked changes only lifecycle frontmatter keys and preserves
+// every unknown frontmatter field and markdown body byte-for-byte.
+func (ts *TaskStore) patchLifecycleUnlocked(task *models.Task) error {
+	if task == nil {
+		return fmt.Errorf("patch Task lifecycle: task is required")
+	}
+	path, err := ts.findFile(task.ID)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read Task %q for lifecycle patch: %w", task.ID, err)
+	}
+	content := string(data)
+	yamlBlock, body := splitFrontmatter(content)
+	if yamlBlock == "" {
+		return fmt.Errorf("patch Task %q lifecycle: missing YAML frontmatter", task.ID)
+	}
+	newline := "\n"
+	if strings.Contains(content, "\r\n") {
+		newline = "\r\n"
+	}
+	lines := strings.Split(strings.ReplaceAll(yamlBlock, "\r\n", "\n"), "\n")
+	lines = patchTaskFrontmatterScalar(lines, "status", task.Status, false)
+	lines = patchTaskFrontmatterScalar(lines, "updatedAt", "'"+formatISO(task.UpdatedAt)+"'", false)
+	if task.CompletedAt == nil {
+		lines = patchTaskFrontmatterScalar(lines, "completedAt", "", true)
+	} else {
+		lines = patchTaskFrontmatterScalar(lines, "completedAt", "'"+formatISO(*task.CompletedAt)+"'", false)
+	}
+	if task.ArchivedAt == nil {
+		lines = patchTaskFrontmatterScalar(lines, "archivedAt", "", true)
+	} else {
+		lines = patchTaskFrontmatterScalar(lines, "archivedAt", "'"+formatISO(*task.ArchivedAt)+"'", false)
+	}
+	patched := "---" + newline + strings.Join(lines, newline) + newline + "---" + newline + body
+	if _, err := parseTaskContent(patched); err != nil {
+		return fmt.Errorf("validate Task %q lifecycle patch: %w", task.ID, err)
+	}
+	return atomicWrite(path, []byte(patched))
+}
+
+func patchTaskFrontmatterScalar(lines []string, key, value string, remove bool) []string {
+	prefix := key + ":"
+	for index, line := range lines {
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") || !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		if remove {
+			return append(lines[:index], lines[index+1:]...)
+		}
+		lines[index] = prefix + " " + value
+		return lines
+	}
+	if remove {
+		return lines
+	}
+	return append(lines, prefix+" "+value)
 }
 
 // RenderTask produces the canonical markdown file content for a task.
@@ -278,6 +559,12 @@ func renderTask(task *models.Task) string {
 
 	fmt.Fprintf(&b, "createdAt: '%s'\n", formatISO(task.CreatedAt))
 	fmt.Fprintf(&b, "updatedAt: '%s'\n", formatISO(task.UpdatedAt))
+	if task.CompletedAt != nil {
+		fmt.Fprintf(&b, "completedAt: '%s'\n", formatISO(*task.CompletedAt))
+	}
+	if task.ArchivedAt != nil {
+		fmt.Fprintf(&b, "archivedAt: '%s'\n", formatISO(*task.ArchivedAt))
+	}
 	fmt.Fprintf(&b, "timeSpent: %d\n", task.TimeSpent)
 
 	if task.Assignee != "" {
@@ -405,6 +692,17 @@ func parseISO(s string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("cannot parse time %q", s)
+}
+
+func parseOptionalISO(s string) (*time.Time, error) {
+	if s == "" {
+		return nil, nil
+	}
+	parsed, err := parseISO(s)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
 }
 
 // formatISO formats a time.Time as the TypeScript-compatible ISO string.

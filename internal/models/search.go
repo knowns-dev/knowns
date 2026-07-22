@@ -24,8 +24,11 @@ type SearchResult struct {
 	MatchedBy []string `json:"matchedBy,omitempty"`
 
 	// Task-specific fields (populated when Type == "task").
-	Status   string `json:"status,omitempty"`
-	Priority string `json:"priority,omitempty"`
+	Status         string             `json:"status,omitempty"`
+	Priority       string             `json:"priority,omitempty"`
+	LifecycleState TaskLifecycleState `json:"lifecycleState,omitempty"`
+	CompletedAt    *time.Time         `json:"completedAt,omitempty"`
+	ArchivedAt     *time.Time         `json:"archivedAt,omitempty"`
 
 	// Doc-specific fields (populated when Type == "doc").
 	Path string   `json:"path,omitempty"`
@@ -77,25 +80,28 @@ type RetrievalResponse struct {
 
 // RetrievalCandidate is a ranked source-level retrieval hit.
 type RetrievalCandidate struct {
-	Type             string       `json:"type"`
-	ID               string       `json:"id"`
-	Title            string       `json:"title"`
-	Path             string       `json:"path,omitempty"`
-	Score            float64      `json:"score"`
-	MatchedBy        []string     `json:"matchedBy,omitempty"`
-	Snippet          string       `json:"snippet,omitempty"`
-	Citation         Citation     `json:"citation"`
-	DirectMatch      bool         `json:"directMatch"`
-	ExpandedFrom     []string     `json:"expandedFrom,omitempty"`
-	Status           string       `json:"status,omitempty"`
-	Priority         string       `json:"priority,omitempty"`
-	Tags             []string     `json:"tags,omitempty"`
-	MemoryLayer      string       `json:"memoryLayer,omitempty"`
-	Category         string       `json:"category,omitempty"`
-	MemoryStore      string       `json:"memoryStore,omitempty"`
-	SourcePreference int          `json:"sourcePreference"`
-	UpdatedAt        *time.Time   `json:"updatedAt,omitempty"`
-	Metadata         SourceRecord `json:"metadata"`
+	Type             string             `json:"type"`
+	ID               string             `json:"id"`
+	Title            string             `json:"title"`
+	Path             string             `json:"path,omitempty"`
+	Score            float64            `json:"score"`
+	MatchedBy        []string           `json:"matchedBy,omitempty"`
+	Snippet          string             `json:"snippet,omitempty"`
+	Citation         Citation           `json:"citation"`
+	DirectMatch      bool               `json:"directMatch"`
+	ExpandedFrom     []string           `json:"expandedFrom,omitempty"`
+	Status           string             `json:"status,omitempty"`
+	Priority         string             `json:"priority,omitempty"`
+	LifecycleState   TaskLifecycleState `json:"lifecycleState,omitempty"`
+	CompletedAt      *time.Time         `json:"completedAt,omitempty"`
+	ArchivedAt       *time.Time         `json:"archivedAt,omitempty"`
+	Tags             []string           `json:"tags,omitempty"`
+	MemoryLayer      string             `json:"memoryLayer,omitempty"`
+	Category         string             `json:"category,omitempty"`
+	MemoryStore      string             `json:"memoryStore,omitempty"`
+	SourcePreference int                `json:"sourcePreference"`
+	UpdatedAt        *time.Time         `json:"updatedAt,omitempty"`
+	Metadata         SourceRecord       `json:"metadata"`
 }
 
 // ContextPack is the assembled retrieval payload for AI consumers.
@@ -106,15 +112,18 @@ type ContextPack struct {
 
 // ContextItem is a source-backed item included in the assembled context pack.
 type ContextItem struct {
-	Type         string       `json:"type"`
-	ID           string       `json:"id"`
-	Title        string       `json:"title"`
-	Content      string       `json:"content"`
-	Snippet      string       `json:"snippet,omitempty"`
-	DirectMatch  bool         `json:"directMatch"`
-	ExpandedFrom []string     `json:"expandedFrom,omitempty"`
-	Citation     Citation     `json:"citation"`
-	Metadata     SourceRecord `json:"metadata"`
+	Type           string             `json:"type"`
+	ID             string             `json:"id"`
+	Title          string             `json:"title"`
+	Content        string             `json:"content"`
+	Snippet        string             `json:"snippet,omitempty"`
+	DirectMatch    bool               `json:"directMatch"`
+	ExpandedFrom   []string           `json:"expandedFrom,omitempty"`
+	Citation       Citation           `json:"citation"`
+	LifecycleState TaskLifecycleState `json:"lifecycleState,omitempty"`
+	CompletedAt    *time.Time         `json:"completedAt,omitempty"`
+	ArchivedAt     *time.Time         `json:"archivedAt,omitempty"`
+	Metadata       SourceRecord       `json:"metadata"`
 }
 
 // Citation points back to the originating source.
@@ -127,16 +136,19 @@ type Citation struct {
 
 // SourceRecord preserves source metadata for consumer inspection.
 type SourceRecord struct {
-	Type        string     `json:"type"`
-	ID          string     `json:"id"`
-	Path        string     `json:"path,omitempty"`
-	Tags        []string   `json:"tags,omitempty"`
-	Status      string     `json:"status,omitempty"`
-	Priority    string     `json:"priority,omitempty"`
-	MemoryLayer string     `json:"memoryLayer,omitempty"`
-	Category    string     `json:"category,omitempty"`
-	MemoryStore string     `json:"memoryStore,omitempty"`
-	UpdatedAt   *time.Time `json:"updatedAt,omitempty"`
-	Imported    bool       `json:"imported,omitempty"`
-	Source      string     `json:"source,omitempty"`
+	Type           string             `json:"type"`
+	ID             string             `json:"id"`
+	Path           string             `json:"path,omitempty"`
+	Tags           []string           `json:"tags,omitempty"`
+	Status         string             `json:"status,omitempty"`
+	Priority       string             `json:"priority,omitempty"`
+	LifecycleState TaskLifecycleState `json:"lifecycleState,omitempty"`
+	CompletedAt    *time.Time         `json:"completedAt,omitempty"`
+	ArchivedAt     *time.Time         `json:"archivedAt,omitempty"`
+	MemoryLayer    string             `json:"memoryLayer,omitempty"`
+	Category       string             `json:"category,omitempty"`
+	MemoryStore    string             `json:"memoryStore,omitempty"`
+	UpdatedAt      *time.Time         `json:"updatedAt,omitempty"`
+	Imported       bool               `json:"imported,omitempty"`
+	Source         string             `json:"source,omitempty"`
 }

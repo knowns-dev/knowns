@@ -29,11 +29,20 @@ func (cs *ConfigStore) Load() (*models.Project, error) {
 	if err := json.Unmarshal(data, &p); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	if err := p.Settings.Validate(); err != nil {
+		return nil, fmt.Errorf("validate config: %w", err)
+	}
 	return &p, nil
 }
 
 // Save writes the project configuration to disk.
 func (cs *ConfigStore) Save(project *models.Project) error {
+	if project == nil {
+		return fmt.Errorf("save config: project is required")
+	}
+	if err := project.Settings.Validate(); err != nil {
+		return fmt.Errorf("validate config: %w", err)
+	}
 	return writeJSON(cs.configPath(), project)
 }
 
@@ -59,6 +68,17 @@ func (cs *ConfigStore) Set(key string, value any) error {
 		return err
 	}
 	setNestedKey(raw, key, value)
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("marshal config for validation: %w", err)
+	}
+	var project models.Project
+	if err := json.Unmarshal(data, &project); err != nil {
+		return fmt.Errorf("parse config for validation: %w", err)
+	}
+	if err := project.Settings.Validate(); err != nil {
+		return fmt.Errorf("validate config: %w", err)
+	}
 	return writeJSON(cs.configPath(), raw)
 }
 

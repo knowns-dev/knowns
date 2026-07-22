@@ -32,6 +32,26 @@ type VectorStore interface {
 	ListContentHashes() map[string]string
 }
 
+// taskVectorMutation is a source-scoped Task update prepared after canonical
+// lifecycle revalidation. SQLite applies a batch atomically so one runtime
+// session cannot overwrite another session's newer Task rows from a stale
+// in-memory snapshot.
+type taskVectorMutation struct {
+	TaskID       string
+	Chunks       []Chunk
+	Hash         string
+	Delete       bool
+	ExpectedHash string
+	CheckHash    bool
+}
+
+// atomicTaskVectorStore is an optional durability contract used by SQLite.
+// Other VectorStore implementations retain the existing in-memory + Save flow.
+type atomicTaskVectorStore interface {
+	SaveNonTaskSources() error
+	ApplyTaskMutations(mutations []taskVectorMutation) error
+}
+
 // FileVectorStore stores embeddings in a flat binary file with a JSON index.
 // Deprecated: Use SQLiteVectorStore instead.
 //

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -18,7 +19,8 @@ import (
 
 // VersionStore reads and writes task version histories from .knowns/versions/.
 type VersionStore struct {
-	root string
+	root          string
+	lifecycleLock *taskLifecycleLock
 }
 
 func (vs *VersionStore) versionsDir() string { return filepath.Join(vs.root, "versions") }
@@ -55,6 +57,22 @@ func (vs *VersionStore) GetHistory(taskID string) (*models.TaskVersionHistory, e
 // version.Snapshot, Changes, and Timestamp should be populated by the caller
 // (or use TrackChanges + TaskToSnapshot helpers).
 func (vs *VersionStore) SaveVersion(taskID string, version models.TaskVersion) error {
+	if vs.lifecycleLock == nil {
+		return vs.saveVersionUnlocked(taskID, version)
+	}
+	return vs.lifecycleLock.with(context.Background(), func() error {
+		return vs.saveVersionUnlocked(taskID, version)
+	})
+}
+
+func (vs *VersionStore) saveVersionUnlocked(taskID string, version models.TaskVersion) error {
+	reserved, err := (&TaskStore{root: vs.root}).IsIDReserved(taskID)
+	if err != nil {
+		return fmt.Errorf("check Task tombstone before saving version: %w", err)
+	}
+	if reserved {
+		return fmt.Errorf("cannot save version for hard-deleted Task %q", taskID)
+	}
 	h, err := vs.GetHistory(taskID)
 	if err != nil {
 		return err
@@ -114,6 +132,14 @@ func (vs *VersionStore) TrackChanges(oldTask, newTask *models.Task) []models.Tas
 	diff("acceptanceCriteria", oldTask.AcceptanceCriteria, newTask.AcceptanceCriteria)
 	diff("implementationPlan", oldTask.ImplementationPlan, newTask.ImplementationPlan)
 	diff("implementationNotes", oldTask.ImplementationNotes, newTask.ImplementationNotes)
+	diff("parent", oldTask.Parent, newTask.Parent)
+	diff("spec", oldTask.Spec, newTask.Spec)
+	diff("fulfills", oldTask.Fulfills, newTask.Fulfills)
+	diff("order", oldTask.Order, newTask.Order)
+	diff("completedAt", oldTask.CompletedAt, newTask.CompletedAt)
+	diff("archivedAt", oldTask.ArchivedAt, newTask.ArchivedAt)
+	diff("archived", oldTask.Archived, newTask.Archived)
+	diff("timeSpent", oldTask.TimeSpent, newTask.TimeSpent)
 
 	return changes
 }
@@ -122,9 +148,14 @@ func (vs *VersionStore) TrackChanges(oldTask, newTask *models.Task) []models.Tas
 // TaskVersion.Snapshot. This matches the TypeScript version history format.
 func TaskToSnapshot(task *models.Task) map[string]any {
 	snap := map[string]any{
-		"title":    task.Title,
-		"status":   task.Status,
-		"priority": task.Priority,
+		"id":        task.ID,
+		"title":     task.Title,
+		"status":    task.Status,
+		"priority":  task.Priority,
+		"createdAt": task.CreatedAt,
+		"updatedAt": task.UpdatedAt,
+		"timeSpent": task.TimeSpent,
+		"archived":  task.Archived,
 	}
 	if task.Description != "" {
 		snap["description"] = task.Description
@@ -143,6 +174,24 @@ func TaskToSnapshot(task *models.Task) map[string]any {
 	}
 	if task.ImplementationNotes != "" {
 		snap["implementationNotes"] = task.ImplementationNotes
+	}
+	if task.Parent != "" {
+		snap["parent"] = task.Parent
+	}
+	if task.Spec != "" {
+		snap["spec"] = task.Spec
+	}
+	if len(task.Fulfills) > 0 {
+		snap["fulfills"] = task.Fulfills
+	}
+	if task.Order != nil {
+		snap["order"] = *task.Order
+	}
+	if task.CompletedAt != nil {
+		snap["completedAt"] = *task.CompletedAt
+	}
+	if task.ArchivedAt != nil {
+		snap["archivedAt"] = *task.ArchivedAt
 	}
 	return snap
 }

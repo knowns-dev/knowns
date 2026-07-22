@@ -3,6 +3,7 @@ package permissions
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -33,6 +34,12 @@ func NewGuardMiddleware(configLoader ConfigLoader) server.ToolHandlerMiddleware 
 			if isBootstrapAction(toolName, action) {
 				return next(ctx, req)
 			}
+			// Lifecycle handlers return the shared public Response contract for
+			// every denial. Let that trusted boundary enforce hard-delete policy
+			// so middleware cannot replace it with a different JSON shape.
+			if isPublicTaskLifecycleAction(toolName, action) {
+				return next(ctx, req)
+			}
 
 			// Classify the action.
 			meta := classifyToolAction(toolName, action, args)
@@ -42,10 +49,11 @@ func NewGuardMiddleware(configLoader ConfigLoader) server.ToolHandlerMiddleware 
 			policy := EffectivePolicy(cfg)
 
 			// Check dryRun from arguments.
-			dryRun := isDryRun(args)
+			dryRun := isDryRun(args) || lifecyclePreview(action, args)
 
 			// Pass 1: capability gate (no IO).
-			if denial := CheckCapability(policy, meta, dryRun); denial != nil {
+			confirmedDelete := meta.Capability == CapDelete && explicitDeleteConfirmation(args)
+			if denial := CheckCapability(policy, meta, dryRun || confirmedDelete); denial != nil {
 				return denialResult(denial), nil
 			}
 
@@ -53,6 +61,34 @@ func NewGuardMiddleware(configLoader ConfigLoader) server.ToolHandlerMiddleware 
 			return next(ctx, req)
 		}
 	}
+}
+
+func isPublicTaskLifecycleAction(tool, action string) bool {
+	if tool != "tasks" {
+		return false
+	}
+	switch action {
+	case "archive", "unarchive", "batch_archive", "batch_unarchive", "hard_delete":
+		return true
+	default:
+		return false
+	}
+}
+
+func lifecyclePreview(action string, args map[string]any) bool {
+	switch action {
+	case "archive", "unarchive", "batch_archive", "batch_unarchive":
+		execute, _ := args["execute"].(bool)
+		return !execute
+	default:
+		return false
+	}
+}
+
+func explicitDeleteConfirmation(args map[string]any) bool {
+	confirmed, _ := args["confirmed"].(bool)
+	reason, _ := args["reason"].(string)
+	return confirmed && strings.TrimSpace(reason) != ""
 }
 
 // classifyToolAction determines the ActionMeta for a tool call.

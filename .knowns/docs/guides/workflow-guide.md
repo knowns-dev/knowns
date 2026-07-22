@@ -2,7 +2,7 @@
 title: Workflow Guide
 description: Task lifecycle and development workflow with Knowns
 createdAt: '2026-02-24T08:45:15.515Z'
-updatedAt: '2026-06-18T09:52:02.163Z'
+updatedAt: '2026-07-22T04:43:54.881Z'
 tags:
   - guide
   - workflow
@@ -128,3 +128,10 @@ knowns time add <id> 2h   # Manual entry
 - [ ] Validate tests/build/refs
 - [ ] Decide whether durable guidance needs a Decision, Memory, or Doc
 - [ ] Stop timer, mark done
+
+
+## Completion, archive, and reopen
+
+Marking a Task `done` removes it from default AI Retrieve immediately under the default project policy, while human Search still finds it. Archive is a later reversible storage transition and is preview-first; Hard Delete is a separately permission-gated irreversible operation.
+
+Before archive, review durable-knowledge warnings and extract reusable Decisions, Memories, or Docs. See @doc/features/task-lifecycle for blockers, retention, batch retry, reopen, and Hard Delete behavior.

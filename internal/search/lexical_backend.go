@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
@@ -34,18 +35,21 @@ type heuristicLexicalBackend struct {
 }
 
 type lexicalDoc struct {
-	Type        string
-	ID          string
-	Title       string
-	Path        string
-	Snippet     string
-	Status      string
-	Priority    string
-	Tags        []string
-	MemoryLayer string
-	Category    string
-	MemoryStore string
-	Fields      []lexicalField
+	Type           string
+	ID             string
+	Title          string
+	Path           string
+	Snippet        string
+	Status         string
+	Priority       string
+	LifecycleState models.TaskLifecycleState
+	CompletedAt    *time.Time
+	ArchivedAt     *time.Time
+	Tags           []string
+	MemoryLayer    string
+	Category       string
+	MemoryStore    string
+	Fields         []lexicalField
 }
 
 type lexicalField struct {
@@ -151,21 +155,12 @@ func (b *bm25LexicalBackend) buildCorpus(opts SearchOptions) ([]lexicalDoc, erro
 	}
 
 	if opts.Type == "all" || opts.Type == "task" {
-		tasks, err := b.store.Tasks.List()
+		tasks, err := tasksForSearch(b.store, opts)
 		if err != nil {
 			return nil, err
 		}
 		for _, task := range tasks {
-			if opts.Status != "" && task.Status != opts.Status {
-				continue
-			}
-			if opts.Priority != "" && task.Priority != opts.Priority {
-				continue
-			}
-			if opts.Assignee != "" && task.Assignee != opts.Assignee {
-				continue
-			}
-			if opts.Label != "" && !containsStr(task.Labels, opts.Label) {
+			if !taskVisibleForSearch(task, opts) || !taskMatchesSearchFilters(task, opts) {
 				continue
 			}
 			corpus = append(corpus, lexicalDocFromTask(task))
@@ -261,13 +256,16 @@ func lexicalDocFromTask(task *models.Task) lexicalDoc {
 		acTexts = append(acTexts, ac.Text)
 	}
 	doc := lexicalDoc{
-		Type:     "task",
-		ID:       task.ID,
-		Title:    task.Title,
-		Snippet:  firstNonEmpty(task.Description, task.ImplementationPlan, task.ImplementationNotes),
-		Status:   task.Status,
-		Priority: task.Priority,
-		Tags:     append([]string{}, task.Labels...),
+		Type:           "task",
+		ID:             task.ID,
+		Title:          task.Title,
+		Snippet:        firstNonEmpty(task.Description, task.ImplementationPlan, task.ImplementationNotes),
+		Status:         task.Status,
+		Priority:       task.Priority,
+		LifecycleState: task.LifecycleState(),
+		CompletedAt:    cloneTimePointer(task.CompletedAt),
+		ArchivedAt:     cloneTimePointer(task.ArchivedAt),
+		Tags:           append([]string{}, task.Labels...),
 		Fields: []lexicalField{
 			newLexicalField("title", task.Title, 4.0),
 			newLexicalField("id", task.ID, 5.0),
@@ -362,19 +360,22 @@ func newLexicalField(name, text string, weight float64) lexicalField {
 
 func (d lexicalDoc) toSearchResult(score float64) models.SearchResult {
 	return models.SearchResult{
-		Type:        d.Type,
-		ID:          d.ID,
-		Title:       d.Title,
-		Score:       score,
-		Snippet:     truncateStr(d.Snippet, 150),
-		MatchedBy:   []string{"keyword"},
-		Status:      d.Status,
-		Priority:    d.Priority,
-		Path:        d.Path,
-		Tags:        d.Tags,
-		MemoryLayer: d.MemoryLayer,
-		Category:    d.Category,
-		MemoryStore: d.MemoryStore,
+		Type:           d.Type,
+		ID:             d.ID,
+		Title:          d.Title,
+		Score:          score,
+		Snippet:        truncateStr(d.Snippet, 150),
+		MatchedBy:      []string{"keyword"},
+		Status:         d.Status,
+		Priority:       d.Priority,
+		LifecycleState: d.LifecycleState,
+		CompletedAt:    cloneTimePointer(d.CompletedAt),
+		ArchivedAt:     cloneTimePointer(d.ArchivedAt),
+		Path:           d.Path,
+		Tags:           d.Tags,
+		MemoryLayer:    d.MemoryLayer,
+		Category:       d.Category,
+		MemoryStore:    d.MemoryStore,
 	}
 }
 

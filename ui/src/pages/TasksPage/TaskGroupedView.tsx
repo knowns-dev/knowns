@@ -13,6 +13,7 @@ import { Button } from "@/ui/components/ui/button";
 import { StatusBadge, PriorityBadge, LabelList } from "@/ui/components/molecules";
 import { useConfig } from "@/ui/contexts/ConfigContext";
 import { getStatusLabel, buildStatusOptions } from "@/ui/utils/colors";
+import { TaskLifecycleBadge } from "@/ui/components/molecules/TaskLifecycleBadge";
 
 interface TaskGroupedViewProps {
 	tasks: Task[];
@@ -161,9 +162,10 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 															>
 																{task.title}
 															</button>
-															<span className="text-xs text-muted-foreground font-mono">
-																#{task.id}
-															</span>
+														<span className="text-xs text-muted-foreground font-mono">
+															#{task.id}
+														</span>
+														<TaskLifecycleBadge state={task.lifecycleState} />
 														</div>
 
 														<div className="flex items-center gap-2 flex-wrap">

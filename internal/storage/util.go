@@ -191,7 +191,9 @@ func splitFrontmatter(content string) (yamlBlock, body string) {
 	if idx == -1 {
 		return "", content
 	}
-	yamlBlock = rest[:idx]
+	// With CRLF input idx points at the LF in "\r\n---". Exclude the CR so
+	// callers that rejoin the frontmatter do not produce "\r\r\n".
+	yamlBlock = strings.TrimSuffix(rest[:idx], "\r")
 	body = rest[idx+4:]
 	// Skip newline after closing ---
 	if strings.HasPrefix(body, "\r\n") {

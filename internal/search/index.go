@@ -1,12 +1,15 @@
 package search
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
@@ -17,6 +20,13 @@ type IndexService struct {
 	store    *storage.Store
 	embedder EmbedderProvider
 	vecStore VectorStore
+}
+
+type taskIndexCandidate struct {
+	taskID    string
+	hash      string
+	chunks    []Chunk
+	unchanged bool
 }
 
 // NewIndexService creates an IndexService.
@@ -36,12 +46,14 @@ type ReindexProgress func(phase string, current, total int)
 func (s *IndexService) Reindex(progress ReindexProgress) error {
 	// If model/version changed, clear everything for a full rebuild.
 	if s.vecStore.NeedsRebuild(s.vecStore.Model()) {
-		if err := s.vecStore.Clear(); err != nil {
+		if err := s.withTaskIndexCommit(func(_ *storage.TaskLifecycleTransaction) error {
+			return s.vecStore.Clear()
+		}); err != nil {
 			return fmt.Errorf("clear vecstore: %w", err)
 		}
 	}
 
-	tasks, err := s.store.Tasks.List()
+	tasks, err := allTasksForIndex(s.store)
 	if err != nil {
 		return fmt.Errorf("list tasks: %w", err)
 	}
@@ -66,25 +78,26 @@ func (s *IndexService) Reindex(progress ReindexProgress) error {
 
 	// Build set of current source IDs for orphan cleanup.
 	currentIDs := make(map[string]bool)
+	taskCandidates := make(map[string]taskIndexCandidate, len(tasks))
 
-	// Phase 1: Index tasks.
+	// Phase 1: prepare Task embeddings without mutating the live index. The
+	// canonical Task set is revalidated under the lifecycle lock at final commit.
 	for i, task := range tasks {
 		if progress != nil {
 			progress("tasks", i+1, len(tasks))
 		}
 		sourceID := "task:" + task.ID
-		currentIDs[sourceID] = true
-
 		hash := contentHash(taskContentForHash(task))
 		if s.vecStore.GetContentHash(sourceID) == hash {
-			continue // unchanged
+			taskCandidates[task.ID] = taskIndexCandidate{taskID: task.ID, hash: hash, unchanged: true}
+			continue
 		}
 
-		s.vecStore.RemoveByPrefix(fmt.Sprintf("task:%s:", task.ID))
-		if err := s.embedAndStoreTask(task); err != nil {
+		chunks, err := s.embedTask(task)
+		if err != nil {
 			continue // non-fatal
 		}
-		s.vecStore.SetContentHash(sourceID, hash)
+		taskCandidates[task.ID] = taskIndexCandidate{taskID: task.ID, hash: hash, chunks: chunks}
 	}
 
 	// Phase 2: Index local docs.
@@ -181,30 +194,182 @@ func (s *IndexService) Reindex(progress ReindexProgress) error {
 		s.vecStore.SetContentHash(sourceID, hash)
 	}
 
-	// Phase 6: Clean up orphaned entries (deleted tasks/docs/memories/decisions).
-	for id := range s.vecStore.ListContentHashes() {
-		if !currentIDs[id] {
-			// Extract prefix for chunk removal (e.g. "task:abc" → "task:abc:")
-			s.vecStore.RemoveByPrefix(id + ":")
-			s.vecStore.DeleteContentHash(id)
+	// Phase 6: atomically reconcile Task candidates with canonical lifecycle
+	// state, clean orphans, and persist. Embedding never runs under this lock.
+	return s.withTaskIndexCommit(func(tx *storage.TaskLifecycleTransaction) error {
+		atomicStore, atomic := s.vecStore.(atomicTaskVectorStore)
+		taskMutations := make(map[string]taskVectorMutation)
+		deleteTaskSource := func(taskID, expectedHash string, checkHash bool) {
+			if atomic {
+				taskMutations[taskID] = taskVectorMutation{
+					TaskID: taskID, Delete: true, ExpectedHash: expectedHash, CheckHash: checkHash,
+				}
+				return
+			}
+			sourceID := "task:" + taskID
+			s.vecStore.RemoveByPrefix(sourceID + ":")
+			s.vecStore.DeleteContentHash(sourceID)
 		}
-	}
+		finalTasks, err := allTasksForIndexTransaction(tx)
+		if err != nil {
+			return fmt.Errorf("revalidate tasks: %w", err)
+		}
+		finalByID := make(map[string]*models.Task, len(finalTasks))
+		for _, task := range finalTasks {
+			reserved, err := tx.IsIDReserved(task.ID)
+			if err != nil {
+				return fmt.Errorf("revalidate Task %q tombstone: %w", task.ID, err)
+			}
+			if reserved {
+				continue
+			}
+			finalByID[task.ID] = task
+			currentIDs["task:"+task.ID] = true
+		}
 
-	return s.vecStore.Save()
+		for taskID, candidate := range taskCandidates {
+			sourceID := "task:" + taskID
+			canonical := finalByID[taskID]
+			if canonical == nil {
+				deleteTaskSource(taskID, "", false)
+				continue
+			}
+			finalHash := contentHash(taskContentForHash(canonical))
+			if finalHash != candidate.hash {
+				// A concurrent update/archive/reopen may already have committed the
+				// correct representation. Preserve it; otherwise fail closed by
+				// removing the stale representation and let its hook retry.
+				if liveHash := s.vecStore.GetContentHash(sourceID); liveHash != finalHash {
+					deleteTaskSource(taskID, liveHash, true)
+				}
+				continue
+			}
+			liveHash := s.vecStore.GetContentHash(sourceID)
+			if liveHash == candidate.hash {
+				continue
+			}
+			if candidate.unchanged {
+				// The session observed this hash before staging but the durable
+				// source changed meanwhile. No embeddings were prepared, so remove
+				// the inconsistent source and let the next pass rebuild it.
+				deleteTaskSource(taskID, liveHash, true)
+				continue
+			}
+			if atomic {
+				taskMutations[taskID] = taskVectorMutation{
+					TaskID: taskID, Chunks: candidate.chunks, Hash: candidate.hash,
+					ExpectedHash: liveHash, CheckHash: true,
+				}
+				continue
+			}
+			s.vecStore.RemoveByPrefix(sourceID + ":")
+			s.vecStore.AddChunks(candidate.chunks)
+			s.vecStore.SetContentHash(sourceID, candidate.hash)
+		}
+
+		for id := range s.vecStore.ListContentHashes() {
+			if !currentIDs[id] {
+				if atomic && strings.HasPrefix(id, "task:") {
+					deleteTaskSource(strings.TrimPrefix(id, "task:"), "", false)
+					continue
+				}
+				s.vecStore.RemoveByPrefix(id + ":")
+				s.vecStore.DeleteContentHash(id)
+			}
+		}
+		if atomic {
+			// Never call SQLite's global Save from a Reindex session whose Task
+			// memory view predates a concurrent lifecycle hook commit.
+			if err := atomicStore.SaveNonTaskSources(); err != nil {
+				return err
+			}
+			mutations := make([]taskVectorMutation, 0, len(taskMutations))
+			for _, mutation := range taskMutations {
+				mutations = append(mutations, mutation)
+			}
+			sort.Slice(mutations, func(i, j int) bool { return mutations[i].TaskID < mutations[j].TaskID })
+			return atomicStore.ApplyTaskMutations(mutations)
+		}
+		return s.vecStore.Save()
+	})
 }
 
 // IndexTask incrementally indexes a single task (removes old chunks first).
 func (s *IndexService) IndexTask(taskID string) error {
-	s.vecStore.RemoveByPrefix(fmt.Sprintf("task:%s:", taskID))
-
 	task, err := s.store.Tasks.Get(taskID)
 	if err != nil {
 		return err
 	}
-	if err := s.embedAndStoreTask(task); err != nil {
+	hash := contentHash(taskContentForHash(task))
+	chunks, err := s.embedTask(task)
+	if err != nil {
 		return err
 	}
-	return s.vecStore.Save()
+
+	return s.withTaskIndexCommit(func(tx *storage.TaskLifecycleTransaction) error {
+		atomicStore, atomic := s.vecStore.(atomicTaskVectorStore)
+		canonical, canonicalErr := tx.GetTask(taskID)
+		reserved, reservedErr := tx.IsIDReserved(taskID)
+		if reservedErr != nil {
+			return fmt.Errorf("revalidate Task %q tombstone: %w", taskID, reservedErr)
+		}
+		sourceID := "task:" + taskID
+		if canonicalErr != nil || reserved {
+			if atomic {
+				if err := atomicStore.ApplyTaskMutations([]taskVectorMutation{{TaskID: taskID, Delete: true}}); err != nil {
+					return err
+				}
+				if reserved {
+					return nil
+				}
+				return fmt.Errorf("revalidate Task %q before index commit: %w", taskID, canonicalErr)
+			}
+			s.vecStore.RemoveByPrefix(sourceID + ":")
+			s.vecStore.DeleteContentHash(sourceID)
+			if saveErr := s.vecStore.Save(); saveErr != nil {
+				return saveErr
+			}
+			if reserved {
+				return nil
+			}
+			return fmt.Errorf("revalidate Task %q before index commit: %w", taskID, canonicalErr)
+		}
+		finalHash := contentHash(taskContentForHash(canonical))
+		if finalHash != hash {
+			liveHash := s.vecStore.GetContentHash(sourceID)
+			if liveHash == finalHash {
+				if atomic {
+					return atomicStore.ApplyTaskMutations(nil)
+				}
+				return nil
+			}
+			if atomic {
+				if err := atomicStore.ApplyTaskMutations([]taskVectorMutation{{
+					TaskID: taskID, Delete: true, ExpectedHash: liveHash, CheckHash: true,
+				}}); err != nil {
+					return err
+				}
+				return fmt.Errorf("Task %q changed during semantic indexing; retry", taskID)
+			}
+			s.vecStore.RemoveByPrefix(sourceID + ":")
+			s.vecStore.DeleteContentHash(sourceID)
+			if saveErr := s.vecStore.Save(); saveErr != nil {
+				return saveErr
+			}
+			return fmt.Errorf("Task %q changed during semantic indexing; retry", taskID)
+		}
+		if atomic {
+			liveHash := s.vecStore.GetContentHash(sourceID)
+			return atomicStore.ApplyTaskMutations([]taskVectorMutation{{
+				TaskID: taskID, Chunks: chunks, Hash: hash,
+				ExpectedHash: liveHash, CheckHash: true,
+			}})
+		}
+		s.vecStore.RemoveByPrefix(sourceID + ":")
+		s.vecStore.AddChunks(chunks)
+		s.vecStore.SetContentHash(sourceID, hash)
+		return s.vecStore.Save()
+	})
 }
 
 // IndexDoc incrementally indexes a single doc (removes old chunks first).
@@ -223,8 +388,15 @@ func (s *IndexService) IndexDoc(docPath string) error {
 
 // RemoveTask removes all chunks for a task from the vector store.
 func (s *IndexService) RemoveTask(taskID string) error {
-	s.vecStore.RemoveByPrefix(fmt.Sprintf("task:%s:", taskID))
-	return s.vecStore.Save()
+	return s.withTaskIndexCommit(func(_ *storage.TaskLifecycleTransaction) error {
+		if atomicStore, ok := s.vecStore.(atomicTaskVectorStore); ok {
+			return atomicStore.ApplyTaskMutations([]taskVectorMutation{{TaskID: taskID, Delete: true}})
+		}
+		sourceID := "task:" + taskID
+		s.vecStore.RemoveByPrefix(sourceID + ":")
+		s.vecStore.DeleteContentHash(sourceID)
+		return s.vecStore.Save()
+	})
 }
 
 // RemoveDoc removes all chunks for a doc from the vector store.
@@ -277,12 +449,21 @@ func (s *IndexService) RemoveDecision(decisionID string) error {
 }
 
 func (s *IndexService) embedAndStoreTask(task *models.Task) error {
+	chunks, err := s.embedTask(task)
+	if err != nil {
+		return err
+	}
+	s.vecStore.AddChunks(chunks)
+	return nil
+}
+
+func (s *IndexService) embedTask(task *models.Task) ([]Chunk, error) {
 	maxTokens := 512
 	if cfg, ok := EmbeddingModels[s.vecStore.Model()]; ok {
 		maxTokens = cfg.MaxTokens
 	}
 	result := ChunkTask(task, maxTokens, s.embedder.GetTokenizer())
-	return s.embedAndStore(result.Chunks)
+	return s.embedChunks(result.Chunks)
 }
 
 func (s *IndexService) embedAndStoreDoc(doc *models.Doc) error {
@@ -349,8 +530,17 @@ func currentMemoryEntries(entries []*models.MemoryEntry, err error) ([]*models.M
 }
 
 func (s *IndexService) embedAndStore(chunks []Chunk) error {
+	embedded, err := s.embedChunks(chunks)
+	if err != nil {
+		return err
+	}
+	s.vecStore.AddChunks(embedded)
+	return nil
+}
+
+func (s *IndexService) embedChunks(chunks []Chunk) ([]Chunk, error) {
 	if len(chunks) == 0 {
-		return nil
+		return chunks, nil
 	}
 
 	batchSize := embedBatchSize(len(chunks))
@@ -389,7 +579,6 @@ func (s *IndexService) embedAndStore(chunks []Chunk) error {
 				}
 				chunks[i].Embedding = vec
 			}
-			s.vecStore.AddChunks(chunks[start:end])
 			continue
 		}
 
@@ -400,9 +589,15 @@ func (s *IndexService) embedAndStore(chunks []Chunk) error {
 		for i := start; i < end; i++ {
 			chunks[i].Embedding = vecs[i-start]
 		}
-		s.vecStore.AddChunks(chunks[start:end])
 	}
-	return nil
+	return chunks, nil
+}
+
+func (s *IndexService) withTaskIndexCommit(fn func(*storage.TaskLifecycleTransaction) error) error {
+	if s == nil || s.store == nil {
+		return fmt.Errorf("semantic index service store unavailable")
+	}
+	return s.store.WithTaskLifecycleTransaction(context.Background(), fn)
 }
 
 func embedBatchSize(total int) int {
@@ -428,12 +623,71 @@ func contentHash(content string) string {
 }
 
 func taskContentForHash(task *models.Task) string {
-	s := task.Title + "\n" + task.Description + "\n" + task.Status + "\n" + task.Priority
+	s := task.Title + "\n" + task.Description + "\n" + task.Status + "\n" + task.Priority + "\n" + string(task.LifecycleState())
+	if task.CompletedAt != nil {
+		s += "\ncompleted:" + task.CompletedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if task.ArchivedAt != nil {
+		s += "\narchived:" + task.ArchivedAt.UTC().Format(time.RFC3339Nano)
+	}
 	for _, ac := range task.AcceptanceCriteria {
 		s += "\n" + ac.Text
 	}
 	s += "\n" + task.ImplementationPlan + "\n" + task.ImplementationNotes
 	return s
+}
+
+func allTasksForIndex(store *storage.Store) ([]*models.Task, error) {
+	if store == nil || store.Tasks == nil {
+		return nil, fmt.Errorf("task store unavailable")
+	}
+	active, err := store.Tasks.List()
+	if err != nil {
+		return nil, err
+	}
+	archived, err := store.Tasks.ListArchived()
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]*models.Task, len(active)+len(archived))
+	for _, task := range archived {
+		byID[task.ID] = task
+	}
+	// Prefer canonical active storage when migration artifacts contain both.
+	for _, task := range active {
+		byID[task.ID] = task
+	}
+	result := make([]*models.Task, 0, len(byID))
+	for _, task := range byID {
+		result = append(result, task)
+	}
+	return result, nil
+}
+
+func allTasksForIndexTransaction(tx *storage.TaskLifecycleTransaction) ([]*models.Task, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("task lifecycle transaction unavailable")
+	}
+	active, err := tx.ListActiveTasks()
+	if err != nil {
+		return nil, err
+	}
+	archived, err := tx.ListArchivedTasks()
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]*models.Task, len(active)+len(archived))
+	for _, task := range archived {
+		byID[task.ID] = task
+	}
+	for _, task := range active {
+		byID[task.ID] = task
+	}
+	result := make([]*models.Task, 0, len(byID))
+	for _, task := range byID {
+		result = append(result, task)
+	}
+	return result, nil
 }
 
 func decisionContentForHash(decision *models.DecisionEntry) string {

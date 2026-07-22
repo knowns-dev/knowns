@@ -1,13 +1,18 @@
 package routes
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/tasklifecycle"
 )
 
 // NormalizeTask ensures all slice fields are non-nil so JSON serialization
@@ -30,6 +35,18 @@ func NormalizeTask(t *models.Task) {
 	}
 }
 
+// taskResponse adds backend-derived lifecycle state without persisting it in
+// Task markdown. Storage location remains canonical for archived Tasks.
+type taskResponse struct {
+	*models.Task
+	LifecycleState models.TaskLifecycleState `json:"lifecycleState"`
+}
+
+func newTaskResponse(task *models.Task) taskResponse {
+	NormalizeTask(task)
+	return taskResponse{Task: task, LifecycleState: task.LifecycleState()}
+}
+
 func (tr *TaskRoutes) loadTaskTimeEntries(t *models.Task) {
 	if t == nil {
 		return
@@ -44,9 +61,16 @@ func (tr *TaskRoutes) loadTaskTimeEntries(t *models.Task) {
 
 // TaskRoutes handles /api/tasks endpoints.
 type TaskRoutes struct {
-	store *storage.Store
-	mgr   *storage.Manager
-	sse   Broadcaster
+	store        *storage.Store
+	mgr          *storage.Manager
+	sse          Broadcaster
+	capabilities TaskRouteCapabilities
+}
+
+// TaskRouteCapabilities are injected by the authenticated server boundary.
+// Client request data cannot grant these permissions.
+type TaskRouteCapabilities struct {
+	HardDelete bool
 }
 
 func (tr *TaskRoutes) getStore() *storage.Store {
@@ -65,6 +89,8 @@ func (tr *TaskRoutes) Register(r chi.Router) {
 	r.Post("/tasks/{id}/archive", tr.archive)
 	r.Post("/tasks/{id}/unarchive", tr.unarchive)
 	r.Post("/tasks/batch-archive", tr.batchArchive)
+	r.Post("/tasks/batch-unarchive", tr.batchUnarchive)
+	r.Post("/tasks/{id}/hard-delete", tr.hardDelete)
 	r.Post("/tasks/reorder", tr.reorder)
 	r.Post("/tasks/sync-spec-acs", tr.syncSpecACs)
 	r.Get("/tasks/{id}/history", tr.history)
@@ -74,18 +100,75 @@ func (tr *TaskRoutes) Register(r chi.Router) {
 //
 // GET /api/tasks
 func (tr *TaskRoutes) list(w http.ResponseWriter, r *http.Request) {
+	includeHistorical, err := parseIncludeHistorical(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	tasks, err := tr.getStore().Tasks.List()
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if tasks == nil {
-		tasks = []*models.Task{}
+	if includeHistorical {
+		archived, err := tr.getStore().Tasks.ListArchived()
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		tasks = append(tasks, archived...)
 	}
+	sortTasksByLifecycle(tasks)
+	response := make([]taskResponse, 0, len(tasks))
 	for _, t := range tasks {
 		tr.loadTaskTimeEntries(t)
+		response = append(response, newTaskResponse(t))
 	}
-	respondJSON(w, http.StatusOK, tasks)
+	respondJSON(w, http.StatusOK, response)
+}
+
+func parseIncludeHistorical(r *http.Request) (bool, error) {
+	values, present := r.URL.Query()["includeHistorical"]
+	if !present {
+		return false, nil
+	}
+	if len(values) != 1 || (values[0] != "true" && values[0] != "false") {
+		return false, fmt.Errorf("includeHistorical must be true or false")
+	}
+	return values[0] == "true", nil
+}
+
+func sortTasksByLifecycle(tasks []*models.Task) {
+	sort.Slice(tasks, func(i, j int) bool {
+		left, right := tasks[i], tasks[j]
+		leftRank, rightRank := taskLifecycleRank(left), taskLifecycleRank(right)
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		if left.Order != nil || right.Order != nil {
+			if left.Order == nil {
+				return false
+			}
+			if right.Order == nil {
+				return true
+			}
+			if *left.Order != *right.Order {
+				return *left.Order < *right.Order
+			}
+		}
+		return left.ID < right.ID
+	})
+}
+
+func taskLifecycleRank(task *models.Task) int {
+	switch task.LifecycleState() {
+	case models.TaskLifecycleActive:
+		return 0
+	case models.TaskLifecycleDone:
+		return 1
+	default:
+		return 2
+	}
 }
 
 // get returns a single task by ID.
@@ -100,7 +183,7 @@ func (tr *TaskRoutes) get(w http.ResponseWriter, r *http.Request) {
 	}
 	tr.loadTaskTimeEntries(task)
 	task.ActiveTimer = tr.getStore().Time.GetActiveTimer(task.ID)
-	respondJSON(w, http.StatusOK, task)
+	respondJSON(w, http.StatusOK, newTaskResponse(task))
 }
 
 // create persists a new task.
@@ -124,9 +207,17 @@ func (tr *TaskRoutes) create(w http.ResponseWriter, r *http.Request) {
 	}
 	task.UpdatedAt = now
 
-	if task.Status == "" {
-		task.Status = "todo"
+	requestedStatus := task.Status
+	if requestedStatus == "" {
+		requestedStatus = "todo"
 	}
+	// Lifecycle clocks and archive state are server-owned. Never accept a
+	// caller-supplied completion/archive clock that could bypass retention.
+	task.Status = "todo"
+	task.CompletedAt = nil
+	task.Archived = false
+	task.ArchivedAt = nil
+	tasklifecycle.ApplyStatusTransition(&task, requestedStatus, now)
 	if task.Priority == "" {
 		task.Priority = "medium"
 	}
@@ -147,9 +238,9 @@ func (tr *TaskRoutes) create(w http.ResponseWriter, r *http.Request) {
 		Snapshot: storage.TaskToSnapshot(&task),
 	})
 
-	NormalizeTask(&task)
-	tr.sse.Broadcast(SSEEvent{Type: "tasks:updated", Data: map[string]interface{}{"task": task}})
-	respondJSON(w, http.StatusCreated, task)
+	response := newTaskResponse(&task)
+	tr.sse.Broadcast(SSEEvent{Type: "tasks:updated", Data: map[string]interface{}{"task": response}})
+	respondJSON(w, http.StatusCreated, response)
 }
 
 // update replaces a task's fields.
@@ -157,46 +248,41 @@ func (tr *TaskRoutes) create(w http.ResponseWriter, r *http.Request) {
 // PUT /api/tasks/{id}
 func (tr *TaskRoutes) update(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-
-	existing, err := tr.getStore().Tasks.Get(id)
-	if err != nil {
-		respondError(w, http.StatusNotFound, err.Error())
-		return
-	}
-
-	// Start from a copy of the existing task so that partial updates
-	// (e.g. {"status":"done"}) only overwrite the fields present in the
-	// request body — all other fields retain their current values.
-	updated := *existing
-	if err := decodeJSON(r, &updated); err != nil {
+	var patch map[string]json.RawMessage
+	if err := decodeJSON(r, &patch); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
-
-	// Preserve immutable fields.
-	updated.ID = existing.ID
-	updated.CreatedAt = existing.CreatedAt
-	updated.UpdatedAt = time.Now().UTC()
-
-	changes := tr.getStore().Versions.TrackChanges(existing, &updated)
-
-	if err := tr.getStore().Tasks.Update(&updated); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+	updated, err := tr.lifecycleService().UpdateTask(r.Context(), id, tasklifecycle.TaskUpdateOptions{Actor: "api", Mutate: func(task *models.Task) error {
+		data, err := json.Marshal(task)
+		if err != nil {
+			return err
+		}
+		var current map[string]json.RawMessage
+		if err := json.Unmarshal(data, &current); err != nil {
+			return err
+		}
+		for key, value := range patch {
+			current[key] = value
+		}
+		merged, err := json.Marshal(current)
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(merged, task)
+	}})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if tasklifecycleErrorNotFound(err) {
+			status = http.StatusNotFound
+		}
+		respondError(w, status, err.Error())
 		return
 	}
 
-	search.BestEffortIndexTask(tr.getStore(), updated.ID)
-
-	if len(changes) > 0 {
-		_ = tr.getStore().Versions.SaveVersion(id, models.TaskVersion{
-			Changes:  changes,
-			Snapshot: storage.TaskToSnapshot(&updated),
-		})
-	}
-
-	NormalizeTask(&updated)
-	tr.sse.Broadcast(SSEEvent{Type: "tasks:updated", Data: map[string]interface{}{"task": updated}})
-	respondJSON(w, http.StatusOK, updated)
+	response := newTaskResponse(updated)
+	tr.sse.Broadcast(SSEEvent{Type: "tasks:updated", Data: map[string]interface{}{"task": response}})
+	respondJSON(w, http.StatusOK, response)
 }
 
 // archive moves a task to the archive.
@@ -204,21 +290,13 @@ func (tr *TaskRoutes) update(w http.ResponseWriter, r *http.Request) {
 // POST /api/tasks/{id}/archive
 func (tr *TaskRoutes) archive(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	// Read the task before archiving so we can return it.
-	task, err := tr.getStore().Tasks.Get(id)
-	if err != nil {
-		respondError(w, http.StatusNotFound, err.Error())
+	request, ok := decodeLifecycleRequest(w, r)
+	if !ok {
 		return
 	}
-	if err := tr.getStore().Tasks.Archive(id); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	search.BestEffortRemoveTask(tr.getStore(), id)
-	task.Status = "archived"
-	NormalizeTask(task)
-	tr.sse.Broadcast(SSEEvent{Type: "tasks:archived", Data: map[string]interface{}{"task": task}})
-	respondJSON(w, http.StatusOK, map[string]interface{}{"success": true, "task": task})
+	request.Operation = tasklifecycle.OperationArchive
+	request.TaskID = id
+	tr.executeLifecycle(w, r, request)
 }
 
 // unarchive restores a task from the archive.
@@ -226,25 +304,23 @@ func (tr *TaskRoutes) archive(w http.ResponseWriter, r *http.Request) {
 // POST /api/tasks/{id}/unarchive
 func (tr *TaskRoutes) unarchive(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if err := tr.getStore().Tasks.Unarchive(id); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+	request, ok := decodeLifecycleRequest(w, r)
+	if !ok {
 		return
 	}
-	search.BestEffortIndexTask(tr.getStore(), id)
-	// Re-read the task after unarchiving to return the current state.
-	task, err := tr.getStore().Tasks.Get(id)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	NormalizeTask(task)
-	tr.sse.Broadcast(SSEEvent{Type: "tasks:unarchived", Data: map[string]interface{}{"task": task}})
-	respondJSON(w, http.StatusOK, map[string]interface{}{"success": true, "task": task})
+	request.Operation = tasklifecycle.OperationReopen
+	request.TaskID = id
+	tr.executeLifecycle(w, r, request)
 }
 
 // batchArchiveRequest is the request body for batch-archive.
 type batchArchiveRequest struct {
-	OlderThanMs int64 `json:"olderThanMs"`
+	IDs          []string `json:"ids,omitempty"`
+	Execute      bool     `json:"execute"`
+	Actor        string   `json:"actor,omitempty"`
+	MinimumAgeMs *int64   `json:"minimumAgeMs,omitempty"`
+	// OlderThanMs is accepted as a backward-compatible alias.
+	OlderThanMs *int64 `json:"olderThanMs,omitempty"`
 }
 
 // batchArchive archives all tasks that were last updated before the given age.
@@ -257,41 +333,87 @@ func (tr *TaskRoutes) batchArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, err := tr.getStore().Tasks.List()
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+	minimumAge := req.MinimumAgeMs
+	if minimumAge == nil {
+		minimumAge = req.OlderThanMs
+	}
+	tr.executeLifecycle(w, r, tasklifecycle.Request{Operation: tasklifecycle.OperationBatchArchive, IDs: req.IDs, Execute: req.Execute, Actor: req.Actor, MinimumAgeMs: minimumAge})
+}
+
+func (tr *TaskRoutes) batchUnarchive(w http.ResponseWriter, r *http.Request) {
+	request, ok := decodeLifecycleRequest(w, r)
+	if !ok {
 		return
 	}
+	request.Operation = tasklifecycle.OperationBatchUnarchive
+	tr.executeLifecycle(w, r, request)
+}
 
-	cutoff := time.Now().Add(-time.Duration(req.OlderThanMs) * time.Millisecond)
-	var archivedTasks []*models.Task
-	for _, t := range tasks {
-		// Only archive "done" tasks that are older than the cutoff.
-		if t.Status != "done" {
-			continue
-		}
-		if req.OlderThanMs > 0 && t.UpdatedAt.After(cutoff) {
-			continue
-		}
-		if err := tr.getStore().Tasks.Archive(t.ID); err == nil {
-			search.BestEffortRemoveTask(tr.getStore(), t.ID)
-			t.Status = "archived"
-			NormalizeTask(t)
-			archivedTasks = append(archivedTasks, t)
-		}
+func (tr *TaskRoutes) hardDelete(w http.ResponseWriter, r *http.Request) {
+	request, ok := decodeLifecycleRequest(w, r)
+	if !ok {
+		return
 	}
-	if archivedTasks == nil {
-		archivedTasks = []*models.Task{}
-	}
+	request.Operation = tasklifecycle.OperationHardDelete
+	request.TaskID = chi.URLParam(r, "id")
+	request.Execute = request.Confirmed
+	tr.executeLifecycle(w, r, request)
+}
 
-	tr.sse.Broadcast(SSEEvent{Type: "tasks:batch-archived", Data: map[string]interface{}{
-		"count": len(archivedTasks),
-	}})
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"count":   len(archivedTasks),
-		"tasks":   archivedTasks,
-	})
+func decodeLifecycleRequest(w http.ResponseWriter, r *http.Request) (tasklifecycle.Request, bool) {
+	var request tasklifecycle.Request
+	if r.Body == nil || r.ContentLength == 0 {
+		return request, true
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return request, false
+	}
+	return request, true
+}
+
+func (tr *TaskRoutes) lifecycleService() *tasklifecycle.Service {
+	store := tr.getStore()
+	return tasklifecycle.New(store, tasklifecycle.WithHooks(tasklifecycle.Hooks{
+		IndexTask:  func(id string) error { return search.ReconcileTaskIndex(store, id) },
+		RemoveTask: func(id string) error { return search.ReconcileTaskRemoval(store, id) },
+		Emit: func(event tasklifecycle.Event) error {
+			if tr.sse != nil {
+				tr.sse.Broadcast(SSEEvent{Type: "tasks:lifecycle", Data: event})
+			}
+			return nil
+		},
+	}))
+}
+
+func tasklifecycleErrorNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "not found")
+}
+
+func (tr *TaskRoutes) executeLifecycle(w http.ResponseWriter, r *http.Request, request tasklifecycle.Request) {
+	if request.Actor == "" {
+		request.Actor = "api"
+	}
+	response, err := tr.lifecycleService().ExecutePublic(r.Context(), request, tr.capabilities.HardDelete)
+	status := lifecycleResponseStatus(response, err)
+	respondJSON(w, status, response)
+}
+
+func lifecycleResponseStatus(response *tasklifecycle.Response, err error) int {
+	switch tasklifecycle.FailureKindFor(response, err) {
+	case tasklifecycle.FailureNone:
+		return http.StatusOK
+	case tasklifecycle.FailureInvalidRequest:
+		return http.StatusBadRequest
+	case tasklifecycle.FailurePermission:
+		return http.StatusForbidden
+	case tasklifecycle.FailureNotFound:
+		return http.StatusNotFound
+	case tasklifecycle.FailureConflict, tasklifecycle.FailureDenied:
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 // reorderItem is a single entry in a reorder request.
@@ -317,20 +439,22 @@ func (tr *TaskRoutes) reorder(w http.ResponseWriter, r *http.Request) {
 
 	updated := 0
 	for _, item := range req.Orders {
-		task, err := tr.getStore().Tasks.Get(item.ID)
+		changed := false
+		_, err := tr.lifecycleService().UpdateTask(r.Context(), item.ID, tasklifecycle.TaskUpdateOptions{Actor: "api", Mutate: func(task *models.Task) error {
+			if task.Order != nil && *task.Order == item.Order {
+				return nil
+			}
+			order := item.Order
+			task.Order = &order
+			changed = true
+			return nil
+		}})
 		if err != nil {
 			continue
 		}
-		// Skip if order is already the same.
-		if task.Order != nil && *task.Order == item.Order {
-			continue
+		if changed {
+			updated++
 		}
-		order := item.Order
-		task.Order = &order
-		if err := tr.getStore().Tasks.Update(task); err != nil {
-			continue
-		}
-		updated++
 	}
 
 	if updated > 0 {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -30,7 +31,10 @@ type RuntimeSearchResponse struct {
 }
 
 type semanticSearchRuntimeRequest struct {
-	Options SearchOptions `json:"options"`
+	Options         SearchOptions  `json:"options"`
+	TaskSnapshot    []*models.Task `json:"taskSnapshot,omitempty"`
+	HasTaskSnapshot bool           `json:"hasTaskSnapshot,omitempty"`
+	TaskVisibility  string         `json:"taskVisibility,omitempty"`
 }
 
 func SearchWithRuntime(store *storage.Store, opts SearchOptions) (*RuntimeSearchResponse, error) {
@@ -63,7 +67,12 @@ func searchWithDaemonRuntime(store *storage.Store, opts SearchOptions) (*Runtime
 	if store == nil {
 		return nil, semanticRuntimeSearchError(ErrSemanticNotConfigured)
 	}
-	requestID, err := writeSemanticSearchRuntimeRequest(semanticSearchRuntimeRequest{Options: opts})
+	requestID, err := writeSemanticSearchRuntimeRequest(semanticSearchRuntimeRequest{
+		Options:         opts,
+		TaskSnapshot:    taskSnapshotValues(opts.taskSnapshot),
+		HasTaskSnapshot: opts.taskSnapshot != nil,
+		TaskVisibility:  string(opts.taskVisibility),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -347,8 +356,13 @@ func newSemanticRuntimeRequestID() (string, error) {
 }
 
 func RetrieveWithRuntime(store *storage.Store, opts models.RetrievalOptions) (*models.RetrievalResponse, *RuntimeMetadata, error) {
+	return retrieveWithRuntime(store, opts, nil)
+}
+
+func retrieveWithRuntime(store *storage.Store, opts models.RetrievalOptions, afterSearch func()) (*models.RetrievalResponse, *RuntimeMetadata, error) {
 	searchType := typeFilterFromSources(opts.SourceTypes)
-	searchResp, err := SearchWithRuntime(store, SearchOptions{
+	engine := NewEngine(store, nil, nil)
+	searchOpts := engine.resolveTaskVisibility(SearchOptions{
 		Query:             opts.Query,
 		Type:              searchType,
 		Mode:              opts.Mode,
@@ -359,17 +373,26 @@ func RetrieveWithRuntime(store *storage.Store, opts models.RetrievalOptions) (*m
 		Tag:               opts.Tag,
 		Limit:             opts.Limit,
 		IncludeHistorical: opts.IncludeHistorical,
+		Purpose:           SearchPurposeAIRetrieval,
 	})
+	searchOpts, err := engine.withTaskSnapshot(searchOpts)
 	if err != nil {
 		return nil, nil, err
 	}
-	engine := NewEngine(store, nil, nil)
-	filtered := filterBySourceTypes(searchResp.Results, opts.SourceTypes)
-	candidates := engine.buildCandidates(filtered)
-	if opts.ExpandReferences {
-		expanded := engine.expandCandidateReferences(candidates, opts)
-		candidates = mergeCandidates(candidates, expanded)
+	searchResp, err := SearchWithRuntime(store, searchOpts)
+	if err != nil {
+		return nil, nil, err
 	}
+	if afterSearch != nil {
+		afterSearch()
+	}
+	filtered := filterBySourceTypes(searchResp.Results, opts.SourceTypes)
+	candidates := engine.buildCandidates(filtered, searchOpts)
+	if opts.ExpandReferences {
+		expanded := engine.expandCandidateReferences(candidates, opts, searchOpts)
+		candidates = mergeCandidates(candidates, expanded, opts.IncludeHistorical)
+	}
+	candidates = engine.canonicalizeRetrievalCandidates(candidates, searchOpts)
 	if opts.Limit <= 0 {
 		opts.Limit = 20
 	}
@@ -381,7 +404,7 @@ func RetrieveWithRuntime(store *storage.Store, opts models.RetrievalOptions) (*m
 		Mode:       effectiveMode(opts.Mode, searchResp.Runtime == nil || !searchResp.Runtime.Degraded),
 		Candidates: candidates,
 		ContextPack: models.ContextPack{
-			Items: engine.buildContextPack(candidates),
+			Items: engine.buildContextPack(candidates, searchOpts),
 			Mode:  "docs-first",
 		},
 	}
@@ -392,6 +415,28 @@ func RetrieveWithRuntime(store *storage.Store, opts models.RetrievalOptions) (*m
 		response.ContextPack.Items = []models.ContextItem{}
 	}
 	return response, searchResp.Runtime, nil
+}
+
+func taskSnapshotValues(snapshot *taskSearchSnapshot) []*models.Task {
+	if snapshot == nil {
+		return nil
+	}
+	tasks := make([]*models.Task, 0, len(snapshot.byID))
+	for _, task := range snapshot.byID {
+		tasks = append(tasks, task)
+	}
+	sort.Slice(tasks, func(i, j int) bool { return tasks[i].ID < tasks[j].ID })
+	return tasks
+}
+
+func taskSnapshotFromValues(tasks []*models.Task) *taskSearchSnapshot {
+	snapshot := &taskSearchSnapshot{byID: make(map[string]*models.Task, len(tasks))}
+	for _, task := range tasks {
+		if task != nil {
+			snapshot.byID[task.ID] = task
+		}
+	}
+	return snapshot
 }
 
 func keywordFallback(store *storage.Store, opts SearchOptions) ([]models.SearchResult, error) {

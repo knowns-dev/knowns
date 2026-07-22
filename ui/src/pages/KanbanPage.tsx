@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Plus, Archive, ChevronDown, ListTodo, X } from "lucide-react";
 import type { Task } from "@/ui/models/task";
 import { Board } from "../components/organisms";
@@ -10,11 +10,15 @@ import {
 	DropdownMenuTrigger,
 } from "../components/ui/DropdownMenu";
 import { api } from "../api/client";
+import { LifecycleAPIError } from "../api/client";
+import type { TaskLifecycleResponse } from "../models/taskLifecycle";
+import { TaskLifecycleDialog } from "../components/organisms/TaskLifecycleDialog";
 import { toast } from "../components/ui/sonner";
 import { useIsMobile } from "../hooks/useMobile";
 
 // Time duration options for batch archive (in milliseconds)
 const BATCH_ARCHIVE_OPTIONS = [
+	{ label: "now", value: 0 },
 	{ label: "1 hour ago", value: 1 * 60 * 60 * 1000 },
 	{ label: "1 day ago", value: 24 * 60 * 60 * 1000 },
 	{ label: "1 week ago", value: 7 * 24 * 60 * 60 * 1000 },
@@ -34,30 +38,77 @@ export default function KanbanPage({ tasks, loading, onTasksUpdate, onNewTask }:
 	const [mobileWarningDismissed, setMobileWarningDismissed] = useState(() => {
 		return sessionStorage.getItem("kanban-mobile-warning-dismissed") === "true";
 	});
+	const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
+	const [archiveResponse, setArchiveResponse] = useState<TaskLifecycleResponse | null>(null);
+	const [archiveError, setArchiveError] = useState<string | null>(null);
+	const [archiveLoading, setArchiveLoading] = useState(false);
+	const [archiveRequest, setArchiveRequest] = useState<{ generation: number; minimumAgeMs: number; label: string; ids?: readonly string[] } | null>(null);
+	const archiveGenerationRef = useRef(0);
+	const archiveInFlightRef = useRef(false);
 
-	// Count done tasks for batch archive preview
-	const getDoneTasksCount = (olderThanMs: number): number => {
-		const cutoffTime = Date.now() - olderThanMs;
-		return tasks.filter(
-			(t) => t.status === "done" && new Date(t.updatedAt).getTime() < cutoffTime
-		).length;
+	const reconcileTasks = async () => {
+		const current = await api.getTasks();
+		onTasksUpdate(current);
 	};
 
-	const handleBatchArchive = async (olderThanMs: number, label: string) => {
+	const handleBatchArchivePreview = async (minimumAgeMs: number, label: string) => {
+		const generation = ++archiveGenerationRef.current;
+		setArchiveRequest({ generation, minimumAgeMs, label });
+		setArchiveDialogOpen(true);
+		setArchiveResponse(null);
+		setArchiveError(null);
+		setArchiveLoading(true);
 		try {
-			const result = await api.batchArchiveTasks(olderThanMs);
-			if (result.count > 0) {
-				// Remove archived tasks from list
-				const archivedIds = new Set(result.tasks.map((t) => t.id));
-				onTasksUpdate(tasks.filter((t) => !archivedIds.has(t.id)));
-				toast.success(`Archived ${result.count} task${result.count > 1 ? "s" : ""} done before ${label}`);
-			} else {
-				toast.info(`No done tasks found before ${label}`);
+			const response = await api.batchArchiveTasks({ minimumAgeMs });
+			if (archiveGenerationRef.current !== generation) return;
+			setArchiveRequest({ generation, minimumAgeMs, label, ids: Object.freeze(response.items.map((item) => item.taskId)) });
+			setArchiveResponse(response);
+		} catch (error) {
+			if (archiveGenerationRef.current !== generation) return;
+			const response = error instanceof LifecycleAPIError ? error.response || null : null;
+			if (response) {
+				setArchiveRequest({ generation, minimumAgeMs, label, ids: Object.freeze(response.items.map((item) => item.taskId)) });
+			}
+			setArchiveResponse(response);
+			setArchiveError(error instanceof Error ? error.message : "Failed to preview archive");
+		} finally {
+			if (archiveGenerationRef.current === generation) setArchiveLoading(false);
+		}
+	};
+
+	const handleBatchArchiveExecute = async () => {
+		if (!archiveRequest?.ids || archiveInFlightRef.current) return;
+		const { generation, minimumAgeMs, ids } = archiveRequest;
+		archiveInFlightRef.current = true;
+		setArchiveLoading(true);
+		setArchiveError(null);
+		try {
+			const response = await api.batchArchiveTasks({ ids: [...ids], minimumAgeMs, execute: true });
+			if (archiveGenerationRef.current !== generation) return;
+			setArchiveResponse(response);
+			await reconcileTasks();
+			if (!response.failedTaskId) {
+				toast.success(`Archived ${response.changed} task${response.changed === 1 ? "" : "s"}`);
 			}
 		} catch (error) {
-			console.error("Failed to batch archive tasks:", error);
-			toast.error("Failed to archive tasks");
+			if (archiveGenerationRef.current === generation) {
+				if (error instanceof LifecycleAPIError && error.response) setArchiveResponse(error.response);
+				setArchiveError(error instanceof Error ? error.message : "Failed to archive Tasks");
+			}
+			await reconcileTasks().catch(() => {});
+		} finally {
+			archiveInFlightRef.current = false;
+			if (archiveGenerationRef.current === generation) setArchiveLoading(false);
 		}
+	};
+
+	const closeArchiveDialog = (open: boolean) => {
+		if (open) return setArchiveDialogOpen(true);
+		++archiveGenerationRef.current;
+		setArchiveDialogOpen(false);
+		setArchiveRequest(null);
+		setArchiveResponse(null);
+		setArchiveError(null);
 	};
 
 	const dismissMobileWarning = () => {
@@ -102,21 +153,14 @@ export default function KanbanPage({ tasks, loading, onTasksUpdate, onNewTask }:
 								</Button>
 							</DropdownMenuTrigger>
 							<DropdownMenuContent align="end">
-								{BATCH_ARCHIVE_OPTIONS.map((option) => {
-									const count = getDoneTasksCount(option.value);
-									return (
+								{BATCH_ARCHIVE_OPTIONS.map((option) => (
 										<DropdownMenuItem
 											key={option.value}
-											onClick={() => handleBatchArchive(option.value, option.label)}
-											disabled={count === 0}
+											onClick={() => handleBatchArchivePreview(option.value, option.label)}
 										>
 											<span className="flex-1">Done before {option.label}</span>
-											<span className="ml-2 text-xs text-muted-foreground">
-												({count})
-											</span>
 										</DropdownMenuItem>
-									);
-								})}
+								))}
 							</DropdownMenuContent>
 						</DropdownMenu>
 						{/* New Task Button */}
@@ -136,6 +180,18 @@ export default function KanbanPage({ tasks, loading, onTasksUpdate, onNewTask }:
 			<div className="flex-1 overflow-hidden px-6 pb-6">
 				<Board tasks={tasks} loading={loading} onTasksUpdate={onTasksUpdate} />
 			</div>
+
+			<TaskLifecycleDialog
+				open={archiveDialogOpen}
+				onOpenChange={closeArchiveDialog}
+				title="Archive completed Tasks"
+				description={`Preview for Tasks completed before ${archiveRequest?.label || "the selected retention window"}. Eligibility and warnings come from the backend.`}
+				response={archiveResponse}
+				loading={archiveLoading}
+				error={archiveError}
+				confirmLabel="Archive eligible Tasks"
+				onConfirm={handleBatchArchiveExecute}
+			/>
 		</div>
 	);
 }

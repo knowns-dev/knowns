@@ -1,6 +1,10 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
-import { getConfig, saveConfig } from "../api/client";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { getConfig, patchConfig } from "../api/client";
 import type { OpenCodeModelSettings } from "../models/chat";
+import {
+	DEFAULT_TASK_LIFECYCLE_SETTINGS,
+	type TaskLifecycleSettings,
+} from "../models/taskLifecycle";
 
 // Import config type
 interface ImportConfig {
@@ -66,13 +70,21 @@ export interface Config {
 		maxItems?: number;
 		maxBytes?: number;
 	};
+	taskLifecycle?: TaskLifecycleSettings;
+	capabilities?: {
+		taskHardDelete?: boolean;
+	};
 }
+
+export type ConfigPatch = Omit<Partial<Config>, "taskLifecycle"> & {
+	taskLifecycle?: Partial<TaskLifecycleSettings>;
+};
 
 interface ConfigContextType {
 	config: Config;
 	loading: boolean;
 	error: Error | null;
-	updateConfig: (updates: Partial<Config>) => Promise<void>;
+	updateConfig: (updates: ConfigPatch) => Promise<void>;
 	refetch: () => Promise<void>;
 	/** True when the "opencode" platform is enabled (or platforms is unset = all enabled). */
 	chatUIEnabled: boolean;
@@ -88,43 +100,110 @@ const DEFAULT_CONFIG: Config = {
 	statuses: ["todo", "in-progress", "in-review", "done", "blocked", "on-hold", "urgent"],
 	visibleColumns: ["todo", "in-progress", "in-review", "done", "blocked"],
 	statusColors: {},
+	taskLifecycle: DEFAULT_TASK_LIFECYCLE_SETTINGS,
 };
+
+function editablePatch(updates: ConfigPatch): ConfigPatch {
+	const {
+		capabilities: _readOnlyCapabilities,
+		id: _readOnlyID,
+		createdAt: _readOnlyCreatedAt,
+		opencodeInstalled: _readOnlyOpenCodeInstalled,
+		...patch
+	} = updates;
+	return patch;
+}
+
+function mergeConfig(base: Config, patch: ConfigPatch): Config {
+	const { taskLifecycle, ...flatPatch } = patch;
+	return {
+		...base,
+		...flatPatch,
+		...(taskLifecycle
+			? { taskLifecycle: { ...(base.taskLifecycle || DEFAULT_TASK_LIFECYCLE_SETTINGS), ...taskLifecycle } }
+			: {}),
+	};
+}
+
+function effectiveServerConfig(data: Config): Config {
+	return {
+		...DEFAULT_CONFIG,
+		...data,
+		taskLifecycle: {
+			...DEFAULT_TASK_LIFECYCLE_SETTINGS,
+			...(data.taskLifecycle || {}),
+		},
+		capabilities: data.capabilities ? { ...data.capabilities } : undefined,
+	};
+}
 
 export function ConfigProvider({ children }: { children: ReactNode }) {
 	const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<Error | null>(null);
 
-	const fetchConfig = async () => {
+	const pendingRef = useRef<Array<{ id: number; patch: ConfigPatch }>>([]);
+	const nextPatchIDRef = useRef(0);
+	const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+	const fetchGenerationRef = useRef(0);
+
+	const applyEffective = useCallback((data: Config) => {
+		const withPending = pendingRef.current.reduce(
+			(current, pending) => mergeConfig(current, pending.patch),
+			effectiveServerConfig(data),
+		);
+		setConfig(withPending);
+	}, []);
+
+	const fetchConfig = useCallback(async () => {
+		const generation = ++fetchGenerationRef.current;
 		try {
 			setLoading(true);
 			setError(null);
-			const data = await getConfig();
-			setConfig({ ...DEFAULT_CONFIG, ...data } as Config);
+			const data = (await getConfig()) as Config;
+			if (generation === fetchGenerationRef.current) applyEffective(data);
 		} catch (err) {
-			setError(err instanceof Error ? err : new Error("Failed to fetch config"));
-			setConfig(DEFAULT_CONFIG);
+			if (generation === fetchGenerationRef.current) {
+				setError(err instanceof Error ? err : new Error("Failed to fetch config"));
+				setConfig(DEFAULT_CONFIG);
+			}
 		} finally {
-			setLoading(false);
+			if (generation === fetchGenerationRef.current) setLoading(false);
 		}
-	};
+	}, [applyEffective]);
 
 	useEffect(() => {
 		fetchConfig();
-	}, []);
+	}, [fetchConfig]);
 
-	const updateConfig = async (updates: Partial<Config>) => {
-		const prevConfig = config;
-		const newConfig = { ...config, ...updates };
-		setConfig(newConfig); // Optimistic update
+	const updateConfig = useCallback(async (updates: ConfigPatch) => {
+		const patch = editablePatch(updates);
+		if (Object.keys(patch).length === 0) return;
+		const id = ++nextPatchIDRef.current;
+		pendingRef.current.push({ id, patch });
+		setConfig((current) => mergeConfig(current, patch));
 
-		try {
-			await saveConfig(newConfig);
-		} catch (err) {
-			setConfig(prevConfig); // Rollback on error
-			throw err;
-		}
-	};
+		const operation = saveQueueRef.current.then(async () => {
+			try {
+				const effective = (await patchConfig(patch as Record<string, unknown>)) as Config;
+				pendingRef.current = pendingRef.current.filter((entry) => entry.id !== id);
+				++fetchGenerationRef.current;
+				applyEffective(effective);
+			} catch (err) {
+				pendingRef.current = pendingRef.current.filter((entry) => entry.id !== id);
+				const generation = ++fetchGenerationRef.current;
+				try {
+					const effective = (await getConfig()) as Config;
+					if (generation === fetchGenerationRef.current) applyEffective(effective);
+				} catch {
+					// Preserve the last effective state if rollback refetch is unavailable.
+				}
+				throw err;
+			}
+		});
+		saveQueueRef.current = operation.catch(() => {});
+		return operation;
+	}, [applyEffective]);
 
 	return (
 		<ConfigContext.Provider

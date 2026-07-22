@@ -8,6 +8,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/tasklifecycle"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -118,16 +119,9 @@ func handleTimeStop(getStore func() *storage.Store, req mcp.CallToolRequest) (*m
 		return errResult(ErrTaskIDReq)
 	}
 
-	entry, err := store.Time.Stop(taskID)
+	entry, err := newMCPTaskLifecycleService(store).StopTimer(context.Background(), taskID, "mcp")
 	if err != nil {
 		return errFailed("stop timer", err)
-	}
-
-	task, taskErr := store.Tasks.Get(taskID)
-	if taskErr == nil {
-		task.TimeSpent += entry.Duration
-		task.UpdatedAt = time.Now().UTC()
-		_ = store.Tasks.Update(task)
 	}
 
 	go notifyTimeUpdated(store)
@@ -190,13 +184,9 @@ func handleTimeAdd(getStore func() *storage.Store, req mcp.CallToolRequest) (*mc
 		entry.Note = note
 	}
 
-	if err := store.Time.SaveEntry(taskID, entry); err != nil {
+	if _, err := newMCPTaskLifecycleService(store).AddTimeEntry(context.Background(), taskID, tasklifecycle.TimeMutationOptions{Actor: "mcp", Entry: entry}); err != nil {
 		return errFailed("save time entry", err)
 	}
-
-	task.TimeSpent += durationSecs
-	task.UpdatedAt = time.Now().UTC()
-	_ = store.Tasks.Update(task)
 
 	go notifyTimeUpdated(store)
 

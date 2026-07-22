@@ -1,14 +1,15 @@
 ---
 title: MCP Integration Guide
+description: Setup MCP server for AI assistants (Claude, Cursor, etc.)
 createdAt: '2026-02-24T08:45:15.876Z'
-updatedAt: '2026-03-08T18:18:23.058Z'
-description: 'Setup MCP server for AI assistants (Claude, Cursor, etc.)'
+updatedAt: '2026-07-22T04:43:55.205Z'
 tags:
   - guide
   - mcp
   - ai
   - integration
 ---
+
 # MCP Integration Guide
 
 Setup Knowns MCP server for AI assistants. Full docs: `./docs/mcp-integration.md`
@@ -150,3 +151,10 @@ mcp__knowns__project({ "action": "set", "projectRoot": "/path/to/project" })
 2. Follow refs returned in task/doc content
 3. Validate after making changes
 4. Use section editing for large docs
+
+
+## Task Lifecycle MCP operations
+
+The `tasks` tool supports `archive`, `unarchive`, `batch_archive`, `batch_unarchive`, and separately permission-gated `hard_delete`. Lifecycle mutations preview by default; set `execute: true` only after reviewing reasons and warnings. Hard Delete also requires `confirmed: true` and a non-empty `reason`.
+
+Use `includeHistorical: true` with `search` or `retrieve` to include historical Tasks. Lifecycle event delivery is AT-LEAST-ONCE, so consumers must deduplicate using stable `Event.ID`. See @doc/features/task-lifecycle.

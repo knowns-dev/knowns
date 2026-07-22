@@ -1,7 +1,9 @@
 package routes
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -12,8 +14,9 @@ import (
 
 // ConfigRoutes handles /api/config endpoints.
 type ConfigRoutes struct {
-	store *storage.Store
-	mgr   *storage.Manager
+	store        *storage.Store
+	mgr          *storage.Manager
+	capabilities TaskRouteCapabilities
 }
 
 func (cr *ConfigRoutes) getStore() *storage.Store {
@@ -27,6 +30,7 @@ func (cr *ConfigRoutes) getStore() *storage.Store {
 func (cr *ConfigRoutes) Register(r chi.Router) {
 	r.Get("/config", cr.get)
 	r.Post("/config", cr.save)
+	r.Patch("/config", cr.save)
 }
 
 // get returns the full project configuration.
@@ -38,12 +42,21 @@ func (cr *ConfigRoutes) get(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	respondJSON(w, http.StatusOK, cr.configResponse(project))
+}
+
+func (cr *ConfigRoutes) configResponse(project *models.Project) map[string]interface{} {
 	// The UI expects a flat config: { name, id, statuses, statusColors, ... }.
-	// Flatten settings into the top-level object.
+	// Flatten settings into the top-level object and always expose effective
+	// lifecycle policy plus trusted read-only capabilities.
 	flat := map[string]interface{}{
-		"name":      project.Name,
-		"id":        project.ID,
-		"createdAt": project.CreatedAt,
+		"name":          project.Name,
+		"id":            project.ID,
+		"createdAt":     project.CreatedAt,
+		"taskLifecycle": project.Settings.EffectiveTaskLifecycle(),
+		"capabilities": map[string]bool{
+			"taskHardDelete": cr.capabilities.HardDelete,
+		},
 	}
 	s := project.Settings
 	if s.DefaultAssignee != "" {
@@ -109,9 +122,9 @@ func (cr *ConfigRoutes) get(w http.ResponseWriter, r *http.Request) {
 		flat["editor"] = s.Editor
 	}
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{
+	return map[string]interface{}{
 		"config": flat,
-	})
+	}
 }
 
 // save writes new project settings.
@@ -134,12 +147,22 @@ func (cr *ConfigRoutes) save(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
+	if err := project.Settings.Validate(); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
 
 	if err := cr.getStore().Config.Save(project); err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	respondJSON(w, http.StatusOK, project)
+	if r.Method == http.MethodPost {
+		// POST is the legacy full-config save API. Preserve its exact response
+		// contract for existing clients; PATCH owns the new effective envelope.
+		respondJSON(w, http.StatusOK, project)
+		return
+	}
+	respondJSON(w, http.StatusOK, cr.configResponse(project))
 }
 
 func applyProjectConfigUpdate(project *models.Project, payload map[string]json.RawMessage) error {
@@ -161,6 +184,11 @@ func applyProjectConfigUpdate(project *models.Project, payload map[string]json.R
 }
 
 func applySettingsUpdate(settings *models.ProjectSettings, payload map[string]json.RawMessage) error {
+	if raw, ok := payload["taskLifecycle"]; ok {
+		if err := applyTaskLifecycleSettingsUpdate(settings, raw); err != nil {
+			return err
+		}
+	}
 	if raw, ok := payload["defaultAssignee"]; ok {
 		if err := json.Unmarshal(raw, &settings.DefaultAssignee); err != nil {
 			return err
@@ -278,5 +306,65 @@ func applySettingsUpdate(settings *models.ProjectSettings, payload map[string]js
 		}
 		settings.EnableChatUI = &v
 	}
+	return nil
+}
+
+func applyTaskLifecycleSettingsUpdate(settings *models.ProjectSettings, raw json.RawMessage) error {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return fmt.Errorf("settings.taskLifecycle: must be an object")
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return fmt.Errorf("settings.taskLifecycle: %w", err)
+	}
+	if payload == nil {
+		return fmt.Errorf("settings.taskLifecycle: must be an object")
+	}
+
+	effective := settings.EffectiveTaskLifecycle()
+	for field, value := range payload {
+		switch field {
+		case "excludeDoneFromDefaultRetrieval":
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return fmt.Errorf("settings.taskLifecycle.%s: must be a boolean", field)
+			}
+			if err := json.Unmarshal(value, &effective.ExcludeDoneFromDefaultRetrieval); err != nil {
+				return fmt.Errorf("settings.taskLifecycle.%s: %w", field, err)
+			}
+		case "autoArchive":
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return fmt.Errorf("settings.taskLifecycle.%s: must be a boolean", field)
+			}
+			if err := json.Unmarshal(value, &effective.AutoArchive); err != nil {
+				return fmt.Errorf("settings.taskLifecycle.%s: %w", field, err)
+			}
+		case "archiveAfter":
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return fmt.Errorf("settings.taskLifecycle.%s: must be a duration string", field)
+			}
+			if err := json.Unmarshal(value, &effective.ArchiveAfter); err != nil {
+				return fmt.Errorf("settings.taskLifecycle.%s: %w", field, err)
+			}
+		case "purgeAfter":
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				effective.PurgeAfter = nil
+				continue
+			}
+			var purgeAfter string
+			if err := json.Unmarshal(value, &purgeAfter); err != nil {
+				return fmt.Errorf("settings.taskLifecycle.%s: %w", field, err)
+			}
+			effective.PurgeAfter = &purgeAfter
+		default:
+			return fmt.Errorf("settings.taskLifecycle.%s: unknown field", field)
+		}
+	}
+
+	candidate := *settings
+	candidate.TaskLifecycle = &effective
+	if err := candidate.Validate(); err != nil {
+		return err
+	}
+	settings.TaskLifecycle = &effective
 	return nil
 }

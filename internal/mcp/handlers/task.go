@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/permissions"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/tasklifecycle"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -17,7 +19,7 @@ import (
 func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 	s.AddTool(
 		mcp.NewTool("tasks",
-			mcp.WithDescription(`Task management operations. Use 'action' to specify: create, get, update, delete, list, history, board.
+			mcp.WithDescription(`Task management operations. Use 'action' to specify: create, get, update, delete, list, history, board, archive, unarchive, batch_archive, batch_unarchive, hard_delete.
 
 - create: Create a task or subtask. Required: title. Optional: description, status, priority, assignee, labels, parent, spec, fulfills, order. Returns: created task with ID and metadata.
 - get: Read task details. Required: taskId. Optional: none. Returns: task metadata, acceptance criteria, plan, notes, spec links, and time spent.
@@ -26,11 +28,14 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 - list: List tasks with filters. Required: none. Optional: status, priority, assignee, label, spec. Returns: matching task summaries with IDs, titles, statuses, priorities, assignees, labels, and spec links.
 - history: View task change history. Required: taskId. Optional: none. Returns: chronological change entries with timestamps and metadata.
 - board: Show tasks grouped by status. Required: none. Optional: none. Returns: board columns containing task summaries by status.
+- archive/unarchive: Preview by default; set execute=true to mutate. Required: taskId.
+- batch_archive/batch_unarchive: Preview by default; set execute=true to mutate. Optional: ids for batch_archive; required for batch_unarchive.
+- hard_delete: Permission-gated separately from archive. Required: taskId, confirmed=true, and non-empty reason.
 `),
 			mcp.WithString("action",
 				mcp.Required(),
 				mcp.Description("Action to perform"),
-				mcp.Enum("create", "get", "update", "delete", "list", "history", "board"),
+				mcp.Enum("create", "get", "update", "delete", "list", "history", "board", "archive", "unarchive", "batch_archive", "batch_unarchive", "hard_delete"),
 			),
 			mcp.WithString("taskId",
 				mcp.Description("Task ID (required for get, update, delete, history)"),
@@ -104,6 +109,11 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 			mcp.WithBoolean("dryRun",
 				mcp.Description("Preview only without deleting (default: true) (delete)"),
 			),
+			mcp.WithArray("ids", mcp.Description("Task IDs for batch lifecycle actions"), mcp.WithStringItems()),
+			mcp.WithBoolean("execute", mcp.Description("Execute a lifecycle mutation; defaults to false preview")),
+			mcp.WithBoolean("confirmed", mcp.Description("Explicit hard-delete confirmation")),
+			mcp.WithString("reason", mcp.Description("Required hard-delete reason")),
+			mcp.WithString("actor", mcp.Description("Optional lifecycle audit actor")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			action, err := req.RequireString("action")
@@ -125,6 +135,8 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 				return handleTaskHistory(getStore, req)
 			case "board":
 				return handleTaskBoard(getStore, req)
+			case "archive", "unarchive", "batch_archive", "batch_unarchive", "hard_delete":
+				return handleTaskLifecycle(ctx, getStore, action, req)
 			default:
 				return errResultf("unknown tasks action: %s", action)
 			}
@@ -138,6 +150,11 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 	registerHelp(s, "tasks.list", HelpEntry{When: "Find tasks by status, owner, priority, label, or spec before choosing work or checking remaining scope.", Params: map[string]string{"status": "filter by task status", "priority": "filter by low | medium | high", "assignee": "filter by assignee", "label": "filter by one label", "spec": "filter by linked spec doc path"}})
 	registerHelp(s, "tasks.history", HelpEntry{When: "Inspect chronological changes for audit, debugging, or understanding how a task evolved.", Params: map[string]string{"taskId": "required — task ID"}})
 	registerHelp(s, "tasks.board", HelpEntry{When: "Show task board grouped by status for planning or handoff overview.", Params: map[string]string{}})
+	registerHelp(s, "tasks.archive", HelpEntry{When: "Preview or archive one completed Task through the canonical lifecycle policy.", Params: map[string]string{"taskId": "required", "execute": "false previews; true mutates", "actor": "optional audit actor"}})
+	registerHelp(s, "tasks.unarchive", HelpEntry{When: "Preview or restore one done/archived Task.", Params: map[string]string{"taskId": "required", "execute": "false previews; true mutates"}})
+	registerHelp(s, "tasks.batch_archive", HelpEntry{When: "Preview or archive eligible Tasks with machine retry progress.", Params: map[string]string{"ids": "optional; omitted evaluates all Tasks", "execute": "false previews; true mutates"}})
+	registerHelp(s, "tasks.batch_unarchive", HelpEntry{When: "Preview or restore multiple Tasks.", Params: map[string]string{"ids": "required Task IDs", "execute": "false previews; true mutates"}})
+	registerHelp(s, "tasks.hard_delete", HelpEntry{When: "Permanently delete a Task only under a trusted project delete permission.", Params: map[string]string{"taskId": "required", "confirmed": "must be true", "reason": "required non-empty reason"}, Why: "Hard-delete is distinct from archive and leaves a content-free tombstone."})
 }
 
 func handleTaskCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -176,6 +193,10 @@ func handleTaskCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 		Labels:    []string{},
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
+	}
+	if status == "done" {
+		task.Status = "todo"
+		tasklifecycle.ApplyStatusTransition(task, status, task.UpdatedAt)
 	}
 
 	if v, ok := textArg(args, "description"); ok {
@@ -258,138 +279,125 @@ func handleTaskUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 		return errResult(ErrTaskIDReq)
 	}
 
-	task, err := store.Tasks.Get(taskID)
-	if err != nil {
-		return errNotFound("Task", err)
-	}
-
-	oldTask := *task
 	args := req.GetArguments()
 	clearFields := stringSetArg(args, "clear")
+	service := newMCPTaskLifecycleService(store)
+	task, err := service.UpdateTask(context.Background(), taskID, tasklifecycle.TaskUpdateOptions{Actor: "mcp", Mutate: func(task *models.Task) error {
 
-	if clearFields["title"] {
-		task.Title = ""
-	} else if v, ok := stringArg(args, "title"); ok && v != "" {
-		task.Title = v
-	}
-	if clearFields["description"] {
-		task.Description = ""
-	} else if v, ok := textArg(args, "description"); ok && v != "" {
-		task.Description = v
-	}
-	if v, ok := stringArg(args, "status"); ok {
-		task.Status = v
-	}
-	if v, ok := stringArg(args, "priority"); ok {
-		task.Priority = v
-	}
-	if clearFields["assignee"] {
-		task.Assignee = ""
-	} else if v, ok := stringArg(args, "assignee"); ok && v != "" {
-		task.Assignee = v
-	}
-	if _, ok := args["labels"]; ok {
-		if v, ok := stringSliceArg(args, "labels"); ok {
-			task.Labels = v
-		} else {
-			task.Labels = []string{}
+		if clearFields["title"] {
+			task.Title = ""
+		} else if v, ok := stringArg(args, "title"); ok && v != "" {
+			task.Title = v
 		}
-	}
-	if clearFields["spec"] {
-		task.Spec = ""
-	} else if v, ok := stringArg(args, "spec"); ok && v != "" {
-		task.Spec = v
-	}
-	if _, ok := args["fulfills"]; ok {
-		if v, ok := stringSliceArg(args, "fulfills"); ok {
-			task.Fulfills = v
-		} else {
-			task.Fulfills = nil
+		if clearFields["description"] {
+			task.Description = ""
+		} else if v, ok := textArg(args, "description"); ok && v != "" {
+			task.Description = v
 		}
-	}
-	if _, ok := args["order"]; ok {
-		if v, ok := intArg(args, "order"); ok {
-			task.Order = &v
+		if v, ok := stringArg(args, "status"); ok {
+			task.Status = v
 		}
-	}
-
-	if v, ok := stringSliceArg(args, "addAc"); ok {
-		for _, text := range v {
-			task.AcceptanceCriteria = append(task.AcceptanceCriteria, models.AcceptanceCriterion{
-				Text:      text,
-				Completed: false,
-			})
+		if v, ok := stringArg(args, "priority"); ok {
+			task.Priority = v
 		}
-	}
-	if v, ok := intSliceArg(args, "checkAc"); ok {
-		for _, idx := range v {
-			i := idx - 1
-			if i >= 0 && i < len(task.AcceptanceCriteria) {
-				task.AcceptanceCriteria[i].Completed = true
+		if clearFields["assignee"] {
+			task.Assignee = ""
+		} else if v, ok := stringArg(args, "assignee"); ok && v != "" {
+			task.Assignee = v
+		}
+		if _, ok := args["labels"]; ok {
+			if v, ok := stringSliceArg(args, "labels"); ok {
+				task.Labels = v
+			} else {
+				task.Labels = []string{}
 			}
 		}
-	}
-	if v, ok := intSliceArg(args, "uncheckAc"); ok {
-		for _, idx := range v {
-			i := idx - 1
-			if i >= 0 && i < len(task.AcceptanceCriteria) {
-				task.AcceptanceCriteria[i].Completed = false
+		if clearFields["spec"] {
+			task.Spec = ""
+		} else if v, ok := stringArg(args, "spec"); ok && v != "" {
+			task.Spec = v
+		}
+		if _, ok := args["fulfills"]; ok {
+			if v, ok := stringSliceArg(args, "fulfills"); ok {
+				task.Fulfills = v
+			} else {
+				task.Fulfills = nil
 			}
 		}
-	}
-	if v, ok := intSliceArg(args, "removeAc"); ok {
-		sorted := make([]int, len(v))
-		copy(sorted, v)
-		for i := 0; i < len(sorted); i++ {
-			for j := i + 1; j < len(sorted); j++ {
-				if sorted[j] > sorted[i] {
-					sorted[i], sorted[j] = sorted[j], sorted[i]
+		if _, ok := args["order"]; ok {
+			if v, ok := intArg(args, "order"); ok {
+				task.Order = &v
+			}
+		}
+
+		if v, ok := stringSliceArg(args, "addAc"); ok {
+			for _, text := range v {
+				task.AcceptanceCriteria = append(task.AcceptanceCriteria, models.AcceptanceCriterion{
+					Text:      text,
+					Completed: false,
+				})
+			}
+		}
+		if v, ok := intSliceArg(args, "checkAc"); ok {
+			for _, idx := range v {
+				i := idx - 1
+				if i >= 0 && i < len(task.AcceptanceCriteria) {
+					task.AcceptanceCriteria[i].Completed = true
 				}
 			}
 		}
-		for _, idx := range sorted {
-			i := idx - 1
-			if i >= 0 && i < len(task.AcceptanceCriteria) {
-				task.AcceptanceCriteria = append(
-					task.AcceptanceCriteria[:i],
-					task.AcceptanceCriteria[i+1:]...,
-				)
+		if v, ok := intSliceArg(args, "uncheckAc"); ok {
+			for _, idx := range v {
+				i := idx - 1
+				if i >= 0 && i < len(task.AcceptanceCriteria) {
+					task.AcceptanceCriteria[i].Completed = false
+				}
 			}
 		}
-	}
-
-	if clearFields["plan"] {
-		task.ImplementationPlan = ""
-	} else if v, ok := textArg(args, "plan"); ok && v != "" {
-		task.ImplementationPlan = v
-	}
-	if clearFields["notes"] {
-		task.ImplementationNotes = ""
-	} else if v, ok := textArg(args, "notes"); ok && v != "" {
-		task.ImplementationNotes = v
-	}
-	if v, ok := textArg(args, "appendNotes"); ok && v != "" {
-		if task.ImplementationNotes == "" {
-			task.ImplementationNotes = v
-		} else {
-			task.ImplementationNotes += "\n" + v
+		if v, ok := intSliceArg(args, "removeAc"); ok {
+			sorted := make([]int, len(v))
+			copy(sorted, v)
+			for i := 0; i < len(sorted); i++ {
+				for j := i + 1; j < len(sorted); j++ {
+					if sorted[j] > sorted[i] {
+						sorted[i], sorted[j] = sorted[j], sorted[i]
+					}
+				}
+			}
+			for _, idx := range sorted {
+				i := idx - 1
+				if i >= 0 && i < len(task.AcceptanceCriteria) {
+					task.AcceptanceCriteria = append(
+						task.AcceptanceCriteria[:i],
+						task.AcceptanceCriteria[i+1:]...,
+					)
+				}
+			}
 		}
-	}
 
-	task.UpdatedAt = time.Now().UTC()
+		if clearFields["plan"] {
+			task.ImplementationPlan = ""
+		} else if v, ok := textArg(args, "plan"); ok && v != "" {
+			task.ImplementationPlan = v
+		}
+		if clearFields["notes"] {
+			task.ImplementationNotes = ""
+		} else if v, ok := textArg(args, "notes"); ok && v != "" {
+			task.ImplementationNotes = v
+		}
+		if v, ok := textArg(args, "appendNotes"); ok && v != "" {
+			if task.ImplementationNotes == "" {
+				task.ImplementationNotes = v
+			} else {
+				task.ImplementationNotes += "\n" + v
+			}
+		}
 
-	if err := store.Tasks.Update(task); err != nil {
+		return nil
+	}})
+	if err != nil {
 		return errFailed("update task", err)
 	}
-
-	if changes := store.Versions.TrackChanges(&oldTask, task); len(changes) > 0 {
-		_ = store.Versions.SaveVersion(task.ID, models.TaskVersion{
-			Changes:  changes,
-			Snapshot: storage.TaskToSnapshot(task),
-		})
-	}
-
-	search.BestEffortIndexTask(store, task.ID)
 	go notifyTaskUpdated(store, task.ID)
 
 	task.ActiveTimer = store.Time.GetActiveTimer(task.ID)
@@ -451,6 +459,59 @@ func handleTaskList(getStore func() *storage.Store, req mcp.CallToolRequest) (*m
 	return mcp.NewToolResultText(string(out)), nil
 }
 
+func newMCPTaskLifecycleService(store *storage.Store) *tasklifecycle.Service {
+	return tasklifecycle.New(store, tasklifecycle.WithHooks(tasklifecycle.Hooks{
+		IndexTask:  func(id string) error { return search.ReconcileTaskIndex(store, id) },
+		RemoveTask: func(id string) error { return search.ReconcileTaskRemoval(store, id) },
+	}))
+}
+
+func handleTaskLifecycle(ctx context.Context, getStore func() *storage.Store, action string, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store := getStore()
+	if store == nil {
+		return noProjectError()
+	}
+	args := req.GetArguments()
+	request := tasklifecycle.Request{Actor: "mcp"}
+	request.TaskID, _ = stringArg(args, "taskId")
+	request.IDs, _ = stringSliceArg(args, "ids")
+	request.Execute, _ = args["execute"].(bool)
+	request.Confirmed, _ = args["confirmed"].(bool)
+	request.Reason, _ = stringArg(args, "reason")
+	if actor, ok := stringArg(args, "actor"); ok {
+		request.Actor = actor
+	}
+	switch action {
+	case "archive":
+		request.Operation = tasklifecycle.OperationArchive
+	case "unarchive":
+		request.Operation = tasklifecycle.OperationReopen
+	case "batch_archive":
+		request.Operation = tasklifecycle.OperationBatchArchive
+	case "batch_unarchive":
+		request.Operation = tasklifecycle.OperationBatchUnarchive
+	case "hard_delete":
+		request.Operation = tasklifecycle.OperationHardDelete
+		request.Execute = request.Confirmed
+	}
+	// Permission comes from canonical project policy, never MCP arguments.
+	capabilities := tasklifecycle.PublicCapabilities{}
+	if cfg, err := store.Config.Load(); err == nil {
+		policy := permissions.EffectivePolicy(cfg.Settings.Permissions)
+		capabilities.Archive = policy.Allowed[permissions.CapArchive] && !policy.Denied[permissions.CapArchive]
+		capabilities.HardDelete = policy.Allowed[permissions.CapDelete] && !policy.Denied[permissions.CapDelete]
+	}
+	response, err := newMCPTaskLifecycleService(store).ExecutePublicWithCapabilities(ctx, request, capabilities)
+	if response.Changed > 0 {
+		go notifyServer(store, "notify/refresh")
+	}
+	out, _ := json.MarshalIndent(response, "", "  ")
+	if err != nil {
+		return mcp.NewToolResultError(string(out)), nil
+	}
+	return mcp.NewToolResultText(string(out)), nil
+}
+
 func handleTaskHistory(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	store := getStore()
 	if store == nil {
@@ -504,18 +565,7 @@ func handleTaskDelete(getStore func() *storage.Store, req mcp.CallToolRequest) (
 		return mcp.NewToolResultText(string(out)), nil
 	}
 
-	if err := store.Tasks.Delete(taskID); err != nil {
-		return errFailed("delete task", err)
-	}
-
-	search.BestEffortRemoveTask(store, taskID)
-	go notifyServer(store, "notify/refresh")
-
-	out, _ := json.MarshalIndent(map[string]any{
-		"deleted": true,
-		"message": fmt.Sprintf(MsgDeletedTask, task.ID, task.Title),
-	}, "", "  ")
-	return mcp.NewToolResultText(string(out)), nil
+	return errResult("tasks.delete is preview-only; use the separately permission-gated hard_delete action with confirmed=true and a non-empty reason")
 }
 
 // handleTaskBoard returns the board view with tasks grouped by status.

@@ -27,12 +27,19 @@ func requireStore(manager *storage.Manager) func(http.Handler) http.Handler {
 // The caller is responsible for mounting r at the /api prefix.
 // manager may be nil when workspace switching is not needed (e.g. tests).
 func SetupRoutes(r chi.Router, store *storage.Store, sse Broadcaster, projectRoot string, manager *storage.Manager, onWorkspaceSwitch ...func(string)) {
+	SetupRoutesWithCapabilities(r, store, sse, projectRoot, manager, TaskRouteCapabilities{}, onWorkspaceSwitch...)
+}
+
+// SetupRoutesWithCapabilities injects trusted server-side capabilities. The
+// default SetupRoutes entry point remains deny-by-default for destructive Task
+// lifecycle operations.
+func SetupRoutesWithCapabilities(r chi.Router, store *storage.Store, sse Broadcaster, projectRoot string, manager *storage.Manager, taskCapabilities TaskRouteCapabilities, onWorkspaceSwitch ...func(string)) {
 	// Project-scoped routes: guarded by requireStore so they return 503 in picker mode.
 	r.Group(func(r chi.Router) {
 		r.Use(requireStore(manager))
 
 		// Tasks
-		tr := &TaskRoutes{store: store, mgr: manager, sse: sse}
+		tr := &TaskRoutes{store: store, mgr: manager, sse: sse, capabilities: taskCapabilities}
 		tr.Register(r)
 
 		// Docs
@@ -40,7 +47,7 @@ func SetupRoutes(r chi.Router, store *storage.Store, sse Broadcaster, projectRoo
 		dr.Register(r)
 
 		// Config
-		cr := &ConfigRoutes{store: store, mgr: manager}
+		cr := &ConfigRoutes{store: store, mgr: manager, capabilities: taskCapabilities}
 		cr.Register(r)
 
 		// Runtime services

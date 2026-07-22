@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,7 +13,8 @@ import (
 
 // TimeStore reads and writes .knowns/time.json and .knowns/time-entries.json.
 type TimeStore struct {
-	root string
+	root          string
+	lifecycleLock *taskLifecycleLock
 }
 
 func (ts *TimeStore) statePath() string   { return filepath.Join(ts.root, "time.json") }
@@ -20,16 +22,23 @@ func (ts *TimeStore) entriesPath() string { return filepath.Join(ts.root, "time-
 
 // GetActiveTimer returns the active timer for a specific task, or nil if none.
 func (ts *TimeStore) GetActiveTimer(taskID string) *models.ActiveTimer {
+	timer, _ := ts.GetActiveTimerWithError(taskID)
+	return timer
+}
+
+// GetActiveTimerWithError returns the active timer without hiding unreadable or
+// corrupt timer state. Lifecycle eligibility uses this fail-closed path.
+func (ts *TimeStore) GetActiveTimerWithError(taskID string) (*models.ActiveTimer, error) {
 	state, err := ts.GetState()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	for i := range state.Active {
 		if state.Active[i].TaskID == taskID {
-			return &state.Active[i]
+			return &state.Active[i], nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // GetState returns the current timer state from time.json.
@@ -53,6 +62,10 @@ func (ts *TimeStore) GetState() (*models.TimeState, error) {
 
 // SaveState writes the timer state to time.json.
 func (ts *TimeStore) SaveState(state *models.TimeState) error {
+	return ts.withLifecycleLock(func() error { return ts.saveStateUnlocked(state) })
+}
+
+func (ts *TimeStore) saveStateUnlocked(state *models.TimeState) error {
 	if state.Active == nil {
 		state.Active = []models.ActiveTimer{}
 	}
@@ -89,17 +102,52 @@ func (ts *TimeStore) GetAllEntries() (map[string][]models.TimeEntry, error) {
 
 // SaveEntry appends a completed time entry for the given task.
 func (ts *TimeStore) SaveEntry(taskID string, entry models.TimeEntry) error {
+	return ts.withLifecycleLock(func() error { return ts.saveEntryUnlocked(taskID, entry) })
+}
+
+func (ts *TimeStore) saveEntryUnlocked(taskID string, entry models.TimeEntry) error {
+	if err := ts.rejectHardDeletedTask(taskID); err != nil {
+		return err
+	}
+	task, err := (&TaskStore{root: ts.root}).Get(taskID)
+	if err != nil {
+		return fmt.Errorf("cannot save time data for Task %q: %w", taskID, err)
+	}
+	if task.Archived {
+		return fmt.Errorf("cannot save time data for archived Task %q", taskID)
+	}
 	all, err := ts.GetAllEntries()
 	if err != nil {
 		return err
 	}
 	all[taskID] = append(all[taskID], entry)
+	return ts.saveAllEntriesUnlocked(all)
+}
+
+func (ts *TimeStore) saveAllEntriesUnlocked(all map[string][]models.TimeEntry) error {
+	if all == nil {
+		all = make(map[string][]models.TimeEntry)
+	}
 	return writeJSON(ts.entriesPath(), all)
 }
 
 // Start begins a new timer for the given task.
 // Returns an error if a timer for that task is already running.
 func (ts *TimeStore) Start(taskID, taskTitle string) error {
+	return ts.withLifecycleLock(func() error { return ts.startUnlocked(taskID, taskTitle) })
+}
+
+func (ts *TimeStore) startUnlocked(taskID, taskTitle string) error {
+	if err := ts.rejectHardDeletedTask(taskID); err != nil {
+		return err
+	}
+	task, err := (&TaskStore{root: ts.root}).Get(taskID)
+	if err != nil {
+		return fmt.Errorf("start timer: %w", err)
+	}
+	if task.Archived {
+		return fmt.Errorf("cannot start timer for archived Task %q", taskID)
+	}
 	state, err := ts.GetState()
 	if err != nil {
 		return err
@@ -117,12 +165,22 @@ func (ts *TimeStore) Start(taskID, taskTitle string) error {
 		PausedAt:      nil,
 		TotalPausedMs: 0,
 	})
-	return ts.SaveState(state)
+	return ts.saveStateUnlocked(state)
 }
 
 // Stop stops the active timer for a task and records a completed TimeEntry.
 // Returns the recorded entry.
 func (ts *TimeStore) Stop(taskID string) (*models.TimeEntry, error) {
+	var entry *models.TimeEntry
+	err := ts.withLifecycleLock(func() error {
+		var err error
+		entry, err = ts.stopUnlocked(taskID)
+		return err
+	})
+	return entry, err
+}
+
+func (ts *TimeStore) stopUnlocked(taskID string) (*models.TimeEntry, error) {
 	state, err := ts.GetState()
 	if err != nil {
 		return nil, err
@@ -173,13 +231,13 @@ func (ts *TimeStore) Stop(taskID string) (*models.TimeEntry, error) {
 	}
 
 	// Save the entry and update state.
-	if err := ts.SaveEntry(taskID, entry); err != nil {
+	if err := ts.saveEntryUnlocked(taskID, entry); err != nil {
 		return nil, fmt.Errorf("save entry: %w", err)
 	}
 
 	_ = nowStr // used for pause tracking above
 	state.Active = remaining
-	if err := ts.SaveState(state); err != nil {
+	if err := ts.saveStateUnlocked(state); err != nil {
 		return nil, fmt.Errorf("save state: %w", err)
 	}
 	return &entry, nil
@@ -187,6 +245,10 @@ func (ts *TimeStore) Stop(taskID string) (*models.TimeEntry, error) {
 
 // Pause pauses the active timer for a task.
 func (ts *TimeStore) Pause(taskID string) error {
+	return ts.withLifecycleLock(func() error { return ts.pauseUnlocked(taskID) })
+}
+
+func (ts *TimeStore) pauseUnlocked(taskID string) error {
 	state, err := ts.GetState()
 	if err != nil {
 		return err
@@ -198,7 +260,7 @@ func (ts *TimeStore) Pause(taskID string) error {
 			}
 			now := isoNow()
 			state.Active[i].PausedAt = &now
-			return ts.SaveState(state)
+			return ts.saveStateUnlocked(state)
 		}
 	}
 	return fmt.Errorf("no active timer for task %q", taskID)
@@ -206,6 +268,10 @@ func (ts *TimeStore) Pause(taskID string) error {
 
 // Resume resumes a paused timer for a task.
 func (ts *TimeStore) Resume(taskID string) error {
+	return ts.withLifecycleLock(func() error { return ts.resumeUnlocked(taskID) })
+}
+
+func (ts *TimeStore) resumeUnlocked(taskID string) error {
 	state, err := ts.GetState()
 	if err != nil {
 		return err
@@ -220,10 +286,28 @@ func (ts *TimeStore) Resume(taskID string) error {
 				state.Active[i].TotalPausedMs += time.Now().UTC().Sub(pausedAt).Milliseconds()
 			}
 			state.Active[i].PausedAt = nil
-			return ts.SaveState(state)
+			return ts.saveStateUnlocked(state)
 		}
 	}
 	return fmt.Errorf("no active timer for task %q", taskID)
+}
+
+func (ts *TimeStore) withLifecycleLock(fn func() error) error {
+	if ts.lifecycleLock == nil {
+		return fn()
+	}
+	return ts.lifecycleLock.with(context.Background(), fn)
+}
+
+func (ts *TimeStore) rejectHardDeletedTask(taskID string) error {
+	reserved, err := (&TaskStore{root: ts.root}).IsIDReserved(taskID)
+	if err != nil {
+		return fmt.Errorf("check Task tombstone before saving time data: %w", err)
+	}
+	if reserved {
+		return fmt.Errorf("cannot save time data for hard-deleted Task %q", taskID)
+	}
+	return nil
 }
 
 // isoNow returns the current UTC time formatted as an ISO 8601 string.
