@@ -16,6 +16,9 @@ type TaskVersion struct {
 	// Author records who triggered the change (username or "rollback").
 	Author string `json:"author,omitempty"`
 
+	// LifecycleEventID makes lifecycle history append/rollback idempotent.
+	LifecycleEventID string `json:"lifecycleEventId,omitempty"`
+
 	// Changes is the list of individual field mutations in this version.
 	Changes []TaskChange `json:"changes"`
 

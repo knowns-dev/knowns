@@ -1023,7 +1023,7 @@ func init() {
 	searchCmd.Flags().String("tag", "", "Filter docs, memories, or decisions by tag")
 	searchCmd.Flags().String("assignee", "", "Filter tasks by assignee")
 	searchCmd.Flags().Bool("keyword", false, "Force keyword-only search")
-	searchCmd.Flags().Bool("include-historical", false, "Include non-active memories and non-current decisions")
+	searchCmd.Flags().Bool("include-historical", false, "Include historical entities, including archived Tasks")
 	searchCmd.Flags().Int("limit", 20, "Limit search results")
 	searchCmd.Flags().Bool("reindex", false, "Rebuild the search index")
 	searchCmd.Flags().Bool("setup", false, "Set up semantic search")
@@ -1036,7 +1036,7 @@ func init() {
 	retrieveCmd.Flags().String("assignee", "", "Filter tasks by assignee")
 	retrieveCmd.Flags().Bool("keyword", false, "Force keyword-only retrieval")
 	retrieveCmd.Flags().Bool("expand-references", false, "Expand @doc/@task/@memory/@decision references into the result")
-	retrieveCmd.Flags().Bool("include-historical", false, "Include non-active memories and non-current decisions")
+	retrieveCmd.Flags().Bool("include-historical", false, "Include historical entities; Task retrieval adds done and archived Tasks")
 	retrieveCmd.Flags().String("source-types", "", "Comma-separated source types: doc,task,memory,decision")
 	retrieveCmd.Flags().Int("limit", 20, "Limit ranked candidates")
 

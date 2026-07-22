@@ -27,6 +27,7 @@ import { cn } from "@/ui/lib/utils";
 import { useIsMobile } from "@/ui/hooks/useMobile";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { toast } from "../ui/sonner";
+import { TaskLifecycleBadge } from "../molecules/TaskLifecycleBadge";
 
 // Default column labels (can be overridden by config)
 const DEFAULT_COLUMN_LABELS: Record<string, string> = {
@@ -312,16 +313,6 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 		navigateTo(`/kanban/${taskId}`);
 	};
 
-	const handleArchive = async (taskId: string) => {
-		try {
-			await api.archiveTask(taskId);
-			onTasksUpdate(tasks.filter((t) => t.id !== taskId));
-			handleModalClose();
-		} catch (error) {
-			console.error("Failed to archive task:", error);
-		}
-	};
-
 	return (
 		<div className="flex flex-col h-full">
 			{/* Column Visibility Controls */}
@@ -458,7 +449,9 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 				allTasks={tasks}
 				onClose={handleModalClose}
 				onUpdate={handleTaskUpdate}
-				onArchive={handleArchive}
+				onLifecycleChange={() => {
+					api.getTasks().then(onTasksUpdate).catch(console.error);
+				}}
 				onNavigateToTask={handleNavigateToTask}
 			/>
 		</div>
@@ -498,6 +491,7 @@ function TaskKanbanCard({ item, isNew, statusColors, onClick }: TaskKanbanCardPr
 						#{task.id}
 					</span>
 					<div className="flex items-center gap-1 flex-wrap justify-end">
+						<TaskLifecycleBadge state={task.lifecycleState} />
 						{task.priority === "high" && (
 							<span className="text-xs text-red-600 dark:text-red-400 font-medium">
 								HIGH

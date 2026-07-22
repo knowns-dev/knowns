@@ -19,6 +19,7 @@ import { cn } from "@/ui/lib/utils";
 import { useTimeTracker } from "../../../contexts/TimeTrackerContext";
 import { useConfig } from "../../../contexts/ConfigContext";
 import { buildStatusOptions, getStatusBadgeClasses, type ColorName } from "../../../utils/colors";
+import { TaskLifecycleBadge, TaskLifecycleTimestamps } from "../../molecules/TaskLifecycleBadge";
 
 interface TaskSidebarProps {
 	task: Task;
@@ -27,6 +28,9 @@ interface TaskSidebarProps {
 	onSave: (updates: Partial<Task>) => Promise<void>;
 	onDelete?: (taskId: string) => void;
 	onArchive?: (taskId: string) => void;
+	onUnarchive?: (taskId: string) => void;
+	onHardDelete?: (taskId: string) => void;
+	canHardDelete?: boolean;
 	onNavigateToTask?: (taskId: string) => void;
 	saving: boolean;
 	compact?: boolean;
@@ -39,6 +43,9 @@ export function TaskSidebar({
 	onSave,
 	onDelete,
 	onArchive,
+	onUnarchive,
+	onHardDelete,
+	canHardDelete = false,
 	onNavigateToTask,
 	saving,
 	compact = false,
@@ -106,6 +113,10 @@ export function TaskSidebar({
 	if (compact) {
 		return (
 			<div className="space-y-3">
+				<div className="flex flex-wrap items-center gap-2" aria-label="Task lifecycle">
+					<TaskLifecycleBadge state={task.lifecycleState} />
+					<TaskLifecycleTimestamps task={task} compact />
+				</div>
 				{/* Row 1: Timer */}
 				<div className="flex items-center gap-2">
 					<span className="text-xs text-muted-foreground shrink-0 w-12">Timer</span>
@@ -139,6 +150,7 @@ export function TaskSidebar({
 							size="sm"
 							className="h-7 text-muted-foreground hover:text-foreground"
 							onClick={handleStartTimer}
+							disabled={task.lifecycleState === "archived"}
 						>
 							<Play className="w-3.5 h-3.5 mr-1.5" />
 							Start Timer
@@ -153,7 +165,7 @@ export function TaskSidebar({
 						<Select
 							value={task.status}
 							onValueChange={(value) => onSave({ status: value as TaskStatus })}
-							disabled={saving}
+							disabled={saving || task.lifecycleState === "archived"}
 						>
 							<SelectTrigger className={cn("w-full h-8 text-sm", getStatusBadgeClasses(task.status, configStatusColors))}>
 								<SelectValue />
@@ -269,23 +281,48 @@ export function TaskSidebar({
 							size="sm"
 							className="h-7 text-xs"
 							onClick={() => onSave({ status: "done" })}
-							disabled={saving || task.status === "done"}
+							disabled={saving || task.status === "done" || task.lifecycleState === "archived"}
 						>
 							<ArchiveRestore className="w-3.5 h-3.5 mr-1" />
 							Done
 						</Button>
-						{onArchive && (
+						{task.lifecycleState !== "archived" && onArchive && (
 							<Button
 								variant="ghost"
 								size="sm"
 								className="h-7 text-muted-foreground hover:text-amber-600"
-								onClick={() => {
-									if (confirm("Archive this task? It will be moved to the archive folder.")) onArchive(task.id);
-								}}
+								onClick={() => onArchive(task.id)}
 								disabled={saving}
 								title="Archive"
+								aria-label="Archive Task"
 							>
 								<Archive className="w-3.5 h-3.5" />
+							</Button>
+						)}
+						{task.lifecycleState === "archived" && onUnarchive && (
+							<Button
+								variant="ghost"
+								size="sm"
+								className="h-7 text-muted-foreground hover:text-emerald-600"
+								onClick={() => onUnarchive(task.id)}
+								disabled={saving}
+								title="Restore"
+								aria-label="Restore Task"
+							>
+								<ArchiveRestore className="w-3.5 h-3.5" />
+							</Button>
+						)}
+						{canHardDelete && onHardDelete && (
+							<Button
+								variant="ghost"
+								size="sm"
+								className="h-7 text-muted-foreground hover:text-destructive"
+								onClick={() => onHardDelete(task.id)}
+								disabled={saving}
+								title="Permanently delete"
+								aria-label="Permanently delete Task"
+							>
+								<Trash2 className="w-3.5 h-3.5" />
 							</Button>
 						)}
 						{onDelete && (
@@ -379,8 +416,9 @@ export function TaskSidebar({
 					<Button
 						variant="ghost"
 						size="sm"
-						className="w-full justify-start text-muted-foreground hover:text-foreground"
-						onClick={handleStartTimer}
+					className="w-full justify-start text-muted-foreground hover:text-foreground"
+					onClick={handleStartTimer}
+					disabled={task.lifecycleState === "archived"}
 					>
 						<Play className="w-4 h-4 mr-2" />
 						Start Timer
@@ -392,11 +430,14 @@ export function TaskSidebar({
 
 			{/* Status */}
 			<div className="space-y-1.5">
-				<span className="text-xs text-muted-foreground">Status</span>
+				<div className="flex items-center justify-between gap-2">
+					<span className="text-xs text-muted-foreground">Status</span>
+					<TaskLifecycleBadge state={task.lifecycleState} />
+				</div>
 				<Select
 					value={task.status}
 					onValueChange={(value) => onSave({ status: value as TaskStatus })}
-					disabled={saving}
+					disabled={saving || task.lifecycleState === "archived"}
 				>
 					<SelectTrigger className={cn("w-full h-8 text-sm", getStatusBadgeClasses(task.status, configStatusColors))}>
 						<SelectValue />
@@ -593,22 +634,42 @@ export function TaskSidebar({
 					type="button"
 					className="flex items-center gap-2 w-full text-left py-1.5 px-1 -mx-1 text-sm rounded-md hover:bg-muted/50 transition-colors disabled:opacity-50"
 					onClick={() => onSave({ status: "done" })}
-					disabled={saving || task.status === "done"}
+					disabled={saving || task.status === "done" || task.lifecycleState === "archived"}
 				>
 					<ArchiveRestore className="w-4 h-4" />
 					Mark as Done
 				</button>
-				{onArchive && (
+				{task.lifecycleState !== "archived" && onArchive && (
 					<button
 						type="button"
 						className="flex items-center gap-2 w-full text-left py-1.5 px-1 -mx-1 text-sm rounded-md text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/10 transition-colors disabled:opacity-50"
-						onClick={() => {
-							if (confirm("Archive this task? It will be moved to the archive folder.")) onArchive(task.id);
-						}}
+						onClick={() => onArchive(task.id)}
 						disabled={saving}
 					>
 						<Archive className="w-4 h-4" />
 						Archive Task
+					</button>
+				)}
+				{task.lifecycleState === "archived" && onUnarchive && (
+					<button
+						type="button"
+						className="flex items-center gap-2 w-full text-left py-1.5 px-1 -mx-1 text-sm rounded-md text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/10 transition-colors disabled:opacity-50"
+						onClick={() => onUnarchive(task.id)}
+						disabled={saving}
+					>
+						<ArchiveRestore className="w-4 h-4" />
+						Restore Task
+					</button>
+				)}
+				{canHardDelete && onHardDelete && (
+					<button
+						type="button"
+						className="flex items-center gap-2 w-full text-left py-1.5 px-1 -mx-1 text-sm rounded-md text-destructive hover:bg-destructive/5 transition-colors disabled:opacity-50"
+						onClick={() => onHardDelete(task.id)}
+						disabled={saving}
+					>
+						<Trash2 className="w-4 h-4" />
+						Permanently delete…
 					</button>
 				)}
 				{onDelete && (
@@ -630,6 +691,7 @@ export function TaskSidebar({
 			<div className="text-xs text-muted-foreground space-y-1 pt-2">
 				<p>Created: {new Date(task.createdAt).toLocaleString()}</p>
 				<p>Updated: {new Date(task.updatedAt).toLocaleString()}</p>
+				<TaskLifecycleTimestamps task={task} />
 			</div>
 		</div>
 	);

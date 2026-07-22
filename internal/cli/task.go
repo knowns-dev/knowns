@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/tasklifecycle"
 	"github.com/spf13/cobra"
 )
 
@@ -88,6 +90,10 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 		ImplementationNotes: notes,
 		CreatedAt:           now,
 		UpdatedAt:           now,
+	}
+	if status == "done" {
+		task.Status = "todo"
+		tasklifecycle.ApplyStatusTransition(task, status, now)
 	}
 
 	for _, ac := range acList {
@@ -275,143 +281,127 @@ var taskEditCmd = &cobra.Command{
 func runTaskEdit(cmd *cobra.Command, args []string) error {
 	id := args[0]
 	store := getStore()
+	service := newCLITaskLifecycleService(store)
+	task, err := service.UpdateTask(cmd.Context(), id, tasklifecycle.TaskUpdateOptions{Actor: cliLifecycleActor(), Mutate: func(task *models.Task) error {
 
-	task, err := store.Tasks.Get(id)
-	if err != nil {
-		return fmt.Errorf("task %q not found", id)
-	}
-
-	oldTask := *task // snapshot before changes
-
-	// Apply flag updates
-	if cmd.Flags().Changed("title") {
-		v, _ := cmd.Flags().GetString("title")
-		task.Title = v
-	}
-	if cmd.Flags().Changed("description") {
-		v, _ := cmd.Flags().GetString("description")
-		task.Description = unescapeText(v)
-	}
-	if cmd.Flags().Changed("status") {
-		v, _ := cmd.Flags().GetString("status")
-		task.Status = v
-	}
-	if cmd.Flags().Changed("priority") {
-		v, _ := cmd.Flags().GetString("priority")
-		task.Priority = v
-	}
-	if cmd.Flags().Changed("assignee") {
-		v, _ := cmd.Flags().GetString("assignee")
-		task.Assignee = v
-	}
-	if cmd.Flags().Changed("labels") {
-		v, _ := cmd.Flags().GetString("labels")
-		task.Labels = splitCSV(v)
-	}
-	if cmd.Flags().Changed("spec") {
-		v, _ := cmd.Flags().GetString("spec")
-		task.Spec = v
-	}
-	if cmd.Flags().Changed("parent") {
-		v, _ := cmd.Flags().GetString("parent")
-		task.Parent = v
-	}
-	if cmd.Flags().Changed("plan") {
-		v, _ := cmd.Flags().GetString("plan")
-		task.ImplementationPlan = unescapeText(v)
-	}
-	if cmd.Flags().Changed("notes") {
-		v, _ := cmd.Flags().GetString("notes")
-		task.ImplementationNotes = unescapeText(v)
-	}
-	if cmd.Flags().Changed("append-notes") {
-		v, _ := cmd.Flags().GetString("append-notes")
-		v = unescapeText(v)
-		if task.ImplementationNotes == "" {
-			task.ImplementationNotes = v
-		} else {
-			task.ImplementationNotes = task.ImplementationNotes + "\n" + v
+		// Apply flag updates
+		if cmd.Flags().Changed("title") {
+			v, _ := cmd.Flags().GetString("title")
+			task.Title = v
 		}
-	}
-	if cmd.Flags().Changed("fulfills") {
-		fulfills, _ := cmd.Flags().GetStringArray("fulfills")
-		task.Fulfills = fulfills
-	}
-	if cmd.Flags().Changed("order") {
-		v, _ := cmd.Flags().GetInt("order")
-		task.Order = &v
-	}
-
-	// Add AC
-	if cmd.Flags().Changed("ac") {
-		acList, _ := cmd.Flags().GetStringArray("ac")
-		for _, ac := range acList {
-			task.AcceptanceCriteria = append(task.AcceptanceCriteria, models.AcceptanceCriterion{
-				Text:      ac,
-				Completed: false,
-			})
+		if cmd.Flags().Changed("description") {
+			v, _ := cmd.Flags().GetString("description")
+			task.Description = unescapeText(v)
 		}
-	}
-
-	// Check AC (1-based indices)
-	if cmd.Flags().Changed("check-ac") {
-		indices, _ := cmd.Flags().GetIntSlice("check-ac")
-		for _, idx := range indices {
-			if idx < 1 || idx > len(task.AcceptanceCriteria) {
-				return fmt.Errorf("AC index %d out of range (task has %d criteria)", idx, len(task.AcceptanceCriteria))
+		if cmd.Flags().Changed("status") {
+			v, _ := cmd.Flags().GetString("status")
+			task.Status = v
+		}
+		if cmd.Flags().Changed("priority") {
+			v, _ := cmd.Flags().GetString("priority")
+			task.Priority = v
+		}
+		if cmd.Flags().Changed("assignee") {
+			v, _ := cmd.Flags().GetString("assignee")
+			task.Assignee = v
+		}
+		if cmd.Flags().Changed("labels") {
+			v, _ := cmd.Flags().GetString("labels")
+			task.Labels = splitCSV(v)
+		}
+		if cmd.Flags().Changed("spec") {
+			v, _ := cmd.Flags().GetString("spec")
+			task.Spec = v
+		}
+		if cmd.Flags().Changed("parent") {
+			v, _ := cmd.Flags().GetString("parent")
+			task.Parent = v
+		}
+		if cmd.Flags().Changed("plan") {
+			v, _ := cmd.Flags().GetString("plan")
+			task.ImplementationPlan = unescapeText(v)
+		}
+		if cmd.Flags().Changed("notes") {
+			v, _ := cmd.Flags().GetString("notes")
+			task.ImplementationNotes = unescapeText(v)
+		}
+		if cmd.Flags().Changed("append-notes") {
+			v, _ := cmd.Flags().GetString("append-notes")
+			v = unescapeText(v)
+			if task.ImplementationNotes == "" {
+				task.ImplementationNotes = v
+			} else {
+				task.ImplementationNotes = task.ImplementationNotes + "\n" + v
 			}
-			task.AcceptanceCriteria[idx-1].Completed = true
 		}
-	}
+		if cmd.Flags().Changed("fulfills") {
+			fulfills, _ := cmd.Flags().GetStringArray("fulfills")
+			task.Fulfills = fulfills
+		}
+		if cmd.Flags().Changed("order") {
+			v, _ := cmd.Flags().GetInt("order")
+			task.Order = &v
+		}
 
-	// Uncheck AC
-	if cmd.Flags().Changed("uncheck-ac") {
-		indices, _ := cmd.Flags().GetIntSlice("uncheck-ac")
-		for _, idx := range indices {
-			if idx < 1 || idx > len(task.AcceptanceCriteria) {
-				return fmt.Errorf("AC index %d out of range (task has %d criteria)", idx, len(task.AcceptanceCriteria))
+		// Add AC
+		if cmd.Flags().Changed("ac") {
+			acList, _ := cmd.Flags().GetStringArray("ac")
+			for _, ac := range acList {
+				task.AcceptanceCriteria = append(task.AcceptanceCriteria, models.AcceptanceCriterion{
+					Text:      ac,
+					Completed: false,
+				})
 			}
-			task.AcceptanceCriteria[idx-1].Completed = false
 		}
-	}
 
-	// Remove AC (process in reverse order to keep indices stable)
-	if cmd.Flags().Changed("remove-ac") {
-		indices, _ := cmd.Flags().GetIntSlice("remove-ac")
-		// Sort descending
-		for i := 0; i < len(indices); i++ {
-			for j := i + 1; j < len(indices); j++ {
-				if indices[j] > indices[i] {
-					indices[i], indices[j] = indices[j], indices[i]
+		// Check AC (1-based indices)
+		if cmd.Flags().Changed("check-ac") {
+			indices, _ := cmd.Flags().GetIntSlice("check-ac")
+			for _, idx := range indices {
+				if idx < 1 || idx > len(task.AcceptanceCriteria) {
+					return fmt.Errorf("AC index %d out of range (task has %d criteria)", idx, len(task.AcceptanceCriteria))
+				}
+				task.AcceptanceCriteria[idx-1].Completed = true
+			}
+		}
+
+		// Uncheck AC
+		if cmd.Flags().Changed("uncheck-ac") {
+			indices, _ := cmd.Flags().GetIntSlice("uncheck-ac")
+			for _, idx := range indices {
+				if idx < 1 || idx > len(task.AcceptanceCriteria) {
+					return fmt.Errorf("AC index %d out of range (task has %d criteria)", idx, len(task.AcceptanceCriteria))
+				}
+				task.AcceptanceCriteria[idx-1].Completed = false
+			}
+		}
+
+		// Remove AC (process in reverse order to keep indices stable)
+		if cmd.Flags().Changed("remove-ac") {
+			indices, _ := cmd.Flags().GetIntSlice("remove-ac")
+			// Sort descending
+			for i := 0; i < len(indices); i++ {
+				for j := i + 1; j < len(indices); j++ {
+					if indices[j] > indices[i] {
+						indices[i], indices[j] = indices[j], indices[i]
+					}
 				}
 			}
-		}
-		for _, idx := range indices {
-			if idx < 1 || idx > len(task.AcceptanceCriteria) {
-				return fmt.Errorf("AC index %d out of range (task has %d criteria)", idx, len(task.AcceptanceCriteria))
+			for _, idx := range indices {
+				if idx < 1 || idx > len(task.AcceptanceCriteria) {
+					return fmt.Errorf("AC index %d out of range (task has %d criteria)", idx, len(task.AcceptanceCriteria))
+				}
+				task.AcceptanceCriteria = append(
+					task.AcceptanceCriteria[:idx-1],
+					task.AcceptanceCriteria[idx:]...,
+				)
 			}
-			task.AcceptanceCriteria = append(
-				task.AcceptanceCriteria[:idx-1],
-				task.AcceptanceCriteria[idx:]...,
-			)
 		}
-	}
 
-	task.UpdatedAt = time.Now()
-
-	if err := store.Tasks.Update(task); err != nil {
+		return nil
+	}})
+	if err != nil {
 		return fmt.Errorf("update task: %w", err)
-	}
-
-	search.BestEffortIndexTask(store, task.ID)
-
-	// Save version if something changed
-	changes := store.Versions.TrackChanges(&oldTask, task)
-	if len(changes) > 0 {
-		_ = store.Versions.SaveVersion(task.ID, models.TaskVersion{
-			Changes:  changes,
-			Snapshot: storage.TaskToSnapshot(task),
-		})
 	}
 
 	fmt.Println(RenderSuccess(fmt.Sprintf("Updated task %s", task.ID)))
@@ -421,40 +411,16 @@ func runTaskEdit(cmd *cobra.Command, args []string) error {
 // --- task delete ---
 
 var taskDeleteCmd = &cobra.Command{
-	Use:   "delete <id>",
-	Short: "Delete a task permanently",
-	Args:  cobra.ExactArgs(1),
+	Use:     "hard-delete <id>",
+	Aliases: []string{"delete"},
+	Short:   "Permanently delete a task and retain a content-free tombstone",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		store := getStore()
-		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		force, _ := cmd.Flags().GetBool("force")
-
-		task, err := store.Tasks.Get(args[0])
-		if err != nil {
-			return fmt.Errorf("delete task: %w", err)
-		}
-
-		if dryRun {
-			fmt.Printf("Would delete task %s: %s\n", task.ID, task.Title)
-			return nil
-		}
-
-		if !force {
-			fmt.Printf("Delete task %s (%s)? This cannot be undone. (y/n): ", task.ID, task.Title)
-			var answer string
-			fmt.Scanln(&answer)
-			if answer != "y" && answer != "yes" {
-				fmt.Println("Aborted.")
-				return nil
-			}
-		}
-
-		if err := store.Tasks.Delete(args[0]); err != nil {
-			return fmt.Errorf("delete task: %w", err)
-		}
-		search.BestEffortRemoveTask(store, args[0])
-		fmt.Println(RenderSuccess(fmt.Sprintf("Deleted task %s", args[0])))
-		return nil
+		reason, _ := cmd.Flags().GetString("reason")
+		yes, _ := cmd.Flags().GetBool("yes")
+		allowed, _ := cmd.Flags().GetBool("allow-hard-delete")
+		request := tasklifecycle.Request{Operation: tasklifecycle.OperationHardDelete, TaskID: args[0], Execute: yes, Confirmed: yes, Reason: reason, Actor: cliLifecycleActor()}
+		return runCLILifecycle(cmd, request, allowed)
 	},
 }
 
@@ -465,13 +431,8 @@ var taskArchiveCmd = &cobra.Command{
 	Short: "Archive a task",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		store := getStore()
-		if err := store.Tasks.Archive(args[0]); err != nil {
-			return fmt.Errorf("archive task: %w", err)
-		}
-		search.BestEffortRemoveTask(store, args[0])
-		fmt.Println(RenderSuccess(fmt.Sprintf("Archived task %s", args[0])))
-		return nil
+		yes, _ := cmd.Flags().GetBool("yes")
+		return runCLILifecycle(cmd, tasklifecycle.Request{Operation: tasklifecycle.OperationArchive, TaskID: args[0], Execute: yes, Actor: cliLifecycleActor()}, false)
 	},
 }
 
@@ -482,14 +443,100 @@ var taskUnarchiveCmd = &cobra.Command{
 	Short: "Restore a task from the archive",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		store := getStore()
-		if err := store.Tasks.Unarchive(args[0]); err != nil {
-			return fmt.Errorf("unarchive task: %w", err)
-		}
-		search.BestEffortIndexTask(store, args[0])
-		fmt.Println(RenderSuccess(fmt.Sprintf("Unarchived task %s", args[0])))
-		return nil
+		yes, _ := cmd.Flags().GetBool("yes")
+		return runCLILifecycle(cmd, tasklifecycle.Request{Operation: tasklifecycle.OperationReopen, TaskID: args[0], Execute: yes, Actor: cliLifecycleActor()}, false)
 	},
+}
+
+var taskBatchArchiveCmd = &cobra.Command{
+	Use: "batch-archive [ids...]", Short: "Preview or execute a batch archive", Args: cobra.ArbitraryArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		yes, _ := cmd.Flags().GetBool("yes")
+		return runCLILifecycle(cmd, tasklifecycle.Request{Operation: tasklifecycle.OperationBatchArchive, IDs: args, Execute: yes, Actor: cliLifecycleActor()}, false)
+	},
+}
+
+var taskBatchUnarchiveCmd = &cobra.Command{
+	Use: "batch-unarchive <ids...>", Short: "Preview or execute a batch unarchive", Args: cobra.ArbitraryArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		yes, _ := cmd.Flags().GetBool("yes")
+		return runCLILifecycle(cmd, tasklifecycle.Request{Operation: tasklifecycle.OperationBatchUnarchive, IDs: args, Execute: yes, Actor: cliLifecycleActor()}, false)
+	},
+}
+
+func newCLITaskLifecycleService(store *storage.Store) *tasklifecycle.Service {
+	return tasklifecycle.New(store, tasklifecycle.WithHooks(tasklifecycle.Hooks{
+		IndexTask:  func(id string) error { return search.ReconcileTaskIndex(store, id) },
+		RemoveTask: func(id string) error { return search.ReconcileTaskRemoval(store, id) },
+	}))
+}
+
+func cliLifecycleActor() string {
+	if actor := strings.TrimSpace(os.Getenv("USER")); actor != "" {
+		return actor
+	}
+	return "cli"
+}
+
+func runCLILifecycle(cmd *cobra.Command, request tasklifecycle.Request, hardDeleteAuthorized bool) error {
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	response, err := newCLITaskLifecycleService(getStore()).ExecutePublic(ctx, request, hardDeleteAuthorized)
+	if isJSON(cmd) {
+		printJSON(response)
+	} else {
+		printLifecycleResponse(response)
+	}
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func printLifecycleResponse(response *tasklifecycle.Response) {
+	if response == nil {
+		return
+	}
+	mode := "preview"
+	if response.Execute {
+		mode = "execute"
+	}
+	fmt.Printf("%s %s: processed=%d changed=%d completed=%t\n", response.Operation, mode, response.Processed, response.Changed, response.Completed)
+	if response.FailedTaskID != "" {
+		fmt.Printf("failedTaskId=%s\n", response.FailedTaskID)
+	}
+	for index, item := range response.Items {
+		fmt.Printf("  [%d/%d] %s: %s -> %s changed=%t eligible=%t", index+1, response.Processed, item.TaskID, item.Before, item.After, item.Changed, item.Eligible)
+		if len(item.Reasons) > 0 {
+			codes := make([]string, 0, len(item.Reasons))
+			for _, reason := range item.Reasons {
+				codes = append(codes, string(reason.Code))
+			}
+			fmt.Printf(" reasons=%s", strings.Join(codes, ","))
+		}
+		if item.CompletedAt != nil {
+			fmt.Printf(" completedAt=%s", item.CompletedAt.UTC().Format(time.RFC3339Nano))
+		}
+		if item.ArchivedAt != nil {
+			fmt.Printf(" archivedAt=%s", item.ArchivedAt.UTC().Format(time.RFC3339Nano))
+		}
+		if item.Deadline != nil {
+			fmt.Printf(" deadline=%s", item.Deadline.UTC().Format(time.RFC3339Nano))
+		}
+		if item.Event != nil {
+			fmt.Printf(" eventId=%s", item.Event.ID)
+		}
+		fmt.Println()
+		for _, warning := range item.Warnings {
+			fmt.Printf("    warning=%s message=%s", warning.Code, warning.Message)
+			if len(warning.References) > 0 {
+				fmt.Printf(" references=%s", strings.Join(warning.References, ","))
+			}
+			fmt.Println()
+		}
+	}
 }
 
 // --- task history ---
@@ -913,8 +960,13 @@ func init() {
 	taskEditCmd.Flags().Int("order", 0, "Display order (lower = first)")
 
 	// task delete flags
-	taskDeleteCmd.Flags().Bool("dry-run", false, "Preview what would be deleted without deleting")
-	taskDeleteCmd.Flags().Bool("force", false, "Skip confirmation prompt")
+	taskDeleteCmd.Flags().String("reason", "", "Required deletion reason")
+	taskDeleteCmd.Flags().Bool("yes", false, "Explicitly confirm permanent deletion")
+	taskDeleteCmd.Flags().Bool("allow-hard-delete", false, "Grant this local CLI invocation hard-delete capability")
+	taskArchiveCmd.Flags().Bool("yes", false, "Execute; otherwise preview only")
+	taskUnarchiveCmd.Flags().Bool("yes", false, "Execute; otherwise preview only")
+	taskBatchArchiveCmd.Flags().Bool("yes", false, "Execute; otherwise preview only")
+	taskBatchUnarchiveCmd.Flags().Bool("yes", false, "Execute; otherwise preview only")
 
 	// Wire up subcommands
 	taskCmd.AddCommand(taskCreateCmd)
@@ -924,6 +976,8 @@ func init() {
 	taskCmd.AddCommand(taskDeleteCmd)
 	taskCmd.AddCommand(taskArchiveCmd)
 	taskCmd.AddCommand(taskUnarchiveCmd)
+	taskCmd.AddCommand(taskBatchArchiveCmd)
+	taskCmd.AddCommand(taskBatchUnarchiveCmd)
 	taskCmd.AddCommand(taskHistoryCmd)
 
 	// Register under root

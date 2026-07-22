@@ -51,9 +51,10 @@ var wsUpgrader = websocket.Upgrader{
 
 // Options configures the server behaviour.
 type Options struct {
-	Dev      bool   // enable verbose logging (HTTP requests, WebSocket, etc.)
-	Tunnel   bool   // start tunnel automatically on server boot
-	Password string // initial password for WebUI protection (in-memory only)
+	Dev                 bool   // enable verbose logging (HTTP requests, WebSocket, etc.)
+	Tunnel              bool   // start tunnel automatically on server boot
+	Password            string // initial password for WebUI protection (in-memory only)
+	AllowTaskHardDelete bool   // trusted server capability; default false
 }
 
 // Server is the top-level HTTP server.
@@ -75,6 +76,7 @@ type Server struct {
 	cancelSSEFwd      context.CancelFunc // Cancels the OpenCode SSE forwarder goroutine
 	cancelRuntimeMon  context.CancelFunc
 	cancelServiceMon  context.CancelFunc
+	cancelTaskSweep   context.CancelFunc
 	prevServiceStatus []services.ServiceStatus
 	prevServiceMu     sync.RWMutex
 	tunnel            *ServerTunnelManager
@@ -407,7 +409,6 @@ func NewServer(store *storage.Store, projectRoot string, port int, opts Options)
 	svcCtx, svcCancel := context.WithCancel(context.Background())
 	s.cancelServiceMon = svcCancel
 	s.startServiceStatusMonitor(svcCtx)
-
 	return s
 }
 
@@ -429,6 +430,10 @@ func (s *Server) StartWithListener(listener net.Listener) error {
 
 func (s *Server) serve(listener net.Listener) error {
 	defer s.releaseLSPDaemonLease()
+	sweepCtx, sweepCancel := context.WithCancel(context.Background())
+	s.cancelTaskSweep = sweepCancel
+	defer sweepCancel()
+	routes.StartTaskAutoArchiveSweeper(sweepCtx, s.activeStore, s.sse, routes.DefaultTaskAutoArchiveInterval)
 
 	// Port is bound — now safe to write the port file.
 	if err := s.writePortFile(); err != nil {
@@ -480,6 +485,9 @@ func (s *Server) serve(listener net.Listener) error {
 	}
 	if s.cancelServiceMon != nil {
 		s.cancelServiceMon()
+	}
+	if s.cancelTaskSweep != nil {
+		s.cancelTaskSweep()
 	}
 	s.cleanupOpenCodeServer()
 
@@ -1004,7 +1012,7 @@ func (s *Server) buildRouter() chi.Router {
 
 	// --- API routes ---
 	r.Route("/api", func(r chi.Router) {
-		routes.SetupRoutes(r, s.store, s.sse, s.projectRoot, s.manager, s.reinitOpenCode)
+		routes.SetupRoutesWithCapabilities(r, s.store, s.sse, s.projectRoot, s.manager, routes.TaskRouteCapabilities{HardDelete: s.opts.AllowTaskHardDelete}, s.reinitOpenCode)
 	})
 
 	// --- LSP language management routes ---

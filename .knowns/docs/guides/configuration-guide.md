@@ -1,13 +1,14 @@
 ---
 title: Configuration Guide
-createdAt: '2026-02-24T08:44:33.245Z'
-updatedAt: '2026-02-24T08:44:33.245Z'
 description: Project configuration options and settings
+createdAt: '2026-02-24T08:44:33.245Z'
+updatedAt: '2026-07-22T04:43:54.717Z'
 tags:
   - guide
   - config
   - settings
 ---
+
 # Configuration Guide
 
 Customize Knowns behavior. Full docs: `./docs/configuration.md`
@@ -76,3 +77,10 @@ Set during `knowns init` or:
 ```bash
 knowns config set gitTrackingMode git-tracked
 ```
+
+
+## Task Lifecycle settings
+
+Task retention and AI visibility are controlled by `settings.taskLifecycle`. Built-in defaults exclude done Tasks from default AI Retrieve, enable Auto Archive after `30d`, and disable purge with `purgeAfter: null`. A zero archive delay is distinct from disabling Auto Archive.
+
+See @doc/features/task-lifecycle for the full schema, effective defaults for legacy projects, validation, and operator recovery.

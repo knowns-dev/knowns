@@ -9,6 +9,8 @@ export type TaskStatus = string;
 // Priority: low, medium, high
 export type TaskPriority = "low" | "medium" | "high";
 
+export type TaskLifecycleState = "active" | "done" | "archived";
+
 // Task interface
 export interface Task {
 	id: string; // task-{6_char_base36} for new tasks; legacy sequential IDs still supported
@@ -25,6 +27,10 @@ export interface Task {
 	order?: number; // Manual ordering for display (lower = first)
 	createdAt: Date;
 	updatedAt: Date;
+	completedAt?: Date;
+	archivedAt?: Date;
+	archived: boolean;
+	lifecycleState: TaskLifecycleState;
 
 	// Acceptance criteria
 	acceptanceCriteria: AcceptanceCriterion[];
@@ -53,7 +59,7 @@ export interface TimeEntry {
 
 // Helper functions for task creation
 export function createTask(
-	data: Omit<Task, "id" | "createdAt" | "updatedAt" | "subtasks" | "timeSpent" | "timeEntries">,
+	data: Omit<Task, "id" | "createdAt" | "updatedAt" | "subtasks" | "timeSpent" | "timeEntries" | "archived" | "lifecycleState">,
 ): Omit<Task, "id"> {
 	const now = new Date();
 	return {
@@ -61,6 +67,8 @@ export function createTask(
 		subtasks: [],
 		timeSpent: 0,
 		timeEntries: [],
+		archived: false,
+		lifecycleState: "active",
 		createdAt: now,
 		updatedAt: now,
 	};

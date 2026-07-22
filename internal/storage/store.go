@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -29,6 +30,8 @@ type Store struct {
 	Chats      *ChatStore
 	Memory     *MemoryStore
 	Decisions  *DecisionStore
+
+	taskLifecycleLock *taskLifecycleLock
 }
 
 // NewStore creates a Store rooted at the given .knowns/ directory path.
@@ -36,18 +39,35 @@ type Store struct {
 func NewStore(root string) *Store {
 	globalRoot := GlobalRootPath()
 
-	s := &Store{Root: root}
-	s.Tasks = &TaskStore{root: root}
+	lifecycleLock := newTaskLifecycleLock(root)
+	s := &Store{Root: root, taskLifecycleLock: lifecycleLock}
+	s.Tasks = &TaskStore{root: root, lifecycleLock: lifecycleLock}
 	s.Docs = &DocStore{root: root}
 	s.Config = &ConfigStore{root: root}
-	s.Time = &TimeStore{root: root}
+	s.Time = &TimeStore{root: root, lifecycleLock: lifecycleLock}
 	s.Templates = &TemplateStore{root: root}
-	s.Versions = &VersionStore{root: root}
+	s.Versions = &VersionStore{root: root, lifecycleLock: lifecycleLock}
 	s.Workspaces = &WorkspaceStore{root: root}
 	s.Chats = &ChatStore{root: root}
 	s.Memory = &MemoryStore{root: root, globalRoot: globalRoot}
 	s.Decisions = &DecisionStore{root: root}
 	return s
+}
+
+// WithTaskLifecycleTransaction serializes a lifecycle mutation across all
+// Store instances and processes that point at the same project. The callback
+// receives lock-aware storage primitives and must not call the public TaskStore
+// mutation methods, which acquire the same lock.
+func (s *Store) WithTaskLifecycleTransaction(ctx context.Context, fn func(*TaskLifecycleTransaction) error) error {
+	if s == nil || s.taskLifecycleLock == nil {
+		return fmt.Errorf("task lifecycle transaction: store is not initialized")
+	}
+	if fn == nil {
+		return fmt.Errorf("task lifecycle transaction: callback is required")
+	}
+	return s.taskLifecycleLock.with(ctx, func() error {
+		return fn(&TaskLifecycleTransaction{store: s})
+	})
 }
 
 // GlobalRootPath returns the machine-level Knowns root (~/.knowns).

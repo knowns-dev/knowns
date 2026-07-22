@@ -1,6 +1,11 @@
 package models
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/howznguyen/knowns/internal/permissions"
@@ -72,6 +77,10 @@ type ProjectSettings struct {
 	DefaultPriority string   `json:"defaultPriority"`
 	DefaultLabels   []string `json:"defaultLabels,omitempty"`
 
+	// TaskLifecycle is canonical for this project. A nil value is supported for
+	// backward compatibility and resolves to DefaultTaskLifecycleSettings.
+	TaskLifecycle *TaskLifecycleSettings `json:"taskLifecycle,omitempty"`
+
 	// CodeIntelligenceIgnore is an optional list of repo-relative paths or
 	// glob-like patterns skipped by code ingest in addition to .gitignore.
 	CodeIntelligenceIgnore []string `json:"codeIntelligenceIgnore,omitempty"`
@@ -127,6 +136,130 @@ type ProjectSettings struct {
 
 	// LSP configures language server enable/disable and binary overrides.
 	LSP *LSPSettings `json:"lsp,omitempty"`
+}
+
+// TaskLifecycleSettings configures Task visibility and retention. AutoArchive
+// is the explicit enable/disable switch; a zero ArchiveAfter duration therefore
+// remains distinct from disabled archival. A nil PurgeAfter disables purging.
+type TaskLifecycleSettings struct {
+	ExcludeDoneFromDefaultRetrieval bool    `json:"excludeDoneFromDefaultRetrieval"`
+	AutoArchive                     bool    `json:"autoArchive"`
+	ArchiveAfter                    string  `json:"archiveAfter"`
+	PurgeAfter                      *string `json:"purgeAfter"`
+}
+
+// UnmarshalJSON lets project/global configuration specify a partial lifecycle
+// block without turning omitted true defaults into false or losing 30d.
+func (s *TaskLifecycleSettings) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		ExcludeDoneFromDefaultRetrieval *bool           `json:"excludeDoneFromDefaultRetrieval"`
+		AutoArchive                     *bool           `json:"autoArchive"`
+		ArchiveAfter                    *string         `json:"archiveAfter"`
+		PurgeAfter                      json.RawMessage `json:"purgeAfter"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	settings := DefaultTaskLifecycleSettings()
+	if raw.ExcludeDoneFromDefaultRetrieval != nil {
+		settings.ExcludeDoneFromDefaultRetrieval = *raw.ExcludeDoneFromDefaultRetrieval
+	}
+	if raw.AutoArchive != nil {
+		settings.AutoArchive = *raw.AutoArchive
+	}
+	if raw.ArchiveAfter != nil {
+		settings.ArchiveAfter = *raw.ArchiveAfter
+	}
+	if len(raw.PurgeAfter) > 0 && !bytes.Equal(bytes.TrimSpace(raw.PurgeAfter), []byte("null")) {
+		var purgeAfter string
+		if err := json.Unmarshal(raw.PurgeAfter, &purgeAfter); err != nil {
+			return fmt.Errorf("purgeAfter: %w", err)
+		}
+		settings.PurgeAfter = &purgeAfter
+	}
+	*s = settings
+	return nil
+}
+
+// DefaultTaskLifecycleSettings returns the built-in project lifecycle policy.
+func DefaultTaskLifecycleSettings() TaskLifecycleSettings {
+	return TaskLifecycleSettings{
+		ExcludeDoneFromDefaultRetrieval: true,
+		AutoArchive:                     true,
+		ArchiveAfter:                    "30d",
+		PurgeAfter:                      nil,
+	}
+}
+
+// EffectiveTaskLifecycle returns project-local lifecycle settings or built-in
+// defaults for legacy projects that do not yet persist the settings block.
+func (s ProjectSettings) EffectiveTaskLifecycle() TaskLifecycleSettings {
+	if s.TaskLifecycle == nil {
+		return DefaultTaskLifecycleSettings()
+	}
+	return cloneTaskLifecycleSettings(*s.TaskLifecycle)
+}
+
+// Validate rejects malformed lifecycle durations while permitting zero delay.
+func (s ProjectSettings) Validate() error {
+	settings := s.EffectiveTaskLifecycle()
+	if _, err := ParseTaskLifecycleDuration(settings.ArchiveAfter); err != nil {
+		return fmt.Errorf("settings.taskLifecycle.archiveAfter: %w", err)
+	}
+	if settings.PurgeAfter != nil {
+		if _, err := ParseTaskLifecycleDuration(*settings.PurgeAfter); err != nil {
+			return fmt.Errorf("settings.taskLifecycle.purgeAfter: %w", err)
+		}
+	}
+	return nil
+}
+
+// ParseTaskLifecycleDuration parses Go duration strings plus an integer day
+// suffix (for example "30d"). Negative and empty durations are rejected.
+func ParseTaskLifecycleDuration(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, fmt.Errorf("duration is required")
+	}
+
+	var (
+		duration time.Duration
+		err      error
+	)
+	if strings.HasSuffix(value, "d") {
+		daysText := strings.TrimSuffix(value, "d")
+		var days int64
+		days, err = strconv.ParseInt(daysText, 10, 64)
+		if err == nil {
+			const day = 24 * time.Hour
+			if days < 0 {
+				err = fmt.Errorf("duration must not be negative")
+			} else if days > int64((time.Duration(1<<63-1))/day) {
+				err = fmt.Errorf("duration overflows")
+			} else {
+				duration = time.Duration(days) * day
+			}
+		}
+	} else {
+		duration, err = time.ParseDuration(value)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration %q: %w", value, err)
+	}
+	if duration < 0 {
+		return 0, fmt.Errorf("duration must not be negative")
+	}
+	return duration, nil
+}
+
+func cloneTaskLifecycleSettings(settings TaskLifecycleSettings) TaskLifecycleSettings {
+	clone := settings
+	if settings.PurgeAfter != nil {
+		purgeAfter := *settings.PurgeAfter
+		clone.PurgeAfter = &purgeAfter
+	}
+	return clone
 }
 
 // RuntimeMemorySettings configures runtime-level memory injection.
@@ -199,8 +332,10 @@ type SemanticSearchSettings struct {
 // DefaultProjectSettings returns a ProjectSettings value populated with the
 // same defaults that the TypeScript CLI uses when initialising a new project.
 func DefaultProjectSettings() ProjectSettings {
+	taskLifecycle := DefaultTaskLifecycleSettings()
 	return ProjectSettings{
 		DefaultPriority: "medium",
+		TaskLifecycle:   &taskLifecycle,
 		Statuses:        DefaultStatuses(),
 		StatusColors: map[string]string{
 			"todo":        "gray",

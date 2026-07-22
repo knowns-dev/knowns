@@ -120,6 +120,34 @@ func TestReadWritePreset_AllowsDelete(t *testing.T) {
 	}
 }
 
+func TestPublicTaskLifecycleDefersPolicyAndIntentToSharedHandler(t *testing.T) {
+	readWrite := NewGuardMiddleware(func() *PermissionConfig { return &PermissionConfig{Preset: PresetReadWrite} })
+	result, err := callTool(readWrite, "tasks", "hard_delete", map[string]any{"taskId": "abc123", "confirmed": true, "reason": "approved"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("explicit hard-delete should pass read-write policy: %+v", result)
+	}
+
+	result, err = callTool(readWrite, "tasks", "hard_delete", map[string]any{"taskId": "abc123", "confirmed": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("shared handler should classify missing reason: %+v", result)
+	}
+
+	defaultPolicy := NewGuardMiddleware(func() *PermissionConfig { return nil })
+	result, err = callTool(defaultPolicy, "tasks", "hard_delete", map[string]any{"taskId": "abc123", "confirmed": true, "reason": "spoof", "authorized": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("shared handler should enforce trusted capability: %+v", result)
+	}
+}
+
 func TestReadOnlyPreset_BlocksWrite(t *testing.T) {
 	// Scenario 3: read-only blocks write.
 	cfg := &PermissionConfig{Preset: PresetReadOnly}

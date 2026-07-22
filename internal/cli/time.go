@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/tasklifecycle"
 	"github.com/spf13/cobra"
 )
 
@@ -73,17 +74,9 @@ func runTimeStop(cmd *cobra.Command, args []string) error {
 		taskID = state.Active[0].TaskID
 	}
 
-	entry, err := store.Time.Stop(taskID)
+	entry, err := newCLITaskLifecycleService(store).StopTimer(cmd.Context(), taskID, cliLifecycleActor())
 	if err != nil {
 		return fmt.Errorf("stop timer: %w", err)
-	}
-
-	// Update task's timeSpent
-	task, err := store.Tasks.Get(taskID)
-	if err == nil {
-		task.TimeSpent += entry.Duration
-		task.UpdatedAt = time.Now()
-		_ = store.Tasks.Update(task)
 	}
 
 	fmt.Println(RenderSuccess(fmt.Sprintf("Timer stopped for task %s. Duration: %s", taskID, formatDuration(entry.Duration))))
@@ -204,7 +197,7 @@ func runTimeAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	// Verify task exists
-	task, err := store.Tasks.Get(taskID)
+	_, err = store.Tasks.Get(taskID)
 	if err != nil {
 		return fmt.Errorf("task %q not found", taskID)
 	}
@@ -219,14 +212,9 @@ func runTimeAdd(cmd *cobra.Command, args []string) error {
 		Note:      note,
 	}
 
-	if err := store.Time.SaveEntry(taskID, entry); err != nil {
+	if _, err := newCLITaskLifecycleService(store).AddTimeEntry(cmd.Context(), taskID, tasklifecycle.TimeMutationOptions{Actor: cliLifecycleActor(), Entry: entry}); err != nil {
 		return fmt.Errorf("save time entry: %w", err)
 	}
-
-	// Update task's timeSpent
-	task.TimeSpent += durationSecs
-	task.UpdatedAt = time.Now()
-	_ = store.Tasks.Update(task)
 
 	fmt.Println(RenderSuccess(fmt.Sprintf("Added %s to task %s", formatDuration(durationSecs), taskID)))
 	return nil

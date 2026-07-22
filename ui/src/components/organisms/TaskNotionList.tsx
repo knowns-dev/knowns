@@ -9,6 +9,7 @@ import { buildStatusOptions } from "@/ui/utils/colors";
 import { useNewTaskIds } from "@/ui/hooks/useNewTaskIds";
 import { navigateTo } from "../../lib/navigation";
 import { cn } from "@/ui/lib/utils";
+import { TaskLifecycleBadge } from "../molecules/TaskLifecycleBadge";
 
 interface TaskNotionListProps {
 	tasks: Task[];
@@ -341,6 +342,7 @@ function TaskRow({ task, isNew, onClick }: { task: Task; isNew?: boolean; onClic
 					<span className="text-[11px] font-mono text-muted-foreground/60 shrink-0">
 						#{task.id}
 					</span>
+					<TaskLifecycleBadge state={task.lifecycleState} />
 				</div>
 				{task.description && (
 					<p className="text-xs text-muted-foreground truncate mt-0.5 max-w-lg">

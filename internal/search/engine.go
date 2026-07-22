@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"regexp"
@@ -16,6 +17,28 @@ import (
 const memoryStoreProject = "project-store"
 const memoryStoreGlobal = "global-store"
 
+// SearchPurpose makes Task lifecycle visibility explicit at the shared search
+// boundary. Public Search callers use the zero-value human purpose; Retrieve
+// always selects the AI purpose.
+type SearchPurpose string
+
+const (
+	SearchPurposeHuman       SearchPurpose = "human-search"
+	SearchPurposeAIRetrieval SearchPurpose = "ai-retrieval"
+)
+
+type taskVisibility string
+
+const (
+	taskVisibilityHuman      taskVisibility = "active-and-done"
+	taskVisibilityActive     taskVisibility = "active-only"
+	taskVisibilityHistorical taskVisibility = "active-done-archived"
+)
+
+type taskSearchSnapshot struct {
+	byID map[string]*models.Task
+}
+
 // SearchOptions configures a search query.
 type SearchOptions struct {
 	Query             string
@@ -28,6 +51,9 @@ type SearchOptions struct {
 	Tag               string
 	Limit             int
 	IncludeHistorical bool
+	Purpose           SearchPurpose
+	taskVisibility    taskVisibility
+	taskSnapshot      *taskSearchSnapshot
 }
 
 // Engine provides keyword, semantic, and hybrid search across tasks and docs.
@@ -66,10 +92,16 @@ func (e *Engine) Search(opts SearchOptions) ([]models.SearchResult, error) {
 	if opts.Mode == "" {
 		opts.Mode = string(ModeHybrid)
 	}
+	opts = e.resolveTaskVisibility(opts)
 
 	query := strings.TrimSpace(opts.Query)
 	if query == "" {
 		return []models.SearchResult{}, nil
+	}
+	var snapshotErr error
+	opts, snapshotErr = e.withTaskSnapshot(opts)
+	if snapshotErr != nil {
+		return nil, snapshotErr
 	}
 
 	mode := SearchMode(opts.Mode)
@@ -101,11 +133,17 @@ func (e *Engine) Search(opts SearchOptions) ([]models.SearchResult, error) {
 	}
 
 	results = filterSearchResultsByType(results, opts.Type)
+	results = e.canonicalizeTaskResults(results, opts)
 
-	// Sort by score descending.
-	sort.Slice(results, func(i, j int) bool {
+	// Preserve established cross-source score ordering, then lifecycle-group the
+	// Task subsequence in the same result slots. This keeps mixed-source ordering
+	// deterministic without letting an archived Task outrank an active Task.
+	sort.SliceStable(results, func(i, j int) bool {
 		return results[i].Score > results[j].Score
 	})
+	if opts.IncludeHistorical {
+		groupHistoricalTaskResults(results)
+	}
 
 	if len(results) > opts.Limit {
 		results = results[:opts.Limit]
@@ -131,6 +169,12 @@ func (e *Engine) Retrieve(opts models.RetrievalOptions) (*models.RetrievalRespon
 		Label:             opts.Label,
 		Type:              typeFilterFromSources(opts.SourceTypes),
 		IncludeHistorical: opts.IncludeHistorical,
+		Purpose:           SearchPurposeAIRetrieval,
+	}
+	searchOpts = e.resolveTaskVisibility(searchOpts)
+	searchOpts, err := e.withTaskSnapshot(searchOpts)
+	if err != nil {
+		return nil, err
 	}
 
 	results, err := e.Search(searchOpts)
@@ -139,18 +183,19 @@ func (e *Engine) Retrieve(opts models.RetrievalOptions) (*models.RetrievalRespon
 	}
 
 	filtered := filterBySourceTypes(results, opts.SourceTypes)
-	candidates := e.buildCandidates(filtered)
+	candidates := e.buildCandidates(filtered, searchOpts)
 	if opts.ExpandReferences {
-		expanded := e.expandCandidateReferences(candidates, opts)
-		candidates = mergeCandidates(candidates, expanded)
+		expanded := e.expandCandidateReferences(candidates, opts, searchOpts)
+		candidates = mergeCandidates(candidates, expanded, opts.IncludeHistorical)
 	}
+	candidates = e.canonicalizeRetrievalCandidates(candidates, searchOpts)
 
 	response := &models.RetrievalResponse{
 		Query:      strings.TrimSpace(opts.Query),
 		Mode:       effectiveMode(searchOpts.Mode, semanticAvailable),
 		Candidates: candidates,
 		ContextPack: models.ContextPack{
-			Items: e.buildContextPack(candidates),
+			Items: e.buildContextPack(candidates, searchOpts),
 			Mode:  "docs-first",
 		},
 	}
@@ -161,6 +206,99 @@ func (e *Engine) Retrieve(opts models.RetrievalOptions) (*models.RetrievalRespon
 		response.ContextPack.Items = []models.ContextItem{}
 	}
 	return response, nil
+}
+
+func (e *Engine) withTaskSnapshot(opts SearchOptions) (SearchOptions, error) {
+	if opts.taskSnapshot != nil {
+		return opts, nil
+	}
+	snapshot := &taskSearchSnapshot{byID: map[string]*models.Task{}}
+	opts.taskSnapshot = snapshot
+	if e == nil || e.store == nil || e.store.Tasks == nil {
+		return opts, nil
+	}
+	if opts.Type != "" && opts.Type != "all" && opts.Type != "task" {
+		return opts, nil
+	}
+	err := e.store.WithTaskLifecycleTransaction(context.Background(), func(tx *storage.TaskLifecycleTransaction) error {
+		active, err := tx.ListActiveTasks()
+		if err != nil {
+			return fmt.Errorf("snapshot active Tasks: %w", err)
+		}
+		if opts.taskVisibility == taskVisibilityHistorical {
+			archived, err := tx.ListArchivedTasks()
+			if err != nil {
+				return fmt.Errorf("snapshot archived Tasks: %w", err)
+			}
+			for _, task := range archived {
+				reserved, err := tx.IsIDReserved(task.ID)
+				if err != nil {
+					return fmt.Errorf("snapshot archived Task %q tombstone: %w", task.ID, err)
+				}
+				if !reserved {
+					snapshot.byID[task.ID] = task
+				}
+			}
+		}
+		// Active storage wins over migration artifacts in both locations.
+		for _, task := range active {
+			reserved, err := tx.IsIDReserved(task.ID)
+			if err != nil {
+				return fmt.Errorf("snapshot active Task %q tombstone: %w", task.ID, err)
+			}
+			if !reserved {
+				snapshot.byID[task.ID] = task
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return opts, err
+	}
+	return opts, nil
+}
+
+func taskFromSnapshot(opts SearchOptions, taskID string) (*models.Task, bool) {
+	if opts.taskSnapshot == nil {
+		return nil, false
+	}
+	task, ok := opts.taskSnapshot.byID[taskID]
+	return task, ok && task != nil
+}
+
+func (e *Engine) resolveTaskVisibility(opts SearchOptions) SearchOptions {
+	// A populated snapshot is a complete query boundary: keep the visibility
+	// policy resolved when that snapshot was captured, including across a local
+	// runtime/daemon handoff.
+	if opts.taskSnapshot != nil && opts.taskVisibility != "" {
+		return opts
+	}
+	if opts.IncludeHistorical {
+		opts.taskVisibility = taskVisibilityHistorical
+		return opts
+	}
+	if opts.Purpose == "" {
+		opts.Purpose = SearchPurposeHuman
+	}
+	if opts.Purpose != SearchPurposeAIRetrieval {
+		opts.taskVisibility = taskVisibilityHuman
+		return opts
+	}
+
+	// Fail closed when project configuration is unavailable. Existing projects
+	// with no lifecycle block resolve through the model's built-in defaults.
+	excludeDone := true
+	if e != nil && e.store != nil && e.store.Config != nil {
+		if project, err := e.store.Config.Load(); err == nil {
+			excludeDone = project.Settings.EffectiveTaskLifecycle().ExcludeDoneFromDefaultRetrieval
+		}
+	}
+	if excludeDone {
+		opts.taskVisibility = taskVisibilityActive
+	} else {
+		opts.taskVisibility = taskVisibilityHuman
+	}
+	return opts
 }
 
 func (e *Engine) semanticAvailableForType(searchType string) bool {
@@ -203,6 +341,161 @@ func filterSearchResultsByType(results []models.SearchResult, searchType string)
 	return filtered
 }
 
+func (e *Engine) canonicalizeTaskResults(results []models.SearchResult, opts SearchOptions) []models.SearchResult {
+	if e == nil || e.store == nil || e.store.Tasks == nil {
+		return results
+	}
+	filtered := make([]models.SearchResult, 0, len(results))
+	for _, result := range results {
+		if result.Type != "task" {
+			filtered = append(filtered, result)
+			continue
+		}
+		task, ok := taskFromSnapshot(opts, result.ID)
+		if !ok || !taskVisibleForSearch(task, opts) || !taskMatchesSearchFilters(task, opts) {
+			continue
+		}
+		applyTaskLifecycleToSearchResult(&result, task)
+		filtered = append(filtered, result)
+	}
+	return filtered
+}
+
+func (e *Engine) canonicalizeRetrievalCandidates(candidates []models.RetrievalCandidate, opts SearchOptions) []models.RetrievalCandidate {
+	if e == nil || e.store == nil || e.store.Tasks == nil {
+		return candidates
+	}
+	filtered := make([]models.RetrievalCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Type != "task" {
+			filtered = append(filtered, candidate)
+			continue
+		}
+		task, ok := taskFromSnapshot(opts, candidate.ID)
+		if !ok || !taskVisibleForSearch(task, opts) || !taskMatchesSearchFilters(task, opts) {
+			continue
+		}
+		applyTaskLifecycleToCandidate(&candidate, task)
+		filtered = append(filtered, candidate)
+	}
+	sortRetrievalCandidates(filtered, opts.IncludeHistorical)
+	return filtered
+}
+
+func taskVisibleForSearch(task *models.Task, opts SearchOptions) bool {
+	if task == nil {
+		return false
+	}
+	switch opts.taskVisibility {
+	case taskVisibilityHistorical:
+		return true
+	case taskVisibilityActive:
+		return task.LifecycleState() == models.TaskLifecycleActive
+	case taskVisibilityHuman:
+		return task.LifecycleState() != models.TaskLifecycleArchived
+	default:
+		// Unresolved options are treated as the backward-compatible human Search
+		// purpose. Engine.Search and Retrieve resolve this explicitly first.
+		return task.LifecycleState() != models.TaskLifecycleArchived
+	}
+}
+
+func taskMatchesSearchFilters(task *models.Task, opts SearchOptions) bool {
+	if opts.Status != "" && task.Status != opts.Status {
+		return false
+	}
+	if opts.Priority != "" && task.Priority != opts.Priority {
+		return false
+	}
+	if opts.Assignee != "" && task.Assignee != opts.Assignee {
+		return false
+	}
+	if opts.Label != "" && !containsStr(task.Labels, opts.Label) {
+		return false
+	}
+	return true
+}
+
+func applyTaskLifecycleToSearchResult(result *models.SearchResult, task *models.Task) {
+	if result == nil || task == nil {
+		return
+	}
+	result.Title = task.Title
+	result.Status = task.Status
+	result.Priority = task.Priority
+	result.LifecycleState = task.LifecycleState()
+	result.CompletedAt = cloneTimePointer(task.CompletedAt)
+	result.ArchivedAt = cloneTimePointer(task.ArchivedAt)
+}
+
+func applyTaskLifecycleToCandidate(candidate *models.RetrievalCandidate, task *models.Task) {
+	if candidate == nil || task == nil {
+		return
+	}
+	candidate.Title = task.Title
+	candidate.Status = task.Status
+	candidate.Priority = task.Priority
+	candidate.LifecycleState = task.LifecycleState()
+	candidate.CompletedAt = cloneTimePointer(task.CompletedAt)
+	candidate.ArchivedAt = cloneTimePointer(task.ArchivedAt)
+	candidate.Metadata.Status = task.Status
+	candidate.Metadata.Priority = task.Priority
+	candidate.Metadata.LifecycleState = task.LifecycleState()
+	candidate.Metadata.CompletedAt = cloneTimePointer(task.CompletedAt)
+	candidate.Metadata.ArchivedAt = cloneTimePointer(task.ArchivedAt)
+	candidate.Metadata.UpdatedAt = timePtr(task.UpdatedAt)
+	candidate.UpdatedAt = timePtr(task.UpdatedAt)
+}
+
+func cloneTimePointer(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func taskLifecycleRank(state models.TaskLifecycleState) int {
+	switch state {
+	case models.TaskLifecycleActive:
+		return 0
+	case models.TaskLifecycleDone:
+		return 1
+	case models.TaskLifecycleArchived:
+		return 2
+	default:
+		return 3
+	}
+}
+
+func groupHistoricalTaskResults(results []models.SearchResult) {
+	tasks := make([]models.SearchResult, 0, len(results))
+	for _, result := range results {
+		if result.Type == "task" {
+			tasks = append(tasks, result)
+		}
+	}
+	sort.SliceStable(tasks, func(i, j int) bool {
+		iRank := taskLifecycleRank(tasks[i].LifecycleState)
+		jRank := taskLifecycleRank(tasks[j].LifecycleState)
+		if iRank != jRank {
+			return iRank < jRank
+		}
+		if tasks[i].Score != tasks[j].Score {
+			return tasks[i].Score > tasks[j].Score
+		}
+		return tasks[i].Title < tasks[j].Title
+	})
+	nextTask := 0
+	for index := range results {
+		if results[index].Type != "task" {
+			continue
+		}
+		results[index] = tasks[nextTask]
+		nextTask++
+	}
+}
+
 func typeFilterFromSources(sourceTypes []string) string {
 	if len(sourceTypes) == 1 {
 		switch sourceTypes[0] {
@@ -224,7 +517,7 @@ func filterBySourceTypes(results []models.SearchResult, sourceTypes []string) []
 	return filtered
 }
 
-func (e *Engine) buildCandidates(results []models.SearchResult) []models.RetrievalCandidate {
+func (e *Engine) buildCandidates(results []models.SearchResult, opts SearchOptions) []models.RetrievalCandidate {
 	candidates := make([]models.RetrievalCandidate, 0, len(results))
 	for _, result := range results {
 		candidate := models.RetrievalCandidate{
@@ -239,24 +532,34 @@ func (e *Engine) buildCandidates(results []models.SearchResult) []models.Retriev
 			DirectMatch:      true,
 			Status:           result.Status,
 			Priority:         result.Priority,
+			LifecycleState:   result.LifecycleState,
+			CompletedAt:      cloneTimePointer(result.CompletedAt),
+			ArchivedAt:       cloneTimePointer(result.ArchivedAt),
 			Tags:             result.Tags,
 			MemoryLayer:      result.MemoryLayer,
 			Category:         result.Category,
 			MemoryStore:      result.MemoryStore,
 			SourcePreference: sourcePreference(result.Type),
 		}
-		candidate.Metadata = e.sourceRecord(result)
+		candidate.Metadata = e.sourceRecord(result, opts)
 		candidate.UpdatedAt = candidate.Metadata.UpdatedAt
 		candidates = append(candidates, candidate)
 	}
-	sortRetrievalCandidates(candidates)
+	sortRetrievalCandidates(candidates, opts.IncludeHistorical)
 	return candidates
 }
 
-func sortRetrievalCandidates(candidates []models.RetrievalCandidate) {
+func sortRetrievalCandidates(candidates []models.RetrievalCandidate, includeHistorical bool) {
 	sort.SliceStable(candidates, func(i, j int) bool {
 		if candidates[i].SourcePreference != candidates[j].SourcePreference {
 			return candidates[i].SourcePreference < candidates[j].SourcePreference
+		}
+		if includeHistorical && candidates[i].Type == "task" && candidates[j].Type == "task" {
+			iRank := taskLifecycleRank(candidates[i].LifecycleState)
+			jRank := taskLifecycleRank(candidates[j].LifecycleState)
+			if iRank != jRank {
+				return iRank < jRank
+			}
 		}
 		if candidates[i].Score != candidates[j].Score {
 			return candidates[i].Score > candidates[j].Score
@@ -265,7 +568,7 @@ func sortRetrievalCandidates(candidates []models.RetrievalCandidate) {
 	})
 }
 
-func mergeCandidates(primary []models.RetrievalCandidate, expanded []models.RetrievalCandidate) []models.RetrievalCandidate {
+func mergeCandidates(primary []models.RetrievalCandidate, expanded []models.RetrievalCandidate, includeHistorical bool) []models.RetrievalCandidate {
 	merged := append([]models.RetrievalCandidate{}, primary...)
 	byKey := make(map[string]int, len(primary))
 	for i, candidate := range primary {
@@ -281,7 +584,7 @@ func mergeCandidates(primary []models.RetrievalCandidate, expanded []models.Retr
 		merged = append(merged, candidate)
 		byKey[key] = len(merged) - 1
 	}
-	sortRetrievalCandidates(merged)
+	sortRetrievalCandidates(merged, includeHistorical)
 	return merged
 }
 
@@ -300,40 +603,47 @@ func appendUnique(existing []string, values ...string) []string {
 	return existing
 }
 
-func (e *Engine) buildContextPack(candidates []models.RetrievalCandidate) []models.ContextItem {
-	ordered := append([]models.RetrievalCandidate{}, candidates...)
-	sortRetrievalCandidates(ordered)
+func (e *Engine) buildContextPack(candidates []models.RetrievalCandidate, opts SearchOptions) []models.ContextItem {
+	ordered := e.canonicalizeRetrievalCandidates(append([]models.RetrievalCandidate{}, candidates...), opts)
+	sortRetrievalCandidates(ordered, opts.IncludeHistorical)
 
 	items := make([]models.ContextItem, 0, len(ordered))
 	for _, candidate := range ordered {
+		content, visible := e.contextContent(candidate, opts)
+		if !visible {
+			continue
+		}
 		item := models.ContextItem{
-			Type:         candidate.Type,
-			ID:           candidate.ID,
-			Title:        candidate.Title,
-			Content:      e.contextContent(candidate),
-			Snippet:      candidate.Snippet,
-			DirectMatch:  candidate.DirectMatch,
-			ExpandedFrom: candidate.ExpandedFrom,
-			Citation:     candidate.Citation,
-			Metadata:     candidate.Metadata,
+			Type:           candidate.Type,
+			ID:             candidate.ID,
+			Title:          candidate.Title,
+			Content:        content,
+			Snippet:        candidate.Snippet,
+			DirectMatch:    candidate.DirectMatch,
+			ExpandedFrom:   candidate.ExpandedFrom,
+			Citation:       candidate.Citation,
+			LifecycleState: candidate.LifecycleState,
+			CompletedAt:    cloneTimePointer(candidate.CompletedAt),
+			ArchivedAt:     cloneTimePointer(candidate.ArchivedAt),
+			Metadata:       candidate.Metadata,
 		}
 		items = append(items, item)
 	}
 	return items
 }
 
-func (e *Engine) contextContent(candidate models.RetrievalCandidate) string {
+func (e *Engine) contextContent(candidate models.RetrievalCandidate, opts SearchOptions) (string, bool) {
 	switch candidate.Type {
 	case "doc":
 		doc, err := e.store.Docs.Get(candidate.ID)
 		if err != nil {
-			return candidate.Snippet
+			return candidate.Snippet, true
 		}
-		return strings.TrimSpace(strings.Join([]string{doc.Title, doc.Description, doc.Content}, "\n\n"))
+		return strings.TrimSpace(strings.Join([]string{doc.Title, doc.Description, doc.Content}, "\n\n")), true
 	case "task":
-		task, err := e.store.Tasks.Get(candidate.ID)
-		if err != nil {
-			return candidate.Snippet
+		task, ok := taskFromSnapshot(opts, candidate.ID)
+		if !ok || !taskVisibleForSearch(task, opts) || !taskMatchesSearchFilters(task, opts) {
+			return "", false
 		}
 		parts := []string{task.Title, task.Description}
 		if task.ImplementationPlan != "" {
@@ -342,25 +652,25 @@ func (e *Engine) contextContent(candidate models.RetrievalCandidate) string {
 		if task.ImplementationNotes != "" {
 			parts = append(parts, task.ImplementationNotes)
 		}
-		return strings.TrimSpace(strings.Join(parts, "\n\n"))
+		return strings.TrimSpace(strings.Join(parts, "\n\n")), true
 	case "memory":
 		entry, err := e.store.Memory.Get(candidate.ID)
 		if err != nil {
-			return candidate.Snippet
+			return candidate.Snippet, true
 		}
 		parts := []string{entry.Title, entry.Content}
 		if entry.Category != "" {
 			parts = append([]string{entry.Title + " [" + entry.Category + "]"}, entry.Content)
 		}
-		return strings.TrimSpace(strings.Join(parts, "\n\n"))
+		return strings.TrimSpace(strings.Join(parts, "\n\n")), true
 	case "decision":
 		decision, err := e.store.Decisions.Get(candidate.ID)
 		if err != nil {
-			return candidate.Snippet
+			return candidate.Snippet, true
 		}
-		return decisionText(decision)
+		return decisionText(decision), true
 	default:
-		return candidate.Snippet
+		return candidate.Snippet, true
 	}
 }
 
@@ -388,17 +698,20 @@ func sourcePreference(sourceType string) int {
 	}
 }
 
-func (e *Engine) sourceRecord(result models.SearchResult) models.SourceRecord {
+func (e *Engine) sourceRecord(result models.SearchResult, opts SearchOptions) models.SourceRecord {
 	record := models.SourceRecord{
-		Type:        result.Type,
-		ID:          result.ID,
-		Path:        result.Path,
-		Tags:        result.Tags,
-		Status:      result.Status,
-		Priority:    result.Priority,
-		MemoryLayer: result.MemoryLayer,
-		Category:    result.Category,
-		MemoryStore: result.MemoryStore,
+		Type:           result.Type,
+		ID:             result.ID,
+		Path:           result.Path,
+		Tags:           result.Tags,
+		Status:         result.Status,
+		Priority:       result.Priority,
+		LifecycleState: result.LifecycleState,
+		CompletedAt:    cloneTimePointer(result.CompletedAt),
+		ArchivedAt:     cloneTimePointer(result.ArchivedAt),
+		MemoryLayer:    result.MemoryLayer,
+		Category:       result.Category,
+		MemoryStore:    result.MemoryStore,
 	}
 	switch result.Type {
 	case "doc":
@@ -409,7 +722,12 @@ func (e *Engine) sourceRecord(result models.SearchResult) models.SourceRecord {
 			record.UpdatedAt = timePtr(doc.UpdatedAt)
 		}
 	case "task":
-		if task, err := e.store.Tasks.Get(result.ID); err == nil {
+		if task, ok := taskFromSnapshot(opts, result.ID); ok {
+			record.Status = task.Status
+			record.Priority = task.Priority
+			record.LifecycleState = task.LifecycleState()
+			record.CompletedAt = cloneTimePointer(task.CompletedAt)
+			record.ArchivedAt = cloneTimePointer(task.ArchivedAt)
 			record.UpdatedAt = timePtr(task.UpdatedAt)
 		}
 	case "memory":
@@ -434,13 +752,13 @@ func timePtr(t time.Time) *time.Time {
 	return &copy
 }
 
-func (e *Engine) expandCandidateReferences(candidates []models.RetrievalCandidate, opts models.RetrievalOptions) []models.RetrievalCandidate {
+func (e *Engine) expandCandidateReferences(candidates []models.RetrievalCandidate, opts models.RetrievalOptions, taskOpts SearchOptions) []models.RetrievalCandidate {
 	allowed := allowedSourceSet(opts.SourceTypes)
 	expanded := []models.RetrievalCandidate{}
 	seen := map[string]bool{}
 	for _, candidate := range candidates {
-		content := e.referenceContent(candidate)
-		for _, expandedCandidate := range e.extractReferenceCandidates(content, candidate, allowed, opts) {
+		content := e.referenceContent(candidate, taskOpts)
+		for _, expandedCandidate := range e.extractReferenceCandidates(content, candidate, allowed, opts, taskOpts) {
 			key := expandedCandidate.Type + ":" + expandedCandidate.ID
 			if seen[key] {
 				continue
@@ -463,14 +781,14 @@ func allowedSourceSet(sourceTypes []string) map[string]bool {
 	return allowed
 }
 
-func (e *Engine) referenceContent(candidate models.RetrievalCandidate) string {
+func (e *Engine) referenceContent(candidate models.RetrievalCandidate, taskOpts SearchOptions) string {
 	switch candidate.Type {
 	case "doc":
 		if doc, err := e.store.Docs.Get(candidate.ID); err == nil {
 			return doc.Content
 		}
 	case "task":
-		if task, err := e.store.Tasks.Get(candidate.ID); err == nil {
+		if task, ok := taskFromSnapshot(taskOpts, candidate.ID); ok {
 			return strings.Join([]string{task.Description, task.ImplementationPlan, task.ImplementationNotes}, "\n")
 		}
 	case "memory":
@@ -485,7 +803,7 @@ func (e *Engine) referenceContent(candidate models.RetrievalCandidate) string {
 	return ""
 }
 
-func (e *Engine) extractReferenceCandidates(content string, source models.RetrievalCandidate, allowed map[string]bool, opts models.RetrievalOptions) []models.RetrievalCandidate {
+func (e *Engine) extractReferenceCandidates(content string, source models.RetrievalCandidate, allowed map[string]bool, opts models.RetrievalOptions, taskOpts SearchOptions) []models.RetrievalCandidate {
 	var expanded []models.RetrievalCandidate
 	for _, ref := range references.Extract(content) {
 		if !ref.ValidRelation || !allowed[ref.Type] {
@@ -493,8 +811,11 @@ func (e *Engine) extractReferenceCandidates(content string, source models.Retrie
 		}
 		switch ref.Type {
 		case "task":
-			if task, err := e.store.Tasks.Get(ref.Target); err == nil {
-				expanded = append(expanded, models.RetrievalCandidate{
+			if task, ok := taskFromSnapshot(taskOpts, ref.Target); ok {
+				if !taskVisibleForSearch(task, taskOpts) || !taskMatchesSearchFilters(task, taskOpts) {
+					continue
+				}
+				candidate := models.RetrievalCandidate{
 					Type:             "task",
 					ID:               task.ID,
 					Title:            task.Title,
@@ -505,15 +826,22 @@ func (e *Engine) extractReferenceCandidates(content string, source models.Retrie
 					ExpandedFrom:     []string{source.Type + ":" + source.ID},
 					Status:           task.Status,
 					Priority:         task.Priority,
+					LifecycleState:   task.LifecycleState(),
+					CompletedAt:      cloneTimePointer(task.CompletedAt),
+					ArchivedAt:       cloneTimePointer(task.ArchivedAt),
 					SourcePreference: sourcePreference("task"),
 					Metadata: models.SourceRecord{
-						Type:      "task",
-						ID:        task.ID,
-						Status:    task.Status,
-						Priority:  task.Priority,
-						UpdatedAt: timePtr(task.UpdatedAt),
+						Type:           "task",
+						ID:             task.ID,
+						Status:         task.Status,
+						Priority:       task.Priority,
+						LifecycleState: task.LifecycleState(),
+						CompletedAt:    cloneTimePointer(task.CompletedAt),
+						ArchivedAt:     cloneTimePointer(task.ArchivedAt),
+						UpdatedAt:      timePtr(task.UpdatedAt),
 					},
-				})
+				}
+				expanded = append(expanded, candidate)
 			}
 		case "doc":
 			if doc, err := e.store.Docs.Get(ref.Target); err == nil {
@@ -661,23 +989,14 @@ func (e *Engine) heuristicKeywordSearch(query string, opts SearchOptions) ([]mod
 }
 
 func (e *Engine) keywordSearchTasks(query string, words []string, opts SearchOptions) ([]models.SearchResult, error) {
-	tasks, err := e.store.Tasks.List()
+	tasks, err := tasksForSearch(e.store, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	var results []models.SearchResult
 	for _, task := range tasks {
-		if opts.Status != "" && task.Status != opts.Status {
-			continue
-		}
-		if opts.Priority != "" && task.Priority != opts.Priority {
-			continue
-		}
-		if opts.Assignee != "" && task.Assignee != opts.Assignee {
-			continue
-		}
-		if opts.Label != "" && !containsStr(task.Labels, opts.Label) {
+		if !taskVisibleForSearch(task, opts) || !taskMatchesSearchFilters(task, opts) {
 			continue
 		}
 
@@ -691,7 +1010,7 @@ func (e *Engine) keywordSearchTasks(query string, words []string, opts SearchOpt
 			snippet = truncateStr(task.Description, 150)
 		}
 
-		results = append(results, models.SearchResult{
+		result := models.SearchResult{
 			Type:      "task",
 			ID:        task.ID,
 			Title:     task.Title,
@@ -700,9 +1019,48 @@ func (e *Engine) keywordSearchTasks(query string, words []string, opts SearchOpt
 			Status:    task.Status,
 			Priority:  task.Priority,
 			MatchedBy: []string{"keyword"},
-		})
+		}
+		applyTaskLifecycleToSearchResult(&result, task)
+		results = append(results, result)
 	}
 	return results, nil
+}
+
+func tasksForSearch(store *storage.Store, opts SearchOptions) ([]*models.Task, error) {
+	if opts.taskSnapshot != nil {
+		tasks := make([]*models.Task, 0, len(opts.taskSnapshot.byID))
+		for _, task := range opts.taskSnapshot.byID {
+			tasks = append(tasks, task)
+		}
+		return tasks, nil
+	}
+	if store == nil || store.Tasks == nil {
+		return nil, fmt.Errorf("task search store unavailable")
+	}
+	active, err := store.Tasks.List()
+	if err != nil {
+		return nil, err
+	}
+	if opts.taskVisibility != taskVisibilityHistorical {
+		return active, nil
+	}
+	archived, err := store.Tasks.ListArchived()
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]*models.Task, len(active)+len(archived))
+	for _, task := range archived {
+		byID[task.ID] = task
+	}
+	// An active copy wins if legacy/migration artifacts left both locations.
+	for _, task := range active {
+		byID[task.ID] = task
+	}
+	all := make([]*models.Task, 0, len(byID))
+	for _, task := range byID {
+		all = append(all, task)
+	}
+	return all, nil
 }
 
 func (e *Engine) keywordSearchDocs(query string, words []string, opts SearchOptions) ([]models.SearchResult, error) {
@@ -893,8 +1251,15 @@ func (e *Engine) semanticSearch(query string, opts SearchOptions) ([]models.Sear
 		return nil, err
 	}
 
+	topK := opts.Limit * 2
+	if opts.Type == "" || opts.Type == "all" || opts.Type == "task" {
+		// Task lifecycle is canonical-file state, not trusted index metadata. Scan
+		// the available vector candidates so stale historical chunks cannot crowd
+		// active Tasks out before canonical filtering.
+		topK = e.vecStore.Count()
+	}
 	scored := e.vecStore.Search(queryVec, VectorSearchOpts{
-		TopK:      opts.Limit * 2, // get more to allow filtering
+		TopK:      topK,
 		Threshold: 0.3,
 		ChunkType: chunkTypeForSearchType(opts.Type),
 	})
@@ -921,8 +1286,8 @@ func (e *Engine) hybridSearch(query string, opts SearchOptions) ([]models.Search
 	}
 
 	// Merge results.
-	merged := mergeResults(kwResults, semResults, opts.Limit*2) // get more for reranking
-	return e.rerank(merged, query, opts.Limit), nil
+	merged := mergeResults(kwResults, semResults, 0)
+	return e.rerank(merged, query, 0, opts), nil
 }
 
 func (e *Engine) memorySemanticAvailable() bool {
@@ -970,7 +1335,7 @@ func (e *Engine) hybridMemorySearch(query string, opts SearchOptions) ([]models.
 		return kwResults, nil
 	}
 	merged := mergeResults(kwResults, semResults, opts.Limit*2)
-	return e.rerank(merged, query, opts.Limit), nil
+	return e.rerank(merged, query, opts.Limit, opts), nil
 }
 
 func (e *Engine) semanticSearchSingleStore(query string, opts SearchOptions, memoryLayer string, memoryStore string) ([]models.SearchResult, error) {
@@ -1160,7 +1525,7 @@ func mergeResults(kwResults, semResults []models.SearchResult, limit int) []mode
 		return results[i].Score > results[j].Score
 	})
 
-	if len(results) > limit {
+	if limit > 0 && len(results) > limit {
 		results = results[:limit]
 	}
 
@@ -1201,36 +1566,24 @@ func (e *Engine) scoredChunksToResults(scored []ScoredChunk, opts SearchOptions,
 		switch sc.Type {
 		case ChunkTypeTask:
 			key = "task:" + sc.TaskID
-
-			if opts.Status != "" && sc.Status != opts.Status {
-				continue
-			}
-			if opts.Priority != "" && sc.Priority != opts.Priority {
-				continue
-			}
-			if opts.Label != "" && !containsStr(sc.Labels, opts.Label) {
-				continue
-			}
 			if opts.Type != "" && opts.Type != "all" && opts.Type != "task" {
 				continue
 			}
-
-			title := sc.TaskID
-			if task, err := e.store.Tasks.Get(sc.TaskID); err == nil {
-				title = task.Title
-				result.Status = task.Status
-				result.Priority = task.Priority
+			task, ok := taskFromSnapshot(opts, sc.TaskID)
+			if !ok || !taskVisibleForSearch(task, opts) || !taskMatchesSearchFilters(task, opts) {
+				continue
 			}
 
 			result = models.SearchResult{
 				Type:      "task",
 				ID:        sc.TaskID,
-				Title:     title,
+				Title:     task.Title,
 				Score:     chunkScore,
-				Status:    result.Status,
-				Priority:  result.Priority,
+				Status:    task.Status,
+				Priority:  task.Priority,
 				MatchedBy: []string{method},
 			}
+			applyTaskLifecycleToSearchResult(&result, task)
 
 		case ChunkTypeDoc:
 			key = "doc:" + sc.DocPath
@@ -1699,7 +2052,7 @@ func scoreDecision(entry *models.DecisionEntry, query string, words []string) fl
 // ─── heuristic reranker ─────────────────────────────────────────────
 
 // rerank applies heuristic signals on top of RRF scores to improve ranking.
-func (e *Engine) rerank(results []models.SearchResult, query string, limit int) []models.SearchResult {
+func (e *Engine) rerank(results []models.SearchResult, query string, limit int, opts SearchOptions) []models.SearchResult {
 	if len(results) == 0 {
 		return results
 	}
@@ -1725,8 +2078,8 @@ func (e *Engine) rerank(results []models.SearchResult, query string, limit int) 
 
 		switch r.Type {
 		case "task":
-			task, err := e.store.Tasks.Get(r.ID)
-			if err != nil {
+			task, ok := taskFromSnapshot(opts, r.ID)
+			if !ok {
 				break
 			}
 
@@ -1836,7 +2189,7 @@ func (e *Engine) rerank(results []models.SearchResult, query string, limit int) 
 		return out[i].Score > out[j].Score
 	})
 
-	if len(out) > limit {
+	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
 

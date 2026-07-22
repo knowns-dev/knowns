@@ -124,6 +124,37 @@ func BestEffortRemoveTask(store *storage.Store, taskID string) {
 	})
 }
 
+// ReconcileTaskIndex synchronously updates one Task's derived index. A project
+// without semantic search has no derived index to reconcile and succeeds.
+func ReconcileTaskIndex(store *storage.Store, taskID string) error {
+	return withSemanticIndex(store, func(service *IndexService) error {
+		return service.IndexTask(taskID)
+	})
+}
+
+// ReconcileTaskRemoval synchronously removes one Task's derived index.
+func ReconcileTaskRemoval(store *storage.Store, taskID string) error {
+	return withSemanticIndex(store, func(service *IndexService) error {
+		return service.RemoveTask(taskID)
+	})
+}
+
+func withSemanticIndex(store *storage.Store, fn func(*IndexService) error) error {
+	if store == nil {
+		return nil
+	}
+	embedder, vecStore, err := InitSemantic(store)
+	if errors.Is(err, ErrSemanticNotConfigured) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer embedder.Close()
+	defer vecStore.Close()
+	return fn(NewIndexService(store, embedder, vecStore))
+}
+
 func BestEffortRemoveDoc(store *storage.Store, docPath string) {
 	if enqueueRuntimeJob(store, runtimequeue.JobRemoveDoc, docPath, func() {
 		scheduleBestEffort(store, "remove-doc", docPath, func(svc *IndexService) error {

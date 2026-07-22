@@ -54,13 +54,18 @@ var ActionRegistry = map[string]ActionMeta{
 	"project.status":  {Capability: CapRead, Target: TargetRuntime, Risk: RiskLow},
 
 	// tasks
-	"tasks.create":  {Capability: CapWrite, Target: TargetTask, Risk: RiskMedium},
-	"tasks.get":     {Capability: CapRead, Target: TargetTask, Risk: RiskLow},
-	"tasks.update":  {Capability: CapWrite, Target: TargetTask, Risk: RiskMedium},
-	"tasks.delete":  {Capability: CapDelete, Target: TargetTask, Risk: RiskHigh},
-	"tasks.list":    {Capability: CapRead, Target: TargetTask, Risk: RiskLow},
-	"tasks.history": {Capability: CapRead, Target: TargetTask, Risk: RiskLow},
-	"tasks.board":   {Capability: CapRead, Target: TargetTask, Risk: RiskLow},
+	"tasks.create":          {Capability: CapWrite, Target: TargetTask, Risk: RiskMedium},
+	"tasks.get":             {Capability: CapRead, Target: TargetTask, Risk: RiskLow},
+	"tasks.update":          {Capability: CapWrite, Target: TargetTask, Risk: RiskMedium},
+	"tasks.delete":          {Capability: CapDelete, Target: TargetTask, Risk: RiskHigh},
+	"tasks.list":            {Capability: CapRead, Target: TargetTask, Risk: RiskLow},
+	"tasks.history":         {Capability: CapRead, Target: TargetTask, Risk: RiskLow},
+	"tasks.board":           {Capability: CapRead, Target: TargetTask, Risk: RiskLow},
+	"tasks.archive":         {Capability: CapArchive, Target: TargetTask, Risk: RiskMedium},
+	"tasks.unarchive":       {Capability: CapArchive, Target: TargetTask, Risk: RiskMedium},
+	"tasks.batch_archive":   {Capability: CapArchive, Target: TargetTask, Risk: RiskMedium},
+	"tasks.batch_unarchive": {Capability: CapArchive, Target: TargetTask, Risk: RiskMedium},
+	"tasks.hard_delete":     {Capability: CapDelete, Target: TargetTask, Risk: RiskHigh},
 
 	// docs
 	"docs.create":  {Capability: CapWrite, Target: TargetDoc, Risk: RiskMedium},

@@ -284,72 +284,188 @@ func (s *SQLiteVectorStore) Save() error {
 		return err
 	}
 
-	// Insert all chunks (use OR REPLACE to handle any duplicates gracefully).
-	stmt, err := tx.Prepare(`
+	if err := insertIndexEntries(tx, s.index, s.vecs, s.dimensions, nil); err != nil {
+		return err
+	}
+	if err := writeSQLiteVectorMetadata(tx, s.model, s.dimensions, len(s.index)); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// SaveNonTaskSources persists a Reindex session's staged non-Task state without
+// touching Task rows. Task rows are reconciled separately from canonical state
+// under the root lifecycle lock, which prevents a stale SQLite session from
+// globally rewriting a newer session's Task commit.
+func (s *SQLiteVectorStore) SaveNonTaskSources() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.db == nil {
+		return fmt.Errorf("sqlite vecstore: not loaded")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM chunks WHERE type <> ?", ChunkTypeTask); err != nil {
+		return err
+	}
+	nonTask := func(entry indexEntry) bool { return entry.Type != ChunkTypeTask }
+	if err := insertIndexEntries(tx, s.index, s.vecs, s.dimensions, nonTask); err != nil {
+		return err
+	}
+	count, err := sqliteChunkCount(tx)
+	if err != nil {
+		return err
+	}
+	if err := writeSQLiteVectorMetadata(tx, s.model, s.dimensions, count); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ApplyTaskMutations replaces or deletes complete Task sources and their hashes
+// in one SQLite transaction, then refreshes this session's in-memory view. The
+// caller serializes this operation with canonical lifecycle mutations.
+func (s *SQLiteVectorStore) ApplyTaskMutations(mutations []taskVectorMutation) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db == nil {
+		return fmt.Errorf("sqlite vecstore: not loaded")
+	}
+	if len(mutations) > 0 {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		for _, mutation := range mutations {
+			if mutation.CheckHash {
+				var liveHash string
+				err := tx.QueryRow("SELECT hash FROM content_hashes WHERE source_id = ?", "task:"+mutation.TaskID).Scan(&liveHash)
+				if err != nil && err != sql.ErrNoRows {
+					return err
+				}
+				if liveHash != mutation.ExpectedHash {
+					return fmt.Errorf("sqlite vecstore: Task %q content hash changed during atomic commit", mutation.TaskID)
+				}
+			}
+			if _, err := tx.Exec("DELETE FROM chunks WHERE task_id = ?", mutation.TaskID); err != nil {
+				return err
+			}
+			sourceID := "task:" + mutation.TaskID
+			if mutation.Delete {
+				if _, err := tx.Exec("DELETE FROM content_hashes WHERE source_id = ?", sourceID); err != nil {
+					return err
+				}
+				continue
+			}
+			for _, chunk := range mutation.Chunks {
+				if err := insertSQLiteChunk(tx, chunk, s.dimensions); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.Exec(
+				"INSERT OR REPLACE INTO content_hashes (source_id, hash) VALUES (?, ?)",
+				sourceID, mutation.Hash,
+			); err != nil {
+				return err
+			}
+		}
+		count, err := sqliteChunkCount(tx)
+		if err != nil {
+			return err
+		}
+		if err := writeSQLiteVectorMetadata(tx, s.model, s.dimensions, count); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return s.loadIntoMemory()
+}
+
+func insertIndexEntries(tx *sql.Tx, entries []indexEntry, vecs []float32, dimensions int, include func(indexEntry) bool) error {
+	for _, entry := range entries {
+		if include != nil && !include(entry) {
+			continue
+		}
+		chunk := Chunk{
+			ID: entry.ID, Type: entry.Type, Content: entry.Content, TokenCount: entry.TokenCount,
+			DocPath: entry.DocPath, Section: entry.Section, HeadingLevel: entry.HeadingLevel,
+			HeaderPath: entry.HeaderPath, Position: entry.Position, TaskID: entry.TaskID,
+			Field: entry.Field, Status: entry.Status, Priority: entry.Priority, Labels: entry.Labels,
+			MemoryLayer: entry.MemoryLayer, MemoryStore: entry.MemoryStore, DecisionID: entry.DecisionID,
+			Name: entry.Name, Signature: entry.Signature, Visibility: entry.Visibility, Detail: entry.Detail,
+		}
+		start := entry.Offset
+		end := start + dimensions
+		if end <= len(vecs) {
+			chunk.Embedding = append([]float32(nil), vecs[start:end]...)
+		}
+		if err := insertSQLiteChunk(tx, chunk, dimensions); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func insertSQLiteChunk(tx *sql.Tx, chunk Chunk, dimensions int) error {
+	if len(chunk.Embedding) != dimensions && (chunk.Type != ChunkTypeCode || len(chunk.Embedding) != 0) {
+		return fmt.Errorf("sqlite vecstore: chunk %q embedding dimensions = %d, want %d", chunk.ID, len(chunk.Embedding), dimensions)
+	}
+	var embBlob []byte
+	if len(chunk.Embedding) == dimensions {
+		embBlob = make([]byte, dimensions*4)
+		for i := range chunk.Embedding {
+			binary.LittleEndian.PutUint32(embBlob[i*4:], math.Float32bits(chunk.Embedding[i]))
+		}
+	}
+	var labelsJSON *string
+	if len(chunk.Labels) > 0 {
+		data, _ := json.Marshal(chunk.Labels)
+		value := string(data)
+		labelsJSON = &value
+	}
+	_, err := tx.Exec(`
 		INSERT OR REPLACE INTO chunks (id, type, content, token_count, embedding,
 		    doc_path, section, heading_level, header_path, position,
 		    task_id, field, status, priority, labels,
 		    memory_layer, memory_store, decision_id,
 		    name, signature, visibility, detail)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
+	`,
+		chunk.ID, chunk.Type, chunk.Content, chunk.TokenCount, embBlob,
+		nullStr(chunk.DocPath), nullStr(chunk.Section), nullInt(chunk.HeadingLevel),
+		nullStr(chunk.HeaderPath), nullInt(chunk.Position), nullStr(chunk.TaskID),
+		nullStr(chunk.Field), nullStr(chunk.Status), nullStr(chunk.Priority), labelsJSON,
+		nullStr(chunk.MemoryLayer), nullStr(chunk.MemoryStore), nullStr(chunk.DecisionID),
+		nullStr(chunk.Name), nullStr(chunk.Signature), nullStr(chunk.Visibility), nullStr(chunk.Detail),
+	)
+	return err
+}
 
-	for _, entry := range s.index {
-		// Encode embedding to blob.
-		var embBlob []byte
-		start := entry.Offset
-		end := start + s.dimensions
-		if end <= len(s.vecs) {
-			embBlob = make([]byte, s.dimensions*4)
-			for i := 0; i < s.dimensions; i++ {
-				binary.LittleEndian.PutUint32(embBlob[i*4:], math.Float32bits(s.vecs[start+i]))
-			}
-		}
+func sqliteChunkCount(tx *sql.Tx) (int, error) {
+	var count int
+	err := tx.QueryRow("SELECT COUNT(*) FROM chunks").Scan(&count)
+	return count, err
+}
 
-		var labelsJSON *string
-		if len(entry.Labels) > 0 {
-			b, _ := json.Marshal(entry.Labels)
-			str := string(b)
-			labelsJSON = &str
-		}
-
-		if _, err := stmt.Exec(
-			entry.ID, entry.Type, entry.Content, entry.TokenCount, embBlob,
-			nullStr(entry.DocPath), nullStr(entry.Section),
-			nullInt(entry.HeadingLevel), nullStr(entry.HeaderPath),
-			nullInt(entry.Position),
-			nullStr(entry.TaskID), nullStr(entry.Field),
-			nullStr(entry.Status), nullStr(entry.Priority),
-			labelsJSON,
-			nullStr(entry.MemoryLayer), nullStr(entry.MemoryStore), nullStr(entry.DecisionID),
-			nullStr(entry.Name), nullStr(entry.Signature), nullStr(entry.Visibility), nullStr(entry.Detail),
-		); err != nil {
-			return err
-		}
-	}
-
-	// Update metadata.
-	now := time.Now()
+func writeSQLiteVectorMetadata(tx *sql.Tx, model string, dimensions, chunkCount int) error {
 	meta := map[string]string{
-		"model":        s.model,
-		"dimensions":   fmt.Sprintf("%d", s.dimensions),
-		"indexedAt":    now.Format(time.RFC3339),
-		"chunkCount":   fmt.Sprintf("%d", len(s.index)),
+		"model": model, "dimensions": fmt.Sprintf("%d", dimensions),
+		"indexedAt": time.Now().Format(time.RFC3339), "chunkCount": fmt.Sprintf("%d", chunkCount),
 		"chunkVersion": fmt.Sprintf("%d", ChunkVersion),
 	}
-	for k, v := range meta {
-		if _, err := tx.Exec(
-			"INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", k, v,
-		); err != nil {
+	for key, value := range meta {
+		if _, err := tx.Exec("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", key, value); err != nil {
 			return err
 		}
 	}
-
-	return tx.Commit()
+	return nil
 }
 
 // Clear removes all data from the store (in-memory and database).

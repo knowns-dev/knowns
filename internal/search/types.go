@@ -11,7 +11,7 @@ const (
 
 // ChunkVersion is incremented when chunking/embedding logic changes,
 // triggering auto-reindex on next search initialization.
-const ChunkVersion = 3
+const ChunkVersion = 4
 
 // ChunkType indicates whether a chunk came from a doc or a task.
 type ChunkType string
