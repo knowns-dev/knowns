@@ -32,7 +32,7 @@ test.describe("Documentation Page", () => {
 		});
 
 		await test.step("Document appears in file manager", async () => {
-			await expect(page.getByText("Test Guide").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Test Guide").first()).toBeVisible();
 		});
 	});
 
@@ -56,7 +56,7 @@ test.describe("Documentation Page", () => {
 		});
 
 		await test.step("Document content is displayed", async () => {
-			await expect(page.getByRole("heading", { name: "Hello World" })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Hello World" })).toBeVisible();
 		});
 	});
 

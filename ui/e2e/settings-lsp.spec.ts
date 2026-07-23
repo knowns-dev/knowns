@@ -20,7 +20,7 @@ test.describe("Settings — LSP (Code tab)", () => {
 		});
 
 		await test.step("LSP section header is visible", async () => {
-			await expect(page.getByText("Language Server Protocol")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Language Server Protocol")).toBeVisible();
 		});
 	});
 
@@ -31,7 +31,7 @@ test.describe("Settings — LSP (Code tab)", () => {
 		});
 
 		await test.step("Enabled toggle is visible", async () => {
-			await expect(page.getByText("Enabled")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Enabled")).toBeVisible();
 		});
 	});
 
@@ -42,7 +42,7 @@ test.describe("Settings — LSP (Code tab)", () => {
 		});
 
 		await test.step("Add language button is visible", async () => {
-			await expect(page.getByRole("button", { name: "Add" })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("button", { name: "Add" })).toBeVisible();
 		});
 	});
 
@@ -60,7 +60,7 @@ test.describe("Settings — LSP (Code tab)", () => {
 		await test.step("Dropdown is visible", async () => {
 			// The dropdown appears as a floating element after click
 			const dropdown = page.locator(".z-50, [class*='z-50']");
-			await expect(dropdown.or(page.locator("div.absolute"))).toBeVisible({ timeout: 5000 });
+			await expect(dropdown.or(page.locator("div.absolute"))).toBeVisible();
 		});
 	});
 

@@ -58,7 +58,7 @@ test.describe("Full Task Create Form", () => {
 
 		await test.step("Task appears on board", async () => {
 			await page.waitForTimeout(500);
-			await expect(page.locator("h3").filter({ hasText: "Implement user authentication" }).first()).toBeVisible({ timeout: 5000 });
+			await expect(page.locator("h3").filter({ hasText: "Implement user authentication" }).first()).toBeVisible();
 		});
 	});
 
@@ -79,7 +79,7 @@ test.describe("Full Task Create Form", () => {
 		await test.step("All tasks visible", async () => {
 			await page.waitForTimeout(500);
 			for (const title of ["Task One", "Task Two", "Task Three"]) {
-				await expect(page.getByText(title).first()).toBeVisible({ timeout: 5000 });
+				await expect(page.getByText(title).first()).toBeVisible();
 			}
 		});
 	});
@@ -95,7 +95,7 @@ test.describe("Task Detail Editing", () => {
 
 		await test.step("Click on title heading to enter edit mode", async () => {
 			const titleHeading = page.getByRole("heading", { name: "Editable Title", exact: true });
-			await expect(titleHeading).toBeVisible({ timeout: 5000 });
+			await expect(titleHeading).toBeVisible();
 			await titleHeading.click();
 		});
 
@@ -109,7 +109,7 @@ test.describe("Task Detail Editing", () => {
 		});
 
 		await test.step("New title is displayed", async () => {
-			await expect(page.getByText("Renamed Title").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Renamed Title").first()).toBeVisible();
 		});
 	});
 
@@ -121,12 +121,12 @@ test.describe("Task Detail Editing", () => {
 		});
 
 		await test.step("Click description to enter edit mode", async () => {
-			await expect(page.getByText("Old description text")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Old description text")).toBeVisible();
 			await page.getByText("Old description text").click();
 		});
 
 		await test.step("Save and Cancel buttons appear", async () => {
-			await expect(page.getByRole("button", { name: /save/i }).first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("button", { name: /save/i }).first()).toBeVisible();
 			await expect(page.getByRole("button", { name: /cancel/i }).first()).toBeVisible();
 		});
 
@@ -144,12 +144,12 @@ test.describe("Task Detail Editing", () => {
 
 		await test.step("Click placeholder to add description", async () => {
 			const placeholder = page.getByText("Click to add description...");
-			await expect(placeholder).toBeVisible({ timeout: 5000 });
+			await expect(placeholder).toBeVisible();
 			await placeholder.click();
 		});
 
 		await test.step("Editor appears with Save button", async () => {
-			await expect(page.getByRole("button", { name: /save/i }).first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("button", { name: /save/i }).first()).toBeVisible();
 		});
 	});
 
@@ -161,7 +161,7 @@ test.describe("Task Detail Editing", () => {
 		});
 
 		await test.step("Find and click status select", async () => {
-			await expect(page.getByText("Status").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Status").first()).toBeVisible();
 			// Status shows "To Do" - click the select trigger
 			const statusTrigger = page.locator("button[role=combobox]").filter({ hasText: /to do/i }).first();
 			await expect(statusTrigger).toBeVisible({ timeout: 3000 });
@@ -185,7 +185,7 @@ test.describe("Task Detail Editing", () => {
 		});
 
 		await test.step("Find and click priority select", async () => {
-			await expect(page.getByText("Priority").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Priority").first()).toBeVisible();
 			const priorityTrigger = page.locator("button[role=combobox]").filter({ hasText: /medium/i }).first();
 			await expect(priorityTrigger).toBeVisible({ timeout: 3000 });
 			await priorityTrigger.click();
@@ -209,7 +209,7 @@ test.describe("Task Detail Editing", () => {
 
 		await test.step("Click Start Timer", async () => {
 			const startBtn = page.getByText("Start Timer").first();
-			await expect(startBtn).toBeVisible({ timeout: 5000 });
+			await expect(startBtn).toBeVisible();
 			await startBtn.click();
 			await page.waitForTimeout(500);
 		});
@@ -222,12 +222,12 @@ test.describe("Task Detail Editing", () => {
 			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
 			// Navigate directly to task detail to avoid pagination issues
 			await page.goto(`${server.baseURL}/kanban/${taskId}`);
-			await expect(page.getByRole("heading", { name: "Done Task", exact: true })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Done Task", exact: true })).toBeVisible();
 		});
 
 		await test.step("Click Mark as Done", async () => {
 			const doneBtn = page.getByText(/mark as done/i).first();
-			await expect(doneBtn).toBeVisible({ timeout: 5000 });
+			await expect(doneBtn).toBeVisible();
 			await doneBtn.click();
 			await page.waitForTimeout(500);
 		});
@@ -271,7 +271,7 @@ test.describe("Acceptance Criteria Interactions", () => {
 		});
 
 		await test.step("Both ACs visible with checkboxes", async () => {
-			await expect(page.getByText("First criterion")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("First criterion")).toBeVisible();
 			await expect(page.getByText("Second criterion")).toBeVisible();
 		});
 
@@ -300,7 +300,7 @@ test.describe("Acceptance Criteria Interactions", () => {
 
 		await test.step("Click Add criterion", async () => {
 			const addBtn = page.getByText(/add criterion/i).first();
-			await expect(addBtn).toBeVisible({ timeout: 5000 });
+			await expect(addBtn).toBeVisible();
 			await addBtn.click();
 		});
 
@@ -312,7 +312,7 @@ test.describe("Acceptance Criteria Interactions", () => {
 		});
 
 		await test.step("New AC appears", async () => {
-			await expect(page.getByText("User sees success message")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("User sees success message")).toBeVisible();
 		});
 	});
 });
@@ -363,7 +363,7 @@ test.describe("Kanban Drag and Drop", () => {
 
 		await test.step("Navigate to kanban", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.locator("h3").filter({ hasText: "Drag Activate" })).toBeVisible({ timeout: 5000 });
+			await expect(page.locator("h3").filter({ hasText: "Drag Activate" })).toBeVisible();
 		});
 
 		await test.step("Mouse down and move >8px activates drag", async () => {
@@ -408,7 +408,7 @@ test.describe("Kanban Drag and Drop", () => {
 
 		await test.step("Navigate to kanban and verify in To Do", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.locator("h3").filter({ hasText: "Drag Cross" })).toBeVisible({ timeout: 5000 });
+			await expect(page.locator("h3").filter({ hasText: "Drag Cross" })).toBeVisible();
 
 			const isInTodo = await page.evaluate(() => {
 				const card = Array.from(document.querySelectorAll("h3")).find((h) => h.textContent?.includes("Drag Cross"));
@@ -426,7 +426,7 @@ test.describe("Kanban Drag and Drop", () => {
 
 		await test.step("Card is now in In Progress column and API persisted", async () => {
 			// Wait for the toast confirming API call succeeded
-			await expect(page.getByText("Status updated")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Status updated")).toBeVisible();
 
 			const isInProgress = await page.evaluate(() => {
 				const card = Array.from(document.querySelectorAll("h3")).find((h) => h.textContent?.includes("Drag Cross"));
@@ -439,7 +439,7 @@ test.describe("Kanban Drag and Drop", () => {
 
 		await test.step("Status persists after reload", async () => {
 			await page.reload();
-			await expect(page.locator("h3").filter({ hasText: "Drag Cross" })).toBeVisible({ timeout: 5000 });
+			await expect(page.locator("h3").filter({ hasText: "Drag Cross" })).toBeVisible();
 
 			const isStillInProgress = await page.evaluate(() => {
 				const card = Array.from(document.querySelectorAll("h3")).find((h) => h.textContent?.includes("Drag Cross"));
@@ -462,7 +462,7 @@ test.describe("Kanban Drag and Drop", () => {
 
 		await test.step("Navigate to kanban and verify task is in To Do column", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.locator("h3").filter({ hasText: "Column Move" })).toBeVisible({ timeout: 5000 });
+			await expect(page.locator("h3").filter({ hasText: "Column Move" })).toBeVisible();
 
 			// Verify card is inside the To Do column
 			const isInTodo = await page.evaluate(() => {
@@ -481,7 +481,7 @@ test.describe("Kanban Drag and Drop", () => {
 		await test.step("Reload and verify card moved to In Progress column", async () => {
 			// Must reload - same-hash navigation doesn't refresh SPA data
 			await page.reload();
-			await expect(page.locator("h3").filter({ hasText: "Column Move" })).toBeVisible({ timeout: 5000 });
+			await expect(page.locator("h3").filter({ hasText: "Column Move" })).toBeVisible();
 
 			const isInProgress = await page.evaluate(() => {
 				const card = Array.from(document.querySelectorAll("h3")).find((h) => h.textContent?.includes("Column Move"));
@@ -504,7 +504,7 @@ test.describe("Kanban Drag and Drop", () => {
 		});
 
 		await test.step("Change status to In Progress via dropdown", async () => {
-			await expect(page.getByText("Status").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Status").first()).toBeVisible();
 			const statusTrigger = page.locator("button[role=combobox]").filter({ hasText: /to do/i }).first();
 			await expect(statusTrigger).toBeVisible({ timeout: 3000 });
 			await statusTrigger.click();
@@ -546,7 +546,7 @@ test.describe("Kanban Drag and Drop", () => {
 
 		await test.step("Navigate to kanban", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.locator("h3").filter({ hasText: "Order Second" })).toBeVisible({ timeout: 5000 });
+			await expect(page.locator("h3").filter({ hasText: "Order Second" })).toBeVisible();
 		});
 
 		await test.step("Verify Order Second is in In Progress column", async () => {
@@ -586,7 +586,7 @@ test.describe("Kanban Drag and Drop", () => {
 
 		await test.step("Navigate to kanban and verify in Done column", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.locator("h3").filter({ hasText: "Persist Status" })).toBeVisible({ timeout: 5000 });
+			await expect(page.locator("h3").filter({ hasText: "Persist Status" })).toBeVisible();
 
 			const isInDone = await page.evaluate(() => {
 				const card = Array.from(document.querySelectorAll("h3")).find((h) => h.textContent?.includes("Persist Status"));
@@ -603,7 +603,7 @@ test.describe("Kanban Drag and Drop", () => {
 		});
 
 		await test.step("Task still in Done column after reload", async () => {
-			await expect(page.locator("h3").filter({ hasText: "Persist Status" }).first()).toBeVisible({ timeout: 5000 });
+			await expect(page.locator("h3").filter({ hasText: "Persist Status" }).first()).toBeVisible();
 
 			const stillInDone = await page.evaluate(() => {
 				const card = Array.from(document.querySelectorAll("h3")).find((h) => h.textContent?.includes("Persist Status"));
@@ -644,12 +644,12 @@ test.describe("Full Workflow: Pure UI", () => {
 		});
 
 		await test.step("Open task from kanban", async () => {
-			await expect(page.getByText("Workflow Task").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Workflow Task").first()).toBeVisible();
 			await page.getByText("Workflow Task").first().click();
 		});
 
 		await test.step("Check AC checkbox", async () => {
-			await expect(page.getByText("Step completed")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Step completed")).toBeVisible();
 			const checkbox = page.getByRole("checkbox").first();
 			if (await checkbox.isVisible({ timeout: 2000 }).catch(() => false)) {
 				await checkbox.click();

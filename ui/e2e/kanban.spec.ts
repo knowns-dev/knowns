@@ -18,7 +18,7 @@ test.describe("Kanban Board", () => {
 		});
 
 		await test.step("Board columns are rendered", async () => {
-			await expect(page.locator("[data-board-column], [class*=kanban]").first()).toBeVisible({ timeout: 5000 }).catch(() => {
+			await expect(page.locator("[data-board-column], [class*=kanban]").first()).toBeVisible().catch(() => {
 				// Fallback: just check page loaded without error
 			});
 		});
@@ -56,7 +56,7 @@ test.describe("Kanban Board", () => {
 		});
 
 		await test.step("Task detail sheet opens with description", async () => {
-			await expect(page.getByRole("heading", { name: "Description" })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Description" })).toBeVisible();
 		});
 	});
 
@@ -80,7 +80,7 @@ test.describe("Kanban Board", () => {
 			});
 
 			await test.step("New task appears on the board", async () => {
-				await expect(page.getByText("Board Created Task")).toBeVisible({ timeout: 5000 });
+				await expect(page.getByText("Board Created Task")).toBeVisible();
 			});
 		}
 	});

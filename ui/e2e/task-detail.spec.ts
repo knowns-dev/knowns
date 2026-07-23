@@ -23,7 +23,7 @@ test.describe("Task Detail Sheet", () => {
 		});
 
 		await test.step("Description section is visible", async () => {
-			await expect(page.getByRole("heading", { name: "Description" })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Description" })).toBeVisible();
 		});
 
 		await test.step("Description content is shown", async () => {
@@ -42,7 +42,7 @@ test.describe("Task Detail Sheet", () => {
 		});
 
 		await test.step("Priority is displayed in detail", async () => {
-			await expect(page.getByText(/high/i).first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/high/i).first()).toBeVisible();
 		});
 	});
 
@@ -57,7 +57,7 @@ test.describe("Task Detail Sheet", () => {
 		});
 
 		await test.step("Acceptance criteria are displayed", async () => {
-			await expect(page.getByText("User can login")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("User can login")).toBeVisible();
 			await expect(page.getByText("User sees dashboard")).toBeVisible();
 		});
 	});
@@ -73,7 +73,7 @@ test.describe("Task Detail Sheet", () => {
 		});
 
 		await test.step("Labels are displayed", async () => {
-			await expect(page.getByText("bug").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("bug").first()).toBeVisible();
 			await expect(page.getByText("frontend").first()).toBeVisible();
 		});
 	});
@@ -93,7 +93,7 @@ test.describe("Task Detail Sheet", () => {
 		});
 
 		await test.step("Plan section is visible", async () => {
-			await expect(page.getByText("Design the feature")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Design the feature")).toBeVisible();
 		});
 	});
 
@@ -105,7 +105,7 @@ test.describe("Task Detail Sheet", () => {
 		});
 
 		await test.step("Detail sheet is open", async () => {
-			await expect(page.getByRole("heading", { name: "Description" })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Description" })).toBeVisible();
 		});
 
 		await test.step("Close the detail sheet", async () => {

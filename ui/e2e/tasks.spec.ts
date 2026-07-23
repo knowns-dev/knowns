@@ -46,7 +46,7 @@ test.describe("Tasks Page", () => {
 		});
 
 		await test.step("Task detail sheet opens", async () => {
-			await expect(page.getByRole("heading", { name: "Description" })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Description" })).toBeVisible();
 		});
 	});
 
@@ -74,7 +74,7 @@ test.describe("Tasks Page", () => {
 		});
 
 		await test.step("New task appears in list", async () => {
-			await expect(page.getByText("New Page Task").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("New Page Task").first()).toBeVisible();
 		});
 	});
 

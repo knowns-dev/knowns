@@ -22,7 +22,7 @@ test.describe("Settings — Security (set from UI)", () => {
 		});
 
 		await test.step("Unprotected status is shown", async () => {
-			await expect(page.getByText("Unprotected")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Unprotected")).toBeVisible();
 		});
 	});
 
@@ -33,7 +33,7 @@ test.describe("Settings — Security (set from UI)", () => {
 		});
 
 		await test.step("Password Protection header is visible", async () => {
-			await expect(page.getByText(/password protection/i)).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/password protection/i)).toBeVisible();
 		});
 	});
 
@@ -45,11 +45,11 @@ test.describe("Settings — Security (set from UI)", () => {
 
 		await test.step("Password input is visible", async () => {
 			const pwInput = page.locator('input[placeholder="Enter password"]');
-			await expect(pwInput).toBeVisible({ timeout: 5000 });
+			await expect(pwInput).toBeVisible();
 		});
 
 		await test.step("Set button is visible", async () => {
-			await expect(page.getByRole("button", { name: /set/i })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("button", { name: /set/i })).toBeVisible();
 		});
 	});
 
@@ -61,7 +61,7 @@ test.describe("Settings — Security (set from UI)", () => {
 
 		await test.step("Enter password and click Set", async () => {
 			const pwInput = page.locator('input[placeholder="Enter password"]');
-			await expect(pwInput).toBeVisible({ timeout: 5000 });
+			await expect(pwInput).toBeVisible();
 			await pwInput.fill("mytestpassword");
 			await page.waitForTimeout(500);
 
@@ -96,7 +96,7 @@ test.describe("Settings — Security (set from UI)", () => {
 		});
 
 		await test.step("Remove Password button appears", async () => {
-			await expect(page.getByText(/remove password/i).first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/remove password/i).first()).toBeVisible();
 		});
 	});
 
@@ -141,7 +141,7 @@ test.describe("Settings — Security (set from UI)", () => {
 		});
 
 		await test.step("Password input is visible again", async () => {
-			await expect(page.locator('input[placeholder="Enter password"]')).toBeVisible({ timeout: 5000 });
+			await expect(page.locator('input[placeholder="Enter password"]')).toBeVisible();
 		});
 	});
 });

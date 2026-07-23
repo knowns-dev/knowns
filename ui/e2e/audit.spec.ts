@@ -22,8 +22,8 @@ test.describe("Audit Trail", () => {
 		});
 
 		await test.step("Tabs are present", async () => {
-			await expect(page.getByText("Recent Activity")).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("Statistics")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Recent Activity")).toBeVisible();
+			await expect(page.getByText("Statistics")).toBeVisible();
 		});
 	});
 
@@ -33,7 +33,7 @@ test.describe("Audit Trail", () => {
 		});
 
 		await test.step("Recent Activity tab is selected by default", async () => {
-			await expect(page.getByText("Recent Activity")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Recent Activity")).toBeVisible();
 		});
 
 		await test.step("Either shows events or empty state", async () => {
@@ -85,7 +85,7 @@ test.describe("Audit Trail", () => {
 		});
 
 		await test.step("Wait for page to load", async () => {
-			await expect(page.getByRole("heading", { name: "MCP Audit Trail" })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "MCP Audit Trail" })).toBeVisible();
 		});
 
 		await test.step("Filter dropdowns are visible", async () => {
@@ -98,7 +98,7 @@ test.describe("Audit Trail", () => {
 		});
 
 		await test.step("Event count text is shown", async () => {
-			await expect(page.getByText(/events$/)).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/events$/)).toBeVisible();
 		});
 	});
 
@@ -155,7 +155,7 @@ test.describe("Audit Trail", () => {
 		});
 
 		await test.step("Refresh button is present", async () => {
-			await expect(page.getByTitle("Refresh")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByTitle("Refresh")).toBeVisible();
 		});
 
 		await test.step("Click refresh", async () => {

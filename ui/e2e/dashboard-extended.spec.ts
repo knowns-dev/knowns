@@ -21,24 +21,24 @@ test.describe("Dashboard Extended", () => {
 		});
 
 		await test.step("Header and subtitle are visible", async () => {
-			await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("Overview of your project")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+			await expect(page.getByText("Overview of your project")).toBeVisible();
 		});
 
 		await test.step("Metric widgets are present", async () => {
-			await expect(page.getByText("Total Tasks")).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("Completion", { exact: true })).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("In Progress").first()).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("Tasks Done")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Total Tasks")).toBeVisible();
+			await expect(page.getByText("Completion", { exact: true })).toBeVisible();
+			await expect(page.getByText("In Progress").first()).toBeVisible();
+			await expect(page.getByText("Tasks Done")).toBeVisible();
 		});
 
 		await test.step("Dashboard sections are visible", async () => {
-			await expect(page.getByText("Status Distribution")).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("Priority Breakdown")).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("Time Tracking")).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("Task Completion")).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("Weekly Activity")).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("Labels Overview")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Status Distribution")).toBeVisible();
+			await expect(page.getByText("Priority Breakdown")).toBeVisible();
+			await expect(page.getByText("Time Tracking")).toBeVisible();
+			await expect(page.getByText("Task Completion")).toBeVisible();
+			await expect(page.getByText("Weekly Activity")).toBeVisible();
+			await expect(page.getByText("Labels Overview")).toBeVisible();
 		});
 	});
 
@@ -53,13 +53,13 @@ test.describe("Dashboard Extended", () => {
 		});
 
 		await test.step("Total tasks widget shows a non-zero value", async () => {
-			await expect(page.getByText("Total Tasks")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Total Tasks")).toBeVisible();
 			const totalTasksCard = page.getByText("Total Tasks").locator("..");
-			await expect(totalTasksCard.getByText(/\d+/).first()).toBeVisible({ timeout: 5000 });
+			await expect(totalTasksCard.getByText(/\d+/).first()).toBeVisible();
 		});
 
 		await test.step("Recent tasks includes newly created task", async () => {
-			await expect(page.getByText("Dashboard Count Task B").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Dashboard Count Task B").first()).toBeVisible();
 		});
 	});
 
@@ -80,7 +80,7 @@ test.describe("Dashboard Extended", () => {
 		});
 
 		await test.step("Recent Activity section is visible", async () => {
-			await expect(page.getByRole("heading", { name: "Recent Activity" })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Recent Activity" })).toBeVisible();
 		});
 
 		await test.step("Activity entry or empty state is rendered", async () => {
@@ -105,12 +105,12 @@ test.describe("Dashboard Extended", () => {
 		});
 
 		await test.step("Recent Tasks section shows the task", async () => {
-			await expect(page.getByRole("heading", { name: "Recent Tasks" })).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("Dashboard Recent Unique").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Recent Tasks" })).toBeVisible();
+			await expect(page.getByText("Dashboard Recent Unique").first()).toBeVisible();
 		});
 
 		await test.step("High priority marker appears for high priority task", async () => {
-			await expect(page.getByText("HIGH").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("HIGH").first()).toBeVisible();
 		});
 	});
 
@@ -131,13 +131,13 @@ test.describe("Dashboard Extended", () => {
 		});
 
 		await test.step("Status Distribution shows In Progress", async () => {
-			await expect(page.getByText("Status Distribution")).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("In Progress").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Status Distribution")).toBeVisible();
+			await expect(page.getByText("In Progress").first()).toBeVisible();
 		});
 
 		await test.step("Task Completion section shows Progress", async () => {
-			await expect(page.getByText("Task Completion")).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("Progress").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Task Completion")).toBeVisible();
+			await expect(page.getByText("Progress").first()).toBeVisible();
 		});
 	});
 
@@ -153,14 +153,14 @@ test.describe("Dashboard Extended", () => {
 		});
 
 		await test.step("Priority Breakdown shows labels", async () => {
-			await expect(page.getByText("Priority Breakdown")).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("High").first()).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("Medium").first()).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText("Low").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Priority Breakdown")).toBeVisible();
+			await expect(page.getByText("High").first()).toBeVisible();
+			await expect(page.getByText("Medium").first()).toBeVisible();
+			await expect(page.getByText("Low").first()).toBeVisible();
 		});
 
 		await test.step("High priority warning appears when applicable", async () => {
-			await expect(page.getByText(/high priority remaining/)).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/high priority remaining/)).toBeVisible();
 		});
 	});
 
@@ -174,7 +174,7 @@ test.describe("Dashboard Extended", () => {
 		});
 
 		await test.step("Labels overview is visible", async () => {
-			await expect(page.getByText("Labels Overview")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Labels Overview")).toBeVisible();
 		});
 
 		await test.step("Label appears or empty state is shown", async () => {
