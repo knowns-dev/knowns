@@ -20,7 +20,7 @@ jobs:
     name: Lint & Test (${{ matrix.os }})
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
       - uses: oven-sh/setup-bun@v2
@@ -123,7 +123,7 @@ jobs:
     name: LSP Fixture Smoke (${{ matrix.os }})
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
       - uses: oven-sh/setup-bun@v2
@@ -254,7 +254,7 @@ jobs:
     name: Build & E2E (${{ matrix.os }})
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
       - uses: oven-sh/setup-bun@v2
