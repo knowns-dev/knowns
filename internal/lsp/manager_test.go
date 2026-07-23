@@ -24,6 +24,7 @@ type mgrMockAdapter struct {
 	lazyStart  bool
 	binaries   []BinaryCandidate
 	guide      InstallGuide
+	initParams func(string, map[string]any) map[string]any
 }
 
 type mgrDocumentSyncAdapter struct {
@@ -46,22 +47,27 @@ func (a *mgrDocumentSyncAdapter) PathCapabilityForAction(path, action, capabilit
 	return a.resolveCapability(path, action, capability)
 }
 
-func (a *mgrMockAdapter) ID() string                                             { return a.id }
-func (a *mgrMockAdapter) Name() string                                           { return a.name }
-func (a *mgrMockAdapter) Extensions() []string                                   { return a.extensions }
-func (a *mgrMockAdapter) Binaries() []BinaryCandidate                            { return a.binaries }
-func (a *mgrMockAdapter) Prerequisites() []Prerequisite                          { return nil }
-func (a *mgrMockAdapter) CheckPrerequisites(context.Context) error               { return nil }
-func (a *mgrMockAdapter) InstallGuide() InstallGuide                             { return a.guide }
-func (a *mgrMockAdapter) CanInstall() bool                                       { return false }
-func (a *mgrMockAdapter) RuntimeDeps() []RuntimeDependency                       { return nil }
-func (a *mgrMockAdapter) Install(context.Context, string) (string, error)        { return "", nil }
-func (a *mgrMockAdapter) InstalledPath() (string, bool)                          { return "", false }
-func (a *mgrMockAdapter) DefaultArgs() []string                                  { return nil }
-func (a *mgrMockAdapter) InitializeParams(string, map[string]any) map[string]any { return nil }
-func (a *mgrMockAdapter) InitializationOptions(map[string]any) map[string]any    { return nil }
-func (a *mgrMockAdapter) IsIgnoredDir(string) bool                               { return false }
-func (a *mgrMockAdapter) NormalizeSymbolName(n string) string                    { return n }
+func (a *mgrMockAdapter) ID() string                                      { return a.id }
+func (a *mgrMockAdapter) Name() string                                    { return a.name }
+func (a *mgrMockAdapter) Extensions() []string                            { return a.extensions }
+func (a *mgrMockAdapter) Binaries() []BinaryCandidate                     { return a.binaries }
+func (a *mgrMockAdapter) Prerequisites() []Prerequisite                   { return nil }
+func (a *mgrMockAdapter) CheckPrerequisites(context.Context) error        { return nil }
+func (a *mgrMockAdapter) InstallGuide() InstallGuide                      { return a.guide }
+func (a *mgrMockAdapter) CanInstall() bool                                { return false }
+func (a *mgrMockAdapter) RuntimeDeps() []RuntimeDependency                { return nil }
+func (a *mgrMockAdapter) Install(context.Context, string) (string, error) { return "", nil }
+func (a *mgrMockAdapter) InstalledPath() (string, bool)                   { return "", false }
+func (a *mgrMockAdapter) DefaultArgs() []string                           { return nil }
+func (a *mgrMockAdapter) InitializeParams(root string, settings map[string]any) map[string]any {
+	if a.initParams == nil {
+		return nil
+	}
+	return a.initParams(root, settings)
+}
+func (a *mgrMockAdapter) InitializationOptions(map[string]any) map[string]any { return nil }
+func (a *mgrMockAdapter) IsIgnoredDir(string) bool                            { return false }
+func (a *mgrMockAdapter) NormalizeSymbolName(n string) string                 { return n }
 
 type errMgrNotFound struct{}
 
@@ -87,6 +93,51 @@ func TestRegisterAdapter(t *testing.T) {
 	}
 	if got.ID() != "go" {
 		t.Fatalf("expected adapter ID 'go', got %q", got.ID())
+	}
+}
+
+func TestManagerConfiguresAdapterInitializeParams(t *testing.T) {
+	root := t.TempDir()
+	settings := map[string]any{"shellcheckPath": "shellcheck"}
+	m := NewManager(root, Config{Languages: map[string]LanguageConfig{
+		"bash": {Settings: settings},
+	}})
+	adapter := &mgrDocumentSyncAdapter{
+		mgrMockAdapter: &mgrMockAdapter{
+			id:         "bash",
+			name:       "Bash",
+			extensions: []string{".sh"},
+			initParams: func(gotRoot string, gotSettings map[string]any) map[string]any {
+				return map[string]any{
+					"rootPath":              gotRoot,
+					"initializationOptions": gotSettings,
+				}
+			},
+		},
+		resolveCapability: func(_, action, capability string) (PathCapabilityDecision, bool) {
+			return PathCapabilityDecision{Supported: false}, action == "" && capability == ""
+		},
+	}
+	if err := m.RegisterAdapter(adapter); err != nil {
+		t.Fatal(err)
+	}
+
+	srv, ok, err := m.ServerForPath(context.Background(), filepath.Join(root, "main.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || srv == nil {
+		t.Fatal("expected routed Bash server")
+	}
+	srv.mu.Lock()
+	rootPath := srv.initializeParams["rootPath"]
+	options := srv.initializeParams["initializationOptions"]
+	srv.mu.Unlock()
+	if rootPath != root {
+		t.Fatalf("rootPath = %#v, want %q", rootPath, root)
+	}
+	if !reflect.DeepEqual(options, settings) {
+		t.Fatalf("initializationOptions = %#v, want %#v", options, settings)
 	}
 }
 

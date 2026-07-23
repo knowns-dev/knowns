@@ -176,6 +176,7 @@ func (m *Manager) ServerForPath(ctx context.Context, path string) (*Server, bool
 		if srv == nil {
 			backend := primaryBinaryName(adapter)
 			srv = NewServer(m.root, ServerCommand{Language: lang.ID, Name: backend, Backend: backend})
+			m.configureServerInitializeParamsLocked(lang.ID, srv)
 			m.configureServerCapabilityProfileLocked(lang.ID, srv)
 			m.configureServerDocumentSyncLocked(lang.ID, srv)
 			m.configureServerPathCapabilityLocked(lang.ID, srv)
@@ -223,6 +224,7 @@ func (m *Manager) ServerForPath(ctx context.Context, path string) (*Server, bool
 		} else {
 			srv.Command = cmd
 		}
+		m.configureServerInitializeParamsLocked(lang.ID, srv)
 		m.configureServerCapabilityProfileLocked(lang.ID, srv)
 		m.configureServerDocumentSyncLocked(lang.ID, srv)
 		m.configureServerPathCapabilityLocked(lang.ID, srv)
@@ -345,6 +347,7 @@ func (m *Manager) StartAll(ctx context.Context) error {
 			m.configureTraceLocked(cmd.Language, srv)
 			m.servers[cmd.Language] = srv
 		}
+		m.configureServerInitializeParamsLocked(cmd.Language, m.servers[cmd.Language])
 		m.configureServerCapabilityProfileLocked(cmd.Language, m.servers[cmd.Language])
 		m.configureServerDocumentSyncLocked(cmd.Language, m.servers[cmd.Language])
 		m.configureServerPathCapabilityLocked(cmd.Language, m.servers[cmd.Language])
@@ -547,6 +550,7 @@ func (m *Manager) startCommand(ctx context.Context, langID string, cmd ServerCom
 	} else {
 		srv.Command = cmd
 	}
+	m.configureServerInitializeParamsLocked(langID, srv)
 	m.configureServerCapabilityProfileLocked(langID, srv)
 	m.configureServerDocumentSyncLocked(langID, srv)
 	m.configureServerPathCapabilityLocked(langID, srv)
@@ -1029,6 +1033,18 @@ func (m *Manager) configureTraceLocked(langID string, srv *Server) {
 	srv.TraceWriter = nil
 }
 
+func (m *Manager) configureServerInitializeParamsLocked(langID string, srv *Server) {
+	if srv == nil {
+		return
+	}
+	adapter := m.adapters[langID]
+	if adapter == nil {
+		srv.setInitializeParams(nil)
+		return
+	}
+	srv.setInitializeParams(adapter.InitializeParams(m.root, m.config.LanguageSettings(langID)))
+}
+
 func (m *Manager) configureServerCapabilityProfileLocked(langID string, srv *Server) {
 	if srv == nil {
 		return
@@ -1109,6 +1125,7 @@ func (m *Manager) startDetected(ctx context.Context) error {
 			srv = NewServer(m.root, cmd)
 			m.servers[cmd.Language] = srv
 		}
+		m.configureServerInitializeParamsLocked(cmd.Language, srv)
 		m.configureServerCapabilityProfileLocked(cmd.Language, srv)
 		m.configureServerDocumentSyncLocked(cmd.Language, srv)
 		m.configureServerPathCapabilityLocked(cmd.Language, srv)

@@ -42,6 +42,7 @@ type Server struct {
 	advertisedCapabilities []string
 	observedCapabilities   map[string]struct{}
 	capabilityProfile      CapabilityProfile
+	initializeParams       map[string]any
 	documentSyncLanguageID string
 	documentSyncAdapter    PathDocumentSyncAdapter
 	pathCapabilityAdapter  PathCapabilityAdapter
@@ -302,13 +303,23 @@ func (s *Server) WithFile(ctx context.Context, path string, fn func() error) err
 }
 
 func (s *Server) initialize(ctx context.Context) error {
-	params := map[string]any{
-		"processId": os.Getpid(),
-		"rootUri":   fileURI(s.Root),
-		"capabilities": map[string]any{
-			"window": map[string]any{
-				"workDoneProgress": true,
-			},
+	params := make(map[string]any)
+	s.mu.Lock()
+	for key, value := range s.initializeParams {
+		params[key] = value
+	}
+	s.mu.Unlock()
+	if _, hasRootURI := params["rootUri"]; !hasRootURI {
+		if _, hasRootPath := params["rootPath"]; !hasRootPath {
+			params["rootUri"] = fileURI(s.Root)
+		}
+	}
+	// Adapter parameters may customize roots and initialization options, but
+	// these client-owned fields must remain consistent for every server.
+	params["processId"] = os.Getpid()
+	params["capabilities"] = map[string]any{
+		"window": map[string]any{
+			"workDoneProgress": true,
 		},
 	}
 	var result struct {
@@ -322,6 +333,19 @@ func (s *Server) initialize(ctx context.Context) error {
 	s.advertisedCapabilities = normalizeInitializeCapabilities(result.Capabilities)
 	s.mu.Unlock()
 	return nil
+}
+
+func (s *Server) setInitializeParams(params map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if params == nil {
+		s.initializeParams = nil
+		return
+	}
+	s.initializeParams = make(map[string]any, len(params))
+	for key, value := range params {
+		s.initializeParams[key] = value
+	}
 }
 
 func (s *Server) didOpen(path string) error {

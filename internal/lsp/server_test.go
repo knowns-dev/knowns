@@ -150,6 +150,65 @@ type recordingLSPWriteCloser struct{ bytes.Buffer }
 
 func (r *recordingLSPWriteCloser) Close() error { return nil }
 
+func TestServerInitializeMergesAdapterParams(t *testing.T) {
+	response := `{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}`
+	reader := bufio.NewReader(strings.NewReader(fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(response), response)))
+	writer := &recordingLSPWriteCloser{}
+	srv := NewServer(t.TempDir(), ServerCommand{Language: "bash"})
+	srv.setInitializeParams(map[string]any{
+		"rootPath":              `C:\workspace\project`,
+		"initializationOptions": map[string]any{"shellcheckPath": "shellcheck"},
+		"processId":             -1,
+		"capabilities":          map[string]any{"overridden": true},
+	})
+	srv.mu.Lock()
+	srv.running = true
+	srv.stdin = writer
+	srv.reader = reader
+	srv.mu.Unlock()
+
+	if err := srv.initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	message, err := testReadMessage(bufio.NewReader(bytes.NewReader(writer.Bytes())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request struct {
+		Method string `json:"method"`
+		Params struct {
+			ProcessID             int            `json:"processId"`
+			RootURI               string         `json:"rootUri"`
+			RootPath              string         `json:"rootPath"`
+			InitializationOptions map[string]any `json:"initializationOptions"`
+			Capabilities          struct {
+				Window struct {
+					WorkDoneProgress bool `json:"workDoneProgress"`
+				} `json:"window"`
+			} `json:"capabilities"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(message, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Method != "initialize" {
+		t.Fatalf("method = %q, want initialize", request.Method)
+	}
+	if request.Params.RootPath != `C:\workspace\project` || request.Params.RootURI != "" {
+		t.Fatalf("roots = rootPath %q, rootUri %q", request.Params.RootPath, request.Params.RootURI)
+	}
+	if request.Params.ProcessID != os.Getpid() {
+		t.Fatalf("processId = %d, want %d", request.Params.ProcessID, os.Getpid())
+	}
+	if !request.Params.Capabilities.Window.WorkDoneProgress {
+		t.Fatal("client capabilities were overwritten by adapter params")
+	}
+	if request.Params.InitializationOptions["shellcheckPath"] != "shellcheck" {
+		t.Fatalf("initializationOptions = %#v", request.Params.InitializationOptions)
+	}
+}
+
 type testDocumentSyncAdapterFunc func(string) DocumentSyncOptions
 
 func (f testDocumentSyncAdapterFunc) DocumentSyncForPath(path string) DocumentSyncOptions {
