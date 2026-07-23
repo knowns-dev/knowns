@@ -263,7 +263,7 @@ jobs:
           node-version: '20'
 
       - name: Cache semantic models
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.knowns/models
           key: semantic-models-${{ runner.os }}-all-MiniLM-L6-v2-v1
