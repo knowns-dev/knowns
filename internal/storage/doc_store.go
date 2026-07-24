@@ -186,6 +186,9 @@ func (ds *DocStore) Update(doc *models.Doc) error {
 	if doc.Path == "" {
 		return fmt.Errorf("doc path is required")
 	}
+	if existing, err := ds.Get(doc.Path); err == nil {
+		applyLockedDecisionReviewGate(existing, doc)
+	}
 	absPath := filepath.Join(ds.docsDir(), filepath.FromSlash(doc.Path)+".md")
 	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
 		return err
@@ -197,6 +200,9 @@ func (ds *DocStore) Update(doc *models.Doc) error {
 func (ds *DocStore) Rename(oldPath string, doc *models.Doc) error {
 	if strings.TrimSpace(oldPath) == "" || doc == nil || strings.TrimSpace(doc.Path) == "" {
 		return fmt.Errorf("old path and new doc path are required")
+	}
+	if existing, err := ds.Get(oldPath); err == nil {
+		applyLockedDecisionReviewGate(existing, doc)
 	}
 	oldAbsPath := filepath.Join(ds.docsDir(), filepath.FromSlash(strings.TrimSuffix(oldPath, ".md"))+".md")
 	newAbsPath := filepath.Join(ds.docsDir(), filepath.FromSlash(strings.TrimSuffix(doc.Path, ".md"))+".md")
@@ -212,6 +218,47 @@ func (ds *DocStore) Rename(oldPath string, doc *models.Doc) error {
 		}
 	}
 	return nil
+}
+
+func applyLockedDecisionReviewGate(existing, updated *models.Doc) {
+	if existing == nil || updated == nil || !docHasTag(existing.Tags, "approved") {
+		return
+	}
+	before, beforeOK := findMarkdownSection(existing.Content, "Locked Decisions")
+	after, afterOK := findMarkdownSection(updated.Content, "Locked Decisions")
+	if beforeOK == afterOK && (!beforeOK || strings.TrimSpace(before.Text) == strings.TrimSpace(after.Text)) {
+		return
+	}
+	updated.Tags = removeDocTag(updated.Tags, "approved")
+	updated.Tags = appendDocTag(updated.Tags, "draft")
+	updated.Tags = appendDocTag(updated.Tags, "review-required")
+}
+
+func docHasTag(tags []string, target string) bool {
+	for _, tag := range tags {
+		if strings.EqualFold(strings.TrimSpace(tag), target) {
+			return true
+		}
+	}
+	return false
+}
+
+func removeDocTag(tags []string, target string) []string {
+	filtered := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if strings.EqualFold(strings.TrimSpace(tag), target) {
+			continue
+		}
+		filtered = append(filtered, tag)
+	}
+	return filtered
+}
+
+func appendDocTag(tags []string, tag string) []string {
+	if docHasTag(tags, tag) {
+		return tags
+	}
+	return append(tags, tag)
 }
 
 // RewriteDocReferences rewrites @doc refs across local docs, tasks, and memories.

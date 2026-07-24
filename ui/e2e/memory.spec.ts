@@ -9,6 +9,7 @@ type MemorySeed = {
 	prefix: string;
 	currentDecisionId: string;
 	duplicateContent: string;
+	activeId: string;
 	activeTitle: string;
 	proposedTitle: string;
 	staleTitle: string;
@@ -16,6 +17,10 @@ type MemorySeed = {
 	brokenSourceTitle: string;
 	supersededSourceTitle: string;
 	archivedTitle: string;
+	recommendedDocTitle: string;
+	recommendedDocRef: string;
+	recommendedTaskTitle: string;
+	recommendedTaskRef: string;
 };
 
 test.beforeAll(async () => {
@@ -26,123 +31,254 @@ test.afterAll(() => {
 	server?.cleanup();
 });
 
-test.describe("Memory Review Inbox", () => {
-	test("opens to Review Inbox and groups actionable reasons", async ({ page }) => {
+test.describe("Memory lifecycle destinations", () => {
+	test("keeps Trusted read-only and separates Review Inbox and History by URL", async ({ page }) => {
 		const seed = await seedMemoryReview(page);
 		await page.goto(`${server.baseURL}/memory`);
 
-		await expect(page.getByRole("heading", { name: "Memory review" })).toBeVisible();
-		await expect(page.getByRole("tab", { name: "Review Inbox" })).toHaveAttribute("aria-selected", "true");
+		await expect(page.getByRole("heading", { name: "Memories", exact: true })).toBeVisible();
+		await expect(page.getByRole("tab", { name: /Trusted/ })).toHaveAttribute("aria-selected", "true");
+		await expect(page.getByTestId("memory-trusted-destination")).toBeVisible();
+		await expect(page.getByText(seed.activeTitle, { exact: true })).toBeVisible();
+		await expect(page.getByText(seed.proposedTitle, { exact: true })).toHaveCount(0);
+		await expect(page.getByRole("button", { name: "New proposal" })).toHaveCount(0);
 
-		await expect(page.getByTestId("memory-review-group-proposed")).toContainText("Proposed");
-		await expect(page.getByTestId("memory-review-group-duplicate_review")).toContainText("Duplicate review");
-		await expect(page.getByTestId("memory-review-group-stale_ttl")).toContainText("Stale TTL");
-		await expect(page.getByTestId("memory-review-group-missing_source")).toContainText("Missing source");
-		await expect(page.getByTestId("memory-review-group-source_missing")).toContainText("Source missing");
-		await expect(page.getByTestId("memory-review-group-source_decision_superseded")).toContainText("Source decision superseded");
+		await page.getByText(seed.activeTitle, { exact: true }).click();
+		await expect(page.getByTestId("memory-readonly-detail")).toBeVisible();
+		await expect(page.getByText("Available to default retrieval")).toBeVisible();
+		await expect(page.getByRole("button", { name: "Remove from Trusted" })).toBeVisible();
+		await expect(page.getByRole("button", { name: /delete|permanent/i })).toHaveCount(0);
+		await expect(page.getByRole("button", { name: /Review (activation|archive|rejection)/ })).toHaveCount(0);
+		await page.getByRole("button", { name: "Close Memory detail" }).click();
 
-		await expect(page.getByTestId("memory-review-group-proposed")).toContainText(seed.proposedTitle);
-		await expect(page.getByTestId("memory-review-group-stale_ttl")).toContainText(seed.staleTitle);
-		await expect(page.getByTestId("memory-review-group-missing_source")).toContainText(seed.missingSourceTitle);
-		await expect(page.getByTestId("memory-review-group-source_missing")).toContainText(seed.brokenSourceTitle);
-		await expect(page.getByTestId("memory-review-group-source_decision_superseded")).toContainText(seed.supersededSourceTitle);
+		await page.getByRole("tab", { name: /Review Inbox/ }).click();
+		await expect(page).toHaveURL(/\/memory\/review$/);
+		await expect(page.getByTestId("memory-review-destination")).toBeVisible();
+		await expect(page.getByText(seed.proposedTitle, { exact: true })).toHaveCount(1);
+		await expect(page.getByText(seed.staleTitle, { exact: true })).toHaveCount(1);
+		await expect(page.getByText(seed.missingSourceTitle, { exact: true })).toHaveCount(1);
+		await expect(page.getByText(seed.brokenSourceTitle, { exact: true })).toHaveCount(1);
+		await expect(page.getByText(seed.supersededSourceTitle, { exact: true })).toHaveCount(1);
+
+		await page.getByRole("tab", { name: /History/ }).click();
+		await expect(page).toHaveURL(/\/memory\/history$/);
+		await expect(page.getByTestId("memory-history-destination")).toBeVisible();
+		await expect(page.getByText(seed.archivedTitle, { exact: true })).toBeVisible();
 	});
 
-	test("keeps Healthy, Archived, and All as secondary views", async ({ page }) => {
+	test("removes Trusted recall through archive confirmation and preserves it in History", async ({ page }) => {
 		const seed = await seedMemoryReview(page);
 		await page.goto(`${server.baseURL}/memory`);
 
-		await page.getByRole("tab", { name: "Healthy" }).click();
-		await expect(page.getByText("Healthy memories")).toBeVisible();
-		await expect(page.getByText(seed.activeTitle)).toBeVisible();
+		await page.getByTestId(`memory-row-${seed.activeId}`).click();
+		const detail = page.getByTestId("memory-readonly-detail");
+		await detail.getByRole("button", { name: "Remove from Trusted" }).click();
 
-		await page.getByRole("tab", { name: "Archived" }).click();
-		await expect(page.getByText("Archived memories")).toBeVisible();
-		await expect(page.getByText(seed.archivedTitle)).toBeVisible();
+		const impact = page.getByTestId("memory-impact-dialog");
+		await expect(impact).toBeVisible();
+		await expect(impact).toContainText("Provenance is retained");
+		await expect(impact).toContainText(
+			"Archived; excluded from default retrieval and moved to History.",
+		);
+		await impact.getByRole("button", { name: "Cancel" }).click();
+		await expect(impact).toHaveCount(0);
+		await expect(detail).toBeVisible();
 
-		await page.getByRole("tab", { name: "All" }).click();
-		await expect(page.getByRole("heading", { name: "All memories" })).toBeVisible();
-		await expect(page.getByText(seed.proposedTitle).first()).toBeVisible();
-		await expect(page.getByText(seed.archivedTitle)).toBeVisible();
+		await detail.getByRole("button", { name: "Remove from Trusted" }).click();
+		await page
+			.getByTestId("memory-impact-dialog")
+			.getByRole("button", { name: "Confirm outcome" })
+			.click();
+
+		await expect(page.getByTestId(`memory-row-${seed.activeId}`)).toHaveCount(0);
+		await expect(page.getByRole("tab", { name: /Trusted/ })).toBeFocused();
+
+		await page.getByRole("tab", { name: /History/ }).click();
+		await expect(page.getByTestId(`memory-row-${seed.activeId}`)).toBeVisible();
+		await page.getByTestId(`memory-row-${seed.activeId}`).click();
+		const historicalDetail = page.getByTestId("memory-readonly-detail");
+		await expect(historicalDetail).toContainText("Historical record");
+		await expect(historicalDetail).toContainText(`@decision/${seed.currentDecisionId}`);
+		await expect(historicalDetail.getByRole("button", { name: "Remove from Trusted" })).toHaveCount(0);
+		await expect(historicalDetail.getByRole("button", { name: /delete|permanent/i })).toHaveCount(0);
 	});
 
-	test("limits bulk actions to verify, archive, and reject proposed", async ({ page }) => {
+	test("shows explicit impact before item and bulk review outcomes", async ({ page }) => {
 		const seed = await seedMemoryReview(page);
-		await page.goto(`${server.baseURL}/memory`);
+		await page.goto(`${server.baseURL}/memory/review`);
 
-		await page.getByLabel(`Select ${seed.proposedTitle}`).first().check();
+		await page.getByText(seed.proposedTitle, { exact: true }).click();
+		const detail = page.getByTestId("memory-review-detail");
+		await expect(detail).toContainText("Similar trusted Memories");
+		await expect(detail.getByRole("button", { name: "Review merge" })).toBeVisible();
+		await expect(detail.getByRole("button", { name: "Review activation" })).toBeVisible();
+		await expect(detail.getByRole("button", { name: /Update existing/i })).toHaveCount(0);
+
+		await detail.getByRole("button", { name: "Review activation" }).click();
+		const impact = page.getByTestId("memory-impact-dialog");
+		await expect(impact).toBeVisible();
+		await expect(impact).toContainText("Memory");
+		await expect(impact).toContainText("Evidence outcome");
+		await expect(impact).toContainText("Resulting lifecycle");
+		await expect(impact).toContainText("Active; included in default retrieval");
+		await impact.getByRole("button", { name: "Cancel" }).click();
+		await expect(impact).toHaveCount(0);
+
+		await page.getByRole("button", { name: "Close Memory detail" }).click();
+		await page.getByLabel(`Select ${seed.proposedTitle}`).check();
 		const toolbar = page.getByTestId("memory-bulk-toolbar");
-
-		await expect(toolbar.getByRole("button", { name: "Verify" })).toBeVisible();
-		await expect(toolbar.getByRole("button", { name: "Archive" })).toBeVisible();
+		await expect(toolbar.getByRole("button", { name: "Verify" })).toBeEnabled();
+		await expect(toolbar.getByRole("button", { name: "Archive" })).toBeEnabled();
 		await expect(toolbar.getByRole("button", { name: "Reject proposed" })).toBeEnabled();
 		await expect(toolbar.getByRole("button", { name: /merge/i })).toHaveCount(0);
-		await expect(toolbar.getByRole("button", { name: /update existing/i })).toHaveCount(0);
-
 		await toolbar.getByRole("button", { name: "Reject proposed" }).click();
-		await expect(page.getByTestId("memory-review-group-proposed")).not.toContainText(seed.proposedTitle);
+		await expect(page.getByRole("heading", { name: "Confirm bulk outcome" })).toBeVisible();
+		await page.getByRole("button", { name: "Cancel" }).click();
 	});
 
-	test("supports item duplicate actions and superseded-source repair", async ({ page }) => {
+	test("keeps source selection above focus view and confirms repairs", async ({ page }) => {
 		const seed = await seedMemoryReview(page);
-		await page.goto(`${server.baseURL}/memory`);
+		await page.goto(`${server.baseURL}/memory/review`);
 
-		await page.getByTestId("memory-review-group-proposed").getByText(seed.proposedTitle).click();
-		const detail = page.getByTestId("memory-detail-panel");
-		await expect(detail).toContainText("Duplicate candidates");
-		await expect(detail.getByRole("button", { name: "Update existing" })).toBeVisible();
-		await expect(detail.getByRole("button", { name: "Merge" })).toBeVisible();
-		await expect(detail.getByRole("button", { name: "Create proposed" })).toBeVisible();
-		await expect(detail.getByRole("button", { name: "Verify" })).toBeVisible();
-		await expect(detail.getByRole("button", { name: "Archive" })).toBeVisible();
-		await expect(detail.getByRole("button", { name: "Reject" })).toBeVisible();
-		await expect(detail.getByRole("button", { name: "Link source" })).toBeVisible();
+		await page.getByText(seed.missingSourceTitle, { exact: true }).click();
+		const focus = page.getByTestId("memory-focus-dialog");
+		await focus.getByRole("button", { name: "Browse existing" }).click();
+		const browser = page.getByTestId("reference-browser");
+		await expect(browser).toBeVisible();
+		const layers = await page.evaluate(() => {
+			const focusDialog = document.querySelector('[data-testid="memory-focus-dialog"]');
+			const referenceBrowser = document.querySelector('[data-testid="reference-browser"]');
+			return {
+				focus: Number.parseInt(getComputedStyle(focusDialog as Element).zIndex || "0", 10),
+				browser: Number.parseInt(getComputedStyle(referenceBrowser as Element).zIndex || "0", 10),
+			};
+		});
+		expect(layers.browser).toBeGreaterThan(layers.focus);
+		await page.keyboard.press("Escape");
+		await expect(browser).toHaveCount(0);
 
-		await page.getByTestId("memory-review-group-source_decision_superseded").getByText(seed.supersededSourceTitle).click();
-		await expect(detail.getByRole("button", { name: "Repair source" })).toBeVisible();
-		await detail.getByRole("button", { name: "Repair source" }).click();
-		await expect(page.getByTestId("memory-review-group-source_decision_superseded")).not.toContainText(seed.supersededSourceTitle);
+		await page.getByRole("button", { name: "Close Memory detail" }).click();
+		await page.getByText(seed.supersededSourceTitle, { exact: true }).click();
+		await page.getByRole("button", { name: "Review repair" }).click();
+		const impact = page.getByTestId("memory-impact-dialog");
+		await expect(impact).toContainText(`@decision/${seed.currentDecisionId}`);
+		await impact.getByRole("button", { name: "Confirm outcome" }).click();
+		await expect(page.getByText(seed.supersededSourceTitle, { exact: true })).toHaveCount(0);
 	});
 
-	test("shows duplicate candidates and supports Create anyway", async ({ page }) => {
+	test("recommends nearby docs and tasks but stages selection until confirmation", async ({ page }) => {
 		const seed = await seedMemoryReview(page);
-		await page.goto(`${server.baseURL}/memory`);
+		await page.goto(`${server.baseURL}/memory/review`);
+
+		await page.getByText(seed.missingSourceTitle, { exact: true }).click();
+		const recommendations = page.getByTestId("memory-source-recommendations");
+		await expect(recommendations).toBeVisible();
+		await expect(recommendations.getByText(seed.recommendedDocTitle, { exact: true })).toBeVisible();
+		await expect(recommendations.getByText(seed.recommendedTaskTitle, { exact: true })).toBeVisible();
+		expect(await recommendations.locator("li").count()).toBeLessThanOrEqual(3);
+
+		await recommendations.getByRole("button", { name: `Select doc: ${seed.recommendedDocTitle}` }).click();
+		await expect(recommendations.getByRole("button", { name: `Selected doc: ${seed.recommendedDocTitle}` })).toBeVisible();
+		const sourceInput = page.getByTestId("memory-source-panel").locator('input[placeholder="@doc/path, @task/id, https://…"]');
+		await expect(sourceInput).toHaveValue(seed.recommendedDocRef);
+
+		await page.getByRole("button", { name: "Review source update" }).click();
+		const impact = page.getByTestId("memory-impact-dialog");
+		await expect(impact).toContainText(seed.recommendedDocRef);
+		await impact.getByRole("button", { name: "Cancel" }).click();
+		await expect(sourceInput).toHaveValue(seed.recommendedDocRef);
+
+		await page.getByRole("button", { name: "Review source update" }).click();
+		await page.getByTestId("memory-impact-dialog").getByRole("button", { name: "Confirm outcome" }).click();
+		await expect(page.getByText(seed.missingSourceTitle, { exact: true })).toHaveCount(0);
+	});
+
+	test("keeps manual source repair usable when recommendations fail", async ({ page }) => {
+		const seed = await seedMemoryReview(page);
+		await page.route("**/api/search?*", (route) =>
+			route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"unavailable"}' }),
+		);
+		await page.goto(`${server.baseURL}/memory/review`);
+
+		await page.getByText(seed.brokenSourceTitle, { exact: true }).click();
+		const recommendations = page.getByTestId("memory-source-recommendations");
+		await expect(recommendations.getByText("Suggestions are unavailable. Manual source entry still works.")).toBeVisible();
+		const sourcePanel = page.getByTestId("memory-source-panel");
+		await sourcePanel.locator('input[placeholder="@doc/path, @task/id, https://…"]').fill(seed.recommendedDocRef);
+		await expect(sourcePanel.getByRole("button", { name: "Review source update" })).toBeEnabled();
+		await sourcePanel.getByRole("button", { name: "Review source update" }).click();
+		await expect(page.getByTestId("memory-impact-dialog")).toContainText(seed.recommendedDocRef);
+	});
+
+	test("creates manual recall only as a proposal and returns it to Review Inbox", async ({ page }) => {
+		const seed = await seedMemoryReview(page);
+		await page.goto(`${server.baseURL}/memory/review`);
 
 		const overrideTitle = `Override duplicate ${seed.prefix}`;
-		await page.getByRole("button", { name: "New memory" }).click();
+		await page.getByRole("button", { name: "New proposal" }).click();
 		await page.locator('input[placeholder="Optional title"]').fill(overrideTitle);
-		await page.locator('textarea[placeholder="Write in markdown"]').fill(seed.duplicateContent);
-		await page.locator('input[placeholder="@doc/path, @task/id, or @decision/id"]').fill(`@decision/${seed.currentDecisionId}`);
-		await page.getByRole("button", { name: "Create" }).click();
+		await page.locator('textarea[placeholder="Write durable recall in markdown"]').fill(seed.duplicateContent);
+		await page.locator('input[placeholder="@doc/path, @task/id, https://…"]').fill(`@decision/${seed.currentDecisionId}`);
+		await page.getByRole("button", { name: "Save proposal" }).click();
 
-		await expect(page.getByText("Similar memories need review")).toBeVisible();
-		await expect(page.locator('[role="dialog"]').getByText(seed.activeTitle, { exact: true })).toBeVisible();
+		await expect(page.getByText("Similar trusted Memories found")).toBeVisible();
+		await expect(page.getByTestId("memory-create-dialog").getByText(seed.activeTitle, { exact: true })).toBeVisible();
+		await page.getByRole("button", { name: "Keep separate as proposal" }).click();
+		await expect(page.getByText("Similar trusted Memories found")).toHaveCount(0);
+		await expect(page).toHaveURL(/\/memory\/review$/);
+		await expect(page.getByText(overrideTitle, { exact: true })).toBeVisible();
+	});
 
-		await page.getByRole("button", { name: "Create anyway" }).click();
-		await expect(page.getByText("Similar memories need review")).toHaveCount(0);
-		await expect(page.getByText(overrideTitle).first()).toBeVisible();
+	test("routes durable choices to System Decisions instead of Decision Memory", async ({ page }) => {
+		await page.goto(`${server.baseURL}/memory/review`);
+		await page.getByRole("button", { name: "New proposal" }).click();
+		const dialog = page.getByTestId("memory-create-dialog");
+		await dialog.locator('textarea[placeholder="Write durable recall in markdown"]').fill("Use the durable system contract.");
+		await dialog.locator('input[placeholder="pattern, convention, preference…"]').fill(" Decision ");
+		await expect(dialog.getByText(/Memory category “decision” is legacy/)).toBeVisible();
+		await expect(dialog.getByRole("button", { name: "Save proposal" })).toBeDisabled();
+	});
+
+	test("keeps Trusted readable when review metadata fails", async ({ page }) => {
+		const seed = await seedMemoryReview(page);
+		await page.route("**/api/memories/review", (route) =>
+			route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"unavailable"}' }),
+		);
+		await page.goto(`${server.baseURL}/memory`);
+
+		await expect(page.getByText(seed.activeTitle, { exact: true })).toBeVisible();
+		await expect(page.getByText(/Review metadata is unavailable/)).toBeVisible();
+		await page.getByRole("tab", { name: /Review Inbox/ }).click();
+		await expect(page.getByText("Review Inbox is temporarily unavailable")).toBeVisible();
 	});
 
 	test("has no horizontal overflow in desktop and mobile key viewports", async ({ page }, testInfo) => {
-		await seedMemoryReview(page);
+		const seed = await seedMemoryReview(page);
 
 		await page.setViewportSize({ width: 1280, height: 800 });
-		await page.goto(`${server.baseURL}/memory`);
-		await expect(page.getByRole("heading", { name: "Memory review" })).toBeVisible();
-		await expect(page.getByTestId("memory-review-group-proposed")).toBeVisible();
+		await page.goto(`${server.baseURL}/memory/review`);
+		await expect(page.getByRole("heading", { name: "Memories", exact: true })).toBeVisible();
+		await expect(page.getByTestId("memory-review-destination")).toBeVisible();
 		await expectNoHorizontalOverflow(page);
 		await expectControlsFit(page);
 		await page.screenshot({ path: testInfo.outputPath("memory-review-desktop.png"), fullPage: true });
 
 		await page.setViewportSize({ width: 390, height: 844 });
-		await page.goto(`${server.baseURL}/memory`);
-		await expect(page.getByRole("heading", { name: "Memory review" })).toBeVisible();
-		await expect(page.getByTestId("memory-review-group-proposed")).toBeVisible();
-		await expect(page.getByRole("tab", { name: "Review Inbox" })).toBeVisible();
-		await expect(page.getByRole("button", { name: "New memory" })).toBeVisible();
+		await page.goto(`${server.baseURL}/memory/review`);
+		await expect(page.getByRole("heading", { name: "Memories", exact: true })).toBeVisible();
+		await expect(page.getByTestId("memory-review-destination")).toBeVisible();
+		await expect(page.getByRole("tab", { name: /Review Inbox/ })).toBeVisible();
+		await expect(page.getByRole("button", { name: "New proposal" })).toBeVisible();
 		await expectNoHorizontalOverflow(page);
 		await expectControlsFit(page);
 		await page.screenshot({ path: testInfo.outputPath("memory-review-mobile.png"), fullPage: true });
+
+		await page.getByText(seed.missingSourceTitle, { exact: true }).click();
+		const mobileRecommendations = page.getByTestId("memory-source-recommendations");
+		await expect(mobileRecommendations).toBeVisible();
+		await mobileRecommendations.scrollIntoViewIfNeeded();
+		await expectNoHorizontalOverflow(page);
+		await page.screenshot({ path: testInfo.outputPath("memory-source-recommendations-mobile.png"), fullPage: true });
 	});
 });
 
@@ -176,19 +312,35 @@ async function seedMemoryReview(page: Page): Promise<MemorySeed> {
 	const supersededSourceTitle = `Superseded source ${prefix}`;
 	const archivedTitle = `Archived memory ${prefix}`;
 	const duplicateContent = `Use Qdrant as the default vector database for ${prefix}.`;
+	const recommendedDocTitle = `Source evidence guide ${prefix}`;
+	const recommendedTaskTitle = `Verify source evidence ${prefix}`;
+	const recommendedDoc = await postJSON<{ path: string }>(page, "/api/docs", {
+		title: recommendedDocTitle,
+		description: `Evidence for ${missingSourceTitle} and its durable retrieval context.`,
+		content: `# ${recommendedDocTitle}\n\nEvidence for ${missingSourceTitle}.`,
+		folder: "evidence",
+		tags: ["memory", "evidence"],
+	});
+	const recommendedTask = await postJSON<{ id: string }>(page, "/api/tasks", {
+		title: recommendedTaskTitle,
+		description: `Verify the evidence linked to ${missingSourceTitle}.`,
+		status: "todo",
+		priority: "medium",
+		labels: ["memory", "evidence"],
+	});
 
-	await createMemory(page, {
+	const activeMemory = await createMemory(page, {
 		title: activeTitle,
 		content: duplicateContent,
 		status: "active",
-		category: "decision",
+		category: "pattern",
 		sources: [`@decision/${currentDecision.id}`],
 	});
 	await createMemory(page, {
 		title: proposedTitle,
 		content: duplicateContent,
 		status: "proposed",
-		category: "decision",
+		category: "pattern",
 		sources: [`@decision/${currentDecision.id}`],
 	});
 	await createMemory(page, {
@@ -225,6 +377,7 @@ async function seedMemoryReview(page: Page): Promise<MemorySeed> {
 		prefix,
 		currentDecisionId: currentDecision.id,
 		duplicateContent,
+		activeId: activeMemory.id,
 		activeTitle,
 		proposedTitle,
 		staleTitle,
@@ -232,6 +385,10 @@ async function seedMemoryReview(page: Page): Promise<MemorySeed> {
 		brokenSourceTitle,
 		supersededSourceTitle,
 		archivedTitle,
+		recommendedDocTitle,
+		recommendedDocRef: `@doc/${recommendedDoc.path}`,
+		recommendedTaskTitle,
+		recommendedTaskRef: `@task/${recommendedTask.id}`,
 	};
 }
 
@@ -269,8 +426,12 @@ function writeDecisionFile(
 	);
 }
 
-async function createMemory(page: Page, body: Record<string, unknown>) {
-	return postJSON(page, "/api/memories", { ...body, layer: "project", skipReview: true });
+async function createMemory(page: Page, body: Record<string, unknown>): Promise<{ id: string }> {
+	return postJSON<{ id: string }>(page, "/api/memories", {
+		...body,
+		layer: "project",
+		skipReview: true,
+	});
 }
 
 async function postJSON<T = unknown>(page: Page, path: string, body: Record<string, unknown>): Promise<T> {

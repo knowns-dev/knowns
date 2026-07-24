@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,12 +13,32 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+func TestMemoryAddRejectsLegacyDecisionCategory(t *testing.T) {
+	store := setupMemoryCleanupStore(t)
+	result, err := handleMemoryAdd(func() *storage.Store { return store }, mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{
+		"action": "add", "category": " Decision ", "content": "Do not persist this.",
+	}}})
+	if err != nil {
+		t.Fatalf("handleMemoryAdd error: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatalf("result = %+v, want tool error", result)
+	}
+	if text := callMemoryTextResult(t, result); !strings.Contains(text, "System Decision") {
+		t.Fatalf("error = %q, want actionable System Decision guidance", text)
+	}
+	entries, listErr := store.Memory.ListPersistent("")
+	if listErr != nil || len(entries) != 0 {
+		t.Fatalf("rejected write persisted entries=%+v err=%v", entries, listErr)
+	}
+}
+
 func TestMemoryAddNoMatchCreatesProposed(t *testing.T) {
 	store := setupMemoryCleanupStore(t)
 	text := callMemoryAdd(t, store, map[string]any{
 		"action":   "add",
 		"title":    "Unique memory",
-		"category": "decision",
+		"category": "pattern",
 		"content":  "Use proposed status for new memory review.",
 	})
 	var entry models.MemoryEntry
@@ -45,7 +66,7 @@ func TestMemoryAddDuplicateReturnsReviewRequiredAndNoWrite(t *testing.T) {
 		t.Fatalf("get existing: %v", err)
 	}
 	existing.Title = "Default vector database"
-	existing.Category = "decision"
+	existing.Category = "pattern"
 	existing.Content = "Use Qdrant as the default vector database."
 	existing.Status = models.MemoryStatusActive
 	if err := store.Memory.Update(existing); err != nil {
@@ -56,7 +77,7 @@ func TestMemoryAddDuplicateReturnsReviewRequiredAndNoWrite(t *testing.T) {
 	text := callMemoryAdd(t, store, map[string]any{
 		"action":   "add",
 		"title":    "Default vector database",
-		"category": "decision",
+		"category": "pattern",
 		"content":  "Use Qdrant as the default vector database.",
 	})
 	var result memoryreview.Result

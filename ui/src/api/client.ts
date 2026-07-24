@@ -709,9 +709,44 @@ export async function restoreDocRevision(
 	return res.json();
 }
 
+export interface KnownsSearchResult {
+	type: "task" | "doc" | "memory" | "decision" | "code";
+	id: string;
+	title: string;
+	score: number;
+	snippet?: string;
+	status?: string;
+	priority?: string;
+	path?: string;
+	tags?: string[];
+	memoryLayer?: string;
+	category?: string;
+}
+
+export interface KnownsSearchResponse {
+	tasks: Array<Task & { score?: number; snippet?: string; matchedBy?: string[] }>;
+	docs: KnownsSearchResult[];
+	memories: KnownsSearchResult[];
+	decisions: KnownsSearchResult[];
+	code: KnownsSearchResult[];
+}
+
+export interface KnownsSearchOptions {
+	type?: "all" | "task" | "doc" | "memory" | "decision" | "code";
+	mode?: "keyword" | "semantic" | "hybrid";
+	limit?: number;
+}
+
 // Search API
-export async function search(query: string): Promise<{ tasks: Task[]; docs: unknown[] }> {
-	const res = await apiFetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}`);
+export async function search(
+	query: string,
+	options: KnownsSearchOptions = {},
+): Promise<KnownsSearchResponse> {
+	const params = new URLSearchParams({ q: query });
+	if (options.type) params.set("type", options.type);
+	if (options.mode) params.set("mode", options.mode);
+	if (options.limit) params.set("limit", String(options.limit));
+	const res = await apiFetch(`${API_BASE}/api/search?${params.toString()}`);
 	if (!res.ok) {
 		throw new Error("Failed to search");
 	}
@@ -719,6 +754,9 @@ export async function search(query: string): Promise<{ tasks: Task[]; docs: unkn
 	return {
 		tasks: (data.tasks || []).map(parseTaskDTO),
 		docs: data.docs || [],
+		memories: data.memories || [],
+		decisions: data.decisions || [],
+		code: data.code || [],
 	};
 }
 
@@ -2024,7 +2062,9 @@ export async function resolveReference(ref: string): Promise<SemanticResolution>
 // --- Decision API ---
 
 export type DecisionStatus = "draft" | "accepted" | "superseded" | "rejected" | "archived";
+export type DecisionReviewState = "needs_evidence" | "needs_resolution" | "ready_for_review";
 export type DecisionReviewResolution =
+	| "accept_new"
 	| "supersede_existing"
 	| "create_draft"
 	| "link_as_related"
@@ -2040,6 +2080,13 @@ export interface DecisionEntry {
 	sources?: string[];
 	relatedDocs?: string[];
 	relatedTasks?: string[];
+	verification?: string[];
+	verifiedAt?: string;
+	reviewState?: DecisionReviewState;
+	reviewBlockers?: string[];
+	reviewMatches?: DecisionReviewMatch[];
+	reviewAllowedResolutions?: DecisionReviewResolution[];
+	reviewEvaluatedAt?: string;
 	createdAt: string;
 	updatedAt: string;
 	context?: string;
@@ -2072,8 +2119,13 @@ export interface DecisionReviewResult {
 	changedIds?: string[];
 }
 
+export interface DecisionAcceptResult extends DecisionReviewResult {
+	decision: DecisionEntry;
+}
+
 export interface DecisionResolveRequest extends Partial<DecisionEntry> {
 	resolution: DecisionReviewResolution;
+	candidateId?: string;
 	targetId?: string;
 	replacementId?: string;
 	status?: DecisionStatus;
@@ -2107,6 +2159,12 @@ export const decisionApi = {
 		return res.json();
 	},
 
+	async reviewInbox(): Promise<DecisionEntry[]> {
+		const res = await apiFetch(`${API_BASE}/api/decisions/review/inbox`);
+		if (!res.ok) throw new Error("Failed to fetch Decision review inbox");
+		return res.json();
+	},
+
 	async create(data: Partial<DecisionEntry>): Promise<DecisionEntry> {
 		const res = await apiFetch(`${API_BASE}/api/decisions`, {
 			method: "POST",
@@ -2120,6 +2178,35 @@ export const decisionApi = {
 		if (!res.ok) {
 			const error = await res.json().catch(() => ({ error: "Failed to create decision" }));
 			throw new Error(error.error || "Failed to create decision");
+		}
+		return res.json();
+	},
+
+	async link(
+		id: string,
+		data: { sources?: string[]; relatedDocs?: string[]; relatedTasks?: string[] },
+	): Promise<DecisionEntry> {
+		const res = await apiFetch(`${API_BASE}/api/decisions/${encodeURIComponent(id)}/link`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(data),
+		});
+		if (!res.ok) {
+			const error = await res.json().catch(() => ({ error: `Failed to link decision ${id}` }));
+			throw new Error(error.error || `Failed to link decision ${id}`);
+		}
+		return res.json();
+	},
+
+	async accept(id: string, supersedes: string[] = []): Promise<DecisionAcceptResult> {
+		const res = await apiFetch(`${API_BASE}/api/decisions/${encodeURIComponent(id)}/accept`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ supersedes }),
+		});
+		if (!res.ok) {
+			const error = await res.json().catch(() => ({ error: `Failed to accept decision ${id}` }));
+			throw new Error(error.error || `Failed to accept decision ${id}`);
 		}
 		return res.json();
 	},
@@ -2148,6 +2235,100 @@ export const decisionApi = {
 			throw new Error(error.error || "Failed to resolve decision review");
 		}
 		return res.json();
+	},
+};
+
+export type DecisionMigrationResolution =
+	| "create_decision"
+	| "link_existing"
+	| "consolidate_duplicate"
+	| "reclassify"
+	| "archive_noise"
+	| "reject_noise"
+	| "leave_unchanged";
+
+export interface DecisionMigrationCandidate {
+	memoryId: string;
+	title: string;
+	layer: "project" | "global";
+	status: string;
+	sources: string[];
+	sourceIssues?: string[];
+	noiseLikelihood: "low" | "medium" | "high";
+	noiseReasons?: string[];
+	duplicateGroup?: string;
+	duplicateMembers?: string[];
+	proposedResolution: DecisionMigrationResolution;
+	proposedDecisionId?: string;
+	proposedTargetId?: string;
+	proposedCategory?: string;
+	journalState?: "pending" | "applied" | "rolled_back" | "failed";
+	linkedDecisionId?: string;
+}
+
+export interface DecisionMigrationPreview {
+	candidates: DecisionMigrationCandidate[];
+	counts: { total: number; highNoise: number; duplicate: number; withIssue: number };
+}
+
+export interface DecisionMigrationSelection {
+	memoryId: string;
+	resolution: DecisionMigrationResolution;
+	decisionId?: string;
+	targetMemoryId?: string;
+	category?: string;
+	reason?: string;
+	relatedDocs?: string[];
+	relatedTasks?: string[];
+	acceptVerified?: boolean;
+}
+
+export interface DecisionMigrationItemResult {
+	memoryId: string;
+	resolution: DecisionMigrationResolution;
+	state: string;
+	decisionId?: string;
+	legacyExcluded: boolean;
+	idempotent?: boolean;
+	error?: string;
+}
+
+export interface DecisionMigrationApplyResult {
+	results: DecisionMigrationItemResult[];
+}
+
+export const decisionMigrationApi = {
+	async preview(): Promise<DecisionMigrationPreview> {
+		const res = await apiFetch(`${API_BASE}/api/decisions/migration/preview`);
+		if (!res.ok) {
+			const error = await res.json().catch(() => ({ error: "Failed to preview Decision Memory migration" }));
+			throw new Error(error.error || "Failed to preview Decision Memory migration");
+		}
+		return res.json();
+	},
+
+	async apply(selection: DecisionMigrationSelection): Promise<DecisionMigrationApplyResult> {
+		const res = await apiFetch(`${API_BASE}/api/decisions/migration/apply`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ selections: [selection] }),
+		});
+		const payload = await res.json().catch(() => ({}));
+		if (!res.ok) {
+			throw new Error(payload.error || "Failed to apply Decision Memory migration");
+		}
+		return payload as DecisionMigrationApplyResult;
+	},
+
+	async rollback(memoryId: string): Promise<{ memoryId: string; state: string; decisionId?: string }> {
+		const res = await apiFetch(`${API_BASE}/api/decisions/migration/${encodeURIComponent(memoryId)}/rollback`, {
+			method: "POST",
+		});
+		const payload = await res.json().catch(() => ({}));
+		if (!res.ok) {
+			throw new Error(payload.error || `Failed to roll back migration for ${memoryId}`);
+		}
+		return payload;
 	},
 };
 
@@ -2294,7 +2475,10 @@ export const memoryApi = {
 			const result = (await res.json()) as MemoryReviewResult;
 			throw new MemoryReviewRequiredError(result);
 		}
-		if (!res.ok) throw new Error("Failed to create memory");
+		if (!res.ok) {
+			const error = await res.json().catch(() => ({ error: "Failed to create memory" }));
+			throw new Error(error.error || "Failed to create memory");
+		}
 		return res.json();
 	},
 
@@ -2323,7 +2507,10 @@ export const memoryApi = {
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(data),
 		});
-		if (!res.ok) throw new Error(`Failed to update memory ${id}`);
+		if (!res.ok) {
+			const error = await res.json().catch(() => ({ error: `Failed to update memory ${id}` }));
+			throw new Error(error.error || `Failed to update memory ${id}`);
+		}
 		return res.json();
 	},
 

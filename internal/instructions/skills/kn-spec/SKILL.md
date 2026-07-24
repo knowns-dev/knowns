@@ -94,6 +94,14 @@ Generate 2–4 gray areas for this feature. A gray area is a decision that:
 mcp_knowns_search({ "action": "search", "query": "<feature keywords>", "type": "memory" })
 ```
 
+Retrieve only relevant current System Decisions as a separate, trusted source:
+```json
+mcp_knowns_search({ "action": "retrieve", "query": "<feature keywords and proposed system change>",
+  "sourceTypes": ["decision"], "status": "accepted", "includeHistorical": false, "limit": 8 })
+```
+
+Spec Decisions are scoped execution rules kept canonically in this spec's `Locked Decisions` section. System Decisions are first-class durable project records. Memory entries whose category is `decision` are legacy and must not be created by this workflow.
+
 **Filter OUT:**
 - Technical implementation details (architecture, library choices) — that's planning's job
 - Performance concerns
@@ -187,6 +195,12 @@ Brief description of the feature and its purpose.
 Decisions extracted during exploring phase:
 - D1: [Decision summary]
 - D2: [Decision summary]
+
+## System Decision Impact
+
+- Impact: [none | existing | draft new | replacement]
+- Decision: [@decision/<id> when impact is not none]
+- Acceptance gate: [verification required before the linked draft becomes accepted]
 
 ## Requirements
 
@@ -351,6 +365,8 @@ Next step — choose one:
 - [ ] Requirements gathered
 - [ ] Spec created at `specs/<yyyy-mm-dd>/<slug>`
 - [ ] Includes: Overview, Locked Decisions, Requirements, ACs, Scenarios, Task Links
+- [ ] Declares System Decision Impact (none, existing, draft new, or replacement)
+- [ ] Relevant accepted/current System Decisions were retrieved with bounded filters
 - [ ] User reviewed
 - [ ] Status updated (draft → approved)
 - [ ] **Next step suggested** (/kn-flow, /kn-plan --from, or /kn-go)
@@ -364,6 +380,7 @@ Next step — choose one:
 - Answering your own questions during exploring
 - Skipping review step
 - Approving without explicit user confirmation
+- Editing an approved spec's Locked Decisions without returning it to `draft` + `review-required` and obtaining renewed approval
 - **Not suggesting `/kn-flow` or task creation after approval**
 - Writing implementation notes instead of requirements
 - Leaving ambiguous AC text that cannot be verified later

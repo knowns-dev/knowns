@@ -1,9 +1,40 @@
 package models
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 )
+
+func TestLegacyDecisionMemoryCategoryPolicyNormalizesInput(t *testing.T) {
+	for _, category := range []string{"decision", " Decision ", "DECISION"} {
+		if !IsLegacyDecisionMemoryCategory(category) {
+			t.Fatalf("category %q was not recognized as legacy", category)
+		}
+		if err := ValidateNewMemoryCategory(category); !errors.Is(err, ErrLegacyDecisionMemoryWrite) {
+			t.Fatalf("ValidateNewMemoryCategory(%q) = %v", category, err)
+		}
+	}
+	if err := ValidateNewMemoryCategory("pattern"); err != nil {
+		t.Fatalf("pattern rejected: %v", err)
+	}
+}
+
+func TestLegacyDecisionMemoryUpdatePolicy(t *testing.T) {
+	existing := &MemoryEntry{Category: "decision", Status: MemoryStatusActive}
+	for _, updated := range []*MemoryEntry{
+		{Category: "decision", Status: MemoryStatusArchived},
+		{Category: " Decision ", Status: MemoryStatusRejected},
+		{Category: "pattern", Status: MemoryStatusActive},
+	} {
+		if err := ValidateLegacyDecisionMemoryUpdate(existing, updated); err != nil {
+			t.Fatalf("allowed legacy transition rejected: %+v: %v", updated, err)
+		}
+	}
+	if err := ValidateLegacyDecisionMemoryUpdate(existing, &MemoryEntry{Category: "decision", Status: MemoryStatusActive}); !errors.Is(err, ErrLegacyDecisionMemoryWrite) {
+		t.Fatalf("active legacy mutation error = %v", err)
+	}
+}
 
 func TestValidMemoryStatus(t *testing.T) {
 	for _, status := range []string{

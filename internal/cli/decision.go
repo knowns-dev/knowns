@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/howznguyen/knowns/internal/decisionmigration"
 	"github.com/howznguyen/knowns/internal/decisionreview"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/search"
@@ -12,8 +13,8 @@ import (
 
 var decisionCmd = &cobra.Command{
 	Use:   "decision",
-	Short: "Manage decision records",
-	Long:  "Create, list, view, link, and supersede project decision records.",
+	Short: "Manage System Decision records",
+	Long:  "Create draft System Decisions, link evidence, verify acceptance, supersede current guidance, and migrate Legacy Decision Memories.",
 	Args:  cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
@@ -34,6 +35,13 @@ var decisionListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List decision records",
 	RunE:  runDecisionList,
+}
+
+var decisionInboxCmd = &cobra.Command{
+	Use:   "inbox",
+	Short: "List unresolved persisted Decision candidates",
+	Args:  cobra.NoArgs,
+	RunE:  runDecisionInbox,
 }
 
 var decisionGetCmd = &cobra.Command{
@@ -57,6 +65,48 @@ var decisionSupersedeCmd = &cobra.Command{
 	Short: "Mark one decision as superseded by another",
 	Args:  cobra.ExactArgs(2),
 	RunE:  runDecisionSupersede,
+}
+
+var decisionAcceptCmd = &cobra.Command{
+	Use:   "accept <id>",
+	Short: "Accept a verified draft decision",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runDecisionAccept,
+}
+
+var decisionResolveCmd = &cobra.Command{
+	Use:   "resolve <resolution> <candidate-id>",
+	Short: "Resolve a persisted System Decision candidate",
+	Long:  "Resolve a persisted candidate with accept_new, link_as_related, reject_new, or supersede_existing. Link and replace require --target.",
+	Args:  cobra.ExactArgs(2),
+	RunE:  runDecisionResolve,
+}
+
+var decisionMigrateCmd = &cobra.Command{
+	Use:   "migrate",
+	Short: "Review and migrate legacy Decision Memories",
+	Long:  "Preview legacy Decision Memories without writes, apply one explicit reviewed resolution, or roll back a prior migration.",
+}
+
+var decisionMigratePreviewCmd = &cobra.Command{
+	Use:   "preview",
+	Short: "Preview legacy Decision Memory candidates without writing",
+	Args:  cobra.NoArgs,
+	RunE:  runDecisionMigrationPreview,
+}
+
+var decisionMigrateApplyCmd = &cobra.Command{
+	Use:   "apply",
+	Short: "Apply one explicit reviewed migration resolution",
+	Args:  cobra.NoArgs,
+	RunE:  runDecisionMigrationApply,
+}
+
+var decisionMigrateRollbackCmd = &cobra.Command{
+	Use:   "rollback <memory-id>",
+	Short: "Roll back a reviewed legacy Decision Memory migration",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runDecisionMigrationRollback,
 }
 
 func runDecisionCreate(cmd *cobra.Command, args []string) error {
@@ -111,6 +161,10 @@ func printDecisionReviewRequired(cmd *cobra.Command, result *decisionreview.Resu
 		fmt.Fprintln(&b)
 	}
 	fmt.Fprintf(&b, "Allowed resolutions: %s\n", strings.Join(result.AllowedResolutions, ", "))
+	if result.Candidate != nil {
+		fmt.Fprintf(&b, "Persisted candidate: %s\n", result.Candidate.ID)
+		fmt.Fprintf(&b, "Run `knowns decision resolve <resolution> %s` with --target when required.\n", result.Candidate.ID)
+	}
 	printPaged(cmd, b.String())
 }
 
@@ -152,6 +206,32 @@ func runDecisionList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runDecisionInbox(cmd *cobra.Command, args []string) error {
+	candidates, err := decisionreview.New(getStore()).ReviewCandidates()
+	if err != nil {
+		return fmt.Errorf("list Decision review inbox: %w", err)
+	}
+	if isJSON(cmd) {
+		printJSON(candidates)
+		return nil
+	}
+	var b strings.Builder
+	for _, candidate := range candidates {
+		fmt.Fprintf(&b, "CANDIDATE: %s\n", candidate.ID)
+		fmt.Fprintf(&b, "  TITLE: %s\n", candidate.Title)
+		fmt.Fprintf(&b, "  REVIEW_STATE: %s\n", candidate.ReviewState)
+		for _, blocker := range candidate.ReviewBlockers {
+			fmt.Fprintf(&b, "  BLOCKER: %s\n", blocker)
+		}
+		fmt.Fprintln(&b)
+	}
+	if b.Len() == 0 {
+		fmt.Fprintln(&b, "No unresolved Decision candidates")
+	}
+	printPaged(cmd, b.String())
+	return nil
+}
+
 func runDecisionGet(cmd *cobra.Command, id string) error {
 	store := getStore()
 	decision, err := store.Decisions.Get(id)
@@ -174,6 +254,12 @@ func runDecisionLink(cmd *cobra.Command, args []string) error {
 	decision, err := store.Decisions.Link(args[0], docs, tasks, sources)
 	if err != nil {
 		return fmt.Errorf("link decision: %w", err)
+	}
+	if decision.Status == models.DecisionStatusDraft {
+		decision, err = decisionreview.New(store).RefreshCandidate(decision.ID)
+		if err != nil {
+			return fmt.Errorf("refresh Decision candidate: %w", err)
+		}
 	}
 	search.BestEffortIndexDecision(store, decision.ID)
 	if isJSON(cmd) {
@@ -201,6 +287,165 @@ func runDecisionSupersede(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	fmt.Println(RenderSuccess(fmt.Sprintf("Decision %s superseded by %s", oldDecision.ID, newDecision.ID)))
+	return nil
+}
+
+func runDecisionAccept(cmd *cobra.Command, args []string) error {
+	store := getStore()
+	supersedes, _ := cmd.Flags().GetStringArray("supersede")
+	result, err := decisionreview.New(store).Accept(args[0], decisionreview.AcceptOptions{Supersedes: supersedes})
+	if err != nil {
+		return fmt.Errorf("accept decision: %w", err)
+	}
+	for _, id := range result.ChangedIDs {
+		search.BestEffortIndexDecision(store, id)
+	}
+	if isJSON(cmd) {
+		printJSON(result)
+		return nil
+	}
+	fmt.Println(RenderSuccess(fmt.Sprintf("Accepted verified decision: %s", result.Decision.ID)))
+	return nil
+}
+
+func runDecisionResolve(cmd *cobra.Command, args []string) error {
+	resolution := args[0]
+	candidateID := args[1]
+	targetID, _ := cmd.Flags().GetString("target")
+	replacementID, _ := cmd.Flags().GetString("replacement-id")
+	result, err := decisionreview.New(getStore()).Resolve(nil, decisionreview.ResolveOptions{
+		CandidateID:   candidateID,
+		Resolution:    resolution,
+		TargetID:      targetID,
+		ReplacementID: replacementID,
+	})
+	if err != nil {
+		return fmt.Errorf("resolve decision review: %w", err)
+	}
+	for _, id := range result.ChangedIDs {
+		search.BestEffortIndexDecision(getStore(), id)
+	}
+	if isJSON(cmd) {
+		printJSON(result)
+		return nil
+	}
+	decision := result.Decision
+	if decision == nil {
+		decision = result.Current
+	}
+	if isPlain(cmd) && decision != nil {
+		printDecisionPlain(cmd, decision)
+		return nil
+	}
+	if decision != nil {
+		fmt.Println(RenderSuccess(fmt.Sprintf("Resolved Decision review with %s: %s", resolution, decision.ID)))
+		return nil
+	}
+	fmt.Println(RenderSuccess(fmt.Sprintf("Resolved Decision review with %s", resolution)))
+	return nil
+}
+
+func runDecisionMigrationPreview(cmd *cobra.Command, args []string) error {
+	report, err := decisionmigration.New(getStore()).Preview()
+	if err != nil {
+		return fmt.Errorf("preview Decision Memory migration: %w", err)
+	}
+	if isJSON(cmd) {
+		printJSON(report)
+		return nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Legacy Decision Memories: %d (high-noise: %d, duplicate members: %d, source issues: %d)\n\n",
+		report.Counts.Total, report.Counts.HighNoise, report.Counts.Duplicate, report.Counts.WithIssue)
+	for _, candidate := range report.Candidates {
+		fmt.Fprintf(&b, "MEMORY: %s\n", candidate.MemoryID)
+		fmt.Fprintf(&b, "  TITLE: %s\n", candidate.Title)
+		fmt.Fprintf(&b, "  LAYER: %s\n", candidate.Layer)
+		fmt.Fprintf(&b, "  STATUS: %s\n", candidate.Status)
+		fmt.Fprintf(&b, "  NOISE: %s\n", candidate.NoiseLikelihood)
+		if len(candidate.DuplicateMembers) > 0 {
+			fmt.Fprintf(&b, "  DUPLICATES: %s (%s)\n", strings.Join(candidate.DuplicateMembers, ", "), candidate.DuplicateGroup)
+		}
+		if len(candidate.Sources) > 0 {
+			fmt.Fprintf(&b, "  SOURCES: %s\n", strings.Join(candidate.Sources, ", "))
+		}
+		if len(candidate.SourceIssues) > 0 {
+			fmt.Fprintf(&b, "  SOURCE_ISSUES: %s\n", strings.Join(candidate.SourceIssues, ", "))
+		}
+		fmt.Fprintf(&b, "  PROPOSED_RESOLUTION: %s\n", candidate.ProposedResolution)
+		if candidate.ProposedDecisionID != "" {
+			fmt.Fprintf(&b, "  PROPOSED_DECISION: %s\n", candidate.ProposedDecisionID)
+		}
+		if candidate.ProposedTargetID != "" {
+			fmt.Fprintf(&b, "  PROPOSED_TARGET: %s\n", candidate.ProposedTargetID)
+		}
+		if candidate.ProposedCategory != "" {
+			fmt.Fprintf(&b, "  PROPOSED_CATEGORY: %s\n", candidate.ProposedCategory)
+		}
+		if candidate.JournalState != "" {
+			fmt.Fprintf(&b, "  JOURNAL: %s\n", candidate.JournalState)
+		}
+		fmt.Fprintln(&b)
+	}
+	if len(report.Candidates) == 0 {
+		fmt.Fprintln(&b, "No legacy Decision Memories found.")
+	}
+	printPaged(cmd, b.String())
+	return nil
+}
+
+func runDecisionMigrationApply(cmd *cobra.Command, args []string) error {
+	memoryID, _ := cmd.Flags().GetString("memory")
+	resolution, _ := cmd.Flags().GetString("resolution")
+	decisionID, _ := cmd.Flags().GetString("decision-id")
+	targetMemoryID, _ := cmd.Flags().GetString("target-memory")
+	category, _ := cmd.Flags().GetString("category")
+	reason, _ := cmd.Flags().GetString("reason")
+	relatedDocs, _ := cmd.Flags().GetStringArray("doc")
+	relatedTasks, _ := cmd.Flags().GetStringArray("task")
+	acceptVerified, _ := cmd.Flags().GetBool("accept-verified")
+	selection := decisionmigration.Selection{
+		MemoryID:       memoryID,
+		Resolution:     resolution,
+		DecisionID:     decisionID,
+		TargetMemoryID: targetMemoryID,
+		Category:       category,
+		Reason:         reason,
+		RelatedDocs:    relatedDocs,
+		RelatedTasks:   relatedTasks,
+		AcceptVerified: acceptVerified,
+	}
+	result, err := decisionmigration.New(getStore()).Apply(cmd.Context(), []decisionmigration.Selection{selection})
+	if isJSON(cmd) && result != nil {
+		printJSON(result)
+	}
+	if err != nil {
+		return fmt.Errorf("apply Decision Memory migration: %w", err)
+	}
+	for _, item := range result.Results {
+		if item.DecisionID != "" {
+			search.BestEffortIndexDecision(getStore(), item.DecisionID)
+		}
+		if !isJSON(cmd) {
+			fmt.Printf("%s\n", RenderSuccess(fmt.Sprintf("Migrated memory %s with %s (state: %s, legacy excluded: %t)", item.MemoryID, item.Resolution, item.State, item.LegacyExcluded)))
+		}
+	}
+	return nil
+}
+
+func runDecisionMigrationRollback(cmd *cobra.Command, args []string) error {
+	result, err := decisionmigration.New(getStore()).Rollback(cmd.Context(), args[0])
+	if err != nil {
+		return fmt.Errorf("rollback Decision Memory migration: %w", err)
+	}
+	if result.DecisionID != "" {
+		search.BestEffortIndexDecision(getStore(), result.DecisionID)
+	}
+	if isJSON(cmd) {
+		printJSON(result)
+		return nil
+	}
+	fmt.Println(RenderSuccess(fmt.Sprintf("Rolled back Decision Memory migration for %s", result.MemoryID)))
 	return nil
 }
 
@@ -297,6 +542,12 @@ func printDecisionPlain(cmd *cobra.Command, decision *models.DecisionEntry) {
 	if len(decision.Tags) > 0 {
 		fmt.Fprintf(&b, "TAGS: %s\n", strings.Join(decision.Tags, ", "))
 	}
+	if decision.ReviewState != "" {
+		fmt.Fprintf(&b, "REVIEW_STATE: %s\n", decision.ReviewState)
+	}
+	for _, blocker := range decision.ReviewBlockers {
+		fmt.Fprintf(&b, "REVIEW_BLOCKER: %s\n", blocker)
+	}
 	fmt.Fprintf(&b, "REF: %s\n\n", models.DecisionRef(decision.ID))
 	if decision.Content != "" {
 		fmt.Fprintln(&b, decision.Content)
@@ -305,16 +556,9 @@ func printDecisionPlain(cmd *cobra.Command, decision *models.DecisionEntry) {
 }
 
 func init() {
-	decisionCreateCmd.Flags().String("status", "", "Explicit decision status")
-	decisionCreateCmd.Flags().StringArrayP("tag", "t", nil, "Decision tag (repeatable)")
-	decisionCreateCmd.Flags().StringArray("source", nil, "Source reference (repeatable)")
-	decisionCreateCmd.Flags().StringArray("doc", nil, "Related doc path (repeatable)")
-	decisionCreateCmd.Flags().StringArray("task", nil, "Related task ID (repeatable)")
-	decisionCreateCmd.Flags().String("body", "", "Full markdown decision body")
-	decisionCreateCmd.Flags().String("context", "", "Context section body")
-	decisionCreateCmd.Flags().String("decision", "", "Decision section body")
-	decisionCreateCmd.Flags().String("alternatives", "", "Alternatives Considered section body")
-	decisionCreateCmd.Flags().String("consequences", "", "Consequences section body")
+	addDecisionInputFlags(decisionCreateCmd, true)
+	decisionResolveCmd.Flags().String("target", "", "Existing Decision ID required by link_as_related or supersede_existing")
+	decisionResolveCmd.Flags().String("replacement-id", "", "Existing verified replacement Decision ID for supersede_existing")
 
 	decisionListCmd.Flags().String("status", "", "Filter by decision status")
 	decisionListCmd.Flags().Bool("all-statuses", false, "Include draft, superseded, rejected, and archived decisions")
@@ -323,12 +567,45 @@ func init() {
 	decisionLinkCmd.Flags().StringArray("doc", nil, "Related doc path (repeatable)")
 	decisionLinkCmd.Flags().StringArray("task", nil, "Related task ID (repeatable)")
 	decisionLinkCmd.Flags().StringArray("source", nil, "Source reference (repeatable)")
+	decisionAcceptCmd.Flags().StringArray("supersede", nil, "Current decision ID replaced on acceptance (repeatable)")
+
+	decisionMigrateApplyCmd.Flags().String("memory", "", "Legacy Decision Memory ID (required)")
+	decisionMigrateApplyCmd.Flags().String("resolution", "", "Reviewed resolution: "+strings.Join(decisionmigration.AllowedResolutions, ", "))
+	decisionMigrateApplyCmd.Flags().String("decision-id", "", "Existing or explicit System Decision ID")
+	decisionMigrateApplyCmd.Flags().String("target-memory", "", "Migrated target Memory ID for duplicate consolidation")
+	decisionMigrateApplyCmd.Flags().String("category", "", "Non-decision Memory category for reclassification")
+	decisionMigrateApplyCmd.Flags().String("reason", "", "Reviewed archive/reject rationale")
+	decisionMigrateApplyCmd.Flags().StringArray("doc", nil, "Related doc path for created/linked Decision (repeatable)")
+	decisionMigrateApplyCmd.Flags().StringArray("task", nil, "Related completed task for verified acceptance (repeatable)")
+	decisionMigrateApplyCmd.Flags().Bool("accept-verified", false, "Accept only if linked evidence passes System Decision verification")
+	_ = decisionMigrateApplyCmd.MarkFlagRequired("memory")
+	_ = decisionMigrateApplyCmd.MarkFlagRequired("resolution")
+	decisionMigrateCmd.AddCommand(decisionMigratePreviewCmd, decisionMigrateApplyCmd, decisionMigrateRollbackCmd)
 
 	decisionCmd.AddCommand(decisionCreateCmd)
 	decisionCmd.AddCommand(decisionListCmd)
+	decisionCmd.AddCommand(decisionInboxCmd)
 	decisionCmd.AddCommand(decisionGetCmd)
 	decisionCmd.AddCommand(decisionLinkCmd)
 	decisionCmd.AddCommand(decisionSupersedeCmd)
+	decisionCmd.AddCommand(decisionAcceptCmd)
+	decisionCmd.AddCommand(decisionResolveCmd)
+	decisionCmd.AddCommand(decisionMigrateCmd)
 
 	rootCmd.AddCommand(decisionCmd)
+}
+
+func addDecisionInputFlags(cmd *cobra.Command, includeStatus bool) {
+	if includeStatus {
+		cmd.Flags().String("status", "", "Decision status; new System Decisions must be draft")
+	}
+	cmd.Flags().StringArrayP("tag", "t", nil, "Decision tag (repeatable)")
+	cmd.Flags().StringArray("source", nil, "Source reference (repeatable)")
+	cmd.Flags().StringArray("doc", nil, "Related doc path (repeatable)")
+	cmd.Flags().StringArray("task", nil, "Related task ID (repeatable)")
+	cmd.Flags().String("body", "", "Full markdown decision body")
+	cmd.Flags().String("context", "", "Context section body")
+	cmd.Flags().String("decision", "", "Decision section body")
+	cmd.Flags().String("alternatives", "", "Alternatives Considered section body")
+	cmd.Flags().String("consequences", "", "Consequences section body")
 }

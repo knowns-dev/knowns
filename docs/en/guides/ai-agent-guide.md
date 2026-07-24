@@ -33,9 +33,9 @@ Instead of giving a vague prompt, point the AI at a task with acceptance criteri
 
 Architecture, patterns, and operational guidance should live in docs rather than only in chat.
 
-### 4. Use memory for durable decisions
+### 4. Separate memory from System Decisions
 
-Store reusable decisions, conventions, and failures in memory so they can be recalled later.
+Store reusable patterns, conventions, and failures in memory. Store durable project choices as first-class System Decisions; never create Memory category `decision`.
 
 ### 5. Validate before calling work complete
 

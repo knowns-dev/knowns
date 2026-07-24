@@ -22,6 +22,7 @@ const (
 	ResolutionCreateDraft       = "create_draft"
 	ResolutionLinkAsRelated     = "link_as_related"
 	ResolutionRejectNew         = "reject_new"
+	ResolutionAcceptNew         = "accept_new"
 
 	MatchDuplicate = "duplicate"
 	MatchConflict  = "conflict"
@@ -32,8 +33,12 @@ const (
 
 var AllowedResolutions = []string{
 	ResolutionSupersedeExisting,
-	ResolutionCreateDraft,
 	ResolutionLinkAsRelated,
+	ResolutionRejectNew,
+}
+
+var ReadyResolutions = []string{
+	ResolutionAcceptNew,
 	ResolutionRejectNew,
 }
 
@@ -52,7 +57,12 @@ type AddOptions struct {
 	Status     string
 }
 
+type AcceptOptions struct {
+	Supersedes []string
+}
+
 type ResolveOptions struct {
+	CandidateID   string
 	Resolution    string
 	TargetID      string
 	ReplacementID string
@@ -60,15 +70,17 @@ type ResolveOptions struct {
 }
 
 type Result struct {
-	Status             string                `json:"status"`
-	Resolution         string                `json:"resolution,omitempty"`
-	Candidate          *models.DecisionEntry `json:"candidate,omitempty"`
-	Matches            []Match               `json:"matches,omitempty"`
-	AllowedResolutions []string              `json:"allowedResolutions,omitempty"`
-	Decision           *models.DecisionEntry `json:"decision,omitempty"`
-	Superseded         *models.DecisionEntry `json:"superseded,omitempty"`
-	Current            *models.DecisionEntry `json:"current,omitempty"`
-	ChangedIDs         []string              `json:"changedIds,omitempty"`
+	Status              string                  `json:"status"`
+	Resolution          string                  `json:"resolution,omitempty"`
+	Candidate           *models.DecisionEntry   `json:"candidate,omitempty"`
+	Matches             []Match                 `json:"matches,omitempty"`
+	AllowedResolutions  []string                `json:"allowedResolutions,omitempty"`
+	Decision            *models.DecisionEntry   `json:"decision,omitempty"`
+	Superseded          *models.DecisionEntry   `json:"superseded,omitempty"`
+	Current             *models.DecisionEntry   `json:"current,omitempty"`
+	ChangedIDs          []string                `json:"changedIds,omitempty"`
+	SupersededDecisions []*models.DecisionEntry `json:"supersededDecisions,omitempty"`
+	PendingVerification bool                    `json:"pendingVerification,omitempty"`
 }
 
 type Match struct {
@@ -91,16 +103,88 @@ func (s *Service) Add(candidate *models.DecisionEntry, opts AddOptions) (*Result
 	if err != nil {
 		return nil, err
 	}
-	if !opts.SkipReview {
-		review, err := s.Review(entry)
+	if entry.Status != models.DecisionStatusDraft {
+		return nil, fmt.Errorf("new System Decisions must start as draft; create the draft, link evidence, then accept it after verification")
+	}
+	if opts.SkipReview {
+		return s.create(entry, ResultCreated, "")
+	}
+	matches, blockers, err := s.evaluateCandidate(entry)
+	if err != nil {
+		return nil, err
+	}
+	s.applyReviewMetadata(entry, matches, blockers)
+	created, err := s.create(entry, ResultCreated, "")
+	if err != nil {
+		return nil, err
+	}
+	if entry.ReviewState != models.DecisionReviewStateNeedsResolution {
+		return created, nil
+	}
+	return &Result{
+		Status:             ResultReviewRequired,
+		Candidate:          entry,
+		Decision:           entry,
+		Matches:            matches,
+		AllowedResolutions: append([]string(nil), entry.ReviewAllowedResolutions...),
+		ChangedIDs:         []string{entry.ID},
+	}, nil
+}
+
+// Accept verifies linked evidence and transitions a draft System Decision to
+// current guidance. Replacement supersession, when requested, is committed in
+// the same storage transaction as acceptance.
+func (s *Service) Accept(id string, opts AcceptOptions) (*Result, error) {
+	if err := s.ensureStore(); err != nil {
+		return nil, err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("decision ID is required")
+	}
+	entry, err := s.Store.Decisions.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if entry.Status == models.DecisionStatusDraft {
+		matches, blockers, err := s.evaluateCandidate(entry)
 		if err != nil {
 			return nil, err
 		}
-		if review != nil && len(review.Matches) > 0 {
-			return review, nil
+		s.applyReviewMetadata(entry, matches, blockers)
+		if err := s.Store.Decisions.Update(entry); err != nil {
+			return nil, err
+		}
+		if len(blockers) > 0 {
+			return nil, fmt.Errorf("%s", blockers[0])
+		}
+		if len(matches) > 0 && len(opts.Supersedes) == 0 {
+			return nil, fmt.Errorf("decision %q needs duplicate/conflict resolution before acceptance", id)
 		}
 	}
-	return s.create(entry, ResultCreated, "")
+	evidence, err := s.verificationEvidence(entry)
+	if err != nil {
+		return nil, err
+	}
+	accepted, superseded, err := s.Store.Decisions.Accept(id, evidence, opts.Supersedes, s.now())
+	if err != nil {
+		return nil, err
+	}
+	changed := []string{accepted.ID}
+	for _, old := range superseded {
+		changed = append(changed, old.ID)
+	}
+	result := &Result{
+		Status:              ResultResolved,
+		Decision:            accepted,
+		Current:             accepted,
+		SupersededDecisions: superseded,
+		ChangedIDs:          changed,
+	}
+	if len(superseded) > 0 {
+		result.Superseded = superseded[0]
+	}
+	return result, nil
 }
 
 func (s *Service) Review(candidate *models.DecisionEntry) (*Result, error) {
@@ -128,9 +212,136 @@ func (s *Service) Review(candidate *models.DecisionEntry) (*Result, error) {
 	}, nil
 }
 
+// ReviewCandidates returns unresolved persisted candidates. Legacy Decision
+// Memory migration drafts remain isolated from the normal review inbox.
+func (s *Service) ReviewCandidates() ([]*models.DecisionEntry, error) {
+	if err := s.ensureStore(); err != nil {
+		return nil, err
+	}
+	entries, err := s.Store.Decisions.List()
+	if err != nil {
+		return nil, err
+	}
+	candidates := make([]*models.DecisionEntry, 0)
+	for _, entry := range entries {
+		if entry.Status != models.DecisionStatusDraft || decisionHasTag(entry, "legacy-memory-migration") {
+			continue
+		}
+		if entry.ReviewState == "" {
+			entry, err = s.RefreshCandidate(entry.ID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if entry.CandidateForReviewInbox() {
+			candidates = append(candidates, entry)
+		}
+	}
+	return candidates, nil
+}
+
+// RefreshCandidate reruns review checks after evidence or provenance changes
+// and persists the new actionable state.
+func (s *Service) RefreshCandidate(id string) (*models.DecisionEntry, error) {
+	if err := s.ensureStore(); err != nil {
+		return nil, err
+	}
+	entry, err := s.Store.Decisions.Get(strings.TrimSpace(id))
+	if err != nil {
+		return nil, err
+	}
+	if entry.Status != models.DecisionStatusDraft {
+		return entry, nil
+	}
+	matches, blockers, err := s.evaluateCandidate(entry)
+	if err != nil {
+		return nil, err
+	}
+	s.applyReviewMetadata(entry, matches, blockers)
+	if err := s.Store.Decisions.Update(entry); err != nil {
+		return nil, err
+	}
+	return s.Store.Decisions.Get(entry.ID)
+}
+
+func (s *Service) evaluateCandidate(entry *models.DecisionEntry) ([]Match, []string, error) {
+	review, err := s.Review(entry)
+	if err != nil {
+		return nil, nil, err
+	}
+	var matches []Match
+	if review != nil {
+		matches = append(matches, review.Matches...)
+	}
+	var blockers []string
+	if _, err := s.verificationEvidence(entry); err != nil {
+		blockers = append(blockers, candidateRepairGuidance(err.Error()))
+	}
+	return matches, blockers, nil
+}
+
+func (s *Service) applyReviewMetadata(entry *models.DecisionEntry, matches []Match, blockers []string) {
+	if entry == nil {
+		return
+	}
+	entry.ReviewBlockers = appendUnique(nil, blockers...)
+	entry.ReviewMatches = persistedMatches(matches)
+	entry.ReviewAllowedResolutions = nil
+	switch {
+	case len(entry.ReviewBlockers) > 0:
+		entry.ReviewState = models.DecisionReviewStateNeedsEvidence
+	case len(entry.ReviewMatches) > 0:
+		entry.ReviewState = models.DecisionReviewStateNeedsResolution
+		entry.ReviewAllowedResolutions = append([]string(nil), AllowedResolutions...)
+	default:
+		entry.ReviewState = models.DecisionReviewStateReadyForReview
+		entry.ReviewAllowedResolutions = append([]string(nil), ReadyResolutions...)
+	}
+	evaluatedAt := s.now().UTC()
+	entry.ReviewEvaluatedAt = &evaluatedAt
+}
+
+func candidateRepairGuidance(message string) string {
+	message = strings.TrimSpace(message)
+	message = strings.ReplaceAll(message, `decision ""`, "candidate")
+	if message == "" {
+		return "Review evidence could not be verified; add a readable source and completed linked task, then retry."
+	}
+	return message
+}
+
+func persistedMatches(matches []Match) []models.DecisionReviewMatch {
+	persisted := make([]models.DecisionReviewMatch, 0, len(matches))
+	for _, match := range matches {
+		persisted = append(persisted, models.DecisionReviewMatch{
+			ID:        match.ID,
+			Title:     match.Title,
+			Status:    match.Status,
+			Score:     match.Score,
+			Kind:      match.Kind,
+			MatchedBy: append([]string(nil), match.MatchedBy...),
+			Snippet:   strings.Join(strings.Fields(match.Snippet), " "),
+			Tags:      append([]string(nil), match.Tags...),
+		})
+	}
+	return persisted
+}
+
 func (s *Service) Resolve(candidate *models.DecisionEntry, opts ResolveOptions) (*Result, error) {
+	if err := s.ensureStore(); err != nil {
+		return nil, err
+	}
 	if opts.Resolution == "" {
 		return nil, fmt.Errorf("resolution is required")
+	}
+	candidateID := strings.TrimSpace(opts.CandidateID)
+	if candidateID == "" && candidate != nil && candidate.ID != "" && candidate.ID != opts.TargetID {
+		if _, err := s.Store.Decisions.Get(candidate.ID); err == nil {
+			candidateID = candidate.ID
+		}
+	}
+	if candidateID != "" {
+		return s.resolvePersistedCandidate(candidateID, opts)
 	}
 	switch opts.Resolution {
 	case ResolutionSupersedeExisting:
@@ -164,6 +375,132 @@ func (s *Service) Resolve(candidate *models.DecisionEntry, opts ResolveOptions) 
 	}
 }
 
+func (s *Service) resolvePersistedCandidate(candidateID string, opts ResolveOptions) (*Result, error) {
+	if err := s.ensureStore(); err != nil {
+		return nil, err
+	}
+	candidate, err := s.Store.Decisions.Get(candidateID)
+	if err != nil {
+		return nil, err
+	}
+	switch opts.Resolution {
+	case ResolutionAcceptNew:
+		if candidate.Status == models.DecisionStatusAccepted {
+			return s.Accept(candidate.ID, AcceptOptions{})
+		}
+		candidate, err = s.RefreshCandidate(candidate.ID)
+		if err != nil {
+			return nil, err
+		}
+		if candidate.ReviewState != models.DecisionReviewStateReadyForReview {
+			return nil, fmt.Errorf("decision %q is %s; accept_new requires ready_for_review", candidate.ID, candidate.ReviewState)
+		}
+		result, err := s.Accept(candidate.ID, AcceptOptions{})
+		if err == nil {
+			result.Resolution = opts.Resolution
+		}
+		return result, err
+
+	case ResolutionSupersedeExisting:
+		if strings.TrimSpace(opts.TargetID) == "" {
+			return nil, fmt.Errorf("targetId is required for %s", opts.Resolution)
+		}
+		if candidate.Status == models.DecisionStatusAccepted {
+			return s.Accept(candidate.ID, AcceptOptions{Supersedes: []string{opts.TargetID}})
+		}
+		candidate, err = s.RefreshCandidate(candidate.ID)
+		if err != nil {
+			return nil, err
+		}
+		if candidate.ReviewState == models.DecisionReviewStateNeedsEvidence {
+			return nil, fmt.Errorf("decision %q needs evidence before replacement", candidate.ID)
+		}
+		if !candidateHasReviewMatch(candidate, opts.TargetID) {
+			return nil, fmt.Errorf("target decision %q is not a persisted review match for candidate %q", opts.TargetID, candidate.ID)
+		}
+		result, err := s.Accept(candidate.ID, AcceptOptions{Supersedes: []string{opts.TargetID}})
+		if err == nil {
+			result.Resolution = opts.Resolution
+		}
+		return result, err
+
+	case ResolutionLinkAsRelated:
+		if strings.TrimSpace(opts.TargetID) == "" {
+			return nil, fmt.Errorf("targetId is required for %s", opts.Resolution)
+		}
+		if candidate.Status == models.DecisionStatusDraft {
+			candidate, err = s.RefreshCandidate(candidate.ID)
+			if err != nil {
+				return nil, err
+			}
+			if candidate.ReviewState == models.DecisionReviewStateNeedsEvidence {
+				return nil, fmt.Errorf("decision %q needs evidence before linking", candidate.ID)
+			}
+			if !candidateHasReviewMatch(candidate, opts.TargetID) {
+				return nil, fmt.Errorf("target decision %q is not a persisted review match for candidate %q", opts.TargetID, candidate.ID)
+			}
+		}
+		rejected, current, err := s.Store.Decisions.LinkCandidateToCurrent(candidate.ID, opts.TargetID, s.now())
+		if err != nil {
+			return nil, err
+		}
+		return &Result{
+			Status:     ResultResolved,
+			Resolution: opts.Resolution,
+			Decision:   rejected,
+			Current:    current,
+			ChangedIDs: []string{rejected.ID, current.ID},
+		}, nil
+
+	case ResolutionRejectNew:
+		rejected, err := s.Store.Decisions.RejectCandidate(candidate.ID, s.now())
+		if err != nil {
+			return nil, err
+		}
+		return &Result{
+			Status:     ResultResolved,
+			Resolution: opts.Resolution,
+			Decision:   rejected,
+			ChangedIDs: []string{rejected.ID},
+		}, nil
+
+	case ResolutionCreateDraft:
+		if candidate.Status != models.DecisionStatusDraft {
+			return nil, fmt.Errorf("decision %q is not a draft candidate", candidate.ID)
+		}
+		return &Result{
+			Status:              ResultResolved,
+			Resolution:          opts.Resolution,
+			Decision:            candidate,
+			ChangedIDs:          []string{candidate.ID},
+			PendingVerification: true,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported decision review resolution: %s", opts.Resolution)
+	}
+}
+
+func candidateHasReviewMatch(candidate *models.DecisionEntry, targetID string) bool {
+	for _, match := range candidate.ReviewMatches {
+		if match.ID == targetID {
+			return true
+		}
+	}
+	return false
+}
+
+func decisionHasTag(entry *models.DecisionEntry, tag string) bool {
+	if entry == nil {
+		return false
+	}
+	for _, value := range entry.Tags {
+		if value == tag {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) supersedeExisting(candidate *models.DecisionEntry, opts ResolveOptions) (*Result, error) {
 	if err := s.ensureStore(); err != nil {
 		return nil, err
@@ -184,15 +521,8 @@ func (s *Service) supersedeExisting(candidate *models.DecisionEntry, opts Resolv
 		if input.ID == opts.TargetID {
 			input.ID = ""
 		}
-		if opts.Status != "" {
-			if opts.Status != models.DecisionStatusDraft && opts.Status != models.DecisionStatusAccepted {
-				return nil, fmt.Errorf("supersede replacement status must be draft or accepted")
-			}
-			input.Status = opts.Status
-		} else if input.Status != "" && input.Status != models.DecisionStatusDraft && input.Status != models.DecisionStatusAccepted {
-			return nil, fmt.Errorf("supersede replacement status must be draft or accepted")
-		}
-		entry, err := s.normalizeCandidate(input, "")
+		input.Status = models.DecisionStatusDraft
+		entry, err := s.normalizeCandidate(input, models.DecisionStatusDraft)
 		if err != nil {
 			return nil, err
 		}
@@ -200,7 +530,9 @@ func (s *Service) supersedeExisting(candidate *models.DecisionEntry, opts Resolv
 		if err != nil {
 			return nil, err
 		}
-		newID = created.Decision.ID
+		created.Current, _ = s.Store.Decisions.Get(opts.TargetID)
+		created.PendingVerification = true
+		return created, nil
 	} else if _, err := s.Store.Decisions.Get(newID); err != nil {
 		return nil, err
 	}
@@ -217,6 +549,114 @@ func (s *Service) supersedeExisting(candidate *models.DecisionEntry, opts Resolv
 		Current:    newDecision,
 		ChangedIDs: []string{oldDecision.ID, newDecision.ID},
 	}, nil
+}
+
+func (s *Service) verificationEvidence(entry *models.DecisionEntry) ([]string, error) {
+	if entry == nil {
+		return nil, fmt.Errorf("decision is required")
+	}
+	if len(entry.Sources) == 0 {
+		return nil, fmt.Errorf("decision %q needs at least one source before acceptance", entry.ID)
+	}
+	evidence := make([]string, 0, len(entry.Sources)+len(entry.RelatedTasks))
+	for _, source := range entry.Sources {
+		source = strings.TrimSpace(source)
+		if source == "" {
+			continue
+		}
+		if err := s.verifySource(source); err != nil {
+			return nil, err
+		}
+		evidence = append(evidence, "source:"+source)
+	}
+
+	taskIDs := normalizeRelatedTaskIDs(entry.RelatedTasks)
+	for _, relatedDoc := range entry.RelatedDocs {
+		path := normalizeRelatedDocPath(relatedDoc)
+		if path == "" {
+			continue
+		}
+		if _, err := s.Store.Docs.Get(path); err != nil {
+			return nil, fmt.Errorf("related doc %q is not readable: %w", path, err)
+		}
+		if strings.HasPrefix(path, "specs/") {
+			tasks, err := s.Store.Tasks.List()
+			if err != nil {
+				return nil, fmt.Errorf("list tasks linked to spec %q: %w", path, err)
+			}
+			for _, task := range tasks {
+				if task.Spec == path {
+					taskIDs = appendUnique(taskIDs, task.ID)
+				}
+			}
+		}
+	}
+	if len(taskIDs) == 0 {
+		return nil, fmt.Errorf("decision %q needs at least one linked task or a spec with linked tasks before acceptance", entry.ID)
+	}
+	for _, taskID := range taskIDs {
+		task, err := s.Store.Tasks.Get(taskID)
+		if err != nil {
+			return nil, fmt.Errorf("linked task %q is not readable: %w", taskID, err)
+		}
+		if task.Status != "done" {
+			return nil, fmt.Errorf("linked task %q is %q; all linked tasks must be done before accepting decision %q", taskID, task.Status, entry.ID)
+		}
+		for _, criterion := range task.AcceptanceCriteria {
+			if !criterion.Completed {
+				return nil, fmt.Errorf("linked task %q has unchecked acceptance criteria", taskID)
+			}
+		}
+		evidence = append(evidence, "task:@task-"+taskID+":done")
+	}
+	return appendUnique(nil, evidence...), nil
+}
+
+func (s *Service) verifySource(source string) error {
+	switch {
+	case strings.HasPrefix(source, "@doc/"):
+		path := normalizeRelatedDocPath(source)
+		if _, err := s.Store.Docs.Get(path); err != nil {
+			return fmt.Errorf("source %q is not readable: %w", source, err)
+		}
+	case strings.HasPrefix(source, "@task-"):
+		id := strings.TrimPrefix(source, "@task-")
+		if _, err := s.Store.Tasks.Get(id); err != nil {
+			return fmt.Errorf("source %q is not readable: %w", source, err)
+		}
+	case strings.HasPrefix(source, "@task/"):
+		id := strings.TrimPrefix(source, "@task/")
+		if _, err := s.Store.Tasks.Get(id); err != nil {
+			return fmt.Errorf("source %q is not readable: %w", source, err)
+		}
+	case strings.HasPrefix(source, "@decision/"):
+		id := strings.TrimPrefix(source, "@decision/")
+		if _, err := s.Store.Decisions.Get(id); err != nil {
+			return fmt.Errorf("source %q is not readable: %w", source, err)
+		}
+	}
+	return nil
+}
+
+func normalizeRelatedTaskIDs(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		value = strings.TrimPrefix(value, "@task-")
+		value = strings.TrimPrefix(value, "@task/")
+		value = strings.TrimPrefix(value, "task-")
+		if value != "" {
+			result = appendUnique(result, value)
+		}
+	}
+	return result
+}
+
+func normalizeRelatedDocPath(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "@doc/")
+	value = strings.TrimSuffix(value, ".md")
+	return strings.TrimPrefix(value, "/")
 }
 
 func (s *Service) linkAsRelated(candidate *models.DecisionEntry, opts ResolveOptions) (*Result, error) {
@@ -530,6 +970,15 @@ func cloneDecision(entry *models.DecisionEntry) *models.DecisionEntry {
 	clone.Sources = append([]string(nil), entry.Sources...)
 	clone.RelatedDocs = append([]string(nil), entry.RelatedDocs...)
 	clone.RelatedTasks = append([]string(nil), entry.RelatedTasks...)
+	clone.Verification = append([]string(nil), entry.Verification...)
+	clone.ReviewBlockers = append([]string(nil), entry.ReviewBlockers...)
+	clone.ReviewAllowedResolutions = append([]string(nil), entry.ReviewAllowedResolutions...)
+	clone.ReviewMatches = make([]models.DecisionReviewMatch, len(entry.ReviewMatches))
+	for i, match := range entry.ReviewMatches {
+		clone.ReviewMatches[i] = match
+		clone.ReviewMatches[i].MatchedBy = append([]string(nil), match.MatchedBy...)
+		clone.ReviewMatches[i].Tags = append([]string(nil), match.Tags...)
+	}
 	return &clone
 }
 

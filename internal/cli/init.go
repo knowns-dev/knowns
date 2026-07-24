@@ -1507,13 +1507,13 @@ func renderCanonicalInstructionContent() string {
 	sb.WriteString("- `task`: delegate large research or multi-step exploration when useful.\n\n")
 	sb.WriteString("## Memory Usage\n\n")
 	sb.WriteString("- Session start: `memory({ action: \"list\", layer: \"project\" })` to load accumulated project knowledge.\n")
-	sb.WriteString("- After task: `memory({ action: \"add\" })` for reusable patterns, decisions, and conventions (alongside docs).\n")
+	sb.WriteString("- After task: use `memory({ action: \"add\" })` for reusable patterns and conventions; use the first-class Decision tool for durable project decisions.\n")
 	sb.WriteString("- Cross-project: `memory({ action: \"promote\" })` to move project knowledge to global (`project→global`).\n")
 	sb.WriteString("- Memory complements docs: memory is for fast agent recall, docs are for structured human-readable reference.\n")
 	sb.WriteString("- Never duplicate the full doc content into memory — store a summary and reference the doc with `@doc/<path>`.\n")
-	sb.WriteString("- During any skill: if you discover a reusable pattern, decision, convention, or failure, save it with `memory({ action: \"add\", layer: \"project\" })`. Capture knowledge as it emerges, don't wait for extraction.\n")
+	sb.WriteString("- During any skill: save reusable patterns, conventions, or failures with `memory({ action: \"add\", layer: \"project\" })`. Memory category `decision` is legacy; create a first-class System Decision instead.\n")
 	sb.WriteString("- Proactively save durable memory without waiting for the user to say \"save this\" when confidence is high.\n")
-	sb.WriteString("- Use `project` for repo-specific rules, architecture decisions, conventions, recurring failure patterns, and implementation constraints.\n")
+	sb.WriteString("- Use `project` Memory for repo-specific patterns, conventions, recurring failures, and implementation context; use System Decisions for durable architecture or workflow choices.\n")
 	sb.WriteString("- Use `global` for stable user preferences or workflow rules that should carry across repositories and future sessions.\n")
 	sb.WriteString("- Ask the user only when the information appears durable but the correct scope (`working`, `project`, or `global`) is genuinely ambiguous.\n")
 	sb.WriteString("- After any meaningful user instruction, correction, or newly discovered pattern, quickly evaluate whether it should be stored as memory and save it when appropriate.\n")
@@ -1866,7 +1866,7 @@ func maybeOpenBrowser(cwd string, openFlag, noOpen bool) error {
 // autoInstallLSPServers detects languages in cwd and installs LSP servers
 // for any that are not already on PATH. Non-blocking: always returns nil.
 func autoInstallLSPServers(cwd string, store *storage.Store) error {
-	if cwd == "" {
+	if cwd == "" || strings.TrimSpace(os.Getenv("KNOWN_LSP_AUTO_INSTALL")) == "0" {
 		return nil
 	}
 

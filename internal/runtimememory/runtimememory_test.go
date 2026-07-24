@@ -19,7 +19,7 @@ func TestBuildSelectsRelevantProjectAndGlobalMemories(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	entries := []*models.MemoryEntry{
-		{Title: "Runtime queue decision", Layer: models.MemoryLayerProject, Category: "decision", Content: "Use the runtime queue pattern for prompt injection jobs.", Tags: []string{"runtime", "queue"}, CreatedAt: now, UpdatedAt: now},
+		{Title: "Runtime queue decision", Layer: models.MemoryLayerProject, Category: "pattern", Content: "Use the runtime queue pattern for prompt injection jobs.", Tags: []string{"runtime", "queue"}, CreatedAt: now, UpdatedAt: now},
 		{Title: "Global OpenCode warning", Layer: models.MemoryLayerGlobal, Category: "warning", Content: "OpenCode prompt hooks must stay bounded to avoid prompt bloat.", Tags: []string{"opencode", "runtime"}, CreatedAt: now, UpdatedAt: now.Add(-time.Hour)},
 		{Title: "Unrelated preference", Layer: models.MemoryLayerProject, Category: "preference", Content: "Use playful colors in marketing pages.", Tags: []string{"design"}, CreatedAt: now, UpdatedAt: now.Add(-2 * time.Hour)},
 	}
@@ -130,7 +130,7 @@ func TestBuildExcludesNonActiveMemoryByDefault(t *testing.T) {
 		entry := &models.MemoryEntry{
 			Title:     "Runtime review proposal " + status,
 			Layer:     models.MemoryLayerProject,
-			Category:  "decision",
+			Category:  "pattern",
 			Content:   "Use runtime review proposals only after activation.",
 			Tags:      []string{"runtime", "review"},
 			Status:    status,
@@ -200,7 +200,7 @@ func TestBuildSkipsLowSignalPrompts(t *testing.T) {
 		t.Fatalf("init store: %v", err)
 	}
 	now := time.Now().UTC()
-	entry := &models.MemoryEntry{Title: "Runtime queue decision", Layer: models.MemoryLayerProject, Category: "decision", Content: "Use the runtime queue pattern for prompt injection jobs.", Tags: []string{"runtime", "queue"}, CreatedAt: now, UpdatedAt: now}
+	entry := &models.MemoryEntry{Title: "Runtime queue decision", Layer: models.MemoryLayerProject, Category: "pattern", Content: "Use the runtime queue pattern for prompt injection jobs.", Tags: []string{"runtime", "queue"}, CreatedAt: now, UpdatedAt: now}
 	if err := store.Memory.Create(entry); err != nil {
 		t.Fatalf("create memory: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestBuildSkipsWeakSingleCandidate(t *testing.T) {
 		t.Fatalf("init store: %v", err)
 	}
 	now := time.Now().UTC()
-	entry := &models.MemoryEntry{Title: "Minor graph note", Layer: models.MemoryLayerProject, Category: "decision", Content: "Graph page keeps code and knowledge presets on one page.", Tags: []string{"graph", "page"}, CreatedAt: now, UpdatedAt: now}
+	entry := &models.MemoryEntry{Title: "Minor graph note", Layer: models.MemoryLayerProject, Category: "pattern", Content: "Graph page keeps code and knowledge presets on one page.", Tags: []string{"graph", "page"}, CreatedAt: now, UpdatedAt: now}
 	if err := store.Memory.Create(entry); err != nil {
 		t.Fatalf("create memory: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestBuildModeOffSuppressesInjectionAndCapture(t *testing.T) {
 	entry := &models.MemoryEntry{
 		Title:     "Runtime queue decision",
 		Layer:     models.MemoryLayerProject,
-		Category:  "decision",
+		Category:  "pattern",
 		Content:   "Use the runtime queue pattern for prompt injection jobs.",
 		Tags:      []string{"runtime", "queue"},
 		CreatedAt: time.Now().UTC(),
@@ -358,7 +358,7 @@ func TestCaptureDisabledStillAllowsInjection(t *testing.T) {
 	entry := &models.MemoryEntry{
 		Title:     "Runtime queue decision",
 		Layer:     models.MemoryLayerProject,
-		Category:  "decision",
+		Category:  "pattern",
 		Content:   "Use the runtime queue pattern for prompt injection jobs.",
 		Tags:      []string{"runtime", "queue"},
 		CreatedAt: time.Now().UTC(),
@@ -401,7 +401,7 @@ func TestCaptureDisabledStillAllowsInjection(t *testing.T) {
 	}
 }
 
-func TestHighConfidenceCaptureCreatesProposedOnly(t *testing.T) {
+func TestHighConfidenceCaptureDoesNotInferProjectDecision(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
@@ -422,28 +422,15 @@ func TestHighConfidenceCaptureCreatesProposedOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
-	if !outcome.Created || outcome.Status != CaptureStatusCreated {
-		t.Fatalf("capture outcome = %+v, want created", outcome)
+	if entry != nil || outcome.Created || outcome.Status != CaptureStatusSkipped || outcome.Reason != SkipReasonNoCaptureCandidate {
+		t.Fatalf("capture outcome = %+v entry=%+v, want no inferred project decision", outcome, entry)
 	}
-	if outcome.Score < minHighConfidenceCapture || outcome.Threshold != minHighConfidenceCapture {
-		t.Fatalf("capture score metadata = score:%v threshold:%v, want score >= %v and threshold %v", outcome.Score, outcome.Threshold, minHighConfidenceCapture, minHighConfidenceCapture)
-	}
-	if outcome.Trusted {
-		t.Fatalf("trusted = true, want false for proposed memory")
-	}
-	if entry == nil {
-		t.Fatal("expected created memory")
-	}
-	if outcome.MemoryStatus != models.MemoryStatusProposed || entry.Status != models.MemoryStatusProposed {
-		t.Fatalf("memory status = outcome:%q entry:%q, want proposed", outcome.MemoryStatus, entry.Status)
-	}
-
-	pack, err := Build(store, input)
+	decisions, err := store.Decisions.List()
 	if err != nil {
-		t.Fatalf("build after proposed capture: %v", err)
+		t.Fatalf("list decisions: %v", err)
 	}
-	if len(pack.Items) != 0 || pack.Serialized != "" {
-		t.Fatalf("pack = %+v, want proposed memory excluded from default injection", pack)
+	if len(decisions) != 0 {
+		t.Fatalf("ordinary prompt created System Decisions: %+v", decisions)
 	}
 }
 
@@ -457,7 +444,7 @@ func TestBuildDebugIsInspectOnly(t *testing.T) {
 	entry := &models.MemoryEntry{
 		Title:     "Runtime queue decision",
 		Layer:     models.MemoryLayerProject,
-		Category:  "decision",
+		Category:  "pattern",
 		Content:   "Use the runtime queue pattern for prompt injection jobs.",
 		Tags:      []string{"runtime", "queue"},
 		CreatedAt: time.Now().UTC(),
@@ -766,7 +753,7 @@ func TestBuildFallsBackWhenHybridUnavailable(t *testing.T) {
 	entry := &models.MemoryEntry{
 		Title:     "Runtime queue decision",
 		Layer:     models.MemoryLayerProject,
-		Category:  "decision",
+		Category:  "pattern",
 		Content:   "Use the runtime queue pattern for prompt injection jobs.",
 		Tags:      []string{"runtime", "queue"},
 		CreatedAt: now,
@@ -901,7 +888,7 @@ func TestCaptureStoresStableGlobalPreference(t *testing.T) {
 	}
 }
 
-func TestCaptureStoresProjectDecisionForMCPShimGuidance(t *testing.T) {
+func TestCaptureDoesNotInferProjectDecisionFromPrompt(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
@@ -920,20 +907,8 @@ func TestCaptureStoresProjectDecisionForMCPShimGuidance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
-	if !created {
-		t.Fatal("expected project decision memory to be created")
-	}
-	if entry.Layer != models.MemoryLayerProject {
-		t.Fatalf("layer = %q, want %q", entry.Layer, models.MemoryLayerProject)
-	}
-	if entry.Category != "decision" {
-		t.Fatalf("category = %q, want decision", entry.Category)
-	}
-	if entry.Status != models.MemoryStatusProposed {
-		t.Fatalf("status = %q, want proposed", entry.Status)
-	}
-	if !strings.Contains(entry.Content, "AGENTS.md should start with Knowns MCP initial") {
-		t.Fatalf("unexpected content: %q", entry.Content)
+	if created || entry != nil {
+		t.Fatalf("ordinary prompt created memory: created=%v entry=%+v", created, entry)
 	}
 }
 

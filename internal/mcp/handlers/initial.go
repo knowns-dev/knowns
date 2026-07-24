@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"fmt"
-	"github.com/mark3labs/mcp-go/server"
 	"strings"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 func RegisterInitialTool(s *server.MCPServer, getStore func() *storage.Store, getLSPManager ...func() *lsp.Manager) {
@@ -78,8 +78,9 @@ func writeProjectState(b *strings.Builder, store *storage.Store, statuses []lsp.
 	fmt.Fprintf(b, "Project: %s\n", payload.ProjectName)
 	if payload.Knowledge != nil {
 		k := payload.Knowledge
-		fmt.Fprintf(b, "Knowledge: docs: %d | tasks: %d (%d in-progress) | templates: %d | memories: %dp, %dg\n",
-			k.Docs, k.Tasks, inProgress, k.Templates, k.Memories.Project, k.Memories.Global)
+		fmt.Fprintf(b, "Knowledge: docs: %d | tasks: %d (%d in-progress) | templates: %d | memories: %dp, %dg (%d legacy Decision) | decisions: %d current, %d draft, %d historical\n",
+			k.Docs, k.Tasks, inProgress, k.Templates, k.Memories.Project, k.Memories.Global, k.Memories.LegacyDecision,
+			k.Decisions.Current, k.Decisions.Draft, k.Decisions.Historical)
 	}
 
 	if timerLine := activeTimerLine(store); timerLine != "" {
@@ -336,7 +337,9 @@ func writeKnowledgeLifecycle(b *strings.Builder) {
 Memory and Decision writes use semantic review before becoming trusted.
 
 - Agent/MCP Memory writes default to proposed unless explicitly resolved; default retrieval only uses active Memories.
-- Decision writes are review-gated; accepted/current Decisions use supersession links instead of overwrite/delete.
+- Spec Decisions are stable D-rules in an approved spec's Locked Decisions section; implementers must report every required D-ID.
+- System Decision writes are first-class, review-gated project evolution records; accepted/current Decisions use verified evidence and supersession links instead of overwrite/delete.
+- Memory category 'decision' is legacy and closed to new writes. Use Decision migration preview plus an explicit reviewed resolution; never create new Decision Memories.
 - Default retrieval/search returns active Memories and accepted non-superseded Decisions.
 - Use review/resolution commands or the WebUI inbox before treating new or conflicting knowledge as trusted.
 `)
@@ -344,6 +347,6 @@ Memory and Decision writes use semantic review before becoming trusted.
 
 func writeToolsSummary(b *strings.Builder) {
 	b.WriteString("## Tools (discover with help)\n")
-	b.WriteString("code | tasks | docs | search | time | templates | validate | memory | project | help\n")
+	b.WriteString("code | tasks | docs | search | time | templates | validate | memory | decision | project | help\n")
 	b.WriteString("Recipes: help(\"workflow.code-edit\"), help(\"workflow.doc-read\"), help(\"workflow.plan-new\"), help(\"workflow.spec\"), help(\"workflow.verify\")")
 }

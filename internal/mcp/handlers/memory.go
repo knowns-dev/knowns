@@ -38,7 +38,7 @@ func RegisterMemoryTool(s *server.MCPServer, getStore func() *storage.Store) {
 				mcp.Description("Memory layer: 'project' (default) or 'global' (add, list)"),
 			),
 			mcp.WithString("category",
-				mcp.Description("Category: pattern, decision, convention, preference, etc. (add, update, list)"),
+				mcp.Description("Category: pattern, convention, preference, failure, etc. New legacy decision-category writes are rejected; use the Decision tool instead (add, update, list)"),
 			),
 			mcp.WithArray("tags",
 				mcp.Description("Tags for the memory entry (add, update)"),

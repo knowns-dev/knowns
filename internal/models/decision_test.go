@@ -34,10 +34,10 @@ func TestDecisionApplyDefaults(t *testing.T) {
 		t.Fatalf("draft status = %q, want %q", draft.Status, DecisionStatusDraft)
 	}
 
-	accepted := &DecisionEntry{Sources: []string{"@doc/specs/example"}}
-	accepted.ApplyDecisionDefaults()
-	if accepted.Status != DecisionStatusAccepted {
-		t.Fatalf("accepted status = %q, want %q", accepted.Status, DecisionStatusAccepted)
+	linkedDraft := &DecisionEntry{Sources: []string{"@doc/specs/example"}}
+	linkedDraft.ApplyDecisionDefaults()
+	if linkedDraft.Status != DecisionStatusDraft {
+		t.Fatalf("linked status = %q, want %q", linkedDraft.Status, DecisionStatusDraft)
 	}
 }
 

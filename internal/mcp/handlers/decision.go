@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/howznguyen/knowns/internal/decisionmigration"
 	"github.com/howznguyen/knowns/internal/decisionreview"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/search"
@@ -16,14 +17,17 @@ import (
 func RegisterDecisionTool(s toolRegistrar, getStore func() *storage.Store) {
 	s.AddTool(
 		mcp.NewTool("decision",
-			mcp.WithDescription("Decision lifecycle operations. Use 'action' to specify: create, list, get, link, supersede, resolve."),
+			mcp.WithDescription("System Decision lifecycle and reviewed Legacy Decision Memory migration operations."),
 			mcp.WithString("action",
 				mcp.Required(),
 				mcp.Description("Action to perform"),
-				mcp.Enum("create", "list", "get", "link", "supersede", "resolve"),
+				mcp.Enum("create", "list", "get", "link", "accept", "supersede", "review_inbox", "resolve", "migration_preview", "migration_apply", "migration_rollback"),
 			),
 			mcp.WithString("id",
-				mcp.Description("Decision ID (required for get/link, old decision for supersede when oldId is omitted)"),
+				mcp.Description("Decision ID (required for get/link/accept, old decision for supersede when oldId is omitted)"),
+			),
+			mcp.WithString("candidateId",
+				mcp.Description("Persisted draft Decision candidate ID (resolve)"),
 			),
 			mcp.WithString("oldId",
 				mcp.Description("Older decision ID to mark superseded (supersede)"),
@@ -75,15 +79,41 @@ func RegisterDecisionTool(s toolRegistrar, getStore func() *storage.Store) {
 				mcp.Description("Related task IDs (create/link)"),
 				mcp.WithStringItems(),
 			),
+			mcp.WithArray("supersedes",
+				mcp.Description("Current Decision IDs to supersede atomically when accepting a verified draft"),
+				mcp.WithStringItems(),
+			),
 			mcp.WithString("resolution",
 				mcp.Description("Review resolution (resolve)"),
-				mcp.Enum("supersede_existing", "create_draft", "link_as_related", "reject_new"),
+				mcp.Enum("accept_new", "supersede_existing", "create_draft", "link_as_related", "reject_new"),
 			),
 			mcp.WithString("tag",
 				mcp.Description("Filter by tag (list)"),
 			),
 			mcp.WithBoolean("includeAll",
 				mcp.Description("Include non-current decisions in list results (default: false)"),
+			),
+			mcp.WithString("memoryId",
+				mcp.Description("Legacy Decision Memory ID (migration_apply/migration_rollback)"),
+			),
+			mcp.WithString("migrationResolution",
+				mcp.Description("Explicit reviewed Legacy Decision Memory resolution (migration_apply)"),
+				mcp.Enum("create_decision", "link_existing", "consolidate_duplicate", "reclassify", "archive_noise", "reject_noise", "leave_unchanged"),
+			),
+			mcp.WithString("decisionId",
+				mcp.Description("Existing or explicit System Decision ID (migration_apply)"),
+			),
+			mcp.WithString("targetMemoryId",
+				mcp.Description("Previously migrated target Memory ID for duplicate consolidation"),
+			),
+			mcp.WithString("category",
+				mcp.Description("Non-decision Memory category for reclassification"),
+			),
+			mcp.WithString("reason",
+				mcp.Description("Reviewed archive/reject rationale"),
+			),
+			mcp.WithBoolean("acceptVerified",
+				mcp.Description("Accept a migrated draft only when linked evidence passes verification"),
 			),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -100,26 +130,116 @@ func RegisterDecisionTool(s toolRegistrar, getStore func() *storage.Store) {
 				return handleDecisionGet(getStore, req)
 			case "link":
 				return handleDecisionLink(getStore, req)
+			case "accept":
+				return handleDecisionAccept(getStore, req)
 			case "supersede":
 				return handleDecisionSupersede(getStore, req)
+			case "review_inbox":
+				return handleDecisionReviewInbox(getStore)
 			case "resolve":
 				return handleDecisionResolve(getStore, req)
+			case "migration_preview":
+				return handleDecisionMigrationPreview(getStore)
+			case "migration_apply":
+				return handleDecisionMigrationApply(ctx, getStore, req)
+			case "migration_rollback":
+				return handleDecisionMigrationRollback(ctx, getStore, req)
 			default:
 				return errResultf("unknown decision action: %s", action)
 			}
 		},
 	)
 	registerHelp(s, "decision", HelpEntry{
-		When: "Use for Decision create/list/get/link/supersede lifecycle operations.",
+		When: "Use for first-class System Decision lifecycle operations and explicit reviewed Legacy Decision Memory migration.",
 		Params: map[string]string{
-			"action":       "Required: create, list, get, link, supersede, resolve.",
+			"action":       "Required: create, list, get, link, accept, supersede, review_inbox, resolve, migration_preview, migration_apply, migration_rollback.",
 			"title":        "Required for create.",
 			"id":           "Required for get/link; accepted as old decision ID for supersede if oldId is omitted.",
+			"candidateId":  "Required for persisted candidate resolution; never use targetId as the candidate.",
 			"oldId/newId":  "Required pair for supersede.",
-			"resolution":   "Decision review resolution: supersede_existing, create_draft, link_as_related, reject_new.",
-			"sources/docs": "Sources or related docs/tasks make create default to accepted; otherwise draft.",
+			"resolution":   "Decision review resolution: accept_new, supersede_existing, link_as_related, reject_new; create_draft remains a compatibility no-op for an existing draft.",
+			"sources/docs": "Sources and related docs/tasks remain evidence links; every create defaults to draft.",
+			"accept":       "Marks a draft verified and accepted only after readable sources and completed linked tasks pass validation; optional supersedes are committed atomically.",
+			"migration":    "Preview is read-only. Apply requires memoryId plus migrationResolution. Rollback requires memoryId and refuses unsafe post-migration drift.",
 		},
+		Flow: "Use migration_preview first, review one candidate, then migration_apply with an explicit resolution. Never create Memory category decision.",
 	})
+}
+
+func handleDecisionReviewInbox(getStore func() *storage.Store) (*mcp.CallToolResult, error) {
+	store := getStore()
+	if store == nil {
+		return noProjectError()
+	}
+	candidates, err := decisionreview.New(store).ReviewCandidates()
+	if err != nil {
+		return errFailed("list Decision review inbox", err)
+	}
+	return decisionResult(candidates)
+}
+
+func handleDecisionMigrationPreview(getStore func() *storage.Store) (*mcp.CallToolResult, error) {
+	store := getStore()
+	if store == nil {
+		return noProjectError()
+	}
+	report, err := decisionmigration.New(store).Preview()
+	if err != nil {
+		return errFailed("preview Decision Memory migration", err)
+	}
+	return decisionResult(report)
+}
+
+func handleDecisionMigrationApply(ctx context.Context, getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store := getStore()
+	if store == nil {
+		return noProjectError()
+	}
+	args := req.GetArguments()
+	memoryID, _ := stringArg(args, "memoryId")
+	resolution, _ := stringArg(args, "migrationResolution")
+	decisionID, _ := stringArg(args, "decisionId")
+	targetMemoryID, _ := stringArg(args, "targetMemoryId")
+	category, _ := stringArg(args, "category")
+	reason, _ := stringArg(args, "reason")
+	relatedDocs, _ := stringSliceArg(args, "relatedDocs")
+	relatedTasks, _ := stringSliceArg(args, "relatedTasks")
+	result, err := decisionmigration.New(store).Apply(ctx, []decisionmigration.Selection{{
+		MemoryID:       memoryID,
+		Resolution:     resolution,
+		DecisionID:     decisionID,
+		TargetMemoryID: targetMemoryID,
+		Category:       category,
+		Reason:         reason,
+		RelatedDocs:    relatedDocs,
+		RelatedTasks:   relatedTasks,
+		AcceptVerified: boolArg(args, "acceptVerified"),
+	}})
+	if err != nil {
+		return errFailed("apply Decision Memory migration", err)
+	}
+	for _, item := range result.Results {
+		if item.DecisionID != "" {
+			search.BestEffortIndexDecision(store, item.DecisionID)
+		}
+	}
+	return decisionResult(result)
+}
+
+func handleDecisionMigrationRollback(ctx context.Context, getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store := getStore()
+	if store == nil {
+		return noProjectError()
+	}
+	memoryID, _ := stringArg(req.GetArguments(), "memoryId")
+	result, err := decisionmigration.New(store).Rollback(ctx, memoryID)
+	if err != nil {
+		return errFailed("rollback Decision Memory migration", err)
+	}
+	if result.DecisionID != "" {
+		search.BestEffortIndexDecision(store, result.DecisionID)
+	}
+	return decisionResult(result)
 }
 
 func handleDecisionCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -164,6 +284,9 @@ func handleDecisionCreate(getStore func() *storage.Store, req mcp.CallToolReques
 		return errFailed("create decision", err)
 	}
 	if result.Status == decisionreview.ResultReviewRequired {
+		if result.Candidate != nil {
+			search.BestEffortIndexDecision(store, result.Candidate.ID)
+		}
 		return decisionResult(result)
 	}
 	if result.Decision != nil {
@@ -238,6 +361,12 @@ func handleDecisionLink(getStore func() *storage.Store, req mcp.CallToolRequest)
 	if err != nil {
 		return errFailed("link decision", err)
 	}
+	if decision.Status == models.DecisionStatusDraft {
+		decision, err = decisionreview.New(store).RefreshCandidate(decision.ID)
+		if err != nil {
+			return errFailed("refresh Decision candidate", err)
+		}
+	}
 	search.BestEffortIndexDecision(store, decision.ID)
 	return decisionResult(decision)
 }
@@ -265,6 +394,26 @@ func handleDecisionSupersede(getStore func() *storage.Store, req mcp.CallToolReq
 	})
 }
 
+func handleDecisionAccept(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store := getStore()
+	if store == nil {
+		return noProjectError()
+	}
+	id, err := req.RequireString("id")
+	if err != nil {
+		return errResult("id is required")
+	}
+	supersedes, _ := stringSliceArg(req.GetArguments(), "supersedes")
+	result, err := decisionreview.New(store).Accept(id, decisionreview.AcceptOptions{Supersedes: supersedes})
+	if err != nil {
+		return errFailed("accept decision", err)
+	}
+	for _, changedID := range result.ChangedIDs {
+		search.BestEffortIndexDecision(store, changedID)
+	}
+	return decisionResult(result)
+}
+
 func handleDecisionResolve(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	store := getStore()
 	if store == nil {
@@ -276,17 +425,13 @@ func handleDecisionResolve(getStore func() *storage.Store, req mcp.CallToolReque
 		return errResult("resolution is required")
 	}
 	targetID, _ := stringArg(args, "targetId")
-	if targetID == "" {
-		targetID, _ = stringArg(args, "id")
-	}
+	candidateID, _ := stringArg(args, "candidateId")
 	replacementID, _ := stringArg(args, "replacementId")
 	status, _ := stringArg(args, "status")
 	candidate := decisionCandidateFromArgs(args)
-	if targetID != "" && candidate.ID == targetID {
-		candidate.ID = ""
-	}
 
 	result, err := decisionreview.New(store).Resolve(candidate, decisionreview.ResolveOptions{
+		CandidateID:   candidateID,
 		Resolution:    resolution,
 		TargetID:      targetID,
 		ReplacementID: replacementID,

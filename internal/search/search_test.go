@@ -862,7 +862,7 @@ func newRetrievalTestStore(t *testing.T) *storage.Store {
 		ID:        "mem001",
 		Title:     "Retrieval preference",
 		Layer:     models.MemoryLayerProject,
-		Category:  "decision",
+		Category:  "pattern",
 		Content:   "Memories support retrieval foundation context.",
 		Tags:      []string{"rag", "retrieval"},
 		CreatedAt: now,
@@ -870,13 +870,16 @@ func newRetrievalTestStore(t *testing.T) *storage.Store {
 	}); err != nil {
 		t.Fatalf("create memory: %v", err)
 	}
+	verifiedAt := now
 	if err := store.Decisions.Create(&models.DecisionEntry{
-		ID:        "20260618-1024-use-qdrant-as-default-vector-db",
-		Title:     "Use Qdrant as default vector DB",
-		Status:    models.DecisionStatusAccepted,
-		Sources:   []string{"@doc/guides/retrieval-foundation"},
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:           "20260618-1024-use-qdrant-as-default-vector-db",
+		Title:        "Use Qdrant as default vector DB",
+		Status:       models.DecisionStatusAccepted,
+		VerifiedAt:   &verifiedAt,
+		Verification: []string{"task:@task-rag001:done"},
+		Sources:      []string{"@doc/guides/retrieval-foundation"},
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}, storage.DecisionCreateOptions{Now: now}); err != nil {
 		t.Fatalf("create decision: %v", err)
 	}

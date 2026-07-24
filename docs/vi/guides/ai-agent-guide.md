@@ -33,9 +33,9 @@ Thay vì prompt mơ hồ, trỏ AI vào task có acceptance criteria rõ ràng.
 
 Architecture, pattern, hướng dẫn vận hành nên nằm trong doc, không chỉ tồn tại trong chat.
 
-### 4. Dùng memory cho decision cần nhớ
+### 4. Tách Memory khỏi System Decision
 
-Lưu decision, convention, failure vào memory để gọi lại sau.
+Lưu pattern, convention, failure vào Memory để gọi lại sau. Lựa chọn project bền vững phải lưu thành first-class System Decision; không tạo Memory category `decision`.
 
 ### 5. Validate trước khi coi là xong
 

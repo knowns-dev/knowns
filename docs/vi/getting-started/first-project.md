@@ -49,7 +49,7 @@ Dùng `--global` cho personal assistant setup vì nó update user-level MCP conf
 
 - Thêm một architecture doc cho subsystem quan trọng nhất.
 - Thêm một task cho thay đổi thật tiếp theo bạn định làm.
-- Chỉ thêm memory cho decision hoặc convention ngắn cần recall về sau.
+- Chỉ thêm Memory cho pattern hoặc convention ngắn cần recall; dùng System Decision cho lựa chọn project bền vững.
 - Chạy `knowns validate --plain` trước khi xem project setup là xong.
 
 ## Tiếp theo

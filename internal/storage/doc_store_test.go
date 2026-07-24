@@ -54,7 +54,7 @@ func TestDocStoreRenameAndRewriteDocReferences(t *testing.T) {
 		ID:        "mem001",
 		Title:     "Memory",
 		Layer:     models.MemoryLayerProject,
-		Category:  "decision",
+		Category:  "pattern",
 		Content:   "Remember @doc/guides/old{implements}",
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -109,5 +109,39 @@ func TestDocStoreRenameAndRewriteDocReferences(t *testing.T) {
 	}
 	if memory.Content != "Remember @doc/guides/new{implements}" {
 		t.Fatalf("memory content = %q", memory.Content)
+	}
+}
+
+func TestDocStoreApprovedLockedDecisionEditRequiresReview(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	store := NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("spec-review-gate-test"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+	now := time.Now().UTC()
+	doc := &models.Doc{
+		Path: "specs/example", Title: "Example", Tags: []string{"spec", "approved"}, CreatedAt: now, UpdatedAt: now,
+		Content: "## Locked Decisions\n\n- D1: Keep the stable rule.\n\n## Task Links\n\nNone.",
+	}
+	if err := store.Docs.Create(doc); err != nil {
+		t.Fatalf("create spec: %v", err)
+	}
+
+	nonDecisionEdit := *doc
+	nonDecisionEdit.Content = "## Locked Decisions\n\n- D1: Keep the stable rule.\n\n## Task Links\n\n- @task-abc123"
+	if err := store.Docs.Update(&nonDecisionEdit); err != nil {
+		t.Fatalf("update task links: %v", err)
+	}
+	if !docHasTag(nonDecisionEdit.Tags, "approved") {
+		t.Fatalf("non-decision edit removed approval: %#v", nonDecisionEdit.Tags)
+	}
+
+	decisionEdit := nonDecisionEdit
+	decisionEdit.Content = "## Locked Decisions\n\n- D1: Use the replacement rule.\n\n## Task Links\n\n- @task-abc123"
+	if err := store.Docs.Update(&decisionEdit); err != nil {
+		t.Fatalf("update locked decision: %v", err)
+	}
+	if docHasTag(decisionEdit.Tags, "approved") || !docHasTag(decisionEdit.Tags, "draft") || !docHasTag(decisionEdit.Tags, "review-required") {
+		t.Fatalf("locked decision edit tags = %#v, want draft review-required without approved", decisionEdit.Tags)
 	}
 }

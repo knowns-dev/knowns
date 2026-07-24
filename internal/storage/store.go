@@ -31,7 +31,8 @@ type Store struct {
 	Memory     *MemoryStore
 	Decisions  *DecisionStore
 
-	taskLifecycleLock *taskLifecycleLock
+	taskLifecycleLock     *taskLifecycleLock
+	decisionMigrationLock *decisionMemoryMigrationLock
 }
 
 // NewStore creates a Store rooted at the given .knowns/ directory path.
@@ -40,7 +41,9 @@ func NewStore(root string) *Store {
 	globalRoot := GlobalRootPath()
 
 	lifecycleLock := newTaskLifecycleLock(root)
-	s := &Store{Root: root, taskLifecycleLock: lifecycleLock}
+	decisionLock := newDecisionLifecycleLock(root)
+	migrationLock := newDecisionMemoryMigrationLock(root)
+	s := &Store{Root: root, taskLifecycleLock: lifecycleLock, decisionMigrationLock: migrationLock}
 	s.Tasks = &TaskStore{root: root, lifecycleLock: lifecycleLock}
 	s.Docs = &DocStore{root: root}
 	s.Config = &ConfigStore{root: root}
@@ -50,8 +53,20 @@ func NewStore(root string) *Store {
 	s.Workspaces = &WorkspaceStore{root: root}
 	s.Chats = &ChatStore{root: root}
 	s.Memory = &MemoryStore{root: root, globalRoot: globalRoot}
-	s.Decisions = &DecisionStore{root: root}
+	s.Decisions = &DecisionStore{root: root, lifecycleLock: decisionLock}
 	return s
+}
+
+// WithDecisionMemoryMigrationLock serializes review-driven migration across
+// CLI, MCP, and server processes while individual stores keep their own locks.
+func (s *Store) WithDecisionMemoryMigrationLock(ctx context.Context, fn func() error) error {
+	if s == nil || s.decisionMigrationLock == nil {
+		return fmt.Errorf("decision memory migration lock is unavailable")
+	}
+	if fn == nil {
+		return fmt.Errorf("decision memory migration callback is required")
+	}
+	return s.decisionMigrationLock.with(ctx, fn)
 }
 
 // WithTaskLifecycleTransaction serializes a lifecycle mutation across all

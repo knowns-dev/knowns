@@ -52,7 +52,7 @@ Dùng `--global` cho personal assistant setup vì nó update user-level MCP conf
 
 - Task define mục tiêu
 - Doc giải thích cấu trúc và intent
-- Memory giữ lại decision và convention
+- Memory giữ lại pattern và convention; System Decision giữ lựa chọn project bền vững
 - Retrieval nối tất cả lại cho cả người và AI
 
 ## Khi nào dùng gì

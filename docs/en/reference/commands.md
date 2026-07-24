@@ -202,13 +202,13 @@ Use resolve to traverse structural relationships between docs, tasks, and other 
 ## Memory
 
 ```bash
-knowns memory add "We use repository pattern" --category decision
+knowns memory add "We use repository pattern" --category pattern
 knowns memory list --plain
 knowns memory <id> --plain
 knowns memory edit <id> --append "More detail"
 ```
 
-Memory is useful for persistent project-level or global knowledge that AI should recall later.
+Memory is useful for persistent project-level or global patterns, conventions, preferences, and failures that AI should recall later. The `decision` category is legacy and rejected for new writes.
 
 ## Decisions
 
@@ -216,11 +216,19 @@ Memory is useful for persistent project-level or global knowledge that AI should
 knowns decision create "Use Postgres for metadata"
 knowns decision list --plain
 knowns decision get <id> --plain
-knowns decision link <id> --doc architecture/storage
+knowns decision link <id> --source @doc/architecture/storage --task <done-task-id>
+knowns decision accept <id>
+knowns decision resolve create_draft "Use Postgres for metadata"
 knowns decision supersede <old-id> <new-id>
+
+knowns decision migrate preview --plain
+knowns decision migrate apply --memory <memory-id> --resolution create_decision
+knowns decision migrate rollback <memory-id>
 ```
 
-Use decisions for durable architectural choices that may later be superseded rather than edited in place.
+Spec Decisions are locked `D1`, `D2`, … implementation rules in an approved spec. The commands above manage System Decisions: durable project choices that start as drafts, require readable sources plus completed task evidence before acceptance, and may later be superseded rather than edited in place.
+
+Legacy Decision Memory migration is preview-first, explicit per record, journaled, and reversible. Supported resolutions are `create_decision`, `link_existing`, `consolidate_duplicate`, `reclassify`, `archive_noise`, `reject_noise`, and `leave_unchanged`; there is no implicit bulk apply.
 
 ## Templates
 

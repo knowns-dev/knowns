@@ -1,6 +1,7 @@
 package memoryreview
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -12,12 +13,35 @@ import (
 	"github.com/howznguyen/knowns/internal/storage"
 )
 
+func TestReviewPathsRejectLegacyDecisionMemoryCategory(t *testing.T) {
+	store := newReviewTestStore(t)
+	_, err := New(store).Add(&models.MemoryEntry{
+		Title: "Legacy write", Category: " Decision ", Content: "Do not persist this.",
+	}, AddOptions{})
+	if !errors.Is(err, models.ErrLegacyDecisionMemoryWrite) {
+		t.Fatalf("Add error = %v", err)
+	}
+	createReviewMemory(t, store, &models.MemoryEntry{
+		ID: "existing1", Title: "Existing pattern", Category: "pattern", Content: "Keep this.", Status: models.MemoryStatusActive,
+	})
+	_, err = New(store).Resolve(&models.MemoryEntry{
+		Title: "Legacy replacement", Category: "DECISION", Content: "Do not persist this.",
+	}, ResolveOptions{Resolution: ResolutionArchiveExistingCreateNew, TargetID: "existing1"})
+	if !errors.Is(err, models.ErrLegacyDecisionMemoryWrite) {
+		t.Fatalf("Resolve error = %v", err)
+	}
+	existing, getErr := store.Memory.Get("existing1")
+	if getErr != nil || existing.Status != models.MemoryStatusActive {
+		t.Fatalf("failed resolution mutated existing memory: entry=%+v err=%v", existing, getErr)
+	}
+}
+
 func TestAddNoMatchCreatesProposedMemory(t *testing.T) {
 	store := newReviewTestStore(t)
 	result, err := New(store).Add(&models.MemoryEntry{
 		Title:    "Unique Memory",
 		Layer:    models.MemoryLayerProject,
-		Category: "decision",
+		Category: "pattern",
 		Content:  "Use review gates for new project memories.",
 	}, AddOptions{})
 	if err != nil {
@@ -40,7 +64,7 @@ func TestAddDuplicateReturnsReviewRequiredAndDoesNotWrite(t *testing.T) {
 		ID:       "active1",
 		Title:    "Default vector database",
 		Layer:    models.MemoryLayerProject,
-		Category: "decision",
+		Category: "pattern",
 		Content:  "Use Qdrant as the default vector database.",
 		Status:   models.MemoryStatusActive,
 	})
@@ -49,7 +73,7 @@ func TestAddDuplicateReturnsReviewRequiredAndDoesNotWrite(t *testing.T) {
 	result, err := New(store).Add(&models.MemoryEntry{
 		Title:    "Default vector database",
 		Layer:    models.MemoryLayerProject,
-		Category: "decision",
+		Category: "pattern",
 		Content:  "Use Qdrant as the default vector database.",
 	}, AddOptions{})
 	if err != nil {
@@ -73,7 +97,7 @@ func TestResolveUpdateExistingRecordsVerification(t *testing.T) {
 		ID:       "target1",
 		Title:    "Old guidance",
 		Layer:    models.MemoryLayerProject,
-		Category: "decision",
+		Category: "pattern",
 		Content:  "Old content.",
 		Status:   models.MemoryStatusActive,
 	})
@@ -82,7 +106,7 @@ func TestResolveUpdateExistingRecordsVerification(t *testing.T) {
 	svc.Now = func() time.Time { return fixed }
 	result, err := svc.Resolve(&models.MemoryEntry{
 		Title:    "Updated guidance",
-		Category: "decision",
+		Category: "pattern",
 		Content:  "Updated content.",
 		Sources:  []string{"@doc/specs/memory"},
 	}, ResolveOptions{Resolution: ResolutionUpdateExisting, TargetID: "target1"})
@@ -113,7 +137,7 @@ func TestResolveArchiveCreateMergeAndReject(t *testing.T) {
 		ID:       "old1",
 		Title:    "Old vector DB",
 		Layer:    models.MemoryLayerProject,
-		Category: "decision",
+		Category: "pattern",
 		Content:  "Use Chroma as the vector database.",
 		Status:   models.MemoryStatusActive,
 	})
@@ -122,7 +146,7 @@ func TestResolveArchiveCreateMergeAndReject(t *testing.T) {
 	archiveResult, err := svc.Resolve(&models.MemoryEntry{
 		Title:    "New vector DB",
 		Layer:    models.MemoryLayerProject,
-		Category: "decision",
+		Category: "pattern",
 		Content:  "Use Qdrant as the vector database.",
 	}, ResolveOptions{Resolution: ResolutionArchiveExistingCreateNew, TargetID: "old1", Status: models.MemoryStatusActive})
 	if err != nil {
@@ -142,7 +166,7 @@ func TestResolveArchiveCreateMergeAndReject(t *testing.T) {
 	mergeResult, err := svc.Resolve(&models.MemoryEntry{
 		Title:    "Duplicate vector DB",
 		Layer:    models.MemoryLayerProject,
-		Category: "decision",
+		Category: "pattern",
 		Content:  "Duplicate guidance.",
 	}, ResolveOptions{Resolution: ResolutionMergeExisting, TargetID: archiveResult.Memory.ID})
 	if err != nil {

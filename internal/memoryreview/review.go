@@ -318,6 +318,9 @@ func (s *Service) normalizeCandidate(candidate *models.MemoryEntry, defaultStatu
 	entry.Title = strings.TrimSpace(entry.Title)
 	entry.Content = strings.TrimSpace(entry.Content)
 	entry.Category = strings.TrimSpace(entry.Category)
+	if err := models.ValidateNewMemoryCategory(entry.Category); err != nil {
+		return nil, err
+	}
 	entry.Layer = strings.TrimSpace(entry.Layer)
 	if entry.Layer == "" {
 		entry.Layer = models.MemoryLayerProject

@@ -92,6 +92,7 @@ export async function startServer(): Promise<TestServer> {
 		NO_COLOR: "1",
 		NO_UPDATE_CHECK: "1",
 		KNOWN_RUNTIME_INLINE: "1",
+		KNOWN_LSP_AUTO_INSTALL: "0",
 		// UI tests exercise the local fallback. Dedicated LSP fixture tests
 		// cover the shared daemon and native Windows named-pipe transport.
 		KNOWN_LSP_DAEMON: "0",

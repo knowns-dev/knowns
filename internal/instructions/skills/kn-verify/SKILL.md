@@ -20,6 +20,14 @@ Run validation with SDD-awareness to check spec coverage and task status.
 - Report concrete warnings before general commentary
 - Prefer actionable fixes over generic advice
 - Separate coverage problems from broken refs or missing links
+- Require complete `Spec Decision Compliance` markers for in-review/done linked tasks; any conflict is a validation failure
+- Require every in-review/done linked task to record exactly one valid impact branch:
+  - `System Decision Impact: none — <reason>` creates no candidate
+  - `System Decision Impact: candidate @decision/<id> (added|changed|removed) — <summary>` resolves to a persisted non-current candidate linked to originating work
+- Keep unverified draft/replacement Decisions out of current guidance
+- Keep Spec Decisions canonical in the spec's `Locked Decisions` section; ledger duplication is a validation failure
+- Treat new Memory category `decision` as legacy workflow drift and require first-class Decision capture instead
+- When gathering context, retrieve only relevant accepted/current System Decisions with bounded filters; do not serialize all Decisions
 
 ## Step 1: Run SDD Validation
 
@@ -53,6 +61,9 @@ Warnings:
 Passed:
 - All spec references resolve
 - specs/auth: fully implemented
+- Spec Decisions: all linked D-IDs assessed with no conflicts
+- System Decision Impact: declared and lifecycle-valid
+- System Decision Impact refs: persisted with task/spec/source provenance
 ```
 
 ## Step 3: Analyze Results
@@ -145,6 +156,8 @@ When verification reveals a clear follow-up, include the best next command. If t
 
 - [ ] Ran validate --sdd
 - [ ] Presented status report
+- [ ] Reported Spec Decision compliance and validated every System Decision Impact marker/ref
+- [ ] Confirmed no Spec Decision ledger duplication or new Decision Memory capture
 - [ ] Analyzed coverage level
 - [ ] Suggested specific fixes for warnings
 - [ ] Suggested `/kn-flow` when an approved spec has pending execution
@@ -156,3 +169,5 @@ When verification reveals a clear follow-up, include the best next command. If t
 - Skipping coverage analysis
 - Claiming coverage is healthy without showing evidence
 - Suggesting manual task-by-task work when `/kn-flow` is the better approved-spec handoff
+- Treating a missing System Decision Impact marker as a harmless warning
+- Treating a ready draft candidate as current guidance

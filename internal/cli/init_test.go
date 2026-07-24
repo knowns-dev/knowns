@@ -56,6 +56,7 @@ func TestCreateOpenCodeConfigQuietCreatesConfig(t *testing.T) {
 }
 
 func TestRunInitStopsWhenTerminalTooNarrow(t *testing.T) {
+	t.Setenv("KNOWN_LSP_AUTO_INSTALL", "0")
 	projectRoot := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -120,6 +121,7 @@ func TestRunInitStopsWhenTerminalTooNarrow(t *testing.T) {
 }
 
 func TestRunInitNoWizardUsesGlobalDefaults(t *testing.T) {
+	t.Setenv("KNOWN_LSP_AUTO_INSTALL", "0")
 	home := t.TempDir()
 	projectRoot := t.TempDir()
 	oldWD, err := os.Getwd()

@@ -28,8 +28,10 @@ func TestSearchRoute_ModeHybridKeepsKeywordOnlyCompatibility(t *testing.T) {
 	}
 
 	var resp struct {
-		Tasks []models.SearchResult `json:"tasks"`
-		Docs  []models.SearchResult `json:"docs"`
+		Tasks     []models.SearchResult `json:"tasks"`
+		Docs      []models.SearchResult `json:"docs"`
+		Memories  []models.SearchResult `json:"memories"`
+		Decisions []models.SearchResult `json:"decisions"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
@@ -37,9 +39,30 @@ func TestSearchRoute_ModeHybridKeepsKeywordOnlyCompatibility(t *testing.T) {
 	if len(resp.Docs) == 0 {
 		t.Fatal("expected doc search results")
 	}
-	for _, result := range append(resp.Docs, resp.Tasks...) {
+	if len(resp.Memories) == 0 {
+		t.Fatal("expected memory search results")
+	}
+	if len(resp.Decisions) == 0 {
+		t.Fatal("expected decision search results")
+	}
+	for _, result := range append(append(append(resp.Docs, resp.Tasks...), resp.Memories...), resp.Decisions...) {
 		if strings.Join(result.MatchedBy, ",") != "keyword" {
 			t.Fatalf("HTTP /search MatchedBy = %v, want keyword", result.MatchedBy)
+		}
+	}
+	for _, result := range resp.Tasks {
+		if result.Type != "task" {
+			t.Fatalf("tasks result type = %q, want task", result.Type)
+		}
+	}
+	for _, result := range resp.Memories {
+		if result.Type != "memory" {
+			t.Fatalf("memories result type = %q, want memory", result.Type)
+		}
+	}
+	for _, result := range resp.Decisions {
+		if result.Type != "decision" {
+			t.Fatalf("decisions result type = %q, want decision", result.Type)
 		}
 	}
 }
@@ -108,13 +131,27 @@ func newSearchRouteTestStore(t *testing.T) *storage.Store {
 		ID:        "mem001",
 		Title:     "Retrieval preference",
 		Layer:     models.MemoryLayerProject,
-		Category:  "decision",
+		Category:  "pattern",
 		Content:   "Memories support retrieval foundation context.",
 		Tags:      []string{"rag", "retrieval"},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("create memory: %v", err)
+	}
+	verifiedAt := now
+	if err := store.Decisions.Create(&models.DecisionEntry{
+		ID:           "20260723-1200-use-retrieval-foundation",
+		Title:        "Use retrieval foundation",
+		Status:       models.DecisionStatusAccepted,
+		VerifiedAt:   &verifiedAt,
+		Verification: []string{"task:@task-rag001:done"},
+		Sources:      []string{"@doc/guides/retrieval-foundation"},
+		Decision:     "Use the retrieval foundation for project search.",
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}, storage.DecisionCreateOptions{Now: now}); err != nil {
+		t.Fatalf("create decision: %v", err)
 	}
 
 	return store

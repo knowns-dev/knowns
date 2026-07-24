@@ -52,7 +52,7 @@ Use this when an assistant is helping with planning or implementation:
 
 - tasks define execution targets
 - docs explain structure and intent
-- memory preserves decisions and conventions
+- Memory preserves patterns and conventions; System Decisions preserve durable project choices
 - retrieval connects everything for humans and AI
 
 ## When to use which surface

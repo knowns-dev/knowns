@@ -44,7 +44,11 @@ type Options struct {
 
 // Reference-detection regexes.
 var (
-	codeRefRE = regexp.MustCompile(`@code/([^\s\)]+)`)
+	codeRefRE                = regexp.MustCompile(`@code/([^\s\)]+)`)
+	lockedDecisionRE         = regexp.MustCompile(`(?m)^\s*-\s*(D[1-9][0-9]*):\s*\S`)
+	decisionComplianceLineRE = regexp.MustCompile(`(?mi)^\s*Spec Decision Compliance:\s*(.+)$`)
+	decisionComplianceItemRE = regexp.MustCompile(`(?i)^\s*(D[1-9][0-9]*)\s*=\s*(pass|conflict)(?::\s*(.+))?\s*$`)
+	systemDecisionImpactRE   = regexp.MustCompile(`(?mi)^\s*-\s*Impact:\s*(.+)$`)
 )
 
 // Valid status and priority values.
@@ -129,6 +133,9 @@ func Run(store *storage.Store, opts Options) *Result {
 				continue
 			}
 			issues = append(issues, validateDoc(fullDoc, taskIDs, docPaths, memoryIDs, store)...)
+			if opts.Scope == "sdd" {
+				issues = append(issues, validateSpecDecisionContract(fullDoc)...)
+			}
 		}
 	}
 
@@ -307,9 +314,184 @@ func validateTask(t *models.Task, taskIDs, docPaths, memoryIDs map[string]bool, 
 				Message: "Task is linked to a spec but has no acceptance criteria", Entity: t.ID,
 			})
 		}
+		if t.Spec != "" && store != nil {
+			issues = append(issues, validateTaskSpecDecisionCompliance(t, store)...)
+		}
 	}
 
 	return issues
+}
+
+func validateTaskSpecDecisionCompliance(task *models.Task, store *storage.Store) []Issue {
+	spec, err := store.Docs.Get(task.Spec)
+	if err != nil {
+		return []Issue{{Level: "error", Code: "SDD_SPEC_DECISIONS_UNREADABLE", Message: fmt.Sprintf("Locked Decisions cannot be read from spec %q: %v", task.Spec, err), Entity: task.ID}}
+	}
+	// The System Decision Impact section is the versioned opt-in for the new
+	// Decision contract. Legacy specs remain readable and receive doc-level
+	// upgrade guidance without retroactively failing completed tasks.
+	if _, contractEnabled := markdownSectionContent(spec.Content, "System Decision Impact"); !contractEnabled {
+		return nil
+	}
+	ids, sectionFound, parseIssues := specDecisionIDs(spec)
+	issues := append([]Issue(nil), parseIssues...)
+	if !sectionFound || len(ids) == 0 {
+		return issues
+	}
+	checks := parseSpecDecisionCompliance(task.ImplementationNotes)
+	strictState := task.Status == "in-review" || task.Status == "done"
+	assessmentRequired := strictState || task.Status == "in-progress"
+	missing := make([]string, 0)
+	for _, id := range ids {
+		check, ok := checks[id]
+		if !ok {
+			missing = append(missing, id)
+			continue
+		}
+		if check.status == "conflict" {
+			note := strings.TrimSpace(check.note)
+			if note == "" {
+				note = "no conflict reason supplied"
+			}
+			issues = append(issues, Issue{Level: "error", Code: "SDD_SPEC_DECISION_CONFLICT", Message: fmt.Sprintf("Spec Decision %s conflicts with task execution: %s", id, note), Entity: task.ID})
+		}
+	}
+	if len(missing) > 0 && assessmentRequired {
+		level := "warning"
+		if strictState {
+			level = "error"
+		}
+		issues = append(issues, Issue{Level: level, Code: "SDD_SPEC_DECISIONS_UNASSESSED", Message: fmt.Sprintf("Spec Decisions not assessed for linked spec %q: %s; append `Spec Decision Compliance: D1=pass, ...`", task.Spec, strings.Join(missing, ", ")), Entity: task.ID})
+	} else if len(missing) == 0 && assessmentRequired && !hasIssueCode(issues, "SDD_SPEC_DECISION_CONFLICT") {
+		issues = append(issues, Issue{Level: "info", Code: "SDD_SPEC_DECISIONS_COMPLIANT", Message: fmt.Sprintf("All %d Spec Decisions from %q are assessed as compliant", len(ids), task.Spec), Entity: task.ID})
+	}
+	return issues
+}
+
+type decisionComplianceCheck struct {
+	status string
+	note   string
+}
+
+func parseSpecDecisionCompliance(notes string) map[string]decisionComplianceCheck {
+	matches := decisionComplianceLineRE.FindAllStringSubmatch(notes, -1)
+	checks := map[string]decisionComplianceCheck{}
+	if len(matches) == 0 {
+		return checks
+	}
+	for _, raw := range strings.FieldsFunc(matches[len(matches)-1][1], func(r rune) bool { return r == ',' || r == ';' }) {
+		parts := decisionComplianceItemRE.FindStringSubmatch(raw)
+		if len(parts) == 0 {
+			continue
+		}
+		checks[strings.ToUpper(parts[1])] = decisionComplianceCheck{status: strings.ToLower(parts[2]), note: strings.TrimSpace(parts[3])}
+	}
+	return checks
+}
+
+func validateSpecDecisionContract(doc *models.Doc) []Issue {
+	if doc == nil || !hasFoldedString(doc.Tags, "spec") {
+		return nil
+	}
+	ids, sectionFound, issues := specDecisionIDs(doc)
+	if !sectionFound {
+		issues = append(issues, Issue{Level: "info", Code: "SDD_LEGACY_SPEC_NO_LOCKED_DECISIONS", Message: "Legacy spec has no Locked Decisions section; add stable D1/D2 IDs when it is next revised", Entity: doc.Path})
+	} else if len(ids) > 0 {
+		issues = append(issues, Issue{Level: "info", Code: "SDD_SPEC_DECISIONS_DECLARED", Message: fmt.Sprintf("Spec declares %d stable Locked Decisions", len(ids)), Entity: doc.Path})
+	}
+
+	impact, impactFound := markdownSectionContent(doc.Content, "System Decision Impact")
+	if !impactFound {
+		issues = append(issues, Issue{Level: "info", Code: "SDD_LEGACY_SPEC_NO_SYSTEM_DECISION_IMPACT", Message: "Legacy spec has no System Decision Impact declaration; declare none, existing, draft new, or replacement when next revised", Entity: doc.Path})
+		return issues
+	}
+	match := systemDecisionImpactRE.FindStringSubmatch(impact)
+	if len(match) == 0 || !validSystemDecisionImpact(match[1]) {
+		issues = append(issues, Issue{Level: "error", Code: "SDD_SYSTEM_DECISION_IMPACT_INVALID", Message: "System Decision Impact must declare one of: none, existing, draft new, replacement", Entity: doc.Path})
+	} else {
+		issues = append(issues, Issue{Level: "info", Code: "SDD_SYSTEM_DECISION_IMPACT_DECLARED", Message: "System Decision impact is declared: " + strings.TrimSpace(match[1]), Entity: doc.Path})
+	}
+	return issues
+}
+
+func specDecisionIDs(doc *models.Doc) ([]string, bool, []Issue) {
+	if doc == nil {
+		return nil, false, nil
+	}
+	section, found := markdownSectionContent(doc.Content, "Locked Decisions")
+	if !found {
+		return nil, false, nil
+	}
+	matches := lockedDecisionRE.FindAllStringSubmatch(section, -1)
+	ids := make([]string, 0, len(matches))
+	seen := map[string]bool{}
+	var issues []Issue
+	for _, match := range matches {
+		id := strings.ToUpper(match[1])
+		if seen[id] {
+			issues = append(issues, Issue{Level: "error", Code: "SDD_SPEC_DECISION_DUPLICATE", Message: fmt.Sprintf("Locked Decision ID %s is duplicated", id), Entity: doc.Path})
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		issues = append(issues, Issue{Level: "warning", Code: "SDD_SPEC_DECISIONS_EMPTY", Message: "Locked Decisions section has no stable IDs such as D1 or D2", Entity: doc.Path})
+	}
+	return ids, true, issues
+}
+
+func markdownSectionContent(content, title string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	start := -1
+	level := 0
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		hashes := len(trimmed) - len(strings.TrimLeft(trimmed, "#"))
+		heading := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+		if start < 0 && strings.EqualFold(heading, title) {
+			start, level = i+1, hashes
+			continue
+		}
+		if start >= 0 && hashes <= level {
+			return strings.Join(lines[start:i], "\n"), true
+		}
+	}
+	if start >= 0 {
+		return strings.Join(lines[start:], "\n"), true
+	}
+	return "", false
+}
+
+func validSystemDecisionImpact(value string) bool {
+	value = strings.ToLower(strings.Trim(strings.TrimSpace(value), "."))
+	for _, allowed := range []string{"none", "existing", "draft new", "replacement"} {
+		if value == allowed || strings.HasPrefix(value, allowed+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasFoldedString(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), target) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasIssueCode(issues []Issue, code string) bool {
+	for _, issue := range issues {
+		if issue.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 // detectCircularParent walks the parent chain and returns true if a cycle is found.

@@ -36,8 +36,10 @@ Coordinate an approved spec, linked task set, or explicit task wave from plannin
 1. Start with Knowns MCP `initial`.
 2. Read `kn-plan`, `kn-implement`, and `kn-review` before using their procedures.
 3. Read the spec or each explicit task.
-4. Search first, then follow explicit refs and retrieve only relevant context.
-5. Do not manually edit Knowns-managed task or doc markdown.
+4. For every linked spec, read the complete canonical `Locked Decisions` section and keep its stable D-IDs as execution gates.
+5. Retrieve relevant accepted/current System Decisions with a feature/task query, `sourceTypes:["decision"]`, `status:"accepted"`, `includeHistorical:false`, and a bounded limit.
+6. Search first, then follow explicit refs and retrieve only relevant context.
+7. Do not manually edit Knowns-managed task or doc markdown.
 
 ## Task Discovery
 
@@ -79,6 +81,13 @@ For each task or parallel-safe wave:
 3. Run `/kn-review <task-id>` behavior against the real diff.
 4. Fix P1 findings. Fix P2 findings when practical, or explicitly defer them with a follow-up task.
 5. Validate the task before marking the wave complete.
+6. Run the System Decision Impact checkpoint before completion:
+   - no durable guidance change → append `System Decision Impact: none — <reason>` and create no candidate
+   - durable guidance added, changed, or removed → create a first-class draft Decision linked to the task, spec/doc, and readable sources; append `System Decision Impact: candidate @decision/<id> (added|changed|removed) — <summary>`
+   - never auto-accept the candidate; unresolved evidence/conflicts stay in Review Inbox
+7. Append one structured task note before completion: `Spec Decision Compliance: D1=pass, D2=pass`. Use `D<N>=conflict: <reason>` for any conflict and do not mark the task done.
+
+Spec Decisions remain canonical execution rules in the spec's `Locked Decisions` section. Do not create System Decision ledger rows merely to mirror D-IDs. Never create Memory category `decision`; redirect legacy Decision Memory capture requests to the first-class Decision candidate flow.
 
 If sub-agent tools are available, use them only after the parallel gate marks tasks safe. In Codex, discover multi-agent/sub-agent tools before declaring them unavailable. If `--sequential` is set, tools are unavailable, or the parallel gate is unsafe, execute the same schedule sequentially in the main context and state why sub-agents were not spawned.
 
@@ -117,6 +126,9 @@ Before calling the flow done:
 - all linked spec tasks are done or explicitly blocked
 - task ACs are checked only after implementation
 - SDD validation passes for the spec/task set
+- every done/in-review linked task has a complete Spec Decision Compliance marker with no conflicts
+- every done/in-review linked task declares `System Decision Impact: none` or a persisted `candidate @decision/<id>`
+- every positive impact candidate is linked to originating work and remains non-current until explicit verified human resolution
 - broad verification ran across the integrated diff
 - useful durable memory is captured
 - sub-agents are closed
@@ -149,6 +161,8 @@ Required order for the final user-facing response:
 - [ ] Reviews completed and P1 fixed
 - [ ] Combined verification passed
 - [ ] SDD validation passed
+- [ ] Spec Decision compliance and per-task System Decision impact markers passed
+- [ ] Positive impacts persisted draft candidates with task/spec/source provenance
 - [ ] Durable memory captured when useful
 - [ ] Sub-agents closed
 - [ ] Next action suggested
@@ -161,4 +175,7 @@ Required order for the final user-facing response:
 - Trusting worker output without inspecting the real diff
 - Skipping review before final verification
 - Marking the spec done while linked tasks remain unhandled
+- Marking work done without an explicit `System Decision Impact` marker
+- Creating legacy Decision Memory instead of a first-class Decision candidate
+- Duplicating Spec Locked Decisions into the System Decision ledger
 - Committing or pushing without explicit user request

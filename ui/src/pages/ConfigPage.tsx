@@ -45,6 +45,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useOpenCode } from "../contexts/OpenCodeContext";
 import { useOpenCodeModelManager } from "../hooks/useOpencodeModelManager";
 import { OpenCodeModelManager } from "../components/organisms/OpenCodeModelManager";
+import DecisionMigrationTool from "../components/organisms/DecisionMigrationTool";
 import { toast } from "../components/ui/sonner";
 import { importApi, saveUserPreferences, getRuntimeServices, getEmbeddingModels, testEmbeddingModel, tunnelApi, lspApi, type EmbeddingModelInfo, type EmbeddingModelsResponse, type EmbeddingModelTestResult, type Import, type ImportDetail, type ImportResult, type RuntimeService, type LSPLanguageInfo } from "../api/client";
 
@@ -92,7 +93,7 @@ function statusVariant(status?: string): "default" | "secondary" | "destructive"
 
 // ── Category definitions ──────────────────────────────────────────
 
-type Category = "general" | "tasks" | "board" | "search" | "code" | "ai" | "imports" | "runtime" | "tunnel" | "security" | "advanced";
+type Category = "general" | "tasks" | "board" | "search" | "code" | "ai" | "imports" | "runtime" | "tunnel" | "security" | "tools" | "advanced";
 
 interface CategoryDef {
 	id: Category;
@@ -112,6 +113,7 @@ const ALL_CATEGORIES: CategoryDef[] = [
 	{ id: "runtime", label: "Runtime", icon: Monitor, description: "Runtime services and sub-processes" },
 	{ id: "tunnel", label: "Tunnel", icon: Globe, description: "Cloudflare Tunnel for remote access" },
 	{ id: "security", label: "Security", icon: Shield, description: "Password protection" },
+	{ id: "tools", label: "Tools", icon: Wrench, description: "Maintenance and migration utilities" },
 	{ id: "advanced", label: "Advanced", icon: Wrench, description: "Git tracking, server, platforms, and JSON" },
 ];
 
@@ -1987,6 +1989,13 @@ export default function ConfigPage() {
 		</div>
 	);
 
+	const renderTools = () => (
+		<div>
+			<SectionHeader icon={Wrench} title="Tools" description="Explicit maintenance workflows that are kept outside normal product flows" />
+			<DecisionMigrationTool />
+		</div>
+	);
+
 	const contentByCategory: Record<Category, () => React.ReactNode> = {
 		general: renderGeneral,
 		tasks: renderTaskLifecycle,
@@ -1998,6 +2007,7 @@ export default function ConfigPage() {
 		runtime: renderRuntime,
 		tunnel: renderTunnel,
 		security: renderSecurity,
+		tools: renderTools,
 		advanced: renderAdvanced,
 	};
 

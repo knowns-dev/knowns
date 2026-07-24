@@ -49,7 +49,7 @@ knowns setup claude --global
 
 - Add one architecture doc for the most important subsystem.
 - Add one task for the next real change you plan to make.
-- Add memory only for short decisions or conventions that should be recalled later.
+- Add Memory for short patterns or conventions that should be recalled later; use a System Decision for durable project choices.
 - Run `knowns validate --plain` before treating the project setup as complete.
 
 ## Suggested next reads

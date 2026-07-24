@@ -11,6 +11,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/lsp"
 	"github.com/howznguyen/knowns/internal/lsp/adapters"
+	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/permissions"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
@@ -36,18 +37,29 @@ type Payload struct {
 
 // KnowledgeStatus reports entity counts.
 type KnowledgeStatus struct {
-	Docs      int          `json:"docs"`
-	Tasks     int          `json:"tasks"`
-	Templates int          `json:"templates"`
-	Memories  MemoryCounts `json:"memories"`
-	Relations int          `json:"relations"`
-	Imports   int          `json:"imports"`
+	Docs      int            `json:"docs"`
+	Tasks     int            `json:"tasks"`
+	Templates int            `json:"templates"`
+	Memories  MemoryCounts   `json:"memories"`
+	Decisions DecisionCounts `json:"decisions"`
+	Relations int            `json:"relations"`
+	Imports   int            `json:"imports"`
 }
 
 // MemoryCounts breaks memory count by layer.
 type MemoryCounts struct {
-	Project int `json:"project"`
-	Global  int `json:"global"`
+	Project        int `json:"project"`
+	Global         int `json:"global"`
+	LegacyDecision int `json:"legacyDecision"`
+}
+
+// DecisionCounts separates current guidance from records that require review
+// or are retained only for history.
+type DecisionCounts struct {
+	Total      int `json:"total"`
+	Current    int `json:"current"`
+	Draft      int `json:"draft"`
+	Historical int `json:"historical"`
 }
 
 // SearchStatus reports semantic search readiness.
@@ -193,9 +205,33 @@ func buildKnowledge(store *storage.Store) *KnowledgeStatus {
 	// Memory counts by layer.
 	if local, err := store.Memory.ListLocal(); err == nil {
 		ks.Memories.Project = len(local)
+		for _, memory := range local {
+			if models.IsLegacyDecisionMemoryCategory(memory.Category) {
+				ks.Memories.LegacyDecision++
+			}
+		}
 	}
 	if global, err := store.Memory.ListGlobalOnly(); err == nil {
 		ks.Memories.Global = len(global)
+		for _, memory := range global {
+			if models.IsLegacyDecisionMemoryCategory(memory.Category) {
+				ks.Memories.LegacyDecision++
+			}
+		}
+	}
+
+	if decisions, err := store.Decisions.List(); err == nil {
+		ks.Decisions.Total = len(decisions)
+		for _, decision := range decisions {
+			switch {
+			case decision.CurrentForDefaultRetrieval():
+				ks.Decisions.Current++
+			case decision.Status == models.DecisionStatusDraft:
+				ks.Decisions.Draft++
+			default:
+				ks.Decisions.Historical++
+			}
+		}
 	}
 
 	// Import count: count subdirectories in .knowns/imports/ that have _import.json.
@@ -360,7 +396,7 @@ func buildCapabilities(ss *SearchStatus, rs *RuntimeStatus) []string {
 	var caps []string
 
 	// Always available when project is active.
-	caps = append(caps, "task-updates", "doc-updates", "memory-tools", "validation")
+	caps = append(caps, "task-updates", "doc-updates", "memory-tools", "system-decisions", "decision-migration", "validation")
 
 	// Search capabilities.
 	caps = append(caps, "search") // keyword search always available

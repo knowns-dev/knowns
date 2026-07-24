@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +11,70 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 )
+
+func TestMemoryStoreRejectsNewDecisionMemoryAndConstrainsLegacyWrites(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	store := NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("legacy-decision-memory-policy"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+	for _, category := range []string{"decision", " Decision ", "DECISION"} {
+		err := store.Memory.Create(&models.MemoryEntry{Title: "Rejected", Category: category})
+		if !errors.Is(err, models.ErrLegacyDecisionMemoryWrite) {
+			t.Fatalf("Create category %q error = %v", category, err)
+		}
+	}
+
+	legacy := &models.MemoryEntry{
+		ID: "legacy-decision", Title: "Historical choice", Layer: models.MemoryLayerProject,
+		Category: "decision", Status: models.MemoryStatusActive, Content: "Historical guidance.",
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	seedLegacyDecisionMemory(t, store, legacy)
+	loaded, err := store.Memory.Get(legacy.ID)
+	if err != nil || loaded.Content != legacy.Content {
+		t.Fatalf("read legacy memory: entry=%+v err=%v", loaded, err)
+	}
+	loaded.Title = "Forbidden rewrite"
+	if err := store.Memory.Update(loaded); !errors.Is(err, models.ErrLegacyDecisionMemoryWrite) {
+		t.Fatalf("active legacy update error = %v", err)
+	}
+	loaded, _ = store.Memory.Get(legacy.ID)
+	loaded.Status = models.MemoryStatusArchived
+	loaded.Metadata = map[string]string{"migration": "previewed"}
+	if err := store.Memory.Update(loaded); err != nil {
+		t.Fatalf("archive legacy memory: %v", err)
+	}
+	if err := store.Memory.Delete(legacy.ID); !errors.Is(err, models.ErrLegacyDecisionMemoryWrite) {
+		t.Fatalf("legacy delete error = %v", err)
+	}
+	if _, err := store.Memory.PromotePersistent(legacy.ID); !errors.Is(err, models.ErrLegacyDecisionMemoryWrite) {
+		t.Fatalf("legacy promote error = %v", err)
+	}
+
+	reclassified := &models.MemoryEntry{
+		ID: "legacy-reclassify", Title: "Historical convention", Layer: models.MemoryLayerProject,
+		Category: "decision", Status: models.MemoryStatusActive, Content: "Historical convention.",
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	seedLegacyDecisionMemory(t, store, reclassified)
+	reclassified.Category = "convention"
+	if err := store.Memory.Update(reclassified); err != nil {
+		t.Fatalf("reclassify legacy memory: %v", err)
+	}
+}
+
+func seedLegacyDecisionMemory(t *testing.T, store *Store, entry *models.MemoryEntry) {
+	t.Helper()
+	dir := filepath.Join(store.Root, "memory")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir legacy memory dir: %v", err)
+	}
+	path := filepath.Join(dir, models.MemoryFileName(entry.ID))
+	if err := os.WriteFile(path, []byte(renderMemory(entry)), 0o644); err != nil {
+		t.Fatalf("seed legacy memory: %v", err)
+	}
+}
 
 func TestParseMemoryContentDefaultsLegacyLifecycle(t *testing.T) {
 	content := `---
@@ -96,7 +161,7 @@ func TestRenderMemoryLifecycleRoundTrip(t *testing.T) {
 		ID:             "life1",
 		Title:          "Lifecycle Memory",
 		Layer:          models.MemoryLayerProject,
-		Category:       "decision",
+		Category:       "pattern",
 		Status:         models.MemoryStatusMerged,
 		Confidence:     models.MemoryConfidenceHigh,
 		LastVerified:   lastVerified,

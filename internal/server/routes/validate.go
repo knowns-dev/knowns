@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/howznguyen/knowns/internal/storage"
+	knownsvalidate "github.com/howznguyen/knowns/internal/validate"
 )
 
 // ValidateRoutes handles /api/validate endpoints.
@@ -131,6 +132,35 @@ func (vr *ValidateRoutes) sdd(w http.ResponseWriter, r *http.Request) {
 		passed = []string{}
 	}
 
+	decisionStats := map[string]int{
+		"compliant": 0, "unassessed": 0, "conflicts": 0,
+		"impactDeclared": 0, "impactInvalid": 0, "legacyImpactMissing": 0,
+	}
+	decisionValidation := knownsvalidate.Run(vr.getStore(), knownsvalidate.Options{Scope: "sdd"})
+	for _, issue := range decisionValidation.Issues {
+		switch issue.Code {
+		case "SDD_SPEC_DECISIONS_COMPLIANT":
+			decisionStats["compliant"]++
+		case "SDD_SPEC_DECISIONS_UNASSESSED":
+			decisionStats["unassessed"]++
+		case "SDD_SPEC_DECISION_CONFLICT":
+			decisionStats["conflicts"]++
+		case "SDD_SYSTEM_DECISION_IMPACT_DECLARED":
+			decisionStats["impactDeclared"]++
+		case "SDD_SYSTEM_DECISION_IMPACT_INVALID":
+			decisionStats["impactInvalid"]++
+		case "SDD_LEGACY_SPEC_NO_SYSTEM_DECISION_IMPACT":
+			decisionStats["legacyImpactMissing"]++
+		default:
+			continue
+		}
+		if issue.Level == "error" || issue.Level == "warning" {
+			warnings = append(warnings, SDDWarning{Type: issue.Code, Entity: issue.Entity, Message: issue.Message})
+		} else {
+			passed = append(passed, issue.Message)
+		}
+	}
+
 	_ = docs
 
 	// Build task stats dynamically using config statuses.
@@ -153,13 +183,14 @@ func (vr *ValidateRoutes) sdd(w http.ResponseWriter, r *http.Request) {
 				"draft":       0,
 				"implemented": 0,
 			},
-			"tasks":        taskStatsMap,
+			"tasks": taskStatsMap,
 			"coverage": map[string]interface{}{
 				"linked":  withSpec,
 				"total":   len(tasks),
 				"percent": coveragePercent,
 			},
 			"acCompletion": acCompletion,
+			"decisions":    decisionStats,
 		},
 		"warnings": warnings,
 		"passed":   passed,
