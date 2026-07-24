@@ -1,0 +1,223 @@
+package search
+
+import (
+	"math"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestLoadCanonicalEvaluationFixture(t *testing.T) {
+	fixture, err := LoadCanonicalEvaluationFixture()
+	if err != nil {
+		t.Fatalf("LoadCanonicalEvaluationFixture: %v", err)
+	}
+	if fixture.SchemaVersion != EvaluationFixtureSchemaVersion {
+		t.Fatalf("schema version = %d", fixture.SchemaVersion)
+	}
+	if len(fixture.Cases) < 5 {
+		t.Fatalf("case count = %d, want at least 5", len(fixture.Cases))
+	}
+	for _, tc := range fixture.Cases {
+		if len(tc.Qrels) == 0 || len(tc.Modes) != 3 {
+			t.Fatalf("case %q is missing qrels or evaluation modes", tc.ID)
+		}
+	}
+}
+
+func TestCommittedEvaluationBaselinesMatchCanonicalFixture(t *testing.T) {
+	fixture, err := LoadCanonicalEvaluationFixture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		path      string
+		mode      string
+		runtimeID string
+	}{
+		{"testdata/retrieval_evaluation_baseline.json", "keyword", "keyword"},
+		{"testdata/retrieval_evaluation_semantic_baseline.json", "semantic", "local/gte-small@384"},
+		{"testdata/retrieval_evaluation_hybrid_baseline.json", "hybrid", "local/gte-small@384"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			baseline, err := LoadEvaluationBaselineFile(tt.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ValidateEvaluationBaseline(fixture, baseline, tt.mode, tt.runtimeID); err != nil {
+				t.Fatalf("validate committed %s baseline: %v", tt.mode, err)
+			}
+		})
+	}
+}
+
+func TestCanonicalEvaluationFilesStayOutsideIndexedKnowledge(t *testing.T) {
+	for _, path := range []string{
+		CanonicalEvaluationFixturePath,
+		CanonicalEvaluationBaselinePath,
+		CanonicalSemanticEvaluationBaselinePath,
+		CanonicalHybridEvaluationBaselinePath,
+	} {
+		if strings.Contains(path, ".knowns/") {
+			t.Fatalf("evaluation file %q must remain outside indexed Knowns knowledge", path)
+		}
+		if !strings.HasPrefix(path, "internal/search/testdata/") {
+			t.Fatalf("evaluation file %q must live in Go testdata", path)
+		}
+	}
+}
+
+func TestValidateEvaluationFixtureRejectsInvalidFields(t *testing.T) {
+	valid := RetrievalEvaluationFixture{
+		SchemaVersion: EvaluationFixtureSchemaVersion,
+		Cases: []RetrievalEvaluationCase{{
+			ID:       "case-1",
+			Category: "exact",
+			Query:    "query",
+			Qrels:    []EvaluationQrel{{Source: "doc-a", Relevance: 3}},
+			Modes:    []string{"keyword"},
+		}},
+	}
+	if err := ValidateEvaluationFixture(&valid); err != nil {
+		t.Fatalf("valid fixture: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*RetrievalEvaluationFixture)
+		wantErr string
+	}{
+		{
+			name: "schema",
+			mutate: func(f *RetrievalEvaluationFixture) {
+				f.SchemaVersion = 99
+			},
+			wantErr: "schemaVersion",
+		},
+		{
+			name: "duplicate case",
+			mutate: func(f *RetrievalEvaluationFixture) {
+				f.Cases = append(f.Cases, f.Cases[0])
+			},
+			wantErr: "duplicate case ID",
+		},
+		{
+			name: "qrel range",
+			mutate: func(f *RetrievalEvaluationFixture) {
+				f.Cases[0].Qrels[0].Relevance = 4
+			},
+			wantErr: "expected 0..3",
+		},
+		{
+			name: "unsupported mode",
+			mutate: func(f *RetrievalEvaluationFixture) {
+				f.Cases[0].Modes = []string{"fallback"}
+			},
+			wantErr: "unsupported mode",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := valid
+			fixture.Cases = append([]RetrievalEvaluationCase{}, valid.Cases...)
+			fixture.Cases[0].Qrels = append([]EvaluationQrel{}, valid.Cases[0].Qrels...)
+			fixture.Cases[0].Modes = append([]string{}, valid.Cases[0].Modes...)
+			tt.mutate(&fixture)
+			err := ValidateEvaluationFixture(&fixture)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want substring %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestEvaluationDecodersRejectTrailingJSON(t *testing.T) {
+	fixtureJSON := `{"schemaVersion":1,"cases":[{"id":"case-1","category":"exact","query":"query","qrels":[{"source":"doc-a","relevance":3}],"modes":["keyword"]}]} {}`
+	if _, err := DecodeEvaluationFixture([]byte(fixtureJSON)); err == nil ||
+		!strings.Contains(err.Error(), "multiple JSON values") {
+		t.Fatalf("fixture trailing JSON error = %v", err)
+	}
+	baselineJSON := `{"schemaVersion":1} {}`
+	if _, err := DecodeEvaluationBaseline([]byte(baselineJSON)); err == nil ||
+		!strings.Contains(err.Error(), "multiple JSON values") {
+		t.Fatalf("baseline trailing JSON error = %v", err)
+	}
+}
+
+func TestEvaluateRankingMetrics(t *testing.T) {
+	qrels := []EvaluationQrel{
+		{Source: "ideal", Relevance: 3},
+		{Source: "useful", Relevance: 2},
+		{Source: "irrelevant", Relevance: 0},
+	}
+	metrics := EvaluateRankingMetrics(qrels, []string{"noise", "ideal", "useful"}, 3)
+	if math.Abs(metrics.MRRAt10-0.5) > 0.000001 {
+		t.Fatalf("MRR@10 = %.6f, want 0.5", metrics.MRRAt10)
+	}
+	if metrics.RecallAt5 != 1 || metrics.RecallAt10 != 1 || metrics.RecallAt20 != 1 {
+		t.Fatalf("recalls = %+v, want all 1", metrics)
+	}
+	if metrics.SuccessAtK != 1 {
+		t.Fatalf("Success@K = %.2f, want 1", metrics.SuccessAtK)
+	}
+	if metrics.NDCGAt10 <= 0 || metrics.NDCGAt10 >= 1 {
+		t.Fatalf("nDCG@10 = %.6f, want between 0 and 1", metrics.NDCGAt10)
+	}
+
+	perfect := EvaluateRankingMetrics(qrels, []string{"ideal", "useful"}, 1)
+	if math.Abs(perfect.NDCGAt10-1) > 0.000001 {
+		t.Fatalf("perfect nDCG@10 = %.6f, want 1", perfect.NDCGAt10)
+	}
+}
+
+func TestAggregateEvaluationMetricsAndLatency(t *testing.T) {
+	aggregate := AggregateEvaluationMetrics([]EvaluationMetrics{
+		{NDCGAt10: 1, MRRAt10: 1, RecallAt5: 1, RecallAt10: 1, RecallAt20: 1, SuccessAtK: 1},
+		{},
+	})
+	if aggregate.NDCGAt10 != 0.5 || aggregate.SuccessAtK != 0.5 {
+		t.Fatalf("aggregate = %+v", aggregate)
+	}
+
+	latency := SummarizeEvaluationLatency([]time.Duration{
+		1 * time.Millisecond,
+		2 * time.Millisecond,
+		3 * time.Millisecond,
+		4 * time.Millisecond,
+		100 * time.Millisecond,
+	})
+	if latency.P50Millis != 3 || latency.P95Millis != 100 {
+		t.Fatalf("latency = %+v, want p50=3 p95=100", latency)
+	}
+}
+
+func TestValidateEvaluationBaselineFindsMissingCaseBeforeRetrieval(t *testing.T) {
+	fixture := &RetrievalEvaluationFixture{
+		SchemaVersion: EvaluationFixtureSchemaVersion,
+		Cases: []RetrievalEvaluationCase{{
+			ID:       "new-case",
+			Category: "exact",
+			Query:    "query",
+			Qrels:    []EvaluationQrel{{Source: "doc-a", Relevance: 3}},
+			Modes:    []string{"keyword"},
+		}},
+	}
+	digest, err := EvaluationFixtureDigest(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := &RetrievalEvaluationBaseline{
+		SchemaVersion:        EvaluationBaselineSchemaVersion,
+		FixtureSchemaVersion: EvaluationFixtureSchemaVersion,
+		FixtureDigest:        digest,
+		Mode:                 "keyword",
+		RuntimeIdentity:      "keyword",
+		Reason:               "reviewed",
+		Tolerances:           map[string]float64{"recallAt10": 0.01},
+	}
+	err = ValidateEvaluationBaseline(fixture, baseline, "keyword", "keyword")
+	if err == nil || !strings.Contains(err.Error(), `canonical case "new-case" has no baseline`) {
+		t.Fatalf("error = %v, want missing baseline case guidance", err)
+	}
+}
