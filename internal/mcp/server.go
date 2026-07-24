@@ -356,7 +356,7 @@ func NewMCPServer(projectHint string) *MCPServer {
 	// Register all tool groups.
 	handlers.RegisterProjectToolWithStatusProvider(s, getStore, setStore, getRoot, getLSPStatuses, getLSPManager)
 	handlers.RegisterTaskTool(s, getStore)
-	handlers.RegisterDocTool(s.srv, getStore)
+	handlers.RegisterDocTool(s, getStore)
 	s.RegisterHelp("docs.get", handlers.HelpEntry{
 		When: "Read documentation without loading more content than needed.",
 		Params: map[string]string{

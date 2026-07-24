@@ -1,14 +1,15 @@
 ---
 title: MCP Server Pattern
-createdAt: '2025-12-29T07:02:33.684Z'
-updatedAt: '2026-03-08T18:21:23.560Z'
 description: Documentation for the Model Context Protocol (MCP) server pattern
+createdAt: '2025-12-29T07:02:33.684Z'
+updatedAt: '2026-07-24T10:23:05.598Z'
 tags:
   - architecture
   - patterns
   - mcp
   - ai
 ---
+
 ## Overview
 
 MCP (Model Context Protocol) is a protocol that allows AI models to interact with tools via JSON-RPC. Knowns implements an MCP server using the `mcp-go` library (`github.com/mark3labs/mcp-go`) so Claude and other AI agents can access tasks and documentation directly.
@@ -235,20 +236,32 @@ func runMCPServer(store *storage.Store) error {
 ```
 ## Tools Exposed
 
-| Tool | Description | Input |
-|------|-------------|-------|
-| `create_task` | Create new task | title, description?, status?, priority?, labels? |
-| `get_task` | Get task by ID | taskId |
-| `list_tasks` | List tasks with filters | status?, assignee?, labels? |
-| `update_task` | Update task fields | taskId, fields to update |
-| `search` | Unified search (tasks + docs) | query, type?, mode?, filters |
-| `start_time` | Start timer | taskId |
-| `stop_time` | Stop current timer | - |
-| `get_time_entries` | Get time entries | taskId?, dateRange? |
-| `list_docs` | List all docs | folder? |
-| `get_doc` | Get doc content | path |
-| `create_doc` | Create new doc | title, content, tags? |
-| `update_doc` | Update doc | path, content |
+Knowns exposes domain-grouped MCP tools. Callers select an operation with the required `action` parameter.
+
+| Tool | Representative actions |
+|------|------------------------|
+| `tasks` | `create`, `get`, `update`, `list`, `history`, `board`, lifecycle actions |
+| `docs` | `create`, `get`, `update`, `list`, `history`, `diff`, `restore` |
+| `search` | `search`, `retrieve`, `resolve` |
+| `code` | navigation, diagnostics, and structural edit actions |
+| `memory` | add, inspect, update, review, and lifecycle actions |
+| `decision` | create, inspect, link, supersede, and resolve |
+| `time` | `start`, `stop`, `add`, `report` |
+| `templates` | `create`, `get`, `list`, `run` |
+| `project` | project detection, selection, and status |
+| `validate` | task, doc, template, and SDD validation |
+
+### Mutation Response Modes
+
+For `tasks.create`, `tasks.update`, `docs.create`, and `docs.update`, successful calls return compact summaries by default. This avoids injecting task bodies or full document content back into the model context after a mutation.
+
+- Omit `return` or set `return: "summary"` for the compact default.
+- Set `return: "full"` only when the complete legacy task or document payload is required.
+- Task summaries contain `success`, `taskId`, `status`, and `updatedAt`.
+- Document summaries contain `success`, `path`, and `updatedAt`; rename responses also contain `previousPath`.
+- Unsupported `return` values fail before mutation. Existing mutation error details and responses from other actions are unchanged.
+
+See @doc/specs/2026-07-24/mcp-mutation-response-compaction for the approved contract.
 
 ## Auto-Fetch Linked Docs
 

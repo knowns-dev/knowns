@@ -1,10 +1,11 @@
 package handlers
 
 import (
-	"github.com/mark3labs/mcp-go/server"
+	"fmt"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 // unescapeText replaces literal \n and \t sequences with actual newlines and tabs.
@@ -34,6 +35,23 @@ func stringArg(args map[string]any, key string) (string, bool) {
 	}
 	s, ok := v.(string)
 	return s, ok
+}
+
+const (
+	mutationReturnSummary = "summary"
+	mutationReturnFull    = "full"
+)
+
+func parseMutationReturn(args map[string]any) (string, error) {
+	value, exists := args["return"]
+	if !exists {
+		return mutationReturnSummary, nil
+	}
+	mode, ok := value.(string)
+	if !ok || (mode != mutationReturnSummary && mode != mutationReturnFull) {
+		return "", fmt.Errorf("invalid return value %v; valid values are %q and %q", value, mutationReturnSummary, mutationReturnFull)
+	}
+	return mode, nil
 }
 
 // intArg safely extracts an int argument from the args map (JSON numbers come as float64).
