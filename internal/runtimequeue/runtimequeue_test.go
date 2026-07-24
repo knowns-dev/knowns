@@ -90,6 +90,28 @@ func TestEnqueueCoalescesDuplicateJobs(t *testing.T) {
 	}
 }
 
+func TestEnqueueRequiresExplicitAPIForReindex(t *testing.T) {
+	SetTestBypass(true)
+	defer SetTestBypass(false)
+	t.Setenv("HOME", t.TempDir())
+	storeRoot := filepath.Join(t.TempDir(), ".knowns")
+
+	if _, err := Enqueue(storeRoot, JobReindex, storeRoot); err == nil {
+		t.Fatal("generic Enqueue should reject full search reindex jobs")
+	}
+
+	job, err := EnqueueReindex(storeRoot)
+	if err != nil {
+		t.Fatalf("enqueue explicit reindex: %v", err)
+	}
+	if job.Kind != JobReindex {
+		t.Fatalf("explicit reindex kind = %q, want %q", job.Kind, JobReindex)
+	}
+	if job.Target != "" {
+		t.Fatalf("explicit reindex target = %q, want empty target", job.Target)
+	}
+}
+
 func TestAcquireClientTracksIndependentLeases(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
@@ -164,7 +186,7 @@ func TestLoadJobSnapshotFindsQueuedAndCompletedJobs(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	storeRoot := filepath.Join(t.TempDir(), ".knowns")
 
-	job, err := Enqueue(storeRoot, JobReindex, "")
+	job, err := EnqueueReindex(storeRoot)
 	if err != nil {
 		t.Fatalf("enqueue job: %v", err)
 	}
@@ -220,7 +242,7 @@ func TestWaitForJobReturnsCompletedSnapshotResult(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	storeRoot := filepath.Join(t.TempDir(), ".knowns")
 
-	job, err := Enqueue(storeRoot, JobReindex, "")
+	job, err := EnqueueReindex(storeRoot)
 	if err != nil {
 		t.Fatalf("enqueue job: %v", err)
 	}

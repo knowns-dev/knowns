@@ -17,7 +17,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/howznguyen/knowns/internal/registry"
-	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/server"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/howznguyen/knowns/internal/util"
@@ -156,22 +155,6 @@ func runBrowser(cmd *cobra.Command, args []string) error {
 			}
 		}()
 		fmt.Printf("  %s  %s\n", StyleInfo.Render("◎"), StyleDim.Render("file watcher enabled"))
-	}
-
-	// Auto-ingest code on startup if semantic search is configured but no code chunks exist.
-	if store != nil && projectRoot != "" {
-		go func() {
-			db := store.SemanticDB()
-			if db == nil {
-				return
-			}
-			var count int
-			_ = db.QueryRow("SELECT COUNT(*) FROM chunks WHERE type='code'").Scan(&count)
-			db.Close()
-			if count == 0 {
-				search.BestEffortIndexAll(store, projectRoot)
-			}
-		}()
 	}
 
 	errCh := make(chan error, 1)

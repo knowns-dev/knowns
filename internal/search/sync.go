@@ -244,17 +244,6 @@ func memoryIndexTarget(store *storage.Store, memoryID string) (*storage.Store, s
 	return store, store.Root
 }
 
-// BestEffortIndexAll reindexes docs, tasks, and memories.
-// Safe to call from a goroutine; errors are logged, not returned.
-// No-op if semantic search is not configured.
-func BestEffortIndexAll(store *storage.Store, projectRoot string) {
-	_ = enqueueRuntimeJob(store, runtimequeue.JobReindex, projectRoot, func() {
-		scheduleBestEffort(store, "reindex", "all", func(svc *IndexService) error {
-			return svc.Reindex(nil)
-		})
-	})
-}
-
 // BestEffortIndexFile is a no-op because code indexing has been removed.
 func BestEffortIndexFile(store *storage.Store, docPath, absPath string) {
 	// Code files are not indexed in background sync. Real-time code intelligence uses LSP.
