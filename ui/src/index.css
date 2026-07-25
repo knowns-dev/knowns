@@ -1204,3 +1204,37 @@ body {
     animation: none;
   }
 }
+
+/* ===== Analysis Workbench ===== */
+.analysis-workbench {
+  --analysis-canvas: #fafafa;
+  --analysis-grid: #e4e7ec;
+  --analysis-created: #2563eb;
+  --analysis-completed: #0f9d7a;
+  --analysis-knowledge: #6558d3;
+  --analysis-risk: #b45309;
+  --analysis-risk-text: #92400e;
+  --analysis-risk-soft: #fffbeb;
+  --analysis-error: #c2413e;
+  --analysis-critical: #ad6664;
+  --analysis-neutral: #7b8494;
+  font-variant-numeric: tabular-nums;
+}
+
+.dark .analysis-workbench {
+  --analysis-canvas: #090a0d;
+  --analysis-grid: #2a2f38;
+  --analysis-created: #60a5fa;
+  --analysis-completed: #34d399;
+  --analysis-knowledge: #a78bfa;
+  --analysis-risk: #f59e0b;
+  --analysis-risk-text: #fbbf24;
+  --analysis-risk-soft: #1c1609;
+  --analysis-error: #f87171;
+  --analysis-critical: #c97876;
+  --analysis-neutral: #a8b0be;
+}
+
+.analysis-workbench .analysis-rule {
+  box-shadow: inset 0 1px 0 var(--analysis-created);
+}
