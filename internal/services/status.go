@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,13 +38,49 @@ type ServiceStatus struct {
 	Details         map[string]string `json:"details,omitempty"` // extra info: model, language, URL, etc.
 }
 
+func sortServiceStatuses(statuses []ServiceStatus) {
+	sort.Slice(statuses, func(i, j int) bool {
+		runningI := statuses[i].Status == "running"
+		runningJ := statuses[j].Status == "running"
+		if runningI != runningJ {
+			return runningI
+		}
+
+		nameI := strings.ToLower(statuses[i].Name)
+		nameJ := strings.ToLower(statuses[j].Name)
+		if nameI != nameJ {
+			return nameI < nameJ
+		}
+		if statuses[i].Type != statuses[j].Type {
+			return statuses[i].Type < statuses[j].Type
+		}
+		return statuses[i].Status < statuses[j].Status
+	})
+}
+
 // detectionTimeout is the max time each individual detector may spend.
 const detectionTimeout = 2 * time.Second
 
+// LSPRuntimeStatusProvider supplies the canonical live LSP snapshot for a
+// project while the other service detectors run in parallel.
+type LSPRuntimeStatusProvider func(context.Context, *storage.Store) []lsp.LanguageRuntimeStatus
+
 // DetectAll returns status for all managed sub-processes.
-// Each detector runs independently and is protected by a 2-second timeout.
-// It handles stale PID files gracefully without false "running" status.
 func DetectAll(store *storage.Store) []ServiceStatus {
+	return detectAll(context.Background(), store, nil)
+}
+
+// DetectAllWithLSPStatusProvider resolves live LSP state in parallel with the
+// other bounded service detectors.
+func DetectAllWithLSPStatusProvider(ctx context.Context, store *storage.Store, provider LSPRuntimeStatusProvider) []ServiceStatus {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return detectAll(ctx, store, provider)
+}
+
+// detectAll runs each detector independently with bounded local probes.
+func detectAll(ctx context.Context, store *storage.Store, lspStatusProvider LSPRuntimeStatusProvider) []ServiceStatus {
 	var proj *models.Project
 	if store != nil {
 		loaded, err := store.Config.Load()
@@ -74,6 +111,12 @@ func DetectAll(store *storage.Store) []ServiceStatus {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		if lspStatusProvider != nil {
+			probeCtx, cancel := context.WithTimeout(ctx, detectionTimeout)
+			defer cancel()
+			add(lspServicesFromRuntimeStatuses(proj, lspStatusProvider(probeCtx, store)))
+			return
+		}
 		projectRoot := ""
 		if store != nil {
 			projectRoot = filepath.Dir(store.Root)
@@ -94,6 +137,7 @@ func DetectAll(store *storage.Store) []ServiceStatus {
 	}()
 
 	wg.Wait()
+	sortServiceStatuses(results)
 	return results
 }
 
@@ -189,8 +233,6 @@ func detectOpenCode(proj *models.Project) []ServiceStatus {
 // ----- LSP Server Detection -----
 
 func detectLSP(proj *models.Project, projectRoot string) []ServiceStatus {
-	var results []ServiceStatus
-
 	// Determine which languages are configured.
 	var defaults *storage.ProjectDefaults
 	if settings, err := storage.NewEmbeddingSettingsStore().Load(); err == nil {
@@ -200,14 +242,13 @@ func detectLSP(proj *models.Project, projectRoot string) []ServiceStatus {
 
 	// If LSP is globally disabled, report one disabled entry.
 	if proj != nil && proj.Settings.LSP != nil && proj.Settings.LSP.Enabled != nil && !*proj.Settings.LSP.Enabled {
-		results = append(results, ServiceStatus{
+		return []ServiceStatus{{
 			Name:            "LSP (global)",
 			Type:            "lsp",
 			Status:          "disabled",
 			EnabledInConfig: false,
 			Details:         make(map[string]string),
-		})
-		return results
+		}}
 	}
 
 	statuses := lsp.CollectRuntimeStatuses(context.Background(), lsp.RuntimeStatusOptions{
@@ -215,17 +256,31 @@ func detectLSP(proj *models.Project, projectRoot string) []ServiceStatus {
 		Config:   lspConfig,
 		Adapters: adapters.All(),
 	})
+	return lspServicesFromRuntimeStatuses(proj, statuses)
+}
+
+func lspServicesFromRuntimeStatuses(proj *models.Project, statuses []lsp.LanguageRuntimeStatus) []ServiceStatus {
+	if proj != nil && proj.Settings.LSP != nil && proj.Settings.LSP.Enabled != nil && !*proj.Settings.LSP.Enabled {
+		return []ServiceStatus{{
+			Name:            "LSP (global)",
+			Type:            "lsp",
+			Status:          "disabled",
+			EnabledInConfig: false,
+			Details:         make(map[string]string),
+		}}
+	}
+
 	if len(statuses) == 0 {
-		results = append(results, ServiceStatus{
+		return []ServiceStatus{{
 			Name:            "LSP",
 			Type:            "lsp",
 			Status:          "stopped",
 			EnabledInConfig: true,
 			Details:         map[string]string{"reason": "no languages detected"},
-		})
-		return results
+		}}
 	}
 
+	results := make([]ServiceStatus, 0, len(statuses))
 	for _, runtimeStatus := range statuses {
 		ss := ServiceStatus{
 			Name:            "LSP (" + runtimeStatus.ID + ")",
@@ -234,6 +289,8 @@ func detectLSP(proj *models.Project, projectRoot string) []ServiceStatus {
 			EnabledInConfig: runtimeStatus.Enabled,
 			Details: map[string]string{
 				"language":        runtimeStatus.ID,
+				"detected":        strconv.FormatBool(runtimeStatus.Detected),
+				"enabled":         strconv.FormatBool(runtimeStatus.Enabled),
 				"install_state":   runtimeStatus.InstallState,
 				"running_state":   runtimeStatus.RunningState,
 				"readiness_state": runtimeStatus.ReadinessState,
@@ -255,6 +312,23 @@ func detectLSP(proj *models.Project, projectRoot string) []ServiceStatus {
 		addDetail("install_cmd", runtimeStatus.InstallCmd)
 		addDetail("install_error", runtimeStatus.InstallError)
 		addDetail("update_error", runtimeStatus.UpdateError)
+		addDetail("owner", runtimeStatus.Owner)
+		addDetail("daemon_state", runtimeStatus.DaemonState)
+		addDetail("daemon_transport", runtimeStatus.DaemonTransport)
+		addDetail("daemon_endpoint", runtimeStatus.DaemonEndpoint)
+		addDetail("daemon_idle_deadline", runtimeStatus.DaemonIdleDeadline)
+		if runtimeStatus.DaemonPID > 0 {
+			ss.Details["daemon_pid"] = strconv.Itoa(runtimeStatus.DaemonPID)
+		}
+		if runtimeStatus.DaemonClients > 0 {
+			ss.Details["daemon_clients"] = strconv.Itoa(runtimeStatus.DaemonClients)
+		}
+		if runtimeStatus.DaemonLeaseCount > 0 {
+			ss.Details["daemon_lease_count"] = strconv.Itoa(runtimeStatus.DaemonLeaseCount)
+		}
+		if len(runtimeStatus.DaemonLeaseOwners) > 0 {
+			ss.Details["daemon_lease_owners"] = strings.Join(runtimeStatus.DaemonLeaseOwners, ",")
+		}
 		if runtimeStatus.InstallState != lsp.RuntimeInstallInstalled {
 			ss.Details["reason"] = runtimeStatus.InstallState
 		}
@@ -266,6 +340,14 @@ func detectLSP(proj *models.Project, projectRoot string) []ServiceStatus {
 }
 
 func serviceStatusFromLSP(status lsp.LanguageRuntimeStatus) string {
+	switch status.RunningState {
+	case lsp.RuntimeRunningRunning, lsp.RuntimeRunningStarting:
+		return "running"
+	case lsp.RuntimeRunningCrashed:
+		return "error"
+	case lsp.RuntimeRunningDisabled:
+		return "disabled"
+	}
 	switch status.Status {
 	case lsp.RuntimeRunningRunning:
 		return "running"
@@ -591,7 +673,9 @@ func addSemanticJobDetails(ss *ServiceStatus, store *storage.Store) {
 		return
 	}
 	var running, queued, recent, failed int
-	lastErr := ""
+	latestSeen := false
+	latestFailed := false
+	latestErr := ""
 	for _, job := range queue.Jobs {
 		if job == nil || !isSemanticRuntimeJob(job.Kind) {
 			continue
@@ -606,12 +690,14 @@ func addSemanticJobDetails(ss *ServiceStatus, store *storage.Store) {
 		if !isSemanticRuntimeJob(result.Kind) {
 			continue
 		}
+		if !latestSeen {
+			latestSeen = true
+			latestFailed = !result.Success
+			latestErr = result.Error
+		}
 		recent++
 		if !result.Success {
 			failed++
-			if lastErr == "" {
-				lastErr = result.Error
-			}
 		}
 	}
 	if running > 0 {
@@ -625,9 +711,11 @@ func addSemanticJobDetails(ss *ServiceStatus, store *storage.Store) {
 	}
 	if failed > 0 {
 		ss.Details["recent_failed_jobs"] = strconv.Itoa(failed)
+	}
+	if latestFailed {
 		ss.Details["degraded"] = "true"
-		if lastErr != "" {
-			ss.Details["last_error"] = lastErr
+		if latestErr != "" {
+			ss.Details["last_error"] = latestErr
 		}
 	}
 }

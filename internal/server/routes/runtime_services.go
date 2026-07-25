@@ -10,10 +10,13 @@ import (
 	"github.com/howznguyen/knowns/internal/storage"
 )
 
+const runtimeServicesTimeout = 3 * time.Second
+
 // RuntimeServicesRoutes handles GET /api/runtime/services.
 type RuntimeServicesRoutes struct {
-	store *storage.Store
-	mgr   *storage.Manager
+	store       *storage.Store
+	mgr         *storage.Manager
+	lspStatuses services.LSPRuntimeStatusProvider
 }
 
 func (rs *RuntimeServicesRoutes) getStore() *storage.Store {
@@ -32,13 +35,19 @@ func (rs *RuntimeServicesRoutes) Register(r chi.Router) {
 //
 // GET /api/runtime/services
 func (rs *RuntimeServicesRoutes) getServices(w http.ResponseWriter, r *http.Request) {
-	// Enforce a 2-second timeout on the entire handler.
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	// Individual detectors are bounded at two seconds; leave one second for
+	// aggregation and response serialization.
+	ctx, cancel := context.WithTimeout(r.Context(), runtimeServicesTimeout)
 	defer cancel()
 
 	done := make(chan []services.ServiceStatus, 1)
+	store := rs.getStore()
 	go func() {
-		done <- services.DetectAll(rs.getStore())
+		if rs.lspStatuses != nil {
+			done <- services.DetectAllWithLSPStatusProvider(ctx, store, rs.lspStatuses)
+			return
+		}
+		done <- services.DetectAll(store)
 	}()
 
 	var results []services.ServiceStatus

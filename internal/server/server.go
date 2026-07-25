@@ -643,7 +643,7 @@ func (s *Server) startServiceStatusMonitor(ctx context.Context) {
 	}
 
 	s.prevServiceMu.Lock()
-	s.prevServiceStatus = services.DetectAll(store)
+	s.prevServiceStatus = s.detectRuntimeServices(ctx, store, false)
 	s.prevServiceMu.Unlock()
 
 	go func() {
@@ -661,7 +661,7 @@ func (s *Server) startServiceStatusMonitor(ctx context.Context) {
 			if store == nil {
 				continue
 			}
-			changes := s.detectChangedServices(services.DetectAll(store))
+			changes := s.detectChangedServices(s.detectRuntimeServices(ctx, store, false))
 			if len(changes) == 0 {
 				continue
 			}
@@ -671,6 +671,53 @@ func (s *Server) startServiceStatusMonitor(ctx context.Context) {
 			})
 		}
 	}()
+}
+
+type lspRuntimeStatusClient interface {
+	AcquireLease(context.Context, string, time.Duration) ([]lsp.LanguageRuntimeStatus, error)
+	RuntimeStatuses(context.Context) ([]lsp.LanguageRuntimeStatus, error)
+}
+
+func fetchLSPRuntimeStatuses(ctx context.Context, client lspRuntimeStatusClient, acquireLease bool) ([]lsp.LanguageRuntimeStatus, error) {
+	if acquireLease {
+		if statuses, err := client.AcquireLease(ctx, "webui", lspdaemon.LeaseTTLFromEnv()); err == nil {
+			return statuses, nil
+		}
+	}
+	return client.RuntimeStatuses(ctx)
+}
+
+func (s *Server) lspRuntimeStatuses(ctx context.Context, store *storage.Store, acquireLease bool) []lsp.LanguageRuntimeStatus {
+	if store == nil {
+		return nil
+	}
+	if lspdaemon.DisabledByEnv() {
+		log.Printf("[server] %s", lspdaemon.DisabledWarning())
+		if s.lspManager != nil {
+			return lspdaemon.AnnotateLocalStatuses(s.lspManager.RuntimeStatuses(ctx), lspdaemon.DaemonStateDisabledByEnv)
+		}
+		return nil
+	}
+
+	if client, err := lspdaemon.EnsureClient(ctx, filepath.Dir(store.Root)); err == nil {
+		if statuses, err := fetchLSPRuntimeStatuses(ctx, client, acquireLease); err == nil {
+			return statuses
+		}
+	}
+	if s.lspManager != nil {
+		return lspdaemon.AnnotateLocalStatuses(s.lspManager.RuntimeStatuses(ctx), lspdaemon.DaemonStateUnavailable)
+	}
+	return nil
+}
+
+func (s *Server) detectRuntimeServices(ctx context.Context, store *storage.Store, acquireLease bool) []services.ServiceStatus {
+	return services.DetectAllWithLSPStatusProvider(
+		ctx,
+		store,
+		func(providerCtx context.Context, providerStore *storage.Store) []lsp.LanguageRuntimeStatus {
+			return s.lspRuntimeStatuses(providerCtx, providerStore, acquireLease)
+		},
+	)
 }
 
 func (s *Server) setRuntimeStatus(status opencode.RuntimeStatus) {
@@ -879,20 +926,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	readinessOpts := serverreadiness.Options{Runtime: rtStatus}
-	if lspdaemon.DisabledByEnv() {
-		log.Printf("[server] %s", lspdaemon.DisabledWarning())
-		if s.lspManager != nil {
-			readinessOpts.LSP = lspdaemon.AnnotateLocalStatuses(s.lspManager.RuntimeStatuses(r.Context()), lspdaemon.DaemonStateDisabledByEnv)
-		}
-	} else if client, err := lspdaemon.EnsureClient(r.Context(), s.projectRoot); err == nil {
-		_, _ = client.AcquireLease(r.Context(), "webui", lspdaemon.LeaseTTLFromEnv())
-		if statuses, err := client.RuntimeStatuses(r.Context()); err == nil {
-			readinessOpts.LSP = statuses
-		}
-	}
-	if s.lspManager != nil && len(readinessOpts.LSP) == 0 {
-		readinessOpts.LSP = lspdaemon.AnnotateLocalStatuses(s.lspManager.RuntimeStatuses(r.Context()), lspdaemon.DaemonStateUnavailable)
+	readinessOpts := serverreadiness.Options{
+		Runtime: rtStatus,
+		LSP:     s.lspRuntimeStatuses(r.Context(), store, true),
 	}
 	payload := serverreadiness.BuildReadiness(store, readinessOpts)
 	writeJSON(w, http.StatusOK, payload)
@@ -1012,7 +1048,18 @@ func (s *Server) buildRouter() chi.Router {
 
 	// --- API routes ---
 	r.Route("/api", func(r chi.Router) {
-		routes.SetupRoutesWithCapabilities(r, s.store, s.sse, s.projectRoot, s.manager, routes.TaskRouteCapabilities{HardDelete: s.opts.AllowTaskHardDelete}, s.reinitOpenCode)
+		routes.SetupRoutesWithCapabilitiesAndLSPStatusProvider(
+			r,
+			s.store,
+			s.sse,
+			s.projectRoot,
+			s.manager,
+			routes.TaskRouteCapabilities{HardDelete: s.opts.AllowTaskHardDelete},
+			func(ctx context.Context, store *storage.Store) []lsp.LanguageRuntimeStatus {
+				return s.lspRuntimeStatuses(ctx, store, true)
+			},
+			s.reinitOpenCode,
+		)
 	})
 
 	// --- LSP language management routes ---

@@ -513,6 +513,12 @@ export default function ConfigPage() {
 		}
 	}, []);
 
+	useEffect(() => {
+		if (activeCategory === "runtime") {
+			void loadRuntimeServices();
+		}
+	}, [activeCategory, loadRuntimeServices]);
+
 	// Load embedding models on mount and when provider changes
 	const loadEmbeddingModels = useCallback(async () => {
 		try {
