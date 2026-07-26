@@ -340,7 +340,9 @@ func TestManagerConfiguresPathDocumentSyncAdapter(t *testing.T) {
 		},
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Race-enabled Windows runners can take more than five seconds to start
+	// the copied fake LSP executable.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	srv, ok, err := m.ServerForPath(ctx, path)
 	if err != nil {
