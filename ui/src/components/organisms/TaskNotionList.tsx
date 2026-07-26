@@ -327,16 +327,25 @@ function TaskRow({ task, isNew, onClick }: { task: Task; isNew?: boolean; onClic
 	const acTotal = criteria.length;
 
 	return (
-		<button
-			type="button"
+		<div
 			onClick={onClick}
 			className={cn(
-				"flex items-center gap-3 w-full text-left px-3 py-2.5 rounded-lg transition-colors hover:bg-muted/50 group",
-				isNew && "animate-[fade-in-up_0.5s_ease-out] bg-primary/5",
+				"group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-muted/50",
+				isNew && "animate-[fade-in-up_0.5s_ease-out] bg-primary/5 motion-reduce:animate-none",
 			)}
 		>
+			<button
+				type="button"
+				onClick={(event) => {
+					event.stopPropagation();
+					onClick();
+				}}
+				aria-label={`Open task ${task.title}`}
+				className="pointer-events-none absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+			/>
+
 			{/* Title + description */}
-			<div className="flex-1 min-w-0">
+			<div className="relative z-10 min-w-0 flex-1">
 				<div className="flex items-center gap-2">
 					<span className="text-sm font-medium truncate">{task.title}</span>
 					<span className="text-[11px] font-mono text-muted-foreground/60 shrink-0">
@@ -352,10 +361,10 @@ function TaskRow({ task, isNew, onClick }: { task: Task; isNew?: boolean; onClic
 			</div>
 
 			{/* Properties — right side */}
-			<div className="flex items-center gap-2 shrink-0">
+			<div className="relative z-10 flex shrink-0 items-center gap-2">
 				{/* Labels */}
 				{(task.labels ?? []).length > 0 && (
-					<div className="hidden sm:block" onClick={(e) => e.stopPropagation()}>
+					<div className="hidden sm:block">
 						<LabelList labels={task.labels} maxVisible={2} />
 					</div>
 				)}
@@ -368,7 +377,8 @@ function TaskRow({ task, isNew, onClick }: { task: Task; isNew?: boolean; onClic
 							e.stopPropagation();
 							navigateTo(`/docs/${task.spec}.md`);
 						}}
-						className="hidden md:flex items-center gap-1 text-[11px] text-purple-600 dark:text-purple-400 hover:underline shrink-0"
+						className="pointer-events-auto hidden shrink-0 items-center gap-1 text-[11px] text-purple-600 hover:underline dark:text-purple-400 md:flex"
+						aria-label={`Open specification ${task.spec.split("/").pop()}`}
 						title={`@doc/${task.spec}`}
 					>
 						<FileText className="w-3 h-3" />
@@ -392,10 +402,10 @@ function TaskRow({ task, isNew, onClick }: { task: Task; isNew?: boolean; onClic
 				)}
 
 				{/* Priority */}
-				<div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+				<div className="shrink-0">
 					<PriorityBadge priority={task.priority} />
 				</div>
 			</div>
-		</button>
+		</div>
 	);
 }

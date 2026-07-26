@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { type KeyboardEvent, useEffect, useState, useRef, useCallback } from "react";
 import {
 	Settings,
 	Check,
@@ -200,12 +200,12 @@ function SectionHeader({ icon: Icon, title, description }: { icon: LucideIcon; t
 
 function FieldRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
 	return (
-		<div className="flex items-start gap-4 py-3">
-			<div className="w-44 shrink-0 pt-2">
+		<div className="flex flex-col items-stretch gap-2 py-3 lg:flex-row lg:items-start lg:gap-4">
+			<div className="w-full shrink-0 lg:w-44 lg:pt-2">
 				<div className="text-sm font-medium">{label}</div>
 				{hint && <div className="text-xs text-muted-foreground mt-0.5">{hint}</div>}
 			</div>
-			<div className="flex-1 min-w-0">{children}</div>
+			<div className="w-full min-w-0 flex-1">{children}</div>
 		</div>
 	);
 }
@@ -612,6 +612,25 @@ export default function ConfigPage() {
 	// ── Filter categories based on chatUI visibility ──────────────
 
 	const categories = ALL_CATEGORIES.filter((cat) => cat.id !== "ai" || chatUIEnabled);
+	const handleCategoryKeyDown = (
+		event: KeyboardEvent<HTMLButtonElement>,
+		categoryIndex: number,
+	) => {
+		let nextIndex: number | null = null;
+		if (event.key === "ArrowRight") nextIndex = (categoryIndex + 1) % categories.length;
+		if (event.key === "ArrowLeft") nextIndex = (categoryIndex - 1 + categories.length) % categories.length;
+		if (event.key === "Home") nextIndex = 0;
+		if (event.key === "End") nextIndex = categories.length - 1;
+		if (nextIndex === null) return;
+
+		const nextCategory = categories[nextIndex];
+		if (!nextCategory) return;
+		event.preventDefault();
+		setActiveCategory(nextCategory.id);
+		requestAnimationFrame(() => {
+			document.getElementById(`settings-tab-${nextCategory.id}`)?.focus();
+		});
+	};
 
 	// ── Render category content ───────────────────────────────────
 
@@ -2020,16 +2039,16 @@ export default function ConfigPage() {
 	// ── Main layout ───────────────────────────────────────────────
 
 	return (
-		<div className="h-full flex flex-col">
+		<div className="flex h-full min-w-0 flex-col overflow-hidden">
 			{/* Top bar */}
-			<div className="px-6 py-4 border-b shrink-0 flex items-center justify-between">
+			<div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-4 md:px-6">
 				<h1 className="text-lg font-semibold">Settings</h1>
-				<Badge variant="outline" className="text-xs">
+				<Badge variant="outline" className="max-w-[60vw] truncate text-xs md:max-w-80">
 					{config.name || "Unknown"}
 				</Badge>
 			</div>
 
-			<div className="flex-1 flex min-h-0">
+			<div className="flex min-h-0 min-w-0 flex-1 flex-col md:flex-row">
 				{/* Sidebar (desktop) */}
 				<nav className="w-52 shrink-0 border-r bg-accent/30 p-3 hidden md:block">
 					<div className="space-y-0.5">
@@ -2040,6 +2059,7 @@ export default function ConfigPage() {
 								<button
 									key={cat.id}
 									type="button"
+									aria-current={isActive ? "page" : undefined}
 									onClick={() => setActiveCategory(cat.id)}
 									className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors text-left ${
 										isActive
@@ -2056,16 +2076,32 @@ export default function ConfigPage() {
 				</nav>
 
 				{/* Mobile tabs */}
-				<div className="md:hidden border-b px-4 pt-2 flex gap-1 shrink-0 overflow-x-auto">
-					{categories.map((cat) => {
+				<div
+					role="tablist"
+					aria-label="Settings categories"
+					className="flex w-full min-w-0 shrink-0 gap-1 overflow-x-auto overscroll-x-contain border-b px-4 pt-2 md:hidden"
+				>
+					{categories.map((cat, categoryIndex) => {
 						const Icon = cat.icon;
 						const isActive = activeCategory === cat.id;
 						return (
 							<button
+								id={`settings-tab-${cat.id}`}
 								key={cat.id}
 								type="button"
-								onClick={() => setActiveCategory(cat.id)}
-								className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-md transition-colors whitespace-nowrap ${
+								role="tab"
+								aria-selected={isActive}
+								aria-controls="settings-panel"
+								tabIndex={isActive ? 0 : -1}
+								onClick={(event) => {
+									setActiveCategory(cat.id);
+									event.currentTarget.scrollIntoView({
+										block: "nearest",
+										inline: "nearest",
+									});
+								}}
+								onKeyDown={(event) => handleCategoryKeyDown(event, categoryIndex)}
+								className={`flex min-h-11 min-w-11 shrink-0 scroll-mx-4 items-center gap-1.5 whitespace-nowrap rounded-t-md px-3 py-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
 									isActive
 										? "bg-background border border-b-0 text-foreground"
 										: "text-muted-foreground hover:text-foreground"
@@ -2079,8 +2115,13 @@ export default function ConfigPage() {
 				</div>
 
 				{/* Content */}
-				<ScrollArea className="flex-1">
-					<div className={`p-6 ${activeCategory === "code" ? "max-w-4xl" : "max-w-2xl"}`}>
+				<ScrollArea className="min-h-0 min-w-0 w-full flex-1">
+					<div
+						id="settings-panel"
+						role="tabpanel"
+						aria-label={`${categories.find((category) => category.id === activeCategory)?.label || "Active"} settings`}
+						className={`w-full p-4 md:p-6 ${activeCategory === "code" ? "max-w-4xl" : "max-w-2xl"}`}
+					>
 						{contentByCategory[activeCategory]()}
 					</div>
 				</ScrollArea>

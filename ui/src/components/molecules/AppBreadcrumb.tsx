@@ -19,6 +19,7 @@ const pageLabels: Record<string, string> = {
 	imports: "Imports",
 	chat: "AI Chat",
 	workspaces: "AI Workspaces",
+	audit: "Audit",
 	config: "Settings",
 };
 
@@ -145,7 +146,10 @@ export function AppBreadcrumb({ currentPage, projectName }: AppBreadcrumbProps) 
 	const pageLabel = pageLabels[currentPage] || "Dashboard";
 
 	return (
-		<nav className="flex items-center gap-1.5 text-sm min-w-0 flex-1 overflow-hidden">
+		<nav
+			aria-label="Breadcrumb"
+			className="flex items-center gap-1.5 text-sm min-w-0 flex-1 overflow-hidden"
+		>
 			<BreadcrumbLink to="/">{projectName}</BreadcrumbLink>
 			{currentPage !== "dashboard" && (
 				<>

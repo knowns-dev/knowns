@@ -12,6 +12,22 @@ test.afterAll(() => {
 });
 
 test.describe("Tasks Page", () => {
+	test("keeps page context and offers retry when Tasks fail to load", async ({ page }) => {
+		await page.route("**/api/tasks", async (route) => {
+			await route.fulfill({
+				status: 500,
+				contentType: "application/json",
+				body: JSON.stringify({ error: "Task service unavailable" }),
+			});
+		});
+
+		await page.goto(`${server.baseURL}/tasks`);
+
+		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
+		await expect(page.getByRole("alert")).toContainText("Unable to load this page");
+		await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
+	});
+
 	test("shows tasks page with table view", async ({ page }) => {
 		await test.step("Create tasks via CLI", async () => {
 			server.cli('task create "Task Alpha" -d "First task" --priority high');
@@ -24,6 +40,8 @@ test.describe("Tasks Page", () => {
 
 		await test.step("Tasks heading is visible", async () => {
 			await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
+			await expect(page.getByText("Plan, review, and recover project work across its lifecycle.")).toBeVisible();
+			await expect(page.getByRole("button", { name: "Table view" })).toHaveAttribute("aria-pressed", "true");
 		});
 
 		await test.step("Tasks appear in the list", async () => {
