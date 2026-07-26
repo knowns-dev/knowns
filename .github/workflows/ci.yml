@@ -139,7 +139,11 @@ jobs:
 
       - name: Run platform and keyword fallback tests
         run: |
-          go test ./internal/search ./internal/cli ./internal/server/routes ./internal/doctor
+          # Existing local-provider unit tests use mocked embedders and assume
+          # a supported runtime. Model that explicit Intel opt-in here; the
+          # commands below run without the override and verify the disabled path.
+          KNOWNS_ORT_LIB="${RUNNER_TEMP}/libonnxruntime-test.dylib" \
+            go test ./internal/search ./internal/cli ./internal/server/routes ./internal/doctor
           go test ./internal/search -run '^TestKeywordModeUsesBM25WithoutSemanticAndPreservesResultShape$'
           bun test npm/knowns/install.test.js
 
