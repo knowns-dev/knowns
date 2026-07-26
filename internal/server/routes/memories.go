@@ -2,6 +2,7 @@ package routes
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -161,7 +162,7 @@ func (mr *MemoryRoutes) create(w http.ResponseWriter, r *http.Request) {
 		Status:     req.Status,
 	})
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondMemoryMutationError(w, err)
 		return
 	}
 	if result.Status == memoryreview.ResultReviewRequired {
@@ -239,7 +240,7 @@ func (mr *MemoryRoutes) update(w http.ResponseWriter, r *http.Request) {
 	entry.UpdatedAt = time.Now().UTC()
 
 	if err := mr.getStore().Memory.Update(entry); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondMemoryMutationError(w, err)
 		return
 	}
 
@@ -354,7 +355,7 @@ func (mr *MemoryRoutes) action(w http.ResponseWriter, r *http.Request) {
 
 	entry.UpdatedAt = now
 	if err := mr.getStore().Memory.Update(entry); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondMemoryMutationError(w, err)
 		return
 	}
 	search.BestEffortIndexMemory(mr.getStore(), entry.ID)
@@ -395,6 +396,10 @@ func (mr *MemoryRoutes) bulkAction(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusBadRequest, "reject_proposed can only target proposed memories")
 			return
 		}
+		if models.IsLegacyDecisionMemoryCategory(entry.Category) && req.Action == "verify" {
+			respondError(w, http.StatusBadRequest, models.ErrLegacyDecisionMemoryWrite.Error())
+			return
+		}
 		entries = append(entries, entry)
 	}
 
@@ -413,7 +418,7 @@ func (mr *MemoryRoutes) bulkAction(w http.ResponseWriter, r *http.Request) {
 		}
 		entry.UpdatedAt = now
 		if err := mr.getStore().Memory.Update(entry); err != nil {
-			respondError(w, http.StatusInternalServerError, err.Error())
+			respondMemoryMutationError(w, err)
 			return
 		}
 		search.BestEffortIndexMemory(mr.getStore(), entry.ID)
@@ -717,12 +722,20 @@ func (mr *MemoryRoutes) delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := mr.getStore().Memory.Delete(id); err != nil {
-		respondError(w, http.StatusNotFound, err.Error())
+		respondMemoryMutationError(w, err)
 		return
 	}
 
 	search.BestEffortRemoveMemory(mr.getStore(), id)
 	respondJSON(w, http.StatusOK, map[string]any{"deleted": true, "id": id})
+}
+
+func respondMemoryMutationError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	if errors.Is(err, models.ErrLegacyDecisionMemoryWrite) {
+		status = http.StatusBadRequest
+	}
+	respondError(w, status, err.Error())
 }
 
 func (mr *MemoryRoutes) promote(w http.ResponseWriter, r *http.Request) {

@@ -180,6 +180,10 @@ func (s *IndexService) Reindex(progress ReindexProgress) error {
 			progress("decisions", i+1, len(decisions))
 		}
 		sourceID := "decision:" + decision.ID
+		if !decision.CurrentForDefaultRetrieval() {
+			s.vecStore.RemoveByPrefix(fmt.Sprintf("decision:%s:", decision.ID))
+			continue
+		}
 		currentIDs[sourceID] = true
 
 		hash := contentHash(decisionContentForHash(decision))
@@ -435,6 +439,9 @@ func (s *IndexService) IndexDecision(decisionID string) error {
 	decision, err := s.store.Decisions.Get(decisionID)
 	if err != nil {
 		return err
+	}
+	if !decision.CurrentForDefaultRetrieval() {
+		return s.vecStore.Save()
 	}
 	if err := s.embedAndStoreDecision(decision); err != nil {
 		return err

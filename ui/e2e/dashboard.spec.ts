@@ -5,6 +5,8 @@ let server: TestServer;
 
 test.beforeAll(async () => {
 	server = await startServer();
+	server.cli('task create "Workbench Todo" -d "Dashboard test task" --priority high -l "dashboard"');
+	server.cli('task create "Workbench Secondary" -d "Another dashboard task" --priority medium -l "api"');
 });
 
 test.afterAll(() => {
@@ -12,85 +14,50 @@ test.afterAll(() => {
 });
 
 test.describe("Dashboard", () => {
-	test("shows page header and key metrics", async ({ page }) => {
-		await test.step("Navigate to dashboard", async () => {
-			await page.goto(server.baseURL);
-		});
+	test("renders the analysis workbench and its primary signals", async ({ page }) => {
+		await page.goto(server.baseURL);
 
-		await test.step("Dashboard header is visible", async () => {
-			await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-		});
-
-		await test.step("Key metrics are displayed", async () => {
-			await expect(page.getByText("Total Tasks")).toBeVisible();
-			await expect(page.getByText("Completion", { exact: true })).toBeVisible();
-			await expect(page.getByText("In Progress").first()).toBeVisible();
-		});
+		await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+		await expect(page.getByText("Analysis workbench", { exact: true })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Throughput" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Work aging" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Lead time" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Knowledge health" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Project pulse" })).toBeVisible();
 	});
 
-	test("shows tasks section with completion progress", async ({ page }) => {
-		await test.step("Create a task via CLI", async () => {
-			server.cli('task create "Test Dashboard Task" -d "A test task"');
-		});
+	test("exposes chart meaning and underlying data without hover", async ({ page }) => {
+		await page.goto(server.baseURL);
 
-		await test.step("Navigate to dashboard", async () => {
-			await page.goto(server.baseURL);
-		});
-
-		await test.step("Tasks section shows status counts", async () => {
-			// Status Distribution donut chart shows status labels for non-zero segments
-			await expect(page.getByText("Status Distribution")).toBeVisible();
-		});
+		await expect(page.getByRole("img", { name: /Created and completed task throughput/ })).toBeVisible();
+		await page.getByText("View throughput data").click();
+		await expect(page.getByRole("columnheader", { name: "Created" })).toBeVisible();
+		await expect(page.getByRole("columnheader", { name: "Completed" })).toBeVisible();
+		await expect(page.getByText(/Created → completed · completions in the last 30 days/)).toBeVisible();
 	});
 
-	test("shows recent activity after task changes", async ({ page }) => {
-		let taskId: string | undefined;
+	test("filters the analysis by label", async ({ page }) => {
+		await page.goto(server.baseURL);
+		await expect(page.getByText(/\d+ of \d+ tasks/).first()).toBeVisible();
 
-		await test.step("Create and update a task to generate activity", async () => {
-			const output = server.cli('task create "Activity Test" -d "test" --priority high');
-			const idMatch = output.match(/Created task\s+([a-z0-9]+)/i);
-			taskId = idMatch?.[1];
+		await page.getByRole("combobox", { name: "Filter by label" }).click();
+		await page.getByRole("option", { name: "dashboard" }).click();
 
-			if (taskId) {
-				try {
-					server.cli(`task edit ${taskId} -s in-progress`);
-					server.cli(`task edit ${taskId} -s done`);
-				} catch {
-					// task ID extraction may fail, that's ok
-				}
-			}
-		});
-
-		await test.step("Navigate to dashboard", async () => {
-			await page.goto(server.baseURL);
-		});
-
-		await test.step("Recent Activity section is visible", async () => {
-			await expect(page.getByRole("heading", { name: "Recent Activity" })).toBeVisible();
-		});
+		await expect(page.getByText("1 of 2 tasks")).toBeVisible();
 	});
 
-	test("shows recent tasks list", async ({ page }) => {
-		await test.step("Navigate to dashboard", async () => {
-			await page.goto(server.baseURL);
-		});
-
-		await test.step("Recent Tasks heading is visible", async () => {
-			await expect(page.getByRole("heading", { name: "Recent Tasks" })).toBeVisible();
-		});
+	test("navigates to the task inventory from project pulse", async ({ page }) => {
+		await page.goto(server.baseURL);
+		await page.getByRole("link", { name: "All tasks" }).click();
+		await expect(page).toHaveURL(/\/tasks$/);
 	});
 
-	test("navigates to tasks page via link", async ({ page }) => {
-		await test.step("Navigate to dashboard", async () => {
-			await page.goto(server.baseURL);
-		});
+	test("recommends the highest-ranked attention task when no work is in progress", async ({ page }) => {
+		await page.goto(server.baseURL);
 
-		await test.step("Click 'View all' link", async () => {
-			await page.getByText("View all →").first().click();
-		});
-
-		await test.step("URL changes to tasks page", async () => {
-			await expect(page).toHaveURL(/\/tasks$/);
-		});
+		await expect(page.getByText("Next recommended", { exact: true })).toBeVisible();
+		await expect(page.getByText("Workbench Todo", { exact: true })).toBeVisible();
+		await expect(page.getByText(/Why now: high priority/)).toBeVisible();
+		await expect(page.getByRole("link", { name: /Review task/ })).toBeVisible();
 	});
 });

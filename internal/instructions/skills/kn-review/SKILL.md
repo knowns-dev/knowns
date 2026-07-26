@@ -42,6 +42,12 @@ If task has spec:
 mcp_knowns_docs({ "action": "get", "path": "<spec-path>", "smart": true })
 ```
 
+Read the linked spec's full `Locked Decisions` section, then retrieve only relevant current System Decisions:
+```json
+mcp_knowns_search({ "action": "retrieve", "query": "<task + feature area>",
+  "sourceTypes": ["decision"], "status": "accepted", "includeHistorical": false, "limit": 8 })
+```
+
 Search for relevant conventions and past review patterns:
 ```json
 mcp_knowns_search({ "action": "search", "query": "<feature area>", "type": "memory" })
@@ -82,6 +88,10 @@ Review the diff from 4 perspectives. For each, produce findings with severity.
 - Integration gaps — new code not wired into existing flows
 - Stubs or TODOs left in code
 - ACs from task not fully met (if task provided)
+- Missing, incomplete, or contradicted `Spec Decision Compliance` markers for the linked spec (P1 when the task would otherwise be approved)
+- Missing `System Decision Impact: none — <reason>` or `System Decision Impact: candidate @decision/<id> (added|changed|removed) — <summary>` on an in-review/done task (P1 when the task would otherwise be approved)
+- A positive System Decision impact has no persisted candidate, lacks task/spec/source provenance, or treats a draft/replacement as current before explicit verified human resolution
+- A workflow created Memory category `decision`, or copied Spec Locked Decisions into the System Decision ledger
 
 ---
 
@@ -212,6 +222,9 @@ For `kn-review`, the key details should cover:
 - [ ] Findings triaged by severity
 - [ ] P1 findings block commit
 - [ ] Artifact verification done (if spec linked)
+- [ ] Every linked Spec Decision was assessed and no conflict was hidden
+- [ ] System Decision Impact marker is explicit and any candidate ref resolves with required provenance
+- [ ] No new legacy Decision Memory or duplicated Spec Decision row was introduced
 - [ ] Returned control to `/kn-flow` when reviewing inside an active flow
 - [ ] Next step suggested
 
@@ -223,3 +236,5 @@ For `kn-review`, the key details should cover:
 - Severity inflation — calling everything P1
 - Skipping security perspective
 - Reviewing one task as if the whole spec is complete when `/kn-flow` is needed
+- Approving a task without an explicit System Decision Impact marker
+- Accepting a Decision candidate automatically as part of implementation

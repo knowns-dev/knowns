@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "exact-semantic-search",
+      "category": "exact_lookup",
+      "query": "semantic search",
+      "qrels": [
+        {"source": "specs/semantic-search", "relevance": 3},
+        {"source": "guides/semantic-search-guide", "relevance": 2},
+        {"source": "research/keyword-search-benchmark-matrix", "relevance": 0}
+      ],
+      "expectedCitations": ["doc:specs/semantic-search"],
+      "forbiddenSources": ["doc:specs/semantic-search-v0"],
+      "modes": ["keyword", "semantic", "hybrid"],
+      "limit": 20,
+      "sourceTypes": ["doc"],
+      "notes": "Exact approved spec and guide lookup."
+    },
+    {
+      "id": "exact-rag-retrieval-foundation",
+      "category": "exact_lookup",
+      "query": "rag retrieval foundation",
+      "qrels": [
+        {"source": "specs/rag-retrieval-foundation", "relevance": 3}
+      ],
+      "expectedCitations": ["doc:specs/rag-retrieval-foundation"],
+      "modes": ["keyword", "semantic", "hybrid"],
+      "limit": 20,
+      "sourceTypes": ["doc"],
+      "notes": "Exact approved retrieval foundation lookup."
+    },
+    {
+      "id": "exact-memory-system",
+      "category": "exact_lookup",
+      "query": "3 layer memory system",
+      "qrels": [
+        {"source": "specs/3-layer-memory-system", "relevance": 3},
+        {"source": "learnings/learning-3-layer-memory-system", "relevance": 2}
+      ],
+      "expectedCitations": ["doc:specs/3-layer-memory-system"],
+      "modes": ["keyword", "semantic", "hybrid"],
+      "limit": 20,
+      "sourceTypes": ["doc"],
+      "notes": "Phrase variation without punctuation."
+    },
+    {
+      "id": "intent-search-quality",
+      "category": "multi_word_intent",
+      "query": "search quality improvements",
+      "qrels": [
+        {"source": "specs/semantic-search-quality-improvements", "relevance": 3}
+      ],
+      "expectedCitations": ["doc:specs/semantic-search-quality-improvements"],
+      "modes": ["keyword", "semantic", "hybrid"],
+      "limit": 20,
+      "sourceTypes": ["doc"],
+      "notes": "Multi-word lexical intent."
+    },
+    {
+      "id": "intent-chunking-research",
+      "category": "multi_word_intent",
+      "query": "chunking strategies research",
+      "qrels": [
+        {"source": "research/rag-chunking-strategies-research", "relevance": 3}
+      ],
+      "expectedCitations": ["doc:research/rag-chunking-strategies-research"],
+      "modes": ["keyword", "semantic", "hybrid"],
+      "limit": 20,
+      "sourceTypes": ["doc"],
+      "notes": "Research-document specificity."
+    },
+    {
+      "id": "source-graph-code-ux",
+      "category": "source_balance",
+      "query": "graph code ux",
+      "qrels": [
+        {"source": "research/research-graph-code-ux", "relevance": 3}
+      ],
+      "expectedCitations": ["doc:research/research-graph-code-ux"],
+      "modes": ["keyword", "semantic", "hybrid"],
+      "limit": 20,
+      "sourceTypes": ["doc"],
+      "notes": "Specialized research doc against broad graph docs."
+    },
+    {
+      "id": "workflow-guide",
+      "category": "workflow",
+      "query": "workflow guide tasks plan implement verify",
+      "qrels": [
+        {"source": "guides/workflow-guide", "relevance": 3},
+        {"source": "specs/sdd-spec-driven-development", "relevance": 2}
+      ],
+      "expectedCitations": ["doc:guides/workflow-guide"],
+      "modes": ["keyword", "semantic", "hybrid"],
+      "limit": 20,
+      "sourceTypes": ["doc"],
+      "notes": "Workflow and SDD guidance."
+    },
+    {
+      "id": "quick-start",
+      "category": "navigation",
+      "query": "knowns quick start initialize project",
+      "qrels": [
+        {"source": "guides/cli-guide", "relevance": 3},
+        {"source": "guides/user-guide", "relevance": 2}
+      ],
+      "expectedCitations": ["doc:guides/cli-guide"],
+      "modes": ["keyword", "semantic", "hybrid"],
+      "limit": 20,
+      "sourceTypes": ["doc"],
+      "notes": "Getting-started navigation."
+    }
+  ]
+}

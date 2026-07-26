@@ -31,9 +31,9 @@ func (sr *SearchRoutes) Register(r chi.Router) {
 	r.Get("/resolve", sr.resolveHandler)
 }
 
-// searchHandler executes a search across tasks and docs.
+// searchHandler executes a search across Knowns entities.
 //
-// GET /api/search?q={query}&type={all|task|doc}&mode={keyword|semantic|hybrid}&limit={n}&status={s}&priority={p}&assignee={a}&label={l}&tag={t}
+// GET /api/search?q={query}&type={all|task|doc|memory|decision|code}&mode={keyword|semantic|hybrid}&limit={n}&status={s}&priority={p}&assignee={a}&label={l}&tag={t}
 func (sr *SearchRoutes) searchHandler(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
@@ -63,23 +63,34 @@ func (sr *SearchRoutes) searchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	results := response.Results
 
-	// Group results by type into {tasks: [...], docs: [...]} shape expected by UI.
+	// Keep the established tasks/docs keys while exposing the remaining entity
+	// types separately so UI consumers do not mistake Decisions for Tasks.
 	taskResults := []models.SearchResult{}
 	docResults := []models.SearchResult{}
+	memoryResults := []models.SearchResult{}
+	decisionResults := []models.SearchResult{}
+	codeResults := []models.SearchResult{}
 	for _, r := range results {
 		switch r.Type {
 		case "task":
 			taskResults = append(taskResults, r)
 		case "doc":
 			docResults = append(docResults, r)
-		default:
-			taskResults = append(taskResults, r)
+		case "memory":
+			memoryResults = append(memoryResults, r)
+		case "decision":
+			decisionResults = append(decisionResults, r)
+		case "code":
+			codeResults = append(codeResults, r)
 		}
 	}
 
 	payload := map[string]interface{}{
-		"tasks": taskResults,
-		"docs":  docResults,
+		"tasks":     taskResults,
+		"docs":      docResults,
+		"memories":  memoryResults,
+		"decisions": decisionResults,
+		"code":      codeResults,
 	}
 	if response.Runtime != nil {
 		payload["_runtime"] = response.Runtime

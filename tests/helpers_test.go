@@ -351,6 +351,7 @@ func (c *MCPClient) SetProject(dir string) {
 // For array responses, returns {"_array": [...], "_raw": "..."}.
 func (c *MCPClient) CallTool(name string, args map[string]any) map[string]any {
 	c.t.Helper()
+	args = fullMutationResponseArgs(name, args)
 
 	resp, err := c.sendRequest("tools/call", map[string]any{
 		"name":      name,
@@ -391,6 +392,25 @@ func (c *MCPClient) CallTool(name string, args map[string]any) map[string]any {
 		return map[string]any{"_array": arr, "_raw": text}
 	}
 	return parsed
+}
+
+// fullMutationResponseArgs keeps the high-level E2E helper's historical
+// full-entity contract after task/doc mutations became summary-by-default.
+// Tests that exercise the compact wire response use CallToolRaw directly.
+func fullMutationResponseArgs(name string, args map[string]any) map[string]any {
+	action, _ := args["action"].(string)
+	if (name != "tasks" && name != "docs") || (action != "create" && action != "update") {
+		return args
+	}
+	if _, explicit := args["return"]; explicit {
+		return args
+	}
+	withReturn := make(map[string]any, len(args)+1)
+	for key, value := range args {
+		withReturn[key] = value
+	}
+	withReturn["return"] = "full"
+	return withReturn
 }
 
 // CallToolRaw calls an MCP tool and returns the raw JSON text.

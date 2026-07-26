@@ -887,7 +887,7 @@ func runReindex() error {
 		defer cancel()
 		runtimequeue.StartHeartbeat(ctx, handle)
 
-		job, err := runtimequeue.Enqueue(store.Root, runtimequeue.JobReindex, "")
+		job, err := runtimequeue.EnqueueReindex(store.Root)
 		if err != nil {
 			return fmt.Errorf("enqueue reindex: %w", err)
 		}

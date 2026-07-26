@@ -1,11 +1,16 @@
 package readiness
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/howznguyen/knowns/internal/lsp"
+	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/search"
+	"github.com/howznguyen/knowns/internal/storage"
 )
 
 func TestLSPStatusFromRuntimeIncludesRuntimeFields(t *testing.T) {
@@ -64,5 +69,44 @@ func TestSemanticRuntimeReadinessReportsDisabledState(t *testing.T) {
 	}
 	if got.Loaded {
 		t.Fatalf("loaded = true, want false")
+	}
+}
+
+func TestBuildReadinessIncludesDecisionCountsAndCapabilities(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("readiness-decisions"); err != nil {
+		t.Fatal(err)
+	}
+	verifiedAt := time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC)
+	for _, decision := range []*models.DecisionEntry{
+		{Title: "Current", Status: models.DecisionStatusAccepted, Sources: []string{"https://example.com"}, Verification: []string{"reviewed"}, VerifiedAt: &verifiedAt},
+		{Title: "Draft", Status: models.DecisionStatusDraft},
+		{Title: "Historical", Status: models.DecisionStatusRejected},
+	} {
+		if err := store.Decisions.Create(decision, storage.DecisionCreateOptions{Now: verifiedAt}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	legacy := "---\nid: legacy1\ntitle: Legacy\nlayer: project\ncategory: decision\nstatus: active\nsources: []\ntags: []\ncreatedAt: '2026-07-23T10:00:00Z'\nupdatedAt: '2026-07-23T10:00:00Z'\n---\n\nLegacy.\n"
+	if err := os.WriteFile(filepath.Join(store.Root, "memory", models.MemoryFileName("legacy1")), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := BuildReadiness(store, Options{})
+	if payload.Knowledge.Decisions != (DecisionCounts{Total: 3, Current: 1, Draft: 1, Historical: 1}) {
+		t.Fatalf("decision counts = %+v", payload.Knowledge.Decisions)
+	}
+	if payload.Knowledge.Memories.LegacyDecision != 1 {
+		t.Fatalf("legacy Decision Memory count = %d", payload.Knowledge.Memories.LegacyDecision)
+	}
+	for _, capability := range []string{"system-decisions", "decision-migration"} {
+		found := false
+		for _, actual := range payload.Capabilities {
+			found = found || actual == capability
+		}
+		if !found {
+			t.Fatalf("capabilities %v missing %s", payload.Capabilities, capability)
+		}
 	}
 }

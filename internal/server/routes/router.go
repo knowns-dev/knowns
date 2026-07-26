@@ -6,8 +6,13 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/howznguyen/knowns/internal/services"
 	"github.com/howznguyen/knowns/internal/storage"
 )
+
+// LSPRuntimeStatusProvider returns the canonical live LSP snapshot for an
+// active project store.
+type LSPRuntimeStatusProvider = services.LSPRuntimeStatusProvider
 
 // requireStore returns a middleware that returns 503 when no project is active.
 // It is a no-op when manager is nil (e.g. in tests that bypass the middleware).
@@ -34,6 +39,16 @@ func SetupRoutes(r chi.Router, store *storage.Store, sse Broadcaster, projectRoo
 // default SetupRoutes entry point remains deny-by-default for destructive Task
 // lifecycle operations.
 func SetupRoutesWithCapabilities(r chi.Router, store *storage.Store, sse Broadcaster, projectRoot string, manager *storage.Manager, taskCapabilities TaskRouteCapabilities, onWorkspaceSwitch ...func(string)) {
+	setupRoutesWithCapabilities(r, store, sse, projectRoot, manager, taskCapabilities, nil, onWorkspaceSwitch...)
+}
+
+// SetupRoutesWithCapabilitiesAndLSPStatusProvider additionally wires the live
+// LSP status source used by Runtime Services.
+func SetupRoutesWithCapabilitiesAndLSPStatusProvider(r chi.Router, store *storage.Store, sse Broadcaster, projectRoot string, manager *storage.Manager, taskCapabilities TaskRouteCapabilities, lspStatusProvider LSPRuntimeStatusProvider, onWorkspaceSwitch ...func(string)) {
+	setupRoutesWithCapabilities(r, store, sse, projectRoot, manager, taskCapabilities, lspStatusProvider, onWorkspaceSwitch...)
+}
+
+func setupRoutesWithCapabilities(r chi.Router, store *storage.Store, sse Broadcaster, projectRoot string, manager *storage.Manager, taskCapabilities TaskRouteCapabilities, lspStatusProvider LSPRuntimeStatusProvider, onWorkspaceSwitch ...func(string)) {
 	// Project-scoped routes: guarded by requireStore so they return 503 in picker mode.
 	r.Group(func(r chi.Router) {
 		r.Use(requireStore(manager))
@@ -51,7 +66,7 @@ func SetupRoutesWithCapabilities(r chi.Router, store *storage.Store, sse Broadca
 		cr.Register(r)
 
 		// Runtime services
-		rsr := &RuntimeServicesRoutes{store: store, mgr: manager}
+		rsr := &RuntimeServicesRoutes{store: store, mgr: manager, lspStatuses: lspStatusProvider}
 		rsr.Register(r)
 
 		// Time tracking

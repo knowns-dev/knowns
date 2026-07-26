@@ -82,6 +82,9 @@ mcp__knowns__update_task({
 | Skip time tracking | Always start/stop timer |
 | Skip validation | Run validate before completing |
 | Ignore refs | Follow ALL `@task-xxx`, `@doc/xxx`, `@template/xxx` refs |
+| Finish without Decision impact | Record `System Decision Impact: none` or a persisted `candidate @decision/<id>` |
+| Create Memory category `decision` | Create a first-class draft Decision candidate with task/spec/source provenance |
+| Copy Spec Decisions into ledger | Keep D-IDs canonical in the spec and report compliance |
 
 {{#if mcp}}
 ---

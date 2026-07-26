@@ -78,7 +78,7 @@ These are promoted learnings that cost the most to discover and save the most by
 mcp_knowns_memory({ "action": "list", "layer": "project" })
 ```
 
-Project memories contain accumulated patterns, decisions, and conventions from past work. Include key entries in the session context summary. If there are many entries, prioritize by recency and relevance to the user's stated focus.
+Project memories contain accumulated patterns, conventions, preferences, and failures from past work. Include key entries in the session context summary. Retrieve relevant accepted/current first-class System Decisions separately; Memory category `decision` is legacy and must not be used for new capture. If there are many entries, prioritize by recency and relevance to the user's stated focus.
 
 ## Step 4: Summarize
 

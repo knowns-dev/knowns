@@ -107,7 +107,7 @@ func TestBM25SearchSupportsMemoryMetadata(t *testing.T) {
 		ID:        "mem001",
 		Title:     "Decision Memory",
 		Layer:     models.MemoryLayerProject,
-		Category:  "decision",
+		Category:  "pattern",
 		Content:   "Use BM25 for keyword search ranking.",
 		Tags:      []string{"search", "bm25"},
 		CreatedAt: now,
@@ -124,7 +124,7 @@ func TestBM25SearchSupportsMemoryMetadata(t *testing.T) {
 		t.Fatalf("results = %d, want 1: %+v", len(results), results)
 	}
 	got := results[0]
-	if got.Type != "memory" || got.ID != "mem001" || got.MemoryLayer != models.MemoryLayerProject || got.Category != "decision" || got.MemoryStore == "" {
+	if got.Type != "memory" || got.ID != "mem001" || got.MemoryLayer != models.MemoryLayerProject || got.Category != "pattern" || got.MemoryStore == "" {
 		t.Fatalf("memory metadata not preserved: %+v", got)
 	}
 }
@@ -133,9 +133,9 @@ func TestMemorySearchAndRetrieveExcludeNonActiveByDefault(t *testing.T) {
 	store := newSearchTestStore(t)
 	now := time.Now().UTC()
 	for _, entry := range []*models.MemoryEntry{
-		{ID: "active1", Title: "Active vector memory", Layer: models.MemoryLayerProject, Category: "decision", Content: "Use Qdrant for vector search.", Status: models.MemoryStatusActive, CreatedAt: now, UpdatedAt: now},
-		{ID: "proposed1", Title: "Proposed vector memory", Layer: models.MemoryLayerProject, Category: "decision", Content: "Use proposed vector guidance.", Status: models.MemoryStatusProposed, CreatedAt: now, UpdatedAt: now},
-		{ID: "merged1", Title: "Merged vector memory", Layer: models.MemoryLayerProject, Category: "decision", Content: "Merged vector guidance.", Status: models.MemoryStatusMerged, MergedInto: "active1", CreatedAt: now, UpdatedAt: now},
+		{ID: "active1", Title: "Active vector memory", Layer: models.MemoryLayerProject, Category: "pattern", Content: "Use Qdrant for vector search.", Status: models.MemoryStatusActive, CreatedAt: now, UpdatedAt: now},
+		{ID: "proposed1", Title: "Proposed vector memory", Layer: models.MemoryLayerProject, Category: "pattern", Content: "Use proposed vector guidance.", Status: models.MemoryStatusProposed, CreatedAt: now, UpdatedAt: now},
+		{ID: "merged1", Title: "Merged vector memory", Layer: models.MemoryLayerProject, Category: "pattern", Content: "Merged vector guidance.", Status: models.MemoryStatusMerged, MergedInto: "active1", CreatedAt: now, UpdatedAt: now},
 	} {
 		if err := store.Memory.Create(entry); err != nil {
 			t.Fatalf("create memory %s: %v", entry.ID, err)
@@ -191,16 +191,19 @@ func TestMemorySearchAndRetrieveExcludeNonActiveByDefault(t *testing.T) {
 func TestDecisionSearchAndRetrieveUseCurrentAcceptedByDefault(t *testing.T) {
 	store := newSearchTestStore(t)
 	now := time.Now().UTC()
+	verifiedAt := now
 	decisions := []*models.DecisionEntry{
 		{
-			ID:        "20260618-1024-use-qdrant",
-			Title:     "Use Qdrant as default vector DB",
-			Status:    models.DecisionStatusAccepted,
-			Tags:      []string{"vector", "search"},
-			Sources:   []string{"@doc/specs/2026-06-18/memory-decision-review-ui"},
-			Decision:  "Use Qdrant for vector db search guidance.",
-			CreatedAt: now,
-			UpdatedAt: now,
+			ID:           "20260618-1024-use-qdrant",
+			Title:        "Use Qdrant as default vector DB",
+			Status:       models.DecisionStatusAccepted,
+			VerifiedAt:   &verifiedAt,
+			Verification: []string{"task:@task-vector:done"},
+			Tags:         []string{"vector", "search"},
+			Sources:      []string{"@doc/specs/2026-06-18/memory-decision-review-ui"},
+			Decision:     "Use Qdrant for vector db search guidance.",
+			CreatedAt:    now,
+			UpdatedAt:    now,
 		},
 		{
 			ID:           "20260618-0900-use-chroma",
@@ -278,15 +281,18 @@ func TestDecisionSearchAndRetrieveUseCurrentAcceptedByDefault(t *testing.T) {
 func TestReindexIndexesDecisionChunksWithStatus(t *testing.T) {
 	store := newSearchTestStore(t)
 	now := time.Now().UTC()
+	verifiedAt := now
 	decision := &models.DecisionEntry{
-		ID:        "20260618-1024-use-qdrant",
-		Title:     "Use Qdrant as default vector DB",
-		Status:    models.DecisionStatusAccepted,
-		Tags:      []string{"vector", "search"},
-		Sources:   []string{"@doc/specs/2026-06-18/memory-decision-review-ui"},
-		Decision:  "Use Qdrant for vector db search guidance.",
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:           "20260618-1024-use-qdrant",
+		Title:        "Use Qdrant as default vector DB",
+		Status:       models.DecisionStatusAccepted,
+		VerifiedAt:   &verifiedAt,
+		Verification: []string{"task:@task-vector:done"},
+		Tags:         []string{"vector", "search"},
+		Sources:      []string{"@doc/specs/2026-06-18/memory-decision-review-ui"},
+		Decision:     "Use Qdrant for vector db search guidance.",
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	if err := store.Decisions.Create(decision, storage.DecisionCreateOptions{}); err != nil {
 		t.Fatalf("create decision: %v", err)

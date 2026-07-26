@@ -146,27 +146,6 @@ var projectScopePhrases = []string{
 	"file",
 }
 
-var instructionPhrases = []string{
-	"must",
-	"should",
-	"need to",
-	"do not",
-	"don't",
-	"never",
-	"always",
-	"keep",
-	"use",
-	"phai",
-	"nen",
-	"khong duoc",
-	"dung",
-	"luon",
-	"giu",
-	"dung ",
-	"hay ",
-	"bat",
-}
-
 var workingContextPhrases = []string{
 	"currently",
 	"for now",
@@ -656,9 +635,6 @@ func inferCaptureCandidate(input Input) (captureCandidate, bool) {
 	if candidate, ok := inferGlobalPreferenceCandidate(input.UserPrompt, normalizedPrompt); ok {
 		return candidate, true
 	}
-	if candidate, ok := inferProjectDecisionCandidate(input, normalizedPrompt); ok {
-		return candidate, true
-	}
 	if candidate, ok := inferWorkingContextCandidate(input.UserPrompt, normalizedPrompt); ok {
 		return candidate, true
 	}
@@ -694,31 +670,6 @@ func inferGlobalPreferenceCandidate(rawPrompt, normalized string) (captureCandid
 		Content:    content,
 		Tags:       uniqueStrings(tags),
 		Confidence: 0.92,
-	}, true
-}
-
-func inferProjectDecisionCandidate(input Input, normalized string) (captureCandidate, bool) {
-	if !hasAnyPhrase(normalized, instructionPhrases) {
-		return captureCandidate{}, false
-	}
-	if !looksRepoSpecific(input.UserPrompt, normalized) {
-		return captureCandidate{}, false
-	}
-	content := normalizeCapturedContent(input.UserPrompt)
-	title := "Project workflow decision"
-	tags := []string{"project", "workflow"}
-	if strings.Contains(normalized, "knowns.md") && strings.Contains(normalized, "agents.md") {
-		title = "Instruction source of truth"
-		content = "Compatibility shim files such as `AGENTS.md` should keep behavior and memory policy aligned with Knowns MCP guidance."
-		tags = append(tags, "knowns", "agents")
-	}
-	return captureCandidate{
-		Title:      title,
-		Category:   "decision",
-		Layer:      models.MemoryLayerProject,
-		Content:    content,
-		Tags:       uniqueStrings(tags),
-		Confidence: 0.88,
 	}, true
 }
 

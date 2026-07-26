@@ -21,9 +21,9 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 		mcp.NewTool("tasks",
 			mcp.WithDescription(`Task management operations. Use 'action' to specify: create, get, update, delete, list, history, board, archive, unarchive, batch_archive, batch_unarchive, hard_delete.
 
-- create: Create a task or subtask. Required: title. Optional: description, status, priority, assignee, labels, parent, spec, fulfills, order. Returns: created task with ID and metadata.
+- create: Create a task or subtask. Required: title. Optional: description, status, priority, assignee, labels, parent, spec, fulfills, order, return. Returns: compact summary by default; use return=full for the legacy task payload.
 - get: Read task details. Required: taskId. Optional: none. Returns: task metadata, acceptance criteria, plan, notes, spec links, and time spent.
-- update: Modify task fields, ACs, plan, or notes. Required: taskId. Optional: title, description, status, priority, assignee, labels, spec, fulfills, order, addAc, checkAc, uncheckAc, removeAc, plan, notes, appendNotes, clear. Returns: updated task.
+- update: Modify task fields, ACs, plan, or notes. Required: taskId. Optional: title, description, status, priority, assignee, labels, spec, fulfills, order, addAc, checkAc, uncheckAc, removeAc, plan, notes, appendNotes, clear, return. Returns: compact summary by default; use return=full for the legacy task payload.
 - delete: Remove a task or preview removal. Required: taskId. Optional: dryRun (default true). Returns: deletion preview or confirmation.
 - list: List tasks with filters. Required: none. Optional: status, priority, assignee, label, spec. Returns: matching task summaries with IDs, titles, statuses, priorities, assignees, labels, and spec links.
 - history: View task change history. Required: taskId. Optional: none. Returns: chronological change entries with timestamps and metadata.
@@ -103,6 +103,10 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 				mcp.Description("Clear string fields (update)"),
 				mcp.WithStringItems(),
 			),
+			mcp.WithString("return",
+				mcp.Description("Success response mode for create/update: summary (default) or full legacy entity"),
+				mcp.Enum(mutationReturnSummary, mutationReturnFull),
+			),
 			mcp.WithString("label",
 				mcp.Description("Filter by label (list)"),
 			),
@@ -143,9 +147,9 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 		},
 	)
 
-	registerHelp(s, "tasks.create", HelpEntry{When: "Create a new task or subtask with title, context, ownership, labels, and optional spec links.", Params: map[string]string{"title": "required — task title", "description": "task context and goal", "status": "todo | in-progress | in-review | done | blocked | on-hold | urgent", "priority": "low | medium | high", "assignee": "person responsible for task", "labels": "task labels", "parent": "parent task ID for subtasks", "spec": "spec doc path this task implements", "fulfills": "spec AC IDs this task satisfies", "order": "display order"}, Examples: []string{`tasks({ action: "create", title: "Add auth", description: "...", priority: "high" })`}, Flow: "Create task, then update to in-progress and start time before implementation."})
+	registerHelp(s, "tasks.create", HelpEntry{When: "Create a new task or subtask with title, context, ownership, labels, and optional spec links. Successful calls return a compact summary by default.", Params: map[string]string{"title": "required — task title", "description": "task context and goal", "status": "todo | in-progress | in-review | done | blocked | on-hold | urgent", "priority": "low | medium | high", "assignee": "person responsible for task", "labels": "task labels", "parent": "parent task ID for subtasks", "spec": "spec doc path this task implements", "fulfills": "spec AC IDs this task satisfies", "order": "display order", "return": "summary (default) | full legacy task payload"}, Examples: []string{`tasks({ action: "create", title: "Add auth", description: "...", priority: "high" })`}, Flow: "Create task, then update to in-progress and start time before implementation. Use return=full only when the complete created task is required."})
 	registerHelp(s, "tasks.get", HelpEntry{When: "Read full task details before planning, implementation, review, or status updates.", Params: map[string]string{"taskId": "required — task ID"}, Flow: "Use before update/history when you need current ACs, plan, notes, or spec links."})
-	registerHelp(s, "tasks.update", HelpEntry{When: "Modify task metadata, status, acceptance criteria, plan, or implementation notes.", Params: map[string]string{"taskId": "required — task ID", "title": "new task title", "description": "new task description", "status": "new task status", "priority": "low | medium | high", "assignee": "new assignee", "labels": "replacement label list", "spec": "spec doc path", "fulfills": "spec AC IDs this task satisfies", "order": "display order", "addAc": "new acceptance criteria", "checkAc": "1-based AC indexes to mark complete", "uncheckAc": "1-based AC indexes to mark incomplete", "removeAc": "1-based AC indexes to remove", "plan": "implementation plan", "notes": "replace all implementation notes", "appendNotes": "append to existing implementation notes", "clear": "string fields to clear"}, Why: "Use appendNotes for progress. notes replaces existing notes and can wipe history.", Examples: []string{`tasks({ action: "update", taskId: "abc123", appendNotes: "Done: added tests" })`, `tasks({ action: "update", taskId: "abc123", checkAc: [1, 2] })`}, Flow: "Only check AC after work is complete; stop time and set status done at finish."})
+	registerHelp(s, "tasks.update", HelpEntry{When: "Modify task metadata, status, acceptance criteria, plan, or implementation notes. Successful calls return a compact summary by default.", Params: map[string]string{"taskId": "required — task ID", "title": "new task title", "description": "new task description", "status": "new task status", "priority": "low | medium | high", "assignee": "new assignee", "labels": "replacement label list", "spec": "spec doc path", "fulfills": "spec AC IDs this task satisfies", "order": "display order", "addAc": "new acceptance criteria", "checkAc": "1-based AC indexes to mark complete", "uncheckAc": "1-based AC indexes to mark incomplete", "removeAc": "1-based AC indexes to remove", "plan": "implementation plan", "notes": "replace all implementation notes", "appendNotes": "append to existing implementation notes", "clear": "string fields to clear", "return": "summary (default) | full legacy task payload"}, Why: "Use appendNotes for progress. notes replaces existing notes and can wipe history.", Examples: []string{`tasks({ action: "update", taskId: "abc123", appendNotes: "Done: added tests" })`, `tasks({ action: "update", taskId: "abc123", checkAc: [1, 2] })`}, Flow: "Only check AC after work is complete; stop time and set status done at finish. Use return=full only when the complete updated task is required."})
 	registerHelp(s, "tasks.delete", HelpEntry{When: "Preview or remove a task when it is obsolete or was created by mistake.", Params: map[string]string{"taskId": "required — task ID", "dryRun": "preview only without deleting; default true"}, Why: "Default dryRun protects against accidental deletion."})
 	registerHelp(s, "tasks.list", HelpEntry{When: "Find tasks by status, owner, priority, label, or spec before choosing work or checking remaining scope.", Params: map[string]string{"status": "filter by task status", "priority": "filter by low | medium | high", "assignee": "filter by assignee", "label": "filter by one label", "spec": "filter by linked spec doc path"}})
 	registerHelp(s, "tasks.history", HelpEntry{When: "Inspect chronological changes for audit, debugging, or understanding how a task evolved.", Params: map[string]string{"taskId": "required — task ID"}})
@@ -155,6 +159,27 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 	registerHelp(s, "tasks.batch_archive", HelpEntry{When: "Preview or archive eligible Tasks with machine retry progress.", Params: map[string]string{"ids": "optional; omitted evaluates all Tasks", "execute": "false previews; true mutates"}})
 	registerHelp(s, "tasks.batch_unarchive", HelpEntry{When: "Preview or restore multiple Tasks.", Params: map[string]string{"ids": "required Task IDs", "execute": "false previews; true mutates"}})
 	registerHelp(s, "tasks.hard_delete", HelpEntry{When: "Permanently delete a Task only under a trusted project delete permission.", Params: map[string]string{"taskId": "required", "confirmed": "must be true", "reason": "required non-empty reason"}, Why: "Hard-delete is distinct from archive and leaves a content-free tombstone."})
+}
+
+type taskMutationSummary struct {
+	Success   bool      `json:"success"`
+	TaskID    string    `json:"taskId"`
+	Status    string    `json:"status"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+func taskMutationResult(task *models.Task, returnMode string) *mcp.CallToolResult {
+	var payload any = task
+	if returnMode == mutationReturnSummary {
+		payload = taskMutationSummary{
+			Success:   true,
+			TaskID:    task.ID,
+			Status:    task.Status,
+			UpdatedAt: task.UpdatedAt,
+		}
+	}
+	out, _ := json.MarshalIndent(payload, "", "  ")
+	return mcp.NewToolResultText(string(out))
 }
 
 func handleTaskCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -169,6 +194,10 @@ func handleTaskCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 	}
 
 	args := req.GetArguments()
+	returnMode, err := parseMutationReturn(args)
+	if err != nil {
+		return errResult(err.Error())
+	}
 
 	priority := "medium"
 	status := "todo"
@@ -239,8 +268,7 @@ func handleTaskCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 	search.BestEffortIndexTask(store, task.ID)
 	go notifyTaskUpdated(store, task.ID)
 
-	out, _ := json.MarshalIndent(task, "", "  ")
-	return mcp.NewToolResultText(string(out)), nil
+	return taskMutationResult(task, returnMode), nil
 }
 
 func handleTaskGet(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -280,6 +308,10 @@ func handleTaskUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 	}
 
 	args := req.GetArguments()
+	returnMode, err := parseMutationReturn(args)
+	if err != nil {
+		return errResult(err.Error())
+	}
 	clearFields := stringSetArg(args, "clear")
 	service := newMCPTaskLifecycleService(store)
 	task, err := service.UpdateTask(context.Background(), taskID, tasklifecycle.TaskUpdateOptions{Actor: "mcp", Mutate: func(task *models.Task) error {
@@ -400,10 +432,10 @@ func handleTaskUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 	}
 	go notifyTaskUpdated(store, task.ID)
 
-	task.ActiveTimer = store.Time.GetActiveTimer(task.ID)
-
-	out, _ := json.MarshalIndent(task, "", "  ")
-	return mcp.NewToolResultText(string(out)), nil
+	if returnMode == mutationReturnFull {
+		task.ActiveTimer = store.Time.GetActiveTimer(task.ID)
+	}
+	return taskMutationResult(task, returnMode), nil
 }
 
 func handleTaskList(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

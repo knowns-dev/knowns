@@ -81,6 +81,54 @@ func TestSyncSkillsToTargetsIncludesKnFlowSkill(t *testing.T) {
 	assertKnFlowSkillSynced(t, target)
 }
 
+func TestDecisionWorkflowRulesSyncToRuntimeCopies(t *testing.T) {
+	projectRoot := t.TempDir()
+	if err := SyncSkillsForPlatforms(projectRoot, []string{"codex"}); err != nil {
+		t.Fatalf("SyncSkillsForPlatforms returned error: %v", err)
+	}
+	for _, name := range []string{"kn-spec", "kn-plan", "kn-flow", "kn-implement", "kn-review", "kn-verify"} {
+		path := filepath.Join(projectRoot, ".agents", "skills", name, "SKILL.md")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read synced %s: %v", name, err)
+		}
+		content := string(data)
+		if !strings.Contains(content, "Spec Decision") || !strings.Contains(content, "System Decision") {
+			t.Fatalf("synced %s is missing two-domain Decision guidance", name)
+		}
+		if strings.Contains(content, `"category": "<pattern|decision|convention>"`) {
+			t.Fatalf("synced %s still recommends legacy Decision Memory creation", name)
+		}
+	}
+	for _, name := range []string{"kn-implement", "kn-flow", "kn-review", "kn-verify"} {
+		path := filepath.Join(projectRoot, ".agents", "skills", name, "SKILL.md")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read synced %s: %v", name, err)
+		}
+		content := string(data)
+		for _, marker := range []string{"System Decision Impact: none", "candidate @decision/<id>"} {
+			if !strings.Contains(content, marker) {
+				t.Fatalf("synced %s is missing completion marker %q", name, marker)
+			}
+		}
+		if !strings.Contains(content, "Memory category `decision`") {
+			t.Fatalf("synced %s does not redirect legacy Decision Memory capture", name)
+		}
+	}
+	extractPath := filepath.Join(projectRoot, ".agents", "skills", "kn-extract", "SKILL.md")
+	extractData, err := os.ReadFile(extractPath)
+	if err != nil {
+		t.Fatalf("read synced kn-extract: %v", err)
+	}
+	extract := string(extractData)
+	if strings.Contains(extract, `"category": "<pattern|decision|convention|failure>"`) ||
+		!strings.Contains(extract, "Never create Memory category `decision`") ||
+		!strings.Contains(extract, "first-class draft Decision candidate") {
+		t.Fatalf("synced kn-extract still recommends legacy Decision Memory creation")
+	}
+}
+
 func assertKnFlowSkillSynced(t *testing.T, skillsDir string) {
 	t.Helper()
 

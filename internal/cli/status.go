@@ -60,8 +60,10 @@ func renderStatusPlain(p readiness.Payload) {
 	if p.Knowledge != nil {
 		k := p.Knowledge
 		totalMem := k.Memories.Project + k.Memories.Global
-		fmt.Printf("Knowledge: %d docs, %d tasks, %d templates, %d memories, %d relations\n",
-			k.Docs, k.Tasks, k.Templates, totalMem, k.Relations)
+		fmt.Printf("Knowledge: %d docs, %d tasks, %d templates, %d memories, %d decisions, %d relations\n",
+			k.Docs, k.Tasks, k.Templates, totalMem, k.Decisions.Total, k.Relations)
+		fmt.Printf("Decisions: %d current, %d draft, %d historical; %d legacy Decision Memories\n",
+			k.Decisions.Current, k.Decisions.Draft, k.Decisions.Historical, k.Memories.LegacyDecision)
 		if k.Imports > 0 {
 			fmt.Printf("Imports: %d active sources\n", k.Imports)
 		}
@@ -143,6 +145,12 @@ func renderStatusStyled(p readiness.Payload) {
 			StyleSuccess.Render("✓"), k.Docs, k.Tasks, k.Templates)
 		fmt.Printf("  %s %d memories (%d project, %d global)\n",
 			StyleSuccess.Render("✓"), totalMem, k.Memories.Project, k.Memories.Global)
+		fmt.Printf("  %s %d System Decisions (%d current, %d draft, %d historical)\n",
+			StyleSuccess.Render("✓"), k.Decisions.Total, k.Decisions.Current, k.Decisions.Draft, k.Decisions.Historical)
+		if k.Memories.LegacyDecision > 0 {
+			fmt.Printf("  %s %d legacy Decision Memories await reviewed migration\n",
+				StyleWarning.Render("⚠"), k.Memories.LegacyDecision)
+		}
 		if k.Relations > 0 {
 			fmt.Printf("  %s %d relations\n", StyleSuccess.Render("✓"), k.Relations)
 		}

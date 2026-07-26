@@ -91,6 +91,7 @@ export default function AppShell() {
 	const [tasks, setTasks] = useState<Task[]>([]);
 	const [directTask, setDirectTask] = useState<Task | null>(null);
 	const [loading, setLoading] = useState(true);
+	const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
 	const currentRequestRef = useRef<{ generation: number; controller?: AbortController }>({ generation: 0 });
 	const directRequestRef = useRef<{ generation: number; controller?: AbortController }>({ generation: 0 });
 	const [projectActive, setProjectActive] = useState<boolean | null>(null);
@@ -126,10 +127,14 @@ export default function AppShell() {
 			const data = await api.getTasks({ signal: controller.signal });
 			if (currentRequestRef.current.generation === generation) {
 				setTasks(data.filter((task) => task.lifecycleState !== "archived"));
+				setTaskLoadError(null);
 			}
 		} catch (error) {
 			if (!(error instanceof DOMException && error.name === "AbortError")) {
 				console.error("Failed to load tasks:", error);
+				if (currentRequestRef.current.generation === generation) {
+					setTaskLoadError(error instanceof Error ? error.message : "Tasks could not be loaded.");
+				}
 			}
 		} finally {
 			if (currentRequestRef.current.generation === generation) setLoading(false);
@@ -317,6 +322,8 @@ export default function AppShell() {
 					<KanbanPage
 						tasks={currentTasks}
 						loading={loading}
+						error={taskLoadError}
+						onRetry={() => void loadCurrentTasks(true)}
 						onTasksUpdate={handleTasksUpdate}
 						onNewTask={() => setShowCreateForm(true)}
 					/>
@@ -330,6 +337,8 @@ export default function AppShell() {
 					<TasksPage
 					tasks={currentTasks}
 						loading={loading}
+						error={taskLoadError}
+						onRetry={() => void loadCurrentTasks(true)}
 						onTasksUpdate={handleTaskCreated}
 						selectedTask={selectedTask}
 						onTaskClose={() => {

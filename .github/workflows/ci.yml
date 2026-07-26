@@ -110,6 +110,81 @@ jobs:
           CGO_ENABLED: '1'
         run: go test -v -race -count=1 ./...
 
+      - name: Run canonical keyword retrieval evaluation gate
+        if: runner.os != 'Windows'
+        run: ./bin/knowns --json eval retrieval --output "$RUNNER_TEMP/retrieval-evaluation-keyword.json"
+
+      - name: Upload canonical keyword retrieval report
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrieval-evaluation-keyword
+          path: ${{ runner.temp }}/retrieval-evaluation-keyword.json
+          if-no-files-found: error
+
+  retrieval-semantic-evaluation:
+    runs-on: ubuntu-latest
+    needs: [test]
+    timeout-minutes: 45
+    env:
+      KNOWNS_RUNTIME_INLINE: '1'
+      PINNED_RETRIEVAL_RUNTIME: local/gte-small@384
+      ORT_VERSION: '1.25.0'
+    name: Retrieval Evaluation (Pinned Semantic Runtime)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Build UI
+        run: cd ui && bun install --frozen-lockfile && bun run build
+
+      - name: Build Knowns
+        run: go build -ldflags "-s -w -X github.com/howznguyen/knowns/internal/util.Version=${GITHUB_SHA}" -o bin/knowns ./cmd/knowns
+
+      - name: Install pinned ONNX Runtime
+        run: |
+          BASE_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}"
+          ARCHIVE="onnxruntime-linux-x64-${ORT_VERSION}.tgz"
+          curl -L --retry 5 --retry-delay 5 -o "/tmp/${ARCHIVE}" "${BASE_URL}/${ARCHIVE}"
+          tar -xzf "/tmp/${ARCHIVE}" -C /tmp
+          cp "/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION}" ./bin/libonnxruntime.so
+          echo "KNOWNS_ORT_LIB=$(pwd)/bin/libonnxruntime.so" >> "$GITHUB_ENV"
+
+      - name: Prepare pinned semantic index
+        run: |
+          ./bin/knowns model download gte-small
+          ./bin/knowns model set gte-small
+          ./bin/knowns config set settings.semanticSearch.provider local
+          ./bin/knowns search --reindex --plain
+
+      - name: Run pinned semantic retrieval evaluation
+        run: |
+          ./bin/knowns --json eval retrieval \
+            --mode semantic \
+            --runtime-id "$PINNED_RETRIEVAL_RUNTIME" \
+            --baseline internal/search/testdata/retrieval_evaluation_semantic_baseline.json \
+            --output "$RUNNER_TEMP/retrieval-evaluation-semantic.json"
+
+      - name: Run pinned hybrid retrieval evaluation
+        run: |
+          ./bin/knowns --json eval retrieval \
+            --mode hybrid \
+            --runtime-id "$PINNED_RETRIEVAL_RUNTIME" \
+            --baseline internal/search/testdata/retrieval_evaluation_hybrid_baseline.json \
+            --output "$RUNNER_TEMP/retrieval-evaluation-hybrid.json"
+
+      - name: Upload canonical semantic and hybrid reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrieval-evaluation-semantic-hybrid
+          path: |
+            ${{ runner.temp }}/retrieval-evaluation-semantic.json
+            ${{ runner.temp }}/retrieval-evaluation-hybrid.json
+          if-no-files-found: error
+
   lsp-fixtures:
     runs-on: ${{ matrix.os }}
     needs: [test]
@@ -173,6 +248,20 @@ jobs:
 
       - name: Build UI
         run: cd ui && bun install --frozen-lockfile && bun run build
+
+      - name: Run doctor portability contract (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          go test -v -count=1 ./internal/doctor
+          go test -v -count=1 -run '^TestDoctor' ./internal/cli
+
+      - name: Run doctor portability contract (Windows)
+        if: runner.os == 'Windows'
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          go test -v -count=1 ./internal/doctor
+          go test -v -count=1 -run '^TestDoctor' ./internal/cli
 
       - name: Build Go binary (Unix)
         if: runner.os != 'Windows'

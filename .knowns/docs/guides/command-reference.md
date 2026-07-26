@@ -1,14 +1,15 @@
 ---
 title: Command Reference
-createdAt: '2026-02-24T08:44:32.957Z'
-updatedAt: '2026-02-24T08:44:32.957Z'
 description: Quick reference for all Knowns CLI commands
+createdAt: '2026-02-24T08:44:32.957Z'
+updatedAt: '2026-07-26T06:59:06.445Z'
 tags:
   - guide
   - cli
   - commands
   - reference
 ---
+
 # Command Reference
 
 Quick reference for Knowns CLI commands. Full docs: `./docs/commands.md`
@@ -82,6 +83,48 @@ knowns model remove <name>
 ```
 
 ## Other Commands
+
+### Diagnose Project Health
+
+Run `knowns doctor` before starting work, especially after cloning a repository that already contains `.knowns/`.
+
+```bash
+knowns doctor
+knowns doctor --verbose
+knowns doctor --plain
+knowns doctor --json
+knowns doctor --scope project,lsp
+knowns doctor --scope search --scope runtime
+knowns doctor --strict --json
+knowns doctor --online
+```
+
+`knowns doctor` is read-only and offline by default. It checks the active project, validation, semantic search and indices, managed runtimes, configured or detected language servers, configured AI artifacts, and Knowns runtime-memory hooks. Registered online checks are returned as `skip` with `online_disabled` until `--online` is explicitly supplied.
+
+For configured or locally available Claude Code, Codex, Kiro, and OpenCode runtimes, missing, disabled, or out-of-sync hooks produce a warning with `knowns runtime install <runtime>` remediation.
+
+| Flag | Description |
+|------|-------------|
+| `--verbose` | Include passing and skipped checks; default human output shows only warnings and failures |
+| `--strict` | Return exit code 1 for a degraded verdict without changing the verdict |
+| `--online` | Opt into bounded version and configured-provider connectivity probes |
+| `--scope <scope>` | Restrict checks; repeat the flag or use comma-separated values |
+| `--plain` | Emit ANSI-free text for agents, logs, and pipes |
+| `--json` | Emit the complete versioned diagnostic result |
+
+Initial scopes are `project`, `validation`, `search`, `runtime`, `lsp`, `ai`, and `online`. Unknown scopes are usage errors.
+
+Verdicts and exit codes:
+
+- `healthy`: no warnings or failures; exit 0.
+- `degraded`: one or more warnings and no failures; exit 0, or 1 with `--strict`.
+- `unhealthy`: one or more failures; exit 1.
+- Diagnostic engine or usage failure: exit 2.
+- A missing active project is a valid `unhealthy` result with `knowns init` remediation, not an engine failure.
+
+Every warning or failure includes a remediation description and an exact Knowns command when one is safely available. Doctor never executes that command, downloads a model, rebuilds an index, starts or stops a process, synchronizes artifacts, or writes an update cache. The versioned behavior is specified by @doc/specs/2026-07-25/knowns-doctor.
+
+### Additional Commands
 
 ```bash
 knowns validate                          # Check broken refs

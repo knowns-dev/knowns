@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"errors"
+	"strings"
+	"time"
+)
 
 // Memory layer constants.
 const (
@@ -14,7 +18,7 @@ type MemoryEntry struct {
 	ID       string `json:"id"                    yaml:"id"`
 	Title    string `json:"title"                 yaml:"title"`
 	Layer    string `json:"layer"                 yaml:"layer"`              // "project", "global"
-	Category string `json:"category,omitempty"    yaml:"category,omitempty"` // "pattern", "decision", "convention", "preference", etc.
+	Category string `json:"category,omitempty"    yaml:"category,omitempty"` // "pattern", "convention", "preference", etc.; "decision" is legacy.
 
 	// Content holds the markdown body. Not persisted in frontmatter.
 	Content string `json:"content,omitempty" yaml:"-"`
@@ -51,6 +55,52 @@ const (
 	MemoryConfidenceMedium = "medium"
 	MemoryConfidenceHigh   = "high"
 )
+
+const LegacyDecisionMemoryCategory = "decision"
+
+const (
+	LegacyDecisionMigrationIDKey         = "decisionMigration.id"
+	LegacyDecisionMigrationResolutionKey = "decisionMigration.resolution"
+	LegacyDecisionMigrationDecisionKey   = "decisionMigration.decisionId"
+)
+
+var ErrLegacyDecisionMemoryWrite = errors.New("memory category \"decision\" is legacy and read-only; archive, reject, reclassify, or migrate existing entries, and create new durable guidance as a first-class System Decision with `knowns decision create` or the Decision MCP/API")
+
+// IsLegacyDecisionMemoryCategory normalizes user input before applying the
+// legacy category policy at every Memory write boundary.
+func IsLegacyDecisionMemoryCategory(category string) bool {
+	return strings.EqualFold(strings.TrimSpace(category), LegacyDecisionMemoryCategory)
+}
+
+// ValidateNewMemoryCategory rejects all new Decision Memory writes. Historical
+// files remain readable and are handled by ValidateLegacyDecisionMemoryUpdate.
+func ValidateNewMemoryCategory(category string) error {
+	if IsLegacyDecisionMemoryCategory(category) {
+		return ErrLegacyDecisionMemoryWrite
+	}
+	return nil
+}
+
+// ValidateLegacyDecisionMemoryUpdate constrains historical Decision Memories
+// to terminal lifecycle changes or reclassification. Migration records use an
+// archived legacy entry plus provenance rather than mutating current guidance.
+func ValidateLegacyDecisionMemoryUpdate(existing, updated *MemoryEntry) error {
+	if existing == nil || updated == nil {
+		return nil
+	}
+	wasLegacy := IsLegacyDecisionMemoryCategory(existing.Category)
+	isLegacy := IsLegacyDecisionMemoryCategory(updated.Category)
+	if !wasLegacy {
+		return ValidateNewMemoryCategory(updated.Category)
+	}
+	if !isLegacy {
+		return nil
+	}
+	if updated.Status == MemoryStatusArchived || updated.Status == MemoryStatusRejected {
+		return nil
+	}
+	return ErrLegacyDecisionMemoryWrite
+}
 
 func ValidMemoryStatus(status string) bool {
 	switch status {

@@ -57,7 +57,10 @@ func TestBuildInitialInstructionsContainsExpectedSections(t *testing.T) {
 		"## Workflow",
 		"## Knowledge Lifecycle",
 		"semantic review before becoming trusted",
+		"Spec Decisions are stable D-rules",
+		"Memory category 'decision' is legacy",
 		"## Tools",
+		"memory | decision | project",
 	}
 	for _, want := range expectedSections {
 		if !strings.Contains(got, want) {

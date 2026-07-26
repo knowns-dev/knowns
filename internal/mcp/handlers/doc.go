@@ -13,14 +13,13 @@ import (
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 // RegisterDocTool registers the consolidated documentation MCP tool.
-func RegisterDocTool(s *server.MCPServer, getStore func() *storage.Store) {
+func RegisterDocTool(s toolRegistrar, getStore func() *storage.Store) {
 	s.AddTool(
 		mcp.NewTool("docs",
-			mcp.WithDescription("Documentation operations. Use 'action' to specify: create, get, update, delete, list, history, diff, restore."),
+			mcp.WithDescription("Documentation operations. Use 'action' to specify: create, get, update, delete, list, history, diff, restore. Create/update return compact summaries by default; use return=full for the legacy document payload."),
 			mcp.WithString("action",
 				mcp.Required(),
 				mcp.Description("Action to perform"),
@@ -82,6 +81,10 @@ func RegisterDocTool(s *server.MCPServer, getStore func() *storage.Store) {
 				mcp.Description("Clear string fields like title, description, or content (update)"),
 				mcp.WithStringItems(),
 			),
+			mcp.WithString("return",
+				mcp.Description("Success response mode for create/update: summary (default) or full legacy entity"),
+				mcp.Enum(mutationReturnSummary, mutationReturnFull),
+			),
 			mcp.WithString("tag",
 				mcp.Description("Filter by tag (list)"),
 			),
@@ -116,6 +119,59 @@ func RegisterDocTool(s *server.MCPServer, getStore func() *storage.Store) {
 			}
 		},
 	)
+
+	registerHelp(s, "docs.create", HelpEntry{
+		When: "Create a documentation page. Successful calls return a compact summary by default.",
+		Params: map[string]string{
+			"title":       "required — document title",
+			"description": "document description",
+			"content":     "markdown content",
+			"tags":        "document tags",
+			"folder":      "folder path",
+			"return":      "summary (default) | full legacy document payload",
+		},
+		Flow: "Use the returned path for later reads or updates. Use return=full only when the complete created document is required.",
+	})
+	registerHelp(s, "docs.update", HelpEntry{
+		When: "Update document metadata or content, append content, replace a section, clear fields, or rename the path. Successful calls return a compact summary by default.",
+		Params: map[string]string{
+			"path":          "required — current document path",
+			"title":         "new document title",
+			"description":   "new document description",
+			"content":       "replacement markdown content, or section content when section is set",
+			"appendContent": "markdown content to append",
+			"section":       "heading title or section number to replace",
+			"newPath":       "new document path",
+			"tags":          "replacement tag list",
+			"clear":         "string fields to clear",
+			"return":        "summary (default) | full legacy document payload",
+		},
+		Flow: "Use the returned path after a rename; previousPath is included only for renames. Use return=full only when the complete updated document is required.",
+	})
+}
+
+type docMutationSummary struct {
+	Success      bool      `json:"success"`
+	Path         string    `json:"path"`
+	PreviousPath string    `json:"previousPath,omitempty"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+func docMutationResult(doc *models.Doc, returnMode, previousPath string) *mcp.CallToolResult {
+	var payload any = doc
+	if returnMode == mutationReturnSummary {
+		if previousPath == doc.Path {
+			previousPath = ""
+		}
+		payload = docMutationSummary{
+			Success:      true,
+			Path:         doc.Path,
+			PreviousPath: previousPath,
+			UpdatedAt:    doc.UpdatedAt,
+		}
+	}
+	out, _ := json.MarshalIndent(payload, "", "  ")
+	return mcp.NewToolResultText(string(out))
 }
 
 func handleDocList(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -285,6 +341,10 @@ func handleDocCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 	}
 
 	args := req.GetArguments()
+	returnMode, err := parseMutationReturn(args)
+	if err != nil {
+		return errResult(err.Error())
+	}
 
 	slug := slugify(title)
 	folder, _ := stringArg(args, "folder")
@@ -328,8 +388,7 @@ func handleDocCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 
 	go notifyDocUpdated(store, doc.Path)
 
-	out, _ := json.MarshalIndent(doc, "", "  ")
-	return mcp.NewToolResultText(string(out)), nil
+	return docMutationResult(doc, returnMode, ""), nil
 }
 
 func handleDocUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -350,6 +409,10 @@ func handleDocUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 
 	oldDoc := *doc
 	args := req.GetArguments()
+	returnMode, err := parseMutationReturn(args)
+	if err != nil {
+		return errResult(err.Error())
+	}
 	clearFields := stringSetArg(args, "clear")
 	oldPath := doc.Path
 
@@ -426,8 +489,7 @@ func handleDocUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 		go notifyDocUpdated(store, doc.Path)
 	}
 
-	out, _ := json.MarshalIndent(doc, "", "  ")
-	return mcp.NewToolResultText(string(out)), nil
+	return docMutationResult(doc, returnMode, oldPath), nil
 }
 
 func handleDocHistory(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

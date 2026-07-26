@@ -17,6 +17,11 @@ test.describe("Kanban Board", () => {
 			await page.goto(`${server.baseURL}/kanban`);
 		});
 
+		await test.step("Shared page header is visible", async () => {
+			await expect(page.getByRole("heading", { name: "Kanban Board" })).toBeVisible();
+			await expect(page.getByText("Move active work through your configured delivery stages.")).toBeVisible();
+		});
+
 		await test.step("Board columns are rendered", async () => {
 			await expect(page.locator("[data-board-column], [class*=kanban]").first()).toBeVisible().catch(() => {
 				// Fallback: just check page loaded without error

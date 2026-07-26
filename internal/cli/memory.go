@@ -636,7 +636,7 @@ func init() {
 
 	// memory create flags
 	memoryCreateCmd.Flags().String("layer", "", "Memory layer (working, project, global; default: project)")
-	memoryCreateCmd.Flags().String("category", "", "Memory category (pattern, decision, convention, preference)")
+	memoryCreateCmd.Flags().String("category", "", "Memory category (pattern, convention, preference, failure); decision is legacy and rejected")
 	memoryCreateCmd.Flags().StringArrayP("tag", "t", nil, "Memory tag (repeatable)")
 	memoryCreateCmd.Flags().StringP("content", "c", "", "Memory content")
 	memoryCreateCmd.Flags().String("status", "", "Explicit memory status for human create/override")

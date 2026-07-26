@@ -83,7 +83,7 @@ Knowns cho nó quyền truy cập đó.
 |---|---|
 | "Bọn tôi dùng repository pattern..." _(paste 50 dòng)_ | AI tự đọc `@doc/patterns/repository` |
 | "Đây là task, AC là..." _(gõ lại từ đầu)_ | AI đọc task, AC, linked spec và related docs |
-| "Nhớ tuần trước quyết định..." _(hy vọng nó nhớ)_ | Decision lưu trong project memory — AI recall mỗi session |
+| "Nhớ tuần trước quyết định..." _(hy vọng nó nhớ)_ | Lựa chọn được lưu thành System Decision có lifecycle kiểm chứng được |
 | "Auth flow hoạt động thế này..." _(giải thích lần thứ 4)_ | AI follow `@doc/architecture/auth` và build tiếp |
 | "Xong chưa nhỉ, để check lại requirements..." | AI tự check AC và validate completion |
 | Session bắt đầu lạnh — mất 10 phút dựng context | Session bắt đầu ấm — AI đã biết project |
@@ -158,6 +158,10 @@ cd your-project
 knowns init
 # Tạo .knowns/ cùng lightweight agent shims như CLAUDE.md/AGENTS.md
 
+# Trước khi bắt đầu làm việc, đặc biệt sau khi clone
+# một repository đã có .knowns/
+knowns doctor
+
 # Hoặc chạy không cần cài global
 npx knowns init
 
@@ -210,12 +214,22 @@ knowns doc "architecture/api-design" --smart --plain
 
 ### Project memory
 
-Memory 3 layer — **project**, **session**, **global** — AI recall decisions, patterns, conventions mà không cần bạn nhắc lại.
+Memory 3 layer — **project**, **session**, **global** — AI recall patterns, conventions, preferences mà không cần bạn nhắc lại.
 
 ```bash
-knowns memory add "We use repository pattern for data access" --category decision
+knowns memory add "We use repository pattern for data access" --category pattern
 knowns memory list --plain
 ```
+
+Knowns có hai miền Decision: **Spec Decision** là các rule `D1`, `D2`, … đã khóa trong spec được approve mà người implement phải tuân thủ và report; **System Decision** là record first-class về thay đổi bền vững của project. System Decision mới luôn bắt đầu ở trạng thái draft và chỉ trở thành current sau khi evidence liên kết đã được verify.
+
+```bash
+knowns decision create "Use Postgres for metadata" --decision "Use Postgres as the metadata store."
+knowns decision link <id> --source @doc/architecture/storage --task <done-task-id>
+knowns decision accept <id>
+```
+
+Memory category `decision` là legacy và read-only đối với write mới. Review bằng `knowns decision migrate preview`; migration phải explicit, từng record một và có thể rollback.
 
 ### Semantic search
 
@@ -236,6 +250,17 @@ LSP-backed code intelligence cho Go, TypeScript, Python, Rust, C/C++, Java, C#, 
 ```bash
 knowns lsp list                    # Xem ngôn ngữ và trạng thái LSP
 knowns lsp install <language>      # Tải và cài LSP server
+```
+
+### Chẩn đoán project
+
+Chạy `knowns doctor` trước khi bắt đầu làm việc, đặc biệt sau khi clone một repository đã có `.knowns/`. Lệnh này kiểm tra offline, read-only cho project setup, semantic search, local runtime, language server, AI integration artifacts và runtime-memory hooks. Mỗi vấn đề có hướng dẫn xử lý nhưng `doctor` không tự thay đổi hệ thống.
+
+```bash
+knowns doctor
+knowns doctor --scope search,lsp
+knowns doctor --verbose
+knowns doctor --json --strict
 ```
 
 ### Templates & code generation
@@ -467,6 +492,11 @@ knowns validate
 knowns lsp list
 knowns lsp install <language>
 knowns lsp cleanup
+
+# Chẩn đoán project
+knowns doctor
+knowns doctor --scope search,lsp
+knowns doctor --json --strict
 
 # AI setup
 knowns setup agents        # lightweight repo-local agent shims only

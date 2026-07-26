@@ -20,6 +20,8 @@ description: Use when creating an implementation plan for a task
 - Follow every explicit `@task-`, `@doc/`, and `@template/` ref before finalizing the plan
 - Search for adjacent docs/tasks only after reading the primary source
 - Do not write a plan that assumes undocumented architecture decisions
+- For a linked spec, read its canonical `Locked Decisions` section and enumerate every D-ID before planning. Stop on an unreadable rule or concrete conflict.
+- Retrieve relevant System Decisions with `sourceTypes:["decision"]`, `status:"accepted"`, `includeHistorical:false`, and a bounded limit; never inject the full Decision ledger.
 - If the user wants an approved spec or multiple linked tasks executed end to end, route to `/kn-flow @doc/<spec-path>` instead of planning one task at a time
 
 ## Mode Detection
@@ -106,6 +108,14 @@ mcp_knowns_templates({ "action": "list" })
 
 If relevant memories appear, factor them into the plan (past patterns, decisions, conventions).
 
+Retrieve relevant current System Decisions separately:
+```json
+mcp_knowns_search({ "action": "retrieve", "query": "<task + feature keywords>",
+  "sourceTypes": ["decision"], "status": "accepted", "includeHistorical": false, "limit": 8 })
+```
+
+Treat `Locked Decisions` in the linked spec as mandatory scoped execution rules. Tasks retain the spec link and must not copy the Decision text.
+
 If the plan needs assembled execution context rather than raw search hits, use retrieval after discovery:
 ```json
 mcp_knowns_search({ "action": "retrieve", "query": "<keywords>" })
@@ -166,6 +176,7 @@ Before presenting the plan for approval, verify plan quality:
 - Every requirement from the task description should map to at least one plan step
 - Every plan step should contribute to at least one AC
 - Flag any AC that no plan step addresses
+- Report `Spec Decision Compliance` for every D-ID as `pass` or `conflict: <reason>`; a conflict blocks approval until the spec or plan is reconciled
 
 ### Scope Sizing
 - Each plan step should be completable in a single implementation session

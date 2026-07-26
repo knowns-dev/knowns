@@ -83,7 +83,7 @@ Knowns gives it that access.
 |---|---|
 | "We use the repository pattern with..." _(paste 50 lines)_ | AI reads `@doc/patterns/repository` automatically |
 | "Here's the task, the acceptance criteria are..." _(re-type everything)_ | AI reads the task, its ACs, linked specs, and related docs |
-| "Remember, we decided last week to..." _(hope it sticks)_ | Decision is stored in project memory - AI recalls it every session |
+| "Remember, we decided last week to..." _(hope it sticks)_ | Choice is stored as a first-class System Decision with a verifiable lifecycle |
 | "The auth flow works like this..." _(explain for the 4th time)_ | AI follows `@doc/architecture/auth` and builds on it |
 | "Are we done? Let me check the requirements again..." | AI checks acceptance criteria and validates completion itself |
 | Session starts cold - 10 min of context-setting | Session starts warm - AI already knows the project |
@@ -158,6 +158,10 @@ cd your-project
 knowns init
 # Creates .knowns/ plus lightweight agent shims such as CLAUDE.md/AGENTS.md
 
+# Before starting work, especially after cloning a repository
+# that already contains .knowns/
+knowns doctor
+
 # or run without a global install
 npx knowns init
 
@@ -210,12 +214,22 @@ knowns doc "architecture/api-design" --smart --plain
 
 ### Project Memory
 
-Three-layer memory system - **project**, **session**, and **global** - so AI recalls decisions, patterns, and conventions without you repeating them.
+Three-layer memory system - **project**, **session**, and **global** - so AI recalls patterns, conventions, and preferences without you repeating them.
 
 ```bash
-knowns memory add "We use repository pattern for data access" --category decision
+knowns memory add "We use repository pattern for data access" --category pattern
 knowns memory list --plain
 ```
+
+Knowns has two Decision domains: **Spec Decisions** are locked `D1`, `D2`, … rules inside an approved spec that implementers must follow and report; **System Decisions** are first-class records of durable project evolution. New System Decisions always start as drafts and become current only after linked evidence is verified.
+
+```bash
+knowns decision create "Use Postgres for metadata" --decision "Use Postgres as the metadata store."
+knowns decision link <id> --source @doc/architecture/storage --task <done-task-id>
+knowns decision accept <id>
+```
+
+Memory category `decision` is legacy and read-only for new writes. Review it with `knowns decision migrate preview`; migration is explicit, one record at a time, and reversible.
 
 ### Semantic Search
 
@@ -236,6 +250,17 @@ LSP-based code intelligence for supported languages. List symbols, jump to defin
 ```bash
 knowns lsp list
 knowns lsp install <language>
+```
+
+### Project Diagnostics
+
+Run `knowns doctor` before starting work, especially after cloning a repository that already contains `.knowns/`. It performs offline, read-only checks for project setup, semantic search, local runtimes, language servers, AI integration artifacts, and runtime-memory hooks. Findings include actionable remediation without applying changes automatically.
+
+```bash
+knowns doctor
+knowns doctor --scope search,lsp
+knowns doctor --verbose
+knowns doctor --json --strict
 ```
 
 ### Templates & Code Generation
@@ -469,6 +494,11 @@ knowns validate
 knowns lsp list
 knowns lsp install <language>
 # Use the MCP code tool for symbols, definitions, references, diagnostics, and edits
+
+# Project diagnostics
+knowns doctor
+knowns doctor --scope search,lsp
+knowns doctor --json --strict
 
 # AI setup
 knowns setup agents        # lightweight repo-local agent shims only

@@ -16,20 +16,48 @@ const (
 	DecisionStatusArchived   = "archived"
 )
 
+// Decision candidate review states are durable workflow metadata layered on
+// top of the canonical Decision lifecycle statuses.
+const (
+	DecisionReviewStateNeedsEvidence   = "needs_evidence"
+	DecisionReviewStateNeedsResolution = "needs_resolution"
+	DecisionReviewStateReadyForReview  = "ready_for_review"
+)
+
+// DecisionReviewMatch is the persisted summary of a current Decision that may
+// duplicate or conflict with a draft candidate.
+type DecisionReviewMatch struct {
+	ID        string   `json:"id"                  yaml:"id"`
+	Title     string   `json:"title"               yaml:"title"`
+	Status    string   `json:"status,omitempty"    yaml:"status,omitempty"`
+	Score     float64  `json:"score"               yaml:"score"`
+	Kind      string   `json:"kind,omitempty"      yaml:"kind,omitempty"`
+	MatchedBy []string `json:"matchedBy,omitempty" yaml:"matchedBy,omitempty"`
+	Snippet   string   `json:"snippet,omitempty"   yaml:"snippet,omitempty"`
+	Tags      []string `json:"tags,omitempty"      yaml:"tags,omitempty"`
+}
+
 // DecisionEntry represents a first-class architecture/product decision stored
 // as markdown with YAML frontmatter.
 type DecisionEntry struct {
-	ID           string    `json:"id"                     yaml:"id"`
-	Title        string    `json:"title"                  yaml:"title"`
-	Status       string    `json:"status"                 yaml:"status"`
-	Supersedes   []string  `json:"supersedes,omitempty"   yaml:"supersedes,omitempty"`
-	SupersededBy []string  `json:"supersededBy,omitempty" yaml:"supersededBy,omitempty"`
-	Tags         []string  `json:"tags,omitempty"         yaml:"tags,omitempty"`
-	Sources      []string  `json:"sources,omitempty"      yaml:"sources,omitempty"`
-	RelatedDocs  []string  `json:"relatedDocs,omitempty"  yaml:"relatedDocs,omitempty"`
-	RelatedTasks []string  `json:"relatedTasks,omitempty" yaml:"relatedTasks,omitempty"`
-	CreatedAt    time.Time `json:"createdAt"              yaml:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"              yaml:"updatedAt"`
+	ID                       string                `json:"id"                               yaml:"id"`
+	Title                    string                `json:"title"                            yaml:"title"`
+	Status                   string                `json:"status"                           yaml:"status"`
+	Supersedes               []string              `json:"supersedes,omitempty"             yaml:"supersedes,omitempty"`
+	SupersededBy             []string              `json:"supersededBy,omitempty"           yaml:"supersededBy,omitempty"`
+	Tags                     []string              `json:"tags,omitempty"                   yaml:"tags,omitempty"`
+	Sources                  []string              `json:"sources,omitempty"                yaml:"sources,omitempty"`
+	RelatedDocs              []string              `json:"relatedDocs,omitempty"            yaml:"relatedDocs,omitempty"`
+	RelatedTasks             []string              `json:"relatedTasks,omitempty"           yaml:"relatedTasks,omitempty"`
+	Verification             []string              `json:"verification,omitempty"           yaml:"verification,omitempty"`
+	VerifiedAt               *time.Time            `json:"verifiedAt,omitempty"             yaml:"verifiedAt,omitempty"`
+	ReviewState              string                `json:"reviewState,omitempty"            yaml:"reviewState,omitempty"`
+	ReviewBlockers           []string              `json:"reviewBlockers,omitempty"         yaml:"reviewBlockers,omitempty"`
+	ReviewMatches            []DecisionReviewMatch `json:"reviewMatches,omitempty"          yaml:"reviewMatches,omitempty"`
+	ReviewAllowedResolutions []string              `json:"reviewAllowedResolutions,omitempty" yaml:"reviewAllowedResolutions,omitempty"`
+	ReviewEvaluatedAt        *time.Time            `json:"reviewEvaluatedAt,omitempty"      yaml:"reviewEvaluatedAt,omitempty"`
+	CreatedAt                time.Time             `json:"createdAt"                        yaml:"createdAt"`
+	UpdatedAt                time.Time             `json:"updatedAt"                        yaml:"updatedAt"`
 
 	Context                string `json:"context,omitempty"                 yaml:"-"`
 	Decision               string `json:"decision,omitempty"                yaml:"-"`
@@ -56,6 +84,17 @@ func ValidDecisionStatus(status string) bool {
 	}
 }
 
+// ValidDecisionReviewState reports whether state is a supported actionable
+// state for a persisted draft candidate.
+func ValidDecisionReviewState(state string) bool {
+	switch state {
+	case "", DecisionReviewStateNeedsEvidence, DecisionReviewStateNeedsResolution, DecisionReviewStateReadyForReview:
+		return true
+	default:
+		return false
+	}
+}
+
 // ValidDecisionID reports whether id follows the canonical
 // YYYYMMDD-HHMM-slug decision ID format.
 func ValidDecisionID(id string) bool {
@@ -63,13 +102,11 @@ func ValidDecisionID(id string) bool {
 }
 
 // ApplyDecisionDefaults fills the create-time status default required by the
-// Decision lifecycle: sourced or related decisions become accepted, otherwise draft.
+// System Decision lifecycle. Evidence and links never imply verification, so
+// every new Decision starts as a draft unless a trusted migration explicitly
+// supplies a historical status.
 func (d *DecisionEntry) ApplyDecisionDefaults() {
 	if d.Status != "" {
-		return
-	}
-	if len(d.Sources) > 0 || len(d.RelatedDocs) > 0 || len(d.RelatedTasks) > 0 {
-		d.Status = DecisionStatusAccepted
 		return
 	}
 	d.Status = DecisionStatusDraft
@@ -80,7 +117,16 @@ func (d *DecisionEntry) CurrentForDefaultRetrieval() bool {
 	if d == nil {
 		return false
 	}
-	return d.Status == DecisionStatusAccepted && len(d.SupersededBy) == 0
+	return d.Status == DecisionStatusAccepted && d.VerifiedAt != nil && len(d.SupersededBy) == 0
+}
+
+// CandidateForReviewInbox reports whether a Decision remains actionable in the
+// persisted review workflow.
+func (d *DecisionEntry) CandidateForReviewInbox() bool {
+	if d == nil || d.Status != DecisionStatusDraft {
+		return false
+	}
+	return ValidDecisionReviewState(d.ReviewState) && d.ReviewState != ""
 }
 
 // DecisionRef returns the canonical semantic reference for a decision.

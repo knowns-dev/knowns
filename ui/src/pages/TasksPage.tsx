@@ -11,10 +11,19 @@ import type { TaskLifecycleResponse } from "../models/taskLifecycle";
 import { TaskLifecycleDialog } from "../components/organisms/TaskLifecycleDialog";
 import { toast } from "../components/ui/sonner";
 import { useSSEEvent } from "../contexts/SSEContext";
+import {
+	PageContent,
+	PageError,
+	PageHeader,
+	PageLoading,
+	PageShell,
+} from "../components/templates/PageShell";
 
 interface TasksPageProps {
 	tasks: Task[];
 	loading: boolean;
+	error?: string | null;
+	onRetry?: () => void;
 	onTasksUpdate: () => void;
 	selectedTask?: Task | null;
 	onTaskClose?: () => void;
@@ -26,6 +35,8 @@ type ViewMode = "table" | "grouped";
 export default function TasksPage({
 	tasks,
 	loading,
+	error,
+	onRetry,
 	onTasksUpdate,
 	selectedTask: externalSelectedTask,
 	onTaskClose,
@@ -179,33 +190,25 @@ export default function TasksPage({
 		if (historicalMode) void loadHistorical();
 	};
 
-	if (loading) {
-		return (
-			<div className="flex items-center justify-center h-64">
-				<div className="text-muted-foreground">Loading tasks...</div>
-			</div>
-		);
-	}
-
 	return (
-		<div className="h-full flex flex-col overflow-hidden">
-			{/* Header */}
-			<div className="shrink-0 px-6 pt-8 pb-4">
-				<div className="flex items-center justify-between gap-4">
-					<div className="flex items-baseline gap-3 min-w-0">
-						<h1 className="text-3xl font-semibold tracking-tight">Tasks</h1>
-						<span className="text-sm text-muted-foreground">
-							{visibleTasks.length} {visibleTasks.length === 1 ? "task" : "tasks"}
-						</span>
-					</div>
-
-					<div className="flex items-center gap-2 shrink-0">
+		<PageShell>
+			<PageHeader
+				title="Tasks"
+				description="Plan, review, and recover project work across its lifecycle."
+				context="Project work"
+				status={
+					<span className="tabular-nums">
+						{visibleTasks.length} {visibleTasks.length === 1 ? "task" : "tasks"}
+					</span>
+				}
+				actions={
+					<div className="flex flex-wrap items-center gap-2">
 						<label className="sr-only" htmlFor="task-lifecycle-filter">Lifecycle</label>
 						<select
 							id="task-lifecycle-filter"
 							value={lifecycleFilter}
 							onChange={(event) => setLifecycleFilter(event.target.value as typeof lifecycleFilter)}
-							className="h-8 rounded-md border bg-background px-2 text-xs"
+							className="h-11 max-w-full rounded-md border bg-background px-2 text-xs sm:h-8"
 						>
 							<option value="current">Current (active + done)</option>
 							<option value="active">Active</option>
@@ -214,45 +217,52 @@ export default function TasksPage({
 							<option value="all">All lifecycle states</option>
 						</select>
 						{archivedIDs.length > 0 && (lifecycleFilter === "archived" || lifecycleFilter === "all") && (
-							<Button variant="outline" size="sm" onClick={previewRestore} className="h-8 gap-1.5">
+							<Button variant="outline" size="sm" onClick={previewRestore} className="h-11 gap-1.5 sm:h-8">
 								<ArchiveRestore className="h-3.5 w-3.5" /> Restore archived…
 							</Button>
 						)}
 						{/* View Toggle */}
-						<div className="flex items-center gap-0.5">
-						<button
-							type="button"
-							onClick={() => setViewMode("table")}
-							className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors ${
-								viewMode === "table"
-									? "bg-muted text-foreground"
-									: "text-muted-foreground hover:text-foreground"
-							}`}
-						>
-							<LayoutList className="h-4 w-4" />
-							<span className="hidden sm:inline">Table</span>
-						</button>
-						<button
-							type="button"
-							onClick={() => setViewMode("grouped")}
-							className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors ${
-								viewMode === "grouped"
-									? "bg-muted text-foreground"
-									: "text-muted-foreground hover:text-foreground"
-							}`}
-						>
-							<LayoutGrid className="h-4 w-4" />
-							<span className="hidden sm:inline">Grouped</span>
-						</button>
+						<div className="flex items-center rounded-md bg-muted/70 p-0.5" aria-label="Task view">
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								aria-label="Table view"
+								aria-pressed={viewMode === "table"}
+								onClick={() => setViewMode("table")}
+								className={viewMode === "table" ? "h-10 bg-background px-2 shadow-sm hover:bg-background sm:h-7" : "h-10 px-2 text-muted-foreground sm:h-7"}
+							>
+								<LayoutList className="h-3.5 w-3.5" />
+								<span className="hidden sm:inline">Table</span>
+							</Button>
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								aria-label="Grouped view"
+								aria-pressed={viewMode === "grouped"}
+								onClick={() => setViewMode("grouped")}
+								className={viewMode === "grouped" ? "h-10 bg-background px-2 shadow-sm hover:bg-background sm:h-7" : "h-10 px-2 text-muted-foreground sm:h-7"}
+							>
+								<LayoutGrid className="h-3.5 w-3.5" />
+								<span className="hidden sm:inline">Grouped</span>
+							</Button>
 						</div>
 					</div>
-				</div>
-			</div>
+				}
+			/>
 
-			{/* Content */}
-			<div className="flex-1 overflow-hidden px-6 pb-6">
-				{historicalMode && historicalLoading && historicalTasks === null ? (
-					<div className="flex h-64 items-center justify-center text-muted-foreground">Loading historical Tasks...</div>
+			<PageContent size="full" className="flex min-h-0 flex-1 flex-col overflow-hidden py-5">
+				{loading ? (
+					<PageLoading label="Loading Tasks" className="flex-1" />
+				) : error && taskSource.length === 0 ? (
+					<PageError
+						description={error}
+						onRetry={onRetry}
+						className="flex-1"
+					/>
+				) : historicalMode && historicalLoading && historicalTasks === null ? (
+					<PageLoading label="Loading historical Tasks" className="flex-1" />
 				) : viewMode === "table" ? (
 					<TaskNotionList
 						tasks={visibleTasks}
@@ -266,7 +276,7 @@ export default function TasksPage({
 						onNewTask={onNewTask}
 					/>
 				)}
-			</div>
+			</PageContent>
 
 			{/* Task Detail Sheet */}
 			<TaskDetailSheet
@@ -292,6 +302,6 @@ export default function TasksPage({
 				confirmLabel="Restore eligible Tasks"
 				onConfirm={executeRestore}
 			/>
-		</div>
+		</PageShell>
 	);
 }

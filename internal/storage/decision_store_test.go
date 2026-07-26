@@ -61,16 +61,58 @@ func TestDecisionStoreCreateDefaultsAndBodyRoundTrip(t *testing.T) {
 		t.Fatalf("section round trip mismatch: %+v", loaded)
 	}
 
-	accepted := &models.DecisionEntry{
+	linkedDraft := &models.DecisionEntry{
 		Title:        "Accepted with source",
 		Sources:      []string{"@doc/specs/2026-06-18/memory-decision-review-ui"},
 		RelatedTasks: []string{"yken4b"},
 	}
-	if err := store.Decisions.Create(accepted, DecisionCreateOptions{Now: createdAt.Add(time.Minute)}); err != nil {
-		t.Fatalf("Create accepted: %v", err)
+	if err := store.Decisions.Create(linkedDraft, DecisionCreateOptions{Now: createdAt.Add(time.Minute)}); err != nil {
+		t.Fatalf("Create linked draft: %v", err)
 	}
-	if accepted.Status != models.DecisionStatusAccepted {
-		t.Fatalf("accepted status = %q, want accepted", accepted.Status)
+	if linkedDraft.Status != models.DecisionStatusDraft {
+		t.Fatalf("linked status = %q, want draft", linkedDraft.Status)
+	}
+}
+
+func TestDecisionStoreCandidateReviewMetadataRoundTrip(t *testing.T) {
+	store := setupDecisionStore(t)
+	evaluatedAt := fixedDecisionTime().Add(time.Minute)
+	candidate := &models.DecisionEntry{
+		Title:                    "Persist Decision review state",
+		ReviewState:              models.DecisionReviewStateNeedsResolution,
+		ReviewBlockers:           []string{"linked task task1 is incomplete"},
+		ReviewAllowedResolutions: []string{"link_as_related", "reject_new"},
+		ReviewEvaluatedAt:        &evaluatedAt,
+		ReviewMatches: []models.DecisionReviewMatch{{
+			ID:        "20260618-1024-existing-decision",
+			Title:     "Existing decision",
+			Status:    models.DecisionStatusAccepted,
+			Score:     0.92,
+			Kind:      "duplicate",
+			MatchedBy: []string{"lexical:title"},
+			Snippet:   "Existing guidance",
+			Tags:      []string{"decision"},
+		}},
+	}
+	if err := store.Decisions.Create(candidate, DecisionCreateOptions{Now: fixedDecisionTime()}); err != nil {
+		t.Fatalf("Create candidate: %v", err)
+	}
+
+	reopened := NewStore(store.Root)
+	loaded, err := reopened.Decisions.Get(candidate.ID)
+	if err != nil {
+		t.Fatalf("Get reopened candidate: %v", err)
+	}
+	if loaded.ReviewState != candidate.ReviewState ||
+		!reflect.DeepEqual(loaded.ReviewBlockers, candidate.ReviewBlockers) ||
+		!reflect.DeepEqual(loaded.ReviewAllowedResolutions, candidate.ReviewAllowedResolutions) ||
+		!reflect.DeepEqual(loaded.ReviewMatches, candidate.ReviewMatches) ||
+		loaded.ReviewEvaluatedAt == nil ||
+		!loaded.ReviewEvaluatedAt.Equal(evaluatedAt) {
+		t.Fatalf("review metadata did not round trip:\n got: %+v\nwant: %+v", loaded, candidate)
+	}
+	if loaded.CurrentForDefaultRetrieval() {
+		t.Fatal("draft candidate entered default current retrieval")
 	}
 }
 
@@ -89,8 +131,8 @@ func TestDecisionStoreListGetLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Link: %v", err)
 	}
-	if linked.Status != models.DecisionStatusAccepted {
-		t.Fatalf("linked status = %q, want accepted", linked.Status)
+	if linked.Status != models.DecisionStatusDraft {
+		t.Fatalf("linked status = %q, want draft", linked.Status)
 	}
 	if !reflect.DeepEqual(linked.RelatedDocs, []string{"specs/a"}) {
 		t.Fatalf("RelatedDocs = %#v", linked.RelatedDocs)
@@ -158,12 +200,20 @@ func TestDecisionStoreRejectsInvalidID(t *testing.T) {
 
 func TestDecisionStoreSupersedeUpdatesBothRecords(t *testing.T) {
 	store := setupDecisionStore(t)
+	verifiedAt := fixedDecisionTime()
 	oldDecision := &models.DecisionEntry{
-		Title:   "Use Chroma as default vector DB",
-		Sources: []string{"@doc/specs/vector"},
+		Title:        "Use Chroma as default vector DB",
+		Status:       models.DecisionStatusAccepted,
+		Sources:      []string{"@doc/specs/vector"},
+		Verification: []string{"task:@task-old:done"},
+		VerifiedAt:   &verifiedAt,
 	}
 	newDecision := &models.DecisionEntry{
-		Title: "Use Qdrant as default vector DB",
+		Title:        "Use Qdrant as default vector DB",
+		Status:       models.DecisionStatusAccepted,
+		Sources:      []string{"@doc/specs/vector-v2"},
+		Verification: []string{"task:@task-new:done"},
+		VerifiedAt:   &verifiedAt,
 	}
 	if err := store.Decisions.Create(oldDecision, DecisionCreateOptions{Now: fixedDecisionTime()}); err != nil {
 		t.Fatalf("Create old: %v", err)
@@ -187,6 +237,54 @@ func TestDecisionStoreSupersedeUpdatesBothRecords(t *testing.T) {
 	}
 	if !reflect.DeepEqual(updatedNew.Supersedes, []string{oldDecision.ID}) {
 		t.Fatalf("new Supersedes = %#v", updatedNew.Supersedes)
+	}
+}
+
+func TestDecisionStoreAcceptIsRollbackSafeAndIdempotent(t *testing.T) {
+	store := setupDecisionStore(t)
+	verifiedAt := fixedDecisionTime()
+	oldDecision := &models.DecisionEntry{
+		Title:        "Old current decision",
+		Status:       models.DecisionStatusAccepted,
+		Sources:      []string{"https://example.com/old"},
+		Verification: []string{"task:@task-old:done"},
+		VerifiedAt:   &verifiedAt,
+	}
+	replacement := &models.DecisionEntry{Title: "Replacement decision", Sources: []string{"https://example.com/new"}}
+	if err := store.Decisions.Create(oldDecision, DecisionCreateOptions{Now: verifiedAt}); err != nil {
+		t.Fatalf("Create old: %v", err)
+	}
+	if err := store.Decisions.Create(replacement, DecisionCreateOptions{Now: verifiedAt.Add(time.Minute)}); err != nil {
+		t.Fatalf("Create replacement: %v", err)
+	}
+
+	writes := 0
+	store.Decisions.writeFile = func(path string, data []byte) error {
+		writes++
+		if writes == 2 {
+			return os.ErrPermission
+		}
+		return atomicWrite(path, data)
+	}
+	if _, _, err := store.Decisions.Accept(replacement.ID, []string{"task:@task-new:done"}, []string{oldDecision.ID}, verifiedAt.Add(2*time.Minute)); err == nil {
+		t.Fatal("Accept succeeded despite injected second-write failure")
+	}
+	store.Decisions.writeFile = nil
+	loadedOld, _ := store.Decisions.Get(oldDecision.ID)
+	loadedReplacement, _ := store.Decisions.Get(replacement.ID)
+	if loadedOld.Status != models.DecisionStatusAccepted || loadedReplacement.Status != models.DecisionStatusDraft {
+		t.Fatalf("rollback did not restore both records: old=%s replacement=%s", loadedOld.Status, loadedReplacement.Status)
+	}
+
+	accepted, superseded, err := store.Decisions.Accept(replacement.ID, []string{"task:@task-new:done"}, []string{oldDecision.ID}, verifiedAt.Add(3*time.Minute))
+	if err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+	if !accepted.CurrentForDefaultRetrieval() || len(superseded) != 1 || superseded[0].Status != models.DecisionStatusSuperseded {
+		t.Fatalf("accept result = accepted:%+v superseded:%+v", accepted, superseded)
+	}
+	if _, _, err := store.Decisions.Accept(replacement.ID, accepted.Verification, []string{oldDecision.ID}, *accepted.VerifiedAt); err != nil {
+		t.Fatalf("idempotent Accept: %v", err)
 	}
 }
 

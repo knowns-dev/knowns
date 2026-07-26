@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -216,6 +217,12 @@ func (ms *MemoryStore) GetInLayer(id, layer string) (*models.MemoryEntry, error)
 
 // Create writes a new memory entry to the appropriate layer directory.
 func (ms *MemoryStore) Create(entry *models.MemoryEntry) error {
+	if entry == nil {
+		return fmt.Errorf("memory entry is required")
+	}
+	if err := models.ValidateNewMemoryCategory(entry.Category); err != nil {
+		return err
+	}
 	if entry.Layer == "" {
 		entry.Layer = models.MemoryLayerProject
 	}
@@ -258,8 +265,74 @@ func (ms *MemoryStore) Update(entry *models.MemoryEntry) error {
 	if err != nil {
 		return err
 	}
+	if err := models.ValidateLegacyDecisionMemoryUpdate(existing, entry); err != nil {
+		return err
+	}
+	return ms.writeExisting(entry, existing, true)
+}
 
-	entry.UpdatedAt = time.Now().UTC()
+// RestoreLegacyDecisionMigration restores a pre-migration snapshot. It is
+// deliberately narrower than Update: the current record must carry the
+// matching migration marker, still match the expected migrated state, and the
+// snapshot must be a legacy Decision Memory.
+func (ms *MemoryStore) RestoreLegacyDecisionMigration(entry, expected *models.MemoryEntry, migrationID string) error {
+	if entry == nil || entry.ID == "" || strings.TrimSpace(migrationID) == "" {
+		return fmt.Errorf("memory snapshot and migration ID are required")
+	}
+	existing, err := ms.Get(entry.ID)
+	if err != nil {
+		return err
+	}
+	if existing.Metadata == nil || existing.Metadata[models.LegacyDecisionMigrationIDKey] != migrationID {
+		if memoryEntriesMigrationEqual(existing, entry) {
+			return nil
+		}
+		return fmt.Errorf("memory %q is not owned by migration %q", entry.ID, migrationID)
+	}
+	if expected == nil || !memoryEntriesMigrationEqual(existing, expected) {
+		return fmt.Errorf("memory %q changed after migration %q; automatic rollback is unsafe", entry.ID, migrationID)
+	}
+	if !models.IsLegacyDecisionMemoryCategory(entry.Category) {
+		return fmt.Errorf("migration snapshot for memory %q is not a legacy Decision Memory", entry.ID)
+	}
+	return ms.writeExisting(entry, existing, false)
+}
+
+func memoryEntriesMigrationEqual(left, right *models.MemoryEntry) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	leftCopy := *left
+	rightCopy := *right
+	if len(leftCopy.Sources) == 0 {
+		leftCopy.Sources = nil
+	}
+	if len(rightCopy.Sources) == 0 {
+		rightCopy.Sources = nil
+	}
+	if len(leftCopy.Tags) == 0 {
+		leftCopy.Tags = nil
+	}
+	if len(rightCopy.Tags) == 0 {
+		rightCopy.Tags = nil
+	}
+	if len(leftCopy.Metadata) == 0 {
+		leftCopy.Metadata = nil
+	}
+	if len(rightCopy.Metadata) == 0 {
+		rightCopy.Metadata = nil
+	}
+	leftCopy.LifecycleMetadataMissing = nil
+	rightCopy.LifecycleMetadataMissing = nil
+	leftCopy.UpdatedAt = time.Time{}
+	rightCopy.UpdatedAt = time.Time{}
+	return reflect.DeepEqual(leftCopy, rightCopy)
+}
+
+func (ms *MemoryStore) writeExisting(entry, existing *models.MemoryEntry, touch bool) error {
+	if touch {
+		entry.UpdatedAt = time.Now().UTC()
+	}
 	if entry.CreatedAt.IsZero() {
 		entry.CreatedAt = existing.CreatedAt
 	}
@@ -276,6 +349,9 @@ func (ms *MemoryStore) Update(entry *models.MemoryEntry) error {
 
 // Delete removes a memory entry by ID.
 func (ms *MemoryStore) Delete(id string) error {
+	if entry, err := ms.Get(id); err == nil && models.IsLegacyDecisionMemoryCategory(entry.Category) {
+		return models.ErrLegacyDecisionMemoryWrite
+	}
 	filename := models.MemoryFileName(id)
 
 	dirs := []string{ms.projectDir(), ms.globalDir()}
@@ -357,6 +433,9 @@ func (ms *MemoryStore) DemotePersistent(id string) (*models.MemoryEntry, error) 
 
 // moveLayer moves a memory entry from its current layer to a new layer.
 func (ms *MemoryStore) moveLayer(entry *models.MemoryEntry, newLayer string) (*models.MemoryEntry, error) {
+	if models.IsLegacyDecisionMemoryCategory(entry.Category) {
+		return nil, models.ErrLegacyDecisionMemoryWrite
+	}
 	oldDir, err := ms.dirForLayer(entry.Layer)
 	if err != nil {
 		return nil, err

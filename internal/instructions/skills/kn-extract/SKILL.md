@@ -86,19 +86,24 @@ If a decision is current guidance rather than only a retrospective learning, cap
 
 - Use Decision for stable project guidance: architecture, product behavior, workflow convention, naming, storage model, API contract, or explicit tradeoff
 - Link the Decision to the source task, source doc, or related reference
-- Supersede existing Decisions when new guidance replaces old guidance
+- Create a persisted draft candidate first; use reviewed replacement only after evidence passes
 - Do not create Decisions for routine progress notes, one-off bugs, local implementation details, or unresolved ideas
+- If the user asks to add a "Decision Memory" or Memory category `decision`, treat that phrase as legacy and use this first-class Decision candidate flow instead
 
 ```bash
 knowns decision create "<decision title>" \
   --task <task-id> \
   --doc <doc-path> \
+  --source @doc/<source-path> \
   --decision "<current guidance>"
 ```
 
 ```bash
-knowns decision supersede <old-decision-id> <new-decision-id>
+knowns decision inbox
+knowns decision resolve supersede_existing <candidate-id> --target <current-decision-id>
 ```
+
+Creation persists a non-current candidate. Missing evidence stays `needs_evidence`; duplicate/conflict candidates stay `needs_resolution`; passing checks becomes `ready_for_review`. Never auto-accept during extraction.
 
 ---
 
@@ -155,18 +160,18 @@ mcp_knowns_docs({ "action": "create", "title": "Learning: <feature/domain>",
 
 ## Step 5: Save to Memory
 
-For each extracted pattern or decision worth quick recall, save a concise memory entry alongside the doc:
+For each extracted pattern, convention, or failure worth quick recall, save a concise memory entry alongside the doc:
 
 ```json
-mcp_knowns_memory({ "action": "add", "title": "<pattern/decision name>",
+mcp_knowns_memory({ "action": "add", "title": "<pattern/convention name>",
   "content": "<2-3 sentence summary>. Full reference: @doc/<path>",
   "layer": "project",
-  "category": "<pattern|decision|convention|failure>",
+  "category": "<pattern|convention|failure>",
   "tags": ["<domain>"]
 })
 ```
 
-Memory = fast agent recall in future sessions. Decision = durable guidance. Doc = full structured reference.
+Memory = fast agent recall in future sessions. System Decision = durable project guidance. Doc = full structured reference. Never create Memory category `decision`; it is legacy. When any user, skill, or imported workflow requests one, redirect the content and provenance to a first-class draft Decision candidate.
 Do NOT duplicate the entire doc content — store a summary and link to the doc.
 If a first-class Decision was created, include its `@decision/<id>` ref in the memory or task note when useful.
 Skip this step if the extraction produced nothing generalizable.
@@ -195,7 +200,7 @@ mcp_knowns_search({ "action": "search", "query": "critical patterns", "type": "d
 **If exists — append:**
 ```json
 mcp_knowns_docs({ "action": "update", "path": "learnings/critical-patterns",
-  "appendContent": "\n\n## [Date] <Learning Title>\n**Category:** pattern / decision / failure\n**Source:** @task-<id>\n**Tags:** [tag1, tag2]\n\n<2-4 sentence summary and what to do differently>\n\n**Full entry:** @doc/learnings/<slug>"
+  "appendContent": "\n\n## [Date] <Learning Title>\n**Category:** pattern / convention / failure\n**Source:** @task-<id>\n**System Decision:** @decision/<id> (if applicable)\n**Tags:** [tag1, tag2]\n\n<2-4 sentence summary and what to do differently>\n\n**Full entry:** @doc/learnings/<slug>"
 })
 ```
 

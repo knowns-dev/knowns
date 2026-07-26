@@ -94,7 +94,7 @@ knowns resolve "@doc/specs/auth{depends}" --direction inbound --depth 2 --plain
 ## Memory
 
 ```bash
-knowns memory add "We use repository pattern" --category decision
+knowns memory add "We use repository pattern" --category pattern
 knowns memory list --plain
 knowns memory <id> --plain
 knowns memory edit <id> --append "More detail"
@@ -106,11 +106,19 @@ knowns memory edit <id> --append "More detail"
 knowns decision create "Use Postgres for metadata"
 knowns decision list --plain
 knowns decision get <id> --plain
-knowns decision link <id> --doc architecture/storage
+knowns decision link <id> --source @doc/architecture/storage --task <done-task-id>
+knowns decision accept <id>
+knowns decision resolve create_draft "Use Postgres for metadata"
 knowns decision supersede <old-id> <new-id>
+
+knowns decision migrate preview --plain
+knowns decision migrate apply --memory <memory-id> --resolution create_decision
+knowns decision migrate rollback <memory-id>
 ```
 
-Decision dùng cho architectural choices cần bền vững và có thể supersede về sau thay vì sửa đè lịch sử.
+Spec Decision là các rule `D1`, `D2`, … được khóa trong spec đã approve. Các lệnh trên quản lý System Decision: lựa chọn project bền vững luôn bắt đầu ở draft, cần source đọc được cùng evidence từ task hoàn tất trước khi accept, và có thể supersede về sau thay vì sửa đè lịch sử.
+
+Migration Decision Memory legacy luôn preview trước, explicit theo từng record, có journal và có thể rollback. Các resolution gồm `create_decision`, `link_existing`, `consolidate_duplicate`, `reclassify`, `archive_noise`, `reject_noise`, `leave_unchanged`; không có bulk apply ngầm.
 
 ## Templates
 

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/howznguyen/knowns/internal/decisionmigration"
 	"github.com/howznguyen/knowns/internal/decisionreview"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/search"
@@ -29,10 +30,70 @@ func (dr *DecisionRoutes) getStore() *storage.Store {
 func (dr *DecisionRoutes) Register(r chi.Router) {
 	r.Get("/decisions", dr.list)
 	r.Post("/decisions", dr.create)
+	r.Get("/decisions/migration/preview", dr.migrationPreview)
+	r.Post("/decisions/migration/apply", dr.migrationApply)
+	r.Post("/decisions/migration/{memoryID}/rollback", dr.migrationRollback)
+	r.Get("/decisions/review/inbox", dr.reviewInbox)
+	r.Post("/decisions/review/resolve", dr.resolve)
 	r.Get("/decisions/{id}", dr.get)
 	r.Post("/decisions/{id}/link", dr.link)
+	r.Post("/decisions/{id}/accept", dr.accept)
 	r.Post("/decisions/{id}/supersede", dr.supersede)
-	r.Post("/decisions/review/resolve", dr.resolve)
+}
+
+func (dr *DecisionRoutes) migrationPreview(w http.ResponseWriter, r *http.Request) {
+	report, err := decisionmigration.New(dr.getStore()).Preview()
+	if err != nil {
+		respondError(w, http.StatusConflict, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, report)
+}
+
+type decisionMigrationApplyRequest struct {
+	Selections []decisionmigration.Selection `json:"selections"`
+}
+
+func (dr *DecisionRoutes) migrationApply(w http.ResponseWriter, r *http.Request) {
+	var req decisionMigrationApplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.Selections) == 0 {
+		respondError(w, http.StatusBadRequest, "at least one explicitly reviewed migration selection is required")
+		return
+	}
+	result, err := decisionmigration.New(dr.getStore()).Apply(r.Context(), req.Selections)
+	if err != nil {
+		respondJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "result": result})
+		return
+	}
+	for _, item := range result.Results {
+		if item.DecisionID != "" {
+			search.BestEffortIndexDecision(dr.getStore(), item.DecisionID)
+		}
+	}
+	if dr.sse != nil {
+		dr.sse.Broadcast(SSEEvent{Type: "decisions:migrated", Data: map[string]any{"result": result}})
+	}
+	respondJSON(w, http.StatusOK, result)
+}
+
+func (dr *DecisionRoutes) migrationRollback(w http.ResponseWriter, r *http.Request) {
+	memoryID := chi.URLParam(r, "memoryID")
+	result, err := decisionmigration.New(dr.getStore()).Rollback(r.Context(), memoryID)
+	if err != nil {
+		respondError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if result.DecisionID != "" {
+		search.BestEffortIndexDecision(dr.getStore(), result.DecisionID)
+	}
+	if dr.sse != nil {
+		dr.sse.Broadcast(SSEEvent{Type: "decisions:migration-rolled-back", Data: map[string]any{"result": result}})
+	}
+	respondJSON(w, http.StatusOK, result)
 }
 
 func (dr *DecisionRoutes) list(w http.ResponseWriter, r *http.Request) {
@@ -66,6 +127,18 @@ func (dr *DecisionRoutes) list(w http.ResponseWriter, r *http.Request) {
 		filtered = []*models.DecisionEntry{}
 	}
 	respondJSON(w, http.StatusOK, filtered)
+}
+
+func (dr *DecisionRoutes) reviewInbox(w http.ResponseWriter, r *http.Request) {
+	candidates, err := decisionreview.New(dr.getStore()).ReviewCandidates()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if candidates == nil {
+		candidates = []*models.DecisionEntry{}
+	}
+	respondJSON(w, http.StatusOK, candidates)
 }
 
 func decisionHasString(values []string, target string) bool {
@@ -111,6 +184,12 @@ func (dr *DecisionRoutes) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if result.Status == decisionreview.ResultReviewRequired {
+		if result.Candidate != nil {
+			search.BestEffortIndexDecision(dr.getStore(), result.Candidate.ID)
+		}
+		if dr.sse != nil {
+			dr.sse.Broadcast(SSEEvent{Type: "decisions:review-required", Data: map[string]any{"result": result}})
+		}
 		respondJSON(w, http.StatusConflict, result)
 		return
 	}
@@ -166,6 +245,13 @@ func (dr *DecisionRoutes) link(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if decision.Status == models.DecisionStatusDraft {
+		decision, err = decisionreview.New(dr.getStore()).RefreshCandidate(decision.ID)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	search.BestEffortIndexDecision(dr.getStore(), decision.ID)
 	if dr.sse != nil {
 		dr.sse.Broadcast(SSEEvent{Type: "decisions:updated", Data: map[string]any{"decision": decision}})
@@ -200,8 +286,36 @@ func (dr *DecisionRoutes) supersede(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type acceptDecisionRequest struct {
+	Supersedes []string `json:"supersedes"`
+}
+
+func (dr *DecisionRoutes) accept(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req acceptDecisionRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			respondError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+	}
+	result, err := decisionreview.New(dr.getStore()).Accept(id, decisionreview.AcceptOptions{Supersedes: req.Supersedes})
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	for _, changedID := range result.ChangedIDs {
+		search.BestEffortIndexDecision(dr.getStore(), changedID)
+	}
+	if dr.sse != nil {
+		dr.sse.Broadcast(SSEEvent{Type: "decisions:updated", Data: map[string]any{"result": result}})
+	}
+	respondJSON(w, http.StatusOK, result)
+}
+
 type resolveDecisionReviewRequest struct {
 	Resolution             string   `json:"resolution"`
+	CandidateID            string   `json:"candidateId"`
 	TargetID               string   `json:"targetId"`
 	ReplacementID          string   `json:"replacementId"`
 	Status                 string   `json:"status"`
@@ -229,6 +343,7 @@ func (dr *DecisionRoutes) resolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := decisionreview.New(dr.getStore()).Resolve(decisionFromResolveRequest(req), decisionreview.ResolveOptions{
+		CandidateID:   req.CandidateID,
 		Resolution:    req.Resolution,
 		TargetID:      req.TargetID,
 		ReplacementID: req.ReplacementID,

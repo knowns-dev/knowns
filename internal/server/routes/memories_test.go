@@ -3,8 +3,10 @@ package routes
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -14,6 +16,66 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
 )
+
+func TestMemoryRoutesLegacyDecisionWritePolicy(t *testing.T) {
+	store := setupMemoryRouteStore(t)
+	router := chi.NewRouter()
+	(&MemoryRoutes{store: store}).Register(router)
+
+	body, _ := json.Marshal(map[string]any{"title": "Rejected", "content": "Do not persist.", "category": " Decision "})
+	req := httptest.NewRequest("POST", "/memories", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest || !bytes.Contains(w.Body.Bytes(), []byte("System Decision")) {
+		t.Fatalf("legacy create status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	seedLegacyDecisionMemoryRoute(t, store, "legacy1", models.MemoryStatusActive)
+	req = httptest.NewRequest("GET", "/memories/legacy1", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("legacy get status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	body, _ = json.Marshal(map[string]any{"title": "Forbidden rewrite"})
+	req = httptest.NewRequest("PUT", "/memories/legacy1", bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest || !bytes.Contains(w.Body.Bytes(), []byte("System Decision")) {
+		t.Fatalf("legacy update status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	body, _ = json.Marshal(map[string]any{"action": "archive"})
+	req = httptest.NewRequest("POST", "/memories/legacy1/action", bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("legacy archive status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	seedLegacyDecisionMemoryRoute(t, store, "legacy2", models.MemoryStatusActive)
+	body, _ = json.Marshal(map[string]any{"category": "convention"})
+	req = httptest.NewRequest("PUT", "/memories/legacy2", bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("legacy reclassify status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func seedLegacyDecisionMemoryRoute(t *testing.T, store *storage.Store, id, status string) {
+	t.Helper()
+	dir := filepath.Join(store.Root, "memory")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir memory dir: %v", err)
+	}
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	content := fmt.Sprintf("---\nid: %s\ntitle: Legacy Decision\nlayer: project\ncategory: decision\nstatus: %s\ncreatedAt: '%s'\nupdatedAt: '%s'\n---\n\nHistorical guidance.\n", id, status, now, now)
+	if err := os.WriteFile(filepath.Join(dir, models.MemoryFileName(id)), []byte(content), 0o644); err != nil {
+		t.Fatalf("seed legacy memory: %v", err)
+	}
+}
 
 func TestMemoryRoutesReviewInboxGroupingAndActions(t *testing.T) {
 	store := setupMemoryRouteStore(t)
@@ -41,7 +103,7 @@ func TestMemoryRoutesReviewInboxGroupingAndActions(t *testing.T) {
 		Status:   models.MemoryStatusActive,
 		Content:  "Use Qdrant as the default vector database.",
 		Sources:  []string{models.DecisionRef(currentDecision.ID)},
-		Category: "decision",
+		Category: "pattern",
 	})
 	proposed := createMemoryRouteMemory(t, store, &models.MemoryEntry{
 		ID:       "proposed1",
@@ -49,7 +111,7 @@ func TestMemoryRoutesReviewInboxGroupingAndActions(t *testing.T) {
 		Status:   models.MemoryStatusProposed,
 		Content:  "Use Qdrant as the default vector database.",
 		Sources:  []string{"@doc/specs/vector"},
-		Category: "decision",
+		Category: "pattern",
 	})
 	stale := createMemoryRouteMemory(t, store, &models.MemoryEntry{
 		ID:           "stale1",
@@ -170,13 +232,13 @@ func TestMemoryRoutesCreateReviewOverrideAndResolve(t *testing.T) {
 		Status:   models.MemoryStatusActive,
 		Content:  "Use Qdrant as the default vector database.",
 		Sources:  []string{"@doc/specs/vector"},
-		Category: "decision",
+		Category: "pattern",
 	})
 
 	duplicateBody, _ := json.Marshal(map[string]any{
 		"title":    "Default vector database",
 		"content":  "Use Qdrant as the default vector database.",
-		"category": "decision",
+		"category": "pattern",
 		"sources":  []string{"@doc/specs/vector"},
 	})
 	req := httptest.NewRequest("POST", "/memories", bytes.NewReader(duplicateBody))
@@ -196,7 +258,7 @@ func TestMemoryRoutesCreateReviewOverrideAndResolve(t *testing.T) {
 	overrideBody, _ := json.Marshal(map[string]any{
 		"title":      "Default vector database",
 		"content":    "Use Qdrant as the default vector database.",
-		"category":   "decision",
+		"category":   "pattern",
 		"sources":    []string{"@doc/specs/vector"},
 		"skipReview": true,
 	})

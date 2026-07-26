@@ -182,6 +182,63 @@ func TestValidateTask_SDD_NoAC(t *testing.T) {
 	assertHasCode(t, issues, "SDD_NO_AC")
 }
 
+func TestValidateTaskSpecDecisionCompliance(t *testing.T) {
+	store := newValidateTestStore(t)
+	now := time.Now().UTC()
+	spec := &models.Doc{
+		Path: "specs/decision-contract", Title: "Decision contract", Description: "Spec", Tags: []string{"spec", "approved"}, CreatedAt: now, UpdatedAt: now,
+		Content: "## Locked Decisions\n\n- D1: First rule.\n- D2: Second rule.\n\n## System Decision Impact\n\n- Impact: none.",
+	}
+	if err := store.Docs.Create(spec); err != nil {
+		t.Fatalf("create spec: %v", err)
+	}
+	task := &models.Task{ID: "abc123", Title: "Task", Status: "in-review", Priority: "medium", Spec: spec.Path}
+	issues := validateTaskSpecDecisionCompliance(task, store)
+	assertHasCode(t, issues, "SDD_SPEC_DECISIONS_UNASSESSED")
+	if issueLevel(issues, "SDD_SPEC_DECISIONS_UNASSESSED") != "error" {
+		t.Fatalf("unassessed in-review task issues = %+v", issues)
+	}
+
+	task.ImplementationNotes = "Spec Decision Compliance: D1=pass, D2=pass"
+	issues = validateTaskSpecDecisionCompliance(task, store)
+	assertNoCode(t, issues, "SDD_SPEC_DECISIONS_UNASSESSED")
+	assertHasCode(t, issues, "SDD_SPEC_DECISIONS_COMPLIANT")
+
+	task.ImplementationNotes = "Spec Decision Compliance: D1=pass, D2=conflict: API violates the rule"
+	issues = validateTaskSpecDecisionCompliance(task, store)
+	assertHasCode(t, issues, "SDD_SPEC_DECISION_CONFLICT")
+}
+
+func TestValidateTaskSpecDecisionComplianceDoesNotFailLegacySpec(t *testing.T) {
+	store := newValidateTestStore(t)
+	now := time.Now().UTC()
+	if err := store.Docs.Create(&models.Doc{
+		Path: "specs/legacy", Title: "Legacy", Tags: []string{"spec", "approved"}, CreatedAt: now, UpdatedAt: now,
+		Content: "## Locked Decisions\n\n- D1: Historical rule.",
+	}); err != nil {
+		t.Fatalf("create legacy spec: %v", err)
+	}
+	task := &models.Task{ID: "legacy1", Title: "Legacy task", Status: "done", Priority: "medium", Spec: "specs/legacy"}
+	issues := validateTaskSpecDecisionCompliance(task, store)
+	assertNoCode(t, issues, "SDD_SPEC_DECISIONS_UNASSESSED")
+}
+
+func TestValidateSpecDecisionContract(t *testing.T) {
+	doc := &models.Doc{
+		Path: "specs/valid", Title: "Valid", Tags: []string{"spec", "approved"},
+		Content: "## Locked Decisions\n\n- D1: Stable.\n- D2: Also stable.\n\n## System Decision Impact\n\n- Impact: draft new System Decision.\n- Decision: @decision/20260723-0001-example",
+	}
+	issues := validateSpecDecisionContract(doc)
+	assertHasCode(t, issues, "SDD_SPEC_DECISIONS_DECLARED")
+	assertHasCode(t, issues, "SDD_SYSTEM_DECISION_IMPACT_DECLARED")
+	assertNoCode(t, issues, "SDD_SYSTEM_DECISION_IMPACT_INVALID")
+
+	doc.Content = "## Locked Decisions\n\n- D1: One.\n- D1: Duplicate.\n\n## System Decision Impact\n\n- Impact: maybe."
+	issues = validateSpecDecisionContract(doc)
+	assertHasCode(t, issues, "SDD_SPEC_DECISION_DUPLICATE")
+	assertHasCode(t, issues, "SDD_SYSTEM_DECISION_IMPACT_INVALID")
+}
+
 func TestValidateTask_ValidTask(t *testing.T) {
 	task := &models.Task{
 		ID: "abc123", Title: "Good task", Status: "todo", Priority: "medium",
@@ -490,6 +547,15 @@ func assertNoCode(t *testing.T, issues []Issue, code string) {
 			t.Errorf("expected no issue with code %q, but found: %v", code, iss)
 		}
 	}
+}
+
+func issueLevel(issues []Issue, code string) string {
+	for _, issue := range issues {
+		if issue.Code == code {
+			return issue.Level
+		}
+	}
+	return ""
 }
 
 func assertNoIssueMessageContains(t *testing.T, issues []Issue, text string) {

@@ -2,14 +2,71 @@ package services
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
+	"github.com/howznguyen/knowns/internal/agents/opencode"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/runtimequeue"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 )
+
+func TestSortServiceStatusesRunningFirst(t *testing.T) {
+	statuses := []ServiceStatus{
+		{Name: "Zeta", Status: "stopped"},
+		{Name: "TypeScript", Status: "running"},
+		{Name: "Alpha", Status: "disabled"},
+		{Name: "Go", Status: "running"},
+		{Name: "Beta", Status: "error"},
+	}
+
+	sortServiceStatuses(statuses)
+
+	got := make([]string, 0, len(statuses))
+	for _, service := range statuses {
+		got = append(got, service.Status+":"+service.Name)
+	}
+	want := []string{
+		"running:Go",
+		"running:TypeScript",
+		"disabled:Alpha",
+		"error:Beta",
+		"stopped:Zeta",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ordered statuses = %v, want %v", got, want)
+	}
+}
+
+func TestDetectOpenCodeReadOnlyPreservesStalePIDFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config := opencode.DefaultConfig()
+	daemon := opencode.NewDaemon(config.Host, config.Port)
+	if err := os.MkdirAll(filepath.Dir(daemon.PIDFile), 0o755); err != nil {
+		t.Fatalf("create PID directory: %v", err)
+	}
+	if err := os.WriteFile(daemon.PIDFile, []byte("99999999"), 0o644); err != nil {
+		t.Fatalf("write stale PID: %v", err)
+	}
+
+	status := detectOpenCode(nil, false)[0]
+	if status.Status != "stopped" {
+		t.Fatalf("read-only status = %q, want stopped", status.Status)
+	}
+	if _, err := os.Stat(daemon.PIDFile); err != nil {
+		t.Fatalf("read-only detection removed stale PID: %v", err)
+	}
+
+	_ = detectOpenCode(nil, true)
+	if _, err := os.Stat(daemon.PIDFile); !os.IsNotExist(err) {
+		t.Fatalf("cleanup detection left stale PID, stat error = %v", err)
+	}
+}
 
 func TestDetectEmbeddingReportsRuntimeDisabled(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
@@ -110,6 +167,46 @@ func TestDetectEmbeddingReportsSemanticJobDegradedState(t *testing.T) {
 	}
 	if service.Details["last_error"] != "semantic provider unavailable" {
 		t.Fatalf("last_error = %q", service.Details["last_error"])
+	}
+}
+
+func TestDetectEmbeddingIgnoresRecoveredSemanticJobFailures(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	runtimequeue.SetTestBypass(true)
+	t.Cleanup(func() { runtimequeue.SetTestBypass(false) })
+	search.DefaultSemanticRuntime().Close()
+	t.Cleanup(search.DefaultSemanticRuntime().Close)
+	store := newStatusSemanticStore(t)
+	saveStatusEmbeddingSettings(t)
+
+	failedJob, err := runtimequeue.Enqueue(store.Root, runtimequeue.JobSemanticSearch, "failed-search")
+	if err != nil {
+		t.Fatalf("enqueue failed semantic job: %v", err)
+	}
+	if err := runtimequeue.CompleteJob(store.Root, failedJob, errors.New("semantic index unavailable")); err != nil {
+		t.Fatalf("complete failed semantic job: %v", err)
+	}
+
+	recoveredJob, err := runtimequeue.Enqueue(store.Root, runtimequeue.JobSemanticSearch, "recovered-search")
+	if err != nil {
+		t.Fatalf("enqueue recovered semantic job: %v", err)
+	}
+	if err := runtimequeue.CompleteJob(store.Root, recoveredJob, nil); err != nil {
+		t.Fatalf("complete recovered semantic job: %v", err)
+	}
+
+	service := detectEmbedding(store)[0]
+	if service.Status != "stopped" {
+		t.Fatalf("status = %q, want stopped after latest semantic job recovered", service.Status)
+	}
+	if service.Details["recent_failed_jobs"] != "1" {
+		t.Fatalf("recent_failed_jobs = %q, want 1", service.Details["recent_failed_jobs"])
+	}
+	if service.Details["degraded"] != "" {
+		t.Fatalf("degraded = %q, want empty after recovery", service.Details["degraded"])
+	}
+	if service.Details["last_error"] != "" {
+		t.Fatalf("last_error = %q, want empty after recovery", service.Details["last_error"])
 	}
 }
 

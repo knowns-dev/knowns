@@ -85,7 +85,7 @@ const topNavItems = [
 	},
 	{
 		id: "decisions",
-		label: "Decisions",
+		label: "System Decisions",
 		icon: ScrollText,
 		to: "/decisions",
 	},

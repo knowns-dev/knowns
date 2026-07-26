@@ -24,6 +24,8 @@ Execute the implementation plan, track progress, and complete the task.
 - Identify whether the task is standalone or linked to a spec
 - If the request is to complete an approved spec or multiple linked tasks, route to `/kn-flow @doc/<spec-path>` instead of implementing a single task in isolation
 - If linked to a spec, load the spec only as needed for requirements/AC context; do not pull a long task list into the prompt
+- If linked to a spec, read every rule in its canonical `Locked Decisions` section before changing code. An unreadable rule or concrete conflict blocks implementation.
+- Retrieve relevant accepted/current System Decisions with `sourceTypes:["decision"]`, `status:"accepted"`, `includeHistorical:false`, and a bounded task query.
 - Decide what verification is required: tests, lint, build, validation, manual checks
 
 ## Step 1: Review Task
@@ -94,9 +96,10 @@ mcp_knowns_tasks({ "action": "update", "taskId": "$ARGUMENTS",
 mcp_knowns_validate({ "entity": "$ARGUMENTS" })
 ```
 
-3. Decide whether the task created, changed, or superseded durable guidance that needs capture as a Decision, Memory, or Doc
-4. Add implementation notes (use `appendNotes`, NOT `notes`!)
-5. Stop timer + mark done
+3. Run the System Decision Impact checkpoint below. Do not mark the task done without exactly one impact marker.
+4. Append `Spec Decision Compliance: D1=pass, D2=pass` for every Locked Decision in the linked spec. Record `conflict: <reason>` and stop instead of completing when any rule is violated.
+5. Add implementation notes (use `appendNotes`, NOT `notes`!)
+6. Stop timer + mark done
 
 ```json
 mcp_knowns_time({ "action": "stop", "taskId": "$ARGUMENTS" })
@@ -106,6 +109,34 @@ mcp_knowns_tasks({ "action": "update", "taskId": "$ARGUMENTS",
 ```
 
 **Note:** When task is marked done (or AC is checked), matching ACs in the linked spec document are automatically checked. No manual spec update needed.
+
+### System Decision Impact checkpoint
+
+Ask: **Did this completed work add, change, or remove durable project guidance that future work must follow?**
+
+Durable guidance includes architecture, product behavior, workflow conventions, naming, storage models, API contracts, and explicit tradeoffs.
+
+- **No** — create no Decision candidate. Append:
+  `System Decision Impact: none — <short reason>`
+- **Yes** — create a first-class **draft System Decision candidate** before completion. Link the originating task, linked spec/doc, and every readable source available. Never auto-accept it.
+
+```json
+mcp_knowns_decision({ "action": "create",
+  "title": "<durable guidance title>",
+  "status": "draft",
+  "decision": "<current guidance future work should follow>",
+  "sources": ["@doc/<source-path>"],
+  "relatedDocs": ["<linked-spec-or-doc-path>"],
+  "relatedTasks": ["<task-id>"]
+})
+```
+
+Append the persisted candidate returned by the tool:
+`System Decision Impact: candidate @decision/<id> (added|changed|removed) — <short summary>`
+
+If review checks find missing evidence or a duplicate/conflict, leave the candidate unresolved in Review Inbox. Passing checks makes it ready for human review; it never makes the candidate current automatically.
+
+Spec Decisions are different: keep every D-ID canonically in the spec's `Locked Decisions` section and report compliance only. Do not copy Spec Decision text into the System Decision ledger merely for display.
 
 ## Step 5.5: SDD Workflow (if task has spec)
 
@@ -168,7 +199,7 @@ ACs: Y/Z verified
 
 ## Step 6: Capture Durable Knowledge (optional)
 
-Before final response, ask whether the work produced guidance future tasks should follow:
+Before final response, use the completed System Decision Impact checkpoint and then capture other durable knowledge:
 
 - Use a first-class Decision for stable choices: architecture, product behavior, workflow convention, naming, storage model, API contract, or explicit tradeoff. Link it to the source task/doc/reference, and supersede older Decisions instead of overwriting them.
 - Use Memory for concise reusable recall that should surface quickly in future sessions.
@@ -181,10 +212,12 @@ If a quick insight is worth remembering but does not warrant a full doc:
 mcp_knowns_memory({ "action": "add", "title": "<insight>",
   "content": "<2-3 sentence summary>",
   "layer": "project",
-  "category": "<pattern|decision|convention>",
+  "category": "<pattern|convention|preference|failure>",
   "tags": ["<domain>"]
 })
 ```
+
+Never create a Memory with category `decision`; that category is legacy. If a user or workflow asks to add a Decision Memory, redirect it to the first-class Decision candidate flow above.
 
 ## Final Response Contract
 
@@ -254,7 +287,9 @@ Run: /kn-plan 44
 - [ ] All ACs checked
 - [ ] Tests pass
 - [ ] **Validated (no broken refs)**
-- [ ] Durable guidance capture considered (Decision/Memory/Doc)
+- [ ] `System Decision Impact` marker recorded as `none` or a persisted candidate ref
+- [ ] Positive impact created a first-class draft Decision linked to task/spec/sources
+- [ ] Spec Decision Compliance marker recorded for every linked D-ID
 - [ ] Notes added
 - [ ] Timer stopped
 - [ ] Status = done
@@ -269,6 +304,9 @@ Run: /kn-plan 44
 - Skipping validation
 - Using `notes` instead of `appendNotes`
 - Marking done without verification
+- Marking done without a `System Decision Impact` marker
+- Creating Memory category `decision` instead of a first-class Decision candidate
+- Copying Spec Locked Decisions into the System Decision ledger
 - **Not checking sibling tasks when spec linked**
 - **Not running SDD verify when spec complete**
 - **Not suggesting next step**

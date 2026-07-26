@@ -11,6 +11,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/lsp"
 	"github.com/howznguyen/knowns/internal/lsp/adapters"
+	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/permissions"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
@@ -36,18 +37,29 @@ type Payload struct {
 
 // KnowledgeStatus reports entity counts.
 type KnowledgeStatus struct {
-	Docs      int          `json:"docs"`
-	Tasks     int          `json:"tasks"`
-	Templates int          `json:"templates"`
-	Memories  MemoryCounts `json:"memories"`
-	Relations int          `json:"relations"`
-	Imports   int          `json:"imports"`
+	Docs      int            `json:"docs"`
+	Tasks     int            `json:"tasks"`
+	Templates int            `json:"templates"`
+	Memories  MemoryCounts   `json:"memories"`
+	Decisions DecisionCounts `json:"decisions"`
+	Relations int            `json:"relations"`
+	Imports   int            `json:"imports"`
 }
 
 // MemoryCounts breaks memory count by layer.
 type MemoryCounts struct {
-	Project int `json:"project"`
-	Global  int `json:"global"`
+	Project        int `json:"project"`
+	Global         int `json:"global"`
+	LegacyDecision int `json:"legacyDecision"`
+}
+
+// DecisionCounts separates current guidance from records that require review
+// or are retained only for history.
+type DecisionCounts struct {
+	Total      int `json:"total"`
+	Current    int `json:"current"`
+	Draft      int `json:"draft"`
+	Historical int `json:"historical"`
 }
 
 // SearchStatus reports semantic search readiness.
@@ -56,7 +68,11 @@ type SearchStatus struct {
 	ModelConfigured   bool                      `json:"modelConfigured"`
 	ModelInstalled    bool                      `json:"modelInstalled"`
 	ProjectIndexReady bool                      `json:"projectIndexReady"`
+	ProjectIndexStale bool                      `json:"projectIndexStale"`
+	ProjectIndexModel string                    `json:"projectIndexModel,omitempty"`
 	GlobalIndexReady  bool                      `json:"globalIndexReady"`
+	GlobalIndexStale  bool                      `json:"globalIndexStale"`
+	GlobalIndexModel  string                    `json:"globalIndexModel,omitempty"`
 	LastReindex       *time.Time                `json:"lastReindex,omitempty"`
 	SemanticRuntime   *SemanticRuntimeReadiness `json:"semanticRuntime,omitempty"`
 }
@@ -193,9 +209,33 @@ func buildKnowledge(store *storage.Store) *KnowledgeStatus {
 	// Memory counts by layer.
 	if local, err := store.Memory.ListLocal(); err == nil {
 		ks.Memories.Project = len(local)
+		for _, memory := range local {
+			if models.IsLegacyDecisionMemoryCategory(memory.Category) {
+				ks.Memories.LegacyDecision++
+			}
+		}
 	}
 	if global, err := store.Memory.ListGlobalOnly(); err == nil {
 		ks.Memories.Global = len(global)
+		for _, memory := range global {
+			if models.IsLegacyDecisionMemoryCategory(memory.Category) {
+				ks.Memories.LegacyDecision++
+			}
+		}
+	}
+
+	if decisions, err := store.Decisions.List(); err == nil {
+		ks.Decisions.Total = len(decisions)
+		for _, decision := range decisions {
+			switch {
+			case decision.CurrentForDefaultRetrieval():
+				ks.Decisions.Current++
+			case decision.Status == models.DecisionStatusDraft:
+				ks.Decisions.Draft++
+			default:
+				ks.Decisions.Historical++
+			}
+		}
 	}
 
 	// Import count: count subdirectories in .knowns/imports/ that have _import.json.
@@ -249,8 +289,13 @@ func buildSearch(store *storage.Store) *SearchStatus {
 	// Project index readiness.
 	searchDir := filepath.Join(store.Root, ".search")
 	vs := search.NewSQLiteVectorStore(searchDir, "", 0)
-	count, _, indexedAt := vs.Stats()
+	count, projectIndexModel, indexedAt := vs.Stats()
 	ss.ProjectIndexReady = count > 0
+	ss.ProjectIndexModel = projectIndexModel
+	if ss.ProjectIndexReady && cfg.Settings.SemanticSearch != nil {
+		configuredModel := cfg.Settings.SemanticSearch.Model
+		ss.ProjectIndexStale = configuredModel != "" && projectIndexModel != "" && projectIndexModel != configuredModel
+	}
 	if !indexedAt.IsZero() {
 		ss.LastReindex = &indexedAt
 	}
@@ -259,8 +304,13 @@ func buildSearch(store *storage.Store) *SearchStatus {
 	globalRoot := storage.GlobalSemanticStoreRoot()
 	globalSearchDir := filepath.Join(globalRoot, ".search")
 	gvs := search.NewSQLiteVectorStore(globalSearchDir, "", 0)
-	gCount, _, _ := gvs.Stats()
+	gCount, globalIndexModel, _ := gvs.Stats()
 	ss.GlobalIndexReady = gCount > 0
+	ss.GlobalIndexModel = globalIndexModel
+	if ss.GlobalIndexReady && cfg.Settings.SemanticSearch != nil {
+		configuredModel := cfg.Settings.SemanticSearch.Model
+		ss.GlobalIndexStale = configuredModel != "" && globalIndexModel != "" && globalIndexModel != configuredModel
+	}
 
 	return ss
 }
@@ -360,7 +410,7 @@ func buildCapabilities(ss *SearchStatus, rs *RuntimeStatus) []string {
 	var caps []string
 
 	// Always available when project is active.
-	caps = append(caps, "task-updates", "doc-updates", "memory-tools", "validation")
+	caps = append(caps, "task-updates", "doc-updates", "memory-tools", "system-decisions", "decision-migration", "validation")
 
 	// Search capabilities.
 	caps = append(caps, "search") // keyword search always available

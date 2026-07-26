@@ -154,3 +154,25 @@ test.describe("Settings — LSP (Code tab)", () => {
 		});
 	});
 });
+
+test.describe("Settings — Runtime services", () => {
+	test("loads runtime services when the Runtime tab becomes active", async ({ page }) => {
+		await page.goto(`${server.baseURL}/config`);
+
+		const responsePromise = page.waitForResponse(
+			(response) =>
+				response.request().method() === "GET" &&
+				response.url().endsWith("/api/runtime/services"),
+		);
+		await page.getByText("Runtime").first().click();
+
+		const response = await responsePromise;
+		const responseBody = await response.text();
+		expect(response.ok(), `runtime services returned ${response.status()}: ${responseBody}`).toBeTruthy();
+		const payload = JSON.parse(responseBody) as {
+			services?: Array<{ type?: string; name?: string }>;
+		};
+		expect(payload.services?.some((service) => service.type === "lsp")).toBeTruthy();
+		await expect(page.getByText(/^LSP \(/).first()).toBeVisible();
+	});
+});

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -15,7 +16,62 @@ import (
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
+
+type searchToolCapture struct {
+	tool mcp.Tool
+}
+
+func (capture *searchToolCapture) AddTool(tool mcp.Tool, _ server.ToolHandlerFunc) {
+	capture.tool = tool
+}
+
+func (capture *searchToolCapture) RegisterHelp(string, HelpEntry) {}
+
+func TestSearchMCPDoesNotExposeEvaluationAction(t *testing.T) {
+	capture := &searchToolCapture{}
+	RegisterSearchTool(capture, func() *storage.Store { return nil })
+	data, err := json.Marshal(capture.tool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if capture.tool.Name != "search" {
+		t.Fatalf("tool = %q, want search", capture.tool.Name)
+	}
+	inputSchema, ok := schema["inputSchema"].(map[string]any)
+	if !ok {
+		t.Fatalf("search MCP input schema = %#v", schema["inputSchema"])
+	}
+	properties, ok := inputSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("search MCP properties = %#v", inputSchema["properties"])
+	}
+	action, ok := properties["action"].(map[string]any)
+	if !ok {
+		t.Fatalf("search MCP action schema = %#v", properties["action"])
+	}
+	values, ok := action["enum"].([]any)
+	if !ok {
+		t.Fatalf("search MCP action enum = %#v", action["enum"])
+	}
+	actions := make(map[string]bool, len(values))
+	for _, value := range values {
+		actions[fmt.Sprint(value)] = true
+	}
+	if actions["eval"] || actions["evaluation"] {
+		t.Fatalf("search MCP unexpectedly exposes evaluation action: %#v", actions)
+	}
+	for _, expected := range []string{"search", "retrieve", "resolve"} {
+		if !actions[expected] {
+			t.Fatalf("search MCP action enum missing %q: %#v", expected, actions)
+		}
+	}
+}
 
 func TestHandleSearchHybridFallsBackToKeywordCompatibleResults(t *testing.T) {
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))

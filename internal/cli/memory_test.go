@@ -29,7 +29,7 @@ func TestRunMemoryCreateWritesProposedAndListHidesByDefault(t *testing.T) {
 	createCmd.Flags().StringP("content", "c", "", "")
 	createCmd.Flags().String("status", "", "")
 	createCmd.Flags().Bool("create-anyway", false, "")
-	if err := createCmd.Flags().Set("category", "decision"); err != nil {
+	if err := createCmd.Flags().Set("category", "pattern"); err != nil {
 		t.Fatalf("set category: %v", err)
 	}
 	if err := createCmd.Flags().Set("content", "Use proposed status for CLI-created memories."); err != nil {
@@ -74,6 +74,34 @@ func TestRunMemoryCreateWritesProposedAndListHidesByDefault(t *testing.T) {
 	}
 	if len(listed) != 0 {
 		t.Fatalf("default list should exclude proposed memory, got %+v", listed)
+	}
+}
+
+func TestRunMemoryCreateRejectsLegacyDecisionCategory(t *testing.T) {
+	projectRoot := setupEmptyMemoryCLIProject(t)
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(projectRoot); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(origDir)
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("layer", "", "")
+	cmd.Flags().String("category", "", "")
+	cmd.Flags().StringArrayP("tag", "t", nil, "")
+	cmd.Flags().StringP("content", "c", "", "")
+	cmd.Flags().String("status", "", "")
+	cmd.Flags().Bool("create-anyway", false, "")
+	_ = cmd.Flags().Set("category", " Decision ")
+	_ = cmd.Flags().Set("content", "Do not persist this.")
+	err := runMemoryCreate(cmd, []string{"Legacy", "decision", "memory"})
+	if err == nil || !strings.Contains(err.Error(), "System Decision") {
+		t.Fatalf("runMemoryCreate error = %v", err)
+	}
+	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
+	entries, listErr := store.Memory.ListPersistent("")
+	if listErr != nil || len(entries) != 0 {
+		t.Fatalf("rejected write persisted entries=%+v err=%v", entries, listErr)
 	}
 }
 

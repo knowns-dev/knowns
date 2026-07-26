@@ -20,7 +20,7 @@ func TestRuntimeMemoryHookModeOffPlainSilentAndSkipsCapture(t *testing.T) {
 	entry := &models.MemoryEntry{
 		Title:     "Runtime queue decision",
 		Layer:     models.MemoryLayerProject,
-		Category:  "decision",
+		Category:  "pattern",
 		Content:   "Use the runtime queue pattern for prompt injection jobs.",
 		Tags:      []string{"runtime", "queue"},
 		CreatedAt: time.Now().UTC(),
@@ -85,7 +85,7 @@ func TestRuntimeMemoryHookDebugJSONIncludesMetadataWithoutPlainPayload(t *testin
 	entry := &models.MemoryEntry{
 		Title:     "Runtime review proposal",
 		Layer:     models.MemoryLayerProject,
-		Category:  "decision",
+		Category:  "pattern",
 		Content:   "Use runtime review proposals only after activation.",
 		Tags:      []string{"runtime", "review"},
 		Status:    models.MemoryStatusProposed,
@@ -151,7 +151,7 @@ func TestRuntimeMemoryHookCaptureDisabledConfigStillInjects(t *testing.T) {
 	entry := &models.MemoryEntry{
 		Title:     "Runtime queue decision",
 		Layer:     models.MemoryLayerProject,
-		Category:  "decision",
+		Category:  "pattern",
 		Content:   "Use the runtime queue pattern for prompt injection jobs.",
 		Tags:      []string{"runtime", "queue"},
 		CreatedAt: time.Now().UTC(),
@@ -214,7 +214,7 @@ func TestRuntimeMemoryHookCaptureDisabledFlagSkipsCapture(t *testing.T) {
 	}
 }
 
-func TestRuntimeMemoryHookHighConfidenceCaptureCreatesProposedOnly(t *testing.T) {
+func TestRuntimeMemoryHookHighConfidenceDoesNotInferProjectDecision(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("KNOWNS_RUNTIME_PROMPT", "AGENTS.md should start with Knowns MCP initial in this repo")
 	projectRoot, store := setupRuntimeMemoryHookStore(t)
@@ -230,24 +230,15 @@ func TestRuntimeMemoryHookHighConfidenceCaptureCreatesProposedOnly(t *testing.T)
 	if err := json.Unmarshal(out.Bytes(), &pack); err != nil {
 		t.Fatalf("decode json %q: %v", out.String(), err)
 	}
-	if pack.Capture == nil || pack.Capture.Status != runtimememory.CaptureStatusCreated || pack.Capture.MemoryStatus != models.MemoryStatusProposed {
-		t.Fatalf("capture = %+v, want proposed memory created", pack.Capture)
-	}
-	if pack.Capture.Score < 0.80 || pack.Capture.Threshold != 0.80 {
-		t.Fatalf("capture score metadata = score:%v threshold:%v, want score >= 0.80 and threshold 0.80", pack.Capture.Score, pack.Capture.Threshold)
-	}
-	if pack.Capture.Trusted {
-		t.Fatalf("trusted = true, want false for proposed memory")
+	if pack.Capture == nil || pack.Capture.Status != runtimememory.CaptureStatusSkipped || pack.Capture.Reason != runtimememory.SkipReasonNoCaptureCandidate {
+		t.Fatalf("capture = %+v, want ordinary project prompt skipped", pack.Capture)
 	}
 	entries, err := store.Memory.List("")
 	if err != nil {
 		t.Fatalf("list memory: %v", err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("entries = %d, want one proposed memory", len(entries))
-	}
-	if entries[0].Status != models.MemoryStatusProposed {
-		t.Fatalf("status = %q, want proposed", entries[0].Status)
+	if len(entries) != 0 {
+		t.Fatalf("entries = %d, want no inferred Decision Memory", len(entries))
 	}
 	if len(pack.Items) != 0 || pack.Serialized != "" {
 		t.Fatalf("pack = %+v, want no automatic injection/activation for captured memory", pack)

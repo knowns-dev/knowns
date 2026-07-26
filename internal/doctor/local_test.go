@@ -1,0 +1,594 @@
+package doctor
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/howznguyen/knowns/internal/lsp"
+	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/readiness"
+	"github.com/howznguyen/knowns/internal/runtimeinstall"
+	"github.com/howznguyen/knowns/internal/services"
+	"github.com/howznguyen/knowns/internal/storage"
+)
+
+func TestSearchChecksReportUnavailableModelAndEmptyIndex(t *testing.T) {
+	store := newDoctorStore(t)
+	configureSemanticSearch(t, store, &models.SemanticSearchSettings{
+		Enabled: true,
+		Model:   "all-MiniLM-L6-v2",
+	})
+	before := snapshotTree(t, store.Root)
+
+	deps := localDependencies{
+		localONNXModel: func(*models.SemanticSearchSettings) localONNXModelStatus {
+			return localONNXModelStatus{
+				State:            localONNXModelMissing,
+				MissingArtifacts: []string{"onnx_model"},
+			}
+		},
+		readiness: func(*storage.Store) (readiness.Payload, error) {
+			return readiness.Payload{
+				Active: true,
+				Knowledge: &readiness.KnowledgeStatus{
+					Memories: readiness.MemoryCounts{},
+				},
+				Search: &readiness.SearchStatus{
+					SemanticEnabled:   true,
+					ModelConfigured:   true,
+					ModelInstalled:    false,
+					ProjectIndexReady: false,
+					SemanticRuntime: &readiness.SemanticRuntimeReadiness{
+						Enabled: true,
+					},
+				},
+			}, nil
+		},
+	}
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+		Scopes:  []Scope{ScopeSearch},
+	}, localCheckersWithDependencies(store, deps))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	model := findCheck(t, result, "search.model")
+	if model.Status != StatusWarn || model.Remediation == nil ||
+		model.Remediation.Command != "knowns model download all-MiniLM-L6-v2" {
+		t.Fatalf("model check = %#v", model)
+	}
+	index := findCheck(t, result, "search.project-index")
+	if index.Status != StatusWarn || index.Remediation == nil ||
+		index.Remediation.Command != "knowns search --reindex" {
+		t.Fatalf("project index check = %#v", index)
+	}
+	if got := snapshotTree(t, store.Root); !sameSnapshot(before, got) {
+		t.Fatalf("search checks mutated project storage")
+	}
+}
+
+func TestSearchChecksReportStaleIndices(t *testing.T) {
+	store := newDoctorStore(t)
+	configureSemanticSearch(t, store, &models.SemanticSearchSettings{
+		Enabled: true,
+		Model:   "current-model",
+	})
+
+	deps := localDependencies{
+		readiness: func(*storage.Store) (readiness.Payload, error) {
+			return readiness.Payload{
+				Knowledge: &readiness.KnowledgeStatus{
+					Memories: readiness.MemoryCounts{Global: 1},
+				},
+				Search: &readiness.SearchStatus{
+					SemanticEnabled:   true,
+					ModelConfigured:   true,
+					ModelInstalled:    true,
+					ProjectIndexReady: true,
+					ProjectIndexStale: true,
+					ProjectIndexModel: "previous-model",
+					GlobalIndexReady:  true,
+					GlobalIndexStale:  true,
+					GlobalIndexModel:  "previous-model",
+					SemanticRuntime:   &readiness.SemanticRuntimeReadiness{Enabled: true},
+				},
+			}, nil
+		},
+		services: func(*storage.Store) ([]services.ServiceStatus, error) {
+			return []services.ServiceStatus{{
+				Type:   "embedding",
+				Status: "running",
+			}}, nil
+		},
+	}
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+		Scopes:  []Scope{ScopeSearch},
+	}, localCheckersWithDependencies(store, deps))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	for _, id := range []string{"search.project-index", "search.global-index"} {
+		check := findCheck(t, result, id)
+		if check.Status != StatusWarn || check.Evidence["stale"] != true ||
+			check.Remediation == nil || check.Remediation.Command != "knowns search --reindex" {
+			t.Fatalf("%s check = %#v", id, check)
+		}
+	}
+}
+
+func TestSearchChecksSkipWhenSemanticSearchDisabled(t *testing.T) {
+	store := newDoctorStore(t)
+	deps := localDependencies{
+		readiness: func(*storage.Store) (readiness.Payload, error) {
+			return readiness.Payload{}, errors.New("readiness should not run")
+		},
+	}
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+		Scopes:  []Scope{ScopeSearch},
+	}, localCheckersWithDependencies(store, deps))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Verdict != VerdictHealthy || result.Summary.Skip != 6 {
+		t.Fatalf("disabled search result = %#v", result)
+	}
+}
+
+func TestSearchChecksReportMissingConfiguredOllama(t *testing.T) {
+	store := newDoctorStore(t)
+	configureSemanticSearch(t, store, &models.SemanticSearchSettings{
+		Enabled:  true,
+		Model:    "nomic-embed-text",
+		Provider: "ollama",
+	})
+	deps := localDependencies{
+		lookPath: func(string) (string, error) {
+			return "", errors.New("executable not found")
+		},
+	}
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+		Scopes:  []Scope{ScopeSearch},
+	}, localCheckersWithDependencies(store, deps))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	model := findCheck(t, result, "search.model")
+	if model.Status != StatusWarn ||
+		model.Summary != "Ollama is configured but is not installed" ||
+		model.Evidence["provider"] != "ollama" ||
+		model.Evidence["installed"] != false ||
+		model.Evidence["errorCode"] != "provider_binary_missing" ||
+		model.Remediation == nil ||
+		model.Remediation.Description != "Install Ollama and ensure the ollama executable is available on PATH." {
+		t.Fatalf("model check = %#v", model)
+	}
+}
+
+func TestSearchChecksReportLocalONNXDependencyStates(t *testing.T) {
+	store := newDoctorStore(t)
+	settings := &models.SemanticSearchSettings{
+		Enabled:       true,
+		Model:         "gte-small",
+		Provider:      "local",
+		HuggingFaceID: "Xenova/gte-small",
+	}
+	configureSemanticSearch(t, store, settings)
+
+	t.Run("runtime missing", func(t *testing.T) {
+		state := newLocalState(store, localDependencies{
+			onnxAvailable: func() (bool, string) {
+				return false, ""
+			},
+		})
+		result, err := searchONNXRuntimeChecker(state).Check(context.Background())
+		if err != nil {
+			t.Fatalf("Check() error = %v", err)
+		}
+		if result.Status != StatusWarn ||
+			result.Summary != "ONNX Runtime is unavailable or incompatible" ||
+			result.Evidence["errorCode"] != "onnx_runtime_unavailable" ||
+			result.Remediation == nil {
+			t.Fatalf("runtime check = %#v", result)
+		}
+	})
+
+	for _, test := range []struct {
+		name        string
+		modelStatus localONNXModelStatus
+		summary     string
+		command     string
+	}{
+		{
+			name: "model missing",
+			modelStatus: localONNXModelStatus{
+				State:            localONNXModelMissing,
+				MissingArtifacts: []string{"onnx_model"},
+			},
+			summary: "Configured ONNX model is not downloaded",
+			command: "knowns model download gte-small",
+		},
+		{
+			name: "model incomplete",
+			modelStatus: localONNXModelStatus{
+				State:            localONNXModelIncomplete,
+				MissingArtifacts: []string{"config.json", "tokenizer.json"},
+			},
+			summary: "Configured ONNX model download is incomplete",
+			command: "knowns model download gte-small --force",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := newLocalState(store, localDependencies{
+				localONNXModel: func(*models.SemanticSearchSettings) localONNXModelStatus {
+					return test.modelStatus
+				},
+			})
+			result, err := searchModelChecker(state).Check(context.Background())
+			if err != nil {
+				t.Fatalf("Check() error = %v", err)
+			}
+			if result.Status != StatusWarn ||
+				result.Summary != test.summary ||
+				result.Remediation == nil ||
+				result.Remediation.Command != test.command {
+				t.Fatalf("model check = %#v", result)
+			}
+		})
+	}
+}
+
+func TestInspectLocalONNXModelDetectsMissingIncompleteAndAvailable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	settings := &models.SemanticSearchSettings{
+		Model:         "gte-small",
+		HuggingFaceID: "Xenova/gte-small",
+	}
+	modelDir := filepath.Join(home, ".knowns", "models", "Xenova", "gte-small")
+
+	status := inspectLocalONNXModel(settings)
+	if status.State != localONNXModelMissing {
+		t.Fatalf("missing status = %#v", status)
+	}
+
+	if err := os.MkdirAll(filepath.Join(modelDir, "onnx"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "onnx", "model_quantized.onnx"), []byte("model"), 0o644); err != nil {
+		t.Fatalf("WriteFile(model) error = %v", err)
+	}
+	status = inspectLocalONNXModel(settings)
+	if status.State != localONNXModelIncomplete {
+		t.Fatalf("incomplete status = %#v", status)
+	}
+
+	for _, name := range []string{"config.json", "tokenizer.json"} {
+		if err := os.WriteFile(filepath.Join(modelDir, name), []byte("{}"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s) error = %v", name, err)
+		}
+	}
+	status = inspectLocalONNXModel(settings)
+	if status.State != localONNXModelAvailable {
+		t.Fatalf("available status = %#v", status)
+	}
+}
+
+func TestLSPChecksReportMissingAndDisabledLanguages(t *testing.T) {
+	store := newDoctorStore(t)
+	cfg, err := store.Config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	disabled := false
+	cfg.Settings.LSP = &models.LSPSettings{
+		Languages: map[string]models.LSPLanguageSettings{
+			"go":     {},
+			"python": {Enabled: &disabled},
+		},
+	}
+	if err := store.Config.Save(cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	deps := localDependencies{
+		lspIDs: []string{"go", "java", "python"},
+		lspStatuses: func(context.Context, *storage.Store) ([]lsp.LanguageRuntimeStatus, error) {
+			return []lsp.LanguageRuntimeStatus{
+				{
+					ID:             "go",
+					Name:           "Go",
+					Enabled:        true,
+					Detected:       true,
+					InstallState:   lsp.RuntimeInstallNotInstalled,
+					RunningState:   lsp.RuntimeRunningStopped,
+					ReadinessState: lsp.RuntimeReadinessNotApplicable,
+					InstallCmd:     "knowns lsp install go",
+				},
+				{
+					ID:             "java",
+					Name:           "Java",
+					Enabled:        true,
+					Detected:       false,
+					InstallState:   lsp.RuntimeInstallNotInstalled,
+					RunningState:   lsp.RuntimeRunningStopped,
+					ReadinessState: lsp.RuntimeReadinessNotApplicable,
+					InstallCmd:     "knowns lsp install java",
+				},
+				{
+					ID:             "python",
+					Name:           "Python",
+					Enabled:        false,
+					Detected:       true,
+					InstallState:   lsp.RuntimeInstallDisabled,
+					RunningState:   lsp.RuntimeRunningDisabled,
+					ReadinessState: lsp.RuntimeReadinessNotApplicable,
+				},
+			}, nil
+		},
+	}
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+		Scopes:  []Scope{ScopeLSP},
+	}, localCheckersWithDependencies(store, deps))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	goCheck := findCheck(t, result, "lsp.go")
+	if goCheck.Status != StatusWarn || goCheck.Remediation == nil ||
+		goCheck.Remediation.Command != "knowns lsp install go" {
+		t.Fatalf("Go check = %#v", goCheck)
+	}
+	javaCheck := findCheck(t, result, "lsp.java")
+	if javaCheck.Status != StatusSkip || javaCheck.SkipReason != "not_detected" {
+		t.Fatalf("Java check = %#v", javaCheck)
+	}
+	pythonCheck := findCheck(t, result, "lsp.python")
+	if pythonCheck.Status != StatusSkip || pythonCheck.SkipReason != "config_disabled" {
+		t.Fatalf("Python check = %#v", pythonCheck)
+	}
+}
+
+func TestManagedServiceProbeFailureDoesNotSuppressSearchChecks(t *testing.T) {
+	store := newDoctorStore(t)
+	configureSemanticSearch(t, store, &models.SemanticSearchSettings{
+		Enabled: true,
+		Model:   "all-MiniLM-L6-v2",
+	})
+	deps := localDependencies{
+		readiness: func(*storage.Store) (readiness.Payload, error) {
+			return readiness.Payload{
+				Knowledge: &readiness.KnowledgeStatus{},
+				Search: &readiness.SearchStatus{
+					SemanticEnabled:   true,
+					ModelConfigured:   true,
+					ModelInstalled:    true,
+					ProjectIndexReady: true,
+					ProjectIndexModel: "all-MiniLM-L6-v2",
+					SemanticRuntime:   &readiness.SemanticRuntimeReadiness{Enabled: true},
+				},
+			}, nil
+		},
+		services: func(*storage.Store) ([]services.ServiceStatus, error) {
+			return nil, errors.New("provider token=secret")
+		},
+	}
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+		Scopes:  []Scope{ScopeSearch, ScopeRuntime},
+	}, localCheckersWithDependencies(store, deps))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	runtimeCheck := findCheck(t, result, "runtime.managed-services")
+	if runtimeCheck.Status != StatusFail || runtimeCheck.Evidence["errorCode"] != "checker_error" {
+		t.Fatalf("runtime check = %#v", runtimeCheck)
+	}
+	if search := findCheck(t, result, "search.semantic"); search.Status != StatusPass {
+		t.Fatalf("search check = %#v", search)
+	}
+}
+
+func TestAIChecksReportArtifactDriftWithoutSyncing(t *testing.T) {
+	store := newDoctorStore(t)
+	cfg, err := store.Config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cfg.Settings.Platforms = []string{"codex"}
+	if err := store.Config.Save(cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	root := filepath.Dir(store.Root)
+	existing := map[string]bool{
+		filepath.Join(root, "KNOWNS.md"):                  true,
+		filepath.Join(root, "AGENTS.md"):                  true,
+		filepath.Join(root, ".agents", "skills"):          true,
+		filepath.Join(root, ".agents", "skills", "extra"): true,
+	}
+	before := snapshotTree(t, store.Root)
+	deps := localDependencies{
+		skillsOutOfSync: func(string) bool { return true },
+		exists:          func(path string) bool { return existing[path] },
+	}
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+		Scopes:  []Scope{ScopeAI},
+	}, localCheckersWithDependencies(store, deps))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if instructions := findCheck(t, result, "ai.instructions"); instructions.Status != StatusPass {
+		t.Fatalf("instruction check = %#v", instructions)
+	}
+	skills := findCheck(t, result, "ai.skills")
+	if skills.Status != StatusWarn || skills.Remediation == nil || skills.Remediation.Command != "knowns sync" {
+		t.Fatalf("skills check = %#v", skills)
+	}
+	if got := snapshotTree(t, store.Root); !sameSnapshot(before, got) {
+		t.Fatalf("AI checks mutated project storage")
+	}
+}
+
+func TestAIRuntimeHookChecksReportConfiguredAndAvailableRuntimes(t *testing.T) {
+	store := newDoctorStore(t)
+	cfg, err := store.Config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cfg.Settings.Platforms = []string{"codex"}
+	if err := store.Config.Save(cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	before := snapshotTree(t, store.Root)
+	statusCalls := 0
+	deps := localDependencies{
+		runtimeHooks: func() ([]runtimeinstall.Status, error) {
+			statusCalls++
+			return []runtimeinstall.Status{
+				{
+					Runtime:     "claude-code",
+					DisplayName: "Claude Code",
+					HookKind:    runtimeinstall.HookKindNative,
+					Available:   true,
+					State:       runtimeinstall.StateMissing,
+					Summary:     "hook config missing",
+				},
+				{
+					Runtime:     "codex",
+					DisplayName: "Codex",
+					HookKind:    runtimeinstall.HookKindNative,
+					Available:   false,
+					State:       runtimeinstall.StateDrifted,
+					Summary:     "Codex hooks disabled in config",
+				},
+				{
+					Runtime:     "kiro",
+					DisplayName: "Kiro IDE",
+					HookKind:    runtimeinstall.HookKindNative,
+					State:       runtimeinstall.StateMissing,
+					Summary:     "not installed",
+				},
+				{
+					Runtime:     "opencode",
+					DisplayName: "OpenCode",
+					HookKind:    runtimeinstall.HookKindPlugin,
+					Available:   true,
+					Installed:   true,
+					State:       runtimeinstall.StateInstalled,
+					Summary:     "installed",
+				},
+			}, nil
+		},
+	}
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+		Scopes:  []Scope{ScopeAI},
+	}, localCheckersWithDependencies(store, deps))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if statusCalls != 1 {
+		t.Fatalf("runtime hook status collector calls = %d, want 1", statusCalls)
+	}
+
+	for _, test := range []struct {
+		id         string
+		status     Status
+		command    string
+		configured bool
+		available  bool
+	}{
+		{
+			id:        "ai.runtime-hook.claude-code",
+			status:    StatusWarn,
+			command:   "knowns runtime install claude-code",
+			available: true,
+		},
+		{
+			id:         "ai.runtime-hook.codex",
+			status:     StatusWarn,
+			command:    "knowns runtime install codex",
+			configured: true,
+		},
+		{
+			id:     "ai.runtime-hook.kiro",
+			status: StatusSkip,
+		},
+		{
+			id:        "ai.runtime-hook.opencode",
+			status:    StatusPass,
+			available: true,
+		},
+	} {
+		check := findCheck(t, result, test.id)
+		if check.Status != test.status ||
+			check.Evidence["configured"] != test.configured ||
+			check.Evidence["available"] != test.available {
+			t.Fatalf("%s check = %#v", test.id, check)
+		}
+		if test.command != "" &&
+			(check.Remediation == nil || check.Remediation.Command != test.command) {
+			t.Fatalf("%s remediation = %#v", test.id, check.Remediation)
+		}
+	}
+	if got := snapshotTree(t, store.Root); !sameSnapshot(before, got) {
+		t.Fatalf("runtime hook checks mutated project storage")
+	}
+}
+
+func TestDefaultLocalChecksDoNotMutateProject(t *testing.T) {
+	store := newDoctorStore(t)
+	before := snapshotTree(t, store.Root)
+	_, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+	}, LocalCheckers(store))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := snapshotTree(t, store.Root); !sameSnapshot(before, got) {
+		t.Fatalf("default local checks mutated project storage")
+	}
+}
+
+func newDoctorStore(t *testing.T) *storage.Store {
+	t.Helper()
+	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("doctor-local-test"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	return store
+}
+
+func configureSemanticSearch(t *testing.T, store *storage.Store, settings *models.SemanticSearchSettings) {
+	t.Helper()
+	cfg, err := store.Config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cfg.Settings.SemanticSearch = settings
+	if err := store.Config.Save(cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+}
+
+func sameSnapshot(left, right map[string]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, value := range left {
+		if right[key] != value {
+			return false
+		}
+	}
+	return true
+}

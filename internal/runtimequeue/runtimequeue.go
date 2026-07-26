@@ -421,7 +421,21 @@ func EnsureDaemon() error {
 	return errors.New("timed out waiting for runtime to start")
 }
 
+// Enqueue adds incremental background work to the shared runtime queue.
+// Full search rebuilds require EnqueueReindex so callers must express intent.
 func Enqueue(storeRoot string, kind JobKind, target string) (Job, error) {
+	if kind == JobReindex {
+		return Job{}, errors.New("full search reindex requires EnqueueReindex")
+	}
+	return enqueue(storeRoot, kind, target)
+}
+
+// EnqueueReindex explicitly requests a user-driven full semantic index rebuild.
+func EnqueueReindex(storeRoot string) (Job, error) {
+	return enqueue(storeRoot, JobReindex, "")
+}
+
+func enqueue(storeRoot string, kind JobKind, target string) (Job, error) {
 	if storeRoot == "" {
 		return Job{}, errors.New("store root is required")
 	}

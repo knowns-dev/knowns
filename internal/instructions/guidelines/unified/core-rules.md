@@ -27,6 +27,7 @@ mcp__knowns__project({ "action": "set", "projectRoot": "/path/to/project" })
 | **AC after work** | Only check acceptance criteria AFTER completing work |
 | **Time tracking** | `start_time` when taking task, `stop_time` when done |
 | **Validate** | Run `validate` before marking task done |
+| **Decision impact** | Record `none` or a persisted first-class draft candidate before completion; never create Decision Memory |
 | **appendNotes** | Use `appendNotes` for progress. `notes` REPLACES all (destroys history) |
 {{else}}
 | Rule | Description |
@@ -37,6 +38,7 @@ mcp__knowns__project({ "action": "set", "projectRoot": "/path/to/project" })
 | **AC after work** | Only check acceptance criteria AFTER completing work |
 | **Time tracking** | `start_time` when taking task, `stop_time` when done |
 | **Validate** | Run `validate` before marking task done |
+| **Decision impact** | Record `none` or a persisted first-class draft candidate before completion; never create Decision Memory |
 | **appendNotes** | Use `appendNotes` for progress. `notes` REPLACES all (destroys history) |
 {{/if}}
 {{else}}
@@ -49,6 +51,7 @@ mcp__knowns__project({ "action": "set", "projectRoot": "/path/to/project" })
 | **AC after work** | Only check acceptance criteria AFTER completing work |
 | **Time tracking** | `time start` when taking task, `time stop` when done |
 | **Validate** | Run `knowns validate` before marking task done |
+| **Decision impact** | Record `none` or a persisted first-class draft candidate before completion; never create Decision Memory |
 | **--append-notes** | Use `--append-notes` for progress. `--notes` REPLACES all (destroys history) |
 {{/if}}
 {{/if}}

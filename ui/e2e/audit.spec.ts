@@ -19,11 +19,36 @@ test.describe("Audit Trail", () => {
 
 		await test.step("Audit page header is visible", async () => {
 			await expect(page.getByRole("heading", { name: "MCP Audit Trail" })).toBeVisible();
+			await expect(
+				page.getByText(
+					"Review MCP activity, outcomes, and execution details recorded for this project.",
+				),
+			).toBeVisible();
+			await expect(
+				page.getByRole("navigation", { name: "Breadcrumb" }).getByText("Audit", {
+					exact: true,
+				}),
+			).toBeVisible();
+			await expect(
+				page.getByRole("region", { name: "Audit status summary" }),
+			).toBeVisible();
 		});
 
 		await test.step("Tabs are present", async () => {
-			await expect(page.getByText("Recent Activity")).toBeVisible();
-			await expect(page.getByText("Statistics")).toBeVisible();
+			const recentTab = page.getByRole("tab", { name: "Recent Activity" });
+			const statisticsTab = page.getByRole("tab", { name: "Statistics" });
+			await expect(recentTab).toHaveAttribute(
+				"aria-selected",
+				"true",
+			);
+			await expect(statisticsTab).toBeVisible();
+			await expect(page.getByRole("button", { name: /Refresh audit data/ })).toBeVisible();
+
+			await recentTab.focus();
+			await recentTab.press("ArrowRight");
+			await expect(statisticsTab).toHaveAttribute("aria-selected", "true");
+			await statisticsTab.press("Home");
+			await expect(recentTab).toHaveAttribute("aria-selected", "true");
 		});
 	});
 
@@ -33,7 +58,10 @@ test.describe("Audit Trail", () => {
 		});
 
 		await test.step("Recent Activity tab is selected by default", async () => {
-			await expect(page.getByText("Recent Activity")).toBeVisible();
+			await expect(page.getByRole("tab", { name: "Recent Activity" })).toHaveAttribute(
+				"aria-selected",
+				"true",
+			);
 		});
 
 		await test.step("Either shows events or empty state", async () => {
@@ -68,8 +96,9 @@ test.describe("Audit Trail", () => {
 			const isEmpty = await emptyState.isVisible({ timeout: 2000 }).catch(() => false);
 			if (isEmpty) {
 				// Refresh button is available
-				const refreshBtn = page.getByTitle("Refresh");
+				const refreshBtn = page.getByRole("button", { name: /Refresh audit data/ });
 				if (await refreshBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+					await expect(refreshBtn).toBeEnabled();
 					await refreshBtn.click();
 					await page.waitForTimeout(2000);
 				}
@@ -89,16 +118,17 @@ test.describe("Audit Trail", () => {
 		});
 
 		await test.step("Filter dropdowns are visible", async () => {
-			// Tool filter and result filter select elements
-			const toolSelect = page.locator("select").filter({ hasText: /All tools|All results/ });
-			const toolSelectCount = await toolSelect.count();
-			if (toolSelectCount > 0) {
-				await expect(toolSelect.first()).toBeVisible();
-			}
+			await expect(page.getByLabel("Filter by tool")).toBeVisible();
+			await expect(page.getByLabel("Filter by result")).toBeVisible();
 		});
 
 		await test.step("Event count text is shown", async () => {
-			await expect(page.getByText(/events$/)).toBeVisible();
+			await expect(page.getByText(/events loaded$/)).toBeVisible();
+			await expect(
+				page
+					.getByRole("region", { name: "Audit status summary" })
+					.getByText("Events loaded"),
+			).toBeVisible();
 		});
 	});
 
@@ -108,7 +138,7 @@ test.describe("Audit Trail", () => {
 		});
 
 		await test.step("Click Statistics tab", async () => {
-			await page.getByText("Statistics").click();
+			await page.getByRole("tab", { name: "Statistics" }).click();
 			await page.waitForTimeout(1000);
 		});
 
@@ -155,16 +185,37 @@ test.describe("Audit Trail", () => {
 		});
 
 		await test.step("Refresh button is present", async () => {
-			await expect(page.getByTitle("Refresh")).toBeVisible();
+			const refreshButton = page.getByRole("button", { name: /Refresh audit data/ });
+			await expect(refreshButton).toBeVisible();
+			await expect(refreshButton).toBeEnabled();
 		});
 
 		await test.step("Click refresh", async () => {
-			await page.getByTitle("Refresh").click();
-			await page.waitForTimeout(1000);
+			await page.getByRole("button", { name: /Refresh audit data/ }).click();
 		});
 
 		await test.step("Page is stable after refresh", async () => {
 			await expect(page.getByRole("heading", { name: "MCP Audit Trail" })).toBeVisible();
+			await expect(page.getByRole("button", { name: "Refresh audit data" })).toBeEnabled();
 		});
+	});
+
+	test("failed requests show a useful retry state", async ({ page }) => {
+		await page.route("**/api/audit/recent*", async (route) => {
+			await route.fulfill({
+				status: 503,
+				contentType: "application/json",
+				body: JSON.stringify({ error: "temporarily unavailable" }),
+			});
+		});
+
+		await page.goto(`${server.baseURL}/audit`);
+
+		const errorState = page.getByRole("alert");
+		await expect(errorState).toContainText("Audit activity unavailable");
+		await expect(errorState.getByRole("button", { name: "Try again" })).toBeVisible();
+		await expect(
+			page.getByRole("region", { name: "Audit status summary" }).getByText("—"),
+		).toHaveCount(3);
 	});
 });
