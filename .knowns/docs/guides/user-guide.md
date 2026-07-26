@@ -1,13 +1,14 @@
 ---
 title: User Guide
-createdAt: '2025-12-29T11:49:48.531Z'
-updatedAt: '2026-03-08T18:18:51.018Z'
 description: Comprehensive user documentation for Knowns CLI and Web UI
+createdAt: '2025-12-29T11:49:48.531Z'
+updatedAt: '2026-07-26T06:12:33.079Z'
 tags:
   - docs
   - guide
   - user
 ---
+
 # Knowns User Guide
 
 Complete guide for using Knowns - a CLI-first knowledge layer and task management system for development teams.
@@ -282,9 +283,50 @@ knowns agents sync --type mcp     # MCP version
 
 ## Troubleshooting
 
+### Diagnose with `knowns doctor`
+
+Run `knowns doctor` before starting work, especially after cloning a repository that already contains `.knowns/`. This confirms whether the local machine has the required models, runtimes, language servers, indices, and integration artifacts before changes begin.
+
+Start with the default offline, read-only diagnostic:
+
+```bash
+knowns doctor
+```
+
+The summary reports `healthy`, `degraded`, or `unhealthy`. Default output lists every warning and failure with remediation while keeping passing and skipped checks compact. Use verbose output when you need the complete human-readable trace:
+
+```bash
+knowns doctor --verbose
+```
+
+Use a scope when investigating one subsystem. Scopes can be comma-separated or repeated:
+
+```bash
+knowns doctor --scope project,validation
+knowns doctor --scope search --scope runtime
+knowns doctor --scope lsp --verbose
+```
+
+Doctor is offline unless you explicitly opt in. Online mode adds bounded version and configured embedding-provider connectivity probes; one failed probe does not suppress other findings:
+
+```bash
+knowns doctor --online
+```
+
+For CI and agents, use the complete JSON contract. `--strict` keeps the JSON verdict `degraded` but returns exit code 1 when warnings exist:
+
+```bash
+knowns doctor --json
+knowns doctor --json --strict
+```
+
+Exit codes are 0 for healthy or non-strict degraded results, 1 for unhealthy or strict degraded results, and 2 when the diagnostic engine cannot produce a valid result. A directory without an active Knowns project returns a structured unhealthy result and recommends `knowns init`.
+
+Doctor does not apply fixes. Copy the remediation command from a finding, run it intentionally, and rerun doctor. Common examples include `knowns validate`, `knowns model download <model>`, `knowns search --reindex`, `knowns lsp install <language>`, `knowns sync`, and `knowns update`.
+
 | Error | Solution |
 |-------|----------|
-| "Not initialized" | Run `knowns init` |
+| "Not initialized" | Run `knowns doctor --scope project`, then `knowns init` |
 | "Task not found" | Check ID with `knowns task list --plain` |
 | "Timer already running" | Run `knowns time stop` first |
 | Web UI won't start | Try `knowns browser --port 6421` |
@@ -293,5 +335,6 @@ knowns agents sync --type mcp     # MCP version
 
 ```bash
 knowns --help
+knowns doctor --help
 knowns task --help
 ```

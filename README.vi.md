@@ -158,6 +158,10 @@ cd your-project
 knowns init
 # Tạo .knowns/ cùng lightweight agent shims như CLAUDE.md/AGENTS.md
 
+# Trước khi bắt đầu làm việc, đặc biệt sau khi clone
+# một repository đã có .knowns/
+knowns doctor
+
 # Hoặc chạy không cần cài global
 npx knowns init
 
@@ -246,6 +250,17 @@ LSP-backed code intelligence cho Go, TypeScript, Python, Rust, C/C++, Java, C#, 
 ```bash
 knowns lsp list                    # Xem ngôn ngữ và trạng thái LSP
 knowns lsp install <language>      # Tải và cài LSP server
+```
+
+### Chẩn đoán project
+
+Chạy `knowns doctor` trước khi bắt đầu làm việc, đặc biệt sau khi clone một repository đã có `.knowns/`. Lệnh này kiểm tra offline, read-only cho project setup, semantic search, local runtime, language server và AI integration artifacts. Mỗi vấn đề có hướng dẫn xử lý nhưng `doctor` không tự thay đổi hệ thống.
+
+```bash
+knowns doctor
+knowns doctor --scope search,lsp
+knowns doctor --verbose
+knowns doctor --json --strict
 ```
 
 ### Templates & code generation
@@ -477,6 +492,11 @@ knowns validate
 knowns lsp list
 knowns lsp install <language>
 knowns lsp cleanup
+
+# Chẩn đoán project
+knowns doctor
+knowns doctor --scope search,lsp
+knowns doctor --json --strict
 
 # AI setup
 knowns setup agents        # lightweight repo-local agent shims only

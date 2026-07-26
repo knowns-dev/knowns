@@ -158,6 +158,10 @@ cd your-project
 knowns init
 # Creates .knowns/ plus lightweight agent shims such as CLAUDE.md/AGENTS.md
 
+# Before starting work, especially after cloning a repository
+# that already contains .knowns/
+knowns doctor
+
 # or run without a global install
 npx knowns init
 
@@ -246,6 +250,17 @@ LSP-based code intelligence for supported languages. List symbols, jump to defin
 ```bash
 knowns lsp list
 knowns lsp install <language>
+```
+
+### Project Diagnostics
+
+Run `knowns doctor` before starting work, especially after cloning a repository that already contains `.knowns/`. It performs offline, read-only checks for project setup, semantic search, local runtimes, language servers, and AI integration artifacts. Findings include actionable remediation without applying changes automatically.
+
+```bash
+knowns doctor
+knowns doctor --scope search,lsp
+knowns doctor --verbose
+knowns doctor --json --strict
 ```
 
 ### Templates & Code Generation
@@ -479,6 +494,11 @@ knowns validate
 knowns lsp list
 knowns lsp install <language>
 # Use the MCP code tool for symbols, definitions, references, diagnostics, and edits
+
+# Project diagnostics
+knowns doctor
+knowns doctor --scope search,lsp
+knowns doctor --json --strict
 
 # AI setup
 knowns setup agents        # lightweight repo-local agent shims only

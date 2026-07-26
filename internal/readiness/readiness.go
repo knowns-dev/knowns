@@ -68,7 +68,11 @@ type SearchStatus struct {
 	ModelConfigured   bool                      `json:"modelConfigured"`
 	ModelInstalled    bool                      `json:"modelInstalled"`
 	ProjectIndexReady bool                      `json:"projectIndexReady"`
+	ProjectIndexStale bool                      `json:"projectIndexStale"`
+	ProjectIndexModel string                    `json:"projectIndexModel,omitempty"`
 	GlobalIndexReady  bool                      `json:"globalIndexReady"`
+	GlobalIndexStale  bool                      `json:"globalIndexStale"`
+	GlobalIndexModel  string                    `json:"globalIndexModel,omitempty"`
 	LastReindex       *time.Time                `json:"lastReindex,omitempty"`
 	SemanticRuntime   *SemanticRuntimeReadiness `json:"semanticRuntime,omitempty"`
 }
@@ -285,8 +289,13 @@ func buildSearch(store *storage.Store) *SearchStatus {
 	// Project index readiness.
 	searchDir := filepath.Join(store.Root, ".search")
 	vs := search.NewSQLiteVectorStore(searchDir, "", 0)
-	count, _, indexedAt := vs.Stats()
+	count, projectIndexModel, indexedAt := vs.Stats()
 	ss.ProjectIndexReady = count > 0
+	ss.ProjectIndexModel = projectIndexModel
+	if ss.ProjectIndexReady && cfg.Settings.SemanticSearch != nil {
+		configuredModel := cfg.Settings.SemanticSearch.Model
+		ss.ProjectIndexStale = configuredModel != "" && projectIndexModel != "" && projectIndexModel != configuredModel
+	}
 	if !indexedAt.IsZero() {
 		ss.LastReindex = &indexedAt
 	}
@@ -295,8 +304,13 @@ func buildSearch(store *storage.Store) *SearchStatus {
 	globalRoot := storage.GlobalSemanticStoreRoot()
 	globalSearchDir := filepath.Join(globalRoot, ".search")
 	gvs := search.NewSQLiteVectorStore(globalSearchDir, "", 0)
-	gCount, _, _ := gvs.Stats()
+	gCount, globalIndexModel, _ := gvs.Stats()
 	ss.GlobalIndexReady = gCount > 0
+	ss.GlobalIndexModel = globalIndexModel
+	if ss.GlobalIndexReady && cfg.Settings.SemanticSearch != nil {
+		configuredModel := cfg.Settings.SemanticSearch.Model
+		ss.GlobalIndexStale = configuredModel != "" && globalIndexModel != "" && globalIndexModel != configuredModel
+	}
 
 	return ss
 }

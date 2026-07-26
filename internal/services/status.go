@@ -65,9 +65,10 @@ const detectionTimeout = 2 * time.Second
 // project while the other service detectors run in parallel.
 type LSPRuntimeStatusProvider func(context.Context, *storage.Store) []lsp.LanguageRuntimeStatus
 
-// DetectAll returns status for all managed sub-processes.
+// DetectAll returns status for all managed sub-processes and cleans up stale
+// process marker files for compatibility with existing status callers.
 func DetectAll(store *storage.Store) []ServiceStatus {
-	return detectAll(context.Background(), store, nil)
+	return detectAll(context.Background(), store, true, nil)
 }
 
 // DetectAllWithLSPStatusProvider resolves live LSP state in parallel with the
@@ -76,11 +77,18 @@ func DetectAllWithLSPStatusProvider(ctx context.Context, store *storage.Store, p
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return detectAll(ctx, store, provider)
+	return detectAll(ctx, store, true, provider)
+}
+
+// DetectAllReadOnly returns the same service snapshot without removing stale
+// process marker files. Diagnostic and other observation-only workflows should
+// use this variant.
+func DetectAllReadOnly(store *storage.Store) []ServiceStatus {
+	return detectAll(context.Background(), store, false, nil)
 }
 
 // detectAll runs each detector independently with bounded local probes.
-func detectAll(ctx context.Context, store *storage.Store, lspStatusProvider LSPRuntimeStatusProvider) []ServiceStatus {
+func detectAll(ctx context.Context, store *storage.Store, cleanupStale bool, lspStatusProvider LSPRuntimeStatusProvider) []ServiceStatus {
 	var proj *models.Project
 	if store != nil {
 		loaded, err := store.Config.Load()
@@ -105,7 +113,7 @@ func detectAll(ctx context.Context, store *storage.Store, lspStatusProvider LSPR
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		add(detectOpenCode(proj))
+		add(detectOpenCode(proj, cleanupStale))
 	}()
 
 	wg.Add(1)
@@ -127,7 +135,7 @@ func detectAll(ctx context.Context, store *storage.Store, lspStatusProvider LSPR
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		add(detectCloudflared())
+		add(detectCloudflared(cleanupStale))
 	}()
 
 	wg.Add(1)
@@ -143,7 +151,7 @@ func detectAll(ctx context.Context, store *storage.Store, lspStatusProvider LSPR
 
 // ----- OpenCode Daemon Detection -----
 
-func detectOpenCode(proj *models.Project) []ServiceStatus {
+func detectOpenCode(proj *models.Project, cleanupStale bool) []ServiceStatus {
 	ctx, cancel := context.WithTimeout(context.Background(), detectionTimeout)
 	defer cancel()
 
@@ -188,7 +196,7 @@ func detectOpenCode(proj *models.Project) []ServiceStatus {
 	alive := isProcessAlive(pid)
 	if !alive {
 		// Clean up stale PID file.
-		if pidErr == nil && pid > 0 {
+		if cleanupStale && pidErr == nil && pid > 0 {
 			os.Remove(daemon.PIDFile)
 		}
 		ss.Status = "stopped"
@@ -375,7 +383,7 @@ func isProcessRunning(name string) bool {
 	return err == nil
 }
 
-func detectCloudflared() []ServiceStatus {
+func detectCloudflared(cleanupStale bool) []ServiceStatus {
 	ss := ServiceStatus{
 		Name:            "Cloudflared",
 		Type:            "cloudflared",
@@ -434,10 +442,12 @@ func detectCloudflared() []ServiceStatus {
 
 		// Check process liveness.
 		if !isProcessAlive(pid) {
-			os.Remove(pidFile)
-			// Also remove corresponding .url file.
-			urlFile := pidFile[:len(pidFile)-3] + "url"
-			os.Remove(urlFile)
+			if cleanupStale {
+				os.Remove(pidFile)
+				// Also remove corresponding .url file.
+				urlFile := pidFile[:len(pidFile)-3] + "url"
+				os.Remove(urlFile)
+			}
 			continue
 		}
 
