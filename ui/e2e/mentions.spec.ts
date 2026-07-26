@@ -35,7 +35,7 @@ test.describe("Task → Task Mentions", () => {
 
 		await test.step("Mention badge shows target task title", async () => {
 			const badge = page.locator(`[data-task-id="${targetId}"]`);
-			await expect(badge).toBeVisible({ timeout: 5000 });
+			await expect(badge).toBeVisible();
 			await expect(badge).toContainText("Login Feature");
 		});
 
@@ -62,13 +62,13 @@ test.describe("Task → Task Mentions", () => {
 
 		await test.step("Click the mention badge", async () => {
 			const badge = page.locator(`[data-task-id="${targetId}"]`);
-			await expect(badge).toBeVisible({ timeout: 5000 });
+			await expect(badge).toBeVisible();
 			await badge.click();
 		});
 
 		await test.step("Navigated to target task", async () => {
 			await expect(page).toHaveURL(new RegExp(`/kanban/${targetId}`), { timeout: 5000 });
-			await expect(page.getByRole("heading", { name: "Target Task", exact: true })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Target Task", exact: true })).toBeVisible();
 		});
 	});
 
@@ -84,7 +84,7 @@ test.describe("Task → Task Mentions", () => {
 
 		await test.step("Broken mention badge is visible without link role", async () => {
 			const badge = page.locator('[data-task-id="nonexistent999"]');
-			await expect(badge).toBeVisible({ timeout: 5000 });
+			await expect(badge).toBeVisible();
 			// Broken mentions don't have role="link"
 			await expect(badge).not.toHaveAttribute("role", "link");
 		});
@@ -108,7 +108,7 @@ test.describe("Task → Doc Mentions", () => {
 
 		await test.step("Doc mention badge is visible", async () => {
 			const badge = page.locator('[data-doc-path="api-guide.md"]');
-			await expect(badge).toBeVisible({ timeout: 5000 });
+			await expect(badge).toBeVisible();
 			await expect(badge).toContainText("API Guide");
 		});
 
@@ -131,7 +131,7 @@ test.describe("Task → Doc Mentions", () => {
 
 		await test.step("Click doc mention badge", async () => {
 			const badge = page.locator('[data-doc-path="setup-guide.md"]');
-			await expect(badge).toBeVisible({ timeout: 5000 });
+			await expect(badge).toBeVisible();
 			await badge.click();
 		});
 
@@ -152,7 +152,7 @@ test.describe("Task → Doc Mentions", () => {
 
 		await test.step("Broken doc badge visible without link role", async () => {
 			const badge = page.locator('[data-doc-path="nonexistent-doc.md"]');
-			await expect(badge).toBeVisible({ timeout: 5000 });
+			await expect(badge).toBeVisible();
 			await expect(badge).not.toHaveAttribute("role", "link");
 		});
 	});
@@ -182,8 +182,8 @@ test.describe("Semantic Reference Badges", () => {
 		await test.step("Semantic badges show labels and relations", async () => {
 			const taskBadge = page.locator(`[data-task-id="${taskId}"]`);
 			const docBadge = page.locator('[data-doc-path="semantic-runtime.md"]');
-			await expect(taskBadge).toBeVisible({ timeout: 5000 });
-			await expect(docBadge).toBeVisible({ timeout: 5000 });
+			await expect(taskBadge).toBeVisible();
+			await expect(docBadge).toBeVisible();
 			await expect(taskBadge).toContainText("Runtime API");
 			await expect(taskBadge).toContainText("blocked-by");
 			await expect(docBadge).toContainText("Semantic Runtime");
@@ -204,7 +204,7 @@ test.describe("Semantic Reference Badges", () => {
 
 		await test.step("Memory badge is visible with relation", async () => {
 			const badge = page.locator('[data-memory-id="security-pattern"]');
-			await expect(badge).toBeVisible({ timeout: 5000 });
+			await expect(badge).toBeVisible();
 			await expect(badge).toContainText("Security Pattern");
 			await expect(badge).toContainText("follows");
 			await expect(badge).toHaveAttribute("role", "link");
@@ -247,9 +247,9 @@ test.describe("Semantic Reference Badges", () => {
 			const memoryBadge = page.locator('[data-memory-id="canonical-memory"]');
 			const decisionBadge = page.locator(`[data-decision-id="${decisionId}"]`);
 
-			await expect(taskBadge).toBeVisible({ timeout: 5000 });
-			await expect(memoryBadge).toBeVisible({ timeout: 5000 });
-			await expect(decisionBadge).toBeVisible({ timeout: 5000 });
+			await expect(taskBadge).toBeVisible();
+			await expect(memoryBadge).toBeVisible();
+			await expect(decisionBadge).toBeVisible();
 			await expect(taskBadge).toContainText("Canonical Target");
 			await expect(taskBadge).toContainText("related");
 			await expect(memoryBadge).toContainText("Canonical Memory");
@@ -273,8 +273,8 @@ test.describe("Semantic Reference Badges", () => {
 		await test.step("Broken semantic badges stay visible without link role", async () => {
 			const docBadge = page.locator('[data-doc-path="missing-guide.md"]');
 			const memoryBadge = page.locator('[data-memory-id="missing-note"]');
-			await expect(docBadge).toBeVisible({ timeout: 5000 });
-			await expect(memoryBadge).toBeVisible({ timeout: 5000 });
+			await expect(docBadge).toBeVisible();
+			await expect(memoryBadge).toBeVisible();
 			await expect(docBadge).toContainText("implements");
 			await expect(memoryBadge).toContainText("related");
 			await expect(docBadge).not.toHaveAttribute("role", "link");
@@ -309,7 +309,7 @@ test.describe("Doc → Task Mentions", () => {
 
 		await test.step("Task mention badge is visible in doc content", async () => {
 			const badge = page.locator(`[data-task-id="${taskId}"]`);
-			await expect(badge).toBeVisible({ timeout: 5000 });
+			await expect(badge).toBeVisible();
 			await expect(badge).toContainText("Important Bug");
 		});
 	});
@@ -334,7 +334,7 @@ test.describe("Doc → Doc Mentions", () => {
 
 		await test.step("Doc mention badge is visible", async () => {
 			const badge = page.locator('[data-doc-path="architecture.md"]');
-			await expect(badge).toBeVisible({ timeout: 5000 });
+			await expect(badge).toBeVisible();
 			await expect(badge).toContainText("Architecture");
 		});
 
@@ -378,9 +378,9 @@ test.describe("Multiple Mentions", () => {
 			const taskBadge2 = page.locator(`[data-task-id="${taskId2}"]`);
 			const docBadge = page.locator('[data-doc-path="design-spec.md"]');
 
-			await expect(taskBadge1).toBeVisible({ timeout: 5000 });
-			await expect(taskBadge2).toBeVisible({ timeout: 5000 });
-			await expect(docBadge).toBeVisible({ timeout: 5000 });
+			await expect(taskBadge1).toBeVisible();
+			await expect(taskBadge2).toBeVisible();
+			await expect(docBadge).toBeVisible();
 
 			await expect(taskBadge1).toContainText("Backend API");
 			await expect(taskBadge2).toContainText("Frontend UI");

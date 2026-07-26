@@ -33,7 +33,7 @@ test.describe("Configuration Page", () => {
 
 		await test.step("Board section is visible", async () => {
 			const boardSection = page.getByText(/board|statuses/i).first();
-			await expect(boardSection).toBeVisible({ timeout: 5000 });
+			await expect(boardSection).toBeVisible();
 		});
 	});
 

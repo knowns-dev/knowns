@@ -23,7 +23,7 @@ test.describe("Knowledge Graph", () => {
 
 		await test.step("Page header/toolbar is visible", async () => {
 			// GraphToolbar renders a search input with placeholder "Search graph..."
-			await expect(page.getByPlaceholder("Search graph...")).toBeVisible({ timeout: 8000 });
+			await expect(page.getByPlaceholder("Search graph...")).toBeVisible();
 		});
 
 		await test.step("No error state is shown", async () => {
@@ -39,7 +39,7 @@ test.describe("Knowledge Graph", () => {
 		await test.step("Graph canvas area exists", async () => {
 			// The ForceGraph2D renders inside an absolute positioned container
 			const canvas = page.locator("canvas").first();
-			await expect(canvas).toBeVisible({ timeout: 8000 });
+			await expect(canvas).toBeVisible();
 		});
 	});
 
@@ -49,18 +49,18 @@ test.describe("Knowledge Graph", () => {
 		});
 
 		await test.step("Search input is present", async () => {
-			await expect(page.getByPlaceholder("Search graph...")).toBeVisible({ timeout: 8000 });
+			await expect(page.getByPlaceholder("Search graph...")).toBeVisible();
 		});
 
 		await test.step("Node/edge count is shown", async () => {
 			// GraphToolbar displays "{n} nodes, {m} edges"
-			await expect(page.getByText(/nodes/)).toBeVisible({ timeout: 5000 });
-			await expect(page.getByText(/edges/)).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/nodes/)).toBeVisible();
+			await expect(page.getByText(/edges/)).toBeVisible();
 		});
 
 		await test.step("Zoom to fit and fullscreen buttons are present", async () => {
-			await expect(page.getByTitle("Zoom to fit")).toBeVisible({ timeout: 5000 });
-			await expect(page.getByTitle("Toggle fullscreen")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByTitle("Zoom to fit")).toBeVisible();
+			await expect(page.getByTitle("Toggle fullscreen")).toBeVisible();
 		});
 	});
 
@@ -70,17 +70,17 @@ test.describe("Knowledge Graph", () => {
 		});
 
 		await test.step("Legend panel is visible", async () => {
-			await expect(page.getByText("Node types")).toBeVisible({ timeout: 8000 });
+			await expect(page.getByText("Node types")).toBeVisible();
 		});
 
 		await test.step("Node type filters are present", async () => {
-			await expect(page.getByRole("button", { name: "Tasks" })).toBeVisible({ timeout: 5000 });
-			await expect(page.getByRole("button", { name: "Docs" })).toBeVisible({ timeout: 5000 });
-			await expect(page.getByRole("button", { name: "Memories" })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("button", { name: "Tasks" })).toBeVisible();
+			await expect(page.getByRole("button", { name: "Docs" })).toBeVisible();
+			await expect(page.getByRole("button", { name: "Memories" })).toBeVisible();
 		});
 
 		await test.step("Edge section is present", async () => {
-			await expect(page.getByText("Edges", { exact: true })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Edges", { exact: true })).toBeVisible();
 		});
 	});
 
@@ -101,7 +101,7 @@ test.describe("Knowledge Graph", () => {
 			// Verify the toolbar shows a non-zero node count
 			const countRegex = /(\d+)\s*nodes/;
 			const countText = page.getByText(countRegex);
-			await expect(countText).toBeVisible({ timeout: 5000 });
+			await expect(countText).toBeVisible();
 		});
 	});
 
@@ -111,7 +111,7 @@ test.describe("Knowledge Graph", () => {
 		});
 
 		await test.step("Wait for graph to load", async () => {
-			await expect(page.getByText(/nodes/)).toBeVisible({ timeout: 8000 });
+			await expect(page.getByText(/nodes/)).toBeVisible();
 		});
 
 		await test.step("Type search query", async () => {
@@ -121,7 +121,7 @@ test.describe("Knowledge Graph", () => {
 
 		await test.step("Match count is shown", async () => {
 			// Toolbar shows "{n} matches" when searching
-			await expect(page.getByText(/matches/)).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/matches/)).toBeVisible();
 		});
 
 		await test.step("Clearing search removes match indicator", async () => {
@@ -137,7 +137,7 @@ test.describe("Knowledge Graph", () => {
 		});
 
 		await test.step("Wait for graph to load", async () => {
-			await expect(page.getByText(/nodes/)).toBeVisible({ timeout: 8000 });
+			await expect(page.getByText(/nodes/)).toBeVisible();
 		});
 
 		await test.step("Click Tasks filter to toggle", async () => {
@@ -157,7 +157,7 @@ test.describe("Knowledge Graph", () => {
 		});
 
 		await test.step("Wait for graph to load", async () => {
-			await expect(page.getByText(/nodes/)).toBeVisible({ timeout: 8000 });
+			await expect(page.getByText(/nodes/)).toBeVisible();
 		});
 
 		await test.step("Click on canvas area (ForceGraph2D canvas)", async () => {
@@ -180,7 +180,7 @@ test.describe("Knowledge Graph", () => {
 		});
 
 		await test.step("Wait for graph to load", async () => {
-			await expect(page.getByText(/nodes/)).toBeVisible({ timeout: 8000 });
+			await expect(page.getByText(/nodes/)).toBeVisible();
 		});
 
 		await test.step("Clicking canvas should not show impact bar initially", async () => {

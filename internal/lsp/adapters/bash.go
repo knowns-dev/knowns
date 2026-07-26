@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"runtime"
 
 	"github.com/howznguyen/knowns/internal/lsp"
 )
@@ -82,6 +83,18 @@ func (a *BashAdapter) InstalledPath() (string, bool) {
 }
 func (a *BashAdapter) DefaultArgs() []string { return []string{"start"} }
 func (a *BashAdapter) InitializeParams(root string, settings map[string]any) map[string]any {
+	return bashInitializeParams(root, settings, runtime.GOOS)
+}
+func bashInitializeParams(root string, settings map[string]any, goos string) map[string]any {
+	// bash-language-server 5.6.0 cannot resolve relative sourced files from a
+	// file URI on Windows. Its rootPath fallback accepts the native path and
+	// preserves cross-file definition and reference navigation.
+	if goos == "windows" {
+		return map[string]any{
+			"rootPath":              root,
+			"initializationOptions": initializationOptions(settings),
+		}
+	}
 	return initializeParams(root, settings)
 }
 func (a *BashAdapter) InitializationOptions(settings map[string]any) map[string]any {

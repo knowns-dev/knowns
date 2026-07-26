@@ -22,7 +22,7 @@ test.describe("Settings — Tunnel", () => {
 		});
 
 		await test.step("Cloudflare Tunnel section is visible", async () => {
-			await expect(page.getByText(/cloudflare tunnel/i)).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/cloudflare tunnel/i)).toBeVisible();
 		});
 	});
 
@@ -33,7 +33,7 @@ test.describe("Settings — Tunnel", () => {
 		});
 
 		await test.step("Status indicator shows Stopped", async () => {
-			await expect(page.getByText("Stopped").or(page.getByText(/running/i))).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Stopped").or(page.getByText(/running/i))).toBeVisible();
 		});
 	});
 
@@ -45,7 +45,7 @@ test.describe("Settings — Tunnel", () => {
 
 		await test.step("Start Tunnel button is visible", async () => {
 			const startBtn = page.getByRole("button", { name: /start/i });
-			await expect(startBtn).toBeVisible({ timeout: 5000 });
+			await expect(startBtn).toBeVisible();
 		});
 	});
 
@@ -57,7 +57,7 @@ test.describe("Settings — Tunnel", () => {
 
 		await test.step("Click Start Tunnel", async () => {
 			const startBtn = page.getByRole("button", { name: /start/i });
-			await expect(startBtn).toBeVisible({ timeout: 5000 });
+			await expect(startBtn).toBeVisible();
 			await startBtn.click();
 		});
 

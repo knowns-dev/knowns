@@ -183,7 +183,7 @@ test.describe("Dark Mode on All Pages", () => {
 		});
 
 		await test.step("Task data visible in dark mode", async () => {
-			await expect(page.getByText("Dark Mode Task").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Dark Mode Task").first()).toBeVisible();
 		});
 	});
 
@@ -200,7 +200,7 @@ test.describe("Dark Mode on All Pages", () => {
 		});
 
 		await test.step("Kanban columns visible in dark mode", async () => {
-			await expect(page.getByText("To Do").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("To Do").first()).toBeVisible();
 			await expect(page.getByText("In Progress").first()).toBeVisible();
 			await expect(page.getByText("Done", { exact: true }).first()).toBeVisible();
 		});
@@ -241,7 +241,7 @@ test.describe("Dark Mode on All Pages", () => {
 		});
 
 		await test.step("Task detail visible in dark mode", async () => {
-			await expect(page.getByRole("heading", { name: "Dark Mode Task", exact: true })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Dark Mode Task", exact: true })).toBeVisible();
 			await expect(page.getByText("Test in dark mode")).toBeVisible();
 		});
 
@@ -296,7 +296,7 @@ test.describe("Dark Mode with Mentions", () => {
 
 		await test.step("Mention badge visible in dark mode", async () => {
 			const badge = page.locator(`[data-task-id="${taskId}"]`);
-			await expect(badge).toBeVisible({ timeout: 5000 });
+			await expect(badge).toBeVisible();
 			await expect(badge).toContainText("Mentioned Task");
 		});
 

@@ -114,7 +114,7 @@ test.describe("Audit Trail", () => {
 		});
 
 		await test.step("Wait for page to load", async () => {
-			await expect(page.getByRole("heading", { name: "MCP Audit Trail" })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "MCP Audit Trail" })).toBeVisible();
 		});
 
 		await test.step("Filter dropdowns are visible", async () => {
@@ -123,7 +123,7 @@ test.describe("Audit Trail", () => {
 		});
 
 		await test.step("Event count text is shown", async () => {
-			await expect(page.getByText(/events loaded$/)).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/events loaded$/)).toBeVisible();
 			await expect(
 				page
 					.getByRole("region", { name: "Audit status summary" })
@@ -186,7 +186,7 @@ test.describe("Audit Trail", () => {
 
 		await test.step("Refresh button is present", async () => {
 			const refreshButton = page.getByRole("button", { name: /Refresh audit data/ });
-			await expect(refreshButton).toBeVisible({ timeout: 5000 });
+			await expect(refreshButton).toBeVisible();
 			await expect(refreshButton).toBeEnabled();
 		});
 

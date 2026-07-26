@@ -174,7 +174,7 @@ test.describe("Password Protection", () => {
 		});
 
 		await test.step("Error message is shown", async () => {
-			await expect(page.getByText(/invalid|incorrect|failed|error/i).first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/invalid|incorrect|failed|error/i).first()).toBeVisible();
 		});
 
 		await test.step("Login gate is still visible (not bypassed)", async () => {
@@ -222,11 +222,11 @@ test.describe("Password Protection", () => {
 		});
 
 		await test.step("Protected status is shown", async () => {
-			await expect(page.getByText(/protected/i).first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/protected/i).first()).toBeVisible();
 		});
 
 		await test.step("Remove Password button is visible", async () => {
-			await expect(page.getByText(/remove password/i).first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/remove password/i).first()).toBeVisible();
 		});
 	});
 
@@ -246,13 +246,13 @@ test.describe("Password Protection", () => {
 		});
 
 		await test.step("Click Remove Password", async () => {
-			await expect(page.getByText(/remove password/i).first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/remove password/i).first()).toBeVisible();
 			await page.getByText(/remove password/i).first().click();
 			await page.waitForTimeout(1500);
 		});
 
 		await test.step("Status shows Unprotected", async () => {
-			await expect(page.getByText(/unprotected/i).first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/unprotected/i).first()).toBeVisible();
 		});
 	});
 
@@ -286,7 +286,7 @@ test.describe("Password Protection", () => {
 		});
 
 		await test.step("Status shows Protected", async () => {
-			await expect(page.getByText(/protected/i).first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/protected/i).first()).toBeVisible();
 		});
 	});
 });

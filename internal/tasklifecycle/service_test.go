@@ -877,7 +877,7 @@ func TestHardDeleteRetryCompletesCleanupAndDoesNotRedeliverEvent(t *testing.T) {
 	options := HardDeleteOptions{Confirmed: true, Reason: "privacy request", Actor: "tester"}
 
 	first, err := service.HardDelete(context.Background(), task.ID, options)
-	if err == nil || !strings.Contains(err.Error(), "directory not empty") || !first.Changed {
+	if err == nil || !strings.Contains(err.Error(), "delete task version history") || !first.Changed {
 		t.Fatalf("first HardDelete = %#v, %v", first, err)
 	}
 	if events.Load() != 0 || removeAttempts.Load() != 0 {

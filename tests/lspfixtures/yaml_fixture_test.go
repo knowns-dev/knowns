@@ -80,19 +80,26 @@ func TestLSPFixture_YAMLLocalSchema(t *testing.T) {
 		t.Fatalf("expected service and port symbols, got: %#v", symbols)
 	}
 
-	diagnostics, err := server.Diagnostics(ctx, configPath)
-	if err != nil {
-		t.Fatalf("schema diagnostics: %v", err)
-	}
+	deadline := time.Now().Add(20 * time.Second)
 	diagnosticsReady := false
-	for _, diagnostic := range diagnostics {
-		if strings.Contains(strings.ToLower(diagnostic.Message), "integer") {
-			diagnosticsReady = true
+	for {
+		diagnostics, err := server.Diagnostics(ctx, configPath)
+		if err != nil {
+			t.Fatalf("schema diagnostics: %v", err)
+		}
+		for _, diagnostic := range diagnostics {
+			if strings.Contains(strings.ToLower(diagnostic.Message), "integer") {
+				diagnosticsReady = true
+				break
+			}
+		}
+		if diagnosticsReady {
 			break
 		}
-	}
-	if !diagnosticsReady {
-		t.Fatalf("expected local-schema integer diagnostic, got: %#v; capabilities: %#v", diagnostics, server.CapabilitySnapshot())
+		if time.Now().After(deadline) {
+			t.Fatalf("expected local-schema integer diagnostic, got: %#v; capabilities: %#v", diagnostics, server.CapabilitySnapshot())
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
 	if err := manager.StopAll(ctx); err != nil {
 		t.Fatalf("stop direct YAML fixture server: %v", err)

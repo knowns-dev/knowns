@@ -75,9 +75,11 @@ jobs:
           EXPECTED_VERSION: ${{ needs.meta.outputs.version }}
           APP_VERSION: ${{ needs.meta.outputs.version }}
         run: |
+          UI_PACKAGE_VERSION=$(node -p 'require("./ui/package.json").version')
+
           echo "expected_version=$EXPECTED_VERSION"
           echo "app_version_env=$APP_VERSION"
-          echo "ui_package_version=$(node -p \"require('./ui/package.json').version\")"
+          echo "ui_package_version=$UI_PACKAGE_VERSION"
 
           echo "dist files:"
           ls -la ui/dist

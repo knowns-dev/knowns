@@ -13,7 +13,7 @@ test.afterAll(() => {
 
 async function openDocFromList(page: import("@playwright/test").Page, label: string) {
 	const docItem = page.getByRole("button", { name: new RegExp(label, "i") }).first();
-	await expect(docItem).toBeVisible({ timeout: 5000 });
+	await expect(docItem).toBeVisible();
 	await docItem.click();
 }
 
@@ -28,7 +28,7 @@ async function enterDocEditMode(page: import("@playwright/test").Page) {
 		}
 		await page.waitForTimeout(300);
 	}
-	await expect(page.locator("button").filter({ hasText: "Save" }).first()).toBeVisible({ timeout: 5000 });
+	await expect(page.locator("button").filter({ hasText: "Save" }).first()).toBeVisible();
 }
 
 test.describe("Doc Creation with Full Fields", () => {
@@ -40,7 +40,7 @@ test.describe("Doc Creation with Full Fields", () => {
 
 		await test.step("Click New Doc button", async () => {
 			const createBtn = page.locator("button").filter({ hasText: "New Doc" }).first();
-			await expect(createBtn).toBeVisible({ timeout: 5000 });
+			await expect(createBtn).toBeVisible();
 			await createBtn.click();
 			await page.waitForTimeout(500);
 		});
@@ -68,7 +68,7 @@ test.describe("Doc Creation with Full Fields", () => {
 
 		await test.step("Fill in content", async () => {
 			const editorInput = page.locator(".rc-md-editor textarea").first();
-			await expect(editorInput).toBeVisible({ timeout: 5000 });
+			await expect(editorInput).toBeVisible();
 			await editorInput.fill("## API Guidelines\n\nUse consistent REST semantics.");
 		});
 
@@ -78,9 +78,9 @@ test.describe("Doc Creation with Full Fields", () => {
 			await createBtn.click();
 			await page.waitForTimeout(1000);
 			const newDocBtn = page.locator("button").filter({ hasText: "New Doc" }).first();
-			await expect(newDocBtn).toBeVisible({ timeout: 5000 });
+			await expect(newDocBtn).toBeVisible();
 			const folderBtn = page.getByRole("button", { name: /guides/i }).first();
-			await expect(folderBtn).toBeVisible({ timeout: 5000 });
+			await expect(folderBtn).toBeVisible();
 			await folderBtn.click();
 			await openDocFromList(page, "API Guidelines");
 			await expect(page.locator('input[placeholder="Untitled"]').first()).toHaveValue("API Guidelines", { timeout: 5000 });
@@ -101,7 +101,7 @@ test.describe("Doc Creation with Full Fields", () => {
 		});
 
 		await test.step("Verify doc content renders", async () => {
-			await expect(page.getByText("Getting Started").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Getting Started").first()).toBeVisible();
 		});
 
 		await test.step("Verify metadata displayed", async () => {
@@ -122,7 +122,7 @@ test.describe("Doc Content Editing", () => {
 			await page.waitForTimeout(1000);
 			await openDocFromList(page, "Editable Doc");
 			await page.waitForTimeout(500);
-			await expect(page.getByText("Original Content").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Original Content").first()).toBeVisible();
 		});
 
 		await test.step("Click Edit button in toolbar", async () => {
@@ -136,10 +136,10 @@ test.describe("Doc Content Editing", () => {
 			const saveBtn = page.locator("button").filter({ hasText: "Save" }).first();
 			const editBtn = page.locator("button").filter({ hasText: "Edit" }).first();
 			if (await saveBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-				await expect(saveBtn).toBeVisible({ timeout: 5000 });
+				await expect(saveBtn).toBeVisible();
 				return;
 			}
-			await expect(editBtn).toBeVisible({ timeout: 5000 });
+			await expect(editBtn).toBeVisible();
 		});
 
 		await test.step("Save and Cancel buttons are visible", async () => {
@@ -157,7 +157,7 @@ test.describe("Doc Content Editing", () => {
 				await cancelBtn.click();
 				await page.waitForTimeout(300);
 			}
-			await expect(page.getByText("Original Content").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Original Content").first()).toBeVisible();
 		});
 	});
 
@@ -172,7 +172,7 @@ test.describe("Doc Content Editing", () => {
 			await page.waitForTimeout(1000);
 			await openDocFromList(page, "Save Test");
 			await page.waitForTimeout(500);
-			await expect(page.getByText("Before Edit").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Before Edit").first()).toBeVisible();
 		});
 
 		await test.step("Enter edit mode", async () => {
@@ -180,7 +180,7 @@ test.describe("Doc Content Editing", () => {
 		});
 
 		await test.step("Editor is visible (edit mode active)", async () => {
-			await expect(page.locator("button").filter({ hasText: "Save" }).first()).toBeVisible({ timeout: 5000 });
+			await expect(page.locator("button").filter({ hasText: "Save" }).first()).toBeVisible();
 		});
 
 		await test.step("Save without changes to verify save flow works", async () => {
@@ -192,7 +192,7 @@ test.describe("Doc Content Editing", () => {
 		});
 
 		await test.step("Back in view mode after save", async () => {
-			await expect(page.getByText("Before Edit").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Before Edit").first()).toBeVisible();
 		});
 
 		await test.step("Edit via CLI and verify UI updates", async () => {
@@ -201,7 +201,7 @@ test.describe("Doc Content Editing", () => {
 			await page.waitForTimeout(1000);
 			await openDocFromList(page, "Save Test");
 			await page.waitForTimeout(500);
-			await expect(page.getByText("After Edit").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("After Edit").first()).toBeVisible();
 		});
 	});
 });
@@ -231,7 +231,7 @@ test.describe("Inline Metadata Editing (Notion-like)", () => {
 			const backBtn = page.locator("button").filter({ hasText: "Back" }).first();
 			await backBtn.click();
 			await page.waitForTimeout(500);
-			await expect(page.getByText("New Title").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("New Title").first()).toBeVisible();
 		});
 	});
 
@@ -262,12 +262,12 @@ test.describe("Inline Metadata Editing (Notion-like)", () => {
 			await backBtn.click();
 			await page.waitForTimeout(1000);
 			// Wait for the file manager to be visible
-			await expect(page.getByText("Browse your docs").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Browse your docs").first()).toBeVisible();
 			// Re-open the doc using its path, which remains visible even if title rendering changes
 			await openDocFromList(page, "desc-test-doc");
 			await page.waitForTimeout(500);
 			const descInput = page.locator('input[placeholder="Add a description..."]').first();
-			await expect(descInput).toBeVisible({ timeout: 5000 });
+			await expect(descInput).toBeVisible();
 		});
 	});
 });

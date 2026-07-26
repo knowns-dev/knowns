@@ -133,3 +133,22 @@ func TestBashAdapterCommandPrerequisiteAndManagedMetadata(t *testing.T) {
 		t.Fatal("CanInstall() = false, want true")
 	}
 }
+
+func TestBashAdapterWindowsInitializeParamsUseNativeRootPath(t *testing.T) {
+	root := `C:\workspace\knowns`
+	settings := map[string]any{
+		"initializationOptions": map[string]any{"globPattern": "**/*.sh"},
+	}
+
+	params := bashInitializeParams(root, settings, "windows")
+	if got := params["rootPath"]; got != root {
+		t.Fatalf("rootPath = %#v, want %q", got, root)
+	}
+	if _, ok := params["rootUri"]; ok {
+		t.Fatalf("rootUri should be omitted on Windows: %#v", params)
+	}
+	options, ok := params["initializationOptions"].(map[string]any)
+	if !ok || options["globPattern"] != "**/*.sh" {
+		t.Fatalf("initializationOptions = %#v", params["initializationOptions"])
+	}
+}

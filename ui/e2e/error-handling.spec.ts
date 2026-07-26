@@ -18,7 +18,7 @@ test.describe("Empty States", () => {
 		});
 
 		await test.step("Column headers visible even with no tasks", async () => {
-			await expect(page.getByText("To Do").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("To Do").first()).toBeVisible();
 			await expect(page.getByText("In Progress").first()).toBeVisible();
 			await expect(page.getByText("Done", { exact: true }).first()).toBeVisible();
 		});
@@ -30,7 +30,7 @@ test.describe("Empty States", () => {
 		});
 
 		await test.step("Tasks page loads", async () => {
-			await expect(page.getByText("Tasks").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Tasks").first()).toBeVisible();
 		});
 	});
 
@@ -42,19 +42,19 @@ test.describe("Empty States", () => {
 		await test.step("Docs page loads", async () => {
 			// The docs file manager should show create button
 			const createBtn = page.getByRole("button", { name: /new|create/i }).first();
-			await expect(createBtn).toBeVisible({ timeout: 5000 });
+			await expect(createBtn).toBeVisible();
 		});
 	});
 
 	test("dashboard shows zero metrics when empty", async ({ page }) => {
 		await test.step("Navigate to dashboard", async () => {
 			await page.goto(server.baseURL);
-			await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 		});
 
 		await test.step("Dashboard shows task metrics", async () => {
 			// Should show "0" or some metrics even with no tasks
-			await expect(page.getByText(/total|tasks/i).first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText(/total|tasks/i).first()).toBeVisible();
 		});
 	});
 });
@@ -71,7 +71,7 @@ test.describe("Invalid URL Handling", () => {
 			const body = page.locator("body");
 			await expect(body).toBeVisible();
 			// Should be on kanban page
-			await expect(page.getByText("To Do").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("To Do").first()).toBeVisible();
 		});
 	});
 
@@ -94,7 +94,7 @@ test.describe("Invalid URL Handling", () => {
 		});
 
 		await test.step("Dashboard loads as fallback", async () => {
-			await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 		});
 	});
 });
@@ -103,7 +103,7 @@ test.describe("Connection Status", () => {
 	test("connection indicator visible", async ({ page }) => {
 		await test.step("Navigate to any page", async () => {
 			await page.goto(server.baseURL);
-			await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 		});
 
 		await test.step("Connection status indicator exists", async () => {
@@ -134,7 +134,7 @@ test.describe("Rapid Operations", () => {
 
 		await test.step("All rapid tasks appear", async () => {
 			for (let i = 1; i <= 5; i++) {
-				await expect(page.getByText(`Rapid Task ${i}`).first()).toBeVisible({ timeout: 5000 });
+				await expect(page.getByText(`Rapid Task ${i}`).first()).toBeVisible();
 			}
 		});
 	});
@@ -165,7 +165,7 @@ test.describe("Rapid Operations", () => {
 				await expect(doneColumn.getByText("Status Flipper")).toBeVisible();
 			} else {
 				// Verify task exists somewhere on the board
-				await expect(page.getByText("Status Flipper").first()).toBeVisible({ timeout: 5000 });
+				await expect(page.getByText("Status Flipper").first()).toBeVisible();
 			}
 		});
 	});
@@ -189,7 +189,7 @@ test.describe("Long Content Handling", () => {
 			const body = page.locator("body");
 			await expect(body).toBeVisible();
 			// Verify the kanban columns are still visible
-			await expect(page.getByText("To Do").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("To Do").first()).toBeVisible();
 		});
 	});
 
@@ -204,7 +204,7 @@ test.describe("Long Content Handling", () => {
 
 		await test.step("Open task detail", async () => {
 			await page.goto(`${server.baseURL}/kanban/${taskId}`);
-			await expect(page.getByRole("heading", { name: "Long Desc Task", exact: true })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Long Desc Task", exact: true })).toBeVisible();
 		});
 
 		await test.step("Description section scrollable", async () => {

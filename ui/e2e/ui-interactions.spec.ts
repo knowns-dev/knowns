@@ -33,7 +33,7 @@ test.describe("Task Creation via UI", () => {
 			// Use kanban-specific locator to avoid matching toast notification
 			await page.waitForTimeout(500);
 			await expect(page.locator("[data-board-column] >> text=Buy groceries for the week").first()
-				.or(page.locator("h3").filter({ hasText: "Buy groceries for the week" }))).toBeVisible({ timeout: 5000 });
+				.or(page.locator("h3").filter({ hasText: "Buy groceries for the week" }))).toBeVisible();
 		});
 	});
 
@@ -61,7 +61,7 @@ test.describe("Task Creation via UI", () => {
 		});
 
 		await test.step("Task appears in the table", async () => {
-			await expect(page.getByText("Design login page").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Design login page").first()).toBeVisible();
 		});
 	});
 
@@ -87,7 +87,7 @@ test.describe("Task Creation via UI", () => {
 			await test.step("Task appears in the column", async () => {
 				await page.waitForTimeout(500);
 				await expect(page.locator("h3").filter({ hasText: "Quick inline task" }).first()
-					.or(page.getByText("Quick inline task").first())).toBeVisible({ timeout: 5000 });
+					.or(page.getByText("Quick inline task").first())).toBeVisible();
 			});
 		}
 	});
@@ -105,7 +105,7 @@ test.describe("Task Detail Interactions", () => {
 		});
 
 		await test.step("Description section visible", async () => {
-			await expect(page.getByText("A complete task")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("A complete task")).toBeVisible();
 		});
 
 		await test.step("Acceptance Criteria section visible", async () => {
@@ -138,7 +138,7 @@ test.describe("Task Detail Interactions", () => {
 		});
 
 		await test.step("AC text is visible", async () => {
-			await expect(page.getByText("First criterion")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("First criterion")).toBeVisible();
 		});
 
 		await test.step("Click the checkbox next to AC", async () => {
@@ -166,7 +166,7 @@ test.describe("Task Detail Interactions", () => {
 
 		await test.step("'Add criterion' button is visible", async () => {
 			const addAcBtn = page.getByText(/add criterion/i).first();
-			await expect(addAcBtn).toBeVisible({ timeout: 5000 });
+			await expect(addAcBtn).toBeVisible();
 		});
 
 		await test.step("Click 'Add criterion' opens input", async () => {
@@ -189,7 +189,7 @@ test.describe("Task Detail Interactions", () => {
 
 		await test.step("Click 'Add label'", async () => {
 			const addLabelBtn = page.getByText(/add label/i).first();
-			await expect(addLabelBtn).toBeVisible({ timeout: 5000 });
+			await expect(addLabelBtn).toBeVisible();
 			await addLabelBtn.click();
 		});
 
@@ -202,7 +202,7 @@ test.describe("Task Detail Interactions", () => {
 		});
 
 		await test.step("Label appears on the task", async () => {
-			await expect(page.getByText("frontend").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("frontend").first()).toBeVisible();
 		});
 	});
 
@@ -218,7 +218,7 @@ test.describe("Task Detail Interactions", () => {
 
 		await test.step("Click 'Mark as Done'", async () => {
 			const doneBtn = page.getByText(/mark as done/i).first();
-			await expect(doneBtn).toBeVisible({ timeout: 5000 });
+			await expect(doneBtn).toBeVisible();
 			await doneBtn.click();
 		});
 
@@ -236,7 +236,7 @@ test.describe("Task Detail Interactions", () => {
 		});
 
 		await test.step("Detail sheet is open", async () => {
-			await expect(page.getByText("Description")).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Description")).toBeVisible();
 		});
 
 		await test.step("Press Escape to close", async () => {
@@ -262,8 +262,8 @@ test.describe("Document Interactions via UI", () => {
 		});
 
 		await test.step("Page switches to doc editor with title", async () => {
-			await expect(page.locator('input[placeholder="Untitled"]').first()).toBeVisible({ timeout: 5000 });
-			await expect(page.getByRole("button", { name: /create/i }).first()).toBeVisible({ timeout: 5000 });
+			await expect(page.locator('input[placeholder="Untitled"]').first()).toBeVisible();
+			await expect(page.getByRole("button", { name: /create/i }).first()).toBeVisible();
 		});
 
 		await test.step("Type document title", async () => {
@@ -282,7 +282,7 @@ test.describe("Document Interactions via UI", () => {
 
 		await test.step("Document is created and visible", async () => {
 			await page.waitForTimeout(1000);
-			await expect(page.getByText("My New Guide").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("My New Guide").first()).toBeVisible();
 		});
 	});
 
@@ -329,7 +329,7 @@ test.describe("Document Interactions via UI", () => {
 		});
 
 		await test.step("Back to doc list", async () => {
-			await expect(page.getByText("Back Nav Doc").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Back Nav Doc").first()).toBeVisible();
 		});
 	});
 
@@ -351,7 +351,7 @@ test.describe("Document Interactions via UI", () => {
 		await test.step("Click Edit button", async () => {
 			// Edit button is in the toolbar: pencil icon + "Edit" text
 			const editBtn = page.locator("button", { hasText: "Edit" }).first();
-			await expect(editBtn).toBeVisible({ timeout: 5000 });
+			await expect(editBtn).toBeVisible();
 			await editBtn.click();
 		});
 
@@ -360,7 +360,7 @@ test.describe("Document Interactions via UI", () => {
 			// After clicking edit, page should show editor with save/back controls
 			const saveBtn = page.getByRole("button", { name: /save|update|back/i }).first();
 			const editor = page.locator("[contenteditable], textarea, .tiptap, .ProseMirror, [class*=editor]").first();
-			await expect(saveBtn.or(editor)).toBeVisible({ timeout: 5000 });
+			await expect(saveBtn.or(editor)).toBeVisible();
 		});
 	});
 });
@@ -384,7 +384,7 @@ test.describe("Search via UI", () => {
 			const searchInput = page.getByPlaceholder(/search/i).first();
 			if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
 				await searchInput.fill("Login");
-				await expect(page.getByText("Login Authentication Feature").first()).toBeVisible({ timeout: 5000 });
+				await expect(page.getByText("Login Authentication Feature").first()).toBeVisible();
 			}
 		});
 	});
@@ -411,7 +411,7 @@ test.describe("Search via UI", () => {
 		});
 
 		await test.step("Results appear", async () => {
-			await expect(page.getByText("Sidebar Search Target").first()).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText("Sidebar Search Target").first()).toBeVisible();
 		});
 	});
 });
@@ -453,7 +453,7 @@ test.describe("Full User Workflows (no CLI)", () => {
 		await test.step("Wait for task to appear on board", async () => {
 			await page.waitForTimeout(1000);
 			await expect(page.locator("h3").filter({ hasText: "Workflow Test Task" }).first()
-				.or(page.getByText("Workflow Test Task").first())).toBeVisible({ timeout: 5000 });
+				.or(page.getByText("Workflow Test Task").first())).toBeVisible();
 		});
 
 		await test.step("Open task detail by clicking", async () => {
@@ -461,7 +461,7 @@ test.describe("Full User Workflows (no CLI)", () => {
 		});
 
 		await test.step("Verify detail sections are shown", async () => {
-			await expect(page.getByRole("heading", { name: "Description" })).toBeVisible({ timeout: 5000 });
+			await expect(page.getByRole("heading", { name: "Description" })).toBeVisible();
 			await expect(page.getByText("Acceptance Criteria")).toBeVisible();
 		});
 
@@ -510,7 +510,7 @@ test.describe("Full User Workflows (no CLI)", () => {
 			const searchInput = page.getByPlaceholder(/search/i).first();
 			if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
 				await searchInput.fill("Unique Searchable");
-				await expect(page.getByText("Unique Searchable XYZ123").first()).toBeVisible({ timeout: 5000 });
+				await expect(page.getByText("Unique Searchable XYZ123").first()).toBeVisible();
 			}
 		});
 	});
