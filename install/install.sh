@@ -53,11 +53,6 @@ detect_platform() {
         *)             error "Unsupported architecture: $ARCH" ;;
     esac
 
-    # macOS Intel (x64) is no longer supported — ONNX Runtime 1.25.0 dropped it.
-    if [ "$OS" = "darwin" ] && [ "$ARCH" = "x64" ]; then
-        error "macOS Intel (x86_64) is no longer supported. Please use macOS on Apple Silicon (arm64)."
-    fi
-
     PLATFORM="${OS}-${ARCH}"
 }
 
@@ -252,4 +247,6 @@ main() {
     printf "  ${DIM}  curl -fsSL https://github.com/${REPO}/releases/download/${VERSION}/uninstall.sh | sh${RESET}\n\n"
 }
 
-main
+if [ "${KNOWNS_INSTALLER_TEST:-0}" != "1" ]; then
+    main
+fi

@@ -174,12 +174,21 @@ function useAutoSave(updateConfig: (c: ConfigPatch) => Promise<void>) {
 function editableConfig(config: Config): Config {
 	const {
 		capabilities: _readOnlyCapabilities,
+		localONNX: _readOnlyLocalONNX,
 		id: _readOnlyID,
 		createdAt: _readOnlyCreatedAt,
 		opencodeInstalled: _readOnlyOpenCodeInstalled,
 		...editable
 	} = config;
 	return editable;
+}
+
+function effectiveSemanticProvider(config: Config): string {
+	const configured = config.semanticSearch?.provider;
+	if (config.localONNX?.supported === false && (!configured || configured === "local")) {
+		return "ollama";
+	}
+	return configured || "local";
 }
 
 // ── Section header component ──────────────────────────────────────
@@ -215,6 +224,7 @@ function FieldRow({ label, hint, children }: { label: string; hint?: string; chi
 export default function ConfigPage() {
 	const { config: globalConfig, loading, updateConfig, chatUIEnabled } = useConfig();
 	const [config, setConfig] = useState<Config>({});
+	const semanticProvider = effectiveSemanticProvider(config);
 	const [activeCategory, setActiveCategory] = useState<Category>("general");
 	const [initialized, setInitialized] = useState(false);
 	const [saving, setSaving] = useState(false);
@@ -537,10 +547,10 @@ export default function ConfigPage() {
 	}, [loadEmbeddingModels]);
 
 	useEffect(() => {
-		if (!initialized || config.semanticSearch?.provider !== "api") return;
+		if (!initialized || semanticProvider !== "api") return;
 		setApiBase((current) => current || "http://localhost:11434/v1");
 		setTestModelName((current) => current || config.semanticSearch?.model || "");
-	}, [initialized, config.semanticSearch?.provider, config.semanticSearch?.model]);
+	}, [initialized, semanticProvider, config.semanticSearch?.model]);
 
 	// Select embedding model and update config
 	const selectEmbeddingModel = useCallback((model: EmbeddingModelInfo) => {
@@ -549,6 +559,7 @@ export default function ConfigPage() {
 		const patch: Partial<Config> = {
 			semanticSearch: {
 				...(config.semanticSearch || {}),
+				provider: semanticProvider,
 				model: modelName,
 				dimensions: model.dimensions || config.semanticSearch?.dimensions || 384,
 				...(isApi ? {
@@ -560,7 +571,7 @@ export default function ConfigPage() {
 		};
 		setConfig(prev => ({ ...prev, ...patch }));
 		autoSave(patch);
-	}, [config.semanticSearch, autoSave]);
+	}, [config.semanticSearch, semanticProvider, autoSave]);
 
 	// Test embedding API endpoint
 	const handleTestEmbedding = async () => {
@@ -578,6 +589,7 @@ export default function ConfigPage() {
 				update({
 					semanticSearch: {
 						...(config.semanticSearch || {}),
+						provider: "api",
 						model: testModelName.trim(),
 						dimensions: data.dimensions,
 					},
@@ -848,7 +860,7 @@ export default function ConfigPage() {
 	};
 
 	const renderEmbeddingModels = () => {
-		const provider = config.semanticSearch?.provider || "local";
+		const provider = semanticProvider;
 		const models = provider === "local"
 			? embeddingModels?.local || []
 			: provider === "ollama"
@@ -913,20 +925,33 @@ export default function ConfigPage() {
 			<FieldRow label="Enabled">
 				<Switch
 					checked={config.semanticSearch?.enabled ?? false}
-					onCheckedChange={(checked) => update({ semanticSearch: { ...(config.semanticSearch || {}), enabled: checked } })}
+					onCheckedChange={(checked) => {
+						const current = config.semanticSearch || {};
+						update({ semanticSearch: { ...current, enabled: checked, provider: semanticProvider } });
+					}}
 				/>
 			</FieldRow>
 
+			{config.localONNX?.supported === false && (
+				<div
+					className="mb-3 flex gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+					data-testid="local-onnx-unavailable"
+				>
+					<AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+					<span>{config.localONNX.reason || "Local ONNX is unavailable on this platform. Use Ollama or an API provider."}</span>
+				</div>
+			)}
+
 			<FieldRow label="Provider" hint="local = ONNX built-in, ollama = local Ollama server, api = custom endpoint">
 				<select
-					value={config.semanticSearch?.provider || "local"}
+					value={semanticProvider}
 					onChange={(e) => {
 						update({ semanticSearch: { ...(config.semanticSearch || {}), provider: e.target.value } });
 						void loadEmbeddingModels();
 					}}
 					className="w-full px-3 py-2 rounded-md border bg-input text-sm focus:outline-none focus:ring-2 focus:ring-ring"
 				>
-					<option value="local">Local (ONNX)</option>
+					<option value="local" disabled={config.localONNX?.supported === false}>Local (ONNX)</option>
 					<option value="ollama">Ollama</option>
 					<option value="api">API (OpenAI-compatible)</option>
 				</select>
@@ -934,7 +959,7 @@ export default function ConfigPage() {
 
 			{renderEmbeddingModels()}
 
-			{config.semanticSearch?.provider === "api" && (
+			{semanticProvider === "api" && (
 				<>
 					<Separator className="my-4" />
 					<SectionHeader icon={Search} title="API Endpoint" description="Configure a custom OpenAI-compatible embedding endpoint" />
@@ -964,11 +989,11 @@ export default function ConfigPage() {
 				</>
 			)}
 
-			{(!config.semanticSearch?.provider || config.semanticSearch.provider === "local") && (
+			{semanticProvider === "local" && (
 				<FieldRow label="HuggingFace ID" hint="Full HuggingFace model identifier (read-only when model is selected)">
 					<Input
 						value={config.semanticSearch?.huggingFaceId || ""}
-						onChange={(e) => update({ semanticSearch: { ...(config.semanticSearch || {}), huggingFaceId: e.target.value } })}
+						onChange={(e) => update({ semanticSearch: { ...(config.semanticSearch || {}), provider: "local", huggingFaceId: e.target.value } })}
 						placeholder="Select a model above"
 						readOnly={!!config.semanticSearch?.huggingFaceId}
 					/>
@@ -979,7 +1004,7 @@ export default function ConfigPage() {
 				<Input
 					type="number"
 					value={config.semanticSearch?.dimensions ?? 384}
-					onChange={(e) => update({ semanticSearch: { ...(config.semanticSearch || {}), dimensions: parseInt(e.target.value, 10) || 384 } })}
+					onChange={(e) => update({ semanticSearch: { ...(config.semanticSearch || {}), provider: semanticProvider, dimensions: parseInt(e.target.value, 10) || 384 } })}
 				/>
 			</FieldRow>
 
@@ -987,7 +1012,7 @@ export default function ConfigPage() {
 				<Input
 					type="number"
 					value={config.semanticSearch?.maxTokens ?? 512}
-					onChange={(e) => update({ semanticSearch: { ...(config.semanticSearch || {}), maxTokens: parseInt(e.target.value, 10) || 512 } })}
+					onChange={(e) => update({ semanticSearch: { ...(config.semanticSearch || {}), provider: semanticProvider, maxTokens: parseInt(e.target.value, 10) || 512 } })}
 				/>
 			</FieldRow>
 		</div>

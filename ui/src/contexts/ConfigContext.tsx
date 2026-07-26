@@ -52,6 +52,12 @@ export interface Config {
 		dimensions?: number;
 		maxTokens?: number;
 	};
+	localONNX?: {
+		supported: boolean;
+		runtimeAvailable: boolean;
+		customLibrary: boolean;
+		reason?: string;
+	};
 	lsp?: {
 		enabled?: boolean;
 		languages?: Record<string, {
@@ -106,6 +112,7 @@ const DEFAULT_CONFIG: Config = {
 function editablePatch(updates: ConfigPatch): ConfigPatch {
 	const {
 		capabilities: _readOnlyCapabilities,
+		localONNX: _readOnlyLocalONNX,
 		id: _readOnlyID,
 		createdAt: _readOnlyCreatedAt,
 		opencodeInstalled: _readOnlyOpenCodeInstalled,

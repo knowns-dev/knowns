@@ -299,6 +299,9 @@ func (m *setupModel) cleanup() {
 // and embedding model files. Returns (steps, alreadyInstalled, error).
 // Used by the init command to integrate downloads into the progressive step UI.
 func buildSemanticDownloadSteps(modelID string) ([]initStep, bool, error) {
+	if err := search.RequireLocalONNX(); err != nil {
+		return nil, false, err
+	}
 	var selected *embeddingModel
 	for i := range supportedModels {
 		if supportedModels[i].ID == modelID {
@@ -322,6 +325,9 @@ func buildSemanticDownloadSteps(modelID string) ([]initStep, bool, error) {
 // using a unified bubbletea multi-step progress UI.
 // Pass force=true to re-download even if already installed.
 func runSemanticSetup(modelID string, force ...bool) error {
+	if err := search.RequireLocalONNX(); err != nil {
+		return err
+	}
 	forceDownload := len(force) > 0 && force[0]
 
 	// Find the model
@@ -410,6 +416,22 @@ func runSemanticSetup(modelID string, force ...bool) error {
 func ensureONNXRuntime() bool {
 	avail, _ := search.IsONNXAvailable()
 	return avail
+}
+
+func semanticProviderForSettings(settings *models.SemanticSearchSettings) string {
+	if settings != nil && settings.Provider != "" {
+		return settings.Provider
+	}
+	return "local"
+}
+
+func localONNXUnsupportedForCapability(settings *models.SemanticSearchSettings, capability search.LocalONNXCapability) bool {
+	return semanticProviderForSettings(settings) == "local" && !capability.Supported
+}
+
+func currentLocalONNXUnsupported(settings *models.SemanticSearchSettings) (search.LocalONNXCapability, bool) {
+	capability := search.CurrentLocalONNXCapability()
+	return capability, localONNXUnsupportedForCapability(settings, capability)
 }
 
 func ensureSemanticStoreReady(store *storage.Store, defaultModelID string) (bool, error) {

@@ -261,6 +261,11 @@ func runSyncModel(store *storage.Store, force bool) error {
 	if cfg.Settings.SemanticSearch != nil && (cfg.Settings.SemanticSearch.Provider == "api" || cfg.Settings.SemanticSearch.Provider == "ollama") {
 		return runSyncModelAPI(cfg)
 	}
+	if capability, unsupported := currentLocalONNXUnsupported(cfg.Settings.SemanticSearch); unsupported {
+		fmt.Printf("%s Local ONNX setup skipped; keyword/BM25 search remains active.\n", StyleWarning.Render("⚠"))
+		fmt.Println(StyleDim.Render("  " + capability.Reason))
+		return nil
+	}
 
 	defaultModelID := "multilingual-e5-small"
 	if cfg.Settings.SemanticSearch != nil && cfg.Settings.SemanticSearch.Model != "" {

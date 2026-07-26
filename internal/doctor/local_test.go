@@ -11,6 +11,7 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/readiness"
 	"github.com/howznguyen/knowns/internal/runtimeinstall"
+	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/services"
 	"github.com/howznguyen/knowns/internal/storage"
 )
@@ -243,6 +244,47 @@ func TestSearchChecksReportLocalONNXDependencyStates(t *testing.T) {
 				t.Fatalf("model check = %#v", result)
 			}
 		})
+	}
+}
+
+func TestSearchChecksExplainUnsupportedMacOSIntelONNX(t *testing.T) {
+	store := newDoctorStore(t)
+	configureSemanticSearch(t, store, &models.SemanticSearchSettings{
+		Enabled:  true,
+		Model:    "gte-small",
+		Provider: "local",
+	})
+	state := newLocalState(store, localDependencies{
+		onnxCapability: func() search.LocalONNXCapability {
+			return search.LocalONNXCapabilityForPlatform("darwin", "amd64", "")
+		},
+	})
+
+	configResult, err := searchConfigChecker(state).Check(context.Background())
+	if err != nil {
+		t.Fatalf("config Check() error = %v", err)
+	}
+	if configResult.Status != StatusWarn ||
+		configResult.Evidence["errorCode"] != "onnx_platform_unsupported" ||
+		configResult.Remediation == nil ||
+		configResult.Remediation.Command != "knowns settings" {
+		t.Fatalf("config check = %#v", configResult)
+	}
+
+	for _, checker := range []Checker{
+		searchModelChecker(state),
+		searchONNXRuntimeChecker(state),
+		searchProjectIndexChecker(state),
+		searchGlobalIndexChecker(state),
+		searchSemanticRuntimeChecker(state),
+	} {
+		result, err := checker.Check(context.Background())
+		if err != nil {
+			t.Fatalf("%s Check() error = %v", checker.ID, err)
+		}
+		if result.Status != StatusSkip || result.SkipReason != "platform_unsupported" {
+			t.Fatalf("%s check = %#v", checker.ID, result)
+		}
 	}
 }
 

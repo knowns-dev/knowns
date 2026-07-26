@@ -546,13 +546,25 @@ func runStatusCheck() error {
 	cfg, _ := store.Config.Load()
 
 	onnxAvail, onnxPath := search.IsONNXAvailable()
+	var semanticSettings *models.SemanticSearchSettings
+	if cfg != nil {
+		semanticSettings = cfg.Settings.SemanticSearch
+	}
+	provider := semanticProviderForSettings(semanticSettings)
+	usesLocalONNX := provider == "local"
+	capability := search.CurrentLocalONNXCapability()
 
 	fmt.Println()
 	fmt.Println(StyleBold.Render("Semantic Search Status"))
 	fmt.Println(RenderSeparator(40))
 
 	// ONNX runtime.
-	if onnxAvail {
+	if !usesLocalONNX {
+		fmt.Println(searchDimStyle.Render(fmt.Sprintf("  ONNX runtime: not used (provider: %s)", provider)))
+	} else if !capability.Supported {
+		fmt.Println(searchWarnStyle.Render("  ONNX runtime: unavailable on macOS Intel"))
+		fmt.Println(searchDimStyle.Render("    " + capability.Reason))
+	} else if onnxAvail {
 		fmt.Println(searchSuccessStyle.Render("  ONNX runtime: installed"))
 		fmt.Println(searchDimStyle.Render(fmt.Sprintf("    Path: %s", onnxPath)))
 	} else {
@@ -585,10 +597,11 @@ func runStatusCheck() error {
 	}
 
 	// Overall status.
+	providerReady := !usesLocalONNX || onnxAvail
 	fmt.Println()
-	if onnxAvail && cfg != nil && cfg.Settings.SemanticSearch != nil && cfg.Settings.SemanticSearch.Enabled && count > 0 {
+	if providerReady && semanticSettings != nil && semanticSettings.Enabled && count > 0 {
 		fmt.Println(searchSuccessStyle.Render("  Status: ready (hybrid search active)"))
-	} else if onnxAvail && cfg != nil && cfg.Settings.SemanticSearch != nil && cfg.Settings.SemanticSearch.Enabled {
+	} else if providerReady && semanticSettings != nil && semanticSettings.Enabled {
 		fmt.Println(searchWarnStyle.Render("  Status: needs search reindex (run: knowns search --reindex)"))
 	} else {
 		fmt.Println(searchDimStyle.Render("  Status: keyword-only mode"))
@@ -607,6 +620,39 @@ func runSetup() error {
 		return err
 	}
 
+	ss := cfg.Settings.SemanticSearch
+	provider := semanticProviderForSettings(ss)
+	if provider == "api" || provider == "ollama" {
+		if ss.Model == "" {
+			fmt.Println(searchWarnStyle.Render("No embedding model configured."))
+			fmt.Println()
+			fmt.Println(RenderHint("Choose a remote embedding model with: " + RenderCmd("knowns settings")))
+			fmt.Println()
+			return nil
+		}
+		if !ss.Enabled {
+			ss.Enabled = true
+			_ = store.Config.Set("settings.semanticSearch.enabled", true)
+			fmt.Println(searchSuccessStyle.Render("Semantic search enabled."))
+		} else {
+			fmt.Println(StyleDim.Render("Semantic search is already enabled."))
+		}
+		fmt.Println()
+		fmt.Println(RenderNextSteps(
+			RenderCmd("knowns search --reindex"),
+			RenderCmd("knowns search \"your query\""),
+		))
+		return nil
+	}
+
+	if capability, unsupported := currentLocalONNXUnsupported(ss); unsupported {
+		fmt.Println(searchWarnStyle.Render("Local ONNX setup is unavailable on macOS Intel."))
+		fmt.Println()
+		fmt.Println(RenderHint(capability.Reason))
+		fmt.Println()
+		return nil
+	}
+
 	// Check ONNX runtime.
 	onnxAvail, _ := search.IsONNXAvailable()
 	if !onnxAvail {
@@ -618,7 +664,7 @@ func runSetup() error {
 	}
 
 	// Check if a model is set.
-	if cfg.Settings.SemanticSearch == nil || cfg.Settings.SemanticSearch.Model == "" {
+	if ss == nil || ss.Model == "" {
 		fmt.Println(searchWarnStyle.Render("No embedding model configured."))
 		fmt.Println()
 		fmt.Println(RenderHint("Set a model first:"))
@@ -627,7 +673,6 @@ func runSetup() error {
 		return nil
 	}
 
-	ss := cfg.Settings.SemanticSearch
 	if !ss.Enabled {
 		ss.Enabled = true
 		_ = store.Config.Set("settings.semanticSearch.enabled", true)
@@ -874,6 +919,17 @@ func runReindex() error {
 
 	if total == 0 {
 		fmt.Println(RenderWarning("No tasks, docs, or decisions to index."))
+		return nil
+	}
+
+	cfg, _ := store.Config.Load()
+	var semanticSettings *models.SemanticSearchSettings
+	if cfg != nil {
+		semanticSettings = cfg.Settings.SemanticSearch
+	}
+	if capability, unsupported := currentLocalONNXUnsupported(semanticSettings); unsupported {
+		fmt.Println(searchWarnStyle.Render("  Local ONNX semantic reindex skipped; keyword/BM25 search remains active."))
+		fmt.Println(searchDimStyle.Render("  " + capability.Reason))
 		return nil
 	}
 

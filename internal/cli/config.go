@@ -31,6 +31,27 @@ type localONNXModelChoice struct {
 	Installed bool
 }
 
+func semanticProviderOptions() []huh.Option[string] {
+	options := make([]huh.Option[string], 0, 3)
+	if search.CurrentLocalONNXCapability().Supported {
+		options = append(options, huh.NewOption("Local ONNX (offline)", "local"))
+	}
+	return append(options,
+		huh.NewOption("Ollama (local API)", "ollama"),
+		huh.NewOption("API (OpenAI-compatible)", "api"),
+	)
+}
+
+func normalizedSemanticProvider(provider string) string {
+	if provider == "" {
+		provider = "local"
+	}
+	if provider == "local" && !search.CurrentLocalONNXCapability().Supported {
+		return "ollama"
+	}
+	return provider
+}
+
 // --- config get ---
 
 var configGetCmd = &cobra.Command{
@@ -114,6 +135,14 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		actualKey = "settings." + key
 	}
 
+	project, err := store.Config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if err := validateConfigSetLocalONNX(project, actualKey, val, search.CurrentLocalONNXCapability()); err != nil {
+		return err
+	}
+
 	if err := store.Config.Set(actualKey, val); err != nil {
 		return fmt.Errorf("config set %q: %w", key, err)
 	}
@@ -137,6 +166,34 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println(RenderSuccess(fmt.Sprintf("Set %s = %v", key, rawVal)))
+	return nil
+}
+
+func validateConfigSetLocalONNX(project *models.Project, key string, value any, capability search.LocalONNXCapability) error {
+	if capability.Supported || project == nil {
+		return nil
+	}
+	enabled := false
+	provider := "local"
+	if settings := project.Settings.SemanticSearch; settings != nil {
+		enabled = settings.Enabled
+		if settings.Provider != "" {
+			provider = settings.Provider
+		}
+	}
+	switch key {
+	case "settings.semanticSearch.enabled":
+		if next, ok := value.(bool); ok {
+			enabled = next
+		}
+	case "settings.semanticSearch.provider":
+		if next, ok := value.(string); ok {
+			provider = next
+		}
+	}
+	if enabled && provider == "local" {
+		return fmt.Errorf("%s", capability.Reason)
+	}
 	return nil
 }
 
@@ -713,6 +770,7 @@ func configureSemanticDefaults(settings *models.ProjectSettings) error {
 			model = settings.SemanticSearch.Model
 		}
 	}
+	provider = normalizedSemanticProvider(provider)
 
 	providerForm := huh.NewForm(
 		huh.NewGroup(
@@ -723,11 +781,7 @@ func configureSemanticDefaults(settings *models.ProjectSettings) error {
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Default provider").
-				Options(
-					huh.NewOption("Local ONNX (offline)", "local"),
-					huh.NewOption("Ollama (local API)", "ollama"),
-					huh.NewOption("API (OpenAI-compatible)", "api"),
-				).
+				Options(semanticProviderOptions()...).
 				Value(&provider),
 		).WithHideFunc(func() bool { return !enabled }),
 	).WithTheme(huh.ThemeCatppuccin())
@@ -866,6 +920,9 @@ func localONNXModelSelectOptions(currentModel string) []huh.Option[string] {
 }
 
 func selectLocalONNXModel(model *string) error {
+	if err := search.RequireLocalONNX(); err != nil {
+		return err
+	}
 	if model == nil {
 		return fmt.Errorf("model value is required")
 	}
@@ -903,6 +960,9 @@ func semanticSettingsForLocalONNX(model *embeddingModel) *models.SemanticSearchS
 }
 
 func saveLocalONNXSemanticSettings(store *storage.Store, project *models.Project, model *embeddingModel) error {
+	if err := search.RequireLocalONNX(); err != nil {
+		return err
+	}
 	if store == nil {
 		return fmt.Errorf("store is required")
 	}
@@ -914,6 +974,9 @@ func saveLocalONNXSemanticSettings(store *storage.Store, project *models.Project
 }
 
 func applyLocalONNXSelection(store *storage.Store, project *models.Project, modelID string, confirmDownload func(*embeddingModel) (bool, error)) (bool, error) {
+	if err := search.RequireLocalONNX(); err != nil {
+		return false, err
+	}
 	selected := findSupportedModel(modelID)
 	if selected == nil {
 		return false, fmt.Errorf("unknown local ONNX model %q", modelID)
@@ -1029,6 +1092,7 @@ func toggleEmbedding(store *storage.Store, project *models.Project, embeddingEna
 			provider = project.Settings.SemanticSearch.Provider
 		}
 	}
+	provider = normalizedSemanticProvider(provider)
 
 	form := huh.NewForm(
 		huh.NewGroup(
@@ -1040,11 +1104,7 @@ func toggleEmbedding(store *storage.Store, project *models.Project, embeddingEna
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Provider").
-				Options(
-					huh.NewOption("Local ONNX (offline)", "local"),
-					huh.NewOption("Ollama (local API)", "ollama"),
-					huh.NewOption("API (OpenAI, etc.)", "api"),
-				).
+				Options(semanticProviderOptions()...).
 				Value(&provider),
 		).WithHideFunc(func() bool { return !enabled }),
 	).WithTheme(huh.ThemeCatppuccin())

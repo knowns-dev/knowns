@@ -387,6 +387,9 @@ func loadSemanticRuntimeConfig(store *storage.Store) (semanticRuntimeConfig, err
 	if provider == "api" || provider == "ollama" {
 		return semanticRuntimeAPIConfig(ss, provider)
 	}
+	if err := RequireLocalONNX(); err != nil {
+		return semanticRuntimeConfig{}, err
+	}
 	return semanticRuntimeLocalConfig(ss, provider)
 }
 

@@ -122,6 +122,79 @@ jobs:
           path: ${{ runner.temp }}/retrieval-evaluation-keyword.json
           if-no-files-found: error
 
+  macos-intel:
+    runs-on: macos-15-intel
+    needs: [test]
+    timeout-minutes: 20
+    name: macOS Intel CLI Smoke
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Build UI
+        run: cd ui && bun install --frozen-lockfile && bun run build
+
+      - name: Run platform and keyword fallback tests
+        run: |
+          go test ./internal/search ./internal/cli ./internal/server/routes ./internal/doctor
+          go test ./internal/search -run '^TestKeywordModeUsesBM25WithoutSemanticAndPreservesResultShape$'
+          bun test npm/knowns/install.test.js
+
+      - name: Build native Intel binary without ONNX Runtime
+        env:
+          CGO_ENABLED: '1'
+        run: go build -ldflags "-s -w -X github.com/howznguyen/knowns/internal/util.Version=${GITHUB_SHA}" -o bin/knowns ./cmd/knowns
+
+      - name: Verify installer and disabled Local ONNX path
+        shell: bash
+        run: |
+          file bin/knowns | grep -q "Mach-O 64-bit"
+          file bin/knowns | grep -q "x86_64"
+          test ! -e bin/libonnxruntime.dylib
+          ./bin/knowns --version
+
+          export KNOWNS_INSTALLER_TEST=1
+          source install/install.sh
+          detect_platform
+          test "$PLATFORM" = "darwin-x64"
+
+          output=$(./bin/knowns model download gte-small 2>&1) && {
+            echo "Local ONNX model download unexpectedly succeeded"
+            exit 1
+          }
+          echo "$output" | grep -q "Local ONNX is not bundled for macOS Intel"
+
+          smoke_dir=$(mktemp -d)
+          (
+            cd "$smoke_dir"
+            git init -q
+            export KNOWN_LSP_AUTO_INSTALL=0
+            export NO_UPDATE_CHECK=1
+            "$GITHUB_WORKSPACE/bin/knowns" init "Intel Smoke" --no-wizard --no-open
+            config_output=$("$GITHUB_WORKSPACE/bin/knowns" config set semanticSearch true 2>&1) && {
+              echo "Local ONNX config unexpectedly succeeded"
+              exit 1
+            }
+            echo "$config_output" | grep -q "Local ONNX is not bundled for macOS Intel"
+            sync_output=$("$GITHUB_WORKSPACE/bin/knowns" sync --model 2>&1)
+            echo "$sync_output"
+            echo "$sync_output" | grep -q "keyword/BM25 search remains active"
+
+            bun -e 'const fs = require("fs"); const p = ".knowns/config.json"; const c = JSON.parse(fs.readFileSync(p, "utf8")); c.settings.semanticSearch = { enabled: true, provider: "local", model: "gte-small", huggingFaceId: "Xenova/gte-small", dimensions: 384, maxTokens: 512 }; fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");'
+            export KNOWN_RUNTIME_INLINE=1
+            status_output=$("$GITHUB_WORKSPACE/bin/knowns" search --status-check 2>&1)
+            echo "$status_output" | grep -q "ONNX runtime: unavailable on macOS Intel"
+            setup_output=$("$GITHUB_WORKSPACE/bin/knowns" search --setup 2>&1)
+            echo "$setup_output" | grep -q "Local ONNX setup is unavailable on macOS Intel"
+            "$GITHUB_WORKSPACE/bin/knowns" task create "Intel keyword fallback" --description "BM25 remains available without ONNX"
+            search_output=$("$GITHUB_WORKSPACE/bin/knowns" search "Intel keyword fallback" --plain 2>&1)
+            echo "$search_output"
+            echo "$search_output" | grep -q "Matched by: keyword"
+          )
+
   retrieval-semantic-evaluation:
     runs-on: ubuntu-latest
     needs: [test]
