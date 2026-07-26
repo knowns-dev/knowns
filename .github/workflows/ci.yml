@@ -136,6 +136,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Build UI
+        run: cd ui && bun install --frozen-lockfile && bun run build
 
       - name: Build Knowns
         run: go build -ldflags "-s -w -X github.com/howznguyen/knowns/internal/util.Version=${GITHUB_SHA}" -o bin/knowns ./cmd/knowns

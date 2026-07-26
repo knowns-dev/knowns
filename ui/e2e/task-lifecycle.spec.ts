@@ -217,7 +217,7 @@ test.describe("Task lifecycle workflows", () => {
 		await expect(page.getByTestId("task-lifecycle-state").filter({ hasText: "Done" }).first()).toBeVisible();
 
 		await page.goto(`${server.baseURL}/kanban`);
-		await page.getByRole("button", { name: /^Archive$/ }).click();
+		await page.getByRole("button", { name: "Archive completed Tasks" }).click();
 		await page.getByRole("menuitem", { name: /Done before now/ }).click();
 		const dialog = page.getByTestId("task-lifecycle-dialog");
 		await expect(dialog).toBeVisible();
@@ -229,7 +229,7 @@ test.describe("Task lifecycle workflows", () => {
 		const before = await page.request.get(`${server.baseURL}/api/tasks/${doneID}`).then((response) => response.json());
 		expect(before.lifecycleState).toBe("done");
 
-		await page.getByRole("button", { name: /^Archive$/ }).click();
+		await page.getByRole("button", { name: "Archive completed Tasks" }).click();
 		await page.getByRole("menuitem", { name: /Done before now/ }).click();
 		await expect(page.getByTestId(`lifecycle-item-${doneID}`)).toBeVisible();
 		const lateDoneID = createTask("Lifecycle Done After Preview", "--status done");
@@ -341,7 +341,7 @@ test.describe("Task lifecycle workflows", () => {
 		});
 
 		await page.goto(`${server.baseURL}/kanban`);
-		await page.getByRole("button", { name: /^Archive$/ }).click();
+		await page.getByRole("button", { name: "Archive completed Tasks" }).click();
 		await page.getByRole("menuitem", { name: /Done before now/ }).click();
 		const dialog = page.getByTestId("task-lifecycle-dialog");
 		await expect(dialog.getByTestId("lifecycle-items").locator(":scope > li")).toHaveCount(2);
