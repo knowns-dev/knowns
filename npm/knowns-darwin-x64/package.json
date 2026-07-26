@@ -1,0 +1,21 @@
+{
+  "name": "@knowns/darwin-x64",
+  "version": "0.0.0",
+  "description": "Knowns CLI binary for macOS Intel (x86_64); local ONNX Runtime is not bundled",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "knowns",
+  "files": [
+    "knowns"
+  ],
+  "license": "MIT",
+  "homepage": "https://knowns.sh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/knowns-dev/knowns.git"
+  }
+}

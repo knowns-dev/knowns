@@ -46,6 +46,14 @@ func semanticSettings(state *localState) (*models.SemanticSearchSettings, error)
 	return project.Settings.SemanticSearch, nil
 }
 
+func unsupportedLocalONNX(state *localState, settings *models.SemanticSearchSettings) (search.LocalONNXCapability, bool) {
+	if settings == nil || providerName(settings.Provider) != "local" {
+		return search.LocalONNXCapability{}, false
+	}
+	capability := state.deps.onnxCapability()
+	return capability, !capability.Supported
+}
+
 func searchConfigChecker(state *localState) Checker {
 	return Checker{
 		ID:    "search.semantic",
@@ -64,6 +72,21 @@ func searchConfigChecker(state *localState) Checker {
 			provider := settings.Provider
 			if provider == "" {
 				provider = "local"
+			}
+			if capability, unsupported := unsupportedLocalONNX(state, settings); unsupported {
+				return CheckResult{
+					Status:  StatusWarn,
+					Summary: "Local ONNX is unavailable on macOS Intel",
+					Evidence: Evidence{
+						"provider":  provider,
+						"available": false,
+						"errorCode": "onnx_platform_unsupported",
+					},
+					Remediation: &Remediation{
+						Description: capability.Reason,
+						Command:     "knowns settings",
+					},
+				}, nil
 			}
 			if settings.Model == "" {
 				return CheckResult{
@@ -104,6 +127,9 @@ func searchModelChecker(state *localState) Checker {
 			}
 			if settings == nil || !settings.Enabled {
 				return subsystemDisabled("Semantic model check is disabled", "config_disabled"), nil
+			}
+			if _, unsupported := unsupportedLocalONNX(state, settings); unsupported {
+				return subsystemDisabled("Local ONNX model check is not applicable on macOS Intel", "platform_unsupported"), nil
 			}
 			if settings.Model == "" {
 				return CheckResult{
@@ -257,6 +283,9 @@ func searchONNXRuntimeChecker(state *localState) Checker {
 			if providerName(settings.Provider) != "local" {
 				return subsystemDisabled("ONNX Runtime is not used by the configured provider", "not_applicable"), nil
 			}
+			if _, unsupported := unsupportedLocalONNX(state, settings); unsupported {
+				return subsystemDisabled("ONNX Runtime is not bundled for macOS Intel", "platform_unsupported"), nil
+			}
 			available, _ := state.deps.onnxAvailable()
 			if !available {
 				return CheckResult{
@@ -403,6 +432,9 @@ func searchProjectIndexChecker(state *localState) Checker {
 			if settings == nil || !settings.Enabled {
 				return subsystemDisabled("Project semantic index is disabled", "config_disabled"), nil
 			}
+			if _, unsupported := unsupportedLocalONNX(state, settings); unsupported {
+				return subsystemDisabled("Project semantic index is disabled because Local ONNX is unavailable", "platform_unsupported"), nil
+			}
 			payload, err := state.readinessSnapshot()
 			if err != nil {
 				return CheckResult{}, err
@@ -466,6 +498,9 @@ func searchGlobalIndexChecker(state *localState) Checker {
 			}
 			if settings == nil || !settings.Enabled {
 				return subsystemDisabled("Global semantic index is disabled", "config_disabled"), nil
+			}
+			if _, unsupported := unsupportedLocalONNX(state, settings); unsupported {
+				return subsystemDisabled("Global semantic index is disabled because Local ONNX is unavailable", "platform_unsupported"), nil
 			}
 			payload, err := state.readinessSnapshot()
 			if err != nil {
@@ -537,6 +572,9 @@ func searchSemanticRuntimeChecker(state *localState) Checker {
 			}
 			if settings == nil || !settings.Enabled {
 				return subsystemDisabled("Semantic runtime is disabled", "config_disabled"), nil
+			}
+			if _, unsupported := unsupportedLocalONNX(state, settings); unsupported {
+				return subsystemDisabled("Semantic runtime is disabled because Local ONNX is unavailable", "platform_unsupported"), nil
 			}
 			payload, err := state.readinessSnapshot()
 			if err != nil {

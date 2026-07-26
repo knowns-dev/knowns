@@ -277,10 +277,32 @@ type initConfig struct {
 	GitTracking     models.GitTracking
 	EnableSemantic  bool
 	SemanticModel   string
-	EmbeddingSource string // "local" or "api"
+	EmbeddingSource string // "local", "ollama", or "api"
 	Platforms       []string
 	EnableChatUI    bool
 	TaskLifecycle   *models.TaskLifecycleSettings
+}
+
+func applyLocalONNXInitCapability(cfg *initConfig) {
+	if !applyLocalONNXInitCapabilityFor(cfg, search.CurrentLocalONNXCapability()) {
+		return
+	}
+	fmt.Fprintln(os.Stderr, warnStyle.Render("Local ONNX is unavailable on macOS Intel; continuing with keyword/BM25 search."))
+	fmt.Fprintln(os.Stderr, dimStyle.Render("  Configure Ollama or an OpenAI-compatible API later with: knowns settings"))
+}
+
+func applyLocalONNXInitCapabilityFor(cfg *initConfig, capability search.LocalONNXCapability) bool {
+	if cfg == nil {
+		return false
+	}
+	if cfg.EmbeddingSource == "" {
+		cfg.EmbeddingSource = "local"
+	}
+	if !cfg.EnableSemantic || cfg.EmbeddingSource != "local" || capability.Supported {
+		return false
+	}
+	cfg.EnableSemantic = false
+	return true
 }
 
 // Aliases for centralized styles (see styles.go)
@@ -487,6 +509,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 	cfg.TaskLifecycle = taskLifecycleSeed
+	applyLocalONNXInitCapability(&cfg)
 
 	// Build init steps
 	steps := []initStep{
@@ -512,11 +535,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 					project.Settings.GitTracking = &cfg.GitTracking
 				}
 				if cfg.EnableSemantic && cfg.SemanticModel != "" {
-					if cfg.EmbeddingSource == "api" {
+					if cfg.EmbeddingSource == "api" || cfg.EmbeddingSource == "ollama" {
 						// API provider: reference model from global settings.
 						project.Settings.SemanticSearch = &models.SemanticSearchSettings{
 							Enabled:  true,
-							Provider: "api",
+							Provider: cfg.EmbeddingSource,
 							Model:    cfg.SemanticModel,
 						}
 					} else {
@@ -525,6 +548,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 						if m != nil {
 							project.Settings.SemanticSearch = &models.SemanticSearchSettings{
 								Enabled:       true,
+								Provider:      "local",
 								Model:         m.ID,
 								HuggingFaceID: m.HuggingFaceID,
 								Dimensions:    m.Dimensions,
@@ -534,6 +558,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 							// Custom model registered at runtime.
 							project.Settings.SemanticSearch = &models.SemanticSearchSettings{
 								Enabled:       true,
+								Provider:      "local",
 								Model:         cfg.SemanticModel,
 								HuggingFaceID: mc.HuggingFaceID,
 								Dimensions:    mc.Dimensions,
@@ -578,7 +603,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Conditional semantic download steps (only for local ONNX with built-in models)
 	isBuiltinModel := findSupportedModel(cfg.SemanticModel) != nil
-	if cfg.EnableSemantic && cfg.EmbeddingSource != "api" && isBuiltinModel {
+	if cfg.EnableSemantic && cfg.EmbeddingSource == "local" && isBuiltinModel {
 		dlSteps, alreadyInstalled, err := buildSemanticDownloadSteps(cfg.SemanticModel)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: semantic search setup failed: %v\n", err)
@@ -593,7 +618,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if cfg.EnableSemantic && cfg.EmbeddingSource != "api" && isBuiltinModel {
+	if cfg.EnableSemantic && cfg.EmbeddingSource == "local" && isBuiltinModel {
 		steps = append(steps, initStep{
 			label: "Preparing project and global semantic stores",
 			run: func() error {

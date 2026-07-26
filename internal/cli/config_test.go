@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 )
 
@@ -154,6 +155,31 @@ func TestApplyLocalONNXSelectionDownloadsMissingModelBeforeSave(t *testing.T) {
 	}
 	if loaded.Settings.SemanticSearch.Dimensions != 768 {
 		t.Fatalf("expected gte-base dimensions, got %d", loaded.Settings.SemanticSearch.Dimensions)
+	}
+}
+
+func TestValidateConfigSetLocalONNXOnMacOSIntel(t *testing.T) {
+	unsupported := search.LocalONNXCapabilityForPlatform("darwin", "amd64", "")
+	project := &models.Project{}
+
+	if err := validateConfigSetLocalONNX(project, "settings.semanticSearch.enabled", true, unsupported); err == nil || !strings.Contains(err.Error(), "Ollama") {
+		t.Fatalf("enabling default local provider error = %v, want actionable guidance", err)
+	}
+
+	project.Settings.SemanticSearch = &models.SemanticSearchSettings{
+		Enabled:  true,
+		Provider: "ollama",
+	}
+	if err := validateConfigSetLocalONNX(project, "settings.semanticSearch.provider", "local", unsupported); err == nil {
+		t.Fatal("switching an enabled project to local ONNX should fail")
+	}
+	if err := validateConfigSetLocalONNX(project, "settings.semanticSearch.provider", "api", unsupported); err != nil {
+		t.Fatalf("API provider should remain writable: %v", err)
+	}
+
+	project.Settings.SemanticSearch.Enabled = false
+	if err := validateConfigSetLocalONNX(project, "settings.semanticSearch.provider", "local", unsupported); err != nil {
+		t.Fatalf("disabled legacy local configuration should remain writable: %v", err)
 	}
 }
 

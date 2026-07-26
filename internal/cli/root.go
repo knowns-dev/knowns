@@ -138,6 +138,9 @@ func maybeAutoSetup() {
 	if cfg.Settings.SemanticSearch == nil || !cfg.Settings.SemanticSearch.Enabled {
 		return
 	}
+	if _, unsupported := currentLocalONNXUnsupported(cfg.Settings.SemanticSearch); unsupported {
+		return
+	}
 
 	modelID := cfg.Settings.SemanticSearch.Model
 	if modelID == "" {

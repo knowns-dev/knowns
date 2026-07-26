@@ -11,9 +11,65 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/runtimeinstall"
+	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 	"gopkg.in/yaml.v3"
 )
+
+func TestApplyLocalONNXInitCapabilityForMacOSIntel(t *testing.T) {
+	unsupported := search.LocalONNXCapabilityForPlatform("darwin", "amd64", "")
+
+	local := initConfig{EnableSemantic: true, EmbeddingSource: "local"}
+	if changed := applyLocalONNXInitCapabilityFor(&local, unsupported); !changed {
+		t.Fatal("local semantic init should be changed on macOS Intel")
+	}
+	if local.EnableSemantic {
+		t.Fatal("local semantic init should fall back to keyword/BM25 search")
+	}
+
+	ollama := initConfig{EnableSemantic: true, EmbeddingSource: "ollama"}
+	if changed := applyLocalONNXInitCapabilityFor(&ollama, unsupported); changed {
+		t.Fatal("Ollama semantic init should remain enabled")
+	}
+	if !ollama.EnableSemantic {
+		t.Fatal("Ollama semantic init was unexpectedly disabled")
+	}
+
+	customRuntime := search.LocalONNXCapabilityForPlatform("darwin", "amd64", "/opt/onnx/libonnxruntime.dylib")
+	custom := initConfig{EnableSemantic: true, EmbeddingSource: "local"}
+	if changed := applyLocalONNXInitCapabilityFor(&custom, customRuntime); changed {
+		t.Fatal("explicit compatible ONNX runtime should keep local semantic init enabled")
+	}
+	if !custom.EnableSemantic {
+		t.Fatal("custom local ONNX semantic init was unexpectedly disabled")
+	}
+}
+
+func TestLocalONNXUnsupportedForCapability(t *testing.T) {
+	unsupported := search.LocalONNXCapabilityForPlatform("darwin", "amd64", "")
+	supported := search.LocalONNXCapabilityForPlatform("darwin", "amd64", "/opt/onnx/libonnxruntime.dylib")
+
+	tests := []struct {
+		name       string
+		settings   *models.SemanticSearchSettings
+		capability search.LocalONNXCapability
+		want       bool
+	}{
+		{name: "default provider uses local ONNX", capability: unsupported, want: true},
+		{name: "explicit local provider", settings: &models.SemanticSearchSettings{Provider: "local"}, capability: unsupported, want: true},
+		{name: "Ollama remains available", settings: &models.SemanticSearchSettings{Provider: "ollama"}, capability: unsupported},
+		{name: "API remains available", settings: &models.SemanticSearchSettings{Provider: "api"}, capability: unsupported},
+		{name: "custom local runtime re-enables ONNX", settings: &models.SemanticSearchSettings{Provider: "local"}, capability: supported},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := localONNXUnsupportedForCapability(test.settings, test.capability); got != test.want {
+				t.Fatalf("localONNXUnsupportedForCapability() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
 
 func TestCreateOpenCodeConfigQuietCreatesConfig(t *testing.T) {
 	execLookPath = func(string) (string, error) { return "/usr/local/bin/knowns", nil }
