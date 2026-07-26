@@ -281,9 +281,8 @@ func buildSearch(store *storage.Store) *SearchStatus {
 		ss.SemanticEnabled = sem.Enabled
 		ss.ModelConfigured = sem.Model != ""
 
-		// Check if ONNX runtime is available.
 		onnxAvail, _ := search.IsONNXAvailable()
-		ss.ModelInstalled = onnxAvail && sem.Model != ""
+		ss.ModelInstalled = semanticModelInstalled(sem, onnxAvail)
 	}
 
 	// Project index readiness.
@@ -313,6 +312,18 @@ func buildSearch(store *storage.Store) *SearchStatus {
 	}
 
 	return ss
+}
+
+func semanticModelInstalled(settings *models.SemanticSearchSettings, onnxAvailable bool) bool {
+	if settings == nil || settings.Model == "" {
+		return false
+	}
+	if settings.Provider == "api" || settings.Provider == "ollama" {
+		// Remote providers manage model availability outside the bundled
+		// ONNX runtime. Runtime health is reported separately.
+		return true
+	}
+	return onnxAvailable
 }
 
 func buildSemanticRuntimeReadiness() *SemanticRuntimeReadiness {

@@ -52,6 +52,9 @@ func InitSemantic(store *storage.Store) (EmbedderProvider, VectorStore, error) {
 	if ss.Provider == "api" || ss.Provider == "ollama" {
 		return initSemanticAPI(store, ss)
 	}
+	if err := RequireLocalONNX(); err != nil {
+		return nil, nil, err
+	}
 	return initSemanticLocal(store, ss)
 }
 

@@ -48,6 +48,49 @@ test.describe("Configuration Page", () => {
 		});
 	});
 
+	test("disables Local ONNX settings when the platform does not bundle it", async ({ page }) => {
+		await page.route("**/api/config", async (route) => {
+			if (route.request().method() !== "GET") {
+				await route.continue();
+				return;
+			}
+			const response = await route.fetch();
+			const body = await response.json();
+			body.config = {
+				...(body.config || {}),
+				semanticSearch: {
+					enabled: true,
+					provider: "local",
+					model: "gte-small",
+					huggingFaceId: "Xenova/gte-small",
+				},
+				localONNX: {
+					supported: false,
+					runtimeAvailable: false,
+					customLibrary: false,
+					reason: "Local ONNX is not bundled for macOS Intel (x86_64). Use Ollama or an API provider.",
+				},
+			};
+			await route.fulfill({ response, json: body });
+		});
+
+		await page.goto(`${server.baseURL}/config`);
+		await page.getByRole("button", { name: "Search", exact: true }).click();
+
+		await expect(page.getByTestId("local-onnx-unavailable")).toContainText("macOS Intel");
+		const provider = page.getByRole("combobox");
+		await expect(provider).toHaveValue("ollama");
+		await expect(provider.locator('option[value="local"]')).toBeDisabled();
+		await expect(page.getByText("HuggingFace ID", { exact: true })).toHaveCount(0);
+
+		const saveRequest = page.waitForRequest(
+			(request) => request.url().endsWith("/api/config") && request.method() === "PATCH",
+		);
+		await page.getByRole("spinbutton").first().fill("768");
+		const request = await saveRequest;
+		expect(request.postDataJSON().semanticSearch.provider).toBe("ollama");
+	});
+
 	test("keeps category navigation and active content usable on mobile", async ({ page }) => {
 		await page.setViewportSize({ width: 390, height: 844 });
 		await page.goto(`${server.baseURL}/config`);

@@ -314,8 +314,9 @@ type SemanticSearchSettings struct {
 	Enabled bool   `json:"enabled,omitempty"`
 	Model   string `json:"model"`
 
-	// Provider selects the embedding backend: "local" (default, ONNX) or "api"
-	// (OpenAI-compatible endpoint configured in ~/.knowns/settings.json).
+	// Provider selects the embedding backend: "local" (default, ONNX),
+	// "ollama", or "api" (OpenAI-compatible endpoint configured in
+	// ~/.knowns/settings.json).
 	Provider string `json:"provider,omitempty"`
 
 	// HuggingFaceID is the full HuggingFace model identifier

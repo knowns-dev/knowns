@@ -611,6 +611,9 @@ var modelDownloadCmd = &cobra.Command{
 }
 
 func runModelDownload(cmd *cobra.Command, args []string) error {
+	if err := search.RequireLocalONNX(); err != nil {
+		return err
+	}
 	modelID := args[0]
 	forceFlag, _ := cmd.Flags().GetBool("force")
 
@@ -840,6 +843,9 @@ var modelSetCmd = &cobra.Command{
 }
 
 func runModelSet(cmd *cobra.Command, args []string) error {
+	if err := search.RequireLocalONNX(); err != nil {
+		return err
+	}
 	modelID := args[0]
 
 	var selected *embeddingModel
@@ -918,6 +924,9 @@ func runModelAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	// Local ONNX model path (existing behavior — add to HuggingFace registry).
+	if err := search.RequireLocalONNX(); err != nil {
+		return err
+	}
 	hfID, _ := cmd.Flags().GetString("hf-id")
 	if hfID == "" {
 		hfID = "Xenova/" + modelName

@@ -149,8 +149,12 @@ func (emr *EmbeddingModelRoutes) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	localModels := []embeddingModelInfo{}
+	if search.CurrentLocalONNXCapability().Supported {
+		localModels = listLocalEmbeddingModels()
+	}
 	respondJSON(w, http.StatusOK, embeddingModelsResponse{
-		Local:      listLocalEmbeddingModels(),
+		Local:      localModels,
 		API:        listOllamaEmbeddingModels(),
 		Configured: configured,
 	})

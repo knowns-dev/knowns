@@ -30,6 +30,7 @@ type localDependencies struct {
 	exists          func(string) bool
 	lookPath        func(string) (string, error)
 	onnxAvailable   func() (bool, string)
+	onnxCapability  func() search.LocalONNXCapability
 	localONNXModel  func(*models.SemanticSearchSettings) localONNXModelStatus
 	readFile        func(string) ([]byte, error)
 }
@@ -59,6 +60,7 @@ func defaultLocalDependencies() localDependencies {
 		},
 		lookPath:       exec.LookPath,
 		onnxAvailable:  search.IsONNXAvailable,
+		onnxCapability: search.CurrentLocalONNXCapability,
 		localONNXModel: inspectLocalONNXModel,
 		readFile:       os.ReadFile,
 	}
@@ -116,6 +118,9 @@ func newLocalState(store *storage.Store, deps localDependencies) *localState {
 	}
 	if deps.onnxAvailable == nil {
 		deps.onnxAvailable = defaults.onnxAvailable
+	}
+	if deps.onnxCapability == nil {
+		deps.onnxCapability = defaults.onnxCapability
 	}
 	if deps.localONNXModel == nil {
 		deps.localONNXModel = defaults.localONNXModel
