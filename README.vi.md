@@ -254,7 +254,7 @@ knowns lsp install <language>      # Tải và cài LSP server
 
 ### Chẩn đoán project
 
-Chạy `knowns doctor` trước khi bắt đầu làm việc, đặc biệt sau khi clone một repository đã có `.knowns/`. Lệnh này kiểm tra offline, read-only cho project setup, semantic search, local runtime, language server và AI integration artifacts. Mỗi vấn đề có hướng dẫn xử lý nhưng `doctor` không tự thay đổi hệ thống.
+Chạy `knowns doctor` trước khi bắt đầu làm việc, đặc biệt sau khi clone một repository đã có `.knowns/`. Lệnh này kiểm tra offline, read-only cho project setup, semantic search, local runtime, language server, AI integration artifacts và runtime-memory hooks. Mỗi vấn đề có hướng dẫn xử lý nhưng `doctor` không tự thay đổi hệ thống.
 
 ```bash
 knowns doctor

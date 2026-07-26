@@ -2,9 +2,12 @@ package doctor
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/howznguyen/knowns/internal/runtimeinstall"
 )
 
 const (
@@ -48,11 +51,113 @@ var platformSetupAliases = map[string]string{
 }
 
 func aiCheckers(state *localState) []Checker {
-	return []Checker{
+	checkers := []Checker{
 		aiInstructionsChecker(state),
 		aiPlatformConfigChecker(state),
 		aiSkillsChecker(state),
 	}
+	return append(checkers, aiRuntimeHookCheckers(state)...)
+}
+
+func aiRuntimeHookCheckers(state *localState) []Checker {
+	runtimes := runtimeinstall.RuntimeNames()
+	checkers := make([]Checker, 0, len(runtimes))
+	for _, name := range runtimes {
+		runtimeName := name
+		checkers = append(checkers, Checker{
+			ID:    "ai.runtime-hook." + runtimeName,
+			Scope: ScopeAI,
+			Check: func(context.Context) (CheckResult, error) {
+				if state.store == nil {
+					return skippedForMissingProject(), nil
+				}
+				project, err := state.projectConfig()
+				if err != nil {
+					return CheckResult{}, err
+				}
+				statuses, err := state.runtimeHookSnapshot()
+				if err != nil {
+					return CheckResult{}, err
+				}
+				status, found := runtimeHookStatus(statuses, runtimeName)
+				if !found {
+					return subsystemDisabled(
+						fmt.Sprintf("%s runtime hook status is unavailable", runtimeName),
+						"status_unavailable",
+					), nil
+				}
+
+				configured := runtimeConfigured(project.Settings.Platforms, runtimeName)
+				evidence := Evidence{
+					"runtime":     status.Runtime,
+					"displayName": status.DisplayName,
+					"hookKind":    status.HookKind,
+					"configured":  configured,
+					"available":   status.Available,
+					"state":       status.State,
+				}
+				if !configured && !status.Available {
+					return CheckResult{
+						Status:     StatusSkip,
+						Summary:    fmt.Sprintf("%s runtime hook is not configured or available", status.DisplayName),
+						Evidence:   evidence,
+						SkipReason: "runtime_not_configured_or_available",
+					}, nil
+				}
+				if status.Installed {
+					return CheckResult{
+						Status:   StatusPass,
+						Summary:  fmt.Sprintf("%s Knowns runtime-memory hook is installed", status.DisplayName),
+						Evidence: evidence,
+					}, nil
+				}
+
+				evidence["statusSummary"] = status.Summary
+				description := fmt.Sprintf(
+					"Install or refresh the Knowns runtime-memory hook for %s.",
+					status.DisplayName,
+				)
+				if !status.Available {
+					description = fmt.Sprintf(
+						"Install %s, then install or refresh its Knowns runtime-memory hook.",
+						status.DisplayName,
+					)
+				}
+				return CheckResult{
+					Status:   StatusWarn,
+					Summary:  fmt.Sprintf("%s Knowns runtime-memory hook is missing or out of sync", status.DisplayName),
+					Evidence: evidence,
+					Remediation: &Remediation{
+						Description: description,
+						Command:     "knowns runtime install " + status.Runtime,
+					},
+				}, nil
+			},
+		})
+	}
+	return checkers
+}
+
+func runtimeHookStatus(statuses []runtimeinstall.Status, runtimeName string) (runtimeinstall.Status, bool) {
+	for _, status := range statuses {
+		if status.Runtime == runtimeName {
+			return status, true
+		}
+	}
+	return runtimeinstall.Status{}, false
+}
+
+func runtimeConfigured(platforms []string, runtimeName string) bool {
+	for _, platform := range platforms {
+		platform = strings.TrimSpace(strings.ToLower(platform))
+		if platform == "claude" {
+			platform = "claude-code"
+		}
+		if platform == runtimeName {
+			return true
+		}
+	}
+	return false
 }
 
 func aiPlatformConfigChecker(state *localState) Checker {

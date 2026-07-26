@@ -2,7 +2,7 @@
 title: Command Reference
 description: Quick reference for all Knowns CLI commands
 createdAt: '2026-02-24T08:44:32.957Z'
-updatedAt: '2026-07-26T06:12:44.399Z'
+updatedAt: '2026-07-26T06:59:06.445Z'
 tags:
   - guide
   - cli
@@ -99,7 +99,9 @@ knowns doctor --strict --json
 knowns doctor --online
 ```
 
-`knowns doctor` is read-only and offline by default. It checks the active project, validation, semantic search and indices, managed runtimes, configured or detected language servers, and configured AI artifacts. Registered online checks are returned as `skip` with `online_disabled` until `--online` is explicitly supplied.
+`knowns doctor` is read-only and offline by default. It checks the active project, validation, semantic search and indices, managed runtimes, configured or detected language servers, configured AI artifacts, and Knowns runtime-memory hooks. Registered online checks are returned as `skip` with `online_disabled` until `--online` is explicitly supplied.
+
+For configured or locally available Claude Code, Codex, Kiro, and OpenCode runtimes, missing, disabled, or out-of-sync hooks produce a warning with `knowns runtime install <runtime>` remediation.
 
 | Flag | Description |
 |------|-------------|

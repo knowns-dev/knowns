@@ -10,6 +10,7 @@ import (
 	"github.com/howznguyen/knowns/internal/lsp"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/readiness"
+	"github.com/howznguyen/knowns/internal/runtimeinstall"
 	"github.com/howznguyen/knowns/internal/services"
 	"github.com/howznguyen/knowns/internal/storage"
 )
@@ -435,6 +436,113 @@ func TestAIChecksReportArtifactDriftWithoutSyncing(t *testing.T) {
 	}
 	if got := snapshotTree(t, store.Root); !sameSnapshot(before, got) {
 		t.Fatalf("AI checks mutated project storage")
+	}
+}
+
+func TestAIRuntimeHookChecksReportConfiguredAndAvailableRuntimes(t *testing.T) {
+	store := newDoctorStore(t)
+	cfg, err := store.Config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cfg.Settings.Platforms = []string{"codex"}
+	if err := store.Config.Save(cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	before := snapshotTree(t, store.Root)
+	statusCalls := 0
+	deps := localDependencies{
+		runtimeHooks: func() ([]runtimeinstall.Status, error) {
+			statusCalls++
+			return []runtimeinstall.Status{
+				{
+					Runtime:     "claude-code",
+					DisplayName: "Claude Code",
+					HookKind:    runtimeinstall.HookKindNative,
+					Available:   true,
+					State:       runtimeinstall.StateMissing,
+					Summary:     "hook config missing",
+				},
+				{
+					Runtime:     "codex",
+					DisplayName: "Codex",
+					HookKind:    runtimeinstall.HookKindNative,
+					Available:   false,
+					State:       runtimeinstall.StateDrifted,
+					Summary:     "Codex hooks disabled in config",
+				},
+				{
+					Runtime:     "kiro",
+					DisplayName: "Kiro IDE",
+					HookKind:    runtimeinstall.HookKindNative,
+					State:       runtimeinstall.StateMissing,
+					Summary:     "not installed",
+				},
+				{
+					Runtime:     "opencode",
+					DisplayName: "OpenCode",
+					HookKind:    runtimeinstall.HookKindPlugin,
+					Available:   true,
+					Installed:   true,
+					State:       runtimeinstall.StateInstalled,
+					Summary:     "installed",
+				},
+			}, nil
+		},
+	}
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+		Scopes:  []Scope{ScopeAI},
+	}, localCheckersWithDependencies(store, deps))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if statusCalls != 1 {
+		t.Fatalf("runtime hook status collector calls = %d, want 1", statusCalls)
+	}
+
+	for _, test := range []struct {
+		id         string
+		status     Status
+		command    string
+		configured bool
+		available  bool
+	}{
+		{
+			id:        "ai.runtime-hook.claude-code",
+			status:    StatusWarn,
+			command:   "knowns runtime install claude-code",
+			available: true,
+		},
+		{
+			id:         "ai.runtime-hook.codex",
+			status:     StatusWarn,
+			command:    "knowns runtime install codex",
+			configured: true,
+		},
+		{
+			id:     "ai.runtime-hook.kiro",
+			status: StatusSkip,
+		},
+		{
+			id:        "ai.runtime-hook.opencode",
+			status:    StatusPass,
+			available: true,
+		},
+	} {
+		check := findCheck(t, result, test.id)
+		if check.Status != test.status ||
+			check.Evidence["configured"] != test.configured ||
+			check.Evidence["available"] != test.available {
+			t.Fatalf("%s check = %#v", test.id, check)
+		}
+		if test.command != "" &&
+			(check.Remediation == nil || check.Remediation.Command != test.command) {
+			t.Fatalf("%s remediation = %#v", test.id, check.Remediation)
+		}
+	}
+	if got := snapshotTree(t, store.Root); !sameSnapshot(before, got) {
+		t.Fatalf("runtime hook checks mutated project storage")
 	}
 }
 

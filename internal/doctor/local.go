@@ -14,6 +14,7 @@ import (
 	"github.com/howznguyen/knowns/internal/lsp/adapters"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/readiness"
+	"github.com/howznguyen/knowns/internal/runtimeinstall"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/services"
 	"github.com/howznguyen/knowns/internal/storage"
@@ -24,6 +25,7 @@ type localDependencies struct {
 	services        func(*storage.Store) ([]services.ServiceStatus, error)
 	lspStatuses     func(context.Context, *storage.Store) ([]lsp.LanguageRuntimeStatus, error)
 	lspIDs          []string
+	runtimeHooks    func() ([]runtimeinstall.Status, error)
 	skillsOutOfSync func(string) bool
 	exists          func(string) bool
 	lookPath        func(string) (string, error)
@@ -45,8 +47,11 @@ func defaultLocalDependencies() localDependencies {
 		services: func(store *storage.Store) ([]services.ServiceStatus, error) {
 			return services.DetectAllReadOnly(store), nil
 		},
-		lspStatuses:     collectLocalLSPStatuses,
-		lspIDs:          localLSPIDs(),
+		lspStatuses: collectLocalLSPStatuses,
+		lspIDs:      localLSPIDs(),
+		runtimeHooks: func() ([]runtimeinstall.Status, error) {
+			return runtimeinstall.StatusAll(runtimeinstall.DefaultOptions())
+		},
 		skillsOutOfSync: codegen.SkillsOutOfSync,
 		exists: func(path string) bool {
 			_, err := os.Stat(path)
@@ -75,6 +80,10 @@ type localState struct {
 	services     []services.ServiceStatus
 	servicesErr  error
 
+	runtimeHooksOnce sync.Once
+	runtimeHooks     []runtimeinstall.Status
+	runtimeHooksErr  error
+
 	virtualExists bool
 }
 
@@ -92,6 +101,9 @@ func newLocalState(store *storage.Store, deps localDependencies) *localState {
 	}
 	if len(deps.lspIDs) == 0 {
 		deps.lspIDs = append([]string(nil), defaults.lspIDs...)
+	}
+	if deps.runtimeHooks == nil {
+		deps.runtimeHooks = defaults.runtimeHooks
 	}
 	if deps.skillsOutOfSync == nil {
 		deps.skillsOutOfSync = defaults.skillsOutOfSync
@@ -137,6 +149,13 @@ func (s *localState) serviceSnapshot() ([]services.ServiceStatus, error) {
 		s.services, s.servicesErr = s.deps.services(s.store)
 	})
 	return s.services, s.servicesErr
+}
+
+func (s *localState) runtimeHookSnapshot() ([]runtimeinstall.Status, error) {
+	s.runtimeHooksOnce.Do(func() {
+		s.runtimeHooks, s.runtimeHooksErr = s.deps.runtimeHooks()
+	})
+	return s.runtimeHooks, s.runtimeHooksErr
 }
 
 func LocalCheckers(store *storage.Store) []Checker {

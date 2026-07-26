@@ -254,7 +254,7 @@ knowns lsp install <language>
 
 ### Project Diagnostics
 
-Run `knowns doctor` before starting work, especially after cloning a repository that already contains `.knowns/`. It performs offline, read-only checks for project setup, semantic search, local runtimes, language servers, and AI integration artifacts. Findings include actionable remediation without applying changes automatically.
+Run `knowns doctor` before starting work, especially after cloning a repository that already contains `.knowns/`. It performs offline, read-only checks for project setup, semantic search, local runtimes, language servers, AI integration artifacts, and runtime-memory hooks. Findings include actionable remediation without applying changes automatically.
 
 ```bash
 knowns doctor

@@ -2,7 +2,7 @@
 title: User Guide
 description: Comprehensive user documentation for Knowns CLI and Web UI
 createdAt: '2025-12-29T11:49:48.531Z'
-updatedAt: '2026-07-26T06:12:33.079Z'
+updatedAt: '2026-07-26T06:58:54.779Z'
 tags:
   - docs
   - guide
@@ -285,7 +285,7 @@ knowns agents sync --type mcp     # MCP version
 
 ### Diagnose with `knowns doctor`
 
-Run `knowns doctor` before starting work, especially after cloning a repository that already contains `.knowns/`. This confirms whether the local machine has the required models, runtimes, language servers, indices, and integration artifacts before changes begin.
+Run `knowns doctor` before starting work, especially after cloning a repository that already contains `.knowns/`. This confirms whether the local machine has the required models, runtimes, language servers, indices, integration artifacts, and Knowns runtime-memory hooks before changes begin.
 
 Start with the default offline, read-only diagnostic:
 
@@ -322,7 +322,9 @@ knowns doctor --json --strict
 
 Exit codes are 0 for healthy or non-strict degraded results, 1 for unhealthy or strict degraded results, and 2 when the diagnostic engine cannot produce a valid result. A directory without an active Knowns project returns a structured unhealthy result and recommends `knowns init`.
 
-Doctor does not apply fixes. Copy the remediation command from a finding, run it intentionally, and rerun doctor. Common examples include `knowns validate`, `knowns model download <model>`, `knowns search --reindex`, `knowns lsp install <language>`, `knowns sync`, and `knowns update`.
+For configured or locally available Claude Code, Codex, Kiro, and OpenCode runtimes, doctor reports missing, disabled, or out-of-sync Knowns runtime-memory hooks as warnings. Each warning identifies the affected runtime and recommends `knowns runtime install <runtime>`.
+
+Doctor does not apply fixes. Copy the remediation command from a finding, run it intentionally, and rerun doctor. Common examples include `knowns validate`, `knowns model download <model>`, `knowns search --reindex`, `knowns lsp install <language>`, `knowns runtime install <runtime>`, `knowns sync`, and `knowns update`.
 
 | Error | Solution |
 |-------|----------|

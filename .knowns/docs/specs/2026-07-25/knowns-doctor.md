@@ -2,7 +2,7 @@
 title: Knowns Doctor
 description: Specification for an offline-first, read-only diagnostic command covering Knowns project setup, local services, and actionable remediation.
 createdAt: '2026-07-24T23:06:06.475Z'
-updatedAt: '2026-07-25T00:24:50.135Z'
+updatedAt: '2026-07-26T06:58:37.992Z'
 tags:
   - spec
   - approved
@@ -168,9 +168,9 @@ Raw configuration values, environment dumps, and log excerpts are forbidden in `
 
 ### Scenario 2: Troubleshooting Missing Local Dependencies
 
-**Given** semantic search and a language server are configured but their required model or binary is unavailable
+**Given** semantic search, a language server, or an AI runtime is configured but its required model, binary, or Knowns runtime-memory hook is unavailable
 **When** a developer runs `knowns doctor`
-**Then** the command reports the affected checks as warnings or failures, derives an unhealthy or degraded verdict, and prints exact model/index/LSP remediation commands where supported.
+**Then** the command reports the affected checks as warnings or failures, derives an unhealthy or degraded verdict, and prints exact model/index/LSP/runtime-hook remediation commands where supported.
 
 ### Scenario 3: Intentionally Disabled Subsystem
 
