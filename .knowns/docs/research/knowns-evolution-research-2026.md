@@ -2,7 +2,7 @@
 title: Knowns Evolution Research 2026
 description: 'Paper-backed research on the next product and architecture directions for Knowns: measurable retrieval, budgeted context, temporal/provenance-aware memory, evidence graphs, secure consolidation, and adaptive workflows.'
 createdAt: '2026-07-23T04:23:57.854Z'
-updatedAt: '2026-07-23T05:02:31.095Z'
+updatedAt: '2026-07-24T14:34:21.693Z'
 tags:
   - research
   - rag
@@ -63,6 +63,8 @@ The proposal is constrained by the current design philosophy in @doc/architectur
 - `internal/storage/structural_traversal.go` already performs bounded typed BFS traversal with direction, relation filters, entity filters, edge origin, and unresolved-edge reporting.
 - `internal/runtimememory/runtimememory.go` already emits bounded memory packs with scores, reasons, matched-by metadata, capture outcomes, and runtime adapters.
 - `internal/mcp/audit.go` and the audit store already provide privacy-aware JSONL tool-call auditing, so new retrieval traces can extend an existing observability substrate.
+- @doc/specs/2026-07-24/decision-processing-flow now persists System Decision candidates, requires explicit Decision impact at workflow completion, preserves task/spec/source provenance, and separates Current, Review Inbox, History, and Legacy Migration surfaces.
+- Memory review now separates Trusted, Review Inbox, and History in WebUI; missing-source repair can stage ranked doc/task suggestions for confirmed persistence; active Memories can be archived out of default retrieval while remaining in History.
 - Memory review, Decision lifecycle, task archive/reopen, and LSP diagnostics provide the governance and verification boundaries needed for the proposals below.
 
 ### Gaps verified in code
@@ -75,8 +77,8 @@ The proposal is constrained by the current design philosophy in @doc/architectur
 6. Memory includes `LastVerified`, `TTLDays`, `Sources`, and `Confidence`, but default eligibility mainly checks `status=active`; TTL and verification age do not directly remove or warn on an item in normal retrieval.
 7. Memory cleanup is age-based on `updatedAt`; touching an entry can reset its apparent freshness without proving its truth or usefulness.
 8. Structural traversal returns flattened edges, not complete support paths, path scores, evidence coverage, or answerability/abstention signals.
-9. Plans and acceptance criteria remain mostly Markdown text. They are not yet connected into a machine-checkable evidence chain from spec decision to task, impacted code, diagnostics, tests, and Decision acceptance evidence.
-10. Audit records tool calls, but Knowns does not yet retain compact task episodes containing goal, retrieved context, actions, failures, corrections, validation, and outcome for later reviewed learning.
+9. Workflow completion now records explicit System Decision impact and can persist a candidate with originating task/spec/source provenance. Plans and acceptance criteria still remain mostly Markdown, however, and there is no machine-checkable evidence chain from each plan step or AC to impacted code, diagnostics, tests, and final Decision acceptance evidence.
+10. Audit records tool calls, while implementation notes and Decision impact markers capture part of the final outcome. Knowns still does not retain a structured compact task episode containing goal, retrieved context, actions, failures, corrections, validation evidence, and outcome for later reviewed learning.
 
 ## Priority Matrix
 
@@ -375,15 +377,19 @@ Knowns already provides useful primitives:
 - review resolutions include `update_existing`, `archive_existing_create_new`, `create_proposed`, `reject_new`, and `merge_existing`;
 - `merge_existing` preserves a duplicate as a `merged` tombstone with `mergedInto` provenance;
 - deletion is previewable through dry-run and removed records are also removed from the search index;
-- non-active records do not enter default retrieval.
+- non-active records do not enter default retrieval;
+- WebUI separates active Trusted Memories, unresolved Review Inbox items, and historical outcomes into distinct lifecycle destinations;
+- missing or broken sources can receive a bounded ranked set of current doc/task suggestions, but persistence remains staged, review-gated, and confirmation-bound;
+- an active Memory can be deliberately archived out of default retrieval while preserving its content and provenance in History.
 
 The remaining gaps are important:
 
 - cleanup currently treats age as the primary signal, even though old knowledge may remain durable and valuable;
 - there is no bounded batch deduplication workflow for memories already in the store;
+- the current WebUI supports individual lifecycle and source-repair actions, but it does not provide a bounded Memory Doctor pass or grouped duplicate review;
 - `merge_existing` records canonical ownership but does not synthesize candidate content, tags, or sources into the target;
-- there is no garbage/utility classification based on provenance, confidence, verification age, contradiction, retrieval use, or replacement evidence;
-- CLI users do not yet have a first-class `memory review` or `memory merge` workflow.
+- source suggestions improve repair ergonomics but do not classify truth, utility, contradiction, verification age, retrieval use, or replacement evidence;
+- CLI users do not yet have a first-class `memory review`, `memory merge`, or `memory doctor` workflow.
 
 ### Proposed Memory Doctor workflow
 
