@@ -14,12 +14,13 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
+
+	knownsprocess "github.com/howznguyen/knowns/internal/process"
 )
 
 // CurrentPlatformID returns the current platform identifier (e.g. "darwin-arm64").
@@ -967,7 +968,7 @@ type dependencyLastError struct {
 }
 
 func defaultRunCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	return knownsprocess.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 func (i *Installer) writeSelection(adapter LanguageAdapter, dep RuntimeDependency, selectedPath string) error {

@@ -50,11 +50,17 @@ type Manager struct {
 	status   map[string]ServerStatus
 
 	traceEnabled map[string]bool
+
+	runtimeStatusCache           []LanguageRuntimeStatus
+	runtimeStatusCacheAt         time.Time
+	runtimeStatusCacheGeneration uint64
+	runtimeStatusCacheLoading    bool
+	runtimeStatusCacheCond       *sync.Cond
 }
 
 func NewManager(root string, cfg Config) *Manager {
 	registry := NewEmptyRegistry()
-	return &Manager{
+	m := &Manager{
 		root:     root,
 		registry: registry,
 		detector: NewDetector(registry),
@@ -65,6 +71,8 @@ func NewManager(root string, cfg Config) *Manager {
 
 		traceEnabled: make(map[string]bool),
 	}
+	m.runtimeStatusCacheCond = sync.NewCond(&m.mu)
+	return m
 }
 
 // RegisterAdapter registers a language adapter with the manager.
@@ -78,7 +86,11 @@ func (m *Manager) RegisterAdapter(adapter LanguageAdapter) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return m.registerAdapterLocked(adapter)
+	if err := m.registerAdapterLocked(adapter); err != nil {
+		return err
+	}
+	m.invalidateRuntimeStatusCacheLocked()
+	return nil
 }
 
 func (m *Manager) RegisterPluginAdapters(opts PluginAdapterLoadOptions) []PluginAdapterLoadError {
@@ -101,6 +113,7 @@ func (m *Manager) SetDetector(detector *Detector) {
 	defer m.mu.Unlock()
 	if detector != nil {
 		m.detector = detector
+		m.invalidateRuntimeStatusCacheLocked()
 	}
 }
 
@@ -116,6 +129,7 @@ func (m *Manager) SetConfig(cfg Config) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.config = cloneManagerConfig(cfg)
+	m.invalidateRuntimeStatusCacheLocked()
 }
 
 func cloneManagerConfig(cfg Config) Config {
@@ -192,15 +206,18 @@ func (m *Manager) ServerForPath(ctx context.Context, path string) (*Server, bool
 		slog.Warn("lsp: server not alive, restarting", "language", lang.ID)
 		m.mu.Lock()
 		m.status[lang.ID] = StatusStarting
+		m.invalidateRuntimeStatusCacheLocked()
 		m.mu.Unlock()
 		if err := srv.Start(ctx); err != nil {
 			m.mu.Lock()
 			m.status[lang.ID] = StatusCrashed
+			m.invalidateRuntimeStatusCacheLocked()
 			m.mu.Unlock()
 			return nil, false, m.runtimeErrorForCommand(srv.Command, err)
 		}
 		m.mu.Lock()
 		m.status[lang.ID] = StatusRunning
+		m.invalidateRuntimeStatusCacheLocked()
 		m.mu.Unlock()
 		return srv, true, nil
 	}
@@ -229,12 +246,14 @@ func (m *Manager) ServerForPath(ctx context.Context, path string) (*Server, bool
 		m.configureServerDocumentSyncLocked(lang.ID, srv)
 		m.configureServerPathCapabilityLocked(lang.ID, srv)
 		m.configureTraceLocked(lang.ID, srv)
+		m.invalidateRuntimeStatusCacheLocked()
 		m.mu.Unlock()
 		if err := srv.Start(ctx); err != nil {
 			return nil, false, m.runtimeErrorForCommand(cmd, err)
 		}
 		m.mu.Lock()
 		m.status[lang.ID] = StatusRunning
+		m.invalidateRuntimeStatusCacheLocked()
 		m.mu.Unlock()
 		return srv, true, nil
 	}
@@ -371,6 +390,7 @@ func (m *Manager) StartAll(ctx context.Context) error {
 			m.status[langID] = StatusStarting
 		}
 	}
+	m.invalidateRuntimeStatusCacheLocked()
 	m.mu.Unlock()
 
 	var wg sync.WaitGroup
@@ -384,11 +404,13 @@ func (m *Manager) StartAll(ctx context.Context) error {
 				slog.Warn("lsp: failed to start server", "language", langID, "error", err)
 				m.mu.Lock()
 				m.status[langID] = StatusCrashed
+				m.invalidateRuntimeStatusCacheLocked()
 				m.mu.Unlock()
 				return
 			}
 			m.mu.Lock()
 			m.status[langID] = StatusRunning
+			m.invalidateRuntimeStatusCacheLocked()
 			m.mu.Unlock()
 		}(item.langID, item.srv)
 	}
@@ -410,6 +432,7 @@ func (m *Manager) StopAll(ctx context.Context) error {
 			m.status[langID] = StatusInstalled
 		}
 	}
+	m.invalidateRuntimeStatusCacheLocked()
 	m.mu.Unlock()
 	return nil
 }
@@ -556,6 +579,7 @@ func (m *Manager) startCommand(ctx context.Context, langID string, cmd ServerCom
 	m.configureServerPathCapabilityLocked(langID, srv)
 	m.configureTraceLocked(langID, srv)
 	m.status[langID] = StatusStarting
+	m.invalidateRuntimeStatusCacheLocked()
 	m.mu.Unlock()
 
 	startCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -564,11 +588,13 @@ func (m *Manager) startCommand(ctx context.Context, langID string, cmd ServerCom
 	if err != nil {
 		m.mu.Lock()
 		m.status[langID] = StatusCrashed
+		m.invalidateRuntimeStatusCacheLocked()
 		m.mu.Unlock()
 		return m.runtimeErrorForCommand(cmd, err)
 	}
 	m.mu.Lock()
 	m.status[langID] = StatusRunning
+	m.invalidateRuntimeStatusCacheLocked()
 	m.mu.Unlock()
 	return nil
 }
@@ -692,11 +718,13 @@ func (m *Manager) stopLanguage(ctx context.Context, langID string, stoppedStatus
 	if srv == nil {
 		if _, ok := m.status[langID]; ok {
 			m.status[langID] = stoppedStatus
+			m.invalidateRuntimeStatusCacheLocked()
 		}
 		m.mu.Unlock()
 		return nil
 	}
 	m.status[langID] = stoppedStatus
+	m.invalidateRuntimeStatusCacheLocked()
 	m.mu.Unlock()
 
 	err := srv.Stop(ctx)
@@ -704,6 +732,7 @@ func (m *Manager) stopLanguage(ctx context.Context, langID string, stoppedStatus
 	m.mu.Lock()
 	delete(m.servers, langID)
 	m.status[langID] = stoppedStatus
+	m.invalidateRuntimeStatusCacheLocked()
 	m.mu.Unlock()
 	return err
 }
@@ -749,6 +778,11 @@ func (m *Manager) InstallLanguageWithOptions(ctx context.Context, langID string,
 			return m.refreshAdapterRegistration(langID)
 		}
 		path, err := installer.InstallWithOptions(ctx, installAdapter, opts)
+		if err == nil {
+			m.mu.Lock()
+			m.invalidateRuntimeStatusCacheLocked()
+			m.mu.Unlock()
+		}
 		return path, err
 	}
 	if !adapter.CanInstall() {
@@ -757,6 +791,11 @@ func (m *Manager) InstallLanguageWithOptions(ctx context.Context, langID string,
 	path, err := adapter.Install(ctx, installer.baseDir)
 	if err == nil {
 		err = m.refreshAdapterRegistration(langID)
+	}
+	if err == nil {
+		m.mu.Lock()
+		m.invalidateRuntimeStatusCacheLocked()
+		m.mu.Unlock()
 	}
 	return path, err
 }
@@ -770,7 +809,13 @@ func (m *Manager) CleanupLanguage(langID string) error {
 	m.mu.Lock()
 	installer := m.installerLocked()
 	m.mu.Unlock()
-	return installer.Cleanup(langID)
+	err := installer.Cleanup(langID)
+	if err == nil {
+		m.mu.Lock()
+		m.invalidateRuntimeStatusCacheLocked()
+		m.mu.Unlock()
+	}
+	return err
 }
 
 // LogTail is a bounded tail of a language runtime or trace log.
@@ -934,7 +979,10 @@ func (m *Manager) refreshAdapterRegistration(langID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if adapter := m.adapters[langID]; adapter != nil {
-		return m.registerAdapterLocked(adapter)
+		if err := m.registerAdapterLocked(adapter); err != nil {
+			return err
+		}
+		m.invalidateRuntimeStatusCacheLocked()
 	}
 	return nil
 }

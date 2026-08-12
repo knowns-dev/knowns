@@ -19,6 +19,7 @@ import (
 	"github.com/howznguyen/knowns/internal/lsp"
 	"github.com/howznguyen/knowns/internal/lsp/adapters"
 	"github.com/howznguyen/knowns/internal/models"
+	knownsprocess "github.com/howznguyen/knowns/internal/process"
 	"github.com/howznguyen/knowns/internal/runtimequeue"
 	goruntime "runtime"
 
@@ -373,13 +374,13 @@ func serviceStatusFromLSP(status lsp.LanguageRuntimeStatus) string {
 // isProcessRunning checks if a process with the given binary name is running.
 func isProcessRunning(name string) bool {
 	if goruntime.GOOS == "windows" {
-		out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq "+name+".exe", "/NH").Output()
+		out, err := knownsprocess.Command("tasklist", "/FI", "IMAGENAME eq "+name+".exe", "/NH").Output()
 		if err != nil {
 			return false
 		}
 		return strings.Contains(string(out), name)
 	}
-	err := exec.Command("pgrep", "-f", name).Run()
+	err := knownsprocess.Command("pgrep", "-f", name).Run()
 	return err == nil
 }
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/howznguyen/knowns/internal/lsp"
+	knownsprocess "github.com/howznguyen/knowns/internal/process"
 )
 
 func checkBinary(ctx context.Context, name string, args ...string) error {
@@ -21,7 +22,7 @@ func checkBinary(ctx context.Context, name string, args ...string) error {
 	if len(args) == 0 {
 		return nil
 	}
-	cmd := exec.CommandContext(ctx, path, args...)
+	cmd := knownsprocess.CommandContext(ctx, path, args...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s %s failed: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
@@ -67,7 +68,7 @@ func commandOutput(ctx context.Context, name string, args ...string) (string, er
 	if err != nil {
 		return "", fmt.Errorf("%s not found in PATH: %w", name, err)
 	}
-	cmd := exec.CommandContext(ctx, path, args...)
+	cmd := knownsprocess.CommandContext(ctx, path, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("%s %s failed: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(output)))

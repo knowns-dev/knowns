@@ -12,6 +12,7 @@ If you are new to Knowns, start with installation, then run the quick start, the
 ## Start here
 
 - Install the CLI: [English](./en/getting-started/installation.md) / [Tieng Viet](./vi/getting-started/installation.md)
+- Uninstall the CLI: [English](./en/getting-started/uninstall.md) / [Tieng Viet](./vi/getting-started/uninstall.md)
 - Create a working project: [English](./en/getting-started/quick-start.md) / [Tieng Viet](./vi/getting-started/quick-start.md)
 - Understand why Knowns exists: [English](./en/guides/why-knowns.md) / [Tieng Viet](./vi/guides/why-knowns.md)
 - Learn the project workflow: [English](./en/guides/workflow.md) / [Tieng Viet](./vi/guides/workflow.md)

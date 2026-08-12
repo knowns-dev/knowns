@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	knownsprocess "github.com/howznguyen/knowns/internal/process"
 )
 
 type Server struct {
@@ -110,7 +112,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.mu.Lock()
 	s.clearCapabilitiesLocked()
 	s.clearDiagnosticsLocked()
-	cmd := exec.Command(s.Command.Path, s.Command.Args...)
+	cmd := knownsprocess.Command(s.Command.Path, s.Command.Args...)
 	cmd.Dir = s.Root
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	knownsprocess "github.com/howznguyen/knowns/internal/process"
 )
 
 var autoDetectionIgnoredDirs = map[string]struct{}{
@@ -151,6 +153,6 @@ func (d *Detector) resolve(ctx context.Context, root string, lang Language, over
 }
 
 func runVersionCheck(ctx context.Context, path string, args ...string) error {
-	cmd := exec.CommandContext(ctx, path, args...)
+	cmd := knownsprocess.CommandContext(ctx, path, args...)
 	return cmd.Run()
 }

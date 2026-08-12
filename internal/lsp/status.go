@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -35,7 +36,10 @@ const (
 	RuntimeStatusDegraded = "degraded"
 )
 
-const runtimeStatusProbeTimeout = 2 * time.Second
+const (
+	runtimeStatusProbeTimeout = 2 * time.Second
+	runtimeStatusCacheTTL     = 30 * time.Second
+)
 
 // LanguageRuntimeStatus is the canonical per-language LSP runtime snapshot used
 // by CLI, MCP/API status, and server routes.
@@ -101,6 +105,11 @@ type RuntimeStatusOptions struct {
 // CollectRuntimeStatuses returns status for adapters without starting servers
 // or installing dependencies.
 func CollectRuntimeStatuses(ctx context.Context, opts RuntimeStatusOptions) []LanguageRuntimeStatus {
+	statuses := collectRuntimeInventoryStatuses(ctx, opts)
+	return applyRuntimeStatusOverlays(statuses, opts)
+}
+
+func collectRuntimeInventoryStatuses(ctx context.Context, opts RuntimeStatusOptions) []LanguageRuntimeStatus {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -154,10 +163,23 @@ func CollectRuntimeStatuses(ctx context.Context, opts RuntimeStatusOptions) []La
 		} else {
 			status.LogPath = LanguageLogPath(opts.Root, langID)
 		}
-		applyLiveStatus(&status, opts.Status[langID], opts.Servers[langID])
-		applyCapabilityStatus(&status, capabilityProfileForAdapter(adapter), opts.Servers[langID])
-		finalizeRuntimeStatus(&status)
 		statuses = append(statuses, status)
+	}
+	sort.Slice(statuses, func(i, j int) bool { return statuses[i].ID < statuses[j].ID })
+	return statuses
+}
+
+func applyRuntimeStatusOverlays(statuses []LanguageRuntimeStatus, opts RuntimeStatusOptions) []LanguageRuntimeStatus {
+	profileByLanguage := make(map[string]CapabilityProfile, len(opts.Adapters))
+	for _, adapter := range opts.Adapters {
+		if adapter != nil {
+			profileByLanguage[adapter.ID()] = capabilityProfileForAdapter(adapter)
+		}
+	}
+	for i := range statuses {
+		applyLiveStatus(&statuses[i], opts.Status[statuses[i].ID], opts.Servers[statuses[i].ID])
+		applyCapabilityStatus(&statuses[i], profileByLanguage[statuses[i].ID], opts.Servers[statuses[i].ID])
+		finalizeRuntimeStatus(&statuses[i])
 	}
 	sort.Slice(statuses, func(i, j int) bool { return statuses[i].ID < statuses[j].ID })
 	return statuses
@@ -181,7 +203,58 @@ func applyExpectedBackendStatus(status *LanguageRuntimeStatus, adapter LanguageA
 // RuntimeStatuses returns manager-backed runtime status, including live process
 // and readiness state when a server exists.
 func (m *Manager) RuntimeStatuses(ctx context.Context) []LanguageRuntimeStatus {
-	m.mu.Lock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	inventory, opts := m.runtimeStatusInventory(ctx)
+	return applyRuntimeStatusOverlays(inventory, opts)
+}
+
+func (m *Manager) runtimeStatusInventory(ctx context.Context) ([]LanguageRuntimeStatus, RuntimeStatusOptions) {
+	for {
+		m.mu.Lock()
+		opts := m.runtimeStatusOptionsLocked()
+		if m.runtimeStatusCacheCond == nil {
+			m.runtimeStatusCacheCond = sync.NewCond(&m.mu)
+		}
+		if m.runtimeStatusCacheFreshLocked(time.Now()) {
+			inventory := cloneLanguageRuntimeStatuses(m.runtimeStatusCache)
+			m.mu.Unlock()
+			return inventory, opts
+		}
+		if m.runtimeStatusCacheLoading {
+			m.runtimeStatusCacheCond.Wait()
+			m.mu.Unlock()
+			continue
+		}
+		m.runtimeStatusCacheLoading = true
+		generation := m.runtimeStatusCacheGeneration
+		m.mu.Unlock()
+
+		inventory := collectRuntimeInventoryStatuses(ctx, opts)
+		cacheable := ctx.Err() == nil
+
+		m.mu.Lock()
+		if cacheable && generation == m.runtimeStatusCacheGeneration {
+			m.runtimeStatusCache = cloneLanguageRuntimeStatuses(inventory)
+			m.runtimeStatusCacheAt = time.Now()
+		}
+		m.runtimeStatusCacheLoading = false
+		m.runtimeStatusCacheCond.Broadcast()
+		freshOpts := m.runtimeStatusOptionsLocked()
+		if cacheable && generation == m.runtimeStatusCacheGeneration {
+			m.mu.Unlock()
+			return cloneLanguageRuntimeStatuses(inventory), freshOpts
+		}
+		if ctx.Err() != nil {
+			m.mu.Unlock()
+			return cloneLanguageRuntimeStatuses(inventory), freshOpts
+		}
+		m.mu.Unlock()
+	}
+}
+
+func (m *Manager) runtimeStatusOptionsLocked() RuntimeStatusOptions {
 	adapters := make([]LanguageAdapter, 0, len(m.adapters))
 	for _, adapter := range m.adapters {
 		adapters = append(adapters, adapter)
@@ -194,16 +267,46 @@ func (m *Manager) RuntimeStatuses(ctx context.Context) []LanguageRuntimeStatus {
 	for id, server := range m.servers {
 		servers[id] = server
 	}
-	opts := RuntimeStatusOptions{
-		Root:     m.root,
-		Config:   m.config,
-		Adapters: adapters,
-		Detector: m.detector,
-		Status:   status,
-		Servers:  servers,
+	return RuntimeStatusOptions{
+		Root:      m.root,
+		Config:    cloneManagerConfig(m.config),
+		Adapters:  adapters,
+		Detector:  m.detector,
+		Installer: m.installerLocked(),
+		Status:    status,
+		Servers:   servers,
 	}
-	m.mu.Unlock()
-	return CollectRuntimeStatuses(ctx, opts)
+}
+
+func (m *Manager) runtimeStatusCacheFreshLocked(now time.Time) bool {
+	return len(m.runtimeStatusCache) > 0 && !m.runtimeStatusCacheAt.IsZero() && now.Sub(m.runtimeStatusCacheAt) < runtimeStatusCacheTTL
+}
+
+func (m *Manager) invalidateRuntimeStatusCacheLocked() {
+	m.runtimeStatusCache = nil
+	m.runtimeStatusCacheAt = time.Time{}
+	m.runtimeStatusCacheGeneration++
+	if m.runtimeStatusCacheCond != nil {
+		m.runtimeStatusCacheCond.Broadcast()
+	}
+}
+
+func cloneLanguageRuntimeStatuses(statuses []LanguageRuntimeStatus) []LanguageRuntimeStatus {
+	if statuses == nil {
+		return nil
+	}
+	out := make([]LanguageRuntimeStatus, len(statuses))
+	copy(out, statuses)
+	for i := range out {
+		out[i].Attempts = append([]BackendAttempt(nil), statuses[i].Attempts...)
+		out[i].DaemonLeaseOwners = append([]string(nil), statuses[i].DaemonLeaseOwners...)
+		out[i].Capabilities = append([]string(nil), statuses[i].Capabilities...)
+		out[i].AdvertisedCapabilities = append([]string(nil), statuses[i].AdvertisedCapabilities...)
+		out[i].ObservedCapabilities = append([]string(nil), statuses[i].ObservedCapabilities...)
+		out[i].RequiredCapabilities = append([]string(nil), statuses[i].RequiredCapabilities...)
+		out[i].MissingCapabilities = append([]string(nil), statuses[i].MissingCapabilities...)
+	}
+	return out
 }
 
 func detectedRuntimeLanguages(root string, cfg Config, adapters []LanguageAdapter, detector *Detector) map[string]bool {

@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -197,6 +200,137 @@ func TestTaskMutationResponseModes(t *testing.T) {
 	}
 	if _, ok := fullCreatePayload["success"]; ok {
 		t.Fatalf("full task create unexpectedly wrapped: %#v", fullCreatePayload)
+	}
+}
+
+func TestMCPTaskUpdateUsesBestEffortIndexing(t *testing.T) {
+	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("mcp-task-update-indexing"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+	getStore := func() *storage.Store { return store }
+	seedTask(t, store, "fast01", "Fast MCP update")
+
+	oldBestEffortIndexTask := mcpBestEffortIndexTask
+	oldReconcileTaskIndex := mcpReconcileTaskIndex
+	t.Cleanup(func() {
+		mcpBestEffortIndexTask = oldBestEffortIndexTask
+		mcpReconcileTaskIndex = oldReconcileTaskIndex
+	})
+
+	bestEffortCalls := 0
+	reconcileCalls := 0
+	mcpBestEffortIndexTask = func(_ *storage.Store, id string) {
+		bestEffortCalls++
+		if id != "fast01" {
+			t.Fatalf("best-effort index id = %q, want fast01", id)
+		}
+	}
+	mcpReconcileTaskIndex = func(_ *storage.Store, id string) error {
+		reconcileCalls++
+		return errors.New("synchronous task reconciliation must not run for MCP update")
+	}
+
+	result, err := handleTaskUpdate(getStore, mutationRequest(map[string]any{
+		"taskId":      "fast01",
+		"status":      "in-progress",
+		"appendNotes": "update should return before semantic indexing",
+	}))
+	if err != nil {
+		t.Fatalf("update task: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("update task returned error result: %s", mutationResultText(t, result))
+	}
+	if bestEffortCalls != 1 {
+		t.Fatalf("best-effort index calls = %d, want 1", bestEffortCalls)
+	}
+	if reconcileCalls != 0 {
+		t.Fatalf("sync reconcile calls = %d, want 0", reconcileCalls)
+	}
+	storedTask, err := store.Tasks.Get("fast01")
+	if err != nil {
+		t.Fatalf("get updated task: %v", err)
+	}
+	if storedTask.Status != "in-progress" || storedTask.ImplementationNotes != "update should return before semantic indexing" {
+		t.Fatalf("stored task = status %q notes %q", storedTask.Status, storedTask.ImplementationNotes)
+	}
+}
+
+func TestMCPTimeMutationsUseBestEffortIndexing(t *testing.T) {
+	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("mcp-time-indexing"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+	getStore := func() *storage.Store { return store }
+	seedTask(t, store, "time01", "Fast MCP time")
+
+	oldBestEffortIndexTask := mcpBestEffortIndexTask
+	oldReconcileTaskIndex := mcpReconcileTaskIndex
+	t.Cleanup(func() {
+		mcpBestEffortIndexTask = oldBestEffortIndexTask
+		mcpReconcileTaskIndex = oldReconcileTaskIndex
+	})
+
+	bestEffortCalls := 0
+	reconcileCalls := 0
+	mcpBestEffortIndexTask = func(_ *storage.Store, id string) {
+		bestEffortCalls++
+		if id != "time01" {
+			t.Fatalf("best-effort index id = %q, want time01", id)
+		}
+	}
+	mcpReconcileTaskIndex = func(_ *storage.Store, id string) error {
+		reconcileCalls++
+		return errors.New("synchronous task reconciliation must not run for MCP time mutation")
+	}
+
+	addResult, err := handleTimeAdd(getStore, mutationRequest(map[string]any{
+		"taskId":   "time01",
+		"duration": "5m",
+		"note":     "manual entry",
+	}))
+	if err != nil {
+		t.Fatalf("add time: %v", err)
+	}
+	if addResult == nil || addResult.IsError {
+		t.Fatalf("add time returned error result: %s", mutationResultText(t, addResult))
+	}
+	if bestEffortCalls != 1 {
+		t.Fatalf("best-effort calls after add = %d, want 1", bestEffortCalls)
+	}
+
+	if err := store.Time.Start("time01", "Fast MCP time"); err != nil {
+		t.Fatalf("start timer: %v", err)
+	}
+	stopResult, err := handleTimeStop(getStore, mutationRequest(map[string]any{"taskId": "time01"}))
+	if err != nil {
+		t.Fatalf("stop time: %v", err)
+	}
+	if stopResult == nil || stopResult.IsError {
+		t.Fatalf("stop time returned error result: %s", mutationResultText(t, stopResult))
+	}
+	if bestEffortCalls != 2 {
+		t.Fatalf("best-effort calls after stop = %d, want 2", bestEffortCalls)
+	}
+	if reconcileCalls != 0 {
+		t.Fatalf("sync reconcile calls = %d, want 0", reconcileCalls)
+	}
+}
+
+func seedTask(t *testing.T, store *storage.Store, id, title string) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := store.Tasks.Create(&models.Task{
+		ID:        id,
+		Title:     title,
+		Status:    "todo",
+		Priority:  "medium",
+		Labels:    []string{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed task: %v", err)
 	}
 }
 

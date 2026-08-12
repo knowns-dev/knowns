@@ -74,6 +74,11 @@ Chạy qua npx:
 npx knowns init
 ```
 
+## Gỡ cài đặt
+
+Xem [Gỡ cài đặt](./uninstall.md) cho Homebrew, npm, shell installer, PowerShell, Go install, cleanup runtime adapter, và các project files được giữ lại có chủ ý.
+
 ## Tiếp theo
 
 - [Quick start](./quick-start.md)
+- [Gỡ cài đặt](./uninstall.md)

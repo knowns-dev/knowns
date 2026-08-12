@@ -6,6 +6,7 @@ import (
 	"os/exec"
 
 	"github.com/howznguyen/knowns/internal/lsp"
+	knownsprocess "github.com/howznguyen/knowns/internal/process"
 )
 
 type PythonAdapter struct{ lsp.BaseAdapter }
@@ -45,7 +46,7 @@ func (a *PythonAdapter) Install(ctx context.Context, targetDir string) (string, 
 	if pm == "uv" {
 		args = []string{"tool", "install", "python-lsp-server"}
 	}
-	cmd := exec.CommandContext(ctx, pm, args...)
+	cmd := knownsprocess.CommandContext(ctx, pm, args...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("%s install failed: %w: %s", pm, err, output)
 	}

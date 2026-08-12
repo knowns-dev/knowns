@@ -28,10 +28,11 @@ Use these docs if you want to:
 6. [Task Management](./guides/task-management.md)
 7. [AI Agent Guide](./guides/ai-agent-guide.md)
 8. [AI Workflow](./guides/ai-workflow.md)
+9. [Uninstall](./getting-started/uninstall.md)
 
 ## Which page should I read first?
 
-- New user: start with [Installation](./getting-started/installation.md), then [Quick start](./getting-started/quick-start.md).
+- New user: start with [Installation](./getting-started/installation.md), then [Quick start](./getting-started/quick-start.md). If you need to remove the CLI later, use [Uninstall](./getting-started/uninstall.md).
 - Existing project owner: read [First project](./getting-started/first-project.md), then [Workflow](./guides/workflow.md).
 - AI assistant user: read [AI Workflow](./guides/ai-workflow.md), [MCP integration](./guides/mcp-integration.md), and [Skills](./integrations/skills.md).
 - CLI reference lookup: go directly to [Commands](./reference/commands.md).
@@ -56,6 +57,7 @@ Use these docs if you want to:
 - [Installation](./getting-started/installation.md)
 - [Quick start](./getting-started/quick-start.md)
 - [First project](./getting-started/first-project.md)
+- [Uninstall](./getting-started/uninstall.md)
 
 ### Guides
 

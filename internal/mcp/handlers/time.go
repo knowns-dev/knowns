@@ -119,7 +119,7 @@ func handleTimeStop(getStore func() *storage.Store, req mcp.CallToolRequest) (*m
 		return errResult(ErrTaskIDReq)
 	}
 
-	entry, err := newMCPTaskLifecycleService(store).StopTimer(context.Background(), taskID, "mcp")
+	entry, err := newMCPTaskMutationService(store).StopTimer(context.Background(), taskID, "mcp")
 	if err != nil {
 		return errFailed("stop timer", err)
 	}
@@ -184,7 +184,7 @@ func handleTimeAdd(getStore func() *storage.Store, req mcp.CallToolRequest) (*mc
 		entry.Note = note
 	}
 
-	if _, err := newMCPTaskLifecycleService(store).AddTimeEntry(context.Background(), taskID, tasklifecycle.TimeMutationOptions{Actor: "mcp", Entry: entry}); err != nil {
+	if _, err := newMCPTaskMutationService(store).AddTimeEntry(context.Background(), taskID, tasklifecycle.TimeMutationOptions{Actor: "mcp", Entry: entry}); err != nil {
 		return errFailed("save time entry", err)
 	}
 
