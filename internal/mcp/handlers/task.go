@@ -168,6 +168,13 @@ type taskMutationSummary struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+var (
+	mcpBestEffortIndexTask  = search.BestEffortIndexTask
+	mcpBestEffortRemoveTask = search.BestEffortRemoveTask
+	mcpReconcileTaskIndex   = search.ReconcileTaskIndex
+	mcpReconcileTaskRemoval = search.ReconcileTaskRemoval
+)
+
 func taskMutationResult(task *models.Task, returnMode string) *mcp.CallToolResult {
 	var payload any = task
 	if returnMode == mutationReturnSummary {
@@ -265,7 +272,7 @@ func handleTaskCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 		Snapshot: storage.TaskToSnapshot(task),
 	})
 
-	search.BestEffortIndexTask(store, task.ID)
+	mcpBestEffortIndexTask(store, task.ID)
 	go notifyTaskUpdated(store, task.ID)
 
 	return taskMutationResult(task, returnMode), nil
@@ -313,7 +320,7 @@ func handleTaskUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 		return errResult(err.Error())
 	}
 	clearFields := stringSetArg(args, "clear")
-	service := newMCPTaskLifecycleService(store)
+	service := newMCPTaskMutationService(store)
 	task, err := service.UpdateTask(context.Background(), taskID, tasklifecycle.TaskUpdateOptions{Actor: "mcp", Mutate: func(task *models.Task) error {
 
 		if clearFields["title"] {
@@ -491,10 +498,23 @@ func handleTaskList(getStore func() *storage.Store, req mcp.CallToolRequest) (*m
 	return mcp.NewToolResultText(string(out)), nil
 }
 
+func newMCPTaskMutationService(store *storage.Store) *tasklifecycle.Service {
+	return tasklifecycle.New(store, tasklifecycle.WithHooks(tasklifecycle.Hooks{
+		IndexTask: func(id string) error {
+			mcpBestEffortIndexTask(store, id)
+			return nil
+		},
+		RemoveTask: func(id string) error {
+			mcpBestEffortRemoveTask(store, id)
+			return nil
+		},
+	}))
+}
+
 func newMCPTaskLifecycleService(store *storage.Store) *tasklifecycle.Service {
 	return tasklifecycle.New(store, tasklifecycle.WithHooks(tasklifecycle.Hooks{
-		IndexTask:  func(id string) error { return search.ReconcileTaskIndex(store, id) },
-		RemoveTask: func(id string) error { return search.ReconcileTaskRemoval(store, id) },
+		IndexTask:  func(id string) error { return mcpReconcileTaskIndex(store, id) },
+		RemoveTask: func(id string) error { return mcpReconcileTaskRemoval(store, id) },
 	}))
 }
 
