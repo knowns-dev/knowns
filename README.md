@@ -6,11 +6,17 @@
 
 <p align="center">
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/go-%3E%3D1.24.2-00ADD8?style=flat-square&logo=go" alt="Go"></a>
-  <a href="https://www.npmjs.com/package/knowns"><img src="https://img.shields.io/npm/v/knowns.svg?style=flat-square" alt="npm"></a>
+  <a href="https://github.com/knowns-dev/knowns/releases"><img src="https://img.shields.io/github/v/release/knowns-dev/knowns?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/knowns-dev/knowns/stargazers"><img src="https://img.shields.io/github/stars/knowns-dev/knowns?style=flat-square" alt="GitHub stars"></a>
   <a href="https://github.com/knowns-dev/knowns/actions/workflows/ci.yml"><img src="https://github.com/knowns-dev/knowns/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="#installation"><img src="https://img.shields.io/badge/platform-win%20%7C%20mac%20%7C%20linux-lightgrey?style=flat-square" alt="Platform"></a>
-  <a href="https://discord.knowns.dev"><img src="https://img.shields.io/badge/Discord-Join%20community-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://discord.knowns.dev"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Join Discord"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/knowns-dev/knowns?style=flat-square" alt="License"></a>
+</p>
+
+<p align="center">
+  <img src="https://custom-icon-badges.demolab.com/badge/Working%20on-Codex-111111?style=flat-square&logo=openai&logoColor=white" alt="Working on Codex">
+  <img src="https://img.shields.io/badge/Working%20on-Claude-D97757?style=flat-square&logo=claude&logoColor=fff" alt="Working on Claude">
 </p>
 
 <p align="center">
@@ -27,7 +33,7 @@
 
 Every time you start a new AI coding session, you re-explain your architecture, paste docs, repeat conventions, and clarify past decisions. Your AI assistant is powerful - but it forgets everything between sessions.
 
-**Knowns fixes that.** It gives AI assistants like Claude, Cursor, Copilot, and others structured, persistent access to your project's tasks, documentation, specs, acceptance criteria, and architectural decisions. Instead of prompting from scratch, your AI reads what it needs and picks up where you left off.
+**Knowns fixes that.** It gives AI assistants like Claude Code, Codex, Cursor, Copilot, OpenCode, and others structured, persistent access to your project's tasks, documentation, specs, acceptance criteria, and architectural decisions. Instead of prompting from scratch, your AI reads what it needs and picks up where you left off.
 
 If you believe AI should truly understand software projects, consider giving **Knowns** a star.
 
@@ -50,6 +56,7 @@ If you believe AI should truly understand software projects, consider giving **K
 - [Quick Start](#quick-start)
 - [Core Capabilities](#core-capabilities)
 - [What You Can Build](#what-you-can-build-with-knowns)
+- [AI Integrations](#ai-integrations)
 - [Agent Skills Workflow](#agent-skills-workflow)
 - [Installation](#installation)
 - [Documentation](#documentation)
@@ -119,7 +126,7 @@ Everything lives in a `.knowns/` directory in your repo. Plain files. Committabl
 - **Solo developers** who pair with AI daily and want it to remember project context across sessions
 - **Teams** building with AI assistants and tired of everyone re-explaining the same architecture
 - **Open-source maintainers** who want contributors (human or AI) to onboard faster
-- **Anyone** who uses Claude, Cursor, Copilot, Windsurf, or other AI coding tools and wants them to actually understand the project
+- **Anyone** who uses Claude Code, Codex, Cursor, Copilot, OpenCode, Windsurf, or other AI coding tools and wants them to actually understand the project
 
 ---
 
@@ -241,7 +248,7 @@ knowns search "how does authentication work" --plain
 
 ### MCP Integration
 
-Full [Model Context Protocol](https://modelcontextprotocol.io/) server. Claude, Cursor, and other MCP-compatible assistants get native access to tasks, docs, memory, search, and validation - no copy-pasting required.
+Full [Model Context Protocol](https://modelcontextprotocol.io/) server. Claude Code, Codex, Cursor, OpenCode, and other MCP-compatible assistants get native access to tasks, docs, memory, search, and validation - no copy-pasting required.
 
 ### Code Intelligence
 
@@ -303,6 +310,26 @@ knowns browser --open
 | **AI Workspaces** | Multi-phase agent orchestration with worktree isolation |
 | **Code Intelligence** | LSP-based symbols, definitions, references, diagnostics, and safe edits |
 | **Web UI** | Kanban board, doc browser, knowledge graph, mermaid diagrams |
+
+---
+
+## AI Integrations
+
+Knowns does not replace your AI assistant. It gives the assistants you already use one shared project context layer: tasks, docs, specs, memory, decisions, search, validation, and code intelligence through MCP and synced skills.
+
+For normal personal setup, use `knowns setup <target> --global`. Use project-level setup only when you intentionally want config files committed or scoped to one repository.
+
+| Assistant | Setup | What it gets |
+|---|---|---|
+| Claude Code | `knowns setup claude --global` | MCP, `/kn-*` skills, runtime memory hooks |
+| Codex | `knowns setup codex --global` | MCP, `$kn-*` skills, runtime memory hooks |
+| OpenCode | `knowns setup opencode --global` | MCP, `.agents/skills`, plugin/runtime integration |
+| Kiro | `knowns setup kiro --global` | MCP, skills, runtime hooks |
+| Cursor | `knowns setup cursor --global` | MCP access to Knowns context |
+| Gemini / Antigravity | `knowns setup gemini --global` / `knowns setup antigravity --global` | Global MCP config |
+| Copilot / generic agents | `knowns setup copilot` / `knowns setup agents` | Instruction shims and agent-readable guidance |
+
+See [Platforms](./docs/en/integrations/platforms.md) for the full mapping.
 
 ---
 
@@ -447,15 +474,34 @@ make install      # Install to GOPATH/bin
 
 ### Uninstall
 
+Use the method that matches how you installed Knowns:
+
 ```bash
-# macOS/Linux
+# Homebrew
+brew uninstall knowns
+
+# npm
+npm uninstall -g knowns
+
+# Shell installer (macOS/Linux)
 curl -fsSL https://knowns.sh/script/uninstall | sh
 
-# Windows
+# Go install
+rm -f "$(go env GOPATH)/bin/knowns"
+```
+
+```powershell
+# PowerShell installer (Windows)
 irm https://knowns.sh/script/uninstall.ps1 | iex
 ```
 
-The uninstall scripts only remove installed CLI binaries and PATH entries added by the installer. They leave project `.knowns/` folders untouched.
+If you installed runtime memory adapters, remove them before uninstalling the CLI:
+
+```bash
+knowns runtime uninstall codex
+```
+
+Uninstall removes CLI binaries and PATH entries added by the installer. It leaves project `.knowns/` folders, tasks, docs, memories, and AI integration files untouched. Delete `.knowns/` only if you intentionally want to discard project context.
 
 ---
 
@@ -514,6 +560,7 @@ knowns sync
 
 | Guide | Description |
 |---|---|
+| [Installation](./docs/en/getting-started/installation.md) | Install, verify, run without a global install, and uninstall |
 | [User Guide](./docs/en/guides/user-guide.md) | Getting started and daily usage |
 | [Command Reference](./docs/en/reference/commands.md) | Core CLI commands with examples |
 | [Workflow Guide](./docs/en/guides/workflow.md) | Recommended human + AI workflow |

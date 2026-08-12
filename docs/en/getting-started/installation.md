@@ -74,6 +74,11 @@ If you do not want a global install, you can still run Knowns through npm:
 npx knowns init
 ```
 
+## Uninstall
+
+See [Uninstall](./uninstall.md) for Homebrew, npm, shell installer, PowerShell, Go install, runtime adapter cleanup, and what project files are intentionally left behind.
+
 ## Next step
 
 - [Quick start](./quick-start.md)
+- [Uninstall](./uninstall.md)

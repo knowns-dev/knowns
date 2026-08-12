@@ -6,11 +6,17 @@
 
 <p align="center">
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/go-%3E%3D1.24.2-00ADD8?style=flat-square&logo=go" alt="Go"></a>
-  <a href="https://www.npmjs.com/package/knowns"><img src="https://img.shields.io/npm/v/knowns.svg?style=flat-square" alt="npm"></a>
+  <a href="https://github.com/knowns-dev/knowns/releases"><img src="https://img.shields.io/github/v/release/knowns-dev/knowns?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/knowns-dev/knowns/stargazers"><img src="https://img.shields.io/github/stars/knowns-dev/knowns?style=flat-square" alt="GitHub stars"></a>
   <a href="https://github.com/knowns-dev/knowns/actions/workflows/ci.yml"><img src="https://github.com/knowns-dev/knowns/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="#cài-đặt"><img src="https://img.shields.io/badge/platform-win%20%7C%20mac%20%7C%20linux-lightgrey?style=flat-square" alt="Platform"></a>
-  <a href="https://discord.knowns.dev"><img src="https://img.shields.io/badge/Discord-Community-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://discord.knowns.dev"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Join Discord"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/knowns-dev/knowns?style=flat-square" alt="License"></a>
+</p>
+
+<p align="center">
+  <img src="https://custom-icon-badges.demolab.com/badge/Working%20on-Codex-111111?style=flat-square&logo=openai&logoColor=white" alt="Working on Codex">
+  <img src="https://img.shields.io/badge/Working%20on-Claude-D97757?style=flat-square&logo=claude&logoColor=fff" alt="Working on Claude">
 </p>
 
 <p align="center">
@@ -27,7 +33,7 @@
 
 Mỗi lần mở session mới với AI, bạn lại phải giải thích lại architecture, paste doc, nhắc lại convention, làm rõ decision cũ. AI rất mạnh — nhưng nó không nhớ gì giữa các session.
 
-**Knowns fix đúng chỗ đó.** Cho AI assistants như Claude, Cursor, Copilot truy cập bền vững vào task, doc, spec, acceptance criteria, và architectural decisions của project. Thay vì prompt từ đầu, AI đọc đúng phần nó cần và tiếp tục từ chỗ bạn dừng.
+**Knowns fix đúng chỗ đó.** Cho AI assistants như Claude Code, Codex, Cursor, Copilot, OpenCode và các công cụ khác truy cập bền vững vào task, doc, spec, acceptance criteria, và architectural decisions của project. Thay vì prompt từ đầu, AI đọc đúng phần nó cần và tiếp tục từ chỗ bạn dừng.
 
 Nếu bạn nghĩ AI nên thực sự hiểu software project, cho **Knowns** một star nhé.
 
@@ -50,6 +56,7 @@ Nếu bạn nghĩ AI nên thực sự hiểu software project, cho **Knowns** m�
 - [Quick start](#quick-start)
 - [Khả năng chính](#khả-năng-chính)
 - [Xây được gì với Knowns?](#xây-được-gì-với-knowns)
+- [AI integrations](#ai-integrations)
 - [Agent skills workflow](#agent-skills-workflow)
 - [Cài đặt](#cài-đặt)
 - [Tài liệu](#tài-liệu)
@@ -119,7 +126,7 @@ Tất cả nằm trong `.knowns/` của repo. Plain files. Commit vào Git đư�
 - **Solo developers** pair với AI hằng ngày, muốn AI nhớ project context across sessions
 - **Teams** dùng AI assistants, chán cảnh ai cũng phải giải thích lại architecture
 - **Open-source maintainers** muốn contributors (người hoặc AI) onboard nhanh hơn
-- **Bất kỳ ai** dùng Claude, Cursor, Copilot, Windsurf hay AI coding tools khác và muốn chúng thực sự hiểu project
+- **Bất kỳ ai** dùng Claude Code, Codex, Cursor, Copilot, OpenCode, Windsurf hay AI coding tools khác và muốn chúng thực sự hiểu project
 
 ---
 
@@ -241,7 +248,7 @@ knowns search "how does authentication work" --plain
 
 ### MCP integration
 
-Full [Model Context Protocol](https://modelcontextprotocol.io/) server. Claude, Cursor và các MCP-compatible assistants truy cập trực tiếp task, doc, memory, search, validation — không cần copy-paste.
+Full [Model Context Protocol](https://modelcontextprotocol.io/) server. Claude Code, Codex, Cursor, OpenCode và các MCP-compatible assistants truy cập trực tiếp task, doc, memory, search, validation — không cần copy-paste.
 
 ### Code intelligence
 
@@ -303,6 +310,26 @@ knowns browser --open
 | **AI Workspaces** | Multi-phase agent orchestration với worktree isolation |
 | **Code Intelligence** | LSP-backed: symbols, definitions, references, rename, replace, insert, delete |
 | **Web UI** | Kanban board, doc browser, knowledge graph, mermaid diagrams |
+
+---
+
+## AI integrations
+
+Knowns không thay thế AI assistant bạn đang dùng. Nó cho các assistant đó một shared project context layer: task, doc, spec, memory, decision, search, validation và code intelligence qua MCP và synced skills.
+
+Với personal setup thông thường, dùng `knowns setup <target> --global`. Chỉ dùng project-level setup khi bạn chủ ý muốn config files nằm trong một repository cụ thể.
+
+| Assistant | Setup | Nhận được gì |
+|---|---|---|
+| Claude Code | `knowns setup claude --global` | MCP, `/kn-*` skills, runtime memory hooks |
+| Codex | `knowns setup codex --global` | MCP, `$kn-*` skills, runtime memory hooks |
+| OpenCode | `knowns setup opencode --global` | MCP, `.agents/skills`, plugin/runtime integration |
+| Kiro | `knowns setup kiro --global` | MCP, skills, runtime hooks |
+| Cursor | `knowns setup cursor --global` | MCP access tới Knowns context |
+| Gemini / Antigravity | `knowns setup gemini --global` / `knowns setup antigravity --global` | Global MCP config |
+| Copilot / generic agents | `knowns setup copilot` / `knowns setup agents` | Instruction shims và agent-readable guidance |
+
+Xem [Platforms](./docs/vi/integrations/platforms.md) để biết mapping đầy đủ.
 
 ---
 
@@ -445,15 +472,34 @@ make install      # Cài vào GOPATH/bin
 
 ### Gỡ cài đặt
 
+Dùng cách tương ứng với cách bạn đã cài Knowns:
+
 ```bash
-# macOS/Linux
+# Homebrew
+brew uninstall knowns
+
+# npm
+npm uninstall -g knowns
+
+# Shell installer (macOS/Linux)
 curl -fsSL https://knowns.sh/script/uninstall | sh
 
-# Windows
+# Go install
+rm -f "$(go env GOPATH)/bin/knowns"
+```
+
+```powershell
+# PowerShell installer (Windows)
 irm https://knowns.sh/script/uninstall.ps1 | iex
 ```
 
-Uninstall scripts chỉ xóa CLI binary và PATH entries do installer thêm. Không đụng tới `.knowns/` trong các project.
+Nếu đã cài runtime memory adapter, gỡ adapter trước khi gỡ CLI:
+
+```bash
+knowns runtime uninstall codex
+```
+
+Uninstall chỉ xóa CLI binary và PATH entries do installer thêm. Không đụng tới `.knowns/`, task, doc, memory, hoặc AI integration files trong project. Chỉ xóa `.knowns/` khi bạn thật sự muốn bỏ toàn bộ project context.
 
 ---
 
@@ -512,6 +558,7 @@ knowns sync
 
 | Guide | Mô tả |
 |---|---|
+| [Cài đặt](./docs/vi/getting-started/installation.md) | Cài đặt, kiểm tra, chạy không cần global install, và gỡ cài đặt |
 | [Hướng dẫn sử dụng](./docs/vi/guides/user-guide.md) | Bắt đầu và sử dụng hằng ngày |
 | [Lệnh](./docs/vi/reference/commands.md) | CLI commands chính và ví dụ |
 | [Workflow](./docs/vi/guides/workflow.md) | Cách làm việc đề xuất |

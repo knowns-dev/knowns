@@ -30,10 +30,11 @@ Nội dung tiếng Việt bám theo `docs/en/` nhưng viết lại cho dễ đ�
 6. [Quản lý task](./guides/task-management.md)
 7. [Làm việc với AI](./guides/ai-agent-guide.md)
 8. [AI workflow](./guides/ai-workflow.md)
+9. [Gỡ cài đặt](./getting-started/uninstall.md)
 
 ## Nên đọc trang nào trước?
 
-- Người mới: đọc [Cài đặt](./getting-started/installation.md), rồi [Quick start](./getting-started/quick-start.md).
+- Người mới: đọc [Cài đặt](./getting-started/installation.md), rồi [Quick start](./getting-started/quick-start.md). Nếu cần gỡ CLI sau này, xem [Gỡ cài đặt](./getting-started/uninstall.md).
 - Project owner: đọc [Dự án đầu tiên](./getting-started/first-project.md), rồi [Workflow](./guides/workflow.md).
 - Người dùng AI assistant: đọc [AI workflow](./guides/ai-workflow.md), [MCP](./guides/mcp-integration.md), và [Skills](./integrations/skills.md).
 - Muốn tra cứu CLI: vào thẳng [Lệnh](./reference/commands.md).
@@ -53,6 +54,7 @@ Nội dung tiếng Việt bám theo `docs/en/` nhưng viết lại cho dễ đ�
 - [Cài đặt](./getting-started/installation.md)
 - [Quick start](./getting-started/quick-start.md)
 - [Dự án đầu tiên](./getting-started/first-project.md)
+- [Gỡ cài đặt](./getting-started/uninstall.md)
 
 ### Hướng dẫn
 
