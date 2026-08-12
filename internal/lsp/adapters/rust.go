@@ -6,6 +6,7 @@ import (
 	"os/exec"
 
 	"github.com/howznguyen/knowns/internal/lsp"
+	knownsprocess "github.com/howznguyen/knowns/internal/process"
 )
 
 type RustAnalyzerAdapter struct{ lsp.BaseAdapter }
@@ -31,7 +32,7 @@ func (a *RustAnalyzerAdapter) InstallGuide() lsp.InstallGuide {
 func (a *RustAnalyzerAdapter) CanInstall() bool                     { return true }
 func (a *RustAnalyzerAdapter) RuntimeDeps() []lsp.RuntimeDependency { return nil }
 func (a *RustAnalyzerAdapter) Install(ctx context.Context, targetDir string) (string, error) {
-	cmd := exec.CommandContext(ctx, "rustup", "component", "add", "rust-analyzer")
+	cmd := knownsprocess.CommandContext(ctx, "rustup", "component", "add", "rust-analyzer")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("rustup install failed: %w: %s", err, output)
 	}

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 
 	"github.com/howznguyen/knowns/internal/lsp"
+	knownsprocess "github.com/howznguyen/knowns/internal/process"
 )
 
 type RubyLspAdapter struct{ lsp.BaseAdapter }
@@ -34,7 +35,7 @@ func (a *RubyLspAdapter) InstallGuide() lsp.InstallGuide {
 func (a *RubyLspAdapter) CanInstall() bool                     { return true }
 func (a *RubyLspAdapter) RuntimeDeps() []lsp.RuntimeDependency { return nil }
 func (a *RubyLspAdapter) Install(ctx context.Context, targetDir string) (string, error) {
-	cmd := exec.CommandContext(ctx, "gem", "install", "ruby-lsp")
+	cmd := knownsprocess.CommandContext(ctx, "gem", "install", "ruby-lsp")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("gem install failed: %w: %s", err, output)
 	}

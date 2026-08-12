@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -165,6 +167,165 @@ func TestCollectRuntimeStatusesBinaryCheckUsesTimeout(t *testing.T) {
 	}
 	if statuses[0].InstallState != RuntimeInstallInstalled {
 		t.Fatalf("InstallState = %q, want installed", statuses[0].InstallState)
+	}
+}
+
+func TestManagerRuntimeStatusesCachesInventoryProbes(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	adapter := statusMockAdapter{
+		id:         "go",
+		name:       "Go",
+		extensions: []string{".go"},
+		binaries:   []BinaryCandidate{{Name: "gopls", CheckArgs: []string{"version"}}},
+	}
+	m := NewManager(root, Config{})
+	if err := m.RegisterAdapter(adapter); err != nil {
+		t.Fatal(err)
+	}
+	var checks, commands atomic.Int64
+	m.SetDetector(&Detector{
+		Registry: m.registry,
+		LookPath: func(name string) (string, error) {
+			if name == "gopls" {
+				return "/opt/knowns/bin/gopls", nil
+			}
+			return "", errors.New("missing")
+		},
+		RunCheck: func(context.Context, string, ...string) error {
+			checks.Add(1)
+			return nil
+		},
+		RunCommand: func(context.Context, string, ...string) ([]byte, error) {
+			commands.Add(1)
+			return []byte("gopls v1.2.3\n"), nil
+		},
+		Installer: NewInstaller(t.TempDir()),
+	})
+
+	first := m.RuntimeStatuses(context.Background())
+	second := m.RuntimeStatuses(context.Background())
+	if len(first) != 1 || len(second) != 1 {
+		t.Fatalf("statuses = %#v / %#v, want one status each", first, second)
+	}
+	if got := checks.Load(); got != 1 {
+		t.Fatalf("RunCheck calls = %d, want 1 cached probe", got)
+	}
+	if got := commands.Load(); got != 1 {
+		t.Fatalf("RunCommand calls = %d, want 1 cached version probe", got)
+	}
+}
+
+func TestManagerRuntimeStatusesCoalescesConcurrentInventoryProbes(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	adapter := statusMockAdapter{
+		id:         "go",
+		name:       "Go",
+		extensions: []string{".go"},
+		binaries:   []BinaryCandidate{{Name: "gopls", CheckArgs: []string{"version"}}},
+	}
+	m := NewManager(root, Config{})
+	if err := m.RegisterAdapter(adapter); err != nil {
+		t.Fatal(err)
+	}
+	var checks, commands atomic.Int64
+	m.SetDetector(&Detector{
+		Registry: m.registry,
+		LookPath: func(name string) (string, error) {
+			if name == "gopls" {
+				return "/opt/knowns/bin/gopls", nil
+			}
+			return "", errors.New("missing")
+		},
+		RunCheck: func(context.Context, string, ...string) error {
+			checks.Add(1)
+			time.Sleep(50 * time.Millisecond)
+			return nil
+		},
+		RunCommand: func(context.Context, string, ...string) ([]byte, error) {
+			commands.Add(1)
+			return []byte("gopls v1.2.3\n"), nil
+		},
+		Installer: NewInstaller(t.TempDir()),
+	})
+
+	var wg sync.WaitGroup
+	errCh := make(chan string, 10)
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			statuses := m.RuntimeStatuses(context.Background())
+			if len(statuses) != 1 || statuses[0].InstallState != RuntimeInstallInstalled {
+				errCh <- "unexpected status"
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for errMsg := range errCh {
+		t.Fatal(errMsg)
+	}
+	if got := checks.Load(); got != 1 {
+		t.Fatalf("RunCheck calls = %d, want 1 coalesced probe", got)
+	}
+	if got := commands.Load(); got != 1 {
+		t.Fatalf("RunCommand calls = %d, want 1 coalesced version probe", got)
+	}
+}
+
+func TestManagerRuntimeStatusesInvalidatesInventoryCacheOnConfigChange(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "config.pathfirst"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	adapter := statusMockAdapter{
+		id:         "pathfirst",
+		name:       "PATH first",
+		extensions: []string{".pathfirst"},
+		binaries:   []BinaryCandidate{{Name: "pathfirst-ls", CheckArgs: []string{"--version"}}},
+	}
+	m := NewManager(root, Config{})
+	if err := m.RegisterAdapter(adapter); err != nil {
+		t.Fatal(err)
+	}
+	var checks atomic.Int64
+	m.SetDetector(&Detector{
+		Registry: m.registry,
+		LookPath: func(name string) (string, error) {
+			switch name {
+			case "pathfirst-ls":
+				return "/usr/bin/pathfirst-ls", nil
+			case "/opt/custom/pathfirst-ls":
+				return "/opt/custom/pathfirst-ls", nil
+			default:
+				return "", os.ErrNotExist
+			}
+		},
+		RunCheck: func(context.Context, string, ...string) error {
+			checks.Add(1)
+			return nil
+		},
+		Installer: NewInstaller(t.TempDir()),
+	})
+
+	_ = m.RuntimeStatuses(context.Background())
+	_ = m.RuntimeStatuses(context.Background())
+	if got := checks.Load(); got != 1 {
+		t.Fatalf("RunCheck calls before invalidation = %d, want 1", got)
+	}
+	m.SetConfig(Config{Languages: map[string]LanguageConfig{"pathfirst": {Binary: "/opt/custom/pathfirst-ls"}}})
+	statuses := m.RuntimeStatuses(context.Background())
+	if got := checks.Load(); got != 2 {
+		t.Fatalf("RunCheck calls after config invalidation = %d, want 2", got)
+	}
+	if len(statuses) != 1 || statuses[0].BinaryPath != "/opt/custom/pathfirst-ls" || statuses[0].Source != RuntimeSourceConfig {
+		t.Fatalf("status after config invalidation = %#v, want custom config binary", statuses)
 	}
 }
 

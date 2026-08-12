@@ -8,10 +8,11 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	knownsprocess "github.com/howznguyen/knowns/internal/process"
 )
 
 // PluginAdapterManifest is the JSON schema for user-contributed LSP adapters.
@@ -178,7 +179,7 @@ func (a *PluginAdapter) CheckPrerequisites(ctx context.Context) error {
 		if len(fields) == 0 {
 			continue
 		}
-		cmd := exec.CommandContext(ctx, fields[0], fields[1:]...)
+		cmd := knownsprocess.CommandContext(ctx, fields[0], fields[1:]...)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			name := prereq.Name
