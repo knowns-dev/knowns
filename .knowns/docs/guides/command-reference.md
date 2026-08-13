@@ -2,7 +2,7 @@
 title: Command Reference
 description: Quick reference for all Knowns CLI commands
 createdAt: '2026-02-24T08:44:32.957Z'
-updatedAt: '2026-07-26T06:59:06.445Z'
+updatedAt: '2026-08-13T08:09:07.340Z'
 tags:
   - guide
   - cli
@@ -133,3 +133,24 @@ knowns import sync                       # Sync imports
 knowns agents sync                       # Sync AI guidelines
 knowns browser                           # Open Web UI
 ```
+
+
+### Status and Runtime Command Selection
+
+Use the narrowest status surface for the question you are answering:
+
+| Intent | Command |
+|--------|---------|
+| Project readiness summary | `knowns status` |
+| Diagnostic findings and remediation | `knowns doctor` |
+| Live shared runtime processes, clients, queue, and recent job activity | `knowns runtime ps` |
+| Compact runtime summary with more client/failure rows | `knowns runtime ps --clients 10 --failures 5` |
+| Detailed runtime job history | `knowns runtime ps --jobs --tail 20` |
+| Failed runtime jobs only | `knowns runtime ps --failed` |
+| Runtime hook/plugin/native integration install state | `knowns runtime status` |
+| Semantic search provider/model/index details | `knowns search --status-check` |
+| LSP language server inventory | `knowns lsp list` |
+| Knowledge/Agent daemon lifecycle | `knowns daemon status` |
+| Raw runtime or MCP logs | `knowns runtime logs` |
+
+`knowns runtime ps` is intentionally compact by default. Use `--clients` and `--failures` to tune compact summary limits. Use `--jobs`, `--tail`, `--failed`, or `--all` when you need event/job history rather than the live process summary.

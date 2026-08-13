@@ -1242,3 +1242,102 @@ func assertNotContains(t *testing.T, content, want string) {
 		t.Fatalf("expected content not to contain %q, got:\n%s", want, content)
 	}
 }
+
+func TestBuildSemanticSettingsDeclaresQdrantVectorStoreDefaults(t *testing.T) {
+	// Local builtin model.
+	ss := buildSemanticSettings(initConfig{EnableSemantic: true, SemanticModel: "gte-small", EmbeddingSource: "local"})
+	if ss == nil {
+		t.Fatal("semantic settings = nil for semantic-enabled init")
+	}
+	if !ss.Enabled || ss.Provider != "local" || ss.Model != "gte-small" {
+		t.Fatalf("semantic settings = %#v", ss)
+	}
+	assertVectorStoreDefaults(t, ss.VectorStore)
+
+	// API provider.
+	ss = buildSemanticSettings(initConfig{EnableSemantic: true, SemanticModel: "openai-embedding", EmbeddingSource: "api"})
+	if ss == nil || ss.Provider != "api" || ss.Model != "openai-embedding" {
+		t.Fatalf("api semantic settings = %#v", ss)
+	}
+	assertVectorStoreDefaults(t, ss.VectorStore)
+
+	// Ollama provider.
+	ss = buildSemanticSettings(initConfig{EnableSemantic: true, SemanticModel: "qwen3-embedding:0.6b", EmbeddingSource: "ollama"})
+	if ss == nil || ss.Provider != "ollama" {
+		t.Fatalf("ollama semantic settings = %#v", ss)
+	}
+	assertVectorStoreDefaults(t, ss.VectorStore)
+
+	// Semantic disabled -> nil.
+	if ss := buildSemanticSettings(initConfig{EnableSemantic: false, SemanticModel: "gte-small"}); ss != nil {
+		t.Fatalf("semantic settings = %#v, want nil when disabled", ss)
+	}
+	// No model -> nil.
+	if ss := buildSemanticSettings(initConfig{EnableSemantic: true, SemanticModel: ""}); ss != nil {
+		t.Fatalf("semantic settings = %#v, want nil without model", ss)
+	}
+}
+
+func TestInitConfigWritesQdrantVectorStoreMetadataOnly(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".knowns")
+	store := storage.NewStore(root)
+	if err := store.Init("vector-defaults"); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	project, err := store.Config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	project.Settings.SemanticSearch = buildSemanticSettings(initConfig{
+		EnableSemantic:  true,
+		SemanticModel:   "gte-small",
+		EmbeddingSource: "local",
+	})
+	if err := store.Config.Save(project); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	reloaded, err := store.Config.Load()
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Settings.SemanticSearch == nil || reloaded.Settings.SemanticSearch.VectorStore == nil {
+		t.Fatalf("persisted config missing vectorStore: %#v", reloaded.Settings.SemanticSearch)
+	}
+	assertVectorStoreDefaults(t, reloaded.Settings.SemanticSearch.VectorStore)
+
+	// No vector/embedding data may be written under project .knowns.
+	searchDir := filepath.Join(root, ".search")
+	entries, err := os.ReadDir(searchDir)
+	if err != nil {
+		t.Fatalf("read .search dir: %v", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if name == "index.db" || name == "embeddings.bin" || name == "index.json" || strings.Contains(name, "qdrant-data") {
+			t.Fatalf("vector data %q found under project .knowns after init", name)
+		}
+	}
+}
+
+func assertVectorStoreDefaults(t *testing.T, vs *models.SemanticVectorStoreSettings) {
+	t.Helper()
+	if vs == nil {
+		t.Fatal("vectorStore = nil, want declared defaults")
+	}
+	if vs.Backend != models.SemanticVectorBackendQdrant {
+		t.Fatalf("vectorStore.backend = %q, want qdrant", vs.Backend)
+	}
+	if vs.Mode != models.SemanticVectorStoreModeManaged {
+		t.Fatalf("vectorStore.mode = %q, want managed", vs.Mode)
+	}
+	if vs.Install != models.SemanticVectorStoreInstallLazy {
+		t.Fatalf("vectorStore.install = %q, want lazy (no install/start at init)", vs.Install)
+	}
+	if vs.ManagedRoot != models.DefaultSemanticManagedRoot {
+		t.Fatalf("vectorStore.managedRoot = %q, want %q", vs.ManagedRoot, models.DefaultSemanticManagedRoot)
+	}
+	if vs.Retention == nil || vs.Retention.PreviousGenerations != models.DefaultSemanticVectorRetentionGenerations || vs.Retention.PreviousGenerationTTL != models.DefaultSemanticVectorRetentionTTL {
+		t.Fatalf("vectorStore.retention = %#v, want defaults", vs.Retention)
+	}
+}

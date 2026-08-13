@@ -1,6 +1,7 @@
 package models
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 	"time"
@@ -91,5 +92,265 @@ func TestParseTaskLifecycleDuration(t *testing.T) {
 				t.Fatalf("ParseTaskLifecycleDuration(%q) succeeded, want error", value)
 			}
 		})
+	}
+}
+
+// envMapLookup returns an envLookupFunc backed by a map so vector store
+// resolution tests are deterministic regardless of the host environment.
+func envMapLookup(m map[string]string) envLookupFunc {
+	return func(key string) string { return m[key] }
+}
+
+func TestDefaultSemanticVectorStoreSettings(t *testing.T) {
+	settings := DefaultSemanticVectorStoreSettings()
+	if settings.Backend != SemanticVectorBackendQdrant {
+		t.Fatalf("backend = %q, want %q", settings.Backend, SemanticVectorBackendQdrant)
+	}
+	if settings.Mode != SemanticVectorStoreModeManaged {
+		t.Fatalf("mode = %q, want %q", settings.Mode, SemanticVectorStoreModeManaged)
+	}
+	if settings.Install != SemanticVectorStoreInstallLazy {
+		t.Fatalf("install = %q, want %q", settings.Install, SemanticVectorStoreInstallLazy)
+	}
+	if settings.ManagedRoot != DefaultSemanticManagedRoot {
+		t.Fatalf("managedRoot = %q, want %q", settings.ManagedRoot, DefaultSemanticManagedRoot)
+	}
+	if settings.Retention == nil {
+		t.Fatal("retention = nil, want defaults")
+	}
+	if settings.Retention.PreviousGenerations != DefaultSemanticVectorRetentionGenerations {
+		t.Fatalf("retention.previousGenerations = %d, want %d", settings.Retention.PreviousGenerations, DefaultSemanticVectorRetentionGenerations)
+	}
+	if settings.Retention.PreviousGenerationTTL != DefaultSemanticVectorRetentionTTL {
+		t.Fatalf("retention.previousGenerationTTL = %q, want %q", settings.Retention.PreviousGenerationTTL, DefaultSemanticVectorRetentionTTL)
+	}
+	if ptr := DefaultSemanticVectorStoreSettingsPtr(); ptr == nil || ptr.Backend != settings.Backend || ptr.Mode != settings.Mode || ptr.Install != settings.Install || ptr.ManagedRoot != settings.ManagedRoot || ptr.Retention == nil || *ptr.Retention != *settings.Retention {
+		t.Fatalf("DefaultSemanticVectorStoreSettingsPtr = %#v, want defaults", ptr)
+	}
+}
+
+func TestSemanticVectorStoreJSONRoundTrip(t *testing.T) {
+	project := Project{
+		Name: "p",
+		Settings: ProjectSettings{
+			SemanticSearch: &SemanticSearchSettings{
+				Enabled:  true,
+				Model:    "gte-small",
+				Provider: "local",
+				VectorStore: &SemanticVectorStoreSettings{
+					Backend:     SemanticVectorBackendQdrant,
+					Mode:        SemanticVectorStoreModeManaged,
+					ManagedRoot: "~/.knowns/runtime/qdrant",
+					Install:     SemanticVectorStoreInstallLazy,
+					Retention: &SemanticVectorStoreRetentionSettings{
+						PreviousGenerations:   2,
+						PreviousGenerationTTL: "24h",
+					},
+				},
+			},
+		},
+	}
+	data, err := json.Marshal(project)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"vectorStore"`)) {
+		t.Fatalf("marshal output missing vectorStore block: %s", data)
+	}
+	var loaded Project
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	vs := loaded.Settings.SemanticSearch.VectorStore
+	if vs == nil {
+		t.Fatal("vectorStore = nil after round trip")
+	}
+	if vs.Backend != SemanticVectorBackendQdrant || vs.Mode != SemanticVectorStoreModeManaged ||
+		vs.Install != SemanticVectorStoreInstallLazy || vs.Retention == nil ||
+		vs.Retention.PreviousGenerations != 2 || vs.Retention.PreviousGenerationTTL != "24h" {
+		t.Fatalf("vectorStore after round trip = %#v", vs)
+	}
+	if err := loaded.Settings.Validate(); err != nil {
+		t.Fatalf("Validate after round trip: %v", err)
+	}
+}
+
+func TestSemanticVectorStoreValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		vs      SemanticVectorStoreSettings
+		wantErr bool
+	}{
+		{name: "defaults-ok", vs: DefaultSemanticVectorStoreSettings()},
+		{name: "partial-ok", vs: SemanticVectorStoreSettings{}},
+		{name: "external-with-url-ok", vs: SemanticVectorStoreSettings{Mode: SemanticVectorStoreModeExternal, ExternalURL: "http://127.0.0.1:6333"}},
+		{name: "external-without-url", vs: SemanticVectorStoreSettings{Mode: SemanticVectorStoreModeExternal}, wantErr: true},
+		{name: "bad-backend", vs: SemanticVectorStoreSettings{Backend: "pinecone"}, wantErr: true},
+		{name: "bad-mode", vs: SemanticVectorStoreSettings{Mode: "remote"}, wantErr: true},
+		{name: "bad-install", vs: SemanticVectorStoreSettings{Install: "always"}, wantErr: true},
+		{name: "negative-retention", vs: SemanticVectorStoreSettings{Retention: &SemanticVectorStoreRetentionSettings{PreviousGenerations: -1}}, wantErr: true},
+		{name: "bad-ttl", vs: SemanticVectorStoreSettings{Retention: &SemanticVectorStoreRetentionSettings{PreviousGenerationTTL: "tomorrow"}}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := (&SemanticSearchSettings{VectorStore: &tt.vs}).ValidateVectorStore()
+			if tt.wantErr && err == nil {
+				t.Fatalf("ValidateVectorStore(%#v) succeeded, want error", tt.vs)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("ValidateVectorStore(%#v) = %v, want nil", tt.vs, err)
+			}
+		})
+	}
+}
+
+func TestResolveSemanticVectorStoreDefaults(t *testing.T) {
+	res := ResolveSemanticVectorStore(nil, nil, envMapLookup(nil))
+	if res.Enabled {
+		t.Fatal("Enabled = true for unconfigured store, want false (keyword-only)")
+	}
+	if res.OptedOut {
+		t.Fatal("OptedOut = true for unconfigured store, want false (not explicitly opted out)")
+	}
+	if res.Backend != SemanticVectorBackendQdrant {
+		t.Fatalf("backend = %q, want qdrant default", res.Backend)
+	}
+	if res.Mode != SemanticVectorStoreModeManaged {
+		t.Fatalf("mode = %q, want managed default", res.Mode)
+	}
+	if res.Install != SemanticVectorStoreInstallLazy {
+		t.Fatalf("install = %q, want lazy default", res.Install)
+	}
+	if res.ManagedRoot != DefaultSemanticManagedRoot {
+		t.Fatalf("managedRoot = %q, want default", res.ManagedRoot)
+	}
+	if res.Retention.PreviousGenerations != DefaultSemanticVectorRetentionGenerations || res.Retention.PreviousGenerationTTL != DefaultSemanticVectorRetentionTTL {
+		t.Fatalf("retention = %#v, want defaults", res.Retention)
+	}
+}
+
+func TestResolveSemanticVectorStorePrecedence(t *testing.T) {
+	global := &SemanticSearchSettings{Enabled: true, VectorStore: &SemanticVectorStoreSettings{Backend: SemanticVectorBackendSQLite}}
+	project := &SemanticSearchSettings{Enabled: true, VectorStore: &SemanticVectorStoreSettings{Backend: SemanticVectorBackendQdrant, Mode: SemanticVectorStoreModeExternal, ExternalURL: "http://localhost:6333"}}
+
+	// Project overrides global.
+	res := ResolveSemanticVectorStore(project, global, envMapLookup(nil))
+	if res.Backend != SemanticVectorBackendQdrant || res.Mode != SemanticVectorStoreModeExternal || res.ExternalURL != "http://localhost:6333" {
+		t.Fatalf("project precedence resolution = %#v", res)
+	}
+	if !res.Enabled || res.OptedOut {
+		t.Fatalf("enabled=%v optedOut=%v, want enabled and not opted out", res.Enabled, res.OptedOut)
+	}
+
+	// Global used when project has no vector store block.
+	projectNoVS := &SemanticSearchSettings{Enabled: true}
+	res = ResolveSemanticVectorStore(projectNoVS, global, envMapLookup(nil))
+	if res.Backend != SemanticVectorBackendSQLite {
+		t.Fatalf("global fallback backend = %q, want sqlite", res.Backend)
+	}
+
+	// Env overrides project.
+	res = ResolveSemanticVectorStore(project, nil, envMapLookup(map[string]string{
+		EnvSemanticVectorBackend: "sqlite",
+	}))
+	if res.Backend != SemanticVectorBackendSQLite {
+		t.Fatalf("env backend override = %q, want sqlite", res.Backend)
+	}
+	if res.Mode != SemanticVectorStoreModeExternal || res.ExternalURL != "http://localhost:6333" {
+		t.Fatalf("env override should preserve project mode/URL, got %#v", res)
+	}
+}
+
+func TestResolveSemanticVectorStoreOptOut(t *testing.T) {
+	tests := []struct {
+		name        string
+		project     *SemanticSearchSettings
+		global      *SemanticSearchSettings
+		env         map[string]string
+		wantEnabled bool
+		wantOptOut  bool
+	}{
+		{
+			name:        "project-disabled",
+			project:     &SemanticSearchSettings{Enabled: false},
+			wantEnabled: false,
+			wantOptOut:  true,
+		},
+		{
+			name:        "global-disabled-fallback",
+			global:      &SemanticSearchSettings{Enabled: false},
+			wantEnabled: false,
+			wantOptOut:  true,
+		},
+		{
+			name:        "global-disabled-overridden-by-project",
+			project:     &SemanticSearchSettings{Enabled: true},
+			global:      &SemanticSearchSettings{Enabled: false},
+			wantEnabled: true,
+			wantOptOut:  false,
+		},
+		{
+			name:        "backend-none",
+			project:     &SemanticSearchSettings{Enabled: true, VectorStore: &SemanticVectorStoreSettings{Backend: SemanticVectorBackendNone}},
+			wantEnabled: false,
+			wantOptOut:  true,
+		},
+		{
+			name:        "env-disabled",
+			project:     &SemanticSearchSettings{Enabled: true},
+			env:         map[string]string{EnvSemanticVectorEnabled: "false"},
+			wantEnabled: false,
+			wantOptOut:  true,
+		},
+		{
+			name:        "env-enabled-overrides-project-opt-out",
+			project:     &SemanticSearchSettings{Enabled: false},
+			env:         map[string]string{EnvSemanticVectorEnabled: "1"},
+			wantEnabled: true,
+			wantOptOut:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := ResolveSemanticVectorStore(tt.project, tt.global, envMapLookup(tt.env))
+			if res.Enabled != tt.wantEnabled {
+				t.Fatalf("Enabled = %v, want %v (res=%#v)", res.Enabled, tt.wantEnabled, res)
+			}
+			if res.OptedOut != tt.wantOptOut {
+				t.Fatalf("OptedOut = %v, want %v (res=%#v)", res.OptedOut, tt.wantOptOut, res)
+			}
+		})
+	}
+}
+
+func TestResolveSemanticVectorStoreExternalMode(t *testing.T) {
+	// Project-level external mode with URL.
+	res := ResolveSemanticVectorStore(
+		&SemanticSearchSettings{Enabled: true, VectorStore: &SemanticVectorStoreSettings{Mode: SemanticVectorStoreModeExternal, ExternalURL: "http://qdrant.internal:6333"}},
+		nil, envMapLookup(nil),
+	)
+	if res.Mode != SemanticVectorStoreModeExternal || res.ExternalURL != "http://qdrant.internal:6333" {
+		t.Fatalf("project external resolution = %#v", res)
+	}
+
+	// Env URL implies external mode (env > project managed default).
+	res = ResolveSemanticVectorStore(
+		&SemanticSearchSettings{Enabled: true, VectorStore: &SemanticVectorStoreSettings{Mode: SemanticVectorStoreModeManaged}},
+		nil, envMapLookup(map[string]string{EnvQdrantURL: "http://127.0.0.1:6333"}),
+	)
+	if res.Mode != SemanticVectorStoreModeExternal || res.ExternalURL != "http://127.0.0.1:6333" {
+		t.Fatalf("env URL resolution = %#v", res)
+	}
+
+	// Semantic-scoped URL alias.
+	res = ResolveSemanticVectorStore(nil, nil, envMapLookup(map[string]string{EnvSemanticQdrantURL: "http://127.0.0.1:6334"}))
+	if res.Mode != SemanticVectorStoreModeExternal || res.ExternalURL != "http://127.0.0.1:6334" {
+		t.Fatalf("alias env URL resolution = %#v", res)
+	}
+
+	// Env mode external without URL.
+	res = ResolveSemanticVectorStore(nil, nil, envMapLookup(map[string]string{EnvSemanticVectorMode: SemanticVectorStoreModeExternal}))
+	if res.Mode != SemanticVectorStoreModeExternal || res.ExternalURL != "" {
+		t.Fatalf("env mode external resolution = %#v", res)
 	}
 }
