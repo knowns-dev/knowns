@@ -680,10 +680,16 @@ func TestServerForPathResolvesOnlyRequestedLanguage(t *testing.T) {
 		"go":             {Binary: goBinary},
 		CSharpLanguageID: {Binary: "csharp-ls"},
 	}})
-	if err := m.RegisterAdapter(&mgrMockAdapter{id: "go", name: "Go", extensions: []string{".go"}}); err != nil {
+	if err := m.RegisterAdapter(&mgrMockAdapter{
+		id: "go", name: "Go", extensions: []string{".go"},
+		binaries: []BinaryCandidate{{Name: goBinary}},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.RegisterAdapter(&mgrMockAdapter{id: CSharpLanguageID, name: "C#", extensions: []string{".cs"}}); err != nil {
+	if err := m.RegisterAdapter(&mgrMockAdapter{
+		id: CSharpLanguageID, name: "C#", extensions: []string{".cs"},
+		binaries: []BinaryCandidate{{Name: "csharp-ls"}},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	var lookedUp []string
@@ -723,7 +729,10 @@ func TestServerForPathCSharpDirectAccessStartsAndReusesCustomBackend(t *testing.
 	m := NewManager(root, Config{Languages: map[string]LanguageConfig{
 		CSharpLanguageID: {Binary: binaryName},
 	}})
-	if err := m.RegisterAdapter(&mgrMockAdapter{id: CSharpLanguageID, name: "C#", extensions: []string{".cs"}}); err != nil {
+	if err := m.RegisterAdapter(&mgrMockAdapter{
+		id: CSharpLanguageID, name: "C#", extensions: []string{".cs"},
+		binaries: []BinaryCandidate{{Name: binaryName}},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	var lookups int

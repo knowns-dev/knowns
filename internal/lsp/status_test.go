@@ -301,8 +301,6 @@ func TestManagerRuntimeStatusesInvalidatesInventoryCacheOnConfigChange(t *testin
 			switch name {
 			case "pathfirst-ls":
 				return "/usr/bin/pathfirst-ls", nil
-			case "/opt/custom/pathfirst-ls":
-				return "/opt/custom/pathfirst-ls", nil
 			default:
 				return "", os.ErrNotExist
 			}
@@ -319,12 +317,12 @@ func TestManagerRuntimeStatusesInvalidatesInventoryCacheOnConfigChange(t *testin
 	if got := checks.Load(); got != 1 {
 		t.Fatalf("RunCheck calls before invalidation = %d, want 1", got)
 	}
-	m.SetConfig(Config{Languages: map[string]LanguageConfig{"pathfirst": {Binary: "/opt/custom/pathfirst-ls"}}})
+	m.SetConfig(Config{Languages: map[string]LanguageConfig{"pathfirst": {Binary: "pathfirst-ls"}}})
 	statuses := m.RuntimeStatuses(context.Background())
 	if got := checks.Load(); got != 2 {
 		t.Fatalf("RunCheck calls after config invalidation = %d, want 2", got)
 	}
-	if len(statuses) != 1 || statuses[0].BinaryPath != "/opt/custom/pathfirst-ls" || statuses[0].Source != RuntimeSourceConfig {
+	if len(statuses) != 1 || statuses[0].BinaryPath != "/usr/bin/pathfirst-ls" || statuses[0].Source != RuntimeSourceConfig {
 		t.Fatalf("status after config invalidation = %#v, want custom config binary", statuses)
 	}
 }
@@ -484,15 +482,19 @@ func TestCollectRuntimeStatusesPrefersPATHAndReportsActualVersion(t *testing.T) 
 func TestCollectRuntimeStatusesConfigOverridePrecedesPATH(t *testing.T) {
 	adapter := statusMockAdapter{
 		id: "override", name: "Override", extensions: []string{".override"},
-		binaries: []BinaryCandidate{{Name: "path-ls", CheckArgs: []string{"--version"}}},
+		binaries: []BinaryCandidate{
+			{Name: "path-ls", CheckArgs: []string{"--version"}},
+			{Name: "override-ls", CheckArgs: []string{"--version"}},
+		},
 	}
-	override := "/opt/custom/override-ls"
+	override := "override-ls"
+	overridePath := "/opt/custom/override-ls"
 	detector := &Detector{
 		Registry: NewRegistry([]Language{{ID: adapter.ID(), Name: adapter.Name(), Extensions: adapter.Extensions()}}),
 		LookPath: func(name string) (string, error) {
 			switch name {
 			case override:
-				return override, nil
+				return overridePath, nil
 			case "path-ls":
 				return "/usr/bin/path-ls", nil
 			default:
@@ -509,8 +511,37 @@ func TestCollectRuntimeStatusesConfigOverridePrecedesPATH(t *testing.T) {
 		Adapters: []LanguageAdapter{adapter}, Detector: detector,
 	})
 	status := statuses[0]
-	if status.Source != RuntimeSourceConfig || status.BinaryPath != override || status.Version != "override-ls 9.8.7" {
+	if status.Source != RuntimeSourceConfig || status.BinaryPath != overridePath || status.Version != "override-ls 9.8.7" {
 		t.Fatalf("config override did not precede PATH: %#v", status)
+	}
+}
+
+func TestCollectRuntimeStatusesRejectsUnregisteredOverrideWithoutExecution(t *testing.T) {
+	adapter := statusMockAdapter{
+		id: "go", name: "Go", extensions: []string{".go"},
+		binaries: []BinaryCandidate{{Name: "gopls", CheckArgs: []string{"version"}}},
+	}
+	detector := &Detector{
+		Registry: NewRegistry(nil),
+		LookPath: func(name string) (string, error) {
+			t.Fatalf("unsafe override reached LookPath: %q", name)
+			return "", nil
+		},
+		RunCheck: func(context.Context, string, ...string) error {
+			t.Fatal("unsafe override reached version check")
+			return nil
+		},
+		RunCommand: func(context.Context, string, ...string) ([]byte, error) {
+			t.Fatal("unsafe override reached version command")
+			return nil, nil
+		},
+	}
+	statuses := CollectRuntimeStatuses(context.Background(), RuntimeStatusOptions{
+		Config:   Config{Languages: map[string]LanguageConfig{"go": {Binary: "/bin/sh"}}},
+		Adapters: []LanguageAdapter{adapter}, Detector: detector,
+	})
+	if len(statuses) != 1 || statuses[0].InstallState == RuntimeInstallInstalled {
+		t.Fatalf("unsafe override was considered installed: %#v", statuses)
 	}
 }
 

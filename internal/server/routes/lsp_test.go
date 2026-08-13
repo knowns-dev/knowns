@@ -58,13 +58,16 @@ func TestLSPRoutesPatchConfigPersistsAndRefreshesManager(t *testing.T) {
 	store := setupLSPRouteStore(t)
 	root := filepath.Dir(store.Root)
 	manager := lsp.NewManager(root, lsp.Config{})
-	if err := manager.RegisterAdapter(routeLSPAdapter{id: lsp.CSharpLanguageID, name: "C#", exts: []string{".cs"}}); err != nil {
+	if err := manager.RegisterAdapter(routeLSPAdapter{
+		id: lsp.CSharpLanguageID, name: "C#", exts: []string{".cs"},
+		binaries: []lsp.BinaryCandidate{{Name: "csharp-ls"}},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	router := chi.NewRouter()
 	(&LSPRoutes{store: store, lspMgr: manager}).Register(router)
 
-	body := bytes.NewBufferString(`{"backend":"omnisharp","projectPath":"src/App.sln","version":"1.2.3","binary":"/tmp/csharp-ls","settings":{"dotnetBootstrapCommand":"echo ok"}}`)
+	body := bytes.NewBufferString(`{"backend":"omnisharp","projectPath":"src/App.sln","version":"1.2.3","binary":"csharp-ls","settings":{"dotnetBootstrapCommand":"echo ok"}}`)
 	req := httptest.NewRequest("PATCH", "/languages/csharp/config", body)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -77,7 +80,7 @@ func TestLSPRoutesPatchConfigPersistsAndRefreshesManager(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings := project.Settings.LSP.Languages[lsp.CSharpLanguageID]
-	if settings.Backend != lsp.CSharpBackendOmni || settings.ProjectPath != "src/App.sln" || settings.Version != "1.2.3" || settings.Binary != "/tmp/csharp-ls" {
+	if settings.Backend != lsp.CSharpBackendOmni || settings.ProjectPath != "src/App.sln" || settings.Version != "1.2.3" || settings.Binary != "csharp-ls" {
 		t.Fatalf("persisted settings = %+v", settings)
 	}
 	if settings.Settings["dotnetBootstrapCommand"] != "echo ok" {
@@ -86,6 +89,45 @@ func TestLSPRoutesPatchConfigPersistsAndRefreshesManager(t *testing.T) {
 	cfg := manager.Config()
 	if cfg.BackendOverride(lsp.CSharpLanguageID) != lsp.CSharpBackendOmni || cfg.ProjectPathOverride(lsp.CSharpLanguageID) != "src/App.sln" {
 		t.Fatalf("manager config was not refreshed: %#v", cfg)
+	}
+}
+
+func TestLSPRoutesPatchConfigRejectsUnregisteredBinary(t *testing.T) {
+	t.Setenv("KNOWNS_LSP_DAEMON", "0")
+	store := setupLSPRouteStore(t)
+	root := filepath.Dir(store.Root)
+	manager := lsp.NewManager(root, lsp.Config{})
+	if err := manager.RegisterAdapter(routeLSPAdapter{
+		id: "go", name: "Go", exts: []string{".go"},
+		binaries: []lsp.BinaryCandidate{{Name: "gopls", CheckArgs: []string{"version"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	router := chi.NewRouter()
+	(&LSPRoutes{store: store, lspMgr: manager}).Register(router)
+
+	for _, binary := range []string{"/bin/sh", "sh", "../gopls", " gopls "} {
+		body, err := json.Marshal(map[string]any{"binary": binary, "apply": true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPatch, "/languages/go/config", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("PATCH binary %q status = %d, want 400: %s", binary, w.Code, w.Body.String())
+		}
+	}
+
+	project, err := store.Config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Settings.LSP != nil && project.Settings.LSP.Languages["go"].Binary != "" {
+		t.Fatalf("unsafe binary was persisted: %#v", project.Settings.LSP.Languages["go"])
+	}
+	if got := manager.Config().BinaryOverride("go"); got != "" {
+		t.Fatalf("unsafe binary reached manager config: %q", got)
 	}
 }
 

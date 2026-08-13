@@ -47,6 +47,31 @@ func TestDetectSilentlySkipsMissingBinaries(t *testing.T) {
 	}
 }
 
+func TestDetectRejectsUnregisteredBinaryOverrideBeforeLookup(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := NewDetector(NewRegistry(nil))
+	d.LookPath = func(name string) (string, error) {
+		t.Fatalf("unsafe override reached LookPath: %q", name)
+		return "", nil
+	}
+	d.RunCheck = func(context.Context, string, ...string) error {
+		t.Fatal("unsafe override reached version check")
+		return nil
+	}
+	commands, err := d.Detect(context.Background(), root, Config{Languages: map[string]LanguageConfig{
+		"go": {Binary: "/bin/sh"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 0 {
+		t.Fatalf("commands = %#v, want unsafe override rejected", commands)
+	}
+}
+
 func TestDetectUsesPATHExistenceWhenBinaryHasNoCheckArgs(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(`{"enabled":true}`), 0o644); err != nil {

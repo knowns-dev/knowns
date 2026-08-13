@@ -60,6 +60,16 @@ func (ir *ImportRoutes) importsDir() string {
 	return filepath.Join(ir.getStore().Root, "imports")
 }
 
+func validateImportName(name string) error {
+	if name == "" || name == "." || name == ".." ||
+		filepath.IsAbs(name) || filepath.VolumeName(name) != "" ||
+		strings.ContainsAny(name, `/\`) || strings.ContainsRune(name, '\x00') ||
+		filepath.Base(name) != name {
+		return fmt.Errorf("invalid import name %q: must be a single path segment", name)
+	}
+	return nil
+}
+
 // collectFiles recursively collects relative file paths under dir.
 func collectFiles(dir string) []string {
 	var files []string
@@ -148,6 +158,10 @@ func (ir *ImportRoutes) list(w http.ResponseWriter, r *http.Request) {
 // GET /api/imports/{name}
 func (ir *ImportRoutes) get(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	if err := validateImportName(name); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	importDir := filepath.Join(ir.importsDir(), name)
 
 	if _, err := os.Stat(importDir); os.IsNotExist(err) {
@@ -333,6 +347,9 @@ func (ir *ImportRoutes) gitLsRemoteHead(source, ref string) string {
 // into .knowns/imports/{name}/, and returns the list of changes.
 // If cachedHash matches the remote HEAD, returns nil changes and upToDate=true.
 func (ir *ImportRoutes) gitCloneImport(source, name, ref, cachedHash string, dryRun bool) ([]importChange, []string, string, bool, error) {
+	if err := validateImportName(name); err != nil {
+		return nil, nil, "", false, err
+	}
 	// Check remote commit hash before cloning.
 	remoteHash := ir.gitLsRemoteHead(source, ref)
 	if remoteHash != "" && remoteHash == cachedHash && !dryRun {
@@ -531,6 +548,10 @@ func (ir *ImportRoutes) add(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = nameFromSource(req.Source)
 	}
+	if err := validateImportName(name); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	// Git URL: clone and copy .knowns/docs + templates.
 	if isGitURL(req.Source) {
@@ -572,6 +593,10 @@ func (ir *ImportRoutes) add(w http.ResponseWriter, r *http.Request) {
 // DELETE /api/imports/{name}
 func (ir *ImportRoutes) remove(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	if err := validateImportName(name); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	destDir := filepath.Join(ir.importsDir(), name)
 	if err := os.RemoveAll(destDir); err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
@@ -595,6 +620,10 @@ func (ir *ImportRoutes) sync(w http.ResponseWriter, r *http.Request) {
 // POST /api/imports/{name}/sync
 func (ir *ImportRoutes) syncOne(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	if err := validateImportName(name); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	importDir := filepath.Join(ir.importsDir(), name)
 
 	if _, err := os.Stat(importDir); os.IsNotExist(err) {

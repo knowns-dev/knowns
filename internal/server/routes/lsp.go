@@ -450,6 +450,12 @@ func (lr *LSPRoutes) patchConfig(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
+	if req.Binary != nil {
+		if err := lr.lspMgr.ValidateBinaryOverride(langID, *req.Binary); err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 
 	store := lr.getStore()
 	project, err := store.Config.Load()

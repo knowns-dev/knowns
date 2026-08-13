@@ -128,9 +128,9 @@ func isAutoDetectionIgnoredDir(name string) bool {
 func (d *Detector) resolve(ctx context.Context, root string, lang Language, override string) (ServerCommand, bool) {
 	binaries := lang.Binaries
 	if override != "" {
-		binary := Binary{Name: override}
-		if len(binaries) > 0 {
-			binary.CheckArgs = append([]string(nil), binaries[0].CheckArgs...)
+		binary, err := selectBinaryOverride(override, binaries)
+		if err != nil {
+			return ServerCommand{}, false
 		}
 		binaries = []Binary{binary}
 	}
