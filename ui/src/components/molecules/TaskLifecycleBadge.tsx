@@ -1,6 +1,6 @@
 import { Archive, CheckCircle2, Circle } from "lucide-react";
 import type { Task, TaskLifecycleState } from "@/ui/models/task";
-import { formatLifecycleState } from "@/ui/models/taskLifecycle";
+import { formatLifecycleState, getTaskLifecycleState } from "@/ui/models/taskLifecycle";
 import { cn } from "@/ui/lib/utils";
 
 const styles: Record<TaskLifecycleState, string> = {
@@ -9,15 +9,16 @@ const styles: Record<TaskLifecycleState, string> = {
 	archived: "border-zinc-500/30 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300",
 };
 
-export function TaskLifecycleBadge({ state, className }: { state: TaskLifecycleState; className?: string }) {
-	const Icon = state === "archived" ? Archive : state === "done" ? CheckCircle2 : Circle;
+export function TaskLifecycleBadge({ state, className }: { state?: TaskLifecycleState | null; className?: string }) {
+	const lifecycleState = getTaskLifecycleState({ lifecycleState: state });
+	const Icon = lifecycleState === "archived" ? Archive : lifecycleState === "done" ? CheckCircle2 : Circle;
 	return (
 		<span
 			data-testid="task-lifecycle-state"
-			className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium", styles[state], className)}
+			className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium", styles[lifecycleState], className)}
 		>
 			<Icon className="h-3 w-3" aria-hidden="true" />
-			{formatLifecycleState(state)}
+			{formatLifecycleState(lifecycleState)}
 		</span>
 	);
 }

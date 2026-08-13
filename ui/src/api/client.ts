@@ -1,5 +1,6 @@
 import type { Task, TimeEntry } from "@/ui/models/task";
 import type { TaskChange, TaskVersion } from "@/ui/models/version";
+import { getTaskLifecycleState } from "@/ui/models/taskLifecycle";
 import type {
 	TaskLifecycleEvent,
 	TaskLifecycleReason,
@@ -91,6 +92,7 @@ function parseActivityDTO(dto: ActivityDTO): Activity {
 }
 
 function parseTaskDTO(dto: TaskDTO): Task {
+	const lifecycleState = getTaskLifecycleState(dto);
 	return {
 		...dto,
 		status: dto.status as Task["status"],
@@ -102,8 +104,8 @@ function parseTaskDTO(dto: TaskDTO): Task {
 		updatedAt: new Date(dto.updatedAt),
 		completedAt: dto.completedAt ? new Date(dto.completedAt) : undefined,
 		archivedAt: dto.archivedAt ? new Date(dto.archivedAt) : undefined,
-		archived: dto.archived ?? dto.lifecycleState === "archived",
-		lifecycleState: dto.lifecycleState,
+		archived: dto.archived ?? lifecycleState === "archived",
+		lifecycleState,
 		timeEntries: (dto.timeEntries || []).map((entry) => ({
 			...entry,
 			startedAt: new Date(entry.startedAt),

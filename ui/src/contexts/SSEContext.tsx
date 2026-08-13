@@ -13,6 +13,7 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, ty
 import type { Task } from "@/ui/models/task";
 import type { ChatSession, ChatMessage } from "@/ui/models/chat";
 import type { ActiveTimer } from "../api/client";
+import { getTaskLifecycleState } from "../models/taskLifecycle";
 import type { TaskLifecycleEvent } from "../models/taskLifecycle";
 import { toast } from "../components/ui/sonner";
 
@@ -76,6 +77,14 @@ const API_BASE = import.meta.env.API_URL || "";
 
 // Parse task DTO dates
 function parseTaskDTO(dto: Record<string, unknown>): Task {
+	const completedAt = dto.completedAt ? new Date(dto.completedAt as string) : undefined;
+	const archivedAt = dto.archivedAt ? new Date(dto.archivedAt as string) : undefined;
+	const lifecycleState = getTaskLifecycleState({
+		lifecycleState: dto.lifecycleState as Task["lifecycleState"] | undefined,
+		archived: dto.archived as boolean | undefined,
+		status: dto.status as string | undefined,
+		completedAt,
+	});
 	return {
 		...dto,
 		status: dto.status as Task["status"],
@@ -86,10 +95,10 @@ function parseTaskDTO(dto: Record<string, unknown>): Task {
 		fulfills: (dto.fulfills as string[]) || [],
 		createdAt: new Date(dto.createdAt as string),
 		updatedAt: new Date(dto.updatedAt as string),
-		completedAt: dto.completedAt ? new Date(dto.completedAt as string) : undefined,
-		archivedAt: dto.archivedAt ? new Date(dto.archivedAt as string) : undefined,
-		archived: (dto.archived as boolean) ?? dto.lifecycleState === "archived",
-		lifecycleState: dto.lifecycleState as Task["lifecycleState"],
+		completedAt,
+		archivedAt,
+		archived: (dto.archived as boolean) ?? lifecycleState === "archived",
+		lifecycleState,
 		timeEntries: ((dto.timeEntries as Array<Record<string, unknown>>) || []).map((entry) => ({
 			...entry,
 			startedAt: new Date(entry.startedAt as string),

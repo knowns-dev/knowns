@@ -42,8 +42,7 @@ func (nr *NotifyRoutes) notifyTask(w http.ResponseWriter, r *http.Request) {
 		// Task not found — broadcast a full refresh instead.
 		nr.sse.Broadcast(SSEEvent{Type: "tasks:refresh", Data: map[string]interface{}{}})
 	} else {
-		NormalizeTask(task)
-		nr.sse.Broadcast(SSEEvent{Type: "tasks:updated", Data: map[string]interface{}{"task": task}})
+		nr.sse.Broadcast(SSEEvent{Type: "tasks:updated", Data: map[string]interface{}{"task": newTaskResponse(task)}})
 	}
 	respondJSON(w, http.StatusOK, map[string]string{"status": "broadcast"})
 }
