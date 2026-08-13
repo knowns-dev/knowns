@@ -54,26 +54,37 @@ func CheckForUpdate() string {
 		return ""
 	}
 
-	return fmt.Sprintf("\n UPDATE  v%s available (current v%s) → knowns update\n", latest, Version)
+	return formatUpdateNotification(latest, Version)
 }
 
 func shouldSkipUpdateCheck() bool {
+	return !ShouldCheckForUpdate(os.Args[1:])
+}
+
+// ShouldCheckForUpdate reports whether a CLI invocation may run the background
+// update check. Machine-readable output and non-interactive environments must
+// remain free of asynchronous notices.
+func ShouldCheckForUpdate(args []string) bool {
 	if os.Getenv("NO_UPDATE_CHECK") == "1" {
-		return true
+		return false
 	}
 	if os.Getenv("CI") != "" {
-		return true
+		return false
 	}
-	for _, arg := range os.Args {
-		if arg == "--plain" {
-			return true
-		}
-		// Skip when running "knowns update" — it handles its own check.
-		if arg == "update" {
-			return true
+	for _, arg := range args {
+		switch arg {
+		case "--plain", "--json", "update":
+			return false
 		}
 	}
-	return false
+	return true
+}
+
+func formatUpdateNotification(latest, current string) string {
+	return fmt.Sprintf("\n UPDATE  %s available (current %s) → knowns update\n",
+		NormalizeVersionTag(latest),
+		NormalizeVersionTag(current),
+	)
 }
 
 func getCachePath() string {

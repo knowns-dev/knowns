@@ -2,6 +2,8 @@ package cli
 
 import "errors"
 
+var ErrCommandCancelled = errors.New("command cancelled")
+
 type commandExitError struct {
 	code int
 	err  error

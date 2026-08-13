@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -20,11 +21,16 @@ type pagerKeyMap struct {
 }
 
 type pagerModel struct {
-	viewport viewport.Model
-	title    string
-	content  string
-	ready    bool
-	keyMap   pagerKeyMap
+	viewport  viewport.Model
+	title     string
+	content   string
+	ready     bool
+	cancelled bool
+	keyMap    pagerKeyMap
+}
+
+func isCancelKey(key string) bool {
+	return key == "ctrl+c"
 }
 
 func newPagerModel(title, content string) pagerModel {
@@ -51,6 +57,7 @@ func (m pagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		if key.Matches(msg, m.keyMap.Quit) {
+			m.cancelled = isCancelKey(msg.String())
 			return m, tea.Quit
 		}
 	case tea.WindowSizeMsg:
@@ -116,8 +123,14 @@ func (m pagerModel) View() tea.View {
 func RunPager(title, content string) error {
 	m := newPagerModel(title, content)
 	p := tea.NewProgram(m)
-	_, err := p.Run()
-	return err
+	result, err := p.Run()
+	if err != nil {
+		return err
+	}
+	if result.(pagerModel).cancelled {
+		return ErrCommandCancelled
+	}
+	return nil
 }
 
 // isTTY returns true if stdout is a terminal.
@@ -127,15 +140,19 @@ func isTTY() bool {
 
 // renderOrPage shows content in the TUI pager if stdout is a TTY and pager is
 // not disabled, otherwise prints directly to stdout.
-func renderOrPage(cmd any, title, content string) {
+func renderOrPage(cmd any, title, content string) error {
 	if !isTTY() || isPagerDisabled(cmd) {
 		fmt.Print(content)
-		return
+		return nil
 	}
 	if err := RunPager(title, content); err != nil {
-		// Fallback to direct print on TUI error
+		if errors.Is(err, ErrCommandCancelled) {
+			return err
+		}
+		// Fallback to direct print on TUI error.
 		fmt.Print(content)
 	}
+	return nil
 }
 
 // defaultPageSize is the default number of lines per page for --page pagination.

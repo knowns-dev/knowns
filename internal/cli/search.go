@@ -153,7 +153,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		printPaged(cmd, content)
 	} else {
 		content := renderPrettyResults(query, actualMode, filteredResults, taskResults, docResults, memoryResults, decisionResults, maxScore)
-		renderOrPage(cmd, fmt.Sprintf("Search: %s", query), content)
+		return renderOrPage(cmd, fmt.Sprintf("Search: %s", query), content)
 	}
 	return nil
 }
@@ -235,7 +235,7 @@ func runRetrieve(cmd *cobra.Command, args []string) error {
 	if plain {
 		printPaged(cmd, sprintPlainRetrieval(resp))
 	} else {
-		renderOrPage(cmd, fmt.Sprintf("Retrieve: %s", query), renderPrettyRetrieval(resp))
+		return renderOrPage(cmd, fmt.Sprintf("Retrieve: %s", query), renderPrettyRetrieval(resp))
 	}
 	return nil
 }

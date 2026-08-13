@@ -88,7 +88,7 @@ func runBoard(cmd *cobra.Command, args []string) error {
 		printPaged(cmd, pb.String())
 	} else {
 		content := renderBoard(tasks, statuses, columns)
-		renderOrPage(cmd, "Board", content)
+		return renderOrPage(cmd, "Board", content)
 	}
 
 	return nil

@@ -30,9 +30,9 @@ func (i listItem) FilterValue() string { return i.title + " " + i.id }
 
 type listItemDelegate struct{}
 
-func (d listItemDelegate) Height() int                               { return 2 }
-func (d listItemDelegate) Spacing() int                              { return 0 }
-func (d listItemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd   { return nil }
+func (d listItemDelegate) Height() int                             { return 2 }
+func (d listItemDelegate) Spacing() int                            { return 0 }
+func (d listItemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
 func (d listItemDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	li, ok := item.(listItem)
 	if !ok {
@@ -82,13 +82,14 @@ const (
 )
 
 type listViewModel struct {
-	list     list.Model
-	viewport viewport.Model
-	state    listViewState
-	title    string
-	ready    bool
-	width    int
-	height   int
+	list      list.Model
+	viewport  viewport.Model
+	state     listViewState
+	title     string
+	ready     bool
+	cancelled bool
+	width     int
+	height    int
 }
 
 func newListViewModel(title string, items []listItem) listViewModel {
@@ -148,6 +149,7 @@ func (m listViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			switch {
 			case key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))):
+				m.cancelled = msg.String() == "ctrl+c"
 				return m, tea.Quit
 			case key.Matches(msg, key.NewBinding(key.WithKeys("enter"))):
 				selected := m.list.SelectedItem()
@@ -163,6 +165,7 @@ func (m listViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case stateDetail:
 			switch {
 			case key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))):
+				m.cancelled = msg.String() == "ctrl+c"
 				return m, tea.Quit
 			case key.Matches(msg, key.NewBinding(key.WithKeys("esc", "backspace"))):
 				m.state = stateList
@@ -235,12 +238,15 @@ func (m listViewModel) View() tea.View {
 	}
 }
 
-// ─── public API ──────────────────────────────────────────────────────
-
-// RunListView launches the interactive list TUI.
 func RunListView(title string, items []listItem) error {
 	m := newListViewModel(title, items)
 	p := tea.NewProgram(m)
-	_, err := p.Run()
-	return err
+	result, err := p.Run()
+	if err != nil {
+		return err
+	}
+	if result.(listViewModel).cancelled {
+		return ErrCommandCancelled
+	}
+	return nil
 }

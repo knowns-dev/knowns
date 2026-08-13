@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -119,6 +120,9 @@ func runDocList(cmd *cobra.Command, args []string) error {
 		}
 		items := buildDocListItems(store, docs)
 		if err := RunListView("Documents", items); err != nil {
+			if errors.Is(err, ErrCommandCancelled) {
+				return err
+			}
 			content := renderDocList(docs)
 			fmt.Print(content)
 		}
@@ -170,7 +174,7 @@ func runDocView(cmd *cobra.Command, path string) error {
 			fmt.Printf("UPDATED: %s\n", doc.UpdatedAt.Format("2006-01-02"))
 		} else {
 			content := renderDocInfo(doc)
-			renderOrPage(cmd, fmt.Sprintf("Doc Info: %s", doc.Title), content)
+			return renderOrPage(cmd, fmt.Sprintf("Doc Info: %s", doc.Title), content)
 		}
 		return nil
 	}
@@ -184,7 +188,7 @@ func runDocView(cmd *cobra.Command, path string) error {
 			}
 		} else {
 			content := renderDocTOC(doc.Title, headings)
-			renderOrPage(cmd, fmt.Sprintf("TOC: %s", doc.Title), content)
+			return renderOrPage(cmd, fmt.Sprintf("TOC: %s", doc.Title), content)
 		}
 		return nil
 	}
@@ -246,7 +250,7 @@ func runDocView(cmd *cobra.Command, path string) error {
 		printPaged(cmd, pb.String())
 	} else {
 		content := renderDocView(doc)
-		renderOrPage(cmd, doc.Title, content)
+		return renderOrPage(cmd, doc.Title, content)
 	}
 
 	return nil
@@ -471,7 +475,7 @@ var docHistoryCmd = &cobra.Command{
 			printPaged(cmd, renderPlainDocHistory(args[0], history))
 		} else {
 			content := renderDocHistory(args[0], history)
-			renderOrPage(cmd, "Doc History", content)
+			return renderOrPage(cmd, "Doc History", content)
 		}
 		return nil
 	},

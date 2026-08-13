@@ -127,7 +127,7 @@ func runCodeDeps(cmd *cobra.Command, args []string) error {
 	if isPlain(cmd) {
 		printPaged(cmd, b.String())
 	} else {
-		renderOrPage(cmd, "Code Dependencies", b.String())
+		return renderOrPage(cmd, "Code Dependencies", b.String())
 	}
 	return nil
 }
@@ -207,7 +207,7 @@ func runCodeSymbols(cmd *cobra.Command, args []string) error {
 	if isPlain(cmd) {
 		printPaged(cmd, b.String())
 	} else {
-		renderOrPage(cmd, "Code Symbols", b.String())
+		return renderOrPage(cmd, "Code Symbols", b.String())
 	}
 	return nil
 }
@@ -307,7 +307,7 @@ func runCodeSearch(cmd *cobra.Command, args []string) error {
 	if isPlain(cmd) {
 		printPaged(cmd, b.String())
 	} else {
-		renderOrPage(cmd, "Code Search", b.String())
+		return renderOrPage(cmd, "Code Search", b.String())
 	}
 	return nil
 }

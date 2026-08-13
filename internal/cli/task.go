@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -179,7 +180,7 @@ func runTaskList(cmd *cobra.Command, args []string) error {
 			printPaged(cmd, content)
 		} else {
 			content := renderTaskTree(filtered)
-			renderOrPage(cmd, "Tasks (tree)", content)
+			return renderOrPage(cmd, "Tasks (tree)", content)
 		}
 		return nil
 	}
@@ -219,6 +220,9 @@ func runTaskList(cmd *cobra.Command, args []string) error {
 		}
 		items := buildTaskListItems(filtered)
 		if err := RunListView("Tasks", items); err != nil {
+			if errors.Is(err, ErrCommandCancelled) {
+				return err
+			}
 			// Fallback to static table on TUI error
 			content := renderTaskTable(filtered)
 			fmt.Print(content)
@@ -263,7 +267,7 @@ func runTaskView(cmd *cobra.Command, id string) error {
 		printPaged(cmd, content)
 	} else {
 		content := renderTaskDetailed(task)
-		renderOrPage(cmd, fmt.Sprintf("Task %s", task.ID), content)
+		return renderOrPage(cmd, fmt.Sprintf("Task %s", task.ID), content)
 	}
 
 	return nil
@@ -589,7 +593,7 @@ var taskHistoryCmd = &cobra.Command{
 			printPaged(cmd, hb.String())
 		} else {
 			content := renderTaskHistory(args[0], history)
-			renderOrPage(cmd, "Task History", content)
+			return renderOrPage(cmd, "Task History", content)
 		}
 		return nil
 	},
