@@ -1,8 +1,8 @@
 ---
-title: ''
-description: ''
+title: Knowledge Graph WebUI Learnings
+description: Knowledge graph WebUI implementation learnings, patterns, decisions, and failures.
 createdAt: '2026-04-02T10:17:20.355Z'
-updatedAt: '2026-04-08T18:31:43.605Z'
+updatedAt: '2026-08-13T13:41:40.214Z'
 tags: []
 ---
 

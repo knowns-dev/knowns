@@ -81,6 +81,46 @@ func TestSyncSkillsToTargetsIncludesKnFlowSkill(t *testing.T) {
 	assertKnFlowSkillSynced(t, target)
 }
 
+func TestPortableSkillContractsSyncToRuntimeCopies(t *testing.T) {
+	projectRoot := t.TempDir()
+	if err := SyncSkillsForPlatforms(projectRoot, []string{"codex"}); err != nil {
+		t.Fatalf("SyncSkillsForPlatforms returned error: %v", err)
+	}
+
+	researchPath := filepath.Join(projectRoot, ".agents", "skills", "kn-research", "SKILL.md")
+	researchData, err := os.ReadFile(researchPath)
+	if err != nil {
+		t.Fatalf("read synced kn-research: %v", err)
+	}
+	research := string(researchData)
+	for _, marker := range []string{
+		"Research is read-only by default",
+		"Select tools by capability and source quality, not by provider or tool name",
+		"If no suitable search or retrieval capability is available",
+	} {
+		if !strings.Contains(research, marker) {
+			t.Fatalf("synced kn-research is missing portable contract marker %q", marker)
+		}
+	}
+	if strings.Contains(research, "Context7") {
+		t.Fatal("synced kn-research contains a named external research provider")
+	}
+
+	for _, name := range []string{"kn-plan", "kn-template", "kn-flow", "kn-commit"} {
+		path := filepath.Join(projectRoot, ".agents", "skills", name, "SKILL.md")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read synced %s: %v", name, err)
+		}
+		content := string(data)
+		for _, forbidden := range []string{"In Codex", "Generated with Claude Code", ".claude/skills/*"} {
+			if strings.Contains(content, forbidden) {
+				t.Fatalf("synced %s contains platform-specific marker %q", name, forbidden)
+			}
+		}
+	}
+}
+
 func TestDecisionWorkflowRulesSyncToRuntimeCopies(t *testing.T) {
 	projectRoot := t.TempDir()
 	if err := SyncSkillsForPlatforms(projectRoot, []string{"codex"}); err != nil {
@@ -124,7 +164,7 @@ func TestDecisionWorkflowRulesSyncToRuntimeCopies(t *testing.T) {
 	extract := string(extractData)
 	if strings.Contains(extract, `"category": "<pattern|decision|convention|failure>"`) ||
 		!strings.Contains(extract, "Never create Memory category `decision`") ||
-		!strings.Contains(extract, "first-class draft Decision candidate") {
+		!strings.Contains(extract, "first-class draft System Decision candidate") {
 		t.Fatalf("synced kn-extract still recommends legacy Decision Memory creation")
 	}
 }

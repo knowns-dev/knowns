@@ -78,7 +78,7 @@ These are promoted learnings that cost the most to discover and save the most by
 mcp_knowns_memory({ "action": "list", "layer": "project" })
 ```
 
-Project memories contain accumulated patterns, conventions, preferences, and failures from past work. Include key entries in the session context summary. Retrieve relevant accepted/current first-class System Decisions separately; Memory category `decision` is legacy and must not be used for new capture. If there are many entries, prioritize by recency and relevance to the user's stated focus.
+Project memories contain accumulated patterns, conventions, preferences, and failures from past work. Include only entries relevant to the user's focus; do not serialize the entire memory list. Retrieve relevant accepted/current first-class System Decisions separately; Memory category `decision` is legacy and must not be used for new capture.
 
 ## Step 4: Summarize
 
@@ -105,7 +105,7 @@ Required order for the final user-facing response:
 
 Keep this concise for CLI use. Skill-specific content may extend the key-details section, but must not replace or reorder the shared structure.
 
-Out of scope: explaining, syncing, or generating `.claude/skills/*`. Runtime auto-sync already handles platform copies, so this skill source only defines the built-in output contract.
+Do not manage platform-synced skill copies; this source defines the built-in workflow contract.
 
 For `kn-init`, the key details should cover:
 

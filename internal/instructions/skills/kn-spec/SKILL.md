@@ -85,7 +85,7 @@ Generate 2–4 gray areas for this feature. A gray area is a decision that:
 - Was not stated in the request
 - Would force the planner to make an assumption without it
 
-**Quick codebase scout** (grep only — no deep analysis):
+**Quick project scout** (use available project search/code intelligence; no deep analysis):
 - Check what already exists that's related
 - Search for past decisions and patterns on this topic
 - Annotate options with what the codebase already has
@@ -103,9 +103,11 @@ mcp_knowns_search({ "action": "retrieve", "query": "<feature keywords and propos
 Spec Decisions are scoped execution rules kept canonically in this spec's `Locked Decisions` section. System Decisions are first-class durable project records. Memory entries whose category is `decision` are legacy and must not be created by this workflow.
 
 **Filter OUT:**
-- Technical implementation details (architecture, library choices) — that's planning's job
-- Performance concerns
+- Low-level implementation mechanics that do not change user-visible behavior or durable constraints
+- Premature optimization without an explicit requirement or measured risk
 - Scope expansion (new capabilities not requested)
+
+Keep architecture, dependency, security, migration, and performance decisions when they affect product behavior, public contracts, feasibility, cost, or acceptance criteria.
 
 ### 0.4 Socratic Exploration
 
@@ -292,7 +294,7 @@ Required order for the final user-facing response:
 
 Keep this concise for CLI use. Skill-specific content may extend the key-details section, but must not replace or reorder the shared structure.
 
-Out of scope: explaining, syncing, or generating `.claude/skills/*`. Runtime auto-sync already handles platform copies, so this skill source only defines the built-in output contract.
+Do not manage platform-synced skill copies; this source defines the built-in workflow contract.
 
 For `kn-spec`, the key details should cover:
 

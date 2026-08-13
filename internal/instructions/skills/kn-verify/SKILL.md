@@ -135,7 +135,7 @@ Required order for the final user-facing response:
 
 Keep this concise for CLI use. Verification-specific content may extend the key-details section, but must not replace or reorder the shared structure.
 
-Out of scope: explaining, syncing, or generating `.claude/skills/*`. Runtime auto-sync already handles platform copies, so this skill source only defines the built-in output contract.
+Do not manage platform-synced skill copies; this source defines the built-in workflow contract.
 
 For `kn-verify`, the key details should cover:
 

@@ -89,7 +89,7 @@ For each task or parallel-safe wave:
 
 Spec Decisions remain canonical execution rules in the spec's `Locked Decisions` section. Do not create System Decision ledger rows merely to mirror D-IDs. Never create Memory category `decision`; redirect legacy Decision Memory capture requests to the first-class Decision candidate flow.
 
-If sub-agent tools are available, use them only after the parallel gate marks tasks safe. In Codex, discover multi-agent/sub-agent tools before declaring them unavailable. If `--sequential` is set, tools are unavailable, or the parallel gate is unsafe, execute the same schedule sequentially in the main context and state why sub-agents were not spawned.
+If delegation capabilities are available, use them only after the parallel gate marks tasks safe. Inspect or discover the current runtime's delegation capabilities before declaring them unavailable. If `--sequential` is set, delegation is unavailable, or the parallel gate is unsafe, execute the same schedule sequentially in the main context and state why workers were not spawned.
 
 ## Worker Prompt
 
