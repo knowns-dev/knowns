@@ -466,8 +466,14 @@ var taskBatchUnarchiveCmd = &cobra.Command{
 
 func newCLITaskLifecycleService(store *storage.Store) *tasklifecycle.Service {
 	return tasklifecycle.New(store, tasklifecycle.WithHooks(tasklifecycle.Hooks{
-		IndexTask:  func(id string) error { return search.ReconcileTaskIndex(store, id) },
-		RemoveTask: func(id string) error { return search.ReconcileTaskRemoval(store, id) },
+		IndexTask: func(id string) error {
+			search.BestEffortIndexTask(store, id)
+			return nil
+		},
+		RemoveTask: func(id string) error {
+			search.BestEffortRemoveTask(store, id)
+			return nil
+		},
 	}))
 }
 

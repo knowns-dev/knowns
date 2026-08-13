@@ -171,8 +171,6 @@ type taskMutationSummary struct {
 var (
 	mcpBestEffortIndexTask  = search.BestEffortIndexTask
 	mcpBestEffortRemoveTask = search.BestEffortRemoveTask
-	mcpReconcileTaskIndex   = search.ReconcileTaskIndex
-	mcpReconcileTaskRemoval = search.ReconcileTaskRemoval
 )
 
 func taskMutationResult(task *models.Task, returnMode string) *mcp.CallToolResult {
@@ -513,8 +511,14 @@ func newMCPTaskMutationService(store *storage.Store) *tasklifecycle.Service {
 
 func newMCPTaskLifecycleService(store *storage.Store) *tasklifecycle.Service {
 	return tasklifecycle.New(store, tasklifecycle.WithHooks(tasklifecycle.Hooks{
-		IndexTask:  func(id string) error { return mcpReconcileTaskIndex(store, id) },
-		RemoveTask: func(id string) error { return mcpReconcileTaskRemoval(store, id) },
+		IndexTask: func(id string) error {
+			mcpBestEffortIndexTask(store, id)
+			return nil
+		},
+		RemoveTask: func(id string) error {
+			mcpBestEffortRemoveTask(store, id)
+			return nil
+		},
 	}))
 }
 

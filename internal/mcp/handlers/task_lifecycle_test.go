@@ -84,6 +84,66 @@ func TestTaskLifecycleMCPContractAndTrustedPermission(t *testing.T) {
 	}
 }
 
+func TestMCPTaskLifecycleUsesBestEffortIndexing(t *testing.T) {
+	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("mcp-life-index"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	completed := now.Add(-time.Hour)
+	if err := store.Tasks.Create(&models.Task{ID: "life-index", Title: "life-index", Status: "done", Priority: "medium", CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: completed, CompletedAt: &completed}); err != nil {
+		t.Fatal(err)
+	}
+	config, err := store.Config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Settings.Permissions = &permissions.PermissionConfig{Preset: permissions.PresetReadWrite}
+	if err := store.Config.Save(config); err != nil {
+		t.Fatal(err)
+	}
+
+	oldIndex := mcpBestEffortIndexTask
+	oldRemove := mcpBestEffortRemoveTask
+	t.Cleanup(func() {
+		mcpBestEffortIndexTask = oldIndex
+		mcpBestEffortRemoveTask = oldRemove
+	})
+
+	var indexed []string
+	var removed []string
+	mcpBestEffortIndexTask = func(_ *storage.Store, id string) {
+		indexed = append(indexed, id)
+	}
+	mcpBestEffortRemoveTask = func(_ *storage.Store, id string) {
+		removed = append(removed, id)
+	}
+
+	archived := callTaskLifecycleMCP(t, store, "archive", map[string]any{"taskId": "life-index", "execute": true})
+	if !archived.Completed || archived.Changed != 1 {
+		t.Fatalf("archive = %+v", archived)
+	}
+	if len(indexed) != 1 || indexed[0] != "life-index" {
+		t.Fatalf("indexed after archive = %#v, want [life-index]", indexed)
+	}
+
+	reopened := callTaskLifecycleMCP(t, store, "unarchive", map[string]any{"taskId": "life-index", "execute": true})
+	if !reopened.Completed || reopened.Changed != 1 {
+		t.Fatalf("unarchive = %+v", reopened)
+	}
+	if len(indexed) != 2 || indexed[1] != "life-index" {
+		t.Fatalf("indexed after unarchive = %#v, want second life-index", indexed)
+	}
+
+	deleted := callTaskLifecycleMCP(t, store, "hard_delete", map[string]any{"taskId": "life-index", "confirmed": true, "reason": "index cleanup"})
+	if !deleted.Completed || deleted.Changed != 1 {
+		t.Fatalf("hard delete = %+v", deleted)
+	}
+	if len(removed) != 1 || removed[0] != "life-index" {
+		t.Fatalf("removed after hard delete = %#v, want [life-index]", removed)
+	}
+}
+
 func TestRegisteredTaskLifecycleMCPMiddlewarePreservesSharedResponse(t *testing.T) {
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init("registered-mcp"); err != nil {

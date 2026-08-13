@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"encoding/json"
-	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -212,23 +211,16 @@ func TestMCPTaskUpdateUsesBestEffortIndexing(t *testing.T) {
 	seedTask(t, store, "fast01", "Fast MCP update")
 
 	oldBestEffortIndexTask := mcpBestEffortIndexTask
-	oldReconcileTaskIndex := mcpReconcileTaskIndex
 	t.Cleanup(func() {
 		mcpBestEffortIndexTask = oldBestEffortIndexTask
-		mcpReconcileTaskIndex = oldReconcileTaskIndex
 	})
 
 	bestEffortCalls := 0
-	reconcileCalls := 0
 	mcpBestEffortIndexTask = func(_ *storage.Store, id string) {
 		bestEffortCalls++
 		if id != "fast01" {
 			t.Fatalf("best-effort index id = %q, want fast01", id)
 		}
-	}
-	mcpReconcileTaskIndex = func(_ *storage.Store, id string) error {
-		reconcileCalls++
-		return errors.New("synchronous task reconciliation must not run for MCP update")
 	}
 
 	result, err := handleTaskUpdate(getStore, mutationRequest(map[string]any{
@@ -244,9 +236,6 @@ func TestMCPTaskUpdateUsesBestEffortIndexing(t *testing.T) {
 	}
 	if bestEffortCalls != 1 {
 		t.Fatalf("best-effort index calls = %d, want 1", bestEffortCalls)
-	}
-	if reconcileCalls != 0 {
-		t.Fatalf("sync reconcile calls = %d, want 0", reconcileCalls)
 	}
 	storedTask, err := store.Tasks.Get("fast01")
 	if err != nil {
@@ -266,23 +255,16 @@ func TestMCPTimeMutationsUseBestEffortIndexing(t *testing.T) {
 	seedTask(t, store, "time01", "Fast MCP time")
 
 	oldBestEffortIndexTask := mcpBestEffortIndexTask
-	oldReconcileTaskIndex := mcpReconcileTaskIndex
 	t.Cleanup(func() {
 		mcpBestEffortIndexTask = oldBestEffortIndexTask
-		mcpReconcileTaskIndex = oldReconcileTaskIndex
 	})
 
 	bestEffortCalls := 0
-	reconcileCalls := 0
 	mcpBestEffortIndexTask = func(_ *storage.Store, id string) {
 		bestEffortCalls++
 		if id != "time01" {
 			t.Fatalf("best-effort index id = %q, want time01", id)
 		}
-	}
-	mcpReconcileTaskIndex = func(_ *storage.Store, id string) error {
-		reconcileCalls++
-		return errors.New("synchronous task reconciliation must not run for MCP time mutation")
 	}
 
 	addResult, err := handleTimeAdd(getStore, mutationRequest(map[string]any{
@@ -312,9 +294,6 @@ func TestMCPTimeMutationsUseBestEffortIndexing(t *testing.T) {
 	}
 	if bestEffortCalls != 2 {
 		t.Fatalf("best-effort calls after stop = %d, want 2", bestEffortCalls)
-	}
-	if reconcileCalls != 0 {
-		t.Fatalf("sync reconcile calls = %d, want 0", reconcileCalls)
 	}
 }
 
