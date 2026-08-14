@@ -1,12 +1,72 @@
 package storage
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
 )
+
+func TestDocStoreRejectsTraversalAndSymlinkEscape(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	base := t.TempDir()
+	store := NewStore(filepath.Join(base, ".knowns"))
+	if err := store.Init("doc-path-security"); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(base, "outside.md")
+	if err := os.WriteFile(outside, []byte("outside"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{"../outside", `..\outside`, "/tmp/outside", `C:\outside`} {
+		if err := store.Docs.Create(&models.Doc{Path: path, Title: "Unsafe"}); err == nil {
+			t.Errorf("Create(%q) succeeded, want containment error", path)
+		}
+		if _, err := store.Docs.Get(path); err == nil {
+			t.Errorf("Get(%q) succeeded, want containment error", path)
+		}
+		if err := store.Docs.Delete(path); err == nil {
+			t.Errorf("Delete(%q) succeeded, want containment error", path)
+		}
+	}
+
+	link := filepath.Join(store.Root, "docs", "linked")
+	outsideDir := filepath.Join(base, "outside-dir")
+	if err := os.MkdirAll(outsideDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideDir, link); err == nil {
+		if err := store.Docs.Create(&models.Doc{Path: "linked/escape", Title: "Unsafe"}); err == nil {
+			t.Fatal("Create through escaping symlink succeeded")
+		}
+		if _, err := os.Stat(filepath.Join(outsideDir, "escape.md")); !os.IsNotExist(err) {
+			t.Fatalf("doc escaped through symlink: %v", err)
+		}
+	}
+
+	if got, err := os.ReadFile(outside); err != nil || string(got) != "outside" {
+		t.Fatalf("outside file changed: content=%q err=%v", got, err)
+	}
+}
+
+func TestDocStoreAllowsNestedRelativePath(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	store := NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("doc-path-security"); err != nil {
+		t.Fatal(err)
+	}
+	doc := &models.Doc{Path: "guides/setup", Title: "Setup", Content: "safe"}
+	if err := store.Docs.Create(doc); err != nil {
+		t.Fatalf("Create nested doc: %v", err)
+	}
+	got, err := store.Docs.Get(doc.Path)
+	if err != nil || got.Content != "safe" {
+		t.Fatalf("Get nested doc: doc=%+v err=%v", got, err)
+	}
+}
 
 func TestDocStoreRenameAndRewriteDocReferences(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

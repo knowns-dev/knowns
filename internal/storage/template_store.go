@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/safepath"
 	"gopkg.in/yaml.v3"
 )
 
@@ -21,14 +22,14 @@ func (ts *TemplateStore) importsDir() string   { return filepath.Join(ts.root, "
 // templateYAML is the raw parsed form of _template.yaml, using the exact field
 // structure that matches the TypeScript _template.yaml format.
 type templateYAML struct {
-	Name        string                  `yaml:"name"`
-	Description string                  `yaml:"description"`
-	Version     string                  `yaml:"version"`
-	Author      string                  `yaml:"author"`
-	Doc         string                  `yaml:"doc"`
-	Destination string                  `yaml:"destination"`
-	Prompts     []models.TemplatePrompt `yaml:"prompts"`
-	Actions     []models.TemplateAction `yaml:"actions"`
+	Name        string                   `yaml:"name"`
+	Description string                   `yaml:"description"`
+	Version     string                   `yaml:"version"`
+	Author      string                   `yaml:"author"`
+	Doc         string                   `yaml:"doc"`
+	Destination string                   `yaml:"destination"`
+	Prompts     []models.TemplatePrompt  `yaml:"prompts"`
+	Actions     []models.TemplateAction  `yaml:"actions"`
 	Messages    *models.TemplateMessages `yaml:"messages"`
 }
 
@@ -109,10 +110,20 @@ func (ts *TemplateStore) Get(name string) (*models.Template, error) {
 	if idx := strings.Index(name, "/"); idx != -1 {
 		importName := name[:idx]
 		templateName := name[idx+1:]
-		templateDir := filepath.Join(ts.importsDir(), importName, "templates", templateName)
+		importDir, err := safepath.Resolve(ts.importsDir(), importName)
+		if err != nil {
+			return nil, fmt.Errorf("invalid import template name: %w", err)
+		}
+		templateDir, err := safepath.Resolve(filepath.Join(importDir, "templates"), templateName)
+		if err != nil {
+			return nil, fmt.Errorf("invalid import template name: %w", err)
+		}
 		return ts.parseTemplate(templateName, templateDir, true, importName)
 	}
-	templateDir := filepath.Join(ts.templatesDir(), name)
+	templateDir, err := safepath.Resolve(ts.templatesDir(), name)
+	if err != nil {
+		return nil, fmt.Errorf("invalid template name: %w", err)
+	}
 	return ts.parseTemplate(name, templateDir, false, "")
 }
 
@@ -168,7 +179,10 @@ func (ts *TemplateStore) parseTemplate(name, dir string, imported bool, importNa
 // Create scaffolds a new template directory with a _template.yaml and a
 // starter .hbs file.
 func (ts *TemplateStore) Create(name string, description string) error {
-	templateDir := filepath.Join(ts.templatesDir(), name)
+	templateDir, err := safepath.Resolve(ts.templatesDir(), name)
+	if err != nil {
+		return fmt.Errorf("invalid template name: %w", err)
+	}
 	if err := os.MkdirAll(templateDir, 0755); err != nil {
 		return fmt.Errorf("create template dir: %w", err)
 	}

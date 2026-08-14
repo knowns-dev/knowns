@@ -2,9 +2,13 @@ package models
 
 import (
 	"errors"
+	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
+
+var memoryIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 // Memory layer constants.
 const (
@@ -175,6 +179,15 @@ func (m *MemoryEntry) CurrentForDefaultRetrieval() bool {
 // Format: "memory-{id}.md"
 func MemoryFileName(id string) string {
 	return "memory-" + id + ".md"
+}
+
+// ValidateMemoryID rejects IDs that can change the canonical memory filename
+// or use platform-specific alternate path syntax.
+func ValidateMemoryID(id string) error {
+	if !memoryIDPattern.MatchString(id) || strings.HasSuffix(id, ".") {
+		return fmt.Errorf("invalid memory ID %q", id)
+	}
+	return nil
 }
 
 // ValidMemoryLayer reports whether layer is a recognised memory layer.

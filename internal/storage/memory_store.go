@@ -133,6 +133,9 @@ func (ms *MemoryStore) listDir(dir, layer string) ([]*models.MemoryEntry, error)
 
 // Get retrieves a memory entry by ID. Searches project, then global.
 func (ms *MemoryStore) Get(id string) (*models.MemoryEntry, error) {
+	if err := models.ValidateMemoryID(id); err != nil {
+		return nil, err
+	}
 	for _, layer := range []string{models.MemoryLayerProject, models.MemoryLayerGlobal} {
 		entry, err := ms.GetInLayer(id, layer)
 		if err == nil {
@@ -201,6 +204,9 @@ func slugifyMemoryReferenceTitle(title string) string {
 
 // GetInLayer retrieves a memory entry by ID from a specific layer only.
 func (ms *MemoryStore) GetInLayer(id, layer string) (*models.MemoryEntry, error) {
+	if err := models.ValidateMemoryID(id); err != nil {
+		return nil, err
+	}
 	if !models.ValidMemoryLayer(layer) {
 		return nil, fmt.Errorf("invalid memory layer: %q", layer)
 	}
@@ -232,6 +238,9 @@ func (ms *MemoryStore) Create(entry *models.MemoryEntry) error {
 	if entry.ID == "" {
 		entry.ID = models.NewTaskID()
 	}
+	if err := models.ValidateMemoryID(entry.ID); err != nil {
+		return err
+	}
 	entry.ApplyLifecycleDefaults()
 
 	now := time.Now().UTC()
@@ -256,8 +265,14 @@ func (ms *MemoryStore) Create(entry *models.MemoryEntry) error {
 
 // Update overwrites an existing memory entry.
 func (ms *MemoryStore) Update(entry *models.MemoryEntry) error {
+	if entry == nil {
+		return fmt.Errorf("memory entry is required")
+	}
 	if entry.ID == "" {
 		return fmt.Errorf("memory ID is required")
+	}
+	if err := models.ValidateMemoryID(entry.ID); err != nil {
+		return err
 	}
 
 	// Find the existing file to determine its current location.
@@ -330,6 +345,12 @@ func memoryEntriesMigrationEqual(left, right *models.MemoryEntry) bool {
 }
 
 func (ms *MemoryStore) writeExisting(entry, existing *models.MemoryEntry, touch bool) error {
+	if entry == nil || existing == nil {
+		return fmt.Errorf("memory entry and existing memory are required")
+	}
+	if err := models.ValidateMemoryID(entry.ID); err != nil {
+		return err
+	}
 	if touch {
 		entry.UpdatedAt = time.Now().UTC()
 	}
@@ -349,6 +370,9 @@ func (ms *MemoryStore) writeExisting(entry, existing *models.MemoryEntry, touch 
 
 // Delete removes a memory entry by ID.
 func (ms *MemoryStore) Delete(id string) error {
+	if err := models.ValidateMemoryID(id); err != nil {
+		return err
+	}
 	if entry, err := ms.Get(id); err == nil && models.IsLegacyDecisionMemoryCategory(entry.Category) {
 		return models.ErrLegacyDecisionMemoryWrite
 	}
@@ -433,6 +457,12 @@ func (ms *MemoryStore) DemotePersistent(id string) (*models.MemoryEntry, error) 
 
 // moveLayer moves a memory entry from its current layer to a new layer.
 func (ms *MemoryStore) moveLayer(entry *models.MemoryEntry, newLayer string) (*models.MemoryEntry, error) {
+	if entry == nil {
+		return nil, fmt.Errorf("memory entry is required")
+	}
+	if err := models.ValidateMemoryID(entry.ID); err != nil {
+		return nil, err
+	}
 	if models.IsLegacyDecisionMemoryCategory(entry.Category) {
 		return nil, models.ErrLegacyDecisionMemoryWrite
 	}

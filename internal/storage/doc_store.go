@@ -9,6 +9,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/references"
+	"github.com/howznguyen/knowns/internal/safepath"
 	"gopkg.in/yaml.v3"
 )
 
@@ -122,11 +123,12 @@ func (ds *DocStore) walkDocs(dir, relBase string, imported bool, importSource st
 // Get retrieves a doc by its relative path (without .md extension).
 // Examples: "readme", "patterns/module", "specs/user-auth"
 func (ds *DocStore) Get(path string) (*models.Doc, error) {
-	path = strings.TrimPrefix(path, "/")
-	path = strings.TrimSuffix(path, ".md")
+	path, absPath, err := resolveDocPath(ds.docsDir(), path)
+	if err != nil {
+		return nil, err
+	}
 
 	// Try local docs first.
-	absPath := filepath.Join(ds.docsDir(), filepath.FromSlash(path)+".md")
 	if _, err := os.Stat(absPath); err == nil {
 		folder := filepath.ToSlash(filepath.Dir(filepath.FromSlash(path)))
 		if folder == "." {
@@ -143,7 +145,11 @@ func (ds *DocStore) Get(path string) (*models.Doc, error) {
 		}
 		importSource := e.Name()
 		// Direct lookup: path already includes the source prefix.
-		candidate := filepath.Join(ds.importsDir(), importSource, "docs", filepath.FromSlash(path)+".md")
+		importDocsDir := filepath.Join(ds.importsDir(), importSource, "docs")
+		candidate, err := safepath.Resolve(importDocsDir, path+".md")
+		if err != nil {
+			continue
+		}
 		if _, err := os.Stat(candidate); err == nil {
 			folder := filepath.ToSlash(filepath.Dir(filepath.FromSlash(path)))
 			if folder == "." {
@@ -155,7 +161,10 @@ func (ds *DocStore) Get(path string) (*models.Doc, error) {
 		// source prefix (e.g. @doc/patterns/foo instead of @doc/source/patterns/foo).
 		// Try prepending the import source name.
 		prefixed := importSource + "/" + path
-		candidate = filepath.Join(ds.importsDir(), importSource, "docs", filepath.FromSlash(prefixed)+".md")
+		candidate, err = safepath.Resolve(importDocsDir, prefixed+".md")
+		if err != nil {
+			continue
+		}
 		if _, err := os.Stat(candidate); err == nil {
 			folder := filepath.ToSlash(filepath.Dir(filepath.FromSlash(prefixed)))
 			if folder == "." {
@@ -171,10 +180,14 @@ func (ds *DocStore) Get(path string) (*models.Doc, error) {
 // Create writes a new doc to .knowns/docs/{path}.md.
 // doc.Path must be set (relative, without .md).
 func (ds *DocStore) Create(doc *models.Doc) error {
-	if doc.Path == "" {
+	if doc == nil || doc.Path == "" {
 		return fmt.Errorf("doc path is required")
 	}
-	absPath := filepath.Join(ds.docsDir(), filepath.FromSlash(doc.Path)+".md")
+	path, absPath, err := resolveDocPath(ds.docsDir(), doc.Path)
+	if err != nil {
+		return err
+	}
+	doc.Path = path
 	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
 		return fmt.Errorf("create doc dir: %w", err)
 	}
@@ -183,13 +196,17 @@ func (ds *DocStore) Create(doc *models.Doc) error {
 
 // Update writes updated doc content.
 func (ds *DocStore) Update(doc *models.Doc) error {
-	if doc.Path == "" {
+	if doc == nil || doc.Path == "" {
 		return fmt.Errorf("doc path is required")
 	}
-	if existing, err := ds.Get(doc.Path); err == nil {
+	path, absPath, err := resolveDocPath(ds.docsDir(), doc.Path)
+	if err != nil {
+		return err
+	}
+	doc.Path = path
+	if existing, err := ds.Get(path); err == nil {
 		applyLockedDecisionReviewGate(existing, doc)
 	}
-	absPath := filepath.Join(ds.docsDir(), filepath.FromSlash(doc.Path)+".md")
 	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
 		return err
 	}
@@ -201,11 +218,18 @@ func (ds *DocStore) Rename(oldPath string, doc *models.Doc) error {
 	if strings.TrimSpace(oldPath) == "" || doc == nil || strings.TrimSpace(doc.Path) == "" {
 		return fmt.Errorf("old path and new doc path are required")
 	}
+	oldPath, oldAbsPath, err := resolveDocPath(ds.docsDir(), oldPath)
+	if err != nil {
+		return err
+	}
+	newPath, newAbsPath, err := resolveDocPath(ds.docsDir(), doc.Path)
+	if err != nil {
+		return err
+	}
+	doc.Path = newPath
 	if existing, err := ds.Get(oldPath); err == nil {
 		applyLockedDecisionReviewGate(existing, doc)
 	}
-	oldAbsPath := filepath.Join(ds.docsDir(), filepath.FromSlash(strings.TrimSuffix(oldPath, ".md"))+".md")
-	newAbsPath := filepath.Join(ds.docsDir(), filepath.FromSlash(strings.TrimSuffix(doc.Path, ".md"))+".md")
 	if err := os.MkdirAll(filepath.Dir(newAbsPath), 0755); err != nil {
 		return err
 	}
@@ -342,9 +366,28 @@ func (ds *DocStore) RewriteDocReferences(oldPath, newPath string, taskStore *Tas
 
 // Delete removes a doc file.
 func (ds *DocStore) Delete(path string) error {
-	path = strings.TrimSuffix(path, ".md")
-	absPath := filepath.Join(ds.docsDir(), filepath.FromSlash(path)+".md")
+	_, absPath, err := resolveDocPath(ds.docsDir(), path)
+	if err != nil {
+		return err
+	}
 	return os.Remove(absPath)
+}
+
+func resolveDocPath(root, path string) (string, string, error) {
+	path = strings.TrimSuffix(path, ".md")
+	if strings.TrimSpace(path) == "" {
+		return "", "", fmt.Errorf("doc path is required")
+	}
+	absPath, err := safepath.Resolve(root, filepath.ToSlash(path)+".md")
+	if err != nil {
+		return "", "", fmt.Errorf("invalid doc path %q: %w", path, err)
+	}
+	rel, err := filepath.Rel(root, absPath)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve doc path: %w", err)
+	}
+	canonical := strings.TrimSuffix(filepath.ToSlash(rel), ".md")
+	return canonical, absPath, nil
 }
 
 // parseFile reads and parses a single doc markdown file.

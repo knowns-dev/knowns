@@ -64,6 +64,26 @@ func TestMemoryStoreRejectsNewDecisionMemoryAndConstrainsLegacyWrites(t *testing
 	}
 }
 
+func TestMemoryStoreRejectsUnsafeIDs(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	store := NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("memory-id-security"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, id := range []string{"../escape", `..\escape`, "nested/id", `C:\escape`, "name:stream"} {
+		if err := store.Memory.Create(&models.MemoryEntry{ID: id, Title: "Unsafe", Category: "pattern"}); err == nil {
+			t.Errorf("Create ID %q succeeded, want validation error", id)
+		}
+		if _, err := store.Memory.Get(id); err == nil {
+			t.Errorf("Get ID %q succeeded, want validation error", id)
+		}
+		if err := store.Memory.Delete(id); err == nil {
+			t.Errorf("Delete ID %q succeeded, want validation error", id)
+		}
+	}
+}
+
 func seedLegacyDecisionMemory(t *testing.T, store *Store, entry *models.MemoryEntry) {
 	t.Helper()
 	dir := filepath.Join(store.Root, "memory")
