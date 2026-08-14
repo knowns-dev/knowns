@@ -199,6 +199,9 @@ func Execute() error {
 }
 
 func executeWithUpdateNotice(args []string, run func() error, check func() string, timeout time.Duration, output io.Writer) error {
+	resetSuppressedTUICancel()
+	defer resetSuppressedTUICancel()
+
 	if !util.ShouldCheckForUpdate(args) {
 		return run()
 	}
@@ -210,6 +213,9 @@ func executeWithUpdateNotice(args []string, run func() error, check func() strin
 
 	if err := run(); err != nil {
 		return err
+	}
+	if wasTUICancelSuppressed() {
+		return nil
 	}
 
 	select {

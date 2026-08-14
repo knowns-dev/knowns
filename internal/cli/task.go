@@ -2,9 +2,9 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -104,18 +104,15 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	if err := store.Tasks.Create(task); err != nil {
+	if err := store.CreateTaskWithHistory(context.Background(), task, models.TaskVersion{
+		Author:   assignee,
+		Changes:  store.Versions.TrackChanges(nil, task),
+		Snapshot: storage.TaskToSnapshot(task),
+	}); err != nil {
 		return fmt.Errorf("create task: %w", err)
 	}
 
 	search.BestEffortIndexTask(store, task.ID)
-
-	// Save version
-	_ = store.Versions.SaveVersion(task.ID, models.TaskVersion{
-		Author:   assignee,
-		Changes:  store.Versions.TrackChanges(nil, task),
-		Snapshot: storage.TaskToSnapshot(task),
-	})
 
 	fmt.Println(RenderSuccess(fmt.Sprintf("Created task %s: %s", task.ID, task.Title)))
 	return nil
@@ -220,8 +217,8 @@ func runTaskList(cmd *cobra.Command, args []string) error {
 		}
 		items := buildTaskListItems(filtered)
 		if err := RunListView("Tasks", items); err != nil {
-			if errors.Is(err, ErrCommandCancelled) {
-				return err
+			if suppressTUICancel(err) == nil {
+				return nil
 			}
 			// Fallback to static table on TUI error
 			content := renderTaskTable(filtered)
@@ -267,6 +264,9 @@ func runTaskView(cmd *cobra.Command, id string) error {
 		printPaged(cmd, content)
 	} else {
 		content := renderTaskDetailed(task)
+		if isTTY() {
+			content = renderTaskDetailedMarkdown(task, markdownDisplayWidth())
+		}
 		return renderOrPage(cmd, fmt.Sprintf("Task %s", task.ID), content)
 	}
 
@@ -286,7 +286,8 @@ func runTaskEdit(cmd *cobra.Command, args []string) error {
 	id := args[0]
 	store := getStore()
 	service := newCLITaskLifecycleService(store)
-	task, err := service.UpdateTask(cmd.Context(), id, tasklifecycle.TaskUpdateOptions{Actor: cliLifecycleActor(), Mutate: func(task *models.Task) error {
+	expectedHash, _ := cmd.Flags().GetString("expected-hash")
+	task, err := service.UpdateTask(cmd.Context(), id, tasklifecycle.TaskUpdateOptions{Actor: cliLifecycleActor(), ExpectedHash: expectedHash, Mutate: func(task *models.Task) error {
 
 		// Apply flag updates
 		if cmd.Flags().Changed("title") {
@@ -436,7 +437,8 @@ var taskArchiveCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		yes, _ := cmd.Flags().GetBool("yes")
-		return runCLILifecycle(cmd, tasklifecycle.Request{Operation: tasklifecycle.OperationArchive, TaskID: args[0], Execute: yes, Actor: cliLifecycleActor()}, false)
+		expectedHash, _ := cmd.Flags().GetString("expected-hash")
+		return runCLILifecycle(cmd, tasklifecycle.Request{Operation: tasklifecycle.OperationArchive, TaskID: args[0], Execute: yes, Actor: cliLifecycleActor(), ExpectedHash: expectedHash}, false)
 	},
 }
 
@@ -448,7 +450,8 @@ var taskUnarchiveCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		yes, _ := cmd.Flags().GetBool("yes")
-		return runCLILifecycle(cmd, tasklifecycle.Request{Operation: tasklifecycle.OperationReopen, TaskID: args[0], Execute: yes, Actor: cliLifecycleActor()}, false)
+		expectedHash, _ := cmd.Flags().GetString("expected-hash")
+		return runCLILifecycle(cmd, tasklifecycle.Request{Operation: tasklifecycle.OperationReopen, TaskID: args[0], Execute: yes, Actor: cliLifecycleActor(), ExpectedHash: expectedHash}, false)
 	},
 }
 
@@ -602,23 +605,89 @@ var taskHistoryCmd = &cobra.Command{
 // ---- list view helpers ----
 
 func buildTaskListItems(tasks []*models.Task) []listItem {
-	items := make([]listItem, len(tasks))
-	for i, t := range tasks {
-		desc := StatusStyle(t.Status).Render(t.Status) + "  " + PriorityStyle(t.Priority).Render(t.Priority)
+	sorted := append([]*models.Task(nil), tasks...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		left, right := sorted[i], sorted[j]
+		if rank := taskStatusListRank(left.Status) - taskStatusListRank(right.Status); rank != 0 {
+			return rank < 0
+		}
+		if left.Order != nil || right.Order != nil {
+			if left.Order == nil {
+				return false
+			}
+			if right.Order == nil {
+				return true
+			}
+			if *left.Order != *right.Order {
+				return *left.Order < *right.Order
+			}
+		}
+		if rank := taskPriorityListRank(left.Priority) - taskPriorityListRank(right.Priority); rank != 0 {
+			return rank < 0
+		}
+		if !left.UpdatedAt.Equal(right.UpdatedAt) {
+			return left.UpdatedAt.After(right.UpdatedAt)
+		}
+		return left.ID < right.ID
+	})
+
+	items := make([]listItem, len(sorted))
+	for i, t := range sorted {
+		task := t
+		parts := []string{
+			StatusStyle(t.Status).Render(t.Status),
+			PriorityStyle(t.Priority).Render(t.Priority),
+		}
 		if t.Assignee != "" {
-			desc += "  " + StyleDim.Render(t.Assignee)
+			parts = append(parts, StyleDim.Render(t.Assignee))
 		}
 		if len(t.Labels) > 0 {
-			desc += "  " + RenderLabels(t.Labels)
+			parts = append(parts, RenderLabels(t.Labels))
 		}
 		items[i] = listItem{
-			id:          t.ID,
-			title:       t.Title,
-			description: desc,
-			detail:      renderTaskDetailed(t),
+			id:          task.ID,
+			title:       task.Title,
+			description: joinListMetadata(parts...),
+			detailRenderer: newLazyMarkdownDetailRenderer(func(width int, style string) string {
+				return renderTaskDetailedMarkdownWithStyle(task, width, style)
+			}),
 		}
 	}
 	return items
+}
+
+func taskStatusListRank(status string) int {
+	switch status {
+	case "urgent":
+		return 0
+	case "blocked":
+		return 1
+	case "in-progress":
+		return 2
+	case "in-review":
+		return 3
+	case "todo":
+		return 4
+	case "on-hold":
+		return 5
+	case "done":
+		return 6
+	default:
+		return 5
+	}
+}
+
+func taskPriorityListRank(priority string) int {
+	switch priority {
+	case "high":
+		return 0
+	case "medium":
+		return 1
+	case "low":
+		return 2
+	default:
+		return 3
+	}
 }
 
 // ---- output helpers ----
@@ -743,6 +812,18 @@ func sprintTaskPlain(t *models.Task) string {
 }
 
 func renderTaskDetailed(t *models.Task) string {
+	return renderTaskDetailedWithBodyRenderer(t, passthroughMarkdown)
+}
+
+func renderTaskDetailedMarkdown(t *models.Task, width int) string {
+	return renderTaskDetailedMarkdownWithStyle(t, width, terminalMarkdownStyle())
+}
+
+func renderTaskDetailedMarkdownWithStyle(t *models.Task, width int, style string) string {
+	return renderTaskDetailedWithBodyRenderer(t, newTerminalMarkdownBodyRenderer(width, style))
+}
+
+func renderTaskDetailedWithBodyRenderer(t *models.Task, renderBody markdownBodyRenderer) string {
 	var b strings.Builder
 	// Header
 	fmt.Fprintf(&b, "%s  %s\n", StyleID.Render(t.ID), StyleBold.Render(t.Title))
@@ -765,7 +846,7 @@ func renderTaskDetailed(t *models.Task) string {
 		fmt.Fprintln(&b, RenderKeyValue("Fulfills", joinStrings(t.Fulfills, ", ")))
 	}
 	if t.Description != "" {
-		fmt.Fprintf(&b, "\n%s\n%s\n", RenderSectionHeader("Description"), t.Description)
+		fmt.Fprintf(&b, "\n%s\n%s\n", RenderSectionHeader("Description"), renderBody(t.Description))
 	}
 	if len(t.AcceptanceCriteria) > 0 {
 		fmt.Fprintf(&b, "\n%s\n", RenderSectionHeader("Acceptance Criteria"))
@@ -774,10 +855,10 @@ func renderTaskDetailed(t *models.Task) string {
 		}
 	}
 	if t.ImplementationPlan != "" {
-		fmt.Fprintf(&b, "\n%s\n%s\n", RenderSectionHeader("Implementation Plan"), t.ImplementationPlan)
+		fmt.Fprintf(&b, "\n%s\n%s\n", RenderSectionHeader("Implementation Plan"), renderBody(t.ImplementationPlan))
 	}
 	if t.ImplementationNotes != "" {
-		fmt.Fprintf(&b, "\n%s\n%s\n", RenderSectionHeader("Implementation Notes"), t.ImplementationNotes)
+		fmt.Fprintf(&b, "\n%s\n%s\n", RenderSectionHeader("Implementation Notes"), renderBody(t.ImplementationNotes))
 	}
 	if t.TimeSpent > 0 {
 		fmt.Fprintf(&b, "\n%s %s\n", StyleDim.Render("Time Spent:"), StyleInfo.Render(formatDuration(t.TimeSpent)))
@@ -966,6 +1047,7 @@ func init() {
 	taskEditCmd.Flags().String("append-notes", "", "Append to implementation notes")
 	taskEditCmd.Flags().String("spec", "", "Linked spec document path")
 	taskEditCmd.Flags().String("parent", "", "Parent task ID")
+	taskEditCmd.Flags().String("expected-hash", "", "Expected canonical hash for optimistic concurrency")
 	taskEditCmd.Flags().StringArray("fulfills", nil, "Spec ACs this task fulfills (repeatable)")
 	taskEditCmd.Flags().Int("order", 0, "Display order (lower = first)")
 
@@ -974,7 +1056,9 @@ func init() {
 	taskDeleteCmd.Flags().Bool("yes", false, "Explicitly confirm permanent deletion")
 	taskDeleteCmd.Flags().Bool("allow-hard-delete", false, "Grant this local CLI invocation hard-delete capability")
 	taskArchiveCmd.Flags().Bool("yes", false, "Execute; otherwise preview only")
+	taskArchiveCmd.Flags().String("expected-hash", "", "Expected canonical hash for optimistic concurrency")
 	taskUnarchiveCmd.Flags().Bool("yes", false, "Execute; otherwise preview only")
+	taskUnarchiveCmd.Flags().String("expected-hash", "", "Expected canonical hash for optimistic concurrency")
 	taskBatchArchiveCmd.Flags().Bool("yes", false, "Execute; otherwise preview only")
 	taskBatchUnarchiveCmd.Flags().Bool("yes", false, "Execute; otherwise preview only")
 

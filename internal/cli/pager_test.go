@@ -22,3 +22,20 @@ func TestCommandCancellationSentinel(t *testing.T) {
 		t.Fatal("unrelated error matched cancellation sentinel")
 	}
 }
+
+func TestSuppressTUICancel(t *testing.T) {
+	resetSuppressedTUICancel()
+	t.Cleanup(resetSuppressedTUICancel)
+
+	if err := suppressTUICancel(ErrCommandCancelled); err != nil {
+		t.Fatalf("direct cancellation returned %v, want nil", err)
+	}
+	if err := suppressTUICancel(errors.Join(errors.New("tui stopped"), ErrCommandCancelled)); err != nil {
+		t.Fatalf("wrapped cancellation returned %v, want nil", err)
+	}
+
+	wantErr := errors.New("render failed")
+	if err := suppressTUICancel(wantErr); !errors.Is(err, wantErr) {
+		t.Fatalf("non-cancellation error = %v, want %v", err, wantErr)
+	}
+}

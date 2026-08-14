@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -118,10 +118,10 @@ func runDocList(cmd *cobra.Command, args []string) error {
 			fmt.Print(content)
 			return nil
 		}
-		items := buildDocListItems(store, docs)
+		items := buildDocListItems(docs)
 		if err := RunListView("Documents", items); err != nil {
-			if errors.Is(err, ErrCommandCancelled) {
-				return err
+			if suppressTUICancel(err) == nil {
+				return nil
 			}
 			content := renderDocList(docs)
 			fmt.Print(content)
@@ -250,6 +250,9 @@ func runDocView(cmd *cobra.Command, path string) error {
 		printPaged(cmd, pb.String())
 	} else {
 		content := renderDocView(doc)
+		if isTTY() {
+			content = renderDocViewMarkdown(doc, markdownDisplayWidth())
+		}
 		return renderOrPage(cmd, doc.Title, content)
 	}
 
@@ -298,18 +301,13 @@ func runDocCreate(cmd *cobra.Command, args []string) error {
 		doc.Tags = []string{}
 	}
 
-	if err := store.Docs.Create(doc); err != nil {
-		return fmt.Errorf("create doc: %w", err)
-	}
-
-	search.BestEffortIndexDoc(store, doc.Path)
-
-	if err := store.Versions.SaveDocRevisionWithOptions(nil, doc, storage.DocRevisionOptions{
+	if err := store.MutateDocWithHistory(context.Background(), nil, doc, storage.DocMutationOptions{
 		Actor:  "cli",
 		Source: "cli",
 	}); err != nil {
-		return fmt.Errorf("save doc history: %w", err)
+		return fmt.Errorf("create doc: %w", err)
 	}
+	search.BestEffortIndexDoc(store, doc.Path)
 
 	fmt.Println(RenderSuccess(fmt.Sprintf("Created doc: %s", docPath)))
 	return nil
@@ -354,6 +352,7 @@ func runDocEdit(cmd *cobra.Command, args []string) error {
 	}
 
 	targetSection, _ := cmd.Flags().GetString("section")
+	expectedHash, _ := cmd.Flags().GetString("expected-hash")
 
 	if cmd.Flags().Changed("content") {
 		v, _ := cmd.Flags().GetString("content")
@@ -379,27 +378,18 @@ func runDocEdit(cmd *cobra.Command, args []string) error {
 
 	doc.UpdatedAt = time.Now()
 
-	if oldPath != doc.Path {
-		if err := store.Docs.Rename(oldPath, doc); err != nil {
-			return fmt.Errorf("rename doc: %w", err)
-		}
-		if err := store.Docs.RewriteDocReferences(oldPath, doc.Path, store.Tasks, store.Memory); err != nil {
-			return fmt.Errorf("rewrite doc refs: %w", err)
-		}
-		search.BestEffortRemoveDoc(store, oldPath)
-	} else if err := store.Docs.Update(doc); err != nil {
+	if err := store.MutateDocWithHistory(context.Background(), &oldDoc, doc, storage.DocMutationOptions{
+		Section:      targetSection,
+		Actor:        "cli",
+		Source:       "cli",
+		ExpectedHash: expectedHash,
+	}); err != nil {
 		return fmt.Errorf("update doc: %w", err)
 	}
-
-	search.BestEffortIndexDoc(store, doc.Path)
-
-	if err := store.Versions.SaveDocRevisionWithOptions(&oldDoc, doc, storage.DocRevisionOptions{
-		Section: targetSection,
-		Actor:   "cli",
-		Source:  "cli",
-	}); err != nil {
-		return fmt.Errorf("save doc history: %w", err)
+	if oldPath != doc.Path {
+		search.BestEffortRemoveDoc(store, oldPath)
 	}
+	search.BestEffortIndexDoc(store, doc.Path)
 
 	fmt.Println(RenderSuccess(fmt.Sprintf("Updated doc: %s", doc.Path)))
 	return nil
@@ -415,10 +405,14 @@ var docDeleteCmd = &cobra.Command{
 		store := getStore()
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		force, _ := cmd.Flags().GetBool("force")
+		expectedHash, _ := cmd.Flags().GetString("expected-hash")
 
 		doc, err := store.Docs.Get(args[0])
 		if err != nil {
 			return fmt.Errorf("delete doc: %w", err)
+		}
+		if strings.TrimSpace(expectedHash) == "" {
+			expectedHash = doc.CanonicalHash
 		}
 
 		if dryRun {
@@ -436,7 +430,7 @@ var docDeleteCmd = &cobra.Command{
 			}
 		}
 
-		if err := store.Docs.Delete(args[0]); err != nil {
+		if err := store.DeleteDocWithExpectedHash(context.Background(), args[0], storage.DocDeleteOptions{ExpectedHash: expectedHash}); err != nil {
 			return fmt.Errorf("delete doc: %w", err)
 		}
 		search.BestEffortRemoveDoc(store, args[0])
@@ -626,33 +620,24 @@ func shortDocHistoryHash(hash string) string {
 
 // ---- list view helpers ----
 
-func buildDocListItems(store *storage.Store, docs []*models.Doc) []listItem {
+func buildDocListItems(docs []*models.Doc) []listItem {
 	items := make([]listItem, len(docs))
 	for i, d := range docs {
-		desc := d.Description
+		doc := d
+		parts := []string{d.Description}
 		if len(d.Tags) > 0 {
-			if desc != "" {
-				desc += "  "
-			}
-			desc += RenderTags(d.Tags)
+			parts = append(parts, RenderTags(d.Tags))
 		}
 		if d.IsImported {
-			if desc != "" {
-				desc += "  "
-			}
-			desc += StyleDim.Render("[imported]")
-		}
-		// Load full content for detail view
-		detail := ""
-		full, err := store.Docs.Get(d.Path)
-		if err == nil {
-			detail = renderDocView(full)
+			parts = append(parts, StyleDim.Render("imported"))
 		}
 		items[i] = listItem{
-			id:          d.Path,
-			title:       d.Title,
-			description: desc,
-			detail:      detail,
+			id:          doc.Path,
+			title:       doc.Title,
+			description: joinListMetadata(parts...),
+			detailRenderer: newLazyMarkdownDetailRenderer(func(width int, style string) string {
+				return renderDocListDetailMarkdownWithStyle(doc, width, style)
+			}),
 		}
 	}
 	return items
@@ -689,6 +674,33 @@ func renderDocList(docs []*models.Doc) string {
 }
 
 func renderDocView(doc *models.Doc) string {
+	return renderDocViewWithBodyRenderer(doc, passthroughMarkdown)
+}
+
+func renderDocViewMarkdown(doc *models.Doc, width int) string {
+	return renderDocViewMarkdownWithStyle(doc, width, terminalMarkdownStyle())
+}
+
+func renderDocViewMarkdownWithStyle(doc *models.Doc, width int, style string) string {
+	return renderDocViewWithBodyRenderer(doc, newTerminalMarkdownBodyRenderer(width, style))
+}
+
+func renderDocListDetailMarkdownWithStyle(doc *models.Doc, width int, style string) string {
+	var b strings.Builder
+	if doc.Description != "" {
+		fmt.Fprintln(&b, StyleDim.Render(doc.Description))
+	}
+	if len(doc.Tags) > 0 {
+		fmt.Fprintf(&b, "%s %s\n", StyleDim.Render("Tags:"), RenderTags(doc.Tags))
+	}
+	if b.Len() > 0 {
+		fmt.Fprintln(&b, RenderSeparator(min(60, width)))
+	}
+	fmt.Fprintln(&b, newTerminalMarkdownBodyRenderer(width, style)(doc.Content))
+	return b.String()
+}
+
+func renderDocViewWithBodyRenderer(doc *models.Doc, renderBody markdownBodyRenderer) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, StyleTitle.Render("# "+doc.Title))
 	if doc.Description != "" {
@@ -698,7 +710,7 @@ func renderDocView(doc *models.Doc) string {
 		fmt.Fprintf(&b, "%s %s\n", StyleDim.Render("Tags:"), RenderTags(doc.Tags))
 	}
 	fmt.Fprintln(&b, RenderSeparator(60))
-	fmt.Fprintln(&b, doc.Content)
+	fmt.Fprintln(&b, renderBody(doc.Content))
 	return b.String()
 }
 
@@ -1031,10 +1043,12 @@ func init() {
 	docEditCmd.Flags().StringP("content", "c", "", "Replace content")
 	docEditCmd.Flags().StringP("append", "a", "", "Append to content")
 	docEditCmd.Flags().String("section", "", "Target section to replace (used with --content)")
+	docEditCmd.Flags().String("expected-hash", "", "Expected canonical hash for optimistic concurrency")
 
 	// doc delete flags
 	docDeleteCmd.Flags().Bool("dry-run", false, "Preview what would be deleted without deleting")
 	docDeleteCmd.Flags().Bool("force", false, "Skip confirmation prompt")
+	docDeleteCmd.Flags().String("expected-hash", "", "Expected canonical hash for optimistic concurrency")
 
 	docCmd.AddCommand(docListCmd)
 	docCmd.AddCommand(docViewCmd)

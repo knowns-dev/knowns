@@ -7,24 +7,62 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/paginator"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ─── list item ───────────────────────────────────────────────────────
 
 // listItem wraps any item for display in the interactive list.
 type listItem struct {
-	id          string // task ID or doc path
-	title       string
-	description string // subtitle line (status, priority, tags, etc.)
-	detail      string // pre-rendered detail content shown on Enter
+	id             string // task ID or doc path
+	title          string
+	description    string // subtitle line (status, priority, tags, etc.)
+	detail         string // static detail content shown on Enter
+	detailRenderer func(width int) string
 }
 
 func (i listItem) Title() string       { return i.title }
 func (i listItem) Description() string { return i.description }
-func (i listItem) FilterValue() string { return i.title + " " + i.id }
+func (i listItem) FilterValue() string {
+	return strings.Join([]string{
+		normalizeListLine(i.title),
+		normalizeListLine(i.id),
+		normalizeListLine(ansi.Strip(i.description)),
+	}, " ")
+}
+
+func (i listItem) detailContent(width int) (string, bool) {
+	if i.detailRenderer != nil {
+		return i.detailRenderer(width), true
+	}
+	return i.detail, i.detail != ""
+}
+
+func joinListMetadata(parts ...string) string {
+	nonEmpty := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if strings.TrimSpace(ansi.Strip(part)) != "" {
+			nonEmpty = append(nonEmpty, part)
+		}
+	}
+	return strings.Join(nonEmpty, StyleDim.Render(" · "))
+}
+
+func normalizeListLine(value string) string {
+	value = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(value)
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func truncateListLine(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return ansi.Truncate(normalizeListLine(value), width, "…")
+}
 
 // ─── custom delegate ─────────────────────────────────────────────────
 
@@ -39,37 +77,52 @@ func (d listItemDelegate) Render(w io.Writer, m list.Model, index int, item list
 		return
 	}
 
-	width := m.Width() - 4 // account for padding
-
-	// Cursor and styling
-	var titleLine, descLine string
-	if index == m.Index() {
-		cursor := StyleInfo.Render("> ")
-		id := StyleID.Render("[" + li.id + "]")
-		title := li.title
-		if lipgloss.Width(li.id)+lipgloss.Width(li.title)+6 > width {
-			maxTitle := width - lipgloss.Width(li.id) - 6
-			if maxTitle > 3 {
-				title = truncate(title, maxTitle)
-			}
-		}
-		titleLine = cursor + id + " " + StyleBold.Render(title)
-		descLine = "    " + li.description
-	} else {
-		id := StyleDim.Render("[" + li.id + "]")
-		title := li.title
-		if lipgloss.Width(li.id)+lipgloss.Width(li.title)+6 > width {
-			maxTitle := width - lipgloss.Width(li.id) - 6
-			if maxTitle > 3 {
-				title = truncate(title, maxTitle)
-			}
-		}
-		titleLine = "  " + id + " " + title
-		descLine = "    " + StyleDim.Render(li.description)
-	}
+	width := max(1, m.Width()-4) // account for list padding
+	titleLine, descLine := renderListItemLines(li, width, index == m.Index())
 
 	fmt.Fprintln(w, titleLine)
 	fmt.Fprint(w, descLine)
+}
+
+func renderListItemLines(item listItem, width int, selected bool) (string, string) {
+	width = max(1, width)
+	marker := "  "
+	if selected {
+		marker = StyleInfo.Render("▌ ")
+	}
+
+	titleWidth := max(1, width-ansi.StringWidth(marker))
+	title := truncateListLine(item.title, titleWidth)
+	if selected {
+		title = StyleBold.Render(title)
+	}
+	titleLine := marker + title
+
+	indent := "  "
+	metadataWidth := max(1, width-ansi.StringWidth(indent))
+	id := normalizeListLine(item.id)
+	description := normalizeListLine(item.description)
+
+	if description == "" {
+		idStyle := StyleDim
+		if selected {
+			idStyle = StyleID
+		}
+		return ansi.Truncate(titleLine, width, "…"), indent + idStyle.Render(truncateListLine(id, metadataWidth))
+	}
+
+	idBudget := min(ansi.StringWidth(id), max(8, metadataWidth*2/5))
+	idText := truncateListLine(id, idBudget)
+	separator := StyleDim.Render(" · ")
+	descriptionWidth := max(1, metadataWidth-ansi.StringWidth(idText)-ansi.StringWidth(separator))
+	descriptionText := truncateListLine(description, descriptionWidth)
+
+	idStyle := StyleDim
+	if selected {
+		idStyle = StyleID
+	}
+	descLine := indent + idStyle.Render(idText) + separator + descriptionText
+	return ansi.Truncate(titleLine, width, "…"), ansi.Truncate(descLine, width, "…")
 }
 
 // ─── list view model ─────────────────────────────────────────────────
@@ -92,6 +145,34 @@ type listViewModel struct {
 	height    int
 }
 
+func (m *listViewModel) refreshSelectedDetail() bool {
+	selected := m.list.SelectedItem()
+	if selected == nil {
+		return false
+	}
+	li, ok := selected.(listItem)
+	if !ok {
+		return false
+	}
+	detail, ok := li.detailContent(m.viewport.Width())
+	if !ok {
+		return false
+	}
+	m.viewport.SetContent(detail)
+	return true
+}
+
+var (
+	listOpenBinding = key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("enter", "open"),
+	)
+	listQuitBinding = key.NewBinding(
+		key.WithKeys("q", "ctrl+c"),
+		key.WithHelp("q", "quit"),
+	)
+)
+
 func newListViewModel(title string, items []listItem) listViewModel {
 	// Convert to list.Item slice
 	listItems := make([]list.Item, len(items))
@@ -106,6 +187,13 @@ func newListViewModel(title string, items []listItem) listViewModel {
 	l.SetShowHelp(true)
 	l.SetFilteringEnabled(true)
 	l.DisableQuitKeybindings()
+	l.Paginator.Type = paginator.Arabic
+	l.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{listOpenBinding, listQuitBinding}
+	}
+	l.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{listOpenBinding, listQuitBinding}
+	}
 
 	// Style the title
 	l.Styles.Title = lipgloss.NewStyle().Bold(true).Foreground(colorCyan)
@@ -126,17 +214,20 @@ func (m listViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.list.SetSize(msg.Width, msg.Height)
+		m.list.SetSize(max(1, msg.Width), max(1, msg.Height))
 		if !m.ready {
 			m.viewport = viewport.New(
-				viewport.WithWidth(msg.Width),
-				viewport.WithHeight(msg.Height-4), // header + footer
+				viewport.WithWidth(max(1, msg.Width)),
+				viewport.WithHeight(max(1, msg.Height-4)), // header + footer
 			)
 			m.viewport.MouseWheelEnabled = true
 			m.ready = true
 		} else {
-			m.viewport.SetWidth(msg.Width)
-			m.viewport.SetHeight(msg.Height - 4)
+			m.viewport.SetWidth(max(1, msg.Width))
+			m.viewport.SetHeight(max(1, msg.Height-4))
+		}
+		if m.state == stateDetail {
+			m.refreshSelectedDetail()
 		}
 		return m, nil
 
@@ -148,23 +239,19 @@ func (m listViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			switch {
-			case key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))):
+			case key.Matches(msg, listQuitBinding):
 				m.cancelled = msg.String() == "ctrl+c"
 				return m, tea.Quit
-			case key.Matches(msg, key.NewBinding(key.WithKeys("enter"))):
-				selected := m.list.SelectedItem()
-				if selected != nil {
-					if li, ok := selected.(listItem); ok && li.detail != "" {
-						m.viewport.SetContent(li.detail)
-						m.viewport.GotoTop()
-						m.state = stateDetail
-						return m, nil
-					}
+			case key.Matches(msg, listOpenBinding):
+				if m.refreshSelectedDetail() {
+					m.viewport.GotoTop()
+					m.state = stateDetail
+					return m, nil
 				}
 			}
 		case stateDetail:
 			switch {
-			case key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))):
+			case key.Matches(msg, listQuitBinding):
 				m.cancelled = msg.String() == "ctrl+c"
 				return m, tea.Quit
 			case key.Matches(msg, key.NewBinding(key.WithKeys("esc", "backspace"))):
@@ -195,7 +282,7 @@ func (m listViewModel) View() tea.View {
 	switch m.state {
 	case stateDetail:
 		if !m.ready {
-			v := tea.NewView("Loading...")
+			v := tea.NewView("Loading…")
 			v.AltScreen = true
 			return v
 		}
@@ -204,18 +291,22 @@ func (m listViewModel) View() tea.View {
 		title := m.title
 		if selected != nil {
 			if li, ok := selected.(listItem); ok {
-				title = li.id + " — " + li.title
+				title = li.id + " · " + li.title
 			}
 		}
 
 		width := m.viewport.Width()
 		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(colorCyan)
-		header := titleStyle.Render(title)
+		header := titleStyle.Render(truncateListLine(title, width))
 		sep := RenderSeparator(width)
 
 		pct := m.viewport.ScrollPercent()
 		info := StyleDim.Render(fmt.Sprintf(" %3.0f%% ", pct*100))
-		helpText := StyleDim.Render("esc: back • ↑↓/PgUp/PgDn: scroll • q: quit")
+		help := "esc back · ↑↓/PgUp/PgDn scroll · q quit"
+		if width < 56 {
+			help = "esc back · q quit"
+		}
+		helpText := StyleDim.Render(truncateListLine(help, max(1, width-lipgloss.Width(info))))
 		gap := max(0, width-lipgloss.Width(info)-lipgloss.Width(helpText))
 		footerLine := info + strings.Repeat(" ", gap) + helpText
 

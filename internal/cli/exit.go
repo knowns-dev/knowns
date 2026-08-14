@@ -1,8 +1,28 @@
 package cli
 
-import "errors"
+import (
+	"errors"
+	"sync/atomic"
+)
 
 var ErrCommandCancelled = errors.New("command cancelled")
+var suppressedTUICancel atomic.Bool
+
+func suppressTUICancel(err error) error {
+	if errors.Is(err, ErrCommandCancelled) {
+		suppressedTUICancel.Store(true)
+		return nil
+	}
+	return err
+}
+
+func resetSuppressedTUICancel() {
+	suppressedTUICancel.Store(false)
+}
+
+func wasTUICancelSuppressed() bool {
+	return suppressedTUICancel.Load()
+}
 
 type commandExitError struct {
 	code int

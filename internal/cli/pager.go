@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -146,8 +145,8 @@ func renderOrPage(cmd any, title, content string) error {
 		return nil
 	}
 	if err := RunPager(title, content); err != nil {
-		if errors.Is(err, ErrCommandCancelled) {
-			return err
+		if suppressTUICancel(err) == nil {
+			return nil
 		}
 		// Fallback to direct print on TUI error.
 		fmt.Print(content)

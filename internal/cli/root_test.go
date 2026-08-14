@@ -95,6 +95,33 @@ func TestExecuteWithUpdateNoticeReturnsImmediatelyOnCancellation(t *testing.T) {
 	}
 }
 
+func TestExecuteWithUpdateNoticeSkipsNoticeAfterSuppressedTUICancel(t *testing.T) {
+	t.Setenv("CI", "")
+	t.Setenv("NO_UPDATE_CHECK", "")
+
+	blocked := make(chan struct{})
+	var output strings.Builder
+	start := time.Now()
+
+	err := executeWithUpdateNotice([]string{"doc", "list"}, func() error {
+		return suppressTUICancel(ErrCommandCancelled)
+	}, func() string {
+		<-blocked
+		return "update notice"
+	}, 250*time.Millisecond, &output)
+	close(blocked)
+
+	if err != nil {
+		t.Fatalf("suppressed TUI cancellation returned error: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed >= 100*time.Millisecond {
+		t.Fatalf("suppressed TUI cancellation waited for update checker: %s", elapsed)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("unexpected update output: %q", output.String())
+	}
+}
+
 func TestExecuteWithUpdateNoticePrintsSuccessfulNotice(t *testing.T) {
 	t.Setenv("CI", "")
 	t.Setenv("NO_UPDATE_CHECK", "")
