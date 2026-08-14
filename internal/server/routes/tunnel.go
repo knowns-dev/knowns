@@ -23,8 +23,12 @@ type TunnelStatus struct {
 }
 
 // SetupTunnelRoutes registers tunnel control endpoints.
-func SetupTunnelRoutes(r chi.Router, tunnelMgr TunnelManager, broadcaster Broadcaster) {
+func SetupTunnelRoutes(r chi.Router, tunnelMgr TunnelManager, broadcaster Broadcaster, protectionReady ...func() bool) {
 	r.Post("/start", func(w http.ResponseWriter, r *http.Request) {
+		if len(protectionReady) > 0 && protectionReady[0] != nil && !protectionReady[0]() {
+			respondError(w, http.StatusForbidden, "password protection is required before starting a public tunnel")
+			return
+		}
 		url, err := tunnelMgr.Start()
 		if err != nil {
 			handleTunnelError(w, err)

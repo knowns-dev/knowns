@@ -89,6 +89,9 @@ func runBrowser(cmd *cobra.Command, args []string) error {
 	tunnelFlag, _ := cmd.Flags().GetBool("tunnel")
 	passwordFlag, _ := cmd.Flags().GetString("password")
 	allowTaskHardDelete, _ := cmd.Flags().GetBool("allow-task-hard-delete")
+	if tunnelFlag && strings.TrimSpace(passwordFlag) == "" {
+		return fmt.Errorf("--tunnel requires --password to protect the public server")
+	}
 
 	store, projectRoot := resolveProject(cmd)
 
@@ -131,9 +134,6 @@ func runBrowser(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  %s  %s %s\n", StyleSuccess.Render("●"), StyleBold.Render("Knowns"), StyleDim.Render("v"+util.Version))
 	fmt.Println()
 	fmt.Printf("  %s  %s\n", StyleInfo.Render("→"), StyleBold.Render(url))
-	if ip := getLocalIP(); ip != "" {
-		fmt.Printf("  %s  %s\n", StyleInfo.Render("→"), StyleInfo.Render(fmt.Sprintf("http://%s:%d", ip, port)))
-	}
 	if projectRoot != "" {
 		fmt.Printf("  %s  %s\n", StyleInfo.Render("⌁"), StyleBold.Render(projectRoot))
 	} else {
@@ -172,19 +172,6 @@ func runBrowser(cmd *cobra.Command, args []string) error {
 	return <-errCh
 }
 
-func getLocalIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		return ""
-	}
-	defer conn.Close()
-	addr, ok := conn.LocalAddr().(*net.UDPAddr)
-	if !ok {
-		return ""
-	}
-	return addr.IP.String()
-}
-
 func bindBrowserPort(startPort int, attempts int) (net.Listener, int, error) {
 	for offset := 0; offset < attempts; offset++ {
 		port := startPort + offset
@@ -194,7 +181,7 @@ func bindBrowserPort(startPort int, attempts int) (net.Listener, int, error) {
 			conn.Close()
 			continue // port in use by another process
 		}
-		listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
+		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err == nil {
 			return listener, port, nil
 		}

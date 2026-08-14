@@ -19,12 +19,16 @@ type AuthProvider interface {
 
 // AuthRoutes handles authentication endpoints.
 type AuthRoutes struct {
-	auth        AuthProvider
-	broadcaster Broadcaster
+	auth              AuthProvider
+	broadcaster       Broadcaster
+	canRemovePassword func() bool
 }
 
-func SetupAuthRoutes(r chi.Router, auth AuthProvider, broadcaster Broadcaster) {
+func SetupAuthRoutes(r chi.Router, auth AuthProvider, broadcaster Broadcaster, canRemovePassword ...func() bool) {
 	ar := &AuthRoutes{auth: auth, broadcaster: broadcaster}
+	if len(canRemovePassword) > 0 {
+		ar.canRemovePassword = canRemovePassword[0]
+	}
 	r.Get("/status", ar.getStatus)
 	r.Post("/login", ar.login)
 	r.Post("/password", ar.setPassword)
@@ -101,6 +105,10 @@ func (ar *AuthRoutes) removePassword(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
+	}
+	if ar.canRemovePassword != nil && !ar.canRemovePassword() {
+		respondError(w, http.StatusConflict, "stop the public tunnel before removing password protection")
+		return
 	}
 
 	ar.auth.RemovePassword()

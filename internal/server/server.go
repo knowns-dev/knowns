@@ -414,7 +414,7 @@ func NewServer(store *storage.Store, projectRoot string, port int, opts Options)
 
 // Start binds the configured port and serves HTTP.
 func (s *Server) Start() error {
-	addr := ":" + strconv.Itoa(s.port)
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(s.port))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
@@ -429,6 +429,12 @@ func (s *Server) StartWithListener(listener net.Listener) error {
 }
 
 func (s *Server) serve(listener net.Listener) error {
+	if !listenerIsLoopback(listener) && !s.auth.HasPassword() {
+		return fmt.Errorf("non-loopback listener requires password protection")
+	}
+	if s.opts.Tunnel && !s.auth.HasPassword() {
+		return fmt.Errorf("tunnel requires password protection")
+	}
 	defer s.releaseLSPDaemonLease()
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
 	s.cancelTaskSweep = sweepCancel
@@ -506,6 +512,14 @@ func (s *Server) serve(listener net.Listener) error {
 
 	log.Printf("[server] Shutdown complete")
 	return nil
+}
+
+func listenerIsLoopback(listener net.Listener) bool {
+	if listener == nil {
+		return false
+	}
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	return ok && addr.IP != nil && addr.IP.IsLoopback()
 }
 
 func (s *Server) releaseLSPDaemonLease() {
@@ -1017,7 +1031,10 @@ func (s *Server) buildRouter() chi.Router {
 		r.Use(middleware.Logger)
 	}
 
-	// CORS: reflect origin when credentials are used.
+	// Reject cross-site requests before CORS can answer a preflight.
+	r.Use(trustedOriginMiddleware(s.auth.HasPassword))
+
+	// CORS: reflect trusted origins when credentials are used.
 	c := cors.New(cors.Options{
 		AllowOriginFunc:  func(origin string) bool { return true },
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
@@ -1033,7 +1050,12 @@ func (s *Server) buildRouter() chi.Router {
 
 	// --- Auth routes (always accessible, bypasses auth middleware) ---
 	r.Route("/api/auth", func(r chi.Router) {
-		routes.SetupAuthRoutes(r, s.auth, s.sse)
+		routes.SetupAuthRoutes(r, s.auth, s.sse, func() bool {
+			if s.opts.Tunnel {
+				return false
+			}
+			return s.tunnel == nil || !s.tunnel.Status().Running
+		})
 	})
 
 	// --- SSE endpoint ---
@@ -1072,7 +1094,7 @@ func (s *Server) buildRouter() chi.Router {
 	// --- Tunnel routes (cloudflared tunnel control) ---
 	if s.tunnel != nil {
 		r.Route("/api/tunnel", func(r chi.Router) {
-			routes.SetupTunnelRoutes(r, s.tunnel, s.sse)
+			routes.SetupTunnelRoutes(r, s.tunnel, s.sse, s.auth.HasPassword)
 		})
 	}
 
@@ -1096,6 +1118,48 @@ func (s *Server) buildRouter() chi.Router {
 	s.mountUI(r)
 
 	return r
+}
+
+func trustedOriginMiddleware(allowPublicHost func() bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestHost := r.Host
+			if host, _, err := net.SplitHostPort(requestHost); err == nil {
+				requestHost = host
+			} else {
+				requestHost = strings.Trim(requestHost, "[]")
+			}
+			if !isLoopbackHost(requestHost) && (allowPublicHost == nil || !allowPublicHost()) {
+				http.Error(w, "untrusted request host", http.StatusForbidden)
+				return
+			}
+
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			u, err := url.Parse(origin)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+				http.Error(w, "untrusted request origin", http.StatusForbidden)
+				return
+			}
+			originHost := strings.Trim(u.Hostname(), "[]")
+			if !strings.EqualFold(originHost, requestHost) && !(isLoopbackHost(originHost) && isLoopbackHost(requestHost)) {
+				http.Error(w, "untrusted request origin", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
 }
 
 func (s *Server) openCodeConfig() (opencode.Config, bool) {
