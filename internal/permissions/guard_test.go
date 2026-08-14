@@ -183,6 +183,60 @@ func TestReadOnlyPreset_AllowsRead(t *testing.T) {
 	}
 }
 
+func TestReadOnlyPresetBlocksEveryCodeMutation(t *testing.T) {
+	mw := NewGuardMiddleware(func() *PermissionConfig {
+		return &PermissionConfig{Preset: PresetReadOnly}
+	})
+
+	for _, action := range []string{"rename", "replace", "replace_body", "insert", "delete"} {
+		result, err := callTool(mw, "code", action, map[string]any{"path": "main.go"})
+		if err != nil {
+			t.Fatalf("code.%s error: %v", action, err)
+		}
+		denial := parseDenial(t, result)
+		if denial == nil {
+			t.Errorf("code.%s passed read-only policy", action)
+			continue
+		}
+		want := CapWrite
+		if action == "delete" {
+			want = CapDelete
+		}
+		if denial.Capability != want {
+			t.Errorf("code.%s capability = %q, want %q", action, denial.Capability, want)
+		}
+	}
+}
+
+func TestReadOnlyPresetFailsClosedForUnknownCodeAction(t *testing.T) {
+	mw := NewGuardMiddleware(func() *PermissionConfig {
+		return &PermissionConfig{Preset: PresetReadOnly}
+	})
+	result, err := callTool(mw, "code", "future_mutation", map[string]any{"path": "main.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	denial := parseDenial(t, result)
+	if denial == nil || denial.Capability != CapWrite {
+		t.Fatalf("unknown code action did not fail closed: %+v", denial)
+	}
+}
+
+func TestReadWritePresetAllowsExplicitCodeDelete(t *testing.T) {
+	mw := NewGuardMiddleware(func() *PermissionConfig {
+		return &PermissionConfig{Preset: PresetReadWrite}
+	})
+	result, err := callTool(mw, "code", "delete", map[string]any{
+		"path": "main.go", "confirmed": true, "reason": "remove obsolete symbol",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("explicit code delete denied under read-write: %+v", result)
+	}
+}
+
 func TestGenerateDryRunPreset_DeniesNonDryRun(t *testing.T) {
 	// Scenario 4: generate-dry-run denies generate without dryRun.
 	cfg := &PermissionConfig{Preset: PresetGenerateDryRun}

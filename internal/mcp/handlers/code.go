@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/howznguyen/knowns/internal/lsp"
+	"github.com/howznguyen/knowns/internal/safepath"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -96,6 +97,12 @@ func RegisterCodeToolWithRuntime(s *server.MCPServer, getStore func() *storage.S
 			mcp.WithString("position",
 				mcp.Description("For action=insert, insertion position: before or after."),
 				mcp.Enum("before", "after"),
+			),
+			mcp.WithBoolean("confirmed",
+				mcp.Description("Explicit confirmation for action=delete."),
+			),
+			mcp.WithString("reason",
+				mcp.Description("Non-empty deletion reason required with confirmed=true."),
 			),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -276,9 +283,9 @@ func lspPathRequest(ctx context.Context, getStore func() *storage.Store, getCode
 	if err != nil || strings.TrimSpace(path) == "" {
 		return nil, nil, "", fmt.Errorf("path is required")
 	}
-	absPath := path
-	if !filepath.IsAbs(absPath) {
-		absPath = filepath.Join(projectRoot(store), absPath)
+	absPath, err := safepath.ResolveProject(projectRoot(store), path)
+	if err != nil {
+		return nil, nil, "", err
 	}
 	if getCodeRuntime == nil {
 		return nil, nil, "", fmt.Errorf("LSP not available for this project")
@@ -548,6 +555,9 @@ func handleCodeRename(ctx context.Context, getStore func() *storage.Store, getCo
 	if err != nil {
 		return errResult(err.Error())
 	}
+	if err := ensureCodeMutationPath(projectRoot(store), absPath); err != nil {
+		return errResult(err.Error())
+	}
 	args := req.GetArguments()
 	line, ok := intArg(args, "line")
 	if !ok {
@@ -574,7 +584,7 @@ func handleCodeRename(ctx context.Context, getStore func() *storage.Store, getCo
 	if edit != nil {
 		changes = edit.AllChanges()
 	}
-	filesChanged, totalEdits, err := applyWorkspaceEdit(changes)
+	filesChanged, totalEdits, err := applyWorkspaceEdit(projectRoot(store), changes)
 	if err != nil {
 		return errResult(err.Error())
 	}
@@ -608,9 +618,12 @@ func handleCodeReplace(ctx context.Context, getStore func() *storage.Store, getC
 		mode = "literal"
 	}
 	allowMultiple := boolArg(args, "allow_multiple_occurrences")
-	absPath := path
-	if !filepath.IsAbs(absPath) {
-		absPath = filepath.Join(projectRoot(store), absPath)
+	absPath, err := safepath.ResolveProject(projectRoot(store), path)
+	if err != nil {
+		return errResult(err.Error())
+	}
+	if err := ensureCodeMutationPath(projectRoot(store), absPath); err != nil {
+		return errResult(err.Error())
 	}
 	data, err := os.ReadFile(absPath)
 	if err != nil {
@@ -646,9 +659,58 @@ func handleCodeReplace(ctx context.Context, getStore func() *storage.Store, getC
 	return mcp.NewToolResultText(string(out)), nil
 }
 
+func ensureCodeMutationPath(root, absPath string) error {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("resolve project root: %w", err)
+	}
+	realPath, err := safepath.ResolveProjectReal(root, absPath)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(realRoot, realPath)
+	if err != nil {
+		return fmt.Errorf("resolve project path: %w", err)
+	}
+	top := strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]
+	if strings.EqualFold(top, ".knowns") || strings.EqualFold(top, ".git") {
+		return fmt.Errorf("code mutations cannot modify managed path %q", top)
+	}
+	for _, managedName := range []string{".knowns", ".git"} {
+		managedPath := filepath.Join(realRoot, managedName)
+		managedInfo, err := os.Stat(managedPath)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect managed path %q: %w", managedName, err)
+		}
+		for current := realPath; ; current = filepath.Dir(current) {
+			currentInfo, statErr := os.Stat(current)
+			if statErr == nil && os.SameFile(currentInfo, managedInfo) {
+				return fmt.Errorf("code mutations cannot modify managed path %q", managedName)
+			}
+			if statErr != nil && !os.IsNotExist(statErr) {
+				return fmt.Errorf("inspect code mutation path: %w", statErr)
+			}
+			if current == realRoot {
+				break
+			}
+			parent := filepath.Dir(current)
+			if parent == current {
+				break
+			}
+		}
+	}
+	return nil
+}
+
 func handleCodeReplaceBody(ctx context.Context, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getCodeRuntime, req)
 	if err != nil {
+		return errResult(err.Error())
+	}
+	if err := ensureCodeMutationPath(projectRoot(store), absPath); err != nil {
 		return errResult(err.Error())
 	}
 	args := req.GetArguments()
@@ -695,6 +757,9 @@ func handleCodeReplaceBody(ctx context.Context, getStore func() *storage.Store, 
 func handleCodeInsert(ctx context.Context, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getCodeRuntime, req)
 	if err != nil {
+		return errResult(err.Error())
+	}
+	if err := ensureCodeMutationPath(projectRoot(store), absPath); err != nil {
 		return errResult(err.Error())
 	}
 	args := req.GetArguments()
@@ -748,6 +813,9 @@ func handleCodeInsert(ctx context.Context, getStore func() *storage.Store, getCo
 func handleCodeDelete(ctx context.Context, getStore func() *storage.Store, getCodeRuntime func() CodeRuntime, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	store, mgr, absPath, err := lspPathRequest(ctx, getStore, getCodeRuntime, req)
 	if err != nil {
+		return errResult(err.Error())
+	}
+	if err := ensureCodeMutationPath(projectRoot(store), absPath); err != nil {
 		return errResult(err.Error())
 	}
 	args := req.GetArguments()
@@ -966,7 +1034,7 @@ func normalizeScore(score, maxScore float64) float64 {
 	return float64(int(n*10000+0.5)) / 10000
 }
 
-func applyWorkspaceEdit(changes map[string][]lsp.TextEdit) ([]string, int, error) {
+func applyWorkspaceEdit(root string, changes map[string][]lsp.TextEdit) ([]string, int, error) {
 	originals := map[string][]byte{}
 	updated := map[string][]byte{}
 	files := make([]string, 0, len(changes))
@@ -975,7 +1043,13 @@ func applyWorkspaceEdit(changes map[string][]lsp.TextEdit) ([]string, int, error
 		if len(edits) == 0 {
 			continue
 		}
-		path := pathFromURI(uri)
+		path, err := safepath.ResolveProject(root, pathFromURI(uri))
+		if err != nil {
+			return nil, 0, err
+		}
+		if err := ensureCodeMutationPath(root, path); err != nil {
+			return nil, 0, err
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, 0, err
