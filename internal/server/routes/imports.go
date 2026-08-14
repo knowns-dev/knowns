@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/howznguyen/knowns/internal/gitauth"
 	"github.com/howznguyen/knowns/internal/storage"
 )
 
@@ -221,14 +223,12 @@ const importMetaFile = "_import.json"
 
 // isGitURL returns true if source looks like a git repository URL.
 func isGitURL(source string) bool {
-	s := strings.ToLower(source)
-	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "git@") {
-		return true
+	s := strings.TrimSpace(source)
+	if strings.HasPrefix(strings.ToLower(s), "git@") {
+		return strings.Contains(s, ":")
 	}
-	if strings.HasSuffix(s, ".git") {
-		return true
-	}
-	return false
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != ""
 }
 
 // writeImportMeta persists import metadata into the import directory.
@@ -256,18 +256,30 @@ func readImportMeta(importDir string) (importMeta, bool) {
 // injectGitToken injects a git token into an HTTPS clone URL.
 // Priority: KNOWNS_GIT_TOKEN env > git.token config > KNOWNS_GITHUB_TOKEN env > github.token config.
 func (ir *ImportRoutes) injectGitToken(source string) string {
-	token := os.Getenv("KNOWNS_GIT_TOKEN")
-	if token == "" {
-		if v, err := ir.getStore().Config.Get("git.token"); err == nil {
-			if s, ok := v.(string); ok && s != "" {
-				token = s
-			}
+	token, host := ir.gitCredential()
+	return injectTokenInURL(source, token, host)
+}
+
+func (ir *ImportRoutes) gitCredential() (string, string) {
+	if token := os.Getenv("KNOWNS_GIT_TOKEN"); token != "" {
+		if host := os.Getenv("KNOWNS_GIT_HOST"); host != "" {
+			return token, host
+		}
+	}
+	var token, host string
+	if v, err := ir.getStore().Config.Get("git.token"); err == nil {
+		token, _ = v.(string)
+	}
+	if v, err := ir.getStore().Config.Get("git.host"); err == nil {
+		host, _ = v.(string)
+	}
+	if token != "" {
+		if host != "" {
+			return token, host
 		}
 	}
 	// Fallback to GitHub-specific for backward compatibility.
-	if token == "" {
-		token = os.Getenv("KNOWNS_GITHUB_TOKEN")
-	}
+	token = os.Getenv("KNOWNS_GITHUB_TOKEN")
 	if token == "" {
 		if v, err := ir.getStore().Config.Get("github.token"); err == nil {
 			if s, ok := v.(string); ok && s != "" {
@@ -276,40 +288,20 @@ func (ir *ImportRoutes) injectGitToken(source string) string {
 		}
 	}
 	if token != "" {
-		return injectTokenInURL(source, token)
+		return token, "github.com"
 	}
-	return source
+	return "", ""
 }
 
 // injectTokenInURL rewrites https://host/... to https://user:token@host/...
 // Uses the appropriate token username based on the git host.
-func injectTokenInURL(source, token string) string {
-	for _, prefix := range []string{"https://", "http://"} {
-		if strings.HasPrefix(source, prefix) {
-			rest := strings.TrimPrefix(source, prefix)
-			if strings.Contains(strings.SplitN(rest, "/", 2)[0], "@") {
-				return source
-			}
-			user := tokenUsernameForHost(rest)
-			return prefix + user + ":" + token + "@" + rest
-		}
-	}
-	return source
+func injectTokenInURL(source, token, allowedHost string) string {
+	return gitauth.InjectHTTPSCredential(source, token, allowedHost)
 }
 
 // tokenUsernameForHost returns the appropriate token username for a git host.
 func tokenUsernameForHost(hostAndPath string) string {
-	host := strings.ToLower(strings.SplitN(hostAndPath, "/", 2)[0])
-	host = strings.SplitN(host, ":", 2)[0] // strip port
-	switch {
-	case strings.Contains(host, "gitlab"):
-		return "oauth2"
-	case strings.Contains(host, "bitbucket"):
-		return "x-token-auth"
-	default:
-		// GitHub and most other git servers accept this.
-		return "x-access-token"
-	}
+	return gitauth.TokenUsername(strings.SplitN(hostAndPath, "/", 2)[0])
 }
 
 // isAuthError checks if a git stderr message indicates an authentication failure.
@@ -330,7 +322,7 @@ func (ir *ImportRoutes) gitLsRemoteHead(source, ref string) string {
 	if ref != "" {
 		target = ref
 	}
-	cmd := exec.Command("git", "ls-remote", url, target)
+	cmd := exec.Command("git", "ls-remote", "--", url, target)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.Output()
 	if err != nil {
@@ -368,7 +360,7 @@ func (ir *ImportRoutes) gitCloneImport(source, name, ref, cachedHash string, dry
 	if ref != "" {
 		args = append(args, "--branch", ref)
 	}
-	args = append(args, cloneURL, tmpDir)
+	args = append(args, "--", cloneURL, tmpDir)
 
 	cmd := exec.Command("git", args...)
 	var stderr bytes.Buffer
@@ -376,6 +368,9 @@ func (ir *ImportRoutes) gitCloneImport(source, name, ref, cachedHash string, dry
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if err := cmd.Run(); err != nil {
 		errMsg := strings.TrimSpace(stderr.String())
+		if token, _ := ir.gitCredential(); token != "" {
+			errMsg = strings.ReplaceAll(errMsg, token, "[REDACTED]")
+		}
 		if isAuthError(errMsg) {
 			return nil, nil, "", false, fmt.Errorf("authentication failed for %s. "+
 				"Set KNOWNS_GIT_TOKEN env var, run 'knowns config set git.token <token>', "+
@@ -403,6 +398,10 @@ func (ir *ImportRoutes) gitCloneImport(source, name, ref, cachedHash string, dry
 
 		err := filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
+				return nil
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				warnings = append(warnings, "skipped symbolic link "+path)
 				return nil
 			}
 			relPath, _ := filepath.Rel(knownsDir, path)

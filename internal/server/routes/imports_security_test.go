@@ -6,11 +6,59 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/howznguyen/knowns/internal/storage"
 )
+
+func TestGitTokenInjectionRequiresExactConfiguredHTTPSHost(t *testing.T) {
+	const token = "top-secret"
+	trusted := injectTokenInURL("https://github.com/knowns-dev/knowns.git", token, "github.com")
+	if !strings.Contains(trusted, token) {
+		t.Fatalf("trusted host did not receive token: %s", trusted)
+	}
+	for _, source := range []string{
+		"https://github.com.attacker.example/repo.git",
+		"https://attacker.example/repo.git",
+		"http://github.com/repo.git",
+	} {
+		if got := injectTokenInURL(source, token, "github.com"); got != source {
+			t.Errorf("untrusted source changed: got %q want %q", got, source)
+		}
+	}
+}
+
+func TestGitURLDetectionDoesNotTreatLocalDotGitPathAsRemote(t *testing.T) {
+	for _, source := range []string{"/tmp/private.git", `C:\private.git`, "file:///tmp/private.git", "--upload-pack=calc"} {
+		if isGitURL(source) {
+			t.Errorf("isGitURL(%q) = true, want false", source)
+		}
+	}
+	for _, source := range []string{"https://github.com/knowns-dev/knowns.git", "git@github.com:knowns-dev/knowns.git"} {
+		if !isGitURL(source) {
+			t.Errorf("isGitURL(%q) = false, want true", source)
+		}
+	}
+}
+
+func TestGitEnvironmentTokenRequiresEnvironmentHost(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("KNOWNS_GIT_TOKEN", "environment-secret")
+	t.Setenv("KNOWNS_GIT_HOST", "")
+	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("git-credential-security"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Config.Set("git.host", "attacker.example"); err != nil {
+		t.Fatal(err)
+	}
+	token, host := (&ImportRoutes{store: store}).gitCredential()
+	if token != "" || host != "" {
+		t.Fatalf("environment token paired with project host: token=%q host=%q", token, host)
+	}
+}
 
 func TestImportRoutesRejectUnsafeNameBeforeFilesystemWrite(t *testing.T) {
 	root := t.TempDir()

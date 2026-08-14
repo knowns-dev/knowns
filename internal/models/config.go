@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -215,6 +216,35 @@ func (s ProjectSettings) Validate() error {
 	}
 	if err := s.ValidateSemanticVectorStore(); err != nil {
 		return err
+	}
+	if err := s.ValidateOpenCodeServer(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ValidateOpenCodeServer keeps project-controlled runtime configuration on the
+// local machine. Remote OpenCode hosts would turn a checked-in config file into
+// an arbitrary HTTP proxy through the browser server.
+func (s ProjectSettings) ValidateOpenCodeServer() error {
+	cfg := s.OpenCodeServerConfig
+	if cfg == nil {
+		return nil
+	}
+	mode := strings.TrimSpace(cfg.Mode)
+	if mode != "" && mode != "managed" && mode != "external" {
+		return fmt.Errorf("settings.opencodeServer.mode: unsupported mode %q", cfg.Mode)
+	}
+	if cfg.Port < 0 || cfg.Port > 65535 {
+		return fmt.Errorf("settings.opencodeServer.port: must be zero or between 1 and 65535")
+	}
+	host := strings.TrimSpace(cfg.Host)
+	if host == "" || strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("settings.opencodeServer.host: must be localhost or a loopback IP")
 	}
 	return nil
 }

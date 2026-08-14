@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
+	"github.com/howznguyen/knowns/internal/gitauth"
 	"github.com/spf13/cobra"
 )
 
@@ -297,27 +299,43 @@ func runImportSync(cmd *cobra.Command, args []string) error {
 
 // isGitURLCli returns true if source looks like a git repository URL.
 func isGitURLCli(source string) bool {
-	s := strings.ToLower(source)
-	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "git@") || strings.HasSuffix(s, ".git")
+	s := strings.TrimSpace(source)
+	if strings.HasPrefix(strings.ToLower(s), "git@") {
+		return strings.Contains(s, ":")
+	}
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != ""
 }
 
 // cliInjectGitToken injects a git token into HTTPS clone URLs.
 // Priority: KNOWNS_GIT_TOKEN env > git.token config > KNOWNS_GITHUB_TOKEN env > github.token config.
 func cliInjectGitToken(source string) string {
-	token := os.Getenv("KNOWNS_GIT_TOKEN")
-	if token == "" {
-		if store, err := getStoreErr(); err == nil {
-			if v, err := store.Config.Get("git.token"); err == nil {
-				if s, ok := v.(string); ok && s != "" {
-					token = s
-				}
-			}
+	token, host := cliGitCredential()
+	return gitauth.InjectHTTPSCredential(source, token, host)
+}
+
+func cliGitCredential() (string, string) {
+	if token := os.Getenv("KNOWNS_GIT_TOKEN"); token != "" {
+		if host := os.Getenv("KNOWNS_GIT_HOST"); host != "" {
+			return token, host
+		}
+	}
+	var token, host string
+	if store, err := getStoreErr(); err == nil {
+		if v, err := store.Config.Get("git.token"); err == nil {
+			token, _ = v.(string)
+		}
+		if v, err := store.Config.Get("git.host"); err == nil {
+			host, _ = v.(string)
+		}
+	}
+	if token != "" {
+		if host != "" {
+			return token, host
 		}
 	}
 	// Fallback to GitHub-specific for backward compatibility.
-	if token == "" {
-		token = os.Getenv("KNOWNS_GITHUB_TOKEN")
-	}
+	token = os.Getenv("KNOWNS_GITHUB_TOKEN")
 	if token == "" {
 		if store, err := getStoreErr(); err == nil {
 			if v, err := store.Config.Get("github.token"); err == nil {
@@ -327,34 +345,10 @@ func cliInjectGitToken(source string) string {
 			}
 		}
 	}
-	if token == "" {
-		return source
+	if token != "" {
+		return token, "github.com"
 	}
-	for _, prefix := range []string{"https://", "http://"} {
-		if strings.HasPrefix(source, prefix) {
-			rest := strings.TrimPrefix(source, prefix)
-			if strings.Contains(strings.SplitN(rest, "/", 2)[0], "@") {
-				return source
-			}
-			user := cliTokenUsernameForHost(rest)
-			return prefix + user + ":" + token + "@" + rest
-		}
-	}
-	return source
-}
-
-// cliTokenUsernameForHost returns the appropriate token username for a git host.
-func cliTokenUsernameForHost(hostAndPath string) string {
-	host := strings.ToLower(strings.SplitN(hostAndPath, "/", 2)[0])
-	host = strings.SplitN(host, ":", 2)[0]
-	switch {
-	case strings.Contains(host, "gitlab"):
-		return "oauth2"
-	case strings.Contains(host, "bitbucket"):
-		return "x-token-auth"
-	default:
-		return "x-access-token"
-	}
+	return "", ""
 }
 
 // cliGitLsRemoteHead returns the commit hash for the remote HEAD (or a specific ref).
@@ -365,7 +359,7 @@ func cliGitLsRemoteHead(source, ref string) string {
 	if ref != "" {
 		target = ref
 	}
-	cmd := exec.Command("git", "ls-remote", url, target)
+	cmd := exec.Command("git", "ls-remote", "--", url, target)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.Output()
 	if err != nil {
@@ -404,7 +398,7 @@ func cliGitSync(source, ref, importDir, name, cachedHash string, force bool) (ad
 	if ref != "" {
 		gitArgs = append(gitArgs, "--branch", ref)
 	}
-	gitArgs = append(gitArgs, cloneURL, tmpDir)
+	gitArgs = append(gitArgs, "--", cloneURL, tmpDir)
 
 	gitCmd := exec.Command("git", gitArgs...)
 	var stderr bytes.Buffer
@@ -412,6 +406,9 @@ func cliGitSync(source, ref, importDir, name, cachedHash string, force bool) (ad
 	gitCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if err := gitCmd.Run(); err != nil {
 		errMsg := strings.TrimSpace(stderr.String())
+		if token, _ := cliGitCredential(); token != "" {
+			errMsg = strings.ReplaceAll(errMsg, token, "[REDACTED]")
+		}
 		if cliIsAuthError(errMsg) {
 			return 0, 0, 0, "", fmt.Errorf("authentication failed for %s\n\n"+
 				"Options:\n"+
@@ -436,6 +433,9 @@ func cliGitSync(source, ref, importDir, name, cachedHash string, force bool) (ad
 
 		_ = filepath.Walk(srcDir, func(path string, info os.FileInfo, walkErr error) error {
 			if walkErr != nil || info.IsDir() {
+				return nil
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
 				return nil
 			}
 			relPath, _ := filepath.Rel(knownsDir, path)
