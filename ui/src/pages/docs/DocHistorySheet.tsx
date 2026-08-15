@@ -12,7 +12,7 @@ import {
 	ShieldQuestion,
 } from "lucide-react";
 import {
-	getDocHistory,
+	getDocHistoryMetadata,
 	getDocRevisionDiff,
 	restoreDocRevision,
 	type DocChange,
@@ -21,6 +21,7 @@ import {
 	type DocRevisionDiff,
 	type DocVersion,
 	type DocVersionHistory,
+	type DocHistoryMetadataPage,
 } from "../../api/client";
 import { Button } from "../../components/ui/button";
 import { DiffViewer } from "../../components/ui/DiffViewer";
@@ -87,6 +88,11 @@ function changeSummary(version: DocVersion): string {
 	const scope = version.changedScopes?.[0];
 	if (scope) return formatScope(scope);
 	if (version.changes.length === 1) return FIELD_LABELS[version.changes[0].field] || version.changes[0].field;
+	if (version.changes.length === 0) {
+		if (version.operation) return version.operation.replaceAll("_", " ");
+		if (version.checkpoint) return "Checkpoint";
+		return "Open to load change details";
+	}
 	return `${version.changes.length} fields`;
 }
 
@@ -96,6 +102,7 @@ function changeSize(version: DocVersion): string {
 	if (delta !== 0) return `${delta > 0 ? "+" : ""}${delta} B`;
 	const bytes = scopes.reduce((sum, scope) => sum + (scope.newBytes || 0), 0);
 	if (bytes > 0) return `${bytes} B`;
+	if (version.changes.length === 0) return "—";
 	return "0 B";
 }
 
@@ -107,6 +114,33 @@ function retentionGapText(gap: DocHistoryGap): string {
 function latestVersion(history: DocVersionHistory | null): DocVersion | null {
 	if (!history?.versions.length) return null;
 	return [...history.versions].sort((a, b) => b.version - a.version)[0] || null;
+}
+
+function metadataHistory(page: DocHistoryMetadataPage): DocVersionHistory {
+	return {
+		docId: page.entityId,
+		docPath: page.docPath || "",
+		currentPath: page.currentPath,
+		currentVersion: page.currentVersion,
+		retentionGaps: page.retentionGaps,
+		versions: (page.items || []).map((item) => ({
+			id: item.id,
+			docId: item.docId,
+			docPath: item.docPath || page.docPath || "",
+			currentPath: item.currentPath,
+			version: item.version,
+			timestamp: item.timestamp,
+			author: item.author,
+			actor: item.actor,
+			source: item.source,
+			baseHash: item.baseHash,
+			newHash: item.newHash,
+			checkpoint: item.checkpoint,
+			operation: item.operation,
+			tombstone: item.tombstone,
+			changes: [],
+		})),
+	};
 }
 
 function sectionScope(diff: DocRevisionDiff | null): DocChangeScope | undefined {
@@ -137,6 +171,10 @@ export function DocHistorySheet({
 	const [selectedRevision, setSelectedRevision] = useState<string | null>(null);
 	const [diff, setDiff] = useState<DocRevisionDiff | null>(null);
 	const [loadingHistory, setLoadingHistory] = useState(false);
+	const [loadingMore, setLoadingMore] = useState(false);
+	const [hasMore, setHasMore] = useState(false);
+	const [nextOffset, setNextOffset] = useState<number | undefined>();
+	const [tailTruncated, setTailTruncated] = useState(false);
 	const [loadingDiff, setLoadingDiff] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [restoring, setRestoring] = useState<"document" | "section" | null>(null);
@@ -158,8 +196,12 @@ export function DocHistorySheet({
 		setLoadingHistory(true);
 		setError(null);
 		try {
-			const nextHistory = await getDocHistory(toDisplayPath(docPath).replace(/\.md$/, ""));
+			const page = await getDocHistoryMetadata(toDisplayPath(docPath).replace(/\.md$/, ""));
+			const nextHistory = metadataHistory(page);
 			setHistory(nextHistory);
+			setHasMore(page.hasMore);
+			setNextOffset(page.nextOffset);
+			setTailTruncated(Boolean(page.tailTruncated));
 			const nextLatest = latestVersion(nextHistory);
 			setSelectedRevision((current) => {
 				if (current && nextHistory.versions.some((version) => version.id === current)) return current;
@@ -169,10 +211,38 @@ export function DocHistorySheet({
 			setError(err instanceof Error ? err.message : "Failed to load document history");
 			setHistory(null);
 			setSelectedRevision(null);
+			setHasMore(false);
+			setNextOffset(undefined);
+			setTailTruncated(false);
 		} finally {
 			setLoadingHistory(false);
 		}
 	}, [docPath]);
+
+	const loadMoreHistory = useCallback(async () => {
+		if (!docPath || !hasMore || nextOffset === undefined || loadingMore) return;
+		setLoadingMore(true);
+		try {
+			const page = await getDocHistoryMetadata(toDisplayPath(docPath).replace(/\.md$/, ""), nextOffset);
+			const additional = metadataHistory(page);
+			setHistory((current) => {
+				if (!current) return additional;
+				const known = new Set(current.versions.map((version) => version.id));
+				return {
+					...current,
+					versions: [...current.versions, ...additional.versions.filter((version) => !known.has(version.id))],
+					retentionGaps: additional.retentionGaps || current.retentionGaps,
+				};
+			});
+			setHasMore(page.hasMore);
+			setNextOffset(page.nextOffset);
+			setTailTruncated(Boolean(page.tailTruncated));
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Failed to load more document history");
+		} finally {
+			setLoadingMore(false);
+		}
+	}, [docPath, hasMore, loadingMore, nextOffset]);
 
 	useEffect(() => {
 		if (!open) return;
@@ -189,7 +259,13 @@ export function DocHistorySheet({
 		setError(null);
 		getDocRevisionDiff(toDisplayPath(docPath).replace(/\.md$/, ""), selectedRevision)
 			.then((nextDiff) => {
-				if (!cancelled) setDiff(nextDiff);
+				if (!cancelled) {
+					setDiff(nextDiff);
+					setHistory((current) => current ? {
+						...current,
+						versions: current.versions.map((version) => version.id === nextDiff.version.id ? nextDiff.version : version),
+					} : current);
+				}
 			})
 			.catch((err) => {
 				if (!cancelled) {
@@ -227,6 +303,9 @@ export function DocHistorySheet({
 				section: mode === "section" ? selectedSectionScope?.section : undefined,
 			});
 			setHistory(result.history);
+			setHasMore(false);
+			setNextOffset(undefined);
+			setTailTruncated(Boolean(result.history.tailTruncated));
 			const nextLatest = latestVersion(result.history);
 			setSelectedRevision(nextLatest?.id || selectedRevision);
 			onRestored();
@@ -266,6 +345,11 @@ export function DocHistorySheet({
 				</div>
 
 				<div className="min-h-0 flex-1 overflow-hidden">
+					{tailTruncated && (
+						<div className="border-b border-amber-300 bg-amber-50 px-5 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+							The final history append is incomplete and was ignored. Run reconciliation before restoring that revision.
+						</div>
+					)}
 					<div className="grid h-full grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)]">
 						<aside className="min-h-0 border-b border-border/60 bg-muted/15 lg:border-b-0 lg:border-r">
 							<div className="flex items-center justify-between px-4 py-3">
@@ -317,6 +401,11 @@ export function DocHistorySheet({
 												</div>
 											</button>
 										))
+									)}
+									{hasMore && !loadingHistory && (
+										<Button className="w-full" variant="ghost" size="sm" onClick={() => void loadMoreHistory()} disabled={loadingMore}>
+											{loadingMore ? "Loading..." : "Load more history"}
+										</Button>
 									)}
 								</div>
 							</ScrollArea>
