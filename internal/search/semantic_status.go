@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -29,6 +30,17 @@ func PersistDefaultSemanticRuntimeStatus() error {
 		return err
 	}
 	return os.WriteFile(path, data, 0644)
+}
+
+func ReloadDefaultSemanticRuntime(ctx context.Context, reload runtimequeue.ReloadStatus) error {
+	_ = ctx
+	setSemanticRuntimeReloadMetadata(SemanticRuntimeStatus{
+		LastReloadAt:     reload.ProcessedAt,
+		ReloadGeneration: reload.Generation,
+		ReloadRequestID:  reload.RequestID,
+	})
+	DefaultSemanticRuntime().Close()
+	return PersistDefaultSemanticRuntimeStatus()
 }
 
 func ObservedSemanticRuntimeStatus() SemanticRuntimeStatus {

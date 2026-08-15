@@ -19,10 +19,12 @@ import (
 )
 
 type RuntimeMetadata struct {
-	Degraded bool   `json:"degraded,omitempty"`
-	Mode     string `json:"mode,omitempty"`
-	Reason   string `json:"reason,omitempty"`
-	Message  string `json:"message,omitempty"`
+	Degraded        bool   `json:"degraded,omitempty"`
+	Warming         bool   `json:"warming,omitempty"`
+	BootstrapQueued bool   `json:"bootstrapQueued,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	Reason          string `json:"reason,omitempty"`
+	Message         string `json:"message,omitempty"`
 }
 
 type RuntimeSearchResponse struct {
@@ -141,18 +143,23 @@ func searchWithLocalRuntime(store *storage.Store, opts SearchOptions) (*RuntimeS
 		}, nil
 	}
 	results, err := engine.Search(opts)
-	return &RuntimeSearchResponse{Results: results}, err
+	if err != nil {
+		return semanticUnavailableResponse(store, opts, mode, err)
+	}
+	return &RuntimeSearchResponse{Results: results}, nil
 }
 
 func semanticUnavailableResponse(store *storage.Store, opts SearchOptions, mode SearchMode, err error) (*RuntimeSearchResponse, error) {
+	bootstrap := queueSemanticBootstrapAsync(store, err)
 	if mode == ModeSemantic {
-		return nil, semanticRuntimeSearchError(err)
+		return nil, semanticRuntimeSearchErrorWithBootstrap(err, bootstrap)
 	}
 	results, kwErr := keywordFallback(store, opts)
 	if kwErr != nil {
 		return nil, kwErr
 	}
 	meta := degradedRuntimeMetadata(mode, err)
+	applySemanticBootstrapMetadata(meta, bootstrap)
 	return &RuntimeSearchResponse{
 		Results: attachRuntimeWarning(results, meta),
 		Runtime: meta,
@@ -164,10 +171,12 @@ func attachRuntimeWarning(results []models.SearchResult, meta *RuntimeMetadata) 
 		return results
 	}
 	warning := &models.RuntimeWarning{
-		Degraded: meta.Degraded,
-		Mode:     meta.Mode,
-		Reason:   meta.Reason,
-		Message:  meta.Message,
+		Degraded:        meta.Degraded,
+		Warming:         meta.Warming,
+		BootstrapQueued: meta.BootstrapQueued,
+		Mode:            meta.Mode,
+		Reason:          meta.Reason,
+		Message:         meta.Message,
 	}
 	for i := range results {
 		results[i].Runtime = warning
@@ -180,8 +189,13 @@ func semanticIndexAvailableForRuntime(store *storage.Store, searchType string) (
 	if err != nil {
 		return false, err
 	}
+	if resolveEffectiveVectorStore(store).OptedOut {
+		// Explicit opt-out (backend none or disabled): keyword-only behavior,
+		// reported as not configured rather than failed (spec D9).
+		return false, ErrSemanticNotConfigured
+	}
 	if searchType != "memory" {
-		available, err := semanticIndexMetadataAvailable(store, cfg, chunkTypesForRuntimePreflight(searchType))
+		available, err := semanticIndexAvailableForType(store, cfg, chunkTypesForRuntimePreflight(searchType))
 		if err != nil {
 			return false, err
 		}
@@ -200,6 +214,32 @@ func semanticIndexAvailableForRuntime(store *storage.Store, searchType string) (
 	return false, nil
 }
 
+// semanticIndexAvailableForType dispatches the preflight readiness probe to the
+// effective vector backend instead of hardcoding SQLite at call sites (spec
+// qdrant-default-vector-backend). Qdrant availability is pointer-metadata only
+// for now (task 02); per-type chunk counts become available once the Qdrant
+// client lands (task 03).
+func semanticIndexAvailableForType(store *storage.Store, cfg semanticRuntimeConfig, chunkTypes []ChunkType) (bool, error) {
+	switch resolveEffectiveVectorStore(store).Backend {
+	case models.SemanticVectorBackendQdrant:
+		r, err := semanticIndexReadinessQdrant(store, semanticIndexExpectation{model: cfg.modelID, dimensions: cfg.dimensions}, chunkTypes)
+		if err != nil {
+			return false, err
+		}
+		return r.Ready, nil
+	case models.SemanticVectorBackendSQLite:
+		r, err := semanticIndexReadinessSQLite(store, semanticIndexExpectation{model: cfg.modelID, dimensions: cfg.dimensions}, chunkTypes)
+		if err != nil {
+			return false, err
+		}
+		return r.Ready, nil
+	default:
+		// "none" or an unrecognized backend is never available: semantic search
+		// is explicitly disabled (spec D9) or the backend is unknown.
+		return false, nil
+	}
+}
+
 func memorySemanticIndexAvailable(store *storage.Store) bool {
 	if store == nil {
 		return false
@@ -208,69 +248,11 @@ func memorySemanticIndexAvailable(store *storage.Store) bool {
 	if err != nil {
 		return false
 	}
-	available, err := semanticIndexMetadataAvailable(store, cfg, []ChunkType{ChunkTypeMemory})
+	available, err := semanticIndexAvailableForType(store, cfg, []ChunkType{ChunkTypeMemory})
 	if err != nil {
 		return false
 	}
 	return available
-}
-
-func semanticIndexMetadataAvailable(store *storage.Store, cfg semanticRuntimeConfig, chunkTypes []ChunkType) (bool, error) {
-	if store == nil {
-		return false, nil
-	}
-	dbPath := filepath.Join(store.Root, ".search", "index.db")
-	if _, err := os.Stat(dbPath); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
-		}
-		return false, err
-	}
-	// Runtime searches can preflight while the daemon is opening or migrating
-	// the same SQLite index. Wait briefly for that writer instead of degrading a
-	// valid concurrent semantic request with SQLITE_BUSY.
-	db, err := sql.Open("sqlite", dbPath+"?mode=ro&_pragma=busy_timeout(5000)")
-	if err != nil {
-		return false, err
-	}
-	defer db.Close()
-	ready, err := semanticIndexMetadataReady(db, cfg)
-	if err != nil || !ready {
-		return false, err
-	}
-	count, err := semanticIndexChunkCount(db, chunkTypes)
-	if err != nil {
-		if strings.Contains(err.Error(), "no such table") {
-			return false, nil
-		}
-		return false, err
-	}
-	return count > 0, nil
-}
-
-func semanticIndexMetadataReady(db *sql.DB, cfg semanticRuntimeConfig) (bool, error) {
-	rows, err := db.Query("SELECT key, value FROM metadata WHERE key IN ('model', 'dimensions', 'chunkVersion')")
-	if err != nil {
-		if strings.Contains(err.Error(), "no such table") {
-			return false, nil
-		}
-		return false, err
-	}
-	defer rows.Close()
-	values := map[string]string{}
-	for rows.Next() {
-		var key, value string
-		if err := rows.Scan(&key, &value); err != nil {
-			return false, err
-		}
-		values[key] = value
-	}
-	if err := rows.Err(); err != nil {
-		return false, err
-	}
-	return values["model"] == cfg.modelID &&
-		values["dimensions"] == fmt.Sprintf("%d", cfg.dimensions) &&
-		values["chunkVersion"] == fmt.Sprintf("%d", ChunkVersion), nil
 }
 
 func semanticIndexChunkCount(db *sql.DB, chunkTypes []ChunkType) (int, error) {
@@ -459,6 +441,13 @@ func degradedRuntimeMetadata(mode SearchMode, err error) *RuntimeMetadata {
 
 func semanticRuntimeSearchError(err error) error {
 	return fmt.Errorf("semantic runtime unavailable: %w", err)
+}
+
+func semanticRuntimeSearchErrorWithBootstrap(err error, bootstrap semanticBootstrapRequest) error {
+	if bootstrap.Queued {
+		return fmt.Errorf("semantic runtime unavailable; qdrant bootstrap/reindex queued: %w", err)
+	}
+	return semanticRuntimeSearchError(err)
 }
 
 func runtimeReason(err error) string {

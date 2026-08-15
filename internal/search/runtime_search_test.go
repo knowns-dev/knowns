@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -95,6 +96,79 @@ func TestSearchWithRuntimeHybridUnavailableFallsBackWithMetadata(t *testing.T) {
 		if result.Runtime == nil || !result.Runtime.Degraded {
 			t.Fatalf("fallback result runtime metadata = %+v, want degraded", result.Runtime)
 		}
+	}
+}
+
+func TestSearchWithRuntimeHybridEmptyQdrantIndexQueuesBootstrapAndMarksWarming(t *testing.T) {
+	store := newRuntimeSearchStore(t)
+	var queued []string
+	oldEnqueue := semanticBootstrapEnqueueReindex
+	oldAsync := semanticBootstrapAsync
+	semanticBootstrapEnqueueReindex = func(storeRoot string) (runtimequeue.Job, error) {
+		queued = append(queued, storeRoot)
+		return runtimequeue.Job{ID: "queued-bootstrap", Kind: runtimequeue.JobReindex}, nil
+	}
+	semanticBootstrapAsync = func(fn func()) { fn() }
+	defer func() {
+		semanticBootstrapEnqueueReindex = oldEnqueue
+		semanticBootstrapAsync = oldAsync
+	}()
+
+	response, err := SearchWithRuntime(store, SearchOptions{Query: "runtime", Mode: string(ModeHybrid), Limit: 5})
+	if err != nil {
+		t.Fatalf("SearchWithRuntime hybrid: %v", err)
+	}
+	if len(response.Results) == 0 {
+		t.Fatalf("expected keyword fallback results")
+	}
+	if len(queued) != 1 || queued[0] != store.Root {
+		t.Fatalf("queued bootstrap roots = %#v, want [%s]", queued, store.Root)
+	}
+	if response.Runtime == nil || !response.Runtime.Degraded || !response.Runtime.Warming || !response.Runtime.BootstrapQueued {
+		t.Fatalf("runtime metadata = %+v, want degraded warming queued", response.Runtime)
+	}
+	if !strings.Contains(response.Runtime.Message, "qdrant bootstrap/reindex queued") {
+		t.Fatalf("runtime message missing bootstrap queue hint: %q", response.Runtime.Message)
+	}
+	for _, result := range response.Results {
+		if result.Runtime == nil || !result.Runtime.Warming || !result.Runtime.BootstrapQueued {
+			t.Fatalf("result runtime metadata = %+v, want warming queued", result.Runtime)
+		}
+	}
+}
+
+func TestSearchWithRuntimeSemanticOptOutDoesNotQueueBootstrap(t *testing.T) {
+	store := newRuntimeSearchStore(t)
+	cfg, err := store.Config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.Settings.SemanticSearch.VectorStore = &models.SemanticVectorStoreSettings{Backend: models.SemanticVectorBackendNone}
+	if err := store.Config.Save(cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	queued := 0
+	oldEnqueue := semanticBootstrapEnqueueReindex
+	oldAsync := semanticBootstrapAsync
+	semanticBootstrapEnqueueReindex = func(storeRoot string) (runtimequeue.Job, error) {
+		queued++
+		return runtimequeue.Job{ID: "unexpected"}, nil
+	}
+	semanticBootstrapAsync = func(fn func()) { fn() }
+	defer func() {
+		semanticBootstrapEnqueueReindex = oldEnqueue
+		semanticBootstrapAsync = oldAsync
+	}()
+
+	response, err := SearchWithRuntime(store, SearchOptions{Query: "runtime", Mode: string(ModeHybrid), Limit: 5})
+	if err != nil {
+		t.Fatalf("SearchWithRuntime hybrid: %v", err)
+	}
+	if queued != 0 {
+		t.Fatalf("queued bootstrap for opt-out backend none")
+	}
+	if response.Runtime == nil || response.Runtime.BootstrapQueued || response.Runtime.Warming {
+		t.Fatalf("runtime metadata = %+v, want degraded without bootstrap", response.Runtime)
 	}
 }
 
@@ -269,6 +343,7 @@ func TestSearchWithRuntimeDaemonRoutingSharesProviderAcrossConcurrentCalls(t *te
 
 func newRuntimeSearchStore(t *testing.T) *storage.Store {
 	t.Helper()
+	suppressSemanticBootstrapForTest(t)
 	store := newSearchTestStore(t)
 	project, err := store.Config.Load()
 	if err != nil {
@@ -294,6 +369,20 @@ func newRuntimeSearchStore(t *testing.T) *storage.Store {
 		t.Fatalf("create doc: %v", err)
 	}
 	return store
+}
+
+func suppressSemanticBootstrapForTest(t *testing.T) {
+	t.Helper()
+	oldEnqueue := semanticBootstrapEnqueueReindex
+	oldAsync := semanticBootstrapAsync
+	semanticBootstrapEnqueueReindex = func(storeRoot string) (runtimequeue.Job, error) {
+		return runtimequeue.Job{ID: "suppressed-bootstrap", Kind: runtimequeue.JobReindex}, nil
+	}
+	semanticBootstrapAsync = func(fn func()) {}
+	t.Cleanup(func() {
+		semanticBootstrapEnqueueReindex = oldEnqueue
+		semanticBootstrapAsync = oldAsync
+	})
 }
 
 func seedRuntimeSearchIndex(t *testing.T, storeRoot, model string, dimensions int) {

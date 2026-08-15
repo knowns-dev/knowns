@@ -47,10 +47,13 @@ type SemanticSession struct {
 }
 
 type SemanticRuntimeStatus struct {
-	Enabled     bool                       `json:"enabled"`
-	DisabledBy  string                     `json:"disabledBy,omitempty"`
-	IdleTimeout time.Duration              `json:"idleTimeout"`
-	Entries     []SemanticRuntimeEntryInfo `json:"entries,omitempty"`
+	Enabled          bool                       `json:"enabled"`
+	DisabledBy       string                     `json:"disabledBy,omitempty"`
+	IdleTimeout      time.Duration              `json:"idleTimeout"`
+	LastReloadAt     time.Time                  `json:"lastReloadAt,omitempty"`
+	ReloadGeneration int64                      `json:"reloadGeneration,omitempty"`
+	ReloadRequestID  string                     `json:"reloadRequestId,omitempty"`
+	Entries          []SemanticRuntimeEntryInfo `json:"entries,omitempty"`
 }
 
 type SemanticRuntimeEntryInfo struct {
@@ -90,6 +93,32 @@ type semanticRuntimeEntry struct {
 }
 
 var defaultSemanticRuntime = NewSemanticRuntime(SemanticRuntimeOptions{})
+
+var semanticRuntimeReloadMu sync.RWMutex
+
+var semanticRuntimeReload semanticRuntimeReloadMetadata
+
+type semanticRuntimeReloadMetadata struct {
+	LastReloadAt     time.Time
+	ReloadGeneration int64
+	ReloadRequestID  string
+}
+
+func setSemanticRuntimeReloadMetadata(status SemanticRuntimeStatus) {
+	semanticRuntimeReloadMu.Lock()
+	defer semanticRuntimeReloadMu.Unlock()
+	semanticRuntimeReload = semanticRuntimeReloadMetadata{
+		LastReloadAt:     status.LastReloadAt,
+		ReloadGeneration: status.ReloadGeneration,
+		ReloadRequestID:  status.ReloadRequestID,
+	}
+}
+
+func currentSemanticRuntimeReloadMetadata() semanticRuntimeReloadMetadata {
+	semanticRuntimeReloadMu.RLock()
+	defer semanticRuntimeReloadMu.RUnlock()
+	return semanticRuntimeReload
+}
 
 func NewSemanticRuntime(opts SemanticRuntimeOptions) *SemanticRuntime {
 	idle := opts.IdleTimeout
@@ -145,7 +174,14 @@ func (r *SemanticRuntime) OpenSession(store *storage.Store) (*SemanticSession, e
 	}
 	vecStore, err := openRuntimeVectorStore(store, cfg)
 	if err != nil {
-		return nil, err
+		// A first Qdrant generation has no pointer yet. Keep the cached embedder
+		// usable for the explicit/background generation builder; normal search
+		// preflight still degrades until activation creates the pointer.
+		if resolveEffectiveVectorStore(store).Backend == models.SemanticVectorBackendQdrant {
+			vecStore = newQdrantStageStore(cfg.modelID)
+		} else {
+			return nil, err
+		}
 	}
 	now := r.now().UTC()
 	entry.mu.Lock()
@@ -167,10 +203,14 @@ func (r *SemanticRuntime) OpenSession(store *storage.Store) (*SemanticSession, e
 
 func (r *SemanticRuntime) Status() SemanticRuntimeStatus {
 	disabled, reason := semanticRuntimeDisabledReason()
+	reload := currentSemanticRuntimeReloadMetadata()
 	status := SemanticRuntimeStatus{
-		Enabled:     !disabled,
-		DisabledBy:  reason,
-		IdleTimeout: r.idleTimeout,
+		Enabled:          !disabled,
+		DisabledBy:       reason,
+		IdleTimeout:      r.idleTimeout,
+		LastReloadAt:     reload.LastReloadAt,
+		ReloadGeneration: reload.ReloadGeneration,
+		ReloadRequestID:  reload.ReloadRequestID,
 	}
 	if disabled {
 		return status
@@ -490,6 +530,19 @@ func openSemanticRuntimeEmbedder(cfg semanticRuntimeConfig) (EmbedderProvider, e
 }
 
 func openRuntimeVectorStore(store *storage.Store, cfg semanticRuntimeConfig) (VectorStore, error) {
+	if resolveEffectiveVectorStore(store).Backend == models.SemanticVectorBackendQdrant {
+		if openQdrantVectorStoreOverride != nil {
+			return openQdrantVectorStoreOverride(store, cfg.modelID, cfg.dimensions)
+		}
+		if pointer, err := LoadQdrantPointer(store.Root); err == nil && pointer == nil && LegacySQLiteIndexExists(store.Root) {
+			legacy := NewSQLiteVectorStore(filepath.Join(store.Root, ".search"), cfg.modelID, cfg.dimensions)
+			if err := legacy.Load(); err != nil {
+				return nil, fmt.Errorf("load temporary legacy SQLite fallback: %w", err)
+			}
+			return legacy, nil
+		}
+		return OpenQdrantVectorStore(store, cfg.modelID, cfg.dimensions)
+	}
 	searchDir := filepath.Join(store.Root, ".search")
 	vecStore := NewSQLiteVectorStore(searchDir, cfg.modelID, cfg.dimensions)
 	if err := vecStore.Load(); err != nil {

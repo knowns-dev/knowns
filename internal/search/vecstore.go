@@ -32,6 +32,12 @@ type VectorStore interface {
 	ListContentHashes() map[string]string
 }
 
+// vectorStoreSearchError is an optional error channel for legacy VectorStore
+// implementations whose Search signature predates error returns.
+type vectorStoreSearchError interface {
+	LastSearchError() error
+}
+
 // taskVectorMutation is a source-scoped Task update prepared after canonical
 // lifecycle revalidation. SQLite applies a batch atomically so one runtime
 // session cannot overwrite another session's newer Task rows from a stale

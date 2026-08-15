@@ -1263,6 +1263,11 @@ func (e *Engine) semanticSearch(query string, opts SearchOptions) ([]models.Sear
 		Threshold: 0.3,
 		ChunkType: chunkTypeForSearchType(opts.Type),
 	})
+	if source, ok := e.vecStore.(vectorStoreSearchError); ok {
+		if err := source.LastSearchError(); err != nil {
+			return nil, fmt.Errorf("semantic vector query failed: %w", err)
+		}
+	}
 
 	return e.scoredChunksToResults(scored, opts, "semantic", query)
 }
@@ -1281,8 +1286,7 @@ func (e *Engine) hybridSearch(query string, opts SearchOptions) ([]models.Search
 
 	semResults, err := e.semanticSearch(query, opts)
 	if err != nil {
-		// Fall back to keyword only.
-		return kwResults, nil
+		return kwResults, err
 	}
 
 	// Merge results.
@@ -1351,6 +1355,11 @@ func (e *Engine) semanticSearchSingleStore(query string, opts SearchOptions, mem
 		Threshold: 0.3,
 		ChunkType: ChunkTypeMemory,
 	})
+	if source, ok := e.vecStore.(vectorStoreSearchError); ok {
+		if err := source.LastSearchError(); err != nil {
+			return nil, fmt.Errorf("semantic vector query failed: %w", err)
+		}
+	}
 	results, err := e.scoredChunksToResults(scored, opts, "semantic", query)
 	if err != nil {
 		return nil, err

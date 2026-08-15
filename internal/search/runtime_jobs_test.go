@@ -12,6 +12,17 @@ import (
 
 func TestExecuteRuntimeJobReusesSemanticRuntimeProvider(t *testing.T) {
 	store := newSemanticRuntimeTestStore(t, "gte-small", 384)
+	// This provider-cache test exercises the legacy targeted executor. Keep it
+	// on SQLite so the Qdrant path can correctly reject a removal without a
+	// durable tombstone or purge reservation.
+	project, err := store.Config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.Settings.SemanticSearch.VectorStore = &models.SemanticVectorStoreSettings{Backend: models.SemanticVectorBackendSQLite}
+	if err := store.Config.Save(project); err != nil {
+		t.Fatal(err)
+	}
 	openCount := 0
 	rt := NewSemanticRuntime(SemanticRuntimeOptions{
 		IdleTimeout: time.Hour,

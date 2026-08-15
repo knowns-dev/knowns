@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -428,6 +429,58 @@ func TestSemanticRuntimeDoesNotUnloadActiveSession(t *testing.T) {
 	}
 	if got := status.Entries[0].ActiveSessions; got != 1 {
 		t.Fatalf("active sessions = %d, want 1", got)
+	}
+}
+
+func TestReloadDefaultSemanticRuntimeClosesCacheAndPersistsMetadata(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	store := newSemanticRuntimeTestStore(t, "gte-small", 384)
+	closeCount := 0
+	rt := NewSemanticRuntime(SemanticRuntimeOptions{
+		IdleTimeout: time.Hour,
+		openEmbedder: func(cfg semanticRuntimeConfig) (EmbedderProvider, error) {
+			return &countingEmbedder{dimensions: cfg.dimensions, closed: &closeCount}, nil
+		},
+	})
+	oldRuntime := defaultSemanticRuntime
+	defaultSemanticRuntime = rt
+	defer func() {
+		defaultSemanticRuntime.Close()
+		defaultSemanticRuntime = oldRuntime
+		setSemanticRuntimeReloadMetadata(SemanticRuntimeStatus{})
+	}()
+
+	session, err := InitSemanticRuntimeSession(store)
+	if err != nil {
+		t.Fatalf("open runtime session: %v", err)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatalf("close runtime session: %v", err)
+	}
+	processedAt := time.Date(2026, 8, 13, 16, 0, 0, 0, time.UTC)
+	if err := ReloadDefaultSemanticRuntime(context.Background(), runtimequeue.ReloadStatus{
+		RequestID:   "reload-123",
+		Generation:  7,
+		ProcessedAt: processedAt,
+		Success:     true,
+	}); err != nil {
+		t.Fatalf("reload runtime: %v", err)
+	}
+	if closeCount != 1 {
+		t.Fatalf("closeCount = %d, want 1", closeCount)
+	}
+	status := DefaultSemanticRuntime().Status()
+	if len(status.Entries) != 0 {
+		t.Fatalf("status entries after reload = %d, want 0", len(status.Entries))
+	}
+	if status.ReloadGeneration != 7 || status.ReloadRequestID != "reload-123" || !status.LastReloadAt.Equal(processedAt) {
+		t.Fatalf("unexpected reload metadata: %+v", status)
+	}
+
+	writeCurrentRuntimePIDForTest(t)
+	observed := ObservedSemanticRuntimeStatus()
+	if observed.ReloadGeneration != 7 || observed.ReloadRequestID != "reload-123" || !observed.LastReloadAt.Equal(processedAt) {
+		t.Fatalf("unexpected persisted reload metadata: %+v", observed)
 	}
 }
 
