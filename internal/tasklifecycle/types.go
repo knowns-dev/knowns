@@ -102,7 +102,8 @@ type Result struct {
 }
 
 type ArchiveOptions struct {
-	Actor string
+	Actor        string
+	ExpectedHash string
 
 	// Automatic applies project auto-archive enablement and retention.
 	Automatic bool
@@ -113,22 +114,25 @@ type ArchiveOptions struct {
 }
 
 type ReopenOptions struct {
-	Actor  string
-	Status string
+	Actor        string
+	Status       string
+	ExpectedHash string
 }
 
 type HardDeleteOptions struct {
-	Actor     string
-	Reason    string
-	Confirmed bool
+	Actor        string
+	Reason       string
+	Confirmed    bool
+	ExpectedHash string
 }
 
 type BatchOptions struct {
-	IDs        []string
-	Execute    bool
-	Actor      string
-	Automatic  bool
-	MinimumAge *time.Duration
+	IDs            []string
+	Execute        bool
+	Actor          string
+	Automatic      bool
+	MinimumAge     *time.Duration
+	ExpectedHashes map[string]string
 }
 
 type BatchResult struct {
@@ -145,15 +149,17 @@ type BatchResult struct {
 // CLI, MCP, HTTP, and WebUI adapters. Authorization is intentionally absent:
 // trusted adapters pass it separately to ExecutePublic.
 type Request struct {
-	Operation    Operation `json:"operation"`
-	TaskID       string    `json:"taskId,omitempty"`
-	IDs          []string  `json:"ids,omitempty"`
-	Execute      bool      `json:"execute"`
-	Actor        string    `json:"actor,omitempty"`
-	Reason       string    `json:"reason,omitempty"`
-	Confirmed    bool      `json:"confirmed,omitempty"`
-	Status       string    `json:"status,omitempty"`
-	MinimumAgeMs *int64    `json:"minimumAgeMs,omitempty"`
+	Operation      Operation         `json:"operation"`
+	TaskID         string            `json:"taskId,omitempty"`
+	IDs            []string          `json:"ids,omitempty"`
+	Execute        bool              `json:"execute"`
+	Actor          string            `json:"actor,omitempty"`
+	Reason         string            `json:"reason,omitempty"`
+	Confirmed      bool              `json:"confirmed,omitempty"`
+	Status         string            `json:"status,omitempty"`
+	MinimumAgeMs   *int64            `json:"minimumAgeMs,omitempty"`
+	ExpectedHash   string            `json:"expectedHash,omitempty"`
+	ExpectedHashes map[string]string `json:"expectedHashes,omitempty"`
 }
 
 type PublicCapabilities struct {
@@ -174,13 +180,36 @@ type Response struct {
 // TaskUpdateOptions keeps the caller's patch logic inside the lifecycle lock.
 // Mutate receives a fresh canonical Task copy and must not retain it.
 type TaskUpdateOptions struct {
-	Actor  string
-	Mutate func(*models.Task) error
+	Actor        string
+	ExpectedHash string
+	Mutate       func(*models.Task) error
+}
+
+// ReorderItem describes one canonical Task order mutation.
+type ReorderItem struct {
+	TaskID string
+	Order  int
 }
 
 type TimeMutationOptions struct {
-	Actor string
-	Entry models.TimeEntry
+	Actor        string
+	ExpectedHash string
+	Entry        models.TimeEntry
+}
+
+// StopTimerOptions carries the actor and optimistic-concurrency base for a
+// timer stop. An omitted ExpectedHash is derived from a fresh observation
+// before the lifecycle transaction and rechecked while its lock is held.
+type StopTimerOptions struct {
+	Actor        string
+	ExpectedHash string
+}
+
+// StopTimersOptions carries one OCC base per Task for an atomic multi-timer
+// stop. Missing entries use the compatibility observation/recheck path.
+type StopTimersOptions struct {
+	Actor          string
+	ExpectedHashes map[string]string
 }
 
 type Hooks struct {

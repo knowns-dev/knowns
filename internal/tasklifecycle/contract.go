@@ -1,8 +1,11 @@
 package tasklifecycle
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/howznguyen/knowns/internal/storage"
 )
 
 type FailureKind string
@@ -47,6 +50,12 @@ func (err *ContractError) Unwrap() error {
 func FailureKindFor(response *Response, cause error) FailureKind {
 	if response == nil {
 		return FailureOperation
+	}
+	if cause != nil {
+		var conflict *storage.MutationConflictError
+		if errors.As(cause, &conflict) || errors.Is(cause, storage.ErrHistoryConflict) {
+			return FailureConflict
+		}
 	}
 	best := FailureNone
 	for _, item := range response.Items {

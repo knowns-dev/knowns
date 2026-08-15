@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -49,10 +50,21 @@ func (service *Service) Evaluate(ctx context.Context, taskID string, options Arc
 
 func (service *Service) Archive(ctx context.Context, taskID string, options ArchiveOptions) (*Result, error) {
 	result := Result{TaskID: taskID, Operation: OperationArchive, Reasons: []Reason{}}
-	preWarnings, prePending, err := service.flushTaskLifecyclePending(ctx, taskID)
+	var preWarnings []Warning
+	var prePending bool
+	var err error
+	if strings.TrimSpace(options.ExpectedHash) == "" {
+		preWarnings, prePending, err = service.flushTaskLifecyclePending(ctx, taskID)
+	}
 	result.Warnings = append(result.Warnings, preWarnings...)
 	if err != nil {
 		return &result, err
+	}
+	if strings.TrimSpace(options.ExpectedHash) == "" {
+		options.ExpectedHash, err = service.observedTaskHash(ctx, taskID)
+		if err != nil {
+			return &result, err
+		}
 	}
 	settings, err := service.settings()
 	if err != nil {
@@ -95,15 +107,29 @@ func (service *Service) Reopen(ctx context.Context, taskID string, options Reope
 		status = "todo"
 	}
 	result := Result{TaskID: taskID, Operation: OperationReopen, Eligible: true, Reasons: []Reason{}}
-	preWarnings, prePending, err := service.flushTaskLifecyclePending(ctx, taskID)
+	var preWarnings []Warning
+	var prePending bool
+	var err error
+	if strings.TrimSpace(options.ExpectedHash) == "" {
+		preWarnings, prePending, err = service.flushTaskLifecyclePending(ctx, taskID)
+	}
 	result.Warnings = append(result.Warnings, preWarnings...)
 	if err != nil {
 		return &result, err
+	}
+	if strings.TrimSpace(options.ExpectedHash) == "" {
+		options.ExpectedHash, err = service.observedTaskHash(ctx, taskID)
+		if err != nil {
+			return &result, err
+		}
 	}
 	now := service.now().UTC()
 	err = service.store.WithTaskLifecycleTransaction(ctx, func(tx *storage.TaskLifecycleTransaction) error {
 		task, err := tx.GetTask(taskID)
 		if err != nil {
+			return err
+		}
+		if err := tx.CheckTaskExpectedHash(task, options.ExpectedHash); err != nil {
 			return err
 		}
 		pending, err := tx.GetIncompleteTaskLifecyclePending(taskID, string(OperationReopen))
@@ -178,6 +204,10 @@ func (service *Service) BatchArchive(ctx context.Context, options BatchOptions) 
 		return batch, err
 	}
 	for _, id := range ids {
+		archiveOptions.ExpectedHash = ""
+		if options.ExpectedHashes != nil {
+			archiveOptions.ExpectedHash = options.ExpectedHashes[id]
+		}
 		var item *Result
 		if options.Execute {
 			item, err = service.Archive(ctx, id, archiveOptions)
@@ -192,6 +222,12 @@ func (service *Service) BatchArchive(ctx context.Context, options BatchOptions) 
 		batch.Processed++
 		if item == nil {
 			item = &Result{TaskID: id, Operation: OperationArchive, Reasons: []Reason{}}
+		}
+		if item.TaskID == "" {
+			item.TaskID = id
+		}
+		if item.Operation == "" {
+			item.Operation = OperationArchive
 		}
 		if err != nil && len(item.Reasons) == 0 {
 			item.Reasons = append(item.Reasons, publicFailureReason(err))
@@ -232,13 +268,19 @@ func (service *Service) BatchUnarchive(ctx context.Context, options BatchOptions
 		}
 		if err == nil && options.Execute {
 			var result *Result
-			result, err = service.Unarchive(ctx, id, ReopenOptions{Actor: options.Actor})
+			result, err = service.Unarchive(ctx, id, ReopenOptions{Actor: options.Actor, ExpectedHash: options.ExpectedHashes[id]})
 			if result != nil {
 				item = *result
 			}
 		}
 		if err != nil && len(item.Reasons) == 0 {
 			item.Reasons = append(item.Reasons, publicFailureReason(err))
+		}
+		if item.TaskID == "" {
+			item.TaskID = id
+		}
+		if item.Operation == "" {
+			item.Operation = OperationReopen
 		}
 		batch.Processed++
 		if item.Changed {
@@ -274,12 +316,28 @@ func (service *Service) HardDelete(ctx context.Context, taskID string, options H
 		return &result, nil
 	}
 	result.Eligible = true
-	preWarnings, prePending, err := service.flushTaskLifecyclePending(ctx, taskID)
+	var preWarnings []Warning
+	var prePending bool
+	var err error
+	if strings.TrimSpace(options.ExpectedHash) == "" {
+		preWarnings, prePending, err = service.flushTaskLifecyclePending(ctx, taskID)
+	}
 	result.Warnings = append(result.Warnings, preWarnings...)
 	if err != nil {
 		return &result, err
 	}
+	if strings.TrimSpace(options.ExpectedHash) == "" {
+		if task, getErr := service.store.Tasks.Get(taskID); getErr == nil {
+			options.ExpectedHash = storage.CanonicalTaskHash(task)
+		} else if !isNotFound(getErr) {
+			return &result, getErr
+		}
+	}
 
+	var purgePath, purgeHash string
+	var needsPurge bool
+	var centralRemoveDelivered bool
+	var centralAlreadyDelivered bool
 	err = service.store.WithTaskLifecycleTransaction(ctx, func(tx *storage.TaskLifecycleTransaction) error {
 		task, taskErr := tx.GetTask(taskID)
 		existing, tombstoneErr := tx.GetTombstone(taskID)
@@ -302,6 +360,11 @@ func (service *Service) HardDelete(ctx context.Context, taskID string, options H
 		if taskErr != nil && !hasTombstone {
 			return taskErr
 		}
+		if task != nil && strings.TrimSpace(options.ExpectedHash) != "" {
+			if err := tx.CheckTaskExpectedHash(task, options.ExpectedHash); err != nil {
+				return err
+			}
+		}
 		if task != nil {
 			result.Before = task.LifecycleState()
 		} else {
@@ -316,15 +379,9 @@ func (service *Service) HardDelete(ctx context.Context, taskID string, options H
 			result.Changed = true
 		}
 		// A tombstone without either a live Task or a pending record is an
-		// already-completed legacy/idempotent delete. Do not synthesize a new
-		// event: doing so would duplicate delivery on every retry.
+		// already-completed legacy/idempotent delete. Do not infer a canonical
+		// path or purge unrelated legacy data on this recovery path.
 		if task == nil && pending == nil {
-			if err := tx.DeleteTaskVersionHistory(taskID); err != nil {
-				return err
-			}
-			if err := tx.DeleteTaskTimeData(taskID); err != nil {
-				return err
-			}
 			result.Reasons = append(result.Reasons, Reason{Code: ReasonAlreadyDeleted, Message: "Task is already hard-deleted"})
 			result.After = models.TaskLifecycleArchived
 			return nil
@@ -346,18 +403,48 @@ func (service *Service) HardDelete(ctx context.Context, taskID string, options H
 			}
 		}
 		if task != nil {
-			if err := tx.DeleteTask(taskID); err != nil {
-				return err
+			path, pathErr := tx.CanonicalTaskPath(taskID)
+			if pathErr != nil {
+				return pathErr
 			}
+			relPath, relErr := filepath.Rel(service.store.Root, path)
+			if relErr != nil || relPath == "." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
+				return fmt.Errorf("hard-delete canonical path is outside project root")
+			}
+			purgePath = filepath.ToSlash(relPath)
+			if strings.TrimSpace(options.ExpectedHash) == "" {
+				options.ExpectedHash = storage.CanonicalTaskHash(task)
+			}
+			purgeHash = options.ExpectedHash
 			result.Changed = true
+		} else {
+			purgePath = pending.CanonicalPath
+			if absPath, absErr := filepath.Abs(purgePath); absErr == nil && filepath.IsAbs(purgePath) {
+				if relPath, relErr := filepath.Rel(service.store.Root, absPath); relErr == nil {
+					purgePath = filepath.ToSlash(relPath)
+				}
+			}
+			purgeHash = pending.CanonicalHash
 		}
-		if err := tx.DeleteTaskVersionHistory(taskID); err != nil {
-			return err
+		if strings.TrimSpace(purgePath) == "" || strings.TrimSpace(purgeHash) == "" {
+			return fmt.Errorf("hard-delete pending proof is incomplete")
 		}
-		if err := tx.DeleteTaskTimeData(taskID); err != nil {
-			return err
+		pendingPath := pending.CanonicalPath
+		if filepath.IsAbs(pendingPath) {
+			if relPath, relErr := filepath.Rel(service.store.Root, pendingPath); relErr == nil {
+				pendingPath = filepath.ToSlash(relPath)
+			}
 		}
-		pending.CanonicalComplete = true
+		if pendingPath != "" && filepath.Clean(pendingPath) != filepath.Clean(purgePath) {
+			return fmt.Errorf("hard-delete pending canonical path changed")
+		}
+		if pending.CanonicalHash != "" && pending.CanonicalHash != purgeHash {
+			return fmt.Errorf("hard-delete pending canonical hash changed")
+		}
+		pending.CanonicalPath = purgePath
+		pending.CanonicalHash = purgeHash
+		needsPurge = !pending.CanonicalComplete
+		centralAlreadyDelivered = pending.DerivedApplied
 		if err := tx.SaveTaskLifecyclePending(pending); err != nil {
 			return err
 		}
@@ -371,12 +458,61 @@ func (service *Service) HardDelete(ctx context.Context, taskID string, options H
 	if !result.Eligible {
 		return &result, nil
 	}
+	if needsPurge {
+		var centralRemove func(string) error
+		if centralAlreadyDelivered {
+			centralRemoveDelivered = true
+		} else {
+			centralRemove = func(id string) error {
+				if err := service.removeFromIndex(id); err != nil {
+					return err
+				}
+				centralRemoveDelivered = true
+				// Record successful removal before phase 3 so a crash after the
+				// external handoff cannot cause a duplicate index removal.
+				return service.store.WithTaskLifecycleTransaction(ctx, func(tx *storage.TaskLifecycleTransaction) error {
+					current, err := tx.GetTaskLifecyclePending(taskID, string(OperationHardDelete))
+					if err != nil {
+						return err
+					}
+					if current == nil {
+						return fmt.Errorf("hard-delete pending record disappeared after remove handoff")
+					}
+					current.DerivedApplied = true
+					return tx.SaveTaskLifecyclePending(current)
+				})
+			}
+		}
+		if err := storage.PurgeTaskLifecycle(ctx, service.store.Root, taskID, purgePath, purgeHash, options.Actor, options.Reason, centralRemove); err != nil {
+			return &result, err
+		}
+		if err := service.store.WithTaskLifecycleTransaction(ctx, func(tx *storage.TaskLifecycleTransaction) error {
+			pending, err := tx.GetTaskLifecyclePending(taskID, string(OperationHardDelete))
+			if err != nil {
+				return err
+			}
+			if pending == nil {
+				return fmt.Errorf("hard-delete pending record disappeared before canonical completion")
+			}
+			if pending.CanonicalPath != purgePath || pending.CanonicalHash != purgeHash {
+				return fmt.Errorf("hard-delete pending proof changed during purge")
+			}
+			if err := tx.DeleteTaskTimeData(taskID); err != nil {
+				return err
+			}
+			pending.CanonicalComplete = true
+			pending.DerivedApplied = centralRemoveDelivered
+			return tx.SaveTaskLifecyclePending(pending)
+		}); err != nil {
+			return &result, err
+		}
+	}
 	postWarnings, postPending, err := service.flushTaskLifecyclePending(ctx, taskID)
 	result.Warnings = append(result.Warnings, postWarnings...)
 	if err != nil {
 		return &result, err
 	}
-	if !result.Changed && !prePending && !postPending {
+	if result.Operation != OperationHardDelete && !result.Changed && !prePending && !postPending {
 		if err := service.removeFromIndex(taskID); err != nil {
 			return &result, err
 		}
@@ -418,7 +554,7 @@ func (service *Service) ExecutePublicWithCapabilities(ctx context.Context, reque
 	case OperationArchive:
 		var result *Result
 		if request.Execute {
-			result, err = service.Archive(ctx, request.TaskID, ArchiveOptions{Actor: request.Actor, MinimumAge: minimumAge})
+			result, err = service.Archive(ctx, request.TaskID, ArchiveOptions{Actor: request.Actor, MinimumAge: minimumAge, ExpectedHash: request.ExpectedHash})
 		} else {
 			var eligibility *Eligibility
 			eligibility, err = service.Evaluate(ctx, request.TaskID, ArchiveOptions{Actor: request.Actor, MinimumAge: minimumAge})
@@ -438,7 +574,7 @@ func (service *Service) ExecutePublicWithCapabilities(ctx context.Context, reque
 	case OperationReopen:
 		if request.Execute {
 			var result *Result
-			result, err = service.Unarchive(ctx, request.TaskID, ReopenOptions{Actor: request.Actor, Status: request.Status})
+			result, err = service.Unarchive(ctx, request.TaskID, ReopenOptions{Actor: request.Actor, Status: request.Status, ExpectedHash: request.ExpectedHash})
 			if result != nil {
 				response.Items = append(response.Items, *result)
 				response.Processed = 1
@@ -447,17 +583,17 @@ func (service *Service) ExecutePublicWithCapabilities(ctx context.Context, reque
 				}
 			}
 		} else {
-			batch, batchErr := service.BatchUnarchive(ctx, BatchOptions{IDs: []string{request.TaskID}, Execute: false, Actor: request.Actor})
+			batch, batchErr := service.BatchUnarchive(ctx, BatchOptions{IDs: []string{request.TaskID}, Execute: false, Actor: request.Actor, ExpectedHashes: request.ExpectedHashes})
 			copyBatchResponse(response, batch)
 			err = batchErr
 		}
 		response.Completed = err == nil
 	case OperationBatchArchive:
-		batch, batchErr := service.BatchArchive(ctx, BatchOptions{IDs: request.IDs, Execute: request.Execute, Actor: request.Actor, MinimumAge: minimumAge})
+		batch, batchErr := service.BatchArchive(ctx, BatchOptions{IDs: request.IDs, Execute: request.Execute, Actor: request.Actor, MinimumAge: minimumAge, ExpectedHashes: request.ExpectedHashes})
 		copyBatchResponse(response, batch)
 		err = batchErr
 	case OperationBatchUnarchive:
-		batch, batchErr := service.BatchUnarchive(ctx, BatchOptions{IDs: request.IDs, Execute: request.Execute, Actor: request.Actor})
+		batch, batchErr := service.BatchUnarchive(ctx, BatchOptions{IDs: request.IDs, Execute: request.Execute, Actor: request.Actor, ExpectedHashes: request.ExpectedHashes})
 		copyBatchResponse(response, batch)
 		err = batchErr
 	case OperationHardDelete:
@@ -468,7 +604,7 @@ func (service *Service) ExecutePublicWithCapabilities(ctx context.Context, reque
 			response.Completed = false
 			break
 		}
-		result, deleteErr := service.HardDelete(ctx, request.TaskID, HardDeleteOptions{Actor: request.Actor, Reason: request.Reason, Confirmed: request.Confirmed})
+		result, deleteErr := service.HardDelete(ctx, request.TaskID, HardDeleteOptions{Actor: request.Actor, Reason: request.Reason, Confirmed: request.Confirmed, ExpectedHash: request.ExpectedHash})
 		if result != nil {
 			response.Items = append(response.Items, *result)
 			response.Processed = 1
@@ -539,10 +675,20 @@ func (service *Service) populateResultLifecycle(result *Result) {
 // including status lifecycle clocks, and persists Task plus history under one
 // lifecycle transaction. Index hooks run only after the lock is released.
 func (service *Service) UpdateTask(ctx context.Context, taskID string, options TaskUpdateOptions) (*models.Task, error) {
+	if strings.TrimSpace(options.ExpectedHash) == "" {
+		var err error
+		options.ExpectedHash, err = service.observedTaskHash(ctx, taskID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var updated *models.Task
 	err := service.store.WithTaskLifecycleTransaction(ctx, func(tx *storage.TaskLifecycleTransaction) error {
 		current, err := tx.GetTask(taskID)
 		if err != nil {
+			return err
+		}
+		if err := tx.CheckTaskExpectedHash(current, options.ExpectedHash); err != nil {
 			return err
 		}
 		if current.Archived {
@@ -569,9 +715,13 @@ func (service *Service) UpdateTask(ctx context.Context, taskID string, options T
 			return err
 		}
 		if err := tx.SaveTaskVersion(before, candidate, options.Actor, now, ""); err != nil {
-			_ = tx.UpdateTask(before)
+			rollbackErr := tx.UpdateTask(before)
+			if rollbackErr != nil {
+				return fmt.Errorf("%w; rollback Task %q failed: %v", err, taskID, rollbackErr)
+			}
 			return err
 		}
+		candidate.CanonicalHash = storage.CanonicalTaskHash(candidate)
 		updated = cloneTask(candidate)
 		return nil
 	})
@@ -584,9 +734,146 @@ func (service *Service) UpdateTask(ctx context.Context, taskID string, options T
 	return updated, nil
 }
 
+// ReorderTasks applies a batch of order changes under one lifecycle
+// transaction. All expected bases are established before the lock when the
+// caller omitted them, then every base is rechecked while the lock is held.
+// History and canonical writes are rolled back together on a late failure;
+// indexing hooks run only after the complete commit.
+func (service *Service) ReorderTasks(ctx context.Context, items []ReorderItem, expectedHashes map[string]string) (int, error) {
+	if service == nil || service.store == nil {
+		return 0, fmt.Errorf("task lifecycle service: store is required")
+	}
+	if len(items) == 0 {
+		return 0, nil
+	}
+	expected := make(map[string]string, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.TaskID) == "" {
+			return 0, fmt.Errorf("Task ID is required for reorder")
+		}
+		if _, duplicate := expected[item.TaskID]; duplicate {
+			return 0, fmt.Errorf("Task %q appears more than once in reorder", item.TaskID)
+		}
+		value := ""
+		if expectedHashes != nil {
+			value = strings.TrimSpace(expectedHashes[item.TaskID])
+		}
+		if value == "" {
+			var err error
+			value, err = service.observedTaskHash(ctx, item.TaskID)
+			if err != nil {
+				return 0, err
+			}
+		}
+		expected[item.TaskID] = value
+	}
+
+	type mutation struct {
+		id      string
+		before  *models.Task
+		eventID string
+	}
+	mutations := make([]mutation, 0, len(items))
+	changed := 0
+	err := service.store.WithTaskLifecycleTransaction(ctx, func(tx *storage.TaskLifecycleTransaction) error {
+		candidates := make([]mutation, 0, len(items))
+		now := service.now().UTC()
+		for _, item := range items {
+			current, err := tx.GetTask(item.TaskID)
+			if err != nil {
+				return err
+			}
+			if err := tx.CheckTaskExpectedHash(current, expected[item.TaskID]); err != nil {
+				return err
+			}
+			if current.Order != nil && *current.Order == item.Order {
+				continue
+			}
+			before := cloneTask(current)
+			candidate := cloneTask(current)
+			order := item.Order
+			candidate.Order = &order
+			candidate.UpdatedAt = now
+			candidates = append(candidates, mutation{id: item.TaskID, before: before, eventID: fmt.Sprintf("reorder-%s-%d", item.TaskID, now.UnixNano())})
+		}
+
+		rollback := func(cause error) error {
+			var rollbackErrors []error
+			for index := len(mutations) - 1; index >= 0; index-- {
+				entry := mutations[index]
+				if err := tx.RollbackTaskLifecycleVersion(entry.id, entry.eventID); err != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback Task %q history: %w", entry.id, err))
+				}
+				if err := tx.UpdateTask(entry.before); err != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback Task %q canonical: %w", entry.id, err))
+				}
+			}
+			return errors.Join(cause, errors.Join(rollbackErrors...))
+		}
+
+		for _, candidate := range candidates {
+			current, err := tx.GetTask(candidate.id)
+			if err != nil {
+				return rollback(err)
+			}
+			// Candidate values are rebuilt from the preflight state so a late
+			// failure cannot accidentally persist an unrelated field change.
+			after := cloneTask(current)
+			for _, item := range items {
+				if item.TaskID == candidate.id {
+					order := item.Order
+					after.Order = &order
+					break
+				}
+			}
+			after.UpdatedAt = now
+			if err := tx.UpdateTask(after); err != nil {
+				return rollback(err)
+			}
+			if err := tx.SaveTaskVersion(candidate.before, after, "api", now, candidate.eventID); err != nil {
+				if rollbackErr := tx.UpdateTask(candidate.before); rollbackErr != nil {
+					return rollback(fmt.Errorf("%w; rollback Task %q canonical: %v", err, candidate.id, rollbackErr))
+				}
+				return rollback(err)
+			}
+			mutations = append(mutations, candidate)
+			changed++
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	for _, mutation := range mutations {
+		if err := service.indexTask(mutation.id); err != nil {
+			return changed, err
+		}
+	}
+	return changed, nil
+}
+
+// observedTaskHash establishes the compatibility base for public mutations
+// whose callers do not provide an explicit expected hash. The canonical read
+// occurs before the owning transaction; the mutation transaction rechecks it
+// under lock, so a concurrent write becomes a conflict rather than an
+// overwrite.
+func (service *Service) observedTaskHash(ctx context.Context, taskID string) (string, error) {
+	if service == nil || service.store == nil {
+		return "", fmt.Errorf("task lifecycle service: store is required")
+	}
+	task, err := service.store.Tasks.Get(taskID)
+	if err != nil {
+		return "", err
+	}
+	return storage.CanonicalTaskHash(task), nil
+}
+
 func (service *Service) archiveInTransaction(tx *storage.TaskLifecycleTransaction, taskID string, options ArchiveOptions, settings models.TaskLifecycleSettings, now time.Time) (Result, error) {
 	task, err := tx.GetTask(taskID)
 	if err != nil {
+		return Result{}, err
+	}
+	if err := tx.CheckTaskExpectedHash(task, options.ExpectedHash); err != nil {
 		return Result{}, err
 	}
 	pending, err := tx.GetIncompleteTaskLifecyclePending(taskID, string(OperationArchive))

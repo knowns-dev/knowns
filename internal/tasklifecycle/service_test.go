@@ -686,8 +686,11 @@ func TestLifecycleMutationRollsBackWhenHistoryWriteFailsAndRetryConverges(t *tes
 		if _, err := New(store, WithClock(func() time.Time { return fixedNow })).Archive(context.Background(), task.ID, ArchiveOptions{}); err != nil {
 			t.Fatalf("Archive: %v", err)
 		}
-		historyPath := filepath.Join(store.Root, "versions", "task-"+task.ID+".json")
+		historyPath := filepath.Join(store.Root, "history", "tasks", task.ID+".jsonl")
 		backupPath := historyPath + ".backup"
+		if err := os.MkdirAll(filepath.Dir(historyPath), 0o755); err != nil {
+			t.Fatalf("create history directory: %v", err)
+		}
 		if err := os.Rename(historyPath, backupPath); err != nil {
 			t.Fatalf("backup history: %v", err)
 		}
@@ -821,7 +824,7 @@ func TestHardDeleteRequiresIntentPurgesDataAndRecoversTombstoneFirst(t *testing.
 	}
 
 	retry, err := service.HardDelete(context.Background(), task.ID, HardDeleteOptions{Confirmed: true, Reason: "privacy request", Actor: "tester"})
-	if err != nil || retry.Changed || removed.Load() != 2 {
+	if err != nil || retry.Changed || removed.Load() != 1 {
 		t.Fatalf("retry = %#v, %v remove=%d", retry, err, removed.Load())
 	}
 
@@ -877,14 +880,14 @@ func TestHardDeleteRetryCompletesCleanupAndDoesNotRedeliverEvent(t *testing.T) {
 	options := HardDeleteOptions{Confirmed: true, Reason: "privacy request", Actor: "tester"}
 
 	first, err := service.HardDelete(context.Background(), task.ID, options)
-	if err == nil || !strings.Contains(err.Error(), "delete task version history") || !first.Changed {
+	if err == nil || !strings.Contains(err.Error(), "lifecycle handoff failed") || !first.Changed {
 		t.Fatalf("first HardDelete = %#v, %v", first, err)
 	}
-	if events.Load() != 0 || removeAttempts.Load() != 0 {
-		t.Fatalf("side effects ran before canonical cleanup: events=%d remove=%d", events.Load(), removeAttempts.Load())
+	if events.Load() != 0 || removeAttempts.Load() != 1 {
+		t.Fatalf("central purge handoff attempts: events=%d remove=%d", events.Load(), removeAttempts.Load())
 	}
 	if _, err := store.Tasks.Get(task.ID); err == nil {
-		t.Fatal("Task remains after tombstone-first partial delete")
+		t.Fatal("central purge failure left canonical Task behind after its removal phase")
 	}
 	if got := pendingLifecycleRecords(t, store, string(OperationHardDelete)); len(got) != 1 || got[0].CanonicalComplete {
 		t.Fatalf("pending after cleanup failure = %#v", got)
@@ -897,14 +900,14 @@ func TestHardDeleteRetryCompletesCleanupAndDoesNotRedeliverEvent(t *testing.T) {
 	}
 
 	second, err := service.HardDelete(context.Background(), task.ID, options)
-	if err == nil || !strings.Contains(err.Error(), "index unavailable") || second.Changed {
+	if err != nil || second.Changed {
 		t.Fatalf("second HardDelete = %#v, %v", second, err)
 	}
-	if events.Load() != 1 || removeAttempts.Load() != 1 {
+	if events.Load() != 1 || removeAttempts.Load() != 2 {
 		t.Fatalf("post-cleanup side effects: events=%d remove=%d", events.Load(), removeAttempts.Load())
 	}
-	if got := pendingLifecycleRecords(t, store, string(OperationHardDelete)); len(got) != 1 || !got[0].CanonicalComplete || !got[0].EventDelivered || got[0].DerivedApplied {
-		t.Fatalf("pending after RemoveTask failure = %#v", got)
+	if got := pendingLifecycleRecords(t, store, string(OperationHardDelete)); len(got) != 0 {
+		t.Fatalf("pending after central purge retry = %#v", got)
 	}
 
 	third, err := service.HardDelete(context.Background(), task.ID, options)
@@ -967,13 +970,48 @@ func TestConcurrentCreateAndHardDeleteNeverLeaveLiveTaskWithTombstone(t *testing
 	}
 }
 
-func TestConcurrentArchiveAndReopenConvergeToOneActiveCopy(t *testing.T) {
+func TestArchiveAndReopenHashlessRequireSeparateUserCalls(t *testing.T) {
 	store := newLifecycleStore(t)
 	task := lifecycleTask("trans1", "done", "")
 	task.CompletedAt = timePointer(fixedNow.Add(-time.Hour))
 	createLifecycleTask(t, store, task)
 	service := New(store, WithClock(func() time.Time { return fixedNow }))
 
+	if result, err := service.Archive(context.Background(), task.ID, ArchiveOptions{}); err != nil || !result.Changed {
+		t.Fatalf("archive: %+v, %v", result, err)
+	}
+	if result, err := service.Reopen(context.Background(), task.ID, ReopenOptions{}); err != nil || !result.Changed {
+		t.Fatalf("explicit second reopen: %+v, %v", result, err)
+	}
+	loaded, err := store.Tasks.Get(task.ID)
+	if err != nil {
+		t.Fatalf("Get converged Task: %v", err)
+	}
+	if loaded.Archived || loaded.Status != "todo" {
+		t.Fatalf("final Task = %#v, want one active todo copy", loaded)
+	}
+	active, _ := store.Tasks.List()
+	archived, _ := store.Tasks.ListArchived()
+	if countID(active, task.ID) != 1 || countID(archived, task.ID) != 0 {
+		t.Fatalf("copies active=%d archived=%d", countID(active, task.ID), countID(archived, task.ID))
+	}
+}
+
+func TestConcurrentArchiveAndReopenSameBaseHasOneWinner(t *testing.T) {
+	store := newLifecycleStore(t)
+	task := lifecycleTask("trans2", "done", "")
+	task.CompletedAt = timePointer(fixedNow.Add(-time.Hour))
+	createLifecycleTask(t, store, task)
+	clockReached := make(chan struct{}, 2)
+	releaseClock := make(chan struct{})
+	var clockCalls atomic.Int32
+	service := New(store, WithClock(func() time.Time {
+		if clockCalls.Add(1) <= 2 {
+			clockReached <- struct{}{}
+			<-releaseClock
+		}
+		return fixedNow
+	}))
 	start := make(chan struct{})
 	errCh := make(chan error, 2)
 	var wg sync.WaitGroup
@@ -991,24 +1029,74 @@ func TestConcurrentArchiveAndReopenConvergeToOneActiveCopy(t *testing.T) {
 		errCh <- err
 	}()
 	close(start)
+	<-clockReached
+	<-clockReached
+	close(releaseClock)
 	wg.Wait()
 	close(errCh)
+	var successes, conflicts int
 	for err := range errCh {
-		if err != nil {
+		if err == nil {
+			successes++
+		} else if errors.Is(err, storage.ErrHistoryConflict) {
+			conflicts++
+		} else {
 			t.Fatalf("concurrent transition: %v", err)
 		}
 	}
-	loaded, err := store.Tasks.Get(task.ID)
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("outcomes successes=%d conflicts=%d, want one each", successes, conflicts)
+	}
+}
+
+func TestReorderTasksRollsBackCanonicalAndHistoryOnLateFailure(t *testing.T) {
+	store := newLifecycleStore(t)
+	createLifecycleTask(t, store, lifecycleTask("reorder-a", "todo", ""))
+	createLifecycleTask(t, store, lifecycleTask("reorder-z", "todo", ""))
+	failurePath := filepath.Join(store.Root, "history", "tasks", "reorder-z.jsonl")
+	if err := os.MkdirAll(filepath.Dir(failurePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(failurePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(failurePath) })
+
+	firstBefore, err := store.Tasks.Get("reorder-a")
 	if err != nil {
-		t.Fatalf("Get converged Task: %v", err)
+		t.Fatal(err)
 	}
-	if loaded.Archived || loaded.Status != "todo" {
-		t.Fatalf("final Task = %#v, want one active todo copy", loaded)
+	secondBefore, err := store.Tasks.Get("reorder-z")
+	if err != nil {
+		t.Fatal(err)
 	}
-	active, _ := store.Tasks.List()
-	archived, _ := store.Tasks.ListArchived()
-	if countID(active, task.ID) != 1 || countID(archived, task.ID) != 0 {
-		t.Fatalf("copies active=%d archived=%d", countID(active, task.ID), countID(archived, task.ID))
+	service := New(store, WithClock(func() time.Time { return fixedNow }))
+	changed, err := service.ReorderTasks(context.Background(), []ReorderItem{
+		{TaskID: firstBefore.ID, Order: 1}, {TaskID: secondBefore.ID, Order: 2},
+	}, map[string]string{firstBefore.ID: firstBefore.CanonicalHash, secondBefore.ID: secondBefore.CanonicalHash})
+	if err == nil || changed != 0 {
+		t.Fatalf("late reorder failure changed=%d err=%v", changed, err)
+	}
+	firstAfter, err := store.Tasks.Get(firstBefore.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondAfter, err := store.Tasks.Get(secondBefore.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstAfter.Order != nil || firstAfter.CanonicalHash != firstBefore.CanonicalHash || secondAfter.Order != nil || secondAfter.CanonicalHash != secondBefore.CanonicalHash {
+		t.Fatalf("late reorder changed canonical state: first=%#v second=%#v", firstAfter, secondAfter)
+	}
+	firstHistory, err := store.Versions.GetHistory(firstBefore.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firstHistory.Versions) != 0 {
+		t.Fatalf("late reorder leaked first history: %d", len(firstHistory.Versions))
+	}
+	if info, statErr := os.Stat(failurePath); statErr != nil || !info.IsDir() {
+		t.Fatalf("late reorder changed injected failure boundary: info=%v err=%v", info, statErr)
 	}
 }
 
@@ -1122,7 +1210,7 @@ func TestIndexHookFailuresAreRecoverableByIdempotentRetry(t *testing.T) {
 		}))
 		options := HardDeleteOptions{Confirmed: true, Reason: "review test", Actor: "tester"}
 		first, err := failing.HardDelete(context.Background(), task.ID, options)
-		if err == nil || !first.Changed || events.Load() != 1 {
+		if err == nil || !first.Changed || events.Load() != 0 {
 			t.Fatalf("first HardDelete = %#v, %v events=%d", first, err, events.Load())
 		}
 
