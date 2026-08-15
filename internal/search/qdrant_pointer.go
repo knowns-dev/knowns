@@ -101,6 +101,7 @@ type QdrantGenerationRecord struct {
 	SchemaVersion  int                    `json:"schemaVersion"`
 	ChunkVersion   int                    `json:"chunkVersion"`
 	Embedding      QdrantEmbeddingPointer `json:"embedding"`
+	Owner          QdrantOwnerPointer     `json:"owner"`
 	Status         string                 `json:"status"` // "active" | "inactive"
 	ChunkCount     int64                  `json:"chunkCount"`
 	CreatedAt      time.Time              `json:"createdAt"`
@@ -117,6 +118,34 @@ func NewCollectionUUID() (string, error) {
 		return "", fmt.Errorf("generate collection uuid: %w", err)
 	}
 	return id.String(), nil
+}
+
+// NewQdrantPointer creates an active-collection pointer for one Knowns store.
+// It generates a UUID collection identity, derives the collection name from
+// that UUID, and records the store owner fingerprint. It does not write the
+// pointer to disk; callers should save only after the corresponding collection
+// exists or when later bootstrap tasks intentionally create pending metadata.
+func NewQdrantPointer(storeRoot, projectID string, embedding QdrantEmbeddingPointer) (*QdrantPointer, error) {
+	collectionUUID, err := NewCollectionUUID()
+	if err != nil {
+		return nil, err
+	}
+	if embedding.Distance == "" {
+		embedding.Distance = QdrantDefaultDistance
+	}
+	return &QdrantPointer{
+		Backend:        "qdrant",
+		CollectionUUID: collectionUUID,
+		CollectionName: CollectionNameFromUUID(collectionUUID),
+		SchemaVersion:  QdrantPointerSchemaVersion,
+		ChunkVersion:   ChunkVersion,
+		Embedding:      embedding,
+		Owner: QdrantOwnerPointer{
+			ProjectID:            projectID,
+			StoreRootFingerprint: StoreRootFingerprint(storeRoot),
+		},
+		ChunkCount: 0,
+	}, nil
 }
 
 // CollectionNameFromUUID derives the Qdrant collection name from a collection
@@ -201,7 +230,25 @@ func AppendQdrantGeneration(storeRoot string, rec QdrantGenerationRecord) error 
 	if _, err := f.Write(append(data, '\n')); err != nil {
 		return fmt.Errorf("append qdrant generation: %w", err)
 	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("sync qdrant generation: %w", err)
+	}
 	return nil
+}
+
+// SaveQdrantGenerations atomically replaces generation history as one durable
+// snapshot, avoiding a crash window between inactive and active records.
+func SaveQdrantGenerations(storeRoot string, records []QdrantGenerationRecord) error {
+	var data []byte
+	for _, rec := range records {
+		line, err := json.Marshal(rec)
+		if err != nil {
+			return fmt.Errorf("marshal qdrant generation: %w", err)
+		}
+		data = append(data, line...)
+		data = append(data, '\n')
+	}
+	return atomicWriteSearchFile(QdrantGenerationsPath(storeRoot), data)
 }
 
 // LoadQdrantGenerations reads the full generation history. A missing file
@@ -262,9 +309,21 @@ func atomicWriteSearchFile(dst string, data []byte) error {
 		_ = os.Remove(tmpName)
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpName)
 		return err
 	}
-	return os.Rename(tmpName, dst)
+	if err := os.Rename(tmpName, dst); err != nil {
+		return err
+	}
+	if dirFile, err := os.Open(dir); err == nil {
+		_ = dirFile.Sync()
+		_ = dirFile.Close()
+	}
+	return nil
 }
