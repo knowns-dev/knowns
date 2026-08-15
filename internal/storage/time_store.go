@@ -131,7 +131,10 @@ func (ts *TimeStore) saveAllEntriesUnlocked(all map[string][]models.TimeEntry) e
 	return writeJSON(ts.entriesPath(), all)
 }
 
-// Start begins a new timer for the given task.
+// Start begins a new timer for the given task. Timer-state-only operations
+// (Start, Pause, and Resume) intentionally do not use Task OCC because they
+// do not mutate canonical Task content or Task history; StopTimer and manual
+// entries use tasklifecycle's OCC-aware transaction because they do.
 // Returns an error if a timer for that task is already running.
 func (ts *TimeStore) Start(taskID, taskTitle string) error {
 	return ts.withLifecycleLock(func() error { return ts.startUnlocked(taskID, taskTitle) })

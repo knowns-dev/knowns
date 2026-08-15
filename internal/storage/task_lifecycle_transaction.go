@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,28 @@ type TaskLifecycleTransaction struct {
 
 func (tx *TaskLifecycleTransaction) GetTask(id string) (*models.Task, error) {
 	return tx.store.Tasks.Get(id)
+}
+
+// CanonicalTaskPath returns the exact path selected while the lifecycle lock
+// is held. It is used as content-free proof for the out-of-lock purge phase.
+func (tx *TaskLifecycleTransaction) CanonicalTaskPath(id string) (string, error) {
+	return tx.store.Tasks.CanonicalPath(id)
+}
+
+// CheckTaskExpectedHash compares a caller-supplied base with the fresh
+// canonical Task read while the owning lifecycle lock is held.
+func (tx *TaskLifecycleTransaction) CheckTaskExpectedHash(task *models.Task, expected string) error {
+	if task == nil {
+		return nil
+	}
+	if strings.TrimSpace(expected) == "" {
+		return fmt.Errorf("task %q expected canonical hash is required", task.ID)
+	}
+	current := CanonicalTaskHash(task)
+	if expected != current {
+		return &MutationConflictError{EntityType: "task", EntityID: task.ID, ExpectedHash: expected, CurrentHash: current}
+	}
+	return nil
 }
 
 func (tx *TaskLifecycleTransaction) ListActiveTasks() ([]*models.Task, error) {
@@ -66,6 +89,11 @@ func (tx *TaskLifecycleTransaction) UpdateTask(task *models.Task) error {
 
 func (tx *TaskLifecycleTransaction) TrackTaskChanges(before, after *models.Task) []models.TaskChange {
 	return tx.store.Versions.TrackChanges(before, after)
+}
+
+// CreateTask writes a new Task while the lifecycle transaction is held.
+func (tx *TaskLifecycleTransaction) CreateTask(task *models.Task) error {
+	return tx.store.Tasks.createUnlocked(task)
 }
 
 func (tx *TaskLifecycleTransaction) ArchiveTask(id string) error {
@@ -279,6 +307,9 @@ func (tx *TaskLifecycleTransaction) RollbackTaskLifecycleVersion(taskID, eventID
 	if len(history.Versions) == 0 || history.Versions[len(history.Versions)-1].LifecycleEventID != eventID {
 		return nil
 	}
+	if tx.store.Versions.hasJSONLHistory("task", taskID) {
+		return tx.store.Versions.historyStore().RemoveLast(context.Background(), "task", taskID)
+	}
 	history.Versions = history.Versions[:len(history.Versions)-1]
 	history.CurrentVersion--
 	if len(history.Versions) == 0 {
@@ -292,11 +323,24 @@ func (tx *TaskLifecycleTransaction) RollbackTaskLifecycleVersion(taskID, eventID
 }
 
 func (tx *TaskLifecycleTransaction) DeleteTaskVersionHistory(id string) error {
-	err := os.Remove(tx.store.Versions.versionPath(id))
-	if err == nil || os.IsNotExist(err) {
+	return tx.PurgeTaskVersionHistory(id, "legacy", "lifecycle purge", "")
+}
+
+// PurgeTaskVersionHistory is the storage-side hard-delete contract used only
+// after the trusted Task lifecycle adapter has validated confirmation, reason,
+// and OCC. It leaves a content-free reservation/audit marker before deleting
+// JSONL or a verified legacy successor.
+func (tx *TaskLifecycleTransaction) PurgeTaskVersionHistory(id, actor, reason, expectedHash string) error {
+	legacyPath := tx.store.Versions.versionPath(id)
+	hasJSONL := tx.store.Versions.hasJSONLHistory("task", id)
+	if !hasJSONL {
+		_, err := tx.store.Versions.historyStore().PurgeLegacyOnly(context.Background(), "task", id, actor, reason, legacyPath)
+		if err != nil {
+			return fmt.Errorf("delete task version history %q: %w", id, err)
+		}
 		return nil
 	}
-	return fmt.Errorf("delete task version history %q: %w", id, err)
+	return tx.store.Versions.historyStore().PurgeAuthorized(context.Background(), "task", id, actor, reason, expectedHash)
 }
 
 // DeleteTaskTimeData removes both active and completed time data. It is

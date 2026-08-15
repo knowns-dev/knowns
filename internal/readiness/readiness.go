@@ -75,6 +75,15 @@ type SearchStatus struct {
 	GlobalIndexModel  string                    `json:"globalIndexModel,omitempty"`
 	LastReindex       *time.Time                `json:"lastReindex,omitempty"`
 	SemanticRuntime   *SemanticRuntimeReadiness `json:"semanticRuntime,omitempty"`
+
+	// Backend-neutral semantic vector store state (spec qdrant-default-vector-backend).
+	// SemanticBackend is "qdrant", "sqlite", or "none"; SemanticMode is
+	// "managed" or "external". SemanticDegraded reports that semantic search is
+	// enabled but the active backend is not ready (keyword fallback active).
+	SemanticBackend        string `json:"semanticBackend,omitempty"`
+	SemanticMode           string `json:"semanticMode,omitempty"`
+	SemanticDegraded       bool   `json:"semanticDegraded,omitempty"`
+	SemanticDegradedReason string `json:"semanticDegradedReason,omitempty"`
 }
 
 // SemanticRuntimeReadiness reports the shared semantic embedding runtime state.
@@ -276,9 +285,17 @@ func buildSearch(store *storage.Store) *SearchStatus {
 		return ss
 	}
 
+	// Backend-neutral semantic index readiness (spec qdrant-default-vector-backend,
+	// D3/D4). This replaces the previous direct .search/index.db probes.
+	project := search.ResolveSemanticIndexReadiness(store)
+	ss.SemanticEnabled = project.Enabled
+	ss.SemanticBackend = project.Backend
+	ss.SemanticMode = project.Mode
+	ss.SemanticDegraded = project.Degraded
+	ss.SemanticDegradedReason = project.Reason
+
 	if cfg.Settings.SemanticSearch != nil {
 		sem := cfg.Settings.SemanticSearch
-		ss.SemanticEnabled = sem.Enabled
 		ss.ModelConfigured = sem.Model != ""
 
 		onnxAvail, _ := search.IsONNXAvailable()
@@ -286,30 +303,18 @@ func buildSearch(store *storage.Store) *SearchStatus {
 	}
 
 	// Project index readiness.
-	searchDir := filepath.Join(store.Root, ".search")
-	vs := search.NewSQLiteVectorStore(searchDir, "", 0)
-	count, projectIndexModel, indexedAt := vs.Stats()
-	ss.ProjectIndexReady = count > 0
-	ss.ProjectIndexModel = projectIndexModel
-	if ss.ProjectIndexReady && cfg.Settings.SemanticSearch != nil {
-		configuredModel := cfg.Settings.SemanticSearch.Model
-		ss.ProjectIndexStale = configuredModel != "" && projectIndexModel != "" && projectIndexModel != configuredModel
-	}
-	if !indexedAt.IsZero() {
-		ss.LastReindex = &indexedAt
+	ss.ProjectIndexReady = project.Ready
+	ss.ProjectIndexStale = project.Stale
+	ss.ProjectIndexModel = project.Model
+	if project.IndexedAt != nil && !project.IndexedAt.IsZero() {
+		ss.LastReindex = project.IndexedAt
 	}
 
 	// Global index readiness.
-	globalRoot := storage.GlobalSemanticStoreRoot()
-	globalSearchDir := filepath.Join(globalRoot, ".search")
-	gvs := search.NewSQLiteVectorStore(globalSearchDir, "", 0)
-	gCount, globalIndexModel, _ := gvs.Stats()
-	ss.GlobalIndexReady = gCount > 0
-	ss.GlobalIndexModel = globalIndexModel
-	if ss.GlobalIndexReady && cfg.Settings.SemanticSearch != nil {
-		configuredModel := cfg.Settings.SemanticSearch.Model
-		ss.GlobalIndexStale = configuredModel != "" && globalIndexModel != "" && globalIndexModel != configuredModel
-	}
+	global := search.ResolveSemanticIndexReadiness(storage.NewGlobalSemanticStore())
+	ss.GlobalIndexReady = global.Ready
+	ss.GlobalIndexStale = global.Stale
+	ss.GlobalIndexModel = global.Model
 
 	return ss
 }

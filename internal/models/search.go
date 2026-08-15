@@ -49,10 +49,12 @@ type SearchResult struct {
 
 // RuntimeWarning describes degraded runtime behavior without changing response shape.
 type RuntimeWarning struct {
-	Degraded bool   `json:"degraded,omitempty"`
-	Mode     string `json:"mode,omitempty"`
-	Reason   string `json:"reason,omitempty"`
-	Message  string `json:"message,omitempty"`
+	Degraded        bool   `json:"degraded,omitempty"`
+	Warming         bool   `json:"warming,omitempty"`
+	BootstrapQueued bool   `json:"bootstrapQueued,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	Reason          string `json:"reason,omitempty"`
+	Message         string `json:"message,omitempty"`
 }
 
 // RetrievalOptions configures mixed-source retrieval and context assembly.

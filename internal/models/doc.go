@@ -6,6 +6,10 @@ import "time"
 // Metadata is kept in a YAML frontmatter block; body content is plain
 // markdown.
 type Doc struct {
+	// ID is the stable identity of this document. Legacy documents may omit it
+	// until their next canonical mutation; passive reads never backfill it.
+	ID string `json:"id,omitempty" yaml:"id,omitempty"`
+
 	// Path is the relative path inside .knowns/docs/ without the .md suffix
 	// (e.g., "guides/setup").  When a filename is needed use Path + ".md".
 	Path string `json:"path"`
@@ -33,4 +37,8 @@ type Doc struct {
 	// ImportSource is the name of the package that owns this doc when
 	// IsImported is true.
 	ImportSource string `json:"importSource,omitempty"`
+
+	// CanonicalHash is derived from the current canonical state and is never
+	// written to frontmatter. It is exposed so callers can form a safe base.
+	CanonicalHash string `json:"canonicalHash,omitempty" yaml:"-"`
 }

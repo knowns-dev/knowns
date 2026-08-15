@@ -118,6 +118,13 @@ func (ts *TaskStore) Get(id string) (*models.Task, error) {
 	return ts.parseFile(path)
 }
 
+// CanonicalPath returns the exact managed Task file selected by the same
+// tasks/archive lookup used by Get. Callers use it as an OCC proof; it does
+// not infer a filename from the Task title or ID.
+func (ts *TaskStore) CanonicalPath(id string) (string, error) {
+	return ts.findFile(id)
+}
+
 func (ts *TaskStore) findFile(id string) (string, error) {
 	for _, dir := range []string{ts.tasksDir(), ts.archiveDir()} {
 		if p, err := ts.scanForID(dir, id); err == nil {
@@ -413,6 +420,7 @@ func (ts *TaskStore) parseFile(path string) (*models.Task, error) {
 		return nil, err
 	}
 	task.Archived = filepath.Clean(filepath.Dir(path)) == filepath.Clean(ts.archiveDir())
+	task.CanonicalHash = CanonicalTaskHash(task)
 	return task, nil
 }
 

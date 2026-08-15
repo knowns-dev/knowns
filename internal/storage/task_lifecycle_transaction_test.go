@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/howznguyen/knowns/internal/models"
 )
 
 func TestTaskLifecycleLockUsesIgnoredSearchRuntimeDirectory(t *testing.T) {
@@ -55,5 +57,32 @@ func TestTaskLifecycleTransactionSerializesStoresAndHonorsContext(t *testing.T) 
 	close(release)
 	if err := <-done; err != nil {
 		t.Fatalf("first transaction: %v", err)
+	}
+}
+
+func TestTaskLifecycleVersionUsesDeltaAfterInitialCheckpoint(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("lifecycle-history"); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	oldTask := &models.Task{ID: "delta-task", Title: "Task", Status: "todo", Priority: "medium"}
+	newTask := *oldTask
+	newTask.Status = "done"
+	if err := store.WithTaskLifecycleTransaction(context.Background(), func(tx *TaskLifecycleTransaction) error {
+		return tx.SaveTaskVersion(nil, oldTask, "tester", time.Now().UTC(), "first")
+	}); err != nil {
+		t.Fatalf("save initial lifecycle version: %v", err)
+	}
+	if err := store.WithTaskLifecycleTransaction(context.Background(), func(tx *TaskLifecycleTransaction) error {
+		return tx.SaveTaskVersion(oldTask, &newTask, "tester", time.Now().UTC(), "second")
+	}); err != nil {
+		t.Fatalf("save delta lifecycle version: %v", err)
+	}
+	history, err := store.Versions.GetHistory(oldTask.ID)
+	if err != nil || len(history.Versions) != 2 {
+		t.Fatalf("history = %#v err=%v", history, err)
+	}
+	if !history.Versions[0].Checkpoint || history.Versions[1].Checkpoint {
+		t.Fatalf("checkpoint policy = first %v second %v, want checkpoint then delta", history.Versions[0].Checkpoint, history.Versions[1].Checkpoint)
 	}
 }

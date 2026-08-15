@@ -68,12 +68,13 @@ var ActionRegistry = map[string]ActionMeta{
 	"tasks.hard_delete":     {Capability: CapDelete, Target: TargetTask, Risk: RiskHigh},
 
 	// docs
-	"docs.create":  {Capability: CapWrite, Target: TargetDoc, Risk: RiskMedium},
-	"docs.get":     {Capability: CapRead, Target: TargetDoc, Risk: RiskLow},
-	"docs.update":  {Capability: CapWrite, Target: TargetDoc, Risk: RiskMedium},
-	"docs.delete":  {Capability: CapDelete, Target: TargetDoc, Risk: RiskHigh},
-	"docs.list":    {Capability: CapRead, Target: TargetDoc, Risk: RiskLow},
-	"docs.history": {Capability: CapRead, Target: TargetDoc, Risk: RiskLow},
+	"docs.create":      {Capability: CapWrite, Target: TargetDoc, Risk: RiskMedium},
+	"docs.get":         {Capability: CapRead, Target: TargetDoc, Risk: RiskLow},
+	"docs.update":      {Capability: CapWrite, Target: TargetDoc, Risk: RiskMedium},
+	"docs.delete":      {Capability: CapDelete, Target: TargetDoc, Risk: RiskHigh},
+	"docs.hard_delete": {Capability: CapDelete, Target: TargetDoc, Risk: RiskHigh},
+	"docs.list":        {Capability: CapRead, Target: TargetDoc, Risk: RiskLow},
+	"docs.history":     {Capability: CapRead, Target: TargetDoc, Risk: RiskLow},
 
 	// memory
 	"memory.add":     {Capability: CapWrite, Target: TargetMemory, Risk: RiskMedium},

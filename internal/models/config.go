@@ -132,6 +132,10 @@ type ProjectSettings struct {
 	// RuntimeMemory configures bounded memory injection for supported runtimes.
 	RuntimeMemory *RuntimeMemorySettings `json:"runtimeMemory,omitempty"`
 
+	// RuntimeWatch configures automatic Task/Doc filesystem reconciliation
+	// demand for long-lived clients. A nil value preserves the default policy.
+	RuntimeWatch *RuntimeWatchSettings `json:"runtimeWatch,omitempty"`
+
 	// Permissions configures the AI permission policy for this project.
 	// When nil, the implicit default preset (read-write-no-delete) is used.
 	Permissions *permissions.PermissionConfig `json:"permissions,omitempty"`
@@ -219,6 +223,26 @@ func (s ProjectSettings) Validate() error {
 	}
 	if err := s.ValidateOpenCodeServer(); err != nil {
 		return err
+	}
+	if err := s.ValidateRuntimeWatch(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ValidateRuntimeWatch rejects malformed project watcher grace periods while
+// allowing an omitted value to inherit the default policy.
+func (s ProjectSettings) ValidateRuntimeWatch() error {
+	if s.RuntimeWatch == nil || strings.TrimSpace(s.RuntimeWatch.GracePeriod) == "" {
+		return nil
+	}
+	grace := strings.TrimSpace(s.RuntimeWatch.GracePeriod)
+	parsed, err := time.ParseDuration(grace)
+	if err != nil {
+		return fmt.Errorf("settings.runtimeWatch.gracePeriod: invalid duration %q: %w", s.RuntimeWatch.GracePeriod, err)
+	}
+	if parsed < 0 {
+		return fmt.Errorf("settings.runtimeWatch.gracePeriod: duration must not be negative")
 	}
 	return nil
 }
@@ -318,6 +342,45 @@ type RuntimeMemorySettings struct {
 
 	// MaxBytes caps the serialized memory payload size.
 	MaxBytes int `json:"maxBytes,omitempty"`
+}
+
+// RuntimeWatchSettings configures project-scoped knowledge watcher leases.
+// Enabled defaults to true for backwards-compatible automatic reconciliation;
+// clients must still be listed as eligible before they request watch demand.
+type RuntimeWatchSettings struct {
+	Enabled         *bool    `json:"enabled,omitempty"`
+	EligibleClients []string `json:"eligibleClients,omitempty"`
+	GracePeriod     string   `json:"gracePeriod,omitempty"`
+}
+
+// DefaultRuntimeWatchSettings returns the project watch policy used when a
+// project has no explicit runtimeWatch block.
+func DefaultRuntimeWatchSettings() RuntimeWatchSettings {
+	enabled := true
+	return RuntimeWatchSettings{
+		Enabled:         &enabled,
+		EligibleClients: []string{"mcp", "opencode"},
+		GracePeriod:     "30s",
+	}
+}
+
+// EffectiveRuntimeWatch resolves omitted project watch settings to defaults.
+func (s ProjectSettings) EffectiveRuntimeWatch() RuntimeWatchSettings {
+	settings := DefaultRuntimeWatchSettings()
+	if s.RuntimeWatch == nil {
+		return settings
+	}
+	if s.RuntimeWatch.Enabled != nil {
+		enabled := *s.RuntimeWatch.Enabled
+		settings.Enabled = &enabled
+	}
+	if s.RuntimeWatch.EligibleClients != nil {
+		settings.EligibleClients = append([]string(nil), s.RuntimeWatch.EligibleClients...)
+	}
+	if s.RuntimeWatch.GracePeriod != "" {
+		settings.GracePeriod = s.RuntimeWatch.GracePeriod
+	}
+	return settings
 }
 
 // OpenCodeServerConfig holds settings for the OpenCode server API.
@@ -426,8 +489,10 @@ const (
 // generations after a successful Qdrant generation swap (spec D7).
 type SemanticVectorStoreRetentionSettings struct {
 	// PreviousGenerations is the maximum number of inactive generations kept
-	// for rollback (default 1; 0 disables rollback retention).
-	PreviousGenerations int `json:"previousGenerations,omitempty"`
+	// for rollback (default 1; 0 disables rollback retention). A nil pointer
+	// means the field was omitted and should inherit the default; an explicit
+	// pointer to 0 disables rollback retention.
+	PreviousGenerations *int `json:"previousGenerations,omitempty"`
 	// PreviousGenerationTTL is how long an inactive generation is retained
 	// before automatic cleanup (default "72h").
 	PreviousGenerationTTL string `json:"previousGenerationTTL,omitempty"`
@@ -490,9 +555,13 @@ type SemanticSearchSettings struct {
 // policy: max 1 inactive generation retained for 72 hours (spec D7).
 func DefaultSemanticVectorStoreRetentionSettings() SemanticVectorStoreRetentionSettings {
 	return SemanticVectorStoreRetentionSettings{
-		PreviousGenerations:   DefaultSemanticVectorRetentionGenerations,
+		PreviousGenerations:   semanticVectorRetentionGenerationsPtr(DefaultSemanticVectorRetentionGenerations),
 		PreviousGenerationTTL: DefaultSemanticVectorRetentionTTL,
 	}
+}
+
+func semanticVectorRetentionGenerationsPtr(v int) *int {
+	return &v
 }
 
 // DefaultSemanticVectorStoreSettings returns the built-in vector store
@@ -631,8 +700,8 @@ func ResolveSemanticVectorStore(project, global *SemanticSearchSettings, lookup 
 	return res
 }
 
-// mergeVectorStoreSettings overlays non-zero src fields onto dst, preserving
-// defaults for fields omitted from partial blocks.
+// mergeVectorStoreSettings overlays set src fields onto dst, preserving
+// existing/default values for fields omitted from partial blocks.
 func mergeVectorStoreSettings(dst *SemanticVectorStoreSettings, src *SemanticVectorStoreSettings) {
 	if src == nil {
 		return
@@ -653,15 +722,28 @@ func mergeVectorStoreSettings(dst *SemanticVectorStoreSettings, src *SemanticVec
 		dst.Install = src.Install
 	}
 	if src.Retention != nil {
-		r := DefaultSemanticVectorStoreRetentionSettings()
-		if src.Retention.PreviousGenerations != 0 {
-			r.PreviousGenerations = src.Retention.PreviousGenerations
+		r := cloneSemanticVectorStoreRetentionSettings(dst.Retention)
+		if src.Retention.PreviousGenerations != nil {
+			r.PreviousGenerations = semanticVectorRetentionGenerationsPtr(*src.Retention.PreviousGenerations)
 		}
 		if src.Retention.PreviousGenerationTTL != "" {
 			r.PreviousGenerationTTL = src.Retention.PreviousGenerationTTL
 		}
 		dst.Retention = &r
 	}
+}
+
+func cloneSemanticVectorStoreRetentionSettings(src *SemanticVectorStoreRetentionSettings) SemanticVectorStoreRetentionSettings {
+	var clone SemanticVectorStoreRetentionSettings
+	if src == nil {
+		clone = DefaultSemanticVectorStoreRetentionSettings()
+	} else {
+		clone = *src
+		if src.PreviousGenerations != nil {
+			clone.PreviousGenerations = semanticVectorRetentionGenerationsPtr(*src.PreviousGenerations)
+		}
+	}
+	return clone
 }
 
 // envBool parses common boolean environment values.
@@ -700,7 +782,7 @@ func (s *SemanticSearchSettings) ValidateVectorStore() error {
 		return fmt.Errorf("settings.semanticSearch.vectorStore.install: unsupported install policy %q", vs.Install)
 	}
 	if vs.Retention != nil {
-		if vs.Retention.PreviousGenerations < 0 {
+		if vs.Retention.PreviousGenerations != nil && *vs.Retention.PreviousGenerations < 0 {
 			return fmt.Errorf("settings.semanticSearch.vectorStore.retention.previousGenerations: must not be negative")
 		}
 		if ttl := strings.TrimSpace(vs.Retention.PreviousGenerationTTL); ttl != "" {

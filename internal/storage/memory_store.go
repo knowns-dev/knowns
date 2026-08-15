@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,8 +16,28 @@ import (
 // MemoryStore reads and writes memory files from .knowns/memory/ (project),
 // .knowns/.working-memory/ (working), and ~/.knowns/memory/ (global).
 type MemoryStore struct {
-	root       string // .knowns/ directory (project)
-	globalRoot string // ~/.knowns/ directory
+	root         string // .knowns/ directory (project)
+	globalRoot   string // ~/.knowns/ directory
+	mutationLock *memoryMutationLock
+}
+
+// CanonicalMemoryHash identifies the complete persisted memory state without
+// exposing its content in conflict errors. The lifecycle warning field is
+// intentionally excluded because it is derived while reading legacy files.
+func CanonicalMemoryHash(memory *models.MemoryEntry) string {
+	if memory == nil {
+		return ""
+	}
+	return hashSnapshot(map[string]any{
+		"id": memory.ID, "title": memory.Title, "layer": memory.Layer,
+		"category": memory.Category, "content": memory.Content,
+		"status": memory.Status, "confidence": memory.Confidence,
+		"lastVerified": memory.LastVerified, "ttlDays": memory.TTLDays,
+		"sources": memory.Sources, "mergedInto": memory.MergedInto,
+		"rejectedReason": memory.RejectedReason, "tags": memory.Tags,
+		"metadata": memory.Metadata, "createdAt": memory.CreatedAt,
+		"updatedAt": memory.UpdatedAt,
+	})
 }
 
 func (ms *MemoryStore) projectDir() string { return filepath.Join(ms.root, "memory") }
@@ -260,7 +281,9 @@ func (ms *MemoryStore) Create(entry *models.MemoryEntry) error {
 	}
 
 	absPath := filepath.Join(dir, models.MemoryFileName(entry.ID))
-	return atomicWrite(absPath, []byte(renderMemory(entry)))
+	return ms.withMemoryLock(context.Background(), entry.ID, func() error {
+		return atomicWrite(absPath, []byte(renderMemory(entry)))
+	})
 }
 
 // Update overwrites an existing memory entry.
@@ -275,15 +298,17 @@ func (ms *MemoryStore) Update(entry *models.MemoryEntry) error {
 		return err
 	}
 
-	// Find the existing file to determine its current location.
-	existing, err := ms.Get(entry.ID)
-	if err != nil {
-		return err
-	}
-	if err := models.ValidateLegacyDecisionMemoryUpdate(existing, entry); err != nil {
-		return err
-	}
-	return ms.writeExisting(entry, existing, true)
+	return ms.withMemoryLock(context.Background(), entry.ID, func() error {
+		// Find the existing file only after acquiring the cross-process lock.
+		existing, err := ms.Get(entry.ID)
+		if err != nil {
+			return err
+		}
+		if err := models.ValidateLegacyDecisionMemoryUpdate(existing, entry); err != nil {
+			return err
+		}
+		return ms.writeExisting(entry, existing, true)
+	})
 }
 
 // RestoreLegacyDecisionMigration restores a pre-migration snapshot. It is
@@ -294,23 +319,25 @@ func (ms *MemoryStore) RestoreLegacyDecisionMigration(entry, expected *models.Me
 	if entry == nil || entry.ID == "" || strings.TrimSpace(migrationID) == "" {
 		return fmt.Errorf("memory snapshot and migration ID are required")
 	}
-	existing, err := ms.Get(entry.ID)
-	if err != nil {
-		return err
-	}
-	if existing.Metadata == nil || existing.Metadata[models.LegacyDecisionMigrationIDKey] != migrationID {
-		if memoryEntriesMigrationEqual(existing, entry) {
-			return nil
+	return ms.withMemoryLock(context.Background(), entry.ID, func() error {
+		existing, err := ms.Get(entry.ID)
+		if err != nil {
+			return err
 		}
-		return fmt.Errorf("memory %q is not owned by migration %q", entry.ID, migrationID)
-	}
-	if expected == nil || !memoryEntriesMigrationEqual(existing, expected) {
-		return fmt.Errorf("memory %q changed after migration %q; automatic rollback is unsafe", entry.ID, migrationID)
-	}
-	if !models.IsLegacyDecisionMemoryCategory(entry.Category) {
-		return fmt.Errorf("migration snapshot for memory %q is not a legacy Decision Memory", entry.ID)
-	}
-	return ms.writeExisting(entry, existing, false)
+		if existing.Metadata == nil || existing.Metadata[models.LegacyDecisionMigrationIDKey] != migrationID {
+			if memoryEntriesMigrationEqual(existing, entry) {
+				return nil
+			}
+			return fmt.Errorf("memory %q is not owned by migration %q", entry.ID, migrationID)
+		}
+		if expected == nil || !memoryEntriesMigrationEqual(existing, expected) {
+			return fmt.Errorf("memory %q changed after migration %q; automatic rollback is unsafe", entry.ID, migrationID)
+		}
+		if !models.IsLegacyDecisionMemoryCategory(entry.Category) {
+			return fmt.Errorf("migration snapshot for memory %q is not a legacy Decision Memory", entry.ID)
+		}
+		return ms.writeExisting(entry, existing, false)
+	})
 }
 
 func memoryEntriesMigrationEqual(left, right *models.MemoryEntry) bool {
@@ -373,20 +400,20 @@ func (ms *MemoryStore) Delete(id string) error {
 	if err := models.ValidateMemoryID(id); err != nil {
 		return err
 	}
-	if entry, err := ms.Get(id); err == nil && models.IsLegacyDecisionMemoryCategory(entry.Category) {
-		return models.ErrLegacyDecisionMemoryWrite
-	}
-	filename := models.MemoryFileName(id)
-
-	dirs := []string{ms.projectDir(), ms.globalDir()}
-	for _, dir := range dirs {
-		absPath := filepath.Join(dir, filename)
-		if _, err := os.Stat(absPath); err == nil {
-			return os.Remove(absPath)
+	return ms.withMemoryLock(context.Background(), id, func() error {
+		if entry, err := ms.Get(id); err == nil && models.IsLegacyDecisionMemoryCategory(entry.Category) {
+			return models.ErrLegacyDecisionMemoryWrite
 		}
-	}
-
-	return fmt.Errorf("memory %q not found", id)
+		filename := models.MemoryFileName(id)
+		dirs := []string{ms.projectDir(), ms.globalDir()}
+		for _, dir := range dirs {
+			absPath := filepath.Join(dir, filename)
+			if _, err := os.Stat(absPath); err == nil {
+				return os.Remove(absPath)
+			}
+		}
+		return fmt.Errorf("memory %q not found", id)
+	})
 }
 
 // Promote moves a memory entry up one layer (working→project→global).
@@ -462,6 +489,22 @@ func (ms *MemoryStore) moveLayer(entry *models.MemoryEntry, newLayer string) (*m
 	}
 	if err := models.ValidateMemoryID(entry.ID); err != nil {
 		return nil, err
+	}
+	var moved *models.MemoryEntry
+	err := ms.withMemoryLock(context.Background(), entry.ID, func() error {
+		current, err := ms.Get(entry.ID)
+		if err != nil {
+			return err
+		}
+		moved, err = ms.moveLayerUnlocked(current, newLayer)
+		return err
+	})
+	return moved, err
+}
+
+func (ms *MemoryStore) moveLayerUnlocked(entry *models.MemoryEntry, newLayer string) (*models.MemoryEntry, error) {
+	if entry == nil {
+		return nil, fmt.Errorf("memory entry is required")
 	}
 	if models.IsLegacyDecisionMemoryCategory(entry.Category) {
 		return nil, models.ErrLegacyDecisionMemoryWrite

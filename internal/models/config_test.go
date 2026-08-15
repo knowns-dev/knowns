@@ -3,6 +3,7 @@ package models
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -95,10 +96,49 @@ func TestParseTaskLifecycleDuration(t *testing.T) {
 	}
 }
 
+func TestRuntimeWatchGracePeriodValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		grace     string
+		wantError string
+	}{
+		{name: "valid", grace: "45s"},
+		{name: "zero", grace: "0s"},
+		{name: "empty-inherits-default", grace: ""},
+		{name: "negative", grace: "-1s", wantError: "must not be negative"},
+		{name: "malformed", grace: "soon", wantError: "invalid duration"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := ProjectSettings{RuntimeWatch: &RuntimeWatchSettings{GracePeriod: tt.grace}}
+			err := settings.Validate()
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("Validate() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("Validate() = %v, want error containing %q", err, tt.wantError)
+			}
+			if !strings.Contains(err.Error(), "settings.runtimeWatch.gracePeriod") {
+				t.Fatalf("Validate() = %v, want actionable runtimeWatch path", err)
+			}
+		})
+	}
+}
+
 // envMapLookup returns an envLookupFunc backed by a map so vector store
 // resolution tests are deterministic regardless of the host environment.
 func envMapLookup(m map[string]string) envLookupFunc {
 	return func(key string) string { return m[key] }
+}
+
+func semanticVectorRetentionGenerationsValue(retention *SemanticVectorStoreRetentionSettings) int {
+	if retention == nil || retention.PreviousGenerations == nil {
+		return 0
+	}
+	return *retention.PreviousGenerations
 }
 
 func TestDefaultSemanticVectorStoreSettings(t *testing.T) {
@@ -118,13 +158,13 @@ func TestDefaultSemanticVectorStoreSettings(t *testing.T) {
 	if settings.Retention == nil {
 		t.Fatal("retention = nil, want defaults")
 	}
-	if settings.Retention.PreviousGenerations != DefaultSemanticVectorRetentionGenerations {
-		t.Fatalf("retention.previousGenerations = %d, want %d", settings.Retention.PreviousGenerations, DefaultSemanticVectorRetentionGenerations)
+	if got := semanticVectorRetentionGenerationsValue(settings.Retention); got != DefaultSemanticVectorRetentionGenerations {
+		t.Fatalf("retention.previousGenerations = %d, want %d", got, DefaultSemanticVectorRetentionGenerations)
 	}
 	if settings.Retention.PreviousGenerationTTL != DefaultSemanticVectorRetentionTTL {
 		t.Fatalf("retention.previousGenerationTTL = %q, want %q", settings.Retention.PreviousGenerationTTL, DefaultSemanticVectorRetentionTTL)
 	}
-	if ptr := DefaultSemanticVectorStoreSettingsPtr(); ptr == nil || ptr.Backend != settings.Backend || ptr.Mode != settings.Mode || ptr.Install != settings.Install || ptr.ManagedRoot != settings.ManagedRoot || ptr.Retention == nil || *ptr.Retention != *settings.Retention {
+	if ptr := DefaultSemanticVectorStoreSettingsPtr(); ptr == nil || ptr.Backend != settings.Backend || ptr.Mode != settings.Mode || ptr.Install != settings.Install || ptr.ManagedRoot != settings.ManagedRoot || ptr.Retention == nil || semanticVectorRetentionGenerationsValue(ptr.Retention) != semanticVectorRetentionGenerationsValue(settings.Retention) || ptr.Retention.PreviousGenerationTTL != settings.Retention.PreviousGenerationTTL {
 		t.Fatalf("DefaultSemanticVectorStoreSettingsPtr = %#v, want defaults", ptr)
 	}
 }
@@ -143,7 +183,7 @@ func TestSemanticVectorStoreJSONRoundTrip(t *testing.T) {
 					ManagedRoot: "~/.knowns/runtime/qdrant",
 					Install:     SemanticVectorStoreInstallLazy,
 					Retention: &SemanticVectorStoreRetentionSettings{
-						PreviousGenerations:   2,
+						PreviousGenerations:   semanticVectorRetentionGenerationsPtr(2),
 						PreviousGenerationTTL: "24h",
 					},
 				},
@@ -167,7 +207,7 @@ func TestSemanticVectorStoreJSONRoundTrip(t *testing.T) {
 	}
 	if vs.Backend != SemanticVectorBackendQdrant || vs.Mode != SemanticVectorStoreModeManaged ||
 		vs.Install != SemanticVectorStoreInstallLazy || vs.Retention == nil ||
-		vs.Retention.PreviousGenerations != 2 || vs.Retention.PreviousGenerationTTL != "24h" {
+		semanticVectorRetentionGenerationsValue(vs.Retention) != 2 || vs.Retention.PreviousGenerationTTL != "24h" {
 		t.Fatalf("vectorStore after round trip = %#v", vs)
 	}
 	if err := loaded.Settings.Validate(); err != nil {
@@ -188,7 +228,7 @@ func TestSemanticVectorStoreValidation(t *testing.T) {
 		{name: "bad-backend", vs: SemanticVectorStoreSettings{Backend: "pinecone"}, wantErr: true},
 		{name: "bad-mode", vs: SemanticVectorStoreSettings{Mode: "remote"}, wantErr: true},
 		{name: "bad-install", vs: SemanticVectorStoreSettings{Install: "always"}, wantErr: true},
-		{name: "negative-retention", vs: SemanticVectorStoreSettings{Retention: &SemanticVectorStoreRetentionSettings{PreviousGenerations: -1}}, wantErr: true},
+		{name: "negative-retention", vs: SemanticVectorStoreSettings{Retention: &SemanticVectorStoreRetentionSettings{PreviousGenerations: semanticVectorRetentionGenerationsPtr(-1)}}, wantErr: true},
 		{name: "bad-ttl", vs: SemanticVectorStoreSettings{Retention: &SemanticVectorStoreRetentionSettings{PreviousGenerationTTL: "tomorrow"}}, wantErr: true},
 	}
 	for _, tt := range tests {
@@ -224,7 +264,7 @@ func TestResolveSemanticVectorStoreDefaults(t *testing.T) {
 	if res.ManagedRoot != DefaultSemanticManagedRoot {
 		t.Fatalf("managedRoot = %q, want default", res.ManagedRoot)
 	}
-	if res.Retention.PreviousGenerations != DefaultSemanticVectorRetentionGenerations || res.Retention.PreviousGenerationTTL != DefaultSemanticVectorRetentionTTL {
+	if semanticVectorRetentionGenerationsValue(&res.Retention) != DefaultSemanticVectorRetentionGenerations || res.Retention.PreviousGenerationTTL != DefaultSemanticVectorRetentionTTL {
 		t.Fatalf("retention = %#v, want defaults", res.Retention)
 	}
 }
@@ -258,6 +298,50 @@ func TestResolveSemanticVectorStorePrecedence(t *testing.T) {
 	}
 	if res.Mode != SemanticVectorStoreModeExternal || res.ExternalURL != "http://localhost:6333" {
 		t.Fatalf("env override should preserve project mode/URL, got %#v", res)
+	}
+}
+
+func TestResolveSemanticVectorStoreExplicitZeroRetention(t *testing.T) {
+	project := &SemanticSearchSettings{Enabled: true, VectorStore: &SemanticVectorStoreSettings{
+		Retention: &SemanticVectorStoreRetentionSettings{PreviousGenerations: semanticVectorRetentionGenerationsPtr(0)},
+	}}
+	res := ResolveSemanticVectorStore(project, nil, envMapLookup(nil))
+	if got := semanticVectorRetentionGenerationsValue(&res.Retention); got != 0 {
+		t.Fatalf("retention.previousGenerations = %d, want explicit zero", got)
+	}
+	if res.Retention.PreviousGenerationTTL != DefaultSemanticVectorRetentionTTL {
+		t.Fatalf("retention.previousGenerationTTL = %q, want default TTL", res.Retention.PreviousGenerationTTL)
+	}
+
+	data, err := json.Marshal(project)
+	if err != nil {
+		t.Fatalf("marshal project with explicit zero retention: %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"previousGenerations":0`)) {
+		t.Fatalf("explicit zero previousGenerations did not round-trip into JSON: %s", data)
+	}
+	var decoded SemanticSearchSettings
+	if err := json.Unmarshal([]byte(`{"enabled":true,"vectorStore":{"retention":{"previousGenerations":0}}}`), &decoded); err != nil {
+		t.Fatalf("unmarshal explicit zero retention: %v", err)
+	}
+	if decoded.VectorStore == nil || decoded.VectorStore.Retention == nil || decoded.VectorStore.Retention.PreviousGenerations == nil || *decoded.VectorStore.Retention.PreviousGenerations != 0 {
+		t.Fatalf("decoded explicit zero retention = %#v", decoded.VectorStore)
+	}
+}
+
+func TestResolveSemanticVectorStoreLayeredRetention(t *testing.T) {
+	global := &SemanticSearchSettings{Enabled: true, VectorStore: &SemanticVectorStoreSettings{
+		Retention: &SemanticVectorStoreRetentionSettings{PreviousGenerations: semanticVectorRetentionGenerationsPtr(0)},
+	}}
+	project := &SemanticSearchSettings{Enabled: true, VectorStore: &SemanticVectorStoreSettings{
+		Retention: &SemanticVectorStoreRetentionSettings{PreviousGenerationTTL: "24h"},
+	}}
+	res := ResolveSemanticVectorStore(project, global, envMapLookup(nil))
+	if got := semanticVectorRetentionGenerationsValue(&res.Retention); got != 0 {
+		t.Fatalf("layered retention.previousGenerations = %d, want global explicit zero preserved", got)
+	}
+	if res.Retention.PreviousGenerationTTL != "24h" {
+		t.Fatalf("layered retention.previousGenerationTTL = %q, want project override", res.Retention.PreviousGenerationTTL)
 	}
 }
 

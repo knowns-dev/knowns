@@ -23,6 +23,7 @@ func (ds *DocStore) importsDir() string { return filepath.Join(ds.root, "imports
 
 // docFrontmatter mirrors the YAML frontmatter in every doc file.
 type docFrontmatter struct {
+	ID          string   `yaml:"id"`
 	Title       string   `yaml:"title"`
 	Description string   `yaml:"description"`
 	CreatedAt   string   `yaml:"createdAt"`
@@ -47,8 +48,48 @@ func (ds *DocStore) List() ([]*models.Doc, error) {
 		return docs, nil
 	}
 	docs = append(docs, imported...)
+	if err := validateDocStableIDs(docs); err != nil {
+		return nil, err
+	}
 
 	return docs, nil
+}
+
+func validateDocStableIDs(docs []*models.Doc) error {
+	seen := make(map[string]string)
+	for _, doc := range docs {
+		if doc == nil || strings.TrimSpace(doc.ID) == "" {
+			continue
+		}
+		if previous, ok := seen[doc.ID]; ok && previous != doc.Path {
+			return fmt.Errorf("ambiguous Doc stable ID %q at paths %q and %q; repair duplicate frontmatter id before mutating", doc.ID, previous, doc.Path)
+		}
+		seen[doc.ID] = doc.Path
+	}
+	return nil
+}
+
+// ValidateStableID rejects a duplicate stable identity before a canonical
+// write. Legacy documents without an ID are intentionally ignored.
+func (ds *DocStore) ValidateStableID(id, path string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	docs, err := ds.List()
+	if err != nil {
+		return err
+	}
+	for _, doc := range docs {
+		if doc != nil && doc.ID == id && normalizeDocPathForStore(doc.Path) != normalizeDocPathForStore(path) {
+			return fmt.Errorf("ambiguous Doc stable ID %q at paths %q and %q; repair duplicate frontmatter id before mutating", id, doc.Path, path)
+		}
+	}
+	return nil
+}
+
+func normalizeDocPathForStore(path string) string {
+	return strings.Trim(strings.TrimSuffix(strings.TrimSpace(path), ".md"), "/")
 }
 
 // listImported scans .knowns/imports/*/docs/ for additional docs.
@@ -244,6 +285,79 @@ func (ds *DocStore) Rename(oldPath string, doc *models.Doc) error {
 	return nil
 }
 
+// writeExact and renameExact are rollback-only primitives. Unlike public
+// writes they do not backfill a legacy Doc ID, so failed multi-entity
+// mutations restore the original canonical bytes exactly.
+func (ds *DocStore) writeExact(doc *models.Doc) error {
+	if doc == nil || strings.TrimSpace(doc.Path) == "" {
+		return fmt.Errorf("doc path is required")
+	}
+	path, absPath, err := resolveDocPath(ds.docsDir(), doc.Path)
+	if err != nil {
+		return err
+	}
+	doc.Path = path
+	return atomicWrite(absPath, []byte(renderDoc(doc)))
+}
+
+func (ds *DocStore) renameExact(oldPath string, doc *models.Doc) error {
+	if doc == nil || strings.TrimSpace(oldPath) == "" {
+		return fmt.Errorf("old path and new doc are required")
+	}
+	oldCanonical, oldAbsPath, err := resolveDocPath(ds.docsDir(), oldPath)
+	if err != nil {
+		return err
+	}
+	newCanonical, newAbsPath, err := resolveDocPath(ds.docsDir(), doc.Path)
+	if err != nil {
+		return err
+	}
+	doc.Path = newCanonical
+	if err := os.MkdirAll(filepath.Dir(newAbsPath), 0755); err != nil {
+		return err
+	}
+	if err := atomicWrite(newAbsPath, []byte(renderDoc(doc))); err != nil {
+		return err
+	}
+	if oldCanonical != newCanonical {
+		if err := os.Remove(oldAbsPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (ds *DocStore) writeRaw(path string, data []byte) error {
+	_, absPath, err := resolveDocPath(ds.docsDir(), path)
+	if err != nil {
+		return err
+	}
+	return atomicWrite(absPath, data)
+}
+
+func (ds *DocStore) renameRaw(oldPath, newPath string, data []byte) error {
+	_, oldAbsPath, err := resolveDocPath(ds.docsDir(), oldPath)
+	if err != nil {
+		return err
+	}
+	_, newAbsPath, err := resolveDocPath(ds.docsDir(), newPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(newAbsPath), 0755); err != nil {
+		return err
+	}
+	if err := atomicWrite(newAbsPath, data); err != nil {
+		return err
+	}
+	if oldAbsPath != newAbsPath {
+		if err := os.Remove(oldAbsPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
 func applyLockedDecisionReviewGate(existing, updated *models.Doc) {
 	if existing == nil || updated == nil || !docHasTag(existing.Tags, "approved") {
 		return
@@ -396,7 +510,12 @@ func (ds *DocStore) parseFile(absPath, relPath, folder string, imported bool, im
 	if err != nil {
 		return nil, fmt.Errorf("parseFile %s: %w", absPath, err)
 	}
-	return parseDocContent(string(data), relPath, folder, imported, importSource)
+	doc, err := parseDocContent(string(data), relPath, folder, imported, importSource)
+	if err != nil {
+		return nil, err
+	}
+	doc.CanonicalHash = CanonicalDocHash(doc)
+	return doc, nil
 }
 
 // parseDocContent parses the content of a doc markdown file.
@@ -424,6 +543,7 @@ func parseDocContent(content, relPath, folder string, imported bool, importSourc
 	}
 
 	doc.Title = fm.Title
+	doc.ID = strings.TrimSpace(fm.ID)
 	doc.Description = fm.Description
 	doc.Tags = fm.Tags
 	if doc.Tags == nil {
@@ -438,6 +558,9 @@ func parseDocContent(content, relPath, folder string, imported bool, importSourc
 
 // writeFile serialises a doc to the canonical markdown format.
 func (ds *DocStore) writeFile(path string, doc *models.Doc) error {
+	if doc != nil && strings.TrimSpace(doc.ID) == "" {
+		doc.ID = newDocID()
+	}
 	return atomicWrite(path, []byte(renderDoc(doc)))
 }
 
@@ -456,6 +579,9 @@ func renderDoc(doc *models.Doc) string {
 	}
 
 	b.WriteString("---\n")
+	if strings.TrimSpace(doc.ID) != "" {
+		fmt.Fprintf(&b, "id: %s\n", yamlScalar(doc.ID))
+	}
 	fmt.Fprintf(&b, "title: %s\n", yamlScalar(doc.Title))
 	fmt.Fprintf(&b, "description: %s\n", yamlScalar(doc.Description))
 	fmt.Fprintf(&b, "createdAt: '%s'\n", formatISO(createdAt))
