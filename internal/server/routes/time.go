@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -88,8 +89,10 @@ func (tr *TimeRoutes) start(w http.ResponseWriter, r *http.Request) {
 
 // stopRequest is the body for POST /api/time/stop.
 type stopRequest struct {
-	TaskID string `json:"taskId"`
-	All    bool   `json:"all"`
+	TaskID         string            `json:"taskId"`
+	All            bool              `json:"all"`
+	ExpectedHash   string            `json:"expectedHash,omitempty"`
+	ExpectedHashes map[string]string `json:"expectedHashes,omitempty"`
 }
 
 // stop terminates one or all active timers.
@@ -108,14 +111,24 @@ func (tr *TimeRoutes) stop(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		var stopped []string
-		for _, a := range state.Active {
-			entry, err := tasklifecycle.New(tr.getStore()).StopTimer(r.Context(), a.TaskID, "api")
-			if err == nil {
-				stopped = append(stopped, a.TaskID)
-				_ = entry
-			}
+		ids := make([]string, 0, len(state.Active))
+		for _, active := range state.Active {
+			ids = append(ids, active.TaskID)
 		}
+		if len(ids) == 0 {
+			respondJSON(w, http.StatusOK, map[string]interface{}{"stopped": []string{}, "active": state.Active})
+			return
+		}
+		_, err = tasklifecycle.New(tr.getStore()).StopTimers(r.Context(), ids, tasklifecycle.StopTimersOptions{Actor: "api", ExpectedHashes: req.ExpectedHashes})
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, storage.ErrHistoryConflict) {
+				status = http.StatusConflict
+			}
+			respondError(w, status, err.Error())
+			return
+		}
+		stopped := append([]string(nil), ids...)
 		newState, _ := tr.getStore().Time.GetState()
 		tr.sse.Broadcast(SSEEvent{Type: "time:updated", Data: newState})
 		respondJSON(w, http.StatusOK, map[string]interface{}{
@@ -129,8 +142,12 @@ func (tr *TimeRoutes) stop(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "taskId is required (or set all:true)")
 		return
 	}
-	entry, err := tasklifecycle.New(tr.getStore()).StopTimer(r.Context(), req.TaskID, "api")
+	entry, err := tasklifecycle.New(tr.getStore()).StopTimer(r.Context(), req.TaskID, tasklifecycle.StopTimerOptions{Actor: "api", ExpectedHash: req.ExpectedHash})
 	if err != nil {
+		if errors.Is(err, storage.ErrHistoryConflict) {
+			respondError(w, http.StatusConflict, err.Error())
+			return
+		}
 		respondError(w, http.StatusNotFound, err.Error())
 		return
 	}
@@ -143,10 +160,11 @@ func (tr *TimeRoutes) stop(w http.ResponseWriter, r *http.Request) {
 }
 
 type addTimeRequest struct {
-	TaskID    string     `json:"taskId"`
-	Duration  int        `json:"duration"`
-	Note      string     `json:"note,omitempty"`
-	StartedAt *time.Time `json:"startedAt,omitempty"`
+	TaskID       string     `json:"taskId"`
+	Duration     int        `json:"duration"`
+	Note         string     `json:"note,omitempty"`
+	StartedAt    *time.Time `json:"startedAt,omitempty"`
+	ExpectedHash string     `json:"expectedHash,omitempty"`
 }
 
 // add appends a manual entry and updates Task.TimeSpent atomically.
@@ -170,7 +188,7 @@ func (tr *TimeRoutes) add(w http.ResponseWriter, r *http.Request) {
 	}
 	endedAt := startedAt.Add(time.Duration(req.Duration) * time.Second)
 	entry := models.TimeEntry{ID: fmt.Sprintf("te-%d-%s", startedAt.UnixNano(), req.TaskID), StartedAt: startedAt, EndedAt: &endedAt, Duration: req.Duration, Note: req.Note}
-	recorded, err := tasklifecycle.New(tr.getStore()).AddTimeEntry(r.Context(), req.TaskID, tasklifecycle.TimeMutationOptions{Actor: "api", Entry: entry})
+	recorded, err := tasklifecycle.New(tr.getStore()).AddTimeEntry(r.Context(), req.TaskID, tasklifecycle.TimeMutationOptions{Actor: "api", ExpectedHash: req.ExpectedHash, Entry: entry})
 	if err != nil {
 		respondError(w, http.StatusConflict, err.Error())
 		return
