@@ -88,3 +88,40 @@ func TestCLIDocDeleteRejectsStaleExpectedHashWithoutSideEffects(t *testing.T) {
 		t.Fatalf("stale CLI delete changed history: before=%d after=%d err=%v", len(historyBefore.Versions), len(historyAfter.Versions), err)
 	}
 }
+
+func TestCLIDocHardDeleteIsSeparateAuthorizedPurge(t *testing.T) {
+	projectRoot := t.TempDir()
+	t.Chdir(projectRoot)
+	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
+	if err := store.Init("cli-doc-hard-delete"); err != nil {
+		t.Fatal(err)
+	}
+	doc := &models.Doc{Path: "cli-hard-delete", Title: "private", Content: "secret"}
+	if err := store.MutateDocWithHistory(context.Background(), nil, doc, storage.DocMutationOptions{Actor: "test", Source: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.Docs.Get(doc.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := func(name, value string) { _ = docHardDeleteCmd.Flags().Set(name, value) }
+	set("allow-hard-delete", "true")
+	set("yes", "true")
+	set("reason", "privacy request")
+	set("expected-hash", current.CanonicalHash)
+	t.Cleanup(func() {
+		set("allow-hard-delete", "false")
+		set("yes", "false")
+		set("reason", "")
+		set("expected-hash", "")
+	})
+	if err := docHardDeleteCmd.RunE(docHardDeleteCmd, []string{doc.Path}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Docs.Get(doc.Path); err == nil {
+		t.Fatal("hard-deleted doc remains")
+	}
+	if history, err := store.Versions.GetDocHistory(doc.Path); err == nil && len(history.Versions) != 0 {
+		t.Fatalf("hard-deleted doc history remains: %d", len(history.Versions))
+	}
+}

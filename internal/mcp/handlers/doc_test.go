@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/howznguyen/knowns/internal/models"
@@ -123,6 +124,57 @@ func TestHandleDocRestoreSectionRecordsRestoreRevision(t *testing.T) {
 	}
 	if len(payload.History.Versions) != 3 || payload.History.Versions[2].Source != "mcp" {
 		t.Fatalf("restore history = %#v", payload.History.Versions)
+	}
+}
+
+func TestHandleDocDeleteRejectsStaleExpectedHashWithoutSideEffects(t *testing.T) {
+	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("doc-mcp-delete"); err != nil {
+		t.Fatal(err)
+	}
+	getStore := func() *storage.Store { return store }
+	if _, err := handleDocCreate(getStore, mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{
+		"title": "MCP delete", "content": "safe content",
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	base, err := store.Docs.Get("mcp-delete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseHash := base.CanonicalHash
+	updated := *base
+	updated.Title = "mcp-delete-secret-title"
+	updated.Content = "mcp-delete-secret-content"
+	if err := store.MutateDocWithHistory(t.Context(), base, &updated, storage.DocMutationOptions{ExpectedHash: baseHash}); err != nil {
+		t.Fatal(err)
+	}
+	historyBefore, err := store.Versions.GetDocHistory(base.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := handleDocDelete(getStore, mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{
+		"path": base.Path, "dryRun": false, "expectedHash": baseHash,
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError || len(result.Content) != 1 {
+		t.Fatalf("stale MCP delete result = %#v", result)
+	}
+	text, ok := result.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("stale MCP delete content type = %T", result.Content[0])
+	}
+	if !strings.Contains(text.Text, "mutation conflict") || strings.Contains(text.Text, "mcp-delete-secret-title") || strings.Contains(text.Text, "mcp-delete-secret-content") {
+		t.Fatalf("stale MCP delete output = %q", text.Text)
+	}
+	if _, err := store.Docs.Get(base.Path); err != nil {
+		t.Fatalf("stale MCP delete removed canonical doc: %v", err)
+	}
+	historyAfter, err := store.Versions.GetDocHistory(base.Path)
+	if err != nil || len(historyAfter.Versions) != len(historyBefore.Versions) {
+		t.Fatalf("stale MCP delete changed history: before=%d after=%d err=%v", len(historyBefore.Versions), len(historyAfter.Versions), err)
 	}
 }
 

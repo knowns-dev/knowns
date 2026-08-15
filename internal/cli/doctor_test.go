@@ -257,6 +257,15 @@ func TestDoctorFlagCombinationsDoNotLeakSecretsOrMutateState(t *testing.T) {
 		Mode:     "managed",
 		Password: secret,
 	}
+	project.Settings.SemanticSearch = &models.SemanticSearchSettings{
+		Enabled: true,
+		Model:   "doctor-test-model",
+		VectorStore: &models.SemanticVectorStoreSettings{
+			Backend:     models.SemanticVectorBackendQdrant,
+			Mode:        models.SemanticVectorStoreModeExternal,
+			ExternalURL: "https://user:" + secret + "@qdrant.example/collections?signature=" + secret,
+		},
+	}
 	if err := store.Config.Save(project); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}

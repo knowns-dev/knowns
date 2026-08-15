@@ -538,7 +538,7 @@ func (s *MCPServer) Start() error {
 	var cancel context.CancelFunc
 	if store != nil && !runtimequeue.ShouldBypassDaemon() {
 		var err error
-		lease, err = runtimequeue.AcquireClient("mcp", store.Root, false)
+		lease, err = runtimequeue.AcquireConfiguredClient("mcp", store.Root)
 		if err != nil {
 			mcpLog.Printf("runtime lease unavailable: %v", err)
 		} else {

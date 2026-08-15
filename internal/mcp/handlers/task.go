@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
@@ -40,6 +41,10 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 			mcp.WithString("taskId",
 				mcp.Description("Task ID (required for get, update, delete, history)"),
 			),
+			mcp.WithBoolean("metadata", mcp.Description("Return payload-free paginated history metadata")),
+			mcp.WithNumber("offset", mcp.Description("History metadata offset (newest first)")),
+			mcp.WithNumber("limit", mcp.Description("History metadata page size")),
+			mcp.WithString("revision", mcp.Description("Explicit history revision detail (vN or numeric)")),
 			mcp.WithString("title",
 				mcp.Description("Task title (required for create, optional for update)"),
 			),
@@ -118,6 +123,8 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 			mcp.WithBoolean("confirmed", mcp.Description("Explicit hard-delete confirmation")),
 			mcp.WithString("reason", mcp.Description("Required hard-delete reason")),
 			mcp.WithString("actor", mcp.Description("Optional lifecycle audit actor")),
+			mcp.WithString("expectedHash", mcp.Description("Expected canonical hash for optimistic concurrency")),
+			mcp.WithObject("expectedHashes", mcp.Description("Per-Task expected canonical hashes for batch lifecycle mutations")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			action, err := req.RequireString("action")
@@ -261,14 +268,12 @@ func handleTaskCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 		task.ImplementationNotes = v
 	}
 
-	if err := store.Tasks.Create(task); err != nil {
-		return errFailed("create task", err)
-	}
-
-	_ = store.Versions.SaveVersion(task.ID, models.TaskVersion{
+	if err := store.CreateTaskWithHistory(context.Background(), task, models.TaskVersion{
 		Changes:  store.Versions.TrackChanges(nil, task),
 		Snapshot: storage.TaskToSnapshot(task),
-	})
+	}); err != nil {
+		return errFailed("create task", err)
+	}
 
 	mcpBestEffortIndexTask(store, task.ID)
 	go notifyTaskUpdated(store, task.ID)
@@ -319,7 +324,8 @@ func handleTaskUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 	}
 	clearFields := stringSetArg(args, "clear")
 	service := newMCPTaskMutationService(store)
-	task, err := service.UpdateTask(context.Background(), taskID, tasklifecycle.TaskUpdateOptions{Actor: "mcp", Mutate: func(task *models.Task) error {
+	expectedHash, _ := stringArg(args, "expectedHash")
+	task, err := service.UpdateTask(context.Background(), taskID, tasklifecycle.TaskUpdateOptions{Actor: "mcp", ExpectedHash: expectedHash, Mutate: func(task *models.Task) error {
 
 		if clearFields["title"] {
 			task.Title = ""
@@ -534,6 +540,15 @@ func handleTaskLifecycle(ctx context.Context, getStore func() *storage.Store, ac
 	request.Execute, _ = args["execute"].(bool)
 	request.Confirmed, _ = args["confirmed"].(bool)
 	request.Reason, _ = stringArg(args, "reason")
+	request.ExpectedHash, _ = stringArg(args, "expectedHash")
+	if raw, ok := args["expectedHashes"].(map[string]any); ok {
+		request.ExpectedHashes = make(map[string]string, len(raw))
+		for id, value := range raw {
+			if hash, ok := value.(string); ok {
+				request.ExpectedHashes[id] = hash
+			}
+		}
+	}
 	if actor, ok := stringArg(args, "actor"); ok {
 		request.Actor = actor
 	}
@@ -579,11 +594,31 @@ func handleTaskHistory(getStore func() *storage.Store, req mcp.CallToolRequest) 
 		return errResult(ErrTaskIDReq)
 	}
 
+	args := req.GetArguments()
+	if revision, ok := stringArg(args, "revision"); ok && strings.TrimSpace(revision) != "" {
+		version, err := store.Versions.GetTaskRevisionDetail(taskID, revision)
+		if err != nil {
+			return errFailed("get task revision", err)
+		}
+		out, _ := json.MarshalIndent(version, "", "  ")
+		return mcp.NewToolResultText(string(out)), nil
+	}
+	if boolArg(args, "metadata") || args["offset"] != nil || args["limit"] != nil {
+		offset, limit, err := historyPageArgs(args)
+		if err != nil {
+			return errResult(err.Error())
+		}
+		page, err := store.Versions.ListTaskHistoryMetadata(taskID, offset, limit)
+		if err != nil {
+			return errFailed("list task history metadata", err)
+		}
+		out, _ := json.MarshalIndent(page, "", "  ")
+		return mcp.NewToolResultText(string(out)), nil
+	}
 	history, err := store.Versions.GetHistory(taskID)
 	if err != nil {
 		return errFailed("get task history", err)
 	}
-
 	out, _ := json.MarshalIndent(history, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }

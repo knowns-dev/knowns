@@ -174,7 +174,7 @@ func maybeAutoSetup() {
 }
 
 func shouldSkipCLIWarnings(args []string) bool {
-	for _, name := range []string{"doctor", "runtime", "runtime-memory", "__runtime", "__lsp-daemon"} {
+	for _, name := range []string{"doctor", "runtime", "runtime-memory", "qdrant", "__runtime", "__lsp-daemon"} {
 		if slices.Contains(args, name) {
 			return true
 		}

@@ -33,6 +33,7 @@ type localDependencies struct {
 	onnxCapability  func() search.LocalONNXCapability
 	localONNXModel  func(*models.SemanticSearchSettings) localONNXModelStatus
 	readFile        func(string) ([]byte, error)
+	qdrant          func(context.Context, *storage.Store) (qdrantDiagnosticSnapshot, error)
 }
 
 func defaultLocalDependencies() localDependencies {
@@ -63,6 +64,7 @@ func defaultLocalDependencies() localDependencies {
 		onnxCapability: search.CurrentLocalONNXCapability,
 		localONNXModel: inspectLocalONNXModel,
 		readFile:       os.ReadFile,
+		qdrant:         inspectQdrantReadOnly,
 	}
 }
 
@@ -86,7 +88,18 @@ type localState struct {
 	runtimeHooks     []runtimeinstall.Status
 	runtimeHooksErr  error
 
+	qdrantOnce sync.Once
+	qdrant     qdrantDiagnosticSnapshot
+	qdrantErr  error
+
 	virtualExists bool
+}
+
+func (s *localState) qdrantSnapshot(ctx context.Context) (qdrantDiagnosticSnapshot, error) {
+	s.qdrantOnce.Do(func() {
+		s.qdrant, s.qdrantErr = s.deps.qdrant(ctx, s.store)
+	})
+	return s.qdrant, s.qdrantErr
 }
 
 func newLocalState(store *storage.Store, deps localDependencies) *localState {
@@ -127,6 +140,9 @@ func newLocalState(store *storage.Store, deps localDependencies) *localState {
 	}
 	if deps.readFile == nil {
 		deps.readFile = defaults.readFile
+	}
+	if deps.qdrant == nil {
+		deps.qdrant = defaults.qdrant
 	}
 	return &localState{store: store, deps: deps, virtualExists: virtualExists}
 }

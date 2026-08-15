@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -387,9 +388,10 @@ func runDocEdit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update doc: %w", err)
 	}
 	if oldPath != doc.Path {
-		search.BestEffortRemoveDoc(store, oldPath)
+		search.BestEffortRenameDoc(store, doc.ID, oldPath, doc.Path)
+	} else {
+		search.BestEffortIndexDoc(store, doc.Path)
 	}
-	search.BestEffortIndexDoc(store, doc.Path)
 
 	fmt.Println(RenderSuccess(fmt.Sprintf("Updated doc: %s", doc.Path)))
 	return nil
@@ -430,11 +432,61 @@ var docDeleteCmd = &cobra.Command{
 			}
 		}
 
-		if err := store.DeleteDocWithExpectedHash(context.Background(), args[0], storage.DocDeleteOptions{ExpectedHash: expectedHash}); err != nil {
+		if err := store.DeleteDocWithExpectedHash(context.Background(), args[0], storage.DocDeleteOptions{ExpectedHash: expectedHash, Actor: "cli", Source: "cli"}); err != nil {
 			return fmt.Errorf("delete doc: %w", err)
 		}
-		search.BestEffortRemoveDoc(store, args[0])
+		search.BestEffortRemoveDocID(store, doc.ID, doc.Path)
 		fmt.Println(RenderSuccess(fmt.Sprintf("Deleted doc: %s", doc.Path)))
+		return nil
+	},
+}
+
+// docHardDeleteCmd is intentionally distinct from ordinary doc delete. The
+// local capability flag is an adapter grant; request data cannot set the
+// reconciler Trusted bit. The central lifecycle purge proves ID/path/hash
+// before removing JSONL and verified legacy successors.
+var docHardDeleteCmd = &cobra.Command{
+	Use:   "hard-delete <path>",
+	Short: "Permanently purge a document and its verified history",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		allowed, _ := cmd.Flags().GetBool("allow-hard-delete")
+		yes, _ := cmd.Flags().GetBool("yes")
+		reason, _ := cmd.Flags().GetString("reason")
+		expectedHash, _ := cmd.Flags().GetString("expected-hash")
+		if !allowed {
+			return fmt.Errorf("doc hard-delete requires the trusted --allow-hard-delete capability")
+		}
+		if !yes {
+			return fmt.Errorf("doc hard-delete requires --yes confirmation")
+		}
+		if strings.TrimSpace(reason) == "" {
+			return fmt.Errorf("doc hard-delete requires a non-empty --reason")
+		}
+		store := getStore()
+		doc, err := store.Docs.Get(args[0])
+		if err != nil {
+			return fmt.Errorf("doc hard-delete: %w", err)
+		}
+		if strings.TrimSpace(expectedHash) == "" {
+			expectedHash = doc.CanonicalHash
+		}
+		if expectedHash != doc.CanonicalHash {
+			return fmt.Errorf("doc hard-delete: expected hash conflict")
+		}
+		r, err := storage.NewFilesystemReconciler(store.Root)
+		if err != nil {
+			return err
+		}
+		canonicalPath := "docs/" + strings.TrimSuffix(strings.TrimPrefix(doc.Path, "docs/"), ".md") + ".md"
+		if _, err := r.ReconcileLifecycleBatch(cmd.Context(), storage.LifecycleBatch{Source: "cli-doc-hard-delete", Limit: 1, ExactEntityType: "doc", ExactEntityID: doc.ID, ExactPath: canonicalPath, Hints: []storage.ReconcileHint{{Path: filepath.Join(store.Root, canonicalPath), Event: "hard_delete"}}}, true); err != nil {
+			return fmt.Errorf("doc hard-delete reconcile: %w", err)
+		}
+		if err := r.HardDelete(cmd.Context(), "doc", doc.ID, storage.HardDeleteOptions{Trusted: true, Confirmed: true, Reason: reason, Actor: cliLifecycleActor(), Path: canonicalPath, ExpectedHash: expectedHash}); err != nil {
+			return fmt.Errorf("doc hard-delete: %w", err)
+		}
+		search.BestEffortRemoveDocID(store, doc.ID, doc.Path)
+		fmt.Fprintf(cmd.OutOrStdout(), "Permanently deleted doc: %s\n", doc.Path)
 		return nil
 	},
 }
@@ -447,6 +499,54 @@ var docHistoryCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store := getStore()
+		revision, _ := cmd.Flags().GetString("revision")
+		metadata, _ := cmd.Flags().GetBool("metadata")
+		offset, _ := cmd.Flags().GetInt("offset")
+		limit, _ := cmd.Flags().GetInt("limit")
+		if revision != "" {
+			version, err := store.Versions.GetDocRevisionDetail(args[0], revision)
+			if err != nil {
+				return fmt.Errorf("get doc revision: %w", err)
+			}
+			if isJSON(cmd) {
+				printJSON(version)
+			} else {
+				history := &models.DocVersionHistory{DocPath: args[0], CurrentVersion: version.Version, Versions: []models.DocVersion{*version}}
+				if isPlain(cmd) {
+					printPaged(cmd, renderPlainDocHistory(args[0], history))
+				} else {
+					return renderOrPage(cmd, "Doc History", renderDocHistory(args[0], history))
+				}
+			}
+			return nil
+		}
+		if metadata || offset != 0 || limit != 0 {
+			page, err := store.Versions.ListDocHistoryMetadata(args[0], offset, limit)
+			if err != nil {
+				return fmt.Errorf("list doc history metadata: %w", err)
+			}
+			if isJSON(cmd) {
+				printJSON(page)
+			} else {
+				var b strings.Builder
+				fmt.Fprintf(&b, "DOC: %s\nOFFSET: %d\nLIMIT: %d\nCURRENT_VERSION: %d\nHAS_MORE: %t\n", args[0], page.Offset, page.Limit, page.CurrentVersion, page.HasMore)
+				if page.TailTruncated {
+					fmt.Fprintln(&b, "TAIL_TRUNCATED: true")
+				}
+				for _, item := range page.Items {
+					fmt.Fprintf(&b, "VERSION: %s\nTIMESTAMP: %s\n", item.ID, item.Timestamp.Format(time.RFC3339))
+					if item.Source != "" {
+						fmt.Fprintf(&b, "SOURCE: %s\n", item.Source)
+					}
+					if item.NewHash != "" {
+						fmt.Fprintf(&b, "NEW_HASH: %s\n", item.NewHash)
+					}
+					fmt.Fprintln(&b)
+				}
+				printPaged(cmd, b.String())
+			}
+			return nil
+		}
 		history, err := store.Versions.GetDocHistory(args[0])
 		if err != nil {
 			return fmt.Errorf("get doc history: %w", err)
@@ -489,6 +589,10 @@ func renderPlainDocHistory(docPath string, history *models.DocVersionHistory) st
 		fmt.Fprintf(&hb, "CURRENT_PATH: %s\n", history.CurrentPath)
 	}
 	fmt.Fprintf(&hb, "VERSIONS: %d\n\n", history.CurrentVersion)
+	if history.TailTruncated {
+		fmt.Fprintln(&hb, "TAIL_TRUNCATED: true")
+		fmt.Fprintln(&hb)
+	}
 	for _, gap := range history.RetentionGaps {
 		fmt.Fprintf(&hb, "RETENTION_GAP: type=%s reason=%s count=%d before=%s after=%s applied=%s\n",
 			gap.Type, gap.Reason, gap.Count, gap.BeforeVersion, gap.AfterVersion, gap.AppliedAt.Format(time.RFC3339))
@@ -1050,11 +1154,24 @@ func init() {
 	docDeleteCmd.Flags().Bool("force", false, "Skip confirmation prompt")
 	docDeleteCmd.Flags().String("expected-hash", "", "Expected canonical hash for optimistic concurrency")
 
+	// doc history flags (additive; no flags preserve the legacy full output)
+	docHistoryCmd.Flags().Bool("metadata", false, "List payload-free revision metadata")
+	docHistoryCmd.Flags().Int("offset", 0, "Metadata page offset (newest first)")
+	docHistoryCmd.Flags().Int("limit", 0, "Metadata page size (0 means all)")
+	docHistoryCmd.Flags().String("revision", "", "Load one revision detail (vN or numeric)")
+
+	// doc hard-delete flags (separate from ordinary delete)
+	docHardDeleteCmd.Flags().Bool("yes", false, "Confirm permanent purge")
+	docHardDeleteCmd.Flags().Bool("allow-hard-delete", false, "Grant this local invocation trusted hard-delete capability")
+	docHardDeleteCmd.Flags().String("reason", "", "Required audit reason for permanent purge")
+	docHardDeleteCmd.Flags().String("expected-hash", "", "Expected canonical hash for optimistic concurrency")
+
 	docCmd.AddCommand(docListCmd)
 	docCmd.AddCommand(docViewCmd)
 	docCmd.AddCommand(docCreateCmd)
 	docCmd.AddCommand(docEditCmd)
 	docCmd.AddCommand(docDeleteCmd)
+	docCmd.AddCommand(docHardDeleteCmd)
 	docCmd.AddCommand(docHistoryCmd)
 
 	rootCmd.AddCommand(docCmd)

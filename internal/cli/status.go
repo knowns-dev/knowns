@@ -106,6 +106,9 @@ func renderStatusPlain(p readiness.Payload) {
 		} else {
 			fmt.Println("Search: keyword-only mode")
 		}
+		if s.SemanticEnabled && s.SemanticDegraded {
+			fmt.Printf("Search: semantic degraded (%s)\n", s.SemanticDegradedReason)
+		}
 	}
 
 	if p.Runtime != nil {
@@ -198,6 +201,9 @@ func renderStatusStyled(p readiness.Payload) {
 			fmt.Printf("  %s model not installed\n", StyleWarning.Render("⚠"))
 		} else if !s.ProjectIndexReady {
 			fmt.Printf("  %s index empty — run: knowns search --reindex\n", StyleWarning.Render("⚠"))
+		}
+		if s.SemanticEnabled && s.SemanticDegraded {
+			fmt.Printf("  %s semantic degraded: %s\n", StyleWarning.Render("⚠"), s.SemanticDegradedReason)
 		}
 		fmt.Println()
 	}

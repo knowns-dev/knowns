@@ -1337,7 +1337,7 @@ func assertVectorStoreDefaults(t *testing.T, vs *models.SemanticVectorStoreSetti
 	if vs.ManagedRoot != models.DefaultSemanticManagedRoot {
 		t.Fatalf("vectorStore.managedRoot = %q, want %q", vs.ManagedRoot, models.DefaultSemanticManagedRoot)
 	}
-	if vs.Retention == nil || vs.Retention.PreviousGenerations != models.DefaultSemanticVectorRetentionGenerations || vs.Retention.PreviousGenerationTTL != models.DefaultSemanticVectorRetentionTTL {
+	if vs.Retention == nil || vs.Retention.PreviousGenerations == nil || *vs.Retention.PreviousGenerations != models.DefaultSemanticVectorRetentionGenerations || vs.Retention.PreviousGenerationTTL != models.DefaultSemanticVectorRetentionTTL {
 		t.Fatalf("vectorStore.retention = %#v, want defaults", vs.Retention)
 	}
 }

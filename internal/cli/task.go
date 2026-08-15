@@ -560,6 +560,54 @@ var taskHistoryCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store := getStore()
+		revision, _ := cmd.Flags().GetString("revision")
+		metadata, _ := cmd.Flags().GetBool("metadata")
+		offset, _ := cmd.Flags().GetInt("offset")
+		limit, _ := cmd.Flags().GetInt("limit")
+		if revision != "" {
+			version, err := store.Versions.GetTaskRevisionDetail(args[0], revision)
+			if err != nil {
+				return fmt.Errorf("get task revision: %w", err)
+			}
+			if isJSON(cmd) {
+				printJSON(version)
+			} else {
+				history := &models.TaskVersionHistory{TaskID: args[0], CurrentVersion: version.Version, Versions: []models.TaskVersion{*version}}
+				if isPlain(cmd) {
+					printPaged(cmd, renderPlainTaskHistory(args[0], history))
+				} else {
+					return renderOrPage(cmd, "Task History", renderTaskHistory(args[0], history))
+				}
+			}
+			return nil
+		}
+		if metadata || offset != 0 || limit != 0 {
+			page, err := store.Versions.ListTaskHistoryMetadata(args[0], offset, limit)
+			if err != nil {
+				return fmt.Errorf("list task history metadata: %w", err)
+			}
+			if isJSON(cmd) {
+				printJSON(page)
+			} else {
+				var b strings.Builder
+				fmt.Fprintf(&b, "TASK: %s\nOFFSET: %d\nLIMIT: %d\nCURRENT_VERSION: %d\nHAS_MORE: %t\n", args[0], page.Offset, page.Limit, page.CurrentVersion, page.HasMore)
+				if page.TailTruncated {
+					fmt.Fprintln(&b, "TAIL_TRUNCATED: true")
+				}
+				for _, item := range page.Items {
+					fmt.Fprintf(&b, "VERSION: %s\nTIMESTAMP: %s\n", item.ID, item.Timestamp.Format(time.RFC3339))
+					if item.Source != "" {
+						fmt.Fprintf(&b, "SOURCE: %s\n", item.Source)
+					}
+					if item.NewHash != "" {
+						fmt.Fprintf(&b, "NEW_HASH: %s\n", item.NewHash)
+					}
+					fmt.Fprintln(&b)
+				}
+				printPaged(cmd, b.String())
+			}
+			return nil
+		}
 		history, err := store.Versions.GetHistory(args[0])
 		if err != nil {
 			return fmt.Errorf("get history: %w", err)
@@ -999,6 +1047,23 @@ func renderTaskHistory(id string, history *models.TaskVersionHistory) string {
 	return b.String()
 }
 
+func renderPlainTaskHistory(id string, history *models.TaskVersionHistory) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "TASK: %s\nVERSIONS: %d\n\n", id, history.CurrentVersion)
+	if history.TailTruncated {
+		fmt.Fprintln(&b, "TAIL_TRUNCATED: true")
+		fmt.Fprintln(&b)
+	}
+	for _, v := range history.Versions {
+		fmt.Fprintf(&b, "VERSION: %s\nTIMESTAMP: %s\n", v.ID, v.Timestamp.Format(time.RFC3339))
+		for _, ch := range v.Changes {
+			fmt.Fprintf(&b, "  CHANGE: %s: %v -> %v\n", ch.Field, ch.OldValue, ch.NewValue)
+		}
+		fmt.Fprintln(&b)
+	}
+	return b.String()
+}
+
 func containsLabel(labels []string, label string) bool {
 	for _, l := range labels {
 		if l == label {
@@ -1030,6 +1095,12 @@ func init() {
 	taskListCmd.Flags().String("priority", "", "Filter by priority")
 	taskListCmd.Flags().String("label", "", "Filter by label")
 	taskListCmd.Flags().Bool("tree", false, "Show tasks as tree hierarchy")
+
+	// task history flags (additive; no flags preserve the legacy full output)
+	taskHistoryCmd.Flags().Bool("metadata", false, "List payload-free revision metadata")
+	taskHistoryCmd.Flags().Int("offset", 0, "Metadata page offset (newest first)")
+	taskHistoryCmd.Flags().Int("limit", 0, "Metadata page size (0 means all)")
+	taskHistoryCmd.Flags().String("revision", "", "Load one revision detail (vN or numeric)")
 
 	// task edit flags
 	taskEditCmd.Flags().StringP("title", "t", "", "New title")

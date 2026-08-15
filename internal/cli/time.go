@@ -74,7 +74,8 @@ func runTimeStop(cmd *cobra.Command, args []string) error {
 		taskID = state.Active[0].TaskID
 	}
 
-	entry, err := newCLITaskLifecycleService(store).StopTimer(cmd.Context(), taskID, cliLifecycleActor())
+	expectedHash, _ := cmd.Flags().GetString("expected-hash")
+	entry, err := newCLITaskLifecycleService(store).StopTimer(cmd.Context(), taskID, tasklifecycle.StopTimerOptions{Actor: cliLifecycleActor(), ExpectedHash: expectedHash})
 	if err != nil {
 		return fmt.Errorf("stop timer: %w", err)
 	}
@@ -212,7 +213,8 @@ func runTimeAdd(cmd *cobra.Command, args []string) error {
 		Note:      note,
 	}
 
-	if _, err := newCLITaskLifecycleService(store).AddTimeEntry(cmd.Context(), taskID, tasklifecycle.TimeMutationOptions{Actor: cliLifecycleActor(), Entry: entry}); err != nil {
+	expectedHash, _ := cmd.Flags().GetString("expected-hash")
+	if _, err := newCLITaskLifecycleService(store).AddTimeEntry(cmd.Context(), taskID, tasklifecycle.TimeMutationOptions{Actor: cliLifecycleActor(), ExpectedHash: expectedHash, Entry: entry}); err != nil {
 		return fmt.Errorf("save time entry: %w", err)
 	}
 
@@ -610,6 +612,8 @@ func runTimeLog(cmd *cobra.Command, args []string) error {
 func init() {
 	timeAddCmd.Flags().StringP("note", "n", "", "Note for this time entry")
 	timeAddCmd.Flags().StringP("date", "d", "", "Date (YYYY-MM-DD, defaults to today)")
+	timeStopCmd.Flags().String("expected-hash", "", "Expected canonical task hash")
+	timeAddCmd.Flags().String("expected-hash", "", "Expected canonical task hash")
 
 	timeReportCmd.Flags().String("from", "", "Start date (YYYY-MM-DD)")
 	timeReportCmd.Flags().String("to", "", "End date (YYYY-MM-DD)")

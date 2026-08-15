@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/qdrantruntime"
 	"github.com/howznguyen/knowns/internal/runtimequeue"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
@@ -31,6 +32,44 @@ var retrieveCmd = &cobra.Command{
 	Short: "Retrieve ranked context for docs, tasks, and memories",
 	Args:  cobra.ArbitraryArgs,
 	RunE:  runRetrieve,
+}
+
+func newSearchIndexCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "index", Short: "Build the configured semantic index", RunE: func(cmd *cobra.Command, args []string) error {
+		wait, _ := cmd.Flags().GetBool("wait")
+		store := getStore()
+		if !wait {
+			job, err := runtimequeue.EnqueueReindex(store.Root)
+			if err == nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "queued semantic reindex %s\n", job.ID)
+			}
+			return err
+		}
+		project, global := qdrantSemanticSettings(store)
+		res := models.ResolveSemanticVectorStore(project, global, nil)
+		if !res.Enabled || res.OptedOut {
+			return fmt.Errorf("semantic vector search is disabled; enable it before indexing")
+		}
+		if res.Backend == models.SemanticVectorBackendQdrant {
+			mgr := qdrantruntime.NewManager(qdrantruntime.ConfigFromResolution(res))
+			if res.Mode == models.SemanticVectorStoreModeManaged {
+				if _, err := (qdrantruntime.Installer{Root: mgr.Paths().Root, Mirror: os.Getenv("KNOWNS_QDRANT_MIRROR")}).Install(cmd.Context()); err != nil {
+					return fmt.Errorf("install managed Qdrant: %w", err)
+				}
+				if _, err := mgr.Start(cmd.Context()); err != nil {
+					return fmt.Errorf("start managed Qdrant: %w (inspect: knowns qdrant logs)", err)
+				}
+			}
+		}
+		job := runtimequeue.Job{ID: "blocking-index", Kind: runtimequeue.JobReindex, RequestedAt: time.Now(), RunAfter: time.Now()}
+		if err := search.ExecuteRuntimeJob(store.Root, job); err != nil {
+			return fmt.Errorf("blocking semantic index failed: %w", err)
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), "semantic index completed")
+		return nil
+	}}
+	cmd.Flags().Bool("wait", false, "Block until managed setup and indexing succeed or fail")
+	return cmd
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -584,24 +623,16 @@ func runStatusCheck() error {
 		fmt.Println(searchDimStyle.Render("    Set up: knowns search --setup"))
 	}
 
-	// Vector index.
-	searchDir := filepath.Join(store.Root, ".search")
-	vs := search.NewSQLiteVectorStore(searchDir, "", 0)
-	count, model, indexedAt := vs.Stats()
-	if count > 0 {
-		fmt.Println(RenderField("Index", fmt.Sprintf("%d chunks (model: %s)", count, model)))
-		fmt.Println(RenderField("Indexed at", indexedAt.Format(time.RFC3339)))
-	} else {
-		fmt.Println(RenderField("Index", StyleDim.Render("empty")))
-		fmt.Println(searchDimStyle.Render("    Build: knowns search --reindex"))
+	readiness := search.ResolveSemanticIndexReadiness(store)
+	for _, line := range formatSearchSemanticIndexReadinessLines(readiness) {
+		fmt.Println(line)
 	}
 
-	// Overall status.
 	providerReady := !usesLocalONNX || onnxAvail
 	fmt.Println()
-	if providerReady && semanticSettings != nil && semanticSettings.Enabled && count > 0 {
+	if providerReady && semanticSettings != nil && semanticSettings.Enabled && readiness.Ready {
 		fmt.Println(searchSuccessStyle.Render("  Status: ready (hybrid search active)"))
-	} else if providerReady && semanticSettings != nil && semanticSettings.Enabled {
+	} else if providerReady && semanticSettings != nil && semanticSettings.Enabled && !readiness.OptedOut {
 		fmt.Println(searchWarnStyle.Render("  Status: needs search reindex (run: knowns search --reindex)"))
 	} else {
 		fmt.Println(searchDimStyle.Render("  Status: keyword-only mode"))
@@ -609,6 +640,43 @@ func runStatusCheck() error {
 	fmt.Println()
 
 	return nil
+}
+
+func formatSearchSemanticIndexReadinessLines(readiness search.SemanticIndexReadiness) []string {
+	status := "ready"
+	if !readiness.Enabled || readiness.OptedOut {
+		status = "keyword-only"
+	} else if readiness.Stale {
+		status = "stale"
+	} else if readiness.Degraded || !readiness.Ready {
+		status = "needs reindex"
+	}
+
+	lines := []string{
+		RenderField("Index", fmt.Sprintf("%s (%d chunks)", status, readiness.ChunkCount)),
+		RenderField("Backend", readiness.Backend),
+		RenderField("Mode", readiness.Mode),
+	}
+	if readiness.Model != "" {
+		lines = append(lines, RenderField("Index model", readiness.Model))
+	}
+	if readiness.Dimensions > 0 {
+		lines = append(lines, RenderField("Index dimensions", fmt.Sprintf("%d", readiness.Dimensions)))
+	}
+	if readiness.ChunkVersion > 0 {
+		lines = append(lines, RenderField("Chunk version", fmt.Sprintf("%d", readiness.ChunkVersion)))
+	}
+	if readiness.IndexedAt != nil {
+		lines = append(lines, RenderField("Indexed at", readiness.IndexedAt.Format(time.RFC3339)))
+	}
+	if readiness.Reason != "" {
+		lines = append(lines, RenderField("Reason", readiness.Reason))
+	}
+	if remediation := semanticReindexRemediation(readiness); remediation != "" {
+		lines = append(lines, searchWarnStyle.Render("    Reindex may be required after semantic provider/model changes."))
+		lines = append(lines, searchDimStyle.Render("    Run: "+remediation))
+	}
+	return lines
 }
 
 // ─── setup ───────────────────────────────────────────────────────────
@@ -1072,6 +1140,7 @@ func truncate(s string, maxLen int) string {
 }
 
 func init() {
+	searchCmd.AddCommand(newSearchIndexCmd())
 	searchCmd.Flags().String("type", "", "Search type: all|task|doc|memory|decision (default: all)")
 	searchCmd.Flags().String("status", "", "Filter by task, memory, or decision status")
 	searchCmd.Flags().String("priority", "", "Filter tasks by priority")

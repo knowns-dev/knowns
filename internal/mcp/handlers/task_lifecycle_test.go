@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,6 +143,176 @@ func TestMCPTaskLifecycleUsesBestEffortIndexing(t *testing.T) {
 	if len(removed) != 1 || removed[0] != "life-index" {
 		t.Fatalf("removed after hard delete = %#v, want [life-index]", removed)
 	}
+}
+
+func TestMCPBatchExpectedHashesRejectOnlyStaleItem(t *testing.T) {
+	t.Run("archive", func(t *testing.T) {
+		store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+		if err := store.Init("mcp-batch-archive"); err != nil {
+			t.Fatal(err)
+		}
+		createMCPBatchTask(t, store, "batch-a-stale")
+		createMCPBatchTask(t, store, "batch-b-other")
+		stale, err := store.Tasks.Get("batch-a-stale")
+		if err != nil {
+			t.Fatal(err)
+		}
+		other, err := store.Tasks.Get("batch-b-other")
+		if err != nil {
+			t.Fatal(err)
+		}
+		staleExpected := stale.CanonicalHash
+		otherExpected := other.CanonicalHash
+		if _, err := tasklifecycle.New(store).UpdateTask(t.Context(), stale.ID, tasklifecycle.TaskUpdateOptions{Mutate: func(task *models.Task) error {
+			task.Title = "mcp-batch-stale-secret-title"
+			task.Description = "mcp-batch-stale-secret-description"
+			return nil
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		staleBefore, err := store.Tasks.Get(stale.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		historyBefore, err := store.Versions.GetHistory(stale.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var indexed []string
+		oldIndex := mcpBestEffortIndexTask
+		mcpBestEffortIndexTask = func(_ *storage.Store, id string) { indexed = append(indexed, id) }
+		t.Cleanup(func() { mcpBestEffortIndexTask = oldIndex })
+		response, isError, raw := callTaskLifecycleMCPRaw(t, store, "batch_archive", map[string]any{
+			"ids": []any{stale.ID, other.ID}, "execute": true,
+			"expectedHashes": map[string]any{stale.ID: staleExpected, other.ID: otherExpected},
+		})
+		if !isError || !response.Completed || response.FailedTaskID != stale.ID || response.Changed != 1 {
+			t.Fatalf("batch archive error=%t response=%+v", isError, response)
+		}
+		if len(response.Items) != 2 || response.Items[0].TaskID != stale.ID || response.Items[1].TaskID != other.ID {
+			t.Fatalf("batch archive item order=%+v", response.Items)
+		}
+		if strings.Contains(raw, "mcp-batch-stale-secret-title") || strings.Contains(raw, "mcp-batch-stale-secret-description") {
+			t.Fatalf("MCP conflict leaked stale content: %s", raw)
+		}
+		staleAfter, err := store.Tasks.Get(stale.ID)
+		if err != nil || staleAfter.CanonicalHash != staleBefore.CanonicalHash || staleAfter.Title != staleBefore.Title {
+			t.Fatalf("stale canonical changed: before=%#v after=%#v err=%v", staleBefore, staleAfter, err)
+		}
+		historyAfter, err := store.Versions.GetHistory(stale.ID)
+		if err != nil || len(historyAfter.Versions) != len(historyBefore.Versions) {
+			t.Fatalf("stale history changed: before=%d after=%d err=%v", len(historyBefore.Versions), len(historyAfter.Versions), err)
+		}
+		otherAfter, err := store.Tasks.Get(other.ID)
+		if err != nil || !otherAfter.Archived {
+			t.Fatalf("other Task was not archived: %#v err=%v", otherAfter, err)
+		}
+		if len(indexed) != 1 || indexed[0] != other.ID {
+			t.Fatalf("index hooks=%v, want only successful other item", indexed)
+		}
+	})
+
+	t.Run("unarchive", func(t *testing.T) {
+		store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+		if err := store.Init("mcp-batch-unarchive"); err != nil {
+			t.Fatal(err)
+		}
+		createMCPBatchTask(t, store, "batch-a-stale")
+		createMCPBatchTask(t, store, "batch-b-other")
+		service := tasklifecycle.New(store)
+		for _, id := range []string{"batch-a-stale", "batch-b-other"} {
+			if _, err := service.Archive(t.Context(), id, tasklifecycle.ArchiveOptions{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		stale, err := store.Tasks.Get("batch-a-stale")
+		if err != nil {
+			t.Fatal(err)
+		}
+		other, err := store.Tasks.Get("batch-b-other")
+		if err != nil {
+			t.Fatal(err)
+		}
+		staleExpected := stale.CanonicalHash
+		otherExpected := other.CanonicalHash
+		stale.Title = "mcp-batch-unarchive-secret-title"
+		stale.Description = "mcp-batch-unarchive-secret-description"
+		if err := store.Tasks.Update(stale); err != nil {
+			t.Fatal(err)
+		}
+		staleBefore, err := store.Tasks.Get(stale.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		historyBefore, err := store.Versions.GetHistory(stale.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var indexed []string
+		oldIndex := mcpBestEffortIndexTask
+		mcpBestEffortIndexTask = func(_ *storage.Store, id string) { indexed = append(indexed, id) }
+		t.Cleanup(func() { mcpBestEffortIndexTask = oldIndex })
+		response, isError, raw := callTaskLifecycleMCPRaw(t, store, "batch_unarchive", map[string]any{
+			"ids": []any{stale.ID, other.ID}, "execute": true,
+			"expectedHashes": map[string]any{stale.ID: staleExpected, other.ID: otherExpected},
+		})
+		if !isError || !response.Completed || response.FailedTaskID != stale.ID || response.Changed != 1 {
+			t.Fatalf("batch unarchive error=%t response=%+v", isError, response)
+		}
+		if len(response.Items) != 2 || response.Items[0].TaskID != stale.ID || response.Items[1].TaskID != other.ID {
+			t.Fatalf("batch unarchive item order=%+v", response.Items)
+		}
+		if strings.Contains(raw, "mcp-batch-unarchive-secret-title") || strings.Contains(raw, "mcp-batch-unarchive-secret-description") {
+			t.Fatalf("MCP conflict leaked stale content: %s", raw)
+		}
+		staleAfter, err := store.Tasks.Get(stale.ID)
+		if err != nil || staleAfter.CanonicalHash != staleBefore.CanonicalHash || !staleAfter.Archived {
+			t.Fatalf("stale canonical changed: before=%#v after=%#v err=%v", staleBefore, staleAfter, err)
+		}
+		historyAfter, err := store.Versions.GetHistory(stale.ID)
+		if err != nil || len(historyAfter.Versions) != len(historyBefore.Versions) {
+			t.Fatalf("stale history changed: before=%d after=%d err=%v", len(historyBefore.Versions), len(historyAfter.Versions), err)
+		}
+		otherAfter, err := store.Tasks.Get(other.ID)
+		if err != nil || otherAfter.Archived {
+			t.Fatalf("other Task was not unarchived: %#v err=%v", otherAfter, err)
+		}
+		if len(indexed) != 1 || indexed[0] != other.ID {
+			t.Fatalf("index hooks=%v, want only successful other item", indexed)
+		}
+	})
+}
+
+func createMCPBatchTask(t *testing.T, store *storage.Store, id string) {
+	t.Helper()
+	now := time.Now().UTC()
+	completed := now.Add(-time.Hour)
+	if err := store.Tasks.Create(&models.Task{ID: id, Title: id, Status: "done", Priority: "medium", CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: completed, CompletedAt: &completed}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func callTaskLifecycleMCPRaw(t *testing.T, store *storage.Store, action string, args map[string]any) (tasklifecycle.Response, bool, string) {
+	t.Helper()
+	result, err := handleTaskLifecycle(t.Context(), func() *storage.Store { return store }, action, mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: args}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil {
+		t.Fatalf("%s result is nil", action)
+	}
+	var text string
+	for _, content := range result.Content {
+		if item, ok := content.(mcp.TextContent); ok {
+			text = item.Text
+			break
+		}
+	}
+	var response tasklifecycle.Response
+	if err := json.Unmarshal([]byte(text), &response); err != nil {
+		t.Fatalf("decode %s: %v", text, err)
+	}
+	return response, result.IsError, text
 }
 
 func TestRegisteredTaskLifecycleMCPMiddlewarePreservesSharedResponse(t *testing.T) {
