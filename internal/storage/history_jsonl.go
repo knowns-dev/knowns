@@ -16,8 +16,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
@@ -972,7 +974,13 @@ func syncDirectory(path string) error {
 		return err
 	}
 	defer dir.Close()
-	return dir.Sync()
+	// On Windows, Sync() on directories is not supported and returns "Access is denied."
+	// Since directory sync is a durability optimization (ensures metadata is flushed),
+	// we can safely skip it on Windows without affecting correctness.
+	if err := dir.Sync(); err != nil && !isWindowsAccessDeniedOnDirSync(err) {
+		return err
+	}
+	return nil
 }
 
 func syncFilePath(path string) error {
@@ -982,4 +990,20 @@ func syncFilePath(path string) error {
 	}
 	defer file.Close()
 	return file.Sync()
+}
+
+// isWindowsAccessDeniedOnDirSync detects Windows "Access is denied" errors
+// when calling Sync() on a directory handle. Windows does not support fsync
+// on directories, so we treat this as a non-error.
+func isWindowsAccessDeniedOnDirSync(err error) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	// On Windows, dir.Sync() returns ERROR_ACCESS_DENIED (errno 5)
+	var errno syscall.Errno
+	if errors.As(err, &errno) && errno == 5 {
+		return true
+	}
+	// Also check the error string as a fallback
+	return strings.Contains(err.Error(), "Access is denied")
 }
