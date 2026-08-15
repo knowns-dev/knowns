@@ -115,7 +115,11 @@ func TestTaskAutoArchiveSweeperRunsBoundedStartupSweepWithoutPurge(t *testing.T)
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	defer func() {
+		cancel()
+		// Wait for goroutine to fully stop before cleanup
+		time.Sleep(50 * time.Millisecond)
+	}()
 	StartTaskAutoArchiveSweeper(ctx, func() *storage.Store { return store }, nil, time.Hour)
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {

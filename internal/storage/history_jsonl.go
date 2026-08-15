@@ -1001,9 +1001,5 @@ func isWindowsAccessDeniedOnDirSync(err error) bool {
 	}
 	// On Windows, dir.Sync() returns ERROR_ACCESS_DENIED (errno 5)
 	var errno syscall.Errno
-	if errors.As(err, &errno) && errno == 5 {
-		return true
-	}
-	// Also check the error string as a fallback
-	return strings.Contains(err.Error(), "Access is denied")
+	return errors.As(err, &errno) && errno == 5
 }
