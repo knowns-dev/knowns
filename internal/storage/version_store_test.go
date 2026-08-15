@@ -1,13 +1,90 @@
 package storage
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
 )
+
+func TestVersionStoreHistoryMetadataPageNewestFirstAndRootIdentity(t *testing.T) {
+	store := newVersionTestStore(t)
+	history := store.Versions.historyStore()
+	state := map[string]any{"title": "one"}
+	hash := taskCanonicalHash(state)
+	for i := 1; i <= 3; i++ {
+		record := models.HistoryRecord{EntityType: "task", EntityID: "page-task", Checkpoint: i == 1, CheckpointPayload: cloneMapIf(i == 1, state), BaseHash: func() string {
+			if i == 1 {
+				return ""
+			}
+			return hash
+		}(), NewHash: hash}
+		if i > 1 {
+			next := map[string]any{"title": string(rune('a' + i))}
+			record.TaskChanges = []models.TaskChange{{Field: "title", OldValue: state["title"], NewValue: next["title"]}}
+			record.NewHash = taskCanonicalHash(next)
+			state, hash = next, record.NewHash
+		}
+		if err := history.Append(context.Background(), record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := store.Versions.ListTaskHistoryMetadata("page-task", 0, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.EntityType != "task" || page.EntityID != "page-task" || page.CurrentVersion != 3 || len(page.Items) != 2 || page.Items[0].ID != "v3" || page.Items[1].ID != "v2" || !page.HasMore || page.NextOffset == nil || *page.NextOffset != 2 {
+		t.Fatalf("metadata page = %#v", page)
+	}
+	if page.Items[0].NewHash == "" || page.Items[0].ID == "" {
+		t.Fatalf("metadata missing identity/hash: %#v", page.Items[0])
+	}
+}
+
+func TestVersionStoreHistorySurfacesTruncatedTailWithoutExposingRevision(t *testing.T) {
+	store := newVersionTestStore(t)
+	history := store.Versions.historyStore()
+	ctx := context.Background()
+	first := map[string]any{"title": "one"}
+	firstHash := taskCanonicalHash(first)
+	if err := history.Append(ctx, models.HistoryRecord{EntityType: "task", EntityID: "tail-public", Checkpoint: true, NewHash: firstHash, CheckpointPayload: first}); err != nil {
+		t.Fatal(err)
+	}
+	second := map[string]any{"title": "two"}
+	if err := history.Append(ctx, models.HistoryRecord{EntityType: "task", EntityID: "tail-public", BaseHash: firstHash, NewHash: taskCanonicalHash(second), TaskChanges: []models.TaskChange{{Field: "title", OldValue: "one", NewValue: "two"}}}); err != nil {
+		t.Fatal(err)
+	}
+	path := history.EntityPath("task", "tail-public")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data[:len(data)-1], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	full, err := store.Versions.GetHistory("tail-public")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !full.TailTruncated || full.CurrentVersion != 1 || len(full.Versions) != 1 {
+		t.Fatalf("full history = %#v, want one durable revision plus tail warning", full)
+	}
+	page, err := store.Versions.ListTaskHistoryMetadata("tail-public", 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !page.TailTruncated || page.CurrentVersion != 1 || len(page.Items) != 1 {
+		t.Fatalf("metadata page = %#v, want one durable revision plus tail warning", page)
+	}
+	if _, err := store.Versions.GetTaskRevisionDetail("tail-public", "v2"); err == nil {
+		t.Fatal("truncated revision detail was exposed")
+	}
+}
 
 func TestSaveDocRevisionCreateCheckpointMetadata(t *testing.T) {
 	store := newVersionTestStore(t)
@@ -65,8 +142,54 @@ func TestSaveDocRevisionCreateCheckpointMetadata(t *testing.T) {
 	if !hasDocScope(version.ChangedScopes, "whole_doc", "content") {
 		t.Fatal("expected creation changed scope to include whole document content")
 	}
-	if _, err := os.Stat(store.Versions.stableDocVersionPath(history.DocID)); err != nil {
-		t.Fatalf("expected stable doc history file: %v", err)
+	if _, err := os.Stat(store.Versions.historyStore().EntityPath("doc", history.DocID)); err != nil {
+		t.Fatalf("expected JSONL doc history file: %v", err)
+	}
+}
+
+func TestVersionStoreSelectsOneHistoryBackendPerEntity(t *testing.T) {
+	store := newVersionTestStore(t)
+	task := &models.Task{ID: "jsonl01", Title: "JSONL", Status: "todo", Priority: "medium"}
+	if err := store.Versions.SaveVersion(task.ID, models.TaskVersion{Snapshot: TaskToSnapshot(task)}); err != nil {
+		t.Fatal(err)
+	}
+	if !fileExists(store.Versions.historyStore().EntityPath("task", task.ID)) || fileExists(store.Versions.versionPath(task.ID)) {
+		t.Fatal("new Task history was not JSONL-only")
+	}
+
+	doc := &models.Doc{Path: "guides/jsonl", Title: "JSONL", Content: "body"}
+	if err := store.Versions.SaveDocRevision(nil, doc); err != nil {
+		t.Fatal(err)
+	}
+	history, err := store.Versions.GetDocHistory(doc.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fileExists(store.Versions.historyStore().EntityPath("doc", history.DocID)) || fileExists(store.Versions.stableDocVersionPath(history.DocID)) {
+		t.Fatal("new Doc history was not JSONL-only")
+	}
+
+	legacyTask := &models.TaskVersionHistory{TaskID: "legacy01", CurrentVersion: 1, Versions: []models.TaskVersion{{ID: "v1", TaskID: "legacy01", Version: 1, Snapshot: map[string]any{"title": "legacy"}}}}
+	if err := writeJSON(store.Versions.versionPath("legacy01"), legacyTask); err != nil {
+		t.Fatal(err)
+	}
+	legacyBefore, err := os.ReadFile(store.Versions.versionPath("legacy01"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Versions.SaveVersion("legacy01", models.TaskVersion{Snapshot: map[string]any{"title": "legacy2"}, Changes: []models.TaskChange{{Field: "title", OldValue: "legacy", NewValue: "legacy2"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if !fileExists(store.Versions.historyStore().EntityPath("task", "legacy01")) {
+		t.Fatal("legacy Task migration did not create JSONL successor")
+	}
+	legacyAfter, err := os.ReadFile(store.Versions.versionPath("legacy01"))
+	if err != nil || string(legacyBefore) != string(legacyAfter) {
+		t.Fatal("legacy Task JSON changed before explicit cleanup")
+	}
+	taskHistory, err := store.Versions.GetHistory("legacy01")
+	if err != nil || len(taskHistory.Versions) != 2 || taskHistory.Versions[0].Version != 1 || taskHistory.Versions[1].Version != 2 || taskHistory.Versions[1].Snapshot["title"] != "legacy2" {
+		t.Fatalf("migrated Task history=%#v err=%v", taskHistory, err)
 	}
 }
 
@@ -100,8 +223,8 @@ func TestSaveDocRevisionWholeContentUpdateMetadataNoAudit(t *testing.T) {
 	}
 
 	version := history.Versions[1]
-	if version.Checkpoint {
-		t.Fatal("content update should not be marked as a checkpoint")
+	if !version.Checkpoint {
+		t.Fatal("content update should be checkpointed when delta is at least full snapshot")
 	}
 	if version.BaseHash == "" || version.NewHash == "" || version.BaseHash == version.NewHash {
 		t.Fatalf("update hashes = (%q, %q), want distinct non-empty hashes", version.BaseHash, version.NewHash)
@@ -118,6 +241,183 @@ func TestSaveDocRevisionWholeContentUpdateMetadataNoAudit(t *testing.T) {
 	}
 	if got := version.Snapshot["content"]; got != "after" {
 		t.Fatalf("snapshot content = %v, want after", got)
+	}
+}
+
+func TestSaveDocVersionDeltaReplaysClearedDocFields(t *testing.T) {
+	store := newVersionTestStore(t)
+	path := "guides/clear-delta"
+	initial := &models.Doc{Path: path, Title: "Clear", Description: "long description", Content: "long content", Tags: []string{"one", "two"}}
+	if err := store.Versions.SaveDocRevision(nil, initial); err != nil {
+		t.Fatalf("save initial revision: %v", err)
+	}
+	cleared := &models.Doc{Path: path, Title: initial.Title}
+	if err := store.Versions.SaveDocVersion(path, models.DocVersion{
+		BaseHash: hashDoc(initial), NewHash: hashDoc(cleared), CurrentPath: path,
+		Changes: []models.DocChange{
+			{Field: "description", OldValue: initial.Description},
+			{Field: "content", OldValue: initial.Content},
+			{Field: "tags", OldValue: initial.Tags},
+		},
+		ChangedScopes: []models.DocChangeScope{{Type: "whole_doc", Field: "content"}},
+	}); err != nil {
+		t.Fatalf("save clearing delta: %v", err)
+	}
+	history, err := store.Versions.GetDocHistory(path)
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+	if len(history.Versions) != 2 || history.Versions[1].Checkpoint {
+		t.Fatalf("history = %#v, want second delta", history.Versions)
+	}
+	version := history.Versions[1]
+	if version.Snapshot["description"] != nil || version.Snapshot["content"] != nil || version.Snapshot["tags"] != nil {
+		t.Fatalf("cleared snapshot retained fields: %#v", version.Snapshot)
+	}
+	if got, want := hashSnapshot(version.Snapshot), hashDoc(cleared); got != want || version.NewHash != want {
+		t.Fatalf("cleared hashes = snapshot %q new %q, want %q", got, version.NewHash, want)
+	}
+}
+
+func TestSaveDocRevisionCheckpointAfterClearsIsStandalone(t *testing.T) {
+	store := newVersionTestStore(t)
+	path := "guides/clear-checkpoint"
+	doc := &models.Doc{Path: path, Title: "Checkpoint", Description: strings.Repeat("description ", 12), Content: strings.Repeat("content ", 30), Tags: []string{"one", "two", "three"}}
+	if err := store.Versions.SaveDocRevision(nil, doc); err != nil {
+		t.Fatalf("save initial revision: %v", err)
+	}
+	oldDoc := *doc
+	doc.Description, doc.Content, doc.Tags = "", "", nil
+	if err := store.Versions.SaveDocRevision(&oldDoc, doc); err != nil {
+		t.Fatalf("save clearing checkpoint: %v", err)
+	}
+	history, err := store.Versions.GetDocHistory(path)
+	if err != nil || len(history.Versions) != 2 || !history.Versions[1].Checkpoint {
+		t.Fatalf("history = %#v err=%v, want inefficient checkpoint", history, err)
+	}
+	stream, err := store.Versions.historyStore().Read(nil, "doc", history.DocID)
+	if err != nil || len(stream.Records) != 2 {
+		t.Fatalf("read stream = %#v err=%v", stream, err)
+	}
+	standalone, err := docHistoryFromRecords(path, []models.HistoryRecord{stream.Records[1]})
+	if err != nil || len(standalone.Versions) != 1 {
+		t.Fatalf("standalone replay = %#v err=%v", standalone, err)
+	}
+	if got, want := hashSnapshot(standalone.Versions[0].Snapshot), hashDoc(doc); got != want || standalone.Versions[0].NewHash != want {
+		t.Fatalf("standalone hashes = snapshot %q new %q, want %q", got, standalone.Versions[0].NewHash, want)
+	}
+	if standalone.Versions[0].Snapshot["description"] != nil || standalone.Versions[0].Snapshot["content"] != nil || standalone.Versions[0].Snapshot["tags"] != nil {
+		t.Fatalf("standalone checkpoint retained cleared fields: %#v", standalone.Versions[0].Snapshot)
+	}
+}
+
+func TestSaveDocVersionRejectsIncompleteCheckpoint(t *testing.T) {
+	store := newVersionTestStore(t)
+	err := store.Versions.SaveDocVersion("guides/incomplete", models.DocVersion{Checkpoint: true, NewHash: "hash"})
+	if !errors.Is(err, ErrHistoryCorrupt) {
+		t.Fatalf("incomplete checkpoint error=%v, want ErrHistoryCorrupt", err)
+	}
+}
+
+func TestSaveDocVersionRejectsMismatchedCandidateHashBeforeAppend(t *testing.T) {
+	store := newVersionTestStore(t)
+	doc := &models.Doc{Path: "guides/hash-guard", Title: "Before", Content: "body"}
+	if err := store.Versions.SaveDocRevision(nil, doc); err != nil {
+		t.Fatalf("save initial revision: %v", err)
+	}
+	history, err := store.Versions.GetDocHistory(doc.Path)
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+	streamBefore, err := store.Versions.historyStore().Read(nil, "doc", history.DocID)
+	if err != nil {
+		t.Fatalf("read stream before: %v", err)
+	}
+	updated := *doc
+	updated.Title = "After"
+	err = store.Versions.SaveDocVersion(doc.Path, models.DocVersion{
+		BaseHash: hashDoc(doc), NewHash: "caller-supplied-wrong-hash", CurrentPath: doc.Path,
+		Changes: []models.DocChange{{Field: "title", OldValue: doc.Title, NewValue: updated.Title}},
+	})
+	if !errors.Is(err, ErrHistoryCorrupt) {
+		t.Fatalf("mismatched candidate error=%v, want ErrHistoryCorrupt", err)
+	}
+	streamAfter, readErr := store.Versions.historyStore().Read(nil, "doc", history.DocID)
+	if readErr != nil || len(streamAfter.Records) != len(streamBefore.Records) {
+		t.Fatalf("stream after rejected append = %#v err=%v, want unchanged count %d", streamAfter, readErr, len(streamBefore.Records))
+	}
+}
+
+func TestSaveDocRevisionRejectsStaleOldDocBeforeAppend(t *testing.T) {
+	store := newVersionTestStore(t)
+	doc := &models.Doc{Path: "guides/stale", Title: "Current", Content: "body"}
+	if err := store.Versions.SaveDocRevision(nil, doc); err != nil {
+		t.Fatalf("save initial revision: %v", err)
+	}
+	historyBefore, err := store.Versions.GetDocHistory(doc.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := *doc
+	stale.Title = "Observed stale state"
+	candidate := stale
+	candidate.Content = "new body"
+	err = store.Versions.SaveDocRevisionWithOptions(&stale, &candidate, DocRevisionOptions{})
+	if !errors.Is(err, ErrHistoryConflict) {
+		t.Fatalf("stale save error=%v, want ErrHistoryConflict", err)
+	}
+	historyAfter, err := store.Versions.GetDocHistory(doc.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(historyAfter.Versions) != len(historyBefore.Versions) {
+		t.Fatalf("history count=%d, want unchanged %d", len(historyAfter.Versions), len(historyBefore.Versions))
+	}
+}
+
+func TestSaveDocRevisionRejectsNilOldDocForExistingHistory(t *testing.T) {
+	store := newVersionTestStore(t)
+	doc := &models.Doc{Path: "guides/nil-old", Title: "Current", Content: "body"}
+	if err := store.Versions.SaveDocRevision(nil, doc); err != nil {
+		t.Fatalf("save initial revision: %v", err)
+	}
+	err := store.Versions.SaveDocRevisionWithOptions(nil, &models.Doc{Path: doc.Path, Title: "Replacement", Content: "new"}, DocRevisionOptions{})
+	if !errors.Is(err, ErrHistoryConflict) {
+		t.Fatalf("nil old save error=%v, want ErrHistoryConflict", err)
+	}
+	history, err := store.Versions.GetDocHistory(doc.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Versions) != 1 {
+		t.Fatalf("history count=%d, want 1", len(history.Versions))
+	}
+}
+
+func TestSaveDocRevisionSeedsCheckpointWhenCanonicalDocHasNoHistory(t *testing.T) {
+	store := newVersionTestStore(t)
+	doc := &models.Doc{Path: "guides/untracked", Title: "Existing", Content: "body"}
+	if err := store.Docs.Create(doc); err != nil {
+		t.Fatalf("create canonical doc: %v", err)
+	}
+	oldDoc, err := store.Docs.Get(doc.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := *oldDoc
+	candidate.Content = "updated body"
+	if err := store.Versions.SaveDocRevisionWithOptions(oldDoc, &candidate, DocRevisionOptions{}); err != nil {
+		t.Fatalf("seed first checkpoint: %v", err)
+	}
+	history, err := store.Versions.GetDocHistory(doc.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Versions) != 1 || !history.Versions[0].Checkpoint {
+		t.Fatalf("history=%#v, want one checkpoint", history.Versions)
+	}
+	if history.Versions[0].BaseHash != "" || history.Versions[0].Snapshot["content"] != candidate.Content {
+		t.Fatalf("first checkpoint base/snapshot=(%q,%#v), want empty base and updated content", history.Versions[0].BaseHash, history.Versions[0].Snapshot)
 	}
 }
 
@@ -295,7 +595,6 @@ func TestGetDocHistoryReadsLegacyPathKeyedHistory(t *testing.T) {
 	if err := writeJSON(store.Versions.legacyDocVersionPath(docPath), legacy); err != nil {
 		t.Fatalf("write legacy history: %v", err)
 	}
-
 	history, err := store.Versions.GetDocHistory(docPath)
 	if err != nil {
 		t.Fatalf("get legacy history: %v", err)
@@ -346,6 +645,10 @@ func TestSaveDocRevisionMigratesLegacyHistoryWithoutLoss(t *testing.T) {
 	if err := writeJSON(store.Versions.legacyDocVersionPath(docPath), legacy); err != nil {
 		t.Fatalf("write legacy history: %v", err)
 	}
+	legacyBefore, err := os.ReadFile(store.Versions.legacyDocVersionPath(docPath))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	oldDoc := &models.Doc{Path: docPath, Title: "Legacy", Content: "old"}
 	newDoc := &models.Doc{Path: docPath, Title: "Legacy", Content: "new"}
@@ -366,8 +669,12 @@ func TestSaveDocRevisionMigratesLegacyHistoryWithoutLoss(t *testing.T) {
 	if got := history.Versions[1].Snapshot["content"]; got != "new" {
 		t.Fatalf("second migrated snapshot content = %v, want new", got)
 	}
-	if _, err := os.Stat(store.Versions.stableDocVersionPath(history.DocID)); err != nil {
-		t.Fatalf("expected migrated stable history file: %v", err)
+	if !fileExists(store.Versions.historyStore().EntityPath("doc", history.DocID)) {
+		t.Fatal("legacy Doc migration did not create JSONL successor")
+	}
+	legacyAfter, err := os.ReadFile(store.Versions.legacyDocVersionPath(docPath))
+	if err != nil || string(legacyBefore) != string(legacyAfter) {
+		t.Fatal("legacy Doc JSON changed before explicit cleanup")
 	}
 }
 
@@ -477,11 +784,9 @@ func TestApplyDocHistoryRetentionMaxVersionsPreservesCheckpointAndGap(t *testing
 			t.Fatalf("save revision %d: %v", i, err)
 		}
 	}
-	setDocHistoryTimestamps(t, store, doc.Path, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-
-	history, err := store.Versions.ApplyDocHistoryRetention(doc.Path, DocHistoryRetentionPolicy{MaxVersions: 3, Now: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)})
+	history, err := store.Versions.ApplyDocHistoryRetention(doc.Path, DocHistoryRetentionPolicy{MaxVersions: 3, Now: time.Now().UTC()})
 	if err != nil {
-		t.Fatalf("apply retention: %v", err)
+		t.Fatalf("apply JSONL retention: history=%#v err=%v", history, err)
 	}
 	if len(history.Versions) != 3 {
 		t.Fatalf("retained versions = %d, want 3", len(history.Versions))
@@ -517,15 +822,13 @@ func TestApplyDocHistoryRetentionMaxAge(t *testing.T) {
 			t.Fatalf("save revision %d: %v", i, err)
 		}
 	}
-	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	setDocHistoryTimestamps(t, store, doc.Path, base)
-
+	now := time.Now().UTC()
 	history, err := store.Versions.ApplyDocHistoryRetention(doc.Path, DocHistoryRetentionPolicy{
 		MaxAge: 48 * time.Hour,
-		Now:    base.Add(96 * time.Hour),
+		Now:    now.Add(96 * time.Hour),
 	})
 	if err != nil {
-		t.Fatalf("apply max-age retention: %v", err)
+		t.Fatalf("apply JSONL age retention: history=%#v err=%v", history, err)
 	}
 	if len(history.Versions) != 1 {
 		t.Fatalf("retained versions = %d, want 1 latest retained checkpoint", len(history.Versions))

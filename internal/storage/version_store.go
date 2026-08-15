@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
@@ -21,6 +23,21 @@ import (
 type VersionStore struct {
 	root          string
 	lifecycleLock *taskLifecycleLock
+	history       *HistoryStore
+	historyOnce   sync.Once
+}
+
+func (vs *VersionStore) historyStore() *HistoryStore {
+	vs.historyOnce.Do(func() {
+		if vs.history == nil {
+			vs.history = NewHistoryStore(vs.root)
+		}
+	})
+	return vs.history
+}
+
+func (vs *VersionStore) taskUsesJSONL(taskID string) bool {
+	return vs.hasJSONLHistory("task", taskID)
 }
 
 func (vs *VersionStore) versionsDir() string { return filepath.Join(vs.root, "versions") }
@@ -32,6 +49,15 @@ func (vs *VersionStore) versionPath(taskID string) string {
 // GetHistory returns the full version history for a task.
 // Returns an empty history (not an error) if no history file exists.
 func (vs *VersionStore) GetHistory(taskID string) (*models.TaskVersionHistory, error) {
+	if result, err := vs.historyStore().Read(context.Background(), "task", taskID); err != nil {
+		return nil, err
+	} else if len(result.Records) > 0 || result.TailTruncated {
+		history, err := taskHistoryFromRecords(taskID, result.Records)
+		if history != nil {
+			history.TailTruncated = result.TailTruncated
+		}
+		return history, err
+	}
 	data, err := os.ReadFile(vs.versionPath(taskID))
 	if os.IsNotExist(err) {
 		return &models.TaskVersionHistory{
@@ -51,6 +77,78 @@ func (vs *VersionStore) GetHistory(taskID string) (*models.TaskVersionHistory, e
 		h.Versions = []models.TaskVersion{}
 	}
 	return &h, nil
+}
+
+// ListTaskHistoryMetadata returns a payload-free, newest-first page. The
+// legacy JSON backend is retained as a compatibility fallback; JSONL callers
+// use HistoryStore.ListMetadata and never materialize checkpoint payloads.
+func (vs *VersionStore) ListTaskHistoryMetadata(taskID string, offset, limit int) (*models.TaskVersionHistoryPage, error) {
+	if vs.hasJSONLHistory("task", taskID) {
+		records, _, tailTruncated, err := vs.historyStore().ListMetadataWithStatus(context.Background(), "task", taskID, 0, 0)
+		if err != nil {
+			return nil, err
+		}
+		page := historyMetadataPage(records, offset, limit)
+		page.EntityType, page.EntityID = "task", taskID
+		page.TailTruncated = tailTruncated
+		return page, nil
+	}
+	history, err := vs.GetHistory(taskID)
+	if err != nil {
+		return nil, err
+	}
+	records := make([]models.HistoryRecord, 0, len(history.Versions))
+	for _, version := range history.Versions {
+		records = append(records, historyRecordFromTaskVersion(taskID, version))
+	}
+	page := historyMetadataPage(records, offset, limit)
+	page.EntityType, page.EntityID = "task", taskID
+	page.TailTruncated = history.TailTruncated
+	return page, nil
+}
+
+// GetTaskRevisionDetail explicitly loads one Task revision, including the
+// reconstructed snapshot required by existing restore/compare consumers.
+func (vs *VersionStore) GetTaskRevisionDetail(taskID, revisionID string) (*models.TaskVersion, error) {
+	if vs.hasJSONLHistory("task", taskID) {
+		records, _, err := vs.historyStore().ListMetadata(context.Background(), "task", taskID, 0, 0)
+		if err != nil {
+			return nil, err
+		}
+		physical, err := resolveHistoryRecordRevision(records, revisionID)
+		if err != nil {
+			return nil, err
+		}
+		window, err := vs.historyStore().ReadRecordWindow(context.Background(), "task", taskID, physical)
+		if err != nil {
+			return nil, err
+		}
+		history, err := taskHistoryFromRecords(taskID, window)
+		if err != nil {
+			return nil, err
+		}
+		if len(history.Versions) == 0 {
+			return nil, fmt.Errorf("revision %q not found", revisionID)
+		}
+		version := history.Versions[len(history.Versions)-1]
+		return &version, nil
+	}
+	history, err := vs.GetHistory(taskID)
+	if err != nil {
+		return nil, err
+	}
+	for _, version := range history.Versions {
+		if historyRevisionMatches(version.ID, version.Version, revisionID) {
+			version.Snapshot = cloneMap(version.Snapshot)
+			return &version, nil
+		}
+	}
+	return nil, fmt.Errorf("revision %q not found", revisionID)
+}
+
+// GetTaskRevision is a concise alias for GetTaskRevisionDetail.
+func (vs *VersionStore) GetTaskRevision(taskID, revisionID string) (*models.TaskVersion, error) {
+	return vs.GetTaskRevisionDetail(taskID, revisionID)
 }
 
 // SaveVersion appends a new version entry and updates CurrentVersion.
@@ -73,6 +171,11 @@ func (vs *VersionStore) saveVersionUnlocked(taskID string, version models.TaskVe
 	if reserved {
 		return fmt.Errorf("cannot save version for hard-deleted Task %q", taskID)
 	}
+	if !vs.taskUsesJSONL(taskID) {
+		if err := vs.migrateLegacyTask(taskID); err != nil {
+			return err
+		}
+	}
 	h, err := vs.GetHistory(taskID)
 	if err != nil {
 		return err
@@ -87,11 +190,50 @@ func (vs *VersionStore) saveVersionUnlocked(taskID string, version models.TaskVe
 	}
 
 	h.Versions = append(h.Versions, version)
+	checkpoint := len(h.Versions) == 1 || version.Checkpoint || historyDeltaInefficient(version.Changes, version.Snapshot)
+	baseHash := ""
+	if len(h.Versions) > 1 {
+		baseHash = h.Versions[len(h.Versions)-2].NewHash
+		if baseHash == "" && len(h.Versions[len(h.Versions)-2].Snapshot) > 0 {
+			baseHash = taskCanonicalHash(h.Versions[len(h.Versions)-2].Snapshot)
+		}
+	}
+	stateForHash := cloneMap(version.Snapshot)
+	if len(h.Versions) > 1 && !checkpoint {
+		stateForHash = cloneMap(h.Versions[len(h.Versions)-2].Snapshot)
+		stateForHash = applyTaskChangesToMap(stateForHash, version.Changes)
+	}
+	newHash := taskCanonicalHash(stateForHash)
+	version.SchemaVersion = historySchemaVersion
+	version.BaseHash = baseHash
+	version.NewHash = newHash
+	version.Checkpoint = checkpoint
+	h.Versions[len(h.Versions)-1] = version
+	jsonl := vs.hasJSONLHistory("task", taskID)
+	legacy := !jsonl && fileExists(vs.versionPath(taskID))
+	if jsonl || !legacy {
+		if err := vs.historyStore().Append(context.Background(), models.HistoryRecord{
+			EntityType: "task", EntityID: taskID, Timestamp: version.Timestamp,
+			Author: version.Author, Source: version.Source, SessionID: version.SessionID,
+			BatchID: version.BatchID, LifecycleID: version.LifecycleEventID,
+			BaseHash: version.BaseHash, NewHash: version.NewHash, Checkpoint: version.Checkpoint,
+			TaskChanges:       append([]models.TaskChange(nil), version.Changes...),
+			CheckpointPayload: cloneMapIf(version.Checkpoint, version.Snapshot),
+		}); err != nil {
+			return err
+		}
+		return nil
+	}
 
 	if err := os.MkdirAll(vs.versionsDir(), 0755); err != nil {
 		return fmt.Errorf("mkdir versions: %w", err)
 	}
 	return writeJSON(vs.versionPath(taskID), h)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // TrackChanges compares two Task values and returns the list of changed fields.
@@ -310,7 +452,51 @@ type DocRevisionOptions struct {
 	AuditEventID string
 	SessionID    string
 	Retention    *DocHistoryRetentionPolicy
+	ExpectedHash string
 }
+
+// MutationConflictError is a content-free optimistic-concurrency failure.
+// Only entity identity and hashes are exposed so callers can safely log or
+// return it from public APIs.
+type MutationConflictError struct {
+	EntityType   string
+	EntityID     string
+	ExpectedHash string
+	CurrentHash  string
+}
+
+// DocIdentityConflictError reports an attempted stable-ID reassignment
+// without exposing document content. Stable IDs are immutable once present.
+type DocIdentityConflictError struct {
+	EntityID    string
+	RequestedID string
+}
+
+func (e *DocIdentityConflictError) Error() string {
+	return fmt.Sprintf("doc %q stable identity cannot be changed to %q", e.EntityID, e.RequestedID)
+}
+
+func (e *DocIdentityConflictError) Unwrap() error { return ErrHistoryConflict }
+
+func (e *MutationConflictError) Error() string {
+	if e == nil {
+		return "history conflict"
+	}
+	return fmt.Sprintf("%s %q mutation conflict: expected hash %q, current hash %q", e.EntityType, e.EntityID, e.ExpectedHash, e.CurrentHash)
+}
+
+func (e *MutationConflictError) Unwrap() error { return ErrHistoryConflict }
+
+// CanonicalTaskHash and CanonicalDocHash are the single canonical hash
+// helpers shared by storage and public mutation adapters.
+func CanonicalTaskHash(task *models.Task) string {
+	if task == nil {
+		return ""
+	}
+	return taskCanonicalHash(TaskToSnapshot(task))
+}
+
+func CanonicalDocHash(doc *models.Doc) string { return hashDoc(doc) }
 
 // DocHistoryRetentionPolicy bounds retained document history detail.
 type DocHistoryRetentionPolicy struct {
@@ -350,6 +536,12 @@ func (vs *VersionStore) docVersionIndexPath() string {
 // Returns an empty history (not an error) if no history file exists.
 func (vs *VersionStore) GetDocHistory(docPath string) (*models.DocVersionHistory, error) {
 	docPath = normalizeDocPath(docPath)
+	if history, ok, err := vs.readDocJSONL(docPath); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		return history, nil
+	}
 
 	if h, ok, err := vs.loadStableDocHistoryForPath(docPath); ok || err != nil {
 		return h, err
@@ -366,9 +558,176 @@ func (vs *VersionStore) GetDocHistory(docPath string) (*models.DocVersionHistory
 	}, nil
 }
 
+// ListDocHistoryMetadata returns a payload-free, newest-first page and keeps
+// stable Doc ID/path resolution independent of the backing history format.
+func (vs *VersionStore) ListDocHistoryMetadata(docPath string, offset, limit int) (*models.DocVersionHistoryPage, error) {
+	docPath = normalizeDocPath(docPath)
+	entityID, ok, err := vs.historyStore().FindEntityByPathMetadata(context.Background(), "doc", docPath)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		records, _, tailTruncated, err := vs.historyStore().ListMetadataWithStatus(context.Background(), "doc", entityID, 0, 0)
+		if err != nil {
+			return nil, err
+		}
+		page := historyMetadataPage(records, offset, limit)
+		page.EntityType, page.EntityID = "doc", entityID
+		page.DocPath, page.CurrentPath = docPath, docPath
+		page.TailTruncated = tailTruncated
+		return page, nil
+	}
+	history, err := vs.GetDocHistory(docPath)
+	if err != nil {
+		return nil, err
+	}
+	records := make([]models.HistoryRecord, 0, len(history.Versions))
+	for _, version := range history.Versions {
+		records = append(records, historyRecordFromDocVersion(history.DocID, version))
+	}
+	page := historyMetadataPage(records, offset, limit)
+	page.EntityType, page.EntityID = "doc", history.DocID
+	page.DocPath, page.CurrentPath = history.DocPath, history.CurrentPath
+	page.CurrentVersion = history.CurrentVersion
+	page.TailTruncated = history.TailTruncated
+	return page, nil
+}
+
+// GetDocRevisionDetail explicitly loads one Doc revision and reconstructs the
+// compatible snapshot from the nearest retained checkpoint.
+func (vs *VersionStore) GetDocRevisionDetail(docPath, revisionID string) (*models.DocVersion, error) {
+	docPath = normalizeDocPath(docPath)
+	entityID, ok, err := vs.historyStore().FindEntityByPathMetadata(context.Background(), "doc", docPath)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		records, _, err := vs.historyStore().ListMetadata(context.Background(), "doc", entityID, 0, 0)
+		if err != nil {
+			return nil, err
+		}
+		physical, err := resolveHistoryRecordRevision(records, revisionID)
+		if err != nil {
+			return nil, err
+		}
+		window, err := vs.historyStore().ReadRecordWindow(context.Background(), "doc", entityID, physical)
+		if err != nil {
+			return nil, err
+		}
+		history, err := docHistoryFromRecords(docPath, window)
+		if err != nil {
+			return nil, err
+		}
+		if len(history.Versions) == 0 {
+			return nil, fmt.Errorf("revision %q not found", revisionID)
+		}
+		version := history.Versions[len(history.Versions)-1]
+		return &version, nil
+	}
+	history, err := vs.GetDocHistory(docPath)
+	if err != nil {
+		return nil, err
+	}
+	for _, version := range history.Versions {
+		if historyRevisionMatches(version.ID, version.Version, revisionID) {
+			return &version, nil
+		}
+	}
+	return nil, fmt.Errorf("revision %q not found", revisionID)
+}
+
+// GetDocRevision is a concise alias for GetDocRevisionDetail.
+func (vs *VersionStore) GetDocRevision(docPath, revisionID string) (*models.DocVersion, error) {
+	return vs.GetDocRevisionDetail(docPath, revisionID)
+}
+
+func historyRecordFromTaskVersion(taskID string, version models.TaskVersion) models.HistoryRecord {
+	return models.HistoryRecord{SchemaVersion: version.SchemaVersion, EntityType: "task", EntityID: taskID, Revision: version.Version, LegacyRevision: version.Version, LegacyID: version.ID, Timestamp: version.Timestamp, Author: version.Author, Source: version.Source, SessionID: version.SessionID, BatchID: version.BatchID, Operation: version.Operation, Tombstone: version.Tombstone, LifecycleID: version.LifecycleEventID, BaseHash: version.BaseHash, NewHash: version.NewHash, Checkpoint: version.Checkpoint, LegacyUnverified: version.LegacyUnverified, LegacyPath: version.LegacyPath, LegacyDigest: version.LegacyDigest}
+}
+
+func historyRecordFromDocVersion(docID string, version models.DocVersion) models.HistoryRecord {
+	return models.HistoryRecord{SchemaVersion: version.SchemaVersion, EntityType: "doc", EntityID: firstNonEmpty(docID, version.DocID), Revision: version.Version, LegacyRevision: version.Version, LegacyID: version.ID, Timestamp: version.Timestamp, Author: version.Author, Actor: version.Actor, Source: version.Source, AuditEventID: version.AuditEventID, SessionID: version.SessionID, BatchID: version.BatchID, Operation: version.Operation, Tombstone: version.Tombstone, BaseHash: version.BaseHash, NewHash: version.NewHash, Checkpoint: version.Checkpoint, LegacyUnverified: version.LegacyUnverified, LegacyPath: version.LegacyPath, LegacyDigest: version.LegacyDigest, CurrentPath: version.CurrentPath, PreviousPath: version.PreviousPath}
+}
+
+func historyMetadataPage(records []models.HistoryRecord, offset, limit int) *models.HistoryMetadataPage {
+	if offset < 0 {
+		offset = 0
+	}
+	if limit < 0 {
+		limit = 0
+	}
+	items := make([]models.HistoryMetadata, 0, len(records))
+	current := 0
+	for i := len(records) - 1; i >= 0; i-- {
+		record := records[i]
+		logical := firstPositive(record.LegacyRevision, record.Revision)
+		if logical > current {
+			current = logical
+		}
+		items = append(items, historyMetadataFromRecord(record))
+	}
+	if offset > len(items) {
+		offset = len(items)
+	}
+	end := len(items)
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	page := &models.HistoryMetadataPage{Offset: offset, Limit: limit, HasMore: end < len(items), CurrentVersion: current, Items: items[offset:end]}
+	if len(records) > 0 {
+		page.EntityType = records[0].EntityType
+		page.EntityID = records[0].EntityID
+		page.CurrentPath = records[len(records)-1].CurrentPath
+		page.DocPath = page.CurrentPath
+		for _, record := range records {
+			if record.CurrentPath != "" {
+				page.CurrentPath = record.CurrentPath
+				page.DocPath = record.CurrentPath
+			}
+			page.RetentionGaps = append(page.RetentionGaps, record.RetentionGaps...)
+		}
+	}
+	if page.HasMore {
+		next := end
+		page.NextOffset = &next
+	}
+	return page
+}
+
+func historyMetadataFromRecord(record models.HistoryRecord) models.HistoryMetadata {
+	return models.HistoryMetadata{SchemaVersion: record.SchemaVersion, EntityType: record.EntityType, EntityID: record.EntityID, Revision: record.Revision, ID: firstNonEmpty(record.LegacyID, fmt.Sprintf("v%d", firstPositive(record.LegacyRevision, record.Revision))), Timestamp: record.Timestamp, Author: record.Author, Actor: record.Actor, Source: record.Source, AuditEventID: record.AuditEventID, SessionID: record.SessionID, BatchID: record.BatchID, Operation: record.Operation, Tombstone: record.Tombstone, LifecycleID: record.LifecycleID, BaseHash: record.BaseHash, NewHash: record.NewHash, PrevRecordHash: record.PrevRecordHash, RecordHash: record.RecordHash, Checkpoint: record.Checkpoint, LegacyRevision: record.LegacyRevision, LegacyID: record.LegacyID, Legacy: record.Legacy, LegacyUnverified: record.LegacyUnverified, LegacyPath: record.LegacyPath, LegacyDigest: record.LegacyDigest, RetentionGaps: append([]models.DocHistoryGap(nil), record.RetentionGaps...), CurrentPath: record.CurrentPath, PreviousPath: record.PreviousPath}
+}
+
+func resolveHistoryRecordRevision(records []models.HistoryRecord, revisionID string) (int, error) {
+	for _, record := range records {
+		if historyRevisionMatches(record.LegacyID, firstPositive(record.LegacyRevision, record.Revision), revisionID) || historyRevisionMatches(fmt.Sprintf("v%d", record.Revision), record.Revision, revisionID) {
+			return record.Revision, nil
+		}
+	}
+	return 0, fmt.Errorf("revision %q not found", revisionID)
+}
+
+func historyRevisionMatches(id string, version int, requested string) bool {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return false
+	}
+	if requested == id || requested == fmt.Sprintf("v%d", version) || requested == strconv.Itoa(version) {
+		return true
+	}
+	if strings.HasPrefix(requested, "v") {
+		requested = strings.TrimPrefix(requested, "v")
+	}
+	n, err := strconv.Atoi(requested)
+	return err == nil && n == version
+}
+
 // SaveDocVersion appends a new version entry and updates CurrentVersion.
 func (vs *VersionStore) SaveDocVersion(docPath string, version models.DocVersion) error {
 	docPath = normalizeDocPath(docPath)
+	if err := vs.migrateLegacyDocPaths(docPath); err != nil {
+		return err
+	}
 	h, err := vs.docHistoryForWrite(docPath, "")
 	if err != nil {
 		return err
@@ -395,6 +754,18 @@ func (vs *VersionStore) SaveDocRevisionWithOptions(oldDoc, newDoc *models.Doc, o
 		return fmt.Errorf("new doc is required")
 	}
 
+	canonicalBefore := newDoc
+	if oldDoc != nil {
+		canonicalBefore = oldDoc
+	}
+	if err := vs.migrateLegacyDocPathsWithCurrent(canonicalBefore, newDoc.Path, func() string {
+		if oldDoc != nil {
+			return oldDoc.Path
+		}
+		return ""
+	}()); err != nil {
+		return err
+	}
 	changes, scopes, contentScope := vs.trackDocChangesWithOptions(oldDoc, newDoc, opts)
 	if oldDoc != nil && len(changes) == 0 {
 		return nil
@@ -412,7 +783,34 @@ func (vs *VersionStore) SaveDocRevisionWithOptions(oldDoc, newDoc *models.Doc, o
 	if err != nil {
 		return err
 	}
+	// Canonical callers establish the frontmatter ID before entering history.
+	// Keep direct VersionStore callers without an ID backward-compatible.
+	if len(h.Versions) == 0 && newDoc.ID != "" {
+		h.DocID = newDoc.ID
+	}
+	if h.DocID == "" {
+		h.DocID = newDoc.ID
+	}
+	if len(h.Versions) > 0 {
+		if oldDoc == nil {
+			return fmt.Errorf("%w: nil old doc cannot append to existing history", ErrHistoryConflict)
+		}
+		head := h.Versions[len(h.Versions)-1]
+		headState, err := resolveDocStateFromHistory(h, head.ID)
+		if err != nil {
+			return fmt.Errorf("reconstruct Doc history head: %w", err)
+		}
+		if expected := hashDoc(oldDoc); expected != hashDoc(headState) && !historyHasUnverifiedLegacy(h) {
+			return &MutationConflictError{EntityType: "doc", EntityID: firstNonEmpty(newDoc.ID, h.DocID, newDoc.Path), ExpectedHash: expected, CurrentHash: hashDoc(headState)}
+		}
+	} else {
+		// A history stream with no records must start with a self-contained
+		// checkpoint. The caller's oldDoc hash is not a valid first-record
+		// BaseHash because there is no prior history state to chain from.
+		baseHash = ""
+	}
 
+	checkpoint := oldDoc == nil || len(h.Versions) == 0 || historyDeltaInefficient(changes, DocToSnapshot(newDoc)) || historyHasUnverifiedLegacy(h)
 	version := models.DocVersion{
 		CurrentPath:   currentPath,
 		PreviousPath:  previousDocPath(oldPath, currentPath),
@@ -423,10 +821,23 @@ func (vs *VersionStore) SaveDocRevisionWithOptions(oldDoc, newDoc *models.Doc, o
 		SessionID:     opts.SessionID,
 		BaseHash:      baseHash,
 		NewHash:       hashDoc(newDoc),
-		Checkpoint:    oldDoc == nil,
+		Checkpoint:    checkpoint,
 		Changes:       changes,
 		ChangedScopes: scopes,
-		Snapshot:      docRevisionSnapshot(newDoc, oldDoc == nil, contentScope),
+		Snapshot:      docRevisionSnapshot(newDoc, checkpoint, contentScope),
+	}
+	if oldDoc != nil {
+		if checkpoint {
+			version.NewHash = hashDoc(newDoc)
+		} else {
+			stateForHash := cloneDoc(oldDoc)
+			if err := applyDocChangesToState(&stateForHash, models.HistoryRecord{
+				DocChanges: changes, ChangedScopes: scopes, CurrentPath: currentPath,
+			}); err != nil {
+				return err
+			}
+			version.NewHash = hashSnapshot(DocToSnapshot(&stateForHash))
+		}
 	}
 
 	if err := vs.appendDocVersion(h, oldPath, version); err != nil {
@@ -440,9 +851,6 @@ func (vs *VersionStore) SaveDocRevisionWithOptions(oldDoc, newDoc *models.Doc, o
 }
 
 func (vs *VersionStore) appendDocVersion(h *models.DocVersionHistory, previousPath string, version models.DocVersion) error {
-	h.CurrentVersion++
-	version.ID = fmt.Sprintf("v%d", h.CurrentVersion)
-	version.Version = h.CurrentVersion
 	version.DocID = h.DocID
 	version.DocPath = h.CurrentPath
 	if version.CurrentPath == "" {
@@ -452,8 +860,84 @@ func (vs *VersionStore) appendDocVersion(h *models.DocVersionHistory, previousPa
 		version.Timestamp = time.Now().UTC()
 	}
 
+	var candidate *models.Doc
+	baseHash := version.BaseHash
+	if len(h.Versions) == 0 {
+		if !version.Checkpoint || len(version.Snapshot) == 0 {
+			return fmt.Errorf("%w: first Doc history record must be a checkpoint payload", ErrHistoryCorrupt)
+		}
+		candidate = &models.Doc{}
+		applyDocSnapshot(candidate, version.Snapshot)
+		if version.CurrentPath != "" {
+			candidate.Path = normalizeDocPath(version.CurrentPath)
+		}
+		if baseHash != "" {
+			return fmt.Errorf("%w: first Doc history record has a base hash", ErrHistoryCorrupt)
+		}
+	} else {
+		head := h.Versions[len(h.Versions)-1]
+		headState, err := resolveDocStateFromHistory(h, head.ID)
+		if err != nil {
+			return fmt.Errorf("reconstruct Doc history head: %w", err)
+		}
+		headHash := hashDoc(headState)
+		if head.NewHash != "" && head.NewHash != headHash {
+			return fmt.Errorf("%w: Doc history head hash mismatch", ErrHistoryCorrupt)
+		}
+		if baseHash == "" {
+			baseHash = firstNonEmpty(head.NewHash, headHash)
+		} else if baseHash != firstNonEmpty(head.NewHash, headHash) {
+			return fmt.Errorf("%w: Doc history base hash does not match current head", ErrHistoryConflict)
+		}
+		if version.Checkpoint {
+			if len(version.Snapshot) == 0 {
+				return fmt.Errorf("%w: Doc checkpoint payload is required", ErrHistoryCorrupt)
+			}
+			candidate = &models.Doc{}
+			applyDocSnapshot(candidate, version.Snapshot)
+			if version.CurrentPath != "" {
+				candidate.Path = normalizeDocPath(version.CurrentPath)
+			}
+		} else {
+			candidate = headState
+			if err := applyDocChangesToState(candidate, models.HistoryRecord{
+				DocChanges: version.Changes, ChangedScopes: version.ChangedScopes, CurrentPath: version.CurrentPath,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	candidateHash := hashDoc(candidate)
+	if version.NewHash != "" && version.NewHash != candidateHash {
+		return fmt.Errorf("%w: Doc candidate hash does not match supplied NewHash", ErrHistoryCorrupt)
+	}
+	version.SchemaVersion = historySchemaVersion
+	version.BaseHash = baseHash
+	version.NewHash = candidateHash
+	if version.Checkpoint {
+		version.Snapshot = DocToSnapshot(candidate)
+	}
+	h.CurrentVersion++
+	version.ID = fmt.Sprintf("v%d", h.CurrentVersion)
+	version.Version = h.CurrentVersion
 	h.Versions = append(h.Versions, version)
 	h.DocPath = h.CurrentPath
+	h.Versions[len(h.Versions)-1] = version
+	jsonl := vs.hasJSONLHistory("doc", h.DocID)
+	legacy := !jsonl && (fileExists(vs.stableDocVersionPath(h.DocID)) || fileExists(vs.legacyDocVersionPath(h.CurrentPath)))
+	if jsonl || !legacy {
+		if err := vs.historyStore().Append(context.Background(), models.HistoryRecord{
+			EntityType: "doc", EntityID: h.DocID, Timestamp: version.Timestamp, Author: version.Author,
+			Actor: version.Actor, Source: version.Source, AuditEventID: version.AuditEventID, SessionID: version.SessionID,
+			BatchID: version.BatchID, BaseHash: version.BaseHash, NewHash: version.NewHash, Checkpoint: version.Checkpoint,
+			DocChanges: append([]models.DocChange(nil), version.Changes...), ChangedScopes: append([]models.DocChangeScope(nil), version.ChangedScopes...),
+			CurrentPath: firstNonEmpty(version.CurrentPath, version.DocPath), PreviousPath: version.PreviousPath,
+			CheckpointPayload: cloneMapIf(version.Checkpoint, version.Snapshot),
+		}); err != nil {
+			return err
+		}
+		return nil
+	}
 
 	if err := os.MkdirAll(vs.versionsDir(), 0755); err != nil {
 		return fmt.Errorf("mkdir versions: %w", err)
@@ -507,6 +991,16 @@ func (vs *VersionStore) GetDocRevisionDiff(docPath, revisionID string) (*models.
 // ApplyDocHistoryRetention purges old retained detail while converting the
 // first retained revision into a checkpoint so retained history stays restorable.
 func (vs *VersionStore) ApplyDocHistoryRetention(docPath string, policy DocHistoryRetentionPolicy) (*models.DocVersionHistory, error) {
+	if history, ok, err := vs.readDocJSONL(normalizeDocPath(docPath)); ok {
+		if err != nil {
+			return nil, err
+		}
+		retention := HistoryRetentionPolicy{MaxDetailedRevisions: policy.MaxVersions, MaxDetailedAge: policy.MaxAge, Now: policy.Now, Reason: retentionReason(policy)}
+		if err := vs.historyStore().Compact(context.Background(), "doc", history.DocID, retention); err != nil {
+			return nil, err
+		}
+		return vs.GetDocHistory(docPath)
+	}
 	h, err := vs.GetDocHistory(docPath)
 	if err != nil {
 		return nil, err
@@ -579,6 +1073,43 @@ func (vs *VersionStore) ApplyDocHistoryRetention(docPath string, policy DocHisto
 	return h, nil
 }
 
+// ApplyTaskHistoryRetention compacts an active Task JSONL stream using the
+// same bounded policy as Docs. Legacy Task JSON is migrated first so cleanup
+// remains an explicit, separate operation.
+func (vs *VersionStore) ApplyTaskHistoryRetention(taskID string, policy HistoryRetentionPolicy) (*models.TaskVersionHistory, error) {
+	if err := vs.migrateLegacyTask(taskID); err != nil {
+		return nil, err
+	}
+	if err := vs.historyStore().Compact(context.Background(), "task", taskID, policy); err != nil {
+		return nil, err
+	}
+	return vs.GetHistory(taskID)
+}
+
+func (vs *VersionStore) MigrateLegacyTaskHistory(ctx context.Context, taskID string) error {
+	if vs.hasJSONLHistory("task", taskID) {
+		return nil
+	}
+	path := vs.versionPath(taskID)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var legacy models.TaskVersionHistory
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+	return vs.historyStore().MigrateLegacyTask(ctx, path, taskID, &legacy)
+}
+
+func (vs *VersionStore) MigrateLegacyDocHistory(ctx context.Context, docPath string) error {
+	current, err := (&DocStore{root: vs.root}).Get(normalizeDocPath(docPath))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return vs.migrateLegacyDocPathsWithCurrent(current, docPath)
+}
+
 func retentionReason(policy DocHistoryRetentionPolicy) string {
 	switch {
 	case policy.MaxVersions > 0 && policy.MaxAge > 0:
@@ -624,10 +1155,6 @@ func (s *Store) RestoreDocSection(path, revisionID, section string, opts DocRevi
 	restored := *current
 	restored.Content = restoredContent
 	restored.UpdatedAt = time.Now().UTC()
-	if err := s.Docs.Update(&restored); err != nil {
-		return nil, err
-	}
-
 	opts.Section = firstNonEmpty(opts.Section, section)
 	if opts.Actor == "" {
 		opts.Actor = "restore"
@@ -635,7 +1162,9 @@ func (s *Store) RestoreDocSection(path, revisionID, section string, opts DocRevi
 	if opts.Source == "" {
 		opts.Source = "restore"
 	}
-	if err := s.Versions.SaveDocRevisionWithOptions(&oldDoc, &restored, opts); err != nil {
+	if err := s.MutateDocWithHistory(context.Background(), &oldDoc, &restored, DocMutationOptions{
+		Actor: opts.Actor, Source: opts.Source, Section: opts.Section, ExpectedHash: opts.ExpectedHash,
+	}); err != nil {
 		return nil, err
 	}
 	return &restored, nil
@@ -660,17 +1189,15 @@ func (s *Store) RestoreDoc(path, revisionID string, opts DocRevisionOptions) (*m
 	restored.Tags = append([]string(nil), historical.Tags...)
 	restored.Content = historical.Content
 	restored.UpdatedAt = time.Now().UTC()
-	if err := s.Docs.Update(&restored); err != nil {
-		return nil, err
-	}
-
 	if opts.Actor == "" {
 		opts.Actor = "restore"
 	}
 	if opts.Source == "" {
 		opts.Source = "restore"
 	}
-	if err := s.Versions.SaveDocRevisionWithOptions(&oldDoc, &restored, opts); err != nil {
+	if err := s.MutateDocWithHistory(context.Background(), &oldDoc, &restored, DocMutationOptions{
+		Actor: opts.Actor, Source: opts.Source, ExpectedHash: opts.ExpectedHash,
+	}); err != nil {
 		return nil, err
 	}
 	return &restored, nil
@@ -693,6 +1220,9 @@ func (vs *VersionStore) trackDocChangesWithOptions(oldDoc, newDoc *models.Doc, o
 	}
 
 	if oldDoc == nil {
+		if newDoc.ID != "" {
+			addChange(models.DocChange{Field: "id", NewValue: newDoc.ID}, fieldDocChangeScope("id", "", newDoc.ID))
+		}
 		if newDoc.Path != "" {
 			value := normalizeDocPath(newDoc.Path)
 			addChange(models.DocChange{Field: "path", NewValue: value}, fieldDocChangeScope("path", "", value))
@@ -728,6 +1258,7 @@ func (vs *VersionStore) trackDocChangesWithOptions(oldDoc, newDoc *models.Doc, o
 	}
 
 	diff("path", normalizeDocPath(oldDoc.Path), normalizeDocPath(newDoc.Path))
+	diff("id", oldDoc.ID, newDoc.ID)
 	diff("title", oldDoc.Title, newDoc.Title)
 	diff("description", oldDoc.Description, newDoc.Description)
 	if oldDoc.Content != newDoc.Content {
@@ -750,6 +1281,9 @@ func DocToSnapshot(doc *models.Doc) map[string]any {
 	snap := map[string]any{
 		"path":  normalizeDocPath(doc.Path),
 		"title": doc.Title,
+	}
+	if doc.ID != "" {
+		snap["id"] = doc.ID
 	}
 	if doc.Description != "" {
 		snap["description"] = doc.Description
@@ -828,6 +1362,10 @@ func applyDocVersionState(state *models.Doc, version models.DocVersion) {
 			} else if version.CurrentPath != "" {
 				state.Path = normalizeDocPath(version.CurrentPath)
 			}
+		case "id":
+			if v, ok := change.NewValue.(string); ok {
+				state.ID = v
+			}
 		case "title":
 			if v, ok := change.NewValue.(string); ok {
 				state.Title = v
@@ -863,6 +1401,9 @@ func applyDocSnapshot(state *models.Doc, snapshot map[string]any) {
 	}
 	if v, ok := snapshot["path"].(string); ok && v != "" {
 		state.Path = normalizeDocPath(v)
+	}
+	if v, ok := snapshot["id"].(string); ok {
+		state.ID = v
 	}
 	if v, ok := snapshot["title"].(string); ok {
 		state.Title = v
@@ -941,6 +1482,22 @@ func (vs *VersionStore) docHistoryForWrite(currentPath, previousPath string) (*m
 	previousPath = normalizeDocPath(previousPath)
 	if currentPath == "" {
 		return nil, fmt.Errorf("doc path is required")
+	}
+	if h, ok, err := vs.readDocJSONL(currentPath); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		normalizeDocHistory(h, h.DocID, currentPath)
+		return h, nil
+	}
+	if previousPath != "" {
+		if h, ok, err := vs.readDocJSONL(previousPath); ok || err != nil {
+			if err != nil {
+				return nil, err
+			}
+			normalizeDocHistory(h, h.DocID, currentPath)
+			return h, nil
+		}
 	}
 
 	if h, ok, err := vs.loadStableDocHistoryForAnyPath(currentPath, previousPath); ok || err != nil {
@@ -1030,6 +1587,7 @@ func (vs *VersionStore) scanStableDocHistoryForPath(paths ...string) (*models.Do
 		return nil, false, fmt.Errorf("read versions dir: %w", err)
 	}
 
+	var match *models.DocVersionHistory
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), "docid-") || !strings.HasSuffix(e.Name(), ".json") {
 			continue
@@ -1044,8 +1602,15 @@ func (vs *VersionStore) scanStableDocHistoryForPath(paths ...string) (*models.Do
 		}
 		normalizeDocHistory(&h, h.DocID, "")
 		if docHistoryContainsPath(&h, want) {
-			return &h, true, nil
+			if match != nil && match.DocID != h.DocID {
+				return nil, true, fmt.Errorf("ambiguous Doc history candidates for path %q; repair stable history index before mutating", firstNonEmpty(paths...))
+			}
+			copy := h
+			match = &copy
 		}
+	}
+	if match != nil {
+		return match, true, nil
 	}
 	return nil, false, nil
 }
@@ -1294,11 +1859,14 @@ func resolveContentChangeScope(oldContent, newContent, sectionRef string) docCon
 		newSection, newOK := findMarkdownSection(newContent, sectionRef)
 		if oldOK && newOK {
 			title := firstNonEmpty(newSection.Title, oldSection.Title, strings.TrimSpace(sectionRef))
-			return docContentScope{
+			scope := docContentScope{
 				scope: sectionDocChangeScope(title, oldSection.Text, newSection.Text),
 				old:   oldSection.Text,
 				new:   newSection.Text,
 				ok:    true,
+			}
+			if reconstructed, replaced := replaceMarkdownSection(oldContent, title, newSection.Text); replaced && reconstructed == newContent {
+				return scope
 			}
 		}
 	}
@@ -1440,6 +2008,10 @@ func hashSnapshot(snapshot map[string]any) string {
 	data, err := json.Marshal(snapshot)
 	if err != nil {
 		return ""
+	}
+	var normalized map[string]any
+	if json.Unmarshal(data, &normalized) == nil {
+		data, _ = json.Marshal(normalized)
 	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
