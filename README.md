@@ -86,14 +86,14 @@ Knowns gives it that access.
 
 ## Before & After
 
-| Without Knowns | With Knowns |
-|---|---|
-| "We use the repository pattern with..." _(paste 50 lines)_ | AI reads `@doc/patterns/repository` automatically |
-| "Here's the task, the acceptance criteria are..." _(re-type everything)_ | AI reads the task, its ACs, linked specs, and related docs |
-| "Remember, we decided last week to..." _(hope it sticks)_ | Choice is stored as a first-class System Decision with a verifiable lifecycle |
-| "The auth flow works like this..." _(explain for the 4th time)_ | AI follows `@doc/architecture/auth` and builds on it |
-| "Are we done? Let me check the requirements again..." | AI checks acceptance criteria and validates completion itself |
-| Session starts cold - 10 min of context-setting | Session starts warm - AI already knows the project |
+| Without Knowns                                                           | With Knowns                                                                   |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| "We use the repository pattern with..." _(paste 50 lines)_               | AI reads `@doc/patterns/repository` automatically                             |
+| "Here's the task, the acceptance criteria are..." _(re-type everything)_ | AI reads the task, its ACs, linked specs, and related docs                    |
+| "Remember, we decided last week to..." _(hope it sticks)_                | Choice is stored as a first-class System Decision with a verifiable lifecycle |
+| "The auth flow works like this..." _(explain for the 4th time)_          | AI follows `@doc/architecture/auth` and builds on it                          |
+| "Are we done? Let me check the requirements again..."                    | AI checks acceptance criteria and validates completion itself                 |
+| Session starts cold - 10 min of context-setting                          | Session starts warm - AI already knows the project                            |
 
 ---
 
@@ -295,21 +295,21 @@ knowns browser --open
 
 ## What You Can Build With Knowns
 
-| Capability | What It Does |
-|---|---|
-| **Task Management** | Tasks with acceptance criteria, plans, status, and time tracking |
-| **Documentation** | Nested markdown folders with cross-references and mermaid support |
-| **Semantic Search** | Meaning-based search with local AI models (fully offline) |
-| **Time Tracking** | Built-in timers and reports per task |
-| **Context Linking** | `@task-42` and `@doc/patterns/auth` references AI can resolve |
-| **Validation** | Detect broken references and incomplete tasks with `knowns validate` |
-| **Template System** | Code generation with Handlebars (`.hbs`) templates |
-| **Import System** | Import docs and templates from git, npm, or local sources |
-| **Memory System** | Project / session / global memory for persistent AI recall |
-| **MCP Server** | Native AI assistant integration with full tool access |
-| **AI Workspaces** | Multi-phase agent orchestration with worktree isolation |
+| Capability            | What It Does                                                            |
+| --------------------- | ----------------------------------------------------------------------- |
+| **Task Management**   | Tasks with acceptance criteria, plans, status, and time tracking        |
+| **Documentation**     | Nested markdown folders with cross-references and mermaid support       |
+| **Semantic Search**   | Meaning-based search with local AI models (fully offline)               |
+| **Time Tracking**     | Built-in timers and reports per task                                    |
+| **Context Linking**   | `@task-42` and `@doc/patterns/auth` references AI can resolve           |
+| **Validation**        | Detect broken references and incomplete tasks with `knowns validate`    |
+| **Template System**   | Code generation with Handlebars (`.hbs`) templates                      |
+| **Import System**     | Import docs and templates from git, npm, or local sources               |
+| **Memory System**     | Project / session / global memory for persistent AI recall              |
+| **MCP Server**        | Native AI assistant integration with full tool access                   |
+| **AI Workspaces**     | Multi-phase agent orchestration with worktree isolation                 |
 | **Code Intelligence** | LSP-based symbols, definitions, references, diagnostics, and safe edits |
-| **Web UI** | Kanban board, doc browser, knowledge graph, mermaid diagrams |
+| **Web UI**            | Kanban board, doc browser, knowledge graph, mermaid diagrams            |
 
 ---
 
@@ -319,15 +319,15 @@ Knowns does not replace your AI assistant. It gives the assistants you already u
 
 For normal personal setup, use `knowns setup <target> --global`. Use project-level setup only when you intentionally want config files committed or scoped to one repository.
 
-| Assistant | Setup | What it gets |
-|---|---|---|
-| Claude Code | `knowns setup claude --global` | MCP, `/kn-*` skills, runtime memory hooks |
-| Codex | `knowns setup codex --global` | MCP, `$kn-*` skills, runtime memory hooks |
-| OpenCode | `knowns setup opencode --global` | MCP, `.agents/skills`, plugin/runtime integration |
-| Kiro | `knowns setup kiro --global` | MCP, skills, runtime hooks |
-| Cursor | `knowns setup cursor --global` | MCP access to Knowns context |
-| Gemini / Antigravity | `knowns setup gemini --global` / `knowns setup antigravity --global` | Global MCP config |
-| Copilot / generic agents | `knowns setup copilot` / `knowns setup agents` | Instruction shims and agent-readable guidance |
+| Assistant                | Setup                                                                | What it gets                                      |
+| ------------------------ | -------------------------------------------------------------------- | ------------------------------------------------- |
+| Claude Code              | `knowns setup claude --global`                                       | MCP, `/kn-*` skills, runtime memory hooks         |
+| Codex                    | `knowns setup codex --global`                                        | MCP, `$kn-*` skills, runtime memory hooks         |
+| OpenCode                 | `knowns setup opencode --global`                                     | MCP, `.agents/skills`, plugin/runtime integration |
+| Kiro                     | `knowns setup kiro --global`                                         | MCP, skills, runtime hooks                        |
+| Cursor                   | `knowns setup cursor --global`                                       | MCP access to Knowns context                      |
+| Gemini / Antigravity     | `knowns setup gemini --global` / `knowns setup antigravity --global` | Global MCP config                                 |
+| Copilot / generic agents | `knowns setup copilot` / `knowns setup agents`                       | Instruction shims and agent-readable guidance     |
 
 See [Platforms](./docs/en/integrations/platforms.md) for the full mapping.
 
@@ -393,29 +393,29 @@ Claude: [Creates conventional commit]
 
 Skills are agent workflow commands, not MCP tools. MCP tools show up in `codex mcp` as domain tools such as `tasks`, `docs`, `memory`, `search`, and `code`; skills are synced separately to the agent's skills directory.
 
-| Platform | Invocation |
-|---|---|
+| Platform    | Invocation                           |
+| ----------- | ------------------------------------ |
 | Claude Code | `/kn-spec`, `/kn-flow`, `/kn-review` |
-| Codex | `$kn-spec`, `$kn-flow`, `$kn-review` |
+| Codex       | `$kn-spec`, `$kn-flow`, `$kn-review` |
 
 The table below uses Claude Code's `/kn-*` syntax. In Codex, use the same skill name with `$` instead of `/`.
 
-| Skill | Description |
-|---|---|
-| `/kn-init` | Initialize session - read docs, load memory, understand project |
-| `/kn-plan <id>` | Take task, gather context, create implementation plan |
-| `/kn-implement <id>` | Execute plan, track progress, check acceptance criteria |
-| `/kn-research` | Research project context, code, and relevant external MCP/web sources |
-| `/kn-commit` | Create conventional commit with verification |
-| `/kn-spec` | Create specification document for features (SDD) |
-| `/kn-flow @doc/<spec-path>` | Recommended full approved-spec flow: plan, implement, review, verify |
-| `/kn-go <spec>` | Legacy full pipeline from approved spec without review gates |
-| `/kn-verify` | Run SDD verification and coverage report |
-| `/kn-review` | Multi-perspective code review (P1/P2/P3 severity) |
-| `/kn-doc` | Create or update documentation |
-| `/kn-extract` | Extract reusable patterns into docs, templates, and memory |
-| `/kn-template` | List, run, or create code templates |
-| `/kn-debug` | Debug errors and failures with memory-backed triage |
+| Skill                       | Description                                                           |
+| --------------------------- | --------------------------------------------------------------------- |
+| `/kn-init`                  | Initialize session - read docs, load memory, understand project       |
+| `/kn-plan <id>`             | Take task, gather context, create implementation plan                 |
+| `/kn-implement <id>`        | Execute plan, track progress, check acceptance criteria               |
+| `/kn-research`              | Research project context, code, and relevant external MCP/web sources |
+| `/kn-commit`                | Create conventional commit with verification                          |
+| `/kn-spec`                  | Create specification document for features (SDD)                      |
+| `/kn-flow @doc/<spec-path>` | Recommended full approved-spec flow: plan, implement, review, verify  |
+| `/kn-go <spec>`             | Legacy full pipeline from approved spec without review gates          |
+| `/kn-verify`                | Run SDD verification and coverage report                              |
+| `/kn-review`                | Multi-perspective code review (P1/P2/P3 severity)                     |
+| `/kn-doc`                   | Create or update documentation                                        |
+| `/kn-extract`               | Extract reusable patterns into docs, templates, and memory            |
+| `/kn-template`              | List, run, or create code templates                                   |
+| `/kn-debug`                 | Debug errors and failures with memory-backed triage                   |
 
 ---
 
@@ -558,21 +558,21 @@ knowns sync
 
 ## Documentation
 
-| Guide | Description |
-|---|---|
-| [Installation](./docs/en/getting-started/installation.md) | Install, verify, run without a global install, and uninstall |
-| [User Guide](./docs/en/guides/user-guide.md) | Getting started and daily usage |
-| [Command Reference](./docs/en/reference/commands.md) | Core CLI commands with examples |
-| [Workflow Guide](./docs/en/guides/workflow.md) | Recommended human + AI workflow |
-| [MCP Integration](./docs/en/guides/mcp-integration.md) | MCP setup and supported platforms |
-| [Reference System](./docs/en/reference/reference-system.md) | How `@doc/` and `@task-` linking works |
-| [Semantic Search](./docs/en/reference/semantic-search.md) | Setup and usage of semantic search |
-| [Templates](./docs/en/integrations/templates.md) | Code generation and template workflows |
-| [Web UI](./docs/en/guides/web-ui.md) | Board, docs, graph, and chat UI |
-| [Configuration](./docs/en/reference/configuration.md) | Project config and platform IDs |
-| [Skills](./docs/en/integrations/skills.md) | Skill paths and regeneration |
-| [Developer Guide](./docs/en/contributing/developer-guide.md) | Notes for contributors |
-| [Platforms](./docs/en/integrations/platforms.md) | Platform integration mapping |
+| Guide                                                        | Description                                                  |
+| ------------------------------------------------------------ | ------------------------------------------------------------ |
+| [Installation](./docs/en/getting-started/installation.md)    | Install, verify, run without a global install, and uninstall |
+| [User Guide](./docs/en/guides/user-guide.md)                 | Getting started and daily usage                              |
+| [Command Reference](./docs/en/reference/commands.md)         | Core CLI commands with examples                              |
+| [Workflow Guide](./docs/en/guides/workflow.md)               | Recommended human + AI workflow                              |
+| [MCP Integration](./docs/en/guides/mcp-integration.md)       | MCP setup and supported platforms                            |
+| [Reference System](./docs/en/reference/reference-system.md)  | How `@doc/` and `@task-` linking works                       |
+| [Semantic Search](./docs/en/reference/semantic-search.md)    | Setup and usage of semantic search                           |
+| [Templates](./docs/en/integrations/templates.md)             | Code generation and template workflows                       |
+| [Web UI](./docs/en/guides/web-ui.md)                         | Board, docs, graph, and chat UI                              |
+| [Configuration](./docs/en/reference/configuration.md)        | Project config and platform IDs                              |
+| [Skills](./docs/en/integrations/skills.md)                   | Skill paths and regeneration                                 |
+| [Developer Guide](./docs/en/contributing/developer-guide.md) | Notes for contributors                                       |
+| [Platforms](./docs/en/integrations/platforms.md)             | Platform integration mapping                                 |
 
 ---
 
@@ -639,15 +639,16 @@ For technical details, see [Architecture](./ARCHITECTURE.md) and [Contributing](
 
 ---
 
-## Star History
+## Support Knowns
 
-<a href="https://www.star-history.com/?repos=knowns-dev%2Fknowns&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=knowns-dev/knowns&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=knowns-dev/knowns&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=knowns-dev/knowns&type=date&legend=top-left" />
- </picture>
-</a>
+If Knowns helps your workflow, consider supporting its development:
+
+- ⭐ **Star the repo** - helps others discover the project
+- 🐛 **Report bugs and suggest features** - your feedback shapes the roadmap
+- 💬 **Share with your team** - the more developers who use it, the better it gets
+- ☕ **[Sponsor on GitHub](https://github.com/sponsors/howznguyen)** - sustains ongoing development
+
+All contributions help make Knowns better for everyone building with AI.
 
 ---
 
