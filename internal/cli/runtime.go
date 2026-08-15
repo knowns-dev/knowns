@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/lipgloss/v2"
@@ -32,7 +33,11 @@ var runtimeRunCmd = &cobra.Command{
 	Short:  "Run the internal shared runtime",
 	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runtimequeue.RunDaemon(cmd.Context(), search.ExecuteRuntimeJob, startRuntimeWatcher)
+		return runtimequeue.RunDaemonWithOptions(cmd.Context(), runtimequeue.DaemonOptions{
+			Executor:       search.ExecuteRuntimeJob,
+			WatcherFactory: startRuntimeWatcher,
+			ReloadHandler:  search.ReloadDefaultSemanticRuntime,
+		})
 	},
 }
 
@@ -134,6 +139,12 @@ installation state, use knowns runtime status. For raw logs, use knowns runtime 
 	RunE: runRuntimePs,
 }
 
+var runtimeReloadCmd = &cobra.Command{
+	Use:   "reload",
+	Short: "Reload shared runtime semantic providers and config",
+	RunE:  runRuntimeReload,
+}
+
 func runRuntimePs(cmd *cobra.Command, args []string) error {
 	watch, _ := cmd.Flags().GetBool("watch")
 	interval, _ := cmd.Flags().GetDuration("interval")
@@ -149,6 +160,8 @@ func runRuntimePs(cmd *cobra.Command, args []string) error {
 		opts := runtimePsOptionsFromCmd(cmd)
 		snapshots := collectProjectJobs(status)
 		summary := summarizeRuntimePs(status, snapshots, opts.FailureLimit)
+		semantic := search.ObservedSemanticRuntimeStatus()
+		reload, _ := runtimequeue.LoadReloadStatus()
 
 		if isJSON(cmd) {
 			store, _ := getStoreErr()
@@ -159,6 +172,8 @@ func runRuntimePs(cmd *cobra.Command, args []string) error {
 				"projects": snapshots,
 				"summary":  summary,
 				"options":  opts,
+				"semantic": semantic,
+				"reload":   reload,
 			})
 			return nil
 		}
@@ -170,7 +185,7 @@ func runRuntimePs(cmd *cobra.Command, args []string) error {
 			store, _ := getStoreErr()
 			svcStatuses = services.DetectAll(store)
 		}
-		renderRuntimePs(cmd, status, svcStatuses, snapshots, summary, opts, isPlain(cmd))
+		renderRuntimePs(cmd, status, svcStatuses, snapshots, summary, opts, semantic, reload, isPlain(cmd))
 		return nil
 	}
 
@@ -187,6 +202,129 @@ func runRuntimePs(cmd *cobra.Command, args []string) error {
 		case <-time.After(interval):
 		}
 	}
+}
+
+func runRuntimeReload(cmd *cobra.Command, args []string) error {
+	wait, _ := cmd.Flags().GetBool("wait")
+	timeout, _ := cmd.Flags().GetDuration("timeout")
+	status, err := runtimequeue.LoadStatus()
+	if err != nil {
+		return err
+	}
+	running := status.Running && runtimequeue.IsRunning()
+	semantic := search.ObservedSemanticRuntimeStatus()
+	var readiness *search.SemanticIndexReadiness
+	if store, err := getStoreErr(); err == nil {
+		r := search.ResolveSemanticIndexReadiness(store)
+		readiness = &r
+	}
+	remediation := ""
+	if readiness != nil {
+		remediation = semanticReindexRemediation(*readiness)
+	}
+
+	if !running {
+		payload := map[string]any{
+			"running":      false,
+			"requested":    false,
+			"acknowledged": false,
+			"noop":         true,
+			"semantic":     semantic,
+			"readiness":    readiness,
+			"remediation":  remediation,
+		}
+		if isJSON(cmd) {
+			printJSON(payload)
+			return nil
+		}
+		w := cmd.OutOrStdout()
+		if isPlain(cmd) {
+			fmt.Fprintln(w, "reload	noop	running=false	acknowledged=false")
+			for _, line := range formatSemanticRuntimePlainLines(semantic, runtimequeue.ReloadStatus{}) {
+				fmt.Fprintln(w, line)
+			}
+			if readiness != nil {
+				fmt.Fprintln(w, formatSemanticIndexReadinessPlainLine(*readiness))
+			}
+			if remediation != "" {
+				fmt.Fprintf(w, "remediation\t%s\n", remediation)
+			}
+			return nil
+		}
+		fmt.Fprintln(w, StyleDim.Render("Runtime is not running; no reload request was needed."))
+		fmt.Fprintln(w, StyleDim.Render("The next runtime start, job, or search will read the latest semantic settings."))
+		for _, line := range formatSemanticIndexReadinessLines(readiness, true) {
+			fmt.Fprintln(w, line)
+		}
+		return nil
+	}
+
+	request, err := runtimequeue.RequestReload()
+	if err != nil {
+		return err
+	}
+	reload := runtimequeue.ReloadStatus{}
+	acknowledged := false
+	if wait {
+		reload, err = runtimequeue.WaitForReload(request.ID, timeout)
+		if err != nil {
+			return err
+		}
+		acknowledged = true
+		semantic = search.ObservedSemanticRuntimeStatus()
+	} else if loaded, err := runtimequeue.LoadReloadStatus(); err == nil && loaded.RequestID == request.ID {
+		reload = loaded
+		acknowledged = loaded.Success
+	}
+
+	payload := map[string]any{
+		"running":      true,
+		"pid":          status.PID,
+		"requested":    true,
+		"request":      request,
+		"acknowledged": acknowledged,
+		"reload":       reload,
+		"semantic":     semantic,
+		"readiness":    readiness,
+		"remediation":  remediation,
+		"noop":         false,
+	}
+	if isJSON(cmd) {
+		printJSON(payload)
+		return nil
+	}
+
+	w := cmd.OutOrStdout()
+	if isPlain(cmd) {
+		fmt.Fprintf(w, "reload\trequested\trunning=true\tpid=%d\trequestId=%s\tacknowledged=%v\n", status.PID, request.ID, acknowledged)
+		if acknowledged {
+			fmt.Fprintf(w, "reload-ack\tgeneration=%d\tprocessedAt=%s\trequestId=%s\n", reload.Generation, reload.ProcessedAt.Format(time.RFC3339), reload.RequestID)
+		}
+		for _, line := range formatSemanticRuntimePlainLines(semantic, reload) {
+			fmt.Fprintln(w, line)
+		}
+		if readiness != nil {
+			fmt.Fprintln(w, formatSemanticIndexReadinessPlainLine(*readiness))
+		}
+		if remediation != "" {
+			fmt.Fprintf(w, "remediation\t%s\n", remediation)
+		}
+		return nil
+	}
+
+	if acknowledged {
+		fmt.Fprintf(w, "%s Runtime reload acknowledged by daemon pid=%d.\n", StyleSuccess.Render("✓"), status.PID)
+		fmt.Fprintf(w, "%s generation=%d request=%s\n", StyleDim.Render("Reload"), reload.Generation, reload.RequestID)
+	} else {
+		fmt.Fprintf(w, "%s Runtime reload requested for daemon pid=%d.\n", StyleSuccess.Render("✓"), status.PID)
+		fmt.Fprintf(w, "%s request=%s; use --wait to block until acknowledged.\n", StyleDim.Render("Reload"), request.ID)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, renderBox("Semantic runtime", formatSemanticRuntimeLines(semantic, reload, true)))
+	for _, line := range formatSemanticIndexReadinessLines(readiness, true) {
+		fmt.Fprintln(w, line)
+	}
+	return nil
 }
 
 type projectSnapshot struct {
@@ -406,11 +544,11 @@ func recentRuntimeRows(snapshots []projectSnapshot, opts runtimePsOptions) []run
 	return rows
 }
 
-func renderRuntimePs(cmd *cobra.Command, status *runtimequeue.Status, svcStatuses []services.ServiceStatus, snapshots []projectSnapshot, summary runtimePsSummary, opts runtimePsOptions, plain bool) {
+func renderRuntimePs(cmd *cobra.Command, status *runtimequeue.Status, svcStatuses []services.ServiceStatus, snapshots []projectSnapshot, summary runtimePsSummary, opts runtimePsOptions, semantic search.SemanticRuntimeStatus, reload runtimequeue.ReloadStatus, plain bool) {
 	w := cmd.OutOrStdout()
 
 	if plain {
-		renderRuntimePsPlain(cmd, status, snapshots, summary, opts)
+		renderRuntimePsPlain(cmd, status, snapshots, summary, opts, semantic, reload)
 		return
 	}
 
@@ -428,6 +566,13 @@ func renderRuntimePs(cmd *cobra.Command, status *runtimequeue.Status, svcStatuse
 	servicesLines := formatServiceSummaryLines(svcStatuses)
 	fmt.Fprintln(w, renderBox(fmt.Sprintf("Services (%d)", len(servicesLines)), servicesLines))
 	fmt.Fprintln(w)
+
+	fmt.Fprintln(w, renderBox("Semantic runtime", formatSemanticRuntimeLines(semantic, reload, true)))
+	fmt.Fprintln(w)
+	if len(status.Watchers) > 0 {
+		fmt.Fprintln(w, renderBox(fmt.Sprintf("Knowledge watchers (%d)", len(status.Watchers)), formatRuntimeWatcherLines(status.Watchers)))
+		fmt.Fprintln(w)
+	}
 
 	if len(status.Clients) > 0 && opts.ClientLimit > 0 {
 		fmt.Fprintln(w, renderBox(fmt.Sprintf("Clients (%d)", len(status.Clients)), formatRuntimeClientLines(status.Clients, opts.ClientLimit)))
@@ -491,6 +636,28 @@ func formatRuntimeClientLines(clients []runtimequeue.Lease, limit int) []string 
 	}
 	if len(lines) == 0 {
 		return []string{StyleDim.Render("(no clients)")}
+	}
+	return lines
+}
+
+func formatRuntimeWatcherLines(watchers []runtimequeue.WatcherStatus) []string {
+	lines := make([]string, 0, len(watchers))
+	for _, watcher := range watchers {
+		state := "stopped"
+		if watcher.Active {
+			state = "active"
+		}
+		if watcher.GracePending {
+			state = "grace"
+		}
+		line := fmt.Sprintf("%s  demand=%d  state=%s", projectDisplayName(watcher.ProjectRoot), watcher.Demand, state)
+		if watcher.GracePending && !watcher.GraceUntil.IsZero() {
+			line += "  until=" + watcher.GraceUntil.Format(time.RFC3339)
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) == 0 {
+		return []string{StyleDim.Render("(no knowledge watchers)")}
 	}
 	return lines
 }
@@ -833,13 +1000,215 @@ func countCommaList(value string) int {
 	return count
 }
 
-func renderRuntimePsPlain(cmd *cobra.Command, status *runtimequeue.Status, snapshots []projectSnapshot, summary runtimePsSummary, opts runtimePsOptions) {
+func semanticRuntimeIdentity(entry search.SemanticRuntimeEntryInfo) string {
+	if entry.ProviderIdentity != "" {
+		return entry.ProviderIdentity
+	}
+	parts := []string{entry.Provider, entry.Model}
+	if entry.Dimensions > 0 {
+		parts = append(parts, fmt.Sprintf("%d", entry.Dimensions))
+	}
+	return strings.Join(parts, "/")
+}
+
+func formatSemanticRuntimeLines(status search.SemanticRuntimeStatus, reload runtimequeue.ReloadStatus, styled bool) []string {
+	state := fmt.Sprintf("Enabled   %t", status.Enabled)
+	if !status.Enabled && status.DisabledBy != "" {
+		state += "  disabledBy=" + status.DisabledBy
+	}
+	if styled && !status.Enabled {
+		state = StyleDim.Render(state)
+	}
+	lines := []string{state, fmt.Sprintf("Entries   %d", len(status.Entries))}
+	if status.IdleTimeout > 0 {
+		lines = append(lines, fmt.Sprintf("Idle      %s", status.IdleTimeout))
+	}
+	for _, entry := range status.Entries {
+		identity := semanticRuntimeIdentity(entry)
+		detail := fmt.Sprintf("Provider  %s  model=%s  dims=%d  identity=%s", entry.Provider, entry.Model, entry.Dimensions, identity)
+		if !entry.Loaded {
+			detail += "  loaded=false"
+		}
+		if entry.ActiveSessions > 0 {
+			detail += fmt.Sprintf("  sessions=%d", entry.ActiveSessions)
+		}
+		if len(entry.StoreConsumers) > 0 {
+			detail += fmt.Sprintf("  consumers=%d", len(entry.StoreConsumers))
+		}
+		lines = append(lines, detail)
+	}
+	if len(status.Entries) == 0 {
+		lines = append(lines, "Provider  no loaded providers")
+	}
+	generation := status.ReloadGeneration
+	processedAt := status.LastReloadAt
+	requestID := status.ReloadRequestID
+	if reload.Generation > generation {
+		generation = reload.Generation
+		processedAt = reload.ProcessedAt
+		requestID = reload.RequestID
+	}
+	if generation > 0 || !processedAt.IsZero() || requestID != "" {
+		reloadLine := fmt.Sprintf("Reload    generation=%d", generation)
+		if !processedAt.IsZero() {
+			reloadLine += "  processedAt=" + processedAt.Format(time.RFC3339)
+		}
+		if requestID != "" {
+			reloadLine += "  requestId=" + requestID
+		}
+		lines = append(lines, reloadLine)
+	}
+	return lines
+}
+
+func formatSemanticRuntimePlainLines(status search.SemanticRuntimeStatus, reload runtimequeue.ReloadStatus) []string {
+	fields := []string{
+		"semantic",
+		fmt.Sprintf("enabled=%t", status.Enabled),
+		fmt.Sprintf("entries=%d", len(status.Entries)),
+	}
+	if status.DisabledBy != "" {
+		fields = append(fields, "disabledBy="+status.DisabledBy)
+	}
+	if len(status.Entries) == 0 {
+		fields = append(fields, "loaded=false")
+	} else {
+		entry := status.Entries[0]
+		fields = append(fields,
+			"provider="+entry.Provider,
+			"model="+entry.Model,
+			fmt.Sprintf("dimensions=%d", entry.Dimensions),
+			"identity="+semanticRuntimeIdentity(entry),
+			fmt.Sprintf("loaded=%t", entry.Loaded),
+		)
+		if entry.ActiveSessions > 0 {
+			fields = append(fields, fmt.Sprintf("sessions=%d", entry.ActiveSessions))
+		}
+		if len(entry.StoreConsumers) > 0 {
+			fields = append(fields, fmt.Sprintf("consumers=%d", len(entry.StoreConsumers)))
+		}
+	}
+	lines := []string{strings.Join(fields, "\t")}
+	generation := status.ReloadGeneration
+	processedAt := status.LastReloadAt
+	requestID := status.ReloadRequestID
+	if reload.Generation > generation {
+		generation = reload.Generation
+		processedAt = reload.ProcessedAt
+		requestID = reload.RequestID
+	}
+	if generation > 0 || !processedAt.IsZero() || requestID != "" {
+		reloadFields := []string{"reload", fmt.Sprintf("generation=%d", generation)}
+		if !processedAt.IsZero() {
+			reloadFields = append(reloadFields, "processedAt="+processedAt.Format(time.RFC3339))
+		}
+		if requestID != "" {
+			reloadFields = append(reloadFields, "requestId="+requestID)
+		}
+		lines = append(lines, strings.Join(reloadFields, "\t"))
+	}
+	return lines
+}
+
+func semanticReindexRemediation(readiness search.SemanticIndexReadiness) string {
+	if !readiness.Enabled || readiness.OptedOut {
+		return ""
+	}
+	if readiness.Stale || readiness.Degraded || !readiness.Ready {
+		return "knowns search --reindex"
+	}
+	return ""
+}
+
+func formatSemanticIndexReadinessLines(readiness *search.SemanticIndexReadiness, styled bool) []string {
+	if readiness == nil {
+		return nil
+	}
+	status := "ready"
+	if !readiness.Enabled || readiness.OptedOut {
+		status = "keyword-only"
+	} else if readiness.Stale {
+		status = "stale"
+	} else if readiness.Degraded || !readiness.Ready {
+		status = "needs reindex"
+	}
+	line := fmt.Sprintf("Index     %s  backend=%s  mode=%s  chunks=%d", status, readiness.Backend, readiness.Mode, readiness.ChunkCount)
+	if readiness.Model != "" {
+		line += "  model=" + readiness.Model
+	}
+	if readiness.Dimensions > 0 {
+		line += fmt.Sprintf("  dims=%d", readiness.Dimensions)
+	}
+	if readiness.IndexedAt != nil {
+		line += "  indexedAt=" + readiness.IndexedAt.Format(time.RFC3339)
+	}
+	if readiness.Reason != "" {
+		line += "  reason=" + readiness.Reason
+	}
+	lines := []string{line}
+	if remediation := semanticReindexRemediation(*readiness); remediation != "" {
+		warning := "Reindex   semantic index may not match current embedding identity; run: " + remediation
+		if styled {
+			warning = StyleWarning.Render(warning)
+		}
+		lines = append(lines, warning)
+	}
+	return lines
+}
+
+func formatSemanticIndexReadinessPlainLine(readiness search.SemanticIndexReadiness) string {
+	fields := []string{
+		"index",
+		fmt.Sprintf("enabled=%t", readiness.Enabled),
+		"backend=" + readiness.Backend,
+		"mode=" + readiness.Mode,
+		fmt.Sprintf("ready=%t", readiness.Ready),
+		fmt.Sprintf("stale=%t", readiness.Stale),
+		fmt.Sprintf("degraded=%t", readiness.Degraded),
+		fmt.Sprintf("chunks=%d", readiness.ChunkCount),
+	}
+	if readiness.Model != "" {
+		fields = append(fields, "model="+readiness.Model)
+	}
+	if readiness.Dimensions > 0 {
+		fields = append(fields, fmt.Sprintf("dimensions=%d", readiness.Dimensions))
+	}
+	if readiness.ChunkVersion > 0 {
+		fields = append(fields, fmt.Sprintf("chunkVersion=%d", readiness.ChunkVersion))
+	}
+	if readiness.IndexedAt != nil {
+		fields = append(fields, "indexedAt="+readiness.IndexedAt.Format(time.RFC3339))
+	}
+	if readiness.Reason != "" {
+		fields = append(fields, "reason="+readiness.Reason)
+	}
+	return strings.Join(fields, "\t")
+}
+
+func renderRuntimePsPlain(cmd *cobra.Command, status *runtimequeue.Status, snapshots []projectSnapshot, summary runtimePsSummary, opts runtimePsOptions, semantic search.SemanticRuntimeStatus, reload runtimequeue.ReloadStatus) {
 	w := cmd.OutOrStdout()
 	state := "running"
 	if !status.Running {
 		state = "stopped"
 	}
 	fmt.Fprintf(w, "runtime\t%s\tpid=%d\tversion=%s\n", state, status.PID, status.Version)
+	for _, line := range formatSemanticRuntimePlainLines(semantic, reload) {
+		fmt.Fprintln(w, line)
+	}
+	for _, watcher := range status.Watchers {
+		state := "stopped"
+		if watcher.Active {
+			state = "active"
+		}
+		if watcher.GracePending {
+			state = "grace"
+		}
+		fmt.Fprintf(w, "watcher\t%s\tdemand=%d\tstate=%s", filepath.Base(watcher.ProjectRoot), watcher.Demand, state)
+		if watcher.GracePending && !watcher.GraceUntil.IsZero() {
+			fmt.Fprintf(w, "\tuntil=%s", watcher.GraceUntil.Format(time.RFC3339))
+		}
+		fmt.Fprintln(w)
+	}
 	fmt.Fprintf(w, "activity\tclients=%d\tprojects=%d\trunning=%d\tqueued=%d\trecent=%d\tfailed=%d\n",
 		summary.Clients, summary.Projects, summary.RunningJobs, summary.QueuedJobs, summary.RecentJobs, summary.FailedJobs)
 
@@ -1075,8 +1444,128 @@ var runtimeStopCmd = &cobra.Command{
 }
 
 func startRuntimeWatcher(ctx context.Context, storeRoot string) error {
+	watchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	store := storage.NewStore(storeRoot)
-	return StartCodeWatcher(ctx, store, filepath.Dir(storeRoot), watchDebounceMs)
+	enqueueIndex := func(result storage.ReconcileResult) error {
+		if search.ResolveSemanticIndexReadiness(store).Backend != "qdrant" {
+			kind := runtimequeue.JobIndexDoc
+			if result.Operation == storage.LifecycleOperationDelete || result.Operation == storage.LifecycleOperationHardDelete {
+				kind = runtimequeue.JobRemoveDoc
+			}
+			target := strings.TrimSuffix(strings.TrimPrefix(filepath.ToSlash(result.Path), "docs/"), ".md")
+			if result.EntityType == "task" {
+				kind, target = runtimequeue.JobIndexTask, result.EntityID
+				if result.Operation == storage.LifecycleOperationDelete || result.Operation == storage.LifecycleOperationHardDelete {
+					kind = runtimequeue.JobRemoveTask
+				}
+			}
+			_, err := runtimequeue.Enqueue(storeRoot, kind, target)
+			return err
+		}
+		path := result.CurrentPath
+		if path == "" {
+			path = result.Path
+		}
+		_, err := runtimequeue.EnqueueQdrantIntent(storeRoot, runtimequeue.QdrantIntent{
+			EntityType: result.EntityType, EntityID: result.EntityID,
+			Revision: result.Revision, Operation: result.Operation,
+			CanonicalHash: result.NewHash, Path: path,
+			PreviousPath: result.PreviousPath, BatchID: result.BatchID,
+		})
+		return err
+	}
+	// Code and knowledge watchers share the runtime lease, but knowledge
+	// events are handed to a bounded serialized reconciler worker. The
+	// fsnotify goroutine never appends history or touches an index.
+	reconciler, err := storage.NewFilesystemReconciler(storeRoot, enqueueIndex)
+	if err != nil {
+		return err
+	}
+	// Reconcile offline edits before opening the event stream. This makes the
+	// startup boundary durable and hands off targeted indexing before fresh
+	// watcher events are accepted.
+	if _, err := reconciler.ReconcileLifecycleWithOptions(watchCtx, true, storage.LifecycleOptions{Source: "watcher-startup", Wait: true}); err != nil {
+		return err
+	}
+	var hintMu sync.Mutex
+	pending := make(map[string]storage.ReconcileHint)
+	wake := make(chan struct{}, 1)
+	resolved := make(chan []storage.ReconcileHint, 1)
+	workerDone := make(chan struct{})
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		for {
+			select {
+			case <-watchCtx.Done():
+				return
+			case <-wake:
+				hintMu.Lock()
+				batch := make([]storage.ReconcileHint, 0, len(pending))
+				for path, hint := range pending {
+					batch = append(batch, hint)
+					delete(pending, path)
+				}
+				hintMu.Unlock()
+				select {
+				case resolved <- batch:
+				case <-watchCtx.Done():
+					return
+				}
+			}
+		}
+	}()
+	go func() {
+		defer workers.Done()
+		for {
+			select {
+			case <-watchCtx.Done():
+				return
+			case batch := <-resolved:
+				if _, err := reconciler.ReconcileLifecycleBatchWithOptions(watchCtx, storage.LifecycleBatch{Source: "watcher", Hints: batch, Limit: storage.DefaultLifecycleBatchLimit}, true, true); err != nil {
+					fmt.Fprintf(os.Stderr, "knowledge reconciliation error: %v\n", err)
+				}
+			}
+		}
+	}()
+	go func() { workers.Wait(); close(workerDone) }()
+	knowledgeErr := make(chan error, 1)
+	go func() {
+		knowledgeErr <- StartKnowledgeWatcher(watchCtx, storeRoot, func(batch []storage.ReconcileHint) error {
+			hintMu.Lock()
+			defer hintMu.Unlock()
+			for _, hint := range batch {
+				if len(pending) >= 4096 {
+					if _, exists := pending[hint.Path]; !exists {
+						return fmt.Errorf("knowledge hint queue capacity exceeded (4096); retry reconciliation")
+					}
+				}
+				pending[hint.Path] = hint
+			}
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+			return nil
+		})
+	}()
+	codeErr := make(chan error, 1)
+	go func() { codeErr <- StartCodeWatcher(watchCtx, store, filepath.Dir(storeRoot), watchDebounceMs) }()
+	select {
+	case <-ctx.Done():
+		<-workerDone
+		return nil
+	case err := <-knowledgeErr:
+		cancel()
+		<-workerDone
+		return err
+	case err := <-codeErr:
+		cancel()
+		<-workerDone
+		return err
+	}
 }
 
 var runtimeLogsCmd = &cobra.Command{
@@ -1234,6 +1723,7 @@ func init() {
 	runtimeCmd.AddCommand(runtimeUninstallCmd)
 	runtimeCmd.AddCommand(runtimeStatusCmd)
 	runtimeCmd.AddCommand(runtimePsCmd)
+	runtimeCmd.AddCommand(runtimeReloadCmd)
 	runtimeCmd.AddCommand(runtimeStopCmd)
 	runtimeCmd.AddCommand(runtimeLogsCmd)
 
@@ -1245,6 +1735,9 @@ func init() {
 	runtimePsCmd.Flags().Bool("all", false, "Show all retained recent jobs")
 	runtimePsCmd.Flags().Int("clients", defaultRuntimePsClientLimit, "Number of connected clients to show in compact output (0 hides client rows)")
 	runtimePsCmd.Flags().Int("failures", defaultRuntimePsFailureLimit, "Number of grouped recent failures to show in compact output (0 hides failure rows)")
+
+	runtimeReloadCmd.Flags().Bool("wait", false, "Wait until runtime acknowledges reload")
+	runtimeReloadCmd.Flags().Duration("timeout", 10*time.Second, "Maximum time to wait for reload acknowledgement")
 
 	runtimeLogsCmd.Flags().BoolP("follow", "f", false, "Follow new log lines")
 	runtimeLogsCmd.Flags().IntP("tail", "n", 50, "Number of trailing lines to show")

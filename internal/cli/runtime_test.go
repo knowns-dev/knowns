@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/howznguyen/knowns/internal/runtimequeue"
+	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/services"
 	"github.com/spf13/cobra"
 )
@@ -89,7 +90,7 @@ func TestRuntimePsDefaultIsCompactAndGroupsFailures(t *testing.T) {
 	}
 
 	cmd, out := runtimePsRenderTestCmd()
-	renderRuntimePs(cmd, status, nil, snapshots, summary, runtimePsOptions{ClientLimit: defaultRuntimePsClientLimit, FailureLimit: defaultRuntimePsFailureLimit}, false)
+	renderRuntimePs(cmd, status, nil, snapshots, summary, runtimePsOptions{ClientLimit: defaultRuntimePsClientLimit, FailureLimit: defaultRuntimePsFailureLimit}, search.SemanticRuntimeStatus{}, runtimequeue.ReloadStatus{}, false)
 	got := out.String()
 	for _, want := range []string{"Activity", "Recent failures", "repeated 2x", "ONNX Runtime is not installed", "knowns runtime install onnx", "knowns runtime ps --jobs --tail 20"} {
 		if !strings.Contains(got, want) {
@@ -133,7 +134,7 @@ func TestRuntimePsPlainDefaultDoesNotDumpAllRecentJobs(t *testing.T) {
 	status := &runtimequeue.Status{Running: true, PID: 42, Version: "test"}
 	summary := summarizeRuntimePs(status, snapshots, defaultRuntimePsFailureLimit)
 	cmd, out := runtimePsRenderTestCmd()
-	renderRuntimePsPlain(cmd, status, snapshots, summary, runtimePsOptions{ClientLimit: defaultRuntimePsClientLimit, FailureLimit: defaultRuntimePsFailureLimit})
+	renderRuntimePsPlain(cmd, status, snapshots, summary, runtimePsOptions{ClientLimit: defaultRuntimePsClientLimit, FailureLimit: defaultRuntimePsFailureLimit}, search.SemanticRuntimeStatus{}, runtimequeue.ReloadStatus{})
 	got := out.String()
 	if !strings.Contains(got, "activity\t") || !strings.Contains(got, "failure\t") {
 		t.Fatalf("plain compact summary missing activity/failure, got:\n%s", got)
@@ -157,7 +158,7 @@ func TestRuntimePsCustomClientLimit(t *testing.T) {
 	}
 	summary := summarizeRuntimePs(status, nil, defaultRuntimePsFailureLimit)
 	cmd, out := runtimePsRenderTestCmd()
-	renderRuntimePs(cmd, status, nil, nil, summary, runtimePsOptions{ClientLimit: 2, FailureLimit: defaultRuntimePsFailureLimit}, false)
+	renderRuntimePs(cmd, status, nil, nil, summary, runtimePsOptions{ClientLimit: 2, FailureLimit: defaultRuntimePsFailureLimit}, search.SemanticRuntimeStatus{}, runtimequeue.ReloadStatus{}, false)
 	got := out.String()
 	for _, want := range []string{"pid=101", "pid=102", "… 1 more clients"} {
 		if !strings.Contains(got, want) {
@@ -185,7 +186,7 @@ func TestRuntimePsCustomFailureLimit(t *testing.T) {
 		t.Fatalf("failure limit produced %d summaries, want 2", len(summary.Failures))
 	}
 	cmd, out := runtimePsRenderTestCmd()
-	renderRuntimePs(cmd, status, nil, snapshots, summary, runtimePsOptions{ClientLimit: defaultRuntimePsClientLimit, FailureLimit: 2}, false)
+	renderRuntimePs(cmd, status, nil, snapshots, summary, runtimePsOptions{ClientLimit: defaultRuntimePsClientLimit, FailureLimit: 2}, search.SemanticRuntimeStatus{}, runtimequeue.ReloadStatus{}, false)
 	got := out.String()
 	if strings.Contains(got, "failure one") {
 		t.Fatalf("custom failure limit leaked oldest failure, got:\n%s", got)
@@ -217,13 +218,104 @@ func TestRuntimePsPlainHonorsCustomCompactLimits(t *testing.T) {
 	}}
 	summary := summarizeRuntimePs(status, snapshots, 1)
 	cmd, out := runtimePsRenderTestCmd()
-	renderRuntimePsPlain(cmd, status, snapshots, summary, runtimePsOptions{ClientLimit: 1, FailureLimit: 1})
+	renderRuntimePsPlain(cmd, status, snapshots, summary, runtimePsOptions{ClientLimit: 1, FailureLimit: 1}, search.SemanticRuntimeStatus{}, runtimequeue.ReloadStatus{})
 	got := out.String()
 	if strings.Count(got, "\nclient\t") != 1 || !strings.Contains(got, "clients-more\tcount=1") {
 		t.Fatalf("plain client limit not honored, got:\n%s", got)
 	}
 	if strings.Count(got, "\nfailure\t") != 1 || strings.Contains(got, "failure one") {
 		t.Fatalf("plain failure limit not honored, got:\n%s", got)
+	}
+}
+
+func TestFormatSemanticRuntimePlainLinesIncludesIdentityAndReload(t *testing.T) {
+	processedAt := time.Date(2026, 8, 13, 6, 30, 0, 0, time.UTC)
+	lines := formatSemanticRuntimePlainLines(search.SemanticRuntimeStatus{
+		Enabled:          true,
+		LastReloadAt:     processedAt,
+		ReloadGeneration: 7,
+		ReloadRequestID:  "reload-123",
+		Entries: []search.SemanticRuntimeEntryInfo{{
+			Provider:         "ollama",
+			Model:            "qwen3-embedding:0.6b",
+			Dimensions:       1024,
+			Loaded:           true,
+			ProviderIdentity: "ollama/qwen3-embedding:0.6b/1024",
+		}},
+	}, runtimequeue.ReloadStatus{})
+	got := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"semantic",
+		"provider=ollama",
+		"model=qwen3-embedding:0.6b",
+		"dimensions=1024",
+		"identity=ollama/qwen3-embedding:0.6b/1024",
+		"reload",
+		"generation=7",
+		"requestId=reload-123",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in semantic runtime plain lines, got:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderRuntimePsPlainIncludesSemanticReloadIdentity(t *testing.T) {
+	processedAt := time.Date(2026, 8, 13, 6, 30, 0, 0, time.UTC)
+	status := &runtimequeue.Status{Running: true, PID: 42, Version: "test"}
+	semantic := search.SemanticRuntimeStatus{
+		Enabled: true,
+		Entries: []search.SemanticRuntimeEntryInfo{{
+			Provider:         "ollama",
+			Model:            "qwen3-embedding:0.6b",
+			Dimensions:       1024,
+			Loaded:           true,
+			ProviderIdentity: "ollama/qwen3-embedding:0.6b/1024",
+		}},
+	}
+	reload := runtimequeue.ReloadStatus{RequestID: "reload-123", Generation: 7, ProcessedAt: processedAt}
+	cmd, out := runtimePsRenderTestCmd()
+	renderRuntimePsPlain(cmd, status, nil, summarizeRuntimePs(status, nil, defaultRuntimePsFailureLimit), runtimePsOptions{}, semantic, reload)
+	got := out.String()
+	for _, want := range []string{
+		"semantic\t",
+		"reload\t",
+		"provider=ollama",
+		"model=qwen3-embedding:0.6b",
+		"dimensions=1024",
+		"identity=ollama/qwen3-embedding:0.6b/1024",
+		"generation=7",
+		"requestId=reload-123",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in runtime ps plain output, got:\n%s", want, got)
+		}
+	}
+}
+
+func TestSemanticReindexRemediation(t *testing.T) {
+	for name, readiness := range map[string]search.SemanticIndexReadiness{
+		"not-ready": {Enabled: true, Ready: false},
+		"stale":     {Enabled: true, Ready: true, Stale: true},
+		"degraded":  {Enabled: true, Ready: true, Degraded: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := semanticReindexRemediation(readiness); got != "knowns search --reindex" {
+				t.Fatalf("remediation = %q, want knowns search --reindex", got)
+			}
+		})
+	}
+
+	for name, readiness := range map[string]search.SemanticIndexReadiness{
+		"disabled":  {Enabled: false},
+		"opted-out": {Enabled: true, OptedOut: true},
+		"ready":     {Enabled: true, Ready: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := semanticReindexRemediation(readiness); got != "" {
+				t.Fatalf("remediation = %q, want empty", got)
+			}
+		})
 	}
 }
 
