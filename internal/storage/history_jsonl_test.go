@@ -101,7 +101,8 @@ func TestTaskHistoryReplayPreservesZeroValueDeltas(t *testing.T) {
 	if archived, ok := snapshot["archived"].(bool); !ok || archived {
 		t.Fatalf("replayed archived = %#v, want false", snapshot["archived"])
 	}
-	if spent, ok := snapshot["timeSpent"].(int); !ok || spent != 0 {
+	// After JSON round-trip, numbers become float64
+	if spent, ok := snapshot["timeSpent"].(float64); !ok || spent != 0 {
 		t.Fatalf("replayed timeSpent = %#v, want 0", snapshot["timeSpent"])
 	}
 	if _, ok := snapshot["description"]; ok {

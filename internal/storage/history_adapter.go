@@ -59,10 +59,48 @@ func applyTaskChangesToMap(state map[string]any, changes []models.TaskChange) ma
 				delete(state, change.Field)
 			}
 		} else {
-			state[change.Field] = cloneHistoryValue(change.NewValue)
+			// Normalize the new value before cloning to ensure consistency.
+			// During write, change.NewValue may be strongly-typed (e.g., []models.AcceptanceCriterion).
+			// During replay from JSONL, it's already normalized as []any.
+			// We normalize here to ensure both paths produce identical state.
+			normalizedValue := normalizeValue(change.NewValue)
+			state[change.Field] = cloneHistoryValue(normalizedValue)
 		}
 	}
-	return state
+	// Normalize the entire state through JSON round-trip to ensure consistent
+	// hash computation. This is critical because values read from JSONL (like
+	// []AcceptanceCriterion) are deserialized as []any with map[string]any
+	// elements, while original values are strongly typed. The normalization
+	// ensures both produce the same hash.
+	return normalizeStateMap(state)
+}
+
+func normalizeStateMap(state map[string]any) map[string]any {
+	data, err := json.Marshal(state)
+	if err != nil {
+		return state
+	}
+	var normalized map[string]any
+	if err := json.Unmarshal(data, &normalized); err != nil {
+		return state
+	}
+	return normalized
+}
+
+// normalizeValue normalizes any value through JSON round-trip.
+// This converts strongly-typed values (like []models.AcceptanceCriterion)
+// into their JSON-equivalent forms ([]any with map[string]any elements),
+// ensuring consistency between write and replay paths.
+func normalizeValue(value any) any {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	var normalized any
+	if err := json.Unmarshal(data, &normalized); err != nil {
+		return value
+	}
+	return normalized
 }
 
 func taskCanonicalHash(snapshot map[string]any) string {
@@ -72,6 +110,8 @@ func taskCanonicalHash(snapshot map[string]any) string {
 	// writes that legitimately refresh UpdatedAt.
 	delete(canonical, "createdAt")
 	delete(canonical, "updatedAt")
+	delete(canonical, "completedAt")
+	delete(canonical, "archivedAt")
 	return hashSnapshot(canonical)
 }
 
@@ -98,13 +138,16 @@ func taskHistoryFromRecords(taskID string, records []models.HistoryRecord) (*mod
 			return nil, fmt.Errorf("history entity mismatch for Task %q", taskID)
 		}
 		if record.Checkpoint {
-			state = cloneMap(record.CheckpointPayload)
+			state = normalizeStateMap(cloneMap(record.CheckpointPayload))
 		}
 		if !record.Checkpoint {
-			applyTaskChangesToMap(state, record.TaskChanges)
+			state = applyTaskChangesToMap(state, record.TaskChanges)
 		}
-		if record.NewHash != "" && !record.LegacyUnverified && taskCanonicalHash(state) != record.NewHash {
-			return nil, fmt.Errorf("%w: Task canonical hash mismatch at revision %d (got %s want %s)", ErrHistoryCorrupt, record.Revision, taskCanonicalHash(state), record.NewHash)
+		if record.NewHash != "" && !record.LegacyUnverified {
+			computedHash := taskCanonicalHash(state)
+			if computedHash != record.NewHash {
+				return nil, fmt.Errorf("%w: Task canonical hash mismatch at revision %d (got %s want %s)", ErrHistoryCorrupt, record.Revision, computedHash, record.NewHash)
+			}
 		}
 		version := models.TaskVersion{
 			ID: firstNonEmpty(record.LegacyID, fmt.Sprintf("v%d", firstPositive(record.LegacyRevision, record.Revision))), TaskID: taskID, Version: firstPositive(record.LegacyRevision, record.Revision),

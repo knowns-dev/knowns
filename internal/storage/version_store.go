@@ -189,6 +189,14 @@ func (vs *VersionStore) saveVersionUnlocked(taskID string, version models.TaskVe
 		version.Timestamp = time.Now().UTC()
 	}
 
+	// Normalize snapshot before storing to ensure consistency between write and replay paths.
+	// During replay from JSONL, snapshots are already normalized via JSON unmarshal.
+	// During write, snapshots come from TaskToSnapshot() and may contain strongly-typed values.
+	// Normalizing here ensures h.Versions always contains normalized snapshots.
+	if version.Snapshot != nil {
+		version.Snapshot = normalizeStateMap(version.Snapshot)
+	}
+
 	h.Versions = append(h.Versions, version)
 	checkpoint := len(h.Versions) == 1 || version.Checkpoint || historyDeltaInefficient(version.Changes, version.Snapshot)
 	baseHash := ""
@@ -198,12 +206,15 @@ func (vs *VersionStore) saveVersionUnlocked(taskID string, version models.TaskVe
 			baseHash = taskCanonicalHash(h.Versions[len(h.Versions)-2].Snapshot)
 		}
 	}
-	stateForHash := cloneMap(version.Snapshot)
+	// For hash computation: normalize checkpoint, or apply changes to normalized previous state
+	stateForHash := normalizeStateMap(cloneMap(version.Snapshot))
 	if len(h.Versions) > 1 && !checkpoint {
-		stateForHash = cloneMap(h.Versions[len(h.Versions)-2].Snapshot)
-		stateForHash = applyTaskChangesToMap(stateForHash, version.Changes)
+		// Previous snapshot is already normalized (stored normalized or from JSONL replay)
+		normalizedPrev := cloneMap(h.Versions[len(h.Versions)-2].Snapshot)
+		stateForHash = applyTaskChangesToMap(normalizedPrev, version.Changes)
 	}
 	newHash := taskCanonicalHash(stateForHash)
+	
 	version.SchemaVersion = historySchemaVersion
 	version.BaseHash = baseHash
 	version.NewHash = newHash
@@ -335,7 +346,20 @@ func TaskToSnapshot(task *models.Task) map[string]any {
 	if task.ArchivedAt != nil {
 		snap["archivedAt"] = *task.ArchivedAt
 	}
-	return snap
+	
+	// Normalize through JSON round-trip to ensure consistent structure.
+	// This is critical because strongly-typed fields (like []AcceptanceCriterion)
+	// have different JSON key ordering than map[string]any after unmarshal.
+	// Without this normalization, hash computation differs between write and replay paths.
+	data, err := json.Marshal(snap)
+	if err != nil {
+		return snap
+	}
+	var normalized map[string]any
+	if err := json.Unmarshal(data, &normalized); err != nil {
+		return snap
+	}
+	return normalized
 }
 
 // --- Activity feed ---
@@ -2005,14 +2029,28 @@ func hashSnapshot(snapshot map[string]any) string {
 	if len(snapshot) == 0 {
 		return ""
 	}
+	// Double round-trip to ensure deterministic JSON encoding.
+	// First round-trip normalizes structs to maps (e.g., []AcceptanceCriterion → []map[string]any).
+	// Second round-trip ensures all nested maps have alphabetically sorted keys,
+	// producing identical JSON regardless of whether the source was a struct or map.
 	data, err := json.Marshal(snapshot)
 	if err != nil {
 		return ""
 	}
 	var normalized map[string]any
-	if json.Unmarshal(data, &normalized) == nil {
-		data, _ = json.Marshal(normalized)
+	if err := json.Unmarshal(data, &normalized); err != nil {
+		return ""
 	}
+	// Second round-trip to ensure nested maps (like AcceptanceCriteria elements)
+	// also have sorted keys, not struct field order
+	data, err = json.Marshal(normalized)
+	if err != nil {
+		return ""
+	}
+	if err := json.Unmarshal(data, &normalized); err != nil {
+		return ""
+	}
+	data, _ = json.Marshal(normalized)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
