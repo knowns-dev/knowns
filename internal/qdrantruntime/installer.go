@@ -131,7 +131,14 @@ func (i Installer) fetch(ctx context.Context, a Artifact, dst string) error {
 			if u.Host != "" {
 				return fmt.Errorf("Qdrant local mirror must use a local file:// path")
 			}
-			source = filepath.Join(u.Path, a.Filename)
+			// Convert file URL path to OS path
+			// On Windows: /C:/path -> C:/path (remove leading slash)
+			// On Unix: /path -> /path (keep as is)
+			path := u.Path
+			if runtime.GOOS == "windows" && len(path) > 2 && path[0] == '/' && path[2] == ':' {
+				path = path[1:] // Remove leading slash: /C:/path -> C:/path
+			}
+			source = filepath.Join(path, a.Filename)
 		} else if u.Scheme != "https" || u.Hostname() == "" {
 			return fmt.Errorf("Qdrant mirror must be HTTPS or file:// local path")
 		} else {
