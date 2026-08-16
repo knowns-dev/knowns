@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,7 +115,11 @@ func TestTaskAutoArchiveSweeperRunsBoundedStartupSweepWithoutPurge(t *testing.T)
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	defer func() {
+		cancel()
+		// Wait for goroutine to fully stop before cleanup
+		time.Sleep(50 * time.Millisecond)
+	}()
 	StartTaskAutoArchiveSweeper(ctx, func() *storage.Store { return store }, nil, time.Hour)
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -382,4 +387,393 @@ func createTaskLifecycleRouteTask(t *testing.T, store *storage.Store, id string)
 	if err := store.Tasks.Create(task); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestTaskRoutesMetadataPageIsPayloadFreeAndDetailIsExplicit(t *testing.T) {
+	store := newTaskLifecycleRouteStore(t)
+	now := time.Now().UTC()
+	task := &models.Task{ID: "task-metadata", Title: "metadata", Status: "todo", Priority: "medium", CreatedAt: now, UpdatedAt: now}
+	if err := store.CreateTaskWithHistory(context.Background(), task, models.TaskVersion{Snapshot: storage.TaskToSnapshot(task), Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+	router := chi.NewRouter()
+	(&TaskRoutes{store: store, sse: &fakeBroadcaster{}}).Register(router)
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/task-metadata/history?metadata=true&limit=1", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("metadata status = %d body=%s", w.Code, w.Body.String())
+	}
+	var page models.TaskVersionHistoryPage
+	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if page.EntityType != "task" || page.EntityID != task.ID || len(page.Items) != 1 || page.Items[0].ID != "v1" {
+		t.Fatalf("metadata page = %#v", page)
+	}
+	for _, forbidden := range []string{`"snapshot"`, `"changes"`, `"taskChanges"`, `"checkpointPayload"`} {
+		if strings.Contains(w.Body.String(), forbidden) {
+			t.Fatalf("metadata response exposed payload key %s: %s", forbidden, w.Body.String())
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/tasks/task-metadata/history/v1", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("detail status = %d body=%s", w.Code, w.Body.String())
+	}
+	var detail models.TaskVersion
+	if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.ID != "v1" || detail.Snapshot["title"] != task.Title {
+		t.Fatalf("detail = %#v", detail)
+	}
+}
+
+func TestTaskHTTPStaleExpectedHashIsContentFreeAndSideEffectFree(t *testing.T) {
+	store := newTaskLifecycleRouteStore(t)
+	now := time.Now().UTC()
+	if err := store.Tasks.Create(&models.Task{ID: "http-stale", Title: "base", Status: "todo", Priority: "medium", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	broadcaster := &fakeBroadcaster{}
+	router := chi.NewRouter()
+	(&TaskRoutes{store: store, sse: broadcaster}).Register(router)
+	base, err := store.Tasks.Get("http-stale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := json.Marshal(map[string]any{"title": "fresh", "expectedHash": base.CanonicalHash})
+	req := httptest.NewRequest(http.MethodPut, "/tasks/http-stale", bytes.NewReader(first))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("fresh update status=%d body=%s", w.Code, w.Body.String())
+	}
+	historyBefore, err := store.Versions.GetHistory("http-stale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventsBefore := len(broadcaster.events)
+	stale, _ := json.Marshal(map[string]any{"title": "secret-title-must-not-leak", "description": "secret-description-must-not-leak", "expectedHash": base.CanonicalHash})
+	req = httptest.NewRequest(http.MethodPut, "/tasks/http-stale", bytes.NewReader(stale))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("stale update status=%d body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "secret-title") || strings.Contains(w.Body.String(), "secret-description") {
+		t.Fatalf("stale conflict leaked content: %s", w.Body.String())
+	}
+	final, err := store.Tasks.Get("http-stale")
+	if err != nil || final.Title != "fresh" {
+		t.Fatalf("final task=%#v err=%v", final, err)
+	}
+	historyAfter, err := store.Versions.GetHistory("http-stale")
+	if err != nil || len(historyAfter.Versions) != len(historyBefore.Versions) {
+		t.Fatalf("stale history changed before=%d after=%d err=%v", len(historyBefore.Versions), len(historyAfter.Versions), err)
+	}
+	if len(broadcaster.events) != eventsBefore {
+		t.Fatalf("stale update emitted SSE: before=%d after=%d", eventsBefore, len(broadcaster.events))
+	}
+}
+
+func TestTaskHTTPReorderRejectsStaleExpectedHashWithoutSideEffects(t *testing.T) {
+	store := newTaskLifecycleRouteStore(t)
+	createTaskLifecycleRouteTask(t, store, "reorder-stale")
+	base, err := store.Tasks.Get("reorder-stale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseHash := base.CanonicalHash
+	if _, err := tasklifecycle.New(store).UpdateTask(t.Context(), base.ID, tasklifecycle.TaskUpdateOptions{Mutate: func(task *models.Task) error {
+		task.Title = "reorder-secret-title"
+		task.Description = "reorder-secret-description"
+		return nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.Tasks.Get(base.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyBefore, err := store.Versions.GetHistory(base.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broadcaster := &fakeBroadcaster{}
+	router := chi.NewRouter()
+	(&TaskRoutes{store: store, sse: broadcaster}).Register(router)
+	body, err := json.Marshal(map[string]any{
+		"orders":         []map[string]any{{"id": base.ID, "order": 7}},
+		"expectedHashes": map[string]string{base.ID: baseHash},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/tasks/reorder", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("stale reorder status=%d body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "reorder-secret-title") || strings.Contains(w.Body.String(), "reorder-secret-description") {
+		t.Fatalf("stale reorder leaked Task content: %s", w.Body.String())
+	}
+	after, err := store.Tasks.Get(base.ID)
+	if err != nil || after.Order != before.Order || after.CanonicalHash != before.CanonicalHash {
+		t.Fatalf("stale reorder changed canonical Task: before=%#v after=%#v err=%v", before, after, err)
+	}
+	historyAfter, err := store.Versions.GetHistory(base.ID)
+	if err != nil || len(historyAfter.Versions) != len(historyBefore.Versions) {
+		t.Fatalf("stale reorder changed history: before=%d after=%d err=%v", len(historyBefore.Versions), len(historyAfter.Versions), err)
+	}
+	if len(broadcaster.events) != 0 {
+		t.Fatalf("stale reorder emitted SSE: %+v", broadcaster.events)
+	}
+}
+
+func TestTaskHTTPReorderIsAllOrNothingForStaleBatchMember(t *testing.T) {
+	store := newTaskLifecycleRouteStore(t)
+	createTaskLifecycleRouteTask(t, store, "reorder-first")
+	createTaskLifecycleRouteTask(t, store, "reorder-stale")
+	first, err := store.Tasks.Get("reorder-first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale, err := store.Tasks.Get("reorder-stale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleExpected := stale.CanonicalHash
+	if _, err := tasklifecycle.New(store).UpdateTask(t.Context(), stale.ID, tasklifecycle.TaskUpdateOptions{Mutate: func(task *models.Task) error {
+		task.Title = "reorder-batch-secret"
+		return nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	firstBefore, err := store.Tasks.Get(first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleBefore, err := store.Tasks.Get(stale.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstHistoryBefore, err := store.Versions.GetHistory(first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleHistoryBefore, err := store.Versions.GetHistory(stale.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broadcaster := &fakeBroadcaster{}
+	router := chi.NewRouter()
+	(&TaskRoutes{store: store, sse: broadcaster}).Register(router)
+	// The stale base is the pre-edit hash captured before the direct mutation.
+	body, err := json.Marshal(map[string]any{
+		"orders":         []map[string]any{{"id": first.ID, "order": 1}, {"id": stale.ID, "order": 2}},
+		"expectedHashes": map[string]string{first.ID: firstBefore.CanonicalHash, stale.ID: staleExpected},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/tasks/reorder", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict || strings.Contains(w.Body.String(), "reorder-batch-secret") {
+		t.Fatalf("stale batch reorder status=%d body=%s", w.Code, w.Body.String())
+	}
+	firstAfter, err := store.Tasks.Get(first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleAfter, err := store.Tasks.Get(stale.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstAfter.Order != nil || firstAfter.CanonicalHash != firstBefore.CanonicalHash || staleAfter.CanonicalHash != staleBefore.CanonicalHash {
+		t.Fatalf("stale batch reorder partially changed canonical state: first=%#v stale=%#v", firstAfter, staleAfter)
+	}
+	firstHistoryAfter, err := store.Versions.GetHistory(first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleHistoryAfter, err := store.Versions.GetHistory(stale.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firstHistoryAfter.Versions) != len(firstHistoryBefore.Versions) || len(staleHistoryAfter.Versions) != len(staleHistoryBefore.Versions) || len(broadcaster.events) != 0 {
+		t.Fatalf("stale batch reorder side effects: first history %d/%d stale history %d/%d events=%d", len(firstHistoryAfter.Versions), len(firstHistoryBefore.Versions), len(staleHistoryAfter.Versions), len(staleHistoryBefore.Versions), len(broadcaster.events))
+	}
+}
+
+func TestTaskHTTPBatchExpectedHashesRejectOnlyStaleItem(t *testing.T) {
+	t.Run("archive", func(t *testing.T) {
+		store := newTaskLifecycleRouteStore(t)
+		createTaskLifecycleRouteTask(t, store, "batch-a-stale")
+		createTaskLifecycleRouteTask(t, store, "batch-b-other")
+		stale, err := store.Tasks.Get("batch-a-stale")
+		if err != nil {
+			t.Fatal(err)
+		}
+		other, err := store.Tasks.Get("batch-b-other")
+		if err != nil {
+			t.Fatal(err)
+		}
+		staleExpected := stale.CanonicalHash
+		otherExpected := other.CanonicalHash
+		if _, err := tasklifecycle.New(store).UpdateTask(t.Context(), stale.ID, tasklifecycle.TaskUpdateOptions{Mutate: func(task *models.Task) error {
+			task.Title = "batch-stale-secret-title"
+			task.Description = "batch-stale-secret-description"
+			return nil
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		staleBefore, err := store.Tasks.Get(stale.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		historyBefore, err := store.Versions.GetHistory(stale.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		broadcaster := &fakeBroadcaster{}
+		router := chi.NewRouter()
+		(&TaskRoutes{store: store, sse: broadcaster}).Register(router)
+		status, response := callTaskLifecycleRouteAny(t, router, "/tasks/batch-archive", map[string]any{
+			"ids": []string{stale.ID, other.ID}, "execute": true,
+			"expectedHashes": map[string]string{stale.ID: staleExpected, other.ID: otherExpected},
+		})
+		if status != http.StatusConflict || !response.Completed || response.FailedTaskID != stale.ID || response.Changed != 1 {
+			t.Fatalf("batch archive status=%d response=%+v", status, response)
+		}
+		if len(response.Items) != 2 || response.Items[0].TaskID != stale.ID || response.Items[1].TaskID != other.ID {
+			t.Fatalf("batch archive item order=%+v", response.Items)
+		}
+		if response.Items[0].Reasons[0].Code != tasklifecycle.ReasonOperationFailed || !response.Items[1].Changed {
+			t.Fatalf("batch archive items=%+v", response.Items)
+		}
+		body := responseBodyForBatch(t, router, "/tasks/batch-archive", map[string]any{
+			"ids": []string{stale.ID}, "execute": true,
+			"expectedHashes": map[string]string{stale.ID: staleExpected},
+		})
+		if strings.Contains(body, "batch-stale-secret-title") || strings.Contains(body, "batch-stale-secret-description") {
+			t.Fatalf("batch conflict leaked stale content: %s", body)
+		}
+		staleAfter, err := store.Tasks.Get(stale.ID)
+		if err != nil || staleAfter.CanonicalHash != staleBefore.CanonicalHash || staleAfter.Title != staleBefore.Title {
+			t.Fatalf("stale canonical changed: before=%#v after=%#v err=%v", staleBefore, staleAfter, err)
+		}
+		historyAfter, err := store.Versions.GetHistory(stale.ID)
+		if err != nil || len(historyAfter.Versions) != len(historyBefore.Versions) {
+			t.Fatalf("stale history changed: before=%d after=%d err=%v", len(historyBefore.Versions), len(historyAfter.Versions), err)
+		}
+		otherAfter, err := store.Tasks.Get(other.ID)
+		if err != nil || !otherAfter.Archived {
+			t.Fatalf("other Task was not archived: %#v err=%v", otherAfter, err)
+		}
+		if len(broadcaster.events) != 1 {
+			t.Fatalf("SSE events=%+v, want only successful other item", broadcaster.events)
+		}
+		event, ok := broadcaster.events[0].Data.(tasklifecycle.Event)
+		if !ok || event.TaskID != other.ID {
+			t.Fatalf("SSE event=%#v, want Task %s", broadcaster.events[0].Data, other.ID)
+		}
+	})
+
+	t.Run("unarchive", func(t *testing.T) {
+		store := newTaskLifecycleRouteStore(t)
+		createTaskLifecycleRouteTask(t, store, "batch-a-stale")
+		createTaskLifecycleRouteTask(t, store, "batch-b-other")
+		service := tasklifecycle.New(store)
+		for _, id := range []string{"batch-a-stale", "batch-b-other"} {
+			if _, err := service.Archive(t.Context(), id, tasklifecycle.ArchiveOptions{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		stale, err := store.Tasks.Get("batch-a-stale")
+		if err != nil {
+			t.Fatal(err)
+		}
+		other, err := store.Tasks.Get("batch-b-other")
+		if err != nil {
+			t.Fatal(err)
+		}
+		staleExpected := stale.CanonicalHash
+		otherExpected := other.CanonicalHash
+		stale.Title = "batch-unarchive-secret-title"
+		stale.Description = "batch-unarchive-secret-description"
+		if err := store.Tasks.Update(stale); err != nil {
+			t.Fatal(err)
+		}
+		staleBefore, err := store.Tasks.Get(stale.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		historyBefore, err := store.Versions.GetHistory(stale.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		broadcaster := &fakeBroadcaster{}
+		router := chi.NewRouter()
+		(&TaskRoutes{store: store, sse: broadcaster}).Register(router)
+		status, response := callTaskLifecycleRouteAny(t, router, "/tasks/batch-unarchive", map[string]any{
+			"ids": []string{stale.ID, other.ID}, "execute": true,
+			"expectedHashes": map[string]string{stale.ID: staleExpected, other.ID: otherExpected},
+		})
+		if status != http.StatusConflict || !response.Completed || response.FailedTaskID != stale.ID || response.Changed != 1 {
+			t.Fatalf("batch unarchive status=%d response=%+v", status, response)
+		}
+		if len(response.Items) != 2 || response.Items[0].TaskID != stale.ID || response.Items[1].TaskID != other.ID {
+			t.Fatalf("batch unarchive item order=%+v", response.Items)
+		}
+		body := responseBodyForBatch(t, router, "/tasks/batch-unarchive", map[string]any{
+			"ids": []string{stale.ID}, "execute": true,
+			"expectedHashes": map[string]string{stale.ID: staleExpected},
+		})
+		if strings.Contains(body, "batch-unarchive-secret-title") || strings.Contains(body, "batch-unarchive-secret-description") {
+			t.Fatalf("batch conflict leaked stale content: %s", body)
+		}
+		staleAfter, err := store.Tasks.Get(stale.ID)
+		if err != nil || staleAfter.CanonicalHash != staleBefore.CanonicalHash || !staleAfter.Archived {
+			t.Fatalf("stale canonical changed: before=%#v after=%#v err=%v", staleBefore, staleAfter, err)
+		}
+		historyAfter, err := store.Versions.GetHistory(stale.ID)
+		if err != nil || len(historyAfter.Versions) != len(historyBefore.Versions) {
+			t.Fatalf("stale history changed: before=%d after=%d err=%v", len(historyBefore.Versions), len(historyAfter.Versions), err)
+		}
+		otherAfter, err := store.Tasks.Get(other.ID)
+		if err != nil || otherAfter.Archived {
+			t.Fatalf("other Task was not unarchived: %#v err=%v", otherAfter, err)
+		}
+		if len(broadcaster.events) != 1 {
+			t.Fatalf("SSE events=%+v, want only successful other item", broadcaster.events)
+		}
+		event, ok := broadcaster.events[0].Data.(tasklifecycle.Event)
+		if !ok || event.TaskID != other.ID {
+			t.Fatalf("SSE event=%#v, want Task %s", broadcaster.events[0].Data, other.ID)
+		}
+	})
+}
+
+func responseBodyForBatch(t *testing.T, router http.Handler, path string, body map[string]any) string {
+	t.Helper()
+	data, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w.Body.String()
 }

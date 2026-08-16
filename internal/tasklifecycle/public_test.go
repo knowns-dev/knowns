@@ -2,8 +2,13 @@ package tasklifecycle
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -72,6 +77,62 @@ func TestExecutePublicPreviewExecuteAndTrustedDeleteCapability(t *testing.T) {
 	missing, err := service.ExecutePublic(t.Context(), Request{Operation: OperationBatchArchive, IDs: []string{"missing"}}, false)
 	if err == nil || missing.FailedTaskID != "missing" || len(missing.Items) != 1 || len(missing.Items[0].Reasons) != 1 || missing.Items[0].Reasons[0].Code != ReasonNotFound {
 		t.Fatalf("missing = %+v, %v", missing, err)
+	}
+}
+
+func TestPublicTaskHardDeletePurgesFilesystemLifecycleStateExactlyOnce(t *testing.T) {
+	store := newPublicLifecycleStore(t)
+	now := time.Date(2026, 7, 22, 1, 0, 0, 0, time.UTC)
+	createPublicLifecycleTask(t, store, "public-fsr", "done", now.Add(-time.Hour))
+	bootstrap, err := storage.NewFilesystemReconciler(store.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bootstrap.ReconcileLifecycle(t.Context(), true); err != nil {
+		t.Fatal(err)
+	}
+	var removes int
+	service := New(store, WithClock(func() time.Time { return now }), WithHooks(Hooks{RemoveTask: func(string) error { removes++; return nil }}))
+	result, err := service.HardDelete(t.Context(), "public-fsr", HardDeleteOptions{Confirmed: true, Reason: "privacy", Actor: "adapter"})
+	if err != nil || !result.Changed || removes != 1 {
+		t.Fatalf("hard-delete result=%+v err=%v removes=%d", result, err, removes)
+	}
+	if _, err := store.Tasks.Get("public-fsr"); err == nil {
+		t.Fatal("Task canonical content remains")
+	}
+	if _, err := os.Stat(filepath.Join(store.Root, "history", "tasks", "public-fsr.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("Task JSONL history remains: %v", err)
+	}
+	manifestData, err := os.ReadFile(filepath.Join(store.Root, "history", "state", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Entries map[string]json.RawMessage `json:"entries"`
+	}
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := manifest.Entries["task:public-fsr"]; ok {
+		t.Fatal("Task manifest ownership remains after central purge")
+	}
+	intentPath := filepath.Join(store.Root, "history", "state", "lifecycle-intents.json")
+	if data, readErr := os.ReadFile(intentPath); readErr == nil {
+		var intents map[string]json.RawMessage
+		if err := json.Unmarshal(data, &intents); err != nil {
+			t.Fatal(err)
+		}
+		if len(intents) != 0 {
+			t.Fatalf("stale lifecycle intents remain: %v", intents)
+		}
+	} else if !os.IsNotExist(readErr) {
+		t.Fatal(readErr)
+	}
+	if _, err := bootstrap.ReconcileLifecycle(t.Context(), true); err != nil {
+		t.Fatalf("post-purge watcher reconciliation: %v", err)
+	}
+	if removes != 1 {
+		t.Fatalf("post-purge reconciliation redelivered remove: %d", removes)
 	}
 }
 
@@ -232,6 +293,106 @@ func TestUpdateTaskSerializesWithLifecycleTransitionsAndHooksOutsideLock(t *test
 			t.Fatalf("missing tombstone: %v", err)
 		}
 	})
+}
+
+func TestUpdateTaskConcurrentSameBaseHasOnePublicWinner(t *testing.T) {
+	store := newPublicLifecycleStore(t)
+	createPublicLifecycleTask(t, store, "same-base", "todo", time.Time{})
+	base, err := store.Tasks.Get("same-base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyBefore, err := store.Versions.GetHistory(base.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var indexCalls atomic.Int32
+	newSession := func() *Service {
+		return New(store, WithHooks(Hooks{IndexTask: func(id string) error {
+			if id != base.ID {
+				return errors.New("unexpected Task index hook")
+			}
+			indexCalls.Add(1)
+			return nil
+		}}))
+	}
+	sessions := []*Service{newSession(), newSession()}
+	ready := make(chan struct{}, 2)
+	start := make(chan struct{})
+	type outcome struct {
+		updated *models.Task
+		err     error
+	}
+	outcomes := make(chan outcome, 2)
+	var workers sync.WaitGroup
+	for index, title := range []string{"winner-a-secret", "winner-b-secret"} {
+		workers.Add(1)
+		go func(service *Service, title string) {
+			defer workers.Done()
+			ready <- struct{}{}
+			<-start
+			updated, updateErr := service.UpdateTask(context.Background(), base.ID, TaskUpdateOptions{
+				ExpectedHash: base.CanonicalHash,
+				Mutate: func(task *models.Task) error {
+					task.Title = title
+					return nil
+				},
+			})
+			outcomes <- outcome{updated: updated, err: updateErr}
+		}(sessions[index], title)
+	}
+	<-ready
+	<-ready
+	close(start)
+	workers.Wait()
+	close(outcomes)
+
+	var winner *models.Task
+	var loser error
+	for result := range outcomes {
+		if result.err == nil {
+			if winner != nil {
+				t.Fatal("both same-base updates succeeded")
+			}
+			winner = result.updated
+			continue
+		}
+		if loser != nil {
+			t.Fatalf("both same-base updates failed: %v and %v", loser, result.err)
+		}
+		loser = result.err
+	}
+	if winner == nil || loser == nil {
+		t.Fatalf("same-base outcomes winner=%#v loser=%v", winner, loser)
+	}
+	if !errors.Is(loser, storage.ErrHistoryConflict) {
+		t.Fatalf("loser error = %v, want ErrHistoryConflict", loser)
+	}
+	if strings.Contains(loser.Error(), "winner-") {
+		t.Fatalf("loser error leaked Task content: %v", loser)
+	}
+	if indexCalls.Load() != 1 {
+		t.Fatalf("index hooks = %d, want exactly one", indexCalls.Load())
+	}
+
+	final, err := store.Tasks.Get(base.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.Title != winner.Title || final.CanonicalHash == base.CanonicalHash || final.CanonicalHash != winner.CanonicalHash {
+		t.Fatalf("final Task=%#v winner=%#v baseHash=%s", final, winner, base.CanonicalHash)
+	}
+	historyAfter, err := store.Versions.GetHistory(base.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(historyAfter.Versions) != len(historyBefore.Versions)+1 {
+		t.Fatalf("history revisions before=%d after=%d", len(historyBefore.Versions), len(historyAfter.Versions))
+	}
+	if got := storage.CanonicalTaskHash(final); got != final.CanonicalHash {
+		t.Fatalf("canonical hash=%s recomputed=%s", final.CanonicalHash, got)
+	}
 }
 
 func newPublicLifecycleStore(t *testing.T) *storage.Store {

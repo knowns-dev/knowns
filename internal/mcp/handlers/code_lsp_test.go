@@ -175,6 +175,80 @@ func TestLSPPathRequestRequiresPath(t *testing.T) {
 	}
 }
 
+func TestCodeReplaceRejectsPathsOutsideProjectAndManagedMetadata(t *testing.T) {
+	root := t.TempDir()
+	knownsRoot := filepath.Join(root, ".knowns")
+	if err := os.MkdirAll(knownsRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	store := storage.NewStore(knownsRoot)
+	outside := filepath.Join(filepath.Dir(root), "outside-code-replace.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(knownsRoot, "config.json")
+	if err := os.WriteFile(configPath, []byte("old-config"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	configLink := filepath.Join(root, "config-link.json")
+	managedDirLink := filepath.Join(root, "managed-link")
+	paths := []string{
+		filepath.Join("..", filepath.Base(root), "..", filepath.Base(outside)),
+		outside,
+		".knowns/config.json",
+		`..\outside-code-replace.txt`,
+	}
+	if err := os.Symlink(configPath, configLink); err == nil {
+		paths = append(paths, "config-link.json")
+	}
+	if err := os.Symlink(knownsRoot, managedDirLink); err == nil {
+		paths = append(paths, "managed-link/config.json")
+	}
+
+	for _, path := range paths {
+		req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{
+			"path": path, "needle": "secret", "repl": "overwritten",
+		}}}
+		result, err := handleCodeReplace(t.Context(), func() *storage.Store { return store }, nil, req)
+		if err != nil {
+			t.Fatalf("path %q returned Go error: %v", path, err)
+		}
+		if result == nil || !result.IsError {
+			t.Errorf("path %q was accepted, want tool error", path)
+		}
+	}
+
+	if got, err := os.ReadFile(outside); err != nil || string(got) != "secret" {
+		t.Fatalf("outside file changed: content=%q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(configPath); err != nil || string(got) != "old-config" {
+		t.Fatalf("managed config changed: content=%q err=%v", got, err)
+	}
+}
+
+func TestCodeReplaceAllowsRegularProjectFile(t *testing.T) {
+	root := t.TempDir()
+	knownsRoot := filepath.Join(root, ".knowns")
+	if err := os.MkdirAll(knownsRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "main.go")
+	if err := os.WriteFile(path, []byte("package old\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	store := storage.NewStore(knownsRoot)
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{
+		"path": "main.go", "needle": "old", "repl": "main",
+	}}}
+	result, err := handleCodeReplace(t.Context(), func() *storage.Store { return store }, nil, req)
+	if err != nil || result == nil || result.IsError {
+		t.Fatalf("regular project replacement failed: result=%#v err=%v", result, err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "package main\n" {
+		t.Fatalf("project file content=%q err=%v", got, err)
+	}
+}
+
 func TestCodeSymbolsUsesRuntimeBoundaryPreservingOutputShape(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".knowns"), 0755); err != nil {

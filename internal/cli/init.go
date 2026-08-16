@@ -534,38 +534,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 				if cfg.GitTrackingMode != "none" {
 					project.Settings.GitTracking = &cfg.GitTracking
 				}
-				if cfg.EnableSemantic && cfg.SemanticModel != "" {
-					if cfg.EmbeddingSource == "api" || cfg.EmbeddingSource == "ollama" {
-						// API provider: reference model from global settings.
-						project.Settings.SemanticSearch = &models.SemanticSearchSettings{
-							Enabled:  true,
-							Provider: cfg.EmbeddingSource,
-							Model:    cfg.SemanticModel,
-						}
-					} else {
-						// Local ONNX: existing behavior.
-						m := findEmbeddingModel(cfg.SemanticModel)
-						if m != nil {
-							project.Settings.SemanticSearch = &models.SemanticSearchSettings{
-								Enabled:       true,
-								Provider:      "local",
-								Model:         m.ID,
-								HuggingFaceID: m.HuggingFaceID,
-								Dimensions:    m.Dimensions,
-								MaxTokens:     m.MaxTokens,
-							}
-						} else if mc, ok := search.EmbeddingModels[cfg.SemanticModel]; ok {
-							// Custom model registered at runtime.
-							project.Settings.SemanticSearch = &models.SemanticSearchSettings{
-								Enabled:       true,
-								Provider:      "local",
-								Model:         cfg.SemanticModel,
-								HuggingFaceID: mc.HuggingFaceID,
-								Dimensions:    mc.Dimensions,
-								MaxTokens:     mc.MaxTokens,
-							}
-						}
-					}
+				if ss := buildSemanticSettings(cfg); ss != nil {
+					project.Settings.SemanticSearch = ss
 				}
 				if len(cfg.Platforms) > 0 {
 					project.Settings.Platforms = cfg.Platforms
@@ -691,6 +661,55 @@ func loadGlobalProjectDefaults() (*storage.ProjectDefaults, error) {
 		return nil, err
 	}
 	return settings.ProjectDefaults, nil
+}
+
+// buildSemanticSettings returns the SemanticSearchSettings block for a
+// semantic-enabled init, including the default vector store declaration
+// (managed Qdrant, lazy install; spec D10). It returns nil when semantic
+// search should not be enabled. No Qdrant binary is installed or started
+// here; the declaration is metadata only.
+func buildSemanticSettings(cfg initConfig) *models.SemanticSearchSettings {
+	if !cfg.EnableSemantic || cfg.SemanticModel == "" {
+		return nil
+	}
+	var ss *models.SemanticSearchSettings
+	if cfg.EmbeddingSource == "api" || cfg.EmbeddingSource == "ollama" {
+		// API provider: reference model from global settings.
+		ss = &models.SemanticSearchSettings{
+			Enabled:  true,
+			Provider: cfg.EmbeddingSource,
+			Model:    cfg.SemanticModel,
+		}
+	} else {
+		// Local ONNX: existing behavior.
+		m := findEmbeddingModel(cfg.SemanticModel)
+		if m != nil {
+			ss = &models.SemanticSearchSettings{
+				Enabled:       true,
+				Provider:      "local",
+				Model:         m.ID,
+				HuggingFaceID: m.HuggingFaceID,
+				Dimensions:    m.Dimensions,
+				MaxTokens:     m.MaxTokens,
+			}
+		} else if mc, ok := search.EmbeddingModels[cfg.SemanticModel]; ok {
+			// Custom model registered at runtime.
+			ss = &models.SemanticSearchSettings{
+				Enabled:       true,
+				Provider:      "local",
+				Model:         cfg.SemanticModel,
+				HuggingFaceID: mc.HuggingFaceID,
+				Dimensions:    mc.Dimensions,
+				MaxTokens:     mc.MaxTokens,
+			}
+		}
+	}
+	if ss != nil {
+		// Declare Qdrant as the default vector backend. Install/start stays
+		// lazy: first semantic use or explicit commands bootstrap the runtime.
+		ss.VectorStore = models.DefaultSemanticVectorStoreSettingsPtr()
+	}
+	return ss
 }
 
 func lifecycleSeedForInit(root string, force bool, defaults *storage.ProjectDefaults) *models.TaskLifecycleSettings {

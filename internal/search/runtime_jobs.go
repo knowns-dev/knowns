@@ -1,10 +1,14 @@
 package search
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 
+	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/qdrantruntime"
 	"github.com/howznguyen/knowns/internal/runtimequeue"
 	"github.com/howznguyen/knowns/internal/storage"
 )
@@ -15,6 +19,22 @@ func ExecuteRuntimeJob(storeRoot string, job runtimequeue.Job) error {
 	defer func() {
 		_ = PersistDefaultSemanticRuntimeStatus()
 	}()
+	if resolveEffectiveVectorStore(store).Backend == models.SemanticVectorBackendQdrant {
+		switch job.Kind {
+		case runtimequeue.JobIndexTask, runtimequeue.JobRemoveTask:
+			intent, intentErr := currentQdrantIntent(storeRoot, "task", job.Target, job.Kind == runtimequeue.JobRemoveTask, "")
+			if intentErr != nil {
+				return fmt.Errorf("build targeted qdrant task intent: %w", intentErr)
+			}
+			return ExecuteQdrantReconciliation(context.Background(), storeRoot, intent)
+		case runtimequeue.JobIndexDoc, runtimequeue.JobRemoveDoc:
+			intent, intentErr := currentQdrantIntent(storeRoot, "doc", job.Target, job.Kind == runtimequeue.JobRemoveDoc, "")
+			if intentErr != nil {
+				return fmt.Errorf("build targeted qdrant doc intent: %w", intentErr)
+			}
+			return ExecuteQdrantReconciliation(context.Background(), storeRoot, intent)
+		}
+	}
 	switch job.Kind {
 	case runtimequeue.JobIndexTask:
 		return executeRuntimeEntity(store, string(job.Kind)+" "+job.Target, func(svc *IndexService) error {
@@ -50,7 +70,56 @@ func ExecuteRuntimeJob(storeRoot string, job runtimequeue.Job) error {
 		})
 	case runtimequeue.JobSemanticSearch:
 		return executeRuntimeSemanticSearch(storeRoot, store, job)
+	case runtimequeue.JobReconcileKnowledge:
+		reconciler, err := storage.NewFilesystemReconciler(storeRoot, func(result storage.ReconcileResult) error {
+			if resolveEffectiveVectorStore(store).Backend != models.SemanticVectorBackendQdrant {
+				kind := runtimequeue.JobIndexDoc
+				if result.Operation == storage.LifecycleOperationDelete || result.Operation == storage.LifecycleOperationHardDelete {
+					kind = runtimequeue.JobRemoveDoc
+				}
+				target := result.Path
+				if result.EntityType == "task" {
+					kind, target = runtimequeue.JobIndexTask, result.EntityID
+					if result.Operation == storage.LifecycleOperationDelete || result.Operation == storage.LifecycleOperationHardDelete {
+						kind = runtimequeue.JobRemoveTask
+					}
+				}
+				_, enqueueErr := runtimequeue.Enqueue(storeRoot, kind, target)
+				return enqueueErr
+			}
+			path := result.CurrentPath
+			if path == "" {
+				path = result.Path
+			}
+			_, enqueueErr := runtimequeue.EnqueueQdrantIntent(storeRoot, runtimequeue.QdrantIntent{
+				EntityType: result.EntityType, EntityID: result.EntityID,
+				Revision: result.Revision, Operation: result.Operation,
+				CanonicalHash: result.NewHash, Path: path,
+				PreviousPath: result.PreviousPath, BatchID: result.BatchID,
+			})
+			return enqueueErr
+		})
+		if err != nil {
+			return err
+		}
+		_, err = reconciler.ReconcileLifecycleWithOptions(context.Background(), true, storage.LifecycleOptions{Source: "runtime-job", Wait: true})
+		return err
+	case runtimequeue.JobQdrantReconcile:
+		if job.Intent == nil {
+			return fmt.Errorf("qdrant reconciliation job has no intent")
+		}
+		return ExecuteQdrantReconciliation(context.Background(), storeRoot, *job.Intent)
 	case runtimequeue.JobReindex:
+		resolved := resolveEffectiveVectorStore(store)
+		if resolved.Backend == models.SemanticVectorBackendQdrant && resolved.Mode == models.SemanticVectorStoreModeManaged {
+			mgr := qdrantruntime.NewManager(qdrantruntime.ConfigFromResolution(resolved))
+			if _, err := (qdrantruntime.Installer{Root: mgr.Paths().Root, Mirror: os.Getenv("KNOWNS_QDRANT_MIRROR")}).Install(context.Background()); err != nil {
+				return fmt.Errorf("install managed Qdrant: %w", err)
+			}
+			if _, err := mgr.Start(context.Background()); err != nil {
+				return fmt.Errorf("start managed Qdrant: %w", err)
+			}
+		}
 		session, err := InitSemanticRuntimeSession(store)
 		if err != nil {
 			if errors.Is(err, ErrSemanticNotConfigured) || errors.Is(err, ErrSemanticRuntimeDisabled) {
@@ -62,6 +131,18 @@ func ExecuteRuntimeJob(storeRoot string, job runtimequeue.Job) error {
 			return nil
 		}
 		defer session.Close()
+		if resolveEffectiveVectorStore(store).Backend == models.SemanticVectorBackendQdrant {
+			client, clientErr := qdrantClientForStore(store)
+			if clientErr != nil {
+				return clientErr
+			}
+			res := resolveEffectiveVectorStore(store)
+			keep, ttl := retentionFromResolution(res)
+			_, reindexErr := ReindexQdrantGeneration(context.Background(), store, session.Embedder, QdrantGenerationOptions{Client: client, RetentionGenerations: keep, RetentionTTL: ttl, Progress: func(phase string, current, total int) {
+				_ = runtimequeue.ReportProgress(storeRoot, job.ID, phase, current, total)
+			}})
+			return reindexErr
+		}
 		return session.Engine(store).Reindex(func(phase string, current, total int) {
 			_ = runtimequeue.ReportProgress(storeRoot, job.ID, phase, current, total)
 		})

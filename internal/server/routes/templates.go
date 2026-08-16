@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/safepath"
 	"github.com/howznguyen/knowns/internal/storage"
 )
 
@@ -107,23 +108,23 @@ type templateListItem struct {
 
 // templateFile is the UI-friendly shape for template actions/files.
 type templateFile struct {
-	Type        string `json:"type"`
-	Template    string `json:"template,omitempty"`
-	Destination string `json:"destination,omitempty"`
-	Path        string `json:"path,omitempty"`
-	Source      string `json:"source,omitempty"`
-	GlobPattern string `json:"globPattern,omitempty"`
-	SkipIfExists bool  `json:"skipIfExists,omitempty"`
-	When        string `json:"when,omitempty"`
+	Type         string `json:"type"`
+	Template     string `json:"template,omitempty"`
+	Destination  string `json:"destination,omitempty"`
+	Path         string `json:"path,omitempty"`
+	Source       string `json:"source,omitempty"`
+	GlobPattern  string `json:"globPattern,omitempty"`
+	SkipIfExists bool   `json:"skipIfExists,omitempty"`
+	When         string `json:"when,omitempty"`
 }
 
 // uiPrompt is the UI-friendly shape for template prompts.
 type uiPrompt struct {
-	Name     string          `json:"name"`
-	Message  string          `json:"message"`
-	Type     string          `json:"type"`
-	Required bool            `json:"required"`
-	Default  string          `json:"default,omitempty"`
+	Name     string           `json:"name"`
+	Message  string           `json:"message"`
+	Type     string           `json:"type"`
+	Required bool             `json:"required"`
+	Default  string           `json:"default,omitempty"`
 	Choices  []uiPromptChoice `json:"choices,omitempty"`
 }
 
@@ -301,7 +302,11 @@ func (tr *TemplateRoutes) preview(w http.ResponseWriter, r *http.Request) {
 		templateFile = "main.hbs"
 	}
 
-	hbsPath := filepath.Join(tmpl.Path, templateFile)
+	hbsPath, err := safepath.Resolve(tmpl.Path, templateFile)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid template file path")
+		return
+	}
 	hbsContent, err := os.ReadFile(hbsPath)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "template file not found: "+templateFile)

@@ -68,6 +68,8 @@ mcp_knowns_templates({ "action": "create", "name": "<template-name>",
 
 ## Template Config
 
+Use the current template schema returned by `templates({ action: "get" })`. A minimal example:
+
 ```yaml
 name: react-component
 description: Create a React component
@@ -75,24 +77,22 @@ doc: patterns/react-component
 
 prompts:
   - name: name
+    type: text
     message: Component name?
     validate: required
 
-files:
-  - template: ".tsx.hbs"
-    destination: "src/components//.tsx"
+actions:
+  - type: add
+    template: component.tsx.hbs
+    path: src/components/{{pascalCase name}}.tsx
+    skipIfExists: true
 ```
 
-## CRITICAL: Syntax Pitfalls
+## Syntax Rules
 
-**NEVER write `$` + triple-brace:**
-```
-// ❌ WRONG
-$` + `{` + `{` + `{camelCase name}`
-
-// ✅ CORRECT - add space, use ~
-${ {{~camelCase name~}}}
-```
+- Use the template engine's documented `{{helper value}}` expressions directly.
+- Do not construct template delimiters through string concatenation or add JavaScript interpolation syntax around them.
+- Validate helper names and output paths with a dry run before writing files.
 
 ## Step 6: Validate (after creating template)
 
@@ -112,7 +112,7 @@ Required order for the final user-facing response:
 
 Keep this concise for CLI use. Template-specific content may extend the key-details section, but must not replace or reorder the shared structure.
 
-Out of scope: explaining, syncing, or generating `.claude/skills/*`. Runtime auto-sync already handles platform copies, so this skill source only defines the built-in output contract.
+Do not manage platform-synced skill copies; this source defines the built-in workflow contract.
 
 For `kn-template`, the key details should cover:
 

@@ -23,6 +23,11 @@ export interface TaskVersion {
 	version: number;
 	timestamp: Date;
 	author?: string; // Who made the change
+	actor?: string;
+	source?: string;
+	checkpoint?: boolean;
+	operation?: string;
+	tombstone?: boolean;
 	changes: TaskChange[];
 	snapshot: Partial<Task>; // Full task state at this version
 }
@@ -34,6 +39,23 @@ export interface TaskVersionHistory {
 	taskId: string;
 	currentVersion: number;
 	versions: TaskVersion[];
+}
+
+export interface TaskHistoryMetadata {
+	id: string;
+	taskId: string;
+	version: number;
+	timestamp: Date;
+	author?: string;
+	actor?: string;
+	source?: string;
+	baseHash?: string;
+	newHash?: string;
+	checkpoint?: boolean;
+	operation?: string;
+	tombstone?: boolean;
+	currentPath?: string;
+	previousPath?: string;
 }
 
 /**

@@ -132,6 +132,23 @@ func (m *Manager) SetConfig(cfg Config) {
 	m.invalidateRuntimeStatusCacheLocked()
 }
 
+// ValidateBinaryOverride permits selecting only binaries declared by the
+// registered language adapter. Arbitrary executable names and paths are never
+// accepted from runtime configuration.
+func (m *Manager) ValidateBinaryOverride(langID, override string) error {
+	if override == "" {
+		return nil
+	}
+	m.mu.Lock()
+	adapter := m.adapters[langID]
+	m.mu.Unlock()
+	if adapter == nil {
+		return fmt.Errorf("no adapter registered for language %q", langID)
+	}
+	_, err := selectBinaryCandidateOverride(override, adapter.Binaries())
+	return err
+}
+
 func cloneManagerConfig(cfg Config) Config {
 	if len(cfg.Languages) == 0 {
 		return Config{}
@@ -512,7 +529,12 @@ func (m *Manager) StartLanguage(ctx context.Context, langID string) error {
 	installer := m.installerLocked()
 	binaries := runtimeBinariesForAdapter(adapter, installer)
 	if override := m.config.BinaryOverride(langID); override != "" {
-		binaries = []BinaryCandidate{{Name: override}}
+		candidate, err := selectBinaryCandidateOverride(override, adapter.Binaries())
+		if err != nil {
+			m.mu.Unlock()
+			return err
+		}
+		binaries = []BinaryCandidate{candidate}
 	}
 	m.mu.Unlock()
 

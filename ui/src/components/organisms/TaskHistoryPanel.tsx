@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { History, ChevronDown, ChevronRight, Filter, RotateCcw, GitCompare, ArrowRight } from "lucide-react";
-import type { TaskVersion, TaskChange } from "@/ui/models/version";
+import type { TaskVersion, TaskChange, TaskHistoryMetadata } from "@/ui/models/version";
 import { createTaskDiff } from "@/ui/models/version";
 import { api } from "../../api/client";
 import Avatar from "../atoms/Avatar";
@@ -69,18 +69,43 @@ function formatRelativeTime(date: Date): string {
 }
 
 // Get change summary
-function getChangeSummary(changes: TaskChange[]): string {
-	if (changes.length === 0) return "No changes";
-	if (changes.length === 1) {
-		const change = changes[0];
+function taskVersionFromMetadata(item: TaskHistoryMetadata): TaskVersion {
+	return {
+		id: item.id,
+		taskId: item.taskId,
+		version: item.version,
+		timestamp: item.timestamp,
+		author: item.author || item.actor,
+		actor: item.actor,
+		source: item.source,
+		checkpoint: item.checkpoint,
+		operation: item.operation,
+		tombstone: item.tombstone,
+		changes: [],
+		snapshot: {},
+	};
+}
+
+function getChangeSummary(version: TaskVersion, loaded: boolean): string {
+	if (!loaded) {
+		if (version.operation) return version.operation.replaceAll("_", " ");
+		if (version.checkpoint) return "Checkpoint";
+		return "Open to load change details";
+	}
+	if (version.changes.length === 0) return "No field changes";
+	if (version.changes.length === 1) {
+		const change = version.changes[0];
 		return `Changed ${FIELD_LABELS[change.field] || change.field}`;
 	}
-	return `Changed ${changes.length} fields`;
+	return `Changed ${version.changes.length} fields`;
 }
 
 export default function TaskHistoryPanel({ taskId, onRestore }: TaskHistoryPanelProps) {
 	const [versions, setVersions] = useState<TaskVersion[]>([]);
+	const [loadedVersions, setLoadedVersions] = useState<Set<number>>(new Set());
 	const [loading, setLoading] = useState(true);
+	const [hasMore, setHasMore] = useState(false);
+	const [tailTruncated, setTailTruncated] = useState(false);
 	const [isOpen, setIsOpen] = useState(true);
 	const [filter, setFilter] = useState("all");
 	const [expandedVersions, setExpandedVersions] = useState<Set<number>>(new Set());
@@ -98,28 +123,66 @@ export default function TaskHistoryPanel({ taskId, onRestore }: TaskHistoryPanel
 	useEffect(() => {
 		if (!taskId) return;
 		setLoading(true);
-		api.getTaskHistory(taskId)
-			.then((data) => {
-				setVersions(data.sort((a, b) => b.version - a.version));
+		setLoadedVersions(new Set());
+		api.getTaskHistoryMetadata(taskId)
+			.then((page) => {
+				setHasMore(page.hasMore);
+				setTailTruncated(Boolean(page.tailTruncated));
+				setVersions(page.items.map(taskVersionFromMetadata).sort((a, b) => b.version - a.version));
 			})
 			.catch((err) => {
 				console.error("Failed to load task history:", err);
 				setVersions([]);
+				setTailTruncated(false);
 			})
 			.finally(() => {
 				setLoading(false);
 			});
 	}, [taskId]);
 
+	const loadMore = useCallback(async () => {
+		if (!hasMore) return;
+		try {
+			const page = await api.getTaskHistoryMetadata(taskId, versions.length);
+			setHasMore(page.hasMore);
+			setVersions((previous) => [...previous, ...page.items.map(taskVersionFromMetadata)]);
+		} catch (err) {
+			console.error("Failed to load more task history:", err);
+		}
+	}, [hasMore, taskId, versions.length]);
+
+	const loadVersionDetail = useCallback(async (versionNumber: number) => {
+		const current = versions.find((version) => version.version === versionNumber);
+		if (!current || loadedVersions.has(versionNumber)) return current;
+		try {
+			const detail = await api.getTaskRevisionDetail(taskId, versionNumber);
+			setVersions((previous) => previous.map((version) => version.version === versionNumber ? detail : version));
+			setLoadedVersions((previous) => new Set(previous).add(versionNumber));
+			return detail;
+		} catch (err) {
+			console.error("Failed to load task revision:", err);
+			return undefined;
+		}
+	}, [loadedVersions, taskId, versions]);
+
 	// Filter versions based on selected filter
 	const filteredVersions = useMemo(() => {
 		if (filter === "all") return versions;
+		if (versions.some((version) => !loadedVersions.has(version.version))) return versions;
 		return versions.filter((v) =>
 			v.changes.some((c) => getChangeCategory(c.field) === filter)
 		);
-	}, [versions, filter]);
+	}, [filter, loadedVersions, versions]);
+
+	useEffect(() => {
+		if (filter === "all") return;
+		for (const version of versions) {
+			if (!loadedVersions.has(version.version)) void loadVersionDetail(version.version);
+		}
+	}, [filter, loadVersionDetail, loadedVersions, versions]);
 
 	const toggleVersion = (versionNum: number) => {
+		void loadVersionDetail(versionNum);
 		setExpandedVersions((prev) => {
 			const next = new Set(prev);
 			if (next.has(versionNum)) {
@@ -139,16 +202,23 @@ export default function TaskHistoryPanel({ taskId, onRestore }: TaskHistoryPanel
 		const fromVer = versions.find((v) => String(v.version) === fromVersion);
 		const toVer = versions.find((v) => String(v.version) === toVersion);
 
-		if (!fromVer?.snapshot || !toVer?.snapshot) return [];
+		if (!fromVer?.snapshot || !toVer?.snapshot || !loadedVersions.has(fromVer.version) || !loadedVersions.has(toVer.version)) return [];
 
 		return createTaskDiff(fromVer.snapshot, toVer.snapshot);
-	}, [compareMode, fromVersion, toVersion, versions]);
+	}, [compareMode, fromVersion, loadedVersions, toVersion, versions]);
 
 	// Find version for restore in compare mode
 	const toVersionObj = useMemo(() => {
 		if (!toVersion) return undefined;
-		return versions.find((v) => String(v.version) === toVersion);
-	}, [toVersion, versions]);
+		const version = versions.find((v) => String(v.version) === toVersion);
+		return version && loadedVersions.has(version.version) ? version : undefined;
+	}, [loadedVersions, toVersion, versions]);
+
+	useEffect(() => {
+		if (!compareMode || !fromVersion || !toVersion) return;
+		void loadVersionDetail(Number(fromVersion));
+		void loadVersionDetail(Number(toVersion));
+	}, [compareMode, fromVersion, toVersion, loadVersionDetail]);
 
 	// Keyboard navigation handlers
 	const handleKeyDown = useCallback(
@@ -235,6 +305,11 @@ export default function TaskHistoryPanel({ taskId, onRestore }: TaskHistoryPanel
 			</div>
 
 			<CollapsibleContent>
+				{tailTruncated && (
+					<div className="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+						The final history append is incomplete and was ignored. Run reconciliation before restoring that revision.
+					</div>
+				)}
 				{/* Controls: Filter and Compare Mode */}
 				{versions.length > 0 && (
 					<div className="space-y-3 mb-4">
@@ -420,7 +495,7 @@ export default function TaskHistoryPanel({ taskId, onRestore }: TaskHistoryPanel
 												)}
 												<div>
 													<div className="text-sm font-medium text-secondary-foreground">
-														{getChangeSummary(version.changes)}
+													{getChangeSummary(version, loadedVersions.has(version.version))}
 													</div>
 													<div className="text-xs text-muted-foreground">
 														{version.author && (
@@ -460,7 +535,9 @@ export default function TaskHistoryPanel({ taskId, onRestore }: TaskHistoryPanel
 															size="sm"
 															onClick={(e) => {
 																e.stopPropagation();
-																onRestore(version);
+															void loadVersionDetail(version.version).then((detail) => {
+																if (detail) onRestore(detail);
+															});
 															}}
 															className="text-xs"
 														>
@@ -475,6 +552,11 @@ export default function TaskHistoryPanel({ taskId, onRestore }: TaskHistoryPanel
 								</div>
 							);
 						})}
+						{hasMore && (
+							<div className="pt-2 text-center">
+								<Button variant="ghost" size="sm" onClick={() => void loadMore()}>Load more history</Button>
+							</div>
+						)}
 					</div>
 				) : null}
 			</CollapsibleContent>

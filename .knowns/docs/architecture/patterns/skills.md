@@ -2,7 +2,7 @@
 title: Agent Skills
 description: Pattern for creating and managing Knowns agent skills across AI platforms
 createdAt: '2026-01-17T06:06:37.006Z'
-updatedAt: '2026-06-26T03:40:06.464Z'
+updatedAt: '2026-08-13T13:23:43.287Z'
 tags:
   - pattern
   - agents
@@ -135,3 +135,16 @@ Skills source lives in `internal/instructions/skills/kn-*/SKILL.md`. These are e
 ### Sync Function
 
 Skills are synced to the target platform's configured skill directory, such as `.claude/skills/<folder-name>/SKILL.md` or `.agents/skills/<folder-name>/SKILL.md`.
+
+
+## Portable Skill Contract
+
+Built-in skill sources must describe runtime capabilities rather than require a named external provider or agent platform. Knowns domain operations remain explicit (`tasks`, `docs`, `search`, `code`, `memory`, `decision`, `templates`, `validate`, and `time`), while external research and delegation are selected by capability and source quality.
+
+- `kn-research` is read-only by default. Persistence requires an explicit user request or authorization from an approved parent workflow.
+- External/current research prefers official or primary sources, verifies the source page when possible, cites exact references, and reports when no suitable capability is available instead of guessing.
+- Source instructions under `internal/instructions/skills/` are canonical. Platform directories are generated copies and must not be edited directly.
+- Every built-in skill returns information in this order: goal/result, key details, then a next action only when a natural handoff exists. Fixed headings are optional; the information order is required.
+- Contract tests cover all embedded skill sources and a synced runtime copy so portability and workflow gates cannot drift silently.
+
+Memory category `decision` is legacy. Durable guidance uses first-class System Decisions; approved spec rules remain canonical in the spec's `Locked Decisions` section.

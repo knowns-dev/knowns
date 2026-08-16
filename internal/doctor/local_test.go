@@ -2,13 +2,18 @@ package doctor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/howznguyen/knowns/internal/lsp"
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/qdrantruntime"
 	"github.com/howznguyen/knowns/internal/readiness"
 	"github.com/howznguyen/knowns/internal/runtimeinstall"
 	"github.com/howznguyen/knowns/internal/search"
@@ -137,7 +142,7 @@ func TestSearchChecksSkipWhenSemanticSearchDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if result.Verdict != VerdictHealthy || result.Summary.Skip != 6 {
+	if result.Verdict != VerdictHealthy || result.Summary.Skip != 10 {
 		t.Fatalf("disabled search result = %#v", result)
 	}
 }
@@ -601,6 +606,134 @@ func TestDefaultLocalChecksDoNotMutateProject(t *testing.T) {
 		t.Fatalf("default local checks mutated project storage")
 	}
 }
+
+func TestQdrantDoctorChecksReportReadOnlyReadinessStates(t *testing.T) {
+	store := newDoctorStore(t)
+	configureSemanticSearch(t, store, &models.SemanticSearchSettings{Enabled: true, Model: "current-model"})
+	pointer := &search.QdrantPointer{
+		Backend: "qdrant", CollectionName: "kn_active", ChunkVersion: search.ChunkVersion,
+		Embedding: search.QdrantEmbeddingPointer{Model: "current-model", Dimensions: 384},
+		Owner:     search.QdrantOwnerPointer{StoreRootFingerprint: search.StoreRootFingerprint(store.Root)}, ChunkCount: 4,
+	}
+	base := qdrantDiagnosticSnapshot{
+		Resolution: models.SemanticVectorStoreResolution{Enabled: true, Backend: models.SemanticVectorBackendQdrant, Mode: models.SemanticVectorStoreModeManaged},
+		Runtime:    qdrantruntime.Status{State: qdrantruntime.StatusRunning, Installed: true}, Pointer: pointer,
+		Readiness:  search.SemanticIndexReadiness{Enabled: true, Backend: models.SemanticVectorBackendQdrant, Ready: true},
+		Expected:   search.SemanticIndexIdentity{Model: "current-model", Dimensions: 384, ChunkVersion: search.ChunkVersion},
+		Collection: search.QdrantCollectionInfo{Exists: true, Dimensions: 384, PointsCount: 4, Status: "green"}, Probed: true,
+		Healthy: true,
+	}
+	for _, test := range []struct {
+		name     string
+		snapshot qdrantDiagnosticSnapshot
+		id       string
+		status   Status
+		command  string
+	}{
+		{"missing binary", func() qdrantDiagnosticSnapshot {
+			s := base
+			s.Runtime = qdrantruntime.Status{State: qdrantruntime.StatusNotInstalled}
+			return s
+		}(), "search.qdrant-runtime", StatusWarn, "knowns qdrant install"},
+		{"unhealthy process", func() qdrantDiagnosticSnapshot {
+			s := base
+			s.Runtime = qdrantruntime.Status{State: qdrantruntime.StatusStale, Installed: true}
+			s.Probed = false
+			return s
+		}(), "search.qdrant-runtime", StatusWarn, "knowns qdrant start"},
+		{"live unhealthy process", func() qdrantDiagnosticSnapshot {
+			s := base
+			s.Healthy = false
+			s.Probed = false
+			s.ProbeErrorCode = "qdrant_health_unavailable"
+			return s
+		}(), "search.qdrant-runtime", StatusWarn, "knowns qdrant start"},
+		{"stale pointer", func() qdrantDiagnosticSnapshot {
+			s := base
+			s.Readiness = search.SemanticIndexReadiness{Enabled: true, Backend: models.SemanticVectorBackendQdrant, Stale: true}
+			s.Expected.Model = "next-model"
+			return s
+		}(), "search.qdrant-pointer", StatusWarn, "knowns search index --wait"},
+		{"collection dimensions", func() qdrantDiagnosticSnapshot { s := base; s.Collection.Dimensions = 768; return s }(), "search.qdrant-collection", StatusWarn, "knowns search index --wait"},
+		{"collection inspection error with healthy runtime", func() qdrantDiagnosticSnapshot {
+			s := base
+			s.Probed = false
+			s.ProbeErrorCode = "qdrant_collection_unavailable"
+			return s
+		}(), "search.qdrant-collection", StatusWarn, "knowns search index --wait"},
+		{"orphan candidates", func() qdrantDiagnosticSnapshot { s := base; s.Orphans = []string{"kn_retired"}; return s }(), "search.qdrant-orphans", StatusWarn, "knowns qdrant cleanup"},
+		{"external", func() qdrantDiagnosticSnapshot {
+			s := base
+			s.Resolution.Mode = models.SemanticVectorStoreModeExternal
+			s.Resolution.ExternalURL = "https://user:embedded-secret@qdrant.example/collections?signature=signed-secret"
+			return s
+		}(), "search.qdrant-collection", StatusWarn, ""},
+		{"disabled", qdrantDiagnosticSnapshot{Resolution: models.SemanticVectorStoreResolution{OptedOut: true, Backend: models.SemanticVectorBackendNone}}, "search.qdrant-runtime", StatusSkip, ""},
+		{"sqlite not applicable", qdrantDiagnosticSnapshot{Resolution: models.SemanticVectorStoreResolution{Enabled: true, Backend: models.SemanticVectorBackendSQLite}}, "search.qdrant-runtime", StatusSkip, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			before := snapshotTree(t, store.Root)
+			calls := 0
+			deps := localDependencies{qdrant: func(context.Context, *storage.Store) (qdrantDiagnosticSnapshot, error) {
+				calls++
+				return test.snapshot, nil
+			}}
+			result, err := Run(context.Background(), RunOptions{Project: ProjectFromStore(store), Scopes: []Scope{ScopeSearch}}, localCheckersWithDependencies(store, deps))
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if calls != 1 {
+				t.Fatalf("qdrant snapshot calls = %d, want 1", calls)
+			}
+			check := findCheck(t, result, test.id)
+			if check.Status != test.status {
+				t.Fatalf("%s check = %#v", test.id, check)
+			}
+			if test.command != "" && (check.Remediation == nil || check.Remediation.Command != test.command) {
+				t.Fatalf("%s remediation = %#v", test.id, check.Remediation)
+			}
+			if test.name == "stale pointer" && (check.Evidence["errorCode"] != "qdrant_model_mismatch" || check.Evidence["expectedModel"] != "next-model" || check.Evidence["actualModel"] != "current-model") {
+				t.Fatalf("pointer mismatch evidence = %#v", check.Evidence)
+			}
+			if test.name == "sqlite not applicable" && check.SkipReason != "not_applicable" {
+				t.Fatalf("sqlite check = %#v", check)
+			}
+			data, err := json.Marshal(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, secret := range []string{"embedded-secret", "signed-secret", "Authorization", "KNOWNS_QDRANT_API_KEY"} {
+				if strings.Contains(string(data), secret) {
+					t.Fatalf("doctor output leaked %q: %s", secret, data)
+				}
+			}
+			if got := snapshotTree(t, store.Root); !sameSnapshot(before, got) {
+				t.Fatalf("doctor Qdrant checks mutated project storage")
+			}
+		})
+	}
+}
+
+func TestQdrantOrphanCandidatesEnforceOwnershipCapAndDeterministicOrder(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".knowns")
+	fingerprint := search.StoreRootFingerprint(root)
+	active := &search.QdrantPointer{CollectionName: "kn_active", Owner: search.QdrantOwnerPointer{StoreRootFingerprint: fingerprint}}
+	future := time.Now().UTC().Add(time.Hour)
+	records := []search.QdrantGenerationRecord{
+		{Generation: 3, CollectionName: "kn_z", Status: search.QdrantGenerationStatusInactive, Owner: search.QdrantOwnerPointer{StoreRootFingerprint: fingerprint}, RetiredAt: &future},
+		{Generation: 3, CollectionName: "kn_a", Status: search.QdrantGenerationStatusInactive, Owner: search.QdrantOwnerPointer{StoreRootFingerprint: fingerprint}, RetiredAt: &future},
+		{Generation: 2, CollectionName: "kn_old", Status: search.QdrantGenerationStatusInactive, Owner: search.QdrantOwnerPointer{StoreRootFingerprint: fingerprint}, RetiredAt: &future},
+	}
+	configuredTwo := models.SemanticVectorStoreResolution{Retention: models.SemanticVectorStoreRetentionSettings{PreviousGenerations: qdrantIntPtr(2)}}
+	if got := qdrantOrphanCandidates(records, active, configuredTwo, fingerprint); !reflect.DeepEqual(got, []string{"kn_z", "kn_old"}) {
+		t.Fatalf("orphan candidates with configured cap 2 = %#v, want [kn_z kn_old]", got)
+	}
+	if got := qdrantOrphanCandidates(records, active, configuredTwo, search.StoreRootFingerprint(root+"-copied")); got != nil {
+		t.Fatalf("copied pointer/history produced cleanup candidates: %#v", got)
+	}
+}
+
+func qdrantIntPtr(value int) *int { return &value }
 
 func newDoctorStore(t *testing.T) *storage.Store {
 	t.Helper()

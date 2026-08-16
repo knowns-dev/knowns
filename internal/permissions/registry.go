@@ -68,12 +68,13 @@ var ActionRegistry = map[string]ActionMeta{
 	"tasks.hard_delete":     {Capability: CapDelete, Target: TargetTask, Risk: RiskHigh},
 
 	// docs
-	"docs.create":  {Capability: CapWrite, Target: TargetDoc, Risk: RiskMedium},
-	"docs.get":     {Capability: CapRead, Target: TargetDoc, Risk: RiskLow},
-	"docs.update":  {Capability: CapWrite, Target: TargetDoc, Risk: RiskMedium},
-	"docs.delete":  {Capability: CapDelete, Target: TargetDoc, Risk: RiskHigh},
-	"docs.list":    {Capability: CapRead, Target: TargetDoc, Risk: RiskLow},
-	"docs.history": {Capability: CapRead, Target: TargetDoc, Risk: RiskLow},
+	"docs.create":      {Capability: CapWrite, Target: TargetDoc, Risk: RiskMedium},
+	"docs.get":         {Capability: CapRead, Target: TargetDoc, Risk: RiskLow},
+	"docs.update":      {Capability: CapWrite, Target: TargetDoc, Risk: RiskMedium},
+	"docs.delete":      {Capability: CapDelete, Target: TargetDoc, Risk: RiskHigh},
+	"docs.hard_delete": {Capability: CapDelete, Target: TargetDoc, Risk: RiskHigh},
+	"docs.list":        {Capability: CapRead, Target: TargetDoc, Risk: RiskLow},
+	"docs.history":     {Capability: CapRead, Target: TargetDoc, Risk: RiskLow},
 
 	// memory
 	"memory.add":     {Capability: CapWrite, Target: TargetMemory, Risk: RiskMedium},
@@ -96,10 +97,20 @@ var ActionRegistry = map[string]ActionMeta{
 	"search.resolve":  {Capability: CapRead, Target: TargetSearch, Risk: RiskLow},
 
 	// code
-	"code.search":  {Capability: CapRead, Target: TargetCode, Risk: RiskLow},
-	"code.symbols": {Capability: CapRead, Target: TargetCode, Risk: RiskLow},
-	"code.deps":    {Capability: CapRead, Target: TargetCode, Risk: RiskLow},
-	"code.graph":   {Capability: CapRead, Target: TargetCode, Risk: RiskLow},
+	"code.search":          {Capability: CapRead, Target: TargetCode, Risk: RiskLow},
+	"code.symbols":         {Capability: CapRead, Target: TargetCode, Risk: RiskLow},
+	"code.deps":            {Capability: CapRead, Target: TargetCode, Risk: RiskLow},
+	"code.graph":           {Capability: CapRead, Target: TargetCode, Risk: RiskLow},
+	"code.find":            {Capability: CapRead, Target: TargetCode, Risk: RiskLow},
+	"code.definition":      {Capability: CapRead, Target: TargetCode, Risk: RiskLow},
+	"code.references":      {Capability: CapRead, Target: TargetCode, Risk: RiskLow},
+	"code.implementations": {Capability: CapRead, Target: TargetCode, Risk: RiskLow},
+	"code.diagnostics":     {Capability: CapRead, Target: TargetCode, Risk: RiskLow},
+	"code.rename":          {Capability: CapWrite, Target: TargetCode, Risk: RiskHigh},
+	"code.replace":         {Capability: CapWrite, Target: TargetCode, Risk: RiskHigh},
+	"code.replace_body":    {Capability: CapWrite, Target: TargetCode, Risk: RiskHigh},
+	"code.insert":          {Capability: CapWrite, Target: TargetCode, Risk: RiskHigh},
+	"code.delete":          {Capability: CapDelete, Target: TargetCode, Risk: RiskHigh},
 
 	// templates
 	"templates.create": {Capability: CapWrite, Target: TargetTemplate, Risk: RiskMedium},
@@ -115,11 +126,13 @@ var ActionRegistry = map[string]ActionMeta{
 // toolFallback provides default classification at the tool level when no
 // specific tool.action entry exists.
 var toolFallback = map[string]ActionMeta{
-	"tasks":     {Capability: CapRead, Target: TargetTask, Risk: RiskLow},
-	"docs":      {Capability: CapRead, Target: TargetDoc, Risk: RiskLow},
-	"time":      {Capability: CapRead, Target: TargetTime, Risk: RiskLow},
-	"search":    {Capability: CapRead, Target: TargetSearch, Risk: RiskLow},
-	"code":      {Capability: CapRead, Target: TargetCode, Risk: RiskLow},
+	"tasks":  {Capability: CapRead, Target: TargetTask, Risk: RiskLow},
+	"docs":   {Capability: CapRead, Target: TargetDoc, Risk: RiskLow},
+	"time":   {Capability: CapRead, Target: TargetTime, Risk: RiskLow},
+	"search": {Capability: CapRead, Target: TargetSearch, Risk: RiskLow},
+	// Code has explicit read classifications above. Keep the fallback write
+	// so a newly added mutation cannot silently inherit read permission.
+	"code":      {Capability: CapWrite, Target: TargetCode, Risk: RiskHigh},
 	"templates": {Capability: CapRead, Target: TargetTemplate, Risk: RiskLow},
 	"validate":  {Capability: CapRead, Target: TargetRuntime, Risk: RiskLow},
 	"memory":    {Capability: CapRead, Target: TargetMemory, Risk: RiskLow},

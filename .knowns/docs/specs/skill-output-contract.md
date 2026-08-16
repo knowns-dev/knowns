@@ -2,7 +2,7 @@
 title: Skill Output Contract
 description: Specification for a consistent output contract across all built-in skills
 createdAt: '2026-03-13T10:07:47.595Z'
-updatedAt: '2026-03-13T10:48:56.758Z'
+updatedAt: '2026-08-13T13:23:43.631Z'
 tags:
   - spec
   - skills
@@ -67,3 +67,26 @@ This spec only covers the skill instruction sources under `internal/instructions
 
 - [ ] Should the contract require a fixed heading vocabulary, or only a fixed information order?
 - [ ] Should every skill always provide a next command, or only when a clear workflow continuation exists?
+
+
+## Contract Clarifications
+
+The contract requires a fixed information order, not fixed heading vocabulary:
+
+1. Goal/result
+2. Key details
+3. Next action only when a natural handoff exists
+
+Current implementation scope includes all 14 built-in skills: `kn-init`, `kn-spec`, `kn-flow`, `kn-plan`, `kn-research`, `kn-implement`, `kn-review`, `kn-verify`, `kn-debug`, `kn-doc`, `kn-template`, `kn-extract`, `kn-commit`, and `kn-go`.
+
+Portability requirements apply to the canonical sources under `internal/instructions/skills/*/SKILL.md`: workflow logic must not require a named external research provider or agent platform. Generated platform copies remain out of implementation scope because setup/sync overwrites them.
+
+Research-specific contract:
+
+- read-only by default
+- persistence only with explicit authorization or an approved parent workflow
+- external tools selected by capability and source quality
+- official/primary evidence preferred and cited
+- missing current-information capability reported explicitly instead of guessed around
+
+Deterministic Go tests verify the embedded sources and representative synced copies while preserving approval, validation, task lifecycle, Spec Decision, System Decision, and verification gates.

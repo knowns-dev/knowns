@@ -2,12 +2,8 @@
 title: Command Reference
 description: Quick reference for all Knowns CLI commands
 createdAt: '2026-02-24T08:44:32.957Z'
-updatedAt: '2026-07-26T06:59:06.445Z'
-tags:
-  - guide
-  - cli
-  - commands
-  - reference
+updatedAt: '2026-08-13T19:08:48.316Z'
+tags: []
 ---
 
 # Command Reference
@@ -53,9 +49,21 @@ knowns doc edit "path" -a "Appended"
 knowns search "query" --plain
 knowns search "query" --type task --plain
 knowns search "query" --type doc --plain
-knowns search reindex                    # Rebuild index
-knowns search status                     # Check status
+knowns search index                       # Queue semantic indexing
+knowns search index --wait                # Install/start managed Qdrant and block through a validated generation swap
+knowns search --reindex                   # Legacy alias for rebuilding semantic index vectors
+knowns search --status-check              # Check provider/model/index readiness
+knowns qdrant install                     # Install the pinned, checksum-verified managed Qdrant binary
+knowns qdrant purge                       # Explicit hard purge of positively owned collections
 ```
+
+`knowns search index --wait` is the deterministic setup path: in managed mode it installs the pinned Qdrant release when necessary, starts the managed runtime, rebuilds a next-generation collection from canonical Knowns sources, validates it, and activates the pointer only after success. Ordinary search remains non-blocking and falls back to keyword/BM25 while bootstrap is queued.
+
+Existing `.knowns/.search/index.db` vector indexes are migration triggers and temporary fallback only; Qdrant generations are rebuilt from canonical task, doc, memory, and decision sources rather than copying SQLite rows.
+
+`knowns qdrant purge` bypasses rollback retention for privacy deletion, but fails closed unless the active pointer and generation history positively prove that the current store owns every target collection. `knowns doctor` remains read-only and only reports remediation commands.
+
+`knowns search --status-check` reports the configured semantic provider, embedding model, dimensions, active vector backend, indexed model identity, chunk counts, and stale/degraded index reasons when available.
 
 ## Time Commands
 
@@ -133,3 +141,30 @@ knowns import sync                       # Sync imports
 knowns agents sync                       # Sync AI guidelines
 knowns browser                           # Open Web UI
 ```
+
+
+### Status and Runtime Command Selection
+
+Use the narrowest status surface for the question you are answering:
+
+| Intent | Command |
+|--------|---------|
+| Project readiness summary | `knowns status` |
+| Diagnostic findings and remediation | `knowns doctor` |
+| Live shared runtime processes, clients, queue, semantic provider identity, reload generation, and recent job activity | `knowns runtime ps` |
+| Compact runtime summary with more client/failure rows | `knowns runtime ps --clients 10 --failures 5` |
+| Detailed runtime job history | `knowns runtime ps --jobs --tail 20` |
+| Failed runtime jobs only | `knowns runtime ps --failed` |
+| Reload cached semantic providers after provider/model config changes | `knowns runtime reload` |
+| Wait until the daemon acknowledges a semantic runtime reload | `knowns runtime reload --wait` |
+| Runtime hook/plugin/native integration install state | `knowns runtime status` |
+| Semantic search provider/model/index details | `knowns search --status-check` |
+| LSP language server inventory | `knowns lsp list` |
+| Knowledge/Agent daemon lifecycle | `knowns daemon status` |
+| Raw runtime or MCP logs | `knowns runtime logs` |
+
+`knowns runtime ps` is intentionally compact by default. Use `--clients` and `--failures` to tune compact summary limits. Use `--jobs`, `--tail`, `--failed`, or `--all` when you need event/job history rather than the live process summary.
+
+`knowns runtime reload` asks the shared runtime daemon to unload cached semantic providers. The next runtime job, search, or semantic session re-reads current provider, model, and dimension settings without requiring a manual process kill. Use `knowns runtime reload --wait` when you need confirmation that the running daemon acknowledged the reload before continuing.
+
+Reloading semantic providers does not rebuild existing vectors. After changing provider, model, or dimensions, compare `knowns runtime ps` with `knowns search --status-check`; if the index is stale or degraded, run `knowns search --reindex`.

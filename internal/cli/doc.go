@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"math"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -117,8 +119,11 @@ func runDocList(cmd *cobra.Command, args []string) error {
 			fmt.Print(content)
 			return nil
 		}
-		items := buildDocListItems(store, docs)
+		items := buildDocListItems(docs)
 		if err := RunListView("Documents", items); err != nil {
+			if suppressTUICancel(err) == nil {
+				return nil
+			}
 			content := renderDocList(docs)
 			fmt.Print(content)
 		}
@@ -170,7 +175,7 @@ func runDocView(cmd *cobra.Command, path string) error {
 			fmt.Printf("UPDATED: %s\n", doc.UpdatedAt.Format("2006-01-02"))
 		} else {
 			content := renderDocInfo(doc)
-			renderOrPage(cmd, fmt.Sprintf("Doc Info: %s", doc.Title), content)
+			return renderOrPage(cmd, fmt.Sprintf("Doc Info: %s", doc.Title), content)
 		}
 		return nil
 	}
@@ -184,7 +189,7 @@ func runDocView(cmd *cobra.Command, path string) error {
 			}
 		} else {
 			content := renderDocTOC(doc.Title, headings)
-			renderOrPage(cmd, fmt.Sprintf("TOC: %s", doc.Title), content)
+			return renderOrPage(cmd, fmt.Sprintf("TOC: %s", doc.Title), content)
 		}
 		return nil
 	}
@@ -246,7 +251,10 @@ func runDocView(cmd *cobra.Command, path string) error {
 		printPaged(cmd, pb.String())
 	} else {
 		content := renderDocView(doc)
-		renderOrPage(cmd, doc.Title, content)
+		if isTTY() {
+			content = renderDocViewMarkdown(doc, markdownDisplayWidth())
+		}
+		return renderOrPage(cmd, doc.Title, content)
 	}
 
 	return nil
@@ -294,18 +302,13 @@ func runDocCreate(cmd *cobra.Command, args []string) error {
 		doc.Tags = []string{}
 	}
 
-	if err := store.Docs.Create(doc); err != nil {
-		return fmt.Errorf("create doc: %w", err)
-	}
-
-	search.BestEffortIndexDoc(store, doc.Path)
-
-	if err := store.Versions.SaveDocRevisionWithOptions(nil, doc, storage.DocRevisionOptions{
+	if err := store.MutateDocWithHistory(context.Background(), nil, doc, storage.DocMutationOptions{
 		Actor:  "cli",
 		Source: "cli",
 	}); err != nil {
-		return fmt.Errorf("save doc history: %w", err)
+		return fmt.Errorf("create doc: %w", err)
 	}
+	search.BestEffortIndexDoc(store, doc.Path)
 
 	fmt.Println(RenderSuccess(fmt.Sprintf("Created doc: %s", docPath)))
 	return nil
@@ -350,6 +353,7 @@ func runDocEdit(cmd *cobra.Command, args []string) error {
 	}
 
 	targetSection, _ := cmd.Flags().GetString("section")
+	expectedHash, _ := cmd.Flags().GetString("expected-hash")
 
 	if cmd.Flags().Changed("content") {
 		v, _ := cmd.Flags().GetString("content")
@@ -375,26 +379,18 @@ func runDocEdit(cmd *cobra.Command, args []string) error {
 
 	doc.UpdatedAt = time.Now()
 
-	if oldPath != doc.Path {
-		if err := store.Docs.Rename(oldPath, doc); err != nil {
-			return fmt.Errorf("rename doc: %w", err)
-		}
-		if err := store.Docs.RewriteDocReferences(oldPath, doc.Path, store.Tasks, store.Memory); err != nil {
-			return fmt.Errorf("rewrite doc refs: %w", err)
-		}
-		search.BestEffortRemoveDoc(store, oldPath)
-	} else if err := store.Docs.Update(doc); err != nil {
+	if err := store.MutateDocWithHistory(context.Background(), &oldDoc, doc, storage.DocMutationOptions{
+		Section:      targetSection,
+		Actor:        "cli",
+		Source:       "cli",
+		ExpectedHash: expectedHash,
+	}); err != nil {
 		return fmt.Errorf("update doc: %w", err)
 	}
-
-	search.BestEffortIndexDoc(store, doc.Path)
-
-	if err := store.Versions.SaveDocRevisionWithOptions(&oldDoc, doc, storage.DocRevisionOptions{
-		Section: targetSection,
-		Actor:   "cli",
-		Source:  "cli",
-	}); err != nil {
-		return fmt.Errorf("save doc history: %w", err)
+	if oldPath != doc.Path {
+		search.BestEffortRenameDoc(store, doc.ID, oldPath, doc.Path)
+	} else {
+		search.BestEffortIndexDoc(store, doc.Path)
 	}
 
 	fmt.Println(RenderSuccess(fmt.Sprintf("Updated doc: %s", doc.Path)))
@@ -411,10 +407,14 @@ var docDeleteCmd = &cobra.Command{
 		store := getStore()
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		force, _ := cmd.Flags().GetBool("force")
+		expectedHash, _ := cmd.Flags().GetString("expected-hash")
 
 		doc, err := store.Docs.Get(args[0])
 		if err != nil {
 			return fmt.Errorf("delete doc: %w", err)
+		}
+		if strings.TrimSpace(expectedHash) == "" {
+			expectedHash = doc.CanonicalHash
 		}
 
 		if dryRun {
@@ -432,11 +432,61 @@ var docDeleteCmd = &cobra.Command{
 			}
 		}
 
-		if err := store.Docs.Delete(args[0]); err != nil {
+		if err := store.DeleteDocWithExpectedHash(context.Background(), args[0], storage.DocDeleteOptions{ExpectedHash: expectedHash, Actor: "cli", Source: "cli"}); err != nil {
 			return fmt.Errorf("delete doc: %w", err)
 		}
-		search.BestEffortRemoveDoc(store, args[0])
+		search.BestEffortRemoveDocID(store, doc.ID, doc.Path)
 		fmt.Println(RenderSuccess(fmt.Sprintf("Deleted doc: %s", doc.Path)))
+		return nil
+	},
+}
+
+// docHardDeleteCmd is intentionally distinct from ordinary doc delete. The
+// local capability flag is an adapter grant; request data cannot set the
+// reconciler Trusted bit. The central lifecycle purge proves ID/path/hash
+// before removing JSONL and verified legacy successors.
+var docHardDeleteCmd = &cobra.Command{
+	Use:   "hard-delete <path>",
+	Short: "Permanently purge a document and its verified history",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		allowed, _ := cmd.Flags().GetBool("allow-hard-delete")
+		yes, _ := cmd.Flags().GetBool("yes")
+		reason, _ := cmd.Flags().GetString("reason")
+		expectedHash, _ := cmd.Flags().GetString("expected-hash")
+		if !allowed {
+			return fmt.Errorf("doc hard-delete requires the trusted --allow-hard-delete capability")
+		}
+		if !yes {
+			return fmt.Errorf("doc hard-delete requires --yes confirmation")
+		}
+		if strings.TrimSpace(reason) == "" {
+			return fmt.Errorf("doc hard-delete requires a non-empty --reason")
+		}
+		store := getStore()
+		doc, err := store.Docs.Get(args[0])
+		if err != nil {
+			return fmt.Errorf("doc hard-delete: %w", err)
+		}
+		if strings.TrimSpace(expectedHash) == "" {
+			expectedHash = doc.CanonicalHash
+		}
+		if expectedHash != doc.CanonicalHash {
+			return fmt.Errorf("doc hard-delete: expected hash conflict")
+		}
+		r, err := storage.NewFilesystemReconciler(store.Root)
+		if err != nil {
+			return err
+		}
+		canonicalPath := "docs/" + strings.TrimSuffix(strings.TrimPrefix(doc.Path, "docs/"), ".md") + ".md"
+		if _, err := r.ReconcileLifecycleBatch(cmd.Context(), storage.LifecycleBatch{Source: "cli-doc-hard-delete", Limit: 1, ExactEntityType: "doc", ExactEntityID: doc.ID, ExactPath: canonicalPath, Hints: []storage.ReconcileHint{{Path: filepath.Join(store.Root, canonicalPath), Event: "hard_delete"}}}, true); err != nil {
+			return fmt.Errorf("doc hard-delete reconcile: %w", err)
+		}
+		if err := r.HardDelete(cmd.Context(), "doc", doc.ID, storage.HardDeleteOptions{Trusted: true, Confirmed: true, Reason: reason, Actor: cliLifecycleActor(), Path: canonicalPath, ExpectedHash: expectedHash}); err != nil {
+			return fmt.Errorf("doc hard-delete: %w", err)
+		}
+		search.BestEffortRemoveDocID(store, doc.ID, doc.Path)
+		fmt.Fprintf(cmd.OutOrStdout(), "Permanently deleted doc: %s\n", doc.Path)
 		return nil
 	},
 }
@@ -449,6 +499,54 @@ var docHistoryCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store := getStore()
+		revision, _ := cmd.Flags().GetString("revision")
+		metadata, _ := cmd.Flags().GetBool("metadata")
+		offset, _ := cmd.Flags().GetInt("offset")
+		limit, _ := cmd.Flags().GetInt("limit")
+		if revision != "" {
+			version, err := store.Versions.GetDocRevisionDetail(args[0], revision)
+			if err != nil {
+				return fmt.Errorf("get doc revision: %w", err)
+			}
+			if isJSON(cmd) {
+				printJSON(version)
+			} else {
+				history := &models.DocVersionHistory{DocPath: args[0], CurrentVersion: version.Version, Versions: []models.DocVersion{*version}}
+				if isPlain(cmd) {
+					printPaged(cmd, renderPlainDocHistory(args[0], history))
+				} else {
+					return renderOrPage(cmd, "Doc History", renderDocHistory(args[0], history))
+				}
+			}
+			return nil
+		}
+		if metadata || offset != 0 || limit != 0 {
+			page, err := store.Versions.ListDocHistoryMetadata(args[0], offset, limit)
+			if err != nil {
+				return fmt.Errorf("list doc history metadata: %w", err)
+			}
+			if isJSON(cmd) {
+				printJSON(page)
+			} else {
+				var b strings.Builder
+				fmt.Fprintf(&b, "DOC: %s\nOFFSET: %d\nLIMIT: %d\nCURRENT_VERSION: %d\nHAS_MORE: %t\n", args[0], page.Offset, page.Limit, page.CurrentVersion, page.HasMore)
+				if page.TailTruncated {
+					fmt.Fprintln(&b, "TAIL_TRUNCATED: true")
+				}
+				for _, item := range page.Items {
+					fmt.Fprintf(&b, "VERSION: %s\nTIMESTAMP: %s\n", item.ID, item.Timestamp.Format(time.RFC3339))
+					if item.Source != "" {
+						fmt.Fprintf(&b, "SOURCE: %s\n", item.Source)
+					}
+					if item.NewHash != "" {
+						fmt.Fprintf(&b, "NEW_HASH: %s\n", item.NewHash)
+					}
+					fmt.Fprintln(&b)
+				}
+				printPaged(cmd, b.String())
+			}
+			return nil
+		}
 		history, err := store.Versions.GetDocHistory(args[0])
 		if err != nil {
 			return fmt.Errorf("get doc history: %w", err)
@@ -471,7 +569,7 @@ var docHistoryCmd = &cobra.Command{
 			printPaged(cmd, renderPlainDocHistory(args[0], history))
 		} else {
 			content := renderDocHistory(args[0], history)
-			renderOrPage(cmd, "Doc History", content)
+			return renderOrPage(cmd, "Doc History", content)
 		}
 		return nil
 	},
@@ -491,6 +589,10 @@ func renderPlainDocHistory(docPath string, history *models.DocVersionHistory) st
 		fmt.Fprintf(&hb, "CURRENT_PATH: %s\n", history.CurrentPath)
 	}
 	fmt.Fprintf(&hb, "VERSIONS: %d\n\n", history.CurrentVersion)
+	if history.TailTruncated {
+		fmt.Fprintln(&hb, "TAIL_TRUNCATED: true")
+		fmt.Fprintln(&hb)
+	}
 	for _, gap := range history.RetentionGaps {
 		fmt.Fprintf(&hb, "RETENTION_GAP: type=%s reason=%s count=%d before=%s after=%s applied=%s\n",
 			gap.Type, gap.Reason, gap.Count, gap.BeforeVersion, gap.AfterVersion, gap.AppliedAt.Format(time.RFC3339))
@@ -622,33 +724,24 @@ func shortDocHistoryHash(hash string) string {
 
 // ---- list view helpers ----
 
-func buildDocListItems(store *storage.Store, docs []*models.Doc) []listItem {
+func buildDocListItems(docs []*models.Doc) []listItem {
 	items := make([]listItem, len(docs))
 	for i, d := range docs {
-		desc := d.Description
+		doc := d
+		parts := []string{d.Description}
 		if len(d.Tags) > 0 {
-			if desc != "" {
-				desc += "  "
-			}
-			desc += RenderTags(d.Tags)
+			parts = append(parts, RenderTags(d.Tags))
 		}
 		if d.IsImported {
-			if desc != "" {
-				desc += "  "
-			}
-			desc += StyleDim.Render("[imported]")
-		}
-		// Load full content for detail view
-		detail := ""
-		full, err := store.Docs.Get(d.Path)
-		if err == nil {
-			detail = renderDocView(full)
+			parts = append(parts, StyleDim.Render("imported"))
 		}
 		items[i] = listItem{
-			id:          d.Path,
-			title:       d.Title,
-			description: desc,
-			detail:      detail,
+			id:          doc.Path,
+			title:       doc.Title,
+			description: joinListMetadata(parts...),
+			detailRenderer: newLazyMarkdownDetailRenderer(func(width int, style string) string {
+				return renderDocListDetailMarkdownWithStyle(doc, width, style)
+			}),
 		}
 	}
 	return items
@@ -685,6 +778,33 @@ func renderDocList(docs []*models.Doc) string {
 }
 
 func renderDocView(doc *models.Doc) string {
+	return renderDocViewWithBodyRenderer(doc, passthroughMarkdown)
+}
+
+func renderDocViewMarkdown(doc *models.Doc, width int) string {
+	return renderDocViewMarkdownWithStyle(doc, width, terminalMarkdownStyle())
+}
+
+func renderDocViewMarkdownWithStyle(doc *models.Doc, width int, style string) string {
+	return renderDocViewWithBodyRenderer(doc, newTerminalMarkdownBodyRenderer(width, style))
+}
+
+func renderDocListDetailMarkdownWithStyle(doc *models.Doc, width int, style string) string {
+	var b strings.Builder
+	if doc.Description != "" {
+		fmt.Fprintln(&b, StyleDim.Render(doc.Description))
+	}
+	if len(doc.Tags) > 0 {
+		fmt.Fprintf(&b, "%s %s\n", StyleDim.Render("Tags:"), RenderTags(doc.Tags))
+	}
+	if b.Len() > 0 {
+		fmt.Fprintln(&b, RenderSeparator(min(60, width)))
+	}
+	fmt.Fprintln(&b, newTerminalMarkdownBodyRenderer(width, style)(doc.Content))
+	return b.String()
+}
+
+func renderDocViewWithBodyRenderer(doc *models.Doc, renderBody markdownBodyRenderer) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, StyleTitle.Render("# "+doc.Title))
 	if doc.Description != "" {
@@ -694,7 +814,7 @@ func renderDocView(doc *models.Doc) string {
 		fmt.Fprintf(&b, "%s %s\n", StyleDim.Render("Tags:"), RenderTags(doc.Tags))
 	}
 	fmt.Fprintln(&b, RenderSeparator(60))
-	fmt.Fprintln(&b, doc.Content)
+	fmt.Fprintln(&b, renderBody(doc.Content))
 	return b.String()
 }
 
@@ -1027,16 +1147,31 @@ func init() {
 	docEditCmd.Flags().StringP("content", "c", "", "Replace content")
 	docEditCmd.Flags().StringP("append", "a", "", "Append to content")
 	docEditCmd.Flags().String("section", "", "Target section to replace (used with --content)")
+	docEditCmd.Flags().String("expected-hash", "", "Expected canonical hash for optimistic concurrency")
 
 	// doc delete flags
 	docDeleteCmd.Flags().Bool("dry-run", false, "Preview what would be deleted without deleting")
 	docDeleteCmd.Flags().Bool("force", false, "Skip confirmation prompt")
+	docDeleteCmd.Flags().String("expected-hash", "", "Expected canonical hash for optimistic concurrency")
+
+	// doc history flags (additive; no flags preserve the legacy full output)
+	docHistoryCmd.Flags().Bool("metadata", false, "List payload-free revision metadata")
+	docHistoryCmd.Flags().Int("offset", 0, "Metadata page offset (newest first)")
+	docHistoryCmd.Flags().Int("limit", 0, "Metadata page size (0 means all)")
+	docHistoryCmd.Flags().String("revision", "", "Load one revision detail (vN or numeric)")
+
+	// doc hard-delete flags (separate from ordinary delete)
+	docHardDeleteCmd.Flags().Bool("yes", false, "Confirm permanent purge")
+	docHardDeleteCmd.Flags().Bool("allow-hard-delete", false, "Grant this local invocation trusted hard-delete capability")
+	docHardDeleteCmd.Flags().String("reason", "", "Required audit reason for permanent purge")
+	docHardDeleteCmd.Flags().String("expected-hash", "", "Expected canonical hash for optimistic concurrency")
 
 	docCmd.AddCommand(docListCmd)
 	docCmd.AddCommand(docViewCmd)
 	docCmd.AddCommand(docCreateCmd)
 	docCmd.AddCommand(docEditCmd)
 	docCmd.AddCommand(docDeleteCmd)
+	docCmd.AddCommand(docHardDeleteCmd)
 	docCmd.AddCommand(docHistoryCmd)
 
 	rootCmd.AddCommand(docCmd)

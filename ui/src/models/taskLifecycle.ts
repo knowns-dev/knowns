@@ -122,6 +122,21 @@ export const TASK_LIFECYCLE_REASON_LABELS: Record<TaskLifecycleReasonCode, strin
 	operation_failed: "Operation failed",
 };
 
-export function formatLifecycleState(state: TaskLifecycleState): string {
-	return state.charAt(0).toUpperCase() + state.slice(1);
+export function getTaskLifecycleState(data: {
+	lifecycleState?: TaskLifecycleState | null;
+	archived?: boolean | null;
+	status?: string | null;
+	completedAt?: Date | string | null;
+}): TaskLifecycleState {
+	if (data.lifecycleState === "active" || data.lifecycleState === "done" || data.lifecycleState === "archived") {
+		return data.lifecycleState;
+	}
+	if (data.archived) return "archived";
+	if (data.status?.toLowerCase() === "done" || data.completedAt) return "done";
+	return "active";
+}
+
+export function formatLifecycleState(state?: TaskLifecycleState | null): string {
+	const value = state || "active";
+	return value.charAt(0).toUpperCase() + value.slice(1);
 }

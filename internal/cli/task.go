@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -103,18 +104,15 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	if err := store.Tasks.Create(task); err != nil {
+	if err := store.CreateTaskWithHistory(context.Background(), task, models.TaskVersion{
+		Author:   assignee,
+		Changes:  store.Versions.TrackChanges(nil, task),
+		Snapshot: storage.TaskToSnapshot(task),
+	}); err != nil {
 		return fmt.Errorf("create task: %w", err)
 	}
 
 	search.BestEffortIndexTask(store, task.ID)
-
-	// Save version
-	_ = store.Versions.SaveVersion(task.ID, models.TaskVersion{
-		Author:   assignee,
-		Changes:  store.Versions.TrackChanges(nil, task),
-		Snapshot: storage.TaskToSnapshot(task),
-	})
 
 	fmt.Println(RenderSuccess(fmt.Sprintf("Created task %s: %s", task.ID, task.Title)))
 	return nil
@@ -179,7 +177,7 @@ func runTaskList(cmd *cobra.Command, args []string) error {
 			printPaged(cmd, content)
 		} else {
 			content := renderTaskTree(filtered)
-			renderOrPage(cmd, "Tasks (tree)", content)
+			return renderOrPage(cmd, "Tasks (tree)", content)
 		}
 		return nil
 	}
@@ -219,6 +217,9 @@ func runTaskList(cmd *cobra.Command, args []string) error {
 		}
 		items := buildTaskListItems(filtered)
 		if err := RunListView("Tasks", items); err != nil {
+			if suppressTUICancel(err) == nil {
+				return nil
+			}
 			// Fallback to static table on TUI error
 			content := renderTaskTable(filtered)
 			fmt.Print(content)
@@ -263,7 +264,10 @@ func runTaskView(cmd *cobra.Command, id string) error {
 		printPaged(cmd, content)
 	} else {
 		content := renderTaskDetailed(task)
-		renderOrPage(cmd, fmt.Sprintf("Task %s", task.ID), content)
+		if isTTY() {
+			content = renderTaskDetailedMarkdown(task, markdownDisplayWidth())
+		}
+		return renderOrPage(cmd, fmt.Sprintf("Task %s", task.ID), content)
 	}
 
 	return nil
@@ -282,7 +286,8 @@ func runTaskEdit(cmd *cobra.Command, args []string) error {
 	id := args[0]
 	store := getStore()
 	service := newCLITaskLifecycleService(store)
-	task, err := service.UpdateTask(cmd.Context(), id, tasklifecycle.TaskUpdateOptions{Actor: cliLifecycleActor(), Mutate: func(task *models.Task) error {
+	expectedHash, _ := cmd.Flags().GetString("expected-hash")
+	task, err := service.UpdateTask(cmd.Context(), id, tasklifecycle.TaskUpdateOptions{Actor: cliLifecycleActor(), ExpectedHash: expectedHash, Mutate: func(task *models.Task) error {
 
 		// Apply flag updates
 		if cmd.Flags().Changed("title") {
@@ -432,7 +437,8 @@ var taskArchiveCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		yes, _ := cmd.Flags().GetBool("yes")
-		return runCLILifecycle(cmd, tasklifecycle.Request{Operation: tasklifecycle.OperationArchive, TaskID: args[0], Execute: yes, Actor: cliLifecycleActor()}, false)
+		expectedHash, _ := cmd.Flags().GetString("expected-hash")
+		return runCLILifecycle(cmd, tasklifecycle.Request{Operation: tasklifecycle.OperationArchive, TaskID: args[0], Execute: yes, Actor: cliLifecycleActor(), ExpectedHash: expectedHash}, false)
 	},
 }
 
@@ -444,7 +450,8 @@ var taskUnarchiveCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		yes, _ := cmd.Flags().GetBool("yes")
-		return runCLILifecycle(cmd, tasklifecycle.Request{Operation: tasklifecycle.OperationReopen, TaskID: args[0], Execute: yes, Actor: cliLifecycleActor()}, false)
+		expectedHash, _ := cmd.Flags().GetString("expected-hash")
+		return runCLILifecycle(cmd, tasklifecycle.Request{Operation: tasklifecycle.OperationReopen, TaskID: args[0], Execute: yes, Actor: cliLifecycleActor(), ExpectedHash: expectedHash}, false)
 	},
 }
 
@@ -466,8 +473,14 @@ var taskBatchUnarchiveCmd = &cobra.Command{
 
 func newCLITaskLifecycleService(store *storage.Store) *tasklifecycle.Service {
 	return tasklifecycle.New(store, tasklifecycle.WithHooks(tasklifecycle.Hooks{
-		IndexTask:  func(id string) error { return search.ReconcileTaskIndex(store, id) },
-		RemoveTask: func(id string) error { return search.ReconcileTaskRemoval(store, id) },
+		IndexTask: func(id string) error {
+			search.BestEffortIndexTask(store, id)
+			return nil
+		},
+		RemoveTask: func(id string) error {
+			search.BestEffortRemoveTask(store, id)
+			return nil
+		},
 	}))
 }
 
@@ -547,6 +560,54 @@ var taskHistoryCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store := getStore()
+		revision, _ := cmd.Flags().GetString("revision")
+		metadata, _ := cmd.Flags().GetBool("metadata")
+		offset, _ := cmd.Flags().GetInt("offset")
+		limit, _ := cmd.Flags().GetInt("limit")
+		if revision != "" {
+			version, err := store.Versions.GetTaskRevisionDetail(args[0], revision)
+			if err != nil {
+				return fmt.Errorf("get task revision: %w", err)
+			}
+			if isJSON(cmd) {
+				printJSON(version)
+			} else {
+				history := &models.TaskVersionHistory{TaskID: args[0], CurrentVersion: version.Version, Versions: []models.TaskVersion{*version}}
+				if isPlain(cmd) {
+					printPaged(cmd, renderPlainTaskHistory(args[0], history))
+				} else {
+					return renderOrPage(cmd, "Task History", renderTaskHistory(args[0], history))
+				}
+			}
+			return nil
+		}
+		if metadata || offset != 0 || limit != 0 {
+			page, err := store.Versions.ListTaskHistoryMetadata(args[0], offset, limit)
+			if err != nil {
+				return fmt.Errorf("list task history metadata: %w", err)
+			}
+			if isJSON(cmd) {
+				printJSON(page)
+			} else {
+				var b strings.Builder
+				fmt.Fprintf(&b, "TASK: %s\nOFFSET: %d\nLIMIT: %d\nCURRENT_VERSION: %d\nHAS_MORE: %t\n", args[0], page.Offset, page.Limit, page.CurrentVersion, page.HasMore)
+				if page.TailTruncated {
+					fmt.Fprintln(&b, "TAIL_TRUNCATED: true")
+				}
+				for _, item := range page.Items {
+					fmt.Fprintf(&b, "VERSION: %s\nTIMESTAMP: %s\n", item.ID, item.Timestamp.Format(time.RFC3339))
+					if item.Source != "" {
+						fmt.Fprintf(&b, "SOURCE: %s\n", item.Source)
+					}
+					if item.NewHash != "" {
+						fmt.Fprintf(&b, "NEW_HASH: %s\n", item.NewHash)
+					}
+					fmt.Fprintln(&b)
+				}
+				printPaged(cmd, b.String())
+			}
+			return nil
+		}
 		history, err := store.Versions.GetHistory(args[0])
 		if err != nil {
 			return fmt.Errorf("get history: %w", err)
@@ -583,7 +644,7 @@ var taskHistoryCmd = &cobra.Command{
 			printPaged(cmd, hb.String())
 		} else {
 			content := renderTaskHistory(args[0], history)
-			renderOrPage(cmd, "Task History", content)
+			return renderOrPage(cmd, "Task History", content)
 		}
 		return nil
 	},
@@ -592,23 +653,89 @@ var taskHistoryCmd = &cobra.Command{
 // ---- list view helpers ----
 
 func buildTaskListItems(tasks []*models.Task) []listItem {
-	items := make([]listItem, len(tasks))
-	for i, t := range tasks {
-		desc := StatusStyle(t.Status).Render(t.Status) + "  " + PriorityStyle(t.Priority).Render(t.Priority)
+	sorted := append([]*models.Task(nil), tasks...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		left, right := sorted[i], sorted[j]
+		if rank := taskStatusListRank(left.Status) - taskStatusListRank(right.Status); rank != 0 {
+			return rank < 0
+		}
+		if left.Order != nil || right.Order != nil {
+			if left.Order == nil {
+				return false
+			}
+			if right.Order == nil {
+				return true
+			}
+			if *left.Order != *right.Order {
+				return *left.Order < *right.Order
+			}
+		}
+		if rank := taskPriorityListRank(left.Priority) - taskPriorityListRank(right.Priority); rank != 0 {
+			return rank < 0
+		}
+		if !left.UpdatedAt.Equal(right.UpdatedAt) {
+			return left.UpdatedAt.After(right.UpdatedAt)
+		}
+		return left.ID < right.ID
+	})
+
+	items := make([]listItem, len(sorted))
+	for i, t := range sorted {
+		task := t
+		parts := []string{
+			StatusStyle(t.Status).Render(t.Status),
+			PriorityStyle(t.Priority).Render(t.Priority),
+		}
 		if t.Assignee != "" {
-			desc += "  " + StyleDim.Render(t.Assignee)
+			parts = append(parts, StyleDim.Render(t.Assignee))
 		}
 		if len(t.Labels) > 0 {
-			desc += "  " + RenderLabels(t.Labels)
+			parts = append(parts, RenderLabels(t.Labels))
 		}
 		items[i] = listItem{
-			id:          t.ID,
-			title:       t.Title,
-			description: desc,
-			detail:      renderTaskDetailed(t),
+			id:          task.ID,
+			title:       task.Title,
+			description: joinListMetadata(parts...),
+			detailRenderer: newLazyMarkdownDetailRenderer(func(width int, style string) string {
+				return renderTaskDetailedMarkdownWithStyle(task, width, style)
+			}),
 		}
 	}
 	return items
+}
+
+func taskStatusListRank(status string) int {
+	switch status {
+	case "urgent":
+		return 0
+	case "blocked":
+		return 1
+	case "in-progress":
+		return 2
+	case "in-review":
+		return 3
+	case "todo":
+		return 4
+	case "on-hold":
+		return 5
+	case "done":
+		return 6
+	default:
+		return 5
+	}
+}
+
+func taskPriorityListRank(priority string) int {
+	switch priority {
+	case "high":
+		return 0
+	case "medium":
+		return 1
+	case "low":
+		return 2
+	default:
+		return 3
+	}
 }
 
 // ---- output helpers ----
@@ -733,6 +860,18 @@ func sprintTaskPlain(t *models.Task) string {
 }
 
 func renderTaskDetailed(t *models.Task) string {
+	return renderTaskDetailedWithBodyRenderer(t, passthroughMarkdown)
+}
+
+func renderTaskDetailedMarkdown(t *models.Task, width int) string {
+	return renderTaskDetailedMarkdownWithStyle(t, width, terminalMarkdownStyle())
+}
+
+func renderTaskDetailedMarkdownWithStyle(t *models.Task, width int, style string) string {
+	return renderTaskDetailedWithBodyRenderer(t, newTerminalMarkdownBodyRenderer(width, style))
+}
+
+func renderTaskDetailedWithBodyRenderer(t *models.Task, renderBody markdownBodyRenderer) string {
 	var b strings.Builder
 	// Header
 	fmt.Fprintf(&b, "%s  %s\n", StyleID.Render(t.ID), StyleBold.Render(t.Title))
@@ -755,7 +894,7 @@ func renderTaskDetailed(t *models.Task) string {
 		fmt.Fprintln(&b, RenderKeyValue("Fulfills", joinStrings(t.Fulfills, ", ")))
 	}
 	if t.Description != "" {
-		fmt.Fprintf(&b, "\n%s\n%s\n", RenderSectionHeader("Description"), t.Description)
+		fmt.Fprintf(&b, "\n%s\n%s\n", RenderSectionHeader("Description"), renderBody(t.Description))
 	}
 	if len(t.AcceptanceCriteria) > 0 {
 		fmt.Fprintf(&b, "\n%s\n", RenderSectionHeader("Acceptance Criteria"))
@@ -764,10 +903,10 @@ func renderTaskDetailed(t *models.Task) string {
 		}
 	}
 	if t.ImplementationPlan != "" {
-		fmt.Fprintf(&b, "\n%s\n%s\n", RenderSectionHeader("Implementation Plan"), t.ImplementationPlan)
+		fmt.Fprintf(&b, "\n%s\n%s\n", RenderSectionHeader("Implementation Plan"), renderBody(t.ImplementationPlan))
 	}
 	if t.ImplementationNotes != "" {
-		fmt.Fprintf(&b, "\n%s\n%s\n", RenderSectionHeader("Implementation Notes"), t.ImplementationNotes)
+		fmt.Fprintf(&b, "\n%s\n%s\n", RenderSectionHeader("Implementation Notes"), renderBody(t.ImplementationNotes))
 	}
 	if t.TimeSpent > 0 {
 		fmt.Fprintf(&b, "\n%s %s\n", StyleDim.Render("Time Spent:"), StyleInfo.Render(formatDuration(t.TimeSpent)))
@@ -908,6 +1047,23 @@ func renderTaskHistory(id string, history *models.TaskVersionHistory) string {
 	return b.String()
 }
 
+func renderPlainTaskHistory(id string, history *models.TaskVersionHistory) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "TASK: %s\nVERSIONS: %d\n\n", id, history.CurrentVersion)
+	if history.TailTruncated {
+		fmt.Fprintln(&b, "TAIL_TRUNCATED: true")
+		fmt.Fprintln(&b)
+	}
+	for _, v := range history.Versions {
+		fmt.Fprintf(&b, "VERSION: %s\nTIMESTAMP: %s\n", v.ID, v.Timestamp.Format(time.RFC3339))
+		for _, ch := range v.Changes {
+			fmt.Fprintf(&b, "  CHANGE: %s: %v -> %v\n", ch.Field, ch.OldValue, ch.NewValue)
+		}
+		fmt.Fprintln(&b)
+	}
+	return b.String()
+}
+
 func containsLabel(labels []string, label string) bool {
 	for _, l := range labels {
 		if l == label {
@@ -940,6 +1096,12 @@ func init() {
 	taskListCmd.Flags().String("label", "", "Filter by label")
 	taskListCmd.Flags().Bool("tree", false, "Show tasks as tree hierarchy")
 
+	// task history flags (additive; no flags preserve the legacy full output)
+	taskHistoryCmd.Flags().Bool("metadata", false, "List payload-free revision metadata")
+	taskHistoryCmd.Flags().Int("offset", 0, "Metadata page offset (newest first)")
+	taskHistoryCmd.Flags().Int("limit", 0, "Metadata page size (0 means all)")
+	taskHistoryCmd.Flags().String("revision", "", "Load one revision detail (vN or numeric)")
+
 	// task edit flags
 	taskEditCmd.Flags().StringP("title", "t", "", "New title")
 	taskEditCmd.Flags().StringP("description", "d", "", "New description")
@@ -956,6 +1118,7 @@ func init() {
 	taskEditCmd.Flags().String("append-notes", "", "Append to implementation notes")
 	taskEditCmd.Flags().String("spec", "", "Linked spec document path")
 	taskEditCmd.Flags().String("parent", "", "Parent task ID")
+	taskEditCmd.Flags().String("expected-hash", "", "Expected canonical hash for optimistic concurrency")
 	taskEditCmd.Flags().StringArray("fulfills", nil, "Spec ACs this task fulfills (repeatable)")
 	taskEditCmd.Flags().Int("order", 0, "Display order (lower = first)")
 
@@ -964,7 +1127,9 @@ func init() {
 	taskDeleteCmd.Flags().Bool("yes", false, "Explicitly confirm permanent deletion")
 	taskDeleteCmd.Flags().Bool("allow-hard-delete", false, "Grant this local CLI invocation hard-delete capability")
 	taskArchiveCmd.Flags().Bool("yes", false, "Execute; otherwise preview only")
+	taskArchiveCmd.Flags().String("expected-hash", "", "Expected canonical hash for optimistic concurrency")
 	taskUnarchiveCmd.Flags().Bool("yes", false, "Execute; otherwise preview only")
+	taskUnarchiveCmd.Flags().String("expected-hash", "", "Expected canonical hash for optimistic concurrency")
 	taskBatchArchiveCmd.Flags().Bool("yes", false, "Execute; otherwise preview only")
 	taskBatchUnarchiveCmd.Flags().Bool("yes", false, "Execute; otherwise preview only")
 

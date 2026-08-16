@@ -2,9 +2,11 @@ package routes
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,6 +96,7 @@ func (tr *TaskRoutes) Register(r chi.Router) {
 	r.Post("/tasks/reorder", tr.reorder)
 	r.Post("/tasks/sync-spec-acs", tr.syncSpecACs)
 	r.Get("/tasks/{id}/history", tr.history)
+	r.Get("/tasks/{id}/history/{revision}", tr.historyRevision)
 }
 
 // list returns all active tasks.
@@ -225,18 +228,16 @@ func (tr *TaskRoutes) create(w http.ResponseWriter, r *http.Request) {
 		task.Labels = []string{}
 	}
 
-	if err := tr.getStore().Tasks.Create(&task); err != nil {
+	store := tr.getStore()
+	if err := store.CreateTaskWithHistory(r.Context(), &task, models.TaskVersion{
+		Changes:  store.Versions.TrackChanges(nil, &task),
+		Snapshot: storage.TaskToSnapshot(&task),
+	}); err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	search.BestEffortIndexTask(tr.getStore(), task.ID)
-
-	// Record initial version.
-	_ = tr.getStore().Versions.SaveVersion(task.ID, models.TaskVersion{
-		Changes:  tr.getStore().Versions.TrackChanges(nil, &task),
-		Snapshot: storage.TaskToSnapshot(&task),
-	})
+	search.BestEffortIndexTask(store, task.ID)
 
 	response := newTaskResponse(&task)
 	tr.sse.Broadcast(SSEEvent{Type: "tasks:updated", Data: map[string]interface{}{"task": response}})
@@ -253,7 +254,15 @@ func (tr *TaskRoutes) update(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
-	updated, err := tr.lifecycleService().UpdateTask(r.Context(), id, tasklifecycle.TaskUpdateOptions{Actor: "api", Mutate: func(task *models.Task) error {
+	var expectedHash string
+	if raw, ok := patch["expectedHash"]; ok {
+		if err := json.Unmarshal(raw, &expectedHash); err != nil {
+			respondError(w, http.StatusBadRequest, "expectedHash must be a string")
+			return
+		}
+		delete(patch, "expectedHash")
+	}
+	updated, err := tr.lifecycleService().UpdateTask(r.Context(), id, tasklifecycle.TaskUpdateOptions{Actor: "api", ExpectedHash: expectedHash, Mutate: func(task *models.Task) error {
 		data, err := json.Marshal(task)
 		if err != nil {
 			return err
@@ -275,6 +284,9 @@ func (tr *TaskRoutes) update(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusInternalServerError
 		if tasklifecycleErrorNotFound(err) {
 			status = http.StatusNotFound
+		}
+		if errors.Is(err, storage.ErrHistoryConflict) {
+			status = http.StatusConflict
 		}
 		respondError(w, status, err.Error())
 		return
@@ -320,7 +332,8 @@ type batchArchiveRequest struct {
 	Actor        string   `json:"actor,omitempty"`
 	MinimumAgeMs *int64   `json:"minimumAgeMs,omitempty"`
 	// OlderThanMs is accepted as a backward-compatible alias.
-	OlderThanMs *int64 `json:"olderThanMs,omitempty"`
+	OlderThanMs    *int64            `json:"olderThanMs,omitempty"`
+	ExpectedHashes map[string]string `json:"expectedHashes,omitempty"`
 }
 
 // batchArchive archives all tasks that were last updated before the given age.
@@ -337,7 +350,7 @@ func (tr *TaskRoutes) batchArchive(w http.ResponseWriter, r *http.Request) {
 	if minimumAge == nil {
 		minimumAge = req.OlderThanMs
 	}
-	tr.executeLifecycle(w, r, tasklifecycle.Request{Operation: tasklifecycle.OperationBatchArchive, IDs: req.IDs, Execute: req.Execute, Actor: req.Actor, MinimumAgeMs: minimumAge})
+	tr.executeLifecycle(w, r, tasklifecycle.Request{Operation: tasklifecycle.OperationBatchArchive, IDs: req.IDs, Execute: req.Execute, Actor: req.Actor, MinimumAgeMs: minimumAge, ExpectedHashes: req.ExpectedHashes})
 }
 
 func (tr *TaskRoutes) batchUnarchive(w http.ResponseWriter, r *http.Request) {
@@ -424,7 +437,8 @@ type reorderItem struct {
 
 // reorderRequest is the request body for the batch reorder endpoint.
 type reorderRequest struct {
-	Orders []reorderItem `json:"orders"`
+	Orders         []reorderItem     `json:"orders"`
+	ExpectedHashes map[string]string `json:"expectedHashes,omitempty"`
 }
 
 // reorder batch-updates the display order of tasks.
@@ -436,25 +450,20 @@ func (tr *TaskRoutes) reorder(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
-
-	updated := 0
+	items := make([]tasklifecycle.ReorderItem, 0, len(req.Orders))
 	for _, item := range req.Orders {
-		changed := false
-		_, err := tr.lifecycleService().UpdateTask(r.Context(), item.ID, tasklifecycle.TaskUpdateOptions{Actor: "api", Mutate: func(task *models.Task) error {
-			if task.Order != nil && *task.Order == item.Order {
-				return nil
-			}
-			order := item.Order
-			task.Order = &order
-			changed = true
-			return nil
-		}})
-		if err != nil {
-			continue
+		items = append(items, tasklifecycle.ReorderItem{TaskID: item.ID, Order: item.Order})
+	}
+	updated, err := tr.lifecycleService().ReorderTasks(r.Context(), items, req.ExpectedHashes)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, storage.ErrHistoryConflict) {
+			status = http.StatusConflict
+		} else if tasklifecycleErrorNotFound(err) {
+			status = http.StatusNotFound
 		}
-		if changed {
-			updated++
-		}
+		respondError(w, status, err.Error())
+		return
 	}
 
 	if updated > 0 {
@@ -511,10 +520,57 @@ func (tr *TaskRoutes) syncSpecACs(w http.ResponseWriter, r *http.Request) {
 // GET /api/tasks/{id}/history
 func (tr *TaskRoutes) history(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if strings.EqualFold(r.URL.Query().Get("metadata"), "true") || r.URL.Query().Get("offset") != "" || r.URL.Query().Get("limit") != "" {
+		offset, limit, err := historyPageQuery(r)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		page, err := tr.getStore().Versions.ListTaskHistoryMetadata(id, offset, limit)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		respondJSON(w, http.StatusOK, page)
+		return
+	}
 	h, err := tr.getStore().Versions.GetHistory(id)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	respondJSON(w, http.StatusOK, h)
+}
+
+func (tr *TaskRoutes) historyRevision(w http.ResponseWriter, r *http.Request) {
+	id, revision := chi.URLParam(r, "id"), chi.URLParam(r, "revision")
+	version, err := tr.getStore().Versions.GetTaskRevisionDetail(id, revision)
+	if err != nil {
+		respondError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, version)
+}
+
+func historyPageQuery(r *http.Request) (int, int, error) {
+	parse := func(name string) (int, error) {
+		value := r.URL.Query().Get(name)
+		if value == "" {
+			return 0, nil
+		}
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 {
+			return 0, fmt.Errorf("invalid history %s", name)
+		}
+		return n, nil
+	}
+	offset, err := parse("offset")
+	if err != nil {
+		return 0, 0, err
+	}
+	limit, err := parse("limit")
+	if err != nil {
+		return 0, 0, err
+	}
+	return offset, limit, nil
 }

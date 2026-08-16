@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"errors"
 	"log"
 	"os"
@@ -86,6 +87,9 @@ func (s *indexScheduler) SubmitAfter(key indexJobKey, debounce time.Duration, jo
 }
 
 func BestEffortIndexTask(store *storage.Store, taskID string) {
+	if qdrantBestEffortIntent(store, "task", taskID, false) {
+		return
+	}
 	if enqueueRuntimeJob(store, runtimequeue.JobIndexTask, taskID, func() {
 		scheduleBestEffort(store, "index-task", taskID, func(svc *IndexService) error {
 			return svc.IndexTask(taskID)
@@ -99,6 +103,9 @@ func BestEffortIndexTask(store *storage.Store, taskID string) {
 }
 
 func BestEffortIndexDoc(store *storage.Store, docPath string) {
+	if qdrantBestEffortIntent(store, "doc", docPath, false) {
+		return
+	}
 	if enqueueRuntimeJob(store, runtimequeue.JobIndexDoc, docPath, func() {
 		scheduleBestEffort(store, "index-doc", docPath, func(svc *IndexService) error {
 			return svc.IndexDoc(docPath)
@@ -112,6 +119,9 @@ func BestEffortIndexDoc(store *storage.Store, docPath string) {
 }
 
 func BestEffortRemoveTask(store *storage.Store, taskID string) {
+	if qdrantBestEffortIntent(store, "task", taskID, true) {
+		return
+	}
 	if enqueueRuntimeJob(store, runtimequeue.JobRemoveTask, taskID, func() {
 		scheduleBestEffort(store, "remove-task", taskID, func(svc *IndexService) error {
 			return svc.RemoveTask(taskID)
@@ -156,6 +166,9 @@ func withSemanticIndex(store *storage.Store, fn func(*IndexService) error) error
 }
 
 func BestEffortRemoveDoc(store *storage.Store, docPath string) {
+	if qdrantBestEffortIntent(store, "doc", docPath, true) {
+		return
+	}
 	if enqueueRuntimeJob(store, runtimequeue.JobRemoveDoc, docPath, func() {
 		scheduleBestEffort(store, "remove-doc", docPath, func(svc *IndexService) error {
 			return svc.RemoveDoc(docPath)
@@ -166,6 +179,63 @@ func BestEffortRemoveDoc(store *storage.Store, docPath string) {
 	scheduleBestEffort(store, "remove-doc", docPath, func(svc *IndexService) error {
 		return svc.RemoveDoc(docPath)
 	})
+}
+
+// BestEffortRemoveDocID preserves stable Doc identity for Qdrant removals.
+// Without a durable tombstone/purge proof it deliberately queues no mutation.
+func BestEffortRemoveDocID(store *storage.Store, docID, docPath string) {
+	if store != nil && resolveEffectiveVectorStore(store).Backend == models.SemanticVectorBackendQdrant {
+		intent, err := removalIntentFromHistoryOrPurge(store.Root, "doc", docID, "docs/"+strings.TrimSuffix(strings.TrimPrefix(docPath, "docs/"), ".md")+".md", "")
+		if err != nil {
+			log.Printf("[search] could not prove qdrant doc removal %s: %v", docID, err)
+			return
+		}
+		intent.BatchID = "public-hook"
+		if ok, proofErr := proveQdrantIntent(store.Root, intent); proofErr != nil || !ok {
+			log.Printf("[search] could not prove qdrant doc removal %s: %v", docID, proofErr)
+			return
+		}
+		if err := markQdrantIntentPending(store.Root, intent); err != nil {
+			log.Printf("[search] could not persist qdrant doc removal readiness: %v", err)
+		}
+		if _, err := runtimequeue.EnqueueQdrantIntent(store.Root, intent); err != nil {
+			log.Printf("[search] could not queue qdrant doc removal: %v", err)
+		}
+		return
+	}
+	BestEffortRemoveDoc(store, docPath)
+}
+
+// BestEffortRenameDoc sends one stable-id Qdrant intent so the old source is
+// deleted and only the renamed canonical document is upserted.
+func BestEffortRenameDoc(store *storage.Store, docID, oldPath, newPath string) {
+	if store != nil && resolveEffectiveVectorStore(store).Backend == models.SemanticVectorBackendQdrant {
+		doc, err := store.Docs.Get(newPath)
+		if err != nil || doc.ID != docID {
+			log.Printf("[search] could not resolve renamed qdrant doc %s: %v", docID, err)
+			return
+		}
+		stream, err := storage.NewHistoryStore(store.Root).Read(context.Background(), "doc", docID)
+		if err != nil || len(stream.Records) == 0 {
+			log.Printf("[search] renamed qdrant doc lacks durable history %s", docID)
+			return
+		}
+		head := stream.Records[len(stream.Records)-1]
+		intent := runtimequeue.QdrantIntent{EntityType: "doc", EntityID: docID, Revision: head.Revision, Operation: "rename", CanonicalHash: storage.CanonicalDocHash(doc), Path: "docs/" + strings.TrimSuffix(strings.TrimPrefix(newPath, "docs/"), ".md") + ".md", PreviousPath: "docs/" + strings.TrimSuffix(strings.TrimPrefix(oldPath, "docs/"), ".md") + ".md", BatchID: "public-hook"}
+		if ok, proofErr := proveQdrantIntent(store.Root, intent); proofErr != nil || !ok {
+			log.Printf("[search] could not prove renamed qdrant doc %s: %v", docID, proofErr)
+			return
+		}
+		if err := markQdrantIntentPending(store.Root, intent); err != nil {
+			log.Printf("[search] could not persist renamed qdrant doc readiness: %v", err)
+		}
+		if _, err := runtimequeue.EnqueueQdrantIntent(store.Root, intent); err != nil {
+			log.Printf("[search] could not queue renamed qdrant doc: %v", err)
+		}
+		return
+	}
+	BestEffortRemoveDoc(store, oldPath)
+	BestEffortIndexDoc(store, newPath)
 }
 
 func BestEffortIndexMemory(store *storage.Store, memoryID string) {
@@ -266,6 +336,36 @@ func enqueueRuntimeJob(store *storage.Store, kind runtimequeue.JobKind, target s
 		log.Printf("[search] runtime queue unavailable for %s %s: %v", kind, target, err)
 		fallback()
 		return true
+	}
+	return true
+}
+
+// qdrantBestEffortIntent handles public mutation hooks when Qdrant is active.
+// These hooks must use the same durable, proof-checked intent path as watcher
+// callbacks. Returning true means the caller must not run the legacy
+// IndexService fallback, including when intent construction or queue durable
+// storage fails.
+func qdrantBestEffortIntent(store *storage.Store, entityType, target string, remove bool) bool {
+	if store == nil || resolveEffectiveVectorStore(store).Backend != models.SemanticVectorBackendQdrant {
+		return false
+	}
+	intent, err := currentPublicQdrantIntent(store.Root, entityType, target, remove)
+	if err != nil {
+		log.Printf("[search] could not build qdrant %s intent for %s: %v", entityType, target, err)
+		return true
+	}
+	if ok, proofErr := proveQdrantIntent(store.Root, intent); proofErr != nil || !ok {
+		log.Printf("[search] could not prove qdrant %s intent for %s: %v", entityType, target, proofErr)
+		return true
+	}
+	if err := markQdrantIntentPending(store.Root, intent); err != nil {
+		// The intent still goes to the durable queue. If its status watermark
+		// cannot be recorded, the queue remains the retry authority and status
+		// surfaces the watermark corruption/read failure instead of falling back.
+		log.Printf("[search] could not persist qdrant %s readiness for %s: %v", entityType, target, err)
+	}
+	if _, err := runtimequeue.EnqueueQdrantIntent(store.Root, intent); err != nil {
+		log.Printf("[search] could not queue qdrant %s intent for %s: %v", entityType, target, err)
 	}
 	return true
 }

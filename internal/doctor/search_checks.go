@@ -28,7 +28,7 @@ type localONNXModelStatus struct {
 }
 
 func searchCheckers(state *localState) []Checker {
-	return []Checker{
+	checkers := []Checker{
 		searchConfigChecker(state),
 		searchGlobalIndexChecker(state),
 		searchModelChecker(state),
@@ -36,6 +36,7 @@ func searchCheckers(state *localState) []Checker {
 		searchProjectIndexChecker(state),
 		searchSemanticRuntimeChecker(state),
 	}
+	return append(checkers, qdrantCheckers(state)...)
 }
 
 func semanticSettings(state *localState) (*models.SemanticSearchSettings, error) {

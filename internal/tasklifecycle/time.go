@@ -2,7 +2,9 @@ package tasklifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,13 +15,52 @@ import (
 // StopTimer atomically removes an active timer, appends its completed entry,
 // increments canonical Task.TimeSpent, and records the Task version while the
 // lifecycle lock is held. Index reconciliation runs after the lock is released.
-func (service *Service) StopTimer(ctx context.Context, taskID, actor string) (*models.TimeEntry, error) {
-	var recorded *models.TimeEntry
-	err := service.store.WithTaskLifecycleTransaction(ctx, func(tx *storage.TaskLifecycleTransaction) error {
-		task, err := activeTaskForTimeMutation(tx, taskID)
-		if err != nil {
-			return err
+func (service *Service) StopTimer(ctx context.Context, taskID string, options StopTimerOptions) (*models.TimeEntry, error) {
+	entries, err := service.StopTimers(ctx, []string{taskID}, StopTimersOptions{Actor: options.Actor, ExpectedHashes: map[string]string{taskID: options.ExpectedHash}})
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("no timer stopped for task %q", taskID)
+	}
+	return &entries[0], nil
+}
+
+// StopTimers atomically stops all selected timers and updates every affected
+// canonical Task plus its history under one lifecycle transaction. Hashes are
+// observed before the lock only for omitted-hash compatibility and are always
+// rechecked after the complete lock set is held.
+func (service *Service) StopTimers(ctx context.Context, taskIDs []string, options StopTimersOptions) ([]models.TimeEntry, error) {
+	if len(taskIDs) == 0 {
+		return []models.TimeEntry{}, nil
+	}
+	ids := append([]string(nil), taskIDs...)
+	sort.Strings(ids)
+	unique := ids[:0]
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			return nil, fmt.Errorf("task ID is required")
 		}
+		if len(unique) == 0 || unique[len(unique)-1] != id {
+			unique = append(unique, id)
+		}
+	}
+	ids = unique
+	expected := make(map[string]string, len(ids))
+	for _, id := range ids {
+		expected[id] = strings.TrimSpace(options.ExpectedHashes[id])
+		if expected[id] != "" {
+			continue
+		}
+		task, err := service.store.Tasks.Get(id)
+		if err != nil {
+			return nil, err
+		}
+		expected[id] = storage.CanonicalTaskHash(task)
+	}
+
+	var recorded []models.TimeEntry
+	err := service.store.WithTaskLifecycleTransaction(ctx, func(tx *storage.TaskLifecycleTransaction) error {
 		state, err := tx.GetTimeState()
 		if err != nil {
 			return err
@@ -28,42 +69,93 @@ func (service *Service) StopTimer(ctx context.Context, taskID, actor string) (*m
 		if err != nil {
 			return err
 		}
-
 		beforeState := cloneTimeState(state)
 		beforeEntries := cloneTimeEntries(entries)
-		beforeTask := cloneTask(task)
-		now := service.now().UTC()
-		entry, nextState, err := completedEntryForTimer(state, taskID, now)
-		if err != nil {
-			return err
-		}
+		nextState := cloneTimeState(state)
 		nextEntries := cloneTimeEntries(entries)
-		nextEntries[taskID] = append(nextEntries[taskID], entry)
-		nextTask := cloneTask(task)
-		nextTask.TimeSpent = totalTimeSpent(nextEntries[taskID])
-		nextTask.UpdatedAt = now
-
+		now := service.now().UTC()
+		type mutation struct {
+			id      string
+			before  *models.Task
+			after   *models.Task
+			entry   models.TimeEntry
+			eventID string
+			updated bool
+			history bool
+		}
+		mutations := make([]mutation, 0, len(ids))
+		for _, id := range ids {
+			task, err := activeTaskForTimeMutation(tx, id)
+			if err != nil {
+				return err
+			}
+			if err := tx.CheckTaskExpectedHash(task, expected[id]); err != nil {
+				return err
+			}
+			entry, updatedState, err := completedEntryForTimer(nextState, id, now)
+			if err != nil {
+				return err
+			}
+			nextState = updatedState
+			nextEntries[id] = append(nextEntries[id], entry)
+			after := cloneTask(task)
+			after.TimeSpent = totalTimeSpent(nextEntries[id])
+			after.UpdatedAt = now
+			mutations = append(mutations, mutation{id: id, before: cloneTask(task), after: after, entry: entry, eventID: fmt.Sprintf("time-stop-%d-%s", now.UnixNano(), id)})
+		}
+		rollback := func(cause error) error {
+			var rollbackErrors []error
+			for index := len(mutations) - 1; index >= 0; index-- {
+				mutation := mutations[index]
+				if mutation.history {
+					if err := tx.RollbackTaskLifecycleVersion(mutation.id, mutation.eventID); err != nil {
+						rollbackErrors = append(rollbackErrors, err)
+					}
+				}
+				if mutation.updated {
+					if err := tx.UpdateTask(mutation.before); err != nil {
+						rollbackErrors = append(rollbackErrors, err)
+					}
+				}
+			}
+			if err := tx.SaveTimeState(beforeState); err != nil {
+				rollbackErrors = append(rollbackErrors, err)
+			}
+			if err := tx.SaveAllTimeEntries(beforeEntries); err != nil {
+				rollbackErrors = append(rollbackErrors, err)
+			}
+			return errors.Join(cause, errors.Join(rollbackErrors...))
+		}
 		if err := tx.SaveAllTimeEntries(nextEntries); err != nil {
-			return err
+			return rollback(err)
 		}
 		if err := tx.SaveTimeState(nextState); err != nil {
-			return rollbackTimeMutation(tx, beforeTask, beforeState, beforeEntries, err)
+			return rollback(err)
 		}
-		if err := tx.UpdateTask(nextTask); err != nil {
-			return rollbackTimeMutation(tx, beforeTask, beforeState, beforeEntries, err)
+		for index := range mutations {
+			mutation := &mutations[index]
+			if err := tx.UpdateTask(mutation.after); err != nil {
+				return rollback(err)
+			}
+			mutation.updated = true
+			if err := tx.SaveTaskVersion(mutation.before, mutation.after, options.Actor, now, mutation.eventID); err != nil {
+				return rollback(err)
+			}
+			mutation.history = true
 		}
-		if err := tx.SaveTaskVersion(beforeTask, nextTask, actor, now, ""); err != nil {
-			return rollbackTimeMutation(tx, beforeTask, beforeState, beforeEntries, err)
+		recorded = make([]models.TimeEntry, len(mutations))
+		for index, mutation := range mutations {
+			recorded[index] = mutation.entry
 		}
-		copy := entry
-		recorded = &copy
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	if err := service.indexTask(taskID); err != nil {
-		return recorded, err
+	for _, id := range ids {
+		if err := service.indexTask(id); err != nil {
+			return recorded, err
+		}
 	}
 	return recorded, nil
 }
@@ -90,10 +182,20 @@ func (service *Service) AddTimeEntry(ctx context.Context, taskID string, options
 	if strings.TrimSpace(entry.ID) == "" {
 		entry.ID = fmt.Sprintf("te-%d-%s", service.now().UTC().UnixNano(), taskID)
 	}
+	if strings.TrimSpace(options.ExpectedHash) == "" {
+		task, err := service.store.Tasks.Get(taskID)
+		if err != nil {
+			return nil, err
+		}
+		options.ExpectedHash = storage.CanonicalTaskHash(task)
+	}
 
 	err := service.store.WithTaskLifecycleTransaction(ctx, func(tx *storage.TaskLifecycleTransaction) error {
 		task, err := activeTaskForTimeMutation(tx, taskID)
 		if err != nil {
+			return err
+		}
+		if err := tx.CheckTaskExpectedHash(task, options.ExpectedHash); err != nil {
 			return err
 		}
 		entries, err := tx.GetAllTimeEntries()

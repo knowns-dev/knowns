@@ -33,6 +33,9 @@ type Store struct {
 
 	taskLifecycleLock     *taskLifecycleLock
 	decisionMigrationLock *decisionMemoryMigrationLock
+	// renameReferencePreflight is test-only synchronization for deterministic
+	// concurrent rename coverage; production callers leave it nil.
+	renameReferencePreflight func()
 }
 
 // NewStore creates a Store rooted at the given .knowns/ directory path.
@@ -49,10 +52,12 @@ func NewStore(root string) *Store {
 	s.Config = &ConfigStore{root: root}
 	s.Time = &TimeStore{root: root, lifecycleLock: lifecycleLock}
 	s.Templates = &TemplateStore{root: root}
-	s.Versions = &VersionStore{root: root, lifecycleLock: lifecycleLock}
+	s.Versions = &VersionStore{root: root, lifecycleLock: lifecycleLock, history: NewHistoryStore(root)}
 	s.Workspaces = &WorkspaceStore{root: root}
 	s.Chats = &ChatStore{root: root}
-	s.Memory = &MemoryStore{root: root, globalRoot: globalRoot}
+	// Memory mutations use a project-independent lock root so updates to a
+	// global memory are serialized across Store instances and projects too.
+	s.Memory = &MemoryStore{root: root, globalRoot: globalRoot, mutationLock: newMemoryMutationLock(globalRoot)}
 	s.Decisions = &DecisionStore{root: root, lifecycleLock: decisionLock}
 	return s
 }

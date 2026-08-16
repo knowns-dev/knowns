@@ -786,6 +786,7 @@ func TestBuildFallsBackWhenHybridUnavailable(t *testing.T) {
 }
 
 func TestBuildKeepsEmptyPackCleanWhenHybridReturnsNoUsableCandidates(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	t.Cleanup(func() {
 		lookupHybridCandidates = defaultHybridCandidates
 	})

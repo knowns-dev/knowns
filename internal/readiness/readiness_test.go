@@ -89,6 +89,179 @@ func TestSemanticModelInstalledDoesNotRequireONNXForRemoteProviders(t *testing.T
 	}
 }
 
+// enableSemanticConfig turns on semantic search for a store with a fixed
+// local embedding identity so readiness checks are deterministic.
+func enableSemanticConfig(t *testing.T, store *storage.Store) {
+	t.Helper()
+	project, err := store.Config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	project.Settings.SemanticSearch = &models.SemanticSearchSettings{
+		Enabled:    true,
+		Provider:   "local",
+		Model:      "gte-small",
+		Dimensions: 384,
+	}
+	if err := store.Config.Save(project); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+}
+
+// seedReadinessSQLiteIndex writes a minimal legacy SQLite semantic index.
+func seedReadinessSQLiteIndex(t *testing.T, storeRoot, model string, dimensions int) {
+	t.Helper()
+	vecStore := search.NewSQLiteVectorStore(filepath.Join(storeRoot, ".search"), model, dimensions)
+	if err := vecStore.Load(); err != nil {
+		t.Fatalf("load vector store: %v", err)
+	}
+	defer vecStore.Close()
+	embedding := make([]float32, dimensions)
+	embedding[0] = 1
+	vecStore.AddChunks([]search.Chunk{{
+		ID:         "doc:readiness/semantic:chunk:1",
+		Type:       search.ChunkTypeDoc,
+		Content:    "readiness semantic chunk",
+		TokenCount: 3,
+		Embedding:  embedding,
+		DocPath:    "readiness/semantic",
+		Position:   1,
+	}})
+	if err := vecStore.Save(); err != nil {
+		t.Fatalf("save vector store: %v", err)
+	}
+}
+
+// writeReadinessQdrantPointer writes a valid pointer for the store root.
+func writeReadinessQdrantPointer(t *testing.T, storeRoot string) {
+	t.Helper()
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	if err := search.SaveQdrantPointer(storeRoot, &search.QdrantPointer{
+		Backend:        "qdrant",
+		CollectionUUID: "8f2c6a7b-91d4-4f6a-b9f7-2ef84d72a9c1",
+		SchemaVersion:  search.QdrantPointerSchemaVersion,
+		ChunkVersion:   search.ChunkVersion,
+		Embedding: search.QdrantEmbeddingPointer{
+			Provider:   "local",
+			Model:      "gte-small",
+			Dimensions: 384,
+		},
+		Owner: search.QdrantOwnerPointer{
+			ProjectID:            "readiness-test",
+			StoreRootFingerprint: search.StoreRootFingerprint(storeRoot),
+		},
+		LastIndexedAt: &now,
+		ChunkCount:    42,
+	}); err != nil {
+		t.Fatalf("save qdrant pointer: %v", err)
+	}
+}
+
+func newReadinessStore(t *testing.T, name string) *storage.Store {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init(name); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func TestBuildSearchDisabledState(t *testing.T) {
+	store := newReadinessStore(t, "readiness-disabled")
+	payload := BuildReadiness(store, Options{})
+	s := payload.Search
+	if s == nil {
+		t.Fatal("search status is nil")
+	}
+	if s.SemanticEnabled {
+		t.Fatal("semanticEnabled = true, want false for unconfigured store")
+	}
+	if s.SemanticDegraded {
+		t.Fatalf("semanticDegraded = true, want false for disabled store (reason: %s)", s.SemanticDegradedReason)
+	}
+	if s.ProjectIndexReady {
+		t.Fatal("projectIndexReady = true, want false for disabled store")
+	}
+}
+
+func TestBuildSearchQdrantPointerReady(t *testing.T) {
+	store := newReadinessStore(t, "readiness-qdrant")
+	enableSemanticConfig(t, store)
+	writeReadinessQdrantPointer(t, store.Root)
+
+	payload := BuildReadiness(store, Options{})
+	s := payload.Search
+	if !s.SemanticEnabled {
+		t.Fatalf("semanticEnabled = false, want true")
+	}
+	if s.SemanticBackend != "qdrant" {
+		t.Fatalf("semanticBackend = %q, want qdrant", s.SemanticBackend)
+	}
+	if !s.ProjectIndexReady {
+		t.Fatalf("projectIndexReady = false, want true with valid qdrant pointer: %+v", s)
+	}
+	if s.ProjectIndexStale {
+		t.Fatalf("projectIndexStale = true, want false")
+	}
+	if s.SemanticDegraded {
+		t.Fatalf("semanticDegraded = true, want false with valid qdrant pointer: %+v", s)
+	}
+	if s.ProjectIndexModel != "gte-small" {
+		t.Fatalf("projectIndexModel = %q, want gte-small", s.ProjectIndexModel)
+	}
+	if s.LastReindex == nil {
+		t.Fatalf("lastReindex = nil, want pointer indexedAt")
+	}
+}
+
+func TestBuildSearchQdrantDegraded(t *testing.T) {
+	store := newReadinessStore(t, "readiness-qdrant-degraded")
+	enableSemanticConfig(t, store)
+
+	payload := BuildReadiness(store, Options{})
+	s := payload.Search
+	if !s.SemanticEnabled {
+		t.Fatal("semanticEnabled = false, want true")
+	}
+	if s.SemanticBackend != "qdrant" {
+		t.Fatalf("semanticBackend = %q, want qdrant", s.SemanticBackend)
+	}
+	if s.ProjectIndexReady {
+		t.Fatal("projectIndexReady = true, want false with no pointer/index")
+	}
+	if !s.SemanticDegraded {
+		t.Fatalf("semanticDegraded = false, want true with unavailable qdrant backend: %+v", s)
+	}
+	if s.SemanticDegradedReason == "" {
+		t.Fatal("semanticDegradedReason is empty")
+	}
+}
+
+func TestBuildSearchSQLiteLegacyFallback(t *testing.T) {
+	store := newReadinessStore(t, "readiness-sqlite-legacy")
+	enableSemanticConfig(t, store)
+	seedReadinessSQLiteIndex(t, store.Root, "gte-small", 384)
+
+	payload := BuildReadiness(store, Options{})
+	s := payload.Search
+	if !s.SemanticEnabled {
+		t.Fatal("semanticEnabled = false, want true")
+	}
+	if s.SemanticBackend != "qdrant" {
+		t.Fatalf("semanticBackend = %q, want resolved default qdrant", s.SemanticBackend)
+	}
+	if !s.ProjectIndexReady {
+		t.Fatalf("projectIndexReady = false, want true via legacy sqlite fallback: %+v", s)
+	}
+	if !s.SemanticDegraded {
+		t.Fatalf("semanticDegraded = false, want true during migration window: %+v", s)
+	}
+	if s.ProjectIndexModel != "gte-small" {
+		t.Fatalf("projectIndexModel = %q, want gte-small", s.ProjectIndexModel)
+	}
+}
+
 func TestBuildReadinessIncludesDecisionCountsAndCapabilities(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))

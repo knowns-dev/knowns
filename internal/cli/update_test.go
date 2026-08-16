@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -51,5 +52,19 @@ func TestPackageManagerExternalUpdateGuidanceIncludesCommand(t *testing.T) {
 	}
 	if !strings.Contains(got, "fresh PowerShell") {
 		t.Fatalf("expected guidance to mention fresh PowerShell, got:\n%s", got)
+	}
+}
+
+func TestUpdateCancellationWrapsCommandCancellation(t *testing.T) {
+	if !errors.Is(errUpdateCancelled, ErrCommandCancelled) {
+		t.Fatalf("expected update cancellation to wrap ErrCommandCancelled: %v", errUpdateCancelled)
+	}
+}
+
+func TestNormalizeVersionTagForUpdateOutput(t *testing.T) {
+	for _, version := range []string{"0.29.1", "v0.29.1"} {
+		if got := util.NormalizeVersionTag(version); got != "v0.29.1" {
+			t.Fatalf("NormalizeVersionTag(%q) = %q, want v0.29.1", version, got)
+		}
 	}
 }

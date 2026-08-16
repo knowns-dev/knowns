@@ -126,6 +126,10 @@ func TestBindBrowserPortReturnsRequestedPortWhenFree(t *testing.T) {
 	if got != port {
 		t.Fatalf("bindBrowserPort(%d, 3) = %d, want %d", port, got, port)
 	}
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok || !addr.IP.IsLoopback() {
+		t.Fatalf("browser listener address = %v, want loopback", ln.Addr())
+	}
 }
 
 func TestBindBrowserPortFallsForwardWhenBusy(t *testing.T) {

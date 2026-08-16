@@ -86,14 +86,14 @@ Knowns cho nó quyền truy cập đó.
 
 ## Trước và sau
 
-| Không có Knowns | Có Knowns |
-|---|---|
-| "Bọn tôi dùng repository pattern..." _(paste 50 dòng)_ | AI tự đọc `@doc/patterns/repository` |
-| "Đây là task, AC là..." _(gõ lại từ đầu)_ | AI đọc task, AC, linked spec và related docs |
-| "Nhớ tuần trước quyết định..." _(hy vọng nó nhớ)_ | Lựa chọn được lưu thành System Decision có lifecycle kiểm chứng được |
-| "Auth flow hoạt động thế này..." _(giải thích lần thứ 4)_ | AI follow `@doc/architecture/auth` và build tiếp |
-| "Xong chưa nhỉ, để check lại requirements..." | AI tự check AC và validate completion |
-| Session bắt đầu lạnh — mất 10 phút dựng context | Session bắt đầu ấm — AI đã biết project |
+| Không có Knowns                                           | Có Knowns                                                            |
+| --------------------------------------------------------- | -------------------------------------------------------------------- |
+| "Bọn tôi dùng repository pattern..." _(paste 50 dòng)_    | AI tự đọc `@doc/patterns/repository`                                 |
+| "Đây là task, AC là..." _(gõ lại từ đầu)_                 | AI đọc task, AC, linked spec và related docs                         |
+| "Nhớ tuần trước quyết định..." _(hy vọng nó nhớ)_         | Lựa chọn được lưu thành System Decision có lifecycle kiểm chứng được |
+| "Auth flow hoạt động thế này..." _(giải thích lần thứ 4)_ | AI follow `@doc/architecture/auth` và build tiếp                     |
+| "Xong chưa nhỉ, để check lại requirements..."             | AI tự check AC và validate completion                                |
+| Session bắt đầu lạnh — mất 10 phút dựng context           | Session bắt đầu ấm — AI đã biết project                              |
 
 ---
 
@@ -295,21 +295,21 @@ knowns browser --open
 
 ## Xây được gì với Knowns?
 
-| Khả năng | Mô tả |
-|---|---|
-| **Task Management** | Task có AC, plan, status, time tracking |
-| **Documentation** | Nested markdown folders có cross-references và mermaid |
-| **Semantic Search** | Tìm theo ý nghĩa với local AI models (offline) |
-| **Time Tracking** | Timer và report theo task |
-| **Context Linking** | `@task-42` và `@doc/patterns/auth` references AI resolve được |
-| **Validation** | Phát hiện broken references và incomplete tasks bằng `knowns validate` |
-| **Template System** | Code generation bằng Handlebars (`.hbs`) templates |
-| **Import System** | Import docs và templates từ git, npm, local |
-| **Memory System** | Project / session / global memory cho persistent AI recall |
-| **MCP Server** | AI assistant integration với full tool access |
-| **AI Workspaces** | Multi-phase agent orchestration với worktree isolation |
+| Khả năng              | Mô tả                                                                         |
+| --------------------- | ----------------------------------------------------------------------------- |
+| **Task Management**   | Task có AC, plan, status, time tracking                                       |
+| **Documentation**     | Nested markdown folders có cross-references và mermaid                        |
+| **Semantic Search**   | Tìm theo ý nghĩa với local AI models (offline)                                |
+| **Time Tracking**     | Timer và report theo task                                                     |
+| **Context Linking**   | `@task-42` và `@doc/patterns/auth` references AI resolve được                 |
+| **Validation**        | Phát hiện broken references và incomplete tasks bằng `knowns validate`        |
+| **Template System**   | Code generation bằng Handlebars (`.hbs`) templates                            |
+| **Import System**     | Import docs và templates từ git, npm, local                                   |
+| **Memory System**     | Project / session / global memory cho persistent AI recall                    |
+| **MCP Server**        | AI assistant integration với full tool access                                 |
+| **AI Workspaces**     | Multi-phase agent orchestration với worktree isolation                        |
 | **Code Intelligence** | LSP-backed: symbols, definitions, references, rename, replace, insert, delete |
-| **Web UI** | Kanban board, doc browser, knowledge graph, mermaid diagrams |
+| **Web UI**            | Kanban board, doc browser, knowledge graph, mermaid diagrams                  |
 
 ---
 
@@ -319,15 +319,15 @@ Knowns không thay thế AI assistant bạn đang dùng. Nó cho các assistant 
 
 Với personal setup thông thường, dùng `knowns setup <target> --global`. Chỉ dùng project-level setup khi bạn chủ ý muốn config files nằm trong một repository cụ thể.
 
-| Assistant | Setup | Nhận được gì |
-|---|---|---|
-| Claude Code | `knowns setup claude --global` | MCP, `/kn-*` skills, runtime memory hooks |
-| Codex | `knowns setup codex --global` | MCP, `$kn-*` skills, runtime memory hooks |
-| OpenCode | `knowns setup opencode --global` | MCP, `.agents/skills`, plugin/runtime integration |
-| Kiro | `knowns setup kiro --global` | MCP, skills, runtime hooks |
-| Cursor | `knowns setup cursor --global` | MCP access tới Knowns context |
-| Gemini / Antigravity | `knowns setup gemini --global` / `knowns setup antigravity --global` | Global MCP config |
-| Copilot / generic agents | `knowns setup copilot` / `knowns setup agents` | Instruction shims và agent-readable guidance |
+| Assistant                | Setup                                                                | Nhận được gì                                      |
+| ------------------------ | -------------------------------------------------------------------- | ------------------------------------------------- |
+| Claude Code              | `knowns setup claude --global`                                       | MCP, `/kn-*` skills, runtime memory hooks         |
+| Codex                    | `knowns setup codex --global`                                        | MCP, `$kn-*` skills, runtime memory hooks         |
+| OpenCode                 | `knowns setup opencode --global`                                     | MCP, `.agents/skills`, plugin/runtime integration |
+| Kiro                     | `knowns setup kiro --global`                                         | MCP, skills, runtime hooks                        |
+| Cursor                   | `knowns setup cursor --global`                                       | MCP access tới Knowns context                     |
+| Gemini / Antigravity     | `knowns setup gemini --global` / `knowns setup antigravity --global` | Global MCP config                                 |
+| Copilot / generic agents | `knowns setup copilot` / `knowns setup agents`                       | Instruction shims và agent-readable guidance      |
 
 Xem [Platforms](./docs/vi/integrations/platforms.md) để biết mapping đầy đủ.
 
@@ -391,29 +391,29 @@ Claude: [Tạo conventional commit]
 
 Skills là agent workflow commands, không phải MCP tools. MCP tools hiện trong `codex mcp` dưới dạng domain tools như `tasks`, `docs`, `memory`, `search`, và `code`; skills được sync riêng vào skills directory của agent.
 
-| Platform | Invocation |
-|---|---|
+| Platform    | Invocation                           |
+| ----------- | ------------------------------------ |
 | Claude Code | `/kn-spec`, `/kn-flow`, `/kn-review` |
-| Codex | `$kn-spec`, `$kn-flow`, `$kn-review` |
+| Codex       | `$kn-spec`, `$kn-flow`, `$kn-review` |
 
 Bảng dưới dùng syntax `/kn-*` của Claude Code. Trong Codex, dùng cùng tên skill với `$` thay cho `/`.
 
-| Skill | Mô tả |
-|---|---|
-| `/kn-init` | Init session — đọc docs, load memory, hiểu project |
-| `/kn-plan <id>` | Nhận task, gom context, tạo implementation plan |
-| `/kn-implement <id>` | Execute plan, track progress, check AC |
-| `/kn-research` | Research project context, code, và external MCP/web sources liên quan |
-| `/kn-commit` | Tạo conventional commit có verification |
-| `/kn-spec` | Tạo spec document cho feature (SDD) |
-| `/kn-flow @doc/<spec-path>` | Recommended full approved-spec flow: plan, implement, review, verify |
-| `/kn-go <spec>` | Legacy full pipeline từ approved spec không có review gates |
-| `/kn-verify` | Chạy SDD verification và coverage report |
-| `/kn-review` | Multi-perspective code review (P1/P2/P3) |
-| `/kn-doc` | Tạo hoặc update doc |
-| `/kn-extract` | Extract reusable patterns vào docs, templates, memory |
-| `/kn-template` | List, run, hoặc tạo template |
-| `/kn-debug` | Debug errors với memory-backed triage |
+| Skill                       | Mô tả                                                                 |
+| --------------------------- | --------------------------------------------------------------------- |
+| `/kn-init`                  | Init session — đọc docs, load memory, hiểu project                    |
+| `/kn-plan <id>`             | Nhận task, gom context, tạo implementation plan                       |
+| `/kn-implement <id>`        | Execute plan, track progress, check AC                                |
+| `/kn-research`              | Research project context, code, và external MCP/web sources liên quan |
+| `/kn-commit`                | Tạo conventional commit có verification                               |
+| `/kn-spec`                  | Tạo spec document cho feature (SDD)                                   |
+| `/kn-flow @doc/<spec-path>` | Recommended full approved-spec flow: plan, implement, review, verify  |
+| `/kn-go <spec>`             | Legacy full pipeline từ approved spec không có review gates           |
+| `/kn-verify`                | Chạy SDD verification và coverage report                              |
+| `/kn-review`                | Multi-perspective code review (P1/P2/P3)                              |
+| `/kn-doc`                   | Tạo hoặc update doc                                                   |
+| `/kn-extract`               | Extract reusable patterns vào docs, templates, memory                 |
+| `/kn-template`              | List, run, hoặc tạo template                                          |
+| `/kn-debug`                 | Debug errors với memory-backed triage                                 |
 
 ---
 
@@ -556,21 +556,21 @@ knowns sync
 
 ## Tài liệu
 
-| Guide | Mô tả |
-|---|---|
-| [Cài đặt](./docs/vi/getting-started/installation.md) | Cài đặt, kiểm tra, chạy không cần global install, và gỡ cài đặt |
-| [Hướng dẫn sử dụng](./docs/vi/guides/user-guide.md) | Bắt đầu và sử dụng hằng ngày |
-| [Lệnh](./docs/vi/reference/commands.md) | CLI commands chính và ví dụ |
-| [Workflow](./docs/vi/guides/workflow.md) | Cách làm việc đề xuất |
-| [MCP](./docs/vi/guides/mcp-integration.md) | MCP setup cho Claude, Cursor, Codex, OpenCode, ... |
-| [Reference system](./docs/vi/reference/reference-system.md) | Cách `@doc/` và `@task-` hoạt động |
-| [Semantic search](./docs/vi/reference/semantic-search.md) | Setup và sử dụng semantic search |
-| [Templates](./docs/vi/integrations/templates.md) | Code generation bằng Handlebars templates |
-| [Web UI](./docs/vi/guides/web-ui.md) | Board, doc browser, graph, chat UI |
-| [Cấu hình](./docs/vi/reference/configuration.md) | Project config và options |
-| [Skills](./docs/vi/integrations/skills.md) | Skills và sync paths theo platform |
-| [Developer guide](./docs/vi/contributing/developer-guide.md) | Cho người đóng góp |
-| [Platforms](./docs/vi/integrations/platforms.md) | Platform integration mapping |
+| Guide                                                        | Mô tả                                                           |
+| ------------------------------------------------------------ | --------------------------------------------------------------- |
+| [Cài đặt](./docs/vi/getting-started/installation.md)         | Cài đặt, kiểm tra, chạy không cần global install, và gỡ cài đặt |
+| [Hướng dẫn sử dụng](./docs/vi/guides/user-guide.md)          | Bắt đầu và sử dụng hằng ngày                                    |
+| [Lệnh](./docs/vi/reference/commands.md)                      | CLI commands chính và ví dụ                                     |
+| [Workflow](./docs/vi/guides/workflow.md)                     | Cách làm việc đề xuất                                           |
+| [MCP](./docs/vi/guides/mcp-integration.md)                   | MCP setup cho Claude, Cursor, Codex, OpenCode, ...              |
+| [Reference system](./docs/vi/reference/reference-system.md)  | Cách `@doc/` và `@task-` hoạt động                              |
+| [Semantic search](./docs/vi/reference/semantic-search.md)    | Setup và sử dụng semantic search                                |
+| [Templates](./docs/vi/integrations/templates.md)             | Code generation bằng Handlebars templates                       |
+| [Web UI](./docs/vi/guides/web-ui.md)                         | Board, doc browser, graph, chat UI                              |
+| [Cấu hình](./docs/vi/reference/configuration.md)             | Project config và options                                       |
+| [Skills](./docs/vi/integrations/skills.md)                   | Skills và sync paths theo platform                              |
+| [Developer guide](./docs/vi/contributing/developer-guide.md) | Cho người đóng góp                                              |
+| [Platforms](./docs/vi/integrations/platforms.md)             | Platform integration mapping                                    |
 
 ---
 
@@ -637,15 +637,16 @@ Technical details: [Architecture](./ARCHITECTURE.md) và [Contributing](./CONTRI
 
 ---
 
-## Star History
+## Ủng hộ Knowns
 
-<a href="https://www.star-history.com/?repos=knowns-dev%2Fknowns&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=knowns-dev/knowns&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=knowns-dev/knowns&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=knowns-dev/knowns&type=date&legend=top-left" />
- </picture>
-</a>
+Nếu Knowns giúp ích cho workflow của bạn, hãy ủng hộ development:
+
+- ⭐ **Star repo** - giúp người khác khám phá project
+- 🐛 **Báo bug và đề xuất tính năng** - feedback của bạn định hình roadmap
+- 💬 **Chia sẻ với team** - càng nhiều developer dùng, càng tốt hơn
+- ☕ **[Sponsor trên GitHub](https://github.com/sponsors/howznguyen)** - duy trì ongoing development
+
+Mọi đóng góp đều giúp Knowns tốt hơn cho những ai build với AI.
 
 ---
 

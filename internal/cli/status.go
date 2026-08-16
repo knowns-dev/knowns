@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/howznguyen/knowns/internal/readiness"
+	"github.com/howznguyen/knowns/internal/runtimequeue"
 	"github.com/spf13/cobra"
 )
 
@@ -32,7 +33,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	payload := readiness.BuildReadiness(store, readiness.Options{})
+	payload := readiness.BuildReadiness(store, readiness.Options{Runtime: cliRuntimeReadiness()})
 
 	if isJSON(cmd) {
 		printJSON(payload)
@@ -46,6 +47,27 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	renderStatusStyled(payload)
 	return nil
+}
+
+func cliRuntimeReadiness() *readiness.RuntimeStatus {
+	status, err := runtimequeue.LoadStatus()
+	if err != nil {
+		return &readiness.RuntimeStatus{Enabled: true, Running: false, State: "stopped"}
+	}
+	runtimeStatus := &readiness.RuntimeStatus{
+		Enabled:          true,
+		Running:          status.Running,
+		ConnectedClients: len(status.Clients),
+		State:            "stopped",
+	}
+	for _, project := range status.Project {
+		runtimeStatus.QueuedJobs += project.QueuedJobs
+		runtimeStatus.RunningJobs += project.RunningJobs
+	}
+	if status.Running {
+		runtimeStatus.State = "healthy"
+	}
+	return runtimeStatus
 }
 
 func renderStatusPlain(p readiness.Payload) {
@@ -83,6 +105,9 @@ func renderStatusPlain(p readiness.Payload) {
 			fmt.Println("Search: semantic enabled but index empty (run: knowns search --reindex)")
 		} else {
 			fmt.Println("Search: keyword-only mode")
+		}
+		if s.SemanticEnabled && s.SemanticDegraded {
+			fmt.Printf("Search: semantic degraded (%s)\n", s.SemanticDegradedReason)
 		}
 	}
 
@@ -176,6 +201,9 @@ func renderStatusStyled(p readiness.Payload) {
 			fmt.Printf("  %s model not installed\n", StyleWarning.Render("⚠"))
 		} else if !s.ProjectIndexReady {
 			fmt.Printf("  %s index empty — run: knowns search --reindex\n", StyleWarning.Render("⚠"))
+		}
+		if s.SemanticEnabled && s.SemanticDegraded {
+			fmt.Printf("  %s semantic degraded: %s\n", StyleWarning.Render("⚠"), s.SemanticDegradedReason)
 		}
 		fmt.Println()
 	}

@@ -2,7 +2,7 @@
 title: Skills System
 description: Skill definition, sharing, and sync across platforms
 createdAt: '2026-01-23T04:07:56.363Z'
-updatedAt: '2026-06-26T03:39:42.320Z'
+updatedAt: '2026-08-13T13:23:43.462Z'
 tags: []
 ---
 
@@ -152,3 +152,14 @@ Skills use MCP tools when available, with CLI as fallback:
 - **Time tracking**: MCP `time({ action: "start" })` or CLI `knowns time start <id>`
 
 MCP is preferred when available because it is faster (direct call vs spawning a process) and returns structured JSON.
+
+
+## Portability and Mutation Boundaries
+
+The embedded `SKILL.md` sources are platform-neutral workflow contracts. Platform-specific invocation syntax and sync destinations belong to setup/sync documentation, not to the workflow logic inside an individual skill.
+
+- External tools are discovered and selected by capability, source type, freshness, and evidence quality; built-in skills do not require a named external research provider.
+- `kn-research` does not mutate tasks, docs, memories, decisions, or source files unless persistence is explicitly authorized.
+- Generated platform copies are overwritten by `knowns sync`; edit only `internal/instructions/skills/kn-*/SKILL.md`.
+- All 14 built-in skills use the shared response order: goal/result, key details, and an optional natural next action.
+- Automated source and sync tests enforce provider neutrality, mutation boundaries, response ordering, template examples, Decision lifecycle rules, and critical approval/verification gates.

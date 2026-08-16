@@ -146,7 +146,7 @@ func runMemoryList(cmd *cobra.Command, args []string) error {
 		if !isTTY() || isPagerDisabled(cmd) {
 			fmt.Print(content)
 		} else {
-			renderOrPage(cmd, "Memory Entries", content)
+			return renderOrPage(cmd, "Memory Entries", content)
 		}
 	}
 	return nil
@@ -317,7 +317,7 @@ func runMemoryView(cmd *cobra.Command, id string) error {
 		printPaged(cmd, pb.String())
 	} else {
 		content := renderMemoryView(entry)
-		renderOrPage(cmd, entry.Title, content)
+		return renderOrPage(cmd, entry.Title, content)
 	}
 	return nil
 }

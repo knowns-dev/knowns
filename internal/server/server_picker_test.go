@@ -53,6 +53,7 @@ func TestStatusEndpoint_NoProject(t *testing.T) {
 	s := newPickerServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req.Host = "127.0.0.1:6420"
 	rr := httptest.NewRecorder()
 	s.router.ServeHTTP(rr, req)
 
@@ -74,6 +75,7 @@ func TestStatusEndpoint_ActiveProject(t *testing.T) {
 	s, projDir := newActiveServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req.Host = "127.0.0.1:6420"
 	rr := httptest.NewRecorder()
 	s.router.ServeHTTP(rr, req)
 
@@ -116,6 +118,7 @@ func TestProjectScopedRoutes_Return503_WhenNoStore(t *testing.T) {
 
 	for _, rt := range routes {
 		req := httptest.NewRequest(rt.method, rt.path, nil)
+		req.Host = "127.0.0.1:6420"
 		rr := httptest.NewRecorder()
 		s.router.ServeHTTP(rr, req)
 
@@ -133,6 +136,7 @@ func TestWorkspaceRoutes_AvailableInPickerMode(t *testing.T) {
 	s := newPickerServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/workspaces", nil)
+	req.Host = "127.0.0.1:6420"
 	rr := httptest.NewRecorder()
 	s.router.ServeHTTP(rr, req)
 
@@ -170,6 +174,7 @@ func TestWorkspaceSwitch_UpdatesActiveStore(t *testing.T) {
 	// Switch to proj-a
 	body := strings.NewReader(`{"id":"` + p.ID + `"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/switch", body)
+	req.Host = "127.0.0.1:6420"
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	s.router.ServeHTTP(rr, req)

@@ -16,52 +16,76 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/util"
 )
 
 type JobKind string
 
 const (
-	JobIndexTask      JobKind = "index-task"
-	JobIndexDoc       JobKind = "index-doc"
-	JobRemoveTask     JobKind = "remove-task"
-	JobRemoveDoc      JobKind = "remove-doc"
-	JobIndexMemory    JobKind = "index-memory"
-	JobRemoveMemory   JobKind = "remove-memory"
-	JobIndexDecision  JobKind = "index-decision"
-	JobRemoveDecision JobKind = "remove-decision"
-	JobSemanticSearch JobKind = "semantic-search"
-	JobIndexAll       JobKind = "index-all-files"
-	JobIndexFile      JobKind = "index-file"
-	JobRemoveFile     JobKind = "remove-file"
-	JobReindex        JobKind = "reindex-search"
+	JobIndexTask          JobKind = "index-task"
+	JobIndexDoc           JobKind = "index-doc"
+	JobRemoveTask         JobKind = "remove-task"
+	JobRemoveDoc          JobKind = "remove-doc"
+	JobIndexMemory        JobKind = "index-memory"
+	JobRemoveMemory       JobKind = "remove-memory"
+	JobIndexDecision      JobKind = "index-decision"
+	JobRemoveDecision     JobKind = "remove-decision"
+	JobSemanticSearch     JobKind = "semantic-search"
+	JobIndexAll           JobKind = "index-all-files"
+	JobIndexFile          JobKind = "index-file"
+	JobRemoveFile         JobKind = "remove-file"
+	JobReindex            JobKind = "reindex-search"
+	JobReconcileKnowledge JobKind = "reconcile-knowledge"
+	// JobQdrantReconcile is a targeted, routine lifecycle sync. It is
+	// intentionally distinct from JobReindex: it may never create/swap a
+	// collection or mutate the active pointer.
+	JobQdrantReconcile JobKind = "reconcile-qdrant"
 )
 
 const (
 	defaultPollInterval = 500 * time.Millisecond
 	defaultIdleTimeout  = 15 * time.Second
 	defaultLeaseTTL     = 20 * time.Second
+	defaultWatchGrace   = 30 * time.Second
 	defaultLockTimeout  = 3 * time.Second
 	defaultLockStaleAge = 10 * time.Second
 	maxRecentResults    = 50
 	defaultLogMaxBytes  = 10 * 1024 * 1024
 	defaultLogBackups   = 3
+	qdrantRetryLimit    = 8
 )
 
+// QdrantIntent is the content-free handoff from durable history/manifest to
+// targeted indexing. It contains no entity text, endpoint, or credential.
+type QdrantIntent struct {
+	EntityType    string `json:"entityType"`
+	EntityID      string `json:"entityId"`
+	Revision      int    `json:"revision"`
+	Operation     string `json:"operation"`
+	CanonicalHash string `json:"canonicalHash,omitempty"`
+	Path          string `json:"path,omitempty"`
+	PreviousPath  string `json:"previousPath,omitempty"`
+	BatchID       string `json:"batchId,omitempty"`
+	Generation    uint64 `json:"generation"`
+}
+
 type Job struct {
-	ID          string      `json:"id"`
-	Key         string      `json:"key"`
-	Kind        JobKind     `json:"kind"`
-	Target      string      `json:"target,omitempty"`
-	RequestedAt time.Time   `json:"requestedAt"`
-	RunAfter    time.Time   `json:"runAfter"`
-	StartedAt   *time.Time  `json:"startedAt,omitempty"`
-	Attempts    int         `json:"attempts,omitempty"`
-	LastError   string      `json:"lastError,omitempty"`
-	Phase       string      `json:"phase,omitempty"`
-	Processed   int         `json:"processed,omitempty"`
-	Total       int         `json:"total,omitempty"`
-	Details     *JobDetails `json:"details,omitempty"`
+	ID          string        `json:"id"`
+	Key         string        `json:"key"`
+	Kind        JobKind       `json:"kind"`
+	Target      string        `json:"target,omitempty"`
+	RequestedAt time.Time     `json:"requestedAt"`
+	RunAfter    time.Time     `json:"runAfter"`
+	StartedAt   *time.Time    `json:"startedAt,omitempty"`
+	Attempts    int           `json:"attempts,omitempty"`
+	LastError   string        `json:"lastError,omitempty"`
+	Phase       string        `json:"phase,omitempty"`
+	Processed   int           `json:"processed,omitempty"`
+	Total       int           `json:"total,omitempty"`
+	Details     *JobDetails   `json:"details,omitempty"`
+	Intent      *QdrantIntent `json:"intent,omitempty"`
+	DeadLetter  bool          `json:"deadLetter,omitempty"`
 }
 
 type JobDetails struct {
@@ -84,6 +108,8 @@ type JobResult struct {
 	StartedAt    time.Time   `json:"startedAt"`
 	AttemptCount int         `json:"attemptCount"`
 	Details      *JobDetails `json:"details,omitempty"`
+	Retryable    bool        `json:"retryable,omitempty"`
+	DeadLetter   bool        `json:"deadLetter,omitempty"`
 }
 
 type QueueState struct {
@@ -173,7 +199,9 @@ type Lease struct {
 }
 
 type ClientHandle struct {
-	lease Lease
+	mu       sync.Mutex
+	lease    Lease
+	released bool
 }
 
 type ProjectStatus struct {
@@ -183,16 +211,255 @@ type ProjectStatus struct {
 }
 
 type Status struct {
-	Running bool            `json:"running"`
-	PID     int             `json:"pid,omitempty"`
-	Version string          `json:"version,omitempty"`
-	Clients []Lease         `json:"clients"`
-	Project []ProjectStatus `json:"projects"`
+	Running  bool            `json:"running"`
+	PID      int             `json:"pid,omitempty"`
+	Version  string          `json:"version,omitempty"`
+	Clients  []Lease         `json:"clients"`
+	Project  []ProjectStatus `json:"projects"`
+	Watchers []WatcherStatus `json:"watchers,omitempty"`
+}
+
+// WatcherStatus describes the project-level knowledge watcher demand and
+// lifecycle. Demand is the number of valid watch-enabled client leases. A
+// watcher with zero demand may remain active while its final-client grace
+// period is pending.
+type WatcherStatus struct {
+	ProjectRoot  string    `json:"projectRoot"`
+	Demand       int       `json:"demand"`
+	Active       bool      `json:"active"`
+	State        string    `json:"state"`
+	GracePending bool      `json:"gracePending,omitempty"`
+	GraceUntil   time.Time `json:"graceUntil,omitempty"`
+}
+
+type ReloadRequest struct {
+	ID          string    `json:"id"`
+	RequestedAt time.Time `json:"requestedAt"`
+	PID         int       `json:"pid,omitempty"`
+}
+
+type ReloadStatus struct {
+	RequestID   string    `json:"requestId,omitempty"`
+	Generation  int64     `json:"generation,omitempty"`
+	RequestedAt time.Time `json:"requestedAt,omitempty"`
+	ProcessedAt time.Time `json:"processedAt,omitempty"`
+	PID         int       `json:"pid,omitempty"`
+	Success     bool      `json:"success"`
+	Error       string    `json:"error,omitempty"`
+}
+
+type ReloadHandler func(ctx context.Context, status ReloadStatus) error
+
+type DaemonOptions struct {
+	Executor       Executor
+	WatcherFactory WatcherFactory
+	ReloadHandler  ReloadHandler
 }
 
 type Executor func(storeRoot string, job Job) error
 
 type WatcherFactory func(ctx context.Context, storeRoot string) error
+
+// WatchLifecycle owns at most one watcher per project and applies D1's final
+// client grace period. The clock and grace-period resolver are injectable so
+// lifecycle behavior can be tested without sleeping.
+type watcherState string
+
+const (
+	watcherRunning         watcherState = "running"
+	watcherGrace           watcherState = "grace"
+	watcherCancelRequested watcherState = "cancelRequested"
+	watcherStopped         watcherState = "stopped"
+)
+
+type WatchLifecycle struct {
+	mu             sync.Mutex
+	now            func() time.Time
+	gracePeriod    func(string) time.Duration
+	watchers       map[string]*watchLifecycleEntry
+	nextGeneration uint64
+}
+
+type watchLifecycleEntry struct {
+	cancel     context.CancelFunc
+	graceUntil time.Time
+	state      watcherState
+	generation uint64
+	done       chan struct{}
+	doneOnce   sync.Once
+}
+
+// NewWatchLifecycle creates a watcher lifecycle controller. A nil clock uses
+// UTC wall time and a nil grace resolver uses the project runtime-watch
+// setting, falling back to the 30-second default.
+func NewWatchLifecycle(now func() time.Time, gracePeriod func(string) time.Duration) *WatchLifecycle {
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
+	if gracePeriod == nil {
+		gracePeriod = projectWatchGracePeriod
+	}
+	return &WatchLifecycle{
+		now:         now,
+		gracePeriod: gracePeriod,
+		watchers:    make(map[string]*watchLifecycleEntry),
+	}
+}
+
+// Reconcile starts missing project watchers, cancels pending grace when new
+// demand arrives, and stops a watcher only after its grace deadline expires.
+// The supplied factory is invoked at most once for each active project.
+func (l *WatchLifecycle) Reconcile(leases []Lease, factory WatcherFactory) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now().UTC()
+	demand := make(map[string]int)
+	for _, lease := range leases {
+		if leaseRequestsWatch(lease, now) {
+			demand[lease.ProjectRoot]++
+		}
+	}
+
+	// Keep canceled generations registered until their factories return. This
+	// prevents a reacquired lease from starting an overlapping replacement.
+	for projectRoot, entry := range l.watchers {
+		select {
+		case <-entry.done:
+			delete(l.watchers, projectRoot)
+		default:
+		}
+		if demand[projectRoot] > 0 {
+			if entry.state == watcherGrace {
+				entry.graceUntil = time.Time{}
+				entry.state = watcherRunning
+			}
+			// A cancellation request cannot be undone. Reacquisition waits for
+			// this generation to finish before the next reconcile starts one.
+			continue
+		}
+		if entry.state == watcherCancelRequested {
+			continue
+		}
+		if entry.state == watcherRunning {
+			grace := l.gracePeriod(projectRoot)
+			if grace < 0 {
+				grace = defaultWatchGrace
+			}
+			entry.graceUntil = now.Add(grace)
+			entry.state = watcherGrace
+		}
+		if !now.Before(entry.graceUntil) {
+			entry.cancel()
+			entry.state = watcherCancelRequested
+		}
+	}
+	if factory == nil {
+		return
+	}
+	for projectRoot, count := range demand {
+		if count == 0 {
+			continue
+		}
+		if _, ok := l.watchers[projectRoot]; ok {
+			continue
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		l.nextGeneration++
+		generation := l.nextGeneration
+		entry := &watchLifecycleEntry{
+			cancel: cancel, state: watcherRunning, generation: generation,
+			done: make(chan struct{}),
+		}
+		l.watchers[projectRoot] = entry
+		go func(storeRoot string, watcherCtx context.Context, watched *watchLifecycleEntry, token uint64) {
+			if err := factory(watcherCtx, storeRoot); err != nil && !errors.Is(err, context.Canceled) {
+				log.Printf("[runtime] watcher failed for %s: %v", storeRoot, err)
+			}
+			watched.doneOnce.Do(func() { close(watched.done) })
+			// Do not mutate a newer generation if a late completion races with
+			// reconciliation. The done channel is still closed for its owner.
+			l.mu.Lock()
+			if current, ok := l.watchers[storeRoot]; !ok || current != watched || current.generation != token {
+				l.mu.Unlock()
+				return
+			}
+			l.mu.Unlock()
+		}(projectRoot, ctx, entry, generation)
+	}
+}
+
+// Status returns a stable snapshot of watcher state, including projects in
+// final-client grace so status remains useful during shutdown.
+func (l *WatchLifecycle) Status(leases []Lease) []WatcherStatus {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	demand := make(map[string]int)
+	for _, lease := range leases {
+		if leaseRequestsWatch(lease, l.now().UTC()) {
+			demand[lease.ProjectRoot]++
+		}
+	}
+	for projectRoot, entry := range l.watchers {
+		select {
+		case <-entry.done:
+			delete(l.watchers, projectRoot)
+		default:
+		}
+	}
+	projects := make(map[string]struct{}, len(l.watchers)+len(demand))
+	for projectRoot := range l.watchers {
+		projects[projectRoot] = struct{}{}
+	}
+	for projectRoot := range demand {
+		projects[projectRoot] = struct{}{}
+	}
+	result := make([]WatcherStatus, 0, len(projects))
+	for projectRoot := range projects {
+		entry := l.watchers[projectRoot]
+		status := WatcherStatus{ProjectRoot: projectRoot, Demand: demand[projectRoot], State: string(watcherStopped)}
+		if entry != nil {
+			status.State = string(entry.state)
+			status.Active = entry.state == watcherRunning || entry.state == watcherGrace
+			status.GraceUntil = entry.graceUntil
+			status.GracePending = entry.state == watcherGrace
+		}
+		result = append(result, status)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ProjectRoot < result[j].ProjectRoot })
+	return result
+}
+
+func leaseRequestsWatch(lease Lease, now time.Time) bool {
+	return lease.Watch && lease.ProjectRoot != "" && (lease.ExpiresAt.IsZero() || lease.ExpiresAt.After(now))
+}
+
+// Stop cancels all active and grace-pending project watchers.
+func (l *WatchLifecycle) Stop() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, entry := range l.watchers {
+		entry.cancel()
+		entry.state = watcherCancelRequested
+	}
+}
+
+func (l *WatchLifecycle) hasActiveOrGrace() bool {
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.watchers) > 0
+}
 
 type activeJob struct {
 	storeRoot string
@@ -302,6 +569,14 @@ func stopFlagPath() string {
 	return filepath.Join(RuntimeRoot(), "stop.flag")
 }
 
+func reloadRequestPath() string {
+	return filepath.Join(RuntimeRoot(), "reload-request.json")
+}
+
+func reloadStatusPath() string {
+	return filepath.Join(RuntimeRoot(), "reload-status.json")
+}
+
 // runningDaemonVersion returns the version persisted by the running daemon in
 // status.json. Empty string if the file is missing or unreadable.
 func runningDaemonVersion() string {
@@ -348,6 +623,109 @@ func RequestShutdown(timeout time.Duration) error {
 func ShouldStop() bool {
 	_, err := os.Stat(stopFlagPath())
 	return err == nil
+}
+
+func RequestReload() (ReloadRequest, error) {
+	if err := os.MkdirAll(RuntimeRoot(), 0755); err != nil {
+		return ReloadRequest{}, err
+	}
+	request := ReloadRequest{
+		ID:          uuid.NewString(),
+		RequestedAt: time.Now().UTC(),
+		PID:         os.Getpid(),
+	}
+	if err := writeJSON(reloadRequestPath(), request); err != nil {
+		return ReloadRequest{}, err
+	}
+	return request, nil
+}
+
+func LoadReloadStatus() (ReloadStatus, error) {
+	data, err := os.ReadFile(reloadStatusPath())
+	if err != nil {
+		return ReloadStatus{}, err
+	}
+	var status ReloadStatus
+	if err := json.Unmarshal(data, &status); err != nil {
+		return ReloadStatus{}, err
+	}
+	return status, nil
+}
+
+func WaitForReload(requestID string, timeout time.Duration) (ReloadStatus, error) {
+	if requestID == "" {
+		return ReloadStatus{}, errors.New("reload request id is required")
+	}
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		status, err := LoadReloadStatus()
+		if err == nil && status.RequestID == requestID {
+			if status.Success {
+				return status, nil
+			}
+			if status.Error != "" {
+				return status, errors.New(status.Error)
+			}
+			return status, errors.New("runtime reload failed")
+		}
+		if time.Now().After(deadline) {
+			return ReloadStatus{}, fmt.Errorf("timed out waiting for runtime reload %s", requestID)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func pendingReload() (ReloadRequest, bool, error) {
+	data, err := os.ReadFile(reloadRequestPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return ReloadRequest{}, false, nil
+	}
+	if err != nil {
+		return ReloadRequest{}, false, err
+	}
+	var request ReloadRequest
+	if err := json.Unmarshal(data, &request); err != nil {
+		return ReloadRequest{}, false, err
+	}
+	if request.ID == "" {
+		request.ID = uuid.NewString()
+	}
+	if request.RequestedAt.IsZero() {
+		request.RequestedAt = time.Now().UTC()
+	}
+	return request, true, nil
+}
+
+func acknowledgeReload(ctx context.Context, request ReloadRequest, handler ReloadHandler) (ReloadStatus, error) {
+	previous, _ := LoadReloadStatus()
+	status := ReloadStatus{
+		RequestID:   request.ID,
+		Generation:  previous.Generation + 1,
+		RequestedAt: request.RequestedAt,
+		ProcessedAt: time.Now().UTC(),
+		PID:         os.Getpid(),
+		Success:     true,
+	}
+	if handler != nil {
+		if err := handler(ctx, status); err != nil {
+			status.Success = false
+			status.Error = err.Error()
+		}
+	}
+	if err := writeJSON(reloadStatusPath(), status); err != nil {
+		return status, err
+	}
+	removeErr := os.Remove(reloadRequestPath())
+	if removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		return status, removeErr
+	}
+	if !status.Success {
+		return status, errors.New(status.Error)
+	}
+	return status, nil
 }
 
 func EnsureDaemon() error {
@@ -435,17 +813,95 @@ func EnqueueReindex(storeRoot string) (Job, error) {
 	return enqueue(storeRoot, JobReindex, "")
 }
 
+// EnqueueQdrantIntent records one successor-safe targeted reconciliation. The
+// durable queue is activated only after the caller has committed history and
+// its manifest/outbox. Repeated intents for one entity coalesce to the newest
+// generation while preserving a running older generation for completion.
+func EnqueueQdrantIntent(storeRoot string, intent QdrantIntent) (Job, error) {
+	if storeRoot == "" {
+		return Job{}, errors.New("store root is required")
+	}
+	if strings.TrimSpace(intent.EntityType) == "" || strings.TrimSpace(intent.EntityID) == "" {
+		return Job{}, errors.New("qdrant intent entity identity is required")
+	}
+	if intent.Generation == 0 {
+		intent.Generation = uint64(intent.Revision)
+		if intent.Generation == 0 {
+			intent.Generation = 1
+		}
+	}
+	if err := prepareEnqueue(storeRoot); err != nil {
+		return Job{}, err
+	}
+	var queued Job
+	err := updateQueue(storeRoot, func(state *QueueState) error {
+		now := time.Now().UTC()
+		key := qdrantIntentKey(intent)
+		for _, job := range state.Jobs {
+			if job.Key != key {
+				continue
+			}
+			if job.Intent != nil && job.Intent.Generation >= intent.Generation {
+				queued = *job
+				return nil
+			}
+			intent.Generation = maxUint64(intent.Generation, jobGeneration(job)+1)
+			copyIntent := intent
+			job.Intent = &copyIntent
+			job.RequestedAt = now
+			job.RunAfter = now.Add(debounceFor(JobQdrantReconcile))
+			job.LastError = ""
+			// A running job keeps its StartedAt and is completed against its
+			// original generation; CompleteJob retains this newer successor.
+			if job.StartedAt == nil {
+				job.Attempts = 0
+			}
+			queued = *job
+			return nil
+		}
+		copyIntent := intent
+		queued = Job{ID: newID(), Key: key, Kind: JobQdrantReconcile,
+			Target: intent.EntityType + ":" + intent.EntityID, RequestedAt: now,
+			RunAfter: now.Add(debounceFor(JobQdrantReconcile)), Intent: &copyIntent}
+		state.Jobs = append(state.Jobs, &queued)
+		return nil
+	})
+	return queued, err
+}
+
+func qdrantIntentKey(intent QdrantIntent) string {
+	return "qdrant:" + intent.EntityType + ":" + intent.EntityID
+}
+
+func jobGeneration(job *Job) uint64 {
+	if job != nil && job.Intent != nil {
+		return job.Intent.Generation
+	}
+	return 0
+}
+
+func maxUint64(a, b uint64) uint64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func prepareEnqueue(storeRoot string) error {
+	if err := os.MkdirAll(filepath.Dir(queuePath(storeRoot)), 0755); err != nil {
+		return err
+	}
+	if err := registerProject(storeRoot); err != nil {
+		return err
+	}
+	return EnsureDaemon()
+}
+
 func enqueue(storeRoot string, kind JobKind, target string) (Job, error) {
 	if storeRoot == "" {
 		return Job{}, errors.New("store root is required")
 	}
-	if err := os.MkdirAll(filepath.Dir(queuePath(storeRoot)), 0755); err != nil {
-		return Job{}, err
-	}
-	if err := registerProject(storeRoot); err != nil {
-		return Job{}, err
-	}
-	if err := EnsureDaemon(); err != nil {
+	if err := prepareEnqueue(storeRoot); err != nil {
 		return Job{}, err
 	}
 
@@ -482,13 +938,38 @@ func enqueue(storeRoot string, kind JobKind, target string) (Job, error) {
 }
 
 func WaitForJob(storeRoot, jobID string, timeout time.Duration) (JobResult, error) {
+	return WaitForJobContext(context.Background(), storeRoot, jobID, timeout)
+}
+
+// WaitForJobContext waits for one job without blocking cancellation.
+func WaitForJobContext(ctx context.Context, storeRoot, jobID string, timeout time.Duration) (JobResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
 	deadline := time.Now().Add(timeout)
 	for {
+		select {
+		case <-ctx.Done():
+			return JobResult{}, ctx.Err()
+		default:
+		}
 		state, err := LoadQueue(storeRoot)
 		if err == nil {
+			active := false
+			for _, job := range state.Jobs {
+				if job.ID == jobID {
+					active = true
+					break
+				}
+			}
+			// A retryable Qdrant failure (or a successor generation) remains
+			// active; do not return the older failed Recent result early.
+			if active {
+				goto waitForJob
+			}
 			for _, result := range state.Recent {
 				if result.JobID == jobID {
 					if result.Success {
@@ -498,10 +979,17 @@ func WaitForJob(storeRoot, jobID string, timeout time.Duration) (JobResult, erro
 				}
 			}
 		}
+	waitForJob:
 		if time.Now().After(deadline) {
 			return JobResult{}, fmt.Errorf("timed out waiting for runtime job %s", jobID)
 		}
-		time.Sleep(200 * time.Millisecond)
+		timer := time.NewTimer(200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return JobResult{}, ctx.Err()
+		case <-timer.C:
+		}
 	}
 }
 
@@ -582,13 +1070,26 @@ func ReportDetails(storeRoot, jobID string, details JobDetails) error {
 func CompleteJob(storeRoot string, job Job, err error) error {
 	return updateQueue(storeRoot, func(state *QueueState) error {
 		finalJob := job
-		jobs := state.Jobs[:0]
+		jobs := make([]*Job, 0, len(state.Jobs))
+		var queuedCurrent *Job
 		for _, queued := range state.Jobs {
 			if queued.ID != job.ID {
 				jobs = append(jobs, queued)
 				continue
 			}
+			queuedCurrent = queued
 			finalJob = *queued
+		}
+		// A newer intent may have arrived while this generation was running.
+		// Keep it queued as a successor instead of removing it with the older
+		// completion. The successor starts fresh and is observable in status.
+		if queuedCurrent != nil && job.Intent != nil && queuedCurrent.Intent != nil && queuedCurrent.Intent.Generation > job.Intent.Generation {
+			copyJob := *queuedCurrent
+			copyJob.StartedAt = nil
+			copyJob.Attempts = 0
+			copyJob.LastError = ""
+			copyJob.RunAfter = time.Now().UTC()
+			jobs = append(jobs, &copyJob)
 		}
 		state.Jobs = jobs
 		startedAt := finalJob.RequestedAt
@@ -609,6 +1110,29 @@ func CompleteJob(storeRoot string, job Job, err error) error {
 		if err != nil {
 			result.Error = err.Error()
 		}
+		if finalJob.Kind == JobQdrantReconcile && err != nil {
+			result.Retryable = true
+			if finalJob.Attempts >= qdrantRetryLimit {
+				result.DeadLetter = true
+				result.Retryable = false
+				copyJob := finalJob
+				copyJob.StartedAt = nil
+				copyJob.LastError = err.Error()
+				copyJob.DeadLetter = true
+				copyJob.RunAfter = time.Now().UTC().Add(24 * time.Hour)
+				jobs = append(jobs, &copyJob)
+				state.Jobs = jobs
+			} else if !(queuedCurrent != nil && job.Intent != nil && queuedCurrent.Intent != nil && queuedCurrent.Intent.Generation > job.Intent.Generation) {
+				// Retain the failed Qdrant intent with bounded exponential
+				// backoff. A future daemon tick or restart can retry it.
+				copyJob := finalJob
+				copyJob.StartedAt = nil
+				copyJob.LastError = err.Error()
+				copyJob.RunAfter = time.Now().UTC().Add(qdrantRetryDelay(finalJob.Attempts))
+				jobs = append(jobs, &copyJob)
+				state.Jobs = jobs
+			}
+		}
 		result.Details = finalJob.Details
 		if result.Details == nil && (finalJob.Phase != "" || finalJob.Processed > 0) {
 			result.Details = &JobDetails{
@@ -623,6 +1147,42 @@ func CompleteJob(storeRoot string, job Job, err error) error {
 		}
 		return nil
 	})
+}
+
+// RetryJob explicitly releases a retained Qdrant dead-letter job. It is
+// intentionally narrow: generic background failures retain their historical
+// terminal behavior and cannot be accidentally replayed.
+func RetryJob(storeRoot, jobID string) (Job, error) {
+	var retried Job
+	err := updateQueue(storeRoot, func(state *QueueState) error {
+		for _, job := range state.Jobs {
+			if job.ID != jobID {
+				continue
+			}
+			if job.Kind != JobQdrantReconcile || !job.DeadLetter {
+				return fmt.Errorf("job %s is not a qdrant dead letter", jobID)
+			}
+			job.DeadLetter = false
+			job.Attempts = 0
+			job.LastError = ""
+			job.RunAfter = time.Now().UTC()
+			retried = *job
+			return nil
+		}
+		return fmt.Errorf("job %s not found", jobID)
+	})
+	return retried, err
+}
+
+func qdrantRetryDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := time.Second * time.Duration(1<<(attempt-1))
+	if delay > 5*time.Minute {
+		return 5 * time.Minute
+	}
+	return delay
 }
 
 func AcquireClient(kind, projectRoot string, watch bool) (*ClientHandle, error) {
@@ -652,8 +1212,48 @@ func AcquireClient(kind, projectRoot string, watch bool) (*ClientHandle, error) 
 	return handle, handle.Refresh()
 }
 
+// AcquireConfiguredClient preserves AcquireClient's lease contract while
+// deriving watch demand from project runtimeWatch settings for eligible
+// long-lived clients such as MCP.
+func AcquireConfiguredClient(kind, projectRoot string) (*ClientHandle, error) {
+	return AcquireClient(kind, projectRoot, WatchEnabledForClient(kind, projectRoot))
+}
+
+// WatchEnabledForClient reports whether a client should request project
+// knowledge watching. An explicit KNOWNS_RUNTIME_WATCH_ENABLED environment
+// override wins over project configuration.
+func WatchEnabledForClient(kind, projectRoot string) bool {
+	if raw := os.Getenv("KNOWNS_RUNTIME_WATCH_ENABLED"); raw != "" {
+		return parseBool(raw, true)
+	}
+	settings := models.DefaultRuntimeWatchSettings()
+	if projectRoot != "" {
+		data, err := os.ReadFile(filepath.Join(projectRoot, "config.json"))
+		if err == nil {
+			var project models.Project
+			if json.Unmarshal(data, &project) == nil {
+				settings = project.Settings.EffectiveRuntimeWatch()
+			}
+		}
+	}
+	if settings.Enabled != nil && !*settings.Enabled {
+		return false
+	}
+	for _, eligible := range settings.EligibleClients {
+		if strings.EqualFold(strings.TrimSpace(eligible), kind) || strings.TrimSpace(eligible) == "*" {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *ClientHandle) Refresh() error {
 	if h == nil {
+		return nil
+	}
+	h.mu.Lock()
+	if h.released {
+		h.mu.Unlock()
 		return nil
 	}
 	now := time.Now().UTC()
@@ -661,16 +1261,31 @@ func (h *ClientHandle) Refresh() error {
 	h.lease.ExpiresAt = now.Add(leaseTTL())
 	data, err := json.MarshalIndent(h.lease, "", "  ")
 	if err != nil {
+		h.mu.Unlock()
 		return err
 	}
-	return os.WriteFile(leasePath(h.lease.ID), append(data, '\n'), 0644)
+	err = os.WriteFile(leasePath(h.lease.ID), append(data, '\n'), 0644)
+	h.mu.Unlock()
+	return err
 }
 
 func (h *ClientHandle) Release() error {
 	if h == nil {
 		return nil
 	}
-	return os.Remove(leasePath(h.lease.ID))
+	h.mu.Lock()
+	if h.released {
+		h.mu.Unlock()
+		return nil
+	}
+	h.released = true
+	id := h.lease.ID
+	h.mu.Unlock()
+	err := os.Remove(leasePath(id))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 func StartHeartbeat(ctx context.Context, handle *ClientHandle) {
@@ -701,10 +1316,12 @@ func LoadStatus() (*Status, error) {
 	}
 	if raw, readErr := os.ReadFile(statusPath()); readErr == nil {
 		var persisted struct {
-			Version string `json:"version"`
+			Version  string          `json:"version"`
+			Watchers []WatcherStatus `json:"watchers"`
 		}
 		if jsonErr := json.Unmarshal(raw, &persisted); jsonErr == nil {
 			status.Version = persisted.Version
+			status.Watchers = persisted.Watchers
 		}
 	}
 	leases, _ := ActiveLeases()
@@ -771,6 +1388,15 @@ func ActiveLeases() ([]Lease, error) {
 }
 
 func RunDaemon(ctx context.Context, executor Executor, watcherFactory WatcherFactory) error {
+	return RunDaemonWithOptions(ctx, DaemonOptions{
+		Executor:       executor,
+		WatcherFactory: watcherFactory,
+	})
+}
+
+func RunDaemonWithOptions(ctx context.Context, opts DaemonOptions) error {
+	executor := opts.Executor
+	watcherFactory := opts.WatcherFactory
 	if executor == nil {
 		return errors.New("runtime executor is required")
 	}
@@ -783,7 +1409,8 @@ func RunDaemon(ctx context.Context, executor Executor, watcherFactory WatcherFac
 	defer os.Remove(PIDFile())
 	_ = os.Remove(stopFlagPath())
 
-	watchers := map[string]context.CancelFunc{}
+	watchLifecycle := NewWatchLifecycle(nil, projectWatchGracePeriod)
+	defer watchLifecycle.Stop()
 	ticker := time.NewTicker(defaultPollInterval)
 	defer ticker.Stop()
 	var running *activeJob
@@ -792,17 +1419,24 @@ func RunDaemon(ctx context.Context, executor Executor, watcherFactory WatcherFac
 	for {
 		leases, _ := ActiveLeases()
 		projects, _ := registeredProjects()
-		watchProjects := map[string]bool{}
 		for _, lease := range leases {
-			if lease.Watch {
-				watchProjects[lease.ProjectRoot] = true
-			}
 			projects = appendIfMissing(projects, lease.ProjectRoot)
 		}
-		reconcileWatchers(watchers, watchProjects, watcherFactory)
+		watchLifecycle.Reconcile(leases, watcherFactory)
+		watcherStates := watchLifecycle.Status(leases)
 
 		pendingJobs := 0
 		if running == nil {
+			request, found, err := pendingReload()
+			if err != nil {
+				log.Printf("[runtime] reload request unreadable: %v", err)
+			} else if found {
+				if _, err := acknowledgeReload(ctx, request, opts.ReloadHandler); err != nil {
+					log.Printf("[runtime] reload failed: %v", err)
+				}
+				_ = writeStatusFile(leases, projects, watcherStates)
+				continue
+			}
 			nextStore, nextJob, found := nextReadyJob(projects)
 			if found {
 				started, err := MarkJobStarted(nextStore, nextJob.ID)
@@ -823,19 +1457,17 @@ func RunDaemon(ctx context.Context, executor Executor, watcherFactory WatcherFac
 			pendingJobs += len(queue.Jobs)
 		}
 
-		_ = writeStatusFile(leases, projects)
+		_ = writeStatusFile(leases, projects, watcherStates)
 
 		if ShouldStop() {
-			stopAllWatchers(watchers)
 			_ = os.Remove(stopFlagPath())
 			return nil
 		}
 
-		if len(leases) == 0 && pendingJobs == 0 && running == nil {
+		if len(leases) == 0 && pendingJobs == 0 && running == nil && !watchLifecycle.hasActiveOrGrace() {
 			if idleSince.IsZero() {
 				idleSince = time.Now().UTC()
 			} else if time.Since(idleSince) >= idleTimeout() {
-				stopAllWatchers(watchers)
 				return nil
 			}
 		} else {
@@ -844,7 +1476,6 @@ func RunDaemon(ctx context.Context, executor Executor, watcherFactory WatcherFac
 
 		select {
 		case <-ctx.Done():
-			stopAllWatchers(watchers)
 			return nil
 		case <-ticker.C:
 		case err := <-runningResult(running):
@@ -904,6 +1535,9 @@ func nextReadyJob(projects []string) (string, Job, bool) {
 			continue
 		}
 		for _, job := range queue.Jobs {
+			if job.DeadLetter {
+				continue
+			}
 			if job.RunAfter.After(now) {
 				continue
 			}
@@ -996,19 +1630,25 @@ func updateQueue(storeRoot string, fn func(*QueueState) error) error {
 	return writeJSON(queuePath(storeRoot), state)
 }
 
-func writeStatusFile(leases []Lease, projects []string) error {
+func writeStatusFile(leases []Lease, projects []string, watcherStates ...[]WatcherStatus) error {
+	var watchers []WatcherStatus
+	if len(watcherStates) > 0 {
+		watchers = watcherStates[0]
+	}
 	status := struct {
-		PID       int       `json:"pid"`
-		Version   string    `json:"version,omitempty"`
-		UpdatedAt time.Time `json:"updatedAt"`
-		Projects  []string  `json:"projects"`
-		Clients   []Lease   `json:"clients"`
+		PID       int             `json:"pid"`
+		Version   string          `json:"version,omitempty"`
+		UpdatedAt time.Time       `json:"updatedAt"`
+		Projects  []string        `json:"projects"`
+		Clients   []Lease         `json:"clients"`
+		Watchers  []WatcherStatus `json:"watchers,omitempty"`
 	}{
 		PID:       os.Getpid(),
 		Version:   util.Version,
 		UpdatedAt: time.Now().UTC(),
 		Projects:  projects,
 		Clients:   leases,
+		Watchers:  watchers,
 	}
 	return writeJSON(statusPath(), status)
 }
@@ -1095,6 +1735,45 @@ func idleTimeout() time.Duration {
 
 func leaseTTL() time.Duration {
 	return durationFromEnvMs("KNOWNS_RUNTIME_LEASE_TTL_MS", int(defaultLeaseTTL/time.Millisecond))
+}
+
+func watchGracePeriod() time.Duration {
+	return durationFromEnvMs("KNOWNS_RUNTIME_WATCH_GRACE_MS", int(defaultWatchGrace/time.Millisecond))
+}
+
+func projectWatchGracePeriod(projectRoot string) time.Duration {
+	grace := watchGracePeriod()
+	if projectRoot == "" {
+		return grace
+	}
+	data, err := os.ReadFile(filepath.Join(projectRoot, "config.json"))
+	if err != nil {
+		return grace
+	}
+	var project models.Project
+	if err := json.Unmarshal(data, &project); err != nil {
+		return grace
+	}
+	configured := project.Settings.EffectiveRuntimeWatch().GracePeriod
+	if configured == "" {
+		return grace
+	}
+	parsed, err := time.ParseDuration(configured)
+	if err != nil || parsed < 0 {
+		return grace
+	}
+	return parsed
+}
+
+func parseBool(value string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }
 
 func durationFromEnvMs(key string, defaultMs int) time.Duration {

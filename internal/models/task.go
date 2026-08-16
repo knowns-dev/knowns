@@ -52,6 +52,9 @@ type Task struct {
 	TimeEntries []TimeEntry  `json:"timeEntries,omitempty" yaml:"-"`
 	ActiveTimer *ActiveTimer `json:"activeTimer,omitempty" yaml:"-"`
 
+	// CanonicalHash is derived from canonical Task fields and is not persisted.
+	CanonicalHash string `json:"canonicalHash,omitempty" yaml:"-"`
+
 	// ImplementationPlan and ImplementationNotes live in the markdown body.
 	ImplementationPlan  string `json:"implementationPlan,omitempty"  yaml:"-"`
 	ImplementationNotes string `json:"implementationNotes,omitempty" yaml:"-"`

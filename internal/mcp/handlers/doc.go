@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/permissions"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -19,11 +21,11 @@ import (
 func RegisterDocTool(s toolRegistrar, getStore func() *storage.Store) {
 	s.AddTool(
 		mcp.NewTool("docs",
-			mcp.WithDescription("Documentation operations. Use 'action' to specify: create, get, update, delete, list, history, diff, restore. Create/update return compact summaries by default; use return=full for the legacy document payload."),
+			mcp.WithDescription("Documentation operations. Use 'action' to specify: create, get, update, delete, hard_delete, list, history, diff, restore. hard_delete is separately permission-gated and requires explicit confirmation and reason."),
 			mcp.WithString("action",
 				mcp.Required(),
 				mcp.Description("Action to perform"),
-				mcp.Enum("create", "get", "update", "delete", "list", "history", "diff", "restore"),
+				mcp.Enum("create", "get", "update", "delete", "hard_delete", "list", "history", "diff", "restore"),
 			),
 			mcp.WithString("path",
 				mcp.Description("Document path (required for get, update, delete, history, diff, restore)"),
@@ -74,9 +76,15 @@ func RegisterDocTool(s toolRegistrar, getStore func() *storage.Store) {
 			mcp.WithString("revisionId",
 				mcp.Description("Alias for revision ID used by API clients"),
 			),
+			mcp.WithBoolean("metadata", mcp.Description("Return payload-free paginated history metadata")),
+			mcp.WithNumber("offset", mcp.Description("History metadata offset (newest first)")),
+			mcp.WithNumber("limit", mcp.Description("History metadata page size")),
 			mcp.WithString("mode",
 				mcp.Description("Restore mode: document (default) or section"),
 			),
+			mcp.WithString("expectedHash", mcp.Description("Expected canonical hash for optimistic concurrency")),
+			mcp.WithBoolean("confirmed", mcp.Description("Explicit confirmation for hard_delete")),
+			mcp.WithString("reason", mcp.Description("Required audit reason for hard_delete")),
 			mcp.WithArray("clear",
 				mcp.Description("Clear string fields like title, description, or content (update)"),
 				mcp.WithStringItems(),
@@ -106,6 +114,8 @@ func RegisterDocTool(s toolRegistrar, getStore func() *storage.Store) {
 				return handleDocUpdate(getStore, req)
 			case "delete":
 				return handleDocDelete(getStore, req)
+			case "hard_delete":
+				return handleDocHardDelete(ctx, getStore, req)
 			case "list":
 				return handleDocList(getStore, req)
 			case "history":
@@ -245,6 +255,7 @@ func handleDocGet(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp
 	if info {
 		headings := extractHeadings(doc.Content)
 		result := map[string]any{
+			"id":          doc.ID,
 			"path":        doc.Path,
 			"title":       doc.Title,
 			"description": doc.Description,
@@ -308,14 +319,16 @@ func handleDocGet(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp
 		}
 		headings := extractHeadings(doc.Content)
 		result := map[string]any{
-			"path":        doc.Path,
-			"title":       doc.Title,
-			"description": doc.Description,
-			"tags":        doc.Tags,
-			"size":        contentLen,
-			"tokens":      approxTokens,
-			"headings":    headings,
-			"note":        "Document is large. Use 'section' parameter to read a specific section, or 'toc: true' to see the table of contents.",
+			"id":            doc.ID,
+			"canonicalHash": doc.CanonicalHash,
+			"path":          doc.Path,
+			"title":         doc.Title,
+			"description":   doc.Description,
+			"tags":          doc.Tags,
+			"size":          contentLen,
+			"tokens":        approxTokens,
+			"headings":      headings,
+			"note":          "Document is large. Use 'section' parameter to read a specific section, or 'toc: true' to see the table of contents.",
 		}
 		out, _ := json.MarshalIndent(result, "", "  ")
 		return mcp.NewToolResultText(string(out)), nil
@@ -373,18 +386,13 @@ func handleDocCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 		doc.Tags = v
 	}
 
-	if err := store.Docs.Create(doc); err != nil {
-		return errFailed("create doc", err)
-	}
-
-	search.BestEffortIndexDoc(store, doc.Path)
-
-	if err := store.Versions.SaveDocRevisionWithOptions(nil, doc, storage.DocRevisionOptions{
+	if err := store.MutateDocWithHistory(context.Background(), nil, doc, storage.DocMutationOptions{
 		Actor:  "mcp",
 		Source: "mcp",
 	}); err != nil {
-		return errFailed("save doc history", err)
+		return errFailed("create doc", err)
 	}
+	search.BestEffortIndexDoc(store, doc.Path)
 
 	go notifyDocUpdated(store, doc.Path)
 
@@ -415,6 +423,7 @@ func handleDocUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 	}
 	clearFields := stringSetArg(args, "clear")
 	oldPath := doc.Path
+	expectedHash, _ := stringArg(args, "expectedHash")
 
 	if clearFields["title"] {
 		doc.Title = ""
@@ -461,26 +470,18 @@ func handleDocUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 
 	doc.UpdatedAt = time.Now().UTC()
 
-	if oldPath != doc.Path {
-		if err := store.Docs.Rename(oldPath, doc); err != nil {
-			return errFailed("rename doc", err)
-		}
-		if err := store.Docs.RewriteDocReferences(oldPath, doc.Path, store.Tasks, store.Memory); err != nil {
-			return errFailed("rewrite doc references", err)
-		}
-		search.BestEffortRemoveDoc(store, oldPath)
-	} else if err := store.Docs.Update(doc); err != nil {
+	if err := store.MutateDocWithHistory(context.Background(), &oldDoc, doc, storage.DocMutationOptions{
+		Section:      sectionTarget,
+		Actor:        "mcp",
+		Source:       "mcp",
+		ExpectedHash: expectedHash,
+	}); err != nil {
 		return errFailed("update doc", err)
 	}
-
-	search.BestEffortIndexDoc(store, doc.Path)
-
-	if err := store.Versions.SaveDocRevisionWithOptions(&oldDoc, doc, storage.DocRevisionOptions{
-		Section: sectionTarget,
-		Actor:   "mcp",
-		Source:  "mcp",
-	}); err != nil {
-		return errFailed("save doc history", err)
+	if oldPath != doc.Path {
+		search.BestEffortRenameDoc(store, doc.ID, oldPath, doc.Path)
+	} else {
+		search.BestEffortIndexDoc(store, doc.Path)
 	}
 
 	if oldPath != doc.Path {
@@ -503,11 +504,31 @@ func handleDocHistory(getStore func() *storage.Store, req mcp.CallToolRequest) (
 		return errResult(ErrPathReq)
 	}
 
+	args := req.GetArguments()
+	if revision := docRevisionArg(args); revision != "" {
+		version, err := store.Versions.GetDocRevisionDetail(path, revision)
+		if err != nil {
+			return errFailed("get doc revision", err)
+		}
+		out, _ := json.MarshalIndent(version, "", "  ")
+		return mcp.NewToolResultText(string(out)), nil
+	}
+	if boolArg(args, "metadata") || args["offset"] != nil || args["limit"] != nil {
+		offset, limit, err := historyPageArgs(args)
+		if err != nil {
+			return errResult(err.Error())
+		}
+		page, err := store.Versions.ListDocHistoryMetadata(path, offset, limit)
+		if err != nil {
+			return errFailed("list doc history metadata", err)
+		}
+		out, _ := json.MarshalIndent(page, "", "  ")
+		return mcp.NewToolResultText(string(out)), nil
+	}
 	history, err := store.Versions.GetDocHistory(path)
 	if err != nil {
 		return errFailed("get doc history", err)
 	}
-
 	out, _ := json.MarshalIndent(history, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }
@@ -552,7 +573,8 @@ func handleDocRestore(getStore func() *storage.Store, req mcp.CallToolRequest) (
 	mode, _ := stringArg(args, "mode")
 	mode = strings.ToLower(strings.TrimSpace(mode))
 
-	opts := storage.DocRevisionOptions{Actor: "mcp", Source: "mcp"}
+	expectedHash, _ := stringArg(args, "expectedHash")
+	opts := storage.DocRevisionOptions{Actor: "mcp", Source: "mcp", ExpectedHash: expectedHash}
 	var restored *models.Doc
 	if section != "" || mode == "section" {
 		restored, err = store.RestoreDocSection(path, revision, section, opts)
@@ -622,6 +644,10 @@ func handleDocDelete(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 	if err != nil {
 		return errNotFound("Doc", err)
 	}
+	expectedHash, _ := stringArg(args, "expectedHash")
+	if strings.TrimSpace(expectedHash) == "" {
+		expectedHash = doc.CanonicalHash
+	}
 
 	if dryRun {
 		out, _ := json.MarshalIndent(map[string]any{
@@ -632,17 +658,71 @@ func handleDocDelete(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 		return mcp.NewToolResultText(string(out)), nil
 	}
 
-	if err := store.Docs.Delete(path); err != nil {
+	if err := store.DeleteDocWithExpectedHash(context.Background(), path, storage.DocDeleteOptions{ExpectedHash: expectedHash, Actor: "mcp", Source: "mcp"}); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to delete doc: %s", err.Error())), nil
 	}
 
-	search.BestEffortRemoveDoc(store, path)
+	search.BestEffortRemoveDocID(store, doc.ID, doc.Path)
 	go notifyServer(store, "notify/refresh")
 
 	out, _ := json.MarshalIndent(map[string]any{
 		"deleted": true,
 		"message": fmt.Sprintf(MsgDeletedDoc, doc.Path, doc.Title),
 	}, "", "  ")
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+func handleDocHardDelete(ctx context.Context, getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store := getStore()
+	if store == nil {
+		return noProjectError()
+	}
+	args := req.GetArguments()
+	path, ok := stringArg(args, "path")
+	if !ok || path == "" {
+		return errResult(ErrPathReq)
+	}
+	confirmed, _ := args["confirmed"].(bool)
+	reason, _ := stringArg(args, "reason")
+	if !confirmed {
+		return errResult("doc hard_delete requires confirmed=true")
+	}
+	if strings.TrimSpace(reason) == "" {
+		return errResult("doc hard_delete requires a non-empty reason")
+	}
+	policy := (*permissions.PermissionConfig)(nil)
+	if cfg, err := store.Config.Load(); err == nil {
+		policy = cfg.Settings.Permissions
+	}
+	capable := permissions.EffectivePolicy(policy).Allowed[permissions.CapDelete] && !permissions.EffectivePolicy(policy).Denied[permissions.CapDelete]
+	if !capable {
+		return errResult("doc hard_delete requires the project delete capability")
+	}
+	doc, err := store.Docs.Get(path)
+	if err != nil {
+		return errNotFound("Doc", err)
+	}
+	expectedHash, _ := stringArg(args, "expectedHash")
+	if strings.TrimSpace(expectedHash) == "" {
+		expectedHash = doc.CanonicalHash
+	}
+	if expectedHash != doc.CanonicalHash {
+		return errResult("doc hard_delete expected hash conflict")
+	}
+	reconciler, err := storage.NewFilesystemReconciler(store.Root)
+	if err != nil {
+		return errFailed("doc hard_delete", err)
+	}
+	canonicalPath := "docs/" + strings.TrimSuffix(strings.TrimPrefix(doc.Path, "docs/"), ".md") + ".md"
+	if _, err := reconciler.ReconcileLifecycleBatch(ctx, storage.LifecycleBatch{Source: "mcp-doc-hard-delete", Limit: 1, ExactEntityType: "doc", ExactEntityID: doc.ID, ExactPath: canonicalPath, Hints: []storage.ReconcileHint{{Path: filepath.Join(store.Root, canonicalPath), Event: "hard_delete"}}}, true); err != nil {
+		return errFailed("doc hard_delete reconcile", err)
+	}
+	if err := reconciler.HardDelete(ctx, "doc", doc.ID, storage.HardDeleteOptions{Trusted: true, Confirmed: true, Reason: reason, Actor: "mcp", Path: canonicalPath, ExpectedHash: expectedHash}); err != nil {
+		return errFailed("doc hard_delete", err)
+	}
+	search.BestEffortRemoveDocID(store, doc.ID, doc.Path)
+	go notifyServer(store, "notify/refresh")
+	out, _ := json.MarshalIndent(map[string]any{"hardDeleted": true, "path": doc.Path}, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }
 

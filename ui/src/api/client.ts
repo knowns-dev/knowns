@@ -1,5 +1,6 @@
 import type { Task, TimeEntry } from "@/ui/models/task";
-import type { TaskChange, TaskVersion } from "@/ui/models/version";
+import type { TaskChange, TaskVersion, TaskHistoryMetadata } from "@/ui/models/version";
+import { getTaskLifecycleState } from "@/ui/models/taskLifecycle";
 import type {
 	TaskLifecycleEvent,
 	TaskLifecycleReason,
@@ -58,6 +59,34 @@ interface TaskVersionDTO {
 	snapshot: Partial<TaskDTO>;
 }
 
+interface HistoryMetadataDTO {
+	id: string;
+	entityId: string;
+	revision: number;
+	legacyRevision?: number;
+	timestamp: string;
+	author?: string;
+	actor?: string;
+	source?: string;
+	baseHash?: string;
+	newHash?: string;
+	checkpoint?: boolean;
+	operation?: string;
+	tombstone?: boolean;
+	currentPath?: string;
+	previousPath?: string;
+}
+
+export interface TaskHistoryMetadataPage {
+	offset: number;
+	limit: number;
+	hasMore: boolean;
+	nextOffset?: number;
+	currentVersion: number;
+	tailTruncated?: boolean;
+	items: TaskHistoryMetadata[];
+}
+
 interface ActivityDTO {
 	taskId: string;
 	taskTitle: string;
@@ -83,6 +112,25 @@ function parseVersionDTO(dto: TaskVersionDTO): TaskVersion {
 	};
 }
 
+function parseHistoryMetadata(dto: HistoryMetadataDTO): TaskHistoryMetadata {
+	return {
+		id: dto.id,
+		taskId: dto.entityId,
+		version: dto.legacyRevision || dto.revision,
+		timestamp: new Date(dto.timestamp),
+		author: dto.author,
+		actor: dto.actor,
+		source: dto.source,
+		baseHash: dto.baseHash,
+		newHash: dto.newHash,
+		checkpoint: dto.checkpoint,
+		operation: dto.operation,
+		tombstone: dto.tombstone,
+		currentPath: dto.currentPath,
+		previousPath: dto.previousPath,
+	};
+}
+
 function parseActivityDTO(dto: ActivityDTO): Activity {
 	return {
 		...dto,
@@ -91,6 +139,7 @@ function parseActivityDTO(dto: ActivityDTO): Activity {
 }
 
 function parseTaskDTO(dto: TaskDTO): Task {
+	const lifecycleState = getTaskLifecycleState(dto);
 	return {
 		...dto,
 		status: dto.status as Task["status"],
@@ -102,8 +151,8 @@ function parseTaskDTO(dto: TaskDTO): Task {
 		updatedAt: new Date(dto.updatedAt),
 		completedAt: dto.completedAt ? new Date(dto.completedAt) : undefined,
 		archivedAt: dto.archivedAt ? new Date(dto.archivedAt) : undefined,
-		archived: dto.archived ?? dto.lifecycleState === "archived",
-		lifecycleState: dto.lifecycleState,
+		archived: dto.archived ?? lifecycleState === "archived",
+		lifecycleState,
 		timeEntries: (dto.timeEntries || []).map((entry) => ({
 			...entry,
 			startedAt: new Date(entry.startedAt),
@@ -242,6 +291,19 @@ export const api = {
 		const data = (await res.json()) as TaskVersionDTO[] | { versions: TaskVersionDTO[] };
 		const versions = Array.isArray(data) ? data : data.versions || [];
 		return versions.map(parseVersionDTO);
+	},
+
+	async getTaskHistoryMetadata(id: string, offset = 0, limit = 50): Promise<TaskHistoryMetadataPage> {
+		const res = await apiFetch(`${API_BASE}/api/tasks/${id}/history?metadata=true&offset=${offset}&limit=${limit}`);
+		if (!res.ok) throw new Error(`Failed to fetch history metadata for task ${id}`);
+		const data = (await res.json()) as { offset: number; limit: number; hasMore: boolean; nextOffset?: number; currentVersion: number; items: HistoryMetadataDTO[] };
+		return { ...data, items: (data.items || []).map(parseHistoryMetadata) };
+	},
+
+	async getTaskRevisionDetail(id: string, revision: string | number): Promise<TaskVersion> {
+		const res = await apiFetch(`${API_BASE}/api/tasks/${id}/history/${encodeURIComponent(String(revision))}`);
+		if (!res.ok) throw new Error(`Failed to fetch revision ${revision} for task ${id}`);
+		return parseVersionDTO((await res.json()) as TaskVersionDTO);
 	},
 
 	async archiveTask(id: string, execute = false, signal?: AbortSignal): Promise<TaskLifecycleResponse> {
@@ -580,9 +642,43 @@ export interface DocVersion {
 	baseHash?: string;
 	newHash?: string;
 	checkpoint?: boolean;
+	operation?: string;
+	tombstone?: boolean;
 	changes: DocChange[];
 	changedScopes?: DocChangeScope[];
 	snapshot?: Record<string, unknown>;
+}
+
+export interface DocHistoryMetadata {
+	id: string;
+	docId?: string;
+	docPath?: string;
+	currentPath?: string;
+	previousPath?: string;
+	version: number;
+	timestamp: string;
+	author?: string;
+	actor?: string;
+	source?: string;
+	baseHash?: string;
+	newHash?: string;
+	checkpoint?: boolean;
+	operation?: string;
+	tombstone?: boolean;
+}
+
+export interface DocHistoryMetadataPage {
+	offset: number;
+	limit: number;
+	hasMore: boolean;
+	nextOffset?: number;
+	currentVersion: number;
+	entityId?: string;
+	docPath?: string;
+	currentPath?: string;
+	retentionGaps?: DocHistoryGap[];
+	tailTruncated?: boolean;
+	items: DocHistoryMetadata[];
 }
 
 export interface DocVersionHistory {
@@ -592,6 +688,7 @@ export interface DocVersionHistory {
 	currentVersion: number;
 	versions: DocVersion[];
 	retentionGaps?: DocHistoryGap[];
+	tailTruncated?: boolean;
 }
 
 export interface DocRevisionDiff {
@@ -679,6 +776,41 @@ export async function getDocHistory(path: string): Promise<DocVersionHistory> {
 	if (!res.ok) {
 		throw new Error(`Failed to fetch doc history for ${path}`);
 	}
+	return res.json();
+}
+
+export async function getDocHistoryMetadata(path: string, offset = 0, limit = 50): Promise<DocHistoryMetadataPage> {
+	const encodedPath = encodeDocPath(path);
+	const res = await apiFetch(`${API_BASE}/api/docs/${encodedPath}/history?metadata=true&offset=${offset}&limit=${limit}`);
+	if (!res.ok) throw new Error(`Failed to fetch doc history metadata for ${path}`);
+	const data = (await res.json()) as Omit<DocHistoryMetadataPage, "items"> & { items: HistoryMetadataDTO[] };
+	return {
+		...data,
+		items: (data.items || []).map((item) => ({
+			id: item.id,
+			docId: item.entityId,
+			docPath: item.currentPath || data.docPath,
+			currentPath: item.currentPath,
+			previousPath: item.previousPath,
+			version: item.legacyRevision || item.revision,
+			timestamp: item.timestamp,
+			author: item.author,
+			actor: item.actor,
+			source: item.source,
+			baseHash: item.baseHash,
+			newHash: item.newHash,
+			checkpoint: item.checkpoint,
+			operation: item.operation,
+			tombstone: item.tombstone,
+		})),
+	};
+}
+
+export async function getDocRevisionDetail(path: string, revisionId: string): Promise<DocVersion> {
+	const encodedPath = encodeDocPath(path);
+	const encodedRevision = encodeURIComponent(revisionId);
+	const res = await apiFetch(`${API_BASE}/api/docs/${encodedPath}/history/${encodedRevision}`);
+	if (!res.ok) throw new Error(`Failed to fetch doc revision ${revisionId}`);
 	return res.json();
 }
 

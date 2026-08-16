@@ -6,25 +6,30 @@ import "time"
 // files and tombstones remain canonical; this record only tracks one stable
 // lifecycle event and its derived index/remove delivery state.
 type TaskLifecyclePending struct {
-	EventID           string              `json:"eventId"`
-	TaskID            string              `json:"taskId"`
-	Operation         string              `json:"operation"`
-	At                time.Time           `json:"at"`
-	Actor             string              `json:"actor,omitempty"`
-	Reason            string              `json:"reason,omitempty"`
-	From              TaskLifecycleState  `json:"from"`
-	To                TaskLifecycleState  `json:"to"`
-	Automatic         bool                `json:"automatic,omitempty"`
-	Original          *TaskLifecycleData  `json:"original,omitempty"`
-	Desired           *TaskLifecycleData  `json:"desired,omitempty"`
-	MoveComplete      bool                `json:"moveComplete,omitempty"`
-	PatchComplete     bool                `json:"patchComplete,omitempty"`
-	VersionComplete   bool                `json:"versionComplete,omitempty"`
-	CanonicalComplete bool                `json:"canonicalComplete"`
-	EventDelivered    bool                `json:"eventDelivered"`
-	DerivedApplied    bool                `json:"derivedApplied"`
-	EventClaim        *TaskLifecycleClaim `json:"eventClaim,omitempty"`
-	DerivedClaim      *TaskLifecycleClaim `json:"derivedClaim,omitempty"`
+	EventID           string             `json:"eventId"`
+	TaskID            string             `json:"taskId"`
+	Operation         string             `json:"operation"`
+	At                time.Time          `json:"at"`
+	Actor             string             `json:"actor,omitempty"`
+	Reason            string             `json:"reason,omitempty"`
+	From              TaskLifecycleState `json:"from"`
+	To                TaskLifecycleState `json:"to"`
+	Automatic         bool               `json:"automatic,omitempty"`
+	Original          *TaskLifecycleData `json:"original,omitempty"`
+	Desired           *TaskLifecycleData `json:"desired,omitempty"`
+	MoveComplete      bool               `json:"moveComplete,omitempty"`
+	PatchComplete     bool               `json:"patchComplete,omitempty"`
+	VersionComplete   bool               `json:"versionComplete,omitempty"`
+	CanonicalComplete bool               `json:"canonicalComplete"`
+	EventDelivered    bool               `json:"eventDelivered"`
+	DerivedApplied    bool               `json:"derivedApplied"`
+	// CanonicalPath and CanonicalHash are content-free proof data used by the
+	// Task hard-delete coordinator to resume the storage purge after the
+	// lifecycle transaction lock has been released.
+	CanonicalPath string              `json:"canonicalPath,omitempty"`
+	CanonicalHash string              `json:"canonicalHash,omitempty"`
+	EventClaim    *TaskLifecycleClaim `json:"eventClaim,omitempty"`
+	DerivedClaim  *TaskLifecycleClaim `json:"derivedClaim,omitempty"`
 }
 
 // TaskLifecycleData is the content-free portion of a Task required to resume

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -69,6 +70,45 @@ func intArg(args map[string]any, key string) (int, bool) {
 		return int(n), true
 	}
 	return 0, false
+}
+
+func historyPageArgs(args map[string]any) (int, int, error) {
+	parse := func(key string) (int, error) {
+		value, exists := args[key]
+		if !exists {
+			return 0, nil
+		}
+		var result int
+		switch number := value.(type) {
+		case float64:
+			if math.IsNaN(number) || math.IsInf(number, 0) || number < 0 || math.Trunc(number) != number || number > float64(int(^uint(0)>>1)) {
+				return 0, fmt.Errorf("%s must be a non-negative integer", key)
+			}
+			result = int(number)
+		case int:
+			result = number
+		case int64:
+			if number > int64(int(^uint(0)>>1)) {
+				return 0, fmt.Errorf("%s must be a non-negative integer", key)
+			}
+			result = int(number)
+		default:
+			return 0, fmt.Errorf("%s must be a non-negative integer", key)
+		}
+		if result < 0 {
+			return 0, fmt.Errorf("%s must be a non-negative integer", key)
+		}
+		return result, nil
+	}
+	offset, err := parse("offset")
+	if err != nil {
+		return 0, 0, err
+	}
+	limit, err := parse("limit")
+	if err != nil {
+		return 0, 0, err
+	}
+	return offset, limit, nil
 }
 
 // boolArg safely extracts a bool from args; returns false if not present.

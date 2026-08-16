@@ -409,9 +409,9 @@ func applyBinaryStatus(ctx context.Context, status *LanguageRuntimeStatus, adapt
 func resolveAdapterBinary(ctx context.Context, adapter LanguageAdapter, override string, lookPath func(string) (string, error), runCheck func(context.Context, string, ...string) error, runCommand func(context.Context, string, ...string) ([]byte, error)) (string, string, string, bool) {
 	binaries := adapter.Binaries()
 	if override != "" {
-		candidate := BinaryCandidate{Name: override}
-		if len(binaries) > 0 {
-			candidate.CheckArgs = append([]string(nil), binaries[0].CheckArgs...)
+		candidate, err := selectBinaryCandidateOverride(override, binaries)
+		if err != nil {
+			return "", "", "", false
 		}
 		binaries = []BinaryCandidate{candidate}
 	}

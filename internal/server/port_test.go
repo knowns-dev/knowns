@@ -16,7 +16,7 @@ import (
 // getFreePort asks the OS for an available TCP port.
 func getFreePort(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", ":0")
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("getFreePort: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestPortFileNotWrittenOnBindFailure(t *testing.T) {
 	store := storage.NewStore(knDir)
 
 	// Occupy a port first
-	l, err := net.Listen("tcp", ":0")
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to occupy port: %v", err)
 	}

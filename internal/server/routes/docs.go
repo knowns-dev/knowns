@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -16,12 +17,14 @@ import (
 // docResponse transforms a flat Doc model into the nested shape the UI expects:
 // { filename, path, folder, metadata: { title, description, tags, ... }, content, isImported, source }
 type docMetadataResponse struct {
-	Title       string   `json:"title"`
-	Description string   `json:"description,omitempty"`
-	CreatedAt   string   `json:"createdAt"`
-	UpdatedAt   string   `json:"updatedAt"`
-	Tags        []string `json:"tags"`
-	Order       *int     `json:"order,omitempty"`
+	ID            string   `json:"id,omitempty"`
+	CanonicalHash string   `json:"canonicalHash,omitempty"`
+	Title         string   `json:"title"`
+	Description   string   `json:"description,omitempty"`
+	CreatedAt     string   `json:"createdAt"`
+	UpdatedAt     string   `json:"updatedAt"`
+	Tags          []string `json:"tags"`
+	Order         *int     `json:"order,omitempty"`
 }
 
 type docResponse struct {
@@ -45,12 +48,14 @@ func toDocResponse(d *models.Doc) docResponse {
 		Path:     d.Path,
 		Folder:   d.Folder,
 		Metadata: docMetadataResponse{
-			Title:       d.Title,
-			Description: d.Description,
-			CreatedAt:   d.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:   d.UpdatedAt.Format(time.RFC3339),
-			Tags:        tags,
-			Order:       d.Order,
+			ID:            d.ID,
+			CanonicalHash: d.CanonicalHash,
+			Title:         d.Title,
+			Description:   d.Description,
+			CreatedAt:     d.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:     d.UpdatedAt.Format(time.RFC3339),
+			Tags:          tags,
+			Order:         d.Order,
 		},
 		Content:    d.Content,
 		IsImported: d.IsImported,
@@ -88,6 +93,10 @@ func (dr *DocRoutes) getOrHistory(w http.ResponseWriter, r *http.Request) {
 	raw := decodedDocWildcard(r)
 	if path, revision, ok := splitDocHistoryDiffPath(raw); ok {
 		dr.diff(w, r, path, revision)
+		return
+	}
+	if path, revision, ok := splitDocHistoryRevisionPath(raw); ok {
+		dr.revision(w, r, path, revision)
 		return
 	}
 	if path, ok := splitDocHistoryPath(raw); ok {
@@ -169,6 +178,20 @@ func splitDocHistoryDiffPath(raw string) (string, string, bool) {
 	return path, revision, path != "" && revision != ""
 }
 
+func splitDocHistoryRevisionPath(raw string) (string, string, bool) {
+	marker := "/history/"
+	idx := strings.LastIndex(raw, marker)
+	if idx < 0 || strings.HasSuffix(raw, "/diff") {
+		return "", "", false
+	}
+	path := cleanDocPath(raw[:idx])
+	revision := strings.Trim(raw[idx+len(marker):], "/")
+	if path == "" || revision == "" || strings.Contains(revision, "/") {
+		return "", "", false
+	}
+	return path, revision, true
+}
+
 func splitDocRestorePath(raw string) (string, bool) {
 	if !strings.HasSuffix(raw, "/restore") {
 		return "", false
@@ -223,20 +246,16 @@ func (dr *DocRoutes) create(w http.ResponseWriter, r *http.Request) {
 		doc.Tags = []string{}
 	}
 
-	if err := dr.getStore().Docs.Create(&doc); err != nil {
+	store := dr.getStore()
+	if err := store.MutateDocWithHistory(r.Context(), nil, &doc, storage.DocMutationOptions{
+		Actor:  "webui",
+		Source: "webui",
+	}); err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	search.BestEffortIndexDoc(dr.getStore(), doc.Path)
-
-	if err := dr.getStore().Versions.SaveDocRevisionWithOptions(nil, &doc, storage.DocRevisionOptions{
-		Actor:  "webui",
-		Source: "webui",
-	}); err != nil {
-		respondError(w, http.StatusInternalServerError, "save doc history: "+err.Error())
-		return
-	}
+	search.BestEffortIndexDoc(store, doc.Path)
 
 	dr.sse.Broadcast(SSEEvent{Type: "docs:updated", Data: map[string]string{"path": doc.Path}})
 	respondJSON(w, http.StatusCreated, toDocResponse(&doc))
@@ -256,12 +275,13 @@ func (dr *DocRoutes) update(w http.ResponseWriter, r *http.Request) {
 	oldDoc := *existing
 
 	var payload struct {
-		Title       *string   `json:"title"`
-		Description *string   `json:"description"`
-		Content     *string   `json:"content"`
-		Tags        *[]string `json:"tags"`
-		Path        *string   `json:"path"`
-		Section     *string   `json:"section"`
+		Title        *string   `json:"title"`
+		Description  *string   `json:"description"`
+		Content      *string   `json:"content"`
+		Tags         *[]string `json:"tags"`
+		Path         *string   `json:"path"`
+		Section      *string   `json:"section"`
+		ExpectedHash string    `json:"expectedHash,omitempty"`
 	}
 	if err := decodeJSON(r, &payload); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -293,34 +313,27 @@ func (dr *DocRoutes) update(w http.ResponseWriter, r *http.Request) {
 		doc.Tags = []string{}
 	}
 
-	if oldPath != doc.Path {
-		if err := dr.getStore().Docs.Rename(oldPath, &doc); err != nil {
-			respondError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if err := dr.getStore().Docs.RewriteDocReferences(oldPath, doc.Path, dr.getStore().Tasks, dr.getStore().Memory); err != nil {
-			respondError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		search.BestEffortRemoveDoc(dr.getStore(), oldPath)
-	} else if err := dr.getStore().Docs.Update(&doc); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	search.BestEffortIndexDoc(dr.getStore(), doc.Path)
-
 	section := ""
 	if payload.Section != nil {
 		section = *payload.Section
 	}
-	if err := dr.getStore().Versions.SaveDocRevisionWithOptions(&oldDoc, &doc, storage.DocRevisionOptions{
-		Section: section,
-		Actor:   "webui",
-		Source:  "webui",
+	if err := dr.getStore().MutateDocWithHistory(r.Context(), &oldDoc, &doc, storage.DocMutationOptions{
+		Section:      section,
+		Actor:        "webui",
+		Source:       "webui",
+		ExpectedHash: payload.ExpectedHash,
 	}); err != nil {
-		respondError(w, http.StatusInternalServerError, "save doc history: "+err.Error())
+		status := http.StatusInternalServerError
+		if errors.Is(err, storage.ErrHistoryConflict) {
+			status = http.StatusConflict
+		}
+		respondError(w, status, err.Error())
 		return
+	}
+	if oldPath != doc.Path {
+		search.BestEffortRenameDoc(dr.getStore(), doc.ID, oldPath, doc.Path)
+	} else {
+		search.BestEffortIndexDoc(dr.getStore(), doc.Path)
 	}
 
 	if oldPath != doc.Path {
@@ -335,12 +348,35 @@ func (dr *DocRoutes) update(w http.ResponseWriter, r *http.Request) {
 //
 // GET /api/docs/*/history
 func (dr *DocRoutes) history(w http.ResponseWriter, r *http.Request, path string) {
+	if strings.EqualFold(r.URL.Query().Get("metadata"), "true") || r.URL.Query().Get("offset") != "" || r.URL.Query().Get("limit") != "" {
+		offset, limit, err := historyPageQuery(r)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		page, err := dr.getStore().Versions.ListDocHistoryMetadata(path, offset, limit)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		respondJSON(w, http.StatusOK, page)
+		return
+	}
 	h, err := dr.getStore().Versions.GetDocHistory(path)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	respondJSON(w, http.StatusOK, h)
+}
+
+func (dr *DocRoutes) revision(w http.ResponseWriter, r *http.Request, path, revision string) {
+	version, err := dr.getStore().Versions.GetDocRevisionDetail(path, revision)
+	if err != nil {
+		respondError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, version)
 }
 
 // diff returns the structured change set for a retained document revision.
@@ -360,10 +396,11 @@ func (dr *DocRoutes) diff(w http.ResponseWriter, r *http.Request, path, revision
 // POST /api/docs/*/restore
 func (dr *DocRoutes) restore(w http.ResponseWriter, r *http.Request, path string) {
 	var payload struct {
-		Revision   string `json:"revision"`
-		RevisionID string `json:"revisionId"`
-		Section    string `json:"section"`
-		Mode       string `json:"mode"`
+		Revision     string `json:"revision"`
+		RevisionID   string `json:"revisionId"`
+		Section      string `json:"section"`
+		Mode         string `json:"mode"`
+		ExpectedHash string `json:"expectedHash,omitempty"`
 	}
 	if err := decodeJSON(r, &payload); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -376,7 +413,7 @@ func (dr *DocRoutes) restore(w http.ResponseWriter, r *http.Request, path string
 		return
 	}
 	mode := strings.ToLower(strings.TrimSpace(payload.Mode))
-	opts := storage.DocRevisionOptions{Actor: "webui", Source: "webui"}
+	opts := storage.DocRevisionOptions{Actor: "webui", Source: "webui", ExpectedHash: payload.ExpectedHash}
 
 	var (
 		doc *models.Doc
@@ -391,7 +428,11 @@ func (dr *DocRoutes) restore(w http.ResponseWriter, r *http.Request, path string
 		return
 	}
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		status := http.StatusInternalServerError
+		if errors.Is(err, storage.ErrHistoryConflict) {
+			status = http.StatusConflict
+		}
+		respondError(w, status, err.Error())
 		return
 	}
 

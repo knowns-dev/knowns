@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -173,7 +174,7 @@ func maybeAutoSetup() {
 }
 
 func shouldSkipCLIWarnings(args []string) bool {
-	for _, name := range []string{"doctor", "runtime", "runtime-memory", "__runtime", "__lsp-daemon"} {
+	for _, name := range []string{"doctor", "runtime", "runtime-memory", "qdrant", "__runtime", "__lsp-daemon"} {
 		if slices.Contains(args, name) {
 			return true
 		}
@@ -183,7 +184,8 @@ func shouldSkipCLIWarnings(args []string) bool {
 
 // Execute runs the root command.
 func Execute() error {
-	if shouldSkipCLIWarnings(os.Args[1:]) {
+	args := os.Args[1:]
+	if shouldSkipCLIWarnings(args) {
 		return rootCmd.Execute()
 	}
 
@@ -193,24 +195,38 @@ func Execute() error {
 	// Check if cloned project needs local setup (e.g. embedding model download).
 	maybeAutoSetup()
 
-	// Start update check in background while command runs
+	return executeWithUpdateNotice(args, rootCmd.Execute, util.CheckForUpdate, 3*time.Second, os.Stderr)
+}
+
+func executeWithUpdateNotice(args []string, run func() error, check func() string, timeout time.Duration, output io.Writer) error {
+	resetSuppressedTUICancel()
+	defer resetSuppressedTUICancel()
+
+	if !util.ShouldCheckForUpdate(args) {
+		return run()
+	}
+
 	msgCh := make(chan string, 1)
 	go func() {
-		msgCh <- util.CheckForUpdate()
+		msgCh <- check()
 	}()
 
-	err := rootCmd.Execute()
+	if err := run(); err != nil {
+		return err
+	}
+	if wasTUICancelSuppressed() {
+		return nil
+	}
 
-	// After command completes, wait for update check (max 3s) and print if available
 	select {
 	case msg := <-msgCh:
 		if msg != "" {
-			fmt.Fprint(os.Stderr, msg)
+			fmt.Fprint(output, msg)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(timeout):
 	}
 
-	return err
+	return nil
 }
 
 func init() {

@@ -55,14 +55,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	cmp := util.CompareVersions(latest, current)
 
 	if cmp <= 0 {
-		fmt.Printf("  %s Already on the latest version %s\n", RenderSuccess(""), StyleBold.Render("v"+current))
+		fmt.Printf("  %s Already on the latest version %s\n", RenderSuccess(""), StyleBold.Render(util.NormalizeVersionTag(current)))
 		return nil
 	}
 
 	fmt.Printf("  %s → %s available (current %s)\n",
 		StyleWarning.Render("UPDATE"),
-		StyleBold.Render("v"+latest),
-		StyleDim.Render("v"+current),
+		StyleBold.Render(util.NormalizeVersionTag(latest)),
+		StyleDim.Render(util.NormalizeVersionTag(current)),
 	)
 
 	if checkOnly {
@@ -258,7 +258,7 @@ func (m *confirmModel) View() tea.View {
 }
 
 // errUpdateCancelled is returned when the user cancels the update.
-var errUpdateCancelled = fmt.Errorf("update cancelled")
+var errUpdateCancelled = fmt.Errorf("update cancelled: %w", ErrCommandCancelled)
 
 // errUpdateDeferred is returned after the command has printed manual update
 // guidance for package-manager installs that cannot be safely upgraded in-place.
