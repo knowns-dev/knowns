@@ -46,6 +46,10 @@ func resolve(root, untrusted string, allowContainedAbsolute bool) (string, error
 	if strings.HasPrefix(normalized, "//?/") || strings.HasPrefix(normalized, "//./") {
 		return "", fmt.Errorf("path must not use a Windows device prefix")
 	}
+	// Reject Unix-style absolute paths (e.g., /tmp/file) unless explicitly allowed and contained.
+	if strings.HasPrefix(normalized, "/") && !allowContainedAbsolute {
+		return "", fmt.Errorf("path must be relative")
+	}
 	windowsAbsolute := windowsVolumePath.MatchString(normalized) || strings.HasPrefix(normalized, "//")
 	if windowsAbsolute && !(allowContainedAbsolute && runtime.GOOS == "windows") {
 		return "", fmt.Errorf("path must not use a volume or UNC prefix")

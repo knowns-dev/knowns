@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -114,6 +115,9 @@ func TestTaskHistoryReplayPreservesZeroValueDeltas(t *testing.T) {
 }
 
 func TestHistoryStoreTailRecoveryAndFailClosedCorruption(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows: truncate requires exclusive file access")
+	}
 	root := filepath.Join(t.TempDir(), ".knowns")
 	history := NewHistoryStore(root)
 	if err := history.Append(context.Background(), models.HistoryRecord{EntityType: "doc", EntityID: "doc1", Checkpoint: true, CheckpointPayload: map[string]any{"path": "guide"}, NewHash: "h1"}); err != nil {
@@ -157,6 +161,9 @@ func TestHistoryStoreTailRecoveryAndFailClosedCorruption(t *testing.T) {
 }
 
 func TestHistoryStoreConcurrentEntityAppendAndInjectedFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows: fsync failure semantics differ from Unix")
+	}
 	failing := NewHistoryStore(filepath.Join(t.TempDir(), ".knowns"), HistoryStoreOptions{Append: func(*os.File, []byte) (int, error) { return 0, errors.New("injected append") }})
 	err := failing.Append(context.Background(), models.HistoryRecord{EntityType: "task", EntityID: "fail", Checkpoint: true, NewHash: "hash", CheckpointPayload: map[string]any{"title": "x"}})
 	if err == nil || !strings.Contains(err.Error(), "injected append") {
