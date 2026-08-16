@@ -12,9 +12,21 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// pathToFileURL converts an OS path to a proper file:// URL.
+// On Windows: C:\path -> file:///C:/path
+// On Unix: /path -> file:///path
+func pathToFileURL(path string) string {
+	if runtime.GOOS == "windows" {
+		// Convert backslashes to forward slashes and add leading slash
+		path = "/" + filepath.ToSlash(path)
+	}
+	return "file://" + path
+}
 
 func TestInstallerRejectsUnsupportedPlatformAndChecksumMismatch(t *testing.T) {
 	for _, key := range []string{"darwin/arm64", "darwin/amd64", "linux/arm64", "linux/amd64"} {
@@ -31,7 +43,7 @@ func TestInstallerRejectsUnsupportedPlatformAndChecksumMismatch(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(mirror, artifact.Filename), []byte("bad"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (Installer{Root: t.TempDir(), Mirror: "file://" + mirror, GOOS: "darwin", GOARCH: "arm64"}).Install(context.Background()); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+	if _, err := (Installer{Root: t.TempDir(), Mirror: pathToFileURL(mirror), GOOS: "darwin", GOARCH: "arm64"}).Install(context.Background()); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("checksum err=%v", err)
 	}
 }
@@ -117,7 +129,7 @@ func TestInstallerAtomicActivationReusesVerifiedManifestAndPreservesPrevious(t *
 	if err := os.WriteFile(paths.BinaryPath, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	installer := Installer{Root: root, Mirror: "file://" + mirror, GOOS: "darwin", GOARCH: "arm64"}
+	installer := Installer{Root: root, Mirror: pathToFileURL(mirror), GOOS: "darwin", GOARCH: "arm64"}
 	if _, err := installer.Install(context.Background()); err != nil {
 		t.Fatal(err)
 	}
