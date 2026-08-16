@@ -124,8 +124,8 @@ func (i Installer) fetch(ctx context.Context, a Artifact, dst string) error {
 		source = "https://github.com/qdrant/qdrant/releases/download/v" + SupportedQdrantVersion + "/" + a.Filename
 	} else {
 		u, err := url.Parse(base)
-		if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-			return fmt.Errorf("Qdrant mirror URL must not contain userinfo, query, or fragment")
+		if err != nil {
+			return fmt.Errorf("invalid Qdrant mirror URL: %w", err)
 		}
 		if u.Scheme == "file" {
 			if u.Host != "" {
@@ -135,6 +135,10 @@ func (i Installer) fetch(ctx context.Context, a Artifact, dst string) error {
 		} else if u.Scheme != "https" || u.Hostname() == "" {
 			return fmt.Errorf("Qdrant mirror must be HTTPS or file:// local path")
 		} else {
+			// Validate HTTPS URLs don't contain sensitive data
+			if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+				return fmt.Errorf("Qdrant HTTPS mirror URL must not contain userinfo, query, or fragment")
+			}
 			u.Path = strings.TrimRight(u.Path, "/") + "/" + a.Filename
 			source = u.String()
 		}
