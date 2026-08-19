@@ -585,6 +585,20 @@ func DefaultSemanticVectorStoreSettingsPtr() *SemanticVectorStoreSettings {
 	return &settings
 }
 
+// DeclaredSemanticVectorStoreSettingsPtr returns the vector store declaration
+// `knowns init` writes into project config (spec D10): backend and
+// provisioning mode only. Fields that merely mirror runtime defaults
+// (ManagedRoot, Install, Retention) are deliberately omitted. Stamping them
+// pins each project to whatever the defaults were at init time, because
+// mergeVectorStoreSettings lets project values win over defaults; omitting
+// them lets ResolveSemanticVectorStore keep supplying the current defaults.
+func DeclaredSemanticVectorStoreSettingsPtr() *SemanticVectorStoreSettings {
+	return &SemanticVectorStoreSettings{
+		Backend: DefaultSemanticVectorBackend,
+		Mode:    DefaultSemanticVectorMode,
+	}
+}
+
 // envLookupFunc abstracts environment lookups so vector store resolution can
 // be tested deterministically. nil resolves to os.Getenv.
 type envLookupFunc func(string) string

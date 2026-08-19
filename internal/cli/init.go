@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 
 	"github.com/howznguyen/knowns/internal/lsp"
@@ -451,6 +450,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if cfg.EmbeddingSource == "" {
 			cfg.EmbeddingSource = existingEmbeddingSource
 		}
+		cfg.EnableChatUI = resolveWizardChatUI(globalDefaults, existingProject)
 	} else {
 		// Non-interactive or name provided
 		name := filepath.Base(cwd)
@@ -645,22 +645,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	if cfg.EnableSemantic {
-		steps = append(steps, initStep{
-			label: "Building project and global semantic indices",
-			run: func() error {
-				store := storage.NewStore(root)
-				if err := reindexSemanticStores(store); err != nil {
-					// A model/provider mismatch must degrade search, not abort
-					// init — the project itself is already fully written.
-					fmt.Printf("\n%s Semantic index not built: %v\n", warnStyle.Render("⚠"), err)
-					fmt.Println(dimStyle.Render("  Search falls back to keyword/BM25. Fix with: knowns model set"))
-					fmt.Println(dimStyle.Render("  Then rebuild: knowns search --reindex"))
-				}
-				return nil
-			},
-		})
-	}
+	// No semantic index is built here, by design. A fresh project has nothing to
+	// embed, and a re-init would pay a full rebuild for no gain: tasks and docs
+	// are indexed incrementally on write (search.BestEffortIndexTask/Doc). The
+	// closing hints point at `knowns doctor` and `knowns search --reindex` for
+	// the cases that do need a rebuild, such as switching embedding model.
 
 	steps = append(steps, initStep{
 		label: "Installing language servers",
@@ -682,6 +671,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println(dimStyle.Render("  Use /kn-init to start an AI session"))
 	if cfg.EnableChatUI {
 		fmt.Println(dimStyle.Render("  knowns browser --open   # Launch Chat UI"))
+	}
+
+	fmt.Println()
+	fmt.Println(titleStyle.Render("Check setup:"))
+	fmt.Println(dimStyle.Render("  knowns doctor             # Diagnose project and integration health"))
+	if cfg.EnableSemantic {
+		fmt.Println(dimStyle.Render("  knowns search --reindex   # Build semantic indices (skipped during init)"))
 	}
 	fmt.Println()
 	return maybeOpenBrowser(cwd, openFlag, noOpen)
@@ -737,9 +733,12 @@ func buildSemanticSettings(cfg initConfig) *models.SemanticSearchSettings {
 		}
 	}
 	if ss != nil {
-		// Declare Qdrant as the default vector backend. Install/start stays
+		// Declare Qdrant as the default vector backend (spec D10). Only the
+		// backend and mode are recorded; managedRoot, install policy, and
+		// retention stay unwritten so they keep resolving from current
+		// defaults instead of being frozen at init time. Install/start stays
 		// lazy: first semantic use or explicit commands bootstrap the runtime.
-		ss.VectorStore = models.DefaultSemanticVectorStoreSettingsPtr()
+		ss.VectorStore = models.DeclaredSemanticVectorStoreSettingsPtr()
 	}
 	return ss
 }
@@ -782,6 +781,20 @@ func resolveWizardEmbeddingSource(globalDefaults *storage.ProjectDefaults, exist
 		source = existing.Settings.SemanticSearch.Provider
 	}
 	return source
+}
+
+// resolveWizardChatUI returns the Chat UI toggle the wizard must preserve.
+// runWizard never asks for it, so without this the toggle falls back to the
+// zero value and `knowns init --force` silently disables an enabled Chat UI.
+func resolveWizardChatUI(globalDefaults *storage.ProjectDefaults, existing *models.Project) bool {
+	enabled := true
+	if globalDefaults != nil && globalDefaults.Settings.EnableChatUI != nil {
+		enabled = *globalDefaults.Settings.EnableChatUI
+	}
+	if existing != nil && existing.Settings.EnableChatUI != nil {
+		enabled = *existing.Settings.EnableChatUI
+	}
+	return enabled
 }
 
 func defaultsForWizard(cwd string, defaults *storage.ProjectDefaults) (string, string, *models.GitTracking, *bool, string, []string) {
@@ -878,6 +891,34 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 	if gitGroup != nil {
 		groups = append(groups, gitGroup)
 	}
+
+	// Seed per-section toggles from existing config. This has to happen before
+	// the form is built so the sections group can join the same form instead of
+	// running as a second, inline program after it.
+	if existingGitTracking != nil {
+		cfg.GitTracking = *existingGitTracking
+	} else {
+		cfg.GitTracking = models.GitTrackingDefaults()
+	}
+	selectedSections := gitTrackingSelectedSections(&cfg.GitTracking)
+	sectionOptions := make([]huh.Option[string], 0, len(gitTrackingSections))
+	for _, section := range gitTrackingSections {
+		sectionOptions = append(sectionOptions, huh.NewOption(section.label, section.id).Selected(sectionSelected(selectedSections, section.id)))
+	}
+	// huh re-evaluates the hide func on every navigation keypress, so picking
+	// "none" above skips this group live without a separate form run.
+	groups = append(groups, huh.NewGroup(
+		huh.NewMultiSelect[string]().
+			TitleFunc(func() string {
+				return fmt.Sprintf("Knowns sections to track in git (%d/%d selected)", len(selectedSections), len(sectionOptions))
+			}, &selectedSections).
+			Description("Choose sections under .knowns/ that should be committed.").
+			Options(sectionOptions...).
+			Value(&selectedSections),
+	).WithHideFunc(func() bool {
+		return cfg.GitTrackingMode == "none"
+	}))
+
 	cfg.Platforms = normalizeInstructionPlatforms(existingPlatforms)
 	instructionOptions := instructionPlatformOptions(cfg.Platforms)
 	groups = append(groups, huh.NewGroup(
@@ -898,41 +939,21 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 			Value(&cfg.Platforms),
 	))
 
+	// Rendered inline, not via tea.WithAltScreen(). The alternate screen buffer
+	// is discarded on exit, so an alt-screen wizard hides the banner printed
+	// above while it runs and leaves no record of the answers afterwards.
+	// Inline keeps both in scrollback, which is the whole point of `init`.
 	form := huh.NewForm(groups...).
-		WithTheme(huh.ThemeCatppuccin()).
-		WithProgramOptions(tea.WithAltScreen())
+		WithTheme(huh.ThemeCatppuccin())
 
 	if err := form.Run(); err != nil {
 		return nil, err
 	}
 
-	// Seed per-section toggles from existing config.
-	if existingGitTracking != nil {
-		cfg.GitTracking = *existingGitTracking
-	} else {
-		cfg.GitTracking = models.GitTrackingDefaults()
-	}
+	// The sections group is hidden for "none", which leaves the seeded tracking
+	// config untouched rather than overwriting it with an unanswered selection.
 	if cfg.GitTrackingMode != "none" {
-		selected := gitTrackingSelectedSections(&cfg.GitTracking)
-		sectionOptions := make([]huh.Option[string], 0, len(gitTrackingSections))
-		for _, section := range gitTrackingSections {
-			sectionOptions = append(sectionOptions, huh.NewOption(section.label, section.id).Selected(sectionSelected(selected, section.id)))
-		}
-		trackingForm := huh.NewForm(
-			huh.NewGroup(
-				huh.NewMultiSelect[string]().
-					TitleFunc(func() string {
-						return fmt.Sprintf("Knowns sections to track in git (%d/%d selected)", len(selected), len(sectionOptions))
-					}, &selected).
-					Description("Choose sections under .knowns/ that should be committed.").
-					Options(sectionOptions...).
-					Value(&selected),
-			),
-		).WithTheme(huh.ThemeCatppuccin())
-		if err := trackingForm.Run(); err != nil {
-			return nil, err
-		}
-		cfg.GitTracking = gitTrackingFromSelectedSections(selected)
+		cfg.GitTracking = gitTrackingFromSelectedSections(selectedSections)
 	}
 
 	return &cfg, nil

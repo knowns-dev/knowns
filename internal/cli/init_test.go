@@ -928,6 +928,37 @@ func TestResolveWizardEmbeddingSourcePreservesProvider(t *testing.T) {
 	}
 }
 
+func TestResolveWizardChatUIPreservesToggle(t *testing.T) {
+	if got := resolveWizardChatUI(nil, nil); !got {
+		t.Fatalf("expected Chat UI to default to enabled, got %v", got)
+	}
+
+	disabled := false
+	project := &models.Project{}
+	project.Settings.EnableChatUI = &disabled
+	if got := resolveWizardChatUI(nil, project); got {
+		t.Fatalf("expected existing disabled Chat UI to be preserved, got %v", got)
+	}
+
+	globalDisabled := &storage.ProjectDefaults{}
+	globalDisabled.Settings.EnableChatUI = &disabled
+	if got := resolveWizardChatUI(globalDisabled, nil); got {
+		t.Fatalf("expected global default to disable Chat UI, got %v", got)
+	}
+
+	enabled := true
+	enabledProject := &models.Project{}
+	enabledProject.Settings.EnableChatUI = &enabled
+	if got := resolveWizardChatUI(globalDisabled, enabledProject); !got {
+		t.Fatalf("expected project setting to override global default, got %v", got)
+	}
+
+	unset := &models.Project{}
+	if got := resolveWizardChatUI(nil, unset); !got {
+		t.Fatalf("expected unset project toggle to keep the enabled default, got %v", got)
+	}
+}
+
 func TestRunInitProceedsAtWizardMinWidth(t *testing.T) {
 	t.Setenv("KNOWN_LSP_AUTO_INSTALL", "0")
 	home := t.TempDir()
@@ -1330,7 +1361,7 @@ func assertNotContains(t *testing.T, content, want string) {
 	}
 }
 
-func TestBuildSemanticSettingsDeclaresQdrantVectorStoreDefaults(t *testing.T) {
+func TestBuildSemanticSettingsDeclaresQdrantBackendAndMode(t *testing.T) {
 	// Local builtin model.
 	ss := buildSemanticSettings(initConfig{EnableSemantic: true, SemanticModel: "gte-small", EmbeddingSource: "local"})
 	if ss == nil {
@@ -1339,21 +1370,21 @@ func TestBuildSemanticSettingsDeclaresQdrantVectorStoreDefaults(t *testing.T) {
 	if !ss.Enabled || ss.Provider != "local" || ss.Model != "gte-small" {
 		t.Fatalf("semantic settings = %#v", ss)
 	}
-	assertVectorStoreDefaults(t, ss.VectorStore)
+	assertVectorStoreDeclaration(t, ss.VectorStore)
 
 	// API provider.
 	ss = buildSemanticSettings(initConfig{EnableSemantic: true, SemanticModel: "openai-embedding", EmbeddingSource: "api"})
 	if ss == nil || ss.Provider != "api" || ss.Model != "openai-embedding" {
 		t.Fatalf("api semantic settings = %#v", ss)
 	}
-	assertVectorStoreDefaults(t, ss.VectorStore)
+	assertVectorStoreDeclaration(t, ss.VectorStore)
 
 	// Ollama provider.
 	ss = buildSemanticSettings(initConfig{EnableSemantic: true, SemanticModel: "qwen3-embedding:0.6b", EmbeddingSource: "ollama"})
 	if ss == nil || ss.Provider != "ollama" {
 		t.Fatalf("ollama semantic settings = %#v", ss)
 	}
-	assertVectorStoreDefaults(t, ss.VectorStore)
+	assertVectorStoreDeclaration(t, ss.VectorStore)
 
 	// Semantic disabled -> nil.
 	if ss := buildSemanticSettings(initConfig{EnableSemantic: false, SemanticModel: "gte-small"}); ss != nil {
@@ -1391,7 +1422,7 @@ func TestInitConfigWritesQdrantVectorStoreMetadataOnly(t *testing.T) {
 	if reloaded.Settings.SemanticSearch == nil || reloaded.Settings.SemanticSearch.VectorStore == nil {
 		t.Fatalf("persisted config missing vectorStore: %#v", reloaded.Settings.SemanticSearch)
 	}
-	assertVectorStoreDefaults(t, reloaded.Settings.SemanticSearch.VectorStore)
+	assertVectorStoreDeclaration(t, reloaded.Settings.SemanticSearch.VectorStore)
 
 	// No vector/embedding data may be written under project .knowns.
 	searchDir := filepath.Join(root, ".search")
@@ -1407,10 +1438,13 @@ func TestInitConfigWritesQdrantVectorStoreMetadataOnly(t *testing.T) {
 	}
 }
 
-func assertVectorStoreDefaults(t *testing.T, vs *models.SemanticVectorStoreSettings) {
+// assertVectorStoreDeclaration checks the declaration init writes: backend and
+// mode only. managedRoot, install, and retention must stay unwritten so they
+// keep resolving from current defaults rather than being frozen at init time.
+func assertVectorStoreDeclaration(t *testing.T, vs *models.SemanticVectorStoreSettings) {
 	t.Helper()
 	if vs == nil {
-		t.Fatal("vectorStore = nil, want declared defaults")
+		t.Fatal("vectorStore = nil, want declared backend and mode")
 	}
 	if vs.Backend != models.SemanticVectorBackendQdrant {
 		t.Fatalf("vectorStore.backend = %q, want qdrant", vs.Backend)
@@ -1418,13 +1452,28 @@ func assertVectorStoreDefaults(t *testing.T, vs *models.SemanticVectorStoreSetti
 	if vs.Mode != models.SemanticVectorStoreModeManaged {
 		t.Fatalf("vectorStore.mode = %q, want managed", vs.Mode)
 	}
-	if vs.Install != models.SemanticVectorStoreInstallLazy {
-		t.Fatalf("vectorStore.install = %q, want lazy (no install/start at init)", vs.Install)
+	if vs.Install != "" {
+		t.Fatalf("vectorStore.install = %q, want unset so the default resolves", vs.Install)
 	}
-	if vs.ManagedRoot != models.DefaultSemanticManagedRoot {
-		t.Fatalf("vectorStore.managedRoot = %q, want %q", vs.ManagedRoot, models.DefaultSemanticManagedRoot)
+	if vs.ManagedRoot != "" {
+		t.Fatalf("vectorStore.managedRoot = %q, want unset so the default resolves", vs.ManagedRoot)
 	}
-	if vs.Retention == nil || vs.Retention.PreviousGenerations == nil || *vs.Retention.PreviousGenerations != models.DefaultSemanticVectorRetentionGenerations || vs.Retention.PreviousGenerationTTL != models.DefaultSemanticVectorRetentionTTL {
-		t.Fatalf("vectorStore.retention = %#v, want defaults", vs.Retention)
+	if vs.Retention != nil {
+		t.Fatalf("vectorStore.retention = %#v, want unset so the default resolves", vs.Retention)
+	}
+
+	// The omitted fields must still resolve to the documented defaults.
+	res := models.ResolveSemanticVectorStore(
+		&models.SemanticSearchSettings{Enabled: true, VectorStore: vs}, nil, nil)
+	if res.ManagedRoot != models.DefaultSemanticManagedRoot {
+		t.Fatalf("resolved managedRoot = %q, want %q", res.ManagedRoot, models.DefaultSemanticManagedRoot)
+	}
+	if res.Install != models.SemanticVectorStoreInstallLazy {
+		t.Fatalf("resolved install = %q, want lazy (no install/start at init)", res.Install)
+	}
+	if res.Retention.PreviousGenerations == nil ||
+		*res.Retention.PreviousGenerations != models.DefaultSemanticVectorRetentionGenerations ||
+		res.Retention.PreviousGenerationTTL != models.DefaultSemanticVectorRetentionTTL {
+		t.Fatalf("resolved retention = %#v, want defaults", res.Retention)
 	}
 }
