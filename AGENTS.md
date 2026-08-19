@@ -11,7 +11,6 @@ Compatibility entrypoint for runtimes that auto-detect `AGENTS.md`.
 - Knowns is the repository memory layer for humans and the AI-friendly working layer for agents.
 - MCP `initial` is the primary AI bootstrap: project state, tool domains, code rules, and workflow routing.
 - MCP `help` is the primary on-demand source for action schemas and recipes.
-- `KNOWNS.md` is a human-readable reference and fallback, not a required startup read.
 - Treat this file only as a lightweight compatibility entrypoint.
 
 ## Minimum Rules

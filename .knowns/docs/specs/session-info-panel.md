@@ -1,11 +1,12 @@
 ---
+id: doc-0d6d851d1bad352e1ffd56fe3cb6d2c0
 title: Context Usage Indicator
 description: 'Arc indicator showing % context usage in Chat toolbar, hover popover with heatmap grid and token breakdown'
 createdAt: '2026-03-12T18:53:43.440Z'
-updatedAt: '2026-03-26T15:38:00.367Z'
+updatedAt: '2026-08-19T10:04:29.215Z'
 tags:
   - spec
-  - approved
+  - superseded
 ---
 
 ## Overview
@@ -176,3 +177,6 @@ claude-opus-4 • 43k/200k tokens (22%)
 
 - [ ] Context limit: hardcode or find a way to get from OpenCode API? (recommend hardcode first, upstream PR later)
 - [ ] Token estimation for categories: OpenCode message API only returns total input/output tokens per message, not broken down by "system prompt" vs "tool definitions" vs "messages". Need to decide: estimate via char count (~4 chars/token) on raw content, or only use the aggregate tokens available?
+
+
+> **Superseded** by @decision/20260819-1703-remove-the-opencode-chat-ui - the OpenCode Chat UI was removed from Knowns.

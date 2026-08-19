@@ -1,8 +1,9 @@
 ---
+id: doc-2a5208c0970e7f059b8fc7a41c9d2f37
 title: Knowns Hub Mode
 description: 'Specification for Hub Mode: standalone app with shared OpenCode daemon, project registry, workspace switching, and port handling fixes'
 createdAt: '2026-03-24T07:08:41.276Z'
-updatedAt: '2026-04-06T07:03:43.671Z'
+updatedAt: '2026-08-19T10:04:38.317Z'
 tags:
   - spec
   - approved
@@ -153,3 +154,6 @@ Hub Mode transforms Knowns from a per-project CLI tool into a standalone applica
 - [ ] Should workspace switch trigger a full page reload or a soft data refresh via SSE?
 - [ ] Should the registry support "pinned" or "favorite" projects for quick access?
 - [ ] How should MCP handlers (separate process) discover the active project after a workspace switch?
+
+
+> **Partially void** by @decision/20260819-1703-remove-the-opencode-chat-ui. The standalone app, project registry, workspace switching and port handling remain valid. The shared-OpenCode-daemon requirements are void: FR-5, NFR-2, NFR-3, AC-5, AC-6 and Scenario 4.

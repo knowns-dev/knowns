@@ -1,9 +1,12 @@
 ---
+id: doc-4eca091dafaa9e1b235cc4b70683b57a
 title: specs/chat-ui-revert-copy
 description: Spec for Chat UI revert and copy message features
 createdAt: '2026-03-13T18:44:33.530Z'
-updatedAt: '2026-03-13T19:09:04.384Z'
-tags: []
+updatedAt: '2026-08-19T10:04:29.124Z'
+tags:
+  - spec
+  - superseded
 ---
 
 # Chat UI - Revert & Copy Message Features
@@ -53,3 +56,6 @@ Add revert message and copy message functionality to Chat UI, plus clear chat on
 - @code/ui/src/components/chat/MessageBubble.tsx - Added copy/revert buttons
 - @code/ui/src/components/chat/ChatThread.tsx - Added `onRevert` prop
 - @code/ui/src/components/organisms/ChatPage/ChatMessages.tsx - Added `onRevert` prop
+
+
+> **Superseded** by @decision/20260819-1703-remove-the-opencode-chat-ui - the OpenCode Chat UI was removed from Knowns.

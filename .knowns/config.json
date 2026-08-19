@@ -5,13 +5,20 @@
   "settings": {
     "defaultAssignee": "howznguyen",
     "defaultPriority": "medium",
+    "taskLifecycle": {
+      "excludeDoneFromDefaultRetrieval": true,
+      "autoArchive": true,
+      "archiveAfter": "30d",
+      "purgeAfter": null
+    },
     "timeFormat": "24h",
     "gitTrackingMode": "git-ignored",
     "gitTracking": {
       "tasks": false,
       "docs": true,
       "templates": true,
-      "memories": false
+      "memories": false,
+      "decisions": true
     },
     "statuses": [
       "todo",
@@ -42,31 +49,22 @@
       "enabled": true,
       "model": "qwen3-embedding:0.6b",
       "provider": "ollama",
-      "dimensions": 1024
+      "vectorStore": {
+        "backend": "qdrant",
+        "mode": "managed"
+      }
     },
-    "serverPort": 6427,
+    "serverPort": 6420,
     "platforms": [
+      "claude-code",
       "agents"
     ],
-    "enableChatUI": false,
-    "opencodeModels": {
-      "version": 1,
-      "defaultModel": {
-        "providerID": "knowns-hub",
-        "modelID": "cx/gpt-5.4"
-      },
-      "variantModels": {
-        "anthropic:claude-sonnet-4-5": "high",
-        "openai:gpt-5.4": "high"
-      },
-      "activeModels": [
-        "anthropic:claude-sonnet-4-5",
-        "knowns-hub:cx/gpt-5.4"
-      ]
-    },
     "lsp": {
       "enabled": true,
       "languages": {
+        "bash": {
+          "enabled": true
+        },
         "csharp": {
           "enabled": true
         },
@@ -74,6 +72,12 @@
           "enabled": true
         },
         "javascript": {
+          "enabled": true
+        },
+        "json": {
+          "enabled": true
+        },
+        "markdown": {
           "enabled": true
         },
         "python": {
@@ -86,6 +90,9 @@
           "enabled": true
         },
         "typescriptreact": {
+          "enabled": true
+        },
+        "yaml": {
           "enabled": true
         }
       }

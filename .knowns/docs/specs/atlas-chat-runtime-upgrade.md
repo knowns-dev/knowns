@@ -1,14 +1,16 @@
 ---
+id: doc-4dd541b78b53b77d5d3d5f92af776762
 title: Atlas Chat Runtime Upgrade
 description: Spec for upgrading chat rendering, timeline flow, and hybrid OpenCode runtime management using the Atlas pattern.
 createdAt: '2026-04-09T09:52:54.570Z'
-updatedAt: '2026-04-09T09:52:54.570Z'
+updatedAt: '2026-08-19T10:04:29.309Z'
 tags:
   - spec
   - chat
   - opencode
   - ui
   - runtime
+  - superseded
 ---
 
 # Atlas Chat Runtime Upgrade
@@ -114,3 +116,6 @@ Backend:
 - Should runtime status be shown primarily in the toolbar, sidebar, or both?
 - Should timeline UI launch as a dialog, right panel, or route-level subview?
 - Which additional tool renderers beyond the initial set are worth prioritizing after the first pass?
+
+
+> **Superseded** by @decision/20260819-1703-remove-the-opencode-chat-ui - the OpenCode Chat UI was removed from Knowns.

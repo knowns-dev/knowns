@@ -1,11 +1,12 @@
 ---
+id: doc-065bdcda136cfc14f967502a496775f6
 title: Chat UI
 description: Specification for replacing AI Workspaces with an interactive Chat UI powered by Claude Code / OpenCode CLI sessions
 createdAt: '2026-03-12T05:22:27.445Z'
-updatedAt: '2026-03-12T05:23:51.829Z'
+updatedAt: '2026-08-19T10:04:29.038Z'
 tags:
   - spec
-  - approved
+  - superseded
 ---
 
 ## Overview
@@ -193,3 +194,6 @@ Claude supports `--session-id` natively. OpenCode may not — if unsupported, pr
 - [ ] Should chat sessions be visible in the MCP tools? (e.g. `list_chats`, `send_chat_message`)
 - [ ] Should there be a maximum number of stored messages per session?
 - [ ] Should old sessions auto-archive after N days of inactivity?
+
+
+> **Superseded** by @decision/20260819-1703-remove-the-opencode-chat-ui - the OpenCode Chat UI was removed from Knowns.
