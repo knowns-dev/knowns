@@ -457,7 +457,6 @@ func TestAIChecksReportArtifactDriftWithoutSyncing(t *testing.T) {
 	}
 	root := filepath.Dir(store.Root)
 	existing := map[string]bool{
-		filepath.Join(root, "KNOWNS.md"):                  true,
 		filepath.Join(root, "AGENTS.md"):                  true,
 		filepath.Join(root, ".agents", "skills"):          true,
 		filepath.Join(root, ".agents", "skills", "extra"): true,

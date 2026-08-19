@@ -123,7 +123,7 @@ func TestRunInitStopsWhenTerminalTooNarrow(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	terminalWidthFn = func() int { return 60 }
+	terminalWidthFn = func() int { return 50 }
 	isTTYFn = func() bool { return true }
 	execLookPath = func(name string) (string, error) {
 		switch name {
@@ -256,8 +256,10 @@ func TestRunInitNoWizardUsesGlobalDefaults(t *testing.T) {
 	if !ok || len(platforms) != 2 || platforms[0] != "codex" || platforms[1] != "agents" {
 		t.Fatalf("expected global platforms, got %#v", settings["platforms"])
 	}
-	assertContains(t, readTextFile(t, filepath.Join(projectRoot, "KNOWNS.md")), "# KNOWNS")
 	assertContains(t, readTextFile(t, filepath.Join(projectRoot, "AGENTS.md")), "Compatibility entrypoint")
+	if _, err := os.Stat(filepath.Join(projectRoot, "KNOWNS.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected init not to create KNOWNS.md, got err=%v", err)
+	}
 	if _, err := os.Stat(filepath.Join(projectRoot, "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Fatalf("expected CLAUDE.md not to be created when global defaults select codex+agents, got err=%v", err)
 	}
@@ -881,20 +883,105 @@ func TestCreateInstructionFilesForCodexCreatesAgentsShimOnly(t *testing.T) {
 		t.Fatalf("createInstructionFilesForPlatforms returned error: %v", err)
 	}
 
-	assertContains(t, readTextFile(t, filepath.Join(projectRoot, "KNOWNS.md")), "# KNOWNS")
 	assertContains(t, readTextFile(t, filepath.Join(projectRoot, "AGENTS.md")), "Compatibility entrypoint")
+	if _, err := os.Stat(filepath.Join(projectRoot, "KNOWNS.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected KNOWNS.md not to be created, got err=%v", err)
+	}
 	if _, err := os.Stat(filepath.Join(projectRoot, "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Fatalf("expected CLAUDE.md not to be created for codex-only instructions, got err=%v", err)
 	}
 }
 
-func TestRenderCanonicalInstructionContentIncludesProactiveMemoryRules(t *testing.T) {
-	content := renderCanonicalInstructionContent()
+func TestCreateInstructionFilesQuietDoesNotCreateKnownsMd(t *testing.T) {
+	projectRoot := t.TempDir()
 
-	assertContains(t, content, "- Proactively save durable memory without waiting for the user to say \"save this\" when confidence is high.")
-	assertContains(t, content, "- Use `global` for stable user preferences or workflow rules that should carry across repositories and future sessions.")
-	assertContains(t, content, "- If the user states a stable collaboration preference, default to saving it as `global` memory unless they clearly scoped it to this repository only.")
-	assertContains(t, content, "- Compatibility shim files must stay lightweight and must direct agents to MCP `initial`/`help` first, with `KNOWNS.md` as fallback reference.")
+	if err := createInstructionFilesQuiet(projectRoot, false); err != nil {
+		t.Fatalf("createInstructionFilesQuiet returned error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(projectRoot, "KNOWNS.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected KNOWNS.md not to be created, got err=%v", err)
+	}
+}
+
+func TestResolveWizardEmbeddingSourcePreservesProvider(t *testing.T) {
+	ollama := &models.Project{}
+	ollama.Settings.SemanticSearch = &models.SemanticSearchSettings{Provider: "ollama", Model: "qwen3-embedding:0.6b"}
+
+	if got := resolveWizardEmbeddingSource(nil, ollama); got != "ollama" {
+		t.Fatalf("expected existing project provider to win, got %q", got)
+	}
+
+	globalAPI := &storage.ProjectDefaults{}
+	globalAPI.Settings.SemanticSearch = &models.SemanticSearchSettings{Provider: "api"}
+	if got := resolveWizardEmbeddingSource(globalAPI, nil); got != "api" {
+		t.Fatalf("expected global default provider, got %q", got)
+	}
+	if got := resolveWizardEmbeddingSource(globalAPI, ollama); got != "ollama" {
+		t.Fatalf("expected project provider to override global default, got %q", got)
+	}
+
+	empty := &models.Project{}
+	empty.Settings.SemanticSearch = &models.SemanticSearchSettings{Model: "gte-small"}
+	if got := resolveWizardEmbeddingSource(nil, empty); got != "" {
+		t.Fatalf("expected empty provider to stay empty so the local default applies, got %q", got)
+	}
+}
+
+func TestRunInitProceedsAtWizardMinWidth(t *testing.T) {
+	t.Setenv("KNOWN_LSP_AUTO_INSTALL", "0")
+	home := t.TempDir()
+	projectRoot := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+	if err := os.Chdir(projectRoot); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	terminalWidthFn = func() int { return wizardMinWidth }
+	isTTYFn = func() bool { return true }
+	t.Cleanup(func() {
+		terminalWidthFn = terminalWidth
+		isTTYFn = isTTY
+	})
+
+	cmd := initCmd
+	cmd.SetArgs([]string{"narrow-ok", "--no-open"})
+
+	var stdout bytes.Buffer
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = oldStdout }()
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = stdout.ReadFrom(r)
+		close(done)
+	}()
+
+	if err := runInit(cmd, []string{"narrow-ok"}); err != nil {
+		w.Close()
+		<-done
+		t.Fatalf("runInit returned error: %v", err)
+	}
+	_ = w.Close()
+	<-done
+
+	if strings.Contains(stdout.String(), "Terminal is too small") {
+		t.Fatalf("expected init to proceed at %d columns, got:\n%s", wizardMinWidth, stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(projectRoot, ".knowns", "config.json")); err != nil {
+		t.Fatalf("expected init to create config at %d columns: %v", wizardMinWidth, err)
+	}
 }
 
 func TestRenderCompatibilityInstructionContentUsesMCPBootstrap(t *testing.T) {
