@@ -55,10 +55,6 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	plan, _ := cmd.Flags().GetString("plan")
 	notes, _ := cmd.Flags().GetString("notes")
 
-	description = unescapeText(description)
-	plan = unescapeText(plan)
-	notes = unescapeText(notes)
-
 	// Load config for defaults
 	cfg, _ := store.Config.Load()
 
@@ -296,7 +292,7 @@ func runTaskEdit(cmd *cobra.Command, args []string) error {
 		}
 		if cmd.Flags().Changed("description") {
 			v, _ := cmd.Flags().GetString("description")
-			task.Description = unescapeText(v)
+			task.Description = v
 		}
 		if cmd.Flags().Changed("status") {
 			v, _ := cmd.Flags().GetString("status")
@@ -324,15 +320,14 @@ func runTaskEdit(cmd *cobra.Command, args []string) error {
 		}
 		if cmd.Flags().Changed("plan") {
 			v, _ := cmd.Flags().GetString("plan")
-			task.ImplementationPlan = unescapeText(v)
+			task.ImplementationPlan = v
 		}
 		if cmd.Flags().Changed("notes") {
 			v, _ := cmd.Flags().GetString("notes")
-			task.ImplementationNotes = unescapeText(v)
+			task.ImplementationNotes = v
 		}
 		if cmd.Flags().Changed("append-notes") {
 			v, _ := cmd.Flags().GetString("append-notes")
-			v = unescapeText(v)
 			if task.ImplementationNotes == "" {
 				task.ImplementationNotes = v
 			} else {
