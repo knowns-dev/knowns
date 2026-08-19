@@ -22,10 +22,13 @@ import (
 )
 
 func TestDoctorCommandSurface(t *testing.T) {
-	for _, flag := range []string{"verbose", "strict", "online", "scope"} {
+	for _, flag := range []string{"verbose", "strict", "scope"} {
 		if doctorCmd.Flags().Lookup(flag) == nil {
 			t.Fatalf("missing doctor --%s flag", flag)
 		}
+	}
+	if doctorCmd.Flags().Lookup("online") != nil {
+		t.Fatal("doctor must not gate diagnostics behind --online")
 	}
 	if !shouldSkipCLIWarnings([]string{"doctor", "--json"}) {
 		t.Fatal("doctor must bypass startup warnings and update checks")
@@ -51,11 +54,14 @@ func TestDoctorHumanAndJSONModesShareCompleteResult(t *testing.T) {
 			},
 		}),
 		{
-			ID:             "online.version",
-			Scope:          doctor.ScopeOnline,
-			RequiresOnline: true,
+			ID:    "online.version",
+			Scope: doctor.ScopeOnline,
 			Check: func(context.Context) (doctor.CheckResult, error) {
-				return doctor.CheckResult{Status: doctor.StatusPass, Summary: "Current"}, nil
+				return doctor.CheckResult{
+					Status:     doctor.StatusSkip,
+					Summary:    "Version service is not configured",
+					SkipReason: "not_configured",
+				}, nil
 			},
 		},
 	}
@@ -81,7 +87,7 @@ func TestDoctorHumanAndJSONModesShareCompleteResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plain doctor error = %v", err)
 	}
-	for _, want := range []string{"PASS [project.ready]", "WARN [search.model]", "SKIP [online.version]", "Skip reason: online_disabled"} {
+	for _, want := range []string{"PASS [project.ready]", "WARN [search.model]", "SKIP [online.version]", "Skip reason: not_configured"} {
 		if !strings.Contains(plainOut, want) {
 			t.Fatalf("plain output missing %q:\n%s", want, plainOut)
 		}
@@ -285,9 +291,8 @@ func TestDoctorFlagCombinationsDoNotLeakSecretsOrMutateState(t *testing.T) {
 			checkers = append(checkers, doctor.LocalCheckers(store)...)
 			return append(checkers,
 				doctor.Checker{
-					ID:             "online.provider-test",
-					Scope:          doctor.ScopeOnline,
-					RequiresOnline: true,
+					ID:    "search.provider-endpoint-test",
+					Scope: doctor.ScopeSearch,
 					Check: func(context.Context) (doctor.CheckResult, error) {
 						return doctor.CheckResult{
 							Status:  doctor.StatusPass,
@@ -296,9 +301,8 @@ func TestDoctorFlagCombinationsDoNotLeakSecretsOrMutateState(t *testing.T) {
 					},
 				},
 				doctor.Checker{
-					ID:             "online.version-test",
-					Scope:          doctor.ScopeOnline,
-					RequiresOnline: true,
+					ID:    "online.version-test",
+					Scope: doctor.ScopeOnline,
 					Check: func(context.Context) (doctor.CheckResult, error) {
 						return doctor.CheckResult{
 							Status:  doctor.StatusPass,
@@ -320,7 +324,7 @@ func TestDoctorFlagCombinationsDoNotLeakSecretsOrMutateState(t *testing.T) {
 		{"--json"},
 		{"--scope", "project,validation"},
 		{"--strict"},
-		{"--online", "--scope", "online"},
+		{"--scope", "online"},
 	}
 	for _, args := range combinations {
 		stdout, stderr, err := executeDoctorForTest(t, deps, args...)

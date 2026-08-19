@@ -10,12 +10,14 @@ import (
 func TestRunOrdersChecksAndDerivesVerdict(t *testing.T) {
 	checkers := []Checker{
 		{
-			ID:             "online.version",
-			Scope:          ScopeOnline,
-			RequiresOnline: true,
+			ID:    "online.version",
+			Scope: ScopeOnline,
 			Check: func(context.Context) (CheckResult, error) {
-				t.Fatal("offline check was executed")
-				return CheckResult{}, nil
+				return CheckResult{
+					Status:     StatusSkip,
+					Summary:    "version service not configured",
+					SkipReason: "not_configured",
+				}, nil
 			},
 		},
 		{
@@ -57,7 +59,7 @@ func TestRunOrdersChecksAndDerivesVerdict(t *testing.T) {
 			t.Fatalf("check order = %v, want %v", gotOrder, wantOrder)
 		}
 	}
-	if result.Checks[2].SkipReason != "online_disabled" {
+	if result.Checks[2].SkipReason != "not_configured" {
 		t.Fatalf("online skip reason = %q", result.Checks[2].SkipReason)
 	}
 }

@@ -1,10 +1,12 @@
 ---
+id: doc-0680fa329d2ce73c2a3c3831483a8f8b
 title: Command Reference
 description: Quick reference for all Knowns CLI commands
 createdAt: '2026-02-24T08:44:32.957Z'
-updatedAt: '2026-08-13T19:08:48.316Z'
+updatedAt: '2026-08-19T07:45:58.089Z'
 tags: []
 ---
+
 
 # Command Reference
 
@@ -104,10 +106,11 @@ knowns doctor --json
 knowns doctor --scope project,lsp
 knowns doctor --scope search --scope runtime
 knowns doctor --strict --json
-knowns doctor --online
 ```
 
-`knowns doctor` is read-only and offline by default. It checks the active project, validation, semantic search and indices, managed runtimes, configured or detected language servers, configured AI artifacts, and Knowns runtime-memory hooks. Registered online checks are returned as `skip` with `online_disabled` until `--online` is explicitly supplied.
+`knowns doctor` is read-only and runs every applicable check in one invocation. It checks the active project, validation, semantic search and indices, the configured embedding provider endpoint, managed runtimes, configured or detected language servers, configured AI artifacts, and Knowns runtime-memory hooks. Network probes are bounded and report an unreachable endpoint as a warning, so offline and air-gapped runs stay healthy enough to exit 0.
+
+For an Ollama provider, `search.provider-endpoint` reads the served model list and warns with an `ollama pull <model>` remediation when the configured model is not pulled. For an API provider, it probes endpoint reachability only.
 
 For configured or locally available Claude Code, Codex, Kiro, and OpenCode runtimes, missing, disabled, or out-of-sync hooks produce a warning with `knowns runtime install <runtime>` remediation.
 
@@ -115,7 +118,6 @@ For configured or locally available Claude Code, Codex, Kiro, and OpenCode runti
 |------|-------------|
 | `--verbose` | Include passing and skipped checks; default human output shows only warnings and failures |
 | `--strict` | Return exit code 1 for a degraded verdict without changing the verdict |
-| `--online` | Opt into bounded version and configured-provider connectivity probes |
 | `--scope <scope>` | Restrict checks; repeat the flag or use comma-separated values |
 | `--plain` | Emit ANSI-free text for agents, logs, and pipes |
 | `--json` | Emit the complete versioned diagnostic result |

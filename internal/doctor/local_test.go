@@ -179,6 +179,40 @@ func TestSearchChecksReportMissingConfiguredOllama(t *testing.T) {
 	}
 }
 
+func TestSearchModelOnlyClaimsRegistrationForOllama(t *testing.T) {
+	store := newDoctorStore(t)
+	configureSemanticSearch(t, store, &models.SemanticSearchSettings{
+		Enabled:  true,
+		Model:    "nomic-embed-text",
+		Provider: "ollama",
+	})
+	deps := localDependencies{
+		lookPath: func(string) (string, error) { return "/usr/local/bin/ollama", nil },
+		services: func(*storage.Store) ([]services.ServiceStatus, error) {
+			return []services.ServiceStatus{{
+				Name:    "Embedding",
+				Type:    "embedding",
+				Status:  "stopped",
+				Details: map[string]string{"provider": "ollama"},
+			}}, nil
+		},
+	}
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+		Scopes:  []Scope{ScopeSearch},
+	}, localCheckersWithDependencies(store, deps))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// Whether the model is pulled is owned by search.provider-endpoint, so this
+	// check must not report it as available.
+	model := findCheck(t, result, "search.model")
+	if model.Status != StatusPass || model.Summary != "Configured semantic model is registered" {
+		t.Fatalf("model check = %#v", model)
+	}
+}
+
 func TestSearchChecksReportLocalONNXDependencyStates(t *testing.T) {
 	store := newDoctorStore(t)
 	settings := &models.SemanticSearchSettings{
@@ -654,6 +688,13 @@ func TestQdrantDoctorChecksReportReadOnlyReadinessStates(t *testing.T) {
 			return s
 		}(), "search.qdrant-pointer", StatusWarn, "knowns search index --wait"},
 		{"collection dimensions", func() qdrantDiagnosticSnapshot { s := base; s.Collection.Dimensions = 768; return s }(), "search.qdrant-collection", StatusWarn, "knowns search index --wait"},
+		{"collection unprobed because the binary is missing", func() qdrantDiagnosticSnapshot {
+			s := base
+			s.Runtime = qdrantruntime.Status{State: qdrantruntime.StatusNotInstalled}
+			s.Probed = false
+			s.Healthy = false
+			return s
+		}(), "search.qdrant-collection", StatusWarn, "knowns qdrant install"},
 		{"collection inspection error with healthy runtime", func() qdrantDiagnosticSnapshot {
 			s := base
 			s.Probed = false
@@ -693,6 +734,10 @@ func TestQdrantDoctorChecksReportReadOnlyReadinessStates(t *testing.T) {
 			}
 			if test.name == "stale pointer" && (check.Evidence["errorCode"] != "qdrant_model_mismatch" || check.Evidence["expectedModel"] != "next-model" || check.Evidence["actualModel"] != "current-model") {
 				t.Fatalf("pointer mismatch evidence = %#v", check.Evidence)
+			}
+			if test.name == "collection unprobed because the binary is missing" &&
+				check.Evidence["errorCode"] != "qdrant_not_installed" {
+				t.Fatalf("unprobed collection evidence = %#v", check.Evidence)
 			}
 			if test.name == "sqlite not applicable" && check.SkipReason != "not_applicable" {
 				t.Fatalf("sqlite check = %#v", check)

@@ -10,7 +10,7 @@ import (
 	"github.com/howznguyen/knowns/internal/util"
 )
 
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 type Status string
 
@@ -118,7 +118,6 @@ type Result struct {
 	SchemaVersion int           `json:"schemaVersion"`
 	Verdict       Verdict       `json:"verdict"`
 	Strict        bool          `json:"strict"`
-	Online        bool          `json:"online"`
 	Project       ProjectInfo   `json:"project"`
 	Summary       Summary       `json:"summary"`
 	Checks        []CheckResult `json:"checks"`
