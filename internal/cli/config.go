@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
-	"github.com/howznguyen/knowns/internal/agents/opencode"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
@@ -233,9 +232,6 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 		if project.Settings.GitTrackingMode != "" {
 			fmt.Printf("settings.gitTrackingMode: %s\n", project.Settings.GitTrackingMode)
 		}
-		if project.Settings.EnableChatUI != nil {
-			fmt.Printf("settings.enableChatUI: %v\n", *project.Settings.EnableChatUI)
-		}
 		if project.Settings.SemanticSearch != nil {
 			fmt.Printf("settings.semanticSearch.enabled: %v\n", project.Settings.SemanticSearch.Enabled)
 			if project.Settings.SemanticSearch.Model != "" {
@@ -264,16 +260,6 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 				}
 			}
 		}
-		if project.Settings.OpenCodeServerConfig != nil {
-			oc := project.Settings.OpenCodeServerConfig
-			fmt.Printf("settings.opencodeServer.host: %s\n", oc.Host)
-			if oc.Port != 0 {
-				fmt.Printf("settings.opencodeServer.port: %d\n", oc.Port)
-			}
-			if oc.Password != "" {
-				fmt.Printf("settings.opencodeServer.password: ****\n")
-			}
-		}
 	} else {
 		fmt.Printf("%s %s\n\n",
 			StyleBold.Render(project.Name),
@@ -290,9 +276,6 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 		}
 		if project.Settings.TimeFormat != "" {
 			fmt.Printf("  %s %s\n", StyleDim.Render("timeFormat:     "), project.Settings.TimeFormat)
-		}
-		if project.Settings.EnableChatUI != nil {
-			fmt.Printf("  %s %v\n", StyleDim.Render("enableChatUI:   "), *project.Settings.EnableChatUI)
 		}
 		if project.Settings.SemanticSearch != nil {
 			fmt.Println(RenderSectionHeader("Semantic Search"))
@@ -322,23 +305,6 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 				if ls.ProjectPath != "" {
 					fmt.Printf("  %s %s\n", StyleDim.Render(fmt.Sprintf("%-14s", lang+".project:")), ls.ProjectPath)
 				}
-			}
-		}
-		if project.Settings.OpenCodeServerConfig != nil {
-			oc := project.Settings.OpenCodeServerConfig
-			fmt.Println(RenderSectionHeader("OpenCode Server"))
-			if oc.Host != "" {
-				fmt.Printf("  %s %s\n", StyleDim.Render("host:         "), oc.Host)
-			} else {
-				fmt.Printf("  %s %s\n", StyleDim.Render("host:         "), "127.0.0.1 (default)")
-			}
-			if oc.Port != 0 {
-				fmt.Printf("  %s %d\n", StyleDim.Render("port:         "), oc.Port)
-			} else {
-				fmt.Printf("  %s %d\n", StyleDim.Render("port:         "), 4096)
-			}
-			if oc.Password != "" {
-				fmt.Printf("  %s ****\n", StyleDim.Render("password:     "))
 			}
 		}
 	}
@@ -459,7 +425,6 @@ func runSettings(cmd *cobra.Command, args []string) error {
 						huh.NewOption("AI Platforms", "platforms"),
 						huh.NewOption("Search", "search"),
 						huh.NewOption("Code Intelligence", "code"),
-						huh.NewOption("Browser / Chat UI", "chat"),
 						huh.NewOption("Maintenance", "maintenance"),
 						huh.NewOption("Done", "done"),
 					).
@@ -500,11 +465,6 @@ func runSettings(cmd *cobra.Command, args []string) error {
 			if err := configureCodeIntelligence(store, project); err != nil {
 				return err
 			}
-		case "chat":
-			chatUI := project.Settings.EnableChatUI == nil || *project.Settings.EnableChatUI
-			if err := toggleChatUI(store, &chatUI); err != nil {
-				return err
-			}
 		case "maintenance":
 			if err := showSettingsMaintenance(project); err != nil {
 				return err
@@ -543,7 +503,6 @@ func runGlobalSettings() error {
 						huh.NewOption("Default AI Platforms", "platforms"),
 						huh.NewOption("Default Search", "search"),
 						huh.NewOption("Default Code Intelligence", "code"),
-						huh.NewOption("Default Browser / Chat UI", "chat"),
 						huh.NewOption("Done", "done"),
 					).
 					Value(&choice),
@@ -598,20 +557,6 @@ func runGlobalSettings() error {
 			if err := configureLSPSettings(&defaults.Settings); err != nil {
 				return err
 			}
-		case "chat":
-			enabled := defaults.Settings.EnableChatUI == nil || *defaults.Settings.EnableChatUI
-			form := huh.NewForm(huh.NewGroup(
-				huh.NewConfirm().
-					Title("Enable Chat UI by default").
-					Value(&enabled),
-			)).WithTheme(huh.ThemeCatppuccin())
-			if err := form.Run(); err != nil {
-				if err == huh.ErrUserAborted {
-					return nil
-				}
-				return err
-			}
-			defaults.Settings.EnableChatUI = &enabled
 		}
 		if err := embStore.Save(settings); err != nil {
 			return err
@@ -999,86 +944,6 @@ func applyLocalONNXSelection(store *storage.Store, project *models.Project, mode
 		return false, err
 	}
 	return true, nil
-}
-
-func toggleChatUI(store *storage.Store, chatUI *bool) error {
-	// Check if OpenCode is installed
-	status := opencode.DetectOpenCode()
-	if !status.Installed {
-		*chatUI = false
-		_ = store.Config.Set("settings.enableChatUI", false)
-		fmt.Println(StyleDim.Render("  OpenCode CLI not found. AI Chat disabled."))
-		fmt.Println(StyleDim.Render("  Install: https://opencode.ai"))
-		return nil
-	}
-	if !status.Compatible {
-		fmt.Println(StyleDim.Render(fmt.Sprintf("  OpenCode %s found (requires >= %s)", status.Version, status.MinVersion)))
-	}
-
-	var enabled bool
-	var host string
-	var port int
-	var password string
-
-	enabled = *chatUI
-
-	// Load current values
-	project, _ := store.Config.Load()
-	if project.Settings.OpenCodeServerConfig != nil {
-		host = project.Settings.OpenCodeServerConfig.Host
-		port = project.Settings.OpenCodeServerConfig.Port
-		password = project.Settings.OpenCodeServerConfig.Password
-	}
-	if host == "" {
-		host = "127.0.0.1"
-	}
-	if port == 0 {
-		port = 4096
-	}
-
-	portStr := strconv.Itoa(port)
-
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewConfirm().
-				Title("Enable AI Chat").
-				Description(fmt.Sprintf("OpenCode %s detected", status.Version)).
-				Value(&enabled),
-		),
-		huh.NewGroup(
-			huh.NewInput().
-				Title("OpenCode Host").
-				Value(&host),
-			huh.NewInput().
-				Title("OpenCode Port").
-				Value(&portStr),
-			huh.NewInput().
-				Title("OpenCode Password").
-				Value(&password).
-				EchoMode(huh.EchoModePassword),
-		).WithHideFunc(func() bool { return !enabled }),
-	).WithTheme(huh.ThemeCatppuccin())
-
-	if err := form.Run(); err != nil {
-		if err == huh.ErrUserAborted {
-			return nil
-		}
-		return err
-	}
-
-	*chatUI = enabled
-	_ = store.Config.Set("settings.enableChatUI", enabled)
-
-	if enabled {
-		_ = store.Config.Set("settings.opencodeServer.host", host)
-		if p, err := strconv.Atoi(portStr); err == nil {
-			_ = store.Config.Set("settings.opencodeServer.port", p)
-		}
-		if password != "" {
-			_ = store.Config.Set("settings.opencodeServer.password", password)
-		}
-	}
-	return nil
 }
 
 func toggleEmbedding(store *storage.Store, project *models.Project, embeddingEnabled *bool) error {

@@ -53,7 +53,7 @@ Search xác nhận retrieval tìm được project context. Validate kiểm tra 
 knowns browser --open
 ```
 
-Web UI hiển thị cùng project state với CLI, gồm task, doc, graph views, config, và chat workflows.
+Web UI hiển thị cùng project state với CLI, gồm task, doc, graph views, và config.
 
 ## 6. Tùy chọn: kết nối AI platform
 

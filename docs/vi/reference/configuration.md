@@ -116,7 +116,6 @@ knowns settings
 #   AI Platforms
 #   Search
 #   Code Intelligence
-#   Browser / Chat UI
 #   Maintenance
 #   Done
 
@@ -127,7 +126,6 @@ knowns settings --global
 knowns config set embedding true       # Bật semantic search
 knowns config set lsp true             # Bật LSP toàn cục
 knowns config set lsp.go true          # Bật LSP cho Go
-knowns config set enableChatUI true    # Bật chat UI
 
 # Git Tracking (per-section)
 knowns config set gitTracking.tasks true

@@ -126,10 +126,6 @@ Examples of managed artifacts:
 - runtime hooks
 - platform-specific config files
 
-### `settings.enableChatUI`
-
-Controls whether the browser UI exposes the chat-oriented experience.
-
 ### `settings.autoSyncOnUpdate`
 
 Controls whether generated artifacts should be refreshed after upgrading the CLI.
@@ -161,7 +157,6 @@ knowns settings
 #   AI Platforms
 #   Search
 #   Code Intelligence
-#   Browser / Chat UI
 #   Maintenance
 #   Done
 
@@ -172,7 +167,6 @@ knowns settings --global
 knowns config set embedding true       # Enable semantic search
 knowns config set lsp true             # Enable LSP globally
 knowns config set lsp.go true          # Enable LSP for Go
-knowns config set enableChatUI true    # Enable chat UI
 
 # Git Tracking (per-section)
 knowns config set gitTracking.tasks true

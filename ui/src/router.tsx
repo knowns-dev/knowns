@@ -60,18 +60,6 @@ const importsRoute = createRoute({
 	component: EmptyRoute,
 });
 
-const chatRoute = createRoute({
-	getParentRoute: () => rootRoute,
-	path: "/chat",
-	component: EmptyRoute,
-});
-
-const chatSessionRoute = createRoute({
-	getParentRoute: () => rootRoute,
-	path: "/chat/$sessionId",
-	component: EmptyRoute,
-});
-
 const graphRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/graph",
@@ -150,8 +138,6 @@ const routeTree = rootRoute.addChildren([
 	decisionsReviewRoute,
 	decisionsHistoryRoute,
 	auditRoute,
-	chatRoute,
-	chatSessionRoute,
 	configRoute,
 	fallbackRoute,
 ]);

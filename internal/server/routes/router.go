@@ -97,15 +97,6 @@ func setupRoutesWithCapabilities(r chi.Router, store *storage.Store, sse Broadca
 		ar := &ActivityRoutes{store: store, mgr: manager}
 		ar.Register(r)
 
-		// Chats
-		chr := &ChatRoutes{
-			store:       store,
-			mgr:         manager,
-			sse:         sse,
-			projectRoot: projectRoot,
-		}
-		chr.Register(r)
-
 		// Graph
 		ggr := &GraphRoutes{store: store, mgr: manager}
 		ggr.Register(r)

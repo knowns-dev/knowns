@@ -11,7 +11,6 @@
 
 import { createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode } from "react";
 import type { Task } from "@/ui/models/task";
-import type { ChatSession, ChatMessage } from "@/ui/models/chat";
 import type { ActiveTimer } from "../api/client";
 import { getTaskLifecycleState } from "../models/taskLifecycle";
 import type { TaskLifecycleEvent } from "../models/taskLifecycle";
@@ -31,13 +30,7 @@ export type SSEEventType =
 	| "time:refresh"
 	| "docs:updated"
 	| "docs:refresh"
-	| "refresh"
-	| "chats:created"
-	| "chats:updated"
-	| "chats:deleted"
-	| "chats:message"
-	| "opencode:event"
-	| "opencode:status";
+	| "refresh";
 
 // Event payload types
 export interface SSEEventPayloads {
@@ -54,12 +47,6 @@ export interface SSEEventPayloads {
 	"docs:updated": { docPath: string };
 	"docs:refresh": Record<string, never>;
 	"refresh": { full?: boolean; reason?: string };
-	"chats:created": { session: ChatSession };
-	"chats:updated": { session: ChatSession };
-	"chats:deleted": { chatId: string };
-	"chats:message": { chatId: string; message: ChatMessage };
-	"opencode:event": Record<string, unknown>;
-	"opencode:status": Record<string, unknown>;
 }
 
 // Callback type for event listeners
@@ -332,35 +319,6 @@ export function SSEProvider({ children }: { children: ReactNode }) {
 				emit("docs:refresh", {});
 			});
 
-			addHandler(eventSource, "chats:created", (e) => {
-				const data = JSON.parse(e.data);
-				emit("chats:created", data);
-			});
-
-			addHandler(eventSource, "chats:updated", (e) => {
-				const data = JSON.parse(e.data);
-				emit("chats:updated", data);
-			});
-
-			addHandler(eventSource, "chats:deleted", (e) => {
-				const data = JSON.parse(e.data);
-				emit("chats:deleted", data);
-			});
-
-			addHandler(eventSource, "chats:message", (e) => {
-				const data = JSON.parse(e.data);
-				emit("chats:message", data);
-			});
-
-			addHandler(eventSource, "opencode:event", (e) => {
-				const data = JSON.parse(e.data);
-				emit("opencode:event", data);
-			});
-
-			addHandler(eventSource, "opencode:status", (e) => {
-				const data = JSON.parse(e.data);
-				emit("opencode:status", data);
-			});
 		};
 
 		connect();

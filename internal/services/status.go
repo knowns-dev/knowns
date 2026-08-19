@@ -1,5 +1,5 @@
 // Package services provides unified status detection for all managed sub-processes:
-// OpenCode daemon, LSP servers, and Cloudflared tunnel.
+// LSP servers and Cloudflared tunnel.
 package services
 
 import (
@@ -15,7 +15,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/howznguyen/knowns/internal/agents/opencode"
 	"github.com/howznguyen/knowns/internal/lsp"
 	"github.com/howznguyen/knowns/internal/lsp/adapters"
 	"github.com/howznguyen/knowns/internal/models"
@@ -114,12 +113,6 @@ func detectAll(ctx context.Context, store *storage.Store, cleanupStale bool, lsp
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		add(detectOpenCode(proj, cleanupStale))
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
 		if lspStatusProvider != nil {
 			probeCtx, cancel := context.WithTimeout(ctx, detectionTimeout)
 			defer cancel()
@@ -148,95 +141,6 @@ func detectAll(ctx context.Context, store *storage.Store, cleanupStale bool, lsp
 	wg.Wait()
 	sortServiceStatuses(results)
 	return results
-}
-
-// ----- OpenCode Daemon Detection -----
-
-func detectOpenCode(proj *models.Project, cleanupStale bool) []ServiceStatus {
-	ctx, cancel := context.WithTimeout(context.Background(), detectionTimeout)
-	defer cancel()
-
-	ss := ServiceStatus{
-		Name:            "OpenCode",
-		Type:            "opencode",
-		Status:          "stopped",
-		Details:         make(map[string]string),
-		EnabledInConfig: true,
-	}
-
-	// Check if ChatUI (and thus OpenCode daemon) is explicitly disabled.
-	if proj != nil && proj.Settings.EnableChatUI != nil && !*proj.Settings.EnableChatUI {
-		ss.Status = "disabled"
-		ss.EnabledInConfig = false
-		return []ServiceStatus{ss}
-	}
-
-	cfg := opencode.DefaultConfig()
-	if proj != nil && proj.Settings.OpenCodeServerConfig != nil {
-		oc := proj.Settings.OpenCodeServerConfig
-		if oc.Host != "" {
-			cfg.Host = oc.Host
-		}
-		if oc.Port != 0 {
-			cfg.Port = oc.Port
-		}
-		if oc.Password != "" {
-			cfg.Password = oc.Password
-		}
-	}
-
-	daemon := opencode.NewDaemon(cfg.Host, cfg.Port)
-
-	// Read PID file to get PID (even if stale, we report it for info).
-	pid, pidErr := daemon.ReadPID()
-	if pidErr == nil && pid > 0 {
-		ss.PID = pid
-	}
-
-	// Check liveness with timeout.
-	alive := isProcessAlive(pid)
-	if !alive {
-		// Clean up stale PID file.
-		if cleanupStale && pidErr == nil && pid > 0 {
-			os.Remove(daemon.PIDFile)
-		}
-		ss.Status = "stopped"
-		return []ServiceStatus{ss}
-	}
-
-	// Process alive — verify HTTP health.
-	client := opencode.NewClient(cfg)
-	readyCh := make(chan opencode.RuntimeReadiness, 1)
-	go func() {
-		readyCh <- client.Readiness()
-	}()
-
-	select {
-	case ready := <-readyCh:
-		if ready.Healthy {
-			ss.Status = "running"
-			ss.Port = cfg.Port
-			ss.Details["version"] = ready.Version
-			if proj != nil && proj.Settings.OpenCodeServerConfig != nil {
-				mode := proj.Settings.OpenCodeServerConfig.Mode
-				if mode == "" {
-					mode = "managed"
-				}
-				ss.Details["mode"] = mode
-			}
-		}
-	case <-ctx.Done():
-		// Timeout — process alive but HTTP unresponsive.
-		ss.Status = "error"
-		ss.Details["error"] = "health check timed out"
-	}
-
-	// Compute uptime from PID file mtime as approximation.
-	if info, statErr := os.Stat(daemon.PIDFile); statErr == nil {
-		ss.Uptime = time.Since(info.ModTime())
-	}
-
-	return []ServiceStatus{ss}
 }
 
 // ----- LSP Server Detection -----

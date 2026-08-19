@@ -259,10 +259,6 @@ func TestDoctorFlagCombinationsDoNotLeakSecretsOrMutateState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	project.Settings.OpenCodeServerConfig = &models.OpenCodeServerConfig{
-		Mode:     "managed",
-		Password: secret,
-	}
 	project.Settings.SemanticSearch = &models.SemanticSearchSettings{
 		Enabled: true,
 		Model:   "doctor-test-model",

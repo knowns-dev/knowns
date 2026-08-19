@@ -295,7 +295,6 @@ type initConfig struct {
 	SemanticModel   string
 	EmbeddingSource string // "local", "ollama", or "api"
 	Platforms       []string
-	EnableChatUI    bool
 	TaskLifecycle   *models.TaskLifecycleSettings
 }
 
@@ -450,7 +449,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if cfg.EmbeddingSource == "" {
 			cfg.EmbeddingSource = existingEmbeddingSource
 		}
-		cfg.EnableChatUI = resolveWizardChatUI(globalDefaults, existingProject)
 	} else {
 		// Non-interactive or name provided
 		name := filepath.Base(cwd)
@@ -466,7 +464,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 		semanticModel := "multilingual-e5-small"
 		embeddingSource := "local"
 		platforms := defaultInstructionPlatforms()
-		enableChatUI := true
 		if globalDefaults != nil {
 			if globalDefaults.Settings.GitTrackingMode != "" {
 				gitMode = globalDefaults.Settings.GitTrackingMode
@@ -483,9 +480,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 			}
 			if len(globalDefaults.Settings.Platforms) > 0 {
 				platforms = globalDefaults.Settings.Platforms
-			}
-			if globalDefaults.Settings.EnableChatUI != nil {
-				enableChatUI = *globalDefaults.Settings.EnableChatUI
 			}
 		}
 		if force {
@@ -509,9 +503,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 				if len(existingCfg.Settings.Platforms) > 0 {
 					platforms = existingCfg.Settings.Platforms
 				}
-				if existingCfg.Settings.EnableChatUI != nil {
-					enableChatUI = *existingCfg.Settings.EnableChatUI
-				}
 			}
 		}
 		if gitTracked {
@@ -527,7 +518,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 			SemanticModel:   semanticModel,
 			EmbeddingSource: embeddingSource,
 			Platforms:       platforms,
-			EnableChatUI:    enableChatUI,
 		}
 	}
 	cfg.TaskLifecycle = taskLifecycleSeed
@@ -565,8 +555,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 				if cfg.TaskLifecycle != nil {
 					project.Settings.TaskLifecycle = copyTaskLifecycleSettings(cfg.TaskLifecycle)
 				}
-				enableChatUI := cfg.EnableChatUI
-				project.Settings.EnableChatUI = &enableChatUI
 				return store.Config.Save(project)
 			},
 		},
@@ -669,9 +657,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println(dimStyle.Render("  knowns task create \"My first task\""))
 	printSetupSuggestion(cwd)
 	fmt.Println(dimStyle.Render("  Use /kn-init to start an AI session"))
-	if cfg.EnableChatUI {
-		fmt.Println(dimStyle.Render("  knowns browser --open   # Launch Chat UI"))
-	}
 
 	fmt.Println()
 	fmt.Println(titleStyle.Render("Check setup:"))
@@ -781,20 +766,6 @@ func resolveWizardEmbeddingSource(globalDefaults *storage.ProjectDefaults, exist
 		source = existing.Settings.SemanticSearch.Provider
 	}
 	return source
-}
-
-// resolveWizardChatUI returns the Chat UI toggle the wizard must preserve.
-// runWizard never asks for it, so without this the toggle falls back to the
-// zero value and `knowns init --force` silently disables an enabled Chat UI.
-func resolveWizardChatUI(globalDefaults *storage.ProjectDefaults, existing *models.Project) bool {
-	enabled := true
-	if globalDefaults != nil && globalDefaults.Settings.EnableChatUI != nil {
-		enabled = *globalDefaults.Settings.EnableChatUI
-	}
-	if existing != nil && existing.Settings.EnableChatUI != nil {
-		enabled = *existing.Settings.EnableChatUI
-	}
-	return enabled
 }
 
 func defaultsForWizard(cwd string, defaults *storage.ProjectDefaults) (string, string, *models.GitTracking, *bool, string, []string) {
@@ -1781,13 +1752,13 @@ func removeLegacyGitignoreBlock(dir string) {
 	_ = os.WriteFile(gitignorePath, []byte(content), 0644)
 }
 
-// maybeOpenBrowser optionally launches the Chat UI after init.
+// maybeOpenBrowser optionally launches the web UI after init.
 //
 //   - --no-open or --no-wizard: skip silently
 //   - --open: launch immediately without prompting
 //   - default (interactive): show a confirm prompt
 //
-// maybeOpenBrowser launches the Chat UI only when --open is passed explicitly.
+// maybeOpenBrowser launches the web UI only when --open is passed explicitly.
 // Default behavior (no flag) is to do nothing — users follow the printed hint instead.
 func maybeOpenBrowser(cwd string, openFlag, noOpen bool) error {
 	if noOpen || !openFlag {
@@ -1911,8 +1882,8 @@ func init() {
 	initCmd.Flags().Bool("wizard", false, "Run interactive setup wizard")
 	initCmd.Flags().Bool("no-wizard", false, "Skip interactive prompts, use defaults")
 	initCmd.Flags().BoolP("force", "f", false, "Force reinitialize even if already initialized")
-	initCmd.Flags().Bool("open", false, "Launch Chat UI immediately after init")
-	initCmd.Flags().Bool("no-open", false, "Skip the Chat UI launch prompt after init")
+	initCmd.Flags().Bool("open", false, "Launch the web UI immediately after init")
+	initCmd.Flags().Bool("no-open", false, "Skip the web UI launch prompt after init")
 
 	rootCmd.AddCommand(initCmd)
 }

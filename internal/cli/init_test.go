@@ -211,7 +211,6 @@ func TestRunInitNoWizardUsesGlobalDefaults(t *testing.T) {
 			"settings": map[string]any{
 				"gitTrackingMode": "git-ignored",
 				"platforms":       []string{"codex", "agents"},
-				"enableChatUI":    false,
 				"taskLifecycle": map[string]any{
 					"autoArchive": false,
 				},
@@ -238,9 +237,6 @@ func TestRunInitNoWizardUsesGlobalDefaults(t *testing.T) {
 	settings := getMap(t, config, "settings")
 	if got := settings["gitTrackingMode"]; got != "git-ignored" {
 		t.Fatalf("expected global gitTrackingMode, got %#v", got)
-	}
-	if got := settings["enableChatUI"]; got != false {
-		t.Fatalf("expected global enableChatUI false, got %#v", got)
 	}
 	taskLifecycle := getMap(t, settings, "taskLifecycle")
 	if got := taskLifecycle["autoArchive"]; got != false {
@@ -925,37 +921,6 @@ func TestResolveWizardEmbeddingSourcePreservesProvider(t *testing.T) {
 	empty.Settings.SemanticSearch = &models.SemanticSearchSettings{Model: "gte-small"}
 	if got := resolveWizardEmbeddingSource(nil, empty); got != "" {
 		t.Fatalf("expected empty provider to stay empty so the local default applies, got %q", got)
-	}
-}
-
-func TestResolveWizardChatUIPreservesToggle(t *testing.T) {
-	if got := resolveWizardChatUI(nil, nil); !got {
-		t.Fatalf("expected Chat UI to default to enabled, got %v", got)
-	}
-
-	disabled := false
-	project := &models.Project{}
-	project.Settings.EnableChatUI = &disabled
-	if got := resolveWizardChatUI(nil, project); got {
-		t.Fatalf("expected existing disabled Chat UI to be preserved, got %v", got)
-	}
-
-	globalDisabled := &storage.ProjectDefaults{}
-	globalDisabled.Settings.EnableChatUI = &disabled
-	if got := resolveWizardChatUI(globalDisabled, nil); got {
-		t.Fatalf("expected global default to disable Chat UI, got %v", got)
-	}
-
-	enabled := true
-	enabledProject := &models.Project{}
-	enabledProject.Settings.EnableChatUI = &enabled
-	if got := resolveWizardChatUI(globalDisabled, enabledProject); !got {
-		t.Fatalf("expected project setting to override global default, got %v", got)
-	}
-
-	unset := &models.Project{}
-	if got := resolveWizardChatUI(nil, unset); !got {
-		t.Fatalf("expected unset project toggle to keep the enabled default, got %v", got)
 	}
 }
 

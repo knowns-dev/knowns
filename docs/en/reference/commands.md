@@ -87,7 +87,7 @@ knowns settings
 knowns settings --global
 ```
 
-Use `knowns settings` for human-friendly project edits: project name, git tracking, AI platforms, search, code intelligence, Browser/Chat UI, and maintenance guidance. In Search settings, Local ONNX models are listed with downloaded/not downloaded status; selecting a missing model can download it before saving. Use `knowns settings --global` for defaults reused by future `knowns init` runs. Use `knowns config get/set/list/reset` when you need scriptable config access.
+Use `knowns settings` for human-friendly project edits: project name, git tracking, AI platforms, search, code intelligence, and maintenance guidance. In Search settings, Local ONNX models are listed with downloaded/not downloaded status; selecting a missing model can download it before saving. Use `knowns settings --global` for defaults reused by future `knowns init` runs. Use `knowns config get/set/list/reset` when you need scriptable config access.
 
 ## Tasks
 

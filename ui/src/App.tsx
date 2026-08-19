@@ -5,10 +5,7 @@ import { UserProvider } from "./contexts/UserContext";
 import { UIPreferencesProvider } from "./contexts/UIPreferencesContext";
 import { SSEProvider } from "./contexts/SSEContext";
 import { TimeTrackerProvider } from "./contexts/TimeTrackerContext";
-import { ChatProvider } from "./contexts/ChatContext";
 import { GlobalTaskProvider } from "./contexts/GlobalTaskContext";
-import { OpenCodeProvider } from "./contexts/OpenCodeContext";
-import { OpenCodeEventProvider } from "./contexts/OpenCodeEventContext";
 import { AuthProvider } from "./contexts/AuthContext";
 import { LoginGate } from "./components/LoginGate";
 import { router } from "./router";
@@ -43,18 +40,12 @@ export default function App() {
 					<UserProvider>
 						<UIPreferencesProvider>
 							<SSEProvider>
-								<OpenCodeProvider>
-									<OpenCodeEventProvider>
-										<TimeTrackerProvider>
-											<ChatProvider>
-												<GlobalTaskProvider>
-													<RouterProvider router={router} />
-													{import.meta.env.DEV && <Agentation />}
-												</GlobalTaskProvider>
-											</ChatProvider>
-										</TimeTrackerProvider>
-									</OpenCodeEventProvider>
-								</OpenCodeProvider>
+								<TimeTrackerProvider>
+									<GlobalTaskProvider>
+										<RouterProvider router={router} />
+										{import.meta.env.DEV && <Agentation />}
+									</GlobalTaskProvider>
+								</TimeTrackerProvider>
 							</SSEProvider>
 						</UIPreferencesProvider>
 					</UserProvider>

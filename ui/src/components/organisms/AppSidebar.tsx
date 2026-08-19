@@ -4,7 +4,6 @@ import {
 	ListTodo,
 	FileText,
 	Download,
-	MessageSquare,
 	Settings,
 	Search,
 	Github,
@@ -41,12 +40,6 @@ interface AppSidebarProps {
 }
 
 const topNavItems = [
-	{
-		id: "chat",
-		label: "AI Chat",
-		icon: MessageSquare,
-		to: "/chat",
-	},
 	{
 		id: "dashboard",
 		label: "Dashboard",
@@ -106,10 +99,8 @@ export function AppSidebar({
 	const { state } = useSidebar();
 	const isMobile = useIsMobile();
 	const isExpanded = state === "expanded";
-	const { config, chatUIEnabled } = useConfig();
-	const visibleNavItems = topNavItems.filter(
-		(item) => item.id !== "chat" || chatUIEnabled
-	);
+	const { config } = useConfig();
+	const visibleNavItems = topNavItems;
 
 	return (
 		<Sidebar collapsible="icon" variant={isMobile ? "floating" : "sidebar"}>

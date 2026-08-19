@@ -59,7 +59,7 @@ Use this when an assistant is helping with planning or implementation:
 
 - **CLI**: quick authoring, scripting, CI-friendly validation, and direct project maintenance
 - **MCP**: structured AI integration for tasks, docs, memory, search, templates, code navigation, and validation
-- **Web UI**: board, docs, graph, config, and chat workflows
+- **Web UI**: board, docs, graph, and config
 - **Skills**: assistant-side workflow commands, for example spec creation, review, or `kn-flow` orchestration
 
 ## Finishing work

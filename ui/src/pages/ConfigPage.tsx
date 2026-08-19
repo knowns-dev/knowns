@@ -11,7 +11,6 @@ import {
 	Palette,
 	Eye,
 	Terminal,
-	Bot,
 	Loader2,
 	AlertCircle,
 	CheckCircle2,
@@ -42,12 +41,9 @@ import { Label } from "../components/ui/label";
 import { Badge } from "../components/ui/badge";
 import { useConfig, type Config, type ConfigPatch } from "../contexts/ConfigContext";
 import { useAuth } from "../contexts/AuthContext";
-import { useOpenCode } from "../contexts/OpenCodeContext";
-import { useOpenCodeModelManager } from "../hooks/useOpencodeModelManager";
-import { OpenCodeModelManager } from "../components/organisms/OpenCodeModelManager";
 import DecisionMigrationTool from "../components/organisms/DecisionMigrationTool";
 import { toast } from "../components/ui/sonner";
-import { importApi, saveUserPreferences, getRuntimeServices, getEmbeddingModels, testEmbeddingModel, tunnelApi, lspApi, type EmbeddingModelInfo, type EmbeddingModelsResponse, type EmbeddingModelTestResult, type Import, type ImportDetail, type ImportResult, type RuntimeService, type LSPLanguageInfo } from "../api/client";
+import { importApi, getRuntimeServices, getEmbeddingModels, testEmbeddingModel, tunnelApi, lspApi, type EmbeddingModelInfo, type EmbeddingModelsResponse, type EmbeddingModelTestResult, type Import, type ImportDetail, type ImportResult, type RuntimeService, type LSPLanguageInfo } from "../api/client";
 
 const DEFAULT_STATUSES = ["todo", "in-progress", "in-review", "done", "blocked", "on-hold", "urgent"];
 const COLOR_OPTIONS = ["gray", "blue", "green", "yellow", "red", "purple", "orange", "pink", "cyan", "indigo"];
@@ -93,7 +89,7 @@ function statusVariant(status?: string): "default" | "secondary" | "destructive"
 
 // ── Category definitions ──────────────────────────────────────────
 
-type Category = "general" | "tasks" | "board" | "search" | "code" | "ai" | "imports" | "runtime" | "tunnel" | "security" | "tools" | "advanced";
+type Category = "general" | "tasks" | "board" | "search" | "code" | "imports" | "runtime" | "tunnel" | "security" | "tools" | "advanced";
 
 interface CategoryDef {
 	id: Category;
@@ -108,7 +104,6 @@ const ALL_CATEGORIES: CategoryDef[] = [
 	{ id: "board", label: "Board", icon: Columns3, description: "Kanban statuses, colors, and visible columns" },
 	{ id: "search", label: "Search", icon: Search, description: "Semantic search configuration" },
 	{ id: "code", label: "Code", icon: Code2, description: "LSP servers and code intelligence" },
-	{ id: "ai", label: "AI", icon: Bot, description: "OpenCode connection used by Chat UI" },
 	{ id: "imports", label: "Imports", icon: Download, description: "Imported templates and docs" },
 	{ id: "runtime", label: "Runtime", icon: Monitor, description: "Runtime services and sub-processes" },
 	{ id: "tunnel", label: "Tunnel", icon: Globe, description: "Cloudflare Tunnel for remote access" },
@@ -177,7 +172,6 @@ function editableConfig(config: Config): Config {
 		localONNX: _readOnlyLocalONNX,
 		id: _readOnlyID,
 		createdAt: _readOnlyCreatedAt,
-		opencodeInstalled: _readOnlyOpenCodeInstalled,
 		...editable
 	} = config;
 	return editable;
@@ -222,7 +216,7 @@ function FieldRow({ label, hint, children }: { label: string; hint?: string; chi
 // ── Main component ────────────────────────────────────────────────
 
 export default function ConfigPage() {
-	const { config: globalConfig, loading, updateConfig, chatUIEnabled } = useConfig();
+	const { config: globalConfig, loading, updateConfig } = useConfig();
 	const [config, setConfig] = useState<Config>({});
 	const semanticProvider = effectiveSemanticProvider(config);
 	const [activeCategory, setActiveCategory] = useState<Category>("general");
@@ -231,8 +225,6 @@ export default function ConfigPage() {
 	const [jsonText, setJsonText] = useState("");
 	const [jsonError, setJsonError] = useState<string | null>(null);
 	const [newStatus, setNewStatus] = useState("");
-	const { status: openCodeStatus, statusLoading: openCodeStatusLoading, providerResponse, providersLoading, lastLoadedAt, refreshAll } =
-		useOpenCode();
 
 	// Imports state
 	const [imports, setImports] = useState<Import[]>([]);
@@ -372,12 +364,6 @@ export default function ConfigPage() {
 		}
 	}, [globalConfig, loading, initialized]);
 
-	useEffect(() => {
-		if (initialized) {
-			void refreshAll({ silent: true });
-		}
-	}, [initialized, refreshAll]);
-
 	// Update helper — updates local state + triggers auto-save
 	const update = useCallback(
 		(patch: ConfigPatch) => {
@@ -432,29 +418,6 @@ export default function ConfigPage() {
 			setSaving(false);
 		}
 	};
-
-	const updateOpenCodeServer = useCallback(
-		(patch: NonNullable<Config["opencodeServer"]>) => {
-			update({
-				opencodeServer: {
-					...(config.opencodeServer || {}),
-					...patch,
-				},
-			});
-		},
-		[config.opencodeServer, update],
-	);
-
-	const { modelCatalog, updateModelPref, toggleProviderHidden, setDefaultModel } = useOpenCodeModelManager({
-		settings: config.opencodeModels,
-		providerResponse,
-		status: openCodeStatus,
-		lastLoadedAt,
-		onChange: async (nextSettings) => {
-			await saveUserPreferences({ opencodeModels: nextSettings });
-			update({ opencodeModels: nextSettings });
-		},
-	});
 
 	// Runtime services state
 	const [services, setServices] = useState<RuntimeService[]>([]);
@@ -621,9 +584,7 @@ export default function ConfigPage() {
 	const statuses = config.statuses || DEFAULT_STATUSES;
 	const statusColors = config.statusColors || {};
 
-	// ── Filter categories based on chatUI visibility ──────────────
-
-	const categories = ALL_CATEGORIES.filter((cat) => cat.id !== "ai" || chatUIEnabled);
+	const categories = ALL_CATEGORIES;
 	const handleCategoryKeyDown = (
 		event: KeyboardEvent<HTMLButtonElement>,
 		categoryIndex: number,
@@ -1485,79 +1446,6 @@ export default function ConfigPage() {
 		);
 	};
 
-	const renderAI = () => {
-		const statusTone = openCodeStatusLoading
-			? "border-border bg-muted/40 text-muted-foreground"
-			: openCodeStatus?.available
-				? "border-emerald-200 bg-emerald-50 text-emerald-700"
-				: "border-amber-200 bg-amber-50 text-amber-700";
-
-		return (
-			<div>
-				<SectionHeader icon={Bot} title="OpenCode" description="Configure the OpenCode server used by Chat UI" />
-
-				<FieldRow label="Connection" hint="Chat UI is blocked when OpenCode is unavailable">
-					<div className="space-y-3">
-						<div className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${statusTone}`}>
-							{openCodeStatusLoading ? (
-								<Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
-							) : openCodeStatus?.available ? (
-								<CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-							) : (
-								<AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-							)}
-							<div className="min-w-0">
-								<div className="font-medium">
-									{openCodeStatusLoading
-										? "Checking OpenCode..."
-										: openCodeStatus?.available
-											? `Connected to ${openCodeStatus.host}:${openCodeStatus.port}`
-											: openCodeStatus?.error || "OpenCode is unavailable."}
-								</div>
-								{!openCodeStatusLoading && !openCodeStatus?.cliAvailable && (
-									<div className="mt-1 text-xs opacity-80">
-										`opencode` CLI was not found, so auto-start is unavailable.
-									</div>
-								)}
-							</div>
-						</div>
-						<Button variant="outline" size="sm" onClick={() => void refreshAll()} disabled={openCodeStatusLoading || providersLoading}>
-							{openCodeStatusLoading || providersLoading ? "Checking..." : "Refresh status"}
-						</Button>
-					</div>
-				</FieldRow>
-
-				<FieldRow label="Password" hint="Optional basic auth password">
-					<Input
-						type="password"
-						value={config.opencodeServer?.password || ""}
-						onChange={(e) => updateOpenCodeServer({ password: e.target.value })}
-						placeholder="Leave empty if OpenCode has no password"
-					/>
-				</FieldRow>
-
-				<Separator className="my-4" />
-
-				<SectionHeader
-					icon={Bot}
-					title="Model Manager"
-					description="Enable models, choose the project default, and control what appears in the chat picker"
-				/>
-
-				<FieldRow label="Catalog" hint="Live provider/model catalog from OpenCode">
-					<OpenCodeModelManager
-						catalog={modelCatalog}
-						lastLoadedAt={lastLoadedAt}
-						onSetDefaultModel={setDefaultModel}
-						onUpdateModelPref={updateModelPref}
-						onToggleProviderHidden={toggleProviderHidden}
-						showProviderVisibility
-					/>
-				</FieldRow>
-			</div>
-		);
-	};
-
 	const renderImports = () => (
 		<div>
 			<SectionHeader icon={Download} title="Imports" description="Imported templates and docs" />
@@ -1999,17 +1887,6 @@ export default function ConfigPage() {
 				</div>
 			</FieldRow>
 
-			<Separator className="my-1" />
-
-			<SectionHeader icon={Settings} title="Chat UI" description="Enable or disable the chat interface" />
-
-			<FieldRow label="Enable Chat UI">
-				<Switch
-					checked={config.enableChatUI ?? true}
-					onCheckedChange={(checked) => update({ enableChatUI: checked })}
-				/>
-			</FieldRow>
-
 			<Separator className="my-4" />
 
 			<SectionHeader icon={Terminal} title="JSON Editor" description="Raw config.json editing" />
@@ -2052,7 +1929,6 @@ export default function ConfigPage() {
 		board: renderBoard,
 		search: renderSearch,
 		code: renderCode,
-		ai: renderAI,
 		imports: renderImports,
 		runtime: renderRuntime,
 		tunnel: renderTunnel,

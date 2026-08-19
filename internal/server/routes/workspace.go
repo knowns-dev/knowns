@@ -179,7 +179,6 @@ func (wr *WorkspaceRoutes) switchWorkspace(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Reinitialize OpenCode for the new project (non-blocking).
 	if wr.onSwitch != nil {
 		go wr.onSwitch(projectPath)
 	}

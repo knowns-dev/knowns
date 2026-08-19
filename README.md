@@ -568,7 +568,7 @@ knowns sync
 | [Reference System](./docs/en/reference/reference-system.md)  | How `@doc/` and `@task-` linking works                       |
 | [Semantic Search](./docs/en/reference/semantic-search.md)    | Setup and usage of semantic search                           |
 | [Templates](./docs/en/integrations/templates.md)             | Code generation and template workflows                       |
-| [Web UI](./docs/en/guides/web-ui.md)                         | Board, docs, graph, and chat UI                              |
+| [Web UI](./docs/en/guides/web-ui.md)                         | Board, docs, graph, and config UI                            |
 | [Configuration](./docs/en/reference/configuration.md)        | Project config and platform IDs                              |
 | [Skills](./docs/en/integrations/skills.md)                   | Skill paths and regeneration                                 |
 | [Developer Guide](./docs/en/contributing/developer-guide.md) | Notes for contributors                                       |

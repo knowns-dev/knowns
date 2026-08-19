@@ -27,7 +27,6 @@ type Store struct {
 	Templates  *TemplateStore
 	Versions   *VersionStore
 	Workspaces *WorkspaceStore
-	Chats      *ChatStore
 	Memory     *MemoryStore
 	Decisions  *DecisionStore
 
@@ -54,7 +53,6 @@ func NewStore(root string) *Store {
 	s.Templates = &TemplateStore{root: root}
 	s.Versions = &VersionStore{root: root, lifecycleLock: lifecycleLock, history: NewHistoryStore(root)}
 	s.Workspaces = &WorkspaceStore{root: root}
-	s.Chats = &ChatStore{root: root}
 	// Memory mutations use a project-independent lock root so updates to a
 	// global memory are serialized across Store instances and projects too.
 	s.Memory = &MemoryStore{root: root, globalRoot: globalRoot, mutationLock: newMemoryMutationLock(globalRoot)}

@@ -44,7 +44,6 @@
     "mermaid": "^11.12.2",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "react-flip-numbers": "^3.0.9",
     "react-force-graph-2d": "^1.29.1",
     "react-markdown": "^10.1.0",
     "react-markdown-editor-lite": "^1.4.2",

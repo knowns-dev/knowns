@@ -109,12 +109,3 @@ func (cs *ConfigStore) initDefault(name string) error {
 	}
 	return writeJSON(cs.configPath(), p)
 }
-
-// GetOpenCodeServerConfig returns the OpenCode server configuration if set.
-func (cs *ConfigStore) GetOpenCodeServerConfig() *models.OpenCodeServerConfig {
-	proj, err := cs.Load()
-	if err != nil {
-		return nil
-	}
-	return proj.Settings.OpenCodeServerConfig
-}

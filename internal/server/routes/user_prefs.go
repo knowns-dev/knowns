@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
 )
 
@@ -46,19 +45,6 @@ func (upr *UserPrefsRoutes) save(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(r, &payload); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
-	}
-
-	if raw, ok := payload["opencodeModels"]; ok {
-		if string(raw) == "null" {
-			prefs.OpenCodeModels = nil
-		} else {
-			cfg := new(models.OpenCodeModelSettings)
-			if err := json.Unmarshal(raw, cfg); err != nil {
-				respondError(w, http.StatusBadRequest, "invalid opencodeModels: "+err.Error())
-				return
-			}
-			prefs.OpenCodeModels = cfg
-		}
 	}
 
 	if err := upr.store.Save(prefs); err != nil {

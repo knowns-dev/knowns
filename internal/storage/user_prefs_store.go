@@ -8,13 +8,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/howznguyen/knowns/internal/models"
 )
 
 // UserPrefs holds user-level preferences that apply across all projects.
 type UserPrefs struct {
-	OpenCodeModels *models.OpenCodeModelSettings `json:"opencodeModels,omitempty"`
 }
 
 // UserPrefsStore reads and writes ~/.knowns/preferences.json.

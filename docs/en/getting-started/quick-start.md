@@ -53,7 +53,7 @@ Search confirms retrieval can find project context. Validate checks the Knowns p
 knowns browser --open
 ```
 
-The Web UI shows the same project state as the CLI, including tasks, docs, graph views, config, and chat workflows.
+The Web UI shows the same project state as the CLI, including tasks, docs, graph views, and config.
 
 ## 6. Optional: connect your AI platform
 

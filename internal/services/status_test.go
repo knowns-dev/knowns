@@ -2,12 +2,10 @@ package services
 
 import (
 	"errors"
-	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 
-	"github.com/howznguyen/knowns/internal/agents/opencode"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/runtimequeue"
 	"github.com/howznguyen/knowns/internal/search"
@@ -38,33 +36,6 @@ func TestSortServiceStatusesRunningFirst(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ordered statuses = %v, want %v", got, want)
-	}
-}
-
-func TestDetectOpenCodeReadOnlyPreservesStalePIDFile(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	config := opencode.DefaultConfig()
-	daemon := opencode.NewDaemon(config.Host, config.Port)
-	if err := os.MkdirAll(filepath.Dir(daemon.PIDFile), 0o755); err != nil {
-		t.Fatalf("create PID directory: %v", err)
-	}
-	if err := os.WriteFile(daemon.PIDFile, []byte("99999999"), 0o644); err != nil {
-		t.Fatalf("write stale PID: %v", err)
-	}
-
-	status := detectOpenCode(nil, false)[0]
-	if status.Status != "stopped" {
-		t.Fatalf("read-only status = %q, want stopped", status.Status)
-	}
-	if _, err := os.Stat(daemon.PIDFile); err != nil {
-		t.Fatalf("read-only detection removed stale PID: %v", err)
-	}
-
-	_ = detectOpenCode(nil, true)
-	if _, err := os.Stat(daemon.PIDFile); !os.IsNotExist(err) {
-		t.Fatalf("cleanup detection left stale PID, stat error = %v", err)
 	}
 }
 

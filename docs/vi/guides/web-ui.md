@@ -1,6 +1,6 @@
 # Web UI
 
-Knowns có Web UI cho người muốn xem project context trực quan thay vì chỉ đọc CLI output. Web UI đọc cùng project state với CLI và MCP server, nên task, doc, memory, graph views, config, và chat workflows vẫn nối với nhau.
+Knowns có Web UI cho người muốn xem project context trực quan thay vì chỉ đọc CLI output. Web UI đọc cùng project state với CLI và MCP server, nên task, doc, memory, graph views, và config vẫn nối với nhau.
 
 ## Mở
 
@@ -17,13 +17,12 @@ Chạy command từ một Knowns project. Dùng `--open` khi muốn Knowns start
 - **Doc browser**: đọc project docs mà không cần nhớ CLI path.
 - **Graph / knowledge views**: explore quan hệ giữa task, doc, memory, và references.
 - **Config pages**: kiểm tra project settings, search setup, code intelligence, và integration state.
-- **Chat page**: dùng chat-driven workflows khi Web UI phù hợp hơn terminal.
 
 ## Khi nào nên dùng
 
 - Xem task theo kiểu board
 - Duyệt doc tiện hơn CLI
-- Explore graph hoặc dùng chat-driven workflows
+- Explore graph
 - Onboard người mới cần hiểu project trước khi dùng CLI commands
 
 ## Liên quan tới AI setup

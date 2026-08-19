@@ -153,11 +153,11 @@ func buildGlobalSetupSteps(force bool, platforms []string) []initStep {
 		}
 		selectedRuntime := rt
 		opts := runtimeinstall.DefaultOptions()
-		if !runtimeinstall.CanAutoInstall(selectedRuntime) {
-			st, err := runtimeinstall.StatusFor(selectedRuntime, opts)
-			if err != nil || !st.Available {
-				continue
-			}
+		// Every runtime, OpenCode included, must already be installed: Knowns
+		// writes hooks for a CLI the user provides, it does not install one.
+		st, err := runtimeinstall.StatusFor(selectedRuntime, opts)
+		if err != nil || !st.Available {
+			continue
 		}
 		steps = append(steps, initStep{
 			label: fmt.Sprintf("Installing %s runtime hooks", runtimeinstall.RuntimePickerLabel(selectedRuntime, opts)),

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -119,16 +118,6 @@ type ProjectSettings struct {
 	// If empty, all platforms are treated as enabled (backwards-compatible default).
 	Platforms []string `json:"platforms,omitempty"`
 
-	// EnableChatUI controls whether the Chat UI (powered by OpenCode web) is
-	// shown in the browser. When nil/unset the UI defaults to showing it.
-	EnableChatUI *bool `json:"enableChatUI,omitempty"`
-
-	// OpenCodeServerConfig holds settings for connecting to OpenCode server.
-	OpenCodeServerConfig *OpenCodeServerConfig `json:"opencodeServer,omitempty"`
-
-	// OpenCodeModels holds project-level model manager preferences for OpenCode.
-	OpenCodeModels *OpenCodeModelSettings `json:"opencodeModels,omitempty"`
-
 	// RuntimeMemory configures bounded memory injection for supported runtimes.
 	RuntimeMemory *RuntimeMemorySettings `json:"runtimeMemory,omitempty"`
 
@@ -221,9 +210,6 @@ func (s ProjectSettings) Validate() error {
 	if err := s.ValidateSemanticVectorStore(); err != nil {
 		return err
 	}
-	if err := s.ValidateOpenCodeServer(); err != nil {
-		return err
-	}
 	if err := s.ValidateRuntimeWatch(); err != nil {
 		return err
 	}
@@ -243,32 +229,6 @@ func (s ProjectSettings) ValidateRuntimeWatch() error {
 	}
 	if parsed < 0 {
 		return fmt.Errorf("settings.runtimeWatch.gracePeriod: duration must not be negative")
-	}
-	return nil
-}
-
-// ValidateOpenCodeServer keeps project-controlled runtime configuration on the
-// local machine. Remote OpenCode hosts would turn a checked-in config file into
-// an arbitrary HTTP proxy through the browser server.
-func (s ProjectSettings) ValidateOpenCodeServer() error {
-	cfg := s.OpenCodeServerConfig
-	if cfg == nil {
-		return nil
-	}
-	mode := strings.TrimSpace(cfg.Mode)
-	if mode != "" && mode != "managed" && mode != "external" {
-		return fmt.Errorf("settings.opencodeServer.mode: unsupported mode %q", cfg.Mode)
-	}
-	if cfg.Port < 0 || cfg.Port > 65535 {
-		return fmt.Errorf("settings.opencodeServer.port: must be zero or between 1 and 65535")
-	}
-	host := strings.TrimSpace(cfg.Host)
-	if host == "" || strings.EqualFold(host, "localhost") {
-		return nil
-	}
-	ip := net.ParseIP(strings.Trim(host, "[]"))
-	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("settings.opencodeServer.host: must be localhost or a loopback IP")
 	}
 	return nil
 }
@@ -381,38 +341,6 @@ func (s ProjectSettings) EffectiveRuntimeWatch() RuntimeWatchSettings {
 		settings.GracePeriod = s.RuntimeWatch.GracePeriod
 	}
 	return settings
-}
-
-// OpenCodeServerConfig holds settings for the OpenCode server API.
-type OpenCodeServerConfig struct {
-	// Mode controls whether Knowns manages the runtime itself or attaches to an
-	// already running external OpenCode server. Supported values: "managed",
-	// "external". Empty defaults to managed for backward compatibility.
-	Mode string `json:"mode,omitempty"`
-
-	// Host is the OpenCode server hostname (default: 127.0.0.1).
-	Host string `json:"host,omitempty"`
-
-	// Port is the OpenCode server port (default: 4096).
-	Port int `json:"port,omitempty"`
-
-	// Password is the authentication password (optional).
-	Password string `json:"password,omitempty"`
-}
-
-// OpenCodeModelSettings stores project-level model manager preferences.
-type OpenCodeModelSettings struct {
-	Version         int               `json:"version"`
-	DefaultModel    *OpenCodeModelRef `json:"defaultModel,omitempty"`
-	VariantModels   map[string]string `json:"variantModels,omitempty"`
-	ActiveModels    []string          `json:"activeModels,omitempty"`
-	HiddenProviders []string          `json:"hiddenProviders,omitempty"`
-}
-
-// OpenCodeModelRef identifies a concrete OpenCode model.
-type OpenCodeModelRef struct {
-	ProviderID string `json:"providerID"`
-	ModelID    string `json:"modelID"`
 }
 
 // Semantic vector store backend identifiers (spec D1/D4/D9).

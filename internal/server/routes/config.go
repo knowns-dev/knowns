@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/howznguyen/knowns/internal/agents/opencode"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
@@ -85,26 +84,9 @@ func (cr *ConfigRoutes) configResponse(project *models.Project) map[string]inter
 	if s.ServerPort != 0 {
 		flat["serverPort"] = s.ServerPort
 	}
-	if s.OpenCodeServerConfig != nil {
-		flat["opencodeServer"] = s.OpenCodeServerConfig
-	}
-	// opencodeModels: project-level overrides user-level.
-	// If the project has no opencodeModels, fall back to user-level preferences.
-	if s.OpenCodeModels != nil {
-		flat["opencodeModels"] = s.OpenCodeModels
-	} else {
-		userPrefs := storage.NewUserPrefsStore()
-		if up, err := userPrefs.Load(); err == nil && up.OpenCodeModels != nil {
-			flat["opencodeModels"] = up.OpenCodeModels
-		}
-	}
 	if s.Platforms != nil {
 		flat["platforms"] = s.Platforms
 	}
-	if s.EnableChatUI != nil {
-		flat["enableChatUI"] = *s.EnableChatUI
-	}
-	flat["opencodeInstalled"] = opencode.DetectOpenCode().Installed
 	if s.RuntimeMemory != nil {
 		flat["runtimeMemory"] = s.RuntimeMemory
 	}
@@ -283,28 +265,6 @@ func applySettingsUpdate(settings *models.ProjectSettings, payload map[string]js
 			settings.SemanticSearch = cfg
 		}
 	}
-	if raw, ok := payload["opencodeServer"]; ok {
-		if string(raw) == "null" {
-			settings.OpenCodeServerConfig = nil
-		} else {
-			cfg := new(models.OpenCodeServerConfig)
-			if err := json.Unmarshal(raw, cfg); err != nil {
-				return err
-			}
-			settings.OpenCodeServerConfig = cfg
-		}
-	}
-	if raw, ok := payload["opencodeModels"]; ok {
-		if string(raw) == "null" {
-			settings.OpenCodeModels = nil
-		} else {
-			cfg := new(models.OpenCodeModelSettings)
-			if err := json.Unmarshal(raw, cfg); err != nil {
-				return err
-			}
-			settings.OpenCodeModels = cfg
-		}
-	}
 	if raw, ok := payload["runtimeMemory"]; ok {
 		if string(raw) == "null" {
 			settings.RuntimeMemory = nil
@@ -336,13 +296,6 @@ func applySettingsUpdate(settings *models.ProjectSettings, payload map[string]js
 		if err := json.Unmarshal(raw, &settings.Editor); err != nil {
 			return err
 		}
-	}
-	if raw, ok := payload["enableChatUI"]; ok {
-		var v bool
-		if err := json.Unmarshal(raw, &v); err != nil {
-			return err
-		}
-		settings.EnableChatUI = &v
 	}
 	return nil
 }
