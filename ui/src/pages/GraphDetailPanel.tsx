@@ -52,6 +52,7 @@ const nodeTypeBadgeStyles: Record<GraphNode["type"] | "external", string> = {
 	doc: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
 	template: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
 	memory: "bg-green-500/10 text-green-600 dark:text-green-400",
+	decision: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
 	code: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
 	external: "bg-muted text-muted-foreground",
 };
@@ -245,7 +246,7 @@ export function GraphDetailPanel({ node, onClose, onNavigate, onShowImpact, onSe
 									{codeKind}
 								</span>
 							)}
-							{node.data.docPath && (
+							{typeof node.data.docPath === "string" && (
 								<span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground font-mono break-all">
 									{node.data.docPath as string}
 								</span>
