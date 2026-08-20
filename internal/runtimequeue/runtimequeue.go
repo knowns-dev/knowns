@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -51,9 +52,14 @@ const (
 	defaultLockTimeout  = 3 * time.Second
 	defaultLockStaleAge = 10 * time.Second
 	maxRecentResults    = 50
-	defaultLogMaxBytes  = 10 * 1024 * 1024
-	defaultLogBackups   = 3
-	qdrantRetryLimit    = 8
+	// Dead letters are retained so RetryJob can replay them, but an
+	// unprovisioned backend fails every intent it is handed. Without a bound
+	// one bulk import pins thousands of unrunnable jobs in the queue forever.
+	deadLetterTTL      = 7 * 24 * time.Hour
+	maxDeadLettersKept = 50
+	defaultLogMaxBytes = 10 * 1024 * 1024
+	defaultLogBackups  = 3
+	qdrantRetryLimit   = 8
 )
 
 // QdrantIntent is the content-free handoff from durable history/manifest to
@@ -506,8 +512,62 @@ func GlobalRoot() string {
 	return filepath.Join(home, ".knowns")
 }
 
+// EnvRuntimeRoot overrides the shared runtime state directory. It exists so a
+// test or sandboxed run can keep its queues, leases and project registry away
+// from the developer's real ~/.knowns/runtime.
+const EnvRuntimeRoot = "KNOWNS_RUNTIME_ROOT"
+
+var (
+	sandboxRootOnce sync.Once
+	sandboxRootPath string
+)
+
 func RuntimeRoot() string {
+	if override := strings.TrimSpace(os.Getenv(EnvRuntimeRoot)); override != "" {
+		return override
+	}
+	if root, ok := testSandboxRoot(); ok {
+		return root
+	}
 	return filepath.Join(GlobalRoot(), "runtime")
+}
+
+// testSandboxRoot diverts runtime state to a throwaway directory when a `go
+// test` binary would otherwise write into the real user home. Enqueueing
+// registers the store root and writes a queue file before any daemon guard
+// runs, so without this a test using t.TempDir() permanently pollutes the
+// developer's project registry. Tests that already redirect HOME keep their
+// own isolation and are left alone.
+func testSandboxRoot() (string, bool) {
+	if !isGoTestBinary(os.Args[0]) || !homeIsRealUserHome() {
+		return "", false
+	}
+	sandboxRootOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "knowns-runtime-sandbox-")
+		if err != nil {
+			return
+		}
+		sandboxRootPath = dir
+	})
+	if sandboxRootPath == "" {
+		return "", false
+	}
+	return sandboxRootPath, true
+}
+
+// homeIsRealUserHome reports whether HOME still points at the account home
+// recorded in the user database. It deliberately reads the user database
+// rather than os.UserHomeDir, which just re-reads the same HOME variable.
+func homeIsRealUserHome() bool {
+	home := strings.TrimSpace(os.Getenv("HOME"))
+	if home == "" {
+		return true
+	}
+	current, err := user.Current()
+	if err != nil || current.HomeDir == "" {
+		return false
+	}
+	return filepath.Clean(home) == filepath.Clean(current.HomeDir)
 }
 
 func PIDFile() string {
@@ -1454,7 +1514,14 @@ func RunDaemonWithOptions(ctx context.Context, opts DaemonOptions) error {
 			if err != nil {
 				continue
 			}
-			pendingJobs += len(queue.Jobs)
+			// Dead letters are retained for manual RetryJob, never executed.
+			// Counting them would pin pendingJobs above zero forever and stop
+			// the idle shutdown below from ever firing.
+			for _, job := range queue.Jobs {
+				if !job.DeadLetter {
+					pendingJobs++
+				}
+			}
 		}
 
 		_ = writeStatusFile(leases, projects, watcherStates)
@@ -1584,9 +1651,47 @@ func registerProject(storeRoot string) error {
 	if err != nil {
 		return err
 	}
+	projects = pruneDeadProjects(projects, storeRoot)
 	projects = appendIfMissing(projects, storeRoot)
 	sort.Strings(projects)
 	return writeJSON(projectsRegistryPath(), projects)
+}
+
+// pruneDeadProjects drops registry entries whose store root is gone and whose
+// queue holds no jobs. The daemon rescans every registered project on each
+// tick, so entries left by throwaway roots (test temp dirs, deleted clones)
+// otherwise grow the scan without bound. keep is the root being registered
+// right now: it is never pruned, because enqueue registers it before writing
+// its first job and a caller may create the store root afterwards.
+func pruneDeadProjects(projects []string, keep string) []string {
+	live := make([]string, 0, len(projects))
+	dropped := 0
+	for _, project := range projects {
+		if project == keep {
+			live = append(live, project)
+			continue
+		}
+		if projectRootExists(project) || projectHasQueuedJobs(project) {
+			live = append(live, project)
+			continue
+		}
+		dropped++
+	}
+	if dropped > 0 {
+		log.Printf("[runtime] unregistered %d project roots that no longer exist", dropped)
+	}
+	return live
+}
+
+// projectHasQueuedJobs reports whether a store root still has queued work.
+// An unreadable queue counts as having work so a transient read error never
+// unregisters a project that is still live.
+func projectHasQueuedJobs(storeRoot string) bool {
+	state, err := LoadQueue(storeRoot)
+	if err != nil {
+		return true
+	}
+	return len(state.Jobs) > 0
 }
 
 func registeredProjects() ([]string, error) {
@@ -1611,6 +1716,20 @@ func registeredProjects() ([]string, error) {
 	return filtered, nil
 }
 
+// projectRootExists reports whether a registered store root is still a
+// directory. Unreadable paths are treated as present so a transient
+// permission or mount error never silently unregisters a live project.
+func projectRootExists(storeRoot string) bool {
+	if !filepath.IsAbs(storeRoot) {
+		return false
+	}
+	info, err := os.Stat(storeRoot)
+	if err != nil {
+		return !errors.Is(err, os.ErrNotExist)
+	}
+	return info.IsDir()
+}
+
 func updateQueue(storeRoot string, fn func(*QueueState) error) error {
 	lockPath := queuePath(storeRoot) + ".lock"
 	unlock, err := acquireLock(lockPath, defaultLockTimeout)
@@ -1626,8 +1745,65 @@ func updateQueue(storeRoot string, fn func(*QueueState) error) error {
 	if err := fn(state); err != nil {
 		return err
 	}
+	pruneDeadLetters(storeRoot, state, time.Now().UTC())
 	state.Updated = time.Now().UTC()
 	return writeJSON(queuePath(storeRoot), state)
+}
+
+// pruneDeadLetters drops retained dead letters that are older than
+// deadLetterTTL, then keeps only the newest maxDeadLettersKept of whatever
+// remains. Live jobs are never touched and keep their relative order. Dropping
+// is logged because a silently shrinking queue reads as "everything ran".
+func pruneDeadLetters(storeRoot string, state *QueueState, now time.Time) {
+	if state == nil {
+		return
+	}
+	dead := 0
+	for _, job := range state.Jobs {
+		if job.DeadLetter {
+			dead++
+		}
+	}
+	if dead == 0 {
+		return
+	}
+	fresh := make([]*Job, 0, dead)
+	expired := 0
+	for _, job := range state.Jobs {
+		if !job.DeadLetter {
+			continue
+		}
+		if now.Sub(job.RequestedAt) > deadLetterTTL {
+			expired++
+			continue
+		}
+		fresh = append(fresh, job)
+	}
+	sort.SliceStable(fresh, func(i, j int) bool {
+		return fresh[i].RequestedAt.After(fresh[j].RequestedAt)
+	})
+	overflow := 0
+	if len(fresh) > maxDeadLettersKept {
+		overflow = len(fresh) - maxDeadLettersKept
+		fresh = fresh[:maxDeadLettersKept]
+	}
+	if expired == 0 && overflow == 0 {
+		return
+	}
+	keep := make(map[string]bool, len(fresh))
+	for _, job := range fresh {
+		keep[job.ID] = true
+	}
+	kept := make([]*Job, 0, len(state.Jobs))
+	for _, job := range state.Jobs {
+		if job.DeadLetter && !keep[job.ID] {
+			continue
+		}
+		kept = append(kept, job)
+	}
+	state.Jobs = kept
+	log.Printf("[runtime] dropped %d dead-letter jobs for %s (%d expired, %d over the %d cap)",
+		expired+overflow, storeRoot, expired, overflow, maxDeadLettersKept)
 }
 
 func writeStatusFile(leases []Lease, projects []string, watcherStates ...[]WatcherStatus) error {
