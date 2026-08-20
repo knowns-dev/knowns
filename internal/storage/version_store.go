@@ -214,7 +214,7 @@ func (vs *VersionStore) saveVersionUnlocked(taskID string, version models.TaskVe
 		stateForHash = applyTaskChangesToMap(normalizedPrev, version.Changes)
 	}
 	newHash := taskCanonicalHash(stateForHash)
-	
+
 	version.SchemaVersion = historySchemaVersion
 	version.BaseHash = baseHash
 	version.NewHash = newHash
@@ -346,7 +346,7 @@ func TaskToSnapshot(task *models.Task) map[string]any {
 	if task.ArchivedAt != nil {
 		snap["archivedAt"] = *task.ArchivedAt
 	}
-	
+
 	// Normalize through JSON round-trip to ensure consistent structure.
 	// This is critical because strongly-typed fields (like []AcceptanceCriterion)
 	// have different JSON key ordering than map[string]any after unmarshal.
@@ -905,13 +905,18 @@ func (vs *VersionStore) appendDocVersion(h *models.DocVersionHistory, previousPa
 			return fmt.Errorf("reconstruct Doc history head: %w", err)
 		}
 		headHash := hashDoc(headState)
-		if head.NewHash != "" && head.NewHash != headHash {
+		if !docHashRecognized(head.NewHash, headState) {
 			return fmt.Errorf("%w: Doc history head hash mismatch", ErrHistoryCorrupt)
 		}
+		recordedHead := firstNonEmpty(head.NewHash, headHash)
 		if baseHash == "" {
-			baseHash = firstNonEmpty(head.NewHash, headHash)
-		} else if baseHash != firstNonEmpty(head.NewHash, headHash) {
+			baseHash = recordedHead
+		} else if baseHash != recordedHead && baseHash != headHash {
 			return fmt.Errorf("%w: Doc history base hash does not match current head", ErrHistoryConflict)
+		} else {
+			// Keep the on-disk chain linked to the hash the head actually
+			// records, even when the caller supplied the canonical one.
+			baseHash = recordedHead
 		}
 		if version.Checkpoint {
 			if len(version.Snapshot) == 0 {
@@ -932,7 +937,7 @@ func (vs *VersionStore) appendDocVersion(h *models.DocVersionHistory, previousPa
 		}
 	}
 	candidateHash := hashDoc(candidate)
-	if version.NewHash != "" && version.NewHash != candidateHash {
+	if !docHashRecognized(version.NewHash, candidate) {
 		return fmt.Errorf("%w: Doc candidate hash does not match supplied NewHash", ErrHistoryCorrupt)
 	}
 	version.SchemaVersion = historySchemaVersion
@@ -1302,6 +1307,21 @@ func (vs *VersionStore) trackDocChangesWithOptions(oldDoc, newDoc *models.Doc, o
 
 // DocToSnapshot converts a Doc to a generic map snapshot.
 func DocToSnapshot(doc *models.Doc) map[string]any {
+	snap := rawDocSnapshot(doc)
+	if content, ok := snap["content"].(string); ok {
+		if canonical := canonicalDocContent(content); canonical != "" {
+			snap["content"] = canonical
+		} else {
+			delete(snap, "content")
+		}
+	}
+	return snap
+}
+
+// rawDocSnapshot is the pre-canonicalisation snapshot shape. It exists only so
+// history records written before content canonicalisation can still be
+// recognised: their hashes covered the untrimmed body.
+func rawDocSnapshot(doc *models.Doc) map[string]any {
 	snap := map[string]any{
 		"path":  normalizeDocPath(doc.Path),
 		"title": doc.Title,
@@ -1415,7 +1435,7 @@ func applyDocVersionState(state *models.Doc, version models.DocVersion) {
 	}
 
 	if version.CurrentPath != "" {
-		state.Path = normalizeDocPath(version.CurrentPath)
+		state.Path = normalizeDocPath(canonicalDocHistoryPath(version.CurrentPath))
 	}
 }
 
@@ -2025,6 +2045,20 @@ func hashDoc(doc *models.Doc) string {
 	return hashSnapshot(DocToSnapshot(doc))
 }
 
+// docHashRecognized reports whether a recorded hash still describes this state.
+// Records written before content canonicalisation hashed the untrimmed body, so
+// they are accepted alongside the canonical hash instead of being read as a
+// corrupt chain.
+func docHashRecognized(recorded string, state *models.Doc) bool {
+	if recorded == "" || state == nil {
+		return true
+	}
+	if recorded == hashDoc(state) {
+		return true
+	}
+	return recorded == hashSnapshot(rawDocSnapshot(state))
+}
+
 func hashSnapshot(snapshot map[string]any) string {
 	if len(snapshot) == 0 {
 		return ""
@@ -2053,6 +2087,17 @@ func hashSnapshot(snapshot map[string]any) string {
 	data, _ = json.Marshal(normalized)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+// canonicalDocHistoryPath repairs a Doc path a reconciler recorded as a
+// store-relative file path. Canonical Doc paths never carry the "docs/" root or
+// the ".md" suffix, so that exact shape is unambiguous and safe to undo.
+func canonicalDocHistoryPath(path string) string {
+	trimmed := strings.TrimSpace(filepath.ToSlash(path))
+	if strings.HasPrefix(trimmed, "docs/") && strings.HasSuffix(trimmed, ".md") {
+		trimmed = strings.TrimSuffix(strings.TrimPrefix(trimmed, "docs/"), ".md")
+	}
+	return trimmed
 }
 
 func normalizeDocPath(path string) string {
