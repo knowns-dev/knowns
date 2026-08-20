@@ -21,6 +21,7 @@ import {
 	SidebarContent,
 	SidebarGroup,
 	SidebarGroupContent,
+	SidebarGroupLabel,
 	SidebarHeader,
 	SidebarMenu,
 	SidebarMenuButton,
@@ -39,54 +40,69 @@ interface AppSidebarProps {
 	serverVersion?: string;
 }
 
-const topNavItems = [
+const navigationGroups = [
 	{
-		id: "dashboard",
-		label: "Dashboard",
-		icon: LayoutDashboard,
-		to: "/",
+		label: "Workspace",
+		items: [
+			{
+				id: "dashboard",
+				label: "Dashboard",
+				icon: LayoutDashboard,
+				to: "/",
+			},
+			{
+				id: "kanban",
+				label: "Kanban",
+				icon: LayoutGrid,
+				to: "/kanban",
+			},
+			{
+				id: "tasks",
+				label: "Tasks",
+				icon: ListTodo,
+				to: "/tasks",
+			},
+		],
 	},
 	{
-		id: "kanban",
-		label: "Kanban",
-		icon: LayoutGrid,
-		to: "/kanban",
+		label: "Knowledge",
+		items: [
+			{
+				id: "docs",
+				label: "Docs",
+				icon: FileText,
+				to: "/docs",
+			},
+			{
+				id: "graph",
+				label: "Graph",
+				icon: Network,
+				to: "/graph",
+			},
+			{
+				id: "memory",
+				label: "Memories",
+				icon: Brain,
+				to: "/memory",
+			},
+			{
+				id: "decisions",
+				label: "System Decisions",
+				icon: ScrollText,
+				to: "/decisions",
+			},
+		],
 	},
 	{
-		id: "tasks",
-		label: "Tasks",
-		icon: ListTodo,
-		to: "/tasks",
-	},
-	{
-		id: "docs",
-		label: "Docs",
-		icon: FileText,
-		to: "/docs",
-	},
-	{
-		id: "graph",
-		label: "Graph",
-		icon: Network,
-		to: "/graph",
-	},
-	{
-		id: "memory",
-		label: "Memories",
-		icon: Brain,
-		to: "/memory",
-	},
-	{
-		id: "decisions",
-		label: "System Decisions",
-		icon: ScrollText,
-		to: "/decisions",
-	},
-	{
-		id: "audit",
-		label: "Audit Trail",
-		icon: Activity,
-		to: "/audit",
+		label: "System",
+		items: [
+			{
+				id: "audit",
+				label: "Audit Trail",
+				icon: Activity,
+				to: "/audit",
+			},
+		],
 	},
 ];
 
@@ -100,7 +116,6 @@ export function AppSidebar({
 	const isMobile = useIsMobile();
 	const isExpanded = state === "expanded";
 	const { config } = useConfig();
-	const visibleNavItems = topNavItems;
 
 	return (
 		<Sidebar collapsible="icon" variant={isMobile ? "floating" : "sidebar"}>
@@ -153,30 +168,32 @@ export function AppSidebar({
 
 			<SidebarContent>
 				{/* Top Navigation */}
-				<SidebarGroup>
-					<SidebarGroupContent>
-						<SidebarMenu>
-							{visibleNavItems.map((item) => {
-								const isActive = currentPage === item.id;
-								return (
-									<SidebarMenuItem key={item.id}>
-										<SidebarMenuButton
-											asChild
-											isActive={isActive}
-											tooltip={item.label}
-										>
-											<Link to={item.to}>
-												<item.icon />
-												<span>{item.label}</span>
-											</Link>
-										</SidebarMenuButton>
-									</SidebarMenuItem>
-								);
-							})}
-						</SidebarMenu>
-					</SidebarGroupContent>
-				</SidebarGroup>
-
+				{navigationGroups.map((group) => (
+					<SidebarGroup key={group.label}>
+						<SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+						<SidebarGroupContent>
+							<SidebarMenu>
+								{group.items.map((item) => {
+									const isActive = currentPage === item.id;
+									return (
+										<SidebarMenuItem key={item.id}>
+											<SidebarMenuButton
+												asChild
+												isActive={isActive}
+												tooltip={item.label}
+											>
+												<Link to={item.to}>
+													<item.icon />
+													<span>{item.label}</span>
+												</Link>
+											</SidebarMenuButton>
+										</SidebarMenuItem>
+									);
+								})}
+							</SidebarMenu>
+						</SidebarGroupContent>
+					</SidebarGroup>
+				))}
 			</SidebarContent>
 
 			<SidebarFooter>
