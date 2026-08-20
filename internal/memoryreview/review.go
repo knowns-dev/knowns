@@ -44,6 +44,12 @@ type Service struct {
 	SemanticSearch  SemanticSearchFunc
 	ReviewThreshold float64
 	ReviewLimit     int
+	// Entries, when set, is used by lexicalMatches instead of re-reading
+	// every memory file from disk. Callers that already listed persistent
+	// entries for the current request (e.g. the review-inbox handler
+	// building N review items) should set this once and reuse it, rather
+	// than paying an extra full-directory listing per candidate.
+	Entries []*models.MemoryEntry
 }
 
 type AddOptions struct {
@@ -395,7 +401,7 @@ func (s *Service) memoryEntryForResult(result models.SearchResult) (*models.Memo
 }
 
 func (s *Service) lexicalMatches(candidate *models.MemoryEntry) []Match {
-	entries, err := s.Store.Memory.ListPersistent("")
+	entries, err := s.entries()
 	if err != nil {
 		return nil
 	}
@@ -412,6 +418,15 @@ func (s *Service) lexicalMatches(candidate *models.MemoryEntry) []Match {
 	}
 	sortMatches(matches)
 	return matches
+}
+
+// entries returns the pre-loaded Entries slice if the caller supplied one,
+// otherwise it lists persistent memories from disk (the original behaviour).
+func (s *Service) entries() ([]*models.MemoryEntry, error) {
+	if s.Entries != nil {
+		return s.Entries, nil
+	}
+	return s.Store.Memory.ListPersistent("")
 }
 
 func (s *Service) now() time.Time {

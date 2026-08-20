@@ -488,7 +488,7 @@ func (mr *MemoryRoutes) reviewInbox(w http.ResponseWriter, r *http.Request) {
 		memoryReviewReasonSourceDecisionSuperseded: 0,
 	}
 	for _, entry := range entries {
-		item := buildMemoryReviewItem(store, ctx, entry, time.Now().UTC())
+		item := buildMemoryReviewItem(store, ctx, entries, entry, time.Now().UTC())
 		if len(item.Reasons) == 0 {
 			continue
 		}
@@ -535,7 +535,7 @@ func newMemoryReviewContext(store *storage.Store, entries []*models.MemoryEntry)
 	return ctx
 }
 
-func buildMemoryReviewItem(store *storage.Store, ctx memoryReviewContext, entry *models.MemoryEntry, now time.Time) memoryReviewItem {
+func buildMemoryReviewItem(store *storage.Store, ctx memoryReviewContext, entries []*models.MemoryEntry, entry *models.MemoryEntry, now time.Time) memoryReviewItem {
 	item := memoryReviewItem{Memory: entry}
 	reasons := map[string]bool{}
 	addReason := func(reason string) {
@@ -547,7 +547,25 @@ func buildMemoryReviewItem(store *storage.Store, ctx memoryReviewContext, entry 
 
 	if entry.Status == models.MemoryStatusProposed {
 		addReason(memoryReviewReasonProposed)
-		if review, err := memoryreview.New(store).Review(entry); err == nil && review != nil && len(review.Matches) > 0 {
+		// Duplicate detection here is intentionally lexical-only: the
+		// review-inbox list is built for every proposed memory on every
+		// page load, and calling live semantic search per entry (embedding
+		// + vector-store round trip through the runtime job queue) made
+		// this endpoint take minutes. Lexical matching is a pure in-memory
+		// comparison against the already-loaded `entries` slice (Entries
+		// field), so it stays fast regardless of list size. Full semantic
+		// duplicate detection is still available via memoryreview.Service's
+		// default SemanticSearch on other paths (CLI `memory create`,
+		// review resolve), which run once per user action rather than
+		// once per proposed memory per page load.
+		svc := &memoryreview.Service{
+			Store:   store,
+			Entries: entries,
+			SemanticSearch: func(*models.MemoryEntry, int) ([]memoryreview.Match, error) {
+				return nil, nil
+			},
+		}
+		if review, err := svc.Review(entry); err == nil && review != nil && len(review.Matches) > 0 {
 			item.Matches = review.Matches
 			addReason(memoryReviewReasonDuplicateReview)
 		}
