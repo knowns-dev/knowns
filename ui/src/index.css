@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Geist — self-hosted, matches the Pencil design system's font-heading/font-body/font-mono */
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist/wght-italic.css";
+@import "@fontsource-variable/geist-mono";
+
 /* Highlight.js themes */
 @import "highlight.js/styles/github.css";
 
@@ -7,8 +12,11 @@
 
 :root {
 	--radius: 0.5rem;
-	font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
-		Arial, sans-serif;
+	--app-font-sans: "Geist Variable", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+		Roboto, "Helvetica Neue", Arial, sans-serif;
+	--app-font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+		"Liberation Mono", monospace;
+	font-family: var(--app-font-sans);
 	line-height: 1.5;
 	font-weight: 400;
 	--background: hsl(0 0% 100%);
@@ -122,6 +130,8 @@ body {
 	--radius-md: calc(var(--radius) - 2px);
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 4px);
+	--font-sans: var(--app-font-sans);
+	--font-mono: var(--app-font-mono);
 }
 
 @layer base {
@@ -930,8 +940,8 @@ body {
   --editor-line-height: 1.5;
   --editor-heading-line-height: 1.3;
   --editor-code-font-size: 0.875em;
-  --editor-code-font: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  --editor-font-family: Inter, "SF Pro Display", -apple-system, BlinkMacSystemFont, "Open Sans", "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  --editor-code-font: var(--app-font-mono);
+  --editor-font-family: var(--app-font-sans);
   --editor-block-padding: 3px 0;
 }
 
