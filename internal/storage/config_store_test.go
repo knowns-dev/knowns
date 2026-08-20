@@ -81,3 +81,42 @@ func TestConfigStoreSetRejectsInvalidLifecycleWithoutMutation(t *testing.T) {
 		t.Fatalf("invalid Set mutated config:\nbefore=%s\nafter=%s", before, after)
 	}
 }
+
+func TestConfigStoreNormalizesTaskIDPrefix(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	if err := store.Init("prefix-config"); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	if err := store.Config.Set("settings.defaultTaskIdPrefix", " kn "); err != nil {
+		t.Fatalf("Set task ID prefix: %v", err)
+	}
+	project, err := store.Config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if project.Settings.DefaultTaskIDPrefix != "KN" {
+		t.Fatalf("DefaultTaskIDPrefix = %q, want KN", project.Settings.DefaultTaskIDPrefix)
+	}
+	// The canonical form must be what landed on disk, not the raw input.
+	raw, err := os.ReadFile(filepath.Join(root, "config.json"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(raw), `"defaultTaskIdPrefix": "KN"`) {
+		t.Fatalf("config.json did not persist the canonical prefix:\n%s", raw)
+	}
+
+	before := raw
+	if err := store.Config.Set("settings.defaultTaskIdPrefix", "1bad"); err == nil {
+		t.Fatal("Set invalid task ID prefix succeeded, want error")
+	}
+	after, err := os.ReadFile(filepath.Join(root, "config.json"))
+	if err != nil {
+		t.Fatalf("ReadFile after invalid Set: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("invalid task ID prefix mutated config")
+	}
+}

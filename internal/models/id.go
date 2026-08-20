@@ -14,7 +14,19 @@ const (
 	// base36Max is 36^6 = 2 176 782 336 – the exclusive upper bound for a
 	// 6-character base-36 value.
 	base36Max = 36 * 36 * 36 * 36 * 36 * 36 // 2_176_782_336
+
+	// crockfordBase32Chars omits I, L, O, and U to keep generated task IDs
+	// readable when copied between terminals, documents, and issue trackers.
+	crockfordBase32Chars = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+	// crockfordBase32Max is 32^6, the exclusive upper bound for a six-character
+	// Crockford Base32 suffix.
+	crockfordBase32Max = 32 * 32 * 32 * 32 * 32 * 32
 )
+
+// taskIDPrefixRE constrains a prefix to a delimiter-safe ASCII namespace:
+// 2-8 alphanumeric characters beginning with a letter.
+var taskIDPrefixRE = regexp.MustCompile(`^[A-Z][A-Z0-9]{1,7}$`)
 
 // NewTaskID generates a random 6-character base-36 task ID.
 //
@@ -27,17 +39,52 @@ func NewTaskID() string {
 	return encodeBase36(int(value), 6)
 }
 
+// NormalizeTaskIDPrefix validates and canonicalizes a task ID prefix. An empty
+// value is allowed and means that no prefixed default is configured.
+func NormalizeTaskIDPrefix(prefix string) (string, error) {
+	normalized := strings.ToUpper(strings.TrimSpace(prefix))
+	if normalized == "" {
+		return "", nil
+	}
+	if !taskIDPrefixRE.MatchString(normalized) {
+		return "", fmt.Errorf("task ID prefix must be 2-8 alphanumeric characters and start with a letter")
+	}
+	return normalized, nil
+}
+
+// NewPrefixedTaskID returns an ID in the form PREFIX-XXXXXX, where the suffix
+// uses uppercase Crockford Base32.
+func NewPrefixedTaskID(prefix string) (string, error) {
+	normalized, err := NormalizeTaskIDPrefix(prefix)
+	if err != nil {
+		return "", err
+	}
+	if normalized == "" {
+		return "", fmt.Errorf("task ID prefix is required")
+	}
+
+	value := rand.N(uint64(crockfordBase32Max)) //nolint:gosec – IDs are not security tokens
+	return normalized + "-" + encodeBase(int(value), 6, crockfordBase32Chars), nil
+}
+
 // encodeBase36 encodes n in base-36 and left-pads the result with '0' to the
 // requested minimum width.
 func encodeBase36(n, width int) string {
+	return encodeBase(n, width, base36Chars)
+}
+
+// encodeBase encodes n using alphabet and left-pads the result with the first
+// alphabet character to the requested minimum width.
+func encodeBase(n, width int, alphabet string) string {
 	if n == 0 {
-		return strings.Repeat("0", width)
+		return strings.Repeat(alphabet[:1], width)
 	}
 
 	buf := make([]byte, 0, width)
+	base := len(alphabet)
 	for n > 0 {
-		buf = append(buf, base36Chars[n%36])
-		n /= 36
+		buf = append(buf, alphabet[n%base])
+		n /= base
 	}
 
 	// Reverse
@@ -47,7 +94,7 @@ func encodeBase36(n, width int) string {
 
 	s := string(buf)
 	if len(s) < width {
-		s = strings.Repeat("0", width-len(s)) + s
+		s = strings.Repeat(alphabet[:1], width-len(s)) + s
 	}
 	return s
 }

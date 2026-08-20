@@ -54,6 +54,7 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	fulfills, _ := cmd.Flags().GetStringArray("fulfills")
 	plan, _ := cmd.Flags().GetString("plan")
 	notes, _ := cmd.Flags().GetString("notes")
+	prefix, _ := cmd.Flags().GetString("prefix")
 
 	// Load config for defaults
 	cfg, _ := store.Config.Load()
@@ -73,7 +74,6 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 
 	now := time.Now()
 	task := &models.Task{
-		ID:                  models.NewTaskID(),
 		Title:               title,
 		Description:         description,
 		Status:              status,
@@ -100,11 +100,10 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	if err := store.CreateTaskWithHistory(context.Background(), task, models.TaskVersion{
-		Author:   assignee,
-		Changes:  store.Versions.TrackChanges(nil, task),
-		Snapshot: storage.TaskToSnapshot(task),
-	}); err != nil {
+	if err := store.CreateTaskWithHistoryPrefixed(context.Background(), task, models.TaskVersion{
+		Author:  assignee,
+		Changes: store.Versions.TrackChanges(nil, task),
+	}, prefix); err != nil {
 		return fmt.Errorf("create task: %w", err)
 	}
 
@@ -1083,6 +1082,7 @@ func init() {
 	taskCreateCmd.Flags().StringArray("fulfills", nil, "Spec AC this task fulfills (repeatable)")
 	taskCreateCmd.Flags().String("plan", "", "Implementation plan")
 	taskCreateCmd.Flags().String("notes", "", "Implementation notes")
+	taskCreateCmd.Flags().String("prefix", "", "Custom task ID prefix (2-8 alphanumeric characters)")
 
 	// task list flags
 	taskListCmd.Flags().String("status", "", "Filter by status")

@@ -14,6 +14,7 @@ Dùng `knowns <command> --help` để xem syntax chính xác. Trang này là t�
 knowns init
 knowns init my-project --no-wizard
 knowns init --force
+knowns init --no-wizard --task-prefix KN
 knowns setup --global
 knowns setup claude --global
 knowns setup codex --global
@@ -42,6 +43,7 @@ knowns settings --global
 
 ```bash
 knowns task create "Title" -d "Description"
+knowns task create "Feature riêng" --prefix FR
 knowns task create "Add auth" \
   --ac "User can login" \
   --ac "JWT token returned" \
@@ -57,6 +59,12 @@ knowns task edit <id> --check-ac 1
 knowns task edit <id> --append-notes "Completed middleware"
 knowns task edit <id> --plan '1. Research\n2. Implement\n3. Test'
 ```
+
+Khi truyền `--prefix`, Knowns tạo ID như `FR-4F7Q2M`. Prefix được chuẩn hoá
+thành chữ hoa, dài 2-8 ký tự chữ/số và phải bắt đầu bằng chữ. Đây là override
+cho một task, không thay đổi config. Nếu bỏ qua, Knowns dùng
+`settings.defaultTaskIdPrefix`; project chưa cấu hình vẫn dùng ID lowercase
+6 ký tự như trước.
 
 ## Doc
 

@@ -10,6 +10,7 @@ This file describes what the project wants Knowns to manage locally, including p
 {
   "name": "my-project",
   "settings": {
+    "defaultTaskIdPrefix": "KN",
     "gitTrackingMode": "git-tracked",
     "gitTracking": {
       "tasks": true,
@@ -62,6 +63,27 @@ Behavior:
 - `git-tracked`: keep `.knowns/` content tracked in Git
 - `git-ignored`: keep config/docs/templates tracked while leaving some local data out of Git depending on generated ignore rules
 - `none`: do not let Knowns manage `.gitignore`
+
+### `settings.defaultTaskIdPrefix`
+
+Optional default for newly generated task IDs. `KN` produces IDs such as
+`KN-4F7Q2M`.
+
+- 2-8 alphanumeric characters
+- must start with a letter
+- normalized to uppercase
+- independent of task type; callers may use any valid one-off prefix
+- changing or clearing it affects future tasks only
+- omitting it preserves the legacy six-character lowercase format
+
+Configure it with the init wizard, `knowns init --task-prefix KN`,
+`knowns settings`, the Web settings page, or:
+
+```bash
+knowns config set settings.defaultTaskIdPrefix KN
+```
+
+`knowns settings --global` can set the default copied into future projects.
 
 ### `settings.gitTracking`
 

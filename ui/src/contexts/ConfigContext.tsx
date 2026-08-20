@@ -28,6 +28,7 @@ export interface Config {
 	defaultAssignee?: string;
 	defaultPriority?: "low" | "medium" | "high";
 	defaultLabels?: string[];
+	defaultTaskIdPrefix?: string;
 	timeFormat?: "12h" | "24h";
 	editor?: string;
 	visibleColumns?: string[];
@@ -97,6 +98,7 @@ const DEFAULT_CONFIG: Config = {
 	name: "Knowns",
 	defaultPriority: "medium",
 	defaultLabels: [],
+	defaultTaskIdPrefix: "",
 	statuses: ["todo", "in-progress", "in-review", "done", "blocked", "on-hold", "urgent"],
 	visibleColumns: ["todo", "in-progress", "in-review", "done", "blocked"],
 	statusColors: {},

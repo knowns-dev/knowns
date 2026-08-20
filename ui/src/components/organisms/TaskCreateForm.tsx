@@ -89,6 +89,7 @@ export default function TaskCreateForm({
 	const [assignee, setAssignee] = useState("");
 	const [labels, setLabels] = useState<string[]>([]);
 	const [parentId, setParentId] = useState<string>("");
+	const [taskIDPrefix, setTaskIDPrefix] = useState("");
 	const [acceptanceCriteria, setAcceptanceCriteria] = useState<{ id: string; text: string }[]>([]);
 	const [implementationPlan, setImplementationPlan] = useState("");
 	const [implementationNotes, setImplementationNotes] = useState("");
@@ -137,6 +138,7 @@ export default function TaskCreateForm({
 			setAssignee("");
 			setLabels([]);
 			setParentId("");
+			setTaskIDPrefix("");
 			setAcceptanceCriteria([]);
 			setImplementationPlan("");
 			setImplementationNotes("");
@@ -198,6 +200,11 @@ export default function TaskCreateForm({
 			setError("Title is required");
 			return;
 		}
+		const normalizedPrefix = taskIDPrefix.trim().toUpperCase();
+		if (normalizedPrefix && !/^[A-Z][A-Z0-9]{1,7}$/.test(normalizedPrefix)) {
+			setError("Task ID prefix must be 2-8 letters or numbers and start with a letter");
+			return;
+		}
 
 		setSaving(true);
 
@@ -210,6 +217,7 @@ export default function TaskCreateForm({
 				labels,
 				assignee: assignee.trim() || undefined,
 				parent: parentId || undefined,
+				prefix: normalizedPrefix || undefined,
 				acceptanceCriteria: acceptanceCriteria.map((ac) => ({
 					text: ac.text,
 					completed: false,
@@ -512,6 +520,21 @@ export default function TaskCreateForm({
 				/>
 			</div>
 
+			{/* Task ID prefix */}
+			<div className="space-y-2">
+				<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+					Task ID Prefix
+				</Label>
+				<Input
+					value={taskIDPrefix}
+					onChange={(event) => setTaskIDPrefix(event.target.value.toUpperCase())}
+					placeholder={config.defaultTaskIdPrefix || "Project default"}
+					maxLength={8}
+					disabled={saving}
+				/>
+				<p className="text-xs text-muted-foreground">Optional override for this task only.</p>
+			</div>
+
 			{/* Labels */}
 			<div className="space-y-2">
 				<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -750,8 +773,8 @@ export default function TaskCreateForm({
 								{/* Sidebar on top - compact layout */}
 								<div className="shrink-0 border-b bg-muted/20">
 									<div className="p-3 sm:p-4 space-y-3">
-										{/* Row 1: Status, Priority, Assignee */}
-										<div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
+										{/* Row 1: Status, Priority, Assignee, ID prefix */}
+										<div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
 											<div className="space-y-1">
 												<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 													Status
@@ -804,6 +827,19 @@ export default function TaskCreateForm({
 													showGrabButton={false}
 													currentUser={currentUser}
 													container={contentRef.current}
+												/>
+											</div>
+											<div className="space-y-1">
+												<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+													ID Prefix
+												</Label>
+												<Input
+													value={taskIDPrefix}
+													onChange={(event) => setTaskIDPrefix(event.target.value.toUpperCase())}
+													placeholder={config.defaultTaskIdPrefix || "Default"}
+													maxLength={8}
+													disabled={saving}
+													className="h-9"
 												/>
 											</div>
 										</div>

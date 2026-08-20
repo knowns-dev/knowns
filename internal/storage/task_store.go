@@ -161,7 +161,78 @@ func (ts *TaskStore) Create(task *models.Task) error {
 	return ts.withLifecycleLock(func() error { return ts.createUnlocked(task) })
 }
 
+const maxTaskIDGenerationAttempts = 10
+
+// CreateGenerated allocates a collision-safe ID and writes a new task while
+// holding the lifecycle lock. An empty prefix preserves the legacy ID format.
+func (ts *TaskStore) CreateGenerated(task *models.Task, prefix string) error {
+	if task == nil {
+		return fmt.Errorf("task is required")
+	}
+	if task.ID != "" {
+		return fmt.Errorf("generated task must not already have an ID")
+	}
+	return ts.withLifecycleLock(func() error {
+		id, err := ts.allocateTaskIDUnlocked(prefix)
+		if err != nil {
+			return err
+		}
+		task.ID = id
+		if err := ts.createUnlocked(task); err != nil {
+			task.ID = ""
+			return err
+		}
+		return nil
+	})
+}
+
+// allocateTaskIDUnlocked returns an unused task ID. It must be called while the
+// project lifecycle lock is held so the reservation cannot race another writer.
+// An empty prefix preserves the legacy six-character base36 format.
+func (ts *TaskStore) allocateTaskIDUnlocked(prefix string) (string, error) {
+	normalized, err := models.NormalizeTaskIDPrefix(prefix)
+	if err != nil {
+		return "", err
+	}
+	return ts.allocateTaskIDWith(normalized, func() (string, error) {
+		if normalized == "" {
+			return models.NewTaskID(), nil
+		}
+		return models.NewPrefixedTaskID(normalized)
+	})
+}
+
+// allocateTaskIDWith is the collision-retry core. generate is injectable so the
+// retry path can be exercised deterministically.
+func (ts *TaskStore) allocateTaskIDWith(normalized string, generate func() (string, error)) (string, error) {
+	for range maxTaskIDGenerationAttempts {
+		candidate, err := generate()
+		if err != nil {
+			return "", fmt.Errorf("generate task ID: %w", err)
+		}
+		if _, err := ts.findFile(candidate); err == nil {
+			continue
+		}
+		reserved, err := ts.IsIDReserved(candidate)
+		if err != nil {
+			return "", fmt.Errorf("check reserved task ID: %w", err)
+		}
+		if reserved {
+			continue
+		}
+		return candidate, nil
+	}
+	format := "legacy"
+	if normalized != "" {
+		format = normalized
+	}
+	return "", fmt.Errorf("could not allocate a unique %s task ID after %d attempts", format, maxTaskIDGenerationAttempts)
+}
+
 func (ts *TaskStore) createUnlocked(task *models.Task) error {
+	if task == nil {
+		return fmt.Errorf("task is required")
+	}
 	if task.ID == "" {
 		return fmt.Errorf("task ID is required")
 	}

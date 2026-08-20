@@ -69,6 +69,7 @@ func (cr *ConfigRoutes) configResponse(project *models.Project) map[string]inter
 	if s.DefaultLabels != nil {
 		flat["defaultLabels"] = s.DefaultLabels
 	}
+	flat["defaultTaskIdPrefix"] = s.DefaultTaskIDPrefix
 	if s.TimeFormat != "" {
 		flat["timeFormat"] = s.TimeFormat
 	}
@@ -221,6 +222,11 @@ func applySettingsUpdate(settings *models.ProjectSettings, payload map[string]js
 	}
 	if raw, ok := payload["defaultLabels"]; ok {
 		if err := json.Unmarshal(raw, &settings.DefaultLabels); err != nil {
+			return err
+		}
+	}
+	if raw, ok := payload["defaultTaskIdPrefix"]; ok {
+		if err := json.Unmarshal(raw, &settings.DefaultTaskIDPrefix); err != nil {
 			return err
 		}
 	}

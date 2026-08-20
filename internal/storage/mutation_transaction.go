@@ -183,15 +183,52 @@ func (s *Store) DeleteDocWithExpectedHash(ctx context.Context, path string, opts
 
 // CreateTaskWithHistory creates a Task and its initial history record under
 // one lifecycle lock. A failed history append removes the newly-created Task.
+// An empty task.ID is allocated from the project default ID prefix.
 func (s *Store) CreateTaskWithHistory(ctx context.Context, task *models.Task, version models.TaskVersion) error {
+	return s.CreateTaskWithHistoryPrefixed(ctx, task, version, "")
+}
+
+// CreateTaskWithHistoryPrefixed is CreateTaskWithHistory with an explicit
+// one-off ID prefix. A non-empty prefix overrides the project default for this
+// Task only and never mutates project settings. Callers that already assigned
+// task.ID keep it, which preserves import and compatibility paths.
+func (s *Store) CreateTaskWithHistoryPrefixed(ctx context.Context, task *models.Task, version models.TaskVersion, prefix string) error {
 	if task == nil {
 		return fmt.Errorf("create task with history: task is required")
 	}
+	// Reject a malformed prefix before taking the lifecycle lock. The message is
+	// user-facing and already self-describing, so it is returned unwrapped.
+	explicitPrefix, err := models.NormalizeTaskIDPrefix(prefix)
+	if err != nil {
+		return err
+	}
 	return s.WithTaskLifecycleTransaction(ctx, func(tx *TaskLifecycleTransaction) error {
+		allocated := false
+		if task.ID == "" {
+			effectivePrefix := explicitPrefix
+			if effectivePrefix == "" {
+				project, err := s.Config.Load()
+				if err != nil {
+					return fmt.Errorf("resolve default task ID prefix: %w", err)
+				}
+				effectivePrefix = project.Settings.DefaultTaskIDPrefix
+			}
+			id, err := s.Tasks.allocateTaskIDUnlocked(effectivePrefix)
+			if err != nil {
+				return err
+			}
+			task.ID = id
+			allocated = true
+		}
 		if err := tx.CreateTask(task); err != nil {
+			if allocated {
+				task.ID = ""
+			}
 			return err
 		}
-		if len(version.Snapshot) == 0 {
+		// A caller-supplied snapshot is captured before the ID exists, so it must
+		// be recomputed whenever this call allocated the ID.
+		if allocated || len(version.Snapshot) == 0 {
 			version.Snapshot = TaskToSnapshot(task)
 		}
 		if len(version.Changes) == 0 {

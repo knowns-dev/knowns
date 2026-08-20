@@ -74,9 +74,10 @@ func GitTrackingModeDefaults(mode string) GitTracking {
 }
 
 type ProjectSettings struct {
-	DefaultAssignee string   `json:"defaultAssignee,omitempty"`
-	DefaultPriority string   `json:"defaultPriority"`
-	DefaultLabels   []string `json:"defaultLabels,omitempty"`
+	DefaultAssignee     string   `json:"defaultAssignee,omitempty"`
+	DefaultPriority     string   `json:"defaultPriority"`
+	DefaultLabels       []string `json:"defaultLabels,omitempty"`
+	DefaultTaskIDPrefix string   `json:"defaultTaskIdPrefix,omitempty"`
 
 	// TaskLifecycle is canonical for this project. A nil value is supported for
 	// backward compatibility and resolves to DefaultTaskLifecycleSettings.
@@ -131,6 +132,16 @@ type ProjectSettings struct {
 
 	// LSP configures language server enable/disable and binary overrides.
 	LSP *LSPSettings `json:"lsp,omitempty"`
+}
+
+// Normalize canonicalizes settings that accept human-friendly input.
+func (s *ProjectSettings) Normalize() error {
+	prefix, err := NormalizeTaskIDPrefix(s.DefaultTaskIDPrefix)
+	if err != nil {
+		return fmt.Errorf("settings.defaultTaskIdPrefix: %w", err)
+	}
+	s.DefaultTaskIDPrefix = prefix
+	return nil
 }
 
 // TaskLifecycleSettings configures Task visibility and retention. AutoArchive
@@ -198,6 +209,9 @@ func (s ProjectSettings) EffectiveTaskLifecycle() TaskLifecycleSettings {
 
 // Validate rejects malformed lifecycle durations while permitting zero delay.
 func (s ProjectSettings) Validate() error {
+	if _, err := NormalizeTaskIDPrefix(s.DefaultTaskIDPrefix); err != nil {
+		return fmt.Errorf("settings.defaultTaskIdPrefix: %w", err)
+	}
 	settings := s.EffectiveTaskLifecycle()
 	if _, err := ParseTaskLifecycleDuration(settings.ArchiveAfter); err != nil {
 		return fmt.Errorf("settings.taskLifecycle.archiveAfter: %w", err)

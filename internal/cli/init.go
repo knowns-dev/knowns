@@ -289,6 +289,7 @@ func normalizeInstructionPlatforms(platforms []string) []string {
 // initConfig holds all wizard answers.
 type initConfig struct {
 	Name            string
+	TaskIDPrefix    string
 	GitTrackingMode string
 	GitTracking     models.GitTracking
 	EnableSemantic  bool
@@ -336,6 +337,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 	noWizard, _ := cmd.Flags().GetBool("no-wizard")
 	openFlag, _ := cmd.Flags().GetBool("open")
 	noOpen, _ := cmd.Flags().GetBool("no-open")
+	taskIDPrefixFlag, _ := cmd.Flags().GetString("task-prefix")
+	taskIDPrefixFlag, err := models.NormalizeTaskIDPrefix(taskIDPrefixFlag)
+	if err != nil {
+		return err
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -417,11 +423,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	if interactive && len(args) == 0 {
 		// Load any existing config to pre-populate wizard defaults.
-		existingName, existingGitTrackingMode, existingGitTracking, existingSemanticEnabled, existingSemanticModel, existingPlatforms := defaultsForWizard(cwd, globalDefaults)
+		existingName, existingTaskIDPrefix, existingGitTrackingMode, existingGitTracking, existingSemanticEnabled, existingSemanticModel, existingPlatforms := defaultsForWizard(cwd, globalDefaults)
 		existingProject, _ := storage.NewStore(root).Config.Load()
 		existingEmbeddingSource := resolveWizardEmbeddingSource(globalDefaults, existingProject)
 		if existingCfg := existingProject; existingCfg != nil {
 			existingName = existingCfg.Name
+			existingTaskIDPrefix = existingCfg.Settings.DefaultTaskIDPrefix
 			existingGitTrackingMode = existingCfg.Settings.GitTrackingMode
 			if existingCfg.Settings.GitTracking != nil {
 				existingGitTracking = existingCfg.Settings.GitTracking
@@ -437,7 +444,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 
 		// Run full wizard with huh
-		wizardCfg, err := runWizard(cwd, gitTracked, gitIgnored, gitAvailable, existingName, existingGitTrackingMode, existingGitTracking, existingSemanticEnabled, existingSemanticModel, existingPlatforms)
+		wizardCfg, err := runWizard(cwd, gitTracked, gitIgnored, gitAvailable, existingName, existingTaskIDPrefix, existingGitTrackingMode, existingGitTracking, existingSemanticEnabled, existingSemanticModel, existingPlatforms)
 		if err != nil {
 			if err == huh.ErrUserAborted {
 				fmt.Println(warnStyle.Render("Setup cancelled."))
@@ -457,6 +464,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 		if len(args) > 0 {
 			name = args[0]
+		}
+		taskIDPrefix := ""
+		if globalDefaults != nil {
+			taskIDPrefix = globalDefaults.Settings.DefaultTaskIDPrefix
 		}
 		gitMode := "git-tracked"
 		gitTracking := models.GitTrackingDefaults()
@@ -487,6 +498,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 				if existingCfg.Name != "" && len(args) == 0 {
 					name = existingCfg.Name
 				}
+				if existingCfg.Settings.DefaultTaskIDPrefix != "" {
+					taskIDPrefix = existingCfg.Settings.DefaultTaskIDPrefix
+				}
 				if existingCfg.Settings.GitTrackingMode != "" {
 					gitMode = existingCfg.Settings.GitTrackingMode
 				}
@@ -512,6 +526,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 		cfg = initConfig{
 			Name:            name,
+			TaskIDPrefix:    taskIDPrefix,
 			GitTrackingMode: gitMode,
 			GitTracking:     gitTracking,
 			EnableSemantic:  enableSemantic,
@@ -519,6 +534,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 			EmbeddingSource: embeddingSource,
 			Platforms:       platforms,
 		}
+	}
+	// An explicit --task-prefix outranks the wizard, existing config, and
+	// global defaults.
+	if taskIDPrefixFlag != "" {
+		cfg.TaskIDPrefix = taskIDPrefixFlag
 	}
 	cfg.TaskLifecycle = taskLifecycleSeed
 	applyLocalONNXInitCapability(&cfg)
@@ -552,6 +572,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				if len(cfg.Platforms) > 0 {
 					project.Settings.Platforms = cfg.Platforms
 				}
+				project.Settings.DefaultTaskIDPrefix = cfg.TaskIDPrefix
 				if cfg.TaskLifecycle != nil {
 					project.Settings.TaskLifecycle = copyTaskLifecycleSettings(cfg.TaskLifecycle)
 				}
@@ -768,8 +789,9 @@ func resolveWizardEmbeddingSource(globalDefaults *storage.ProjectDefaults, exist
 	return source
 }
 
-func defaultsForWizard(cwd string, defaults *storage.ProjectDefaults) (string, string, *models.GitTracking, *bool, string, []string) {
+func defaultsForWizard(cwd string, defaults *storage.ProjectDefaults) (string, string, string, *models.GitTracking, *bool, string, []string) {
 	name := filepath.Base(cwd)
+	var taskIDPrefix string
 	var gitMode string
 	var gitTracking *models.GitTracking
 	var semanticEnabled *bool
@@ -777,11 +799,12 @@ func defaultsForWizard(cwd string, defaults *storage.ProjectDefaults) (string, s
 	platforms := defaultInstructionPlatforms()
 
 	if defaults == nil {
-		return name, gitMode, gitTracking, semanticEnabled, semanticModel, platforms
+		return name, taskIDPrefix, gitMode, gitTracking, semanticEnabled, semanticModel, platforms
 	}
 	if defaults.ProjectName != "" {
 		name = defaults.ProjectName
 	}
+	taskIDPrefix = defaults.Settings.DefaultTaskIDPrefix
 	gitMode = defaults.Settings.GitTrackingMode
 	gitTracking = defaults.Settings.GitTracking
 	if defaults.Settings.SemanticSearch != nil {
@@ -792,10 +815,10 @@ func defaultsForWizard(cwd string, defaults *storage.ProjectDefaults) (string, s
 	if len(defaults.Settings.Platforms) > 0 {
 		platforms = defaults.Settings.Platforms
 	}
-	return name, gitMode, gitTracking, semanticEnabled, semanticModel, platforms
+	return name, taskIDPrefix, gitMode, gitTracking, semanticEnabled, semanticModel, platforms
 }
 
-func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, existingName string, existingGitTrackingMode string, existingGitTracking *models.GitTracking, existingSemanticEnabled *bool, existingSemanticModel string, existingPlatforms []string) (*initConfig, error) {
+func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, existingName string, existingTaskIDPrefix string, existingGitTrackingMode string, existingGitTracking *models.GitTracking, existingSemanticEnabled *bool, existingSemanticModel string, existingPlatforms []string) (*initConfig, error) {
 	defaultName := filepath.Base(cwd)
 	if existingName != "" {
 		defaultName = existingName
@@ -809,8 +832,9 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 
 	var cfg initConfig
 	cfg.Name = defaultName
+	cfg.TaskIDPrefix = existingTaskIDPrefix
 
-	// --- Group 1: Project name ---
+	// --- Group 1: Project name and Task ID prefix ---
 	nameField := huh.NewGroup(
 		huh.NewInput().
 			Title("Project name").
@@ -821,6 +845,15 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 					return fmt.Errorf("project name is required")
 				}
 				return nil
+			}),
+		huh.NewInput().
+			Title("Default Task ID prefix").
+			Description("2-8 alphanumeric characters, e.g. KN. Leave blank for legacy IDs.").
+			Value(&cfg.TaskIDPrefix).
+			Placeholder(existingTaskIDPrefix).
+			Validate(func(s string) error {
+				_, err := models.NormalizeTaskIDPrefix(s)
+				return err
 			}),
 	)
 
@@ -1877,6 +1910,7 @@ func lspBinariesFromAdapter(adapter lsp.LanguageAdapter) []lsp.Binary {
 }
 
 func init() {
+	initCmd.Flags().String("task-prefix", "", "Default task ID prefix (2-8 alphanumeric characters, e.g. KN)")
 	initCmd.Flags().Bool("git-tracked", false, "Track .knowns/ files in git")
 	initCmd.Flags().Bool("git-ignored", false, "Add .knowns/ to .gitignore")
 	initCmd.Flags().Bool("wizard", false, "Run interactive setup wizard")

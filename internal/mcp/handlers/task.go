@@ -22,7 +22,7 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 		mcp.NewTool("tasks",
 			mcp.WithDescription(`Task management operations. Use 'action' to specify: create, get, update, delete, list, history, board, archive, unarchive, batch_archive, batch_unarchive, hard_delete.
 
-- create: Create a task or subtask. Required: title. Optional: description, status, priority, assignee, labels, parent, spec, fulfills, order, return. Returns: compact summary by default; use return=full for the legacy task payload.
+- create: Create a task or subtask. Required: title. Optional: description, status, priority, assignee, labels, parent, spec, fulfills, order, prefix, return. Returns: compact summary by default; use return=full for the legacy task payload.
 - get: Read task details. Required: taskId. Optional: none. Returns: task metadata, acceptance criteria, plan, notes, spec links, and time spent.
 - update: Modify task fields, ACs, plan, or notes. Required: taskId. Optional: title, description, status, priority, assignee, labels, spec, fulfills, order, addAc, checkAc, uncheckAc, removeAc, plan, notes, appendNotes, clear, return. Returns: compact summary by default; use return=full for the legacy task payload.
 - delete: Remove a task or preview removal. Required: taskId. Optional: dryRun (default true). Returns: deletion preview or confirmation.
@@ -68,6 +68,9 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 			),
 			mcp.WithString("parent",
 				mcp.Description("Parent task ID for subtasks (create)"),
+			),
+			mcp.WithString("prefix",
+				mcp.Description("Custom task ID prefix for create; overrides the project default without changing config"),
 			),
 			mcp.WithString("spec",
 				mcp.Description("Spec document path (create, update, list)"),
@@ -154,7 +157,7 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 		},
 	)
 
-	registerHelp(s, "tasks.create", HelpEntry{When: "Create a new task or subtask with title, context, ownership, labels, and optional spec links. Successful calls return a compact summary by default.", Params: map[string]string{"title": "required — task title", "description": "task context and goal", "status": "todo | in-progress | in-review | done | blocked | on-hold | urgent", "priority": "low | medium | high", "assignee": "person responsible for task", "labels": "task labels", "parent": "parent task ID for subtasks", "spec": "spec doc path this task implements", "fulfills": "spec AC IDs this task satisfies", "order": "display order", "return": "summary (default) | full legacy task payload"}, Examples: []string{`tasks({ action: "create", title: "Add auth", description: "...", priority: "high" })`}, Flow: "Create task, then update to in-progress and start time before implementation. Use return=full only when the complete created task is required."})
+	registerHelp(s, "tasks.create", HelpEntry{When: "Create a new task or subtask with title, context, ownership, labels, and optional spec links. Successful calls return a compact summary by default.", Params: map[string]string{"title": "required — task title", "description": "task context and goal", "status": "todo | in-progress | in-review | done | blocked | on-hold | urgent", "priority": "low | medium | high", "assignee": "person responsible for task", "labels": "task labels", "parent": "parent task ID for subtasks", "spec": "spec doc path this task implements", "fulfills": "spec AC IDs this task satisfies", "order": "display order", "prefix": "custom 2-8 character task ID prefix; overrides the project default for this task only", "return": "summary (default) | full legacy task payload"}, Examples: []string{`tasks({ action: "create", title: "Add auth", description: "...", priority: "high", prefix: "FR" })`}, Flow: "Create task, then update to in-progress and start time before implementation. Use return=full only when the complete created task is required."})
 	registerHelp(s, "tasks.get", HelpEntry{When: "Read full task details before planning, implementation, review, or status updates.", Params: map[string]string{"taskId": "required — task ID"}, Flow: "Use before update/history when you need current ACs, plan, notes, or spec links."})
 	registerHelp(s, "tasks.update", HelpEntry{When: "Modify task metadata, status, acceptance criteria, plan, or implementation notes. Successful calls return a compact summary by default.", Params: map[string]string{"taskId": "required — task ID", "title": "new task title", "description": "new task description", "status": "new task status", "priority": "low | medium | high", "assignee": "new assignee", "labels": "replacement label list", "spec": "spec doc path", "fulfills": "spec AC IDs this task satisfies", "order": "display order", "addAc": "new acceptance criteria", "checkAc": "1-based AC indexes to mark complete", "uncheckAc": "1-based AC indexes to mark incomplete", "removeAc": "1-based AC indexes to remove", "plan": "implementation plan", "notes": "replace all implementation notes", "appendNotes": "append to existing implementation notes", "clear": "string fields to clear", "return": "summary (default) | full legacy task payload"}, Why: "Use appendNotes for progress. notes replaces existing notes and can wipe history.", Examples: []string{`tasks({ action: "update", taskId: "abc123", appendNotes: "Done: added tests" })`, `tasks({ action: "update", taskId: "abc123", checkAc: [1, 2] })`}, Flow: "Only check AC after work is complete; stop time and set status done at finish. Use return=full only when the complete updated task is required."})
 	registerHelp(s, "tasks.delete", HelpEntry{When: "Preview or remove a task when it is obsolete or was created by mistake.", Params: map[string]string{"taskId": "required — task ID", "dryRun": "preview only without deleting; default true"}, Why: "Default dryRun protects against accidental deletion."})
@@ -227,7 +230,6 @@ func handleTaskCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 	}
 
 	task := &models.Task{
-		ID:        models.NewTaskID(),
 		Title:     title,
 		Status:    status,
 		Priority:  priority,
@@ -268,10 +270,10 @@ func handleTaskCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 		task.ImplementationNotes = v
 	}
 
-	if err := store.CreateTaskWithHistory(context.Background(), task, models.TaskVersion{
-		Changes:  store.Versions.TrackChanges(nil, task),
-		Snapshot: storage.TaskToSnapshot(task),
-	}); err != nil {
+	prefix, _ := stringArg(args, "prefix")
+	if err := store.CreateTaskWithHistoryPrefixed(context.Background(), task, models.TaskVersion{
+		Changes: store.Versions.TrackChanges(nil, task),
+	}, prefix); err != nil {
 		return errFailed("create task", err)
 	}
 

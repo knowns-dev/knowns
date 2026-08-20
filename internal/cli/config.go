@@ -225,6 +225,7 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 		fmt.Printf("ID: %s\n", project.ID)
 		fmt.Printf("settings.defaultAssignee: %s\n", project.Settings.DefaultAssignee)
 		fmt.Printf("settings.defaultPriority: %s\n", project.Settings.DefaultPriority)
+		fmt.Printf("settings.defaultTaskIdPrefix: %s\n", project.Settings.DefaultTaskIDPrefix)
 		fmt.Printf("settings.statuses: %s\n", strings.Join(project.Settings.Statuses, ", "))
 		if project.Settings.ServerPort != 0 {
 			fmt.Printf("settings.serverPort: %d\n", project.Settings.ServerPort)
@@ -267,6 +268,7 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 		fmt.Println(RenderSectionHeader("Settings"))
 		fmt.Printf("  %s %s\n", StyleDim.Render("defaultAssignee:"), project.Settings.DefaultAssignee)
 		fmt.Printf("  %s %s\n", StyleDim.Render("defaultPriority:"), project.Settings.DefaultPriority)
+		fmt.Printf("  %s %s\n", StyleDim.Render("taskIdPrefix:   "), project.Settings.DefaultTaskIDPrefix)
 		fmt.Printf("  %s %s\n", StyleDim.Render("statuses:       "), strings.Join(project.Settings.Statuses, ", "))
 		if project.Settings.ServerPort != 0 {
 			fmt.Printf("  %s %d\n", StyleDim.Render("serverPort:     "), project.Settings.ServerPort)
@@ -528,11 +530,20 @@ func runGlobalSettings() error {
 			return nil
 		case "project":
 			name := defaults.ProjectName
+			taskIDPrefix := defaults.Settings.DefaultTaskIDPrefix
 			form := huh.NewForm(huh.NewGroup(
 				huh.NewInput().
 					Title("Default project name").
 					Description("Leave blank to use the directory name.").
 					Value(&name),
+				huh.NewInput().
+					Title("Default Task ID prefix").
+					Description("2-8 alphanumeric characters, e.g. KN. Leave blank for legacy IDs.").
+					Value(&taskIDPrefix).
+					Validate(func(s string) error {
+						_, err := models.NormalizeTaskIDPrefix(s)
+						return err
+					}),
 			)).WithTheme(huh.ThemeCatppuccin())
 			if err := form.Run(); err != nil {
 				if err == huh.ErrUserAborted {
@@ -541,6 +552,7 @@ func runGlobalSettings() error {
 				return err
 			}
 			defaults.ProjectName = strings.TrimSpace(name)
+			defaults.Settings.DefaultTaskIDPrefix = taskIDPrefix
 		case "git":
 			if err := configureGitTrackingSettings(&defaults.Settings); err != nil {
 				return err
@@ -566,6 +578,7 @@ func runGlobalSettings() error {
 
 func configureProjectIdentity(store *storage.Store, project *models.Project) error {
 	name := project.Name
+	taskIDPrefix := project.Settings.DefaultTaskIDPrefix
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewInput().
 			Title("Project name").
@@ -576,6 +589,14 @@ func configureProjectIdentity(store *storage.Store, project *models.Project) err
 				}
 				return nil
 			}),
+		huh.NewInput().
+			Title("Default Task ID prefix").
+			Description("2-8 alphanumeric characters, e.g. KN. Leave blank for legacy IDs.").
+			Value(&taskIDPrefix).
+			Validate(func(s string) error {
+				_, err := models.NormalizeTaskIDPrefix(s)
+				return err
+			}),
 	)).WithTheme(huh.ThemeCatppuccin())
 	if err := form.Run(); err != nil {
 		if err == huh.ErrUserAborted {
@@ -584,6 +605,7 @@ func configureProjectIdentity(store *storage.Store, project *models.Project) err
 		return err
 	}
 	project.Name = strings.TrimSpace(name)
+	project.Settings.DefaultTaskIDPrefix = taskIDPrefix
 	return store.Config.Save(project)
 }
 

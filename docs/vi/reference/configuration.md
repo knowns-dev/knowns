@@ -10,6 +10,7 @@ File này khai báo những gì Knowns cần quản lý locally: platform integr
 {
   "name": "my-project",
   "settings": {
+    "defaultTaskIdPrefix": "KN",
     "gitTrackingMode": "git-tracked",
     "gitTracking": {
       "tasks": true,
@@ -52,6 +53,26 @@ Tên project hiển thị trong Knowns.
 - `git-tracked` — `.knowns/` content tracked trong Git
 - `git-ignored` — config/docs/templates tracked, local data thì không
 - `none` — Knowns không quản lý `.gitignore`
+
+### `settings.defaultTaskIdPrefix`
+
+Default prefix tuỳ chọn cho ID của task mới. Ví dụ `KN` tạo ID
+`KN-4F7Q2M`.
+
+- dài 2-8 ký tự chữ/số và bắt đầu bằng chữ
+- luôn được chuẩn hoá thành chữ hoa
+- không phụ thuộc task type; caller có thể truyền bất kỳ custom prefix hợp lệ
+- đổi hoặc xoá default chỉ ảnh hưởng task tạo sau đó
+- nếu không cấu hình, project vẫn sinh ID lowercase 6 ký tự như trước
+
+Có thể set bằng init wizard, `knowns init --task-prefix KN`,
+`knowns settings`, Web settings, hoặc:
+
+```bash
+knowns config set settings.defaultTaskIdPrefix KN
+```
+
+`knowns settings --global` lưu default cho các project tạo sau.
 
 ### `settings.gitTracking`
 

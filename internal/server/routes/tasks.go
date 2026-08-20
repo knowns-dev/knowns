@@ -44,6 +44,13 @@ type taskResponse struct {
 	LifecycleState models.TaskLifecycleState `json:"lifecycleState"`
 }
 
+// taskCreateRequest accepts an optional one-off ID prefix alongside the Task
+// fields. The prefix is a request-scoped override and is never persisted.
+type taskCreateRequest struct {
+	models.Task
+	Prefix string `json:"prefix,omitempty"`
+}
+
 func newTaskResponse(task *models.Task) taskResponse {
 	NormalizeTask(task)
 	return taskResponse{Task: task, LifecycleState: task.LifecycleState()}
@@ -193,15 +200,16 @@ func (tr *TaskRoutes) get(w http.ResponseWriter, r *http.Request) {
 //
 // POST /api/tasks
 func (tr *TaskRoutes) create(w http.ResponseWriter, r *http.Request) {
-	var task models.Task
-	if err := decodeJSON(r, &task); err != nil {
+	var request taskCreateRequest
+	if err := decodeJSON(r, &request); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
-
-	// Generate an ID if not provided.
-	if task.ID == "" {
-		task.ID = models.NewTaskID()
+	task := request.Task
+	// Reject a malformed prefix as a client error before any storage work.
+	if _, err := models.NormalizeTaskIDPrefix(request.Prefix); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	now := time.Now().UTC()
@@ -229,10 +237,9 @@ func (tr *TaskRoutes) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	store := tr.getStore()
-	if err := store.CreateTaskWithHistory(r.Context(), &task, models.TaskVersion{
-		Changes:  store.Versions.TrackChanges(nil, &task),
-		Snapshot: storage.TaskToSnapshot(&task),
-	}); err != nil {
+	if err := store.CreateTaskWithHistoryPrefixed(r.Context(), &task, models.TaskVersion{
+		Changes: store.Versions.TrackChanges(nil, &task),
+	}, request.Prefix); err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

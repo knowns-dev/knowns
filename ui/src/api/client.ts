@@ -49,6 +49,10 @@ interface TaskDTO {
 	order?: number;
 }
 
+export type CreateTaskInput = Partial<Task> & {
+	prefix?: string;
+};
+
 interface TaskVersionDTO {
 	id: string;
 	taskId: string;
@@ -270,14 +274,15 @@ export const api = {
 		return parseTaskDTO(dto);
 	},
 
-	async createTask(data: Partial<Task>): Promise<Task> {
+	async createTask(data: CreateTaskInput): Promise<Task> {
 		const res = await apiFetch(`${API_BASE}/api/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(data),
 		});
 		if (!res.ok) {
-			throw new Error("Failed to create task");
+			const text = await res.text();
+			throw new Error(`Failed to create task: ${text}`);
 		}
 		const dto = (await res.json()) as TaskDTO;
 		return parseTaskDTO(dto);

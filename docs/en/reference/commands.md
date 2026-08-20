@@ -18,11 +18,13 @@ Initializes Knowns in the current project.
 knowns init
 knowns init my-project --no-wizard
 knowns init --force
+knowns init --no-wizard --task-prefix KN
 ```
 
 What `init` configures:
 
 - project name
+- optional default task ID prefix
 - git tracking mode (with per-section toggles)
 - lightweight project instruction shims such as `CLAUDE.md` and `AGENTS.md`
 - semantic search
@@ -95,6 +97,7 @@ Use `knowns settings` for human-friendly project edits: project name, git tracki
 
 ```bash
 knowns task create "Title" -d "Description"
+knowns task create "Feature-specific title" --prefix FR
 knowns task create "Add auth" \
   --ac "User can login" \
   --ac "JWT token returned" \
@@ -110,6 +113,13 @@ Common options:
 - `--priority`
 - `-a, --assignee`
 - `--parent`
+- `--prefix` (one-off task ID prefix; does not change project config)
+
+When a prefix is supplied, Knowns creates IDs such as `FR-4F7Q2M`. Prefixes
+are normalized to uppercase, must contain 2-8 letters or digits, and must start
+with a letter. If `--prefix` is omitted, Knowns uses
+`settings.defaultTaskIdPrefix`; projects without that setting keep the legacy
+six-character lowercase ID format.
 
 ### View and list
 

@@ -225,6 +225,7 @@ export default function ConfigPage() {
 	const [jsonText, setJsonText] = useState("");
 	const [jsonError, setJsonError] = useState<string | null>(null);
 	const [newStatus, setNewStatus] = useState("");
+	const [taskPrefixDraft, setTaskPrefixDraft] = useState("");
 
 	// Imports state
 	const [imports, setImports] = useState<Import[]>([]);
@@ -359,6 +360,7 @@ export default function ConfigPage() {
 	useEffect(() => {
 		if (!loading) {
 			setConfig(globalConfig);
+			setTaskPrefixDraft(globalConfig.defaultTaskIdPrefix || "");
 			setJsonText(JSON.stringify(editableConfig(globalConfig), null, 2));
 			if (!initialized) setInitialized(true);
 		}
@@ -655,6 +657,27 @@ export default function ConfigPage() {
 						})
 					}
 					placeholder="frontend, backend, ui"
+				/>
+			</FieldRow>
+
+			<FieldRow label="Task ID prefix" hint="Optional default for new tasks, for example KN-4F7Q2M">
+				<Input
+					value={taskPrefixDraft}
+					onChange={(event) => setTaskPrefixDraft(event.target.value.toUpperCase())}
+					onBlur={() => {
+						const normalized = taskPrefixDraft.trim().toUpperCase();
+						if (normalized && !/^[A-Z][A-Z0-9]{1,7}$/.test(normalized)) {
+							toast.error("Prefix must be 2-8 letters or numbers and start with a letter");
+							setTaskPrefixDraft(config.defaultTaskIdPrefix || "");
+							return;
+						}
+						setTaskPrefixDraft(normalized);
+						if (normalized !== (config.defaultTaskIdPrefix || "")) {
+							update({ defaultTaskIdPrefix: normalized });
+						}
+					}}
+					maxLength={8}
+					placeholder="KN"
 				/>
 			</FieldRow>
 
