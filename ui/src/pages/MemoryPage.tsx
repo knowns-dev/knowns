@@ -53,12 +53,14 @@ import {
 } from "lucide-react";
 import MDRender from "@/ui/components/editor/MDRender";
 import ReferencePicker from "@/ui/components/organisms/ReferencePicker";
+import { Button } from "@/ui/components/ui/button";
 import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
 	DialogTitle,
 } from "@/ui/components/ui/dialog";
+import { PageContent, PageHeader, PageShell } from "@/ui/components/templates/PageShell";
 import { cn } from "@/ui/lib/utils";
 
 type MemoryView = "trusted" | "review" | "history";
@@ -174,9 +176,21 @@ export default function MemoryPage() {
 
 	const loadMemories = useCallback(async (): Promise<LoadResult> => {
 		setErrorMessage("");
+		const listPromise = memoryApi.list();
+		const reviewPromise = memoryApi.reviewInbox();
+
+		// The review inbox is far slower than the base ledger, so paint the ledger as
+		// soon as it lands instead of holding the whole page in a skeleton behind it.
+		void listPromise
+			.then((base) => {
+				setMemories((prev) => (prev.length === 0 ? base : prev));
+				setLoading(false);
+			})
+			.catch(() => {});
+
 		const [listResult, reviewResult] = await Promise.allSettled([
-			memoryApi.list(),
-			memoryApi.reviewInbox(),
+			listPromise,
+			reviewPromise,
 		]);
 
 		if (listResult.status === "rejected" && reviewResult.status === "rejected") {
@@ -453,41 +467,61 @@ export default function MemoryPage() {
 	if (loading) return <MemoryLoadingState />;
 
 	return (
-		<div className="flex h-full flex-col overflow-hidden bg-[#FAFAFA] text-zinc-950 dark:bg-background dark:text-foreground">
-			<header className="shrink-0 border-b border-zinc-200 bg-white dark:border-border dark:bg-background">
-				<div className="mx-auto flex w-full max-w-[1440px] flex-wrap items-start justify-between gap-4 px-4 py-5 sm:px-6">
-					<div className="min-w-0">
-						<h1 className="text-2xl font-semibold tracking-[-0.025em]">Memories</h1>
-						<p className="mt-1 max-w-[72ch] text-sm leading-6 text-zinc-600 dark:text-muted-foreground">
-							Trusted memories are read-only here. New recall and uncertain evidence stay in Review Inbox until explicitly resolved.
-						</p>
-					</div>
-					<div className="flex items-center gap-1">
+		<PageShell>
+			<PageHeader
+				title="Memories"
+				description="Trusted memories are read-only here. New recall and uncertain evidence stay in Review Inbox until explicitly resolved."
+				actions={
+					<>
 						{view === "review" ? (
-							<button
+							<Button
 								type="button"
+								variant="outline"
+								size="sm"
 								onClick={() => setCreateOpen(true)}
-								className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:border-border dark:bg-background dark:hover:bg-accent sm:min-h-9"
+								className="h-11 sm:h-8"
 							>
 								<Plus className="h-4 w-4" />
 								New proposal
-							</button>
+							</Button>
 						) : null}
-						<button
+						<Button
 							type="button"
+							variant="ghost"
+							size="icon"
 							onClick={() => void handleRefresh()}
 							aria-label="Refresh Memories"
-							className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:text-muted-foreground dark:hover:bg-accent dark:hover:text-foreground sm:h-9 sm:w-9"
+							className="h-11 w-11 sm:h-8 sm:w-8"
 						>
 							<RefreshCw className="h-4 w-4" />
-						</button>
-					</div>
-				</div>
+						</Button>
+					</>
+				}
+			/>
 
+			{errorMessage ? (
 				<div
-					className="mx-auto flex w-full max-w-[1440px] items-end gap-1 overflow-x-auto px-4 sm:px-6"
+					role="alert"
+					className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-destructive/30 bg-card px-4 py-3 text-sm text-destructive shadow-lg"
+				>
+					{errorMessage}
+				</div>
+			) : null}
+			{notice ? (
+				<div
+					role="status"
+					aria-live="polite"
+					className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-emerald-200 bg-card px-4 py-3 text-sm text-emerald-700 shadow-lg dark:border-emerald-500/30 dark:text-emerald-400"
+				>
+					{notice}
+				</div>
+			) : null}
+
+			<div className="shrink-0 border-b bg-card">
+				<div
 					role="tablist"
 					aria-label="Memory destinations"
+					className="mx-auto flex w-full max-w-[1440px] gap-1 overflow-x-auto px-4 sm:px-6"
 				>
 					{destinations.map((destination) => {
 						const Icon = destination.icon;
@@ -500,61 +534,42 @@ export default function MemoryPage() {
 								aria-selected={active}
 								onClick={() => handleNavigate(destination.id)}
 								className={cn(
-									"inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 sm:min-h-10",
+									"min-h-11 shrink-0 border-b-2 px-4 py-2 text-sm font-medium transition-colors sm:min-h-10",
 									active
-										? "border-zinc-950 text-zinc-950 dark:border-zinc-100 dark:text-zinc-100"
-										: "border-transparent text-zinc-500 hover:text-zinc-950 dark:text-muted-foreground dark:hover:text-foreground",
+										? "border-primary text-primary"
+										: "border-transparent text-muted-foreground hover:text-foreground",
 								)}
 							>
-								<Icon className="h-4 w-4" />
-								{destination.label}
-								<span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] tabular-nums text-zinc-600 dark:bg-muted dark:text-muted-foreground">
-									{destinationCounts[destination.id]}
+								<span className="flex items-center gap-2">
+									<Icon className="h-4 w-4" />
+									{destination.label}
+									<span className="rounded bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">
+										{destinationCounts[destination.id]}
+									</span>
 								</span>
 							</button>
 						);
 					})}
 				</div>
-			</header>
+			</div>
 
-			{errorMessage ? (
-				<div
-					role="alert"
-					className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-red-200 bg-white px-4 py-3 text-sm text-red-700 shadow-lg dark:border-destructive/30 dark:bg-background dark:text-destructive"
-				>
-					{errorMessage}
-				</div>
-			) : null}
-			{notice ? (
-				<div
-					role="status"
-					aria-live="polite"
-					className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-emerald-200 bg-white px-4 py-3 text-sm text-emerald-700 shadow-lg dark:border-emerald-500/30 dark:bg-background dark:text-emerald-300"
-				>
-					{notice}
-				</div>
-			) : null}
-
-			<main className="min-h-0 flex-1 overflow-y-auto">
-				<section
-					className="mx-auto w-full max-w-[1440px] px-4 py-5 sm:px-6"
-					data-testid={`memory-${view}-destination`}
-				>
+			<PageContent className="flex min-h-0 flex-1 flex-col">
+				<div data-testid={`memory-${view}-destination`}>
 					<div className="mb-4 flex flex-wrap items-end justify-between gap-3">
 						<div>
 							<h2 className="text-base font-semibold">{destinationTitle(view)}</h2>
-							<p className="mt-1 text-sm text-zinc-500 dark:text-muted-foreground">
+							<p className="mt-1 text-sm text-muted-foreground">
 								{destinationDescription(view)}
 							</p>
 						</div>
 						<label className="relative block w-full sm:w-72">
 							<span className="sr-only">Search this destination</span>
-							<Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+							<Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 							<input
 								value={query}
 								onChange={(event) => setQuery(event.target.value)}
 								placeholder="Search title, ID, source…"
-								className="min-h-11 w-full rounded-lg border border-zinc-200 bg-white pl-9 pr-3 text-sm outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 dark:border-border dark:bg-background sm:min-h-9"
+								className="min-h-11 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring sm:min-h-9"
 							/>
 						</label>
 					</div>
@@ -594,14 +609,14 @@ export default function MemoryPage() {
 							onOpen={handleOpenMemory}
 						/>
 					)}
-				</section>
-			</main>
+				</div>
+			</PageContent>
 
 			<Dialog open={selectedMemory !== null} onOpenChange={(open) => !open && handleCloseMemory()}>
 				<DialogContent
 					hideCloseButton
-					overlayClassName="bg-zinc-950/45 backdrop-blur-[1.5px]"
-					className="left-0 top-0 flex h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-white p-0 shadow-none dark:bg-background sm:left-1/2 sm:top-1/2 sm:h-[min(860px,calc(100dvh-3rem))] sm:w-[min(1120px,calc(100vw-3rem))] sm:max-w-[1120px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:border sm:border-zinc-200 sm:shadow-[0_12px_32px_rgba(0,0,0,0.16)] dark:sm:border-border"
+					overlayClassName="bg-black/45 backdrop-blur-[1.5px]"
+					className="left-0 top-0 flex h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-background p-0 shadow-none sm:left-1/2 sm:top-1/2 sm:h-[min(860px,calc(100dvh-3rem))] sm:w-[min(1120px,calc(100vw-3rem))] sm:max-w-[1120px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:border sm:shadow-[0_12px_32px_rgba(0,0,0,0.16)]"
 					onCloseAutoFocus={(event) => event.preventDefault()}
 					data-testid="memory-focus-dialog"
 				>
@@ -646,7 +661,7 @@ export default function MemoryPage() {
 				onCancel={() => setBulkAction(null)}
 				onConfirm={() => void handleBulkAction()}
 			/>
-		</div>
+		</PageShell>
 	);
 }
 
@@ -680,12 +695,12 @@ function MemoryRegister({
 
 	return (
 		<div
-			className="overflow-hidden border-y border-zinc-200 bg-white dark:border-border dark:bg-background"
+			className="overflow-hidden rounded-lg border bg-card"
 			data-testid="memory-list"
 		>
 			<div
 				className={cn(
-					"hidden gap-4 border-b border-zinc-200 bg-zinc-50 px-4 py-2 text-xs font-medium text-zinc-500 dark:border-border dark:bg-muted/20 dark:text-muted-foreground md:grid",
+					"hidden gap-4 border-b bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground md:grid",
 					view === "review"
 						? "grid-cols-[32px_minmax(0,1fr)_170px_130px_32px]"
 						: "grid-cols-[minmax(0,1fr)_170px_130px_32px]",
@@ -697,14 +712,14 @@ function MemoryRegister({
 				<span>Updated</span>
 				<span aria-hidden="true" />
 			</div>
-			<div className="divide-y divide-zinc-200 dark:divide-border">
+			<div className="divide-y divide-border">
 				{memories.map((memory) => {
 					const reviewItem = itemByID.get(memory.id);
 					return (
 						<div
 							key={memory.id}
 							className={cn(
-								"group grid min-h-[76px] items-center gap-3 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-muted/20 md:gap-4",
+								"group grid min-h-[76px] items-center gap-3 px-4 py-3 hover:bg-muted/40 md:gap-4",
 								view === "review"
 									? "grid-cols-[32px_minmax(0,1fr)_auto] md:grid-cols-[32px_minmax(0,1fr)_170px_130px_32px]"
 									: "grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1fr)_170px_130px_32px]",
@@ -717,7 +732,7 @@ function MemoryRegister({
 										type="checkbox"
 										checked={selectedIDs.has(memory.id)}
 										onChange={(event) => onSelect(memory.id, event.target.checked)}
-										className="h-4 w-4 accent-emerald-700"
+										className="h-4 w-4 accent-primary"
 										aria-label={`Select ${memory.title || memory.id}`}
 									/>
 								</label>
@@ -725,13 +740,13 @@ function MemoryRegister({
 							<button
 								type="button"
 								onClick={() => onOpen(memory.id)}
-								className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
+								className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 								data-testid={`memory-row-${memory.id}`}
 							>
-								<span className="block truncate text-sm font-medium text-zinc-950 dark:text-foreground">
+								<span className="block truncate text-sm font-medium text-foreground">
 									{memory.title || "Untitled memory"}
 								</span>
-								<span className="mt-1 block truncate font-mono text-xs text-zinc-500 dark:text-muted-foreground">
+								<span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
 									@memory/{memory.id} · {memory.layer}
 									{memory.category ? ` · ${memory.category}` : ""}
 								</span>
@@ -743,14 +758,14 @@ function MemoryRegister({
 									<StatusPill status={normalizedStatus(memory)} trusted={view === "trusted"} />
 								)}
 							</span>
-							<span className="hidden text-sm tabular-nums text-zinc-500 dark:text-muted-foreground md:block">
+							<span className="hidden text-sm tabular-nums text-muted-foreground md:block">
 								{formatDate(memory.updatedAt)}
 							</span>
 							<button
 								type="button"
 								onClick={() => onOpen(memory.id)}
 								aria-label={`Open ${memory.title || memory.id}`}
-								className="flex items-center gap-2 justify-self-end rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
+								className="flex items-center gap-2 justify-self-end rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 							>
 								<span className="md:hidden">
 									{view === "review" && reviewItem ? (
@@ -759,7 +774,7 @@ function MemoryRegister({
 										<StatusPill status={normalizedStatus(memory)} trusted={view === "trusted"} />
 									)}
 								</span>
-								<ChevronRight className="h-4 w-4 text-zinc-400 transition-transform group-hover:translate-x-0.5" />
+								<ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 							</button>
 						</div>
 					);
@@ -812,22 +827,22 @@ function ReadOnlyMemoryDetail({
 			/>
 			<div className="min-h-0 flex-1 overflow-y-auto md:grid md:grid-cols-[minmax(0,1fr)_340px] md:overflow-hidden">
 				<article className="px-5 py-6 sm:px-8 sm:py-8 md:min-h-0 md:overflow-y-auto">
-					<div className="border-y border-zinc-200 py-6 dark:border-border">
+					<div className="border-y py-6">
 						{memory.content ? (
 							<MDRender
 								markdown={memory.content}
 								className="prose prose-zinc max-w-[72ch] dark:prose-invert"
 							/>
 						) : (
-							<p className="text-sm text-zinc-500 dark:text-muted-foreground">No content.</p>
+							<p className="text-sm text-muted-foreground">No content.</p>
 						)}
 					</div>
 				</article>
 				<MemoryMetadataAside memory={memory}>
 					{trusted && normalizedStatus(memory) === "active" ? (
-						<section className="mt-7 border-t border-zinc-200 pt-6 dark:border-border">
+						<section className="mt-7 border-t pt-6">
 							<h3 className="text-sm font-semibold">Lifecycle</h3>
-							<p className="mt-2 text-sm leading-6 text-zinc-500 dark:text-muted-foreground">
+							<p className="mt-2 text-sm leading-6 text-muted-foreground">
 								Stop default retrieval and move this Memory to History. Its content and provenance
 								will be retained.
 							</p>
@@ -912,9 +927,9 @@ function MemoryReviewDetail({
 
 			<div className="min-h-0 flex-1 overflow-y-auto md:grid md:grid-cols-[minmax(0,1fr)_340px] md:overflow-hidden">
 				<article className="px-5 py-6 sm:px-8 sm:py-8 md:min-h-0 md:overflow-y-auto">
-					<section className="border-y border-zinc-200 py-5 dark:border-border">
+					<section className="border-y py-5">
 						<h3 className="text-sm font-semibold">Why this needs review</h3>
-						<p className="mt-2 max-w-[68ch] text-base leading-7 text-zinc-600 dark:text-muted-foreground">
+						<p className="mt-2 max-w-[68ch] text-base leading-7 text-muted-foreground">
 							{reviewStateDescription(state)}
 						</p>
 						<div className="mt-3 flex flex-wrap gap-2">
@@ -934,7 +949,7 @@ function MemoryReviewDetail({
 						) : null}
 					</section>
 
-					<section className="border-b border-zinc-200 py-6 dark:border-border">
+					<section className="border-b py-6">
 						<h3 className="mb-4 text-sm font-semibold">Memory content</h3>
 						{memory.content ? (
 							<MDRender
@@ -942,14 +957,14 @@ function MemoryReviewDetail({
 								className="prose prose-zinc max-w-[72ch] dark:prose-invert"
 							/>
 						) : (
-							<p className="text-sm text-zinc-500 dark:text-muted-foreground">No content.</p>
+							<p className="text-sm text-muted-foreground">No content.</p>
 						)}
 					</section>
 
 					{hasSourceIssue ? (
-						<section className="border-b border-zinc-200 py-6 dark:border-border" data-testid="memory-source-panel">
+						<section className="border-b py-6" data-testid="memory-source-panel">
 							<h3 className="text-sm font-semibold">Repair evidence</h3>
-							<p className="mt-1 max-w-[68ch] text-sm leading-6 text-zinc-500 dark:text-muted-foreground">
+							<p className="mt-1 max-w-[68ch] text-sm leading-6 text-muted-foreground">
 								Add a readable source, or apply a verified replacement below. The Memory is re-evaluated after saving.
 							</p>
 							{shouldRecommendSources ? (
@@ -978,7 +993,7 @@ function MemoryReviewDetail({
 								</div>
 							</div>
 							{reviewItem.repairSources?.length ? (
-								<div className="mt-6 divide-y divide-zinc-200 border-y border-zinc-200 dark:divide-border dark:border-border">
+								<div className="mt-6 divide-y border-y">
 									{reviewItem.repairSources.map((repair) => (
 										<SourceRepairRow
 											key={`${repair.source}-${repair.replacement}`}
@@ -998,21 +1013,21 @@ function MemoryReviewDetail({
 					) : null}
 
 					{reviewItem.matches?.length ? (
-						<section className="border-b border-zinc-200 py-6 dark:border-border" data-testid="memory-duplicate-panel">
+						<section className="border-b py-6" data-testid="memory-duplicate-panel">
 							<h3 className="text-sm font-semibold">Similar trusted Memories</h3>
-							<p className="mt-1 max-w-[68ch] text-sm leading-6 text-zinc-500 dark:text-muted-foreground">
+							<p className="mt-1 max-w-[68ch] text-sm leading-6 text-muted-foreground">
 								Merge this proposal into an existing trusted Memory, or keep it separate by explicitly activating it.
 							</p>
-							<div className="mt-4 divide-y divide-zinc-200 border-y border-zinc-200 dark:divide-border dark:border-border">
+							<div className="mt-4 divide-y border-y">
 								{reviewItem.matches.map((match) => (
 									<div key={match.id} className="flex flex-wrap items-start justify-between gap-3 py-4">
 										<div className="min-w-0">
 											<p className="truncate text-sm font-medium">{match.title || match.id}</p>
-											<p className="mt-1 font-mono text-xs text-zinc-500 dark:text-muted-foreground">
+											<p className="mt-1 font-mono text-xs text-muted-foreground">
 												@memory/{match.id} · {Math.round(match.score * 100)}%
 											</p>
 											{match.snippet ? (
-												<p className="mt-2 line-clamp-2 max-w-[56ch] text-sm text-zinc-500 dark:text-muted-foreground">
+												<p className="mt-2 line-clamp-2 max-w-[56ch] text-sm text-muted-foreground">
 													{match.snippet}
 												</p>
 											) : null}
@@ -1040,7 +1055,7 @@ function MemoryReviewDetail({
 							<h3 className="text-sm font-semibold">
 								{memory.status === "stale" ? "Re-verify this Memory" : "Keep as separate trusted recall"}
 							</h3>
-							<p className="mt-1 max-w-[68ch] text-sm leading-6 text-zinc-500 dark:text-muted-foreground">
+							<p className="mt-1 max-w-[68ch] text-sm leading-6 text-muted-foreground">
 								This makes the Memory active and available to default retrieval.
 							</p>
 							<div className="mt-4">
@@ -1056,9 +1071,9 @@ function MemoryReviewDetail({
 					) : null}
 				</article>
 
-				<aside className="border-t border-zinc-200 bg-zinc-50/70 px-5 py-6 dark:border-border dark:bg-muted/10 md:min-h-0 md:overflow-y-auto md:border-l md:border-t-0">
+				<aside className="border-t bg-muted/40 px-5 py-6 md:min-h-0 md:overflow-y-auto md:border-l md:border-t-0">
 					<h3 className="text-sm font-semibold">Review outcome</h3>
-					<dl className="mt-4 divide-y divide-zinc-200 border-y border-zinc-200 text-sm dark:divide-border dark:border-border">
+					<dl className="mt-4 divide-y border-y text-sm">
 						<MetadataRow label="Lifecycle" value={statusLabels[normalizedStatus(memory)]} />
 						<MetadataRow label="Layer" value={memory.layer} />
 						<MetadataRow label="Category" value={memory.category || "Uncategorized"} />
@@ -1116,40 +1131,44 @@ function FocusHeader({
 	onClose: () => void;
 }) {
 	return (
-		<div className="flex shrink-0 items-start gap-3 border-b border-zinc-200 px-4 py-4 dark:border-border sm:px-6">
-			<button
+		<div className="flex shrink-0 items-start gap-3 border-b px-4 py-4 sm:px-6">
+			<Button
 				type="button"
+				variant="ghost"
+				size="icon"
 				onClick={onClose}
 				aria-label="Back to Memories"
-				className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:text-muted-foreground dark:hover:bg-accent dark:hover:text-foreground sm:h-9 sm:w-9"
+				className="h-11 w-11 shrink-0 sm:h-9 sm:w-9"
 				data-testid="memory-mobile-back"
 			>
 				<ArrowLeft className="h-4 w-4" />
-			</button>
+			</Button>
 			<div className="min-w-0 flex-1">
 				<div className="flex flex-wrap items-center gap-2">
 					{badge}
-					<span className="text-xs text-zinc-500 dark:text-muted-foreground">{context}</span>
+					<span className="text-xs text-muted-foreground">{context}</span>
 				</div>
 				<h2 className="mt-2 text-xl font-semibold tracking-[-0.02em] sm:text-2xl">{title}</h2>
 				<button
 					type="button"
 					onClick={onCopy}
-					className="mt-1 inline-flex items-center gap-1 font-mono text-xs text-zinc-500 hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:text-muted-foreground dark:hover:text-foreground"
+					className="mt-1 inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 				>
 					{reference}
 					<Copy className="h-3 w-3" />
 					<span className="sr-only">{copied ? "Copied" : "Copy reference"}</span>
 				</button>
 			</div>
-			<button
+			<Button
 				type="button"
+				variant="ghost"
+				size="icon"
 				onClick={onClose}
 				aria-label="Close Memory detail"
-				className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 sm:h-9 sm:w-9"
+				className="h-11 w-11 shrink-0 sm:h-9 sm:w-9"
 			>
 				<X className="h-4 w-4" />
-			</button>
+			</Button>
 		</div>
 	);
 }
@@ -1162,9 +1181,9 @@ function MemoryMetadataAside({
 	children?: ReactNode;
 }) {
 	return (
-		<aside className="border-t border-zinc-200 bg-zinc-50/70 px-5 py-6 dark:border-border dark:bg-muted/10 md:min-h-0 md:overflow-y-auto md:border-l md:border-t-0">
+		<aside className="border-t bg-muted/40 px-5 py-6 md:min-h-0 md:overflow-y-auto md:border-l md:border-t-0">
 			<h3 className="text-sm font-semibold">Provenance</h3>
-			<dl className="mt-4 divide-y divide-zinc-200 border-y border-zinc-200 text-sm dark:divide-border dark:border-border">
+			<dl className="mt-4 divide-y border-y text-sm">
 				<MetadataRow label="Layer" value={memory.layer} />
 				<MetadataRow label="Category" value={memory.category || "Uncategorized"} />
 				<MetadataRow label="Confidence" value={memory.confidence || "Not set"} />
@@ -1175,21 +1194,21 @@ function MemoryMetadataAside({
 			<section className="mt-6">
 				<h3 className="text-sm font-semibold">Sources</h3>
 				{memory.sources?.length ? (
-					<ul className="mt-3 divide-y divide-zinc-200 border-y border-zinc-200 dark:divide-border dark:border-border">
+					<ul className="mt-3 divide-y border-y">
 						{memory.sources.map((source) => (
-							<li key={source} className="break-all py-3 font-mono text-xs text-zinc-600 dark:text-muted-foreground">
+							<li key={source} className="break-all py-3 font-mono text-xs text-muted-foreground">
 								{source}
 							</li>
 						))}
 					</ul>
 				) : (
-					<p className="mt-2 text-sm text-zinc-500 dark:text-muted-foreground">No source linked.</p>
+					<p className="mt-2 text-sm text-muted-foreground">No source linked.</p>
 				)}
 			</section>
 			{memory.mergedInto ? (
 				<section className="mt-6">
 					<h3 className="text-sm font-semibold">Merged into</h3>
-					<p className="mt-2 break-all font-mono text-xs text-zinc-600 dark:text-muted-foreground">
+					<p className="mt-2 break-all font-mono text-xs text-muted-foreground">
 						@memory/{memory.mergedInto}
 					</p>
 				</section>
@@ -1263,12 +1282,12 @@ function SuggestedSources({
 			<div className="flex flex-wrap items-end justify-between gap-2">
 				<div>
 					<h4 className="text-sm font-semibold">Suggested sources</h4>
-					<p className="mt-1 text-xs leading-5 text-zinc-500 dark:text-muted-foreground">
+					<p className="mt-1 text-xs leading-5 text-muted-foreground">
 						Nearby current docs and tasks ranked from this Memory’s title and content.
 					</p>
 				</div>
 				{!loading && !error && suggestions.length > 0 ? (
-					<span className="text-xs tabular-nums text-zinc-500 dark:text-muted-foreground">
+					<span className="text-xs tabular-nums text-muted-foreground">
 						{suggestions.length} nearby
 					</span>
 				) : null}
@@ -1277,37 +1296,38 @@ function SuggestedSources({
 			<div className="mt-3" aria-live="polite">
 				{loading ? (
 					<div
-						className="divide-y divide-zinc-200 border-y border-zinc-200 dark:divide-border dark:border-border"
+						className="divide-y border-y"
 						aria-label="Loading suggested sources"
 					>
 						{Array.from({ length: 3 }).map((_, index) => (
 							<div key={index} className="flex min-h-16 items-center gap-3 py-3">
-								<span className="h-8 w-8 shrink-0 animate-pulse rounded-md bg-zinc-100 dark:bg-muted" />
+								<span className="h-8 w-8 shrink-0 animate-pulse rounded-md bg-muted" />
 								<span className="min-w-0 flex-1">
-									<span className="block h-4 w-2/5 animate-pulse rounded bg-zinc-100 dark:bg-muted" />
-									<span className="mt-2 block h-3 w-3/4 animate-pulse rounded bg-zinc-100 dark:bg-muted" />
+									<span className="block h-4 w-2/5 animate-pulse rounded bg-muted" />
+									<span className="mt-2 block h-3 w-3/4 animate-pulse rounded bg-muted" />
 								</span>
 							</div>
 						))}
 					</div>
 				) : error ? (
-					<div className="flex flex-wrap items-center justify-between gap-3 border-y border-zinc-200 py-3 text-sm dark:border-border">
-						<span className="text-zinc-600 dark:text-muted-foreground">{error}</span>
-						<button
+					<div className="flex flex-wrap items-center justify-between gap-3 border-y py-3 text-sm">
+						<span className="text-muted-foreground">{error}</span>
+						<Button
 							type="button"
+							variant="ghost"
+							size="sm"
 							onClick={() => setReloadKey((current) => current + 1)}
-							className="inline-flex min-h-10 items-center gap-2 rounded-lg px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:text-foreground dark:hover:bg-accent"
 						>
 							<RefreshCw className="h-4 w-4" />
 							Retry
-						</button>
+						</Button>
 					</div>
 				) : suggestions.length === 0 ? (
-					<p className="border-y border-zinc-200 py-3 text-sm text-zinc-500 dark:border-border dark:text-muted-foreground">
+					<p className="border-y py-3 text-sm text-muted-foreground">
 						No nearby docs or tasks found. Search manually or enter an external source below.
 					</p>
 				) : (
-					<ul className="divide-y divide-zinc-200 border-y border-zinc-200 dark:divide-border dark:border-border">
+					<ul className="divide-y border-y">
 						{suggestions.map((suggestion) => {
 							const selected = selectedSources.has(suggestion.reference);
 							const Icon = suggestion.kind === "doc" ? FileText : ListTodo;
@@ -1318,28 +1338,28 @@ function SuggestedSources({
 										onClick={() => onChange(appendSourceValue(value, suggestion.reference))}
 										disabled={selected}
 										aria-label={`${selected ? "Selected" : "Select"} ${suggestion.kind}: ${suggestion.title}`}
-										className="group flex min-h-16 w-full items-start gap-3 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 disabled:cursor-default"
+										className="group flex min-h-16 w-full items-start gap-3 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
 									>
-										<span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-zinc-100 text-zinc-500 group-hover:text-zinc-950 dark:bg-muted dark:text-muted-foreground dark:group-hover:text-foreground">
+										<span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground group-hover:text-foreground">
 											<Icon className="h-4 w-4" />
 										</span>
 										<span className="min-w-0 flex-1">
 											<span className="flex flex-wrap items-center gap-2">
 												<span className="truncate text-sm font-medium">{suggestion.title}</span>
-												<span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600 dark:bg-muted dark:text-muted-foreground">
+												<span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
 													{suggestion.kind === "doc" ? "Doc" : "Task"}
 												</span>
 												{suggestion.status ? (
-													<span className="text-xs text-zinc-500 dark:text-muted-foreground">
+													<span className="text-xs text-muted-foreground">
 														{suggestion.status}
 													</span>
 												) : null}
 											</span>
-											<span className="mt-1 block truncate font-mono text-xs text-zinc-500 dark:text-muted-foreground">
+											<span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
 												{suggestion.reference}
 											</span>
 											{suggestion.snippet ? (
-												<span className="mt-1 line-clamp-2 block text-xs leading-5 text-zinc-500 dark:text-muted-foreground">
+												<span className="mt-1 line-clamp-2 block text-xs leading-5 text-muted-foreground">
 													{suggestion.snippet}
 												</span>
 											) : null}
@@ -1348,8 +1368,8 @@ function SuggestedSources({
 											className={cn(
 												"inline-flex min-w-[72px] shrink-0 items-center justify-end gap-1 pt-1 text-xs font-medium",
 												selected
-													? "text-emerald-700 dark:text-emerald-300"
-													: "text-zinc-500 group-hover:text-zinc-950 dark:text-muted-foreground dark:group-hover:text-foreground",
+													? "text-emerald-700 dark:text-emerald-400"
+													: "text-muted-foreground group-hover:text-foreground",
 											)}
 										>
 											{selected ? (
@@ -1382,10 +1402,10 @@ function SourceRepairRow({
 	return (
 		<div className="flex flex-wrap items-start justify-between gap-3 py-4">
 			<div className="min-w-0">
-				<p className="break-all font-mono text-xs text-zinc-500 line-through dark:text-muted-foreground">
+				<p className="break-all font-mono text-xs text-muted-foreground line-through">
 					{repair.source}
 				</p>
-				<p className="mt-1 break-all font-mono text-xs text-zinc-950 dark:text-foreground">
+				<p className="mt-1 break-all font-mono text-xs text-foreground">
 					{repair.replacement}
 				</p>
 			</div>
@@ -1412,11 +1432,11 @@ function ConfirmReviewActionDialog({
 		<Dialog open={action !== null} onOpenChange={(open) => !open && !busy && onCancel()}>
 			<DialogContent
 				hideCloseButton
-				overlayClassName="z-[90] bg-zinc-950/55"
-				className="z-[100] w-[min(560px,calc(100vw-2rem))] gap-0 overflow-hidden rounded-xl border border-zinc-200 bg-white p-0 shadow-[0_12px_32px_rgba(0,0,0,0.2)] dark:border-border dark:bg-background"
+				overlayClassName="z-[90] bg-black/55"
+				className="z-[100] w-[min(560px,calc(100vw-2rem))] gap-0 overflow-hidden rounded-xl bg-background p-0 shadow-[0_12px_32px_rgba(0,0,0,0.2)]"
 				data-testid="memory-impact-dialog"
 			>
-				<DialogTitle className="border-b border-zinc-200 px-5 py-4 text-base dark:border-border">
+				<DialogTitle className="border-b px-5 py-4 text-base">
 					Confirm Memory outcome
 				</DialogTitle>
 				<DialogDescription className="sr-only">
@@ -1424,7 +1444,7 @@ function ConfirmReviewActionDialog({
 				</DialogDescription>
 				{impact ? (
 					<div className="px-5 py-5">
-						<dl className="divide-y divide-zinc-200 border-y border-zinc-200 text-sm dark:divide-border dark:border-border">
+						<dl className="divide-y border-y text-sm">
 							<ImpactRow label="Memory" value={`${memory.title || "Untitled memory"} · @memory/${memory.id}`} />
 							{impact.target ? <ImpactRow label="Target" value={impact.target} /> : null}
 							<ImpactRow label="Evidence outcome" value={impact.evidence} />
@@ -1432,24 +1452,26 @@ function ConfirmReviewActionDialog({
 						</dl>
 					</div>
 				) : null}
-				<div className="flex flex-col-reverse gap-2 border-t border-zinc-200 px-5 py-4 dark:border-border sm:flex-row sm:justify-end">
-					<button
+				<div className="flex flex-col-reverse gap-2 border-t px-5 py-4 sm:flex-row sm:justify-end">
+					<Button
 						type="button"
+						variant="ghost"
 						onClick={onCancel}
 						disabled={busy}
-						className="min-h-11 rounded-lg px-4 text-sm font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:text-muted-foreground dark:hover:bg-accent sm:min-h-10"
+						className="min-h-11 sm:min-h-10"
 					>
 						Cancel
-					</button>
-					<button
+					</Button>
+					<Button
 						type="button"
+						variant="default"
 						onClick={onConfirm}
 						disabled={busy}
-						className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-zinc-950 px-4 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200 sm:min-h-10"
+						className="min-h-11 sm:min-h-10"
 					>
 						{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
 						Confirm outcome
-					</button>
+					</Button>
 				</div>
 			</DialogContent>
 		</Dialog>
@@ -1471,7 +1493,7 @@ function BulkActionBar({
 }) {
 	return (
 		<div
-			className="mb-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border-y border-zinc-200 bg-white px-3 py-2 dark:border-border dark:bg-background"
+			className="mb-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border-y bg-card px-3 py-2"
 			data-testid="memory-bulk-toolbar"
 		>
 			<div className="flex items-center gap-3">
@@ -1479,7 +1501,7 @@ function BulkActionBar({
 				<button
 					type="button"
 					onClick={onClear}
-					className="text-sm text-zinc-500 hover:text-zinc-950 dark:text-muted-foreground dark:hover:text-foreground"
+					className="text-sm text-muted-foreground hover:text-foreground"
 				>
 					Clear
 				</button>
@@ -1521,33 +1543,35 @@ function ConfirmBulkActionDialog({
 		<Dialog open={action !== null} onOpenChange={(open) => !open && !busy && onCancel()}>
 			<DialogContent
 				hideCloseButton
-				overlayClassName="z-[90] bg-zinc-950/55"
-				className="z-[100] w-[min(520px,calc(100vw-2rem))] gap-0 overflow-hidden rounded-xl border border-zinc-200 bg-white p-0 shadow-[0_12px_32px_rgba(0,0,0,0.2)] dark:border-border dark:bg-background"
+				overlayClassName="z-[90] bg-black/55"
+				className="z-[100] w-[min(520px,calc(100vw-2rem))] gap-0 overflow-hidden rounded-xl bg-background p-0 shadow-[0_12px_32px_rgba(0,0,0,0.2)]"
 			>
-				<DialogTitle className="border-b border-zinc-200 px-5 py-4 text-base dark:border-border">
+				<DialogTitle className="border-b px-5 py-4 text-base">
 					Confirm bulk outcome
 				</DialogTitle>
-				<DialogDescription className="px-5 py-5 text-sm leading-6 text-zinc-600 dark:text-muted-foreground">
+				<DialogDescription className="px-5 py-5 text-sm leading-6 text-muted-foreground">
 					{action ? `${bulkActionLabel(action)} will update ${count} selected Memories.` : ""}
 				</DialogDescription>
-				<div className="flex flex-col-reverse gap-2 border-t border-zinc-200 px-5 py-4 dark:border-border sm:flex-row sm:justify-end">
-					<button
+				<div className="flex flex-col-reverse gap-2 border-t px-5 py-4 sm:flex-row sm:justify-end">
+					<Button
 						type="button"
+						variant="ghost"
 						onClick={onCancel}
 						disabled={busy}
-						className="min-h-11 rounded-lg px-4 text-sm font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:text-muted-foreground dark:hover:bg-accent sm:min-h-10"
+						className="min-h-11 sm:min-h-10"
 					>
 						Cancel
-					</button>
-					<button
+					</Button>
+					<Button
 						type="button"
+						variant="default"
 						onClick={onConfirm}
 						disabled={busy}
-						className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-zinc-950 px-4 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-950 sm:min-h-10"
+						className="min-h-11 sm:min-h-10"
 					>
 						{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
 						Confirm bulk action
-					</button>
+					</Button>
 				</div>
 			</DialogContent>
 		</Dialog>
@@ -1623,8 +1647,8 @@ function CreateMemoryDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent
 				hideCloseButton
-				overlayClassName="bg-zinc-950/45 backdrop-blur-[1.5px]"
-				className="left-0 top-0 flex h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-white p-0 shadow-none dark:bg-background sm:left-1/2 sm:top-1/2 sm:h-auto sm:max-h-[calc(100dvh-3rem)] sm:w-[min(900px,calc(100vw-3rem))] sm:max-w-[900px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:border sm:border-zinc-200 sm:shadow-[0_12px_32px_rgba(0,0,0,0.16)] dark:sm:border-border"
+				overlayClassName="bg-black/45 backdrop-blur-[1.5px]"
+				className="left-0 top-0 flex h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-background p-0 shadow-none sm:left-1/2 sm:top-1/2 sm:h-auto sm:max-h-[calc(100dvh-3rem)] sm:w-[min(900px,calc(100vw-3rem))] sm:max-w-[900px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:border sm:shadow-[0_12px_32px_rgba(0,0,0,0.16)]"
 				data-testid="memory-create-dialog"
 			>
 				<DialogTitle className="sr-only">Create a Memory proposal</DialogTitle>
@@ -1635,18 +1659,20 @@ function CreateMemoryDialog({
 					<div className="flex items-start justify-between gap-4">
 						<div>
 							<h2 className="text-xl font-semibold tracking-[-0.02em]">New Memory proposal</h2>
-							<p className="mt-1 max-w-[65ch] text-sm leading-6 text-zinc-500 dark:text-muted-foreground">
+							<p className="mt-1 max-w-[65ch] text-sm leading-6 text-muted-foreground">
 								Every manual Memory begins as proposed and remains outside trusted retrieval until reviewed.
 							</p>
 						</div>
-						<button
+						<Button
 							type="button"
+							variant="ghost"
+							size="icon"
 							onClick={resetAndClose}
 							aria-label="Close Memory proposal"
-							className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:hover:bg-accent sm:h-9 sm:w-9"
+							className="h-11 w-11 shrink-0 sm:h-9 sm:w-9"
 						>
 							<X className="h-4 w-4" />
-						</button>
+						</Button>
 					</div>
 
 					<form
@@ -1661,7 +1687,7 @@ function CreateMemoryDialog({
 								value={draft.title}
 								onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
 								placeholder="Optional title"
-								className="min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 dark:border-border dark:bg-background"
+								className="min-h-11 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
 							/>
 						</FormField>
 						<FormField label="Content">
@@ -1670,7 +1696,7 @@ function CreateMemoryDialog({
 								onChange={(event) => setDraft((current) => ({ ...current, content: event.target.value }))}
 								placeholder="Write durable recall in markdown"
 								rows={8}
-								className="w-full resize-y rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 dark:border-border dark:bg-background"
+								className="w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
 							/>
 						</FormField>
 						<div className="grid gap-4 sm:grid-cols-2">
@@ -1683,7 +1709,7 @@ function CreateMemoryDialog({
 											layer: event.target.value as PersistentMemoryLayer,
 										}))
 									}
-									className="min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 dark:border-border dark:bg-background"
+									className="min-h-11 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
 								>
 									<option value="project">Project</option>
 									<option value="global">Global</option>
@@ -1694,7 +1720,7 @@ function CreateMemoryDialog({
 									value={draft.category}
 									onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value }))}
 									placeholder="pattern, convention, preference…"
-									className="min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 dark:border-border dark:bg-background"
+									className="min-h-11 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
 								/>
 							</FormField>
 						</div>
@@ -1720,27 +1746,29 @@ function CreateMemoryDialog({
 							/>
 						) : null}
 						{error ? (
-							<p className="border-y border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700 dark:border-destructive/30 dark:bg-destructive/10 dark:text-destructive">
+							<p className="border-y border-destructive/30 bg-destructive/10 px-3 py-3 text-sm text-destructive">
 								{error}
 							</p>
 						) : null}
 
-						<div className="flex flex-col-reverse gap-2 border-t border-zinc-200 pt-5 dark:border-border sm:flex-row sm:justify-end">
-							<button
+						<div className="flex flex-col-reverse gap-2 border-t pt-5 sm:flex-row sm:justify-end">
+							<Button
 								type="button"
+								variant="ghost"
 								onClick={resetAndClose}
-								className="min-h-11 rounded-lg px-4 text-sm font-medium text-zinc-600 hover:bg-zinc-100 dark:text-muted-foreground dark:hover:bg-accent"
+								className="min-h-11 sm:min-h-9"
 							>
 								Cancel
-							</button>
-							<button
+							</Button>
+							<Button
 								type="submit"
+								variant="default"
 								disabled={!draft.content.trim() || legacyDecisionCategory || submitting}
-								className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-zinc-950 px-4 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200"
+								className="min-h-11 sm:min-h-9"
 							>
 								{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
 								Save proposal
-							</button>
+							</Button>
 						</div>
 					</form>
 				</div>
@@ -1784,30 +1812,32 @@ function DuplicateReviewPanel({
 					</div>
 				))}
 			</div>
-			<button
+			<Button
 				type="button"
+				variant="outline"
+				size="sm"
 				onClick={onCreateAnyway}
 				disabled={busy}
-				className="mt-4 inline-flex min-h-11 items-center gap-2 rounded-lg border border-amber-700/30 px-3 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:text-amber-100 dark:hover:bg-amber-500/10"
+				className="mt-4 min-h-11 border-amber-700/30 text-amber-900 hover:bg-amber-100 dark:text-amber-100 dark:hover:bg-amber-500/10"
 			>
 				<Plus className="h-4 w-4" />
 				Keep separate as proposal
-			</button>
+			</Button>
 		</section>
 	);
 }
 
 function MemoryLoadingState() {
 	return (
-		<div className="flex h-full flex-col bg-[#FAFAFA] dark:bg-background" aria-label="Loading Memories">
-			<div className="border-b border-zinc-200 bg-white px-4 py-5 dark:border-border dark:bg-background sm:px-6">
-				<div className="h-7 w-36 animate-pulse rounded bg-zinc-200 dark:bg-muted" />
-				<div className="mt-3 h-4 w-[min(560px,80vw)] animate-pulse rounded bg-zinc-100 dark:bg-muted/60" />
+		<div className="flex h-full flex-col bg-background" aria-label="Loading Memories">
+			<div className="border-b bg-card px-4 py-5 sm:px-6">
+				<div className="h-7 w-36 animate-pulse rounded bg-muted" />
+				<div className="mt-3 h-4 w-[min(560px,80vw)] animate-pulse rounded bg-muted/60" />
 			</div>
 			<div className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6">
-				<div className="space-y-px overflow-hidden border-y border-zinc-200 dark:border-border">
+				<div className="space-y-px overflow-hidden border-y">
 					{Array.from({ length: 6 }).map((_, index) => (
-						<div key={index} className="h-20 animate-pulse bg-white dark:bg-muted/20" />
+						<div key={index} className="h-20 animate-pulse bg-muted/40" />
 					))}
 				</div>
 			</div>
@@ -1821,8 +1851,8 @@ function StatusPill({ status, trusted = false }: { status: MemoryStatus; trusted
 			className={cn(
 				"inline-flex rounded-md px-2 py-0.5 text-xs font-medium",
 				trusted || status === "active"
-					? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
-					: "bg-zinc-100 text-zinc-600 dark:bg-muted dark:text-muted-foreground",
+					? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
+					: "bg-muted text-muted-foreground",
 			)}
 		>
 			{statusLabels[status]}
@@ -1833,7 +1863,7 @@ function StatusPill({ status, trusted = false }: { status: MemoryStatus; trusted
 function ReviewStatePill({ state }: { state: MemoryReviewState }) {
 	const tone =
 		state === "ready_for_review"
-			? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
+			? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
 			: state === "needs_resolution"
 				? "bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
 				: "bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300";
@@ -1842,7 +1872,7 @@ function ReviewStatePill({ state }: { state: MemoryReviewState }) {
 
 function ReasonPill({ reason }: { reason: MemoryReviewReason }) {
 	return (
-		<span className="inline-flex rounded-md border border-zinc-200 px-2 py-0.5 text-xs text-zinc-600 dark:border-border dark:text-muted-foreground">
+		<span className="inline-flex rounded-md border px-2 py-0.5 text-xs text-muted-foreground">
 			{reasonLabels[reason]}
 		</span>
 	);
@@ -1851,7 +1881,7 @@ function ReasonPill({ reason }: { reason: MemoryReviewReason }) {
 function MetadataRow({ label, value }: { label: string; value: string }) {
 	return (
 		<div className="flex items-start justify-between gap-4 py-3">
-			<dt className="text-zinc-500 dark:text-muted-foreground">{label}</dt>
+			<dt className="text-muted-foreground">{label}</dt>
 			<dd className="max-w-[60%] break-words text-right font-medium">{value}</dd>
 		</div>
 	);
@@ -1860,7 +1890,7 @@ function MetadataRow({ label, value }: { label: string; value: string }) {
 function ImpactRow({ label, value }: { label: string; value: string }) {
 	return (
 		<div className="grid gap-1 py-3 sm:grid-cols-[140px_minmax(0,1fr)] sm:gap-4">
-			<dt className="text-zinc-500 dark:text-muted-foreground">{label}</dt>
+			<dt className="text-muted-foreground">{label}</dt>
 			<dd className="break-words font-medium">{value}</dd>
 		</div>
 	);
@@ -1884,32 +1914,29 @@ function ActionButton({
 	fullWidth?: boolean;
 }) {
 	return (
-		<button
+		<Button
 			type="button"
+			variant={primary ? "default" : "outline"}
 			disabled={disabled}
 			onClick={onClick}
 			className={cn(
-				"inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-10",
-				primary
-					? "bg-zinc-950 text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-200"
-					: danger
-						? "border border-red-200 text-red-700 hover:bg-red-50 dark:border-destructive/30 dark:text-destructive dark:hover:bg-destructive/10"
-						: "border border-zinc-200 bg-white text-zinc-800 hover:bg-zinc-100 dark:border-border dark:bg-background dark:text-foreground dark:hover:bg-accent",
+				"min-h-11 sm:min-h-10",
+				danger && "border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive",
 				fullWidth && "w-full",
 			)}
 		>
 			{Icon ? <Icon className="h-4 w-4" /> : null}
 			<span className="truncate">{label}</span>
-		</button>
+		</Button>
 	);
 }
 
 function EmptyState({ title, description }: { title: string; description: string }) {
 	return (
-		<div className="flex min-h-52 flex-col items-center justify-center border-y border-zinc-200 bg-white px-4 py-10 text-center dark:border-border dark:bg-background">
-			<Brain className="h-6 w-6 text-zinc-400" />
+		<div className="flex min-h-52 flex-col items-center justify-center rounded-lg border border-dashed px-4 py-10 text-center">
+			<Brain className="h-6 w-6 text-muted-foreground" />
 			<p className="mt-3 text-sm font-medium">{title}</p>
-			<p className="mt-1 max-w-[52ch] text-sm leading-6 text-zinc-500 dark:text-muted-foreground">{description}</p>
+			<p className="mt-1 max-w-[52ch] text-sm leading-6 text-muted-foreground">{description}</p>
 		</div>
 	);
 }

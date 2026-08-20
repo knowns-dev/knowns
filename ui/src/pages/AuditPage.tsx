@@ -28,8 +28,8 @@ type Tab = "recent" | "stats";
 
 const resultColors: Record<string, { bg: string; text: string; icon: typeof CheckCircle2 }> = {
 	success: {
-		bg: "bg-green-500/10",
-		text: "text-green-600 dark:text-green-400",
+		bg: "bg-emerald-500/10",
+		text: "text-emerald-600 dark:text-emerald-400",
 		icon: CheckCircle2,
 	},
 	error: {
@@ -574,7 +574,7 @@ function StatsTab({
 						<CardTitle className="text-sm font-medium text-muted-foreground">Success Rate</CardTitle>
 					</CardHeader>
 					<CardContent>
-						<div className="text-2xl font-bold text-green-600 dark:text-green-400">
+						<div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
 							{stats.totalCalls > 0
 								? Math.round(((stats.byResult.success || 0) / stats.totalCalls) * 100)
 								: 0}

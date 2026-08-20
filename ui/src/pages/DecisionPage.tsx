@@ -31,12 +31,14 @@ import {
 } from "lucide-react";
 import MDRender from "@/ui/components/editor/MDRender";
 import ReferencePicker from "@/ui/components/organisms/ReferencePicker";
+import { Button } from "@/ui/components/ui/button";
 import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
 	DialogTitle,
 } from "@/ui/components/ui/dialog";
+import { PageContent, PageHeader, PageShell } from "@/ui/components/templates/PageShell";
 import { cn } from "@/ui/lib/utils";
 
 type DecisionView = "current" | "review" | "history";
@@ -356,38 +358,60 @@ export default function DecisionPage() {
 	}
 
 	return (
-		<div className="flex h-full flex-col overflow-hidden bg-[#FAFAFA] text-zinc-950 dark:bg-background dark:text-foreground">
-			<header className="shrink-0 border-b border-zinc-200 bg-white dark:border-border dark:bg-background">
-				<div className="mx-auto flex w-full max-w-[1440px] flex-wrap items-start justify-between gap-4 px-4 py-5 sm:px-6">
-					<div className="min-w-0">
-						<h1 className="text-2xl font-semibold tracking-[-0.025em]">System Decisions</h1>
-						<p className="mt-1 max-w-[72ch] text-sm leading-6 text-zinc-600 dark:text-muted-foreground">
-							Current guidance is read-only. New or changed project rules enter the Review Inbox before they can become current.
-						</p>
-					</div>
-					<div className="flex items-center gap-1">
+		<PageShell>
+			<PageHeader
+				className="border-b-0"
+				title="System Decisions"
+				description={
+					<span className="block max-w-[72ch]">
+						Current guidance is read-only. New or changed project rules enter the Review Inbox before they can become current.
+					</span>
+				}
+				actions={
+					<>
 						{view === "review" ? (
-							<button
+							<Button
 								type="button"
+								variant="outline"
+								size="sm"
 								onClick={() => setCreateOpen(true)}
-								className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:border-border dark:bg-background dark:hover:bg-accent sm:min-h-9"
+								className="h-11 sm:h-8"
 							>
 								<Plus className="h-4 w-4" />
 								New candidate
-							</button>
+							</Button>
 						) : null}
-						<button
+						<Button
 							type="button"
+							variant="ghost"
+							size="icon"
 							onClick={() => void handleRefresh()}
 							aria-label="Refresh Decisions"
-							className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:text-muted-foreground dark:hover:bg-accent dark:hover:text-foreground sm:h-9 sm:w-9"
+							className="h-11 w-11 sm:h-8 sm:w-8"
 						>
 							<RefreshCw className="h-4 w-4" />
-						</button>
-					</div>
-				</div>
+						</Button>
+					</>
+				}
+			/>
 
-				<div className="mx-auto flex w-full max-w-[1440px] items-end gap-1 overflow-x-auto px-4 sm:px-6" role="tablist" aria-label="Decision destinations">
+			{errorMessage ? (
+				<div role="alert" className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-destructive/30 bg-card px-4 py-3 text-sm text-destructive shadow-lg">
+					{errorMessage}
+				</div>
+			) : null}
+			{notice ? (
+				<div role="status" aria-live="polite" className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-emerald-200 bg-card px-4 py-3 text-sm text-emerald-700 shadow-lg dark:border-emerald-500/30 dark:text-emerald-300">
+					{notice}
+				</div>
+			) : null}
+
+			<div className="shrink-0 border-b border-border bg-card">
+				<div
+					role="tablist"
+					aria-label="Decision destinations"
+					className="mx-auto flex w-full max-w-[1440px] items-center gap-1 overflow-x-auto px-4 sm:px-6"
+				>
 					{destinations.map((destination) => {
 						const Icon = destination.icon;
 						const active = view === destination.id;
@@ -399,49 +423,38 @@ export default function DecisionPage() {
 								aria-selected={active}
 								onClick={() => handleNavigate(destination.id)}
 								className={cn(
-									"inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 sm:min-h-10",
+									"inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-4 py-2 text-sm font-medium transition-colors sm:min-h-10",
 									active
-										? "border-zinc-950 text-zinc-950 dark:border-zinc-100 dark:text-zinc-100"
-										: "border-transparent text-zinc-500 hover:text-zinc-950 dark:text-muted-foreground dark:hover:text-foreground",
+										? "border-primary text-primary"
+										: "border-transparent text-muted-foreground hover:text-foreground",
 								)}
 							>
 								<Icon className="h-4 w-4" />
 								{destination.label}
-								<span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] tabular-nums text-zinc-600 dark:bg-muted dark:text-muted-foreground">
+								<span className="rounded bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">
 									{destinationCounts[destination.id]}
 								</span>
 							</button>
 						);
 					})}
 				</div>
-			</header>
+			</div>
 
-			{errorMessage ? (
-				<div role="alert" className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-red-200 bg-white px-4 py-3 text-sm text-red-700 shadow-lg dark:border-destructive/30 dark:bg-background dark:text-destructive">
-					{errorMessage}
-				</div>
-			) : null}
-			{notice ? (
-				<div role="status" aria-live="polite" className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-emerald-200 bg-white px-4 py-3 text-sm text-emerald-700 shadow-lg dark:border-emerald-500/30 dark:bg-background dark:text-emerald-300">
-					{notice}
-				</div>
-			) : null}
-
-			<main className="min-h-0 flex-1 overflow-y-auto">
-				<section className="mx-auto w-full max-w-[1440px] px-4 py-5 sm:px-6" data-testid={`decision-${view}-destination`}>
+			<PageContent className="flex min-h-0 flex-1 flex-col gap-4">
+				<div data-testid={`decision-${view}-destination`}>
 					<div className="mb-4 flex flex-wrap items-end justify-between gap-3">
 						<div>
 							<h2 className="text-base font-semibold">{destinationTitle(view)}</h2>
-							<p className="mt-1 text-sm text-zinc-500 dark:text-muted-foreground">{destinationDescription(view)}</p>
+							<p className="mt-1 text-sm text-muted-foreground">{destinationDescription(view)}</p>
 						</div>
 						<label className="relative block w-full sm:w-72">
 							<span className="sr-only">Search this destination</span>
-							<Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+							<Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 							<input
 								value={query}
 								onChange={(event) => setQuery(event.target.value)}
 								placeholder="Search title, ID, source…"
-								className="min-h-11 w-full rounded-lg border border-zinc-200 bg-white pl-9 pr-3 text-sm outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 dark:border-border dark:bg-background sm:min-h-9"
+								className="min-h-11 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm outline-none focus:ring-1 focus:ring-ring sm:min-h-9"
 							/>
 						</label>
 					</div>
@@ -451,14 +464,14 @@ export default function DecisionPage() {
 						decisions={visibleDecisions}
 						onOpen={handleOpenDecision}
 					/>
-				</section>
-			</main>
+				</div>
+			</PageContent>
 
 			<Dialog open={selectedDecision !== null} onOpenChange={(open) => !open && handleCloseDecision()}>
 				<DialogContent
 					hideCloseButton
-					overlayClassName="bg-zinc-950/45 backdrop-blur-[1.5px]"
-					className="left-0 top-0 flex h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-white p-0 shadow-none dark:bg-background sm:left-1/2 sm:top-1/2 sm:h-[min(860px,calc(100dvh-3rem))] sm:w-[min(1120px,calc(100vw-3rem))] sm:max-w-[1120px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:border sm:border-zinc-200 sm:shadow-[0_12px_32px_rgba(0,0,0,0.16)] dark:sm:border-border"
+					overlayClassName="bg-black/45 backdrop-blur-[1.5px]"
+					className="left-0 top-0 flex h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-card p-0 shadow-none sm:left-1/2 sm:top-1/2 sm:h-[min(860px,calc(100dvh-3rem))] sm:w-[min(1120px,calc(100vw-3rem))] sm:max-w-[1120px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:border sm:border-border sm:shadow-[0_12px_32px_rgba(0,0,0,0.16)]"
 					onCloseAutoFocus={(event) => event.preventDefault()}
 					data-testid="decision-focus-dialog"
 				>
@@ -491,8 +504,8 @@ export default function DecisionPage() {
 			<Dialog open={createOpen} onOpenChange={setCreateOpen}>
 				<DialogContent
 					hideCloseButton
-					overlayClassName="bg-zinc-950/45 backdrop-blur-[1.5px]"
-					className="left-0 top-0 flex h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-white p-0 shadow-none dark:bg-background sm:left-1/2 sm:top-1/2 sm:h-auto sm:max-h-[calc(100dvh-3rem)] sm:w-[min(900px,calc(100vw-3rem))] sm:max-w-[900px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:border sm:border-zinc-200 sm:shadow-[0_12px_32px_rgba(0,0,0,0.16)] dark:sm:border-border"
+					overlayClassName="bg-black/45 backdrop-blur-[1.5px]"
+					className="left-0 top-0 flex h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-card p-0 shadow-none sm:left-1/2 sm:top-1/2 sm:h-auto sm:max-h-[calc(100dvh-3rem)] sm:w-[min(900px,calc(100vw-3rem))] sm:max-w-[900px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:border sm:border-border sm:shadow-[0_12px_32px_rgba(0,0,0,0.16)]"
 					id="decision-create-workflow"
 				>
 					<DialogTitle className="sr-only">Create a System Decision candidate</DialogTitle>
@@ -508,7 +521,7 @@ export default function DecisionPage() {
 					</div>
 				</DialogContent>
 			</Dialog>
-		</div>
+		</PageShell>
 	);
 }
 
@@ -534,33 +547,33 @@ function DecisionRegister({
 		);
 	}
 	return (
-		<div className="overflow-hidden border-y border-zinc-200 bg-white dark:border-border dark:bg-background" data-testid="decision-list">
-			<div className="hidden grid-cols-[minmax(0,1fr)_160px_150px_32px] gap-4 border-b border-zinc-200 bg-zinc-50 px-4 py-2 text-xs font-medium text-zinc-500 dark:border-border dark:bg-muted/20 dark:text-muted-foreground md:grid">
+		<div className="overflow-hidden border-y border-border bg-card" data-testid="decision-list">
+			<div className="hidden grid-cols-[minmax(0,1fr)_160px_150px_32px] gap-4 border-b border-border bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground md:grid">
 				<span>Decision</span>
 				<span>{view === "review" ? "Review state" : "Lifecycle"}</span>
 				<span>Updated</span>
 				<span aria-hidden="true" />
 			</div>
-			<div className="divide-y divide-zinc-200 dark:divide-border">
+			<div className="divide-y divide-border">
 				{decisions.map((decision) => (
 					<button
 						key={decision.id}
 						type="button"
 						onClick={() => onOpen(decision.id)}
-						className="group grid min-h-[76px] w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 text-left hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-600 dark:hover:bg-muted/20 md:grid-cols-[minmax(0,1fr)_160px_150px_32px] md:gap-4"
+						className="group grid min-h-[76px] w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 text-left hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:grid-cols-[minmax(0,1fr)_160px_150px_32px] md:gap-4"
 						data-testid={`decision-row-${decision.id}`}
 					>
 						<span className="min-w-0">
-							<span className="block truncate text-sm font-medium text-zinc-950 dark:text-foreground">{decision.title}</span>
-							<span className="mt-1 block truncate font-mono text-xs text-zinc-500 dark:text-muted-foreground">@decision/{decision.id}</span>
+							<span className="block truncate text-sm font-medium text-foreground">{decision.title}</span>
+							<span className="mt-1 block truncate font-mono text-xs text-muted-foreground">@decision/{decision.id}</span>
 						</span>
 						<span className="hidden md:block">
 							{view === "review" ? <ReviewStatePill state={decision.reviewState} /> : <StatusPill status={decision.status} current={view === "current"} />}
 						</span>
-						<span className="hidden text-sm tabular-nums text-zinc-500 dark:text-muted-foreground md:block">{formatDate(decision.updatedAt)}</span>
+						<span className="hidden text-sm tabular-nums text-muted-foreground md:block">{formatDate(decision.updatedAt)}</span>
 						<span className="flex items-center gap-2 justify-self-end">
 							<span className="md:hidden">{view === "review" ? <ReviewStatePill state={decision.reviewState} /> : <StatusPill status={decision.status} current={view === "current"} />}</span>
-							<ChevronRight className="h-4 w-4 text-zinc-400 transition-transform group-hover:translate-x-0.5" />
+							<ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 						</span>
 					</button>
 				))}
@@ -620,20 +633,22 @@ function CandidateReviewDetail({
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col" data-testid="decision-review-detail">
-			<div className="flex shrink-0 items-start gap-3 border-b border-zinc-200 px-4 py-4 dark:border-border sm:px-6">
-				<button
+			<div className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-4 sm:px-6">
+				<Button
 					type="button"
+					variant="ghost"
+					size="icon"
 					onClick={onClose}
 					aria-label="Back to Review Inbox"
-					className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:text-muted-foreground dark:hover:bg-accent dark:hover:text-foreground sm:h-9 sm:w-9"
+					className="h-11 w-11 shrink-0 sm:h-9 sm:w-9"
 					data-testid="decision-mobile-back"
 				>
 					<ArrowLeft className="h-4 w-4" />
-				</button>
+				</Button>
 				<div className="min-w-0 flex-1">
 					<div className="flex flex-wrap items-center gap-2">
 						<ReviewStatePill state={candidate.reviewState} />
-						<span className="text-xs text-zinc-500 dark:text-muted-foreground">Persisted candidate</span>
+						<span className="text-xs text-muted-foreground">Persisted candidate</span>
 					</div>
 					<h2 className="mt-2 text-xl font-semibold tracking-[-0.02em] sm:text-2xl">{candidate.title}</h2>
 					<button
@@ -643,28 +658,30 @@ function CandidateReviewDetail({
 							setCopied(true);
 							window.setTimeout(() => setCopied(false), 1500);
 						}}
-						className="mt-1 inline-flex items-center gap-1 font-mono text-xs text-zinc-500 hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:text-muted-foreground dark:hover:text-foreground"
+						className="mt-1 inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 					>
 						{reference}
 						<Copy className="h-3 w-3" />
 						<span className="sr-only">{copied ? "Copied" : "Copy reference"}</span>
 					</button>
 				</div>
-				<button
+				<Button
 					type="button"
+					variant="ghost"
+					size="icon"
 					onClick={onClose}
 					aria-label="Close candidate review"
-					className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 sm:h-9 sm:w-9"
+					className="h-11 w-11 shrink-0 sm:h-9 sm:w-9"
 				>
 					<X className="h-4 w-4" />
-				</button>
+				</Button>
 			</div>
 
 			<div className="grid min-h-0 flex-1 md:grid-cols-[minmax(0,1fr)_340px]">
 				<article className="min-h-0 overflow-y-auto px-5 py-6 sm:px-8 sm:py-8">
-					<section aria-labelledby="review-status-heading" className="border-y border-zinc-200 py-5 dark:border-border">
+					<section aria-labelledby="review-status-heading" className="border-y border-border py-5">
 						<h3 id="review-status-heading" className="text-sm font-semibold">Review status</h3>
-						<p className="mt-2 text-base leading-7 text-zinc-600 dark:text-muted-foreground">{reviewStateDescription(state)}</p>
+						<p className="mt-2 text-base leading-7 text-muted-foreground">{reviewStateDescription(state)}</p>
 						{candidate.reviewBlockers?.length ? (
 							<ul className="mt-4 space-y-2 text-sm text-amber-800 dark:text-amber-300">
 								{candidate.reviewBlockers.map((blocker) => (
@@ -682,16 +699,16 @@ function CandidateReviewDetail({
 						)}
 					</section>
 
-					<div className="divide-y divide-zinc-200 dark:divide-border">
+					<div className="divide-y divide-border">
 						{bodySections.map((section) => (
 							<BodySection key={section.key} title={section.label} markdown={String(candidate[section.key] || "")} />
 						))}
 					</div>
 
 					{state === "needs_evidence" ? (
-						<section className="border-t border-zinc-200 pt-6 dark:border-border" data-testid="decision-evidence-panel">
+						<section className="border-t border-border pt-6" data-testid="decision-evidence-panel">
 							<h3 className="text-sm font-semibold">Add verifiable evidence</h3>
-							<p className="mt-1 text-sm leading-6 text-zinc-500 dark:text-muted-foreground">
+							<p className="mt-1 text-sm leading-6 text-muted-foreground">
 								Select a readable source and completed task. Saving re-evaluates this persisted candidate.
 							</p>
 							<div className="mt-5 space-y-4">
@@ -736,18 +753,18 @@ function CandidateReviewDetail({
 					) : null}
 
 					{state === "needs_resolution" ? (
-						<section className="border-t border-zinc-200 pt-6 dark:border-border" data-testid="decision-resolution-panel">
+						<section className="border-t border-border pt-6" data-testid="decision-resolution-panel">
 							<h3 className="text-sm font-semibold">Resolve against current guidance</h3>
-							<p className="mt-1 text-sm leading-6 text-zinc-500 dark:text-muted-foreground">
+							<p className="mt-1 text-sm leading-6 text-muted-foreground">
 								Only persisted review matches can be linked or replaced.
 							</p>
-							<div className="mt-4 divide-y divide-zinc-200 border-y border-zinc-200 dark:divide-border dark:border-border">
+							<div className="mt-4 divide-y divide-border border-y border-border">
 								{(candidate.reviewMatches || []).map((match) => (
 									<div key={match.id} className="py-4">
 										<div className="flex flex-wrap items-start justify-between gap-3">
 											<div className="min-w-0">
 												<p className="truncate text-sm font-medium">{match.title}</p>
-												<p className="mt-1 font-mono text-xs text-zinc-500 dark:text-muted-foreground">
+												<p className="mt-1 font-mono text-xs text-muted-foreground">
 													@decision/{match.id} · {match.kind || "related"} · {Math.round(match.score * 100)}%
 												</p>
 											</div>
@@ -771,7 +788,7 @@ function CandidateReviewDetail({
 												) : null}
 											</div>
 										</div>
-										{match.snippet ? <p className="mt-3 text-sm leading-6 text-zinc-600 dark:text-muted-foreground">{match.snippet}</p> : null}
+										{match.snippet ? <p className="mt-3 text-sm leading-6 text-muted-foreground">{match.snippet}</p> : null}
 									</div>
 								))}
 							</div>
@@ -779,9 +796,9 @@ function CandidateReviewDetail({
 					) : null}
 
 					{state === "ready_for_review" && allowed.has("accept_new") ? (
-						<section className="border-t border-zinc-200 pt-6 dark:border-border" data-testid="decision-ready-panel">
+						<section className="border-t border-border pt-6" data-testid="decision-ready-panel">
 							<h3 className="text-sm font-semibold">Ready for human acceptance</h3>
-							<p className="mt-1 max-w-[68ch] text-sm leading-6 text-zinc-500 dark:text-muted-foreground">
+							<p className="mt-1 max-w-[68ch] text-sm leading-6 text-muted-foreground">
 								Verified evidence is present and no current Decision requires resolution. Acceptance makes this candidate current guidance.
 							</p>
 							<div className="mt-4 flex justify-end">
@@ -797,9 +814,9 @@ function CandidateReviewDetail({
 					) : null}
 				</article>
 
-				<aside className="min-h-0 overflow-y-auto border-t border-zinc-200 bg-zinc-50/70 px-5 py-6 dark:border-border dark:bg-muted/10 md:border-l md:border-t-0">
+				<aside className="min-h-0 overflow-y-auto border-t border-border bg-muted/40 px-5 py-6 dark:bg-muted/10 md:border-l md:border-t-0">
 					<DetailSection title="Lifecycle">
-						<dl className="divide-y divide-zinc-200 text-sm dark:divide-border">
+						<dl className="divide-y divide-border text-sm">
 							<MetadataItem label="State" value={reviewStateLabel(candidate)} />
 							<MetadataItem label="Evaluated" value={formatDate(candidate.reviewEvaluatedAt)} />
 							<MetadataItem label="Created" value={formatDate(candidate.createdAt)} />
@@ -807,14 +824,14 @@ function CandidateReviewDetail({
 							<MetadataItem label="Blockers" value={String(candidate.reviewBlockers?.length || 0)} />
 						</dl>
 					</DetailSection>
-					<div className="mt-7 space-y-5 border-t border-zinc-200 pt-5 dark:border-border">
+					<div className="mt-7 space-y-5 border-t border-border pt-5">
 						<TokenGroup label="Sources" values={candidate.sources || []} Icon={Link2} />
 						<TokenGroup label="Docs" values={candidate.relatedDocs || []} Icon={FileText} />
 						<TokenGroup label="Tasks" values={candidate.relatedTasks || []} Icon={CheckCircle2} />
 						<TokenGroup label="Tags" values={candidate.tags || []} Icon={Tags} prefix="#" />
 					</div>
 					{allowed.has("reject_new") ? (
-						<div className="mt-7 border-t border-zinc-200 pt-5 dark:border-border">
+						<div className="mt-7 border-t border-border pt-5">
 							<ActionButton
 								label="Review rejection"
 								Icon={CircleAlert}
@@ -857,21 +874,21 @@ function ReviewActionDialog({
 		<Dialog open onOpenChange={(open) => !open && onCancel()}>
 			<DialogContent
 				hideCloseButton
-				overlayClassName="z-[65] bg-zinc-950/55"
-				className="z-[70] w-[calc(100vw-2rem)] max-w-lg gap-0 overflow-hidden rounded-xl border border-zinc-200 bg-white p-0 shadow-[0_16px_48px_rgba(0,0,0,0.22)] dark:border-border dark:bg-background"
+				overlayClassName="z-[65] bg-black/55"
+				className="z-[70] w-[calc(100vw-2rem)] max-w-lg gap-0 overflow-hidden rounded-xl border border-border bg-card p-0 shadow-[0_16px_48px_rgba(0,0,0,0.22)]"
 				data-testid="decision-action-confirmation"
 			>
-				<div className="border-b border-zinc-200 px-5 py-4 dark:border-border">
+				<div className="border-b border-border px-5 py-4">
 					<DialogTitle className="text-base">{impact.title}</DialogTitle>
 					<DialogDescription className="mt-1">Review the exact lifecycle effect before confirming.</DialogDescription>
 				</div>
-				<dl className="divide-y divide-zinc-200 px-5 text-sm dark:divide-border">
+				<dl className="divide-y divide-border px-5 text-sm">
 					<ImpactRow label="Candidate" value={`${candidate.title} (@decision/${candidate.id})`} />
 					<ImpactRow label="Target" value={impact.target} />
 					<ImpactRow label="Evidence outcome" value={impact.evidence} />
 					<ImpactRow label="Resulting lifecycle" value={impact.lifecycle} />
 				</dl>
-				<div className="flex flex-col-reverse gap-2 border-t border-zinc-200 px-5 py-4 dark:border-border sm:flex-row sm:justify-end">
+				<div className="flex flex-col-reverse gap-2 border-t border-border px-5 py-4 sm:flex-row sm:justify-end">
 					<ActionButton label="Cancel" disabled={busy} onClick={onCancel} />
 					<ActionButton label={busy ? "Applying…" : impact.confirmLabel} Icon={impact.icon} tone={impact.tone} disabled={busy} onClick={() => void onConfirm()} />
 				</div>
@@ -900,22 +917,24 @@ function DecisionCandidateForm({
 			}}
 			data-testid="decision-create-panel"
 		>
-			<div className="flex flex-wrap items-start justify-between gap-4 border-b border-zinc-200 pb-5 dark:border-border">
+			<div className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-5">
 				<div>
-					<p className="text-xs font-medium text-zinc-500 dark:text-muted-foreground">Secondary workflow</p>
+					<p className="text-xs font-medium text-muted-foreground">Secondary workflow</p>
 					<h2 className="mt-1 text-xl font-semibold tracking-[-0.02em]">New System Decision candidate</h2>
 					<p className="mt-1 max-w-[70ch] text-sm leading-6 text-muted-foreground">
 						Creation never changes current guidance. The candidate returns to Review Inbox with a persisted review state.
 					</p>
 				</div>
-				<button type="button" onClick={onCancel} className="min-h-11 rounded-lg px-3 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground sm:min-h-9">Cancel</button>
+				<Button type="button" variant="ghost" size="sm" onClick={onCancel} className="h-11 sm:h-9">
+					Cancel
+				</Button>
 			</div>
 			<div className="grid gap-5 sm:grid-cols-2">
 				<FormField label="Title">
-					<input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} className="min-h-11 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 sm:min-h-10" placeholder="Require reviewed workflow checkpoints" />
+					<input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} className="min-h-11 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring sm:min-h-10" placeholder="Require reviewed workflow checkpoints" />
 				</FormField>
 				<FormField label="Tags">
-					<input value={draft.tagsText} onChange={(event) => setDraft((current) => ({ ...current, tagsText: event.target.value }))} className="min-h-11 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 sm:min-h-10" placeholder="workflow, decision" />
+					<input value={draft.tagsText} onChange={(event) => setDraft((current) => ({ ...current, tagsText: event.target.value }))} className="min-h-11 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring sm:min-h-10" placeholder="workflow, decision" />
 				</FormField>
 			</div>
 			<ReferencePicker
@@ -948,21 +967,21 @@ function DecisionCandidateForm({
 			</div>
 			<div className="grid gap-5">
 				<FormField label="Context">
-					<textarea value={draft.context} onChange={(event) => setDraft((current) => ({ ...current, context: event.target.value }))} rows={3} className="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600" />
+					<textarea value={draft.context} onChange={(event) => setDraft((current) => ({ ...current, context: event.target.value }))} rows={3} className="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring" />
 				</FormField>
 				<FormField label="Decision">
-					<textarea value={draft.decision} onChange={(event) => setDraft((current) => ({ ...current, decision: event.target.value }))} rows={4} className="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600" />
+					<textarea value={draft.decision} onChange={(event) => setDraft((current) => ({ ...current, decision: event.target.value }))} rows={4} className="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring" />
 				</FormField>
 				<div className="grid gap-5 sm:grid-cols-2">
 					<FormField label="Alternatives considered">
-						<textarea value={draft.alternativesConsidered} onChange={(event) => setDraft((current) => ({ ...current, alternativesConsidered: event.target.value }))} rows={3} className="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600" />
+						<textarea value={draft.alternativesConsidered} onChange={(event) => setDraft((current) => ({ ...current, alternativesConsidered: event.target.value }))} rows={3} className="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring" />
 					</FormField>
 					<FormField label="Consequences">
-						<textarea value={draft.consequences} onChange={(event) => setDraft((current) => ({ ...current, consequences: event.target.value }))} rows={3} className="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600" />
+						<textarea value={draft.consequences} onChange={(event) => setDraft((current) => ({ ...current, consequences: event.target.value }))} rows={3} className="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring" />
 					</FormField>
 				</div>
 			</div>
-			<div className="flex justify-end border-t border-zinc-200 pt-5 dark:border-border">
+			<div className="flex justify-end border-t border-border pt-5">
 				<ActionButton label={busy ? "Saving…" : "Save to Review Inbox"} Icon={Inbox} tone="primary" disabled={!canSubmit || busy} />
 			</div>
 		</form>
@@ -986,14 +1005,22 @@ function ReadOnlyDecisionDetail({
 	const reference = `@decision/${decision.id}`;
 	return (
 		<div className="flex min-h-0 flex-1 flex-col" data-testid="decision-detail-panel">
-			<div className="flex shrink-0 items-start gap-3 border-b border-zinc-200 px-4 py-4 dark:border-border sm:px-6">
-				<button type="button" onClick={onClose} aria-label="Back to Decisions" className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:hover:bg-accent sm:h-9 sm:w-9" data-testid="decision-mobile-back">
+			<div className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-4 sm:px-6">
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					onClick={onClose}
+					aria-label="Back to Decisions"
+					className="h-11 w-11 shrink-0 sm:h-9 sm:w-9"
+					data-testid="decision-mobile-back"
+				>
 					<ArrowLeft className="h-4 w-4" />
-				</button>
+				</Button>
 				<div className="min-w-0 flex-1">
 					<div className="flex flex-wrap items-center gap-2">
 						<StatusPill status={decision.status} current={current} />
-						<span className="text-xs text-zinc-500 dark:text-muted-foreground">{current ? "Read-only current guidance" : "Read-only history"}</span>
+						<span className="text-xs text-muted-foreground">{current ? "Read-only current guidance" : "Read-only history"}</span>
 					</div>
 					<h2 className="mt-2 text-xl font-semibold tracking-[-0.02em] sm:text-2xl">{decision.title}</h2>
 					<button
@@ -1003,30 +1030,37 @@ function ReadOnlyDecisionDetail({
 							setCopied(true);
 							window.setTimeout(() => setCopied(false), 1500);
 						}}
-						className="mt-1 inline-flex items-center gap-1 font-mono text-xs text-zinc-500 hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:text-muted-foreground dark:hover:text-foreground"
+						className="mt-1 inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 					>
 						{reference}
 						<Copy className="h-3 w-3" />
 						<span className="sr-only">{copied ? "Copied" : "Copy reference"}</span>
 					</button>
 				</div>
-				<button type="button" onClick={onClose} aria-label="Close Decision detail" className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:hover:bg-accent sm:h-9 sm:w-9">
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					onClick={onClose}
+					aria-label="Close Decision detail"
+					className="h-11 w-11 shrink-0 sm:h-9 sm:w-9"
+				>
 					<X className="h-4 w-4" />
-				</button>
+				</Button>
 			</div>
 			<div className="grid min-h-0 flex-1 md:grid-cols-[minmax(0,1fr)_340px]">
 				<article className="min-h-0 overflow-y-auto px-5 py-6 sm:px-8 sm:py-8">
-					<div className="divide-y divide-zinc-200 dark:divide-border">
+					<div className="divide-y divide-border">
 						{bodySections.map((section) => (
 							<BodySection key={section.key} title={section.label} markdown={String(decision[section.key] || "")} />
 						))}
 					</div>
 				</article>
-				<aside className="min-h-0 overflow-y-auto border-t border-zinc-200 bg-zinc-50/70 px-5 py-6 dark:border-border dark:bg-muted/10 md:border-l md:border-t-0">
+				<aside className="min-h-0 overflow-y-auto border-t border-border bg-muted/40 px-5 py-6 dark:bg-muted/10 md:border-l md:border-t-0">
 					<DecisionLineage decision={decision} decisionByID={decisionByID} onOpenDecision={onOpenDecision} />
-					<div className="mt-7 border-t border-zinc-200 pt-5 dark:border-border">
+					<div className="mt-7 border-t border-border pt-5">
 						<DetailSection title="Lifecycle">
-							<dl className="divide-y divide-zinc-200 text-sm dark:divide-border">
+							<dl className="divide-y divide-border text-sm">
 								<MetadataItem label="Status" value={current ? "Current" : statusLabels[decision.status]} />
 								<MetadataItem label="Created" value={formatDate(decision.createdAt)} />
 								<MetadataItem label="Updated" value={formatDate(decision.updatedAt)} />
@@ -1035,7 +1069,7 @@ function ReadOnlyDecisionDetail({
 							</dl>
 						</DetailSection>
 					</div>
-					<div className="mt-7 space-y-5 border-t border-zinc-200 pt-5 dark:border-border">
+					<div className="mt-7 space-y-5 border-t border-border pt-5">
 						<TokenGroup label="Sources" values={decision.sources || []} Icon={Link2} />
 						<TokenGroup label="Docs" values={decision.relatedDocs || []} Icon={FileText} />
 						<TokenGroup label="Tasks" values={decision.relatedTasks || []} Icon={CheckCircle2} />
@@ -1063,7 +1097,7 @@ function DecisionLineage({
 	];
 	return (
 		<DetailSection title="Decision lineage">
-			<div className="divide-y divide-zinc-200 dark:divide-border">
+			<div className="divide-y divide-border">
 				{nodes.map((node) => {
 					const linked = decisionByID.get(node.id);
 					const selected = node.id === decision.id;
@@ -1077,10 +1111,10 @@ function DecisionLineage({
 							className="group flex min-h-12 w-full items-center justify-between gap-3 py-2 text-left disabled:cursor-default"
 						>
 							<span className="min-w-0">
-								<span className="block text-xs text-zinc-500 dark:text-muted-foreground">{node.relation}</span>
-								<span className="block truncate text-sm font-medium group-enabled:group-hover:text-emerald-700 dark:group-enabled:group-hover:text-emerald-400">{linked?.title || node.id}</span>
+								<span className="block text-xs text-muted-foreground">{node.relation}</span>
+								<span className="block truncate text-sm font-medium group-enabled:group-hover:text-primary">{linked?.title || node.id}</span>
 							</span>
-							{!selected && linked ? <ChevronRight className="h-4 w-4 shrink-0 text-zinc-400" /> : null}
+							{!selected && linked ? <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" /> : null}
 						</button>
 					);
 				})}
@@ -1093,13 +1127,13 @@ function BodySection({ title, markdown }: { title: string; markdown: string }) {
 	return (
 		<section className="py-7 first:pt-0 last:pb-0">
 			<h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-				<ScrollText className="h-4 w-4 text-zinc-400" />
+				<ScrollText className="h-4 w-4 text-muted-foreground" />
 				{title}
 			</h3>
 			{markdown.trim() ? (
 				<MDRender markdown={markdown} className="prose max-w-none text-base leading-7 prose-p:my-3 prose-li:my-1 dark:prose-invert" />
 			) : (
-				<p className="text-base leading-7 text-zinc-500 dark:text-muted-foreground">Not documented.</p>
+				<p className="text-base leading-7 text-muted-foreground">Not documented.</p>
 			)}
 		</section>
 	);
@@ -1108,7 +1142,7 @@ function BodySection({ title, markdown }: { title: string; markdown: string }) {
 function DetailSection({ title, children }: { title: string; children: ReactNode }) {
 	return (
 		<section className="space-y-2.5">
-			<h3 className="text-xs font-semibold text-zinc-500 dark:text-muted-foreground">{title}</h3>
+			<h3 className="text-xs font-semibold text-muted-foreground">{title}</h3>
 			{children}
 		</section>
 	);
@@ -1127,18 +1161,18 @@ function TokenGroup({
 }) {
 	return (
 		<div>
-			<div className="mb-2 flex items-center gap-2 text-xs font-semibold text-zinc-500 dark:text-muted-foreground">
+			<div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
 				<Icon className="h-3.5 w-3.5" />
 				<span>{label}</span>
 			</div>
 			{values.length ? (
 				<div className="flex flex-wrap gap-1.5">
 					{values.map((value) => (
-						<span key={`${label}-${value}`} className="max-w-full truncate rounded-md bg-zinc-200/70 px-2 py-1 font-mono text-xs text-zinc-700 dark:bg-muted dark:text-muted-foreground">{prefix}{value}</span>
+						<span key={`${label}-${value}`} className="max-w-full truncate rounded-md bg-muted px-2 py-1 font-mono text-xs text-foreground dark:bg-muted">{prefix}{value}</span>
 					))}
 				</div>
 			) : (
-				<p className="text-sm text-zinc-500 dark:text-muted-foreground">None linked.</p>
+				<p className="text-sm text-muted-foreground">None linked.</p>
 			)}
 		</div>
 	);
@@ -1161,10 +1195,10 @@ function ReviewStatePill({ state }: { state?: DecisionReviewState }) {
 function StatusPill({ status, current }: { status: DecisionStatus; current?: boolean }) {
 	const classes: Record<DecisionStatus, string> = {
 		accepted: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300",
-		draft: "border-zinc-200 bg-zinc-100 text-zinc-700 dark:border-zinc-500/30 dark:bg-zinc-500/10 dark:text-zinc-300",
-		superseded: "border-zinc-300 bg-zinc-100 text-zinc-700 dark:border-zinc-500/30 dark:bg-zinc-500/10 dark:text-zinc-300",
+		draft: "border-border bg-muted text-foreground",
+		superseded: "border-border bg-muted text-foreground",
 		rejected: "border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300",
-		archived: "border-zinc-200 bg-zinc-100 text-zinc-600 dark:border-zinc-500/30 dark:bg-zinc-500/10 dark:text-zinc-300",
+		archived: "border-border bg-muted text-muted-foreground",
 	};
 	return (
 		<span className={cn("inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium", classes[status])}>
@@ -1177,7 +1211,7 @@ function StatusPill({ status, current }: { status: DecisionStatus; current?: boo
 function MetadataItem({ label, value }: { label: string; value: string }) {
 	return (
 		<div className="flex items-center justify-between gap-3 py-2">
-			<dt className="text-zinc-500 dark:text-muted-foreground">{label}</dt>
+			<dt className="text-muted-foreground">{label}</dt>
 			<dd className="truncate text-right font-medium tabular-nums">{value}</dd>
 		</div>
 	);
@@ -1186,7 +1220,7 @@ function MetadataItem({ label, value }: { label: string; value: string }) {
 function ImpactRow({ label, value }: { label: string; value: string }) {
 	return (
 		<div className="grid gap-1 py-3 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-3">
-			<dt className="text-zinc-500 dark:text-muted-foreground">{label}</dt>
+			<dt className="text-muted-foreground">{label}</dt>
 			<dd className="break-words leading-6">{value}</dd>
 		</div>
 	);
@@ -1211,9 +1245,9 @@ function ActionButton({
 			disabled={disabled}
 			onClick={onClick}
 			className={cn(
-				"inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9",
-				tone === "neutral" && "border-zinc-200 bg-white hover:bg-zinc-100 dark:border-border dark:bg-background dark:hover:bg-accent",
-				tone === "primary" && "border-emerald-700 bg-emerald-700 text-white hover:bg-emerald-800",
+				"inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9",
+				tone === "neutral" && "border-border bg-card hover:bg-accent",
+				tone === "primary" && "border-primary bg-primary text-primary-foreground hover:bg-primary/90",
 				tone === "danger" && "border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/15",
 			)}
 		>
@@ -1225,10 +1259,10 @@ function ActionButton({
 
 function EmptyState({ title, description }: { title: string; description: string }) {
 	return (
-		<div className="flex min-h-56 flex-col items-center justify-center border-y border-zinc-200 bg-white px-4 py-10 text-center dark:border-border dark:bg-background">
-			<Inbox className="h-5 w-5 text-zinc-400" />
+		<div className="flex min-h-56 flex-col items-center justify-center border-y border-border bg-card px-4 py-10 text-center">
+			<Inbox className="h-5 w-5 text-muted-foreground" />
 			<p className="mt-3 text-sm font-medium">{title}</p>
-			<p className="mt-1 max-w-md text-sm text-zinc-500 dark:text-muted-foreground">{description}</p>
+			<p className="mt-1 max-w-md text-sm text-muted-foreground">{description}</p>
 		</div>
 	);
 }
