@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
 import { AlertCircle, RefreshCw } from "lucide-react";
 
 import { useTheme } from "@/ui/App";
 import { getGraph, type GraphData, type GraphNode } from "@/ui/api/client";
+import { DecisionPreviewDialog } from "@/ui/components/organisms/DecisionPreview/DecisionPreviewDialog";
 import { DocPreviewDialog } from "@/ui/components/organisms/DocsPreview/DocPreviewDialog";
+import { MemoryPreviewDialog } from "@/ui/components/organisms/MemoryPreview/MemoryPreviewDialog";
 import { TaskPreviewDialog } from "@/ui/components/organisms/TaskDetail/TaskPreviewDialog";
 import { useSSEEvent } from "@/ui/contexts/SSEContext";
 
@@ -21,14 +22,11 @@ import {
 } from "./graph/constants";
 import {
 	buildConstellationData,
-	createConstellationForce,
-	edgeColor,
-	linkNodeId,
-	shouldDrawConstellationLabel,
 	type ConstellationLink,
 	type ConstellationNode,
 } from "./graph/graphModel";
 import { GraphToolbar } from "./graph/GraphToolbar";
+import { SigmaConstellation, type SigmaConstellationHandle } from "./graph/SigmaConstellation";
 import { useContainerSize } from "./graph/useContainerSize";
 
 const EMPTY_FORCE_DATA: {
@@ -120,40 +118,12 @@ function toGraphNode(node: ConstellationNode): GraphNode {
 	return { id: node.id, label: node.label, type: node.type, data: node.data };
 }
 
-function truncateLabel(label: string, maxLength = 36): string {
-	return label.length > maxLength ? `${label.slice(0, maxLength - 1)}…` : label;
-}
-
-function isLinkInNeighborhood(link: ConstellationLink, neighborhood: Map<string, number> | null): boolean {
-	if (!neighborhood) return true;
-	return neighborhood.has(linkNodeId(link.source)) && neighborhood.has(linkNodeId(link.target));
-}
-
-interface LabelRect {
-	x: number;
-	y: number;
-	width: number;
-	height: number;
-}
-
-function labelRectsOverlap(a: LabelRect, b: LabelRect, gap: number): boolean {
-	return !(
-		a.x + a.width + gap < b.x ||
-		b.x + b.width + gap < a.x ||
-		a.y + a.height + gap < b.y ||
-		b.y + b.height + gap < a.y
-	);
-}
-
 export default function GraphPage() {
 	const graphShellRef = useRef<HTMLDivElement>(null);
 	const graphContainerRef = useRef<HTMLDivElement>(null);
-	const graphRef = useRef<ForceGraphMethods<ConstellationNode, ConstellationLink> | undefined>(undefined);
+	const constellationRef = useRef<SigmaConstellationHandle>(null);
 	const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const initialFitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const stableForceDataRef = useRef(EMPTY_FORCE_DATA);
-	const hoverNodeIdRef = useRef<string | null>(null);
-	const didInitialFitRef = useRef(false);
 	const { isDark } = useTheme();
 	const { width, height } = useContainerSize(graphContainerRef);
 
@@ -164,6 +134,8 @@ export default function GraphPage() {
 	const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
 	const [previewTaskId, setPreviewTaskId] = useState<string | null>(null);
 	const [previewDocPath, setPreviewDocPath] = useState<string | null>(null);
+	const [previewMemoryId, setPreviewMemoryId] = useState<string | null>(null);
+	const [previewDecisionId, setPreviewDecisionId] = useState<string | null>(null);
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const [searchQuery, setSearchQuery] = useState("");
 	const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
@@ -202,7 +174,6 @@ export default function GraphPage() {
 			const graphData = await getGraph();
 			setData(graphData);
 			setError(null);
-			didInitialFitRef.current = false;
 		} catch (fetchError) {
 			setError("We couldn’t load the graph.");
 			console.error(fetchError);
@@ -255,7 +226,15 @@ export default function GraphPage() {
 
 	const forceData = useMemo(() => {
 		if (!filteredData) return EMPTY_FORCE_DATA;
-		const next = buildConstellationData(filteredData, debouncedSearchQuery);
+		const built = buildConstellationData(filteredData, debouncedSearchQuery);
+		// Paint order decides both what is drawn on top and, more importantly, which
+		// node wins a click where hit areas overlap: the last one painted takes it.
+		// Draw the biggest first so small nodes end up on top and stay clickable
+		// instead of being swallowed by a large neighbour.
+		const next = {
+			...built,
+			nodes: [...built.nodes].sort((a, b) => b.val - a.val),
+		};
 		const previous = stableForceDataRef.current;
 		const structureSame = sameNodeIds(previous.nodes, next.nodes) && sameLinkIds(previous.links, next.links);
 
@@ -296,72 +275,14 @@ export default function GraphPage() {
 		return merged;
 	}, [filteredData, debouncedSearchQuery]);
 
-	const structureKey = useMemo(
-		() => `${forceData.nodes.map((node) => node.id).join("|")}::${forceData.links.map((link) => link.id).join("|")}`,
-		[forceData.nodes, forceData.links],
-	);
-
-	const fitView = useCallback((durationMs: number, padding: number) => {
-		graphRef.current?.zoomToFit(durationMs, padding);
+	const fitView = useCallback(() => {
+		constellationRef.current?.fitView();
 	}, []);
-
-	useEffect(() => {
-		if (!filteredData || forceData.nodes.length === 0 || width <= 0 || height <= 0) {
-			setEngineRunning(false);
-			return;
-		}
-
-		setEngineRunning(true);
-		const frame = requestAnimationFrame(() => {
-			const graph = graphRef.current;
-			if (!graph) return;
-
-			graph.d3Force("center", null);
-			graph.d3Force("constellation", createConstellationForce());
-
-			const charge = graph.d3Force("charge") as
-				| {
-						strength: (accessor: (node: ConstellationNode) => number) => unknown;
-						distanceMax: (distance: number) => unknown;
-					}
-				| undefined;
-			charge?.strength((node) => (node.isIsolated ? -10 : -34 - Math.sqrt(node.degree + 1) * 9));
-			charge?.distanceMax(260);
-
-			const linkForce = graph.d3Force("link") as
-				| {
-						distance: (accessor: (link: ConstellationLink) => number) => unknown;
-						strength: (accessor: (link: ConstellationLink) => number) => unknown;
-					}
-				| undefined;
-			linkForce?.distance((link) => {
-				const source = typeof link.source === "string" ? undefined : link.source;
-				const target = typeof link.target === "string" ? undefined : link.target;
-				return 26 + Math.min(34, ((source?.degree ?? 0) + (target?.degree ?? 0)) * 1.4);
-			});
-			linkForce?.strength((link) => (link.type === "parent" || link.type === "spec" ? 0.42 : 0.28));
-
-			graph.d3ReheatSimulation();
-			if (!didInitialFitRef.current) {
-				if (initialFitTimerRef.current) clearTimeout(initialFitTimerRef.current);
-				initialFitTimerRef.current = setTimeout(() => {
-					fitView(0, 64);
-					didInitialFitRef.current = true;
-				}, 80);
-			}
-		});
-
-		return () => {
-			cancelAnimationFrame(frame);
-			if (initialFitTimerRef.current) clearTimeout(initialFitTimerRef.current);
-		};
-	}, [filteredData, fitView, forceData.nodes.length, height, structureKey, width]);
 
 	const toggleFilter = useCallback((key: keyof FilterState) => {
 		setFilters((previous) => ({ ...previous, [key]: !previous[key] }));
 		setSelectedNode(null);
 		setImpactNodeId(null);
-		didInitialFitRef.current = false;
 	}, []);
 
 	const selectedNodeReferences = useMemo(
@@ -369,8 +290,19 @@ export default function GraphPage() {
 		[filteredData, selectedNode],
 	);
 
+	// force-graph re-heats the whole simulation (forceLayout.stop().alpha(1))
+	// every time the graphData prop changes identity. Passing an object literal
+	// here meant every React render — selecting a node included — shook the
+	// layout, so the graph shifted under the cursor between clicks and aiming at
+	// a node became a coin flip. Keep the wrapper stable; forceData already
+	// preserves the node objects themselves.
+	const graphDataProp = useMemo(
+		() => ({ nodes: forceData.nodes, links: forceData.links }),
+		[forceData.nodes, forceData.links],
+	);
+
 	const handleZoomToFit = useCallback(() => {
-		fitView(350, 56);
+		fitView();
 	}, [fitView]);
 
 	const clearSelection = useCallback(() => {
@@ -387,27 +319,33 @@ export default function GraphPage() {
 		}
 	}, []);
 
-	const handleNodeNavigate = useCallback((node: GraphNode) => {
-		const [type, ...rest] = node.id.split(":");
-		const entityId = rest.join(":");
-		if (type === "task") setPreviewTaskId(entityId);
-		else if (type === "doc") setPreviewDocPath(entityId);
-	}, []);
+	const handleNodeNavigate = useCallback(
+		(node: GraphNode) => {
+			const [type, ...rest] = node.id.split(":");
+			const entityId = rest.join(":");
+			if (type === "task") setPreviewTaskId(entityId);
+			else if (type === "doc") setPreviewDocPath(entityId);
+			else if (type === "memory") setPreviewMemoryId(entityId);
+			else if (type === "decision") setPreviewDecisionId(entityId);
+		},
+		[],
+	);
 
-	const selectNode = useCallback((node: ConstellationNode) => {
+	const selectNode = useCallback((node: ConstellationNode, options?: { center?: boolean }) => {
 		setSelectedNode(toGraphNode(node));
 		setImpactNodeId(node.id);
-		if (typeof node.x === "number" && typeof node.y === "number") {
-			graphRef.current?.centerAt(node.x, node.y, 250);
-			const currentZoom = graphRef.current?.zoom() ?? 1;
-			if (currentZoom < 1.15) graphRef.current?.zoom(1.15, 250);
-		}
+		// A click does not recentre the view. The node the user just aimed at would
+		// slide out from under the cursor and half the graph would swing off screen,
+		// which reads as the click having broken something. Only programmatic
+		// selection recentres, because there the target may be off screen already.
+		if (!options?.center) return;
+		constellationRef.current?.centerOnNode(node.id);
 	}, []);
 
 	const selectNodeById = useCallback(
 		(id: string) => {
 			const node = stableForceDataRef.current.nodes.find((candidate) => candidate.id === id);
-			if (node) selectNode(node);
+			if (node) selectNode(node, { center: true });
 		},
 		[selectNode],
 	);
@@ -460,233 +398,18 @@ export default function GraphPage() {
 				</span>
 
 				{filteredData && width > 0 && height > 0 && (
-					<ForceGraph2D
-						ref={graphRef}
-						width={width}
-						height={height}
-						graphData={{ nodes: forceData.nodes, links: forceData.links }}
-						backgroundColor={canvasPalette.canvas}
-						minZoom={0.08}
-						maxZoom={8}
-						enableZoomInteraction
-						enablePanInteraction
-						enablePointerInteraction={forceData.nodes.length < 2_000}
-						d3AlphaDecay={0.042}
-						d3VelocityDecay={0.32}
-						warmupTicks={0}
-						cooldownTicks={110}
-						cooldownTime={3_500}
-						onEngineStop={() => setEngineRunning(false)}
-						onRenderFramePost={(context, globalScale) => {
-							const occupiedLabels: LabelRect[] = [];
-							const candidates: ConstellationNode[] = [];
-							const selectedForceNode = selectedNode
-								? forceData.nodes.find((node) => node.id === selectedNode.id)
-								: undefined;
-							const hoveredForceNode = hoverNodeIdRef.current
-								? forceData.nodes.find((node) => node.id === hoverNodeIdRef.current)
-								: undefined;
-							if (selectedForceNode) candidates.push(selectedForceNode);
-							if (hoveredForceNode && hoveredForceNode.id !== selectedForceNode?.id) candidates.push(hoveredForceNode);
-							if (forceData.matches > 0) {
-								for (const node of forceData.nodes) {
-									if (node.highlighted) candidates.push(node);
-								}
-							}
-							candidates.push(...forceData.nodes);
-
-							const rendered = new Set<string>();
-							for (const graphNode of candidates) {
-								if (rendered.has(graphNode.id)) continue;
-								rendered.add(graphNode.id);
-
-								const isSelected = selectedNode?.id === graphNode.id;
-								const isHovered = hoverNodeIdRef.current === graphNode.id;
-								const focusDistance = impactNeighborhood?.get(graphNode.id);
-								const isFocusMode = impactNeighborhood !== null;
-								const isSearchMatch = forceData.matches > 0 && graphNode.highlighted;
-								const isCompact = width < 640;
-								if (
-									!shouldDrawConstellationLabel(graphNode, globalScale, {
-										isSelected,
-										isHovered,
-										isFocusMode,
-										isSearchMatch,
-										isCompact,
-									})
-								) {
-									continue;
-								}
-
-								const x = graphNode.x ?? 0;
-								const y = graphNode.y ?? 0;
-								const minimumScreenRadius = graphNode.isIsolated ? 1.4 : 2.4;
-								const radius = Math.max(graphNode.val, minimumScreenRadius / Math.max(globalScale, 0.08));
-								const label = truncateLabel(graphNode.label || graphNode.id, isCompact ? 24 : 36);
-								const fontSize = (isSelected ? 11.5 : 10.5) / globalScale;
-								const fontWeight = isSelected || graphNode.labelRank < 15 ? 600 : 500;
-								context.font = `${fontWeight} ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-								const textWidth = context.measureText(label).width;
-								const paddingX = 3 / globalScale;
-								const paddingY = 2 / globalScale;
-								const placeLeft = !isSelected && graphNode.labelRank % 2 === 1;
-								const verticalOffset = isSelected ? 0 : ((graphNode.labelRank % 3) - 1) * fontSize * 0.8;
-								const mayOverlap = isSelected || isHovered;
-								const labelHeight = fontSize + paddingY * 2;
-								const horizontalGap = 3 / globalScale;
-								const rightPosition = {
-									x: x + radius + horizontalGap,
-									y: y - fontSize / 2 - paddingY + verticalOffset,
-								};
-								const leftPosition = {
-									x: x - radius - horizontalGap - textWidth,
-									y: y - fontSize / 2 - paddingY + verticalOffset,
-								};
-								const topPosition = {
-									x: x - textWidth / 2,
-									y: y - radius - horizontalGap - labelHeight,
-								};
-								const bottomPosition = {
-									x: x - textWidth / 2,
-									y: y + radius + horizontalGap,
-								};
-								const positionOptions = placeLeft
-									? [leftPosition, rightPosition, topPosition, bottomPosition]
-									: [rightPosition, leftPosition, topPosition, bottomPosition];
-								const placement = positionOptions
-									.map(({ x: labelX, y: labelY }) => ({
-										labelX,
-										labelY,
-										rect: {
-											x: labelX - paddingX,
-											y: labelY,
-											width: textWidth + paddingX * 2,
-											height: labelHeight,
-										},
-									}))
-									.find(
-										(candidate) =>
-											mayOverlap ||
-											!occupiedLabels.some((occupied) =>
-												labelRectsOverlap(candidate.rect, occupied, 3 / globalScale),
-											),
-									);
-								if (!placement) continue;
-								const { labelX, labelY, rect } = placement;
-								occupiedLabels.push(rect);
-
-								const isFocusActive = !impactNeighborhood || typeof focusDistance === "number";
-								context.globalAlpha = isFocusActive ? 0.96 : 0.35;
-								context.fillStyle = canvasPalette.labelSurface;
-								context.fillRect(rect.x, rect.y, rect.width, rect.height);
-								context.strokeStyle = canvasPalette.labelBorder;
-								context.lineWidth = 0.65 / globalScale;
-								context.strokeRect(rect.x, rect.y, rect.width, rect.height);
-								context.fillStyle = canvasPalette.text;
-								context.textBaseline = "middle";
-								context.fillText(label, labelX, labelY + fontSize / 2 + paddingY);
-								context.globalAlpha = 1;
-							}
-						}}
-						nodeLabel={() => ""}
-						nodeVal={(node) => (node as ConstellationNode).val}
-						nodeColor={(node) => (node as ConstellationNode).color}
-						nodePointerAreaPaint={(node, paintColor, context, globalScale) => {
-							const graphNode = node as ConstellationNode;
-							const radius = Math.max(graphNode.val + 2, 7 / globalScale);
-							context.beginPath();
-							context.arc(graphNode.x ?? 0, graphNode.y ?? 0, radius, 0, Math.PI * 2);
-							context.fillStyle = paintColor;
-							context.fill();
-						}}
-						linkColor={(link) => {
-							const graphLink = link as ConstellationLink;
-							if (!isLinkInNeighborhood(graphLink, impactNeighborhood)) return canvasPalette.dimLink;
-							if (impactNeighborhood) return edgeColor(graphLink);
-							if (graphLink.muted) return canvasPalette.dimLink;
-							return canvasPalette.link;
-						}}
-						linkWidth={(link) => {
-							const graphLink = link as ConstellationLink;
-							if (!isLinkInNeighborhood(graphLink, impactNeighborhood)) return 0.25;
-							if (!impactNeighborhood) return graphLink.width;
-							const sourceDistance = impactNeighborhood.get(linkNodeId(graphLink.source));
-							const targetDistance = impactNeighborhood.get(linkNodeId(graphLink.target));
-							return sourceDistance === 0 || targetDistance === 0 ? 1.45 : 0.9;
-						}}
-						linkLineDash={(link) => ((link as ConstellationLink).dashed ? [3, 3] : null)}
-						linkDirectionalArrowLength={(link) => {
-							const graphLink = link as ConstellationLink;
-							if (!impactNeighborhood || !isLinkInNeighborhood(graphLink, impactNeighborhood)) return 0;
-							const sourceDistance = impactNeighborhood.get(linkNodeId(graphLink.source));
-							const targetDistance = impactNeighborhood.get(linkNodeId(graphLink.target));
-							return sourceDistance === 0 || targetDistance === 0 ? 2.5 : 0;
-						}}
-						linkDirectionalArrowColor={(link) => edgeColor(link as ConstellationLink)}
-						linkDirectionalArrowRelPos={0.92}
-						onNodeClick={(node) => selectNode(node as ConstellationNode)}
-						onNodeHover={(node) => {
-							hoverNodeIdRef.current = node ? String(node.id) : null;
-						}}
-						onNodeDragEnd={(node) => {
-							const graphNode = node as ConstellationNode;
-							graphNode.fx = graphNode.x;
-							graphNode.fy = graphNode.y;
-						}}
+					<SigmaConstellation
+						ref={constellationRef}
+						nodes={forceData.nodes}
+						links={forceData.links}
+						palette={canvasPalette}
+						selectedNodeId={selectedNode?.id ?? null}
+						impactNeighborhood={impactNeighborhood}
+						searchActive={forceData.matches > 0}
+						compact={width < 640}
+						onSelectNode={selectNode}
 						onBackgroundClick={clearSelection}
-						nodeCanvasObject={(node, context, globalScale) => {
-							const graphNode = node as ConstellationNode;
-							const x = graphNode.x ?? 0;
-							const y = graphNode.y ?? 0;
-							const minimumScreenRadius = graphNode.isIsolated ? 1.4 : 2.4;
-							const radius = Math.max(graphNode.val, minimumScreenRadius / Math.max(globalScale, 0.08));
-							const isSelected = selectedNode?.id === graphNode.id;
-							const focusDistance = impactNeighborhood?.get(graphNode.id);
-							const isFocusActive = !impactNeighborhood || typeof focusDistance === "number";
-							const opacity = !isFocusActive
-								? 0.16
-								: focusDistance === 2
-									? 0.64
-									: graphNode.isIsolated
-										? 0.62
-										: graphNode.highlighted
-											? 1
-											: 0.24;
-							const displayColor = isFocusActive && graphNode.highlighted ? graphNode.color : canvasPalette.dimNode;
-
-							if (graphNode.degree >= 8 && isFocusActive) {
-								context.beginPath();
-								context.arc(x, y, radius + 2.2, 0, Math.PI * 2);
-								context.strokeStyle = graphNode.color;
-								context.lineWidth = 0.8;
-								context.globalAlpha = opacity * 0.42;
-								context.stroke();
-							}
-
-							if (isSelected) {
-								context.beginPath();
-								context.arc(x, y, radius + 4.5, 0, Math.PI * 2);
-								context.strokeStyle = canvasPalette.text;
-								context.lineWidth = 1.35 / Math.max(globalScale, 0.45);
-								context.globalAlpha = 0.95;
-								context.stroke();
-								context.beginPath();
-								context.arc(x, y, radius + 2.1, 0, Math.PI * 2);
-								context.strokeStyle = graphNode.color;
-								context.lineWidth = 1.1 / Math.max(globalScale, 0.45);
-								context.stroke();
-							}
-
-							context.beginPath();
-							context.arc(x, y, radius, 0, Math.PI * 2);
-							context.fillStyle = displayColor;
-							context.globalAlpha = opacity;
-							context.fill();
-							context.strokeStyle = canvasPalette.nodeOutline;
-							context.lineWidth = 0.8 / Math.max(globalScale, 0.5);
-							context.stroke();
-							context.globalAlpha = 1;
-						}}
+						onEngineRunningChange={setEngineRunning}
 					/>
 				)}
 
@@ -772,9 +495,7 @@ export default function GraphPage() {
 						node={selectedNode}
 						onClose={clearSelection}
 						onNavigate={handleNodeNavigate}
-						onShowImpact={setImpactNodeId}
 						onSelectNode={selectNodeById}
-						impactActive={Boolean(impactNodeId)}
 						references={selectedNodeReferences}
 					/>
 				</div>
@@ -792,6 +513,27 @@ export default function GraphPage() {
 				open={Boolean(previewDocPath)}
 				onOpenChange={(open) => {
 					if (!open) setPreviewDocPath(null);
+				}}
+			/>
+			<MemoryPreviewDialog
+				memoryId={previewMemoryId}
+				open={Boolean(previewMemoryId)}
+				onOpenChange={(open) => {
+					if (!open) setPreviewMemoryId(null);
+				}}
+				onOpenSource={(ref) => {
+					setPreviewMemoryId(null);
+					if (ref.kind === "doc") setPreviewDocPath(ref.path);
+					else if (ref.kind === "task") setPreviewTaskId(ref.id);
+					else if (ref.kind === "memory") setPreviewMemoryId(ref.id);
+					else setPreviewDecisionId(ref.id);
+				}}
+			/>
+			<DecisionPreviewDialog
+				decisionId={previewDecisionId}
+				open={Boolean(previewDecisionId)}
+				onOpenChange={(open) => {
+					if (!open) setPreviewDecisionId(null);
 				}}
 			/>
 		</div>

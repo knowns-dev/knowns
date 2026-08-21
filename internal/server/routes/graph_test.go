@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -97,5 +98,54 @@ func seedSemanticGraphData(t *testing.T, store *storage.Store) {
 		Sources: []string{"@doc/guides/source"},
 	}, storage.DecisionCreateOptions{}); err != nil {
 		t.Fatalf("create decision: %v", err)
+	}
+}
+
+func TestGraph_LinksMemoriesThroughTheirSources(t *testing.T) {
+	store := newGraphRouteTestStore(t)
+	if err := store.Docs.Create(&models.Doc{Path: "guides/source", Title: "Source Guide"}); err != nil {
+		t.Fatalf("create doc: %v", err)
+	}
+	if err := store.Memory.Create(&models.MemoryEntry{
+		ID:       "mem002",
+		Title:    "Deploy convention",
+		Layer:    models.MemoryLayerProject,
+		Category: "convention",
+		Content:  "Nothing referenced in the body.",
+		Sources:  []string{"@doc/guides/source", "notes/handwritten.txt"},
+	}); err != nil {
+		t.Fatalf("create memory: %v", err)
+	}
+
+	routes := &GraphRoutes{store: store}
+	r := chi.NewRouter()
+	routes.Register(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/graph", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /graph status = %d, want 200", w.Code)
+	}
+
+	var payload struct {
+		Edges []GraphEdge `json:"edges"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode graph: %v", err)
+	}
+
+	var found bool
+	for _, edge := range payload.Edges {
+		if edge.Source == "memory:mem002" && edge.Target == "doc:guides/source" {
+			found = true
+		}
+		// A source that is not a reference must not invent a node.
+		if edge.Target == "doc:notes/handwritten.txt" {
+			t.Fatalf("plain-text source became an edge: %+v", edge)
+		}
+	}
+	if !found {
+		t.Fatalf("no edge from memory:mem002 to doc:guides/source, got %+v", payload.Edges)
 	}
 }

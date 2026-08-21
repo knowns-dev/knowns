@@ -7,6 +7,9 @@ import {
 	type ComponentType,
 	type ReactNode,
 } from "react";
+
+import { SourceLinkList } from "@/ui/components/molecules/SourceLinkList";
+import { navigateTo } from "@/ui/lib/navigation";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import {
 	MemoryReviewRequiredError,
@@ -60,7 +63,8 @@ import {
 	DialogDescription,
 	DialogTitle,
 } from "@/ui/components/ui/dialog";
-import { PageContent, PageHeader, PageShell } from "@/ui/components/templates/PageShell";
+import { FeatureHeader } from "@/ui/components/templates";
+import { PageContent, PageShell } from "@/ui/components/templates/PageShell";
 import { cn } from "@/ui/lib/utils";
 
 type MemoryView = "trusted" | "review" | "history";
@@ -159,9 +163,18 @@ export default function MemoryPage() {
 	const navigate = useNavigate();
 	const pathname = useRouterState({ select: (state) => state.location.pathname });
 	const view = viewFromPath(pathname);
+	// The graph links straight to one entry, e.g. /memory/<id>, so a node there
+	// opens the same detail dialog the list uses.
+	const routeSelectedID = useMemo(() => {
+		const match = pathname.match(/^\/memory\/([^/]+)\/?$/);
+		const id = match?.[1];
+		if (!id) return null;
+		return ["review", "history"].includes(id) ? null : decodeURIComponent(id);
+	}, [pathname]);
 	const [memories, setMemories] = useState<MemoryEntry[]>([]);
 	const [inbox, setInbox] = useState<MemoryReviewInboxResponse>(emptyInbox);
 	const [reviewAvailable, setReviewAvailable] = useState(true);
+	const [layerFilter, setLayerFilter] = useState<string>("all");
 	const [selectedID, setSelectedID] = useState<string | null>(null);
 	const [selectedIDs, setSelectedIDs] = useState<Set<string>>(() => new Set());
 	const [query, setQuery] = useState("");
@@ -285,10 +298,37 @@ export default function MemoryPage() {
 		}
 	}, [historicalMemories, inbox.items, trustedMemories, view]);
 
+	// The layers to offer come from every memory the page knows about, not just the
+	// open tab, so the control keeps the same shape as you move between tabs. A
+	// layer only some projects use (working) still earns its own filter.
+	const knownLayers = useMemo(() => {
+		const layers = new Set<string>();
+		for (const memory of memoryByID.values()) layers.add(memory.layer);
+		return [...layers].sort();
+	}, [memoryByID]);
+
+	// Counts follow the open tab, so a zero says "none in here" rather than
+	// hiding the fact that this layer exists at all.
+	const layerCounts = useMemo(() => {
+		const counts = new Map<string, number>();
+		for (const memory of destinationMemories) {
+			counts.set(memory.layer, (counts.get(memory.layer) || 0) + 1);
+		}
+		return counts;
+	}, [destinationMemories]);
+
+	useEffect(() => {
+		if (layerFilter !== "all" && !knownLayers.includes(layerFilter)) setLayerFilter("all");
+	}, [knownLayers, layerFilter]);
+
 	const visibleMemories = useMemo(() => {
+		const byLayer =
+			layerFilter === "all"
+				? destinationMemories
+				: destinationMemories.filter((memory) => memory.layer === layerFilter);
 		const normalized = query.trim().toLowerCase();
-		if (!normalized) return destinationMemories;
-		return destinationMemories.filter((memory) => {
+		if (!normalized) return byLayer;
+		return byLayer.filter((memory) => {
 			const reviewItem = itemByID.get(memory.id);
 			return [
 				memory.title,
@@ -303,9 +343,33 @@ export default function MemoryPage() {
 				.filter(Boolean)
 				.some((value) => String(value).toLowerCase().includes(normalized));
 		});
-	}, [destinationMemories, itemByID, query]);
+	}, [destinationMemories, itemByID, layerFilter, query]);
 
-	const selectedMemory = selectedID ? memoryByID.get(selectedID) || null : null;
+	// A linked entry may sit in a tab that has not been fetched yet — a proposal
+	// while the trusted list is showing, say — so fall back to loading it alone.
+	const [routeEntry, setRouteEntry] = useState<MemoryEntry | null>(null);
+	useEffect(() => {
+		if (!routeSelectedID) {
+			setRouteEntry(null);
+			return;
+		}
+		setSelectedID(routeSelectedID);
+		if (memoryByID.has(routeSelectedID)) return;
+		let cancelled = false;
+		memoryApi
+			.get(routeSelectedID)
+			.then((entry) => {
+				if (!cancelled) setRouteEntry(entry);
+			})
+			.catch(() => {
+				if (!cancelled) setRouteEntry(null);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [memoryByID, routeSelectedID]);
+
+	const selectedMemory = selectedID ? memoryByID.get(selectedID) || routeEntry || null : null;
 	const selectedReviewItem = selectedID ? itemByID.get(selectedID) || null : null;
 	const selectedReviewItems = useMemo(
 		() => inbox.items.filter((item) => selectedIDs.has(item.memory.id)),
@@ -327,6 +391,12 @@ export default function MemoryPage() {
 		review: inbox.items.length,
 		history: historicalMemories.length,
 	};
+
+	const reviewCount = destinationCounts.review;
+	const headerStatus =
+		reviewCount > 0
+			? `${reviewCount} ${reviewCount === 1 ? "proposal" : "proposals"} ${reviewCount === 1 ? "needs" : "need"} review`
+			: "No proposals awaiting review";
 
 	const handleNavigate = useCallback(
 		(nextView: MemoryView) => {
@@ -468,9 +538,10 @@ export default function MemoryPage() {
 
 	return (
 		<PageShell>
-			<PageHeader
+			<FeatureHeader
+				icon={Brain}
 				title="Memories"
-				description="Trusted memories are read-only here. New recall and uncertain evidence stay in Review Inbox until explicitly resolved."
+				status={headerStatus}
 				actions={
 					<>
 						{view === "review" ? (
@@ -517,63 +588,94 @@ export default function MemoryPage() {
 				</div>
 			) : null}
 
-			<div className="shrink-0 border-b bg-card">
-				<div
-					role="tablist"
-					aria-label="Memory destinations"
-					className="mx-auto flex w-full max-w-[1440px] gap-1 overflow-x-auto px-4 sm:px-6"
-				>
-					{destinations.map((destination) => {
-						const Icon = destination.icon;
-						const active = view === destination.id;
-						return (
-							<button
-								key={destination.id}
-								type="button"
-								role="tab"
-								aria-selected={active}
-								onClick={() => handleNavigate(destination.id)}
-								className={cn(
-									"min-h-11 shrink-0 border-b-2 px-4 py-2 text-sm font-medium transition-colors sm:min-h-10",
-									active
-										? "border-primary text-primary"
-										: "border-transparent text-muted-foreground hover:text-foreground",
-								)}
-							>
-								<span className="flex items-center gap-2">
-									<Icon className="h-4 w-4" />
-									{destination.label}
-									<span className="rounded bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">
-										{destinationCounts[destination.id]}
+			<div className="flex h-[58px] shrink-0 items-center border-b bg-card px-4 sm:px-6">
+				<div className="flex w-full items-center gap-4">
+					<label className="relative min-w-0 flex-1">
+						<span className="sr-only">Search this destination</span>
+						<Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+						<input
+							value={query}
+							onChange={(event) => setQuery(event.target.value)}
+							placeholder="Search title, ID, source…"
+							className="h-11 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring sm:h-9"
+						/>
+					</label>
+					{knownLayers.length > 1 && (
+						<div
+							role="group"
+							aria-label="Filter by layer"
+							className="flex shrink-0 items-center gap-1 rounded-lg border bg-background p-0.5"
+						>
+							{[["all", "All"] as const, ...knownLayers.map((layer) => [layer, layer] as const)].map(
+								([value, label]) => {
+									const active = layerFilter === value;
+									const count = value === "all" ? destinationMemories.length : (layerCounts.get(value) ?? 0);
+									const empty = count === 0 && value !== "all";
+									return (
+										<button
+											key={value}
+											type="button"
+											aria-pressed={active}
+											disabled={empty}
+											title={empty ? `No ${value} memories in this tab` : undefined}
+											onClick={() => setLayerFilter(value)}
+											className={cn(
+												"flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium capitalize transition-colors",
+												active ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
+												empty && "cursor-not-allowed opacity-40 hover:text-muted-foreground",
+											)}
+										>
+											{value === "all" ? (
+												label
+											) : (
+												<LayerBadge layer={value} className={active ? "" : "opacity-70"} />
+											)}
+											<span className="tabular-nums text-[11px] text-muted-foreground">{count}</span>
+										</button>
+									);
+								},
+							)}
+						</div>
+					)}
+
+					<div
+						role="tablist"
+						aria-label="Memory destinations"
+						className="flex shrink-0 gap-1 overflow-x-auto"
+					>
+						{destinations.map((destination) => {
+							const Icon = destination.icon;
+							const active = view === destination.id;
+							return (
+								<button
+									key={destination.id}
+									type="button"
+									role="tab"
+									aria-selected={active}
+									onClick={() => handleNavigate(destination.id)}
+									className={cn(
+										"min-h-11 shrink-0 border-b-2 px-4 py-2 text-sm font-medium transition-colors sm:min-h-10",
+										active
+											? "border-primary text-primary"
+											: "border-transparent text-muted-foreground hover:text-foreground",
+									)}
+								>
+									<span className="flex items-center gap-2">
+										<Icon className="h-4 w-4" />
+										{destination.label}
+										<span className="rounded bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">
+											{destinationCounts[destination.id]}
+										</span>
 									</span>
-								</span>
-							</button>
-						);
-					})}
+								</button>
+							);
+						})}
+					</div>
 				</div>
 			</div>
 
-			<PageContent className="flex min-h-0 flex-1 flex-col">
+			<PageContent size="full" className="flex min-h-0 flex-1 flex-col">
 				<div data-testid={`memory-${view}-destination`}>
-					<div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-						<div>
-							<h2 className="text-base font-semibold">{destinationTitle(view)}</h2>
-							<p className="mt-1 text-sm text-muted-foreground">
-								{destinationDescription(view)}
-							</p>
-						</div>
-						<label className="relative block w-full sm:w-72">
-							<span className="sr-only">Search this destination</span>
-							<Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-							<input
-								value={query}
-								onChange={(event) => setQuery(event.target.value)}
-								placeholder="Search title, ID, source…"
-								className="min-h-11 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring sm:min-h-9"
-							/>
-						</label>
-					</div>
-
 					{dataWarning ? (
 						<p
 							role="status"
@@ -702,8 +804,8 @@ function MemoryRegister({
 				className={cn(
 					"hidden gap-4 border-b bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground md:grid",
 					view === "review"
-						? "grid-cols-[32px_minmax(0,1fr)_170px_130px_32px]"
-						: "grid-cols-[minmax(0,1fr)_170px_130px_32px]",
+						? "grid-cols-[32px_minmax(0,1fr)_160px_150px_32px]"
+						: "grid-cols-[minmax(0,1fr)_160px_150px_32px]",
 				)}
 			>
 				{view === "review" ? <span aria-hidden="true" /> : null}
@@ -721,8 +823,8 @@ function MemoryRegister({
 							className={cn(
 								"group grid min-h-[76px] items-center gap-3 px-4 py-3 hover:bg-muted/40 md:gap-4",
 								view === "review"
-									? "grid-cols-[32px_minmax(0,1fr)_auto] md:grid-cols-[32px_minmax(0,1fr)_170px_130px_32px]"
-									: "grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1fr)_170px_130px_32px]",
+									? "grid-cols-[32px_minmax(0,1fr)_auto] md:grid-cols-[32px_minmax(0,1fr)_160px_150px_32px]"
+									: "grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1fr)_160px_150px_32px]",
 							)}
 							data-testid={`memory-register-item-${memory.id}`}
 						>
@@ -746,9 +848,12 @@ function MemoryRegister({
 								<span className="block truncate text-sm font-medium text-foreground">
 									{memory.title || "Untitled memory"}
 								</span>
-								<span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
-									@memory/{memory.id} · {memory.layer}
-									{memory.category ? ` · ${memory.category}` : ""}
+								<span className="mt-1 flex items-center gap-1.5">
+									<LayerBadge layer={memory.layer} />
+									<span className="truncate font-mono text-xs text-muted-foreground">
+										@memory/{memory.id}
+										{memory.category ? ` · ${memory.category}` : ""}
+									</span>
 								</span>
 							</button>
 							<span className="hidden md:block">
@@ -1193,17 +1298,16 @@ function MemoryMetadataAside({
 			</dl>
 			<section className="mt-6">
 				<h3 className="text-sm font-semibold">Sources</h3>
-				{memory.sources?.length ? (
-					<ul className="mt-3 divide-y border-y">
-						{memory.sources.map((source) => (
-							<li key={source} className="break-all py-3 font-mono text-xs text-muted-foreground">
-								{source}
-							</li>
-						))}
-					</ul>
-				) : (
-					<p className="mt-2 text-sm text-muted-foreground">No source linked.</p>
-				)}
+				<SourceLinkList
+					className="mt-3"
+					sources={memory.sources || []}
+					onOpen={(ref) => {
+						if (ref.kind === "doc") navigateTo(`/docs/${ref.path}`);
+						else if (ref.kind === "task") navigateTo(`/tasks/${ref.id}`);
+						else if (ref.kind === "memory") navigateTo(`/memory/${encodeURIComponent(ref.id)}`);
+						else navigateTo(`/decisions/${encodeURIComponent(ref.id)}`);
+					}}
+				/>
 			</section>
 			{memory.mergedInto ? (
 				<section className="mt-6">
@@ -1834,7 +1938,7 @@ function MemoryLoadingState() {
 				<div className="h-7 w-36 animate-pulse rounded bg-muted" />
 				<div className="mt-3 h-4 w-[min(560px,80vw)] animate-pulse rounded bg-muted/60" />
 			</div>
-			<div className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6">
+			<div className="w-full px-4 py-6 sm:px-6">
 				<div className="space-y-px overflow-hidden border-y">
 					{Array.from({ length: 6 }).map((_, index) => (
 						<div key={index} className="h-20 animate-pulse bg-muted/40" />
@@ -1950,32 +2054,32 @@ function FormField({ label, children }: { label: string; children: ReactNode }) 
 	);
 }
 
+const layerStyles: Record<string, string> = {
+	// Mirrors memoryLayerColors in the graph, so a memory keeps one colour across
+	// the list and the constellation.
+	project: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+	global: "border-purple-500/30 bg-purple-500/10 text-purple-700 dark:text-purple-400",
+	working: "border-slate-500/30 bg-slate-500/10 text-slate-700 dark:text-slate-400",
+};
+
+function LayerBadge({ layer, className }: { layer: string; className?: string }) {
+	return (
+		<span
+			className={cn(
+				"inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+				layerStyles[layer] || layerStyles.working,
+				className,
+			)}
+		>
+			{layer}
+		</span>
+	);
+}
+
 function viewFromPath(pathname: string): MemoryView {
 	if (pathname.startsWith("/memory/review")) return "review";
 	if (pathname.startsWith("/memory/history")) return "history";
 	return "trusted";
-}
-
-function destinationTitle(view: MemoryView) {
-	switch (view) {
-		case "review":
-			return "Review Inbox";
-		case "history":
-			return "Historical Memories";
-		default:
-			return "Trusted Memories";
-	}
-}
-
-function destinationDescription(view: MemoryView) {
-	switch (view) {
-		case "review":
-			return "One row per Memory requiring activation, re-verification, evidence repair, or duplicate resolution.";
-		case "history":
-			return "Archived, rejected, merged, and deprecated recall retained for audit and context.";
-		default:
-			return "Active recall currently available to default search and runtime retrieval.";
-	}
 }
 
 function reviewState(item: MemoryReviewItem): MemoryReviewState {

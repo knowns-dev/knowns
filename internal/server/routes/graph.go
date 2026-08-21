@@ -183,7 +183,11 @@ func (gr *GraphRoutes) graph(w http.ResponseWriter, r *http.Request) {
 	// --- Edges from memory content ---
 	for _, m := range memories {
 		src := "memory:" + m.ID
-		edges = append(edges, gr.extractMentions(src, m.Content)...)
+		// Sources carry the references a Memory was recorded against, so they
+		// belong in the graph just as much as anything mentioned in the body —
+		// the decision pass below already treats its own Sources this way.
+		content := strings.Join(append([]string{m.Content}, m.Sources...), "\n")
+		edges = append(edges, gr.extractMentions(src, content)...)
 	}
 
 	// --- Edges from decision content ---

@@ -116,13 +116,16 @@ export function TaskLifecycleDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={(next) => (!loading || allowCancelWhileLoading) && onOpenChange(next)}>
-			<DialogContent className="max-h-[85vh] max-w-2xl overflow-hidden p-0" data-testid="task-lifecycle-dialog">
-				<DialogHeader className="border-b px-6 py-5 pr-12">
+			<DialogContent className="flex max-h-[85vh] max-w-2xl flex-col overflow-hidden p-0" data-testid="task-lifecycle-dialog">
+				<DialogHeader className="shrink-0 border-b px-6 py-5 pr-12">
 					<DialogTitle>{title}</DialogTitle>
 					<DialogDescription>{description}</DialogDescription>
 				</DialogHeader>
 
-				<div className="overflow-y-auto px-6 py-4">
+				{/* min-h-0 is required: without it this flex child grows to its content
+				    height, the footer is pushed past the clipped edge of the dialog and
+				    the confirm button becomes unreachable on long previews. */}
+				<div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
 					{error && (
 						<div role="alert" className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
 							{error}
@@ -144,7 +147,7 @@ export function TaskLifecycleDialog({
 					)}
 				</div>
 
-				<DialogFooter className="border-t px-6 py-4">
+				<DialogFooter className="shrink-0 border-t px-6 py-4">
 					<Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading && !allowCancelWhileLoading}>Cancel</Button>
 					{(canExecute || canRetry) && (
 						<Button onClick={onConfirm} disabled={loading} data-testid="lifecycle-confirm">

@@ -28,6 +28,7 @@ import { useIsMobile } from "@/ui/hooks/useMobile";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { toast } from "../ui/sonner";
 import { TaskLifecycleBadge } from "../molecules/TaskLifecycleBadge";
+import { LabelList, PriorityBadge } from "../molecules";
 
 // Default column labels (can be overridden by config)
 const DEFAULT_COLUMN_LABELS: Record<string, string> = {
@@ -486,28 +487,27 @@ function TaskKanbanCard({ item, isNew, statusColors, onClick }: TaskKanbanCardPr
 				tabIndex={0}
 				className="cursor-pointer"
 			>
-				<div className="flex items-center justify-between gap-2 mb-1">
-					<span className="text-xs font-mono text-muted-foreground">
-						#{task.id}
-					</span>
+				<div className="mb-1.5 flex items-center justify-between gap-2">
+					<div className="flex min-w-0 items-center gap-2">
+						<PriorityBadge priority={task.priority} />
+						<span className="truncate font-mono text-[11px] text-muted-foreground">
+							#{task.id}
+						</span>
+					</div>
 					<div className="flex items-center gap-1 flex-wrap justify-end">
 						<TaskLifecycleBadge state={task.lifecycleState} />
-						{task.priority === "high" && (
-							<span className="text-xs text-red-600 dark:text-red-400 font-medium">
-								HIGH
-							</span>
-						)}
-						{task.priority === "medium" && (
-							<span className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">
-								MED
-							</span>
-						)}
 					</div>
 				</div>
 
-				<h3 className="font-medium text-sm mb-2 line-clamp-2 text-foreground">
+				<h3 className="mb-1 line-clamp-2 text-sm font-medium leading-5 text-foreground">
 					{task.title}
 				</h3>
+
+				{task.description && (
+					<p className="mb-2 line-clamp-2 text-xs leading-4 text-muted-foreground">
+						{task.description}
+					</p>
+				)}
 
 				{totalAC > 0 && (
 					<div className="flex items-center gap-1.5 text-xs mb-2 text-muted-foreground">
@@ -519,16 +519,7 @@ function TaskKanbanCard({ item, isNew, statusColors, onClick }: TaskKanbanCardPr
 				)}
 
 				{(task.labels ?? []).length > 0 && (
-					<div className="flex flex-wrap gap-1 mb-2">
-						{(task.labels ?? []).map((label) => (
-							<span
-								key={label}
-								className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground"
-							>
-								{label}
-							</span>
-						))}
-					</div>
+					<LabelList labels={task.labels ?? []} maxVisible={2} className="mb-2" />
 				)}
 
 				{/* Spec link */}

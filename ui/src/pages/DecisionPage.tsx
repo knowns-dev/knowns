@@ -38,7 +38,8 @@ import {
 	DialogDescription,
 	DialogTitle,
 } from "@/ui/components/ui/dialog";
-import { PageContent, PageHeader, PageShell } from "@/ui/components/templates/PageShell";
+import { PageContent, PageShell } from "@/ui/components/templates/PageShell";
+import { FeatureHeader } from "@/ui/components/templates";
 import { cn } from "@/ui/lib/utils";
 
 type DecisionView = "current" | "review" | "history";
@@ -79,6 +80,12 @@ const destinations: Array<{
 	{ id: "history", label: "History", path: "/decisions/history", icon: History },
 ];
 
+const destinationStatusWords: Record<DecisionView, string> = {
+	current: "current",
+	review: "pending",
+	history: "historical",
+};
+
 const statusLabels: Record<DecisionStatus, string> = {
 	draft: "Draft",
 	accepted: "Accepted",
@@ -116,6 +123,14 @@ export default function DecisionPage() {
 	const navigate = useNavigate();
 	const pathname = useRouterState({ select: (state) => state.location.pathname });
 	const view = viewFromPath(pathname);
+	// The graph links straight to one entry, e.g. /decisions/<id>, so a node there
+	// opens the same detail dialog the list uses.
+	const routeSelectedID = useMemo(() => {
+		const match = pathname.match(/^\/decisions\/([^/]+)\/?$/);
+		const id = match?.[1];
+		if (!id) return null;
+		return ["review", "history"].includes(id) ? null : decodeURIComponent(id);
+	}, [pathname]);
 	const [currentDecisions, setCurrentDecisions] = useState<DecisionEntry[]>([]);
 	const [allDecisions, setAllDecisions] = useState<DecisionEntry[]>([]);
 	const [reviewCandidates, setReviewCandidates] = useState<DecisionEntry[]>([]);
@@ -208,13 +223,44 @@ export default function DecisionPage() {
 		return byID;
 	}, [allDecisions, reviewCandidates]);
 
-	const selectedDecision = selectedID ? decisionByID.get(selectedID) || null : null;
+	// A linked entry may sit in a tab that has not been fetched yet — a proposal
+	// while the trusted list is showing, say — so fall back to loading it alone.
+	const [routeEntry, setRouteEntry] = useState<DecisionEntry | null>(null);
+	useEffect(() => {
+		if (!routeSelectedID) {
+			setRouteEntry(null);
+			return;
+		}
+		setSelectedID(routeSelectedID);
+		if (decisionByID.has(routeSelectedID)) return;
+		let cancelled = false;
+		decisionApi
+			.get(routeSelectedID)
+			.then((entry) => {
+				if (!cancelled) setRouteEntry(entry);
+			})
+			.catch(() => {
+				if (!cancelled) setRouteEntry(null);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [decisionByID, routeSelectedID]);
+
+	const selectedDecision = selectedID ? decisionByID.get(selectedID) || routeEntry || null : null;
 
 	const destinationCounts: Record<DecisionView, number> = {
 		current: currentDecisions.length,
 		review: reviewCandidates.length,
 		history: historyDecisions.length,
 	};
+
+	const headerStatus = useMemo(() => {
+		const count = destinationCounts[view];
+		const word = destinationStatusWords[view];
+		if (count === 0) return `No ${word} Decisions`;
+		return `${count} ${word} ${count === 1 ? "Decision" : "Decisions"}`;
+	}, [destinationCounts, view]);
 
 	const handleNavigate = useCallback(
 		(nextView: DecisionView) => {
@@ -359,14 +405,11 @@ export default function DecisionPage() {
 
 	return (
 		<PageShell>
-			<PageHeader
+			<FeatureHeader
 				className="border-b-0"
+				icon={ScrollText}
 				title="System Decisions"
-				description={
-					<span className="block max-w-[72ch]">
-						Current guidance is read-only. New or changed project rules enter the Review Inbox before they can become current.
-					</span>
-				}
+				status={headerStatus}
 				actions={
 					<>
 						{view === "review" ? (
@@ -406,59 +449,54 @@ export default function DecisionPage() {
 				</div>
 			) : null}
 
-			<div className="shrink-0 border-b border-border bg-card">
-				<div
-					role="tablist"
-					aria-label="Decision destinations"
-					className="mx-auto flex w-full max-w-[1440px] items-center gap-1 overflow-x-auto px-4 sm:px-6"
-				>
-					{destinations.map((destination) => {
-						const Icon = destination.icon;
-						const active = view === destination.id;
-						return (
-							<button
-								key={destination.id}
-								type="button"
-								role="tab"
-								aria-selected={active}
-								onClick={() => handleNavigate(destination.id)}
-								className={cn(
-									"inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-4 py-2 text-sm font-medium transition-colors sm:min-h-10",
-									active
-										? "border-primary text-primary"
-										: "border-transparent text-muted-foreground hover:text-foreground",
-								)}
-							>
-								<Icon className="h-4 w-4" />
-								{destination.label}
-								<span className="rounded bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">
-									{destinationCounts[destination.id]}
-								</span>
-							</button>
-						);
-					})}
+			<div className="flex h-[58px] shrink-0 items-center border-b border-border bg-card">
+				<div className="flex w-full items-center gap-3 px-4 sm:px-6">
+					<label className="relative min-w-0 flex-1">
+						<span className="sr-only">Search this destination</span>
+						<Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+						<input
+							value={query}
+							onChange={(event) => setQuery(event.target.value)}
+							placeholder="Search title, ID, source…"
+							className="min-h-11 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm outline-none focus:ring-1 focus:ring-ring sm:min-h-9"
+						/>
+					</label>
+					<div
+						role="tablist"
+						aria-label="Decision destinations"
+						className="flex shrink-0 items-center gap-1 overflow-x-auto"
+					>
+						{destinations.map((destination) => {
+							const Icon = destination.icon;
+							const active = view === destination.id;
+							return (
+								<button
+									key={destination.id}
+									type="button"
+									role="tab"
+									aria-selected={active}
+									onClick={() => handleNavigate(destination.id)}
+									className={cn(
+										"inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-4 py-2 text-sm font-medium transition-colors sm:min-h-10",
+										active
+											? "border-primary text-primary"
+											: "border-transparent text-muted-foreground hover:text-foreground",
+									)}
+								>
+									<Icon className="h-4 w-4" />
+									{destination.label}
+									<span className="rounded bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">
+										{destinationCounts[destination.id]}
+									</span>
+								</button>
+							);
+						})}
+					</div>
 				</div>
 			</div>
 
-			<PageContent className="flex min-h-0 flex-1 flex-col gap-4">
+			<PageContent size="full" className="flex min-h-0 flex-1 flex-col gap-4">
 				<div data-testid={`decision-${view}-destination`}>
-					<div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-						<div>
-							<h2 className="text-base font-semibold">{destinationTitle(view)}</h2>
-							<p className="mt-1 text-sm text-muted-foreground">{destinationDescription(view)}</p>
-						</div>
-						<label className="relative block w-full sm:w-72">
-							<span className="sr-only">Search this destination</span>
-							<Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-							<input
-								value={query}
-								onChange={(event) => setQuery(event.target.value)}
-								placeholder="Search title, ID, source…"
-								className="min-h-11 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm outline-none focus:ring-1 focus:ring-ring sm:min-h-9"
-							/>
-						</label>
-					</div>
-
 					<DecisionRegister
 						view={view}
 						decisions={visibleDecisions}
@@ -547,8 +585,8 @@ function DecisionRegister({
 		);
 	}
 	return (
-		<div className="overflow-hidden border-y border-border bg-card" data-testid="decision-list">
-			<div className="hidden grid-cols-[minmax(0,1fr)_160px_150px_32px] gap-4 border-b border-border bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground md:grid">
+		<div className="overflow-hidden rounded-lg border bg-card" data-testid="decision-list">
+			<div className="hidden grid-cols-[minmax(0,1fr)_160px_150px_32px] gap-4 border-b bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground md:grid">
 				<span>Decision</span>
 				<span>{view === "review" ? "Review state" : "Lifecycle"}</span>
 				<span>Updated</span>
@@ -1349,27 +1387,6 @@ function viewFromPath(pathname: string): DecisionView {
 	return "current";
 }
 
-function destinationTitle(view: DecisionView) {
-	switch (view) {
-		case "review":
-			return "Persisted review candidates";
-		case "history":
-			return "Decision history";
-		default:
-			return "Current guidance";
-	}
-}
-
-function destinationDescription(view: DecisionView) {
-	switch (view) {
-		case "review":
-			return "Resolve evidence and current-guidance relationships before acceptance.";
-		case "history":
-			return "Superseded, rejected, and archived records remain readable for audit.";
-		default:
-			return "Accepted, non-superseded System Decisions used by default retrieval.";
-	}
-}
 
 function reviewStateDescription(state: DecisionReviewState) {
 	switch (state) {

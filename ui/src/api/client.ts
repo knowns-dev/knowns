@@ -2075,18 +2075,65 @@ export interface AuditStats {
 	byToolResult: Record<string, Record<string, number>>;
 }
 
+export type AuditRangeDays = 7 | 30 | 90;
+
+export interface AuditCoverage {
+	startDate?: string;
+	endDate?: string;
+	partial: boolean;
+}
+
+export interface AuditDailyBucket {
+	date: string;
+	covered: boolean;
+	totalCalls: number;
+	successCount: number;
+	errorCount: number;
+	deniedCount: number;
+	needsAttention: number;
+	averageDurationMs: number;
+	topTool?: string;
+	topToolCalls: number;
+}
+
+export interface AuditToolStats {
+	tool: string;
+	totalCalls: number;
+	byResult: Record<string, number>;
+	averageDurationMs: number;
+}
+
+export interface AuditAnalytics extends AuditStats {
+	timezone: string;
+	rangeStart: string;
+	rangeEnd: string;
+	coverage: AuditCoverage;
+	dailyBuckets: AuditDailyBucket[];
+	tools: AuditToolStats[];
+	byProject: Record<string, number>;
+	needsAttention: number;
+	averageDurationMs: number;
+}
+
 export const auditApi = {
 	async recent(options?: {
 		limit?: number;
 		tool?: string;
 		result?: string;
 		project?: string;
+		/** Inclusive calendar day (YYYY-MM-DD) in the caller's timezone. */
+		from?: string;
+		to?: string;
+		timezone?: string;
 	}): Promise<{ events: AuditEvent[]; count: number }> {
 		const params = new URLSearchParams();
 		if (options?.limit) params.set("limit", String(options.limit));
 		if (options?.tool) params.set("tool", options.tool);
 		if (options?.result) params.set("result", options.result);
 		if (options?.project) params.set("project", options.project);
+		if (options?.from) params.set("from", options.from);
+		if (options?.to) params.set("to", options.to);
+		if (options?.timezone) params.set("timezone", options.timezone);
 
 		const res = await apiFetch(`${API_BASE}/api/audit/recent?${params.toString()}`);
 		if (!res.ok) throw new Error("Failed to fetch audit events");
@@ -2103,6 +2150,23 @@ export const auditApi = {
 
 		const res = await apiFetch(`${API_BASE}/api/audit/stats?${params.toString()}`);
 		if (!res.ok) throw new Error("Failed to fetch audit stats");
+		return res.json();
+	},
+
+	async analytics(options: {
+		days: AuditRangeDays;
+		timezone: string;
+		project?: string;
+		scope?: "project" | "all";
+	}): Promise<AuditAnalytics> {
+		const params = new URLSearchParams();
+		params.set("days", String(options.days));
+		params.set("timezone", options.timezone);
+		params.set("scope", options.scope ?? (options.project ? "project" : "all"));
+		if (options.project) params.set("project", options.project);
+
+		const res = await apiFetch(`${API_BASE}/api/audit/analytics?${params.toString()}`);
+		if (!res.ok) throw new Error("Failed to fetch audit analytics");
 		return res.json();
 	},
 };

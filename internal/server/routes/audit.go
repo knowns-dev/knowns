@@ -3,6 +3,7 @@ package routes
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/howznguyen/knowns/internal/models"
@@ -19,6 +20,7 @@ type AuditRoutes struct {
 func (ar *AuditRoutes) Register(r chi.Router) {
 	r.Get("/audit/recent", ar.recent)
 	r.Get("/audit/stats", ar.stats)
+	r.Get("/audit/analytics", ar.analytics)
 }
 
 // recent returns recent MCP audit events.
@@ -70,14 +72,77 @@ func buildAuditFilter(r *http.Request) *storage.AuditFilter {
 	tool := q.Get("tool")
 	result := q.Get("result")
 	project := q.Get("project")
+	from := q.Get("from")
+	to := q.Get("to")
 
-	if tool == "" && result == "" && project == "" {
+	if tool == "" && result == "" && project == "" && from == "" && to == "" {
 		return nil
 	}
 
-	return &storage.AuditFilter{
+	filter := &storage.AuditFilter{
 		ToolName: tool,
 		Result:   result,
 		Project:  project,
 	}
+
+	// from/to are calendar days (YYYY-MM-DD) resolved in the caller's timezone;
+	// an unparsable value is ignored rather than failing the whole query.
+	location := time.UTC
+	if tz := q.Get("timezone"); tz != "" {
+		if loc, err := time.LoadLocation(tz); err == nil {
+			location = loc
+		}
+	}
+	if since, err := time.ParseInLocation(time.DateOnly, from, location); err == nil {
+		filter.Since = &since
+	}
+	if until, err := time.ParseInLocation(time.DateOnly, to, location); err == nil {
+		endOfDay := until.AddDate(0, 0, 1).Add(-time.Nanosecond)
+		filter.Until = &endOfDay
+	}
+
+	return filter
+}
+
+// analytics returns per-day and per-tool aggregates for the audit charts.
+//
+// GET /api/audit/analytics?days=30&timezone=Asia/Ho_Chi_Minh&scope=project&project=/path
+func (ar *AuditRoutes) analytics(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	days := 30
+	if v := q.Get("days"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || (n != 7 && n != 30 && n != 90) {
+			respondError(w, http.StatusBadRequest, "days must be 7, 30, or 90")
+			return
+		}
+		days = n
+	}
+
+	timezone := q.Get("timezone")
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	if _, err := time.LoadLocation(timezone); err != nil {
+		respondError(w, http.StatusBadRequest, "unknown timezone")
+		return
+	}
+
+	scope := q.Get("scope")
+	project := q.Get("project")
+	allProjects := scope == "all" || (scope == "" && project == "")
+
+	analytics, err := ar.auditStore.Analytics(&models.AuditAnalyticsQuery{
+		Days:        days,
+		Timezone:    timezone,
+		Project:     project,
+		AllProjects: allProjects,
+	})
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, analytics)
 }

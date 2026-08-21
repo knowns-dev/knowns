@@ -85,6 +85,12 @@ const memoryHistoryRoute = createRoute({
 	component: EmptyRoute,
 });
 
+const memoryDetailRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/memory/$memoryId",
+	component: EmptyRoute,
+});
+
 const decisionsRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/decisions",
@@ -103,9 +109,21 @@ const decisionsHistoryRoute = createRoute({
 	component: EmptyRoute,
 });
 
+const decisionDetailRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/decisions/$decisionId",
+	component: EmptyRoute,
+});
+
 const auditRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/audit",
+	component: EmptyRoute,
+});
+
+const runtimeRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/runtime",
 	component: EmptyRoute,
 });
 
@@ -134,10 +152,13 @@ const routeTree = rootRoute.addChildren([
 	memoryRoute,
 	memoryReviewRoute,
 	memoryHistoryRoute,
+	memoryDetailRoute,
 	decisionsRoute,
 	decisionsReviewRoute,
 	decisionsHistoryRoute,
+	decisionDetailRoute,
 	auditRoute,
+	runtimeRoute,
 	configRoute,
 	fallbackRoute,
 ]);
