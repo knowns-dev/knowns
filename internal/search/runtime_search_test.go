@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -293,11 +292,8 @@ func TestSearchWithRuntimeDaemonRoutingSharesProviderAcrossConcurrentCalls(t *te
 		}
 	}()
 
-	oldArg0 := os.Args[0]
-	os.Args[0] = filepath.Join(t.TempDir(), "knowns")
-	defer func() {
-		os.Args[0] = oldArg0
-	}()
+	runtimequeue.SetTestBinaryPath(filepath.Join(t.TempDir(), "knowns"))
+	defer runtimequeue.SetTestBinaryPath("")
 
 	const calls = 2
 	errs := make(chan error, calls)

@@ -474,14 +474,41 @@ type activeJob struct {
 }
 
 var (
-	testBypassMu sync.RWMutex
-	testBypass   bool
+	testBypassMu       sync.RWMutex
+	testBypass         bool
+	testBinaryPathOver string
 )
 
 func SetTestBypass(enabled bool) {
 	testBypassMu.Lock()
 	defer testBypassMu.Unlock()
 	testBypass = enabled
+}
+
+// SetTestBinaryPath overrides the executable path used to detect a `go test`
+// binary. A test that needs real daemon routing has to look like a shipped
+// binary; rewriting os.Args[0] to do that races with the daemon goroutine
+// reading the same slice, so it goes through this guarded override instead.
+// Pass "" to restore the real os.Args[0].
+func SetTestBinaryPath(path string) {
+	testBypassMu.Lock()
+	defer testBypassMu.Unlock()
+	testBinaryPathOver = path
+}
+
+// binaryPath reports the executable path, honouring any test override. Callers
+// that already hold testBypassMu must use binaryPathLocked.
+func binaryPath() string {
+	testBypassMu.RLock()
+	defer testBypassMu.RUnlock()
+	return binaryPathLocked()
+}
+
+func binaryPathLocked() string {
+	if testBinaryPathOver != "" {
+		return testBinaryPathOver
+	}
+	return os.Args[0]
 }
 
 func ShouldBypassDaemon() bool {
@@ -493,7 +520,7 @@ func ShouldBypassDaemon() bool {
 	if os.Getenv("KNOWNS_RUNTIME_INLINE") == "1" {
 		return true
 	}
-	return isGoTestBinary(os.Args[0])
+	return isGoTestBinary(binaryPathLocked())
 }
 
 func isGoTestBinary(path string) bool {
@@ -539,7 +566,7 @@ func RuntimeRoot() string {
 // developer's project registry. Tests that already redirect HOME keep their
 // own isolation and are left alone.
 func testSandboxRoot() (string, bool) {
-	if !isGoTestBinary(os.Args[0]) || !homeIsRealUserHome() {
+	if !isGoTestBinary(binaryPath()) || !homeIsRealUserHome() {
 		return "", false
 	}
 	sandboxRootOnce.Do(func() {
