@@ -5,6 +5,15 @@ on:
     branches: [main, develop]
     types: [opened, synchronize, reopened]
   workflow_dispatch:
+    inputs:
+      update_retrieval_baseline:
+        description: 'Regenerate the pinned retrieval baselines instead of gating on them'
+        type: boolean
+        default: false
+      baseline_reason:
+        description: 'Review reason recorded in the regenerated baselines (required when regenerating)'
+        type: string
+        default: ''
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -238,6 +247,7 @@ jobs:
           ./bin/knowns search --reindex --plain
 
       - name: Run pinned semantic retrieval evaluation
+        if: ${{ !inputs.update_retrieval_baseline }}
         run: |
           ./bin/knowns --json eval retrieval \
             --mode semantic \
@@ -246,12 +256,50 @@ jobs:
             --output "$RUNNER_TEMP/retrieval-evaluation-semantic.json"
 
       - name: Run pinned hybrid retrieval evaluation
+        if: ${{ !inputs.update_retrieval_baseline }}
         run: |
           ./bin/knowns --json eval retrieval \
             --mode hybrid \
             --runtime-id "$PINNED_RETRIEVAL_RUNTIME" \
             --baseline internal/search/testdata/retrieval_evaluation_hybrid_baseline.json \
             --output "$RUNNER_TEMP/retrieval-evaluation-hybrid.json"
+
+      # Manual maintenance path. Baselines are runtime-sensitive, so they have to
+      # be regenerated in this job's pinned environment (linux x64 + the pinned
+      # ONNX build) rather than on a contributor's machine.
+      - name: Regenerate pinned retrieval baselines
+        if: ${{ inputs.update_retrieval_baseline }}
+        env:
+          BASELINE_REASON: ${{ inputs.baseline_reason }}
+        run: |
+          if [ -z "$BASELINE_REASON" ]; then
+            echo "baseline_reason is required when update_retrieval_baseline is set" >&2
+            exit 1
+          fi
+          ./bin/knowns --json eval retrieval \
+            --mode semantic \
+            --runtime-id "$PINNED_RETRIEVAL_RUNTIME" \
+            --baseline internal/search/testdata/retrieval_evaluation_semantic_baseline.json \
+            --update-baseline \
+            --reason "$BASELINE_REASON" \
+            --output "$RUNNER_TEMP/retrieval-evaluation-semantic.json"
+          ./bin/knowns --json eval retrieval \
+            --mode hybrid \
+            --runtime-id "$PINNED_RETRIEVAL_RUNTIME" \
+            --baseline internal/search/testdata/retrieval_evaluation_hybrid_baseline.json \
+            --update-baseline \
+            --reason "$BASELINE_REASON" \
+            --output "$RUNNER_TEMP/retrieval-evaluation-hybrid.json"
+
+      - name: Upload regenerated retrieval baselines
+        if: ${{ inputs.update_retrieval_baseline }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrieval-evaluation-baselines
+          path: |
+            internal/search/testdata/retrieval_evaluation_semantic_baseline.json
+            internal/search/testdata/retrieval_evaluation_hybrid_baseline.json
+          if-no-files-found: error
 
       - name: Upload canonical semantic and hybrid reports
         uses: actions/upload-artifact@v4
