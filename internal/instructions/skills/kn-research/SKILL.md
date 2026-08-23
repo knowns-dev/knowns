@@ -15,6 +15,23 @@ Research is read-only by default. Do not create or update tasks, docs, memories,
 
 - Topic, feature, API, error, file pattern, or task ID
 - Suspected paths, symbols, packages, refs, or external facts to verify
+- Optional: additional repository roots when the feature spans more than one repository
+
+## Multi-Repo Scope
+
+A feature can span repositories that do not share a Knowns store, such as a frontend and a backend. When the user supplies additional repository roots, research all of them before drawing conclusions, and keep their boundaries explicit.
+
+- Knowns search, retrieve, structural resolution, and code intelligence are scoped to the current project. For an additional root, use file and code search against that root directly.
+- Additional roots are read-only. Never create or modify tasks, docs, memories, decisions, or source files outside the current project, even when the user authorizes persistence here.
+- Prefix every file reference with its repository name, because the same relative path often exists on both sides:
+
+```text
+knowns-web/src/features/orders/hooks/useRefund.ts:28
+knowns-api/internal/services/refund_service.go:142
+```
+
+- Report conventions, constraints, and existing patterns per repository. Two repositories rarely share testing, validation, or naming rules, and assuming they do produces a plan that is wrong on one side.
+- State which side owns each open question, so the finding can become a cross-repo handoff without further triage.
 
 ## Search Order
 
@@ -156,9 +173,11 @@ Do not manage platform-synced skill copies; this source defines the built-in wor
 - [ ] Used external research only when needed and selected tools by capability
 - [ ] Cited evidence and reported conflicts or gaps
 - [ ] Kept research read-only unless persistence was authorized
+- [ ] Kept additional repository roots read-only and prefixed their file references
 
 ## Next Step Suggestion
 
+- research spans two repositories and one side must hand work to the other → `/kn-handoff`
 - active task research → `/kn-plan <task-id>`
 - approved spec/task wave ready → `/kn-flow @doc/<spec-path>`
 - completed work produced reusable knowledge → `/kn-extract <task-id>`

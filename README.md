@@ -406,6 +406,7 @@ The table below uses Claude Code's `/kn-*` syntax. In Codex, use the same skill 
 | `/kn-plan <id>`             | Take task, gather context, create implementation plan                 |
 | `/kn-implement <id>`        | Execute plan, track progress, check acceptance criteria               |
 | `/kn-research`              | Research project context, code, and relevant external MCP/web sources |
+| `/kn-handoff`               | Write a cross-repo brief or API contract handoff document             |
 | `/kn-commit`                | Create conventional commit with verification                          |
 | `/kn-spec`                  | Create specification document for features (SDD)                      |
 | `/kn-flow @doc/<spec-path>` | Recommended full approved-spec flow: plan, implement, review, verify  |

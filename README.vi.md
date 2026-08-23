@@ -404,6 +404,7 @@ Bảng dưới dùng syntax `/kn-*` của Claude Code. Trong Codex, dùng cùng 
 | `/kn-plan <id>`             | Nhận task, gom context, tạo implementation plan                       |
 | `/kn-implement <id>`        | Execute plan, track progress, check AC                                |
 | `/kn-research`              | Research project context, code, và external MCP/web sources liên quan |
+| `/kn-handoff`               | Viết handoff document cross-repo: brief hoặc API contract             |
 | `/kn-commit`                | Tạo conventional commit có verification                               |
 | `/kn-spec`                  | Tạo spec document cho feature (SDD)                                   |
 | `/kn-flow @doc/<spec-path>` | Recommended full approved-spec flow: plan, implement, review, verify  |

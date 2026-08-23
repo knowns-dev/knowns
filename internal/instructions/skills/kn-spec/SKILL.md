@@ -17,6 +17,7 @@ Create a specification document for a feature using SDD (Spec-Driven Development
 - User requirements, scenarios, constraints, and non-functional expectations
 - Related docs/tasks, if any
 - Optional: `--skip-explore` to jump straight to spec writing (for trivial features)
+- Optional: a cross-repo handoff document to shape the spec from
 
 ## Spec Storage Convention
 
@@ -360,6 +361,7 @@ Next step — choose one:
 
 ## Related Skills
 
+- `/kn-handoff` - Read a contract from another repository before shaping the spec, or publish a brief when the other side must build first
 - `/kn-flow @doc/<spec-path>` - Orchestrate an approved spec through plan, implement, review, and verify
 - `/kn-plan --from @doc/<spec-path>` - Generate tasks from this spec (manual flow)
 - `/kn-go <spec-path>` - Legacy no-review-gates auto pipeline

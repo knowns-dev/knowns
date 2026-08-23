@@ -206,6 +206,7 @@ Nên dùng gần cuối task hoặc sau verify, khi đã biết chắc kết qu�
 |---|---|
 | `/kn-init` | Load project context |
 | `/kn-research` | Explore project context, code, và external MCP/web sources liên quan |
+| `/kn-handoff` | Viết handoff document cross-repo: brief hoặc API contract |
 | `/kn-spec` | Tạo spec document |
 | `/kn-flow` | Orchestrate approved spec hoặc task wave |
 | `/kn-plan` | Tạo implementation plan |

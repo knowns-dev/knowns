@@ -208,6 +208,7 @@ Use `kn-extract` near the end of a task or after verification, once you know the
 |---|---|
 | `/kn-init` | Load project context |
 | `/kn-research` | Explore project context, code, and relevant external MCP/web sources |
+| `/kn-handoff` | Write a cross-repo brief or API contract handoff |
 | `/kn-spec` | Create a spec document |
 | `/kn-flow` | Orchestrate an approved spec or task wave |
 | `/kn-plan` | Create an implementation plan |

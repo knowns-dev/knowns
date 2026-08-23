@@ -141,4 +141,5 @@ When a follow-up is natural, recommend exactly one next command such as:
 /kn-plan <task-id>
 /kn-flow @doc/<approved-spec-path>
 /kn-research <query>
+/kn-handoff
 ```

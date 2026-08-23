@@ -156,6 +156,7 @@ Required order for the final user-facing response:
 - `/kn-implement <id>` - implement one task inside the flow
 - `/kn-review <id>` - review one task or integrated wave
 - `/kn-verify` - final SDD verification
+- `/kn-handoff contract` - publish the settled API contract when another repository is waiting on this work
 - `/kn-commit` - commit after the flow is complete and reviewed
 
 ## Checklist
@@ -186,3 +187,4 @@ Required order for the final user-facing response:
 - Creating legacy Decision Memory instead of a first-class Decision candidate
 - Duplicating Spec Locked Decisions into the System Decision ledger
 - Committing or pushing without explicit user request
+- Closing a flow that another repository is waiting on without publishing a `/kn-handoff contract`

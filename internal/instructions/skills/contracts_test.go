@@ -10,8 +10,8 @@ import (
 func TestBuiltInSkillContracts(t *testing.T) {
 	skills := readBuiltInSkills(t)
 
-	if len(skills) != 14 {
-		t.Fatalf("expected 14 built-in skills, got %d", len(skills))
+	if len(skills) != 15 {
+		t.Fatalf("expected 15 built-in skills, got %d", len(skills))
 	}
 
 	for name, content := range skills {
