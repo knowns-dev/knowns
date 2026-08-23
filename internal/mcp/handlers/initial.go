@@ -76,10 +76,14 @@ func writeProjectState(b *strings.Builder, store *storage.Store, statuses []lsp.
 	payload := readiness.BuildReadiness(store, readiness.Options{})
 	inProgress := countInProgressTasks(store)
 	fmt.Fprintf(b, "Project: %s\n", payload.ProjectName)
+	// Show a concrete ID and say it is not separable: an agent told elsewhere to
+	// pass "raw IDs" can otherwise strip PREFIX- and send an ID that resolves to
+	// nothing. Stays one line to respect the output budget.
 	if project, err := store.Config.Load(); err == nil && project.Settings.DefaultTaskIDPrefix != "" {
-		fmt.Fprintf(b, "Task IDs: default=%s | format=<PREFIX>-XXXXXX | suffix=Crockford Base32\n", project.Settings.DefaultTaskIDPrefix)
+		prefix := project.Settings.DefaultTaskIDPrefix
+		fmt.Fprintf(b, "Task IDs: default=%s | example=%s-4F7Q2M | use verbatim, %s- is part of the ID not a task- ref | per-task override: tasks.create prefix=<2-8 chars> | default changes via CLI settings.defaultTaskIdPrefix\n", prefix, prefix, prefix)
 	} else {
-		b.WriteString("Task IDs: legacy 6-char base36 default | custom prefixes supported\n")
+		b.WriteString("Task IDs: legacy 6-char base36, example=4f7q2m | use verbatim | per-task override: tasks.create prefix=<2-8 chars> | default changes via CLI settings.defaultTaskIdPrefix\n")
 	}
 	if payload.Knowledge != nil {
 		k := payload.Knowledge
