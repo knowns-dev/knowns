@@ -19,11 +19,8 @@ test.describe("Audit Trail", () => {
 
 		await test.step("Audit page header is visible", async () => {
 			await expect(page.getByRole("heading", { name: "MCP Audit Trail" })).toBeVisible();
-			await expect(
-				page.getByText(
-					"Review MCP activity, outcomes, and execution details recorded for this project.",
-				),
-			).toBeVisible();
+			// The rework replaced the prose subtitle with a live count in the header.
+			await expect(page.getByText(/^\d+ events$/)).toBeVisible();
 			await expect(
 				page.getByRole("navigation", { name: "Breadcrumb" }).getByText("Audit", {
 					exact: true,
@@ -144,9 +141,10 @@ test.describe("Audit Trail", () => {
 
 		await test.step("Statistics cards or empty state is visible", async () => {
 			const emptyState = page.getByText("No audit data available.");
-			const totalCallsText = page.getByText("Total Calls");
+			// The rework renamed the headline metric to "Calls in range".
+			const rangeSummary = page.getByRole("region", { name: "Range summary" });
 			const isEmpty = await emptyState.isVisible({ timeout: 3000 }).catch(() => false);
-			const hasStats = await totalCallsText.isVisible({ timeout: 3000 }).catch(() => false);
+			const hasStats = await rangeSummary.isVisible({ timeout: 3000 }).catch(() => false);
 			expect(isEmpty || hasStats).toBeTruthy();
 		});
 	});

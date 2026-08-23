@@ -121,8 +121,9 @@ test.describe("Task Detail Editing", () => {
 		});
 
 		await test.step("Click description to enter edit mode", async () => {
-			await expect(page.getByText("Old description text")).toBeVisible();
-			await page.getByText("Old description text").click();
+			const sheet = page.locator('[role="dialog"]');
+			await expect(sheet.getByText("Old description text")).toBeVisible();
+			await sheet.getByText("Old description text").click();
 		});
 
 		await test.step("Save and Cancel buttons appear", async () => {

@@ -22,8 +22,8 @@ test.describe("Knowledge Graph", () => {
 		});
 
 		await test.step("Page header/toolbar is visible", async () => {
-			// GraphToolbar renders a search input with placeholder "Search graph..."
-			await expect(page.getByPlaceholder("Search graph...")).toBeVisible();
+			// GraphToolbar renders a search input with placeholder "Search graph…"
+			await expect(page.getByPlaceholder("Search graph…")).toBeVisible();
 		});
 
 		await test.step("No error state is shown", async () => {
@@ -49,18 +49,20 @@ test.describe("Knowledge Graph", () => {
 		});
 
 		await test.step("Search input is present", async () => {
-			await expect(page.getByPlaceholder("Search graph...")).toBeVisible();
+			await expect(page.getByPlaceholder("Search graph…")).toBeVisible();
 		});
 
 		await test.step("Node/edge count is shown", async () => {
-			// GraphToolbar displays "{n} nodes, {m} edges"
-			await expect(page.getByText(/nodes/)).toBeVisible();
-			await expect(page.getByText(/edges/)).toBeVisible();
+			// GraphToolbar displays "{n} entities · {m} relations"
+			await expect(page.getByText(/\d+ entities/)).toBeVisible();
+			await expect(page.getByText(/\d+ relations/)).toBeVisible();
 		});
 
 		await test.step("Zoom to fit and fullscreen buttons are present", async () => {
-			await expect(page.getByTitle("Zoom to fit")).toBeVisible();
-			await expect(page.getByTitle("Toggle fullscreen")).toBeVisible();
+			await expect(page.getByRole("button", { name: "Fit graph to view" })).toBeVisible();
+			await expect(
+				page.getByRole("button", { name: "Open graph fullscreen" }),
+			).toBeVisible();
 		});
 	});
 
@@ -69,18 +71,20 @@ test.describe("Knowledge Graph", () => {
 			await page.goto(`${server.baseURL}/graph`);
 		});
 
-		await test.step("Legend panel is visible", async () => {
-			await expect(page.getByText("Node types")).toBeVisible();
+		await test.step("Legend panel opens from the Filters popover", async () => {
+			// The rework moved the legend out of a docked panel into this popover.
+			await page.getByRole("button", { name: "Graph filters" }).click();
+			await expect(page.getByText("Entity types")).toBeVisible();
 		});
 
 		await test.step("Node type filters are present", async () => {
-			await expect(page.getByRole("button", { name: "Tasks" })).toBeVisible();
-			await expect(page.getByRole("button", { name: "Docs" })).toBeVisible();
-			await expect(page.getByRole("button", { name: "Memories" })).toBeVisible();
+			await expect(page.getByRole("button", { name: /^Tasks/ })).toBeVisible();
+			await expect(page.getByRole("button", { name: /^Docs/ })).toBeVisible();
+			await expect(page.getByRole("button", { name: /^Memories/ })).toBeVisible();
 		});
 
-		await test.step("Edge section is present", async () => {
-			await expect(page.getByText("Edges", { exact: true })).toBeVisible();
+		await test.step("Relation section is present", async () => {
+			await expect(page.getByText("Relation types")).toBeVisible();
 		});
 	});
 
@@ -95,13 +99,10 @@ test.describe("Knowledge Graph", () => {
 
 		await test.step("Node count shows at least some nodes", async () => {
 			// Wait for the graph to load, then check node count text
-			const nodeCountText = page.getByText(/0 nodes/);
-			await expect(nodeCountText).not.toBeVisible({ timeout: 10000 });
+			await expect(page.getByText(/^0 entities/)).not.toBeVisible({ timeout: 10000 });
 
-			// Verify the toolbar shows a non-zero node count
-			const countRegex = /(\d+)\s*nodes/;
-			const countText = page.getByText(countRegex);
-			await expect(countText).toBeVisible();
+			// Verify the toolbar shows a non-zero entity count
+			await expect(page.getByText(/\d+ entities/)).toBeVisible();
 		});
 	});
 
@@ -111,11 +112,11 @@ test.describe("Knowledge Graph", () => {
 		});
 
 		await test.step("Wait for graph to load", async () => {
-			await expect(page.getByText(/nodes/)).toBeVisible();
+			await expect(page.getByText(/\d+ entities/)).toBeVisible();
 		});
 
 		await test.step("Type search query", async () => {
-			await page.getByPlaceholder("Search graph...").fill("Graph Test");
+			await page.getByPlaceholder("Search graph…").fill("Graph Test");
 			await page.waitForTimeout(500);
 		});
 
@@ -125,7 +126,7 @@ test.describe("Knowledge Graph", () => {
 		});
 
 		await test.step("Clearing search removes match indicator", async () => {
-			await page.getByPlaceholder("Search graph...").fill("");
+			await page.getByPlaceholder("Search graph…").fill("");
 			await page.waitForTimeout(300);
 			await expect(page.getByText(/matches/)).not.toBeVisible();
 		});
@@ -137,17 +138,20 @@ test.describe("Knowledge Graph", () => {
 		});
 
 		await test.step("Wait for graph to load", async () => {
-			await expect(page.getByText(/nodes/)).toBeVisible();
+			await expect(page.getByText(/\d+ entities/)).toBeVisible();
 		});
 
 		await test.step("Click Tasks filter to toggle", async () => {
-			await page.getByRole("button", { name: "Tasks" }).click();
-			await page.waitForTimeout(300);
+			await page.getByRole("button", { name: "Graph filters" }).click();
+			const tasksFilter = page.getByRole("button", { name: /^Tasks/ });
+			await expect(tasksFilter).toHaveAttribute("aria-pressed", "true");
+			await tasksFilter.click();
+			await expect(tasksFilter).toHaveAttribute("aria-pressed", "false");
 		});
 
 		await test.step("Node count may decrease", async () => {
-			// The graph should still be visible; node count may have changed
-			await expect(page.getByText(/nodes/)).toBeVisible();
+			// The graph should still be visible; entity count may have changed
+			await expect(page.getByText(/\d+ entities/)).toBeVisible();
 		});
 	});
 
@@ -157,13 +161,13 @@ test.describe("Knowledge Graph", () => {
 		});
 
 		await test.step("Wait for graph to load", async () => {
-			await expect(page.getByText(/nodes/)).toBeVisible();
+			await expect(page.getByText(/\d+ entities/)).toBeVisible();
 		});
 
 		await test.step("Click on canvas area (ForceGraph2D canvas)", async () => {
 			const canvas = page.locator("canvas").first();
 			if (await canvas.isVisible({ timeout: 5000 })) {
-				await canvas.click();
+				await canvas.click({ force: true });
 				await page.waitForTimeout(300);
 			}
 		});
@@ -180,7 +184,7 @@ test.describe("Knowledge Graph", () => {
 		});
 
 		await test.step("Wait for graph to load", async () => {
-			await expect(page.getByText(/nodes/)).toBeVisible();
+			await expect(page.getByText(/\d+ entities/)).toBeVisible();
 		});
 
 		await test.step("Clicking canvas should not show impact bar initially", async () => {
@@ -188,7 +192,7 @@ test.describe("Knowledge Graph", () => {
 			// Just verify the page is stable after interaction
 			const canvas = page.locator("canvas").first();
 			if (await canvas.isVisible({ timeout: 5000 })) {
-				await canvas.click();
+				await canvas.click({ force: true });
 				await page.waitForTimeout(500);
 			}
 		});

@@ -13,6 +13,13 @@ export default defineConfig({
 	},
 	use: {
 		headless: true,
+		// The graph renders through Sigma/WebGL. Headless Chromium has no GPU
+		// backend, so without SwiftShader every graph test would only ever see
+		// the crash/fallback path instead of the real renderer.
+		launchOptions: { args: ["--enable-unsafe-swiftshader"] },
+		// The graph renders through Sigma/WebGL. Headless Chromium ships no GPU
+		// backend, so without SwiftShader every graph test would only ever see
+		// the no-WebGL fallback instead of the real renderer.
 		screenshot: "on",
 		trace: "on",
 		actionTimeout: isCI ? 15_000 : 10_000,

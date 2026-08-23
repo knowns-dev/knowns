@@ -18,7 +18,7 @@ test.describe("Dashboard", () => {
 		await page.goto(server.baseURL);
 
 		await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-		await expect(page.getByText("Analysis workbench", { exact: true })).toBeVisible();
+		await expect(page.getByText(/All sources ready|Partial data|Refreshing/)).toBeVisible();
 		await expect(page.getByRole("heading", { name: "Throughput" })).toBeVisible();
 		await expect(page.getByRole("heading", { name: "Work aging" })).toBeVisible();
 		await expect(page.getByRole("heading", { name: "Lead time" })).toBeVisible();
@@ -38,12 +38,12 @@ test.describe("Dashboard", () => {
 
 	test("filters the analysis by label", async ({ page }) => {
 		await page.goto(server.baseURL);
-		await expect(page.getByText(/\d+ of \d+ tasks/).first()).toBeVisible();
+		await expect(page.getByText(/\d+ tasks in range/).first()).toBeVisible();
 
 		await page.getByRole("combobox", { name: "Filter by label" }).click();
 		await page.getByRole("option", { name: "dashboard" }).click();
 
-		await expect(page.getByText("1 of 2 tasks")).toBeVisible();
+		await expect(page.getByText("task in range")).toBeVisible();
 	});
 
 	test("navigates to the task inventory from project pulse", async ({ page }) => {
