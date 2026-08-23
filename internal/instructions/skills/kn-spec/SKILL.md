@@ -235,16 +235,25 @@ Decisions extracted during exploring phase:
 
 Optional implementation hints or constraints.
 
+## Task Generation
+
+- Task Prefix: [optional 2-8 character ID prefix, for example SPC; leave blank to use the project default]
+
 ## Task Links
 
 Generated tasks will be linked here after `/kn-plan --from @doc/<spec-path>` runs.
-Keep this section short: task ID, prefixed title, and status only.
+Keep this section short: task ID, title, and status only.
 
 ## Open Questions
 
 - [ ] Question 1?
 - [ ] Question 2?
 ```
+
+`Task Prefix` is optional and independent of task type. Normalize a supplied
+value to uppercase; leaving it blank delegates ID generation to the project's
+`settings.defaultTaskIdPrefix`, or to the legacy format when that is unset. Do
+not maintain an allowlist of prefixes in the spec.
 
 ## Step 3.5: Validate Spec
 
@@ -284,7 +293,7 @@ Gather additional requirements and update spec.
 
 ## Final Response Contract
 
-All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-plan`, `kn-research`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
+All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-plan`, `kn-research`, `kn-handoff`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
 
 Required order for the final user-facing response:
 

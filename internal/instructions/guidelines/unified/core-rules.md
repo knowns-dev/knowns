@@ -70,10 +70,10 @@ mcp__knowns__project({ "action": "set", "projectRoot": "/path/to/project" })
 
 ```bash
 # WRONG - sets assignee to garbage!
-knowns task edit 35 -a "Criterion text"
+knowns task edit KN-4F7Q2M -a "Criterion text"
 
 # CORRECT
-knowns task edit 35 --ac "Criterion text"
+knowns task edit KN-4F7Q2M --ac "Criterion text"
 ```
 
 ### --plain flag
@@ -89,8 +89,11 @@ knowns task edit --plain      # ✗ ERROR
 ### Subtasks
 
 ```bash
-knowns task create "Sub" --parent 48    # ✓ raw ID
-knowns task create "Sub" --parent task-48  # ✗ WRONG
+knowns task create "Sub" --parent KN-4F7Q2M    # ✓ the ID as printed
+knowns task create "Sub" --parent task-KN-4F7Q2M  # ✗ WRONG
+
+# The hyphen inside KN-4F7Q2M is part of the ID. Never strip the prefix.
+# Projects without settings.defaultTaskIdPrefix use plain IDs like 4f7q2m.
 ```
 {{/if}}
 
@@ -100,10 +103,15 @@ knowns task create "Sub" --parent task-48  # ✗ WRONG
 
 Tasks and docs can reference each other:
 
-| Type | Format |
-|------|--------|
-| Task | `@task-<id>` |
-| Doc | `@doc/<path>` |
-| Template | `@template/<name>` |
+| Type | Format | Example |
+|------|--------|---------|
+| Task | `@task-<id>` | `@task-KN-4F7Q2M`, `@task-4f7q2m` |
+| Doc | `@doc/<path>` | `@doc/guides/setup` |
+| Template | `@template/<name>` | `@template/component` |
+
+`<id>` is the ID exactly as Knowns printed it. When a project sets
+`settings.defaultTaskIdPrefix`, that includes the prefix, so `@task-KN-4F7Q2M`
+carries two hyphens: the first belongs to the ref form, the second to the ID.
+Dropping either one breaks the reference.
 
 **Always follow refs recursively** before planning.

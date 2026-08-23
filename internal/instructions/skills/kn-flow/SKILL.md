@@ -47,14 +47,21 @@ For a spec ref:
 
 1. Read the spec.
 2. List tasks linked to the spec.
-3. Sort by `order`, then shared `[slug-NN]` title prefix, then title.
-4. If no tasks exist, use `/kn-plan --from @doc/<spec-path>` behavior to preview tasks. Ask before creating tasks unless the user explicitly approved task creation.
+3. Read the spec's optional `Task Generation` → `Task Prefix`; when tasks must be
+   generated, pass it as `prefix` on each create call without changing project config.
+4. Sort by `order`, then title. Generated IDs are identity, not workflow ordering.
+5. If no tasks exist, use `/kn-plan --from @doc/<spec-path>` behavior to preview tasks. Ask before creating tasks unless the user explicitly approved task creation.
 
 For explicit task IDs:
 
 1. Read every task.
 2. Follow refs needed to understand dependencies and verification.
 3. Sort by dependency order when visible; otherwise preserve user order.
+
+Carry each ID verbatim into worker prompts and back out of worker reports.
+Projects that set `settings.defaultTaskIdPrefix` produce IDs like `KN-4F7Q2M`,
+and a worker receives that string with none of your project context to repair
+it, so a stripped prefix becomes a task the worker cannot open.
 
 ## Parallel Gate
 

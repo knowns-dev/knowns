@@ -57,6 +57,20 @@ mcp_knowns_tasks({ "action": "list", "status": "in-progress" })
 mcp_knowns_tasks({ "action": "board" })
 ```
 
+Note the shape of the Task IDs you get back. A project that sets
+`settings.defaultTaskIdPrefix` generates IDs like `KN-4F7Q2M`; without it they
+look like `4f7q2m`. Either way, pass the ID exactly as printed — the hyphen in
+`KN-4F7Q2M` is part of the ID, not a `task-` reference prefix to strip.
+
+The `initial` tool reports the active format. Over MCP you can override the
+prefix per Task with `tasks({ action: "create", prefix: "SPC" })`; changing the
+project default is a CLI or Settings action, not an MCP one:
+
+```bash
+knowns config get settings.defaultTaskIdPrefix --plain   # empty = legacy format
+knowns config set settings.defaultTaskIdPrefix SPC
+```
+
 ## Step 4.5: Load Critical Learnings
 
 Check for accumulated critical learnings from past work:
@@ -95,7 +109,7 @@ Project memories contain accumulated patterns, conventions, preferences, and fai
 
 ## Final Response Contract
 
-All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-plan`, `kn-research`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
+All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-plan`, `kn-research`, `kn-handoff`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
 
 Required order for the final user-facing response:
 

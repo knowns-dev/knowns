@@ -39,7 +39,9 @@ With `--dry-run`, stop after presenting validation plus the task create/reuse pr
 
 Use the same task-shaping rules as `/kn-plan --from @doc/<spec-path>`, but skip its approval gate because the user explicitly selected go mode:
 
-- stable `[<slug>-NN]` titles and order
+- clean titles and stable `order`; no synthetic `[<slug>-NN]` bracket prefixes
+- the spec's optional `Task Generation` → `Task Prefix` passed as `prefix` on each
+  create call, or omitted when blank to use the project default
 - `spec` link and `fulfills` mapping
 - outcome-oriented task ACs
 - concise descriptions; implementation detail belongs in task plans

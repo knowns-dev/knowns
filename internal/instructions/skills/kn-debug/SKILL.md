@@ -196,6 +196,10 @@ mcp_knowns_docs({ "action": "create", "title": "Learning: <domain> — <pattern>
 })
 ```
 
+`<id>` is the Task ID exactly as printed, prefix included: `@task-KN-4F7Q2M`,
+or `@task-4f7q2m` in projects without `settings.defaultTaskIdPrefix`. A ref
+written with a mangled ID resolves to nothing later.
+
 ### Known pattern that didn't work?
 
 If the documented resolution failed or is outdated:
