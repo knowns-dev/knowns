@@ -1,14 +1,16 @@
 ---
+id: doc-fe8df7428015eeac9ee274c2bb8bf30a
 title: 'Pattern: Atlas Chat Runtime'
 description: Reference pattern for a richer chat experience and hybrid OpenCode runtime management in Knowns, using a neutral codename instead of the original source system.
 createdAt: '2026-04-09T09:49:56.118Z'
-updatedAt: '2026-04-09T09:50:54.705Z'
+updatedAt: '2026-08-19T10:04:29.502Z'
 tags:
   - pattern
   - chat
   - opencode
   - ui
   - runtime
+  - superseded
 ---
 
 # Pattern: Atlas Chat Runtime
@@ -338,3 +340,6 @@ Atlas is the recommended direction when Knowns needs:
 The key rule is simple:
 - copy interaction patterns and operational lessons
 - do not copy the original architecture wholesale
+
+
+> **Superseded** by @decision/20260819-1703-remove-the-opencode-chat-ui - the OpenCode Chat UI was removed from Knowns.

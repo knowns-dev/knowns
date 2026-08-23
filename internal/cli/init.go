@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 
 	"github.com/howznguyen/knowns/internal/lsp"
@@ -100,7 +99,24 @@ type instructionFile struct {
 	PlatformID string // matches allPlatformIDs entry
 }
 
-const canonicalInstructionFile = "KNOWNS.md"
+// gitTrackingSections is the option table for the git tracking multi-select.
+var gitTrackingSections = []struct {
+	label string
+	id    string
+}{
+	{label: "Tasks", id: "tasks"},
+	{label: "Docs", id: "docs"},
+	{label: "Templates", id: "templates"},
+	{label: "Decisions", id: "decisions"},
+	{label: "Memories", id: "memories"},
+}
+
+// wizardMinWidth is the narrowest terminal the huh form still renders legibly.
+// The floor is set by the widest option label (".github/copilot-instructions.md",
+// 31 cells) plus huh's border, padding, cursor, and checkbox prefix (8 cells).
+// huh itself resizes to any width via tea.WindowSizeMsg, so this is purely a
+// readability guard.
+const wizardMinWidth = 60
 
 var defaultInstructionFiles = []instructionFile{
 	{Path: "CLAUDE.md", Platform: "Claude Code", PlatformID: "claude-code"},
@@ -234,7 +250,7 @@ func instructionPlatformOptions(selected []string) []huh.Option[string] {
 		{label: "AGENTS.md  (Codex / generic agents)", id: "agents"},
 		{label: "OPENCODE.md  (OpenCode)", id: "opencode"},
 		{label: "GEMINI.md  (Gemini CLI)", id: "gemini"},
-		{label: ".github/copilot-instructions.md  (GitHub Copilot)", id: "copilot"},
+		{label: ".github/copilot-instructions.md", id: "copilot"},
 	}
 	result := make([]huh.Option[string], len(options))
 	for i, opt := range options {
@@ -273,13 +289,13 @@ func normalizeInstructionPlatforms(platforms []string) []string {
 // initConfig holds all wizard answers.
 type initConfig struct {
 	Name            string
+	TaskIDPrefix    string
 	GitTrackingMode string
 	GitTracking     models.GitTracking
 	EnableSemantic  bool
 	SemanticModel   string
 	EmbeddingSource string // "local", "ollama", or "api"
 	Platforms       []string
-	EnableChatUI    bool
 	TaskLifecycle   *models.TaskLifecycleSettings
 }
 
@@ -321,6 +337,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 	noWizard, _ := cmd.Flags().GetBool("no-wizard")
 	openFlag, _ := cmd.Flags().GetBool("open")
 	noOpen, _ := cmd.Flags().GetBool("no-open")
+	taskIDPrefixFlag, _ := cmd.Flags().GetString("task-prefix")
+	taskIDPrefixFlag, err := models.NormalizeTaskIDPrefix(taskIDPrefixFlag)
+	if err != nil {
+		return err
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -387,10 +408,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Determine if interactive mode
 	interactive := !noWizard
-	if interactive && isTTYFn() && terminalWidthFn() < 90 {
+	if interactive && isTTYFn() && terminalWidthFn() < wizardMinWidth {
 		fmt.Println(warnStyle.Render("Terminal is too small for the interactive setup wizard."))
 		fmt.Println()
-		fmt.Println(RenderField("Minimum width", "90 columns"))
+		fmt.Println(RenderField("Minimum width", fmt.Sprintf("%d columns", wizardMinWidth)))
 		fmt.Println(RenderField("Current width", fmt.Sprintf("%d columns", terminalWidthFn())))
 		fmt.Println()
 		fmt.Println(dimStyle.Render("  Resize the terminal and rerun: knowns init"))
@@ -402,9 +423,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	if interactive && len(args) == 0 {
 		// Load any existing config to pre-populate wizard defaults.
-		existingName, existingGitTrackingMode, existingGitTracking, existingSemanticEnabled, existingSemanticModel, existingPlatforms := defaultsForWizard(cwd, globalDefaults)
-		if existingCfg, err := storage.NewStore(root).Config.Load(); err == nil {
+		existingName, existingTaskIDPrefix, existingGitTrackingMode, existingGitTracking, existingSemanticEnabled, existingSemanticModel, existingPlatforms := defaultsForWizard(cwd, globalDefaults)
+		existingProject, _ := storage.NewStore(root).Config.Load()
+		existingEmbeddingSource := resolveWizardEmbeddingSource(globalDefaults, existingProject)
+		if existingCfg := existingProject; existingCfg != nil {
 			existingName = existingCfg.Name
+			existingTaskIDPrefix = existingCfg.Settings.DefaultTaskIDPrefix
 			existingGitTrackingMode = existingCfg.Settings.GitTrackingMode
 			if existingCfg.Settings.GitTracking != nil {
 				existingGitTracking = existingCfg.Settings.GitTracking
@@ -420,7 +444,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 
 		// Run full wizard with huh
-		wizardCfg, err := runWizard(cwd, gitTracked, gitIgnored, gitAvailable, existingName, existingGitTrackingMode, existingGitTracking, existingSemanticEnabled, existingSemanticModel, existingPlatforms)
+		wizardCfg, err := runWizard(cwd, gitTracked, gitIgnored, gitAvailable, existingName, existingTaskIDPrefix, existingGitTrackingMode, existingGitTracking, existingSemanticEnabled, existingSemanticModel, existingPlatforms)
 		if err != nil {
 			if err == huh.ErrUserAborted {
 				fmt.Println(warnStyle.Render("Setup cancelled."))
@@ -429,6 +453,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		cfg = *wizardCfg
+		if cfg.EmbeddingSource == "" {
+			cfg.EmbeddingSource = existingEmbeddingSource
+		}
 	} else {
 		// Non-interactive or name provided
 		name := filepath.Base(cwd)
@@ -438,13 +465,16 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 {
 			name = args[0]
 		}
+		taskIDPrefix := ""
+		if globalDefaults != nil {
+			taskIDPrefix = globalDefaults.Settings.DefaultTaskIDPrefix
+		}
 		gitMode := "git-tracked"
 		gitTracking := models.GitTrackingDefaults()
 		enableSemantic := isTTY()
 		semanticModel := "multilingual-e5-small"
 		embeddingSource := "local"
 		platforms := defaultInstructionPlatforms()
-		enableChatUI := true
 		if globalDefaults != nil {
 			if globalDefaults.Settings.GitTrackingMode != "" {
 				gitMode = globalDefaults.Settings.GitTrackingMode
@@ -462,14 +492,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 			if len(globalDefaults.Settings.Platforms) > 0 {
 				platforms = globalDefaults.Settings.Platforms
 			}
-			if globalDefaults.Settings.EnableChatUI != nil {
-				enableChatUI = *globalDefaults.Settings.EnableChatUI
-			}
 		}
 		if force {
 			if existingCfg, err := storage.NewStore(root).Config.Load(); err == nil {
 				if existingCfg.Name != "" && len(args) == 0 {
 					name = existingCfg.Name
+				}
+				if existingCfg.Settings.DefaultTaskIDPrefix != "" {
+					taskIDPrefix = existingCfg.Settings.DefaultTaskIDPrefix
 				}
 				if existingCfg.Settings.GitTrackingMode != "" {
 					gitMode = existingCfg.Settings.GitTrackingMode
@@ -487,9 +517,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 				if len(existingCfg.Settings.Platforms) > 0 {
 					platforms = existingCfg.Settings.Platforms
 				}
-				if existingCfg.Settings.EnableChatUI != nil {
-					enableChatUI = *existingCfg.Settings.EnableChatUI
-				}
 			}
 		}
 		if gitTracked {
@@ -499,14 +526,19 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 		cfg = initConfig{
 			Name:            name,
+			TaskIDPrefix:    taskIDPrefix,
 			GitTrackingMode: gitMode,
 			GitTracking:     gitTracking,
 			EnableSemantic:  enableSemantic,
 			SemanticModel:   semanticModel,
 			EmbeddingSource: embeddingSource,
 			Platforms:       platforms,
-			EnableChatUI:    enableChatUI,
 		}
+	}
+	// An explicit --task-prefix outranks the wizard, existing config, and
+	// global defaults.
+	if taskIDPrefixFlag != "" {
+		cfg.TaskIDPrefix = taskIDPrefixFlag
 	}
 	cfg.TaskLifecycle = taskLifecycleSeed
 	applyLocalONNXInitCapability(&cfg)
@@ -540,11 +572,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 				if len(cfg.Platforms) > 0 {
 					project.Settings.Platforms = cfg.Platforms
 				}
+				project.Settings.DefaultTaskIDPrefix = cfg.TaskIDPrefix
 				if cfg.TaskLifecycle != nil {
 					project.Settings.TaskLifecycle = copyTaskLifecycleSettings(cfg.TaskLifecycle)
 				}
-				enableChatUI := cfg.EnableChatUI
-				project.Settings.EnableChatUI = &enableChatUI
 				return store.Config.Save(project)
 			},
 		},
@@ -605,7 +636,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 			run: func() error {
 				mc, ok := search.EmbeddingModels[customModelID]
 				if !ok {
-					return fmt.Errorf("model %q not registered", customModelID)
+					fmt.Printf("\n%s Model %q is not a built-in local model.\n", warnStyle.Render("⚠"), customModelID)
+					fmt.Println(dimStyle.Render("  If it is an Ollama or API model, set its provider: knowns model set"))
+					fmt.Println(dimStyle.Render("  Falling back to keyword-only search for now."))
+					return nil // non-fatal: init must not fail on a model choice
 				}
 				err := downloadCustomHuggingFaceModel(mc.HuggingFaceID)
 				if err != nil && strings.Contains(err.Error(), "no .onnx files found") {
@@ -620,15 +654,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	if cfg.EnableSemantic {
-		steps = append(steps, initStep{
-			label: "Building project and global semantic indices",
-			run: func() error {
-				store := storage.NewStore(root)
-				return reindexSemanticStores(store)
-			},
-		})
-	}
+	// No semantic index is built here, by design. A fresh project has nothing to
+	// embed, and a re-init would pay a full rebuild for no gain: tasks and docs
+	// are indexed incrementally on write (search.BestEffortIndexTask/Doc). The
+	// closing hints point at `knowns doctor` and `knowns search --reindex` for
+	// the cases that do need a rebuild, such as switching embedding model.
 
 	steps = append(steps, initStep{
 		label: "Installing language servers",
@@ -648,8 +678,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println(dimStyle.Render("  knowns task create \"My first task\""))
 	printSetupSuggestion(cwd)
 	fmt.Println(dimStyle.Render("  Use /kn-init to start an AI session"))
-	if cfg.EnableChatUI {
-		fmt.Println(dimStyle.Render("  knowns browser --open   # Launch Chat UI"))
+
+	fmt.Println()
+	fmt.Println(titleStyle.Render("Check setup:"))
+	fmt.Println(dimStyle.Render("  knowns doctor             # Diagnose project and integration health"))
+	if cfg.EnableSemantic {
+		fmt.Println(dimStyle.Render("  knowns search --reindex   # Build semantic indices (skipped during init)"))
 	}
 	fmt.Println()
 	return maybeOpenBrowser(cwd, openFlag, noOpen)
@@ -705,9 +739,12 @@ func buildSemanticSettings(cfg initConfig) *models.SemanticSearchSettings {
 		}
 	}
 	if ss != nil {
-		// Declare Qdrant as the default vector backend. Install/start stays
+		// Declare Qdrant as the default vector backend (spec D10). Only the
+		// backend and mode are recorded; managedRoot, install policy, and
+		// retention stay unwritten so they keep resolving from current
+		// defaults instead of being frozen at init time. Install/start stays
 		// lazy: first semantic use or explicit commands bootstrap the runtime.
-		ss.VectorStore = models.DefaultSemanticVectorStoreSettingsPtr()
+		ss.VectorStore = models.DeclaredSemanticVectorStoreSettingsPtr()
 	}
 	return ss
 }
@@ -737,8 +774,24 @@ func copyTaskLifecycleSettings(settings *models.TaskLifecycleSettings) *models.T
 	return &clone
 }
 
-func defaultsForWizard(cwd string, defaults *storage.ProjectDefaults) (string, string, *models.GitTracking, *bool, string, []string) {
+// resolveWizardEmbeddingSource returns the embedding provider the wizard must
+// preserve. runWizard never asks for it, so without this the provider silently
+// resets to "local" and an Ollama/API model gets misrouted to the local ONNX
+// download path on `knowns init --force`.
+func resolveWizardEmbeddingSource(globalDefaults *storage.ProjectDefaults, existing *models.Project) string {
+	source := ""
+	if globalDefaults != nil && globalDefaults.Settings.SemanticSearch != nil {
+		source = globalDefaults.Settings.SemanticSearch.Provider
+	}
+	if existing != nil && existing.Settings.SemanticSearch != nil && existing.Settings.SemanticSearch.Provider != "" {
+		source = existing.Settings.SemanticSearch.Provider
+	}
+	return source
+}
+
+func defaultsForWizard(cwd string, defaults *storage.ProjectDefaults) (string, string, string, *models.GitTracking, *bool, string, []string) {
 	name := filepath.Base(cwd)
+	var taskIDPrefix string
 	var gitMode string
 	var gitTracking *models.GitTracking
 	var semanticEnabled *bool
@@ -746,11 +799,12 @@ func defaultsForWizard(cwd string, defaults *storage.ProjectDefaults) (string, s
 	platforms := defaultInstructionPlatforms()
 
 	if defaults == nil {
-		return name, gitMode, gitTracking, semanticEnabled, semanticModel, platforms
+		return name, taskIDPrefix, gitMode, gitTracking, semanticEnabled, semanticModel, platforms
 	}
 	if defaults.ProjectName != "" {
 		name = defaults.ProjectName
 	}
+	taskIDPrefix = defaults.Settings.DefaultTaskIDPrefix
 	gitMode = defaults.Settings.GitTrackingMode
 	gitTracking = defaults.Settings.GitTracking
 	if defaults.Settings.SemanticSearch != nil {
@@ -761,10 +815,10 @@ func defaultsForWizard(cwd string, defaults *storage.ProjectDefaults) (string, s
 	if len(defaults.Settings.Platforms) > 0 {
 		platforms = defaults.Settings.Platforms
 	}
-	return name, gitMode, gitTracking, semanticEnabled, semanticModel, platforms
+	return name, taskIDPrefix, gitMode, gitTracking, semanticEnabled, semanticModel, platforms
 }
 
-func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, existingName string, existingGitTrackingMode string, existingGitTracking *models.GitTracking, existingSemanticEnabled *bool, existingSemanticModel string, existingPlatforms []string) (*initConfig, error) {
+func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, existingName string, existingTaskIDPrefix string, existingGitTrackingMode string, existingGitTracking *models.GitTracking, existingSemanticEnabled *bool, existingSemanticModel string, existingPlatforms []string) (*initConfig, error) {
 	defaultName := filepath.Base(cwd)
 	if existingName != "" {
 		defaultName = existingName
@@ -778,8 +832,9 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 
 	var cfg initConfig
 	cfg.Name = defaultName
+	cfg.TaskIDPrefix = existingTaskIDPrefix
 
-	// --- Group 1: Project name ---
+	// --- Group 1: Project name and Task ID prefix ---
 	nameField := huh.NewGroup(
 		huh.NewInput().
 			Title("Project name").
@@ -790,6 +845,15 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 					return fmt.Errorf("project name is required")
 				}
 				return nil
+			}),
+		huh.NewInput().
+			Title("Default Task ID prefix").
+			Description("2-8 alphanumeric characters, e.g. KN. Leave blank for legacy IDs.").
+			Value(&cfg.TaskIDPrefix).
+			Placeholder(existingTaskIDPrefix).
+			Validate(func(s string) error {
+				_, err := models.NormalizeTaskIDPrefix(s)
+				return err
 			}),
 	)
 
@@ -831,12 +895,45 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 	if gitGroup != nil {
 		groups = append(groups, gitGroup)
 	}
-	cfg.Platforms = normalizeInstructionPlatforms(existingPlatforms)
+
+	// Seed per-section toggles from existing config. This has to happen before
+	// the form is built so the sections group can join the same form instead of
+	// running as a second, inline program after it.
+	if existingGitTracking != nil {
+		cfg.GitTracking = *existingGitTracking
+	} else {
+		cfg.GitTracking = models.GitTrackingDefaults()
+	}
+	selectedSections := gitTrackingSelectedSections(&cfg.GitTracking)
+	sectionOptions := make([]huh.Option[string], 0, len(gitTrackingSections))
+	for _, section := range gitTrackingSections {
+		sectionOptions = append(sectionOptions, huh.NewOption(section.label, section.id).Selected(sectionSelected(selectedSections, section.id)))
+	}
+	// huh re-evaluates the hide func on every navigation keypress, so picking
+	// "none" above skips this group live without a separate form run.
 	groups = append(groups, huh.NewGroup(
 		huh.NewMultiSelect[string]().
-			Title("Project instruction files").
-			Description("KNOWNS.md is always created as a human-readable fallback reference. Choose compatibility shims for agents that read project files.").
-			Options(instructionPlatformOptions(cfg.Platforms)...).
+			TitleFunc(func() string {
+				return fmt.Sprintf("Knowns sections to track in git (%d/%d selected)", len(selectedSections), len(sectionOptions))
+			}, &selectedSections).
+			Description("Choose sections under .knowns/ that should be committed.").
+			Options(sectionOptions...).
+			Value(&selectedSections),
+	).WithHideFunc(func() bool {
+		return cfg.GitTrackingMode == "none"
+	}))
+
+	cfg.Platforms = normalizeInstructionPlatforms(existingPlatforms)
+	instructionOptions := instructionPlatformOptions(cfg.Platforms)
+	groups = append(groups, huh.NewGroup(
+		huh.NewMultiSelect[string]().
+			// TitleFunc keeps a live "n/total" counter so the list reads as
+			// scrollable when the viewport is shorter than the option list.
+			TitleFunc(func() string {
+				return fmt.Sprintf("Project instruction files (%d/%d selected)", len(cfg.Platforms), len(instructionOptions))
+			}, &cfg.Platforms).
+			Description("Instruction files for agents that read project files.").
+			Options(instructionOptions...).
 			Validate(func(s []string) error {
 				if len(s) == 0 {
 					return fmt.Errorf("select at least one instruction file")
@@ -846,41 +943,21 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 			Value(&cfg.Platforms),
 	))
 
+	// Rendered inline, not via tea.WithAltScreen(). The alternate screen buffer
+	// is discarded on exit, so an alt-screen wizard hides the banner printed
+	// above while it runs and leaves no record of the answers afterwards.
+	// Inline keeps both in scrollback, which is the whole point of `init`.
 	form := huh.NewForm(groups...).
-		WithTheme(huh.ThemeCatppuccin()).
-		WithProgramOptions(tea.WithAltScreen())
+		WithTheme(huh.ThemeCatppuccin())
 
 	if err := form.Run(); err != nil {
 		return nil, err
 	}
 
-	// Seed per-section toggles from existing config.
-	if existingGitTracking != nil {
-		cfg.GitTracking = *existingGitTracking
-	} else {
-		cfg.GitTracking = models.GitTrackingDefaults()
-	}
+	// The sections group is hidden for "none", which leaves the seeded tracking
+	// config untouched rather than overwriting it with an unanswered selection.
 	if cfg.GitTrackingMode != "none" {
-		selected := gitTrackingSelectedSections(&cfg.GitTracking)
-		trackingForm := huh.NewForm(
-			huh.NewGroup(
-				huh.NewMultiSelect[string]().
-					Title("Knowns sections to track in git").
-					Description("Choose sections under .knowns/ that should be committed.").
-					Options(
-						huh.NewOption("Tasks", "tasks").Selected(sectionSelected(selected, "tasks")),
-						huh.NewOption("Docs", "docs").Selected(sectionSelected(selected, "docs")),
-						huh.NewOption("Templates", "templates").Selected(sectionSelected(selected, "templates")),
-						huh.NewOption("Decisions", "decisions").Selected(sectionSelected(selected, "decisions")),
-						huh.NewOption("Memories", "memories").Selected(sectionSelected(selected, "memories")),
-					).
-					Value(&selected),
-			),
-		).WithTheme(huh.ThemeCatppuccin())
-		if err := trackingForm.Run(); err != nil {
-			return nil, err
-		}
-		cfg.GitTracking = gitTrackingFromSelectedSections(selected)
+		cfg.GitTracking = gitTrackingFromSelectedSections(selectedSections)
 	}
 
 	return &cfg, nil
@@ -1403,10 +1480,6 @@ func createAntigravityMCPConfigQuiet(projectRoot string) error {
 // createInstructionFilesForPlatforms generates only instruction files for the
 // given platform IDs. If platforms is empty all files are generated.
 func createInstructionFilesForPlatforms(projectRoot string, force bool, platforms []string) error {
-	if err := writeInstructionFile(projectRoot, canonicalInstructionFile, "Knowns", force); err != nil {
-		return err
-	}
-
 	for _, f := range defaultInstructionFiles {
 		if !shouldCreateInstructionFile(platforms, f) {
 			continue
@@ -1420,10 +1493,6 @@ func createInstructionFilesForPlatforms(projectRoot string, force bool, platform
 
 // createInstructionFilesQuiet generates agent instruction files without printing.
 func createInstructionFilesQuiet(projectRoot string, force bool) error {
-	if err := writeInstructionFile(projectRoot, canonicalInstructionFile, "Knowns", force); err != nil {
-		return err
-	}
-
 	for _, f := range defaultInstructionFiles {
 		if err := writeInstructionFile(projectRoot, f.Path, f.Platform, force); err != nil {
 			return err
@@ -1452,7 +1521,7 @@ func writeInstructionFile(projectRoot, relativePath, platform string, force bool
 
 	// For compatibility shim files that already exist, preserve user content
 	// outside the managed marker block.
-	if fileExists && relativePath != canonicalInstructionFile {
+	if fileExists {
 		return syncInstructionMarkerBlock(filePath, content)
 	}
 
@@ -1464,169 +1533,7 @@ func writeInstructionFile(projectRoot, relativePath, platform string, force bool
 }
 
 func generateInstructionContent(relativePath, platform, projectRoot string) string {
-	if relativePath == canonicalInstructionFile {
-		return renderCanonicalInstructionContent()
-	}
-
 	return renderCompatibilityInstructionContent(relativePath, platform, projectRoot)
-}
-
-func renderCanonicalInstructionContent() string {
-	var sb strings.Builder
-	sb.WriteString("# KNOWNS\n\n")
-	sb.WriteString("Human-readable repository guidance for agents working in this project. Runtime-critical AI bootstrap guidance is provided by Knowns MCP `initial` and on-demand `help`.\n\n")
-	sb.WriteString("## Table of Contents\n\n")
-	sb.WriteString("- [Source of Truth](#source-of-truth)\n")
-	sb.WriteString("- [TL;DR](#tldr)\n")
-	sb.WriteString("- [Repo Mental Model](#repo-mental-model)\n")
-	sb.WriteString("- [How Agents Should Read This File](#how-agents-should-read-this-file)\n")
-	sb.WriteString("- [Tool Selection](#tool-selection)\n")
-	sb.WriteString("- [Memory Usage](#memory-usage)\n")
-	sb.WriteString("- [Critical Rules](#critical-rules)\n")
-	sb.WriteString("- [Git Safety](#git-safety)\n")
-	sb.WriteString("- [Context Retrieval Strategy](#context-retrieval-strategy)\n")
-	sb.WriteString("- [References](#references)\n")
-	sb.WriteString("- [Common Mistakes](#common-mistakes)\n")
-	sb.WriteString("- [Recommended File Roles](#recommended-file-roles)\n")
-	sb.WriteString("- [Compatibility Pattern](#compatibility-pattern)\n")
-	sb.WriteString("- [Maintenance Rules](#maintenance-rules)\n\n")
-	sb.WriteString("## Source of Truth\n\n")
-	sb.WriteString("- MCP `initial` is the primary runtime bootstrap for AI agents.\n")
-	sb.WriteString("- MCP `help(\"tool.*\")` and `help(\"workflow.*\")` are the primary on-demand sources for tool schemas and workflow recipes.\n")
-	sb.WriteString("- `KNOWNS.md` is a human-readable project reference and fallback when MCP is unavailable.\n")
-	sb.WriteString("- `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `OPENCODE.md`, and `.github/copilot-instructions.md` are compatibility shims for runtimes that auto-detect those filenames.\n")
-	sb.WriteString("- If guidance appears in multiple places, follow this precedence order:\n")
-	sb.WriteString("  1. System instructions\n")
-	sb.WriteString("  2. Developer instructions\n")
-	sb.WriteString("  3. MCP `initial` / `help`\n")
-	sb.WriteString("  4. Skills\n")
-	sb.WriteString("  5. `KNOWNS.md`\n")
-	sb.WriteString("  6. Compatibility shim files\n")
-	sb.WriteString("  7. Other repository docs\n\n")
-	sb.WriteString("## TL;DR\n\n")
-	sb.WriteString("- Call `initial` at session start — it returns project readiness, knowledge counts, code intelligence rules, workflow guidance, and available tools.\n")
-	sb.WriteString("- Use `help(\"tool.action\")`, `help(\"tool.*\")`, or `help(\"workflow.*\")` when a domain/action schema is not visible.\n")
-	sb.WriteString("- Use Knowns as the memory layer for humans and the AI-friendly working layer for agents.\n")
-	sb.WriteString("- Search before reading; read only the sections and docs relevant to the current task.\n")
-	sb.WriteString("- Never manually edit Knowns-managed task or doc markdown.\n")
-	sb.WriteString("- Prefer Knowns MCP tools; use the `knowns` CLI only as fallback.\n")
-	sb.WriteString("- Let skills handle detailed workflows; use this file for rules, conventions, and context routing.\n")
-	sb.WriteString("- Validate before marking work complete.\n")
-	sb.WriteString("- Do not revert user changes you did not make.\n\n")
-	sb.WriteString("## Repo Mental Model\n\n")
-	sb.WriteString("- Knowns is the project's memory layer for humans and the AI-friendly operating layer for agents.\n")
-	sb.WriteString("- Knowns manages tasks, docs, templates, specs, references, and workflow state in one place.\n")
-	sb.WriteString("- Tasks and docs may reference each other using `@task-<id>`, `@doc/<path>`, and `@template/<name>`.\n")
-	sb.WriteString("- MCP `initial` defines runtime operating rules; skills define step-by-step execution flows.\n")
-	sb.WriteString("- `KNOWNS.md` provides a stable human-readable reference for those conventions.\n")
-	sb.WriteString("- Long guidance should be retrieved by section, not blindly injected in full on every request.\n\n")
-	sb.WriteString("## How Agents Should Read This File\n\n")
-	sb.WriteString("- Prefer MCP `initial` and `help` first. Read this file when MCP guidance is unavailable or deeper project context is needed.\n")
-	sb.WriteString("- If reading this file, start with `## Source of Truth` and `## TL;DR`.\n")
-	sb.WriteString("- For short or obvious tasks, use the summary sections plus the relevant section only.\n")
-	sb.WriteString("- For tool usage questions, read `## Tool Selection` and `## Common Mistakes`.\n")
-	sb.WriteString("- For safety-sensitive work, read `## Critical Rules` and `## Git Safety`.\n")
-	sb.WriteString("- For large files or docs, read `## Context Retrieval Strategy`.\n")
-	sb.WriteString("- For ambiguous requests, search the repo and related docs before asking the user.\n")
-	sb.WriteString("- Do not assume the entire file is present in context; retrieve the needed sections when required.\n\n")
-	sb.WriteString("## Tool Selection\n\n")
-	sb.WriteString("- Call `initial` at session start — it includes project readiness, capabilities, and code intelligence rules.\n")
-	sb.WriteString("- Use `help(\"tool.action\")` or `help(\"tool.*\")` for detailed per-action documentation on demand.\n")
-	sb.WriteString("- Use Knowns MCP tools first for tasks, docs, templates, validation, and time tracking.\n")
-	sb.WriteString("- Use Knowns `code` tools for code discovery, structure, and editing — not built-in Read/Grep/Edit.\n")
-	sb.WriteString("- Use shell commands for git, tests, builds, generators, and other terminal operations.\n")
-	sb.WriteString("- Prefer targeted retrieval over loading large files in full.\n")
-	sb.WriteString("- Use `knowns search` for discovery and quick relevance checks.\n")
-	sb.WriteString("- Use MCP `retrieve` tool when a workflow needs structured context with citations and context-pack assembly. Fall back to CLI `knowns retrieve` if MCP is unavailable.\n")
-	sb.WriteString("- Prefer `--json` for structured CLI reads consumed by agents, scripts, or workflows, including `get`, `list`, `search`, and `retrieve` commands.\n")
-	sb.WriteString("- Prefer `--plain` for human-facing inspection, quick content reads, and logs when JSON is unnecessary.\n")
-	sb.WriteString("- Do not rely on styled default CLI output for automation or parsing.\n\n")
-	sb.WriteString("### Preferred Tool Matrix\n\n")
-	sb.WriteString("- `knowns_*`: canonical operations on tasks, docs, templates, validation, and time.\n")
-	sb.WriteString("- `read`: inspect a known file.\n")
-	sb.WriteString("- `glob`: find files by path pattern.\n")
-	sb.WriteString("- `grep`: locate content by regex.\n")
-	sb.WriteString("- `bash`: run git, builds, tests, package managers, or other terminal commands.\n")
-	sb.WriteString("- `apply_patch`: make small, explicit file edits.\n")
-	sb.WriteString("- `task`: delegate large research or multi-step exploration when useful.\n\n")
-	sb.WriteString("## Memory Usage\n\n")
-	sb.WriteString("- Session start: `memory({ action: \"list\", layer: \"project\" })` to load accumulated project knowledge.\n")
-	sb.WriteString("- After task: use `memory({ action: \"add\" })` for reusable patterns and conventions; use the first-class Decision tool for durable project decisions.\n")
-	sb.WriteString("- Cross-project: `memory({ action: \"promote\" })` to move project knowledge to global (`project→global`).\n")
-	sb.WriteString("- Memory complements docs: memory is for fast agent recall, docs are for structured human-readable reference.\n")
-	sb.WriteString("- Never duplicate the full doc content into memory — store a summary and reference the doc with `@doc/<path>`.\n")
-	sb.WriteString("- During any skill: save reusable patterns, conventions, or failures with `memory({ action: \"add\", layer: \"project\" })`. Memory category `decision` is legacy; create a first-class System Decision instead.\n")
-	sb.WriteString("- Proactively save durable memory without waiting for the user to say \"save this\" when confidence is high.\n")
-	sb.WriteString("- Use `project` Memory for repo-specific patterns, conventions, recurring failures, and implementation context; use System Decisions for durable architecture or workflow choices.\n")
-	sb.WriteString("- Use `global` for stable user preferences or workflow rules that should carry across repositories and future sessions.\n")
-	sb.WriteString("- Ask the user only when the information appears durable but the correct scope (`working`, `project`, or `global`) is genuinely ambiguous.\n")
-	sb.WriteString("- After any meaningful user instruction, correction, or newly discovered pattern, quickly evaluate whether it should be stored as memory and save it when appropriate.\n")
-	sb.WriteString("- If the user states a stable collaboration preference, default to saving it as `global` memory unless they clearly scoped it to this repository only.\n\n")
-	sb.WriteString("## Critical Rules\n\n")
-	sb.WriteString("- Never manually edit Knowns-managed task or doc markdown.\n")
-	sb.WriteString("- Search first, then read only relevant docs and code.\n")
-	sb.WriteString("- Follow `@task-<id>`, `@doc/<path>`, and `@template/<name>` references before acting.\n")
-	sb.WriteString("- Use `appendNotes` for progress updates; `notes` replaces existing notes and should only be used intentionally.\n")
-	sb.WriteString("- Validate before marking work complete.\n")
-	sb.WriteString("- Use skills for detailed workflow execution instead of duplicating step-by-step process here.\n")
-	sb.WriteString("- Compatibility shim files must stay lightweight and must direct agents to MCP `initial`/`help` first, with `KNOWNS.md` as fallback reference.\n\n")
-	sb.WriteString("## Git Safety\n\n")
-	sb.WriteString("- Assume the worktree may already contain user changes.\n")
-	sb.WriteString("- Never revert or overwrite unrelated user changes unless explicitly requested.\n")
-	sb.WriteString("- Avoid destructive git commands unless explicitly requested.\n")
-	sb.WriteString("- Do not amend commits unless explicitly requested.\n")
-	sb.WriteString("- Do not create commits unless the user explicitly asks for a commit.\n")
-	sb.WriteString("- Do not push unless the user explicitly asks for it.\n\n")
-	sb.WriteString("## Context Retrieval Strategy\n\n")
-	sb.WriteString("- Treat `KNOWNS.md` as an indexed manual, not a required startup prompt or content to fully inject every time.\n")
-	sb.WriteString("- Read in this order when context is limited:\n")
-	sb.WriteString("  1. `## Source of Truth`\n")
-	sb.WriteString("  2. `## TL;DR`\n")
-	sb.WriteString("  3. The section most relevant to the task\n")
-	sb.WriteString("- For large or complex tasks, retrieve additional sections on demand.\n")
-	sb.WriteString("- Prefer section headings with stable names so tools can target them precisely.\n")
-	sb.WriteString("- If a downstream runtime supports startup loading, preload only the top-level summary and fetch deeper sections lazily.\n\n")
-	sb.WriteString("## References\n\n")
-	sb.WriteString("- Task references use `@task-<id>`.\n")
-	sb.WriteString("- Doc references use `@doc/<path>`.\n")
-	sb.WriteString("- Template references use `@template/<name>`.\n")
-	sb.WriteString("- Doc references support line and range suffixes:\n")
-	sb.WriteString("  - `@doc/<path>:42` — link to a specific line.\n")
-	sb.WriteString("  - `@doc/<path>:10-25` — link to a line range.\n")
-	sb.WriteString("  - `@doc/<path>#heading-slug` — link to a heading anchor.\n")
-	sb.WriteString("- Follow references recursively before planning, implementation, or validation work.\n\n")
-	sb.WriteString("## Common Mistakes\n\n")
-	sb.WriteString("### Notes vs Append Notes\n\n")
-	sb.WriteString("- Use `appendNotes` for progress updates and audit trail entries.\n")
-	sb.WriteString("- Use `notes` only when intentionally replacing the task's notes content.\n\n")
-	sb.WriteString("### CLI Pitfalls\n\n")
-	sb.WriteString("- In `task create` and `task edit`, `-a` means `--assignee`, not acceptance criteria.\n")
-	sb.WriteString("- In `doc edit`, `-a` means `--append`.\n")
-	sb.WriteString("- Use raw task IDs where a command expects an ID value rather than a mention.\n")
-	sb.WriteString("- Use `--plain` for read, list, and search commands, not for create or edit commands.\n")
-	sb.WriteString("- Use `--json` for structured reads like `get`, `list`, `search`, and `retrieve` when the output will be parsed or fed into an agent workflow.\n")
-	sb.WriteString("- Use `--plain` when inspecting manually or when only clean text output is needed.\n")
-	sb.WriteString("- Use `--smart` when reading docs through the CLI.\n\n")
-	sb.WriteString("### Retrieval Pitfalls\n\n")
-	sb.WriteString("- Do not read every doc hoping to find the answer; search first.\n")
-	sb.WriteString("- Do not replace discovery-oriented `search` with `retrieve` by default; use `retrieve` only when you need assembled context, citations, or expansion metadata.\n")
-	sb.WriteString("- Do not repeatedly list the same tasks or docs if the needed context is already loaded.\n")
-	sb.WriteString("- Do not quote large file contents when a concise summary is enough.\n\n")
-	sb.WriteString("## Recommended File Roles\n\n")
-	sb.WriteString("- `KNOWNS.md`: human-readable repo-level reference and fallback.\n")
-	sb.WriteString("- Compatibility shim files: lightweight entrypoints that introduce Knowns and redirect runtimes to MCP `initial`/`help`.\n")
-	sb.WriteString("- Other docs: deeper domain, feature, or workflow references.\n\n")
-	sb.WriteString("## Compatibility Pattern\n\n")
-	sb.WriteString("- Keep shim files short.\n")
-	sb.WriteString("- In every shim file, explicitly say MCP `initial` is the primary bootstrap and `KNOWNS.md` is optional fallback/reference.\n")
-	sb.WriteString("- Preserve the `<!-- KNOWNS GUIDELINES START -->` and `<!-- KNOWNS GUIDELINES END -->` markers in shim files so tooling can detect and sync them reliably.\n\n")
-	sb.WriteString("## Maintenance Rules\n\n")
-	sb.WriteString("- Update the Knowns generator when the repository's operational rules change.\n")
-	sb.WriteString("- Keep top sections stable so automated loaders can depend on them.\n")
-	sb.WriteString("- Prefer adding new sections over bloating the TL;DR.\n")
-	sb.WriteString("- Keep workflow details in skills and MCP `help` when possible; keep `KNOWNS.md` focused on human-readable rules, conventions, and routing.\n")
-
-	return sb.String()
 }
 
 func renderCompatibilityInstructionContent(relativePath, platform, projectRoot string) string {
@@ -1878,13 +1785,13 @@ func removeLegacyGitignoreBlock(dir string) {
 	_ = os.WriteFile(gitignorePath, []byte(content), 0644)
 }
 
-// maybeOpenBrowser optionally launches the Chat UI after init.
+// maybeOpenBrowser optionally launches the web UI after init.
 //
 //   - --no-open or --no-wizard: skip silently
 //   - --open: launch immediately without prompting
 //   - default (interactive): show a confirm prompt
 //
-// maybeOpenBrowser launches the Chat UI only when --open is passed explicitly.
+// maybeOpenBrowser launches the web UI only when --open is passed explicitly.
 // Default behavior (no flag) is to do nothing — users follow the printed hint instead.
 func maybeOpenBrowser(cwd string, openFlag, noOpen bool) error {
 	if noOpen || !openFlag {
@@ -2003,13 +1910,14 @@ func lspBinariesFromAdapter(adapter lsp.LanguageAdapter) []lsp.Binary {
 }
 
 func init() {
+	initCmd.Flags().String("task-prefix", "", "Default task ID prefix (2-8 alphanumeric characters, e.g. KN)")
 	initCmd.Flags().Bool("git-tracked", false, "Track .knowns/ files in git")
 	initCmd.Flags().Bool("git-ignored", false, "Add .knowns/ to .gitignore")
 	initCmd.Flags().Bool("wizard", false, "Run interactive setup wizard")
 	initCmd.Flags().Bool("no-wizard", false, "Skip interactive prompts, use defaults")
 	initCmd.Flags().BoolP("force", "f", false, "Force reinitialize even if already initialized")
-	initCmd.Flags().Bool("open", false, "Launch Chat UI immediately after init")
-	initCmd.Flags().Bool("no-open", false, "Skip the Chat UI launch prompt after init")
+	initCmd.Flags().Bool("open", false, "Launch the web UI immediately after init")
+	initCmd.Flags().Bool("no-open", false, "Skip the web UI launch prompt after init")
 
 	rootCmd.AddCommand(initCmd)
 }

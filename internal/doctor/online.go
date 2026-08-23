@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/howznguyen/knowns/internal/util"
 )
@@ -27,6 +28,8 @@ type httpDoer interface {
 
 type providerTarget struct {
 	ID      string
+	Kind    string
+	Model   string
 	APIBase string
 	APIKey  string
 }
@@ -50,14 +53,16 @@ func defaultOnlineDependencies() onlineDependencies {
 	}
 }
 
-// OnlineCheckers returns external diagnostics. The checkers are always
-// registered so offline runs can return explicit online_disabled skips, but
-// their bodies are never invoked unless RunOptions.Online is true.
-func OnlineCheckers(store *storage.Store) []Checker {
-	return onlineCheckersWithDependencies(store, onlineDependencies{})
+// NetworkCheckers returns diagnostics that probe a network endpoint. They run
+// in every doctor invocation: the configured embedding provider is part of the
+// project setup a user asks doctor about, so its reachability must not depend
+// on an opt-in flag. Every probe is bounded and reports an unreachable network
+// as a warning so offline and air-gapped runs stay usable.
+func NetworkCheckers(store *storage.Store) []Checker {
+	return networkCheckersWithDependencies(store, onlineDependencies{})
 }
 
-func onlineCheckersWithDependencies(store *storage.Store, deps onlineDependencies) []Checker {
+func networkCheckersWithDependencies(store *storage.Store, deps onlineDependencies) []Checker {
 	defaults := defaultOnlineDependencies()
 	if deps.client == nil {
 		deps.client = defaults.client
@@ -69,17 +74,16 @@ func onlineCheckersWithDependencies(store *storage.Store, deps onlineDependencie
 		deps.loadProvider = defaults.loadProvider
 	}
 	return []Checker{
-		onlineProviderChecker(store, deps),
+		providerEndpointChecker(store, deps),
 		onlineVersionChecker(deps),
 	}
 }
 
 func onlineVersionChecker(deps onlineDependencies) Checker {
 	return Checker{
-		ID:             "online.version",
-		Scope:          ScopeOnline,
-		Timeout:        onlineCheckTimeout,
-		RequiresOnline: true,
+		ID:      "online.version",
+		Scope:   ScopeOnline,
+		Timeout: onlineCheckTimeout,
 		Check: func(ctx context.Context) (CheckResult, error) {
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, deps.versionURL, nil)
 			if err != nil {
@@ -157,16 +161,26 @@ func onlineVersionChecker(deps onlineDependencies) Checker {
 	}
 }
 
-func onlineProviderChecker(store *storage.Store, deps onlineDependencies) Checker {
+func providerEndpointChecker(store *storage.Store, deps onlineDependencies) Checker {
 	return Checker{
-		ID:             "online.provider",
-		Scope:          ScopeOnline,
-		Timeout:        onlineCheckTimeout,
-		RequiresOnline: true,
+		ID:      "search.provider-endpoint",
+		Scope:   ScopeSearch,
+		Timeout: 2 * onlineCheckTimeout,
 		Check: func(ctx context.Context) (CheckResult, error) {
 			target, configured, err := deps.loadProvider(store)
 			if err != nil {
-				return CheckResult{}, err
+				return CheckResult{
+					Status:  StatusWarn,
+					Summary: "Configured embedding provider settings are incomplete",
+					Evidence: Evidence{
+						"configured": true,
+						"errorCode":  "provider_settings_incomplete",
+					},
+					Remediation: &Remediation{
+						Description: "Register the configured embedding model and provider in Knowns settings.",
+						Command:     "knowns settings",
+					},
+				}, nil
 			}
 			if !configured {
 				return CheckResult{
@@ -176,9 +190,23 @@ func onlineProviderChecker(store *storage.Store, deps onlineDependencies) Checke
 				}, nil
 			}
 
+			base, err := url.Parse(strings.TrimSpace(target.APIBase))
+			if err != nil || base.Host == "" ||
+				(base.Scheme != "http" && base.Scheme != "https") || base.User != nil {
+				return providerWarning(
+					target.ID,
+					"Configured embedding provider URL is invalid",
+					"provider_url_invalid",
+					0,
+				), nil
+			}
+			if target.Kind == "ollama" {
+				return ollamaEndpointResult(ctx, deps, target, base), nil
+			}
+
 			endpoint, err := providerProbeURL(target.APIBase)
 			if err != nil {
-				return providerFailure(
+				return providerWarning(
 					target.ID,
 					"Configured embedding provider URL is invalid",
 					"provider_url_invalid",
@@ -199,7 +227,9 @@ func onlineProviderChecker(store *storage.Store, deps onlineDependencies) Checke
 			}
 			resp, err := deps.client.Do(req)
 			if err != nil {
-				return providerFailure(
+				// An unreachable network is an environment condition, not a
+				// broken project, so it must never fail a default doctor run.
+				return providerWarning(
 					target.ID,
 					"Configured embedding provider is unreachable",
 					networkErrorCode(ctx, err),
@@ -217,7 +247,7 @@ func onlineProviderChecker(store *storage.Store, deps onlineDependencies) Checke
 					resp.StatusCode,
 				), nil
 			case resp.StatusCode == http.StatusRequestTimeout:
-				return providerFailure(
+				return providerWarning(
 					target.ID,
 					"Configured embedding provider timed out",
 					"provider_timeout",
@@ -256,6 +286,7 @@ func onlineProviderChecker(store *storage.Store, deps onlineDependencies) Checke
 					Status:  StatusPass,
 					Summary: "Configured embedding provider is reachable",
 					Evidence: Evidence{
+						"provider":   target.Kind,
 						"reachable":  true,
 						"statusCode": resp.StatusCode,
 					},
@@ -263,6 +294,107 @@ func onlineProviderChecker(store *storage.Store, deps onlineDependencies) Checke
 			}
 		},
 	}
+}
+
+// ollamaEndpointResult probes the Ollama tag listing instead of an embeddings
+// path: it is the only endpoint that answers both questions doctor cares about
+// for this provider — is the daemon serving, and is the configured model pulled.
+func ollamaEndpointResult(
+	ctx context.Context,
+	deps onlineDependencies,
+	target providerTarget,
+	base *url.URL,
+) CheckResult {
+	endpoint := (&url.URL{Scheme: base.Scheme, Host: base.Host, Path: "/api/tags"}).String()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return providerFailure(
+			target.ID,
+			"Configured embedding provider request is invalid",
+			"provider_request_invalid",
+			0,
+		)
+	}
+	resp, err := deps.client.Do(req)
+	if err != nil {
+		result := providerWarning(
+			target.ID,
+			"Ollama is not serving the configured endpoint",
+			networkErrorCode(ctx, err),
+			0,
+		)
+		result.Remediation = &Remediation{
+			Description: "Start Ollama so it serves the configured endpoint.",
+			Command:     "ollama serve",
+		}
+		return result
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return providerWarning(
+			target.ID,
+			"Ollama returned an unexpected response",
+			"provider_unexpected_status",
+			resp.StatusCode,
+		)
+	}
+	var tags search.OllamaTagsResponse
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, 1<<20))
+	if err := decoder.Decode(&tags); err != nil {
+		return providerWarning(
+			target.ID,
+			"Ollama returned an invalid model listing",
+			"provider_invalid_response",
+			resp.StatusCode,
+		)
+	}
+	for _, model := range tags.Models {
+		if ollamaModelMatches(model.Name, target.Model) {
+			return CheckResult{
+				Status:  StatusPass,
+				Summary: "Configured Ollama model is pulled and served",
+				Evidence: Evidence{
+					"provider":  "ollama",
+					"model":     target.Model,
+					"pulled":    true,
+					"reachable": true,
+				},
+			}
+		}
+	}
+	return CheckResult{
+		Status:  StatusWarn,
+		Summary: "Configured Ollama model is not pulled",
+		Evidence: Evidence{
+			"provider":  "ollama",
+			"model":     target.Model,
+			"pulled":    false,
+			"reachable": true,
+		},
+		Remediation: &Remediation{
+			Description: "Pull the configured embedding model into Ollama.",
+			Command:     "ollama pull " + target.Model,
+		},
+	}
+}
+
+// ollamaModelMatches compares a served tag with the configured model, treating
+// an omitted tag as Ollama does: "nomic-embed-text" serves "nomic-embed-text:latest".
+func ollamaModelMatches(served, configured string) bool {
+	served = strings.TrimSpace(strings.ToLower(served))
+	configured = strings.TrimSpace(strings.ToLower(configured))
+	if served == "" || configured == "" {
+		return false
+	}
+	return canonicalOllamaTag(served) == canonicalOllamaTag(configured)
+}
+
+func canonicalOllamaTag(name string) string {
+	if strings.Contains(name, ":") {
+		return strings.TrimSuffix(name, ":latest")
+	}
+	return name
 }
 
 func loadConfiguredProvider(store *storage.Store) (providerTarget, bool, error) {
@@ -293,7 +425,9 @@ func loadConfiguredProvider(store *storage.Store) (providerTarget, bool, error) 
 	}
 	return providerTarget{
 		ID:      model.Provider,
-		APIBase: provider.APIBase,
+		Kind:    semantic.Provider,
+		Model:   model.Model,
+		APIBase: provider.WithDefaults().APIBase,
 		APIKey:  provider.APIKey,
 	}, true, nil
 }

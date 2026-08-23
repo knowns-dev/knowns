@@ -27,7 +27,7 @@ test.describe("Task Detail Sheet", () => {
 		});
 
 		await test.step("Description content is shown", async () => {
-			await expect(page.getByText("This is a detailed description for testing")).toBeVisible();
+			await expect(page.getByText("This is a detailed description for testing").first()).toBeVisible();
 		});
 	});
 

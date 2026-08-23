@@ -14,6 +14,7 @@ Dùng `knowns <command> --help` để xem syntax chính xác. Trang này là t�
 knowns init
 knowns init my-project --no-wizard
 knowns init --force
+knowns init --no-wizard --task-prefix KN
 knowns setup --global
 knowns setup claude --global
 knowns setup codex --global
@@ -36,12 +37,13 @@ knowns settings --global
 
 `knowns init` tạo `.knowns/`, config, git tracking, semantic setup, và lightweight project instruction shims như `CLAUDE.md`/`AGENTS.md`. Runtime-critical AI guidance nằm trong MCP `initial` và on-demand `help`. Dùng `knowns setup <target> --global` cho personal assistant setup thông thường vì nó update user-level MCP config, skills, và runtime hooks trên nhiều repository. Ví dụ: `knowns setup hermes --global` cấu hình Hermes MCP config và skills ở user scope. Chỉ dùng `knowns setup <target>` khi bạn chủ ý muốn project-level integration artifacts trong repo. Dùng `knowns setup agents` khi chỉ muốn repo-local agent shims.
 
-`knowns settings` mở settings center để chỉnh project name, git tracking, AI platforms, search, code intelligence, Browser/Chat UI, và maintenance guidance. Trong Search settings, Local ONNX models hiển thị trạng thái downloaded/not downloaded; nếu chọn model chưa download, Knowns có thể hỏi xác nhận rồi download trước khi lưu. `knowns settings --global` lưu defaults cho các lần `knowns init` sau. Dùng `knowns config get/set/list/reset` khi cần thao tác config bằng script hoặc agent.
+`knowns settings` mở settings center để chỉnh project name, git tracking, AI platforms, search, code intelligence, và maintenance guidance. Trong Search settings, Local ONNX models hiển thị trạng thái downloaded/not downloaded; nếu chọn model chưa download, Knowns có thể hỏi xác nhận rồi download trước khi lưu. `knowns settings --global` lưu defaults cho các lần `knowns init` sau. Dùng `knowns config get/set/list/reset` khi cần thao tác config bằng script hoặc agent.
 
 ## Task
 
 ```bash
 knowns task create "Title" -d "Description"
+knowns task create "Feature riêng" --prefix FR
 knowns task create "Add auth" \
   --ac "User can login" \
   --ac "JWT token returned" \
@@ -57,6 +59,12 @@ knowns task edit <id> --check-ac 1
 knowns task edit <id> --append-notes "Completed middleware"
 knowns task edit <id> --plan '1. Research\n2. Implement\n3. Test'
 ```
+
+Khi truyền `--prefix`, Knowns tạo ID như `FR-4F7Q2M`. Prefix được chuẩn hoá
+thành chữ hoa, dài 2-8 ký tự chữ/số và phải bắt đầu bằng chữ. Đây là override
+cho một task, không thay đổi config. Nếu bỏ qua, Knowns dùng
+`settings.defaultTaskIdPrefix`; project chưa cấu hình vẫn dùng ID lowercase
+6 ký tự như trước.
 
 ## Doc
 

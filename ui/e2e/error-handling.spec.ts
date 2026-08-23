@@ -18,9 +18,10 @@ test.describe("Empty States", () => {
 		});
 
 		await test.step("Column headers visible even with no tasks", async () => {
-			await expect(page.getByText("To Do").first()).toBeVisible();
-			await expect(page.getByText("In Progress").first()).toBeVisible();
-			await expect(page.getByText("Done", { exact: true }).first()).toBeVisible();
+			const board = page.locator("[data-board-column]");
+			await expect(board.filter({ hasText: "To Do" }).first()).toBeVisible();
+			await expect(board.filter({ hasText: "In Progress" }).first()).toBeVisible();
+			await expect(board.filter({ hasText: "Done" }).first()).toBeVisible();
 		});
 	});
 

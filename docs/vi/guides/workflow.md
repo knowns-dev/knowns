@@ -59,7 +59,7 @@ Dùng `--global` cho personal assistant setup vì nó update user-level MCP conf
 
 - **CLI**: thao tác nhanh, scripting, CI-friendly validation, và project maintenance trực tiếp
 - **MCP**: structured AI integration cho task, doc, memory, search, template, code navigation, và validation
-- **Web UI**: board, doc, graph, config, và chat workflows
+- **Web UI**: board, doc, graph, và config
 - **Skill**: assistant-side workflow commands, ví dụ tạo spec, review, hoặc orchestration bằng `kn-flow`
 
 ## Kết thúc work

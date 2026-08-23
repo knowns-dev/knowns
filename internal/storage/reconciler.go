@@ -356,6 +356,18 @@ func (r *FilesystemReconciler) ReconcileHints(ctx context.Context, hints []Recon
 	return results, nil
 }
 
+// appendHistoryRecord is the reconciler's single history-append boundary. Doc
+// records must carry the canonical Doc path, not the store-relative file path
+// the reconciler works with: a "docs/<path>.md" value would replay into a Doc
+// state that no longer matches the file, stranding every later write.
+func (r *FilesystemReconciler) appendHistoryRecord(ctx context.Context, record models.HistoryRecord) error {
+	if record.EntityType == "doc" {
+		record.CurrentPath = canonicalDocHistoryPath(record.CurrentPath)
+		record.PreviousPath = canonicalDocHistoryPath(record.PreviousPath)
+	}
+	return r.history.Append(ctx, record)
+}
+
 func (r *FilesystemReconciler) reconcileFile(ctx context.Context, path string, execute bool) (ReconcileResult, manifestEntry, error) {
 	data, err := stableRead(path)
 	if err != nil {
@@ -433,7 +445,7 @@ func (r *FilesystemReconciler) reconcileFile(ctx context.Context, path string, e
 		if r.activePreviousPath != "" {
 			record.PreviousPath = r.activePreviousPath
 		}
-		if err := r.history.Append(ctx, record); err != nil {
+		if err := r.appendHistoryRecord(ctx, record); err != nil {
 			return result, entry, err
 		}
 		entry.Revision, entry.HeadHash = last.Revision+1, hash
@@ -505,7 +517,7 @@ func (r *FilesystemReconciler) reconcileFile(ctx context.Context, path string, e
 		if r.activePreviousPath != "" {
 			record.PreviousPath = r.activePreviousPath
 		}
-		if err := r.history.Append(ctx, record); err != nil {
+		if err := r.appendHistoryRecord(ctx, record); err != nil {
 			return result, entry, err
 		}
 		entry.Revision, entry.HeadHash = 1, hash

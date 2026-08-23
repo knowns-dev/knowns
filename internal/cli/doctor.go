@@ -28,7 +28,7 @@ func defaultDoctorCommandDependencies() doctorCommandDependencies {
 			if store != nil {
 				checkers = append(checkers, doctor.LocalCheckers(store)...)
 			}
-			return append(checkers, doctor.OnlineCheckers(store)...)
+			return append(checkers, doctor.NetworkCheckers(store)...)
 		},
 		run: doctor.Run,
 	}
@@ -51,9 +51,9 @@ func newDoctorCmd(deps doctorCommandDependencies) *cobra.Command {
 		Short: "Diagnose project and local integration health",
 		Long: `Run read-only diagnostics for the active Knowns project.
 
-Local checks run offline by default. Use --online to opt into registered
-external checks, --scope to select diagnostic areas, and --verbose to show
-passing and skipped checks.`,
+Every applicable check runs, including bounded probes of the configured
+embedding provider. Use --scope to select diagnostic areas and --verbose to
+show passing and skipped checks.`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.NoArgs(cmd, args); err != nil {
 				return doctorEngineError(err)
@@ -69,7 +69,6 @@ passing and skipped checks.`,
 	})
 	cmd.Flags().Bool("verbose", false, "Show passing and skipped checks")
 	cmd.Flags().Bool("strict", false, "Return exit code 1 when the verdict is degraded")
-	cmd.Flags().Bool("online", false, "Run registered external diagnostics")
 	cmd.Flags().StringSlice("scope", nil, "Diagnostic scope (repeatable or comma-separated)")
 	return cmd
 }
@@ -89,12 +88,10 @@ func runDoctor(cmd *cobra.Command, deps doctorCommandDependencies) error {
 		return doctorEngineError(fmt.Errorf("initialize doctor: %w", err))
 	}
 	strict, _ := cmd.Flags().GetBool("strict")
-	online, _ := cmd.Flags().GetBool("online")
 	result, err := deps.run(cmd.Context(), doctor.RunOptions{
 		Project: doctor.ProjectFromStore(store),
 		Scopes:  scopes,
 		Strict:  strict,
-		Online:  online,
 	}, deps.checkers(store))
 	if err != nil {
 		return doctorEngineError(fmt.Errorf("run doctor: %w", err))

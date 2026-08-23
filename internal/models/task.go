@@ -3,8 +3,9 @@ package models
 import "time"
 
 // Task represents a task in the .knowns/ system.
-// The ID uses a 6-character base36 format (e.g., "abc123").
-// Legacy sequential integer IDs are also supported for backward compatibility.
+// Newly allocated IDs may use PREFIX plus a six-character Crockford Base32
+// suffix (e.g., "KN-4F7Q2M") or the legacy six-character base36 format.
+// Sequential, hierarchical, imported, and other existing IDs remain supported.
 type Task struct {
 	ID          string   `json:"id"                    yaml:"id"`
 	Title       string   `json:"title"                 yaml:"title"`
@@ -14,7 +15,7 @@ type Task struct {
 	Assignee    string   `json:"assignee,omitempty"    yaml:"assignee,omitempty"`
 	Labels      []string `json:"labels"                yaml:"labels"`
 
-	// Parent task ID for subtasks (e.g., "abc123").
+	// Parent task ID for subtasks (e.g., "KN-4F7Q2M" or "abc123").
 	Parent string `json:"parent,omitempty" yaml:"parent,omitempty"`
 
 	// Subtasks holds child task IDs. Derived at load time; not persisted in the

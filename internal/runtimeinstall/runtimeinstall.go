@@ -248,10 +248,6 @@ func RuntimeAvailabilitySummary(runtimeName string, opts Options) string {
 	}
 }
 
-func CanAutoInstall(runtimeName string) bool {
-	return runtimeName == "opencode"
-}
-
 func runtimeSpecs() []runtimeSpec {
 	return []runtimeSpec{
 		{Runtime: "claude-code", DisplayName: "Claude Code", HookKind: HookKindNative, Binary: "claude", Artifact: "CLAUDE.md, hooks, ..."},
@@ -274,9 +270,6 @@ func lookupSpec(runtimeName string) (runtimeSpec, error) {
 func validateInstallable(spec runtimeSpec, opts Options) error {
 	if strings.TrimSpace(opts.HomeDir) == "" {
 		return fmt.Errorf("cannot resolve home directory for %s install", spec.DisplayName)
-	}
-	if spec.Runtime == "opencode" {
-		return nil
 	}
 	if runtimeAvailable(spec, opts) {
 		return nil

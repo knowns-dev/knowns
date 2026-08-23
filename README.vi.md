@@ -566,7 +566,7 @@ knowns sync
 | [Reference system](./docs/vi/reference/reference-system.md)  | Cách `@doc/` và `@task-` hoạt động                              |
 | [Semantic search](./docs/vi/reference/semantic-search.md)    | Setup và sử dụng semantic search                                |
 | [Templates](./docs/vi/integrations/templates.md)             | Code generation bằng Handlebars templates                       |
-| [Web UI](./docs/vi/guides/web-ui.md)                         | Board, doc browser, graph, chat UI                              |
+| [Web UI](./docs/vi/guides/web-ui.md)                         | Board, doc browser, graph, config                                |
 | [Cấu hình](./docs/vi/reference/configuration.md)             | Project config và options                                       |
 | [Skills](./docs/vi/integrations/skills.md)                   | Skills và sync paths theo platform                              |
 | [Developer guide](./docs/vi/contributing/developer-guide.md) | Cho người đóng góp                                              |

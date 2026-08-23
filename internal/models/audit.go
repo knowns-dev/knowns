@@ -52,3 +52,59 @@ type AuditStats struct {
 	ExecuteCount  int                       `json:"executeCount"`
 	ByToolResult  map[string]map[string]int `json:"byToolResult"`
 }
+
+// AuditCoverage reports the retained window the audit log can actually answer
+// for. A requested range wider than the retained log is reported as partial so
+// the UI can distinguish "no activity" from "history rotated away".
+type AuditCoverage struct {
+	StartDate string `json:"startDate,omitempty"`
+	EndDate   string `json:"endDate,omitempty"`
+	Partial   bool   `json:"partial"`
+}
+
+// AuditDailyBucket holds privacy-safe aggregates for one calendar day.
+type AuditDailyBucket struct {
+	Date              string  `json:"date"`
+	Covered           bool    `json:"covered"`
+	TotalCalls        int     `json:"totalCalls"`
+	SuccessCount      int     `json:"successCount"`
+	ErrorCount        int     `json:"errorCount"`
+	DeniedCount       int     `json:"deniedCount"`
+	NeedsAttention    int     `json:"needsAttention"`
+	AverageDurationMs float64 `json:"averageDurationMs"`
+	TopTool           string  `json:"topTool,omitempty"`
+	TopToolCalls      int     `json:"topToolCalls"`
+}
+
+// AuditToolStats holds outcome and latency aggregates for one tool/action pair.
+type AuditToolStats struct {
+	Tool              string         `json:"tool"`
+	TotalCalls        int            `json:"totalCalls"`
+	ByResult          map[string]int `json:"byResult"`
+	AverageDurationMs float64        `json:"averageDurationMs"`
+}
+
+// AuditAnalytics is the calendar-range aggregate behind the audit charts.
+type AuditAnalytics struct {
+	AuditStats
+	Timezone          string             `json:"timezone"`
+	RangeStart        string             `json:"rangeStart"`
+	RangeEnd          string             `json:"rangeEnd"`
+	Coverage          AuditCoverage      `json:"coverage"`
+	DailyBuckets      []AuditDailyBucket `json:"dailyBuckets"`
+	Tools             []AuditToolStats   `json:"tools"`
+	ByProject         map[string]int     `json:"byProject"`
+	NeedsAttention    int                `json:"needsAttention"`
+	AverageDurationMs float64            `json:"averageDurationMs"`
+}
+
+// AuditAnalyticsQuery selects a calendar range and project scope.
+type AuditAnalyticsQuery struct {
+	Days        int    `json:"days"`
+	Timezone    string `json:"timezone"`
+	Project     string `json:"project,omitempty"`
+	AllProjects bool   `json:"allProjects,omitempty"`
+}
+
+// UnknownAuditProject labels events recorded without a project scope.
+const UnknownAuditProject = "(unknown)"

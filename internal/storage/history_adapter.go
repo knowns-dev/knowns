@@ -198,10 +198,13 @@ func docHistoryFromRecords(docPath string, records []models.HistoryRecord) (*mod
 				return nil, err
 			}
 		}
-		if record.NewHash != "" && !record.LegacyUnverified && hashSnapshot(DocToSnapshot(state)) != record.NewHash {
+		if !record.LegacyUnverified && !docHashRecognized(record.NewHash, state) {
 			return nil, fmt.Errorf("%w: Doc canonical hash mismatch at revision %d", ErrHistoryCorrupt, record.Revision)
 		}
-		version.Snapshot = DocToSnapshot(state)
+		// Keep the replayed snapshot byte-faithful to the record. Canonicalising
+		// here would erase the pre-canonicalisation body a legacy NewHash covers,
+		// making that record unrecognisable on the next write.
+		version.Snapshot = rawDocSnapshot(state)
 		if !record.Checkpoint && firstSectionScopeFromRecord(record) != "" {
 			delete(version.Snapshot, "content")
 		}

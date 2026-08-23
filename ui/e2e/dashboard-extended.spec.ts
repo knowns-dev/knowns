@@ -53,7 +53,7 @@ test.describe("Dashboard Extended", () => {
 		});
 		await page.goto(server.baseURL);
 
-		await expect(page.getByText("Partial data", { exact: true })).toBeVisible({ timeout: 10_000 });
+		await expect(page.getByText(/Partial data/)).toBeVisible({ timeout: 10_000 });
 		await expect(page.getByText(/Unavailable now: Spec coverage/)).toBeVisible();
 		await expect(page.getByText("Document inventory")).toBeVisible();
 	});

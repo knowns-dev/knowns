@@ -1,6 +1,13 @@
 import { type KeyboardEvent, useCallback, useEffect, useId, useState } from "react";
-import { auditApi, type AuditEvent, type AuditStats } from "@/ui/api/client";
 import {
+	auditApi,
+	type AuditAnalytics,
+	type AuditEvent,
+	type AuditRangeDays,
+	type AuditStats,
+} from "@/ui/api/client";
+import {
+	Activity,
 	AlertCircle,
 	CheckCircle2,
 	ChevronDown,
@@ -11,25 +18,45 @@ import {
 	RefreshCw,
 	ShieldAlert,
 	BarChart3,
+	X,
 } from "lucide-react";
 import { cn } from "@/ui/lib/utils";
 import { Button } from "@/ui/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/ui/components/ui/card";
 import { ScrollArea } from "@/ui/components/ui/ScrollArea";
+import { FeatureHeader } from "@/ui/components/templates";
 import {
 	PageContent,
 	PageError,
-	PageHeader,
 	PageLoading,
 	PageShell,
 } from "@/ui/components/templates/PageShell";
+import { ActivityHeatmap } from "./audit/ActivityHeatmap";
+import { DailyTrend } from "./audit/DailyTrend";
+import { TopTools } from "./audit/TopTools";
+import { hasCoveredAuditDays } from "./audit/analyticsMath";
 
 type Tab = "recent" | "stats";
 
+const RANGE_OPTIONS: AuditRangeDays[] = [7, 30, 90];
+
+function browserTimezone(): string {
+	return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+function formatRangeDay(date: string): string {
+	return new Intl.DateTimeFormat(undefined, {
+		month: "short",
+		day: "numeric",
+		year: "numeric",
+		timeZone: "UTC",
+	}).format(new Date(`${date}T00:00:00Z`));
+}
+
 const resultColors: Record<string, { bg: string; text: string; icon: typeof CheckCircle2 }> = {
 	success: {
-		bg: "bg-green-500/10",
-		text: "text-green-600 dark:text-green-400",
+		bg: "bg-emerald-500/10",
+		text: "text-emerald-600 dark:text-emerald-400",
 		icon: CheckCircle2,
 	},
 	error: {
@@ -60,6 +87,11 @@ export default function AuditPage() {
 	const [error, setError] = useState<string | null>(null);
 	const [toolFilter, setToolFilter] = useState("");
 	const [resultFilter, setResultFilter] = useState("");
+	const [dayFilter, setDayFilter] = useState("");
+	const [range, setRange] = useState<AuditRangeDays>(30);
+	const [analytics, setAnalytics] = useState<AuditAnalytics | null>(null);
+	const [analyticsLoading, setAnalyticsLoading] = useState(true);
+	const [analyticsError, setAnalyticsError] = useState<string | null>(null);
 
 	const fetchRecent = useCallback(async () => {
 		setLoading(true);
@@ -68,6 +100,11 @@ export default function AuditPage() {
 			const opts: Parameters<typeof auditApi.recent>[0] = { limit: 100 };
 			if (toolFilter) opts.tool = toolFilter;
 			if (resultFilter) opts.result = resultFilter;
+			if (dayFilter) {
+				opts.from = dayFilter;
+				opts.to = dayFilter;
+				opts.timezone = browserTimezone();
+			}
 			const data = await auditApi.recent(opts);
 			setEvents(data.events || []);
 		} catch (caught) {
@@ -80,7 +117,7 @@ export default function AuditPage() {
 		} finally {
 			setLoading(false);
 		}
-	}, [toolFilter, resultFilter]);
+	}, [toolFilter, resultFilter, dayFilter]);
 
 	const fetchStats = useCallback(async () => {
 		setLoading(true);
@@ -100,10 +137,46 @@ export default function AuditPage() {
 		}
 	}, []);
 
+	const fetchAnalytics = useCallback(async () => {
+		setAnalyticsLoading(true);
+		setAnalyticsError(null);
+		try {
+			const data = await auditApi.analytics({
+				days: range,
+				timezone: browserTimezone(),
+				scope: "all",
+			});
+			setAnalytics(data);
+		} catch (caught) {
+			setAnalytics(null);
+			setAnalyticsError(
+				caught instanceof Error
+					? caught.message
+					: "The audit analytics could not be loaded.",
+			);
+		} finally {
+			setAnalyticsLoading(false);
+		}
+	}, [range]);
+
 	useEffect(() => {
-		if (tab === "recent") fetchRecent();
-		else fetchStats();
-	}, [tab, fetchRecent, fetchStats]);
+		if (tab === "recent") {
+			fetchRecent();
+			return;
+		}
+		fetchStats();
+		fetchAnalytics();
+	}, [tab, fetchRecent, fetchStats, fetchAnalytics]);
+
+	// Clicking a day or a tool in the charts drills into the event list.
+	const handleSelectDay = (date: string) => {
+		setDayFilter(date);
+		setTab("recent");
+	};
+	const handleSelectTool = (tool: string) => {
+		setToolFilter(tool.split(".")[0] ?? tool);
+		setTab("recent");
+	};
 
 	const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
 		let nextTab: Tab | null = null;
@@ -123,9 +196,14 @@ export default function AuditPage() {
 
 	return (
 		<PageShell>
-			<PageHeader
+			<FeatureHeader
+				icon={Activity}
 				title="MCP Audit Trail"
-				description="Review MCP activity, outcomes, and execution details recorded for this project."
+				status={
+					tab === "recent"
+						? `${events.length} events`
+						: `${stats?.totalCalls ?? 0} calls`
+				}
 				actions={
 					<Button
 						type="button"
@@ -143,7 +221,7 @@ export default function AuditPage() {
 				}
 			/>
 
-			<PageContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden">
+			<PageContent size="full" className="flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden">
 				<AuditStatusSummary
 					tab={tab}
 					events={events}
@@ -215,8 +293,10 @@ export default function AuditPage() {
 							error={error}
 							toolFilter={toolFilter}
 							resultFilter={resultFilter}
+							dayFilter={dayFilter}
 							onToolFilter={setToolFilter}
 							onResultFilter={setResultFilter}
+							onClearDay={() => setDayFilter("")}
 							onRetry={fetchRecent}
 						/>
 					</div>
@@ -233,6 +313,14 @@ export default function AuditPage() {
 							loading={loading}
 							error={error}
 							onRetry={fetchStats}
+							analytics={analytics}
+							analyticsLoading={analyticsLoading}
+							analyticsError={analyticsError}
+							range={range}
+							onRangeChange={setRange}
+							onRetryAnalytics={fetchAnalytics}
+							onSelectDay={handleSelectDay}
+							onSelectTool={handleSelectTool}
 						/>
 					</div>
 				)}
@@ -311,8 +399,10 @@ function RecentTab({
 	error,
 	toolFilter,
 	resultFilter,
+	dayFilter,
 	onToolFilter,
 	onResultFilter,
+	onClearDay,
 	onRetry,
 }: {
 	events: AuditEvent[];
@@ -320,8 +410,10 @@ function RecentTab({
 	error: string | null;
 	toolFilter: string;
 	resultFilter: string;
+	dayFilter: string;
 	onToolFilter: (v: string) => void;
 	onResultFilter: (v: string) => void;
+	onClearDay: () => void;
 	onRetry: () => void;
 }) {
 	// Extract unique tool names for filter.
@@ -355,6 +447,17 @@ function RecentTab({
 					<option value="error">Error</option>
 					<option value="denied">Denied</option>
 				</select>
+				{dayFilter && (
+					<button
+						type="button"
+						onClick={onClearDay}
+						className="inline-flex h-9 items-center gap-1.5 rounded-md border bg-muted/40 px-2.5 text-xs font-medium transition-colors hover:bg-muted"
+						aria-label={`Clear the ${formatRangeDay(dayFilter)} filter`}
+					>
+						{formatRangeDay(dayFilter)}
+						<X className="h-3.5 w-3.5" aria-hidden="true" />
+					</button>
+				)}
 				<span className="w-full text-right text-muted-foreground sm:ml-auto sm:w-auto">
 					{events.length} events loaded
 				</span>
@@ -374,8 +477,8 @@ function RecentTab({
 					No audit events found.
 				</div>
 			) : (
-				<ScrollArea className="flex-1">
-					<div className="space-y-1">
+				<ScrollArea className="flex-1 rounded-lg border bg-card">
+					<div className="divide-y divide-border/40">
 						{events.map((event, index) => (
 							<EventRow
 								key={`${event.timestamp}-${event.toolName}-${event.action || ""}-${index}`}
@@ -414,7 +517,7 @@ function EventRow({ event }: { event: AuditEvent }) {
 	return (
 		<div
 			className={cn(
-				"rounded-md hover:bg-muted/50 transition-colors group",
+				"hover:bg-muted/50 transition-colors group",
 				expanded && "bg-muted/30",
 			)}
 		>
@@ -424,7 +527,7 @@ function EventRow({ event }: { event: AuditEvent }) {
 				aria-expanded={hasDetails ? expanded : undefined}
 				aria-controls={hasDetails ? detailsId : undefined}
 				className={cn(
-					"flex items-start gap-3 px-3 py-2",
+					"flex items-center gap-2.5 px-3 py-1.5",
 					hasDetails && "cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
 				)}
 				onClick={toggleExpanded}
@@ -435,7 +538,7 @@ function EventRow({ event }: { event: AuditEvent }) {
 				}}
 			>
 				{/* Expand indicator */}
-				<div className="mt-1 w-3.5 flex-shrink-0">
+				<div className="w-3.5 flex-shrink-0">
 					{hasDetails ? (
 						expanded ? (
 							<ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
@@ -445,11 +548,11 @@ function EventRow({ event }: { event: AuditEvent }) {
 					) : null}
 				</div>
 
-				<div className={cn("mt-0.5 p-1 rounded", rc.bg)}>
+				<div className={cn("shrink-0 rounded p-0.5", rc.bg)}>
 					<ResultIcon className={cn("w-3.5 h-3.5", rc.text)} />
 				</div>
 				<div className="flex-1 min-w-0">
-					<div className="flex min-w-0 flex-wrap items-center gap-2">
+					<div className="flex min-w-0 items-center gap-2">
 						<span className="max-w-full truncate font-mono text-sm font-medium">{toolDisplay}</span>
 						<span className={cn("text-xs font-medium", rc.text)}>
 							{event.result}
@@ -462,31 +565,34 @@ function EventRow({ event }: { event: AuditEvent }) {
 								dry-run
 							</span>
 						)}
-						<span className="ml-auto hidden text-xs text-muted-foreground sm:inline">
+						{event.errorMessage ? (
+							<span className="min-w-0 truncate text-xs text-red-500" title={event.errorMessage}>
+								{event.errorMessage}
+							</span>
+						) : event.entityRefs && event.entityRefs.length > 0 ? (
+							<span
+								className="min-w-0 truncate text-xs text-muted-foreground"
+								title={event.entityRefs.join(", ")}
+							>
+								{event.entityRefs.join(", ")}
+							</span>
+						) : null}
+						<span className="ml-auto hidden shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground sm:inline">
 							{event.durationMs}ms
 						</span>
 					</div>
-					{event.errorMessage && (
-						<p className="text-xs text-red-500 mt-0.5 truncate">{event.errorMessage}</p>
-					)}
-					{event.entityRefs && event.entityRefs.length > 0 && (
-						<p className="text-xs text-muted-foreground mt-0.5 truncate">
-							{event.entityRefs.join(", ")}
-						</p>
-					)}
-					<p className="mt-1 text-[11px] text-muted-foreground sm:hidden">
+					<p className="text-[11px] text-muted-foreground sm:hidden">
 						{dateStr} · {timeStr} · {event.durationMs}ms
 					</p>
 				</div>
-				<div className="hidden whitespace-nowrap text-right text-xs text-muted-foreground sm:block">
-					<div>{timeStr}</div>
-					<div>{dateStr}</div>
+				<div className="hidden shrink-0 whitespace-nowrap text-right font-mono text-[11px] tabular-nums text-muted-foreground sm:block">
+					{dateStr} · {timeStr}
 				</div>
 			</div>
 
 			{/* Expanded details */}
 			{expanded && hasDetails && (
-				<div id={detailsId} className="px-3 pb-3 ml-10 space-y-2 border-t border-border/50 pt-2">
+				<div id={detailsId} className="ml-9 space-y-2 border-t border-border/50 px-3 pb-3 pt-2">
 					{event.projectRoot && (
 						<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
 							<FolderOpen className="w-3 h-3 flex-shrink-0" />
@@ -526,11 +632,27 @@ function StatsTab({
 	loading,
 	error,
 	onRetry,
+	analytics,
+	analyticsLoading,
+	analyticsError,
+	range,
+	onRangeChange,
+	onRetryAnalytics,
+	onSelectDay,
+	onSelectTool,
 }: {
 	stats: AuditStats | null;
 	loading: boolean;
 	error: string | null;
 	onRetry: () => void;
+	analytics: AuditAnalytics | null;
+	analyticsLoading: boolean;
+	analyticsError: string | null;
+	range: AuditRangeDays;
+	onRangeChange: (days: AuditRangeDays) => void;
+	onRetryAnalytics: () => void;
+	onSelectDay: (date: string) => void;
+	onSelectTool: (tool: string) => void;
 }) {
 	if (loading) {
 		return <PageLoading label="Loading audit statistics" className="flex-1" />;
@@ -555,112 +677,144 @@ function StatsTab({
 		);
 	}
 
-	const toolEntries = Object.entries(stats.byTool).sort((a, b) => b[1] - a[1]);
 	const classEntries = Object.entries(stats.byActionClass).sort((a, b) => b[1] - a[1]);
+	const buckets = analytics?.dailyBuckets ?? [];
+	const hasHistory = hasCoveredAuditDays(buckets);
 
 	return (
 		<ScrollArea className="flex-1">
-			<div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-				<Card>
-					<CardHeader className="pb-2">
-						<CardTitle className="text-sm font-medium text-muted-foreground">Total Calls</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<div className="text-2xl font-bold">{stats.totalCalls}</div>
-					</CardContent>
-				</Card>
-				<Card>
-					<CardHeader className="pb-2">
-						<CardTitle className="text-sm font-medium text-muted-foreground">Success Rate</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<div className="text-2xl font-bold text-green-600 dark:text-green-400">
-							{stats.totalCalls > 0
-								? Math.round(((stats.byResult.success || 0) / stats.totalCalls) * 100)
-								: 0}
-							%
-						</div>
-					</CardContent>
-				</Card>
-				<Card>
-					<CardHeader className="pb-2">
-						<CardTitle className="text-sm font-medium text-muted-foreground">Dry-Run</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<div className="text-2xl font-bold">{stats.dryRunCount}</div>
-						<p className="text-xs text-muted-foreground">
-							vs {stats.executeCount} executed
+			<div className="flex min-w-0 flex-col gap-4 pr-1">
+				{/* Range selector + headline aggregates for the selected window */}
+				<section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3">
+					<div className="flex min-w-0 flex-col">
+						<h3 className="text-sm font-semibold">Activity over time</h3>
+						<p className="mt-0.5 text-xs text-muted-foreground">
+							{analytics
+								? `${formatRangeDay(analytics.rangeStart)} – ${formatRangeDay(analytics.rangeEnd)} · ${analytics.timezone}`
+								: "Loading range…"}
 						</p>
-					</CardContent>
-				</Card>
-			</div>
+					</div>
+					<div
+						className="flex shrink-0 gap-1"
+						role="group"
+						aria-label="Analytics range"
+					>
+						{RANGE_OPTIONS.map((option) => (
+							<button
+								key={option}
+								type="button"
+								aria-pressed={range === option}
+								onClick={() => onRangeChange(option)}
+								className={cn(
+									"inline-flex h-8 items-center rounded-md px-2.5 text-xs font-medium transition-colors",
+									range === option
+										? "bg-foreground text-background"
+										: "text-muted-foreground hover:bg-muted hover:text-foreground",
+								)}
+							>
+								{option}d
+							</button>
+						))}
+					</div>
+				</section>
 
-			{/* By Result */}
-			<div className="mb-6">
-				<h3 className="text-sm font-semibold mb-2">By Result</h3>
-				<div className="flex flex-wrap gap-3">
-					{Object.entries(stats.byResult).map(([result, count]) => {
-						const rc = resultColors[result] ?? {
-							bg: "bg-gray-500/10",
-							text: "text-gray-600 dark:text-gray-400",
-							icon: CheckCircle2,
-						};
-						return (
-							<div key={result} className={cn("px-3 py-2 rounded-md", rc.bg)}>
-								<span className={cn("text-sm font-medium", rc.text)}>
-									{result}: {count}
+				{analyticsError ? (
+					<PageError
+						title="Audit analytics unavailable"
+						description={analyticsError}
+						onRetry={onRetryAnalytics}
+					/>
+				) : analyticsLoading && !analytics ? (
+					<PageLoading label="Loading audit analytics" />
+				) : analytics ? (
+					<>
+						<AnalyticsSummary analytics={analytics} />
+
+						{analytics.coverage.partial && (
+							<p className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-2.5 text-xs text-amber-700 dark:text-amber-300">
+								{hasHistory
+									? `Retained history only covers ${formatRangeDay(analytics.coverage.startDate ?? analytics.rangeStart)} – ${formatRangeDay(analytics.coverage.endDate ?? analytics.rangeEnd)}. Days outside that window are shown as uncovered rather than empty.`
+									: "No retained audit history overlaps this range. Older events were rotated out of the log."}
+							</p>
+						)}
+
+						{hasHistory && (
+							<>
+								<div className="grid min-w-0 gap-4 xl:grid-cols-2">
+									<ActivityHeatmap buckets={buckets} onSelectDay={onSelectDay} />
+									<DailyTrend buckets={buckets} onSelectDay={onSelectDay} />
+								</div>
+								<TopTools tools={analytics.tools} onSelectTool={onSelectTool} />
+							</>
+						)}
+					</>
+				) : null}
+
+				{/* All-time breakdowns (not range-scoped) */}
+				<section className="rounded-lg border bg-card px-4 py-3">
+					<h3 className="text-sm font-semibold">All-time totals</h3>
+					<div className="mt-3 flex flex-wrap gap-2">
+						{Object.entries(stats.byResult).map(([result, count]) => {
+							const rc = resultColors[result] ?? {
+								bg: "bg-gray-500/10",
+								text: "text-gray-600 dark:text-gray-400",
+								icon: CheckCircle2,
+							};
+							return (
+								<div key={result} className={cn("rounded-md px-3 py-1.5", rc.bg)}>
+									<span className={cn("text-sm font-medium", rc.text)}>
+										{result}: {count}
+									</span>
+								</div>
+							);
+						})}
+						{classEntries.map(([cls, count]) => (
+							<div key={cls} className="rounded-md bg-muted px-3 py-1.5">
+								<span className={cn("text-sm", classColors[cls] || "text-foreground")}>
+									{cls}
 								</span>
+								<span className="ml-1.5 text-sm text-muted-foreground">{count}</span>
 							</div>
-						);
-					})}
-				</div>
-			</div>
-
-			{/* By Action Class */}
-			<div className="mb-6">
-				<h3 className="text-sm font-semibold mb-2">By Action Class</h3>
-				<div className="flex flex-wrap gap-2">
-					{classEntries.map(([cls, count]) => (
-						<div key={cls} className="px-3 py-1.5 rounded-md bg-muted">
-							<span className={cn("text-sm", classColors[cls] || "text-foreground")}>
-								{cls}
-							</span>
-							<span className="text-sm text-muted-foreground ml-1.5">{count}</span>
+						))}
+						<div className="rounded-md bg-muted px-3 py-1.5 text-sm">
+							dry-run
+							<span className="ml-1.5 text-muted-foreground">{stats.dryRunCount}</span>
 						</div>
-					))}
-				</div>
-			</div>
-
-			{/* By Tool */}
-			<div>
-				<h3 className="text-sm font-semibold mb-2">By Tool</h3>
-				<div className="space-y-1">
-					{toolEntries.map(([tool, count]) => {
-						const maxCount = toolEntries[0]?.[1] || 1;
-						const pct = Math.round((count / maxCount) * 100);
-						const results = stats.byToolResult[tool] || {};
-						return (
-							<div key={tool} className="flex items-center gap-3 py-1">
-								<span className="font-mono text-sm w-48 truncate">{tool}</span>
-								<div className="flex-1 h-5 bg-muted rounded-full overflow-hidden">
-									<div
-										className="h-full bg-primary/30 rounded-full transition-all"
-										style={{ width: `${pct}%` }}
-									/>
-								</div>
-								<span className="text-sm font-medium w-12 text-right">{count}</span>
-								<div className="flex gap-1 text-xs text-muted-foreground w-32">
-									{Object.entries(results).map(([r, c]) => (
-										<span key={r}>
-											{r}:{c}
-										</span>
-									))}
-								</div>
-							</div>
-						);
-					})}
-				</div>
+					</div>
+				</section>
 			</div>
 		</ScrollArea>
+	);
+}
+
+function AnalyticsSummary({ analytics }: { analytics: AuditAnalytics }) {
+	const successRate =
+		analytics.totalCalls > 0
+			? Math.round(((analytics.byResult.success || 0) / analytics.totalCalls) * 100)
+			: 0;
+	const latency =
+		analytics.averageDurationMs >= 1000
+			? `${(analytics.averageDurationMs / 1000).toFixed(2)} s`
+			: `${Math.round(analytics.averageDurationMs)} ms`;
+
+	const metrics = [
+		{ label: "Calls in range", value: analytics.totalCalls },
+		{ label: "Success rate", value: `${successRate}%` },
+		{ label: "Needs attention", value: analytics.needsAttention },
+		{ label: "Avg latency", value: latency },
+	];
+
+	return (
+		<section
+			aria-label="Range summary"
+			className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-4"
+		>
+			{metrics.map((metric) => (
+				<dl key={metric.label} className="bg-card px-4 py-3">
+					<dt className="text-xs font-medium text-muted-foreground">{metric.label}</dt>
+					<dd className="mt-1 text-xl font-semibold tabular-nums">{metric.value}</dd>
+				</dl>
+			))}
+		</section>
 	);
 }

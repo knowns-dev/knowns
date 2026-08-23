@@ -1,6 +1,6 @@
 # Web UI
 
-Knowns includes a browser UI for people who prefer to inspect project context visually instead of only through CLI output. It reads the same project state as the CLI and MCP server, so tasks, docs, memory, graph views, config, and chat workflows stay connected.
+Knowns includes a browser UI for people who prefer to inspect project context visually instead of only through CLI output. It reads the same project state as the CLI and MCP server, so tasks, docs, memory, graph views, and config stay connected.
 
 ## Open it
 
@@ -17,13 +17,12 @@ Run the command from a Knowns project. Use `--open` when you want Knowns to star
 - **Docs browser**: read project docs without remembering CLI paths.
 - **Graph / knowledge views**: explore relationships between tasks, docs, memory, and references.
 - **Configuration pages**: inspect project settings, search setup, code intelligence, and integration state.
-- **Chat page**: use chat-driven workflows when the browser UI is a better fit than a terminal.
 
 ## When to use it
 
 - when you want a board-oriented task view
 - when browsing docs is easier in a UI than in CLI output
-- when you want graph exploration or chat-driven workflows
+- when you want graph exploration
 - when onboarding someone who should understand the project before using CLI commands
 
 ## How it fits with AI setup

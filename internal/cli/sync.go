@@ -26,7 +26,7 @@ This is the recommended command after cloning a repo with Knowns:
 
 It reads config.json and sets up everything locally:
   • Skills — copies built-in skills to platform directories
-  • Instructions — generates agent instruction files (KNOWNS.md, CLAUDE.md, etc.)
+  • Instructions — generates agent instruction files (CLAUDE.md, AGENTS.md, etc.)
   • Runtime hooks — installs current memory hooks for configured runtimes
   • Model — downloads the configured embedding model (if not installed)
   • Search index — rebuilds the semantic search index
@@ -384,10 +384,6 @@ func runSyncInstructions(projectRoot string, platform string, force bool, config
 			}
 		}
 		platforms = filtered
-	}
-
-	if err := writeInstructionFile(projectRoot, canonicalInstructionFile, "Knowns", force); err != nil {
-		return err
 	}
 
 	fmt.Println(StyleBold.Render("Checking agent instruction files..."))

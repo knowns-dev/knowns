@@ -556,10 +556,19 @@ func parseDocContent(content, relPath, folder string, imported bool, importSourc
 	return doc, nil
 }
 
+// canonicalDocContent is the only body form the markdown round-trip preserves:
+// renderDoc frames the body with newlines and parseDocContent trims it back, so
+// surrounding whitespace never survives a read. Normalising before the write
+// keeps the in-memory doc, the file bytes, and the history hash identical.
+func canonicalDocContent(content string) string { return strings.TrimSpace(content) }
+
 // writeFile serialises a doc to the canonical markdown format.
 func (ds *DocStore) writeFile(path string, doc *models.Doc) error {
-	if doc != nil && strings.TrimSpace(doc.ID) == "" {
-		doc.ID = newDocID()
+	if doc != nil {
+		if strings.TrimSpace(doc.ID) == "" {
+			doc.ID = newDocID()
+		}
+		doc.Content = canonicalDocContent(doc.Content)
 	}
 	return atomicWrite(path, []byte(renderDoc(doc)))
 }

@@ -20,16 +20,16 @@ var setupCmd = &cobra.Command{
 Without a target, an interactive selector is shown.
 
 Targets:
-  claude    Generate CLAUDE.md, KNOWNS.md, .mcp.json, skills, and runtime hooks
-  opencode  Generate OPENCODE.md, KNOWNS.md, opencode.json, skills, and runtime hooks
-  hermes    Generate AGENTS.md, KNOWNS.md, skills, and a project-pinned global Hermes MCP config
-  codex     Generate AGENTS.md, KNOWNS.md, .codex/config.toml, skills, and runtime hooks
-  copilot   Generate .github/copilot-instructions.md and KNOWNS.md
-  kiro      Generate .kiro steering/settings, KNOWNS.md, skills, and runtime hooks
-  cursor    Generate .cursor/mcp.json and KNOWNS.md
-  gemini    Generate GEMINI.md and KNOWNS.md
-  antigravity Generate Antigravity rules/config, KNOWNS.md, and skills
-  agents    Generate AGENTS.md and KNOWNS.md
+  claude    Generate CLAUDE.md, .mcp.json, skills, and runtime hooks
+  opencode  Generate OPENCODE.md, opencode.json, skills, and runtime hooks
+  hermes    Generate AGENTS.md, skills, and a project-pinned global Hermes MCP config
+  codex     Generate AGENTS.md, .codex/config.toml, skills, and runtime hooks
+  copilot   Generate .github/copilot-instructions.md
+  kiro      Generate .kiro steering/settings, skills, and runtime hooks
+  cursor    Generate .cursor/mcp.json
+  gemini    Generate GEMINI.md
+  antigravity Generate Antigravity rules/config and skills
+  agents    Generate AGENTS.md
   all       Generate all supported AI integration files
 
 Use --global to install at user-level paths (no project required).
@@ -239,11 +239,11 @@ func buildSetupSteps(cwd string, force bool, target string, platforms []string) 
 		}
 		selectedRuntime := runtimeName
 		opts := runtimeinstall.DefaultOptions()
-		if !runtimeinstall.CanAutoInstall(selectedRuntime) {
-			st, err := runtimeinstall.StatusFor(selectedRuntime, opts)
-			if err != nil || !st.Available {
-				continue
-			}
+		// Every runtime, OpenCode included, must already be installed: Knowns
+		// writes hooks for a CLI the user provides, it does not install one.
+		st, err := runtimeinstall.StatusFor(selectedRuntime, opts)
+		if err != nil || !st.Available {
+			continue
 		}
 		steps = append(steps, initStep{
 			label: fmt.Sprintf("Installing %s runtime hooks", runtimeinstall.RuntimePickerLabel(selectedRuntime, opts)),
@@ -268,7 +268,6 @@ func buildSetupSteps(cwd string, force bool, target string, platforms []string) 
 
 func hasExistingAIIntegrationFiles(projectRoot string) bool {
 	paths := []string{
-		canonicalInstructionFile,
 		"CLAUDE.md",
 		"OPENCODE.md",
 		"GEMINI.md",

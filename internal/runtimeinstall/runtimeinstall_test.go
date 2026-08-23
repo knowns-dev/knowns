@@ -298,12 +298,35 @@ func TestNormalizeCodexHooksFeaturePreservesDeprecatedDisableIntent(t *testing.T
 	}
 }
 
-func TestInstallOpenCodeCreatesPluginAndStatusInstalled(t *testing.T) {
+// OpenCode used to bypass the PATH check so hooks were written for a CLI the
+// user had not installed. Knowns never downloaded the binary, so that only
+// produced hooks pointing at nothing; every runtime must now be present first.
+func TestInstallOpenCodeRequiresBinaryInPath(t *testing.T) {
 	home := t.TempDir()
 	opts := Options{
 		HomeDir:        home,
 		ExecutablePath: "/usr/local/bin/knowns",
 		LookPath:       func(string) (string, error) { return "", os.ErrNotExist },
+	}
+	err := Install("opencode", opts)
+	if err == nil {
+		t.Fatal("Install(\"opencode\") succeeded without the CLI in PATH, want an error")
+	}
+	if !strings.Contains(err.Error(), "not available in PATH") {
+		t.Fatalf("Install(\"opencode\") error = %v, want a PATH availability error", err)
+	}
+	pluginPath := filepath.Join(home, ".config", "opencode", "plugins", pluginFileName)
+	if _, statErr := os.Stat(pluginPath); !os.IsNotExist(statErr) {
+		t.Fatalf("plugin written despite failed install: stat err = %v", statErr)
+	}
+}
+
+func TestInstallOpenCodeCreatesPluginAndStatusInstalled(t *testing.T) {
+	home := t.TempDir()
+	opts := Options{
+		HomeDir:        home,
+		ExecutablePath: "/usr/local/bin/knowns",
+		LookPath:       func(string) (string, error) { return "/usr/local/bin/opencode", nil },
 	}
 	if err := Install("opencode", opts); err != nil {
 		t.Fatalf("install opencode: %v", err)

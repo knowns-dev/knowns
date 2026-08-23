@@ -1,11 +1,12 @@
 ---
+id: doc-c9ad42c33cc820351832fabe04f2e57a
 title: Continue Streaming Message
 description: Specification for continue streaming message feature
 createdAt: '2026-03-13T13:57:40.053Z'
-updatedAt: '2026-03-13T14:26:51.120Z'
+updatedAt: '2026-08-19T10:04:29.380Z'
 tags:
   - spec
-  - draft
+  - superseded
 ---
 
 # Continue Streaming Message
@@ -88,3 +89,6 @@ Response 429: { "error": "Queue full, max 10 messages" }
 
 - [ ] Question 1: Nếu user reload page, queue có persist không?
 - [ ] Question 2: Có cần clear queue button không?
+
+
+> **Superseded** by @decision/20260819-1703-remove-the-opencode-chat-ui - the OpenCode Chat UI was removed from Knowns.

@@ -11,3 +11,5 @@
 !docs/**
 !templates/
 !templates/**
+!decisions/
+!decisions/**

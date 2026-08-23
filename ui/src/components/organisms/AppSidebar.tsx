@@ -1,10 +1,7 @@
 import {
 	LayoutDashboard,
-	LayoutGrid,
 	ListTodo,
 	FileText,
-	Download,
-	MessageSquare,
 	Settings,
 	Search,
 	Github,
@@ -14,6 +11,7 @@ import {
 	Brain,
 	ScrollText,
 	Activity,
+	Monitor,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import logoImage from "../../public/logo.png";
@@ -22,6 +20,7 @@ import {
 	SidebarContent,
 	SidebarGroup,
 	SidebarGroupContent,
+	SidebarGroupLabel,
 	SidebarHeader,
 	SidebarMenu,
 	SidebarMenuButton,
@@ -30,70 +29,82 @@ import {
 	SidebarFooter,
 	useSidebar,
 } from "@/ui/components/ui/sidebar";
-import { useIsMobile } from "@/ui/hooks/useMobile";
 import { useConfig } from "@/ui/contexts/ConfigContext";
+import { ConnectionStatus } from "../atoms";
+import { SidebarThemeControl } from "../molecules";
 
 interface AppSidebarProps {
 	currentPage: string;
 	onSearchClick: () => void;
 	onWorkspacePickerClick: () => void;
+	isDark: boolean;
+	onThemeToggle: (event: React.MouseEvent<HTMLButtonElement>) => void;
 	serverVersion?: string;
 }
 
-const topNavItems = [
+const navigationGroups = [
 	{
-		id: "chat",
-		label: "AI Chat",
-		icon: MessageSquare,
-		to: "/chat",
+		label: "Workspace",
+		items: [
+			{
+				id: "dashboard",
+				label: "Dashboard",
+				icon: LayoutDashboard,
+				to: "/",
+			},
+			{
+				id: "tasks",
+				label: "Tasks",
+				icon: ListTodo,
+				to: "/tasks",
+			},
+		],
 	},
 	{
-		id: "dashboard",
-		label: "Dashboard",
-		icon: LayoutDashboard,
-		to: "/",
+		label: "Knowledge",
+		items: [
+			{
+				id: "docs",
+				label: "Docs",
+				icon: FileText,
+				to: "/docs",
+			},
+			{
+				id: "graph",
+				label: "Graph",
+				icon: Network,
+				to: "/graph",
+			},
+			{
+				id: "memory",
+				label: "Memories",
+				icon: Brain,
+				to: "/memory",
+			},
+			{
+				id: "decisions",
+				label: "System Decisions",
+				icon: ScrollText,
+				to: "/decisions",
+			},
+		],
 	},
 	{
-		id: "kanban",
-		label: "Kanban",
-		icon: LayoutGrid,
-		to: "/kanban",
-	},
-	{
-		id: "tasks",
-		label: "Tasks",
-		icon: ListTodo,
-		to: "/tasks",
-	},
-	{
-		id: "docs",
-		label: "Docs",
-		icon: FileText,
-		to: "/docs",
-	},
-	{
-		id: "graph",
-		label: "Graph",
-		icon: Network,
-		to: "/graph",
-	},
-	{
-		id: "memory",
-		label: "Memories",
-		icon: Brain,
-		to: "/memory",
-	},
-	{
-		id: "decisions",
-		label: "System Decisions",
-		icon: ScrollText,
-		to: "/decisions",
-	},
-	{
-		id: "audit",
-		label: "Audit Trail",
-		icon: Activity,
-		to: "/audit",
+		label: "System",
+		items: [
+			{
+				id: "runtime",
+				label: "Runtime",
+				icon: Monitor,
+				to: "/runtime",
+			},
+			{
+				id: "audit",
+				label: "Audit Trail",
+				icon: Activity,
+				to: "/audit",
+			},
+		],
 	},
 ];
 
@@ -101,91 +112,97 @@ export function AppSidebar({
 	currentPage,
 	onSearchClick,
 	onWorkspacePickerClick,
+	isDark,
+	onThemeToggle,
 	serverVersion,
 }: AppSidebarProps) {
-	const { state } = useSidebar();
-	const isMobile = useIsMobile();
+	const { state, isMobile, setOpenMobile } = useSidebar();
 	const isExpanded = state === "expanded";
-	const { config, chatUIEnabled } = useConfig();
-	const visibleNavItems = topNavItems.filter(
-		(item) => item.id !== "chat" || chatUIEnabled
-	);
+	const { config } = useConfig();
+	const closeMobileSidebar = () => {
+		if (isMobile) setOpenMobile(false);
+	};
 
 	return (
 		<Sidebar collapsible="icon" variant={isMobile ? "floating" : "sidebar"}>
-			{/* Header: Logo + Project Name + Version */}
+			{/* Header: workspace switcher + search */}
 			<SidebarHeader>
 				<SidebarMenu>
 					<SidebarMenuItem>
-						<div className="flex w-full items-center gap-2 rounded-md p-2 text-left">
-								<img
-									src={logoImage}
-									alt="Knowns"
-									className="size-8 rounded-lg object-contain"
-								/>
-								<div className="grid flex-1 text-left text-sm leading-tight">
-									<span className="truncate font-semibold">
-										{config.name || "Knowns"}
-									</span>
-								</div>
-								{isExpanded && (
-									<button
-										type="button"
-										onClick={onWorkspacePickerClick}
-										className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-										title="Switch workspace"
-									>
-										<ArrowRightLeft className="h-4 w-4" />
-									</button>
-								)}
-						</div>
-					</SidebarMenuItem>
-				</SidebarMenu>
-
-				{/* Search Button */}
-				{isExpanded && (
-					<div className="px-2 pb-2">
-						<button
+						<SidebarMenuButton
 							type="button"
-							onClick={onSearchClick}
-							className="flex w-full items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+							size="lg"
+							onClick={() => {
+								closeMobileSidebar();
+								onWorkspacePickerClick();
+							}}
+							tooltip="Switch workspace"
+							className="group/workspace"
 						>
-							<Search className="h-4 w-4" />
+							<img
+								src={logoImage}
+								alt=""
+								className="size-8 shrink-0 rounded-lg object-contain"
+							/>
+							<span className="min-w-0 flex-1 truncate font-semibold">
+								{config.name || "Knowns"}
+							</span>
+							<ArrowRightLeft className="text-muted-foreground group-data-[collapsible=icon]:hidden" />
+						</SidebarMenuButton>
+					</SidebarMenuItem>
+					<SidebarMenuItem>
+						<SidebarMenuButton
+							type="button"
+							onClick={() => {
+								closeMobileSidebar();
+								onSearchClick();
+							}}
+							tooltip="Search"
+						>
+							<Search />
 							<span>Search...</span>
-							<kbd className="ml-auto pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">
+							<kbd className="pointer-events-none ml-auto hidden h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground group-data-[collapsible=icon]:hidden lg:inline-flex">
 								<span className="text-xs">⌘</span>K
 							</kbd>
-						</button>
-					</div>
-				)}
+						</SidebarMenuButton>
+					</SidebarMenuItem>
+				</SidebarMenu>
+				<div className="group-data-[collapsible=icon]:hidden">
+					<ConnectionStatus />
+				</div>
 			</SidebarHeader>
 
 			<SidebarContent>
 				{/* Top Navigation */}
-				<SidebarGroup>
-					<SidebarGroupContent>
-						<SidebarMenu>
-							{visibleNavItems.map((item) => {
-								const isActive = currentPage === item.id;
-								return (
-									<SidebarMenuItem key={item.id}>
-										<SidebarMenuButton
-											asChild
-											isActive={isActive}
-											tooltip={item.label}
-										>
-											<Link to={item.to}>
-												<item.icon />
-												<span>{item.label}</span>
-											</Link>
-										</SidebarMenuButton>
-									</SidebarMenuItem>
-								);
-							})}
-						</SidebarMenu>
-					</SidebarGroupContent>
-				</SidebarGroup>
-
+				{navigationGroups.map((group) => (
+					<SidebarGroup key={group.label}>
+						<SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+						<SidebarGroupContent>
+							<SidebarMenu>
+								{group.items.map((item) => {
+									// /kanban now renders the Tasks page pinned to the Board view,
+									// so it must keep the Tasks entry highlighted.
+									const activePage = currentPage === "kanban" ? "tasks" : currentPage;
+									const isActive = activePage === item.id;
+									return (
+										<SidebarMenuItem key={item.id}>
+											<SidebarMenuButton
+												asChild
+												isActive={isActive}
+												tooltip={item.label}
+											>
+												<Link to={item.to} onClick={closeMobileSidebar}>
+													<item.icon />
+													<span>{item.label}</span>
+												</Link>
+											</SidebarMenuButton>
+										</SidebarMenuItem>
+									);
+								})}
+							</SidebarMenu>
+						</SidebarGroupContent>
+					</SidebarGroup>
+				))}
 			</SidebarContent>
 
 			<SidebarFooter>
@@ -196,11 +213,14 @@ export function AppSidebar({
 							isActive={currentPage === "config"}
 							tooltip="Settings"
 						>
-							<Link to="/config">
+							<Link to="/config" onClick={closeMobileSidebar}>
 								<Settings />
 								<span>Settings</span>
 							</Link>
 						</SidebarMenuButton>
+					</SidebarMenuItem>
+					<SidebarMenuItem>
+						<SidebarThemeControl isDark={isDark} onToggle={onThemeToggle} />
 					</SidebarMenuItem>
 				</SidebarMenu>
 

@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LayoutList, LayoutGrid, ArchiveRestore } from "lucide-react";
+import { LayoutList, LayoutGrid, ListTodo, ArchiveRestore, Archive, ChevronDown, Columns3, Plus, Table2 } from "lucide-react";
 import type { Task } from "@/ui/models/task";
 import { navigateTo } from "../lib/navigation";
-import { TaskNotionList } from "../components/organisms";
+import { Board, TaskNotionList } from "../components/organisms";
 import { TaskDetailSheet } from "../components/organisms/TaskDetail/TaskDetailSheet";
 import { TaskGroupedView } from "./TasksPage/TaskGroupedView";
+import { TaskTableView } from "./TasksPage/TaskTableView";
 import { Button } from "../components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "../components/ui/DropdownMenu";
 import { api, LifecycleAPIError } from "../api/client";
 import type { TaskLifecycleResponse } from "../models/taskLifecycle";
 import { TaskLifecycleDialog } from "../components/organisms/TaskLifecycleDialog";
@@ -14,10 +21,20 @@ import { useSSEEvent } from "../contexts/SSEContext";
 import {
 	PageContent,
 	PageError,
-	PageHeader,
 	PageLoading,
 	PageShell,
 } from "../components/templates/PageShell";
+import { FeatureHeader } from "../components/templates";
+
+// Time duration options for batch archive (in milliseconds)
+const BATCH_ARCHIVE_OPTIONS = [
+	{ label: "now", value: 0 },
+	{ label: "1 hour ago", value: 1 * 60 * 60 * 1000 },
+	{ label: "1 day ago", value: 24 * 60 * 60 * 1000 },
+	{ label: "1 week ago", value: 7 * 24 * 60 * 60 * 1000 },
+	{ label: "1 month ago", value: 30 * 24 * 60 * 60 * 1000 },
+	{ label: "3 months ago", value: 90 * 24 * 60 * 60 * 1000 },
+];
 
 interface TasksPageProps {
 	tasks: Task[];
@@ -25,12 +42,31 @@ interface TasksPageProps {
 	error?: string | null;
 	onRetry?: () => void;
 	onTasksUpdate: () => void;
+	/** Board drag-and-drop replaces the whole task set, so it needs the list form. */
+	onTasksReplace?: (tasks: Task[]) => void;
 	selectedTask?: Task | null;
 	onTaskClose?: () => void;
 	onNewTask: () => void;
+	/** Forces a view on mount, e.g. the /kanban route pins the Board. */
+	initialView?: ViewMode;
+	/** Route the detail URL is nested under, so /kanban keeps its own path. */
+	detailBasePath?: "/tasks" | "/kanban";
 }
 
-type ViewMode = "table" | "grouped";
+type ViewMode = "board" | "list" | "table" | "grouped";
+
+const VIEW_STORAGE_KEY = "knowns.tasks.view";
+
+const VIEW_OPTIONS: { value: ViewMode; label: string; icon: typeof LayoutList }[] = [
+	{ value: "board", label: "Board", icon: Columns3 },
+	{ value: "list", label: "List", icon: LayoutList },
+	{ value: "table", label: "Table", icon: Table2 },
+	{ value: "grouped", label: "Grouped", icon: LayoutGrid },
+];
+
+function isViewMode(value: unknown): value is ViewMode {
+	return VIEW_OPTIONS.some((option) => option.value === value);
+}
 
 export default function TasksPage({
 	tasks,
@@ -38,11 +74,27 @@ export default function TasksPage({
 	error,
 	onRetry,
 	onTasksUpdate,
+	onTasksReplace,
 	selectedTask: externalSelectedTask,
 	onTaskClose,
 	onNewTask,
+	initialView,
+	detailBasePath = "/tasks",
 }: TasksPageProps) {
-	const [viewMode, setViewMode] = useState<ViewMode>("table");
+	const [viewMode, setViewMode] = useState<ViewMode>(() => {
+		if (initialView) return initialView;
+		const stored = typeof localStorage === "undefined" ? null : localStorage.getItem(VIEW_STORAGE_KEY);
+		return isViewMode(stored) ? stored : "list";
+	});
+
+	const selectView = useCallback((next: ViewMode) => {
+		setViewMode(next);
+		try {
+			localStorage.setItem(VIEW_STORAGE_KEY, next);
+		} catch {
+			// Private mode or storage disabled: the choice just won't persist.
+		}
+	}, []);
 	const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 	const [lifecycleFilter, setLifecycleFilter] = useState<"current" | "active" | "done" | "archived" | "all">("current");
 	const [restoreOpen, setRestoreOpen] = useState(false);
@@ -55,6 +107,13 @@ export default function TasksPage({
 	const restoreGenerationRef = useRef(0);
 	const restoreInFlightRef = useRef(false);
 	const [restoreScope, setRestoreScope] = useState<{ generation: number; ids: readonly string[] } | null>(null);
+	const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
+	const [archiveResponse, setArchiveResponse] = useState<TaskLifecycleResponse | null>(null);
+	const [archiveError, setArchiveError] = useState<string | null>(null);
+	const [archiveLoading, setArchiveLoading] = useState(false);
+	const [archiveRequest, setArchiveRequest] = useState<{ generation: number; minimumAgeMs: number; label: string; ids?: readonly string[] } | null>(null);
+	const archiveGenerationRef = useRef(0);
+	const archiveInFlightRef = useRef(false);
 	const historicalMode = lifecycleFilter === "archived" || lifecycleFilter === "all";
 
 	const loadHistorical = useCallback(async () => {
@@ -172,17 +231,83 @@ export default function TasksPage({
 		setRestoreError(null);
 	};
 
+	const reconcileTasks = async () => {
+		const current = await api.getTasks();
+		if (onTasksReplace) onTasksReplace(current);
+		else onTasksUpdate();
+	};
+
+	const handleBatchArchivePreview = async (minimumAgeMs: number, label: string) => {
+		const generation = ++archiveGenerationRef.current;
+		setArchiveRequest({ generation, minimumAgeMs, label });
+		setArchiveDialogOpen(true);
+		setArchiveResponse(null);
+		setArchiveError(null);
+		setArchiveLoading(true);
+		try {
+			const response = await api.batchArchiveTasks({ minimumAgeMs });
+			if (archiveGenerationRef.current !== generation) return;
+			setArchiveRequest({ generation, minimumAgeMs, label, ids: Object.freeze(response.items.map((item) => item.taskId)) });
+			setArchiveResponse(response);
+		} catch (error) {
+			if (archiveGenerationRef.current !== generation) return;
+			const response = error instanceof LifecycleAPIError ? error.response || null : null;
+			if (response) {
+				setArchiveRequest({ generation, minimumAgeMs, label, ids: Object.freeze(response.items.map((item) => item.taskId)) });
+			}
+			setArchiveResponse(response);
+			setArchiveError(error instanceof Error ? error.message : "Failed to preview archive");
+		} finally {
+			if (archiveGenerationRef.current === generation) setArchiveLoading(false);
+		}
+	};
+
+	const handleBatchArchiveExecute = async () => {
+		if (!archiveRequest?.ids || archiveInFlightRef.current) return;
+		const { generation, minimumAgeMs, ids } = archiveRequest;
+		archiveInFlightRef.current = true;
+		setArchiveLoading(true);
+		setArchiveError(null);
+		try {
+			const response = await api.batchArchiveTasks({ ids: [...ids], minimumAgeMs, execute: true });
+			if (archiveGenerationRef.current !== generation) return;
+			setArchiveResponse(response);
+			await reconcileTasks();
+			if (!response.failedTaskId) {
+				toast.success(`Archived ${response.changed} task${response.changed === 1 ? "" : "s"}`);
+			}
+		} catch (error) {
+			if (archiveGenerationRef.current === generation) {
+				if (error instanceof LifecycleAPIError && error.response) setArchiveResponse(error.response);
+				setArchiveError(error instanceof Error ? error.message : "Failed to archive Tasks");
+			}
+			await reconcileTasks().catch(() => {});
+		} finally {
+			archiveInFlightRef.current = false;
+			if (archiveGenerationRef.current === generation) setArchiveLoading(false);
+		}
+	};
+
+	const closeArchiveDialog = (open: boolean) => {
+		if (open) return setArchiveDialogOpen(true);
+		++archiveGenerationRef.current;
+		setArchiveDialogOpen(false);
+		setArchiveRequest(null);
+		setArchiveResponse(null);
+		setArchiveError(null);
+	};
+
 	// Handle external selected task from search
 	useEffect(() => {
 		setSelectedTask(externalSelectedTask || null);
 	}, [externalSelectedTask]);
 
 	const handleTaskClick = (task: Task) => {
-		navigateTo(`/tasks/${task.id}`);
+		navigateTo(`${detailBasePath}/${task.id}`);
 	};
 
 	const handleNavigateToTask = (taskId: string) => {
-		navigateTo(`/tasks/${taskId}`);
+		navigateTo(`${detailBasePath}/${taskId}`);
 	};
 
 	const refreshVisibleData = () => {
@@ -192,10 +317,9 @@ export default function TasksPage({
 
 	return (
 		<PageShell>
-			<PageHeader
+			<FeatureHeader
+				icon={ListTodo}
 				title="Tasks"
-				description="Plan, review, and recover project work across its lifecycle."
-				context="Project work"
 				status={
 					<span className="tabular-nums">
 						{visibleTasks.length} {visibleTasks.length === 1 ? "task" : "tasks"}
@@ -221,33 +345,58 @@ export default function TasksPage({
 								<ArchiveRestore className="h-3.5 w-3.5" /> Restore archived…
 							</Button>
 						)}
+						{/* Batch Archive Dropdown */}
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<Button
+									variant="outline"
+									size="sm"
+									aria-label="Archive completed Tasks"
+									className="h-11 gap-1.5 sm:h-8"
+								>
+									<Archive className="w-4 h-4" />
+									<span className="hidden sm:inline text-sm">Archive</span>
+									<ChevronDown className="w-3 h-3" />
+								</Button>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent align="end">
+								{BATCH_ARCHIVE_OPTIONS.map((option) => (
+										<DropdownMenuItem
+											key={option.value}
+											onClick={() => handleBatchArchivePreview(option.value, option.label)}
+										>
+											<span className="flex-1">Done before {option.label}</span>
+										</DropdownMenuItem>
+								))}
+							</DropdownMenuContent>
+						</DropdownMenu>
 						{/* View Toggle */}
 						<div className="flex items-center rounded-md bg-muted/70 p-0.5" aria-label="Task view">
-							<Button
-								type="button"
-								variant="ghost"
-								size="sm"
-								aria-label="Table view"
-								aria-pressed={viewMode === "table"}
-								onClick={() => setViewMode("table")}
-								className={viewMode === "table" ? "h-10 bg-background px-2 shadow-sm hover:bg-background sm:h-7" : "h-10 px-2 text-muted-foreground sm:h-7"}
-							>
-								<LayoutList className="h-3.5 w-3.5" />
-								<span className="hidden sm:inline">Table</span>
-							</Button>
-							<Button
-								type="button"
-								variant="ghost"
-								size="sm"
-								aria-label="Grouped view"
-								aria-pressed={viewMode === "grouped"}
-								onClick={() => setViewMode("grouped")}
-								className={viewMode === "grouped" ? "h-10 bg-background px-2 shadow-sm hover:bg-background sm:h-7" : "h-10 px-2 text-muted-foreground sm:h-7"}
-							>
-								<LayoutGrid className="h-3.5 w-3.5" />
-								<span className="hidden sm:inline">Grouped</span>
-							</Button>
+							{VIEW_OPTIONS.map((option) => {
+								const Icon = option.icon;
+								const active = viewMode === option.value;
+								return (
+									<Button
+										key={option.value}
+										type="button"
+										variant="ghost"
+										size="sm"
+										aria-label={`${option.label} view`}
+										aria-pressed={active}
+										onClick={() => selectView(option.value)}
+										className={active ? "h-10 bg-background px-2 shadow-sm hover:bg-background sm:h-7" : "h-10 px-2 text-muted-foreground sm:h-7"}
+									>
+										<Icon className="h-3.5 w-3.5" />
+										<span className="hidden sm:inline">{option.label}</span>
+									</Button>
+								);
+							})}
 						</div>
+						{/* Lives in the header so every view can create a Task: the Board and
+						    Table views have no empty-state "New" affordance of their own. */}
+						<Button size="sm" onClick={onNewTask} className="h-11 gap-1.5 sm:h-8">
+							<Plus className="h-3.5 w-3.5" /> New Task
+						</Button>
 					</div>
 				}
 			/>
@@ -263,12 +412,21 @@ export default function TasksPage({
 					/>
 				) : historicalMode && historicalLoading && historicalTasks === null ? (
 					<PageLoading label="Loading historical Tasks" className="flex-1" />
-				) : viewMode === "table" ? (
+				) : viewMode === "board" ? (
+					<Board
+						tasks={visibleTasks}
+						loading={false}
+						onTasksUpdate={onTasksReplace ?? (() => onTasksUpdate())}
+						onTaskClick={handleTaskClick}
+					/>
+				) : viewMode === "list" ? (
 					<TaskNotionList
 						tasks={visibleTasks}
 						onTaskClick={handleTaskClick}
 						onNewTask={onNewTask}
 					/>
+				) : viewMode === "table" ? (
+					<TaskTableView tasks={visibleTasks} onTaskClick={handleTaskClick} />
 				) : (
 					<TaskGroupedView
 						tasks={visibleTasks}
@@ -301,6 +459,18 @@ export default function TasksPage({
 				error={restoreError}
 				confirmLabel="Restore eligible Tasks"
 				onConfirm={executeRestore}
+			/>
+
+			<TaskLifecycleDialog
+				open={archiveDialogOpen}
+				onOpenChange={closeArchiveDialog}
+				title="Archive completed Tasks"
+				description={`Preview for Tasks completed before ${archiveRequest?.label || "the selected retention window"}. Eligibility and warnings come from the backend.`}
+				response={archiveResponse}
+				loading={archiveLoading}
+				error={archiveError}
+				confirmLabel="Archive eligible Tasks"
+				onConfirm={handleBatchArchiveExecute}
 			/>
 		</PageShell>
 	);

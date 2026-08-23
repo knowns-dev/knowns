@@ -12,6 +12,7 @@ import {
 	Flame,
 	GitPullRequest,
 	Info,
+	LayoutDashboard,
 	ListChecks,
 	RefreshCw,
 	Sparkles,
@@ -35,6 +36,7 @@ import {
 } from "../api/client";
 import { Button } from "../components/ui/button";
 import { Progress } from "../components/ui/progress";
+import { FeatureHeader } from "../components/templates";
 import {
 	Select,
 	SelectContent,
@@ -240,6 +242,35 @@ function Metric({
 }) {
 	return (
 		<div className="min-w-0 border-l border-border/70 pl-3 first:border-l-0 first:pl-0">
+			<p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
+			<p
+				className={cn(
+					"mt-1 text-xl font-semibold tabular-nums tracking-[-0.03em]",
+					tone === "created" && "text-[var(--analysis-created)]",
+					tone === "completed" && "text-[var(--analysis-completed)]",
+					tone === "risk" && "text-[var(--analysis-risk)]",
+				)}
+			>
+				{value}
+			</p>
+			{detail && <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{detail}</p>}
+		</div>
+	);
+}
+
+function MetricTile({
+	label,
+	value,
+	detail,
+	tone,
+}: {
+	label: string;
+	value: string;
+	detail?: string;
+	tone?: "created" | "completed" | "risk";
+}) {
+	return (
+		<div className="min-w-0 rounded-xl border border-border/70 bg-card px-4 py-3">
 			<p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
 			<p
 				className={cn(
@@ -595,7 +626,6 @@ function FilterBar({
 	assignees,
 	labels,
 	filteredCount,
-	totalCount,
 }: {
 	period: number;
 	onPeriodChange: (value: number) => void;
@@ -606,10 +636,9 @@ function FilterBar({
 	assignees: string[];
 	labels: string[];
 	filteredCount: number;
-	totalCount: number;
 }) {
 	return (
-		<div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-border/70 bg-card px-3 py-3">
+		<div className="mb-5 flex h-[52px] shrink-0 flex-wrap items-center gap-3 rounded-xl border border-border/70 bg-card px-3">
 			<fieldset className="flex items-center gap-1 rounded-lg bg-muted/60 p-1">
 				<legend className="sr-only">Analysis period</legend>
 				{PERIOD_OPTIONS.map((option) => (
@@ -630,6 +659,21 @@ function FilterBar({
 				))}
 			</fieldset>
 			<div className="h-5 w-px bg-border max-sm:hidden" />
+			{/* No dedicated "project" filter exists on this page; the label filter fills that slot. */}
+			<div className="flex min-w-[10rem] items-center gap-2">
+				<span className="text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">Label</span>
+				<Select value={label} onValueChange={onLabelChange}>
+					<SelectTrigger className="h-8 min-w-32 flex-1 border-border/80 bg-background text-xs shadow-none" aria-label="Filter by label">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value={ALL_LABELS}>All labels</SelectItem>
+						{labels.map((item) => (
+							<SelectItem key={item} value={item}>{item}</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+			</div>
 			<div className="flex min-w-[10rem] items-center gap-2">
 				<span className="text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">Assignee</span>
 				<Select value={assignee} onValueChange={onAssigneeChange}>
@@ -645,24 +689,9 @@ function FilterBar({
 					</SelectContent>
 				</Select>
 			</div>
-			<div className="flex min-w-[10rem] items-center gap-2">
-				<span className="text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">Label</span>
-				<Select value={label} onValueChange={onLabelChange}>
-					<SelectTrigger className="h-8 min-w-32 flex-1 border-border/80 bg-background text-xs shadow-none" aria-label="Filter by label">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value={ALL_LABELS}>All labels</SelectItem>
-						{labels.map((item) => (
-							<SelectItem key={item} value={item}>{item}</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
-			</div>
-			<p className="ml-auto text-xs text-muted-foreground">
-				<span className="font-medium tabular-nums text-foreground">{filteredCount}</span>
-				{" "}of{" "}
-				<span className="tabular-nums">{totalCount}</span> tasks
+			<p className="ml-auto shrink-0 text-xs text-muted-foreground">
+				<span className="font-medium tabular-nums text-foreground">{filteredCount}</span>{" "}
+				{filteredCount === 1 ? "task" : "tasks"} in range
 			</p>
 		</div>
 	);
@@ -886,48 +915,36 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 
 	return (
 		<div className="analysis-workbench h-full overflow-auto bg-[var(--analysis-canvas)] text-foreground">
-			<header className="border-b border-border/70 bg-card">
-				<div className="mx-auto flex w-full max-w-[1440px] flex-col justify-between gap-4 px-4 py-5 sm:flex-row sm:items-end sm:px-6">
-					<div>
-						<div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-							<span>{config.name || "Knowns"}</span>
-							<span aria-hidden="true">/</span>
-							<span>Analysis workbench</span>
-							<span className="inline-flex items-center gap-1 normal-case tracking-normal">
-								<span className={cn("h-1.5 w-1.5 rounded-full", remote.errors.length > 0 ? "bg-[var(--analysis-risk)]" : "bg-[var(--analysis-completed)]")} />
-								{remote.errors.length > 0
-									? "Partial data"
-									: remote.loading
-										? "Refreshing"
-										: "All sources ready"}
-							</span>
-						</div>
-						<h1 className="text-2xl font-semibold tracking-[-0.035em]">Dashboard</h1>
-						<p className="mt-1 text-sm text-muted-foreground">
-							Delivery signals, knowledge health, and the next project action.
-						</p>
-					</div>
-					<div className="flex items-center gap-3">
-						<p className="text-right text-[11px] leading-4 text-muted-foreground">
-							{remote.refreshedAt
-								? <>Snapshot {remote.refreshedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}<br />Task totals update live</>
-								: "Preparing project snapshot"}
-						</p>
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => void loadRemoteData()}
-							disabled={remote.loading}
-							aria-label="Refresh dashboard data"
-						>
-							<RefreshCw className={cn(remote.loading && "animate-spin motion-reduce:animate-none")} />
-							Refresh
-						</Button>
-					</div>
-				</div>
-			</header>
+			<FeatureHeader
+				icon={LayoutDashboard}
+				title="Dashboard"
+				status={
+					<span className="inline-flex items-center gap-1.5">
+						<span className={cn("h-1.5 w-1.5 rounded-full", remote.errors.length > 0 ? "bg-[var(--analysis-risk)]" : "bg-[var(--analysis-completed)]")} />
+						{remote.errors.length > 0
+							? "Partial data"
+							: remote.loading
+								? "Refreshing"
+								: "All sources ready"}
+						{" · Updated "}
+						{remote.refreshedAt ? formatRelativeTime(remote.refreshedAt) : "—"}
+					</span>
+				}
+				actions={
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() => void loadRemoteData()}
+						disabled={remote.loading}
+						aria-label="Refresh dashboard data"
+					>
+						<RefreshCw className={cn(remote.loading && "animate-spin motion-reduce:animate-none")} />
+						Refresh
+					</Button>
+				}
+			/>
 
-			<div className="mx-auto w-full max-w-[1440px] px-4 py-5 sm:px-6">
+			<div className="w-full px-4 py-5 sm:px-6">
 				<FilterBar
 					period={period}
 					onPeriodChange={setPeriod}
@@ -938,8 +955,26 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 					assignees={assignees}
 					labels={labels}
 					filteredCount={filteredTasks.length}
-					totalCount={tasks.length}
 				/>
+
+				{loading ? (
+					<div className="mb-5 grid grid-cols-3 gap-4">
+						<Skeleton className="h-[68px]" />
+						<Skeleton className="h-[68px]" />
+						<Skeleton className="h-[68px]" />
+					</div>
+				) : (
+					<div className="mb-5 grid grid-cols-3 gap-4">
+						<MetricTile label="Created" value={String(throughputSummary.created)} tone="created" />
+						<MetricTile label="Completed" value={String(throughputSummary.completed)} tone="completed" />
+						<MetricTile
+							label="Flow gap"
+							value={`${gap > 0 ? "+" : ""}${gap}`}
+							detail={gap > 0 ? "intake above output" : gap < 0 ? "output above intake" : "balanced"}
+							tone={gap > 0 ? "risk" : undefined}
+						/>
+					</div>
+				)}
 
 				<div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_23rem]">
 					<main className="order-2 min-w-0 space-y-5 xl:order-1">
@@ -958,21 +993,11 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 								<ChartLoading />
 							) : (
 								<>
-									<div className="grid grid-cols-3 gap-3 px-5 pt-5">
-										<Metric label="Created" value={String(throughputSummary.created)} tone="created" />
-										<Metric label="Completed" value={String(throughputSummary.completed)} tone="completed" />
-										<Metric
-											label="Flow gap"
-											value={`${gap > 0 ? "+" : ""}${gap}`}
-											detail={gap > 0 ? "intake above output" : gap < 0 ? "output above intake" : "balanced"}
-											tone={gap > 0 ? "risk" : undefined}
-										/>
-									</div>
-									<div className="px-3 pt-2">
+									<div className="px-3 pt-5">
 										<ThroughputChart data={throughput} />
 									</div>
 									{!hasThroughput && (
-										<p className="-mt-5 px-5 pb-4 text-center text-xs text-muted-foreground">
+										<p className="px-5 pb-4 pt-1 text-center text-xs text-muted-foreground">
 											No tasks were created or completed in this window.
 										</p>
 									)}

@@ -20,37 +20,204 @@ func (f httpDoerFunc) Do(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-func TestOnlineChecksDoNotInvokeDependenciesOffline(t *testing.T) {
+func TestProviderEndpointRunsWithoutAnOnlineFlag(t *testing.T) {
 	var httpCalls atomic.Int32
-	var providerLoads atomic.Int32
 	deps := onlineDependencies{
 		client: httpDoerFunc(func(*http.Request) (*http.Response, error) {
 			httpCalls.Add(1)
-			return nil, errors.New("HTTP must not run")
+			return onlineResponse(http.StatusNoContent, ""), nil
 		}),
 		loadProvider: func(*storage.Store) (providerTarget, bool, error) {
-			providerLoads.Add(1)
-			return providerTarget{}, false, errors.New("provider load must not run")
+			return providerTarget{
+				ID:      "remote",
+				Kind:    "api",
+				Model:   "text-embedding-3-small",
+				APIBase: "https://provider.example/v1",
+			}, true, nil
 		},
 	}
 
 	result, err := Run(context.Background(), RunOptions{
-		Scopes: []Scope{ScopeOnline},
-		Online: false,
-	}, onlineCheckersWithDependencies(nil, deps))
+		Scopes: []Scope{ScopeSearch},
+	}, networkCheckersWithDependencies(nil, deps))
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if httpCalls.Load() != 0 || providerLoads.Load() != 0 {
-		t.Fatalf("offline dependency calls = HTTP %d, provider %d", httpCalls.Load(), providerLoads.Load())
+	if httpCalls.Load() != 1 {
+		t.Fatalf("HTTP calls = %d, want 1", httpCalls.Load())
 	}
-	if result.Verdict != VerdictHealthy || result.Summary.Skip != 2 {
-		t.Fatalf("offline result = %#v", result)
+	check := findCheck(t, result, "search.provider-endpoint")
+	if check.Status != StatusPass || check.Evidence["reachable"] != true {
+		t.Fatalf("provider endpoint check = %#v", check)
 	}
-	for _, check := range result.Checks {
-		if check.Status != StatusSkip || check.SkipReason != "online_disabled" {
-			t.Fatalf("offline check = %#v", check)
-		}
+}
+
+func TestProviderEndpointWarnsWhenNetworkIsUnreachable(t *testing.T) {
+	deps := onlineDependencies{
+		client: httpDoerFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("dial tcp: no route to host")
+		}),
+		loadProvider: func(*storage.Store) (providerTarget, bool, error) {
+			return providerTarget{
+				ID:      "remote",
+				Kind:    "api",
+				APIBase: "https://provider.example/v1",
+			}, true, nil
+		},
+	}
+
+	result, err := Run(context.Background(), RunOptions{
+		Scopes: []Scope{ScopeSearch},
+	}, []Checker{providerEndpointChecker(nil, deps)})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	check := findCheck(t, result, "search.provider-endpoint")
+	if check.Status != StatusWarn || check.Evidence["errorCode"] != "network_request_failed" {
+		t.Fatalf("unreachable provider check = %#v", check)
+	}
+	if result.Verdict != VerdictDegraded {
+		t.Fatalf("verdict = %q, want degraded so air-gapped runs still exit 0", result.Verdict)
+	}
+}
+
+func TestProviderEndpointWarnsWhenSettingsAreIncomplete(t *testing.T) {
+	var httpCalls atomic.Int32
+	deps := onlineDependencies{
+		client: httpDoerFunc(func(*http.Request) (*http.Response, error) {
+			httpCalls.Add(1)
+			return onlineResponse(http.StatusOK, ""), nil
+		}),
+		loadProvider: func(*storage.Store) (providerTarget, bool, error) {
+			return providerTarget{}, false, errors.New("model qwen3-embedding:0.6b not found")
+		},
+	}
+
+	result, err := Run(context.Background(), RunOptions{
+		Scopes: []Scope{ScopeSearch},
+	}, []Checker{providerEndpointChecker(nil, deps)})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	check := findCheck(t, result, "search.provider-endpoint")
+	if check.Status != StatusWarn || check.Evidence["errorCode"] != "provider_settings_incomplete" ||
+		check.Remediation == nil || check.Remediation.Command != "knowns settings" {
+		t.Fatalf("incomplete settings check = %#v", check)
+	}
+	if httpCalls.Load() != 0 {
+		t.Fatalf("HTTP calls = %d, want 0", httpCalls.Load())
+	}
+}
+
+func TestProviderEndpointRejectsInvalidURLWithoutProbing(t *testing.T) {
+	var httpCalls atomic.Int32
+	deps := onlineDependencies{
+		client: httpDoerFunc(func(*http.Request) (*http.Response, error) {
+			httpCalls.Add(1)
+			return onlineResponse(http.StatusOK, ""), nil
+		}),
+		loadProvider: func(*storage.Store) (providerTarget, bool, error) {
+			return providerTarget{ID: "remote", Kind: "api", APIBase: "not-a-url"}, true, nil
+		},
+	}
+
+	result, err := Run(context.Background(), RunOptions{
+		Scopes: []Scope{ScopeSearch},
+	}, []Checker{providerEndpointChecker(nil, deps)})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	check := findCheck(t, result, "search.provider-endpoint")
+	if check.Status != StatusWarn || check.Evidence["errorCode"] != "provider_url_invalid" {
+		t.Fatalf("invalid URL check = %#v", check)
+	}
+	if httpCalls.Load() != 0 {
+		t.Fatalf("HTTP calls = %d, want 0", httpCalls.Load())
+	}
+}
+
+func TestOllamaEndpointReportsPulledAndMissingModels(t *testing.T) {
+	tags := `{"models":[{"name":"nomic-embed-text:latest"},{"name":"qwen3-embedding:0.6b"}]}`
+	cases := []struct {
+		name       string
+		model      string
+		wantStatus Status
+		wantPulled bool
+		wantCmd    string
+	}{
+		{name: "exact tag", model: "qwen3-embedding:0.6b", wantStatus: StatusPass, wantPulled: true},
+		{name: "implicit latest", model: "nomic-embed-text", wantStatus: StatusPass, wantPulled: true},
+		{
+			name:       "not pulled",
+			model:      "mxbai-embed-large",
+			wantStatus: StatusWarn,
+			wantCmd:    "ollama pull mxbai-embed-large",
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var probed string
+			deps := onlineDependencies{
+				client: httpDoerFunc(func(req *http.Request) (*http.Response, error) {
+					probed = req.URL.String()
+					return onlineResponse(http.StatusOK, tags), nil
+				}),
+				loadProvider: func(*storage.Store) (providerTarget, bool, error) {
+					return providerTarget{
+						ID:      "ollama",
+						Kind:    "ollama",
+						Model:   testCase.model,
+						APIBase: "http://localhost:11434/v1",
+					}, true, nil
+				},
+			}
+
+			result, err := Run(context.Background(), RunOptions{
+				Scopes: []Scope{ScopeSearch},
+			}, []Checker{providerEndpointChecker(nil, deps)})
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if probed != "http://localhost:11434/api/tags" {
+				t.Fatalf("probed URL = %q", probed)
+			}
+			check := findCheck(t, result, "search.provider-endpoint")
+			if check.Status != testCase.wantStatus || check.Evidence["pulled"] != testCase.wantPulled {
+				t.Fatalf("ollama check = %#v", check)
+			}
+			if testCase.wantCmd != "" &&
+				(check.Remediation == nil || check.Remediation.Command != testCase.wantCmd) {
+				t.Fatalf("ollama remediation = %#v", check.Remediation)
+			}
+		})
+	}
+}
+
+func TestOllamaEndpointWarnsWhenDaemonIsNotServing(t *testing.T) {
+	deps := onlineDependencies{
+		client: httpDoerFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("connection refused")
+		}),
+		loadProvider: func(*storage.Store) (providerTarget, bool, error) {
+			return providerTarget{
+				ID:      "ollama",
+				Kind:    "ollama",
+				Model:   "qwen3-embedding:0.6b",
+				APIBase: "http://localhost:11434",
+			}, true, nil
+		},
+	}
+
+	result, err := Run(context.Background(), RunOptions{
+		Scopes: []Scope{ScopeSearch},
+	}, []Checker{providerEndpointChecker(nil, deps)})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	check := findCheck(t, result, "search.provider-endpoint")
+	if check.Status != StatusWarn || check.Remediation == nil ||
+		check.Remediation.Command != "ollama serve" {
+		t.Fatalf("ollama daemon check = %#v", check)
 	}
 }
 
@@ -74,17 +241,14 @@ func TestOnlineChecksCompleteIndependently(t *testing.T) {
 		},
 	}
 
-	result, err := Run(context.Background(), RunOptions{
-		Scopes: []Scope{ScopeOnline},
-		Online: true,
-	}, onlineCheckersWithDependencies(nil, deps))
+	result, err := Run(context.Background(), RunOptions{}, networkCheckersWithDependencies(nil, deps))
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if httpCalls.Load() != 2 {
 		t.Fatalf("HTTP calls = %d, want 2", httpCalls.Load())
 	}
-	provider := findCheck(t, result, "online.provider")
+	provider := findCheck(t, result, "search.provider-endpoint")
 	if provider.Status != StatusPass || provider.Evidence["statusCode"] != http.StatusNoContent {
 		t.Fatalf("provider check = %#v", provider)
 	}
@@ -107,10 +271,7 @@ func TestOnlineVersionCheckReportsAvailableUpdate(t *testing.T) {
 			return providerTarget{}, false, nil
 		},
 	}
-	result, err := Run(context.Background(), RunOptions{
-		Scopes: []Scope{ScopeOnline},
-		Online: true,
-	}, onlineCheckersWithDependencies(nil, deps))
+	result, err := Run(context.Background(), RunOptions{}, networkCheckersWithDependencies(nil, deps))
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -134,16 +295,13 @@ func TestOnlineChecksAreBoundedAndHonorCancellation(t *testing.T) {
 			}, true, nil
 		},
 	}
-	checkers := onlineCheckersWithDependencies(nil, deps)
+	checkers := networkCheckersWithDependencies(nil, deps)
 	for i := range checkers {
 		checkers[i].Timeout = 25 * time.Millisecond
 	}
 
 	started := time.Now()
-	result, err := Run(context.Background(), RunOptions{
-		Scopes: []Scope{ScopeOnline},
-		Online: true,
-	}, checkers)
+	result, err := Run(context.Background(), RunOptions{}, checkers)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -160,7 +318,7 @@ func TestOnlineChecksAreBoundedAndHonorCancellation(t *testing.T) {
 	}
 }
 
-func TestOnlineProviderRejectsMissingEndpoint(t *testing.T) {
+func TestProviderEndpointRejectsMissingEndpoint(t *testing.T) {
 	deps := onlineDependencies{
 		client: httpDoerFunc(func(*http.Request) (*http.Response, error) {
 			return onlineResponse(http.StatusNotFound, ""), nil
@@ -173,14 +331,11 @@ func TestOnlineProviderRejectsMissingEndpoint(t *testing.T) {
 		},
 	}
 
-	result, err := Run(context.Background(), RunOptions{
-		Scopes: []Scope{ScopeOnline},
-		Online: true,
-	}, []Checker{onlineProviderChecker(nil, deps)})
+	result, err := Run(context.Background(), RunOptions{}, []Checker{providerEndpointChecker(nil, deps)})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	check := findCheck(t, result, "online.provider")
+	check := findCheck(t, result, "search.provider-endpoint")
 	if check.Status != StatusFail || check.Evidence["errorCode"] != "provider_endpoint_missing" {
 		t.Fatalf("provider check = %#v", check)
 	}
@@ -209,10 +364,7 @@ func TestOnlineEvidenceExcludesCredentialsURLsBodiesAndErrors(t *testing.T) {
 		},
 	}
 
-	result, err := Run(context.Background(), RunOptions{
-		Scopes: []Scope{ScopeOnline},
-		Online: true,
-	}, onlineCheckersWithDependencies(nil, deps))
+	result, err := Run(context.Background(), RunOptions{}, networkCheckersWithDependencies(nil, deps))
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}

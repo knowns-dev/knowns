@@ -1,11 +1,12 @@
 ---
+id: doc-728e857476dc2ef96c7bb00ae1771d6c
 title: Auto-download OpenCode
 description: Auto-detect and guide OpenCode installation when missing
 createdAt: '2026-04-01T04:01:54.649Z'
-updatedAt: '2026-04-01T08:32:35.735Z'
+updatedAt: '2026-08-19T10:04:29.586Z'
 tags:
   - spec
-  - approved
+  - superseded
 ---
 
 # Auto-download OpenCode
@@ -166,3 +167,6 @@ const MinOpenCodeVersion = "1.3.0"
 9. **Uninstall/update path** — if we guide install, should we guide uninstall/update? Defer to native Go agent migration.
 
 10. **`opencode.json` only has MCP config** — server settings live in `.knowns/config.json`. Config consolidation is a separate concern.
+
+
+> **Superseded** by @decision/20260819-1703-remove-the-opencode-chat-ui - the OpenCode Chat UI was removed from Knowns.

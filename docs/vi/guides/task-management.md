@@ -34,12 +34,20 @@ knowns task create "Add authentication" \
   --ac "User can login" \
   --priority high
 
+# Namespace ID tuỳ chọn cho một task; tạo ID như FR-4F7Q2M
+knowns task create "Add authentication feature" --prefix FR
+
 knowns task edit <id> -s in-progress
 knowns task edit <id> --plan '1. Review auth pattern\n2. Implement endpoints\n3. Add tests'
 knowns task edit <id> --check-ac 1
 knowns task edit <id> --append-notes "Completed middleware"
 knowns task edit <id> -s done
 ```
+
+Task ID là immutable và vẫn là public identifier duy nhất. Project có thể set
+`settings.defaultTaskIdPrefix`; `--prefix` chỉ override cho task đang tạo và
+không đổi config. Các ID numeric, hierarchical và random 6 ký tự cũ vẫn đọc
+được, không cần migration.
 
 ## Acceptance criteria
 

@@ -470,11 +470,11 @@ func decisionFromFlags(cmd *cobra.Command, title string) (*models.DecisionEntry,
 		Sources:                sources,
 		RelatedDocs:            relatedDocs,
 		RelatedTasks:           relatedTasks,
-		Content:                unescapeText(body),
-		Context:                unescapeText(context),
-		Decision:               unescapeText(decisionText),
-		AlternativesConsidered: unescapeText(alternatives),
-		Consequences:           unescapeText(consequences),
+		Content:                body,
+		Context:                context,
+		Decision:               decisionText,
+		AlternativesConsidered: alternatives,
+		Consequences:           consequences,
 	}, nil
 }
 

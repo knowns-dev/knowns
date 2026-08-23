@@ -123,7 +123,7 @@ func TestRunInitStopsWhenTerminalTooNarrow(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	terminalWidthFn = func() int { return 60 }
+	terminalWidthFn = func() int { return 50 }
 	isTTYFn = func() bool { return true }
 	execLookPath = func(name string) (string, error) {
 		switch name {
@@ -211,7 +211,6 @@ func TestRunInitNoWizardUsesGlobalDefaults(t *testing.T) {
 			"settings": map[string]any{
 				"gitTrackingMode": "git-ignored",
 				"platforms":       []string{"codex", "agents"},
-				"enableChatUI":    false,
 				"taskLifecycle": map[string]any{
 					"autoArchive": false,
 				},
@@ -239,9 +238,6 @@ func TestRunInitNoWizardUsesGlobalDefaults(t *testing.T) {
 	if got := settings["gitTrackingMode"]; got != "git-ignored" {
 		t.Fatalf("expected global gitTrackingMode, got %#v", got)
 	}
-	if got := settings["enableChatUI"]; got != false {
-		t.Fatalf("expected global enableChatUI false, got %#v", got)
-	}
 	taskLifecycle := getMap(t, settings, "taskLifecycle")
 	if got := taskLifecycle["autoArchive"]; got != false {
 		t.Fatalf("expected global autoArchive false, got %#v", got)
@@ -256,8 +252,10 @@ func TestRunInitNoWizardUsesGlobalDefaults(t *testing.T) {
 	if !ok || len(platforms) != 2 || platforms[0] != "codex" || platforms[1] != "agents" {
 		t.Fatalf("expected global platforms, got %#v", settings["platforms"])
 	}
-	assertContains(t, readTextFile(t, filepath.Join(projectRoot, "KNOWNS.md")), "# KNOWNS")
 	assertContains(t, readTextFile(t, filepath.Join(projectRoot, "AGENTS.md")), "Compatibility entrypoint")
+	if _, err := os.Stat(filepath.Join(projectRoot, "KNOWNS.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected init not to create KNOWNS.md, got err=%v", err)
+	}
 	if _, err := os.Stat(filepath.Join(projectRoot, "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Fatalf("expected CLAUDE.md not to be created when global defaults select codex+agents, got err=%v", err)
 	}
@@ -881,20 +879,105 @@ func TestCreateInstructionFilesForCodexCreatesAgentsShimOnly(t *testing.T) {
 		t.Fatalf("createInstructionFilesForPlatforms returned error: %v", err)
 	}
 
-	assertContains(t, readTextFile(t, filepath.Join(projectRoot, "KNOWNS.md")), "# KNOWNS")
 	assertContains(t, readTextFile(t, filepath.Join(projectRoot, "AGENTS.md")), "Compatibility entrypoint")
+	if _, err := os.Stat(filepath.Join(projectRoot, "KNOWNS.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected KNOWNS.md not to be created, got err=%v", err)
+	}
 	if _, err := os.Stat(filepath.Join(projectRoot, "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Fatalf("expected CLAUDE.md not to be created for codex-only instructions, got err=%v", err)
 	}
 }
 
-func TestRenderCanonicalInstructionContentIncludesProactiveMemoryRules(t *testing.T) {
-	content := renderCanonicalInstructionContent()
+func TestCreateInstructionFilesQuietDoesNotCreateKnownsMd(t *testing.T) {
+	projectRoot := t.TempDir()
 
-	assertContains(t, content, "- Proactively save durable memory without waiting for the user to say \"save this\" when confidence is high.")
-	assertContains(t, content, "- Use `global` for stable user preferences or workflow rules that should carry across repositories and future sessions.")
-	assertContains(t, content, "- If the user states a stable collaboration preference, default to saving it as `global` memory unless they clearly scoped it to this repository only.")
-	assertContains(t, content, "- Compatibility shim files must stay lightweight and must direct agents to MCP `initial`/`help` first, with `KNOWNS.md` as fallback reference.")
+	if err := createInstructionFilesQuiet(projectRoot, false); err != nil {
+		t.Fatalf("createInstructionFilesQuiet returned error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(projectRoot, "KNOWNS.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected KNOWNS.md not to be created, got err=%v", err)
+	}
+}
+
+func TestResolveWizardEmbeddingSourcePreservesProvider(t *testing.T) {
+	ollama := &models.Project{}
+	ollama.Settings.SemanticSearch = &models.SemanticSearchSettings{Provider: "ollama", Model: "qwen3-embedding:0.6b"}
+
+	if got := resolveWizardEmbeddingSource(nil, ollama); got != "ollama" {
+		t.Fatalf("expected existing project provider to win, got %q", got)
+	}
+
+	globalAPI := &storage.ProjectDefaults{}
+	globalAPI.Settings.SemanticSearch = &models.SemanticSearchSettings{Provider: "api"}
+	if got := resolveWizardEmbeddingSource(globalAPI, nil); got != "api" {
+		t.Fatalf("expected global default provider, got %q", got)
+	}
+	if got := resolveWizardEmbeddingSource(globalAPI, ollama); got != "ollama" {
+		t.Fatalf("expected project provider to override global default, got %q", got)
+	}
+
+	empty := &models.Project{}
+	empty.Settings.SemanticSearch = &models.SemanticSearchSettings{Model: "gte-small"}
+	if got := resolveWizardEmbeddingSource(nil, empty); got != "" {
+		t.Fatalf("expected empty provider to stay empty so the local default applies, got %q", got)
+	}
+}
+
+func TestRunInitProceedsAtWizardMinWidth(t *testing.T) {
+	t.Setenv("KNOWN_LSP_AUTO_INSTALL", "0")
+	home := t.TempDir()
+	projectRoot := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+	if err := os.Chdir(projectRoot); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	terminalWidthFn = func() int { return wizardMinWidth }
+	isTTYFn = func() bool { return true }
+	t.Cleanup(func() {
+		terminalWidthFn = terminalWidth
+		isTTYFn = isTTY
+	})
+
+	cmd := initCmd
+	cmd.SetArgs([]string{"narrow-ok", "--no-open"})
+
+	var stdout bytes.Buffer
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = oldStdout }()
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = stdout.ReadFrom(r)
+		close(done)
+	}()
+
+	if err := runInit(cmd, []string{"narrow-ok"}); err != nil {
+		w.Close()
+		<-done
+		t.Fatalf("runInit returned error: %v", err)
+	}
+	_ = w.Close()
+	<-done
+
+	if strings.Contains(stdout.String(), "Terminal is too small") {
+		t.Fatalf("expected init to proceed at %d columns, got:\n%s", wizardMinWidth, stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(projectRoot, ".knowns", "config.json")); err != nil {
+		t.Fatalf("expected init to create config at %d columns: %v", wizardMinWidth, err)
+	}
 }
 
 func TestRenderCompatibilityInstructionContentUsesMCPBootstrap(t *testing.T) {
@@ -1243,7 +1326,7 @@ func assertNotContains(t *testing.T, content, want string) {
 	}
 }
 
-func TestBuildSemanticSettingsDeclaresQdrantVectorStoreDefaults(t *testing.T) {
+func TestBuildSemanticSettingsDeclaresQdrantBackendAndMode(t *testing.T) {
 	// Local builtin model.
 	ss := buildSemanticSettings(initConfig{EnableSemantic: true, SemanticModel: "gte-small", EmbeddingSource: "local"})
 	if ss == nil {
@@ -1252,21 +1335,21 @@ func TestBuildSemanticSettingsDeclaresQdrantVectorStoreDefaults(t *testing.T) {
 	if !ss.Enabled || ss.Provider != "local" || ss.Model != "gte-small" {
 		t.Fatalf("semantic settings = %#v", ss)
 	}
-	assertVectorStoreDefaults(t, ss.VectorStore)
+	assertVectorStoreDeclaration(t, ss.VectorStore)
 
 	// API provider.
 	ss = buildSemanticSettings(initConfig{EnableSemantic: true, SemanticModel: "openai-embedding", EmbeddingSource: "api"})
 	if ss == nil || ss.Provider != "api" || ss.Model != "openai-embedding" {
 		t.Fatalf("api semantic settings = %#v", ss)
 	}
-	assertVectorStoreDefaults(t, ss.VectorStore)
+	assertVectorStoreDeclaration(t, ss.VectorStore)
 
 	// Ollama provider.
 	ss = buildSemanticSettings(initConfig{EnableSemantic: true, SemanticModel: "qwen3-embedding:0.6b", EmbeddingSource: "ollama"})
 	if ss == nil || ss.Provider != "ollama" {
 		t.Fatalf("ollama semantic settings = %#v", ss)
 	}
-	assertVectorStoreDefaults(t, ss.VectorStore)
+	assertVectorStoreDeclaration(t, ss.VectorStore)
 
 	// Semantic disabled -> nil.
 	if ss := buildSemanticSettings(initConfig{EnableSemantic: false, SemanticModel: "gte-small"}); ss != nil {
@@ -1304,7 +1387,7 @@ func TestInitConfigWritesQdrantVectorStoreMetadataOnly(t *testing.T) {
 	if reloaded.Settings.SemanticSearch == nil || reloaded.Settings.SemanticSearch.VectorStore == nil {
 		t.Fatalf("persisted config missing vectorStore: %#v", reloaded.Settings.SemanticSearch)
 	}
-	assertVectorStoreDefaults(t, reloaded.Settings.SemanticSearch.VectorStore)
+	assertVectorStoreDeclaration(t, reloaded.Settings.SemanticSearch.VectorStore)
 
 	// No vector/embedding data may be written under project .knowns.
 	searchDir := filepath.Join(root, ".search")
@@ -1320,10 +1403,13 @@ func TestInitConfigWritesQdrantVectorStoreMetadataOnly(t *testing.T) {
 	}
 }
 
-func assertVectorStoreDefaults(t *testing.T, vs *models.SemanticVectorStoreSettings) {
+// assertVectorStoreDeclaration checks the declaration init writes: backend and
+// mode only. managedRoot, install, and retention must stay unwritten so they
+// keep resolving from current defaults rather than being frozen at init time.
+func assertVectorStoreDeclaration(t *testing.T, vs *models.SemanticVectorStoreSettings) {
 	t.Helper()
 	if vs == nil {
-		t.Fatal("vectorStore = nil, want declared defaults")
+		t.Fatal("vectorStore = nil, want declared backend and mode")
 	}
 	if vs.Backend != models.SemanticVectorBackendQdrant {
 		t.Fatalf("vectorStore.backend = %q, want qdrant", vs.Backend)
@@ -1331,13 +1417,28 @@ func assertVectorStoreDefaults(t *testing.T, vs *models.SemanticVectorStoreSetti
 	if vs.Mode != models.SemanticVectorStoreModeManaged {
 		t.Fatalf("vectorStore.mode = %q, want managed", vs.Mode)
 	}
-	if vs.Install != models.SemanticVectorStoreInstallLazy {
-		t.Fatalf("vectorStore.install = %q, want lazy (no install/start at init)", vs.Install)
+	if vs.Install != "" {
+		t.Fatalf("vectorStore.install = %q, want unset so the default resolves", vs.Install)
 	}
-	if vs.ManagedRoot != models.DefaultSemanticManagedRoot {
-		t.Fatalf("vectorStore.managedRoot = %q, want %q", vs.ManagedRoot, models.DefaultSemanticManagedRoot)
+	if vs.ManagedRoot != "" {
+		t.Fatalf("vectorStore.managedRoot = %q, want unset so the default resolves", vs.ManagedRoot)
 	}
-	if vs.Retention == nil || vs.Retention.PreviousGenerations == nil || *vs.Retention.PreviousGenerations != models.DefaultSemanticVectorRetentionGenerations || vs.Retention.PreviousGenerationTTL != models.DefaultSemanticVectorRetentionTTL {
-		t.Fatalf("vectorStore.retention = %#v, want defaults", vs.Retention)
+	if vs.Retention != nil {
+		t.Fatalf("vectorStore.retention = %#v, want unset so the default resolves", vs.Retention)
+	}
+
+	// The omitted fields must still resolve to the documented defaults.
+	res := models.ResolveSemanticVectorStore(
+		&models.SemanticSearchSettings{Enabled: true, VectorStore: vs}, nil, nil)
+	if res.ManagedRoot != models.DefaultSemanticManagedRoot {
+		t.Fatalf("resolved managedRoot = %q, want %q", res.ManagedRoot, models.DefaultSemanticManagedRoot)
+	}
+	if res.Install != models.SemanticVectorStoreInstallLazy {
+		t.Fatalf("resolved install = %q, want lazy (no install/start at init)", res.Install)
+	}
+	if res.Retention.PreviousGenerations == nil ||
+		*res.Retention.PreviousGenerations != models.DefaultSemanticVectorRetentionGenerations ||
+		res.Retention.PreviousGenerationTTL != models.DefaultSemanticVectorRetentionTTL {
+		t.Fatalf("resolved retention = %#v, want defaults", res.Retention)
 	}
 }

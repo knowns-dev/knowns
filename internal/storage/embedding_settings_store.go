@@ -95,11 +95,30 @@ func (s *EmbeddingSettingsStore) Load() (*EmbeddingSettings, error) {
 	if settings.Models == nil {
 		settings.Models = make(map[string]EmbeddingModel)
 	}
+	if settings.ProjectDefaults != nil {
+		if err := settings.ProjectDefaults.Settings.Normalize(); err != nil {
+			return nil, fmt.Errorf("normalize project defaults: %w", err)
+		}
+		if err := settings.ProjectDefaults.Settings.Validate(); err != nil {
+			return nil, fmt.Errorf("validate project defaults: %w", err)
+		}
+	}
 	return &settings, nil
 }
 
 // Save writes embedding settings to disk, creating parent directories if needed.
 func (s *EmbeddingSettingsStore) Save(settings *EmbeddingSettings) error {
+	if settings == nil {
+		return fmt.Errorf("embedding settings are required")
+	}
+	if settings.ProjectDefaults != nil {
+		if err := settings.ProjectDefaults.Settings.Normalize(); err != nil {
+			return fmt.Errorf("normalize project defaults: %w", err)
+		}
+		if err := settings.ProjectDefaults.Settings.Validate(); err != nil {
+			return fmt.Errorf("validate project defaults: %w", err)
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(s.filePath), 0755); err != nil {
 		return fmt.Errorf("create settings dir: %w", err)
 	}

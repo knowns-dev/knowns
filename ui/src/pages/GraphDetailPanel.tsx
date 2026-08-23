@@ -7,9 +7,7 @@ interface GraphDetailPanelProps {
 	node: GraphNode | null;
 	onClose: () => void;
 	onNavigate: (node: GraphNode) => void;
-	onShowImpact?: (nodeId: string) => void;
 	onSelectNode?: (nodeId: string) => void;
-	impactActive?: boolean;
 	references?: SelectedNodeReferences;
 }
 
@@ -52,6 +50,7 @@ const nodeTypeBadgeStyles: Record<GraphNode["type"] | "external", string> = {
 	doc: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
 	template: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
 	memory: "bg-green-500/10 text-green-600 dark:text-green-400",
+	decision: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
 	code: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
 	external: "bg-muted text-muted-foreground",
 };
@@ -133,7 +132,7 @@ function GraphReferenceList({
 	);
 }
 
-export function GraphDetailPanel({ node, onClose, onNavigate, onShowImpact, onSelectNode, impactActive, references }: GraphDetailPanelProps) {
+export function GraphDetailPanel({ node, onClose, onNavigate, onSelectNode, references }: GraphDetailPanelProps) {
 	if (!node) return null;
 
 	const [type, ...rest] = node.id.split(":");
@@ -245,7 +244,7 @@ export function GraphDetailPanel({ node, onClose, onNavigate, onShowImpact, onSe
 									{codeKind}
 								</span>
 							)}
-							{node.data.docPath && (
+							{typeof node.data.docPath === "string" && (
 								<span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground font-mono break-all">
 									{node.data.docPath as string}
 								</span>
@@ -270,7 +269,7 @@ export function GraphDetailPanel({ node, onClose, onNavigate, onShowImpact, onSe
 			</div>
 
 			<div className="px-3 pb-3 flex flex-col gap-1.5 shrink-0">
-				{(type === "task" || type === "doc") && (
+				{(type === "task" || type === "doc" || type === "memory" || type === "decision") && (
 					<button
 						type="button"
 						onClick={() => onNavigate(node)}
@@ -278,21 +277,6 @@ export function GraphDetailPanel({ node, onClose, onNavigate, onShowImpact, onSe
 					>
 						<ExternalLink className="w-3 h-3" />
 						Preview {type}
-					</button>
-				)}
-				{onShowImpact && (
-					<button
-						type="button"
-						onClick={() => onShowImpact(node.id)}
-						className={cn(
-							"flex items-center gap-1.5 w-full rounded-md border px-3 py-1.5 text-xs font-medium transition-colors justify-center",
-							impactActive
-								? "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30"
-								: "text-muted-foreground hover:text-foreground hover:bg-accent",
-						)}
-					>
-						<Zap className="w-3 h-3" />
-						{impactActive ? "Impact Active" : "Show Impact"}
 					</button>
 				)}
 			</div>

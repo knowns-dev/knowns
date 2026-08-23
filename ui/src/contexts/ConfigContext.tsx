@@ -1,6 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { getConfig, patchConfig } from "../api/client";
-import type { OpenCodeModelSettings } from "../models/chat";
 import {
 	DEFAULT_TASK_LIFECYCLE_SETTINGS,
 	type TaskLifecycleSettings,
@@ -29,6 +28,7 @@ export interface Config {
 	defaultAssignee?: string;
 	defaultPriority?: "low" | "medium" | "high";
 	defaultLabels?: string[];
+	defaultTaskIdPrefix?: string;
 	timeFormat?: "12h" | "24h";
 	editor?: string;
 	visibleColumns?: string[];
@@ -40,10 +40,7 @@ export interface Config {
 		port?: number;
 		password?: string;
 	};
-	opencodeModels?: OpenCodeModelSettings;
 	platforms?: string[];
-	enableChatUI?: boolean;
-	opencodeInstalled?: boolean;
 	semanticSearch?: {
 		enabled?: boolean;
 		model?: string;
@@ -92,8 +89,6 @@ interface ConfigContextType {
 	error: Error | null;
 	updateConfig: (updates: ConfigPatch) => Promise<void>;
 	refetch: () => Promise<void>;
-	/** True when the "opencode" platform is enabled (or platforms is unset = all enabled). */
-	chatUIEnabled: boolean;
 }
 
 const ConfigContext = createContext<ConfigContextType | undefined>(undefined);
@@ -103,6 +98,7 @@ const DEFAULT_CONFIG: Config = {
 	name: "Knowns",
 	defaultPriority: "medium",
 	defaultLabels: [],
+	defaultTaskIdPrefix: "",
 	statuses: ["todo", "in-progress", "in-review", "done", "blocked", "on-hold", "urgent"],
 	visibleColumns: ["todo", "in-progress", "in-review", "done", "blocked"],
 	statusColors: {},
@@ -115,7 +111,6 @@ function editablePatch(updates: ConfigPatch): ConfigPatch {
 		localONNX: _readOnlyLocalONNX,
 		id: _readOnlyID,
 		createdAt: _readOnlyCreatedAt,
-		opencodeInstalled: _readOnlyOpenCodeInstalled,
 		...patch
 	} = updates;
 	return patch;
@@ -220,7 +215,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
 				error,
 				updateConfig,
 				refetch: fetchConfig,
-				chatUIEnabled: config.enableChatUI !== false && config.opencodeInstalled !== false,
 			}}
 		>
 			{children}

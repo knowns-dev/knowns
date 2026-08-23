@@ -125,9 +125,8 @@ test.describe("Dark Mode Persistence", () => {
 			expect(htmlClass).toContain("dark");
 		});
 
-		await test.step("Navigate to kanban - still dark", async () => {
-			await page.getByText("Kanban", { exact: true }).first().click();
-			await expect(page).toHaveURL(/\/kanban/);
+		await test.step("Switch to the board view - still dark", async () => {
+			await page.getByRole("button", { name: "Board view" }).click();
 			const htmlClass = await page.locator("html").getAttribute("class");
 			expect(htmlClass).toContain("dark");
 		});
@@ -200,9 +199,10 @@ test.describe("Dark Mode on All Pages", () => {
 		});
 
 		await test.step("Kanban columns visible in dark mode", async () => {
-			await expect(page.getByText("To Do").first()).toBeVisible();
-			await expect(page.getByText("In Progress").first()).toBeVisible();
-			await expect(page.getByText("Done", { exact: true }).first()).toBeVisible();
+			const board = page.locator("[data-board-column]");
+			await expect(board.filter({ hasText: "To Do" }).first()).toBeVisible();
+			await expect(board.filter({ hasText: "In Progress" }).first()).toBeVisible();
+			await expect(board.filter({ hasText: "Done" }).first()).toBeVisible();
 		});
 
 		await test.step("Task cards visible in dark mode", async () => {
@@ -242,7 +242,7 @@ test.describe("Dark Mode on All Pages", () => {
 
 		await test.step("Task detail visible in dark mode", async () => {
 			await expect(page.getByRole("heading", { name: "Dark Mode Task", exact: true })).toBeVisible();
-			await expect(page.getByText("Test in dark mode")).toBeVisible();
+			await expect(page.getByText("Test in dark mode").first()).toBeVisible();
 		});
 
 		await test.step("Dark mode still active in detail sheet", async () => {

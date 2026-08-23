@@ -12,18 +12,16 @@ const defaultCheckTimeout = 2 * time.Second
 type CheckFunc func(context.Context) (CheckResult, error)
 
 type Checker struct {
-	ID             string
-	Scope          Scope
-	Timeout        time.Duration
-	RequiresOnline bool
-	Check          CheckFunc
+	ID      string
+	Scope   Scope
+	Timeout time.Duration
+	Check   CheckFunc
 }
 
 type RunOptions struct {
 	Project        ProjectInfo
 	Scopes         []Scope
 	Strict         bool
-	Online         bool
 	DefaultTimeout time.Duration
 }
 
@@ -53,7 +51,6 @@ func Run(ctx context.Context, opts RunOptions, checkers []Checker) (Result, erro
 	result := Result{
 		SchemaVersion: SchemaVersion,
 		Strict:        opts.Strict,
-		Online:        opts.Online,
 		Project:       opts.Project,
 		Checks:        make([]CheckResult, 0, len(selected)),
 	}
@@ -69,7 +66,7 @@ func Run(ctx context.Context, opts RunOptions, checkers []Checker) (Result, erro
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
-		checkResult, err := runChecker(ctx, checker, timeout, opts.Online)
+		checkResult, err := runChecker(ctx, checker, timeout)
 		if err != nil {
 			return Result{}, err
 		}
@@ -120,17 +117,7 @@ type checkerOutcome struct {
 	panicked bool
 }
 
-func runChecker(parent context.Context, checker Checker, fallbackTimeout time.Duration, online bool) (CheckResult, error) {
-	if checker.RequiresOnline && !online {
-		return CheckResult{
-			ID:         checker.ID,
-			Scope:      checker.Scope,
-			Status:     StatusSkip,
-			Summary:    "Online check disabled",
-			SkipReason: "online_disabled",
-		}, nil
-	}
-
+func runChecker(parent context.Context, checker Checker, fallbackTimeout time.Duration) (CheckResult, error) {
 	timeout := checker.Timeout
 	if timeout <= 0 {
 		timeout = fallbackTimeout

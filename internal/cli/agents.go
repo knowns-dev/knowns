@@ -15,9 +15,8 @@ type agentPlatform struct {
 	Label    string // display name
 }
 
-// knownPlatforms lists the canonical guidance file plus supported AI agent platforms.
+// knownPlatforms lists the supported AI agent platforms.
 var knownPlatforms = []agentPlatform{
-	{Name: "knowns", FileName: canonicalInstructionFile, Label: "Knowns Canonical Guide"},
 	{Name: "claude", FileName: "CLAUDE.md", Label: "Claude Code"},
 	{Name: "opencode", FileName: "OPENCODE.md", Label: "OpenCode"},
 	{Name: "gemini", FileName: "GEMINI.md", Label: "Google Gemini"},
@@ -28,8 +27,8 @@ var knownPlatforms = []agentPlatform{
 var agentsCmd = &cobra.Command{
 	Use:   "agents",
 	Short: "Manage agent instruction files",
-	Long: `Manage the canonical guidance file and AI agent instruction files
-(KNOWNS.md, CLAUDE.md, OPENCODE.md, GEMINI.md, AGENTS.md,
+	Long: `Manage AI agent instruction files
+(CLAUDE.md, OPENCODE.md, GEMINI.md, AGENTS.md,
 .github/copilot-instructions.md).
 
 Shows the status of instruction files for each supported AI platform and

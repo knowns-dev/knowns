@@ -7,7 +7,7 @@ Dùng bộ docs này khi bạn muốn:
 - setup Knowns trong một repository có sẵn
 - giữ project work, decision, và doc ở nơi cả người lẫn AI đều đọc được
 - kết nối assistant qua MCP, skill, hoặc lightweight shim files
-- dùng Web UI để xem board, doc, graph, và chat workflows
+- dùng Web UI để xem board, doc, graph, và config
 
 Nội dung tiếng Việt bám theo `docs/en/` nhưng viết lại cho dễ đọc với developer Việt. Các feature name như task, doc, memory, template, search, MCP, skill, Web UI được giữ nguyên để khớp với CLI và UI.
 

@@ -85,7 +85,7 @@ knowns sync
 ## Choosing a surface
 
 - Use the CLI when you want fast commands, scripts, or terminal-first work.
-- Use the Web UI when you want a board, doc browser, graph view, config pages, or chat workflow.
+- Use the Web UI when you want a board, doc browser, graph view, or config pages.
 - Use MCP when an AI assistant needs structured access to tasks, docs, search, memory, templates, and validation.
 - Use skills when you want agent-side workflows such as spec creation, implementation, review, or full flow orchestration.
 

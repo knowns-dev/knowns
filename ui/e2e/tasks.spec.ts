@@ -40,7 +40,8 @@ test.describe("Tasks Page", () => {
 
 		await test.step("Tasks heading is visible", async () => {
 			await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
-			await expect(page.getByText("Plan, review, and recover project work across its lifecycle.")).toBeVisible();
+			await expect(page.getByText(/^\d+ tasks?$/).first()).toBeVisible();
+			await page.getByRole("button", { name: "Table view" }).click();
 			await expect(page.getByRole("button", { name: "Table view" })).toHaveAttribute("aria-pressed", "true");
 		});
 

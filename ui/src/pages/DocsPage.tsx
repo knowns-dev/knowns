@@ -10,6 +10,8 @@ import {
 	Minimize2,
 	Menu,
 	History,
+	PanelLeftClose,
+	PanelLeftOpen,
 } from "lucide-react";
 import { MDEditor } from "../components/editor";
 import { Button } from "../components/ui/button";
@@ -25,7 +27,7 @@ import { Sheet, SheetContent, SheetTitle } from "../components/ui/sheet";
 
 import { DocsDocHeader } from "./docs/DocsDocHeader";
 import { DocsCreateView } from "./docs/DocsCreateView";
-import { DocsEmptyState } from "./docs/DocsEmptyState";
+import { DocsLibrary } from "../components/organisms/DocsLibrary";
 import { DocMiniGraph } from "./docs/DocMiniGraph";
 import { DocHistorySheet } from "./docs/DocHistorySheet";
 import { MDRenderWithHighlight } from "../components/editor/MDRenderWithHighlight";
@@ -72,6 +74,7 @@ function DocsPageInner() {
 	const [docSearchQuery, setDocSearchQuery] = useState("");
 	const [lineHighlight, setLineHighlight] = useState<{ start: number; end: number } | null>(null);
 	const [wideMode, setWideMode] = useState(() => localStorage.getItem("docs-wide-mode") === "true");
+	const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("docs-sidebar-collapsed") === "true");
 	const [historyOpen, setHistoryOpen] = useState(false);
 	const [metaTitle, setMetaTitle] = useState("");
 	const [metaDescription, setMetaDescription] = useState("");
@@ -143,6 +146,7 @@ function DocsPageInner() {
 
 	// --- Effects ---
 	useEffect(() => { localStorage.setItem("docs-wide-mode", String(wideMode)); }, [wideMode]);
+	useEffect(() => { localStorage.setItem("docs-sidebar-collapsed", String(sidebarCollapsed)); }, [sidebarCollapsed]);
 
 	useEffect(() => {
 		if (selectedDoc) {
@@ -338,11 +342,17 @@ function DocsPageInner() {
 		</div>
 	);
 
+	// With no doc open the page is the Docs Library: a full-width browse view.
+	// The navigation sidebar only earns its space once a doc is being read.
+	const libraryMode = !selectedDoc && !showCreateView;
+
 	return (
 		<div className="h-full flex overflow-hidden bg-background">
-			<aside className="hidden lg:flex w-[300px] xl:w-[320px] shrink-0 bg-[#fafaf8] dark:bg-muted/10 border-r border-border/40">
-				<div className="h-full w-full px-3 py-5">{sidebarContent}</div>
-			</aside>
+			{!libraryMode && !sidebarCollapsed && (
+				<aside className="hidden lg:flex w-[300px] xl:w-[320px] shrink-0 bg-[#fafaf8] dark:bg-muted/10 border-r border-border/40">
+					<div className="h-full w-full px-3 py-5">{sidebarContent}</div>
+				</aside>
+			)}
 
 			<div className="min-w-0 flex-1 flex flex-col overflow-hidden">
 				<Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
@@ -360,6 +370,16 @@ function DocsPageInner() {
 						<div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 border-b border-border/40 shrink-0 bg-background/90 backdrop-blur-sm">
 							<Button variant="ghost" size="sm" onClick={() => setMobileSidebarOpen(true)} className="h-7 px-2 text-muted-foreground hover:text-foreground lg:hidden">
 								<Menu className="w-3.5 h-3.5" />
+							</Button>
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+								aria-pressed={sidebarCollapsed}
+								className="hidden h-7 px-2 text-muted-foreground hover:text-foreground lg:inline-flex"
+								title={sidebarCollapsed ? "Show doc list" : "Hide doc list"}
+							>
+								{sidebarCollapsed ? <PanelLeftOpen className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
 							</Button>
 							<Button variant="ghost" size="sm" onClick={() => navigateToFolder(selectedDoc.folder || currentFolder || null)} className="h-7 px-2 text-muted-foreground hover:text-foreground">
 								<ArrowLeft className="w-3.5 h-3.5 sm:mr-1" /><span className="hidden sm:inline text-xs">Back</span>
@@ -472,7 +492,15 @@ function DocsPageInner() {
 						onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
 					/>
 				) : (
-					<DocsEmptyState currentFolder={currentFolder} onCreateDoc={openCreateView} onOpenMobileSidebar={() => setMobileSidebarOpen(true)} />
+					<DocsLibrary
+						docs={docs}
+						loading={loading}
+						error={error}
+						initialFolder={currentFolder}
+						onCreateDoc={openCreateView}
+						onSelectDoc={setSelectedDoc}
+						onRetry={loadDocs}
+					/>
 				)}
 			</div>
 			{selectedDoc && (

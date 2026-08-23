@@ -167,6 +167,16 @@ func TestDefaultSemanticVectorStoreSettings(t *testing.T) {
 	if ptr := DefaultSemanticVectorStoreSettingsPtr(); ptr == nil || ptr.Backend != settings.Backend || ptr.Mode != settings.Mode || ptr.Install != settings.Install || ptr.ManagedRoot != settings.ManagedRoot || ptr.Retention == nil || semanticVectorRetentionGenerationsValue(ptr.Retention) != semanticVectorRetentionGenerationsValue(settings.Retention) || ptr.Retention.PreviousGenerationTTL != settings.Retention.PreviousGenerationTTL {
 		t.Fatalf("DefaultSemanticVectorStoreSettingsPtr = %#v, want defaults", ptr)
 	}
+
+	// The init-time declaration records backend and mode only, so the remaining
+	// fields keep resolving from current defaults instead of being frozen.
+	decl := DeclaredSemanticVectorStoreSettingsPtr()
+	if decl == nil || decl.Backend != DefaultSemanticVectorBackend || decl.Mode != DefaultSemanticVectorMode {
+		t.Fatalf("DeclaredSemanticVectorStoreSettingsPtr = %#v, want backend and mode", decl)
+	}
+	if decl.ManagedRoot != "" || decl.Install != "" || decl.Retention != nil {
+		t.Fatalf("DeclaredSemanticVectorStoreSettingsPtr = %#v, want default-mirroring fields unset", decl)
+	}
 }
 
 func TestSemanticVectorStoreJSONRoundTrip(t *testing.T) {

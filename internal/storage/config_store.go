@@ -29,6 +29,9 @@ func (cs *ConfigStore) Load() (*models.Project, error) {
 	if err := json.Unmarshal(data, &p); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	if err := p.Settings.Normalize(); err != nil {
+		return nil, fmt.Errorf("normalize config: %w", err)
+	}
 	if err := p.Settings.Validate(); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
@@ -39,6 +42,9 @@ func (cs *ConfigStore) Load() (*models.Project, error) {
 func (cs *ConfigStore) Save(project *models.Project) error {
 	if project == nil {
 		return fmt.Errorf("save config: project is required")
+	}
+	if err := project.Settings.Normalize(); err != nil {
+		return fmt.Errorf("normalize config: %w", err)
 	}
 	if err := project.Settings.Validate(); err != nil {
 		return fmt.Errorf("validate config: %w", err)
@@ -76,8 +82,16 @@ func (cs *ConfigStore) Set(key string, value any) error {
 	if err := json.Unmarshal(data, &project); err != nil {
 		return fmt.Errorf("parse config for validation: %w", err)
 	}
+	if err := project.Settings.Normalize(); err != nil {
+		return fmt.Errorf("normalize config: %w", err)
+	}
 	if err := project.Settings.Validate(); err != nil {
 		return fmt.Errorf("validate config: %w", err)
+	}
+	// Persist the canonical (uppercased/trimmed) prefix so raw-map writes do not
+	// keep the human-friendly input form.
+	if key == "settings.defaultTaskIdPrefix" || project.Settings.DefaultTaskIDPrefix != "" {
+		setNestedKey(raw, "settings.defaultTaskIdPrefix", project.Settings.DefaultTaskIDPrefix)
 	}
 	return writeJSON(cs.configPath(), raw)
 }
@@ -108,13 +122,4 @@ func (cs *ConfigStore) initDefault(name string) error {
 		Settings:  models.DefaultProjectSettings(),
 	}
 	return writeJSON(cs.configPath(), p)
-}
-
-// GetOpenCodeServerConfig returns the OpenCode server configuration if set.
-func (cs *ConfigStore) GetOpenCodeServerConfig() *models.OpenCodeServerConfig {
-	proj, err := cs.Load()
-	if err != nil {
-		return nil
-	}
-	return proj.Settings.OpenCodeServerConfig
 }

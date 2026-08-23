@@ -26,7 +26,6 @@ var platformInstructionFiles = map[string]string{
 }
 
 var allInstructionFiles = []string{
-	"KNOWNS.md",
 	"CLAUDE.md",
 	"OPENCODE.md",
 	"GEMINI.md",
@@ -246,19 +245,18 @@ func aiInstructionsChecker(state *localState) Checker {
 			}
 			projectRoot := filepath.Dir(state.store.Root)
 			platforms := normalizedStrings(project.Settings.Platforms)
-			expected := []string{"KNOWNS.md"}
-			if len(platforms) > 0 {
-				for _, platform := range platforms {
-					if file := platformInstructionFiles[platform]; file != "" {
-						expected = append(expected, file)
-					}
+			expected := make([]string, 0, len(platforms))
+			for _, platform := range platforms {
+				if file := platformInstructionFiles[platform]; file != "" {
+					expected = append(expected, file)
 				}
-				expected = normalizedStrings(expected)
-			} else {
+			}
+			expected = normalizedStrings(expected)
+			if len(expected) == 0 {
 				expected = existingPaths(projectRoot, allInstructionFiles, state.deps.exists)
-				if len(expected) == 0 {
-					return subsystemDisabled("No local AI instruction integration is configured", "not_configured"), nil
-				}
+			}
+			if len(expected) == 0 {
+				return subsystemDisabled("No local AI instruction integration is configured", "not_configured"), nil
 			}
 
 			missing := make([]string, 0)
@@ -277,9 +275,8 @@ func aiInstructionsChecker(state *localState) Checker {
 					missing = append(missing, filepath.ToSlash(relativePath))
 					continue
 				}
-				if relativePath != "KNOWNS.md" &&
-					(!strings.Contains(string(data), knownsGuidelinesStart) ||
-						!strings.Contains(string(data), knownsGuidelinesEnd)) {
+				if !strings.Contains(string(data), knownsGuidelinesStart) ||
+					!strings.Contains(string(data), knownsGuidelinesEnd) {
 					outOfSync = append(outOfSync, filepath.ToSlash(relativePath))
 				}
 			}

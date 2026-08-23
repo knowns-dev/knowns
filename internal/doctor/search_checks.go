@@ -257,9 +257,16 @@ func searchModelChecker(state *localState) Checker {
 					},
 				}, nil
 			}
+			// An Ollama model is only known to be registered here; whether it is
+			// actually pulled and served is owned by search.provider-endpoint,
+			// so this summary must not claim more than it verified.
+			summary := "Configured semantic model is available"
+			if provider == "ollama" {
+				summary = "Configured semantic model is registered"
+			}
 			return CheckResult{
 				Status:   StatusPass,
-				Summary:  "Configured semantic model is available",
+				Summary:  summary,
 				Evidence: evidence,
 			}, nil
 		},

@@ -105,7 +105,7 @@ test.describe("Task Detail Interactions", () => {
 		});
 
 		await test.step("Description section visible", async () => {
-			await expect(page.getByText("A complete task")).toBeVisible();
+			await expect(page.locator('[role="dialog"]').getByText("A complete task")).toBeVisible();
 		});
 
 		await test.step("Acceptance Criteria section visible", async () => {
@@ -188,7 +188,11 @@ test.describe("Task Detail Interactions", () => {
 		});
 
 		await test.step("Click 'Add label'", async () => {
-			const addLabelBtn = page.getByText(/add label/i).first();
+			// Scope to the sheet: the board card behind it also mentions labels.
+			const addLabelBtn = page
+				.locator('[role="dialog"]')
+				.getByRole("button", { name: /add label/i })
+				.first();
 			await expect(addLabelBtn).toBeVisible();
 			await addLabelBtn.click();
 		});
@@ -477,9 +481,15 @@ test.describe("Full User Workflows (no CLI)", () => {
 			await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 		});
 
-		await test.step("Go to Kanban via sidebar", async () => {
-			await page.getByText("Kanban", { exact: true }).first().click();
-			await expect(page).toHaveURL(/\/kanban/);
+		await test.step("Go to Tasks via sidebar, then the board view", async () => {
+			// The rework folded /kanban into Tasks, so the board is a view, not a nav entry.
+			await page.getByText("Tasks", { exact: true }).first().click();
+			await expect(page).toHaveURL(/\/tasks/);
+			await page.getByRole("button", { name: "Board view" }).click();
+			await expect(page.getByRole("button", { name: "Board view" })).toHaveAttribute(
+				"aria-pressed",
+				"true",
+			);
 		});
 
 		await test.step("Go to Docs via sidebar", async () => {

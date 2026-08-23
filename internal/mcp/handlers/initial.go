@@ -76,6 +76,11 @@ func writeProjectState(b *strings.Builder, store *storage.Store, statuses []lsp.
 	payload := readiness.BuildReadiness(store, readiness.Options{})
 	inProgress := countInProgressTasks(store)
 	fmt.Fprintf(b, "Project: %s\n", payload.ProjectName)
+	if project, err := store.Config.Load(); err == nil && project.Settings.DefaultTaskIDPrefix != "" {
+		fmt.Fprintf(b, "Task IDs: default=%s | format=<PREFIX>-XXXXXX | suffix=Crockford Base32\n", project.Settings.DefaultTaskIDPrefix)
+	} else {
+		b.WriteString("Task IDs: legacy 6-char base36 default | custom prefixes supported\n")
+	}
 	if payload.Knowledge != nil {
 		k := payload.Knowledge
 		fmt.Fprintf(b, "Knowledge: docs: %d | tasks: %d (%d in-progress) | templates: %d | memories: %dp, %dg (%d legacy Decision) | decisions: %d current, %d draft, %d historical\n",

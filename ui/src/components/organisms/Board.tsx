@@ -1,12 +1,9 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
-import { useRouterState } from "@tanstack/react-router";
 import { Eye, EyeOff, ClipboardList, ChevronDown, ChevronUp, FileText } from "lucide-react";
 import type { Task, TaskStatus } from "@/ui/models/task";
 import { api } from "../../api/client";
-import { navigateTo } from "../../lib/navigation";
 import { useConfig } from "../../contexts/ConfigContext";
 import { useNewTaskIds } from "../../hooks/useNewTaskIds";
-import { TaskDetailSheet } from "./TaskDetail/TaskDetailSheet";
 import { ScrollArea, ScrollBar } from "../ui/ScrollArea";
 import {
 	KanbanProvider,
@@ -28,6 +25,7 @@ import { useIsMobile } from "@/ui/hooks/useMobile";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { toast } from "../ui/sonner";
 import { TaskLifecycleBadge } from "../molecules/TaskLifecycleBadge";
+import { LabelList, PriorityBadge } from "../molecules";
 
 // Default column labels (can be overridden by config)
 const DEFAULT_COLUMN_LABELS: Record<string, string> = {
@@ -69,10 +67,11 @@ interface BoardProps {
 	tasks: Task[];
 	loading: boolean;
 	onTasksUpdate: (tasks: Task[]) => void;
+	/** Opening a Task is the page's job: it owns the single TaskDetailSheet. */
+	onTaskClick: (task: Task) => void;
 }
 
-export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
-	const location = useRouterState({ select: (state) => state.location });
+export default function Board({ tasks, loading, onTasksUpdate, onTaskClick }: BoardProps) {
 	const { config, updateConfig } = useConfig();
 	const newTaskIds = useNewTaskIds(tasks);
 	const [visibleColumns, setVisibleColumns] = useState<Set<TaskStatus>>(new Set());
@@ -139,21 +138,6 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 	const [kanbanData, setKanbanData] = useState<KanbanTaskItem[]>(kanbanDataFromTasks);
 
 	// Get selected task from URL hash
-	const getSelectedTask = (): Task | null => {
-		const match = location.pathname.match(/^\/kanban\/([^?]+)/);
-		if (!match) return null;
-
-		const taskId = match[1];
-		return tasks.find((t) => t.id === taskId) || null;
-	};
-
-	const [selectedTask, setSelectedTask] = useState<Task | null>(getSelectedTask());
-
-	// Listen to route changes and tasks updates to update selected task
-	useEffect(() => {
-		setSelectedTask(getSelectedTask());
-	}, [location.pathname, tasks]);
-
 	useEffect(() => {
 		if (!isDragging) {
 			setKanbanData(kanbanDataFromTasks);
@@ -297,22 +281,6 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 		);
 	}
 
-	const handleTaskClick = (task: Task) => {
-		navigateTo(`/kanban/${task.id}`);
-	};
-
-	const handleModalClose = () => {
-		navigateTo("/kanban");
-	};
-
-	const handleTaskUpdate = (updatedTask: Task) => {
-		onTasksUpdate(tasks.map((t) => (t.id === updatedTask.id ? updatedTask : t)));
-	};
-
-	const handleNavigateToTask = (taskId: string) => {
-		navigateTo(`/kanban/${taskId}`);
-	};
-
 	return (
 		<div className="flex flex-col h-full">
 			{/* Column Visibility Controls */}
@@ -426,7 +394,7 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 												item={item}
 												isNew={newTaskIds.has(item.id)}
 												statusColors={statusColors}
-												onClick={() => handleTaskClick(item.task)}
+												onClick={() => onTaskClick(item.task)}
 											/>
 										)}
 									</KanbanCards>
@@ -443,17 +411,6 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 				)}
 				<ScrollBar orientation="horizontal" />
 			</ScrollArea>
-
-			<TaskDetailSheet
-				task={selectedTask}
-				allTasks={tasks}
-				onClose={handleModalClose}
-				onUpdate={handleTaskUpdate}
-				onLifecycleChange={() => {
-					api.getTasks().then(onTasksUpdate).catch(console.error);
-				}}
-				onNavigateToTask={handleNavigateToTask}
-			/>
 		</div>
 	);
 }
@@ -486,28 +443,27 @@ function TaskKanbanCard({ item, isNew, statusColors, onClick }: TaskKanbanCardPr
 				tabIndex={0}
 				className="cursor-pointer"
 			>
-				<div className="flex items-center justify-between gap-2 mb-1">
-					<span className="text-xs font-mono text-muted-foreground">
-						#{task.id}
-					</span>
+				<div className="mb-1.5 flex items-center justify-between gap-2">
+					<div className="flex min-w-0 items-center gap-2">
+						<PriorityBadge priority={task.priority} />
+						<span className="truncate font-mono text-[11px] text-muted-foreground">
+							#{task.id}
+						</span>
+					</div>
 					<div className="flex items-center gap-1 flex-wrap justify-end">
 						<TaskLifecycleBadge state={task.lifecycleState} />
-						{task.priority === "high" && (
-							<span className="text-xs text-red-600 dark:text-red-400 font-medium">
-								HIGH
-							</span>
-						)}
-						{task.priority === "medium" && (
-							<span className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">
-								MED
-							</span>
-						)}
 					</div>
 				</div>
 
-				<h3 className="font-medium text-sm mb-2 line-clamp-2 text-foreground">
+				<h3 className="mb-1 line-clamp-2 text-sm font-medium leading-5 text-foreground">
 					{task.title}
 				</h3>
+
+				{task.description && (
+					<p className="mb-2 line-clamp-2 text-xs leading-4 text-muted-foreground">
+						{task.description}
+					</p>
+				)}
 
 				{totalAC > 0 && (
 					<div className="flex items-center gap-1.5 text-xs mb-2 text-muted-foreground">
@@ -519,16 +475,7 @@ function TaskKanbanCard({ item, isNew, statusColors, onClick }: TaskKanbanCardPr
 				)}
 
 				{(task.labels ?? []).length > 0 && (
-					<div className="flex flex-wrap gap-1 mb-2">
-						{(task.labels ?? []).map((label) => (
-							<span
-								key={label}
-								className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground"
-							>
-								{label}
-							</span>
-						))}
-					</div>
+					<LabelList labels={task.labels ?? []} maxVisible={2} className="mb-2" />
 				)}
 
 				{/* Spec link */}

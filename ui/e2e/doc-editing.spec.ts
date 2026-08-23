@@ -261,10 +261,12 @@ test.describe("Inline Metadata Editing (Notion-like)", () => {
 			const backBtn = page.locator("button").filter({ hasText: "Back" }).first();
 			await backBtn.click();
 			await page.waitForTimeout(1000);
-			// Wait for the file manager to be visible
-			await expect(page.getByText("Browse your docs").first()).toBeVisible();
-			// Re-open the doc using its path, which remains visible even if title rendering changes
-			await openDocFromList(page, "desc-test-doc");
+			// Wait for the file manager to be visible. The rework labels entries
+			// "Open <title>" rather than exposing the path slug.
+			await expect(
+				page.getByRole("button", { name: "Open Desc Test Doc" }).first(),
+			).toBeVisible();
+			await openDocFromList(page, "Open Desc Test Doc");
 			await page.waitForTimeout(500);
 			const descInput = page.locator('input[placeholder="Add a description..."]').first();
 			await expect(descInput).toBeVisible();

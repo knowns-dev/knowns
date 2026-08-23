@@ -7,7 +7,7 @@ Use these docs if you want to:
 - set up Knowns in an existing repository
 - keep project work, decisions, and docs readable by both humans and AI
 - connect assistants through MCP, skills, or lightweight shim files
-- use the Web UI for boards, docs, graph views, and chat workflows
+- use the Web UI for boards, docs, graph views, and config
 
 ## Core ideas
 

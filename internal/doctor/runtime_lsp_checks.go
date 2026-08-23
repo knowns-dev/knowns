@@ -3,11 +3,9 @@ package doctor
 import (
 	"context"
 	"fmt"
-	"sort"
 
 	"github.com/howznguyen/knowns/internal/lsp"
 	"github.com/howznguyen/knowns/internal/models"
-	"github.com/howznguyen/knowns/internal/services"
 	"github.com/howznguyen/knowns/internal/storage"
 )
 
@@ -20,67 +18,16 @@ func runtimeCheckers(store *storage.Store, snapshot *serviceSnapshot) []Checker 
 			if store == nil {
 				return skippedForMissingProject(), nil
 			}
-			statuses, err := snapshot.get()
-			if err != nil {
+			// Knowns manages no runtime service of its own any more. The
+			// snapshot is still read so a failing service probe surfaces as a
+			// checker error instead of a silent skip.
+			if _, err := snapshot.get(); err != nil {
 				return CheckResult{}, err
 			}
-			applicable := make([]services.ServiceStatus, 0)
-			for _, status := range statuses {
-				if status.Type == "opencode" {
-					applicable = append(applicable, status)
-				}
-			}
-			if len(applicable) == 0 {
-				return CheckResult{
-					Status:     StatusSkip,
-					Summary:    "No configured managed runtime services",
-					SkipReason: "not_configured",
-				}, nil
-			}
-
-			states := make([]string, 0, len(applicable))
-			warnings := 0
-			disabled := 0
-			for _, status := range applicable {
-				states = append(states, status.Name+":"+status.Status)
-				switch status.Status {
-				case "disabled":
-					disabled++
-				case "running":
-				// Healthy.
-				default:
-					warnings++
-				}
-			}
-			sort.Strings(states)
-			if disabled == len(applicable) {
-				return CheckResult{
-					Status:     StatusSkip,
-					Summary:    "Managed runtime services are disabled",
-					Evidence:   Evidence{"services": states},
-					SkipReason: "config_disabled",
-				}, nil
-			}
-			if warnings > 0 {
-				return CheckResult{
-					Status:  StatusWarn,
-					Summary: fmt.Sprintf("%d managed runtime services need attention", warnings),
-					Evidence: Evidence{
-						"services": states,
-						"warnings": warnings,
-					},
-					Remediation: &Remediation{
-						Description: "Inspect managed runtime status and start or repair configured services.",
-						Command:     "knowns browser",
-					},
-				}, nil
-			}
 			return CheckResult{
-				Status:  StatusPass,
-				Summary: "Configured managed runtime services are healthy",
-				Evidence: Evidence{
-					"services": states,
-				},
+				Status:     StatusSkip,
+				Summary:    "No configured managed runtime services",
+				SkipReason: "not_configured",
 			}, nil
 		},
 	}}

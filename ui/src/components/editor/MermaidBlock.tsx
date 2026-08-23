@@ -39,7 +39,8 @@ function initMermaid(isDark: boolean) {
     startOnLoad: false,
     theme: theme,
     securityLevel: "loose",
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',
+    fontFamily:
+      '"Geist Variable", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',
     themeVariables: isDark
       ? {
           primaryColor: "#3d4144",

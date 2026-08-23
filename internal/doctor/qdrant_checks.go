@@ -131,7 +131,11 @@ func qdrantCollectionChecker(state *localState) Checker {
 			if snapshot.Runtime.State == qdrantruntime.StatusRunning && snapshot.Healthy {
 				remediation = &Remediation{Description: "Rebuild the active collection explicitly, then rerun doctor.", Command: "knowns search index --wait"}
 			}
-			return CheckResult{Status: StatusWarn, Summary: "Qdrant collection cannot be inspected", Evidence: Evidence{"probed": false, "errorCode": snapshot.ProbeErrorCode}, Remediation: remediation}, nil
+			if snapshot.Runtime.State == qdrantruntime.StatusNotInstalled {
+				remediation = &Remediation{Description: "Install the managed Qdrant binary explicitly.", Command: "knowns qdrant install"}
+			}
+			evidence := Evidence{"probed": false, "errorCode": qdrantProbeErrorCode(snapshot)}
+			return CheckResult{Status: StatusWarn, Summary: "Qdrant collection cannot be inspected", Evidence: evidence, Remediation: remediation}, nil
 		}
 		evidence := Evidence{"probed": true, "exists": snapshot.Collection.Exists, "dimensions": snapshot.Collection.Dimensions, "points": snapshot.Collection.PointsCount, "status": snapshot.Collection.Status}
 		if !snapshot.Collection.Exists {
@@ -226,6 +230,26 @@ func inspectQdrantReadOnly(ctx context.Context, store *storage.Store) (qdrantDia
 	}
 	snapshot.Collection, snapshot.Probed = info, true
 	return snapshot, nil
+}
+
+// qdrantProbeErrorCode names why a collection could not be inspected. The
+// snapshot only carries a code for probes that were attempted and failed, so
+// the reasons that stop doctor before the probe are named here instead of
+// reporting an empty code.
+func qdrantProbeErrorCode(snapshot qdrantDiagnosticSnapshot) string {
+	if snapshot.ProbeErrorCode != "" {
+		return snapshot.ProbeErrorCode
+	}
+	switch {
+	case snapshot.Runtime.State == qdrantruntime.StatusNotInstalled:
+		return "qdrant_not_installed"
+	case snapshot.Runtime.State != qdrantruntime.StatusRunning:
+		return "qdrant_runtime_not_running"
+	case snapshot.Pointer == nil:
+		return "qdrant_pointer_missing"
+	default:
+		return "qdrant_collection_not_probed"
+	}
 }
 
 func qdrantPointerErrorCode(snapshot qdrantDiagnosticSnapshot) string {

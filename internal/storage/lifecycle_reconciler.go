@@ -668,7 +668,7 @@ func (r *FilesystemReconciler) reconcileLifecycleFile(ctx context.Context, path 
 	record := r.filesystemRecord(kind, id, base, hash, snapshot, stream.Records)
 	record.Operation, record.BatchID, record.Source = operation, batchID, source
 	record.PreviousPath, record.CurrentPath = previous.Path, r.relative(path)
-	if err := r.history.Append(ctx, record); err != nil {
+	if err := r.appendHistoryRecord(ctx, record); err != nil {
 		return result, entry, err
 	}
 	entry.Revision, entry.HeadHash = rev, hash
@@ -727,7 +727,7 @@ func (r *FilesystemReconciler) appendLifecycleTombstoneLocked(ctx context.Contex
 		return result, nil
 	}
 	record := models.HistoryRecord{EntityType: entry.EntityType, EntityID: entry.EntityID, Source: source, BatchID: batchID, Operation: LifecycleOperationDelete, Tombstone: true, Timestamp: time.Now().UTC(), BaseHash: last.NewHash, NewHash: last.NewHash, Checkpoint: true, CheckpointPayload: snapshot, PreviousPath: entry.Path, CurrentPath: entry.Path}
-	if err := r.history.Append(ctx, record); err != nil {
+	if err := r.appendHistoryRecord(ctx, record); err != nil {
 		return result, err
 	}
 	return result, nil
@@ -1091,7 +1091,7 @@ func (r *FilesystemReconciler) restoreLocked(ctx context.Context, entityType, en
 			hash = CanonicalDocHash(doc)
 		}
 		record := models.HistoryRecord{EntityType: entityType, EntityID: entityID, Source: "restore", Operation: operation, BatchID: opts.BatchID, Timestamp: time.Now().UTC(), BaseHash: last.NewHash, NewHash: hash, Checkpoint: true, CheckpointPayload: snapshot, PreviousPath: last.CurrentPath, CurrentPath: path}
-		if err := r.history.Append(ctx, record); err != nil {
+		if err := r.appendHistoryRecord(ctx, record); err != nil {
 			_ = os.Remove(abs)
 			return err
 		}

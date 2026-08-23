@@ -23,9 +23,14 @@ test.describe("Navigation & Global Features", () => {
 			await expect(page).toHaveURL(/\/tasks/);
 		});
 
-		await test.step("Navigate to Kanban via sidebar", async () => {
-			await page.getByText("Kanban", { exact: true }).first().click();
-			await expect(page).toHaveURL(/\/kanban/);
+		await test.step("Reach the board through the Tasks view switcher", async () => {
+			// The rework folded /kanban into Tasks, so the board is a view, not a nav entry.
+			await expect(page.getByText("Kanban", { exact: true })).toHaveCount(0);
+			await page.getByRole("button", { name: "Board view" }).click();
+			await expect(page.getByRole("button", { name: "Board view" })).toHaveAttribute(
+				"aria-pressed",
+				"true",
+			);
 		});
 
 		await test.step("Navigate to Docs via sidebar", async () => {

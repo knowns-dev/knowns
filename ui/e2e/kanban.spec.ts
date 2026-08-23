@@ -18,8 +18,12 @@ test.describe("Kanban Board", () => {
 		});
 
 		await test.step("Shared page header is visible", async () => {
-			await expect(page.getByRole("heading", { name: "Kanban Board" })).toBeVisible();
-			await expect(page.getByText("Move active work through your configured delivery stages.")).toBeVisible();
+			// /kanban is now the unified Tasks page pinned to board view.
+			await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
+			await expect(page.getByRole("button", { name: "Board view" })).toHaveAttribute(
+				"aria-pressed",
+				"true",
+			);
 		});
 
 		await test.step("Board columns are rendered", async () => {

@@ -5,9 +5,8 @@ import { api, getProjectStatus } from "./api/client";
 import { useSSEEvent } from "./contexts/SSEContext";
 import { AppSidebar, TaskCreateForm, SearchCommandDialog, NotificationBell, TaskDetailSheet } from "./components/organisms";
 import { WorkspacePicker } from "./components/organisms/WorkspacePicker";
-import { RuntimeMonitorPanel } from "./components/organisms/RuntimeMonitorPanel";
 import { WelcomePage } from "./pages/WelcomePage";
-import { ConnectionStatus, ThemeToggle, ErrorBoundary } from "./components/atoms";
+import { ErrorBoundary } from "./components/atoms";
 import { HeaderTimeTracker } from "./components/molecules";
 import { AppBreadcrumb } from "./components/molecules/AppBreadcrumb";
 import { SidebarProvider, SidebarTrigger } from "./components/ui/sidebar";
@@ -17,7 +16,6 @@ import { useConfig } from "./contexts/ConfigContext";
 import { useGlobalTask } from "./contexts/GlobalTaskContext";
 import { Loader2 } from "lucide-react";
 import { ThemeContext } from "./App";
-import { cn } from "./lib/utils";
 
 // Retry wrapper for lazy imports — auto-reloads when chunks are stale after a deploy.
 function lazyWithRetry(factory: () => Promise<{ default: React.ComponentType<any> }>) {
@@ -40,13 +38,12 @@ const ConfigPage = lazyWithRetry(() => import("./pages/ConfigPage"));
 const DashboardPage = lazyWithRetry(() => import("./pages/DashboardPage"));
 const DocsPage = lazyWithRetry(() => import("./pages/DocsPage"));
 const ImportsPage = lazyWithRetry(() => import("./pages/ImportsPage"));
-const KanbanPage = lazyWithRetry(() => import("./pages/KanbanPage"));
 const TasksPage = lazyWithRetry(() => import("./pages/TasksPage"));
-const ChatPage = lazyWithRetry(() => import("./pages/ChatPage"));
 const GraphPage = lazyWithRetry(() => import("./pages/GraphPage"));
 const MemoryPage = lazyWithRetry(() => import("./pages/MemoryPage"));
 const DecisionPage = lazyWithRetry(() => import("./pages/DecisionPage"));
 const AuditPage = lazyWithRetry(() => import("./pages/AuditPage"));
+const RuntimePage = lazyWithRetry(() => import("./pages/RuntimePage"));
 
 function PageLoading() {
 	return (
@@ -68,7 +65,7 @@ function getCurrentPage(pathname: string) {
 	if (pathname.startsWith("/memory")) return "memory";
 	if (pathname.startsWith("/decisions")) return "decisions";
 	if (pathname.startsWith("/audit")) return "audit";
-	if (pathname.startsWith("/chat")) return "chat";
+	if (pathname.startsWith("/runtime")) return "runtime";
 	if (pathname.startsWith("/config")) return "config";
 	if (pathname.startsWith("/kanban")) return "kanban";
 	if (pathname === "/" || pathname === "") return "dashboard";
@@ -110,10 +107,9 @@ export default function AppShell() {
 	});
 
 	const currentPage = getCurrentPage(location.pathname);
-	const isChatPage = currentPage === "chat";
 	const currentTasks = tasks;
-	const routeTaskId = currentPage === "tasks"
-		? getTaskIdFromLocation(location.pathname, location.searchStr, "tasks")
+	const routeTaskId = currentPage === "tasks" || currentPage === "kanban"
+		? getTaskIdFromLocation(location.pathname, location.searchStr, currentPage)
 		: null;
 	const requestedDirectTaskId = currentTaskId || routeTaskId;
 
@@ -145,15 +141,15 @@ export default function AppShell() {
 	useEffect(() => {
 		const titles: Record<string, string> = {
 			dashboard: "Dashboard",
-			kanban: "Kanban",
+			kanban: "Tasks",
 			tasks: "Tasks",
 			docs: "Docs",
 			graph: "Graph",
 			memory: "Memories",
 			decisions: "Decisions",
 			audit: "Audit Trail",
+			runtime: "Runtime",
 			imports: "Imports",
-			chat: "Chat",
 			config: "Settings",
 		};
 		const pageTitle = titles[currentPage] || "Dashboard";
@@ -317,32 +313,28 @@ export default function AppShell() {
 		switch (currentPage) {
 			case "dashboard":
 				return <DashboardPage tasks={currentTasks} loading={loading} />;
+			// Kanban is no longer its own page: /kanban renders the unified Tasks
+			// page pinned to the Board view, so existing links keep working.
 			case "kanban":
-				return (
-					<KanbanPage
-						tasks={currentTasks}
-						loading={loading}
-						error={taskLoadError}
-						onRetry={() => void loadCurrentTasks(true)}
-						onTasksUpdate={handleTasksUpdate}
-						onNewTask={() => setShowCreateForm(true)}
-					/>
-				);
 			case "tasks": {
 				const selectedTask = routeTaskId
 					? tasks.find((task) => task.id === routeTaskId) || (directTask?.id === routeTaskId ? directTask : null)
 					: null;
+				const boardRoute = currentPage === "kanban";
 
 				return (
 					<TasksPage
-					tasks={currentTasks}
+						tasks={currentTasks}
 						loading={loading}
 						error={taskLoadError}
 						onRetry={() => void loadCurrentTasks(true)}
 						onTasksUpdate={handleTaskCreated}
+						onTasksReplace={handleTasksUpdate}
 						selectedTask={selectedTask}
+						initialView={boardRoute ? "board" : undefined}
+						detailBasePath={boardRoute ? "/kanban" : "/tasks"}
 						onTaskClose={() => {
-							navigate({ to: "/tasks" });
+							navigate({ to: boardRoute ? "/kanban" : "/tasks" });
 						}}
 						onNewTask={() => setShowCreateForm(true)}
 					/>
@@ -358,10 +350,10 @@ export default function AppShell() {
 				return <DecisionPage />;
 			case "audit":
 				return <AuditPage />;
+			case "runtime":
+				return <RuntimePage />;
 			case "imports":
 				return <ImportsPage />;
-			case "chat":
-				return <ChatPage />;
 			case "config":
 				return <ConfigPage />;
 			default:
@@ -385,46 +377,27 @@ export default function AppShell() {
 					currentPage={currentPage}
 					onSearchClick={() => setShowCommandDialog(true)}
 					onWorkspacePickerClick={() => setShowWorkspacePicker(true)}
+					isDark={isDark}
+					onThemeToggle={toggleTheme}
 					serverVersion={serverVersion}
 				/>
-					<main className={cn("flex min-w-0 flex-1 flex-col overflow-hidden", isChatPage ? "bg-background" : "bg-background")}>
-						<header
-							className={cn(
-								"flex shrink-0 items-center gap-1.5 px-2 sm:px-4",
-								isChatPage
-									? "h-11 border-b border-border/50 bg-background/95 px-4 sm:px-6"
-									: "h-11 border-b border-border/50 bg-background sm:gap-2",
-							)}
-						>
-							<SidebarTrigger className={cn("-ml-1", isChatPage && "opacity-80")} />
-							<Separator orientation="vertical" className={cn("mr-1 h-4 sm:mr-2", isChatPage && "opacity-50")} />
-							<ConnectionStatus />
+					<main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
+						<header className="flex h-11 shrink-0 items-center gap-1.5 border-b border-border/50 bg-background px-2 sm:gap-2 sm:px-4">
+							<SidebarTrigger className="-ml-1" />
+							<Separator orientation="vertical" className="mr-1 h-4 sm:mr-2" />
 							<AppBreadcrumb
 								currentPage={currentPage}
 								projectName={config.name || "Knowns"}
 							/>
-							{!isChatPage && (
-								<HeaderTimeTracker
-									onTaskClick={(taskId) => {
-										navigate({ to: `/kanban/${taskId}` });
-									}}
-								/>
-							)}
-							<ThemeToggle
-								isDark={isDark}
-								onToggle={toggleTheme}
-								size="sm"
-								className={cn(isChatPage && "scale-95 opacity-80")}
+							<HeaderTimeTracker
+								onTaskClick={(taskId) => {
+									navigate({ to: `/kanban/${taskId}` });
+								}}
 							/>
-							{!isChatPage && <NotificationBell />}
+							<NotificationBell />
 						</header>
 
-						<div
-							className={cn(
-								"flex-1 w-full overflow-x-hidden flex flex-col",
-								isChatPage ? "min-h-0 overflow-hidden bg-muted/10" : "overflow-y-auto",
-							)}
-						>
+						<div className="flex-1 w-full overflow-x-hidden flex flex-col overflow-y-auto">
 							<ErrorBoundary>
 								<Suspense fallback={<PageLoading />}>
 									<div
@@ -436,7 +409,6 @@ export default function AppShell() {
 							</Suspense>
 						</ErrorBoundary>
 					</div>
-						<RuntimeMonitorPanel />
 					</main>
 
 					<TaskCreateForm

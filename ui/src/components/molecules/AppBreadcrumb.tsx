@@ -9,7 +9,7 @@ interface AppBreadcrumbProps {
 
 const pageLabels: Record<string, string> = {
 	dashboard: "Dashboard",
-	kanban: "Kanban",
+	kanban: "Tasks",
 	tasks: "Tasks",
 	docs: "Docs",
 	graph: "Graph",
@@ -20,6 +20,7 @@ const pageLabels: Record<string, string> = {
 	chat: "AI Chat",
 	workspaces: "AI Workspaces",
 	audit: "Audit",
+	runtime: "Runtime",
 	config: "Settings",
 };
 

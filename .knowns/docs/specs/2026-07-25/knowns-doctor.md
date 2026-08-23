@@ -1,14 +1,17 @@
 ---
+id: doc-80bdc24941e8db53b8c050b753ac86da
 title: Knowns Doctor
 description: Specification for an offline-first, read-only diagnostic command covering Knowns project setup, local services, and actionable remediation.
 createdAt: '2026-07-24T23:06:06.475Z'
-updatedAt: '2026-07-26T06:58:37.992Z'
+updatedAt: '2026-08-19T07:46:26.667Z'
 tags:
   - spec
-  - approved
   - cli
   - diagnostics
+  - draft
+  - review-required
 ---
+
 
 ## Overview
 
@@ -24,7 +27,7 @@ The same diagnostic model must support styled terminal output, plain output, and
 
 ## Locked Decisions
 
-- D1: `knowns doctor` serves both post-setup/update verification and reactive troubleshooting. It supports terminal users and AI/CI through one diagnostic contract. It is offline by default and performs external network checks only with `--online`.
+- D1: `knowns doctor` serves both post-setup/update verification and reactive troubleshooting. It supports terminal users and AI/CI through one diagnostic contract. It runs every applicable check in a single invocation, including bounded probes of the configured embedding provider, because a provider a user configured is part of the setup doctor is asked about. An unreachable network is reported as a warning so offline and air-gapped runs stay usable.
 - D2: The default command runs every applicable local check across project core, search, runtime, LSP, validation, and configured AI integrations. A subsystem disabled by explicit configuration is `skip`; a subsystem that is enabled or configured but unavailable creates a finding. Validation is executed but represented only as an aggregate check that directs users to `knowns validate` for details.
 - D3: The first version is entirely read-only and has no `--fix`. Each actionable finding includes an exact remediation command when possible, otherwise a manual remediation description. Evidence is limited to safe metadata and file paths; the command does not print raw config or log content.
 - D4: Each check has status `pass`, `warn`, `fail`, or `skip`, and the run has verdict `healthy`, `degraded`, or `unhealthy`. Exit codes follow the defined CLI contract, with `--strict` making warnings fail automation. Default terminal output shows the summary and actionable problems, `--verbose` shows all checks, and `--json` always returns the complete selected diagnostic result.
@@ -43,7 +46,7 @@ The same diagnostic model must support styled terminal output, plain output, and
 - Replacing the detailed output or repair behavior of `knowns validate`, `knowns status`, `knowns sync`, `knowns search`, or `knowns lsp`.
 - Printing raw configuration values, raw logs, environment dumps, credentials, tokens, or a support bundle.
 - Adding a server endpoint, Web UI surface, or MCP tool in the first version.
-- Calling external services without the explicit `--online` flag.
+- Unbounded network probes, or probing any endpoint the project has not configured.
 
 ## Diagnostic Model
 
@@ -53,10 +56,9 @@ A diagnostic run exposes the following logical fields in structured output:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "verdict": "degraded",
   "strict": false,
-  "online": false,
   "project": {
     "active": true,
     "name": "my-project",
@@ -92,7 +94,7 @@ Raw configuration values, environment dumps, and log excerpts are forbidden in `
 - `pass`: the check's required condition is satisfied.
 - `warn`: the capability remains usable but is degraded, stale, incomplete, or requires attention.
 - `fail`: a configured or required capability cannot operate, project state is invalid, or the check itself cannot establish a safe result.
-- `skip`: the subsystem is explicitly disabled, not applicable to this project, excluded by scope, or requires `--online` when online mode is absent.
+- `skip`: the subsystem is explicitly disabled, not applicable to this project, or excluded by scope.
 - `unhealthy`: at least one selected check is `fail`.
 - `degraded`: no selected check is `fail` and at least one selected check is `warn`.
 - `healthy`: selected checks contain neither `fail` nor `warn`.
@@ -104,7 +106,7 @@ Raw configuration values, environment dumps, and log excerpts are forbidden in `
 
 - FR-1: The CLI must expose `knowns doctor` with styled human output by default and support the existing global `--plain` and `--json` output modes.
 - FR-2: Without a scope filter, the command must run every applicable local diagnostic check and must not contact an external network service.
-- FR-3: The command must support `--online`; only this mode may run registered external checks such as update availability and configured provider connectivity.
+- FR-3: Network probes must run in every invocation without an opt-in flag, must be bounded, and must report an unreachable endpoint as `warn` rather than `fail`. The configured embedding provider check belongs to the `search` scope; update availability remains in the `online` scope.
 - FR-4: The command must support one or more named `--scope` values so callers can restrict execution without changing check semantics. Initial scopes must cover `project`, `validation`, `search`, `runtime`, `lsp`, `ai`, and `online`.
 - FR-5: The command must support `--verbose`. Default styled/plain output must show project identity, overall verdict, summary counts, and every `warn` or `fail`; verbose output must additionally show `pass` and `skip` checks.
 - FR-6: JSON output must return the complete selected diagnostic result, including schema version, project identity, verdict, summary counts, every selected check, evidence, skip reasons, and remediation.
@@ -119,7 +121,7 @@ Raw configuration values, environment dumps, and log excerpts are forbidden in `
 - FR-15: Every `warn` and `fail` must include actionable remediation. The result must include an exact copyable Knowns command when a safe existing command addresses the issue; otherwise it must include a concise manual action.
 - FR-16: The first version must not expose `--fix` and must not execute remediation commands.
 - FR-17: Evidence must be limited to safe metadata such as booleans, normalized states, versions, paths, counts, PIDs, ports, capability names, and normalized error codes. It must not contain raw config values or log content.
-- FR-18: External checks must be represented as `skip` with reason `online_disabled` when `--online` is absent. When enabled, failure to reach one external service must not prevent other checks from completing.
+- FR-18: For an Ollama provider the check must read the served model listing and warn when the configured model is not pulled; for an API provider it must verify endpoint reachability only. Failure to reach one external service must not prevent other checks from completing.
 - FR-19: Independent checker failures and timeouts must be converted into check results and must not abort the remaining diagnostic run.
 - FR-20: Exit code must be `0` for `healthy` and `degraded`, `1` for `unhealthy`, and `2` when the diagnostic engine cannot initialize or complete a valid result. With `--strict`, `degraded` must return `1` while the JSON verdict remains `degraded`.
 - FR-21: Missing active-project state must be represented as a valid unhealthy diagnostic result with a project finding and exit code `1`, not as an engine failure with exit code `2`.
@@ -147,13 +149,13 @@ Raw configuration values, environment dumps, and log excerpts are forbidden in `
 - [x] AC-7: An explicitly disabled runtime, LSP, search, or AI integration produces `skip` and does not affect the overall verdict by itself.
 - [x] AC-8: Validation errors produce one failing `validation.summary` check with counts and remediation pointing to `knowns validate`; individual validation issues are not duplicated in doctor output.
 - [x] AC-9: A timed-out or failed runtime/LSP/provider probe is represented as a check result while independent checks still run and appear in output.
-- [x] AC-10: Without `--online`, an instrumented test confirms that no external network request occurs and online checks report `skip` with reason `online_disabled`.
-- [x] AC-11: With `--online`, registered version and configured-provider connectivity checks execute independently and cannot prevent local checks from completing.
+- [x] AC-10: An instrumented test confirms the provider endpoint check runs without any flag, that an unreachable endpoint yields `warn` and a `degraded` verdict, and that incomplete provider settings or an invalid URL warn without issuing a request.
+- [x] AC-11: Registered version and configured-provider connectivity checks execute independently and cannot prevent local checks from completing.
 - [x] AC-12: Default terminal output contains the verdict, summary, and every `warn`/`fail`, while omitting `pass`/`skip`; `--verbose` includes all checks.
 - [x] AC-13: Healthy and degraded runs exit `0`; unhealthy runs exit `1`; `--strict` makes a degraded run exit `1` without changing its verdict; engine-level failure exits `2`.
 - [x] AC-14: Running doctor with no active project yields a structured unhealthy result, actionable project remediation, and exit `1`.
 - [x] AC-15: Tests containing credentials in config, environment, and logs confirm that no raw secret or raw log content appears in styled, plain, verbose, or JSON output.
-- [x] AC-16: A before/after filesystem and process-state test confirms that `knowns doctor`, including `--verbose`, `--json`, scoped, strict, and online modes, performs no Knowns state mutation or process lifecycle action.
+- [x] AC-16: A before/after filesystem and process-state test confirms that `knowns doctor`, including `--verbose`, `--json`, scoped, and strict modes, performs no Knowns state mutation or process lifecycle action.
 - [x] AC-17: `--scope project,lsp` runs or returns only the selected scopes according to the documented JSON contract and rejects unknown scope IDs with a usage error.
 - [x] AC-18: Plain output contains no ANSI escape sequences and communicates every non-passing status without relying on color.
 - [x] AC-19: Supported-platform tests verify equivalent status, verdict, exit-code, and secret-safety behavior on macOS, Linux, and Windows.
@@ -196,17 +198,17 @@ Raw configuration values, environment dumps, and log excerpts are forbidden in `
 **When** CI runs `knowns doctor --json --strict`
 **Then** JSON verdict remains `degraded`, all selected checks are present, no ANSI output is emitted, and the process exits `1`.
 
-### Scenario 7: Offline Default
+### Scenario 7: Unreachable Network
 
 **Given** external networking is unavailable
-**When** a user runs `knowns doctor` without `--online`
-**Then** local diagnosis completes normally, no external request is attempted, and online checks are skipped without degrading the verdict.
+**When** a user runs `knowns doctor`
+**Then** every local check completes normally, each bounded network probe reports `warn` with a network error code, and the run exits `0` on a `degraded` verdict.
 
-### Scenario 8: Explicit Online Diagnosis
+### Scenario 8: Ollama Model Not Pulled
 
-**Given** the user explicitly supplies `--online` and one configured external provider is unreachable
-**When** doctor runs
-**Then** the provider check reports an actionable finding while every local and other online check continues independently.
+**Given** the project is configured for an Ollama embedding model that has never been pulled on this machine
+**When** doctor runs without any flag
+**Then** the provider endpoint check reports `warn` with an `ollama pull <model>` remediation while every other check continues independently.
 
 ### Scenario 9: Sensitive Local State
 

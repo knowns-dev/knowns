@@ -339,7 +339,6 @@ func runMemoryCreate(cmd *cobra.Command, args []string) error {
 	category, _ := cmd.Flags().GetString("category")
 	tags, _ := cmd.Flags().GetStringArray("tag")
 	content, _ := cmd.Flags().GetString("content")
-	content = unescapeText(content)
 	createAnyway, _ := cmd.Flags().GetBool("create-anyway")
 	status, _ := cmd.Flags().GetString("status")
 	if status != "" && !models.ValidMemoryStatus(status) {
@@ -463,11 +462,10 @@ func runMemoryEdit(cmd *cobra.Command, args []string) error {
 	}
 	if cmd.Flags().Changed("content") {
 		v, _ := cmd.Flags().GetString("content")
-		entry.Content = unescapeText(v)
+		entry.Content = v
 	}
 	if cmd.Flags().Changed("append") {
 		v, _ := cmd.Flags().GetString("append")
-		v = unescapeText(v)
 		if entry.Content == "" {
 			entry.Content = v
 		} else {
