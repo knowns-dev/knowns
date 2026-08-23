@@ -101,7 +101,7 @@ The AI breaks the spec into tasks and maps them back to spec acceptance criteria
 Then run individual tasks yourself:
 
 ```text
-/kn-implement 42
+/kn-implement KN-4F7Q2M
 ```
 
 ### 5. Verify
@@ -129,15 +129,15 @@ Use this when the implementation produced a reusable pattern, decision, or lesso
 Use this for smaller features where the task already exists and the problem is well understood.
 
 1. `/kn-init`
-2. `/kn-plan 42`
-3. `/kn-implement 42`
+2. `/kn-plan KN-4F7Q2M`
+3. `/kn-implement KN-4F7Q2M`
 
 ## Quick Fix flow
 
 Use this for bug fixes, hotfixes, or small repairs.
 
 1. `/kn-init`
-2. `/kn-implement 42`
+2. `/kn-implement KN-4F7Q2M`
 
 ## When to use `kn-flow`
 
@@ -229,19 +229,19 @@ knowns doc list --plain
 knowns doc "readme" --plain --smart
 
 # Take a task
-knowns task edit 42 -s in-progress -a @me
-knowns time start 42
+knowns task edit KN-4F7Q2M -s in-progress -a @me
+knowns time start KN-4F7Q2M
 
 # Add plan
-knowns task edit 42 --plan $'1. Research\n2. Implement\n3. Test'
+knowns task edit KN-4F7Q2M --plan $'1. Research\n2. Implement\n3. Test'
 
 # Mark ACs and add notes
-knowns task edit 42 --check-ac 1
-knowns task edit 42 --append-notes "Completed feature X"
+knowns task edit KN-4F7Q2M --check-ac 1
+knowns task edit KN-4F7Q2M --append-notes "Completed feature X"
 
 # Finish
 knowns time stop
-knowns task edit 42 -s done
+knowns task edit KN-4F7Q2M -s done
 ```
 
 ## Use separate sessions when useful

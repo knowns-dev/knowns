@@ -99,7 +99,7 @@ AI tách spec thành tasks, map ngược về spec AC.
 Sau đó chạy từng task:
 
 ```text
-/kn-implement 42
+/kn-implement KN-4F7Q2M
 ```
 
 ### 5. Verify
@@ -127,15 +127,15 @@ Dùng khi implementation tạo ra pattern, decision, hoặc lesson đáng giữ 
 Feature nhỏ, task đã có, vấn đề đã rõ.
 
 1. `/kn-init`
-2. `/kn-plan 42`
-3. `/kn-implement 42`
+2. `/kn-plan KN-4F7Q2M`
+3. `/kn-implement KN-4F7Q2M`
 
 ## Quick Fix flow
 
 Bug fix, hotfix, sửa nhỏ.
 
 1. `/kn-init`
-2. `/kn-implement 42`
+2. `/kn-implement KN-4F7Q2M`
 
 ## Khi nào dùng `kn-flow`
 
@@ -227,19 +227,19 @@ knowns doc list --plain
 knowns doc "readme" --plain --smart
 
 # Nhận task
-knowns task edit 42 -s in-progress -a @me
-knowns time start 42
+knowns task edit KN-4F7Q2M -s in-progress -a @me
+knowns time start KN-4F7Q2M
 
 # Thêm plan
-knowns task edit 42 --plan '1. Research\n2. Implement\n3. Test'
+knowns task edit KN-4F7Q2M --plan '1. Research\n2. Implement\n3. Test'
 
 # Check AC và thêm notes
-knowns task edit 42 --check-ac 1
-knowns task edit 42 --append-notes "Completed feature X"
+knowns task edit KN-4F7Q2M --check-ac 1
+knowns task edit KN-4F7Q2M --append-notes "Completed feature X"
 
 # Xong
 knowns time stop
-knowns task edit 42 -s done
+knowns task edit KN-4F7Q2M -s done
 ```
 
 ## Tách session khi cần

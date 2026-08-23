@@ -114,7 +114,7 @@ Concretely, Knowns manages:
 - **Specs** that define what "done" looks like for a feature
 - **Memory** - project-level, session-level, and global knowledge that AI can recall
 - **Templates** for code generation with Handlebars
-- **References** like `@task-42` and `@doc/patterns/auth` that AI can follow and resolve
+- **References** like `@task-KN-4F7Q2M` and `@doc/patterns/auth` that AI can follow and resolve
 - **Code intelligence** - LSP-based symbols, definitions, references, diagnostics, and safe edits
 
 Everything lives in a `.knowns/` directory in your repo. Plain files. Committable to Git. No cloud required.
@@ -301,7 +301,7 @@ knowns browser --open
 | **Documentation**     | Nested markdown folders with cross-references and mermaid support       |
 | **Semantic Search**   | Meaning-based search with local AI models (fully offline)               |
 | **Time Tracking**     | Built-in timers and reports per task                                    |
-| **Context Linking**   | `@task-42` and `@doc/patterns/auth` references AI can resolve           |
+| **Context Linking**   | `@task-KN-4F7Q2M` and `@doc/patterns/auth` references AI can resolve           |
 | **Validation**        | Detect broken references and incomplete tasks with `knowns validate`    |
 | **Template System**   | Code generation with Handlebars (`.hbs`) templates                      |
 | **Import System**     | Import docs and templates from git, npm, or local sources               |
