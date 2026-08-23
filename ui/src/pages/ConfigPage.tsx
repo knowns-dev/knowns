@@ -575,6 +575,20 @@ export default function ConfigPage() {
 		return ss.model === model.name;
 	}, [config.semanticSearch]);
 
+	// ── Tunnel state ──────────────────────────────────────────────────
+	const [tunnelStatus, setTunnelStatus] = useState<{ running: boolean; url?: string }>({ running: false });
+	const [tunnelLoading, setTunnelLoading] = useState(false);
+	const [tunnelError, setTunnelError] = useState<string | null>(null);
+
+	useEffect(() => {
+		tunnelApi.getStatus().then(setTunnelStatus).catch(() => {});
+	}, []);
+
+	// ── Security state ────────────────────────────────────────────────
+	const { isProtected, setPassword: authSetPassword, removePassword: authRemovePassword } = useAuth();
+	const [newPassword, setNewPassword] = useState("");
+	const [securityLoading, setSecurityLoading] = useState(false);
+
 	if (loading) {
 		return (
 			<div className="p-6 flex items-center justify-center h-64">
@@ -1695,15 +1709,6 @@ export default function ConfigPage() {
 		{ id: "agents", label: "Agents" },
 	];
 
-	// ── Tunnel state ──────────────────────────────────────────────────
-	const [tunnelStatus, setTunnelStatus] = useState<{ running: boolean; url?: string }>({ running: false });
-	const [tunnelLoading, setTunnelLoading] = useState(false);
-	const [tunnelError, setTunnelError] = useState<string | null>(null);
-
-	useEffect(() => {
-		tunnelApi.getStatus().then(setTunnelStatus).catch(() => {});
-	}, []);
-
 	const handleTunnelStart = async () => {
 		setTunnelLoading(true);
 		setTunnelError(null);
@@ -1782,11 +1787,6 @@ export default function ConfigPage() {
 			</FieldRow>
 		</div>
 	);
-
-	// ── Security state ────────────────────────────────────────────────
-	const { isProtected, setPassword: authSetPassword, removePassword: authRemovePassword } = useAuth();
-	const [newPassword, setNewPassword] = useState("");
-	const [securityLoading, setSecurityLoading] = useState(false);
 
 	const handleSetPassword = async () => {
 		if (!newPassword) return;
