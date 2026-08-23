@@ -1,12 +1,9 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
-import { useRouterState } from "@tanstack/react-router";
 import { Eye, EyeOff, ClipboardList, ChevronDown, ChevronUp, FileText } from "lucide-react";
 import type { Task, TaskStatus } from "@/ui/models/task";
 import { api } from "../../api/client";
-import { navigateTo } from "../../lib/navigation";
 import { useConfig } from "../../contexts/ConfigContext";
 import { useNewTaskIds } from "../../hooks/useNewTaskIds";
-import { TaskDetailSheet } from "./TaskDetail/TaskDetailSheet";
 import { ScrollArea, ScrollBar } from "../ui/ScrollArea";
 import {
 	KanbanProvider,
@@ -70,10 +67,11 @@ interface BoardProps {
 	tasks: Task[];
 	loading: boolean;
 	onTasksUpdate: (tasks: Task[]) => void;
+	/** Opening a Task is the page's job: it owns the single TaskDetailSheet. */
+	onTaskClick: (task: Task) => void;
 }
 
-export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
-	const location = useRouterState({ select: (state) => state.location });
+export default function Board({ tasks, loading, onTasksUpdate, onTaskClick }: BoardProps) {
 	const { config, updateConfig } = useConfig();
 	const newTaskIds = useNewTaskIds(tasks);
 	const [visibleColumns, setVisibleColumns] = useState<Set<TaskStatus>>(new Set());
@@ -140,21 +138,6 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 	const [kanbanData, setKanbanData] = useState<KanbanTaskItem[]>(kanbanDataFromTasks);
 
 	// Get selected task from URL hash
-	const getSelectedTask = (): Task | null => {
-		const match = location.pathname.match(/^\/kanban\/([^?]+)/);
-		if (!match) return null;
-
-		const taskId = match[1];
-		return tasks.find((t) => t.id === taskId) || null;
-	};
-
-	const [selectedTask, setSelectedTask] = useState<Task | null>(getSelectedTask());
-
-	// Listen to route changes and tasks updates to update selected task
-	useEffect(() => {
-		setSelectedTask(getSelectedTask());
-	}, [location.pathname, tasks]);
-
 	useEffect(() => {
 		if (!isDragging) {
 			setKanbanData(kanbanDataFromTasks);
@@ -298,22 +281,6 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 		);
 	}
 
-	const handleTaskClick = (task: Task) => {
-		navigateTo(`/kanban/${task.id}`);
-	};
-
-	const handleModalClose = () => {
-		navigateTo("/kanban");
-	};
-
-	const handleTaskUpdate = (updatedTask: Task) => {
-		onTasksUpdate(tasks.map((t) => (t.id === updatedTask.id ? updatedTask : t)));
-	};
-
-	const handleNavigateToTask = (taskId: string) => {
-		navigateTo(`/kanban/${taskId}`);
-	};
-
 	return (
 		<div className="flex flex-col h-full">
 			{/* Column Visibility Controls */}
@@ -427,7 +394,7 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 												item={item}
 												isNew={newTaskIds.has(item.id)}
 												statusColors={statusColors}
-												onClick={() => handleTaskClick(item.task)}
+												onClick={() => onTaskClick(item.task)}
 											/>
 										)}
 									</KanbanCards>
@@ -444,17 +411,6 @@ export default function Board({ tasks, loading, onTasksUpdate }: BoardProps) {
 				)}
 				<ScrollBar orientation="horizontal" />
 			</ScrollArea>
-
-			<TaskDetailSheet
-				task={selectedTask}
-				allTasks={tasks}
-				onClose={handleModalClose}
-				onUpdate={handleTaskUpdate}
-				onLifecycleChange={() => {
-					api.getTasks().then(onTasksUpdate).catch(console.error);
-				}}
-				onNavigateToTask={handleNavigateToTask}
-			/>
 		</div>
 	);
 }

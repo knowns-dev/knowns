@@ -332,6 +332,7 @@ export default function AppShell() {
 						onTasksReplace={handleTasksUpdate}
 						selectedTask={selectedTask}
 						initialView={boardRoute ? "board" : undefined}
+						detailBasePath={boardRoute ? "/kanban" : "/tasks"}
 						onTaskClose={() => {
 							navigate({ to: boardRoute ? "/kanban" : "/tasks" });
 						}}

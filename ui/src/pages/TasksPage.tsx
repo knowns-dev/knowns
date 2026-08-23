@@ -49,6 +49,8 @@ interface TasksPageProps {
 	onNewTask: () => void;
 	/** Forces a view on mount, e.g. the /kanban route pins the Board. */
 	initialView?: ViewMode;
+	/** Route the detail URL is nested under, so /kanban keeps its own path. */
+	detailBasePath?: "/tasks" | "/kanban";
 }
 
 type ViewMode = "board" | "list" | "table" | "grouped";
@@ -77,6 +79,7 @@ export default function TasksPage({
 	onTaskClose,
 	onNewTask,
 	initialView,
+	detailBasePath = "/tasks",
 }: TasksPageProps) {
 	const [viewMode, setViewMode] = useState<ViewMode>(() => {
 		if (initialView) return initialView;
@@ -300,11 +303,11 @@ export default function TasksPage({
 	}, [externalSelectedTask]);
 
 	const handleTaskClick = (task: Task) => {
-		navigateTo(`/tasks/${task.id}`);
+		navigateTo(`${detailBasePath}/${task.id}`);
 	};
 
 	const handleNavigateToTask = (taskId: string) => {
-		navigateTo(`/tasks/${taskId}`);
+		navigateTo(`${detailBasePath}/${taskId}`);
 	};
 
 	const refreshVisibleData = () => {
@@ -414,6 +417,7 @@ export default function TasksPage({
 						tasks={visibleTasks}
 						loading={false}
 						onTasksUpdate={onTasksReplace ?? (() => onTasksUpdate())}
+						onTaskClick={handleTaskClick}
 					/>
 				) : viewMode === "list" ? (
 					<TaskNotionList
