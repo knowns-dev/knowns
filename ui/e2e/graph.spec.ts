@@ -198,3 +198,48 @@ test.describe("Knowledge Graph", () => {
 		});
 	});
 });
+
+// The suite as a whole runs with SwiftShader so the real renderer is covered.
+// This block takes the context away again to reproduce a browser that refuses
+// WebGL, which is what enterprise policy or a blocklisted driver leaves users
+// with. Blocking getContext rather than the launch flag keeps the check
+// deterministic on runners that do have a GPU.
+test.describe("Knowledge Graph without WebGL", () => {
+	test("explains the missing context instead of crashing the page", async ({ page }) => {
+		const pageErrors: string[] = [];
+		page.on("pageerror", (error) => pageErrors.push(error.message));
+
+		await page.addInitScript(() => {
+			const original = HTMLCanvasElement.prototype.getContext;
+			HTMLCanvasElement.prototype.getContext = function patched(
+				this: HTMLCanvasElement,
+				kind: string,
+				...rest: unknown[]
+			) {
+				if (kind === "webgl" || kind === "webgl2" || kind === "experimental-webgl") {
+					return null;
+				}
+				return (original as (...args: unknown[]) => unknown).call(this, kind, ...rest);
+			} as typeof HTMLCanvasElement.prototype.getContext;
+		});
+
+		await page.goto(`${server.baseURL}/graph`);
+
+		await test.step("Fallback replaces the canvas", async () => {
+			await expect(page.locator('[data-graph-fallback="no-webgl"]')).toBeVisible();
+			await expect(page.getByText(/needs WebGL/)).toBeVisible();
+		});
+
+		await test.step("The page is not swallowed by the error boundary", async () => {
+			await expect(page.getByText("Something went wrong")).toHaveCount(0);
+			expect(pageErrors.join("\n")).not.toContain("blendFunc");
+		});
+
+		await test.step("The rest of the graph page still works", async () => {
+			await expect(page.getByPlaceholder("Search graph\u2026")).toBeVisible();
+			await expect(page.getByText(/\d+ entities/)).toBeVisible();
+			await expect(page.getByText(/\d+ relations/)).toBeVisible();
+			await expect(page.getByRole("button", { name: "Graph filters" })).toBeVisible();
+		});
+	});
+});

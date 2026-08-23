@@ -44,6 +44,27 @@ interface SigmaConstellationProps {
 	onEngineRunningChange(running: boolean): void;
 }
 
+/**
+ * Sigma renders through WebGL. Enterprise policy, a blocklisted GPU driver or a
+ * VM without a GPU backend can leave the browser without a context, and Sigma
+ * then dereferences a null one and takes the whole page down with it. Probe
+ * once per page load and fall back to an explanation instead.
+ */
+let webglSupport: boolean | null = null;
+
+function supportsWebGL(): boolean {
+	if (webglSupport !== null) return webglSupport;
+	try {
+		const canvas = document.createElement("canvas");
+		webglSupport = Boolean(
+			canvas.getContext("webgl") || canvas.getContext("experimental-webgl"),
+		);
+	} catch {
+		webglSupport = false;
+	}
+	return webglSupport;
+}
+
 /** Mirrors the old force-graph props: stop once the layout has visibly settled. */
 const COOLDOWN_TICKS = 110;
 const COOLDOWN_MS = 3_500;
@@ -104,6 +125,9 @@ export const SigmaConstellation = forwardRef<SigmaConstellationHandle, SigmaCons
 		const hoveredRef = useRef<string | null>(null);
 		const onSelectNodeRef = useRef(onSelectNode);
 		const onBackgroundClickRef = useRef(onBackgroundClick);
+		// Probed once and kept stable: a context that is missing on mount will not
+		// appear later in the same document.
+		const webglAvailable = useRef(supportsWebGL()).current;
 		const onEngineRunningChangeRef = useRef(onEngineRunningChange);
 
 		paletteRef.current = palette;
@@ -178,6 +202,12 @@ export const SigmaConstellation = forwardRef<SigmaConstellationHandle, SigmaCons
 		useEffect(() => {
 			const container = containerRef.current;
 			if (!container) return;
+			if (!webglAvailable) {
+				// Nothing will ever lay out, so do not leave the page reporting
+				// a running engine.
+				onEngineRunningChangeRef.current(false);
+				return;
+			}
 
 			const graph = new Graph({ multi: true, type: "undirected" });
 			graphRef.current = graph;
@@ -449,6 +479,26 @@ export const SigmaConstellation = forwardRef<SigmaConstellationHandle, SigmaCons
 			}),
 			[],
 		);
+
+		if (!webglAvailable) {
+			return (
+				<div
+					role="status"
+					data-graph-fallback="no-webgl"
+					className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center"
+					style={{ background: palette.canvas }}
+				>
+					<p className="text-sm font-medium text-foreground">
+						The graph needs WebGL, which this browser has not made available.
+					</p>
+					<p className="max-w-md text-xs leading-relaxed text-muted-foreground">
+						Hardware acceleration is usually off, blocked by policy, or unsupported by the
+						graphics driver. Entity and relation counts stay available in the toolbar, and
+						every other page works as usual.
+					</p>
+				</div>
+			);
+		}
 
 		return <div ref={containerRef} className="absolute inset-0" style={{ background: palette.canvas }} />;
 	},
