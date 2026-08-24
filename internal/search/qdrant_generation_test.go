@@ -3,7 +3,9 @@ package search
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -215,4 +217,58 @@ func TestCleanupAndPurgeRequireOwnerProofAndApplyHardCap(t *testing.T) {
 	if _, err := PurgeQdrantCollections(context.Background(), t.TempDir(), client); err == nil {
 		t.Fatal("purge without pointer/ownership proof succeeded")
 	}
+}
+
+func TestGenerationLockIsReclaimedFromADeadHolderWithoutWaitingOutStaleness(t *testing.T) {
+	// A crashed or killed reindex leaves its lock behind. Waiting out the full
+	// staleAfter window blocks every later reindex even though nothing holds
+	// the lock, which surfaces to users as a bare "timed out waiting" error.
+	root := t.TempDir()
+	path := qdrantGenerationLockPath(root)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dead := deadPID(t)
+	if err := os.WriteFile(path, []byte(fmt.Sprintf("pid=%d\ncreatedAt=%s\n", dead, time.Now().UTC().Format(time.RFC3339Nano))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	release, err := acquireQdrantGenerationFileLock(context.Background(), root, 2*time.Second, time.Hour)
+	if err != nil {
+		t.Fatalf("lock not reclaimed from dead holder %d: %v", dead, err)
+	}
+	defer release()
+	holder, ok := qdrantGenerationLockHolder(path)
+	if !ok || holder != os.Getpid() {
+		t.Fatalf("lock holder = %d (%v), want this process %d", holder, ok, os.Getpid())
+	}
+}
+
+func TestGenerationLockIsNotStolenFromALiveHolder(t *testing.T) {
+	root := t.TempDir()
+	path := qdrantGenerationLockPath(root)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// This test process is alive by definition, so it stands in for a running
+	// reindex. Only the staleness window may reclaim a live holder's lock.
+	if err := os.WriteFile(path, []byte(fmt.Sprintf("pid=%d\ncreatedAt=%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339Nano))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := acquireQdrantGenerationFileLock(context.Background(), root, 200*time.Millisecond, time.Hour); err == nil {
+		t.Fatal("live holder's lock was stolen")
+	}
+	if holder, ok := qdrantGenerationLockHolder(path); !ok || holder != os.Getpid() {
+		t.Fatalf("live holder's lock was removed: holder=%d ok=%v", holder, ok)
+	}
+}
+
+// deadPID returns a PID that is guaranteed not to be running: a child process
+// is started and reaped, so its PID is free until the OS recycles it.
+func deadPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", "exit 0")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("spawn throwaway process: %v", err)
+	}
+	return cmd.Process.Pid
 }

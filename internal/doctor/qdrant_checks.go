@@ -101,9 +101,30 @@ func qdrantPointerChecker(state *localState) Checker {
 			return CheckResult{Status: StatusWarn, Summary: "Qdrant active collection pointer is missing", Evidence: Evidence{"pointer": "missing"}, Remediation: &Remediation{Description: "Build and activate a Qdrant generation explicitly.", Command: "knowns search index --wait"}}, nil
 		}
 		evidence := Evidence{"pointer": "present", "actualModel": snapshot.Pointer.Embedding.Model, "actualDimensions": snapshot.Pointer.Embedding.Dimensions, "actualChunkVersion": snapshot.Pointer.ChunkVersion, "chunkCount": snapshot.Pointer.ChunkCount, "expectedModel": snapshot.Expected.Model, "expectedDimensions": snapshot.Expected.Dimensions, "expectedChunkVersion": snapshot.Expected.ChunkVersion}
+		if snapshot.Readiness.EntitiesOnlyStale {
+			// The pointer describes a valid, current collection; only per-entity
+			// watermarks lag. This check answers "is the pointer valid", and
+			// search.project-index already owns index freshness. Warning here
+			// too reports one cause twice and sends the reader to rebuild the
+			// collection, which is not the repair for a stale entity.
+			evidence["ready"] = true
+			evidence["staleEntities"] = snapshot.Readiness.EntityStaleCount
+			evidence["indexFreshness"] = "search.project-index"
+			return CheckResult{Status: StatusPass, Summary: "Qdrant active pointer is valid", Evidence: evidence}, nil
+		}
 		if snapshot.Readiness.Stale || snapshot.Readiness.Degraded || !snapshot.Readiness.Ready {
 			evidence["ready"] = false
 			evidence["errorCode"] = qdrantPointerErrorCode(snapshot)
+			// Readiness already explains itself. Without the reason the report
+			// contradicts its own evidence whenever the pointer fields match
+			// and staleness comes from somewhere else (stale entities), and
+			// the error code degrades to the catch-all qdrant_pointer_invalid.
+			if reason := strings.TrimSpace(snapshot.Readiness.Reason); reason != "" {
+				evidence["reason"] = reason
+			}
+			if snapshot.Readiness.EntityStaleCount > 0 {
+				evidence["staleEntities"] = snapshot.Readiness.EntityStaleCount
+			}
 			return CheckResult{Status: StatusWarn, Summary: "Qdrant active pointer is stale or incomplete", Evidence: evidence, Remediation: &Remediation{Description: "Rebuild the active collection for the configured model, dimensions, and chunk version.", Command: "knowns search index --wait"}}, nil
 		}
 		evidence["ready"] = true
@@ -163,7 +184,12 @@ func qdrantOrphanChecker(state *localState) Checker {
 		if len(snapshot.Orphans) == 0 {
 			return CheckResult{Status: StatusPass, Summary: "No Qdrant orphan collection candidates were identified", Evidence: Evidence{"orphanCandidates": 0}}, nil
 		}
-		return CheckResult{Status: StatusWarn, Summary: "Qdrant orphan collection candidates were identified", Evidence: Evidence{"orphanCandidates": snapshot.Orphans}, Remediation: &Remediation{Description: "Review and explicitly clean eligible inactive Qdrant generations.", Command: "knowns qdrant cleanup"}}, nil
+		// `knowns qdrant cleanup` only removes stale managed runtime PID/status
+		// metadata; it never deletes collections, so advertising it here left a
+		// warning that no remediation could clear. Orphan generations must be
+		// reviewed and dropped against the Qdrant endpoint until a dedicated
+		// collection-cleanup command exists.
+		return CheckResult{Status: StatusWarn, Summary: "Qdrant orphan collection candidates were identified", Evidence: Evidence{"orphanCandidates": snapshot.Orphans}, Remediation: &Remediation{Description: "Review the listed inactive collections and drop the ones you no longer need directly against the Qdrant endpoint. `knowns qdrant cleanup` only clears runtime PID/status metadata and will not remove them."}}, nil
 	}}
 }
 
@@ -263,6 +289,12 @@ func qdrantPointerErrorCode(snapshot qdrantDiagnosticSnapshot) string {
 		return "qdrant_dimensions_mismatch"
 	case snapshot.Expected.ChunkVersion > 0 && snapshot.Pointer.ChunkVersion != snapshot.Expected.ChunkVersion:
 		return "qdrant_chunk_version_mismatch"
+	case snapshot.Readiness.EntityStaleCount > 0:
+		// The pointer describes a valid collection; individual Task/Doc
+		// entities are behind their canonical hash. Reporting that as
+		// qdrant_pointer_invalid sends the reader to rebuild a pointer that
+		// was never the problem.
+		return "qdrant_entities_stale"
 	default:
 		return "qdrant_pointer_invalid"
 	}

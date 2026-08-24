@@ -180,3 +180,52 @@ func assertKnFlowSkillSynced(t *testing.T, skillsDir string) {
 		t.Fatalf("expected kn-flow skill frontmatter in %s", skillsDir)
 	}
 }
+
+func TestStaleSkillDirsIgnoresDirectoriesThatWereNeverSynced(t *testing.T) {
+	root := t.TempDir()
+
+	if stale := StaleSkillDirs(skillRootsUnder(root)); len(stale) != 0 {
+		t.Fatalf("StaleSkillDirs() on an unsynced root = %v, want none", stale)
+	}
+}
+
+func TestStaleSkillDirsInspectsEveryExistingDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := SyncSkills(root); err != nil {
+		t.Fatalf("SyncSkills() error = %v", err)
+	}
+	if stale := StaleSkillDirs(skillRootsUnder(root)); len(stale) != 0 {
+		t.Fatalf("freshly synced root reported stale dirs %v", stale)
+	}
+
+	// Drift the second directory only. A check that stops at the first existing
+	// directory would see an up-to-date .claude/skills and report nothing.
+	drifted := filepath.Join(root, ".agents", "skills", "kn-init", "SKILL.md")
+	if err := os.WriteFile(drifted, []byte("stale copy\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	stale := StaleSkillDirs(skillRootsUnder(root))
+	want := []string{filepath.Join(root, ".agents", "skills")}
+	if len(stale) != 1 || stale[0] != want[0] {
+		t.Fatalf("StaleSkillDirs() = %v, want %v", stale, want)
+	}
+}
+
+func TestStaleSkillDirsReportsASkillMissingFromDisk(t *testing.T) {
+	root := t.TempDir()
+	if err := SyncSkills(root); err != nil {
+		t.Fatalf("SyncSkills() error = %v", err)
+	}
+
+	// A skill added to the binary has no on-disk copy yet, which is what an
+	// upgraded binary looks like before its skills are re-synced.
+	if err := os.RemoveAll(filepath.Join(root, ".claude", "skills", "kn-handoff")); err != nil {
+		t.Fatalf("RemoveAll() error = %v", err)
+	}
+
+	stale := StaleSkillDirs(skillRootsUnder(root))
+	if len(stale) != 1 || stale[0] != filepath.Join(root, ".claude", "skills") {
+		t.Fatalf("StaleSkillDirs() = %v, want only .claude/skills", stale)
+	}
+}

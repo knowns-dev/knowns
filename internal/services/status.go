@@ -61,6 +61,14 @@ func sortServiceStatuses(statuses []ServiceStatus) {
 // detectionTimeout is the max time each individual detector may spend.
 const detectionTimeout = 2 * time.Second
 
+// lspDetectionTimeout bounds the LSP inventory specifically. It probes every
+// configured language adapter, so it is legitimately far slower than the other
+// detectors (measured at ~40s on a repo with many adapters) and a 2s budget
+// would discard real data. This is a backstop against a hung probe, not a
+// target: callers that do not need LSP state must not request the full
+// snapshot at all.
+const lspDetectionTimeout = 60 * time.Second
+
 // LSPRuntimeStatusProvider supplies the canonical live LSP snapshot for a
 // project while the other service detectors run in parallel.
 type LSPRuntimeStatusProvider func(context.Context, *storage.Store) []lsp.LanguageRuntimeStatus
@@ -85,6 +93,14 @@ func DetectAllWithLSPStatusProvider(ctx context.Context, store *storage.Store, p
 // use this variant.
 func DetectAllReadOnly(store *storage.Store) []ServiceStatus {
 	return detectAll(context.Background(), store, false, nil)
+}
+
+// DetectEmbeddingReadOnly returns only the embedding service status. Callers
+// that need nothing else must use this instead of DetectAllReadOnly: the LSP
+// inventory in the full snapshot spawns per-language probes and routinely costs
+// tens of seconds, which is unrelated work to charge to an embedding question.
+func DetectEmbeddingReadOnly(store *storage.Store) []ServiceStatus {
+	return detectEmbedding(store)
 }
 
 // detectAll runs each detector independently with bounded local probes.
@@ -123,7 +139,22 @@ func detectAll(ctx context.Context, store *storage.Store, cleanupStale bool, lsp
 		if store != nil {
 			projectRoot = filepath.Dir(store.Root)
 		}
-		add(detectLSP(proj, projectRoot))
+		// Parts of the LSP inventory (language detection and managed install
+		// probes) never observe a context, so a cooperative deadline alone does
+		// not bound this detector: it has been measured at 35s+ on a warm repo.
+		// Bound the whole probe and report a timeout entry instead, otherwise
+		// every DetectAllReadOnly caller stalls with it — which is what made
+		// doctor's search.model check exceed its budget and report a timeout.
+		probeCtx, cancel := context.WithTimeout(ctx, lspDetectionTimeout)
+		defer cancel()
+		probed := make(chan []ServiceStatus, 1)
+		go func() { probed <- detectLSP(probeCtx, proj, projectRoot) }()
+		select {
+		case statuses := <-probed:
+			add(statuses)
+		case <-probeCtx.Done():
+			add([]ServiceStatus{lspProbeTimeoutStatus(proj)})
+		}
 	}()
 
 	wg.Add(1)
@@ -145,7 +176,27 @@ func detectAll(ctx context.Context, store *storage.Store, cleanupStale bool, lsp
 
 // ----- LSP Server Detection -----
 
-func detectLSP(proj *models.Project, projectRoot string) []ServiceStatus {
+// lspProbeTimeoutStatus reports that the LSP inventory exceeded its detection
+// budget. It is deliberately distinct from "stopped": the runtimes were never
+// determined, so callers must not read it as "no languages detected".
+func lspProbeTimeoutStatus(proj *models.Project) ServiceStatus {
+	enabled := true
+	if proj != nil && proj.Settings.LSP != nil && proj.Settings.LSP.Enabled != nil {
+		enabled = *proj.Settings.LSP.Enabled
+	}
+	return ServiceStatus{
+		Name:            "LSP",
+		Type:            "lsp",
+		Status:          "unknown",
+		EnabledInConfig: enabled,
+		Details:         map[string]string{"reason": "language runtime probe timed out"},
+	}
+}
+
+// detectLSP probes configured language runtimes. ctx must carry the caller's
+// detection deadline: starting or probing language servers can take tens of
+// seconds, and an unbounded probe here stalls every DetectAllReadOnly caller.
+func detectLSP(ctx context.Context, proj *models.Project, projectRoot string) []ServiceStatus {
 	// Determine which languages are configured.
 	var defaults *storage.ProjectDefaults
 	if settings, err := storage.NewEmbeddingSettingsStore().Load(); err == nil {
@@ -164,7 +215,7 @@ func detectLSP(proj *models.Project, projectRoot string) []ServiceStatus {
 		}}
 	}
 
-	statuses := lsp.CollectRuntimeStatuses(context.Background(), lsp.RuntimeStatusOptions{
+	statuses := lsp.CollectRuntimeStatuses(ctx, lsp.RuntimeStatusOptions{
 		Root:     projectRoot,
 		Config:   lspConfig,
 		Adapters: adapters.All(),

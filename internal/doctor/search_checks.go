@@ -204,7 +204,10 @@ func searchModelChecker(state *localState) Checker {
 				}, nil
 			}
 
-			statuses, err := state.serviceSnapshot()
+			// Embedding-only: the full service snapshot also probes every LSP
+			// adapter, which costs tens of seconds and made this check exceed
+			// its timeout budget and report checker_timeout.
+			statuses, err := state.embeddingSnapshot()
 			if err != nil {
 				return CheckResult{}, err
 			}
@@ -451,15 +454,28 @@ func searchProjectIndexChecker(state *localState) Checker {
 				return CheckResult{}, fmt.Errorf("search readiness unavailable")
 			}
 			if payload.Search.ProjectIndexStale {
+				// Staleness has several causes (model, dimensions, chunk
+				// version, or per-entity watermarks). Only claim a model
+				// mismatch when the recorded model actually differs, and
+				// surface the resolved reason so the summary matches evidence.
+				summary := "Project semantic index is stale"
+				indexModel := payload.Search.ProjectIndexModel
+				if indexModel != "" && settings.Model != "" && indexModel != settings.Model {
+					summary = "Project semantic index was built with a different model"
+				}
+				evidence := Evidence{
+					"ready":      true,
+					"indexModel": indexModel,
+					"model":      settings.Model,
+					"stale":      true,
+				}
+				if reason := payload.Search.SemanticDegradedReason; reason != "" {
+					evidence["reason"] = reason
+				}
 				return CheckResult{
-					Status:  StatusWarn,
-					Summary: "Project semantic index was built with a different model",
-					Evidence: Evidence{
-						"ready":      true,
-						"indexModel": payload.Search.ProjectIndexModel,
-						"model":      settings.Model,
-						"stale":      true,
-					},
+					Status:   StatusWarn,
+					Summary:  summary,
+					Evidence: evidence,
 					Remediation: &Remediation{
 						Description: "Rebuild the project and global semantic indices.",
 						Command:     "knowns search --reindex",

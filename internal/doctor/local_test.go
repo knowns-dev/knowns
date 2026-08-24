@@ -498,6 +498,7 @@ func TestAIChecksReportArtifactDriftWithoutSyncing(t *testing.T) {
 	before := snapshotTree(t, store.Root)
 	deps := localDependencies{
 		skillsOutOfSync: func(string) bool { return true },
+		globalSkills:    func() []string { return nil },
 		exists:          func(path string) bool { return existing[path] },
 	}
 	result, err := Run(context.Background(), RunOptions{
@@ -511,11 +512,80 @@ func TestAIChecksReportArtifactDriftWithoutSyncing(t *testing.T) {
 		t.Fatalf("instruction check = %#v", instructions)
 	}
 	skills := findCheck(t, result, "ai.skills")
-	if skills.Status != StatusWarn || skills.Remediation == nil || skills.Remediation.Command != "knowns sync" {
+	if skills.Status != StatusWarn || skills.Remediation == nil || skills.Remediation.Command != "knowns sync --skills" {
 		t.Fatalf("skills check = %#v", skills)
 	}
 	if got := snapshotTree(t, store.Root); !sameSnapshot(before, got) {
 		t.Fatalf("AI checks mutated project storage")
+	}
+}
+
+func TestAISkillsCheckReportsStaleUserLevelSkills(t *testing.T) {
+	store := newDoctorStore(t)
+	cfg, err := store.Config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cfg.Settings.Platforms = []string{"claude-code"}
+	if err := store.Config.Save(cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	root := filepath.Dir(store.Root)
+	existing := map[string]bool{
+		filepath.Join(root, "CLAUDE.md"):                    true,
+		filepath.Join(root, ".claude", "skills"):            true,
+		filepath.Join(root, ".claude", "skills", "kn-init"): true,
+	}
+	deps := localDependencies{
+		// The project itself is fully synced; only the user-level copies drifted.
+		skillsOutOfSync: func(string) bool { return false },
+		globalSkills:    func() []string { return []string{"/somewhere/.claude/skills"} },
+		exists:          func(path string) bool { return existing[path] },
+	}
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+		Scopes:  []Scope{ScopeAI},
+	}, localCheckersWithDependencies(store, deps))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	skills := findCheck(t, result, "ai.skills")
+	if skills.Status != StatusWarn {
+		t.Fatalf("skills status = %v, want warn", skills.Status)
+	}
+	// A project sync never rewrites user-level skills, so it is the wrong fix.
+	if skills.Remediation == nil || skills.Remediation.Command != "knowns setup claude --global" {
+		t.Fatalf("skills remediation = %#v, want global setup", skills.Remediation)
+	}
+	stale, ok := skills.Evidence["globalStalePaths"].([]string)
+	if !ok || len(stale) != 1 {
+		t.Fatalf("globalStalePaths evidence = %#v", skills.Evidence["globalStalePaths"])
+	}
+}
+
+func TestAISkillsCheckStaysApplicableWhenOnlyGlobalSkillsExist(t *testing.T) {
+	store := newDoctorStore(t)
+	deps := localDependencies{
+		globalSkills: func() []string { return []string{"/somewhere/.agents/skills"} },
+		exists:       func(string) bool { return false },
+	}
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+		Scopes:  []Scope{ScopeAI},
+	}, localCheckersWithDependencies(store, deps))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// No project platform dir exists, which used to short-circuit the whole
+	// check and hide user-level drift behind "not applicable".
+	skills := findCheck(t, result, "ai.skills")
+	if skills.Status != StatusWarn {
+		t.Fatalf("skills status = %v, want warn", skills.Status)
+	}
+	if skills.Remediation == nil || skills.Remediation.Command != "knowns setup agents --global" {
+		t.Fatalf("skills remediation = %#v, want agents global setup", skills.Remediation)
 	}
 }
 
@@ -687,6 +757,11 @@ func TestQdrantDoctorChecksReportReadOnlyReadinessStates(t *testing.T) {
 			s.Expected.Model = "next-model"
 			return s
 		}(), "search.qdrant-pointer", StatusWarn, "knowns search index --wait"},
+		{"entities-only staleness leaves the pointer valid", func() qdrantDiagnosticSnapshot {
+			s := base
+			s.Readiness = search.SemanticIndexReadiness{Enabled: true, Backend: models.SemanticVectorBackendQdrant, Stale: true, EntitiesOnlyStale: true, EntityStaleCount: 3, Reason: "3 canonical Task/Doc entities are not indexed at their current hash"}
+			return s
+		}(), "search.qdrant-pointer", StatusPass, ""},
 		{"collection dimensions", func() qdrantDiagnosticSnapshot { s := base; s.Collection.Dimensions = 768; return s }(), "search.qdrant-collection", StatusWarn, "knowns search index --wait"},
 		{"collection unprobed because the binary is missing", func() qdrantDiagnosticSnapshot {
 			s := base
@@ -701,7 +776,7 @@ func TestQdrantDoctorChecksReportReadOnlyReadinessStates(t *testing.T) {
 			s.ProbeErrorCode = "qdrant_collection_unavailable"
 			return s
 		}(), "search.qdrant-collection", StatusWarn, "knowns search index --wait"},
-		{"orphan candidates", func() qdrantDiagnosticSnapshot { s := base; s.Orphans = []string{"kn_retired"}; return s }(), "search.qdrant-orphans", StatusWarn, "knowns qdrant cleanup"},
+		{"orphan candidates", func() qdrantDiagnosticSnapshot { s := base; s.Orphans = []string{"kn_retired"}; return s }(), "search.qdrant-orphans", StatusWarn, ""},
 		{"external", func() qdrantDiagnosticSnapshot {
 			s := base
 			s.Resolution.Mode = models.SemanticVectorStoreModeExternal
@@ -731,6 +806,17 @@ func TestQdrantDoctorChecksReportReadOnlyReadinessStates(t *testing.T) {
 			}
 			if test.command != "" && (check.Remediation == nil || check.Remediation.Command != test.command) {
 				t.Fatalf("%s remediation = %#v", test.id, check.Remediation)
+			}
+			// Orphan collections have no cleanup command: `knowns qdrant cleanup`
+			// only clears runtime PID/status metadata, so the check must offer
+			// guidance without advertising a command that cannot clear it.
+			if test.name == "orphan candidates" {
+				if check.Remediation == nil || check.Remediation.Description == "" {
+					t.Fatalf("orphan remediation = %#v", check.Remediation)
+				}
+				if check.Remediation.Command != "" {
+					t.Fatalf("orphan remediation must not advertise a command, got %q", check.Remediation.Command)
+				}
 			}
 			if test.name == "stale pointer" && (check.Evidence["errorCode"] != "qdrant_model_mismatch" || check.Evidence["expectedModel"] != "next-model" || check.Evidence["actualModel"] != "current-model") {
 				t.Fatalf("pointer mismatch evidence = %#v", check.Evidence)

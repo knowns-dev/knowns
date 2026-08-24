@@ -476,3 +476,45 @@ func TestRuntimeQdrantQueryFailureDegradesHybridAndRetrieveButFailsSemantic(t *t
 		t.Fatalf("retrieve meta=%#v candidates=%d", meta, len(retrieved.Candidates))
 	}
 }
+
+func TestEntitiesOnlyStaleDistinguishesEntityLagFromPointerFailure(t *testing.T) {
+	// A stale entity and a stale pointer are repaired differently: the first by
+	// per-entity reconciliation, the second by rebuilding the collection.
+	// Callers scoped to pointer metadata rely on this flag to tell them apart.
+	stale := runtimequeue.QdrantIntent{EntityType: "task", EntityID: "lagging", Revision: 1, Operation: "update", CanonicalHash: "canonical-hash", Path: "tasks/lagging.md", BatchID: "public-hook"}
+
+	t.Run("valid pointer with lagging entity", func(t *testing.T) {
+		store := configureSemanticStore(t, nil)
+		writeReadyQdrantPointer(t, store)
+		if err := markQdrantIntentPending(store.Root, stale); err != nil {
+			t.Fatal(err)
+		}
+		r := ResolveSemanticIndexReadiness(store)
+		if !r.Stale || !r.EntitiesOnlyStale || r.EntityStaleCount == 0 {
+			t.Fatalf("entity lag not attributed to entities: %+v", r)
+		}
+	})
+
+	t.Run("pointer mismatch outranks entity lag", func(t *testing.T) {
+		store := configureSemanticStore(t, nil)
+		writeReadyQdrantPointer(t, store)
+		pointer, err := LoadQdrantPointer(store.Root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pointer.Embedding.Model = "some-other-model"
+		if err := SaveQdrantPointer(store.Root, pointer); err != nil {
+			t.Fatal(err)
+		}
+		if err := markQdrantIntentPending(store.Root, stale); err != nil {
+			t.Fatal(err)
+		}
+		r := ResolveSemanticIndexReadiness(store)
+		if !r.Stale {
+			t.Fatalf("stale = false for pointer model mismatch: %+v", r)
+		}
+		if r.EntitiesOnlyStale {
+			t.Fatalf("pointer mismatch misreported as entities-only: %+v", r)
+		}
+	})
+}

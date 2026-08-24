@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -200,6 +201,16 @@ func acquireQdrantGenerationFileLock(ctx context.Context, storeRoot string, time
 		if !os.IsExist(err) {
 			return nil, err
 		}
+		// The lock records its holder's PID. A holder that died without
+		// releasing (crash, SIGKILL, a killed `knowns` run) otherwise blocks
+		// every reindex for the whole staleAfter window even though nothing is
+		// rebuilding. Reclaim as soon as the PID is gone; PID reuse can only
+		// make an abandoned lock look held, which the mtime check below still
+		// clears on its own schedule.
+		if holder, ok := qdrantGenerationLockHolder(path); ok && !isProcessAlive(holder) {
+			_ = os.Remove(path)
+			continue
+		}
 		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > staleAfter {
 			_ = os.Remove(path)
 			continue
@@ -213,6 +224,29 @@ func acquireQdrantGenerationFileLock(ctx context.Context, storeRoot string, time
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
+}
+
+// qdrantGenerationLockHolder reads the PID that acquireQdrantGenerationFileLock
+// recorded in a lock file. It reports false when the file is unreadable, racing
+// a release, or was written without the pid line, so callers fall back to the
+// mtime staleness window rather than assuming the lock is abandoned.
+func qdrantGenerationLockHolder(path string) (int, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		raw, found := strings.CutPrefix(strings.TrimSpace(line), "pid=")
+		if !found {
+			continue
+		}
+		pid, convErr := strconv.Atoi(strings.TrimSpace(raw))
+		if convErr != nil || pid <= 0 {
+			return 0, false
+		}
+		return pid, true
+	}
+	return 0, false
 }
 
 func generationRecord(generation int, p *QdrantPointer, status string, created, swapped time.Time, retired *time.Time) QdrantGenerationRecord {
@@ -260,6 +294,24 @@ func CleanupQdrantGenerations(ctx context.Context, storeRoot string, client Qdra
 			continue
 		}
 		deleted = append(deleted, r.CollectionName)
+	}
+	// Record the deletions. A record left at "inactive" outlives the collection
+	// it describes, so retention keeps counting it and diagnostics keep
+	// proposing an already-dropped collection for manual review — advice no
+	// operator can act on, because there is nothing left to drop.
+	if len(deleted) > 0 {
+		dropped := make(map[string]bool, len(deleted))
+		for _, name := range deleted {
+			dropped[name] = true
+		}
+		for i := range records {
+			if dropped[records[i].CollectionName] && records[i].Status == QdrantGenerationStatusInactive {
+				records[i].Status = QdrantGenerationStatusDeleted
+			}
+		}
+		if err := SaveQdrantGenerations(storeRoot, records); err != nil {
+			errs = append(errs, fmt.Errorf("record deleted Qdrant generations: %w", err))
+		}
 	}
 	return deleted, errs
 }
