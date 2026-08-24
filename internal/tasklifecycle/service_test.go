@@ -990,7 +990,7 @@ func TestArchiveAndReopenHashlessRequireSeparateUserCalls(t *testing.T) {
 	if loaded.Archived || loaded.Status != "todo" {
 		t.Fatalf("final Task = %#v, want one active todo copy", loaded)
 	}
-	active, _ := store.Tasks.List()
+	active, _ := store.Tasks.ListActive()
 	archived, _ := store.Tasks.ListArchived()
 	if countID(active, task.ID) != 1 || countID(archived, task.ID) != 0 {
 		t.Fatalf("copies active=%d archived=%d", countID(active, task.ID), countID(archived, task.ID))

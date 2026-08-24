@@ -26,7 +26,7 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 - get: Read task details. Required: taskId. Optional: none. Returns: task metadata, acceptance criteria, plan, notes, spec links, and time spent.
 - update: Modify task fields, ACs, plan, or notes. Required: taskId. Optional: title, description, status, priority, assignee, labels, spec, fulfills, order, addAc, checkAc, uncheckAc, removeAc, plan, notes, appendNotes, clear, return. Returns: compact summary by default; use return=full for the legacy task payload.
 - delete: Remove a task or preview removal. Required: taskId. Optional: dryRun (default true). Returns: deletion preview or confirmation.
-- list: List tasks with filters. Required: none. Optional: status, priority, assignee, label, spec. Returns: matching task summaries with IDs, titles, statuses, priorities, assignees, labels, and spec links.
+- list: List tasks with filters. Required: none. Optional: status, priority, assignee, label, spec, includeHistorical. Returns: matching task summaries with IDs, titles, statuses, priorities, assignees, labels, and spec links.
 - history: View task change history. Required: taskId. Optional: none. Returns: chronological change entries with timestamps and metadata.
 - board: Show tasks grouped by status. Required: none. Optional: none. Returns: board columns containing task summaries by status.
 - archive/unarchive: Preview by default; set execute=true to mutate. Required: taskId.
@@ -118,6 +118,9 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 			mcp.WithString("label",
 				mcp.Description("Filter by label (list)"),
 			),
+			mcp.WithBoolean("includeHistorical",
+				mcp.Description("Include archived Tasks in the result (list)"),
+			),
 			mcp.WithBoolean("dryRun",
 				mcp.Description("Preview only without deleting (default: true) (delete)"),
 			),
@@ -161,7 +164,7 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 	registerHelp(s, "tasks.get", HelpEntry{When: "Read full task details before planning, implementation, review, or status updates.", Params: map[string]string{"taskId": "required — task ID"}, Flow: "Use before update/history when you need current ACs, plan, notes, or spec links."})
 	registerHelp(s, "tasks.update", HelpEntry{When: "Modify task metadata, status, acceptance criteria, plan, or implementation notes. Successful calls return a compact summary by default.", Params: map[string]string{"taskId": "required — task ID", "title": "new task title", "description": "new task description", "status": "new task status", "priority": "low | medium | high", "assignee": "new assignee", "labels": "replacement label list", "spec": "spec doc path", "fulfills": "spec AC IDs this task satisfies", "order": "display order", "addAc": "new acceptance criteria", "checkAc": "1-based AC indexes to mark complete", "uncheckAc": "1-based AC indexes to mark incomplete", "removeAc": "1-based AC indexes to remove", "plan": "implementation plan", "notes": "replace all implementation notes", "appendNotes": "append to existing implementation notes", "clear": "string fields to clear", "return": "summary (default) | full legacy task payload"}, Why: "Use appendNotes for progress. notes replaces existing notes and can wipe history.", Examples: []string{`tasks({ action: "update", taskId: "abc123", appendNotes: "Done: added tests" })`, `tasks({ action: "update", taskId: "abc123", checkAc: [1, 2] })`}, Flow: "Only check AC after work is complete; stop time and set status done at finish. Use return=full only when the complete updated task is required."})
 	registerHelp(s, "tasks.delete", HelpEntry{When: "Preview or remove a task when it is obsolete or was created by mistake.", Params: map[string]string{"taskId": "required — task ID", "dryRun": "preview only without deleting; default true"}, Why: "Default dryRun protects against accidental deletion."})
-	registerHelp(s, "tasks.list", HelpEntry{When: "Find tasks by status, owner, priority, label, or spec before choosing work or checking remaining scope.", Params: map[string]string{"status": "filter by task status", "priority": "filter by low | medium | high", "assignee": "filter by assignee", "label": "filter by one label", "spec": "filter by linked spec doc path"}})
+	registerHelp(s, "tasks.list", HelpEntry{When: "Find tasks by status, owner, priority, label, or spec before choosing work or checking remaining scope.", Params: map[string]string{"status": "filter by task status", "priority": "filter by low | medium | high", "assignee": "filter by assignee", "label": "filter by one label", "spec": "filter by linked spec doc path", "includeHistorical": "include archived Tasks in the result"}})
 	registerHelp(s, "tasks.history", HelpEntry{When: "Inspect chronological changes for audit, debugging, or understanding how a task evolved.", Params: map[string]string{"taskId": "required — task ID"}})
 	registerHelp(s, "tasks.board", HelpEntry{When: "Show task board grouped by status for planning or handoff overview.", Params: map[string]string{}})
 	registerHelp(s, "tasks.archive", HelpEntry{When: "Preview or archive one completed Task through the canonical lifecycle policy.", Params: map[string]string{"taskId": "required", "execute": "false previews; true mutates", "actor": "optional audit actor"}})
@@ -457,17 +460,22 @@ func handleTaskList(getStore func() *storage.Store, req mcp.CallToolRequest) (*m
 		return noProjectError()
 	}
 
-	tasks, err := store.Tasks.List()
-	if err != nil {
-		return errFailed("list tasks", err)
-	}
-
 	args := req.GetArguments()
 	statusFilter, _ := stringArg(args, "status")
 	priorityFilter, _ := stringArg(args, "priority")
 	assigneeFilter, _ := stringArg(args, "assignee")
 	labelFilter, _ := stringArg(args, "label")
 	specFilter, _ := stringArg(args, "spec")
+	includeHistorical := boolArg(args, "includeHistorical")
+
+	list := store.Tasks.ListActive
+	if includeHistorical {
+		list = store.Tasks.ListAll
+	}
+	tasks, err := list()
+	if err != nil {
+		return errFailed("list tasks", err)
+	}
 
 	filtered := tasks[:0]
 	for _, t := range tasks {
@@ -669,7 +677,7 @@ func handleTaskBoard(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 		return noProjectError()
 	}
 
-	tasks, err := store.Tasks.List()
+	tasks, err := store.Tasks.ListActive()
 	if err != nil {
 		return errFailed("list tasks", err)
 	}

@@ -977,7 +977,7 @@ func runRuntimeReindexWithProgress(storeRoot, jobID string) error {
 func runReindex() error {
 	store := getStore()
 
-	tasks, _ := store.Tasks.List()
+	tasks, _ := store.Tasks.ListAll()
 	docs, _ := store.Docs.List()
 	decisions, _ := store.Decisions.List()
 	taskCount := len(tasks)

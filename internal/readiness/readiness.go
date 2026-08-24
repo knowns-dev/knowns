@@ -208,7 +208,7 @@ func buildKnowledge(store *storage.Store) *KnowledgeStatus {
 	if docs, err := store.Docs.List(); err == nil {
 		ks.Docs = len(docs)
 	}
-	if tasks, err := store.Tasks.List(); err == nil {
+	if tasks, err := store.Tasks.ListActive(); err == nil {
 		ks.Tasks = len(tasks)
 	}
 	if templates, err := store.Templates.List(); err == nil {

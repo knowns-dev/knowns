@@ -648,7 +648,7 @@ func allTasksForIndex(store *storage.Store) ([]*models.Task, error) {
 	if store == nil || store.Tasks == nil {
 		return nil, fmt.Errorf("task store unavailable")
 	}
-	active, err := store.Tasks.List()
+	active, err := store.Tasks.ListActive()
 	if err != nil {
 		return nil, err
 	}

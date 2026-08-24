@@ -166,7 +166,7 @@ func TestTaskMutationResponseModes(t *testing.T) {
 		t.Fatalf("invalid update changed title from %q to %q", beforeInvalid.Title, afterInvalid.Title)
 	}
 
-	tasksBefore, err := store.Tasks.List()
+	tasksBefore, err := store.Tasks.ListActive()
 	if err != nil {
 		t.Fatalf("list tasks before invalid create: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestTaskMutationResponseModes(t *testing.T) {
 		t.Fatalf("invalid task create: %v", err)
 	}
 	assertMutationModeError(t, invalidCreate)
-	tasksAfter, err := store.Tasks.List()
+	tasksAfter, err := store.Tasks.ListActive()
 	if err != nil {
 		t.Fatalf("list tasks after invalid create: %v", err)
 	}

@@ -327,7 +327,7 @@ export default function TasksPage({
 				}
 				actions={
 					<div className="flex flex-wrap items-center gap-2">
-						<label className="sr-only" htmlFor="task-lifecycle-filter">Lifecycle</label>
+						<label className="text-xs text-muted-foreground" htmlFor="task-lifecycle-filter">Show</label>
 						<select
 							id="task-lifecycle-filter"
 							value={lifecycleFilter}

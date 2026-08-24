@@ -44,16 +44,23 @@ func (sr *SearchRoutes) searchHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	includeHistorical, err := parseIncludeHistorical(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	opts := search.SearchOptions{
-		Query:    q.Get("q"),
-		Type:     q.Get("type"),
-		Mode:     q.Get("mode"),
-		Status:   q.Get("status"),
-		Priority: q.Get("priority"),
-		Assignee: q.Get("assignee"),
-		Label:    q.Get("label"),
-		Tag:      q.Get("tag"),
-		Limit:    limit,
+		Query:             q.Get("q"),
+		Type:              q.Get("type"),
+		Mode:              q.Get("mode"),
+		Status:            q.Get("status"),
+		Priority:          q.Get("priority"),
+		Assignee:          q.Get("assignee"),
+		Label:             q.Get("label"),
+		Tag:               q.Get("tag"),
+		Limit:             limit,
+		IncludeHistorical: includeHistorical,
 	}
 
 	response, err := search.SearchWithRuntime(sr.getStore(), opts)

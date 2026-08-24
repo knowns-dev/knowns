@@ -424,7 +424,7 @@ func (ds *DocStore) RewriteDocReferences(oldPath, newPath string, taskStore *Tas
 		}
 	}
 	if taskStore != nil {
-		tasks, err := taskStore.List()
+		tasks, err := taskStore.ListAll()
 		if err != nil {
 			return err
 		}

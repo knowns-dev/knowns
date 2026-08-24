@@ -110,7 +110,7 @@ func writeProjectState(b *strings.Builder, store *storage.Store, statuses []lsp.
 }
 
 func countInProgressTasks(store *storage.Store) int {
-	tasks, err := store.Tasks.List()
+	tasks, err := store.Tasks.ListActive()
 	if err != nil {
 		return 0
 	}

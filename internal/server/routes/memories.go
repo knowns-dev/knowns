@@ -519,7 +519,7 @@ func newMemoryReviewContext(store *storage.Store, entries []*models.MemoryEntry)
 		docPaths:  map[string]bool{},
 		memoryIDs: map[string]bool{},
 	}
-	if tasks, err := store.Tasks.List(); err == nil {
+	if tasks, err := store.Tasks.ListAll(); err == nil {
 		for _, task := range tasks {
 			ctx.taskIDs[task.ID] = true
 		}

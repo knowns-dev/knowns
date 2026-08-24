@@ -64,7 +64,7 @@ func TestRunTaskCreateUsesDefaultAndCustomPrefixes(t *testing.T) {
 		t.Fatalf("runTaskCreate custom: %v", err)
 	}
 
-	tasks, err := store.Tasks.List()
+	tasks, err := store.Tasks.ListActive()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestRunTaskCreateUsesDefaultAndCustomPrefixes(t *testing.T) {
 	if err := runTaskCreate(cmd, []string{"Invalid prefix"}); err == nil {
 		t.Fatal("runTaskCreate invalid prefix succeeded")
 	}
-	after, err := store.Tasks.List()
+	after, err := store.Tasks.ListActive()
 	if err != nil {
 		t.Fatalf("List after invalid prefix: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestRunTaskCreateFallsBackToLegacyIDsWithoutPrefix(t *testing.T) {
 	if err := runTaskCreate(newTaskCreateTestCommand(), []string{"Legacy id"}); err != nil {
 		t.Fatalf("runTaskCreate: %v", err)
 	}
-	tasks, err := store.Tasks.List()
+	tasks, err := store.Tasks.ListActive()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

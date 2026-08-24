@@ -1037,7 +1037,7 @@ func tasksForSearch(store *storage.Store, opts SearchOptions) ([]*models.Task, e
 	if store == nil || store.Tasks == nil {
 		return nil, fmt.Errorf("task search store unavailable")
 	}
-	active, err := store.Tasks.List()
+	active, err := store.Tasks.ListActive()
 	if err != nil {
 		return nil, err
 	}

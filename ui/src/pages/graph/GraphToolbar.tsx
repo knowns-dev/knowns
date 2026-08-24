@@ -1,7 +1,7 @@
 import type { GraphData } from "@/ui/api/client";
 import { Popover, PopoverContent, PopoverTrigger } from "@/ui/components/ui/popover";
 import { cn } from "@/ui/lib/utils";
-import { Maximize2, Minimize2, Scan, Search, SlidersHorizontal, X } from "lucide-react";
+import { Archive, Maximize2, Minimize2, Scan, Search, SlidersHorizontal, X } from "lucide-react";
 
 import { TASK_COLOR, type FilterState } from "./constants";
 import { GraphLegend } from "./GraphLegend";
@@ -20,6 +20,8 @@ interface GraphToolbarProps {
 	onClearImpact: () => void;
 	onZoomToFit: () => void;
 	onToggleFullscreen: () => void;
+	includeArchived: boolean;
+	onToggleArchived: () => void;
 }
 
 const entityFilterKeys: (keyof FilterState)[] = ["tasks", "docs", "memories", "decisions", "templates"];
@@ -38,6 +40,8 @@ export function GraphToolbar({
 	onClearImpact,
 	onZoomToFit,
 	onToggleFullscreen,
+	includeArchived,
+	onToggleArchived,
 }: GraphToolbarProps) {
 	const hiddenEntityCount = entityFilterKeys.filter((key) => !filters[key]).length;
 	const hasFilteredVisibility = hiddenEntityCount > 0 || !filters.showEdges;
@@ -134,6 +138,18 @@ export function GraphToolbar({
 					</PopoverContent>
 				</Popover>
 
+				<button
+					type="button"
+					aria-pressed={includeArchived}
+					aria-label={includeArchived ? "Hide archived tasks" : "Show archived tasks"}
+					title={includeArchived ? "Hide archived tasks" : "Show archived tasks"}
+					onClick={onToggleArchived}
+					className={`flex h-11 w-11 items-center justify-center rounded-md transition-colors duration-150 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-9 sm:w-9 ${
+						includeArchived ? "bg-accent text-foreground" : "text-muted-foreground"
+					}`}
+				>
+					<Archive aria-hidden="true" className="h-4 w-4" />
+				</button>
 				<button
 					type="button"
 					aria-label="Fit graph to view"

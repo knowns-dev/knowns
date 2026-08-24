@@ -10,6 +10,7 @@ import {
 } from "../ui/command";
 import { Dialog, DialogContent } from "../ui/dialog";
 import type { Task } from "@/ui/models/task";
+import { API_BASE, apiFetch } from "@/ui/api/client";
 
 interface SearchCommandDialogProps {
 	open: boolean;
@@ -81,7 +82,9 @@ export default function SearchCommandDialog({
 
 		setLoading(true);
 		const timeoutId = setTimeout(() => {
-			fetch(`/api/search?q=${encodeURIComponent(search)}`)
+			apiFetch(
+				`${API_BASE}/api/search?q=${encodeURIComponent(search)}&includeHistorical=true`,
+			)
 				.then((res) => res.json())
 				.then((data) => {
 					setResults({

@@ -580,7 +580,7 @@ func (s *Service) verificationEvidence(entry *models.DecisionEntry) ([]string, e
 			return nil, fmt.Errorf("related doc %q is not readable: %w", path, err)
 		}
 		if strings.HasPrefix(path, "specs/") {
-			tasks, err := s.Store.Tasks.List()
+			tasks, err := s.Store.Tasks.ListAll()
 			if err != nil {
 				return nil, fmt.Errorf("list tasks linked to spec %q: %w", path, err)
 			}
