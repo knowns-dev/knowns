@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -13,6 +14,36 @@ import (
 	"github.com/howznguyen/knowns/internal/references"
 	"github.com/howznguyen/knowns/internal/storage"
 )
+
+// errSemanticUnavailable marks a failure at the embedder boundary as
+// operational rather than programming/request error: an unreachable or
+// failing embedder, a failing vector store search, or semantic search
+// having no embedder/vector store configured. Per Locked Decision D3, these
+// failures degrade a search to keyword results rather than failing it.
+//
+// Classification happens only at the three embedder-boundary sources
+// (EmbedQuery, VectorStore.LastSearchError, the nil-embedder branch) — never
+// by matching on error text, which would silently drift as messages change.
+// Any other error (e.g. a malformed request, a programming bug) is left
+// unwrapped so it still propagates and fails the search (see AC-17 on
+// OLM-AKEN95).
+var errSemanticUnavailable = errors.New("semantic search unavailable")
+
+// SearchDegradation reports that a search returned keyword results because
+// its semantic leg failed for an operational reason (Locked Decision D3).
+// It is deliberately not an error: the search succeeded, at reduced quality.
+//
+// Callers that only want results can keep using Search and ignore this.
+// Callers that surface search quality to a user, or that repair the semantic
+// index in the background, must use SearchWithDegradation instead — a
+// degraded search is precisely the signal that the index needs attention,
+// and before this existed that signal was carried by an error that the
+// keyword-fallback fix correctly stopped returning.
+type SearchDegradation struct {
+	// Err is the classified embedder-boundary failure behind the
+	// degradation, suitable for a user-facing reason string.
+	Err error
+}
 
 const memoryStoreProject = "project-store"
 const memoryStoreGlobal = "global-store"
@@ -81,8 +112,17 @@ func (e *Engine) SemanticAvailable() bool {
 	return e.embedder != nil && e.vecStore != nil && e.vecStore.Count() > 0
 }
 
-// Search executes a search and returns scored results.
+// Search executes a search and returns scored results. A semantic leg that
+// fails operationally degrades to keyword results silently; use
+// SearchWithDegradation to observe that.
 func (e *Engine) Search(opts SearchOptions) ([]models.SearchResult, error) {
+	results, _, err := e.SearchWithDegradation(opts)
+	return results, err
+}
+
+// SearchWithDegradation executes a search and additionally reports whether
+// the semantic leg was skipped because it failed operationally.
+func (e *Engine) SearchWithDegradation(opts SearchOptions) ([]models.SearchResult, *SearchDegradation, error) {
 	if opts.Limit <= 0 {
 		opts.Limit = 20
 	}
@@ -96,12 +136,12 @@ func (e *Engine) Search(opts SearchOptions) ([]models.SearchResult, error) {
 
 	query := strings.TrimSpace(opts.Query)
 	if query == "" {
-		return []models.SearchResult{}, nil
+		return []models.SearchResult{}, nil, nil
 	}
 	var snapshotErr error
 	opts, snapshotErr = e.withTaskSnapshot(opts)
 	if snapshotErr != nil {
-		return nil, snapshotErr
+		return nil, nil, snapshotErr
 	}
 
 	mode := SearchMode(opts.Mode)
@@ -117,19 +157,27 @@ func (e *Engine) Search(opts SearchOptions) ([]models.SearchResult, error) {
 
 	var results []models.SearchResult
 	var err error
+	var degraded *SearchDegradation
 
 	switch mode {
 	case ModeKeyword:
 		results, err = e.keywordSearch(query, opts)
 	case ModeSemantic:
 		results, err = e.semanticSearch(query, opts)
+		if err != nil && errors.Is(err, errSemanticUnavailable) {
+			// Semantic mode has no keyword leg to fall back on already
+			// running (unlike hybrid), so run one now. D3: an operational
+			// embedder failure degrades the search, it does not fail it.
+			degraded = &SearchDegradation{Err: err}
+			results, err = e.keywordSearch(query, opts)
+		}
 	case ModeHybrid:
-		results, err = e.hybridSearch(query, opts)
+		results, degraded, err = e.hybridSearch(query, opts)
 	default:
 		results, err = e.keywordSearch(query, opts)
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	results = filterSearchResultsByType(results, opts.Type)
@@ -149,7 +197,7 @@ func (e *Engine) Search(opts SearchOptions) ([]models.SearchResult, error) {
 		results = results[:opts.Limit]
 	}
 
-	return results, nil
+	return results, degraded, nil
 }
 
 // Retrieve executes mixed-source retrieval and assembles a context pack.
@@ -1244,11 +1292,11 @@ func (e *Engine) semanticSearch(query string, opts SearchOptions) ([]models.Sear
 		return e.semanticMemorySearch(query, opts)
 	}
 	if e.embedder == nil || e.vecStore == nil {
-		return nil, fmt.Errorf("semantic search is not available")
+		return nil, fmt.Errorf("semantic search is not available: %w", errSemanticUnavailable)
 	}
 	queryVec, err := e.embedder.EmbedQuery(query)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("embed query: %w: %w", errSemanticUnavailable, err)
 	}
 
 	topK := opts.Limit * 2
@@ -1265,7 +1313,7 @@ func (e *Engine) semanticSearch(query string, opts SearchOptions) ([]models.Sear
 	})
 	if source, ok := e.vecStore.(vectorStoreSearchError); ok {
 		if err := source.LastSearchError(); err != nil {
-			return nil, fmt.Errorf("semantic vector query failed: %w", err)
+			return nil, fmt.Errorf("semantic vector query failed: %w: %w", errSemanticUnavailable, err)
 		}
 	}
 
@@ -1274,24 +1322,33 @@ func (e *Engine) semanticSearch(query string, opts SearchOptions) ([]models.Sear
 
 // ─── hybrid search ───────────────────────────────────────────────────
 
-func (e *Engine) hybridSearch(query string, opts SearchOptions) ([]models.SearchResult, error) {
+func (e *Engine) hybridSearch(query string, opts SearchOptions) ([]models.SearchResult, *SearchDegradation, error) {
 	if opts.Type == "memory" {
-		return e.hybridMemorySearch(query, opts)
+		results, err := e.hybridMemorySearch(query, opts)
+		return results, nil, err
 	}
 	// Run both in sequence (could be parallel, but for simplicity).
 	kwResults, err := e.keywordSearch(query, opts)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	semResults, err := e.semanticSearch(query, opts)
 	if err != nil {
-		return kwResults, err
+		if errors.Is(err, errSemanticUnavailable) {
+			// D3: an operational embedder failure degrades hybrid search to
+			// its keyword leg rather than failing the whole search. Mirrors
+			// the hybridMemorySearch precedent below. The failure is reported
+			// as a degradation rather than dropped, so callers that repair
+			// the index or warn the user still see it.
+			return kwResults, &SearchDegradation{Err: err}, nil
+		}
+		return nil, nil, err
 	}
 
 	// Merge results.
 	merged := mergeResults(kwResults, semResults, 0)
-	return e.rerank(merged, query, 0, opts), nil
+	return e.rerank(merged, query, 0, opts), nil, nil
 }
 
 func (e *Engine) memorySemanticAvailable() bool {
@@ -1344,11 +1401,11 @@ func (e *Engine) hybridMemorySearch(query string, opts SearchOptions) ([]models.
 
 func (e *Engine) semanticSearchSingleStore(query string, opts SearchOptions, memoryLayer string, memoryStore string) ([]models.SearchResult, error) {
 	if e.embedder == nil || e.vecStore == nil {
-		return nil, fmt.Errorf("semantic search is not available")
+		return nil, fmt.Errorf("semantic search is not available: %w", errSemanticUnavailable)
 	}
 	queryVec, err := e.embedder.EmbedQuery(query)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("embed query: %w: %w", errSemanticUnavailable, err)
 	}
 	scored := e.vecStore.Search(queryVec, VectorSearchOpts{
 		TopK:      opts.Limit * 2,
@@ -1357,7 +1414,7 @@ func (e *Engine) semanticSearchSingleStore(query string, opts SearchOptions, mem
 	})
 	if source, ok := e.vecStore.(vectorStoreSearchError); ok {
 		if err := source.LastSearchError(); err != nil {
-			return nil, fmt.Errorf("semantic vector query failed: %w", err)
+			return nil, fmt.Errorf("semantic vector query failed: %w: %w", errSemanticUnavailable, err)
 		}
 	}
 	results, err := e.scoredChunksToResults(scored, opts, "semantic", query)

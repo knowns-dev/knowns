@@ -429,7 +429,7 @@ func TestSearchWithRuntimeHybridQdrantPointerReady(t *testing.T) {
 	}
 }
 
-func TestRuntimeQdrantQueryFailureDegradesHybridAndRetrieveButFailsSemantic(t *testing.T) {
+func TestRuntimeQdrantQueryFailureDegradesHybridSemanticAndRetrieve(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "qdrant unavailable", http.StatusServiceUnavailable)
 	}))
@@ -465,8 +465,20 @@ func TestRuntimeQdrantQueryFailureDegradesHybridAndRetrieveButFailsSemantic(t *t
 	if len(hybrid.Results) == 0 {
 		t.Fatal("hybrid lost keyword fallback")
 	}
-	if _, err := SearchWithRuntime(store, SearchOptions{Query: "runtime", Mode: string(ModeSemantic), Limit: 5}); err == nil || !strings.Contains(err.Error(), "503") {
-		t.Fatalf("semantic err=%v", err)
+	// Semantic mode used to fail outright here. Locked Decision D3 and AC-7 of
+	// the ollama-only-embedding spec changed that contract deliberately: an
+	// unreachable embedder degrades a search, it does not fail it, in every
+	// mode. Semantic mode now runs a keyword leg on the failure path and
+	// reports the degradation through the runtime metadata instead.
+	semantic, err := SearchWithRuntime(store, SearchOptions{Query: "runtime", Mode: string(ModeSemantic), Limit: 5})
+	if err != nil {
+		t.Fatalf("semantic err=%v, want keyword degradation rather than failure", err)
+	}
+	if semantic.Runtime == nil || !semantic.Runtime.Degraded || !strings.Contains(semantic.Runtime.Message, "503") {
+		t.Fatalf("semantic runtime=%#v, want degraded metadata naming the upstream failure", semantic.Runtime)
+	}
+	if len(semantic.Results) == 0 {
+		t.Fatal("semantic lost keyword fallback")
 	}
 	retrieved, meta, err := RetrieveWithRuntime(store, models.RetrievalOptions{Query: "runtime", Mode: string(ModeHybrid), Limit: 5})
 	if err != nil {

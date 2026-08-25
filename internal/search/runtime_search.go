@@ -142,9 +142,24 @@ func searchWithLocalRuntime(store *storage.Store, opts SearchOptions) (*RuntimeS
 			Runtime: meta,
 		}, nil
 	}
-	results, err := engine.Search(opts)
+	results, degraded, err := engine.SearchWithDegradation(opts)
 	if err != nil {
 		return semanticUnavailableResponse(store, opts, mode, err)
+	}
+	if degraded != nil {
+		// The engine already ran the keyword leg and handed back its results,
+		// so unlike semanticUnavailableResponse there is nothing to re-run.
+		// The bootstrap still has to be queued: a degraded search is exactly
+		// the signal that the semantic index needs repair, and that signal
+		// used to arrive here as an error before keyword fallback (D3) —
+		// correctly — stopped the engine returning one.
+		bootstrap := queueSemanticBootstrapAsync(store, degraded.Err)
+		meta := degradedRuntimeMetadata(mode, degraded.Err)
+		applySemanticBootstrapMetadata(meta, bootstrap)
+		return &RuntimeSearchResponse{
+			Results: attachRuntimeWarning(results, meta),
+			Runtime: meta,
+		}, nil
 	}
 	return &RuntimeSearchResponse{Results: results}, nil
 }
