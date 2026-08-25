@@ -1,6 +1,8 @@
-import { normalizeKnownsTaskReferences } from "../../lib/knownsReferences";
+import { TASK_TARGET_PATTERN, normalizeKnownsTaskReferences } from "../../lib/knownsReferences";
 
-const TASK_MENTION_REGEX = /@(task[-/][a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)?(?:\{[a-z-]+\})?)/g;
+const TASK_MENTION_REGEX = new RegExp(`@(task[-/]${TASK_TARGET_PATTERN}(?:\\{[a-z-]+\\})?)`, "g");
+const TASK_LEGACY_REF_REGEX = new RegExp(`^@task-(${TASK_TARGET_PATTERN})(\\{[a-z-]+\\})?$`);
+const TASK_CANONICAL_REF_REGEX = new RegExp(`^@task/(${TASK_TARGET_PATTERN})(\\{[a-z-]+\\})?$`);
 const MEMORY_MENTION_REGEX = /@(memory[-/][a-zA-Z0-9-]+(?:\{[a-z-]+\})?)/g;
 const DECISION_MENTION_REGEX = /@(decision\/[a-z0-9]+(?:-[a-z0-9]+)*(?:\{[a-z-]+\})?)/g;
 const TEMPLATE_MENTION_REGEX = /@(template\/[a-zA-Z0-9_./-]+(?:\{[a-z-]+\})?)/g;
@@ -124,13 +126,14 @@ export function canonicalizeSemanticReference(raw: string): string | null {
 
   if (!value || value.includes("<") || value.includes(">")) return null;
 
-  const taskLegacy = value.match(/^@task-([a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)?)(\{[a-z-]+\})?$/);
+  const taskLegacy = value.match(TASK_LEGACY_REF_REGEX);
   if (taskLegacy) {
     return `@task/${taskLegacy[1]}${taskLegacy[2] || ""}`;
   }
 
-  if (/^@task\/[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)?(?:\{[a-z-]+\})?$/.test(value)) {
-    return value;
+  const taskCanonical = value.match(TASK_CANONICAL_REF_REGEX);
+  if (taskCanonical) {
+    return `@task/${taskCanonical[1]}${taskCanonical[2] || ""}`;
   }
 
   const memoryLegacy = value.match(/^@memory-([a-zA-Z0-9-]+)(\{[a-z-]+\})?$/);

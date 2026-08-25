@@ -1,6 +1,7 @@
 import { Brain, ExternalLink, FileText, ListTodo, Scale } from "lucide-react";
 
 import { toDocPath } from "../editor/mentionUtils";
+import { TASK_TARGET_PATTERN } from "../../lib/knownsReferences";
 import { cn } from "../../lib/utils";
 
 export type SourceRef =
@@ -10,6 +11,8 @@ export type SourceRef =
 	| { kind: "decision"; id: string }
 	| { kind: "url"; href: string }
 	| { kind: "text" };
+
+const TASK_SOURCE_REGEX = new RegExp(`^@task[-/](${TASK_TARGET_PATTERN})$`);
 
 /**
  * Sources are free-form: a Knowns reference, a path inside the repository, or a
@@ -25,7 +28,7 @@ export function parseSource(raw: string): SourceRef {
 	const doc = value.match(/^@docs?\/(.+)$/);
 	if (doc?.[1]) return { kind: "doc", path: toDocPath(value) };
 
-	const task = value.match(/^@task[-/]([A-Za-z0-9]+)$/);
+	const task = value.match(TASK_SOURCE_REGEX);
 	if (task?.[1]) return { kind: "task", id: task[1] };
 
 	const memory = value.match(/^@memory[-/]([A-Za-z0-9-]+)$/);
