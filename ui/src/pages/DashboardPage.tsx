@@ -1106,7 +1106,7 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 										<div className="flex items-start justify-between gap-3">
 											<div className="min-w-0">
 												<Link
-													to="/kanban/$taskId"
+													to="/tasks/$taskId"
 													params={{ taskId: focusTask.id }}
 													className="line-clamp-2 text-sm font-semibold leading-5 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 												>
@@ -1148,7 +1148,7 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 											/>
 										)}
 										<Button asChild className="mt-4 w-full" size="sm">
-											<Link to="/kanban/$taskId" params={{ taskId: focusTask.id }}>
+											<Link to="/tasks/$taskId" params={{ taskId: focusTask.id }}>
 												{isRecommendedFocus ? "Review task" : "Continue task"}
 												<ArrowRight />
 											</Link>
@@ -1178,7 +1178,7 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 										{visibleAttentionItems.map((item, index) => (
 											<li key={item.task.id}>
 												<Link
-													to="/kanban/$taskId"
+													to="/tasks/$taskId"
 													params={{ taskId: item.task.id }}
 													className="grid grid-cols-[1rem_minmax(0,1fr)] gap-2 px-4 py-2.5 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
 												>

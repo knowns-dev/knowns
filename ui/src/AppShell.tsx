@@ -296,7 +296,7 @@ export default function AppShell() {
 	};
 
 	const handleSearchTaskSelect = (task: Task) => {
-		navigate({ to: `/kanban/${task.id}` });
+		navigate({ to: `/tasks/${task.id}` });
 	};
 
 	const handleSearchDocSelect = (doc?: { path?: string; filename?: string }) => {
@@ -391,7 +391,7 @@ export default function AppShell() {
 							/>
 							<HeaderTimeTracker
 								onTaskClick={(taskId) => {
-									navigate({ to: `/kanban/${taskId}` });
+									navigate({ to: `/tasks/${taskId}` });
 								}}
 							/>
 							<NotificationBell />

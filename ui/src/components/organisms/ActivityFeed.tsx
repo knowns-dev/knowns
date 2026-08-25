@@ -133,7 +133,7 @@ export default function ActivityFeed({
 		if (onTaskClick) {
 			onTaskClick(taskId);
 		} else {
-			navigateTo(`/kanban/${taskId}`);
+			navigateTo(`/tasks/${taskId}`);
 		}
 	};
 
