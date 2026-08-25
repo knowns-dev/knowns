@@ -34,6 +34,14 @@ type EmbeddingModel struct {
 	Provider   string `json:"provider"`   // ID key into EmbeddingProviders map
 	Model      string `json:"model"`      // model name sent to API
 	Dimensions int    `json:"dimensions"` // embedding vector size
+	// MaxTokens is the model's context limit, used for chunk sizing. Zero
+	// leaves the caller on its own conservative default.
+	MaxTokens int `json:"maxTokens,omitempty"`
+	// QueryPrefix and DocPrefix carry the markers an asymmetric or
+	// instruction-aware model expects. They belong to the model rather than the
+	// provider: the same endpoint can serve models with different conventions.
+	QueryPrefix string `json:"queryPrefix,omitempty"`
+	DocPrefix   string `json:"docPrefix,omitempty"`
 }
 
 // EmbeddingSettings holds the global embedding provider and model registry.

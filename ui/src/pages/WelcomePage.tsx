@@ -5,6 +5,7 @@ import { Button } from "@/ui/components/ui/button";
 import { ThemeToggle } from "@/ui/components/atoms/ThemeToggle";
 import { cn } from "@/ui/lib/utils";
 import logoImage from "../public/logo.png";
+import { API_BASE, apiFetch } from "@/ui/api/client";
 
 interface WelcomePageProps {
   onProjectSelected: () => void;
@@ -204,7 +205,7 @@ export function WelcomePage({ onProjectSelected }: WelcomePageProps) {
 
   const handleInit = async () => {
     try {
-      const res = await fetch("/api/init", { method: "POST" });
+      const res = await apiFetch(`${API_BASE}/api/init`, { method: "POST" });
       if (!res.ok) throw new Error();
       await loadProjects();
     } catch {

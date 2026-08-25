@@ -22,15 +22,30 @@ type APIEmbedder struct {
 	dimensions int
 }
 
+// defaultAPIMaxTokens is the context limit assumed when neither the project
+// settings nor the model registry declares one. It is deliberately small: an
+// unknown model is more likely to reject an oversized input than to waste
+// capacity on an undersized chunk.
+const defaultAPIMaxTokens = 512
+
 // APIEmbedderConfig specifies how to create an APIEmbedder.
 type APIEmbedderConfig struct {
 	APIBase    string // e.g. "http://localhost:11434/v1"
 	APIKey     string // Bearer token (optional for local providers)
 	Model      string // model name sent to API
 	Dimensions int    // expected embedding dimensions
+	MaxTokens  int    // model context limit; 0 falls back to defaultAPIMaxTokens
 	Timeout    int    // seconds per request (default 30)
 	BatchSize  int    // max texts per API call (default 64)
 	Retry      storage.RetryConfig
+
+	// QueryPrefix and DocPrefix are prepended before embedding. Asymmetric
+	// models are trained with distinct query and passage markers, and
+	// instruction-aware models take a task instruction on the query side only,
+	// so the two sides must not be embedded identically. Empty for models that
+	// are symmetric or apply their own template.
+	QueryPrefix string
+	DocPrefix   string
 }
 
 // openaiEmbeddingRequest is the request body for /v1/embeddings.
@@ -41,10 +56,10 @@ type openaiEmbeddingRequest struct {
 
 // openaiEmbeddingResponse is the response from /v1/embeddings.
 type openaiEmbeddingResponse struct {
-	Object string                    `json:"object"`
-	Data   []openaiEmbeddingDatum    `json:"data"`
-	Model  string                    `json:"model"`
-	Usage  *openaiEmbeddingUsage     `json:"usage,omitempty"`
+	Object string                 `json:"object"`
+	Data   []openaiEmbeddingDatum `json:"data"`
+	Model  string                 `json:"model"`
+	Usage  *openaiEmbeddingUsage  `json:"usage,omitempty"`
 }
 
 type openaiEmbeddingDatum struct {
@@ -94,17 +109,34 @@ func NewAPIEmbedder(cfg APIEmbedderConfig) (*APIEmbedder, error) {
 			Timeout: time.Duration(timeout) * time.Second,
 		},
 		config: APIEmbedderConfig{
-			APIBase:    cfg.APIBase,
-			APIKey:     cfg.APIKey,
-			Model:      cfg.Model,
-			Dimensions: cfg.Dimensions,
-			Timeout:    timeout,
-			BatchSize:  batchSize,
-			Retry:      retry,
+			APIBase:     cfg.APIBase,
+			APIKey:      cfg.APIKey,
+			Model:       cfg.Model,
+			Dimensions:  cfg.Dimensions,
+			MaxTokens:   cfg.MaxTokens,
+			Timeout:     timeout,
+			BatchSize:   batchSize,
+			Retry:       retry,
+			QueryPrefix: cfg.QueryPrefix,
+			DocPrefix:   cfg.DocPrefix,
 		},
 		retryOpts:  retry,
 		dimensions: cfg.Dimensions,
 	}, nil
+}
+
+// withPrefix prepends p to every text. It allocates a new slice so callers keep
+// their originals: the same chunks are reused for storage and logging, where
+// the prefix must not appear.
+func withPrefix(p string, texts []string) []string {
+	if p == "" {
+		return texts
+	}
+	out := make([]string, len(texts))
+	for i, t := range texts {
+		out[i] = p + t
+	}
+	return out
 }
 
 // Embed returns the document embedding for a single text.
@@ -114,33 +146,38 @@ func (e *APIEmbedder) Embed(text string) ([]float32, error) {
 
 // EmbedDocument returns the document embedding for a single text.
 func (e *APIEmbedder) EmbedDocument(text string) ([]float32, error) {
-	vecs, err := e.embedBatchRaw([]string{text})
+	vecs, err := e.embedBatchRaw([]string{e.config.DocPrefix + text})
 	if err != nil {
 		return nil, err
 	}
 	return vecs[0], nil
 }
 
-// EmbedQuery returns the query embedding for a single text.
+// EmbedQuery returns the query embedding for a single text. The OpenAI
+// embeddings API has no query/document distinction of its own, so the
+// asymmetry has to be expressed in the input: the configured query prefix is
+// applied here and nowhere else.
 func (e *APIEmbedder) EmbedQuery(text string) ([]float32, error) {
-	// OpenAI-compatible APIs don't distinguish query/doc at the API level;
-	// prefix handling is done by the model itself.
-	return e.EmbedDocument(text)
+	vecs, err := e.embedBatchRaw([]string{e.config.QueryPrefix + text})
+	if err != nil {
+		return nil, err
+	}
+	return vecs[0], nil
 }
 
 // EmbedBatch returns document embeddings for multiple texts.
 func (e *APIEmbedder) EmbedBatch(texts []string) ([][]float32, error) {
-	return e.embedSorted(texts)
+	return e.EmbedDocumentBatch(texts)
 }
 
 // EmbedDocumentBatch returns document embeddings for multiple texts.
 func (e *APIEmbedder) EmbedDocumentBatch(texts []string) ([][]float32, error) {
-	return e.embedSorted(texts)
+	return e.embedSorted(withPrefix(e.config.DocPrefix, texts))
 }
 
 // EmbedQueryBatch returns query embeddings for multiple texts.
 func (e *APIEmbedder) EmbedQueryBatch(texts []string) ([][]float32, error) {
-	return e.embedSorted(texts)
+	return e.embedSorted(withPrefix(e.config.QueryPrefix, texts))
 }
 
 // Dimensions returns the embedding vector dimensionality.
@@ -148,12 +185,21 @@ func (e *APIEmbedder) Dimensions() int {
 	return e.dimensions
 }
 
-// ModelConfig returns an EmbeddingModelConfig for compatibility with existing code.
+// ModelConfig returns an EmbeddingModelConfig for compatibility with existing
+// code. MaxTokens comes from configuration rather than a constant: it drives
+// chunk sizing, and pinning it to a conservative default silently truncated
+// long-context models to a fraction of what they accept.
 func (e *APIEmbedder) ModelConfig() EmbeddingModelConfig {
+	maxTokens := e.config.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = defaultAPIMaxTokens
+	}
 	return EmbeddingModelConfig{
-		Name:       e.config.Model,
-		Dimensions: e.dimensions,
-		MaxTokens:  512, // reasonable default for API models
+		Name:        e.config.Model,
+		Dimensions:  e.dimensions,
+		MaxTokens:   maxTokens,
+		QueryPrefix: e.config.QueryPrefix,
+		DocPrefix:   e.config.DocPrefix,
 	}
 }
 

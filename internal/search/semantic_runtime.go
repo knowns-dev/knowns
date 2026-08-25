@@ -447,6 +447,16 @@ func semanticRuntimeAPIConfig(ss *models.SemanticSearchSettings, providerType st
 		return semanticRuntimeConfig{}, fmt.Errorf("resolve embedding provider: %w", err)
 	}
 	provider = provider.WithDefaults()
+	// Project settings win over the machine-wide registry so one project can
+	// chunk differently without editing global state; the registry entry is the
+	// fallback, and only then the embedder's own conservative default.
+	maxTokens := ss.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = model.MaxTokens
+	}
+	// Every field below feeds the cache key. A changed prefix or context limit
+	// produces different vectors and different chunk boundaries, so a runtime
+	// cached under the old value must not be reused.
 	key := strings.Join([]string{
 		"provider=" + providerType,
 		"providerID=" + model.Provider,
@@ -454,6 +464,9 @@ func semanticRuntimeAPIConfig(ss *models.SemanticSearchSettings, providerType st
 		"apiKey=" + secretFingerprint(provider.APIKey),
 		"model=" + model.Model,
 		"dims=" + strconv.Itoa(model.Dimensions),
+		"maxTokens=" + strconv.Itoa(maxTokens),
+		"queryPrefix=" + model.QueryPrefix,
+		"docPrefix=" + model.DocPrefix,
 		"timeout=" + strconv.Itoa(provider.Timeout),
 		"batch=" + strconv.Itoa(provider.BatchSize),
 		"retry=" + strconv.Itoa(provider.Retry.MaxRetries) + "/" + strconv.Itoa(provider.Retry.InitialDelay) + "/" + strconv.Itoa(provider.Retry.MaxDelay),
@@ -466,13 +479,16 @@ func semanticRuntimeAPIConfig(ss *models.SemanticSearchSettings, providerType st
 		modelName:        model.Model,
 		dimensions:       model.Dimensions,
 		apiConfig: APIEmbedderConfig{
-			APIBase:    provider.APIBase,
-			APIKey:     provider.APIKey,
-			Model:      model.Model,
-			Dimensions: model.Dimensions,
-			Timeout:    provider.Timeout,
-			BatchSize:  provider.BatchSize,
-			Retry:      provider.Retry,
+			APIBase:     provider.APIBase,
+			APIKey:      provider.APIKey,
+			Model:       model.Model,
+			Dimensions:  model.Dimensions,
+			MaxTokens:   maxTokens,
+			Timeout:     provider.Timeout,
+			BatchSize:   provider.BatchSize,
+			Retry:       provider.Retry,
+			QueryPrefix: model.QueryPrefix,
+			DocPrefix:   model.DocPrefix,
 		},
 	}, nil
 }

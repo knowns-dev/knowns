@@ -224,6 +224,12 @@ func renderDoctorChecks(w io.Writer, checks []doctor.CheckResult, verbose, style
 			status = styledDoctorStatus(check.Status)
 		}
 		fmt.Fprintf(w, "  %s [%s] %s\n", status, check.ID, check.Summary)
+		// A reason is the check explaining, in its own words, why it reached
+		// this verdict. Burying it behind --verbose leaves the default output
+		// stating a problem without ever saying what it is.
+		if reason, ok := check.Evidence["reason"].(string); ok && strings.TrimSpace(reason) != "" {
+			fmt.Fprintf(w, "    Reason: %s\n", reason)
+		}
 		if verbose && len(check.Evidence) > 0 {
 			fmt.Fprintf(w, "    Evidence: %s\n", formatDoctorEvidence(check.Evidence))
 		}
