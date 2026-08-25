@@ -466,7 +466,10 @@ func detectEmbedding(store *storage.Store) []ServiceStatus {
 		return []ServiceStatus{ss}
 	}
 
-	semCfg := proj.Settings.SemanticSearch
+	// Resolved per spec ollama-only-embedding D1/FR-3: provider: local (or
+	// omitted) reports as provider: ollama with the D2 default model here,
+	// in memory only.
+	semCfg := proj.Settings.EffectiveSemanticSearch()
 	if semCfg == nil || !semCfg.Enabled {
 		ss.Status = "disabled"
 		ss.EnabledInConfig = false

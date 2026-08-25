@@ -817,6 +817,16 @@ func TestEngineRetrieve_PreservesRequestedSemanticModeWhenAvailable(t *testing.T
 
 func newRetrievalTestStore(t *testing.T) *storage.Store {
 	t.Helper()
+	// Isolate HOME: memorySemanticAvailable() constructs a semantic runtime
+	// session against storage.NewGlobalSemanticStore(), which resolves
+	// ~/.knowns. Without isolation this test depends on whatever the
+	// machine running it happens to have configured globally -- and, since
+	// spec ollama-only-embedding D1/FR-3, a legacy provider: local global
+	// config now resolves to a genuinely working provider: ollama config,
+	// so on a machine with Ollama actually running this test would flip
+	// from "semantic unavailable" to available for reasons having nothing
+	// to do with what it is testing.
+	t.Setenv("HOME", t.TempDir())
 	root := filepath.Join(t.TempDir(), ".knowns")
 	store := storage.NewStore(root)
 	if err := store.Init("retrieval-test"); err != nil {

@@ -257,19 +257,24 @@ func runSyncModel(store *storage.Store, force bool) error {
 		return nil // no config, skip silently
 	}
 
+	// Resolved per spec ollama-only-embedding D1/FR-3: provider: local (or
+	// omitted) behaves as provider: ollama with the D2 default model here,
+	// in memory only.
+	ss := cfg.Settings.EffectiveSemanticSearch()
+
 	// API/Ollama provider path: verify reachability instead of downloading model files.
-	if cfg.Settings.SemanticSearch != nil && (cfg.Settings.SemanticSearch.Provider == "api" || cfg.Settings.SemanticSearch.Provider == "ollama") {
-		return runSyncModelAPI(cfg)
+	if ss != nil && (ss.Provider == "api" || ss.Provider == "ollama") {
+		return runSyncModelAPI(ss)
 	}
-	if capability, unsupported := currentLocalONNXUnsupported(cfg.Settings.SemanticSearch); unsupported {
+	if capability, unsupported := currentLocalONNXUnsupported(ss); unsupported {
 		fmt.Printf("%s Local ONNX setup skipped; keyword/BM25 search remains active.\n", StyleWarning.Render("⚠"))
 		fmt.Println(StyleDim.Render("  " + capability.Reason))
 		return nil
 	}
 
 	defaultModelID := "multilingual-e5-small"
-	if cfg.Settings.SemanticSearch != nil && cfg.Settings.SemanticSearch.Model != "" {
-		defaultModelID = cfg.Settings.SemanticSearch.Model
+	if ss != nil && ss.Model != "" {
+		defaultModelID = ss.Model
 	}
 	projectChanged, globalChanged, err := ensureProjectAndGlobalSemanticReady(store, defaultModelID)
 	if err != nil {
@@ -284,8 +289,9 @@ func runSyncModel(store *storage.Store, force bool) error {
 }
 
 // runSyncModelAPI verifies API provider reachability and model availability during sync.
-func runSyncModelAPI(cfg *models.Project) error {
-	ss := cfg.Settings.SemanticSearch
+// ss is already resolved (spec D1/FR-3): the caller passes
+// EffectiveSemanticSearch(), never the raw stored settings.
+func runSyncModelAPI(ss *models.SemanticSearchSettings) error {
 	settingsStore := storage.NewEmbeddingSettingsStore()
 	settings, err := settingsStore.Load()
 	if err != nil {

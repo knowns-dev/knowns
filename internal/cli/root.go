@@ -135,15 +135,19 @@ func maybeAutoSetup() {
 		return
 	}
 
-	// Check if semantic search is configured but model is not installed
-	if cfg.Settings.SemanticSearch == nil || !cfg.Settings.SemanticSearch.Enabled {
+	// Resolved per spec ollama-only-embedding D1/FR-3: provider: local (or
+	// omitted) behaves as provider: ollama with the D2 default model here,
+	// in memory only. A legacy local-provider project no longer nags about
+	// an ONNX download it does not need.
+	ss := cfg.Settings.EffectiveSemanticSearch()
+	if ss == nil || !ss.Enabled {
 		return
 	}
-	if _, unsupported := currentLocalONNXUnsupported(cfg.Settings.SemanticSearch); unsupported {
+	if _, unsupported := currentLocalONNXUnsupported(ss); unsupported {
 		return
 	}
 
-	modelID := cfg.Settings.SemanticSearch.Model
+	modelID := ss.Model
 	if modelID == "" {
 		return
 	}
@@ -173,8 +177,34 @@ func maybeAutoSetup() {
 	fmt.Println()
 }
 
+// maybeWarnUnmigratedConfig prints a one-line notice naming `knowns migrate`
+// when the project config carries a schema version older than current
+// (spec ollama-only-embedding FR-4). It deliberately says only that a
+// migration is pending, not the full remediation (install Ollama, pull the
+// model, reindex) — that belongs to `knowns migrate` itself and to
+// `doctor`, where the user has asked for it.
+func maybeWarnUnmigratedConfig() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	root := filepath.Join(cwd, ".knowns")
+	if _, err := os.Stat(root); err != nil {
+		return
+	}
+	store := storage.NewStore(root)
+	project, err := store.Config.Load()
+	if err != nil || project == nil {
+		return
+	}
+	if !storage.NeedsMigration(project) {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s\n", StyleWarning.Render("⚠ This project's config needs migrating. Run "+RenderCmd("knowns migrate")+"."))
+}
+
 func shouldSkipCLIWarnings(args []string) bool {
-	for _, name := range []string{"doctor", "runtime", "runtime-memory", "qdrant", "__runtime", "__lsp-daemon"} {
+	for _, name := range []string{"doctor", "runtime", "runtime-memory", "qdrant", "__runtime", "__lsp-daemon", "migrate"} {
 		if slices.Contains(args, name) {
 			return true
 		}
@@ -194,6 +224,9 @@ func Execute() error {
 
 	// Check if cloned project needs local setup (e.g. embedding model download).
 	maybeAutoSetup()
+
+	// Warn once per command if the project config has pending schema migrations.
+	maybeWarnUnmigratedConfig()
 
 	return executeWithUpdateNotice(args, rootCmd.Execute, util.CheckForUpdate, 3*time.Second, os.Stderr)
 }

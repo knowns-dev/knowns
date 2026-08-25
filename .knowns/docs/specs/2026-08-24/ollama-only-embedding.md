@@ -3,7 +3,7 @@ id: doc-0dfd45b6feea4bba84a7494c34281465
 title: Ollama-Only Embedding
 description: Specification for removing the local ONNX embedding path, migrating projects to Ollama, and making keyword fallback survive an unreachable embedder
 createdAt: '2026-08-24T11:05:37.755Z'
-updatedAt: '2026-08-25T04:11:35.283Z'
+updatedAt: '2026-08-25T09:33:25.062Z'
 tags:
   - spec
   - approved
@@ -624,3 +624,52 @@ Resolved during spec review:
 - Command surface for the runner. Top level, `knowns migrate`; see D11. It does
   not absorb `knowns decision migrate`, which is a reviewed data conversion
   rather than a schema upgrade.
+
+
+## Implementation Corrections
+
+Recorded during implementation. These correct factual claims in the sections
+above without altering any Locked Decision.
+
+- D10 cites `internal/sync/autosync.go`, "which compares a stored `cliVersion`
+  before acting", as the in-repo precedent for a versioned migration runner.
+  That file does not exist, and no `cliVersion` symbol appears in any Go file
+  in the tree. D10's decision is unaffected — its reasoning rests on the
+  ecosystem convention (`ng update`, `nx migrate`, `biome migrate`) — but the
+  repository evidence offered for it is not there. Do not go looking for it.
+
+- The real in-repo precedent, and a closer one, is
+  `ConfigStore.Load` (`internal/storage/config_store.go`) together with
+  `TestConfigStoreLoadsLegacyLifecycleDefaultsWithoutRewriting`
+  (`internal/storage/config_store_test.go`). Legacy lifecycle defaults resolve
+  through the `ProjectSettings.EffectiveTaskLifecycle()` accessor and are
+  deliberately never materialized into the loaded struct, so an unrelated
+  later `Save()` does not write them into the committed file — the test
+  asserts the saved file still contains no `taskLifecycle` key. That is
+  exactly D1's rule with a working implementation, and FR-3 was built by
+  mirroring it as `ProjectSettings.EffectiveSemanticSearch()`.
+
+  The trap it guards against is worth naming: resolving FR-3 by mutating the
+  loaded settings would make any later `knowns config set` on an unrelated key
+  silently rewrite `provider: local` to `provider: ollama` in a committed
+  file, which is the change D1 exists to prevent.
+
+- FR-3 resolution must replace the stale `dimensions` and `maxTokens` as well
+  as the provider and model. A `provider: local` config typically carries
+  `dimensions: 384` from multilingual-e5-small, and the D2 default is 1024;
+  carrying 384 onto a 1024-dimension model corrupts an index. An accessor that
+  swaps only provider and model looks correct and is not.
+
+- FR-9's guidance pages must not document `knowns model add` as the way to
+  register a third-party model, even though it exists today at
+  `internal/cli/model.go`. It sits inside the `knowns model` tree that D4 and
+  FR-1 remove, and the supersession section above already voids it. Users
+  hand-edit `~/.knowns/settings.json` for the model entry instead, which FR-16
+  makes safe. `knowns provider add` is a separate top-level command and
+  survives the removal.
+
+- Nothing in this spec replaces `knowns model add`. FR-1 removes the command
+  tree and the supersession section voids the older spec's requirement for it,
+  but no requirement here provides another way to register a third-party model
+  in the registry. Whether that loss is intended is an open implementation
+  question for FR-1, recorded on the removal task.

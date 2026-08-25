@@ -23,8 +23,10 @@ func InitCodeStore(store *storage.Store) (VectorStore, error) {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 	model := "code-keyword"
-	if cfg != nil && cfg.Settings.SemanticSearch != nil && cfg.Settings.SemanticSearch.Model != "" {
-		model = cfg.Settings.SemanticSearch.Model
+	if cfg != nil {
+		if ss := cfg.Settings.EffectiveSemanticSearch(); ss != nil && ss.Model != "" {
+			model = ss.Model
+		}
 	}
 
 	vecStore := NewSQLiteVectorStore(store.Root, model, 1)
@@ -43,7 +45,10 @@ func InitSemantic(store *storage.Store) (EmbedderProvider, VectorStore, error) {
 		return nil, nil, ErrSemanticNotConfigured
 	}
 
-	ss := cfg.Settings.SemanticSearch
+	// Resolved per spec ollama-only-embedding D1/FR-3: a project declaring
+	// provider: local (or omitted) is treated as provider: ollama with the
+	// D2 default model here, in memory, without rewriting config.json.
+	ss := cfg.Settings.EffectiveSemanticSearch()
 	if ss == nil || !ss.Enabled || ss.Model == "" {
 		return nil, nil, ErrSemanticNotConfigured
 	}

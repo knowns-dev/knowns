@@ -419,7 +419,10 @@ func loadSemanticRuntimeConfig(store *storage.Store) (semanticRuntimeConfig, err
 	if cfg == nil || cfg.Settings.SemanticSearch == nil || !cfg.Settings.SemanticSearch.Enabled || cfg.Settings.SemanticSearch.Model == "" {
 		return semanticRuntimeConfig{}, ErrSemanticNotConfigured
 	}
-	ss := cfg.Settings.SemanticSearch
+	// Resolved per spec ollama-only-embedding D1/FR-3: provider: local (or
+	// omitted) behaves as provider: ollama with the D2 default model, in
+	// memory only — config.json is untouched here.
+	ss := cfg.Settings.EffectiveSemanticSearch()
 	provider := ss.Provider
 	if provider == "" {
 		provider = "local"

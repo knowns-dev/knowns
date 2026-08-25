@@ -345,9 +345,14 @@ func newRuntimeSearchStore(t *testing.T) *storage.Store {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
+	// Registered explicitly as provider: ollama (spec ollama-only-embedding
+	// D1/FR-3): provider: local now resolves to provider: ollama with the
+	// D2 default model in memory on every read, so a literal "local"
+	// fixture can no longer carry a specific (model, dimensions) pair.
+	registerOllamaTestModel(t, "gte-small", 384)
 	project.Settings.SemanticSearch = &models.SemanticSearchSettings{
 		Enabled:    true,
-		Provider:   "local",
+		Provider:   "ollama",
 		Model:      "gte-small",
 		Dimensions: 384,
 	}

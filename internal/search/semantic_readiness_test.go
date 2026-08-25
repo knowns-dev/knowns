@@ -24,9 +24,17 @@ func configureSemanticStore(t *testing.T, vs *models.SemanticVectorStoreSettings
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
+	// Registered explicitly as provider: ollama (spec ollama-only-embedding
+	// D1/FR-3): provider: local now resolves to provider: ollama with the
+	// D2 default model in memory on every read, so a literal "local"
+	// fixture can no longer carry a specific, stable (model, dimensions)
+	// pair for the readiness/staleness comparisons this file exercises.
+	// registerOllamaTestModel makes "gte-small"@384 resolve deterministically
+	// instead.
+	registerOllamaTestModel(t, "gte-small", 384)
 	project.Settings.SemanticSearch = &models.SemanticSearchSettings{
 		Enabled:     true,
-		Provider:    "local",
+		Provider:    "ollama",
 		Model:       "gte-small",
 		Dimensions:  384,
 		VectorStore: vs,

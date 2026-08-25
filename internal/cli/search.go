@@ -1037,7 +1037,15 @@ func runReindex() error {
 	// Auto-download default model if ONNX is available but no model configured.
 	if avail, _ := search.IsONNXAvailable(); avail {
 		cfg, _ := store.Config.Load()
-		if cfg != nil && (cfg.Settings.SemanticSearch == nil || cfg.Settings.SemanticSearch.Model == "") {
+		// Resolved per spec ollama-only-embedding D1/FR-3: provider: local
+		// (or omitted) resolves to provider: ollama with the D2 default
+		// model here, in memory only, so this ONNX-specific auto-download
+		// no longer fires for it.
+		var ss *models.SemanticSearchSettings
+		if cfg != nil {
+			ss = cfg.Settings.EffectiveSemanticSearch()
+		}
+		if cfg != nil && (ss == nil || ss.Model == "") {
 			defaultModel := "multilingual-e5-small"
 			fmt.Println(searchDimStyle.Render(fmt.Sprintf("  No model configured — downloading default model (%s)...", defaultModel)))
 			fmt.Println()
