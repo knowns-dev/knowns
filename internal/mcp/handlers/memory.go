@@ -130,7 +130,6 @@ func handleMemoryAdd(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 	if err != nil {
 		return errResult("content is required")
 	}
-	content = unescapeText(content)
 
 	args := req.GetArguments()
 	title, _ := stringArg(args, "title")
@@ -325,7 +324,7 @@ func memoryCandidateFromArgs(args map[string]any) *models.MemoryEntry {
 	title, _ := stringArg(args, "title")
 	layer, _ := stringArg(args, "layer")
 	category, _ := stringArg(args, "category")
-	content, _ := textArg(args, "content")
+	content, _ := stringArg(args, "content")
 	tags, _ := stringSliceArg(args, "tags")
 	sources, _ := stringSliceArg(args, "sources")
 	confidence, _ := stringArg(args, "confidence")
@@ -464,7 +463,7 @@ func handleMemoryUpdate(getStore func() *storage.Store, req mcp.CallToolRequest)
 	}
 	if clearFields["content"] {
 		entry.Content = ""
-	} else if v, ok := textArg(args, "content"); ok && v != "" {
+	} else if v, ok := stringArg(args, "content"); ok && v != "" {
 		entry.Content = v
 	}
 	if clearFields["category"] {

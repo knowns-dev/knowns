@@ -335,7 +335,8 @@ func runTaskEdit(cmd *cobra.Command, args []string) error {
 			if task.ImplementationNotes == "" {
 				task.ImplementationNotes = v
 			} else {
-				task.ImplementationNotes = task.ImplementationNotes + "\n" + v
+				// Blank line so each appended entry stays its own markdown block.
+				task.ImplementationNotes = task.ImplementationNotes + "\n\n" + v
 			}
 		}
 		if cmd.Flags().Changed("fulfills") {

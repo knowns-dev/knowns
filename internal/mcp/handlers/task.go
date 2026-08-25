@@ -245,7 +245,7 @@ func handleTaskCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 		tasklifecycle.ApplyStatusTransition(task, status, task.UpdatedAt)
 	}
 
-	if v, ok := textArg(args, "description"); ok {
+	if v, ok := stringArg(args, "description"); ok {
 		task.Description = v
 	}
 	if v, ok := stringArg(args, "assignee"); ok {
@@ -266,10 +266,10 @@ func handleTaskCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 	if v, ok := intArg(args, "order"); ok {
 		task.Order = &v
 	}
-	if v, ok := textArg(args, "plan"); ok {
+	if v, ok := stringArg(args, "plan"); ok {
 		task.ImplementationPlan = v
 	}
-	if v, ok := textArg(args, "notes"); ok {
+	if v, ok := stringArg(args, "notes"); ok {
 		task.ImplementationNotes = v
 	}
 
@@ -339,7 +339,7 @@ func handleTaskUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 		}
 		if clearFields["description"] {
 			task.Description = ""
-		} else if v, ok := textArg(args, "description"); ok && v != "" {
+		} else if v, ok := stringArg(args, "description"); ok && v != "" {
 			task.Description = v
 		}
 		if v, ok := stringArg(args, "status"); ok {
@@ -425,19 +425,20 @@ func handleTaskUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 
 		if clearFields["plan"] {
 			task.ImplementationPlan = ""
-		} else if v, ok := textArg(args, "plan"); ok && v != "" {
+		} else if v, ok := stringArg(args, "plan"); ok && v != "" {
 			task.ImplementationPlan = v
 		}
 		if clearFields["notes"] {
 			task.ImplementationNotes = ""
-		} else if v, ok := textArg(args, "notes"); ok && v != "" {
+		} else if v, ok := stringArg(args, "notes"); ok && v != "" {
 			task.ImplementationNotes = v
 		}
-		if v, ok := textArg(args, "appendNotes"); ok && v != "" {
+		if v, ok := stringArg(args, "appendNotes"); ok && v != "" {
 			if task.ImplementationNotes == "" {
 				task.ImplementationNotes = v
 			} else {
-				task.ImplementationNotes += "\n" + v
+				// Blank line so each appended entry stays its own markdown block.
+				task.ImplementationNotes += "\n\n" + v
 			}
 		}
 

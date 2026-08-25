@@ -376,10 +376,10 @@ func handleDocCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 		UpdatedAt: time.Now().UTC(),
 	}
 
-	if v, ok := textArg(args, "description"); ok {
+	if v, ok := stringArg(args, "description"); ok {
 		doc.Description = v
 	}
-	if v, ok := textArg(args, "content"); ok {
+	if v, ok := stringArg(args, "content"); ok {
 		doc.Content = v
 	}
 	if v, ok := stringSliceArg(args, "tags"); ok {
@@ -432,7 +432,7 @@ func handleDocUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 	}
 	if clearFields["description"] {
 		doc.Description = ""
-	} else if v, ok := textArg(args, "description"); ok && v != "" {
+	} else if v, ok := stringArg(args, "description"); ok && v != "" {
 		doc.Description = v
 	}
 	if _, ok := args["tags"]; ok {
@@ -447,8 +447,8 @@ func handleDocUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 	}
 
 	sectionTarget, hasSection := stringArg(args, "section")
-	newContent, hasContent := textArg(args, "content")
-	appendContent, hasAppend := textArg(args, "appendContent")
+	newContent, hasContent := stringArg(args, "content")
+	appendContent, hasAppend := stringArg(args, "appendContent")
 
 	if clearFields["content"] {
 		doc.Content = ""
