@@ -24,3 +24,7 @@ knowns search "how authentication works" --plain
 ## Operational note
 
 If semantic components are unavailable, the relevant search paths can safely fall back instead of crashing.
+
+## See also
+
+- [Ollama Embedding Models](./ollama-embedding-models.md) — recommended models, install/pull commands, and the four Ollama readiness states.

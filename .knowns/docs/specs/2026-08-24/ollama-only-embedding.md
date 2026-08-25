@@ -3,11 +3,10 @@ id: doc-0dfd45b6feea4bba84a7494c34281465
 title: Ollama-Only Embedding
 description: Specification for removing the local ONNX embedding path, migrating projects to Ollama, and making keyword fallback survive an unreachable embedder
 createdAt: '2026-08-24T11:05:37.755Z'
-updatedAt: '2026-08-24T18:53:36.398Z'
+updatedAt: '2026-08-25T04:11:35.283Z'
 tags:
   - spec
-  - draft
-  - review-required
+  - approved
   - embedding
   - search
   - breaking
@@ -563,7 +562,24 @@ first.
 
 ## Task Links
 
-Generated tasks will be linked here after `/kn-plan --from @doc/specs/2026-08-24/ollama-only-embedding` runs.
+Generated 2026-08-25 by `/kn-flow`, carrying the `OLM-` prefix from Task
+Generation. Execution order is `{1,2,3} -> 4 -> 5 -> {6,7} -> 8`; the braces are
+the only parallel-safe groups.
+
+| Order | Task | Requirements |
+|-------|------|--------------|
+| 1 | @task-OLM-AKEN95 Return keyword results when the embedder fails | FR-6, NFR-1, NFR-6 |
+| 2 | @task-OLM-PT1BX4 Seed the global model registry with the three Ollama models | FR-5, FR-16, NFR-3 |
+| 3 | @task-OLM-JF91HA Make one data source the single origin of Ollama guidance | FR-9, FR-10, FR-11 |
+| 4 | @task-OLM-2MWBPF Add a config schema version and the knowns migrate runner | FR-3, FR-4, FR-18, FR-19, FR-20 |
+| 5 | @task-OLM-CC04VN Remove the local ONNX embedding path | FR-1, FR-2, FR-12, FR-17 |
+| 6 | @task-OLM-XJKSB7 Gate init and setup on a reachable Ollama without ever widening | FR-13, FR-14 |
+| 7 | @task-OLM-K4NHTY Rework doctor for Ollama states, stale index, and unmigrated projects | FR-7, FR-8, FR-21, NFR-5 |
+| 8 | @task-OLM-H9PKPY Record supersession and raise the removal Decision | System Decision Impact |
+
+FR-15 is carried by task 5, which owns the `ui/src` scope. NFR-2 and NFR-4 are
+carried as acceptance criteria on tasks 4 and 6 respectively rather than as
+tasks of their own.
 
 ## Open Questions
 

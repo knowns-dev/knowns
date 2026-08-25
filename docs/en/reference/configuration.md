@@ -115,6 +115,7 @@ Common behavior:
 - `knowns provider add` and `knowns model add --provider <id> <model-name>` configure API-backed embedding models
 - `knowns sync` can re-apply the semantic setup
 - `knowns search --reindex` rebuilds the local index
+- See [Ollama Embedding Models](./ollama-embedding-models.md) for recommended models, install/pull commands, and the shape of a third-party OpenAI-compatible provider entry
 
 ### `settings.lsp`
 

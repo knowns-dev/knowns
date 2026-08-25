@@ -24,3 +24,7 @@ knowns search "how authentication works" --plain
 ## Lưu ý
 
 Nếu semantic components chưa sẵn sàng, search tự fallback về safe mode thay vì crash.
+
+## Xem thêm
+
+- [Ollama Embedding Models](./ollama-embedding-models.md) — model khuyến nghị, lệnh cài/pull, và bốn trạng thái sẵn sàng của Ollama.

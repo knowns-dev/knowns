@@ -97,6 +97,7 @@ Config cho semantic search: `enabled`, `model`, `provider`, `dimensions`.
 - `knowns provider add` và `knowns model add --provider <id> <model-name>` cấu hình API-backed embedding models
 - `knowns sync` re-apply semantic setup
 - `knowns search --reindex` rebuild local index
+- Xem [Ollama Embedding Models](./ollama-embedding-models.md) để biết model khuyến nghị, lệnh cài/pull, và cách khai báo một provider OpenAI-compatible của bên thứ ba
 
 ### `settings.lsp`
 

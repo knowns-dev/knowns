@@ -80,6 +80,7 @@ Use these docs if you want to:
 - [Model Management](./reference/model-management.md)
 - [Reference system](./reference/reference-system.md)
 - [Semantic search](./reference/semantic-search.md)
+- [Ollama Embedding Models](./reference/ollama-embedding-models.md)
 
 ### Integrations
 

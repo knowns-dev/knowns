@@ -27,6 +27,13 @@ type EmbeddingProvider struct {
 	Timeout   int         `json:"timeout,omitempty"`   // seconds, default 30
 	BatchSize int         `json:"batchSize,omitempty"` // texts per request, default 64
 	Retry     RetryConfig `json:"retry,omitempty"`
+
+	// extra retains fields on this provider entry that this struct does not
+	// model, the same way EmbeddingSettings.extra does at the top level, so a
+	// user-defined entry survives a seeding round trip byte-identical (AC-6)
+	// even where it carries fields this version of the CLI does not know
+	// about.
+	extra map[string]json.RawMessage `json:"-"`
 }
 
 // EmbeddingModel represents a model registered against a provider.
@@ -42,6 +49,113 @@ type EmbeddingModel struct {
 	// provider: the same endpoint can serve models with different conventions.
 	QueryPrefix string `json:"queryPrefix,omitempty"`
 	DocPrefix   string `json:"docPrefix,omitempty"`
+
+	// extra retains fields on this model entry that this struct does not
+	// model. See EmbeddingProvider.extra.
+	extra map[string]json.RawMessage `json:"-"`
+}
+
+// embeddingProviderAlias/embeddingModelAlias have the same fields as their
+// namesakes but none of their methods, so the custom codecs below can
+// delegate to the default struct codec without recursing into themselves.
+type embeddingProviderAlias EmbeddingProvider
+type embeddingModelAlias EmbeddingModel
+
+var knownEmbeddingProviderFields = map[string]bool{
+	"name": true, "apiBase": true, "apiKey": true,
+	"timeout": true, "batchSize": true, "retry": true,
+}
+
+var knownEmbeddingModelFields = map[string]bool{
+	"provider": true, "model": true, "dimensions": true,
+	"maxTokens": true, "queryPrefix": true, "docPrefix": true,
+}
+
+func extractExtraFields(data []byte, known map[string]bool) (map[string]json.RawMessage, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	var extra map[string]json.RawMessage
+	for k, v := range raw {
+		if known[k] {
+			continue
+		}
+		if extra == nil {
+			extra = make(map[string]json.RawMessage)
+		}
+		extra[k] = v
+	}
+	return extra, nil
+}
+
+func mergeExtraFields(base []byte, extra map[string]json.RawMessage) ([]byte, error) {
+	if len(extra) == 0 {
+		return base, nil
+	}
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(base, &merged); err != nil {
+		return nil, err
+	}
+	for k, v := range extra {
+		if _, exists := merged[k]; exists {
+			continue
+		}
+		merged[k] = v
+	}
+	return json.Marshal(merged)
+}
+
+// UnmarshalJSON decodes the known fields normally and stashes any remaining
+// keys in extra so Save can write them back unchanged.
+func (p *EmbeddingProvider) UnmarshalJSON(data []byte) error {
+	var aux embeddingProviderAlias
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	extra, err := extractExtraFields(data, knownEmbeddingProviderFields)
+	if err != nil {
+		return err
+	}
+	aux.extra = extra
+	*p = EmbeddingProvider(aux)
+	return nil
+}
+
+// MarshalJSON encodes the known fields normally, then merges back any
+// unmodeled keys captured by UnmarshalJSON.
+func (p EmbeddingProvider) MarshalJSON() ([]byte, error) {
+	base, err := json.Marshal(embeddingProviderAlias(p))
+	if err != nil {
+		return nil, err
+	}
+	return mergeExtraFields(base, p.extra)
+}
+
+// UnmarshalJSON decodes the known fields normally and stashes any remaining
+// keys in extra so Save can write them back unchanged.
+func (m *EmbeddingModel) UnmarshalJSON(data []byte) error {
+	var aux embeddingModelAlias
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	extra, err := extractExtraFields(data, knownEmbeddingModelFields)
+	if err != nil {
+		return err
+	}
+	aux.extra = extra
+	*m = EmbeddingModel(aux)
+	return nil
+}
+
+// MarshalJSON encodes the known fields normally, then merges back any
+// unmodeled keys captured by UnmarshalJSON.
+func (m EmbeddingModel) MarshalJSON() ([]byte, error) {
+	base, err := json.Marshal(embeddingModelAlias(m))
+	if err != nil {
+		return nil, err
+	}
+	return mergeExtraFields(base, m.extra)
 }
 
 // EmbeddingSettings holds the global embedding provider and model registry.
@@ -50,6 +164,69 @@ type EmbeddingSettings struct {
 	Models                map[string]EmbeddingModel    `json:"embeddingModels,omitempty"`
 	DefaultEmbeddingModel string                       `json:"defaultEmbeddingModel,omitempty"`
 	ProjectDefaults       *ProjectDefaults             `json:"projectDefaults,omitempty"`
+
+	// extra retains top-level fields present in the settings file that this
+	// struct does not model. Seeding and migration write ~/.knowns/settings.json
+	// on paths the user did not initiate (FR-16), so a load-and-save round
+	// trip must not silently drop configuration a user (or a newer CLI
+	// version) wrote by hand. Populated by UnmarshalJSON, replayed by
+	// MarshalJSON, never touched otherwise.
+	extra map[string]json.RawMessage `json:"-"`
+}
+
+// embeddingSettingsAlias has the same fields as EmbeddingSettings but none of
+// its methods, so MarshalJSON/UnmarshalJSON below can delegate to the default
+// struct codec without recursing into themselves.
+type embeddingSettingsAlias EmbeddingSettings
+
+// knownEmbeddingSettingsFields lists the top-level JSON keys EmbeddingSettings
+// models directly. Anything else found on load is preserved verbatim in
+// extra and re-emitted on save.
+var knownEmbeddingSettingsFields = map[string]bool{
+	"embeddingProviders":    true,
+	"embeddingModels":       true,
+	"defaultEmbeddingModel": true,
+	"projectDefaults":       true,
+}
+
+// UnmarshalJSON decodes the known fields normally and stashes any remaining
+// top-level keys in extra so Save can write them back unchanged.
+func (s *EmbeddingSettings) UnmarshalJSON(data []byte) error {
+	var aux embeddingSettingsAlias
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	extra, err := extractExtraFields(data, knownEmbeddingSettingsFields)
+	if err != nil {
+		return err
+	}
+	aux.extra = extra
+	*s = EmbeddingSettings(aux)
+	return nil
+}
+
+// MarshalJSON encodes the known fields normally, then merges back any
+// unmodeled top-level keys captured by UnmarshalJSON. A known field always
+// wins over a same-named extra key.
+func (s EmbeddingSettings) MarshalJSON() ([]byte, error) {
+	base, err := json.Marshal(embeddingSettingsAlias(s))
+	if err != nil {
+		return nil, err
+	}
+	if len(s.extra) == 0 {
+		return base, nil
+	}
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(base, &merged); err != nil {
+		return nil, err
+	}
+	for k, v := range s.extra {
+		if _, exists := merged[k]; exists {
+			continue
+		}
+		merged[k] = v
+	}
+	return json.Marshal(merged)
 }
 
 // ProjectDefaults are user-level defaults applied by future `knowns init` runs.
@@ -81,15 +258,26 @@ func (s *EmbeddingSettingsStore) Path() string {
 	return s.filePath
 }
 
-// Load reads embedding settings from disk. Returns empty settings if file doesn't exist.
+// Load reads embedding settings from disk. Returns seeded default settings if
+// the file doesn't exist.
+//
+// Every call merges the D2 canonical model/provider defaults (see
+// embedding_registry_defaults.go) into the result in memory, never
+// overwriting anything already present and never writing to disk or making a
+// network call. This guarantees that any caller resolving `provider: ollama`
+// — including on a fresh machine with no settings file at all — can resolve
+// the default model and its provider without having gone through an explicit
+// seeding step first (FR-5). Use Seed to persist the merged result to disk.
 func (s *EmbeddingSettingsStore) Load() (*EmbeddingSettings, error) {
 	data, err := os.ReadFile(s.filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &EmbeddingSettings{
+			settings := &EmbeddingSettings{
 				Providers: make(map[string]EmbeddingProvider),
 				Models:    make(map[string]EmbeddingModel),
-			}, nil
+			}
+			SeedDefaults(settings)
+			return settings, nil
 		}
 		return nil, fmt.Errorf("read embedding settings: %w", err)
 	}
@@ -111,7 +299,29 @@ func (s *EmbeddingSettingsStore) Load() (*EmbeddingSettings, error) {
 			return nil, fmt.Errorf("validate project defaults: %w", err)
 		}
 	}
+	SeedDefaults(&settings)
 	return &settings, nil
+}
+
+// Seed merges the D2 canonical model/provider defaults into the settings file
+// and persists the result, without overwriting any entry the user already
+// defined (AC-6). It is idempotent: repeated calls produce the same file
+// (NFR-3), and it never adds an `api` provider entry (FR-5). This is the
+// "registry seeding path" — the explicit, non-interactive counterpart to the
+// interactive registration in cli/config.go — intended for callers such as
+// init, doctor, or first-run setup that need the global registry populated on
+// disk rather than only in memory.
+func (s *EmbeddingSettingsStore) Seed() (*EmbeddingSettings, error) {
+	settings, err := s.Load()
+	if err != nil {
+		return nil, err
+	}
+	// Load already seeded settings in memory; persist so the file on disk
+	// reflects it too.
+	if err := s.Save(settings); err != nil {
+		return nil, err
+	}
+	return settings, nil
 }
 
 // Save writes embedding settings to disk, creating parent directories if needed.
