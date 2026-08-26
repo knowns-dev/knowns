@@ -685,7 +685,10 @@ func TestMCP_ReopenWorkflow(t *testing.T) {
 }
 
 // TestMCP_SemanticSearch tests reindex + search modes via MCP.
-// Requires ONNX Runtime + model. Skip unless TEST_SEMANTIC=1.
+//
+// It needs no reachable embedder: the subsets CI runs are keyword and hybrid,
+// and hybrid degrades to keyword results when the embedder is unreachable
+// rather than erroring. Skip unless TEST_SEMANTIC=1.
 func TestMCP_SemanticSearch(t *testing.T) {
 	if os.Getenv("TEST_SEMANTIC") != "1" {
 		t.Skip("skipping semantic search test (set TEST_SEMANTIC=1 to enable)")
@@ -708,15 +711,20 @@ func TestMCP_SemanticSearch(t *testing.T) {
 		"tags":    []string{"security", "semantic-test"},
 	})
 
-	// Set model via CLI (MCP doesn't have model tools)
+	// Select the model via CLI (MCP has no model tools). This was `model set`
+	// until the local ONNX path was removed and took that command tree with it
+	// (spec ollama-only-embedding D4); `config set` is the replacement, and it
+	// only records the choice — nothing is downloaded and nothing has to be
+	// running.
 	bin := getBinaryPath(t)
 	setModelCmd := exec.CommandContext(
-		context.Background(), bin, "model", "set", "all-MiniLM-L6-v2",
+		context.Background(), bin, "config", "set",
+		"settings.semanticSearch.model", "qwen3-embedding:0.6b",
 	)
 	setModelCmd.Dir = dir
 	setModelCmd.Env = append(os.Environ(), "NO_COLOR=1", "KNOWNS_RUNTIME_INLINE=1")
 	if out, err := setModelCmd.CombinedOutput(); err != nil {
-		t.Fatalf("model set failed: %v\n%s", err, string(out))
+		t.Fatalf("config set model failed: %v\n%s", err, string(out))
 	}
 
 	// Step 1: Reindex via MCP — reindex_search was removed in the consolidated MCP tool refactor
