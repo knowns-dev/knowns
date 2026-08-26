@@ -22,30 +22,19 @@ var configCmd = &cobra.Command{
 	Short: "Manage project configuration",
 }
 
-var runSemanticSetupForSettings = runSemanticSetup
-
-type localONNXModelChoice struct {
-	Model     *embeddingModel
-	Label     string
-	Installed bool
-}
-
 func semanticProviderOptions() []huh.Option[string] {
-	options := make([]huh.Option[string], 0, 3)
-	if search.CurrentLocalONNXCapability().Supported {
-		options = append(options, huh.NewOption("Local ONNX (offline)", "local"))
-	}
-	return append(options,
+	return []huh.Option[string]{
 		huh.NewOption("Ollama (local API)", "ollama"),
 		huh.NewOption("API (OpenAI-compatible)", "api"),
-	)
+	}
 }
 
+// normalizedSemanticProvider maps the legacy "local" provider value (and an
+// empty/omitted provider, its historical default) onto "ollama" per spec
+// ollama-only-embedding D1: a project declaring provider: local resolves as
+// though it declared provider: ollama with the D2 default model.
 func normalizedSemanticProvider(provider string) string {
-	if provider == "" {
-		provider = "local"
-	}
-	if provider == "local" && !search.CurrentLocalONNXCapability().Supported {
+	if provider == "" || provider == "local" {
 		return "ollama"
 	}
 	return provider
@@ -134,14 +123,6 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		actualKey = "settings." + key
 	}
 
-	project, err := store.Config.Load()
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-	if err := validateConfigSetLocalONNX(project, actualKey, val, search.CurrentLocalONNXCapability()); err != nil {
-		return err
-	}
-
 	if err := store.Config.Set(actualKey, val); err != nil {
 		return fmt.Errorf("config set %q: %w", key, err)
 	}
@@ -165,34 +146,6 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println(RenderSuccess(fmt.Sprintf("Set %s = %v", key, rawVal)))
-	return nil
-}
-
-func validateConfigSetLocalONNX(project *models.Project, key string, value any, capability search.LocalONNXCapability) error {
-	if capability.Supported || project == nil {
-		return nil
-	}
-	enabled := false
-	provider := "local"
-	if settings := project.Settings.SemanticSearch; settings != nil {
-		enabled = settings.Enabled
-		if settings.Provider != "" {
-			provider = settings.Provider
-		}
-	}
-	switch key {
-	case "settings.semanticSearch.enabled":
-		if next, ok := value.(bool); ok {
-			enabled = next
-		}
-	case "settings.semanticSearch.provider":
-		if next, ok := value.(string); ok {
-			provider = next
-		}
-	}
-	if enabled && provider == "local" {
-		return fmt.Errorf("%s", capability.Reason)
-	}
 	return nil
 }
 
@@ -727,8 +680,8 @@ func configureCodeIntelligence(store *storage.Store, project *models.Project) er
 
 func configureSemanticDefaults(settings *models.ProjectSettings) error {
 	enabled := settings.SemanticSearch != nil && settings.SemanticSearch.Enabled
-	provider := "local"
-	model := "multilingual-e5-small"
+	provider := "ollama"
+	model := storage.D2DefaultModelID
 	if settings.SemanticSearch != nil {
 		if settings.SemanticSearch.Provider != "" {
 			provider = settings.SemanticSearch.Provider
@@ -762,54 +715,18 @@ func configureSemanticDefaults(settings *models.ProjectSettings) error {
 		settings.SemanticSearch = &models.SemanticSearchSettings{Enabled: false, Model: model, Provider: provider}
 		return nil
 	}
-	if provider != "local" {
-		modelForm := huh.NewForm(huh.NewGroup(
-			huh.NewInput().
-				Title("Default model").
-				Value(&model),
-		)).WithTheme(huh.ThemeCatppuccin())
-		if err := modelForm.Run(); err != nil {
-			if err == huh.ErrUserAborted {
-				return nil
-			}
-			return err
+	modelForm := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title("Default model").
+			Value(&model),
+	)).WithTheme(huh.ThemeCatppuccin())
+	if err := modelForm.Run(); err != nil {
+		if err == huh.ErrUserAborted {
+			return nil
 		}
+		return err
 	}
-	ss := &models.SemanticSearchSettings{Enabled: true, Provider: provider, Model: model}
-	if provider == "local" {
-		if err := selectLocalONNXModel(&model); err != nil {
-			if err == huh.ErrUserAborted {
-				return nil
-			}
-			return err
-		}
-		selected := findSupportedModel(model)
-		if selected == nil {
-			return fmt.Errorf("unknown local ONNX model %q", model)
-		}
-		if !isModelInstalled(selected) {
-			download := false
-			confirmForm := huh.NewForm(huh.NewGroup(
-				huh.NewConfirm().
-					Title(fmt.Sprintf("Download %s now?", selected.ID)).
-					Description("Global defaults can use a missing model, but downloading now prepares this machine for future projects.").
-					Value(&download),
-			)).WithTheme(huh.ThemeCatppuccin())
-			if err := confirmForm.Run(); err != nil {
-				if err == huh.ErrUserAborted {
-					return nil
-				}
-				return err
-			}
-			if download {
-				if err := runSemanticSetupForSettings(selected.ID, false); err != nil {
-					return err
-				}
-			}
-		}
-		ss = semanticSettingsForLocalONNX(selected)
-	}
-	settings.SemanticSearch = ss
+	settings.SemanticSearch = &models.SemanticSearchSettings{Enabled: true, Provider: provider, Model: model}
 	return nil
 }
 
@@ -854,124 +771,10 @@ func showSettingsMaintenance(project *models.Project) error {
 	return nil
 }
 
-func localONNXModelChoices(currentModel string) []localONNXModelChoice {
-	choices := make([]localONNXModelChoice, 0, len(supportedModels))
-	for i := range supportedModels {
-		m := &supportedModels[i]
-		installed := isModelInstalled(m)
-		status := "not downloaded"
-		if installed {
-			status = "downloaded"
-		}
-		current := ""
-		if currentModel == m.ID {
-			current = ", current"
-		}
-		choices = append(choices, localONNXModelChoice{
-			Model:     m,
-			Installed: installed,
-			Label: fmt.Sprintf("%s - %s (%dd, %d tokens, %dMB, %s%s)",
-				m.ID, m.Name, m.Dimensions, m.MaxTokens, m.SizeMB, status, current),
-		})
-	}
-	return choices
-}
-
-func localONNXModelSelectOptions(currentModel string) []huh.Option[string] {
-	choices := localONNXModelChoices(currentModel)
-	options := make([]huh.Option[string], 0, len(choices))
-	for _, choice := range choices {
-		options = append(options, huh.NewOption(choice.Label, choice.Model.ID))
-	}
-	return options
-}
-
-func selectLocalONNXModel(model *string) error {
-	if err := search.RequireLocalONNX(); err != nil {
-		return err
-	}
-	if model == nil {
-		return fmt.Errorf("model value is required")
-	}
-	if findSupportedModel(*model) == nil {
-		*model = "multilingual-e5-small"
-	}
-	modelForm := huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("Local ONNX model").
-				Description("Downloaded models are ready for offline semantic search. Missing models can be downloaded after selection.").
-				Options(localONNXModelSelectOptions(*model)...).
-				Value(model),
-		),
-	).WithTheme(huh.ThemeCatppuccin())
-
-	if err := modelForm.Run(); err != nil {
-		if err == huh.ErrUserAborted {
-			return err
-		}
-		return err
-	}
-	return nil
-}
-
-func semanticSettingsForLocalONNX(model *embeddingModel) *models.SemanticSearchSettings {
-	return &models.SemanticSearchSettings{
-		Enabled:       true,
-		Provider:      "local",
-		Model:         model.ID,
-		HuggingFaceID: model.HuggingFace,
-		Dimensions:    model.Dimensions,
-		MaxTokens:     model.MaxTokens,
-	}
-}
-
-func saveLocalONNXSemanticSettings(store *storage.Store, project *models.Project, model *embeddingModel) error {
-	if err := search.RequireLocalONNX(); err != nil {
-		return err
-	}
-	if store == nil {
-		return fmt.Errorf("store is required")
-	}
-	if project == nil {
-		return fmt.Errorf("project is required")
-	}
-	project.Settings.SemanticSearch = semanticSettingsForLocalONNX(model)
-	return store.Config.Save(project)
-}
-
-func applyLocalONNXSelection(store *storage.Store, project *models.Project, modelID string, confirmDownload func(*embeddingModel) (bool, error)) (bool, error) {
-	if err := search.RequireLocalONNX(); err != nil {
-		return false, err
-	}
-	selected := findSupportedModel(modelID)
-	if selected == nil {
-		return false, fmt.Errorf("unknown local ONNX model %q", modelID)
-	}
-	if !isModelInstalled(selected) {
-		download, err := confirmDownload(selected)
-		if err != nil {
-			return false, err
-		}
-		if !download {
-			fmt.Println(RenderWarning(fmt.Sprintf("Kept previous Local ONNX model; %q was not downloaded.", selected.ID)))
-			fmt.Println(RenderHint("Run: " + RenderCmd(fmt.Sprintf("knowns model download %s", selected.ID)) + " and select it again."))
-			return false, nil
-		}
-		if err := runSemanticSetupForSettings(selected.ID, false); err != nil {
-			return false, err
-		}
-	}
-	if err := saveLocalONNXSemanticSettings(store, project, selected); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 func toggleEmbedding(store *storage.Store, project *models.Project, embeddingEnabled *bool) error {
 	enabled := *embeddingEnabled
 	model := ""
-	provider := "local"
+	provider := "ollama"
 
 	if project.Settings.SemanticSearch != nil {
 		model = project.Settings.SemanticSearch.Model
@@ -1022,8 +825,14 @@ func toggleEmbedding(store *storage.Store, project *models.Project, embeddingEna
 
 		embModels, err := detector.ListEmbeddingModels()
 		if err != nil || len(embModels) == 0 {
+			// Ollama answered but has no embedding model: that is exactly
+			// OllamaModelMissing. Resolve the text from the shared FR-10
+			// source (AC-15) so the model named here follows D2 instead of
+			// being restated — and stays the D2 default rather than drifting
+			// to whichever model was hardcoded here.
+			guidance := storage.OllamaStateGuidance(storage.OllamaModelMissing, "")
 			fmt.Println(StyleDim.Render("  No embedding models found in Ollama."))
-			fmt.Println(StyleDim.Render("  Pull one: ollama pull nomic-embed-text"))
+			fmt.Println(StyleDim.Render("  Pull one: " + guidance.Command))
 			return nil
 		}
 
@@ -1071,51 +880,11 @@ func toggleEmbedding(store *storage.Store, project *models.Project, embeddingEna
 			Model:      model,
 			Dimensions: dims,
 		}
-		// Ensure ollama provider is registered
-		if _, exists := embSettings.Providers["ollama"]; !exists {
-			embSettings.Providers["ollama"] = storage.EmbeddingProvider{
-				Name:      "Ollama Local",
-				APIBase:   search.OllamaDefaultBase + "/v1",
-				Timeout:   30,
-				BatchSize: 64,
-				Retry:     storage.RetryConfig{MaxRetries: 3, InitialDelay: 1000, MaxDelay: 30000},
-			}
-		}
+		// The ollama provider entry needs no registration here: Load merges
+		// the D2 defaults on every call, so it is already present. Restating
+		// it locally would give the seeded entry a second origin and let the
+		// two drift (AC-15).
 		_ = embStore.Save(embSettings)
-		return nil
-	}
-
-	// Local ONNX
-	if provider == "local" {
-		if err := selectLocalONNXModel(&model); err != nil {
-			if err == huh.ErrUserAborted {
-				return nil
-			}
-			return err
-		}
-
-		saved, err := applyLocalONNXSelection(store, project, model, func(selected *embeddingModel) (bool, error) {
-			download := false
-			confirmForm := huh.NewForm(huh.NewGroup(
-				huh.NewConfirm().
-					Title(fmt.Sprintf("Download %s now?", selected.ID)).
-					Description(fmt.Sprintf("%s is not downloaded. Download it before saving this Local ONNX setting.", selected.Name)).
-					Value(&download),
-			)).WithTheme(huh.ThemeCatppuccin())
-			if err := confirmForm.Run(); err != nil {
-				if err == huh.ErrUserAborted {
-					return false, nil
-				}
-				return false, err
-			}
-			return download, nil
-		})
-		if err != nil {
-			return err
-		}
-		if saved {
-			*embeddingEnabled = true
-		}
 		return nil
 	}
 

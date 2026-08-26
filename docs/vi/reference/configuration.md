@@ -20,9 +20,9 @@ File này khai báo những gì Knowns cần quản lý locally: platform integr
     },
     "semanticSearch": {
       "enabled": true,
-      "model": "multilingual-e5-small",
-      "provider": "local",
-      "dimensions": 384
+      "model": "qwen3-embedding:0.6b",
+      "provider": "ollama",
+      "dimensions": 1024
     },
     "platforms": [
       "claude-code",
@@ -89,12 +89,16 @@ Per-section git tracking toggles. Kiểm soát subdirectories nào trong `.known
 
 Config cho semantic search: `enabled`, `model`, `provider`, `dimensions`.
 
-`provider` có thể là `local`, `ollama`, hoặc provider ID đã đăng ký bằng `knowns provider add`.
+`provider` có thể là `ollama`, hoặc provider ID đã đăng ký bằng `knowns provider add`.
+
+Project tạo trước thay đổi Ollama-only có thể vẫn còn `"provider": "local"`.
+Giá trị đó được đọc như `"ollama"` với model mặc định; `knowns migrate` ghi lại
+vào file khi bạn chủ động chạy.
 
 - `knowns init` set các giá trị này
-- `knowns settings` hiển thị Local ONNX models kèm trạng thái downloaded/not downloaded
-- Nếu chọn Local ONNX model chưa download trong `knowns settings`, Knowns hỏi xác nhận rồi download trước khi lưu
-- `knowns provider add` và `knowns model add --provider <id> <model-name>` cấu hình API-backed embedding models
+- `knowns settings` liệt kê các embedding model mà Ollama đang phục vụ
+- `knowns provider add` đăng ký provider OpenAI-compatible; chọn model của nó
+  bằng `knowns config set settings.semanticSearch.model <name>`
 - `knowns sync` re-apply semantic setup
 - `knowns search --reindex` rebuild local index
 - Xem [Ollama Embedding Models](./ollama-embedding-models.md) để biết model khuyến nghị, lệnh cài/pull, và cách khai báo một provider OpenAI-compatible của bên thứ ba

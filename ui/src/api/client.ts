@@ -1293,10 +1293,8 @@ export const timeApi = {
 // Embedding Models API
 export interface EmbeddingModelInfo {
 	name: string;
-	huggingFaceId?: string;
 	dimensions: number;
 	maxTokens?: number;
-	installed?: boolean;
 	source?: string;
 	provider?: string;
 	id?: string;
@@ -1304,7 +1302,6 @@ export interface EmbeddingModelInfo {
 }
 
 export interface EmbeddingModelsResponse {
-	local: EmbeddingModelInfo[];
 	api: EmbeddingModelInfo[];
 	configured: EmbeddingModelInfo[];
 }

@@ -75,8 +75,8 @@ func TestRuntimePsDefaultIsCompactAndGroupsFailures(t *testing.T) {
 	snapshots := []projectSnapshot{{
 		Root: "/repo/.knowns",
 		Recent: []runtimequeue.JobResult{
-			runtimePsResult("a", runtimequeue.JobIndexMemory, "3kno2x", false, "could not index-memory 3kno2x: init onnx runtime: ONNX Runtime is not installed; run `knowns runtime install onnx`", now),
-			runtimePsResult("b", runtimequeue.JobIndexMemory, "3kno2x", false, "could not index-memory 3kno2x: init onnx runtime: ONNX Runtime is not installed; run `knowns runtime install onnx`", now.Add(time.Second)),
+			runtimePsResult("a", runtimequeue.JobIndexMemory, "3kno2x", false, "could not index-memory 3kno2x: semantic runtime unavailable: embedding provider could not be reached", now),
+			runtimePsResult("b", runtimequeue.JobIndexMemory, "3kno2x", false, "could not index-memory 3kno2x: semantic runtime unavailable: embedding provider could not be reached", now.Add(time.Second)),
 			runtimePsResult("c", runtimequeue.JobIndexTask, "ozbtct", true, "", now.Add(2*time.Second)),
 		},
 	}}
@@ -92,7 +92,12 @@ func TestRuntimePsDefaultIsCompactAndGroupsFailures(t *testing.T) {
 	cmd, out := runtimePsRenderTestCmd()
 	renderRuntimePs(cmd, status, nil, snapshots, summary, runtimePsOptions{ClientLimit: defaultRuntimePsClientLimit, FailureLimit: defaultRuntimePsFailureLimit}, search.SemanticRuntimeStatus{}, runtimequeue.ReloadStatus{}, false)
 	got := out.String()
-	for _, want := range []string{"Activity", "Recent failures", "repeated 2x", "ONNX Runtime is not installed", "knowns runtime install onnx", "knowns runtime ps --jobs --tail 20"} {
+	// The sample failure is a semantic runtime error rather than the ONNX one
+	// this test used to carry: that runtime is gone, and so is its
+	// `knowns runtime install onnx` remediation. What is under test here is
+	// unchanged — repeated failures group, and a known failure renders its
+	// remediation.
+	for _, want := range []string{"Activity", "Recent failures", "repeated 2x", "semantic runtime unavailable", "knowns search --reindex", "knowns runtime ps --jobs --tail 20"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in compact output, got:\n%s", want, got)
 		}
@@ -127,7 +132,7 @@ func TestRuntimePsPlainDefaultDoesNotDumpAllRecentJobs(t *testing.T) {
 	snapshots := []projectSnapshot{{
 		Root: "/repo/.knowns",
 		Recent: []runtimequeue.JobResult{
-			runtimePsResult("a", runtimequeue.JobIndexMemory, "mem", false, "ONNX Runtime is not installed", now),
+			runtimePsResult("a", runtimequeue.JobIndexMemory, "mem", false, "semantic runtime unavailable", now),
 			runtimePsResult("b", runtimequeue.JobIndexTask, "task", true, "", now.Add(time.Second)),
 		},
 	}}

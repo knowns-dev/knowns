@@ -80,7 +80,8 @@ type VectorSearchOpts struct {
 	ChunkType ChunkType
 }
 
-// EmbedderProvider is the interface for all embedding backends (local ONNX and API).
+// EmbedderProvider is the interface for all embedding backends (Ollama and
+// any other OpenAI-compatible endpoint).
 type EmbedderProvider interface {
 	Embed(text string) ([]float32, error)
 	EmbedDocument(text string) ([]float32, error)
@@ -112,56 +113,23 @@ type EmbeddingModelConfig struct {
 	DocPrefix     string // prefix prepended to documents before embedding
 }
 
-// Known embedding model configurations.
-var EmbeddingModels = map[string]EmbeddingModelConfig{
-	"gte-small": {
-		Name:          "gte-small",
-		Dimensions:    384,
-		MaxTokens:     512,
-		HuggingFaceID: "Xenova/gte-small",
-	},
-	"all-MiniLM-L6-v2": {
-		Name:          "all-MiniLM-L6-v2",
-		Dimensions:    384,
-		MaxTokens:     256,
-		HuggingFaceID: "Xenova/all-MiniLM-L6-v2",
-	},
-	"gte-base": {
-		Name:          "gte-base",
-		Dimensions:    768,
-		MaxTokens:     512,
-		HuggingFaceID: "Xenova/gte-base",
-	},
-	"bge-small-en-v1.5": {
-		Name:          "bge-small-en-v1.5",
-		Dimensions:    384,
-		MaxTokens:     512,
-		HuggingFaceID: "Xenova/bge-small-en-v1.5",
-		QueryPrefix:   "Represent this sentence: ",
-		DocPrefix:     "Represent this sentence: ",
-	},
-	"bge-base-en-v1.5": {
-		Name:          "bge-base-en-v1.5",
-		Dimensions:    768,
-		MaxTokens:     512,
-		HuggingFaceID: "Xenova/bge-base-en-v1.5",
-		QueryPrefix:   "Represent this sentence: ",
-		DocPrefix:     "Represent this sentence: ",
-	},
-	"nomic-embed-text-v1.5": {
-		Name:          "nomic-embed-text-v1.5",
-		Dimensions:    768,
-		MaxTokens:     8192,
-		HuggingFaceID: "Xenova/nomic-embed-text-v1.5",
-		QueryPrefix:   "search_query: ",
-		DocPrefix:     "search_document: ",
-	},
-	"multilingual-e5-small": {
-		Name:          "multilingual-e5-small",
-		Dimensions:    384,
-		MaxTokens:     512,
-		HuggingFaceID: "Xenova/multilingual-e5-small",
-		QueryPrefix:   "query: ",
-		DocPrefix:     "passage: ",
-	},
+// Tokenizer is the interface for all tokenizer implementations. The only
+// production implementation was the ONNX runtime's WordPiece/Unigram
+// tokenizer (spec ollama-only-embedding FR-1), which was removed along with
+// the local ONNX embedding path. Every remaining EmbedderProvider returns a
+// nil Tokenizer from GetTokenizer, and chunker.go's countTokens already
+// falls back to EstimateTokens whenever no tokenizer is supplied, so removal
+// changes no behavior for HTTP-backed providers. The interface itself
+// survives because chunker.go's ChunkTask/ChunkDocument/ChunkMemory/
+// ChunkDecision accept one, and tests exercise that fallback path with a
+// mock implementation.
+type Tokenizer interface {
+	Encode(text string, maxLength int) TokenizerOutput
+}
+
+// TokenizerOutput holds the result of tokenization.
+type TokenizerOutput struct {
+	InputIDs      []int64
+	AttentionMask []int64
+	TokenTypeIDs  []int64
 }

@@ -521,38 +521,36 @@ func detectEmbedding(store *storage.Store) []ServiceStatus {
 		}
 		provider = provider.WithDefaults()
 
-		ss.Details["model_id"] = semCfg.Model
-		ss.Details["model"] = model.Model
-		ss.Details["provider_id"] = model.Provider
-		ss.Details["api_base"] = provider.APIBase
-		ss.Details["dimensions"] = strconv.Itoa(model.Dimensions)
-		setEmbeddingRuntimeActivityStatus(&ss)
-
-	case "local", "":
-		modelCfg, ok := search.EmbeddingModels[semCfg.Model]
-		if !ok {
+		// Model config (dimensions, max tokens) resolves through the embedder
+		// itself (spec ollama-only-embedding FR-12), not the removed
+		// EmbeddingModels table, which only ever covered local ONNX model
+		// names. status.go resolves it this way for every remaining
+		// provider, not just what used to be the local-only branch.
+		embedder, err := search.NewAPIEmbedder(search.APIEmbedderConfig{
+			APIBase:    provider.APIBase,
+			APIKey:     provider.APIKey,
+			Model:      model.Model,
+			Dimensions: model.Dimensions,
+			MaxTokens:  model.MaxTokens,
+			Timeout:    provider.Timeout,
+			BatchSize:  provider.BatchSize,
+			Retry:      provider.Retry,
+		})
+		if err != nil {
 			ss.Status = "error"
-			ss.Details["error"] = "unknown embedding model: " + semCfg.Model
+			ss.Details["error"] = "init embedder: " + err.Error()
 			ss.Details["degraded"] = "true"
 			return []ServiceStatus{ss}
 		}
-		ss.Details["model"] = semCfg.Model
-		ss.Details["hugging_face_id"] = modelCfg.HuggingFaceID
-		dims := semCfg.Dimensions
-		if dims <= 0 {
-			dims = modelCfg.Dimensions
-		}
-		ss.Details["dimensions"] = strconv.Itoa(dims)
-		home, _ := os.UserHomeDir()
-		modelDir := filepath.Join(home, ".knowns", "models", modelCfg.HuggingFaceID)
-		if localONNXModelAvailable(modelDir) {
-			ss.Details["model_available"] = "true"
-			setEmbeddingRuntimeActivityStatus(&ss)
-			return []ServiceStatus{ss}
-		}
-		ss.Status = "stopped"
-		ss.Details["model_available"] = "false"
-		ss.Details["reason"] = "local model not downloaded"
+		defer embedder.Close()
+		mc := embedder.ModelConfig()
+
+		ss.Details["model_id"] = semCfg.Model
+		ss.Details["model"] = mc.Name
+		ss.Details["provider_id"] = model.Provider
+		ss.Details["api_base"] = provider.APIBase
+		ss.Details["dimensions"] = strconv.Itoa(mc.Dimensions)
+		setEmbeddingRuntimeActivityStatus(&ss)
 
 	default:
 		ss.Status = "stopped"
@@ -705,18 +703,6 @@ func isSemanticRuntimeJob(kind runtimequeue.JobKind) bool {
 	default:
 		return false
 	}
-}
-
-func localONNXModelAvailable(modelDir string) bool {
-	for _, name := range []string{
-		filepath.Join(modelDir, "onnx", "model_quantized.onnx"),
-		filepath.Join(modelDir, "onnx", "model.onnx"),
-	} {
-		if _, err := os.Stat(name); err == nil {
-			return true
-		}
-	}
-	return false
 }
 
 func uniqueStrings(values []string) []string {

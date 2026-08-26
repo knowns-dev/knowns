@@ -72,20 +72,25 @@ func TestSemanticRuntimeReadinessReportsDisabledState(t *testing.T) {
 	}
 }
 
-func TestSemanticModelInstalledDoesNotRequireONNXForRemoteProviders(t *testing.T) {
-	for _, provider := range []string{"api", "ollama"} {
+// TestSemanticModelInstalledReducesToConfigured verifies spec
+// ollama-only-embedding FR-1: with the local ONNX runtime removed, every
+// provider (including the legacy "local" value D1 resolves to ollama)
+// manages model availability remotely, so "installed" is just "configured".
+func TestSemanticModelInstalledReducesToConfigured(t *testing.T) {
+	for _, provider := range []string{"api", "ollama", "local", ""} {
 		settings := &models.SemanticSearchSettings{Provider: provider, Model: "remote-model"}
-		if !semanticModelInstalled(settings, false) {
-			t.Fatalf("provider %q should not require a local ONNX runtime", provider)
+		if !semanticModelInstalled(settings) {
+			t.Fatalf("provider %q with a configured model should be installed", provider)
 		}
 	}
 
-	local := &models.SemanticSearchSettings{Provider: "local", Model: "gte-small"}
-	if semanticModelInstalled(local, false) {
-		t.Fatal("local provider should require an available ONNX runtime")
+	unconfigured := &models.SemanticSearchSettings{Provider: "ollama", Model: ""}
+	if semanticModelInstalled(unconfigured) {
+		t.Fatal("no model configured should not be installed")
 	}
-	if !semanticModelInstalled(local, true) {
-		t.Fatal("local provider with ONNX runtime should be ready")
+
+	if semanticModelInstalled(nil) {
+		t.Fatal("nil settings should not be installed")
 	}
 }
 

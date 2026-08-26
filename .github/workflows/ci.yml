@@ -72,32 +72,11 @@ jobs:
           CGO_ENABLED: '1'
         run: go build -ldflags "-s -w -X github.com/howznguyen/knowns/internal/util.Version=${env:GITHUB_SHA}" -o bin/knowns.exe ./cmd/knowns
 
-      - name: Download ONNX Runtime (Unix)
-        if: runner.os != 'Windows'
-        env:
-          ORT_VERSION: "1.25.0"
-        run: |
-          BASE_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}"
-          ARCHIVE="onnxruntime-linux-x64-${ORT_VERSION}.tgz"
-          curl -L --retry 5 --retry-delay 5 -o "/tmp/${ARCHIVE}" "${BASE_URL}/${ARCHIVE}"
-          tar -xzf "/tmp/${ARCHIVE}" -C /tmp
-          mkdir -p ./bin
-          cp "/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION}" ./bin/libonnxruntime.so
-          echo "KNOWNS_ORT_LIB=$(pwd)/bin/libonnxruntime.so" >> "$GITHUB_ENV"
-
-      - name: Download ONNX Runtime (Windows)
-        if: runner.os == 'Windows'
-        env:
-          ORT_VERSION: "1.25.0"
-        shell: bash
-        run: |
-          BASE_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}"
-          ARCHIVE="onnxruntime-win-x64-${ORT_VERSION}.zip"
-          curl -L --retry 5 --retry-delay 5 -o "/tmp/${ARCHIVE}" "${BASE_URL}/${ARCHIVE}"
-          unzip -q "/tmp/${ARCHIVE}" -d /tmp
-          mkdir -p ./bin
-          cp "/tmp/onnxruntime-win-x64-${ORT_VERSION}/lib/onnxruntime.dll" ./bin/onnxruntime.dll
-          echo "KNOWNS_ORT_LIB=$(pwd)/bin/onnxruntime.dll" >> "$GITHUB_ENV"
+      # No ONNX Runtime download: github.com/yalue/onnxruntime_go was removed
+      # with the local ONNX embedding path (spec ollama-only-embedding FR-2),
+      # so no test needs a shared library on disk. CGO stays enabled on
+      # Windows because `go test -race` requires a C toolchain, not because
+      # anything in this module binds to C.
 
       - name: Go vet (Unix)
         if: runner.os != 'Windows'
@@ -148,37 +127,45 @@ jobs:
 
       - name: Run platform and keyword fallback tests
         run: |
-          # Existing local-provider unit tests use mocked embedders and assume
-          # a supported runtime. Model that explicit Intel opt-in here; the
-          # commands below run without the override and verify the disabled path.
-          KNOWNS_ORT_LIB="${RUNNER_TEMP}/libonnxruntime-test.dylib" \
-            go test ./internal/search ./internal/cli ./internal/server/routes ./internal/doctor
+          go test ./internal/search ./internal/cli ./internal/server/routes ./internal/doctor
           go test ./internal/search -run '^TestKeywordModeUsesBM25WithoutSemanticAndPreservesResultShape$'
           bun test npm/knowns/install.test.js
 
-      - name: Build native Intel binary without ONNX Runtime
-        env:
-          CGO_ENABLED: '1'
+      - name: Build native Intel binary
         run: go build -ldflags "-s -w -X github.com/howznguyen/knowns/internal/util.Version=${GITHUB_SHA}" -o bin/knowns ./cmd/knowns
 
-      - name: Verify installer and disabled Local ONNX path
+      # This job used to assert that the local ONNX path was *disabled* on
+      # macOS Intel, the one platform it was never bundled for. That path is
+      # gone everywhere now (spec ollama-only-embedding FR-1/FR-2), so Intel
+      # is no longer a special case. What is still worth smoking here is the
+      # native x86_64 build, the installer's platform detection, and the fact
+      # that a machine with no Ollama gets a working keyword-only project —
+      # which is exactly AC-13 and AC-7 end to end, on a runner that has no
+      # Ollama installed.
+      - name: Verify installer and keyword-only project without Ollama
         shell: bash
         run: |
           file bin/knowns | grep -q "Mach-O 64-bit"
           file bin/knowns | grep -q "x86_64"
+          # No shared library is shipped alongside the binary any more.
           test ! -e bin/libonnxruntime.dylib
           ./bin/knowns --version
+
+          # Guard the removal itself: `knowns model` must not resolve.
+          if ./bin/knowns model list >/dev/null 2>&1; then
+            echo "knowns model still resolves; it was removed by D4"
+            exit 1
+          fi
 
           export KNOWNS_INSTALLER_TEST=1
           source install/install.sh
           detect_platform
           test "$PLATFORM" = "darwin-x64"
 
-          output=$(./bin/knowns model download gte-small 2>&1) && {
-            echo "Local ONNX model download unexpectedly succeeded"
+          command -v ollama >/dev/null 2>&1 && {
+            echo "this runner unexpectedly has Ollama; the assertions below assume it does not"
             exit 1
           }
-          echo "$output" | grep -q "Local ONNX is not bundled for macOS Intel"
 
           smoke_dir=$(mktemp -d)
           (
@@ -186,23 +173,40 @@ jobs:
             git init -q
             export KNOWN_LSP_AUTO_INSTALL=0
             export NO_UPDATE_CHECK=1
-            "$GITHUB_WORKSPACE/bin/knowns" init "Intel Smoke" --no-wizard --no-open
-            config_output=$("$GITHUB_WORKSPACE/bin/knowns" config set semanticSearch true 2>&1) && {
-              echo "Local ONNX config unexpectedly succeeded"
-              exit 1
-            }
-            echo "$config_output" | grep -q "Local ONNX is not bundled for macOS Intel"
-            sync_output=$("$GITHUB_WORKSPACE/bin/knowns" sync --model 2>&1)
-            echo "$sync_output"
-            echo "$sync_output" | grep -q "keyword/BM25 search remains active"
 
-            bun -e 'const fs = require("fs"); const p = ".knowns/config.json"; const c = JSON.parse(fs.readFileSync(p, "utf8")); c.settings.semanticSearch = { enabled: true, provider: "local", model: "gte-small", huggingFaceId: "Xenova/gte-small", dimensions: 384, maxTokens: 512 }; fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");'
+            init_output=$("$GITHUB_WORKSPACE/bin/knowns" init "Intel Smoke" --no-wizard --no-open 2>&1)
+            echo "$init_output"
+            # AC-13: no reachable Ollama => semantic search written disabled,
+            # and the output tells the user keyword search still works, names
+            # the default model and how to get it, and where to read more.
+            echo "$init_output" | grep -q "Keyword search still works without it"
+            echo "$init_output" | grep -q "ollama pull qwen3-embedding:0.6b"
+            echo "$init_output" | grep -q "Read more:"
+            test "$(bun -e 'const c=require("fs").readFileSync(".knowns/config.json","utf8");console.log(JSON.stringify(JSON.parse(c).settings.semanticSearch ?? null))')" = "null"
+
+            # AC-3/AC-26/AC-27: a legacy `provider: local` config resolves and
+            # migrates without the file being touched until --write.
+            bun -e 'const fs = require("fs"); const p = ".knowns/config.json"; const c = JSON.parse(fs.readFileSync(p, "utf8")); c.settings.semanticSearch = { enabled: true, provider: "local", model: "gte-small", huggingFaceId: "Xenova/gte-small", dimensions: 384, maxTokens: 512 }; delete c.schemaVersion; fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");'
+            before=$(shasum -a 256 .knowns/config.json | cut -d" " -f1)
+            "$GITHUB_WORKSPACE/bin/knowns" migrate
+            after=$(shasum -a 256 .knowns/config.json | cut -d" " -f1)
+            test "$before" = "$after"
+            "$GITHUB_WORKSPACE/bin/knowns" migrate --write
+            grep -q '"provider": "ollama"' .knowns/config.json
+            # AC-29: the rewritten config no longer carries huggingFaceId.
+            # `grep -v` would not assert this — it succeeds whenever *any*
+            # line fails to match, which is almost always.
+            if grep -q "huggingFaceId" .knowns/config.json; then
+              echo "huggingFaceId survived migrate --write"
+              exit 1
+            fi
+            second=$("$GITHUB_WORKSPACE/bin/knowns" migrate --write 2>&1)
+            echo "$second" | grep -q "Nothing to migrate"
+
+            # AC-7: the configured embedder is unreachable on this runner, so
+            # search degrades to keyword results instead of failing.
             export KNOWN_RUNTIME_INLINE=1
-            status_output=$("$GITHUB_WORKSPACE/bin/knowns" search --status-check 2>&1)
-            echo "$status_output" | grep -q "ONNX runtime: unavailable on macOS Intel"
-            setup_output=$("$GITHUB_WORKSPACE/bin/knowns" search --setup 2>&1)
-            echo "$setup_output" | grep -q "Local ONNX setup is unavailable on macOS Intel"
-            "$GITHUB_WORKSPACE/bin/knowns" task create "Intel keyword fallback" --description "BM25 remains available without ONNX"
+            "$GITHUB_WORKSPACE/bin/knowns" task create "Intel keyword fallback" --description "BM25 remains available without an embedder"
             search_output=$("$GITHUB_WORKSPACE/bin/knowns" search "Intel keyword fallback" --plain 2>&1)
             echo "$search_output"
             echo "$search_output" | grep -q "Matched by: keyword"
@@ -214,8 +218,11 @@ jobs:
     timeout-minutes: 45
     env:
       KNOWNS_RUNTIME_INLINE: '1'
-      PINNED_RETRIEVAL_RUNTIME: local/gte-small@384
-      ORT_VERSION: '1.25.0'
+      # Repinned from local/gte-small@384: the local ONNX runtime it named was
+      # removed (spec ollama-only-embedding FR-2), so Ollama serving the D2
+      # default is the only pinnable semantic runtime left.
+      PINNED_RETRIEVAL_RUNTIME: ollama/qwen3-embedding:0.6b@1024
+      PINNED_RETRIEVAL_MODEL: qwen3-embedding:0.6b
     name: Retrieval Evaluation (Pinned Semantic Runtime)
     steps:
       - uses: actions/checkout@v4
@@ -230,24 +237,44 @@ jobs:
       - name: Build Knowns
         run: go build -ldflags "-s -w -X github.com/howznguyen/knowns/internal/util.Version=${GITHUB_SHA}" -o bin/knowns ./cmd/knowns
 
-      - name: Install pinned ONNX Runtime
+      - name: Install and start pinned Ollama runtime
         run: |
-          BASE_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}"
-          ARCHIVE="onnxruntime-linux-x64-${ORT_VERSION}.tgz"
-          curl -L --retry 5 --retry-delay 5 -o "/tmp/${ARCHIVE}" "${BASE_URL}/${ARCHIVE}"
-          tar -xzf "/tmp/${ARCHIVE}" -C /tmp
-          cp "/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION}" ./bin/libonnxruntime.so
-          echo "KNOWNS_ORT_LIB=$(pwd)/bin/libonnxruntime.so" >> "$GITHUB_ENV"
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve >"$RUNNER_TEMP/ollama.log" 2>&1 &
+          # Wait for the API rather than sleeping a fixed amount: a cold
+          # start here is the difference between a green run and a confusing
+          # connection-refused further down.
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:11434/api/tags >/dev/null && break
+            sleep 2
+          done
+          curl -sf http://localhost:11434/api/tags >/dev/null || {
+            echo "Ollama did not become reachable"; cat "$RUNNER_TEMP/ollama.log"; exit 1;
+          }
+          ollama pull "$PINNED_RETRIEVAL_MODEL"
 
       - name: Prepare pinned semantic index
         run: |
-          ./bin/knowns model download gte-small
-          ./bin/knowns model set gte-small
-          ./bin/knowns config set settings.semanticSearch.provider local
+          ./bin/knowns config set settings.semanticSearch.enabled true
+          ./bin/knowns config set settings.semanticSearch.provider ollama
+          ./bin/knowns config set settings.semanticSearch.model "$PINNED_RETRIEVAL_MODEL"
           ./bin/knowns search --reindex --plain
 
-      - name: Run pinned semantic retrieval evaluation
+      # The gate steps below are skipped while the baselines are absent. They
+      # were deleted with the local ONNX runtime they pinned, and a baseline
+      # can only be regenerated by the manual dispatch further down. Say so
+      # out loud: a silently skipped gate reads exactly like a passing one.
+      - name: Report gate coverage
         if: ${{ !inputs.update_retrieval_baseline }}
+        run: |
+          if [ -f internal/search/testdata/retrieval_evaluation_semantic_baseline.json ]; then
+            echo "Semantic and hybrid baselines present; gating against $PINNED_RETRIEVAL_RUNTIME."
+          else
+            echo "::warning::No semantic/hybrid baseline committed — retrieval quality is NOT gated in this run. Regenerate via workflow_dispatch with update_retrieval_baseline=true, then commit the uploaded artifact."
+          fi
+
+      - name: Run pinned semantic retrieval evaluation
+        if: ${{ !inputs.update_retrieval_baseline && hashFiles('internal/search/testdata/retrieval_evaluation_semantic_baseline.json') != '' }}
         run: |
           ./bin/knowns --json eval retrieval \
             --mode semantic \
@@ -256,7 +283,7 @@ jobs:
             --output "$RUNNER_TEMP/retrieval-evaluation-semantic.json"
 
       - name: Run pinned hybrid retrieval evaluation
-        if: ${{ !inputs.update_retrieval_baseline }}
+        if: ${{ !inputs.update_retrieval_baseline && hashFiles('internal/search/testdata/retrieval_evaluation_hybrid_baseline.json') != '' }}
         run: |
           ./bin/knowns --json eval retrieval \
             --mode hybrid \
@@ -264,9 +291,9 @@ jobs:
             --baseline internal/search/testdata/retrieval_evaluation_hybrid_baseline.json \
             --output "$RUNNER_TEMP/retrieval-evaluation-hybrid.json"
 
-      # Manual maintenance path. Baselines are runtime-sensitive, so they have to
-      # be regenerated in this job's pinned environment (linux x64 + the pinned
-      # ONNX build) rather than on a contributor's machine.
+      # Manual maintenance path. Baselines are runtime-sensitive, so they have
+      # to be regenerated in this job's pinned environment (linux x64 running
+      # the pinned Ollama model) rather than on a contributor's machine.
       - name: Regenerate pinned retrieval baselines
         if: ${{ inputs.update_retrieval_baseline }}
         env:
@@ -301,7 +328,10 @@ jobs:
             internal/search/testdata/retrieval_evaluation_hybrid_baseline.json
           if-no-files-found: error
 
+      # Only produced when the gate or the regeneration actually ran; with no
+      # baseline committed both are skipped and there is nothing to upload.
       - name: Upload canonical semantic and hybrid reports
+        if: ${{ inputs.update_retrieval_baseline || hashFiles('internal/search/testdata/retrieval_evaluation_semantic_baseline.json') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: retrieval-evaluation-semantic-hybrid
@@ -476,11 +506,9 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Cache semantic models
-        uses: actions/cache@v4
-        with:
-          path: ~/.knowns/models
-          key: semantic-models-${{ runner.os }}-all-MiniLM-L6-v2-v1
+      # No semantic-model cache: `~/.knowns/models` was the local ONNX model
+      # store, removed with that path (spec ollama-only-embedding FR-1/D4).
+      # Ollama keeps its own models outside the workspace and CI pulls none.
 
       - name: Install llvm-mingw toolchain
         if: runner.os == 'Windows'
@@ -513,32 +541,8 @@ jobs:
           CGO_ENABLED: '1'
         run: go build -ldflags "-s -w -X github.com/howznguyen/knowns/internal/util.Version=${env:GITHUB_SHA}" -o bin/knowns.exe ./cmd/knowns
 
-      - name: Download ONNX Runtime (Unix)
-        if: runner.os != 'Windows'
-        env:
-          ORT_VERSION: "1.25.0"
-        run: |
-          BASE_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}"
-          ARCHIVE="onnxruntime-linux-x64-${ORT_VERSION}.tgz"
-          curl -L --retry 5 --retry-delay 5 -o "/tmp/${ARCHIVE}" "${BASE_URL}/${ARCHIVE}"
-          tar -xzf "/tmp/${ARCHIVE}" -C /tmp
-          mkdir -p ./bin
-          cp "/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION}" ./bin/libonnxruntime.so
-          echo "KNOWNS_ORT_LIB=$(pwd)/bin/libonnxruntime.so" >> "$GITHUB_ENV"
-
-      - name: Download ONNX Runtime (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          BASE_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}"
-          ARCHIVE="onnxruntime-win-x64-${ORT_VERSION}.zip"
-          curl -L --retry 5 --retry-delay 5 -o "/tmp/${ARCHIVE}" "${BASE_URL}/${ARCHIVE}"
-          unzip -q "/tmp/${ARCHIVE}" -d /tmp
-          mkdir -p ./bin
-          cp "/tmp/onnxruntime-win-x64-${ORT_VERSION}/lib/onnxruntime.dll" ./bin/onnxruntime.dll
-          echo "KNOWNS_ORT_LIB=$(pwd)/bin/onnxruntime.dll" >> "$GITHUB_ENV"
-        env:
-          ORT_VERSION: "1.25.0"
+      # No ONNX Runtime download here either — see the note in the test job.
+      # The E2E binary embeds no C library and needs none at runtime.
 
       - name: Install Playwright browsers (Unix)
         if: runner.os != 'Windows'

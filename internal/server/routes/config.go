@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/howznguyen/knowns/internal/models"
-	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 )
 
@@ -54,7 +53,6 @@ func (cr *ConfigRoutes) configResponse(project *models.Project) map[string]inter
 		"id":            project.ID,
 		"createdAt":     project.CreatedAt,
 		"taskLifecycle": project.Settings.EffectiveTaskLifecycle(),
-		"localONNX":     search.CurrentLocalONNXCapability(),
 		"capabilities": map[string]bool{
 			"taskHardDelete": cr.capabilities.HardDelete,
 		},
@@ -132,12 +130,6 @@ func (cr *ConfigRoutes) save(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
-	if semanticSearchUpdateRequested(payload) {
-		if err := validateSemanticSearchCapability(project.Settings.SemanticSearch, search.CurrentLocalONNXCapability()); err != nil {
-			respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
-			return
-		}
-	}
 	if err := project.Settings.Validate(); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
@@ -154,36 +146,6 @@ func (cr *ConfigRoutes) save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, cr.configResponse(project))
-}
-
-func validateSemanticSearchCapability(settings *models.SemanticSearchSettings, capability search.LocalONNXCapability) error {
-	if settings == nil || !settings.Enabled {
-		return nil
-	}
-	provider := settings.Provider
-	if provider == "" {
-		provider = "local"
-	}
-	if provider == "local" && !capability.Supported {
-		return fmt.Errorf("%s", capability.Reason)
-	}
-	return nil
-}
-
-func semanticSearchUpdateRequested(payload map[string]json.RawMessage) bool {
-	if _, ok := payload["semanticSearch"]; ok {
-		return true
-	}
-	raw, ok := payload["settings"]
-	if !ok {
-		return false
-	}
-	var nested map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &nested); err != nil {
-		return false
-	}
-	_, ok = nested["semanticSearch"]
-	return ok
 }
 
 func applyProjectConfigUpdate(project *models.Project, payload map[string]json.RawMessage) error {

@@ -48,7 +48,7 @@ test.describe("Configuration Page", () => {
 		});
 	});
 
-	test("disables Local ONNX settings when the platform does not bundle it", async ({ page }) => {
+	test("offers no local ONNX embedding source or model picker", async ({ page }) => {
 		await page.route("**/api/config", async (route) => {
 			if (route.request().method() !== "GET") {
 				await route.continue();
@@ -58,17 +58,12 @@ test.describe("Configuration Page", () => {
 			const body = await response.json();
 			body.config = {
 				...(body.config || {}),
+				// Simulate an unmigrated project still carrying the retired
+				// "local" provider value on disk.
 				semanticSearch: {
 					enabled: true,
 					provider: "local",
 					model: "gte-small",
-					huggingFaceId: "Xenova/gte-small",
-				},
-				localONNX: {
-					supported: false,
-					runtimeAvailable: false,
-					customLibrary: false,
-					reason: "Local ONNX is not bundled for macOS Intel (x86_64). Use Ollama or an API provider.",
 				},
 			};
 			await route.fulfill({ response, json: body });
@@ -77,10 +72,14 @@ test.describe("Configuration Page", () => {
 		await page.goto(`${server.baseURL}/config`);
 		await page.getByRole("button", { name: "Search", exact: true }).click();
 
-		await expect(page.getByTestId("local-onnx-unavailable")).toContainText("macOS Intel");
+		await expect(page.getByTestId("local-onnx-unavailable")).toHaveCount(0);
 		const provider = page.getByRole("combobox");
+		await expect(provider.locator('option[value="local"]')).toHaveCount(0);
+		await expect(provider.locator('option[value="ollama"]')).toHaveCount(1);
+		await expect(provider.locator('option[value="api"]')).toHaveCount(1);
+		// A stale "local" value from an unmigrated config falls back to Ollama
+		// rather than leaving the selector on an option that no longer exists.
 		await expect(provider).toHaveValue("ollama");
-		await expect(provider.locator('option[value="local"]')).toBeDisabled();
 		await expect(page.getByText("HuggingFace ID", { exact: true })).toHaveCount(0);
 
 		const saveRequest = page.waitForRequest(

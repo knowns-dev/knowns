@@ -1,8 +1,9 @@
 ---
+id: doc-666bb99e354884b219ec964778f35b8a
 title: Multi-Store Semantic Memory Retrieval
 description: Specification for multi-store semantic memory retrieval across project and global stores with default model auto-setup during init and sync.
 createdAt: '2026-04-11T22:16:32.404Z'
-updatedAt: '2026-04-11T22:17:24.327Z'
+updatedAt: '2026-08-25T14:36:43.724Z'
 tags:
   - spec
   - approved
@@ -11,6 +12,7 @@ tags:
   - search
   - global
   - runtime
+  - partially-superseded
 ---
 
 # Multi-Store Semantic Memory Retrieval
@@ -143,3 +145,14 @@ This spec extends @doc/specs/semantic-search and supports the runtime retrieval 
 - [ ] Should project and global stores contribute equal weight during rank fusion, or should project memory receive a small default boost?
 - [ ] Should `knowns search --status-check` be extended to report project and global semantic readiness separately in one command?
 - [ ] Should `knowns sync` always refresh global memory indexing, or only when global memory content/hash has changed?
+
+
+## Superseded in Part
+
+@doc/specs/2026-08-24/ollama-only-embedding supersedes part of this spec.
+
+**Void:** FR-6 and FR-7 (model download during init and sync), FR-8 (`multilingual-e5-small` as the default model).
+
+**Retained:** everything about multi-store retrieval and merging.
+
+The System Decision recording this removal is not yet accepted — it stays draft until the removal is merged and a commit can be cited as evidence — and will be linked here once accepted.

@@ -297,9 +297,7 @@ func buildSearch(store *storage.Store) *SearchStatus {
 	if cfg.Settings.SemanticSearch != nil {
 		sem := cfg.Settings.SemanticSearch
 		ss.ModelConfigured = sem.Model != ""
-
-		onnxAvail, _ := search.IsONNXAvailable()
-		ss.ModelInstalled = semanticModelInstalled(sem, onnxAvail)
+		ss.ModelInstalled = semanticModelInstalled(sem)
 	}
 
 	// Project index readiness.
@@ -319,16 +317,14 @@ func buildSearch(store *storage.Store) *SearchStatus {
 	return ss
 }
 
-func semanticModelInstalled(settings *models.SemanticSearchSettings, onnxAvailable bool) bool {
-	if settings == nil || settings.Model == "" {
-		return false
-	}
-	if settings.Provider == "api" || settings.Provider == "ollama" {
-		// Remote providers manage model availability outside the bundled
-		// ONNX runtime. Runtime health is reported separately.
-		return true
-	}
-	return onnxAvailable
+// semanticModelInstalled reports whether a model is configured. Every
+// remaining provider (api, ollama, and the legacy "local"/"" value that
+// spec ollama-only-embedding D1 resolves to ollama) manages model
+// availability remotely rather than through a bundled local runtime, so
+// "installed" reduces to "configured" — runtime health is reported
+// separately via SemanticRuntime.
+func semanticModelInstalled(settings *models.SemanticSearchSettings) bool {
+	return settings != nil && settings.Model != ""
 }
 
 func buildSemanticRuntimeReadiness() *SemanticRuntimeReadiness {

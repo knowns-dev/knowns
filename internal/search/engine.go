@@ -2266,7 +2266,7 @@ func (e *Engine) rerank(results []models.SearchResult, query string, limit int, 
 // Returns an error if semantic search is not available.
 func (e *Engine) Reindex(progress ReindexProgress) error {
 	if e.embedder == nil || e.vecStore == nil {
-		return fmt.Errorf("semantic search is not available (no ONNX Runtime)")
+		return fmt.Errorf("semantic search is not available (no embedding provider configured)")
 	}
 	svc := NewIndexService(e.store, e.embedder, e.vecStore)
 	return svc.Reindex(progress)

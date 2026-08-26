@@ -77,7 +77,6 @@ Use these docs if you want to:
 - [Configuration](./reference/configuration.md)
 - [Sync](./reference/sync.md)
 - [Validate](./reference/validate.md)
-- [Model Management](./reference/model-management.md)
 - [Reference system](./reference/reference-system.md)
 - [Semantic search](./reference/semantic-search.md)
 - [Ollama Embedding Models](./reference/ollama-embedding-models.md)

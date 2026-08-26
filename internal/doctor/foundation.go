@@ -34,6 +34,7 @@ func FoundationCheckers(store *storage.Store) []Checker {
 		projectActiveChecker(store),
 		projectConfigChecker(store),
 		projectStorageChecker(store),
+		projectMigrationChecker(store),
 		validationSummaryChecker(store),
 	}
 }
@@ -99,6 +100,53 @@ func projectConfigChecker(store *storage.Store) Checker {
 				Evidence: Evidence{
 					"path": configPath,
 					"name": project.Name,
+				},
+			}, nil
+		},
+	}
+}
+
+// projectMigrationChecker reports FR-21/AC-30: a project whose committed
+// config still carries a schema version behind storage.CurrentSchemaVersion()
+// names `knowns migrate` as the remediation, so the command is discoverable
+// from `knowns doctor` without reading release notes. It reads
+// project.SchemaVersion directly (storage.NeedsMigration/PendingMigrations),
+// the same fields the FR-4 per-command banner and `knowns migrate` itself
+// read, so this check can never disagree with them about whether a project
+// needs migration.
+func projectMigrationChecker(store *storage.Store) Checker {
+	return Checker{
+		ID:    "project.migration",
+		Scope: ScopeProject,
+		Check: func(context.Context) (CheckResult, error) {
+			if store == nil {
+				return skippedForMissingProject(), nil
+			}
+			project, err := store.Config.Load()
+			if err != nil {
+				return CheckResult{}, err
+			}
+			if !storage.NeedsMigration(project) {
+				return CheckResult{
+					Status:  StatusPass,
+					Summary: "Project configuration schema is current",
+					Evidence: Evidence{
+						"schemaVersion": project.SchemaVersion,
+					},
+				}, nil
+			}
+			pending := storage.PendingMigrations(project.SchemaVersion)
+			return CheckResult{
+				Status:  StatusWarn,
+				Summary: "Project configuration needs migration",
+				Evidence: Evidence{
+					"schemaVersion":  project.SchemaVersion,
+					"currentVersion": storage.CurrentSchemaVersion(),
+					"pendingCount":   len(pending),
+				},
+				Remediation: &Remediation{
+					Description: "Upgrade the project configuration to the current schema version. Preview with `knowns migrate`, then apply with `knowns migrate --write`.",
+					Command:     "knowns migrate",
 				},
 			}, nil
 		},

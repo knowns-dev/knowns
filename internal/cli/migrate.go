@@ -69,7 +69,35 @@ func runMigratePreview(cmd *cobra.Command, project *models.Project) error {
 	printPendingMigrations(project.SchemaVersion, result.Changes)
 	fmt.Println()
 	fmt.Println(RenderHint("No files were changed. Run " + RenderCmd("knowns migrate --write") + " to apply."))
+	if len(result.Changes) > 0 {
+		fmt.Println()
+		printPostMigrationSteps("After applying, you will need:")
+	}
 	return nil
+}
+
+// printPostMigrationSteps names installing Ollama, pulling the model and
+// reindexing. Both the preview and the write path print it, because every
+// other command reports an unmigrated project with a single line pointing at
+// `knowns migrate` (FR-4) — so a preview that stays silent breaks the
+// guidance chain at precisely the command the user was sent to, and they
+// would not learn what the migration requires until after writing the file.
+func printPostMigrationSteps(heading string) {
+	pull := ""
+	for _, m := range storage.RecommendedModels() {
+		if m.Default {
+			pull = m.PullCommand
+			break
+		}
+		if pull == "" {
+			pull = m.PullCommand
+		}
+	}
+	fmt.Println(StyleBold.Render(heading))
+	fmt.Printf("  1. Install Ollama: %s\n", storage.OllamaInstallURL)
+	fmt.Printf("  2. Pull the model: %s\n", pull)
+	fmt.Println("  3. Reindex: " + RenderCmd("knowns search index --wait"))
+	fmt.Println(RenderHint("  Read more: " + storage.OllamaGuidanceDocsURL))
 }
 
 // printPendingMigrations names every pending migration and lists the changes
@@ -117,18 +145,16 @@ func runMigrateWrite(cmd *cobra.Command, store *storage.Store, project *models.P
 	for _, line := range result.Changes {
 		fmt.Printf("  %s\n", line)
 	}
-	fmt.Println()
-	pullCmd := "ollama pull " + storage.D2DefaultModelID
-	for _, m := range storage.RecommendedModels() {
-		if m.Default {
-			pullCmd = m.PullCommand
-			break
-		}
+	if len(result.Changes) == 0 {
+		// Nothing about the embedding identity moved, so installing Ollama,
+		// pulling a model and reindexing do not apply: a project already on
+		// the target configuration would be told to redo work it has done,
+		// and to reindex when nothing changed.
+		fmt.Println(RenderHint("Only the schema version was recorded; no further action is needed."))
+		return nil
 	}
-	fmt.Println(StyleBold.Render("Next steps:"))
-	fmt.Printf("  1. Install Ollama: %s\n", storage.OllamaInstallURL)
-	fmt.Printf("  2. Pull the model: %s\n", pullCmd)
-	fmt.Println("  3. Reindex: " + RenderCmd("knowns search index --wait"))
+	fmt.Println()
+	printPostMigrationSteps("Next steps:")
 	fmt.Println()
 	fmt.Println(RenderHint("Review and commit the updated .knowns/config.json."))
 	return nil

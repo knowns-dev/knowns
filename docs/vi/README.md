@@ -74,7 +74,6 @@ Nội dung tiếng Việt bám theo `docs/en/` nhưng viết lại cho dễ đ�
 - [Cấu hình](./reference/configuration.md)
 - [Sync](./reference/sync.md)
 - [Validate](./reference/validate.md)
-- [Quản lý model](./reference/model-management.md)
 - [Reference system](./reference/reference-system.md)
 - [Semantic search](./reference/semantic-search.md)
 - [Ollama Embedding Models](./reference/ollama-embedding-models.md)

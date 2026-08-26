@@ -947,21 +947,29 @@ func contentHashForChunks(chunks []Chunk) string {
 	return contentHash(b.String())
 }
 
-func (s *QdrantVectorStore) embedTask(task *models.Task, embedder EmbedderProvider) ([]Chunk, error) {
+// qdrantChunkMaxTokens resolves the chunk-sizing context limit from the
+// embedder's own model config (spec ollama-only-embedding FR-12) rather than
+// the removed EmbeddingModels table keyed by s.model, which only ever
+// covered local ONNX model names and silently fell back to 512 for every
+// HTTP-backed model.
+func qdrantChunkMaxTokens(embedder EmbedderProvider) int {
 	maxTokens := 512
-	if cfg, ok := EmbeddingModels[s.model]; ok {
+	if embedder == nil {
+		return maxTokens
+	}
+	if cfg := embedder.ModelConfig(); cfg.MaxTokens > 0 {
 		maxTokens = cfg.MaxTokens
 	}
-	result := ChunkTask(task, maxTokens, embedder.GetTokenizer())
+	return maxTokens
+}
+
+func (s *QdrantVectorStore) embedTask(task *models.Task, embedder EmbedderProvider) ([]Chunk, error) {
+	result := ChunkTask(task, qdrantChunkMaxTokens(embedder), embedder.GetTokenizer())
 	return embedderChunks(embedder, result.Chunks)
 }
 
 func (s *QdrantVectorStore) embedDoc(doc *models.Doc, embedder EmbedderProvider) ([]Chunk, error) {
-	maxTokens := 512
-	if cfg, ok := EmbeddingModels[s.model]; ok {
-		maxTokens = cfg.MaxTokens
-	}
-	result := ChunkDocument(doc.Content, doc.Path, doc.Title, doc.Description, maxTokens, embedder.GetTokenizer())
+	result := ChunkDocument(doc.Content, doc.Path, doc.Title, doc.Description, qdrantChunkMaxTokens(embedder), embedder.GetTokenizer())
 	return embedderChunks(embedder, result.Chunks)
 }
 

@@ -625,29 +625,6 @@ func downloadAndReplaceBinary(url, binaryPath string) error {
 		return fmt.Errorf("replace binary: %w", err)
 	}
 
-	// Also install colocated ONNX Runtime native libraries from the tarball.
-	destDir := filepath.Dir(binaryPath)
-	entries, _ := os.ReadDir(tmpDir)
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() {
-			continue
-		}
-		isORT := strings.HasPrefix(name, "libonnxruntime") || name == "onnxruntime.dll"
-		if !isORT {
-			continue
-		}
-		src := filepath.Join(tmpDir, name)
-		dst := filepath.Join(destDir, name)
-		data, err := os.ReadFile(src)
-		if err != nil {
-			continue
-		}
-		if err := os.WriteFile(dst, data, 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to update %s: %v\n", name, err)
-		}
-	}
-
 	return nil
 }
 

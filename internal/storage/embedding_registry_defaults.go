@@ -31,6 +31,14 @@ const OllamaProviderID = "ollama"
 // comment is exactly the drift FR-9 exists to prevent.
 const OllamaHostBase = "http://localhost:11434"
 
+// OllamaGuidanceDocsURL is where a user reads the full Ollama embedding
+// guidance: the prose home FR-9 designates for the recommended models, the
+// install and pull commands, and the shape of a third-party provider entry.
+// It lives here with the rest of the guidance data so a surface that tells
+// the user where to read more cannot drift from the surfaces that summarise
+// it — the same single-origin rule FR-9 applies to the model list itself.
+const OllamaGuidanceDocsURL = "https://knowns.sh/docs"
+
 // ollamaProviderAPIBase is the OpenAI-compatible embeddings endpoint Ollama
 // serves, derived from OllamaHostBase rather than restated.
 const ollamaProviderAPIBase = OllamaHostBase + "/v1"

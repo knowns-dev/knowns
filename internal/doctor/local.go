@@ -15,7 +15,6 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/readiness"
 	"github.com/howznguyen/knowns/internal/runtimeinstall"
-	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/services"
 	"github.com/howznguyen/knowns/internal/storage"
 )
@@ -31,9 +30,6 @@ type localDependencies struct {
 	globalSkills    func() []string
 	exists          func(string) bool
 	lookPath        func(string) (string, error)
-	onnxAvailable   func() (bool, string)
-	onnxCapability  func() search.LocalONNXCapability
-	localONNXModel  func(*models.SemanticSearchSettings) localONNXModelStatus
 	readFile        func(string) ([]byte, error)
 	qdrant          func(context.Context, *storage.Store) (qdrantDiagnosticSnapshot, error)
 }
@@ -67,12 +63,9 @@ func defaultLocalDependencies() localDependencies {
 			_, err := os.Stat(path)
 			return err == nil
 		},
-		lookPath:       exec.LookPath,
-		onnxAvailable:  search.IsONNXAvailable,
-		onnxCapability: search.CurrentLocalONNXCapability,
-		localONNXModel: inspectLocalONNXModel,
-		readFile:       os.ReadFile,
-		qdrant:         inspectQdrantReadOnly,
+		lookPath: exec.LookPath,
+		readFile: os.ReadFile,
+		qdrant:   inspectQdrantReadOnly,
 	}
 }
 
@@ -154,15 +147,6 @@ func newLocalState(store *storage.Store, deps localDependencies) *localState {
 	}
 	if deps.lookPath == nil {
 		deps.lookPath = defaults.lookPath
-	}
-	if deps.onnxAvailable == nil {
-		deps.onnxAvailable = defaults.onnxAvailable
-	}
-	if deps.onnxCapability == nil {
-		deps.onnxCapability = defaults.onnxCapability
-	}
-	if deps.localONNXModel == nil {
-		deps.localONNXModel = defaults.localONNXModel
 	}
 	if deps.readFile == nil {
 		deps.readFile = defaults.readFile

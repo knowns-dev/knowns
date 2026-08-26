@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -24,18 +23,13 @@ import (
 func TestSearchChecksReportUnavailableModelAndEmptyIndex(t *testing.T) {
 	store := newDoctorStore(t)
 	configureSemanticSearch(t, store, &models.SemanticSearchSettings{
-		Enabled: true,
-		Model:   "all-MiniLM-L6-v2",
+		Enabled:  true,
+		Model:    "all-minilm",
+		Provider: "ollama",
 	})
 	before := snapshotTree(t, store.Root)
 
 	deps := localDependencies{
-		localONNXModel: func(*models.SemanticSearchSettings) localONNXModelStatus {
-			return localONNXModelStatus{
-				State:            localONNXModelMissing,
-				MissingArtifacts: []string{"onnx_model"},
-			}
-		},
 		readiness: func(*storage.Store) (readiness.Payload, error) {
 			return readiness.Payload{
 				Active: true,
@@ -53,6 +47,13 @@ func TestSearchChecksReportUnavailableModelAndEmptyIndex(t *testing.T) {
 				},
 			}, nil
 		},
+		services: func(*storage.Store) ([]services.ServiceStatus, error) {
+			return []services.ServiceStatus{{
+				Type:    "embedding",
+				Status:  "error",
+				Details: map[string]string{"error": "model not found"},
+			}}, nil
+		},
 	}
 	result, err := Run(context.Background(), RunOptions{
 		Project: ProjectFromStore(store),
@@ -63,8 +64,7 @@ func TestSearchChecksReportUnavailableModelAndEmptyIndex(t *testing.T) {
 	}
 
 	model := findCheck(t, result, "search.model")
-	if model.Status != StatusWarn || model.Remediation == nil ||
-		model.Remediation.Command != "knowns model download all-MiniLM-L6-v2" {
+	if model.Status != StatusWarn || model.Summary != "Configured semantic model or provider is unavailable" {
 		t.Fatalf("model check = %#v", model)
 	}
 	index := findCheck(t, result, "search.project-index")
@@ -121,8 +121,75 @@ func TestSearchChecksReportStaleIndices(t *testing.T) {
 
 	for _, id := range []string{"search.project-index", "search.global-index"} {
 		check := findCheck(t, result, id)
+		// FR-7/AC-8: after a migration changes the embedding identity, D5
+		// stops at marking the index stale — it does not reindex — so
+		// doctor must name the explicit reindex command.
 		if check.Status != StatusWarn || check.Evidence["stale"] != true ||
-			check.Remediation == nil || check.Remediation.Command != "knowns search --reindex" {
+			check.Remediation == nil || check.Remediation.Command != "knowns search index --wait" {
+			t.Fatalf("%s check = %#v", id, check)
+		}
+	}
+}
+
+// TestSearchChecksReportStaleIndexAfterDimensionChange proves FR-7 staleness
+// reporting is not limited to a model-name mismatch: a dimension change alone
+// (same model name, different vector size — the case
+// internal/search/qdrant_reconcile.go:610-614 and
+// internal/search/semantic_readiness.go:366 detect) must still surface as a
+// warning naming the reindex command (task OLM-K4NHTY AC "Tests cover stale
+// reporting after a dimension change").
+func TestSearchChecksReportStaleIndexAfterDimensionChange(t *testing.T) {
+	store := newDoctorStore(t)
+	configureSemanticSearch(t, store, &models.SemanticSearchSettings{
+		Enabled: true,
+		Model:   "current-model",
+	})
+
+	deps := localDependencies{
+		readiness: func(*storage.Store) (readiness.Payload, error) {
+			return readiness.Payload{
+				Knowledge: &readiness.KnowledgeStatus{
+					Memories: readiness.MemoryCounts{Global: 1},
+				},
+				Search: &readiness.SearchStatus{
+					SemanticEnabled:   true,
+					ModelConfigured:   true,
+					ModelInstalled:    true,
+					ProjectIndexReady: true,
+					// Same model name as configured, unlike
+					// TestSearchChecksReportStaleIndices — only the recorded
+					// dimensions differ, mirroring qdrant pointer/sqlite
+					// dimension mismatch staleness.
+					ProjectIndexStale:      true,
+					ProjectIndexModel:      "current-model",
+					GlobalIndexReady:       true,
+					GlobalIndexStale:       true,
+					GlobalIndexModel:       "current-model",
+					SemanticDegradedReason: "qdrant pointer dimensions 384 != configured dimensions 1024",
+					SemanticRuntime:        &readiness.SemanticRuntimeReadiness{Enabled: true},
+				},
+			}, nil
+		},
+		services: func(*storage.Store) ([]services.ServiceStatus, error) {
+			return []services.ServiceStatus{{
+				Type:   "embedding",
+				Status: "running",
+			}}, nil
+		},
+	}
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+		Scopes:  []Scope{ScopeSearch},
+	}, localCheckersWithDependencies(store, deps))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	for _, id := range []string{"search.project-index", "search.global-index"} {
+		check := findCheck(t, result, id)
+		if check.Status != StatusWarn || check.Evidence["stale"] != true ||
+			check.Evidence["reason"] != "qdrant pointer dimensions 384 != configured dimensions 1024" ||
+			check.Remediation == nil || check.Remediation.Command != "knowns search index --wait" {
 			t.Fatalf("%s check = %#v", id, check)
 		}
 	}
@@ -142,7 +209,7 @@ func TestSearchChecksSkipWhenSemanticSearchDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if result.Verdict != VerdictHealthy || result.Summary.Skip != 10 {
+	if result.Verdict != VerdictHealthy || result.Summary.Skip != 9 {
 		t.Fatalf("disabled search result = %#v", result)
 	}
 }
@@ -167,6 +234,11 @@ func TestSearchChecksReportMissingConfiguredOllama(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
+	// Remediation must resolve from the shared FR-9/D6 guidance source
+	// (storage.OllamaStateGuidance) rather than restating install
+	// instructions locally (AC-7) — assert against it directly so this test
+	// tracks the source instead of duplicating its wording.
+	wantGuidance := storage.OllamaStateGuidance(storage.OllamaNotInstalled, "nomic-embed-text")
 	model := findCheck(t, result, "search.model")
 	if model.Status != StatusWarn ||
 		model.Summary != "Ollama is configured but is not installed" ||
@@ -174,7 +246,8 @@ func TestSearchChecksReportMissingConfiguredOllama(t *testing.T) {
 		model.Evidence["installed"] != false ||
 		model.Evidence["errorCode"] != "provider_binary_missing" ||
 		model.Remediation == nil ||
-		model.Remediation.Description != "Install Ollama and ensure the ollama executable is available on PATH." {
+		model.Remediation.Description != wantGuidance.Description ||
+		model.Remediation.Command != wantGuidance.Command {
 		t.Fatalf("model check = %#v", model)
 	}
 }
@@ -210,157 +283,6 @@ func TestSearchModelOnlyClaimsRegistrationForOllama(t *testing.T) {
 	model := findCheck(t, result, "search.model")
 	if model.Status != StatusPass || model.Summary != "Configured semantic model is registered" {
 		t.Fatalf("model check = %#v", model)
-	}
-}
-
-func TestSearchChecksReportLocalONNXDependencyStates(t *testing.T) {
-	store := newDoctorStore(t)
-	settings := &models.SemanticSearchSettings{
-		Enabled:       true,
-		Model:         "gte-small",
-		Provider:      "local",
-		HuggingFaceID: "Xenova/gte-small",
-	}
-	configureSemanticSearch(t, store, settings)
-
-	t.Run("runtime missing", func(t *testing.T) {
-		state := newLocalState(store, localDependencies{
-			onnxAvailable: func() (bool, string) {
-				return false, ""
-			},
-		})
-		result, err := searchONNXRuntimeChecker(state).Check(context.Background())
-		if err != nil {
-			t.Fatalf("Check() error = %v", err)
-		}
-		if result.Status != StatusWarn ||
-			result.Summary != "ONNX Runtime is unavailable or incompatible" ||
-			result.Evidence["errorCode"] != "onnx_runtime_unavailable" ||
-			result.Remediation == nil {
-			t.Fatalf("runtime check = %#v", result)
-		}
-	})
-
-	for _, test := range []struct {
-		name        string
-		modelStatus localONNXModelStatus
-		summary     string
-		command     string
-	}{
-		{
-			name: "model missing",
-			modelStatus: localONNXModelStatus{
-				State:            localONNXModelMissing,
-				MissingArtifacts: []string{"onnx_model"},
-			},
-			summary: "Configured ONNX model is not downloaded",
-			command: "knowns model download gte-small",
-		},
-		{
-			name: "model incomplete",
-			modelStatus: localONNXModelStatus{
-				State:            localONNXModelIncomplete,
-				MissingArtifacts: []string{"config.json", "tokenizer.json"},
-			},
-			summary: "Configured ONNX model download is incomplete",
-			command: "knowns model download gte-small --force",
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			state := newLocalState(store, localDependencies{
-				localONNXModel: func(*models.SemanticSearchSettings) localONNXModelStatus {
-					return test.modelStatus
-				},
-			})
-			result, err := searchModelChecker(state).Check(context.Background())
-			if err != nil {
-				t.Fatalf("Check() error = %v", err)
-			}
-			if result.Status != StatusWarn ||
-				result.Summary != test.summary ||
-				result.Remediation == nil ||
-				result.Remediation.Command != test.command {
-				t.Fatalf("model check = %#v", result)
-			}
-		})
-	}
-}
-
-func TestSearchChecksExplainUnsupportedMacOSIntelONNX(t *testing.T) {
-	store := newDoctorStore(t)
-	configureSemanticSearch(t, store, &models.SemanticSearchSettings{
-		Enabled:  true,
-		Model:    "gte-small",
-		Provider: "local",
-	})
-	state := newLocalState(store, localDependencies{
-		onnxCapability: func() search.LocalONNXCapability {
-			return search.LocalONNXCapabilityForPlatform("darwin", "amd64", "")
-		},
-	})
-
-	configResult, err := searchConfigChecker(state).Check(context.Background())
-	if err != nil {
-		t.Fatalf("config Check() error = %v", err)
-	}
-	if configResult.Status != StatusWarn ||
-		configResult.Evidence["errorCode"] != "onnx_platform_unsupported" ||
-		configResult.Remediation == nil ||
-		configResult.Remediation.Command != "knowns settings" {
-		t.Fatalf("config check = %#v", configResult)
-	}
-
-	for _, checker := range []Checker{
-		searchModelChecker(state),
-		searchONNXRuntimeChecker(state),
-		searchProjectIndexChecker(state),
-		searchGlobalIndexChecker(state),
-		searchSemanticRuntimeChecker(state),
-	} {
-		result, err := checker.Check(context.Background())
-		if err != nil {
-			t.Fatalf("%s Check() error = %v", checker.ID, err)
-		}
-		if result.Status != StatusSkip || result.SkipReason != "platform_unsupported" {
-			t.Fatalf("%s check = %#v", checker.ID, result)
-		}
-	}
-}
-
-func TestInspectLocalONNXModelDetectsMissingIncompleteAndAvailable(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	settings := &models.SemanticSearchSettings{
-		Model:         "gte-small",
-		HuggingFaceID: "Xenova/gte-small",
-	}
-	modelDir := filepath.Join(home, ".knowns", "models", "Xenova", "gte-small")
-
-	status := inspectLocalONNXModel(settings)
-	if status.State != localONNXModelMissing {
-		t.Fatalf("missing status = %#v", status)
-	}
-
-	if err := os.MkdirAll(filepath.Join(modelDir, "onnx"), 0o755); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(modelDir, "onnx", "model_quantized.onnx"), []byte("model"), 0o644); err != nil {
-		t.Fatalf("WriteFile(model) error = %v", err)
-	}
-	status = inspectLocalONNXModel(settings)
-	if status.State != localONNXModelIncomplete {
-		t.Fatalf("incomplete status = %#v", status)
-	}
-
-	for _, name := range []string{"config.json", "tokenizer.json"} {
-		if err := os.WriteFile(filepath.Join(modelDir, name), []byte("{}"), 0o644); err != nil {
-			t.Fatalf("WriteFile(%s) error = %v", name, err)
-		}
-	}
-	status = inspectLocalONNXModel(settings)
-	if status.State != localONNXModelAvailable {
-		t.Fatalf("available status = %#v", status)
 	}
 }
 

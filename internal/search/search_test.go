@@ -62,38 +62,6 @@ func (s *stubVectorStore) SetContentHash(string, string)        {}
 func (s *stubVectorStore) DeleteContentHash(string)             {}
 func (s *stubVectorStore) ListContentHashes() map[string]string { return nil }
 
-// --- Model Prefix Config Tests ---
-
-func TestEmbeddingModelPrefixes(t *testing.T) {
-	tests := []struct {
-		model       string
-		queryPrefix string
-		docPrefix   string
-	}{
-		{"gte-small", "", ""},
-		{"all-MiniLM-L6-v2", "", ""},
-		{"gte-base", "", ""},
-		{"bge-small-en-v1.5", "Represent this sentence: ", "Represent this sentence: "},
-		{"bge-base-en-v1.5", "Represent this sentence: ", "Represent this sentence: "},
-		{"nomic-embed-text-v1.5", "search_query: ", "search_document: "},
-		{"multilingual-e5-small", "query: ", "passage: "},
-	}
-
-	for _, tt := range tests {
-		cfg, ok := EmbeddingModels[tt.model]
-		if !ok {
-			t.Errorf("model %q not found in EmbeddingModels", tt.model)
-			continue
-		}
-		if cfg.QueryPrefix != tt.queryPrefix {
-			t.Errorf("model %q: QueryPrefix = %q, want %q", tt.model, cfg.QueryPrefix, tt.queryPrefix)
-		}
-		if cfg.DocPrefix != tt.docPrefix {
-			t.Errorf("model %q: DocPrefix = %q, want %q", tt.model, cfg.DocPrefix, tt.docPrefix)
-		}
-	}
-}
-
 // --- ChunkVersion Tests ---
 
 func TestChunkVersionConstant(t *testing.T) {

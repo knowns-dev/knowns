@@ -1,14 +1,16 @@
 ---
+id: doc-23c9e2390608bb3955851b9c6613c430
 title: OpenAI-Compatible Embedding Provider
 description: Specification for adding OpenAI-compatible embedding API support (Ollama, OpenAI, Azure, LM Studio, etc.) as an alternative to local ONNX inference
 createdAt: '2026-05-07T03:13:20.324Z'
-updatedAt: '2026-05-07T03:16:38.989Z'
+updatedAt: '2026-08-25T14:37:11.894Z'
 tags:
   - spec
   - approved
   - embedding
   - api
   - search
+  - partially-superseded
 ---
 
 # OpenAI-Compatible Embedding Provider
@@ -253,3 +255,18 @@ All resolved:
 - [x] `knowns provider add` auto-detects dimensions via test embed call; `--dims` flag available as override → both supported
 - [x] Yes — `knowns provider test <id>` command for health checking. Also `knowns provider add` tests before saving (fail = don't save)
 - [x] Ollama detection filters to embedding-capable models only (not chat/generation models)
+
+
+## Superseded in Part
+
+@doc/specs/2026-08-24/ollama-only-embedding supersedes part of this spec.
+
+**Void:** NFR-1 ("existing local ONNX path remains default and unchanged"), FR-12 (automatic reindex on dimension change), FR-9 (API-backed models via `knowns model add`).
+
+**Retained:** the provider and model registry, reachability checks, retry and batching, NFR-2 through NFR-6.
+
+### Deliberate override: FR-12
+
+This is a deliberate override, not an ordinary supersession. D5 of @doc/specs/2026-08-24/ollama-only-embedding overrides FR-12's requirement for an automatic reindex on model dimension change. The Ollama migration is exactly such a change; D5 marks the index stale instead of reindexing automatically, because reindexing during config load would block the first command for minutes and would fail outright when Ollama is not yet installed — the common state at that moment.
+
+The System Decision recording this removal is not yet accepted — it stays draft until the removal is merged and a commit can be cited as evidence — and will be linked here once accepted.

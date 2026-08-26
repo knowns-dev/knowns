@@ -531,13 +531,16 @@ type SemanticSearchSettings struct {
 	Enabled bool   `json:"enabled,omitempty"`
 	Model   string `json:"model"`
 
-	// Provider selects the embedding backend: "local" (default, ONNX),
-	// "ollama", or "api" (OpenAI-compatible endpoint configured in
-	// ~/.knowns/settings.json).
+	// Provider selects the embedding backend: "ollama" or "api" (an
+	// OpenAI-compatible endpoint configured in ~/.knowns/settings.json).
+	// A legacy "local", or an empty value, resolves to "ollama" with the
+	// default model on read — see ProjectSettings.EffectiveSemanticSearch.
 	Provider string `json:"provider,omitempty"`
 
-	// HuggingFaceID is the full HuggingFace model identifier
-	// (e.g., "Xenova/gte-small"). Used only when Provider is "local" or empty.
+	// HuggingFaceID is a legacy field from the removed local embedding
+	// backend. Nothing reads it any more, and `knowns migrate` drops it,
+	// but it stays on the struct so a config that still carries it loads
+	// without failing or warning.
 	HuggingFaceID string `json:"huggingFaceId,omitempty"`
 
 	// Dimensions is the embedding vector size for the chosen model.

@@ -97,5 +97,6 @@
         }
       }
     }
-  }
+  },
+  "schemaVersion": 1
 }

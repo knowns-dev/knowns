@@ -96,19 +96,6 @@ jobs:
             exit 1
           fi
 
-      - name: Download ONNX Runtime for tests
-        env:
-          ORT_VERSION: "1.25.0"
-        run: |
-          BASE_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}"
-          ARCHIVE="onnxruntime-linux-x64-${ORT_VERSION}.tgz"
-          curl -L --retry 5 --retry-delay 5 -o "/tmp/${ARCHIVE}" "${BASE_URL}/${ARCHIVE}"
-          tar -xzf "/tmp/${ARCHIVE}" -C /tmp
-          mkdir -p ./bin
-          cp "/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION}" ./bin/libonnxruntime.so
-          echo "KNOWNS_ORT_LIB=$(pwd)/bin/libonnxruntime.so" >> "$GITHUB_ENV"
-          echo "✓ ONNX Runtime ${ORT_VERSION} installed for tests"
-
       - name: Run Go tests
         run: go test -v -race ./...
 
@@ -127,48 +114,38 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # CGO is not required. github.com/yalue/onnxruntime_go was the only
+        # package in this module that needed a C toolchain, and it was removed
+        # with the local ONNX embedding path (spec ollama-only-embedding FR-2).
+        # Everything left is pure Go - notably modernc.org/sqlite, which is a
+        # pure-Go SQLite rather than a cgo binding - so every target builds
+        # with CGO_ENABLED=0 and no per-platform C compiler.
         include:
           - runner: macos-15
             goos: darwin
             goarch: arm64
             npm_pkg: knowns-darwin-arm64
             ext: ""
-            cgo_enabled: "1"
-            ort_lib: libonnxruntime.dylib
-            bundle_onnx: "true"
           - runner: macos-15-intel
             goos: darwin
             goarch: amd64
             npm_pkg: knowns-darwin-x64
             ext: ""
-            cgo_enabled: "1"
-            bundle_onnx: "false"
           - runner: ubuntu-latest
             goos: linux
             goarch: amd64
             npm_pkg: knowns-linux-x64
             ext: ""
-            cgo_enabled: "1"
-            ort_lib: libonnxruntime.so
-            bundle_onnx: "true"
           - runner: ubuntu-24.04-arm
             goos: linux
             goarch: arm64
             npm_pkg: knowns-linux-arm64
             ext: ""
-            cgo_enabled: "1"
-            ort_lib: libonnxruntime.so
-            bundle_onnx: "true"
           - runner: windows-latest
             goos: windows
             goarch: amd64
             npm_pkg: knowns-win-x64
             ext: ".exe"
-            cgo_enabled: "1"
-            ort_lib: onnxruntime.dll
-            bundle_onnx: "true"
-            llvm_mingw_archive: llvm-mingw-20260407-ucrt-x86_64.zip
-            llvm_mingw_prefix: x86_64-w64-mingw32
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
@@ -181,27 +158,6 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.26"
-
-      - name: Install llvm-mingw toolchain
-        if: matrix.goos == 'windows'
-        run: |
-          curl -L --retry 5 --retry-delay 5 \
-            -o llvm-mingw.zip \
-            "https://github.com/mstorsjo/llvm-mingw/releases/download/20260407/${{ matrix.llvm_mingw_archive }}"
-          unzip -q llvm-mingw.zip -d "$RUNNER_TEMP/llvm-mingw"
-          TOOLCHAIN_DIR=$(find "$RUNNER_TEMP/llvm-mingw" -mindepth 1 -maxdepth 1 -type d | head -n 1)
-          if [ -z "$TOOLCHAIN_DIR" ]; then
-            echo "Failed to extract llvm-mingw toolchain"
-            exit 1
-          fi
-          {
-            echo "$TOOLCHAIN_DIR/bin"
-          } >> "$GITHUB_PATH"
-          {
-            echo "CC=${{ matrix.llvm_mingw_prefix }}-clang"
-            echo "CXX=${{ matrix.llvm_mingw_prefix }}-clang++"
-            echo "AR=${{ matrix.llvm_mingw_prefix }}-ar"
-          } >> "$GITHUB_ENV"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -238,79 +194,11 @@ jobs:
           VERSION: ${{ needs.meta.outputs.version }}
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: ${{ matrix.cgo_enabled }}
+          CGO_ENABLED: "0"
         run: |
           LDFLAGS="-s -w -X github.com/howznguyen/knowns/internal/util.Version=${VERSION}"
           mkdir -p "artifacts/${{ matrix.npm_pkg }}"
           go build -ldflags "$LDFLAGS" -o "artifacts/${{ matrix.npm_pkg }}/knowns${{ matrix.ext }}" ./cmd/knowns
-
-      - name: Bundle ONNX Runtime native library
-        if: matrix.bundle_onnx == 'true'
-        env:
-          ORT_VERSION: "1.25.0"
-        run: |
-          ARTIFACT_DIR="artifacts/${{ matrix.npm_pkg }}"
-          BASE_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}"
-
-          echo "=== Bundling ONNX Runtime ${ORT_VERSION} for ${{ matrix.goos }}/${{ matrix.goarch }} ==="
-
-          if [ "${{ matrix.goos }}" = "linux" ] && [ "${{ matrix.goarch }}" = "amd64" ]; then
-            ARCHIVE="onnxruntime-linux-x64-${ORT_VERSION}.tgz"
-            curl -L --retry 5 --retry-delay 5 -o "$ARCHIVE" "${BASE_URL}/${ARCHIVE}"
-            tar -xzf "$ARCHIVE"
-            cp "onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION}" "${ARTIFACT_DIR}/libonnxruntime.so"
-            echo "Downloaded libonnxruntime.so (${ORT_VERSION}) for linux/amd64"
-
-          elif [ "${{ matrix.goos }}" = "linux" ] && [ "${{ matrix.goarch }}" = "arm64" ]; then
-            ARCHIVE="onnxruntime-linux-aarch64-${ORT_VERSION}.tgz"
-            curl -L --retry 5 --retry-delay 5 -o "$ARCHIVE" "${BASE_URL}/${ARCHIVE}"
-            tar -xzf "$ARCHIVE"
-            cp "onnxruntime-linux-aarch64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION}" "${ARTIFACT_DIR}/libonnxruntime.so"
-            echo "Downloaded libonnxruntime.so (${ORT_VERSION}) for linux/arm64"
-
-          elif [ "${{ matrix.goos }}" = "darwin" ] && [ "${{ matrix.goarch }}" = "arm64" ]; then
-            ARCHIVE="onnxruntime-osx-arm64-${ORT_VERSION}.tgz"
-            curl -L --retry 5 --retry-delay 5 -o "$ARCHIVE" "${BASE_URL}/${ARCHIVE}"
-            tar -xzf "$ARCHIVE"
-            cp "onnxruntime-osx-arm64-${ORT_VERSION}/lib/libonnxruntime.${ORT_VERSION}.dylib" "${ARTIFACT_DIR}/libonnxruntime.dylib"
-            echo "Downloaded libonnxruntime.dylib (${ORT_VERSION}) for darwin/arm64"
-
-          elif [ "${{ matrix.goos }}" = "windows" ] && [ "${{ matrix.goarch }}" = "amd64" ]; then
-            ARCHIVE="onnxruntime-win-x64-${ORT_VERSION}.zip"
-            curl -L --retry 5 --retry-delay 5 -o "$ARCHIVE" "${BASE_URL}/${ARCHIVE}"
-            unzip -q "$ARCHIVE"
-            cp "onnxruntime-win-x64-${ORT_VERSION}/lib/onnxruntime.dll" "${ARTIFACT_DIR}/onnxruntime.dll"
-            echo "Downloaded onnxruntime.dll (${ORT_VERSION}) for windows/amd64"
-
-          else
-            echo "FATAL: No download strategy for ${{ matrix.goos }}/${{ matrix.goarch }}"
-            exit 1
-          fi
-
-          # Verify the native lib was bundled
-          if ! ls "${ARTIFACT_DIR}"/*onnxruntime* >/dev/null 2>&1; then
-            echo "FATAL: No ONNX Runtime library found for ${{ matrix.goos }}/${{ matrix.goarch }}"
-            exit 1
-          fi
-
-          echo "=== Artifact contents ==="
-          ls -la "${ARTIFACT_DIR}/"
-
-      - name: Verify macOS Intel package without bundled ONNX
-        if: matrix.goos == 'darwin' && matrix.goarch == 'amd64'
-        run: |
-          ARTIFACT_DIR="artifacts/${{ matrix.npm_pkg }}"
-          test -x "${ARTIFACT_DIR}/knowns"
-          if find "${ARTIFACT_DIR}" -maxdepth 1 -name '*onnxruntime*' | grep -q .; then
-            echo "FATAL: macOS Intel package must not bundle ONNX Runtime"
-            exit 1
-          fi
-          "${ARTIFACT_DIR}/knowns" --version
-          output=$("${ARTIFACT_DIR}/knowns" model download gte-small 2>&1) && {
-            echo "FATAL: Local ONNX model download unexpectedly succeeded"
-            exit 1
-          }
-          echo "$output" | grep -q "Local ONNX is not bundled for macOS Intel"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -415,41 +303,7 @@ jobs:
 
       - name: Verify npm package contents
         run: |
-          echo "=== Verifying ONNX Runtime native libs in all platform packages ==="
-
-          # Windows: onnxruntime.dll
-          if [ ! -f "npm/knowns-win-x64/onnxruntime.dll" ]; then
-            echo "FATAL: npm/knowns-win-x64/onnxruntime.dll is missing!"
-            ls -la npm/knowns-win-x64/ || true
-            exit 1
-          fi
-          echo "✓ knowns-win-x64/onnxruntime.dll"
-
-          # macOS: libonnxruntime.dylib
-          for pkg in knowns-darwin-arm64; do
-            if ! ls npm/$pkg/libonnxruntime*.dylib >/dev/null 2>&1; then
-              echo "FATAL: npm/$pkg/ missing libonnxruntime dylib!"
-              ls -la "npm/$pkg/" || true
-              exit 1
-            fi
-            echo "✓ $pkg/libonnxruntime.dylib"
-          done
-
-          if find npm/knowns-darwin-x64 -maxdepth 1 -name '*onnxruntime*' | grep -q .; then
-            echo "FATAL: npm/knowns-darwin-x64 must not contain ONNX Runtime"
-            exit 1
-          fi
-          echo "✓ knowns-darwin-x64 intentionally excludes ONNX Runtime"
-
-          # Linux: libonnxruntime.so
-          for pkg in knowns-linux-arm64 knowns-linux-x64; do
-            if ! ls npm/$pkg/libonnxruntime*.so* >/dev/null 2>&1; then
-              echo "FATAL: npm/$pkg/ missing libonnxruntime.so!"
-              ls -la "npm/$pkg/" || true
-              exit 1
-            fi
-            echo "✓ $pkg/libonnxruntime.so"
-          done
+          echo "=== Verifying platform packages ==="
 
           # Main binary in all packages
           for pkg in knowns-darwin-arm64 knowns-darwin-x64 knowns-linux-arm64 knowns-linux-x64; do
@@ -555,28 +409,21 @@ jobs:
           for archive in \
             knowns-darwin-arm64.tar.gz; do
             tar -tzf "$archive" | grep -Fx "./knowns" >/dev/null || { echo "$archive missing knowns"; exit 1; }
-            tar -tzf "$archive" | grep -E "^\./libonnxruntime.*\.dylib$" >/dev/null || { echo "$archive missing libonnxruntime dylib"; exit 1; }
           done
 
           tar -tzf knowns-darwin-x64.tar.gz | grep -Fx "./knowns" >/dev/null || {
             echo "knowns-darwin-x64.tar.gz missing knowns"
             exit 1
           }
-          if tar -tzf knowns-darwin-x64.tar.gz | grep -i "onnxruntime" >/dev/null; then
-            echo "knowns-darwin-x64.tar.gz must not contain ONNX Runtime"
-            exit 1
-          fi
 
           for archive in \
             knowns-linux-arm64.tar.gz \
             knowns-linux-x64.tar.gz; do
             tar -tzf "$archive" | grep -Fx "./knowns" >/dev/null || { echo "$archive missing knowns"; exit 1; }
-            tar -tzf "$archive" | grep -E "^\./libonnxruntime\.so" >/dev/null || { echo "$archive missing libonnxruntime.so"; exit 1; }
           done
 
           for archive in knowns-win-x64.tar.gz; do
             tar -tzf "$archive" | grep -Fx "./knowns.exe" >/dev/null || { echo "$archive missing knowns.exe"; exit 1; }
-            tar -tzf "$archive" | grep -Fx "./onnxruntime.dll" >/dev/null || { echo "$archive missing onnxruntime.dll"; exit 1; }
           done
 
           # Verify ELF architecture matches package platform.
@@ -594,8 +441,6 @@ jobs:
             echo "✓ $archive $file arch=$label"
           }
 
-          verify_elf_arch knowns-linux-x64.tar.gz  ./libonnxruntime.so "3e00" "x86_64"
-          verify_elf_arch knowns-linux-arm64.tar.gz ./libonnxruntime.so "b700" "aarch64"
           verify_elf_arch knowns-linux-x64.tar.gz   ./knowns            "3e00" "x86_64"
           verify_elf_arch knowns-linux-arm64.tar.gz  ./knowns            "b700" "aarch64"
 
@@ -671,9 +516,6 @@ jobs:
             end
 
             def install
-              # ONNX Runtime native lib goes into libexec so knowns can find it
-              onnx_libraries = Dir["libonnxruntime*"]
-              libexec.install onnx_libraries unless onnx_libraries.empty?
               bin.install "knowns"
               bin.install_symlink "knowns" => "kn"
             end

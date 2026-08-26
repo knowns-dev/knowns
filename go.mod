@@ -11,12 +11,10 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-chi/chi/v5 v5.2.5
-	github.com/gorilla/websocket v1.5.3
 	github.com/mark3labs/mcp-go v0.44.1
 	github.com/mattn/go-isatty v0.0.20
 	github.com/rs/cors v1.11.1
 	github.com/spf13/cobra v1.10.2
-	github.com/yalue/onnxruntime_go v1.27.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.46.1
 )
@@ -82,5 +80,5 @@ require (
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.45.0
-	golang.org/x/text v0.34.0
+	golang.org/x/text v0.34.0 // indirect
 )

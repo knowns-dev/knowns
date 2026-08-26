@@ -495,8 +495,6 @@ func runtimePsErrorSummary(errText string) string {
 		return "unknown error"
 	}
 	knownFragments := []string{
-		"ONNX Runtime is not installed",
-		"Error loading ONNX shared library",
 		"semantic runtime unavailable",
 		"embedding model",
 		"provider is unavailable",
@@ -515,8 +513,6 @@ func runtimePsErrorSummary(errText string) string {
 func runtimePsRemediation(errText string) string {
 	lower := strings.ToLower(errText)
 	switch {
-	case strings.Contains(lower, "onnx runtime is not installed") || strings.Contains(lower, "onnxruntime"):
-		return "knowns runtime install onnx"
 	case strings.Contains(lower, "semantic runtime unavailable") || strings.Contains(lower, "index is empty"):
 		return "knowns search --reindex"
 	default:

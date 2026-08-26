@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,61 +17,6 @@ import (
 	"github.com/howznguyen/knowns/internal/storage"
 	"gopkg.in/yaml.v3"
 )
-
-func TestApplyLocalONNXInitCapabilityForMacOSIntel(t *testing.T) {
-	unsupported := search.LocalONNXCapabilityForPlatform("darwin", "amd64", "")
-
-	local := initConfig{EnableSemantic: true, EmbeddingSource: "local"}
-	if changed := applyLocalONNXInitCapabilityFor(&local, unsupported); !changed {
-		t.Fatal("local semantic init should be changed on macOS Intel")
-	}
-	if local.EnableSemantic {
-		t.Fatal("local semantic init should fall back to keyword/BM25 search")
-	}
-
-	ollama := initConfig{EnableSemantic: true, EmbeddingSource: "ollama"}
-	if changed := applyLocalONNXInitCapabilityFor(&ollama, unsupported); changed {
-		t.Fatal("Ollama semantic init should remain enabled")
-	}
-	if !ollama.EnableSemantic {
-		t.Fatal("Ollama semantic init was unexpectedly disabled")
-	}
-
-	customRuntime := search.LocalONNXCapabilityForPlatform("darwin", "amd64", "/opt/onnx/libonnxruntime.dylib")
-	custom := initConfig{EnableSemantic: true, EmbeddingSource: "local"}
-	if changed := applyLocalONNXInitCapabilityFor(&custom, customRuntime); changed {
-		t.Fatal("explicit compatible ONNX runtime should keep local semantic init enabled")
-	}
-	if !custom.EnableSemantic {
-		t.Fatal("custom local ONNX semantic init was unexpectedly disabled")
-	}
-}
-
-func TestLocalONNXUnsupportedForCapability(t *testing.T) {
-	unsupported := search.LocalONNXCapabilityForPlatform("darwin", "amd64", "")
-	supported := search.LocalONNXCapabilityForPlatform("darwin", "amd64", "/opt/onnx/libonnxruntime.dylib")
-
-	tests := []struct {
-		name       string
-		settings   *models.SemanticSearchSettings
-		capability search.LocalONNXCapability
-		want       bool
-	}{
-		{name: "default provider uses local ONNX", capability: unsupported, want: true},
-		{name: "explicit local provider", settings: &models.SemanticSearchSettings{Provider: "local"}, capability: unsupported, want: true},
-		{name: "Ollama remains available", settings: &models.SemanticSearchSettings{Provider: "ollama"}, capability: unsupported},
-		{name: "API remains available", settings: &models.SemanticSearchSettings{Provider: "api"}, capability: unsupported},
-		{name: "custom local runtime re-enables ONNX", settings: &models.SemanticSearchSettings{Provider: "local"}, capability: supported},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := localONNXUnsupportedForCapability(test.settings, test.capability); got != test.want {
-				t.Fatalf("localONNXUnsupportedForCapability() = %v, want %v", got, test.want)
-			}
-		})
-	}
-}
 
 func TestCreateOpenCodeConfigQuietCreatesConfig(t *testing.T) {
 	execLookPath = func(string) (string, error) { return "/usr/local/bin/knowns", nil }
@@ -1440,5 +1387,323 @@ func assertVectorStoreDeclaration(t *testing.T, vs *models.SemanticVectorStoreSe
 		*res.Retention.PreviousGenerations != models.DefaultSemanticVectorRetentionGenerations ||
 		res.Retention.PreviousGenerationTTL != models.DefaultSemanticVectorRetentionTTL {
 		t.Fatalf("resolved retention = %#v, want defaults", res.Retention)
+	}
+}
+
+// runNoWizardInitCapture runs a non-interactive `knowns init` (--no-wizard)
+// in a fresh HOME and project directory, returning the project root and
+// everything printed to stdout. Shared by the OLM-XJKSB7 tests below.
+func runNoWizardInitCapture(t *testing.T, name string) (projectRoot string, stdout string) {
+	t.Helper()
+	t.Setenv("KNOWN_LSP_AUTO_INSTALL", "0")
+	home := t.TempDir()
+	projectRoot = t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+	if err := os.Chdir(projectRoot); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	setInitBoolFlag(t, "no-wizard", true)
+	setInitBoolFlag(t, "no-open", true)
+	setInitBoolFlag(t, "git-tracked", false)
+	setInitBoolFlag(t, "git-ignored", false)
+	setInitBoolFlag(t, "force", false)
+
+	var buf bytes.Buffer
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	done := make(chan struct{})
+	go func() {
+		_, _ = buf.ReadFrom(r)
+		close(done)
+	}()
+
+	runErr := runInit(initCmd, []string{name})
+	os.Stdout = oldStdout
+	_ = w.Close()
+	<-done
+
+	if runErr != nil {
+		t.Fatalf("runInit returned error: %v", runErr)
+	}
+	return projectRoot, buf.String()
+}
+
+// semanticSearchJSON returns the raw `settings.semanticSearch` bytes from a
+// written project config, or "null" if the key is absent — the shape AC-21
+// compares byte-for-byte across machines.
+func semanticSearchJSON(t *testing.T, projectRoot string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(projectRoot, ".knowns", "config.json"))
+	if err != nil {
+		t.Fatalf("read config.json: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("parse config.json: %v", err)
+	}
+	settings, _ := parsed["settings"].(map[string]any)
+	out, err := json.Marshal(settings["semanticSearch"])
+	if err != nil {
+		t.Fatalf("marshal semanticSearch: %v", err)
+	}
+	return out
+}
+
+// TestRunInitNoWizardDisablesSemanticSearchWithGuidance covers AC-13: a
+// non-interactive init writes a config with semantic search disabled, and its
+// output names keyword search, the default model, the pull command, and
+// where to read more. Before OLM-XJKSB7, the non-interactive default was
+// `isTTY()` (a real embedder shipped in the binary once made "enable by
+// default in a terminal" safe) and no guidance was printed at all — this test
+// fails to compile against that code because SemanticGuidance did not exist.
+func TestRunInitNoWizardDisablesSemanticSearchWithGuidance(t *testing.T) {
+	execLookPath = func(string) (string, error) { return "", os.ErrNotExist }
+	ollamaDetectorFactory = func() *search.OllamaDetector {
+		t.Fatal("non-interactive init must not probe Ollama (D8)")
+		return nil
+	}
+	t.Cleanup(func() {
+		execLookPath = defaultExecLookPath
+		ollamaDetectorFactory = func() *search.OllamaDetector {
+			return search.NewOllamaDetector(search.OllamaDefaultBase)
+		}
+	})
+
+	projectRoot, stdout := runNoWizardInitCapture(t, "ac13-project")
+
+	if got := string(semanticSearchJSON(t, projectRoot)); got != "null" {
+		t.Fatalf("semanticSearch = %s, want null (disabled)", got)
+	}
+
+	for _, want := range []string{
+		"Keyword search still works without it",
+		storage.D2DefaultModelID,
+		"ollama pull " + storage.D2DefaultModelID,
+		"Read more:",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("expected output to contain %q, got:\n%s", want, stdout)
+		}
+	}
+}
+
+// TestRunInitNoWizardSemanticSettingsByteIdenticalRegardlessOfOllama covers
+// AC-21/NFR-4/D8: `init` non-interactive produces byte-identical
+// `semanticSearch` settings whether or not Ollama is reachable, because a
+// non-interactive run never probes for it in the first place. The
+// panicking ollamaDetectorFactory proves the "never probes" half directly;
+// varying execLookPath's answer for "ollama" proves the machine-state
+// difference alone cannot leak into the written file.
+func TestRunInitNoWizardSemanticSettingsByteIdenticalRegardlessOfOllama(t *testing.T) {
+	neverProbe := func() *search.OllamaDetector {
+		t.Fatal("non-interactive init must not probe Ollama (D8)")
+		return nil
+	}
+	t.Cleanup(func() {
+		execLookPath = defaultExecLookPath
+		ollamaDetectorFactory = func() *search.OllamaDetector {
+			return search.NewOllamaDetector(search.OllamaDefaultBase)
+		}
+	})
+
+	// "Machine without Ollama": nothing on PATH.
+	execLookPath = func(string) (string, error) { return "", os.ErrNotExist }
+	ollamaDetectorFactory = neverProbe
+	withoutRoot, _ := runNoWizardInitCapture(t, "without-ollama")
+	without := semanticSearchJSON(t, withoutRoot)
+
+	// "Machine with Ollama": binary on PATH and (if it were ever asked, which
+	// it must not be) a detector that would report a ready model.
+	execLookPath = func(name string) (string, error) {
+		if name == "ollama" {
+			return "/usr/local/bin/ollama", nil
+		}
+		return "", os.ErrNotExist
+	}
+	ollamaDetectorFactory = neverProbe
+	withRoot, _ := runNoWizardInitCapture(t, "with-ollama")
+	with := semanticSearchJSON(t, withRoot)
+
+	if !bytes.Equal(without, with) {
+		t.Fatalf("semanticSearch differs by machine state:\nwithout ollama: %s\nwith ollama:    %s", without, with)
+	}
+}
+
+// fakeOllamaServer stands up an httptest server answering the three Ollama
+// endpoints probeOllamaForWizard uses, so probeOllamaForWizard's state
+// classification can be exercised without a real Ollama installation.
+func fakeOllamaServer(t *testing.T, models []map[string]any, embeddingLengths map[string]int) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"version": "0.1.0"})
+	})
+	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"models": models})
+	})
+	mux.HandleFunc("/api/show", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name string `json:"name"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		dims := embeddingLengths[body.Name]
+		modelInfo := map[string]any{}
+		if dims > 0 {
+			modelInfo["general.embedding_length"] = dims
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"model_info": modelInfo})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestProbeOllamaForWizardDistinguishesFourStates covers the FR-10 state
+// classification the wizard's preselection depends on.
+func TestProbeOllamaForWizardDistinguishesFourStates(t *testing.T) {
+	t.Cleanup(func() {
+		execLookPath = defaultExecLookPath
+		ollamaDetectorFactory = func() *search.OllamaDetector {
+			return search.NewOllamaDetector(search.OllamaDefaultBase)
+		}
+	})
+
+	t.Run("not installed", func(t *testing.T) {
+		execLookPath = func(string) (string, error) { return "", os.ErrNotExist }
+		ollamaDetectorFactory = func() *search.OllamaDetector {
+			t.Fatal("must not construct a detector when the binary is not on PATH")
+			return nil
+		}
+		state, models := probeOllamaForWizard()
+		if state != storage.OllamaNotInstalled || models != nil {
+			t.Fatalf("state = %v, models = %v, want OllamaNotInstalled/nil", state, models)
+		}
+	})
+
+	t.Run("not running", func(t *testing.T) {
+		execLookPath = func(string) (string, error) { return "/usr/local/bin/ollama", nil }
+		srv := fakeOllamaServer(t, nil, nil)
+		srv.Close() // refused connection: installed, but nothing answers
+		ollamaDetectorFactory = func() *search.OllamaDetector { return search.NewOllamaDetector(srv.URL) }
+		state, models := probeOllamaForWizard()
+		if state != storage.OllamaNotRunning || models != nil {
+			t.Fatalf("state = %v, models = %v, want OllamaNotRunning/nil", state, models)
+		}
+	})
+
+	t.Run("model missing", func(t *testing.T) {
+		execLookPath = func(string) (string, error) { return "/usr/local/bin/ollama", nil }
+		srv := fakeOllamaServer(t, nil, nil)
+		ollamaDetectorFactory = func() *search.OllamaDetector { return search.NewOllamaDetector(srv.URL) }
+		state, models := probeOllamaForWizard()
+		if state != storage.OllamaModelMissing || len(models) != 0 {
+			t.Fatalf("state = %v, models = %v, want OllamaModelMissing/empty", state, models)
+		}
+	})
+
+	t.Run("ready", func(t *testing.T) {
+		execLookPath = func(string) (string, error) { return "/usr/local/bin/ollama", nil }
+		srv := fakeOllamaServer(t,
+			[]map[string]any{{"name": "nomic-embed-text:latest", "modified_at": "", "size": 123}},
+			map[string]int{"nomic-embed-text:latest": 768},
+		)
+		ollamaDetectorFactory = func() *search.OllamaDetector { return search.NewOllamaDetector(srv.URL) }
+		state, models := probeOllamaForWizard()
+		if state != storage.OllamaReady || len(models) != 1 || models[0].ShortName != "nomic-embed-text" || models[0].Dimensions != 768 {
+			t.Fatalf("state = %v, models = %#v, want OllamaReady/[nomic-embed-text 768d]", state, models)
+		}
+	})
+}
+
+// TestWizardSemanticDefaultsPreselection covers D7's preselect-not-decide
+// rule and D8/FR-14/AC-23's "offer what's on disk ahead of the D2 default".
+func TestWizardSemanticDefaultsPreselection(t *testing.T) {
+	onDisk := []search.OllamaEmbeddingModel{{ShortName: "nomic-embed-text", Dimensions: 768}}
+
+	t.Run("fresh project, ready, offers on-disk model ahead of D2 default", func(t *testing.T) {
+		enabled, model, _ := wizardSemanticDefaults(storage.OllamaReady, onDisk, nil, "")
+		if !enabled {
+			t.Fatal("expected Ready to preselect enabled on a fresh project")
+		}
+		if model != "nomic-embed-text" {
+			t.Fatalf("model = %q, want the on-disk model ahead of %q", model, storage.D2DefaultModelID)
+		}
+	})
+
+	t.Run("fresh project, unreachable, preselects disabled and the D2 default", func(t *testing.T) {
+		enabled, model, guidance := wizardSemanticDefaults(storage.OllamaNotInstalled, nil, nil, "")
+		if enabled {
+			t.Fatal("expected an unreachable Ollama not to preselect enabled (D7: never widen)")
+		}
+		if model != storage.D2DefaultModelID {
+			t.Fatalf("model = %q, want D2 default %q", model, storage.D2DefaultModelID)
+		}
+		if guidance.Description == "" {
+			t.Fatal("expected non-empty guidance description")
+		}
+	})
+
+	t.Run("existing enabled answer wins over a ready probe", func(t *testing.T) {
+		existing := false
+		enabled, _, _ := wizardSemanticDefaults(storage.OllamaReady, onDisk, &existing, "")
+		if enabled {
+			t.Fatal("expected the existing (disabled) answer to win over the probe")
+		}
+	})
+
+	t.Run("existing model wins over a detected on-disk model", func(t *testing.T) {
+		_, model, _ := wizardSemanticDefaults(storage.OllamaReady, onDisk, nil, "all-minilm")
+		if model != "all-minilm" {
+			t.Fatalf("model = %q, want the existing config's model preserved", model)
+		}
+	})
+}
+
+// TestSemanticModelOptionsOffersOnDiskModelAheadOfD2Default covers AC-23:
+// the option list places a model already on disk ahead of the D2 default,
+// without duplicating it if it also happens to be one of the three D2
+// entries, and never silently drops a selected model absent from both lists.
+func TestSemanticModelOptionsOffersOnDiskModelAheadOfD2Default(t *testing.T) {
+	onDisk := []search.OllamaEmbeddingModel{{ShortName: "nomic-embed-text", Dimensions: 768}}
+	options := semanticModelOptions(onDisk, "nomic-embed-text")
+	if len(options) == 0 {
+		t.Fatal("expected at least one option")
+	}
+	firstValue := options[0].Value
+	if firstValue != "nomic-embed-text" {
+		t.Fatalf("first option = %q, want the on-disk model ahead of the D2 default", firstValue)
+	}
+	count := 0
+	for _, opt := range options {
+		if opt.Value == "nomic-embed-text" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("nomic-embed-text appeared %d times, want exactly 1 (deduplicated against D2Models)", count)
+	}
+
+	// A selected model absent from both the on-disk and D2 buckets must still
+	// appear, so a prior answer is never silently discarded.
+	options = semanticModelOptions(nil, "custom-legacy-model")
+	found := false
+	for _, opt := range options {
+		if opt.Value == "custom-legacy-model" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected the existing model to remain selectable even when absent from D2 and on-disk models")
 	}
 }

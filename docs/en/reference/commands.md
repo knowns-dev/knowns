@@ -89,7 +89,7 @@ knowns settings
 knowns settings --global
 ```
 
-Use `knowns settings` for human-friendly project edits: project name, git tracking, AI platforms, search, code intelligence, and maintenance guidance. In Search settings, Local ONNX models are listed with downloaded/not downloaded status; selecting a missing model can download it before saving. Use `knowns settings --global` for defaults reused by future `knowns init` runs. Use `knowns config get/set/list/reset` when you need scriptable config access.
+Use `knowns settings` for human-friendly project edits: project name, git tracking, AI platforms, search, code intelligence, and maintenance guidance. In Search settings, the embedding models Ollama is already serving are listed for selection; `knowns settings` never pulls one for you. Use `knowns settings --global` for defaults reused by future `knowns init` runs. Use `knowns config get/set/list/reset` when you need scriptable config access.
 
 ## Tasks
 
@@ -337,16 +337,20 @@ knowns sync --instructions
 
 Use `knowns setup` to generate AI integration files, or `knowns sync` to refresh them.
 
-## Model management
+## Embedding models
+
+There is no `knowns model` command. Models are pulled with Ollama and selected
+with `knowns config`:
 
 ```bash
-knowns model add <model-name>
-knowns model list
-knowns model download multilingual-e5-small
-knowns model set multilingual-e5-small
-knowns model status
-knowns model remove <id>
+ollama pull qwen3-embedding:0.6b
+knowns config set settings.semanticSearch.model qwen3-embedding:0.6b
+knowns search --reindex
 ```
+
+See [Ollama Embedding Models](./ollama-embedding-models.md) for the recommended
+set, install and pull commands, and how to point Knowns at a third-party
+OpenAI-compatible provider.
 
 ## Providers and runtime adapters
 

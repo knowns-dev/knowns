@@ -106,6 +106,66 @@ func TestRunMigratePreviewNamesEachPendingMigration(t *testing.T) {
 	}
 }
 
+// TestRunMigratePreviewNamesTheThreeFollowUpSteps covers the half of AC-4 that
+// the write path alone does not satisfy. Every other command reports an
+// unmigrated project with one line naming `knowns migrate` (FR-4), so the bare
+// command is where the user actually arrives. Before this, only `--write`
+// named installing Ollama, pulling the model and reindexing — a user asking
+// "what does this need?" could not find out without first writing the file,
+// which inverts preview and commit.
+func TestRunMigratePreviewNamesTheThreeFollowUpSteps(t *testing.T) {
+	projectRoot := setupUnmigratedCLIProject(t)
+	chdirForTest(t, projectRoot)
+
+	output := captureMemoryStdout(t, func() {
+		if err := runMigrate(newMigrateTestCmd(false), nil); err != nil {
+			t.Fatalf("runMigrate preview: %v", err)
+		}
+	})
+
+	for _, want := range []string{storage.OllamaInstallURL, "ollama pull ", "knowns search index --wait"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("preview does not name %q, so the guidance chain breaks at the command the notice points to:\n%s", want, output)
+		}
+	}
+}
+
+// TestRunMigrateOnAlreadyOllamaProjectOmitsFollowUpSteps guards against
+// telling a user to redo work they have already done. A project already on
+// provider: ollama with the default model has a migration pending — the
+// schema version is still unstamped — but nothing about its embedding
+// identity moves. Installing Ollama, pulling the model and reindexing
+// therefore do not apply, and advising a reindex when nothing changed is
+// simply wrong. The steps must appear only when there are real field changes.
+func TestRunMigrateOnAlreadyOllamaProjectOmitsFollowUpSteps(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	projectRoot := t.TempDir()
+	knownsDir := filepath.Join(projectRoot, ".knowns")
+	if err := os.MkdirAll(knownsDir, 0o755); err != nil {
+		t.Fatalf("mkdir .knowns: %v", err)
+	}
+	already := `{"name":"ao","id":"ao","settings":{"defaultPriority":"medium","statuses":["todo","done"],"semanticSearch":{"enabled":true,"provider":"ollama","model":"` + storage.D2DefaultModelID + `","dimensions":1024,"maxTokens":32768}}}`
+	if err := os.WriteFile(filepath.Join(knownsDir, "config.json"), []byte(already), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	chdirForTest(t, projectRoot)
+
+	output := captureMemoryStdout(t, func() {
+		if err := runMigrate(newMigrateTestCmd(false), nil); err != nil {
+			t.Fatalf("runMigrate preview: %v", err)
+		}
+	})
+
+	for _, unwanted := range []string{storage.OllamaInstallURL, "ollama pull ", "knowns search index --wait"} {
+		if strings.Contains(output, unwanted) {
+			t.Fatalf("preview tells an already-migrated-in-substance project to %q, which it has done or does not need:\n%s", unwanted, output)
+		}
+	}
+	if !strings.Contains(output, "pending migration") {
+		t.Fatalf("preview should still report the pending version stamp:\n%s", output)
+	}
+}
+
 // TestRunMigrateWriteAppliesAndStampsVersion is AC-26 (write half): --write
 // applies pending migrations, stamps the schema version, and reports what
 // changed.

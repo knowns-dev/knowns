@@ -1,7 +1,9 @@
 package search
 
 import (
+	"errors"
 	"math"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -30,19 +32,32 @@ func TestCommittedEvaluationBaselinesMatchCanonicalFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	pinned := PinnedSemanticRuntimeID()
 	tests := []struct {
 		path      string
 		mode      string
 		runtimeID string
+		// optional marks a baseline that may legitimately be absent while it
+		// is being regenerated against a newly pinned runtime. The keyword
+		// baseline is never optional: it needs no embedder, so nothing can
+		// stop it from being committed.
+		optional bool
 	}{
-		{"testdata/retrieval_evaluation_baseline.json", "keyword", "keyword"},
-		{"testdata/retrieval_evaluation_semantic_baseline.json", "semantic", "local/gte-small@384"},
-		{"testdata/retrieval_evaluation_hybrid_baseline.json", "hybrid", "local/gte-small@384"},
+		{"testdata/retrieval_evaluation_baseline.json", "keyword", "keyword", false},
+		{"testdata/retrieval_evaluation_semantic_baseline.json", "semantic", pinned, true},
+		{"testdata/retrieval_evaluation_hybrid_baseline.json", "hybrid", pinned, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.mode, func(t *testing.T) {
 			baseline, err := LoadEvaluationBaselineFile(tt.path)
 			if err != nil {
+				if tt.optional && errors.Is(err, os.ErrNotExist) {
+					t.Skipf(
+						"%s baseline not committed yet; regenerate it against %s "+
+							"via the CI workflow_dispatch with update_retrieval_baseline=true",
+						tt.mode, tt.runtimeID,
+					)
+				}
 				t.Fatal(err)
 			}
 			if err := ValidateEvaluationBaseline(fixture, baseline, tt.mode, tt.runtimeID); err != nil {
