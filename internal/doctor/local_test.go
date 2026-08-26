@@ -30,6 +30,13 @@ func TestSearchChecksReportUnavailableModelAndEmptyIndex(t *testing.T) {
 	before := snapshotTree(t, store.Root)
 
 	deps := localDependencies{
+		// The provider is ollama, so searchModelChecker consults lookPath
+		// before it ever looks at the service snapshot. Stub it as present:
+		// this test is about a model the *service* reports unavailable, not
+		// about a missing binary, and leaving it unstubbed made the result
+		// depend on whether the machine running the tests happens to have
+		// Ollama installed — green on a developer laptop, red on CI.
+		lookPath: func(string) (string, error) { return "/usr/local/bin/ollama", nil },
 		readiness: func(*storage.Store) (readiness.Payload, error) {
 			return readiness.Payload{
 				Active: true,
