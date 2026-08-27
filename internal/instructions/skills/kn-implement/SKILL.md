@@ -134,6 +134,11 @@ mcp_knowns_decision({ "action": "create",
 Append the persisted candidate returned by the tool:
 `System Decision Impact: candidate @decision/<id> (added|changed|removed) — <short summary>`
 
+Retire what the work replaced, in the same change:
+
+- **Fully superseded** — delete the spec or doc. Do not leave it resident under a `Superseded` banner. A bannered document still returns in search and its body still reads as current instructions, so the banner hides the rot instead of removing it. Record the supersession in the Decision's `consequences`, not in the retired document.
+- **Partially superseded** — do not delete. Name the void parts explicitly (for example `FR-5`, `AC-6`, `Scenario 4`) and leave the rest live. Deleting a partially superseded document destroys guidance that is still in force.
+
 If review checks find missing evidence or a duplicate/conflict, leave the candidate unresolved in Review Inbox. Passing checks makes it ready for human review; it never makes the candidate current automatically.
 
 Resolving that candidate later — triaging the inbox, promoting it, or superseding what it replaces — is `/kn-decision`. Create the candidate here; settle it there.
@@ -293,6 +298,7 @@ Run: /kn-plan USER-4F7Q2M
 - [ ] Tests pass
 - [ ] **Validated (no broken refs)**
 - [ ] `System Decision Impact` marker recorded as `none` or a persisted candidate ref
+- [ ] Fully superseded specs/docs deleted in the same change; partially superseded ones kept with void parts named
 - [ ] Positive impact created a first-class draft Decision linked to task/spec/sources
 - [ ] Spec Decision Compliance marker recorded for every linked D-ID
 - [ ] Notes added
@@ -310,6 +316,7 @@ Run: /kn-plan USER-4F7Q2M
 - Using `notes` instead of `appendNotes`
 - Marking done without verification
 - Marking done without a `System Decision Impact` marker
+- Leaving a fully superseded spec or doc resident under a `Superseded` banner instead of deleting it
 - Creating Memory category `decision` instead of a first-class Decision candidate
 - Copying Spec Locked Decisions into the System Decision ledger
 - **Not checking sibling tasks when spec linked**
