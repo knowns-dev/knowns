@@ -50,7 +50,7 @@ export function TaskMentionBadge({
     if (onTaskLinkClick) {
       onTaskLinkClick(taskNumber);
     } else {
-      navigateTo(`/kanban/${taskNumber}`);
+      navigateTo(`/tasks/${taskNumber}`);
     }
   };
 

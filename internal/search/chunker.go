@@ -8,12 +8,42 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 )
 
-// EstimateTokens returns a rough token count (~4 chars per token for English).
+// tokenPieces splits text the way a BPE pre-tokenizer does: contractions, runs
+// of letters, runs of digits, runs of punctuation, and whitespace, each
+// optionally carrying one leading space. Transcribed from
+// LLAMA_VOCAB_PRE_TYPE_GPT2 in llama.cpp/src/llama-vocab.cpp, which is what
+// Ollama runs. Go's RE2 has no lookahead, so the upstream `\s+(?!\S)`
+// alternative is dropped and the trailing `\s+` covers those runs.
+//
+// The letter and digit classes must stay Unicode-aware. Go's `\w` is ASCII
+// only, so using it here would push every accented letter into the punctuation
+// branch and overcount Vietnamese by more than double.
+var tokenPieces = regexp.MustCompile(`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+`)
+
+// EstimateTokens approximates the token count of text. It is the fallback used
+// for chunk sizing whenever no real tokenizer is available, which is every
+// API-backed provider.
+//
+// This counts pre-tokenizer pieces rather than dividing the byte length. Byte
+// division assumed roughly four ASCII characters per token and was wrong in
+// both directions: it overestimated accented text, where one character costs
+// two or three bytes, and underestimated code. Measured against token counts
+// reported by qwen3-embedding, embeddinggemma, nomic-embed-text and all-minilm,
+// piece counting is closer for every one of them, including the WordPiece and
+// SentencePiece models that use no regex pre-tokenizer at all.
+//
+// It stays an estimate: pre-tokenizer pieces are what BPE merges operate on,
+// not the merged result, so callers must keep headroom rather than treat this
+// as an exact limit.
 func EstimateTokens(text string) int {
 	if text == "" {
 		return 0
 	}
-	return (len(text) + 3) / 4 // ceiling division
+	n := len(tokenPieces.FindAllString(text, -1))
+	if n == 0 {
+		return 1
+	}
+	return n
 }
 
 // countTokens uses the tokenizer if available, otherwise falls back to EstimateTokens.

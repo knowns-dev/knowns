@@ -7,6 +7,7 @@
     "dev": "bunx --bun vite",
     "build": "bunx --bun vite build",
     "preview": "bunx --bun vite preview",
+    "test:unit": "bun test src",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed"
@@ -62,6 +63,7 @@
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "@tailwindcss/vite": "^4.1.18",
+    "@types/bun": "^1.4.0",
     "@types/d3-force": "^3.0.10",
     "@types/diff": "^8.0.0",
     "@types/react": "^19.2.7",

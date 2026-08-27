@@ -232,3 +232,47 @@ func TestLspWarningsLineIncludesDegradedCapabilities(t *testing.T) {
 		t.Fatalf("degraded status line = %q", got)
 	}
 }
+
+func TestInitialReportsTaskIDFormat(t *testing.T) {
+	// Asserts the properties that keep an agent from mangling an ID, not the exact
+	// prose: a concrete example, the instruction to pass it through unchanged, and
+	// the setting name so the format can be traced back to config.
+	for _, tt := range []struct {
+		name   string
+		prefix string
+		want   []string
+	}{
+		{
+			name: "legacy",
+			want: []string{"Task IDs:", "4f7q2m", "use verbatim", "tasks.create prefix", "settings.defaultTaskIdPrefix"},
+		},
+		{
+			name:   "configured",
+			prefix: "SPC",
+			want:   []string{"Task IDs:", "default=SPC", "SPC-4F7Q2M", "use verbatim", "tasks.create prefix", "settings.defaultTaskIdPrefix"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+			if err := store.Init("initial-task-id"); err != nil {
+				t.Fatalf("Init: %v", err)
+			}
+			if tt.prefix != "" {
+				project, err := store.Config.Load()
+				if err != nil {
+					t.Fatalf("Load config: %v", err)
+				}
+				project.Settings.DefaultTaskIDPrefix = tt.prefix
+				if err := store.Config.Save(project); err != nil {
+					t.Fatalf("Save config: %v", err)
+				}
+			}
+			got := buildInitialInstructions(func() *storage.Store { return store }, nil)
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("initial output missing %q:\n%s", want, got)
+				}
+			}
+		})
+	}
+}

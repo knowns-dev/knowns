@@ -527,3 +527,46 @@ func reviewSelectorCalls(t *testing.T) map[string]bool {
 	})
 	return calls
 }
+
+// A Decision whose evidence lives in a spec must stay acceptable after the
+// implementing Tasks are archived. With AutoArchive on by default, blocking
+// acceptance once evidence ages out would make Decisions un-acceptable by time.
+func TestAcceptCollectsSpecTasksAfterTheyAreArchived(t *testing.T) {
+	store := newDecisionReviewTestStore(t)
+	if err := store.Docs.Create(&models.Doc{
+		Path:    "specs/archived-evidence",
+		Title:   "Archived Evidence Spec",
+		Content: "# Spec\n\nBody.",
+	}); err != nil {
+		t.Fatalf("create spec doc: %v", err)
+	}
+	task := &models.Task{
+		ID:                 "arcdec",
+		Title:              "Implement spec",
+		Status:             "done",
+		Priority:           "medium",
+		Labels:             []string{},
+		Spec:               "specs/archived-evidence",
+		AcceptanceCriteria: []models.AcceptanceCriterion{{Text: "Verified", Completed: true}},
+	}
+	if err := store.Tasks.Create(task); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if err := store.Tasks.Archive(task.ID); err != nil {
+		t.Fatalf("archive task: %v", err)
+	}
+
+	entry := &models.DecisionEntry{
+		Title:       "Spec-backed decision",
+		Sources:     []string{"https://example.com/source"},
+		RelatedDocs: []string{"specs/archived-evidence"},
+	}
+	if err := store.Decisions.Create(entry, storage.DecisionCreateOptions{Now: fixedDecisionReviewTime()}); err != nil {
+		t.Fatalf("create decision: %v", err)
+	}
+	svc := New(store)
+	svc.Now = func() time.Time { return fixedDecisionReviewTime().Add(time.Hour) }
+	if _, err := svc.Accept(entry.ID, AcceptOptions{}); err != nil {
+		t.Fatalf("Accept with archived spec evidence: %v", err)
+	}
+}

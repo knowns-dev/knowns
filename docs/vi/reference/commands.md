@@ -37,7 +37,7 @@ knowns settings --global
 
 `knowns init` tạo `.knowns/`, config, git tracking, semantic setup, và lightweight project instruction shims như `CLAUDE.md`/`AGENTS.md`. Runtime-critical AI guidance nằm trong MCP `initial` và on-demand `help`. Dùng `knowns setup <target> --global` cho personal assistant setup thông thường vì nó update user-level MCP config, skills, và runtime hooks trên nhiều repository. Ví dụ: `knowns setup hermes --global` cấu hình Hermes MCP config và skills ở user scope. Chỉ dùng `knowns setup <target>` khi bạn chủ ý muốn project-level integration artifacts trong repo. Dùng `knowns setup agents` khi chỉ muốn repo-local agent shims.
 
-`knowns settings` mở settings center để chỉnh project name, git tracking, AI platforms, search, code intelligence, và maintenance guidance. Trong Search settings, Local ONNX models hiển thị trạng thái downloaded/not downloaded; nếu chọn model chưa download, Knowns có thể hỏi xác nhận rồi download trước khi lưu. `knowns settings --global` lưu defaults cho các lần `knowns init` sau. Dùng `knowns config get/set/list/reset` khi cần thao tác config bằng script hoặc agent.
+`knowns settings` mở settings center để chỉnh project name, git tracking, AI platforms, search, code intelligence, và maintenance guidance. Trong Search settings, các embedding model mà Ollama đang phục vụ được liệt kê để chọn; `knowns settings` không bao giờ tự pull model. `knowns settings --global` lưu defaults cho các lần `knowns init` sau. Dùng `knowns config get/set/list/reset` khi cần thao tác config bằng script hoặc agent.
 
 ## Task
 
@@ -219,16 +219,20 @@ knowns sync --skills
 knowns sync --instructions
 ```
 
-## Model
+## Embedding model
+
+Không còn lệnh `knowns model`. Model được pull bằng Ollama và chọn bằng
+`knowns config`:
 
 ```bash
-knowns model add <model-name>
-knowns model list
-knowns model download multilingual-e5-small
-knowns model set multilingual-e5-small
-knowns model status
-knowns model remove <id>
+ollama pull qwen3-embedding:0.6b
+knowns config set settings.semanticSearch.model qwen3-embedding:0.6b
+knowns search --reindex
 ```
+
+Xem [Ollama Embedding Models](./ollama-embedding-models.md) để biết bộ model
+khuyến nghị, lệnh cài/pull, và cách trỏ Knowns tới provider
+OpenAI-compatible của bên thứ ba.
 
 ## Provider và runtime adapters
 

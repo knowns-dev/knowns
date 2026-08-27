@@ -605,11 +605,11 @@ func handleCodeReplace(ctx context.Context, getStore func() *storage.Store, getC
 	if !ok || strings.TrimSpace(path) == "" {
 		return errResult("path is required")
 	}
-	needle, ok := textArg(args, "needle")
+	needle, ok := stringArg(args, "needle")
 	if !ok || needle == "" {
 		return errResult("needle is required")
 	}
-	repl, ok := textArg(args, "repl")
+	repl, ok := stringArg(args, "repl")
 	if !ok {
 		return errResult("repl is required")
 	}
@@ -718,7 +718,7 @@ func handleCodeReplaceBody(ctx context.Context, getStore func() *storage.Store, 
 	if !ok || strings.TrimSpace(name) == "" {
 		return errResult("symbol is required")
 	}
-	body, ok := textArg(args, "body")
+	body, ok := stringArg(args, "body")
 	if !ok {
 		return errResult("body is required")
 	}
@@ -774,7 +774,7 @@ func handleCodeInsert(ctx context.Context, getStore func() *storage.Store, getCo
 	if position != "before" && position != "after" {
 		return errResult("position must be before or after")
 	}
-	body, ok := textArg(args, "body")
+	body, ok := stringArg(args, "body")
 	if !ok {
 		return errResult("body is required")
 	}

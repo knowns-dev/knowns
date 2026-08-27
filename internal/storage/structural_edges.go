@@ -63,7 +63,7 @@ func (s *Store) collectAllEdges() edgeIndex {
 
 // collectFieldBackedEdges extracts edges from task fields: parent, spec, fulfills.
 func (s *Store) collectFieldBackedEdges() []rawEdge {
-	tasks, err := s.Tasks.List()
+	tasks, err := s.Tasks.ListAll()
 	if err != nil {
 		return nil
 	}
@@ -180,7 +180,7 @@ func (s *Store) collectInlineRefEdges() []rawEdge {
 	var edges []rawEdge
 
 	// From tasks.
-	tasks, _ := s.Tasks.List()
+	tasks, _ := s.Tasks.ListAll()
 	for _, t := range tasks {
 		content := strings.Join([]string{t.Description, t.ImplementationPlan, t.ImplementationNotes}, "\n")
 		for _, ref := range references.Extract(content) {

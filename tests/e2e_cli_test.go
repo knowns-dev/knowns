@@ -359,9 +359,7 @@ func TestCLI_ReopenWorkflow(t *testing.T) {
 	})
 }
 
-// TestCLI_SemanticSearch tests the semantic search workflow:
-// model list → model download → model set → status check → reindex → semantic search → keyword search
-// Requires ONNX Runtime + network access. Skip unless TEST_SEMANTIC=1.
+// TestCLI_Sync covers the sync subcommands that write agent-facing files.
 func TestCLI_Sync(t *testing.T) {
 	t.Run("sync instructions", func(t *testing.T) {
 		dir := setupTestProject(t)
@@ -389,8 +387,19 @@ func TestCLI_Sync(t *testing.T) {
 }
 
 // TestCLI_SemanticSearch tests the semantic search workflow:
-// model list → model download → model set → status check → reindex → semantic search → keyword search
-// Requires ONNX Runtime + network access. Skip unless TEST_SEMANTIC=1.
+// configure -> status check -> reindex -> semantic search -> keyword search
+//
+// It used to open with model list -> model download -> model set. The removal
+// of the local ONNX path deleted that command tree (spec ollama-only-embedding
+// D4): a model now reaches a project through `ollama pull` plus `knowns
+// config`, so this configures rather than downloads.
+//
+// It deliberately requires no reachable embedder. Every step below has to
+// survive one being absent, because that is now an ordinary state and the same
+// wave made search degrade to keyword results instead of failing. Running this
+// on a machine with no Ollama is the point, not a limitation.
+//
+// Skip unless TEST_SEMANTIC=1.
 func TestCLI_SemanticSearch(t *testing.T) {
 	if os.Getenv("TEST_SEMANTIC") != "1" {
 		t.Skip("skipping semantic search test (set TEST_SEMANTIC=1 to enable)")
@@ -413,44 +422,26 @@ func TestCLI_SemanticSearch(t *testing.T) {
 		"-c", "# Security Patterns\n\n## JWT Authentication\n- Use RS256 algorithm\n- Short-lived access tokens\n- Refresh token flow")
 	requireSuccess(t, res, "set doc content")
 
-	// Step 1: Model list
-	t.Run("model list", func(t *testing.T) {
-		res := runCli(t, dir, "model", "list")
-		requireSuccess(t, res)
-		assertContains(t, res.Stdout, "all-MiniLM-L6-v2", "model list should contain MiniLM")
-	})
-
-	// Step 2: Model download (180s timeout for network download)
-	modelDownloaded := false
-	t.Run("model download", func(t *testing.T) {
-		res := runCliWithTimeout(t, dir, 180*time.Second, "model", "download", "all-MiniLM-L6-v2")
-		output := res.Stdout + res.Stderr
-		if res.ExitCode != 0 && strings.Contains(output, "HTTP 429") {
-			t.Skipf("skipping semantic search test: model download was rate limited: %s", truncate(output, 300))
-		}
-		requireSuccess(t, res)
-		modelDownloaded = true
-		if !strings.Contains(output, "downloaded") && !strings.Contains(output, "already installed") {
-			t.Logf("download output: %s", truncate(output, 500))
+	// Step 1: Configure the embedder. Nothing is downloaded and nothing has to
+	// be running: `knowns config` only records the choice, and the project
+	// resolves it lazily.
+	t.Run("configure model", func(t *testing.T) {
+		for _, kv := range [][2]string{
+			{"settings.semanticSearch.enabled", "true"},
+			{"settings.semanticSearch.provider", "ollama"},
+			{"settings.semanticSearch.model", "qwen3-embedding:0.6b"},
+		} {
+			res := runCli(t, dir, "config", "set", kv[0], kv[1])
+			requireSuccess(t, res, "config set "+kv[0])
 		}
 	})
-	if !modelDownloaded {
-		t.Skip("skipping semantic search test: embedding model is unavailable")
-	}
 
-	// Step 3: Model set
-	t.Run("model set", func(t *testing.T) {
-		res := runCli(t, dir, "model", "set", "all-MiniLM-L6-v2")
-		requireSuccess(t, res)
-	})
-
-	// Step 4: Status check
+	// Step 2: Status check
 	t.Run("status check", func(t *testing.T) {
 		res := runCli(t, dir, "search", "--status-check")
 		requireSuccess(t, res)
-		// Should mention model or enabled
 		output := strings.ToLower(res.Stdout)
-		if !strings.Contains(output, "all-minilm") && !strings.Contains(output, "enabled") {
+		if !strings.Contains(output, "qwen3-embedding") && !strings.Contains(output, "enabled") {
 			t.Logf("status check output: %s", res.Stdout)
 		}
 	})
@@ -508,10 +499,15 @@ func TestCLI_SemanticSearch(t *testing.T) {
 		}
 	})
 
-	// Step 9: Model status
-	t.Run("model status", func(t *testing.T) {
-		res := runCli(t, dir, "model", "status")
-		requireSuccess(t, res)
+	// Step 9: Doctor reports the embedder state instead of `model status`,
+	// which went with the rest of the command tree. It must exit cleanly and
+	// name the configured model even when nothing is serving it.
+	t.Run("doctor reports embedder state", func(t *testing.T) {
+		res := runCli(t, dir, "doctor", "--scope", "search")
+		if res.ExitCode > 1 {
+			t.Fatalf("doctor failed with code %d: %s", res.ExitCode, res.Stderr)
+		}
+		t.Logf("doctor search scope: %s", truncate(res.Stdout, 400))
 	})
 }
 

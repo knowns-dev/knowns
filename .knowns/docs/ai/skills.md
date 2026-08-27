@@ -1,8 +1,9 @@
 ---
+id: doc-6b90879582069ffc1bcdffed63fde6dc
 title: Skills System
 description: Skill definition, sharing, and sync across platforms
 createdAt: '2026-01-23T04:07:56.363Z'
-updatedAt: '2026-08-13T13:23:43.462Z'
+updatedAt: '2026-08-27T06:14:37.859Z'
 tags: []
 ---
 
@@ -81,20 +82,21 @@ knowns sync --instructions
 |-------|-------------|
 | `kn-init` | Initialize session, read docs, load memory, understand project |
 | `kn-spec` | Create specification document for features (SDD) |
-| `kn-flow` | Recommended approved-spec orchestration: plan, implement, review, verify |
+| `kn-flow` | Recommended approved-spec orchestration: plan, implement, test, review, verify |
+| `kn-go` | Legacy full pipeline from approved spec without review gates |
 | `kn-plan` | Take task, gather context, create implementation plan |
 | `kn-research` | Search codebase, find patterns, explore before coding |
+| `kn-handoff` | Cross-repo brief or API contract when work spans repositories |
 | `kn-implement` | Execute plan, track progress, check acceptance criteria |
+| `kn-test` | Turn spec Scenarios and ACs into tests; report unproven criteria |
 | `kn-review` | Multi-perspective code review (P1/P2/P3 severity) |
-| `kn-commit` | Create conventional commit with verification |
-| `kn-extract` | Extract reusable patterns into docs, templates, and memory |
+| `kn-debug` | Structured debugging: triage -> fix -> learn |
+| `kn-decision` | System Decision lifecycle: draft, triage, promote, supersede |
+| `kn-verify` | Run SDD verification and coverage report |
 | `kn-doc` | Create and update documentation |
 | `kn-template` | List, run, or create code templates |
-| `kn-verify` | Run SDD verification and coverage report |
-| `kn-go` | Legacy full pipeline from approved spec without review gates |
-| `kn-debug` | Structured debugging: triage -> fix -> learn |
-
----
+| `kn-extract` | Extract reusable patterns into docs, templates, and memory |
+| `kn-commit` | Create conventional commit with verification |
 
 ## SDD Workflow
 
@@ -161,5 +163,5 @@ The embedded `SKILL.md` sources are platform-neutral workflow contracts. Platfor
 - External tools are discovered and selected by capability, source type, freshness, and evidence quality; built-in skills do not require a named external research provider.
 - `kn-research` does not mutate tasks, docs, memories, decisions, or source files unless persistence is explicitly authorized.
 - Generated platform copies are overwritten by `knowns sync`; edit only `internal/instructions/skills/kn-*/SKILL.md`.
-- All 14 built-in skills use the shared response order: goal/result, key details, and an optional natural next action.
-- Automated source and sync tests enforce provider neutrality, mutation boundaries, response ordering, template examples, Decision lifecycle rules, and critical approval/verification gates.
+- All 17 built-in skills use the shared response order: goal/result, key details, and an optional natural next action.
+- Automated source and sync tests enforce provider neutrality, mutation boundaries, response ordering, template examples, Decision lifecycle rules, and critical approval/verification gates. A contract test also asserts every embedded skill appears in the shared roster sentence, so the list cannot drift as skills are added.

@@ -7,11 +7,15 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/howznguyen/knowns/internal/storage"
 )
 
 const (
-	// OllamaDefaultBase is the default Ollama API base URL.
-	OllamaDefaultBase = "http://localhost:11434"
+	// OllamaDefaultBase is the default Ollama API base URL. Derived from
+	// storage.OllamaHostBase so the endpoint has one definition; the
+	// registry seeds its provider entry from the same constant.
+	OllamaDefaultBase = storage.OllamaHostBase
 	// ollamaDetectTimeout is the timeout for detection requests.
 	ollamaDetectTimeout = 5 * time.Second
 )

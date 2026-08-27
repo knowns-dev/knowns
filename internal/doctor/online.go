@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -20,6 +21,17 @@ import (
 const (
 	defaultVersionEndpoint = "https://registry.npmjs.org/knowns/latest"
 	onlineCheckTimeout     = 3 * time.Second
+	// ollamaProbeTimeout bounds the /api/tags round trip specifically (NFR-5,
+	// AC-20): well inside the runner's 2s default per-check budget
+	// (runner.go's defaultCheckTimeout), so a socket that accepts the
+	// connection and never answers still yields a real OllamaNotRunning
+	// result instead of falling through to the runner's own
+	// checker_timeout — the failure mode searchModelChecker shipped once
+	// via services.DetectAllReadOnly's ~40s LSP probe. This bound is applied
+	// via the request context regardless of deps.client's own Timeout (2.5s
+	// by default), so it holds even when a caller supplies a client with no
+	// timeout at all.
+	ollamaProbeTimeout = 1 * time.Second
 )
 
 type httpDoer interface {
@@ -38,6 +50,12 @@ type onlineDependencies struct {
 	client       httpDoer
 	versionURL   string
 	loadProvider func(*storage.Store) (providerTarget, bool, error)
+	// lookPath detects the Ollama binary on PATH, the FR-10 signal that
+	// distinguishes OllamaNotInstalled from the other three states before
+	// any network probe runs — mirrors localDependencies.lookPath in
+	// local.go, kept separate because this file's dependency struct is
+	// independently constructible in tests that never touch localState.
+	lookPath func(string) (string, error)
 }
 
 func defaultOnlineDependencies() onlineDependencies {
@@ -50,6 +68,7 @@ func defaultOnlineDependencies() onlineDependencies {
 		},
 		versionURL:   defaultVersionEndpoint,
 		loadProvider: loadConfiguredProvider,
+		lookPath:     exec.LookPath,
 	}
 }
 
@@ -72,6 +91,9 @@ func networkCheckersWithDependencies(store *storage.Store, deps onlineDependenci
 	}
 	if deps.loadProvider == nil {
 		deps.loadProvider = defaults.loadProvider
+	}
+	if deps.lookPath == nil {
+		deps.lookPath = defaults.lookPath
 	}
 	return []Checker{
 		providerEndpointChecker(store, deps),
@@ -298,15 +320,40 @@ func providerEndpointChecker(store *storage.Store, deps onlineDependencies) Chec
 
 // ollamaEndpointResult probes the Ollama tag listing instead of an embeddings
 // path: it is the only endpoint that answers both questions doctor cares about
-// for this provider — is the daemon serving, and is the configured model pulled.
+// for this provider — is the daemon serving, and is the configured model
+// pulled. It distinguishes all four FR-10 states — OllamaNotInstalled,
+// OllamaNotRunning, OllamaModelMissing, OllamaReady — and every non-ready
+// result's Remediation resolves from storage.OllamaStateGuidance (AC-7/D6)
+// rather than restating install/pull instructions locally.
 func ollamaEndpointResult(
 	ctx context.Context,
 	deps onlineDependencies,
 	target providerTarget,
 	base *url.URL,
 ) CheckResult {
+	lookPath := deps.lookPath
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+	if _, err := lookPath("ollama"); err != nil {
+		// No network call: the binary isn't on PATH, so probing the
+		// endpoint would only spend the NFR-5 budget confirming what
+		// lookPath already answered for free.
+		return ollamaGuidanceResult(StatusWarn, storage.OllamaNotInstalled, target, Evidence{
+			"provider":  "ollama",
+			"model":     target.Model,
+			"installed": false,
+		})
+	}
+
+	// Bounded well inside the runner's 2s default (NFR-5/AC-20): this must
+	// hold even when the socket accepts the connection and never answers,
+	// independent of whatever Timeout deps.client itself carries.
+	probeCtx, cancel := context.WithTimeout(ctx, ollamaProbeTimeout)
+	defer cancel()
+
 	endpoint := (&url.URL{Scheme: base.Scheme, Host: base.Host, Path: "/api/tags"}).String()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return providerFailure(
 			target.ID,
@@ -317,17 +364,13 @@ func ollamaEndpointResult(
 	}
 	resp, err := deps.client.Do(req)
 	if err != nil {
-		result := providerWarning(
-			target.ID,
-			"Ollama is not serving the configured endpoint",
-			networkErrorCode(ctx, err),
-			0,
-		)
-		result.Remediation = &Remediation{
-			Description: "Start Ollama so it serves the configured endpoint.",
-			Command:     "ollama serve",
-		}
-		return result
+		return ollamaGuidanceResult(StatusWarn, storage.OllamaNotRunning, target, Evidence{
+			"provider":  "ollama",
+			"model":     target.Model,
+			"installed": true,
+			"reachable": false,
+			"errorCode": networkErrorCode(probeCtx, err),
+		})
 	}
 	defer resp.Body.Close()
 
@@ -351,9 +394,10 @@ func ollamaEndpointResult(
 	}
 	for _, model := range tags.Models {
 		if ollamaModelMatches(model.Name, target.Model) {
+			guidance := storage.OllamaStateGuidance(storage.OllamaReady, target.Model)
 			return CheckResult{
 				Status:  StatusPass,
-				Summary: "Configured Ollama model is pulled and served",
+				Summary: guidance.Description,
 				Evidence: Evidence{
 					"provider":  "ollama",
 					"model":     target.Model,
@@ -363,19 +407,42 @@ func ollamaEndpointResult(
 			}
 		}
 	}
+	return ollamaGuidanceResult(StatusWarn, storage.OllamaModelMissing, target, Evidence{
+		"provider":  "ollama",
+		"model":     target.Model,
+		"pulled":    false,
+		"reachable": true,
+	})
+}
+
+// ollamaGuidanceResult builds a CheckResult for a non-ready FR-10 Ollama
+// state, rendering both the Summary and the Remediation from
+// storage.OllamaStateGuidance so the text — including the keyword-search-
+// still-works reassurance (AC-14) — can never drift from what setup and
+// init show for the same state (AC-15).
+func ollamaGuidanceResult(status Status, state storage.OllamaState, target providerTarget, evidence Evidence) CheckResult {
+	guidance := storage.OllamaStateGuidance(state, target.Model)
 	return CheckResult{
-		Status:  StatusWarn,
-		Summary: "Configured Ollama model is not pulled",
-		Evidence: Evidence{
-			"provider":  "ollama",
-			"model":     target.Model,
-			"pulled":    false,
-			"reachable": true,
-		},
+		Status:   status,
+		Summary:  ollamaStateSummary(state),
+		Evidence: evidence,
 		Remediation: &Remediation{
-			Description: "Pull the configured embedding model into Ollama.",
-			Command:     "ollama pull " + target.Model,
+			Description: guidance.Description,
+			Command:     guidance.Command,
 		},
+	}
+}
+
+func ollamaStateSummary(state storage.OllamaState) string {
+	switch state {
+	case storage.OllamaNotInstalled:
+		return "Ollama is not installed"
+	case storage.OllamaNotRunning:
+		return "Ollama is not serving the configured endpoint"
+	case storage.OllamaModelMissing:
+		return "Configured Ollama model is not pulled"
+	default:
+		return "Ollama state could not be determined"
 	}
 }
 

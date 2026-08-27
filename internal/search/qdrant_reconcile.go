@@ -186,7 +186,22 @@ func QdrantEntityReadinessForStore(storeRoot string) ([]QdrantEntityReadiness, e
 		if !fromManifest {
 			entry.EntityType, entry.EntityID, entry.Path, entry.Hash, entry.Revision = wm.EntityType, wm.EntityID, wm.Path, wm.CanonicalHash, wm.Revision
 		}
-		out = append(out, QdrantEntityReadiness{EntityType: entry.EntityType, EntityID: entry.EntityID, CanonicalHash: entry.Hash, IndexedHash: wm.IndexedHash, Revision: entry.Revision, IndexedRevision: wm.IndexedRevision, Path: entry.Path, IndexedPath: wm.IndexedPath, Stale: wm.Stale || wm.PendingRemoval || entry.Hash == "" || wm.IndexedHash != entry.Hash || wm.IndexedRevision != entry.Revision || wm.IndexedPath != entry.Path})
+		// Watermarks written before indexedRevision existed record only the
+		// indexed hash and path. loadQdrantWatermarks back-fills the indexed
+		// revision from the desired revision, but that field is absent in the
+		// same records, so IndexedRevision stays 0 and can never equal a
+		// manifest revision. Indexed hash and path equality already prove the
+		// entity is indexed at its current canonical state, so an unrecorded
+		// indexed revision is unknown rather than a mismatch. Without this the
+		// entity is permanently stale and no reindex can repair it, because
+		// watermarks are only rewritten by per-entity reconciliation intents.
+		revisionRecorded := wm.IndexedRevision != 0
+		stale := wm.Stale || wm.PendingRemoval ||
+			entry.Hash == "" ||
+			wm.IndexedHash != entry.Hash ||
+			wm.IndexedPath != entry.Path ||
+			(revisionRecorded && wm.IndexedRevision != entry.Revision)
+		out = append(out, QdrantEntityReadiness{EntityType: entry.EntityType, EntityID: entry.EntityID, CanonicalHash: entry.Hash, IndexedHash: wm.IndexedHash, Revision: entry.Revision, IndexedRevision: wm.IndexedRevision, Path: entry.Path, IndexedPath: wm.IndexedPath, Stale: stale})
 	}
 	return out, nil
 }
@@ -212,6 +227,18 @@ func ExecuteQdrantReconciliation(ctx context.Context, storeRoot string, intent r
 	pointer, err := LoadQdrantPointer(storeRoot)
 	if err != nil {
 		return err
+	}
+	if pointer == nil {
+		// The store resolves to the Qdrant backend but has never been
+		// provisioned onto a generation: it is still inside the migration
+		// window that semanticIndexReadinessQdrant and openRuntimeVectorStore
+		// already handle by falling back to the legacy SQLite index. Targeted
+		// reconciliation may never create or swap a collection, so there is no
+		// destination to write to and nothing here can repair the state. Skip
+		// like a disabled backend does instead of failing: a per-entity error
+		// retries every task or doc mutation to the dead-letter limit and
+		// buries the real signal (the pending reindex) under queue noise.
+		return nil
 	}
 	client, err := qdrantClientForStore(store)
 	if err != nil {
@@ -338,10 +365,20 @@ func currentQdrantIntent(storeRoot, entityType, target string, remove bool, prev
 			stream, historyErr := storage.NewHistoryStore(storeRoot).Read(context.Background(), "task", target)
 			if taskErr == nil && historyErr == nil && len(stream.Records) > 0 {
 				head := stream.Records[len(stream.Records)-1]
-				if remove {
-					return removalIntentFromHistoryOrPurge(storeRoot, "task", target, "tasks/"+target+".md", "")
+				// Resolve the managed file rather than synthesising a name. The
+				// manifest records the real filename ("tasks/task-<id> -
+				// <slug>.md"), and readiness compares the two, so an intent
+				// carrying "tasks/<id>.md" leaves the task stale forever: the
+				// mismatch survives every reindex because watermarks are only
+				// rewritten by these intents, which reproduce it each time.
+				canonicalPath, pathErr := canonicalTaskIntentPath(store, target)
+				if pathErr != nil {
+					return runtimequeue.QdrantIntent{}, pathErr
 				}
-				return runtimequeue.QdrantIntent{EntityType: "task", EntityID: target, Revision: head.Revision, Operation: "update", CanonicalHash: storage.CanonicalTaskHash(task), Path: "tasks/" + target + ".md", BatchID: "public-hook"}, nil
+				if remove {
+					return removalIntentFromHistoryOrPurge(storeRoot, "task", target, canonicalPath, "")
+				}
+				return runtimequeue.QdrantIntent{EntityType: "task", EntityID: target, Revision: head.Revision, Operation: "update", CanonicalHash: storage.CanonicalTaskHash(task), Path: canonicalPath, BatchID: "public-hook"}, nil
 			}
 		}
 		if entityType == "doc" {
@@ -389,7 +426,14 @@ func currentPublicQdrantIntent(storeRoot, entityType, target string, remove bool
 			return runtimequeue.QdrantIntent{}, fmt.Errorf("public task intent lacks durable history")
 		}
 		head := stream.Records[len(stream.Records)-1]
-		return runtimequeue.QdrantIntent{EntityType: "task", EntityID: target, Revision: head.Revision, Operation: "update", CanonicalHash: storage.CanonicalTaskHash(task), Path: targetPathForIntent("task", target), BatchID: "public-hook"}, nil
+		// The managed filename, not a synthesised "tasks/<id>.md": readiness
+		// compares this against the manifest path, and every public Task
+		// mutation flows through here. See canonicalTaskIntentPath.
+		canonicalPath, pathErr := canonicalTaskIntentPath(store, target)
+		if pathErr != nil {
+			return runtimequeue.QdrantIntent{}, pathErr
+		}
+		return runtimequeue.QdrantIntent{EntityType: "task", EntityID: target, Revision: head.Revision, Operation: "update", CanonicalHash: storage.CanonicalTaskHash(task), Path: canonicalPath, BatchID: "public-hook"}, nil
 	}
 	if entityType != "doc" {
 		return runtimequeue.QdrantIntent{}, fmt.Errorf("unsupported public qdrant entity type %q", entityType)
@@ -460,6 +504,23 @@ func removalIntentFromHistoryOrPurge(storeRoot, entityType, entityID, path, prev
 	return intent, nil
 }
 
+// canonicalTaskIntentPath returns the store-relative path of a Task's managed
+// file, matching what the filesystem manifest records for the same Task.
+// TaskStore.CanonicalPath performs the same tasks/ then archive/ lookup as Get
+// instead of rebuilding a filename from the ID and title, so archived Tasks
+// resolve correctly too.
+func canonicalTaskIntentPath(store *storage.Store, id string) (string, error) {
+	path, err := store.Tasks.CanonicalPath(id)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(store.Root, path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(rel), nil
+}
+
 func purgeReservationForPath(storeRoot, path string) (struct {
 	EntityID, Path, Hash, ExpectedHash string
 }, bool, error) {
@@ -512,8 +573,22 @@ func firstNonEmptyIntentPath(values ...string) string {
 }
 
 func validateTargetedCollection(ctx context.Context, store *storage.Store, pointer *QdrantPointer, client QdrantClient) error {
-	if pointer == nil || pointer.Backend != models.SemanticVectorBackendQdrant || pointer.SchemaVersion != QdrantPointerSchemaVersion || pointer.ChunkVersion != ChunkVersion || pointer.CollectionUUID == "" || pointer.CollectionName != CollectionNameFromUUID(pointer.CollectionUUID) {
-		return fmt.Errorf("qdrant active pointer is missing or malformed")
+	// Each rejection names the field that failed. A single collapsed message
+	// cannot distinguish "never provisioned" from "written by an older schema",
+	// which are diagnosed and repaired differently.
+	switch {
+	case pointer == nil:
+		return fmt.Errorf("qdrant active pointer is missing (run: knowns search index)")
+	case pointer.Backend != models.SemanticVectorBackendQdrant:
+		return fmt.Errorf("qdrant active pointer backend = %q, want %q", pointer.Backend, models.SemanticVectorBackendQdrant)
+	case pointer.SchemaVersion != QdrantPointerSchemaVersion:
+		return fmt.Errorf("qdrant active pointer schema version = %d, want %d", pointer.SchemaVersion, QdrantPointerSchemaVersion)
+	case pointer.ChunkVersion != ChunkVersion:
+		return fmt.Errorf("qdrant active pointer chunk version = %d, want %d", pointer.ChunkVersion, ChunkVersion)
+	case strings.TrimSpace(pointer.CollectionUUID) == "":
+		return fmt.Errorf("qdrant active pointer is missing collectionUUID")
+	case pointer.CollectionName != CollectionNameFromUUID(pointer.CollectionUUID):
+		return fmt.Errorf("qdrant active pointer collectionName %q does not match collectionUUID %s", pointer.CollectionName, pointer.CollectionUUID)
 	}
 	if _, err := uuid.Parse(pointer.CollectionUUID); err != nil {
 		return fmt.Errorf("qdrant active pointer collectionUUID is invalid")
@@ -802,8 +877,21 @@ func updateQdrantWatermark(storeRoot string, intent runtimequeue.QdrantIntent, c
 			if intent.Operation == "delete" || intent.Operation == "hard_delete" {
 				desiredHash = intent.CanonicalHash
 			}
-			if current.Revision == intent.Revision && current.CanonicalHash != "" && (current.CanonicalHash != desiredHash || (current.Path != "" && current.Path != intent.Path)) {
-				return fmt.Errorf("qdrant watermark canonical hash conflict for %s revision %d", key, intent.Revision)
+			if current.Revision == intent.Revision && current.CanonicalHash != "" {
+				if current.CanonicalHash != desiredHash {
+					return fmt.Errorf("qdrant watermark canonical hash conflict for %s revision %d", key, intent.Revision)
+				}
+				// Equal revision and equal hash means the same canonical
+				// content. A Task's Qdrant source id is "task:<id>", so its
+				// path is bookkeeping and a differing one here is a correction
+				// of a previously recorded path, not a competing state;
+				// rejecting it leaves the Task permanently stale with no way
+				// to repair it. A Doc's source id is derived from its path, so
+				// accepting a silent path change there would strand vectors
+				// under the previous source and must still conflict.
+				if intent.EntityType != "task" && current.Path != "" && current.Path != intent.Path {
+					return fmt.Errorf("qdrant watermark canonical path conflict for %s revision %d", key, intent.Revision)
+				}
 			}
 		}
 		values[key] = QdrantIndexWatermark{EntityType: intent.EntityType, EntityID: intent.EntityID, CanonicalHash: canonicalHash, IndexedHash: canonicalHash, Revision: intent.Revision, Path: intent.Path, IndexedRevision: intent.Revision, IndexedPath: intent.Path, IndexedAt: time.Now().UTC(), Stale: false}
@@ -859,21 +947,29 @@ func contentHashForChunks(chunks []Chunk) string {
 	return contentHash(b.String())
 }
 
-func (s *QdrantVectorStore) embedTask(task *models.Task, embedder EmbedderProvider) ([]Chunk, error) {
+// qdrantChunkMaxTokens resolves the chunk-sizing context limit from the
+// embedder's own model config (spec ollama-only-embedding FR-12) rather than
+// the removed EmbeddingModels table keyed by s.model, which only ever
+// covered local ONNX model names and silently fell back to 512 for every
+// HTTP-backed model.
+func qdrantChunkMaxTokens(embedder EmbedderProvider) int {
 	maxTokens := 512
-	if cfg, ok := EmbeddingModels[s.model]; ok {
+	if embedder == nil {
+		return maxTokens
+	}
+	if cfg := embedder.ModelConfig(); cfg.MaxTokens > 0 {
 		maxTokens = cfg.MaxTokens
 	}
-	result := ChunkTask(task, maxTokens, embedder.GetTokenizer())
+	return maxTokens
+}
+
+func (s *QdrantVectorStore) embedTask(task *models.Task, embedder EmbedderProvider) ([]Chunk, error) {
+	result := ChunkTask(task, qdrantChunkMaxTokens(embedder), embedder.GetTokenizer())
 	return embedderChunks(embedder, result.Chunks)
 }
 
 func (s *QdrantVectorStore) embedDoc(doc *models.Doc, embedder EmbedderProvider) ([]Chunk, error) {
-	maxTokens := 512
-	if cfg, ok := EmbeddingModels[s.model]; ok {
-		maxTokens = cfg.MaxTokens
-	}
-	result := ChunkDocument(doc.Content, doc.Path, doc.Title, doc.Description, maxTokens, embedder.GetTokenizer())
+	result := ChunkDocument(doc.Content, doc.Path, doc.Title, doc.Description, qdrantChunkMaxTokens(embedder), embedder.GetTokenizer())
 	return embedderChunks(embedder, result.Chunks)
 }
 

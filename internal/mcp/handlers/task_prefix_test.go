@@ -101,7 +101,7 @@ func TestMCPTaskCreateRejectsInvalidPrefix(t *testing.T) {
 	if !result.IsError {
 		t.Fatalf("invalid prefix did not produce an error result: %#v", result)
 	}
-	tasks, err := getStore().Tasks.List()
+	tasks, err := getStore().Tasks.ListActive()
 	if err != nil {
 		t.Fatalf("list tasks: %v", err)
 	}

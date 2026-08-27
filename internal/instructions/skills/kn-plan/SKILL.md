@@ -84,7 +84,7 @@ Plan-quality checks:
 **Announce:** "Using kn-plan to generate tasks from spec [name]."
 
 1. Read and validate the exact spec path.
-2. Parse requirements, ACs, scenarios, Locked Decisions, and existing Task Links.
+2. Parse requirements, ACs, scenarios, Locked Decisions, existing Task Links, and the optional `Task Generation` → `Task Prefix`.
 3. Resolve existing linked tasks and reuse overlapping work.
 4. Group requirements into independently completable tasks.
 5. Preview tasks and wait for explicit approval.
@@ -92,23 +92,37 @@ Plan-quality checks:
 
 Each task should have:
 
-- title `[<slug>-NN] <outcome>` with stable zero-padded order
+- a clean, descriptive title, with no synthetic `[<slug>-NN]` bracket prefix
 - concise description and spec link
 - `fulfills` mapped to Spec AC IDs
 - outcome-oriented, testable task ACs
 - labels `from-spec`, `spec:<slug>`, and `spec-date:<yyyy-mm-dd>`
-- order `NN * 10`
+- order `NN * 10`, which is what carries sequence
 
 Implementation mechanics belong in the later task plan, not in task ACs.
+
+### Task Prefix
+
+Read the spec's optional `Task Generation` → `Task Prefix`:
+
+- Present: normalize to uppercase and pass it as `prefix` on every create call.
+- Absent or blank: omit `prefix`, and creation falls back to the project's
+  `settings.defaultTaskIdPrefix`, or the legacy format when that is unset.
+
+`prefix` shapes the generated ID only. It is not tied to task type, it must
+never be added to the title, and it does not change project config.
+
+Derive `<slug>` and `<yyyy-mm-dd>` from the spec path for labels and filtering only.
 
 Example creation shape:
 
 ```json
-mcp_knowns_tasks({ "action": "create", "title": "[<slug>-NN] <outcome>",
+mcp_knowns_tasks({ "action": "create", "title": "<outcome>",
   "description": "<bounded outcome>", "spec": "<spec-path>",
   "fulfills": ["AC-1"], "priority": "medium",
   "labels": ["from-spec", "spec:<slug>", "spec-date:<yyyy-mm-dd>"],
-  "order": 10 })
+  "order": 10,
+  "prefix": "<Task Prefix from spec; omit this field when blank>" })
 ```
 
 ## Validation and Approval

@@ -115,7 +115,7 @@ func (tr *TaskRoutes) list(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	tasks, err := tr.getStore().Tasks.List()
+	tasks, err := tr.getStore().Tasks.ListActive()
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -487,10 +487,12 @@ func (tr *TaskRoutes) reorder(w http.ResponseWriter, r *http.Request) {
 
 // syncSpecACs scans all done tasks that have a Spec field and synchronises
 // their Fulfills list into the linked spec document's acceptance criteria.
+// Archived tasks count: work that satisfied an AC keeps satisfying it after the
+// task is archived, so coverage must not drop when the board is tidied.
 //
 // POST /api/tasks/sync-spec-acs
 func (tr *TaskRoutes) syncSpecACs(w http.ResponseWriter, r *http.Request) {
-	tasks, err := tr.getStore().Tasks.List()
+	tasks, err := tr.getStore().Tasks.ListAll()
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return

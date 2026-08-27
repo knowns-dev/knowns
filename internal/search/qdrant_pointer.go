@@ -48,6 +48,11 @@ const (
 	// QdrantGenerationStatusInactive marks a prior generation retained only
 	// for rollback within the retention window.
 	QdrantGenerationStatusInactive = "inactive"
+	// QdrantGenerationStatusDeleted marks a generation whose collection was
+	// dropped from the backend. The record is kept for audit but no longer
+	// describes anything that exists, so retention and orphan reporting must
+	// not keep proposing it for review.
+	QdrantGenerationStatusDeleted = "deleted"
 )
 
 // QdrantEmbeddingPointer identifies the embedding identity used to build a

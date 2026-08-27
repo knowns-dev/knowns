@@ -1,14 +1,16 @@
 ---
+id: doc-15c506292139106a6932c41b7526610d
 title: Semantic Search Quality Improvements
 description: Specification for fixing chunking algorithm and embedding model prefix issues to improve semantic search quality
 createdAt: '2026-04-01T08:02:49.337Z'
-updatedAt: '2026-04-06T07:01:32.948Z'
+updatedAt: '2026-08-25T14:36:46.570Z'
 tags:
   - spec
   - approved
   - search
   - embedding
   - chunking
+  - partially-superseded
 ---
 
 ## Overview
@@ -129,3 +131,20 @@ Related: @doc/specs/semantic-search (original spec)
 
 - [ ] Should `Embed()` be deprecated or kept long-term? (Current plan: keep for backward compat)
 - [ ] Should auto-reindex have a `--no-auto-reindex` flag for CI/scripting environments?
+
+
+## Superseded in Part
+
+@doc/specs/2026-08-24/ollama-only-embedding supersedes part of this spec.
+
+**Void:** FR-3 and AC-5 (tokenizer-based token counting), and Scenario 3 — the tokenizer is removed along with the ONNX path.
+
+**Void in part:** AC-1, for the local models that no longer exist.
+
+**Retained:** the query/document prefix mechanism, which now applies to the HTTP provider, and the chunking requirements.
+
+### Deliberate downgrade: FR-3
+
+This is a deliberate downgrade, not an ordinary supersession. Removing the tokenizer downgrades token counting from exact to estimated for every provider, against FR-3's requirement for tokenizer-based exact counts. The estimator was improved separately to reduce the cost of this change, but it remains a downgrade and is recorded as one rather than silently absorbed.
+
+The System Decision recording this removal is not yet accepted — it stays draft until the removal is merged and a commit can be cited as evidence — and will be linked here once accepted.

@@ -77,8 +77,6 @@ type semanticRuntimeConfig struct {
 	modelID          string
 	modelName        string
 	dimensions       int
-	maxTokens        int
-	modelDir         string
 	apiConfig        APIEmbedderConfig
 }
 
@@ -419,18 +417,15 @@ func loadSemanticRuntimeConfig(store *storage.Store) (semanticRuntimeConfig, err
 	if cfg == nil || cfg.Settings.SemanticSearch == nil || !cfg.Settings.SemanticSearch.Enabled || cfg.Settings.SemanticSearch.Model == "" {
 		return semanticRuntimeConfig{}, ErrSemanticNotConfigured
 	}
-	ss := cfg.Settings.SemanticSearch
+	// Resolved per spec ollama-only-embedding D1/FR-3: provider: local (or
+	// omitted) behaves as provider: ollama with the D2 default model, in
+	// memory only — config.json is untouched here.
+	ss := cfg.Settings.EffectiveSemanticSearch()
 	provider := ss.Provider
 	if provider == "" {
-		provider = "local"
+		provider = "ollama"
 	}
-	if provider == "api" || provider == "ollama" {
-		return semanticRuntimeAPIConfig(ss, provider)
-	}
-	if err := RequireLocalONNX(); err != nil {
-		return semanticRuntimeConfig{}, err
-	}
-	return semanticRuntimeLocalConfig(ss, provider)
+	return semanticRuntimeAPIConfig(ss, provider)
 }
 
 func semanticRuntimeAPIConfig(ss *models.SemanticSearchSettings, providerType string) (semanticRuntimeConfig, error) {
@@ -447,6 +442,16 @@ func semanticRuntimeAPIConfig(ss *models.SemanticSearchSettings, providerType st
 		return semanticRuntimeConfig{}, fmt.Errorf("resolve embedding provider: %w", err)
 	}
 	provider = provider.WithDefaults()
+	// Project settings win over the machine-wide registry so one project can
+	// chunk differently without editing global state; the registry entry is the
+	// fallback, and only then the embedder's own conservative default.
+	maxTokens := ss.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = model.MaxTokens
+	}
+	// Every field below feeds the cache key. A changed prefix or context limit
+	// produces different vectors and different chunk boundaries, so a runtime
+	// cached under the old value must not be reused.
 	key := strings.Join([]string{
 		"provider=" + providerType,
 		"providerID=" + model.Provider,
@@ -454,6 +459,9 @@ func semanticRuntimeAPIConfig(ss *models.SemanticSearchSettings, providerType st
 		"apiKey=" + secretFingerprint(provider.APIKey),
 		"model=" + model.Model,
 		"dims=" + strconv.Itoa(model.Dimensions),
+		"maxTokens=" + strconv.Itoa(maxTokens),
+		"queryPrefix=" + model.QueryPrefix,
+		"docPrefix=" + model.DocPrefix,
 		"timeout=" + strconv.Itoa(provider.Timeout),
 		"batch=" + strconv.Itoa(provider.BatchSize),
 		"retry=" + strconv.Itoa(provider.Retry.MaxRetries) + "/" + strconv.Itoa(provider.Retry.InitialDelay) + "/" + strconv.Itoa(provider.Retry.MaxDelay),
@@ -466,67 +474,22 @@ func semanticRuntimeAPIConfig(ss *models.SemanticSearchSettings, providerType st
 		modelName:        model.Model,
 		dimensions:       model.Dimensions,
 		apiConfig: APIEmbedderConfig{
-			APIBase:    provider.APIBase,
-			APIKey:     provider.APIKey,
-			Model:      model.Model,
-			Dimensions: model.Dimensions,
-			Timeout:    provider.Timeout,
-			BatchSize:  provider.BatchSize,
-			Retry:      provider.Retry,
+			APIBase:     provider.APIBase,
+			APIKey:      provider.APIKey,
+			Model:       model.Model,
+			Dimensions:  model.Dimensions,
+			MaxTokens:   maxTokens,
+			Timeout:     provider.Timeout,
+			BatchSize:   provider.BatchSize,
+			Retry:       provider.Retry,
+			QueryPrefix: model.QueryPrefix,
+			DocPrefix:   model.DocPrefix,
 		},
 	}, nil
 }
 
-func semanticRuntimeLocalConfig(ss *models.SemanticSearchSettings, providerType string) (semanticRuntimeConfig, error) {
-	modelConfig, ok := EmbeddingModels[ss.Model]
-	if !ok {
-		return semanticRuntimeConfig{}, fmt.Errorf("unknown embedding model %q", ss.Model)
-	}
-	home, _ := os.UserHomeDir()
-	modelDir := filepath.Join(home, ".knowns", "models", modelConfig.HuggingFaceID)
-	dims := ss.Dimensions
-	if dims <= 0 {
-		dims = modelConfig.Dimensions
-	}
-	maxTokens := ss.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = modelConfig.MaxTokens
-	}
-	key := strings.Join([]string{
-		"provider=" + providerType,
-		"model=" + ss.Model,
-		"modelDir=" + modelDir,
-		"dims=" + strconv.Itoa(dims),
-	}, "|")
-	return semanticRuntimeConfig{
-		cacheKey:         key,
-		provider:         providerType,
-		providerIdentity: modelDir,
-		modelID:          ss.Model,
-		modelName:        ss.Model,
-		dimensions:       dims,
-		maxTokens:        maxTokens,
-		modelDir:         modelDir,
-	}, nil
-}
-
 func openSemanticRuntimeEmbedder(cfg semanticRuntimeConfig) (EmbedderProvider, error) {
-	if cfg.provider == "api" || cfg.provider == "ollama" {
-		return NewAPIEmbedder(cfg.apiConfig)
-	}
-	onnxPath := filepath.Join(cfg.modelDir, "onnx", "model_quantized.onnx")
-	if _, err := os.Stat(onnxPath); os.IsNotExist(err) {
-		onnxPath = filepath.Join(cfg.modelDir, "onnx", "model.onnx")
-		if _, err := os.Stat(onnxPath); os.IsNotExist(err) {
-			return nil, fmt.Errorf("embedding model %q not downloaded (run: knowns model download %s)", cfg.modelID, cfg.modelID)
-		}
-	}
-	return NewEmbedder(EmbedderConfig{
-		ModelDir:   cfg.modelDir,
-		ModelName:  cfg.modelID,
-		Dimensions: cfg.dimensions,
-		MaxTokens:  cfg.maxTokens,
-	})
+	return NewAPIEmbedder(cfg.apiConfig)
 }
 
 func openRuntimeVectorStore(store *storage.Store, cfg semanticRuntimeConfig) (VectorStore, error) {

@@ -56,7 +56,17 @@ var (
 //
 // GET /api/graph
 func (gr *GraphRoutes) graph(w http.ResponseWriter, r *http.Request) {
-	tasks, err := gr.getStore().Tasks.List()
+	includeHistorical, err := parseIncludeHistorical(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	list := gr.getStore().Tasks.ListActive
+	if includeHistorical {
+		list = gr.getStore().Tasks.ListAll
+	}
+	tasks, err := list()
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -392,7 +402,9 @@ func BuildCodeGraph(store *storage.Store) ([]GraphNode, []GraphEdge) {
 		codeEdges = append(codeEdges, extractCodeMentions(src, fullDoc.Content, codeChunkIDs)...)
 	}
 
-	tasks, _ := store.Tasks.List()
+	// Active only on purpose: BuildCodeGraph has no visibility flag, and emitting
+	// edges for Task nodes the caller did not request would leave them dangling.
+	tasks, _ := store.Tasks.ListActive()
 	for _, t := range tasks {
 		src := "task:" + t.ID
 		content := t.Description + " " + t.ImplementationPlan + " " + t.ImplementationNotes

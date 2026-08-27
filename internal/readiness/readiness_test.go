@@ -72,34 +72,71 @@ func TestSemanticRuntimeReadinessReportsDisabledState(t *testing.T) {
 	}
 }
 
-func TestSemanticModelInstalledDoesNotRequireONNXForRemoteProviders(t *testing.T) {
-	for _, provider := range []string{"api", "ollama"} {
+// TestSemanticModelInstalledReducesToConfigured verifies spec
+// ollama-only-embedding FR-1: with the local ONNX runtime removed, every
+// provider (including the legacy "local" value D1 resolves to ollama)
+// manages model availability remotely, so "installed" is just "configured".
+func TestSemanticModelInstalledReducesToConfigured(t *testing.T) {
+	for _, provider := range []string{"api", "ollama", "local", ""} {
 		settings := &models.SemanticSearchSettings{Provider: provider, Model: "remote-model"}
-		if !semanticModelInstalled(settings, false) {
-			t.Fatalf("provider %q should not require a local ONNX runtime", provider)
+		if !semanticModelInstalled(settings) {
+			t.Fatalf("provider %q with a configured model should be installed", provider)
 		}
 	}
 
-	local := &models.SemanticSearchSettings{Provider: "local", Model: "gte-small"}
-	if semanticModelInstalled(local, false) {
-		t.Fatal("local provider should require an available ONNX runtime")
+	unconfigured := &models.SemanticSearchSettings{Provider: "ollama", Model: ""}
+	if semanticModelInstalled(unconfigured) {
+		t.Fatal("no model configured should not be installed")
 	}
-	if !semanticModelInstalled(local, true) {
-		t.Fatal("local provider with ONNX runtime should be ready")
+
+	if semanticModelInstalled(nil) {
+		t.Fatal("nil settings should not be installed")
 	}
 }
 
 // enableSemanticConfig turns on semantic search for a store with a fixed
 // local embedding identity so readiness checks are deterministic.
+// registerReadinessOllamaTestModel merges modelID -> {provider: ollama,
+// dimensions} into the per-test-isolated global embedding settings file, so
+// a project declaring provider: ollama and this model resolves
+// deterministically in tests without depending on a real Ollama-seeded
+// model name. Caller must have HOME isolated already (newReadinessStore
+// does this).
+func registerReadinessOllamaTestModel(t *testing.T, modelID string, dimensions int) {
+	t.Helper()
+	settingsStore := storage.NewEmbeddingSettingsStore()
+	settings, err := settingsStore.Load()
+	if err != nil {
+		t.Fatalf("load embedding settings: %v", err)
+	}
+	if settings.Models == nil {
+		settings.Models = make(map[string]storage.EmbeddingModel)
+	}
+	settings.Models[modelID] = storage.EmbeddingModel{
+		Provider:   storage.OllamaProviderID,
+		Model:      modelID,
+		Dimensions: dimensions,
+	}
+	if err := settingsStore.Save(settings); err != nil {
+		t.Fatalf("save embedding settings: %v", err)
+	}
+}
+
 func enableSemanticConfig(t *testing.T, store *storage.Store) {
 	t.Helper()
 	project, err := store.Config.Load()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
+	// Registered explicitly as provider: ollama (spec ollama-only-embedding
+	// D1/FR-3): provider: local now resolves to provider: ollama with the
+	// D2 default model in memory on every read, so a literal "local"
+	// fixture can no longer carry a specific, stable (model, dimensions)
+	// pair for the readiness/staleness comparisons this file exercises.
+	registerReadinessOllamaTestModel(t, "gte-small", 384)
 	project.Settings.SemanticSearch = &models.SemanticSearchSettings{
 		Enabled:    true,
-		Provider:   "local",
+		Provider:   "ollama",
 		Model:      "gte-small",
 		Dimensions: 384,
 	}

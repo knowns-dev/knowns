@@ -328,7 +328,7 @@ func runTimeReport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get time entries: %w", err)
 	}
 
-	tasks, _ := store.Tasks.List()
+	tasks, _ := store.Tasks.ListAll()
 	taskByID := make(map[string]*models.Task)
 	for _, t := range tasks {
 		taskByID[t.ID] = t

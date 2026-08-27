@@ -42,7 +42,11 @@ func TestConfigLifecyclePOSTPreservesLegacyProjectResponse(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
 		t.Fatal(err)
 	}
-	if len(raw) != 4 || raw["name"] == nil || raw["id"] == nil || raw["createdAt"] == nil || raw["settings"] == nil {
+	// schemaVersion (spec ollama-only-embedding D10/FR-18) is a legitimate
+	// new top-level Project field: a freshly initialized project is stamped
+	// at the current schema version, so it round-trips through this legacy
+	// endpoint like any other Project field.
+	if len(raw) != 5 || raw["name"] == nil || raw["id"] == nil || raw["createdAt"] == nil || raw["settings"] == nil || raw["schemaVersion"] == nil {
 		t.Fatalf("legacy POST top-level shape = %v", raw)
 	}
 	if raw["config"] != nil || raw["capabilities"] != nil || raw["taskLifecycle"] != nil {

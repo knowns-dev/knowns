@@ -9,10 +9,10 @@ Optimize your context usage to work more efficiently within token limits.
 
 ```bash
 # Verbose output
-knowns task 42 --json
+knowns task KN-4F7Q2M --json
 
 # Compact output (always use --plain)
-knowns task 42 --plain
+knowns task KN-4F7Q2M --plain
 ```
 
 ---
@@ -111,10 +111,10 @@ mcp__knowns__get_doc({ "path": "readme", "section": "3" })
 
 ```bash
 # DON'T: Verbose notes
-knowns task edit 42 --append-notes "I have successfully completed the implementation..."
+knowns task edit KN-4F7Q2M --append-notes "I have successfully completed the implementation..."
 
 # DO: Compact notes
-knowns task edit 42 --append-notes "Done: Auth middleware + JWT validation"
+knowns task edit KN-4F7Q2M --append-notes "Done: Auth middleware + JWT validation"
 ```
 
 ---

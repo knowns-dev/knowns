@@ -47,14 +47,21 @@ For a spec ref:
 
 1. Read the spec.
 2. List tasks linked to the spec.
-3. Sort by `order`, then shared `[slug-NN]` title prefix, then title.
-4. If no tasks exist, use `/kn-plan --from @doc/<spec-path>` behavior to preview tasks. Ask before creating tasks unless the user explicitly approved task creation.
+3. Read the spec's optional `Task Generation` → `Task Prefix`; when tasks must be
+   generated, pass it as `prefix` on each create call without changing project config.
+4. Sort by `order`, then title. Generated IDs are identity, not workflow ordering.
+5. If no tasks exist, use `/kn-plan --from @doc/<spec-path>` behavior to preview tasks. Ask before creating tasks unless the user explicitly approved task creation.
 
 For explicit task IDs:
 
 1. Read every task.
 2. Follow refs needed to understand dependencies and verification.
 3. Sort by dependency order when visible; otherwise preserve user order.
+
+Carry each ID verbatim into worker prompts and back out of worker reports.
+Projects that set `settings.defaultTaskIdPrefix` produce IDs like `KN-4F7Q2M`,
+and a worker receives that string with none of your project context to repair
+it, so a stripped prefix becomes a task the worker cannot open.
 
 ## Parallel Gate
 
@@ -78,14 +85,15 @@ For each task or parallel-safe wave:
 
 1. Run `/kn-plan <task-id>` behavior if no saved plan exists or if the plan is stale.
 2. Run `/kn-implement <task-id>` behavior to complete the saved plan.
-3. Run `/kn-review <task-id>` behavior against the real diff.
-4. Fix P1 findings. Fix P2 findings when practical, or explicitly defer them with a follow-up task.
-5. Validate the task before marking the wave complete.
-6. Run the System Decision Impact checkpoint before completion:
+3. Run `/kn-test <task-id>` behavior when the task changed behavior, so the reviewer sees the implementation and its tests together. Report any criterion left unproven rather than omitting it. Skip this step for work that changes no behavior, such as documentation or configuration, and say that it was skipped.
+4. Run `/kn-review <task-id>` behavior against the real diff.
+5. Fix P1 findings. Fix P2 findings when practical, or explicitly defer them with a follow-up task.
+6. Validate the task before marking the wave complete.
+7. Run the System Decision Impact checkpoint before completion:
    - no durable guidance change → append `System Decision Impact: none — <reason>` and create no candidate
    - durable guidance added, changed, or removed → create a first-class draft Decision linked to the task, spec/doc, and readable sources; append `System Decision Impact: candidate @decision/<id> (added|changed|removed) — <summary>`
    - never auto-accept the candidate; unresolved evidence/conflicts stay in Review Inbox
-7. Append one structured task note before completion: `Spec Decision Compliance: D1=pass, D2=pass`. Use `D<N>=conflict: <reason>` for any conflict and do not mark the task done.
+8. Append one structured task note before completion: `Spec Decision Compliance: D1=pass, D2=pass`. Use `D<N>=conflict: <reason>` for any conflict and do not mark the task done.
 
 Spec Decisions remain canonical execution rules in the spec's `Locked Decisions` section. Do not create System Decision ledger rows merely to mirror D-IDs. Never create Memory category `decision`; redirect legacy Decision Memory capture requests to the first-class Decision candidate flow.
 
@@ -147,8 +155,10 @@ Required order for the final user-facing response:
 - `/kn-plan --from @doc/<spec-path>` - generate tasks from a spec without executing them
 - `/kn-plan <id>` - plan one task inside the flow
 - `/kn-implement <id>` - implement one task inside the flow
+- `/kn-test <id>` - derive tests from the spec's criteria and report what remains unproven
 - `/kn-review <id>` - review one task or integrated wave
 - `/kn-verify` - final SDD verification
+- `/kn-handoff contract` - publish the settled API contract when another repository is waiting on this work
 - `/kn-commit` - commit after the flow is complete and reviewed
 
 ## Checklist
@@ -158,6 +168,7 @@ Required order for the final user-facing response:
 - [ ] Parallel gate reported
 - [ ] Plans exist for all runnable tasks
 - [ ] Implementation completed per task
+- [ ] Tests derived and run for behavior changes, or the step explicitly skipped
 - [ ] Reviews completed and P1 fixed
 - [ ] Combined verification passed
 - [ ] SDD validation passed
@@ -179,3 +190,4 @@ Required order for the final user-facing response:
 - Creating legacy Decision Memory instead of a first-class Decision candidate
 - Duplicating Spec Locked Decisions into the System Decision ledger
 - Committing or pushing without explicit user request
+- Closing a flow that another repository is waiting on without publishing a `/kn-handoff contract`

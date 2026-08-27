@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -299,7 +300,7 @@ func aiInstructionsChecker(state *localState) Checker {
 					Evidence: evidence,
 					Remediation: &Remediation{
 						Description: "Synchronize the configured AI platform artifacts.",
-						Command:     "knowns sync",
+						Command:     "knowns sync --instructions",
 					},
 				}, nil
 			}
@@ -334,7 +335,13 @@ func aiSkillsChecker(state *localState) Checker {
 					filepath.Join(".kiro", "skills"),
 				}, state.deps.exists)
 			}
-			if len(expected) == 0 {
+
+			// User-level skills are installed by `setup --global` and are never
+			// touched by a project sync, so they drift silently after an upgrade.
+			// They are checked even when this project syncs no skills of its own.
+			globalStale := homeRelativePaths(state.deps.globalSkills())
+
+			if len(expected) == 0 && len(globalStale) == 0 {
 				return subsystemDisabled("No configured AI platform requires synchronized skills", "not_applicable"), nil
 			}
 
@@ -345,7 +352,7 @@ func aiSkillsChecker(state *localState) Checker {
 				}
 			}
 			sort.Strings(missing)
-			outOfSync := len(missing) == 0 && state.deps.skillsOutOfSync(projectRoot)
+			outOfSync := len(expected) > 0 && len(missing) == 0 && state.deps.skillsOutOfSync(projectRoot)
 			evidence := Evidence{
 				"platforms": platforms,
 				"skillDirs": slashPaths(expected),
@@ -356,15 +363,41 @@ func aiSkillsChecker(state *localState) Checker {
 			if outOfSync {
 				evidence["outOfSync"] = true
 			}
-			if len(missing) > 0 || outOfSync {
+			if len(globalStale) > 0 {
+				evidence["globalStalePaths"] = globalStale
+			}
+
+			projectNeedsSync := len(missing) > 0 || outOfSync
+			if projectNeedsSync || len(globalStale) > 0 {
+				summary := "AI skills are missing or out of sync"
+				// `knowns sync` with no flag also downloads the embedding model
+				// and rebuilds the whole search index, which is far more than a
+				// stale SKILL.md warrants. `--skills` does only what is broken.
+				description := "Synchronize built-in skills for the configured AI platforms."
+				if len(globalStale) > 0 {
+					// `knowns sync` leaves the user-level copies untouched, so
+					// naming only that command sends the user around the loop
+					// twice when both scopes have drifted.
+					description += " Then run `knowns setup " + globalSetupTarget(globalStale) + " --global` for the user-level copies."
+				}
+				remediation := &Remediation{
+					Description: description,
+					Command:     "knowns sync --skills",
+				}
+				// A project sync never rewrites the user-level copies, so a
+				// global-only drift needs the global setup command instead.
+				if !projectNeedsSync {
+					summary = "User-level AI skills are out of sync"
+					remediation = &Remediation{
+						Description: "Re-run global setup so user-level skills match this binary.",
+						Command:     "knowns setup " + globalSetupTarget(globalStale) + " --global",
+					}
+				}
 				return CheckResult{
-					Status:   StatusWarn,
-					Summary:  "AI skills are missing or out of sync",
-					Evidence: evidence,
-					Remediation: &Remediation{
-						Description: "Synchronize built-in skills for the configured AI platforms.",
-						Command:     "knowns sync",
-					},
+					Status:      StatusWarn,
+					Summary:     summary,
+					Evidence:    evidence,
+					Remediation: remediation,
 				}, nil
 			}
 			return CheckResult{
@@ -374,6 +407,38 @@ func aiSkillsChecker(state *localState) Checker {
 			}, nil
 		},
 	}
+}
+
+// homeRelativePaths rewrites absolute home paths to a ~ prefix so evidence stays
+// readable and does not leak the account name into shared diagnostics output.
+func homeRelativePaths(paths []string) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if err == nil && home != "" && strings.HasPrefix(path, home+string(filepath.Separator)) {
+			path = "~" + path[len(home):]
+		}
+		out = append(out, filepath.ToSlash(path))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// globalSetupTarget picks the setup target to name in the remediation command
+// from the stale user-level directories.
+func globalSetupTarget(stalePaths []string) string {
+	for _, path := range stalePaths {
+		switch {
+		case strings.Contains(path, "/.claude/"):
+			return "claude"
+		case strings.Contains(path, "/.kiro/"):
+			return "kiro"
+		}
+	}
+	return "agents"
 }
 
 func skillDirsForPlatforms(platforms []string) []string {

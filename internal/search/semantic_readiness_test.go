@@ -24,9 +24,17 @@ func configureSemanticStore(t *testing.T, vs *models.SemanticVectorStoreSettings
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
+	// Registered explicitly as provider: ollama (spec ollama-only-embedding
+	// D1/FR-3): provider: local now resolves to provider: ollama with the
+	// D2 default model in memory on every read, so a literal "local"
+	// fixture can no longer carry a specific, stable (model, dimensions)
+	// pair for the readiness/staleness comparisons this file exercises.
+	// registerOllamaTestModel makes "gte-small"@384 resolve deterministically
+	// instead.
+	registerOllamaTestModel(t, "gte-small", 384)
 	project.Settings.SemanticSearch = &models.SemanticSearchSettings{
 		Enabled:     true,
-		Provider:    "local",
+		Provider:    "ollama",
 		Model:       "gte-small",
 		Dimensions:  384,
 		VectorStore: vs,
@@ -429,7 +437,7 @@ func TestSearchWithRuntimeHybridQdrantPointerReady(t *testing.T) {
 	}
 }
 
-func TestRuntimeQdrantQueryFailureDegradesHybridAndRetrieveButFailsSemantic(t *testing.T) {
+func TestRuntimeQdrantQueryFailureDegradesHybridSemanticAndRetrieve(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "qdrant unavailable", http.StatusServiceUnavailable)
 	}))
@@ -465,8 +473,20 @@ func TestRuntimeQdrantQueryFailureDegradesHybridAndRetrieveButFailsSemantic(t *t
 	if len(hybrid.Results) == 0 {
 		t.Fatal("hybrid lost keyword fallback")
 	}
-	if _, err := SearchWithRuntime(store, SearchOptions{Query: "runtime", Mode: string(ModeSemantic), Limit: 5}); err == nil || !strings.Contains(err.Error(), "503") {
-		t.Fatalf("semantic err=%v", err)
+	// Semantic mode used to fail outright here. Locked Decision D3 and AC-7 of
+	// the ollama-only-embedding spec changed that contract deliberately: an
+	// unreachable embedder degrades a search, it does not fail it, in every
+	// mode. Semantic mode now runs a keyword leg on the failure path and
+	// reports the degradation through the runtime metadata instead.
+	semantic, err := SearchWithRuntime(store, SearchOptions{Query: "runtime", Mode: string(ModeSemantic), Limit: 5})
+	if err != nil {
+		t.Fatalf("semantic err=%v, want keyword degradation rather than failure", err)
+	}
+	if semantic.Runtime == nil || !semantic.Runtime.Degraded || !strings.Contains(semantic.Runtime.Message, "503") {
+		t.Fatalf("semantic runtime=%#v, want degraded metadata naming the upstream failure", semantic.Runtime)
+	}
+	if len(semantic.Results) == 0 {
+		t.Fatal("semantic lost keyword fallback")
 	}
 	retrieved, meta, err := RetrieveWithRuntime(store, models.RetrievalOptions{Query: "runtime", Mode: string(ModeHybrid), Limit: 5})
 	if err != nil {
@@ -475,4 +495,46 @@ func TestRuntimeQdrantQueryFailureDegradesHybridAndRetrieveButFailsSemantic(t *t
 	if meta == nil || !meta.Degraded || len(retrieved.Candidates) == 0 {
 		t.Fatalf("retrieve meta=%#v candidates=%d", meta, len(retrieved.Candidates))
 	}
+}
+
+func TestEntitiesOnlyStaleDistinguishesEntityLagFromPointerFailure(t *testing.T) {
+	// A stale entity and a stale pointer are repaired differently: the first by
+	// per-entity reconciliation, the second by rebuilding the collection.
+	// Callers scoped to pointer metadata rely on this flag to tell them apart.
+	stale := runtimequeue.QdrantIntent{EntityType: "task", EntityID: "lagging", Revision: 1, Operation: "update", CanonicalHash: "canonical-hash", Path: "tasks/lagging.md", BatchID: "public-hook"}
+
+	t.Run("valid pointer with lagging entity", func(t *testing.T) {
+		store := configureSemanticStore(t, nil)
+		writeReadyQdrantPointer(t, store)
+		if err := markQdrantIntentPending(store.Root, stale); err != nil {
+			t.Fatal(err)
+		}
+		r := ResolveSemanticIndexReadiness(store)
+		if !r.Stale || !r.EntitiesOnlyStale || r.EntityStaleCount == 0 {
+			t.Fatalf("entity lag not attributed to entities: %+v", r)
+		}
+	})
+
+	t.Run("pointer mismatch outranks entity lag", func(t *testing.T) {
+		store := configureSemanticStore(t, nil)
+		writeReadyQdrantPointer(t, store)
+		pointer, err := LoadQdrantPointer(store.Root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pointer.Embedding.Model = "some-other-model"
+		if err := SaveQdrantPointer(store.Root, pointer); err != nil {
+			t.Fatal(err)
+		}
+		if err := markQdrantIntentPending(store.Root, stale); err != nil {
+			t.Fatal(err)
+		}
+		r := ResolveSemanticIndexReadiness(store)
+		if !r.Stale {
+			t.Fatalf("stale = false for pointer model mismatch: %+v", r)
+		}
+		if r.EntitiesOnlyStale {
+			t.Fatalf("pointer mismatch misreported as entities-only: %+v", r)
+		}
+	})
 }

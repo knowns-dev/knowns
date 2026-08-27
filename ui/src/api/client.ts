@@ -10,10 +10,13 @@ import type {
 } from "@/ui/models/taskLifecycle";
 
 // Use env vars from Vite, fallback to relative paths for production
-const API_BASE = import.meta.env.API_URL || "";
+export const API_BASE = import.meta.env.API_URL || "";
 
-// Wrapper that always sends credentials (cookies) with requests
-function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+// Wrapper that always sends credentials (cookies) with requests. Exported so
+// components never hand-roll a relative fetch: in dev the UI is served by Vite
+// on a different port with no /api proxy, so a relative URL silently returns
+// index.html instead of JSON.
+export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
 	return fetch(input, { ...init, credentials: "include" });
 }
 
@@ -872,6 +875,7 @@ export interface KnownsSearchOptions {
 	type?: "all" | "task" | "doc" | "memory" | "decision" | "code";
 	mode?: "keyword" | "semantic" | "hybrid";
 	limit?: number;
+	includeHistorical?: boolean;
 }
 
 // Search API
@@ -883,6 +887,7 @@ export async function search(
 	if (options.type) params.set("type", options.type);
 	if (options.mode) params.set("mode", options.mode);
 	if (options.limit) params.set("limit", String(options.limit));
+	if (options.includeHistorical) params.set("includeHistorical", "true");
 	const res = await apiFetch(`${API_BASE}/api/search?${params.toString()}`);
 	if (!res.ok) {
 		throw new Error("Failed to search");
@@ -934,7 +939,10 @@ function taskMentionsSpec(task: Task, normalizedSpec: string): boolean {
 
 // Get tasks linked to a spec
 export async function getTasksBySpec(specPath: string): Promise<Task[]> {
-	const tasks = await api.getTasks();
+	// A spec's linked tasks are the evidence of who implemented it, so archived
+	// implementers stay in the list. The panel marks them instead of hiding them:
+	// dropping them would make a fully implemented spec look unimplemented.
+	const tasks = await api.getTasks({ includeHistorical: true });
 	const normalizedSpec = normalizeSpecLink(specPath);
 	return tasks.filter((task) => taskMentionsSpec(task, normalizedSpec));
 }
@@ -1285,10 +1293,8 @@ export const timeApi = {
 // Embedding Models API
 export interface EmbeddingModelInfo {
 	name: string;
-	huggingFaceId?: string;
 	dimensions: number;
 	maxTokens?: number;
-	installed?: boolean;
 	source?: string;
 	provider?: string;
 	id?: string;
@@ -1296,7 +1302,6 @@ export interface EmbeddingModelInfo {
 }
 
 export interface EmbeddingModelsResponse {
-	local: EmbeddingModelInfo[];
 	api: EmbeddingModelInfo[];
 	configured: EmbeddingModelInfo[];
 }
@@ -1449,8 +1454,11 @@ export interface GraphData {
 	edges: GraphEdge[];
 }
 
-export async function getGraph(): Promise<GraphData> {
-	const res = await apiFetch(`${API_BASE}/api/graph`);
+export async function getGraph(options?: { includeHistorical?: boolean }): Promise<GraphData> {
+	const params = new URLSearchParams();
+	if (options?.includeHistorical) params.set("includeHistorical", "true");
+	const query = params.toString();
+	const res = await apiFetch(`${API_BASE}/api/graph${query ? `?${query}` : ""}`);
 	if (!res.ok) throw new Error("Failed to fetch graph");
 	return res.json();
 }

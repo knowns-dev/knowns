@@ -48,8 +48,8 @@ No SQLite. No JSON database. Just markdown files.
 .knowns/
 ├── config.json           # Project configuration
 ├── tasks/
-│   ├── task-1 - Title.md
-│   └── task-2 - Title.md
+│   ├── task-KN-4F7Q2M - Title.md
+│   └── task-KN-9B3XKD - Title.md
 ├── docs/
 │   ├── patterns/
 │   │   └── auth.md
@@ -89,8 +89,8 @@ References like `@doc/patterns/auth` resolve to real file paths:
 Input:  @doc/patterns/auth
 Output: .knowns/docs/patterns/auth.md
 
-Input:  @task-42
-Output: .knowns/tasks/task-42 - Title.md
+Input:  @task-KN-4F7Q2M
+Output: .knowns/tasks/task-KN-4F7Q2M - Title.md
 ```
 
 **Why:** Deterministic, no magic, AI can follow links.
@@ -136,11 +136,11 @@ src/
 ### CLI Command
 
 ```
-User: knowns task view 42 --plain
+User: knowns task view KN-4F7Q2M --plain
 
 1. CLI parses command (commander.js)
 2. Command calls storage layer
-3. Storage reads .knowns/tasks/task-42 - *.md
+3. Storage reads .knowns/tasks/task-KN-4F7Q2M - *.md
 4. Markdown parsed, frontmatter extracted
 5. Output formatted (plain text for AI)
 6. Result printed to stdout

@@ -101,7 +101,7 @@ export function SemanticReferenceBadge({ rawRef, onDocLinkClick, onTaskLinkClick
           if (onTaskLinkClick) {
             onTaskLinkClick(taskId);
           } else {
-            navigateTo(`/kanban/${taskId}`);
+            navigateTo(`/tasks/${taskId}`);
           }
         },
       };

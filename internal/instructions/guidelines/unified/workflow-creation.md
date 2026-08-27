@@ -79,7 +79,7 @@ Explain WHY. Include doc refs: `@doc/security-patterns`
 ### CLI
 ```bash
 knowns task create "Parent task"
-knowns task create "Subtask" --parent 48  # Raw ID only!
+knowns task create "Subtask" --parent KN-4F7Q2M  # The ID as printed, prefix included
 ```
 {{/if}}
 {{#if mcp}}

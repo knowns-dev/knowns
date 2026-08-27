@@ -166,8 +166,18 @@ func TestSemanticRuntimeConcurrentSessionsOpenSingleProvider(t *testing.T) {
 }
 
 func TestSemanticRuntimeCacheKeySeparatesDimensions(t *testing.T) {
-	firstStore := newSemanticRuntimeTestStore(t, "gte-small", 384)
-	secondStore := newSemanticRuntimeTestStore(t, "gte-small", 768)
+	t.Setenv("HOME", t.TempDir())
+	// Two distinct model names, not one model name with two Dimensions
+	// overrides: under provider: ollama, dimensions are a property of the
+	// registered model (looked up by name), not a per-project override, so
+	// the same model name can no longer carry two different dimension
+	// values across two stores in the same test (spec D1/FR-3 resolution
+	// no longer honors a project's own Dimensions field for a legacy local
+	// config; a genuine ollama config never did).
+	firstStore := newSemanticRuntimeTestStoreWithProvider(t, "gte-small-384", 384, "ollama")
+	registerOllamaTestModel(t, "gte-small-384", 384)
+	secondStore := newSemanticRuntimeTestStoreWithProvider(t, "gte-small-768", 768, "ollama")
+	registerOllamaTestModel(t, "gte-small-768", 768)
 	openCount := 0
 	rt := NewSemanticRuntime(SemanticRuntimeOptions{
 		IdleTimeout: time.Hour,
@@ -490,6 +500,25 @@ func newSemanticRuntimeTestStore(t *testing.T, model string, dimensions int) *st
 
 func newSemanticRuntimeTestStoreWithProvider(t *testing.T, model string, dimensions int, provider string) *storage.Store {
 	t.Helper()
+	if provider == "local" {
+		// Spec ollama-only-embedding D1/FR-3: provider: local now resolves
+		// to provider: ollama with the D2 default model in memory on every
+		// read, so a literal "local" fixture can no longer reach a distinct
+		// code path. None of this helper's callers exercise ONNX -- they
+		// inject openEmbedder -- so redirect them through ollama,
+		// registering the requested (model, dimensions) as a custom ollama
+		// model so callers keep the exact values they asked for.
+		provider = "ollama"
+		// Only isolate HOME if the caller has not already done so (e.g. to
+		// set up a persisted-status fixture at a specific path beforehand);
+		// t.TempDir() always sits under os.TempDir(), so a HOME already
+		// pointing there means a caller isolated it deliberately and this
+		// must not clobber it with a second, different temp dir.
+		if !strings.HasPrefix(os.Getenv("HOME"), os.TempDir()) {
+			t.Setenv("HOME", t.TempDir())
+		}
+		registerOllamaTestModel(t, model, dimensions)
+	}
 	root := filepath.Join(t.TempDir(), ".knowns")
 	if err := os.MkdirAll(root, 0755); err != nil {
 		t.Fatalf("mkdir store: %v", err)
@@ -511,6 +540,36 @@ func newSemanticRuntimeTestStoreWithProvider(t *testing.T, model string, dimensi
 		t.Fatalf("save config: %v", err)
 	}
 	return store
+}
+
+// registerOllamaTestModel merges modelID -> {provider: ollama, dimensions}
+// into the per-test-isolated global embedding settings file, so a project
+// declaring provider: ollama and this model resolves deterministically in
+// tests without depending on a real Ollama-seeded model name. Spec
+// ollama-only-embedding D1/FR-3 means provider: local now resolves to
+// provider: ollama with the D2 default model, so fixtures that need a
+// specific, stable (model, dimensions) pair — unrelated to migration
+// semantics — must declare provider: ollama explicitly and register that
+// pair here instead of relying on provider: local as a free-form test
+// double. Caller must have HOME isolated already.
+func registerOllamaTestModel(t *testing.T, modelID string, dimensions int) {
+	t.Helper()
+	settingsStore := storage.NewEmbeddingSettingsStore()
+	settings, err := settingsStore.Load()
+	if err != nil {
+		t.Fatalf("load embedding settings: %v", err)
+	}
+	if settings.Models == nil {
+		settings.Models = make(map[string]storage.EmbeddingModel)
+	}
+	settings.Models[modelID] = storage.EmbeddingModel{
+		Provider:   storage.OllamaProviderID,
+		Model:      modelID,
+		Dimensions: dimensions,
+	}
+	if err := settingsStore.Save(settings); err != nil {
+		t.Fatalf("save embedding settings: %v", err)
+	}
 }
 
 func saveEmbeddingSettings(t *testing.T, apiKey string) {

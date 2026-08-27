@@ -1,8 +1,9 @@
 ---
+id: doc-d93907fa6b5fc3c04541c72c96cde935
 title: Agent Skills
 description: Pattern for creating and managing Knowns agent skills across AI platforms
 createdAt: '2026-01-17T06:06:37.006Z'
-updatedAt: '2026-08-13T13:23:43.287Z'
+updatedAt: '2026-08-27T06:14:50.351Z'
 tags:
   - pattern
   - agents
@@ -60,18 +61,21 @@ Instructions for the skill live here.
 |-------|-------------|
 | `kn-init` | Initialize session: read docs, list tasks, load project memories |
 | `kn-spec` | Create spec with Socratic exploring phase (SDD workflow) |
-| `kn-flow` | Recommended approved-spec orchestration: plan, implement, review, verify |
+| `kn-flow` | Recommended approved-spec orchestration: plan, implement, test, review, verify |
+| `kn-go` | Legacy full pipeline from approved spec without review gates |
 | `kn-plan` | Plan task implementation or generate tasks from a spec |
-| `kn-implement` | Implement task, track progress, check ACs |
 | `kn-research` | Research codebase before implementation |
+| `kn-handoff` | Publish a cross-repo brief or API contract |
+| `kn-implement` | Implement task, track progress, check ACs |
+| `kn-test` | Derive tests from spec Scenarios and ACs, report uncovered criteria |
 | `kn-review` | Multi-perspective code review with P1/P2/P3 severity |
-| `kn-commit` | Generate commit message and commit changes |
-| `kn-extract` | Extract patterns, decisions, failures, and memory |
+| `kn-debug` | Structured debugging: triage, reproduce, fix, learn |
+| `kn-decision` | System Decision lifecycle: draft, triage, promote, supersede |
+| `kn-verify` | SDD verification and coverage reporting |
 | `kn-doc` | Create and update documentation |
 | `kn-template` | Generate code from templates |
-| `kn-verify` | SDD verification and coverage reporting |
-| `kn-go` | Legacy full pipeline from approved spec without review gates |
-| `kn-debug` | Structured debugging: triage, reproduce, fix, learn |
+| `kn-extract` | Extract patterns, decisions, failures, and memory |
+| `kn-commit` | Generate commit message and commit changes |
 
 ## Memory Integration
 

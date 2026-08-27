@@ -79,6 +79,12 @@ type SemanticIndexReadiness struct {
 	// Task/Doc sources. It never includes content or backend credentials.
 	Entities         []QdrantEntityReadiness `json:"entities,omitempty"`
 	EntityStaleCount int                     `json:"entityStaleCount,omitempty"`
+	// EntitiesOnlyStale reports that per-entity watermarks are the sole cause
+	// of staleness: the active index metadata (model, dimensions, chunk
+	// version, chunk count, ownership) is valid. Callers scoped to that
+	// metadata must not report themselves as broken in this state, and the
+	// repair is per-entity reconciliation rather than a collection rebuild.
+	EntitiesOnlyStale bool `json:"entitiesOnlyStale,omitempty"`
 }
 
 // SemanticIndexIdentity is the configured embedding identity used to validate
@@ -283,7 +289,10 @@ func semanticIndexReadinessQdrant(store *storage.Store, expectation semanticInde
 		r.Reason = "qdrant pointer exists but chunk count is zero (never indexed)"
 	}
 	if r.EntityStaleCount > 0 && !r.Stale && !r.Degraded {
-		r.Stale = true
+		// Reaching here means every pointer-scoped check above passed, so the
+		// entities are the only cause. Record that here rather than letting
+		// callers re-derive it from the pointer fields and drift.
+		r.Stale, r.EntitiesOnlyStale = true, true
 		r.Reason = fmt.Sprintf("%d canonical Task/Doc entities are not indexed at their current hash", r.EntityStaleCount)
 	}
 	if r.Stale || r.Degraded {

@@ -45,15 +45,8 @@ export interface Config {
 		enabled?: boolean;
 		model?: string;
 		provider?: string;
-		huggingFaceId?: string;
 		dimensions?: number;
 		maxTokens?: number;
-	};
-	localONNX?: {
-		supported: boolean;
-		runtimeAvailable: boolean;
-		customLibrary: boolean;
-		reason?: string;
 	};
 	lsp?: {
 		enabled?: boolean;
@@ -108,7 +101,6 @@ const DEFAULT_CONFIG: Config = {
 function editablePatch(updates: ConfigPatch): ConfigPatch {
 	const {
 		capabilities: _readOnlyCapabilities,
-		localONNX: _readOnlyLocalONNX,
 		id: _readOnlyID,
 		createdAt: _readOnlyCreatedAt,
 		...patch

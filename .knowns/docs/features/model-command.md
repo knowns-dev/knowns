@@ -1,14 +1,16 @@
 ---
+id: doc-448dbdd7152c913074e15172fb70533b
 title: Model Command
 description: CLI command for managing embedding models - list, download, set, add custom models
 createdAt: '2026-02-24T07:29:13.547Z'
-updatedAt: '2026-06-04T04:50:30.572Z'
+updatedAt: '2026-08-25T14:36:36.710Z'
 tags:
   - feature
   - cli
   - model
   - embedding
   - search
+  - superseded
 ---
 
 # Model Command
@@ -245,3 +247,10 @@ knowns search --reindex
 ### `knowns settings` Local ONNX picker
 
 `knowns settings` also manages semantic search. When the provider is Local ONNX, the settings flow shows all supported ONNX models with dimensions, max tokens, approximate size, and downloaded/not downloaded status. Selecting a missing model asks for confirmation and can download it with the existing semantic model download flow before saving the full local semantic config.
+
+
+## Superseded
+
+Superseded in full by @doc/specs/2026-08-24/ollama-only-embedding (D4). Every section in this document describes the removed `knowns model` command tree, the `~/.knowns/models/` layout, `custom-models.json`, and the Local ONNX picker in `knowns settings`. Nothing here survives D4.
+
+The System Decision recording this removal is not yet accepted — it stays draft until the removal is merged and a commit can be cited as evidence — and will be linked here once accepted.

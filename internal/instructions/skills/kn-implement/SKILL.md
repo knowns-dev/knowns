@@ -136,6 +136,8 @@ Append the persisted candidate returned by the tool:
 
 If review checks find missing evidence or a duplicate/conflict, leave the candidate unresolved in Review Inbox. Passing checks makes it ready for human review; it never makes the candidate current automatically.
 
+Resolving that candidate later — triaging the inbox, promoting it, or superseding what it replaces — is `/kn-decision`. Create the candidate here; settle it there.
+
 Spec Decisions are different: keep every D-ID canonically in the spec's `Locked Decisions` section and report compliance only. Do not copy Spec Decision text into the System Decision ledger merely for display.
 
 ## Step 5.5: SDD Workflow (if task has spec)
@@ -150,8 +152,11 @@ mcp_knowns_tasks({ "action": "list", "spec": "<spec-path-from-task>" })
 
 Use the returned task metadata as a compact sibling summary. Sort siblings by:
 1. `order` when present
-2. the shared title prefix `[<slug>-NN]`
+2. explicit dependency information when available
 3. title as fallback
+
+Do not infer workflow order from a generated Task ID or a synthetic title prefix.
+Existing bracket-prefixed titles remain valid content but carry no ordering meaning.
 
 Do not fetch every sibling task body unless a dependency or status inconsistency requires it.
 
@@ -168,8 +173,8 @@ Count tasks by status:
 ✓ Task done! This task is part of spec: <spec-path>
 
 Remaining tasks (Y of Z):
-- task-YY: [user-auth-02] Title (todo)
-- task-ZZ: [user-auth-03] Title (in-progress)
+- USER-4F7Q2M: Add refresh token rotation (todo)
+- USER-9K2P6R: Add session revocation (in-progress)
 
 Next: /kn-flow @doc/<spec-path> to orchestrate the remaining tasks, or /kn-plan <first-todo-id> for manual task-by-task work
 ```
@@ -221,7 +226,7 @@ Never create a Memory with category `decision`; that category is legacy. If a us
 
 ## Final Response Contract
 
-All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-plan`, `kn-research`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
+All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-go`, `kn-plan`, `kn-research`, `kn-handoff`, `kn-implement`, `kn-test`, `kn-review`, `kn-debug`, `kn-decision`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
 
 Required order for the final user-facing response:
 
@@ -264,12 +269,12 @@ After task completion, check for:
 
 **Example output:**
 ```
-✓ Task #43 complete!
+✓ Task USER-2QW7VT complete!
 
 Next task from @doc/specs/2026-06-17/user-auth:
-→ Task #44: [user-auth-02] Add refresh token rotation
+→ USER-4F7Q2M: Add refresh token rotation
 
-Run: /kn-plan 44
+Run: /kn-plan USER-4F7Q2M
 ```
 
 ---

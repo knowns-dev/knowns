@@ -75,12 +75,15 @@ func Run(store *storage.Store, opts Options) *Result {
 
 	var issues []Issue
 
-	// Load all tasks and docs for cross-reference validation.
-	tasks, _ := store.Tasks.List()
+	// Load tasks and docs for cross-reference validation. The reference universe
+	// spans archived tasks so archiving never breaks a ref that points at one,
+	// while only active tasks are re-validated to keep the output actionable.
+	tasks, _ := store.Tasks.ListActive()
+	allTasks, _ := store.Tasks.ListAll()
 	docs, _ := store.Docs.List()
 
-	taskIDs := make(map[string]bool, len(tasks))
-	for _, t := range tasks {
+	taskIDs := make(map[string]bool, len(allTasks))
+	for _, t := range allTasks {
 		taskIDs[t.ID] = true
 	}
 	docPaths := make(map[string]bool, len(docs))
@@ -88,16 +91,28 @@ func Run(store *storage.Store, opts Options) *Result {
 		docPaths[d.Path] = true
 	}
 
-	// Load memory entries for cross-reference validation.
+	// Every layer is loaded so a project Task or Doc may resolve a reference to
+	// a global memory without being reported as broken.
 	memories, _ := store.Memory.List("")
 	memoryIDs := make(map[string]bool, len(memories))
 	for _, m := range memories {
 		memoryIDs[m.ID] = true
 	}
+	// Only project-layer entries are validated. Global memories are shared
+	// across every project on the machine, so reporting their hygiene here
+	// blames this project for entries it does not own and cannot fix from its
+	// own repository, and leaves the summary permanently unresolvable.
+	projectMemories := make([]*models.MemoryEntry, 0, len(memories))
+	for _, m := range memories {
+		if m.Layer != models.MemoryLayerGlobal {
+			projectMemories = append(projectMemories, m)
+		}
+	}
 
-	// Build parent map for circular detection.
-	parentMap := make(map[string]string, len(tasks))
-	for _, t := range tasks {
+	// Build parent map for circular detection. Archived ancestors are included so
+	// a chain that passes through the archive is still detected.
+	parentMap := make(map[string]string, len(allTasks))
+	for _, t := range allTasks {
 		if t.Parent != "" {
 			parentMap[t.ID] = t.Parent
 		}
@@ -141,7 +156,7 @@ func Run(store *storage.Store, opts Options) *Result {
 
 	// --- Memory ---
 	if opts.Scope == "all" || opts.Scope == "memory" {
-		for _, m := range memories {
+		for _, m := range projectMemories {
 			if opts.Entity != "" && opts.Entity != m.ID {
 				continue
 			}

@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sort"
 	"time"
 
@@ -18,21 +16,18 @@ import (
 type EmbeddingModelRoutes struct{}
 
 type embeddingModelsResponse struct {
-	Local      []embeddingModelInfo `json:"local"`
 	API        []embeddingModelInfo `json:"api"`
 	Configured []embeddingModelInfo `json:"configured"`
 }
 
 type embeddingModelInfo struct {
-	Name          string `json:"name"`
-	HuggingFaceID string `json:"huggingFaceId,omitempty"`
-	Dimensions    int    `json:"dimensions"`
-	MaxTokens     int    `json:"maxTokens,omitempty"`
-	Installed     *bool  `json:"installed,omitempty"`
-	Source        string `json:"source,omitempty"`
-	Provider      string `json:"provider,omitempty"`
-	ID            string `json:"id,omitempty"`
-	Model         string `json:"model,omitempty"`
+	Name       string `json:"name"`
+	Dimensions int    `json:"dimensions"`
+	MaxTokens  int    `json:"maxTokens,omitempty"`
+	Source     string `json:"source,omitempty"`
+	Provider   string `json:"provider,omitempty"`
+	ID         string `json:"id,omitempty"`
+	Model      string `json:"model,omitempty"`
 }
 
 type embeddingModelTestRequest struct {
@@ -149,48 +144,10 @@ func (emr *EmbeddingModelRoutes) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	localModels := []embeddingModelInfo{}
-	if search.CurrentLocalONNXCapability().Supported {
-		localModels = listLocalEmbeddingModels()
-	}
 	respondJSON(w, http.StatusOK, embeddingModelsResponse{
-		Local:      localModels,
 		API:        listOllamaEmbeddingModels(),
 		Configured: configured,
 	})
-}
-
-func listLocalEmbeddingModels() []embeddingModelInfo {
-	models := make([]embeddingModelInfo, 0, len(search.EmbeddingModels))
-	for name, cfg := range search.EmbeddingModels {
-		installed := localEmbeddingModelInstalled(cfg.HuggingFaceID)
-		models = append(models, embeddingModelInfo{
-			Name:          name,
-			HuggingFaceID: cfg.HuggingFaceID,
-			Dimensions:    cfg.Dimensions,
-			MaxTokens:     cfg.MaxTokens,
-			Installed:     &installed,
-		})
-	}
-	sort.Slice(models, func(i, j int) bool { return models[i].Name < models[j].Name })
-	return models
-}
-
-func localEmbeddingModelInstalled(huggingFaceID string) bool {
-	if huggingFaceID == "" {
-		return false
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return false
-	}
-	base := filepath.Join(home, ".knowns", "models", filepath.FromSlash(huggingFaceID), "onnx")
-	for _, file := range []string{"model_quantized.onnx", "model.onnx"} {
-		if info, err := os.Stat(filepath.Join(base, file)); err == nil && !info.IsDir() {
-			return true
-		}
-	}
-	return false
 }
 
 func listOllamaEmbeddingModels() []embeddingModelInfo {

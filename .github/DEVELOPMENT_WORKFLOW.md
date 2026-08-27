@@ -48,7 +48,7 @@ knowns task create "Add new feature X" \
   --priority medium \
   -l "feature"
 
-# Output: Created task-63: Add new feature X
+# Output: Created task KN-4F7Q2M: Add new feature X
 ```
 
 ### For External Contributors (GitHub Issues)
@@ -90,12 +90,12 @@ git checkout -b <type>/task-<id>-<short-description>
 
 | Type | Pattern | Example |
 |------|---------|---------|
-| Feature | `feat/task-<id>-description` | `feat/task-63-add-export-command` |
-| Bug Fix | `fix/task-<id>-description` | `fix/task-64-parsing-error` |
-| Documentation | `docs/task-<id>-description` | `docs/task-65-update-readme` |
-| Refactor | `refactor/task-<id>-description` | `refactor/task-66-clean-utils` |
-| Performance | `perf/task-<id>-description` | `perf/task-67-optimize-search` |
-| Chore | `chore/task-<id>-description` | `chore/task-68-update-deps` |
+| Feature | `feat/task-<id>-description` | `feat/task-KN-4F7Q2M-add-export-command` |
+| Bug Fix | `fix/task-<id>-description` | `fix/task-KN-9B3XKD-parsing-error` |
+| Documentation | `docs/task-<id>-description` | `docs/task-KN-2QW7VT-update-readme` |
+| Refactor | `refactor/task-<id>-description` | `refactor/task-KN-6M1HZP-clean-utils` |
+| Performance | `perf/task-<id>-description` | `perf/task-KN-8DK3RN-optimize-search` |
+| Chore | `chore/task-<id>-description` | `chore/task-KN-5TY0GC-update-deps` |
 
 ---
 
@@ -178,7 +178,7 @@ git rebase origin/main
 git push -u origin <branch-name>
 
 # Example:
-git push -u origin feat/task-63-add-export-command
+git push -u origin feat/task-KN-4F7Q2M-add-export-command
 ```
 
 ### Create Pull Request
@@ -345,7 +345,7 @@ git checkout main
 git pull origin main
 
 # Delete local branch
-git branch -d feat/task-63-add-export-command
+git branch -d feat/task-KN-4F7Q2M-add-export-command
 
 # Prune remote tracking branches
 git fetch --prune

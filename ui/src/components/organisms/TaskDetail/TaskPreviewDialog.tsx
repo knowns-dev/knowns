@@ -56,7 +56,7 @@ export function TaskPreviewDialog({
 
 	const handleViewInKanban = () => {
 		if (taskId) {
-			navigateTo(`/kanban/${taskId}`);
+			navigateTo(`/tasks/${taskId}`);
 			onOpenChange(false);
 		}
 	};

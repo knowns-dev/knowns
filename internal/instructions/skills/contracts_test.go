@@ -10,8 +10,8 @@ import (
 func TestBuiltInSkillContracts(t *testing.T) {
 	skills := readBuiltInSkills(t)
 
-	if len(skills) != 14 {
-		t.Fatalf("expected 14 built-in skills, got %d", len(skills))
+	if len(skills) != 17 {
+		t.Fatalf("expected 17 built-in skills, got %d", len(skills))
 	}
 
 	for name, content := range skills {
@@ -99,6 +99,60 @@ func TestCompactedSkillsPreserveWorkflowGates(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestRosterSentenceListsEverySkill keeps the shared roster sentence in step with
+// the embedded set. The sentence is duplicated across several skill sources and was
+// maintained by hand, so it silently fell three skills behind. Adding a skill without
+// updating the roster now fails here instead of shipping.
+func TestRosterSentenceListsEverySkill(t *testing.T) {
+	const rosterMarker = "All built-in skills in scope must end with the same user-facing information order:"
+
+	skills := readBuiltInSkills(t)
+
+	var carriers []string
+	for name, content := range skills {
+		if strings.Contains(content, rosterMarker) {
+			carriers = append(carriers, name)
+		}
+	}
+	if len(carriers) == 0 {
+		t.Fatalf("no skill carries the roster sentence; the marker may have been reworded")
+	}
+
+	for _, carrier := range carriers {
+		t.Run(carrier+"/roster-complete", func(t *testing.T) {
+			roster := rosterSentence(t, skills[carrier], rosterMarker)
+			for name := range skills {
+				if !strings.Contains(roster, "`"+name+"`") {
+					t.Errorf("roster sentence omits %q", name)
+				}
+			}
+		})
+	}
+
+	t.Run("carriers-agree", func(t *testing.T) {
+		want := rosterSentence(t, skills[carriers[0]], rosterMarker)
+		for _, carrier := range carriers[1:] {
+			if got := rosterSentence(t, skills[carrier], rosterMarker); got != want {
+				t.Errorf("%s roster differs from %s:\n got: %s\nwant: %s", carrier, carriers[0], got, want)
+			}
+		}
+	})
+}
+
+func rosterSentence(t *testing.T, content, marker string) string {
+	t.Helper()
+
+	idx := strings.Index(content, marker)
+	if idx < 0 {
+		t.Fatalf("roster marker not found")
+	}
+	rest := content[idx:]
+	if end := strings.Index(rest, "\n"); end >= 0 {
+		rest = rest[:end]
+	}
+	return rest
 }
 
 func readBuiltInSkills(t *testing.T) map[string]string {

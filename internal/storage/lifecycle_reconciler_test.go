@@ -862,3 +862,96 @@ func TestLifecycleDocRenameDeleteRestoreReplaysHash(t *testing.T) {
 		t.Fatalf("doc replay: %v", err)
 	}
 }
+
+func TestRestoreRepairsASpuriousTombstoneLeftOverALivingFile(t *testing.T) {
+	// A watcher pass that observes a file as briefly missing writes a tombstone
+	// for an entity that was never deleted. Reconciliation then reports the
+	// entity unchanged forever, because the file hash still matches the
+	// tombstone's, so nothing repairs the contradiction on its own.
+	root := filepath.Join(t.TempDir(), ".knowns")
+	path := lifecycleTaskFile(t, root, "alive", "spurious", "Alive")
+	r, err := NewFilesystemReconciler(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReconcileLifecycle(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	stream, err := r.history.Read(context.Background(), "task", "spurious")
+	if err != nil || len(stream.Records) == 0 {
+		t.Fatalf("stream=%+v err=%v", stream.Records, err)
+	}
+	live := stream.Records[len(stream.Records)-1]
+
+	// Forge the tombstone directly: the file never left, which is exactly the
+	// state a spurious deletion leaves behind.
+	if err := r.appendHistoryRecord(context.Background(), models.HistoryRecord{
+		EntityType: "task", EntityID: "spurious", Source: "watcher-startup", Operation: LifecycleOperationDelete,
+		Tombstone: true, Timestamp: time.Now().UTC(), BaseHash: live.NewHash, NewHash: live.NewHash,
+		Checkpoint: true, CheckpointPayload: live.CheckpointPayload, CurrentPath: "tasks/alive.md",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reconciliation cannot see the problem: the hash still matches.
+	results, err := r.ReconcileLifecycle(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, res := range results {
+		if res.EntityID == "spurious" && res.Changed {
+			t.Fatalf("reconciliation unexpectedly repaired the tombstone: %+v", res)
+		}
+	}
+
+	result, err := r.Restore(context.Background(), "task", "spurious", RestoreOptions{Path: "tasks/alive.md"})
+	if err != nil {
+		t.Fatalf("spurious tombstone could not be repaired: %v", err)
+	}
+	if result.Operation != LifecycleOperationRestore || !result.Changed {
+		t.Fatalf("restore result = %+v, want a durable restore", result)
+	}
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Fatalf("restore disturbed the living file: %v", statErr)
+	}
+	stream, err = r.history.Read(context.Background(), "task", "spurious")
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := stream.Records[len(stream.Records)-1]
+	if head.Operation != LifecycleOperationRestore || head.Tombstone {
+		t.Fatalf("history head still claims deletion: %+v", head)
+	}
+	if head.NewHash != live.NewHash {
+		t.Fatalf("restore changed the canonical hash: %q != %q", head.NewHash, live.NewHash)
+	}
+}
+
+func TestRestoreStillRefusesAnUnrelatedFileOccupyingThePath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".knowns")
+	lifecycleTaskFile(t, root, "occupied", "occupier", "Original")
+	r, err := NewFilesystemReconciler(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReconcileLifecycle(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	stream, err := r.history.Read(context.Background(), "task", "occupier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := stream.Records[len(stream.Records)-1]
+	if err := r.appendHistoryRecord(context.Background(), models.HistoryRecord{
+		EntityType: "task", EntityID: "occupier", Source: "watcher", Operation: LifecycleOperationDelete,
+		Tombstone: true, Timestamp: time.Now().UTC(), BaseHash: live.NewHash, NewHash: live.NewHash,
+		Checkpoint: true, CheckpointPayload: live.CheckpointPayload, CurrentPath: "tasks/occupied.md",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Different content now sits at the path, so it is not this entity's file.
+	lifecycleTaskFile(t, root, "occupied", "occupier", "Rewritten By Something Else")
+	if _, err := r.Restore(context.Background(), "task", "occupier", RestoreOptions{Path: "tasks/occupied.md"}); !errors.Is(err, ErrReconcileUnsafe) {
+		t.Fatalf("restore adopted foreign content at the path: err=%v", err)
+	}
+}

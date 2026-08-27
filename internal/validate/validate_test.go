@@ -585,3 +585,115 @@ func assertNoLevel(t *testing.T, issues []Issue, level string) {
 		}
 	}
 }
+
+// --- Archived tasks stay in the reference universe ---
+
+func TestRun_ArchivedParentIsNotBrokenRef(t *testing.T) {
+	store := newValidateTestStore(t)
+	parent := &models.Task{ID: "parent1", Title: "Parent", Status: "done", Priority: "medium"}
+	if err := store.Tasks.Create(parent); err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	child := &models.Task{ID: "child1", Title: "Child", Status: "todo", Priority: "medium", Parent: "parent1"}
+	if err := store.Tasks.Create(child); err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	if err := store.Tasks.Archive("parent1"); err != nil {
+		t.Fatalf("archive parent: %v", err)
+	}
+
+	result := Run(store, Options{Scope: "tasks"})
+	assertNoCode(t, result.Issues, "BROKEN_TASK_REF")
+}
+
+func TestRun_CircularParentDetectedThroughArchive(t *testing.T) {
+	store := newValidateTestStore(t)
+	a := &models.Task{ID: "cyca", Title: "A", Status: "todo", Priority: "medium", Parent: "cycb"}
+	b := &models.Task{ID: "cycb", Title: "B", Status: "todo", Priority: "medium", Parent: "cyca"}
+	if err := store.Tasks.Create(a); err != nil {
+		t.Fatalf("create a: %v", err)
+	}
+	if err := store.Tasks.Create(b); err != nil {
+		t.Fatalf("create b: %v", err)
+	}
+	if err := store.Tasks.Archive("cycb"); err != nil {
+		t.Fatalf("archive b: %v", err)
+	}
+
+	result := Run(store, Options{Scope: "tasks"})
+	assertHasCode(t, result.Issues, "TASK_CIRCULAR_PARENT")
+}
+
+func TestRun_ArchivedTasksAreNotRevalidated(t *testing.T) {
+	store := newValidateTestStore(t)
+	bad := &models.Task{ID: "archbad", Title: "Archived", Status: "todo", Priority: "critical"}
+	if err := store.Tasks.Create(bad); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if err := store.Tasks.Archive("archbad"); err != nil {
+		t.Fatalf("archive task: %v", err)
+	}
+
+	result := Run(store, Options{Scope: "tasks"})
+	assertNoCode(t, result.Issues, "TASK_INVALID_PRIORITY")
+}
+
+func TestRunValidatesProjectMemoriesButNotGlobalOnes(t *testing.T) {
+	// Global memories are shared by every project on the machine. Reporting
+	// their hygiene inside one project's summary blames that project for
+	// entries it does not own, and no change in its repository can clear them.
+	store := newValidateTestStore(t)
+	project := &models.MemoryEntry{
+		ID: "projmem", Title: "Project entry", Content: "project scoped",
+		Layer: models.MemoryLayerProject, Status: models.MemoryStatusActive,
+	}
+	if err := store.Memory.Create(project); err != nil {
+		t.Fatalf("create project memory: %v", err)
+	}
+	global := &models.MemoryEntry{
+		ID: "globmem", Title: "Global entry", Content: "machine wide",
+		Layer: models.MemoryLayerGlobal, Status: models.MemoryStatusActive,
+	}
+	if err := store.Memory.Create(global); err != nil {
+		t.Fatalf("create global memory: %v", err)
+	}
+
+	result := Run(store, Options{Scope: "memory"})
+	var sawProject, sawGlobal bool
+	for _, issue := range result.Issues {
+		switch issue.Entity {
+		case "projmem":
+			sawProject = true
+		case "globmem":
+			sawGlobal = true
+		}
+	}
+	if !sawProject {
+		t.Fatalf("project memory was not validated: %+v", result.Issues)
+	}
+	if sawGlobal {
+		t.Fatalf("global memory was reported in a project's validation: %+v", result.Issues)
+	}
+}
+
+func TestGlobalMemoriesStillResolveProjectReferences(t *testing.T) {
+	// Excluding global memories from validation must not make a Task that
+	// legitimately cites one look broken.
+	store := newValidateTestStore(t)
+	global := &models.MemoryEntry{
+		ID: "globref", Title: "Global entry", Content: "machine wide",
+		Layer: models.MemoryLayerGlobal, Status: models.MemoryStatusActive,
+	}
+	if err := store.Memory.Create(global); err != nil {
+		t.Fatalf("create global memory: %v", err)
+	}
+	task := &models.Task{ID: "citer", Title: "Cites a global memory", Status: "todo", Priority: "medium", Description: "see @memory/globref"}
+	if err := store.Tasks.Create(task); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	for _, issue := range Run(store, Options{Scope: "all"}).Issues {
+		if strings.Contains(issue.Message, "globref") {
+			t.Fatalf("reference to a global memory reported as broken: %+v", issue)
+		}
+	}
+}

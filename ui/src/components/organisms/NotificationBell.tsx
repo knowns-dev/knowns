@@ -85,7 +85,7 @@ export default function NotificationBell() {
 							showFilter={false}
 							onTaskClick={(taskId) => {
 								setOpen(false);
-								navigateTo(`/kanban/${taskId}`);
+								navigateTo(`/tasks/${taskId}`);
 							}}
 						/>
 					</div>

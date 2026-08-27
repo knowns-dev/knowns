@@ -669,7 +669,7 @@ func (s *Store) captureDocReferenceState() (*docReferenceState, error) {
 	if err != nil {
 		return nil, err
 	}
-	tasks, err := s.Tasks.List()
+	tasks, err := s.Tasks.ListAll()
 	if err != nil {
 		return nil, err
 	}

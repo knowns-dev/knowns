@@ -17,7 +17,7 @@ var boardCmd = &cobra.Command{
 func runBoard(cmd *cobra.Command, args []string) error {
 	store := getStore()
 
-	tasks, err := store.Tasks.List()
+	tasks, err := store.Tasks.ListActive()
 	if err != nil {
 		return fmt.Errorf("list tasks: %w", err)
 	}

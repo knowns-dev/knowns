@@ -120,6 +120,10 @@ func (cs *ConfigStore) initDefault(name string) error {
 		ID:        sanitizeTitle(name),
 		CreatedAt: time.Now().UTC(),
 		Settings:  models.DefaultProjectSettings(),
+		// A freshly initialized project starts fully migrated: nothing about
+		// it needs the resolution knowns migrate exists to apply, so it
+		// should never trigger the FR-4 unmigrated notice.
+		SchemaVersion: CurrentSchemaVersion(),
 	}
 	return writeJSON(cs.configPath(), p)
 }

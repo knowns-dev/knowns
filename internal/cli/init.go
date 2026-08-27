@@ -4,12 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/huh"
 
@@ -22,75 +20,6 @@ import (
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/spf13/cobra"
 )
-
-// embeddingModelInfo describes a supported embedding model for semantic search.
-type embeddingModelInfo struct {
-	ID            string
-	Title         string
-	Description   string
-	HuggingFaceID string
-	Dimensions    int
-	MaxTokens     int
-}
-
-var supportedEmbeddingModels = []embeddingModelInfo{
-	{
-		ID:            "gte-small",
-		Title:         "gte-small (recommended)",
-		Description:   "384 dims, 67MB — best balance",
-		HuggingFaceID: "Xenova/gte-small",
-		Dimensions:    384,
-		MaxTokens:     512,
-	},
-	{
-		ID:            "all-MiniLM-L6-v2",
-		Title:         "all-MiniLM-L6-v2",
-		Description:   "384 dims, 45MB — fastest",
-		HuggingFaceID: "Xenova/all-MiniLM-L6-v2",
-		Dimensions:    384,
-		MaxTokens:     256,
-	},
-	{
-		ID:            "gte-base",
-		Title:         "gte-base",
-		Description:   "768 dims, 220MB — highest quality",
-		HuggingFaceID: "Xenova/gte-base",
-		Dimensions:    768,
-		MaxTokens:     512,
-	},
-	{
-		ID:            "bge-small-en-v1.5",
-		Title:         "bge-small-en-v1.5",
-		Description:   "384 dims, 67MB — strong retrieval",
-		HuggingFaceID: "Xenova/bge-small-en-v1.5",
-		Dimensions:    384,
-		MaxTokens:     512,
-	},
-	{
-		ID:            "bge-base-en-v1.5",
-		Title:         "bge-base-en-v1.5",
-		Description:   "768 dims, 220MB — top retrieval quality",
-		HuggingFaceID: "Xenova/bge-base-en-v1.5",
-		Dimensions:    768,
-		MaxTokens:     512,
-	},
-	{
-		ID:            "nomic-embed-text-v1.5",
-		Title:         "nomic-embed-text-v1.5",
-		Description:   "768 dims, 274MB — long context (8192 tokens)",
-		HuggingFaceID: "nomic-ai/nomic-embed-text-v1.5",
-		Dimensions:    768,
-		MaxTokens:     8192,
-	},
-	{
-		ID:            "multilingual-e5-small",
-		Title:         "multilingual-e5-small",
-		Description:   "384 dims, 471MB — multilingual support",
-		HuggingFaceID: "Xenova/multilingual-e5-small",
-		Dimensions:    384,
-		MaxTokens:     512,
-	},
-}
 
 // instructionFile defines an agent instruction file to generate during init.
 type instructionFile struct {
@@ -294,31 +223,15 @@ type initConfig struct {
 	GitTracking     models.GitTracking
 	EnableSemantic  bool
 	SemanticModel   string
-	EmbeddingSource string // "local", "ollama", or "api"
+	EmbeddingSource string // "ollama" or "api"
 	Platforms       []string
 	TaskLifecycle   *models.TaskLifecycleSettings
-}
-
-func applyLocalONNXInitCapability(cfg *initConfig) {
-	if !applyLocalONNXInitCapabilityFor(cfg, search.CurrentLocalONNXCapability()) {
-		return
-	}
-	fmt.Fprintln(os.Stderr, warnStyle.Render("Local ONNX is unavailable on macOS Intel; continuing with keyword/BM25 search."))
-	fmt.Fprintln(os.Stderr, dimStyle.Render("  Configure Ollama or an OpenAI-compatible API later with: knowns settings"))
-}
-
-func applyLocalONNXInitCapabilityFor(cfg *initConfig, capability search.LocalONNXCapability) bool {
-	if cfg == nil {
-		return false
-	}
-	if cfg.EmbeddingSource == "" {
-		cfg.EmbeddingSource = "local"
-	}
-	if !cfg.EnableSemantic || cfg.EmbeddingSource != "local" || capability.Supported {
-		return false
-	}
-	cfg.EnableSemantic = false
-	return true
+	// SemanticGuidance is the FR-10/FR-11 guidance (D6, resolved from
+	// storage.OllamaStateGuidance) shown when the run finishes with semantic
+	// search disabled. It is populated on both the wizard path (from the
+	// actual detected state, D7) and the non-interactive path (from a fixed,
+	// unprobed state, D8) — see runInit and runWizard.
+	SemanticGuidance storage.OllamaGuidance
 }
 
 // Aliases for centralized styles (see styles.go)
@@ -471,9 +384,19 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 		gitMode := "git-tracked"
 		gitTracking := models.GitTrackingDefaults()
-		enableSemantic := isTTY()
-		semanticModel := "multilingual-e5-small"
-		embeddingSource := "local"
+		// D7/D8/NFR-4: a non-interactive run never probes Ollama and never
+		// widens the configuration from machine state, so the committed file
+		// is identical whether or not Ollama happens to be reachable here
+		// (AC-21). The safe default now that no embedder ships inside the
+		// binary is off (D7) — the previous `isTTY()` default assumed an
+		// in-process embedder that no longer exists, and additionally made
+		// the answer depend on terminal attachment rather than the user's
+		// stated intent. An explicit prior answer (global defaults below, or
+		// an existing project config on --force) still wins: that is the
+		// user's answer, not the probe.
+		enableSemantic := false
+		semanticModel := storage.D2DefaultModelID
+		embeddingSource := "ollama"
 		platforms := defaultInstructionPlatforms()
 		if globalDefaults != nil {
 			if globalDefaults.Settings.GitTrackingMode != "" {
@@ -533,6 +456,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 			SemanticModel:   semanticModel,
 			EmbeddingSource: embeddingSource,
 			Platforms:       platforms,
+			// AC-13: the guidance shown when this ends up disabled must not
+			// itself depend on a probe (D8), so it always renders the
+			// "not installed" state — the conservative message that names
+			// the default model and pull command without claiming to know
+			// more about this machine than a non-interactive run is allowed
+			// to check.
+			SemanticGuidance: storage.OllamaStateGuidance(storage.OllamaNotInstalled, semanticModel),
 		}
 	}
 	// An explicit --task-prefix outranks the wizard, existing config, and
@@ -541,7 +471,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 		cfg.TaskIDPrefix = taskIDPrefixFlag
 	}
 	cfg.TaskLifecycle = taskLifecycleSeed
-	applyLocalONNXInitCapability(&cfg)
+	if cfg.EmbeddingSource == "" {
+		cfg.EmbeddingSource = "ollama"
+	}
 
 	// Build init steps
 	steps := []initStep{
@@ -602,58 +534,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}}, steps...)
 	}
 
-	// Conditional semantic download steps (only for local ONNX with built-in models)
-	isBuiltinModel := findSupportedModel(cfg.SemanticModel) != nil
-	if cfg.EnableSemantic && cfg.EmbeddingSource == "local" && isBuiltinModel {
-		dlSteps, alreadyInstalled, err := buildSemanticDownloadSteps(cfg.SemanticModel)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: semantic search setup failed: %v\n", err)
-			fmt.Println(dimStyle.Render(fmt.Sprintf("  You can set up later: knowns model download %s", cfg.SemanticModel)))
-		} else if alreadyInstalled {
-			steps = append(steps, initStep{
-				label: "Semantic search (already installed)",
-				run:   func() error { return nil },
-			})
-		} else {
-			steps = append(steps, dlSteps...)
-		}
-	}
-
-	if cfg.EnableSemantic && cfg.EmbeddingSource == "local" && isBuiltinModel {
-		steps = append(steps, initStep{
-			label: "Preparing project and global semantic stores",
-			run: func() error {
-				store := storage.NewStore(root)
-				_, _, err := ensureProjectAndGlobalSemanticReady(store, cfg.SemanticModel)
-				return err
-			},
-		})
-	} else if cfg.EnableSemantic && cfg.EmbeddingSource == "local" && !isBuiltinModel {
-		// Custom HuggingFace model: auto-download ONNX files.
-		customModelID := cfg.SemanticModel
-		steps = append(steps, initStep{
-			label: fmt.Sprintf("Downloading custom model %q from HuggingFace", customModelID),
-			run: func() error {
-				mc, ok := search.EmbeddingModels[customModelID]
-				if !ok {
-					fmt.Printf("\n%s Model %q is not a built-in local model.\n", warnStyle.Render("⚠"), customModelID)
-					fmt.Println(dimStyle.Render("  If it is an Ollama or API model, set its provider: knowns model set"))
-					fmt.Println(dimStyle.Render("  Falling back to keyword-only search for now."))
-					return nil // non-fatal: init must not fail on a model choice
-				}
-				err := downloadCustomHuggingFaceModel(mc.HuggingFaceID)
-				if err != nil && strings.Contains(err.Error(), "no .onnx files found") {
-					fmt.Printf("\n%s This model has no ONNX export — cannot use for local inference.\n", warnStyle.Render("⚠"))
-					fmt.Println(dimStyle.Render("  Use it via API instead: knowns provider add, then knowns model set"))
-					fmt.Println(dimStyle.Render("  Or choose a Xenova/* model which includes ONNX files."))
-					fmt.Println(dimStyle.Render("  Falling back to keyword-only search for now."))
-					return nil // non-fatal
-				}
-				return err
-			},
-		})
-	}
-
 	// No semantic index is built here, by design. A fresh project has nothing to
 	// embed, and a re-init would pay a full rebuild for no gain: tasks and docs
 	// are indexed incrementally on write (search.BestEffortIndexTask/Doc). The
@@ -684,6 +564,18 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println(dimStyle.Render("  knowns doctor             # Diagnose project and integration health"))
 	if cfg.EnableSemantic {
 		fmt.Println(dimStyle.Render("  knowns search --reindex   # Build semantic indices (skipped during init)"))
+	} else {
+		// AC-13/FR-10/FR-11 (D6): semantic search ended up disabled, so state
+		// that keyword search still works, name the default model and the
+		// command to obtain it, and point at the published guidance — all
+		// resolved from the single shared source rather than restated here.
+		fmt.Println()
+		fmt.Println(titleStyle.Render("Semantic search:"))
+		fmt.Println(dimStyle.Render("  " + cfg.SemanticGuidance.Description))
+		if cfg.SemanticGuidance.Command != "" {
+			fmt.Println(dimStyle.Render("  " + cfg.SemanticGuidance.Command))
+		}
+		fmt.Println(dimStyle.Render("  Read more: " + storage.OllamaGuidanceDocsURL))
 	}
 	fmt.Println()
 	return maybeOpenBrowser(cwd, openFlag, noOpen)
@@ -706,46 +598,21 @@ func buildSemanticSettings(cfg initConfig) *models.SemanticSearchSettings {
 	if !cfg.EnableSemantic || cfg.SemanticModel == "" {
 		return nil
 	}
-	var ss *models.SemanticSearchSettings
-	if cfg.EmbeddingSource == "api" || cfg.EmbeddingSource == "ollama" {
-		// API provider: reference model from global settings.
-		ss = &models.SemanticSearchSettings{
-			Enabled:  true,
-			Provider: cfg.EmbeddingSource,
-			Model:    cfg.SemanticModel,
-		}
-	} else {
-		// Local ONNX: existing behavior.
-		m := findEmbeddingModel(cfg.SemanticModel)
-		if m != nil {
-			ss = &models.SemanticSearchSettings{
-				Enabled:       true,
-				Provider:      "local",
-				Model:         m.ID,
-				HuggingFaceID: m.HuggingFaceID,
-				Dimensions:    m.Dimensions,
-				MaxTokens:     m.MaxTokens,
-			}
-		} else if mc, ok := search.EmbeddingModels[cfg.SemanticModel]; ok {
-			// Custom model registered at runtime.
-			ss = &models.SemanticSearchSettings{
-				Enabled:       true,
-				Provider:      "local",
-				Model:         cfg.SemanticModel,
-				HuggingFaceID: mc.HuggingFaceID,
-				Dimensions:    mc.Dimensions,
-				MaxTokens:     mc.MaxTokens,
-			}
-		}
+	provider := cfg.EmbeddingSource
+	if provider == "" {
+		provider = "ollama"
 	}
-	if ss != nil {
-		// Declare Qdrant as the default vector backend (spec D10). Only the
-		// backend and mode are recorded; managedRoot, install policy, and
-		// retention stay unwritten so they keep resolving from current
-		// defaults instead of being frozen at init time. Install/start stays
-		// lazy: first semantic use or explicit commands bootstrap the runtime.
-		ss.VectorStore = models.DeclaredSemanticVectorStoreSettingsPtr()
+	ss := &models.SemanticSearchSettings{
+		Enabled:  true,
+		Provider: provider,
+		Model:    cfg.SemanticModel,
 	}
+	// Declare Qdrant as the default vector backend (spec D10). Only the
+	// backend and mode are recorded; managedRoot, install policy, and
+	// retention stay unwritten so they keep resolving from current defaults
+	// instead of being frozen at init time. Install/start stays lazy: first
+	// semantic use or explicit commands bootstrap the runtime.
+	ss.VectorStore = models.DeclaredSemanticVectorStoreSettingsPtr()
 	return ss
 }
 
@@ -774,10 +641,106 @@ func copyTaskLifecycleSettings(settings *models.TaskLifecycleSettings) *models.T
 	return &clone
 }
 
+// ollamaDetectorFactory constructs the detector the interactive wizard uses
+// to preselect semantic search state (D7) and to offer a model already on
+// disk ahead of the D2 default (D8/FR-14). It is called only from
+// probeOllamaForWizard, which in turn is called only from runWizard — a
+// non-interactive init must neither probe nor pull (D8), which is what makes
+// AC-21's byte-identical output achievable. Overridable in tests.
+var ollamaDetectorFactory = func() *search.OllamaDetector {
+	return search.NewOllamaDetector(search.OllamaDefaultBase)
+}
+
+// probeOllamaForWizard detects which of the FR-10 four states the local
+// machine is in, for the interactive wizard's preselection only. IsRunning
+// alone cannot tell "not installed" apart from "installed but not running" —
+// both look like a refused connection — so, like doctor's search.model check,
+// it distinguishes the two via PATH lookup first.
+func probeOllamaForWizard() (storage.OllamaState, []search.OllamaEmbeddingModel) {
+	if _, err := execLookPath("ollama"); err != nil {
+		return storage.OllamaNotInstalled, nil
+	}
+	detector := ollamaDetectorFactory()
+	running, _ := detector.IsRunning()
+	if !running {
+		return storage.OllamaNotRunning, nil
+	}
+	embModels, err := detector.ListEmbeddingModels()
+	if err != nil || len(embModels) == 0 {
+		return storage.OllamaModelMissing, nil
+	}
+	return storage.OllamaReady, embModels
+}
+
+// wizardSemanticDefaults resolves what the interactive wizard preselects for
+// semantic search: whether it starts enabled, which model starts selected,
+// and the guidance text/command explaining the detected state. An existing
+// answer from a prior `knowns init` always wins over the probe — that answer
+// is itself the user's word, not machine state, so honoring it here is the
+// same D7 rule applied to a value written earlier rather than today. On a
+// genuinely fresh project the probe may preselect enabled=true only when
+// Ollama is actually ready; any other state preselects disabled without
+// deciding — the user can still turn it on in the form (Scenario 6). The
+// model preselection offers whatever the machine already serves ahead of the
+// D2 default (D8/FR-14/AC-23), falling back to the D2 default when nothing is
+// detected.
+func wizardSemanticDefaults(state storage.OllamaState, embModels []search.OllamaEmbeddingModel, existingEnabled *bool, existingModel string) (enabled bool, model string, guidance storage.OllamaGuidance) {
+	model = storage.D2DefaultModelID
+	if len(embModels) > 0 {
+		model = embModels[0].ShortName
+	}
+	if existingModel != "" {
+		model = existingModel
+	}
+	guidance = storage.OllamaStateGuidance(state, model)
+
+	enabled = state == storage.OllamaReady
+	if existingEnabled != nil {
+		enabled = *existingEnabled
+	}
+	return enabled, model, guidance
+}
+
+// semanticModelOptions renders the wizard's model choices: anything the
+// machine already serves, ahead of the three D2 recommended models with the
+// tradeoff that distinguishes each (FR-9/FR-11), deduplicated by ID so a
+// model that is both on disk and in D2 is not listed twice. selected — an
+// existing config's model, a detected on-disk model, or the D2 default — is
+// always present and marked as the default choice, even if it matches
+// neither bucket (e.g. a model since removed from D2), so a prior answer is
+// never silently discarded from the list.
+func semanticModelOptions(embModels []search.OllamaEmbeddingModel, selected string) []huh.Option[string] {
+	seen := make(map[string]bool)
+	var options []huh.Option[string]
+	for _, m := range embModels {
+		id := m.ShortName
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		label := fmt.Sprintf("%s (%dd) — already on this machine", id, m.Dimensions)
+		options = append(options, huh.NewOption(label, id).Selected(id == selected))
+	}
+	for _, m := range storage.RecommendedModels() {
+		if seen[m.ID] {
+			continue
+		}
+		seen[m.ID] = true
+		label := fmt.Sprintf("%s — %s", m.ID, m.Tradeoff)
+		options = append(options, huh.NewOption(label, m.ID).Selected(m.ID == selected))
+	}
+	if selected != "" && !seen[selected] {
+		options = append(options, huh.NewOption(selected+" (current)", selected).Selected(true))
+	}
+	return options
+}
+
 // resolveWizardEmbeddingSource returns the embedding provider the wizard must
 // preserve. runWizard never asks for it, so without this the provider silently
-// resets to "local" and an Ollama/API model gets misrouted to the local ONNX
-// download path on `knowns init --force`.
+// resets to the legacy "local" value on `knowns init --force`, discarding a
+// deliberate Ollama or API choice. That value now resolves back to the Ollama
+// default rather than reaching a local backend, but losing the user's stated
+// provider is still wrong.
 func resolveWizardEmbeddingSource(globalDefaults *storage.ProjectDefaults, existing *models.Project) string {
 	source := ""
 	if globalDefaults != nil && globalDefaults.Settings.SemanticSearch != nil {
@@ -881,20 +844,39 @@ func runWizard(cwd string, gitTracked, gitIgnored bool, gitAvailable bool, exist
 		cfg.GitTrackingMode = "git-ignored"
 	}
 
-	// --- Group 2: Semantic search ---
-	cfg.EnableSemantic = true
-	cfg.SemanticModel = "multilingual-e5-small"
-	if existingSemanticEnabled != nil {
-		cfg.EnableSemantic = *existingSemanticEnabled
-	}
-	if existingSemanticModel != "" {
-		cfg.SemanticModel = existingSemanticModel
-	}
+	// --- Group 2: Semantic search (D7/D8, FR-13/FR-14) ---
+	// Detection may only narrow what gets preselected here, never decide what
+	// gets written: the probe below sets the form's starting values, but the
+	// written configuration is whatever the user leaves in the form when it
+	// submits (D7). A non-interactive run reaches neither this probe nor this
+	// form at all — see runInit's separate, fixed default (D8/AC-21).
+	ollamaState, ollamaEmbModels := probeOllamaForWizard()
+	semanticEnabledDefault, semanticModelDefault, semanticGuidance := wizardSemanticDefaults(
+		ollamaState, ollamaEmbModels, existingSemanticEnabled, existingSemanticModel)
+	cfg.EnableSemantic = semanticEnabledDefault
+	cfg.SemanticModel = semanticModelDefault
+	cfg.SemanticGuidance = semanticGuidance
+
+	semanticGroup := huh.NewGroup(
+		huh.NewConfirm().
+			Title("Enable Semantic Search").
+			Description(semanticGuidance.Description).
+			Value(&cfg.EnableSemantic),
+		huh.NewSelect[string]().
+			Title("Embedding model").
+			Description("No model is downloaded by init (D8) — pull it yourself if it isn't already on disk.").
+			Options(semanticModelOptions(ollamaEmbModels, cfg.SemanticModel)...).
+			Value(&cfg.SemanticModel),
+	).WithHideFunc(func() bool {
+		return !cfg.EnableSemantic
+	})
+
 	// Run form
 	groups := []*huh.Group{nameField}
 	if gitGroup != nil {
 		groups = append(groups, gitGroup)
 	}
+	groups = append(groups, semanticGroup)
 
 	// Seed per-section toggles from existing config. This has to happen before
 	// the form is built so the sections group can join the same form instead of
@@ -1010,145 +992,6 @@ func gitTrackingFromSelectedSections(selected []string) models.GitTracking {
 		Memories:  &memories,
 		Decisions: &decisions,
 	}
-}
-
-// downloadCustomHuggingFaceModel downloads ONNX model files from HuggingFace.
-func downloadCustomHuggingFaceModel(hfID string) error {
-	home, _ := os.UserHomeDir()
-	modelDir := filepath.Join(home, ".knowns", "models", hfID)
-
-	// First, find the ONNX file path by listing the repo tree.
-	onnxPath, err := findHuggingFaceONNXPath(hfID)
-	if err != nil {
-		return fmt.Errorf("could not find ONNX model file in %s: %w\nThis model may not have an ONNX export. Try a Xenova/* model instead.", hfID, err)
-	}
-
-	// Standard files + discovered ONNX path.
-	files := []struct {
-		remote   string
-		local    string
-		optional bool
-	}{
-		{"config.json", "config.json", false},
-		{"tokenizer.json", "tokenizer.json", false},
-		{"tokenizer_config.json", "tokenizer_config.json", true},
-		{onnxPath, onnxPath, false},
-	}
-
-	for _, file := range files {
-		dst := filepath.Join(modelDir, file.local)
-		if _, err := os.Stat(dst); err == nil {
-			continue // already exists
-		}
-
-		url := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", hfID, file.remote)
-		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-			return fmt.Errorf("create dir for %s: %w", file.local, err)
-		}
-
-		fmt.Printf("    Downloading %s...\n", file.remote)
-		_, err := downloadSimple(url, dst)
-		if err != nil {
-			if file.optional {
-				continue
-			}
-			return fmt.Errorf("download %s: %w", file.remote, err)
-		}
-	}
-	return nil
-}
-
-// findHuggingFaceONNXPath finds the ONNX model file path in a HuggingFace repo.
-func findHuggingFaceONNXPath(hfID string) (string, error) {
-	// Try common paths first without API call.
-	commonPaths := []string{
-		"onnx/model_quantized.onnx",
-		"onnx/model.onnx",
-		"model.onnx",
-		"model_quantized.onnx",
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	for _, p := range commonPaths {
-		url := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", hfID, p)
-		req, _ := http.NewRequest("HEAD", url, nil)
-		resp, err := client.Do(req)
-		if err != nil {
-			continue
-		}
-		resp.Body.Close()
-		if resp.StatusCode == 200 {
-			return p, nil
-		}
-	}
-
-	// Fallback: list repo files via API.
-	url := fmt.Sprintf("https://huggingface.co/api/models/%s/tree/main", hfID)
-	resp, err := client.Get(url)
-	if err != nil {
-		return "", fmt.Errorf("list repo files: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("HuggingFace API returned HTTP %d", resp.StatusCode)
-	}
-
-	var files []struct {
-		Path string `json:"path"`
-		Type string `json:"type"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
-		return "", fmt.Errorf("parse file list: %w", err)
-	}
-
-	// Find any .onnx file, prefer quantized.
-	var onnxFiles []string
-	for _, f := range files {
-		if f.Type == "file" && strings.HasSuffix(f.Path, ".onnx") {
-			onnxFiles = append(onnxFiles, f.Path)
-		}
-	}
-
-	if len(onnxFiles) == 0 {
-		// Check onnx/ subdirectory.
-		subURL := fmt.Sprintf("https://huggingface.co/api/models/%s/tree/main/onnx", hfID)
-		subResp, err := client.Get(subURL)
-		if err == nil && subResp.StatusCode == 200 {
-			var subFiles []struct {
-				Path string `json:"path"`
-				Type string `json:"type"`
-			}
-			json.NewDecoder(subResp.Body).Decode(&subFiles)
-			subResp.Body.Close()
-			for _, f := range subFiles {
-				if f.Type == "file" && strings.HasSuffix(f.Path, ".onnx") {
-					onnxFiles = append(onnxFiles, f.Path)
-				}
-			}
-		}
-	}
-
-	if len(onnxFiles) == 0 {
-		return "", fmt.Errorf("no .onnx files found")
-	}
-
-	// Prefer quantized > regular.
-	for _, f := range onnxFiles {
-		if strings.Contains(f, "quantized") {
-			return f, nil
-		}
-	}
-	return onnxFiles[0], nil
-}
-
-func findEmbeddingModel(id string) *embeddingModelInfo {
-	for _, m := range supportedEmbeddingModels {
-		if m.ID == id {
-			return &m
-		}
-	}
-	return nil
 }
 
 // execLookPath is used to locate binaries in PATH. Overridable in tests.

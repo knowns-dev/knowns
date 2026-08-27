@@ -250,7 +250,7 @@ export function TaskDetailSheet({
 				if (href && /^(task-)?\d+(\.md)?$/.test(href)) {
 					e.preventDefault();
 					const taskId = href.replace(/^task-/, "").replace(/\.md$/, "");
-					navigateTo(`/kanban/${taskId}`);
+					navigateTo(`/tasks/${taskId}`);
 					onClose();
 					return;
 				}

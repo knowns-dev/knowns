@@ -169,7 +169,6 @@ function useAutoSave(updateConfig: (c: ConfigPatch) => Promise<void>) {
 function editableConfig(config: Config): Config {
 	const {
 		capabilities: _readOnlyCapabilities,
-		localONNX: _readOnlyLocalONNX,
 		id: _readOnlyID,
 		createdAt: _readOnlyCreatedAt,
 		...editable
@@ -177,12 +176,13 @@ function editableConfig(config: Config): Config {
 	return editable;
 }
 
+// Ollama is the only local/default embedding provider; "api" is the only
+// alternative. Anything else (including a stale "local" value from an
+// unmigrated config) falls back to "ollama" rather than leaving the
+// provider selector on an option that no longer exists.
 function effectiveSemanticProvider(config: Config): string {
 	const configured = config.semanticSearch?.provider;
-	if (config.localONNX?.supported === false && (!configured || configured === "local")) {
-		return "ollama";
-	}
-	return configured || "local";
+	return configured === "api" ? "api" : "ollama";
 }
 
 // ── Section header component ──────────────────────────────────────
@@ -519,7 +519,6 @@ export default function ConfigPage() {
 
 	// Select embedding model and update config
 	const selectEmbeddingModel = useCallback((model: EmbeddingModelInfo) => {
-		const isApi = model.source === "ollama" || model.provider !== undefined;
 		const modelName = model.name;
 		const patch: Partial<Config> = {
 			semanticSearch: {
@@ -527,11 +526,6 @@ export default function ConfigPage() {
 				provider: semanticProvider,
 				model: modelName,
 				dimensions: model.dimensions || config.semanticSearch?.dimensions || 384,
-				...(isApi ? {
-					huggingFaceId: "",
-				} : {
-					huggingFaceId: model.huggingFaceId || "",
-				}),
 			},
 		};
 		setConfig(prev => ({ ...prev, ...patch }));
@@ -859,14 +853,11 @@ export default function ConfigPage() {
 
 	const renderEmbeddingModels = () => {
 		const provider = semanticProvider;
-		const models = provider === "local"
-			? embeddingModels?.local || []
-			: provider === "ollama"
-				? embeddingModels?.api || []
-				: embeddingModels?.configured || [];
+		const models = provider === "ollama"
+			? embeddingModels?.api || []
+			: embeddingModels?.configured || [];
 
 		const hintByProvider: Record<string, string> = {
-			local: "Select a local ONNX model",
 			ollama: "Select an Ollama embedding model",
 			api: "Select a configured API model",
 		};
@@ -881,9 +872,7 @@ export default function ConfigPage() {
 					<div className="text-sm text-muted-foreground py-2">
 						{provider === "ollama"
 							? "No Ollama embedding models found. Ensure Ollama is running and has embedding models pulled."
-							: provider === "api"
-								? "No configured API models. Use the endpoint config below to test and add one."
-								: "No local models found."}
+							: "No configured API models. Use the endpoint config below to test and add one."}
 					</div>
 				) : (
 					<div className="space-y-2">
@@ -899,13 +888,6 @@ export default function ConfigPage() {
 										<div className="text-sm font-medium">{model.name}</div>
 										<div className="text-xs text-muted-foreground">{model.dimensions}d{model.maxTokens ? `, ${model.maxTokens} tokens` : ""}</div>
 									</div>
-									{"installed" in model && model.installed !== undefined ? (
-										model.installed ? (
-											<Badge variant="default">Installed</Badge>
-										) : (
-											<Badge variant="outline">Not installed</Badge>
-										)
-									) : null}
 									{selected && <Check className="w-4 h-4 text-primary" />}
 								</div>
 							);
@@ -930,17 +912,7 @@ export default function ConfigPage() {
 				/>
 			</FieldRow>
 
-			{config.localONNX?.supported === false && (
-				<div
-					className="mb-3 flex gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
-					data-testid="local-onnx-unavailable"
-				>
-					<AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-					<span>{config.localONNX.reason || "Local ONNX is unavailable on this platform. Use Ollama or an API provider."}</span>
-				</div>
-			)}
-
-			<FieldRow label="Provider" hint="local = ONNX built-in, ollama = local Ollama server, api = custom endpoint">
+			<FieldRow label="Provider" hint="ollama = local Ollama server, api = custom endpoint">
 				<select
 					value={semanticProvider}
 					onChange={(e) => {
@@ -949,7 +921,6 @@ export default function ConfigPage() {
 					}}
 					className="w-full px-3 py-2 rounded-md border bg-input text-sm focus:outline-none focus:ring-2 focus:ring-ring"
 				>
-					<option value="local" disabled={config.localONNX?.supported === false}>Local (ONNX)</option>
 					<option value="ollama">Ollama</option>
 					<option value="api">API (OpenAI-compatible)</option>
 				</select>
@@ -985,17 +956,6 @@ export default function ConfigPage() {
 						</div>
 					)}
 				</>
-			)}
-
-			{semanticProvider === "local" && (
-				<FieldRow label="HuggingFace ID" hint="Full HuggingFace model identifier (read-only when model is selected)">
-					<Input
-						value={config.semanticSearch?.huggingFaceId || ""}
-						onChange={(e) => update({ semanticSearch: { ...(config.semanticSearch || {}), provider: "local", huggingFaceId: e.target.value } })}
-						placeholder="Select a model above"
-						readOnly={!!config.semanticSearch?.huggingFaceId}
-					/>
-				</FieldRow>
 			)}
 
 			<FieldRow label="Dimensions" hint="Embedding vector size">

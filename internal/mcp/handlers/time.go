@@ -233,7 +233,7 @@ func handleTimeReport(getStore func() *storage.Store, req mcp.CallToolRequest) (
 		return errFailed("load time entries", err)
 	}
 
-	tasks, _ := store.Tasks.List()
+	tasks, _ := store.Tasks.ListAll()
 	taskMap := make(map[string]*models.Task)
 	for _, t := range tasks {
 		taskMap[t.ID] = t

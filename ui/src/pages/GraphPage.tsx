@@ -131,6 +131,9 @@ export default function GraphPage() {
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [filters, setFilters] = useState<FilterState>(KNOWLEDGE_FILTERS);
+	// Archived Tasks stay out of the graph unless asked for: the graph answers
+	// "what is the project now", while the archive is history.
+	const [includeArchived, setIncludeArchived] = useState(false);
 	const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
 	const [previewTaskId, setPreviewTaskId] = useState<string | null>(null);
 	const [previewDocPath, setPreviewDocPath] = useState<string | null>(null);
@@ -171,7 +174,7 @@ export default function GraphPage() {
 	const fetchGraph = useCallback(async () => {
 		setLoading(true);
 		try {
-			const graphData = await getGraph();
+			const graphData = await getGraph({ includeHistorical: includeArchived });
 			setData(graphData);
 			setError(null);
 		} catch (fetchError) {
@@ -180,7 +183,7 @@ export default function GraphPage() {
 		} finally {
 			setLoading(false);
 		}
-	}, []);
+	}, [includeArchived]);
 
 	useEffect(() => {
 		fetchGraph();
@@ -381,6 +384,8 @@ export default function GraphPage() {
 				onClearImpact={clearSelection}
 				onZoomToFit={handleZoomToFit}
 				onToggleFullscreen={toggleFullscreen}
+				includeArchived={includeArchived}
+				onToggleArchived={() => setIncludeArchived((previous) => !previous)}
 			/>
 
 			<main

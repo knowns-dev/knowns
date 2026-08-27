@@ -50,7 +50,7 @@ Knowns replaces implicit memory with explicit references:
 
 ```
 @doc/patterns/auth
-@task-42
+@task-KN-4F7Q2M
 ```
 
 These references are:

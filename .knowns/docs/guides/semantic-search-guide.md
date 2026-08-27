@@ -1,62 +1,70 @@
 ---
+id: doc-05e628627a98b129687fe797aa85ce3a
 title: Semantic Search Guide
+description: Guide for setting up and using semantic search with Ollama or an OpenAI-compatible embeddings provider
 createdAt: '2026-02-24T08:44:32.489Z'
-updatedAt: '2026-03-08T18:18:32.324Z'
-description: Complete guide for setting up and using semantic search with local AI models
+updatedAt: '2026-08-25T14:37:45.502Z'
 tags:
   - guide
   - search
   - semantic
   - ai
-  - model
+  - ollama
 ---
+
 # Semantic Search Guide
 
-Search tasks and docs by **meaning**, not just keywords. Uses local AI models for privacy and offline capability.
+Search tasks and docs by **meaning**, not just keywords. Embeddings are computed by [Ollama](https://ollama.com) (a local runtime) or any OpenAI-compatible embeddings API — no embedding model is bundled into the binary.
 
 ## Architecture
-
-Knowns uses ONNX Runtime (via Go bindings) for local embedding inference. No external API calls required.
 
 ```mermaid
 graph TD
     A[Tasks/Docs] --> B[Chunker]
-    B --> C[ONNX Runtime - Go]
+    B --> C[Embedding Provider - Ollama / OpenAI-compatible HTTP]
     C --> D[Vector Index]
     E[Query] --> C
     C --> F[Hybrid Search]
     D --> F
     F --> G[Results]
 ```
+
+Keyword (BM25) search never depends on the embedding provider — it works the moment a project is initialized, with or without Ollama installed. When the embedder is unreachable or errors, semantic retrieval degrades to keyword results instead of failing the search.
+
 ## Quick Start
 
 ```bash
-# Enable during init
+# Enable during init — init detects Ollama and offers a model, but never pulls one
 knowns init my-project
-# → "Enable semantic search?" [y/n] → y
-# → "Select model:" → gte-small (recommended)
 
-# Or enable on existing project
-knowns config set search.semantic.enabled true
-knowns model download gte-small
-knowns search reindex
+# Or enable on an existing project
+knowns config set semanticSearch.enabled true
+knowns config set semanticSearch.provider ollama
+knowns config set semanticSearch.model qwen3-embedding:0.6b
+knowns search --reindex
 ```
 
-## Model Management
+## Choosing and Installing a Model
 
-ONNX models are stored at `~/.knowns/models/` (shared across projects). The Go binary loads models directly via ONNX Runtime -- no Node.js or Python dependencies required.
+Installing Ollama, the recommended model table with tradeoffs, and the pull commands are not repeated here. They live in one place only:
 
-| Model | Size | Speed | Best For |
-|-------|------|-------|----------|
-| `gte-small` | 67MB | Fast | Most projects (recommended) |
-| `all-MiniLM-L6-v2` | 80MB | Fast | Alternative |
-| `gte-base` | 220MB | Medium | Large projects |
+- `docs/en/reference/ollama-embedding-models.md` (and the `vi` translation)
+
+Setup, `doctor`, `init`, and this guide all point there instead of restating the advice, so it cannot drift between surfaces — read it before picking a model.
+
+## Using a Third-Party Provider Instead
+
+No `api` provider is seeded by default. To use a hosted OpenAI-compatible embeddings endpoint instead of Ollama:
 
 ```bash
-knowns model list              # List downloaded
-knowns model download gte-small # Download
-knowns model remove gte-small   # Remove
+knowns provider add --id openai --name "OpenAI" \
+  --api-base https://api.openai.com/v1 --api-key sk-...
+knowns config set semanticSearch.provider openai
+knowns config set semanticSearch.model text-embedding-3-small
 ```
+
+For why no `api` provider ships by default and for the exact `~/.knowns/settings.json` shape a hand-added model entry needs, see `docs/en/reference/ollama-embedding-models.md`.
+
 ## Search Usage
 
 ```bash
@@ -80,7 +88,8 @@ In `.knowns/config.json`:
   "settings": {
     "semanticSearch": {
       "enabled": true,
-      "model": "gte-small"
+      "provider": "ollama",
+      "model": "qwen3-embedding:0.6b"
     }
   }
 }
@@ -97,15 +106,15 @@ graph LR
 
 Index auto-updates on create/update. Manual rebuild:
 ```bash
-knowns search reindex
+knowns search --reindex
 ```
 
 ## Troubleshooting
 
 | Issue | Fix |
 |-------|-----|
-| Model not found | `knowns model download gte-small` |
-| Index stale | `knowns search reindex` |
-| Slow first search | Normal - model loads into memory |
+| Ollama not installed, not running, or model not pulled | `knowns doctor` names the exact next step for the state it detects; full guidance is in `docs/en/reference/ollama-embedding-models.md` |
+| Index stale (e.g. after `knowns migrate`) | `knowns search --reindex` |
+| Semantic search quietly returning keyword-only results | Expected when the embedder is unreachable — keyword search degrades gracefully instead of failing; check `knowns doctor` |
 
-> Full docs: `./docs/semantic-search.md`
+> Full reference: `docs/en/reference/ollama-embedding-models.md`

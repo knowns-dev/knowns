@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -170,6 +171,10 @@ func TestOllamaEndpointReportsPulledAndMissingModels(t *testing.T) {
 						APIBase: "http://localhost:11434/v1",
 					}, true, nil
 				},
+				// Deterministic regardless of whether this machine actually
+				// has the ollama binary on PATH: these cases exercise the
+				// "installed" branch specifically.
+				lookPath: func(string) (string, error) { return "/usr/local/bin/ollama", nil },
 			}
 
 			result, err := Run(context.Background(), RunOptions{
@@ -206,6 +211,7 @@ func TestOllamaEndpointWarnsWhenDaemonIsNotServing(t *testing.T) {
 				APIBase: "http://localhost:11434",
 			}, true, nil
 		},
+		lookPath: func(string) (string, error) { return "/usr/local/bin/ollama", nil },
 	}
 
 	result, err := Run(context.Background(), RunOptions{
@@ -214,10 +220,118 @@ func TestOllamaEndpointWarnsWhenDaemonIsNotServing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
+	// Remediation must resolve from storage.OllamaStateGuidance (AC-7), and
+	// must say keyword search still works without Ollama (AC-14).
+	wantGuidance := storage.OllamaStateGuidance(storage.OllamaNotRunning, "qwen3-embedding:0.6b")
 	check := findCheck(t, result, "search.provider-endpoint")
 	if check.Status != StatusWarn || check.Remediation == nil ||
-		check.Remediation.Command != "ollama serve" {
+		check.Remediation.Command != "ollama serve" ||
+		check.Remediation.Description != wantGuidance.Description ||
+		!strings.Contains(check.Remediation.Description, "Keyword search still works") {
 		t.Fatalf("ollama daemon check = %#v", check)
+	}
+}
+
+func TestOllamaEndpointReportsNotInstalledWithoutProbingNetwork(t *testing.T) {
+	var httpCalls atomic.Int32
+	deps := onlineDependencies{
+		client: httpDoerFunc(func(*http.Request) (*http.Response, error) {
+			httpCalls.Add(1)
+			return onlineResponse(http.StatusOK, `{"models":[]}`), nil
+		}),
+		loadProvider: func(*storage.Store) (providerTarget, bool, error) {
+			return providerTarget{
+				ID:      "ollama",
+				Kind:    "ollama",
+				Model:   "qwen3-embedding:0.6b",
+				APIBase: "http://localhost:11434",
+			}, true, nil
+		},
+		lookPath: func(string) (string, error) { return "", errors.New("executable file not found in $PATH") },
+	}
+
+	result, err := Run(context.Background(), RunOptions{
+		Scopes: []Scope{ScopeSearch},
+	}, []Checker{providerEndpointChecker(nil, deps)})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	wantGuidance := storage.OllamaStateGuidance(storage.OllamaNotInstalled, "qwen3-embedding:0.6b")
+	check := findCheck(t, result, "search.provider-endpoint")
+	if check.Status != StatusWarn ||
+		check.Evidence["installed"] != false ||
+		check.Remediation == nil ||
+		check.Remediation.Description != wantGuidance.Description ||
+		!strings.Contains(check.Remediation.Description, "Keyword search still works") {
+		t.Fatalf("ollama not-installed check = %#v", check)
+	}
+	if httpCalls.Load() != 0 {
+		t.Fatalf("HTTP calls = %d, want 0 — not-installed must short-circuit before probing", httpCalls.Load())
+	}
+}
+
+// TestOllamaEndpointProbeIsBoundedAgainstHangingConnection is the NFR-5/AC-20
+// regression test: a real TCP listener that accepts the connection and never
+// writes a response, the specific failure mode a refused connection cannot
+// exercise (a refusal returns immediately and proves nothing about bounding).
+// It uses a real *http.Client with no Timeout of its own, so the only thing
+// that can possibly bound the request is ollamaProbeTimeout applied inside
+// ollamaEndpointResult via the request context.
+func TestOllamaEndpointProbeIsBoundedAgainstHangingConnection(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	defer listener.Close()
+
+	release := make(chan struct{})
+	defer close(release)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		// Accept the connection and hold it open without ever writing a
+		// response — the case a refused connection cannot exercise.
+		<-release
+	}()
+
+	deps := onlineDependencies{
+		client: &http.Client{}, // deliberately no Timeout: only the probe's own bound may apply
+		loadProvider: func(*storage.Store) (providerTarget, bool, error) {
+			return providerTarget{
+				ID:      "ollama",
+				Kind:    "ollama",
+				Model:   "qwen3-embedding:0.6b",
+				APIBase: "http://" + listener.Addr().String(),
+			}, true, nil
+		},
+		lookPath: func(string) (string, error) { return "/usr/local/bin/ollama", nil },
+	}
+
+	started := time.Now()
+	result, err := Run(context.Background(), RunOptions{
+		Scopes: []Scope{ScopeSearch},
+	}, []Checker{providerEndpointChecker(nil, deps)})
+	elapsed := time.Since(started)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	t.Logf("accept-and-hang probe returned in %s", elapsed)
+	if elapsed >= 2*time.Second {
+		t.Fatalf("probe took %s, want well under the 2s default check budget", elapsed)
+	}
+
+	check := findCheck(t, result, "search.provider-endpoint")
+	// Must be a real, meaningful result (OllamaNotRunning), not the runner's
+	// generic checker_timeout fallback — that fallback is exactly the
+	// failure mode this test guards against (a check that reports a timeout
+	// instead of its subject).
+	if check.Status != StatusWarn ||
+		check.Evidence["errorCode"] == "checker_timeout" ||
+		check.Remediation == nil || check.Remediation.Command != "ollama serve" {
+		t.Fatalf("accept-and-hang probe result = %#v", check)
 	}
 }
 

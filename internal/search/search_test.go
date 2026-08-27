@@ -62,38 +62,6 @@ func (s *stubVectorStore) SetContentHash(string, string)        {}
 func (s *stubVectorStore) DeleteContentHash(string)             {}
 func (s *stubVectorStore) ListContentHashes() map[string]string { return nil }
 
-// --- Model Prefix Config Tests ---
-
-func TestEmbeddingModelPrefixes(t *testing.T) {
-	tests := []struct {
-		model       string
-		queryPrefix string
-		docPrefix   string
-	}{
-		{"gte-small", "", ""},
-		{"all-MiniLM-L6-v2", "", ""},
-		{"gte-base", "", ""},
-		{"bge-small-en-v1.5", "Represent this sentence: ", "Represent this sentence: "},
-		{"bge-base-en-v1.5", "Represent this sentence: ", "Represent this sentence: "},
-		{"nomic-embed-text-v1.5", "search_query: ", "search_document: "},
-		{"multilingual-e5-small", "query: ", "passage: "},
-	}
-
-	for _, tt := range tests {
-		cfg, ok := EmbeddingModels[tt.model]
-		if !ok {
-			t.Errorf("model %q not found in EmbeddingModels", tt.model)
-			continue
-		}
-		if cfg.QueryPrefix != tt.queryPrefix {
-			t.Errorf("model %q: QueryPrefix = %q, want %q", tt.model, cfg.QueryPrefix, tt.queryPrefix)
-		}
-		if cfg.DocPrefix != tt.docPrefix {
-			t.Errorf("model %q: DocPrefix = %q, want %q", tt.model, cfg.DocPrefix, tt.docPrefix)
-		}
-	}
-}
-
 // --- ChunkVersion Tests ---
 
 func TestChunkVersionConstant(t *testing.T) {
@@ -817,6 +785,16 @@ func TestEngineRetrieve_PreservesRequestedSemanticModeWhenAvailable(t *testing.T
 
 func newRetrievalTestStore(t *testing.T) *storage.Store {
 	t.Helper()
+	// Isolate HOME: memorySemanticAvailable() constructs a semantic runtime
+	// session against storage.NewGlobalSemanticStore(), which resolves
+	// ~/.knowns. Without isolation this test depends on whatever the
+	// machine running it happens to have configured globally -- and, since
+	// spec ollama-only-embedding D1/FR-3, a legacy provider: local global
+	// config now resolves to a genuinely working provider: ollama config,
+	// so on a machine with Ollama actually running this test would flip
+	// from "semantic unavailable" to available for reasons having nothing
+	// to do with what it is testing.
+	t.Setenv("HOME", t.TempDir())
 	root := filepath.Join(t.TempDir(), ".knowns")
 	store := storage.NewStore(root)
 	if err := store.Init("retrieval-test"); err != nil {

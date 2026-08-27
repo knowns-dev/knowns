@@ -116,65 +116,34 @@ func maybeWarnSkillsOutOfSync() {
 	}
 }
 
-// maybeAutoSetup detects a cloned Knowns project with config.json but missing
-// local setup (e.g. embedding model not downloaded) and prompts the user to
-// complete setup. This runs on the first command after cloning.
-func maybeAutoSetup() {
+// maybeWarnUnmigratedConfig prints a one-line notice naming `knowns migrate`
+// when the project config carries a schema version older than current
+// (spec ollama-only-embedding FR-4). It deliberately says only that a
+// migration is pending, not the full remediation (install Ollama, pull the
+// model, reindex) — that belongs to `knowns migrate` itself and to
+// `doctor`, where the user has asked for it.
+func maybeWarnUnmigratedConfig() {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return
 	}
 	root := filepath.Join(cwd, ".knowns")
 	if _, err := os.Stat(root); err != nil {
-		return // not a knowns project
+		return
 	}
-
 	store := storage.NewStore(root)
-	cfg, err := store.Config.Load()
-	if err != nil {
+	project, err := store.Config.Load()
+	if err != nil || project == nil {
 		return
 	}
-
-	// Check if semantic search is configured but model is not installed
-	if cfg.Settings.SemanticSearch == nil || !cfg.Settings.SemanticSearch.Enabled {
+	if !storage.NeedsMigration(project) {
 		return
 	}
-	if _, unsupported := currentLocalONNXUnsupported(cfg.Settings.SemanticSearch); unsupported {
-		return
-	}
-
-	modelID := cfg.Settings.SemanticSearch.Model
-	if modelID == "" {
-		return
-	}
-
-	// Find the model in supported list
-	var selected *embeddingModel
-	for i := range supportedModels {
-		if supportedModels[i].ID == modelID {
-			selected = &supportedModels[i]
-			break
-		}
-	}
-	if selected == nil {
-		return
-	}
-
-	if isModelInstalled(selected) {
-		return // already installed, nothing to do
-	}
-
-	// Model not installed — prompt user
-	fmt.Println()
-	fmt.Println(warnStyle.Render("⚠ This project uses semantic search but the embedding model is not installed locally."))
-	fmt.Println(RenderField("Model", fmt.Sprintf("%s (%s, ~%dMB)", selected.Name, selected.ID, selected.SizeMB)))
-	fmt.Println()
-	fmt.Println(RenderHint("Run: " + RenderCmd("knowns sync")))
-	fmt.Println()
+	fmt.Fprintf(os.Stderr, "%s\n", StyleWarning.Render("⚠ This project's config needs migrating. Run "+RenderCmd("knowns migrate")+"."))
 }
 
 func shouldSkipCLIWarnings(args []string) bool {
-	for _, name := range []string{"doctor", "runtime", "runtime-memory", "qdrant", "__runtime", "__lsp-daemon"} {
+	for _, name := range []string{"doctor", "runtime", "runtime-memory", "qdrant", "__runtime", "__lsp-daemon", "migrate"} {
 		if slices.Contains(args, name) {
 			return true
 		}
@@ -192,8 +161,8 @@ func Execute() error {
 	// Warn if skills are out of sync after a CLI upgrade.
 	maybeWarnSkillsOutOfSync()
 
-	// Check if cloned project needs local setup (e.g. embedding model download).
-	maybeAutoSetup()
+	// Warn once per command if the project config has pending schema migrations.
+	maybeWarnUnmigratedConfig()
 
 	return executeWithUpdateNotice(args, rootCmd.Execute, util.CheckForUpdate, 3*time.Second, os.Stderr)
 }

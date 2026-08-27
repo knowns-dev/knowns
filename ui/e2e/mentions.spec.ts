@@ -67,7 +67,7 @@ test.describe("Task → Task Mentions", () => {
 		});
 
 		await test.step("Navigated to target task", async () => {
-			await expect(page).toHaveURL(new RegExp(`/kanban/${targetId}`), { timeout: 5000 });
+			await expect(page).toHaveURL(new RegExp(`/tasks/${targetId}`), { timeout: 5000 });
 			await expect(page.getByRole("heading", { name: "Target Task", exact: true })).toBeVisible();
 		});
 	});

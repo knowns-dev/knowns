@@ -1,14 +1,17 @@
 ---
+id: doc-2f729c94287a2981810920f1d2c589e4
 title: Semantic Search
-createdAt: '2026-02-24T02:57:24.464Z'
-updatedAt: '2026-02-24T03:09:10.737Z'
 description: Specification for semantic search feature with local embedding models
+createdAt: '2026-02-24T02:57:24.464Z'
+updatedAt: '2026-08-25T14:37:08.468Z'
 tags:
   - spec
   - approved
   - search
   - ai
+  - partially-superseded
 ---
+
 ## Overview
 
 Semantic Search enables searching tasks and docs based on **meaning** rather than just keyword matching. Uses local embedding models to ensure privacy and offline capability.
@@ -337,3 +340,14 @@ mcp__knowns__search({
 - [ ] Q2: Need "search score threshold" to filter low-confidence results?
 - [ ] Q3: Support embedding for acceptance criteria and implementation notes?
 - [ ] Q4: Rate limit for incremental indexing (batch updates)?
+
+
+## Superseded in Part
+
+@doc/specs/2026-08-24/ollama-only-embedding supersedes part of this spec.
+
+**Void:** FR-3 (auto-download), NFR-1 ("model download < 100MB"), NFR-3 (offline-after-download), the `modelPath` config field, and the recommended model table.
+
+**Retained:** chunking strategy, index version control, hybrid mode, MCP tool changes, FR-4 through FR-8.
+
+The System Decision recording this removal is not yet accepted — it stays draft until the removal is merged and a commit can be cited as evidence — and will be linked here once accepted.

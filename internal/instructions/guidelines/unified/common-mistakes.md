@@ -10,10 +10,10 @@
 
 ```bash
 # WRONG (sets assignee to garbage!)
-knowns task edit 35 -a "Criterion text"
+knowns task edit KN-4F7Q2M -a "Criterion text"
 
 # CORRECT (use --ac)
-knowns task edit 35 --ac "Criterion text"
+knowns task edit KN-4F7Q2M --ac "Criterion text"
 ```
 
 ---
@@ -68,7 +68,8 @@ mcp__knowns__update_task({
 {{#if cli}}
 | Edit .md files directly | Use CLI commands |
 | `-a "criterion"` | `--ac "criterion"` |
-| `--parent task-48` | `--parent 48` (raw ID) |
+| `--parent task-KN-4F7Q2M` | `--parent KN-4F7Q2M` (the ID as printed) |
+| Stripping `KN-` from `KN-4F7Q2M` | The hyphen is part of the ID, not a `task-` ref |
 | `--plain` with create/edit | `--plain` only for view/list |
 | `--notes` for progress | `--append-notes` for progress |
 {{/if}}

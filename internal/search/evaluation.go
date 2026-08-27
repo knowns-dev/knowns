@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/howznguyen/knowns/internal/storage"
 )
 
 const (
@@ -25,6 +27,24 @@ const (
 	CanonicalSemanticEvaluationBaselinePath = "internal/search/testdata/retrieval_evaluation_semantic_baseline.json"
 	CanonicalHybridEvaluationBaselinePath   = "internal/search/testdata/retrieval_evaluation_hybrid_baseline.json"
 )
+
+// PinnedSemanticRuntimeID is the runtime the canonical semantic and hybrid
+// baselines are generated against, and the value CI passes as --runtime-id.
+// It is derived from the D2 default rather than written out, so changing the
+// default model cannot leave this pin silently naming the old one — the
+// baselines would then be regenerated against a runtime nobody pinned.
+// The previous pin, local/gte-small@384, named the local ONNX runtime that
+// spec ollama-only-embedding FR-2 removed.
+func PinnedSemanticRuntimeID() string {
+	for _, m := range storage.RecommendedModels() {
+		if m.Default {
+			return fmt.Sprintf("ollama/%s@%d", m.ID, m.Dimensions)
+		}
+	}
+	// D2Models always carries exactly one default; a build without one is a
+	// programming error, not a runtime condition to paper over.
+	panic("search: no default model in the D2 registry")
+}
 
 var (
 	//go:embed testdata/retrieval_evaluation_cases.json testdata/retrieval_evaluation_baseline.json

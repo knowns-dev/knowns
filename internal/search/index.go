@@ -464,39 +464,40 @@ func (s *IndexService) embedAndStoreTask(task *models.Task) error {
 	return nil
 }
 
-func (s *IndexService) embedTask(task *models.Task) ([]Chunk, error) {
+// chunkMaxTokens resolves the chunk-sizing context limit from the active
+// embedder's own model config (spec ollama-only-embedding FR-12) rather than
+// the removed EmbeddingModels table, which only ever covered local ONNX
+// model names. Falling back to a lookup keyed by s.vecStore.Model() silently
+// missed every HTTP-backed model and chunked at the 512 fallback regardless
+// of the model's real context limit.
+func (s *IndexService) chunkMaxTokens() int {
 	maxTokens := 512
-	if cfg, ok := EmbeddingModels[s.vecStore.Model()]; ok {
+	if s.embedder == nil {
+		return maxTokens
+	}
+	if cfg := s.embedder.ModelConfig(); cfg.MaxTokens > 0 {
 		maxTokens = cfg.MaxTokens
 	}
-	result := ChunkTask(task, maxTokens, s.embedder.GetTokenizer())
+	return maxTokens
+}
+
+func (s *IndexService) embedTask(task *models.Task) ([]Chunk, error) {
+	result := ChunkTask(task, s.chunkMaxTokens(), s.embedder.GetTokenizer())
 	return s.embedChunks(result.Chunks)
 }
 
 func (s *IndexService) embedAndStoreDoc(doc *models.Doc) error {
-	maxTokens := 512
-	if cfg, ok := EmbeddingModels[s.vecStore.Model()]; ok {
-		maxTokens = cfg.MaxTokens
-	}
-	result := ChunkDocument(doc.Content, doc.Path, doc.Title, doc.Description, maxTokens, s.embedder.GetTokenizer())
+	result := ChunkDocument(doc.Content, doc.Path, doc.Title, doc.Description, s.chunkMaxTokens(), s.embedder.GetTokenizer())
 	return s.embedAndStore(result.Chunks)
 }
 
 func (s *IndexService) embedAndStoreMemory(entry *models.MemoryEntry) error {
-	maxTokens := 512
-	if cfg, ok := EmbeddingModels[s.vecStore.Model()]; ok {
-		maxTokens = cfg.MaxTokens
-	}
-	result := ChunkMemory(entry, maxTokens, s.embedder.GetTokenizer())
+	result := ChunkMemory(entry, s.chunkMaxTokens(), s.embedder.GetTokenizer())
 	return s.embedAndStore(result.Chunks)
 }
 
 func (s *IndexService) embedAndStoreDecision(decision *models.DecisionEntry) error {
-	maxTokens := 512
-	if cfg, ok := EmbeddingModels[s.vecStore.Model()]; ok {
-		maxTokens = cfg.MaxTokens
-	}
-	result := ChunkDecision(decision, maxTokens, s.embedder.GetTokenizer())
+	result := ChunkDecision(decision, s.chunkMaxTokens(), s.embedder.GetTokenizer())
 	return s.embedAndStore(result.Chunks)
 }
 
@@ -648,7 +649,7 @@ func allTasksForIndex(store *storage.Store) ([]*models.Task, error) {
 	if store == nil || store.Tasks == nil {
 		return nil, fmt.Errorf("task store unavailable")
 	}
-	active, err := store.Tasks.List()
+	active, err := store.Tasks.ListActive()
 	if err != nil {
 		return nil, err
 	}

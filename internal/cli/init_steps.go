@@ -6,22 +6,15 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-
-	tea "charm.land/bubbletea/v2"
 )
 
-// initStep represents a single step in the init process.
-// Either run (task step) or url+dst (download step) should be set.
+// initStep represents a single task step in the init process. The download-step
+// variant that used to share this type (url/dst/postHook, driven through a
+// bubbletea progress UI) was removed with the local ONNX model download flow
+// (spec ollama-only-embedding FR-1); every remaining init step is a plain task.
 type initStep struct {
-	label    string
-	run      func() error       // task step (mutually exclusive with url)
-	url      string             // download step
-	dst      string             // download destination
-	postHook func(string) error // post-download hook
-	size     int64
-	written  int64
-	done     bool
-	err      error
+	label string
+	run   func() error
 }
 
 // spinnerFrames for the simple goroutine-based spinner.
@@ -61,55 +54,13 @@ func runTaskStepAnimated(step *initStep) error {
 	return err
 }
 
-// runInitSteps runs all steps sequentially with animated UI.
-// Task steps use a goroutine spinner (no bubbletea, no escape sequence leak).
-// Download steps are batched and run via bubbletea setupModel with progress bars.
+// runInitSteps runs all steps sequentially with animated UI, using a
+// goroutine spinner (no bubbletea, no escape sequence leak).
 func runInitSteps(steps []initStep) error {
-	if len(steps) == 0 {
-		return nil
-	}
-
-	i := 0
-	for i < len(steps) {
-		step := &steps[i]
-
-		if step.run != nil {
-			// Task step — goroutine spinner
-			if err := runTaskStepAnimated(step); err != nil {
-				return err
-			}
-			i++
-			continue
-		}
-
-		// Collect consecutive download steps
-		j := i
-		for j < len(steps) && steps[j].url != "" {
-			j++
-		}
-
-		// Convert to downloadStep for the proven setupModel
-		var dlSteps []downloadStep
-		for k := i; k < j; k++ {
-			dlSteps = append(dlSteps, downloadStep{
-				label:    steps[k].label,
-				url:      steps[k].url,
-				dst:      steps[k].dst,
-				postHook: steps[k].postHook,
-			})
-		}
-
-		m := newSetupModel(dlSteps)
-		p := tea.NewProgram(m)
-		if _, err := p.Run(); err != nil {
+	for i := range steps {
+		if err := runTaskStepAnimated(&steps[i]); err != nil {
 			return err
 		}
-		if m.err != nil {
-			return m.err
-		}
-
-		i = j
 	}
-
 	return nil
 }

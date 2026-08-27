@@ -149,3 +149,63 @@ func TestGraph_LinksMemoriesThroughTheirSources(t *testing.T) {
 		t.Fatalf("no edge from memory:mem002 to doc:guides/source, got %+v", payload.Edges)
 	}
 }
+
+// The graph answers "what is the project now", so archived Tasks stay out by
+// default and appear only when the caller asks for them.
+func TestGraphRouteIncludeHistorical(t *testing.T) {
+	store := newGraphRouteTestStore(t)
+	for _, id := range []string{"gactive", "garchived"} {
+		if err := store.Tasks.Create(&models.Task{
+			ID: id, Title: "Graph " + id, Status: "done", Priority: "medium",
+		}); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+	if err := store.Tasks.Archive("garchived"); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	r := chi.NewRouter()
+	(&GraphRoutes{store: store}).Register(r)
+
+	nodeIDs := func(query string) map[string]bool {
+		t.Helper()
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/graph"+query, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET /graph%s status = %d, body %s", query, w.Code, w.Body.String())
+		}
+		var payload struct {
+			Nodes []struct {
+				ID string `json:"id"`
+			} `json:"nodes"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		out := map[string]bool{}
+		for _, n := range payload.Nodes {
+			out[n.ID] = true
+		}
+		return out
+	}
+
+	def := nodeIDs("")
+	if !def["task:gactive"] {
+		t.Errorf("default graph missing active task: %v", def)
+	}
+	if def["task:garchived"] {
+		t.Errorf("default graph must exclude archived task: %v", def)
+	}
+
+	withArchived := nodeIDs("?includeHistorical=true")
+	if !withArchived["task:gactive"] || !withArchived["task:garchived"] {
+		t.Errorf("includeHistorical graph = %v, want both tasks", withArchived)
+	}
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/graph?includeHistorical=maybe", nil))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("invalid includeHistorical status = %d, want 400", w.Code)
+	}
+}

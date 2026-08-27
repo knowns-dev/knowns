@@ -18,6 +18,15 @@ type Project struct {
 	ID        string          `json:"id"`
 	CreatedAt time.Time       `json:"createdAt"`
 	Settings  ProjectSettings `json:"settings"`
+
+	// SchemaVersion is the project config schema version (spec
+	// ollama-only-embedding D10/FR-18). It lives in the committed config,
+	// not per-machine state, so a migration applied and committed by one
+	// developer is recorded for everyone who pulls it. Zero/omitted means
+	// "legacy": a config written before this field existed, which needs
+	// every registered migration applied. `knowns migrate` is the only
+	// command that advances it; nothing else may write this field.
+	SchemaVersion int `json:"schemaVersion,omitempty"`
 }
 
 // ProjectSettings holds all user-configurable options for a project.
@@ -205,6 +214,56 @@ func (s ProjectSettings) EffectiveTaskLifecycle() TaskLifecycleSettings {
 		return DefaultTaskLifecycleSettings()
 	}
 	return cloneTaskLifecycleSettings(*s.TaskLifecycle)
+}
+
+// semanticSearchResolver, when registered, resolves provider: local (or
+// omitted, its historical default) as though it declared provider: ollama
+// with the current default model (spec ollama-only-embedding D1/FR-3).
+//
+// ProjectSettings cannot import internal/storage directly to compute this
+// itself — internal/storage already imports internal/models (ConfigStore
+// operates on models.Project), and models importing storage back would be
+// an import cycle. internal/storage registers the real implementation
+// (ResolveSemanticSearch, backed by the D2 model registry) from an init()
+// in internal/storage/semantic_resolve.go, so any binary that imports
+// internal/storage — which is effectively every command in this tree —
+// has resolution wired up before main() runs. This is the same registration
+// idiom database/sql uses for drivers.
+var semanticSearchResolver func(*SemanticSearchSettings) *SemanticSearchSettings
+
+// RegisterSemanticSearchResolver installs the function EffectiveSemanticSearch
+// delegates to. Call it from the package that owns the model registry
+// (internal/storage); models itself never calls this.
+func RegisterSemanticSearchResolver(fn func(*SemanticSearchSettings) *SemanticSearchSettings) {
+	semanticSearchResolver = fn
+}
+
+// EffectiveSemanticSearch returns SemanticSearch resolved per spec
+// ollama-only-embedding D1/FR-3: a project declaring provider: local (or
+// omitting provider) resolves in memory as though it declared provider:
+// ollama with the default model, independent of what is installed, pulled,
+// or configured on the machine (D9). nil in, nil out.
+//
+// This mirrors EffectiveTaskLifecycle's shape deliberately: it returns a
+// resolved copy and never mutates s.SemanticSearch, so a later unrelated
+// Save() still persists whatever the file actually said (see
+// TestConfigStoreResolvesLegacyLocalProviderWithoutRewriting) — mutating the
+// receiver here would make an unrelated `knowns config set` silently
+// rewrite provider: local to provider: ollama in a committed file, which
+// breaks D1.
+//
+// If no resolver has been registered (a models-only test, or a binary that
+// never imports internal/storage), this returns the settings unresolved —
+// the same behavior as before this accessor existed — rather than panic.
+func (s ProjectSettings) EffectiveSemanticSearch() *SemanticSearchSettings {
+	if s.SemanticSearch == nil {
+		return nil
+	}
+	if semanticSearchResolver == nil {
+		resolved := *s.SemanticSearch
+		return &resolved
+	}
+	return semanticSearchResolver(s.SemanticSearch)
 }
 
 // Validate rejects malformed lifecycle durations while permitting zero delay.
@@ -472,13 +531,16 @@ type SemanticSearchSettings struct {
 	Enabled bool   `json:"enabled,omitempty"`
 	Model   string `json:"model"`
 
-	// Provider selects the embedding backend: "local" (default, ONNX),
-	// "ollama", or "api" (OpenAI-compatible endpoint configured in
-	// ~/.knowns/settings.json).
+	// Provider selects the embedding backend: "ollama" or "api" (an
+	// OpenAI-compatible endpoint configured in ~/.knowns/settings.json).
+	// A legacy "local", or an empty value, resolves to "ollama" with the
+	// default model on read — see ProjectSettings.EffectiveSemanticSearch.
 	Provider string `json:"provider,omitempty"`
 
-	// HuggingFaceID is the full HuggingFace model identifier
-	// (e.g., "Xenova/gte-small"). Used only when Provider is "local" or empty.
+	// HuggingFaceID is a legacy field from the removed local embedding
+	// backend. Nothing reads it any more, and `knowns migrate` drops it,
+	// but it stays on the struct so a config that still carries it loads
+	// without failing or warning.
 	HuggingFaceID string `json:"huggingFaceId,omitempty"`
 
 	// Dimensions is the embedding vector size for the chosen model.

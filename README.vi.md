@@ -114,7 +114,7 @@ Cụ thể, Knowns quản lý:
 - **Specs** define "xong" nghĩa là gì cho một feature
 - **Memory** — project-level, session-level, global knowledge để AI recall
 - **Templates** cho code generation bằng Handlebars
-- **References** như `@task-42` và `@doc/patterns/auth` để AI follow và resolve
+- **References** như `@task-KN-4F7Q2M` và `@doc/patterns/auth` để AI follow và resolve
 - **Code intelligence** — LSP-backed real-time code queries: symbols, definitions, references, rename, và editing actions
 
 Tất cả nằm trong `.knowns/` của repo. Plain files. Commit vào Git được. Không cần cloud.
@@ -301,7 +301,7 @@ knowns browser --open
 | **Documentation**     | Nested markdown folders có cross-references và mermaid                        |
 | **Semantic Search**   | Tìm theo ý nghĩa với local AI models (offline)                                |
 | **Time Tracking**     | Timer và report theo task                                                     |
-| **Context Linking**   | `@task-42` và `@doc/patterns/auth` references AI resolve được                 |
+| **Context Linking**   | `@task-KN-4F7Q2M` và `@doc/patterns/auth` references AI resolve được                 |
 | **Validation**        | Phát hiện broken references và incomplete tasks bằng `knowns validate`        |
 | **Template System**   | Code generation bằng Handlebars (`.hbs`) templates                            |
 | **Import System**     | Import docs và templates từ git, npm, local                                   |
@@ -404,6 +404,7 @@ Bảng dưới dùng syntax `/kn-*` của Claude Code. Trong Codex, dùng cùng 
 | `/kn-plan <id>`             | Nhận task, gom context, tạo implementation plan                       |
 | `/kn-implement <id>`        | Execute plan, track progress, check AC                                |
 | `/kn-research`              | Research project context, code, và external MCP/web sources liên quan |
+| `/kn-handoff`               | Viết handoff document cross-repo: brief hoặc API contract             |
 | `/kn-commit`                | Tạo conventional commit có verification                               |
 | `/kn-spec`                  | Tạo spec document cho feature (SDD)                                   |
 | `/kn-flow @doc/<spec-path>` | Recommended full approved-spec flow: plan, implement, review, verify  |

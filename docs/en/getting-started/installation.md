@@ -6,21 +6,25 @@ Install the `knowns` CLI first. Installation only makes the command available; y
 
 - a supported terminal environment on macOS, Linux, or Windows
 - Git if you want repository-aware init/setup behavior
-- optional local model downloads if you plan to use semantic search
+- [Ollama](https://ollama.com/download) if you plan to use semantic search
 
 ## Platform support
 
-| Platform | CLI artifact | Bundled local ONNX |
-| --- | --- | --- |
-| macOS Apple Silicon | `darwin-arm64` | Yes |
-| macOS Intel (x86_64) | `darwin-x64` | No |
-| Linux x64 | `linux-x64` | Yes |
-| Linux ARM64 | `linux-arm64` | Yes |
-| Windows x64 | `win32-x64` | Yes |
+| Platform | CLI artifact |
+| --- | --- |
+| macOS Apple Silicon | `darwin-arm64` |
+| macOS Intel (x86_64) | `darwin-x64` |
+| Linux x64 | `linux-x64` |
+| Linux ARM64 | `linux-arm64` |
+| Windows x64 | `win32-x64` |
 
-On macOS Intel, the full CLI and keyword/BM25 search remain available. Local ONNX controls are disabled because ONNX Runtime no longer provides a compatible prebuilt macOS x86_64 library. For semantic search, use Ollama or an OpenAI-compatible API provider.
+Every platform ships the same single binary with no bundled shared library, so
+the CLI behaves identically on all of them.
 
-Advanced users can explicitly set `KNOWN_ORT_LIB` to a compatible x86_64 `libonnxruntime.dylib`; Knowns will then enable the local ONNX provider.
+Semantic search is optional and needs an embedding provider — Ollama running
+locally, or a third-party OpenAI-compatible endpoint. Without one, Knowns
+still works: search falls back to keyword/BM25. See
+[Ollama Embedding Models](../reference/ollama-embedding-models.md).
 
 ## Homebrew
 

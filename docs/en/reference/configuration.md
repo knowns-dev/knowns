@@ -20,9 +20,9 @@ This file describes what the project wants Knowns to manage locally, including p
     },
     "semanticSearch": {
       "enabled": true,
-      "model": "multilingual-e5-small",
-      "provider": "local",
-      "dimensions": 384
+      "model": "qwen3-embedding:0.6b",
+      "provider": "ollama",
+      "dimensions": 1024
     },
     "platforms": [
       "claude-code",
@@ -104,17 +104,22 @@ Relevant fields:
 
 - `enabled`
 - `model`
-- `provider` (`"local"`, `"ollama"`, or a provider ID registered with `knowns provider add`)
+- `provider` (`"ollama"`, or a provider ID registered with `knowns provider add`)
 - `dimensions`
+
+A project written before the Ollama-only change may still carry
+`"provider": "local"`. It is read as `"ollama"` with the default model, and
+`knowns migrate` rewrites it on disk when you choose to.
 
 Common behavior:
 
 - `knowns init` can set these values
-- `knowns settings` shows supported Local ONNX models with downloaded/not downloaded status
-- Selecting a missing Local ONNX model in `knowns settings` asks before downloading and saving it
-- `knowns provider add` and `knowns model add --provider <id> <model-name>` configure API-backed embedding models
+- `knowns settings` lists the embedding models Ollama is already serving
+- `knowns provider add` registers an OpenAI-compatible provider; select one of
+  its models with `knowns config set settings.semanticSearch.model <name>`
 - `knowns sync` can re-apply the semantic setup
 - `knowns search --reindex` rebuilds the local index
+- See [Ollama Embedding Models](./ollama-embedding-models.md) for recommended models, install/pull commands, and the shape of a third-party OpenAI-compatible provider entry
 
 ### `settings.lsp`
 
@@ -224,8 +229,8 @@ knowns settings
 knowns sync
 knowns config set <key> <value>
 knowns config get <key>
-knowns model list
-knowns model download multilingual-e5-small
+knowns migrate
+ollama pull qwen3-embedding:0.6b
 knowns search --status-check
 knowns search --reindex
 ```

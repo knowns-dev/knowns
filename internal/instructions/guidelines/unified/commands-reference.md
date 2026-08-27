@@ -47,9 +47,27 @@ Returns: `{ projectRoot, isExplicitlySet, isValid, source }`
   "priority": "medium",
   "labels": ["label1"],
   "assignee": "@me",
-  "parent": "parent-id"
+  "parent": "KN-4F7Q2M",
+  "prefix": "SPC"
 }
 ```
+
+Generated IDs follow `settings.defaultTaskIdPrefix`: `KN-4F7Q2M` when it is set,
+`4f7q2m` when it is not. Pass IDs through unchanged; the prefix is not separable.
+
+`prefix` overrides the default for that one Task without touching config, so a
+spec-driven wave can mint `SPC-4F7Q2M` while the project default stays `KN`. It
+must be 2-8 alphanumeric characters starting with a letter, and is normalized to
+uppercase. The suffix is always 6 characters and is not configurable.
+
+Changing the project default is a CLI or Settings action, not an MCP one:
+
+```bash
+knowns config get settings.defaultTaskIdPrefix --plain
+knowns config set settings.defaultTaskIdPrefix KN
+```
+
+It only affects Tasks created afterwards; existing IDs stay valid.
 
 ### mcp__knowns__update_task
 

@@ -47,7 +47,7 @@ func (tx *TaskLifecycleTransaction) CheckTaskExpectedHash(task *models.Task, exp
 }
 
 func (tx *TaskLifecycleTransaction) ListActiveTasks() ([]*models.Task, error) {
-	return tx.store.Tasks.List()
+	return tx.store.Tasks.ListActive()
 }
 
 func (tx *TaskLifecycleTransaction) ListArchivedTasks() ([]*models.Task, error) {

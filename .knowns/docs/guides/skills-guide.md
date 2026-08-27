@@ -1,8 +1,9 @@
 ---
+id: doc-d5d47f26d99e8b75311d881f59244ca2
 title: Skills Guide
 description: Agent skills for AI-assisted development workflows across Claude Code, Codex, and other platforms
 createdAt: '2026-02-24T08:45:44.217Z'
-updatedAt: '2026-06-26T03:45:43.011Z'
+updatedAt: '2026-08-27T06:14:45.715Z'
 tags:
   - guide
   - skills
@@ -40,18 +41,22 @@ graph TD
 | Skill | Description |
 |-------|-------------|
 | `kn-init` | Read project docs, understand context |
-| `kn-plan <id>` | Take task, gather context, create plan |
-| `kn-implement <id>` | Execute plan, track progress |
-| `kn-research` | Search codebase, find patterns |
-| `kn-review` | Review implemented work |
-| `kn-commit` | Create conventional commit |
 | `kn-spec` | Create spec document (SDD) |
 | `kn-flow @doc/<spec-path>` | Recommended approved-spec orchestration |
 | `kn-go <spec-path>` | Legacy no-review-gates approved-spec pipeline |
+| `kn-plan <id>` | Take task, gather context, create plan |
+| `kn-research` | Search codebase, find patterns |
+| `kn-handoff` | Write a cross-repo brief or API contract |
+| `kn-implement <id>` | Execute plan, track progress |
+| `kn-test <id>` | Turn spec criteria into tests, report what is unproven |
+| `kn-review` | Review implemented work |
+| `kn-debug` | Triage a failure, fix it, capture the lesson |
+| `kn-decision` | Draft, triage, promote, or supersede a System Decision |
 | `kn-verify` | Run SDD verification |
 | `kn-doc` | Create/update documentation |
-| `kn-extract` | Extract patterns to docs |
 | `kn-template` | Work with templates |
+| `kn-extract` | Extract patterns to docs |
+| `kn-commit` | Create conventional commit |
 
 ## Typical Session
 

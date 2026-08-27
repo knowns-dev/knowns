@@ -115,7 +115,10 @@ func runProviderAdd(cmd *cobra.Command, args []string) error {
 			for _, m := range models {
 				fmt.Printf("    • %s (%dd)\n", m.ShortName, m.Dimensions)
 			}
-			fmt.Printf("\n  Add a model: knowns model add --provider %s --model <name>\n", id)
+			// `knowns model` was removed with the local ONNX path (D4): a
+			// model is pulled with `ollama pull` and selected with
+			// `knowns config`, so point at the command that still exists.
+			fmt.Println("\n  Select one: knowns config set settings.semanticSearch.model <name>")
 		}
 	}
 

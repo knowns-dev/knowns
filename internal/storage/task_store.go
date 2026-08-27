@@ -47,14 +47,61 @@ type taskFrontmatter struct {
 	Order       *int     `yaml:"order,omitempty"`
 }
 
-// List returns all tasks from .knowns/tasks/.
-func (ts *TaskStore) List() ([]*models.Task, error) {
+// ListActive returns the tasks in .knowns/tasks/. Archived work is excluded, so
+// callers that resolve references, aggregate evidence, or report totals should
+// use ListAll instead: archiving is a view concern, not a deletion.
+func (ts *TaskStore) ListActive() ([]*models.Task, error) {
 	return ts.listDir(ts.tasksDir())
 }
 
 // ListArchived returns all tasks from .knowns/archive/.
 func (ts *TaskStore) ListArchived() ([]*models.Task, error) {
 	return ts.listDir(ts.archiveDir())
+}
+
+// ListAll returns active and archived tasks together. An active copy wins when
+// legacy or migration artifacts left one ID in both locations, and an archived
+// task whose ID is tombstoned is skipped. Subtask links are recomputed across
+// the merged set so a parent and child on opposite sides still resolve.
+func (ts *TaskStore) ListAll() ([]*models.Task, error) {
+	active, err := ts.ListActive()
+	if err != nil {
+		return nil, err
+	}
+	archived, err := ts.ListArchived()
+	if err != nil {
+		return nil, err
+	}
+
+	byID := make(map[string]*models.Task, len(active)+len(archived))
+	for _, task := range archived {
+		reserved, err := ts.IsIDReserved(task.ID)
+		if err != nil {
+			return nil, err
+		}
+		if reserved {
+			continue
+		}
+		byID[task.ID] = task
+	}
+	for _, task := range active {
+		byID[task.ID] = task
+	}
+
+	all := make([]*models.Task, 0, len(byID))
+	for _, task := range byID {
+		task.Subtasks = nil
+		all = append(all, task)
+	}
+	for _, task := range all {
+		if task.Parent == "" {
+			continue
+		}
+		if parent, ok := byID[task.Parent]; ok {
+			parent.Subtasks = append(parent.Subtasks, task.ID)
+		}
+	}
+	return all, nil
 }
 
 func (ts *TaskStore) listDir(dir string) ([]*models.Task, error) {

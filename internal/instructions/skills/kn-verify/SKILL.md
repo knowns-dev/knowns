@@ -125,7 +125,7 @@ mcp_knowns_validate({ "entity": "specs/user-auth" })
 
 ## Shared Output Contract
 
-All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-plan`, `kn-research`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
+All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-go`, `kn-plan`, `kn-research`, `kn-handoff`, `kn-implement`, `kn-test`, `kn-review`, `kn-debug`, `kn-decision`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
 
 Required order for the final user-facing response:
 
@@ -151,6 +151,7 @@ When verification reveals a clear follow-up, include the best next command. If t
 - `/kn-flow @doc/<spec-path>` - Continue an approved spec with pending or missing task execution
 - `/kn-plan --from @doc/<spec-path>` - Generate tasks only when verification shows an approved spec has none
 - `/kn-review <id>` - Review implemented work before final verification
+- `/kn-decision` - Resolve the Decision behind a missing, malformed, or conflicting `System Decision Impact` marker
 
 ## Checklist
 

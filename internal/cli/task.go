@@ -129,8 +129,13 @@ func runTaskList(cmd *cobra.Command, args []string) error {
 	priorityFilter, _ := cmd.Flags().GetString("priority")
 	labelFilter, _ := cmd.Flags().GetString("label")
 	treeMode, _ := cmd.Flags().GetBool("tree")
+	includeHistorical, _ := cmd.Flags().GetBool("include-historical")
 
-	tasks, err := store.Tasks.List()
+	list := store.Tasks.ListActive
+	if includeHistorical {
+		list = store.Tasks.ListAll
+	}
+	tasks, err := list()
 	if err != nil {
 		return fmt.Errorf("list tasks: %w", err)
 	}
@@ -330,7 +335,8 @@ func runTaskEdit(cmd *cobra.Command, args []string) error {
 			if task.ImplementationNotes == "" {
 				task.ImplementationNotes = v
 			} else {
-				task.ImplementationNotes = task.ImplementationNotes + "\n" + v
+				// Blank line so each appended entry stays its own markdown block.
+				task.ImplementationNotes = task.ImplementationNotes + "\n\n" + v
 			}
 		}
 		if cmd.Flags().Changed("fulfills") {
@@ -1090,6 +1096,7 @@ func init() {
 	taskListCmd.Flags().String("priority", "", "Filter by priority")
 	taskListCmd.Flags().String("label", "", "Filter by label")
 	taskListCmd.Flags().Bool("tree", false, "Show tasks as tree hierarchy")
+	taskListCmd.Flags().Bool("include-historical", false, "Include historical entities, including archived Tasks")
 
 	// task history flags (additive; no flags preserve the legacy full output)
 	taskHistoryCmd.Flags().Bool("metadata", false, "List payload-free revision metadata")

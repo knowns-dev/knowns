@@ -980,10 +980,13 @@ func (r *FilesystemReconciler) restoreLocked(ctx context.Context, entityType, en
 	}
 	if info, statErr := os.Lstat(abs); statErr == nil {
 		// An interrupted restore may have durable history and canonical bytes
-		// already present. Verify that exact state and only reactivate ownership.
-		if last.Operation != LifecycleOperationRestore {
-			return ReconcileResult{}, fmt.Errorf("%w: restore path already exists", ErrReconcileUnsafe)
-		}
+		// already present. A spurious tombstone reaches the same shape: the
+		// head says deleted while the canonical file never left. Both are
+		// identified by the content hash below, so read first and let the hash
+		// decide rather than refusing every head that is not already a restore
+		// — that refusal made a spurious tombstone unrepairable, because
+		// reconciliation also reports the entity unchanged whenever the file
+		// hash still matches the tombstone's.
 		data, readErr := stableRead(abs)
 		if readErr != nil {
 			return ReconcileResult{}, readErr
@@ -1005,7 +1008,21 @@ func (r *FilesystemReconciler) restoreLocked(ctx context.Context, entityType, en
 			currentHash = CanonicalDocHash(doc)
 		}
 		if currentHash != last.NewHash {
+			if last.Operation != LifecycleOperationRestore {
+				// A different entity's bytes occupy the path. Reactivating
+				// would adopt content this identity never owned.
+				return ReconcileResult{}, fmt.Errorf("%w: restore path already exists", ErrReconcileUnsafe)
+			}
 			return ReconcileResult{}, fmt.Errorf("%w: interrupted restore hash mismatch", ErrHistoryConflict)
+		}
+		if last.Operation != LifecycleOperationRestore {
+			// The head is a tombstone but the canonical file is present and
+			// carries exactly the content the tombstone recorded, so the
+			// deletion never happened on disk. Reactivating ownership alone
+			// would leave history asserting the entity is deleted, which still
+			// authorizes removal of its indexed vectors; append a durable
+			// restore so the stream stops contradicting the filesystem.
+			return r.reactivateTombstonedEntity(ctx, entityType, entityID, path, abs, currentHash, last, stream, opts)
 		}
 		result := ReconcileResult{EntityType: entityType, EntityID: entityID, Path: path, Hash: currentHash, Operation: LifecycleOperationRestore, BatchID: last.BatchID, CurrentPath: path, Changed: false, Revision: last.Revision, NewHash: currentHash}
 		if r.index != nil {
@@ -1704,4 +1721,55 @@ func (r *FilesystemReconciler) writeManifestMutations(upserts map[string]manifes
 		return err
 	}
 	return syncDirectory(dir)
+}
+
+// reactivateTombstonedEntity repairs an entity whose durable history head is a
+// tombstone while its canonical file is still present with exactly the content
+// that tombstone recorded — the shape a spurious deletion leaves behind, for
+// example a watcher startup pass that observed the file as missing while it was
+// briefly absent. Ordinary reconciliation cannot repair this: it compares the
+// file hash against the head's and reports the entity unchanged, so the
+// contradiction between history and filesystem persists forever.
+//
+// The canonical bytes are already correct, so no file is written. Only a
+// durable restore record and the reactivated manifest ownership are needed.
+func (r *FilesystemReconciler) reactivateTombstonedEntity(ctx context.Context, entityType, entityID, path, abs, currentHash string, last models.HistoryRecord, stream models.HistoryReadResult, opts RestoreOptions) (ReconcileResult, error) {
+	if info, statErr := os.Lstat(abs); statErr != nil {
+		return ReconcileResult{}, statErr
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		return ReconcileResult{}, fmt.Errorf("%w: restore path is symlink", ErrReconcileUnsafe)
+	}
+	snapshot, err := r.replaySnapshot(entityType, entityID, stream.Records[:len(stream.Records)-1])
+	if err != nil || len(snapshot) == 0 {
+		snapshot = cloneMap(last.CheckpointPayload)
+	}
+	if len(snapshot) == 0 {
+		return ReconcileResult{}, fmt.Errorf("%w: tombstone has no replayable state", ErrReconcileUnsafe)
+	}
+	record := models.HistoryRecord{EntityType: entityType, EntityID: entityID, Source: "restore", Operation: LifecycleOperationRestore, BatchID: opts.BatchID, Timestamp: time.Now().UTC(), BaseHash: last.NewHash, NewHash: currentHash, Checkpoint: true, CheckpointPayload: snapshot, PreviousPath: last.CurrentPath, CurrentPath: path}
+	appendRecord := func() error { return r.appendHistoryRecord(ctx, record) }
+	if entityType == "doc" {
+		publicPath := strings.TrimPrefix(filepath.ToSlash(path), "docs/")
+		if err := NewStore(r.storeRoot).withDocMutationLocks(ctx, []string{publicPath}, appendRecord); err != nil {
+			return ReconcileResult{}, err
+		}
+	} else if err := appendRecord(); err != nil {
+		return ReconcileResult{}, err
+	}
+	result := ReconcileResult{EntityType: entityType, EntityID: entityID, Path: path, Hash: currentHash, Operation: LifecycleOperationRestore, BatchID: opts.BatchID, PreviousPath: last.CurrentPath, CurrentPath: path, Changed: true, Revision: last.Revision + 1, BaseHash: last.NewHash, NewHash: currentHash}
+	if r.index != nil {
+		if err := r.queueLifecycleIntent(result); err != nil {
+			return result, err
+		}
+	}
+	next := manifestEntry{EntityType: entityType, EntityID: entityID, Path: path, Hash: currentHash, Revision: last.Revision + 1, HeadHash: currentHash}
+	if err := r.writeManifestMutations(map[string]manifestEntry{manifestKey(entityType, entityID): next}, nil); err != nil {
+		return ReconcileResult{}, err
+	}
+	if r.index != nil {
+		if pending := r.flushLifecycleIntents(); len(pending) > 0 && pending[0].Diagnostic != "" {
+			return pending[0], errors.New(pending[0].Diagnostic)
+		}
+	}
+	return result, nil
 }

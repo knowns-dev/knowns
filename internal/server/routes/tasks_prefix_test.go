@@ -83,7 +83,7 @@ func TestTaskPOSTRejectsInvalidPrefix(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("POST status=%d body=%s, want 400", w.Code, w.Body.String())
 	}
-	tasks, err := store.Tasks.List()
+	tasks, err := store.Tasks.ListActive()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

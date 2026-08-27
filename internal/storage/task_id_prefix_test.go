@@ -85,7 +85,7 @@ func TestCreateTaskWithHistoryRejectsInvalidPrefix(t *testing.T) {
 	if task.ID != "" {
 		t.Fatalf("rejected create assigned an ID %q", task.ID)
 	}
-	tasks, err := store.Tasks.List()
+	tasks, err := store.Tasks.ListActive()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

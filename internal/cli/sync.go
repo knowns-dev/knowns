@@ -249,43 +249,31 @@ func runSyncPlatformConfigs(projectRoot string, force bool, platforms []string) 
 	return nil
 }
 
-// runSyncModel downloads the embedding model configured in config.json if not already installed.
-// For API providers, verifies reachability instead of downloading.
-func runSyncModel(store *storage.Store, force bool) error {
+// runSyncModel verifies the embedding provider configured in config.json is
+// reachable. force is accepted for backward compatibility with callers that
+// pre-date the removal of the local ONNX model download flow (spec
+// ollama-only-embedding FR-1); every remaining provider is verified rather
+// than downloaded, so there is nothing left to force.
+func runSyncModel(store *storage.Store, _ bool) error {
 	cfg, err := store.Config.Load()
 	if err != nil {
 		return nil // no config, skip silently
 	}
 
-	// API/Ollama provider path: verify reachability instead of downloading model files.
-	if cfg.Settings.SemanticSearch != nil && (cfg.Settings.SemanticSearch.Provider == "api" || cfg.Settings.SemanticSearch.Provider == "ollama") {
-		return runSyncModelAPI(cfg)
-	}
-	if capability, unsupported := currentLocalONNXUnsupported(cfg.Settings.SemanticSearch); unsupported {
-		fmt.Printf("%s Local ONNX setup skipped; keyword/BM25 search remains active.\n", StyleWarning.Render("⚠"))
-		fmt.Println(StyleDim.Render("  " + capability.Reason))
+	// Resolved per spec ollama-only-embedding D1/FR-3: provider: local (or
+	// omitted) behaves as provider: ollama with the D2 default model here,
+	// in memory only.
+	ss := cfg.Settings.EffectiveSemanticSearch()
+	if ss == nil {
 		return nil
 	}
-
-	defaultModelID := "multilingual-e5-small"
-	if cfg.Settings.SemanticSearch != nil && cfg.Settings.SemanticSearch.Model != "" {
-		defaultModelID = cfg.Settings.SemanticSearch.Model
-	}
-	projectChanged, globalChanged, err := ensureProjectAndGlobalSemanticReady(store, defaultModelID)
-	if err != nil {
-		return err
-	}
-	if !projectChanged && !globalChanged && !force {
-		if model := findSupportedModel(defaultModelID); model != nil {
-			fmt.Printf("%s Model %s already installed.\n", StyleSuccess.Render("✓"), model.Name)
-		}
-	}
-	return nil
+	return runSyncModelAPI(ss)
 }
 
 // runSyncModelAPI verifies API provider reachability and model availability during sync.
-func runSyncModelAPI(cfg *models.Project) error {
-	ss := cfg.Settings.SemanticSearch
+// ss is already resolved (spec D1/FR-3): the caller passes
+// EffectiveSemanticSearch(), never the raw stored settings.
+func runSyncModelAPI(ss *models.SemanticSearchSettings) error {
 	settingsStore := storage.NewEmbeddingSettingsStore()
 	settings, err := settingsStore.Load()
 	if err != nil {
@@ -297,7 +285,12 @@ func runSyncModelAPI(cfg *models.Project) error {
 	model, err := settings.GetModel(ss.Model)
 	if err != nil {
 		fmt.Printf("%s Embedding model %q not found in ~/.knowns/settings.json\n", StyleWarning.Render("⚠"), ss.Model)
-		fmt.Println(StyleDim.Render("  Configure it: knowns model add --provider <id> <model-name>"))
+		// `knowns model` was removed with the local ONNX path (D4). A model
+		// reaches the registry by pulling it with Ollama and selecting it
+		// with `knowns config`; naming the removed command here sent the
+		// user to a command that no longer resolves.
+		fmt.Println(StyleDim.Render("  Pull it with `ollama pull " + ss.Model + "`, then select it:"))
+		fmt.Println(StyleDim.Render("  knowns config set settings.semanticSearch.model " + ss.Model))
 		return nil
 	}
 

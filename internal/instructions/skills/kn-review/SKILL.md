@@ -215,6 +215,7 @@ For `kn-review`, the key details should cover:
 - `/kn-implement <id>` — implement before review
 - `/kn-commit` — commit after review passes
 - `/kn-verify` — SDD-level verification (broader than code review)
+- `/kn-decision` — resolve a Decision finding: an unlinked candidate, a missing marker, or a draft being treated as current
 
 ## Checklist
 

@@ -653,3 +653,176 @@ func writeJSONLTest(t *testing.T, path string, value any) {
 
 var _ QdrantClient = (*targetedFakeClient)(nil)
 var _ qdrantSourceDeleter = (*targetedFakeClient)(nil)
+
+// A watermark written before indexedRevision existed records only the indexed
+// hash and path. Those records must not be reported stale forever: no reindex
+// path rewrites watermarks, so a false mismatch there is unrepairable and keeps
+// doctor's search.project-index and search.qdrant-pointer checks warning.
+func TestLegacyWatermarkWithoutIndexedRevisionIsNotStale(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "history", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeJSONTest(t, filepath.Join(stateDir, "manifest.json"), map[string]any{"schemaVersion": 1, "entries": map[string]any{
+		"doc:doc-1": map[string]any{"entityType": "doc", "entityId": "doc-1", "path": "docs/a.md", "hash": "h1", "revision": 1},
+		"doc:doc-2": map[string]any{"entityType": "doc", "entityId": "doc-2", "path": "docs/b.md", "hash": "h2", "revision": 1},
+	}})
+	// doc-1 omits revision/indexedRevision entirely (legacy record) but its
+	// indexed hash and path match. doc-2 is genuinely stale by hash.
+	writeJSONTest(t, filepath.Join(stateDir, qdrantWatermarkFile), map[string]any{
+		"doc:doc-1": map[string]any{"entityType": "doc", "entityId": "doc-1", "canonicalHash": "h1", "indexedHash": "h1", "path": "docs/a.md", "indexedPath": "docs/a.md"},
+		"doc:doc-2": map[string]any{"entityType": "doc", "entityId": "doc-2", "canonicalHash": "h2", "indexedHash": "old", "path": "docs/b.md", "indexedPath": "docs/b.md"},
+	})
+
+	readiness, err := QdrantEntityReadinessForStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(readiness) != 2 {
+		t.Fatalf("readiness = %#v", readiness)
+	}
+	byID := map[string]QdrantEntityReadiness{}
+	for _, entity := range readiness {
+		byID[entity.EntityID] = entity
+	}
+	if byID["doc-1"].Stale {
+		t.Fatalf("legacy watermark matching hash and path reported stale: %#v", byID["doc-1"])
+	}
+	if !byID["doc-2"].Stale {
+		t.Fatalf("watermark with an outdated indexed hash must stay stale: %#v", byID["doc-2"])
+	}
+}
+
+// A recorded indexed revision that trails the manifest revision is still a real
+// mismatch and must keep reporting stale.
+func TestRecordedIndexedRevisionMismatchStaysStale(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "history", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeJSONTest(t, filepath.Join(stateDir, "manifest.json"), map[string]any{"schemaVersion": 1, "entries": map[string]any{
+		"doc:doc-1": map[string]any{"entityType": "doc", "entityId": "doc-1", "path": "docs/a.md", "hash": "h1", "revision": 3},
+	}})
+	writeJSONTest(t, filepath.Join(stateDir, qdrantWatermarkFile), map[string]any{
+		"doc:doc-1": map[string]any{"entityType": "doc", "entityId": "doc-1", "canonicalHash": "h1", "indexedHash": "h1", "revision": 3, "path": "docs/a.md", "indexedRevision": 2, "indexedPath": "docs/a.md"},
+	})
+
+	readiness, err := QdrantEntityReadinessForStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(readiness) != 1 || !readiness[0].Stale {
+		t.Fatalf("trailing indexed revision must stay stale: %#v", readiness)
+	}
+}
+
+func TestUnprovisionedPointerSkipsTargetedReconciliationInsteadOfFailing(t *testing.T) {
+	// A store that resolves to the Qdrant backend but has never been indexed
+	// onto a generation is mid-migration, not broken: search still answers from
+	// the legacy SQLite index. Failing here retried every entity mutation to
+	// the dead-letter limit and reported the pointer as "malformed".
+	store := configureSemanticStore(t, &models.SemanticVectorStoreSettings{Backend: models.SemanticVectorBackendQdrant})
+	root := store.Root
+	if err := os.MkdirAll(filepath.Join(root, "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tasks", "task-unprov - Unprovisioned.md"), []byte("---\nid: unprov\ntitle: Unprovisioned\nstatus: todo\npriority: medium\nlabels: []\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.Tasks.Get("unprov")
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := runtimequeue.QdrantIntent{EntityType: "task", EntityID: "unprov", Revision: 1, Operation: "update", CanonicalHash: storage.CanonicalTaskHash(task), Path: "tasks/unprov.md"}
+	if err := markQdrantIntentPending(root, intent); err != nil {
+		t.Fatal(err)
+	}
+	if pointer, err := LoadQdrantPointer(root); err != nil || pointer != nil {
+		t.Fatalf("pointer = %#v, err=%v, want no pointer", pointer, err)
+	}
+	if err := ExecuteQdrantReconciliation(context.Background(), root, intent); err != nil {
+		t.Fatalf("unprovisioned reconciliation failed: %v", err)
+	}
+	// The entity must stay stale so the eventual generation rebuild indexes it.
+	watermarks, err := LoadQdrantIndexWatermarks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wm, ok := watermarks["task:unprov"]; ok && wm.IndexedHash != "" {
+		t.Fatalf("skipped reconciliation advanced the watermark: %#v", wm)
+	}
+}
+
+func TestTargetedValidationNamesTheRejectedPointerField(t *testing.T) {
+	store := configureSemanticStore(t, &models.SemanticVectorStoreSettings{Backend: models.SemanticVectorBackendQdrant})
+	pointer := targetedPointer(t, store.Root)
+	client := &targetedFakeClient{info: QdrantCollectionInfo{Name: pointer.CollectionName, Exists: true, Dimensions: 384, Distance: "cosine", Status: "green"}}
+	cases := []struct {
+		name   string
+		mutate func(*QdrantPointer)
+		want   string
+	}{
+		{"missing", nil, "is missing"},
+		{"schema", func(p *QdrantPointer) { p.SchemaVersion = 99 }, "schema version"},
+		{"chunk-version", func(p *QdrantPointer) { p.ChunkVersion = 99 }, "chunk version"},
+		{"backend", func(p *QdrantPointer) { p.Backend = "sqlite" }, "backend"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var p *QdrantPointer
+			if tc.mutate != nil {
+				copied := *pointer
+				tc.mutate(&copied)
+				p = &copied
+			}
+			err := validateTargetedCollection(context.Background(), store, p, client)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want one naming %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestPublicTaskIntentCarriesTheManagedFilePathNotASynthesisedOne(t *testing.T) {
+	// Readiness compares the watermark path against the manifest path. The
+	// manifest records the managed filename, so an intent that synthesises
+	// "tasks/<id>.md" leaves the task stale forever — no reindex can repair it,
+	// because only these intents rewrite watermarks.
+	root := filepath.Join(t.TempDir(), ".knowns")
+	if err := os.MkdirAll(filepath.Join(root, "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	managed := "task-slugged - Teach-the-shipped-instructions.md"
+	if err := os.WriteFile(filepath.Join(root, "tasks", managed), []byte("---\nid: slugged\ntitle: Teach the shipped instructions\nstatus: todo\npriority: medium\nlabels: []\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := storage.NewStore(root)
+	task, err := store.Tasks.Get("slugged")
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := storage.NewHistoryStore(root)
+	if err := history.Append(context.Background(), models.HistoryRecord{EntityType: "task", EntityID: "slugged", Operation: "update", NewHash: storage.CanonicalTaskHash(task), Checkpoint: true, CheckpointPayload: map[string]any{"id": "slugged"}}); err != nil {
+		t.Fatal(err)
+	}
+	intent, err := currentPublicQdrantIntent(root, "task", "slugged", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "tasks/" + managed; intent.Path != want {
+		t.Fatalf("intent path = %q, want the managed file %q", intent.Path, want)
+	}
+	// The watermark this intent writes must match what the manifest would hold.
+	if err := updateQdrantWatermark(root, intent, intent.CanonicalHash); err != nil {
+		t.Fatal(err)
+	}
+	watermarks, err := LoadQdrantIndexWatermarks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := watermarks["task:slugged"].IndexedPath; got != "tasks/"+managed {
+		t.Fatalf("watermark indexedPath = %q, want the managed file", got)
+	}
+}

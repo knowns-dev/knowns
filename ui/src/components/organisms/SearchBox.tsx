@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Search, X, ClipboardList, FileText } from "lucide-react";
 import type { Task } from "@/ui/models/task";
 import { Input } from "../ui/input";
+import { API_BASE, apiFetch } from "@/ui/api/client";
 
 interface Doc {
 	filename: string;
@@ -46,8 +47,8 @@ export default function SearchBox({ onTaskSelect, onDocSelect }: SearchBoxProps)
 	const performSearch = async () => {
 		setLoading(true);
 		try {
-			const response = await fetch(
-				`/api/search?q=${encodeURIComponent(query)}`
+			const response = await apiFetch(
+				`${API_BASE}/api/search?q=${encodeURIComponent(query)}&includeHistorical=true`
 			);
 			const data = await response.json();
 			setTasks(data.tasks || []);

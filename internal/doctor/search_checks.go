@@ -3,36 +3,18 @@ package doctor
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
-	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/services"
+	"github.com/howznguyen/knowns/internal/storage"
 )
-
-type localONNXModelState string
-
-const (
-	localONNXModelAvailable  localONNXModelState = "available"
-	localONNXModelMissing    localONNXModelState = "missing"
-	localONNXModelIncomplete localONNXModelState = "incomplete"
-	localONNXModelUnknown    localONNXModelState = "unknown"
-)
-
-type localONNXModelStatus struct {
-	State            localONNXModelState
-	MissingArtifacts []string
-}
 
 func searchCheckers(state *localState) []Checker {
 	checkers := []Checker{
 		searchConfigChecker(state),
 		searchGlobalIndexChecker(state),
 		searchModelChecker(state),
-		searchONNXRuntimeChecker(state),
 		searchProjectIndexChecker(state),
 		searchSemanticRuntimeChecker(state),
 	}
@@ -45,14 +27,6 @@ func semanticSettings(state *localState) (*models.SemanticSearchSettings, error)
 		return nil, err
 	}
 	return project.Settings.SemanticSearch, nil
-}
-
-func unsupportedLocalONNX(state *localState, settings *models.SemanticSearchSettings) (search.LocalONNXCapability, bool) {
-	if settings == nil || providerName(settings.Provider) != "local" {
-		return search.LocalONNXCapability{}, false
-	}
-	capability := state.deps.onnxCapability()
-	return capability, !capability.Supported
 }
 
 func searchConfigChecker(state *localState) Checker {
@@ -73,21 +47,6 @@ func searchConfigChecker(state *localState) Checker {
 			provider := settings.Provider
 			if provider == "" {
 				provider = "local"
-			}
-			if capability, unsupported := unsupportedLocalONNX(state, settings); unsupported {
-				return CheckResult{
-					Status:  StatusWarn,
-					Summary: "Local ONNX is unavailable on macOS Intel",
-					Evidence: Evidence{
-						"provider":  provider,
-						"available": false,
-						"errorCode": "onnx_platform_unsupported",
-					},
-					Remediation: &Remediation{
-						Description: capability.Reason,
-						Command:     "knowns settings",
-					},
-				}, nil
 			}
 			if settings.Model == "" {
 				return CheckResult{
@@ -129,9 +88,6 @@ func searchModelChecker(state *localState) Checker {
 			if settings == nil || !settings.Enabled {
 				return subsystemDisabled("Semantic model check is disabled", "config_disabled"), nil
 			}
-			if _, unsupported := unsupportedLocalONNX(state, settings); unsupported {
-				return subsystemDisabled("Local ONNX model check is not applicable on macOS Intel", "platform_unsupported"), nil
-			}
 			if settings.Model == "" {
 				return CheckResult{
 					Status:  StatusWarn,
@@ -145,6 +101,11 @@ func searchModelChecker(state *localState) Checker {
 			provider := providerName(settings.Provider)
 			if provider == "ollama" {
 				if _, err := state.deps.lookPath("ollama"); err != nil {
+					// Remediation text is not restated here (AC-7): it resolves
+					// from storage.OllamaStateGuidance, the single FR-9/D6
+					// source setup, doctor, and init all read, so a wording
+					// change there reaches this check without editing it.
+					guidance := storage.OllamaStateGuidance(storage.OllamaNotInstalled, settings.Model)
 					return CheckResult{
 						Status:  StatusWarn,
 						Summary: "Ollama is configured but is not installed",
@@ -155,56 +116,16 @@ func searchModelChecker(state *localState) Checker {
 							"errorCode": "provider_binary_missing",
 						},
 						Remediation: &Remediation{
-							Description: "Install Ollama and ensure the ollama executable is available on PATH.",
+							Description: guidance.Description,
+							Command:     guidance.Command,
 						},
 					}, nil
 				}
 			}
-			if provider == "local" {
-				modelStatus := state.deps.localONNXModel(settings)
-				switch modelStatus.State {
-				case localONNXModelMissing:
-					return localONNXModelFinding(
-						settings,
-						modelStatus,
-						"Configured ONNX model is not downloaded",
-						"Download the configured ONNX embedding model.",
-						"knowns model download "+settings.Model,
-					), nil
-				case localONNXModelIncomplete:
-					return localONNXModelFinding(
-						settings,
-						modelStatus,
-						"Configured ONNX model download is incomplete",
-						"Re-download the configured ONNX embedding model to restore missing artifacts.",
-						"knowns model download "+settings.Model+" --force",
-					), nil
-				}
-			}
-
-			payload, readinessErr := state.readinessSnapshot()
-			if readinessErr == nil &&
-				payload.Search != nil &&
-				provider == "local" &&
-				state.deps.localONNXModel(settings).State == localONNXModelUnknown &&
-				!payload.Search.ModelInstalled {
-				return CheckResult{
-					Status:  StatusWarn,
-					Summary: "Configured ONNX model availability could not be established",
-					Evidence: Evidence{
-						"model":     settings.Model,
-						"provider":  provider,
-						"available": false,
-						"errorCode": "model_status_unknown",
-					},
-					Remediation: &Remediation{
-						Description: "Review the local ONNX model configuration.",
-						Command:     "knowns settings",
-					},
-				}, nil
-			}
-
-			statuses, err := state.serviceSnapshot()
+			// Embedding-only: the full service snapshot also probes every LSP
+			// adapter, which costs tens of seconds and made this check exceed
+			// its timeout budget and report checker_timeout.
+			statuses, err := state.embeddingSnapshot()
 			if err != nil {
 				return CheckResult{}, err
 			}
@@ -233,18 +154,6 @@ func searchModelChecker(state *localState) Checker {
 			}
 			evidence["provider"] = provider
 
-			if embedding.Details["model_available"] == "false" ||
-				embedding.Details["reason"] == "local model not downloaded" {
-				return CheckResult{
-					Status:   StatusWarn,
-					Summary:  "Configured ONNX model is not downloaded",
-					Evidence: evidence,
-					Remediation: &Remediation{
-						Description: "Download the configured ONNX embedding model.",
-						Command:     "knowns model download " + settings.Model,
-					},
-				}, nil
-			}
 			if embedding.Status == "error" {
 				evidence["errorCode"] = "embedding_configuration_invalid"
 				return CheckResult{
@@ -273,151 +182,6 @@ func searchModelChecker(state *localState) Checker {
 	}
 }
 
-func searchONNXRuntimeChecker(state *localState) Checker {
-	return Checker{
-		ID:    "search.onnx-runtime",
-		Scope: ScopeSearch,
-		Check: func(context.Context) (CheckResult, error) {
-			if state.store == nil {
-				return skippedForMissingProject(), nil
-			}
-			settings, err := semanticSettings(state)
-			if err != nil {
-				return CheckResult{}, err
-			}
-			if settings == nil || !settings.Enabled {
-				return subsystemDisabled("ONNX Runtime check is disabled", "config_disabled"), nil
-			}
-			if providerName(settings.Provider) != "local" {
-				return subsystemDisabled("ONNX Runtime is not used by the configured provider", "not_applicable"), nil
-			}
-			if _, unsupported := unsupportedLocalONNX(state, settings); unsupported {
-				return subsystemDisabled("ONNX Runtime is not bundled for macOS Intel", "platform_unsupported"), nil
-			}
-			available, _ := state.deps.onnxAvailable()
-			if !available {
-				return CheckResult{
-					Status:  StatusWarn,
-					Summary: "ONNX Runtime is unavailable or incompatible",
-					Evidence: Evidence{
-						"available": false,
-						"errorCode": "onnx_runtime_unavailable",
-					},
-					Remediation: &Remediation{
-						Description: "Reinstall Knowns using the original package manager so its ONNX Runtime library is restored.",
-					},
-				}, nil
-			}
-			return CheckResult{
-				Status:  StatusPass,
-				Summary: "ONNX Runtime is available",
-				Evidence: Evidence{
-					"available": true,
-				},
-			}, nil
-		},
-	}
-}
-
-func localONNXModelFinding(
-	settings *models.SemanticSearchSettings,
-	status localONNXModelStatus,
-	summary string,
-	description string,
-	command string,
-) CheckResult {
-	evidence := Evidence{
-		"model":         settings.Model,
-		"provider":      "local",
-		"available":     false,
-		"artifactState": string(status.State),
-	}
-	if len(status.MissingArtifacts) > 0 {
-		evidence["missingArtifacts"] = status.MissingArtifacts
-	}
-	return CheckResult{
-		Status:   StatusWarn,
-		Summary:  summary,
-		Evidence: evidence,
-		Remediation: &Remediation{
-			Description: description,
-			Command:     command,
-		},
-	}
-}
-
-func inspectLocalONNXModel(settings *models.SemanticSearchSettings) localONNXModelStatus {
-	if settings == nil {
-		return localONNXModelStatus{State: localONNXModelUnknown}
-	}
-	huggingFaceID := settings.HuggingFaceID
-	if huggingFaceID == "" {
-		if model, ok := search.EmbeddingModels[settings.Model]; ok {
-			huggingFaceID = model.HuggingFaceID
-		}
-	}
-	relativeModelPath := filepath.Clean(filepath.FromSlash(huggingFaceID))
-	if relativeModelPath == "." ||
-		filepath.IsAbs(relativeModelPath) ||
-		relativeModelPath == ".." ||
-		strings.HasPrefix(relativeModelPath, ".."+string(filepath.Separator)) {
-		return localONNXModelStatus{State: localONNXModelUnknown}
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return localONNXModelStatus{State: localONNXModelUnknown}
-	}
-	modelDir := filepath.Join(home, ".knowns", "models", relativeModelPath)
-
-	modelExists := false
-	modelUsable := false
-	for _, name := range []string{
-		filepath.Join(modelDir, "onnx", "model_quantized.onnx"),
-		filepath.Join(modelDir, "onnx", "model.onnx"),
-	} {
-		exists, usable := localArtifactState(name)
-		modelExists = modelExists || exists
-		modelUsable = modelUsable || usable
-	}
-	if !modelExists {
-		return localONNXModelStatus{
-			State:            localONNXModelMissing,
-			MissingArtifacts: []string{"onnx_model"},
-		}
-	}
-
-	missing := make([]string, 0, 3)
-	if !modelUsable {
-		missing = append(missing, "onnx_model")
-	}
-	for _, artifact := range []struct {
-		name string
-		path string
-	}{
-		{name: "config.json", path: filepath.Join(modelDir, "config.json")},
-		{name: "tokenizer.json", path: filepath.Join(modelDir, "tokenizer.json")},
-	} {
-		if _, usable := localArtifactState(artifact.path); !usable {
-			missing = append(missing, artifact.name)
-		}
-	}
-	if len(missing) > 0 {
-		return localONNXModelStatus{
-			State:            localONNXModelIncomplete,
-			MissingArtifacts: missing,
-		}
-	}
-	return localONNXModelStatus{State: localONNXModelAvailable}
-}
-
-func localArtifactState(path string) (exists bool, usable bool) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false, false
-	}
-	return true, info.Mode().IsRegular() && info.Size() > 0
-}
-
 func providerName(provider string) string {
 	if provider == "" {
 		return "local"
@@ -440,9 +204,6 @@ func searchProjectIndexChecker(state *localState) Checker {
 			if settings == nil || !settings.Enabled {
 				return subsystemDisabled("Project semantic index is disabled", "config_disabled"), nil
 			}
-			if _, unsupported := unsupportedLocalONNX(state, settings); unsupported {
-				return subsystemDisabled("Project semantic index is disabled because Local ONNX is unavailable", "platform_unsupported"), nil
-			}
 			payload, err := state.readinessSnapshot()
 			if err != nil {
 				return CheckResult{}, err
@@ -451,18 +212,35 @@ func searchProjectIndexChecker(state *localState) Checker {
 				return CheckResult{}, fmt.Errorf("search readiness unavailable")
 			}
 			if payload.Search.ProjectIndexStale {
+				// Staleness has several causes (model, dimensions, chunk
+				// version, or per-entity watermarks). Only claim a model
+				// mismatch when the recorded model actually differs, and
+				// surface the resolved reason so the summary matches evidence.
+				summary := "Project semantic index is stale"
+				indexModel := payload.Search.ProjectIndexModel
+				if indexModel != "" && settings.Model != "" && indexModel != settings.Model {
+					summary = "Project semantic index was built with a different model"
+				}
+				evidence := Evidence{
+					"ready":      true,
+					"indexModel": indexModel,
+					"model":      settings.Model,
+					"stale":      true,
+				}
+				if reason := payload.Search.SemanticDegradedReason; reason != "" {
+					evidence["reason"] = reason
+				}
 				return CheckResult{
-					Status:  StatusWarn,
-					Summary: "Project semantic index was built with a different model",
-					Evidence: Evidence{
-						"ready":      true,
-						"indexModel": payload.Search.ProjectIndexModel,
-						"model":      settings.Model,
-						"stale":      true,
-					},
+					Status:   StatusWarn,
+					Summary:  summary,
+					Evidence: evidence,
+					// FR-7: after `knowns migrate` changes the embedding
+					// identity, D5 stops at marking the index stale — it does
+					// not reindex — so doctor must name the explicit reindex
+					// command rather than imply one already ran.
 					Remediation: &Remediation{
 						Description: "Rebuild the project and global semantic indices.",
-						Command:     "knowns search --reindex",
+						Command:     "knowns search index --wait",
 					},
 				}, nil
 			}
@@ -507,9 +285,6 @@ func searchGlobalIndexChecker(state *localState) Checker {
 			if settings == nil || !settings.Enabled {
 				return subsystemDisabled("Global semantic index is disabled", "config_disabled"), nil
 			}
-			if _, unsupported := unsupportedLocalONNX(state, settings); unsupported {
-				return subsystemDisabled("Global semantic index is disabled because Local ONNX is unavailable", "platform_unsupported"), nil
-			}
 			payload, err := state.readinessSnapshot()
 			if err != nil {
 				return CheckResult{}, err
@@ -525,18 +300,32 @@ func searchGlobalIndexChecker(state *localState) Checker {
 				return subsystemDisabled("Global semantic index has no applicable memories", "not_applicable"), nil
 			}
 			if payload.Search.GlobalIndexStale {
+				// Same reasoning as search.project-index: only claim a model
+				// mismatch when the recorded model actually differs (a
+				// dimension-only change, e.g. FR-7 after `knowns migrate`,
+				// leaves the model name unchanged), and surface the resolved
+				// reason so the summary matches evidence.
+				summary := "Global semantic index is stale"
+				indexModel := payload.Search.GlobalIndexModel
+				if indexModel != "" && settings.Model != "" && indexModel != settings.Model {
+					summary = "Global semantic index was built with a different model"
+				}
+				evidence := Evidence{
+					"ready":      true,
+					"indexModel": indexModel,
+					"model":      settings.Model,
+					"stale":      true,
+				}
+				if reason := payload.Search.SemanticDegradedReason; reason != "" {
+					evidence["reason"] = reason
+				}
 				return CheckResult{
-					Status:  StatusWarn,
-					Summary: "Global semantic index was built with a different model",
-					Evidence: Evidence{
-						"ready":      true,
-						"indexModel": payload.Search.GlobalIndexModel,
-						"model":      settings.Model,
-						"stale":      true,
-					},
+					Status:   StatusWarn,
+					Summary:  summary,
+					Evidence: evidence,
 					Remediation: &Remediation{
 						Description: "Rebuild the project and global semantic indices.",
-						Command:     "knowns search --reindex",
+						Command:     "knowns search index --wait",
 					},
 				}, nil
 			}
@@ -580,9 +369,6 @@ func searchSemanticRuntimeChecker(state *localState) Checker {
 			}
 			if settings == nil || !settings.Enabled {
 				return subsystemDisabled("Semantic runtime is disabled", "config_disabled"), nil
-			}
-			if _, unsupported := unsupportedLocalONNX(state, settings); unsupported {
-				return subsystemDisabled("Semantic runtime is disabled because Local ONNX is unavailable", "platform_unsupported"), nil
 			}
 			payload, err := state.readinessSnapshot()
 			if err != nil {

@@ -69,6 +69,71 @@ func TestFoundationCheckersWithoutProjectReturnValidUnhealthyResult(t *testing.T
 	}
 }
 
+// TestFoundationCheckersReportUnmigratedProject is FR-21/AC-30: a project
+// whose committed config.json still carries a schema version behind
+// storage.CurrentSchemaVersion() must be reported by doctor, naming `knowns
+// migrate` as the remediation, so the command is discoverable from `knowns
+// doctor` without reading release notes.
+func TestFoundationCheckersReportUnmigratedProject(t *testing.T) {
+	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("doctor-migration-test"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	cfg, err := store.Config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	// Simulate a project left behind by an older knowns version: below
+	// storage.CurrentSchemaVersion(), matching an on-disk provider: local
+	// config that predates knowns migrate (spec ollama-only-embedding D10).
+	cfg.SchemaVersion = 0
+	if err := store.Config.Save(cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	before := snapshotTree(t, store.Root)
+
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+	}, FoundationCheckers(store))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	migration := findCheck(t, result, "project.migration")
+	if migration.Status != StatusWarn ||
+		migration.Evidence["schemaVersion"] != 0 ||
+		migration.Remediation == nil || migration.Remediation.Command != "knowns migrate" {
+		t.Fatalf("migration check = %#v", migration)
+	}
+	after := snapshotTree(t, store.Root)
+	if fmt.Sprint(after) != fmt.Sprint(before) {
+		t.Fatalf("migration check mutated storage\nbefore=%v\nafter=%v", before, after)
+	}
+}
+
+// TestFoundationCheckersPassWhenProjectSchemaIsCurrent proves the migration
+// check does not warn on every project — only one that actually needs
+// storage.NeedsMigration (FR-20: migration is idempotent, and a project with
+// nothing pending must not be flagged).
+func TestFoundationCheckersPassWhenProjectSchemaIsCurrent(t *testing.T) {
+	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("doctor-migration-current-test"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+	}, FoundationCheckers(store))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	migration := findCheck(t, result, "project.migration")
+	if migration.Status != StatusPass || migration.Remediation != nil {
+		t.Fatalf("migration check = %#v", migration)
+	}
+}
+
 func findCheck(t *testing.T, result Result, id string) CheckResult {
 	t.Helper()
 	for _, check := range result.Checks {

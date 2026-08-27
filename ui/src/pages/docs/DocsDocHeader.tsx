@@ -18,6 +18,7 @@ interface LinkedTask {
   id: string;
   title: string;
   status: string;
+  archived?: boolean;
 }
 
 interface DocsDocHeaderProps {
@@ -174,7 +175,11 @@ export function DocsDocHeader({
             className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
           >
             <FileText className="w-3.5 h-3.5" />
-            <span>{linkedTasks.length} linked tasks</span>
+            <span>
+              {linkedTasks.length} linked tasks
+              {linkedTasks.some((task) => task.archived) &&
+                ` (${linkedTasks.filter((task) => task.archived).length} archived)`}
+            </span>
             {linkedTasksExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
           </button>
           {linkedTasksExpanded && (
@@ -201,6 +206,11 @@ export function DocsDocHeader({
                       }`}
                     />
                     <span className="text-xs truncate">{task.title}</span>
+                    {task.archived && (
+                      <span className="ml-auto shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                        archived
+                      </span>
+                    )}
                   </button>
                 ))
               )}
