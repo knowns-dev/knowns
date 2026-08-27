@@ -313,26 +313,11 @@ func runSyncModelAPI(ss *models.SemanticSearchSettings) error {
 	return nil
 }
 
-// resolveSkillsScope answers where sync should materialize skills. The project
-// setting wins; an unset project setting falls back to the global default in
-// ~/.knowns/settings.json; an unset global default means "project", which is
-// what every project did before the setting existed.
-//
-// The global fallback is the point: a user who keeps skills in ~/.claude/skills
-// sets the preference once instead of editing every repository they own, and
-// projects that predate the setting pick it up without being touched.
+// resolveSkillsScope answers where sync should materialize skills, using the
+// shared chain so `knowns doctor` and `knowns sync` can never disagree about
+// which directories a project is supposed to have.
 func resolveSkillsScope(settings models.ProjectSettings) string {
-	if scope, err := models.NormalizeSkillsScope(settings.SkillsScope); err == nil && scope != "" {
-		return scope
-	}
-	defaults, err := loadGlobalProjectDefaults()
-	if err != nil || defaults == nil {
-		return models.SkillsScopeProject
-	}
-	if scope, err := models.NormalizeSkillsScope(defaults.Settings.SkillsScope); err == nil && scope != "" {
-		return scope
-	}
-	return models.SkillsScopeProject
+	return models.ResolveSkillsScope(settings.SkillsScope, storage.GlobalSkillsScopeDefault())
 }
 
 // runSyncSkillsForScope routes skill materialization by the project's

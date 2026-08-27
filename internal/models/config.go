@@ -172,6 +172,20 @@ func NormalizeSkillsScope(scope string) (string, error) {
 	}
 }
 
+// ResolveSkillsScope applies the resolution chain: the project's own scope
+// wins, then the global default from ~/.knowns/settings.json, then "project".
+// Callers supply both raw values so this stays a pure function that doctor and
+// the CLI can share without either importing the other.
+func ResolveSkillsScope(projectScope, globalScope string) string {
+	if scope, err := NormalizeSkillsScope(projectScope); err == nil && scope != "" {
+		return scope
+	}
+	if scope, err := NormalizeSkillsScope(globalScope); err == nil && scope != "" {
+		return scope
+	}
+	return SkillsScopeProject
+}
+
 // SkillsScopeOrDefault resolves the effective scope. Unset means "project",
 // which is what every project did before this setting existed.
 func (s *ProjectSettings) SkillsScopeOrDefault() string {

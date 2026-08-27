@@ -28,6 +28,7 @@ type localDependencies struct {
 	runtimeHooks    func() ([]runtimeinstall.Status, error)
 	skillsOutOfSync func(string) bool
 	globalSkills    func() []string
+	globalScope     func() string
 	exists          func(string) bool
 	lookPath        func(string) (string, error)
 	readFile        func(string) ([]byte, error)
@@ -59,6 +60,7 @@ func defaultLocalDependencies() localDependencies {
 		},
 		skillsOutOfSync: codegen.SkillsOutOfSync,
 		globalSkills:    codegen.GlobalStaleSkillDirs,
+		globalScope:     storage.GlobalSkillsScopeDefault,
 		exists: func(path string) bool {
 			_, err := os.Stat(path)
 			return err == nil
@@ -141,6 +143,9 @@ func newLocalState(store *storage.Store, deps localDependencies) *localState {
 	}
 	if deps.globalSkills == nil {
 		deps.globalSkills = defaults.globalSkills
+	}
+	if deps.globalScope == nil {
+		deps.globalScope = defaults.globalScope
 	}
 	if deps.exists == nil {
 		deps.exists = defaults.exists
