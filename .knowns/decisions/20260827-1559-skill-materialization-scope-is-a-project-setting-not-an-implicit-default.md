@@ -18,18 +18,21 @@ sources:
   - internal/cli/sync_skills_scope_test.go
   - internal/storage/embedding_settings_store.go
   - ~/.knowns/settings.json
+  - internal/doctor/ai_checks.go
+  - internal/doctor/local.go
+  - '@memory/dulbcb'
 relatedDocs: []
 relatedTasks:
   - or6x99
 verification: []
 reviewState: needs_evidence
 reviewBlockers:
-  - 'linked task "or6x99" is "in-review"; all linked tasks must be done before accepting decision "20260827-1559-skill-materialization-scope-is-a-project-setting-not-an-implicit-default"'
+  - 'linked task "or6x99" has unchecked acceptance criteria'
 reviewMatches: []
 reviewAllowedResolutions: []
-reviewEvaluatedAt: '2026-08-27T09:08:17.057Z'
+reviewEvaluatedAt: '2026-08-27T09:48:45.412Z'
 createdAt: '2026-08-27T08:59:00.591Z'
-updatedAt: '2026-08-27T09:08:17.057Z'
+updatedAt: '2026-08-27T09:48:45.412Z'
 ---
 
 ## Context
