@@ -9,7 +9,19 @@ import (
 
 // SemanticEvaluationRuntimeIdentity returns a stable, non-secret identity for
 // baseline attribution across machines.
+// MockEvaluationRuntimeIdentity is the runtime identity reported while the
+// deterministic embedder is active. It is deliberately unmistakable, so a
+// baseline recorded against the mock can never be confused with one recorded
+// against a real model.
+const MockEvaluationRuntimeIdentity = "mock/mock-deterministic@32"
+
 func SemanticEvaluationRuntimeIdentity(store *storage.Store) (string, error) {
+	// Under the deterministic embedder the runtime is the mock itself, so it
+	// reports a stable identity of its own. The pin still applies; CI pins to
+	// this value rather than to a provider that would have to be installed.
+	if MockEmbedderEnabled() {
+		return MockEvaluationRuntimeIdentity, nil
+	}
 	cfg, err := loadSemanticRuntimeConfig(store)
 	if err != nil {
 		return "", fmt.Errorf("load semantic evaluation runtime: %w", err)
@@ -37,6 +49,11 @@ func RequirePinnedSemanticEvaluationRuntime(
 			actualIdentity,
 			pinnedIdentity,
 		)
+	}
+	// The mock has no daemon to enable and no index to warm: it answers every
+	// embed call in process. Identity equality above is the whole check.
+	if MockEmbedderEnabled() {
+		return actualIdentity, nil
 	}
 	if !SemanticRuntimeEnabled() {
 		status := ObservedSemanticRuntimeStatus()

@@ -53,6 +53,23 @@ func InitSemantic(store *storage.Store) (EmbedderProvider, VectorStore, error) {
 		return nil, nil, ErrSemanticNotConfigured
 	}
 
+	// The deterministic embedder replaces the API provider entirely, so a CI
+	// run can exercise the semantic and hybrid paths with no Ollama, no model
+	// download and no network. It is opt-in through an environment variable and
+	// never reached unless that variable is set.
+	if MockEmbedderEnabled() {
+		embedder := NewMockEmbedder()
+		// A distinct model name keeps the mock's vectors in their own store, so
+		// a CI run can never leave vectors behind that a real run would then
+		// read back as if a real model had produced them.
+		vecStore := NewSQLiteVectorStore(filepath.Join(store.Root, ".search"),
+			embedder.ModelConfig().Name, embedder.Dimensions())
+		if err := vecStore.Load(); err != nil {
+			return nil, nil, fmt.Errorf("load mock vector store: %w", err)
+		}
+		return embedder, vecStore, nil
+	}
+
 	return initSemanticAPI(store, ss)
 }
 
