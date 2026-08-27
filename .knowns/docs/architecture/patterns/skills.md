@@ -1,8 +1,9 @@
 ---
+id: doc-d93907fa6b5fc3c04541c72c96cde935
 title: Agent Skills
 description: Pattern for creating and managing Knowns agent skills across AI platforms
 createdAt: '2026-01-17T06:06:37.006Z'
-updatedAt: '2026-08-13T13:23:43.287Z'
+updatedAt: '2026-08-27T04:38:05.269Z'
 tags:
   - pattern
   - agents
@@ -69,6 +70,7 @@ Instructions for the skill live here.
 | `kn-extract` | Extract patterns, decisions, failures, and memory |
 | `kn-doc` | Create and update documentation |
 | `kn-template` | Generate code from templates |
+| `kn-decision` | System Decision lifecycle: draft, triage, promote, supersede |
 | `kn-verify` | SDD verification and coverage reporting |
 | `kn-go` | Legacy full pipeline from approved spec without review gates |
 | `kn-debug` | Structured debugging: triage, reproduce, fix, learn |

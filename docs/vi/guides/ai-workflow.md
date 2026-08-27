@@ -211,6 +211,7 @@ Nên dùng gần cuối task hoặc sau verify, khi đã biết chắc kết qu�
 | `/kn-flow` | Orchestrate approved spec hoặc task wave |
 | `/kn-plan` | Tạo implementation plan |
 | `/kn-implement` | Thực hiện công việc |
+| `/kn-decision` | Draft, triage, promote hoặc supersede một System Decision |
 | `/kn-verify` | Check AC, refs, consistency |
 | `/kn-review` | Review implemented work |
 | `/kn-extract` | Lưu reusable knowledge |

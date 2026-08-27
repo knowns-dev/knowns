@@ -1,8 +1,9 @@
 ---
+id: doc-6b90879582069ffc1bcdffed63fde6dc
 title: Skills System
 description: Skill definition, sharing, and sync across platforms
 createdAt: '2026-01-23T04:07:56.363Z'
-updatedAt: '2026-08-13T13:23:43.462Z'
+updatedAt: '2026-08-27T04:38:31.773Z'
 tags: []
 ---
 
@@ -90,11 +91,10 @@ knowns sync --instructions
 | `kn-extract` | Extract reusable patterns into docs, templates, and memory |
 | `kn-doc` | Create and update documentation |
 | `kn-template` | List, run, or create code templates |
+| `kn-decision` | System Decision lifecycle: draft, triage, promote, supersede |
 | `kn-verify` | Run SDD verification and coverage report |
 | `kn-go` | Legacy full pipeline from approved spec without review gates |
 | `kn-debug` | Structured debugging: triage -> fix -> learn |
-
----
 
 ## SDD Workflow
 
@@ -161,5 +161,5 @@ The embedded `SKILL.md` sources are platform-neutral workflow contracts. Platfor
 - External tools are discovered and selected by capability, source type, freshness, and evidence quality; built-in skills do not require a named external research provider.
 - `kn-research` does not mutate tasks, docs, memories, decisions, or source files unless persistence is explicitly authorized.
 - Generated platform copies are overwritten by `knowns sync`; edit only `internal/instructions/skills/kn-*/SKILL.md`.
-- All 14 built-in skills use the shared response order: goal/result, key details, and an optional natural next action.
+- All 15 built-in skills use the shared response order: goal/result, key details, and an optional natural next action.
 - Automated source and sync tests enforce provider neutrality, mutation boundaries, response ordering, template examples, Decision lifecycle rules, and critical approval/verification gates.

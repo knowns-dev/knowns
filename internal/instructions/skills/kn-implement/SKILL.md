@@ -136,6 +136,8 @@ Append the persisted candidate returned by the tool:
 
 If review checks find missing evidence or a duplicate/conflict, leave the candidate unresolved in Review Inbox. Passing checks makes it ready for human review; it never makes the candidate current automatically.
 
+Resolving that candidate later — triaging the inbox, promoting it, or superseding what it replaces — is `/kn-decision`. Create the candidate here; settle it there.
+
 Spec Decisions are different: keep every D-ID canonically in the spec's `Locked Decisions` section and report compliance only. Do not copy Spec Decision text into the System Decision ledger merely for display.
 
 ## Step 5.5: SDD Workflow (if task has spec)
@@ -224,7 +226,7 @@ Never create a Memory with category `decision`; that category is legacy. If a us
 
 ## Final Response Contract
 
-All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-plan`, `kn-research`, `kn-handoff`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
+All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-plan`, `kn-research`, `kn-handoff`, `kn-implement`, `kn-decision`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
 
 Required order for the final user-facing response:
 

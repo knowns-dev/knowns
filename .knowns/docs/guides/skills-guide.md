@@ -1,8 +1,9 @@
 ---
+id: doc-d5d47f26d99e8b75311d881f59244ca2
 title: Skills Guide
 description: Agent skills for AI-assisted development workflows across Claude Code, Codex, and other platforms
 createdAt: '2026-02-24T08:45:44.217Z'
-updatedAt: '2026-06-26T03:45:43.011Z'
+updatedAt: '2026-08-27T04:38:01.909Z'
 tags:
   - guide
   - skills
@@ -48,6 +49,7 @@ graph TD
 | `kn-spec` | Create spec document (SDD) |
 | `kn-flow @doc/<spec-path>` | Recommended approved-spec orchestration |
 | `kn-go <spec-path>` | Legacy no-review-gates approved-spec pipeline |
+| `kn-decision` | Draft, triage, promote, or supersede a System Decision |
 | `kn-verify` | Run SDD verification |
 | `kn-doc` | Create/update documentation |
 | `kn-extract` | Extract patterns to docs |

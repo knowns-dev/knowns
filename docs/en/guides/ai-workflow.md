@@ -213,6 +213,7 @@ Use `kn-extract` near the end of a task or after verification, once you know the
 | `/kn-flow` | Orchestrate an approved spec or task wave |
 | `/kn-plan` | Create an implementation plan |
 | `/kn-implement` | Execute the work |
+| `/kn-decision` | Draft, triage, promote, or supersede a System Decision |
 | `/kn-verify` | Check ACs, refs, and consistency |
 | `/kn-review` | Review implemented work |
 | `/kn-extract` | Capture reusable knowledge |
