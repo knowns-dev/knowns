@@ -511,7 +511,7 @@ func runGlobalSettings() error {
 				return err
 			}
 		case "platforms":
-			if err := configurePlatformSettings(&defaults.Settings); err != nil {
+			if err := configurePlatformSettings(&defaults.Settings, true); err != nil {
 				return err
 			}
 		case "search":
@@ -631,7 +631,7 @@ func configureGitTrackingSettings(settings *models.ProjectSettings) error {
 }
 
 func configurePlatforms(store *storage.Store, project *models.Project) error {
-	if err := configurePlatformSettings(&project.Settings); err != nil {
+	if err := configurePlatformSettings(&project.Settings, false); err != nil {
 		return err
 	}
 	if err := store.Config.Save(project); err != nil {
@@ -641,7 +641,7 @@ func configurePlatforms(store *storage.Store, project *models.Project) error {
 	return nil
 }
 
-func configurePlatformSettings(settings *models.ProjectSettings) error {
+func configurePlatformSettings(settings *models.ProjectSettings, global bool) error {
 	selected := settings.Platforms
 	if len(selected) == 0 {
 		selected = []string{"claude-code", "agents"}
@@ -650,12 +650,37 @@ func configurePlatformSettings(settings *models.ProjectSettings) error {
 	for _, id := range wizardPlatformIDs {
 		options = append(options, huh.NewOption(platformLabel(id), id).Selected(sectionSelected(selected, id)))
 	}
+
+	// The empty option matters. Without a way to say "leave this unset", simply
+	// stepping through this form would stamp an explicit scope into the project
+	// and silently override the global default the user just configured.
+	inheritLabel := "Inherit global default"
+	scopeDescription := "Where knowns sync writes built-in skills for this project."
+	if global {
+		inheritLabel = "Not set (projects default to their own directory)"
+		scopeDescription = "Default for every project that has not set its own scope."
+	}
+	scope, err := models.NormalizeSkillsScope(settings.SkillsScope)
+	if err != nil {
+		scope = ""
+	}
+
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewMultiSelect[string]().
 			Title("AI platforms").
 			Description("Select generated instruction and integration targets.").
 			Options(options...).
 			Value(&selected),
+		huh.NewSelect[string]().
+			Title("Skill location").
+			Description(scopeDescription).
+			Options(
+				huh.NewOption(inheritLabel, ""),
+				huh.NewOption("This project (.claude/skills, .agents/skills)", models.SkillsScopeProject),
+				huh.NewOption("Global only (~/.claude/skills, ~/.agents/skills)", models.SkillsScopeGlobal),
+				huh.NewOption("Do not manage skills", models.SkillsScopeNone),
+			).
+			Value(&scope),
 	)).WithTheme(huh.ThemeCatppuccin())
 	if err := form.Run(); err != nil {
 		if err == huh.ErrUserAborted {
@@ -664,6 +689,7 @@ func configurePlatformSettings(settings *models.ProjectSettings) error {
 		return err
 	}
 	settings.Platforms = selected
+	settings.SkillsScope = scope
 	return nil
 }
 

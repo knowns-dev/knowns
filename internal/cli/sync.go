@@ -72,7 +72,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	// 1. Skills
 	if syncSkills {
-		if err := runSyncSkillsForPlatforms(projectRoot, force, selectedPlatforms); err != nil {
+		if err := runSyncSkillsForScope(projectRoot, force, selectedPlatforms, resolveSkillsScope(cfg.Settings)); err != nil {
 			return fmt.Errorf("sync skills: %w", err)
 		}
 		fmt.Println()
@@ -311,6 +311,62 @@ func runSyncModelAPI(ss *models.SemanticSearchSettings) error {
 	fmt.Printf("%s Semantic search ready (api: %s, model: %s, %dd)\n",
 		StyleSuccess.Render("✓"), model.Provider, model.Model, model.Dimensions)
 	return nil
+}
+
+// resolveSkillsScope answers where sync should materialize skills. The project
+// setting wins; an unset project setting falls back to the global default in
+// ~/.knowns/settings.json; an unset global default means "project", which is
+// what every project did before the setting existed.
+//
+// The global fallback is the point: a user who keeps skills in ~/.claude/skills
+// sets the preference once instead of editing every repository they own, and
+// projects that predate the setting pick it up without being touched.
+func resolveSkillsScope(settings models.ProjectSettings) string {
+	if scope, err := models.NormalizeSkillsScope(settings.SkillsScope); err == nil && scope != "" {
+		return scope
+	}
+	defaults, err := loadGlobalProjectDefaults()
+	if err != nil || defaults == nil {
+		return models.SkillsScopeProject
+	}
+	if scope, err := models.NormalizeSkillsScope(defaults.Settings.SkillsScope); err == nil && scope != "" {
+		return scope
+	}
+	return models.SkillsScopeProject
+}
+
+// runSyncSkillsForScope routes skill materialization by the project's
+// settings.skillsScope. Before this existed, sync always created the project
+// skill directories, which silently shadowed a user's global install: a
+// project copy wins over ~/.claude/skills, and sync always overwrites, so
+// deleting the project copy never stuck.
+func runSyncSkillsForScope(projectRoot string, force bool, platforms []string, scope string) error {
+	switch scope {
+	case models.SkillsScopeNone:
+		fmt.Println(RenderInfo("Skills scope is \"none\": leaving skill directories untouched."))
+		return nil
+	case models.SkillsScopeGlobal:
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolve home directory: %w", err)
+		}
+		count, err := codegen.BuiltInSkillCount()
+		if err != nil {
+			return fmt.Errorf("count built-in skills: %w", err)
+		}
+		if count == 0 {
+			fmt.Println(StyleDim.Render("No embedded built-in skills found. Skipping skill sync."))
+			return nil
+		}
+		fmt.Printf("%s\n", RenderInfo(fmt.Sprintf("Syncing %s skill(s) to global directories...", StyleBold.Render(fmt.Sprintf("%d", count)))))
+		if err := syncGlobalSkills(home, platforms); err != nil {
+			return err
+		}
+		fmt.Println(RenderSuccess(fmt.Sprintf("Synced %d skill(s) globally. Project skill directories were left untouched.", count)))
+		return nil
+	default:
+		return runSyncSkillsForPlatforms(projectRoot, force, platforms)
+	}
 }
 
 // runSyncSkillsForPlatforms copies embedded built-in skills to the platform dirs

@@ -139,8 +139,47 @@ type ProjectSettings struct {
 	// When nil, the implicit default preset (read-write-no-delete) is used.
 	Permissions *permissions.PermissionConfig `json:"permissions,omitempty"`
 
+	// SkillsScope controls where `knowns sync` materializes built-in skills.
+	// Allowed values: "project" (default), "global", "none". An unset value
+	// resolves to "project" so existing projects keep their behaviour.
+	SkillsScope string `json:"skillsScope,omitempty"`
+
 	// LSP configures language server enable/disable and binary overrides.
 	LSP *LSPSettings `json:"lsp,omitempty"`
+}
+
+// Skill materialization scopes for `knowns sync`.
+const (
+	SkillsScopeProject = "project"
+	SkillsScopeGlobal  = "global"
+	SkillsScopeNone    = "none"
+)
+
+// NormalizeSkillsScope canonicalizes a skills scope. An empty value is left
+// empty so an unset setting is never written back into config.json.
+func NormalizeSkillsScope(scope string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "":
+		return "", nil
+	case SkillsScopeProject:
+		return SkillsScopeProject, nil
+	case SkillsScopeGlobal:
+		return SkillsScopeGlobal, nil
+	case SkillsScopeNone:
+		return SkillsScopeNone, nil
+	default:
+		return "", fmt.Errorf("unknown scope %q, want %q, %q, or %q", scope, SkillsScopeProject, SkillsScopeGlobal, SkillsScopeNone)
+	}
+}
+
+// SkillsScopeOrDefault resolves the effective scope. Unset means "project",
+// which is what every project did before this setting existed.
+func (s *ProjectSettings) SkillsScopeOrDefault() string {
+	scope, err := NormalizeSkillsScope(s.SkillsScope)
+	if err != nil || scope == "" {
+		return SkillsScopeProject
+	}
+	return scope
 }
 
 // Normalize canonicalizes settings that accept human-friendly input.
@@ -150,6 +189,12 @@ func (s *ProjectSettings) Normalize() error {
 		return fmt.Errorf("settings.defaultTaskIdPrefix: %w", err)
 	}
 	s.DefaultTaskIDPrefix = prefix
+
+	scope, err := NormalizeSkillsScope(s.SkillsScope)
+	if err != nil {
+		return fmt.Errorf("settings.skillsScope: %w", err)
+	}
+	s.SkillsScope = scope
 	return nil
 }
 
