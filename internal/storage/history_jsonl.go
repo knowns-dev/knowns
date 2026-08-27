@@ -538,12 +538,11 @@ func metadataRecord(raw map[string]json.RawMessage) (models.HistoryRecord, error
 
 func validateMetadataRecord(raw map[string]json.RawMessage, record models.HistoryRecord, expected int, previous []models.HistoryRecord, entityType, entityID string) error {
 	recordHash := record.RecordHash
-	data, err := marshalMetadataForHash(raw)
+	computed, err := metadataRecordHash(raw)
 	if err != nil {
 		return err
 	}
-	hash := sha256.Sum256(data)
-	if recordHash == "" || recordHash != hex.EncodeToString(hash[:]) {
+	if recordHash == "" || recordHash != computed {
 		return fmt.Errorf("%w: record hash mismatch at revision %d", ErrHistoryCorrupt, expected)
 	}
 	return validateHistoryEnvelope(record, expected, previous, entityType, entityID, rawCheckpointPayloadPresent(raw), true)
@@ -589,17 +588,27 @@ type historyRecordWire struct {
 	CheckpointPayload json.RawMessage        `json:"checkpointPayload,omitempty"`
 }
 
-func marshalMetadataForHash(raw map[string]json.RawMessage) ([]byte, error) {
+// metadataRecordHash recomputes a record hash from the raw line so the metadata
+// reader validates with exactly the function that wrote the hash.
+//
+// It must not hash the file's bytes directly. `historyRecordHash` normalizes a
+// record through `models.HistoryRecord`, where `TaskChange.OldValue` and
+// `NewValue` are `any` and therefore become `map[string]any`, whose keys Go
+// marshals in sorted order. On disk the same values keep the field order of the
+// struct they were written from. Any record whose changes carry a nested object
+// - an acceptance criterion, for instance - therefore hashes one way when
+// written and another when read back verbatim, and a perfectly intact history
+// gets reported as corrupt.
+func metadataRecordHash(raw map[string]json.RawMessage) (string, error) {
 	data, err := json.Marshal(raw)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	var wire historyRecordWire
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return nil, err
+	var record models.HistoryRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		return "", err
 	}
-	wire.RecordHash = ""
-	return json.Marshal(wire)
+	return historyRecordHash(record), nil
 }
 
 // FindEntityByPath locates a Doc history by its current or historical path.
