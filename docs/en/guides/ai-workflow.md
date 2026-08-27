@@ -211,8 +211,10 @@ Use `kn-extract` near the end of a task or after verification, once you know the
 | `/kn-handoff` | Write a cross-repo brief or API contract handoff |
 | `/kn-spec` | Create a spec document |
 | `/kn-flow` | Orchestrate an approved spec or task wave |
+| `/kn-go` | Legacy approved-spec pipeline without review gates |
 | `/kn-plan` | Create an implementation plan |
 | `/kn-implement` | Execute the work |
+| `/kn-test` | Turn spec criteria into tests and report what is unproven |
 | `/kn-decision` | Draft, triage, promote, or supersede a System Decision |
 | `/kn-verify` | Check ACs, refs, and consistency |
 | `/kn-review` | Review implemented work |
@@ -220,6 +222,7 @@ Use `kn-extract` near the end of a task or after verification, once you know the
 | `/kn-doc` | Work with docs |
 | `/kn-template` | Run templates |
 | `/kn-debug` | Debug blocked or failing work |
+| `/kn-commit` | Create a conventional commit |
 
 ## CLI fallback
 

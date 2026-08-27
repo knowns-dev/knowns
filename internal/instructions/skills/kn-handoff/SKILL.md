@@ -145,7 +145,7 @@ A handoff has a state, and the state governs cleanup:
 
 ## Final Response Contract
 
-All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-plan`, `kn-research`, `kn-handoff`, `kn-implement`, `kn-decision`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
+All built-in skills in scope must end with the same user-facing information order: `kn-init`, `kn-spec`, `kn-flow`, `kn-go`, `kn-plan`, `kn-research`, `kn-handoff`, `kn-implement`, `kn-test`, `kn-review`, `kn-debug`, `kn-decision`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, and `kn-commit`.
 
 Required order for the final user-facing response:
 

@@ -24,7 +24,7 @@ Knowns is a CLI-first knowledge layer and task management system for development
 | UI Components | Radix UI (shadcn/ui) |
 | Storage | File-based (Markdown + YAML Frontmatter) |
 | AI Integration | Model Context Protocol (mcp-go) |
-| Testing | go test + testify |
+| Testing | go test (standard library), Playwright + bun:test for the UI |
 | Build | Make + goreleaser |
 ## Layered Architecture
 

@@ -60,7 +60,7 @@ This spec only covers the skill instruction sources under `internal/instructions
 ## Technical Notes
 
 - Primary implementation surface: `internal/instructions/skills/*/SKILL.md`
-- Current built-in skills in scope: `kn-init`, `kn-spec`, `kn-plan`, `kn-research`, `kn-implement`, `kn-verify`, `kn-doc`, `kn-template`, `kn-extract`, `kn-commit`
+- Skills in scope: every directory under `internal/instructions/skills/kn-*`. The canonical list is the shared roster sentence those files carry, which a contract test keeps in step with the embedded set. Do not maintain a second copy here.
 - Verification can be done by reviewing each skill source for consistent final output guidance.
 
 ## Open Questions
@@ -77,7 +77,7 @@ The contract requires a fixed information order, not fixed heading vocabulary:
 2. Key details
 3. Next action only when a natural handoff exists
 
-Current implementation scope includes all 14 built-in skills: `kn-init`, `kn-spec`, `kn-flow`, `kn-plan`, `kn-research`, `kn-implement`, `kn-review`, `kn-verify`, `kn-debug`, `kn-doc`, `kn-template`, `kn-extract`, `kn-commit`, and `kn-go`.
+Implementation scope is every built-in skill, without exception. This document previously carried two hand-maintained lists that disagreed with each other and with the codebase; both were replaced by a pointer to the roster sentence in the skill sources, which is now test-enforced.
 
 Portability requirements apply to the canonical sources under `internal/instructions/skills/*/SKILL.md`: workflow logic must not require a named external research provider or agent platform. Generated platform copies remain out of implementation scope because setup/sync overwrites them.
 

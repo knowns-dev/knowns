@@ -209,8 +209,10 @@ Nên dùng gần cuối task hoặc sau verify, khi đã biết chắc kết qu�
 | `/kn-handoff` | Viết handoff document cross-repo: brief hoặc API contract |
 | `/kn-spec` | Tạo spec document |
 | `/kn-flow` | Orchestrate approved spec hoặc task wave |
+| `/kn-go` | Pipeline cũ cho approved spec, không có review gate |
 | `/kn-plan` | Tạo implementation plan |
 | `/kn-implement` | Thực hiện công việc |
+| `/kn-test` | Biến spec criteria thành test, báo tiêu chí nào chưa được chứng minh |
 | `/kn-decision` | Draft, triage, promote hoặc supersede một System Decision |
 | `/kn-verify` | Check AC, refs, consistency |
 | `/kn-review` | Review implemented work |
@@ -218,6 +220,7 @@ Nên dùng gần cuối task hoặc sau verify, khi đã biết chắc kết qu�
 | `/kn-doc` | Làm việc với docs |
 | `/kn-template` | Chạy templates |
 | `/kn-debug` | Debug khi bị block hoặc fail |
+| `/kn-commit` | Tạo conventional commit |
 
 ## CLI fallback
 
