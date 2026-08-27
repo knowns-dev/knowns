@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -125,6 +126,29 @@ func ReindexQdrantGeneration(ctx context.Context, store *storage.Store, embedder
 		return QdrantGenerationResult{}, fmt.Errorf("activate next Qdrant generation: %w", err)
 	}
 	activated = true
+
+	// The rebuild is the most authoritative moment to record what is indexed:
+	// the collection was just built from canonical sources, validated point by
+	// point, and made active. Stamping here is what lets `knowns search index`
+	// clear a `knowns doctor` warning, which it previously could never do
+	// because watermarks were written only by per-entity reconciliation.
+	//
+	// Only entities that actually produced points are stamped. Reindex swallows
+	// a per-entity embedding failure, so an entity it skipped has none and stays
+	// stale, which is the honest outcome.
+	indexedSourceIDs := make(map[string]bool, len(points))
+	for _, p := range points {
+		if id := payloadString(p.Payload, qdrantPayloadSourceID); id != "" {
+			indexedSourceIDs[id] = true
+		}
+	}
+	if _, err := StampWatermarksFromGeneration(store.Root, indexedSourceIDs, indexed); err != nil {
+		// The generation is live and correct; only the bookkeeping failed. Report
+		// it rather than failing the rebuild, so status stays wrong-but-visible
+		// instead of the rebuild appearing to have not happened.
+		log.Printf("[search] rebuilt generation but could not stamp index watermarks: %v", err)
+	}
+
 	result := QdrantGenerationResult{Pointer: next, Previous: previous}
 	records, historyErr := LoadQdrantGenerations(store.Root)
 	if historyErr != nil {
