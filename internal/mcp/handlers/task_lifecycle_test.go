@@ -48,8 +48,12 @@ func TestTaskLifecycleMCPContractAndTrustedPermission(t *testing.T) {
 		t.Fatalf("empty batch-unarchive = %+v error=%t", empty, emptyError)
 	}
 
-	// A spoofed request argument cannot grant a permission absent from config.
-	denied, isError := callTaskLifecycleMCPAny(t, store, "hard_delete", map[string]any{"taskId": "mcp-life", "confirmed": true, "reason": "spoof", "authorized": true})
+	// A hard delete is denied by the permission layer, not by the arguments.
+	// The spoofed "authorized" argument that used to be passed here is now
+	// refused before dispatch by validateTaskArgs, which would hide whether the
+	// permission check itself still holds, so it is asserted separately in
+	// TestUnknownTaskArgumentIsRejected.
+	denied, isError := callTaskLifecycleMCPAny(t, store, "hard_delete", map[string]any{"taskId": "mcp-life", "confirmed": true, "reason": "spoof"})
 	if !isError {
 		t.Fatal("denied hard-delete must be an MCP error result")
 	}
@@ -337,7 +341,7 @@ func TestRegisteredTaskLifecycleMCPMiddlewarePreservesSharedResponse(t *testing.
 	RegisterTaskTool(registered, func() *storage.Store { return store })
 
 	denied, isError := callRegisteredTaskLifecycleMCP(t, registered.MCPServer, map[string]any{
-		"action": "hard_delete", "taskId": "registered-life", "confirmed": true, "reason": "spoof", "authorized": true,
+		"action": "hard_delete", "taskId": "registered-life", "confirmed": true, "reason": "spoof",
 	})
 	if !isError || denied.Items[0].Reasons[0].Code != tasklifecycle.ReasonPermissionRequired {
 		t.Fatalf("registered denial = %+v error=%t", denied, isError)
