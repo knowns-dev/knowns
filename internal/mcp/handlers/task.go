@@ -386,20 +386,18 @@ func handleTaskUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 				})
 			}
 		}
+		// An out-of-range index used to be skipped in silence, so checking the
+		// criteria of a Task that has none reported success and changed
+		// nothing. That is how a Task reaches "done" with acceptance criteria
+		// nobody ever verified, which is the opposite of what the marker means.
 		if v, ok := intSliceArg(args, "checkAc"); ok {
-			for _, idx := range v {
-				i := idx - 1
-				if i >= 0 && i < len(task.AcceptanceCriteria) {
-					task.AcceptanceCriteria[i].Completed = true
-				}
+			if err := applyACCompletion(task, v, true); err != nil {
+				return err
 			}
 		}
 		if v, ok := intSliceArg(args, "uncheckAc"); ok {
-			for _, idx := range v {
-				i := idx - 1
-				if i >= 0 && i < len(task.AcceptanceCriteria) {
-					task.AcceptanceCriteria[i].Completed = false
-				}
+			if err := applyACCompletion(task, v, false); err != nil {
+				return err
 			}
 		}
 		if v, ok := intSliceArg(args, "removeAc"); ok {
@@ -745,4 +743,19 @@ func handleTaskBoard(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 
 	out, _ := json.MarshalIndent(board, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+// applyACCompletion marks acceptance criteria complete or incomplete by
+// 1-based index, rejecting any index the Task does not have rather than
+// skipping it. A caller that names a criterion that is not there is working
+// from a stale picture, and silently doing nothing hides that.
+func applyACCompletion(task *models.Task, indexes []int, completed bool) error {
+	for _, idx := range indexes {
+		i := idx - 1
+		if i < 0 || i >= len(task.AcceptanceCriteria) {
+			return fmt.Errorf("acceptance criterion %d is out of range: task has %d", idx, len(task.AcceptanceCriteria))
+		}
+		task.AcceptanceCriteria[i].Completed = completed
+	}
+	return nil
 }
