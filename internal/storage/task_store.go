@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -189,15 +188,12 @@ func (ts *TaskStore) scanForID(dir, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	prefix := "task-" + id + " - "
-	exact := "task-" + id + ".md"
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
-		n := e.Name()
-		if n == exact || strings.HasPrefix(n, prefix) {
-			return filepath.Join(dir, n), nil
+		if TaskFileMatches(e.Name(), id) {
+			return filepath.Join(dir, e.Name()), nil
 		}
 	}
 	return "", fmt.Errorf("task %q not found in %s", id, dir)
@@ -296,7 +292,7 @@ func (ts *TaskStore) createUnlocked(task *models.Task) error {
 	if err := os.MkdirAll(ts.tasksDir(), 0755); err != nil {
 		return fmt.Errorf("create task dir: %w", err)
 	}
-	path := filepath.Join(ts.tasksDir(), taskFilename(task.ID, task.Title))
+	path := filepath.Join(ts.tasksDir(), taskFilename(task.ID))
 	return ts.writeFile(path, task)
 }
 
@@ -343,10 +339,8 @@ func (ts *TaskStore) deleteAllUnlocked(id string) (int, error) {
 		if err != nil {
 			return removed, err
 		}
-		prefix := "task-" + id + " - "
-		exact := "task-" + id + ".md"
 		for _, entry := range entries {
-			if entry.IsDir() || (entry.Name() != exact && !strings.HasPrefix(entry.Name(), prefix)) {
+			if entry.IsDir() || !TaskFileMatches(entry.Name(), id) {
 				continue
 			}
 			if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !os.IsNotExist(err) {
@@ -840,13 +834,20 @@ func formatISO(t time.Time) string {
 }
 
 // taskIDPattern extracts the ID from a task filename.
-var taskIDPattern = regexp.MustCompile(`^task-([^ ]+)`)
-
-// IDFromFilename extracts a task ID from a filename like "task-abc123 - My Task.md".
+// IDFromFilename extracts a task ID from any filename this store has written:
+// "abc123.md", "task-abc123.md", or "task-abc123 - My Task.md". The legacy
+// untitled form is why the extension has to be trimmed explicitly; the old
+// pattern captured "abc123.md" for it and no caller noticed.
 func IDFromFilename(filename string) string {
-	m := taskIDPattern.FindStringSubmatch(filename)
-	if len(m) < 2 {
+	name := strings.TrimSuffix(filename, ".md")
+	if name == "" {
 		return ""
 	}
-	return m[1]
+	if rest, ok := strings.CutPrefix(name, "task-"); ok {
+		name = rest
+	}
+	if before, _, found := strings.Cut(name, " - "); found {
+		name = before
+	}
+	return strings.TrimSpace(name)
 }

@@ -68,9 +68,12 @@ func TestNewTaskIDKeepsLegacyBase36Format(t *testing.T) {
 }
 
 func TestTaskFileNameSupportsPrefixedIDs(t *testing.T) {
-	got := TaskFileName("KN-7F3K9M", "Add authentication")
-	want := "task-KN-7F3K9M - Add-authentication.md"
-	if got != want {
-		t.Fatalf("TaskFileName() = %q, want %q", got, want)
+	for _, tc := range []struct{ id, want string }{
+		{"KN-7F3K9M", "KN-7F3K9M.md"},
+		{"abc123", "abc123.md"},
+	} {
+		if got := TaskFileName(tc.id); got != tc.want {
+			t.Errorf("TaskFileName(%q) = %q, want %q", tc.id, got, tc.want)
+		}
 	}
 }

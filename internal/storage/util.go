@@ -81,8 +81,28 @@ func sanitizeTitle(title string) string {
 }
 
 // taskFilename returns the canonical filename for a task.
-func taskFilename(id, title string) string {
-	return "task-" + id + " - " + sanitizeTitle(title) + ".md"
+// taskFilename delegates so that the canonical name has exactly one definition.
+// It previously had three, in three packages, which is how two of them came to
+// describe a format the store no longer wrote.
+func taskFilename(id string) string {
+	return models.TaskFileName(id)
+}
+
+// TaskFileMatches reports whether name is the file for id, in any of the three
+// forms this store has written. The canonical form is checked first, so an ID
+// that itself begins with "task-" can never be mistaken for a legacy name.
+//
+// It is exported because tests outside this package need the same answer, and
+// each hand-rolled copy of this rule is a place the naming change can be missed.
+//
+//	<id>.md                     canonical
+//	task-<id>.md                legacy, untitled
+//	task-<id> - <slug>.md       legacy, titled
+func TaskFileMatches(name, id string) bool {
+	if name == id+".md" {
+		return true
+	}
+	return name == "task-"+id+".md" || strings.HasPrefix(name, "task-"+id+" - ")
 }
 
 // extractSection returns the content between <!-- SECTION:TYPE:BEGIN --> /

@@ -1334,11 +1334,23 @@ func countID(tasks []*models.Task, id string) int {
 	return count
 }
 
+// taskFilePath finds a task file under any name the store has written, using
+// the store's own matcher so this helper cannot drift from it.
 func taskFilePath(t *testing.T, root, directory, id string) string {
 	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(root, directory, "task-"+id+"*.md"))
-	if err != nil || len(matches) != 1 {
-		t.Fatalf("find Task %s in %s: matches=%v err=%v", id, directory, matches, err)
+	dir := filepath.Join(root, directory)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("find Task %s in %s: %v", id, directory, err)
+	}
+	var matches []string
+	for _, entry := range entries {
+		if !entry.IsDir() && storage.TaskFileMatches(entry.Name(), id) {
+			matches = append(matches, filepath.Join(dir, entry.Name()))
+		}
+	}
+	if len(matches) != 1 {
+		t.Fatalf("find Task %s in %s: matches=%v", id, directory, matches)
 	}
 	return matches[0]
 }

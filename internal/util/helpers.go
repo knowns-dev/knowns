@@ -45,11 +45,6 @@ func SanitizeTitle(title string) string {
 	return s
 }
 
-// TaskFileName returns the filename for a task: task-{id} - {sanitized-title}.md
-func TaskFileName(id, title string) string {
-	return fmt.Sprintf("task-%s - %s.md", id, SanitizeTitle(title))
-}
-
 // ParseDuration parses duration strings like "2h", "30m", "1h30m" into seconds.
 func ParseDuration(s string) (int, error) {
 	s = strings.TrimSpace(strings.ToLower(s))

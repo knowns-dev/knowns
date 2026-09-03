@@ -118,13 +118,23 @@ func SanitizeTitle(title string) string {
 	return clean
 }
 
-// TaskFileName returns the canonical file name for a task.
+// TaskFileName returns the canonical file name for a task: the ID and nothing
+// else.
 //
-// Format: "task-{id} - {sanitized-title}.md"
+// The title used to be part of the name. That made a directory listing
+// readable, but it put a copy of a mutable field into a path that is never
+// rewritten, so a renamed task advertised its old title for the rest of its
+// life. Readers that need the title read the frontmatter, which is always
+// current.
+//
+// Files written under the older forms, "task-{id} - {slug}.md" and
+// "task-{id}.md", are still located and read; see taskFileMatches in the
+// storage package.
 //
 // Example:
 //
-//	TaskFileName("abc123", "Fix login bug")  →  "task-abc123 - Fix-login-bug.md"
-func TaskFileName(id, title string) string {
-	return fmt.Sprintf("task-%s - %s.md", id, SanitizeTitle(title))
+//	TaskFileName("abc123")     →  "abc123.md"
+//	TaskFileName("KN-7F3K9M")  →  "KN-7F3K9M.md"
+func TaskFileName(id string) string {
+	return id + ".md"
 }
