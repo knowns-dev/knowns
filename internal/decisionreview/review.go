@@ -92,6 +92,8 @@ type Match struct {
 	MatchedBy []string `json:"matchedBy,omitempty"`
 	Snippet   string   `json:"snippet,omitempty"`
 	Tags      []string `json:"tags,omitempty"`
+	// Hash pins the matched decision's content as the reviewer saw it.
+	Hash string `json:"hash,omitempty"`
 }
 
 func New(store *storage.Store) *Service {
@@ -299,6 +301,10 @@ func (s *Service) applyReviewMetadata(entry *models.DecisionEntry, matches []Mat
 	}
 	evaluatedAt := s.now().UTC()
 	entry.ReviewEvaluatedAt = &evaluatedAt
+	// Record which state was judged, not only when. The hash is taken after
+	// the review fields are set and deliberately excludes them, so writing the
+	// review cannot invalidate its own watermark.
+	entry.ReviewEvaluatedHash = storage.CanonicalDecisionHash(entry)
 }
 
 func candidateRepairGuidance(message string) string {
@@ -318,6 +324,7 @@ func persistedMatches(matches []Match) []models.DecisionReviewMatch {
 			Title:     match.Title,
 			Status:    match.Status,
 			Score:     match.Score,
+			Hash:      match.Hash,
 			Kind:      match.Kind,
 			MatchedBy: append([]string(nil), match.MatchedBy...),
 			Snippet:   strings.Join(strings.Fields(match.Snippet), " "),
@@ -956,6 +963,7 @@ func matchFromEntry(entry *models.DecisionEntry, score float64, kind string, mat
 		MatchedBy: matchedBy,
 		Snippet:   truncate(strings.TrimSpace(snippet), 220),
 		Tags:      append([]string(nil), entry.Tags...),
+		Hash:      storage.CanonicalDecisionHash(entry),
 	}
 }
 

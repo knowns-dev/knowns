@@ -8,6 +8,7 @@ import (
 	"github.com/howznguyen/knowns/internal/decisionreview"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/search"
+	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -220,6 +221,9 @@ func runDecisionInbox(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(&b, "CANDIDATE: %s\n", candidate.ID)
 		fmt.Fprintf(&b, "  TITLE: %s\n", candidate.Title)
 		fmt.Fprintf(&b, "  REVIEW_STATE: %s\n", candidate.ReviewState)
+		if storage.DecisionReviewIsStale(candidate) {
+			fmt.Fprintln(&b, "  REVIEW_STALE: the decision changed after this review; re-run it")
+		}
 		for _, blocker := range candidate.ReviewBlockers {
 			fmt.Fprintf(&b, "  BLOCKER: %s\n", blocker)
 		}
@@ -544,6 +548,9 @@ func printDecisionPlain(cmd *cobra.Command, decision *models.DecisionEntry) {
 	}
 	if decision.ReviewState != "" {
 		fmt.Fprintf(&b, "REVIEW_STATE: %s\n", decision.ReviewState)
+	}
+	if storage.DecisionReviewIsStale(decision) {
+		fmt.Fprintln(&b, "REVIEW_STALE: the decision changed after this review; re-run it")
 	}
 	for _, blocker := range decision.ReviewBlockers {
 		fmt.Fprintf(&b, "REVIEW_BLOCKER: %s\n", blocker)
