@@ -1,0 +1,131 @@
+knowns	visible	runnable	--json:bool --no-pager:bool --page-size:int --page:int --plain:bool
+knowns __lsp-daemon	hidden	group
+knowns __lsp-daemon run	hidden	runnable	--project:string
+knowns __runtime	hidden	group
+knowns __runtime run	hidden	runnable
+knowns __runtime status	hidden	runnable
+knowns agents	visible	runnable
+knowns audit	visible	group
+knowns audit recent	visible	runnable	--limit:int --project:string --result:string --tool:string
+knowns audit stats	visible	runnable	--project:string --tool:string
+knowns board	visible	runnable
+knowns browser	visible	runnable	--allow-task-hard-delete:bool --dev:bool --no-open:bool --open:bool --password:string --port:int --project:string --restart:bool --scan:string --tunnel:bool --watch:bool
+knowns code	visible	group
+knowns code deps	visible	runnable	--limit:int --type:string
+knowns code search	visible	runnable	--limit:int --path:string
+knowns code symbols	visible	runnable	--kind:string --limit:int --path:string
+knowns config	visible	group
+knowns config get	visible	runnable
+knowns config list	visible	runnable
+knowns config reset	visible	runnable	--yes:bool
+knowns config set	visible	runnable
+knowns decision	visible	runnable
+knowns decision accept	visible	runnable	--supersede:stringArray
+knowns decision create	visible	runnable	--alternatives:string --body:string --consequences:string --context:string --decision:string --doc:stringArray --source:stringArray --status:string --tag:stringArray --task:stringArray
+knowns decision get	visible	runnable
+knowns decision inbox	visible	runnable
+knowns decision link	visible	runnable	--doc:stringArray --source:stringArray --task:stringArray
+knowns decision list	visible	runnable	--all-statuses:bool --status:string --tag:string
+knowns decision migrate	visible	group
+knowns decision migrate apply	visible	runnable	--accept-verified:bool --category:string --decision-id:string --doc:stringArray --memory:string --reason:string --resolution:string --target-memory:string --task:stringArray
+knowns decision migrate preview	visible	runnable
+knowns decision migrate rollback	visible	runnable
+knowns decision resolve	visible	runnable	--replacement-id:string --target:string
+knowns decision supersede	visible	runnable
+knowns doc	visible	runnable	--info:bool --line:string --section:string --smart:bool --toc:bool
+knowns doc create	visible	runnable	--content:string --description:string --folder:string --tag:stringArray
+knowns doc delete	visible	runnable	--dry-run:bool --expected-hash:string --force:bool
+knowns doc edit	visible	runnable	--append:string --content:string --description:string --expected-hash:string --path:string --section:string --tags:string --title:string
+knowns doc hard-delete	visible	runnable	--allow-hard-delete:bool --expected-hash:string --reason:string --yes:bool
+knowns doc history	visible	runnable	--limit:int --metadata:bool --offset:int --revision:string
+knowns doc list	visible	runnable	--tag:string
+knowns doc view	visible	runnable	--info:bool --line:string --section:string --smart:bool --toc:bool
+knowns doctor	visible	runnable	--scope:stringSlice --strict:bool --verbose:bool
+knowns eval	visible	group
+knowns eval retrieval	visible	runnable	--baseline:string --cases:string --mode:string --output:string --reason:string --runtime-id:string --update-baseline:bool
+knowns import	visible	group
+knowns import add	visible	runnable
+knowns import list	visible	runnable
+knowns import remove	visible	runnable
+knowns import status	visible	runnable
+knowns import sync	visible	runnable
+knowns init	visible	runnable	--force:bool --git-ignored:bool --git-tracked:bool --no-open:bool --no-wizard:bool --open:bool --task-prefix:string --wizard:bool
+knowns lsp	visible	group
+knowns lsp cleanup	visible	runnable
+knowns lsp install	visible	runnable	--latest:bool --version:string --yes:bool
+knowns lsp list	visible	runnable
+knowns mcp	visible	runnable	--project:string --stdio:bool
+knowns memory	visible	runnable
+knowns memory cleanup	visible	runnable	--layer:string --limit:int --older-than:int
+knowns memory create	visible	runnable	--category:string --content:string --create-anyway:bool --layer:string --status:string --tag:stringArray
+knowns memory delete	visible	runnable	--dry-run:bool --force:bool
+knowns memory demote	visible	runnable
+knowns memory edit	visible	runnable	--append:string --category:string --content:string --tag:stringArray --title:string
+knowns memory list	visible	runnable	--all-statuses:bool --category:string --layer:string --status:string --tag:string
+knowns memory promote	visible	runnable
+knowns memory view	visible	runnable
+knowns migrate	visible	runnable	--write:bool
+knowns provider	visible	group
+knowns provider add	visible	runnable	--api-base:string --api-key:string --id:string --name:string
+knowns provider list	visible	runnable
+knowns provider remove	visible	runnable
+knowns provider test	visible	runnable
+knowns qdrant	visible	group
+knowns qdrant cleanup	visible	runnable
+knowns qdrant install	visible	runnable
+knowns qdrant logs	visible	runnable	--tail:int
+knowns qdrant purge	visible	runnable
+knowns qdrant start	visible	runnable
+knowns qdrant status	visible	runnable
+knowns qdrant stop	visible	runnable
+knowns reconcile	visible	runnable	--execute:bool --wait:bool
+knowns resolve	visible	runnable	--depth:int --direction:string --relation:string --type:string
+knowns retrieve	visible	runnable	--assignee:string --expand-references:bool --include-historical:bool --keyword:bool --label:string --limit:int --priority:string --source-types:string --status:string --tag:string
+knowns runtime	visible	group
+knowns runtime install	visible	runnable
+knowns runtime logs	visible	runnable	--follow:bool --source:string --tail:int
+knowns runtime memory	visible	group
+knowns runtime memory hook	visible	runnable	--capture:string --cwd:string --event:string --max-bytes:int --max-items:int --mode:string --project:string --runtime:string
+knowns runtime ps	visible	runnable	--all:bool --clients:int --failed:bool --failures:int --interval:duration --jobs:bool --tail:int --watch:bool
+knowns runtime reload	visible	runnable	--timeout:duration --wait:bool
+knowns runtime status	visible	runnable
+knowns runtime stop	visible	runnable
+knowns runtime uninstall	visible	runnable
+knowns runtime-memory	hidden/deprecated	group
+knowns runtime-memory hook	visible	runnable	--capture:string --cwd:string --event:string --max-bytes:int --max-items:int --mode:string --project:string --runtime:string
+knowns search	visible	runnable	--assignee:string --include-historical:bool --keyword:bool --label:string --limit:int --priority:string --reindex:bool --setup:bool --status-check:bool --status:string --tag:string --type:string
+knowns search index	visible	runnable	--wait:bool
+knowns settings	visible	runnable	--global:bool
+knowns setup	visible	runnable	--force:bool --global:bool
+knowns status	visible	runnable
+knowns sync	visible	runnable	--force:bool --instructions:bool --model:bool --platform:string --skills:bool
+knowns task	visible	runnable
+knowns task archive	visible	runnable	--expected-hash:string --yes:bool
+knowns task batch-archive	visible	runnable	--yes:bool
+knowns task batch-unarchive	visible	runnable	--yes:bool
+knowns task create	visible	runnable	--ac:stringArray --assignee:string --description:string --fulfills:stringArray --label:stringArray --notes:string --parent:string --plan:string --prefix:string --priority:string --spec:string --status:string
+knowns task edit	visible	runnable	--ac:stringArray --append-notes:string --assignee:string --check-ac:intSlice --description:string --expected-hash:string --fulfills:stringArray --labels:string --notes:string --order:int --parent:string --plan:string --priority:string --remove-ac:intSlice --spec:string --status:string --title:string --uncheck-ac:intSlice
+knowns task hard-delete	visible	runnable	--allow-hard-delete:bool --reason:string --yes:bool
+knowns task history	visible	runnable	--limit:int --metadata:bool --offset:int --revision:string
+knowns task list	visible	runnable	--assignee:string --include-historical:bool --label:string --priority:string --status:string --tree:bool
+knowns task unarchive	visible	runnable	--expected-hash:string --yes:bool
+knowns task view	visible	runnable
+knowns template	visible	runnable
+knowns template create	visible	runnable	--description:string --doc:string
+knowns template list	visible	runnable	--imported:bool --local:bool
+knowns template run	visible	runnable	--dry-run:bool --var:stringArray
+knowns template view	visible	runnable
+knowns time	visible	group
+knowns time add	visible	runnable	--date:string --expected-hash:string --note:string
+knowns time log	visible	runnable
+knowns time pause	visible	runnable
+knowns time report	visible	runnable	--by-label:bool --by-status:bool --csv:bool --from:string --to:string
+knowns time resume	visible	runnable
+knowns time start	visible	runnable
+knowns time status	visible	runnable
+knowns time stop	visible	runnable	--expected-hash:string
+knowns tunnel	visible	group
+knowns tunnel status	visible	runnable	--port:int
+knowns tunnel stop	visible	runnable	--port:int
+knowns update	visible	runnable	--check:bool
+knowns validate	visible	runnable	--entity:string --fix:bool --scope:string --strict:bool

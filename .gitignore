@@ -5,6 +5,7 @@ tmp/
 *.exe
 /knowns
 /knowns-embed
+/gendocs
 
 # npm platform binaries
 npm/knowns-*/knowns

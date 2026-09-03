@@ -40,7 +40,7 @@ PLATFORMS := \
 	windows/amd64 \
 	windows/arm64
 
-.PHONY: all build clean test test-e2e test-e2e-semantic test-e2e-ui lint dev dev-go dev-ui dev-all install cross-compile ui embed npm-build release runtime-docker-build runtime-docker-smoke runtime-docker-project-stress runtime-docker-ai-stress runtime-docker-shell runtime-docker-lsp-build runtime-docker-lsp-fixtures
+.PHONY: all build clean test test-e2e test-e2e-semantic test-e2e-ui lint cli-docs cli-docs-check dev dev-go dev-ui dev-all install cross-compile ui embed npm-build release runtime-docker-build runtime-docker-smoke runtime-docker-project-stress runtime-docker-ai-stress runtime-docker-shell runtime-docker-lsp-build runtime-docker-lsp-fixtures
 
 all: ui build
 
@@ -226,6 +226,19 @@ test-e2e-ui: all
 
 test-ui-report: all
 	cd ui && bun exec playwright show-report
+
+# Regenerate everything derived from the command tree: the human CLI reference
+# and the contract snapshot that also covers hidden, machine-facing commands.
+cli-docs:
+	go run ./tools/gendocs
+	go test ./internal/cli -run TestCommandContract -update-contract
+
+# Fail if the committed CLI reference drifted from the command tree, or if a
+# hand-written doc shows a command or flag the binary does not have. The
+# contract snapshot is checked by `go test ./...`, so CI needs only this.
+cli-docs-check:
+	go run ./tools/gendocs --check
+	go run ./tools/gendocs --lint
 
 # Run linter
 lint:
