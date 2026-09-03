@@ -124,7 +124,7 @@ func runAgentsStatus(cmd *cobra.Command, projectRoot string, jsonOut bool) error
 		fmt.Printf("%s of %d instruction files found.\n", StyleBold.Render(fmt.Sprintf("%d", existing)), len(statuses))
 
 		if existing < len(statuses) {
-			fmt.Println(StyleDim.Render("Use 'knowns agents --sync' to generate missing files."))
+			fmt.Println(StyleDim.Render("Use 'knowns sync --instructions' to generate missing files."))
 		}
 	}
 
