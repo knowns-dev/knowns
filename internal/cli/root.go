@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -159,6 +160,7 @@ func shouldSkipCLIWarnings(args []string) bool {
 
 // Execute runs the root command.
 func Execute() error {
+	RootCommand() // apply the lifecycle schedule before dispatch
 	args := os.Args[1:]
 	if shouldSkipCLIWarnings(args) {
 		return rootCmd.Execute()
@@ -216,4 +218,17 @@ func init() {
 	rootCmd.PersistentFlags().Bool("no-pager", false, "Disable TUI pager (print styled output directly)")
 	rootCmd.PersistentFlags().Int("page", 0, "Page number for paginated output (e.g. --page 2)")
 	rootCmd.PersistentFlags().Int("page-size", 0, "Lines per page (default 50)")
+}
+
+var lifecycleOnce sync.Once
+
+// RootCommand exposes the fully assembled command tree for documentation
+// generation. It is the same tree Execute runs, so generated docs cannot
+// describe a command surface the binary does not have.
+//
+// The lifecycle schedule is applied here rather than in an init(), which would
+// depend on the order Go happens to run this package's init functions.
+func RootCommand() *cobra.Command {
+	lifecycleOnce.Do(func() { applyLifecycle(rootCmd) })
+	return rootCmd
 }

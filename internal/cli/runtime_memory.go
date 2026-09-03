@@ -13,15 +13,27 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var runtimeMemoryCmd = &cobra.Command{
-	Use:   "runtime-memory",
-	Short: "Manage runtime memory hook behavior",
-}
-
-var runtimeMemoryHookCmd = &cobra.Command{
-	Use:   "hook",
-	Short: "Build a runtime memory payload for adapter hooks",
-	RunE:  runRuntimeMemoryHook,
+// newRuntimeMemoryHookCmd builds a fresh hook command. Two identical instances
+// are registered — one under `knowns runtime memory`, one under the original
+// top-level `knowns runtime-memory` — because a cobra.Command can only have one
+// parent, and the old path must keep working: it is baked into every hook
+// script, OpenCode plugin, and Kiro hook file that runtimeinstall has already
+// written to users' machines.
+func newRuntimeMemoryHookCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "hook",
+		Short: "Build a runtime memory payload for adapter hooks",
+		RunE:  runRuntimeMemoryHook,
+	}
+	c.Flags().String("runtime", "", "Runtime adapter name")
+	c.Flags().String("event", "", "Hook event name")
+	c.Flags().String("project", "", "Project root (defaults to detected project)")
+	c.Flags().String("cwd", "", "Working directory for scoring context")
+	c.Flags().String("mode", "", "Override runtime memory mode")
+	c.Flags().String("capture", "", "Override runtime memory capture mode")
+	c.Flags().Int("max-items", 0, "Override maximum number of memory items")
+	c.Flags().Int("max-bytes", 0, "Override maximum serialized bytes")
+	return c
 }
 
 func runRuntimeMemoryHook(cmd *cobra.Command, args []string) error {
@@ -142,14 +154,22 @@ func stringFromMap(payload map[string]any, keys ...string) string {
 }
 
 func init() {
-	runtimeMemoryHookCmd.Flags().String("runtime", "", "Runtime adapter name")
-	runtimeMemoryHookCmd.Flags().String("event", "", "Hook event name")
-	runtimeMemoryHookCmd.Flags().String("project", "", "Project root (defaults to detected project)")
-	runtimeMemoryHookCmd.Flags().String("cwd", "", "Working directory for scoring context")
-	runtimeMemoryHookCmd.Flags().String("mode", "", "Override runtime memory mode")
-	runtimeMemoryHookCmd.Flags().String("capture", "", "Override runtime memory capture mode")
-	runtimeMemoryHookCmd.Flags().Int("max-items", 0, "Override maximum number of memory items")
-	runtimeMemoryHookCmd.Flags().Int("max-bytes", 0, "Override maximum serialized bytes")
-	runtimeMemoryCmd.AddCommand(runtimeMemoryHookCmd)
-	rootCmd.AddCommand(runtimeMemoryCmd)
+	// Discoverable path: `knowns runtime memory hook`, grouped under the noun
+	// it belongs to instead of sitting beside it as a second top-level command.
+	runtimeMemoryCmd := &cobra.Command{
+		Use:   "memory",
+		Short: "Manage runtime memory hook behavior",
+	}
+	runtimeMemoryCmd.AddCommand(newRuntimeMemoryHookCmd())
+	runtimeCmd.AddCommand(runtimeMemoryCmd)
+
+	// Compatibility path: `knowns runtime-memory hook`, kept runnable for hooks
+	// already installed. Its retirement schedule lives in lifecycle.go, which
+	// also hides it from help.
+	legacy := &cobra.Command{
+		Use:   "runtime-memory",
+		Short: "Manage runtime memory hook behavior (use \"knowns runtime memory\")",
+	}
+	legacy.AddCommand(newRuntimeMemoryHookCmd())
+	rootCmd.AddCommand(legacy)
 }
