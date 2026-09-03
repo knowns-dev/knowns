@@ -161,11 +161,14 @@ func runCliWithTimeout(t *testing.T, dir string, timeout time.Duration, args ...
 	}
 }
 
-// taskIDRegex matches "task-<id>" format (e.g., "task-abc123").
-var taskIDRegex = regexp.MustCompile(`task-([a-z0-9]+)`)
+// taskIDRegex matches the "@task-<id>" reference format. The id half accepts
+// uppercase and a hyphen because generated IDs are prefixed (KN-A1B2C3); the
+// older unprefixed ids (abc123) still match.
+var taskIDRegex = regexp.MustCompile(`task-([A-Za-z0-9]+(?:-[A-Za-z0-9]+)?)`)
 
-// createdTaskRegex matches the Go CLI create output: "Created task <id>:" (with optional ANSI codes).
-var createdTaskRegex = regexp.MustCompile(`(?i)created\s+task\s+([a-z0-9]+)`)
+// createdTaskRegex matches the CLI create output: "Created task <id>:" (with
+// optional ANSI codes), for both prefixed and unprefixed ids.
+var createdTaskRegex = regexp.MustCompile(`(?i)created\s+task\s+([A-Za-z0-9]+(?:-[A-Za-z0-9]+)?)`)
 
 // extractTaskID extracts the first task-<id> from the given text (e.g. "task-abc123").
 func extractTaskID(output string) string {

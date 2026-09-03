@@ -77,3 +77,43 @@ func TestTaskFileNameSupportsPrefixedIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestDeriveTaskIDPrefix(t *testing.T) {
+	cases := map[string]string{
+		"Knowns":          "KN",   // one word: first two letters
+		"knowns":          "KN",   // case is normalized
+		"My Cool Project": "MCP",  // several words: initials
+		"a b c d e f":     "ABCD", // initials are capped at four
+		"my-cool-project": "MCP",  // punctuation separates words
+		"42":              "TSK",  // cannot start with a digit
+		"":                "TSK",
+		"!!!":             "TSK",
+		"X":               "TSK", // a single letter is too short to be legal
+		// A word that does not start with an ASCII character contributes
+		// nothing, so only "Cool" is left, and one letter cannot be a prefix.
+		"Über Cool": "TSK",
+	}
+	for name, want := range cases {
+		got := DeriveTaskIDPrefix(name)
+		if got != want {
+			t.Errorf("DeriveTaskIDPrefix(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// TestDeriveTaskIDPrefixAlwaysReturnsALegalPrefix is the property that matters:
+// whatever a project is called, the result can be used to mint an ID.
+func TestDeriveTaskIDPrefixAlwaysReturnsALegalPrefix(t *testing.T) {
+	for _, name := range []string{
+		"Knowns", "", "42", "!!!", "x", "a very long project name indeed",
+		"日本語", "9lives", "A", "AB", "under_score", "  spaced  out  ",
+	} {
+		prefix := DeriveTaskIDPrefix(name)
+		if _, err := NormalizeTaskIDPrefix(prefix); err != nil {
+			t.Errorf("DeriveTaskIDPrefix(%q) = %q, which is not a legal prefix: %v", name, prefix, err)
+		}
+		if _, err := NewPrefixedTaskID(prefix); err != nil {
+			t.Errorf("DeriveTaskIDPrefix(%q) = %q, which cannot mint an ID: %v", name, prefix, err)
+		}
+	}
+}

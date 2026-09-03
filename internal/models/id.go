@@ -5,6 +5,8 @@ import (
 	"math/rand/v2"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -50,6 +52,65 @@ func NormalizeTaskIDPrefix(prefix string) (string, error) {
 		return "", fmt.Errorf("task ID prefix must be 2-8 alphanumeric characters and start with a letter")
 	}
 	return normalized, nil
+}
+
+// FallbackTaskIDPrefix is used when a project name yields nothing that can be
+// a prefix, so that task IDs are prefixed even for a project named "42".
+const FallbackTaskIDPrefix = "TSK"
+
+// DeriveTaskIDPrefix produces a task ID prefix from a project name, for
+// projects that never configured one explicitly.
+//
+// A single word contributes its first two letters; several words contribute
+// their initials, up to four. The result is validated, so a name that cannot
+// produce a legal prefix falls back rather than minting an invalid ID.
+//
+//	DeriveTaskIDPrefix("Knowns")           →  "KN"
+//	DeriveTaskIDPrefix("My Cool Project")  →  "MCP"
+//	DeriveTaskIDPrefix("42")               →  "TSK"
+func DeriveTaskIDPrefix(projectName string) string {
+	words := strings.FieldsFunc(projectName, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+
+	var candidate string
+	switch {
+	case len(words) == 0:
+		candidate = ""
+	case len(words) == 1:
+		candidate = firstN(words[0], 2)
+	default:
+		var initials strings.Builder
+		for _, word := range words {
+			if initials.Len() == 4 {
+				break
+			}
+			initials.WriteString(firstN(word, 1))
+		}
+		candidate = initials.String()
+	}
+
+	if normalized, err := NormalizeTaskIDPrefix(candidate); err == nil && normalized != "" {
+		return normalized
+	}
+	return FallbackTaskIDPrefix
+}
+
+// firstN returns up to n characters from the front of s, uppercased, stopping
+// at the first character that cannot appear in a prefix. It stops rather than
+// skipping, so "Über" contributes nothing instead of quietly contributing "B".
+func firstN(s string, n int) string {
+	var b strings.Builder
+	for _, r := range s {
+		if b.Len() == n {
+			break
+		}
+		if r >= utf8.RuneSelf || !(unicode.IsLetter(r) || unicode.IsDigit(r)) {
+			break
+		}
+		b.WriteRune(unicode.ToUpper(r))
+	}
+	return b.String()
 }
 
 // NewPrefixedTaskID returns an ID in the form PREFIX-XXXXXX, where the suffix

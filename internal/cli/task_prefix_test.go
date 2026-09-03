@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/spf13/cobra"
 )
@@ -106,7 +107,9 @@ func TestRunTaskCreateUsesDefaultAndCustomPrefixes(t *testing.T) {
 	}
 }
 
-func TestRunTaskCreateFallsBackToLegacyIDsWithoutPrefix(t *testing.T) {
+// Renamed from a test that asserted bare six-character IDs. Generation now
+// always adds a prefix; IDs written before this keep resolving unchanged.
+func TestRunTaskCreateDerivesAPrefixWithoutConfiguration(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	projectDir := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectDir, ".knowns"))
@@ -133,7 +136,8 @@ func TestRunTaskCreateFallsBackToLegacyIDsWithoutPrefix(t *testing.T) {
 	if len(tasks) != 1 {
 		t.Fatalf("created %d tasks, want 1", len(tasks))
 	}
-	if id := tasks[0].ID; len(id) != 6 || strings.Contains(id, "-") {
-		t.Fatalf("task ID = %q, want legacy six-character base36 format", id)
+	want := models.DeriveTaskIDPrefix("task-legacy-cli")
+	if id := tasks[0].ID; !strings.HasPrefix(id, want+"-") {
+		t.Fatalf("task ID = %q, want the %q prefix derived from the project name", id, want)
 	}
 }
