@@ -224,7 +224,7 @@ knowns doc "architecture/api-design" --smart --plain
 Memory 3 layer — **project**, **session**, **global** — AI recall patterns, conventions, preferences mà không cần bạn nhắc lại.
 
 ```bash
-knowns memory add "We use repository pattern for data access" --category pattern
+knowns memory create "We use repository pattern for data access" --category pattern
 knowns memory list --plain
 ```
 
@@ -276,7 +276,7 @@ Handlebars-based templates cho scaffolding. Define pattern một lần, generate
 
 ```bash
 knowns template list
-knowns template run <name> --name "UserService"
+knowns template run <name> --var name=UserService
 ```
 
 ### AI agent workspaces
@@ -522,7 +522,7 @@ knowns doc "doc-name" --section "2" --plain
 
 # Templates
 knowns template list
-knowns template run <name> --name "X"
+knowns template run <name> --var name=X
 knowns template create <name>
 
 # Imports

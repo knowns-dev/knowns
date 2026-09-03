@@ -383,7 +383,7 @@ knowns search "api" --type doc --plain
 ```bash
 knowns template list
 knowns template info <name>
-knowns template run <name> --name "X" --dry-run
+knowns template run <name> --var name=X --dry-run
 knowns template create <name>
 ```
 

@@ -212,7 +212,7 @@ Use resolve to traverse structural relationships between docs, tasks, and other 
 ## Memory
 
 ```bash
-knowns memory add "We use repository pattern" --category pattern
+knowns memory create "We use repository pattern" --category pattern
 knowns memory list --plain
 knowns memory <id> --plain
 knowns memory edit <id> --append "More detail"

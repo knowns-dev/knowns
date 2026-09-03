@@ -31,7 +31,7 @@ Nội dung memory thường viết bằng tiếng Anh vì AI đọc trực tiế
 ## Lệnh
 
 ```bash
-knowns memory add "We use repository pattern" --category pattern
+knowns memory create "We use repository pattern" --category pattern
 knowns memory list --plain
 knowns memory <id> --plain
 ```
