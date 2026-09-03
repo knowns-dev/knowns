@@ -52,18 +52,37 @@ func (r *Registry) Load() error {
 	if err := json.Unmarshal(data, &r.Projects); err != nil {
 		return err
 	}
-	// Deduplicate by path (keep last occurrence so most recent wins)
+	// Rewrite stored paths to their on-disk spelling, then deduplicate on that
+	// canonical key (keep last occurrence so most recent wins). Registries
+	// written before paths were canonicalized can hold one folder twice under
+	// two spellings; this collapses them without hand-editing the file.
+	changed := false
 	seen := make(map[string]int)
 	deduped := r.Projects[:0]
 	for _, p := range r.Projects {
+		if canonical := util.CanonicalPath(p.Path); canonical != p.Path {
+			// Only refresh a name that was derived from the path, so a name
+			// set elsewhere survives the rewrite.
+			if p.Name == filepath.Base(p.Path) {
+				p.Name = filepath.Base(canonical)
+			}
+			p.Path = canonical
+			changed = true
+		}
 		if idx, exists := seen[p.Path]; exists {
 			deduped[idx] = p // overwrite with newer entry
+			changed = true
 		} else {
 			seen[p.Path] = len(deduped)
 			deduped = append(deduped, p)
 		}
 	}
 	r.Projects = deduped
+	if changed {
+		// The in-memory registry is already correct, so a registry that cannot
+		// be written (read-only home, for example) must not fail the read.
+		_ = r.Save()
+	}
 	return nil
 }
 
@@ -86,6 +105,9 @@ func (r *Registry) Add(projectPath string) (*Project, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve path: %w", err)
 	}
+	// Store the on-disk spelling so the same folder reached through a
+	// differently cased path resolves to one entry.
+	absPath = util.CanonicalPath(absPath)
 
 	// Check .knowns/ exists and has config.json (properly initialized project)
 	knDir := filepath.Join(absPath, ".knowns")
@@ -148,9 +170,12 @@ func (r *Registry) GetActive() *Project {
 }
 
 // FindByPath returns the project with the given absolute path, or nil.
+// The lookup compares on-disk spelling, so any casing that names the stored
+// folder finds it. Stored paths are canonicalized by Add and Load.
 func (r *Registry) FindByPath(absPath string) *Project {
+	canonical := util.CanonicalPath(absPath)
 	for i, p := range r.Projects {
-		if p.Path == absPath {
+		if p.Path == canonical {
 			return &r.Projects[i]
 		}
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/util"
 )
 
 // WorkspaceRoutes handles /api/workspaces endpoints for multi-project management.
@@ -109,8 +110,6 @@ func (wr *WorkspaceRoutes) browse(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, result)
 }
 
-
-//
 // GET /api/workspaces
 func (wr *WorkspaceRoutes) list(w http.ResponseWriter, r *http.Request) {
 	reg := wr.manager.GetRegistry()
@@ -189,9 +188,11 @@ func (wr *WorkspaceRoutes) switchWorkspace(w http.ResponseWriter, r *http.Reques
 		Data: map[string]string{"reason": "workspace-switch"},
 	})
 
-	// Return the active project info.
+	// Return the active project info. Registry paths carry their on-disk
+	// spelling, so compare against the canonical form of what was requested.
+	canonicalPath := util.CanonicalPath(projectPath)
 	for _, p := range reg.Projects {
-		if p.Path == projectPath {
+		if p.Path == canonicalPath {
 			respondJSON(w, http.StatusOK, p)
 			return
 		}
@@ -247,7 +248,35 @@ func (wr *WorkspaceRoutes) autoScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Common project directories to scan
+	dirs := scanCandidates(home)
+
+	added, err := reg.Scan(dirs)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if added == nil {
+		respondJSON(w, http.StatusOK, []struct{}{})
+		return
+	}
+	respondJSON(w, http.StatusOK, added)
+}
+
+// scanCandidates returns the directories auto-scan walks for the given home
+// directory: the well-known project folders that exist, collapsed onto their
+// on-disk spelling.
+//
+// Unlike browse, this does not filter the macOS /private tree. Every candidate
+// is the home directory or one of its immediate children, so the filter never
+// protected anything on a real machine, while it silently emptied the scan for
+// any home that resolves under /private, such as root's /var/root.
+//
+// The candidate list deliberately carries several casings of the same folder
+// (Projects and projects, Code and code) because either spelling can be the
+// real one. On a case-insensitive filesystem both spellings stat successfully
+// and name one directory, so without the collapse every scan would register
+// that project twice.
+func scanCandidates(home string) []string {
 	candidates := []string{
 		home,
 		filepath.Join(home, "Projects"),
@@ -267,33 +296,21 @@ func (wr *WorkspaceRoutes) autoScan(w http.ResponseWriter, r *http.Request) {
 		filepath.Join(home, "Dev"),
 	}
 
-	// Filter to only existing directories, excluding /private (macOS symlink target)
 	var dirs []string
+	seen := make(map[string]bool)
 	for _, d := range candidates {
 		info, err := os.Stat(d)
 		if err != nil || !info.IsDir() {
 			continue
 		}
-		resolved, err := filepath.EvalSymlinks(d)
-		if err != nil {
-			resolved = d
-		}
-		if strings.HasPrefix(resolved, "/private") {
+		canonical := util.CanonicalPath(d)
+		if seen[canonical] {
 			continue
 		}
-		dirs = append(dirs, d)
+		seen[canonical] = true
+		dirs = append(dirs, canonical)
 	}
-
-	added, err := reg.Scan(dirs)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if added == nil {
-		respondJSON(w, http.StatusOK, []struct{}{})
-		return
-	}
-	respondJSON(w, http.StatusOK, added)
+	return dirs
 }
 
 // remove deletes a project from the registry.
