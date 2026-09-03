@@ -78,13 +78,16 @@ knowns task edit KN-4F7Q2M --ac "Criterion text"
 
 ### --plain flag
 
-**Only for view/list/search commands:**
+**Global — every command accepts it.** It strips styling everywhere; on
+view/list/search it also selects the parseable plain format:
+
 ```bash
-knowns task <id> --plain      # ✓
-knowns task list --plain      # ✓
-knowns task create --plain    # ✗ ERROR
-knowns task edit --plain      # ✗ ERROR
+knowns task <id> --plain      # plain, parseable output
+knowns task list --plain      # plain, parseable output
+knowns task create --plain    # accepted; output is unstyled
 ```
+
+`NO_COLOR=1` strips styling without changing the format.
 
 ### Subtasks
 

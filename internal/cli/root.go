@@ -53,6 +53,12 @@ var rootCmd = &cobra.Command{
 
 // customHelpFunc renders a clean, styled help output matching the TS CLI style.
 func customHelpFunc(cmd *cobra.Command, args []string) {
+	// Cobra serves help without running PersistentPreRun, so --plain/--json
+	// have to be honored here too.
+	if isPlain(cmd) || isJSON(cmd) {
+		SetPlainOutput(true)
+	}
+
 	// Header
 	fmt.Printf("%s %s\n", StyleBold.Render(cmd.Short), StyleDim.Render("(v"+util.Version+")"))
 	fmt.Println()
@@ -200,6 +206,11 @@ func executeWithUpdateNotice(args []string, run func() error, check func() strin
 
 func init() {
 	rootCmd.SetHelpFunc(customHelpFunc)
+	// --plain and --json are global, so honoring them has to happen once, before
+	// any command renders. NO_COLOR rides along here for the same reason.
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
+		SetPlainOutput(isPlain(cmd) || isJSON(cmd) || noColorRequested())
+	}
 	rootCmd.PersistentFlags().Bool("plain", false, "Plain text output (for AI agents)")
 	rootCmd.PersistentFlags().Bool("json", false, "JSON output")
 	rootCmd.PersistentFlags().Bool("no-pager", false, "Disable TUI pager (print styled output directly)")

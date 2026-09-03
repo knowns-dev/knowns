@@ -105,6 +105,9 @@ var (
 
 // StatusStyle returns the appropriate style for a given status.
 func StatusStyle(status string) lipgloss.Style {
+	if plainOutput.Load() {
+		return lipgloss.NewStyle()
+	}
 	switch status {
 	case "done":
 		return lipgloss.NewStyle().Foreground(colorGreen)
@@ -125,6 +128,9 @@ func StatusStyle(status string) lipgloss.Style {
 
 // PriorityStyle returns the appropriate style for a given priority.
 func PriorityStyle(priority string) lipgloss.Style {
+	if plainOutput.Load() {
+		return lipgloss.NewStyle()
+	}
 	switch priority {
 	case "high":
 		return lipgloss.NewStyle().Foreground(colorRed)
