@@ -130,3 +130,74 @@ func TestCanonicalPathResolvesPastAnUnlistableComponent(t *testing.T) {
 		t.Fatalf("CanonicalPath(%q) = %q, want %q", lower, got, dir)
 	}
 }
+
+// TestNameOfSameFileResolvesAnUnlistedSpelling covers the branch that RUNNER~1
+// takes on Windows: a name the parent's listing never enumerates, which the
+// filesystem still opens. No portable filesystem creates such an alias, so the
+// listing is narrowed by hand and a hard link supplies the second spelling of
+// one file. The real 8.3 shape is only exercised on the Windows runners.
+func TestNameOfSameFileResolvesAnUnlistedSpelling(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "Target")
+	if err := os.WriteFile(target, []byte("x"), 0644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	alias := filepath.Join(dir, "alias-not-in-listing")
+	if err := os.Link(target, alias); err != nil {
+		t.Skipf("filesystem does not support hard links: %v", err)
+	}
+
+	all, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	// Drop the alias, leaving the listing the walk would see for a name the
+	// directory does not enumerate.
+	var listed []os.DirEntry
+	for _, entry := range all {
+		if entry.Name() != filepath.Base(alias) {
+			listed = append(listed, entry)
+		}
+	}
+
+	requested, err := os.Lstat(alias)
+	if err != nil {
+		t.Fatalf("lstat alias: %v", err)
+	}
+	got, ok := nameOfSameFile(dir, listed, requested)
+	if !ok {
+		t.Fatal("nameOfSameFile found no entry naming the same file")
+	}
+	if got != "Target" {
+		t.Fatalf("nameOfSameFile = %q, want %q", got, "Target")
+	}
+}
+
+// TestNameOfSameFileRejectsAnUnrelatedEntry keeps the scan from resolving a
+// name onto whatever sibling happens to be listed.
+func TestNameOfSameFileRejectsAnUnrelatedEntry(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"one", "two"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0644); err != nil {
+			t.Fatalf("write %q: %v", name, err)
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	requested, err := os.Lstat(filepath.Join(dir, "one"))
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+
+	var others []os.DirEntry
+	for _, entry := range entries {
+		if entry.Name() == "two" {
+			others = append(others, entry)
+		}
+	}
+	if got, ok := nameOfSameFile(dir, others, requested); ok {
+		t.Fatalf("nameOfSameFile = %q, want no match", got)
+	}
+}

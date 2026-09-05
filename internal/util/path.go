@@ -18,12 +18,14 @@ import (
 // directories keep their own paths.
 //
 // A component that cannot be resolved keeps the caller's spelling and the walk
-// carries on into the components below it. Resolution reads a parent's
-// directory listing, so a component the listing never names — a Windows 8.3
-// short name such as RUNNER~1, which the filesystem still opens — must not
-// stop the deeper components from being canonicalized. Where the directory is
-// genuinely absent the components below it fail to resolve too and keep their
-// own spelling, so the result is always usable as a path.
+// carries on into the components below it, so a directory that is absent or
+// unreadable never strands the rest of the path.
+//
+// Resolution reads a parent's directory listing, and a component the listing
+// never names still has to collapse: a Windows 8.3 short name such as RUNNER~1
+// opens fine but is not enumerated, so keeping the caller's spelling there
+// would let RUNNER~1 and runner~1 canonicalize to two different strings for
+// one directory.
 func CanonicalPath(path string) string {
 	if path == "" {
 		return path
@@ -54,10 +56,9 @@ func CanonicalPath(path string) string {
 }
 
 // onDiskName resolves name against the entries of dir, returning the spelling
-// stored on disk. An exact match always wins. A case-insensitive match is only
-// accepted when the filesystem itself treats both spellings as the same
-// directory, so on a case-sensitive filesystem a missing name never silently
-// resolves to a differently cased sibling.
+// stored on disk. An exact match always wins. Any other match has to be proved
+// with os.SameFile, so on a case-sensitive filesystem a missing name never
+// silently resolves to a differently cased sibling.
 func onDiskName(dir, name string) (string, bool) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -73,22 +74,44 @@ func onDiskName(dir, name string) (string, bool) {
 			folded = entry.Name()
 		}
 	}
-	if folded == "" {
-		return "", false
-	}
 
+	// Everything below has to open the requested name. When it does not exist
+	// there is nothing to resolve, and this also keeps the scan further down
+	// off the common path.
 	requested, err := os.Lstat(filepath.Join(dir, name))
 	if err != nil {
 		return "", false
 	}
-	existing, err := os.Lstat(filepath.Join(dir, folded))
-	if err != nil {
-		return "", false
+
+	if folded != "" {
+		existing, err := os.Lstat(filepath.Join(dir, folded))
+		if err != nil || !os.SameFile(requested, existing) {
+			return "", false
+		}
+		return folded, true
 	}
-	if !os.SameFile(requested, existing) {
-		return "", false
+
+	// The listing never names it, yet it opens: an alias the directory does not
+	// enumerate, such as a Windows 8.3 short name. Reading the spelling back is
+	// impossible, so find the entry it refers to instead. Without this,
+	// C:\Users\RUNNER~1 and C:\Users\runner~1 each keep the caller's spelling
+	// and one directory canonicalizes to two different strings.
+	return nameOfSameFile(dir, entries, requested)
+}
+
+// nameOfSameFile returns the entry of dir that names the same file as
+// requested, identifying it by the file itself rather than by its spelling.
+func nameOfSameFile(dir string, entries []os.DirEntry, requested os.FileInfo) (string, bool) {
+	for _, entry := range entries {
+		existing, err := os.Lstat(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		if os.SameFile(requested, existing) {
+			return entry.Name(), true
+		}
 	}
-	return folded, true
+	return "", false
 }
 
 // canonicalVolume normalizes a Windows drive letter, which is case-insensitive
