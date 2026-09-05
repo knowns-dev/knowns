@@ -19,7 +19,7 @@ test.describe("Task → Task Mentions", () => {
 
 		await test.step("Create target task", async () => {
 			const output = server.cli('task create "Login Feature" -d "Implement login"');
-			const match = output.match(/Created task\s+([a-z0-9]+)/i);
+			const match = output.match(/Created task\s+([a-z0-9-]+)/i);
 			targetId = match?.[1] || "";
 			expect(targetId).toBeTruthy();
 		});
@@ -50,7 +50,7 @@ test.describe("Task → Task Mentions", () => {
 
 		await test.step("Create two tasks with mention", async () => {
 			const output = server.cli('task create "Target Task" -d "The target"');
-			const match = output.match(/Created task\s+([a-z0-9]+)/i);
+			const match = output.match(/Created task\s+([a-z0-9-]+)/i);
 			targetId = match?.[1] || "";
 			server.cli(`task create "Referencing Task" -d "See @task-${targetId} for details"`);
 		});
@@ -164,7 +164,7 @@ test.describe("Semantic Reference Badges", () => {
 
 		await test.step("Create target task and doc", async () => {
 			const output = server.cli('task create "Runtime API" -d "Implement runtime API"');
-			const match = output.match(/Created task\s+([a-z0-9]+)/i);
+			const match = output.match(/Created task\s+([a-z0-9-]+)/i);
 			taskId = match?.[1] || "";
 			expect(taskId).toBeTruthy();
 			server.cli('doc create "Semantic Runtime" -d "Semantic runtime guide" -t "guide"');
@@ -217,7 +217,7 @@ test.describe("Semantic Reference Badges", () => {
 
 		await test.step("Create canonical ref targets", async () => {
 			const taskOutput = server.cli('task create "Canonical Target" -d "Target task"');
-			taskId = taskOutput.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = taskOutput.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			expect(taskId).toBeTruthy();
 
 			server.cli('memory create "Canonical Memory" --layer project --category pattern -c "Remember canonical refs"');
@@ -289,7 +289,7 @@ test.describe("Doc → Task Mentions", () => {
 
 		await test.step("Create a task", async () => {
 			const output = server.cli('task create "Important Bug" -d "Critical bug to fix"');
-			const match = output.match(/Created task\s+([a-z0-9]+)/i);
+			const match = output.match(/Created task\s+([a-z0-9-]+)/i);
 			taskId = match?.[1] || "";
 		});
 
@@ -352,11 +352,11 @@ test.describe("Multiple Mentions", () => {
 
 		await test.step("Create tasks and docs", async () => {
 			const out1 = server.cli('task create "Backend API" -d "Build backend"');
-			const match1 = out1.match(/Created task\s+([a-z0-9]+)/i);
+			const match1 = out1.match(/Created task\s+([a-z0-9-]+)/i);
 			taskId1 = match1?.[1] || "";
 
 			const out2 = server.cli('task create "Frontend UI" -d "Build frontend"');
-			const match2 = out2.match(/Created task\s+([a-z0-9]+)/i);
+			const match2 = out2.match(/Created task\s+([a-z0-9-]+)/i);
 			taskId2 = match2?.[1] || "";
 
 			server.cli('doc create "Design Spec" -d "Design specifications" -t "spec"');

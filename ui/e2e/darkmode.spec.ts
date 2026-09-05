@@ -277,7 +277,7 @@ test.describe("Dark Mode with Mentions", () => {
 
 		await test.step("Create task with mentions", async () => {
 			const output = server.cli('task create "Mentioned Task" -d "Referenced by another"');
-			const match = output.match(/Created task\s+([a-z0-9]+)/i);
+			const match = output.match(/Created task\s+([a-z0-9-]+)/i);
 			taskId = match?.[1] || "";
 			server.cli(`task create "Mentioner" -d "See @task-${taskId} for details"`);
 		});

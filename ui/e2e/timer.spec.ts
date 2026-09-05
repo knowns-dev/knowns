@@ -27,7 +27,7 @@ test.describe("Timer Start & Stop", () => {
 
 		await test.step("Create task", async () => {
 			const output = server.cli('task create "Build Feature" -d "Verify timer activation"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 		});
 
 		await test.step("Open task detail from kanban", async () => {
@@ -82,7 +82,7 @@ test.describe("Timer Start & Stop", () => {
 
 		await test.step("Create task and start timer via CLI", async () => {
 			const output = server.cli('task create "Write Tests" -d "Verify shutdown flow"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`time start ${taskId}`);
 		});
 
@@ -127,7 +127,7 @@ test.describe("Timer Start & Stop", () => {
 
 		await test.step("Create task and start timer", async () => {
 			const output = server.cli('task create "Deploy App" -d "Verify header controls"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`time start ${taskId}`);
 		});
 
@@ -158,7 +158,7 @@ test.describe("Timer Pause & Resume", () => {
 
 		await test.step("Create task and start timer", async () => {
 			const output = server.cli('task create "Code Review" -d "Verify workflow"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`time start ${taskId}`);
 		});
 
@@ -201,7 +201,7 @@ test.describe("Timer Pause & Resume", () => {
 
 		await test.step("Create task and start timer", async () => {
 			const output = server.cli('task create "Fix Linting" -d "Verify header controls"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`time start ${taskId}`);
 		});
 
@@ -248,7 +248,7 @@ test.describe("Timer Persistence", () => {
 
 		await test.step("Create task and start timer", async () => {
 			const output = server.cli('task create "Nav Task" -d "Persists across pages"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`time start ${taskId}`);
 		});
 
@@ -284,7 +284,7 @@ test.describe("Timer Persistence", () => {
 
 		await test.step("Create task and start timer", async () => {
 			const output = server.cli('task create "Reload Task" -d "Survives reload"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`time start ${taskId}`);
 		});
 
@@ -313,7 +313,7 @@ test.describe("Timer Persistence", () => {
 
 		await test.step("Create task and start timer via CLI", async () => {
 			const output = server.cli('task create "CLI Task" -d "Started via CLI"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`time start ${taskId}`);
 		});
 
@@ -345,7 +345,7 @@ test.describe("Time Tracking Logs", () => {
 
 		await test.step("Create task and add time via CLI", async () => {
 			const output = server.cli('task create "Log Task" -d "Check time logs"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`time add ${taskId} 30m`);
 		});
 
@@ -370,7 +370,7 @@ test.describe("Time Tracking Logs", () => {
 
 		await test.step("Create task with multiple manual entries", async () => {
 			const output = server.cli('task create "Multi Log" -d "Multiple entries"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`time add ${taskId} 1h`);
 			server.cli(`time add ${taskId} 45m`);
 		});
@@ -396,7 +396,7 @@ test.describe("Time Tracking Logs", () => {
 
 		await test.step("Create task and start timer", async () => {
 			const output = server.cli('task create "Active Task" -d "Shows recording badge"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`time start ${taskId}`);
 		});
 
@@ -425,7 +425,7 @@ test.describe("Timer Elapsed Time", () => {
 
 		await test.step("Create task and start timer", async () => {
 			const output = server.cli('task create "Counting" -d "Watch time tick"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`time start ${taskId}`);
 		});
 
@@ -457,7 +457,7 @@ test.describe("Timer Elapsed Time", () => {
 
 		await test.step("Create task, start then pause timer", async () => {
 			const output = server.cli('task create "Frozen" -d "Time freezes when paused"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`time start ${taskId}`);
 			await page.waitForTimeout(500);
 			server.cli(`time pause ${taskId}`);
@@ -493,9 +493,9 @@ test.describe("Multiple Timers", () => {
 
 		await test.step("Create two tasks and start both timers", async () => {
 			const out1 = server.cli('task create "Task Alpha" -d "First timer"');
-			taskId1 = out1.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId1 = out1.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			const out2 = server.cli('task create "Task Beta" -d "Second timer"');
-			taskId2 = out2.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId2 = out2.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`time start ${taskId1}`);
 			server.cli(`time start ${taskId2}`);
 		});
@@ -521,9 +521,9 @@ test.describe("Multiple Timers", () => {
 
 		await test.step("Create tasks and start timers", async () => {
 			const out1 = server.cli('task create "Batch One" -d "First"');
-			taskId1 = out1.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId1 = out1.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			const out2 = server.cli('task create "Batch Two" -d "Second"');
-			taskId2 = out2.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId2 = out2.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`time start ${taskId1}`);
 			server.cli(`time start ${taskId2}`);
 		});

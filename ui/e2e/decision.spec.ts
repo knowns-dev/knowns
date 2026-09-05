@@ -264,7 +264,7 @@ function seedDecisionEvidence(label: string): DecisionEvidence {
 	const docPath = stripAnsi(docOutput).match(/Created doc:\s+(\S+)/)?.[1];
 	expect(docPath, `could not parse doc path from: ${docOutput}`).toBeTruthy();
 	const taskOutput = server.cli(`task create "Verify Decisions ${label}" --status done`);
-	const taskID = taskOutput.match(/Created task\s+([a-z0-9]+):/)?.[1];
+	const taskID = taskOutput.match(/Created task\s+([a-z0-9-]+):/i)?.[1];
 	expect(taskID, `could not parse task ID from: ${taskOutput}`).toBeTruthy();
 	return {
 		sources: [`@doc/${docPath!}`],

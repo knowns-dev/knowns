@@ -220,7 +220,7 @@ test.describe("Task Detail Editing", () => {
 		let taskId = "";
 		await test.step("Create task and open detail", async () => {
 			const output = server.cli('task create "Done Task" -d "Mark done"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			// Navigate directly to task detail to avoid pagination issues
 			await page.goto(`${server.baseURL}/kanban/${taskId}`);
 			await expect(page.getByRole("heading", { name: "Done Task", exact: true })).toBeVisible();
@@ -457,7 +457,7 @@ test.describe("Kanban Drag and Drop", () => {
 
 		await test.step("Create task in To Do", async () => {
 			const output = server.cli('task create "Column Move" -d "Move via status change"');
-			const match = output.match(/Created task\s+([a-z0-9]+)/i);
+			const match = output.match(/Created task\s+([a-z0-9-]+)/i);
 			taskId = match?.[1] || "";
 		});
 
@@ -534,11 +534,11 @@ test.describe("Kanban Drag and Drop", () => {
 
 		await test.step("Create 3 tasks in To Do", async () => {
 			const out1 = server.cli('task create "Order First" -d "First task"');
-			taskId1 = out1.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId1 = out1.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			const out2 = server.cli('task create "Order Second" -d "Second task"');
-			taskId2 = out2.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId2 = out2.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			const out3 = server.cli('task create "Order Third" -d "Third task"');
-			taskId3 = out3.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId3 = out3.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 		});
 
 		await test.step("Move middle task to in-progress via CLI", async () => {
@@ -581,7 +581,7 @@ test.describe("Kanban Drag and Drop", () => {
 
 		await test.step("Create task and change status", async () => {
 			const output = server.cli('task create "Persist Status" -d "Should persist"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`task edit ${taskId} -s done`);
 		});
 

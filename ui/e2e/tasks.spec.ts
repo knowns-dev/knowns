@@ -116,7 +116,7 @@ test.describe("Tasks Page", () => {
 	test("filters tasks by status", async ({ page }) => {
 		await test.step("Create tasks with different statuses", async () => {
 			const output = server.cli('task create "Done Task" -d "completed"');
-			const idMatch = output.match(/Created task\s+([a-z0-9]+)/i);
+			const idMatch = output.match(/Created task\s+([a-z0-9-]+)/i);
 			if (idMatch?.[1]) {
 				server.cli(`task edit ${idMatch[1]} -s done`);
 			}
