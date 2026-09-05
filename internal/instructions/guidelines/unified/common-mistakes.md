@@ -70,7 +70,6 @@ mcp__knowns__update_task({
 | `-a "criterion"` | `--ac "criterion"` |
 | `--parent task-KN-4F7Q2M` | `--parent KN-4F7Q2M` (the ID as printed) |
 | Stripping `KN-` from `KN-4F7Q2M` | The hyphen is part of the ID, not a `task-` ref |
-| `--plain` with create/edit | `--plain` only for view/list |
 | `--notes` for progress | `--append-notes` for progress |
 {{/if}}
 {{#if mcp}}

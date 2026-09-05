@@ -3,9 +3,27 @@ package registry
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
+
+// canonicalTempDir returns t.TempDir() spelled the way the OS itself reports
+// it. The Windows runners hand tests a TMP path holding the 8.3 short name
+// RUNNER~1, which is an alias rather than the directory's real name, so a test
+// comparing against the raw value asserts against exactly the spelling
+// CanonicalPath exists to collapse. EvalSymlinks reads the real name from the
+// OS, independently of the code under test.
+func canonicalTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return dir
+	}
+	return resolved
+}
 
 // helper creates a temp dir with a .knowns/config.json to simulate an initialized project.
 func createFakeProject(t *testing.T, parent, name string) string {
@@ -17,7 +35,7 @@ func createFakeProject(t *testing.T, parent, name string) string {
 }
 
 func TestRegistryAddAndLoad(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	regFile := filepath.Join(tmpDir, "registry.json")
 	projDir := createFakeProject(t, tmpDir, "my-project")
 
@@ -51,7 +69,7 @@ func TestRegistryAddAndLoad(t *testing.T) {
 }
 
 func TestRegistryRemove(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	regFile := filepath.Join(tmpDir, "registry.json")
 	projDir := createFakeProject(t, tmpDir, "to-remove")
 
@@ -68,7 +86,7 @@ func TestRegistryRemove(t *testing.T) {
 }
 
 func TestRegistrySetActiveAndGetActive(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	regFile := filepath.Join(tmpDir, "registry.json")
 	proj1 := createFakeProject(t, tmpDir, "proj-a")
 	proj2 := createFakeProject(t, tmpDir, "proj-b")
@@ -94,7 +112,7 @@ func TestRegistrySetActiveAndGetActive(t *testing.T) {
 }
 
 func TestRegistryAddDeduplicate(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	regFile := filepath.Join(tmpDir, "registry.json")
 	projDir := createFakeProject(t, tmpDir, "dup-project")
 
@@ -112,7 +130,7 @@ func TestRegistryAddDeduplicate(t *testing.T) {
 }
 
 func TestRegistryScan(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	regFile := filepath.Join(tmpDir, "registry.json")
 
 	// Create a parent dir with 3 subdirs, 2 of which have .knowns/
@@ -143,7 +161,7 @@ func TestRegistryScan(t *testing.T) {
 }
 
 func TestRegistryFindByPath(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	regFile := filepath.Join(tmpDir, "registry.json")
 	projDir := createFakeProject(t, tmpDir, "findme")
 
@@ -170,5 +188,168 @@ func TestRegistryGetActiveEmpty(t *testing.T) {
 	r.Load()
 	if r.GetActive() != nil {
 		t.Fatal("GetActive should return nil for empty registry")
+	}
+}
+
+// caseInsensitiveFS reports whether dir lives on a filesystem that treats two
+// spellings of one name as the same entry.
+func caseInsensitiveFS(t *testing.T, dir string) bool {
+	t.Helper()
+	probe := filepath.Join(dir, "CaseProbe")
+	if err := os.Mkdir(probe, 0755); err != nil {
+		t.Fatalf("create probe dir: %v", err)
+	}
+	defer os.RemoveAll(probe)
+	_, err := os.Stat(filepath.Join(dir, "caseprobe"))
+	return err == nil
+}
+
+func TestRegistryAddCollapsesCaseVariantPaths(t *testing.T) {
+	tmpDir := canonicalTempDir(t)
+	if !caseInsensitiveFS(t, tmpDir) {
+		t.Skip("filesystem is case-sensitive; the two spellings are different folders")
+	}
+	regFile := filepath.Join(tmpDir, "registry.json")
+	projDir := createFakeProject(t, tmpDir, "Casing")
+
+	r := NewRegistryWithPath(regFile)
+	if err := r.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	first, err := r.Add(projDir)
+	if err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+	second, err := r.Add(strings.ToLower(projDir))
+	if err != nil {
+		t.Fatalf("Add with lowercased path failed: %v", err)
+	}
+
+	if len(r.Projects) != 1 {
+		t.Fatalf("expected 1 project for one folder, got %d", len(r.Projects))
+	}
+	if second.ID != first.ID {
+		t.Fatalf("ID = %q, want the already registered %q", second.ID, first.ID)
+	}
+	if second.Path != projDir {
+		t.Fatalf("Path = %q, want the on-disk spelling %q", second.Path, projDir)
+	}
+	if second.Name != "Casing" {
+		t.Fatalf("Name = %q, want %q", second.Name, "Casing")
+	}
+}
+
+func TestRegistryAddKeepsDistinctCaseSensitiveDirectories(t *testing.T) {
+	tmpDir := canonicalTempDir(t)
+	if caseInsensitiveFS(t, tmpDir) {
+		t.Skip("filesystem is case-insensitive; both spellings name one folder")
+	}
+	regFile := filepath.Join(tmpDir, "registry.json")
+	upper := createFakeProject(t, tmpDir, "Casing")
+	lower := createFakeProject(t, tmpDir, "casing")
+
+	r := NewRegistryWithPath(regFile)
+	r.Load()
+	if _, err := r.Add(upper); err != nil {
+		t.Fatalf("Add(%q) failed: %v", upper, err)
+	}
+	if _, err := r.Add(lower); err != nil {
+		t.Fatalf("Add(%q) failed: %v", lower, err)
+	}
+
+	if len(r.Projects) != 2 {
+		t.Fatalf("expected 2 projects for 2 distinct folders, got %d", len(r.Projects))
+	}
+}
+
+func TestRegistryLoadCollapsesCaseDuplicateRows(t *testing.T) {
+	tmpDir := canonicalTempDir(t)
+	if !caseInsensitiveFS(t, tmpDir) {
+		t.Skip("filesystem is case-sensitive; the two spellings are different folders")
+	}
+	regFile := filepath.Join(tmpDir, "registry.json")
+	projDir := createFakeProject(t, tmpDir, "Casing")
+
+	// A registry written before paths were canonicalized: one folder, two rows,
+	// disagreeing about both path spelling and name.
+	stale := `[
+	  {"id":"aaaaaa","name":"Casing","path":` + strconv.Quote(projDir) + `,"lastUsed":"2026-01-01T00:00:00Z"},
+	  {"id":"bbbbbb","name":"casing","path":` + strconv.Quote(strings.ToLower(projDir)) + `,"lastUsed":"2026-01-02T00:00:00Z"}
+	]`
+	if err := os.WriteFile(regFile, []byte(stale), 0644); err != nil {
+		t.Fatalf("write registry: %v", err)
+	}
+
+	r := NewRegistryWithPath(regFile)
+	if err := r.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if len(r.Projects) != 1 {
+		t.Fatalf("expected duplicates to collapse to 1 project, got %d", len(r.Projects))
+	}
+	if r.Projects[0].Path != projDir {
+		t.Fatalf("Path = %q, want the on-disk spelling %q", r.Projects[0].Path, projDir)
+	}
+	if r.Projects[0].Name != "Casing" {
+		t.Fatalf("Name = %q, want %q", r.Projects[0].Name, "Casing")
+	}
+
+	// The collapse is persisted, so the duplicates do not come back on reload.
+	reloaded := NewRegistryWithPath(regFile)
+	if err := reloaded.Load(); err != nil {
+		t.Fatalf("Reload failed: %v", err)
+	}
+	if len(reloaded.Projects) != 1 {
+		t.Fatalf("expected 1 project after reload, got %d", len(reloaded.Projects))
+	}
+}
+
+func TestRegistryLoadKeepsMissingPathsDistinct(t *testing.T) {
+	tmpDir := canonicalTempDir(t)
+	regFile := filepath.Join(tmpDir, "registry.json")
+	gone := filepath.Join(tmpDir, "Deleted")
+
+	stale := `[
+	  {"id":"aaaaaa","name":"Deleted","path":` + strconv.Quote(gone) + `,"lastUsed":"2026-01-01T00:00:00Z"},
+	  {"id":"bbbbbb","name":"deleted","path":` + strconv.Quote(strings.ToLower(gone)) + `,"lastUsed":"2026-01-02T00:00:00Z"}
+	]`
+	if err := os.WriteFile(regFile, []byte(stale), 0644); err != nil {
+		t.Fatalf("write registry: %v", err)
+	}
+
+	r := NewRegistryWithPath(regFile)
+	if err := r.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Neither path exists, so nothing proves they name one folder.
+	if len(r.Projects) != 2 {
+		t.Fatalf("expected unresolvable paths to stay distinct, got %d", len(r.Projects))
+	}
+}
+
+func TestRegistryFindByPathIgnoresCasing(t *testing.T) {
+	tmpDir := canonicalTempDir(t)
+	if !caseInsensitiveFS(t, tmpDir) {
+		t.Skip("filesystem is case-sensitive; the two spellings are different folders")
+	}
+	regFile := filepath.Join(tmpDir, "registry.json")
+	projDir := createFakeProject(t, tmpDir, "Casing")
+
+	r := NewRegistryWithPath(regFile)
+	r.Load()
+	added, err := r.Add(projDir)
+	if err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+
+	found := r.FindByPath(strings.ToLower(projDir))
+	if found == nil {
+		t.Fatal("FindByPath with a differently cased path found nothing")
+	}
+	if found.ID != added.ID {
+		t.Fatalf("ID = %q, want %q", found.ID, added.ID)
 	}
 }

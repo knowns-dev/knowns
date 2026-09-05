@@ -92,11 +92,15 @@ func TestTaskPOSTRejectsInvalidPrefix(t *testing.T) {
 	}
 }
 
-func TestTaskPOSTFallsBackToLegacyIDs(t *testing.T) {
+// TestTaskPOSTDerivesAPrefixWhenNoneIsConfigured replaces an older test that
+// asserted bare six-character IDs for an unconfigured project. Generation now
+// always produces PREFIX-XXXXXX; IDs already written without a prefix keep
+// resolving under their original names.
+func TestTaskPOSTDerivesAPrefixWhenNoneIsConfigured(t *testing.T) {
 	store := newTaskLifecycleRouteStore(t)
-	id := createdTaskID(t, postTaskPrefix(t, store, `{"title":"Legacy id"}`))
-	if !regexp.MustCompile(`^[0-9a-z]{6}$`).MatchString(id) {
-		t.Fatalf("task ID = %q, want legacy six-character base36 format", id)
+	id := createdTaskID(t, postTaskPrefix(t, store, `{"title":"Derived id"}`))
+	if !regexp.MustCompile(`^[A-Z][A-Z0-9]{1,7}-[0-9A-Z]{6}$`).MatchString(id) {
+		t.Fatalf("task ID = %q, want PREFIX-XXXXXX", id)
 	}
 }
 

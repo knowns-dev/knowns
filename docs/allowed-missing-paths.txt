@@ -1,0 +1,18 @@
+# File references in docs that this check should not try to resolve.
+# One token per line, exactly as it appears in the doc.
+#
+# Add an entry only with a reason. An unexplained entry is how a genuinely
+# broken reference gets hidden, which is the failure this check exists to stop.
+
+# Library and framework names that happen to end in a source extension.
+Commander.js
+commander.js
+Next.js
+
+# Deliberately fictional repositories in the cross-repo handoff and research
+# skills. They illustrate a frontend/backend split; no such repo exists here.
+knowns-api/internal/services/refund_service.go
+knowns-web/src/features/orders/hooks/useRefund.ts
+
+# Placeholder output name in a template example.
+component.tsx

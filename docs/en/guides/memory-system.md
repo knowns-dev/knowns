@@ -27,7 +27,7 @@ Use docs when the information needs longer narrative explanation or structured s
 ## Commands
 
 ```bash
-knowns memory add "We use repository pattern" --category pattern
+knowns memory create "We use repository pattern" --category pattern
 knowns memory list --plain
 knowns memory <id> --plain
 ```

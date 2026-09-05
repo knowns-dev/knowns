@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"fmt"
+	"github.com/howznguyen/knowns/internal/models"
 	"os"
 	"path/filepath"
 	"sort"
@@ -327,9 +328,31 @@ func aiSkillsChecker(state *localState) Checker {
 			}
 			projectRoot := filepath.Dir(state.store.Root)
 			platforms := normalizedStrings(project.Settings.Platforms)
-			expected := skillDirsForPlatforms(platforms)
-			if len(platforms) == 0 {
-				expected = existingPaths(projectRoot, []string{
+			scope := models.ResolveSkillsScope(project.Settings.SkillsScope, state.deps.globalScope())
+
+			// A project whose scope is not "project" is not supposed to hold
+			// skill directories, so their absence is the configured state and
+			// never a fault. Reporting it as missing would produce a warning
+			// that `knowns sync --skills` can never clear.
+			var expected []string
+			if scope == models.SkillsScopeProject {
+				expected = skillDirsForPlatforms(platforms)
+				if len(platforms) == 0 {
+					expected = existingPaths(projectRoot, []string{
+						filepath.Join(".claude", "skills"),
+						filepath.Join(".agents", "skills"),
+						filepath.Join(".kiro", "skills"),
+					}, state.deps.exists)
+				}
+			}
+
+			// The state that motivated this check: skills live globally, yet a
+			// project copy is also present. The project copy wins at runtime,
+			// so the global install the user configured is silently overridden
+			// and neither directory looks wrong on its own.
+			shadowing := make([]string, 0)
+			if scope != models.SkillsScopeProject {
+				shadowing = existingPaths(projectRoot, []string{
 					filepath.Join(".claude", "skills"),
 					filepath.Join(".agents", "skills"),
 					filepath.Join(".kiro", "skills"),
@@ -341,7 +364,7 @@ func aiSkillsChecker(state *localState) Checker {
 			// They are checked even when this project syncs no skills of its own.
 			globalStale := homeRelativePaths(state.deps.globalSkills())
 
-			if len(expected) == 0 && len(globalStale) == 0 {
+			if len(expected) == 0 && len(globalStale) == 0 && len(shadowing) == 0 {
 				return subsystemDisabled("No configured AI platform requires synchronized skills", "not_applicable"), nil
 			}
 
@@ -365,6 +388,19 @@ func aiSkillsChecker(state *localState) Checker {
 			}
 			if len(globalStale) > 0 {
 				evidence["globalStalePaths"] = globalStale
+			}
+			evidence["skillsScope"] = scope
+			if len(shadowing) > 0 {
+				evidence["shadowingPaths"] = slashPaths(shadowing)
+				return CheckResult{
+					Status:  StatusWarn,
+					Summary: fmt.Sprintf("Project skill directories shadow the %s install", scope),
+					Remediation: &Remediation{
+						Description: fmt.Sprintf("settings.skillsScope is %q, but this project still holds skill directories. A project copy takes precedence over the global one, so the configured install is overridden.", scope),
+						Command:     "rm -rf " + strings.Join(slashPaths(shadowing), " "),
+					},
+					Evidence: evidence,
+				}, nil
 			}
 
 			projectNeedsSync := len(missing) > 0 || outOfSync

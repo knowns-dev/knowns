@@ -212,6 +212,13 @@ func (s *Store) CreateTaskWithHistoryPrefixed(ctx context.Context, task *models.
 					return fmt.Errorf("resolve default task ID prefix: %w", err)
 				}
 				effectivePrefix = project.Settings.DefaultTaskIDPrefix
+				if effectivePrefix == "" {
+					// Every new task gets a prefix, so its file name carries
+					// the project it belongs to. Existing unprefixed IDs are
+					// left alone: an ID is an identity, and rewriting one
+					// breaks every @task- reference already pointing at it.
+					effectivePrefix = models.DeriveTaskIDPrefix(project.Name)
+				}
 			}
 			id, err := s.Tasks.allocateTaskIDUnlocked(effectivePrefix)
 			if err != nil {

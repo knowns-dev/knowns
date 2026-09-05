@@ -196,7 +196,7 @@ func newListViewModel(title string, items []listItem) listViewModel {
 	}
 
 	// Style the title
-	l.Styles.Title = lipgloss.NewStyle().Bold(true).Foreground(colorCyan)
+	l.Styles.Title = StyleTitle
 
 	return listViewModel{
 		list:  l,
@@ -296,7 +296,7 @@ func (m listViewModel) View() tea.View {
 		}
 
 		width := m.viewport.Width()
-		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(colorCyan)
+		titleStyle := StyleTitle
 		header := titleStyle.Render(truncateListLine(title, width))
 		sep := RenderSeparator(width)
 

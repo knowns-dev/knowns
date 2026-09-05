@@ -35,6 +35,11 @@ type DecisionReviewMatch struct {
 	MatchedBy []string `json:"matchedBy,omitempty" yaml:"matchedBy,omitempty"`
 	Snippet   string   `json:"snippet,omitempty"   yaml:"snippet,omitempty"`
 	Tags      []string `json:"tags,omitempty"      yaml:"tags,omitempty"`
+
+	// Hash identifies the matched decision's content as the reviewer saw it.
+	// Without it a match records only that two decisions once looked alike,
+	// not which version of the other one was compared.
+	Hash string `json:"hash,omitempty" yaml:"hash,omitempty"`
 }
 
 // DecisionEntry represents a first-class architecture/product decision stored
@@ -56,8 +61,15 @@ type DecisionEntry struct {
 	ReviewMatches            []DecisionReviewMatch `json:"reviewMatches,omitempty"          yaml:"reviewMatches,omitempty"`
 	ReviewAllowedResolutions []string              `json:"reviewAllowedResolutions,omitempty" yaml:"reviewAllowedResolutions,omitempty"`
 	ReviewEvaluatedAt        *time.Time            `json:"reviewEvaluatedAt,omitempty"      yaml:"reviewEvaluatedAt,omitempty"`
-	CreatedAt                time.Time             `json:"createdAt"                        yaml:"createdAt"`
-	UpdatedAt                time.Time             `json:"updatedAt"                        yaml:"updatedAt"`
+	// ReviewEvaluatedHash is the content state the review was made against.
+	// ReviewEvaluatedAt says *when* a judgment happened; this says *which
+	// state* it judged, which is what tells a stale finding from a merely old
+	// one. Comparing it with the decision's current hash is exact, where
+	// comparing timestamps guesses and guesses wrong when two edits land close
+	// together.
+	ReviewEvaluatedHash string    `json:"reviewEvaluatedHash,omitempty" yaml:"reviewEvaluatedHash,omitempty"`
+	CreatedAt           time.Time `json:"createdAt"                        yaml:"createdAt"`
+	UpdatedAt           time.Time `json:"updatedAt"                        yaml:"updatedAt"`
 
 	Context                string `json:"context,omitempty"                 yaml:"-"`
 	Decision               string `json:"decision,omitempty"                yaml:"-"`

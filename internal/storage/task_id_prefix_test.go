@@ -29,14 +29,19 @@ func newPrefixTestStore(t *testing.T, name, defaultPrefix string) *Store {
 	return store
 }
 
-func TestCreateTaskWithHistoryUsesCustomDefaultAndLegacyIDFormats(t *testing.T) {
+// The "derived fallback" row used to be a "legacy fallback" asserting a bare
+// six-character ID for an unconfigured project. Generation now always produces
+// PREFIX-XXXXXX, deriving the prefix from the project name when nothing is
+// configured. IDs already written without a prefix are untouched and still
+// resolve; see TestExistingUnprefixedIDsAreLeftAlone.
+func TestCreateTaskWithHistoryUsesCustomDefaultAndDerivedIDFormats(t *testing.T) {
 	tests := []struct {
 		name          string
 		defaultPrefix string
 		customPrefix  string
 		pattern       string
 	}{
-		{name: "legacy fallback", pattern: `^[0-9a-z]{6}$`},
+		{name: "derived fallback", pattern: `^CTIT-[0-9A-HJKMNP-TV-Z]{6}$`},
 		{name: "project default", defaultPrefix: "KN", pattern: `^KN-[0-9A-HJKMNP-TV-Z]{6}$`},
 		{name: "custom override", defaultPrefix: "KN", customPrefix: "fr", pattern: `^FR-[0-9A-HJKMNP-TV-Z]{6}$`},
 		// A custom prefix equal to the default must still be honored explicitly.

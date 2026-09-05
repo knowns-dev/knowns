@@ -170,7 +170,7 @@ func assertTaskMarkdownOmitsLifecycleState(t *testing.T, store *storage.Store, d
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasPrefix(entry.Name(), "task-"+taskID) {
+		if !entry.IsDir() && storage.TaskFileMatches(entry.Name(), taskID) {
 			data, err := os.ReadFile(filepath.Join(store.Root, dir, entry.Name()))
 			if err != nil {
 				t.Fatal(err)

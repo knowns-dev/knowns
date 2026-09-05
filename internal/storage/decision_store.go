@@ -20,6 +20,55 @@ type DecisionStore struct {
 	writeFile     func(string, []byte) error
 }
 
+// CanonicalDecisionHash identifies the substance a reviewer judged: the
+// decision's own content and relationships, with every review field and
+// timestamp excluded. Excluding them is what makes the hash usable as a review
+// watermark; if writing the review changed the hash, the review would be stale
+// the instant it was recorded.
+func CanonicalDecisionHash(entry *models.DecisionEntry) string {
+	if entry == nil {
+		return ""
+	}
+	// ID is deliberately absent. It is assigned inside Create, after the review
+	// that records this hash has already run, so including it guaranteed a
+	// mismatch on every freshly created decision. It also never changes, so it
+	// tells a change detector nothing.
+	return hashSnapshot(map[string]any{
+		"title": entry.Title, "status": entry.Status,
+		"supersedes": canonicalList(entry.Supersedes), "supersededBy": canonicalList(entry.SupersededBy),
+		"tags": canonicalList(entry.Tags), "sources": canonicalList(entry.Sources),
+		"relatedDocs": canonicalList(entry.RelatedDocs), "relatedTasks": canonicalList(entry.RelatedTasks),
+		"verification": canonicalList(entry.Verification), "verifiedAt": entry.VerifiedAt,
+		// The body is hashed in its canonical rendered form, the same one the
+		// store writes. Hashing the section fields and Content separately does
+		// not round-trip: on write the sections are set and Content is empty,
+		// while on read Content holds the rendered body. It also loses body
+		// text that lives outside the four known sections.
+		"body": renderDecisionBody(entry),
+	})
+}
+
+// canonicalList collapses an empty slice and a nil slice to one value. The
+// write path builds empty slices while the YAML reader leaves them nil, and
+// without this every freshly created decision hashed differently on reload and
+// reported its own review as stale.
+func canonicalList(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	return values
+}
+
+// DecisionReviewIsStale reports whether a recorded review was made against a
+// state the decision has since left. A review with no recorded state is not
+// stale, only unverifiable: it predates the watermark.
+func DecisionReviewIsStale(entry *models.DecisionEntry) bool {
+	if entry == nil || entry.ReviewEvaluatedHash == "" {
+		return false
+	}
+	return entry.ReviewEvaluatedHash != CanonicalDecisionHash(entry)
+}
+
 func (ds *DecisionStore) decisionsDir() string { return filepath.Join(ds.root, "decisions") }
 
 type decisionFrontmatter struct {
@@ -39,6 +88,7 @@ type decisionFrontmatter struct {
 	ReviewMatches            []models.DecisionReviewMatch `yaml:"reviewMatches,omitempty"`
 	ReviewAllowedResolutions []string                     `yaml:"reviewAllowedResolutions,omitempty"`
 	ReviewEvaluatedAt        string                       `yaml:"reviewEvaluatedAt,omitempty"`
+	ReviewEvaluatedHash      string                       `yaml:"reviewEvaluatedHash,omitempty"`
 	CreatedAt                string                       `yaml:"createdAt"`
 	UpdatedAt                string                       `yaml:"updatedAt"`
 }
@@ -391,6 +441,7 @@ func (ds *DecisionStore) Accept(id string, verification []string, supersedes []s
 		decision.ReviewMatches = nil
 		decision.ReviewAllowedResolutions = nil
 		decision.ReviewEvaluatedAt = nil
+		decision.ReviewEvaluatedHash = ""
 		decision.UpdatedAt = verifiedAt
 
 		seen := map[string]bool{}
@@ -607,6 +658,7 @@ func parseDecisionContent(content string) (*models.DecisionEntry, error) {
 			decision.VerifiedAt = &parsed
 		}
 	}
+	decision.ReviewEvaluatedHash = fm.ReviewEvaluatedHash
 	if fm.ReviewEvaluatedAt != "" {
 		if parsed, err := parseISO(fm.ReviewEvaluatedAt); err == nil {
 			decision.ReviewEvaluatedAt = &parsed
@@ -696,11 +748,15 @@ func renderDecision(decision *models.DecisionEntry) string {
 		len(decision.ReviewBlockers) > 0 ||
 		len(decision.ReviewMatches) > 0 ||
 		len(decision.ReviewAllowedResolutions) > 0 ||
+		decision.ReviewEvaluatedHash != "" ||
 		decision.ReviewEvaluatedAt != nil {
 		fmt.Fprintf(&b, "reviewState: %s\n", yamlScalar(decision.ReviewState))
 		writeYAMLStringList(&b, "reviewBlockers", decision.ReviewBlockers)
 		writeDecisionReviewMatches(&b, decision.ReviewMatches)
 		writeYAMLStringList(&b, "reviewAllowedResolutions", decision.ReviewAllowedResolutions)
+		if decision.ReviewEvaluatedHash != "" {
+			fmt.Fprintf(&b, "reviewEvaluatedHash: '%s'\n", decision.ReviewEvaluatedHash)
+		}
 		if decision.ReviewEvaluatedAt != nil {
 			fmt.Fprintf(&b, "reviewEvaluatedAt: '%s'\n", formatISO(*decision.ReviewEvaluatedAt))
 		}
@@ -730,6 +786,9 @@ func writeDecisionReviewMatches(b *strings.Builder, matches []models.DecisionRev
 		fmt.Fprintf(b, "    score: %.6f\n", match.Score)
 		if match.Kind != "" {
 			fmt.Fprintf(b, "    kind: %s\n", yamlScalar(match.Kind))
+		}
+		if match.Hash != "" {
+			fmt.Fprintf(b, "    hash: %s\n", yamlScalar(match.Hash))
 		}
 		writeIndentedYAMLStringList(b, "matchedBy", match.MatchedBy, 4)
 		if match.Snippet != "" {

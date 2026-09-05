@@ -93,6 +93,7 @@ For each task or parallel-safe wave:
    - no durable guidance change → append `System Decision Impact: none — <reason>` and create no candidate
    - durable guidance added, changed, or removed → create a first-class draft Decision linked to the task, spec/doc, and readable sources; append `System Decision Impact: candidate @decision/<id> (added|changed|removed) — <summary>`
    - never auto-accept the candidate; unresolved evidence/conflicts stay in Review Inbox
+   - retire what the work replaced in the same change: delete a fully superseded spec/doc rather than leaving it resident under a `Superseded` banner; for a partially superseded one, keep it and name the void parts
 8. Append one structured task note before completion: `Spec Decision Compliance: D1=pass, D2=pass`. Use `D<N>=conflict: <reason>` for any conflict and do not mark the task done.
 
 Spec Decisions remain canonical execution rules in the spec's `Locked Decisions` section. Do not create System Decision ledger rows merely to mirror D-IDs. Never create Memory category `decision`; redirect legacy Decision Memory capture requests to the first-class Decision candidate flow.
@@ -187,6 +188,7 @@ Required order for the final user-facing response:
 - Skipping review before final verification
 - Marking the spec done while linked tasks remain unhandled
 - Marking work done without an explicit `System Decision Impact` marker
+- Leaving a fully superseded spec or doc resident under a `Superseded` banner instead of deleting it
 - Creating legacy Decision Memory instead of a first-class Decision candidate
 - Duplicating Spec Locked Decisions into the System Decision ledger
 - Committing or pushing without explicit user request

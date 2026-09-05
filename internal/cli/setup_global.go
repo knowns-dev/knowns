@@ -3,6 +3,8 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/storage"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -63,7 +65,36 @@ func runGlobalSetup(cmd *cobra.Command, args []string, force bool) error {
 	}
 	fmt.Println()
 	fmt.Println(successStyle.Render("Global AI integration setup complete"))
+	recordGlobalSkillsScope()
 	return nil
+}
+
+// recordGlobalSkillsScope persists the choice this command just made, so a
+// later `knowns sync` does not undo it. Without this, global setup writes
+// skills to the home directory and nothing records it, so sync keeps
+// materializing a competing project copy that shadows the global one.
+//
+// It writes the global default in ~/.knowns/settings.json rather than one
+// project's config, because `--global` is a machine-wide action: every project
+// that has not set its own scope then honours it, including projects that
+// already exist. Best-effort, and never fails the command.
+func recordGlobalSkillsScope() {
+	store := storage.NewEmbeddingSettingsStore()
+	settings, err := store.Load()
+	if err != nil || settings == nil {
+		return
+	}
+	if settings.ProjectDefaults == nil {
+		settings.ProjectDefaults = &storage.ProjectDefaults{}
+	}
+	if settings.ProjectDefaults.Settings.SkillsScope == models.SkillsScopeGlobal {
+		return
+	}
+	settings.ProjectDefaults.Settings.SkillsScope = models.SkillsScopeGlobal
+	if err := store.Save(settings); err != nil {
+		return
+	}
+	fmt.Println(StyleDim.Render("Recorded global default skillsScope = \"global\"; knowns sync will no longer create project skill directories."))
 }
 
 func buildGlobalSetupSteps(force bool, platforms []string) []initStep {

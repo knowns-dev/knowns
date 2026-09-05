@@ -145,7 +145,7 @@ test.describe("Rapid Operations", () => {
 
 		await test.step("Create task", async () => {
 			const output = server.cli('task create "Status Flipper" -d "Changes status rapidly"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 		});
 
 		await test.step("Change status rapidly via CLI", async () => {
@@ -200,7 +200,7 @@ test.describe("Long Content Handling", () => {
 
 		await test.step("Create task with long description", async () => {
 			const output = server.cli(`task create "Long Desc Task" -d "${longDesc}"`);
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 		});
 
 		await test.step("Open task detail", async () => {

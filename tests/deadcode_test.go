@@ -13,19 +13,32 @@ import (
 // TestDeadCode_UnusedFunctions parses internal/cli/*.go using AST and detects
 // unexported functions that are defined but never referenced anywhere in the package.
 // Interface method implementations and init() are excluded.
+//
+// Declarations are collected from production files only, but references are
+// counted across the test files too: a helper the package's own tests exercise
+// is reachable code, and reporting it as dead would push authors to delete the
+// thing under test or to bolt on a fake production caller.
 func TestDeadCode_UnusedFunctions(t *testing.T) {
 	cliDir := filepath.Join(getProjectRoot(t), "internal", "cli")
 
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, cliDir, func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, parser.ParseComments)
+	pkgs, err := parser.ParseDir(fset, cliDir, nil, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("failed to parse cli package: %v", err)
 	}
 
-	pkg, ok := pkgs["cli"]
-	if !ok {
+	// Test files may sit in "cli" or in the external "cli_test" package; both
+	// reference the same identifiers.
+	var files []*ast.File
+	for name, pkg := range pkgs {
+		if name != "cli" && name != "cli_test" {
+			continue
+		}
+		for _, file := range pkg.Files {
+			files = append(files, file)
+		}
+	}
+	if _, ok := pkgs["cli"]; !ok {
 		t.Fatal("package 'cli' not found in internal/cli")
 	}
 
@@ -34,9 +47,12 @@ func TestDeadCode_UnusedFunctions(t *testing.T) {
 		pos  token.Position
 	}
 
-	// Collect all unexported top-level function declarations.
+	// Collect all unexported top-level function declarations, production only.
 	funcDefs := make(map[string]funcInfo)
-	for _, file := range pkg.Files {
+	for name, file := range pkgs["cli"].Files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Recv != nil {
@@ -55,7 +71,7 @@ func TestDeadCode_UnusedFunctions(t *testing.T) {
 
 	// Count all identifier usages across the package (excluding the func declaration itself).
 	usages := make(map[string]int)
-	for _, file := range pkg.Files {
+	for _, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			ident, ok := n.(*ast.Ident)
 			if !ok {

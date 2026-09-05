@@ -938,6 +938,21 @@ func EnqueueQdrantIntent(storeRoot string, intent QdrantIntent) (Job, error) {
 			job.RequestedAt = now
 			job.RunAfter = now.Add(debounceFor(JobQdrantReconcile))
 			job.LastError = ""
+			// A newer intent is a new request, so it gets a fresh attempt
+			// budget. Clearing DeadLetter is part of that and not a separate
+			// policy: the two lines around it already discard the previous
+			// failure's error and attempt count. Leaving the flag set stranded
+			// the entity forever, because nextReadyJob skips a dead letter
+			// unconditionally and RetryJob, the only other way to clear it, is
+			// wired to no command. An outage long enough to exhaust the retry
+			// budget then orphaned every entity edited during it, and every
+			// later edit refreshed RequestedAt so the job never even aged out
+			// to be pruned and replaced.
+			//
+			// The generation guard above is what keeps this honest: a re-enqueue
+			// carrying the same or an older intent returns before this point, so
+			// only genuinely new work revives the job.
+			job.DeadLetter = false
 			// A running job keeps its StartedAt and is completed against its
 			// original generation; CompleteJob retains this newer successor.
 			if job.StartedAt == nil {

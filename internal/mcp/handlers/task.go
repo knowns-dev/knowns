@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -137,6 +138,9 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 			if err != nil {
 				return errResult("action is required")
 			}
+			if err := validateTaskArgs(action, req.GetArguments()); err != nil {
+				return errResult(err.Error())
+			}
 			switch action {
 			case "create":
 				return handleTaskCreate(getStore, req)
@@ -160,18 +164,18 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 		},
 	)
 
-	registerHelp(s, "tasks.create", HelpEntry{When: "Create a new task or subtask with title, context, ownership, labels, and optional spec links. Successful calls return a compact summary by default.", Params: map[string]string{"title": "required — task title", "description": "task context and goal", "status": "todo | in-progress | in-review | done | blocked | on-hold | urgent", "priority": "low | medium | high", "assignee": "person responsible for task", "labels": "task labels", "parent": "parent task ID for subtasks", "spec": "spec doc path this task implements", "fulfills": "spec AC IDs this task satisfies", "order": "display order", "prefix": "custom 2-8 character task ID prefix; overrides the project default for this task only", "return": "summary (default) | full legacy task payload"}, Examples: []string{`tasks({ action: "create", title: "Add auth", description: "...", priority: "high", prefix: "FR" })`}, Flow: "Create task, then update to in-progress and start time before implementation. Use return=full only when the complete created task is required."})
-	registerHelp(s, "tasks.get", HelpEntry{When: "Read full task details before planning, implementation, review, or status updates.", Params: map[string]string{"taskId": "required — task ID"}, Flow: "Use before update/history when you need current ACs, plan, notes, or spec links."})
-	registerHelp(s, "tasks.update", HelpEntry{When: "Modify task metadata, status, acceptance criteria, plan, or implementation notes. Successful calls return a compact summary by default.", Params: map[string]string{"taskId": "required — task ID", "title": "new task title", "description": "new task description", "status": "new task status", "priority": "low | medium | high", "assignee": "new assignee", "labels": "replacement label list", "spec": "spec doc path", "fulfills": "spec AC IDs this task satisfies", "order": "display order", "addAc": "new acceptance criteria", "checkAc": "1-based AC indexes to mark complete", "uncheckAc": "1-based AC indexes to mark incomplete", "removeAc": "1-based AC indexes to remove", "plan": "implementation plan", "notes": "replace all implementation notes", "appendNotes": "append to existing implementation notes", "clear": "string fields to clear", "return": "summary (default) | full legacy task payload"}, Why: "Use appendNotes for progress. notes replaces existing notes and can wipe history.", Examples: []string{`tasks({ action: "update", taskId: "abc123", appendNotes: "Done: added tests" })`, `tasks({ action: "update", taskId: "abc123", checkAc: [1, 2] })`}, Flow: "Only check AC after work is complete; stop time and set status done at finish. Use return=full only when the complete updated task is required."})
-	registerHelp(s, "tasks.delete", HelpEntry{When: "Preview or remove a task when it is obsolete or was created by mistake.", Params: map[string]string{"taskId": "required — task ID", "dryRun": "preview only without deleting; default true"}, Why: "Default dryRun protects against accidental deletion."})
-	registerHelp(s, "tasks.list", HelpEntry{When: "Find tasks by status, owner, priority, label, or spec before choosing work or checking remaining scope.", Params: map[string]string{"status": "filter by task status", "priority": "filter by low | medium | high", "assignee": "filter by assignee", "label": "filter by one label", "spec": "filter by linked spec doc path", "includeHistorical": "include archived Tasks in the result"}})
-	registerHelp(s, "tasks.history", HelpEntry{When: "Inspect chronological changes for audit, debugging, or understanding how a task evolved.", Params: map[string]string{"taskId": "required — task ID"}})
-	registerHelp(s, "tasks.board", HelpEntry{When: "Show task board grouped by status for planning or handoff overview.", Params: map[string]string{}})
-	registerHelp(s, "tasks.archive", HelpEntry{When: "Preview or archive one completed Task through the canonical lifecycle policy.", Params: map[string]string{"taskId": "required", "execute": "false previews; true mutates", "actor": "optional audit actor"}})
-	registerHelp(s, "tasks.unarchive", HelpEntry{When: "Preview or restore one done/archived Task.", Params: map[string]string{"taskId": "required", "execute": "false previews; true mutates"}})
-	registerHelp(s, "tasks.batch_archive", HelpEntry{When: "Preview or archive eligible Tasks with machine retry progress.", Params: map[string]string{"ids": "optional; omitted evaluates all Tasks", "execute": "false previews; true mutates"}})
-	registerHelp(s, "tasks.batch_unarchive", HelpEntry{When: "Preview or restore multiple Tasks.", Params: map[string]string{"ids": "required Task IDs", "execute": "false previews; true mutates"}})
-	registerHelp(s, "tasks.hard_delete", HelpEntry{When: "Permanently delete a Task only under a trusted project delete permission.", Params: map[string]string{"taskId": "required", "confirmed": "must be true", "reason": "required non-empty reason"}, Why: "Hard-delete is distinct from archive and leaves a content-free tombstone."})
+	registerHelp(s, "tasks.create", HelpEntry{When: "Create a new task or subtask with title, context, ownership, labels, and optional spec links. Successful calls return a compact summary by default.", Params: taskActionParams["create"], Examples: []string{`tasks({ action: "create", title: "Add auth", description: "...", priority: "high", prefix: "FR" })`}, Flow: "Create task, then update to in-progress and start time before implementation. Use return=full only when the complete created task is required."})
+	registerHelp(s, "tasks.get", HelpEntry{When: "Read full task details before planning, implementation, review, or status updates.", Params: taskActionParams["get"], Flow: "Use before update/history when you need current ACs, plan, notes, or spec links."})
+	registerHelp(s, "tasks.update", HelpEntry{When: "Modify task metadata, status, acceptance criteria, plan, or implementation notes. Successful calls return a compact summary by default.", Params: taskActionParams["update"], Why: "Use appendNotes for progress. notes replaces existing notes and can wipe history.", Examples: []string{`tasks({ action: "update", taskId: "abc123", appendNotes: "Done: added tests" })`, `tasks({ action: "update", taskId: "abc123", checkAc: [1, 2] })`}, Flow: "Only check AC after work is complete; stop time and set status done at finish. Use return=full only when the complete updated task is required."})
+	registerHelp(s, "tasks.delete", HelpEntry{When: "Preview or remove a task when it is obsolete or was created by mistake.", Params: taskActionParams["delete"], Why: "Default dryRun protects against accidental deletion."})
+	registerHelp(s, "tasks.list", HelpEntry{When: "Find tasks by status, owner, priority, label, or spec before choosing work or checking remaining scope.", Params: taskActionParams["list"]})
+	registerHelp(s, "tasks.history", HelpEntry{When: "Inspect chronological changes for audit, debugging, or understanding how a task evolved.", Params: taskActionParams["history"]})
+	registerHelp(s, "tasks.board", HelpEntry{When: "Show task board grouped by status for planning or handoff overview.", Params: taskActionParams["board"]})
+	registerHelp(s, "tasks.archive", HelpEntry{When: "Preview or archive one completed Task through the canonical lifecycle policy.", Params: taskActionParams["archive"]})
+	registerHelp(s, "tasks.unarchive", HelpEntry{When: "Preview or restore one done/archived Task.", Params: taskActionParams["unarchive"]})
+	registerHelp(s, "tasks.batch_archive", HelpEntry{When: "Preview or archive eligible Tasks with machine retry progress.", Params: taskActionParams["batch_archive"]})
+	registerHelp(s, "tasks.batch_unarchive", HelpEntry{When: "Preview or restore multiple Tasks.", Params: taskActionParams["batch_unarchive"]})
+	registerHelp(s, "tasks.hard_delete", HelpEntry{When: "Permanently delete a Task only under a trusted project delete permission.", Params: taskActionParams["hard_delete"], Why: "Hard-delete is distinct from archive and leaves a content-free tombstone."})
 }
 
 type taskMutationSummary struct {
@@ -198,6 +202,80 @@ func taskMutationResult(task *models.Task, returnMode string) *mcp.CallToolResul
 	}
 	out, _ := json.MarshalIndent(payload, "", "  ")
 	return mcp.NewToolResultText(string(out))
+}
+
+// taskActionParams declares the parameters each tasks action accepts. It is the
+// single source for both the help text and argument validation, so a parameter
+// cannot be documented without being accepted, or accepted without being
+// documented. A handler that reads a parameter absent from this map makes that
+// parameter an error, which is the intended direction: the caller is told,
+// rather than silently getting a different outcome than the one it asked for.
+var taskActionParams = map[string]map[string]string{
+	"create": {
+		"title": "required - task title", "description": "task context and goal",
+		"status":   "todo | in-progress | in-review | done | blocked | on-hold | urgent",
+		"priority": "low | medium | high", "assignee": "person responsible for task",
+		"labels": "task labels", "parent": "parent task ID for subtasks",
+		"spec": "spec doc path this task implements", "fulfills": "spec AC IDs this task satisfies",
+		"order": "display order", "prefix": "custom 2-8 character task ID prefix; overrides the project default for this task only",
+		"addAc": "acceptance criteria to create the task with",
+		"plan":  "implementation plan", "notes": "implementation notes",
+		"return": "summary (default) | full legacy task payload",
+	},
+	"get": {"taskId": "required - task ID"},
+	"update": {
+		"taskId": "required - task ID", "title": "new task title", "description": "new task description",
+		"status": "new task status", "priority": "low | medium | high", "assignee": "new assignee",
+		"labels": "replacement label list", "spec": "spec doc path", "fulfills": "spec AC IDs this task satisfies",
+		"order": "display order", "addAc": "new acceptance criteria",
+		"checkAc": "1-based AC indexes to mark complete", "uncheckAc": "1-based AC indexes to mark incomplete",
+		"removeAc": "1-based AC indexes to remove", "plan": "implementation plan",
+		"notes": "replace all implementation notes", "appendNotes": "append to existing implementation notes",
+		"clear": "string fields to clear", "expectedHash": "expected canonical hash for optimistic concurrency",
+		"return": "summary (default) | full legacy task payload",
+	},
+	"delete": {"taskId": "required - task ID", "dryRun": "preview only without deleting; default true"},
+	"list": {
+		"status": "filter by task status", "priority": "filter by low | medium | high",
+		"assignee": "filter by assignee", "label": "filter by one label",
+		"spec": "filter by linked spec doc path", "includeHistorical": "include archived Tasks in the result",
+	},
+	"history": {
+		"taskId": "required - task ID", "metadata": "payload-free paginated history metadata",
+		"limit": "history metadata page size", "offset": "history metadata offset, newest first",
+		"revision": "explicit revision detail (vN or numeric)",
+	},
+	"board":           {},
+	"archive":         {"taskId": "required", "execute": "false previews; true mutates", "actor": "optional audit actor", "expectedHash": "expected canonical hash"},
+	"unarchive":       {"taskId": "required", "execute": "false previews; true mutates", "actor": "optional audit actor", "expectedHash": "expected canonical hash"},
+	"batch_archive":   {"ids": "optional; omitted evaluates all Tasks", "execute": "false previews; true mutates", "actor": "optional audit actor", "expectedHashes": "per-Task expected canonical hashes"},
+	"batch_unarchive": {"ids": "required Task IDs", "execute": "false previews; true mutates", "actor": "optional audit actor", "expectedHashes": "per-Task expected canonical hashes"},
+	"hard_delete":     {"taskId": "required", "confirmed": "must be true", "reason": "required non-empty reason"},
+}
+
+// validateTaskArgs rejects a parameter the action does not accept instead of
+// ignoring it. Silently dropping an argument is how a caller working from a
+// stale picture of the schema receives a success it did not earn.
+func validateTaskArgs(action string, args map[string]any) error {
+	allowed, ok := taskActionParams[action]
+	if !ok {
+		return nil
+	}
+	unknown := make([]string, 0)
+	for key := range args {
+		if key == "action" {
+			continue
+		}
+		if _, valid := allowed[key]; !valid {
+			unknown = append(unknown, key)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	return fmt.Errorf("tasks %s does not accept %s; call help(%q) for the parameters it takes",
+		action, strings.Join(unknown, ", "), "tasks."+action)
 }
 
 func handleTaskCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -271,6 +349,15 @@ func handleTaskCreate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 	}
 	if v, ok := stringArg(args, "notes"); ok {
 		task.ImplementationNotes = v
+	}
+
+	// Acceptance criteria used to be accepted only by update, so passing them
+	// here returned success and dropped them. A Task then reached done against
+	// criteria that were never recorded, and nothing in the response said so.
+	if v, ok := stringSliceArg(args, "addAc"); ok {
+		for _, text := range v {
+			task.AcceptanceCriteria = append(task.AcceptanceCriteria, models.AcceptanceCriterion{Text: text})
+		}
 	}
 
 	prefix, _ := stringArg(args, "prefix")
@@ -386,20 +473,18 @@ func handleTaskUpdate(getStore func() *storage.Store, req mcp.CallToolRequest) (
 				})
 			}
 		}
+		// An out-of-range index used to be skipped in silence, so checking the
+		// criteria of a Task that has none reported success and changed
+		// nothing. That is how a Task reaches "done" with acceptance criteria
+		// nobody ever verified, which is the opposite of what the marker means.
 		if v, ok := intSliceArg(args, "checkAc"); ok {
-			for _, idx := range v {
-				i := idx - 1
-				if i >= 0 && i < len(task.AcceptanceCriteria) {
-					task.AcceptanceCriteria[i].Completed = true
-				}
+			if err := applyACCompletion(task, v, true); err != nil {
+				return err
 			}
 		}
 		if v, ok := intSliceArg(args, "uncheckAc"); ok {
-			for _, idx := range v {
-				i := idx - 1
-				if i >= 0 && i < len(task.AcceptanceCriteria) {
-					task.AcceptanceCriteria[i].Completed = false
-				}
+			if err := applyACCompletion(task, v, false); err != nil {
+				return err
 			}
 		}
 		if v, ok := intSliceArg(args, "removeAc"); ok {
@@ -745,4 +830,19 @@ func handleTaskBoard(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 
 	out, _ := json.MarshalIndent(board, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+// applyACCompletion marks acceptance criteria complete or incomplete by
+// 1-based index, rejecting any index the Task does not have rather than
+// skipping it. A caller that names a criterion that is not there is working
+// from a stale picture, and silently doing nothing hides that.
+func applyACCompletion(task *models.Task, indexes []int, completed bool) error {
+	for _, idx := range indexes {
+		i := idx - 1
+		if i < 0 || i >= len(task.AcceptanceCriteria) {
+			return fmt.Errorf("acceptance criterion %d is out of range: task has %d", idx, len(task.AcceptanceCriteria))
+		}
+		task.AcceptanceCriteria[i].Completed = completed
+	}
+	return nil
 }

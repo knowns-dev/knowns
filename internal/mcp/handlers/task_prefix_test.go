@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -110,11 +111,21 @@ func TestMCPTaskCreateRejectsInvalidPrefix(t *testing.T) {
 	}
 }
 
-func TestMCPTaskCreateFallsBackToLegacyIDs(t *testing.T) {
+// TestMCPTaskCreateDerivesAPrefixWhenNoneIsConfigured replaces an older test
+// that asserted the opposite: that an unconfigured project minted bare
+// six-character IDs. Every new task now carries a prefix, derived from the
+// project name, so its file name says which project it belongs to. IDs already
+// written without one are left alone; only generation changed.
+func TestMCPTaskCreateDerivesAPrefixWhenNoneIsConfigured(t *testing.T) {
 	getStore := newMCPPrefixStore(t, "")
-	id := mcpCreatedTaskID(t, getStore, map[string]any{"title": "Legacy id"})
-	if !regexp.MustCompile(`^[0-9a-z]{6}$`).MatchString(id) {
-		t.Fatalf("task ID = %q, want legacy six-character base36 format", id)
+	id := mcpCreatedTaskID(t, getStore, map[string]any{"title": "Derived id"})
+
+	want := models.DeriveTaskIDPrefix("mcp-task-prefix")
+	if !strings.HasPrefix(id, want+"-") {
+		t.Fatalf("task ID = %q, want the %q prefix derived from the project name", id, want)
+	}
+	if !regexp.MustCompile(`^[A-Z][A-Z0-9]{1,7}-[0-9A-Z]{6}$`).MatchString(id) {
+		t.Fatalf("task ID = %q, want PREFIX-XXXXXX", id)
 	}
 }
 

@@ -13,7 +13,7 @@ test.afterAll(() => {
 
 function createTask(title: string, extra = ""): string {
 	const output = server.cli(`task create "${title}" ${extra}`);
-	return output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+	return output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 }
 
 async function selectLifecycle(page: Page, value: string) {

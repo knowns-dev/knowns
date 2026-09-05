@@ -33,7 +33,7 @@ Run validation with SDD-awareness to check spec coverage and task status.
 
 ### Via CLI
 ```bash
-knowns validate --sdd --plain
+knowns validate --scope sdd --plain
 ```
 
 ### Via MCP (if available)
@@ -155,7 +155,7 @@ When verification reveals a clear follow-up, include the best next command. If t
 
 ## Checklist
 
-- [ ] Ran validate --sdd
+- [ ] Ran validate --scope sdd
 - [ ] Presented status report
 - [ ] Reported Spec Decision compliance and validated every System Decision Impact marker/ref
 - [ ] Confirmed no Spec Decision ledger duplication or new Decision Memory capture

@@ -93,7 +93,7 @@ func (m pagerModel) View() tea.View {
 	width := m.viewport.Width()
 
 	// Header
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(colorCyan)
+	titleStyle := StyleTitle
 	header := titleStyle.Render(m.title)
 	sep := RenderSeparator(width)
 

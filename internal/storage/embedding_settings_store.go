@@ -240,6 +240,17 @@ type EmbeddingSettingsStore struct {
 	filePath string
 }
 
+// GlobalSkillsScopeDefault returns the machine-wide skills scope recorded in
+// ~/.knowns/settings.json, or "" when none is set. Errors are reported as ""
+// so a missing or unreadable global file simply means "no default".
+func GlobalSkillsScopeDefault() string {
+	settings, err := NewEmbeddingSettingsStore().Load()
+	if err != nil || settings == nil || settings.ProjectDefaults == nil {
+		return ""
+	}
+	return settings.ProjectDefaults.Settings.SkillsScope
+}
+
 // NewEmbeddingSettingsStore creates a store with the default path (~/.knowns/settings.json).
 func NewEmbeddingSettingsStore() *EmbeddingSettingsStore {
 	home, _ := os.UserHomeDir()

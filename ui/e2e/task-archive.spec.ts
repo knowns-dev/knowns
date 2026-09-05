@@ -17,7 +17,7 @@ test.describe("Task Archive", () => {
 
 		await test.step("Create task", async () => {
 			const output = server.cli('task create "Archive Target" -d "Task to be archived" --priority low');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 		});
 
 		await test.step("Open task detail", async () => {
@@ -37,7 +37,7 @@ test.describe("Task Archive", () => {
 
 		await test.step("Create task", async () => {
 			const output = server.cli('task create "Soon Archived" -d "Will be archived" --status done');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 		});
 
 		await test.step("Verify task visible on kanban", async () => {
@@ -62,7 +62,7 @@ test.describe("Task Archive", () => {
 
 		await test.step("Create and archive task", async () => {
 			const output = server.cli('task create "Revived Task" -d "Will be unarchived" --status done');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`task archive ${taskId} --yes`);
 		});
 
@@ -89,7 +89,7 @@ test.describe("Task Archive", () => {
 
 		await test.step("Create task", async () => {
 			const output = server.cli('task create "Hidden Task" -d "Should not appear after archive" --status done');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 		});
 
 		await test.step("Verify task on tasks page", async () => {
@@ -116,7 +116,7 @@ test.describe("Task Delete", () => {
 
 		await test.step("Create task", async () => {
 			const output = server.cli('task create "Delete Me" -d "Permanent removal"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 		});
 
 		await test.step("Verify task on kanban", async () => {

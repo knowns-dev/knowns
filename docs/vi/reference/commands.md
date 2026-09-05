@@ -102,7 +102,7 @@ knowns resolve "@doc/specs/auth{depends}" --direction inbound --depth 2 --plain
 ## Memory
 
 ```bash
-knowns memory add "We use repository pattern" --category pattern
+knowns memory create "We use repository pattern" --category pattern
 knowns memory list --plain
 knowns memory <id> --plain
 knowns memory edit <id> --append "More detail"

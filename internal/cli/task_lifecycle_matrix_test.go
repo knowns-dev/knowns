@@ -432,7 +432,24 @@ func matrixMCPRunner(t *testing.T, store *storage.Store) func(tasklifecycle.Requ
 		if request.Operation == tasklifecycle.OperationReopen {
 			action = "unarchive"
 		}
-		args := map[string]any{"action": action, "taskId": request.TaskID, "ids": request.IDs, "execute": request.Execute, "confirmed": request.Confirmed, "reason": request.Reason}
+		// Send only what the action accepts. A uniform envelope used to be
+		// harmless because unrecognized arguments were dropped in silence,
+		// which is exactly how acceptance criteria passed to create were lost.
+		// The tool now rejects them, so this matrix must address each action
+		// with its own parameters.
+		args := map[string]any{"action": action}
+		switch action {
+		case "batch_archive", "batch_unarchive":
+			args["ids"] = request.IDs
+			args["execute"] = request.Execute
+		case "hard_delete":
+			args["taskId"] = request.TaskID
+			args["confirmed"] = request.Confirmed
+			args["reason"] = request.Reason
+		default:
+			args["taskId"] = request.TaskID
+			args["execute"] = request.Execute
+		}
 		message, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "tasks", "arguments": args}})
 		result := server.HandleMessage(t.Context(), message)
 		data, _ := json.Marshal(result)

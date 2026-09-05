@@ -79,6 +79,19 @@ jobs:
           CGO_ENABLED: '1'
         run: go vet ./...
 
+      # Catches a reference page describing a command the binary does not have,
+      # and a command with no page at all. Unix only: the output is identical
+      # across platforms, so running it three times buys nothing.
+      - name: Check CLI reference matches the command tree
+        if: runner.os == 'Linux'
+        run: go run ./tools/gendocs --check
+
+      # Catches a README or embedded skill telling a reader (or an agent) to run
+      # a command or flag the binary does not have.
+      - name: Check docs only use commands that exist
+        if: runner.os == 'Linux'
+        run: go run ./tools/gendocs --lint
+
       - name: Run tests (Unix)
         if: runner.os != 'Windows'
         run: go test -v -race -count=1 ./...

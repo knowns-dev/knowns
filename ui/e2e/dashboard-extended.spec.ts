@@ -7,10 +7,10 @@ test.beforeAll(async () => {
 	server = await startServer();
 	server.cli('task create "Dashboard High Priority" -d "Needs attention" --priority high -l "ui"');
 	const progressOutput = server.cli('task create "Dashboard Current Focus" -d "Current focus" --priority medium -l "ui"');
-	const progressId = progressOutput.match(/Created task\s+([a-z0-9.]+)/i)?.[1];
+	const progressId = progressOutput.match(/Created task\s+([a-z0-9.-]+)/i)?.[1];
 	if (progressId) server.cli(`task edit ${progressId} -s in-progress`);
 	const holdOutput = server.cli('task create "Dashboard On Hold" -d "Custom status coverage" --priority low -l "ops"');
-	const holdId = holdOutput.match(/Created task\s+([a-z0-9.]+)/i)?.[1];
+	const holdId = holdOutput.match(/Created task\s+([a-z0-9.-]+)/i)?.[1];
 	if (holdId) server.cli(`task edit ${holdId} -s on-hold`);
 });
 

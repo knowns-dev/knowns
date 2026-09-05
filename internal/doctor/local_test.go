@@ -826,3 +826,81 @@ func sameSnapshot(left, right map[string]string) bool {
 	}
 	return true
 }
+
+// TestAISkillsCheckStaysSilentWhenScopeIsGlobal guards against a warning no
+// remediation can clear. With settings.skillsScope "global" the project is not
+// supposed to hold skill directories, so their absence is the configured state.
+// Reporting it as missing would tell the user to run `knowns sync --skills`,
+// which deliberately creates nothing, leaving the warning permanently on.
+func TestAISkillsCheckStaysSilentWhenScopeIsGlobal(t *testing.T) {
+	store := newDoctorStore(t)
+	project, err := store.Config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	project.Settings.Platforms = []string{"claude-code"}
+	project.Settings.SkillsScope = models.SkillsScopeGlobal
+	if err := store.Config.Save(project); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	deps := localDependencies{
+		skillsOutOfSync: func(string) bool { return false },
+		globalSkills:    func() []string { return nil },
+		globalScope:     func() string { return "" },
+		exists:          func(string) bool { return false },
+	}
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+		Scopes:  []Scope{ScopeAI},
+	}, localCheckersWithDependencies(store, deps))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if skills := findCheck(t, result, "ai.skills"); skills.Status == StatusWarn {
+		t.Fatalf("skills check warned about absent project dirs under global scope: %#v", skills)
+	}
+}
+
+// TestAISkillsCheckReportsProjectCopyShadowingGlobal covers the state that
+// produced the original report: skills configured globally, yet a project copy
+// present. The project copy wins at runtime, so the configured install is
+// silently overridden and neither directory looks wrong on its own.
+func TestAISkillsCheckReportsProjectCopyShadowingGlobal(t *testing.T) {
+	store := newDoctorStore(t)
+	project, err := store.Config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	project.Settings.Platforms = []string{"claude-code"}
+	if err := store.Config.Save(project); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	root := filepath.Dir(store.Root)
+	existing := map[string]bool{filepath.Join(root, ".claude", "skills"): true}
+	deps := localDependencies{
+		skillsOutOfSync: func(string) bool { return false },
+		globalSkills:    func() []string { return nil },
+		// The scope comes from the machine-wide default, not this project, which
+		// is how an existing repository inherits the setting untouched.
+		globalScope: func() string { return models.SkillsScopeGlobal },
+		exists:      func(path string) bool { return existing[path] },
+	}
+	result, err := Run(context.Background(), RunOptions{
+		Project: ProjectFromStore(store),
+		Scopes:  []Scope{ScopeAI},
+	}, localCheckersWithDependencies(store, deps))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	skills := findCheck(t, result, "ai.skills")
+	if skills.Status != StatusWarn {
+		t.Fatalf("skills status = %v, want warn about shadowing", skills.Status)
+	}
+	shadowing, ok := skills.Evidence["shadowingPaths"].([]string)
+	if !ok || len(shadowing) != 1 {
+		t.Fatalf("shadowingPaths evidence = %#v", skills.Evidence["shadowingPaths"])
+	}
+	if skills.Remediation == nil || !strings.Contains(skills.Remediation.Command, ".claude/skills") {
+		t.Fatalf("remediation = %#v, want the shadowing directory removed", skills.Remediation)
+	}
+}

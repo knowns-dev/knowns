@@ -81,7 +81,7 @@ test.describe("Task Detail Sheet", () => {
 	test("shows implementation plan", async ({ page }) => {
 		await test.step("Create task with plan", async () => {
 			const output = server.cli('task create "Planned Task" -d "Has a plan"');
-			const idMatch = output.match(/Created task\s+([a-z0-9]+)/i);
+			const idMatch = output.match(/Created task\s+([a-z0-9-]+)/i);
 			if (idMatch?.[1]) {
 				server.cli(`task edit ${idMatch[1]} --plan "1. Design the feature\n2. Implement it\n3. Write tests"`);
 			}

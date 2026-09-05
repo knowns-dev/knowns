@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -53,6 +54,12 @@ var rootCmd = &cobra.Command{
 
 // customHelpFunc renders a clean, styled help output matching the TS CLI style.
 func customHelpFunc(cmd *cobra.Command, args []string) {
+	// Cobra serves help without running PersistentPreRun, so --plain/--json
+	// have to be honored here too.
+	if isPlain(cmd) || isJSON(cmd) {
+		SetPlainOutput(true)
+	}
+
 	// Header
 	fmt.Printf("%s %s\n", StyleBold.Render(cmd.Short), StyleDim.Render("(v"+util.Version+")"))
 	fmt.Println()
@@ -153,6 +160,7 @@ func shouldSkipCLIWarnings(args []string) bool {
 
 // Execute runs the root command.
 func Execute() error {
+	RootCommand() // apply the lifecycle schedule before dispatch
 	args := os.Args[1:]
 	if shouldSkipCLIWarnings(args) {
 		return rootCmd.Execute()
@@ -200,9 +208,27 @@ func executeWithUpdateNotice(args []string, run func() error, check func() strin
 
 func init() {
 	rootCmd.SetHelpFunc(customHelpFunc)
+	// --plain and --json are global, so honoring them has to happen once, before
+	// any command renders. NO_COLOR rides along here for the same reason.
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
+		SetPlainOutput(isPlain(cmd) || isJSON(cmd) || noColorRequested())
+	}
 	rootCmd.PersistentFlags().Bool("plain", false, "Plain text output (for AI agents)")
 	rootCmd.PersistentFlags().Bool("json", false, "JSON output")
 	rootCmd.PersistentFlags().Bool("no-pager", false, "Disable TUI pager (print styled output directly)")
 	rootCmd.PersistentFlags().Int("page", 0, "Page number for paginated output (e.g. --page 2)")
 	rootCmd.PersistentFlags().Int("page-size", 0, "Lines per page (default 50)")
+}
+
+var lifecycleOnce sync.Once
+
+// RootCommand exposes the fully assembled command tree for documentation
+// generation. It is the same tree Execute runs, so generated docs cannot
+// describe a command surface the binary does not have.
+//
+// The lifecycle schedule is applied here rather than in an init(), which would
+// depend on the order Go happens to run this package's init functions.
+func RootCommand() *cobra.Command {
+	lifecycleOnce.Do(func() { applyLifecycle(rootCmd) })
+	return rootCmd
 }

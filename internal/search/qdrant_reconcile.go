@@ -124,6 +124,98 @@ func saveQdrantWatermarks(storeRoot string, values map[string]QdrantIndexWaterma
 	return nil
 }
 
+// StampWatermarksFromGeneration records that a full generation rebuild indexed
+// an entity, so `knowns search index` can finally clear what `knowns doctor`
+// reports.
+//
+// Until now the two halves were disjoint by construction. The bulk rebuild
+// (ReindexQdrantGeneration) repopulates the whole collection from canonical
+// sources but never wrote this file, while only per-entity reconciliation ever
+// did. A doctor warning could therefore survive its own advertised remediation
+// forever, which is exactly what happened to eight entities in this repository.
+//
+// Truth comes from the points that were actually built, validated and upserted,
+// not from the manifest. An entity the rebuild skipped - embedding failure is
+// swallowed per entity inside Reindex - has no point, so it is left stale and
+// keeps being reported. Claiming it indexed because the manifest lists it would
+// trade a visible wrong warning for an invisible wrong silence.
+func StampWatermarksFromGeneration(storeRoot string, indexedSourceIDs map[string]bool, at time.Time) (int, error) {
+	if len(indexedSourceIDs) == 0 {
+		return 0, nil
+	}
+	entries, err := manifestEntriesForStamping(storeRoot)
+	if err != nil {
+		return 0, err
+	}
+	values, err := loadQdrantWatermarks(storeRoot)
+	if err != nil {
+		return 0, err
+	}
+	if values == nil {
+		values = map[string]QdrantIndexWatermark{}
+	}
+	stamped := 0
+	for key, entry := range entries {
+		if !indexedSourceIDs[sourceIDForManifestEntry(entry)] {
+			continue
+		}
+		current := values[key]
+		if current.Removed || current.PendingRemoval {
+			continue
+		}
+		current.EntityType, current.EntityID = entry.EntityType, entry.EntityID
+		current.CanonicalHash, current.Revision, current.Path = entry.Hash, entry.Revision, entry.Path
+		current.IndexedHash, current.IndexedRevision, current.IndexedPath = entry.Hash, entry.Revision, entry.Path
+		current.IndexedAt, current.Stale = at.UTC(), false
+		values[key] = current
+		stamped++
+	}
+	if stamped == 0 {
+		return 0, nil
+	}
+	return stamped, saveQdrantWatermarks(storeRoot, values)
+}
+
+// sourceIDForManifestEntry mirrors how IndexService builds a chunk's source id:
+// tasks by ID, docs by their store-relative path with the docs/ prefix and .md
+// suffix removed.
+func sourceIDForManifestEntry(entry manifestStampEntry) string {
+	switch entry.EntityType {
+	case "task":
+		return "task:" + entry.EntityID
+	case "doc":
+		path := strings.TrimSuffix(strings.TrimPrefix(entry.Path, "docs/"), ".md")
+		return "doc:" + path
+	default:
+		return ""
+	}
+}
+
+type manifestStampEntry struct {
+	EntityType string `json:"entityType"`
+	EntityID   string `json:"entityId"`
+	Path       string `json:"path"`
+	Hash       string `json:"hash"`
+	Revision   int    `json:"revision"`
+}
+
+func manifestEntriesForStamping(storeRoot string) (map[string]manifestStampEntry, error) {
+	data, err := os.ReadFile(filepath.Join(storeRoot, "history", "state", "manifest.json"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var manifest struct {
+		Entries map[string]manifestStampEntry `json:"entries"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, err
+	}
+	return manifest.Entries, nil
+}
+
 // QdrantEntityReadinessForStore compares canonical manifest hashes and
 // durable public-hook intent watermarks with indexed watermarks without
 // loading entity content. Public hooks do not necessarily update the watcher

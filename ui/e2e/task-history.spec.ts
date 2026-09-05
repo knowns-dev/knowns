@@ -34,7 +34,7 @@ test.describe("Task History Panel", () => {
 
 		await test.step("Create and edit task to generate history", async () => {
 			const output = server.cli('task create "History Task" -d "Track changes" --priority low');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`task edit ${taskId} -s in-progress`);
 			server.cli(`task edit ${taskId} --priority high`);
 			server.cli(`task edit ${taskId} -d "Updated description"`);
@@ -59,7 +59,7 @@ test.describe("Task History Panel", () => {
 
 		await test.step("Create task with several edits", async () => {
 			const output = server.cli('task create "Version Task" -d "Original description"');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`task edit ${taskId} -s in-progress`);
 			server.cli(`task edit ${taskId} -t "Renamed Version Task"`);
 		});
@@ -85,7 +85,7 @@ test.describe("Task History Panel", () => {
 
 		await test.step("Create task and change status", async () => {
 			const output = server.cli('task create "Diff Task" -d "Check diff view" --priority low');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`task edit ${taskId} -s in-progress`);
 		});
 
@@ -117,7 +117,7 @@ test.describe("Task History Panel", () => {
 
 		await test.step("Create task with status and content changes", async () => {
 			const output = server.cli('task create "Filter Task" -d "Test filtering" --priority low');
-			taskId = output.match(/Created task\s+([a-z0-9]+)/i)?.[1] || "";
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
 			server.cli(`task edit ${taskId} -s in-progress`);
 			server.cli(`task edit ${taskId} -d "Updated for filter test"`);
 			server.cli(`task edit ${taskId} --priority high`);
