@@ -75,7 +75,7 @@ func TestUnsetSkillsScopeResolvesToProject(t *testing.T) {
 
 func TestGlobalDefaultAppliesToProjectsThatNeverSetTheScope(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	if err := os.MkdirAll(filepath.Join(home, ".knowns"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestGlobalDefaultAppliesToProjectsThatNeverSetTheScope(t *testing.T) {
 }
 
 func TestNoGlobalDefaultStillMeansProject(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setHome(t, t.TempDir())
 	if got := resolveSkillsScope(models.ProjectSettings{}); got != models.SkillsScopeProject {
 		t.Fatalf("with no global default, scope = %q, want %q", got, models.SkillsScopeProject)
 	}
@@ -128,4 +128,14 @@ func TestEmptyScopeStaysEmpty(t *testing.T) {
 	if err != nil || scope != "" {
 		t.Fatalf("NormalizeSkillsScope(\"\") = %q, %v; want \"\", nil", scope, err)
 	}
+}
+
+// setHome points the global settings store at dir. os.UserHomeDir reads
+// USERPROFILE on Windows and HOME elsewhere, so a test that sets only HOME
+// writes into the real home directory of whoever runs it — which is how one of
+// these tests came to read back a global default a sibling test had saved.
+func setHome(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 }

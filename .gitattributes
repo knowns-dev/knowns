@@ -1,0 +1,3 @@
+# Golden files are compared byte for byte against output the code generates
+# with "\n", so they must stay LF even where core.autocrlf rewrites checkouts.
+**/testdata/** text eol=lf

@@ -43,15 +43,19 @@ func TestCommandContract(t *testing.T) {
 		return
 	}
 
-	want, err := os.ReadFile(contractPath)
+	raw, err := os.ReadFile(contractPath)
 	if err != nil {
 		t.Fatalf("read %s (regenerate with -update-contract): %v", contractPath, err)
 	}
-	if string(want) == got {
+	// git checks the snapshot out with CRLF wherever core.autocrlf is on, which
+	// is the default on the Windows runners. Comparing raw bytes there reports
+	// every line as changed and says nothing about the command surface.
+	want := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	if want == got {
 		return
 	}
 
-	for _, line := range diffLines(strings.Split(string(want), "\n"), strings.Split(got, "\n")) {
+	for _, line := range diffLines(strings.Split(want, "\n"), strings.Split(got, "\n")) {
 		t.Error(line)
 	}
 	t.Fatalf("command surface changed; if intended, regenerate:\n" +

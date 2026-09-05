@@ -17,9 +17,13 @@ import (
 // case-sensitive the exact spelling matches first, so two genuinely distinct
 // directories keep their own paths.
 //
-// Components that do not exist on disk keep the caller's spelling, and any
-// error while resolving leaves the remainder of the path untouched, so the
-// result is always usable as a path.
+// A component that cannot be resolved keeps the caller's spelling and the walk
+// carries on into the components below it. Resolution reads a parent's
+// directory listing, so a component the listing never names — a Windows 8.3
+// short name such as RUNNER~1, which the filesystem still opens — must not
+// stop the deeper components from being canonicalized. Where the directory is
+// genuinely absent the components below it fail to resolve too and keep their
+// own spelling, so the result is always usable as a path.
 func CanonicalPath(path string) string {
 	if path == "" {
 		return path
@@ -37,12 +41,12 @@ func CanonicalPath(path string) string {
 		return current
 	}
 
-	components := strings.Split(rest, string(filepath.Separator))
-	for i, component := range components {
+	for _, component := range strings.Split(rest, string(filepath.Separator)) {
 		match, ok := onDiskName(current, component)
 		if !ok {
-			// Unresolvable from here down; keep what the caller spelled.
-			return filepath.Join(append([]string{current}, components[i:]...)...)
+			// Not in the parent's listing: keep what the caller spelled and
+			// keep walking, since the directory may still open under that name.
+			match = component
 		}
 		current = filepath.Join(current, match)
 	}
