@@ -9,6 +9,22 @@ import (
 	"time"
 )
 
+// canonicalTempDir returns t.TempDir() spelled the way the OS itself reports
+// it. The Windows runners hand tests a TMP path holding the 8.3 short name
+// RUNNER~1, which is an alias rather than the directory's real name, so a test
+// comparing against the raw value asserts against exactly the spelling
+// CanonicalPath exists to collapse. EvalSymlinks reads the real name from the
+// OS, independently of the code under test.
+func canonicalTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return dir
+	}
+	return resolved
+}
+
 // helper creates a temp dir with a .knowns/config.json to simulate an initialized project.
 func createFakeProject(t *testing.T, parent, name string) string {
 	t.Helper()
@@ -19,7 +35,7 @@ func createFakeProject(t *testing.T, parent, name string) string {
 }
 
 func TestRegistryAddAndLoad(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	regFile := filepath.Join(tmpDir, "registry.json")
 	projDir := createFakeProject(t, tmpDir, "my-project")
 
@@ -53,7 +69,7 @@ func TestRegistryAddAndLoad(t *testing.T) {
 }
 
 func TestRegistryRemove(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	regFile := filepath.Join(tmpDir, "registry.json")
 	projDir := createFakeProject(t, tmpDir, "to-remove")
 
@@ -70,7 +86,7 @@ func TestRegistryRemove(t *testing.T) {
 }
 
 func TestRegistrySetActiveAndGetActive(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	regFile := filepath.Join(tmpDir, "registry.json")
 	proj1 := createFakeProject(t, tmpDir, "proj-a")
 	proj2 := createFakeProject(t, tmpDir, "proj-b")
@@ -96,7 +112,7 @@ func TestRegistrySetActiveAndGetActive(t *testing.T) {
 }
 
 func TestRegistryAddDeduplicate(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	regFile := filepath.Join(tmpDir, "registry.json")
 	projDir := createFakeProject(t, tmpDir, "dup-project")
 
@@ -114,7 +130,7 @@ func TestRegistryAddDeduplicate(t *testing.T) {
 }
 
 func TestRegistryScan(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	regFile := filepath.Join(tmpDir, "registry.json")
 
 	// Create a parent dir with 3 subdirs, 2 of which have .knowns/
@@ -145,7 +161,7 @@ func TestRegistryScan(t *testing.T) {
 }
 
 func TestRegistryFindByPath(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	regFile := filepath.Join(tmpDir, "registry.json")
 	projDir := createFakeProject(t, tmpDir, "findme")
 
@@ -189,7 +205,7 @@ func caseInsensitiveFS(t *testing.T, dir string) bool {
 }
 
 func TestRegistryAddCollapsesCaseVariantPaths(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	if !caseInsensitiveFS(t, tmpDir) {
 		t.Skip("filesystem is case-sensitive; the two spellings are different folders")
 	}
@@ -225,7 +241,7 @@ func TestRegistryAddCollapsesCaseVariantPaths(t *testing.T) {
 }
 
 func TestRegistryAddKeepsDistinctCaseSensitiveDirectories(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	if caseInsensitiveFS(t, tmpDir) {
 		t.Skip("filesystem is case-insensitive; both spellings name one folder")
 	}
@@ -248,7 +264,7 @@ func TestRegistryAddKeepsDistinctCaseSensitiveDirectories(t *testing.T) {
 }
 
 func TestRegistryLoadCollapsesCaseDuplicateRows(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	if !caseInsensitiveFS(t, tmpDir) {
 		t.Skip("filesystem is case-sensitive; the two spellings are different folders")
 	}
@@ -291,7 +307,7 @@ func TestRegistryLoadCollapsesCaseDuplicateRows(t *testing.T) {
 }
 
 func TestRegistryLoadKeepsMissingPathsDistinct(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	regFile := filepath.Join(tmpDir, "registry.json")
 	gone := filepath.Join(tmpDir, "Deleted")
 
@@ -315,7 +331,7 @@ func TestRegistryLoadKeepsMissingPathsDistinct(t *testing.T) {
 }
 
 func TestRegistryFindByPathIgnoresCasing(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	if !caseInsensitiveFS(t, tmpDir) {
 		t.Skip("filesystem is case-sensitive; the two spellings are different folders")
 	}

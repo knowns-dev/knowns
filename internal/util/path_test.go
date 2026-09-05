@@ -7,6 +7,22 @@ import (
 	"testing"
 )
 
+// canonicalTempDir returns t.TempDir() spelled the way the OS itself reports
+// it. The Windows runners hand tests a TMP path holding the 8.3 short name
+// RUNNER~1, which is an alias rather than the directory's real name, so a test
+// comparing against the raw value asserts against exactly the spelling
+// CanonicalPath exists to collapse. EvalSymlinks reads the real name from the
+// OS, independently of the code under test.
+func canonicalTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return dir
+	}
+	return resolved
+}
+
 // caseInsensitiveFS reports whether dir lives on a filesystem that treats two
 // spellings of one name as the same entry.
 func caseInsensitiveFS(t *testing.T, dir string) bool {
@@ -21,7 +37,7 @@ func caseInsensitiveFS(t *testing.T, dir string) bool {
 }
 
 func TestCanonicalPathKeepsExistingSpelling(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	dir := filepath.Join(tmpDir, "Projects")
 	if err := os.Mkdir(dir, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -33,7 +49,7 @@ func TestCanonicalPathKeepsExistingSpelling(t *testing.T) {
 }
 
 func TestCanonicalPathResolvesOnDiskCasing(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	if !caseInsensitiveFS(t, tmpDir) {
 		t.Skip("filesystem is case-sensitive; the two spellings are different folders")
 	}
@@ -50,7 +66,7 @@ func TestCanonicalPathResolvesOnDiskCasing(t *testing.T) {
 }
 
 func TestCanonicalPathKeepsDistinctDirectoriesApart(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	if caseInsensitiveFS(t, tmpDir) {
 		t.Skip("filesystem is case-insensitive; both spellings name one folder")
 	}
@@ -72,7 +88,7 @@ func TestCanonicalPathKeepsDistinctDirectoriesApart(t *testing.T) {
 }
 
 func TestCanonicalPathKeepsMissingComponents(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	dir := filepath.Join(tmpDir, "Projects")
 	if err := os.Mkdir(dir, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -106,7 +122,7 @@ func TestCanonicalPathResolvesPastAnUnlistableComponent(t *testing.T) {
 		t.Skip("root reads a directory regardless of its mode")
 	}
 
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	if !caseInsensitiveFS(t, tmpDir) {
 		t.Skip("filesystem is case-sensitive; the two spellings are different folders")
 	}
@@ -137,7 +153,7 @@ func TestCanonicalPathResolvesPastAnUnlistableComponent(t *testing.T) {
 // listing is narrowed by hand and a hard link supplies the second spelling of
 // one file. The real 8.3 shape is only exercised on the Windows runners.
 func TestNameOfSameFileResolvesAnUnlistedSpelling(t *testing.T) {
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	target := filepath.Join(dir, "Target")
 	if err := os.WriteFile(target, []byte("x"), 0644); err != nil {
 		t.Fatalf("write target: %v", err)
@@ -176,7 +192,7 @@ func TestNameOfSameFileResolvesAnUnlistedSpelling(t *testing.T) {
 // TestNameOfSameFileRejectsAnUnrelatedEntry keeps the scan from resolving a
 // name onto whatever sibling happens to be listed.
 func TestNameOfSameFileRejectsAnUnrelatedEntry(t *testing.T) {
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	for _, name := range []string{"one", "two"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0644); err != nil {
 			t.Fatalf("write %q: %v", name, err)

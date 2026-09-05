@@ -15,6 +15,22 @@ import (
 	"github.com/howznguyen/knowns/internal/storage"
 )
 
+// canonicalTempDir returns t.TempDir() spelled the way the OS itself reports
+// it. The Windows runners hand tests a TMP path holding the 8.3 short name
+// RUNNER~1, which is an alias rather than the directory's real name, so a test
+// comparing against the raw value asserts against exactly the spelling
+// CanonicalPath exists to collapse. EvalSymlinks reads the real name from the
+// OS, independently of the code under test.
+func canonicalTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return dir
+	}
+	return resolved
+}
+
 // fakeBroadcaster records broadcast calls for assertions.
 type fakeBroadcaster struct {
 	events []SSEEvent
@@ -27,7 +43,7 @@ func (fb *fakeBroadcaster) Broadcast(e SSEEvent) {
 // setupWorkspaceTest creates a test environment with registry, manager, and router.
 func setupWorkspaceTest(t *testing.T) (*chi.Mux, *fakeBroadcaster, *storage.Manager, string) {
 	t.Helper()
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 
 	// Create a fake project with .knowns/config.json
 	projDir := filepath.Join(tmpDir, "test-project")
@@ -171,7 +187,7 @@ func caseInsensitiveFS(t *testing.T, dir string) bool {
 }
 
 func TestScanCandidatesCollapsesCaseVariantDirectories(t *testing.T) {
-	home := t.TempDir()
+	home := canonicalTempDir(t)
 	if !caseInsensitiveFS(t, home) {
 		t.Skip("filesystem is case-sensitive; the two spellings are different folders")
 	}
@@ -205,7 +221,7 @@ func TestScanCandidatesCollapsesCaseVariantDirectories(t *testing.T) {
 }
 
 func TestScanCandidatesKeepsDistinctCaseSensitiveDirectories(t *testing.T) {
-	home := t.TempDir()
+	home := canonicalTempDir(t)
 	if caseInsensitiveFS(t, home) {
 		t.Skip("filesystem is case-insensitive; both spellings name one folder")
 	}
