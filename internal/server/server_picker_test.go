@@ -13,6 +13,22 @@ import (
 	"github.com/howznguyen/knowns/internal/storage"
 )
 
+// canonicalTempDir returns t.TempDir() spelled the way the OS itself reports
+// it. The Windows runners hand tests a TMP path holding the 8.3 short name
+// RUNNER~1, which is an alias rather than the directory's real name, so a test
+// comparing against the raw value asserts against exactly the spelling
+// CanonicalPath exists to collapse. EvalSymlinks reads the real name from the
+// OS, independently of the code under test.
+func canonicalTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return dir
+	}
+	return resolved
+}
+
 // newPickerServer creates a Server in picker mode (nil store).
 func newPickerServer(t *testing.T) *Server {
 	t.Helper()
@@ -30,7 +46,7 @@ func newPickerServer(t *testing.T) *Server {
 // newActiveServer creates a Server with a real project store.
 func newActiveServer(t *testing.T) (*Server, string) {
 	t.Helper()
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 	projDir := filepath.Join(tmpDir, "my-project")
 	os.MkdirAll(filepath.Join(projDir, ".knowns"), 0755)
 	os.WriteFile(filepath.Join(projDir, ".knowns", "config.json"), []byte(`{"name":"my-project"}`), 0644)
@@ -148,7 +164,7 @@ func TestWorkspaceRoutes_AvailableInPickerMode(t *testing.T) {
 
 func TestWorkspaceSwitch_UpdatesActiveStore(t *testing.T) {
 	t.Parallel()
-	tmpDir := t.TempDir()
+	tmpDir := canonicalTempDir(t)
 
 	// Start in picker mode (nil store)
 	proj := filepath.Join(tmpDir, "proj-a")
