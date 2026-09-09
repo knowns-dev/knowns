@@ -226,7 +226,7 @@ func createMemoryForCleanupTest(t *testing.T, store *storage.Store, id, layer st
 	}
 }
 
-func callMemoryCleanup(t *testing.T, store *storage.Store, args map[string]any) []memoryCleanupCandidate {
+func callMemoryCleanup(t *testing.T, store *storage.Store, args map[string]any) []models.MemoryCleanupCandidate {
 	t.Helper()
 	result, err := handleMemoryCleanup(func() *storage.Store { return store }, mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: args}})
 	if err != nil || result.IsError {
@@ -239,7 +239,7 @@ func callMemoryCleanup(t *testing.T, store *storage.Store, args map[string]any) 
 	if !ok {
 		t.Fatalf("expected text content, got %T", result.Content[0])
 	}
-	var candidates []memoryCleanupCandidate
+	var candidates []models.MemoryCleanupCandidate
 	if err := json.Unmarshal([]byte(text.Text), &candidates); err != nil {
 		t.Fatalf("unmarshal cleanup output: %v\n%s", err, text.Text)
 	}
@@ -458,5 +458,96 @@ func TestMemoryUpdateWritesProvenance(t *testing.T) {
 	}
 	if len(stored.Sources) != 2 || stored.Confidence != models.MemoryConfidenceHigh {
 		t.Fatalf("provenance did not survive the round trip: %+v", stored)
+	}
+}
+
+func callMemoryAction(t *testing.T, store *storage.Store, fn func(func() *storage.Store, mcp.CallToolRequest) (*mcp.CallToolResult, error), args map[string]any) string {
+	t.Helper()
+	result, err := fn(func() *storage.Store { return store }, mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: args}})
+	if err != nil || result.IsError {
+		t.Fatalf("action returned error: %v, result: %+v", err, result)
+	}
+	return callMemoryTextResult(t, result)
+}
+
+func TestMemoryConfirmStampsVerificationWithoutChangingStatus(t *testing.T) {
+	store := setupMemoryCleanupStore(t)
+	createMemoryForCleanupTest(t, store, "conf1", models.MemoryLayerProject, time.Now().UTC(), time.Now().UTC())
+
+	text := callMemoryAction(t, store, handleMemoryConfirm, map[string]any{"action": "confirm", "id": "conf1"})
+	var entry models.MemoryEntry
+	if err := json.Unmarshal([]byte(text), &entry); err != nil {
+		t.Fatalf("unmarshal confirm output: %v\n%s", err, text)
+	}
+	if entry.LastVerified.IsZero() {
+		t.Fatal("confirm should stamp lastVerified")
+	}
+	// Confirming says the content still holds. It is not a promotion, so an
+	// entry still under review must not be quietly moved out of the queue.
+	before, err := store.Memory.Get("conf1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if entry.Status != before.Status {
+		t.Fatalf("confirm changed status from %q to %q", before.Status, entry.Status)
+	}
+}
+
+func TestMemoryContradictSplitsByWhoDecides(t *testing.T) {
+	store := setupMemoryCleanupStore(t)
+
+	// A claim about the code: the repository settles it, an agent can read the
+	// repository, so an agent may retire it.
+	worldFact := callMemoryAdd(t, store, map[string]any{
+		"action": "add", "title": "Retry uses jittered backoff",
+		"category": "failure", "content": "`Manager.Start` retries with jitter.",
+	})
+	var worldEntry models.MemoryEntry
+	if err := json.Unmarshal([]byte(worldFact), &worldEntry); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	text := callMemoryAction(t, store, handleMemoryContradict, map[string]any{
+		"action": "contradict", "id": worldEntry.ID, "note": "the jitter was removed in a refactor",
+	})
+	var got struct {
+		Outcome   string              `json:"outcome"`
+		NeedsUser bool                `json:"needsUser"`
+		Memory    *models.MemoryEntry `json:"memory"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("unmarshal contradict output: %v\n%s", err, text)
+	}
+	if got.Memory.Status != models.MemoryStatusStale {
+		t.Fatalf("world-fact status = %q, want stale", got.Memory.Status)
+	}
+	if got.NeedsUser {
+		t.Error("a claim about the code should not need the user to retire it")
+	}
+
+	// A commitment: nothing outside the user's words makes it true, so an agent
+	// saying it "seems wrong" has observed nothing that bears on it.
+	pref := callMemoryAdd(t, store, map[string]any{
+		"action": "add", "title": "Reply in Vietnamese",
+		"category": "preference",
+		"content":  "Answer in Vietnamese.\n\n**Why:** the user writes in Vietnamese.",
+	})
+	var prefEntry models.MemoryEntry
+	if err := json.Unmarshal([]byte(pref), &prefEntry); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	text = callMemoryAction(t, store, handleMemoryContradict, map[string]any{
+		"action": "contradict", "id": prefEntry.ID, "note": "saw an English reply",
+	})
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("unmarshal contradict output: %v\n%s", err, text)
+	}
+	if got.Memory.Status != models.MemoryStatusActive {
+		t.Fatalf("preference status = %q, want it left active", got.Memory.Status)
+	}
+	if !got.NeedsUser {
+		t.Error("contradicting a preference must say the user has to decide")
+	}
+	if got.Memory.Metadata[memoryDisputedMetadataKey] == "" {
+		t.Error("the dispute should be recorded on the entry")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -322,4 +323,132 @@ func DemotePersistentMemoryLayer(layer string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// MemoryProposalTTLDays is how long a `proposed` entry may sit unresolved.
+//
+// A proposal nobody acts on inside this window is a proposal that was not
+// needed. Left alone it becomes the worst of both states: never retrieved, so
+// it helps nothing, and never removed, so it keeps crowding the review queue
+// that a person would have to read to find the entries that do matter.
+const MemoryProposalTTLDays = 30
+
+// Cleanup candidate kinds. The distinction is the point: an abandoned proposal
+// and a merely old entry need opposite treatment, and reporting them as one
+// list is what let a working `active` memory be offered for deletion beside a
+// proposal nobody ever looked at.
+const (
+	MemoryCleanupAbandonedProposal = "abandoned-proposal"
+	MemoryCleanupStaleEntry        = "stale-entry"
+)
+
+// MemoryCleanupCandidate is one entry offered for review or removal.
+type MemoryCleanupCandidate struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Layer     string    `json:"layer"`
+	Category  string    `json:"category,omitempty"`
+	Status    string    `json:"status,omitempty"`
+	Kind      string    `json:"kind"`
+	Tags      []string  `json:"tags,omitempty"`
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	AgeDays   int       `json:"ageDays"`
+}
+
+// MemoryEffectiveUpdatedAt is the timestamp age is measured from.
+func MemoryEffectiveUpdatedAt(entry *MemoryEntry) time.Time {
+	if entry == nil {
+		return time.Time{}
+	}
+	if !entry.UpdatedAt.IsZero() {
+		return entry.UpdatedAt
+	}
+	return entry.CreatedAt
+}
+
+// ProposalIsExpired reports whether a `proposed` entry has outlived the queue.
+//
+// Only `proposed` expires. Every other status is either in use or already
+// terminal, and sweeping those would delete knowledge rather than clear a
+// backlog.
+func ProposalIsExpired(entry *MemoryEntry, ttlDays int, now time.Time) bool {
+	if entry == nil || entry.Status != MemoryStatusProposed {
+		return false
+	}
+	if ttlDays <= 0 {
+		ttlDays = MemoryProposalTTLDays
+	}
+	effective := MemoryEffectiveUpdatedAt(entry)
+	if effective.IsZero() {
+		return false
+	}
+	return effective.Before(now.Add(-time.Duration(ttlDays) * 24 * time.Hour))
+}
+
+// SelectMemoryCleanupCandidates is the ONE selection rule for cleanup.
+//
+// It replaces two copies, one in internal/cli and one in internal/mcp/handlers,
+// that had already drifted: the MCP copy applied defaults for olderThanDays and
+// limit and the CLI copy did not, so the same request answered differently
+// depending on which door it came through. Neither read Status, which is why a
+// verified `active` memory could be listed for cleanup purely for being old.
+func SelectMemoryCleanupCandidates(entries []*MemoryEntry, olderThanDays, limit int, now time.Time) []MemoryCleanupCandidate {
+	if olderThanDays <= 0 {
+		olderThanDays = 7
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	threshold := now.Add(-time.Duration(olderThanDays) * 24 * time.Hour)
+
+	candidates := make([]MemoryCleanupCandidate, 0)
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		effective := MemoryEffectiveUpdatedAt(entry)
+		if effective.IsZero() {
+			continue
+		}
+
+		kind := ""
+		switch {
+		case ProposalIsExpired(entry, MemoryProposalTTLDays, now):
+			kind = MemoryCleanupAbandonedProposal
+		case effective.Before(threshold):
+			kind = MemoryCleanupStaleEntry
+		default:
+			continue
+		}
+
+		candidates = append(candidates, MemoryCleanupCandidate{
+			ID:        entry.ID,
+			Title:     entry.Title,
+			Layer:     entry.Layer,
+			Category:  entry.Category,
+			Status:    entry.Status,
+			Kind:      kind,
+			Tags:      entry.Tags,
+			Content:   entry.Content,
+			CreatedAt: entry.CreatedAt,
+			UpdatedAt: entry.UpdatedAt,
+			AgeDays:   int(now.Sub(effective).Hours() / 24),
+		})
+	}
+
+	// Abandoned proposals first: they are the ones that can be cleared without
+	// judgement, and burying them under old-but-working entries is what made the
+	// existing report something nobody acted on.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Kind != candidates[j].Kind {
+			return candidates[i].Kind == MemoryCleanupAbandonedProposal
+		}
+		return candidates[i].AgeDays > candidates[j].AgeDays
+	})
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	return candidates
 }

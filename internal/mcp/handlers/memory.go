@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"strings"
 	"time"
 
 	"github.com/howznguyen/knowns/internal/memoryreview"
@@ -19,11 +19,11 @@ import (
 func RegisterMemoryTool(s *server.MCPServer, getStore func() *storage.Store) {
 	s.AddTool(
 		mcp.NewTool("memory",
-			mcp.WithDescription("Persistent memory operations. Use 'action' to specify: add, get, update, delete, list, promote, demote, cleanup, resolve."),
+			mcp.WithDescription("Persistent memory operations. Use 'action' to specify: add, get, update, delete, list, promote, demote, cleanup, resolve, confirm, contradict."),
 			mcp.WithString("action",
 				mcp.Required(),
 				mcp.Description("Action to perform"),
-				mcp.Enum("add", "get", "update", "delete", "list", "promote", "demote", "cleanup", "resolve"),
+				mcp.Enum("add", "get", "update", "delete", "list", "promote", "demote", "cleanup", "resolve", "confirm", "contradict"),
 			),
 			mcp.WithString("id",
 				mcp.Description("Memory entry ID (required for get, update, delete, promote, demote)"),
@@ -72,6 +72,9 @@ func RegisterMemoryTool(s *server.MCPServer, getStore func() *storage.Store) {
 			mcp.WithString("targetId",
 				mcp.Description("Existing memory ID selected for duplicate resolution"),
 			),
+			mcp.WithString("note",
+				mcp.Description("Why this memory is wrong (contradict). Say what you observed, not just that it failed"),
+			),
 			mcp.WithString("rejectedReason",
 				mcp.Description("Reason recorded for reject_new resolution"),
 			),
@@ -119,6 +122,10 @@ func RegisterMemoryTool(s *server.MCPServer, getStore func() *storage.Store) {
 				return handleMemoryCleanup(getStore, req)
 			case "resolve":
 				return handleMemoryResolve(getStore, req)
+			case "confirm":
+				return handleMemoryConfirm(getStore, req)
+			case "contradict":
+				return handleMemoryContradict(getStore, req)
 			default:
 				return errResultf("unknown memory action: %s", action)
 			}
@@ -533,61 +540,6 @@ func indexMemoryReviewChanges(store *storage.Store, ids []string) {
 	}
 }
 
-type memoryCleanupCandidate struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Layer     string    `json:"layer"`
-	Category  string    `json:"category,omitempty"`
-	Tags      []string  `json:"tags,omitempty"`
-	Content   string    `json:"content"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
-	AgeDays   int       `json:"ageDays"`
-}
-
-func memoryEffectiveUpdatedAt(entry *models.MemoryEntry) time.Time {
-	if !entry.UpdatedAt.IsZero() {
-		return entry.UpdatedAt
-	}
-	return entry.CreatedAt
-}
-
-func cleanupMemoryCandidates(entries []*models.MemoryEntry, olderThanDays, limit int, now time.Time) []memoryCleanupCandidate {
-	if olderThanDays <= 0 {
-		olderThanDays = 7
-	}
-	if limit <= 0 {
-		limit = 20
-	}
-	threshold := now.Add(-time.Duration(olderThanDays) * 24 * time.Hour)
-	candidates := make([]memoryCleanupCandidate, 0)
-	for _, entry := range entries {
-		effective := memoryEffectiveUpdatedAt(entry)
-		if effective.IsZero() || !effective.Before(threshold) {
-			continue
-		}
-		ageDays := int(now.Sub(effective).Hours() / 24)
-		candidates = append(candidates, memoryCleanupCandidate{
-			ID:        entry.ID,
-			Title:     entry.Title,
-			Layer:     entry.Layer,
-			Category:  entry.Category,
-			Tags:      entry.Tags,
-			Content:   entry.Content,
-			CreatedAt: entry.CreatedAt,
-			UpdatedAt: entry.UpdatedAt,
-			AgeDays:   ageDays,
-		})
-	}
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].AgeDays > candidates[j].AgeDays
-	})
-	if len(candidates) > limit {
-		candidates = candidates[:limit]
-	}
-	return candidates
-}
-
 func handleMemoryCleanup(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	store := getStore()
 	if store == nil {
@@ -615,7 +567,7 @@ func handleMemoryCleanup(getStore func() *storage.Store, req mcp.CallToolRequest
 	if err != nil {
 		return errFailed("list memories", err)
 	}
-	result := cleanupMemoryCandidates(entries, olderThanDays, limit, time.Now().UTC())
+	result := models.SelectMemoryCleanupCandidates(entries, olderThanDays, limit, time.Now().UTC())
 	out, _ := json.MarshalIndent(result, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }
@@ -822,5 +774,116 @@ func handleMemoryDemote(getStore func() *storage.Store, req mcp.CallToolRequest)
 	go notifyServer(store, "notify/refresh")
 
 	out, _ := json.MarshalIndent(entry, "", "  ")
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+// memoryDisputedMetadataKey records that an agent challenged a commitment it
+// has no standing to overturn.
+const (
+	memoryDisputedMetadataKey   = "disputed.note"
+	memoryDisputedAtMetadataKey = "disputed.at"
+)
+
+// handleMemoryConfirm records that a memory was checked and still holds.
+//
+// VERIFICATION HAS TO BE A BYPRODUCT OF USE, not a separate chore, or it does
+// not happen. Before this the only way to move lastVerified was the duplicate
+// resolution flow, so an entry re-read and re-confirmed still reported its last
+// check months earlier, and 5 of 107 entries carried any provenance at all.
+func handleMemoryConfirm(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store := getStore()
+	if store == nil {
+		return noProjectError()
+	}
+	id, err := req.RequireString("id")
+	if err != nil {
+		return errResult("id is required")
+	}
+	entry, err := store.Memory.Get(id)
+	if err != nil || !models.ValidPersistentMemoryLayer(entry.Layer) {
+		return errNotFound("memory", fmt.Errorf("memory %q not found", id))
+	}
+
+	now := time.Now().UTC()
+	entry.LastVerified = now
+	entry.UpdatedAt = now
+	// Status is deliberately untouched. Confirming says the content still holds,
+	// which is not the same as promoting something out of review.
+	if err := store.Memory.Update(entry); err != nil {
+		return errFailed("confirm memory", err)
+	}
+
+	search.BestEffortIndexMemory(store, entry.ID)
+	go notifyServer(store, "notify/refresh")
+
+	out, _ := json.MarshalIndent(entry, "", "  ")
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+// handleMemoryContradict records that a memory no longer holds.
+//
+// What happens next depends on what kind of claim it is, and the split is not a
+// nicety. A pattern, convention or failure is a claim ABOUT THE CODE: the repo
+// decides whether it is true, an agent can read the repo, so an agent can retire
+// it. A preference is the user's own COMMITMENT: nothing outside their words
+// makes it true, so an agent reporting that it "seems wrong" has observed
+// nothing that bears on it. Letting that demote a preference would let a
+// misreading switch off a standing instruction.
+func handleMemoryContradict(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store := getStore()
+	if store == nil {
+		return noProjectError()
+	}
+	id, err := req.RequireString("id")
+	if err != nil {
+		return errResult("id is required")
+	}
+	note, _ := stringArg(req.GetArguments(), "note")
+	if note == "" {
+		return errResult("note is required: say what you observed that contradicts this memory")
+	}
+	entry, err := store.Memory.Get(id)
+	if err != nil || !models.ValidPersistentMemoryLayer(entry.Layer) {
+		return errNotFound("memory", fmt.Errorf("memory %q not found", id))
+	}
+
+	now := time.Now().UTC()
+	entry.UpdatedAt = now
+
+	response := struct {
+		Outcome     string              `json:"outcome"`
+		NeedsUser   bool                `json:"needsUser"`
+		Explanation string              `json:"explanation"`
+		Memory      *models.MemoryEntry `json:"memory"`
+	}{Memory: entry}
+
+	if strings.EqualFold(strings.TrimSpace(entry.Category), "preference") {
+		if entry.Metadata == nil {
+			entry.Metadata = map[string]string{}
+		}
+		entry.Metadata[memoryDisputedMetadataKey] = note
+		entry.Metadata[memoryDisputedAtMetadataKey] = now.Format(time.RFC3339)
+		response.Outcome = "disputed"
+		response.NeedsUser = true
+		response.Explanation = "This is a preference, so it is the user's own commitment and only the user can withdraw it. The dispute is recorded and the memory stays active. Raise it with them rather than acting as though it were retired."
+	} else {
+		entry.Status = models.MemoryStatusStale
+		if entry.Metadata == nil {
+			entry.Metadata = map[string]string{}
+		}
+		entry.Metadata[memoryDisputedMetadataKey] = note
+		entry.Metadata[memoryDisputedAtMetadataKey] = now.Format(time.RFC3339)
+		response.Outcome = string(models.MemoryStatusStale)
+		response.Explanation = "This is a claim about the code, which the repository settles, so it has been marked stale and will no longer be retrieved."
+	}
+
+	if err := store.Memory.Update(entry); err != nil {
+		return errFailed("contradict memory", err)
+	}
+
+	search.BestEffortIndexMemory(store, entry.ID)
+	go notifyServer(store, "notify/refresh")
+
+	out, _ := json.MarshalIndent(response, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }

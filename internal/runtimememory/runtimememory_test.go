@@ -964,3 +964,60 @@ func TestHookGuidanceDefinesWhatAMemoryIs(t *testing.T) {
 		t.Errorf("canonicality warning is duplicated inside the guidance block")
 	}
 }
+
+func TestCaptureExpiresAbandonedProposals(t *testing.T) {
+	// The hook's write path used to manufacture junk. It now clears it: the
+	// review queue becomes self-limiting without anyone running a command,
+	// which is the only version of this that actually happens.
+	t.Setenv("HOME", t.TempDir())
+	projectRoot := t.TempDir()
+	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
+	if err := store.Init("runtime-memory"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+
+	old := time.Now().UTC().AddDate(0, 0, -400)
+	seed := func(id, status string, updated time.Time) {
+		t.Helper()
+		if err := store.Memory.Create(&models.MemoryEntry{
+			ID: id, Title: "Memory " + id, Layer: models.MemoryLayerProject,
+			Category: "pattern", Content: "Body " + id, Status: status, UpdatedAt: updated,
+		}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	seed("abandoned", models.MemoryStatusProposed, old)
+	seed("kept", models.MemoryStatusActive, old)
+	seed("recent", models.MemoryStatusProposed, time.Now().UTC())
+
+	_, outcome, err := CaptureWithOutcome(store, Input{
+		Runtime: "opencode", ProjectRoot: projectRoot, WorkingDir: projectRoot,
+		ActionType: "user-prompt-submit", UserPrompt: "please review the reconcile queue", Mode: ModeAuto,
+	})
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if outcome.ExpiredProposals != 1 {
+		t.Fatalf("expiredProposals = %d, want 1", outcome.ExpiredProposals)
+	}
+
+	expired, err := store.Memory.Get("abandoned")
+	if err != nil {
+		t.Fatalf("get abandoned: %v", err)
+	}
+	if expired.Status != models.MemoryStatusRejected {
+		t.Fatalf("abandoned status = %q, want rejected", expired.Status)
+	}
+
+	// An entry in use must survive being old, and a proposal inside its window
+	// must survive being unreviewed.
+	for _, id := range []string{"kept", "recent"} {
+		entry, err := store.Memory.Get(id)
+		if err != nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		if entry.Status == models.MemoryStatusRejected {
+			t.Errorf("%s was expired but should not have been", id)
+		}
+	}
+}

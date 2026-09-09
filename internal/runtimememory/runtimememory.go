@@ -162,6 +162,9 @@ type CaptureOutcome struct {
 	Trusted      bool                 `json:"trusted"`
 	TrustReason  string               `json:"trustReason,omitempty"`
 	Matches      []memoryreview.Match `json:"matches,omitempty"`
+
+	// ExpiredProposals counts entries this call retired from the review queue.
+	ExpiredProposals int `json:"expiredProposals,omitempty"`
 }
 
 type Adapter struct {
@@ -444,8 +447,48 @@ func CaptureWithOutcome(store *storage.Store, input Input) (*models.MemoryEntry,
 	// SkipReasonReviewRequired are now unreachable; they stay exported because
 	// they are part of the hook's published JSON vocabulary, and retiring that
 	// surface is its own change.
+	outcome.ExpiredProposals = expireAbandonedProposals(store, time.Now().UTC())
 	outcome.Reason = SkipReasonNoCaptureCandidate
 	return nil, outcome, nil
+}
+
+// expireAbandonedProposals retires `proposed` entries that outlived the queue,
+// and returns how many it retired.
+//
+// THIS IS WHERE THE QUEUE BECOMES SELF-LIMITING. A review queue only works if
+// somebody empties it, and this project's did not: 48 entries sat unresolved
+// because nothing expired them and nothing announced them. Left that way a
+// proposal is the worst of both states, never retrieved so it helps nobody,
+// never removed so it keeps burying the entries a person would actually want to
+// read.
+//
+// It runs here because this hook already fires on every prompt and this
+// function is already the write path, so no new trigger and no new schedule has
+// to exist for the rule to hold. Until now it manufactured the junk; the same
+// call now clears it.
+//
+// The write cannot affect the prompt in flight: an expired proposal was already
+// invisible to retrieval, so changing its status changes nothing the current
+// injection would have shown. A read error or a write error is swallowed on
+// purpose, because failing to tidy a backlog must never fail a user's prompt.
+func expireAbandonedProposals(store *storage.Store, now time.Time) int {
+	entries, err := store.Memory.List("")
+	if err != nil {
+		return 0
+	}
+	expired := 0
+	for _, entry := range entries {
+		if !models.ProposalIsExpired(entry, models.MemoryProposalTTLDays, now) {
+			continue
+		}
+		entry.Status = models.MemoryStatusRejected
+		entry.RejectedReason = "expired_unreviewed"
+		entry.UpdatedAt = now
+		if err := store.Memory.Update(entry); err == nil {
+			expired++
+		}
+	}
+	return expired
 }
 
 func buildCandidates(store *storage.Store, input Input, maxItems int, baseline bool) ([]candidate, error) {
