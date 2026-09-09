@@ -29,3 +29,6 @@ ui/playwright-report/
 ui/test-results/
 playwright-report/
 test-results/
+
+# Local Qdrant bootstrap marker
+.qdrant-initialized
