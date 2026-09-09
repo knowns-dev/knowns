@@ -53,7 +53,7 @@ knowns init	visible	runnable	--force:bool --git-ignored:bool --git-tracked:bool 
 knowns lsp	visible	group
 knowns lsp cleanup	visible	runnable
 knowns lsp install	visible	runnable	--latest:bool --version:string --yes:bool
-knowns lsp list	visible	runnable
+knowns lsp list	visible	runnable	--verbose:bool
 knowns mcp	visible	runnable	--project:string --stdio:bool
 knowns memory	visible	runnable
 knowns memory cleanup	visible	runnable	--layer:string --limit:int --older-than:int
