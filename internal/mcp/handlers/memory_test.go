@@ -33,13 +33,52 @@ func TestMemoryAddRejectsLegacyDecisionCategory(t *testing.T) {
 	}
 }
 
-func TestMemoryAddNoMatchCreatesProposed(t *testing.T) {
+func TestMemoryAddNoMatchCreatesActiveAndIsRetrievable(t *testing.T) {
+	// A write that conflicts with nothing lands active and shows up in the
+	// default list straight away. It used to land proposed and stay invisible,
+	// which meant an agent using MCP had no way at all to create a memory that
+	// would ever be read back.
 	store := setupMemoryCleanupStore(t)
 	text := callMemoryAdd(t, store, map[string]any{
 		"action":   "add",
 		"title":    "Unique memory",
 		"category": "pattern",
-		"content":  "Use proposed status for new memory review.",
+		"content":  "Prefer `storage.Store` over a bare path when a helper needs the memory plane.",
+	})
+	var entry models.MemoryEntry
+	if err := json.Unmarshal([]byte(text), &entry); err != nil {
+		t.Fatalf("unmarshal add output: %v\n%s", err, text)
+	}
+	if entry.Status != models.MemoryStatusActive {
+		t.Fatalf("status = %q, want active", entry.Status)
+	}
+	if !entry.CurrentForDefaultRetrieval() {
+		t.Fatal("expected the new memory to be current for default retrieval")
+	}
+	if entry.Key != "unique-memory" {
+		t.Fatalf("key = %q, want a slug derived from the title", entry.Key)
+	}
+
+	listText := callMemoryList(t, store, map[string]any{"action": "list"})
+	var summaries []map[string]any
+	if err := json.Unmarshal([]byte(listText), &summaries); err != nil {
+		t.Fatalf("unmarshal list output: %v\n%s", err, listText)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("default list should contain the new memory, got %+v", summaries)
+	}
+}
+
+func TestMemoryAddExplicitStatusStillWins(t *testing.T) {
+	// active is only the default. A caller that wants the old behaviour, or any
+	// other lifecycle state, still gets exactly what it asked for.
+	store := setupMemoryCleanupStore(t)
+	text := callMemoryAdd(t, store, map[string]any{
+		"action":   "add",
+		"title":    "Explicitly proposed",
+		"category": "pattern",
+		"content":  "Hold this one for review.",
+		"status":   models.MemoryStatusProposed,
 	})
 	var entry models.MemoryEntry
 	if err := json.Unmarshal([]byte(text), &entry); err != nil {
@@ -47,14 +86,6 @@ func TestMemoryAddNoMatchCreatesProposed(t *testing.T) {
 	}
 	if entry.Status != models.MemoryStatusProposed {
 		t.Fatalf("status = %q, want proposed", entry.Status)
-	}
-	listText := callMemoryList(t, store, map[string]any{"action": "list"})
-	var summaries []map[string]any
-	if err := json.Unmarshal([]byte(listText), &summaries); err != nil {
-		t.Fatalf("unmarshal list output: %v\n%s", err, listText)
-	}
-	if len(summaries) != 0 {
-		t.Fatalf("default list should exclude proposed memory, got %+v", summaries)
 	}
 }
 
@@ -252,4 +283,180 @@ func callMemoryCleanupListPersistent(t *testing.T, store *storage.Store) []*mode
 		t.Fatalf("list persistent memories: %v", err)
 	}
 	return entries
+}
+
+// callMemoryAddExpectingError runs add and requires it to be refused, returning
+// the message so a test can assert the refusal explains itself.
+func callMemoryAddExpectingError(t *testing.T, store *storage.Store, args map[string]any) string {
+	t.Helper()
+	result, err := handleMemoryAdd(func() *storage.Store { return store }, mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: args}})
+	if err != nil {
+		t.Fatalf("add returned a transport error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected add to be refused, got: %+v", result)
+	}
+	return callMemoryTextResult(t, result)
+}
+
+func callMemoryUpdate(t *testing.T, store *storage.Store, args map[string]any) string {
+	t.Helper()
+	result, err := handleMemoryUpdate(func() *storage.Store { return store }, mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: args}})
+	if err != nil || result.IsError {
+		t.Fatalf("update returned error: %v, result: %+v", err, result)
+	}
+	return callMemoryTextResult(t, result)
+}
+
+func TestMemoryAddRejectsPreferenceWithoutWhy(t *testing.T) {
+	// A preference has no truth-maker outside the user's own words, so the
+	// reason is the only thing that lets it be applied to a case it does not
+	// name. "No em dash" cannot say whether it covers a string literal.
+	store := setupMemoryCleanupStore(t)
+	msg := callMemoryAddExpectingError(t, store, map[string]any{
+		"action":   "add",
+		"title":    "Avoid em dashes",
+		"category": "preference",
+		"content":  "Never use an em dash in prose written for the user.",
+	})
+	if !strings.Contains(msg, "**Why:**") {
+		t.Fatalf("refusal should name the missing marker, got: %s", msg)
+	}
+	if entries := callMemoryCleanupListPersistent(t, store); len(entries) != 0 {
+		t.Fatalf("refused add must write nothing, got %d entries", len(entries))
+	}
+
+	text := callMemoryAdd(t, store, map[string]any{
+		"action":   "add",
+		"title":    "Avoid em dashes",
+		"category": "preference",
+		"content":  "Never use an em dash in prose written for the user.\n\n**Why:** it reads as machine-written.",
+	})
+	var entry models.MemoryEntry
+	if err := json.Unmarshal([]byte(text), &entry); err != nil {
+		t.Fatalf("unmarshal add output: %v\n%s", err, text)
+	}
+	if entry.Category != "preference" {
+		t.Fatalf("category = %q, want preference", entry.Category)
+	}
+}
+
+func TestMemoryAddRejectsCategoryOutsideTheContract(t *testing.T) {
+	store := setupMemoryCleanupStore(t)
+	msg := callMemoryAddExpectingError(t, store, map[string]any{
+		"action":   "add",
+		"title":    "Document history storage",
+		"category": "implementation",
+		"content":  "Revisions live under .knowns/history.",
+	})
+	if !strings.Contains(msg, "implementation") {
+		t.Fatalf("refusal should name the rejected category, got: %s", msg)
+	}
+
+	// Each entry has to be genuinely unlike the others. Near-identical titles or
+	// bodies trip the duplicate review, which writes nothing and would make this
+	// test fail for a reason that has nothing to do with categories.
+	accepted := []struct{ category, title, content string }{
+		{"pattern", "Retry with jittered backoff", "Spread reconnects so a restart does not thunder."},
+		{"convention", "Anchor citations to symbols", "Cite `Manager.Start`, never a line number."},
+		{"preference", "Answer in Vietnamese", "Reply in Vietnamese.\n\n**Why:** the user writes in Vietnamese."},
+		{"failure", "A stale pid file blocks recovery", "`Manager.Start` reports state=stale and falls through to a fresh spawn."},
+	}
+	for _, tc := range accepted {
+		callMemoryAdd(t, store, map[string]any{
+			"action":   "add",
+			"title":    tc.title,
+			"category": tc.category,
+			"content":  tc.content,
+		})
+	}
+	if entries := callMemoryCleanupListPersistent(t, store); len(entries) != len(accepted) {
+		t.Fatalf("expected %d entries, got %d", len(accepted), len(entries))
+	}
+}
+
+func TestMemoryAddWithSameExplicitKeyUpdatesInPlace(t *testing.T) {
+	// Two writes under one key must converge on one entry, and the id must
+	// survive, because @memory/<id> refs already exist in the store and in the
+	// shipped instructions.
+	store := setupMemoryCleanupStore(t)
+	first := callMemoryAdd(t, store, map[string]any{
+		"action":   "add",
+		"title":    "Qdrant is the default vector store",
+		"key":      "vector-store-default",
+		"category": "convention",
+		"content":  "Qdrant, managed mode.",
+	})
+	var created models.MemoryEntry
+	if err := json.Unmarshal([]byte(first), &created); err != nil {
+		t.Fatalf("unmarshal first add: %v\n%s", err, first)
+	}
+
+	second := callMemoryAdd(t, store, map[string]any{
+		"action":   "add",
+		"title":    "Qdrant is the default vector store",
+		"key":      "vector-store-default",
+		"category": "convention",
+		"content":  "Qdrant, managed mode, started from the reconcile path.",
+		"sources":  []any{"internal/qdrantruntime/manager.go"},
+	})
+	var upsert struct {
+		Replaced bool                `json:"replaced"`
+		Memory   *models.MemoryEntry `json:"memory"`
+	}
+	if err := json.Unmarshal([]byte(second), &upsert); err != nil {
+		t.Fatalf("unmarshal second add: %v\n%s", err, second)
+	}
+	if !upsert.Replaced {
+		t.Fatalf("second write under the same key should report replaced, got: %s", second)
+	}
+	if upsert.Memory.ID != created.ID {
+		t.Fatalf("id changed across upsert: %q then %q", created.ID, upsert.Memory.ID)
+	}
+	if upsert.Memory.LastVerified.IsZero() {
+		t.Fatal("supplying sources should stamp lastVerified")
+	}
+	if entries := callMemoryCleanupListPersistent(t, store); len(entries) != 1 {
+		t.Fatalf("expected exactly one entry after the upsert, got %d", len(entries))
+	}
+}
+
+func TestMemoryUpdateWritesProvenance(t *testing.T) {
+	// Before this, sources, confidence and lastVerified were reachable only
+	// through the duplicate-resolution flow, so an entry could be re-confirmed
+	// and still read as last checked months earlier.
+	store := setupMemoryCleanupStore(t)
+	createMemoryForCleanupTest(t, store, "prov1", models.MemoryLayerProject, time.Now().UTC(), time.Now().UTC())
+
+	text := callMemoryUpdate(t, store, map[string]any{
+		"action":     "update",
+		"id":         "prov1",
+		"sources":    []any{"internal/search/engine.go", "@task-npgfm4"},
+		"confidence": models.MemoryConfidenceHigh,
+		"ttlDays":    180,
+	})
+	var entry models.MemoryEntry
+	if err := json.Unmarshal([]byte(text), &entry); err != nil {
+		t.Fatalf("unmarshal update output: %v\n%s", err, text)
+	}
+	if len(entry.Sources) != 2 {
+		t.Fatalf("sources = %+v, want two", entry.Sources)
+	}
+	if entry.Confidence != models.MemoryConfidenceHigh {
+		t.Fatalf("confidence = %q, want high", entry.Confidence)
+	}
+	if entry.TTLDays != 180 {
+		t.Fatalf("ttlDays = %d, want 180", entry.TTLDays)
+	}
+	if entry.LastVerified.IsZero() {
+		t.Fatal("supplying evidence should stamp lastVerified")
+	}
+
+	stored, err := store.Memory.Get("prov1")
+	if err != nil {
+		t.Fatalf("get stored: %v", err)
+	}
+	if len(stored.Sources) != 2 || stored.Confidence != models.MemoryConfidenceHigh {
+		t.Fatalf("provenance did not survive the round trip: %+v", stored)
+	}
 }

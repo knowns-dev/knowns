@@ -38,26 +38,32 @@ func RegisterMemoryTool(s *server.MCPServer, getStore func() *storage.Store) {
 				mcp.Description("Memory layer: 'project' (default) or 'global' (add, list)"),
 			),
 			mcp.WithString("category",
-				mcp.Description("Category: pattern, convention, preference, failure, etc. New legacy decision-category writes are rejected; use the Decision tool instead (add, update, list)"),
+				mcp.Description("One of pattern, convention, preference, failure. The first three are claims about the code and must cite a checkable anchor; preference is a user commitment and must carry a **Why:** line. Anything else is rejected on write, and legacy decision-category writes go to the Decision tool instead (add, update, list)"),
 			),
 			mcp.WithArray("tags",
 				mcp.Description("Tags for the memory entry (add, update)"),
 				mcp.WithStringItems(),
 			),
+			mcp.WithString("key",
+				mcp.Description("Upsert handle, unique within a layer; defaults to a slug of the title. Adding with a key that already exists updates that entry in place and reports replaced=true, keeping its id so @memory/<id> refs still resolve (add, update)"),
+			),
 			mcp.WithArray("sources",
-				mcp.Description("Source refs for the memory entry (resolve)"),
+				mcp.Description("Where this came from. For pattern/convention/failure cite something checkable: a symbol, a file, @doc/<path> or @task-<id>. For preference cite the utterance: who said it and when (add, update, resolve)"),
 				mcp.WithStringItems(),
 			),
 			mcp.WithString("status",
-				mcp.Description("Memory status filter (list) or selected replacement status (resolve)"),
+				mcp.Description("Lifecycle status. On add it defaults to active, so a write nothing conflicts with is retrieved immediately; a write matching an existing memory still returns review_required instead. Also a filter (list) and the selected replacement status (resolve)"),
 				mcp.Enum("proposed", "active", "stale", "deprecated", "archived", "rejected", "merged"),
 			),
 			mcp.WithString("confidence",
-				mcp.Description("Memory confidence metadata (resolve)"),
+				mcp.Description("Memory confidence metadata (add, update, resolve)"),
 				mcp.Enum("low", "medium", "high"),
 			),
+			mcp.WithString("lastVerified",
+				mcp.Description("RFC3339 timestamp of the last check (update). Supplying sources or confidence stamps this automatically, since providing evidence is itself a verification"),
+			),
 			mcp.WithNumber("ttlDays",
-				mcp.Description("Memory TTL in days (resolve)"),
+				mcp.Description("Memory TTL in days (add, update, resolve)"),
 			),
 			mcp.WithString("resolution",
 				mcp.Description("Review resolution (resolve)"),
@@ -136,6 +142,11 @@ func handleMemoryAdd(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 	layer, _ := stringArg(args, "layer")
 	category, _ := stringArg(args, "category")
 	tags, _ := stringSliceArg(args, "tags")
+	key, _ := stringArg(args, "key")
+	status, _ := stringArg(args, "status")
+	sources, _ := stringSliceArg(args, "sources")
+	confidence, _ := stringArg(args, "confidence")
+	ttlDays, _ := intArg(args, "ttlDays")
 
 	if layer == "" {
 		layer = models.MemoryLayerProject
@@ -143,22 +154,87 @@ func handleMemoryAdd(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 	if !models.ValidPersistentMemoryLayer(layer) {
 		return errResult("layer must be 'project' or 'global'")
 	}
+	if err := models.ValidateMemoryCategory(category); err != nil {
+		return errResult(err.Error())
+	}
+	if err := models.ValidatePreferenceWhy(category, content); err != nil {
+		return errResult(err.Error())
+	}
+	if status != "" && !models.ValidMemoryStatus(status) {
+		return errResultf("invalid status %q", status)
+	}
+	if confidence != "" && !models.ValidMemoryConfidence(confidence) {
+		return errResultf("invalid confidence %q", confidence)
+	}
+
+	// ONLY AN EXPLICIT KEY UPSERTS. A key derived from the title is stored so a
+	// later explicit write can find this entry, but it never matches on its own.
+	//
+	// The difference is who is asserting identity. Passing `key` is the caller
+	// saying "this is the same memory, replace it". Two entries merely sharing a
+	// title is the case the duplicate review exists to judge, and letting a
+	// derived key short-circuit it would overwrite one memory with another on a
+	// title collision, silently and with no review. That is the known failure of
+	// deriving the handle from the text itself.
+	if explicitKey := key; explicitKey != "" {
+		existing, err := findMemoryByKey(store, layer, explicitKey)
+		if err != nil {
+			return errFailed("look up memory key", err)
+		}
+		if existing != nil {
+			return replaceMemoryByKey(store, existing, memoryWrite{
+				title:      title,
+				key:        explicitKey,
+				category:   category,
+				content:    content,
+				tags:       tags,
+				status:     status,
+				sources:    sources,
+				confidence: confidence,
+				ttlDays:    ttlDays,
+			})
+		}
+	}
+	if key == "" {
+		key = models.DeriveMemoryKey(title)
+	}
 
 	now := time.Now().UTC()
 	entry := &models.MemoryEntry{
-		Title:     title,
-		Layer:     layer,
-		Category:  category,
-		Content:   content,
-		Tags:      tags,
-		CreatedAt: now,
-		UpdatedAt: now,
+		Title:      title,
+		Key:        key,
+		Layer:      layer,
+		Category:   category,
+		Content:    content,
+		Tags:       tags,
+		Sources:    sources,
+		Confidence: confidence,
+		TTLDays:    ttlDays,
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 	if entry.Tags == nil {
 		entry.Tags = []string{}
 	}
+	if len(sources) > 0 || confidence != "" {
+		entry.LastVerified = now
+	}
 
-	result, err := memoryreview.New(store).Add(entry, memoryreview.AddOptions{})
+	// A write that matches nothing lands `active` and is retrieved on the next
+	// prompt. The review gate is NOT removed: memoryreview.Add still runs, and a
+	// write that does match an existing entry still returns review_required
+	// below without creating anything.
+	//
+	// The split follows what each side can actually judge. Whether a fact is
+	// worth keeping is a question the agent just answered by doing the work;
+	// every one of the 20 entries written this way met the bar. Whether it
+	// contradicts something already stored needs the whole store, which the
+	// agent never sees, so that stays gated.
+	requestedStatus := status
+	if requestedStatus == "" {
+		requestedStatus = models.MemoryStatusActive
+	}
+	result, err := memoryreview.New(store).Add(entry, memoryreview.AddOptions{Status: requestedStatus})
 	if err != nil {
 		return errFailed("create memory", err)
 	}
@@ -171,6 +247,112 @@ func handleMemoryAdd(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 	go notifyServer(store, "notify/refresh")
 
 	out, _ := json.MarshalIndent(result.Memory, "", "  ")
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+// memoryWrite carries the fields an add may set, so the create path and the
+// key-upsert path below cannot drift apart.
+type memoryWrite struct {
+	title      string
+	key        string
+	category   string
+	content    string
+	tags       []string
+	status     string
+	sources    []string
+	confidence string
+	ttlDays    int
+}
+
+// findMemoryByKey returns the entry in layer whose key matches, or nil.
+//
+// It also matches an entry that stores no Key but whose title derives to the
+// same one. Every entry written before Key existed has an empty field, and
+// without that fallback the first upsert against one of them would add a second
+// copy instead of updating it, which is the exact failure Key exists to stop.
+func findMemoryByKey(store *storage.Store, layer, key string) (*models.MemoryEntry, error) {
+	if key == "" {
+		return nil, nil
+	}
+	entries, err := store.Memory.ListPersistent(layer)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry == nil || entry.Layer != layer {
+			continue
+		}
+		existing := entry.Key
+		if existing == "" {
+			existing = models.DeriveMemoryKey(entry.Title)
+		}
+		if existing != "" && existing == key {
+			return entry, nil
+		}
+	}
+	return nil, nil
+}
+
+// replaceMemoryByKey updates the entry a key already names, in place.
+//
+// The ID is deliberately untouched, so `@memory/<id>` refs written into other
+// memories, tasks and shipped instructions keep resolving across an edit. That
+// is the whole reason Key is a second field rather than the identity.
+func replaceMemoryByKey(store *storage.Store, entry *models.MemoryEntry, write memoryWrite) (*mcp.CallToolResult, error) {
+	updated := *entry
+	updated.Key = write.key
+	if write.title != "" {
+		updated.Title = write.title
+	}
+	if write.category != "" {
+		updated.Category = write.category
+	}
+	if write.content != "" {
+		updated.Content = write.content
+	}
+	if write.tags != nil {
+		updated.Tags = write.tags
+	}
+	if write.status != "" {
+		updated.Status = write.status
+	}
+	if len(write.sources) > 0 {
+		updated.Sources = write.sources
+	}
+	if write.confidence != "" {
+		updated.Confidence = write.confidence
+	}
+	if write.ttlDays > 0 {
+		updated.TTLDays = write.ttlDays
+	}
+
+	if err := models.ValidateLegacyDecisionMemoryUpdate(entry, &updated); err != nil {
+		return errResult(err.Error())
+	}
+	if err := models.ValidatePreferenceWhy(updated.Category, updated.Content); err != nil {
+		return errResult(err.Error())
+	}
+
+	now := time.Now().UTC()
+	updated.UpdatedAt = now
+	// Re-supplying evidence IS a verification, so record it. Without this the
+	// only way to move lastVerified was the duplicate-resolution flow, and the
+	// field sat unchanged on entries that had just been re-confirmed.
+	if len(write.sources) > 0 || write.confidence != "" {
+		updated.LastVerified = now
+	}
+
+	if err := store.Memory.Update(&updated); err != nil {
+		return errFailed("update memory", err)
+	}
+
+	search.BestEffortIndexMemory(store, updated.ID)
+	go notifyServer(store, "notify/refresh")
+
+	out, _ := json.MarshalIndent(struct {
+		Replaced bool                `json:"replaced"`
+		Memory   *models.MemoryEntry `json:"memory"`
+	}{Replaced: true, Memory: &updated}, "", "  ")
 	return mcp.NewToolResultText(string(out)), nil
 }
 
@@ -474,8 +656,69 @@ func handleMemoryUpdate(getStore func() *storage.Store, req mcp.CallToolRequest)
 	if v, ok := stringSliceArg(args, "tags"); ok {
 		entry.Tags = v
 	}
+	if v, ok := stringArg(args, "key"); ok && v != "" {
+		entry.Key = v
+	}
 
-	entry.UpdatedAt = time.Now().UTC()
+	// PROVENANCE IS WRITABLE HERE NOW. Before this, sources, confidence and
+	// lastVerified could only be set through the duplicate-resolution flow, so
+	// there was no ordinary way to record that a memory had been re-checked. A
+	// store of 107 entries carried provenance on 5 of them.
+	evidenceChanged := false
+	if v, ok := stringSliceArg(args, "sources"); ok {
+		entry.Sources = v
+		evidenceChanged = true
+	}
+	if v, ok := stringArg(args, "confidence"); ok && v != "" {
+		if !models.ValidMemoryConfidence(v) {
+			return errResultf("invalid confidence %q", v)
+		}
+		entry.Confidence = v
+		evidenceChanged = true
+	}
+	if v, ok := intArg(args, "ttlDays"); ok && v > 0 {
+		entry.TTLDays = v
+	}
+	if v, ok := stringArg(args, "status"); ok && v != "" {
+		if !models.ValidMemoryStatus(v) {
+			return errResultf("invalid status %q", v)
+		}
+		entry.Status = v
+	}
+
+	// BOTH GATES APPLY ONLY TO WHAT THE CALLER SUPPLIED, never to what the entry
+	// already holds.
+	//
+	// Three stored entries carry a category outside the contract and three
+	// preferences predate the Why rule. Validating the loaded value would make
+	// exactly those six un-editable, including by the migration meant to fix
+	// them, and would punish an unrelated tag edit for a defect it did not
+	// introduce.
+	if newCategory, ok := stringArg(args, "category"); ok && newCategory != "" {
+		if err := models.ValidateMemoryCategory(newCategory); err != nil {
+			return errResult(err.Error())
+		}
+	}
+	if newContent, ok := stringArg(args, "content"); ok && newContent != "" {
+		if err := models.ValidatePreferenceWhy(entry.Category, newContent); err != nil {
+			return errResult(err.Error())
+		}
+	}
+
+	now := time.Now().UTC()
+	entry.UpdatedAt = now
+	if v, ok := stringArg(args, "lastVerified"); ok && v != "" {
+		parsed, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return errResultf("lastVerified must be RFC3339, got %q", v)
+		}
+		entry.LastVerified = parsed
+	} else if evidenceChanged {
+		// Supplying evidence is itself a verification. Leaving the timestamp
+		// alone here is what let an entry read as last checked months ago
+		// moments after someone re-confirmed it.
+		entry.LastVerified = now
+	}
 
 	if err := store.Memory.Update(entry); err != nil {
 		return errFailed("update memory", err)

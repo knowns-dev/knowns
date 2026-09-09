@@ -69,6 +69,7 @@ func (ms *MemoryStore) dirForLayer(layer string) (string, error) {
 type memoryFrontmatter struct {
 	ID             string            `yaml:"id"`
 	Title          string            `yaml:"title"`
+	Key            string            `yaml:"key,omitempty"`
 	Layer          string            `yaml:"layer"`
 	Category       string            `yaml:"category,omitempty"`
 	Status         string            `yaml:"status,omitempty"`
@@ -594,6 +595,7 @@ func parseMemoryContent(content, layer string) (*models.MemoryEntry, error) {
 
 	entry.ID = fm.ID
 	entry.Title = fm.Title
+	entry.Key = fm.Key
 	entry.Category = fm.Category
 	entry.Status = fm.Status
 	entry.Confidence = fm.Confidence
@@ -653,6 +655,9 @@ func renderMemory(entry *models.MemoryEntry) string {
 	b.WriteString("---\n")
 	fmt.Fprintf(&b, "id: %s\n", entry.ID)
 	fmt.Fprintf(&b, "title: %s\n", yamlScalar(entry.Title))
+	if entry.Key != "" {
+		fmt.Fprintf(&b, "key: %s\n", yamlScalar(entry.Key))
+	}
 	fmt.Fprintf(&b, "layer: %s\n", entry.Layer)
 
 	if entry.Category != "" {

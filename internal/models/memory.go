@@ -19,8 +19,15 @@ const (
 // MemoryEntry represents a single memory entry stored as a markdown file
 // with YAML frontmatter. Content is free-form markdown.
 type MemoryEntry struct {
-	ID       string `json:"id"                    yaml:"id"`
-	Title    string `json:"title"                 yaml:"title"`
+	ID    string `json:"id"                    yaml:"id"`
+	Title string `json:"title"                 yaml:"title"`
+
+	// Key is the upsert handle, unique within a Layer. Writing with a Key that
+	// already exists updates that entry in place instead of adding a second one.
+	// Defaults to DeriveMemoryKey(Title). Unlike ID it may change, so nothing
+	// should reference an entry by Key.
+	Key string `json:"key,omitempty" yaml:"key,omitempty"`
+
 	Layer    string `json:"layer"                 yaml:"layer"`              // "project", "global"
 	Category string `json:"category,omitempty"    yaml:"category,omitempty"` // "pattern", "convention", "preference", etc.; "decision" is legacy.
 
@@ -124,6 +131,83 @@ func ValidMemoryConfidence(confidence string) bool {
 	default:
 		return false
 	}
+}
+
+// AllowedMemoryCategories is the contract kn-extract already publishes:
+// "Use only pattern, convention, preference, or failure categories."
+//
+// The store predates the rule and holds entries outside it: one
+// `implementation`, one `failure-pattern` and one legacy `decision`. Those stay
+// readable; only new writes are held to the list, so a migration can reclassify
+// them without a flag day.
+var AllowedMemoryCategories = []string{"pattern", "convention", "preference", "failure"}
+
+// ValidateMemoryCategory rejects a category the write path should never create.
+//
+// An empty category stays legal because callers that never set one, including
+// older CLI invocations, must keep working. The whitelist is only applied to a
+// value the caller actually chose.
+func ValidateMemoryCategory(category string) error {
+	trimmed := strings.TrimSpace(category)
+	if trimmed == "" {
+		return nil
+	}
+	if err := ValidateNewMemoryCategory(trimmed); err != nil {
+		return err
+	}
+	for _, allowed := range AllowedMemoryCategories {
+		if strings.EqualFold(trimmed, allowed) {
+			return nil
+		}
+	}
+	return fmt.Errorf("memory category %q is not allowed; use one of %s", trimmed, strings.Join(AllowedMemoryCategories, ", "))
+}
+
+// whyMarker is the heading a preference Memory must carry.
+const whyMarker = "**Why:**"
+
+// ValidatePreferenceWhy requires a `preference` Memory to record why it exists.
+//
+// A preference is a COMMITMENT, not a claim about the code: nothing outside the
+// user's own words makes it true, so there is no source to re-read when it has
+// to be applied to a situation it did not anticipate. The reason is the only
+// thing that lets a rule be extended correctly. "No em dash" cannot tell you
+// whether it covers a string literal; "no em dash, because it reads as
+// machine-written" answers that on its own.
+//
+// The three preferences that predate this rule stay readable and keep being
+// injected. `knowns validate` reports them through MissingTrustMetadata rather
+// than this function, because retrofitting a reason is the user's call and
+// nobody else can supply it honestly.
+func ValidatePreferenceWhy(category, content string) error {
+	if !strings.EqualFold(strings.TrimSpace(category), "preference") {
+		return nil
+	}
+	if strings.Contains(content, whyMarker) {
+		return nil
+	}
+	return fmt.Errorf("a preference memory must state its reason: add a %s line saying why the user asked for this, since the reason is what lets the rule be applied to cases it does not name", whyMarker)
+}
+
+var memoryKeyNonSlugRE = regexp.MustCompile(`[^a-z0-9]+`)
+
+// DeriveMemoryKey turns a title into the key used for upsert.
+//
+// The key comes from the TITLE and never from the content, so editing a
+// memory's body does not re-key it. Deriving it from content is what lets a
+// reworded insight land as a second entry, which is how a store accumulates
+// near-duplicates that no exact-match check will ever catch.
+//
+// This is deliberately not the entry's identity. The ID stays random because
+// `@memory/<id>` refs already exist in the store and in shipped instructions;
+// a content-derived identity would break every one of them on the first edit.
+func DeriveMemoryKey(title string) string {
+	slug := memoryKeyNonSlugRE.ReplaceAllString(strings.ToLower(strings.TrimSpace(title)), "-")
+	slug = strings.Trim(slug, "-")
+	if len(slug) > 80 {
+		slug = strings.Trim(slug[:80], "-")
+	}
+	return slug
 }
 
 func (m *MemoryEntry) ApplyLifecycleDefaults() {
