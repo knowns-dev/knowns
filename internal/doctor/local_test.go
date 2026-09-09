@@ -904,3 +904,72 @@ func TestAISkillsCheckReportsProjectCopyShadowingGlobal(t *testing.T) {
 		t.Fatalf("remediation = %#v, want the shadowing directory removed", skills.Remediation)
 	}
 }
+
+// A managed Qdrant that cannot run turns doctor into a loop: the remediation is
+// `knowns qdrant install` or `knowns qdrant start`, and on a platform where the
+// pinned binary will not execute both fail and the same warning comes back. The
+// remediation therefore has to name external mode, which is the route that
+// actually works. States the primary command can repair must stay unchanged, so
+// the escape does not become noise attached to every Qdrant warning.
+func TestQdrantRuntimeRemediationOffersExternalEscape(t *testing.T) {
+	store := newDoctorStore(t)
+	configureSemanticSearch(t, store, &models.SemanticSearchSettings{Enabled: true, Model: "current-model"})
+	base := qdrantDiagnosticSnapshot{
+		Resolution: models.SemanticVectorStoreResolution{Enabled: true, Backend: models.SemanticVectorBackendQdrant, Mode: models.SemanticVectorStoreModeManaged},
+		Runtime:    qdrantruntime.Status{State: qdrantruntime.StatusRunning, Installed: true},
+		Readiness:  search.SemanticIndexReadiness{Enabled: true, Backend: models.SemanticVectorBackendQdrant, Ready: true},
+		Expected:   search.SemanticIndexIdentity{Model: "current-model", Dimensions: 384, ChunkVersion: search.ChunkVersion},
+		Healthy:    true, Probed: true,
+	}
+	for _, test := range []struct {
+		name     string
+		snapshot qdrantDiagnosticSnapshot
+		want     bool
+	}{
+		{"missing binary", func() qdrantDiagnosticSnapshot {
+			s := base
+			s.Runtime = qdrantruntime.Status{State: qdrantruntime.StatusNotInstalled}
+			return s
+		}(), true},
+		{"runtime will not start", func() qdrantDiagnosticSnapshot {
+			s := base
+			s.Runtime = qdrantruntime.Status{State: qdrantruntime.StatusStopped, Installed: true}
+			s.Healthy = false
+			return s
+		}(), true},
+		{"live process is merely unhealthy", func() qdrantDiagnosticSnapshot {
+			s := base
+			s.Healthy = false
+			s.ProbeErrorCode = "qdrant_health_unavailable"
+			return s
+		}(), false},
+		{"external mode", func() qdrantDiagnosticSnapshot {
+			s := base
+			s.Resolution.Mode = models.SemanticVectorStoreModeExternal
+			s.Resolution.ExternalURL = "https://qdrant.example.com:6333"
+			return s
+		}(), false},
+		{"healthy managed runtime", base, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			deps := localDependencies{qdrant: func(context.Context, *storage.Store) (qdrantDiagnosticSnapshot, error) {
+				return test.snapshot, nil
+			}}
+			result, err := Run(context.Background(), RunOptions{Project: ProjectFromStore(store), Scopes: []Scope{ScopeSearch}}, localCheckersWithDependencies(store, deps))
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			check := findCheck(t, result, "search.qdrant-runtime")
+			description := ""
+			if check.Remediation != nil {
+				description = check.Remediation.Description
+			}
+			if got := strings.Contains(description, "external Qdrant endpoint"); got != test.want {
+				t.Fatalf("external escape present = %v, want %v; remediation = %q", got, test.want, description)
+			}
+			if test.want && !strings.Contains(description, "KNOWNS_QDRANT_URL") {
+				t.Fatalf("escape must name the env override; remediation = %q", description)
+			}
+		})
+	}
+}

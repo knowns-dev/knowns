@@ -24,6 +24,15 @@ set and the tradeoff between them.
 - `semantic`
 - `hybrid`
 
+## Vector store
+
+Vectors are stored in Qdrant. By default Knowns manages a local Qdrant process
+for you, and there is nothing to install or configure.
+
+If the managed binary does not run on your platform, or you already run Qdrant
+somewhere, point Knowns at that endpoint instead. See
+[External Qdrant](./external-qdrant.md).
+
 ## Operational note
 
 If semantic components are unavailable, the relevant search paths can safely fall back instead of crashing.
@@ -31,3 +40,4 @@ If semantic components are unavailable, the relevant search paths can safely fal
 ## See also
 
 - [Ollama Embedding Models](./ollama-embedding-models.md) — recommended models, install/pull commands, and the four Ollama readiness states.
+- [External Qdrant](./external-qdrant.md) - connecting to a Qdrant you run yourself, and the platform limits of the managed binary.

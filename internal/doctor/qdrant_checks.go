@@ -48,6 +48,16 @@ func qdrantSkip(snapshot qdrantDiagnosticSnapshot, disabled, notApplicable strin
 	return CheckResult{}, false
 }
 
+// externalQdrantEscape is appended to the remediation for every managed state
+// the primary command cannot repair on its own. On a platform where the pinned
+// binary installs but will not execute, `knowns qdrant install` and
+// `knowns qdrant start` both fail and doctor reports the same warning forever,
+// so the remediation has to name the one route that does work.
+const externalQdrantEscape = " If the managed binary cannot run on this platform, " +
+	"configure an external Qdrant endpoint instead: set " +
+	"settings.semanticSearch.vectorStore.externalURL and then .mode to external, " +
+	"or export KNOWNS_QDRANT_URL. See docs/en/reference/external-qdrant.md."
+
 func qdrantRuntimeChecker(state *localState) Checker {
 	return Checker{ID: "search.qdrant-runtime", Scope: ScopeSearch, Check: func(ctx context.Context) (CheckResult, error) {
 		if state.store == nil {
@@ -77,10 +87,10 @@ func qdrantRuntimeChecker(state *localState) Checker {
 			evidence["healthy"] = true
 			return CheckResult{Status: StatusPass, Summary: "Managed Qdrant process is running", Evidence: evidence}, nil
 		case qdrantruntime.StatusNotInstalled:
-			return CheckResult{Status: StatusWarn, Summary: "Managed Qdrant binary is not installed", Evidence: evidence, Remediation: &Remediation{Description: "Install the managed Qdrant binary explicitly.", Command: "knowns qdrant install"}}, nil
+			return CheckResult{Status: StatusWarn, Summary: "Managed Qdrant binary is not installed", Evidence: evidence, Remediation: &Remediation{Description: "Install the managed Qdrant binary explicitly." + externalQdrantEscape, Command: "knowns qdrant install"}}, nil
 		default:
 			evidence["running"] = false
-			return CheckResult{Status: StatusWarn, Summary: "Managed Qdrant process is not healthy", Evidence: evidence, Remediation: &Remediation{Description: "Start the configured managed Qdrant runtime explicitly.", Command: "knowns qdrant start"}}, nil
+			return CheckResult{Status: StatusWarn, Summary: "Managed Qdrant process is not healthy", Evidence: evidence, Remediation: &Remediation{Description: "Start the configured managed Qdrant runtime explicitly." + externalQdrantEscape, Command: "knowns qdrant start"}}, nil
 		}
 	}}
 }

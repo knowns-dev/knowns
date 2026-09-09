@@ -79,6 +79,7 @@ Use these docs if you want to:
 - [Validate](./reference/validate.md)
 - [Reference system](./reference/reference-system.md)
 - [Semantic search](./reference/semantic-search.md)
+- [External Qdrant](./reference/external-qdrant.md)
 - [Ollama Embedding Models](./reference/ollama-embedding-models.md)
 
 ### Integrations

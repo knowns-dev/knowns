@@ -24,6 +24,15 @@ khuyến nghị và điểm đánh đổi giữa chúng.
 - `semantic`
 - `hybrid`
 
+## Vector store
+
+Vector được lưu trong Qdrant. Mặc định Knowns tự quản lý một process Qdrant local
+cho bạn, không cần cài hay cấu hình gì thêm.
+
+Nếu managed binary không chạy được trên platform của bạn, hoặc bạn đã có sẵn
+Qdrant ở đâu đó, hãy trỏ Knowns vào endpoint đó. Xem
+[External Qdrant](./external-qdrant.md).
+
 ## Lưu ý
 
 Nếu semantic components chưa sẵn sàng, search tự fallback về safe mode thay vì crash.
@@ -31,3 +40,4 @@ Nếu semantic components chưa sẵn sàng, search tự fallback về safe mode
 ## Xem thêm
 
 - [Ollama Embedding Models](./ollama-embedding-models.md) — model khuyến nghị, lệnh cài/pull, và bốn trạng thái sẵn sàng của Ollama.
+- [External Qdrant](./external-qdrant.md) - kết nối tới Qdrant bạn tự chạy, và giới hạn platform của managed binary.

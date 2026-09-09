@@ -87,9 +87,15 @@ Per-section git tracking toggles. Kiểm soát subdirectories nào trong `.known
 
 ### `settings.semanticSearch`
 
-Config cho semantic search: `enabled`, `model`, `provider`, `dimensions`.
+Config cho semantic search: `enabled`, `model`, `provider`, `dimensions`,
+`vectorStore`.
 
 `provider` có thể là `ollama`, hoặc provider ID đã đăng ký bằng `knowns provider add`.
+
+`vectorStore` (`backend`, `mode`, `externalURL`, `managedRoot`, `install`,
+`retention`) chọn và provision vector backend. Mặc định là Qdrant local do Knowns
+quản lý, nên đa số project không cần set. Xem
+[External Qdrant](./external-qdrant.md) nếu muốn kết nối tới Qdrant bạn tự chạy.
 
 Project tạo trước thay đổi Ollama-only có thể vẫn còn `"provider": "local"`.
 Giá trị đó được đọc như `"ollama"` với model mặc định; `knowns migrate` ghi lại
