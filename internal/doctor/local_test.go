@@ -216,7 +216,7 @@ func TestSearchChecksSkipWhenSemanticSearchDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if result.Verdict != VerdictHealthy || result.Summary.Skip != 9 {
+	if result.Verdict != VerdictHealthy || result.Summary.Skip != 10 {
 		t.Fatalf("disabled search result = %#v", result)
 	}
 }

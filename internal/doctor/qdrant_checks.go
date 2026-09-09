@@ -9,6 +9,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/qdrantruntime"
+	"github.com/howznguyen/knowns/internal/runtimequeue"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 )
@@ -35,6 +36,7 @@ func qdrantCheckers(state *localState) []Checker {
 		qdrantPointerChecker(state),
 		qdrantCollectionChecker(state),
 		qdrantOrphanChecker(state),
+		qdrantDeadLetterChecker(state),
 	}
 }
 
@@ -201,6 +203,85 @@ func qdrantOrphanChecker(state *localState) Checker {
 		// collection-cleanup command exists.
 		return CheckResult{Status: StatusWarn, Summary: "Qdrant orphan collection candidates were identified", Evidence: Evidence{"orphanCandidates": snapshot.Orphans}, Remediation: &Remediation{Description: "Review the listed inactive collections and drop the ones you no longer need directly against the Qdrant endpoint. `knowns qdrant cleanup` only clears runtime PID/status metadata and will not remove them."}}, nil
 	}}
+}
+
+// deadLetterSampleLimit bounds the entity list put in evidence. An outage
+// dead-letters every pending job at once, so the honest count can run to
+// hundreds; a sample plus the total tells an operator what is affected without
+// turning one check into a wall of IDs.
+const deadLetterSampleLimit = 10
+
+// qdrantDeadLetterChecker reports Qdrant reconcile jobs the scheduler has given
+// up on. A job dead-letters once it exhausts its retry budget, and
+// nextReadyJob then skips it unconditionally, so the entity behind it stays
+// unindexed until something clears the flag. Doctor previously reported the
+// resulting staleness without ever naming this cause, which left an operator
+// running reindex commands that cannot touch the queue.
+//
+// The check reads the queue directly through ListDeadLetters, which takes no
+// lock and mutates nothing, so a diagnostic run can never disturb the runtime
+// it is diagnosing.
+func qdrantDeadLetterChecker(state *localState) Checker {
+	return Checker{ID: "search.qdrant-dead-letters", Scope: ScopeSearch, Check: func(ctx context.Context) (CheckResult, error) {
+		if state.store == nil {
+			return skippedForMissingProject(), nil
+		}
+		snapshot, err := state.qdrantSnapshot(ctx)
+		if err != nil {
+			return CheckResult{}, err
+		}
+		if skip, ok := qdrantSkip(snapshot,
+			"Qdrant dead-letter recovery is dormant because semantic search is disabled",
+			"Qdrant dead-letter recovery is not applicable to the configured semantic backend"); ok {
+			return skip, nil
+		}
+
+		letters, err := runtimequeue.ListDeadLetters(state.store.Root)
+		if err != nil {
+			return CheckResult{}, err
+		}
+		if len(letters) == 0 {
+			return CheckResult{
+				Status:   StatusPass,
+				Summary:  "No Qdrant reconcile jobs are stranded in the dead-letter state",
+				Evidence: Evidence{"deadLetters": 0},
+			}, nil
+		}
+
+		evidence := Evidence{"deadLetters": len(letters), "entities": deadLetterEntities(letters)}
+		if len(letters) > deadLetterSampleLimit {
+			evidence["entitiesTruncated"] = true
+		}
+		// Unlike the orphan check above, this warning has a command that
+		// genuinely clears it: releasing the jobs sets DeadLetter false, so a
+		// second doctor run passes. Whether the released jobs then succeed is a
+		// separate question the runtime checks answer.
+		return CheckResult{
+			Status:   StatusWarn,
+			Summary:  fmt.Sprintf("%d Qdrant reconcile job(s) are dead-lettered and will never be scheduled again", len(letters)),
+			Evidence: evidence,
+			Remediation: &Remediation{
+				Description: "Release the retained jobs back to the scheduler. Preview first with `knowns runtime retry --all --dry-run`, and use `knowns runtime retry --all-projects` when an outage stranded more than this project. Reindexing cannot clear this: the scheduler skips a dead letter unconditionally, so the jobs must be released before the entities behind them can be indexed.",
+				Command:     "knowns runtime retry --all",
+			},
+		}, nil
+	}}
+}
+
+// deadLetterEntities names the affected entities, sorted so repeated runs
+// report the same evidence, and capped at deadLetterSampleLimit. Job targets
+// are entity references such as "task:KND-1A2B3C"; no path, error text, or
+// payload from the queue is exposed here.
+func deadLetterEntities(letters []runtimequeue.Job) []string {
+	targets := make([]string, 0, len(letters))
+	for _, job := range letters {
+		targets = append(targets, job.Target)
+	}
+	sort.Strings(targets)
+	if len(targets) > deadLetterSampleLimit {
+		targets = targets[:deadLetterSampleLimit]
+	}
+	return targets
 }
 
 func inspectQdrantReadOnly(ctx context.Context, store *storage.Store) (qdrantDiagnosticSnapshot, error) {
