@@ -119,8 +119,33 @@ Use this shape when spawning an implementation worker:
 Worker for <TASK_ID> in <SPEC_REF>. Use kn-implement.
 Owned scope: <OWNERSHIP_SCOPE>.
 Do not revert unrelated changes.
-Implement the saved plan, verify it, validate the task, and report changed files, tests, ACs, blockers, and out-of-scope edits.
+Implement the saved plan, verify it, and validate the task.
+End your report with a single JSON object in exactly this shape:
+
+{
+  "task_id": "<TASK_ID>",
+  "changed_files": ["<path>"],
+  "commands_run": ["<exact command as run>"],
+  "tests_passed": true,
+  "test_evidence": "<verbatim result line from the test run>",
+  "acs_checked": [1, 2],
+  "decision_compliance": ["D1=pass"],
+  "out_of_scope_edits": [],
+  "blockers": [],
+  "unknowns": []
+}
 ```
+
+### Worker Report Contract
+
+A worker report is evidence, not a status claim. Send the report back rather than integrating it when:
+
+- `tests_passed` is true while `commands_run` or `test_evidence` is empty, because nothing shows the tests ran
+- `acs_checked` names a criterion that no listed file or command could satisfy
+- `changed_files` disagrees with the real diff
+- prose replaces the object, or fields are silently dropped
+
+Integrate because the evidence holds, never because a worker reported completion. A non-empty `unknowns` is an honest report; an empty `unknowns` on a task that plainly had open questions is the suspicious case.
 
 ## Reviewer Prompt
 
@@ -129,11 +154,12 @@ Use this shape when spawning a review worker:
 ```text
 Reviewer for <TASK_ID> in <SPEC_REF>. Use kn-review.
 Review the real diff and report verdict, P1/P2/P3 findings with file:line refs, wiring status, fixes, and verification gaps.
+Check the worker's report against that diff and report every field the diff contradicts.
 ```
 
 ## After Each Wave
 
-1. Inspect worker output directly.
+1. Inspect worker output directly, and check each report field against the real diff before trusting it.
 2. Integrate or reject worker changes in the main context.
 3. Run combined verification for touched areas.
 4. Re-run review if integration changed reviewed code.
@@ -182,6 +208,7 @@ Required order for the final user-facing response:
 - [ ] Plans exist for all runnable tasks
 - [ ] Implementation completed per task
 - [ ] Tests derived and run for behavior changes, or the step explicitly skipped
+- [ ] Worker reports carried evidence and matched the real diff
 - [ ] Reviews completed and P1 fixed
 - [ ] Combined verification passed
 - [ ] SDD validation passed
@@ -197,6 +224,7 @@ Required order for the final user-facing response:
 - Creating tasks without approval
 - Parallelizing tasks with shared APIs, schema, config, generated files, migrations, or runtime contracts
 - Trusting worker output without inspecting the real diff
+- Accepting a worker report that claims passing tests with no command or result evidence
 - Ordering or parallelising tasks from `order` when no dependency edge was declared
 - Skipping review before final verification
 - Marking the spec done while linked tasks remain unhandled

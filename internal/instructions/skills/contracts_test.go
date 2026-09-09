@@ -172,6 +172,26 @@ func TestDependencyEdgesAreDeclaredNotInferred(t *testing.T) {
 	}
 }
 
+// TestWorkerReportsCarryEvidence pins the worker report contract. The prompt used
+// to ask for free-text, so a reviewer approved because a worker said "done" rather
+// than because evidence existed.
+func TestWorkerReportsCarryEvidence(t *testing.T) {
+	flow := readBuiltInSkill(t, "kn-flow")
+	for _, required := range []string{
+		"Worker Report Contract",
+		`"test_evidence"`,
+		`"commands_run"`,
+		`"out_of_scope_edits"`,
+		"A worker report is evidence, not a status claim",
+		"Integrate because the evidence holds, never because a worker reported completion",
+		"Check the worker's report against that diff",
+	} {
+		if !strings.Contains(flow, required) {
+			t.Errorf("kn-flow is missing worker-report marker %q", required)
+		}
+	}
+}
+
 func rosterSentence(t *testing.T, content, marker string) string {
 	t.Helper()
 
