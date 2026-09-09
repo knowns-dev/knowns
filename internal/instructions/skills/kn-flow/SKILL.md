@@ -67,17 +67,28 @@ it, so a stripped prefix becomes a task the worker cannot open.
 
 Before spawning workers or implementing in waves, decide what can safely run together.
 
+Read declared dependency edges before judging dependencies from prose:
+
+```json
+mcp_knowns_search({ "action": "resolve", "ref": "@task-<id>{blocked-by}",
+  "direction": "both", "relationTypes": "blocked-by,depends", "entityTypes": "task" })
+```
+
 For each task, note:
 
-- dependencies
+- declared dependency edges, plus any dependency visible in the task text but never declared
 - owned write scope
 - expected verification
 - shared API/schema/config/generated artifact/runtime contract risk
 - parallel-safe: yes/no
 
+A task is runnable only when every task it declares `blocked-by` is done. Two tasks with no edge between them are candidates for the same wave: `order` is display sequence, so it never on its own justifies serialising them and never on its own justifies parallelising them.
+
+When a real dependency exists but was never declared as an edge, say so and record it on the task, so the next run reads the edge instead of re-deriving it.
+
 Only run tasks in parallel when dependencies and write scopes are disjoint and no shared runtime contract is touched. Default to sequential execution when safety is unclear.
 
-Report the schedule before implementation.
+Report the schedule before implementation, naming which pairs are unordered because no edge exists and which are ordered by a declared edge.
 
 ## Execution Loop
 
@@ -166,6 +177,7 @@ Required order for the final user-facing response:
 
 - [ ] Spec/tasks read
 - [ ] Linked tasks discovered and sorted
+- [ ] Declared dependency edges read before scheduling
 - [ ] Parallel gate reported
 - [ ] Plans exist for all runnable tasks
 - [ ] Implementation completed per task
@@ -185,6 +197,7 @@ Required order for the final user-facing response:
 - Creating tasks without approval
 - Parallelizing tasks with shared APIs, schema, config, generated files, migrations, or runtime contracts
 - Trusting worker output without inspecting the real diff
+- Ordering or parallelising tasks from `order` when no dependency edge was declared
 - Skipping review before final verification
 - Marking the spec done while linked tasks remain unhandled
 - Marking work done without an explicit `System Decision Impact` marker

@@ -141,6 +141,37 @@ func TestRosterSentenceListsEverySkill(t *testing.T) {
 	})
 }
 
+// TestDependencyEdgesAreDeclaredNotInferred pins the contract that produced the
+// edges in the first place. Across 35 tasks the project had exactly one relation
+// ref and zero blocked-by edges, because kn-plan never emitted any while kn-flow
+// leaned on `order` as if it carried dependency. Both halves must stay: a producer
+// that writes edges, and a consumer that reads them instead of guessing.
+func TestDependencyEdgesAreDeclaredNotInferred(t *testing.T) {
+	plan := readBuiltInSkill(t, "kn-plan")
+	for _, required := range []string{
+		"{blocked-by}",
+		"order `NN * 10`, which carries display sequence only",
+		"Create upstream tasks first so their IDs exist",
+		"Never declare a cycle",
+		"Prefer no edge over a speculative edge",
+	} {
+		if !strings.Contains(plan, required) {
+			t.Errorf("kn-plan is missing dependency-edge marker %q", required)
+		}
+	}
+
+	flow := readBuiltInSkill(t, "kn-flow")
+	for _, required := range []string{
+		`"relationTypes": "blocked-by,depends"`,
+		"A task is runnable only when every task it declares `blocked-by` is done",
+		"never on its own justifies serialising them",
+	} {
+		if !strings.Contains(flow, required) {
+			t.Errorf("kn-flow is missing dependency-edge marker %q", required)
+		}
+	}
+}
+
 func rosterSentence(t *testing.T, content, marker string) string {
 	t.Helper()
 
