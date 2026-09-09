@@ -139,8 +139,20 @@ function isErrorStale(job: RuntimeJob, now: number) {
 	return now - failedAt > DEAD_LETTER_STALE_AFTER_MS;
 }
 
+// Every runtime projectRoot is the project's `.knowns` directory, so its last
+// segment is always ".knowns" and names nothing: every client, job and failure
+// row read as ".knowns" no matter which workspace it belonged to. The workspace
+// is the directory that holds it.
+function projectPath(root: string) {
+	const separator = root.includes("\\") && !root.includes("/") ? "\\" : "/";
+	const segments = root.split(/[\\/]/);
+	if (segments[segments.length - 1] === ".knowns") segments.pop();
+	const path = segments.join(separator);
+	return path === "" || path === separator ? root : path;
+}
+
 function projectName(root: string) {
-	return root.split(/[\\/]/).filter(Boolean).pop() || root;
+	return projectPath(root).split(/[\\/]/).filter(Boolean).pop() || root;
 }
 
 function detailValue(service: RuntimeService, key: string) {
@@ -1666,8 +1678,11 @@ export function RuntimeOverview() {
 										className="grid gap-1 px-4 py-2.5 text-xs sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:items-center"
 									>
 										<span className="font-medium">{client.clientKind}</span>
-										<span className="truncate text-muted-foreground" title={client.projectRoot}>
-											{projectName(client.projectRoot)}
+										<span
+											className="truncate font-mono text-[11px] text-muted-foreground"
+											title={client.projectRoot}
+										>
+											{projectPath(client.projectRoot)}
 										</span>
 										<span className="font-mono text-[10px] tabular-nums text-muted-foreground">
 											pid={client.pid || "?"} · {timeAgo(client.updatedAt)}

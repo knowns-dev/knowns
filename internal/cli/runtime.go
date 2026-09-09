@@ -1199,7 +1199,7 @@ func renderRuntimePsPlain(cmd *cobra.Command, status *runtimequeue.Status, snaps
 		if watcher.GracePending {
 			state = "grace"
 		}
-		fmt.Fprintf(w, "watcher\t%s\tdemand=%d\tstate=%s", filepath.Base(watcher.ProjectRoot), watcher.Demand, state)
+		fmt.Fprintf(w, "watcher\t%s\tdemand=%d\tstate=%s", projectDisplayName(watcher.ProjectRoot), watcher.Demand, state)
 		if watcher.GracePending && !watcher.GraceUntil.IsZero() {
 			fmt.Fprintf(w, "\tuntil=%s", watcher.GraceUntil.Format(time.RFC3339))
 		}
@@ -1224,14 +1224,14 @@ func renderRuntimePsPlain(cmd *cobra.Command, status *runtimequeue.Status, snaps
 		}
 		age := time.Since(lease.UpdatedAt).Round(time.Second)
 		fmt.Fprintf(w, "client\t%s\t%s\tpid=%d\tage=%s\n",
-			lease.ClientKind, filepath.Base(lease.ProjectRoot), lease.PID, age)
+			lease.ClientKind, projectDisplayName(lease.ProjectRoot), lease.PID, age)
 	}
 
 	if opts.ShowJobs {
 		now := time.Now().UTC()
 		if !opts.FailedOnly {
 			for _, snap := range snapshots {
-				project := filepath.Base(snap.Root)
+				project := projectDisplayName(snap.Root)
 				for _, job := range snap.Running {
 					dur := ""
 					if job.StartedAt != nil {
