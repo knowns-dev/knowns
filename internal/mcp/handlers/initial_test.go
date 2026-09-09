@@ -56,7 +56,13 @@ func TestBuildInitialInstructionsContainsExpectedSections(t *testing.T) {
 		"**FORBIDDEN**",
 		"## Workflow",
 		"## Knowledge Lifecycle",
-		"semantic review before becoming trusted",
+		// The block has to say what a Memory IS, not only how its lifecycle
+		// works. Describing only the machinery is what left every quality
+		// memory coming from the kn-extract skill, which has to be invoked,
+		// rather than from initial, which runs every session.
+		"a fact the NEXT session needs",
+		"a request, not a conclusion",
+		"**Why:**",
 		"Spec Decisions are stable D-rules",
 		"Memory category 'decision' is legacy",
 		"## Tools",
@@ -274,5 +280,24 @@ func TestInitialReportsTaskIDFormat(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildInitialInstructionsDropsTheProposedDefaultClaim(t *testing.T) {
+	// initial used to publish "Agent/MCP Memory writes default to proposed
+	// unless explicitly resolved". That stopped being true when add started
+	// landing active, and a bootstrap that misdescribes the write path teaches
+	// every session the wrong lifecycle.
+	got := buildInitialInstructions(func() *storage.Store { return nil }, nil)
+	for _, stale := range []string{
+		"default to proposed unless explicitly resolved",
+		"semantic review before becoming trusted",
+	} {
+		if strings.Contains(got, stale) {
+			t.Errorf("initial still carries the superseded claim %q", stale)
+		}
+	}
+	if !strings.Contains(got, "returns review_required") {
+		t.Error("initial should say what happens to a write that matches an existing memory")
 	}
 }

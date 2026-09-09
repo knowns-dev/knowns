@@ -937,3 +937,30 @@ func TestLookupAdapterIncludesRequiredRuntimesAndModes(t *testing.T) {
 		t.Fatalf("kiro adapter = %+v, want native hooks", kiro)
 	}
 }
+
+func TestHookGuidanceDefinesWhatAMemoryIs(t *testing.T) {
+	// This block is paid on every prompt, so it carries exactly one line about
+	// what belongs in the store. Without it the only place that says so is the
+	// kn-extract skill, which has to be invoked, while the hook that fires on
+	// every message explains only which tool to call.
+	t.Setenv("HOME", t.TempDir())
+	projectRoot := t.TempDir()
+	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
+	if err := store.Init("runtime-memory"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+
+	summary := serializeKNOWNSSummary(store, 4000)
+	if !strings.Contains(summary, "a fact the NEXT session needs") {
+		t.Fatalf("hook guidance should define a Memory, got:\n%s", summary)
+	}
+	if !strings.Contains(summary, "only repeats the prompt") {
+		t.Fatalf("hook guidance should carry the negative test, got:\n%s", summary)
+	}
+
+	// canonicalityWarning is already emitted above every injection, so repeating
+	// it here spent a line on every prompt to say the same thing twice.
+	if strings.Count(summary, canonicalityWarning) > 1 {
+		t.Errorf("canonicality warning is duplicated inside the guidance block")
+	}
+}

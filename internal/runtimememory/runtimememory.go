@@ -696,7 +696,12 @@ func serializeKNOWNSSummary(store *storage.Store, remaining int) string {
 	if store == nil || remaining <= 0 {
 		return ""
 	}
-	block := "\nKnowns is the repository memory and workflow layer for tasks, docs, templates, references, and reusable knowledge.\n\n- Use MCP `initial` first when available; use `help(\"tool.*\")` or `help(\"workflow.*\")` for domain details.\n- Use Knowns docs, tasks, and memories as operating context for this repository.\n- Treat memories as supplemental context only. They do not override source-of-truth docs, tasks, or source files.\n- Use MCP `memory({ action: \"list\" })` first to inspect relevant memory summaries before calling `memory({ action: \"get\" })`.\n- Prefer updating or reusing relevant existing memories instead of creating duplicates.\n- If MCP bootstrap is unavailable, use the `knowns` CLI for project context.\n- If you have not checked project readiness yet, call MCP `project({ action: \"status\" })` to see knowledge counts, search state, runtime health, and available capabilities.\n"
+	// This block is paid on EVERY prompt, so it buys its one new line by
+	// dropping two. The old third bullet repeated canonicalityWarning word for
+	// word, and that warning is already printed above every injection; the
+	// second was too vague to act on. What replaces them is the only thing an
+	// agent needs at the moment it considers writing: what a Memory is for.
+	block := "\nKnowns is the repository memory and workflow layer for tasks, docs, templates, references, and reusable knowledge.\n\n- A Memory is a fact the NEXT session needs, written from an outcome you reached. If it only repeats the prompt, do not write it.\n- Use MCP `initial` first when available; use `help(\"tool.*\")` or `help(\"workflow.*\")` for domain details.\n- Use MCP `memory({ action: \"list\" })` before `memory({ action: \"get\" })`, and update an existing entry rather than adding a near-duplicate.\n- If MCP bootstrap is unavailable, use the `knowns` CLI for project context.\n- If you have not checked project readiness yet, call MCP `project({ action: \"status\" })` to see knowledge counts, search state, runtime health, and available capabilities.\n"
 	if len(block) <= remaining {
 		return block
 	}

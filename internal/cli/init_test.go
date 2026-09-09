@@ -932,7 +932,13 @@ func TestRenderCompatibilityInstructionContentUsesMCPBootstrap(t *testing.T) {
 
 	assertContains(t, content, "Start with Knowns MCP `initial`")
 	assertNotContains(t, content, "KNOWNS.md")
-	assertContains(t, content, "- Proactively capture durable memory when scope and durability are clear.")
+	// The shipped guidance has to define a Memory, not merely point at the
+	// tools. "Proactively capture durable memory when scope and durability are
+	// clear" told an agent to act without telling it what qualifies, which is
+	// how a store fills with entries nobody can use.
+	assertContains(t, content, "a fact the NEXT session needs")
+	assertContains(t, content, "a request, not a conclusion")
+	assertContains(t, content, "**Why:**")
 }
 
 func TestPlatformLabelUsesUnifiedRuntimeArtifactSummary(t *testing.T) {
