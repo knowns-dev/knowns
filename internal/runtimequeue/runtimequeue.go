@@ -1251,6 +1251,25 @@ func CompleteJob(storeRoot string, job Job, err error) error {
 	})
 }
 
+// IsReleasableDeadLetter reports whether a job is a retained Qdrant dead
+// letter — the only kind RetryJob and RetryDeadLetters are willing to
+// resurrect. Generic background failures are dropped outright and never
+// reach this state, so they never pass this check.
+func IsReleasableDeadLetter(job Job) bool {
+	return job.Kind == JobQdrantReconcile && job.DeadLetter
+}
+
+// releaseDeadLetter clears the terminal dead-letter state on job so the
+// scheduler treats it as freshly runnable. RetryJob and RetryDeadLetters
+// both call this instead of resetting the fields themselves, so the
+// single-job and bulk release paths cannot drift apart.
+func releaseDeadLetter(job *Job, now time.Time) {
+	job.DeadLetter = false
+	job.Attempts = 0
+	job.LastError = ""
+	job.RunAfter = now
+}
+
 // RetryJob explicitly releases a retained Qdrant dead-letter job. It is
 // intentionally narrow: generic background failures retain their historical
 // terminal behavior and cannot be accidentally replayed.
@@ -1261,19 +1280,56 @@ func RetryJob(storeRoot, jobID string) (Job, error) {
 			if job.ID != jobID {
 				continue
 			}
-			if job.Kind != JobQdrantReconcile || !job.DeadLetter {
+			if !IsReleasableDeadLetter(*job) {
 				return fmt.Errorf("job %s is not a qdrant dead letter", jobID)
 			}
-			job.DeadLetter = false
-			job.Attempts = 0
-			job.LastError = ""
-			job.RunAfter = time.Now().UTC()
+			releaseDeadLetter(job, time.Now().UTC())
 			retried = *job
 			return nil
 		}
 		return fmt.Errorf("job %s not found", jobID)
 	})
 	return retried, err
+}
+
+// ListDeadLetters returns every retained Qdrant dead letter in storeRoot's
+// queue. It is read-only — it goes through LoadQueue directly and never
+// acquires the queue lock — so it is safe to call from a --dry-run preview
+// without any risk of mutating state.
+func ListDeadLetters(storeRoot string) ([]Job, error) {
+	state, err := LoadQueue(storeRoot)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Job, 0)
+	for _, job := range state.Jobs {
+		if IsReleasableDeadLetter(*job) {
+			out = append(out, *job)
+		}
+	}
+	return out, nil
+}
+
+// RetryDeadLetters releases every retained Qdrant dead letter in storeRoot in
+// a single updateQueue pass. An extended outage can dead-letter hundreds of
+// jobs at once (an 8-attempt retry budget exhausts identically for every
+// pending job); replaying them through RetryJob one at a time would mean
+// hundreds of lock/read/write cycles on the same queue file for what is
+// logically one recovery operation.
+func RetryDeadLetters(storeRoot string) ([]Job, error) {
+	released := make([]Job, 0)
+	err := updateQueue(storeRoot, func(state *QueueState) error {
+		now := time.Now().UTC()
+		for _, job := range state.Jobs {
+			if !IsReleasableDeadLetter(*job) {
+				continue
+			}
+			releaseDeadLetter(job, now)
+			released = append(released, *job)
+		}
+		return nil
+	})
+	return released, err
 }
 
 func qdrantRetryDelay(attempt int) time.Duration {
