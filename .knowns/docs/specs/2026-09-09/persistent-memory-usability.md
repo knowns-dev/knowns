@@ -3,7 +3,7 @@ id: doc-b8ef6350c3474347b9778c6b79a100f1
 title: Persistent Memory Usability
 description: 'Làm cho Persistent Memory thực sự dùng được: bỏ auto-capture theo keyword, mở đường ghi MCP, ghi được provenance, thêm confirm/contradict, anchor check cho memory loại 1'
 createdAt: '2026-09-09T07:09:15.590Z'
-updatedAt: '2026-09-09T08:34:41.016Z'
+updatedAt: '2026-09-09T09:26:19.326Z'
 tags:
   - spec
   - approved
@@ -209,14 +209,19 @@ Thiết kế dựa trên phân biệt sau, vì nó quyết định cách verify:
 
 | Wave | Task | FR | Status |
 |---|---|---|---|
-| 1 | `MEM-ZRRANS` Remove keyword auto-capture from runtime memory | FR-1 | todo |
-| 2 | `MEM-7MH0SK` MCP memory write path: provenance, active default, Why and category gates, key upsert | FR-2, 3, 6, 7, 8 | todo |
-| 2 | `MEM-YEWBH2` Teach the instruction layer what a Memory is, across all three delivery channels | FR-11, 12, 13 | todo |
+| 1 | `MEM-ZRRANS` Remove keyword auto-capture from runtime memory | FR-1 | in-review, committed `3b02f6e` |
+| 2 | `MEM-7MH0SK` MCP memory write path: provenance, active default, Why and category gates, key upsert | FR-2, 3, 6, 7, 8 | in-review |
+| 2 | `MEM-YEWBH2` Teach the instruction layer what a Memory is, across all three delivery channels | FR-11, 12, 13 | in-review |
 | 3 | `MEM-F2GSWW` Verification lifecycle: confirm and contradict, plus a bounded proposed queue | FR-4, 10 | todo |
 | 3 | `MEM-1YT800` Flag world-fact memories whose cited anchors no longer exist | FR-5 | todo |
 | 4 | `MEM-TAT57N` Migrate the memory store: export, delete 83, rescue 3, normalize the rest | FR-9 | todo |
+| follow-up | `MEM-FB7A6Y` Retire the runtime memory capture surface now that nothing can capture | out of spec scope | todo |
 
 Phụ thuộc khai bằng `@task-<id>{blocked-by}` trong description, không bằng `order`, theo `@decision/20260828-0249-task-dependencies-are-declared-as-blocked-by-edges-order-is-display-sequence-only`.
+
+### Đính chính với FR-12
+
+FR-12 viết "thay dòng thống kê `memories: 48p, 60g`". Sai: `%dp, %dg` ở `internal/mcp/handlers/initial.go` là số theo **layer** (project và global), không phải số `proposed`. `MEM-YEWBH2` giữ nguyên số theo layer và **thêm** một dòng cảnh báo chỉ hiện khi có entry chờ duyệt.
 
 ## Open Questions
 
