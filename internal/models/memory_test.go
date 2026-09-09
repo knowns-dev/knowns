@@ -4,7 +4,6 @@ import (
 	"errors"
 	"reflect"
 	"testing"
-	"time"
 )
 
 func TestLegacyDecisionMemoryCategoryPolicyNormalizesInput(t *testing.T) {
@@ -111,8 +110,11 @@ func TestMemoryEntryMissingTrustMetadata(t *testing.T) {
 }
 
 func TestSelectMemoryCleanupCandidatesSeparatesAbandonedFromOld(t *testing.T) {
-	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
-	old := now.AddDate(0, 0, -400)
+	// Anchored to the rule's effective date, not to wall-clock time, so the
+	// grace window for the pre-existing backlog does not silently neutralise
+	// what this test is checking.
+	now := memoryProposalTTLEffectiveFrom.AddDate(0, 0, 400)
+	old := now.AddDate(0, 0, -390)
 
 	entries := []*MemoryEntry{
 		// Verified and in use. It is old, but nothing about it needs cleaning,
@@ -146,8 +148,8 @@ func TestSelectMemoryCleanupCandidatesSeparatesAbandonedFromOld(t *testing.T) {
 }
 
 func TestProposalIsExpiredOnlyAppliesToProposed(t *testing.T) {
-	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
-	old := now.AddDate(0, 0, -400)
+	now := memoryProposalTTLEffectiveFrom.AddDate(0, 0, 400)
+	old := now.AddDate(0, 0, -390)
 
 	for _, status := range []string{MemoryStatusActive, MemoryStatusArchived, MemoryStatusRejected, MemoryStatusStale} {
 		entry := &MemoryEntry{ID: "x", Status: status, UpdatedAt: old}
@@ -157,5 +159,36 @@ func TestProposalIsExpiredOnlyAppliesToProposed(t *testing.T) {
 	}
 	if !ProposalIsExpired(&MemoryEntry{ID: "x", Status: MemoryStatusProposed, UpdatedAt: old}, MemoryProposalTTLDays, now) {
 		t.Error("an unresolved proposal past its window should expire")
+	}
+}
+
+func TestProposalGracePeriodProtectsThePreExistingBacklog(t *testing.T) {
+	// The backlog that existed when the TTL shipped accumulated under a system
+	// that never surfaced the queue. Measuring its age from when each entry was
+	// written would retire it for missing a deadline that did not exist, and
+	// would take real knowledge with it: this store held six well-sourced
+	// failures and a root-cause writeup in exactly that state.
+	old := memoryProposalTTLEffectiveFrom.AddDate(0, 0, -400)
+	entry := &MemoryEntry{ID: "backlog", Status: MemoryStatusProposed, UpdatedAt: old}
+
+	justInside := memoryProposalTTLEffectiveFrom.AddDate(0, 0, MemoryProposalTTLDays-1)
+	if ProposalIsExpired(entry, MemoryProposalTTLDays, justInside) {
+		t.Error("an entry from before the rule must get the full window, measured from the rule")
+	}
+
+	justPast := memoryProposalTTLEffectiveFrom.AddDate(0, 0, MemoryProposalTTLDays+1)
+	if !ProposalIsExpired(entry, MemoryProposalTTLDays, justPast) {
+		t.Error("once the grace window passes, the ordinary rule applies")
+	}
+
+	// Anything written after the rule took effect is measured normally.
+	fresh := &MemoryEntry{
+		ID:     "after",
+		Status: MemoryStatusProposed,
+		// Written the day the rule shipped, then left alone.
+		UpdatedAt: memoryProposalTTLEffectiveFrom.AddDate(0, 0, 1),
+	}
+	if ProposalIsExpired(fresh, MemoryProposalTTLDays, justInside) {
+		t.Error("a recent proposal is not abandoned yet")
 	}
 }

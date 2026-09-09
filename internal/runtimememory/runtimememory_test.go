@@ -965,10 +965,10 @@ func TestHookGuidanceDefinesWhatAMemoryIs(t *testing.T) {
 	}
 }
 
-func TestCaptureExpiresAbandonedProposals(t *testing.T) {
-	// The hook's write path used to manufacture junk. It now clears it: the
-	// review queue becomes self-limiting without anyone running a command,
-	// which is the only version of this that actually happens.
+func TestExpireAbandonedProposalsRetiresOnlyTheAbandoned(t *testing.T) {
+	// Driven with an explicit clock rather than time.Now, so it keeps testing
+	// the rule after the grace window for the pre-existing backlog has passed
+	// and stops depending on what day it is run.
 	t.Setenv("HOME", t.TempDir())
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
@@ -976,7 +976,7 @@ func TestCaptureExpiresAbandonedProposals(t *testing.T) {
 		t.Fatalf("init store: %v", err)
 	}
 
-	old := time.Now().UTC().AddDate(0, 0, -400)
+	now := time.Now().UTC().AddDate(2, 0, 0)
 	seed := func(id, status string, updated time.Time) {
 		t.Helper()
 		if err := store.Memory.Create(&models.MemoryEntry{
@@ -986,19 +986,12 @@ func TestCaptureExpiresAbandonedProposals(t *testing.T) {
 			t.Fatalf("seed %s: %v", id, err)
 		}
 	}
-	seed("abandoned", models.MemoryStatusProposed, old)
-	seed("kept", models.MemoryStatusActive, old)
-	seed("recent", models.MemoryStatusProposed, time.Now().UTC())
+	seed("abandoned", models.MemoryStatusProposed, now.AddDate(0, 0, -90))
+	seed("kept", models.MemoryStatusActive, now.AddDate(0, 0, -90))
+	seed("recent", models.MemoryStatusProposed, now.AddDate(0, 0, -1))
 
-	_, outcome, err := CaptureWithOutcome(store, Input{
-		Runtime: "opencode", ProjectRoot: projectRoot, WorkingDir: projectRoot,
-		ActionType: "user-prompt-submit", UserPrompt: "please review the reconcile queue", Mode: ModeAuto,
-	})
-	if err != nil {
-		t.Fatalf("capture: %v", err)
-	}
-	if outcome.ExpiredProposals != 1 {
-		t.Fatalf("expiredProposals = %d, want 1", outcome.ExpiredProposals)
+	if got := expireAbandonedProposals(store, now); got != 1 {
+		t.Fatalf("expired = %d, want 1", got)
 	}
 
 	expired, err := store.Memory.Get("abandoned")
@@ -1019,5 +1012,41 @@ func TestCaptureExpiresAbandonedProposals(t *testing.T) {
 		if entry.Status == models.MemoryStatusRejected {
 			t.Errorf("%s was expired but should not have been", id)
 		}
+	}
+}
+
+func TestCaptureReportsTheExpirySweep(t *testing.T) {
+	// The hook's write path used to manufacture junk. It now runs the sweep,
+	// so the queue is bounded without anyone remembering to run a command.
+	t.Setenv("HOME", t.TempDir())
+	projectRoot := t.TempDir()
+	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
+	if err := store.Init("runtime-memory"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+	if err := store.Memory.Create(&models.MemoryEntry{
+		ID: "fresh", Title: "Fresh", Layer: models.MemoryLayerProject,
+		Category: "pattern", Content: "Body", Status: models.MemoryStatusProposed,
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	_, outcome, err := CaptureWithOutcome(store, Input{
+		Runtime: "opencode", ProjectRoot: projectRoot, WorkingDir: projectRoot,
+		ActionType: "user-prompt-submit", UserPrompt: "please review the reconcile queue", Mode: ModeAuto,
+	})
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if outcome.ExpiredProposals != 0 {
+		t.Fatalf("a proposal written moments ago must not be swept, got %d", outcome.ExpiredProposals)
+	}
+	entry, err := store.Memory.Get("fresh")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if entry.Status != models.MemoryStatusProposed {
+		t.Fatalf("status = %q, want it left proposed", entry.Status)
 	}
 }

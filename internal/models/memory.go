@@ -333,6 +333,12 @@ func DemotePersistentMemoryLayer(layer string) (string, bool) {
 // that a person would have to read to find the entries that do matter.
 const MemoryProposalTTLDays = 30
 
+// memoryProposalTTLEffectiveFrom is the day the review queue started being
+// reported and expired. Proposals older than this are measured from here, so a
+// backlog built under a system that never announced itself gets the same full
+// window as anything written afterwards. See ProposalIsExpired.
+var memoryProposalTTLEffectiveFrom = time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+
 // Cleanup candidate kinds. The distinction is the point: an abandoned proposal
 // and a merely old entry need opposite treatment, and reporting them as one
 // list is what let a working `active` memory be offered for deletion beside a
@@ -383,6 +389,26 @@ func ProposalIsExpired(entry *MemoryEntry, ttlDays int, now time.Time) bool {
 	effective := MemoryEffectiveUpdatedAt(entry)
 	if effective.IsZero() {
 		return false
+	}
+	// A PROPOSAL CANNOT HAVE BEEN ABANDONED BEFORE ANYTHING ANNOUNCED IT.
+	//
+	// The backlog that existed when this rule shipped had accumulated under a
+	// system that never surfaced the queue: nothing expired an entry and nothing
+	// counted it, so a person could work in the repository daily for months and
+	// never learn that 48 entries were waiting. Measuring their age from when
+	// they were written would retire them for missing a deadline that did not
+	// exist, and it would take real knowledge with it. This store held six
+	// well-sourced failures and a root-cause writeup in that state.
+	//
+	// So the clock starts at the later of the entry's own timestamp and the day
+	// the rule took effect. Everything written afterwards is measured normally,
+	// because from then on the count is reported at every session start.
+	//
+	// This is deliberately a fixed date rather than persisted state: it needs no
+	// migration, it cannot drift between machines, and once the grace window has
+	// passed it stops having any effect and can simply be deleted.
+	if effective.Before(memoryProposalTTLEffectiveFrom) {
+		effective = memoryProposalTTLEffectiveFrom
 	}
 	return effective.Before(now.Add(-time.Duration(ttlDays) * 24 * time.Hour))
 }
