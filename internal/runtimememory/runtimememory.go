@@ -66,8 +66,6 @@ const (
 	defaultMaxBytes  = 2500
 	maxPreviewBody   = 320
 	baselineMaxItems = 4
-
-	minHighConfidenceCapture = 0.80
 )
 
 var tokenRE = regexp.MustCompile(`[a-z0-9]+`)
@@ -88,89 +86,6 @@ var lowSignalPromptTokens = map[string]struct{}{
 	"thank":    {},
 	"thanks":   {},
 	"yes":      {},
-}
-
-var globalPreferencePhrases = []string{
-	"i want",
-	"i prefer",
-	"please",
-	"always",
-	"never",
-	"default to",
-	"from now on",
-	"toi muon",
-	"toi thich",
-	"uu tien",
-	"luon",
-	"mac dinh",
-	"tu gio",
-	"ve sau",
-	"dung",
-	"khong doi",
-}
-
-var assistantScopePhrases = []string{
-	"assistant",
-	"agent",
-	" ai ",
-	"memory",
-	"save memory",
-	"reply",
-	"review",
-	"commit",
-	"luu memory",
-	"tra loi",
-	"review code",
-}
-
-var projectScopePhrases = []string{
-	"repo",
-	"repository",
-	"project",
-	"codebase",
-	"this repo",
-	"this project",
-	"repo nay",
-	"project nay",
-	"trong repo",
-	"trong project",
-	"knowns.md",
-	"agents.md",
-	"claude.md",
-	"opencode.md",
-	"copilot-instructions.md",
-	"shim",
-	"runtime",
-	"package",
-	"module",
-	"file",
-}
-
-var workingContextPhrases = []string{
-	"currently",
-	"for now",
-	"this session",
-	"temporary",
-	"temporarily",
-	"investigating",
-	"debugging",
-	"blocked on",
-	"workaround",
-	"hien tai",
-	"tam thoi",
-	"phien nay",
-	"dang debug",
-	"dang dieu tra",
-	"bi chan",
-}
-
-type captureCandidate struct {
-	Title      string
-	Category   string
-	Layer      string
-	Content    string
-	Tags       []string
-	Confidence float64
 }
 
 type Settings struct {
@@ -506,52 +421,31 @@ func CaptureWithOutcome(store *storage.Store, input Input) (*models.MemoryEntry,
 		outcome.Reason = reason
 		return nil, outcome, nil
 	}
-	candidate, ok := inferCaptureCandidate(input)
-	if !ok {
-		outcome.Reason = SkipReasonNoCaptureCandidate
-		return nil, outcome, nil
-	}
-	outcome.Score = candidate.Confidence
-	if captureMode == CaptureHighConfidence {
-		outcome.Threshold = minHighConfidenceCapture
-	}
-	if captureMode == CaptureHighConfidence && candidate.Confidence < minHighConfidenceCapture {
-		outcome.Reason = SkipReasonCaptureConfidence
-		return nil, outcome, nil
-	}
-	entries, err := store.Memory.List("")
-	if err != nil {
-		return nil, outcome, err
-	}
-	if hasDuplicateCapture(entries, candidate) {
-		outcome.Reason = SkipReasonDuplicateCapture
-		return nil, outcome, nil
-	}
-	entry := &models.MemoryEntry{
-		Title:    candidate.Title,
-		Layer:    candidate.Layer,
-		Category: candidate.Category,
-		Content:  candidate.Content,
-		Tags:     append([]string(nil), candidate.Tags...),
-	}
-	result, err := memoryreview.New(store).Add(entry, memoryreview.AddOptions{})
-	if err != nil {
-		return nil, outcome, err
-	}
-	if result.Status == memoryreview.ResultReviewRequired || result.Memory == nil {
-		outcome.Reason = SkipReasonReviewRequired
-		outcome.Matches = append([]memoryreview.Match(nil), result.Matches...)
-		return nil, outcome, nil
-	}
-	outcome.Status = CaptureStatusCreated
-	outcome.Created = true
-	outcome.MemoryID = result.Memory.ID
-	outcome.MemoryStatus = result.Memory.Status
-	outcome.Trusted = result.Memory.CurrentForDefaultRetrieval()
-	if !outcome.Trusted {
-		outcome.TrustReason = "memory_not_active_for_default_retrieval"
-	}
-	return result.Memory, outcome, nil
+	// NOTHING IS CAPTURED FROM PROMPT TEXT ANY MORE, and this function keeps
+	// its signature so the `--capture` flag, settings.Capture and the hook's
+	// JSON envelope stay exactly as they shipped.
+	//
+	// The two inferences that used to run here read a phrase out of the user's
+	// prompt and wrote it down as durable knowledge. A prompt is a REQUEST, not
+	// a conclusion: at prompt time nothing has been established yet. The
+	// working-context inference made that concrete by matching on "currently",
+	// "for now", "temporary" and "this session", the exact vocabulary of a
+	// fact about to expire, and then stored it forever. The preference
+	// inference was worse: it overwrote Content with a hard-coded sentence, so
+	// it attributed to the user a statement the user had never made.
+	//
+	// The two together produced 86 of the 107 entries in the reference store
+	// and not one of them ever reached `active`. Memory now comes only from a
+	// deliberate `add`, where an agent writes from an outcome it just reached.
+	//
+	// The checks above still run, so mode=off, mode=debug, capture=disabled and
+	// the low-signal prompt filter keep reporting the reasons callers match on.
+	// SkipReasonCaptureConfidence, SkipReasonDuplicateCapture and
+	// SkipReasonReviewRequired are now unreachable; they stay exported because
+	// they are part of the hook's published JSON vocabulary, and retiring that
+	// surface is its own change.
+	outcome.Reason = SkipReasonNoCaptureCandidate
+	return nil, outcome, nil
 }
 
 func buildCandidates(store *storage.Store, input Input, maxItems int, baseline bool) ([]candidate, error) {
@@ -623,105 +517,6 @@ func buildBaselineItems(entries []*models.MemoryEntry, input Input) []candidate 
 	return candidates
 }
 
-func inferCaptureCandidate(input Input) (captureCandidate, bool) {
-	normalizedPrompt := normalizedPrompt(input.UserPrompt)
-	if normalizedPrompt == "" {
-		return captureCandidate{}, false
-	}
-	if looksLikeHookPayload(input.UserPrompt, normalizedPrompt) {
-		return captureCandidate{}, false
-	}
-
-	if candidate, ok := inferGlobalPreferenceCandidate(input.UserPrompt, normalizedPrompt); ok {
-		return candidate, true
-	}
-	if candidate, ok := inferWorkingContextCandidate(input.UserPrompt, normalizedPrompt); ok {
-		return candidate, true
-	}
-	return captureCandidate{}, false
-}
-
-func inferGlobalPreferenceCandidate(rawPrompt, normalized string) (captureCandidate, bool) {
-	if !hasAnyPhrase(normalized, globalPreferencePhrases) {
-		return captureCandidate{}, false
-	}
-	if !hasAnyPhrase(" "+normalized+" ", assistantScopePhrases) {
-		return captureCandidate{}, false
-	}
-	if looksRepoSpecific(rawPrompt, normalized) {
-		return captureCandidate{}, false
-	}
-	content := normalizeCapturedContent(rawPrompt)
-	title := "User collaboration preference"
-	tags := []string{"assistant", "preference"}
-	if strings.Contains(normalized, "memory") || strings.Contains(normalized, "luu memory") || strings.Contains(normalized, "save memory") {
-		title = "Memory capture preference"
-		content = "User prefers the assistant to proactively save durable memory without waiting for explicit reminders."
-		tags = append(tags, "memory")
-	}
-	if strings.Contains(normalized, "tra loi") || strings.Contains(normalized, "reply") || strings.Contains(normalized, "language") {
-		title = "Response preference"
-		tags = append(tags, "response")
-	}
-	return captureCandidate{
-		Title:      title,
-		Category:   "preference",
-		Layer:      models.MemoryLayerGlobal,
-		Content:    content,
-		Tags:       uniqueStrings(tags),
-		Confidence: 0.92,
-	}, true
-}
-
-func inferWorkingContextCandidate(rawPrompt, normalized string) (captureCandidate, bool) {
-	if !hasAnyPhrase(normalized, workingContextPhrases) {
-		return captureCandidate{}, false
-	}
-	return captureCandidate{
-		Title:      "Session working context",
-		Category:   "context",
-		Layer:      models.MemoryLayerProject,
-		Content:    normalizeCapturedContent(rawPrompt),
-		Tags:       []string{"session", "working-context"},
-		Confidence: 0.84,
-	}, true
-}
-
-func hasDuplicateCapture(entries []*models.MemoryEntry, candidate captureCandidate) bool {
-	content := normalizeComparableText(candidate.Content)
-	for _, entry := range entries {
-		if entry == nil {
-			continue
-		}
-		existingContent := normalizeComparableText(entry.Content)
-		if existingContent == content {
-			return true
-		}
-		if entry.Layer == candidate.Layer && normalizeComparableText(entry.Title) == normalizeComparableText(candidate.Title) {
-			if existingContent == "" || content == "" || strings.Contains(existingContent, content) || strings.Contains(content, existingContent) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func normalizedPrompt(prompt string) string {
-	return normalizeComparableText(normalizeWhitespace(strings.ToLower(strings.TrimSpace(prompt))))
-}
-
-func normalizeCapturedContent(prompt string) string {
-	prompt = normalizeWhitespace(strings.TrimSpace(prompt))
-	if prompt == "" {
-		return ""
-	}
-	last := prompt[len(prompt)-1]
-	if last != '.' && last != '!' && last != '?' {
-		prompt += "."
-	}
-	return prompt
-}
-
 func normalizeComparableText(s string) string {
 	replacer := strings.NewReplacer(
 		"á", "a", "à", "a", "ả", "a", "ã", "a", "ạ", "a",
@@ -739,43 +534,6 @@ func normalizeComparableText(s string) string {
 		"đ", "d",
 	)
 	return normalizeWhitespace(replacer.Replace(strings.ToLower(strings.TrimSpace(s))))
-}
-
-func hasAnyPhrase(text string, phrases []string) bool {
-	for _, phrase := range phrases {
-		if phrase == "" {
-			continue
-		}
-		if strings.Contains(text, normalizeComparableText(phrase)) {
-			return true
-		}
-	}
-	return false
-}
-
-func looksRepoSpecific(rawPrompt, normalized string) bool {
-	if hasAnyPhrase(normalized, projectScopePhrases) {
-		return true
-	}
-	rawPrompt = strings.TrimSpace(rawPrompt)
-	return strings.Contains(rawPrompt, "`") || strings.Contains(rawPrompt, "/") || strings.Contains(rawPrompt, ".go") || strings.Contains(rawPrompt, ".md")
-}
-
-func uniqueStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		normalized := normalizeComparableText(value)
-		if normalized == "" {
-			continue
-		}
-		if _, ok := seen[normalized]; ok {
-			continue
-		}
-		seen[normalized] = struct{}{}
-		result = append(result, normalized)
-	}
-	return result
 }
 
 func buildHeuristicItems(entries []*models.MemoryEntry, input Input) []candidate {
@@ -1154,20 +912,6 @@ func hasMemoryTag(entry *models.MemoryEntry, target string) bool {
 		if strings.EqualFold(strings.TrimSpace(tag), target) {
 			return true
 		}
-	}
-	return false
-}
-
-func looksLikeHookPayload(rawPrompt, normalized string) bool {
-	trimmed := strings.TrimSpace(rawPrompt)
-	if strings.HasPrefix(trimmed, "{") && strings.Contains(trimmed, "\"hook_event_name\"") {
-		return true
-	}
-	if strings.HasPrefix(trimmed, "{") && strings.Contains(trimmed, "\"session_id\"") {
-		return true
-	}
-	if strings.Contains(normalized, "hook_event_name") || strings.Contains(normalized, "session_id") || strings.Contains(normalized, "transcript_path") || strings.Contains(normalized, "permission_mode") {
-		return true
 	}
 	return false
 }

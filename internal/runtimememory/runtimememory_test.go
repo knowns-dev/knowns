@@ -835,57 +835,66 @@ func TestBuildKeepsEmptyPackCleanWhenHybridReturnsNoUsableCandidates(t *testing.
 	}
 }
 
-func TestCaptureStoresStableGlobalPreference(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	projectRoot := t.TempDir()
-	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
-	if err := store.Init("runtime-memory"); err != nil {
-		t.Fatalf("init store: %v", err)
+func TestCaptureNeverWritesFromPromptText(t *testing.T) {
+	// Every prompt below used to create a Memory. The first two are the exact
+	// shapes the two removed inferences matched on. The third is the prompt
+	// that produced entry 4pgj1h in this repository's own store: the user's
+	// question, copied verbatim, stored as durable knowledge.
+	//
+	// The English cases are the tell. "for now", "currently" and "investigating"
+	// are the vocabulary of a fact that is about to stop being true, and the
+	// removed inference treated them as the signal to keep one forever.
+	cases := []struct {
+		name   string
+		prompt string
+	}{
+		{"global preference phrasing", "toi muon AI tu luu memory, khong doi toi nhac moi them"},
+		{"working context phrasing", "for now we are debugging the runtime queue workaround"},
+		{"vietnamese hien tai", "hiện tại bạn đã thấy Knowns đã có Persistent Memory chưa"},
+		{"english currently", "currently I am investigating the reconcile queue"},
 	}
 
-	entry, created, err := Capture(store, Input{
-		Runtime:     "opencode",
-		ProjectRoot: projectRoot,
-		WorkingDir:  projectRoot,
-		ActionType:  "user-prompt-submit",
-		UserPrompt:  "toi muon AI tu luu memory, khong doi toi nhac moi them",
-		Mode:        ModeAuto,
-	})
-	if err != nil {
-		t.Fatalf("capture: %v", err)
-	}
-	if !created {
-		t.Fatal("expected capture to create a memory")
-	}
-	if entry == nil {
-		t.Fatal("expected created entry")
-	}
-	if entry.Layer != models.MemoryLayerGlobal {
-		t.Fatalf("layer = %q, want %q", entry.Layer, models.MemoryLayerGlobal)
-	}
-	if entry.Category != "preference" {
-		t.Fatalf("category = %q, want preference", entry.Category)
-	}
-	if !strings.Contains(entry.Content, "proactively save durable memory") {
-		t.Fatalf("unexpected content: %q", entry.Content)
-	}
-	if entry.Status != models.MemoryStatusProposed {
-		t.Fatalf("status = %q, want proposed", entry.Status)
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			projectRoot := t.TempDir()
+			store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
+			if err := store.Init("runtime-memory"); err != nil {
+				t.Fatalf("init store: %v", err)
+			}
 
-	_, createdAgain, err := Capture(store, Input{
-		Runtime:     "opencode",
-		ProjectRoot: projectRoot,
-		WorkingDir:  projectRoot,
-		ActionType:  "user-prompt-submit",
-		UserPrompt:  "toi muon AI tu luu memory, khong doi toi nhac moi them",
-		Mode:        ModeAuto,
-	})
-	if err != nil {
-		t.Fatalf("capture duplicate: %v", err)
-	}
-	if createdAgain {
-		t.Fatal("expected duplicate capture to be skipped")
+			entry, outcome, err := CaptureWithOutcome(store, Input{
+				Runtime:     "opencode",
+				ProjectRoot: projectRoot,
+				WorkingDir:  projectRoot,
+				ActionType:  "user-prompt-submit",
+				UserPrompt:  tc.prompt,
+				Mode:        ModeAuto,
+			})
+			if err != nil {
+				t.Fatalf("capture: %v", err)
+			}
+			if entry != nil {
+				t.Fatalf("expected no memory, got %q", entry.Title)
+			}
+			if outcome.Created {
+				t.Fatal("expected Created to be false")
+			}
+			if outcome.Status != CaptureStatusSkipped {
+				t.Fatalf("status = %q, want %q", outcome.Status, CaptureStatusSkipped)
+			}
+			if outcome.Reason != SkipReasonNoCaptureCandidate {
+				t.Fatalf("reason = %q, want %q", outcome.Reason, SkipReasonNoCaptureCandidate)
+			}
+
+			stored, err := store.Memory.List("")
+			if err != nil {
+				t.Fatalf("list memories: %v", err)
+			}
+			if len(stored) != 0 {
+				t.Fatalf("expected an empty store, got %d entries", len(stored))
+			}
+		})
 	}
 }
 
@@ -910,39 +919,6 @@ func TestCaptureDoesNotInferProjectDecisionFromPrompt(t *testing.T) {
 	}
 	if created || entry != nil {
 		t.Fatalf("ordinary prompt created memory: created=%v entry=%+v", created, entry)
-	}
-}
-
-func TestCaptureStoresWorkingContextForTemporaryInstruction(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	projectRoot := t.TempDir()
-	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
-	if err := store.Init("runtime-memory"); err != nil {
-		t.Fatalf("init store: %v", err)
-	}
-
-	entry, created, err := Capture(store, Input{
-		Runtime:     "opencode",
-		ProjectRoot: projectRoot,
-		WorkingDir:  projectRoot,
-		ActionType:  "user-prompt-submit",
-		UserPrompt:  "for now we are debugging the runtime queue workaround",
-		Mode:        ModeAuto,
-	})
-	if err != nil {
-		t.Fatalf("capture: %v", err)
-	}
-	if !created {
-		t.Fatal("expected memory to be created")
-	}
-	if entry.Layer != models.MemoryLayerProject {
-		t.Fatalf("layer = %q, want %q", entry.Layer, models.MemoryLayerProject)
-	}
-	if entry.Category != "context" {
-		t.Fatalf("category = %q, want context", entry.Category)
-	}
-	if entry.Status != models.MemoryStatusProposed {
-		t.Fatalf("status = %q, want proposed", entry.Status)
 	}
 }
 
