@@ -246,6 +246,8 @@ knowns runtime status
 knowns runtime install codex
 knowns runtime ps
 knowns runtime logs
+knowns runtime retry --all --dry-run
+knowns runtime retry --all
 knowns runtime stop
 knowns runtime uninstall codex
 
@@ -254,6 +256,8 @@ knowns runtime-memory hook --json
 ```
 
 Dùng provider commands cho API-backed embedding providers. Dùng runtime commands để install và inspect runtime memory adapters/shared runtime.
+
+`knowns runtime retry` thả các Qdrant dead-letter job đang bị giữ lại về cho scheduler. Một reconcile job bị dead-letter khi dùng hết 8 lần retry, và không có gì khác xoá cờ đó, nên một lần Qdrant chết đủ lâu sẽ kẹt vĩnh viễn mọi entity được queue trong khoảng đó. Truyền job ID cụ thể, `--all` cho project hiện tại, hoặc `--all-projects` để quét mọi project đã đăng ký với shared runtime. Thêm `--dry-run` để xem sẽ thả những job nào mà không đụng vào queue.
 
 Default hook output là plain prompt context cho runtime adapters. Mỗi injected memory có inline score/trust metadata, ví dụ `score=0.92; trust=active`, để assistant tự cân nhắc supplemental context.
 

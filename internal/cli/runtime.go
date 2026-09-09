@@ -1423,6 +1423,229 @@ func shorten(s string) string {
 	return s
 }
 
+var runtimeRetryCmd = &cobra.Command{
+	Use:   "retry [jobID...]",
+	Short: "Release retained Qdrant dead-letter jobs back to the scheduler",
+	Long: `Release retained Qdrant dead-letter jobs so the runtime schedules them again.
+
+A job is dead-lettered once it exhausts its 8-attempt retry budget. During an
+extended Qdrant outage every pending reconcile job can exhaust that budget at
+the same time, stranding a whole backlog: nothing else clears the flag, and
+the entity is never indexed unless it happens to be edited again.
+
+Pass explicit job IDs to release specific jobs, --all to release every dead
+letter in the current project, or --all-projects to sweep every project
+registered with the shared runtime. --dry-run reports what would be released
+without acquiring the queue lock or mutating anything.`,
+	Args: cobra.ArbitraryArgs,
+	RunE: runRuntimeRetry,
+}
+
+// runtimeRetryRefusal records why an explicitly named job was not released.
+// Bulk modes (--all, --all-projects) never produce refusals: they only ever
+// touch jobs that already satisfy IsReleasableDeadLetter.
+type runtimeRetryRefusal struct {
+	JobID string `json:"jobId"`
+	Error string `json:"error"`
+}
+
+// runtimeRetryResult is one project's outcome, in both live and --dry-run
+// runs. Released holds jobs that were (or, in a dry run, would be) released.
+type runtimeRetryResult struct {
+	Root     string                `json:"root"`
+	Released []runtimequeue.Job    `json:"released"`
+	Refused  []runtimeRetryRefusal `json:"refused,omitempty"`
+	Error    string                `json:"error,omitempty"`
+}
+
+func runRuntimeRetry(cmd *cobra.Command, args []string) error {
+	all, _ := cmd.Flags().GetBool("all")
+	allProjects, _ := cmd.Flags().GetBool("all-projects")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+	if len(args) > 0 && (all || allProjects) {
+		return fmt.Errorf("cannot combine explicit job IDs with --all or --all-projects")
+	}
+	if len(args) == 0 && !all && !allProjects {
+		return fmt.Errorf("specify job IDs, or use --all / --all-projects")
+	}
+
+	var roots []string
+	if allProjects {
+		// Reuse the same project enumeration `runtime ps` performs
+		// (runtimequeue.LoadStatus's registered-project scan) so both
+		// commands agree on what counts as a project.
+		status, err := runtimequeue.LoadStatus()
+		if err != nil {
+			return err
+		}
+		for _, p := range status.Project {
+			roots = append(roots, p.ProjectRoot)
+		}
+	} else {
+		store, err := getStoreErr()
+		if err != nil {
+			return err
+		}
+		roots = []string{store.Root}
+	}
+
+	results := make([]runtimeRetryResult, 0, len(roots))
+	for _, root := range roots {
+		result := runtimeRetryResult{Root: root}
+		var err error
+		switch {
+		case len(args) > 0:
+			result.Released, result.Refused = retryExplicitJobs(root, args, dryRun)
+		case dryRun:
+			result.Released, err = runtimequeue.ListDeadLetters(root)
+		default:
+			result.Released, err = runtimequeue.RetryDeadLetters(root)
+		}
+		if err != nil {
+			result.Error = err.Error()
+		}
+		results = append(results, result)
+	}
+
+	if isJSON(cmd) {
+		printJSON(map[string]any{"dryRun": dryRun, "results": results})
+		return runtimeRetryErr(results)
+	}
+	renderRuntimeRetry(cmd, results, dryRun, isPlain(cmd))
+	return runtimeRetryErr(results)
+}
+
+// retryExplicitJobs releases specific job IDs in storeRoot. A handful of
+// named jobs does not carry the lock-churn cost that motivated the bulk
+// single-pass path, so each ID goes through the same RetryJob guard used
+// everywhere else — no separate reset logic to keep in sync. In dry-run mode
+// nothing is mutated: the queue is read once and each ID is checked against
+// the same IsReleasableDeadLetter predicate RetryJob enforces.
+func retryExplicitJobs(storeRoot string, ids []string, dryRun bool) ([]runtimequeue.Job, []runtimeRetryRefusal) {
+	var released []runtimequeue.Job
+	var refused []runtimeRetryRefusal
+	if !dryRun {
+		for _, id := range ids {
+			job, err := runtimequeue.RetryJob(storeRoot, id)
+			if err != nil {
+				refused = append(refused, runtimeRetryRefusal{JobID: id, Error: err.Error()})
+				continue
+			}
+			released = append(released, job)
+		}
+		return released, refused
+	}
+
+	state, err := runtimequeue.LoadQueue(storeRoot)
+	if err != nil {
+		for _, id := range ids {
+			refused = append(refused, runtimeRetryRefusal{JobID: id, Error: err.Error()})
+		}
+		return released, refused
+	}
+	byID := make(map[string]runtimequeue.Job, len(state.Jobs))
+	for _, job := range state.Jobs {
+		byID[job.ID] = *job
+	}
+	for _, id := range ids {
+		job, ok := byID[id]
+		switch {
+		case !ok:
+			refused = append(refused, runtimeRetryRefusal{JobID: id, Error: "job not found"})
+		case !runtimequeue.IsReleasableDeadLetter(job):
+			refused = append(refused, runtimeRetryRefusal{JobID: id, Error: "not a qdrant dead letter"})
+		default:
+			released = append(released, job)
+		}
+	}
+	return released, refused
+}
+
+// runtimeRetryErr turns per-project errors and per-job refusals into a
+// single command error so a partial failure still sets a non-zero exit code,
+// even though every successfully released job was already reported.
+func runtimeRetryErr(results []runtimeRetryResult) error {
+	var problems []string
+	for _, result := range results {
+		if result.Error != "" {
+			problems = append(problems, fmt.Sprintf("%s: %s", projectDisplayName(result.Root), result.Error))
+		}
+		for _, refusal := range result.Refused {
+			problems = append(problems, fmt.Sprintf("%s: %s", refusal.JobID, refusal.Error))
+		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return fmt.Errorf("runtime retry: %s", strings.Join(problems, "; "))
+}
+
+func renderRuntimeRetry(cmd *cobra.Command, results []runtimeRetryResult, dryRun bool, plain bool) {
+	w := cmd.OutOrStdout()
+	mode := "release"
+	if dryRun {
+		mode = "preview"
+	}
+
+	if plain {
+		for _, result := range results {
+			project := projectDisplayName(result.Root)
+			if result.Error != "" {
+				fmt.Fprintf(w, "retry-error\t%s\terror=%s\n", project, result.Error)
+				continue
+			}
+			fmt.Fprintf(w, "retry\t%s\tmode=%s\treleased=%d\trefused=%d\n",
+				project, mode, len(result.Released), len(result.Refused))
+			for _, job := range result.Released {
+				fmt.Fprintf(w, "retry-job\t%s\t%s\t%s\t%s\n", project, job.ID, job.Kind, shorten(job.Target))
+			}
+			for _, refusal := range result.Refused {
+				fmt.Fprintf(w, "retry-refused\t%s\t%s\terror=%s\n", project, refusal.JobID, refusal.Error)
+			}
+		}
+		return
+	}
+
+	verb := "Released"
+	if dryRun {
+		verb = "Would release"
+	}
+	totalReleased, totalRefused := 0, 0
+	for _, result := range results {
+		totalReleased += len(result.Released)
+		totalRefused += len(result.Refused)
+	}
+	fmt.Fprintf(w, "%s  %s\n\n",
+		StyleBold.Render("Runtime retry"),
+		StyleDim.Render(fmt.Sprintf("%s · %d project(s)", mode, len(results))))
+
+	for _, result := range results {
+		project := projectDisplayName(result.Root)
+		if result.Error != "" {
+			fmt.Fprintln(w, renderBox(project, []string{StyleError.Render("✗ " + result.Error)}))
+			fmt.Fprintln(w)
+			continue
+		}
+		lines := make([]string, 0, len(result.Released)+len(result.Refused)+1)
+		lines = append(lines, StyleSuccess.Render(fmt.Sprintf("%s %d dead letter(s)", verb, len(result.Released))))
+		for _, job := range result.Released {
+			lines = append(lines, fmt.Sprintf("  %s  %s", job.ID, shorten(job.Target)))
+		}
+		for _, refusal := range result.Refused {
+			lines = append(lines, StyleWarning.Render(fmt.Sprintf("  %s refused: %s", refusal.JobID, refusal.Error)))
+		}
+		fmt.Fprintln(w, renderBox(project, lines))
+		fmt.Fprintln(w)
+	}
+
+	summary := fmt.Sprintf("%s %d job(s) across %d project(s)", verb, totalReleased, len(results))
+	if totalRefused > 0 {
+		summary += "  " + StyleWarning.Render(fmt.Sprintf("%d refused", totalRefused))
+	}
+	fmt.Fprintln(w, StyleDim.Render(summary))
+}
+
 var runtimeStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Request the shared runtime to shut down gracefully",
@@ -1722,6 +1945,7 @@ func init() {
 	runtimeCmd.AddCommand(runtimeReloadCmd)
 	runtimeCmd.AddCommand(runtimeStopCmd)
 	runtimeCmd.AddCommand(runtimeLogsCmd)
+	runtimeCmd.AddCommand(runtimeRetryCmd)
 
 	runtimePsCmd.Flags().BoolP("watch", "w", false, "Refresh continuously")
 	runtimePsCmd.Flags().Duration("interval", 2*time.Second, "Refresh interval when --watch is set")
@@ -1738,6 +1962,10 @@ func init() {
 	runtimeLogsCmd.Flags().BoolP("follow", "f", false, "Follow new log lines")
 	runtimeLogsCmd.Flags().IntP("tail", "n", 50, "Number of trailing lines to show")
 	runtimeLogsCmd.Flags().StringP("source", "s", "all", "Which log to read: runtime|mcp|all")
+
+	runtimeRetryCmd.Flags().Bool("all", false, "Release every retained Qdrant dead letter in the current project")
+	runtimeRetryCmd.Flags().Bool("all-projects", false, "Release every retained Qdrant dead letter across all registered projects")
+	runtimeRetryCmd.Flags().Bool("dry-run", false, "Report what would be released without mutating the queue")
 
 	rootCmd.AddCommand(runtimeInternalCmd)
 	rootCmd.AddCommand(runtimeCmd)

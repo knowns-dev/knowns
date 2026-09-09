@@ -88,6 +88,7 @@ knowns runtime memory	visible	group
 knowns runtime memory hook	visible	runnable	--capture:string --cwd:string --event:string --max-bytes:int --max-items:int --mode:string --project:string --runtime:string
 knowns runtime ps	visible	runnable	--all:bool --clients:int --failed:bool --failures:int --interval:duration --jobs:bool --tail:int --watch:bool
 knowns runtime reload	visible	runnable	--timeout:duration --wait:bool
+knowns runtime retry	visible	runnable	--all-projects:bool --all:bool --dry-run:bool
 knowns runtime status	visible	runnable
 knowns runtime stop	visible	runnable
 knowns runtime uninstall	visible	runnable

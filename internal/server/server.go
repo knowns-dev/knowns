@@ -506,6 +506,132 @@ func (s *Server) handleRuntimePs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// runtimeRetryJobRef names one job to release, paired with the project it
+// belongs to. A single failure cause shown in the WebUI can span several
+// projects, so a "retry this cause" click may carry refs into more than one
+// project's queue in one request.
+type runtimeRetryJobRef struct {
+	ProjectRoot string `json:"projectRoot"`
+	JobID       string `json:"jobId"`
+}
+
+// runtimeRetryRequest selects what a POST /api/runtime/retry call releases.
+// Exactly one of the three scopes applies:
+//   - "all": every retained Qdrant dead letter across every project
+//     registered with the shared runtime (mirrors `knowns runtime retry
+//     --all-projects`).
+//   - "project": every retained Qdrant dead letter in ProjectRoot only
+//     (mirrors `knowns runtime retry --all`).
+//   - "jobs": the explicit (project, job) pairs in Jobs (mirrors
+//     `knowns runtime retry <jobID...>`).
+type runtimeRetryRequest struct {
+	Scope       string               `json:"scope"`
+	ProjectRoot string               `json:"projectRoot,omitempty"`
+	Jobs        []runtimeRetryJobRef `json:"jobs,omitempty"`
+}
+
+// runtimeRetryRefusal records why an explicitly named job was not released.
+// Bulk scopes ("all", "project") never produce refusals: RetryDeadLetters
+// only ever touches jobs that already satisfy IsReleasableDeadLetter.
+type runtimeRetryRefusal struct {
+	JobID string `json:"jobId"`
+	Error string `json:"error"`
+}
+
+// runtimeRetryProjectResult is one project's outcome of a retry request, so
+// the UI can report per-project counts rather than one opaque total.
+type runtimeRetryProjectResult struct {
+	ProjectRoot string                `json:"projectRoot"`
+	Released    int                   `json:"released"`
+	Refused     []runtimeRetryRefusal `json:"refused,omitempty"`
+	Error       string                `json:"error,omitempty"`
+}
+
+// handleRuntimeRetry releases retained Qdrant dead-letter jobs back to the
+// scheduler. It calls the same exported runtimequeue helpers the `knowns
+// runtime retry` CLI command uses (RetryDeadLetters, RetryJob) rather than
+// reimplementing the release logic, and enumerates projects for scope "all"
+// the same way handleRuntimePs does (runtimequeue.LoadStatus().Project) so
+// both endpoints agree on what counts as a project.
+//
+// POST /api/runtime/retry
+func (s *Server) handleRuntimeRetry(w http.ResponseWriter, r *http.Request) {
+	var req runtimeRetryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	switch req.Scope {
+	case "all":
+		status, err := runtimequeue.LoadStatus()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		results := make([]runtimeRetryProjectResult, 0, len(status.Project))
+		for _, p := range status.Project {
+			result := runtimeRetryProjectResult{ProjectRoot: p.ProjectRoot}
+			released, err := runtimequeue.RetryDeadLetters(p.ProjectRoot)
+			if err != nil {
+				result.Error = err.Error()
+			} else {
+				result.Released = len(released)
+			}
+			results = append(results, result)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"results": results})
+
+	case "project":
+		if strings.TrimSpace(req.ProjectRoot) == "" {
+			http.Error(w, "projectRoot is required for scope \"project\"", http.StatusBadRequest)
+			return
+		}
+		result := runtimeRetryProjectResult{ProjectRoot: req.ProjectRoot}
+		released, err := runtimequeue.RetryDeadLetters(req.ProjectRoot)
+		if err != nil {
+			result.Error = err.Error()
+		} else {
+			result.Released = len(released)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"results": []runtimeRetryProjectResult{result}})
+
+	case "jobs":
+		if len(req.Jobs) == 0 {
+			http.Error(w, "jobs is required for scope \"jobs\"", http.StatusBadRequest)
+			return
+		}
+		order := make([]string, 0, len(req.Jobs))
+		byProject := make(map[string][]string, len(req.Jobs))
+		for _, ref := range req.Jobs {
+			if strings.TrimSpace(ref.ProjectRoot) == "" || strings.TrimSpace(ref.JobID) == "" {
+				http.Error(w, "each job requires a projectRoot and a jobId", http.StatusBadRequest)
+				return
+			}
+			if _, seen := byProject[ref.ProjectRoot]; !seen {
+				order = append(order, ref.ProjectRoot)
+			}
+			byProject[ref.ProjectRoot] = append(byProject[ref.ProjectRoot], ref.JobID)
+		}
+		results := make([]runtimeRetryProjectResult, 0, len(order))
+		for _, root := range order {
+			result := runtimeRetryProjectResult{ProjectRoot: root}
+			for _, jobID := range byProject[root] {
+				if _, err := runtimequeue.RetryJob(root, jobID); err != nil {
+					result.Refused = append(result.Refused, runtimeRetryRefusal{JobID: jobID, Error: err.Error()})
+					continue
+				}
+				result.Released++
+			}
+			results = append(results, result)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"results": results})
+
+	default:
+		http.Error(w, `scope must be one of "all", "project", "jobs"`, http.StatusBadRequest)
+	}
+}
+
 // savePortToConfig persists the server port into config.json so the browser
 // and other tools can discover the running server.
 func (s *Server) savePortToConfig() error {
@@ -571,6 +697,7 @@ func (s *Server) buildRouter() chi.Router {
 	// --- Status endpoint (project active/inactive) ---
 	r.Get("/api/status", s.handleStatus)
 	r.Get("/api/runtime/ps", s.handleRuntimePs)
+	r.Post("/api/runtime/retry", s.handleRuntimeRetry)
 
 	// --- API routes ---
 	r.Route("/api", func(r chi.Router) {
