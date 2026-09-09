@@ -963,3 +963,50 @@ func TestLanguageInfoFromRuntimeStatusIncludesCapabilities(t *testing.T) {
 		t.Fatalf("capability mapping = %#v, want %#v", info, status)
 	}
 }
+
+// TestUnavailableReasonNamesTheActualCause covers the defect where every path
+// that failed to map to a server produced "LSP not available for this
+// language". That sentence is only correct for one of the four causes, and it
+// sent users looking for a missing language server when they had simply passed
+// a directory.
+func TestUnavailableReasonNamesTheActualCause(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "pkg")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	swiftFile := filepath.Join(root, "a.swift")
+	if err := os.WriteFile(swiftFile, []byte("struct A {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oddFile := filepath.Join(root, "notes.xyz")
+	if err := os.WriteFile(oddFile, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	disabled := false
+	mgr := NewManager(root, Config{Languages: map[string]LanguageConfig{"swift": {Enabled: &disabled}}})
+	if err := mgr.registry.Register(Language{ID: "swift", Name: "Swift", Extensions: []string{".swift"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, tc := range map[string]struct{ path, want string }{
+		"directory":         {dir, "is a directory"},
+		"missing":           {filepath.Join(root, "gone.swift"), "does not exist"},
+		"disabled language": {swiftFile, "disabled for this project"},
+		"unknown extension": {oddFile, "no language server is registered for .xyz"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := mgr.unavailableReason(tc.path)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !errors.Is(err, ErrServerUnavailable) {
+				t.Errorf("error should still wrap ErrServerUnavailable, got %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %q, want it to mention %q", err.Error(), tc.want)
+			}
+		})
+	}
+}

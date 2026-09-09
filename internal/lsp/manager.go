@@ -339,9 +339,42 @@ func (m *Manager) WithSession(ctx context.Context, path string, fn func(Session)
 		return err
 	}
 	if !ok {
-		return ErrServerUnavailable
+		return m.unavailableReason(path)
 	}
 	return srv.WithFile(ctx, path, func() error { return fn(srv) })
+}
+
+// unavailableReason explains why no server matched the path. The bare sentinel
+// reads as "this language is unsupported", which covers four different causes
+// and is wrong for three of them: a directory, a path that does not exist, and
+// a language that is registered but disabled in the project config. Callers hit
+// the directory case constantly, because passing a package directory to a
+// symbol lookup is the obvious first guess, and being told the language is
+// unsupported sends them looking in the wrong place.
+func (m *Manager) unavailableReason(path string) error {
+	info, statErr := os.Stat(path)
+	switch {
+	case statErr == nil && info.IsDir():
+		return fmt.Errorf("%w: %s is a directory, and code intelligence operates on one source file at a time", ErrServerUnavailable, path)
+	case errors.Is(statErr, os.ErrNotExist):
+		return fmt.Errorf("%w: %s does not exist", ErrServerUnavailable, path)
+	}
+
+	m.mu.Lock()
+	lang, known := m.registry.ForPath(path)
+	enabled := known && m.config.Enabled(lang.ID)
+	m.mu.Unlock()
+
+	switch {
+	case known && !enabled:
+		return fmt.Errorf("%w: %s is registered but disabled for this project", ErrServerUnavailable, lang.ID)
+	case !known:
+		if ext := filepath.Ext(path); ext != "" {
+			return fmt.Errorf("%w: no language server is registered for %s files", ErrServerUnavailable, ext)
+		}
+		return fmt.Errorf("%w: %s has no file extension to match a language server", ErrServerUnavailable, filepath.Base(path))
+	}
+	return ErrServerUnavailable
 }
 
 // WithAnyServer calls fn with any running server. Used for workspace-level queries.
