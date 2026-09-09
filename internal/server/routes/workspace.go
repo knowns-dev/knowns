@@ -56,6 +56,11 @@ func (wr *WorkspaceRoutes) browse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !wr.isAllowedBrowseDir(absDir) {
+		respondError(w, http.StatusForbidden, "access denied: directory is outside allowed workspace boundaries")
+		return
+	}
+
 	entries, err := os.ReadDir(absDir)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "cannot read directory: "+err.Error())
@@ -108,6 +113,50 @@ func (wr *WorkspaceRoutes) browse(w http.ResponseWriter, r *http.Request) {
 		result = []DirEntry{}
 	}
 	respondJSON(w, http.StatusOK, result)
+}
+
+func (wr *WorkspaceRoutes) isAllowedBrowseDir(target string) bool {
+	targetClean := filepath.Clean(target)
+	targetReal, err := filepath.EvalSymlinks(targetClean)
+	if err != nil {
+		targetReal = targetClean
+	}
+
+	allowedRoots := []string{}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		allowedRoots = append(allowedRoots, home)
+	}
+	if cwd, err := os.Getwd(); err == nil && cwd != "" {
+		allowedRoots = append(allowedRoots, cwd)
+	}
+	if wr.manager != nil {
+		if reg := wr.manager.GetRegistry(); reg != nil {
+			for _, p := range reg.Projects {
+				if p.Path != "" {
+					allowedRoots = append(allowedRoots, p.Path)
+				}
+			}
+		}
+	}
+
+	for _, root := range allowedRoots {
+		rootClean := filepath.Clean(root)
+		rootReal, err := filepath.EvalSymlinks(rootClean)
+		if err != nil {
+			rootReal = rootClean
+		}
+
+		rel, err := filepath.Rel(rootClean, targetClean)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+
+		relReal, err := filepath.Rel(rootReal, targetReal)
+		if err == nil && relReal != ".." && !strings.HasPrefix(relReal, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // GET /api/workspaces
