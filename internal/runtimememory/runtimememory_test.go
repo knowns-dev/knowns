@@ -562,14 +562,14 @@ func TestBuildHonorsItemAndByteLimits(t *testing.T) {
 	if len(pack.Items) != 1 {
 		t.Fatalf("items = %d, want 1", len(pack.Items))
 	}
-	if pack.Bytes > 300 {
-		t.Fatalf("bytes = %d, want <= 300", pack.Bytes)
+	// The byte ceiling no longer cuts inside an entry. This entry alone exceeds
+	// 300, and the contract is now to emit it whole rather than to emit a half
+	// of it that reads as complete. See TestOversizedSoleEntryIsEmittedWhole.
+	if strings.Contains(pack.Serialized, "...") {
+		t.Fatalf("did not expect truncation marker in serialized payload, got %q", pack.Serialized)
 	}
-	if !strings.Contains(pack.Serialized, "...") {
-		t.Fatalf("expected truncated content marker in serialized payload, got %q", pack.Serialized)
-	}
-	if strings.Contains(pack.Serialized, "ranking reasons for repeated prompt execution") {
-		t.Fatalf("expected long content tail to be truncated, got %q", pack.Serialized)
+	if !strings.Contains(pack.Serialized, "ranking reasons for repeated prompt execution") {
+		t.Fatalf("expected the claim to be emitted intact, got %q", pack.Serialized)
 	}
 	if !strings.Contains(pack.Serialized, "score=") || !strings.Contains(pack.Serialized, "trust=active") {
 		t.Fatalf("expected score/trust metadata in serialized payload, got %q", pack.Serialized)
@@ -1048,5 +1048,108 @@ func TestCaptureReportsTheExpirySweep(t *testing.T) {
 	}
 	if entry.Status != models.MemoryStatusProposed {
 		t.Fatalf("status = %q, want it left proposed", entry.Status)
+	}
+}
+
+// item builds a serialization-ready Item without going through the store.
+func claimItem(id, title, claim string, hasDetail bool, fullBytes int) Item {
+	return Item{
+		ID: id, Title: title, Category: "pattern", Layer: models.MemoryLayerProject,
+		Status: models.MemoryStatusActive, Claim: claim, HasDetail: hasDetail,
+		FullBytes: fullBytes, Score: 1.5,
+	}
+}
+
+func TestOversizedEntryDoesNotBlockSmallerOnesBehindIt(t *testing.T) {
+	// This is the defect that made every injection show exactly one memory.
+	// The list is score-ordered, so what follows a large entry is usually a
+	// SMALLER entry; `break` discarded all of them to protect budget with room
+	// still in it.
+	big := claimItem("big", "Large", strings.Repeat("x", 400), false, 400)
+	small := claimItem("small", "Small", "short and useful", false, 16)
+	var emitted []Item
+	out := serializeItems([]Item{big, small}, 220, &emitted)
+	if len(emitted) != 1 || emitted[0].ID != "small" {
+		t.Fatalf("emitted = %+v, want only the small entry", emitted)
+	}
+	if !strings.Contains(out, "short and useful") {
+		t.Fatalf("serialized = %q, want the smaller entry present", out)
+	}
+	if !strings.Contains(out, "1 more matching memory did not fit") {
+		t.Fatalf("serialized = %q, want the elision line to name the skipped entry", out)
+	}
+}
+
+func TestOversizedSoleEntryIsEmittedWhole(t *testing.T) {
+	// A prompt that retrieved a memory and then showed none is, from the
+	// agent's side, identical to having no memory at all.
+	body := strings.Repeat("y", 500)
+	var emitted []Item
+	out := serializeItems([]Item{claimItem("only", "Only", body, false, 500)}, 100, &emitted)
+	if len(emitted) != 1 {
+		t.Fatalf("emitted = %d, want 1 even over budget", len(emitted))
+	}
+	if !strings.Contains(out, body) {
+		t.Fatalf("serialized = %q, want the claim intact rather than trimmed", out)
+	}
+	if strings.Contains(out, "...") {
+		t.Fatalf("serialized = %q, want no truncation marker", out)
+	}
+}
+
+func TestDetailLinePrintedOnlyWhenSomethingWasHeldBack(t *testing.T) {
+	withDetail := serializeItems([]Item{claimItem("a", "A", "the claim", true, 900)}, 4000, nil)
+	if !strings.Contains(withDetail, `detail: memory(action:"get", id:"a")`) {
+		t.Fatalf("serialized = %q, want the detail hint", withDetail)
+	}
+	if !strings.Contains(withDetail, "full=900b") {
+		t.Fatalf("serialized = %q, want the full size named", withDetail)
+	}
+	// A memory whose claim IS its body must not send an agent after a fuller
+	// version that does not exist; one wasted call teaches it to ignore the
+	// hint everywhere it does matter.
+	withoutDetail := serializeItems([]Item{claimItem("b", "B", "the whole thing", false, 15)}, 4000, nil)
+	if strings.Contains(withoutDetail, "detail: memory(") {
+		t.Fatalf("serialized = %q, want no detail hint on a memory with no detail", withoutDetail)
+	}
+}
+
+func TestElisionLineCountsEveryHiddenEntry(t *testing.T) {
+	items := []Item{
+		claimItem("keep", "Keep", "tiny", false, 4),
+		claimItem("d1", "D1", strings.Repeat("z", 400), false, 400),
+		claimItem("d2", "D2", strings.Repeat("z", 400), false, 400),
+	}
+	out := serializeItems(items, 200, nil)
+	if !strings.Contains(out, "2 more matching memories did not fit") {
+		t.Fatalf("serialized = %q, want both hidden entries counted", out)
+	}
+}
+
+func TestConventionCategoryReachesInjection(t *testing.T) {
+	// sbf2ih is `convention`: active, fully sourced, top of every search, and
+	// invisible to the agent because injection kept its own category list.
+	if !allowedCategory("convention") {
+		t.Fatalf("convention must be injectable; it is in models.AllowedMemoryCategories")
+	}
+	for _, legacy := range []string{"decision", "warning"} {
+		if !allowedCategory(legacy) {
+			t.Fatalf("%s predates the contract and must stay readable", legacy)
+		}
+	}
+	if allowedCategory("implementation") || allowedCategory("") {
+		t.Fatalf("categories outside the contract must not be injectable")
+	}
+}
+
+func TestClaimFieldsSplitOnRawContentNotNormalized(t *testing.T) {
+	// normalizeWhitespace collapses the blank line that separates a claim from
+	// its evidence, so the split has to happen before it runs.
+	claim, hasDetail, full := claimFields("The point.\n\nThe evidence that supports it.")
+	if claim != "The point." || !hasDetail {
+		t.Fatalf("claim = %q hasDetail = %v", claim, hasDetail)
+	}
+	if full != len("The point.\n\nThe evidence that supports it.") {
+		t.Fatalf("fullBytes = %d", full)
 	}
 }

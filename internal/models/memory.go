@@ -190,6 +190,61 @@ func ValidatePreferenceWhy(category, content string) error {
 	return fmt.Errorf("a preference memory must state its reason: add a %s line saying why the user asked for this, since the reason is what lets the rule be applied to cases it does not name", whyMarker)
 }
 
+// MemoryDetailMarker separates the claim an agent is shown from the reasoning
+// and supporting material it can fetch on demand.
+//
+// A memory has three parts: the claim, the reason it exists, and whatever
+// supplementary material makes it usable. Only the claim has to be paid for on
+// every prompt. The other two are what an agent goes and reads once it decides
+// the claim applies to what it is doing.
+const MemoryDetailMarker = "<!--memory:detail-->"
+
+// MemoryClaim returns the part of a memory worth injecting, and whether
+// anything was held back.
+//
+// With the marker present the split is explicit. Without it the claim is the
+// first paragraph, which is why the twelve entries already in the store work
+// unchanged: they were written with the point in the opening paragraph and the
+// evidence below it. That fallback is a convention, not a guarantee, so
+// `hasDetail` reports what actually happened rather than what was intended.
+//
+// hasDetail is false when the claim IS the whole content. A short memory must
+// not invite an agent to go fetch a fuller version that does not exist; the
+// wasted call teaches it to distrust the line everywhere else.
+func MemoryClaim(content string) (string, bool) {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return "", false
+	}
+	if idx := strings.Index(trimmed, MemoryDetailMarker); idx >= 0 {
+		claim := strings.TrimSpace(trimmed[:idx])
+		rest := strings.TrimSpace(trimmed[idx+len(MemoryDetailMarker):])
+		// An empty claim means the marker leads the content. Falling back to the
+		// paragraph split would inject the detail as if it were the claim, so
+		// treat the whole body as the claim and admit there is no detail.
+		if claim == "" {
+			return trimmed, false
+		}
+		return claim, rest != ""
+	}
+	claim := firstParagraph(trimmed)
+	return claim, len(claim) < len(trimmed)
+}
+
+// firstParagraph cuts at the first blank line, tolerating carriage returns and
+// trailing spaces on the blank line itself.
+func firstParagraph(text string) string {
+	lines := strings.Split(text, "\n")
+	end := len(lines)
+	for i, line := range lines {
+		if i > 0 && strings.TrimSpace(strings.TrimSuffix(line, "\r")) == "" {
+			end = i
+			break
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines[:end], "\n"))
+}
+
 var memoryKeyNonSlugRE = regexp.MustCompile(`[^a-z0-9]+`)
 
 // DeriveMemoryKey turns a title into the key used for upsert.

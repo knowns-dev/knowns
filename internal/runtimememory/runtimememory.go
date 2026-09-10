@@ -115,11 +115,16 @@ type Item struct {
 	Status    string    `json:"status,omitempty"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	Content   string    `json:"content"`
-	Score     float64   `json:"score"`
-	Retrieval string    `json:"retrieval,omitempty"`
-	MatchedBy []string  `json:"matchedBy,omitempty"`
-	Reasons   []string  `json:"reasons,omitempty"`
-	Tags      []string  `json:"tags,omitempty"`
+	// Claim is what actually reaches the agent. Content stays whole so the
+	// debug pack can show what was held back next to what was sent.
+	Claim     string   `json:"claim,omitempty"`
+	HasDetail bool     `json:"hasDetail,omitempty"`
+	FullBytes int      `json:"fullBytes,omitempty"`
+	Score     float64  `json:"score"`
+	Retrieval string   `json:"retrieval,omitempty"`
+	MatchedBy []string `json:"matchedBy,omitempty"`
+	Reasons   []string `json:"reasons,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
 }
 
 type hybridCandidate struct {
@@ -543,6 +548,7 @@ func buildBaselineItems(entries []*models.MemoryEntry, input Input) []candidate 
 		if score <= 0 {
 			continue
 		}
+		claim, hasDetail, fullBytes := claimFields(entry.Content)
 		candidates = append(candidates, candidate{item: Item{
 			ID:        entry.ID,
 			Title:     entry.Title,
@@ -551,6 +557,9 @@ func buildBaselineItems(entries []*models.MemoryEntry, input Input) []candidate 
 			Status:    entry.Status,
 			UpdatedAt: entry.UpdatedAt,
 			Content:   normalizeWhitespace(entry.Content),
+			Claim:     claim,
+			HasDetail: hasDetail,
+			FullBytes: fullBytes,
 			Score:     score,
 			Retrieval: "session-baseline",
 			Reasons:   reasons,
@@ -592,6 +601,7 @@ func buildHeuristicItems(entries []*models.MemoryEntry, input Input) []candidate
 		if score <= 0 {
 			continue
 		}
+		claim, hasDetail, fullBytes := claimFields(entry.Content)
 		candidates = append(candidates, candidate{item: Item{
 			ID:        entry.ID,
 			Title:     entry.Title,
@@ -600,6 +610,9 @@ func buildHeuristicItems(entries []*models.MemoryEntry, input Input) []candidate
 			Status:    entry.Status,
 			UpdatedAt: entry.UpdatedAt,
 			Content:   normalizeWhitespace(entry.Content),
+			Claim:     claim,
+			HasDetail: hasDetail,
+			FullBytes: fullBytes,
 			Score:     score,
 			Retrieval: "heuristic-fallback",
 			Reasons:   append(reasons, "heuristic-fallback"),
@@ -631,6 +644,7 @@ func buildHybridItems(hits []hybridCandidate, input Input) []candidate {
 		if score <= 0.75 {
 			continue
 		}
+		claim, hasDetail, fullBytes := claimFields(hit.entry.Content)
 		candidates = append(candidates, candidate{item: Item{
 			ID:        hit.entry.ID,
 			Title:     hit.entry.Title,
@@ -639,6 +653,9 @@ func buildHybridItems(hits []hybridCandidate, input Input) []candidate {
 			Status:    hit.entry.Status,
 			UpdatedAt: hit.entry.UpdatedAt,
 			Content:   normalizeWhitespace(hit.entry.Content),
+			Claim:     claim,
+			HasDetail: hasDetail,
+			FullBytes: fullBytes,
 			Score:     score,
 			Retrieval: "hybrid",
 			MatchedBy: append([]string(nil), hit.matchedBy...),
@@ -751,9 +768,21 @@ func serializeKNOWNSSummary(store *storage.Store, remaining int) string {
 	if remaining <= 48 {
 		return ""
 	}
+	// Cut at a line boundary, never mid-word. This block is a list of rules;
+	// half a rule ending in "..." is not a shorter rule, it is an unreadable
+	// one, and it sat directly under memory entries that this change just
+	// stopped truncating.
 	trimmed := block[:remaining]
-	if remaining > 3 {
-		trimmed = strings.TrimSpace(trimmed[:remaining-3]) + "..."
+	idx := strings.LastIndexByte(trimmed, '\n')
+	if idx <= 0 {
+		return ""
+	}
+	trimmed = trimmed[:idx+1]
+	// Never emit the header with nothing under it. Memories are what the prompt
+	// actually asked for, so this block is the right thing to degrade first, but
+	// degrading it to a lone banner line spends bytes on pure noise.
+	if !strings.Contains(trimmed, "\n- ") {
+		return ""
 	}
 	return trimmed
 }
@@ -765,27 +794,92 @@ func serializeItems(items []Item, remaining int, serializedItems *[]Item) string
 	var builder strings.Builder
 	builder.WriteString("\n")
 	remaining--
+
+	// Reserve the elision line before spending anything, sized for the worst
+	// case. Announcing that entries were hidden is only useful if the
+	// announcement itself cannot be the thing that gets cut, and paying for it
+	// up front is what makes the declared budget an actual ceiling instead of a
+	// number the last write is allowed to step over.
+	reserved := 0
+	if len(items) > 1 {
+		reserved = len(serializeElision(len(items)))
+		if reserved < remaining {
+			remaining -= reserved
+		} else {
+			reserved = 0
+		}
+	}
+
+	emitted := 0
+	elided := 0
 	for _, item := range items {
 		block := serializeItem(item, remaining)
 		if block == "" {
-			break
+			// A block that does not fit must not stop the ones behind it.
+			// `break` here was the reason a prompt matching several memories
+			// injected exactly one: the list is ordered by score, so what
+			// follows a large entry is usually a SMALLER entry, and every one
+			// of them was being discarded to protect budget that had room.
+			elided++
+			continue
 		}
 		builder.WriteString(block)
 		remaining -= len(block)
+		emitted++
 		if serializedItems != nil {
 			*serializedItems = append(*serializedItems, item)
 		}
 	}
-	if serializedItems != nil && len(*serializedItems) == 0 {
-		return ""
+
+	if emitted == 0 {
+		// Nothing fit. Emit the top match anyway, over budget. From the agent's
+		// side a prompt that retrieved memories and then showed none is
+		// indistinguishable from having no memory at all, and the budget exists
+		// to bound repetition, not to make the feature disappear on its most
+		// relevant entry.
+		block := buildItemBlock(items[0])
+		if block == "" {
+			return ""
+		}
+		builder.WriteString(block)
+		elided = len(items) - 1
+		if serializedItems != nil {
+			*serializedItems = append(*serializedItems, items[0])
+		}
+	}
+
+	if elided > 0 {
+		builder.WriteString(serializeElision(elided))
 	}
 	return builder.String()
+}
+
+// serializeElision names what was left out and how to reach it.
+func serializeElision(count int) string {
+	noun := "memories"
+	if count == 1 {
+		noun = "memory"
+	}
+	return fmt.Sprintf("- %d more matching %s did not fit; list them with memory(action:\"list\")\n", count, noun)
 }
 
 func serializeItem(item Item, remaining int) string {
 	if remaining <= 0 {
 		return ""
 	}
+	block := buildItemBlock(item)
+	// All or nothing. The old path trimmed the body to whatever was left, which
+	// produced entries cut mid-sentence: an agent reading half a rule cannot
+	// tell that it is half, and a truncated claim is worse than an absent one
+	// because it still reads as complete.
+	if block == "" || len(block) > remaining {
+		return ""
+	}
+	return block
+}
+
+// buildItemBlock renders one entry at full size, with no budget applied.
+func buildItemBlock(item Item) string {
 	ref := memoryReference(item)
 	layer := strings.TrimSpace(item.Layer)
 	if layer == "" {
@@ -799,24 +893,25 @@ func serializeItem(item Item, remaining int) string {
 	if title == "" {
 		title = "Untitled memory"
 	}
-	content := normalizeWhitespace(item.Content)
+	claim := normalizeWhitespace(item.Claim)
+	if claim == "" {
+		// Items built by hand, including in tests, carry only Content.
+		claim = normalizeWhitespace(item.Content)
+	}
+	if claim == "" {
+		return ""
+	}
 
 	header := fmt.Sprintf("- %s [%s/%s] %s%s\n", ref, layer, category, title, serializeItemTrustMetadata(item))
-	contentPrefix := "  "
-	trailer := "\n"
-	overhead := len(header) + len(contentPrefix) + len(trailer)
-	if overhead > remaining {
-		return ""
+	detail := ""
+	if item.HasDetail {
+		// Printed ONLY when something was actually held back. On a memory whose
+		// claim is its whole body this line would send an agent to fetch a
+		// fuller version that does not exist, and one wasted call is enough to
+		// teach it to ignore the line everywhere it does matter.
+		detail = fmt.Sprintf("\n  full=%db  detail: memory(action:\"get\", id:%q)", item.FullBytes, item.ID)
 	}
-	contentBudget := remaining - overhead
-	if contentBudget <= 0 {
-		return ""
-	}
-	content = truncateText(content, contentBudget)
-	if content == "" {
-		return ""
-	}
-	return header + contentPrefix + content + trailer
+	return header + "  " + claim + detail + "\n"
 }
 
 func serializeItemTrustMetadata(item Item) string {
@@ -849,24 +944,6 @@ func memoryReference(item Item) string {
 	return "@memory/" + id
 }
 
-func truncateText(text string, maxBytes int) string {
-	text = normalizeWhitespace(text)
-	if maxBytes <= 0 {
-		return ""
-	}
-	if len(text) <= maxBytes {
-		return text
-	}
-	if maxBytes <= 3 {
-		return trimToByteLimit(text, maxBytes)
-	}
-	trimmed := strings.TrimSpace(trimToByteLimit(text, maxBytes-3))
-	if trimmed == "" {
-		return trimToByteLimit(text, maxBytes)
-	}
-	return trimmed + "..."
-}
-
 func trimToByteLimit(text string, maxBytes int) string {
 	if maxBytes <= 0 {
 		return ""
@@ -881,13 +958,31 @@ func trimToByteLimit(text string, maxBytes int) string {
 	return trimmed
 }
 
+// allowedCategory gates what may be injected.
+//
+// The write contract lives in models.AllowedMemoryCategories and this used to
+// keep a second, drifted copy of it. The two disagreed in both directions:
+// `convention` was writable but never injectable, so an active, fully sourced
+// entry like sbf2ih could top every search and still never reach an agent;
+// `warning` was injectable but not writable. One list, plus an explicit legacy
+// set that can only shrink.
 func allowedCategory(category string) bool {
-	switch strings.ToLower(strings.TrimSpace(category)) {
-	case "decision", "pattern", "preference", "warning", "failure":
-		return true
-	default:
+	normalized := strings.ToLower(strings.TrimSpace(category))
+	if normalized == "" {
 		return false
 	}
+	for _, allowed := range models.AllowedMemoryCategories {
+		if normalized == allowed {
+			return true
+		}
+	}
+	// Readable, never writable: models.ValidateMemoryCategory rejects both on
+	// the write path, so these only cover entries that predate the contract.
+	switch normalized {
+	case "decision", "warning":
+		return true
+	}
+	return false
 }
 
 func shouldSkipPrompt(prompt string) bool {
@@ -1159,4 +1254,14 @@ func uniqueTokens(parts ...string) []string {
 
 func normalizeWhitespace(s string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
+}
+
+// claimFields derives what gets injected from a stored memory body.
+//
+// The split must happen on the RAW content: normalizeWhitespace collapses the
+// blank lines that separate a claim from its evidence, so anything downstream of
+// it has already lost the boundary.
+func claimFields(raw string) (claim string, hasDetail bool, fullBytes int) {
+	text, detail := models.MemoryClaim(raw)
+	return normalizeWhitespace(text), detail, len(strings.TrimSpace(raw))
 }

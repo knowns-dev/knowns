@@ -192,3 +192,54 @@ func TestProposalGracePeriodProtectsThePreExistingBacklog(t *testing.T) {
 		t.Error("a recent proposal is not abandoned yet")
 	}
 }
+
+func TestMemoryClaimSplitsAtMarker(t *testing.T) {
+	content := "Never mutate os.Args[0] in tests.\n" + MemoryDetailMarker + "\n**Why:** the runtime queue resolves its binary from it, so a mutated value races every parallel test."
+	claim, hasDetail := MemoryClaim(content)
+	if claim != "Never mutate os.Args[0] in tests." {
+		t.Fatalf("claim = %q", claim)
+	}
+	if !hasDetail {
+		t.Fatalf("hasDetail = false, want true when material sits below the marker")
+	}
+}
+
+func TestMemoryClaimFallsBackToFirstParagraph(t *testing.T) {
+	// The twelve entries already in the store carry no marker. They must keep
+	// working untouched, which is the whole reason the fallback exists.
+	content := "Two hash functions over one record always drift.\n\nOn 2026-08-30 the writer hashed the rendered body and the verifier hashed the parsed struct."
+	claim, hasDetail := MemoryClaim(content)
+	if claim != "Two hash functions over one record always drift." {
+		t.Fatalf("claim = %q", claim)
+	}
+	if !hasDetail {
+		t.Fatalf("hasDetail = false, want true when a second paragraph exists")
+	}
+}
+
+func TestMemoryClaimReportsNoDetailWhenClaimIsEverything(t *testing.T) {
+	// A short memory must not advertise a fuller version that does not exist.
+	claim, hasDetail := MemoryClaim("Do not use the rtk wrapper; run commands directly.")
+	if claim != "Do not use the rtk wrapper; run commands directly." {
+		t.Fatalf("claim = %q", claim)
+	}
+	if hasDetail {
+		t.Fatalf("hasDetail = true, want false when nothing was held back")
+	}
+}
+
+func TestMemoryClaimHandlesMarkerAtStart(t *testing.T) {
+	// A leading marker would otherwise make the claim empty and promote the
+	// detail into the claim slot on the paragraph fallback.
+	claim, hasDetail := MemoryClaim(MemoryDetailMarker + "\nonly detail here")
+	if claim == "" || hasDetail {
+		t.Fatalf("claim = %q hasDetail = %v, want the whole body claimed and no detail", claim, hasDetail)
+	}
+}
+
+func TestMemoryClaimOnEmptyContent(t *testing.T) {
+	claim, hasDetail := MemoryClaim("   \n\n  ")
+	if claim != "" || hasDetail {
+		t.Fatalf("claim = %q hasDetail = %v, want empty and false", claim, hasDetail)
+	}
+}
