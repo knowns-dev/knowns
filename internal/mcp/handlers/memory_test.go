@@ -45,10 +45,7 @@ func TestMemoryAddNoMatchCreatesActiveAndIsRetrievable(t *testing.T) {
 		"category": "pattern",
 		"content":  "Prefer `storage.Store` over a bare path when a helper needs the memory plane.",
 	})
-	var entry models.MemoryEntry
-	if err := json.Unmarshal([]byte(text), &entry); err != nil {
-		t.Fatalf("unmarshal add output: %v\n%s", err, text)
-	}
+	entry := *decodeMemoryWrite(t, text).Memory
 	if entry.Status != models.MemoryStatusActive {
 		t.Fatalf("status = %q, want active", entry.Status)
 	}
@@ -80,10 +77,7 @@ func TestMemoryAddExplicitStatusStillWins(t *testing.T) {
 		"content":  "Hold this one for review.",
 		"status":   models.MemoryStatusProposed,
 	})
-	var entry models.MemoryEntry
-	if err := json.Unmarshal([]byte(text), &entry); err != nil {
-		t.Fatalf("unmarshal add output: %v\n%s", err, text)
-	}
+	entry := *decodeMemoryWrite(t, text).Memory
 	if entry.Status != models.MemoryStatusProposed {
 		t.Fatalf("status = %q, want proposed", entry.Status)
 	}
@@ -246,6 +240,21 @@ func callMemoryCleanup(t *testing.T, store *storage.Store, args map[string]any) 
 	return candidates
 }
 
+// decodeMemoryWrite reads the one shape every memory write now returns. The
+// three write paths used to answer in two different shapes; this helper exists
+// so a future divergence fails here rather than in a caller.
+func decodeMemoryWrite(t *testing.T, text string) memoryWriteResult {
+	t.Helper()
+	var out memoryWriteResult
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("unmarshal memory write result: %v\n%s", err, text)
+	}
+	if out.Memory == nil {
+		t.Fatalf("memory write result carried no entry: %s", text)
+	}
+	return out
+}
+
 func callMemoryAdd(t *testing.T, store *storage.Store, args map[string]any) string {
 	t.Helper()
 	result, err := handleMemoryAdd(func() *storage.Store { return store }, mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: args}})
@@ -332,10 +341,7 @@ func TestMemoryAddRejectsPreferenceWithoutWhy(t *testing.T) {
 		"category": "preference",
 		"content":  "Never use an em dash in prose written for the user.\n\n**Why:** it reads as machine-written.",
 	})
-	var entry models.MemoryEntry
-	if err := json.Unmarshal([]byte(text), &entry); err != nil {
-		t.Fatalf("unmarshal add output: %v\n%s", err, text)
-	}
+	entry := *decodeMemoryWrite(t, text).Memory
 	if entry.Category != "preference" {
 		t.Fatalf("category = %q, want preference", entry.Category)
 	}
@@ -387,10 +393,7 @@ func TestMemoryAddWithSameExplicitKeyUpdatesInPlace(t *testing.T) {
 		"category": "convention",
 		"content":  "Qdrant, managed mode.",
 	})
-	var created models.MemoryEntry
-	if err := json.Unmarshal([]byte(first), &created); err != nil {
-		t.Fatalf("unmarshal first add: %v\n%s", err, first)
-	}
+	created := *decodeMemoryWrite(t, first).Memory
 
 	second := callMemoryAdd(t, store, map[string]any{
 		"action":   "add",
@@ -435,10 +438,7 @@ func TestMemoryUpdateWritesProvenance(t *testing.T) {
 		"confidence": models.MemoryConfidenceHigh,
 		"ttlDays":    180,
 	})
-	var entry models.MemoryEntry
-	if err := json.Unmarshal([]byte(text), &entry); err != nil {
-		t.Fatalf("unmarshal update output: %v\n%s", err, text)
-	}
+	entry := *decodeMemoryWrite(t, text).Memory
 	if len(entry.Sources) != 2 {
 		t.Fatalf("sources = %+v, want two", entry.Sources)
 	}
@@ -475,6 +475,8 @@ func TestMemoryConfirmStampsVerificationWithoutChangingStatus(t *testing.T) {
 	createMemoryForCleanupTest(t, store, "conf1", models.MemoryLayerProject, time.Now().UTC(), time.Now().UTC())
 
 	text := callMemoryAction(t, store, handleMemoryConfirm, map[string]any{"action": "confirm", "id": "conf1"})
+	// confirm is a lifecycle action, not a content write: it cannot move the
+	// claim boundary, so it keeps returning the entry directly.
 	var entry models.MemoryEntry
 	if err := json.Unmarshal([]byte(text), &entry); err != nil {
 		t.Fatalf("unmarshal confirm output: %v\n%s", err, text)
@@ -502,10 +504,7 @@ func TestMemoryContradictSplitsByWhoDecides(t *testing.T) {
 		"action": "add", "title": "Retry uses jittered backoff",
 		"category": "failure", "content": "`Manager.Start` retries with jitter.",
 	})
-	var worldEntry models.MemoryEntry
-	if err := json.Unmarshal([]byte(worldFact), &worldEntry); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	worldEntry := *decodeMemoryWrite(t, worldFact).Memory
 	text := callMemoryAction(t, store, handleMemoryContradict, map[string]any{
 		"action": "contradict", "id": worldEntry.ID, "note": "the jitter was removed in a refactor",
 	})
@@ -531,10 +530,7 @@ func TestMemoryContradictSplitsByWhoDecides(t *testing.T) {
 		"category": "preference",
 		"content":  "Answer in Vietnamese.\n\n**Why:** the user writes in Vietnamese.",
 	})
-	var prefEntry models.MemoryEntry
-	if err := json.Unmarshal([]byte(pref), &prefEntry); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	prefEntry := *decodeMemoryWrite(t, pref).Memory
 	text = callMemoryAction(t, store, handleMemoryContradict, map[string]any{
 		"action": "contradict", "id": prefEntry.ID, "note": "saw an English reply",
 	})
@@ -549,5 +545,74 @@ func TestMemoryContradictSplitsByWhoDecides(t *testing.T) {
 	}
 	if got.Memory.Metadata[memoryDisputedMetadataKey] == "" {
 		t.Error("the dispute should be recorded on the entry")
+	}
+}
+
+func TestMemoryAddReportsTheClaimItWillInject(t *testing.T) {
+	store := setupMemoryCleanupStore(t)
+
+	// Multi-paragraph, no marker: the boundary is a guess and the author is the
+	// only one who can settle it, so say so while they still have it in mind.
+	guessed := decodeMemoryWrite(t, callMemoryAdd(t, store, map[string]any{
+		"action": "add", "title": "Retry uses jittered backoff", "category": "failure",
+		"content": "`Manager.Start` retries with jitter.\n\nAdded 2026-08-01 after the thundering herd on deploy.",
+	}))
+	if guessed.Claim != "`Manager.Start` retries with jitter." {
+		t.Fatalf("claim = %q", guessed.Claim)
+	}
+	if guessed.ClaimSource != models.MemoryClaimSourceFirstParagraph {
+		t.Fatalf("claimSource = %q, want first-paragraph", guessed.ClaimSource)
+	}
+	if guessed.ClaimWarning == "" {
+		t.Fatal("a guessed boundary must be reported at write time")
+	}
+	if guessed.Memory.Status != models.MemoryStatusActive {
+		t.Fatalf("a guessed boundary must not block the write, status = %q", guessed.Memory.Status)
+	}
+
+	// Single paragraph: nothing to split. Warning here would train the author
+	// to scroll past the warning that matters.
+	whole := decodeMemoryWrite(t, callMemoryAdd(t, store, map[string]any{
+		"action": "add", "title": "Timeouts are five seconds", "category": "pattern",
+		"content": "Every outbound call uses a five second timeout.",
+	}))
+	if whole.ClaimSource != models.MemoryClaimSourceWhole {
+		t.Fatalf("claimSource = %q, want whole", whole.ClaimSource)
+	}
+	if whole.ClaimWarning != "" {
+		t.Fatalf("single-paragraph write must not warn, got %q", whole.ClaimWarning)
+	}
+
+	// Marker present: the author chose, so report it and stay quiet.
+	marked := decodeMemoryWrite(t, callMemoryAdd(t, store, map[string]any{
+		"action": "add", "title": "Config is read once", "category": "pattern",
+		"content": "Config is read once at startup.\n" + models.MemoryDetailMarker + "\nA reload needs a restart.",
+	}))
+	if marked.ClaimSource != models.MemoryClaimSourceMarker || marked.ClaimWarning != "" {
+		t.Fatalf("claimSource = %q warning = %q", marked.ClaimSource, marked.ClaimWarning)
+	}
+}
+
+func TestMemoryUpdateReportsTheClaimToo(t *testing.T) {
+	store := setupMemoryCleanupStore(t)
+	created := decodeMemoryWrite(t, callMemoryAdd(t, store, map[string]any{
+		"action": "add", "title": "Config is read once", "category": "pattern",
+		"content": "Config is read once at startup.",
+	}))
+	if created.ClaimWarning != "" {
+		t.Fatalf("unexpected warning on create: %q", created.ClaimWarning)
+	}
+
+	// Growing a one-paragraph memory into several is exactly when the boundary
+	// starts being guessed, and exactly when nobody would think to check.
+	updated := decodeMemoryWrite(t, callMemoryUpdate(t, store, map[string]any{
+		"action": "update", "id": created.Memory.ID,
+		"content": "Config is read once at startup.\n\nA reload needs a restart.",
+	}))
+	if updated.ClaimSource != models.MemoryClaimSourceFirstParagraph || updated.ClaimWarning == "" {
+		t.Fatalf("claimSource = %q warning = %q", updated.ClaimSource, updated.ClaimWarning)
+	}
+	if updated.Claim != "Config is read once at startup." {
+		t.Fatalf("claim = %q", updated.Claim)
 	}
 }

@@ -3,6 +3,7 @@ package models
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -276,5 +277,92 @@ func TestMemoryClaimOnEmptyContent(t *testing.T) {
 	claim, hasDetail := MemoryClaim("   \n\n  ")
 	if claim != "" || hasDetail {
 		t.Fatalf("claim = %q hasDetail = %v, want empty and false", claim, hasDetail)
+	}
+}
+
+func TestInspectMemoryClaimNamesWhoChoseTheBoundary(t *testing.T) {
+	cases := []struct {
+		name       string
+		content    string
+		wantSource string
+		wantClaim  string
+	}{
+		{"marker", "The point.\n" + MemoryDetailMarker + "\nThe evidence.", MemoryClaimSourceMarker, "The point."},
+		{"guessed", "The point.\n\nThe evidence.", MemoryClaimSourceFirstParagraph, "The point."},
+		{"nothing to split", "The point and nothing else.", MemoryClaimSourceWhole, "The point and nothing else."},
+		{"empty", "  ", MemoryClaimSourceWhole, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := InspectMemoryClaim(tc.content)
+			if got.Source != tc.wantSource || got.Claim != tc.wantClaim {
+				t.Fatalf("source = %q claim = %q, want %q / %q", got.Source, got.Claim, tc.wantSource, tc.wantClaim)
+			}
+		})
+	}
+}
+
+func TestInsertMemoryDetailMarkerPreservesTheClaim(t *testing.T) {
+	// The whole point of the migration: freeze the boundary WITHOUT changing
+	// what gets injected. If the claim moves, the migration is a behaviour
+	// change wearing the clothes of a cleanup.
+	content := "The point.\n\nThe evidence.\n\nMore evidence."
+	before, _ := MemoryClaim(content)
+	migrated, changed := InsertMemoryDetailMarker(content)
+	if !changed {
+		t.Fatal("expected a guessed boundary to be migrated")
+	}
+	after, hasDetail := MemoryClaim(migrated)
+	if after != before {
+		t.Fatalf("claim moved: %q -> %q", before, after)
+	}
+	if !hasDetail {
+		t.Fatal("migrated entry lost its detail")
+	}
+	if InspectMemoryClaim(migrated).Source != MemoryClaimSourceMarker {
+		t.Fatal("migrated entry should report the author as the source")
+	}
+	// Running it twice must not stack markers.
+	again, changedAgain := InsertMemoryDetailMarker(migrated)
+	if changedAgain || again != migrated {
+		t.Fatal("migration is not idempotent")
+	}
+}
+
+func TestInsertMemoryDetailMarkerSkipsSingleParagraphBodies(t *testing.T) {
+	content := "Nothing to split here."
+	got, changed := InsertMemoryDetailMarker(content)
+	if changed || got != content {
+		t.Fatalf("single-paragraph body should be left alone, got %q changed=%v", got, changed)
+	}
+}
+
+func TestEditingTheOpeningParagraphCannotMoveAMarkedBoundary(t *testing.T) {
+	// Without a marker, rewriting the opening paragraph silently changes what
+	// is injected. With one, the boundary belongs to the author.
+	marked := "Original point.\n\n" + MemoryDetailMarker + "\n\nEvidence one.\n\nEvidence two."
+	edited := strings.Replace(marked, "Original point.", "Rewritten point spanning\nmore than one line.", 1)
+	info := InspectMemoryClaim(edited)
+	if info.Source != MemoryClaimSourceMarker {
+		t.Fatalf("source = %q, want the marker to still own the boundary", info.Source)
+	}
+	if info.Claim != "Rewritten point spanning\nmore than one line." {
+		t.Fatalf("claim = %q", info.Claim)
+	}
+	if strings.Contains(info.Claim, "Evidence") {
+		t.Fatal("the boundary moved into the evidence")
+	}
+}
+
+func TestStripMemoryDetailMarkerRestoresTheOriginalBody(t *testing.T) {
+	// Retrieval must score a memory identically before and after migration, so
+	// stripping has to give back exactly what was there.
+	original := "The point.\n\nThe evidence."
+	migrated, _ := InsertMemoryDetailMarker(original)
+	if got := StripMemoryDetailMarker(migrated); got != original {
+		t.Fatalf("strip = %q, want %q", got, original)
+	}
+	if got := StripMemoryDetailMarker(original); got != original {
+		t.Fatalf("strip changed an unmarked body: %q", got)
 	}
 }

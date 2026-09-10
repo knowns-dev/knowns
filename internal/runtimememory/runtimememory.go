@@ -1103,7 +1103,10 @@ func scoreEntry(entry *models.MemoryEntry, input Input, requirePromptMatch bool)
 		filepathBase(input.WorkingDir),
 		input.ActionType,
 	)
-	textTokens := uniqueTokens(entry.Title, entry.Category, strings.Join(entry.Tags, " "), entry.Content)
+	// The claim-boundary marker is a directive, not content. Tokenizing it adds
+	// words like "memory" and "detail" to every marked entry, so a migration
+	// meant to preserve behaviour would change what matches.
+	textTokens := uniqueTokens(entry.Title, entry.Category, strings.Join(entry.Tags, " "), models.StripMemoryDetailMarker(entry.Content))
 	textSet := make(map[string]struct{}, len(textTokens))
 	for _, token := range textTokens {
 		textSet[token] = struct{}{}
@@ -1263,5 +1266,8 @@ func normalizeWhitespace(s string) string {
 // it has already lost the boundary.
 func claimFields(raw string) (claim string, hasDetail bool, fullBytes int) {
 	text, detail := models.MemoryClaim(raw)
-	return normalizeWhitespace(text), detail, len(strings.TrimSpace(raw))
+	// The reported size excludes the marker. The number answers "how much do I
+	// gain by fetching this", and a formatting directive is not something the
+	// reader gains.
+	return normalizeWhitespace(text), detail, len(strings.TrimSpace(models.StripMemoryDetailMarker(raw)))
 }

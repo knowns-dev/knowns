@@ -313,6 +313,34 @@ func (ms *MemoryStore) Update(entry *models.MemoryEntry) error {
 }
 
 // RestoreLegacyDecisionMigration restores a pre-migration snapshot. It is
+// UpdateContentPreservingTimestamp rewrites a memory body without touching
+// UpdatedAt.
+//
+// For a mechanical reformat, and the claim-boundary marker is exactly that.
+// UpdatedAt drives the recency bonus in retrieval, so stamping it would make
+// every migrated entry score slightly higher and quietly reorder results. The
+// knowledge did not change; only its formatting did, and the timestamp is a
+// statement about the knowledge.
+func (ms *MemoryStore) UpdateContentPreservingTimestamp(entry *models.MemoryEntry) error {
+	if entry == nil || entry.ID == "" {
+		return fmt.Errorf("memory entry is required")
+	}
+	if err := models.ValidateMemoryID(entry.ID); err != nil {
+		return err
+	}
+	return ms.withMemoryLock(context.Background(), entry.ID, func() error {
+		existing, err := ms.Get(entry.ID)
+		if err != nil {
+			return err
+		}
+		if err := models.ValidateLegacyDecisionMemoryUpdate(existing, entry); err != nil {
+			return err
+		}
+		entry.UpdatedAt = existing.UpdatedAt
+		return ms.writeExisting(entry, existing, false)
+	})
+}
+
 // deliberately narrower than Update: the current record must carry the
 // matching migration marker, still match the expected migrated state, and the
 // snapshot must be a legacy Decision Memory.

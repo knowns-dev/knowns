@@ -62,6 +62,7 @@ knowns memory delete	visible	runnable	--dry-run:bool --force:bool
 knowns memory demote	visible	runnable
 knowns memory edit	visible	runnable	--append:string --category:string --content:string --tag:stringArray --title:string
 knowns memory list	visible	runnable	--all-statuses:bool --category:string --layer:string --status:string --tag:string
+knowns memory migrate	visible	runnable	--all-statuses:bool --layer:string --write:bool
 knowns memory promote	visible	runnable
 knowns memory view	visible	runnable
 knowns migrate	visible	runnable	--write:bool

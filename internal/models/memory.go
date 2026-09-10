@@ -202,22 +202,46 @@ func ValidatePreferenceWhy(category, content string) error {
 // the claim applies to what it is doing.
 const MemoryDetailMarker = "<!--memory:detail-->"
 
-// MemoryClaim returns the part of a memory worth injecting, and whether
-// anything was held back.
+// Claim source values. They answer one question: who decided where the claim
+// ends, the author or the fallback.
+const (
+	// MemoryClaimSourceMarker means the author placed the boundary.
+	MemoryClaimSourceMarker = "marker"
+	// MemoryClaimSourceFirstParagraph means nobody did, and the split is a
+	// guess the system is making on the author's behalf.
+	MemoryClaimSourceFirstParagraph = "first-paragraph"
+	// MemoryClaimSourceWhole means there is nothing to split: the content is a
+	// single paragraph and the claim IS all of it. No marker would add anything.
+	MemoryClaimSourceWhole = "whole"
+)
+
+// MemoryClaimInfo describes how a memory body divides into what an agent is
+// shown and what it must ask for.
+type MemoryClaimInfo struct {
+	Claim     string `json:"claim"`
+	Source    string `json:"claimSource"`
+	HasDetail bool   `json:"hasDetail"`
+	// DetailBytes is what a reader would gain by fetching the whole entry. Zero
+	// whenever HasDetail is false.
+	DetailBytes int `json:"detailBytes,omitempty"`
+}
+
+// InspectMemoryClaim splits a memory body and reports who chose the boundary.
 //
 // With the marker present the split is explicit. Without it the claim is the
 // first paragraph, which is why the twelve entries already in the store work
 // unchanged: they were written with the point in the opening paragraph and the
-// evidence below it. That fallback is a convention, not a guarantee, so
-// `hasDetail` reports what actually happened rather than what was intended.
+// evidence below it. That fallback is a convention, not a guarantee, and Source
+// is what makes the difference visible instead of silent.
 //
-// hasDetail is false when the claim IS the whole content. A short memory must
-// not invite an agent to go fetch a fuller version that does not exist; the
-// wasted call teaches it to distrust the line everywhere else.
-func MemoryClaim(content string) (string, bool) {
+// A single-paragraph body reports MemoryClaimSourceWhole rather than
+// first-paragraph. Both produce the same claim, but only one of them is a
+// guess, and warning about a body that has nothing to split would train authors
+// to ignore the warning on the bodies that do.
+func InspectMemoryClaim(content string) MemoryClaimInfo {
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {
-		return "", false
+		return MemoryClaimInfo{Source: MemoryClaimSourceWhole}
 	}
 	if idx := strings.Index(trimmed, MemoryDetailMarker); idx >= 0 {
 		claim := strings.TrimSpace(trimmed[:idx])
@@ -226,12 +250,80 @@ func MemoryClaim(content string) (string, bool) {
 		// paragraph split would inject the detail as if it were the claim, so
 		// treat the whole body as the claim and admit there is no detail.
 		if claim == "" {
-			return trimmed, false
+			return MemoryClaimInfo{Claim: trimmed, Source: MemoryClaimSourceWhole}
 		}
-		return claim, rest != ""
+		return MemoryClaimInfo{
+			Claim:       claim,
+			Source:      MemoryClaimSourceMarker,
+			HasDetail:   rest != "",
+			DetailBytes: len(rest),
+		}
 	}
 	claim := firstParagraph(trimmed)
-	return claim, len(claim) < len(trimmed)
+	if len(claim) >= len(trimmed) {
+		return MemoryClaimInfo{Claim: claim, Source: MemoryClaimSourceWhole}
+	}
+	return MemoryClaimInfo{
+		Claim:       claim,
+		Source:      MemoryClaimSourceFirstParagraph,
+		HasDetail:   true,
+		DetailBytes: len(trimmed) - len(claim),
+	}
+}
+
+// StripMemoryDetailMarker removes the boundary marker from a body.
+//
+// The marker is a FORMATTING DIRECTIVE, not content. Anything that reads a
+// memory to decide how relevant it is must not see it: leaving it in changes
+// the keyword tokens and the embedding, so inserting a marker that is supposed
+// to preserve behaviour silently reorders retrieval and can push an entry out
+// of the results entirely. That is exactly what the first migration run did.
+func StripMemoryDetailMarker(content string) string {
+	if !strings.Contains(content, MemoryDetailMarker) {
+		return content
+	}
+	stripped := strings.ReplaceAll(content, MemoryDetailMarker, "")
+	// Collapse the blank line the marker left behind so the paragraph structure
+	// matches what the body looked like before it was inserted.
+	for strings.Contains(stripped, "\n\n\n") {
+		stripped = strings.ReplaceAll(stripped, "\n\n\n", "\n\n")
+	}
+	return strings.TrimSpace(stripped)
+}
+
+// MemoryClaim returns the part of a memory worth injecting, and whether
+// anything was held back.
+//
+// A thin wrapper over InspectMemoryClaim on purpose. Injection does not care
+// who chose the boundary, only where it is, and a second implementation of the
+// split for the shorter answer is exactly how two views of one record drift.
+func MemoryClaim(content string) (string, bool) {
+	info := InspectMemoryClaim(content)
+	return info.Claim, info.HasDetail
+}
+
+// MemoryClaimNeedsMarker reports whether the boundary is being guessed and the
+// author could settle it.
+func MemoryClaimNeedsMarker(content string) bool {
+	return InspectMemoryClaim(content).Source == MemoryClaimSourceFirstParagraph
+}
+
+// InsertMemoryDetailMarker freezes the boundary the fallback is already using.
+//
+// The marker goes exactly where the split happens today, so the injected claim
+// does not change. What changes is that a later edit to the opening paragraph
+// can no longer move the boundary without someone meaning to.
+//
+// Returns the content unchanged when there is no guess to settle: an existing
+// marker, or a single paragraph with nothing to split.
+func InsertMemoryDetailMarker(content string) (string, bool) {
+	info := InspectMemoryClaim(content)
+	if info.Source != MemoryClaimSourceFirstParagraph {
+		return content, false
+	}
+	trimmed := strings.TrimSpace(content)
+	rest := strings.TrimSpace(trimmed[len(info.Claim):])
+	return info.Claim + "\n\n" + MemoryDetailMarker + "\n\n" + rest, true
 }
 
 // firstParagraph cuts at the first blank line, tolerating carriage returns and

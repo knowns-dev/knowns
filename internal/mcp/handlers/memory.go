@@ -253,8 +253,51 @@ func handleMemoryAdd(getStore func() *storage.Store, req mcp.CallToolRequest) (*
 	indexMemoryReviewChanges(store, result.ChangedIDs)
 	go notifyServer(store, "notify/refresh")
 
-	out, _ := json.MarshalIndent(result.Memory, "", "  ")
-	return mcp.NewToolResultText(string(out)), nil
+	return memoryWriteResultText(result.Memory, false), nil
+}
+
+// memoryWriteResult is what every successful memory write returns.
+//
+// ONE shape for all three write paths: create, key-upsert and update. Each of
+// them used to marshal the entry directly, so adding the claim fields to them
+// separately is how the three answers to "what will actually be injected" start
+// disagreeing. The same drift already cost this subsystem two defects.
+type memoryWriteResult struct {
+	Replaced bool                `json:"replaced,omitempty"`
+	Memory   *models.MemoryEntry `json:"memory"`
+	// Claim is the text an agent will see on a prompt that retrieves this
+	// entry. Reported at write time because the author is the only person who
+	// can fix a bad boundary, and only while they still have the content in
+	// mind.
+	Claim       string `json:"claim"`
+	ClaimSource string `json:"claimSource"`
+	DetailBytes int    `json:"detailBytes,omitempty"`
+	// ClaimWarning is set ONLY when the boundary is a guess. A single-paragraph
+	// body has nothing to split, and warning about it would teach authors to
+	// scroll past the warning that matters.
+	ClaimWarning string `json:"claimWarning,omitempty"`
+}
+
+func newMemoryWriteResult(entry *models.MemoryEntry, replaced bool) memoryWriteResult {
+	info := models.InspectMemoryClaim(entry.Content)
+	out := memoryWriteResult{
+		Replaced:    replaced,
+		Memory:      entry,
+		Claim:       info.Claim,
+		ClaimSource: info.Source,
+		DetailBytes: info.DetailBytes,
+	}
+	if info.Source == models.MemoryClaimSourceFirstParagraph {
+		out.ClaimWarning = fmt.Sprintf(
+			"Only the first paragraph (%d bytes) is injected; the remaining %d bytes are fetched with memory(action:\"get\", id:%q). Nobody chose that boundary. Add %s where the claim ends to settle it, or run `knowns memory migrate --write` to freeze the current split.",
+			len(info.Claim), info.DetailBytes, entry.ID, models.MemoryDetailMarker)
+	}
+	return out
+}
+
+func memoryWriteResultText(entry *models.MemoryEntry, replaced bool) *mcp.CallToolResult {
+	out, _ := json.MarshalIndent(newMemoryWriteResult(entry, replaced), "", "  ")
+	return mcp.NewToolResultText(string(out))
 }
 
 // memoryWrite carries the fields an add may set, so the create path and the
@@ -356,11 +399,7 @@ func replaceMemoryByKey(store *storage.Store, entry *models.MemoryEntry, write m
 	search.BestEffortIndexMemory(store, updated.ID)
 	go notifyServer(store, "notify/refresh")
 
-	out, _ := json.MarshalIndent(struct {
-		Replaced bool                `json:"replaced"`
-		Memory   *models.MemoryEntry `json:"memory"`
-	}{Replaced: true, Memory: &updated}, "", "  ")
-	return mcp.NewToolResultText(string(out)), nil
+	return memoryWriteResultText(&updated, true), nil
 }
 
 func handleMemoryGet(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -679,8 +718,7 @@ func handleMemoryUpdate(getStore func() *storage.Store, req mcp.CallToolRequest)
 	search.BestEffortIndexMemory(store, entry.ID)
 	go notifyServer(store, "notify/refresh")
 
-	out, _ := json.MarshalIndent(entry, "", "  ")
-	return mcp.NewToolResultText(string(out)), nil
+	return memoryWriteResultText(entry, false), nil
 }
 
 func handleMemoryDelete(getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

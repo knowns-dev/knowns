@@ -28,6 +28,7 @@ knowns memory
 - [`knowns memory demote`](knowns_memory_demote.md) — Demote a memory entry down one layer
 - [`knowns memory edit`](knowns_memory_edit.md) — Edit a memory entry
 - [`knowns memory list`](knowns_memory_list.md) — List memory entries
+- [`knowns memory migrate`](knowns_memory_migrate.md) — Freeze the claim boundary of memories the system is guessing at
 - [`knowns memory promote`](knowns_memory_promote.md) — Promote a memory entry up one layer
 - [`knowns memory view`](knowns_memory_view.md) — View a memory entry
 
