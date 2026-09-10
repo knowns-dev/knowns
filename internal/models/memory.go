@@ -7,6 +7,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 var memoryIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -257,13 +260,47 @@ var memoryKeyNonSlugRE = regexp.MustCompile(`[^a-z0-9]+`)
 // This is deliberately not the entry's identity. The ID stays random because
 // `@memory/<id>` refs already exist in the store and in shipped instructions;
 // a content-derived identity would break every one of them on the first edit.
+// LETTERS ARE FOLDED TO ASCII FIRST, and that step is not cosmetic. Replacing
+// every non-ASCII rune with a separator shreds any language that writes with
+// diacritics: "Không dùng em dash trong nội dung" became
+// "kh-ng-d-ng-em-dash-trong-n-i-dung", which names nothing, cannot be typed back
+// from memory, and collides with any other title sharing those consonants.
+// Folding gives "khong-dung-em-dash-trong-noi-dung" instead.
+//
+// The fold is NFD decomposition with combining marks dropped, so it covers every
+// script that composes accents rather than a hand-written table for one
+// language. `đ` needs its own case because it is a distinct letter, not a `d`
+// carrying a mark, so NFD leaves it whole.
+//
+// Folding cannot preserve tone, so two Vietnamese titles differing only by tone
+// share a key. That is why a derived key never upserts on its own: only a key
+// the caller states explicitly replaces an existing entry, and a collision here
+// costs a suggestion rather than a memory.
 func DeriveMemoryKey(title string) string {
-	slug := memoryKeyNonSlugRE.ReplaceAllString(strings.ToLower(strings.TrimSpace(title)), "-")
+	slug := memoryKeyNonSlugRE.ReplaceAllString(foldToASCII(title), "-")
 	slug = strings.Trim(slug, "-")
 	if len(slug) > 80 {
 		slug = strings.Trim(slug[:80], "-")
 	}
 	return slug
+}
+
+// foldToASCII lowercases and strips diacritics, leaving the base letters.
+func foldToASCII(s string) string {
+	lowered := strings.ToLower(strings.TrimSpace(s))
+	// Letters that carry a stroke or bar rather than a combining mark survive
+	// decomposition intact, so they are mapped by hand.
+	lowered = strings.NewReplacer("đ", "d", "ø", "o", "ł", "l", "ß", "ss", "æ", "ae", "œ", "oe").Replace(lowered)
+
+	var b strings.Builder
+	b.Grow(len(lowered))
+	for _, r := range norm.NFD.String(lowered) {
+		if unicode.Is(unicode.Mn, r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func (m *MemoryEntry) ApplyLifecycleDefaults() {

@@ -193,6 +193,41 @@ func TestProposalGracePeriodProtectsThePreExistingBacklog(t *testing.T) {
 	}
 }
 
+func TestDeriveMemoryKeyFoldsDiacriticsInsteadOfShreddingThem(t *testing.T) {
+	// Replacing every non-ASCII rune with a separator destroys any language that
+	// writes with diacritics. The user of this repository writes Vietnamese
+	// titles, so the shipped behaviour produced keys naming nothing and colliding
+	// with each other on shared consonants.
+	cases := []struct{ title, want string }{
+		{"Không dùng em dash trong nội dung", "khong-dung-em-dash-trong-noi-dung"},
+		{"Cần sử dụng Knowns để quản lý tasks", "can-su-dung-knowns-de-quan-ly-tasks"},
+		{"Dùng tavily CLI cho web research", "dung-tavily-cli-cho-web-research"},
+		// English is unaffected by the fold.
+		{"Two hash functions over one record always drift", "two-hash-functions-over-one-record-always-drift"},
+		// Letters carrying a stroke rather than a combining mark need the explicit
+		// map: NFD leaves them whole.
+		{"Đường dẫn", "duong-dan"},
+	}
+	for _, tc := range cases {
+		if got := DeriveMemoryKey(tc.title); got != tc.want {
+			t.Errorf("DeriveMemoryKey(%q)\n  got  %q\n  want %q", tc.title, got, tc.want)
+		}
+	}
+
+	// Folding does NOT preserve tone, so titles differing only by tone share a
+	// key. That is inherent to slugging and is why a derived key never upserts on
+	// its own: only a key the caller states explicitly replaces an entry.
+	if DeriveMemoryKey("Không dùng em dash") != DeriveMemoryKey("Khống dụng em dash") {
+		t.Error("tone-only differences are expected to fold together; if they no longer do, the upsert rule can be revisited")
+	}
+
+	// What folding does buy is word shape. Titles that differ in base letters
+	// stay distinct, where the old rule collapsed them onto their consonants.
+	if DeriveMemoryKey("Nội dung") == DeriveMemoryKey("Ngôn ngữ") {
+		t.Error("different words must not share a key")
+	}
+}
+
 func TestMemoryClaimSplitsAtMarker(t *testing.T) {
 	content := "Never mutate os.Args[0] in tests.\n" + MemoryDetailMarker + "\n**Why:** the runtime queue resolves its binary from it, so a mutated value races every parallel test."
 	claim, hasDetail := MemoryClaim(content)
