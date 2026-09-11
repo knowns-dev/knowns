@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -274,5 +275,50 @@ func setRuntimeMemoryHookFlag(t *testing.T, cmd *cobra.Command, name, value stri
 	t.Helper()
 	if err := cmd.Flags().Set(name, value); err != nil {
 		t.Fatalf("set flag %s: %v", name, err)
+	}
+}
+
+func TestRuntimeMemoryPromptIgnoresAnEnvelopeWithNoPromptField(t *testing.T) {
+	// A SessionStart payload is a control message, not something the user
+	// typed. Returning the envelope made it the query: the session-baseline
+	// branch saw a non-empty prompt and bowed out, so the first injection of
+	// every session was whatever shared a word with the hook's own JSON.
+	cases := []struct {
+		name  string
+		stdin string
+		want  string
+	}{
+		{"session start envelope", `{"hook_event_name":"SessionStart","cwd":"/repo"}`, ""},
+		{"prompt submit envelope", `{"hook_event_name":"UserPromptSubmit","cwd":"/repo"}`, ""},
+		{"envelope carrying a prompt", `{"hook_event_name":"UserPromptSubmit","prompt":"why is retrieval slow"}`, "why is retrieval slow"},
+		{"alternate prompt keys", `{"text":"from text"}`, "from text"},
+		// Some runtimes pipe the bare prompt. That fallback stays, narrowed to
+		// input that is not structured.
+		{"bare text", "just the prompt", "just the prompt"},
+		{"empty stdin", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("KNOWNS_RUNTIME_PROMPT", "")
+			t.Setenv("USER_PROMPT", "")
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("pipe: %v", err)
+			}
+			orig := os.Stdin
+			os.Stdin = r
+			defer func() { os.Stdin = orig }()
+			go func() {
+				_, _ = w.WriteString(tc.stdin)
+				_ = w.Close()
+			}()
+			got, err := runtimeMemoryPrompt()
+			if err != nil {
+				t.Fatalf("runtimeMemoryPrompt: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("prompt = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

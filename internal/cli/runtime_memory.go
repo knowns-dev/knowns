@@ -137,10 +137,17 @@ func runtimeMemoryPrompt() (string, error) {
 	}
 	var payload map[string]any
 	if json.Unmarshal(body, &payload) == nil {
-		if prompt := strings.TrimSpace(stringFromMap(payload, "prompt", "text", "message")); prompt != "" {
-			return prompt, nil
-		}
+		// A structured payload speaks for itself. When it carries no prompt
+		// field there IS no user prompt, and returning the envelope instead was
+		// how a SessionStart hook came to be treated as something the user
+		// typed: `{"hook_event_name":...,"cwd":...}` became the query, the
+		// session-baseline branch saw a non-empty prompt and bowed out, and the
+		// first injection of every session was whatever happened to share a word
+		// with the hook's own JSON.
+		return strings.TrimSpace(stringFromMap(payload, "prompt", "text", "message")), nil
 	}
+	// Not JSON: some runtimes pipe the bare prompt text, so the body IS the
+	// prompt. This fallback stays, narrowed to the case it was written for.
 	return trimmed, nil
 }
 

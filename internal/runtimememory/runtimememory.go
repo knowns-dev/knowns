@@ -306,7 +306,12 @@ func Build(store *storage.Store, input Input) (Pack, error) {
 	if maxItems <= 0 {
 		maxItems = defaultMaxItems
 	}
-	if isSessionBaseline && input.MaxItems <= 0 {
+	if isSessionBaseline && maxItems > baselineMaxItems {
+		// A real ceiling, not a default. The old condition was `input.MaxItems
+		// <= 0`, which never held: settings.MaxItems is always filled in from
+		// config before it reaches here, so baselineMaxItems had no effect at
+		// all. The session opener is a short list of commitments; more entries
+		// only push the ones that matter down the page.
 		maxItems = baselineMaxItems
 	}
 	maxBytes := input.MaxBytes
@@ -1025,9 +1030,40 @@ func shouldUseSessionBaseline(actionType, prompt string) bool {
 	}
 }
 
+// Baseline tiers. At session start there is no question to be relevant TO, so
+// the only thing worth spending the budget on is what holds regardless of what
+// the user is about to ask.
+//
+// The tiers are wide enough to separate cleanly: every commitment outranks
+// every context-dependent fact, and layer, recency and tags only order within a
+// tier. Ranking used to come from TAGS, and tags are a free-form field, so
+// `ipkq69` led only because its author happened to write `style` and
+// `preference` on it while `rtsx9j`, `ew4xea` and `2s3q4u` sat at positions 10,
+// 11 and 12 out of 12, below every project failure note. Category is the field
+// the write path actually validates against models.AllowedMemoryCategories.
+const (
+	baselinePreferenceWeight = 1.0
+	baselineConventionWeight = 0.5
+	// baselineTagWeight applies AT MOST ONCE. Counting it per tag is what let a
+	// twice-tagged entry outrank an equally important once-tagged one.
+	baselineTagWeight = 0.08
+)
+
 func baselineScore(entry *models.MemoryEntry) (float64, []string) {
 	score := 0.0
 	reasons := make([]string, 0, 4)
+
+	switch strings.ToLower(strings.TrimSpace(entry.Category)) {
+	case "preference":
+		// A commitment the user made. Nothing in the repository can confirm or
+		// retire it, and it applies to work that has not been described yet.
+		score += baselinePreferenceWeight
+		reasons = append(reasons, "user-commitment")
+	case "convention":
+		score += baselineConventionWeight
+		reasons = append(reasons, "project-convention")
+	}
+
 	switch entry.Layer {
 	case models.MemoryLayerProject:
 		score += 0.2
@@ -1043,8 +1079,9 @@ func baselineScore(entry *models.MemoryEntry) (float64, []string) {
 	for _, tag := range entry.Tags {
 		switch strings.ToLower(strings.TrimSpace(tag)) {
 		case "preference", "convention", "style", "runtime-memory", "runtime":
-			score += 0.08
+			score += baselineTagWeight
 			reasons = append(reasons, "baseline-tag")
+			return score, dedupeStrings(reasons)
 		}
 	}
 	return score, dedupeStrings(reasons)

@@ -1,6 +1,7 @@
 package runtimememory
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1151,5 +1152,84 @@ func TestClaimFieldsSplitOnRawContentNotNormalized(t *testing.T) {
 	}
 	if full != len("The point.\n\nThe evidence that supports it.") {
 		t.Fatalf("fullBytes = %d", full)
+	}
+}
+
+func baselineEntry(id, category, layer string, tags []string) *models.MemoryEntry {
+	return &models.MemoryEntry{
+		ID: id, Title: "Memory " + id, Category: category, Layer: layer,
+		Status: models.MemoryStatusActive, Content: "Body of " + id, Tags: tags,
+		UpdatedAt: time.Now().UTC().Add(-24 * time.Hour),
+	}
+}
+
+func TestBaselineRanksCommitmentsAboveContextDependentFacts(t *testing.T) {
+	// Ranking used to come from TAGS, which are free-form. On the real store
+	// that put three of four preferences at positions 10, 11 and 12 out of 12,
+	// below every project failure note, while the fourth led only because its
+	// author happened to write `style` and `preference` on it.
+	entries := []*models.MemoryEntry{
+		baselineEntry("failure-recent", "failure", models.MemoryLayerProject, []string{"debug"}),
+		baselineEntry("pattern-proj", "pattern", models.MemoryLayerProject, []string{"storage"}),
+		baselineEntry("pref-untagged", "preference", models.MemoryLayerGlobal, []string{"workflow"}),
+		baselineEntry("convention-proj", "convention", models.MemoryLayerProject, []string{"sdd"}),
+		baselineEntry("pref-tagged", "preference", models.MemoryLayerGlobal, []string{"style", "preference"}),
+	}
+	scored := map[string]float64{}
+	for _, entry := range entries {
+		score, _ := baselineScore(entry)
+		scored[entry.ID] = score
+	}
+	// Every preference outranks every non-commitment, tagged or not.
+	for _, pref := range []string{"pref-untagged", "pref-tagged"} {
+		for _, other := range []string{"failure-recent", "pattern-proj", "convention-proj"} {
+			if scored[pref] <= scored[other] {
+				t.Fatalf("%s (%.2f) must outrank %s (%.2f)", pref, scored[pref], other, scored[other])
+			}
+		}
+	}
+	if scored["convention-proj"] <= scored["failure-recent"] {
+		t.Fatalf("a convention must outrank a context-dependent fact: %.2f vs %.2f",
+			scored["convention-proj"], scored["failure-recent"])
+	}
+	// A second matching tag must not buy a second bonus; that is what let one
+	// entry jump the queue for a reason nobody chose.
+	if scored["pref-tagged"]-scored["pref-untagged"] > baselineTagWeight+0.0001 {
+		t.Fatalf("tags gave more than one bonus: %.2f vs %.2f", scored["pref-tagged"], scored["pref-untagged"])
+	}
+}
+
+func TestSessionBaselineCapsItemsEvenWhenConfigAsksForMore(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	projectRoot := t.TempDir()
+	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
+	if err := store.Init("runtime-memory"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+	for i := 0; i < baselineMaxItems+4; i++ {
+		entry := &models.MemoryEntry{
+			Title: fmt.Sprintf("Commitment %d", i), Layer: models.MemoryLayerGlobal,
+			Category: "preference", Content: fmt.Sprintf("Rule %d.\n\n**Why:** because.", i),
+			Status: models.MemoryStatusActive, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		}
+		if err := store.Memory.Create(entry); err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+	}
+	// MaxItems arrives filled in from config on every real call, which is why
+	// the old `input.MaxItems <= 0` guard never fired and the cap was dead.
+	pack, err := Build(store, Input{
+		Runtime: "claude-code", ProjectRoot: projectRoot, WorkingDir: projectRoot,
+		ActionType: "session-start", UserPrompt: "", Mode: ModeAuto,
+		MaxItems: baselineMaxItems + 4, MaxBytes: 40000,
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if pack.RetrievalMode != "session-baseline" {
+		t.Fatalf("retrievalMode = %q, want session-baseline", pack.RetrievalMode)
+	}
+	if len(pack.Items) > baselineMaxItems {
+		t.Fatalf("items = %d, want at most %d", len(pack.Items), baselineMaxItems)
 	}
 }

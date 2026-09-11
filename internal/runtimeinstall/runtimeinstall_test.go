@@ -140,8 +140,26 @@ func TestInstallClaudeWindowsWritesExactPromptSubmitHookJSON(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected hooks object, got: %#v", settings["hooks"])
 	}
-	if _, ok := hooks["SessionStart"]; ok {
-		t.Fatalf("expected no SessionStart managed hook for prompt-aware Claude, got: %#v", hooks["SessionStart"])
+	// Both hooks are installed. The session hook is the only moment a session
+	// can be told what holds before the user has asked anything, which is where
+	// user commitments load; the prompt hook cannot do that job because by then
+	// there is a question competing for the budget.
+	sessionStart, ok := hooks["SessionStart"].([]any)
+	if !ok || len(sessionStart) != 1 {
+		t.Fatalf("expected one SessionStart hook group, got: %#v", hooks["SessionStart"])
+	}
+	sessionGroup, ok := sessionStart[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected SessionStart group object, got: %#v", sessionStart[0])
+	}
+	sessionHooks, ok := sessionGroup["hooks"].([]any)
+	if !ok || len(sessionHooks) != 1 {
+		t.Fatalf("expected one SessionStart hook, got: %#v", sessionGroup["hooks"])
+	}
+	sessionEntry, _ := sessionHooks[0].(map[string]any)
+	wantSession := `C:/Users/Admin/.knowns/bin/knowns.exe runtime-memory hook --runtime claude-code --event session-start`
+	if sessionEntry["command"] != wantSession {
+		t.Fatalf("SessionStart command = %v, want %v", sessionEntry["command"], wantSession)
 	}
 	userPromptSubmit, ok := hooks["UserPromptSubmit"].([]any)
 	if !ok || len(userPromptSubmit) != 1 {
@@ -236,8 +254,14 @@ func TestInstallCodexNormalizesDeprecatedFeatureAndUninstallRemovesManagedHookOn
 	if !strings.Contains(text, "/tmp/existing-hook.sh") {
 		t.Fatalf("expected unrelated SessionStart hook preserved after install, got:\n%s", text)
 	}
-	if strings.Contains(text, "/tmp/old-knowns") || strings.Contains(text, "--event session-start") {
+	if strings.Contains(text, "/tmp/old-knowns") {
 		t.Fatalf("expected stale managed SessionStart hook removed after install, got:\n%s", text)
+	}
+	// The stale managed hook is replaced, not merely deleted: a session hook is
+	// now part of a complete install, and its absence is what left the first
+	// injection of every session with no user commitments in it.
+	if !strings.Contains(text, "runtime-memory hook --runtime codex --event session-start") {
+		t.Fatalf("expected current managed SessionStart hook installed, got:\n%s", text)
 	}
 	status, err := StatusFor("codex", opts)
 	if err != nil {

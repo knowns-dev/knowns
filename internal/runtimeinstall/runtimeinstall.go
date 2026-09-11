@@ -55,6 +55,23 @@ func baselineHookEvent(runtime string) string {
 	}
 }
 
+// nativeBaselineHookKey names the hook that fires once, before the user has
+// asked anything.
+//
+// This is the only moment a session can be told what holds regardless of the
+// question, so it is where user commitments are loaded. It was never installed:
+// installClaude and installCodex both DELETED the group while
+// baselineHookCommandPath and the uninstall paths kept cleaning up after a hook
+// nothing wrote.
+func nativeBaselineHookKey(runtime string) (string, bool) {
+	switch strings.TrimSpace(strings.ToLower(runtime)) {
+	case "claude-code", "codex":
+		return "SessionStart", true
+	default:
+		return "", false
+	}
+}
+
 func nativePromptHookKey(runtime string) (string, bool) {
 	switch strings.TrimSpace(strings.ToLower(runtime)) {
 	case "claude-code", "codex":
@@ -362,9 +379,12 @@ func installClaude(spec runtimeSpec, opts Options) error {
 	} else {
 		hooks[promptKey] = legacy
 	}
-	setOrDeleteHookGroups(hooks, "SessionStart", removeManagedHookGroups(hooks["SessionStart"], managedStatus))
 	hooks[promptKey] = removeManagedHookGroups(hooks[promptKey], managedStatus)
 	hooks[promptKey] = ensureCommandHookGroup(hooks[promptKey], hookCommandPath(spec, opts), managedStatus)
+	if baselineKey, ok := nativeBaselineHookKey(spec.Runtime); ok {
+		baseline := removeManagedHookGroups(hooks[baselineKey], managedStatus)
+		hooks[baselineKey] = ensureCommandHookGroup(baseline, baselineHookCommandPath(spec, opts), managedStatus)
+	}
 	config["hooks"] = hooks
 	return writeJSONMap(path, config)
 }
@@ -412,6 +432,16 @@ func populateClaudeStatus(status *Status, spec runtimeSpec, opts Options) {
 		status.Details = append(status.Details, promptKey+" prompt-aware hook not installed")
 		return
 	}
+	// A prompt hook without a session hook is a HALF install, and reporting it
+	// as installed is how the missing baseline stayed invisible.
+	if baselineKey, ok := nativeBaselineHookKey(spec.Runtime); ok {
+		if !hasCommandHookGroup(hooks[baselineKey], baselineHookCommandPath(spec, opts)) {
+			status.State = StateDrifted
+			status.Summary = "helper script present, Claude session hook missing"
+			status.Details = append(status.Details, baselineKey+" session-baseline hook not installed")
+			return
+		}
+	}
 	status.Installed = true
 	status.State = StateInstalled
 	status.Summary = "installed"
@@ -447,9 +477,12 @@ func installCodex(spec runtimeSpec, opts Options) error {
 	} else {
 		hookRoot[promptKey] = legacy
 	}
-	setOrDeleteHookGroups(hookRoot, "SessionStart", removeManagedHookGroups(hookRoot["SessionStart"], managedStatus))
 	hookRoot[promptKey] = removeManagedHookGroups(hookRoot[promptKey], managedStatus)
 	hookRoot[promptKey] = ensureCommandHookGroup(hookRoot[promptKey], hookCommandPath(spec, opts), managedStatus)
+	if baselineKey, ok := nativeBaselineHookKey(spec.Runtime); ok {
+		baseline := removeManagedHookGroups(hookRoot[baselineKey], managedStatus)
+		hookRoot[baselineKey] = ensureCommandHookGroup(baseline, baselineHookCommandPath(spec, opts), managedStatus)
+	}
 	hooks["hooks"] = hookRoot
 	return writeJSONMap(hooksPath, hooks)
 }
@@ -515,6 +548,14 @@ func populateCodexStatus(status *Status, spec runtimeSpec, opts Options) {
 		status.Summary = "Codex feature enabled, hook missing"
 		status.Details = append(status.Details, promptKey+" prompt-aware hook not installed")
 		return
+	}
+	if baselineKey, ok := nativeBaselineHookKey(spec.Runtime); ok {
+		if !hasCommandHookGroup(hookRoot[baselineKey], baselineHookCommandPath(spec, opts)) {
+			status.State = StateDrifted
+			status.Summary = "Codex feature enabled, session hook missing"
+			status.Details = append(status.Details, baselineKey+" session-baseline hook not installed")
+			return
+		}
 	}
 	status.Installed = true
 	status.State = StateInstalled
