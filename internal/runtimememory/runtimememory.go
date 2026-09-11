@@ -636,10 +636,14 @@ func buildHybridItems(hits []hybridCandidate, input Input) []candidate {
 		if !containsString(hit.matchedBy, "semantic") {
 			continue
 		}
-		score, reasons, promptOverlaps := scoreEntry(hit.entry, input, false)
-		if promptOverlaps == 0 {
-			continue
-		}
+		// No keyword-overlap gate. Every hit here already matched
+		// semantically, and requiring a shared word as well put keyword in
+		// FRONT of semantic: "don't use the long dash" was discarded for
+		// sharing no word with "em dash", which is precisely the case the
+		// semantic layer exists to catch. The score floor below still applies,
+		// and with no overlap almost all of the score comes from the semantic
+		// boost, so only a genuinely strong semantic match clears it.
+		score, reasons, _ := scoreEntry(hit.entry, input, false)
 		score += hybridSearchBoost(hit.score)
 		reasons = append(reasons, "hybrid-retrieval")
 		reasons = append(reasons, "semantic-match")

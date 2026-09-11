@@ -1233,3 +1233,36 @@ func TestSessionBaselineCapsItemsEvenWhenConfigAsksForMore(t *testing.T) {
 		t.Fatalf("items = %d, want at most %d", len(pack.Items), baselineMaxItems)
 	}
 }
+
+func TestSemanticHitSharingNoWordWithThePromptIsStillConsidered(t *testing.T) {
+	// The keyword gate stood IN FRONT of the semantic layer: a hit that
+	// matched on meaning but shared no word with the prompt was discarded,
+	// which is exactly the case the semantic layer exists to catch.
+	entry := &models.MemoryEntry{
+		ID: "ipkq69", Title: "Khong dung em dash", Category: "preference",
+		Layer: models.MemoryLayerGlobal, Status: models.MemoryStatusActive,
+		Content:   "Khi viet noi dung cho nguoi dung, khong dung ky tu em dash.",
+		UpdatedAt: time.Now().UTC(),
+	}
+	// Shares no token with the entry's title, category, tags or content.
+	input := Input{Runtime: "claude-code", UserPrompt: "avoid that lengthy horizontal stroke in prose", Mode: ModeAuto}
+	if _, _, overlaps := scoreEntry(entry, input, false); overlaps != 0 {
+		t.Fatalf("fixture must share zero words with the prompt, got %d", overlaps)
+	}
+
+	strong := buildHybridItems([]hybridCandidate{{entry: entry, score: 0.95, matchedBy: []string{"semantic"}}}, input)
+	if len(strong) != 1 {
+		t.Fatalf("a strong semantic hit with zero word overlap was dropped")
+	}
+	if strong[0].item.Retrieval != "hybrid" {
+		t.Fatalf("retrieval = %q, want hybrid", strong[0].item.Retrieval)
+	}
+
+	// The floor still holds. With no overlap nearly all of the score is the
+	// semantic boost, so a weak semantic match must not ride in on the
+	// removal of the gate.
+	weak := buildHybridItems([]hybridCandidate{{entry: entry, score: 0.40, matchedBy: []string{"semantic"}}}, input)
+	if len(weak) != 0 {
+		t.Fatalf("a weak semantic hit with zero word overlap cleared the floor: %+v", weak[0].item)
+	}
+}

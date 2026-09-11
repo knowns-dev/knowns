@@ -97,6 +97,12 @@ type indexEntry struct {
 	Labels   []string `json:"labels,omitempty"`
 
 	// Memory fields.
+	//
+	// MemoryID was missing, so every memory chunk the SQLite backend returned
+	// from Search carried an empty ID. The engine keys memory results by it and
+	// the runtime hook drops a result with no ID, which is how every global
+	// memory lost the semantic layer without an error anywhere.
+	MemoryID    string `json:"memoryId,omitempty"`
 	MemoryLayer string `json:"memoryLayer,omitempty"`
 	MemoryStore string `json:"memoryStore,omitempty"`
 
