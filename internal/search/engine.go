@@ -1561,6 +1561,12 @@ func mergeResults(kwResults, semResults []models.SearchResult, limit int) []mode
 		if item, ok := merged[key]; ok {
 			item.rrfScore += rrfScore
 			item.matchedBy = []string{"semantic", "keyword"}
+			// The keyword record is the one kept, and it never had a cosine.
+			// Without this copy a memory found by BOTH layers, the strongest
+			// kind of match, would be the one that lost its similarity.
+			if r.SemanticScore > item.result.SemanticScore {
+				item.result.SemanticScore = r.SemanticScore
+			}
 		} else {
 			merged[key] = &mergedItem{
 				result:    r,
@@ -1604,6 +1610,10 @@ func (e *Engine) scoredChunksToResults(scored []ScoredChunk, opts SearchOptions,
 	type sourceResult struct {
 		result models.SearchResult
 		scores []float64 // all chunk scores for this source
+		// bestRaw is the best chunk's cosine BEFORE any boost. Score mixes in
+		// a doc path-match boost and a bonus per extra chunk; neither says how
+		// well the text matches, and the second favours long sources.
+		bestRaw float64
 	}
 	seen := make(map[string]*sourceResult)
 
@@ -1613,6 +1623,7 @@ func (e *Engine) scoredChunksToResults(scored []ScoredChunk, opts SearchOptions,
 
 		// Tree-aware scoring: boost doc chunks whose HeaderPath matches query words.
 		chunkScore := sc.Score
+		rawScore := sc.Score
 		if sc.Type == ChunkTypeDoc && sc.HeaderPath != "" {
 			headerLower := strings.ToLower(sc.HeaderPath)
 			queryWords := strings.Fields(strings.ToLower(query))
@@ -1759,12 +1770,15 @@ func (e *Engine) scoredChunksToResults(scored []ScoredChunk, opts SearchOptions,
 
 		if existing, ok := seen[key]; ok {
 			existing.scores = append(existing.scores, chunkScore)
+			if rawScore > existing.bestRaw {
+				existing.bestRaw = rawScore
+			}
 			// Keep the result with the best snippet.
 			if chunkScore > existing.result.Score {
 				existing.result = result
 			}
 		} else {
-			seen[key] = &sourceResult{result: result, scores: []float64{chunkScore}}
+			seen[key] = &sourceResult{result: result, scores: []float64{chunkScore}, bestRaw: rawScore}
 		}
 	}
 
@@ -1784,6 +1798,9 @@ func (e *Engine) scoredChunksToResults(scored []ScoredChunk, opts SearchOptions,
 		}
 
 		sr.result.Score = finalScore
+		if method == "semantic" {
+			sr.result.SemanticScore = sr.bestRaw
+		}
 		results = append(results, sr.result)
 	}
 	return results, nil

@@ -70,6 +70,52 @@ const (
 
 var tokenRE = regexp.MustCompile(`[a-z0-9]+`)
 
+// Relevance floors. Both are absolute, and both sit on a signal that does not
+// grow with the length of the prompt, which is the whole point: the old
+// threshold compared a fixed number against `0.35 × shared words`, so a longer
+// prompt cleared it more easily whether or not it was more relevant.
+const (
+	// semanticRelevanceFloor is the raw cosine a hybrid hit must reach.
+	//
+	// Calibrated 2026-09-12 on qwen3-embedding:0.6b against the live store:
+	// prompts that were about a stored memory had a best hit of 0.62 to 0.67;
+	// prompts about nothing stored ("ok cảm ơn", "database connection pool")
+	// peaked at 0.50 and 0.37. The floor sits in that gap. It is specific to
+	// the embedding model: a different model has a different cosine
+	// distribution and would need recalibrating.
+	semanticRelevanceFloor = 0.55
+	// keywordRelevanceFloor applies only when the semantic layer is
+	// unavailable. It is a FRACTION of the prompt's content words found in
+	// the memory, so adding unrelated words can only lower it.
+	keywordRelevanceFloor = 0.5
+	// Tie-breakers for hybrid ranking. Their sum is capped well below the
+	// cosine gap between a relevant and an unrelated memory, so they order
+	// near-equal matches and can never lift a weak one past a strong one.
+	hybridKeywordTiebreak = 0.03
+	hybridProjectTiebreak = 0.01
+)
+
+// matchStopwords are dropped before counting shared words. Kept to function
+// words only (articles, pronouns, prepositions, conjunctions, auxiliaries,
+// question words) in folded form, since tokens are folded before lookup.
+// Tokens shorter than three letters are already dropped, which covers most
+// Vietnamese function words (va, la, co, da).
+var matchStopwords = func() map[string]struct{} {
+	words := strings.Fields(`
+		the and for with that this from into what when where which who how why
+		are was were have has had not but you your can should would could will
+		about there their then than also only just does did been being its our
+		all any some more most very like them they these those here please
+		khi cho thi cua voi nhu nay kia nhung cac mot nhieu rat cung dang duoc
+		khong nen phai sao trong tren duoi sau truoc giua bang tai neu hay hoac
+		chi van lai roi vay nao ban toi minh nhe thoi day`)
+	set := make(map[string]struct{}, len(words))
+	for _, w := range words {
+		set[w] = struct{}{}
+	}
+	return set
+}()
+
 var lowSignalPromptTokens = map[string]struct{}{
 	"again":    {},
 	"continue": {},
@@ -117,19 +163,30 @@ type Item struct {
 	Content   string    `json:"content"`
 	// Claim is what actually reaches the agent. Content stays whole so the
 	// debug pack can show what was held back next to what was sent.
-	Claim     string   `json:"claim,omitempty"`
-	HasDetail bool     `json:"hasDetail,omitempty"`
-	FullBytes int      `json:"fullBytes,omitempty"`
-	Score     float64  `json:"score"`
-	Retrieval string   `json:"retrieval,omitempty"`
-	MatchedBy []string `json:"matchedBy,omitempty"`
-	Reasons   []string `json:"reasons,omitempty"`
-	Tags      []string `json:"tags,omitempty"`
+	Claim     string `json:"claim,omitempty"`
+	HasDetail bool   `json:"hasDetail,omitempty"`
+	FullBytes int    `json:"fullBytes,omitempty"`
+	// Semantic is the raw cosine for a hybrid hit; KeywordMatch is the share of
+	// the prompt's content words found in the entry. Each is what its own
+	// retrieval path is judged on, and both are carried so a rejected entry can
+	// be told apart from a missing one.
+	Semantic     float64  `json:"semanticScore,omitempty"`
+	KeywordMatch float64  `json:"keywordMatch,omitempty"`
+	Score        float64  `json:"score"`
+	Retrieval    string   `json:"retrieval,omitempty"`
+	MatchedBy    []string `json:"matchedBy,omitempty"`
+	Reasons      []string `json:"reasons,omitempty"`
+	Tags         []string `json:"tags,omitempty"`
 }
 
 type hybridCandidate struct {
-	entry     *models.MemoryEntry
-	score     float64
+	entry *models.MemoryEntry
+	// score is the engine's fused RANK, top result always 1.0. Kept for
+	// callers that only need ordering; never used as relevance.
+	score float64
+	// semantic is the raw cosine of the best-matching chunk. This is the
+	// relevance signal: absolute, and stable across prompt length.
+	semantic  float64
 	matchedBy []string
 }
 
@@ -334,20 +391,35 @@ func Build(store *storage.Store, input Input) (Pack, error) {
 		return candidates[i].item.ID < candidates[j].item.ID
 	})
 
-	selected := make([]Item, 0, maxItems)
-	for _, candidate := range candidates {
-		if len(selected) >= maxItems {
-			break
+	// The floor applies BEFORE the item cap, so an entry that did not match
+	// well enough can never take a slot from one that did. The session
+	// baseline is exempt: at session start there is no question to be relevant
+	// to, and it is ranked on its own terms.
+	eligible := candidates
+	if !isSessionBaseline {
+		eligible = make([]candidate, 0, len(candidates))
+		for _, c := range candidates {
+			if clearsInjectionFloor(c.item) {
+				eligible = append(eligible, c)
+			}
 		}
-		selected = append(selected, candidate.item)
 	}
+	selected := capItems(eligible, maxItems)
 	pack.CandidateCount = len(candidates)
 	pack.RetrievalMode = retrievalModeForItems(selected)
+	if pack.RetrievalMode == "" {
+		pack.RetrievalMode = retrievalModeForItems(capItems(candidates, maxItems))
+	}
 
 	if mode == ModeDebug {
-		pack.Candidates = selected
+		// Debug shows what was FOUND, including what the floor rejected, so a
+		// memory that matched weakly can be told apart from one never found.
+		pack.Candidates = capItems(candidates, maxItems)
 		if len(selected) == 0 {
 			pack.SkipReason = SkipReasonNoCandidates
+			if !isSessionBaseline && len(candidates) > 0 {
+				pack.SkipReason = SkipReasonBelowThreshold
+			}
 			return pack, nil
 		}
 		pack.Status = StatusCandidate
@@ -357,6 +429,14 @@ func Build(store *storage.Store, input Input) (Pack, error) {
 	prefix := trimToByteLimit(serializePrefix(input.Runtime), maxBytes)
 	serialized := prefix
 
+	if !isSessionBaseline && len(selected) == 0 && len(candidates) > 0 {
+		// Found, but nothing matched well enough. Kept distinct from finding
+		// nothing, because the remedy for each is different.
+		pack.Candidates = capItems(candidates, maxItems)
+		pack.SkipReason = SkipReasonBelowThreshold
+		pack.Bytes = len(prefix)
+		return pack, nil
+	}
 	if len(selected) == 0 {
 		if isSessionBaseline {
 			block := serializeKNOWNSSummary(store, maxBytes-len(serialized))
@@ -373,12 +453,6 @@ func Build(store *storage.Store, input Input) (Pack, error) {
 		pack.Bytes = len(pack.Serialized)
 		pack.Status = StatusCandidate
 		pack.SelectedCount = len(pack.Items)
-		return pack, nil
-	}
-	if !isSessionBaseline && len(selected) > 0 && !passesInjectionThreshold(selected) {
-		pack.Candidates = selected
-		pack.SkipReason = SkipReasonBelowThreshold
-		pack.Bytes = len(prefix)
 		return pack, nil
 	}
 
@@ -511,10 +585,12 @@ func buildCandidates(store *storage.Store, input Input, maxItems int, baseline b
 	}
 	limit := max(maxItems*4, 20)
 	if hybrid, ok := lookupHybridCandidates(store, input, limit); ok {
-		candidates := buildHybridItems(hybrid, input)
-		if len(candidates) > 0 {
-			return candidates, nil
-		}
+		// When the semantic layer ran, its answer stands, INCLUDING "nothing
+		// here is relevant". Falling back to keyword matching whenever no
+		// hybrid candidate cleared was how "ok cảm ơn" could still inject
+		// whatever shared a word with it. Keyword matching is for when the
+		// semantic layer is unavailable, not for overruling it.
+		return buildHybridItems(hybrid, input), nil
 	}
 
 	entries, err := store.Memory.List("")
@@ -574,25 +650,6 @@ func buildBaselineItems(entries []*models.MemoryEntry, input Input) []candidate 
 	return candidates
 }
 
-func normalizeComparableText(s string) string {
-	replacer := strings.NewReplacer(
-		"á", "a", "à", "a", "ả", "a", "ã", "a", "ạ", "a",
-		"ă", "a", "ắ", "a", "ằ", "a", "ẳ", "a", "ẵ", "a", "ặ", "a",
-		"â", "a", "ấ", "a", "ầ", "a", "ẩ", "a", "ẫ", "a", "ậ", "a",
-		"é", "e", "è", "e", "ẻ", "e", "ẽ", "e", "ẹ", "e",
-		"ê", "e", "ế", "e", "ề", "e", "ể", "e", "ễ", "e", "ệ", "e",
-		"í", "i", "ì", "i", "ỉ", "i", "ĩ", "i", "ị", "i",
-		"ó", "o", "ò", "o", "ỏ", "o", "õ", "o", "ọ", "o",
-		"ô", "o", "ố", "o", "ồ", "o", "ổ", "o", "ỗ", "o", "ộ", "o",
-		"ơ", "o", "ớ", "o", "ờ", "o", "ở", "o", "ỡ", "o", "ợ", "o",
-		"ú", "u", "ù", "u", "ủ", "u", "ũ", "u", "ụ", "u",
-		"ư", "u", "ứ", "u", "ừ", "u", "ử", "u", "ữ", "u", "ự", "u",
-		"ý", "y", "ỳ", "y", "ỷ", "y", "ỹ", "y", "ỵ", "y",
-		"đ", "d",
-	)
-	return normalizeWhitespace(replacer.Replace(strings.ToLower(strings.TrimSpace(s))))
-}
-
 func buildHeuristicItems(entries []*models.MemoryEntry, input Input) []candidate {
 	candidates := make([]candidate, 0, len(entries))
 	for _, entry := range entries {
@@ -602,35 +659,55 @@ func buildHeuristicItems(entries []*models.MemoryEntry, input Input) []candidate
 		if !allowedCategory(entry.Category) {
 			continue
 		}
-		score, reasons, _ := scoreEntry(entry, input, true)
+		score, reasons, match := scoreEntry(entry, input, true)
 		if score <= 0 {
 			continue
 		}
 		claim, hasDetail, fullBytes := claimFields(entry.Content)
 		candidates = append(candidates, candidate{item: Item{
-			ID:        entry.ID,
-			Title:     entry.Title,
-			Category:  entry.Category,
-			Layer:     entry.Layer,
-			Status:    entry.Status,
-			UpdatedAt: entry.UpdatedAt,
-			Content:   normalizeWhitespace(entry.Content),
-			Claim:     claim,
-			HasDetail: hasDetail,
-			FullBytes: fullBytes,
-			Score:     score,
-			Retrieval: "heuristic-fallback",
-			Reasons:   append(reasons, "heuristic-fallback"),
-			Tags:      append([]string(nil), entry.Tags...),
+			ID:           entry.ID,
+			Title:        entry.Title,
+			Category:     entry.Category,
+			Layer:        entry.Layer,
+			Status:       entry.Status,
+			UpdatedAt:    entry.UpdatedAt,
+			Content:      normalizeWhitespace(entry.Content),
+			Claim:        claim,
+			HasDetail:    hasDetail,
+			FullBytes:    fullBytes,
+			Score:        score,
+			KeywordMatch: match.fraction,
+			Retrieval:    "heuristic-fallback",
+			Reasons:      append(reasons, "heuristic-fallback"),
+			Tags:         append([]string(nil), entry.Tags...),
 		}})
 	}
 	return candidates
 }
 
 func buildHybridItems(hits []hybridCandidate, input Input) []candidate {
+	// One memory can come back more than once. It is indexed once per store,
+	// and an entry that moved between layers leaves a stale chunk in the store
+	// it left: r7upz8, demoted to project, still sits in the global index.
+	// mergeStoreMemoryResults keys by store, so both copies survive the engine
+	// and resolve to the same entry here. Keep the strongest match per entry,
+	// or the same rule is injected twice and paid for twice.
+	best := make(map[string]int, len(hits))
+	for i, hit := range hits {
+		if hit.entry == nil || hit.entry.ID == "" {
+			continue
+		}
+		if j, ok := best[hit.entry.ID]; !ok || hit.semantic > hits[j].semantic {
+			best[hit.entry.ID] = i
+		}
+	}
+
 	candidates := make([]candidate, 0, len(hits))
-	for _, hit := range hits {
+	for i, hit := range hits {
 		if hit.entry == nil || !memoryVisibleForRuntime(hit.entry, input) || !allowedCategory(hit.entry.Category) {
+			continue
+		}
+		if id := hit.entry.ID; id != "" && best[id] != i {
 			continue
 		}
 		if !containsString(hit.matchedBy, "semantic") {
@@ -643,15 +720,21 @@ func buildHybridItems(hits []hybridCandidate, input Input) []candidate {
 		// semantic layer exists to catch. The score floor below still applies,
 		// and with no overlap almost all of the score comes from the semantic
 		// boost, so only a genuinely strong semantic match clears it.
-		score, reasons, _ := scoreEntry(hit.entry, input, false)
-		score += hybridSearchBoost(hit.score)
-		reasons = append(reasons, "hybrid-retrieval")
-		reasons = append(reasons, "semantic-match")
+		//
+		// Relevance is the raw cosine. The engine's fused score is a rank
+		// (top result always 1.0, even for "ok cảm ơn"), so adding it as a
+		// boost gave every prompt a few near-maximal hits regardless of
+		// relevance. Keyword overlap, layer and recency only break ties.
+		_, reasons, match := scoreEntry(hit.entry, input, false)
+		score := hit.semantic + hybridKeywordTiebreak*match.fraction
+		if hit.entry.Layer == models.MemoryLayerProject {
+			score += hybridProjectTiebreak
+		}
+		score += recencyBonus(hit.entry.UpdatedAt) / 12
+		reasons = append(reasons, fmt.Sprintf("semantic:%.2f", hit.semantic))
+		reasons = append(reasons, "hybrid-retrieval", "semantic-match")
 		if containsString(hit.matchedBy, "keyword") {
 			reasons = append(reasons, "keyword-match")
-		}
-		if score <= 0.75 {
-			continue
 		}
 		claim, hasDetail, fullBytes := claimFields(hit.entry.Content)
 		candidates = append(candidates, candidate{item: Item{
@@ -666,6 +749,7 @@ func buildHybridItems(hits []hybridCandidate, input Input) []candidate {
 			HasDetail: hasDetail,
 			FullBytes: fullBytes,
 			Score:     score,
+			Semantic:  hit.semantic,
 			Retrieval: "hybrid",
 			MatchedBy: append([]string(nil), hit.matchedBy...),
 			Reasons:   reasons,
@@ -701,7 +785,10 @@ func defaultHybridCandidates(store *storage.Store, input Input, limit int) ([]hy
 		IncludeHistorical: NormalizeMode(input.Mode) == ModeDebug,
 	})
 	if err != nil {
-		return nil, true
+		// A failed search is not an answer. Report the semantic layer as
+		// unavailable so the caller degrades to keyword matching, rather than
+		// treating "the search errored" as "nothing is relevant".
+		return nil, false
 	}
 	hits := make([]hybridCandidate, 0, len(results))
 	for _, result := range results {
@@ -715,6 +802,7 @@ func defaultHybridCandidates(store *storage.Store, input Input, limit int) ([]hy
 		hits = append(hits, hybridCandidate{
 			entry:     entry,
 			score:     result.Score,
+			semantic:  result.SemanticScore,
 			matchedBy: append([]string(nil), result.MatchedBy...),
 		})
 	}
@@ -1006,7 +1094,7 @@ func promptSkipReason(prompt string) string {
 	if len(normalized) < 3 {
 		return SkipReasonLowSignalPrompt
 	}
-	tokens := tokenRE.FindAllString(normalized, -1)
+	tokens := tokenRE.FindAllString(models.FoldToASCII(normalized), -1)
 	if len(tokens) == 0 {
 		return SkipReasonLowSignalPrompt
 	}
@@ -1117,24 +1205,20 @@ func dedupeStrings(values []string) []string {
 	return result
 }
 
-func passesInjectionThreshold(items []Item) bool {
-	if len(items) == 0 {
-		return false
-	}
-	total := 0.0
-	for _, item := range items {
-		total += item.Score
-	}
-	if items[0].Score < 0.85 {
-		return false
-	}
-	if len(items) == 1 {
-		return total >= 1.1
-	}
-	return total >= 1.4
+// keywordMatch counts the prompt's content words found in an entry.
+//
+// fraction is the share, 0 to 1. It replaced a raw count multiplied by 0.35,
+// which grew with every word the prompt added: the same memory scored 0.77 for
+// "em dash" and 2.52 for a 117-character paraphrase. A share can only fall when
+// unrelated words are added, and scales every entry by the same factor, so
+// neither selection nor order depends on how long the prompt is.
+type keywordMatch struct {
+	overlaps int
+	total    int
+	fraction float64
 }
 
-func scoreEntry(entry *models.MemoryEntry, input Input, requirePromptMatch bool) (float64, []string, int) {
+func scoreEntry(entry *models.MemoryEntry, input Input, requirePromptMatch bool) (float64, []string, keywordMatch) {
 	mode := NormalizeMode(input.Mode)
 	_ = mode
 	promptTokens := uniqueTokens(input.UserPrompt)
@@ -1163,18 +1247,21 @@ func scoreEntry(entry *models.MemoryEntry, input Input, requirePromptMatch bool)
 		reasons = append(reasons, "global-memory")
 	}
 
-	promptOverlaps := 0
+	match := keywordMatch{total: len(promptTokens)}
 	for _, token := range promptTokens {
 		if _, ok := textSet[token]; ok {
-			promptOverlaps++
+			match.overlaps++
 		}
 	}
-	if promptOverlaps == 0 && requirePromptMatch {
-		return 0, nil, 0
+	if match.total > 0 {
+		match.fraction = float64(match.overlaps) / float64(match.total)
 	}
-	if promptOverlaps > 0 {
-		score += float64(promptOverlaps) * 0.35
-		reasons = append(reasons, fmt.Sprintf("keyword-overlap:%d", promptOverlaps))
+	if match.overlaps == 0 && requirePromptMatch {
+		return 0, nil, match
+	}
+	if match.overlaps > 0 {
+		score += match.fraction
+		reasons = append(reasons, fmt.Sprintf("keyword-overlap:%d/%d", match.overlaps, match.total))
 	}
 
 	contextOverlaps := 0
@@ -1198,17 +1285,7 @@ func scoreEntry(entry *models.MemoryEntry, input Input, requirePromptMatch bool)
 		score += bonus
 		reasons = append(reasons, "recent")
 	}
-	return score, reasons, promptOverlaps
-}
-
-func hybridSearchBoost(raw float64) float64 {
-	if raw < 0 {
-		return 0
-	}
-	if raw > 1.2 {
-		return 1.2
-	}
-	return raw
+	return score, reasons, match
 }
 
 func retrievalModeForItems(items []Item) string {
@@ -1281,8 +1358,16 @@ func uniqueTokens(parts ...string) []string {
 	seen := map[string]struct{}{}
 	var tokens []string
 	for _, part := range parts {
-		for _, token := range tokenRE.FindAllString(strings.ToLower(part), -1) {
+		// Fold before splitting. tokenRE only knows ASCII letters, so an
+		// unfolded "không" split into "kh" and "ng" and both fell under the
+		// length filter: Vietnamese content words vanished from matching while
+		// ASCII function words like "khi" and "cho" survived to match
+		// everything. The same shredding already broke DeriveMemoryKey.
+		for _, token := range tokenRE.FindAllString(models.FoldToASCII(part), -1) {
 			if len(token) < 3 {
+				continue
+			}
+			if _, stop := matchStopwords[token]; stop {
 				continue
 			}
 			if _, ok := seen[token]; ok {
@@ -1311,4 +1396,28 @@ func claimFields(raw string) (claim string, hasDetail bool, fullBytes int) {
 	// gain by fetching this", and a formatting directive is not something the
 	// reader gains.
 	return normalizeWhitespace(text), detail, len(strings.TrimSpace(models.StripMemoryDetailMarker(raw)))
+}
+
+// clearsInjectionFloor reports whether an item matched well enough to inject.
+// Each retrieval path is judged on the signal it actually has.
+func clearsInjectionFloor(item Item) bool {
+	switch item.Retrieval {
+	case "hybrid":
+		return item.Semantic >= semanticRelevanceFloor
+	case "heuristic-fallback":
+		return item.KeywordMatch >= keywordRelevanceFloor
+	default:
+		return true
+	}
+}
+
+func capItems(candidates []candidate, n int) []Item {
+	out := make([]Item, 0, min(len(candidates), n))
+	for _, c := range candidates {
+		if len(out) >= n {
+			break
+		}
+		out = append(out, c.item)
+	}
+	return out
 }

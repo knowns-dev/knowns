@@ -234,6 +234,11 @@ func TestBuildSkipsLowSignalPrompts(t *testing.T) {
 	}
 }
 
+// A weak candidate is one that matches only a minority of what the prompt is
+// about. It used to mean "the prompt was short": "graph page" against a memory
+// literally about the graph page was rejected for sharing only two words, which
+// is the length bias this threshold no longer has. Here the memory matches one
+// of four content words.
 func TestBuildSkipsWeakSingleCandidate(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	projectRoot := t.TempDir()
@@ -247,7 +252,7 @@ func TestBuildSkipsWeakSingleCandidate(t *testing.T) {
 		t.Fatalf("create memory: %v", err)
 	}
 
-	pack, err := Build(store, Input{Runtime: "opencode", ProjectRoot: projectRoot, WorkingDir: projectRoot, ActionType: "prompt_async", UserPrompt: "graph page", Mode: ModeAuto})
+	pack, err := Build(store, Input{Runtime: "opencode", ProjectRoot: projectRoot, WorkingDir: projectRoot, ActionType: "prompt_async", UserPrompt: "graph rendering performance regression", Mode: ModeAuto})
 	if err != nil {
 		t.Fatalf("build pack: %v", err)
 	}
@@ -614,6 +619,7 @@ func TestBuildSerializesMemoryFactsInDeterministicOrder(t *testing.T) {
 					UpdatedAt: now,
 				},
 				score:     0.9,
+				semantic:  0.8,
 				matchedBy: []string{"semantic"},
 			},
 			{
@@ -627,6 +633,7 @@ func TestBuildSerializesMemoryFactsInDeterministicOrder(t *testing.T) {
 					UpdatedAt: now,
 				},
 				score:     0.9,
+				semantic:  0.8,
 				matchedBy: []string{"semantic"},
 			},
 		}, true
@@ -682,6 +689,7 @@ func TestBuildUsesHybridCandidatesWhenAvailable(t *testing.T) {
 					UpdatedAt: now,
 				},
 				score:     0.92,
+				semantic:  0.82,
 				matchedBy: []string{"semantic", "keyword"},
 			},
 			{
@@ -695,6 +703,7 @@ func TestBuildUsesHybridCandidatesWhenAvailable(t *testing.T) {
 					UpdatedAt: now.Add(-time.Minute),
 				},
 				score:     0.21,
+				semantic:  0.21,
 				matchedBy: []string{"semantic"},
 			},
 		}, true
@@ -1246,23 +1255,28 @@ func TestSemanticHitSharingNoWordWithThePromptIsStillConsidered(t *testing.T) {
 	}
 	// Shares no token with the entry's title, category, tags or content.
 	input := Input{Runtime: "claude-code", UserPrompt: "avoid that lengthy horizontal stroke in prose", Mode: ModeAuto}
-	if _, _, overlaps := scoreEntry(entry, input, false); overlaps != 0 {
-		t.Fatalf("fixture must share zero words with the prompt, got %d", overlaps)
+	if _, _, match := scoreEntry(entry, input, false); match.overlaps != 0 {
+		t.Fatalf("fixture must share zero words with the prompt, got %d", match.overlaps)
 	}
 
-	strong := buildHybridItems([]hybridCandidate{{entry: entry, score: 0.95, matchedBy: []string{"semantic"}}}, input)
+	strong := buildHybridItems([]hybridCandidate{{entry: entry, score: 0.95, semantic: 0.72, matchedBy: []string{"semantic"}}}, input)
 	if len(strong) != 1 {
-		t.Fatalf("a strong semantic hit with zero word overlap was dropped")
+		t.Fatalf("a semantic hit with zero word overlap was not even considered")
 	}
 	if strong[0].item.Retrieval != "hybrid" {
 		t.Fatalf("retrieval = %q, want hybrid", strong[0].item.Retrieval)
 	}
+	if !clearsInjectionFloor(strong[0].item) {
+		t.Fatalf("a strong semantic match (cosine 0.72) with zero word overlap must clear the floor")
+	}
 
-	// The floor still holds. With no overlap nearly all of the score is the
-	// semantic boost, so a weak semantic match must not ride in on the
-	// removal of the gate.
-	weak := buildHybridItems([]hybridCandidate{{entry: entry, score: 0.40, matchedBy: []string{"semantic"}}}, input)
-	if len(weak) != 0 {
-		t.Fatalf("a weak semantic hit with zero word overlap cleared the floor: %+v", weak[0].item)
+	// The floor still holds, and it is judged on cosine alone. With no shared
+	// word, nothing else can carry a weak match over it.
+	weak := buildHybridItems([]hybridCandidate{{entry: entry, score: 0.40, semantic: 0.40, matchedBy: []string{"semantic"}}}, input)
+	if len(weak) != 1 {
+		t.Fatalf("weak hit should be a candidate so its rejection is visible, got %d", len(weak))
+	}
+	if clearsInjectionFloor(weak[0].item) {
+		t.Fatalf("a weak semantic match (cosine 0.40) cleared the floor: %+v", weak[0].item)
 	}
 }

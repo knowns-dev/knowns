@@ -369,7 +369,7 @@ var memoryKeyNonSlugRE = regexp.MustCompile(`[^a-z0-9]+`)
 // the caller states explicitly replaces an existing entry, and a collision here
 // costs a suggestion rather than a memory.
 func DeriveMemoryKey(title string) string {
-	slug := memoryKeyNonSlugRE.ReplaceAllString(foldToASCII(title), "-")
+	slug := memoryKeyNonSlugRE.ReplaceAllString(FoldToASCII(title), "-")
 	slug = strings.Trim(slug, "-")
 	if len(slug) > 80 {
 		slug = strings.Trim(slug[:80], "-")
@@ -377,8 +377,8 @@ func DeriveMemoryKey(title string) string {
 	return slug
 }
 
-// foldToASCII lowercases and strips diacritics, leaving the base letters.
-func foldToASCII(s string) string {
+// FoldToASCII lowercases and strips diacritics, leaving the base letters.
+func FoldToASCII(s string) string {
 	lowered := strings.ToLower(strings.TrimSpace(s))
 	// Letters that carry a stroke or bar rather than a combining mark survive
 	// decomposition intact, so they are mapped by hand.
