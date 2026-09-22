@@ -69,6 +69,7 @@ func (ms *MemoryStore) dirForLayer(layer string) (string, error) {
 type memoryFrontmatter struct {
 	ID             string            `yaml:"id"`
 	Title          string            `yaml:"title"`
+	Key            string            `yaml:"key,omitempty"`
 	Layer          string            `yaml:"layer"`
 	Category       string            `yaml:"category,omitempty"`
 	Status         string            `yaml:"status,omitempty"`
@@ -312,6 +313,34 @@ func (ms *MemoryStore) Update(entry *models.MemoryEntry) error {
 }
 
 // RestoreLegacyDecisionMigration restores a pre-migration snapshot. It is
+// UpdateContentPreservingTimestamp rewrites a memory body without touching
+// UpdatedAt.
+//
+// For a mechanical reformat, and the claim-boundary marker is exactly that.
+// UpdatedAt drives the recency bonus in retrieval, so stamping it would make
+// every migrated entry score slightly higher and quietly reorder results. The
+// knowledge did not change; only its formatting did, and the timestamp is a
+// statement about the knowledge.
+func (ms *MemoryStore) UpdateContentPreservingTimestamp(entry *models.MemoryEntry) error {
+	if entry == nil || entry.ID == "" {
+		return fmt.Errorf("memory entry is required")
+	}
+	if err := models.ValidateMemoryID(entry.ID); err != nil {
+		return err
+	}
+	return ms.withMemoryLock(context.Background(), entry.ID, func() error {
+		existing, err := ms.Get(entry.ID)
+		if err != nil {
+			return err
+		}
+		if err := models.ValidateLegacyDecisionMemoryUpdate(existing, entry); err != nil {
+			return err
+		}
+		entry.UpdatedAt = existing.UpdatedAt
+		return ms.writeExisting(entry, existing, false)
+	})
+}
+
 // deliberately narrower than Update: the current record must carry the
 // matching migration marker, still match the expected migrated state, and the
 // snapshot must be a legacy Decision Memory.
@@ -594,6 +623,7 @@ func parseMemoryContent(content, layer string) (*models.MemoryEntry, error) {
 
 	entry.ID = fm.ID
 	entry.Title = fm.Title
+	entry.Key = fm.Key
 	entry.Category = fm.Category
 	entry.Status = fm.Status
 	entry.Confidence = fm.Confidence
@@ -653,6 +683,9 @@ func renderMemory(entry *models.MemoryEntry) string {
 	b.WriteString("---\n")
 	fmt.Fprintf(&b, "id: %s\n", entry.ID)
 	fmt.Fprintf(&b, "title: %s\n", yamlScalar(entry.Title))
+	if entry.Key != "" {
+		fmt.Fprintf(&b, "key: %s\n", yamlScalar(entry.Key))
+	}
 	fmt.Fprintf(&b, "layer: %s\n", entry.Layer)
 
 	if entry.Category != "" {

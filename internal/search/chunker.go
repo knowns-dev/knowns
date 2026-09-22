@@ -469,7 +469,10 @@ func ChunkMemory(entry *models.MemoryEntry, maxTokens int, tok Tokenizer) ChunkR
 		if text != "" {
 			text += "\n\n"
 		}
-		text += entry.Content
+		// The claim-boundary marker never reaches the index. It is a directive
+		// about what to show, and indexing it makes an entry's relevance depend
+		// on whether its author happened to mark the boundary.
+		text += models.StripMemoryDetailMarker(entry.Content)
 	}
 
 	if text == "" {

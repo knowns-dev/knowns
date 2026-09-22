@@ -49,6 +49,7 @@
       "enabled": true,
       "model": "qwen3-embedding:0.6b",
       "provider": "ollama",
+      "dimensions": 1024,
       "vectorStore": {
         "backend": "qdrant",
         "mode": "managed"

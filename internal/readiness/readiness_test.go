@@ -337,3 +337,36 @@ func TestBuildReadinessIncludesDecisionCountsAndCapabilities(t *testing.T) {
 		}
 	}
 }
+
+func TestKnowledgeCountsAwaitingReview(t *testing.T) {
+	// The layer counts say how many memories exist, never how many can be read
+	// back. A store can hold dozens of proposed entries and still report a
+	// healthy total, which is how a review queue grows unnoticed for months.
+	store := newReadinessStore(t, "awaiting-review")
+
+	write := func(id, layer, status string) {
+		t.Helper()
+		entry := &models.MemoryEntry{
+			ID:       id,
+			Title:    "Memory " + id,
+			Layer:    layer,
+			Category: "pattern",
+			Content:  "Body for " + id,
+			Status:   status,
+		}
+		if err := store.Memory.Create(entry); err != nil {
+			t.Fatalf("create memory %s: %v", id, err)
+		}
+	}
+	write("live", models.MemoryLayerProject, models.MemoryStatusActive)
+	write("queued1", models.MemoryLayerProject, models.MemoryStatusProposed)
+	write("queued2", models.MemoryLayerGlobal, models.MemoryStatusProposed)
+
+	ks := buildKnowledge(store)
+	if ks.Memories.AwaitingReview != 2 {
+		t.Fatalf("awaitingReview = %d, want 2", ks.Memories.AwaitingReview)
+	}
+	if ks.Memories.Project != 2 || ks.Memories.Global != 1 {
+		t.Fatalf("layer counts changed: project=%d global=%d", ks.Memories.Project, ks.Memories.Global)
+	}
+}

@@ -51,6 +51,12 @@ type MemoryCounts struct {
 	Project        int `json:"project"`
 	Global         int `json:"global"`
 	LegacyDecision int `json:"legacyDecision"`
+
+	// AwaitingReview counts entries stuck at `proposed`. Default retrieval skips
+	// them, so a growing number here is knowledge the project wrote down and
+	// then never used. Reporting it as a number nobody surfaces is how a store
+	// reaches 48 of them without anyone noticing.
+	AwaitingReview int `json:"awaitingReview"`
 }
 
 // DecisionCounts separates current guidance from records that require review
@@ -222,6 +228,9 @@ func buildKnowledge(store *storage.Store) *KnowledgeStatus {
 			if models.IsLegacyDecisionMemoryCategory(memory.Category) {
 				ks.Memories.LegacyDecision++
 			}
+			if memory.Status == models.MemoryStatusProposed {
+				ks.Memories.AwaitingReview++
+			}
 		}
 	}
 	if global, err := store.Memory.ListGlobalOnly(); err == nil {
@@ -229,6 +238,9 @@ func buildKnowledge(store *storage.Store) *KnowledgeStatus {
 		for _, memory := range global {
 			if models.IsLegacyDecisionMemoryCategory(memory.Category) {
 				ks.Memories.LegacyDecision++
+			}
+			if memory.Status == models.MemoryStatusProposed {
+				ks.Memories.AwaitingReview++
 			}
 		}
 	}

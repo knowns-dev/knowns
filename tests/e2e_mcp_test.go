@@ -366,18 +366,34 @@ func TestMCP_UpdateIgnoresEmptyStringsAndSupportsClear(t *testing.T) {
 			"content":  "Memory content",
 			"category": "pattern",
 		})
-		memoryID, _ := created["id"].(string)
+		// Every memory write returns the entry under `memory`, alongside the
+		// claim that will actually be injected. The three write paths used to
+		// answer in two different shapes; one shape is the point.
+		memoryOf := func(result map[string]any) map[string]any {
+			t.Helper()
+			entry, ok := result["memory"].(map[string]any)
+			if !ok {
+				t.Fatalf("memory write result carried no entry: %v", result)
+			}
+			return entry
+		}
+
+		createdEntry := memoryOf(created)
+		memoryID, _ := createdEntry["id"].(string)
 		if memoryID == "" {
 			t.Fatalf("missing memory id: %v", created)
 		}
+		if created["claim"] != "Memory content" {
+			t.Fatalf("claim = %v, want the injected text reported at write time", created["claim"])
+		}
 
-		unchanged := client.CallTool("memory", map[string]any{
+		unchanged := memoryOf(client.CallTool("memory", map[string]any{
 			"action":   "update",
 			"id":       memoryID,
 			"title":    "",
 			"content":  "",
 			"category": "",
-		})
+		}))
 		if unchanged["title"] != "Memory title" {
 			t.Fatalf("title changed on empty string update: %v", unchanged["title"])
 		}
@@ -388,11 +404,11 @@ func TestMCP_UpdateIgnoresEmptyStringsAndSupportsClear(t *testing.T) {
 			t.Fatalf("category changed on empty string update: %v", unchanged["category"])
 		}
 
-		cleared := client.CallTool("memory", map[string]any{
+		cleared := memoryOf(client.CallTool("memory", map[string]any{
 			"action": "update",
 			"id":     memoryID,
 			"clear":  []string{"title", "content", "category"},
-		})
+		}))
 		assertCleared(t, cleared, "title")
 		assertCleared(t, cleared, "content")
 		assertCleared(t, cleared, "category")

@@ -19,6 +19,7 @@ Install and inspect runtime hooks and status integrations
 - [`knowns runtime memory`](knowns_runtime_memory.md) — Manage runtime memory hook behavior
 - [`knowns runtime ps`](knowns_runtime_ps.md) — Show live runtime processes and jobs, not readiness or integration status
 - [`knowns runtime reload`](knowns_runtime_reload.md) — Reload shared runtime semantic providers and config
+- [`knowns runtime retry`](knowns_runtime_retry.md) — Release retained Qdrant dead-letter jobs back to the scheduler
 - [`knowns runtime status`](knowns_runtime_status.md) — Show runtime hook and integration installation state
 - [`knowns runtime stop`](knowns_runtime_stop.md) — Request the shared runtime to shut down gracefully
 - [`knowns runtime uninstall`](knowns_runtime_uninstall.md) — Remove a runtime memory adapter

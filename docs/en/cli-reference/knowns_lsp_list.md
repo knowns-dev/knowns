@@ -5,8 +5,14 @@ List supported LSP language servers
 ## Usage
 
 ```
-knowns lsp list
+knowns lsp list [flags]
 ```
+
+## Flags
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-v, --verbose` | `bool` | — | Show daemon owner, backend selection, and log paths |
 
 ## Inherited flags
 

@@ -332,6 +332,17 @@ func ExecuteQdrantReconciliation(ctx context.Context, storeRoot string, intent r
 		// buries the real signal (the pending reindex) under queue noise.
 		return nil
 	}
+	// Everything below this line needs a live Qdrant. The managed process has
+	// no supervisor: a reboot or a kill leaves it down with nothing to bring it
+	// back, so without this every job from here on fails with connection
+	// refused until an operator intervenes, and the whole pending queue
+	// dead-letters together. Starting it here is what
+	// @doc/architecture/patterns/qdrant-vector-store-placement-pattern requires
+	// of a semantic vector operation. The two guards above still short-circuit
+	// first, so a disabled backend or an unprovisioned pointer starts nothing.
+	if err := ensureManagedQdrant(ctx, resolved); err != nil {
+		return err
+	}
 	client, err := qdrantClientForStore(store)
 	if err != nil {
 		return err

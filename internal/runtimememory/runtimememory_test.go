@@ -1,6 +1,7 @@
 package runtimememory
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -233,6 +234,11 @@ func TestBuildSkipsLowSignalPrompts(t *testing.T) {
 	}
 }
 
+// A weak candidate is one that matches only a minority of what the prompt is
+// about. It used to mean "the prompt was short": "graph page" against a memory
+// literally about the graph page was rejected for sharing only two words, which
+// is the length bias this threshold no longer has. Here the memory matches one
+// of four content words.
 func TestBuildSkipsWeakSingleCandidate(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	projectRoot := t.TempDir()
@@ -246,7 +252,7 @@ func TestBuildSkipsWeakSingleCandidate(t *testing.T) {
 		t.Fatalf("create memory: %v", err)
 	}
 
-	pack, err := Build(store, Input{Runtime: "opencode", ProjectRoot: projectRoot, WorkingDir: projectRoot, ActionType: "prompt_async", UserPrompt: "graph page", Mode: ModeAuto})
+	pack, err := Build(store, Input{Runtime: "opencode", ProjectRoot: projectRoot, WorkingDir: projectRoot, ActionType: "prompt_async", UserPrompt: "graph rendering performance regression", Mode: ModeAuto})
 	if err != nil {
 		t.Fatalf("build pack: %v", err)
 	}
@@ -562,14 +568,14 @@ func TestBuildHonorsItemAndByteLimits(t *testing.T) {
 	if len(pack.Items) != 1 {
 		t.Fatalf("items = %d, want 1", len(pack.Items))
 	}
-	if pack.Bytes > 300 {
-		t.Fatalf("bytes = %d, want <= 300", pack.Bytes)
+	// The byte ceiling no longer cuts inside an entry. This entry alone exceeds
+	// 300, and the contract is now to emit it whole rather than to emit a half
+	// of it that reads as complete. See TestOversizedSoleEntryIsEmittedWhole.
+	if strings.Contains(pack.Serialized, "...") {
+		t.Fatalf("did not expect truncation marker in serialized payload, got %q", pack.Serialized)
 	}
-	if !strings.Contains(pack.Serialized, "...") {
-		t.Fatalf("expected truncated content marker in serialized payload, got %q", pack.Serialized)
-	}
-	if strings.Contains(pack.Serialized, "ranking reasons for repeated prompt execution") {
-		t.Fatalf("expected long content tail to be truncated, got %q", pack.Serialized)
+	if !strings.Contains(pack.Serialized, "ranking reasons for repeated prompt execution") {
+		t.Fatalf("expected the claim to be emitted intact, got %q", pack.Serialized)
 	}
 	if !strings.Contains(pack.Serialized, "score=") || !strings.Contains(pack.Serialized, "trust=active") {
 		t.Fatalf("expected score/trust metadata in serialized payload, got %q", pack.Serialized)
@@ -613,6 +619,7 @@ func TestBuildSerializesMemoryFactsInDeterministicOrder(t *testing.T) {
 					UpdatedAt: now,
 				},
 				score:     0.9,
+				semantic:  0.8,
 				matchedBy: []string{"semantic"},
 			},
 			{
@@ -626,6 +633,7 @@ func TestBuildSerializesMemoryFactsInDeterministicOrder(t *testing.T) {
 					UpdatedAt: now,
 				},
 				score:     0.9,
+				semantic:  0.8,
 				matchedBy: []string{"semantic"},
 			},
 		}, true
@@ -681,6 +689,7 @@ func TestBuildUsesHybridCandidatesWhenAvailable(t *testing.T) {
 					UpdatedAt: now,
 				},
 				score:     0.92,
+				semantic:  0.82,
 				matchedBy: []string{"semantic", "keyword"},
 			},
 			{
@@ -694,6 +703,7 @@ func TestBuildUsesHybridCandidatesWhenAvailable(t *testing.T) {
 					UpdatedAt: now.Add(-time.Minute),
 				},
 				score:     0.21,
+				semantic:  0.21,
 				matchedBy: []string{"semantic"},
 			},
 		}, true
@@ -835,57 +845,66 @@ func TestBuildKeepsEmptyPackCleanWhenHybridReturnsNoUsableCandidates(t *testing.
 	}
 }
 
-func TestCaptureStoresStableGlobalPreference(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	projectRoot := t.TempDir()
-	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
-	if err := store.Init("runtime-memory"); err != nil {
-		t.Fatalf("init store: %v", err)
+func TestCaptureNeverWritesFromPromptText(t *testing.T) {
+	// Every prompt below used to create a Memory. The first two are the exact
+	// shapes the two removed inferences matched on. The third is the prompt
+	// that produced entry 4pgj1h in this repository's own store: the user's
+	// question, copied verbatim, stored as durable knowledge.
+	//
+	// The English cases are the tell. "for now", "currently" and "investigating"
+	// are the vocabulary of a fact that is about to stop being true, and the
+	// removed inference treated them as the signal to keep one forever.
+	cases := []struct {
+		name   string
+		prompt string
+	}{
+		{"global preference phrasing", "toi muon AI tu luu memory, khong doi toi nhac moi them"},
+		{"working context phrasing", "for now we are debugging the runtime queue workaround"},
+		{"vietnamese hien tai", "hiện tại bạn đã thấy Knowns đã có Persistent Memory chưa"},
+		{"english currently", "currently I am investigating the reconcile queue"},
 	}
 
-	entry, created, err := Capture(store, Input{
-		Runtime:     "opencode",
-		ProjectRoot: projectRoot,
-		WorkingDir:  projectRoot,
-		ActionType:  "user-prompt-submit",
-		UserPrompt:  "toi muon AI tu luu memory, khong doi toi nhac moi them",
-		Mode:        ModeAuto,
-	})
-	if err != nil {
-		t.Fatalf("capture: %v", err)
-	}
-	if !created {
-		t.Fatal("expected capture to create a memory")
-	}
-	if entry == nil {
-		t.Fatal("expected created entry")
-	}
-	if entry.Layer != models.MemoryLayerGlobal {
-		t.Fatalf("layer = %q, want %q", entry.Layer, models.MemoryLayerGlobal)
-	}
-	if entry.Category != "preference" {
-		t.Fatalf("category = %q, want preference", entry.Category)
-	}
-	if !strings.Contains(entry.Content, "proactively save durable memory") {
-		t.Fatalf("unexpected content: %q", entry.Content)
-	}
-	if entry.Status != models.MemoryStatusProposed {
-		t.Fatalf("status = %q, want proposed", entry.Status)
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			projectRoot := t.TempDir()
+			store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
+			if err := store.Init("runtime-memory"); err != nil {
+				t.Fatalf("init store: %v", err)
+			}
 
-	_, createdAgain, err := Capture(store, Input{
-		Runtime:     "opencode",
-		ProjectRoot: projectRoot,
-		WorkingDir:  projectRoot,
-		ActionType:  "user-prompt-submit",
-		UserPrompt:  "toi muon AI tu luu memory, khong doi toi nhac moi them",
-		Mode:        ModeAuto,
-	})
-	if err != nil {
-		t.Fatalf("capture duplicate: %v", err)
-	}
-	if createdAgain {
-		t.Fatal("expected duplicate capture to be skipped")
+			entry, outcome, err := CaptureWithOutcome(store, Input{
+				Runtime:     "opencode",
+				ProjectRoot: projectRoot,
+				WorkingDir:  projectRoot,
+				ActionType:  "user-prompt-submit",
+				UserPrompt:  tc.prompt,
+				Mode:        ModeAuto,
+			})
+			if err != nil {
+				t.Fatalf("capture: %v", err)
+			}
+			if entry != nil {
+				t.Fatalf("expected no memory, got %q", entry.Title)
+			}
+			if outcome.Created {
+				t.Fatal("expected Created to be false")
+			}
+			if outcome.Status != CaptureStatusSkipped {
+				t.Fatalf("status = %q, want %q", outcome.Status, CaptureStatusSkipped)
+			}
+			if outcome.Reason != SkipReasonNoCaptureCandidate {
+				t.Fatalf("reason = %q, want %q", outcome.Reason, SkipReasonNoCaptureCandidate)
+			}
+
+			stored, err := store.Memory.List("")
+			if err != nil {
+				t.Fatalf("list memories: %v", err)
+			}
+			if len(stored) != 0 {
+				t.Fatalf("expected an empty store, got %d entries", len(stored))
+			}
+		})
 	}
 }
 
@@ -913,39 +932,6 @@ func TestCaptureDoesNotInferProjectDecisionFromPrompt(t *testing.T) {
 	}
 }
 
-func TestCaptureStoresWorkingContextForTemporaryInstruction(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	projectRoot := t.TempDir()
-	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
-	if err := store.Init("runtime-memory"); err != nil {
-		t.Fatalf("init store: %v", err)
-	}
-
-	entry, created, err := Capture(store, Input{
-		Runtime:     "opencode",
-		ProjectRoot: projectRoot,
-		WorkingDir:  projectRoot,
-		ActionType:  "user-prompt-submit",
-		UserPrompt:  "for now we are debugging the runtime queue workaround",
-		Mode:        ModeAuto,
-	})
-	if err != nil {
-		t.Fatalf("capture: %v", err)
-	}
-	if !created {
-		t.Fatal("expected memory to be created")
-	}
-	if entry.Layer != models.MemoryLayerProject {
-		t.Fatalf("layer = %q, want %q", entry.Layer, models.MemoryLayerProject)
-	}
-	if entry.Category != "context" {
-		t.Fatalf("category = %q, want context", entry.Category)
-	}
-	if entry.Status != models.MemoryStatusProposed {
-		t.Fatalf("status = %q, want proposed", entry.Status)
-	}
-}
-
 func TestLookupAdapterIncludesRequiredRuntimesAndModes(t *testing.T) {
 	for _, runtime := range []string{"kiro", "claude-code", "opencode", "antigravity"} {
 		adapter, ok := LookupAdapter(runtime)
@@ -959,5 +945,338 @@ func TestLookupAdapterIncludesRequiredRuntimesAndModes(t *testing.T) {
 	kiro, _ := LookupAdapter("kiro")
 	if !kiro.NativeHooks || kiro.HookKind != HookNative {
 		t.Fatalf("kiro adapter = %+v, want native hooks", kiro)
+	}
+}
+
+func TestHookGuidanceDefinesWhatAMemoryIs(t *testing.T) {
+	// This block is paid on every prompt, so it carries exactly one line about
+	// what belongs in the store. Without it the only place that says so is the
+	// kn-extract skill, which has to be invoked, while the hook that fires on
+	// every message explains only which tool to call.
+	t.Setenv("HOME", t.TempDir())
+	projectRoot := t.TempDir()
+	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
+	if err := store.Init("runtime-memory"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+
+	summary := serializeKNOWNSSummary(store, 4000)
+	if !strings.Contains(summary, "a fact the NEXT session needs") {
+		t.Fatalf("hook guidance should define a Memory, got:\n%s", summary)
+	}
+	if !strings.Contains(summary, "only repeats the prompt") {
+		t.Fatalf("hook guidance should carry the negative test, got:\n%s", summary)
+	}
+
+	// canonicalityWarning is already emitted above every injection, so repeating
+	// it here spent a line on every prompt to say the same thing twice.
+	if strings.Count(summary, canonicalityWarning) > 1 {
+		t.Errorf("canonicality warning is duplicated inside the guidance block")
+	}
+}
+
+func TestExpireAbandonedProposalsRetiresOnlyTheAbandoned(t *testing.T) {
+	// Driven with an explicit clock rather than time.Now, so it keeps testing
+	// the rule after the grace window for the pre-existing backlog has passed
+	// and stops depending on what day it is run.
+	t.Setenv("HOME", t.TempDir())
+	projectRoot := t.TempDir()
+	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
+	if err := store.Init("runtime-memory"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+
+	now := time.Now().UTC().AddDate(2, 0, 0)
+	seed := func(id, status string, updated time.Time) {
+		t.Helper()
+		if err := store.Memory.Create(&models.MemoryEntry{
+			ID: id, Title: "Memory " + id, Layer: models.MemoryLayerProject,
+			Category: "pattern", Content: "Body " + id, Status: status, UpdatedAt: updated,
+		}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	seed("abandoned", models.MemoryStatusProposed, now.AddDate(0, 0, -90))
+	seed("kept", models.MemoryStatusActive, now.AddDate(0, 0, -90))
+	seed("recent", models.MemoryStatusProposed, now.AddDate(0, 0, -1))
+
+	if got := expireAbandonedProposals(store, now); got != 1 {
+		t.Fatalf("expired = %d, want 1", got)
+	}
+
+	expired, err := store.Memory.Get("abandoned")
+	if err != nil {
+		t.Fatalf("get abandoned: %v", err)
+	}
+	if expired.Status != models.MemoryStatusRejected {
+		t.Fatalf("abandoned status = %q, want rejected", expired.Status)
+	}
+
+	// An entry in use must survive being old, and a proposal inside its window
+	// must survive being unreviewed.
+	for _, id := range []string{"kept", "recent"} {
+		entry, err := store.Memory.Get(id)
+		if err != nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		if entry.Status == models.MemoryStatusRejected {
+			t.Errorf("%s was expired but should not have been", id)
+		}
+	}
+}
+
+func TestCaptureReportsTheExpirySweep(t *testing.T) {
+	// The hook's write path used to manufacture junk. It now runs the sweep,
+	// so the queue is bounded without anyone remembering to run a command.
+	t.Setenv("HOME", t.TempDir())
+	projectRoot := t.TempDir()
+	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
+	if err := store.Init("runtime-memory"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+	if err := store.Memory.Create(&models.MemoryEntry{
+		ID: "fresh", Title: "Fresh", Layer: models.MemoryLayerProject,
+		Category: "pattern", Content: "Body", Status: models.MemoryStatusProposed,
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	_, outcome, err := CaptureWithOutcome(store, Input{
+		Runtime: "opencode", ProjectRoot: projectRoot, WorkingDir: projectRoot,
+		ActionType: "user-prompt-submit", UserPrompt: "please review the reconcile queue", Mode: ModeAuto,
+	})
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if outcome.ExpiredProposals != 0 {
+		t.Fatalf("a proposal written moments ago must not be swept, got %d", outcome.ExpiredProposals)
+	}
+	entry, err := store.Memory.Get("fresh")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if entry.Status != models.MemoryStatusProposed {
+		t.Fatalf("status = %q, want it left proposed", entry.Status)
+	}
+}
+
+// item builds a serialization-ready Item without going through the store.
+func claimItem(id, title, claim string, hasDetail bool, fullBytes int) Item {
+	return Item{
+		ID: id, Title: title, Category: "pattern", Layer: models.MemoryLayerProject,
+		Status: models.MemoryStatusActive, Claim: claim, HasDetail: hasDetail,
+		FullBytes: fullBytes, Score: 1.5,
+	}
+}
+
+func TestOversizedEntryDoesNotBlockSmallerOnesBehindIt(t *testing.T) {
+	// This is the defect that made every injection show exactly one memory.
+	// The list is score-ordered, so what follows a large entry is usually a
+	// SMALLER entry; `break` discarded all of them to protect budget with room
+	// still in it.
+	big := claimItem("big", "Large", strings.Repeat("x", 400), false, 400)
+	small := claimItem("small", "Small", "short and useful", false, 16)
+	var emitted []Item
+	out := serializeItems([]Item{big, small}, 220, &emitted)
+	if len(emitted) != 1 || emitted[0].ID != "small" {
+		t.Fatalf("emitted = %+v, want only the small entry", emitted)
+	}
+	if !strings.Contains(out, "short and useful") {
+		t.Fatalf("serialized = %q, want the smaller entry present", out)
+	}
+	if !strings.Contains(out, "1 more matching memory did not fit") {
+		t.Fatalf("serialized = %q, want the elision line to name the skipped entry", out)
+	}
+}
+
+func TestOversizedSoleEntryIsEmittedWhole(t *testing.T) {
+	// A prompt that retrieved a memory and then showed none is, from the
+	// agent's side, identical to having no memory at all.
+	body := strings.Repeat("y", 500)
+	var emitted []Item
+	out := serializeItems([]Item{claimItem("only", "Only", body, false, 500)}, 100, &emitted)
+	if len(emitted) != 1 {
+		t.Fatalf("emitted = %d, want 1 even over budget", len(emitted))
+	}
+	if !strings.Contains(out, body) {
+		t.Fatalf("serialized = %q, want the claim intact rather than trimmed", out)
+	}
+	if strings.Contains(out, "...") {
+		t.Fatalf("serialized = %q, want no truncation marker", out)
+	}
+}
+
+func TestDetailLinePrintedOnlyWhenSomethingWasHeldBack(t *testing.T) {
+	withDetail := serializeItems([]Item{claimItem("a", "A", "the claim", true, 900)}, 4000, nil)
+	if !strings.Contains(withDetail, `detail: memory(action:"get", id:"a")`) {
+		t.Fatalf("serialized = %q, want the detail hint", withDetail)
+	}
+	if !strings.Contains(withDetail, "full=900b") {
+		t.Fatalf("serialized = %q, want the full size named", withDetail)
+	}
+	// A memory whose claim IS its body must not send an agent after a fuller
+	// version that does not exist; one wasted call teaches it to ignore the
+	// hint everywhere it does matter.
+	withoutDetail := serializeItems([]Item{claimItem("b", "B", "the whole thing", false, 15)}, 4000, nil)
+	if strings.Contains(withoutDetail, "detail: memory(") {
+		t.Fatalf("serialized = %q, want no detail hint on a memory with no detail", withoutDetail)
+	}
+}
+
+func TestElisionLineCountsEveryHiddenEntry(t *testing.T) {
+	items := []Item{
+		claimItem("keep", "Keep", "tiny", false, 4),
+		claimItem("d1", "D1", strings.Repeat("z", 400), false, 400),
+		claimItem("d2", "D2", strings.Repeat("z", 400), false, 400),
+	}
+	out := serializeItems(items, 200, nil)
+	if !strings.Contains(out, "2 more matching memories did not fit") {
+		t.Fatalf("serialized = %q, want both hidden entries counted", out)
+	}
+}
+
+func TestConventionCategoryReachesInjection(t *testing.T) {
+	// sbf2ih is `convention`: active, fully sourced, top of every search, and
+	// invisible to the agent because injection kept its own category list.
+	if !allowedCategory("convention") {
+		t.Fatalf("convention must be injectable; it is in models.AllowedMemoryCategories")
+	}
+	for _, legacy := range []string{"decision", "warning"} {
+		if !allowedCategory(legacy) {
+			t.Fatalf("%s predates the contract and must stay readable", legacy)
+		}
+	}
+	if allowedCategory("implementation") || allowedCategory("") {
+		t.Fatalf("categories outside the contract must not be injectable")
+	}
+}
+
+func TestClaimFieldsSplitOnRawContentNotNormalized(t *testing.T) {
+	// normalizeWhitespace collapses the blank line that separates a claim from
+	// its evidence, so the split has to happen before it runs.
+	claim, hasDetail, full := claimFields("The point.\n\nThe evidence that supports it.")
+	if claim != "The point." || !hasDetail {
+		t.Fatalf("claim = %q hasDetail = %v", claim, hasDetail)
+	}
+	if full != len("The point.\n\nThe evidence that supports it.") {
+		t.Fatalf("fullBytes = %d", full)
+	}
+}
+
+func baselineEntry(id, category, layer string, tags []string) *models.MemoryEntry {
+	return &models.MemoryEntry{
+		ID: id, Title: "Memory " + id, Category: category, Layer: layer,
+		Status: models.MemoryStatusActive, Content: "Body of " + id, Tags: tags,
+		UpdatedAt: time.Now().UTC().Add(-24 * time.Hour),
+	}
+}
+
+func TestBaselineRanksCommitmentsAboveContextDependentFacts(t *testing.T) {
+	// Ranking used to come from TAGS, which are free-form. On the real store
+	// that put three of four preferences at positions 10, 11 and 12 out of 12,
+	// below every project failure note, while the fourth led only because its
+	// author happened to write `style` and `preference` on it.
+	entries := []*models.MemoryEntry{
+		baselineEntry("failure-recent", "failure", models.MemoryLayerProject, []string{"debug"}),
+		baselineEntry("pattern-proj", "pattern", models.MemoryLayerProject, []string{"storage"}),
+		baselineEntry("pref-untagged", "preference", models.MemoryLayerGlobal, []string{"workflow"}),
+		baselineEntry("convention-proj", "convention", models.MemoryLayerProject, []string{"sdd"}),
+		baselineEntry("pref-tagged", "preference", models.MemoryLayerGlobal, []string{"style", "preference"}),
+	}
+	scored := map[string]float64{}
+	for _, entry := range entries {
+		score, _ := baselineScore(entry)
+		scored[entry.ID] = score
+	}
+	// Every preference outranks every non-commitment, tagged or not.
+	for _, pref := range []string{"pref-untagged", "pref-tagged"} {
+		for _, other := range []string{"failure-recent", "pattern-proj", "convention-proj"} {
+			if scored[pref] <= scored[other] {
+				t.Fatalf("%s (%.2f) must outrank %s (%.2f)", pref, scored[pref], other, scored[other])
+			}
+		}
+	}
+	if scored["convention-proj"] <= scored["failure-recent"] {
+		t.Fatalf("a convention must outrank a context-dependent fact: %.2f vs %.2f",
+			scored["convention-proj"], scored["failure-recent"])
+	}
+	// A second matching tag must not buy a second bonus; that is what let one
+	// entry jump the queue for a reason nobody chose.
+	if scored["pref-tagged"]-scored["pref-untagged"] > baselineTagWeight+0.0001 {
+		t.Fatalf("tags gave more than one bonus: %.2f vs %.2f", scored["pref-tagged"], scored["pref-untagged"])
+	}
+}
+
+func TestSessionBaselineCapsItemsEvenWhenConfigAsksForMore(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	projectRoot := t.TempDir()
+	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
+	if err := store.Init("runtime-memory"); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+	for i := 0; i < baselineMaxItems+4; i++ {
+		entry := &models.MemoryEntry{
+			Title: fmt.Sprintf("Commitment %d", i), Layer: models.MemoryLayerGlobal,
+			Category: "preference", Content: fmt.Sprintf("Rule %d.\n\n**Why:** because.", i),
+			Status: models.MemoryStatusActive, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		}
+		if err := store.Memory.Create(entry); err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+	}
+	// MaxItems arrives filled in from config on every real call, which is why
+	// the old `input.MaxItems <= 0` guard never fired and the cap was dead.
+	pack, err := Build(store, Input{
+		Runtime: "claude-code", ProjectRoot: projectRoot, WorkingDir: projectRoot,
+		ActionType: "session-start", UserPrompt: "", Mode: ModeAuto,
+		MaxItems: baselineMaxItems + 4, MaxBytes: 40000,
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if pack.RetrievalMode != "session-baseline" {
+		t.Fatalf("retrievalMode = %q, want session-baseline", pack.RetrievalMode)
+	}
+	if len(pack.Items) > baselineMaxItems {
+		t.Fatalf("items = %d, want at most %d", len(pack.Items), baselineMaxItems)
+	}
+}
+
+func TestSemanticHitSharingNoWordWithThePromptIsStillConsidered(t *testing.T) {
+	// The keyword gate stood IN FRONT of the semantic layer: a hit that
+	// matched on meaning but shared no word with the prompt was discarded,
+	// which is exactly the case the semantic layer exists to catch.
+	entry := &models.MemoryEntry{
+		ID: "ipkq69", Title: "Khong dung em dash", Category: "preference",
+		Layer: models.MemoryLayerGlobal, Status: models.MemoryStatusActive,
+		Content:   "Khi viet noi dung cho nguoi dung, khong dung ky tu em dash.",
+		UpdatedAt: time.Now().UTC(),
+	}
+	// Shares no token with the entry's title, category, tags or content.
+	input := Input{Runtime: "claude-code", UserPrompt: "avoid that lengthy horizontal stroke in prose", Mode: ModeAuto}
+	if _, _, match := scoreEntry(entry, input, false); match.overlaps != 0 {
+		t.Fatalf("fixture must share zero words with the prompt, got %d", match.overlaps)
+	}
+
+	strong := buildHybridItems([]hybridCandidate{{entry: entry, score: 0.95, semantic: 0.72, matchedBy: []string{"semantic"}}}, input)
+	if len(strong) != 1 {
+		t.Fatalf("a semantic hit with zero word overlap was not even considered")
+	}
+	if strong[0].item.Retrieval != "hybrid" {
+		t.Fatalf("retrieval = %q, want hybrid", strong[0].item.Retrieval)
+	}
+	if !clearsInjectionFloor(strong[0].item) {
+		t.Fatalf("a strong semantic match (cosine 0.72) with zero word overlap must clear the floor")
+	}
+
+	// The floor still holds, and it is judged on cosine alone. With no shared
+	// word, nothing else can carry a weak match over it.
+	weak := buildHybridItems([]hybridCandidate{{entry: entry, score: 0.40, semantic: 0.40, matchedBy: []string{"semantic"}}}, input)
+	if len(weak) != 1 {
+		t.Fatalf("weak hit should be a candidate so its rejection is visible, got %d", len(weak))
+	}
+	if clearsInjectionFloor(weak[0].item) {
+		t.Fatalf("a weak semantic match (cosine 0.40) cleared the floor: %+v", weak[0].item)
 	}
 }

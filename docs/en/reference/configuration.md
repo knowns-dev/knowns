@@ -106,6 +106,11 @@ Relevant fields:
 - `model`
 - `provider` (`"ollama"`, or a provider ID registered with `knowns provider add`)
 - `dimensions`
+- `vectorStore` (`backend`, `mode`, `externalURL`, `managedRoot`, `install`,
+  `retention`) - selects and provisions the vector backend. Defaults to a
+  Knowns-managed local Qdrant, so most projects never set it. See
+  [External Qdrant](./external-qdrant.md) to connect to a Qdrant you run
+  yourself.
 
 A project written before the Ollama-only change may still carry
 `"provider": "local"`. It is read as `"ollama"` with the default model, and

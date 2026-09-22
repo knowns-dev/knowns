@@ -108,7 +108,7 @@ func (s *SQLiteVectorStore) createSchema() error {
 		}
 	}
 
-	for _, col := range []string{"memory_layer", "memory_store", "decision_id"} {
+	for _, col := range []string{"memory_id", "memory_layer", "memory_store", "decision_id"} {
 		var hasCol int
 		row = s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('chunks') WHERE name=?`, col)
 		if err := row.Scan(&hasCol); err == nil && hasCol == 0 {
@@ -145,6 +145,7 @@ CREATE TABLE IF NOT EXISTS chunks (
 	    priority        TEXT,
 	    labels          TEXT,
 
+	    memory_id       TEXT,
 	    memory_layer    TEXT,
 	    memory_store    TEXT,
 	    decision_id     TEXT,
@@ -174,6 +175,23 @@ CREATE TABLE IF NOT EXISTS code_file_hashes (
 		return err
 	}
 
+	// Backfill memory_id for rows written before the column existed, and for
+	// rows migrateFromFile imports from the legacy file index, which never
+	// recorded it either. The ID is recoverable from the chunk id
+	// (`memory:<id>:chunk:...`), so this fills the COLUMN once and the column
+	// stays the only place the ID is read from. A read-side "parse it when
+	// empty" fallback would be a second representation of the same fact, and
+	// two representations of one record is how this subsystem has drifted
+	// before. Idempotent: it only touches memory rows still missing the ID.
+	if _, err := s.db.Exec(`
+		UPDATE chunks
+		   SET memory_id = substr(id, 8, instr(substr(id, 8), ':') - 1)
+		 WHERE type = 'memory'
+		   AND (memory_id IS NULL OR memory_id = '')
+		   AND id LIKE 'memory:%:%'`); err != nil {
+		return err
+	}
+
 	if _, err := s.db.Exec(`DROP TABLE IF EXISTS code_symbols; DROP TABLE IF EXISTS code_edges;`); err != nil {
 		return err
 	}
@@ -195,7 +213,7 @@ func (s *SQLiteVectorStore) loadIntoMemory() error {
 		SELECT id, type, content, token_count, embedding,
 		       doc_path, section, heading_level, header_path, position,
 		       task_id, field, status, priority, labels,
-		       COALESCE(memory_layer, ''), COALESCE(memory_store, ''), COALESCE(decision_id, ''),
+		       COALESCE(memory_id, ''), COALESCE(memory_layer, ''), COALESCE(memory_store, ''), COALESCE(decision_id, ''),
 		       COALESCE(name, ''), COALESCE(signature, ''), COALESCE(visibility, ''), COALESCE(detail, '')
 		FROM chunks
 	`)
@@ -214,14 +232,14 @@ func (s *SQLiteVectorStore) loadIntoMemory() error {
 		var docPath, section, parentSection sql.NullString
 		var headingLevel, position sql.NullInt64
 		var taskID, field, status, priority, labels sql.NullString
-		var memoryLayer, memoryStore, decisionID string
+		var memoryID, memoryLayer, memoryStore, decisionID string
 		var name, signature, visibility, detail string
 
 		if err := rows.Scan(
 			&entry.ID, &entry.Type, &content, &entry.TokenCount, &embBlob,
 			&docPath, &section, &headingLevel, &parentSection, &position,
 			&taskID, &field, &status, &priority, &labels,
-			&memoryLayer, &memoryStore, &decisionID,
+			&memoryID, &memoryLayer, &memoryStore, &decisionID,
 			&name, &signature, &visibility, &detail,
 		); err != nil {
 			return err
@@ -236,6 +254,7 @@ func (s *SQLiteVectorStore) loadIntoMemory() error {
 		entry.Field = field.String
 		entry.Status = status.String
 		entry.Priority = priority.String
+		entry.MemoryID = memoryID
 		entry.MemoryLayer = memoryLayer
 		entry.MemoryStore = memoryStore
 		entry.DecisionID = decisionID
@@ -398,7 +417,7 @@ func insertIndexEntries(tx *sql.Tx, entries []indexEntry, vecs []float32, dimens
 			DocPath: entry.DocPath, Section: entry.Section, HeadingLevel: entry.HeadingLevel,
 			HeaderPath: entry.HeaderPath, Position: entry.Position, TaskID: entry.TaskID,
 			Field: entry.Field, Status: entry.Status, Priority: entry.Priority, Labels: entry.Labels,
-			MemoryLayer: entry.MemoryLayer, MemoryStore: entry.MemoryStore, DecisionID: entry.DecisionID,
+			MemoryID: entry.MemoryID, MemoryLayer: entry.MemoryLayer, MemoryStore: entry.MemoryStore, DecisionID: entry.DecisionID,
 			Name: entry.Name, Signature: entry.Signature, Visibility: entry.Visibility, Detail: entry.Detail,
 		}
 		start := entry.Offset
@@ -434,15 +453,15 @@ func insertSQLiteChunk(tx *sql.Tx, chunk Chunk, dimensions int) error {
 		INSERT OR REPLACE INTO chunks (id, type, content, token_count, embedding,
 		    doc_path, section, heading_level, header_path, position,
 		    task_id, field, status, priority, labels,
-		    memory_layer, memory_store, decision_id,
+		    memory_id, memory_layer, memory_store, decision_id,
 		    name, signature, visibility, detail)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		chunk.ID, chunk.Type, chunk.Content, chunk.TokenCount, embBlob,
 		nullStr(chunk.DocPath), nullStr(chunk.Section), nullInt(chunk.HeadingLevel),
 		nullStr(chunk.HeaderPath), nullInt(chunk.Position), nullStr(chunk.TaskID),
 		nullStr(chunk.Field), nullStr(chunk.Status), nullStr(chunk.Priority), labelsJSON,
-		nullStr(chunk.MemoryLayer), nullStr(chunk.MemoryStore), nullStr(chunk.DecisionID),
+		nullStr(chunk.MemoryID), nullStr(chunk.MemoryLayer), nullStr(chunk.MemoryStore), nullStr(chunk.DecisionID),
 		nullStr(chunk.Name), nullStr(chunk.Signature), nullStr(chunk.Visibility), nullStr(chunk.Detail),
 	)
 	return err
@@ -524,8 +543,10 @@ func (s *SQLiteVectorStore) AddChunks(chunks []Chunk) {
 			Status:       c.Status,
 			Priority:     c.Priority,
 			Labels:       c.Labels,
+			MemoryID:     c.MemoryID,
 			MemoryLayer:  c.MemoryLayer,
 			MemoryStore:  c.MemoryStore,
+			DecisionID:   c.DecisionID,
 			Name:         c.Name,
 			Signature:    c.Signature,
 			Visibility:   c.Visibility,
@@ -669,11 +690,16 @@ func (s *SQLiteVectorStore) Search(queryVec []float32, opts VectorSearchOpts) []
 				Status:       entry.Status,
 				Priority:     entry.Priority,
 				Labels:       entry.Labels,
-				MemoryLayer:  entry.MemoryLayer,
-				MemoryStore:  entry.MemoryStore,
-				Name:         entry.Name,
-				Signature:    entry.Signature,
-				Content:      entry.Content,
+				// Both IDs were dropped here. The engine keys memory results
+				// by MemoryID and decision results by DecisionID, so a hit
+				// that lost its ID could never be matched back to its entry.
+				MemoryID:    entry.MemoryID,
+				MemoryLayer: entry.MemoryLayer,
+				MemoryStore: entry.MemoryStore,
+				DecisionID:  entry.DecisionID,
+				Name:        entry.Name,
+				Signature:   entry.Signature,
+				Content:     entry.Content,
 			},
 			Score: c.score,
 		}

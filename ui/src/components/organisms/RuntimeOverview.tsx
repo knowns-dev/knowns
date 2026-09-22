@@ -9,18 +9,18 @@ import {
 	ChevronRight,
 	Circle,
 	Clock,
-	ListChecks,
 	RefreshCw,
 	Server,
 	Settings2,
 	Users,
 	XCircle,
 } from "lucide-react";
-import { getRuntimeServices } from "@/ui/api/client";
+import { getRuntimeServices, postRuntimeRetry } from "@/ui/api/client";
 import type {
 	RuntimeJob,
 	RuntimeJobResult,
 	RuntimeProjectSnapshot,
+	RuntimeRetryJobRef,
 	RuntimeService,
 } from "@/ui/api/client";
 import { useRuntimeMonitor } from "@/ui/hooks/useRuntimeMonitor";
@@ -71,8 +71,88 @@ function duration(start?: string, end?: string) {
 	return `${minutes}m ${seconds % 60}s`;
 }
 
+function timeUntil(value?: string | null) {
+	if (!value) return "soon";
+	const diff = new Date(value).getTime() - Date.now();
+	if (diff <= 0) return "any moment";
+	const seconds = Math.floor(diff / 1000);
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return `${minutes}m`;
+	return `${Math.floor(minutes / 60)}h`;
+}
+
+// The queue only ever backs off or dead-letters a Qdrant reconcile job
+// (runtimequeue.go CompleteJob): every other kind is dropped outright on
+// failure and never reappears in the queued list. So any queued job that
+// still carries a lastError is one of exactly two cases, and both stamp
+// runAfter by a fixed, known offset from the moment it actually failed:
+//   - dead-lettered: runAfter = failedAt + 24h (a bookkeeping stamp; dead
+//     letters are skipped unconditionally regardless of runAfter)
+//   - retrying: runAfter = failedAt + backoff(attempts), backoff doubling
+//     each attempt and capped at 5 minutes
+// That lets the UI recover the real failure time from data already on the
+// wire, without an API change, instead of showing when the job was first
+// requested.
+const DEAD_LETTER_RUN_AFTER_OFFSET_MS = 24 * 60 * 60 * 1000;
+
+// No per-job "producing version" is on the wire, and the API does not
+// expose when the running daemon started — only its current version
+// string. So staleness can't be tied to the binary precisely; this reuses
+// the queue's own 24h dead-letter bookkeeping window as a deliberately
+// conservative proxy: an error frozen for at least that long is flagged as
+// possibly outdated rather than silently presented as current. Documented
+// as a known limitation, not a precise binary-vs-error comparison.
+const DEAD_LETTER_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+// The daemon claims one job per scheduling tick, and this page polls every
+// few seconds, so catching a ready job with nothing running is the ordinary
+// gap between a job arriving and the scheduler picking it up. Calling that a
+// stall is the false alarm this panel exists to stop raising. A job still
+// ready well past that handoff is a different claim, and only that one earns
+// the banner.
+const READY_STALL_GRACE_MS = 60 * 1000;
+
+function jobReadySinceMs(job: RuntimeJob) {
+	const readyAt = new Date(job.runAfter || job.requestedAt).getTime();
+	return Number.isNaN(readyAt) ? Number.NaN : readyAt;
+}
+
+function backoffDelayMs(attempts?: number) {
+	const attempt = Math.max(1, attempts ?? 1);
+	return Math.min(1000 * 2 ** (attempt - 1), 5 * 60 * 1000);
+}
+
+function jobFailedAt(job: RuntimeJob): string {
+	const runAfterMs = job.runAfter ? new Date(job.runAfter).getTime() : Number.NaN;
+	if (Number.isNaN(runAfterMs)) return job.requestedAt;
+	const offsetMs = job.deadLetter
+		? DEAD_LETTER_RUN_AFTER_OFFSET_MS
+		: backoffDelayMs(job.attempts);
+	return new Date(runAfterMs - offsetMs).toISOString();
+}
+
+function isErrorStale(job: RuntimeJob, now: number) {
+	if (!job.deadLetter) return false;
+	const failedAt = new Date(jobFailedAt(job)).getTime();
+	if (Number.isNaN(failedAt)) return false;
+	return now - failedAt > DEAD_LETTER_STALE_AFTER_MS;
+}
+
+// Every runtime projectRoot is the project's `.knowns` directory, so its last
+// segment is always ".knowns" and names nothing: every client, job and failure
+// row read as ".knowns" no matter which workspace it belonged to. The workspace
+// is the directory that holds it.
+function projectPath(root: string) {
+	const separator = root.includes("\\") && !root.includes("/") ? "\\" : "/";
+	const segments = root.split(/[\\/]/);
+	if (segments[segments.length - 1] === ".knowns") segments.pop();
+	const path = segments.join(separator);
+	return path === "" || path === separator ? root : path;
+}
+
 function projectName(root: string) {
-	return root.split(/[\\/]/).filter(Boolean).pop() || root;
+	return projectPath(root).split(/[\\/]/).filter(Boolean).pop() || root;
 }
 
 function detailValue(service: RuntimeService, key: string) {
@@ -144,13 +224,17 @@ function serviceOperationalState(
 	if (hasFailure || (detected && installState === "not_installed")) {
 		return "attention";
 	}
+	if (service.status === "running") return "running";
+	// "warm" describes an embedder that is loaded but idle between requests —
+	// distinct from cold/disabled, but only when the service isn't already
+	// reporting as running (a loaded, actively-serving embedder must count as
+	// active, not standby).
 	if (
 		service.type === "embedding" &&
 		detailValue(service, "activity_state") === "warm"
 	) {
 		return "standby";
 	}
-	if (service.status === "running") return "running";
 	if (service.status === "disabled" || !service.enabledInConfig) {
 		return "disabled";
 	}
@@ -245,6 +329,18 @@ function serviceSettingsCategory(service: RuntimeService) {
 	if (service.type === "cloudflared") return "tunnel";
 	if (service.type === "embedding") return "search";
 	return "runtime";
+}
+
+// The service list always reports every built-in LSP adapter this binary
+// ships, whether or not the project uses that language (adapters.go), plus
+// cloudflared and embedding — 16 + 2 regardless of project. A project can
+// only ever "reach" the LSP adapters it actually has a matching language
+// for (marked `detected`); non-LSP services are always relevant. Counting
+// against the full fixed list makes "0/18" the normal steady state for any
+// project that isn't polyglot, which reads as a fault when it isn't one.
+function isReachableService(service: RuntimeService) {
+	if (service.type !== "lsp") return true;
+	return detailIsTrue(service, "detected");
 }
 
 function KindBadge({ kind }: { kind: string }) {
@@ -443,6 +539,65 @@ function ServiceGroup({
 	);
 }
 
+type JobLifecycleState = "running" | "ready" | "retrying" | "dead";
+
+// A running or queued job paired with the project it belongs to — the unit
+// the Activity tab groups, retries, and renders throughout.
+type JobEntry = { job: RuntimeJob; project: RuntimeProjectSnapshot };
+
+// One distinct failure cause (same job kind + same message), with the jobs
+// it accounts for and the projects it spans. `key` is stable across renders
+// and doubles as the React list key and the in-flight retry identifier.
+interface JobFailureGroup {
+	key: string;
+	kind: string;
+	message: string;
+	count: number;
+	mostRecentFailedAt: string;
+	allStale: boolean;
+	bucket: "dead" | "retrying";
+	entries: JobEntry[];
+	projects: Array<{ root: string; count: number }>;
+}
+
+function JobStateBadge({ state }: { state: JobLifecycleState }) {
+	const label =
+		state === "running"
+			? "Active"
+			: state === "dead"
+				? "Failed permanently"
+				: state === "retrying"
+					? "Retrying"
+					: "Waiting";
+	return (
+		<span
+			className={cn(
+				"inline-flex w-fit shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.5 text-[10px] font-medium",
+				state === "running" &&
+					"border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+				state === "dead" &&
+					"border-destructive/30 bg-destructive/10 text-destructive",
+				state === "retrying" &&
+					"border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+				state === "ready" &&
+					"border-border bg-muted/45 text-muted-foreground",
+			)}
+		>
+			<Circle
+				className={cn(
+					"size-1.5 fill-current",
+					state === "running" && "text-emerald-500",
+					state === "dead" && "text-destructive",
+					state === "retrying" && "text-amber-500",
+					state === "ready" && "text-muted-foreground/60",
+				)}
+				aria-hidden="true"
+			/>
+			{label}
+		</span>
+	);
+}
+
 function JobRow({
 	job,
 	project,
@@ -450,7 +605,7 @@ function JobRow({
 }: {
 	job: RuntimeJob;
 	project: RuntimeProjectSnapshot;
-	state: "running" | "queued";
+	state: JobLifecycleState;
 }) {
 	const hasProgress =
 		typeof job.processed === "number" &&
@@ -462,6 +617,7 @@ function JobRow({
 				Math.round(((job.processed ?? 0) / (job.total ?? 1)) * 100),
 			)
 		: 0;
+	const stale = state === "dead" && isErrorStale(job, Date.now());
 
 	return (
 		<div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/25">
@@ -488,15 +644,41 @@ function JobRow({
 						/>
 					</div>
 				)}
-				{job.lastError && (
-					<p className="mt-1 truncate text-[11px] text-destructive">
+				{job.lastError ? (
+					<p
+						className={cn(
+							"mt-1 truncate text-[11px]",
+							stale ? "text-muted-foreground italic" : "text-destructive",
+						)}
+						title={
+							stale
+								? "Recorded before the currently running build; may no longer reproduce."
+								: job.lastError
+						}
+					>
 						{job.lastError}
+						{stale ? " (stale)" : ""}
 					</p>
+				) : (
+					state === "dead" && (
+						<p className="mt-1 text-[11px] italic text-muted-foreground">
+							No error message recorded.
+						</p>
+					)
 				)}
 			</div>
-			<div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-				<Clock className="size-3" aria-hidden="true" />
-				{state === "running" ? "active" : timeAgo(job.requestedAt)}
+			<div className="flex flex-col items-end gap-1">
+				<JobStateBadge state={state} />
+				<div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+					<Clock className="size-3" aria-hidden="true" />
+					{state === "running"
+						? "active"
+						: state === "retrying"
+							? `retry in ${timeUntil(job.runAfter)}`
+							: state === "dead"
+								? `failed ${timeAgo(jobFailedAt(job))}`
+								: timeAgo(job.requestedAt)}
+				</div>
 			</div>
 		</div>
 	);
@@ -631,6 +813,11 @@ export function RuntimeOverview() {
 	const [servicesUpdatedAt, setServicesUpdatedAt] = useState<string | null>(null);
 	const [serviceFilter, setServiceFilter] = useState<ServiceFilter>("all");
 	const [tab, setTab] = useState<RuntimeTab>("services");
+	// The key of the in-flight retry request — "all" for the recovery
+	// banner's bulk action, or a cause's own key for a per-cause retry. Only
+	// one retry runs at a time so a second click can't race the first.
+	const [retryingKey, setRetryingKey] = useState<string | null>(null);
+	const [retryError, setRetryError] = useState<string | null>(null);
 
 	const loadServices = useCallback(async () => {
 		setServicesRefreshing(true);
@@ -657,19 +844,44 @@ export function RuntimeOverview() {
 		return () => window.clearInterval(interval);
 	}, [loadServices]);
 
-	const runningJobs = useMemo(
-		() =>
-			data?.projects?.flatMap((project) =>
-				(project.running ?? []).map((job) => ({ job, project })),
-			) ?? [],
-		[data],
-	);
+	// A queued job collapses three distinct backend states into one label if
+	// treated as a single bucket: ready to run now, waiting out a retry
+	// backoff, or dead-lettered (permanently skipped by the scheduler,
+	// runtimequeue.go). Only a job with nothing ready and nothing running is
+	// an actual stall — a backlog that is only retrying or only dead is not.
+	const jobBuckets = useMemo(() => {
+		const now = Date.now();
+		const running: JobEntry[] = [];
+		const ready: JobEntry[] = [];
+		const retrying: JobEntry[] = [];
+		const dead: JobEntry[] = [];
+		for (const project of data?.projects ?? []) {
+			for (const job of project.running ?? []) running.push({ job, project });
+			for (const job of project.queued ?? []) {
+				const entry: JobEntry = { job, project };
+				if (job.deadLetter) dead.push(entry);
+				else if (job.runAfter && new Date(job.runAfter).getTime() > now)
+					retrying.push(entry);
+				else ready.push(entry);
+			}
+		}
+		return { running, ready, retrying, dead };
+	}, [data]);
+	const runningJobs = jobBuckets.running;
+	const readyJobs = jobBuckets.ready;
+	// Ready long enough that the scheduler should already have claimed it.
+	const stalledReadyJobs = useMemo(() => {
+		const cutoff = Date.now() - READY_STALL_GRACE_MS;
+		return readyJobs.filter(({ job }) => {
+			const readyAt = jobReadySinceMs(job);
+			return Number.isNaN(readyAt) || readyAt <= cutoff;
+		});
+	}, [readyJobs]);
+	const retryingJobs = jobBuckets.retrying;
+	const deadJobs = jobBuckets.dead;
 	const queuedJobs = useMemo(
-		() =>
-			data?.projects?.flatMap((project) =>
-				(project.queued ?? []).map((job) => ({ job, project })),
-			) ?? [],
-		[data],
+		() => [...readyJobs, ...retryingJobs, ...deadJobs],
+		[readyJobs, retryingJobs, deadJobs],
 	);
 	const recentJobs = useMemo(
 		() =>
@@ -739,37 +951,141 @@ export function RuntimeOverview() {
 	);
 
 	// Queue backlogs repeat the same failure verbatim across every job, so the
-	// activity view groups by (kind, message) and reports a count instead.
-	const jobFailures = useMemo(() => {
+	// activity view groups by (kind, message) and reports a count instead. A
+	// dead-lettered job can carry no captured error at all — it is still
+	// grouped here (rather than silently dropped) so the count stays
+	// accounted for. Recency is derived per-job (jobFailedAt), not the
+	// request time, and groups are labeled by bucket so "retrying" and
+	// "failed permanently" are never conflated under one badge.
+	const jobFailures = useMemo<JobFailureGroup[]>(() => {
+		const now = Date.now();
 		const groups = new Map<
 			string,
-			{ kind: string; message: string; count: number; latest: string }
+			Omit<JobFailureGroup, "projects"> & { projectCounts: Map<string, number> }
 		>();
-		for (const { job } of [...runningJobs, ...queuedJobs]) {
-			if (!job.lastError) continue;
-			const key = `${job.kind}::${job.lastError}`;
-			const existing = groups.get(key);
-			if (existing) {
-				existing.count += 1;
-				if (job.requestedAt > existing.latest) existing.latest = job.requestedAt;
-				continue;
+		for (const bucket of ["dead", "retrying"] as const) {
+			for (const entry of bucket === "dead" ? deadJobs : retryingJobs) {
+				const { job, project } = entry;
+				if (bucket === "retrying" && !job.lastError) continue;
+				const message = job.lastError || "No error message recorded";
+				const key = `${bucket}::${job.kind}::${message}`;
+				const failedAt = jobFailedAt(job);
+				const stale = bucket === "dead" && isErrorStale(job, now);
+				let group = groups.get(key);
+				if (!group) {
+					group = {
+						key,
+						kind: job.kind,
+						message,
+						count: 0,
+						mostRecentFailedAt: failedAt,
+						allStale: true,
+						bucket,
+						entries: [],
+						projectCounts: new Map(),
+					};
+					groups.set(key, group);
+				}
+				group.count += 1;
+				if (failedAt > group.mostRecentFailedAt)
+					group.mostRecentFailedAt = failedAt;
+				group.allStale = group.allStale && stale;
+				group.entries.push(entry);
+				group.projectCounts.set(
+					project.root,
+					(group.projectCounts.get(project.root) ?? 0) + 1,
+				);
 			}
-			groups.set(key, {
-				kind: job.kind,
-				message: job.lastError,
-				count: 1,
-				latest: job.requestedAt,
-			});
 		}
-		return [...groups.values()].sort((a, b) => b.count - a.count);
-	}, [queuedJobs, runningJobs]);
-	const topJobFailure = jobFailures[0];
+		return [...groups.values()]
+			.map(({ projectCounts, ...group }): JobFailureGroup => {
+				// Busiest project first — the same rule the causes themselves
+				// are sorted by, so "knowns +4" always names the project the
+				// cause hit hardest.
+				const projects = [...projectCounts.entries()]
+					.map(([root, count]) => ({ root, count }))
+					.sort((a, b) => b.count - a.count);
+				return { ...group, projects };
+			})
+			.sort((a, b) => b.count - a.count);
+	}, [deadJobs, retryingJobs]);
+	const newestJobFailure = useMemo(
+		() =>
+			jobFailures.reduce<(typeof jobFailures)[number] | undefined>(
+				(newest, failure) =>
+					!newest || failure.mostRecentFailedAt > newest.mostRecentFailedAt
+						? failure
+						: newest,
+				undefined,
+			),
+		[jobFailures],
+	);
+
+	// How many distinct projects a permanently-failed backlog touches, and
+	// how long the oldest of those failures has been sitting there — the two
+	// facts the recovery banner leads with (AC1).
+	const deadProjectCount = useMemo(() => {
+		const roots = new Set<string>();
+		for (const { project } of deadJobs) roots.add(project.root);
+		return roots.size;
+	}, [deadJobs]);
+	const oldestDeadFailedAt = useMemo(() => {
+		let oldest: string | null = null;
+		for (const { job } of deadJobs) {
+			const failedAt = jobFailedAt(job);
+			if (!oldest || failedAt < oldest) oldest = failedAt;
+		}
+		return oldest;
+	}, [deadJobs]);
+
+	// Both the "Retry all" banner action and a per-cause "Retry" button post
+	// to the same endpoint and then re-fetch rather than guess the result —
+	// a bulk release can touch jobs the client never separately enumerated.
+	const runRetry = useCallback(
+		async (
+			key: string,
+			request: { scope: "all" } | { scope: "jobs"; jobs: RuntimeRetryJobRef[] },
+		) => {
+			setRetryingKey(key);
+			setRetryError(null);
+			try {
+				await postRuntimeRetry(request);
+				await refresh();
+			} catch (error) {
+				setRetryError(
+					error instanceof Error ? error.message : "Retry request failed.",
+				);
+			} finally {
+				setRetryingKey(null);
+			}
+		},
+		[refresh],
+	);
+	const handleRetryAll = useCallback(
+		() => runRetry("all", { scope: "all" }),
+		[runRetry],
+	);
+	const handleRetryCause = useCallback(
+		(failure: JobFailureGroup) =>
+			runRetry(failure.key, {
+				scope: "jobs",
+				jobs: failure.entries.map(({ job, project }) => ({
+					projectRoot: project.root,
+					jobId: job.id,
+				})),
+			}),
+		[runRetry],
+	);
 
 	const attentionCount = servicesByState.attention.length;
 	const runningServiceCount = servicesByState.running.length;
 	const standbyCount = servicesByState.standby.length;
 	const disabledCount = servicesByState.disabled.length;
 	const initialUnavailable = !loading && !data && services.length === 0;
+	const reachableServiceCount = useMemo(
+		() => services.filter(isReachableService).length,
+		[services],
+	);
 
 	const posture = useMemo(() => {
 		if (loading || servicesLoading) {
@@ -803,13 +1119,32 @@ export function RuntimeOverview() {
 				tone: "attention" as const,
 			};
 		}
-		// A deep queue with nothing running is a stall, not healthy throughput —
-		// the daemon answers health checks while no work actually drains.
-		if (queuedJobs.length > 0 && runningJobs.length === 0) {
+		// A backlog that is only dead letters will never drain on its own — the
+		// scheduler skips them unconditionally — so it reads as a past failure
+		// with a recovery action, not as a stall in progress.
+		if (
+			deadJobs.length > 0 &&
+			readyJobs.length === 0 &&
+			retryingJobs.length === 0 &&
+			runningJobs.length === 0
+		) {
+			return {
+				title: "Past failures need recovery",
+				description: `${deadJobs.length} ${deadJobs.length === 1 ? "job" : "jobs"} failed permanently and will not be retried automatically.`,
+				tone: "attention" as const,
+			};
+		}
+		// A job that is ready to run right now with nothing running is a real
+		// stall, not healthy throughput — the daemon answers health checks while
+		// no work actually drains. Jobs still waiting out a retry backoff don't
+		// count toward this: that delay is deliberate, not stuck.
+		if (stalledReadyJobs.length > 0 && runningJobs.length === 0) {
 			return {
 				title: "Queue is not draining",
-				description: `${queuedJobs.length} ${queuedJobs.length === 1 ? "job is" : "jobs are"} queued and nothing is running.${
-					topJobFailure ? ` Most recent failure: ${topJobFailure.message}` : ""
+				description: `${stalledReadyJobs.length} ${stalledReadyJobs.length === 1 ? "job has" : "jobs have"} been ready to run for a while and nothing is running.${
+					newestJobFailure
+						? ` Newest failure: ${newestJobFailure.message}`
+						: ""
 				}`,
 				tone: "attention" as const,
 			};
@@ -831,14 +1166,17 @@ export function RuntimeOverview() {
 		};
 	}, [
 		attentionCount,
+		deadJobs.length,
 		initialUnavailable,
 		loading,
-		queuedJobs.length,
+		newestJobFailure,
+		readyJobs.length,
+		retryingJobs.length,
 		runningJobs.length,
 		runningServiceCount,
 		runtimeRunning,
 		servicesLoading,
-		topJobFailure,
+		stalledReadyJobs.length,
 		totalActive,
 	]);
 
@@ -859,10 +1197,24 @@ export function RuntimeOverview() {
 	};
 
 	const errors = [runtimeError, servicesError].filter(Boolean) as string[];
-	const freshestUpdate = [lastUpdatedAt, servicesUpdatedAt]
+	// This page's own last successful fetch — used only for the refresh
+	// button's tooltip, not for the Clients tile (see freshestClientHeartbeat
+	// below): "the browser last polled" and "a client is still connected" are
+	// different facts and were previously shown under the same word.
+	const lastSyncedAt = [lastUpdatedAt, servicesUpdatedAt]
 		.filter(Boolean)
 		.sort()
 		.at(-1);
+
+	// The Clients tile previously showed when the browser last polled, which
+	// reads as "checked" but really only says the page fetched — not that any
+	// client is still there. Each client row already shows its own lease
+	// heartbeat (client.updatedAt); the tile should say the same thing.
+	const freshestClientHeartbeat = clients.reduce<string | null>(
+		(latest, client) =>
+			!latest || client.updatedAt > latest ? client.updatedAt : latest,
+		null,
+	);
 
 	const busy = isRefreshing || servicesRefreshing;
 	const headerStatus = loading
@@ -878,9 +1230,17 @@ export function RuntimeOverview() {
 	const alert =
 		posture.tone === "attention" || posture.tone === "offline" ? posture : null;
 
+	// The tab badge is a row count for what's rendered in that panel (dead
+	// letters included, since they still get their own section) — totalActive
+	// deliberately excludes them so the header status above doesn't repeat the
+	// "152 jobs queued" overstatement this page used to make.
 	const tabs: Array<{ id: RuntimeTab; label: string; count: number }> = [
 		{ id: "services", label: "Services", count: services.length },
-		{ id: "activity", label: "Activity", count: totalActive },
+		{
+			id: "activity",
+			label: "Activity",
+			count: runningJobs.length + queuedJobs.length,
+		},
 		{ id: "clients", label: "Clients", count: clients.length },
 	];
 
@@ -922,6 +1282,7 @@ export function RuntimeOverview() {
 							disabled={busy}
 							aria-busy={busy}
 							aria-label="Refresh runtime status"
+							title={lastSyncedAt ? `Page last synced ${timeAgo(lastSyncedAt)}` : undefined}
 						>
 							<RefreshCw
 								className={cn("h-4 w-4", busy && "animate-spin motion-reduce:animate-none")}
@@ -986,7 +1347,7 @@ export function RuntimeOverview() {
 								{alert.description}
 							</p>
 						</div>
-						{attentionCount > 0 && (
+						{attentionCount > 0 ? (
 							<Button
 								type="button"
 								variant="outline"
@@ -999,7 +1360,20 @@ export function RuntimeOverview() {
 							>
 								Show {attentionCount} {attentionCount === 1 ? "service" : "services"}
 							</Button>
-						)}
+						) : deadJobs.length > 0 && tab !== "activity" ? (
+							// The Activity tab owns recovery now, so the banner hands the
+							// reader over to it instead of restating the CLI command beside
+							// a button that already does the work.
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								className="h-8 shrink-0 self-start text-xs"
+								onClick={() => setTab("activity")}
+							>
+								Show failures
+							</Button>
+						) : null}
 					</div>
 				)}
 
@@ -1011,18 +1385,28 @@ export function RuntimeOverview() {
 					/>
 					<SummaryFact
 						label="Services"
-						value={`${runningServiceCount}/${services.length}`}
+						value={`${runningServiceCount}/${reachableServiceCount}`}
 						detail={attentionCount > 0 ? `${attentionCount} need setup` : "active now"}
 					/>
 					<SummaryFact
 						label="Queue"
-						value={queuedJobs.length}
-						detail={`${runningJobs.length} running`}
+						value={readyJobs.length}
+						detail={[
+							`${runningJobs.length} running`,
+							retryingJobs.length > 0 ? `${retryingJobs.length} retrying` : null,
+							deadJobs.length > 0 ? `${deadJobs.length} failed` : null,
+						]
+							.filter(Boolean)
+							.join(" · ")}
 					/>
 					<SummaryFact
 						label="Clients"
 						value={clients.length}
-						detail={`checked ${timeAgo(freshestUpdate)}`}
+						detail={
+							clients.length > 0
+								? `heartbeat ${timeAgo(freshestClientHeartbeat)}`
+								: "none attached"
+						}
 					/>
 				</dl>
 
@@ -1143,82 +1527,135 @@ export function RuntimeOverview() {
 						aria-labelledby="runtime-tab-activity"
 						className="min-h-0 min-w-0 flex-1 space-y-4 overflow-auto"
 					>
-						{jobFailures.length > 0 && (
+						{loading ? (
 							<div className="overflow-hidden rounded-lg border bg-card">
-								<div className="flex items-center justify-between border-b border-border/45 bg-muted/15 px-4 py-2">
-									<h3 className="text-xs font-semibold">Blocking failures</h3>
-									<span className="font-mono text-[10px] tabular-nums text-muted-foreground">
-										{jobFailures.length}
-									</span>
-								</div>
-								<div className="divide-y divide-border/40">
-									{jobFailures.map((failure) => (
-										<div
-											key={`${failure.kind}-${failure.message}`}
-											className="flex items-start gap-3 px-4 py-2.5"
-										>
-											<span className="mt-0.5 shrink-0 font-mono text-[10px] tabular-nums text-destructive">
-												{failure.count}×
-											</span>
-											<div className="min-w-0 flex-1">
-												<div className="flex min-w-0 items-center gap-2">
-													<KindBadge kind={failure.kind} />
-													<span className="shrink-0 text-[11px] text-muted-foreground">
-														latest {timeAgo(failure.latest)}
-													</span>
-												</div>
-												<p
-													className="mt-1 line-clamp-2 text-[11px] leading-5 text-destructive"
-													title={failure.message}
-												>
-													{failure.message}
+								<RuntimeListSkeleton rows={2} />
+							</div>
+						) : (
+							<>
+								{/* One line for what's wrong and how to recover it, before
+								    any list (AC1). A backlog with nothing permanently dead
+								    reads as calm, not as an empty version of this same
+								    banner (AC10) — it gets a quieter, non-destructive line
+								    instead of an alert that has nothing to report. */}
+								{deadJobs.length > 0 ? (
+									<div className="shrink-0 overflow-hidden rounded-lg border border-destructive/30 bg-destructive/5">
+										<div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+											<div className="flex min-w-0 items-start gap-3">
+												<AlertTriangle
+													className="mt-0.5 size-4 shrink-0 text-destructive"
+													aria-hidden="true"
+												/>
+												<p className="text-sm font-medium">
+													{deadJobs.length}{" "}
+													{deadJobs.length === 1 ? "job" : "jobs"} failed
+													permanently across {deadProjectCount}{" "}
+													{deadProjectCount === 1 ? "project" : "projects"}
 												</p>
 											</div>
+											<div className="flex shrink-0 items-center gap-3 self-end sm:self-auto">
+												{oldestDeadFailedAt && (
+													<span className="whitespace-nowrap text-[11px] text-muted-foreground">
+														since {timeAgo(oldestDeadFailedAt)}
+													</span>
+												)}
+												<Button
+													type="button"
+													variant="outline"
+													size="sm"
+													className="h-8 shrink-0 text-xs"
+													onClick={() => void handleRetryAll()}
+													disabled={retryingKey !== null}
+													aria-busy={retryingKey === "all"}
+												>
+													{retryingKey === "all" ? "Retrying…" : "Retry all"}
+												</Button>
+											</div>
 										</div>
-									))}
-								</div>
-							</div>
-						)}
-
-						<div className="overflow-hidden rounded-lg border bg-card">
-							{loading ? (
-								<RuntimeListSkeleton rows={2} />
-							) : runningJobs.length === 0 && queuedJobs.length === 0 ? (
-								<RuntimeEmptyState
-									icon={ListChecks}
-									title="Work queue is clear"
-									description="Indexing, retrieval, and sync jobs appear here while they are active or waiting."
-								/>
-							) : (
-								<>
-									{runningJobs.length > 0 && (
-										<JobSection
-											title="Running"
-											jobs={runningJobs}
-											state="running"
+										{retryError && (
+											<p
+												role="alert"
+												className="border-t border-destructive/20 px-4 py-2 text-[11px] text-destructive"
+											>
+												{retryError}
+											</p>
+										)}
+									</div>
+								) : (
+									<div className="flex shrink-0 items-center gap-3 rounded-lg border bg-card px-4 py-3">
+										<CheckCircle2
+											className="size-4 shrink-0 text-emerald-500"
+											aria-hidden="true"
 										/>
-									)}
-									{queuedJobs.length > 0 && (
-										<JobSection title="Queued" jobs={queuedJobs} state="queued" />
-									)}
-								</>
-							)}
-						</div>
+										<p className="text-sm text-muted-foreground">
+											{jobFailures.length > 0
+												? `No permanent failures. ${retryingJobs.length} ${retryingJobs.length === 1 ? "job is" : "jobs are"} waiting out a retry.`
+												: "No failures. Background jobs are completing normally."}
+										</p>
+										{retryError && (
+											<p role="alert" className="ml-auto text-[11px] text-destructive">
+												{retryError}
+											</p>
+										)}
+									</div>
+								)}
 
-						{recentJobs.length > 0 && (
-							<div className="overflow-hidden rounded-lg border bg-card">
-								<div className="flex items-center justify-between border-b border-border/45 bg-muted/15 px-4 py-2">
-									<h3 className="text-xs font-semibold">Recent completions</h3>
-									<span className="font-mono text-[10px] tabular-nums text-muted-foreground">
-										{recentJobs.length}
-									</span>
+								{/* Every distinct cause, one row each, project as a column
+								    (AC2, AC3, AC5). A cause expands for its full error text
+								    and affected targets, collapsed by default (AC6). */}
+								{jobFailures.length > 0 && (
+									<CauseTable
+										failures={jobFailures}
+										onRetry={handleRetryCause}
+										retryingKey={retryingKey}
+										version={data?.status.version}
+									/>
+								)}
+
+								{/* Live counts, present but deliberately plain text so they
+								    never compete with the failure banner or cause table for
+								    attention (AC7). */}
+								<div className="shrink-0 px-1 text-xs text-muted-foreground">
+									<span className="font-mono tabular-nums text-foreground/80">
+										{runningJobs.length}
+									</span>{" "}
+									running
+									<span className="mx-1.5 text-border">·</span>
+									<span className="font-mono tabular-nums text-foreground/80">
+										{readyJobs.length}
+									</span>{" "}
+									ready
+									<span className="mx-1.5 text-border">·</span>
+									<span className="font-mono tabular-nums text-foreground/80">
+										{retryingJobs.length}
+									</span>{" "}
+									retrying
 								</div>
-								<div className="divide-y divide-border/40">
-									{recentJobs.map((job) => (
-										<RecentRow key={job.jobId} job={job} />
-									))}
-								</div>
-							</div>
+
+								{/* Completed work stays available without occupying the top
+								    of the tab, and is collapsed by default (AC8). */}
+								{recentJobs.length > 0 && (
+									<details className="group/recent shrink-0 overflow-hidden rounded-lg border bg-card">
+										<summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2 transition-colors hover:bg-muted/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+											<ChevronRight
+												className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/recent:rotate-90 motion-reduce:transition-none"
+												aria-hidden="true"
+											/>
+											<h3 className="text-xs font-semibold">
+												Recent completions
+											</h3>
+											<span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground">
+												{recentJobs.length}
+											</span>
+										</summary>
+										<div className="divide-y divide-border/40 border-t border-border/45">
+											{recentJobs.map((job) => (
+												<RecentRow key={job.jobId} job={job} />
+											))}
+										</div>
+									</details>
+								)}
+							</>
 						)}
 					</section>
 				)}
@@ -1241,8 +1678,11 @@ export function RuntimeOverview() {
 										className="grid gap-1 px-4 py-2.5 text-xs sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:items-center"
 									>
 										<span className="font-medium">{client.clientKind}</span>
-										<span className="truncate text-muted-foreground" title={client.projectRoot}>
-											{projectName(client.projectRoot)}
+										<span
+											className="truncate font-mono text-[11px] text-muted-foreground"
+											title={client.projectRoot}
+										>
+											{projectPath(client.projectRoot)}
 										</span>
 										<span className="font-mono text-[10px] tabular-nums text-muted-foreground">
 											pid={client.pid || "?"} · {timeAgo(client.updatedAt)}
@@ -1268,17 +1708,24 @@ function JobSection({
 	title,
 	jobs,
 	state,
+	hideHeader = false,
 }: {
 	title: string;
-	jobs: Array<{ job: RuntimeJob; project: RuntimeProjectSnapshot }>;
-	state: "running" | "queued";
+	jobs: JobEntry[];
+	state: JobLifecycleState;
+	// A cause's expansion already states its own state badge and count in
+	// the row above; repeating "Failed permanently · 86" as a second header
+	// right beneath it would say the same thing twice.
+	hideHeader?: boolean;
 }) {
 	return (
 		<div>
-			<div className="flex items-center justify-between border-b border-border/40 bg-muted/15 px-4 py-2 text-[11px] font-medium text-muted-foreground">
-				<span>{title}</span>
-				<span className="font-mono tabular-nums">{jobs.length}</span>
-			</div>
+			{!hideHeader && (
+				<div className="flex items-center justify-between border-b border-border/40 bg-muted/15 px-4 py-2 text-[11px] font-medium text-muted-foreground">
+					<span>{title}</span>
+					<span className="font-mono tabular-nums">{jobs.length}</span>
+				</div>
+			)}
 			<div className="divide-y divide-border/40">
 				{jobs.slice(0, JOB_PREVIEW_LIMIT).map(({ job, project }) => (
 					<JobRow key={job.id} job={job} project={project} state={state} />
@@ -1286,9 +1733,148 @@ function JobSection({
 			</div>
 			{jobs.length > JOB_PREVIEW_LIMIT && (
 				<p className="border-t border-border/40 px-4 py-2 text-[11px] text-muted-foreground">
-					Showing {JOB_PREVIEW_LIMIT} of {jobs.length} {title.toLowerCase()} jobs.
+					Showing {JOB_PREVIEW_LIMIT} of {jobs.length}.
 				</p>
 			)}
 		</div>
+	);
+}
+
+// The cause table replaces the old By-project / Failures / per-job-list
+// trio: one row per distinct (kind, message) cause, project surfaced as a
+// column instead of a separate card, and the individual jobs it accounts
+// for live inside the row's own disclosure instead of a permanently visible
+// list (AC2, AC3, AC5, AC6).
+function CauseTable({
+	failures,
+	onRetry,
+	retryingKey,
+	version,
+}: {
+	failures: JobFailureGroup[];
+	onRetry: (failure: JobFailureGroup) => void;
+	retryingKey: string | null;
+	version?: string;
+}) {
+	return (
+		<div className="overflow-hidden rounded-lg border bg-card">
+			<div className="hidden grid-cols-[1.25rem_minmax(0,1fr)_3.5rem_5.5rem_11rem_5.5rem] gap-3 border-b border-border/45 bg-muted/15 px-4 py-2 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground md:grid">
+				<span />
+				<span>Cause</span>
+				<span className="text-right">Count</span>
+				<span>Newest</span>
+				<span>Project</span>
+				<span className="text-right">Action</span>
+			</div>
+			<div className="divide-y divide-border/40">
+				{failures.map((failure) => (
+					<CauseRow
+						key={failure.key}
+						failure={failure}
+						onRetry={onRetry}
+						retryingKey={retryingKey}
+						version={version}
+					/>
+				))}
+			</div>
+		</div>
+	);
+}
+
+function CauseRow({
+	failure,
+	onRetry,
+	retryingKey,
+	version,
+}: {
+	failure: JobFailureGroup;
+	onRetry: (failure: JobFailureGroup) => void;
+	retryingKey: string | null;
+	version?: string;
+}) {
+	const isRetrying = retryingKey === failure.key;
+	const primaryProject = failure.projects[0];
+	const extraProjectCount = failure.projects.length - 1;
+	const projectLabel = primaryProject
+		? `${projectName(primaryProject.root)}${extraProjectCount > 0 ? ` +${extraProjectCount}` : ""}`
+		: "—";
+	const projectTitle = failure.projects
+		.map((p) => `${projectName(p.root)} (${p.count})`)
+		.join(", ");
+
+	return (
+		<details className="group/cause">
+			<summary className="grid cursor-pointer list-none grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-4 py-2.5 transition-colors hover:bg-muted/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:grid-cols-[1.25rem_minmax(0,1fr)_3.5rem_5.5rem_11rem_5.5rem] md:items-center [&::-webkit-details-marker]:hidden">
+				<ChevronRight
+					className="mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform group-open/cause:rotate-90 motion-reduce:transition-none md:mt-0"
+					aria-hidden="true"
+				/>
+				<div className="min-w-0">
+					<div className="flex min-w-0 flex-wrap items-center gap-2">
+						<KindBadge kind={failure.kind} />
+						<JobStateBadge
+							state={failure.bucket === "dead" ? "dead" : "retrying"}
+						/>
+						{failure.allStale && (
+							<span
+								className="shrink-0 rounded-md border border-border bg-muted/45 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+								title={`Recorded before the currently running build${version ? ` (v${version})` : ""}; may no longer reproduce.`}
+							>
+								Stale
+							</span>
+						)}
+					</div>
+					<p className="mt-1 line-clamp-2 text-[11px] leading-5 text-destructive group-open/cause:line-clamp-none">
+						{failure.message}
+					</p>
+					<div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground md:hidden">
+						<span className="font-mono tabular-nums">{failure.count}×</span>
+						<span>newest {timeAgo(failure.mostRecentFailedAt)}</span>
+						<span className="truncate" title={projectTitle}>
+							{projectLabel}
+						</span>
+					</div>
+				</div>
+				<span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground md:block">
+					{failure.count}
+				</span>
+				<span className="hidden text-xs text-muted-foreground md:block">
+					{timeAgo(failure.mostRecentFailedAt)}
+				</span>
+				<span
+					className="hidden min-w-0 truncate text-xs text-muted-foreground md:block"
+					title={projectTitle}
+				>
+					{projectLabel}
+				</span>
+				<span className="flex items-start justify-end md:items-center">
+					{failure.bucket === "dead" && (
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							className="h-7 shrink-0 px-2 text-[11px]"
+							onClick={(event) => {
+								event.preventDefault();
+								event.stopPropagation();
+								onRetry(failure);
+							}}
+							disabled={retryingKey !== null}
+							aria-busy={isRetrying}
+						>
+							{isRetrying ? "Retrying…" : "Retry"}
+						</Button>
+					)}
+				</span>
+			</summary>
+			<div className="border-t border-border/40 bg-muted/10">
+				<JobSection
+					title="Affected targets"
+					jobs={failure.entries}
+					state={failure.bucket === "dead" ? "dead" : "retrying"}
+					hideHeader
+				/>
+			</div>
+		</details>
 	);
 }

@@ -140,8 +140,26 @@ func TestInstallClaudeWindowsWritesExactPromptSubmitHookJSON(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected hooks object, got: %#v", settings["hooks"])
 	}
-	if _, ok := hooks["SessionStart"]; ok {
-		t.Fatalf("expected no SessionStart managed hook for prompt-aware Claude, got: %#v", hooks["SessionStart"])
+	// Both hooks are installed. The session hook is the only moment a session
+	// can be told what holds before the user has asked anything, which is where
+	// user commitments load; the prompt hook cannot do that job because by then
+	// there is a question competing for the budget.
+	sessionStart, ok := hooks["SessionStart"].([]any)
+	if !ok || len(sessionStart) != 1 {
+		t.Fatalf("expected one SessionStart hook group, got: %#v", hooks["SessionStart"])
+	}
+	sessionGroup, ok := sessionStart[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected SessionStart group object, got: %#v", sessionStart[0])
+	}
+	sessionHooks, ok := sessionGroup["hooks"].([]any)
+	if !ok || len(sessionHooks) != 1 {
+		t.Fatalf("expected one SessionStart hook, got: %#v", sessionGroup["hooks"])
+	}
+	sessionEntry, _ := sessionHooks[0].(map[string]any)
+	wantSession := `C:/Users/Admin/.knowns/bin/knowns.exe runtime-memory hook --runtime claude-code --event session-start`
+	if sessionEntry["command"] != wantSession {
+		t.Fatalf("SessionStart command = %v, want %v", sessionEntry["command"], wantSession)
 	}
 	userPromptSubmit, ok := hooks["UserPromptSubmit"].([]any)
 	if !ok || len(userPromptSubmit) != 1 {
@@ -236,8 +254,14 @@ func TestInstallCodexNormalizesDeprecatedFeatureAndUninstallRemovesManagedHookOn
 	if !strings.Contains(text, "/tmp/existing-hook.sh") {
 		t.Fatalf("expected unrelated SessionStart hook preserved after install, got:\n%s", text)
 	}
-	if strings.Contains(text, "/tmp/old-knowns") || strings.Contains(text, "--event session-start") {
+	if strings.Contains(text, "/tmp/old-knowns") {
 		t.Fatalf("expected stale managed SessionStart hook removed after install, got:\n%s", text)
+	}
+	// The stale managed hook is replaced, not merely deleted: a session hook is
+	// now part of a complete install, and its absence is what left the first
+	// injection of every session with no user commitments in it.
+	if !strings.Contains(text, "runtime-memory hook --runtime codex --event session-start") {
+		t.Fatalf("expected current managed SessionStart hook installed, got:\n%s", text)
 	}
 	status, err := StatusFor("codex", opts)
 	if err != nil {
@@ -354,6 +378,50 @@ func TestInstallOpenCodeCreatesPluginAndStatusInstalled(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(status.Details, "\n"), "session-created baseline plugin installed") {
 		t.Fatalf("expected baseline plugin status detail, got: %+v", status.Details)
+	}
+}
+
+// OpenCode v2 rejects modules without a default definition carrying an id and
+// setup(ctx); OpenCode 1.x instead calls default.server(input). The generated
+// plugin must satisfy both contracts from one file so either runtime loads it.
+func TestInstallOpenCodePluginContractLoadsOnV1AndV2(t *testing.T) {
+	home := t.TempDir()
+	opts := Options{
+		HomeDir:        home,
+		ExecutablePath: "/usr/local/bin/knowns",
+		LookPath:       func(string) (string, error) { return "/usr/local/bin/opencode", nil },
+	}
+	if err := Install("opencode", opts); err != nil {
+		t.Fatalf("install opencode: %v", err)
+	}
+	pluginPath := filepath.Join(home, ".config", "opencode", "plugins", pluginFileName)
+	body, err := os.ReadFile(pluginPath)
+	if err != nil {
+		t.Fatalf("read plugin: %v", err)
+	}
+	plugin := string(body)
+
+	for _, want := range []string{
+		"export default {",
+		`id: "knowns.runtime-memory"`,
+		"const server = async ({ client }) => {",
+		"const setup = async (ctx) => {",
+		"ctx.event.subscribe(",
+		"ctx.session.synthetic(",
+		"client.session.prompt({",
+		"noReply: true",
+		"controller.abort()",
+		`"runtime-memory", "hook", "--runtime", "opencode", "--event", "session.created"`,
+	} {
+		if !strings.Contains(plugin, want) {
+			t.Fatalf("expected plugin to contain %q, got:\n%s", want, plugin)
+		}
+	}
+	if strings.Contains(plugin, "export const KnownsRuntimeMemoryPlugin") {
+		t.Fatalf("expected no stray named plugin export, got:\n%s", plugin)
+	}
+	if strings.Contains(plugin, "@opencode/plugin") || strings.Contains(plugin, "@opencode-ai/plugin") {
+		t.Fatalf("expected self-contained plugin without OpenCode package imports, got:\n%s", plugin)
 	}
 }
 

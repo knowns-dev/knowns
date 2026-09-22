@@ -50,8 +50,19 @@ export function useRuntimeMonitor() {
 		};
 	}, [refresh]);
 
+	// A dead-lettered job is permanently skipped by the scheduler and will not
+	// run again without a manual retry — it isn't "active" work in progress,
+	// so it's excluded here the same way the daemon itself excludes dead
+	// letters from its own pending-work count (runtimequeue.go).
 	const totalActive = useMemo(
-		() => data?.projects?.reduce((total, project) => total + (project.running?.length ?? 0) + (project.queued?.length ?? 0), 0) ?? 0,
+		() =>
+			data?.projects?.reduce(
+				(total, project) =>
+					total +
+					(project.running?.length ?? 0) +
+					(project.queued?.filter((job) => !job.deadLetter).length ?? 0),
+				0,
+			) ?? 0,
 		[data],
 	);
 

@@ -3,10 +3,9 @@ id: doc-0680fa329d2ce73c2a3c3831483a8f8b
 title: Command Reference
 description: Quick reference for all Knowns CLI commands
 createdAt: '2026-02-24T08:44:32.957Z'
-updatedAt: '2026-08-19T07:45:58.089Z'
+updatedAt: '2026-09-05T03:37:27.604Z'
 tags: []
 ---
-
 
 # Command Reference
 
@@ -157,6 +156,9 @@ Use the narrowest status surface for the question you are answering:
 | Compact runtime summary with more client/failure rows | `knowns runtime ps --clients 10 --failures 5` |
 | Detailed runtime job history | `knowns runtime ps --jobs --tail 20` |
 | Failed runtime jobs only | `knowns runtime ps --failed` |
+| Preview which retained Qdrant dead letters would be released | `knowns runtime retry --all --dry-run` |
+| Release every retained Qdrant dead letter in this project | `knowns runtime retry --all` |
+| Release retained Qdrant dead letters across every registered project | `knowns runtime retry --all-projects` |
 | Reload cached semantic providers after provider/model config changes | `knowns runtime reload` |
 | Wait until the daemon acknowledges a semantic runtime reload | `knowns runtime reload --wait` |
 | Runtime hook/plugin/native integration install state | `knowns runtime status` |
@@ -170,3 +172,5 @@ Use the narrowest status surface for the question you are answering:
 `knowns runtime reload` asks the shared runtime daemon to unload cached semantic providers. The next runtime job, search, or semantic session re-reads current provider, model, and dimension settings without requiring a manual process kill. Use `knowns runtime reload --wait` when you need confirmation that the running daemon acknowledged the reload before continuing.
 
 Reloading semantic providers does not rebuild existing vectors. After changing provider, model, or dimensions, compare `knowns runtime ps` with `knowns search --status-check`; if the index is stale or degraded, run `knowns search --reindex`.
+
+`knowns runtime retry` is the recovery path for a Qdrant backlog that can no longer schedule itself. A reconcile job dead-letters after 8 failed attempts, and the scheduler skips a dead letter unconditionally, so an outage that outlasts the retry budget leaves every entity queued during it unindexed until someone releases the jobs. Preview with `--dry-run` first: it reads the queue without taking the lock and mutates nothing. Explicit job IDs release only those jobs and report a refusal for anything that is not a retained Qdrant dead letter.

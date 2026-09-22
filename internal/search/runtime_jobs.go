@@ -13,6 +13,15 @@ import (
 	"github.com/howznguyen/knowns/internal/storage"
 )
 
+// ensureManagedQdrant starts the managed Qdrant process when the resolved
+// configuration owns one. It is a package variable rather than a direct call
+// so tests can observe it and, more importantly, so no test in this package
+// can reach the machine-level runtime under ~/.knowns and start a real
+// process; see TestMain in runtime_jobs_ensure_test.go.
+var ensureManagedQdrant = func(ctx context.Context, res models.SemanticVectorStoreResolution) error {
+	return qdrantruntime.NewManager(qdrantruntime.ConfigFromResolution(res)).EnsureRunning(ctx)
+}
+
 // ExecuteRuntimeJob runs a queued runtime job synchronously inside the shared runtime.
 func ExecuteRuntimeJob(storeRoot string, job runtimequeue.Job) error {
 	store := storage.NewStore(storeRoot)
@@ -113,10 +122,16 @@ func ExecuteRuntimeJob(storeRoot string, job runtimequeue.Job) error {
 		resolved := resolveEffectiveVectorStore(store)
 		if resolved.Backend == models.SemanticVectorBackendQdrant && resolved.Mode == models.SemanticVectorStoreModeManaged {
 			mgr := qdrantruntime.NewManager(qdrantruntime.ConfigFromResolution(resolved))
+			// Reindex keeps an install step of its own. It is the explicit,
+			// operator-triggered path, so reaching the network to fetch a
+			// missing binary is expected here and nowhere else: the reconcile
+			// path runs on every edit and must not be able to trigger a
+			// download. The start itself goes through the shared seam so both
+			// paths agree on what starting means.
 			if _, err := (qdrantruntime.Installer{Root: mgr.Paths().Root, Mirror: os.Getenv("KNOWNS_QDRANT_MIRROR")}).Install(context.Background()); err != nil {
 				return fmt.Errorf("install managed Qdrant: %w", err)
 			}
-			if _, err := mgr.Start(context.Background()); err != nil {
+			if err := ensureManagedQdrant(context.Background(), resolved); err != nil {
 				return fmt.Errorf("start managed Qdrant: %w", err)
 			}
 		}

@@ -987,6 +987,11 @@ export interface RuntimeJob {
 	phase?: string;
 	processed?: number;
 	total?: number;
+	// A dead-lettered job exhausted its retry budget and is permanently
+	// skipped by the scheduler; it is never picked up again until a manual
+	// retry clears the flag. Ships from the server already (runtimequeue.go)
+	// — it was just missing here.
+	deadLetter?: boolean;
 }
 
 export interface JobDetails {
@@ -1062,6 +1067,58 @@ export async function getRuntimeServices(): Promise<RuntimeServicesResponse> {
 	const res = await apiFetch(`${API_BASE}/api/runtime/services`);
 	if (!res.ok) {
 		throw new Error("Failed to fetch runtime services");
+	}
+	return res.json();
+}
+
+// Releases retained Qdrant dead-letter jobs back to the scheduler. Exactly
+// one scope applies per request:
+//   - "all": every dead letter across every project registered with the
+//     shared runtime.
+//   - "project": every dead letter in one project (projectRoot required).
+//   - "jobs": the explicit (project, job) pairs in jobs — a single failure
+//     cause can span more than one project, so a "retry this cause" click
+//     may carry refs into several projects' queues at once.
+export type RuntimeRetryScope = "all" | "project" | "jobs";
+
+export interface RuntimeRetryJobRef {
+	projectRoot: string;
+	jobId: string;
+}
+
+export interface RuntimeRetryRequest {
+	scope: RuntimeRetryScope;
+	projectRoot?: string;
+	jobs?: RuntimeRetryJobRef[];
+}
+
+export interface RuntimeRetryRefusal {
+	jobId: string;
+	error: string;
+}
+
+export interface RuntimeRetryProjectResult {
+	projectRoot: string;
+	released: number;
+	refused?: RuntimeRetryRefusal[];
+	error?: string;
+}
+
+export interface RuntimeRetryResponse {
+	results: RuntimeRetryProjectResult[];
+}
+
+export async function postRuntimeRetry(
+	request: RuntimeRetryRequest,
+): Promise<RuntimeRetryResponse> {
+	const res = await apiFetch(`${API_BASE}/api/runtime/retry`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(request),
+	});
+	if (!res.ok) {
+		const text = await res.text();
+		throw new Error(text || "Failed to retry runtime jobs");
 	}
 	return res.json();
 }

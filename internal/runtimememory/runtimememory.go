@@ -66,11 +66,55 @@ const (
 	defaultMaxBytes  = 2500
 	maxPreviewBody   = 320
 	baselineMaxItems = 4
-
-	minHighConfidenceCapture = 0.80
 )
 
 var tokenRE = regexp.MustCompile(`[a-z0-9]+`)
+
+// Relevance floors. Both are absolute, and both sit on a signal that does not
+// grow with the length of the prompt, which is the whole point: the old
+// threshold compared a fixed number against `0.35 × shared words`, so a longer
+// prompt cleared it more easily whether or not it was more relevant.
+const (
+	// semanticRelevanceFloor is the raw cosine a hybrid hit must reach.
+	//
+	// Calibrated 2026-09-12 on qwen3-embedding:0.6b against the live store:
+	// prompts that were about a stored memory had a best hit of 0.62 to 0.67;
+	// prompts about nothing stored ("ok cảm ơn", "database connection pool")
+	// peaked at 0.50 and 0.37. The floor sits in that gap. It is specific to
+	// the embedding model: a different model has a different cosine
+	// distribution and would need recalibrating.
+	semanticRelevanceFloor = 0.55
+	// keywordRelevanceFloor applies only when the semantic layer is
+	// unavailable. It is a FRACTION of the prompt's content words found in
+	// the memory, so adding unrelated words can only lower it.
+	keywordRelevanceFloor = 0.5
+	// Tie-breakers for hybrid ranking. Their sum is capped well below the
+	// cosine gap between a relevant and an unrelated memory, so they order
+	// near-equal matches and can never lift a weak one past a strong one.
+	hybridKeywordTiebreak = 0.03
+	hybridProjectTiebreak = 0.01
+)
+
+// matchStopwords are dropped before counting shared words. Kept to function
+// words only (articles, pronouns, prepositions, conjunctions, auxiliaries,
+// question words) in folded form, since tokens are folded before lookup.
+// Tokens shorter than three letters are already dropped, which covers most
+// Vietnamese function words (va, la, co, da).
+var matchStopwords = func() map[string]struct{} {
+	words := strings.Fields(`
+		the and for with that this from into what when where which who how why
+		are was were have has had not but you your can should would could will
+		about there their then than also only just does did been being its our
+		all any some more most very like them they these those here please
+		khi cho thi cua voi nhu nay kia nhung cac mot nhieu rat cung dang duoc
+		khong nen phai sao trong tren duoi sau truoc giua bang tai neu hay hoac
+		chi van lai roi vay nao ban toi minh nhe thoi day`)
+	set := make(map[string]struct{}, len(words))
+	for _, w := range words {
+		set[w] = struct{}{}
+	}
+	return set
+}()
 
 var lowSignalPromptTokens = map[string]struct{}{
 	"again":    {},
@@ -88,89 +132,6 @@ var lowSignalPromptTokens = map[string]struct{}{
 	"thank":    {},
 	"thanks":   {},
 	"yes":      {},
-}
-
-var globalPreferencePhrases = []string{
-	"i want",
-	"i prefer",
-	"please",
-	"always",
-	"never",
-	"default to",
-	"from now on",
-	"toi muon",
-	"toi thich",
-	"uu tien",
-	"luon",
-	"mac dinh",
-	"tu gio",
-	"ve sau",
-	"dung",
-	"khong doi",
-}
-
-var assistantScopePhrases = []string{
-	"assistant",
-	"agent",
-	" ai ",
-	"memory",
-	"save memory",
-	"reply",
-	"review",
-	"commit",
-	"luu memory",
-	"tra loi",
-	"review code",
-}
-
-var projectScopePhrases = []string{
-	"repo",
-	"repository",
-	"project",
-	"codebase",
-	"this repo",
-	"this project",
-	"repo nay",
-	"project nay",
-	"trong repo",
-	"trong project",
-	"knowns.md",
-	"agents.md",
-	"claude.md",
-	"opencode.md",
-	"copilot-instructions.md",
-	"shim",
-	"runtime",
-	"package",
-	"module",
-	"file",
-}
-
-var workingContextPhrases = []string{
-	"currently",
-	"for now",
-	"this session",
-	"temporary",
-	"temporarily",
-	"investigating",
-	"debugging",
-	"blocked on",
-	"workaround",
-	"hien tai",
-	"tam thoi",
-	"phien nay",
-	"dang debug",
-	"dang dieu tra",
-	"bi chan",
-}
-
-type captureCandidate struct {
-	Title      string
-	Category   string
-	Layer      string
-	Content    string
-	Tags       []string
-	Confidence float64
 }
 
 type Settings struct {
@@ -200,16 +161,32 @@ type Item struct {
 	Status    string    `json:"status,omitempty"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	Content   string    `json:"content"`
-	Score     float64   `json:"score"`
-	Retrieval string    `json:"retrieval,omitempty"`
-	MatchedBy []string  `json:"matchedBy,omitempty"`
-	Reasons   []string  `json:"reasons,omitempty"`
-	Tags      []string  `json:"tags,omitempty"`
+	// Claim is what actually reaches the agent. Content stays whole so the
+	// debug pack can show what was held back next to what was sent.
+	Claim     string `json:"claim,omitempty"`
+	HasDetail bool   `json:"hasDetail,omitempty"`
+	FullBytes int    `json:"fullBytes,omitempty"`
+	// Semantic is the raw cosine for a hybrid hit; KeywordMatch is the share of
+	// the prompt's content words found in the entry. Each is what its own
+	// retrieval path is judged on, and both are carried so a rejected entry can
+	// be told apart from a missing one.
+	Semantic     float64  `json:"semanticScore,omitempty"`
+	KeywordMatch float64  `json:"keywordMatch,omitempty"`
+	Score        float64  `json:"score"`
+	Retrieval    string   `json:"retrieval,omitempty"`
+	MatchedBy    []string `json:"matchedBy,omitempty"`
+	Reasons      []string `json:"reasons,omitempty"`
+	Tags         []string `json:"tags,omitempty"`
 }
 
 type hybridCandidate struct {
-	entry     *models.MemoryEntry
-	score     float64
+	entry *models.MemoryEntry
+	// score is the engine's fused RANK, top result always 1.0. Kept for
+	// callers that only need ordering; never used as relevance.
+	score float64
+	// semantic is the raw cosine of the best-matching chunk. This is the
+	// relevance signal: absolute, and stable across prompt length.
+	semantic  float64
 	matchedBy []string
 }
 
@@ -247,6 +224,9 @@ type CaptureOutcome struct {
 	Trusted      bool                 `json:"trusted"`
 	TrustReason  string               `json:"trustReason,omitempty"`
 	Matches      []memoryreview.Match `json:"matches,omitempty"`
+
+	// ExpiredProposals counts entries this call retired from the review queue.
+	ExpiredProposals int `json:"expiredProposals,omitempty"`
 }
 
 type Adapter struct {
@@ -383,7 +363,12 @@ func Build(store *storage.Store, input Input) (Pack, error) {
 	if maxItems <= 0 {
 		maxItems = defaultMaxItems
 	}
-	if isSessionBaseline && input.MaxItems <= 0 {
+	if isSessionBaseline && maxItems > baselineMaxItems {
+		// A real ceiling, not a default. The old condition was `input.MaxItems
+		// <= 0`, which never held: settings.MaxItems is always filled in from
+		// config before it reaches here, so baselineMaxItems had no effect at
+		// all. The session opener is a short list of commitments; more entries
+		// only push the ones that matter down the page.
 		maxItems = baselineMaxItems
 	}
 	maxBytes := input.MaxBytes
@@ -406,20 +391,35 @@ func Build(store *storage.Store, input Input) (Pack, error) {
 		return candidates[i].item.ID < candidates[j].item.ID
 	})
 
-	selected := make([]Item, 0, maxItems)
-	for _, candidate := range candidates {
-		if len(selected) >= maxItems {
-			break
+	// The floor applies BEFORE the item cap, so an entry that did not match
+	// well enough can never take a slot from one that did. The session
+	// baseline is exempt: at session start there is no question to be relevant
+	// to, and it is ranked on its own terms.
+	eligible := candidates
+	if !isSessionBaseline {
+		eligible = make([]candidate, 0, len(candidates))
+		for _, c := range candidates {
+			if clearsInjectionFloor(c.item) {
+				eligible = append(eligible, c)
+			}
 		}
-		selected = append(selected, candidate.item)
 	}
+	selected := capItems(eligible, maxItems)
 	pack.CandidateCount = len(candidates)
 	pack.RetrievalMode = retrievalModeForItems(selected)
+	if pack.RetrievalMode == "" {
+		pack.RetrievalMode = retrievalModeForItems(capItems(candidates, maxItems))
+	}
 
 	if mode == ModeDebug {
-		pack.Candidates = selected
+		// Debug shows what was FOUND, including what the floor rejected, so a
+		// memory that matched weakly can be told apart from one never found.
+		pack.Candidates = capItems(candidates, maxItems)
 		if len(selected) == 0 {
 			pack.SkipReason = SkipReasonNoCandidates
+			if !isSessionBaseline && len(candidates) > 0 {
+				pack.SkipReason = SkipReasonBelowThreshold
+			}
 			return pack, nil
 		}
 		pack.Status = StatusCandidate
@@ -429,6 +429,14 @@ func Build(store *storage.Store, input Input) (Pack, error) {
 	prefix := trimToByteLimit(serializePrefix(input.Runtime), maxBytes)
 	serialized := prefix
 
+	if !isSessionBaseline && len(selected) == 0 && len(candidates) > 0 {
+		// Found, but nothing matched well enough. Kept distinct from finding
+		// nothing, because the remedy for each is different.
+		pack.Candidates = capItems(candidates, maxItems)
+		pack.SkipReason = SkipReasonBelowThreshold
+		pack.Bytes = len(prefix)
+		return pack, nil
+	}
 	if len(selected) == 0 {
 		if isSessionBaseline {
 			block := serializeKNOWNSSummary(store, maxBytes-len(serialized))
@@ -445,12 +453,6 @@ func Build(store *storage.Store, input Input) (Pack, error) {
 		pack.Bytes = len(pack.Serialized)
 		pack.Status = StatusCandidate
 		pack.SelectedCount = len(pack.Items)
-		return pack, nil
-	}
-	if !isSessionBaseline && len(selected) > 0 && !passesInjectionThreshold(selected) {
-		pack.Candidates = selected
-		pack.SkipReason = SkipReasonBelowThreshold
-		pack.Bytes = len(prefix)
 		return pack, nil
 	}
 
@@ -506,52 +508,71 @@ func CaptureWithOutcome(store *storage.Store, input Input) (*models.MemoryEntry,
 		outcome.Reason = reason
 		return nil, outcome, nil
 	}
-	candidate, ok := inferCaptureCandidate(input)
-	if !ok {
-		outcome.Reason = SkipReasonNoCaptureCandidate
-		return nil, outcome, nil
-	}
-	outcome.Score = candidate.Confidence
-	if captureMode == CaptureHighConfidence {
-		outcome.Threshold = minHighConfidenceCapture
-	}
-	if captureMode == CaptureHighConfidence && candidate.Confidence < minHighConfidenceCapture {
-		outcome.Reason = SkipReasonCaptureConfidence
-		return nil, outcome, nil
-	}
+	// NOTHING IS CAPTURED FROM PROMPT TEXT ANY MORE, and this function keeps
+	// its signature so the `--capture` flag, settings.Capture and the hook's
+	// JSON envelope stay exactly as they shipped.
+	//
+	// The two inferences that used to run here read a phrase out of the user's
+	// prompt and wrote it down as durable knowledge. A prompt is a REQUEST, not
+	// a conclusion: at prompt time nothing has been established yet. The
+	// working-context inference made that concrete by matching on "currently",
+	// "for now", "temporary" and "this session", the exact vocabulary of a
+	// fact about to expire, and then stored it forever. The preference
+	// inference was worse: it overwrote Content with a hard-coded sentence, so
+	// it attributed to the user a statement the user had never made.
+	//
+	// The two together produced 86 of the 107 entries in the reference store
+	// and not one of them ever reached `active`. Memory now comes only from a
+	// deliberate `add`, where an agent writes from an outcome it just reached.
+	//
+	// The checks above still run, so mode=off, mode=debug, capture=disabled and
+	// the low-signal prompt filter keep reporting the reasons callers match on.
+	// SkipReasonCaptureConfidence, SkipReasonDuplicateCapture and
+	// SkipReasonReviewRequired are now unreachable; they stay exported because
+	// they are part of the hook's published JSON vocabulary, and retiring that
+	// surface is its own change.
+	outcome.ExpiredProposals = expireAbandonedProposals(store, time.Now().UTC())
+	outcome.Reason = SkipReasonNoCaptureCandidate
+	return nil, outcome, nil
+}
+
+// expireAbandonedProposals retires `proposed` entries that outlived the queue,
+// and returns how many it retired.
+//
+// THIS IS WHERE THE QUEUE BECOMES SELF-LIMITING. A review queue only works if
+// somebody empties it, and this project's did not: 48 entries sat unresolved
+// because nothing expired them and nothing announced them. Left that way a
+// proposal is the worst of both states, never retrieved so it helps nobody,
+// never removed so it keeps burying the entries a person would actually want to
+// read.
+//
+// It runs here because this hook already fires on every prompt and this
+// function is already the write path, so no new trigger and no new schedule has
+// to exist for the rule to hold. Until now it manufactured the junk; the same
+// call now clears it.
+//
+// The write cannot affect the prompt in flight: an expired proposal was already
+// invisible to retrieval, so changing its status changes nothing the current
+// injection would have shown. A read error or a write error is swallowed on
+// purpose, because failing to tidy a backlog must never fail a user's prompt.
+func expireAbandonedProposals(store *storage.Store, now time.Time) int {
 	entries, err := store.Memory.List("")
 	if err != nil {
-		return nil, outcome, err
+		return 0
 	}
-	if hasDuplicateCapture(entries, candidate) {
-		outcome.Reason = SkipReasonDuplicateCapture
-		return nil, outcome, nil
+	expired := 0
+	for _, entry := range entries {
+		if !models.ProposalIsExpired(entry, models.MemoryProposalTTLDays, now) {
+			continue
+		}
+		entry.Status = models.MemoryStatusRejected
+		entry.RejectedReason = "expired_unreviewed"
+		entry.UpdatedAt = now
+		if err := store.Memory.Update(entry); err == nil {
+			expired++
+		}
 	}
-	entry := &models.MemoryEntry{
-		Title:    candidate.Title,
-		Layer:    candidate.Layer,
-		Category: candidate.Category,
-		Content:  candidate.Content,
-		Tags:     append([]string(nil), candidate.Tags...),
-	}
-	result, err := memoryreview.New(store).Add(entry, memoryreview.AddOptions{})
-	if err != nil {
-		return nil, outcome, err
-	}
-	if result.Status == memoryreview.ResultReviewRequired || result.Memory == nil {
-		outcome.Reason = SkipReasonReviewRequired
-		outcome.Matches = append([]memoryreview.Match(nil), result.Matches...)
-		return nil, outcome, nil
-	}
-	outcome.Status = CaptureStatusCreated
-	outcome.Created = true
-	outcome.MemoryID = result.Memory.ID
-	outcome.MemoryStatus = result.Memory.Status
-	outcome.Trusted = result.Memory.CurrentForDefaultRetrieval()
-	if !outcome.Trusted {
-		outcome.TrustReason = "memory_not_active_for_default_retrieval"
-	}
-	return result.Memory, outcome, nil
+	return expired
 }
 
 func buildCandidates(store *storage.Store, input Input, maxItems int, baseline bool) ([]candidate, error) {
@@ -564,10 +585,12 @@ func buildCandidates(store *storage.Store, input Input, maxItems int, baseline b
 	}
 	limit := max(maxItems*4, 20)
 	if hybrid, ok := lookupHybridCandidates(store, input, limit); ok {
-		candidates := buildHybridItems(hybrid, input)
-		if len(candidates) > 0 {
-			return candidates, nil
-		}
+		// When the semantic layer ran, its answer stands, INCLUDING "nothing
+		// here is relevant". Falling back to keyword matching whenever no
+		// hybrid candidate cleared was how "ok cảm ơn" could still inject
+		// whatever shared a word with it. Keyword matching is for when the
+		// semantic layer is unavailable, not for overruling it.
+		return buildHybridItems(hybrid, input), nil
 	}
 
 	entries, err := store.Memory.List("")
@@ -606,6 +629,7 @@ func buildBaselineItems(entries []*models.MemoryEntry, input Input) []candidate 
 		if score <= 0 {
 			continue
 		}
+		claim, hasDetail, fullBytes := claimFields(entry.Content)
 		candidates = append(candidates, candidate{item: Item{
 			ID:        entry.ID,
 			Title:     entry.Title,
@@ -614,6 +638,9 @@ func buildBaselineItems(entries []*models.MemoryEntry, input Input) []candidate 
 			Status:    entry.Status,
 			UpdatedAt: entry.UpdatedAt,
 			Content:   normalizeWhitespace(entry.Content),
+			Claim:     claim,
+			HasDetail: hasDetail,
+			FullBytes: fullBytes,
 			Score:     score,
 			Retrieval: "session-baseline",
 			Reasons:   reasons,
@@ -621,161 +648,6 @@ func buildBaselineItems(entries []*models.MemoryEntry, input Input) []candidate 
 		}})
 	}
 	return candidates
-}
-
-func inferCaptureCandidate(input Input) (captureCandidate, bool) {
-	normalizedPrompt := normalizedPrompt(input.UserPrompt)
-	if normalizedPrompt == "" {
-		return captureCandidate{}, false
-	}
-	if looksLikeHookPayload(input.UserPrompt, normalizedPrompt) {
-		return captureCandidate{}, false
-	}
-
-	if candidate, ok := inferGlobalPreferenceCandidate(input.UserPrompt, normalizedPrompt); ok {
-		return candidate, true
-	}
-	if candidate, ok := inferWorkingContextCandidate(input.UserPrompt, normalizedPrompt); ok {
-		return candidate, true
-	}
-	return captureCandidate{}, false
-}
-
-func inferGlobalPreferenceCandidate(rawPrompt, normalized string) (captureCandidate, bool) {
-	if !hasAnyPhrase(normalized, globalPreferencePhrases) {
-		return captureCandidate{}, false
-	}
-	if !hasAnyPhrase(" "+normalized+" ", assistantScopePhrases) {
-		return captureCandidate{}, false
-	}
-	if looksRepoSpecific(rawPrompt, normalized) {
-		return captureCandidate{}, false
-	}
-	content := normalizeCapturedContent(rawPrompt)
-	title := "User collaboration preference"
-	tags := []string{"assistant", "preference"}
-	if strings.Contains(normalized, "memory") || strings.Contains(normalized, "luu memory") || strings.Contains(normalized, "save memory") {
-		title = "Memory capture preference"
-		content = "User prefers the assistant to proactively save durable memory without waiting for explicit reminders."
-		tags = append(tags, "memory")
-	}
-	if strings.Contains(normalized, "tra loi") || strings.Contains(normalized, "reply") || strings.Contains(normalized, "language") {
-		title = "Response preference"
-		tags = append(tags, "response")
-	}
-	return captureCandidate{
-		Title:      title,
-		Category:   "preference",
-		Layer:      models.MemoryLayerGlobal,
-		Content:    content,
-		Tags:       uniqueStrings(tags),
-		Confidence: 0.92,
-	}, true
-}
-
-func inferWorkingContextCandidate(rawPrompt, normalized string) (captureCandidate, bool) {
-	if !hasAnyPhrase(normalized, workingContextPhrases) {
-		return captureCandidate{}, false
-	}
-	return captureCandidate{
-		Title:      "Session working context",
-		Category:   "context",
-		Layer:      models.MemoryLayerProject,
-		Content:    normalizeCapturedContent(rawPrompt),
-		Tags:       []string{"session", "working-context"},
-		Confidence: 0.84,
-	}, true
-}
-
-func hasDuplicateCapture(entries []*models.MemoryEntry, candidate captureCandidate) bool {
-	content := normalizeComparableText(candidate.Content)
-	for _, entry := range entries {
-		if entry == nil {
-			continue
-		}
-		existingContent := normalizeComparableText(entry.Content)
-		if existingContent == content {
-			return true
-		}
-		if entry.Layer == candidate.Layer && normalizeComparableText(entry.Title) == normalizeComparableText(candidate.Title) {
-			if existingContent == "" || content == "" || strings.Contains(existingContent, content) || strings.Contains(content, existingContent) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func normalizedPrompt(prompt string) string {
-	return normalizeComparableText(normalizeWhitespace(strings.ToLower(strings.TrimSpace(prompt))))
-}
-
-func normalizeCapturedContent(prompt string) string {
-	prompt = normalizeWhitespace(strings.TrimSpace(prompt))
-	if prompt == "" {
-		return ""
-	}
-	last := prompt[len(prompt)-1]
-	if last != '.' && last != '!' && last != '?' {
-		prompt += "."
-	}
-	return prompt
-}
-
-func normalizeComparableText(s string) string {
-	replacer := strings.NewReplacer(
-		"á", "a", "à", "a", "ả", "a", "ã", "a", "ạ", "a",
-		"ă", "a", "ắ", "a", "ằ", "a", "ẳ", "a", "ẵ", "a", "ặ", "a",
-		"â", "a", "ấ", "a", "ầ", "a", "ẩ", "a", "ẫ", "a", "ậ", "a",
-		"é", "e", "è", "e", "ẻ", "e", "ẽ", "e", "ẹ", "e",
-		"ê", "e", "ế", "e", "ề", "e", "ể", "e", "ễ", "e", "ệ", "e",
-		"í", "i", "ì", "i", "ỉ", "i", "ĩ", "i", "ị", "i",
-		"ó", "o", "ò", "o", "ỏ", "o", "õ", "o", "ọ", "o",
-		"ô", "o", "ố", "o", "ồ", "o", "ổ", "o", "ỗ", "o", "ộ", "o",
-		"ơ", "o", "ớ", "o", "ờ", "o", "ở", "o", "ỡ", "o", "ợ", "o",
-		"ú", "u", "ù", "u", "ủ", "u", "ũ", "u", "ụ", "u",
-		"ư", "u", "ứ", "u", "ừ", "u", "ử", "u", "ữ", "u", "ự", "u",
-		"ý", "y", "ỳ", "y", "ỷ", "y", "ỹ", "y", "ỵ", "y",
-		"đ", "d",
-	)
-	return normalizeWhitespace(replacer.Replace(strings.ToLower(strings.TrimSpace(s))))
-}
-
-func hasAnyPhrase(text string, phrases []string) bool {
-	for _, phrase := range phrases {
-		if phrase == "" {
-			continue
-		}
-		if strings.Contains(text, normalizeComparableText(phrase)) {
-			return true
-		}
-	}
-	return false
-}
-
-func looksRepoSpecific(rawPrompt, normalized string) bool {
-	if hasAnyPhrase(normalized, projectScopePhrases) {
-		return true
-	}
-	rawPrompt = strings.TrimSpace(rawPrompt)
-	return strings.Contains(rawPrompt, "`") || strings.Contains(rawPrompt, "/") || strings.Contains(rawPrompt, ".go") || strings.Contains(rawPrompt, ".md")
-}
-
-func uniqueStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		normalized := normalizeComparableText(value)
-		if normalized == "" {
-			continue
-		}
-		if _, ok := seen[normalized]; ok {
-			continue
-		}
-		seen[normalized] = struct{}{}
-		result = append(result, normalized)
-	}
-	return result
 }
 
 func buildHeuristicItems(entries []*models.MemoryEntry, input Input) []candidate {
@@ -787,49 +659,84 @@ func buildHeuristicItems(entries []*models.MemoryEntry, input Input) []candidate
 		if !allowedCategory(entry.Category) {
 			continue
 		}
-		score, reasons, _ := scoreEntry(entry, input, true)
+		score, reasons, match := scoreEntry(entry, input, true)
 		if score <= 0 {
 			continue
 		}
+		claim, hasDetail, fullBytes := claimFields(entry.Content)
 		candidates = append(candidates, candidate{item: Item{
-			ID:        entry.ID,
-			Title:     entry.Title,
-			Category:  entry.Category,
-			Layer:     entry.Layer,
-			Status:    entry.Status,
-			UpdatedAt: entry.UpdatedAt,
-			Content:   normalizeWhitespace(entry.Content),
-			Score:     score,
-			Retrieval: "heuristic-fallback",
-			Reasons:   append(reasons, "heuristic-fallback"),
-			Tags:      append([]string(nil), entry.Tags...),
+			ID:           entry.ID,
+			Title:        entry.Title,
+			Category:     entry.Category,
+			Layer:        entry.Layer,
+			Status:       entry.Status,
+			UpdatedAt:    entry.UpdatedAt,
+			Content:      normalizeWhitespace(entry.Content),
+			Claim:        claim,
+			HasDetail:    hasDetail,
+			FullBytes:    fullBytes,
+			Score:        score,
+			KeywordMatch: match.fraction,
+			Retrieval:    "heuristic-fallback",
+			Reasons:      append(reasons, "heuristic-fallback"),
+			Tags:         append([]string(nil), entry.Tags...),
 		}})
 	}
 	return candidates
 }
 
 func buildHybridItems(hits []hybridCandidate, input Input) []candidate {
+	// One memory can come back more than once. It is indexed once per store,
+	// and an entry that moved between layers leaves a stale chunk in the store
+	// it left: r7upz8, demoted to project, still sits in the global index.
+	// mergeStoreMemoryResults keys by store, so both copies survive the engine
+	// and resolve to the same entry here. Keep the strongest match per entry,
+	// or the same rule is injected twice and paid for twice.
+	best := make(map[string]int, len(hits))
+	for i, hit := range hits {
+		if hit.entry == nil || hit.entry.ID == "" {
+			continue
+		}
+		if j, ok := best[hit.entry.ID]; !ok || hit.semantic > hits[j].semantic {
+			best[hit.entry.ID] = i
+		}
+	}
+
 	candidates := make([]candidate, 0, len(hits))
-	for _, hit := range hits {
+	for i, hit := range hits {
 		if hit.entry == nil || !memoryVisibleForRuntime(hit.entry, input) || !allowedCategory(hit.entry.Category) {
+			continue
+		}
+		if id := hit.entry.ID; id != "" && best[id] != i {
 			continue
 		}
 		if !containsString(hit.matchedBy, "semantic") {
 			continue
 		}
-		score, reasons, promptOverlaps := scoreEntry(hit.entry, input, false)
-		if promptOverlaps == 0 {
-			continue
+		// No keyword-overlap gate. Every hit here already matched
+		// semantically, and requiring a shared word as well put keyword in
+		// FRONT of semantic: "don't use the long dash" was discarded for
+		// sharing no word with "em dash", which is precisely the case the
+		// semantic layer exists to catch. The score floor below still applies,
+		// and with no overlap almost all of the score comes from the semantic
+		// boost, so only a genuinely strong semantic match clears it.
+		//
+		// Relevance is the raw cosine. The engine's fused score is a rank
+		// (top result always 1.0, even for "ok cảm ơn"), so adding it as a
+		// boost gave every prompt a few near-maximal hits regardless of
+		// relevance. Keyword overlap, layer and recency only break ties.
+		_, reasons, match := scoreEntry(hit.entry, input, false)
+		score := hit.semantic + hybridKeywordTiebreak*match.fraction
+		if hit.entry.Layer == models.MemoryLayerProject {
+			score += hybridProjectTiebreak
 		}
-		score += hybridSearchBoost(hit.score)
-		reasons = append(reasons, "hybrid-retrieval")
-		reasons = append(reasons, "semantic-match")
+		score += recencyBonus(hit.entry.UpdatedAt) / 12
+		reasons = append(reasons, fmt.Sprintf("semantic:%.2f", hit.semantic))
+		reasons = append(reasons, "hybrid-retrieval", "semantic-match")
 		if containsString(hit.matchedBy, "keyword") {
 			reasons = append(reasons, "keyword-match")
 		}
-		if score <= 0.75 {
-			continue
-		}
+		claim, hasDetail, fullBytes := claimFields(hit.entry.Content)
 		candidates = append(candidates, candidate{item: Item{
 			ID:        hit.entry.ID,
 			Title:     hit.entry.Title,
@@ -838,7 +745,11 @@ func buildHybridItems(hits []hybridCandidate, input Input) []candidate {
 			Status:    hit.entry.Status,
 			UpdatedAt: hit.entry.UpdatedAt,
 			Content:   normalizeWhitespace(hit.entry.Content),
+			Claim:     claim,
+			HasDetail: hasDetail,
+			FullBytes: fullBytes,
 			Score:     score,
+			Semantic:  hit.semantic,
 			Retrieval: "hybrid",
 			MatchedBy: append([]string(nil), hit.matchedBy...),
 			Reasons:   reasons,
@@ -874,7 +785,10 @@ func defaultHybridCandidates(store *storage.Store, input Input, limit int) ([]hy
 		IncludeHistorical: NormalizeMode(input.Mode) == ModeDebug,
 	})
 	if err != nil {
-		return nil, true
+		// A failed search is not an answer. Report the semantic layer as
+		// unavailable so the caller degrades to keyword matching, rather than
+		// treating "the search errored" as "nothing is relevant".
+		return nil, false
 	}
 	hits := make([]hybridCandidate, 0, len(results))
 	for _, result := range results {
@@ -888,6 +802,7 @@ func defaultHybridCandidates(store *storage.Store, input Input, limit int) ([]hy
 		hits = append(hits, hybridCandidate{
 			entry:     entry,
 			score:     result.Score,
+			semantic:  result.SemanticScore,
 			matchedBy: append([]string(nil), result.MatchedBy...),
 		})
 	}
@@ -938,16 +853,33 @@ func serializeKNOWNSSummary(store *storage.Store, remaining int) string {
 	if store == nil || remaining <= 0 {
 		return ""
 	}
-	block := "\nKnowns is the repository memory and workflow layer for tasks, docs, templates, references, and reusable knowledge.\n\n- Use MCP `initial` first when available; use `help(\"tool.*\")` or `help(\"workflow.*\")` for domain details.\n- Use Knowns docs, tasks, and memories as operating context for this repository.\n- Treat memories as supplemental context only. They do not override source-of-truth docs, tasks, or source files.\n- Use MCP `memory({ action: \"list\" })` first to inspect relevant memory summaries before calling `memory({ action: \"get\" })`.\n- Prefer updating or reusing relevant existing memories instead of creating duplicates.\n- If MCP bootstrap is unavailable, use the `knowns` CLI for project context.\n- If you have not checked project readiness yet, call MCP `project({ action: \"status\" })` to see knowledge counts, search state, runtime health, and available capabilities.\n"
+	// This block is paid on EVERY prompt, so it buys its one new line by
+	// dropping two. The old third bullet repeated canonicalityWarning word for
+	// word, and that warning is already printed above every injection; the
+	// second was too vague to act on. What replaces them is the only thing an
+	// agent needs at the moment it considers writing: what a Memory is for.
+	block := "\nKnowns is the repository memory and workflow layer for tasks, docs, templates, references, and reusable knowledge.\n\n- A Memory is a fact the NEXT session needs, written from an outcome you reached. If it only repeats the prompt, do not write it.\n- Use MCP `initial` first when available; use `help(\"tool.*\")` or `help(\"workflow.*\")` for domain details.\n- Use MCP `memory({ action: \"list\" })` before `memory({ action: \"get\" })`, and update an existing entry rather than adding a near-duplicate.\n- If MCP bootstrap is unavailable, use the `knowns` CLI for project context.\n- If you have not checked project readiness yet, call MCP `project({ action: \"status\" })` to see knowledge counts, search state, runtime health, and available capabilities.\n"
 	if len(block) <= remaining {
 		return block
 	}
 	if remaining <= 48 {
 		return ""
 	}
+	// Cut at a line boundary, never mid-word. This block is a list of rules;
+	// half a rule ending in "..." is not a shorter rule, it is an unreadable
+	// one, and it sat directly under memory entries that this change just
+	// stopped truncating.
 	trimmed := block[:remaining]
-	if remaining > 3 {
-		trimmed = strings.TrimSpace(trimmed[:remaining-3]) + "..."
+	idx := strings.LastIndexByte(trimmed, '\n')
+	if idx <= 0 {
+		return ""
+	}
+	trimmed = trimmed[:idx+1]
+	// Never emit the header with nothing under it. Memories are what the prompt
+	// actually asked for, so this block is the right thing to degrade first, but
+	// degrading it to a lone banner line spends bytes on pure noise.
+	if !strings.Contains(trimmed, "\n- ") {
+		return ""
 	}
 	return trimmed
 }
@@ -959,27 +891,92 @@ func serializeItems(items []Item, remaining int, serializedItems *[]Item) string
 	var builder strings.Builder
 	builder.WriteString("\n")
 	remaining--
+
+	// Reserve the elision line before spending anything, sized for the worst
+	// case. Announcing that entries were hidden is only useful if the
+	// announcement itself cannot be the thing that gets cut, and paying for it
+	// up front is what makes the declared budget an actual ceiling instead of a
+	// number the last write is allowed to step over.
+	reserved := 0
+	if len(items) > 1 {
+		reserved = len(serializeElision(len(items)))
+		if reserved < remaining {
+			remaining -= reserved
+		} else {
+			reserved = 0
+		}
+	}
+
+	emitted := 0
+	elided := 0
 	for _, item := range items {
 		block := serializeItem(item, remaining)
 		if block == "" {
-			break
+			// A block that does not fit must not stop the ones behind it.
+			// `break` here was the reason a prompt matching several memories
+			// injected exactly one: the list is ordered by score, so what
+			// follows a large entry is usually a SMALLER entry, and every one
+			// of them was being discarded to protect budget that had room.
+			elided++
+			continue
 		}
 		builder.WriteString(block)
 		remaining -= len(block)
+		emitted++
 		if serializedItems != nil {
 			*serializedItems = append(*serializedItems, item)
 		}
 	}
-	if serializedItems != nil && len(*serializedItems) == 0 {
-		return ""
+
+	if emitted == 0 {
+		// Nothing fit. Emit the top match anyway, over budget. From the agent's
+		// side a prompt that retrieved memories and then showed none is
+		// indistinguishable from having no memory at all, and the budget exists
+		// to bound repetition, not to make the feature disappear on its most
+		// relevant entry.
+		block := buildItemBlock(items[0])
+		if block == "" {
+			return ""
+		}
+		builder.WriteString(block)
+		elided = len(items) - 1
+		if serializedItems != nil {
+			*serializedItems = append(*serializedItems, items[0])
+		}
+	}
+
+	if elided > 0 {
+		builder.WriteString(serializeElision(elided))
 	}
 	return builder.String()
+}
+
+// serializeElision names what was left out and how to reach it.
+func serializeElision(count int) string {
+	noun := "memories"
+	if count == 1 {
+		noun = "memory"
+	}
+	return fmt.Sprintf("- %d more matching %s did not fit; list them with memory(action:\"list\")\n", count, noun)
 }
 
 func serializeItem(item Item, remaining int) string {
 	if remaining <= 0 {
 		return ""
 	}
+	block := buildItemBlock(item)
+	// All or nothing. The old path trimmed the body to whatever was left, which
+	// produced entries cut mid-sentence: an agent reading half a rule cannot
+	// tell that it is half, and a truncated claim is worse than an absent one
+	// because it still reads as complete.
+	if block == "" || len(block) > remaining {
+		return ""
+	}
+	return block
+}
+
+// buildItemBlock renders one entry at full size, with no budget applied.
+func buildItemBlock(item Item) string {
 	ref := memoryReference(item)
 	layer := strings.TrimSpace(item.Layer)
 	if layer == "" {
@@ -993,24 +990,25 @@ func serializeItem(item Item, remaining int) string {
 	if title == "" {
 		title = "Untitled memory"
 	}
-	content := normalizeWhitespace(item.Content)
+	claim := normalizeWhitespace(item.Claim)
+	if claim == "" {
+		// Items built by hand, including in tests, carry only Content.
+		claim = normalizeWhitespace(item.Content)
+	}
+	if claim == "" {
+		return ""
+	}
 
 	header := fmt.Sprintf("- %s [%s/%s] %s%s\n", ref, layer, category, title, serializeItemTrustMetadata(item))
-	contentPrefix := "  "
-	trailer := "\n"
-	overhead := len(header) + len(contentPrefix) + len(trailer)
-	if overhead > remaining {
-		return ""
+	detail := ""
+	if item.HasDetail {
+		// Printed ONLY when something was actually held back. On a memory whose
+		// claim is its whole body this line would send an agent to fetch a
+		// fuller version that does not exist, and one wasted call is enough to
+		// teach it to ignore the line everywhere it does matter.
+		detail = fmt.Sprintf("\n  full=%db  detail: memory(action:\"get\", id:%q)", item.FullBytes, item.ID)
 	}
-	contentBudget := remaining - overhead
-	if contentBudget <= 0 {
-		return ""
-	}
-	content = truncateText(content, contentBudget)
-	if content == "" {
-		return ""
-	}
-	return header + contentPrefix + content + trailer
+	return header + "  " + claim + detail + "\n"
 }
 
 func serializeItemTrustMetadata(item Item) string {
@@ -1043,24 +1041,6 @@ func memoryReference(item Item) string {
 	return "@memory/" + id
 }
 
-func truncateText(text string, maxBytes int) string {
-	text = normalizeWhitespace(text)
-	if maxBytes <= 0 {
-		return ""
-	}
-	if len(text) <= maxBytes {
-		return text
-	}
-	if maxBytes <= 3 {
-		return trimToByteLimit(text, maxBytes)
-	}
-	trimmed := strings.TrimSpace(trimToByteLimit(text, maxBytes-3))
-	if trimmed == "" {
-		return trimToByteLimit(text, maxBytes)
-	}
-	return trimmed + "..."
-}
-
 func trimToByteLimit(text string, maxBytes int) string {
 	if maxBytes <= 0 {
 		return ""
@@ -1075,13 +1055,31 @@ func trimToByteLimit(text string, maxBytes int) string {
 	return trimmed
 }
 
+// allowedCategory gates what may be injected.
+//
+// The write contract lives in models.AllowedMemoryCategories and this used to
+// keep a second, drifted copy of it. The two disagreed in both directions:
+// `convention` was writable but never injectable, so an active, fully sourced
+// entry like sbf2ih could top every search and still never reach an agent;
+// `warning` was injectable but not writable. One list, plus an explicit legacy
+// set that can only shrink.
 func allowedCategory(category string) bool {
-	switch strings.ToLower(strings.TrimSpace(category)) {
-	case "decision", "pattern", "preference", "warning", "failure":
-		return true
-	default:
+	normalized := strings.ToLower(strings.TrimSpace(category))
+	if normalized == "" {
 		return false
 	}
+	for _, allowed := range models.AllowedMemoryCategories {
+		if normalized == allowed {
+			return true
+		}
+	}
+	// Readable, never writable: models.ValidateMemoryCategory rejects both on
+	// the write path, so these only cover entries that predate the contract.
+	switch normalized {
+	case "decision", "warning":
+		return true
+	}
+	return false
 }
 
 func shouldSkipPrompt(prompt string) bool {
@@ -1096,7 +1094,7 @@ func promptSkipReason(prompt string) string {
 	if len(normalized) < 3 {
 		return SkipReasonLowSignalPrompt
 	}
-	tokens := tokenRE.FindAllString(normalized, -1)
+	tokens := tokenRE.FindAllString(models.FoldToASCII(normalized), -1)
 	if len(tokens) == 0 {
 		return SkipReasonLowSignalPrompt
 	}
@@ -1124,9 +1122,40 @@ func shouldUseSessionBaseline(actionType, prompt string) bool {
 	}
 }
 
+// Baseline tiers. At session start there is no question to be relevant TO, so
+// the only thing worth spending the budget on is what holds regardless of what
+// the user is about to ask.
+//
+// The tiers are wide enough to separate cleanly: every commitment outranks
+// every context-dependent fact, and layer, recency and tags only order within a
+// tier. Ranking used to come from TAGS, and tags are a free-form field, so
+// `ipkq69` led only because its author happened to write `style` and
+// `preference` on it while `rtsx9j`, `ew4xea` and `2s3q4u` sat at positions 10,
+// 11 and 12 out of 12, below every project failure note. Category is the field
+// the write path actually validates against models.AllowedMemoryCategories.
+const (
+	baselinePreferenceWeight = 1.0
+	baselineConventionWeight = 0.5
+	// baselineTagWeight applies AT MOST ONCE. Counting it per tag is what let a
+	// twice-tagged entry outrank an equally important once-tagged one.
+	baselineTagWeight = 0.08
+)
+
 func baselineScore(entry *models.MemoryEntry) (float64, []string) {
 	score := 0.0
 	reasons := make([]string, 0, 4)
+
+	switch strings.ToLower(strings.TrimSpace(entry.Category)) {
+	case "preference":
+		// A commitment the user made. Nothing in the repository can confirm or
+		// retire it, and it applies to work that has not been described yet.
+		score += baselinePreferenceWeight
+		reasons = append(reasons, "user-commitment")
+	case "convention":
+		score += baselineConventionWeight
+		reasons = append(reasons, "project-convention")
+	}
+
 	switch entry.Layer {
 	case models.MemoryLayerProject:
 		score += 0.2
@@ -1142,8 +1171,9 @@ func baselineScore(entry *models.MemoryEntry) (float64, []string) {
 	for _, tag := range entry.Tags {
 		switch strings.ToLower(strings.TrimSpace(tag)) {
 		case "preference", "convention", "style", "runtime-memory", "runtime":
-			score += 0.08
+			score += baselineTagWeight
 			reasons = append(reasons, "baseline-tag")
+			return score, dedupeStrings(reasons)
 		}
 	}
 	return score, dedupeStrings(reasons)
@@ -1154,20 +1184,6 @@ func hasMemoryTag(entry *models.MemoryEntry, target string) bool {
 		if strings.EqualFold(strings.TrimSpace(tag), target) {
 			return true
 		}
-	}
-	return false
-}
-
-func looksLikeHookPayload(rawPrompt, normalized string) bool {
-	trimmed := strings.TrimSpace(rawPrompt)
-	if strings.HasPrefix(trimmed, "{") && strings.Contains(trimmed, "\"hook_event_name\"") {
-		return true
-	}
-	if strings.HasPrefix(trimmed, "{") && strings.Contains(trimmed, "\"session_id\"") {
-		return true
-	}
-	if strings.Contains(normalized, "hook_event_name") || strings.Contains(normalized, "session_id") || strings.Contains(normalized, "transcript_path") || strings.Contains(normalized, "permission_mode") {
-		return true
 	}
 	return false
 }
@@ -1189,24 +1205,20 @@ func dedupeStrings(values []string) []string {
 	return result
 }
 
-func passesInjectionThreshold(items []Item) bool {
-	if len(items) == 0 {
-		return false
-	}
-	total := 0.0
-	for _, item := range items {
-		total += item.Score
-	}
-	if items[0].Score < 0.85 {
-		return false
-	}
-	if len(items) == 1 {
-		return total >= 1.1
-	}
-	return total >= 1.4
+// keywordMatch counts the prompt's content words found in an entry.
+//
+// fraction is the share, 0 to 1. It replaced a raw count multiplied by 0.35,
+// which grew with every word the prompt added: the same memory scored 0.77 for
+// "em dash" and 2.52 for a 117-character paraphrase. A share can only fall when
+// unrelated words are added, and scales every entry by the same factor, so
+// neither selection nor order depends on how long the prompt is.
+type keywordMatch struct {
+	overlaps int
+	total    int
+	fraction float64
 }
 
-func scoreEntry(entry *models.MemoryEntry, input Input, requirePromptMatch bool) (float64, []string, int) {
+func scoreEntry(entry *models.MemoryEntry, input Input, requirePromptMatch bool) (float64, []string, keywordMatch) {
 	mode := NormalizeMode(input.Mode)
 	_ = mode
 	promptTokens := uniqueTokens(input.UserPrompt)
@@ -1216,7 +1228,10 @@ func scoreEntry(entry *models.MemoryEntry, input Input, requirePromptMatch bool)
 		filepathBase(input.WorkingDir),
 		input.ActionType,
 	)
-	textTokens := uniqueTokens(entry.Title, entry.Category, strings.Join(entry.Tags, " "), entry.Content)
+	// The claim-boundary marker is a directive, not content. Tokenizing it adds
+	// words like "memory" and "detail" to every marked entry, so a migration
+	// meant to preserve behaviour would change what matches.
+	textTokens := uniqueTokens(entry.Title, entry.Category, strings.Join(entry.Tags, " "), models.StripMemoryDetailMarker(entry.Content))
 	textSet := make(map[string]struct{}, len(textTokens))
 	for _, token := range textTokens {
 		textSet[token] = struct{}{}
@@ -1232,18 +1247,21 @@ func scoreEntry(entry *models.MemoryEntry, input Input, requirePromptMatch bool)
 		reasons = append(reasons, "global-memory")
 	}
 
-	promptOverlaps := 0
+	match := keywordMatch{total: len(promptTokens)}
 	for _, token := range promptTokens {
 		if _, ok := textSet[token]; ok {
-			promptOverlaps++
+			match.overlaps++
 		}
 	}
-	if promptOverlaps == 0 && requirePromptMatch {
-		return 0, nil, 0
+	if match.total > 0 {
+		match.fraction = float64(match.overlaps) / float64(match.total)
 	}
-	if promptOverlaps > 0 {
-		score += float64(promptOverlaps) * 0.35
-		reasons = append(reasons, fmt.Sprintf("keyword-overlap:%d", promptOverlaps))
+	if match.overlaps == 0 && requirePromptMatch {
+		return 0, nil, match
+	}
+	if match.overlaps > 0 {
+		score += match.fraction
+		reasons = append(reasons, fmt.Sprintf("keyword-overlap:%d/%d", match.overlaps, match.total))
 	}
 
 	contextOverlaps := 0
@@ -1267,17 +1285,7 @@ func scoreEntry(entry *models.MemoryEntry, input Input, requirePromptMatch bool)
 		score += bonus
 		reasons = append(reasons, "recent")
 	}
-	return score, reasons, promptOverlaps
-}
-
-func hybridSearchBoost(raw float64) float64 {
-	if raw < 0 {
-		return 0
-	}
-	if raw > 1.2 {
-		return 1.2
-	}
-	return raw
+	return score, reasons, match
 }
 
 func retrievalModeForItems(items []Item) string {
@@ -1350,8 +1358,16 @@ func uniqueTokens(parts ...string) []string {
 	seen := map[string]struct{}{}
 	var tokens []string
 	for _, part := range parts {
-		for _, token := range tokenRE.FindAllString(strings.ToLower(part), -1) {
+		// Fold before splitting. tokenRE only knows ASCII letters, so an
+		// unfolded "không" split into "kh" and "ng" and both fell under the
+		// length filter: Vietnamese content words vanished from matching while
+		// ASCII function words like "khi" and "cho" survived to match
+		// everything. The same shredding already broke DeriveMemoryKey.
+		for _, token := range tokenRE.FindAllString(models.FoldToASCII(part), -1) {
 			if len(token) < 3 {
+				continue
+			}
+			if _, stop := matchStopwords[token]; stop {
 				continue
 			}
 			if _, ok := seen[token]; ok {
@@ -1367,4 +1383,41 @@ func uniqueTokens(parts ...string) []string {
 
 func normalizeWhitespace(s string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
+}
+
+// claimFields derives what gets injected from a stored memory body.
+//
+// The split must happen on the RAW content: normalizeWhitespace collapses the
+// blank lines that separate a claim from its evidence, so anything downstream of
+// it has already lost the boundary.
+func claimFields(raw string) (claim string, hasDetail bool, fullBytes int) {
+	text, detail := models.MemoryClaim(raw)
+	// The reported size excludes the marker. The number answers "how much do I
+	// gain by fetching this", and a formatting directive is not something the
+	// reader gains.
+	return normalizeWhitespace(text), detail, len(strings.TrimSpace(models.StripMemoryDetailMarker(raw)))
+}
+
+// clearsInjectionFloor reports whether an item matched well enough to inject.
+// Each retrieval path is judged on the signal it actually has.
+func clearsInjectionFloor(item Item) bool {
+	switch item.Retrieval {
+	case "hybrid":
+		return item.Semantic >= semanticRelevanceFloor
+	case "heuristic-fallback":
+		return item.KeywordMatch >= keywordRelevanceFloor
+	default:
+		return true
+	}
+}
+
+func capItems(candidates []candidate, n int) []Item {
+	out := make([]Item, 0, min(len(candidates), n))
+	for _, c := range candidates {
+		if len(out) >= n {
+			break
+		}
+		out = append(out, c.item)
+	}
+	return out
 }

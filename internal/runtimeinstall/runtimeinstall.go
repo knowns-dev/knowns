@@ -55,6 +55,23 @@ func baselineHookEvent(runtime string) string {
 	}
 }
 
+// nativeBaselineHookKey names the hook that fires once, before the user has
+// asked anything.
+//
+// This is the only moment a session can be told what holds regardless of the
+// question, so it is where user commitments are loaded. It was never installed:
+// installClaude and installCodex both DELETED the group while
+// baselineHookCommandPath and the uninstall paths kept cleaning up after a hook
+// nothing wrote.
+func nativeBaselineHookKey(runtime string) (string, bool) {
+	switch strings.TrimSpace(strings.ToLower(runtime)) {
+	case "claude-code", "codex":
+		return "SessionStart", true
+	default:
+		return "", false
+	}
+}
+
 func nativePromptHookKey(runtime string) (string, bool) {
 	switch strings.TrimSpace(strings.ToLower(runtime)) {
 	case "claude-code", "codex":
@@ -362,9 +379,12 @@ func installClaude(spec runtimeSpec, opts Options) error {
 	} else {
 		hooks[promptKey] = legacy
 	}
-	setOrDeleteHookGroups(hooks, "SessionStart", removeManagedHookGroups(hooks["SessionStart"], managedStatus))
 	hooks[promptKey] = removeManagedHookGroups(hooks[promptKey], managedStatus)
 	hooks[promptKey] = ensureCommandHookGroup(hooks[promptKey], hookCommandPath(spec, opts), managedStatus)
+	if baselineKey, ok := nativeBaselineHookKey(spec.Runtime); ok {
+		baseline := removeManagedHookGroups(hooks[baselineKey], managedStatus)
+		hooks[baselineKey] = ensureCommandHookGroup(baseline, baselineHookCommandPath(spec, opts), managedStatus)
+	}
 	config["hooks"] = hooks
 	return writeJSONMap(path, config)
 }
@@ -412,6 +432,16 @@ func populateClaudeStatus(status *Status, spec runtimeSpec, opts Options) {
 		status.Details = append(status.Details, promptKey+" prompt-aware hook not installed")
 		return
 	}
+	// A prompt hook without a session hook is a HALF install, and reporting it
+	// as installed is how the missing baseline stayed invisible.
+	if baselineKey, ok := nativeBaselineHookKey(spec.Runtime); ok {
+		if !hasCommandHookGroup(hooks[baselineKey], baselineHookCommandPath(spec, opts)) {
+			status.State = StateDrifted
+			status.Summary = "helper script present, Claude session hook missing"
+			status.Details = append(status.Details, baselineKey+" session-baseline hook not installed")
+			return
+		}
+	}
 	status.Installed = true
 	status.State = StateInstalled
 	status.Summary = "installed"
@@ -447,9 +477,12 @@ func installCodex(spec runtimeSpec, opts Options) error {
 	} else {
 		hookRoot[promptKey] = legacy
 	}
-	setOrDeleteHookGroups(hookRoot, "SessionStart", removeManagedHookGroups(hookRoot["SessionStart"], managedStatus))
 	hookRoot[promptKey] = removeManagedHookGroups(hookRoot[promptKey], managedStatus)
 	hookRoot[promptKey] = ensureCommandHookGroup(hookRoot[promptKey], hookCommandPath(spec, opts), managedStatus)
+	if baselineKey, ok := nativeBaselineHookKey(spec.Runtime); ok {
+		baseline := removeManagedHookGroups(hookRoot[baselineKey], managedStatus)
+		hookRoot[baselineKey] = ensureCommandHookGroup(baseline, baselineHookCommandPath(spec, opts), managedStatus)
+	}
 	hooks["hooks"] = hookRoot
 	return writeJSONMap(hooksPath, hooks)
 }
@@ -515,6 +548,14 @@ func populateCodexStatus(status *Status, spec runtimeSpec, opts Options) {
 		status.Summary = "Codex feature enabled, hook missing"
 		status.Details = append(status.Details, promptKey+" prompt-aware hook not installed")
 		return
+	}
+	if baselineKey, ok := nativeBaselineHookKey(spec.Runtime); ok {
+		if !hasCommandHookGroup(hookRoot[baselineKey], baselineHookCommandPath(spec, opts)) {
+			status.State = StateDrifted
+			status.Summary = "Codex feature enabled, session hook missing"
+			status.Details = append(status.Details, baselineKey+" session-baseline hook not installed")
+			return
+		}
 	}
 	status.Installed = true
 	status.State = StateInstalled
@@ -666,35 +707,49 @@ func renderOpenCodePlugin(opts Options) string {
 		"import { appendFileSync, mkdirSync } from \"node:fs\"",
 		"import { join } from \"node:path\"",
 		"",
-		"export const KnownsRuntimeMemoryPlugin = async ({ client }) => {",
-		"  const injectedSessions = new Set()",
-		"  const debugEnabled = process.env.KNOWNS_RUNTIME_DEBUG === \"1\"",
-		"  const logPath = join(process.env.HOME || process.cwd(), \".knowns\", \"runtime\", \"opencode-runtime-memory.log\")",
-		"  const log = (message, extra) => {",
-		"    if (!debugEnabled) return",
-		"    try {",
-		"      mkdirSync(join(process.env.HOME || process.cwd(), \".knowns\", \"runtime\"), { recursive: true })",
-		"      const suffix = extra ? ` ${JSON.stringify(extra)}` : \"\"",
-		"      appendFileSync(logPath, `[${new Date().toISOString()}] ${message}${suffix}\\n`)",
-		"    } catch (_) {",
-		"    }",
+		"const injectedSessions = new Set()",
+		"const debugEnabled = process.env.KNOWNS_RUNTIME_DEBUG === \"1\"",
+		"const logPath = join(process.env.HOME || process.cwd(), \".knowns\", \"runtime\", \"opencode-runtime-memory.log\")",
+		"const log = (message, extra) => {",
+		"  if (!debugEnabled) return",
+		"  try {",
+		"    mkdirSync(join(process.env.HOME || process.cwd(), \".knowns\", \"runtime\"), { recursive: true })",
+		"    const suffix = extra ? ` ${JSON.stringify(extra)}` : \"\"",
+		"    appendFileSync(logPath, `[${new Date().toISOString()}] ${message}${suffix}\\n`)",
+		"  } catch (_) {",
 		"  }",
-		"  log(\"plugin initialized\")",
+		"}",
+		"",
+		"// OpenCode 1.x publishes session.created on event.properties; OpenCode 2.x",
+		"// publishes it on event.data with the session location beside it.",
+		"const sessionInfo = (event) => {",
+		"  const props = event?.properties || event?.data || {}",
+		"  const sessionID = props.sessionID || props.sessionId || props.id || props.session?.id || props.info?.id",
+		"  const location = props.location || event?.location || {}",
+		"  const cwd = props.cwd || location.directory || process.cwd()",
+		"  return { sessionID, cwd }",
+		"}",
+		"",
+		"const knownsBaseline = (cwd) =>",
+		"  execFileSync(\"" + exe + "\", [\"runtime-memory\", \"hook\", \"--runtime\", \"opencode\", \"--event\", \"session.created\"], {",
+		"    cwd,",
+		"    env: { ...process.env },",
+		"  }).toString().trim()",
+		"",
+		"// OpenCode 1.x entrypoint: its loader accepts a default-exported object with",
+		"// server(input) and awaits the returned hooks object.",
+		"const server = async ({ client }) => {",
+		"  log(\"plugin initialized\", { runtime: \"opencode-v1\" })",
 		"  await client.app.log({ body: { service: \"knowns-runtime-memory\", level: \"info\", message: \"OpenCode runtime memory plugin initialized\" } })",
 		"  return {",
 		"    event: async ({ event }) => {",
 		"      log(\"event received\", { type: event?.type })",
 		"      if (!event || event.type !== \"session.created\") return",
 		"      try {",
-		"        const props = event.properties || {}",
-		"        const sessionID = props.sessionID || props.sessionId || props.id || props.session?.id",
+		"        const { sessionID, cwd } = sessionInfo(event)",
 		"        log(\"session.created parsed\", { sessionID })",
 		"        if (!sessionID || injectedSessions.has(sessionID)) return",
-		"        const cwd = props.cwd || process.cwd()",
-		"        const result = execFileSync(\"" + exe + "\", [\"runtime-memory\", \"hook\", \"--runtime\", \"opencode\", \"--event\", \"session.created\"], {",
-		"          cwd,",
-		"          env: { ...process.env },",
-		"        }).toString().trim()",
+		"        const result = knownsBaseline(cwd)",
 		"        log(\"knowns hook returned\", { resultLength: result.length })",
 		"        if (!result) return",
 		"        injectedSessions.add(sessionID)",
@@ -712,6 +767,47 @@ func renderOpenCodePlugin(opts Options) string {
 		"      }",
 		"    },",
 		"  }",
+		"}",
+		"",
+		"// OpenCode 2.x entrypoint: its loader requires a default definition with an",
+		"// id and setup(ctx); events arrive through ctx.event.subscribe and baseline",
+		"// text is injected with ctx.session.synthetic instead of client.session.prompt.",
+		"const setup = async (ctx) => {",
+		"  log(\"plugin initialized\", { runtime: \"opencode-v2\" })",
+		"  const controller = new AbortController()",
+		"  const run = async () => {",
+		"    try {",
+		"      for await (const event of ctx.event.subscribe({ signal: controller.signal })) {",
+		"        log(\"event received\", { type: event?.type })",
+		"        if (!event || event.type !== \"session.created\") continue",
+		"        try {",
+		"          const { sessionID, cwd } = sessionInfo(event)",
+		"          log(\"session.created parsed\", { sessionID })",
+		"          if (!sessionID || injectedSessions.has(sessionID)) continue",
+		"          const result = knownsBaseline(cwd)",
+		"          log(\"knowns hook returned\", { resultLength: result.length })",
+		"          if (!result) continue",
+		"          injectedSessions.add(sessionID)",
+		"          await ctx.session.synthetic({ sessionID, text: result, resume: false })",
+		"          log(\"session baseline injected\", { sessionID })",
+		"        } catch (error) {",
+		"          log(\"injection failed\", { error: String(error) })",
+		"        }",
+		"      }",
+		"    } catch (error) {",
+		"      if (!controller.signal.aborted) {",
+		"        log(\"event subscription failed\", { error: String(error) })",
+		"      }",
+		"    }",
+		"  }",
+		"  void run()",
+		"  return () => controller.abort()",
+		"}",
+		"",
+		"export default {",
+		"  id: \"knowns.runtime-memory\",",
+		"  server,",
+		"  setup,",
 		"}",
 		"",
 	}, "\n")

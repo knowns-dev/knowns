@@ -97,9 +97,38 @@ Each task should have:
 - `fulfills` mapped to Spec AC IDs
 - outcome-oriented, testable task ACs
 - labels `from-spec`, `spec:<slug>`, and `spec-date:<yyyy-mm-dd>`
-- order `NN * 10`, which is what carries sequence
+- order `NN * 10`, which carries display sequence only
+- a declared `blocked-by` edge for every real dependency, per Dependency Edges below
 
 Implementation mechanics belong in the later task plan, not in task ACs.
+
+### Dependency Edges
+
+`order` carries display sequence only. A later `order` does not mean a task needs an
+earlier task's output, and no skill may infer one from the other.
+
+Declare a real dependency as an inline ref in the dependent task's description:
+
+```text
+Blocked by @task-<UPSTREAM_ID>{blocked-by}
+```
+
+Task description, plan, and notes are scanned for inline refs, so a declared edge
+becomes a traversable graph edge that `/kn-flow` reads when it schedules waves. An
+undeclared dependency is invisible: it survives only in whoever remembers it.
+
+Rules:
+
+- Create upstream tasks first so their IDs exist when a dependent task is written.
+- Declare an edge only for a real dependency: the dependent task cannot start, or
+  cannot be verified, until the upstream task's output exists. Shared subject matter,
+  adjacent files, and neighbouring `order` values are not dependencies.
+- Never declare a cycle. When two tasks each need the other's output, they are one
+  task or the split is wrong.
+- Prefer no edge over a speculative edge. An invented dependency serialises work that
+  could have run in parallel, and it is as invisible as a missing one once written.
+- List every declared edge in the task preview, so approval covers the shape of the
+  graph and not just the list of tasks.
 
 ### Task Prefix
 
@@ -118,7 +147,8 @@ Example creation shape:
 
 ```json
 mcp_knowns_tasks({ "action": "create", "title": "<outcome>",
-  "description": "<bounded outcome>", "spec": "<spec-path>",
+  "description": "<bounded outcome>\n\nBlocked by @task-<UPSTREAM_ID>{blocked-by}",
+  "spec": "<spec-path>",
   "fulfills": ["AC-1"], "priority": "medium",
   "labels": ["from-spec", "spec:<slug>", "spec-date:<yyyy-mm-dd>"],
   "order": 10,
@@ -159,5 +189,6 @@ Do not manage platform-synced skill copies; this source defines the built-in wor
 - [ ] Relevant templates and current Decisions considered
 - [ ] Plan or task ACs are outcome-oriented
 - [ ] AC coverage, dependency, risk, and Decision checks passed
+- [ ] Real dependencies declared as `blocked-by` edges, with no cycle and no speculative edge
 - [ ] Entity validation passed
 - [ ] Explicit approval requested before implementation or task creation

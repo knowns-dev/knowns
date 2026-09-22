@@ -364,6 +364,8 @@ knowns runtime status
 knowns runtime install codex
 knowns runtime ps
 knowns runtime logs
+knowns runtime retry --all --dry-run
+knowns runtime retry --all
 knowns runtime stop
 knowns runtime uninstall codex
 
@@ -372,6 +374,8 @@ knowns runtime-memory hook --json
 ```
 
 Use providers for API-backed embedding providers. Use runtime commands to install and inspect runtime memory adapters and the shared runtime.
+
+`knowns runtime retry` releases retained Qdrant dead-letter jobs back to the scheduler. A reconcile job is dead-lettered once it exhausts its 8-attempt retry budget, and nothing else clears that flag, so an outage long enough to exhaust the budget strands every entity queued during it. Pass explicit job IDs, `--all` for the current project, or `--all-projects` to sweep every project registered with the shared runtime. Add `--dry-run` to report what would be released without touching the queue.
 
 The default hook output is plain prompt context for runtime adapters. Each injected memory includes inline score/trust metadata, for example `score=0.92; trust=active`, so the assistant can weigh supplemental context.
 

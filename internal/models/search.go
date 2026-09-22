@@ -14,7 +14,19 @@ type SearchResult struct {
 	Title string `json:"title"`
 
 	// Score is the relevance score (higher = more relevant).
+	//
+	// For hybrid results this is a RANK, not a similarity: reciprocal-rank
+	// fusion divided by the best fused score, so the top result is always 1.0
+	// whether or not it is relevant at all. Use SemanticScore to ask "how well
+	// does this match".
 	Score float64 `json:"score"`
+
+	// SemanticScore is the raw cosine similarity of the best-matching chunk,
+	// set whenever the semantic layer found this result. Unlike Score it is
+	// absolute and does not depend on what else was returned, so it can carry
+	// a threshold. It excludes the per-extra-chunk bonus Score adds, which
+	// would otherwise favour long sources.
+	SemanticScore float64 `json:"semanticScore,omitempty"`
 
 	// Snippet is an optional excerpt of matching text.
 	Snippet string `json:"snippet,omitempty"`

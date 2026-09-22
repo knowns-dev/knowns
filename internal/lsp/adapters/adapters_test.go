@@ -19,6 +19,7 @@ func TestAdaptersSatisfyLanguageAdapter(t *testing.T) {
 	var _ lsp.LanguageAdapter = NewJdtlsAdapter()
 	var _ lsp.LanguageAdapter = NewRoslynAdapter()
 	var _ lsp.LanguageAdapter = NewDartAdapter()
+	var _ lsp.LanguageAdapter = NewSwiftAdapter()
 	var _ lsp.LanguageAdapter = NewRubyLspAdapter()
 	var _ lsp.LanguageAdapter = NewIntelephenseAdapter()
 	var _ lsp.LanguageAdapter = NewScssAdapter()
@@ -46,6 +47,7 @@ func TestAdapterMetadata(t *testing.T) {
 		{name: "java", adapter: NewJdtlsAdapter(), id: "java", displayName: "Java", extensions: []string{".java"}, canInstall: true},
 		{name: "csharp", adapter: NewRoslynAdapter(), id: "csharp", displayName: "C#", extensions: []string{".cs"}, canInstall: true},
 		{name: "dart", adapter: NewDartAdapter(), id: "dart", displayName: "Dart", extensions: []string{".dart"}, canInstall: false},
+		{name: "swift", adapter: NewSwiftAdapter(), id: "swift", displayName: "Swift", extensions: []string{".swift"}, canInstall: false},
 		{name: "ruby", adapter: NewRubyLspAdapter(), id: "ruby", displayName: "Ruby", extensions: []string{".rb", ".rake", ".gemspec"}, canInstall: true},
 		{name: "php", adapter: NewIntelephenseAdapter(), id: "php", displayName: "PHP", extensions: []string{".php"}, canInstall: true},
 		{name: "scss", adapter: NewScssAdapter(), id: "scss", displayName: "SCSS/Sass/CSS", extensions: []string{".scss", ".sass", ".css"}, canInstall: true},
@@ -80,14 +82,14 @@ func TestAdapterMetadata(t *testing.T) {
 
 func TestAllAdapters(t *testing.T) {
 	adapters := AllAdapters()
-	if len(adapters) != 16 {
-		t.Fatalf("AllAdapters() returned %d adapters, want 16", len(adapters))
+	if len(adapters) != 17 {
+		t.Fatalf("AllAdapters() returned %d adapters, want 17", len(adapters))
 	}
 	ids := make(map[string]bool, len(adapters))
 	for _, adapter := range adapters {
 		ids[adapter.ID()] = true
 	}
-	for _, id := range []string{"go", "typescript", "python", "rust", "c_cpp", "java", "csharp", "dart", "ruby", "php", "scss", "markdown", "bash", "json", "terraform", "yaml"} {
+	for _, id := range []string{"go", "typescript", "python", "rust", "c_cpp", "java", "csharp", "dart", "swift", "ruby", "php", "scss", "markdown", "bash", "json", "terraform", "yaml"} {
 		if !ids[id] {
 			t.Fatalf("AllAdapters() missing %q", id)
 		}

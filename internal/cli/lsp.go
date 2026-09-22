@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"text/tabwriter"
 
@@ -75,11 +76,13 @@ func newLspCmd() *cobra.Command {
 }
 
 func newLspListCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List supported LSP language servers",
 		RunE:  runLspList,
 	}
+	cmd.Flags().BoolP("verbose", "v", false, "Show daemon owner, backend selection, and log paths")
+	return cmd
 }
 
 func newLspInstallCmd() *cobra.Command {
@@ -110,7 +113,162 @@ func runLspList(cmd *cobra.Command, args []string) error {
 		printJSON(rows)
 		return nil
 	}
+	if verbose, _ := cmd.Flags().GetBool("verbose"); verbose {
+		return printLspListVerbose(rows)
+	}
+	return printLspListCompact(rows)
+}
 
+// lspListLogTemplate stands in for the per-language log path. The paths differ
+// only in their final segment, so printing all of them costs about seventy
+// columns per row and tells the reader nothing the template does not.
+const lspListLogTemplate = ".knowns/logs/lsp/<language>.log"
+
+// LSP list groups, in render order. Problems lead because they are the only
+// group that asks the reader to do something urgently.
+const (
+	lspGroupProblem = iota
+	lspGroupReady
+	lspGroupMissing
+	lspGroupDisabled
+)
+
+var lspGroupTitles = map[int]string{
+	lspGroupProblem:  "Problems",
+	lspGroupReady:    "Ready",
+	lspGroupMissing:  "Not installed",
+	lspGroupDisabled: "Disabled",
+}
+
+// lspListGroup buckets a row by what the reader would do about it, which is a
+// coarser question than the seven values Status can take.
+func lspListGroup(row lspListRow) int {
+	if row.InstallError != "" || row.UpdateError != "" {
+		return lspGroupProblem
+	}
+	switch row.Status {
+	case lsp.RuntimeRunningCrashed, lsp.RuntimeStatusDegraded:
+		return lspGroupProblem
+	case lsp.RuntimeInstallDisabled:
+		return lspGroupDisabled
+	case lsp.RuntimeInstallNotInstalled:
+		return lspGroupMissing
+	default:
+		return lspGroupReady
+	}
+}
+
+func printLspListCompact(rows []lspListRow) error {
+	if len(rows) == 0 {
+		fmt.Println(RenderDim("No LSP languages registered."))
+		return nil
+	}
+
+	fmt.Println(lspListHeader(rows))
+
+	grouped := make(map[int][]lspListRow, 4)
+	for _, row := range rows {
+		g := lspListGroup(row)
+		grouped[g] = append(grouped[g], row)
+	}
+
+	for _, group := range []int{lspGroupProblem, lspGroupReady, lspGroupMissing, lspGroupDisabled} {
+		members := grouped[group]
+		if len(members) == 0 {
+			continue
+		}
+		fmt.Println()
+		fmt.Println(RenderCount(lspGroupTitles[group], len(members)))
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		for _, row := range members {
+			fmt.Fprintf(w, "  %s\t%s\n", row.ID, lspListDetail(group, row))
+		}
+		if err := w.Flush(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// lspListHeader hoists the facts that repeat identically on every row: which
+// process owns the servers, and where the logs live.
+func lspListHeader(rows []lspListRow) string {
+	owner := "local"
+	if rows[0].Owner != "" {
+		owner = rows[0].Owner
+	}
+	if state := rows[0].DaemonState; state != "" {
+		owner += " " + state
+	}
+	return RenderDim(owner + " · logs " + lspListLogTemplate)
+}
+
+// lspListDetail renders the columns that actually differ per language. A
+// not-installed language has no version, source or backend to report, so it
+// gets the one thing that helps: the command that installs it.
+func lspListDetail(group int, row lspListRow) string {
+	switch group {
+	case lspGroupMissing:
+		if row.InstallCmd != "" {
+			return RenderCmd(row.InstallCmd)
+		}
+		return RenderDim(row.InstallState)
+
+	case lspGroupDisabled:
+		return RenderDim("disabled in config")
+
+	case lspGroupProblem:
+		return StyleWarning.Render(lspListProblem(row))
+	}
+
+	server := row.Binary
+	if server == "" {
+		server = "-"
+	}
+	origin := row.Source
+	if v := lspShortVersion(row.Version); v != "" {
+		origin = strings.TrimSpace(origin + " " + v)
+	}
+	detail := server + "\t" + RenderDim(origin)
+	if row.ProjectPath != "" {
+		detail += "\t" + RenderDim(filepath.Base(row.ProjectPath))
+	}
+	return detail
+}
+
+// lspVersionToken matches a semver-ish or date-stamped release identifier.
+var lspVersionToken = regexp.MustCompile(`\bv?\d+\.\d+(?:\.\d+)*\b|\b\d{4}-\d{2}-\d{2}\b`)
+
+// lspShortVersion pulls the version out of whatever a language server prints
+// for `--version`. Servers found on PATH answer in their own format, from a
+// bare "3.10.8" to a full sentence, and one adapter probes with `--help`
+// because its binary has no version flag at all. Anything with no recognizable
+// version in it is dropped rather than printed as a wall of prose.
+func lspShortVersion(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if match := lspVersionToken.FindString(raw); match != "" {
+		return match
+	}
+	return ""
+}
+
+func lspListProblem(row lspListRow) string {
+	switch {
+	case row.InstallError != "":
+		return row.InstallError
+	case row.UpdateError != "":
+		return row.UpdateError
+	case len(row.MissingCapabilities) > 0:
+		return "degraded, missing " + strings.Join(row.MissingCapabilities, ", ")
+	default:
+		return row.Status
+	}
+}
+
+func printLspListVerbose(rows []lspListRow) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "Language\tStatus\tOwner\tBackend\tRuntime\tInstall\tCapabilities\tLog")
 	for _, row := range rows {

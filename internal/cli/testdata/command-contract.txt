@@ -53,7 +53,7 @@ knowns init	visible	runnable	--force:bool --git-ignored:bool --git-tracked:bool 
 knowns lsp	visible	group
 knowns lsp cleanup	visible	runnable
 knowns lsp install	visible	runnable	--latest:bool --version:string --yes:bool
-knowns lsp list	visible	runnable
+knowns lsp list	visible	runnable	--verbose:bool
 knowns mcp	visible	runnable	--project:string --stdio:bool
 knowns memory	visible	runnable
 knowns memory cleanup	visible	runnable	--layer:string --limit:int --older-than:int
@@ -62,6 +62,7 @@ knowns memory delete	visible	runnable	--dry-run:bool --force:bool
 knowns memory demote	visible	runnable
 knowns memory edit	visible	runnable	--append:string --category:string --content:string --tag:stringArray --title:string
 knowns memory list	visible	runnable	--all-statuses:bool --category:string --layer:string --status:string --tag:string
+knowns memory migrate	visible	runnable	--all-statuses:bool --layer:string --write:bool
 knowns memory promote	visible	runnable
 knowns memory view	visible	runnable
 knowns migrate	visible	runnable	--write:bool
@@ -88,6 +89,7 @@ knowns runtime memory	visible	group
 knowns runtime memory hook	visible	runnable	--capture:string --cwd:string --event:string --max-bytes:int --max-items:int --mode:string --project:string --runtime:string
 knowns runtime ps	visible	runnable	--all:bool --clients:int --failed:bool --failures:int --interval:duration --jobs:bool --tail:int --watch:bool
 knowns runtime reload	visible	runnable	--timeout:duration --wait:bool
+knowns runtime retry	visible	runnable	--all-projects:bool --all:bool --dry-run:bool
 knowns runtime status	visible	runnable
 knowns runtime stop	visible	runnable
 knowns runtime uninstall	visible	runnable

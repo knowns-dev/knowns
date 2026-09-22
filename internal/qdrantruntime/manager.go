@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,6 +32,12 @@ const (
 	StatusDisabled     = "disabled"
 	StatusNotInstalled = "not-installed"
 )
+
+// ErrWedgedProcessStopped reports that Start found a live managed Qdrant that
+// failed its readiness probe, stopped it, and did not replace it. Callers that
+// want recovery rather than a diagnosis can retry Start once: the wedged
+// process is gone, so the retry takes the ordinary spawn path.
+var ErrWedgedProcessStopped = errors.New("managed Qdrant was running but unhealthy and has been stopped")
 
 // Config describes either a managed local Qdrant runtime or an external Qdrant
 // endpoint. Managed process ownership is used only when Backend=qdrant and
@@ -257,9 +264,9 @@ func (m *Manager) Start(ctx context.Context) (Status, error) {
 			status.Message = "managed Qdrant process was running but failed HTTP readiness; inspect logs: knowns qdrant logs"
 			_ = m.writeStatus(status)
 			if stopErr != nil {
-				return status, fmt.Errorf("existing Qdrant failed /healthz: %w; cleanup process: %v; inspect %s", err, stopErr, status.Paths.LogPath)
+				return status, fmt.Errorf("%w: %w; cleanup process: %v; inspect %s", ErrWedgedProcessStopped, err, stopErr, status.Paths.LogPath)
 			}
-			return status, fmt.Errorf("existing Qdrant failed /healthz: %w; inspect %s or run `knowns qdrant logs`", err, status.Paths.LogPath)
+			return status, fmt.Errorf("%w: %w; inspect %s or run `knowns qdrant logs`", ErrWedgedProcessStopped, err, status.Paths.LogPath)
 		}
 	}
 	if !status.Installed {
