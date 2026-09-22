@@ -381,6 +381,50 @@ func TestInstallOpenCodeCreatesPluginAndStatusInstalled(t *testing.T) {
 	}
 }
 
+// OpenCode v2 rejects modules without a default definition carrying an id and
+// setup(ctx); OpenCode 1.x instead calls default.server(input). The generated
+// plugin must satisfy both contracts from one file so either runtime loads it.
+func TestInstallOpenCodePluginContractLoadsOnV1AndV2(t *testing.T) {
+	home := t.TempDir()
+	opts := Options{
+		HomeDir:        home,
+		ExecutablePath: "/usr/local/bin/knowns",
+		LookPath:       func(string) (string, error) { return "/usr/local/bin/opencode", nil },
+	}
+	if err := Install("opencode", opts); err != nil {
+		t.Fatalf("install opencode: %v", err)
+	}
+	pluginPath := filepath.Join(home, ".config", "opencode", "plugins", pluginFileName)
+	body, err := os.ReadFile(pluginPath)
+	if err != nil {
+		t.Fatalf("read plugin: %v", err)
+	}
+	plugin := string(body)
+
+	for _, want := range []string{
+		"export default {",
+		`id: "knowns.runtime-memory"`,
+		"const server = async ({ client }) => {",
+		"const setup = async (ctx) => {",
+		"ctx.event.subscribe(",
+		"ctx.session.synthetic(",
+		"client.session.prompt({",
+		"noReply: true",
+		"controller.abort()",
+		`"runtime-memory", "hook", "--runtime", "opencode", "--event", "session.created"`,
+	} {
+		if !strings.Contains(plugin, want) {
+			t.Fatalf("expected plugin to contain %q, got:\n%s", want, plugin)
+		}
+	}
+	if strings.Contains(plugin, "export const KnownsRuntimeMemoryPlugin") {
+		t.Fatalf("expected no stray named plugin export, got:\n%s", plugin)
+	}
+	if strings.Contains(plugin, "@opencode/plugin") || strings.Contains(plugin, "@opencode-ai/plugin") {
+		t.Fatalf("expected self-contained plugin without OpenCode package imports, got:\n%s", plugin)
+	}
+}
+
 func TestInstallKiroCreatesWorkspaceIDEHook(t *testing.T) {
 	home := t.TempDir()
 	project := t.TempDir()
