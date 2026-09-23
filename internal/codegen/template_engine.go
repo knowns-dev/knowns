@@ -13,6 +13,7 @@ import (
 	"text/template"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/safepath"
 )
 
 // Engine executes Knowns code-generation templates.
@@ -108,7 +109,10 @@ func (e *Engine) runAdd(
 	}
 
 	// Resolve relative to project root (or template destination when set).
-	destPath = e.resolveDest(tmpl, destPath)
+	destPath, err = e.resolveDest(tmpl, destPath)
+	if err != nil {
+		return fmt.Errorf("resolve destination path: %w", err)
+	}
 
 	if action.SkipIfExists {
 		if _, err := os.Stat(destPath); err == nil {
@@ -142,7 +146,14 @@ func (e *Engine) runAddMany(
 	dryRun bool,
 	result *models.TemplateResult,
 ) error {
-	sourceDir := filepath.Join(tmpl.Path, action.Source)
+	sourceDir := tmpl.Path
+	if action.Source != "" {
+		var err error
+		sourceDir, err = safepath.ResolveProject(tmpl.Path, action.Source)
+		if err != nil {
+			return fmt.Errorf("invalid source directory %q: %w", action.Source, err)
+		}
+	}
 
 	globPat := action.GlobPattern
 	if globPat == "" {
@@ -164,7 +175,10 @@ func (e *Engine) runAddMany(
 	if err != nil {
 		return fmt.Errorf("render destination %q: %w", action.Destination, err)
 	}
-	destBase = filepath.Join(e.ProjectRoot, destBase)
+	destBase, err = safepath.ResolveProject(e.ProjectRoot, destBase)
+	if err != nil {
+		return fmt.Errorf("invalid destination base: %w", err)
+	}
 
 	for _, srcFile := range matches {
 		// Relative path from sourceDir, strip .hbs extension.
@@ -182,7 +196,10 @@ func (e *Engine) runAddMany(
 			rel = rel[:len(rel)-4]
 		}
 
-		destPath := filepath.Join(destBase, rel)
+		destPath, err := safepath.ResolveProject(destBase, rel)
+		if err != nil {
+			return fmt.Errorf("resolve destination path %q: %w", rel, err)
+		}
 
 		if action.SkipIfExists {
 			if _, err := os.Stat(destPath); err == nil {
@@ -224,7 +241,10 @@ func (e *Engine) runModify(
 	if err != nil {
 		return fmt.Errorf("render path %q: %w", action.Path, err)
 	}
-	destPath = e.resolveDest(tmpl, destPath)
+	destPath, err = e.resolveDest(tmpl, destPath)
+	if err != nil {
+		return fmt.Errorf("resolve destination path: %w", err)
+	}
 
 	existing, err := os.ReadFile(destPath)
 	if err != nil {
@@ -270,7 +290,10 @@ func (e *Engine) runAppend(
 	if err != nil {
 		return fmt.Errorf("render path %q: %w", action.Path, err)
 	}
-	destPath = e.resolveDest(tmpl, destPath)
+	destPath, err = e.resolveDest(tmpl, destPath)
+	if err != nil {
+		return fmt.Errorf("resolve destination path: %w", err)
+	}
 
 	content, err := e.loadAndRenderTemplate(tmpl, action.Template, vars)
 	if err != nil {
@@ -326,9 +349,15 @@ func (e *Engine) loadAndRenderTemplate(tmpl *models.Template, src string, vars m
 	if strings.HasSuffix(src, ".hbs") || strings.ContainsAny(src, "/\\") {
 		// Paths starting with tmpl.Path are already absolute (addMany passes
 		// absolute paths).  Otherwise treat as relative to the template folder.
-		srcPath := src
-		if !filepath.IsAbs(src) {
-			srcPath = filepath.Join(tmpl.Path, src)
+		baseDir := ""
+		if tmpl != nil && tmpl.Path != "" {
+			baseDir = tmpl.Path
+		} else {
+			baseDir = e.ProjectRoot
+		}
+		srcPath, err := safepath.ResolveProject(baseDir, src)
+		if err != nil {
+			return "", fmt.Errorf("invalid template file path %q: %w", src, err)
 		}
 		data, err := os.ReadFile(srcPath)
 		if err != nil {
@@ -623,16 +652,17 @@ func buildFuncMap() template.FuncMap {
 // ---------------------------------------------------------------------------
 
 // resolveDest resolves a destination path against the project root, taking
-// the template's optional Destination prefix into account.
-func (e *Engine) resolveDest(tmpl *models.Template, dest string) string {
+// the template's optional Destination prefix into account. It guarantees
+// that the returned path is contained within the project root.
+func (e *Engine) resolveDest(tmpl *models.Template, dest string) (string, error) {
 	if filepath.IsAbs(dest) {
-		return dest
+		return safepath.ResolveProject(e.ProjectRoot, dest)
 	}
-	base := e.ProjectRoot
-	if tmpl.Destination != "" {
-		base = filepath.Join(e.ProjectRoot, tmpl.Destination)
+	target := dest
+	if tmpl != nil && tmpl.Destination != "" {
+		target = filepath.Join(tmpl.Destination, dest)
 	}
-	return filepath.Join(base, dest)
+	return safepath.ResolveProject(e.ProjectRoot, target)
 }
 
 // ---------------------------------------------------------------------------

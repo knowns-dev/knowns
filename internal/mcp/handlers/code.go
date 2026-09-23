@@ -897,6 +897,11 @@ func handleCodeFind(ctx context.Context, getStore func() *storage.Store, getCode
 	}
 
 	root := projectRoot(store)
+	if strings.TrimSpace(path) != "" {
+		if _, err := safepath.ResolveProject(root, path); err != nil {
+			return errResult(err.Error())
+		}
+	}
 	var summaries []search.CodeSummary
 
 	files, err := findCodeFiles(root, path)
@@ -999,11 +1004,13 @@ func handleCodeFind(ctx context.Context, getStore func() *storage.Store, getCode
 			item["snippet"] = r.Snippet
 		}
 		if includeBody {
-			absPath := filepath.Join(root, r.Path)
-			item["body"] = sourceForRange(absPath, lsp.Range{
-				Start: lsp.Position{Line: r.StartLine - 1, Character: r.StartCharacter - 1},
-				End:   lsp.Position{Line: r.EndLine - 1, Character: 0},
-			})
+			absPath, err := safepath.ResolveProject(root, r.Path)
+			if err == nil {
+				item["body"] = sourceForRange(absPath, lsp.Range{
+					Start: lsp.Position{Line: r.StartLine - 1, Character: r.StartCharacter - 1},
+					End:   lsp.Position{Line: r.EndLine - 1, Character: 0},
+				})
+			}
 		}
 		results = append(results, item)
 	}
@@ -1293,10 +1300,11 @@ func positionInRange(pos lsp.Position, rng lsp.Range) bool {
 func findCodeFiles(root, path string) ([]string, error) {
 	base := root
 	if strings.TrimSpace(path) != "" {
-		base = path
-		if !filepath.IsAbs(base) {
-			base = filepath.Join(root, base)
+		resolved, err := safepath.ResolveProject(root, path)
+		if err != nil {
+			return nil, err
 		}
+		base = resolved
 	}
 	info, err := os.Stat(base)
 	if err != nil {

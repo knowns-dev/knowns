@@ -317,6 +317,9 @@ func isAuthError(stderr string) bool {
 // gitLsRemoteHead returns the commit hash for the remote HEAD (or a specific ref).
 // Returns empty string on any error.
 func (ir *ImportRoutes) gitLsRemoteHead(source, ref string) string {
+	if err := validateGitSource(source); err != nil {
+		return ""
+	}
 	url := ir.injectGitToken(source)
 	target := "HEAD"
 	if ref != "" {
@@ -341,6 +344,9 @@ func (ir *ImportRoutes) gitLsRemoteHead(source, ref string) string {
 func (ir *ImportRoutes) gitCloneImport(source, name, ref, cachedHash string, dryRun bool) ([]importChange, []string, string, bool, error) {
 	if err := validateImportName(name); err != nil {
 		return nil, nil, "", false, err
+	}
+	if err := validateGitSource(source); err != nil {
+		return nil, nil, "", false, fmt.Errorf("invalid git source: %w", err)
 	}
 	// Check remote commit hash before cloning.
 	remoteHash := ir.gitLsRemoteHead(source, ref)
@@ -554,6 +560,10 @@ func (ir *ImportRoutes) add(w http.ResponseWriter, r *http.Request) {
 
 	// Git URL: clone and copy .knowns/docs + templates.
 	if isGitURL(req.Source) {
+		if err := validateGitSource(req.Source); err != nil {
+			respondError(w, http.StatusBadRequest, "invalid git source: "+err.Error())
+			return
+		}
 		changes, warnings, _, _, err := ir.gitCloneImport(req.Source, name, req.Ref, "", req.DryRun)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, err.Error())

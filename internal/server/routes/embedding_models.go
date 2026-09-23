@@ -3,8 +3,11 @@ package routes
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -68,11 +71,20 @@ func (emr *EmbeddingModelRoutes) test(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	embedURL := req.APIBase
-	if embedURL[len(embedURL)-1] != '/' {
-		embedURL += "/"
+	if err := validateExternalURL(req.APIBase); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid apiBase: "+err.Error())
+		return
 	}
-	embedURL += "embeddings"
+
+	u, err := url.Parse(strings.TrimSpace(req.APIBase))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid apiBase URL")
+		return
+	}
+	u.Path = strings.TrimSuffix(u.Path, "/") + "/embeddings"
+	u.RawQuery = ""
+	u.Fragment = ""
+	embedURL := u.String()
 
 	payload := map[string]interface{}{
 		"model": req.Model,
@@ -94,12 +106,23 @@ func (emr *EmbeddingModelRoutes) test(w http.ResponseWriter, r *http.Request) {
 		httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return fmt.Errorf("too many redirects")
+			}
+			if err := validateExternalURL(req.URL.String()); err != nil {
+				return fmt.Errorf("redirect blocked: %w", err)
+			}
+			return nil
+		},
+	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		respondJSON(w, http.StatusOK, embeddingModelTestResponse{
 			Success: false,
-			Error:   err.Error(),
+			Error:   "connection to embedding endpoint failed",
 		})
 		return
 	}

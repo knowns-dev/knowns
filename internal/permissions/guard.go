@@ -20,18 +20,26 @@ type ConfigLoader func() *PermissionConfig
 // The middleware uses the configLoader to read the current policy on each
 // call, so policy changes take effect immediately without server restart.
 //
+// An optional isStoreInitialized function can be provided to indicate whether
+// an active project store is currently established. When initialized, administrative
+// actions like project.set cannot bypass capability enforcement as bootstrap actions.
+//
 // When a call is denied, the middleware returns a structured denial payload
 // as an error result and does not invoke the underlying handler.
-func NewGuardMiddleware(configLoader ConfigLoader) server.ToolHandlerMiddleware {
+func NewGuardMiddleware(configLoader ConfigLoader, isStoreInitialized ...func() bool) server.ToolHandlerMiddleware {
+	var storeInitialized func() bool
+	if len(isStoreInitialized) > 0 {
+		storeInitialized = isStoreInitialized[0]
+	}
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 			toolName := req.Params.Name
 			args := req.GetArguments()
 			action, _ := args["action"].(string)
 
-			// Bootstrap actions are always allowed — they are required to
-			// set up the project context before any policy can be loaded.
-			if isBootstrapAction(toolName, action) {
+			// Bootstrap actions are always allowed to set up the initial project context.
+			// Once a project store is initialized, project.set is subject to capability enforcement.
+			if isBootstrapAction(toolName, action, storeInitialized) {
 				return next(ctx, req)
 			}
 			// Lifecycle handlers return the shared public Response contract for
@@ -101,12 +109,18 @@ func classifyToolAction(tool, action string, args map[string]any) ActionMeta {
 	return ClassifyAction(tool, action)
 }
 
-// isBootstrapAction returns true for actions that must always be allowed
-// because they are needed to establish the project context. Without these,
-// the permission system itself cannot load its config.
-func isBootstrapAction(tool, action string) bool {
+// isBootstrapAction returns true for actions that must be allowed to establish
+// the initial project context. Without these, the permission system itself
+// cannot load its config. Once a project store is established, project.set
+// is no longer exempt.
+func isBootstrapAction(tool, action string, storeInitialized func() bool) bool {
 	switch tool + "." + action {
-	case "project.set", "project.detect", "project.current", "project.status":
+	case "project.detect", "project.current", "project.status":
+		return true
+	case "project.set":
+		if storeInitialized != nil && storeInitialized() {
+			return false
+		}
 		return true
 	}
 	return false
