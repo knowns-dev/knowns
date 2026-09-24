@@ -154,8 +154,10 @@ link_one() {
 link_into_path() {
     LINKED_PATHS=""
     [ "${KNOWNS_NO_LINK:-0}" = "1" ] && return 0
-    on_path "$INSTALL_DIR" && return 0
-
+    # Link even when INSTALL_DIR is on this shell's PATH. That entry usually
+    # comes from an rc line only interactive shells read, so an editor, an
+    # agent started from an older tab, launchd and hooks still cannot find
+    # knowns without the link.
     if [ -n "$KNOWNS_LINK_DIR" ]; then
         link_dir="$KNOWNS_LINK_DIR"
     elif on_path "${HOME}/.local/bin"; then
@@ -163,6 +165,8 @@ link_into_path() {
     else
         return 0
     fi
+    # Installed straight into the link dir: the binary is already there.
+    [ "${link_dir%/}" = "${INSTALL_DIR%/}" ] && return 0
 
     mkdir -p "$link_dir" 2>/dev/null || true
     if [ ! -w "$link_dir" ]; then
