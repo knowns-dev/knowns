@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"strings"
 
 	"github.com/howznguyen/knowns/internal/lsp"
 )
@@ -56,4 +57,28 @@ func (a *TypeScriptAdapter) InitializationOptions(settings map[string]any) map[s
 }
 func (a *TypeScriptAdapter) IsIgnoredDir(name string) bool {
 	return isIgnoredDir(name, map[string]struct{}{"node_modules": {}, "dist": {}, "build": {}, ".next": {}})
+}
+
+// DocumentSyncForPath sends the language identifier tsserver expects for each
+// file. This adapter serves four extensions under one registry ID, and tsserver
+// chooses the script kind from languageId rather than from the file name. Sent
+// the registry ID "typescript", a .tsx file is parsed as plain TypeScript, so
+// its JSX becomes syntax errors and its components come back as <unknown>
+// symbols.
+func (a *TypeScriptAdapter) DocumentSyncForPath(path string) lsp.DocumentSyncOptions {
+	return lsp.DocumentSyncOptions{LanguageID: typeScriptLanguageID(path)}
+}
+
+func typeScriptLanguageID(path string) string {
+	normalized := strings.ToLower(strings.ReplaceAll(path, `\`, "/"))
+	switch {
+	case strings.HasSuffix(normalized, ".tsx"):
+		return "typescriptreact"
+	case strings.HasSuffix(normalized, ".jsx"):
+		return "javascriptreact"
+	case strings.HasSuffix(normalized, ".js"):
+		return "javascript"
+	default:
+		return "typescript"
+	}
 }
