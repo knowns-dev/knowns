@@ -99,21 +99,6 @@ func joinStrings(ss []string, sep string) string {
 	return strings.Join(ss, sep)
 }
 
-// isPagerDisabled returns true if pager is disabled via flag or env var.
-func isPagerDisabled(cmd any) bool {
-	if c, ok := cmd.(*cobra.Command); ok {
-		v, _ := c.Flags().GetBool("no-pager")
-		if v {
-			return true
-		}
-		v, _ = c.Root().PersistentFlags().GetBool("no-pager")
-		if v {
-			return true
-		}
-	}
-	return os.Getenv("KNOWNS_NO_PAGER") != ""
-}
-
 // splitCSV splits a comma-separated string into trimmed parts.
 func splitCSV(s string) []string {
 	if s == "" {

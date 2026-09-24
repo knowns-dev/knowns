@@ -8,6 +8,19 @@ Search tasks and documentation
 knowns search <query> [flags]
 ```
 
+## Examples
+
+```bash
+# Search tasks and docs together
+  knowns search "auth"
+
+  # Only docs
+  knowns search "security patterns" --type doc
+
+  # Learn from tasks that already solved something like this
+  knowns search "auth" --type task --status done
+```
+
 ## Flags
 
 | Flag | Type | Default | Description |
@@ -30,7 +43,6 @@ knowns search <query> [flags]
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--json` | `bool` | — | JSON output |
-| `--no-pager` | `bool` | — | Disable TUI pager (print styled output directly) |
 | `--page` | `int` | `0` | Page number for paginated output (e.g. --page 2) |
 | `--page-size` | `int` | `0` | Lines per page (default 50) |
 | `--plain` | `bool` | — | Plain text output (for AI agents) |

@@ -7,7 +7,20 @@ Create, view, edit, and manage project tasks.
 ## Usage
 
 ```
-knowns task
+knowns task [id]
+```
+
+## Examples
+
+```bash
+# The everyday loop
+  knowns task list
+  knowns task create "Add JWT auth"
+  knowns task edit KN-A1B2C3 -s in-progress
+  knowns task edit KN-A1B2C3 -s done
+
+  # Read one task; the id alone is shorthand for "task view"
+  knowns task KN-A1B2C3
 ```
 
 ## Inherited flags
@@ -15,7 +28,6 @@ knowns task
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--json` | `bool` | — | JSON output |
-| `--no-pager` | `bool` | — | Disable TUI pager (print styled output directly) |
 | `--page` | `int` | `0` | Page number for paginated output (e.g. --page 2) |
 | `--page-size` | `int` | `0` | Lines per page (default 50) |
 | `--plain` | `bool` | — | Plain text output (for AI agents) |

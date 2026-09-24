@@ -8,7 +8,6 @@ knowns agents	visible	runnable
 knowns audit	visible	group
 knowns audit recent	visible	runnable	--limit:int --project:string --result:string --tool:string
 knowns audit stats	visible	runnable	--project:string --tool:string
-knowns board	visible	runnable
 knowns browser	visible	runnable	--allow-task-hard-delete:bool --dev:bool --no-open:bool --open:bool --password:string --port:int --project:string --restart:bool --scan:string --tunnel:bool --watch:bool
 knowns code	visible	group
 knowns code deps	visible	runnable	--limit:int --type:string
@@ -79,6 +78,7 @@ knowns qdrant purge	visible	runnable
 knowns qdrant start	visible	runnable
 knowns qdrant status	visible	runnable
 knowns qdrant stop	visible	runnable
+knowns quickstart	visible	runnable
 knowns reconcile	visible	runnable	--execute:bool --wait:bool
 knowns reconcile restore	visible	runnable	--execute:bool
 knowns resolve	visible	runnable	--depth:int --direction:string --relation:string --type:string

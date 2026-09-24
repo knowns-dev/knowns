@@ -8,6 +8,22 @@ List tasks
 knowns task list [flags]
 ```
 
+## Examples
+
+```bash
+# Every task
+  knowns task list
+
+  # Only what is being worked on
+  knowns task list --status in-progress
+
+  # Your own high-priority work
+  knowns task list --assignee @me --priority high
+
+  # As a parent/child tree
+  knowns task list --tree
+```
+
 ## Flags
 
 | Flag | Type | Default | Description |
@@ -24,7 +40,6 @@ knowns task list [flags]
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--json` | `bool` | — | JSON output |
-| `--no-pager` | `bool` | — | Disable TUI pager (print styled output directly) |
 | `--page` | `int` | `0` | Page number for paginated output (e.g. --page 2) |
 | `--page-size` | `int` | `0` | Lines per page (default 50) |
 | `--plain` | `bool` | — | Plain text output (for AI agents) |

@@ -89,9 +89,9 @@ func runProviderAdd(cmd *cobra.Command, args []string) error {
 	fmt.Println("✓ Connection successful")
 
 	provider := storage.EmbeddingProvider{
-		Name:   name,
+		Name:    name,
 		APIBase: apiBase,
-		APIKey: apiKey,
+		APIKey:  apiKey,
 	}
 	provider = provider.WithDefaults()
 
