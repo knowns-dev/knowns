@@ -80,6 +80,7 @@ knowns qdrant start	visible	runnable
 knowns qdrant status	visible	runnable
 knowns qdrant stop	visible	runnable
 knowns reconcile	visible	runnable	--execute:bool --wait:bool
+knowns reconcile restore	visible	runnable	--execute:bool
 knowns resolve	visible	runnable	--depth:int --direction:string --relation:string --type:string
 knowns retrieve	visible	runnable	--assignee:string --expand-references:bool --include-historical:bool --keyword:bool --label:string --limit:int --priority:string --source-types:string --status:string --tag:string
 knowns runtime	visible	group

@@ -170,15 +170,30 @@ func taskHistoryFromRecords(taskID string, records []models.HistoryRecord) (*mod
 }
 
 func docHistoryFromRecords(docPath string, records []models.HistoryRecord) (*models.DocVersionHistory, error) {
+	history, _, err := replayDocHistory(docPath, records)
+	return history, err
+}
+
+// replayDocHistory replays a Doc stream and also returns the final replayed
+// state. A caller that persists state, such as a lifecycle tombstone or
+// restore, must use that state and never a version's Snapshot: the Snapshot is
+// a display projection whose content is dropped after a section-scoped
+// revision, so storing it as a checkpoint yields a record whose NewHash no
+// longer describes its own payload.
+func replayDocHistory(docPath string, records []models.HistoryRecord) (*models.DocVersionHistory, *models.Doc, error) {
 	history := &models.DocVersionHistory{DocPath: docPath, CurrentPath: docPath, Versions: []models.DocVersion{}}
 	state := &models.Doc{Path: docPath, Tags: []string{}}
 	for _, record := range records {
 		if record.EntityType != "doc" {
-			return nil, fmt.Errorf("history entity mismatch for Doc %q", docPath)
+			return nil, nil, fmt.Errorf("history entity mismatch for Doc %q", docPath)
 		}
 		if record.Checkpoint {
+			prior := state
 			state = &models.Doc{}
 			applyDocSnapshot(state, record.CheckpointPayload)
+			if lifecycleCheckpointDroppedContent(record, prior) {
+				state.Content = prior.Content
+			}
 		}
 		version := models.DocVersion{
 			ID: firstNonEmpty(record.LegacyID, fmt.Sprintf("v%d", firstPositive(record.LegacyRevision, record.Revision))), DocID: record.EntityID, DocPath: docPath,
@@ -195,11 +210,11 @@ func docHistoryFromRecords(docPath string, records []models.HistoryRecord) (*mod
 		}
 		if !record.Checkpoint {
 			if err := applyDocChangesToState(state, record); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 		if !record.LegacyUnverified && !docHashRecognized(record.NewHash, state) {
-			return nil, fmt.Errorf("%w: Doc canonical hash mismatch at revision %d", ErrHistoryCorrupt, record.Revision)
+			return nil, nil, fmt.Errorf("%w: Doc canonical hash mismatch at revision %d", ErrHistoryCorrupt, record.Revision)
 		}
 		// Keep the replayed snapshot byte-faithful to the record. Canonicalising
 		// here would erase the pre-canonicalisation body a legacy NewHash covers,
@@ -219,7 +234,26 @@ func docHistoryFromRecords(docPath string, records []models.HistoryRecord) (*mod
 			history.CurrentVersion = version.Version
 		}
 	}
-	return history, nil
+	return history, state, nil
+}
+
+// lifecycleCheckpointDroppedContent recognises a delete or restore checkpoint
+// that was written from a display snapshot and so lost its content: the payload
+// has no content key at all, while the prior replayed state, which the record's
+// BaseHash proves it was taken from, still holds content. Carrying that content
+// forward heals such records on read, so an already-written stream replays
+// without its history file being rewritten.
+func lifecycleCheckpointDroppedContent(record models.HistoryRecord, prior *models.Doc) bool {
+	if record.Operation != LifecycleOperationDelete && record.Operation != LifecycleOperationRestore {
+		return false
+	}
+	if _, present := record.CheckpointPayload["content"]; present {
+		return false
+	}
+	if prior == nil || prior.Content == "" || record.BaseHash == "" {
+		return false
+	}
+	return docHashRecognized(record.BaseHash, prior)
 }
 
 func firstPositive(values ...int) int {

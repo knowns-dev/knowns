@@ -690,7 +690,11 @@ func (r *FilesystemReconciler) reconcileLifecycleContent(ctx context.Context, pa
 	if err != nil {
 		return result, entry, err
 	}
-	result.Operation, result.BatchID, result.PreviousPath, result.CurrentPath = LifecycleOperationUpdate, batchID, previous.Path, r.relative(path)
+	operation := LifecycleOperationUpdate
+	if result.Operation == LifecycleOperationRestore {
+		operation = LifecycleOperationRestore
+	}
+	result.Operation, result.BatchID, result.PreviousPath, result.CurrentPath = operation, batchID, previous.Path, r.relative(path)
 	result.BaseHash, result.NewHash = previous.HeadHash, result.Hash
 	return result, entry, nil
 }
@@ -878,11 +882,13 @@ func (r *FilesystemReconciler) replaySnapshot(kind, id string, records []models.
 	for _, rec := range records {
 		path = firstNonEmpty(rec.CurrentPath, rec.PreviousPath, path)
 	}
-	h, err := docHistoryFromRecords(path, records)
+	h, state, err := replayDocHistory(path, records)
 	if err != nil || len(h.Versions) == 0 {
 		return nil, err
 	}
-	return cloneMap(h.Versions[len(h.Versions)-1].Snapshot), nil
+	// A version Snapshot omits content after a section-scoped revision; a
+	// persisted checkpoint needs the full replayed state.
+	return rawDocSnapshot(state), nil
 }
 
 // Restore recreates the canonical file from the verified tombstone state and
@@ -1721,6 +1727,62 @@ func (r *FilesystemReconciler) writeManifestMutations(upserts map[string]manifes
 		return err
 	}
 	return syncDirectory(dir)
+}
+
+// reactivateReappearedEntity settles a live canonical file whose history head is
+// a delete tombstone carrying exactly that file's hash. This is the signature
+// of a spurious deletion: something removed the file briefly, such as
+// `git stash -u`, a checkout, or a pull, the watcher tombstoned it after the
+// quiet window, and the file then returned unchanged. Reporting it unchanged
+// would leave history asserting deletion while the file lives, and every later
+// write would fail replay. A Doc with an unfinished delete transaction is left
+// alone: there the tombstone records a deletion the user asked for, and
+// recovery must complete it rather than undo it.
+func (r *FilesystemReconciler) reactivateReappearedEntity(ctx context.Context, entityType, entityID, abs, hash string, last models.HistoryRecord, execute bool, result ReconcileResult, entry manifestEntry) (ReconcileResult, manifestEntry, error) {
+	if entityType == "doc" {
+		if _, err := os.Stat(docDeleteTransactionPath(r.storeRoot, entityID)); err == nil {
+			return result, entry, nil
+		} else if !os.IsNotExist(err) {
+			return result, entry, err
+		}
+	}
+	rel := r.relative(abs)
+	if !execute {
+		result.Operation, result.Changed, result.Revision = LifecycleOperationRestore, true, last.Revision+1
+		result.BaseHash, result.NewHash = last.NewHash, hash
+		result.PreviousPath, result.CurrentPath = last.CurrentPath, rel
+		return result, entry, nil
+	}
+	var restored ReconcileResult
+	var head models.HistoryRecord
+	settled := false
+	err := r.withLifecycleEntityLock(ctx, entityType, entityID, func() error {
+		stream, readErr := r.history.Read(ctx, entityType, entityID)
+		if readErr != nil {
+			return readErr
+		}
+		if len(stream.Records) == 0 {
+			return fmt.Errorf("%w: reappeared %s %q has no history", ErrReconcileUnsafe, entityType, entityID)
+		}
+		head = stream.Records[len(stream.Records)-1]
+		if !head.Tombstone || head.Operation != LifecycleOperationDelete || head.NewHash != hash {
+			// Another writer settled the entity between the first read and the lock.
+			settled = true
+			return nil
+		}
+		var reactivateErr error
+		restored, reactivateErr = r.reactivateTombstonedEntity(ctx, entityType, entityID, rel, abs, hash, head, stream, RestoreOptions{Path: rel, BatchID: r.activeBatchID})
+		return reactivateErr
+	})
+	if err != nil {
+		return result, entry, err
+	}
+	if settled {
+		entry.Revision, entry.HeadHash = head.Revision, head.NewHash
+		return result, entry, nil
+	}
+	entry.Revision, entry.HeadHash = restored.Revision, hash
+	return restored, entry, nil
 }
 
 // reactivateTombstonedEntity repairs an entity whose durable history head is a

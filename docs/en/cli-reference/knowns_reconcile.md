@@ -25,6 +25,10 @@ knowns reconcile [flags]
 | `--page-size` | `int` | `0` | Lines per page (default 50) |
 | `--plain` | `bool` | — | Plain text output (for AI agents) |
 
+## Subcommands
+
+- [`knowns reconcile restore`](knowns_reconcile_restore.md) — Preview or reactivate a Task or Doc whose history records a deletion
+
 ## See also
 
 - [`knowns`](knowns.md) — The memory layer for AI-native software development

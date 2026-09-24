@@ -422,6 +422,9 @@ func (r *FilesystemReconciler) reconcileFile(ctx context.Context, path string, e
 		last := stream.Records[len(stream.Records)-1]
 		entry.Revision, entry.HeadHash = last.Revision, last.NewHash
 		if last.NewHash == hash {
+			if last.Tombstone && last.Operation == LifecycleOperationDelete {
+				return r.reactivateReappearedEntity(ctx, entityType, entityID, path, hash, last, execute, result, entry)
+			}
 			return result, entry, nil
 		}
 		if !execute {

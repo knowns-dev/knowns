@@ -865,9 +865,8 @@ func TestLifecycleDocRenameDeleteRestoreReplaysHash(t *testing.T) {
 
 func TestRestoreRepairsASpuriousTombstoneLeftOverALivingFile(t *testing.T) {
 	// A watcher pass that observes a file as briefly missing writes a tombstone
-	// for an entity that was never deleted. Reconciliation then reports the
-	// entity unchanged forever, because the file hash still matches the
-	// tombstone's, so nothing repairs the contradiction on its own.
+	// for an entity that was never deleted. Restore must repair that state on
+	// explicit request.
 	root := filepath.Join(t.TempDir(), ".knowns")
 	path := lifecycleTaskFile(t, root, "alive", "spurious", "Alive")
 	r, err := NewFilesystemReconciler(root)
@@ -893,16 +892,9 @@ func TestRestoreRepairsASpuriousTombstoneLeftOverALivingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Reconciliation cannot see the problem: the hash still matches.
-	results, err := r.ReconcileLifecycle(context.Background(), true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, res := range results {
-		if res.EntityID == "spurious" && res.Changed {
-			t.Fatalf("reconciliation unexpectedly repaired the tombstone: %+v", res)
-		}
-	}
+	// Restore repairs it on explicit request, without waiting for a
+	// reconciliation pass. The watcher's own repair of the same state is covered
+	// by TestReconciliationReactivatesATaskWhoseFileReturnedUnchanged.
 
 	result, err := r.Restore(context.Background(), "task", "spurious", RestoreOptions{Path: "tasks/alive.md"})
 	if err != nil {
