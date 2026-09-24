@@ -48,6 +48,16 @@ Useful when your environment already uses Node tooling.
 curl -fsSL https://knowns.sh/script/install | sh
 ```
 
+The binary goes to `~/.knowns/bin`. The installer never edits your shell rc files; instead, when `~/.local/bin` is already on your `PATH`, it links `knowns` and `kn` there so the command works right away. Otherwise it prints how to add `~/.knowns/bin` to `PATH`.
+
+```bash
+# Link into another directory that is on PATH
+curl -fsSL https://knowns.sh/script/install | KNOWNS_LINK_DIR=/opt/homebrew/bin sh
+
+# Skip linking entirely
+curl -fsSL https://knowns.sh/script/install | KNOWNS_NO_LINK=1 sh
+```
+
 ## PowerShell installer (Windows)
 
 ```powershell

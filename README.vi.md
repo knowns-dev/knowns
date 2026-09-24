@@ -436,6 +436,9 @@ wget -qO- https://knowns.sh/script/install | sh
 
 # Version cụ thể
 curl -fsSL https://knowns.sh/script/install | KNOWNS_VERSION=0.18.0 sh
+
+# Link vào thư mục PATH khác ~/.local/bin
+curl -fsSL https://knowns.sh/script/install | KNOWNS_LINK_DIR=/opt/homebrew/bin sh
 ```
 
 ### PowerShell installer (Windows)

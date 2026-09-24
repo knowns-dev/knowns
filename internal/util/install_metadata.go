@@ -18,8 +18,12 @@ type InstallMetadata struct {
 	Platform       string `json:"platform,omitempty"`
 	Arch           string `json:"arch,omitempty"`
 	BinaryPath     string `json:"binaryPath,omitempty"`
-	Version        string `json:"version,omitempty"`
-	InstalledAt    string `json:"installedAt,omitempty"`
+	// LinkPaths are the symlinks the shell installer placed in a PATH
+	// directory. Kept here so a self-update rewrite does not drop them
+	// before the uninstaller reads them.
+	LinkPaths   []string `json:"linkPaths,omitempty"`
+	Version     string   `json:"version,omitempty"`
+	InstalledAt string   `json:"installedAt,omitempty"`
 }
 
 func InstallMetadataPath() string {

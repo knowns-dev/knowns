@@ -195,13 +195,35 @@ const (
 // over persisted metadata, so switching install methods (e.g. script → brew)
 // is detected correctly without stale install.json data.
 func DetectInstallMethod() (InstallMethod, string) {
-	// 1. Collect candidate paths: current executable + resolved symlink.
+	exe, err := os.Executable()
+	if err != nil {
+		exe = ""
+	}
+	return detectInstallMethodFor(exe)
+}
+
+// ResolveExecutable follows symlinks in exe, returning exe unchanged when it
+// cannot be resolved.
+func ResolveExecutable(exe string) string {
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		return real
+	}
+	return exe
+}
+
+// detectInstallMethodFor is DetectInstallMethod with the executable path
+// injected, so tests can run it against a symlinked install.
+func detectInstallMethodFor(exe string) (InstallMethod, string) {
+	// 1. Collect candidate paths: resolved executable first, then the path
+	// it was invoked through. On macOS os.Executable returns the symlink, so
+	// a script install linked into /opt/homebrew/bin would otherwise match
+	// Homebrew before its real ~/.knowns/bin location is ever checked.
 	candidates := []string{}
-	if exe, err := os.Executable(); err == nil {
-		candidates = append(candidates, exe)
-		if real, err := filepath.EvalSymlinks(exe); err == nil && real != exe {
+	if exe != "" {
+		if real := ResolveExecutable(exe); real != exe {
 			candidates = append(candidates, real)
 		}
+		candidates = append(candidates, exe)
 	}
 	// Also check persisted binary path from install.json.
 	meta, _ := LoadInstallMetadata()
@@ -235,7 +257,7 @@ func DetectInstallMethod() (InstallMethod, string) {
 
 		// Script install: binary in ~/.knowns/bin/
 		if home != "" {
-			defaultDir := filepath.ToSlash(filepath.Join(home, ".knowns", "bin"))
+			defaultDir := filepath.ToSlash(ResolveExecutable(filepath.Join(home, ".knowns", "bin")))
 			if strings.HasPrefix(pathLower, strings.ToLower(defaultDir)+"/") ||
 				pathLower == strings.ToLower(defaultDir+"/knowns") ||
 				pathLower == strings.ToLower(defaultDir+"/knowns.exe") {

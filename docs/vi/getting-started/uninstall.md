@@ -20,6 +20,8 @@ npm uninstall -g knowns
 curl -fsSL https://knowns.sh/script/uninstall | sh
 ```
 
+Lệnh này cũng gỡ các symlink `knowns` và `kn` mà installer đã tạo trong thư mục `PATH`. Symlink trỏ tới nơi khác, ví dụ bản cài bằng Homebrew, được giữ nguyên.
+
 Nếu trước đó bạn cài vào thư mục custom, truyền lại cùng thư mục cho uninstaller:
 
 ```bash

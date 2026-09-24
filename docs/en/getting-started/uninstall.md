@@ -20,6 +20,8 @@ npm uninstall -g knowns
 curl -fsSL https://knowns.sh/script/uninstall | sh
 ```
 
+This also removes the `knowns` and `kn` links the installer created in a `PATH` directory. Links that point somewhere else, such as a Homebrew install, are left alone.
+
 If you installed into a custom directory, pass the same directory to the uninstaller:
 
 ```bash

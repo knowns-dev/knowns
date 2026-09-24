@@ -48,6 +48,16 @@ Phù hợp nếu đã dùng Node tooling sẵn.
 curl -fsSL https://knowns.sh/script/install | sh
 ```
 
+Binary được cài vào `~/.knowns/bin`. Installer không bao giờ sửa rc file của shell. Nếu `~/.local/bin` đã có trong `PATH`, installer tạo symlink `knowns` và `kn` vào đó để gọi được ngay. Nếu không, installer in ra cách thêm `~/.knowns/bin` vào `PATH`.
+
+```bash
+# Link vào một thư mục khác đã có trong PATH
+curl -fsSL https://knowns.sh/script/install | KNOWNS_LINK_DIR=/opt/homebrew/bin sh
+
+# Bỏ qua bước link
+curl -fsSL https://knowns.sh/script/install | KNOWNS_NO_LINK=1 sh
+```
+
 ## PowerShell installer (Windows)
 
 ```powershell
