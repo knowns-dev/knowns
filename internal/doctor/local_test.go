@@ -796,6 +796,11 @@ func qdrantIntPtr(value int) *int { return &value }
 
 func newDoctorStore(t *testing.T) *storage.Store {
 	t.Helper()
+	// Checks that resolve the vector store fall back to the user-level
+	// ~/.knowns/settings.json when the project leaves semantic search unset.
+	// A developer whose global defaults enable it would otherwise see a
+	// "disabled" fixture probe their real managed Qdrant.
+	t.Setenv("HOME", t.TempDir())
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init("doctor-local-test"); err != nil {
 		t.Fatalf("Init() error = %v", err)
