@@ -1,7 +1,7 @@
 ---
 id: 20260912-1650-a-briefly-missing-file-is-not-a-deletion
 title: A briefly missing file is not a deletion
-status: draft
+status: accepted
 supersedes: []
 supersededBy: []
 tags:
@@ -22,16 +22,17 @@ relatedDocs:
   - specs/2026-09-09/git-backed-shared-knowledge-store-sync
 relatedTasks:
   - KN-00TYF2
-verification: []
-reviewState: needs_evidence
-reviewBlockers:
-  - 'linked task "KN-00TYF2" is "in-progress"; all linked tasks must be done before accepting candidate'
-reviewMatches: []
-reviewAllowedResolutions: []
-reviewEvaluatedHash: 'd25b62e27710f160a8b8a8095981acb607cb2ad4575abc16f246ec62d002a9af'
-reviewEvaluatedAt: '2026-09-12T09:50:17.390Z'
+verification:
+  - 'source:@task-KN-00TYF2'
+  - 'source:@doc/specs/2026-08-14/shared-task-doc-history-reconciliation'
+  - 'source:@doc/specs/2026-09-09/git-backed-shared-knowledge-store-sync'
+  - 'source:internal/storage/reconciler.go reconcileFile'
+  - 'source:internal/storage/lifecycle_reconciler.go reactivateReappearedEntity'
+  - 'source:internal/storage/history_adapter.go lifecycleCheckpointDroppedContent'
+  - 'task:@task-KN-00TYF2:done'
+verifiedAt: '2026-09-25T05:40:19.965Z'
 createdAt: '2026-09-12T09:50:17.390Z'
-updatedAt: '2026-09-12T09:50:17.390Z'
+updatedAt: '2026-09-25T05:40:19.965Z'
 ---
 
 ## Context

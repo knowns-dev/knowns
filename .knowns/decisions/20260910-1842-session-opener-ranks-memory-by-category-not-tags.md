@@ -1,7 +1,7 @@
 ---
 id: 20260910-1842-session-opener-ranks-memory-by-category-not-tags
 title: Session opener ranks memory by category, not tags
-status: draft
+status: accepted
 supersedes: []
 supersededBy: []
 tags:
@@ -14,16 +14,13 @@ sources:
 relatedDocs: []
 relatedTasks:
   - MEM-TN1P8A
-verification: []
-reviewState: needs_evidence
-reviewBlockers:
-  - 'linked task "MEM-TN1P8A" is "in-review"; all linked tasks must be done before accepting decision "20260910-1842-session-opener-ranks-memory-by-category-not-tags"'
-reviewMatches: []
-reviewAllowedResolutions: []
-reviewEvaluatedHash: '67322c7107c735d6cdb4be2698af6a3b5ff9a06a5e7317ac6199afffc4fe793e'
-reviewEvaluatedAt: '2026-09-13T15:59:44.762Z'
+verification:
+  - 'source:@task-MEM-TN1P8A'
+  - 'source:git:d1edcd6 fix(memory): load user commitments at session start'
+  - 'task:@task-MEM-TN1P8A:done'
+verifiedAt: '2026-09-25T05:40:21.703Z'
 createdAt: '2026-09-10T11:42:44.794Z'
-updatedAt: '2026-09-13T15:59:44.762Z'
+updatedAt: '2026-09-25T05:40:21.703Z'
 ---
 
 ## Context

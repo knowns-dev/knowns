@@ -1,7 +1,7 @@
 ---
 id: 20260914-1147-adapters-send-each-file-its-own-lsp-language-identifier
 title: Adapters send each file its own LSP language identifier
-status: draft
+status: accepted
 supersedes: []
 supersededBy: []
 tags:
@@ -15,16 +15,13 @@ relatedDocs:
   - specs/2026-07-20/priority-built-in-lsp-expansion
 relatedTasks:
   - KN-PBTSN9
-verification: []
-reviewState: needs_evidence
-reviewBlockers:
-  - 'linked task "KN-PBTSN9" is "in-progress"; all linked tasks must be done before accepting candidate'
-reviewMatches: []
-reviewAllowedResolutions: []
-reviewEvaluatedHash: '1defcb8f046cafa9e70344c1c4d646ccc1e0837aad3631b35aa1aa8f52fa6bf6'
-reviewEvaluatedAt: '2026-09-14T04:47:44.134Z'
+verification:
+  - 'source:@task-KN-PBTSN9'
+  - 'source:@doc/specs/2026-07-20/priority-built-in-lsp-expansion'
+  - 'task:@task-KN-PBTSN9:done'
+verifiedAt: '2026-09-25T05:40:18.606Z'
 createdAt: '2026-09-14T04:47:44.134Z'
-updatedAt: '2026-09-14T04:47:44.134Z'
+updatedAt: '2026-09-25T05:40:18.606Z'
 ---
 
 ## Context
