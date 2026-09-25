@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -55,6 +56,61 @@ func newReappearedDocStore(t *testing.T) (*Store, *models.Doc) {
 		t.Fatal(err)
 	}
 	return store, reappearedDoc(t, store)
+}
+
+// TestReconciliationNeverTombstonesAFileItCouldNotRead covers the field
+// failure of 2026-09-25: a runtime out of file descriptors failed to read task
+// files during inventory, then read them again moments later, and appended a
+// delete tombstone for every one of them while the files never moved.
+func TestReconciliationNeverTombstonesAFileItCouldNotRead(t *testing.T) {
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), ".knowns")
+	path := lifecycleTaskFile(t, root, "alive", "unread", "Alive")
+	r, err := NewFilesystemReconciler(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReconcileLifecycle(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	live := reappearedHead(t, r, "task", "unread")
+
+	// Fail only the inventory read; every later read succeeds, as happens when
+	// descriptors free up mid-pass.
+	failed := false
+	r.SetLifecycleFailureHooks(LifecycleFailureHooks{BeforeCanonicalRead: func(p string) error {
+		if !failed && filepath.Clean(p) == filepath.Clean(path) {
+			failed = true
+			return errors.New("too many open files")
+		}
+		return nil
+	}})
+	results, err := r.ReconcileLifecycle(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !failed {
+		t.Fatal("the inventory read was never attempted")
+	}
+	for _, res := range results {
+		if res.EntityID == "unread" && res.Changed {
+			t.Fatalf("an unreadable file changed its entity: %+v", res)
+		}
+	}
+	if head := reappearedHead(t, r, "task", "unread"); head.Tombstone || head.Revision != live.Revision {
+		t.Fatalf("history head = %+v, want the untouched live head at revision %d", head, live.Revision)
+	}
+
+	r.SetLifecycleFailureHooks(LifecycleFailureHooks{})
+	again, err := r.ReconcileLifecycle(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, res := range again {
+		if res.EntityID == "unread" && (res.Changed || res.Diagnostic != "") {
+			t.Fatalf("a readable pass did not settle the entity: %+v", res)
+		}
+	}
 }
 
 func TestReconciliationReactivatesATaskWhoseFileReturnedUnchanged(t *testing.T) {

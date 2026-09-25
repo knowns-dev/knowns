@@ -187,6 +187,9 @@ func (r *FilesystemReconciler) reconcileLifecycleOnce(ctx context.Context, execu
 	// false delete. ObservedPaths limits which identities are mutated below.
 	byPath := make(map[string]struct{}, len(paths))
 	byIdentity := make(map[string]string, len(paths))
+	// unreadable holds files that exist but whose identity this pass could not
+	// read. Their owner is unknown, so nothing about them may be concluded.
+	unreadable := make(map[string]struct{})
 	results := make([]ReconcileResult, 0, len(paths)+len(manifest.Entries)+len(recovered))
 	results = append(results, recovered...)
 	results = append(results, r.flushLifecycleIntents()...)
@@ -194,6 +197,7 @@ func (r *FilesystemReconciler) reconcileLifecycleOnce(ctx context.Context, execu
 		byPath[r.relative(path)] = struct{}{}
 		kind, id, _, resolveErr := r.resolveCanonicalHint(ctx, path)
 		if resolveErr != nil {
+			unreadable[r.relative(path)] = struct{}{}
 			results = append(results, ReconcileResult{Path: r.relative(path), Diagnostic: resolveErr.Error()})
 			continue
 		}
@@ -289,11 +293,25 @@ func (r *FilesystemReconciler) reconcileLifecycleOnce(ctx context.Context, execu
 		// Missing owned path: confirm absence twice before creating a tombstone.
 		owned := filepath.Join(r.storeRoot, filepath.FromSlash(filepath.Clean(entry.Path)))
 		if _, pathPresent := byPath[entry.Path]; pathPresent {
+			// The file is there but this pass never learned who owns it, for
+			// example because the process ran out of file descriptors. That is
+			// not evidence of a replacement; a later pass must decide.
+			if _, wasUnreadable := unreadable[entry.Path]; wasUnreadable {
+				results = append(results, ReconcileResult{EntityType: entry.EntityType, EntityID: entry.EntityID, Path: entry.Path, Diagnostic: fmt.Sprintf("%v: owned path was unreadable during inventory; retry", ErrReconcileUnsafe)})
+				continue
+			}
 			// Same-path replacement by a different stable ID is a delete of the
 			// old owner plus a create for the new owner. Never infer the old
 			// content from the replacement bytes.
-			if _, _, _, resolveErr := r.resolveCanonicalHint(ctx, owned); resolveErr != nil {
+			kind, id, _, resolveErr := r.resolveCanonicalHint(ctx, owned)
+			if resolveErr != nil {
 				results = append(results, ReconcileResult{EntityType: entry.EntityType, EntityID: entry.EntityID, Path: entry.Path, Diagnostic: resolveErr.Error()})
+				continue
+			}
+			// Only a different owner proves a replacement. The same owner here
+			// means the inventory and this read disagree, so decide nothing.
+			if kind == entry.EntityType && id == entry.EntityID {
+				results = append(results, ReconcileResult{EntityType: entry.EntityType, EntityID: entry.EntityID, Path: entry.Path, Diagnostic: fmt.Sprintf("%v: owned path still holds its owner; retry", ErrReconcileUnsafe)})
 				continue
 			}
 			if batchID == "" {
