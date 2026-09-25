@@ -96,7 +96,7 @@ knowns task create "Sub" --parent KN-4F7Q2M    # ✓ the ID as printed
 knowns task create "Sub" --parent task-KN-4F7Q2M  # ✗ WRONG
 
 # The hyphen inside KN-4F7Q2M is part of the ID. Never strip the prefix.
-# Projects without settings.defaultTaskIdPrefix use plain IDs like 4f7q2m.
+# Older tasks may have plain IDs like 4f7q2m; pass those unchanged too.
 ```
 {{/if}}
 

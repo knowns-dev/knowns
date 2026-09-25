@@ -63,7 +63,7 @@ Default prefix tuỳ chọn cho ID của task mới. Ví dụ `KN` tạo ID
 - luôn được chuẩn hoá thành chữ hoa
 - không phụ thuộc task type; caller có thể truyền bất kỳ custom prefix hợp lệ
 - đổi hoặc xoá default chỉ ảnh hưởng task tạo sau đó
-- nếu không cấu hình, project vẫn sinh ID lowercase 6 ký tự như trước
+- nếu không cấu hình, ID mới dùng prefix suy ra từ tên project (`Knowns` cho ra `KN`); ID đã có không bao giờ bị đổi
 
 Có thể set bằng init wizard, `knowns init --task-prefix KN`,
 `knowns settings`, Web settings, hoặc:

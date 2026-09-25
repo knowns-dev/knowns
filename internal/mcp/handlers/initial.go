@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/howznguyen/knowns/internal/lsp"
+	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/readiness"
 	"github.com/howznguyen/knowns/internal/runtimequeue"
 	"github.com/howznguyen/knowns/internal/search"
@@ -79,11 +80,14 @@ func writeProjectState(b *strings.Builder, store *storage.Store, statuses []lsp.
 	// Show a concrete ID and say it is not separable: an agent told elsewhere to
 	// pass "raw IDs" can otherwise strip PREFIX- and send an ID that resolves to
 	// nothing. Stays one line to respect the output budget.
-	if project, err := store.Config.Load(); err == nil && project.Settings.DefaultTaskIDPrefix != "" {
-		prefix := project.Settings.DefaultTaskIDPrefix
-		fmt.Fprintf(b, "Task IDs: default=%s | example=%s-4F7Q2M | use verbatim, %s- is part of the ID not a task- ref | per-task override: tasks.create prefix=<2-8 chars> | default changes via CLI settings.defaultTaskIdPrefix\n", prefix, prefix, prefix)
-	} else {
-		b.WriteString("Task IDs: legacy 6-char base36, example=4f7q2m | use verbatim | per-task override: tasks.create prefix=<2-8 chars> | default changes via CLI settings.defaultTaskIdPrefix\n")
+	// An unset setting does not mean bare IDs: new tasks take a prefix derived
+	// from the project name, so announce the prefix they will actually get.
+	if project, err := store.Config.Load(); err == nil && project != nil {
+		prefix, source := project.Settings.DefaultTaskIDPrefix, "settings.defaultTaskIdPrefix"
+		if prefix == "" {
+			prefix, source = models.DeriveTaskIDPrefix(project.Name), "derived from project name"
+		}
+		fmt.Fprintf(b, "Task IDs: new=%s-4F7Q2M (%s) | use verbatim, %s- is part of the ID not a task- ref | older IDs like 4f7q2m stay valid | per-task override: tasks.create prefix=<2-8 chars> | default changes via CLI settings.defaultTaskIdPrefix\n", prefix, source, prefix)
 	}
 	if payload.Knowledge != nil {
 		k := payload.Knowledge

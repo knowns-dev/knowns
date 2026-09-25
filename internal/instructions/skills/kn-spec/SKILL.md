@@ -253,8 +253,8 @@ Keep this section short: task ID, title, and status only.
 
 `Task Prefix` is optional and independent of task type. Normalize a supplied
 value to uppercase; leaving it blank delegates ID generation to the project's
-`settings.defaultTaskIdPrefix`, or to the legacy format when that is unset. Do
-not maintain an allowlist of prefixes in the spec.
+`settings.defaultTaskIdPrefix`, or to a prefix derived from the project name
+when that is unset. Do not maintain an allowlist of prefixes in the spec.
 
 ## Step 3.5: Validate Spec
 

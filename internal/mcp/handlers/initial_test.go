@@ -249,13 +249,15 @@ func TestInitialReportsTaskIDFormat(t *testing.T) {
 		want   []string
 	}{
 		{
-			name: "legacy",
-			want: []string{"Task IDs:", "4f7q2m", "use verbatim", "tasks.create prefix", "settings.defaultTaskIdPrefix"},
+			// Unset does not mean bare IDs: new tasks take a prefix derived
+			// from the project name, "initial-task-id" here.
+			name: "unset",
+			want: []string{"Task IDs:", "new=ITI-4F7Q2M", "derived from project name", "4f7q2m stay valid", "use verbatim", "tasks.create prefix", "settings.defaultTaskIdPrefix"},
 		},
 		{
 			name:   "configured",
 			prefix: "SPC",
-			want:   []string{"Task IDs:", "default=SPC", "SPC-4F7Q2M", "use verbatim", "tasks.create prefix", "settings.defaultTaskIdPrefix"},
+			want:   []string{"Task IDs:", "new=SPC-4F7Q2M", "use verbatim", "tasks.create prefix", "settings.defaultTaskIdPrefix"},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

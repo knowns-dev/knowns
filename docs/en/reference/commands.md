@@ -118,8 +118,9 @@ Common options:
 When a prefix is supplied, Knowns creates IDs such as `FR-4F7Q2M`. Prefixes
 are normalized to uppercase, must contain 2-8 letters or digits, and must start
 with a letter. If `--prefix` is omitted, Knowns uses
-`settings.defaultTaskIdPrefix`; projects without that setting keep the legacy
-six-character lowercase ID format.
+`settings.defaultTaskIdPrefix`; projects without that setting get a prefix
+derived from the project name (`Knowns` gives `KN`). Existing lowercase IDs
+such as `4f7q2m` are kept as they are.
 
 ### View and list
 
