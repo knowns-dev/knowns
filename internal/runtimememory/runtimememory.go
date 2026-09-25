@@ -1093,10 +1093,6 @@ func allowedCategory(category string) bool {
 	return false
 }
 
-func shouldSkipPrompt(prompt string) bool {
-	return promptSkipReason(prompt) != ""
-}
-
 func promptSkipReason(prompt string) string {
 	normalized := strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(prompt))), " ")
 	if normalized == "" {
