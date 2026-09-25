@@ -131,4 +131,4 @@ knowns tunnel	visible	group
 knowns tunnel status	visible	runnable	--port:int
 knowns tunnel stop	visible	runnable	--port:int
 knowns update	visible	runnable	--check:bool
-knowns validate	visible	runnable	--entity:string --fix:bool --scope:string --strict:bool
+knowns validate	visible	runnable	--entity:string --fix:bool --include-global:bool --scope:string --strict:bool

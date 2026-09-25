@@ -21,6 +21,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	strict, _ := cmd.Flags().GetBool("strict")
 	fix, _ := cmd.Flags().GetBool("fix")
 	entity, _ := cmd.Flags().GetString("entity")
+	includeGlobal, _ := cmd.Flags().GetBool("include-global")
 
 	plain := isPlain(cmd)
 	jsonOut := isJSON(cmd)
@@ -31,6 +32,8 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		Entity: entity,
 		Strict: strict,
 		Fix:    fix,
+
+		IncludeGlobalMemory: includeGlobal,
 	})
 
 	if jsonOut {
@@ -105,6 +108,7 @@ func init() {
 	validateCmd.Flags().Bool("strict", false, "Treat warnings as errors")
 	validateCmd.Flags().Bool("fix", false, "Auto-fix supported issues")
 	validateCmd.Flags().String("entity", "", "Validate a specific entity (task ID or doc path)")
+	validateCmd.Flags().Bool("include-global", false, "Also validate the user-level global memory layer, shared by every project")
 
 	rootCmd.AddCommand(validateCmd)
 }

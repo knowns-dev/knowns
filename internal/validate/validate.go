@@ -40,6 +40,9 @@ type Options struct {
 	Entity string // validate a single entity (task ID or doc path)
 	Strict bool   // treat warnings as errors
 	Fix    bool   // auto-fix supported issues
+	// IncludeGlobalMemory also validates the user-level global memory layer.
+	// Off by default: see the comment where memories are filtered.
+	IncludeGlobalMemory bool
 }
 
 // Reference-detection regexes.
@@ -103,8 +106,9 @@ func Run(store *storage.Store, opts Options) *Result {
 	// blames this project for entries it does not own and cannot fix from its
 	// own repository, and leaves the summary permanently unresolvable.
 	projectMemories := make([]*models.MemoryEntry, 0, len(memories))
+	// IncludeGlobalMemory is the explicit way to audit that shared layer.
 	for _, m := range memories {
-		if m.Layer != models.MemoryLayerGlobal {
+		if m.Layer != models.MemoryLayerGlobal || opts.IncludeGlobalMemory {
 			projectMemories = append(projectMemories, m)
 		}
 	}

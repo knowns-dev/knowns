@@ -14,6 +14,7 @@ knowns validate [flags]
 |---|---|---|---|
 | `--entity` | `string` | — | Validate a specific entity (task ID or doc path) |
 | `--fix` | `bool` | — | Auto-fix supported issues |
+| `--include-global` | `bool` | — | Also validate the user-level global memory layer, shared by every project |
 | `--scope` | `string` | `all` | Validation scope: all\|tasks\|docs\|templates\|sdd |
 | `--strict` | `bool` | — | Treat warnings as errors |
 
