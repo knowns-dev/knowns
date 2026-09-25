@@ -1034,6 +1034,8 @@ export interface RuntimeStatusResponse {
 		running: boolean;
 		pid?: number;
 		version?: string;
+		/** When the running daemon started; absent on daemons that predate it. */
+		startedAt?: string;
 		clients: RuntimeClient[];
 		projects: Array<{ projectRoot: string; queuedJobs: number; runningJobs: number }>;
 	};

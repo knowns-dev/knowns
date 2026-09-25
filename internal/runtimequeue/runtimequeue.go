@@ -217,12 +217,16 @@ type ProjectStatus struct {
 }
 
 type Status struct {
-	Running  bool            `json:"running"`
-	PID      int             `json:"pid,omitempty"`
-	Version  string          `json:"version,omitempty"`
-	Clients  []Lease         `json:"clients"`
-	Project  []ProjectStatus `json:"projects"`
-	Watchers []WatcherStatus `json:"watchers,omitempty"`
+	Running bool   `json:"running"`
+	PID     int    `json:"pid,omitempty"`
+	Version string `json:"version,omitempty"`
+	// StartedAt is when the running daemon process started, so a client can
+	// tell an error recorded by an earlier build from one the current build
+	// produced. Nil when the daemon predates the field.
+	StartedAt *time.Time      `json:"startedAt,omitempty"`
+	Clients   []Lease         `json:"clients"`
+	Project   []ProjectStatus `json:"projects"`
+	Watchers  []WatcherStatus `json:"watchers,omitempty"`
 }
 
 // WatcherStatus describes the project-level knowledge watcher demand and
@@ -1474,11 +1478,13 @@ func LoadStatus() (*Status, error) {
 	}
 	if raw, readErr := os.ReadFile(statusPath()); readErr == nil {
 		var persisted struct {
-			Version  string          `json:"version"`
-			Watchers []WatcherStatus `json:"watchers"`
+			Version   string          `json:"version"`
+			StartedAt *time.Time      `json:"startedAt"`
+			Watchers  []WatcherStatus `json:"watchers"`
 		}
 		if jsonErr := json.Unmarshal(raw, &persisted); jsonErr == nil {
 			status.Version = persisted.Version
+			status.StartedAt = persisted.StartedAt
 			status.Watchers = persisted.Watchers
 		}
 	}
@@ -1904,6 +1910,10 @@ func pruneDeadLetters(storeRoot string, state *QueueState, now time.Time) {
 		expired+overflow, storeRoot, expired, overflow, maxDeadLettersKept)
 }
 
+// processStartedAt is captured once per process; only the daemon writes the
+// status file, so in that file it is the daemon's start time.
+var processStartedAt = time.Now().UTC()
+
 func writeStatusFile(leases []Lease, projects []string, watcherStates ...[]WatcherStatus) error {
 	var watchers []WatcherStatus
 	if len(watcherStates) > 0 {
@@ -1912,6 +1922,7 @@ func writeStatusFile(leases []Lease, projects []string, watcherStates ...[]Watch
 	status := struct {
 		PID       int             `json:"pid"`
 		Version   string          `json:"version,omitempty"`
+		StartedAt time.Time       `json:"startedAt"`
 		UpdatedAt time.Time       `json:"updatedAt"`
 		Projects  []string        `json:"projects"`
 		Clients   []Lease         `json:"clients"`
@@ -1919,6 +1930,7 @@ func writeStatusFile(leases []Lease, projects []string, watcherStates ...[]Watch
 	}{
 		PID:       os.Getpid(),
 		Version:   util.Version,
+		StartedAt: processStartedAt,
 		UpdatedAt: time.Now().UTC(),
 		Projects:  projects,
 		Clients:   leases,

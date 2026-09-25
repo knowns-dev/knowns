@@ -1,5 +1,12 @@
 import { Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+	createContext,
+	useCallback,
+	useContext,
+	useEffect,
+	useMemo,
+	useState,
+} from "react";
 import {
 	Activity,
 	AlertTriangle,
@@ -132,11 +139,30 @@ function jobFailedAt(job: RuntimeJob): string {
 	return new Date(runAfterMs - offsetMs).toISOString();
 }
 
-function isErrorStale(job: RuntimeJob, now: number) {
+// When the running daemon started. A daemon that reports it lets staleness be
+// exact: an error recorded before the process started came from an earlier
+// build. Older daemons do not, and the 24h proxy above stands in.
+const DaemonStartedAtContext = createContext<string | undefined>(undefined);
+
+function daemonStartedMs(daemonStartedAt?: string) {
+	if (!daemonStartedAt) return Number.NaN;
+	return new Date(daemonStartedAt).getTime();
+}
+
+function isErrorStale(job: RuntimeJob, now: number, daemonStartedAt?: string) {
 	if (!job.deadLetter) return false;
 	const failedAt = new Date(jobFailedAt(job)).getTime();
 	if (Number.isNaN(failedAt)) return false;
+	const startedMs = daemonStartedMs(daemonStartedAt);
+	if (!Number.isNaN(startedMs)) return failedAt < startedMs;
 	return now - failedAt > DEAD_LETTER_STALE_AFTER_MS;
+}
+
+function staleErrorTitle(daemonStartedAt?: string, version?: string) {
+	const build = version ? ` (v${version})` : "";
+	return Number.isNaN(daemonStartedMs(daemonStartedAt))
+		? `Failed more than 24 hours ago; the running build${build} may no longer produce this error.`
+		: `Recorded before the running build${build} started; it may no longer reproduce.`;
 }
 
 // Every runtime projectRoot is the project's `.knowns` directory, so its last
@@ -617,7 +643,9 @@ function JobRow({
 				Math.round(((job.processed ?? 0) / (job.total ?? 1)) * 100),
 			)
 		: 0;
-	const stale = state === "dead" && isErrorStale(job, Date.now());
+	const daemonStartedAt = useContext(DaemonStartedAtContext);
+	const stale =
+		state === "dead" && isErrorStale(job, Date.now(), daemonStartedAt);
 
 	return (
 		<div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/25">
@@ -652,7 +680,7 @@ function JobRow({
 						)}
 						title={
 							stale
-								? "Failed more than 24 hours ago; the running build may no longer produce this error."
+								? staleErrorTitle(daemonStartedAt)
 								: job.lastError
 						}
 					>
@@ -957,6 +985,7 @@ export function RuntimeOverview() {
 	// accounted for. Recency is derived per-job (jobFailedAt), not the
 	// request time, and groups are labeled by bucket so "retrying" and
 	// "failed permanently" are never conflated under one badge.
+	const daemonStartedAt = data?.status.startedAt;
 	const jobFailures = useMemo<JobFailureGroup[]>(() => {
 		const now = Date.now();
 		const groups = new Map<
@@ -970,7 +999,8 @@ export function RuntimeOverview() {
 				const message = job.lastError || "No error message recorded";
 				const key = `${bucket}::${job.kind}::${message}`;
 				const failedAt = jobFailedAt(job);
-				const stale = bucket === "dead" && isErrorStale(job, now);
+				const stale =
+					bucket === "dead" && isErrorStale(job, now, daemonStartedAt);
 				let group = groups.get(key);
 				if (!group) {
 					group = {
@@ -1008,7 +1038,7 @@ export function RuntimeOverview() {
 				return { ...group, projects };
 			})
 			.sort((a, b) => b.count - a.count);
-	}, [deadJobs, retryingJobs]);
+	}, [deadJobs, retryingJobs, daemonStartedAt]);
 	const newestJobFailure = useMemo(
 		() =>
 			jobFailures.reduce<(typeof jobFailures)[number] | undefined>(
@@ -1260,7 +1290,7 @@ export function RuntimeOverview() {
 	};
 
 	return (
-		<>
+		<DaemonStartedAtContext.Provider value={daemonStartedAt}>
 			<FeatureHeader
 				icon={Activity}
 				title="Runtime"
@@ -1700,7 +1730,7 @@ export function RuntimeOverview() {
 					</section>
 				)}
 			</PageContent>
-		</>
+		</DaemonStartedAtContext.Provider>
 	);
 }
 
@@ -1792,6 +1822,7 @@ function CauseRow({
 	retryingKey: string | null;
 	version?: string;
 }) {
+	const daemonStartedAt = useContext(DaemonStartedAtContext);
 	const isRetrying = retryingKey === failure.key;
 	const primaryProject = failure.projects[0];
 	const extraProjectCount = failure.projects.length - 1;
@@ -1818,7 +1849,7 @@ function CauseRow({
 						{failure.allStale && (
 							<span
 								className="shrink-0 rounded-md border border-border bg-muted/45 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
-								title={`Failed more than 24 hours ago; the running build${version ? ` (v${version})` : ""} may no longer produce this error.`}
+								title={staleErrorTitle(daemonStartedAt, version)}
 							>
 								Stale
 							</span>
