@@ -777,17 +777,28 @@ func defaultHybridCandidates(store *storage.Store, input Input, limit int) ([]hy
 	if !engine.SemanticAvailable() {
 		return nil, false
 	}
-	results, err := engine.Search(search.SearchOptions{
+	return hybridCandidatesFrom(store, engine, input, limit)
+}
+
+// memorySearcher is the part of the search engine the hybrid lookup needs.
+type memorySearcher interface {
+	SearchWithDegradation(search.SearchOptions) ([]models.SearchResult, *search.SearchDegradation, error)
+}
+
+func hybridCandidatesFrom(store *storage.Store, engine memorySearcher, input Input, limit int) ([]hybridCandidate, bool) {
+	results, degraded, err := engine.SearchWithDegradation(search.SearchOptions{
 		Query:             strings.TrimSpace(input.UserPrompt),
 		Type:              "memory",
 		Mode:              string(search.ModeHybrid),
 		Limit:             limit,
 		IncludeHistorical: NormalizeMode(input.Mode) == ModeDebug,
 	})
-	if err != nil {
-		// A failed search is not an answer. Report the semantic layer as
-		// unavailable so the caller degrades to keyword matching, rather than
-		// treating "the search errored" as "nothing is relevant".
+	if err != nil || degraded != nil {
+		// A failed search is not an answer. Neither is a search whose semantic
+		// leg failed and quietly returned keyword-only hits: those carry no
+		// cosine, so the relevance floor drops every one and the prompt gets
+		// nothing. Report the semantic layer as unavailable so the caller
+		// degrades to keyword matching, as it does when no embedder exists.
 		return nil, false
 	}
 	hits := make([]hybridCandidate, 0, len(results))
