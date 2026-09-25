@@ -25,7 +25,6 @@ knowns browser [flags]
 | `--restart` | `bool` | — | Restart server if already running |
 | `--scan` | `string` | — | Comma-separated directories to scan for projects |
 | `--tunnel` | `bool` | — | Expose via a Cloudflare Quick Tunnel (requires cloudflared) |
-| `--watch` | `bool` | — | Enable file watcher for auto-indexing on code changes |
 
 ## Inherited flags
 
