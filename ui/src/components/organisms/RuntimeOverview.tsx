@@ -652,7 +652,7 @@ function JobRow({
 						)}
 						title={
 							stale
-								? "Recorded before the currently running build; may no longer reproduce."
+								? "Failed more than 24 hours ago; the running build may no longer produce this error."
 								: job.lastError
 						}
 					>
@@ -1818,7 +1818,7 @@ function CauseRow({
 						{failure.allStale && (
 							<span
 								className="shrink-0 rounded-md border border-border bg-muted/45 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
-								title={`Recorded before the currently running build${version ? ` (v${version})` : ""}; may no longer reproduce.`}
+								title={`Failed more than 24 hours ago; the running build${version ? ` (v${version})` : ""} may no longer produce this error.`}
 							>
 								Stale
 							</span>
