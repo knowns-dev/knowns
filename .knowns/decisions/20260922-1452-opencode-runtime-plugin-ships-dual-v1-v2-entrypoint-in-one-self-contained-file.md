@@ -13,15 +13,30 @@ relatedDocs:
 relatedTasks:
   - KN-D6KBD7
 verification: []
-reviewState: needs_evidence
-reviewBlockers:
-  - 'linked task "KN-D6KBD7" is "in-progress"; all linked tasks must be done before accepting candidate'
-reviewMatches: []
-reviewAllowedResolutions: []
+reviewState: needs_resolution
+reviewBlockers: []
+reviewMatches:
+  - id: 20260819-1703-remove-the-opencode-chat-ui
+    title: Remove the OpenCode Chat UI
+    status: accepted
+    score: 0.752236
+    kind: duplicate
+    hash: 3c1cbf1c0148e8f905ae569cdf66edf4bccf7c35344ee32ed6302fdbc1d78acb
+    matchedBy:
+      - semantic
+    tags:
+      - chat
+      - opencode
+      - ui
+      - removal
+reviewAllowedResolutions:
+  - supersede_existing
+  - link_as_related
+  - reject_new
 reviewEvaluatedHash: '0d2ec0bc59bedca11e3b750f2f4ba4b233d215b63a128a64a8a654aeade2acbc'
-reviewEvaluatedAt: '2026-09-22T07:52:10.857Z'
+reviewEvaluatedAt: '2026-09-25T08:33:33.045Z'
 createdAt: '2026-09-22T07:52:10.857Z'
-updatedAt: '2026-09-22T07:52:10.857Z'
+updatedAt: '2026-09-25T08:33:33.045Z'
 ---
 
 ## Context

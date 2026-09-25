@@ -19,13 +19,13 @@ relatedTasks:
 verification: []
 reviewState: needs_evidence
 reviewBlockers:
-  - 'linked task "MEM-TAT57N" is "in-review"; all linked tasks must be done before accepting decision "20260912-1158-runtime-memory-relevance-is-judged-on-raw-cosine-never-on-fused-rank"'
+  - 'linked task "MEM-FB7A6Y" is "todo"; all linked tasks must be done before accepting decision "20260912-1158-runtime-memory-relevance-is-judged-on-raw-cosine-never-on-fused-rank"'
 reviewMatches: []
 reviewAllowedResolutions: []
 reviewEvaluatedHash: '6c7ce0ff4c02d2defe0d46ca0dafdac0d440c2381a29f8ce1ef58b0fa8c204d0'
-reviewEvaluatedAt: '2026-09-25T05:40:20.850Z'
+reviewEvaluatedAt: '2026-09-25T08:24:57.812Z'
 createdAt: '2026-09-12T04:58:35.871Z'
-updatedAt: '2026-09-25T05:40:20.851Z'
+updatedAt: '2026-09-25T08:24:57.813Z'
 ---
 
 ## Context
