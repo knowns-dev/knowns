@@ -11,7 +11,6 @@ import (
 const minMarkdownRenderWidth = 20
 
 type markdownBodyRenderer func(string) string
-type styledMarkdownDetailRenderer func(width int, style string) string
 
 func passthroughMarkdown(input string) string {
 	return input
@@ -37,16 +36,6 @@ func terminalMarkdownStyle() string {
 		return "dark"
 	}
 	return "light"
-}
-
-func newLazyMarkdownDetailRenderer(render styledMarkdownDetailRenderer) func(width int) string {
-	style := ""
-	return func(viewportWidth int) string {
-		if style == "" {
-			style = terminalMarkdownStyle()
-		}
-		return render(markdownViewportWidth(viewportWidth), style)
-	}
 }
 
 func newTerminalMarkdownBodyRenderer(width int, style string) markdownBodyRenderer {
