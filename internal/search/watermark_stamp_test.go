@@ -124,3 +124,37 @@ func TestStampSkipsEntitiesPendingRemoval(t *testing.T) {
 		t.Fatalf("pending removal was stamped indexed: %#v", got)
 	}
 }
+
+// A removal the manifest has since moved past is history, not the current
+// state. Seen on 2026-09-25: two docs spuriously tombstoned on 2026-09-10 were
+// restored a day later, yet every rebuild left them "never indexed" because
+// their watermark still said removed.
+func TestStampClearsARemovalTheManifestHasMovedPast(t *testing.T) {
+	root := writeStampFixture(t)
+	if err := saveQdrantWatermarks(root, map[string]QdrantIndexWatermark{
+		"doc:doc-1": {EntityType: "doc", EntityID: "doc-1", CanonicalHash: "hash-c", Revision: 2,
+			Path: "docs/guides/thing.md", Removed: true},
+		"task:indexed": {EntityType: "task", EntityID: "indexed", CanonicalHash: "hash-a", Revision: 6,
+			Path: "tasks/task-indexed - A-real-filename.md", Removed: true},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	stamped, err := StampWatermarksFromGeneration(root, map[string]bool{
+		"doc:guides/thing": true,
+		"task:indexed":     true,
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("StampWatermarksFromGeneration: %v", err)
+	}
+	if stamped != 1 {
+		t.Fatalf("stamped = %d, want 1 (only the restored doc)", stamped)
+	}
+	values, _ := loadQdrantWatermarks(root)
+	if got := values["doc:doc-1"]; got.Removed || got.IndexedHash != "hash-c" || got.IndexedRevision != 3 {
+		t.Fatalf("restored doc = %#v, want indexed at revision 3", got)
+	}
+	// A removal at the manifest's own revision is still the current state.
+	if got := values["task:indexed"]; !got.Removed || got.IndexedHash != "" {
+		t.Fatalf("current removal was stamped indexed: %#v", got)
+	}
+}

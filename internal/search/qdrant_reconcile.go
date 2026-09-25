@@ -160,9 +160,17 @@ func StampWatermarksFromGeneration(storeRoot string, indexedSourceIDs map[string
 			continue
 		}
 		current := values[key]
-		if current.Removed || current.PendingRemoval {
+		if current.PendingRemoval {
 			continue
 		}
+		// A completed removal stands only while the manifest is not newer than
+		// it. A later revision means the entity came back, for example through
+		// a tombstone restore; the rebuild indexed it, so the removal must not
+		// keep it reported as never indexed.
+		if current.Removed && current.Revision >= entry.Revision {
+			continue
+		}
+		current.Removed = false
 		current.EntityType, current.EntityID = entry.EntityType, entry.EntityID
 		current.CanonicalHash, current.Revision, current.Path = entry.Hash, entry.Revision, entry.Path
 		current.IndexedHash, current.IndexedRevision, current.IndexedPath = entry.Hash, entry.Revision, entry.Path
