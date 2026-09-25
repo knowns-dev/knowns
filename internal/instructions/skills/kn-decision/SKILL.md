@@ -105,7 +105,7 @@ mcp_knowns_decision({ "action": "link", "id": "<decision-id>",
 | Resolution | Meaning | Gate |
 |------------|---------|------|
 | `create_draft` | Keep it as a draft for now | free |
-| `link_as_related` | Relate it to an existing Decision without changing status | free |
+| `link_as_related` | Fold a true duplicate into the existing Decision: its sources and links move there and the draft becomes `rejected`. Not for a draft that only looks similar | free |
 | `accept_new` | Promote this draft to current guidance | **stop for human** |
 | `supersede_existing` | Promote it and retire the Decision it replaces | **stop for human** |
 | `reject_new` | Reject the draft outright | **stop for human** |
