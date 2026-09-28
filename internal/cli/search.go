@@ -21,7 +21,15 @@ import (
 )
 
 var searchCmd = &cobra.Command{
-	Use:   "search <query>",
+	Use: "search <query>",
+	Example: `  # Search tasks and docs together
+  knowns search "auth"
+
+  # Only docs
+  knowns search "security patterns" --type doc
+
+  # Learn from tasks that already solved something like this
+  knowns search "auth" --type task --status done`,
 	Short: "Search tasks and documentation",
 	Args:  cobra.ArbitraryArgs,
 	RunE:  runSearch,
@@ -192,7 +200,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		printPaged(cmd, content)
 	} else {
 		content := renderPrettyResults(query, actualMode, filteredResults, taskResults, docResults, memoryResults, decisionResults, maxScore)
-		return renderOrPage(cmd, fmt.Sprintf("Search: %s", query), content)
+		return printContent(content)
 	}
 	return nil
 }
@@ -274,7 +282,7 @@ func runRetrieve(cmd *cobra.Command, args []string) error {
 	if plain {
 		printPaged(cmd, sprintPlainRetrieval(resp))
 	} else {
-		return renderOrPage(cmd, fmt.Sprintf("Retrieve: %s", query), renderPrettyRetrieval(resp))
+		return printContent(renderPrettyRetrieval(resp))
 	}
 	return nil
 }
@@ -1025,13 +1033,16 @@ func scoreToPercent(score, maxScore float64) int {
 	return pct
 }
 
+// truncate flattens whitespace and cuts to a display width.
+//
+// It used to cut with s[:maxLen], a byte slice, so any title carrying a multi-byte
+// character was sliced mid-rune and the command emitted invalid UTF-8 that broke
+// downstream readers. truncateVisible counts what the terminal shows and never
+// splits a rune.
 func truncate(s string, maxLen int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > maxLen {
-		return s[:maxLen] + "..."
-	}
-	return s
+	return truncateVisible(s, maxLen)
 }
 
 func init() {

@@ -483,7 +483,8 @@ func runScriptManagedUpgrade(meta *util.InstallMetadata) error {
 		if err != nil {
 			return fmt.Errorf("resolve binary path: %w", err)
 		}
-		binaryPath = exe
+		// Replace the real binary, not the PATH link the installer created.
+		binaryPath = util.ResolveExecutable(exe)
 	}
 	if !isUserWritable(binaryPath) {
 		return fmt.Errorf("script-managed install at %s is not writable by the current user; reinstall to ~/.knowns/bin or set KNOWNS_INSTALL_DIR to a user-writable path", binaryPath)
@@ -525,11 +526,12 @@ func inferScriptInstallMetadata() *util.InstallMetadata {
 	if err != nil || exe == "" {
 		return nil
 	}
+	exe = util.ResolveExecutable(exe)
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return nil
 	}
-	defaultDir := filepath.Join(home, ".knowns", "bin")
+	defaultDir := util.ResolveExecutable(filepath.Join(home, ".knowns", "bin"))
 	exeDir := filepath.Dir(exe)
 	if !samePath(exeDir, defaultDir) {
 		return nil

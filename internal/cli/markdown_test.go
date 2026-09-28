@@ -134,10 +134,6 @@ func TestRenderTaskDetailedMarkdownPreservesMetadataAndRendersFields(t *testing.
 		}
 	}
 
-	items := buildTaskListItems([]*models.Task{task})
-	if len(items) != 1 || items[0].detail != "" || items[0].detailRenderer == nil {
-		t.Fatalf("task list detail should be rendered lazily: %#v", items)
-	}
 	if plain := sprintTaskPlain(task); !strings.Contains(plain, "**formatted description**") {
 		t.Fatalf("plain task output contract changed:\n%s", plain)
 	}

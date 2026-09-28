@@ -1770,17 +1770,15 @@ func startRuntimeWatcher(ctx context.Context, storeRoot string) error {
 			return nil
 		})
 	}()
-	codeErr := make(chan error, 1)
-	go func() { codeErr <- StartCodeWatcher(watchCtx, store, filepath.Dir(storeRoot), watchDebounceMs) }()
+	// Only .knowns task and doc roots are watched. A source-tree watcher used
+	// to run here for a code index that no longer exists; on macOS kqueue
+	// holds a descriptor per watched file, and across every registered
+	// project that exhausted the per-process limit.
 	select {
 	case <-ctx.Done():
 		<-workerDone
 		return nil
 	case err := <-knowledgeErr:
-		cancel()
-		<-workerDone
-		return err
-	case err := <-codeErr:
 		cancel()
 		<-workerDone
 		return err

@@ -8,6 +8,25 @@ Edit a task
 knowns task edit <id> [flags]
 ```
 
+## Examples
+
+```bash
+# Take the task
+  knowns task edit KN-A1B2C3 -s in-progress -a @me
+
+  # Record the plan before writing code
+  knowns task edit KN-A1B2C3 --plan $'1. Read the spec\n2. Add the middleware\n3. Test'
+
+  # Tick criterion 1, one-indexed, only once the work is actually done
+  knowns task edit KN-A1B2C3 --check-ac 1
+
+  # Append progress without replacing the existing notes
+  knowns task edit KN-A1B2C3 --append-notes "Middleware landed, tests next"
+
+  # Finish
+  knowns task edit KN-A1B2C3 -s done
+```
+
 ## Flags
 
 | Flag | Type | Default | Description |
@@ -36,7 +55,6 @@ knowns task edit <id> [flags]
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--json` | `bool` | — | JSON output |
-| `--no-pager` | `bool` | — | Disable TUI pager (print styled output directly) |
 | `--page` | `int` | `0` | Page number for paginated output (e.g. --page 2) |
 | `--page-size` | `int` | `0` | Lines per page (default 50) |
 | `--plain` | `bool` | — | Plain text output (for AI agents) |

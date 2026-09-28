@@ -7,7 +7,19 @@ Create, view, and edit project documentation.
 ## Usage
 
 ```
-knowns doc [flags]
+knowns doc [path] [flags]
+```
+
+## Examples
+
+```bash
+# The everyday loop
+  knowns doc list
+  knowns doc create "Controller Pattern" -f patterns
+
+  # Read one doc; the path alone is shorthand for "doc view"
+  knowns doc "ARCHITECTURE"
+  knowns doc "patterns/controller"
 ```
 
 ## Flags
@@ -25,7 +37,6 @@ knowns doc [flags]
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--json` | `bool` | — | JSON output |
-| `--no-pager` | `bool` | — | Disable TUI pager (print styled output directly) |
 | `--page` | `int` | `0` | Page number for paginated output (e.g. --page 2) |
 | `--page-size` | `int` | `0` | Lines per page (default 50) |
 | `--plain` | `bool` | — | Plain text output (for AI agents) |

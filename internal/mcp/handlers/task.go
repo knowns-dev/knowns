@@ -21,7 +21,7 @@ import (
 func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 	s.AddTool(
 		mcp.NewTool("tasks",
-			mcp.WithDescription(`Task management operations. Use 'action' to specify: create, get, update, delete, list, history, board, archive, unarchive, batch_archive, batch_unarchive, hard_delete.
+			mcp.WithDescription(`Task management operations. Use 'action' to specify: create, get, update, delete, list, history, board, archive, unarchive, batch_archive, batch_unarchive, hard_delete, restore.
 
 - create: Create a task or subtask. Required: title. Optional: description, status, priority, assignee, labels, parent, spec, fulfills, order, prefix, return. Returns: compact summary by default; use return=full for the legacy task payload.
 - get: Read task details. Required: taskId. Optional: none. Returns: task metadata, acceptance criteria, plan, notes, spec links, and time spent.
@@ -33,11 +33,12 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 - archive/unarchive: Preview by default; set execute=true to mutate. Required: taskId.
 - batch_archive/batch_unarchive: Preview by default; set execute=true to mutate. Optional: ids for batch_archive; required for batch_unarchive.
 - hard_delete: Permission-gated separately from archive. Required: taskId, confirmed=true, and non-empty reason.
+- restore: Reactivate a Task whose history head is a delete tombstone, for example after its file vanished briefly and returned. Preview by default; set execute=true to mutate. Required: taskId. Refuses when the file on disk holds different content.
 `),
 			mcp.WithString("action",
 				mcp.Required(),
 				mcp.Description("Action to perform"),
-				mcp.Enum("create", "get", "update", "delete", "list", "history", "board", "archive", "unarchive", "batch_archive", "batch_unarchive", "hard_delete"),
+				mcp.Enum("create", "get", "update", "delete", "list", "history", "board", "archive", "unarchive", "batch_archive", "batch_unarchive", "hard_delete", "restore"),
 			),
 			mcp.WithString("taskId",
 				mcp.Description("Task ID (required for get, update, delete, history)"),
@@ -156,6 +157,8 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 				return handleTaskHistory(getStore, req)
 			case "board":
 				return handleTaskBoard(getStore, req)
+			case "restore":
+				return handleTaskRestore(ctx, getStore, req)
 			case "archive", "unarchive", "batch_archive", "batch_unarchive", "hard_delete":
 				return handleTaskLifecycle(ctx, getStore, action, req)
 			default:
@@ -173,6 +176,7 @@ func RegisterTaskTool(s toolRegistrar, getStore func() *storage.Store) {
 	registerHelp(s, "tasks.board", HelpEntry{When: "Show task board grouped by status for planning or handoff overview.", Params: taskActionParams["board"]})
 	registerHelp(s, "tasks.archive", HelpEntry{When: "Preview or archive one completed Task through the canonical lifecycle policy.", Params: taskActionParams["archive"]})
 	registerHelp(s, "tasks.unarchive", HelpEntry{When: "Preview or restore one done/archived Task.", Params: taskActionParams["unarchive"]})
+	registerHelp(s, "tasks.restore", HelpEntry{When: "Preview or reactivate one Task whose history head is a delete tombstone, such as after its file vanished briefly and came back.", Params: taskActionParams["restore"], Flow: "Unlike unarchive, this undoes a recorded deletion. It refuses when the file on disk holds content the tombstone did not record."})
 	registerHelp(s, "tasks.batch_archive", HelpEntry{When: "Preview or archive eligible Tasks with machine retry progress.", Params: taskActionParams["batch_archive"]})
 	registerHelp(s, "tasks.batch_unarchive", HelpEntry{When: "Preview or restore multiple Tasks.", Params: taskActionParams["batch_unarchive"]})
 	registerHelp(s, "tasks.hard_delete", HelpEntry{When: "Permanently delete a Task only under a trusted project delete permission.", Params: taskActionParams["hard_delete"], Why: "Hard-delete is distinct from archive and leaves a content-free tombstone."})
@@ -251,6 +255,7 @@ var taskActionParams = map[string]map[string]string{
 	"batch_archive":   {"ids": "optional; omitted evaluates all Tasks", "execute": "false previews; true mutates", "actor": "optional audit actor", "expectedHashes": "per-Task expected canonical hashes"},
 	"batch_unarchive": {"ids": "required Task IDs", "execute": "false previews; true mutates", "actor": "optional audit actor", "expectedHashes": "per-Task expected canonical hashes"},
 	"hard_delete":     {"taskId": "required", "confirmed": "must be true", "reason": "required non-empty reason"},
+	"restore":         {"taskId": "required", "execute": "false previews; true mutates"},
 }
 
 // validateTaskArgs rejects a parameter the action does not accept instead of
@@ -845,4 +850,19 @@ func applyACCompletion(task *models.Task, indexes []int, completed bool) error {
 		task.AcceptanceCriteria[i].Completed = completed
 	}
 	return nil
+}
+
+// handleTaskRestore reactivates a Task whose history head is a delete
+// tombstone. It previews by default, like the other lifecycle actions.
+func handleTaskRestore(ctx context.Context, getStore func() *storage.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	store := getStore()
+	if store == nil {
+		return noProjectError()
+	}
+	taskID, err := req.RequireString("taskId")
+	if err != nil {
+		return errResult(ErrTaskIDReq)
+	}
+	execute, _ := req.GetArguments()["execute"].(bool)
+	return tombstoneRestoreResult(ctx, store, "task", taskID, execute)
 }

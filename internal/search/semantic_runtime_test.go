@@ -514,8 +514,15 @@ func newSemanticRuntimeTestStoreWithProvider(t *testing.T, model string, dimensi
 		// t.TempDir() always sits under os.TempDir(), so a HOME already
 		// pointing there means a caller isolated it deliberately and this
 		// must not clobber it with a second, different temp dir.
+		// os.UserHomeDir reads USERPROFILE on Windows, so both must point at
+		// the temp home or the model registered below lands where the
+		// settings store never reads it.
 		if !strings.HasPrefix(os.Getenv("HOME"), os.TempDir()) {
-			t.Setenv("HOME", t.TempDir())
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+		} else if os.Getenv("USERPROFILE") != os.Getenv("HOME") {
+			t.Setenv("USERPROFILE", os.Getenv("HOME"))
 		}
 		registerOllamaTestModel(t, model, dimensions)
 	}

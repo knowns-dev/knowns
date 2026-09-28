@@ -1,13 +1,15 @@
 ---
+id: doc-0d348a7070f27690ec75bcd4b23881dd
 title: Developer Guide
-createdAt: '2025-12-29T11:50:54.275Z'
-updatedAt: '2026-03-08T18:22:03.378Z'
 description: Technical documentation for contributors and developers
+createdAt: '2025-12-29T11:50:54.275Z'
+updatedAt: '2026-09-24T19:16:36.443Z'
 tags:
   - docs
   - developer
   - architecture
 ---
+
 # Knowns Developer Guide
 
 Technical documentation for contributors and developers building on Knowns. Knowns is implemented in Go and distributed as a single static binary.
@@ -49,7 +51,6 @@ internal/
 │   ├── search.go                # Full-text + semantic search
 │   ├── browser.go               # Web UI launcher
 │   ├── agents.go                # AI guidelines management
-│   ├── board.go                 # Kanban board TUI
 │   ├── validate.go              # Validation commands
 │   ├── template.go              # Template commands
 │   ├── config.go                # Config management
@@ -78,7 +79,6 @@ internal/
 ├── mcp/                         # MCP Server (mcp-go library)
 │   ├── server.go                # MCPServer setup + tool registration
 │   └── handlers/                # One file per tool group
-│       ├── board.go
 │       ├── doc.go
 │       ├── project.go
 │       ├── search.go
@@ -411,7 +411,6 @@ Tools are grouped by domain in `internal/mcp/handlers/`:
 | `project.go` | `detect_projects`, `set_project`, `get_current_project` |
 | `task.go` | `get_task`, `list_tasks`, `create_task`, `update_task` |
 | `doc.go` | `get_doc`, `list_docs`, `create_doc`, `update_doc` |
-| `board.go` | `get_board` |
 | `search.go` | `search`, `reindex_search` |
 | `time.go` | `start_time`, `stop_time`, `add_time`, `get_time_report` |
 | `template.go` | `list_templates`, `get_template`, `create_template`, `run_template` |

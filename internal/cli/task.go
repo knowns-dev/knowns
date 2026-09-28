@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"charm.land/lipgloss/v2"
 	"context"
 	"fmt"
 	"os"
@@ -16,7 +17,15 @@ import (
 )
 
 var taskCmd = &cobra.Command{
-	Use:   "task",
+	Use: "task [id]",
+	Example: `  # The everyday loop
+  knowns task list
+  knowns task create "Add JWT auth"
+  knowns task edit KN-A1B2C3 -s in-progress
+  knowns task edit KN-A1B2C3 -s done
+
+  # Read one task; the id alone is shorthand for "task view"
+  knowns task KN-A1B2C3`,
 	Short: "Manage tasks",
 	Long:  "Create, view, edit, and manage project tasks.",
 	// Allow 'knowns task <id>' as a shorthand for 'knowns task view <id>'
@@ -33,7 +42,20 @@ var taskCmd = &cobra.Command{
 // --- task create ---
 
 var taskCreateCmd = &cobra.Command{
-	Use:   "create <title>",
+	Use: "create <title>",
+	Example: `  # A task with nothing but a title
+  knowns task create "Add JWT auth"
+
+  # With outcome-oriented acceptance criteria, repeat --ac per criterion
+  knowns task create "Add JWT auth" \
+    --ac "User can log in and receive a token" \
+    --ac "Expired tokens are rejected"
+
+  # With priority and labels
+  knowns task create "Fix login timeout" --priority high -l auth,bug
+
+  # As a subtask of an existing task
+  knowns task create "Write auth tests" --parent KN-A1B2C3`,
 	Short: "Create a new task",
 	Args:  cobra.MinimumNArgs(1),
 	RunE:  runTaskCreate,
@@ -116,7 +138,18 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 // --- task list ---
 
 var taskListCmd = &cobra.Command{
-	Use:   "list",
+	Use: "list",
+	Example: `  # Every task
+  knowns task list
+
+  # Only what is being worked on
+  knowns task list --status in-progress
+
+  # Your own high-priority work
+  knowns task list --assignee @me --priority high
+
+  # As a parent/child tree
+  knowns task list --tree`,
 	Short: "List tasks",
 	RunE:  runTaskList,
 }
@@ -158,6 +191,10 @@ func runTaskList(cmd *cobra.Command, args []string) error {
 		filtered = append(filtered, t)
 	}
 
+	// One sort, above the fork into plain / table / interactive, so all three
+	// render the same rows in the same order.
+	filtered = sortTasksForList(filtered)
+
 	plain := isPlain(cmd)
 	jsonOut := isJSON(cmd)
 
@@ -177,7 +214,7 @@ func runTaskList(cmd *cobra.Command, args []string) error {
 			printPaged(cmd, content)
 		} else {
 			content := renderTaskTree(filtered)
-			return renderOrPage(cmd, "Tasks (tree)", content)
+			return printContent(content)
 		}
 		return nil
 	}
@@ -186,6 +223,9 @@ func runTaskList(cmd *cobra.Command, args []string) error {
 		page, _ := getPageOpts(cmd)
 		total := len(filtered)
 		limit := defaultPlainItemLimit
+		if !plainPageRequested(cmd) {
+			limit = max(total, 1)
+		}
 		if page <= 0 {
 			page = 1
 		}
@@ -210,20 +250,7 @@ func runTaskList(cmd *cobra.Command, args []string) error {
 			}
 		}
 	} else {
-		if !isTTY() || isPagerDisabled(cmd) {
-			content := renderTaskTable(filtered)
-			fmt.Print(content)
-			return nil
-		}
-		items := buildTaskListItems(filtered)
-		if err := RunListView("Tasks", items); err != nil {
-			if suppressTUICancel(err) == nil {
-				return nil
-			}
-			// Fallback to static table on TUI error
-			content := renderTaskTable(filtered)
-			fmt.Print(content)
-		}
+		fmt.Print(renderTaskTable(filtered))
 	}
 
 	return nil
@@ -232,7 +259,15 @@ func runTaskList(cmd *cobra.Command, args []string) error {
 // --- task view ---
 
 var taskViewCmd = &cobra.Command{
-	Use:   "view <id>",
+	Use: "view <id>",
+	Example: `  # Full task, styled
+  knowns task view KN-A1B2C3
+
+  # The same thing, since view is optional
+  knowns task KN-A1B2C3
+
+  # Parseable output for an agent
+  knowns task KN-A1B2C3 --plain`,
 	Short: "View a task",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -267,7 +302,7 @@ func runTaskView(cmd *cobra.Command, id string) error {
 		if isTTY() {
 			content = renderTaskDetailedMarkdown(task, markdownDisplayWidth())
 		}
-		return renderOrPage(cmd, fmt.Sprintf("Task %s", task.ID), content)
+		return printContent(content)
 	}
 
 	return nil
@@ -276,7 +311,21 @@ func runTaskView(cmd *cobra.Command, id string) error {
 // --- task edit ---
 
 var taskEditCmd = &cobra.Command{
-	Use:   "edit <id>",
+	Use: "edit <id>",
+	Example: `  # Take the task
+  knowns task edit KN-A1B2C3 -s in-progress -a @me
+
+  # Record the plan before writing code
+  knowns task edit KN-A1B2C3 --plan $'1. Read the spec\n2. Add the middleware\n3. Test'
+
+  # Tick criterion 1, one-indexed, only once the work is actually done
+  knowns task edit KN-A1B2C3 --check-ac 1
+
+  # Append progress without replacing the existing notes
+  knowns task edit KN-A1B2C3 --append-notes "Middleware landed, tests next"
+
+  # Finish
+  knowns task edit KN-A1B2C3 -s done`,
 	Short: "Edit a task",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runTaskEdit,
@@ -576,7 +625,7 @@ var taskHistoryCmd = &cobra.Command{
 				if isPlain(cmd) {
 					printPaged(cmd, renderPlainTaskHistory(args[0], history))
 				} else {
-					return renderOrPage(cmd, "Task History", renderTaskHistory(args[0], history))
+					return printContent(renderTaskHistory(args[0], history))
 				}
 			}
 			return nil
@@ -644,7 +693,7 @@ var taskHistoryCmd = &cobra.Command{
 			printPaged(cmd, hb.String())
 		} else {
 			content := renderTaskHistory(args[0], history)
-			return renderOrPage(cmd, "Task History", content)
+			return printContent(content)
 		}
 		return nil
 	},
@@ -652,7 +701,15 @@ var taskHistoryCmd = &cobra.Command{
 
 // ---- list view helpers ----
 
-func buildTaskListItems(tasks []*models.Task) []listItem {
+// sortTasksForList is the order a task list is presented in: status rank, then
+// explicit display order, then priority, then most recently updated, then ID.
+//
+// It used to live inside buildTaskListItems, which only the interactive path
+// calls, so the same command answered in three different orders depending on how
+// it was rendered: sorted when attached to a terminal, raw store order when piped,
+// and raw store order again under --plain. Order is a property of the list, not of
+// the renderer that draws it.
+func sortTasksForList(tasks []*models.Task) []*models.Task {
 	sorted := append([]*models.Task(nil), tasks...)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		left, right := sorted[i], sorted[j]
@@ -678,30 +735,7 @@ func buildTaskListItems(tasks []*models.Task) []listItem {
 		}
 		return left.ID < right.ID
 	})
-
-	items := make([]listItem, len(sorted))
-	for i, t := range sorted {
-		task := t
-		parts := []string{
-			StatusStyle(t.Status).Render(t.Status),
-			PriorityStyle(t.Priority).Render(t.Priority),
-		}
-		if t.Assignee != "" {
-			parts = append(parts, StyleDim.Render(t.Assignee))
-		}
-		if len(t.Labels) > 0 {
-			parts = append(parts, RenderLabels(t.Labels))
-		}
-		items[i] = listItem{
-			id:          task.ID,
-			title:       task.Title,
-			description: joinListMetadata(parts...),
-			detailRenderer: newLazyMarkdownDetailRenderer(func(width int, style string) string {
-				return renderTaskDetailedMarkdownWithStyle(task, width, style)
-			}),
-		}
-	}
-	return items
+	return sorted
 }
 
 func taskStatusListRank(status string) int {
@@ -725,6 +759,16 @@ func taskStatusListRank(status string) int {
 	}
 }
 
+// isRankedTaskStatus reports whether taskStatusListRank recognises a status by
+// name rather than falling through to its default.
+func isRankedTaskStatus(status string) bool {
+	switch status {
+	case "urgent", "blocked", "in-progress", "in-review", "todo", "on-hold", "done":
+		return true
+	}
+	return false
+}
+
 func taskPriorityListRank(priority string) int {
 	switch priority {
 	case "high":
@@ -740,65 +784,96 @@ func taskPriorityListRank(priority string) int {
 
 // ---- output helpers ----
 
-// sprintTaskListPlain renders compact task list grouped by status as a string.
+// sprintTaskListPlain renders one task per line, in a fixed field order.
+//
+// It used to group under status headings ("To Do:", "Done:") with the status
+// carried only by the heading. That makes the format unusable for the consumer it
+// is named after: `knowns task list --plain | grep <id>` returned a line with no
+// status in it, and reading a row's status meant tracking which heading it fell
+// under. Every field a row is about now lives on that row.
+//
+// Fields are ID, STATUS, PRIORITY, ASSIGNEE, TITLE. Assignee prints "-" when
+// empty rather than collapsing the column, so the field a value lands in does not
+// depend on which task it belongs to. Title comes last, being the only field that
+// can contain spaces.
 func sprintTaskListPlain(tasks []*models.Task) string {
 	var b strings.Builder
-	// Define status display order
-	statusOrder := []struct {
-		key   string
-		label string
-	}{
-		{"urgent", "Urgent:"},
-		{"blocked", "Blocked:"},
-		{"todo", "To Do:"},
-		{"in-progress", "In Progress:"},
-		{"in-review", "In Review:"},
-		{"on-hold", "On Hold:"},
-		{"done", "Done:"},
-	}
 
-	// Group tasks by status
-	byStatus := make(map[string][]*models.Task)
+	idW, statusW, prioW, assigneeW := 0, 0, 0, 0
 	for _, t := range tasks {
-		byStatus[t.Status] = append(byStatus[t.Status], t)
+		idW = max(idW, len(t.ID))
+		statusW = max(statusW, len(t.Status))
+		prioW = max(prioW, len(t.Priority))
+		assigneeW = max(assigneeW, len(plainAssignee(t)))
 	}
 
-	first := true
-	for _, s := range statusOrder {
-		group, ok := byStatus[s.key]
-		if !ok || len(group) == 0 {
-			continue
-		}
-		if !first {
-			fmt.Fprintln(&b)
-		}
-		first = false
-		fmt.Fprintln(&b, s.label)
-		for _, t := range group {
-			fmt.Fprintf(&b, "  [%s] %s - %s\n", strings.ToUpper(t.Priority), t.ID, t.Title)
-		}
-	}
-
-	// Any statuses not in our predefined order
 	for _, t := range tasks {
-		found := false
-		for _, s := range statusOrder {
-			if t.Status == s.key {
-				found = true
-				break
-			}
-		}
-		if !found {
-			if _, printed := byStatus["_other_printed"]; !printed {
-				if !first {
-					fmt.Fprintln(&b)
-				}
-				byStatus["_other_printed"] = nil
-			}
-			fmt.Fprintf(&b, "  [%s] %s - %s\n", strings.ToUpper(t.Priority), t.ID, t.Title)
-		}
+		fmt.Fprintf(&b, "%-*s  %-*s  %-*s  %-*s  %s\n",
+			idW, t.ID,
+			statusW, t.Status,
+			prioW, t.Priority,
+			assigneeW, plainAssignee(t),
+			t.Title,
+		)
+	}
+
+	if len(tasks) > 0 {
+		fmt.Fprintf(&b, "\nTotal: %d %s (%s)\n", len(tasks), pluralTasks(len(tasks)), plainStatusSummary(tasks))
 	}
 	return b.String()
+}
+
+// plainAssignee keeps the assignee column present on every row.
+func plainAssignee(t *models.Task) string {
+	if t.Assignee == "" {
+		return "-"
+	}
+	return t.Assignee
+}
+
+func pluralTasks(n int) string {
+	if n == 1 {
+		return "task"
+	}
+	return "tasks"
+}
+
+// plainStatusSummary counts tasks per status, ordered by taskStatusListRank so the
+// summary reads in the same order the rows above it are sorted.
+func plainStatusSummary(tasks []*models.Task) string {
+	counts := map[string]int{}
+	for _, t := range tasks {
+		counts[t.Status]++
+	}
+
+	// Order by the same rank the list itself sorts on. A second ordering of the
+	// same statuses would be free to drift from the first, and the summary would
+	// then describe the rows in an order they are not printed in.
+	statuses := make([]string, 0, len(counts))
+	for status := range counts {
+		statuses = append(statuses, status)
+	}
+	sort.SliceStable(statuses, func(i, j int) bool {
+		return taskStatusListRank(statuses[i]) < taskStatusListRank(statuses[j])
+	})
+
+	var parts []string
+	seen := map[string]bool{}
+	for _, status := range statuses {
+		if isRankedTaskStatus(status) {
+			parts = append(parts, fmt.Sprintf("%d %s", counts[status], status))
+			seen[status] = true
+		}
+	}
+	// Any status the canonical order does not name still gets counted.
+	var extra []string
+	for status, n := range counts {
+		if !seen[status] {
+			extra = append(extra, fmt.Sprintf("%d %s", n, status))
+		}
+	}
+	sort.Strings(extra)
+	return strings.Join(append(parts, extra...), ", ")
 }
 
 func sprintTaskPlain(t *models.Task) string {
@@ -928,30 +1003,66 @@ func renderTaskDetailedWithBodyRenderer(t *models.Task, renderBody markdownBodyR
 	return b.String()
 }
 
+// renderTaskTable renders the styled task table.
+//
+// Column widths come from the data and from the terminal, not from constants. The
+// old fixed 96-column layout cut every title at 35 bytes however much room the
+// terminal had, and it cut by byte, so a title carrying any multi-byte character
+// was sliced mid-rune and the command emitted invalid UTF-8. That is not only ugly:
+// it breaks anything reading the output, as sed refusing the stream with "illegal
+// byte sequence" showed.
 func renderTaskTable(tasks []*models.Task) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "  %s  %s  %s  %s  %s\n",
-		StyleBold.Render(fmt.Sprintf("%-10s", "ID")),
-		StyleBold.Render(fmt.Sprintf("%-40s", "TITLE")),
-		StyleBold.Render(fmt.Sprintf("%-12s", "STATUS")),
-		StyleBold.Render(fmt.Sprintf("%-8s", "PRIORITY")),
-		StyleBold.Render(fmt.Sprintf("%-20s", "ASSIGNEE")))
-	fmt.Fprintln(&b, "  "+RenderSeparator(96))
+	const (
+		indent    = 2
+		gap       = 2
+		minTitle  = 24
+		maxAssign = 20
+	)
+
+	idW, assigneeW, titleW := len("ID"), len("ASSIGNEE"), len("TITLE")
+	statusW, prioW := len("STATUS"), len("PRIORITY")
 	for _, t := range tasks {
-		title := t.Title
-		if len(title) > 38 {
-			title = title[:35] + "..."
-		}
-		assignee := t.Assignee
-		if len(assignee) > 18 {
-			assignee = assignee[:15] + "..."
-		}
-		fmt.Fprintf(&b, "  %s  %-40s  %s  %s  %-20s\n",
-			StyleID.Render(fmt.Sprintf("%-10s", t.ID)),
-			title,
-			StatusStyle(t.Status).Render(fmt.Sprintf("%-12s", t.Status)),
-			PriorityStyle(t.Priority).Render(fmt.Sprintf("%-8s", t.Priority)),
-			assignee)
+		idW = max(idW, lipgloss.Width(t.ID))
+		statusW = max(statusW, lipgloss.Width(t.Status))
+		prioW = max(prioW, lipgloss.Width(t.Priority))
+		assigneeW = max(assigneeW, lipgloss.Width(t.Assignee))
+		titleW = max(titleW, lipgloss.Width(t.Title))
+	}
+	assigneeW = min(assigneeW, maxAssign)
+
+	// The title column takes whatever the fixed columns leave, and no more than it
+	// needs. Titles that all fit are never truncated.
+	fixed := indent + idW + statusW + prioW + assigneeW + gap*4
+	if room := terminalWidth() - fixed; room < titleW {
+		titleW = max(room, minTitle)
+	}
+
+	var b strings.Builder
+	sep := strings.Repeat(" ", gap)
+	pad := strings.Repeat(" ", indent)
+
+	fmt.Fprintln(&b, pad+strings.Join([]string{
+		StyleBold.Render(padRight("ID", idW)),
+		StyleBold.Render(padRight("TITLE", titleW)),
+		StyleBold.Render(padRight("STATUS", statusW)),
+		StyleBold.Render(padRight("PRIORITY", prioW)),
+		StyleBold.Render("ASSIGNEE"),
+	}, sep))
+	fmt.Fprintln(&b, pad+RenderSeparator(fixed+titleW-indent))
+
+	for _, t := range tasks {
+		fmt.Fprintln(&b, pad+strings.Join([]string{
+			StyleID.Render(padRight(t.ID, idW)),
+			padRight(truncateVisible(t.Title, titleW), titleW),
+			StatusStyle(t.Status).Render(padRight(t.Status, statusW)),
+			PriorityStyle(t.Priority).Render(padRight(t.Priority, prioW)),
+			truncateVisible(t.Assignee, assigneeW),
+		}, sep))
+	}
+
+	if len(tasks) > 0 {
+		fmt.Fprintf(&b, "\n%s%s\n", pad,
+			StyleDim.Render(fmt.Sprintf("Total: %d %s (%s)", len(tasks), pluralTasks(len(tasks)), plainStatusSummary(tasks))))
 	}
 	return b.String()
 }

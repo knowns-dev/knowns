@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"charm.land/lipgloss/v2"
 	"context"
 	"fmt"
 	"math"
@@ -17,7 +18,14 @@ import (
 )
 
 var docCmd = &cobra.Command{
-	Use:   "doc",
+	Use: "doc [path]",
+	Example: `  # The everyday loop
+  knowns doc list
+  knowns doc create "Controller Pattern" -f patterns
+
+  # Read one doc; the path alone is shorthand for "doc view"
+  knowns doc "ARCHITECTURE"
+  knowns doc "patterns/controller"`,
 	Short: "Manage documentation",
 	Long:  "Create, view, and edit project documentation.",
 	// Allow 'knowns doc <path>' as a shorthand for 'knowns doc view <path>'
@@ -76,6 +84,9 @@ func runDocList(cmd *cobra.Command, args []string) error {
 		page, _ := getPageOpts(cmd)
 		total := len(docs)
 		limit := defaultPlainItemLimit
+		if !plainPageRequested(cmd) {
+			limit = max(total, 1)
+		}
 		if page <= 0 {
 			page = 1
 		}
@@ -106,6 +117,9 @@ func runDocList(cmd *cobra.Command, args []string) error {
 			fmt.Fprintln(&pb)
 		}
 		fmt.Print(pb.String())
+		// Parity with the styled table: the one line that tells a reader whether
+		// they are looking at the whole list.
+		fmt.Printf("Total: %d %s\n", total, pluralDocs(total))
 		if total > limit {
 			totalPages := (total + limit - 1) / limit
 			fmt.Printf("PAGE: %d/%d (items %d-%d of %d)\n", page, totalPages, start+1, end, total)
@@ -114,19 +128,7 @@ func runDocList(cmd *cobra.Command, args []string) error {
 			}
 		}
 	} else {
-		if !isTTY() || isPagerDisabled(cmd) {
-			content := renderDocList(docs)
-			fmt.Print(content)
-			return nil
-		}
-		items := buildDocListItems(docs)
-		if err := RunListView("Documents", items); err != nil {
-			if suppressTUICancel(err) == nil {
-				return nil
-			}
-			content := renderDocList(docs)
-			fmt.Print(content)
-		}
+		fmt.Print(renderDocList(docs))
 	}
 	return nil
 }
@@ -134,7 +136,15 @@ func runDocList(cmd *cobra.Command, args []string) error {
 // --- doc view ---
 
 var docViewCmd = &cobra.Command{
-	Use:   "view <path>",
+	Use: "view <path>",
+	Example: `  # Read a doc
+  knowns doc view "ARCHITECTURE"
+
+  # The same thing, since view is optional
+  knowns doc "patterns/controller"
+
+  # Table of contents first, then one section, for a long doc
+  knowns doc "ARCHITECTURE" --toc`,
 	Short: "View a documentation file",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -175,7 +185,7 @@ func runDocView(cmd *cobra.Command, path string) error {
 			fmt.Printf("UPDATED: %s\n", doc.UpdatedAt.Format("2006-01-02"))
 		} else {
 			content := renderDocInfo(doc)
-			return renderOrPage(cmd, fmt.Sprintf("Doc Info: %s", doc.Title), content)
+			return printContent(content)
 		}
 		return nil
 	}
@@ -189,7 +199,7 @@ func runDocView(cmd *cobra.Command, path string) error {
 			}
 		} else {
 			content := renderDocTOC(doc.Title, headings)
-			return renderOrPage(cmd, fmt.Sprintf("TOC: %s", doc.Title), content)
+			return printContent(content)
 		}
 		return nil
 	}
@@ -254,7 +264,7 @@ func runDocView(cmd *cobra.Command, path string) error {
 		if isTTY() {
 			content = renderDocViewMarkdown(doc, markdownDisplayWidth())
 		}
-		return renderOrPage(cmd, doc.Title, content)
+		return printContent(content)
 	}
 
 	return nil
@@ -263,7 +273,12 @@ func runDocView(cmd *cobra.Command, path string) error {
 // --- doc create ---
 
 var docCreateCmd = &cobra.Command{
-	Use:   "create <title>",
+	Use: "create <title>",
+	Example: `  # A core doc, at the root of .knowns/docs/
+  knowns doc create "ARCHITECTURE" -d "System design"
+
+  # A categorized doc, -f names the folder
+  knowns doc create "Controller Pattern" -f patterns -t pattern,backend`,
 	Short: "Create a new documentation file",
 	Args:  cobra.MinimumNArgs(1),
 	RunE:  runDocCreate,
@@ -512,7 +527,7 @@ var docHistoryCmd = &cobra.Command{
 				if isPlain(cmd) {
 					printPaged(cmd, renderPlainDocHistory(args[0], history))
 				} else {
-					return renderOrPage(cmd, "Doc History", renderDocHistory(args[0], history))
+					return printContent(renderDocHistory(args[0], history))
 				}
 			}
 			return nil
@@ -566,7 +581,7 @@ var docHistoryCmd = &cobra.Command{
 			printPaged(cmd, renderPlainDocHistory(args[0], history))
 		} else {
 			content := renderDocHistory(args[0], history)
-			return renderOrPage(cmd, "Doc History", content)
+			return printContent(content)
 		}
 		return nil
 	},
@@ -721,57 +736,85 @@ func shortDocHistoryHash(hash string) string {
 
 // ---- list view helpers ----
 
-func buildDocListItems(docs []*models.Doc) []listItem {
-	items := make([]listItem, len(docs))
-	for i, d := range docs {
-		doc := d
-		parts := []string{d.Description}
-		if len(d.Tags) > 0 {
-			parts = append(parts, RenderTags(d.Tags))
-		}
-		if d.IsImported {
-			parts = append(parts, StyleDim.Render("imported"))
-		}
-		items[i] = listItem{
-			id:          doc.Path,
-			title:       doc.Title,
-			description: joinListMetadata(parts...),
-			detailRenderer: newLazyMarkdownDetailRenderer(func(width int, style string) string {
-				return renderDocListDetailMarkdownWithStyle(doc, width, style)
-			}),
-		}
-	}
-	return items
-}
-
 // ---- render helpers ----
 
+// renderDocList renders the styled document table.
+//
+// Widths come from the data and the terminal. The old fixed layout capped the path
+// at 38 characters, which truncated 49 of this project's 152 docs, and the path is
+// the argument the reader types next into `knowns doc "<path>"`. A listing whose
+// identifiers do not survive the listing is not usable. It also cut by byte, so a
+// non-ASCII path would have been sliced mid-rune, as the task table was.
 func renderDocList(docs []*models.Doc) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "  %s  %s  %s\n",
-		StyleBold.Render(fmt.Sprintf("%-40s", "PATH")),
-		StyleBold.Render(fmt.Sprintf("%-30s", "TITLE")),
-		StyleBold.Render("TAGS"))
-	fmt.Fprintln(&b, "  "+RenderSeparator(86))
+	const (
+		indent   = 2
+		gap      = 2
+		minPath  = 20
+		minTitle = 16
+	)
+
+	pathW, titleW := len("PATH"), len("TITLE")
 	for _, d := range docs {
-		path := d.Path
-		if len(path) > 38 {
-			path = path[:35] + "..."
-		}
-		title := d.Title
-		if len(title) > 28 {
-			title = title[:25] + "..."
-		}
-		tags := RenderTags(d.Tags)
+		pathW = max(pathW, lipgloss.Width(d.Path))
+		titleW = max(titleW, lipgloss.Width(d.Title))
+	}
+
+	// Path and title share what the terminal leaves after the tags column. When it
+	// does not stretch to both, they give up room in proportion to what they asked
+	// for, so neither is starved to keep the other whole. Favouring the path
+	// outright squeezed titles to nothing on a standard terminal.
+	if room := terminalWidth() - indent - gap*2 - docListTagsWidth(docs); room < pathW+titleW {
+		want := pathW + titleW
+		pathW = max(room*pathW/want, minPath)
+		titleW = max(room-pathW, minTitle)
+	}
+
+	var b strings.Builder
+	sep := strings.Repeat(" ", gap)
+	pad := strings.Repeat(" ", indent)
+
+	fmt.Fprintln(&b, pad+strings.Join([]string{
+		StyleBold.Render(padRight("PATH", pathW)),
+		StyleBold.Render(padRight("TITLE", titleW)),
+		StyleBold.Render("TAGS"),
+	}, sep))
+	fmt.Fprintln(&b, pad+RenderSeparator(pathW+titleW+gap*2+docListTagsWidth(docs)))
+
+	for _, d := range docs {
 		prefix := ""
 		if d.IsImported {
 			prefix = StyleDim.Render("[imported] ")
 		}
-		fmt.Fprintf(&b, "  %s  %-30s  %s%s\n",
-			StyleID.Render(fmt.Sprintf("%-40s", path)),
-			title, prefix, tags)
+		fmt.Fprintln(&b, pad+strings.Join([]string{
+			StyleID.Render(padRight(truncateVisible(d.Path, pathW), pathW)),
+			padRight(truncateVisible(d.Title, titleW), titleW),
+			prefix + RenderTags(d.Tags),
+		}, sep))
+	}
+
+	if len(docs) > 0 {
+		fmt.Fprintf(&b, "\n%s%s\n", pad,
+			StyleDim.Render(fmt.Sprintf("Total: %d %s", len(docs), pluralDocs(len(docs)))))
 	}
 	return b.String()
+}
+
+// docListTagsWidth is the room the tags column needs, capped so a single
+// heavily-tagged document cannot squeeze every path in the list.
+func docListTagsWidth(docs []*models.Doc) int {
+	const cap = 28
+	width := len("TAGS")
+	for _, d := range docs {
+		width = max(width, lipgloss.Width(strings.Join(d.Tags, ", ")))
+	}
+	return min(width, cap)
+}
+
+func pluralDocs(n int) string {
+	if n == 1 {
+		return "doc"
+	}
+	return "docs"
 }
 
 func renderDocView(doc *models.Doc) string {

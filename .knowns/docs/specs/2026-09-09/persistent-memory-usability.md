@@ -3,12 +3,13 @@ id: doc-b8ef6350c3474347b9778c6b79a100f1
 title: Persistent Memory Usability
 description: 'Làm cho Persistent Memory thực sự dùng được: bỏ auto-capture theo keyword, mở đường ghi MCP, ghi được provenance, thêm confirm/contradict, anchor check cho memory loại 1'
 createdAt: '2026-09-09T07:09:15.590Z'
-updatedAt: '2026-09-09T09:26:19.326Z'
+updatedAt: '2026-09-24T19:16:36.626Z'
 tags:
   - spec
-  - approved
   - memory
   - provenance
+  - draft
+  - review-required
 ---
 
 ## Overview
@@ -69,23 +70,16 @@ Thiết kế dựa trên phân biệt sau, vì nó quyết định cách verify:
 
 ## Locked Decisions
 
-- **D1**: Gỡ toàn bộ tầng auto-capture theo keyword. Bỏ cả `inferWorkingContextCandidate` lẫn `inferGlobalPreferenceCandidate`, kèm `workingContextPhrases`, `globalPreferencePhrases`, và các call site. Memory chỉ sinh ra từ lời gọi `add` có chủ đích.
-- **D2**: **Triage trước, xoá sau.** Không xoá cả lô. 83 entry chép prompt bị xoá, 3 entry có nội dung thật được cứu. Toàn bộ 86 file được export ra ngoài `.knowns/` trước khi xoá bất cứ thứ gì, vì `.knowns/.gitignore` ignore thư mục memory nên không có đường khôi phục qua git.
-- **D3**: `contradict` phân theo loại. Loại 1 có anchor tra được thì hạ `stale` ngay kèm note. Loại 2 thì agent không có thẩm quyền, chỉ được đánh dấu `disputed` và nêu cho người dùng quyết.
-- **D4**: Thiếu `**Why:**` trên memory category `preference` là lỗi chặn khi ghi mới. Entry cũ vẫn đọc và inject được, nhưng bị `knowns validate` liệt kê là thiếu provenance.
-- **D5**: Category phải nằm trong hợp đồng của `kn-extract` (`pattern`, `convention`, `preference`, `failure`). Ba entry đang sai được chuẩn hoá: `r7upz8` (`implementation`) và `16m7rp` (`failure-pattern`) đổi về category hợp lệ, `15q1yo` (`decision`, legacy read-only) chuyển thành System Decision. Ghi mới với category ngoài danh sách bị từ chối.
-- **D6**: Global layer chỉ chứa thứ đúng với mọi dự án. Năm entry của dự án khác (`kfh4cx`, `xrbwkh` thuộc autosub, `16m7rp` Cloudinary, `vesntm` Stitch, `rnliz9` Coordination ReBAC) được đưa về project layer tương ứng hoặc xoá nếu dự án đó không còn dùng Knowns.
-- **D7**: ID giữ nguyên dạng ngẫu nhiên 6 ký tự base36 của `util.GenerateID()`, vì memory ID đang được tham chiếu (`@memory/3kno2x` xuất hiện trong chính nội dung memory đó). ID sinh từ nội dung sẽ đổi khi nội dung được sửa và làm chết mọi ref. Thay vào đó bổ sung field `key` riêng, tuỳ chọn, unique trong một layer, mặc định là slug của `title`. Ghi với `key` đã tồn tại là update tại chỗ và báo `replaced`.
-- **D8**: **Memory ghi qua MCP mặc định là `active`, không phải `proposed`.** Đây là ghi đè có chủ đích lên chính sách hiện hành mà MCP `initial` đang công bố ("Agent/MCP Memory writes default to proposed unless explicitly resolved"). Căn cứ: 86 entry do regex sinh đạt 0 `active`, còn 20 entry do LLM tự quyết thì cả 20 đều đạt chuẩn. Cổng duyệt đang canh mối nguy chưa từng xuất hiện.
+Format lưu ý: mỗi dòng phải bắt đầu bằng `- D<N>: ` phẳng, không in đậm. `lockedDecisionRE` trong `internal/validate/validate.go` là `^\s*-\s*(D[1-9][0-9]*):\s*\S`, nên `- **D1**:` không khớp và spec bị báo `SDD_SPEC_DECISIONS_EMPTY`. Xem `@memory/sbf2ih`.
 
-  Cổng duyệt **không bị bỏ**, chỉ thu hẹp: `memoryreview.Add` vẫn chạy, và nhánh có match trùng lặp vẫn trả `review_required` như hiện tại. Chỉ những entry **không trùng lặp** mới đi thẳng `active`. Phân công trách nhiệm:
-
-  | Câu hỏi | Ai quyết | Có cổng không |
-  |---|---|---|
-  | Có đáng lưu không | LLM | không, ghi thẳng `active` |
-  | Có mâu thuẫn hoặc trùng cái cũ không | hệ thống | có, giữ nguyên `review_required` |
-
-  Vì nhánh có match vẫn sinh ra hàng đợi `proposed`, hàng đợi đó phải có TTL để không tích lại thành 83 lần nữa. Xem FR-10.
+- D1: Gỡ toàn bộ tầng auto-capture theo keyword. Bỏ cả `inferWorkingContextCandidate` lẫn `inferGlobalPreferenceCandidate`, kèm `workingContextPhrases`, `globalPreferencePhrases`, và các call site. Memory chỉ sinh ra từ lời gọi `add` có chủ đích.
+- D2: Triage trước, xoá sau. Không xoá cả lô. Entry chép prompt bị xoá, entry có nội dung thật được cứu. Toàn bộ nhóm heuristic được export ra ngoài `.knowns/` trước khi xoá bất cứ thứ gì, vì `.knowns/.gitignore` ignore thư mục memory nên không có đường khôi phục qua git. Số lượng chốt tại thời điểm chạy, không dùng số đếm cũ.
+- D3: `contradict` phân theo loại. Loại 1 có anchor tra được thì hạ `stale` ngay kèm note. Loại 2 thì agent không có thẩm quyền, chỉ được đánh dấu `disputed` và nêu cho người dùng quyết.
+- D4: Thiếu `**Why:**` trên memory category `preference` là lỗi chặn khi ghi mới. Entry cũ vẫn đọc và inject được, nhưng bị `knowns validate` liệt kê là thiếu provenance.
+- D5: Category phải nằm trong hợp đồng của `kn-extract`, tức `pattern`, `convention`, `preference`, `failure`. Ba entry đang sai được chuẩn hoá: `r7upz8` và `16m7rp` đổi về category hợp lệ, `15q1yo` chuyển thành System Decision. Ghi mới với category ngoài danh sách bị từ chối.
+- D6: Global layer chỉ chứa thứ đúng với mọi dự án. Entry của dự án khác được đưa về project layer tương ứng hoặc xoá nếu dự án đó không còn dùng Knowns.
+- D7: ID giữ nguyên dạng ngẫu nhiên của `util.GenerateID`, vì `@memory/<id>` là ref đang được dùng và ID sinh từ nội dung sẽ chết mọi ref khi nội dung được sửa. Bổ sung field `key` riêng, tuỳ chọn, unique trong một layer. Chỉ `key` do caller nêu rõ mới upsert; key suy ra từ title được lưu nhưng không bao giờ tự khớp, vì hai entry trùng title là đúng ca mà cổng duyệt sinh ra để phán.
+- D8: Memory ghi qua MCP mặc định là `active`, không phải `proposed`. Đây là ghi đè có chủ đích lên chính sách mà MCP `initial` công bố trước đó. Căn cứ: entry do regex sinh đạt 0 `active`, còn entry do LLM tự quyết thì đạt chuẩn toàn bộ. Cổng duyệt không bị bỏ, chỉ thu hẹp: nhánh có match trùng lặp vẫn trả `review_required` và không tạo gì. Vì nhánh đó vẫn sinh hàng đợi, hàng đợi phải có TTL, xem FR-10.
 
 ## System Decision Impact
 
@@ -136,6 +130,16 @@ Thiết kế dựa trên phân biệt sau, vì nó quyết định cách verify:
   Dòng duy nhất trong hook phải là dòng có tác dụng đúng lúc ghi, đại ý: memory là thứ phiên sau cần, viết từ kết quả; nếu nó chỉ lặp lại prompt thì không viết. Bảy bullet hiện có trong block đó chỉ nói cách gọi tool, không nói cái gì đáng ghi, nên có thể nén để lấy chỗ.
 
   `CLAUDE.md` hiện đã có "Use memory tools ... `memory({ action: \"add\" })` after tasks for reusable knowledge" và "Proactively capture durable memory when scope and durability are clear". Hai câu này đúng hướng nhưng quá mơ hồ để hành động theo, và phải được thay bằng định nghĩa cùng phép thử phủ định.
+- **FR-14**: Injection phân tầng. Mỗi memory được retrieve hiện **phần claim**, không phải toàn văn, và tất cả các memory được chọn đều hiện chứ không chỉ cái đầu tiên.
+  - Ranh giới claim và detail do marker `<!--memory:detail-->` quyết định khi có.
+  - Không có marker thì lấy đoạn văn đầu tiên. Điều này quan trọng: nó chạy ngay trên toàn bộ memory hiện có mà không cần migration, vì đo được là cả 12 entry `active` đều có đoạn đầu là một claim đứng một mình được, trung bình 260 byte.
+  - Mỗi entry được inject phải nêu cách lấy toàn văn, tức `memory(action:"get", id:"<id>")`.
+  - Khi chạm ngân sách, cắt ở **ranh giới memory**, không bao giờ cắt giữa nội dung, và nêu số entry bị ẩn.
+  - Luôn phát ít nhất một entry khi có ứng viên.
+
+  Căn cứ đo được: toàn văn 12 memory `active` là 15.829 byte (~3.957 token), phần claim là 3.138 byte (~784 token). Hành vi hiện tại tốn ~625 token để đưa **một** memory bị cắt dở. Cùng bậc chi phí, nhưng đổi từ một cái không đầy đủ sang mười hai cái đầy đủ.
+
+  Thiết kế này giữ **một entity**. Phương án tách memory thành memory cộng doc đã bị loại vì nó tạo hai thứ phải đồng bộ, cần link thủ công, và xoá memory sẽ để lại doc mồ côi.
 
 ### Non-Functional Requirements
 
@@ -209,19 +213,27 @@ Thiết kế dựa trên phân biệt sau, vì nó quyết định cách verify:
 
 | Wave | Task | FR | Status |
 |---|---|---|---|
-| 1 | `MEM-ZRRANS` Remove keyword auto-capture from runtime memory | FR-1 | in-review, committed `3b02f6e` |
-| 2 | `MEM-7MH0SK` MCP memory write path: provenance, active default, Why and category gates, key upsert | FR-2, 3, 6, 7, 8 | in-review |
-| 2 | `MEM-YEWBH2` Teach the instruction layer what a Memory is, across all three delivery channels | FR-11, 12, 13 | in-review |
-| 3 | `MEM-F2GSWW` Verification lifecycle: confirm and contradict, plus a bounded proposed queue | FR-4, 10 | todo |
+| 1 | `MEM-ZRRANS` Remove keyword auto-capture from runtime memory | FR-1 | in-review, `3b02f6e` |
+| 2 | `MEM-7MH0SK` MCP memory write path: provenance, active default, Why and category gates, key upsert | FR-2, 3, 6, 7, 8 | in-review, `5192c1e` |
+| 2 | `MEM-YEWBH2` Teach the instruction layer what a Memory is, across all three delivery channels | FR-11, 12, 13 | in-review, `b55d996` |
+| 3 | `MEM-F2GSWW` Verification lifecycle: confirm and contradict, plus a bounded proposed queue | FR-4, 10 | in-review, `992bbed` + `98b9528` |
 | 3 | `MEM-1YT800` Flag world-fact memories whose cited anchors no longer exist | FR-5 | todo |
-| 4 | `MEM-TAT57N` Migrate the memory store: export, delete 83, rescue 3, normalize the rest | FR-9 | todo |
-| follow-up | `MEM-FB7A6Y` Retire the runtime memory capture surface now that nothing can capture | out of spec scope | todo |
+| 3 | `MEM-QEV8DV` Inject memory claims, not whole memories | FR-14 | in-progress, planned |
+| 3 | `MEM-GP473Z` Let authors see and fix where a memory claim is cut | FR-14 | todo |
+| 4 | `MEM-TAT57N` Migrate the memory store: export, delete, rescue, normalize | FR-9 | in-review |
+| follow-up | `MEM-FB7A6Y` Retire the runtime memory capture surface now that nothing can capture | ngoài phạm vi spec | todo |
 
 Phụ thuộc khai bằng `@task-<id>{blocked-by}` trong description, không bằng `order`, theo `@decision/20260828-0249-task-dependencies-are-declared-as-blocked-by-edges-order-is-display-sequence-only`.
 
+FR-14 tách làm hai task vì chúng là hai mối quan tâm và hai bề mặt khác nhau. `MEM-QEV8DV` đổi hình dạng injection trong `internal/runtimememory`. `MEM-GP473Z` là công cụ soạn thảo: `add` và `update` trả về claim vừa suy ra, cộng subcommand `knowns memory migrate` để đóng băng ranh giới cho tám memory nhiều đoạn hiện có. Task thứ hai `blocked-by` task thứ nhất vì nó dùng chung hàm trích claim.
+
+### Mở rộng phạm vi sau khi approve
+
+FR-14 và hai task của nó được thêm sau khi spec đã `approved`. Lý do: migration ở FR-9 làm kho sạch, và chỉ khi đó mới đo được đường đọc mới là nút thắt, chứ không phải đường ghi. Đây là bổ sung requirement, không sửa Locked Decision nào, nên spec giữ nguyên trạng thái approved.
+
 ### Đính chính với FR-12
 
-FR-12 viết "thay dòng thống kê `memories: 48p, 60g`". Sai: `%dp, %dg` ở `internal/mcp/handlers/initial.go` là số theo **layer** (project và global), không phải số `proposed`. `MEM-YEWBH2` giữ nguyên số theo layer và **thêm** một dòng cảnh báo chỉ hiện khi có entry chờ duyệt.
+FR-12 nói "thay dòng thống kê `memories: 48p, 60g`". Sai: `%dp, %dg` ở `internal/mcp/handlers/initial.go` là số theo **layer**, không phải số `proposed`. `MEM-YEWBH2` giữ nguyên số theo layer và **thêm** một dòng cảnh báo chỉ hiện khi có entry chờ duyệt.
 
 ## Open Questions
 

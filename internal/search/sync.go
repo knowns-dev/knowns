@@ -314,16 +314,6 @@ func memoryIndexTarget(store *storage.Store, memoryID string) (*storage.Store, s
 	return store, store.Root
 }
 
-// BestEffortIndexFile is a no-op because code indexing has been removed.
-func BestEffortIndexFile(store *storage.Store, docPath, absPath string) {
-	// Code files are not indexed in background sync. Real-time code intelligence uses LSP.
-}
-
-// BestEffortRemoveFile removes all code chunks for a file from the vector store.
-func BestEffortRemoveFile(store *storage.Store, docPath string) {
-	// Code files are not indexed in background sync. Real-time code intelligence uses LSP.
-}
-
 func enqueueRuntimeJob(store *storage.Store, kind runtimequeue.JobKind, target string, fallback func()) bool {
 	if store == nil {
 		return true

@@ -13,7 +13,6 @@ knowns [options] [command]
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--json` | `bool` | — | JSON output |
-| `--no-pager` | `bool` | — | Disable TUI pager (print styled output directly) |
 | `--page` | `int` | `0` | Page number for paginated output (e.g. --page 2) |
 | `--page-size` | `int` | `0` | Lines per page (default 50) |
 | `--plain` | `bool` | — | Plain text output (for AI agents) |
@@ -22,7 +21,6 @@ knowns [options] [command]
 
 - [`knowns agents`](knowns_agents.md) — Manage agent instruction files
 - [`knowns audit`](knowns_audit.md) — Inspect MCP tool call audit trail
-- [`knowns board`](knowns_board.md) — Show the Kanban board
 - [`knowns browser`](knowns_browser.md) — Launch the Knowns web UI
 - [`knowns code`](knowns_code.md) — Code intelligence commands
 - [`knowns config`](knowns_config.md) — Manage project configuration
@@ -38,6 +36,7 @@ knowns [options] [command]
 - [`knowns migrate`](knowns_migrate.md) — Apply pending project config schema migrations
 - [`knowns provider`](knowns_provider.md) — Manage embedding API providers
 - [`knowns qdrant`](knowns_qdrant.md) — Inspect and control the semantic Qdrant runtime
+- [`knowns quickstart`](knowns_quickstart.md) — Show the short path from an empty project to a finished task
 - [`knowns reconcile`](knowns_reconcile.md) — Preview or apply canonical Task/Doc filesystem reconciliation
 - [`knowns resolve`](knowns_resolve.md) — Resolve a semantic reference
 - [`knowns retrieve`](knowns_retrieve.md) — Retrieve ranked context for docs, tasks, and memories

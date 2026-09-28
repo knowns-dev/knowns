@@ -510,16 +510,3 @@ func TestCLI_SemanticSearch(t *testing.T) {
 		t.Logf("doctor search scope: %s", truncate(res.Stdout, 400))
 	})
 }
-
-// TestCLI_Board tests the board command runs without error.
-func TestCLI_Board(t *testing.T) {
-	dir := setupTestProject(t)
-
-	// Create a task so the board has something
-	runCli(t, dir, "task", "create", "Board Test Task")
-
-	t.Run("board runs", func(t *testing.T) {
-		res := runCli(t, dir, "board")
-		requireSuccess(t, res)
-	})
-}

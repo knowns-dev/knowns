@@ -63,8 +63,8 @@ knowns task edit <id> --plan '1. Research\n2. Implement\n3. Test'
 Khi truyền `--prefix`, Knowns tạo ID như `FR-4F7Q2M`. Prefix được chuẩn hoá
 thành chữ hoa, dài 2-8 ký tự chữ/số và phải bắt đầu bằng chữ. Đây là override
 cho một task, không thay đổi config. Nếu bỏ qua, Knowns dùng
-`settings.defaultTaskIdPrefix`; project chưa cấu hình vẫn dùng ID lowercase
-6 ký tự như trước.
+`settings.defaultTaskIdPrefix`; project chưa cấu hình sẽ dùng prefix suy ra từ
+tên project (`Knowns` cho ra `KN`). ID lowercase cũ như `4f7q2m` được giữ nguyên.
 
 ## Doc
 

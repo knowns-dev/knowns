@@ -52,8 +52,10 @@ Returns: `{ projectRoot, isExplicitlySet, isValid, source }`
 }
 ```
 
-Generated IDs follow `settings.defaultTaskIdPrefix`: `KN-4F7Q2M` when it is set,
-`4f7q2m` when it is not. Pass IDs through unchanged; the prefix is not separable.
+Every new ID carries a prefix: `settings.defaultTaskIdPrefix` when it is set,
+otherwise one derived from the project name (`Knowns` gives `KN-4F7Q2M`).
+Older unprefixed IDs such as `4f7q2m` stay valid and are never rewritten. Pass
+IDs through unchanged; the prefix is not separable.
 
 `prefix` overrides the default for that one Task without touching config, so a
 spec-driven wave can mint `SPC-4F7Q2M` while the project default stays `KN`. It

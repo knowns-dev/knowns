@@ -105,6 +105,9 @@ func runMemoryList(cmd *cobra.Command, args []string) error {
 		page, _ := getPageOpts(cmd)
 		total := len(entries)
 		limit := defaultPlainItemLimit
+		if !plainPageRequested(cmd) {
+			limit = max(total, 1)
+		}
 		if page <= 0 {
 			page = 1
 		}
@@ -141,12 +144,7 @@ func runMemoryList(cmd *cobra.Command, args []string) error {
 			}
 		}
 	} else {
-		content := renderMemoryList(entries)
-		if !isTTY() || isPagerDisabled(cmd) {
-			fmt.Print(content)
-		} else {
-			return renderOrPage(cmd, "Memory Entries", content)
-		}
+		fmt.Print(renderMemoryList(entries))
 	}
 	return nil
 }
@@ -272,7 +270,7 @@ func runMemoryView(cmd *cobra.Command, id string) error {
 		printPaged(cmd, pb.String())
 	} else {
 		content := renderMemoryView(entry)
-		return renderOrPage(cmd, entry.Title, content)
+		return printContent(content)
 	}
 	return nil
 }

@@ -47,7 +47,7 @@ func TestParameterValidOnAnotherActionIsRejected(t *testing.T) {
 func TestEveryDispatchedActionDeclaresParams(t *testing.T) {
 	for _, action := range []string{
 		"create", "get", "update", "delete", "list", "history", "board",
-		"archive", "unarchive", "batch_archive", "batch_unarchive", "hard_delete",
+		"archive", "unarchive", "batch_archive", "batch_unarchive", "hard_delete", "restore",
 	} {
 		if _, ok := taskActionParams[action]; !ok {
 			t.Errorf("action %q has no declared parameters", action)

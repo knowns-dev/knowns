@@ -136,7 +136,8 @@ Read the spec's optional `Task Generation` → `Task Prefix`:
 
 - Present: normalize to uppercase and pass it as `prefix` on every create call.
 - Absent or blank: omit `prefix`, and creation falls back to the project's
-  `settings.defaultTaskIdPrefix`, or the legacy format when that is unset.
+  `settings.defaultTaskIdPrefix`, or a prefix derived from the project name when
+  that is unset.
 
 `prefix` shapes the generated ID only. It is not tied to task type, it must
 never be added to the title, and it does not change project config.

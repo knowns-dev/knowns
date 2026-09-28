@@ -122,6 +122,12 @@ func lintLine(root *cobra.Command, line string) []string {
 			end = locs[i+1][0]
 		}
 
+		// Cobra registers the help flag lazily, on Execute or on the first help
+		// render, so it is absent from the flag set a docs pass walks. Without
+		// this, `knowns task --help` lints as an error, which would make the
+		// most basic invocation in the CLI the one thing docs cannot show.
+		cmd.InitDefaultHelpFlag()
+
 		problem := ""
 		for _, m := range flagTokenRE.FindAllStringSubmatch(line[loc[1]:end], -1) {
 			if cmd.Flags().Lookup(m[1]) == nil && cmd.InheritedFlags().Lookup(m[1]) == nil {

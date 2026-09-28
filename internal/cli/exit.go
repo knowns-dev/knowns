@@ -2,27 +2,11 @@ package cli
 
 import (
 	"errors"
-	"sync/atomic"
 )
 
+// ErrCommandCancelled marks a command the user interrupted. The input wizards
+// still return it; the display TUI that used to swallow it is gone.
 var ErrCommandCancelled = errors.New("command cancelled")
-var suppressedTUICancel atomic.Bool
-
-func suppressTUICancel(err error) error {
-	if errors.Is(err, ErrCommandCancelled) {
-		suppressedTUICancel.Store(true)
-		return nil
-	}
-	return err
-}
-
-func resetSuppressedTUICancel() {
-	suppressedTUICancel.Store(false)
-}
-
-func wasTUICancelSuppressed() bool {
-	return suppressedTUICancel.Load()
-}
 
 type commandExitError struct {
 	code int

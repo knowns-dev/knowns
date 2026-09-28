@@ -74,7 +74,7 @@ Optional default for newly generated task IDs. `KN` produces IDs such as
 - normalized to uppercase
 - independent of task type; callers may use any valid one-off prefix
 - changing or clearing it affects future tasks only
-- omitting it preserves the legacy six-character lowercase format
+- when unset, new IDs take a prefix derived from the project name (`Knowns` gives `KN`); existing IDs are never rewritten
 
 Configure it with the init wizard, `knowns init --task-prefix KN`,
 `knowns settings`, the Web settings page, or:

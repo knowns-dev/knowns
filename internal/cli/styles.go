@@ -122,7 +122,10 @@ func StatusStyle(status string) lipgloss.Style {
 	case "urgent":
 		return lipgloss.NewStyle().Bold(true).Foreground(colorRed)
 	default: // "todo"
-		return lipgloss.NewStyle().Foreground(colorGray)
+		// The default foreground, not colorGray. "todo" is the most common status
+		// in a backlog, and Color("8") is the lowest-contrast entry in the palette,
+		// so the rows a reader most needs to see were the hardest to read.
+		return lipgloss.NewStyle()
 	}
 }
 
@@ -135,7 +138,9 @@ func PriorityStyle(priority string) lipgloss.Style {
 	case "high":
 		return lipgloss.NewStyle().Foreground(colorRed)
 	case "low":
-		return lipgloss.NewStyle().Foreground(colorGray)
+		// Low priority is de-emphasised by carrying no colour at all, which reads
+		// as quieter than red or yellow without becoming unreadable.
+		return lipgloss.NewStyle()
 	default: // "medium"
 		return lipgloss.NewStyle().Foreground(colorYellow)
 	}

@@ -20,10 +20,13 @@ knowns reconcile [flags]
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--json` | `bool` | — | JSON output |
-| `--no-pager` | `bool` | — | Disable TUI pager (print styled output directly) |
 | `--page` | `int` | `0` | Page number for paginated output (e.g. --page 2) |
 | `--page-size` | `int` | `0` | Lines per page (default 50) |
 | `--plain` | `bool` | — | Plain text output (for AI agents) |
+
+## Subcommands
+
+- [`knowns reconcile restore`](knowns_reconcile_restore.md) — Preview or reactivate a Task or Doc whose history records a deletion
 
 ## See also
 

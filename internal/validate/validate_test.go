@@ -676,6 +676,35 @@ func TestRunValidatesProjectMemoriesButNotGlobalOnes(t *testing.T) {
 	}
 }
 
+// The global layer is excluded by default, but it still needs an audit path:
+// its entries have no project that owns their hygiene. IncludeGlobalMemory is
+// that path, and its findings stay warnings rather than blocking errors.
+func TestIncludeGlobalMemoryAuditsTheGlobalLayer(t *testing.T) {
+	store := newValidateTestStore(t)
+	global := &models.MemoryEntry{
+		ID: "globaudit", Title: "Global entry", Content: "machine wide",
+		Layer: models.MemoryLayerGlobal, Status: models.MemoryStatusActive,
+	}
+	if err := store.Memory.Create(global); err != nil {
+		t.Fatalf("create global memory: %v", err)
+	}
+
+	result := Run(store, Options{Scope: "memory", IncludeGlobalMemory: true})
+	saw := false
+	for _, issue := range result.Issues {
+		if issue.Entity != "globaudit" {
+			continue
+		}
+		saw = true
+		if issue.Level == "error" {
+			t.Fatalf("missing provenance on a global memory was a blocking error: %+v", issue)
+		}
+	}
+	if !saw {
+		t.Fatalf("global memory was not audited with IncludeGlobalMemory: %+v", result.Issues)
+	}
+}
+
 func TestGlobalMemoriesStillResolveProjectReferences(t *testing.T) {
 	// Excluding global memories from validation must not make a Task that
 	// legitimately cites one look broken.

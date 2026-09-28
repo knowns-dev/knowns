@@ -203,7 +203,7 @@ type MCPServer struct {
 }
 
 func (s *MCPServer) AddTool(tool mcp.Tool, handler server.ToolHandlerFunc) {
-	s.srv.AddTool(tool, handler)
+	s.srv.AddTool(tool, handlers.RejectUnknownArguments(tool, handler))
 }
 
 // RegisterHelp adds an in-memory help entry for a tool action key.

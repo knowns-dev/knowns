@@ -57,9 +57,10 @@ mcp_knowns_tasks({ "action": "list", "status": "in-progress" })
 mcp_knowns_tasks({ "action": "board" })
 ```
 
-Note the shape of the Task IDs you get back. A project that sets
-`settings.defaultTaskIdPrefix` generates IDs like `KN-4F7Q2M`; without it they
-look like `4f7q2m`. Either way, pass the ID exactly as printed — the hyphen in
+Note the shape of the Task IDs you get back. New IDs always carry a prefix,
+from `settings.defaultTaskIdPrefix` or, when that is unset, derived from the
+project name, so they look like `KN-4F7Q2M`. Older tasks may still have plain
+IDs like `4f7q2m`. Either way, pass the ID exactly as printed: the hyphen in
 `KN-4F7Q2M` is part of the ID, not a `task-` reference prefix to strip.
 
 The `initial` tool reports the active format. Over MCP you can override the
@@ -67,7 +68,7 @@ prefix per Task with `tasks({ action: "create", prefix: "SPC" })`; changing the
 project default is a CLI or Settings action, not an MCP one:
 
 ```bash
-knowns config get settings.defaultTaskIdPrefix --plain   # empty = legacy format
+knowns config get settings.defaultTaskIdPrefix --plain   # empty = derived from project name
 knowns config set settings.defaultTaskIdPrefix SPC
 ```
 

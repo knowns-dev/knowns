@@ -1,11 +1,13 @@
 package runtimememory
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
 )
 
@@ -229,5 +231,35 @@ func TestSameMemoryIsNeverInjectedTwice(t *testing.T) {
 	}
 	if pack.Items[0].Semantic != 0.61 {
 		t.Fatalf("kept the copy with cosine %.2f, want the stronger 0.61", pack.Items[0].Semantic)
+	}
+}
+
+type fakeMemorySearcher struct {
+	results  []models.SearchResult
+	degraded *search.SearchDegradation
+}
+
+func (f fakeMemorySearcher) SearchWithDegradation(search.SearchOptions) ([]models.SearchResult, *search.SearchDegradation, error) {
+	return f.results, f.degraded, nil
+}
+
+// TestDegradedSemanticSearchFallsBackToKeywords covers 2026-09-25: Ollama had
+// quit while Qdrant stayed up. The engine still reported semantic search as
+// available, its semantic leg failed, and it returned keyword-only hits with
+// no cosine. The relevance floor dropped all of them, so every prompt got no
+// memory at all instead of the keyword fallback.
+func TestDegradedSemanticSearchFallsBackToKeywords(t *testing.T) {
+	entry := &models.MemoryEntry{Title: "No em dash", Category: "preference", Layer: "project", Status: "active", Content: "Never use the em dash."}
+	store, _ := relevanceStore(t, entry)
+	keywordOnly := []models.SearchResult{{Type: "memory", ID: entry.ID, Score: 0.9, MatchedBy: []string{"keyword"}}}
+
+	degraded := fakeMemorySearcher{results: keywordOnly, degraded: &search.SearchDegradation{Err: errors.New("embedder unreachable")}}
+	if hits, ok := hybridCandidatesFrom(store, degraded, Input{UserPrompt: "em dash"}, 20); ok {
+		t.Fatalf("a degraded search was treated as the semantic answer: %+v", hits)
+	}
+
+	healthy := fakeMemorySearcher{results: []models.SearchResult{{Type: "memory", ID: entry.ID, Score: 0.9, SemanticScore: 0.7, MatchedBy: []string{"semantic", "keyword"}}}}
+	if hits, ok := hybridCandidatesFrom(store, healthy, Input{UserPrompt: "em dash"}, 20); !ok || len(hits) != 1 {
+		t.Fatalf("a healthy search was not used: ok=%v hits=%+v", ok, hits)
 	}
 }

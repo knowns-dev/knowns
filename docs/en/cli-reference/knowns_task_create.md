@@ -8,6 +8,24 @@ Create a new task
 knowns task create <title> [flags]
 ```
 
+## Examples
+
+```bash
+# A task with nothing but a title
+  knowns task create "Add JWT auth"
+
+  # With outcome-oriented acceptance criteria, repeat --ac per criterion
+  knowns task create "Add JWT auth" \
+    --ac "User can log in and receive a token" \
+    --ac "Expired tokens are rejected"
+
+  # With priority and labels
+  knowns task create "Fix login timeout" --priority high -l auth,bug
+
+  # As a subtask of an existing task
+  knowns task create "Write auth tests" --parent KN-A1B2C3
+```
+
 ## Flags
 
 | Flag | Type | Default | Description |
@@ -30,7 +48,6 @@ knowns task create <title> [flags]
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--json` | `bool` | — | JSON output |
-| `--no-pager` | `bool` | — | Disable TUI pager (print styled output directly) |
 | `--page` | `int` | `0` | Page number for paginated output (e.g. --page 2) |
 | `--page-size` | `int` | `0` | Lines per page (default 50) |
 | `--plain` | `bool` | — | Plain text output (for AI agents) |

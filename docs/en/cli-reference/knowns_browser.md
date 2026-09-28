@@ -25,14 +25,12 @@ knowns browser [flags]
 | `--restart` | `bool` | — | Restart server if already running |
 | `--scan` | `string` | — | Comma-separated directories to scan for projects |
 | `--tunnel` | `bool` | — | Expose via a Cloudflare Quick Tunnel (requires cloudflared) |
-| `--watch` | `bool` | — | Enable file watcher for auto-indexing on code changes |
 
 ## Inherited flags
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--json` | `bool` | — | JSON output |
-| `--no-pager` | `bool` | — | Disable TUI pager (print styled output directly) |
 | `--page` | `int` | `0` | Page number for paginated output (e.g. --page 2) |
 | `--page-size` | `int` | `0` | Lines per page (default 50) |
 | `--plain` | `bool` | — | Plain text output (for AI agents) |

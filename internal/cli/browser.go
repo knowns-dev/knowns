@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -85,7 +84,6 @@ func runBrowser(cmd *cobra.Command, args []string) error {
 	noOpen, _ := cmd.Flags().GetBool("no-open")
 	restart, _ := cmd.Flags().GetBool("restart")
 	dev, _ := cmd.Flags().GetBool("dev")
-	watchFlag, _ := cmd.Flags().GetBool("watch")
 	tunnelFlag, _ := cmd.Flags().GetBool("tunnel")
 	passwordFlag, _ := cmd.Flags().GetString("password")
 	allowTaskHardDelete, _ := cmd.Flags().GetBool("allow-task-hard-delete")
@@ -143,18 +141,6 @@ func runBrowser(cmd *cobra.Command, args []string) error {
 
 	if passwordFlag != "" {
 		fmt.Printf("  %s  %s\n", StyleSuccess.Render("🔒"), "Password protection active")
-	}
-
-	// Start file watcher if --watch is enabled
-	if watchFlag && store != nil && projectRoot != "" {
-		ctx, cancelWatcher := context.WithCancel(context.Background())
-		defer cancelWatcher()
-		go func() {
-			if err := StartCodeWatcher(ctx, store, projectRoot, 1500); err != nil {
-				fmt.Fprintf(os.Stderr, "watcher error: %v\n", err)
-			}
-		}()
-		fmt.Printf("  %s  %s\n", StyleInfo.Render("◎"), StyleDim.Render("file watcher enabled"))
 	}
 
 	errCh := make(chan error, 1)
@@ -284,7 +270,10 @@ func init() {
 	browserCmd.Flags().Bool("dev", false, "Enable development mode (verbose logging)")
 	browserCmd.Flags().String("project", "", "Project path to open directly")
 	browserCmd.Flags().String("scan", "", "Comma-separated directories to scan for projects")
-	browserCmd.Flags().Bool("watch", false, "Enable file watcher for auto-indexing on code changes")
+	// --watch started a code watcher for an index that no longer exists. It
+	// stays accepted, hidden and inert, so existing scripts keep working.
+	browserCmd.Flags().Bool("watch", false, "No effect; code files are no longer indexed")
+	_ = browserCmd.Flags().MarkHidden("watch")
 	browserCmd.Flags().Bool("tunnel", false, "Expose via a Cloudflare Quick Tunnel (requires cloudflared)")
 	browserCmd.Flags().String("password", "", "Protect WebUI with a password (in-memory only)")
 	browserCmd.Flags().Bool("allow-task-hard-delete", false, "Grant this server instance Task hard-delete capability")

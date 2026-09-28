@@ -177,6 +177,9 @@ type FilesystemReconciler struct {
 // recovery ordering. Hooks never come from filesystem or public requests.
 type LifecycleFailureHooks struct {
 	BeforeCanonicalRemove func(entityType, entityID, path string) error
+	// BeforeCanonicalRead fails a canonical file read, the way a process out
+	// of file descriptors does, without the file being absent.
+	BeforeCanonicalRead func(path string) error
 }
 
 func (r *FilesystemReconciler) SetLifecycleFailureHooks(hooks LifecycleFailureHooks) {
@@ -422,6 +425,9 @@ func (r *FilesystemReconciler) reconcileFile(ctx context.Context, path string, e
 		last := stream.Records[len(stream.Records)-1]
 		entry.Revision, entry.HeadHash = last.Revision, last.NewHash
 		if last.NewHash == hash {
+			if last.Tombstone && last.Operation == LifecycleOperationDelete {
+				return r.reactivateReappearedEntity(ctx, entityType, entityID, path, hash, last, execute, result, entry)
+			}
 			return result, entry, nil
 		}
 		if !execute {
@@ -532,6 +538,11 @@ func (r *FilesystemReconciler) reconcileFile(ctx context.Context, path string, e
 }
 
 func (r *FilesystemReconciler) resolveCanonicalHint(ctx context.Context, path string) (string, string, string, error) {
+	if r.failureHooks.BeforeCanonicalRead != nil {
+		if err := r.failureHooks.BeforeCanonicalRead(path); err != nil {
+			return "", "", "", fmt.Errorf("%w: %s: %v", ErrReconcileUnsafe, filepath.Base(path), err)
+		}
+	}
 	data, err := stableRead(path)
 	if err != nil {
 		return "", "", "", fmt.Errorf("%w: %s: %v", ErrReconcileUnsafe, filepath.Base(path), err)

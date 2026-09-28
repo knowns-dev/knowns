@@ -14,6 +14,7 @@ knowns validate [flags]
 |---|---|---|---|
 | `--entity` | `string` | — | Validate a specific entity (task ID or doc path) |
 | `--fix` | `bool` | — | Auto-fix supported issues |
+| `--include-global` | `bool` | — | Also validate the user-level global memory layer, shared by every project |
 | `--scope` | `string` | `all` | Validation scope: all\|tasks\|docs\|templates\|sdd |
 | `--strict` | `bool` | — | Treat warnings as errors |
 
@@ -22,7 +23,6 @@ knowns validate [flags]
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--json` | `bool` | — | JSON output |
-| `--no-pager` | `bool` | — | Disable TUI pager (print styled output directly) |
 | `--page` | `int` | `0` | Page number for paginated output (e.g. --page 2) |
 | `--page-size` | `int` | `0` | Lines per page (default 50) |
 | `--plain` | `bool` | — | Plain text output (for AI agents) |

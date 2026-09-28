@@ -12,7 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/howznguyen/knowns/internal/codegen"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/howznguyen/knowns/internal/util"
 )
@@ -40,10 +39,18 @@ var rootCmd = &cobra.Command{
 		fmt.Println("  Enabling AI to understand your project instantly.")
 		fmt.Println()
 		fmt.Println(StyleBold.Render("  Quick Start:"))
-		fmt.Printf("    %s  %s\n", StyleInfo.Render("knowns init"), "Initialize project")
-		fmt.Printf("    %s  %s\n", StyleInfo.Render("knowns task list"), "List all tasks")
-		fmt.Printf("    %s  %s\n", StyleInfo.Render("knowns browser"), "Open web UI")
-		fmt.Printf("    %s  %s\n", StyleInfo.Render("knowns --help"), "Show all commands")
+		for _, row := range [][2]string{
+			{"knowns init", "Initialize project"},
+			{"knowns quickstart", "Learn the short path to a finished task"},
+			{"knowns task list", "List all tasks"},
+			{"knowns --help", "Show all commands"},
+		} {
+			fmt.Printf("    %s%s%s\n",
+				StyleInfo.Render(row[0]),
+				strings.Repeat(" ", len("knowns quickstart")-len(row[0])+2),
+				row[1],
+			)
+		}
 		fmt.Println()
 		fmt.Printf("  %s  %s\n", StyleBold.Render("Homepage: "), StyleInfo.Render("https://knowns.sh"))
 		fmt.Printf("  %s  %s\n", StyleBold.Render("Documents:"), StyleInfo.Render("https://knowns.sh/docs"))
@@ -64,63 +71,98 @@ func customHelpFunc(cmd *cobra.Command, args []string) {
 	fmt.Printf("%s %s\n", StyleBold.Render(cmd.Short), StyleDim.Render("(v"+util.Version+")"))
 	fmt.Println()
 
-	// Usage
+	// Usage. A command that both takes arguments itself and has subcommands
+	// gets both lines; printing only UseLine() hid `knowns task create` and the
+	// `knowns task <id>` shorthand behind a bare `knowns task [flags]`.
 	fmt.Printf("%s %s\n", StyleBold.Render("Usage:"), StyleInfo.Render(cmd.UseLine()))
+	if cmd.HasAvailableSubCommands() {
+		fmt.Printf("%s %s\n", strings.Repeat(" ", len("Usage:")), StyleInfo.Render(cmd.CommandPath()+" [command]"))
+	}
 	fmt.Println()
 
-	// Commands - grouped
-	if cmd.HasAvailableSubCommands() {
-		fmt.Println(StyleBold.Render("Commands:"))
+	// Examples. A flag list says what a command accepts; only a worked example
+	// says what a real invocation looks like, which is the part a reader is
+	// usually here for. Comment lines are dimmed so the runnable lines stand out.
+	if cmd.Example != "" {
+		fmt.Println(StyleBold.Render("Examples:"))
+		for _, line := range strings.Split(strings.TrimRight(cmd.Example, "\n"), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+				fmt.Println(StyleDim.Render(line))
+			} else if strings.TrimSpace(line) == "" {
+				fmt.Println()
+			} else {
+				fmt.Println(StyleInfo.Render(line))
+			}
+		}
+		fmt.Println()
+	}
 
-		// Find max command name length for alignment
+	// Commands. The root list is grouped by job; a subcommand's own list is
+	// short enough that a flat list still reads at a glance.
+	if cmd.HasAvailableSubCommands() {
+		short := map[string]string{}
 		maxLen := 0
 		for _, c := range cmd.Commands() {
-			if !c.IsAvailableCommand() || c.Name() == "help" || c.Name() == "completion" {
+			if !isListableCommand(c) {
 				continue
 			}
+			short[c.Name()] = c.Short
 			if len(c.Name()) > maxLen {
 				maxLen = len(c.Name())
 			}
 		}
 
-		for _, c := range cmd.Commands() {
-			if !c.IsAvailableCommand() || c.Name() == "help" || c.Name() == "completion" {
-				continue
-			}
-			padding := strings.Repeat(" ", maxLen-len(c.Name())+2)
-			fmt.Printf("  %s%s%s\n",
-				StyleInfo.Render(c.Name()),
-				padding,
-				StyleDim.Render(c.Short),
-			)
+		// The description is the content of this list, not a footnote on it.
+		// The cyan command name already carries the hierarchy, so the text next
+		// to it stays at the terminal's default foreground; rendering it in
+		// colorGray ("8", the lowest-contrast entry in the palette) sank the
+		// half of each line a reader is actually here for.
+		printCommand := func(name string) {
+			padding := strings.Repeat(" ", maxLen-len(name)+2)
+			fmt.Printf("  %s%s%s\n", StyleInfo.Render(name), padding, short[name])
 		}
-		fmt.Println()
+
+		if cmd.Parent() == nil {
+			for _, g := range groupRootCommands(cmd) {
+				fmt.Println(StyleBold.Render(g.Title + ":"))
+				for _, name := range g.Commands {
+					printCommand(name)
+				}
+				fmt.Println()
+			}
+		} else {
+			var names []string
+			for _, c := range cmd.Commands() {
+				if !isListableCommand(c) {
+					continue
+				}
+				names = append(names, c.Name())
+			}
+			fmt.Println(StyleBold.Render("Commands:"))
+			for _, name := range sortSubcommands(names) {
+				printCommand(name)
+			}
+			fmt.Println()
+		}
 	}
 
 	// Flags
 	if cmd.HasAvailableLocalFlags() {
 		fmt.Println(StyleBold.Render("Options:"))
-		fmt.Println(StyleDim.Render(cmd.LocalFlags().FlagUsages()))
+		fmt.Println(cmd.LocalFlags().FlagUsages())
+	}
+
+	// Global flags, on subcommands only; on the root they are already the
+	// Options block above. Leaving them out is how `--plain` came to be
+	// documented as something only certain commands accepted, when it has
+	// always been valid everywhere.
+	if cmd.Parent() != nil && cmd.InheritedFlags().HasAvailableFlags() {
+		fmt.Println(StyleBold.Render("Global options:"))
+		fmt.Println(cmd.InheritedFlags().FlagUsages())
 	}
 
 	// Footer
 	fmt.Printf("%s\n", StyleDim.Render("Use \"knowns [command] --help\" for more information about a command."))
-}
-
-// maybeWarnSkillsOutOfSync prints a one-line warning if embedded skills differ
-// from the on-disk copies. This nudges the user to run `knowns sync` after upgrading.
-func maybeWarnSkillsOutOfSync() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return
-	}
-	root := filepath.Join(cwd, ".knowns")
-	if _, err := os.Stat(root); err != nil {
-		return
-	}
-	if codegen.SkillsOutOfSync(cwd) {
-		fmt.Fprintf(os.Stderr, "%s\n", StyleWarning.Render("⚠ Skills are out of sync. Run 'knowns sync' to update."))
-	}
 }
 
 // maybeWarnUnmigratedConfig prints a one-line notice naming `knowns migrate`
@@ -166,9 +208,6 @@ func Execute() error {
 		return rootCmd.Execute()
 	}
 
-	// Warn if skills are out of sync after a CLI upgrade.
-	maybeWarnSkillsOutOfSync()
-
 	// Warn once per command if the project config has pending schema migrations.
 	maybeWarnUnmigratedConfig()
 
@@ -176,9 +215,6 @@ func Execute() error {
 }
 
 func executeWithUpdateNotice(args []string, run func() error, check func() string, timeout time.Duration, output io.Writer) error {
-	resetSuppressedTUICancel()
-	defer resetSuppressedTUICancel()
-
 	if !util.ShouldCheckForUpdate(args) {
 		return run()
 	}
@@ -191,10 +227,6 @@ func executeWithUpdateNotice(args []string, run func() error, check func() strin
 	if err := run(); err != nil {
 		return err
 	}
-	if wasTUICancelSuppressed() {
-		return nil
-	}
-
 	select {
 	case msg := <-msgCh:
 		if msg != "" {
@@ -215,7 +247,11 @@ func init() {
 	}
 	rootCmd.PersistentFlags().Bool("plain", false, "Plain text output (for AI agents)")
 	rootCmd.PersistentFlags().Bool("json", false, "JSON output")
-	rootCmd.PersistentFlags().Bool("no-pager", false, "Disable TUI pager (print styled output directly)")
+	// The pager it disabled is gone; output is always printed directly now. The
+	// flag stays registered and hidden so a script that still passes it keeps
+	// working instead of failing on an unknown flag.
+	rootCmd.PersistentFlags().Bool("no-pager", false, "No effect; output is always printed directly")
+	_ = rootCmd.PersistentFlags().MarkHidden("no-pager")
 	rootCmd.PersistentFlags().Int("page", 0, "Page number for paginated output (e.g. --page 2)")
 	rootCmd.PersistentFlags().Int("page-size", 0, "Lines per page (default 50)")
 }

@@ -8,6 +8,19 @@ View a documentation file
 knowns doc view <path> [flags]
 ```
 
+## Examples
+
+```bash
+# Read a doc
+  knowns doc view "ARCHITECTURE"
+
+  # The same thing, since view is optional
+  knowns doc "patterns/controller"
+
+  # Table of contents first, then one section, for a long doc
+  knowns doc "ARCHITECTURE" --toc
+```
+
 ## Flags
 
 | Flag | Type | Default | Description |
@@ -23,7 +36,6 @@ knowns doc view <path> [flags]
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--json` | `bool` | — | JSON output |
-| `--no-pager` | `bool` | — | Disable TUI pager (print styled output directly) |
 | `--page` | `int` | `0` | Page number for paginated output (e.g. --page 2) |
 | `--page-size` | `int` | `0` | Lines per page (default 50) |
 | `--plain` | `bool` | — | Plain text output (for AI agents) |

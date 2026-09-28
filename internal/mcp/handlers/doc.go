@@ -21,7 +21,7 @@ import (
 func RegisterDocTool(s toolRegistrar, getStore func() *storage.Store) {
 	s.AddTool(
 		mcp.NewTool("docs",
-			mcp.WithDescription("Documentation operations. Use 'action' to specify: create, get, update, delete, hard_delete, list, history, diff, restore. hard_delete is separately permission-gated and requires explicit confirmation and reason."),
+			mcp.WithDescription("Documentation operations. Use 'action' to specify: create, get, update, delete, hard_delete, list, history, diff, restore. restore rolls back to a given revision; without a revision it reactivates a Doc whose history head is a delete tombstone. hard_delete is separately permission-gated and requires explicit confirmation and reason."),
 			mcp.WithString("action",
 				mcp.Required(),
 				mcp.Description("Action to perform"),
@@ -71,7 +71,7 @@ func RegisterDocTool(s toolRegistrar, getStore func() *storage.Store) {
 				mcp.Description("Rename document to new path (update)"),
 			),
 			mcp.WithString("revision",
-				mcp.Description("Revision ID or number for diff/restore (defaults to latest for diff)"),
+				mcp.Description("Revision ID or number for diff/restore (defaults to latest for diff; omit on restore to reactivate a tombstoned Doc)"),
 			),
 			mcp.WithString("revisionId",
 				mcp.Description("Alias for revision ID used by API clients"),
@@ -157,6 +157,17 @@ func RegisterDocTool(s toolRegistrar, getStore func() *storage.Store) {
 			"return":        "summary (default) | full legacy document payload",
 		},
 		Flow: "Use the returned path after a rename; previousPath is included only for renames. Use return=full only when the complete updated document is required.",
+	})
+	registerHelp(s, "docs.restore", HelpEntry{
+		When: "Restore an earlier revision of a document, or reactivate a document whose history records a deletion while its content is still recoverable.",
+		Params: map[string]string{
+			"path":         "required — document path",
+			"revision":     "revision to restore; omit to reactivate a tombstoned document",
+			"mode":         "document (default) or section, with a revision",
+			"section":      "heading title or section number, with mode=section",
+			"expectedHash": "expected canonical hash, with a revision",
+		},
+		Flow: "Reactivation refuses when the file on disk holds content the tombstone did not record, so it never adopts bytes the document did not own.",
 	})
 }
 
@@ -567,7 +578,9 @@ func handleDocRestore(getStore func() *storage.Store, req mcp.CallToolRequest) (
 	args := req.GetArguments()
 	revision := docRevisionArg(args)
 	if revision == "" {
-		return errResult("revision is required")
+		// Without a revision, restore reactivates a Doc whose history head is a
+		// delete tombstone.
+		return tombstoneRestoreResult(context.Background(), store, "doc", path, true)
 	}
 	section, _ := stringArg(args, "section")
 	mode, _ := stringArg(args, "mode")
