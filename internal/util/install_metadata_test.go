@@ -12,6 +12,7 @@ import (
 func TestInstallMetadataKeepsScriptLinkPaths(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads this on Windows
 
 	written := `{
   "method": "script",
@@ -60,6 +61,7 @@ func TestDetectInstallMethodFollowsInstallerLink(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads this on Windows
 	t.Setenv("npm_config_user_agent", "")
 
 	binDir := filepath.Join(home, ".knowns", "bin")
