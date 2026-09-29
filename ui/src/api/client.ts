@@ -763,7 +763,7 @@ export async function createDoc(data: Record<string, unknown>): Promise<unknown>
 
 export async function updateDoc(
 	path: string,
-	data: { content?: string; title?: string; description?: string; tags?: string[] },
+	data: { content?: string; title?: string; description?: string; tags?: string[]; expectedHash?: string },
 ): Promise<Doc> {
 	const encodedPath = encodeDocPath(path);
 	const res = await apiFetch(`${API_BASE}/api/docs/${encodedPath}`, {

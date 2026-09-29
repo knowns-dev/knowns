@@ -67,6 +67,10 @@ function DocsPageInner() {
 	} = docsContext;
 
 	const [saving, setSaving] = useState(false);
+	// A failed save shows its server message next to what was being saved,
+	// e.g. a change that arrived through store sync after this version was read.
+	const [saveError, setSaveError] = useState<string | null>(null);
+	const [metaError, setMetaError] = useState<{ field: "title" | "description" | "tags"; message: string } | null>(null);
 	const [showCreateView, setShowCreateView] = useState(false);
 	const [pathCopied, setPathCopied] = useState(false);
 	const [previewTaskId, setPreviewTaskId] = useState<string | null>(null);
@@ -167,10 +171,12 @@ function DocsPageInner() {
 		}
 		if (Object.keys(updates).length === 0) return;
 		try {
-			await updateDoc(normalizePathForAPI(selectedDoc.path), updates);
+			await updateDoc(normalizePathForAPI(selectedDoc.path), { ...updates, expectedHash: selectedDoc.canonicalHash });
+			setMetaError(null);
 			loadDocs();
 		} catch (err) {
 			console.error("Failed to save metadata:", err);
+			setMetaError({ field, message: err instanceof Error ? err.message : String(err) });
 			setMetaTitle(selectedDoc.metadata.title || "");
 			setMetaDescription(selectedDoc.metadata.description || "");
 			setMetaTags(selectedDoc.metadata.tags?.join(", ") || "");
@@ -290,11 +296,19 @@ function DocsPageInner() {
 	const handleSave = async () => {
 		if (!selectedDoc) return;
 		setSaving(true);
-		try { await updateDoc(normalizePathForAPI(selectedDoc.path), { content: editedContent }); loadDocs(); setIsEditing(false); }
-		catch (err) { console.error("Failed to save doc:", err); }
+		try {
+			await updateDoc(normalizePathForAPI(selectedDoc.path), { content: editedContent, expectedHash: selectedDoc.canonicalHash });
+			setSaveError(null);
+			loadDocs();
+			setIsEditing(false);
+		}
+		catch (err) {
+			console.error("Failed to save doc:", err);
+			setSaveError(err instanceof Error ? err.message : String(err));
+		}
 		finally { setSaving(false); }
 	};
-	const handleCancel = () => { setIsEditing(false); setEditedContent(""); };
+	const handleCancel = () => { setIsEditing(false); setEditedContent(""); setSaveError(null); };
 	const openCreateView = () => { setShowCreateView(true); setMobileSidebarOpen(false); };
 	const dismissLineHighlight = () => {
 		setLineHighlight(null);
@@ -419,8 +433,15 @@ function DocsPageInner() {
 						</div>
 
 						{isEditing ? (
-							<div className="flex-1 min-h-0 overflow-hidden p-4 sm:p-6">
-								<MDEditor markdown={editedContent} onChange={setEditedContent} placeholder="Write your documentation here..." height="100%" className="h-full" />
+							<div className="flex-1 min-h-0 overflow-hidden p-4 sm:p-6 flex flex-col gap-3">
+								{saveError && (
+									<div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
+										{saveError}
+									</div>
+								)}
+								<div className="flex-1 min-h-0">
+									<MDEditor markdown={editedContent} onChange={setEditedContent} placeholder="Write your documentation here..." height="100%" className="h-full" />
+								</div>
 							</div>
 						) : (
 							<div className="flex-1 overflow-y-auto relative" ref={scrollContainerRef}>
@@ -432,6 +453,7 @@ function DocsPageInner() {
 											metaDescription={metaDescription} setMetaDescription={setMetaDescription}
 											metaTags={metaTags} setMetaTags={setMetaTags}
 											handleSaveMetadata={handleSaveMetadata}
+											metaError={metaError}
 											linkedTasks={linkedTasks}
 											linkedTasksExpanded={linkedTasksExpanded} setLinkedTasksExpanded={setLinkedTasksExpanded}
 											openTask={openTask}

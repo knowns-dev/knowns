@@ -30,6 +30,8 @@ interface DocsDocHeaderProps {
   metaTags: string;
   setMetaTags: (v: string) => void;
   handleSaveMetadata: (field: "title" | "description" | "tags") => void;
+  /** The last failed metadata save, shown under its field. */
+  metaError?: { field: "title" | "description" | "tags"; message: string } | null;
   linkedTasks: LinkedTask[];
   linkedTasksExpanded: boolean;
   setLinkedTasksExpanded: (v: boolean) => void;
@@ -45,6 +47,7 @@ export function DocsDocHeader({
   metaTags,
   setMetaTags,
   handleSaveMetadata,
+  metaError,
   linkedTasks,
   linkedTasksExpanded,
   setLinkedTasksExpanded,
@@ -66,8 +69,10 @@ export function DocsDocHeader({
           onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
           className="text-4xl font-semibold tracking-tight bg-transparent w-full outline-none border-none p-0 mb-2 placeholder:text-muted-foreground/35"
           placeholder="Untitled"
+          aria-invalid={metaError?.field === "title" || undefined}
         />
       )}
+      <FieldError error={metaError} field="title" />
 
       {/* Description */}
       {selectedDoc.isImported ? (
@@ -85,8 +90,10 @@ export function DocsDocHeader({
           onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
           className="text-[15px] leading-7 text-muted-foreground bg-transparent w-full outline-none border-none p-0 mb-4 placeholder:text-muted-foreground/35 max-w-2xl"
           placeholder="Add a description..."
+          aria-invalid={metaError?.field === "description" || undefined}
         />
       )}
+      <FieldError error={metaError} field="description" />
 
       {/* Tags */}
       <div className="mb-4 space-y-2">
@@ -99,6 +106,7 @@ export function DocsDocHeader({
             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
             className="bg-transparent outline-none border-none p-0 text-[12px] text-muted-foreground/75 placeholder:text-muted-foreground/40 w-full"
             placeholder="Add tags..."
+            aria-invalid={metaError?.field === "tags" || undefined}
           />
         ) : (
           selectedDoc.metadata.tags &&
@@ -112,6 +120,7 @@ export function DocsDocHeader({
             </div>
           )
         )}
+        <FieldError error={metaError} field="tags" />
         <div className="text-[11px] font-mono text-muted-foreground/65 break-all">
           @doc/{toDisplayPath(selectedDoc.path).replace(/\.md$/, "")}
         </div>
@@ -219,5 +228,20 @@ export function DocsDocHeader({
         </div>
       )}
     </header>
+  );
+}
+
+function FieldError({
+  error,
+  field,
+}: {
+  error?: { field: "title" | "description" | "tags"; message: string } | null;
+  field: "title" | "description" | "tags";
+}) {
+  if (!error || error.field !== field) return null;
+  return (
+    <p role="alert" className="mb-3 max-w-2xl text-xs leading-5 text-destructive">
+      {error.message}
+    </p>
   );
 }
