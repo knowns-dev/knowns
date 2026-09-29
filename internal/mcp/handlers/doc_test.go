@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
@@ -215,5 +216,35 @@ func unmarshalDocToolResult(t *testing.T, result *mcp.CallToolResult, target any
 	}
 	if err := json.Unmarshal([]byte(text.Text), target); err != nil {
 		t.Fatalf("unmarshal tool result: %v\n%s", err, text.Text)
+	}
+}
+
+// FR-12/13 on the MCP surface.
+func TestHandleDocStaleDeleteAfterSyncExplainsItself(t *testing.T) {
+	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
+	if err := store.Init("doc-mcp-sync"); err != nil {
+		t.Fatal(err)
+	}
+	getStore := func() *storage.Store { return store }
+	if _, err := handleDocCreate(getStore, mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"title": "Synced", "content": "v1"}}}); err != nil {
+		t.Fatal(err)
+	}
+	base, _ := store.Docs.Get("synced")
+	stale := base.CanonicalHash
+	updated := *base
+	updated.Content = "v2 from a teammate"
+	if err := store.MutateDocWithHistory(t.Context(), base, &updated, storage.DocMutationOptions{ExpectedHash: stale}); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.RecordSyncArrivals(store.Root, []storage.SyncArrival{{Path: "docs/synced.md", Author: "Alice <alice@example.com>", ArrivedAt: time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)}}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := handleDocDelete(getStore, mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"path": "synced", "dryRun": false, "expectedHash": stale}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, _ := result.Content[0].(mcp.TextContent)
+	if !result.IsError || !strings.Contains(text.Text, "Alice <alice@example.com>") || !strings.Contains(text.Text, "store sync") || !strings.Contains(text.Text, "Reread") {
+		t.Fatalf("MCP tool error must explain the sync conflict: %q", text.Text)
 	}
 }

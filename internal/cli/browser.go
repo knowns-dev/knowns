@@ -39,10 +39,16 @@ func resolveProject(cmd *cobra.Command) (store *storage.Store, projectRoot strin
 
 	// 1. Explicit --project flag
 	if projectFlag != "" {
-		absPath, err := filepath.Abs(projectFlag)
-		if err == nil {
-			knDir := filepath.Join(absPath, ".knowns")
-			store = storage.NewStore(knDir)
+		if loc, err := storage.LocateProjectAt(projectFlag); err == nil {
+			warnIgnoredKnowns(loc)
+			store = loc.Open()
+			projectRoot = loc.ProjectRoot
+			return
+		}
+		if absPath, err := filepath.Abs(projectFlag); err == nil {
+			// Not a project yet: keep today's behaviour of opening the path
+			// so the browser can offer to initialize it.
+			store = storage.NewStore(filepath.Join(absPath, ".knowns"))
 			projectRoot = absPath
 			return
 		}
@@ -67,7 +73,7 @@ func resolveProject(cmd *cobra.Command) (store *storage.Store, projectRoot strin
 	s, err := getStoreErr()
 	if err == nil {
 		store = s
-		projectRoot = filepath.Dir(s.Root)
+		projectRoot = s.ProjectRoot
 		return
 	}
 

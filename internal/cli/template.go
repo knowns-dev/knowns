@@ -212,7 +212,7 @@ func runTemplateRun(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine the project root (one level up from .knowns/).
-	projectRoot := filepath.Dir(store.Root)
+	projectRoot := store.ProjectRoot
 	engine := codegen.NewEngine(projectRoot)
 
 	result, err := engine.Run(tmpl, vars, dryRun)

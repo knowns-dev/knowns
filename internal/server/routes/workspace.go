@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/howznguyen/knowns/internal/registry"
 	"github.com/howznguyen/knowns/internal/storage"
 	"github.com/howznguyen/knowns/internal/util"
 )
@@ -122,17 +123,13 @@ func (wr *WorkspaceRoutes) list(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, http.StatusOK, []struct{}{})
 		return
 	}
-	// Filter out entries that no longer have a valid .knowns/config.json
-	valid := projects[:0]
+	// Filter out entries whose knowledge root is gone. A store-linked project
+	// has no .knowns/ in the repository and is still valid.
+	valid := make([]registry.Project, 0, len(projects))
 	for _, p := range projects {
-		cfgPath := filepath.Join(p.Path, ".knowns", "config.json")
-		if _, err := os.Stat(cfgPath); err == nil {
+		if reg.IsValid(p) {
 			valid = append(valid, p)
 		}
-	}
-	if valid == nil {
-		respondJSON(w, http.StatusOK, []struct{}{})
-		return
 	}
 	respondJSON(w, http.StatusOK, valid)
 }

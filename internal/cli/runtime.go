@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,6 +20,7 @@ import (
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/services"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/storesync"
 	"github.com/spf13/cobra"
 )
 
@@ -33,10 +35,15 @@ var runtimeRunCmd = &cobra.Command{
 	Short:  "Run the internal shared runtime",
 	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		syncConfig := storesync.DefaultConfig(filepath.Join(runtimequeue.RuntimeRoot(), "stores"))
+		syncConfig.OnSynced = reconcileSynced
+		stores := storesync.NewService(syncConfig)
 		return runtimequeue.RunDaemonWithOptions(cmd.Context(), runtimequeue.DaemonOptions{
 			Executor:       search.ExecuteRuntimeJob,
 			WatcherFactory: startRuntimeWatcher,
 			ReloadHandler:  search.ReloadDefaultSemanticRuntime,
+			Services:       []func(context.Context){stores.Run},
+			KeepAlive:      stores.HasStores,
 		})
 	},
 }
@@ -1662,11 +1669,10 @@ var runtimeStopCmd = &cobra.Command{
 	},
 }
 
-func startRuntimeWatcher(ctx context.Context, storeRoot string) error {
-	watchCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	store := storage.NewStore(storeRoot)
-	enqueueIndex := func(result storage.ReconcileResult) error {
+// runtimeIndexEnqueuer queues reindexing for one reconciled entity: a job for
+// the local index, or a Qdrant intent when Qdrant is the backend.
+func runtimeIndexEnqueuer(storeRoot string, store *storage.Store) func(storage.ReconcileResult) error {
+	return func(result storage.ReconcileResult) error {
 		if search.ResolveSemanticIndexReadiness(store).Backend != "qdrant" {
 			kind := runtimequeue.JobIndexDoc
 			if result.Operation == storage.LifecycleOperationDelete || result.Operation == storage.LifecycleOperationHardDelete {
@@ -1694,6 +1700,40 @@ func startRuntimeWatcher(ctx context.Context, storeRoot string) error {
 		})
 		return err
 	}
+}
+
+// reconcileSynced records entities that arrived through store sync in local
+// history and queues their reindexing, through the same reconciler the
+// knowledge watcher uses for any external file change (store spec FR-20, D9).
+func reconcileSynced(ctx context.Context, knowledgeRoot string, relPaths []string) {
+	now := time.Now()
+	var hints []storage.ReconcileHint
+	for _, rel := range relPaths {
+		rel = filepath.ToSlash(rel)
+		if !strings.HasPrefix(rel, "tasks/") && !strings.HasPrefix(rel, "archive/") && !strings.HasPrefix(rel, "docs/") {
+			continue
+		}
+		hints = append(hints, storage.ReconcileHint{Path: filepath.Join(knowledgeRoot, filepath.FromSlash(rel)), At: now})
+	}
+	if len(hints) == 0 {
+		return
+	}
+	store := storage.NewStore(knowledgeRoot)
+	reconciler, err := storage.NewFilesystemReconciler(knowledgeRoot, runtimeIndexEnqueuer(knowledgeRoot, store))
+	if err != nil {
+		log.Printf("[storesync] reconcile %s: %v", knowledgeRoot, err)
+		return
+	}
+	if _, err := reconciler.ReconcileLifecycleBatchWithOptions(ctx, storage.LifecycleBatch{Source: "sync", Hints: hints, Limit: storage.DefaultLifecycleBatchLimit}, true, true); err != nil {
+		log.Printf("[storesync] reconcile %s: %v", knowledgeRoot, err)
+	}
+}
+
+func startRuntimeWatcher(ctx context.Context, storeRoot string) error {
+	watchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	store := storage.NewStore(storeRoot)
+	enqueueIndex := runtimeIndexEnqueuer(storeRoot, store)
 	// Code and knowledge watchers share the runtime lease, but knowledge
 	// events are handed to a bounded serialized reconciler worker. The
 	// fsnotify goroutine never appends history or touches an index.

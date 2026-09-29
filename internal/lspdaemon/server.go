@@ -208,7 +208,7 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 }
 
 func (s *Server) reloadConfig() error {
-	store := storage.NewStore(filepath.Join(s.identity.Root, ".knowns"))
+	store := projectStore(s.identity.Root)
 	project, err := store.Config.Load()
 	if err != nil {
 		return err
@@ -434,7 +434,7 @@ func (s *Server) errorResponse(path string, err error) Response {
 }
 
 func newProjectManager(root string) (*lsp.Manager, error) {
-	store := storage.NewStore(filepath.Join(root, ".knowns"))
+	store := projectStore(root)
 	project, err := store.Config.Load()
 	if err != nil {
 		return nil, err
@@ -451,4 +451,13 @@ func newProjectManager(root string) (*lsp.Manager, error) {
 	}
 	_ = manager.RegisterPluginAdapters(lsp.PluginAdapterLoadOptions{})
 	return manager, nil
+}
+
+// projectStore opens the knowledge of the project whose code lives at root,
+// following a store link when the project has one.
+func projectStore(root string) *storage.Store {
+	if loc, err := storage.LocateProjectAt(root); err == nil {
+		return loc.Open()
+	}
+	return storage.NewStore(filepath.Join(root, ".knowns"))
 }

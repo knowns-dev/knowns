@@ -5,7 +5,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -163,9 +162,6 @@ func (s *Server) serve(listener net.Listener) error {
 	if err := s.writePortFile(); err != nil {
 		fmt.Fprintf(os.Stderr, "warn: could not write .server-port: %v\n", err)
 	}
-	if err := s.savePortToConfig(); err != nil {
-		fmt.Fprintf(os.Stderr, "warn: could not save port to config: %v\n", err)
-	}
 
 	srv := &http.Server{Handler: s.router}
 
@@ -240,7 +236,7 @@ func (s *Server) releaseLSPDaemonLease() {
 	}
 	if s.manager != nil {
 		if store := s.manager.GetStore(); store != nil && store.Root != "" {
-			roots[filepath.Dir(store.Root)] = struct{}{}
+			roots[store.ProjectRoot] = struct{}{}
 		}
 	}
 
@@ -368,7 +364,7 @@ func (s *Server) lspRuntimeStatuses(ctx context.Context, store *storage.Store, a
 		return nil
 	}
 
-	if client, err := lspdaemon.EnsureClient(ctx, filepath.Dir(store.Root)); err == nil {
+	if client, err := lspdaemon.EnsureClient(ctx, store.ProjectRoot); err == nil {
 		if statuses, err := fetchLSPRuntimeStatuses(ctx, client, acquireLease); err == nil {
 			return statuses
 		}
@@ -630,23 +626,6 @@ func (s *Server) handleRuntimeRetry(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, `scope must be one of "all", "project", "jobs"`, http.StatusBadRequest)
 	}
-}
-
-// savePortToConfig persists the server port into config.json so the browser
-// and other tools can discover the running server.
-func (s *Server) savePortToConfig() error {
-	if s.store == nil {
-		return nil
-	}
-	project, err := s.store.Config.Load()
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	project.Settings.ServerPort = s.port
-	return s.store.Config.Save(project)
 }
 
 // buildRouter assembles the chi.Router with all middleware and route groups.

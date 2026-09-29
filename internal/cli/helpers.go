@@ -21,13 +21,14 @@ func getStore() *storage.Store {
 		fmt.Fprintf(os.Stderr, "Error: cannot determine working directory: %v\n", err)
 		os.Exit(1)
 	}
-	root, err := storage.FindProjectRoot(cwd)
+	loc, err := storage.LocateProject(cwd)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Run 'knowns init' to initialize a project.\n")
+		fmt.Fprintf(os.Stderr, "Run 'knowns init' to keep knowledge in this repository, or 'knowns store link <remote>' to keep it in a store.\n")
 		os.Exit(1)
 	}
-	return storage.NewStore(root)
+	warnIgnoredKnowns(loc)
+	return loc.Open()
 }
 
 // getStoreErr finds the project root and returns a Store instance, or an error.
@@ -36,11 +37,20 @@ func getStoreErr() (*storage.Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot determine working directory: %w", err)
 	}
-	root, err := storage.FindProjectRoot(cwd)
+	loc, err := storage.LocateProject(cwd)
 	if err != nil {
 		return nil, err
 	}
-	return storage.NewStore(root), nil
+	warnIgnoredKnowns(loc)
+	return loc.Open(), nil
+}
+
+// warnIgnoredKnowns tells the user, on every command, that an in-repo .knowns/
+// is shadowed by a store link or that the linked store folder is unusable.
+func warnIgnoredKnowns(loc storage.ProjectLocation) {
+	for _, msg := range loc.Warnings() {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
+	}
 }
 
 // isPlain returns true if the --plain flag is set.

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -137,7 +136,7 @@ func detectAll(ctx context.Context, store *storage.Store, cleanupStale bool, lsp
 		}
 		projectRoot := ""
 		if store != nil {
-			projectRoot = filepath.Dir(store.Root)
+			projectRoot = store.ProjectRoot
 		}
 		// Parts of the LSP inventory (language detection and managed install
 		// probes) never observe a context, so a cooperative deadline alone does

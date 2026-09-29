@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -176,12 +175,11 @@ func maybeWarnUnmigratedConfig() {
 	if err != nil {
 		return
 	}
-	root := filepath.Join(cwd, ".knowns")
-	if _, err := os.Stat(root); err != nil {
+	loc, err := storage.LocateProjectAt(cwd)
+	if err != nil {
 		return
 	}
-	store := storage.NewStore(root)
-	project, err := store.Config.Load()
+	project, err := loc.Open().Config.Load()
 	if err != nil || project == nil {
 		return
 	}

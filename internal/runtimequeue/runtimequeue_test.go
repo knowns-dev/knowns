@@ -797,3 +797,41 @@ func TestWaitForJobReturnsCompletedSnapshotResult(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
+
+func TestRunDaemonStaysAliveWhileKeepAliveAndRunsServices(t *testing.T) {
+	SetTestBypass(true)
+	defer SetTestBypass(false)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("KNOWNS_RUNTIME_IDLE_TIMEOUT_MS", "100")
+	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer cancel()
+
+	serviceStarted := make(chan struct{})
+	serviceStopped := make(chan struct{})
+	started := time.Now()
+	err := RunDaemonWithOptions(ctx, DaemonOptions{
+		Executor:  func(storeRoot string, job Job) error { return nil },
+		KeepAlive: func() bool { return true },
+		Services: []func(context.Context){func(ctx context.Context) {
+			close(serviceStarted)
+			<-ctx.Done()
+			close(serviceStopped)
+		}},
+	})
+	if err != nil {
+		t.Fatalf("run daemon: %v", err)
+	}
+	if time.Since(started) < 700*time.Millisecond {
+		t.Fatalf("daemon exited after %s despite KeepAlive", time.Since(started))
+	}
+	select {
+	case <-serviceStarted:
+	default:
+		t.Fatal("service never started")
+	}
+	select {
+	case <-serviceStopped:
+	default:
+		t.Fatal("service was not stopped when the daemon returned")
+	}
+}

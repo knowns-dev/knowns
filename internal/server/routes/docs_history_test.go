@@ -249,3 +249,39 @@ func setupDocRouteHistoryStore(t *testing.T, path string) *storage.Store {
 	}
 	return store
 }
+
+// FR-12/13 on the browser surface: a stale save whose current state arrived
+// through store sync returns 409 with the author, arrival and recovery.
+func TestDocRoutesStaleSaveAfterSyncExplainsItself(t *testing.T) {
+	store := setupDocRouteHistoryStore(t, "synced")
+	current, _ := store.Docs.Get("synced")
+	stale := current.CanonicalHash
+	arrived := *current
+	arrived.Content = "## One\nfrom a teammate\n\n## Two\nsame two"
+	if err := store.MutateDocWithHistory(t.Context(), current, &arrived, storage.DocMutationOptions{ExpectedHash: stale}); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.RecordSyncArrivals(store.Root, []storage.SyncArrival{{Path: "docs/synced.md", Author: "Alice <alice@example.com>", ArrivedAt: time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)}}); err != nil {
+		t.Fatal(err)
+	}
+	router := chi.NewRouter()
+	(&DocRoutes{store: store, sse: &fakeBroadcaster{}}).Register(router)
+	body, _ := json.Marshal(map[string]any{"content": "my edit", "expectedHash": stale})
+	req := httptest.NewRequest(http.MethodPut, "/docs/synced", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"synced"`, "Alice <alice@example.com>", "store sync", "2026-09-29T12:00:00Z", "Reread"} {
+		if !strings.Contains(payload.Error, want) {
+			t.Fatalf("browser error must name %q: %s", want, payload.Error)
+		}
+	}
+}

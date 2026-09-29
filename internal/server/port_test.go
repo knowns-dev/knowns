@@ -119,3 +119,36 @@ func TestPortFileNotWrittenOnBindFailure(t *testing.T) {
 		t.Fatal("expected no .server-port file when bind fails")
 	}
 }
+
+// Store spec D13: starting the browser writes no configuration.
+func TestServerStartDoesNotWriteConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	knDir := filepath.Join(tmpDir, ".knowns")
+	store := storage.NewStore(knDir)
+	if err := store.Init("browser"); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(knDir, "config.json")
+	before, _ := os.ReadFile(configPath)
+	port := getFreePort(t)
+
+	s := &Server{store: store, sse: NewSSEBroker(), port: port, shutdownCh: make(chan struct{}, 1)}
+	s.router = s.buildRouter()
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.Start() }()
+	time.Sleep(200 * time.Millisecond)
+
+	after, _ := os.ReadFile(configPath)
+	client := &http.Client{Timeout: 2 * time.Second}
+	if resp, err := client.Post(fmt.Sprintf("http://localhost:%d/api/shutdown", port), "application/json", nil); err == nil {
+		resp.Body.Close()
+	}
+	select {
+	case <-errCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down within 5s")
+	}
+	if string(before) != string(after) {
+		t.Fatalf("starting the server changed config.json:\nbefore %s\nafter  %s", before, after)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
@@ -123,5 +124,39 @@ func TestCLIDocHardDeleteIsSeparateAuthorizedPurge(t *testing.T) {
 	}
 	if history, err := store.Versions.GetDocHistory(doc.Path); err == nil && len(history.Versions) != 0 {
 		t.Fatalf("hard-deleted doc history remains: %d", len(history.Versions))
+	}
+}
+
+// FR-12/13 on the CLI surface: the command fails (non-zero exit) with the
+// explanation on its error.
+func TestCLIDocStaleDeleteAfterSyncExplainsItself(t *testing.T) {
+	projectRoot := t.TempDir()
+	t.Chdir(projectRoot)
+	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
+	if err := store.Init("cli-doc-sync"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MutateDocWithHistory(context.Background(), nil, &models.Doc{Path: "synced", Title: "Synced", Content: "v1"}, storage.DocMutationOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	base, _ := store.Docs.Get("synced")
+	stale := base.CanonicalHash
+	updated := *base
+	updated.Content = "v2 from a teammate"
+	if err := store.MutateDocWithHistory(context.Background(), base, &updated, storage.DocMutationOptions{ExpectedHash: stale}); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.RecordSyncArrivals(store.Root, []storage.SyncArrival{{Path: "docs/synced.md", Author: "Alice <alice@example.com>", ArrivedAt: time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = docDeleteCmd.Flags().Set("force", "true")
+	_ = docDeleteCmd.Flags().Set("expected-hash", stale)
+	t.Cleanup(func() {
+		_ = docDeleteCmd.Flags().Set("force", "false")
+		_ = docDeleteCmd.Flags().Set("expected-hash", "")
+	})
+	err := docDeleteCmd.RunE(docDeleteCmd, []string{"synced"})
+	if err == nil || !strings.Contains(err.Error(), "Alice <alice@example.com>") || !strings.Contains(err.Error(), "Reread") {
+		t.Fatalf("CLI error must explain the sync conflict, got %v", err)
 	}
 }

@@ -45,6 +45,7 @@ knowns [options] [command]
 - [`knowns settings`](knowns_settings.md) — Open interactive project settings
 - [`knowns setup`](knowns_setup.md) — Configure AI tool integrations
 - [`knowns status`](knowns_status.md) — Show project readiness summary
+- [`knowns store`](knowns_store.md) — Keep project knowledge in a shared Git store instead of the repository
 - [`knowns sync`](knowns_sync.md) — Sync project from config.json (skills, instructions, model, search index)
 - [`knowns task`](knowns_task.md) — Manage tasks
 - [`knowns template`](knowns_template.md) — Manage code generation templates
