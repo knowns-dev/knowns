@@ -138,6 +138,18 @@ on_path() {
     return 1
 }
 
+# Copies $1 to $2 through a temp file and a rename, so $2 gets a new inode.
+# A plain cp rewrites the old inode in place; on macOS the kernel keeps the
+# code signature of that inode cached for any knowns process still running,
+# and SIGKILLs every later launch of the new binary.
+install_file() {
+    tmp="$2.new.$$"
+    cp "$1" "$tmp" && chmod "$3" "$tmp" && mv -f "$tmp" "$2" || {
+        rm -f "$tmp"
+        error "Could not install $2"
+    }
+}
+
 # Links $2 -> $1, refusing to replace anything that is not a symlink, so a
 # knowns from Homebrew or npm is never clobbered.
 link_one() {
@@ -276,14 +288,13 @@ main() {
     printf "  ${DIM}⠋${RESET} Installing to ${INSTALL_DIR}...\r"
     mkdir -p "$INSTALL_DIR" 2>/dev/null || true
 
-    cp "$EXTRACTED_BIN" "${INSTALL_DIR}/${BINARY}"
-    chmod +x "${INSTALL_DIR}/${BINARY}"
+    install_file "$EXTRACTED_BIN" "${INSTALL_DIR}/${BINARY}" 755
 
     # Install colocated ONNX Runtime native libs (dylib/so/dll)
     for f in "${EXTRACT_ROOT}"/libonnxruntime* \
              "${EXTRACT_ROOT}"/onnxruntime.dll; do
         [ -e "$f" ] || continue
-        cp "$f" "${INSTALL_DIR}/"
+        install_file "$f" "${INSTALL_DIR}/$(basename "$f")" 644
     done
 
     success "Installed to ${INSTALL_DIR}/${BINARY}"
