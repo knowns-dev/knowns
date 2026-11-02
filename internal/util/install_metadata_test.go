@@ -77,7 +77,7 @@ func TestDetectInstallMethodFollowsInstallerLink(t *testing.T) {
 	}
 	link := filepath.Join(linkDir, "knowns")
 	if err := os.Symlink(binary, link); err != nil {
-		t.Fatal(err)
+		t.Skipf("symlink unavailable: %v", err)
 	}
 
 	if got, _ := detectInstallMethodFor(link); got != InstallMethodScript {
@@ -95,7 +95,7 @@ func TestDetectInstallMethodFollowsInstallerLink(t *testing.T) {
 	}
 	brewLink := filepath.Join(linkDir, "knowns-brew")
 	if err := os.Symlink(brewBinary, brewLink); err != nil {
-		t.Fatal(err)
+		t.Skipf("symlink unavailable: %v", err)
 	}
 	if got, _ := detectInstallMethodFor(brewLink); got != InstallMethodBrew {
 		t.Fatalf("detectInstallMethodFor(brew link) = %q, want %q", got, InstallMethodBrew)
