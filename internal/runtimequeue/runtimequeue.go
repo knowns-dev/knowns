@@ -10,10 +10,12 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,6 +54,9 @@ const (
 	defaultLockTimeout  = 3 * time.Second
 	defaultLockStaleAge = 10 * time.Second
 	maxRecentResults    = 50
+	// How long a rename waits out a reader holding the target open on Windows.
+	windowsFileBusyTimeout    = 2 * time.Second
+	windowsFileBusyRetryDelay = 5 * time.Millisecond
 	// Dead letters are retained so RetryJob can replay them, but an
 	// unprovisioned backend fails every intent it is handed. Without a bound
 	// one bulk import pins thousands of unrunnable jobs in the queue forever.
@@ -671,7 +676,7 @@ func reloadStatusPath() string {
 // runningDaemonVersion returns the version persisted by the running daemon in
 // status.json. Empty string if the file is missing or unreadable.
 func runningDaemonVersion() string {
-	raw, err := os.ReadFile(statusPath())
+	raw, err := readFileRetrying(statusPath())
 	if err != nil {
 		return ""
 	}
@@ -732,7 +737,7 @@ func RequestReload() (ReloadRequest, error) {
 }
 
 func LoadReloadStatus() (ReloadStatus, error) {
-	data, err := os.ReadFile(reloadStatusPath())
+	data, err := readFileRetrying(reloadStatusPath())
 	if err != nil {
 		return ReloadStatus{}, err
 	}
@@ -770,7 +775,7 @@ func WaitForReload(requestID string, timeout time.Duration) (ReloadStatus, error
 }
 
 func pendingReload() (ReloadRequest, bool, error) {
-	data, err := os.ReadFile(reloadRequestPath())
+	data, err := readFileRetrying(reloadRequestPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return ReloadRequest{}, false, nil
 	}
@@ -1101,7 +1106,7 @@ func WaitForJobContext(ctx context.Context, storeRoot, jobID string, timeout tim
 
 func LoadQueue(storeRoot string) (*QueueState, error) {
 	path := queuePath(storeRoot)
-	data, err := os.ReadFile(path)
+	data, err := readFileRetrying(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return &QueueState{Jobs: []*Job{}, Recent: []JobResult{}}, nil
 	}
@@ -1476,7 +1481,7 @@ func LoadStatus() (*Status, error) {
 		status.Running = isProcessAlive(pid)
 		status.PID = pid
 	}
-	if raw, readErr := os.ReadFile(statusPath()); readErr == nil {
+	if raw, readErr := readFileRetrying(statusPath()); readErr == nil {
 		var persisted struct {
 			Version   string          `json:"version"`
 			StartedAt *time.Time      `json:"startedAt"`
@@ -1524,7 +1529,7 @@ func ActiveLeases() ([]Lease, error) {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(leaseDir(), entry.Name()))
+		data, err := readFileRetrying(filepath.Join(leaseDir(), entry.Name()))
 		if err != nil {
 			continue
 		}
@@ -1799,7 +1804,7 @@ func projectHasQueuedJobs(storeRoot string) bool {
 }
 
 func registeredProjects() ([]string, error) {
-	data, err := os.ReadFile(projectsRegistryPath())
+	data, err := readFileRetrying(projectsRegistryPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return []string{}, nil
 	}
@@ -1977,7 +1982,48 @@ func writeJSON(path string, value any) error {
 	if err := os.WriteFile(tmp, append(data, '\n'), 0644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return renameOverFile(tmp, path)
+}
+
+// renameOverFile replaces path with tmp. Readers such as LoadQueue take no
+// lock, and on Windows a rename over a file someone has open fails until they
+// close it, so a transient failure there is retried for a bounded time.
+func renameOverFile(tmp, path string) error {
+	deadline := time.Now().Add(windowsFileBusyTimeout)
+	for {
+		err := os.Rename(tmp, path)
+		if err == nil || !isWindowsFileBusy(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(windowsFileBusyRetryDelay)
+	}
+}
+
+// readFileRetrying reads a file writeJSON replaces. The rename that replaces it
+// briefly refuses new handles on Windows, so the same bounded retry applies.
+func readFileRetrying(path string) ([]byte, error) {
+	deadline := time.Now().Add(windowsFileBusyTimeout)
+	for {
+		data, err := os.ReadFile(path)
+		if err == nil || !isWindowsFileBusy(err) || time.Now().After(deadline) {
+			return data, err
+		}
+		time.Sleep(windowsFileBusyRetryDelay)
+	}
+}
+
+// isWindowsFileBusy reports ERROR_ACCESS_DENIED (5), ERROR_SHARING_VIOLATION
+// (32) and ERROR_LOCK_VIOLATION (33), which Windows returns while another
+// handle holds the file open.
+func isWindowsFileBusy(err error) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	var errno syscall.Errno
+	if !errors.As(err, &errno) {
+		return false
+	}
+	return errno == 5 || errno == 32 || errno == 33
 }
 
 func openRuntimeLogFile() (*os.File, error) {
