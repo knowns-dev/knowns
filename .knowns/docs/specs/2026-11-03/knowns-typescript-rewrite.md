@@ -1,0 +1,144 @@
+---
+id: doc-7c0dbdd40f8c36d3f72dc2c758d3e55b
+title: knowns-typescript-rewrite
+description: Specification for rewriting Knowns from Go back to TypeScript on Bun
+createdAt: '2026-11-02T19:05:28.224Z'
+updatedAt: '2026-11-03T10:09:13.015Z'
+tags:
+  - spec
+  - draft
+  - review-required
+---
+
+## Overview
+
+Rewrite the Knowns CLI, MCP server, and HTTP server from Go back to TypeScript, shipped as one Bun-compiled binary per platform. The React UI (`ui/`) is unchanged and embedded as before.
+
+Why now: the maintainer does not work comfortably in Go, so reviewing ~105k lines of Go (including agent-written changes) is a long-term maintainability risk, and the TypeScript contributor pool is larger. The native pieces that made Go attractive have left the core: embedding is Ollama over HTTP, vectors live in Qdrant over HTTP, and code intelligence runs through LSP instead of tree-sitter.
+
+Explicit non-goal: the rewrite is not expected to fix install failures by itself. Issues #133, #138, #144, #155 come from install scripts and OS handling; they are carried forward as regression tests (FR-9), not assumed away.
+
+Predecessor: @doc/specs/knowns-go-rewrite (the opposite migration, 2026-03).
+
+## Locked Decisions
+
+- D1: Parallel rewrite with a one-time switch. No strangler bridge through the Go binary; the TypeScript build replaces Go only after it meets the release gate (D11).
+- D2: The Go code is fully frozen for the duration of the rewrite. Only security fixes are allowed, and each must land with an e2e test the TypeScript build must also pass.
+- D3: TypeScript work lives on one long-lived branch in this repository and merges once at the switch. Go code is deleted in that merge.
+- D4: Runtime is Bun with `bun build --compile`: one binary per platform, no Node or Bun required on the user's machine. Distribution keeps per-platform npm packages and `install.sh` / `install.ps1`.
+- D5: Budgets that block release: on each platform, the binary may exceed an empty Bun-compiled binary for the same target by at most 30MB (Knowns code plus embedded UI); `knowns --version` and MCP readiness each at most 150ms. Revised 2026-11-03 after TSR-5BRB3D measured the stub (raw): darwin 65-70MB, linux 102MB, windows 114-117MB, because the Bun runtime alone is about 100MB on linux and more on windows. The original fixed 100MB limit was unreachable. Go 0.34.1 for reference: 35MB raw, 12MB gzip.
+- D6: Full parity of commands, flags, output formats (`--plain`, `--json`), MCP tools and schemas, HTTP endpoints and SSE/WebSocket events, and the `.knowns/` data format. The only exceptions are D7 and D8.
+- D7: `knowns reconcile preview` and `knowns reconcile apply` are removed. `knowns reconcile restore` stays. The automatic reconciler (watcher, history, tombstones, restore) is ported and follows @decision/20260912-1650-a-briefly-missing-file-is-not-a-deletion.
+- D8: `knowns import` (list, add, remove, status, sync) is removed. Content already present in `.knowns/imports/` stays readable and searchable; `knowns doctor` reports that import management was removed.
+- D9: Direct switch with no beta channel: the TypeScript build becomes the stable release.
+- D10: The TypeScript build ships as v1.0.0. The last Go release (0.34.x) stays installable via `npm i knowns@0.34` and `install.sh --version 0.34.x`. The TypeScript build never writes `.knowns/` data that 0.34.x cannot read.
+- D11: Release gate for v1.0.0: the Go e2e suite passes with `TEST_BINARY` pointed at the TypeScript binary on all 6 platforms; OS regression tests (FR-9) pass; UI Playwright e2e passes; and the maintainer has used the TypeScript build on this repository for at least 2 consecutive weeks with no data-loss bug.
+
+## System Decision Impact
+
+- Impact: draft new
+- Decision: @decision/20261103-1709-knowns-runtime-is-typescript-compiled-with-bun
+- Acceptance gate: the decision becomes accepted only when AC-1 through AC-6 pass and the v1.0.0 release gate (D11) is met. Until then Go remains the shipped runtime.
+
+## Requirements
+
+### Functional Requirements
+
+- FR-1: CLI parity. Every command and flag listed by `knowns --help` on 0.34.1 exists with the same name, arguments, exit codes, and output, except the removals in D7 and D8.
+- FR-2: MCP parity. Every MCP tool, action, parameter, and response shape served by `knowns mcp` on 0.34.1 is served identically over stdio.
+- FR-3: HTTP server parity. `knowns browser` serves the embedded UI and every REST endpoint, SSE stream, and WebSocket channel the UI uses, with the same request and response shapes.
+- FR-4: Storage parity. Tasks, docs, decisions, memory, templates, time entries, history, versions, config, and workspace registry are read and written in the exact on-disk format of 0.34.1, including hash chains and mutation transactions.
+- FR-5: Search parity. Keyword search, semantic search through Ollama embeddings and Qdrant (managed runtime and external), degradation to keyword results when the embedder fails, retrieval with citations, and the runtime job queue including dead letters and `knowns runtime retry`.
+- FR-6: Code intelligence parity. `knowns code` and `knowns lsp` work through the LSP manager, the LSP daemon, and every built-in language adapter shipped in 0.34.1, including auto-install of language servers.
+- FR-7: Lifecycle parity. The automatic reconciler, file watcher, git-backed store sync, and tombstone restore behave as in 0.34.1 (D7).
+- FR-8: Setup parity. `init`, `setup`, `sync`, `agents`, `runtime` hooks, `update`, `migrate`, `doctor`, and skill and instruction sync produce the same files and platform configs as 0.34.1.
+- FR-9: OS regression coverage. Before the rewrite starts, Go history is mined for OS-specific fixes (Windows paths and casing, BOM handling, process and console handling, PATH linking, binary replacement by rename, macOS kqueue descriptor limits, USERPROFILE/HOME isolation). Each becomes a test that the TypeScript build must pass on the affected platform.
+- FR-10: Removed features (D7, D8) fail clearly: invoking `knowns import` or `knowns reconcile preview|apply` prints a message naming the removal and exits non-zero.
+- FR-11: Rollback. A project used by the TypeScript build can be opened by 0.34.x with no data loss and no migration step.
+
+### Non-Functional Requirements
+
+- NFR-1: Size and startup budgets per D5, measured in CI on every platform build. The size check compiles an empty entry for the same target with the same Bun version and compares against it.
+- NFR-2: TypeScript runs with `strict: true`; `any` is disallowed by lint outside generated code.
+- NFR-3: Every boundary input (CLI args, MCP arguments, HTTP bodies, files read from `.knowns/`) is validated against a schema before use.
+- NFR-4: No native Node addons. SQLite goes through `bun:sqlite`; Windows named pipes and process control use Bun or Node built-ins.
+- NFR-5: Cross-compiled binaries for darwin, linux, and windows on x64 and arm64.
+
+## Acceptance Criteria
+
+- [ ] AC-1: The Go e2e suite (`tests/e2e_cli_test.go`, `tests/e2e_mcp_test.go`, `tests/e2e_structural_test.go`, `tests/e2e_cli_text_verbatim_test.go`) passes with `TEST_BINARY` set to the TypeScript binary on all 6 platforms, with only the tests for D7 and D8 removals changed.
+- [ ] AC-2: Every OS regression test from FR-9 passes on its affected platform.
+- [ ] AC-3: UI Playwright e2e (`ui/e2e`) passes against `knowns browser` from the TypeScript binary.
+- [ ] AC-4: CI reports, for every platform, the binary size delta over an empty Bun binary at most 30MB, and `knowns --version` and MCP readiness at most 150ms.
+- [ ] AC-5: A project created and modified by the TypeScript build opens in 0.34.x; `knowns validate` on 0.34.x reports no errors and all tasks, docs, memory, decisions, and history remain readable.
+- [ ] AC-6: An existing 0.34.1 project, including one with `.knowns/imports/` content and Qdrant-indexed semantic search, works under the TypeScript build with no migration step; imported content appears in `search`.
+- [ ] AC-7: `knowns import` and `knowns reconcile preview|apply` print a removal message and exit non-zero; `knowns reconcile restore` works as in 0.34.1.
+- [ ] AC-8: The maintainer has used the TypeScript build on this repository for at least 14 consecutive days with no data-loss bug, recorded in the release task.
+- [ ] AC-9: v1.0.0 is published to npm and the install scripts; `npm i knowns@0.34` and `install.sh --version 0.34.x` still install the Go build.
+
+## Scenarios
+
+### Scenario 1: Upgrade an existing project
+**Given** a project last used with knowns 0.34.1, with tasks, docs, memory, history, and a Qdrant semantic index
+**When** the user installs v1.0.0 and runs `knowns task list --plain`, `knowns search "<query>" --plain`, and `knowns mcp`
+**Then** output matches 0.34.1, semantic results come from the existing index, and no migration is required
+
+### Scenario 2: Roll back after a bad release
+**Given** a project modified by v1.0.0
+**When** the user installs 0.34.x and runs `knowns validate`
+**Then** validation passes and every entity written by v1.0.0 is readable
+
+### Scenario 3: Project with imported packages
+**Given** a project with content in `.knowns/imports/`
+**When** the user runs `knowns search` and `knowns import sync` on v1.0.0
+**Then** search returns imported content, and `import sync` prints the removal message and exits non-zero
+
+### Scenario 4: Git stash removes files briefly
+**Given** a project on v1.0.0 with the watcher running
+**When** `git stash -u` removes untracked docs and `git stash pop` restores them byte-identical
+**Then** reconciliation records a restore and later writes to those docs succeed
+
+### Scenario 5: Windows install
+**Given** a Windows machine where PowerShell writes UTF-8 with BOM
+**When** the user installs v1.0.0 with `install.ps1` and later runs `knowns update`
+**Then** install metadata is read without error (regression of #155) and the binary is linked onto PATH
+
+### Scenario 6: Ollama unavailable
+**Given** semantic search is configured but Ollama is not running
+**When** the user runs `knowns search "<query>"`
+**Then** keyword results are returned with a degraded-search notice, as in 0.34.1
+
+## Technical Notes
+
+- Port order suggestion: storage and models, then CLI for task/doc/memory/decision, then MCP, then HTTP server, then search and runtime queue, then LSP and daemon, then setup/sync/doctor/update.
+- The Go e2e harness already supports `TEST_BINARY` (`tests/helpers_test.go`), so it is the parity oracle until the switch.
+- Package sizes for planning (non-test Go lines): cli 21k, storage 17k, search 14k, lsp 9k, server 8k, mcp 8k.
+- The TUI (bubbletea, huh, glamour) needs a TypeScript equivalent; the choice is an implementation detail as long as FR-1 output matches.
+
+## Task Generation
+
+- Task Prefix: TSR
+
+## Task Links
+
+Execution order; wave 1 runs in parallel, wave 2 blocks everything after it.
+
+- @task-TSR-GM1E2A - Capture OS-specific regressions as binary-level tests (wave 1)
+- @task-TSR-5BRB3D - Scaffold the TypeScript workspace, build, and budget checks (wave 1)
+- @task-TSR-2BD194 - Port storage and models with on-disk format parity (wave 2)
+- @task-TSR-ZH1CYS - Port CLI commands for knowledge entities
+- @task-TSR-A3N6KY - Port the MCP server
+- @task-TSR-Q7B522 - Port the HTTP server for the web UI
+- @task-TSR-2MPMDK - Port search, embeddings, Qdrant and the runtime queue
+- @task-TSR-MBTAN6 - Port reconciler, watcher, store sync and restore
+- @task-TSR-XSEKND - Port code intelligence: LSP manager, daemon and adapters
+- @task-TSR-2P6ZDV - Port setup, sync, doctor, update, migrate and interactive TUI
+- @task-TSR-8WCHX1 - Handle removed import command and keep imported content readable
+- @task-TSR-Z7CRS1 - Ship v1.0.0 distribution with Go rollback path
+- @task-TSR-9VVJA6 - Pass the v1.0.0 release gate
+
+## Open Questions
+
+- [ ] After the switch the Go e2e suite still needs the Go toolchain in CI. Keep it in Go, or port it to TypeScript after v1.0.0?
+- [ ] D2 freezes Go for many months. Is there a maximum freeze length after which the plan is re-evaluated?
+- [ ] Which TUI library replaces bubbletea, and does the interactive `settings` and `init` wizard need pixel-identical rendering or only equivalent behavior?
