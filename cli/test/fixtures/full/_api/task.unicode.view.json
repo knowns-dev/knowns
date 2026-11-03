@@ -1,0 +1,15 @@
+{
+  "id": "FX-P6DXEY",
+  "title": "Fix: unicode 日本語 title / with \"quotes\" \u0026 colon",
+  "description": "Ünïcödé body",
+  "status": "todo",
+  "priority": "medium",
+  "assignee": "@fixture",
+  "labels": null,
+  "createdAt": "2026-11-03T13:37:36.385Z",
+  "updatedAt": "2026-11-03T13:37:36.385Z",
+  "archived": false,
+  "acceptanceCriteria": null,
+  "timeSpent": 0,
+  "canonicalHash": "011de8f3305f68fbfbaefe600a40b66d196e3cbe298d3ea5fb4d0360c81c9ab2"
+}

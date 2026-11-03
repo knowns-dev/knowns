@@ -1,0 +1,30 @@
+{
+  "id": "20261103-1337-use-bun-for-everything",
+  "title": "Use bun for everything",
+  "status": "accepted",
+  "supersedes": [
+    "20261103-1337-use-bun-for-scripts"
+  ],
+  "tags": [
+    "runtime"
+  ],
+  "sources": [
+    "doc:architecture"
+  ],
+  "relatedDocs": [
+    "architecture"
+  ],
+  "relatedTasks": [
+    "FX-3VT2SR"
+  ],
+  "verification": [
+    "source:doc:architecture",
+    "task:@task-FX-3VT2SR:done"
+  ],
+  "verifiedAt": "2026-11-03T13:37:37.109Z",
+  "createdAt": "2026-11-03T13:37:37.07Z",
+  "updatedAt": "2026-11-03T13:37:37.109Z",
+  "context": "Scripts worked out",
+  "decision": "Bun everywhere",
+  "content": "## Context\n\nScripts worked out\n\n## Decision\n\nBun everywhere\n\n## Alternatives Considered\n\n\n## Consequences"
+}

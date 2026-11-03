@@ -1,0 +1,14 @@
+{
+  "id": "FX-19XJKQ",
+  "title": "Prod is down",
+  "status": "urgent",
+  "priority": "high",
+  "assignee": "@fixture",
+  "labels": null,
+  "createdAt": "2026-11-03T13:37:36.278Z",
+  "updatedAt": "2026-11-03T13:37:36.278Z",
+  "archived": false,
+  "acceptanceCriteria": null,
+  "timeSpent": 0,
+  "canonicalHash": "27de8882a68ae49e8370e54263ee0fde4e80d7b78e7559776b5232c7d740ae58"
+}

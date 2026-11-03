@@ -1,0 +1,20 @@
+{
+  "task:TM-B9YGFM": {
+    "entityType": "task",
+    "entityId": "TM-B9YGFM",
+    "canonicalHash": "ef57a512faa49e0a06b2a938bcd2ae4a4f20ecda3fb9d59211bfcf3b137d77c2",
+    "revision": 1,
+    "path": "tasks/TM-B9YGFM.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  },
+  "task:TM-Q3M99R": {
+    "entityType": "task",
+    "entityId": "TM-Q3M99R",
+    "canonicalHash": "4d2d5749e2d8deb81ca5f1fd164137a8aa31d971395fd871575996744d1ecade",
+    "revision": 1,
+    "path": "tasks/TM-Q3M99R.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  }
+}

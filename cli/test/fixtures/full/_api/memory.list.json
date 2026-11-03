@@ -1,0 +1,23 @@
+[
+  {
+    "id": "rrvcia",
+    "title": "Prefer hyphens",
+    "layer": "project",
+    "category": "preference",
+    "content": "Use plain hyphens.\n\n**Why:** reads as machine-written otherwise.",
+    "status": "active",
+    "lastVerified": "0001-01-01T00:00:00Z",
+    "tags": [
+      "style",
+      "text"
+    ],
+    "createdAt": "2026-11-03T13:37:37.173Z",
+    "updatedAt": "2026-11-03T13:37:37.173Z",
+    "lifecycleMetadataMissing": [
+      "confidence",
+      "lastVerified",
+      "ttlDays",
+      "sources"
+    ]
+  }
+]

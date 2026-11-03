@@ -10,7 +10,9 @@
     "check": "bun run typecheck && bun run lint",
     "test": "bun run gen && bun test",
     "build": "bun scripts/build.ts",
-    "budget": "bun scripts/budget.ts"
+    "budget": "bun scripts/budget.ts",
+    "fixtures": "bun scripts/gen-fixtures.ts",
+    "fixtures:verify": "bun scripts/gen-fixtures.ts --verify"
   },
   "dependencies": {
     "zod": "^4.1.0"

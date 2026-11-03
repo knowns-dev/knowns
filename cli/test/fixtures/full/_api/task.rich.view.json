@@ -1,0 +1,41 @@
+{
+  "id": "FX-3VT2SR",
+  "title": "Implement login flow (v2)",
+  "description": "Users sign in with email and password.\n\nSecond paragraph with `code` and a | pipe.",
+  "status": "done",
+  "priority": "high",
+  "assignee": "@fixture",
+  "labels": [
+    "auth",
+    "feature",
+    "shipped"
+  ],
+  "spec": "specs/login",
+  "fulfills": [
+    "AC-1",
+    "AC-2"
+  ],
+  "order": 3,
+  "createdAt": "2026-11-03T13:37:35.144Z",
+  "updatedAt": "2026-11-03T13:37:37.363Z",
+  "completedAt": "2026-11-03T13:37:35.549Z",
+  "archived": false,
+  "acceptanceCriteria": [
+    {
+      "text": "User can log in",
+      "completed": true
+    },
+    {
+      "text": "Bad passwords are rejected",
+      "completed": true
+    },
+    {
+      "text": "Sessions expire after 24h",
+      "completed": true
+    }
+  ],
+  "timeSpent": 8100,
+  "canonicalHash": "1a9c159b26bb5ec63b609df11424400e656e7b2ef6979ccd11e6e21337a293c1",
+  "implementationPlan": "1. Design\n2. Build\n3. Test",
+  "implementationNotes": "Initial notes\n\nImplemented the happy path"
+}

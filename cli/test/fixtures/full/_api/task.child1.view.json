@@ -1,0 +1,17 @@
+{
+  "id": "FX-3GCY37",
+  "title": "Child one",
+  "status": "done",
+  "priority": "medium",
+  "assignee": "@fixture",
+  "labels": null,
+  "parent": "FX-65T7HG",
+  "createdAt": "2026-11-03T13:37:35.651Z",
+  "updatedAt": "2026-11-03T13:37:35.985Z",
+  "completedAt": "2026-11-03T13:37:35.775Z",
+  "archivedAt": "2026-11-03T13:37:35.985Z",
+  "archived": true,
+  "acceptanceCriteria": null,
+  "timeSpent": 0,
+  "canonicalHash": "feaf789f40cd82e3107677c99d5660f1a643615ec6f9b30fa7d5268d06e70bb7"
+}
