@@ -345,6 +345,8 @@ export default function TasksPage({
 			<FeatureHeader
 				icon={ListTodo}
 				title="Tasks"
+				// The filters can outgrow one line; wrap them instead of squeezing the title to nothing.
+				className="h-auto min-h-12 flex-wrap py-2"
 				status={
 					<span className="tabular-nums">
 						{visibleTasks.length} {visibleTasks.length === 1 ? "task" : "tasks"}
