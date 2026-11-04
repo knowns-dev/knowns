@@ -76,6 +76,7 @@ export function goEnv(home: string): Record<string, string> {
     TZ: "UTC",
     NO_COLOR: "1",
     NO_UPDATE_CHECK: "1",
+    ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
     CI: "1",
     KNOWN_LSP_AUTO_INSTALL: "0",
     KNOWNS_RUNTIME_INLINE: "1",

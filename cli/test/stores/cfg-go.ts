@@ -19,7 +19,7 @@ export function goCli(): string | undefined {
     return cliBin;
   }
   mkdirSync(OUT, { recursive: true });
-  const exe = join(OUT, "knowns");
+  const exe = join(OUT, process.platform === "win32" ? "knowns.exe" : "knowns");
   if (!existsSync(exe)) {
     const res = Bun.spawnSync(
       [
@@ -52,6 +52,10 @@ export function goEnv(home: string): Record<string, string> {
     USERPROFILE: home,
     NO_COLOR: "1",
     NO_UPDATE_CHECK: "1",
+    // Without this the Go CLI forks a detached `__runtime run` whose cwd pins the project dir (EBUSY on Windows).
+    KNOWNS_RUNTIME_INLINE: "1",
+    KNOWNS_SEMANTIC_RUNTIME_DISABLED: "1",
+    ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
   };
 }
 
@@ -81,7 +85,7 @@ export function goTool(name: string, source: string): string | undefined {
   const virtual = join(REPO, "cmd", `zz-${name}`, "main.go");
   const overlay = join(dir, "overlay.json");
   writeFileSync(overlay, JSON.stringify({ Replace: { [virtual]: src } }));
-  const exe = join(dir, name);
+  const exe = join(dir, process.platform === "win32" ? `${name}.exe` : name);
   const res = Bun.spawnSync(["go", "build", "-overlay", overlay, "-o", exe, `./cmd/zz-${name}`], {
     cwd: REPO,
     stdout: "pipe",

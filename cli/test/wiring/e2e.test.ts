@@ -207,9 +207,11 @@ describe("adapters over the real stores", () => {
     expect(memory?.canonicalHash(reread)).not.toBe(hash);
   });
 
-  test("rewriteDocPath is not silently skipped when no extractor is wired", () => {
+  test("rewriteDocPath defaults to the reference extractor and stays injectable", () => {
     const p = project();
-    expect(() => p.storage.ctx.rewriteDocPath("x", "a", "b")).toThrow(/not wired/);
+    expect(p.storage.ctx.rewriteDocPath("see @doc/a#h{related}", "a", "b")).toBe(
+      "see @doc/b#h{related}",
+    );
     const wired = createStorage(Store.open(p.root), { rewriteDocPath: (c) => c });
     expect(wired.ctx.rewriteDocPath("x", "a", "b")).toBe("x");
   });

@@ -92,7 +92,8 @@ export function parseMemoryContent(content: string, layer: string): MemoryEntry 
     }
     const meta: Record<string, string> = {};
     for (const [k, v] of Object.entries(fm.metadata as Record<string, unknown>)) meta[k] = asStr(v);
-    if (Object.keys(meta).length > 0) entry.metadata = meta;
+    // An explicit `metadata: {}` is an empty (non-nil) map in Go and hashes as `{}`, not `null`.
+    entry.metadata = meta;
   }
   entry.createdAt = readTime(asStr(fm.createdAt));
   entry.updatedAt = readTime(asStr(fm.updatedAt));

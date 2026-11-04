@@ -231,12 +231,32 @@ function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
   });
 }
 
-function combineSignal(opts: LockOptions): AbortSignal | undefined {
+interface CombinedSignal {
+  signal: AbortSignal | undefined;
+  /** Clear the timeout timer once the wait is over. */
+  dispose(): void;
+}
+
+// Not AbortSignal.timeout: on Bun 1.3.13 for Windows it never aborts when its only listener is
+// added and removed repeatedly, which is exactly what the 20 ms poll loop does, so a timed-out
+// wait would spin forever. A plain timer driving an AbortController behaves the same everywhere.
+function combineSignal(opts: LockOptions): CombinedSignal {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const signals: AbortSignal[] = [];
   if (opts.signal) signals.push(opts.signal);
-  if (opts.timeoutMs !== undefined) signals.push(AbortSignal.timeout(opts.timeoutMs));
-  if (signals.length === 0) return undefined;
-  return signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+  if (opts.timeoutMs !== undefined) {
+    const ac = new AbortController();
+    timer = setTimeout(
+      () => ac.abort(new DOMException("The operation timed out.", "TimeoutError")),
+      opts.timeoutMs,
+    );
+    signals.push(ac.signal);
+  }
+  const dispose = () => {
+    if (timer !== undefined) clearTimeout(timer);
+  };
+  if (signals.length === 0) return { signal: undefined, dispose };
+  return { signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals), dispose };
 }
 
 /**
@@ -245,15 +265,19 @@ function combineSignal(opts: LockOptions): AbortSignal | undefined {
  * Rejects with the signal's reason if aborted or timed out first.
  */
 export async function acquireFileLock(path: string, opts: LockOptions = {}): Promise<HeldLock> {
-  const signal = combineSignal(opts);
-  if (signal?.aborted) throw signal.reason;
-  mkdirSync(dirname(path), { recursive: true, mode: 0o755 });
-  const be = loadBackend();
-  const poll = opts.pollMs ?? LOCK_POLL_MS;
-  for (;;) {
-    const held = be.tryLock(path);
-    if (held) return held;
-    await sleep(poll, signal);
+  const { signal, dispose } = combineSignal(opts);
+  try {
+    if (signal?.aborted) throw signal.reason;
+    mkdirSync(dirname(path), { recursive: true, mode: 0o755 });
+    const be = loadBackend();
+    const poll = opts.pollMs ?? LOCK_POLL_MS;
+    for (;;) {
+      const held = be.tryLock(path);
+      if (held) return held;
+      await sleep(poll, signal);
+    }
+  } finally {
+    dispose();
   }
 }
 
@@ -278,7 +302,7 @@ export async function withFileLock<T>(
   fn: () => T | Promise<T>,
   opts: LockOptions = {},
 ): Promise<T> {
-  const signal = combineSignal(opts);
+  const { signal, dispose } = combineSignal(opts);
   const previous = queues.get(path) ?? Promise.resolve();
   let openGate!: () => void;
   const gate = new Promise<void>((resolve) => {
@@ -301,10 +325,13 @@ export async function withFileLock<T>(
         resolve();
       });
     });
-    const held = await acquireFileLock(
-      path,
-      signal ? { ...opts, signal, timeoutMs: undefined } : opts,
-    );
+    let held: HeldLock;
+    try {
+      held = await acquireFileLock(path, { ...opts, signal, timeoutMs: undefined });
+    } finally {
+      // The timeout bounds the wait only, never the critical section.
+      dispose();
+    }
     try {
       return await fn();
     } finally {

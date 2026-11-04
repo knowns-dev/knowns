@@ -40,6 +40,10 @@ export function isolatedEnv(home: string): Record<string, string> {
     USERPROFILE: home,
     NO_COLOR: "1",
     NO_UPDATE_CHECK: "1",
+    // Without this the Go CLI forks a detached `__runtime run` whose cwd pins the project dir (EBUSY on Windows).
+    KNOWNS_RUNTIME_INLINE: "1",
+    KNOWNS_SEMANTIC_RUNTIME_DISABLED: "1",
+    ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
   };
 }
 

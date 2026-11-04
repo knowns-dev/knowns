@@ -159,7 +159,7 @@ describe("case variants", () => {
   });
 });
 
-describe.skipIf(isWindows)("parity with the real Go safepath.Resolve*", () => {
+describe("parity with the real Go safepath.Resolve*", () => {
   const home = tempDir("knowns-ts-home-");
   const corpus = [
     "guides/setup.md",

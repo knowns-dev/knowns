@@ -1,6 +1,5 @@
 import { cliArgsSchema, parseBoundary } from "./schema/index.ts";
 import { getUiAsset } from "./ui.ts";
-import { VERSION } from "./version.ts";
 
 export function parseArgs(argv: string[]) {
   const raw: Record<string, unknown> = {};
@@ -12,15 +11,16 @@ export function parseArgs(argv: string[]) {
   return parseBoundary(cliArgsSchema, raw, "arguments");
 }
 
+/**
+ * Entry point. `--debug-ui-asset <path>` is a build-proof flag (not a command, not in help) that
+ * checks an asset is readable from the compiled binary; everything else goes to the CLI framework.
+ * The framework is imported lazily so the debug path and `--version` do not pay for modules
+ * they do not use.
+ */
 export async function run(argv: string[]): Promise<number> {
-  const args = parseArgs(argv);
-  if (args.version) {
-    // Matches the Go binary (cobra): "knowns version X.Y.Z"
-    process.stdout.write(`knowns version ${VERSION}\n`);
-    return 0;
-  }
-  if (args.debugUiAsset !== undefined) {
-    const asset = getUiAsset(args.debugUiAsset);
+  if (argv[0] === "--debug-ui-asset") {
+    const args = parseArgs(argv);
+    const asset = getUiAsset(args.debugUiAsset ?? "");
     if (!asset) {
       process.stderr.write(`ui asset not found: ${args.debugUiAsset}\n`);
       return 1;
@@ -28,8 +28,8 @@ export async function run(argv: string[]): Promise<number> {
     process.stdout.write(`${asset.size} ${asset.type}\n`);
     return 0;
   }
-  process.stderr.write("knowns (typescript stub): only --version is implemented\n");
-  return 1;
+  const { execute } = await import("./cli/core/root.ts");
+  return execute(argv);
 }
 
 if (import.meta.main) {

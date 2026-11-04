@@ -22,6 +22,16 @@ function clean(path: string): string {
 
 const WINDOWS_VOLUME = /^[A-Za-z]:/;
 const isWindows = () => process.platform === "win32";
+const WINDOWS_ABSOLUTE = /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/?.][^\\/]*[\\/]+[^\\/]+[\\/])/;
+
+/**
+ * filepath.IsAbs. On Windows a path is absolute only with a volume (`C:\x`, `\\host\share\x`);
+ * a rooted `\x` is not, whereas Node's isAbsolute treats it as absolute. Go then joins it under
+ * the root, so the same must happen here.
+ */
+function goIsAbs(path: string): boolean {
+  return isWindows() ? WINDOWS_ABSOLUTE.test(path) : isAbsolute(path);
+}
 
 /** Resolve an untrusted relative path inside root. Absolute paths are rejected. */
 export function resolveSafe(root: string, untrusted: string): string {
@@ -55,7 +65,7 @@ function resolveInternal(root: string, untrusted: string, allowContainedAbsolute
   }
   // filepath.FromSlash: on Windows "/" becomes "\"; elsewhere it is unchanged.
   const nativePath = isWindows() ? normalized.replaceAll("/", "\\") : normalized;
-  if (windowsAbsolute && allowContainedAbsolute && isWindows() && !isAbsolute(nativePath)) {
+  if (windowsAbsolute && allowContainedAbsolute && isWindows() && !goIsAbs(nativePath)) {
     throw new SafePathError("path must not use a drive-relative prefix");
   }
   const segments = normalized.split("/");
@@ -71,7 +81,7 @@ function resolveInternal(root: string, untrusted: string, allowContainedAbsolute
 
   const rootAbs = clean(resolve(root));
   let candidate: string;
-  if (isAbsolute(nativePath)) {
+  if (goIsAbs(nativePath)) {
     if (!allowContainedAbsolute) throw new SafePathError("path must be relative");
     candidate = clean(nativePath);
   } else {
@@ -115,12 +125,34 @@ export function resolveProspectivePath(path: string): string {
       existing = parent;
     }
   }
-  const resolvedExisting = realpathSync(existing);
+  const resolvedExisting = evalSymlinks(existing);
   const rel = relative(existing, path);
   return rel === "" ? resolvedExisting : clean(join(resolvedExisting, rel));
 }
 
+/**
+ * filepath.EvalSymlinks. On Windows it also returns the on-disk spelling, which JS realpath keeps
+ * as given; the native variant (GetFinalPathNameByHandle) matches Go there. Elsewhere Go leaves
+ * case alone, and so does the JS implementation.
+ */
+export function evalSymlinks(path: string): string {
+  return isWindows() ? realpathSync.native(path) : realpathSync(path);
+}
+
+/** filepath.VolumeName on Windows: `C:` or `\\host\share`; empty elsewhere. */
+function volumeName(path: string): string {
+  if (!isWindows()) return "";
+  const m = /^(?:[A-Za-z]:|[\\/]{2}[^\\/?.][^\\/]*[\\/]+[^\\/]+)/.exec(path);
+  return m ? m[0] : "";
+}
+
 function requireWithin(root: string, candidate: string): void {
+  // filepath.Rel fails across volumes; Go reports that distinctly from an escape.
+  if (volumeName(root).toLowerCase() !== volumeName(candidate).toLowerCase()) {
+    throw new SafePathError(
+      `compare path to root: Rel: can't make ${candidate} relative to ${root}`,
+    );
+  }
   const rel = relative(root, candidate);
   if (rel === ".." || isAbsolute(rel) || rel.startsWith(`..${sep}`)) {
     throw new SafePathError("path escapes allowed root");

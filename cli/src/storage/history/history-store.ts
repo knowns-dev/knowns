@@ -125,6 +125,25 @@ interface ReadInternal extends HistoryReadResult {
   validOffsets: number[];
 }
 
+/**
+ * Truncate a log opened for append. Windows opens an O_APPEND handle with FILE_APPEND_DATA but no
+ * FILE_WRITE_DATA, so SetEndOfFile on it fails with "Access is denied" (Go's File.Truncate has the
+ * same limit there, which makes Go's tail recovery and append rollback fail on Windows). A second
+ * short-lived read-write handle truncates the file; the append handle keeps writing at the new end.
+ */
+function truncateAppendLog(fd: number, path: string, size: number): void {
+  if (process.platform !== "win32") {
+    ftruncateSync(fd, size);
+    return;
+  }
+  const rw = openSync(path, "r+");
+  try {
+    ftruncateSync(rw, size);
+  } finally {
+    closeSync(rw);
+  }
+}
+
 /** syncDirectory: fsync a directory; Windows cannot, and that is not an error. */
 export function syncDirectory(path: string): void {
   const fd = openSync(path, "r");
@@ -297,11 +316,11 @@ export class HistoryStore {
         mkdirSync(dirname(path), { recursive: true, mode: 0o755 });
         const fd = openSync(path, "a", 0o600);
         try {
-          if (read.tailTruncated) ftruncateSync(fd, read.validBytes);
+          if (read.tailTruncated) truncateAppendLog(fd, path, read.validBytes);
           const baseOffset = read.validBytes;
           const rollback = () => {
             try {
-              ftruncateSync(fd, baseOffset);
+              truncateAppendLog(fd, path, baseOffset);
               fsyncSync(fd);
             } catch {
               // best effort, as in Go

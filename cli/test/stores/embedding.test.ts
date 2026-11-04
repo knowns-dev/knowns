@@ -1,7 +1,7 @@
 // EmbeddingSettingsStore, registry defaults and semantic resolution
 // (embedding_settings_store.go, embedding_registry_defaults.go, semantic_resolve.go).
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -129,7 +129,7 @@ describe("store", () => {
     const goFile = file();
     const exe = goTool("embseed", GO_SEED);
     for (const f of [tsFile, goFile]) {
-      Bun.spawnSync(["mkdir", "-p", join(f, "..")]);
+      mkdirSync(join(f, ".."), { recursive: true });
       writeFileSync(f, WITH_EXTRAS);
     }
     const store = new EmbeddingSettingsStore(tsFile);
@@ -144,7 +144,7 @@ describe("store", () => {
 
   test("a UTF-8 BOM settings.json is read", () => {
     const f = file();
-    Bun.spawnSync(["mkdir", "-p", join(f, "..")]);
+    mkdirSync(join(f, ".."), { recursive: true });
     writeFileSync(f, `﻿${WITH_EXTRAS}`);
     const s = new EmbeddingSettingsStore(f).load();
     expect(s.providers.api?.apiKey).toBe("k<ey>");
@@ -153,7 +153,7 @@ describe("store", () => {
 
   test("invalid project defaults are rejected", () => {
     const f = file();
-    Bun.spawnSync(["mkdir", "-p", join(f, "..")]);
+    mkdirSync(join(f, ".."), { recursive: true });
     writeFileSync(f, '{"projectDefaults":{"settings":{"defaultTaskIdPrefix":"1!!"}}}');
     expect(() => new EmbeddingSettingsStore(f).load()).toThrow(/normalize project defaults/);
   });

@@ -237,7 +237,8 @@ export function canonicalTaskHash(task: Task | null | undefined): string {
 export function canonicalMemoryHash(memory: MemoryEntry | null | undefined): string {
   if (!memory) return "";
   const list = (v: readonly string[] | undefined) => (v ? [...v] : null);
-  const meta = memory.metadata && Object.keys(memory.metadata).length > 0 ? memory.metadata : null;
+  // Go distinguishes a nil map (`null`) from an empty one (`{}`); the parser keeps an explicit `metadata: {}`.
+  const meta = memory.metadata ?? null;
   return hashSnapshot(
     normalizeAny({
       id: memory.id,

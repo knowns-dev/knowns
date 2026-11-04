@@ -3,7 +3,8 @@
 //
 // Layering: core <- history <- stores <- adapters. history never imports stores and stores take
 // their canonical task/doc hashes straight from history/entities.ts, so there is one hash path.
-// The reference extractor (rewriteDocPath) and the reconciler are injected, not wired here.
+// rewriteDocPath defaults to the reference extractor (domain/references); the reconciler is injected.
+import { rewriteDocPath as rewriteDocPathDefault } from "../domain/references/rewrite.ts";
 import type { MemoryEntry } from "../models/memory.ts";
 import type { TimeEntry } from "../models/time.ts";
 import { withTaskLifecycleLock } from "./core/locks.ts";
@@ -73,8 +74,8 @@ export interface CreateStorageOptions {
   /** Root of machine-level memories (default ~/.knowns). */
   globalRoot?: string;
   /**
-   * references.RewriteDocPath, owned by the reference extractor (not ported yet). The default
-   * throws, so a doc rename that must rewrite references fails loudly instead of skipping them.
+   * references.RewriteDocPath. Defaults to domain/references `rewriteDocPath`; inject another
+   * only to observe or fail a rename in tests.
    */
   rewriteDocPath?: HistoryContext["rewriteDocPath"];
   /** Failure-injection seams for the history store (tests). */
@@ -99,10 +100,6 @@ export interface Storage {
   /** Pass to createTaskWithHistory, mutateDocWithHistory, withTaskLifecycleTransaction, ... */
   ctx: HistoryContext;
 }
-
-const rewriteNotWired: HistoryContext["rewriteDocPath"] = () => {
-  throw new Error("rewriteDocPath is not wired: the reference extractor is not ported yet");
-};
 
 /** Build the wired storage from a Store. */
 export function createStorage(store: Store, opts: CreateStorageOptions = {}): Storage {
@@ -129,7 +126,7 @@ export function createStorage(store: Store, opts: CreateStorageOptions = {}): St
     memory: adaptMemory(memory, store),
     time: adaptTime(time),
     withTaskLifecycleLock: lock,
-    rewriteDocPath: opts.rewriteDocPath ?? rewriteNotWired,
+    rewriteDocPath: opts.rewriteDocPath ?? rewriteDocPathDefault,
     loadProject: () => config.load(),
     renameReferencePreflight: opts.renameReferencePreflight,
   };

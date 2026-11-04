@@ -20,7 +20,7 @@ let failed = 0;
 for (const target of list) {
   const out = join(cliDir, "dist", platformOf(target), exeName(target));
   try {
-    await compile(join(cliDir, "src", "main.ts"), target, out, {
+    await compile(join(cliDir, "src", "bin.ts"), target, out, {
       KNOWNS_VERSION: JSON.stringify(version),
     });
     console.log(`ok   ${target} -> dist/${platformOf(target)}/${exeName(target)}`);

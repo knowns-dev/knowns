@@ -24,7 +24,7 @@ export function isInitializedKnowledgeRoot(dir: string): boolean {
 
 function evalSymlinks(path: string): string | undefined {
   try {
-    return realpathSync(path);
+    return process.platform === "win32" ? realpathSync.native(path) : realpathSync(path);
   } catch {
     return undefined;
   }
