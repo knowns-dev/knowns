@@ -83,6 +83,8 @@ export interface QdrantClient {
     validation: QdrantHitValidationContext,
   ): Promise<{ chunks: ScoredChunk[]; summary: QdrantHitValidationSummary }>;
   deletePoints(name: string, pointIds: string[]): Promise<void>;
+  /** Exact source deletion (Go's qdrantSourceDeleter); targeted reconciliation needs it. */
+  deletePointsBySource?(name: string, sourceId: string): Promise<void>;
   deleteCollection(name: string): Promise<void>;
 }
 

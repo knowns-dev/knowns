@@ -593,6 +593,19 @@ export class VersionStore {
     return { history: h, ok: true };
   }
 
+  /**
+   * readDocHistoryPreview (reconciler.go): the stable, then the legacy, version history for a
+   * path. Read-only; the reconciler uses it to find a legacy head without migrating anything.
+   */
+  readDocHistoryPreview(docPath: string): DocVersionHistory {
+    docPath = normalizeDocPath(docPath);
+    const stable = this.loadStableDocHistoryForAnyPath(docPath);
+    if (stable.ok && stable.history) return stable.history;
+    const legacy = this.loadLegacyDocHistory(docPath);
+    if (legacy.ok && legacy.history) return legacy.history;
+    return { docPath, currentPath: docPath, currentVersion: 0, versions: [] };
+  }
+
   /** readDocJSONL: the replayed history for a path, found through the stream scan. */
   async readDocJsonl(docPath: string): Promise<{ history?: DocVersionHistory; ok: boolean }> {
     const entityId = await this.history.findEntityByPath("doc", docPath);

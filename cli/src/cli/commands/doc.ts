@@ -717,7 +717,11 @@ const docHardDeleteCmd = defineCommand({
         actor: lifecycleActor(ctx.env),
       });
     } catch (e) {
-      throw new Error(`doc hard-delete: ${(e as Error).message}`);
+      // A bootstrap failure (DocReconcileError, message "reconcile: <err>") reads
+      // "doc hard-delete reconcile: <err>" in Go; the purge itself reads "doc hard-delete: <err>".
+      const err = e as Error;
+      if (err.name === "DocReconcileError") throw new Error(`doc hard-delete ${err.message}`);
+      throw new Error(`doc hard-delete: ${err.message}`);
     }
     docHooks.removeDocID(storage, doc.id ?? "", doc.path);
     ctx.print(`Permanently deleted doc: ${doc.path}\n`);

@@ -1,5 +1,6 @@
 // The root-help manifest and the loader registry: what is listed, what is ported, and the gates
 // that keep them honest.
+
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,6 +8,7 @@ import { join } from "node:path";
 import { commandLoaders } from "../../src/cli/commands/index.ts";
 import { ROOT_MANIFEST } from "../../src/cli/core/help-manifest.generated.ts";
 import { groupRootCommands, HELP_GROUPS } from "../../src/cli/core/helpgroups.ts";
+import { REMOVED_COMMAND_SHORT } from "../../src/cli/core/removed.ts";
 import { createRoot } from "../../src/cli/core/root.ts";
 import { GO_BIN, hasGoBin } from "./oracle.ts";
 
@@ -49,7 +51,7 @@ describe("loader registry", () => {
         // The manifest is what root help prints; the ported command must say the same.
         expect({ name, short: spec.short, hidden: spec.hidden ?? false }).toEqual({
           name,
-          short: entry.short,
+          short: REMOVED_COMMAND_SHORT[name] ?? entry.short,
           hidden: entry.hidden,
         });
       } else {

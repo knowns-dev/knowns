@@ -24,6 +24,7 @@ import {
   StyleWarning,
   setPlainOutput,
 } from "./plainoutput.ts";
+import { REMOVED_COMMAND_SHORT } from "./removed.ts";
 
 export const ROOT_SHORT = "The memory layer for AI-native software development";
 
@@ -97,6 +98,10 @@ function lazyCommand(
     // Runnable so it is listed; never runs, because it is replaced before dispatch.
     run: () => undefined,
     loader: async () => {
+      // Seam implementations (search runtime, reconciler) load with the first real command, so
+      // --version, help and unknown-command errors never import them.
+      const { installWiring } = await import("../../wiring/index.ts");
+      await installWiring();
       const spec = (await loader.load()).default;
       return buildCommand(spec);
     },
@@ -117,11 +122,18 @@ export interface RootOptions {
   env?: Record<string, string | undefined>;
 }
 
+function withRemovedCommands(manifest: readonly ManifestEntry[]): ManifestEntry[] {
+  return manifest.map((e) => {
+    const short = REMOVED_COMMAND_SHORT[e.name];
+    return short === undefined ? e : { ...e, short };
+  });
+}
+
 /** Builds the root command: global flags, help, and every root command. */
 export function createRoot(opts: RootOptions = {}): Command {
   const version = opts.version ?? VERSION;
   const loaders = opts.loaders ?? commandLoaders;
-  const manifest = opts.manifest ?? ROOT_MANIFEST;
+  const manifest = withRemovedCommands(opts.manifest ?? ROOT_MANIFEST);
 
   const root = new Command({
     use: "knowns [options] [command]",

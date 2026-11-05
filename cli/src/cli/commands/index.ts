@@ -44,4 +44,8 @@ export const commandLoaders: Record<string, CommandLoader> = {
   quickstart: { load: () => import("./quickstart.ts") },
   sync: { load: () => import("./sync.ts") },
   agents: { load: () => import("./agents.ts") },
+  import: { load: () => import("./import.ts") },
+  reconcile: { load: () => import("./reconcile.ts") },
+  runtime: { load: () => import("./runtime.ts") },
+  __runtime: { load: () => import("./runtime-daemon.ts") },
 };

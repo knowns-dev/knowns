@@ -72,18 +72,23 @@ export function runGoIn(p: Project, args: string[], stdin = ""): Result {
 }
 
 export async function runTsIn(p: Project, args: string[]): Promise<Result> {
-  // The storage layer reads the machine root from process.env.HOME, so the in-process run needs
-  // the sandbox home there too (a real binary gets it from its environment).
-  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
-  process.env.HOME = p.home;
-  process.env.USERPROFILE = p.home;
+  // The storage layer reads the machine root from process.env.HOME and the runtime queue reads its
+  // knobs (KNOWNS_RUNTIME_INLINE) from process.env, so the in-process run needs the sandbox env
+  // there too (a real binary gets it from its environment). PATH is left alone.
+  const env = envFor(p);
+  const saved: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (k === "PATH") continue;
+    saved[k] = process.env[k];
+    process.env[k] = v;
+  }
   try {
-    return await runTs(args, { cwd: p.dir, env: envFor(p) });
+    return await runTs(args, { cwd: p.dir, env });
   } finally {
-    if (saved.HOME === undefined) delete process.env.HOME;
-    else process.env.HOME = saved.HOME;
-    if (saved.USERPROFILE === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = saved.USERPROFILE;
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
   }
 }
 

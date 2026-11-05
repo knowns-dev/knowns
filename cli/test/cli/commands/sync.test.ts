@@ -751,55 +751,6 @@ cases("sync and imports (spec D8: `knowns import` is removed)", () => {
   );
 });
 
-describe("sync reindex goes through the runtime queue seam", () => {
-  const input = (env: Record<string, string>, semantic?: Record<string, unknown>) => ({
-    counts: { tasks: 1, docs: 2, decisions: 3 },
-    semantic: semantic as never,
-    env,
-    storeRoot: "/store/root",
-  });
-
-  test("a runtime (non-inline) sync enqueues and prints the queued line", async () => {
-    const { runSyncReindex } = await import("../../../src/cli/commands/sync-support.ts");
-    const { searchRuntimeHooks } = await import("../../../src/domain/searchenv/index.ts");
-    const saved = searchRuntimeHooks.enqueueReindex;
-    const calls: string[] = [];
-    searchRuntimeHooks.enqueueReindex = (root) => {
-      calls.push(root);
-    };
-    try {
-      const out: string[] = [];
-      await runSyncReindex({ print: (t) => out.push(t), printErr: () => {} }, input({}));
-      expect(calls).toEqual(["/store/root"]);
-      expect(out.join("")).toContain("Queued runtime reindex (1 tasks, 2 docs, 3 decisions)...");
-    } finally {
-      searchRuntimeHooks.enqueueReindex = saved;
-    }
-  });
-
-  test("an inline sync with semantic search configured enqueues too, and never warns", async () => {
-    const { runSyncReindex } = await import("../../../src/cli/commands/sync-support.ts");
-    const { searchRuntimeHooks } = await import("../../../src/domain/searchenv/index.ts");
-    const saved = searchRuntimeHooks.enqueueReindex;
-    let called = 0;
-    searchRuntimeHooks.enqueueReindex = () => {
-      called++;
-    };
-    try {
-      const out: string[] = [];
-      const err: string[] = [];
-      await runSyncReindex(
-        { print: (t) => out.push(t), printErr: (t) => err.push(t) },
-        input({ KNOWNS_RUNTIME_INLINE: "1" }, { enabled: true, model: "m", provider: "ollama" }),
-      );
-      expect(called).toBe(1);
-      expect(err).toEqual([]);
-    } finally {
-      searchRuntimeHooks.enqueueReindex = saved;
-    }
-  });
-});
-
 cases("sync matches Go: error text", () => {
   test(
     "global scope with HOME unset names the home directory step",

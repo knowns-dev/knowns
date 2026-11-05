@@ -1,9 +1,7 @@
 // `knowns search` (internal/cli/search.go): keyword and semantic search over tasks, docs, memories
 // and decisions, plus the `--status-check`, `--setup` and `--reindex` maintenance modes.
 //
-// Not ported yet (they need the index writer and the runtime queue, TSR-2MPMDK): `--reindex`,
-// `search index` and `search index --wait`. They fail with an explicit message instead of
-// pretending to index.
+// `--reindex`, `search index` and `search index --wait` live in search-index.ts (runtime queue).
 import { arbitraryArgs } from "../core/args.ts";
 import { type CommandContext, defineCommand } from "../core/define.ts";
 import { goQuote } from "../core/gofmt.ts";
@@ -27,11 +25,6 @@ import {
   searchWarn,
   sprintPlainResults,
 } from "./search-support.ts";
-
-const NOT_PORTED = (what: string): Error =>
-  new Error(
-    `${what} is not available in the TypeScript build yet (the semantic index writer and the runtime queue have not been ported)`,
-  );
 
 type Ctx = CommandContext;
 
@@ -120,21 +113,8 @@ async function runSetup(ctx: Ctx): Promise<void> {
 
 async function runReindex(ctx: Ctx): Promise<void> {
   const storage = await openStorage(ctx);
-  const count = (fn: () => unknown[]): number => {
-    try {
-      return fn().length;
-    } catch {
-      return 0;
-    }
-  };
-  const tasks = count(() => storage.tasks.listAll());
-  const docs = count(() => storage.docs.list());
-  const decisions = count(() => storage.decisions.list());
-  if (tasks + docs + decisions === 0) {
-    ctx.print(`${renderWarning("No tasks, docs, or decisions to index.")}\n`);
-    return;
-  }
-  throw NOT_PORTED("search --reindex");
+  const { runReindex: reindex } = await import("./search-index.ts");
+  await reindex(ctx, storage, ctx.env);
 }
 
 export default defineCommand({
@@ -201,34 +181,9 @@ export default defineCommand({
         },
       ],
       async run(ctx) {
-        const wait = ctx.flags.bool("wait");
         const storage = await openStorage(ctx);
-        if (!wait) throw NOT_PORTED("search index");
-        // Same precheck as Go: env overrides are not consulted (the getter is nil there).
-        const { resolveSemanticVectorStore, semanticSearchSettingsSchema } = await import(
-          "../../models/config.ts"
-        );
-        const { buildSearchEnvironment } = await import("../../domain/searchenv/index.ts");
-        let project: ReturnType<typeof storage.config.load>["settings"]["semanticSearch"];
-        try {
-          project = storage.config.load().settings.semanticSearch;
-        } catch {
-          project = undefined;
-        }
-        let global: typeof project;
-        try {
-          const raw = buildSearchEnvironment({ env: ctx.env }).embeddingRegistry().projectDefaults
-            ?.settings.semanticSearch;
-          const parsed = semanticSearchSettingsSchema.safeParse(raw);
-          if (parsed.success) global = parsed.data;
-        } catch {
-          global = undefined;
-        }
-        const res = resolveSemanticVectorStore(project, global, undefined);
-        if (!res.enabled || res.optedOut) {
-          throw new Error("semantic vector search is disabled; enable it before indexing");
-        }
-        throw NOT_PORTED("search index --wait");
+        const { runSearchIndex } = await import("./search-index.ts");
+        await runSearchIndex(ctx, storage, ctx.flags.bool("wait"), ctx.env);
       },
     }),
   ],

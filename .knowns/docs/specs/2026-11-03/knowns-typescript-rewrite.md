@@ -3,7 +3,7 @@ id: doc-7c0dbdd40f8c36d3f72dc2c758d3e55b
 title: knowns-typescript-rewrite
 description: Specification for rewriting Knowns from Go back to TypeScript on Bun
 createdAt: '2026-11-02T19:05:28.224Z'
-updatedAt: '2026-11-03T10:09:13.015Z'
+updatedAt: '2026-11-05T08:43:55.904Z'
 tags:
   - spec
   - draft
@@ -142,3 +142,8 @@ Execution order; wave 1 runs in parallel, wave 2 blocks everything after it.
 - [ ] After the switch the Go e2e suite still needs the Go toolchain in CI. Keep it in Go, or port it to TypeScript after v1.0.0?
 - [ ] D2 freezes Go for many months. Is there a maximum freeze length after which the plan is re-evaluated?
 - [ ] Which TUI library replaces bubbletea, and does the interactive `settings` and `init` wizard need pixel-identical rendering or only equivalent behavior?
+
+
+## Resolved Questions
+
+- 2026-11-05, TUI: the interactive init and settings wizard needs equivalent behavior, not pixel-identical rendering. That means the same questions, order, defaults, validation and resulting files. It is built with @clack/prompts. Non-interactive output stays under D6 byte parity. Tracked in @task-TSR-2P6ZDV.

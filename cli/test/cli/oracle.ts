@@ -1,10 +1,12 @@
 // Runs the Go binary (the parity oracle) and the TypeScript CLI side by side.
 // Go tests need KNOWNS_GO_BIN pointing at a knowns binary built from this repo; they skip without it.
+
 import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildCommand, type CommandSpec } from "../../src/cli/core/define.ts";
 import { memoryIO } from "../../src/cli/core/io.ts";
+import { GO_SHORT_OF_REMOVED, REMOVED_COMMAND_SHORT } from "../../src/cli/core/removed.ts";
 import { execute } from "../../src/cli/core/root.ts";
 import { VERSION } from "../../src/version.ts";
 
@@ -54,6 +56,8 @@ export function normalizeGo(text: string): string {
       .replace(/^knowns version dev$/m, `knowns version ${VERSION}`)
       // biome-ignore lint/suspicious/noControlCharactersInRegex: matching ANSI escapes is the point
       .replace(/(Knowns(?:\x1b\[m)? (?:\x1b\[32m)?)dev/, `$1${VERSION}`)
+      // D8: root help lists removed commands as removed; this is the only intended difference.
+      .replaceAll(GO_SHORT_OF_REMOVED.import ?? "\u0000", REMOVED_COMMAND_SHORT.import ?? "")
   );
 }
 

@@ -4,7 +4,7 @@
 import { searchRuntimeHooks } from "../../domain/searchenv/index.ts";
 import {
   checkEmbeddingModel,
-  planSyncReindex,
+  type planSyncReindex,
   resolveSkillsScope,
   syncInstructionFiles,
   syncPlatformConfigs,
@@ -155,37 +155,10 @@ export interface ReindexInput {
  * printed here. Keyword-only projects reproduce Go's output exactly.
  */
 export async function runSyncReindex(out: Out, input: ReindexInput): Promise<void> {
-  const { tasks, docs, decisions } = input.counts;
-  const plan = planSyncReindex(input);
-  switch (plan.kind) {
-    case "nothing-to-index":
-      out.print(`${renderWarning("No tasks, docs, or decisions to index.")}\n`);
-      return;
-    case "silent":
-      return;
-    case "queue":
-      try {
-        await searchRuntimeHooks.enqueueReindex(input.storeRoot);
-      } catch {
-        // best effort, like the search bootstrap
-      }
-      out.print(
-        `${renderInfo(`Queued runtime reindex (${tasks} tasks, ${docs} docs, ${decisions} decisions)...`)}\n\n`,
-      );
-      return;
-    case "keyword-only":
-      if (plan.globalLoadError !== undefined) out.print(`${searchWarn(plan.globalLoadError)}\n\n`);
-      out.print(`${searchDim("Semantic search is not configured.")}\n\n`);
-      out.print(
-        `${renderNextSteps(renderCmd("knowns settings"), renderCmd("knowns search --reindex"))}\n`,
-      );
-      out.print(
-        `${searchDim("Keyword search does not require indexing (scans tasks/docs on each query).")}\n`,
-      );
-      out.print(
-        `${renderInfo(`Found ${tasks} tasks, ${docs} docs, and ${decisions} decisions available for keyword search.`)}\n`,
-      );
-  }
+  const { createStorage } = await import("../../storage/adapters.ts");
+  const { Store } = await import("../../storage/core/store.ts");
+  const { runReindex } = await import("./search-index.ts");
+  await runReindex(out, createStorage(Store.open(input.storeRoot)), input.env);
 }
 
 /** syncMCPConfigs (internal/cli/update.go): the project is found by walking up from cwd. */
