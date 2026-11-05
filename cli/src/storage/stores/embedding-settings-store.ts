@@ -223,6 +223,8 @@ export class EmbeddingSettingsStore {
     } catch (e) {
       throw new Error(`parse embedding settings: ${(e as Error).message}`);
     }
+    const mismatch = goTypeMismatch(raw);
+    if (mismatch) throw new Error(`parse embedding settings: ${mismatch}`);
     if (!isObject(raw)) throw new Error("parse embedding settings: expected a JSON object");
 
     const settings: EmbeddingSettings = { providers: {}, models: {} };
@@ -358,4 +360,184 @@ export function providerWithDefaults(p: EmbeddingProvider): EmbeddingProvider {
       maxDelay: r.maxDelay <= 0 ? dr.maxDelay : r.maxDelay,
     },
   };
+}
+
+// --- Go's encoding/json type errors ---------------------------------------------------------------
+// Go decodes settings.json into typed structs, so a value of the wrong JSON type fails the whole
+// load with `json: cannot unmarshal <kind> into Go struct field <Struct>.<json path> of type <T>`
+// (the first mismatch in document order). The schemas below name the struct fields Go decodes
+// into; fields they do not list are not type-checked here (they are validated later, as before).
+
+type GoType =
+  | { k: "string" | "bool" | "int" | "strs" | "mapstr" }
+  | {
+      k: "obj";
+      goName: string;
+      struct: string;
+      fields?: Record<string, GoType>;
+    };
+
+const S: GoType = { k: "string" };
+const B: GoType = { k: "bool" };
+const I: GoType = { k: "int" };
+const STRS: GoType = { k: "strs" };
+const obj = (goName: string, fields?: Record<string, GoType>): GoType => ({
+  k: "obj",
+  goName,
+  struct: goName.slice(goName.lastIndexOf(".") + 1),
+  ...(fields ? { fields } : {}),
+});
+
+const GIT_TRACKING = obj("models.GitTracking", {
+  tasks: B,
+  docs: B,
+  templates: B,
+  memories: B,
+  decisions: B,
+});
+const SEMANTIC = obj("models.SemanticSearchSettings", {
+  enabled: B,
+  model: S,
+  provider: S,
+  huggingFaceId: S,
+  dimensions: I,
+  maxTokens: I,
+});
+const PROJECT_SETTINGS = obj("models.ProjectSettings", {
+  defaultAssignee: S,
+  defaultPriority: S,
+  defaultLabels: STRS,
+  defaultTaskIdPrefix: S,
+  // TaskLifecycleSettings.UnmarshalJSON decodes into an anonymous struct, so Go names that type
+  // in full; field errors keep the enclosing struct name and the full path.
+  taskLifecycle: {
+    k: "obj",
+    goName:
+      'struct { ExcludeDoneFromDefaultRetrieval *bool "json:\\"excludeDoneFromDefaultRetrieval\\""; AutoArchive *bool "json:\\"autoArchive\\""; ArchiveAfter *string "json:\\"archiveAfter\\""; PurgeAfter json.RawMessage "json:\\"purgeAfter\\"" }',
+    struct: "ProjectSettings",
+    fields: { excludeDoneFromDefaultRetrieval: B, autoArchive: B, archiveAfter: S },
+  },
+  codeIntelligenceIgnore: STRS,
+  timeFormat: S,
+  editor: S,
+  gitTrackingMode: S,
+  gitTracking: GIT_TRACKING,
+  statuses: STRS,
+  statusColors: { k: "mapstr" },
+  visibleColumns: STRS,
+  semanticSearch: SEMANTIC,
+  serverPort: I,
+  platforms: STRS,
+  runtimeMemory: obj("models.RuntimeMemorySettings"),
+  runtimeWatch: obj("models.RuntimeWatchSettings"),
+  permissions: obj("permissions.PermissionConfig"),
+  skillsScope: S,
+  lsp: obj("models.LSPSettings"),
+});
+const PROJECT_DEFAULTS = obj("storage.ProjectDefaults", {
+  projectName: S,
+  settings: PROJECT_SETTINGS,
+});
+
+function jsonKind(v: unknown): string {
+  if (v === null) return "null";
+  if (Array.isArray(v)) return "array";
+  if (typeof v === "object") return Object.hasOwn(v, "rawJSON") ? "number" : "object";
+  return typeof v === "boolean" ? "bool" : typeof v;
+}
+
+function numberLiteral(v: unknown): string {
+  return typeof v === "object" && v !== null
+    ? String((v as { rawJSON: string }).rawJSON)
+    : String(v);
+}
+
+function goTypeName(t: GoType): string {
+  switch (t.k) {
+    case "strs":
+      return "[]string";
+    case "mapstr":
+      return "map[string]string";
+    case "obj":
+      return t.goName;
+    default:
+      return t.k;
+  }
+}
+
+function typeMismatch(
+  value: unknown,
+  t: GoType,
+  parent: string,
+  path: string[],
+): string | undefined {
+  const kind = jsonKind(value);
+  if (kind === "null") return undefined;
+  const fail = (shownKind = kind): string =>
+    `json: cannot unmarshal ${shownKind} into Go struct field ${parent}.${path.join(".")} of type ${goTypeName(t)}`;
+  switch (t.k) {
+    case "string":
+    case "bool":
+      return kind === t.k ? undefined : fail();
+    case "int":
+      if (kind !== "number") return fail();
+      return /^-?\d+$/.test(numberLiteral(value))
+        ? undefined
+        : fail(`number ${numberLiteral(value)}`);
+    case "strs": {
+      if (kind !== "array") return fail();
+      for (const el of value as unknown[]) {
+        const m = typeMismatch(el, S, parent, path);
+        if (m) return m;
+      }
+      return undefined;
+    }
+    case "mapstr": {
+      if (kind !== "object") return fail();
+      for (const el of Object.values(value as JsonObject)) {
+        const m = typeMismatch(el, S, parent, path);
+        if (m) return m;
+      }
+      return undefined;
+    }
+    case "obj": {
+      if (kind !== "object") return fail();
+      for (const [key, v] of Object.entries(value as JsonObject)) {
+        const ft = t.fields?.[key];
+        if (!ft) continue;
+        const m = typeMismatch(v, ft, t.struct, [...path, key]);
+        if (m) return m;
+      }
+      return undefined;
+    }
+  }
+}
+
+/** The first type error Go's json.Unmarshal would report for this settings document, if any. */
+export function goTypeMismatch(raw: unknown): string | undefined {
+  const kind = jsonKind(raw);
+  if (kind !== "object" && kind !== "null") {
+    return `json: cannot unmarshal ${kind} into Go value of type storage.embeddingSettingsAlias`;
+  }
+  if (kind === "null") return undefined;
+  const top: Record<string, GoType> = {
+    defaultEmbeddingModel: S,
+    projectDefaults: PROJECT_DEFAULTS,
+  };
+  for (const [key, v] of Object.entries(raw as JsonObject)) {
+    if (key === "embeddingProviders" || key === "embeddingModels") {
+      const elem =
+        key === "embeddingProviders" ? "storage.EmbeddingProvider" : "storage.EmbeddingModel";
+      const k = jsonKind(v);
+      if (k !== "object" && k !== "null") {
+        return `json: cannot unmarshal ${k} into Go struct field embeddingSettingsAlias.${key} of type map[string]${elem}`;
+      }
+      continue;
+    }
+    const t = top[key];
+    if (!t) continue;
+    const m = typeMismatch(v, t, "embeddingSettingsAlias", [key]);
+    if (m) return m;
+  }
+  return undefined;
 }

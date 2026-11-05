@@ -104,9 +104,15 @@ export class Normalizer {
     }
     if (this.durations) {
       s = s.replace(/Duration: [0-9hms ]+/g, "Duration: <D>");
-      s = s.replace(/"duration": \d+/g, '"duration": <D>');
-      s = s.replace(/"timeSpent": \d+/g, '"timeSpent": <D>');
+      s = s.replace(/"duration":( ?)\d+/g, '"duration":$1<D>');
+      s = s.replace(/"timeSpent":( ?)\d+/g, '"timeSpent":$1<D>');
+      // history JSONL: {"field":"timeSpent","oldValue":null,"newValue":88287}
+      s = s.replace(/("field":"timeSpent","oldValue":[^,]+,"newValue":)\d+/g, "$1<D>");
       s = s.replace(/timeSpent: \d+/g, "timeSpent: <D>");
+      // task history: "timeSpent: <nil> -> 88115"; Go and TS can straddle a second boundary.
+      s = s.replace(/(timeSpent: \S+ -> )\d+/g, "$1<D>");
+      // time log rows and totals ("24h 29m"): the running entry's length crosses minute boundaries.
+      s = s.replace(/\b\d+h \d+m\b/g, "<D>");
       s = s.replace(/TIME SPENT: [0-9hms ]+/g, "TIME SPENT: <D>");
     }
     return s;

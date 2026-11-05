@@ -226,7 +226,7 @@ export function runBoth(
   });
   const maskTree = (t: Record<string, string>, ids: string[]) => {
     const o: Record<string, string> = {};
-    for (const [k, v] of Object.entries(t)) o[mask(k, ids)] = mask(v, ids);
+    for (const [k, v] of Object.entries(t)) o[mask(k, ids)] = sortMatchedBy(mask(v, ids));
     return o;
   };
   return {
@@ -242,19 +242,26 @@ export function runBoth(
  * the comma-separated MATCHED_BY value and the JSON matchedBy arrays before comparing.
  */
 export function sortMatchedBy(text: string): string {
-  return text
-    .replace(
-      /^( {2}MATCHED_BY: )(.*)$/gm,
-      (_m, p: string, v: string) => p + v.split(", ").sort().join(", "),
-    )
-    .replace(/"matchedBy": \[([^\]]*)\]/g, (_m, inner: string) => {
-      const items = inner
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s !== "")
-        .sort();
-      return `"matchedBy": [${items.join(", ")}]`;
-    });
+  return (
+    text
+      .replace(
+        /^( {2}MATCHED_BY: )(.*)$/gm,
+        (_m, p: string, v: string) => p + v.split(", ").sort().join(", "),
+      )
+      .replace(/"matchedBy": \[([^\]]*)\]/g, (_m, inner: string) => {
+        const items = inner
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s !== "")
+          .sort();
+        return `"matchedBy": [${items.join(", ")}]`;
+      })
+      // Decision files (decision_store.go writeIndentedYAMLStringList): "    matchedBy:\n      - x".
+      .replace(/^( *)matchedBy:\n((?:\1 {2}- .*\n)+)/gm, (_m, ind: string, list: string) => {
+        const lines = list.split("\n").filter((l) => l !== "");
+        return `${ind}matchedBy:\n${lines.sort().join("\n")}\n`;
+      })
+  );
 }
 
 /** Blocks separated by blank lines, sorted: list output ordered by Go's random generated ids. */

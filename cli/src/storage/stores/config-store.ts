@@ -133,8 +133,20 @@ export function projectToGo(project: JsonObject): JsonObject {
 }
 
 /** json.Unmarshal into models.Project, then Normalize + Validate. */
+/** models.Project zero values: "" strings, time.Time{} and an empty settings struct. */
+const GO_PROJECT_ZERO: ReadonlyArray<readonly [string, () => JsonObject[string]]> = [
+  ["name", () => ""],
+  ["id", () => ""],
+  ["createdAt", () => "0001-01-01T00:00:00Z"],
+  ["settings", () => ({})],
+];
+
 function parseProject(raw: JsonObject, what: string): Project {
   const plain = plainNumbers(raw) as JsonObject;
+  // json.Unmarshal leaves absent or null fields at their zero value, so Go accepts `{}`.
+  for (const [key, zero] of GO_PROJECT_ZERO) {
+    if (plain[key] === undefined || plain[key] === null) plain[key] = zero();
+  }
   if (plain.settings !== null && typeof plain.settings === "object") {
     plain.settings = dropNulls(plain.settings as JsonObject);
   }

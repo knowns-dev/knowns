@@ -8,6 +8,7 @@ import { rewriteDocPath as rewriteDocPathDefault } from "../domain/references/re
 import type { MemoryEntry } from "../models/memory.ts";
 import type { TimeEntry } from "../models/time.ts";
 import { withTaskLifecycleLock } from "./core/locks.ts";
+import { inStoresDir } from "./core/project-location.ts";
 import type { Store } from "./core/store.ts";
 import {
   canonicalMemoryHash,
@@ -103,7 +104,11 @@ export interface Storage {
 
 /** Build the wired storage from a Store. */
 export function createStorage(store: Store, opts: CreateStorageOptions = {}): Storage {
-  const config = new ConfigStore(store.root, store.projectRoot);
+  // Go (store.go): only a store folder under the global root splits personal/machine settings out.
+  const config = new ConfigStore(
+    store.root,
+    inStoresDir(store.root) ? store.projectRoot : undefined,
+  );
   const tasks = new TaskStore(store);
   const docs = new DocStore(store);
   const memory = new MemoryStore(store, opts.globalRoot);

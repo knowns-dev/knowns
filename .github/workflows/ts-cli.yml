@@ -48,6 +48,10 @@ jobs:
         working-directory: ui
         run: bun install --frozen-lockfile && bun run build
       - run: bun install --frozen-lockfile
+      # Before anything regenerates it: the committed embedded skills/guidelines must match what
+      # Go embeds from internal/instructions, or a Go-side edit would ship stale content.
+      - name: Embedded instructions are in sync with internal/instructions
+        run: bun scripts/gen-instructions.ts --check
       - name: Check (typecheck + lint)
         run: bun run check
       - name: Unit tests

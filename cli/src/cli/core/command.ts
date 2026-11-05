@@ -5,6 +5,7 @@
  * printing, and the exact order of persistent/pre/run hooks. See cli/README.md ("CLI framework")
  * for why this is a small bespoke engine instead of commander/yargs.
  */
+import { goGetwd } from "../../storage/core/getwd.ts";
 import type { PositionalArgs } from "./args.ts";
 import { SilentExit } from "./exit.ts";
 import { type Flag, FlagError, FlagSet, HelpRequested } from "./flags.ts";
@@ -236,7 +237,7 @@ export class Command {
 
   /** The working directory of this run. */
   cwd(): string {
-    return this.root().runCwd ?? process.cwd();
+    return this.root().runCwd ?? goGetwd(this.env());
   }
 
   // --- output ----------------------------------------------------------------------------------

@@ -28,6 +28,7 @@ export interface CommandLoader {
 }
 
 export const commandLoaders: Record<string, CommandLoader> = {
+  init: { load: () => import("./init.ts") },
   task: { load: () => import("./task.ts") },
   time: { load: () => import("./time.ts") },
   doc: { load: () => import("./doc.ts") },
@@ -35,4 +36,12 @@ export const commandLoaders: Record<string, CommandLoader> = {
   validate: { load: () => import("./validate.ts") },
   memory: { load: () => import("./memory.ts") },
   decision: { load: () => import("./decision.ts") },
+  search: { load: () => import("./search.ts") },
+  retrieve: { load: () => import("./retrieve.ts") },
+  resolve: { load: () => import("./resolve.ts") },
+  config: { load: () => import("./config.ts") },
+  status: { load: () => import("./status.ts") },
+  quickstart: { load: () => import("./quickstart.ts") },
+  sync: { load: () => import("./sync.ts") },
+  agents: { load: () => import("./agents.ts") },
 };

@@ -12,6 +12,7 @@ import {
   saveQdrantPointer,
   searchWithRuntime,
 } from "../../src/search/index.ts";
+import { CONNECTION_REFUSED } from "../../src/search/neterror.ts";
 import { createStorage, type Storage } from "../../src/storage/adapters.ts";
 import { Store } from "../../src/storage/core/store.ts";
 import { EmbeddingSettingsStore } from "../../src/storage/stores/index.ts";
@@ -164,7 +165,7 @@ suite("degraded search against Go 0.34.1", () => {
     const dead = `http://127.0.0.1:${closedPort()}`;
     useServices(dead, qdrantBase);
     const message = await compare("deploy");
-    expect(message).toContain("connect: connection refused");
+    expect(message).toContain(CONNECTION_REFUSED);
   });
 
   test("embedder fine, Qdrant answers HTTP 500", async () => {
@@ -189,7 +190,7 @@ suite("degraded search against Go 0.34.1", () => {
         : new Response("", { status: 404 });
     useServices(base, `http://127.0.0.1:${closedPort()}`);
     const message = await compare("deploy rollback");
-    expect(message).toContain("connect: connection refused");
+    expect(message).toContain(CONNECTION_REFUSED);
   });
 
   test("no index pointer: the index is reported empty", async () => {

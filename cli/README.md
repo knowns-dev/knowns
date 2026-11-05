@@ -51,6 +51,17 @@ const storage = createStorage(Store.open(root));
 - `domain/references` - the inline reference grammar (`extract`, `parse`, `rewriteDocPath`, `allowedRelation`). `createStorage` wires `rewriteDocPath` as the default doc-rename rewriter. `referenceExtractor` is the adapter for `SearchEnvironment.references` / `Engine` deps (`expandReferences`).
 - `domain/validate` - `run(storage, options)` returns `{ issues, errorCount, warningCount, infoCount, valid }` (task, doc, memory, template and spec-decision checks), plus `looksLikeTaskID` and `markdownSectionContent`.
 - `domain/codegen` - the template engine (`Engine.run`, `renderString`, `validateTemplate`) over a port of Go's `text/template`, so render output and parse/exec error text match Go's.
+- `domain/readiness` - `buildReadiness(storage, env, { runtime?, lsp? })` returns the payload behind `knowns status` (knowledge counts, search readiness, runtime, permissions, capabilities); `inactivePayload()` and `loadRuntimeReadiness(env)` (the read side of the runtime daemon's pid, lease and queue files). The `lsp` section needs the LSP manager (TSR-XSEKND): pass its statuses in `lsp`; without them the section is omitted.
+
+### Search, retrieve, resolve, config, status, quickstart
+
+`commands/search.ts`, `retrieve.ts`, `resolve.ts`, `config.ts`, `status.ts` and `quickstart.ts` are the `internal/cli` ports; their libraries are importable without the CLI framework:
+
+- `domain/searchenv/index.ts` - `buildSearchEnvironment({ env?, fetch?, ... })` builds the `SearchEnvironment` every caller of the search library needs: the machine embedding registry (`EmbeddingSettingsStore`, `~/.knowns/settings.json`), the global semantic store (`~/.knowns/global`, opened lazily), the references adapter (`referenceExtractor`) and the `queueReindex` seam. MCP and the server call this instead of assembling their own. `searchRuntimeHooks.enqueueReindex` is the runtime-queue seam (a no-op until TSR-2MPMDK lands); the degraded-search notice already says `qdrant bootstrap/reindex queued` exactly as Go does, because Go reports the bootstrap as queued even when the enqueue itself fails.
+- `commands/resolve-support.ts` - `storageReaders(storage)`, `resolveRaw(storage, ref)` and `resolveStructural(storage, ref, params)` (Store.ResolveRawReference / StructuralResolve) over the history library's resolvers.
+- `commands/search-support.ts` - result grouping and the plain / styled renderers; `commands/config-gitignore.ts` - `writeKnownsGitignore` (also needed by `init`).
+
+Not ported yet, and failing with an explicit message rather than pretending: `search --reindex`, `search index` and `search index --wait` (they need the semantic index writer and the runtime queue), and the interactive `settings` command (huh forms; still a root-help placeholder). Go's `search*` warning, dim and success styles, and `RenderBadge`, are built outside Go's plain / `NO_COLOR` switch, so they keep their colours there; the port reproduces that for byte parity.
 
 The doc commands' pure helpers (sections, line ranges, headings, slugs, history formatting and Go-ordered history JSON) are exported from `src/cli/commands/doc-support.ts` and `doc-history.ts`. Two seams are inert until their owners land: `docHooks` in `commands/doc-hooks.ts` (background search indexing after a doc mutation, and the reconciler behind `doc hard-delete`).
 

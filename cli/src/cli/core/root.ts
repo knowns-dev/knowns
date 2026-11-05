@@ -3,6 +3,7 @@
  * unmigrated-config warning, and the honest placeholder for commands that are not ported yet.
  */
 
+import { goGetwd } from "../../storage/core/getwd.ts";
 import { VERSION } from "../../version.ts";
 import { type CommandLoader, commandLoaders } from "../commands/index.ts";
 import { Command, type CommandInit } from "./command.ts";
@@ -245,7 +246,7 @@ export interface RunOptions extends RootOptions {
 export async function execute(argv: string[], opts: RunOptions = {}): Promise<number> {
   const io = opts.io ?? stdIO();
   const env = opts.env ?? process.env;
-  const cwd = opts.cwd ?? process.cwd();
+  const cwd = opts.cwd ?? goGetwd(env);
   // NO_COLOR applies before anything can render, --help included.
   setPlainOutput(noColorRequested(env));
 

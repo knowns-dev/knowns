@@ -184,3 +184,16 @@ describe("store-linked project split (D13)", () => {
     }
   });
 });
+
+describe("Go zero values", () => {
+  test("an empty config object loads like json.Unmarshal into models.Project", () => {
+    const root = join(tmp, "zero", ".knowns");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "config.json"), "{}\n");
+    const p = new ConfigStore(root).load();
+    expect(p.name).toBe("");
+    expect(p.id).toBe("");
+    expect(p.createdAt).toBe("0001-01-01T00:00:00Z");
+    expect(p.settings.defaultPriority).toBe("");
+  });
+});

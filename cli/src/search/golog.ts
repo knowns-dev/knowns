@@ -1,8 +1,17 @@
-// math.Log as Go computes it. V8's Math.log and Go's math.Log are both fdlibm descendants but
+// math.Log as Go computes it, per target. V8's Math.log and Go's math.Log are both fdlibm descendants but
 // differ in the last bit for about 7% of the arguments BM25's idf feeds them, which would shift
-// scores by an ulp. This is Go's pure-Go `log` (FreeBSD e_log.c), with its multiply-adds fused
-// where the Go arm64 compiler fuses them (see fma.ts).
+// scores by an ulp. On arm64 (and every GOARCH without an assembly Log) Go runs its pure-Go `log`
+// (FreeBSD e_log.c) with the multiply-adds fused where the compiler fuses them (see fma.ts); that
+// is `goLogPure` here. On amd64 Go runs log_amd64.s instead, ported in golog-amd64.ts. `goLog`
+// picks the one for the target this process runs on (each release binary is per target).
 import { mulAdd } from "./fma.ts";
+import { goLogAmd64 } from "./golog-amd64.ts";
+
+export { goLogAmd64 };
+
+/** Which Go math.Log implementation matches the machine: x64 binaries use the assembly one. */
+export const hostLogImplementation: "amd64-asm" | "pure-go" =
+  process.arch === "x64" ? "amd64-asm" : "pure-go";
 
 const bits = new DataView(new ArrayBuffer(8));
 /** The double with these high and low words (the constants' exact fdlibm bit patterns). */
@@ -44,7 +53,8 @@ function frexp(x: number): { frac: number; exp: number } {
   return { frac: view.getFloat64(0), exp };
 }
 
-export function goLog(x: number): number {
+/** Go's pure-Go math.Log (arm64 etc.), fused per fma.ts. */
+export function goLogPure(x: number): number {
   if (Number.isNaN(x) || x === Number.POSITIVE_INFINITY) return x;
   if (x < 0) return Number.NaN;
   if (x === 0) return Number.NEGATIVE_INFINITY;
@@ -73,3 +83,7 @@ export function goLog(x: number): number {
   const b = c - f;
   return mulAdd(k, LN2_HI, -b);
 }
+
+/** math.Log exactly as the Go binary built for this machine computes it. */
+export const goLog: (x: number) => number =
+  hostLogImplementation === "amd64-asm" ? goLogAmd64 : goLogPure;

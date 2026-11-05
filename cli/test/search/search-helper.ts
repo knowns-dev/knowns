@@ -12,7 +12,7 @@ let built: string | undefined | null = null;
 
 export function searchHelperPath(): string | undefined {
   if (built !== null) return built;
-  const exe = join(OUT_DIR, "search-helper");
+  const exe = join(OUT_DIR, process.platform === "win32" ? "search-helper.exe" : "search-helper");
   mkdirSync(OUT_DIR, { recursive: true });
   if (existsSync(exe) && statSync(exe).mtimeMs > statSync(SOURCE).mtimeMs) {
     built = exe;
