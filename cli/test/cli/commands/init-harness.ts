@@ -25,6 +25,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
+import { withProcessEnv } from "../../helpers/process-env.ts";
 import { GO_BIN, hasGoBin, normalizeGo, type Result, runTs } from "../oracle.ts";
 
 export { hasGoBin };
@@ -48,6 +49,12 @@ export interface InitStep {
    * (/dev/tty cannot be opened) however the test runner itself was started.
    */
   detached?: boolean;
+  /**
+   * Run the TS side as a separate `bun` process instead of in-process. Needed when the env sets
+   * HTTP(S)_PROXY: Bun on Windows keeps using a proxy put on process.env even after it is removed,
+   * which breaks every later test in the run that talks to a local server.
+   */
+  proc?: boolean;
 }
 
 export function makeInitProject(
@@ -125,17 +132,23 @@ export function runInitGo(p: InitProject, step: InitStep): Result {
 
 export async function runInitTs(p: InitProject, step: InitStep): Promise<Result> {
   if (step.detached) return runDetached(["bun", MAIN, ...step.args], p, step);
-  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
-  process.env.HOME = p.home;
-  process.env.USERPROFILE = p.home;
-  try {
-    return await runTs(step.args, { cwd: p.dir, env: baseEnv(p, step.env) });
-  } finally {
-    if (saved.HOME === undefined) delete process.env.HOME;
-    else process.env.HOME = saved.HOME;
-    if (saved.USERPROFILE === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = saved.USERPROFILE;
+  const env = baseEnv(p, step.env);
+  if (step.proc) {
+    // process.execPath: the step's PATH may be a sandbox that holds no bun.
+    const r = Bun.spawnSync([process.execPath, MAIN, ...step.args], {
+      cwd: p.dir,
+      env,
+      stdin: Buffer.from(""),
+      timeout: SPAWN_TIMEOUT_MS,
+    });
+    return { code: r.exitCode ?? -1, stdout: r.stdout.toString(), stderr: r.stderr.toString() };
   }
+  if (env.HTTP_PROXY !== undefined || env.HTTPS_PROXY !== undefined) {
+    throw new Error("a step that sets a proxy must use proc: true (see InitStep.proc)");
+  }
+  // The whole sandbox env, PATH included: the language-server install step looks up binaries on
+  // PATH, and the runtime reads its knobs from process.env.
+  return withProcessEnv(env, () => runTs(step.args, { cwd: p.dir, env }));
 }
 
 const TS_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;

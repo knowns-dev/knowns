@@ -254,9 +254,11 @@ Creates a .knowns/ directory with the required structure and a default config.js
       },
       {
         label: "Installing language servers",
-        run: () => {
+        run: async () => {
           if (cwd === "" || (ctx.env.KNOWN_LSP_AUTO_INSTALL ?? "").trim() === "0") return;
-          recordDetectedLanguages(cwd, openStorage().config);
+          const detected = recordDetectedLanguages(cwd, openStorage().config);
+          const { installDetectedServers } = await import("../../lsp/auto-install.ts");
+          await installDetectedServers(cwd, detected, (t) => ctx.print(t));
         },
       },
     );

@@ -340,7 +340,9 @@ cases("init language detection", () => {
   }
 
   test("detected languages are recorded in settings.lsp like Go", async () => {
-    const [first] = await lspConfig([(p) => ({ args: ["init", "--no-wizard"], env: lspEnv(p) })]);
+    const [first] = await lspConfig([
+      (p) => ({ args: ["init", "--no-wizard"], env: lspEnv(p), proc: true }),
+    ]);
     const go = first?.go as { lsp?: { enabled?: boolean; languages?: object } };
     expect(go.lsp?.enabled).toBe(true);
     // go, typescript (src/index.ts), json (package.json) and markdown (the instruction files);
@@ -358,6 +360,7 @@ cases("init language detection", () => {
     const mk = (p: InitProject): InitStep => ({
       args: ["init", "--no-wizard", "--force"],
       env: lspEnv(p),
+      proc: true,
     });
     const configs = await lspConfig([mk, mk]);
     for (const c of configs) expect(c.ts).toEqual(c.go);
@@ -368,6 +371,7 @@ cases("init language detection", () => {
       (p) => ({
         args: ["init", "--no-wizard"],
         env: { ...lspEnv(p), KNOWN_LSP_AUTO_INSTALL: "0" },
+        proc: true,
       }),
     ]);
     expect((first?.go as { lsp?: unknown } | undefined)?.lsp).toBeUndefined();

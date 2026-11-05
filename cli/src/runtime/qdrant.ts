@@ -1,9 +1,7 @@
 // Port of internal/qdrantruntime (manager.go, ensure.go): the managed local Qdrant process under
 // ~/.knowns/runtime/qdrant, enough for the runtime queue (EnsureRunning before every job that talks
-// to Qdrant) and `search index` (start after an install check). The artifact installer
-// (installer.go: pinned download, checksum, archive extraction) is not part of this port: an
-// installed binary and a matching install.json are honoured, anything else fails with Go's
-// not-installed error.
+// to Qdrant) and `search index` (start after an install). The artifact installer (installer.go) is
+// ported in qdrant-installer.ts; installQdrant below is its entry point.
 
 import { spawn } from "node:child_process";
 import {
@@ -84,6 +82,13 @@ export interface QdrantRuntimeStatus {
   message?: string;
   paths: QdrantPaths;
   updatedAt: string;
+}
+
+/** Go's Start returns (status, err); the TS port throws, carrying the status Go would return. */
+export type QdrantStartError = Error & { status?: QdrantRuntimeStatus };
+
+function withStatus<E extends Error>(err: E, status: QdrantRuntimeStatus): E & QdrantStartError {
+  return Object.assign(err, { status });
 }
 
 export interface ProcessController {
@@ -386,8 +391,11 @@ export class QdrantManager {
         } catch {
           // best effort
         }
-        throw new WedgedProcessStoppedError(
-          `${(err as Error).message}; inspect ${status.paths.logPath} or run \`knowns qdrant logs\``,
+        throw withStatus(
+          new WedgedProcessStoppedError(
+            `${(err as Error).message}; inspect ${status.paths.logPath} or run \`knowns qdrant logs\``,
+          ),
+          status,
         );
       }
     }
@@ -400,7 +408,10 @@ export class QdrantManager {
       } catch {
         // best effort
       }
-      throw new Error(`managed Qdrant binary not found at ${status.paths.binaryPath}`);
+      throw withStatus(
+        new Error(`managed Qdrant binary not found at ${status.paths.binaryPath}`),
+        status,
+      );
     }
     let logFd: number;
     try {
@@ -436,8 +447,11 @@ export class QdrantManager {
       } catch {
         // best effort
       }
-      throw new Error(
-        `wait for Qdrant /healthz: ${(err as Error).message}; inspect ${status.paths.logPath} or run \`knowns qdrant logs\``,
+      throw withStatus(
+        new Error(
+          `wait for Qdrant /healthz: ${(err as Error).message}; inspect ${status.paths.logPath} or run \`knowns qdrant logs\``,
+        ),
+        status,
       );
     }
     status = this.status("managed Qdrant started");
@@ -446,6 +460,80 @@ export class QdrantManager {
     status.state = QDRANT_STATUS_RUNNING;
     this.writeStatus(status);
     return status;
+  }
+
+  /** Stop stops the managed process Knowns owns. External mode is a visible no-op. */
+  async stop(): Promise<QdrantRuntimeStatus> {
+    if (this.isExternal()) {
+      const status = this.status("external Qdrant URL configured; no managed process stopped");
+      try {
+        this.writeStatus(status);
+      } catch {
+        // best effort
+      }
+      return status;
+    }
+    let status = this.status("");
+    if (!status.pid || !status.running) {
+      rmSync(status.paths.pidPath, { force: true });
+      status.pid = undefined;
+      status.running = false;
+      status.state = QDRANT_STATUS_STOPPED;
+      status.message = "managed Qdrant is not running";
+      try {
+        this.writeStatus(status);
+      } catch {
+        // best effort
+      }
+      return status;
+    }
+    await this.controller.stop(status.pid, 10_000);
+    rmSync(status.paths.pidPath, { force: true });
+    status = this.status("managed Qdrant stopped");
+    status.state = QDRANT_STATUS_STOPPED;
+    status.running = false;
+    status.pid = undefined;
+    this.writeStatus(status);
+    return status;
+  }
+
+  /** Cleanup removes stale process metadata; it never deletes data or collections. */
+  cleanup(): QdrantRuntimeStatus {
+    if (this.isExternal()) {
+      const status = this.status("external Qdrant URL configured; managed cleanup bypassed");
+      try {
+        this.writeStatus(status);
+      } catch {
+        // best effort
+      }
+      return status;
+    }
+    const status = this.status("");
+    if (status.pid && !status.running) {
+      rmSync(status.paths.pidPath, { force: true });
+      status.pid = undefined;
+      status.state = QDRANT_STATUS_STOPPED;
+      status.message = "removed stale Qdrant pid file";
+    } else if (status.running) {
+      status.message = "managed Qdrant is running; no stale pid cleanup needed";
+    } else {
+      status.message = "no stale Qdrant runtime metadata found";
+    }
+    this.writeStatus(status);
+    return status;
+  }
+
+  /** TailLog: the last n log lines (default 50); a missing log is a message, not an error. */
+  tailLog(n: number): string {
+    const path = this.paths().logPath;
+    if (!existsSync(path)) return `${path} (no log yet)\n`;
+    const count = n <= 0 ? 50 : n;
+    const lines = readFileSync(path, "utf8").split("\n");
+    if (lines[lines.length - 1] === "") lines.pop();
+    return lines
+      .slice(-count)
+      .map((l) => `${l.endsWith("\r") ? l.slice(0, -1) : l}\n`)
+      .join("");
   }
 
   /** EnsureRunning: start managed Qdrant when this configuration owns one and it is not serving. */
@@ -506,7 +594,7 @@ async function defaultHealthCheck(endpoint: string, signal: AbortSignal): Promis
     throw new Error(`GET /healthz returned ${resp.status} ${resp.statusText}`);
 }
 
-function statusJson(s: QdrantRuntimeStatus): unknown {
+export function statusJson(s: QdrantRuntimeStatus): unknown {
   return {
     enabled: s.enabled,
     backend: s.backend,
@@ -524,23 +612,21 @@ function statusJson(s: QdrantRuntimeStatus): unknown {
   };
 }
 
-/** Installer.Install, without the network leg: an installed, matching binary is accepted. */
-export function installQdrant(root: string): QdrantPaths {
-  const paths = pathsForRoot(root);
-  mkdirSync(paths.root, { recursive: true, mode: 0o755 });
-  const manifestPath = join(paths.root, "install.json");
-  if (existsSync(manifestPath) && fileExists(paths.binaryPath)) {
-    try {
-      const m = JSON.parse(readFileSync(manifestPath, "utf8")) as { version?: string };
-      if (m.version === SUPPORTED_QDRANT_VERSION) return paths;
-    } catch {
-      // fall through
-    }
-  }
-  if (fileExists(paths.binaryPath)) return paths;
-  throw new Error(
-    `Qdrant ${SUPPORTED_QDRANT_VERSION} is not installed at ${paths.binaryPath}; the TypeScript build cannot download it yet`,
-  );
+/**
+ * Installer.Install with the process environment's KNOWNS_QDRANT_MIRROR, as every Go caller
+ * (`search index --wait`, the reindex job, `qdrant install`) builds it. The installer module is
+ * loaded on demand: it is only needed when a managed Qdrant is actually being installed.
+ */
+export async function installQdrant(
+  root: string,
+  opts: { mirror?: string; signal?: AbortSignal } = {},
+): Promise<QdrantPaths> {
+  const { QdrantInstaller } = await import("./qdrant-installer.ts");
+  return new QdrantInstaller({
+    root,
+    mirror: opts.mirror ?? process.env.KNOWNS_QDRANT_MIRROR ?? "",
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  }).install();
 }
 
 export function ensureManagedQdrant(res: SemanticVectorStoreResolution): Promise<void> {

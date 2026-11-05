@@ -317,7 +317,7 @@ async function executeReindex(
   ) {
     const mgr = new QdrantManager(configFromResolution(resolved));
     try {
-      installQdrant(mgr.paths().root);
+      await installQdrant(mgr.paths().root);
     } catch (err) {
       throw new Error(`install managed Qdrant: ${(err as Error).message}`);
     }

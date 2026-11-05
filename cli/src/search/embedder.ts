@@ -2,8 +2,8 @@
 // serves one at /v1). Requests, retry policy and error texts follow Go; a transport failure is
 // retryable, a 4xx other than 429 is not.
 import { z } from "zod";
+import { goTransportError } from "../platform/goerror.ts";
 import { goJson } from "./json.ts";
-import { goTransportError } from "./neterror.ts";
 import { byteSlicePrefix } from "./text.ts";
 import type { EmbedderProvider, EmbeddingModelConfig, Tokenizer } from "./types.ts";
 

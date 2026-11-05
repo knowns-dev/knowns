@@ -73,23 +73,25 @@ export async function runTsStep(p: Project, step: Step): Promise<Result> {
     });
     return { code: r.exitCode ?? -1, stdout: r.stdout.toString(), stderr: r.stderr.toString() };
   }
-  // The storage layer reads the machine root from process.env.HOME, so the in-process run needs
-  // the sandbox home there too (a real binary gets it from its environment).
-  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
-  process.env.HOME = p.home;
-  process.env.USERPROFILE = p.home;
+  // The storage layer reads the machine root from process.env.HOME and the runtime queue reads
+  // its knobs (KNOWNS_RUNTIME_INLINE, the semantic overrides) from process.env, so the in-process
+  // run needs the whole sandbox env there (a real binary gets it from its environment). Without
+  // it a queued reindex tries to start a real daemon from the test process.
+  const env = baseEnv(p, step.env);
+  const saved: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (k === "PATH") continue;
+    saved[k] = process.env[k];
+    process.env[k] = v;
+  }
   try {
     // configWarning: the real binary tells you when the project config needs `knowns migrate`.
-    return await runTs(step.args, {
-      cwd: p.dir,
-      env: baseEnv(p, step.env),
-      configWarning: true,
-    });
+    return await runTs(step.args, { cwd: p.dir, env, configWarning: true });
   } finally {
-    if (saved.HOME === undefined) delete process.env.HOME;
-    else process.env.HOME = saved.HOME;
-    if (saved.USERPROFILE === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = saved.USERPROFILE;
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
   }
 }
 

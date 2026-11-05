@@ -2,8 +2,8 @@
 // Qdrant over HTTP (managed local or external); installation and ownership live elsewhere.
 // Every response is a boundary and is parsed with zod.
 import { z } from "zod";
+import { goTransportError } from "../../platform/goerror.ts";
 import { float32ArrayJson, goJson } from "../json.ts";
-import { goTransportError } from "../neterror.ts";
 import { byteSlicePrefix } from "../text.ts";
 import type { Chunk, ChunkType, ScoredChunk } from "../types.ts";
 import {

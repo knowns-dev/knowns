@@ -47,5 +47,10 @@ export const commandLoaders: Record<string, CommandLoader> = {
   import: { load: () => import("./import.ts") },
   reconcile: { load: () => import("./reconcile.ts") },
   runtime: { load: () => import("./runtime.ts") },
+  qdrant: { load: () => import("./qdrant.ts") },
+  store: { load: () => import("./store.ts") },
+  code: { load: () => import("./code.ts") },
+  lsp: { load: () => import("./lsp.ts") },
+  "__lsp-daemon": { load: () => import("./lsp-daemon.ts"), short: "", hidden: true },
   __runtime: { load: () => import("./runtime-daemon.ts") },
 };

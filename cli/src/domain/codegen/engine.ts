@@ -4,7 +4,8 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import type { Template, TemplateAction, TemplateResult } from "../../models/template.ts";
-import { globDir, goFsError } from "./glob.ts";
+import { goFsError } from "../../platform/goerror.ts";
+import { globDir } from "./glob.ts";
 import { executeTemplate, FUNCTION_NAMES, GoExecError } from "./goexec.ts";
 import { GoTemplateError, parseTemplate } from "./goparse.ts";
 import { goQuote } from "./goquote.ts";

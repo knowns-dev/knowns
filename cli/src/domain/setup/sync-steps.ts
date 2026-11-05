@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { resolveSkillsScope as resolveScopeChain } from "../../models/config.ts";
+import { goFsMessage, goNotExistReason } from "../../platform/goerror.ts";
 import { globalSemanticStoreRoot } from "../../storage/core/store.ts";
 import { resolveSemanticSearch } from "../../storage/history/semantic-resolve.ts";
 import {
@@ -33,30 +34,6 @@ import * as runtimeinstall from "./runtimeinstall.ts";
 import { selectSyncInstructionDefs } from "./sync-platforms.ts";
 
 type Semantic = Parameters<typeof resolveSemanticSearch>[0];
-
-/** Go's text for a failed filesystem call: `open <path>: is a directory`. */
-export function goFsMessage(e: unknown): string {
-  const err = e as NodeJS.ErrnoException;
-  const reasons: Record<string, string> = {
-    EISDIR: "is a directory",
-    ENOENT: "no such file or directory",
-    EACCES: "permission denied",
-    EPERM: "operation not permitted",
-    ENOTDIR: "not a directory",
-    EEXIST: "file exists",
-  };
-  // Opening a directory for writing: Go's Windows os.OpenFile reports EISDIR, but Bun surfaces
-  // the underlying CreateFile failure as EEXIST there.
-  const code =
-    process.platform === "win32" && err.code === "EEXIST" && err.syscall === "open"
-      ? "EISDIR"
-      : err.code;
-  const reason = code === undefined ? undefined : reasons[code];
-  if (reason !== undefined && err.syscall !== undefined && err.path !== undefined) {
-    return `${err.syscall} ${err.path}: ${reason}`;
-  }
-  return err instanceof Error ? err.message : String(e);
-}
 
 // --- skills ------------------------------------------------------------------------------------
 
@@ -353,13 +330,7 @@ export function planSyncReindex(input: {
   // The global semantic store: Go opens it through the same config loader.
   const globalConfig = join(globalSemanticStoreRoot(), "config.json");
   if (!existsSync(globalConfig)) {
-    // Windows: a missing parent directory is ERROR_PATH_NOT_FOUND, a missing file FILE_NOT_FOUND.
-    const reason =
-      process.platform !== "win32"
-        ? "no such file or directory"
-        : existsSync(dirname(globalConfig))
-          ? "The system cannot find the file specified."
-          : "The system cannot find the path specified.";
+    const reason = goNotExistReason(existsSync(dirname(globalConfig)));
     return {
       kind: "keyword-only",
       globalLoadError: `Semantic search initialization failed: load config: load config: open ${globalConfig}: ${reason}`,

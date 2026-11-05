@@ -1,9 +1,8 @@
 // status against the Go 0.34.1 oracle, plus the readiness library.
 //
-// Two documented differences are normalised. The oracle prints `dev` as its version (handled by
-// the harness). The LSP section is host state (which language servers are installed) from the
-// LSP manager, which is a separate port (TSR-XSEKND); it is removed from the Go side's output and
-// the TS side omits it until that port provides `BuildOptions.lsp`.
+// One documented difference is normalised: the oracle prints `dev` as its version (handled by the
+// harness). The LSP section is compared as is: it is host state (which language servers are on
+// PATH or under the sandbox HOME), and both sides run on the same host (TSR-XSEKND ported it).
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -17,26 +16,7 @@ import { expectParity } from "./search-parity.ts";
 
 const cases = hasGoBin ? describe : describe.skip;
 
-/** Drops the LSP section from `status` output (styled, plain and json). */
-function withoutLsp(text: string): string {
-  try {
-    const j = JSON.parse(text) as Record<string, unknown>;
-    if ("lsp" in j) {
-      const { lsp: _lsp, ...rest } = j;
-      return JSON.stringify(rest);
-    }
-    return JSON.stringify(j);
-  } catch {
-    return (
-      text
-        .replace(/^LSP: .*\n/m, "")
-        // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI styling is part of the output
-        .replace(/\x1b\[1mLSP\x1b\[m\n(?: {2}.*\n| {4}.*\n)+\n/, "")
-    );
-  }
-}
-
-const opts = { map: withoutLsp };
+const opts = {};
 /** The oracle probes every language server on the host: slow. */
 const SLOW = 120_000;
 

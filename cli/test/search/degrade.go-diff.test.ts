@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { CONNECTION_REFUSED } from "../../src/platform/goerror.ts";
 import {
   newQdrantPointer,
   retrieveWithRuntime,
@@ -12,7 +13,6 @@ import {
   saveQdrantPointer,
   searchWithRuntime,
 } from "../../src/search/index.ts";
-import { CONNECTION_REFUSED } from "../../src/search/neterror.ts";
 import { createStorage, type Storage } from "../../src/storage/adapters.ts";
 import { Store } from "../../src/storage/core/store.ts";
 import { EmbeddingSettingsStore } from "../../src/storage/stores/index.ts";

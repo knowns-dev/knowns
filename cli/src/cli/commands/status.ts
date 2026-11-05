@@ -194,7 +194,14 @@ Use --plain for clean text output suitable for piping.`,
     const { createStorage } = await import("../../storage/adapters.ts");
     const { buildSearchEnvironment } = await import("../../domain/searchenv/index.ts");
     const storage = createStorage(store);
+    const { collectProjectRuntimeStatuses, lspStatusFromRuntime } = await import(
+      "../../lsp/project.ts"
+    );
+    const lsp = (await collectProjectRuntimeStatuses(store.projectRoot)).map(
+      (s) => lspStatusFromRuntime(s) as unknown as LSPStatus,
+    );
     const payload = buildReadiness(storage, buildSearchEnvironment({ env: ctx.env }), {
+      lsp,
       runtime: loadRuntimeReadiness(ctx.env),
     });
 
