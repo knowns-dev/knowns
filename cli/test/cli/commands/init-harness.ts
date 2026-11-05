@@ -96,12 +96,16 @@ const MAIN = join(import.meta.dir, "..", "..", "..", "src", "main.ts");
 // simply run as plain children with empty stdin, which is the same for Go and TS.
 const CAN_SETSID = process.platform !== "win32" && Bun.which("python3") !== null;
 
+const SPAWN_TIMEOUT_MS = 60_000;
+
 function runDetached(cmd: string[], p: InitProject, step: InitStep): Result {
   const argv = CAN_SETSID ? ["python3", "-I", "-c", SETSID, ...cmd] : cmd;
   const r = Bun.spawnSync(argv, {
     cwd: p.dir,
     env: baseEnv(p, step.env),
     stdin: Buffer.from(""),
+    // A child that waits for input (Go's wizard on a Windows console) must not hang the suite.
+    timeout: SPAWN_TIMEOUT_MS,
   });
   return { code: r.exitCode ?? -1, stdout: r.stdout.toString(), stderr: r.stderr.toString() };
 }
@@ -113,6 +117,8 @@ export function runInitGo(p: InitProject, step: InitStep): Result {
     cwd: p.dir,
     env: baseEnv(p, step.env),
     stdin: Buffer.from(""),
+    // A child that waits for input (Go's wizard on a Windows console) must not hang the suite.
+    timeout: SPAWN_TIMEOUT_MS,
   });
   return { code: r.exitCode ?? -1, stdout: r.stdout.toString(), stderr: r.stderr.toString() };
 }
@@ -142,6 +148,7 @@ export function normalizeInit(text: string, p: InitProject): string {
       "<JSON-SYNTAX-ERROR>",
     )
     .replaceAll(p.base, "<ROOT>")
+    .replaceAll(JSON.stringify(p.base).slice(1, -1), "<ROOT>")
     .replace(TS_RE, "<TS>")
     .replace(new RegExp(`\\r  \\x1b\\[90m${SPINNER_FRAME}\\x1b\\[m [^\\r\\n]*`, "g"), "")
     .replace(/\r {2,}(?=\r)/g, "");
@@ -161,7 +168,9 @@ export function snapshotTree(root: string, p: InitProject, skip: (rel: string) =
       const rel = relative(root, full).split(sep).join("/");
       if (skip(rel)) continue;
       const st = statSync(full);
-      const mode = `[${(st.mode & 0o777).toString(8)}]`;
+      // Windows has no unix permission bits (stat reports 666/777 for everything), so only the
+      // paths are compared there.
+      const mode = process.platform === "win32" ? "[-]" : `[${(st.mode & 0o777).toString(8)}]`;
       if (st.isDirectory()) {
         out.set(`${rel}/`, mode);
         walk(full);

@@ -8,7 +8,7 @@ export function goGetwd(env: Record<string, string | undefined> = process.env): 
   const cwd = process.cwd();
   if (process.platform === "win32") return cwd;
   const pwd = env.PWD;
-  if (!pwd || !pwd.startsWith("/")) return cwd;
+  if (!pwd?.startsWith("/")) return cwd;
   try {
     const a = statSync(pwd);
     const b = statSync(".");

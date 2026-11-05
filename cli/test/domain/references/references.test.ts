@@ -160,17 +160,35 @@ const hasGo = Bun.which("go") !== null;
 const repoRoot = resolve(import.meta.dir, "../../../..");
 let binary: string | undefined;
 
-function oracle(requests: unknown[]): Array<Record<string, unknown>> {
-  if (!binary) {
-    const dir = mkdtempSync(join(tmpdir(), "references-oracle-"));
-    binary = join(dir, process.platform === "win32" ? "oracle.exe" : "oracle");
-    const b = spawnSync("go", ["build", "-o", binary, "cli/test/helpers/references-oracle.go"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-    });
-    if (b.status !== 0) throw new Error(`go build failed: ${b.stderr}`);
+function oracleBinary(): string {
+  if (binary) return binary;
+  const dir = mkdtempSync(join(tmpdir(), "references-oracle-"));
+  const out = join(dir, process.platform === "win32" ? "oracle.exe" : "oracle");
+  const b = spawnSync("go", ["build", "-o", out, "cli/test/helpers/references-oracle.go"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  if (b.status !== 0) {
+    throw new Error(
+      `go build failed: status=${b.status} signal=${b.signal} error=${b.error} stderr=${b.stderr} stdout=${b.stdout} cwd=${repoRoot}`,
+    );
   }
-  const r = spawnSync(binary, [], {
+  binary = out;
+  return out;
+}
+
+// A cold `go build` can outlast bun's 5s test timeout, so build at load time, outside any test.
+if (hasGo) {
+  try {
+    oracleBinary();
+  } catch {
+    // reported by the first oracle() call
+  }
+}
+
+function oracle(requests: unknown[]): Array<Record<string, unknown>> {
+  const exe = oracleBinary();
+  const r = spawnSync(exe, [], {
     input: `${requests.map((q) => JSON.stringify(q)).join("\n")}\n`,
     encoding: "utf8",
     maxBuffer: 1 << 28,

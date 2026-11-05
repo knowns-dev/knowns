@@ -74,7 +74,7 @@ cases("init with flags matches Go", () => {
       const dirs = [...c.goTree.keys()].filter((k) => k.endsWith("/"));
       expect(dirs.length).toBeGreaterThanOrEqual(5);
       expect(dirs).toContain(".knowns/");
-      expect(c.goTree.get(".knowns/")).toBe("[755]");
+      if (process.platform !== "win32") expect(c.goTree.get(".knowns/")).toBe("[755]");
       expect([...c.tsTree.keys()].filter((k) => k.endsWith("/"))).toEqual(dirs);
       expect(treeDiff(c.goTree, c.tsTree)).toEqual([]);
       expect(c.ts[0]).toEqual(c.go[0]);
@@ -117,12 +117,17 @@ cases("init with flags matches Go", () => {
     await expectInitParity([["init", "--no-wizard", "--wizard", "--no-open"]]);
   });
 
-  test("no flags and no terminal fails the way Go does", async () => {
-    // Detached: no controlling terminal, so Go's wizard cannot open /dev/tty and fails.
-    const c = await expectInitParity([{ args: ["init"], detached: true }]);
-    expect(c.go[0]?.code).toBe(1);
-    expect(c.go[0]?.stderr).toContain("could not open a new TTY");
-  });
+  // Unix only: on Windows there is no /dev/tty; Go's wizard opens the console instead and waits
+  // for input. The interactive wizard itself is TSR-2P6ZDV.
+  test.skipIf(process.platform === "win32")(
+    "no flags and no terminal fails the way Go does",
+    async () => {
+      // Detached: no controlling terminal, so Go's wizard cannot open /dev/tty and fails.
+      const c = await expectInitParity([{ args: ["init"], detached: true }]);
+      expect(c.go[0]?.code).toBe(1);
+      expect(c.go[0]?.stderr).toContain("could not open a new TTY");
+    },
+  );
 
   test("a project name skips the wizard even without a terminal", async () => {
     await expectInitParity([{ args: ["init", "named"], detached: true }]);
@@ -377,7 +382,7 @@ cases("init in a symlinked directory", () => {
     const c = await expectInitParity([{ args: ["init", "--no-wizard"], detached: true }], {
       linked: true,
     });
-    const cfg = JSON.parse((c.goTree.get(".knowns/config.json") ?? "").replace(/^\[\d+\] /, ""));
+    const cfg = JSON.parse((c.goTree.get(".knowns/config.json") ?? "").replace(/^\[[-\d]+\] /, ""));
     expect(cfg.name).toBe("proj");
     expect(c.goTree.get("CLAUDE.md")).toBeDefined();
   });

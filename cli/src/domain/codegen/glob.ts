@@ -189,6 +189,25 @@ export function matchGlob(patternIn: string, nameIn: string): boolean {
 /** An fs error as Go prints it: "<op> <path>: <strerror>". */
 export function goFsError(op: string, path: string, e: unknown): Error {
   const code = (e as NodeJS.ErrnoException).code;
+  if (process.platform === "win32") {
+    // Go prints the Windows system message, and lstat is GetFileAttributesEx there.
+    const win: Record<string, string> = {
+      ENOENT: "The system cannot find the file specified.",
+      ENOTDIR: "The system cannot find the path specified.",
+      EACCES: "Access is denied.",
+      EPERM: "Access is denied.",
+      EEXIST: "Cannot create a file when that file already exists.",
+      ENOTEMPTY: "The directory is not empty.",
+    };
+    const reason = code === undefined ? undefined : win[code];
+    if (reason !== undefined) {
+      const winOp = op === "lstat" ? "GetFileAttributesEx" : op;
+      // A missing parent while creating a directory is ERROR_PATH_NOT_FOUND, not FILE_NOT_FOUND.
+      const finalReason =
+        op === "mkdir" && code === "ENOENT" ? "The system cannot find the path specified." : reason;
+      return new Error(`${winOp} ${path}: ${finalReason}`);
+    }
+  }
   const text: Record<string, string> = {
     ENOENT: "no such file or directory",
     EACCES: "permission denied",

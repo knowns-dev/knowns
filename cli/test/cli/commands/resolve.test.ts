@@ -200,6 +200,7 @@ cases("resolve: structural traversal matches Go", () => {
     "nonsense",
   ];
   for (const root of roots) {
+    // 14 flag sets x 3 modes x 2 binaries: process spawn on Windows alone outlasts bun's 5s default.
     test(root, async () => {
       for (const f of flags) {
         await expectParity(
@@ -212,7 +213,7 @@ cases("resolve: structural traversal matches Go", () => {
           { setup: graph, map: asSets },
         );
       }
-    });
+    }, 120_000);
   }
 
   test("project without any link", async () => {

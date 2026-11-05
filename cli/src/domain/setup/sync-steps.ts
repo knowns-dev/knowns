@@ -45,7 +45,13 @@ export function goFsMessage(e: unknown): string {
     ENOTDIR: "not a directory",
     EEXIST: "file exists",
   };
-  const reason = err.code === undefined ? undefined : reasons[err.code];
+  // Opening a directory for writing: Go's Windows os.OpenFile reports EISDIR, but Bun surfaces
+  // the underlying CreateFile failure as EEXIST there.
+  const code =
+    process.platform === "win32" && err.code === "EEXIST" && err.syscall === "open"
+      ? "EISDIR"
+      : err.code;
+  const reason = code === undefined ? undefined : reasons[code];
   if (reason !== undefined && err.syscall !== undefined && err.path !== undefined) {
     return `${err.syscall} ${err.path}: ${reason}`;
   }
@@ -347,9 +353,16 @@ export function planSyncReindex(input: {
   // The global semantic store: Go opens it through the same config loader.
   const globalConfig = join(globalSemanticStoreRoot(), "config.json");
   if (!existsSync(globalConfig)) {
+    // Windows: a missing parent directory is ERROR_PATH_NOT_FOUND, a missing file FILE_NOT_FOUND.
+    const reason =
+      process.platform !== "win32"
+        ? "no such file or directory"
+        : existsSync(dirname(globalConfig))
+          ? "The system cannot find the file specified."
+          : "The system cannot find the path specified.";
     return {
       kind: "keyword-only",
-      globalLoadError: `Semantic search initialization failed: load config: load config: open ${globalConfig}: no such file or directory`,
+      globalLoadError: `Semantic search initialization failed: load config: load config: open ${globalConfig}: ${reason}`,
     };
   }
   if (semanticConfigured(readGlobalSemantic(globalConfig))) return { kind: "queue" };

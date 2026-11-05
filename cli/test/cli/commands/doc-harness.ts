@@ -45,7 +45,8 @@ export function makeProject(fixture: string, setup?: (dir: string) => void): Pro
 }
 
 export function dispose(p: Project): void {
-  rmSync(p.base, { recursive: true, force: true });
+  // maxRetries: Windows can report EBUSY for a moment after a child process exits.
+  rmSync(p.base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 const envFor = (p: Project): Record<string, string> => ({
@@ -54,6 +55,10 @@ const envFor = (p: Project): Record<string, string> => ({
   USERPROFILE: p.home,
   NO_UPDATE_CHECK: "1",
   CI: "1",
+  // Without these Go forks a detached `__runtime run` whose cwd is the project, which keeps the
+  // temp dir busy on Windows (EBUSY on dispose); the other harnesses set them too.
+  KNOWNS_RUNTIME_INLINE: "1",
+  KNOWNS_SEMANTIC_RUNTIME_DISABLED: "1",
 });
 
 export function runGoIn(p: Project, args: string[], stdin = ""): Result {
@@ -98,11 +103,15 @@ const DOC_ID_RE = /doc-[0-9a-f]{32}/g;
 const HASH_RE = /\b[0-9a-f]{64}\b/g;
 
 export function normalize(text: string, p: Project): string {
-  return text
-    .replaceAll(p.base, "<ROOT>")
-    .replace(TS_RE, "<TS>")
-    .replace(DOC_ID_RE, "<DOCID>")
-    .replace(HASH_RE, "<HASH>");
+  return (
+    text
+      .replaceAll(p.base, "<ROOT>")
+      // JSON output escapes Windows backslashes ("C:\\Users\\..."), which the raw form misses.
+      .replaceAll(JSON.stringify(p.base).slice(1, -1), "<ROOT>")
+      .replace(TS_RE, "<TS>")
+      .replace(DOC_ID_RE, "<DOCID>")
+      .replace(HASH_RE, "<HASH>")
+  );
 }
 
 /** Every file under `.knowns` (relative path -> normalised content). */

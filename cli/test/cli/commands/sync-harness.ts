@@ -119,9 +119,14 @@ export function writeText(dir: string, rel: string, text: string): void {
 const TS_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
 
 export function normalize(text: string, s: Side): string {
-  let t = text.replaceAll(s.base, "<ROOT>").replace(TS_RE, "<TS>");
+  let t = text
+    .replaceAll(s.base, "<ROOT>")
+    .replaceAll(JSON.stringify(s.base).slice(1, -1), "<ROOT>")
+    .replace(TS_RE, "<TS>");
   for (const exe of new Set([GO_BIN, process.execPath].filter((x): x is string => !!x))) {
-    t = t.replaceAll(exe, "<KNOWNS_BIN>");
+    t = t
+      .replaceAll(exe, "<KNOWNS_BIN>")
+      .replaceAll(JSON.stringify(exe).slice(1, -1), "<KNOWNS_BIN>");
   }
   return t;
 }

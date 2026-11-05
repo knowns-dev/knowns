@@ -36,9 +36,24 @@ function oracleBinary(): string {
     cwd: repoRoot,
     encoding: "utf8",
   });
-  if (r.status !== 0) throw new Error(`go build failed: ${r.stderr}`);
+  if (r.status !== 0) {
+    throw new Error(
+      `go build failed: status=${r.status} signal=${r.signal} error=${r.error} stderr=${r.stderr} stdout=${r.stdout} cwd=${repoRoot}`,
+    );
+  }
   binary = out;
   return out;
+}
+
+// The first `go build` on a cold cache can take longer than bun's 5s test/hook timeout (Windows CI
+// and the full run hit this), and a sync call cannot be interrupted. Build while the module loads,
+// outside any timed hook; a failure is rethrown with details by the first askGo.
+if (GO_ORACLE) {
+  try {
+    oracleBinary();
+  } catch {
+    // reported by askGo
+  }
 }
 
 export function askGo(requests: OracleRequest[]): OracleResponse[] {
