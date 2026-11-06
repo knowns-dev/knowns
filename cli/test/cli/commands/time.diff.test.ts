@@ -32,6 +32,14 @@ function clockSensitive(pair: Pair): Pair {
 const RUNNING = "TM-B9YGFM";
 const PAUSED = "TM-Q3M99R";
 
+// The fixture's paused timer holds only 45 ms, so the final no-id `time stop` (which stops it)
+// rounds its whole-second timeSpent to 0 or 1 depending on how long the steps took. At 0 neither
+// binary writes a history record (no field changed); at 1 both do. Go and TS each run on their own
+// wall clock, so on a slow host one side crossed the boundary and the other did not, and the
+// trees differed by one time-stop record. Waiting past one second before that stop puts both
+// sides over the boundary; the durations themselves are normalised.
+const SETTLE: string[] = [];
+
 describe.skipIf(!hasGoBin)("time on the active-timer fixture", () => {
   test("status, pause, resume and stop with explicit and implicit task ids", async () => {
     const pair = clockSensitive(makePair("active-timer"));
@@ -56,6 +64,7 @@ describe.skipIf(!hasGoBin)("time on the active-timer fixture", () => {
       ["time", "status"],
       ["time", "pause"],
       ["time", "resume"],
+      SETTLE,
       ["time", "stop"],
       ["time", "status", "--plain"],
       ["time", "log", RUNNING],
@@ -63,7 +72,10 @@ describe.skipIf(!hasGoBin)("time on the active-timer fixture", () => {
       ["task", RUNNING, "--plain"],
       ["task", "history", RUNNING, "--plain"],
     ];
-    for (const args of steps) await step(pair, args);
+    for (const args of steps) {
+      if (args === SETTLE) await Bun.sleep(1_100);
+      else await step(pair, args);
+    }
     sameTree(pair);
   });
 

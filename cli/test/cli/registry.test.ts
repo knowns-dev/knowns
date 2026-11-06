@@ -49,9 +49,15 @@ describe("loader registry", () => {
       const entry = ROOT_MANIFEST.find((e) => e.name === name);
       if (entry) {
         // The manifest is what root help prints; the ported command must say the same.
+        // Root help never prints a hidden command, so the manifest cannot know its short; the
+        // command keeps Go's own (shown by `<command> --help`).
+        const short =
+          entry.hidden && entry.short === ""
+            ? spec.short
+            : (REMOVED_COMMAND_SHORT[name] ?? entry.short);
         expect({ name, short: spec.short, hidden: spec.hidden ?? false }).toEqual({
           name,
-          short: REMOVED_COMMAND_SHORT[name] ?? entry.short,
+          short,
           hidden: entry.hidden,
         });
       } else {

@@ -58,6 +58,9 @@ export class Style {
       ...(this.fg === undefined ? [] : [String(this.fg)]),
     ];
     const open = `\x1b[${codes.join(";")}m`;
+    // lipgloss styles an empty string as an empty span (Go prints "\x1b[1m\x1b[m" for a blank
+    // help title); blank lines inside longer text stay bare.
+    if (text === "") return `${open}\x1b[m`;
     return text
       .split("\n")
       .map((line) => (line === "" ? line : `${open}${line}\x1b[m`))

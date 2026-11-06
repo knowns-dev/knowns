@@ -24,9 +24,11 @@ import {
 import { goJson } from "../search/json.ts";
 import { qdrantClientForStore } from "../search/qdrant/store.ts";
 import { openSemanticSession } from "../search/runtime.ts";
+import { SQLiteVectorStore } from "../search/sqlite-store.ts";
 import { createStorage, type Storage } from "../storage/adapters.ts";
 import { Store } from "../storage/core/store.ts";
 import { applySqliteIndexAction, openSqliteSemantic } from "./index/entity.ts";
+import { IndexService } from "./index/index-service.ts";
 import { currentQdrantIntent } from "./index/qdrant-intent.ts";
 import { executeQdrantReconciliation } from "./index/reconcile.ts";
 import { reindexQdrantGeneration, retentionFromResolution } from "./index/reindex.ts";
@@ -336,8 +338,20 @@ async function executeReindex(
   }
   try {
     const res = resolveEffectiveVectorStore(storage, env);
+    const progress = (phase: string, current: number, total: number) => {
+      try {
+        reportProgress(storeRoot, job.id, phase, current, total);
+      } catch {
+        // progress is advisory
+      }
+    };
     if (res.backend !== SEMANTIC_VECTOR_BACKEND_QDRANT) {
-      throw new Error(`reindex: ${res.backend} vector backend is not available in this build`);
+      // session.Engine(store).Reindex: the SQLite index is rebuilt in place.
+      if (!(session.vecStore instanceof SQLiteVectorStore)) {
+        throw new Error(`reindex: ${res.backend} vector store is not writable`);
+      }
+      await new IndexService(storage, session.embedder, session.vecStore).reindex(progress);
+      return;
     }
     const client = qdrantClientForStore(storage, env);
     const { keep, ttlMs } = retentionFromResolution(res);
@@ -345,13 +359,7 @@ async function executeReindex(
       client,
       retentionGenerations: keep,
       retentionTtlMs: ttlMs,
-      progress: (phase, current, total) => {
-        try {
-          reportProgress(storeRoot, job.id, phase, current, total);
-        } catch {
-          // progress is advisory
-        }
-      },
+      progress,
     });
   } finally {
     await session.close();

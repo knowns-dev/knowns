@@ -1,12 +1,36 @@
-// Port of the write path of internal/search/sqlite_vecstore.go: the legacy per-project
+// Port of internal/search/sqlite_vecstore.go: the legacy per-project
 // `.search/index.db` the Go binary builds with `search --reindex` and the in-process indexer.
 // Same schema, same metadata keys, same content-hash table, so a 0.34.x binary reads what this
-// writes. Vector search over it is not part of this port (the Qdrant backend is the default).
+// writes, and the `sqlite` vector backend (and the legacy fallback of a Qdrant project with no
+// pointer yet) searches it.
 
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { CHUNK_VERSION, type Chunk } from "./types.ts";
+import {
+  CHUNK_VERSION,
+  type Chunk,
+  type ScoredChunk,
+  type VectorSearchOpts,
+  type VectorStore,
+} from "./types.ts";
+
+/** CosineSimilarity (cosine.go): float64 accumulation over float32 inputs. */
+export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+  if (a.length !== b.length || a.length === 0) return 0;
+  let dot = 0;
+  let magA = 0;
+  let magB = 0;
+  for (let i = 0; i < a.length; i++) {
+    const ai = a[i] as number;
+    const bi = b[i] as number;
+    dot += ai * bi;
+    magA += ai * ai;
+    magB += bi * bi;
+  }
+  if (magA === 0 || magB === 0) return 0;
+  return dot / (Math.sqrt(magA) * Math.sqrt(magB));
+}
 
 export interface TaskVectorMutation {
   taskId: string;
@@ -128,7 +152,7 @@ interface Row {
   detail: string | null;
 }
 
-export class SQLiteVectorStore implements WritableVectorStore {
+export class SQLiteVectorStore implements WritableVectorStore, VectorStore {
   private db: Database | undefined;
   private chunks: Chunk[] = [];
 
@@ -424,6 +448,35 @@ export class SQLiteVectorStore implements WritableVectorStore {
 
   removeByPrefix(prefix: string): void {
     this.chunks = this.chunks.filter((c) => !c.id.startsWith(prefix));
+  }
+
+  /**
+   * Search: brute-force cosine over the loaded chunks (sqlite_vecstore.go Search). Go keeps every
+   * vector in one flat slice and a row without an embedding keeps offset 0, so it is scored
+   * against the first stored vector; that is reproduced here. Chunks added in memory after load
+   * are scored against their own embedding.
+   */
+  async search(queryVec: Float32Array, optsIn: VectorSearchOpts): Promise<ScoredChunk[]> {
+    if (queryVec.length !== this.dimensions || this.chunks.length === 0) return [];
+    const topK = optsIn.topK > 0 ? optsIn.topK : 20;
+    const threshold = optsIn.threshold > 0 ? optsIn.threshold : 0.3;
+    const first = this.chunks.find((c) => (c.embedding?.length ?? 0) > 0)?.embedding;
+    const candidates: { chunk: Chunk; score: number }[] = [];
+    for (const chunk of this.chunks) {
+      if (optsIn.chunkType !== "" && chunk.type !== optsIn.chunkType) continue;
+      let vec = chunk.embedding && chunk.embedding.length > 0 ? chunk.embedding : first;
+      if (!vec || vec.length < this.dimensions) continue;
+      if (vec.length > this.dimensions) vec = vec.subarray(0, this.dimensions);
+      const sim = cosineSimilarity(queryVec, vec);
+      if (sim >= threshold) candidates.push({ chunk, score: sim });
+    }
+    // Go's sort.Slice is an insertion sort up to 12 elements (stable); beyond that ties are
+    // unspecified there, and stable here.
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates.slice(0, topK).map(({ chunk, score }) => {
+      const { embedding: _e, visibility: _v, detail: _d, ...rest } = chunk;
+      return { ...rest, score };
+    });
   }
 
   count(): number {

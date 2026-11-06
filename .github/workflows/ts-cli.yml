@@ -3,10 +3,10 @@ name: TS CLI
 on:
   push:
     branches: [feat/typescript-rewrite]
-    paths: ['cli/**', 'ui/**', '.github/workflows/ts-cli.yml', 'internal/**', 'cmd/**']
+    paths: ['cli/**', 'ui/**', 'npm/**', 'install/**', 'scripts/**', '.github/workflows/ts-cli.yml', 'internal/**', 'cmd/**']
   pull_request:
     branches: [feat/typescript-rewrite]
-    paths: ['cli/**', 'ui/**', '.github/workflows/ts-cli.yml', 'internal/**', 'cmd/**']
+    paths: ['cli/**', 'ui/**', 'npm/**', 'install/**', 'scripts/**', '.github/workflows/ts-cli.yml', 'internal/**', 'cmd/**']
   workflow_dispatch:
 
 concurrency:
@@ -56,14 +56,29 @@ jobs:
         run: bun run check
       - name: Unit tests
         run: bun run test
+      # The compiled-binary tests compare against the Go 0.34.1 oracle (and unbuilt source reports
+      # that baseline too, cli/src/version.ts), so the host test build is stamped with it.
+      # Releases use the tag.
       - name: Build host target
+        env:
+          KNOWNS_VERSION: 0.34.1
         run: bun run build ${{ matrix.target }}
       - name: Unit tests against compiled binary
         run: bun run test
       - name: Budget (size and startup)
         run: bun run budget
+      # Built the way publish.yml builds a release: the version comes from KNOWNS_VERSION (the tag).
       - name: Cross-compile all targets and check sizes
         if: runner.os == 'Linux'
+        env:
+          KNOWNS_VERSION: 1.0.0-ci
         run: |
           bun run build
           bun run budget dist/*/knowns*
+          got=$(NO_UPDATE_CHECK=1 dist/linux-x64/knowns --version)
+          [ "$got" = "knowns version 1.0.0-ci" ] || { echo "FATAL: --version printed: $got"; exit 1; }
+      - name: Package release (npm packages and Go-compatible assets)
+        if: runner.os == 'Linux'
+        run: |
+          bun ../scripts/package-release.ts --version 1.0.0-ci --dist dist --out "$RUNNER_TEMP/release"
+          ls -l "$RUNNER_TEMP/release/assets"

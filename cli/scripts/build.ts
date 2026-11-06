@@ -1,6 +1,6 @@
 import { join, resolve } from "node:path";
-import pkg from "../package.json" with { type: "json" };
 import { compile, exeName, platformOf, TARGETS } from "./lib.ts";
+import { resolveVersion } from "./version.ts";
 
 const cliDir = resolve(import.meta.dir, "..");
 
@@ -14,7 +14,8 @@ if (gen.exitCode !== 0) process.exit(gen.exitCode ?? 1);
 // `bun run build` builds all targets; `bun run build bun-linux-x64 ...` builds a subset.
 const wanted = process.argv.slice(2);
 const list: string[] = wanted.length > 0 ? wanted : [...TARGETS];
-const version = process.env.KNOWNS_VERSION ?? pkg.version;
+const version = resolveVersion();
+console.log(`version ${version}`);
 let failed = 0;
 
 for (const target of list) {

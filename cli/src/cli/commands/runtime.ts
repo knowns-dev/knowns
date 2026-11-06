@@ -12,6 +12,7 @@ import {
   StyleSuccess,
   StyleWarning,
 } from "../core/plainoutput.ts";
+import { runtimeMemoryGroup } from "./runtime-memory.ts";
 import {
   projectDisplayName,
   renderBox,
@@ -306,5 +307,6 @@ export default defineCommand({
     stop,
     runtimeLogsCommand,
     retry,
+    runtimeMemoryGroup(),
   ],
 });

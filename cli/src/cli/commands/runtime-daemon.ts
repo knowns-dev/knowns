@@ -55,7 +55,7 @@ const status = defineCommand({
 
 export default defineCommand({
   use: "__runtime",
-  short: "",
+  short: "Internal shared runtime",
   hidden: true,
   subcommands: [run, status],
 });

@@ -286,3 +286,17 @@ embed:
 	@if [ ! -f ui/dist/index.html ]; then \
 		echo '<!DOCTYPE html><html><body>Build UI first: make ui</body></html>' > ui/dist/index.html; \
 	fi
+
+# TypeScript CLI (cli/). The version is the release tag: KNOWNS_VERSION if set, else an exact git
+# tag on HEAD, else 0.0.0-dev (cli/scripts/version.ts). Nothing reads cli/package.json for it.
+.PHONY: ts-build ts-release ts-test-dist
+ts-build:
+	cd cli && bun run build
+
+# Builds all 6 targets and stages release/npm/<pkg> plus release/assets/knowns-<platform>.tar.gz.
+ts-release: ts-build
+	bun scripts/package-release.ts --version "$$(cd cli && bun -e 'import { resolveVersion } from "./scripts/version.ts"; console.log(resolveVersion())')" --dist cli/dist --out release
+
+# Install script, packaging and version tests (KNOWNS_NETWORK_TESTS=1 adds the 0.34.x rollback check).
+ts-test-dist:
+	cd cli && bun test test/distribution

@@ -5,6 +5,7 @@
 
 import { goGetwd } from "../../storage/core/getwd.ts";
 import { VERSION } from "../../version.ts";
+import { buildCompletionCommand } from "../commands/completion.ts";
 import { type CommandLoader, commandLoaders } from "../commands/index.ts";
 import { Command, type CommandInit } from "./command.ts";
 import { buildCommand, type CommandSpec } from "./define.ts";
@@ -186,14 +187,8 @@ export function createRoot(opts: RootOptions = {}): Command {
     else root.addCommand(built);
   }
 
-  // cobra adds a `completion` command; shell completion scripts are not ported yet.
-  root.addCommand(
-    unportedCommand({
-      name: "completion",
-      short: "Generate the autocompletion script for the specified shell",
-      hidden: false,
-    }),
-  );
+  // cobra adds its own `completion` command (the scripts load only when one is requested).
+  root.addCommand(buildCompletionCommand(root.name()));
   return root;
 }
 

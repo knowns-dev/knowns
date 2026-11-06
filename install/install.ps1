@@ -5,6 +5,7 @@
 # Options (via env vars):
 #   $env:KNOWNS_INSTALL_DIR  — install directory (default: ~\.knowns\bin)
 #   $env:KNOWNS_VERSION      — specific version (default: latest)
+#   $env:KNOWNS_BASE_URL     — release download prefix (default: GitHub releases)
 
 $ErrorActionPreference = "Stop"
 
@@ -59,7 +60,8 @@ $Platform = Get-Platform
 $Version = Get-Version
 
 $Archive = "knowns-$Platform.tar.gz"
-$Url = "https://github.com/$Repo/releases/download/$Version/$Archive"
+$BaseUrl = if ($env:KNOWNS_BASE_URL) { $env:KNOWNS_BASE_URL.TrimEnd('/') } else { "https://github.com/$Repo/releases/download" }
+$Url = "$BaseUrl/$Version/$Archive"
 $ChecksumUrl = "$Url.sha256"
 
 Write-Host "  Version:  $Version" -ForegroundColor DarkGray

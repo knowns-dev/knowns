@@ -379,7 +379,21 @@ describe("lazy loading", () => {
     expect(loads).toBe(2);
   });
   test("an unported command fails honestly, never pretends", async () => {
-    const r = await runTs(["provider", "list"]);
+    // Every 0.34.1 command is ported now, so the placeholder is exercised with a registry that
+    // leaves one manifest command out.
+    const { commandLoaders } = await import("../../src/cli/commands/index.ts");
+    const { memoryIO } = await import("../../src/cli/core/io.ts");
+    const { execute } = await import("../../src/cli/core/root.ts");
+    const { provider: _omitted, ...loaders } = commandLoaders;
+    const { io, out, err } = memoryIO();
+    const code = await execute(["provider", "list"], {
+      io,
+      loaders,
+      env: { HOME: sandbox, NO_UPDATE_CHECK: "1", CI: "1" },
+      cwd: sandbox,
+      skipConfigWarning: true,
+    });
+    const r = { code, stdout: out.text, stderr: err.text };
     expect(r.code).toBe(1);
     expect(r.stdout).toBe("");
     expect(r.stderr).toBe(

@@ -7,6 +7,7 @@
  */
 import { goGetwd } from "../../storage/core/getwd.ts";
 import type { PositionalArgs } from "./args.ts";
+import type { CompletionFunc } from "./completion.ts";
 import { SilentExit } from "./exit.ts";
 import { type Flag, FlagError, FlagSet, HelpRequested } from "./flags.ts";
 import { goBackquote, goQuote, levenshtein } from "./gofmt.ts";
@@ -52,6 +53,11 @@ export interface CommandInit {
   flagErrorFunc?: (cmd: Command, err: Error) => Error;
   /** Builds the real command on first use; `short`/`hidden` must already describe it for listings. */
   loader?: () => Promise<Command>;
+  /** Static positional-argument completions (cobra ValidArgs). */
+  validArgs?: string[];
+  argAliases?: string[];
+  /** Dynamic positional-argument completions (cobra ValidArgsFunction). */
+  validArgsFunction?: CompletionFunc;
 }
 
 export class Command {
@@ -76,6 +82,11 @@ export class Command {
   persistentPostRun: RunFunc | undefined;
   flagErrorFunc: ((cmd: Command, err: Error) => Error) | undefined;
   loader: (() => Promise<Command>) | undefined;
+  validArgs: string[];
+  argAliases: string[];
+  validArgsFunction: CompletionFunc | undefined;
+  /** The name or alias the command was looked up by (cobra CalledAs); "" until found. */
+  calledAsName = "";
   /** Flag groups, checked after the required flags (cobra MarkFlags*). */
   flagGroups: FlagGroups = {};
   /** Replaces the default help renderer (set on the root; children inherit). */
@@ -120,6 +131,19 @@ export class Command {
     this.persistentPostRun = init.persistentPostRun;
     this.flagErrorFunc = init.flagErrorFunc;
     this.loader = init.loader;
+    this.validArgs = init.validArgs ?? [];
+    this.argAliases = init.argAliases ?? [];
+    this.validArgsFunction = init.validArgsFunction;
+  }
+
+  /** cobra CalledAs: the name or alias this command was found by. */
+  calledAs(): string {
+    return this.calledAsName;
+  }
+
+  /** The `help` subcommand, once the root has created it. */
+  helpCmd(): Command | undefined {
+    return this.helpCommand;
   }
 
   // --- tree ------------------------------------------------------------------------------------
@@ -359,7 +383,8 @@ export class Command {
     }
   }
 
-  private parseFlags(args: string[]): void {
+  /** cobra ParseFlags: throws FlagError / HelpRequested. */
+  parseFlags(args: string[]): void {
     if (this.disableFlagParsing) return;
     this.mergePersistentFlags();
     const fs = this.flags();
@@ -412,7 +437,10 @@ export class Command {
 
   private findNext(next: string): Command | undefined {
     for (const c of this.children) {
-      if (c.name() === next || c.hasAlias(next)) return c;
+      if (c.name() === next || c.hasAlias(next)) {
+        c.calledAsName = next;
+        return c;
+      }
     }
     return undefined;
   }
@@ -622,6 +650,21 @@ export class Command {
         use: "help [command]",
         short: "Help about any command",
         long: `Help provides help for any command in the application.\nSimply type ${this.displayName()} help [path to command] for full details.`,
+        validArgsFunction: async (c, args, toComplete) => {
+          // A lazy command must be real before its subcommands can be listed.
+          for (const x of c.root().lazyPath(args)) await x.materialize();
+          const found = c.root().find(args);
+          // ShellCompDirectiveNoFileComp = 4.
+          if (found.err) return [[], 4];
+          const completions: string[] = [];
+          for (const sub of found.cmd.commands()) {
+            if (sub.isAvailableCommand() || sub === found.cmd.helpCommand) {
+              if (sub.name().startsWith(toComplete))
+                completions.push(`${sub.name()}\t${sub.short}`);
+            }
+          }
+          return [completions, 4];
+        },
         run: (c, args) => {
           const found = c.root().find(args);
           if (found.err) {
@@ -656,6 +699,12 @@ export class Command {
     this.runEnv = run.env;
     this.runCwd = run.cwd;
     this.initDefaultHelpCmd();
+    // The hidden __complete command exists only for a call that selects it; the module that
+    // builds it is not loaded otherwise.
+    if (argv.some((a) => a === "__complete" || a === "__completeNoDesc")) {
+      const { initCompleteCmd } = await import("./completion.ts");
+      initCompleteCmd(this, argv);
+    }
 
     // Lazy commands are loaded only when the arguments actually select them.
     for (const c of this.lazyPath(argv)) await c.materialize();

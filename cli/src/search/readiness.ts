@@ -2,6 +2,7 @@
 // configured vector store whether it can answer before any network call is made: Qdrant readiness
 // is pointer metadata plus per-entity watermarks, and a legacy SQLite index only counts while no
 // Qdrant pointer exists yet.
+import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
@@ -336,8 +337,8 @@ export function semanticIndexReadinessQdrant(
  */
 export function semanticIndexReadinessSqlite(
   storage: Storage,
-  _expectation: SemanticIndexExpectation,
-  _chunkTypes: ChunkType[],
+  expectation: SemanticIndexExpectation,
+  chunkTypes: ChunkType[],
 ): SemanticIndexReadiness {
   const r: SemanticIndexReadiness = {
     backend: SEMANTIC_VECTOR_BACKEND_SQLITE,
@@ -350,9 +351,103 @@ export function semanticIndexReadinessSqlite(
     r.reason = "no legacy sqlite semantic index";
     return r;
   }
-  r.degraded = true;
-  r.reason = "legacy sqlite semantic index is not readable by this build";
-  return r;
+  // Read-only, waiting briefly for a writer (the daemon may be opening or migrating it).
+  // A WAL database with no -shm file cannot be opened read-only by bun:sqlite; open it without
+  // create and never write.
+  let db: Database | undefined;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    db.query("SELECT 1 FROM sqlite_master LIMIT 1").get();
+  } catch {
+    // Close the read-only handle before reopening, or every preflight leaks one on index.db.
+    db?.close();
+    db = new Database(dbPath, { readwrite: true, create: false });
+  }
+  try {
+    db.run("PRAGMA busy_timeout=5000");
+    const noTable = (err: unknown) => String((err as Error).message).includes("no such table");
+    let rows: { key: string; value: string }[];
+    try {
+      rows = db
+        .query(
+          "SELECT key, value FROM metadata WHERE key IN ('model', 'dimensions', 'chunkVersion', 'indexedAt', 'chunkCount')",
+        )
+        .all() as { key: string; value: string }[];
+    } catch (err) {
+      if (!noTable(err)) throw err;
+      rows = [];
+    }
+    let model = "";
+    let dimensions = 0;
+    let chunkVersion = 0;
+    const atoi = (v: string) => (/^[+-]?\d+$/.test(v) ? Number.parseInt(v, 10) : 0);
+    for (const row of rows) {
+      switch (row.key) {
+        case "model":
+          model = row.value;
+          break;
+        case "dimensions":
+          dimensions = atoi(row.value);
+          break;
+        case "chunkVersion":
+          chunkVersion = atoi(row.value);
+          break;
+        case "indexedAt":
+          if (!Number.isNaN(Date.parse(row.value))) r.indexedAt = row.value;
+          break;
+        case "chunkCount":
+          r.chunkCount = atoi(row.value);
+          break;
+      }
+    }
+    r.model = model;
+    r.dimensions = dimensions;
+    r.chunkVersion = chunkVersion;
+    r.chunkCount ??= 0;
+    if (rows.length === 0) {
+      r.degraded = true;
+      r.reason = "sqlite index is empty or missing metadata";
+      return r;
+    }
+    let count: number;
+    try {
+      let sql = "SELECT COUNT(*) AS n FROM chunks WHERE embedding IS NOT NULL";
+      if (chunkTypes.length > 0) sql += ` AND type IN (${chunkTypes.map(() => "?").join(",")})`;
+      count = (db.query(sql).get(...chunkTypes) as { n: number }).n;
+    } catch (err) {
+      if (!noTable(err)) throw err;
+      r.degraded = true;
+      r.reason = "sqlite index is empty or missing tables";
+      return r;
+    }
+    r.chunkCount = count;
+    if (expectation.model !== "" && model !== "" && model !== expectation.model) {
+      r.stale = true;
+      r.reason = `sqlite index model ${JSON.stringify(model)} != configured model ${JSON.stringify(expectation.model)}`;
+    } else if (
+      expectation.dimensions > 0 &&
+      dimensions > 0 &&
+      dimensions !== expectation.dimensions
+    ) {
+      r.stale = true;
+      r.reason = `sqlite index dimensions ${dimensions} != configured dimensions ${expectation.dimensions}`;
+    } else if (chunkVersion !== CHUNK_VERSION) {
+      r.stale = true;
+      r.reason = `sqlite index chunk version ${chunkVersion} != current chunk version ${CHUNK_VERSION}`;
+    } else if (count <= 0) {
+      r.degraded = true;
+      r.reason = "sqlite semantic index has no indexed chunks";
+    }
+    if (r.stale || r.degraded) {
+      r.ready = false;
+      if (!r.reason) r.reason = "sqlite semantic index is not ready";
+      return r;
+    }
+    r.ready = true;
+    return r;
+  } finally {
+    db.close();
+  }
 }
 
 export function resolveSemanticIndexReadiness(

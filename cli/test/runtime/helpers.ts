@@ -10,6 +10,7 @@ import { setDaemonCommand } from "../../src/runtime/queue.ts";
 import { installRuntime } from "../../src/wiring/runtime.ts";
 import { Normalizer, type Pair } from "../cli/commands/harness.ts";
 import { type Result, runGo, runTs } from "../cli/oracle.ts";
+import { withProcessEnv } from "../helpers/process-env.ts";
 
 export { hasGoBin, makePair } from "../cli/commands/harness.ts";
 
@@ -39,19 +40,14 @@ export async function runSide(
   if (side === "go") {
     result = runGo(a, full, s.dir);
   } else {
-    const saved: Record<string, string | undefined> = {};
-    for (const [k, v] of Object.entries(full)) {
-      saved[k] = process.env[k];
-      process.env[k] = v;
-    }
-    try {
-      result = await runTs(a, { env: full, cwd: s.dir });
-    } finally {
-      for (const [k, v] of Object.entries(saved)) {
-        if (v === undefined) delete process.env[k];
-        else process.env[k] = v;
-      }
-    }
+    // process.env must say what the Go side's environment says. runGo builds a clean env, so a
+    // KNOWNS_RUNTIME_INLINE inherited from the shell (huit-gpu's env.sh exports it) never reaches
+    // Go; the in-process TS side would still read it, run inline and never spawn its daemon.
+    const onProcess: Record<string, string | undefined> = {
+      KNOWNS_RUNTIME_INLINE: undefined,
+      ...full,
+    };
+    result = await withProcessEnv(onProcess, () => runTs(a, { env: full, cwd: s.dir }));
   }
   pair.norm.learn(side, result.stdout);
   return result;

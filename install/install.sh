@@ -11,6 +11,8 @@
 #   KNOWNS_LINK_DIR     - directory on PATH to link knowns and kn into
 #                         (default: ~/.local/bin, when it is already on PATH)
 #   KNOWNS_NO_LINK      - set to 1 to skip linking into a PATH directory
+#   KNOWNS_BASE_URL     - release download prefix (default: GitHub releases);
+#                         archives are fetched from <base>/<tag>/knowns-<os>-<arch>.tar.gz
 
 set -e
 
@@ -236,7 +238,10 @@ main() {
     resolve_version
 
     ARCHIVE="${BINARY}-${PLATFORM}.tar.gz"
-    URL="https://github.com/${REPO}/releases/download/${VERSION}/${ARCHIVE}"
+    # KNOWNS_BASE_URL replaces the release download prefix (mirrors, offline tests).
+    # Assets are looked up as ${KNOWNS_BASE_URL}/${VERSION}/${ARCHIVE}.
+    BASE_URL="${KNOWNS_BASE_URL:-https://github.com/${REPO}/releases/download}"
+    URL="${BASE_URL%/}/${VERSION}/${ARCHIVE}"
     CHECKSUM_URL="${URL}.sha256"
 
     info "Version:  ${VERSION}"

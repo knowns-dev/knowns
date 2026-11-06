@@ -3,6 +3,8 @@
 // answer. The runtime queue (daemon hand-off, background bootstrap) is out of scope: its seams are
 // `SearchEnvironment.queueReindex` and the in-process session below.
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
   SEMANTIC_VECTOR_BACKEND_QDRANT,
   SEMANTIC_VECTOR_BACKEND_SQLITE,
@@ -31,9 +33,11 @@ import {
   SemanticNotConfiguredError,
   SemanticRuntimeDisabledError,
 } from "./errors.ts";
+import { loadQdrantPointer } from "./qdrant/pointer.ts";
 import { EmptyVectorStore, QdrantVectorStore } from "./qdrant/store.ts";
 import { semanticIndexReadinessQdrant, semanticIndexReadinessSqlite } from "./readiness.ts";
 import { shapeRuntime, shapeSearchResult } from "./results.ts";
+import { SQLiteVectorStore } from "./sqlite-store.ts";
 import { goTrimSpace } from "./text.ts";
 import type { ChunkType, EmbedderProvider, SearchOptions, VectorStore } from "./types.ts";
 
@@ -99,16 +103,40 @@ export function openSemanticSession(storage: Storage, env: SearchEnvironment): S
   return new SemanticSession(embedder, vecStore);
 }
 
+/** openRuntimeVectorStore (semantic_runtime.go): Qdrant, or the SQLite index for `sqlite`. */
 function openRuntimeVectorStore(
   storage: Storage,
   env: SearchEnvironment,
   cfg: SemanticRuntimeConfig,
 ): VectorStore {
+  const root = storage.store.root;
   const backend = resolveEffectiveVectorStore(storage, env).backend;
   if (backend === SEMANTIC_VECTOR_BACKEND_QDRANT) {
+    // A project that has not activated a Qdrant generation yet reads its old SQLite index.
+    let pointerMissing = false;
+    try {
+      pointerMissing = loadQdrantPointer(root) === undefined;
+    } catch {
+      pointerMissing = false;
+    }
+    if (pointerMissing && existsSync(join(root, ".search", "index.db"))) {
+      const legacy = new SQLiteVectorStore(join(root, ".search"), cfg.modelId, cfg.dimensions);
+      try {
+        legacy.load();
+      } catch (err) {
+        throw new Error(`load temporary legacy SQLite fallback: ${(err as Error).message}`);
+      }
+      return legacy;
+    }
     return QdrantVectorStore.open(storage, env, cfg.modelId, cfg.dimensions);
   }
-  throw new Error(`load vector store: ${backend} vector backend is not available in this build`);
+  const store = new SQLiteVectorStore(join(root, ".search"), cfg.modelId, cfg.dimensions);
+  try {
+    store.load();
+  } catch (err) {
+    throw new Error(`load vector store: ${(err as Error).message}`);
+  }
+  return store;
 }
 
 /** initMemorySemanticStores: sessions for the project store and, when wired, the global store. */
@@ -186,7 +214,7 @@ function memorySemanticIndexAvailable(
 }
 
 /** Throws SemanticNotConfiguredError when semantic search is opted out. */
-function semanticIndexAvailableForRuntime(
+export function semanticIndexAvailableForRuntime(
   storage: Storage,
   env: SearchEnvironment,
   searchType: string | undefined,

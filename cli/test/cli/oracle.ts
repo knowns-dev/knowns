@@ -9,6 +9,7 @@ import { memoryIO } from "../../src/cli/core/io.ts";
 import { GO_SHORT_OF_REMOVED, REMOVED_COMMAND_SHORT } from "../../src/cli/core/removed.ts";
 import { execute } from "../../src/cli/core/root.ts";
 import { VERSION } from "../../src/version.ts";
+import { withProcessEnv } from "../helpers/process-env.ts";
 
 export const GO_BIN = process.env.KNOWNS_GO_BIN;
 export const hasGoBin = GO_BIN !== undefined && existsSync(GO_BIN);
@@ -71,17 +72,35 @@ export interface TsOptions {
   updateTimeoutMs?: number;
 }
 
+// Proxy variables never go on process.env: Bun on Windows keeps using a proxy after it is removed
+// (see test/helpers/process-env.ts and the init harness).
+const PROXY_KEY = /^(https?|all|no)_proxy$/i;
+
 export async function runTs(args: string[], opts: TsOptions = {}): Promise<Result> {
   const { io, out, err } = memoryIO();
-  const code = await execute(args, {
-    io,
-    env: baseEnv(opts.env),
-    cwd: opts.cwd ?? sandbox,
-    skipConfigWarning: !opts.configWarning,
-    ...(opts.extra && { extra: opts.extra }),
-    ...(opts.checkForUpdate && { checkForUpdate: opts.checkForUpdate }),
-    ...(opts.updateTimeoutMs !== undefined && { updateTimeoutMs: opts.updateTimeoutMs }),
-  });
+  const env = baseEnv(opts.env);
+  // The in-process CLI resolves ~/.knowns, the runtime root and the runtime knobs from
+  // process.env, not from `env`. Without this, a call ran against whatever home the test process
+  // has (formerly the developer's real one) instead of the sandbox the caller asked for.
+  // Windows has no empty environment variables (setting one to "" removes it), so a real child
+  // given USERPROFILE="" runs with it unset; mirror that instead of leaving "" on process.env,
+  // which libuv's homedir lookup rejects with ENOENT.
+  const mirrored: Record<string, string | undefined> = Object.fromEntries(
+    Object.entries(env)
+      .filter(([k]) => k !== "PATH" && !PROXY_KEY.test(k))
+      .map(([k, v]) => [k, process.platform === "win32" && v === "" ? undefined : v]),
+  );
+  const code = await withProcessEnv(mirrored, () =>
+    execute(args, {
+      io,
+      env,
+      cwd: opts.cwd ?? sandbox,
+      skipConfigWarning: !opts.configWarning,
+      ...(opts.extra && { extra: opts.extra }),
+      ...(opts.checkForUpdate && { checkForUpdate: opts.checkForUpdate }),
+      ...(opts.updateTimeoutMs !== undefined && { updateTimeoutMs: opts.updateTimeoutMs }),
+    }),
+  );
   return { code, stdout: out.text, stderr: err.text };
 }
 

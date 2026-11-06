@@ -1,7 +1,6 @@
 {
   "name": "knowns-cli",
   "private": true,
-  "version": "0.34.1",
   "type": "module",
   "scripts": {
     "gen": "bun scripts/gen-ui-assets.ts && bun scripts/gen-instructions.ts",
