@@ -3,11 +3,10 @@ id: doc-7c0dbdd40f8c36d3f72dc2c758d3e55b
 title: knowns-typescript-rewrite
 description: Specification for rewriting Knowns from Go back to TypeScript on Bun
 createdAt: '2026-11-02T19:05:28.224Z'
-updatedAt: '2026-11-05T08:43:55.904Z'
+updatedAt: '2026-11-06T08:10:29.656Z'
 tags:
   - spec
-  - draft
-  - review-required
+  - approved
 ---
 
 ## Overview
@@ -27,12 +26,31 @@ Predecessor: @doc/specs/knowns-go-rewrite (the opposite migration, 2026-03).
 - D3: TypeScript work lives on one long-lived branch in this repository and merges once at the switch. Go code is deleted in that merge.
 - D4: Runtime is Bun with `bun build --compile`: one binary per platform, no Node or Bun required on the user's machine. Distribution keeps per-platform npm packages and `install.sh` / `install.ps1`.
 - D5: Budgets that block release: on each platform, the binary may exceed an empty Bun-compiled binary for the same target by at most 30MB (Knowns code plus embedded UI); `knowns --version` and MCP readiness each at most 150ms. Revised 2026-11-03 after TSR-5BRB3D measured the stub (raw): darwin 65-70MB, linux 102MB, windows 114-117MB, because the Bun runtime alone is about 100MB on linux and more on windows. The original fixed 100MB limit was unreachable. Go 0.34.1 for reference: 35MB raw, 12MB gzip.
-- D6: Full parity of commands, flags, output formats (`--plain`, `--json`), MCP tools and schemas, HTTP endpoints and SSE/WebSocket events, and the `.knowns/` data format. The only exceptions are D7 and D8.
+- D6: Full parity of commands, flags, output formats (`--plain`, `--json`), MCP tools and schemas, HTTP endpoints and SSE/WebSocket events, and the `.knowns/` data format. The only exceptions are D7, D8 and the divergences D12 allows.
 - D7: `knowns reconcile preview` and `knowns reconcile apply` are removed. `knowns reconcile restore` stays. The automatic reconciler (watcher, history, tombstones, restore) is ported and follows @decision/20260912-1650-a-briefly-missing-file-is-not-a-deletion.
 - D8: `knowns import` (list, add, remove, status, sync) is removed. Content already present in `.knowns/imports/` stays readable and searchable; `knowns doctor` reports that import management was removed.
 - D9: Direct switch with no beta channel: the TypeScript build becomes the stable release.
 - D10: The TypeScript build ships as v1.0.0. The last Go release (0.34.x) stays installable via `npm i knowns@0.34` and `install.sh --version 0.34.x`. The TypeScript build never writes `.knowns/` data that 0.34.x cannot read.
 - D11: Release gate for v1.0.0: the Go e2e suite passes with `TEST_BINARY` pointed at the TypeScript binary on all 6 platforms; OS regression tests (FR-9) pass; UI Playwright e2e passes; and the maintainer has used the TypeScript build on this repository for at least 2 consecutive weeks with no data-loss bug.
+- D12: The TypeScript build may differ from 0.34.1 only to fix unsafe behavior, a data-integrity hole or a false success report in 0.34.1. Each divergence is listed under Approved Divergences with its task and a test that fails without the fix, keeps 0.34.1's output and exit code wherever the fix allows, and never breaks D10. Added 2026-11-06.
+
+## Approved Divergences
+
+Each item differs from 0.34.1 under D12. Where only a side effect differs, output and exit code still match 0.34.1.
+
+- MCP permissions: every action a handler implements is classified, and an unlisted action of a known tool counts as a write. 0.34.1 let read-only sessions write through the decision tool and several other actions. (@task-TSR-A3N6KY)
+- MCP server notifications: the port file must hold only a port number, and URL segments are escaped. (@task-TSR-A3N6KY)
+- MCP server: a handler that throws answers with an internal error instead of leaving the request unanswered. (@task-TSR-A3N6KY)
+- Tunnel stop never signals a pid of 1 or less. (@task-TSR-Q7B522)
+- `/api/imports` git calls are killed after 5 minutes. (@task-TSR-Q7B522)
+- `knowns update` on Windows restores the previous binary if the final rename fails, and cleans up its temp file. (@task-TSR-2P6ZDV)
+- LSP daemon: a 30 s request read deadline, a 16 MB frame cap, the socket chmod 0600, and a 10 minute timeout per language-server download during init. (@task-TSR-XSEKND)
+- Managed Qdrant installer: a pid-stamped install lock and recovery of an interrupted activation. (@task-TSR-30A1BM)
+- Store sync: a failing store no longer stops the other stores or the service. (@task-TSR-YZY173)
+- A rejected update on a hard-deleted Task never rewrites its file. 0.34.1 writes, then rolls back. (@task-TSR-6ERKFQ)
+- Task hard-delete runs its reconcile preflight before reserving the id, so a refusal leaves no half-deleted Task. On refusal, stdout reports changed=0 and no eventId. (@task-TSR-8CXR89)
+- Doc hard-delete fails with exit 1 on a Doc it cannot delete. 0.34.1 printed "Permanently deleted doc" with exit 0 and kept the file. (@task-TSR-N5EFM6)
+- `knowns validate --fix` assigns stable ids to legacy Docs that have none. 0.34.1 assigns an id only when it rewrites a Doc, and its reconciler then refuses the whole store. (@task-TSR-WR33ZF)
 
 ## System Decision Impact
 

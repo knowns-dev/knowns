@@ -1,5 +1,6 @@
 // validate command against the Go 0.34.1 oracle, over a project seeded with every issue class.
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   compareSteps,
   dispose,
@@ -77,8 +78,14 @@ function taskBody(title: string, description: string, plan = "", notes = "", ac 
   return b;
 }
 
+// Fixture Docs carry a stable id, as every Doc 0.26+ writes does. A Doc without one is a legacy
+// Doc, for which the TS build adds a TS-only DOC_MISSING_ID issue (TSR-WR33ZF, tested in
+// test/domain/validate and test/rollback), so this Go-parity fixture keeps to current Docs.
+const docId = (title: string) =>
+  `doc-${createHash("sha256").update(title).digest("hex").slice(0, 32)}`;
+
 function doc(title: string, tags: string[], content: string, description = "d"): string {
-  return `---\ntitle: ${title}\ndescription: ${description}\n${D}\ntags: [${tags.join(", ")}]\n---\n\n${content}\n`;
+  return `---\nid: ${docId(title)}\ntitle: ${title}\ndescription: ${description}\n${D}\ntags: [${tags.join(", ")}]\n---\n\n${content}\n`;
 }
 
 function memory(id: string, front: string, body: string): string {
@@ -168,7 +175,7 @@ const seed = (dir: string): void => {
       "",
     ),
   );
-  put("docs/empty.md", `---\ntitle: Empty\n${D}\ntags: []\n---\n`);
+  put("docs/empty.md", `---\nid: ${docId("Empty")}\ntitle: Empty\n${D}\ntags: []\n---\n`);
   put("docs/broken.md", "---\ntitle: [unclosed\n---\nbody\n");
 
   put(

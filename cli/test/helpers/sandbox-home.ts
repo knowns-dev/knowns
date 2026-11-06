@@ -79,26 +79,35 @@ function pinGoEnv(): void {
   if (!process.env.GOMODCACHE && modcache) process.env.GOMODCACHE = modcache;
   if (!process.env.GOCACHE && cache) process.env.GOCACHE = cache;
 }
-pinGoEnv();
-const sandboxHome = realpathSync(mkdtempSync(join(tmpdir(), "knowns-test-home-")));
-process.env.KNOWNS_TEST_REAL_HOME = realHome;
-process.env.HOME = sandboxHome;
-process.env.USERPROFILE = sandboxHome;
+// Applied once per process. This module is loaded by the preload when `bun test` starts in cli/
+// (cli/bunfig.toml) or at the repo root (bunfig.toml), and imported by test/cli/oracle.ts as a
+// fallback for any other cwd: bun only reads bunfig.toml from the current directory, and a run
+// from elsewhere silently skipped the sandbox (time.diff from the repo root on Windows).
+// KNOWNS_TEST_REAL_HOME marks it applied; a child test process inherits the sandboxed HOME too.
+const alreadyApplied = process.env.KNOWNS_TEST_REAL_HOME !== undefined;
+if (!alreadyApplied) {
+  pinGoEnv();
+  const sandboxHome = realpathSync(mkdtempSync(join(tmpdir(), "knowns-test-home-")));
+  process.env.KNOWNS_TEST_REAL_HOME = realHome;
+  process.env.HOME = sandboxHome;
+  process.env.USERPROFILE = sandboxHome;
 
-// 3. A daemon command that starts the real CLI entry, not the test file.
-const MAIN = resolve(import.meta.dir, "..", "..", "src", "main.ts");
-setDaemonCommand(() => ({ cmd: process.execPath, args: [MAIN, "__runtime", "run"] }));
+  // 3. A daemon command that starts the real CLI entry, not the test file.
+  const MAIN = resolve(import.meta.dir, "..", "..", "src", "main.ts");
+  setDaemonCommand(() => ({ cmd: process.execPath, args: [MAIN, "__runtime", "run"] }));
+}
 
 // 4. Fail loudly if anything still reached the real registry files.
-afterAll(() => {
-  const leaks: string[] = [];
-  for (const f of REAL_FILES) {
-    const was = before.get(f) ?? new Set<string>();
-    for (const p of tempPathsIn(f)) if (!was.has(p)) leaks.push(`${f}: ${p}`);
-  }
-  if (leaks.length > 0) {
-    throw new Error(
-      `a test wrote temp projects into the REAL home (${realHome}); fix the code path that ignores HOME:\n  ${leaks.join("\n  ")}`,
-    );
-  }
-});
+if (!alreadyApplied)
+  afterAll(() => {
+    const leaks: string[] = [];
+    for (const f of REAL_FILES) {
+      const was = before.get(f) ?? new Set<string>();
+      for (const p of tempPathsIn(f)) if (!was.has(p)) leaks.push(`${f}: ${p}`);
+    }
+    if (leaks.length > 0) {
+      throw new Error(
+        `a test wrote temp projects into the REAL home (${realHome}); fix the code path that ignores HOME:\n  ${leaks.join("\n  ")}`,
+      );
+    }
+  });

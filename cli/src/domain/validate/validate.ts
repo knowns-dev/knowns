@@ -17,6 +17,7 @@ import type { Storage } from "../../storage/adapters.ts";
 import { goTrimSpace } from "../../storage/core/util.ts";
 import { Engine } from "../codegen/index.ts";
 import { extract, parse } from "../references/references.ts";
+import { backfillDocId, DOC_MISSING_ID } from "./doc-id-backfill.ts";
 import { goQuote } from "./go-quote.ts";
 
 /** A single validation problem. Key order is Go's struct order. */
@@ -43,7 +44,8 @@ export interface Options {
   entity?: string;
   /** Treat warnings as errors. */
   strict?: boolean;
-  /** Auto-fix supported issues (only changes the severity of a broken template doc link). */
+  /** Auto-fix supported issues: the severity of a broken template doc link (as Go), and, TS-only,
+   * a stable id for each legacy Doc that has none (doc-id-backfill.ts). */
   fix?: boolean;
   /** Also validate the user-level global memory layer. */
   includeGlobalMemory?: boolean;
@@ -144,6 +146,7 @@ export function run(storage: Storage, opts: Options = {}): Result {
         continue;
       }
       issues.push(...validateDoc(full, ctx));
+      if (goTrimSpace(full.id ?? "") === "") issues.push(missingDocId(storage, d.path, o));
       if (scope === "sdd") issues.push(...validateSpecDecisionContract(full));
     }
   }
@@ -206,6 +209,36 @@ function formatInOffsetOf(ms: number, rfc3339: string): string {
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * TS-only (0.34.1 has no such check): a Doc without a stable id, written by a pre-0.26 version.
+ * Reported as info so `valid`, the exit code and --strict stay what 0.34.1 gives; such a Doc makes
+ * the reconciler refuse the store (hard-delete fails). --fix assigns the id (doc-id-backfill.ts).
+ */
+function missingDocId(storage: Storage, path: string, o: Options): Issue {
+  if (!o.fix) {
+    return issue(
+      "info",
+      DOC_MISSING_ID,
+      "Doc has no stable id (written by a version before 0.26); run `knowns validate --fix` to assign one",
+      path,
+    );
+  }
+  try {
+    const r = backfillDocId(storage.docs.docsDir(), path);
+    if (r.status === "no-frontmatter") {
+      return issue(
+        "warning",
+        DOC_MISSING_ID,
+        "Doc has no stable id and no frontmatter to add one to; edit the doc to give it one",
+        path,
+      );
+    }
+    return { ...issue("info", DOC_MISSING_ID, `Assigned stable id ${r.id}`, path), fixed: true };
+  } catch (e) {
+    return issue("error", DOC_MISSING_ID, `Could not assign a stable id: ${errMsg(e)}`, path);
+  }
 }
 
 function issue(level: string, code: string, message: string, entity?: string): Issue {

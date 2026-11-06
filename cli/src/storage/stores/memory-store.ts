@@ -26,6 +26,7 @@ import { atomicWrite, goTrimSpace, splitFrontmatter } from "../core/util.ts";
 import {
   asInt,
   asStr,
+  asStrField,
   asStrList,
   formatIso,
   isZeroTime,
@@ -65,14 +66,14 @@ export function parseMemoryContent(content: string, layer: string): MemoryEntry 
   } catch (e) {
     throw new Error(`parse memory frontmatter: ${(e as Error).message}`);
   }
-  entry.id = asStr(fm.id);
-  entry.title = asStr(fm.title);
+  entry.id = asStrField(fm, yaml, "id");
+  entry.title = asStrField(fm, yaml, "title");
   const set = <
     K extends "key" | "category" | "status" | "confidence" | "mergedInto" | "rejectedReason",
   >(
     k: K,
   ) => {
-    const v = asStr(fm[k]);
+    const v = asStrField(fm, yaml, k);
     if (v !== "") entry[k] = v;
   };
   set("key");
@@ -97,7 +98,7 @@ export function parseMemoryContent(content: string, layer: string): MemoryEntry 
   }
   entry.createdAt = readTime(asStr(fm.createdAt));
   entry.updatedAt = readTime(asStr(fm.updatedAt));
-  const fmLayer = asStr(fm.layer);
+  const fmLayer = asStrField(fm, yaml, "layer");
   if (fmLayer !== "") entry.layer = fmLayer;
   entry.lifecycleMetadataMissing = missingLifecycleFields(fm);
   memoryApplyLifecycleDefaults(entry);

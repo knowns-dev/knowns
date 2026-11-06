@@ -16,6 +16,7 @@ import type { Store } from "../core/store.ts";
 import { atomicWrite, goTrimSpace, splitFrontmatter } from "../core/util.ts";
 import {
   asStr,
+  asStrField,
   asStrList,
   formatIso,
   goTimeJson,
@@ -94,8 +95,8 @@ export function parseDecisionContent(content: string): DecisionEntry {
     throw new Error(`parse decision frontmatter: ${(e as Error).message}`);
   }
   const d: DecisionEntry = {
-    id: asStr(fm.id),
-    title: asStr(fm.title),
+    id: asStrField(fm, yaml, "id"),
+    title: asStrField(fm, yaml, "title"),
     status: asStr(fm.status),
     createdAt: readTime(asStr(fm.createdAt)),
     updatedAt: readTime(asStr(fm.updatedAt)),

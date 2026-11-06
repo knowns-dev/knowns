@@ -1,6 +1,9 @@
 // Runs the Go binary (the parity oracle) and the TypeScript CLI side by side.
 // Go tests need KNOWNS_GO_BIN pointing at a knowns binary built from this repo; they skip without it.
 
+// First, before any src module loads: the sandbox HOME must already be in place when this harness
+// is used from a cwd whose bunfig.toml does not preload it (see test/helpers/sandbox-home.ts).
+import "../helpers/sandbox-home.ts";
 import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

@@ -77,6 +77,13 @@ export class TaskLifecycleTransaction {
 
   /** UpdateTask: write a complete Task; callers must first read it through this transaction. */
   async updateTask(task: Task): Promise<void> {
+    // A hard-deleted ID is reserved for good. Go writes the canonical file first and only then
+    // fails at SaveTaskVersion with this message, rolling the write back; checking first gives the
+    // same error and exit code without ever rewriting a tombstoned Task's file (a crash between
+    // the write and the rollback would otherwise leave an edit on a deleted Task).
+    if (task.id !== "" && (await this.ctx.tasks.isIdReserved(task.id))) {
+      throw new Error(`cannot save version for hard-deleted Task "${task.id}"`);
+    }
     await this.ctx.tasks.updateUnlocked(task);
   }
 
@@ -388,6 +395,17 @@ export function conflictResolverOf(ctx: HistoryContext): SyncConflictResolver {
 export interface TaskPurgeReconciler {
   /** ReconcileLifecycleBatch for the exact task, bootstrapping its history before the purge. */
   bootstrapTask(args: {
+    root: string;
+    relPath: string;
+    absPath: string;
+    taskId: string;
+  }): Promise<{ diagnostic?: string }[]>;
+  /**
+   * The bootstrap batch in preview mode (writes nothing): the diagnostics bootstrapTask would
+   * report. Hard-delete runs it before reserving the ID, so a refusal (an unsafe canonical input
+   * elsewhere in the store) cannot leave a tombstone over a live Task.
+   */
+  preflightTask?(args: {
     root: string;
     relPath: string;
     absPath: string;

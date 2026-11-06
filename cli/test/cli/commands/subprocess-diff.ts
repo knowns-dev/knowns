@@ -113,7 +113,10 @@ async function runIn(
     const proj = join(run, "proj");
     const proc = Bun.spawn([...bin, ...args], {
       cwd: proj,
-      env: sandboxEnv(home, opts.env),
+      // Inline unless a test asks otherwise: a write (memory edit, doc create) would start the
+      // shared runtime daemon inside the run copy, and Windows cannot delete a directory a live
+      // process sits in (EBUSY).
+      env: sandboxEnv(home, { KNOWNS_RUNTIME_INLINE: "1", ...opts.env }),
       stdin: opts.stdin === undefined ? "ignore" : Buffer.from(opts.stdin),
       stdout: "pipe",
       stderr: "pipe",

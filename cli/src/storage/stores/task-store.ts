@@ -33,6 +33,7 @@ import { canonicalTaskHash } from "../history/entities.ts";
 import {
   asInt,
   asStr,
+  asStrField,
   asStrList,
   formatIso,
   goTimeJson,
@@ -62,8 +63,8 @@ export function parseTaskContent(content: string): Task {
   const labels = asStrList(fm.labels);
   const fulfills = asStrList(fm.fulfills);
   const task: Task = {
-    id: asStr(fm.id),
-    title: asStr(fm.title),
+    id: asStrField(fm, yaml, "id"),
+    title: asStrField(fm, yaml, "title"),
     status: asStr(fm.status),
     priority: asStr(fm.priority),
     labels: labels.length === 0 ? null : labels,

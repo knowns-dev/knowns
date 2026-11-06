@@ -8,23 +8,33 @@ import { FilesystemReconciler } from "./reconciler.ts";
 
 /** The reconciler behind `taskLifecycleSeams.purgeReconciler`. */
 export function createTaskPurgeReconciler(): TaskPurgeReconciler {
+  const bootstrapBatch = async (
+    {
+      root,
+      relPath,
+      absPath,
+      taskId,
+    }: { root: string; relPath: string; absPath: string; taskId: string },
+    execute: boolean,
+  ) => {
+    // The bootstrap carries no index callback: it only records the target into the history.
+    const bootstrap = new FilesystemReconciler(root, { allowArchive: true });
+    const results = await bootstrap.reconcileLifecycleBatch(
+      {
+        source: "task-hard-delete-bootstrap",
+        limit: 4,
+        exactEntityType: "task",
+        exactEntityId: taskId,
+        exactPath: relPath,
+        hints: [{ path: absPath, event: "hard_delete", entityType: "task", entityId: taskId }],
+      },
+      execute,
+    );
+    return results.map((r) => (r.diagnostic !== "" ? { diagnostic: r.diagnostic } : {}));
+  };
   return {
-    async bootstrapTask({ root, relPath, absPath, taskId }) {
-      // The bootstrap carries no index callback: it only records the target into the history.
-      const bootstrap = new FilesystemReconciler(root, { allowArchive: true });
-      const results = await bootstrap.reconcileLifecycleBatch(
-        {
-          source: "task-hard-delete-bootstrap",
-          limit: 4,
-          exactEntityType: "task",
-          exactEntityId: taskId,
-          exactPath: relPath,
-          hints: [{ path: absPath, event: "hard_delete", entityType: "task", entityId: taskId }],
-        },
-        true,
-      );
-      return results.map((r) => (r.diagnostic !== "" ? { diagnostic: r.diagnostic } : {}));
-    },
+    bootstrapTask: (args) => bootstrapBatch(args, true),
+    preflightTask: (args) => bootstrapBatch(args, false),
     async hardDelete({ root, taskId, relPath, reason, actor, expectedHash, remove }) {
       const handoff = remove
         ? async (result: { operation: string; entityId: string }) => {

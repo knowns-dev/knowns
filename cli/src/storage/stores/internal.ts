@@ -165,6 +165,38 @@ export function asInt(v: unknown): number {
   throw new Error("cannot decode YAML value into an int");
 }
 
+/**
+ * The literal text of a top-level plain scalar (`key: value` on one line), or undefined when the
+ * value is quoted, a block, a flow collection, an alias or absent. A trailing ` #comment` is not
+ * part of the value.
+ */
+export function yamlRawScalar(yaml: string, key: string): string | undefined {
+  const prefix = `${key}:`;
+  for (const line of yaml.split(/\r?\n/)) {
+    if (!line.startsWith(prefix)) continue;
+    let value = line.slice(prefix.length);
+    if (value !== "" && value[0] !== " " && value[0] !== "\t") continue;
+    const hash = value.search(/[ \t]#/);
+    if (hash >= 0) value = value.slice(0, hash);
+    value = value.trim();
+    if (value === "" || "'\"[{|>&*!".includes(value[0] as string)) return undefined;
+    return value;
+  }
+  return undefined;
+}
+
+/**
+ * A top-level string field as yaml.v3 decodes it into a Go string: a plain scalar YAML resolves
+ * to a number (`000681`, `1e5678`, `0x1f2a`) keeps its literal text. Bun.YAML has already turned
+ * it into a number by then, so the text is read back from the frontmatter itself. Base36 ids
+ * are written unquoted (by Go too), so a numeric-looking id came back as `681` or `Infinity`.
+ */
+export function asStrField(fm: Yaml, yaml: string, key: string): string {
+  const v = fm[key];
+  if (typeof v === "number") return yamlRawScalar(yaml, key) ?? asStr(v);
+  return asStr(v);
+}
+
 /** Parse a YAML mapping (an empty or non-mapping document is an empty mapping). */
 export function parseYamlMap(text: string): Yaml {
   const v = Bun.YAML.parse(text) as unknown;

@@ -1,5 +1,6 @@
 // `knowns doc ...` (internal/cli/doc.go): list, view, create, edit, delete, hard-delete, history.
-import { readSync } from "node:fs";
+import { existsSync, readSync } from "node:fs";
+import { join } from "node:path";
 import type { Doc } from "../../models/doc.ts";
 import type { Storage } from "../../storage/adapters.ts";
 import { goTrimSpace } from "../../storage/core/util.ts";
@@ -698,6 +699,14 @@ const docHardDeleteCmd = defineCommand({
     if (expectedHash !== (doc.canonicalHash ?? "")) {
       throw new Error("doc hard-delete: expected hash conflict");
     }
+    // Deliberate divergence from 0.34.1 (TSR-N5EFM6): a Doc without a stable id cannot be purged
+    // (the lifecycle reconciler refuses it), and Go then reported "Permanently deleted doc" with
+    // exit 0 while the file stayed. Refuse before touching anything instead.
+    if (goTrimSpace(doc.id ?? "") === "") {
+      throw new Error(
+        `doc hard-delete: ${doc.path} has no stable Doc id, so it cannot be hard-deleted; nothing was changed`,
+      );
+    }
     const purge = docHooks.hardDelete;
     if (!purge) {
       throw new Error(
@@ -722,6 +731,10 @@ const docHardDeleteCmd = defineCommand({
       const err = e as Error;
       if (err.name === "DocReconcileError") throw new Error(`doc hard-delete ${err.message}`);
       throw new Error(`doc hard-delete: ${err.message}`);
+    }
+    // Never claim a deletion that did not happen (TSR-N5EFM6).
+    if (existsSync(join(storage.store.root, ...canonicalPath.split("/")))) {
+      throw new Error(`doc hard-delete: ${doc.path} was not removed`);
     }
     docHooks.removeDocID(storage, doc.id ?? "", doc.path);
     ctx.print(`Permanently deleted doc: ${doc.path}\n`);

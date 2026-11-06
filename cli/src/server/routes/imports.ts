@@ -190,9 +190,10 @@ function resultJson(
   return out;
 }
 
-const GIT_TIMEOUT_MS = 5 * 60_000;
+/** The git call limit (5 minutes); a seam so a test can shorten it. */
+export const importsGitLimits = { timeoutMs: 5 * 60_000 };
 
-async function git(
+export async function git(
   args: string[],
   cwd?: string,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -204,7 +205,7 @@ async function git(
   });
   // Not in Go (its http.Server WriteTimeout bounded the request): a slow or huge remote must not
   // hold a request and a git process forever. The server sets idleTimeout 0 for SSE.
-  const timer = setTimeout(() => proc.kill("SIGKILL"), GIT_TIMEOUT_MS);
+  const timer = setTimeout(() => proc.kill("SIGKILL"), importsGitLimits.timeoutMs);
   try {
     const [stdout, stderr, code] = await Promise.all([
       new Response(proc.stdout).text(),

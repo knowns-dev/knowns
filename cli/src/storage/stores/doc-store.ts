@@ -8,6 +8,7 @@ import { canonicalDocHash, newDocId } from "../history/entities.ts";
 import {
   asInt,
   asStr,
+  asStrField,
   asStrList,
   formatIso,
   parseYamlMap,
@@ -70,8 +71,8 @@ export function parseDocContent(
   } catch (e) {
     throw new Error(`parse doc frontmatter: ${(e as Error).message}`);
   }
-  doc.title = asStr(fm.title);
-  const id = goTrimSpace(asStr(fm.id));
+  doc.title = asStrField(fm, yaml, "title");
+  const id = goTrimSpace(asStrField(fm, yaml, "id"));
   if (id !== "") doc.id = id;
   const description = asStr(fm.description);
   if (description !== "") doc.description = description;

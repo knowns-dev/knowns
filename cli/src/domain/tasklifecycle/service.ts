@@ -5,6 +5,7 @@
 // Go methods return (value, err) with a meaningful partial value. Here a failing method throws and
 // the partial value rides on the error (`partialOf`); `executePublic` returns `{ response, error }`
 // because adapters always need the response.
+import { existsSync } from "node:fs";
 import { isAbsolute, normalize, relative, sep } from "node:path";
 import { effectiveTaskLifecycle, type TaskLifecycleSettings } from "../../models/config.ts";
 import { type Task, type TaskTombstone, taskLifecycleState } from "../../models/task.ts";
@@ -573,6 +574,36 @@ export class Service implements LifecycleCore {
     let centralRemoveDelivered = false;
     let centralAlreadyDelivered = false;
     const root = this.storage.store.root;
+
+    // Go reserves the ID (tombstone + pending record) first and only then runs the bootstrap
+    // reconcile, which refuses the whole store when any canonical input is unsafe (a legacy Doc
+    // without a stable id). The delete then stops halfway: tombstone written, Task file and
+    // history kept, every later update refused. Run the same reconcile in preview mode first and
+    // fail with its diagnostic, so a refusal leaves nothing behind.
+    if (this.purgeReconciler?.preflightTask) {
+      let absPath = "";
+      const [, pathErr] = await attempt(() =>
+        this.withTransaction(async (tx) => {
+          absPath = await tx.canonicalTaskPath(taskId);
+        }),
+      );
+      if (pathErr) absPath = "";
+      if (absPath !== "" && existsSync(absPath)) {
+        const relPath = relative(root, absPath).split(sep).join("/");
+        const [checks, checkErr] = await attempt(() =>
+          (
+            this.purgeReconciler as Required<NonNullable<typeof this.purgeReconciler>>
+          ).preflightTask({ root, relPath, absPath, taskId }),
+        );
+        if (checkErr) return [result, checkErr];
+        const refused = (checks ?? []).find((c) => c.diagnostic);
+        if (refused?.diagnostic) {
+          const [live] = await attempt(() => Promise.resolve(this.storage.tasks.get(taskId)));
+          if (live) result.before = taskLifecycleState(live);
+          return [result, new Error(refused.diagnostic)];
+        }
+      }
+    }
     const [, txErr] = await attempt(() =>
       this.withTransaction(async (tx) => {
         const [task, taskErr] = await attempt(() => tx.getTask(taskId));

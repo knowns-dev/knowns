@@ -23,7 +23,9 @@ for (const bad of ["-1", "0", "1"]) {
     const d = new Daemon(47999);
     mkdirSync(dirname(d.pidFile), { recursive: true });
     writeFileSync(d.pidFile, bad);
-    const kill = spyOn(process, "kill");
+    // Mocked, never called through: if the guard regressed, a real kill(-1) would signal every
+    // process the user owns.
+    const kill = spyOn(process, "kill").mockImplementation(() => true);
     try {
       await d.stop();
       expect(kill).not.toHaveBeenCalled();
