@@ -59,6 +59,16 @@ detect_platform() {
         *)             error "Unsupported architecture: $ARCH" ;;
     esac
 
+    # An x86_64 shell on Apple Silicon runs under Rosetta 2, so uname -m says x86_64. The x64
+    # build then runs translated, and Rosetta has no AVX, so it warns on every run. The machine
+    # runs the arm64 build natively.
+    ROSETTA=0
+    if [ "$OS" = "darwin" ] && [ "$ARCH" = "x64" ] &&
+        [ "$({ sysctl -in sysctl.proc_translated || /usr/sbin/sysctl -in sysctl.proc_translated; } 2>/dev/null)" = "1" ]; then
+        ARCH="arm64"
+        ROSETTA=1
+    fi
+
     PLATFORM="${OS}-${ARCH}"
 }
 
@@ -246,6 +256,9 @@ main() {
 
     info "Version:  ${VERSION}"
     info "Platform: ${PLATFORM}"
+    if [ "$ROSETTA" = "1" ]; then
+        info "          (this shell runs under Rosetta; installing the native Apple Silicon build)"
+    fi
     info "Install:  ${INSTALL_DIR}"
     printf "\n"
 

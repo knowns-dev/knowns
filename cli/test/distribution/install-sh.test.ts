@@ -178,6 +178,45 @@ describe.skipIf(!posix)("install.sh", () => {
     );
     const meta = JSON.parse(readFileSync(join(sb.home, ".knowns", "install.json"), "utf8"));
     expect([meta.platform, meta.arch]).toEqual(["darwin", "x64"]);
+    expect(r.stdout).not.toContain("Rosetta");
+  });
+
+  // KN-N2M8CS: an x86_64 shell on Apple Silicon (Rosetta 2) reports x86_64, but the x64 Bun build
+  // warns about missing AVX on every run there. The native arm64 build is installed instead.
+  test("an x86_64 shell under Rosetta installs the darwin-arm64 asset and says why", () => {
+    const sb = makeSandbox([".local/bin"]);
+    // Only the arm64 asset exists, so success proves the x64 one was never requested.
+    const rel = makeRelease("v1.0.0", "darwin-arm64", "1.0.0-native");
+    const r = runInstall({
+      sandbox: sb,
+      baseUrl: rel.baseUrl,
+      version: "1.0.0",
+      uname: ["Darwin", "x86_64"],
+      rosetta: true,
+    });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("Platform: darwin-arm64");
+    expect(r.stdout).toContain("runs under Rosetta");
+    expect(r.stdout).toContain("knowns-darwin-arm64.tar.gz");
+    expect(run([join(sb.home, ".knowns", "bin", "knowns")]).stdout).toBe(
+      "knowns version 1.0.0-native\n",
+    );
+    const meta = JSON.parse(readFileSync(join(sb.home, ".knowns", "install.json"), "utf8"));
+    expect([meta.platform, meta.arch]).toEqual(["darwin", "arm64"]);
+  });
+
+  test("a translated shell on Linux keeps its own architecture", () => {
+    const sb = makeSandbox();
+    const rel = makeRelease("v1.0.0", "linux-x64", "x");
+    const r = runInstall({
+      sandbox: sb,
+      baseUrl: rel.baseUrl,
+      version: "1.0.0",
+      uname: ["Linux", "x86_64"],
+      rosetta: true,
+    });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("Platform: linux-x64");
   });
 
   test.each([

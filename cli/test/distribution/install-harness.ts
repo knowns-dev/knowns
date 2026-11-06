@@ -63,8 +63,11 @@ export function makeSandbox(extraPathRel: string[] = []): Sandbox {
   return { home, extraPath };
 }
 
-/** A `uname` that answers -s/-m with the given values (first on PATH). */
-export function fakeUname(os: string, arch: string): string {
+/**
+ * A `uname` that answers -s/-m with the given values, and a `sysctl` that answers
+ * sysctl.proc_translated (1 = the shell runs under Rosetta 2), both first on PATH.
+ */
+export function fakeUname(os: string, arch: string, translated = false): string {
   const d = tempDir("uname");
   const f = join(d, "uname");
   writeFileSync(
@@ -72,6 +75,12 @@ export function fakeUname(os: string, arch: string): string {
     `#!/bin/sh\ncase "$1" in -s) echo ${os};; -m) echo ${arch};; *) echo ${os};; esac\n`,
   );
   chmodSync(f, 0o755);
+  const sysctl = join(d, "sysctl");
+  writeFileSync(
+    sysctl,
+    `#!/bin/sh\nfor a; do [ "$a" = sysctl.proc_translated ] && { echo ${translated ? 1 : 0}; exit 0; }; done\nexit 1\n`,
+  );
+  chmodSync(sysctl, 0o755);
   return d;
 }
 
@@ -80,11 +89,13 @@ export function runInstall(opts: {
   baseUrl: string;
   version: string;
   uname?: [string, string];
+  /** With uname: whether the stub sysctl reports a Rosetta-translated shell. */
+  rosetta?: boolean;
   env?: Record<string, string>;
 }) {
   const sys = "/usr/bin:/bin:/usr/sbin:/sbin";
   const pathParts = [
-    ...(opts.uname ? [fakeUname(...opts.uname)] : []),
+    ...(opts.uname ? [fakeUname(...opts.uname, opts.rosetta)] : []),
     ...opts.sandbox.extraPath,
     sys,
   ];
