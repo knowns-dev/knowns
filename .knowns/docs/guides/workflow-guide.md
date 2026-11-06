@@ -1,4 +1,5 @@
 ---
+id: doc-1056e0fa07f721f69e56def1e1876889
 title: Workflow Guide
 description: Task lifecycle and development workflow with Knowns
 createdAt: '2026-02-24T08:45:15.515Z'

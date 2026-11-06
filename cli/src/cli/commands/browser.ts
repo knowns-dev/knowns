@@ -308,8 +308,23 @@ export default defineCommand({
     port = bound.port;
 
     const shouldOpen = openFlag && !noOpen;
+    // Exact origins trusted on top of the server's own (the Vite dev UI on another port). Not in
+    // 0.34.1, which trusted every loopback port (D12, TSR-X86JV4).
+    const allowedOrigins = (ctx.env.KNOWNS_ALLOWED_ORIGINS ?? "")
+      .split(",")
+      .map((o) => o.trim())
+      .filter((o) => o !== "")
+      .map((o) => {
+        try {
+          return new URL(o).origin;
+        } catch {
+          return "";
+        }
+      })
+      .filter((o) => o !== "" && o !== "null");
     const server = new Server(store, projectRoot, port, {
       dev,
+      allowedOrigins,
       tunnel: tunnelFlag,
       password: passwordFlag,
       allowTaskHardDelete,

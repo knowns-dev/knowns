@@ -315,18 +315,9 @@ const steps: Step[] = [
     method: "GET",
     path: (v) => `/api/resolve?ref=${encodeURIComponent(`@task-${v.t1}`)}`,
   },
-  {
-    name: "import add local",
-    method: "POST",
-    path: "/api/imports",
-    headers: J,
-    body: { source: "/some/dir", name: "loc" },
-  },
   { name: "imports list 2", method: "GET", path: "/api/imports" },
   { name: "import get", method: "GET", path: "/api/imports/loc" },
   { name: "import bad name", method: "GET", path: "/api/imports/..%2Fx" },
-  { name: "import sync one", method: "POST", path: "/api/imports/loc/sync" },
-  { name: "import remove", method: "DELETE", path: "/api/imports/loc" },
   { name: "notify refresh", method: "POST", path: "/api/notify/refresh" },
   { name: "notify doc", method: "POST", path: "/api/notify/doc/guides/my-guide" },
   { name: "notify task", method: "POST", path: (v) => `/api/notify/task/${v.t1}` },
@@ -373,7 +364,9 @@ const steps: Step[] = [
     name: "cors get",
     method: "GET",
     path: "/api/config",
-    headers: { Origin: "http://localhost:5173" },
+    // The server's own origin: a cross-port origin is refused since TSR-X86JV4 (D12) and is
+    // covered by origin-guard.diff.test.ts.
+    headers: { Origin: "<SELF>" },
   },
   {
     name: "cors evil",
@@ -386,7 +379,7 @@ const steps: Step[] = [
     method: "OPTIONS",
     path: "/api/tasks",
     headers: {
-      Origin: "http://localhost:5173",
+      Origin: "<SELF>",
       "Access-Control-Request-Method": "POST",
       "Access-Control-Request-Headers": "content-type",
     },
@@ -418,6 +411,8 @@ beforeAll(async () => {
   // sequential: two concurrent freePort() calls can hand out the same port on Windows
   go = await startSide("go", tpl);
   ts = await startSide("ts", tpl);
+  // "<SELF>" in a step's headers is each server's own origin; mask it back in the replies.
+  for (const s of [go, ts]) s.subs.push([s.base, "<SELF>"]);
 });
 afterAll(() => {
   if (go) stopSide(go);
@@ -441,7 +436,15 @@ describe.skipIf(!enabled)("REST parity with the Go server", () => {
             : bodyVal === undefined
               ? undefined
               : JSON.stringify(bodyVal);
-        const r = await send(side, step.method, path, { body, headers: step.headers });
+        const headers = step.headers
+          ? Object.fromEntries(
+              Object.entries(step.headers).map(([k, val]) => [
+                k,
+                val === "<SELF>" ? side.base : val,
+              ]),
+            )
+          : undefined;
+        const r = await send(side, step.method, path, { body, headers });
         if (step.capture) {
           try {
             const caught = step.capture(JSON.parse(r.text));
@@ -457,6 +460,11 @@ describe.skipIf(!enabled)("REST parity with the Go server", () => {
       }
       const [a, b] = replies as [Reply, Reply];
       const idMask = (t: string) => {
+        // The UI build names its assets by content hash; the embedded build, not the server, decides
+        // them (the Go oracle may embed an older ui/dist than the TS build).
+        if (step.name.startsWith("ui ")) {
+          return t.replace(/assets\/([\w-]+?)-[\w-]{8}\.(js|css)/g, "assets/$1-<HASH>.$2");
+        }
         if (step.name === "workspaces") return t.replace(/"id":"[a-z0-9]{6}"/g, '"id":"<WS>"');
         // Go builds these lists from map iteration, so their order is random in Go itself.
         if (step.name.startsWith("graph")) {

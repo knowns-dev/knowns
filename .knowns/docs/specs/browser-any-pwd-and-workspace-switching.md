@@ -1,4 +1,5 @@
 ---
+id: doc-6df1230eddc2640a35d99645d69fad56
 title: browser-any-pwd-and-workspace-switching
 description: Specification for browser any-pwd launch, welcome page, and reliable workspace switching
 createdAt: '2026-04-10T04:08:06.995Z'

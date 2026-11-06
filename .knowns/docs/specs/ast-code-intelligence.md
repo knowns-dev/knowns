@@ -1,4 +1,5 @@
 ---
+id: doc-32a5ac317e8295e650a93ddf1c03075f
 title: AST Code Intelligence
 description: Specification for AST-based code indexing, search, watching, ref system, and graph integration
 createdAt: '2026-04-04T10:02:50.950Z'

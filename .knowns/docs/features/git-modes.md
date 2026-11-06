@@ -1,4 +1,5 @@
 ---
+id: doc-87be97a46bd7b1f550f0caa23eb26e00
 title: Git Tracking Modes
 description: Documentation for git-tracked vs git-ignored modes
 createdAt: '2026-01-05T16:59:24.389Z'

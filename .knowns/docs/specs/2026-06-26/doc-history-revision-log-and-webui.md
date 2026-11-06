@@ -1,4 +1,5 @@
 ---
+id: doc-7cc6b716c58716fb295d185678515c36
 title: Doc History Revision Log and WebUI
 description: Specification for audit-linked doc revision history with section-level diffs, bounded retention, and WebUI compare/restore flows.
 createdAt: '2026-06-26T04:16:50.076Z'

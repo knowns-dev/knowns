@@ -1,4 +1,5 @@
 ---
+id: doc-4bbf6807ba01f439e5c725765c25831a
 title: Knowns CLI Guide
 description: Complete guide for using Knowns CLI
 createdAt: '2025-12-26T19:43:25.470Z'

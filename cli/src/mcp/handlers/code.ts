@@ -1,7 +1,7 @@
 // Port of internal/mcp/handlers/code.go and code_runtime.go: code intelligence over the LSP
 // manager (or the project LSP daemon) plus the structural edit actions.
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { type BigIntStats, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import {
   buildCodeSummaries,
@@ -458,16 +458,18 @@ function ensureCodeMutationPath(root: string, absPath: string): void {
   }
   for (const managedName of [".knowns", ".git"]) {
     const managedPath = join(realRoot, managedName);
-    let managedInfo: ReturnType<typeof statSync>;
+    // bigint: Windows file ids are 64-bit (sequence number in the high bits) and a Number rounds
+    // them, so distinct directories (project root and .knowns) could compare as os.SameFile.
+    let managedInfo: BigIntStats;
     try {
-      managedInfo = statSync(managedPath);
+      managedInfo = statSync(managedPath, { bigint: true });
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
       throw new Error(`inspect managed path "${managedName}": ${errMessage(e)}`);
     }
     for (let current = realPath; ; current = dirname(current)) {
       try {
-        const info = statSync(current);
+        const info = statSync(current, { bigint: true });
         if (info.ino === managedInfo.ino && info.dev === managedInfo.dev) {
           throw new Error(`code mutations cannot modify managed path "${managedName}"`);
         }

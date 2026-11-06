@@ -10,6 +10,8 @@ export interface FixtureEntry {
   files: string[];
   digest: string;
   bomFiles?: string[];
+  /** Leaf directories with no files; restored by fixture-dirs.ts since git drops them. */
+  emptyDirs?: string[];
 }
 
 export interface FixtureManifest {

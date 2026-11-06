@@ -1,4 +1,5 @@
 ---
+id: doc-3089705c9f77ee529eebc8713178d489
 title: User Guide
 description: Comprehensive user documentation for Knowns CLI and Web UI
 createdAt: '2025-12-29T11:49:48.531Z'

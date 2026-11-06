@@ -1,4 +1,5 @@
 ---
+id: doc-7ba36a851ac1002fea2198da0914239e
 title: Agent Executor Pattern
 description: Extensible executor pattern for spawning and managing AI coding agents (Claude Code, Gemini CLI, etc.)
 createdAt: '2026-03-04T10:19:32.746Z'

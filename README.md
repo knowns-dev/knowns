@@ -611,6 +611,28 @@ make cross-compile      # Build for all 6 platforms
 make ui                 # Rebuild embedded Web UI (requires pnpm)
 ```
 
+Run the Go E2E suite directly through `scripts/go-e2e.sh` (or `scripts/go-e2e.ps1` on Windows), for example `TEST_BINARY=cli/dist/linux-x64/knowns scripts/go-e2e.sh -v`: it gives the suite a temporary home so its test projects never land in your real `~/.knowns`.
+
+#### Web UI development
+
+The Vite dev UI runs on `http://localhost:6421` and calls the API server on `:6420` (`API_URL`).
+
+```bash
+make dev-all            # Go server (hot reload) + Vite dev UI
+make dev-all-ts         # TypeScript server + Vite dev UI
+make dev-ui             # Vite dev UI only
+make dev-ts             # TypeScript server only
+```
+
+The TypeScript web server accepts requests only from its own origin, so the dev UI on another port
+must be allowed with `KNOWNS_ALLOWED_ORIGINS` (exact origins, comma-separated, no wildcards).
+`make dev-ts` sets it to `http://localhost:6421,http://127.0.0.1:6421`; when you start the server
+yourself, set it the same way, or the UI gets `403 untrusted request origin`:
+
+```bash
+KNOWNS_ALLOWED_ORIGINS=http://localhost:6421 knowns browser --port 6420 --no-open
+```
+
 ### Project Structure
 
 ```

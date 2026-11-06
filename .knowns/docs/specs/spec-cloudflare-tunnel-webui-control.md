@@ -1,4 +1,5 @@
 ---
+id: doc-d2779f73eeaffd0edaae93a22124f0a1
 title: 'Spec: Cloudflare Tunnel WebUI Control'
 description: Spec for controlling Cloudflare Tunnel from WebUI settings and CLI status output
 createdAt: '2026-05-28T08:44:16.878Z'

@@ -7,8 +7,21 @@ import { defaultLSPBaseDir } from "./dependency-adapter.ts";
 import { collectRuntimeStatuses } from "./status.ts";
 import { RuntimeInstallInstalled } from "./types.ts";
 
-/** Per language server; a full download of the largest server takes well under this. */
-const INIT_INSTALL_TIMEOUT_MS = 10 * 60_000;
+/** Per language server; a full download of the largest server takes well under this. A seam for tests. */
+export const lspInitInstallLimits = { timeoutMs: 10 * 60_000 };
+
+/** Not in Go (context.Background there): a stalled mirror must not hang init forever. */
+export async function installWithDeadline(
+  adapter: { install(ctx: AbortSignal, targetDir: string): Promise<string> },
+  targetDir: string,
+): Promise<string> {
+  const { ctx, cancel } = withTimeout(undefined, lspInitInstallLimits.timeoutMs);
+  try {
+    return await adapter.install(ctx, targetDir);
+  } finally {
+    cancel();
+  }
+}
 
 export async function installDetectedServers(
   cwd: string,
@@ -37,15 +50,11 @@ export async function installDetectedServers(
       print(`  ⚠ ${adapter.name()} — prerequisites not met: ${(e as Error).message}\n`);
       continue;
     }
-    // Not in Go (context.Background there): a stalled mirror must not hang init forever.
-    const { ctx, cancel } = withTimeout(undefined, INIT_INSTALL_TIMEOUT_MS);
     try {
-      const path = await adapter.install(ctx, defaultLSPBaseDir());
+      const path = await installWithDeadline(adapter, defaultLSPBaseDir());
       print(`  ✓ Installed ${adapter.name()} → ${path}\n`);
     } catch (e) {
       print(`  ⚠ ${adapter.name()} — install failed: ${(e as Error).message}\n`);
-    } finally {
-      cancel();
     }
   }
 }

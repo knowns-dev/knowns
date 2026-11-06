@@ -7,6 +7,7 @@
 // `updateSeams`, so tests drive the whole flow against a local server and a temp "binary" without
 // ever replacing the real executable or downloading a release.
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   createWriteStream,
   existsSync,
@@ -277,7 +278,13 @@ function findFile(root: string, match: (name: string) => boolean): string {
   return found;
 }
 
-function replaceBinary(src: string, dest: string, goos: string): void {
+/** Exported, with a rename seam, for the Windows rollback test. */
+export function replaceBinary(
+  src: string,
+  dest: string,
+  goos: string,
+  rename: (from: string, to: string) => void = renameSync,
+): void {
   mkdirSync(dirname(dest), { recursive: true, mode: 0o755 });
   const data = readFileSync(src);
   const tmp = `${dest}.tmp`;
@@ -292,7 +299,7 @@ function replaceBinary(src: string, dest: string, goos: string): void {
     rmSync(`${dest}.old`, { force: true });
     if (existsSync(dest)) {
       try {
-        renameSync(dest, `${dest}.old`);
+        rename(dest, `${dest}.old`);
         movedAside = true;
       } catch (e) {
         rmSync(tmp, { force: true });
@@ -301,18 +308,51 @@ function replaceBinary(src: string, dest: string, goos: string): void {
     }
   }
   try {
-    renameSync(tmp, dest);
+    rename(tmp, dest);
   } catch (e) {
     // Not in Go: a failed final rename on Windows left no knowns.exe at all. Put the old one back.
     if (movedAside) {
       try {
-        renameSync(`${dest}.old`, dest);
+        rename(`${dest}.old`, dest);
       } catch {
         // the error below still reports the failure; .old keeps the previous binary
       }
     }
     rmSync(tmp, { force: true });
     throw e;
+  }
+}
+
+/** The digest in a `<hex>  <file>` (or bare `<hex>`) checksum file, or undefined if malformed. */
+export function parseReleaseChecksum(text: string): string | undefined {
+  const first = text.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+  return /^[0-9a-f]{64}$/.test(first) ? first : undefined;
+}
+
+async function verifyReleaseChecksum(
+  seams: UpdateSeams,
+  url: string,
+  archive: string,
+): Promise<void> {
+  const sumFile = `${archive}.sha256`;
+  try {
+    await seams.download(`${url}.sha256`, sumFile);
+  } catch (e) {
+    throw new Error(
+      `download release checksum (${basename(url)}.sha256): ${(e as Error).message}; the current binary was not changed`,
+    );
+  }
+  const expected = parseReleaseChecksum(readFileSync(sumFile, "utf8"));
+  if (!expected) {
+    throw new Error(
+      `release checksum file ${basename(url)}.sha256 is not a sha256 digest; the current binary was not changed`,
+    );
+  }
+  const actual = createHash("sha256").update(readFileSync(archive)).digest("hex");
+  if (actual !== expected) {
+    throw new Error(
+      `release artifact checksum mismatch for ${basename(url)}: expected ${expected}, got ${actual}; the current binary was not changed`,
+    );
   }
 }
 
@@ -330,14 +370,27 @@ async function downloadAndReplaceBinary(
     } catch (e) {
       throw new Error(`download release artifact: ${(e as Error).message}`);
     }
+    // D12 (TSR-CRAT15), beyond 0.34.1, which installs whatever the download returned: verify the
+    // archive against the <asset>.sha256 published next to it (package-release.ts for 1.x, shasum
+    // for 0.34.x), as install.sh and the npm installer do. A missing or mismatching checksum stops
+    // before extraction, so the current binary is never touched.
+    await verifyReleaseChecksum(seams, url, archive);
+    // D12 (TSR-CRAT15), beyond 0.34.1: extract into a directory of its own. 0.34.1 extracts next to
+    // the downloaded `knowns-<platform>.tar.gz`, and its matcher also accepts `knowns-*`, so the
+    // archive itself is a candidate: Go's sorted walk happens to reach `knowns` first on macOS and
+    // Linux, but on Windows `knowns-win-x64.tar.gz` sorts before `knowns.exe`, and an unsorted walk
+    // can pick it anywhere. Installing the archive as the binary reports "Upgrade complete." and
+    // leaves a knowns that cannot run.
+    const extractDir = join(tmpDir, "extracted");
+    mkdirSync(extractDir);
     try {
-      await seams.extract(archive, tmpDir, env);
+      await seams.extract(archive, extractDir, env);
     } catch (e) {
       throw new Error(`extract release artifact: ${(e as Error).message}`);
     }
     const binaryName = seams.goos() === "windows" ? "knowns.exe" : "knowns";
     const extracted = findFile(
-      tmpDir,
+      extractDir,
       (n) => n === binaryName.toLowerCase() || n.startsWith("knowns-"),
     );
     try {

@@ -1,5 +1,5 @@
 // Port of internal/lsp/registry.go.
-import { closeSync, fstatSync, lstatSync, openSync, readSync } from "node:fs";
+import { type BigIntStats, closeSync, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { ErrExtensionAlreadyRegistered, WrappedError } from "./errors.ts";
 import type { Binary, Language, PathMatcher, PathMatcherKind } from "./types.ts";
@@ -66,13 +66,14 @@ function hasPathSegment(p: string, segment: string): boolean {
 }
 
 export function readFirstLine(path: string): string {
-  let info: ReturnType<typeof lstatSync>;
+  // bigint: Windows file ids are 64-bit and a Number rounds them, so distinct files could match.
+  let info: BigIntStats;
   try {
-    info = lstatSync(path);
+    info = lstatSync(path, { bigint: true });
   } catch {
     return "";
   }
-  if (!info.isFile() || info.size === 0) return "";
+  if (!info.isFile() || info.size === 0n) return "";
   let fd: number;
   try {
     fd = openSync(path, "r");
@@ -80,7 +81,7 @@ export function readFirstLine(path: string): string {
     return "";
   }
   try {
-    const opened = fstatSync(fd);
+    const opened = fstatSync(fd, { bigint: true });
     if (!opened.isFile() || opened.ino !== info.ino || opened.dev !== info.dev) return "";
     const buf = Buffer.alloc(1024);
     const n = readSync(fd, buf, 0, 1024, 0);

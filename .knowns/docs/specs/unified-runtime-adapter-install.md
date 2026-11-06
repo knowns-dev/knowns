@@ -1,4 +1,5 @@
 ---
+id: doc-c7fa6001bb3f09e82bbe7bee026cdcf5
 title: Unified Runtime Adapter Install
 description: Specification for global runtime adapter install and thin native hook/plugin setup across Claude Code, Codex, Kiro, and OpenCode.
 createdAt: '2026-04-11T19:36:42.435Z'

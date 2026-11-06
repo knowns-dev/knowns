@@ -1,4 +1,5 @@
 ---
+id: doc-831312e70fd733e966fe2ac8bea8d88b
 title: 'Learning: Code Ingest Performance Optimization'
 description: Learnings from optimizing code ingest pipeline — 5x speedup via batch embedding, content compaction, and parser pooling
 createdAt: '2026-04-30T13:00:36.691Z'

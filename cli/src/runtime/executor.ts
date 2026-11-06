@@ -48,6 +48,7 @@ import {
   runtimeRoot,
   type WatcherFactory,
 } from "./queue.ts";
+import { executeSemanticSearchJob } from "./semantic-search-job.ts";
 
 export interface RuntimeSeams {
   /** startRuntimeWatcher: the project knowledge watcher the daemon runs for watch leases (TSR-MBTAN6). */
@@ -220,7 +221,8 @@ async function executeInner(storeRoot: string, job: Job): Promise<void> {
     case "remove-decision":
       return executeEntity(storage, env, `${job.kind} ${target}`, job.kind, target);
     case "semantic-search":
-      throw new Error("unsupported runtime job kind: semantic-search");
+      // Go clients sharing this daemon hand their searches over (TSR-2W21YT).
+      return executeSemanticSearchJob(storeRoot, storage, env, job);
     case "reconcile-knowledge": {
       const reconcile = runtimeSeams.reconcileKnowledge;
       if (!reconcile) throw new Error("knowledge reconciliation is not available in this build");

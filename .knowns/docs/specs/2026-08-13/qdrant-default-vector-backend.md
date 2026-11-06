@@ -1,4 +1,5 @@
 ---
+id: doc-8a105e1ee88db2b0790a821af9fa898f
 title: Qdrant Default Vector Backend
 description: Specification for making managed Qdrant the default semantic vector backend for new Knowns installs while preserving graceful fallback and rebuild migration from SQLite.
 createdAt: '2026-08-13T07:25:31.700Z'

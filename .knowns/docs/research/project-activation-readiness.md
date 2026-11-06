@@ -1,4 +1,5 @@
 ---
+id: doc-578a56a6aa9696341ca2755b5426af83
 title: Project Activation Readiness
 description: Research note on making project activation and readiness explicit across CLI, browser, runtime, and AI clients.
 createdAt: '2026-04-22T08:56:30.376Z'

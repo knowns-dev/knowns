@@ -204,7 +204,7 @@ function groupByProject(paths: string[]): Map<string, string[]> {
 export class Service {
   private readonly stores = new Map<string, StoreRuntime>();
   /** Lets tests simulate another machine winning the push race. */
-  beforePush: (() => void | Promise<void>) | undefined;
+  beforePush: ((store: string) => void | Promise<void>) | undefined;
   private signal: AbortSignal = new AbortController().signal;
 
   constructor(readonly cfg: Config) {
@@ -875,7 +875,7 @@ export class Service {
         }
         args = ["push", "--quiet", "--set-upstream", "origin", "HEAD"];
       }
-      await this.beforePush?.();
+      await this.beforePush?.(rt.state.store);
       try {
         await this.git(clone, ...args);
         rt.state.lastPush = timeText(new Date(now));

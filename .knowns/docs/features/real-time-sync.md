@@ -1,4 +1,5 @@
 ---
+id: doc-43c67ac4ef50a7e2e0ffa7714014bf2e
 title: Real-time Sync
 createdAt: '2026-01-05T16:59:43.560Z'
 updatedAt: '2026-01-05T16:59:58.794Z'

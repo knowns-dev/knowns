@@ -1,4 +1,5 @@
 ---
+id: doc-d91722891051579bb2c4bc2d8907ef39
 title: Template CLI
 createdAt: '2026-01-23T04:00:56.085Z'
 updatedAt: '2026-03-09T06:39:43.159Z'

@@ -1,4 +1,5 @@
 ---
+id: doc-b5ce6c46a6a9f8d4a6263dc742199729
 title: 3-Layer Memory System
 description: Specification for Working/Project/Global memory system — persistent knowledge layers for AI agents and users
 createdAt: '2026-04-02T07:40:13.536Z'

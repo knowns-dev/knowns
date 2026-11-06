@@ -1,4 +1,5 @@
 ---
+id: doc-08bcadbbbdc99c2ea6fcc9511c8996c4
 title: Template System
 description: Design documentation for the lightweight template/scaffolding system
 createdAt: '2026-01-23T03:40:02.075Z'

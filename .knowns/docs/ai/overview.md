@@ -1,4 +1,5 @@
 ---
+id: doc-b9a1d72978b69c243b184edb3e763e4a
 title: AI Integration
 description: 'Multi-AI platform support: skills, MCP, configurations'
 createdAt: '2026-01-23T04:07:54.465Z'

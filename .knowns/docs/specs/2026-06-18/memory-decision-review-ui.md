@@ -1,4 +1,5 @@
 ---
+id: doc-170fdab5e4f0a60e9b5c79cd95482ac7
 title: Memory Decision Review UI
 description: Specification for trusted Memory lifecycle, first-class Decisions, semantic write review, retrieval filtering, and WebUI review flows.
 createdAt: '2026-06-18T03:25:43.329Z'

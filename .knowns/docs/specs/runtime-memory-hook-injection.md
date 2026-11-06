@@ -1,4 +1,5 @@
 ---
+id: doc-d63a6145a0b07ec13a611b243570d13a
 title: Runtime Memory Hook Injection
 description: Specification for bounded multi-runtime memory injection hooks backed by Knowns memory context builder
 createdAt: '2026-04-11T14:30:47.775Z'

@@ -262,6 +262,29 @@ describe("install over http", () => {
     expect(hits.length).toBe(1);
   });
 
+  test("a lock left by a dead installer is taken over", async () => {
+    const archive = archiveOf(Buffer.from("new-binary"));
+    const { rewrite } = serve({ "/test-qdrant.tar.gz": { body: archive } });
+    const root = tmp();
+    // A pid that existed and is gone: a finished child process.
+    const dead = Bun.spawnSync([process.execPath, "-e", "0"]).pid;
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "install.lock"), String(dead));
+    const opts = {
+      mirror: "https://mirror.test",
+      fetch: rewrite,
+      artifacts: artifactTable(archive),
+    };
+    const outcome = await Promise.race([
+      makeInstaller(root, opts)
+        .install()
+        .then(() => "installed"),
+      Bun.sleep(5000).then(() => "still waiting on the dead lock"),
+    ]);
+    expect(outcome).toBe("installed");
+    expect(existsSync(join(root, "install.lock"))).toBe(false);
+  });
+
   test("checksum mismatch fails with Go's text and leaves nothing installed", async () => {
     const archive = archiveOf(Buffer.from("new-binary"));
     const table = artifactTable(archive);

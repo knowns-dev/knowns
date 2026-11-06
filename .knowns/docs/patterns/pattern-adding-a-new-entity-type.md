@@ -1,4 +1,5 @@
 ---
+id: doc-fed4ae8bc145cf6496cb1997e595d048
 title: 'Pattern: Adding a New Entity Type'
 description: Step-by-step blueprint for adding a new first-class entity (like memory, notes, etc.) to Knowns across all layers
 createdAt: '2026-04-02T08:47:18.339Z'

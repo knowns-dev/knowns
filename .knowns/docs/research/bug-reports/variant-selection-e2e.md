@@ -1,4 +1,5 @@
 ---
+id: doc-5b64a88381e2cb23d2433b48812ac365
 title: Bug_Report
 description: E2E test failures for variant selection verification
 createdAt: '2026-03-16T18:27:59.107Z'

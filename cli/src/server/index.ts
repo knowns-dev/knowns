@@ -241,7 +241,11 @@ export class Server {
   async handle(req: Request, remote = ""): Promise<Response> {
     try {
       const url = new URL(req.url);
-      const rejected = trustedOrigin(req, () => this.auth.hasPassword());
+      const rejected = trustedOrigin(
+        req,
+        () => this.auth.hasPassword(),
+        this.opts.allowedOrigins ?? [],
+      );
       if (rejected) return rejected;
       const pre = corsPreflight(req);
       if (pre) return pre;

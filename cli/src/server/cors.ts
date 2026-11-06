@@ -24,8 +24,24 @@ function requestHostOf(hostHeader: string): string {
   return m ? (m[1] as string) : hostHeader.replace(/^\[|\]$/g, "");
 }
 
-/** Returns a 403 response for a cross-site or untrusted-host request. */
-export function trustedOrigin(req: Request, allowPublicHost: () => boolean): Response | undefined {
+/** The port a Host header names, or "" when it names none. */
+function requestPortOf(hostHeader: string): string {
+  const m = /^\[[^\]]*\]:(\d+)$/.exec(hostHeader) ?? /^[^:]*:(\d+)$/.exec(hostHeader);
+  return m ? (m[1] as string) : "";
+}
+
+const DEFAULT_PORT: Record<string, string> = { "http:": "80", "https:": "443" };
+
+/**
+ * Returns a 403 response for a cross-site or untrusted-host request. `allowedOrigins` are exact
+ * origins (scheme://host:port) trusted on top of the server's own, from KNOWNS_ALLOWED_ORIGINS:
+ * the Vite dev UI runs on its own port and calls the API cross-origin.
+ */
+export function trustedOrigin(
+  req: Request,
+  allowPublicHost: () => boolean,
+  allowedOrigins: readonly string[] = [],
+): Response | undefined {
   const requestHost = requestHostOf(req.headers.get("host") ?? new URL(req.url).host);
   if (!isLoopbackHost(requestHost) && !allowPublicHost()) {
     return httpError(403, "untrusted request host");
@@ -46,6 +62,18 @@ export function trustedOrigin(req: Request, allowPublicHost: () => boolean): Res
     originHost.toLowerCase() !== requestHost.toLowerCase() &&
     !(isLoopbackHost(originHost) && isLoopbackHost(requestHost))
   ) {
+    return httpError(403, "untrusted request origin");
+  }
+  // Approved divergence (D12, TSR-X86JV4): the origin must also name the server's own port. 0.34.1
+  // compared host names only, so any page on another localhost port (a dev server, a local app)
+  // could read and write the knowledge base, which needs no auth without a password. Loopback
+  // aliases (localhost, 127.0.0.1, ::1) still count as one host, but only on the same port. A
+  // Host header without a port (the tunnel's public name) accepts its default-port origin.
+  if (allowedOrigins.includes(u.origin)) return undefined;
+  const hostHeader = req.headers.get("host") ?? new URL(req.url).host;
+  const requestPort = requestPortOf(hostHeader);
+  const originPort = u.port !== "" ? u.port : (DEFAULT_PORT[u.protocol] ?? "");
+  if (requestPort !== "" ? originPort !== requestPort : u.port !== "") {
     return httpError(403, "untrusted request origin");
   }
   return undefined;

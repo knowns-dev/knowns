@@ -1,4 +1,5 @@
 ---
+id: doc-7b7a1031a40498dbc8beaa8f16e0f61f
 title: BM25 Lexical Search Backend
 description: Specification for replacing heuristic keyword ranking with BM25-backed lexical search across knowledge and code discovery
 createdAt: '2026-06-10T04:20:49.518Z'

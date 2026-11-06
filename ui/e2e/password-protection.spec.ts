@@ -61,6 +61,10 @@ async function startServerWithPassword(password: string): Promise<TestServer> {
 	}
 
 	const projectDir = mkdtempSync(join(tmpdir(), "knowns-e2e-pw-"));
+	// Like helpers.ts startServer: a temp HOME keeps init and the server out of the real
+	// ~/.knowns (they registered this project in the real registry.json before).
+	const homeDir = mkdtempSync(join(tmpdir(), "knowns-e2e-pw-home-"));
+	const testEnv = { ...process.env, HOME: homeDir, USERPROFILE: homeDir, NO_COLOR: "1", NO_UPDATE_CHECK: "1" };
 
 	execSync("git init", { cwd: projectDir, stdio: "ignore" });
 	execSync("git config user.email test@test.com", { cwd: projectDir, stdio: "ignore" });
@@ -70,11 +74,13 @@ async function startServerWithPassword(password: string): Promise<TestServer> {
 		execFileSync(BINARY, ["init", "E2E Password Test", "--no-wizard", "--no-open"], {
 			cwd: projectDir,
 			stdio: "ignore",
+			env: testEnv,
 		});
 	} else {
 		execSync(`${BINARY} init "E2E Password Test" --no-wizard --no-open`, {
 			cwd: projectDir,
 			stdio: "ignore",
+			env: testEnv,
 		});
 	}
 
@@ -85,7 +91,7 @@ async function startServerWithPassword(password: string): Promise<TestServer> {
 		{
 			cwd: projectDir,
 			stdio: ["ignore", "pipe", "pipe"],
-			env: { ...process.env, NO_COLOR: "1" },
+			env: testEnv,
 		},
 	);
 
@@ -101,6 +107,7 @@ async function startServerWithPassword(password: string): Promise<TestServer> {
 	} catch (err) {
 		serverProcess.kill("SIGTERM");
 		rmSync(projectDir, { recursive: true, force: true });
+		rmSync(homeDir, { recursive: true, force: true });
 		const detail = serverStderr ? `\nServer stderr:\n${serverStderr}` : "";
 		throw new Error(`Server not ready at ${baseURL} after timeout.${detail}`);
 	}
@@ -119,6 +126,7 @@ async function startServerWithPassword(password: string): Promise<TestServer> {
 		}
 		try {
 			rmSync(projectDir, { recursive: true, force: true });
+			rmSync(homeDir, { recursive: true, force: true });
 		} catch {
 			// EBUSY on Windows
 		}

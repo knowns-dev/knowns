@@ -1,4 +1,5 @@
 ---
+id: doc-92fc173c4d61c8215b260c43d3839359
 title: Web UI Guide
 description: Using the Knowns Web UI - Kanban board and doc browser
 createdAt: '2026-02-24T08:45:16.503Z'

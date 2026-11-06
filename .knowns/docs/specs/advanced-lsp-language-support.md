@@ -1,4 +1,5 @@
 ---
+id: doc-80246a79505f91b69229a52ad42131de
 title: Advanced LSP Language Support
 description: Specification for expanding Knowns LSP module with auto-download, per-language adapters, parallel startup, auto-restart, and broad language coverage
 createdAt: '2026-05-20T10:53:19.385Z'

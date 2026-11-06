@@ -1,4 +1,5 @@
 ---
+id: doc-dd27ea7b4f0b83989d5fcd3f498ba869
 title: Branch Protection Rules
 createdAt: '2026-01-06T07:55:48.545Z'
 updatedAt: '2026-01-06T07:56:03.304Z'

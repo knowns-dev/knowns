@@ -1,4 +1,5 @@
 ---
+id: doc-da1fb8a6d9068b3fbb83a531bf98e546
 title: MCP Server Pattern
 description: Documentation for the Model Context Protocol (MCP) server pattern
 createdAt: '2025-12-29T07:02:33.684Z'

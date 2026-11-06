@@ -1,4 +1,5 @@
 ---
+id: doc-faa1b02257fb7d3efde1becec1e819f6
 title: Implementation Checklist
 description: Step-by-step checklist for implementing new features in the Go codebase
 createdAt: '2025-12-25T15:16:58.867Z'

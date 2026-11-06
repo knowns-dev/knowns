@@ -1,4 +1,5 @@
 ---
+id: doc-b5d49020ac82c32304b24bd5bb8f09b1
 title: Custom Provider UI Design
 description: Research and UI design for adding custom OpenAI-compatible providers from the web UI
 createdAt: '2026-03-27T21:29:38.953Z'

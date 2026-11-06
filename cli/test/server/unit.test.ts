@@ -87,6 +87,38 @@ describe("cors", () => {
     expect(trustedOrigin(req("example.com"), () => false)?.status).toBe(403);
     expect(trustedOrigin(req("example.com"), () => true)).toBeUndefined();
     expect(trustedOrigin(req("localhost:1", "http://evil.test"), () => false)?.status).toBe(403);
-    expect(trustedOrigin(req("localhost:1", "http://127.0.0.1:9"), () => false)).toBeUndefined();
+    // Approved divergence (D12, TSR-X86JV4): the origin must name the server's own port.
+    expect(trustedOrigin(req("localhost:1", "http://127.0.0.1:9"), () => false)?.status).toBe(403);
+    expect(trustedOrigin(req("localhost:3001", "http://localhost:5173"), () => false)?.status).toBe(
+      403,
+    );
+    expect(trustedOrigin(req("localhost:3001", "http://localhost"), () => false)?.status).toBe(403);
+    // Same server under another loopback name, same port: still trusted.
+    expect(
+      trustedOrigin(req("localhost:3001", "http://127.0.0.1:3001"), () => false),
+    ).toBeUndefined();
+    expect(trustedOrigin(req("[::1]:3001", "http://localhost:3001"), () => false)).toBeUndefined();
+    expect(trustedOrigin(req("localhost:80", "http://localhost"), () => false)).toBeUndefined();
+    // The tunnel: a public Host without a port, the browser's https origin (password set).
+    const tunnel = "abc-def.trycloudflare.com";
+    expect(trustedOrigin(req(tunnel, `https://${tunnel}`), () => true)).toBeUndefined();
+    expect(trustedOrigin(req(tunnel, `https://${tunnel}:8443`), () => true)?.status).toBe(403);
+    expect(trustedOrigin(req(tunnel, "https://other.trycloudflare.com"), () => true)?.status).toBe(
+      403,
+    );
+    // KNOWNS_ALLOWED_ORIGINS: exact extra origins (the Vite dev UI on its own port), no wildcards.
+    const dev = ["http://localhost:6421"];
+    expect(
+      trustedOrigin(req("localhost:6420", "http://localhost:6421"), () => false, dev),
+    ).toBeUndefined();
+    expect(
+      trustedOrigin(req("localhost:6420", "http://localhost:6422"), () => false, dev)?.status,
+    ).toBe(403);
+    expect(
+      trustedOrigin(req("localhost:6420", "http://evil.test:6421"), () => false, dev)?.status,
+    ).toBe(403);
+    expect(trustedOrigin(req("localhost:6420", "http://localhost:6421"), () => false)?.status).toBe(
+      403,
+    );
   });
 });

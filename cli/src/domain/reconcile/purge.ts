@@ -19,6 +19,17 @@ export function createTaskPurgeReconciler(): TaskPurgeReconciler {
   ) => {
     // The bootstrap carries no index callback: it only records the target into the history.
     const bootstrap = new FilesystemReconciler(root, { allowArchive: true });
+    if (execute) {
+      // D12 (TSR-481DH6), beyond 0.34.1: a Task whose only history is the legacy path-keyed
+      // versions/task-<id>.json (written by 0.25.x and older) is converted to its id-keyed stream
+      // here, before the batch. Otherwise the batch migrates it through VersionStore.saveVersion,
+      // which refuses because hard-delete already reserved the ID (tombstone saved in phase 1):
+      // 0.34.1 then fails with `cannot save version for hard-deleted Task`, and every retry fails
+      // the same way, leaving the Task visible but frozen (no edit, no timer). Converting history
+      // the Task already has is not a new version, so the reservation is not bypassed for writes.
+      // A no-op when the Task already has a stream or no legacy file; idempotent on retry.
+      await bootstrap.storage.versions.migrateLegacyTask(taskId);
+    }
     const results = await bootstrap.reconcileLifecycleBatch(
       {
         source: "task-hard-delete-bootstrap",

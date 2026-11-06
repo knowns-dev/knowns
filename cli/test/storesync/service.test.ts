@@ -216,6 +216,57 @@ describe("store sync service", () => {
     expect(state(a).lastError).toBe("");
   }, 60_000);
 
+  // Approved divergence (D12, TSR-YZY173): in 0.34.1 one store's failure ended the pass, so the
+  // stores after it never synced.
+  test("a store that keeps failing does not stop the other stores", async () => {
+    const root = tempRoot();
+    const remoteA = makeRemote(root, "remote-a");
+    const remoteB = makeRemote(root, "remote-b");
+    const a = await machine(root, "a", remoteA, "first");
+    // A second code repository on the same machine, linked to a second store.
+    const code2 = join(a.side.root, "proj2");
+    mkdirSync(code2, { recursive: true });
+    const second = await runTsSide(
+      a.side,
+      ["store", "link", remoteB, "--as", "second", "--store", "kb2"],
+      {},
+      code2,
+    );
+    expect(second.code, second.stderr).toBe(0);
+    await ticks(a);
+    writeFileSync(join(a.clone, "first", "a.md"), "a\n");
+    writeFileSync(join(a.side.home, ".knowns", "stores", "kb2", "second", "b.md"), "b\n");
+    // Whichever store the pass reaches first, "kb" always throws before its push.
+    a.svc.beforePush = (store) => {
+      if (store === "kb") throw new Error("boom in kb");
+    };
+    await ticks(a, 6);
+    expect(state(a).lastError).toContain("boom in kb");
+    expect(remoteFile(remoteB, a.side.home, "second/b.md")).toBe("b\n");
+    expect(loadState(a.stateDir, "kb2").lastError).toBe("");
+  }, 60_000);
+
+  // Approved divergence (D12, TSR-YZY173): a throw that escapes a whole pass is logged and the
+  // loop goes on. The runtime stays up while stores are linked, so without this sync would stop
+  // for good while the daemon looks healthy.
+  test("the service keeps running after a pass throws", async () => {
+    const root = tempRoot();
+    const a = await machine(root, "a", makeRemote(root, "remote"), "shared");
+    let calls = 0;
+    const realTick = a.svc.tick.bind(a.svc);
+    a.svc.tick = async (signal: AbortSignal) => {
+      calls++;
+      if (calls === 1) throw new Error("registry unreadable");
+      return realTick(signal);
+    };
+    const ac = new AbortController();
+    const running = on(a, () => a.svc.run(ac.signal));
+    await sleep(200);
+    ac.abort();
+    await running;
+    expect(calls).toBeGreaterThan(1);
+  }, 60_000);
+
   test("failure classification matches Go", () => {
     expect(classifyFailure("! [rejected] main -> main (fetch first)")).toBe("rejected");
     expect(classifyFailure("fatal: Authentication failed for 'https://x'")).toBe("credential");

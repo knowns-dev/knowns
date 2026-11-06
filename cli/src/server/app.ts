@@ -9,6 +9,8 @@ import type { SSEBroker } from "./sse.ts";
 
 export interface ServerOptions {
   dev?: boolean;
+  /** Exact extra origins the web server trusts (KNOWNS_ALLOWED_ORIGINS); see cors.ts. */
+  allowedOrigins?: string[];
   tunnel?: boolean;
   password?: string;
   allowTaskHardDelete?: boolean;

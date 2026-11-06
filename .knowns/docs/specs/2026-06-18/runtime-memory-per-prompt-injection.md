@@ -1,4 +1,5 @@
 ---
+id: doc-4e46aefccc785380e1d1cf740c0639cd
 title: Runtime Memory Per Prompt Injection
 description: Specification for selective per-prompt runtime Memory injection, bounded payload serialization, mode semantics, capture controls, and debug observability.
 createdAt: '2026-06-18T08:58:45.261Z'

@@ -1,4 +1,5 @@
 ---
+id: doc-7b36ef1053f94235e84be655b060cc73
 title: SDD Fulfills Mapping Pattern
 createdAt: '2026-02-24T08:26:47.625Z'
 updatedAt: '2026-02-24T08:26:47.625Z'

@@ -1,4 +1,5 @@
 ---
+id: doc-acc84e1d1ecd3de433312315caf69ff3
 title: Semantic Reference Runtime
 description: Specification for semantic references with relation-aware parsing, resolution, graph edges, doc rename rewriting, and WebUI badge rendering.
 createdAt: '2026-04-15T09:02:16.425Z'

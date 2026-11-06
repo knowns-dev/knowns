@@ -24,6 +24,8 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setDaemonCommand } from "../../src/runtime/queue.ts";
+// Side effect: restores the fixtures' empty directories that a clean clone lacks.
+import "./fixture-dirs.ts";
 
 const realHome = homedir();
 const REAL_FILES = [

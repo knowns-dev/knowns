@@ -1,4 +1,5 @@
 ---
+id: doc-4ae8dcecb4321ea1198ce45bc1b76f57
 title: Configuration Guide
 description: Project configuration options and settings
 createdAt: '2026-02-24T08:44:33.245Z'

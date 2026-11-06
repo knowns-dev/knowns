@@ -1,4 +1,5 @@
 ---
+id: doc-4f4269e42abce064272a242d02ff1829
 title: Template Examples
 createdAt: '2026-01-23T04:00:57.742Z'
 updatedAt: '2026-03-09T06:40:45.079Z'

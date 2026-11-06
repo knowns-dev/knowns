@@ -86,6 +86,8 @@ export class Server {
   private leases = new Map<string, Lease>();
   private conns = new Set<net.Socket>();
   reloadConfigOverride: (() => void) | undefined;
+  /** Not in Go: a client that never sends its request is dropped after this (a test seam). */
+  requestReadTimeoutMs = 30_000;
 
   constructor(
     readonly identity: ProjectIdentity,
@@ -144,7 +146,7 @@ export class Server {
     try {
       let req: Request;
       try {
-        req = await readJSON<Request>(conn, { timeoutMs: 30_000 });
+        req = await readJSON<Request>(conn, { timeoutMs: this.requestReadTimeoutMs });
       } catch (e) {
         await writeJSON(conn, { error: errorMessage(e) }).catch(() => {});
         return;

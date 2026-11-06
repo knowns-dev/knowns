@@ -1,4 +1,5 @@
 ---
+id: doc-6f53d18f111469ea9b2ac7b1ead3d61e
 title: 'Learning: 3-Layer Memory System'
 description: Patterns, decisions, and failures from implementing the 3-layer memory system
 createdAt: '2026-04-02T08:47:52.066Z'

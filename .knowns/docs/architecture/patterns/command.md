@@ -1,4 +1,5 @@
 ---
+id: doc-997292d807149ba0f9c234e445254891
 title: Command Pattern
 createdAt: '2025-12-29T07:01:51.223Z'
 updatedAt: '2026-03-08T18:19:48.970Z'

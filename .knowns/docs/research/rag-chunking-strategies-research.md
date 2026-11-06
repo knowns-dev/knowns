@@ -1,4 +1,5 @@
 ---
+id: doc-132d6408c295454b6fcbd57ba6763ba3
 title: RAG Chunking Strategies Research
 description: Research on RAG chunking strategies from LangChain and LlamaIndex, compared with Knowns implementation
 createdAt: '2026-04-01T08:05:05.516Z'

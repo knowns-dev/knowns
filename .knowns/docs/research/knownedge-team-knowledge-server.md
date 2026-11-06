@@ -1,4 +1,5 @@
 ---
+id: doc-44bdbf73df57c176206612ac9f310bcb
 title: Knownedge Team Knowledge Server
 description: Research brief for a separate self-hosted team knowledge and memory server built on Knowns primitives.
 createdAt: '2026-06-19T08:33:04.850Z'

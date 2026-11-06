@@ -3,11 +3,13 @@
 // the npm registry and the release host, an isolated HOME, and a temp file standing in for the
 // binary, so no test ever replaces the running executable or downloads a real release.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   writeFileSync,
@@ -74,7 +76,23 @@ beforeAll(async () => {
       const path = new URL(req.url).pathname;
       hits.push(path);
       if (path === "/latest") return Response.json({ version: latest });
-      if (path === "/release.tar.gz") return new Response(archive);
+      // The real asset name: a `knowns-*` archive next to the extracted `knowns` must never be the
+      // file installed (TSR-CRAT15).
+      if (path === "/knowns-linux-x64.tar.gz") return new Response(archive);
+      // D12 (TSR-CRAT15): update verifies <asset>.sha256, published as `<hex>  <file>`.
+      if (path === "/knowns-linux-x64.tar.gz.sha256")
+        return new Response(`${sha256(archive)}  knowns-linux-x64.tar.gz\n`);
+      // A tampered asset: the published digest is of different bytes.
+      if (path === "/tampered.tar.gz") return new Response(archive);
+      if (path === "/tampered.tar.gz.sha256")
+        return new Response(`${"0".repeat(64)}  tampered.tar.gz\n`);
+      // An asset with no checksum file next to it.
+      if (path === "/nosum.tar.gz") return new Response(archive);
+      if (path === "/nosum.tar.gz.sha256")
+        return new Response("nope", { status: 404, statusText: "Not Found" });
+      // A checksum file that is not a digest.
+      if (path === "/badsum.tar.gz") return new Response(archive);
+      if (path === "/badsum.tar.gz.sha256") return new Response("<html>not a checksum</html>");
       if (path === "/missing.tar.gz")
         return new Response("nope", { status: 404, statusText: "Not Found" });
       return new Response("?", { status: 500 });
@@ -84,6 +102,7 @@ beforeAll(async () => {
 afterAll(() => server.stop(true));
 
 const base = (): string => `http://127.0.0.1:${server.port}`;
+const sha256 = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
 
 interface Sandbox {
   home: string;
@@ -139,7 +158,7 @@ function seams(overrides: Partial<typeof updateSeams>): void {
     // Package-manager upgrades are deferred on Windows; tests that want that say so.
     goos: () => "linux",
     restartRuntime: async () => {},
-    releaseUrl: () => `${base()}/release.tar.gz`,
+    releaseUrl: () => `${base()}/knowns-linux-x64.tar.gz`,
     ...overrides,
   });
 }
@@ -278,6 +297,71 @@ describe("update flow", () => {
     },
     SLOW,
   );
+
+  // D12 (TSR-CRAT15): 0.34.1 extracts next to the downloaded `knowns-<platform>.tar.gz`, which its
+  // `knowns-*` matcher also accepts, so the archive itself could be installed as the binary (the
+  // order of the directory walk decides). Extraction must land in a directory holding none of
+  // the downloaded files; checked directly, so the result does not depend on readdir order.
+  test(
+    "the release is extracted into its own directory, apart from the downloaded files",
+    async () => {
+      const sb = sandbox();
+      const seen: string[][] = [];
+      seams({
+        executable: () => sb.bin,
+        extract: async (archive: string, dir: string, env: Record<string, string | undefined>) => {
+          seen.push(readdirSync(dir));
+          return saved.extract(archive, dir, env);
+        },
+      });
+      try {
+        const r = await update(sb);
+        expect(r.code).toBe(0);
+        expect(seen).toEqual([[]]);
+        expect(readFileSync(sb.bin, "utf8")).toBe("NEW-BINARY");
+      } finally {
+        restore();
+      }
+    },
+    SLOW,
+  );
+
+  // D12 (TSR-CRAT15): 0.34.1 installs whatever the download returned.
+  for (const [name, path, message] of [
+    [
+      "a checksum mismatch",
+      "tampered",
+      "release artifact checksum mismatch for tampered.tar.gz: expected 0000",
+    ],
+    [
+      "a missing checksum file",
+      "nosum",
+      "download release checksum (nosum.tar.gz.sha256): unexpected status: 404",
+    ],
+    [
+      "a checksum file that is not a digest",
+      "badsum",
+      "release checksum file badsum.tar.gz.sha256 is not a sha256 digest",
+    ],
+  ] as const) {
+    test(
+      `${name} refuses the update and leaves the binary alone`,
+      async () => {
+        const sb = sandbox();
+        seams({ executable: () => sb.bin, releaseUrl: () => `${base()}/${path}.tar.gz` });
+        try {
+          const r = await update(sb);
+          expect(r.code).toBe(1);
+          expect(r.stderr).toContain(message);
+          expect(r.stderr).toContain("the current binary was not changed");
+          expect(readFileSync(sb.bin, "utf8")).toBe("OLD-BINARY");
+        } finally {
+          restore();
+        }
+      },
+      SLOW,
+    );
+  }
 
   test("a package-manager install runs the manager and records it", async () => {
     const sb = sandbox({ meta: null });

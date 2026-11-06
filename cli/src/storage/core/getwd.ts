@@ -10,8 +10,9 @@ export function goGetwd(env: Record<string, string | undefined> = process.env): 
   const pwd = env.PWD;
   if (!pwd?.startsWith("/")) return cwd;
   try {
-    const a = statSync(pwd);
-    const b = statSync(".");
+    // bigint: XFS/Btrfs/ZFS may hand out inodes above 2^53, which a Number would round.
+    const a = statSync(pwd, { bigint: true });
+    const b = statSync(".", { bigint: true });
     if (a.dev === b.dev && a.ino === b.ino) return pwd;
   } catch {
     // PWD is stale or unreadable: fall back like Go does.

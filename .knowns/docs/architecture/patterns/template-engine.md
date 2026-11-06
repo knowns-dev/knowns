@@ -1,4 +1,5 @@
 ---
+id: doc-9adc5d5e39eee2b19068a133bf14c4f8
 title: Template Engine Architecture
 description: Internal architecture of the template engine for developers
 createdAt: '2026-01-25T09:48:44.135Z'

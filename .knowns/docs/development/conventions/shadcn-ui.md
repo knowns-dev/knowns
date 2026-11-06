@@ -1,4 +1,5 @@
 ---
+id: doc-af85e437575dbcb0ae89b9d7e1830b7b
 title: Shadcn UI Conventions
 createdAt: '2025-12-29T09:20:49.101Z'
 updatedAt: '2025-12-29T09:22:43.297Z'

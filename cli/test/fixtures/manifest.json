@@ -13,7 +13,17 @@
         ".knowns/time.json",
         ".knowns/workspaces.json"
       ],
-      "digest": "65ee63d33f0994d7e10fcad876ec72b3b42e2ffcaeaf8faba84569f33db0a634"
+      "digest": "65ee63d33f0994d7e10fcad876ec72b3b42e2ffcaeaf8faba84569f33db0a634",
+      "emptyDirs": [
+        ".knowns/archive",
+        ".knowns/decisions",
+        ".knowns/docs",
+        ".knowns/imports",
+        ".knowns/memory",
+        ".knowns/tasks",
+        ".knowns/templates",
+        ".knowns/versions"
+      ]
     },
     "full": {
       "description": "every entity type, lifecycle states, history, archive, config, global memory, --json API goldens",
@@ -124,7 +134,11 @@
         "_api/template.list.json",
         "_home/.knowns/memory/memory-nr44bw.md"
       ],
-      "digest": "9d4e55c12b46366f64f69847096beb5c41b14b76efdf43ca83bedcdb80e80bc4"
+      "digest": "9d4e55c12b46366f64f69847096beb5c41b14b76efdf43ca83bedcdb80e80bc4",
+      "emptyDirs": [
+        ".knowns/imports",
+        ".knowns/versions"
+      ]
     },
     "active-timer": {
       "description": "time.json with one running and one paused active timer",
@@ -145,7 +159,16 @@
         ".knowns/time.json",
         ".knowns/workspaces.json"
       ],
-      "digest": "20e129ad000f5cee301c8df1a5f06f66e3d52391499dd36c45fa841b289bee30"
+      "digest": "20e129ad000f5cee301c8df1a5f06f66e3d52391499dd36c45fa841b289bee30",
+      "emptyDirs": [
+        ".knowns/archive",
+        ".knowns/decisions",
+        ".knowns/docs",
+        ".knowns/imports",
+        ".knowns/memory",
+        ".knowns/templates",
+        ".knowns/versions"
+      ]
     },
     "bom-config": {
       "description": "config.json and one doc start with a UTF-8 BOM (Windows PowerShell). Go 0.34.1 fails `config get` on it; the TypeScript build must read it",
@@ -171,6 +194,14 @@
       "bomFiles": [
         ".knowns/config.json",
         ".knowns/docs/a-doc.md"
+      ],
+      "emptyDirs": [
+        ".knowns/archive",
+        ".knowns/decisions",
+        ".knowns/imports",
+        ".knowns/memory",
+        ".knowns/templates",
+        ".knowns/versions"
       ]
     }
   }

@@ -54,6 +54,11 @@ interface FixtureEntry {
   digest: string;
   /** Files that carry a UTF-8 BOM. */
   bomFiles?: string[];
+  /**
+   * Leaf directories with no files (forward slashes). Git does not track them, so a clean clone
+   * lacks them; test/helpers/fixture-dirs.ts recreates them before any test copies a fixture.
+   */
+  emptyDirs?: string[];
 }
 
 function parseFlags(argv: string[]) {
@@ -218,6 +223,26 @@ class Sandbox {
     }
     return listFiles(dest);
   }
+}
+
+/** Leaf directories under root that hold no entries, as forward-slash paths relative to it. */
+function listEmptyDirs(root: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    const names = readdirSync(dir).sort();
+    if (names.length === 0 && dir !== root) out.push(relative(root, dir).split(sep).join("/"));
+    for (const name of names) {
+      const p = join(dir, name);
+      if (statSync(p).isDirectory()) walk(p);
+    }
+  };
+  walk(root);
+  return out;
+}
+
+function emptyDirsField(root: string): { emptyDirs?: string[] } {
+  const dirs = listEmptyDirs(root);
+  return dirs.length > 0 ? { emptyDirs: dirs } : {};
 }
 
 function listFiles(root: string): string[] {
@@ -667,6 +692,7 @@ function generate(outDir: string): Manifest {
             : undefined,
         ),
         ...(result.bomFiles ? { bomFiles: result.bomFiles } : {}),
+        ...emptyDirsField(dest),
       };
     }
     writeFileSync(join(outDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);

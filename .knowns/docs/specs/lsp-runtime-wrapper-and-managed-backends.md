@@ -1,4 +1,5 @@
 ---
+id: doc-8207207f4691f0c5d30e51b8068b8bc9
 title: LSP Runtime Wrapper and Managed Backends
 description: 'Specification for an LSP runtime wrapper, managed language server dependencies, and multi-backend C# support in Knowns'
 createdAt: '2026-06-15T04:09:00.461Z'
