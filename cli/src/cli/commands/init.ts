@@ -1,6 +1,6 @@
 // `knowns init` (internal/cli/init.go), flag-driven path. When Go would start the interactive
 // huh wizard (no --no-wizard and no [name]) this build reports the same error Go gives without a
-// terminal; see wizardUnavailable. Language servers are detected and recorded in config.json but
+// terminal; see tui/init-wizard.ts. Language servers are detected and recorded in config.json but
 // not downloaded (the LSP installer is not ported).
 import { statSync } from "node:fs";
 import { join } from "node:path";
@@ -9,6 +9,7 @@ import { writeKnownsGitignore } from "../../domain/setup/gitignore.ts";
 import {
   buildSemanticSettings,
   type GlobalProjectDefaults,
+  type InitConfig,
   lifecycleSeedForInit,
   resolveNonInteractiveInit,
 } from "../../domain/setup/init-config.ts";
@@ -27,7 +28,7 @@ import { terminalWidth } from "../core/markdown.ts";
 import { isTTY } from "../core/pager.ts";
 import { renderField, StyleDim, StyleTitle, StyleWarning } from "../core/plainoutput.ts";
 import { type InitStep, runInitSteps } from "./init-steps.ts";
-import { isGitRepo, printSetupSuggestion, wizardUnavailable } from "./init-support.ts";
+import { isGitRepo, printSetupSuggestion } from "./init-support.ts";
 
 const WIZARD_MIN_WIDTH = 60;
 
@@ -181,26 +182,53 @@ Creates a .knowns/ directory with the required structure and a default config.js
         return;
       }
     }
+    let cfg: InitConfig;
     if (interactive && ctx.args.length === 0) {
-      ctx.print("\n");
-      ctx.print(`${StyleTitle.render("🚀 Knowns Project Setup")}\n`);
-      ctx.print(`${StyleDim.render("   Quick configuration")}\n`);
-      ctx.print("\n");
-      throw wizardUnavailable();
+      // Pre-fill from the global defaults and, with --force, the existing config.
+      const wizard = await import("../tui/init-wizard.ts");
+      const { createPrompter, isUserAborted } = await import("../tui/prompter.ts");
+      let existingProject: Project | undefined;
+      try {
+        existingProject = openStorage().config.load();
+      } catch {
+        existingProject = undefined;
+      }
+      const d = wizard.wizardDefaults(cwd, globalDefaults, existingProject);
+      try {
+        cfg = await wizard.runWizard(createPrompter(), {
+          cwd,
+          gitTracked,
+          gitIgnored,
+          gitAvailable: hasGit,
+          inGitRepo: hasGitRepo,
+          ...d,
+          env: ctx.env,
+          print: (t) => ctx.print(t),
+        });
+      } catch (e) {
+        if (isUserAborted(e)) {
+          ctx.print(`${StyleWarning.render("Setup cancelled.")}\n`);
+          return;
+        }
+        throw e;
+      }
+      if (cfg.embeddingSource === "") cfg.embeddingSource = d.existingEmbeddingSource;
+      if (taskPrefixFlag !== "") cfg.taskIdPrefix = taskPrefixFlag;
+    } else {
+      cfg = resolveNonInteractiveInit({
+        cwd,
+        nameArg: ctx.args[0],
+        gitTracked,
+        gitIgnored,
+        force,
+        taskPrefixFlag,
+        globalDefaults,
+        existing,
+        taskLifecycleSeed,
+      });
     }
-
-    const cfg = resolveNonInteractiveInit({
-      cwd,
-      nameArg: ctx.args[0],
-      gitTracked,
-      gitIgnored,
-      force,
-      taskPrefixFlag,
-      globalDefaults,
-      existing,
-      taskLifecycleSeed,
-    });
     if (taskLifecycleSeed) cfg.taskLifecycle = taskLifecycleSeed;
+    if (cfg.embeddingSource === "") cfg.embeddingSource = "ollama";
 
     const steps: InitStep[] = [];
     if (!hasGitRepo && hasGit) {
@@ -297,9 +325,9 @@ Creates a .knowns/ directory with the required structure and a default config.js
     ctx.print("\n");
 
     if (!noOpen && openFlag) {
-      throw new Error(
-        "--open is not available in the TypeScript build yet (the web server is not ported)",
-      );
+      // maybeOpenBrowser (internal/cli/init.go): serve the new project's UI until stopped.
+      const { openProjectBrowser } = await import("./browser.ts");
+      await openProjectBrowser(ctx, cwd);
     }
   },
 });

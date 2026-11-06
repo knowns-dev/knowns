@@ -28,7 +28,13 @@ export async function run(argv: string[]): Promise<number> {
     process.stdout.write(`${asset.size} ${asset.type}\n`);
     return 0;
   }
-  const { execute } = await import("./cli/core/root.ts");
+  // The update notice is read by execute() before any command loads, so it cannot wait for the
+  // lazy installWiring(); the installer is tiny (the notifier itself loads only when it runs).
+  const [{ execute }, { installUpdateNotifier }] = await Promise.all([
+    import("./cli/core/root.ts"),
+    import("./wiring/update.ts"),
+  ]);
+  installUpdateNotifier();
   return execute(argv);
 }
 

@@ -1,7 +1,7 @@
 // Port of the user-level half of internal/cli/setup_global.go: global skills, global MCP configs
 // and the global instruction files written by `knowns setup <target> --global`.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { syncSkillsToTargets } from "../instructions/index.ts";
 import type { Env } from "./env.ts";
 import { setupGlobalHermesMcp } from "./hermes.ts";
@@ -36,7 +36,12 @@ export function upsertGlobalMcpJson(configPath: string, serverKey: string, env: 
 export const setupGlobalClaudeCodeMcp = (home: string, env: Env) =>
   upsertGlobalMcpJson(join(home, ".claude.json"), "knowns", env);
 
-export function setupGlobalClaudeDesktopMcp(home: string, env: Env, platform = process.platform) {
+export function setupGlobalClaudeDesktopMcp(
+  home: string,
+  env: Env,
+  platform = process.platform,
+  cwd = process.cwd(),
+) {
   let configPath: string;
   switch (platform) {
     case "darwin":
@@ -49,7 +54,8 @@ export function setupGlobalClaudeDesktopMcp(home: string, env: Env, platform = p
       );
       break;
     case "win32":
-      configPath = join(env.APPDATA ?? "", "Claude", "claude_desktop_config.json");
+      // An unset %APPDATA% leaves a relative path, which Go resolves against its working directory.
+      configPath = resolve(cwd, join(env.APPDATA ?? "", "Claude", "claude_desktop_config.json"));
       break;
     default:
       configPath = join(home, ".config", "claude", "claude_desktop_config.json");

@@ -1,5 +1,6 @@
 // Port of internal/storage/template_store.go: templates in .knowns/templates/ and
 // .knowns/imports/*/templates/. A template is a folder with a `_template.yaml`.
+
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
@@ -9,6 +10,7 @@ import type {
   TemplateMessages,
   TemplatePrompt,
 } from "../../models/template.ts";
+import { goFsMessage, goNotExistReason } from "../../platform/goerror.ts";
 import { resolveSafe } from "../core/safe-path.ts";
 import { atomicWrite } from "../core/util.ts";
 import { asStr, parseYamlMap, readDirSorted } from "./internal.ts";
@@ -167,7 +169,15 @@ export class TemplateStore {
     try {
       data = readFileSync(join(dir, "_template.yaml"), "utf8");
     } catch (e) {
-      throw new Error(`read template ${name}: ${(e as Error).message}`);
+      const code = (e as NodeJS.ErrnoException).code;
+      const file = join(dir, "_template.yaml");
+      // Go: "open <path>: <reason>"; on Windows the reason depends on whether the folder exists.
+      if (code === "ENOENT") {
+        throw new Error(
+          `read template ${name}: open ${file}: ${goNotExistReason(existsSync(dir))}`,
+        );
+      }
+      throw new Error(`read template ${name}: ${goFsMessage(e)}`);
     }
     let t: Template;
     try {

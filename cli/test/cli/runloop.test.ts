@@ -379,11 +379,11 @@ describe("lazy loading", () => {
     expect(loads).toBe(2);
   });
   test("an unported command fails honestly, never pretends", async () => {
-    const r = await runTs(["tunnel", "list"]);
+    const r = await runTs(["provider", "list"]);
     expect(r.code).toBe(1);
     expect(r.stdout).toBe("");
     expect(r.stderr).toBe(
-      'Error: "knowns tunnel" is not available in the TypeScript build yet (the command has not been ported)\n',
+      'Error: "knowns provider" is not available in the TypeScript build yet (the command has not been ported)\n',
     );
   });
   test("exactArgs messages match cobra", () => {

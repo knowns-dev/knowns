@@ -568,7 +568,8 @@ function addSemanticJobDetails(ss: ServiceStatus, storeRoot: string): void {
 
 type Store = Awaited<ReturnType<typeof getStoreErr>>;
 
-function detectEmbedding(
+/** services.DetectEmbeddingReadOnly (also used by doctor). */
+export function detectEmbedding(
   store: Store | undefined,
   env: Record<string, string | undefined>,
 ): ServiceStatus[] {
