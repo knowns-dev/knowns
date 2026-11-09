@@ -994,6 +994,82 @@ export async function waitForJob(
   }
 }
 
+/** How a progress-bounded wait ended: the job finished, or it stopped moving while still queued. */
+export type JobWaitOutcome =
+  | { status: "completed"; result: JobResult }
+  | { status: "pending"; job: Job }
+  | { status: "stopped"; job: Job };
+
+/** How long the runtime daemon may be gone before a wait stops on it (a restart takes seconds). */
+const DAEMON_GONE_GRACE_MS = 10_000;
+
+/**
+ * Wait for a job for as long as it makes progress. waitForJob gives up after a fixed time, which a
+ * full reindex on a real knowledge base outlives: the CLI then reported a failure for a job the
+ * daemon went on to finish (@task-KN-Q6DVKQ). This wait gives up only after `stallMs` without
+ * movement: the job starting, changing phase or count, or, while it is still queued, the jobs
+ * ahead of it finishing. A job still in the queue at that point comes back as "pending". If the
+ * runtime daemon is gone (no live pid) for a short grace while the job is still queued, nothing
+ * will run it, so the wait stops early with "stopped". A failed job throws as in waitForJob, and
+ * a job that is in neither the queue nor the recent results times out with waitForJob's error.
+ */
+export async function waitForJobProgress(
+  storeRoot: string,
+  jobId: string,
+  stallMs: number,
+  signal?: AbortSignal,
+): Promise<JobWaitOutcome> {
+  const limit = stallMs <= 0 ? 30_000 : stallMs;
+  const grace = Math.min(limit, DAEMON_GONE_GRACE_MS);
+  let lastSignature = "";
+  let lastMove = Date.now();
+  let daemonGoneSince = 0;
+  let pending: Job | undefined;
+  for (;;) {
+    if (signal?.aborted) throw new Error("context canceled");
+    try {
+      const state = loadQueue(storeRoot);
+      const job = state.jobs.find((j) => j.id === jobId);
+      if (!job) {
+        pending = undefined;
+        for (const r of state.recent ?? []) {
+          if (r.jobId !== jobId) continue;
+          if (r.success) return { status: "completed", result: r };
+          throw Object.assign(new Error(r.error ?? ""), { result: r });
+        }
+      } else {
+        pending = { ...job };
+        const latest = state.recent?.[0];
+        const signature = JSON.stringify([
+          job.startedAt ?? null,
+          job.attempts ?? 0,
+          job.phase ?? "",
+          job.processed ?? 0,
+          job.total ?? 0,
+          job.startedAt ? null : [state.jobs.length, latest?.jobId, latest?.completedAt],
+        ]);
+        if (signature !== lastSignature) {
+          lastSignature = signature;
+          lastMove = Date.now();
+        }
+      }
+    } catch (err) {
+      if ((err as { result?: JobResult }).result) throw err;
+    }
+    if (pending && !isRunning()) {
+      if (daemonGoneSince === 0) daemonGoneSince = Date.now();
+      else if (Date.now() - daemonGoneSince > grace) return { status: "stopped", job: pending };
+    } else {
+      daemonGoneSince = 0;
+    }
+    if (Date.now() - lastMove > limit) {
+      if (pending) return { status: daemonGoneSince ? "stopped" : "pending", job: pending };
+      throw new Error(`timed out waiting for runtime job ${jobId}`);
+    }
+    await sleep(200, signal);
+  }
+}
+
 export function loadJobSnapshot(storeRoot: string, jobId: string): JobSnapshot {
   const state = loadQueue(storeRoot);
   const job = state.jobs.find((j) => j.id === jobId);

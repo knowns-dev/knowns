@@ -172,7 +172,12 @@ Use flags to sync only specific parts.`,
           storeRoot: store.root,
         });
       } catch (e) {
-        ctx.printErr(`Warning: reindex failed: ${(e as Error).message}\n`);
+        // A reindex still running, or kept queued by a stopped runtime, has already said so; it
+        // has not failed. Matched by name so sync keeps loading search-index.ts lazily.
+        const name = (e as Error).name;
+        if (name !== "ReindexStillRunning" && name !== "ReindexRuntimeStopped") {
+          ctx.printErr(`Warning: reindex failed: ${(e as Error).message}\n`);
+        }
       }
       ctx.print("\n");
     }

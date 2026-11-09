@@ -18,21 +18,54 @@ import {
   acquireClient,
   enqueueReindex,
   type Job,
+  type JobWaitOutcome,
   loadJobSnapshot,
   shouldBypassDaemon,
   sleep,
   startHeartbeat,
-  waitForJob,
+  waitForJobProgress,
 } from "../../runtime/queue.ts";
 import { SemanticNotConfiguredError } from "../../search/errors.ts";
 import { SQLiteVectorStore } from "../../search/sqlite-store.ts";
 import { createStorage, type Storage } from "../../storage/adapters.ts";
 import { globalSemanticStoreRoot, Store } from "../../storage/core/store.ts";
+import { SilentExit } from "../core/exit.ts";
 import { renderCmd, renderInfo, renderWarning } from "../core/plainoutput.ts";
 import { renderNextSteps, searchDim, searchSuccess, searchWarn } from "./search-support.ts";
 
 export interface Out {
   print(text: string): void;
+}
+
+/**
+ * The reindex wait gave up while the daemon still holds the job. The warning is already printed,
+ * so the run loop only sets the exit status (1, as 0.34.1), and `sync` skips its "reindex failed".
+ */
+export class ReindexStillRunning extends SilentExit {
+  constructor(readonly jobId: string) {
+    super(1);
+    this.name = "ReindexStillRunning";
+  }
+}
+
+/**
+ * The reindex wait found no runtime daemon while the job was still queued. The explanation is
+ * already printed; exit 1, and `sync` skips its "reindex failed" (the job is kept, not failed).
+ */
+export class ReindexRuntimeStopped extends SilentExit {
+  constructor(readonly jobId: string) {
+    super(1);
+    this.name = "ReindexRuntimeStopped";
+  }
+}
+
+const DEFAULT_REINDEX_STALL_MS = 5 * 60_000;
+
+/** How long the reindex wait tolerates a job that does not move (0.34.1's fixed cap, 5 minutes). */
+function reindexStallMs(envVars: Record<string, string | undefined>): number {
+  const raw = envVars.KNOWNS_RUNTIME_REINDEX_STALL_MS?.trim();
+  if (raw && /^\d+$/.test(raw) && Number(raw) > 0) return Number(raw);
+  return DEFAULT_REINDEX_STALL_MS;
 }
 
 function count(fn: () => unknown[]): number {
@@ -128,25 +161,27 @@ export async function runReindex(
       out.print(
         `${renderInfo(`Queued runtime reindex (${tasks} tasks, ${docs} docs, ${decisions} decisions)...`)}\n\n`,
       );
-      const phases: { name: string; count: number }[] = [];
+      // A phase line is printed as soon as the next phase begins, so a long reindex shows where it
+      // is; a completed run prints the same lines as before, only earlier.
+      const printPhase = (name: string, total: number): void =>
+        out.print(`  ${searchSuccess("✓")} Indexed ${name} (${total})\n`);
       let lastPhase = "";
       let lastTotal = 0;
-      const done = waitForJob(storeRoot, job.id, 5 * 60_000).then(
-        () => undefined,
-        (e: Error) => e,
+      const done = waitForJobProgress(storeRoot, job.id, reindexStallMs(envVars)).then(
+        (outcome) => ({ outcome }),
+        (error: Error) => ({ error }),
       );
-      const state: { done: boolean; error?: Error } = { done: false };
-      void done.then((e) => {
+      const state: { done: boolean; outcome?: JobWaitOutcome; error?: Error } = { done: false };
+      void done.then((r) => {
         state.done = true;
-        if (e) state.error = e;
+        Object.assign(state, r);
       });
       while (!state.done) {
         try {
           const snap = loadJobSnapshot(storeRoot, job.id);
           if (snap.found && !snap.completed) {
             const phase = snap.job?.phase || "queued";
-            if (phase !== lastPhase && lastPhase !== "")
-              phases.push({ name: lastPhase, count: lastTotal });
+            if (phase !== lastPhase && lastPhase !== "") printPhase(lastPhase, lastTotal);
             lastPhase = phase;
             lastTotal = (snap.job?.total ?? 0) > 0 ? (snap.job?.total as number) : 1;
           }
@@ -155,8 +190,32 @@ export async function runReindex(
         }
         await sleep(200);
       }
-      if (lastPhase !== "") phases.push({ name: lastPhase, count: lastTotal });
-      for (const p of phases) out.print(`  ${searchSuccess("✓")} Indexed ${p.name} (${p.count})\n`);
+      if (state.outcome && state.outcome.status !== "completed") {
+        // The job is still in the queue, so it has not failed. Reporting "reindex failed" here made
+        // users rerun a reindex that was about to succeed (@task-KN-Q6DVKQ); the exit status
+        // stays 1 as in 0.34.1, because the index is not rebuilt yet.
+        const pending = state.outcome.job;
+        const where = pending.startedAt
+          ? `${pending.phase || "running"}${(pending.total ?? 0) > 0 ? ` ${pending.processed ?? 0}/${pending.total}` : ""}`
+          : "queued";
+        if (state.outcome.status === "stopped") {
+          // No daemon is left to run it: "still running" would be false. Any command that queues
+          // work starts the runtime, and a new reindex request reuses the queued job.
+          out.print(
+            `\n${renderWarning(`The runtime stopped before the reindex finished (job ${pending.id}, ${where}). The job stays queued and runs when the runtime starts again.`)}\n`,
+          );
+          out.print(
+            `${searchDim("Start it with:")} ${renderCmd("knowns search --reindex")} ${searchDim("(reuses the queued job)")}\n`,
+          );
+          throw new ReindexRuntimeStopped(pending.id);
+        }
+        out.print(
+          `\n${renderWarning(`Reindex is still running in the runtime (job ${pending.id}, ${where}). It was not rebuilt yet; do not start another one.`)}\n`,
+        );
+        out.print(`${searchDim("Follow it with:")} ${renderCmd("knowns runtime ps")}\n`);
+        throw new ReindexStillRunning(pending.id);
+      }
+      if (lastPhase !== "") printPhase(lastPhase, lastTotal);
       if (state.error) throw new Error(`reindex failed: ${state.error.message}`);
       const stats = new SQLiteVectorStore(join(storeRoot, ".search"), "", 0).stats();
       out.print(
