@@ -3,7 +3,7 @@ id: doc-cf43bc1b2def706508a1fe44daf93c3f
 title: TypeScript v1 dogfooding log
 description: Daily log for the 14-day maintainer dogfooding of the TypeScript build on this repository (TSR-9VVJA6 AC3, spec D11)
 createdAt: '2026-11-06T06:01:59.325Z'
-updatedAt: '2026-11-06T08:37:19.141Z'
+updatedAt: '2026-11-06T16:23:42.799Z'
 tags:
   - dogfood,release-gate,typescript-rewrite
 ---
@@ -33,3 +33,4 @@ D11 requires the maintainer to use the TypeScript build on this repository for a
 | 0 | 2026-11-06 | 0fcb2f2 | install, task list, doc create (this doc) | none | pending |
 | 0 | 2026-11-06 | 0fcb2f2 | MCP over TS (claude mcp local scope), task hard-delete KN-VPA58K | hard-delete refused: filesystem reconciliation rejects legacy docs without a stable id (122/156 docs here); no bytes changed, same as Go 0.34.1. Not data loss. Follow-up with knowns-4b. | 0 errors / 0 errors |
 | 0 | 2026-11-06 | 0b988bf | rebuilt dogfood binary; validate --fix gave 122 legacy docs a stable id (one id line each, nothing else changed); hard-delete KN-VPA58K completed (file and history purged, tombstone kept) | none | 0 errors / 0 errors |
+| 0 | 2026-11-06 | 5d31aa5 | rebuilt dogfood binary from a clean worktree (wave 11 + Rosetta installer fix); stopped the old 0b988bf dogfood daemon so the next client starts the new one; task create/edit/done (KN-N2M8CS), time add, search (semantic + keyword), validate | none | 0 errors / 0 errors |
