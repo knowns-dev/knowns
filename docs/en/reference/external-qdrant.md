@@ -10,12 +10,44 @@ either run Qdrant for you or connect to one you already run.
 
 Managed mode is the default and needs no setup. This page is about external mode.
 
+## The quick way: `knowns qdrant setup`
+
+Since v1.0.0, one command finds a Qdrant for this machine and sets it up:
+
+```bash
+knowns qdrant setup
+```
+
+It checks, in this order, and takes the first that works:
+
+1. A Qdrant that already answers: `KNOWNS_QDRANT_URL`, the endpoint recorded
+   earlier for this machine, or `127.0.0.1:6333` (version 1.14.0 or later).
+2. Managed Qdrant, when this platform has a pinned build.
+3. Docker, when `docker` is on PATH and its daemon is running. Knowns runs
+   container `knowns-qdrant` from `qdrant/qdrant:v1.14.1` on `127.0.0.1:6333`
+   with volume `knowns-qdrant-data`, and `knowns qdrant status`, `start`,
+   `stop` and `logs` then act on that container.
+
+It asks only when more than one option works. `--yes`, `--json` or a
+non-interactive terminal take the first one. Force a branch with `--url <endpoint>`,
+`--docker` or `--managed`.
+
+The choice is recorded for this machine in `~/.knowns/runtime/qdrant/endpoint.json`
+and outranks the project config, so the project's `.knowns/config.json` never
+changes and teammates on other platforms keep their own setup. Undo it with
+`knowns qdrant setup --remove`, which also removes the Docker container and,
+only when you confirm or pass `--volume`, the volume that holds the vectors.
+`knowns init` runs the same detection when its wizard turns on semantic search.
+
+Knowns 0.34.x ignores the recorded endpoint. The rest of this page is the manual
+route, which every version supports.
+
 ## When you need external mode
 
 - The managed binary does not run on your platform. Knowns pins Qdrant 1.14.1
-  for `darwin/arm64`, `darwin/amd64`, `linux/amd64`, and `linux/arm64` only. The
-  `linux/amd64` build is linked against glibc, so it will not run on a musl
-  distribution such as Alpine.
+  for `darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64` and, since
+  v1.0.0, `windows/amd64` only. The `linux/amd64` build is linked against glibc,
+  so it will not run on a musl distribution such as Alpine.
 - You already run Qdrant, in Docker or as a shared service, and want one
   instance instead of one per machine.
 - You run Knowns in a container and do not want a second long-lived process
@@ -162,7 +194,7 @@ knowns doctor --scope search
 | `mode "external" requires externalURL` | `mode` was set before the URL | Set `externalURL` first, then `mode` |
 | `qdrant install applies only to managed mode` | `knowns qdrant install` in external mode | Expected. Nothing to install |
 | `qdrant pointer missing; run: knowns search index --wait` | New endpoint has no collection yet | Run `knowns search index --wait` |
-| `unsupported Qdrant platform <os>/<arch>` | No managed binary for this platform | This page is the answer. Configure an external endpoint |
+| `unsupported Qdrant platform <os>/<arch>` | No managed binary for this platform | Run `knowns qdrant setup`, or configure an external endpoint as on this page |
 
 ## Going back to managed mode
 
@@ -188,7 +220,8 @@ forces external mode on its own.
 | `KNOWNS_SEMANTIC_VECTOR_MANAGED_ROOT` | Managed runtime root, default `~/.knowns/runtime/qdrant` |
 | `KNOWNS_QDRANT_MIRROR` | Alternate download host for the managed binary. Checksum verification is unchanged |
 
-Environment beats project config, which beats global settings, which beats
+Environment beats the endpoint `knowns qdrant setup` recorded for this machine
+(v1.0.0), which beats project config, which beats global settings, which beats
 defaults.
 
 ## See also

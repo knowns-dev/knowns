@@ -10,10 +10,43 @@ chạy Qdrant cho bạn, hoặc kết nối tới một Qdrant bạn đã có s�
 
 Managed là mặc định và không cần setup gì. Trang này nói về external mode.
 
+## Cách nhanh: `knowns qdrant setup`
+
+Từ v1.0.0, một lệnh tự tìm Qdrant cho máy này và setup luôn:
+
+```bash
+knowns qdrant setup
+```
+
+Lệnh kiểm tra theo thứ tự sau và dùng cách đầu tiên chạy được:
+
+1. Một Qdrant đang trả lời: `KNOWNS_QDRANT_URL`, endpoint đã ghi trước đó cho
+   máy này, hoặc `127.0.0.1:6333` (phiên bản 1.14.0 trở lên).
+2. Managed Qdrant, nếu platform này có bản pin sẵn.
+3. Docker, nếu có `docker` trong PATH và daemon đang chạy. Knowns chạy container
+   `knowns-qdrant` từ `qdrant/qdrant:v1.14.1` trên `127.0.0.1:6333` với volume
+   `knowns-qdrant-data`, sau đó `knowns qdrant status`, `start`, `stop` và
+   `logs` sẽ thao tác trên container đó.
+
+Lệnh chỉ hỏi khi có nhiều hơn một cách dùng được. `--yes`, `--json` hoặc
+terminal không tương tác sẽ lấy cách đầu tiên. Ép một nhánh bằng
+`--url <endpoint>`, `--docker` hoặc `--managed`.
+
+Lựa chọn được ghi cho máy này ở `~/.knowns/runtime/qdrant/endpoint.json` và
+được ưu tiên hơn project config, nên `.knowns/config.json` của project không bao
+giờ đổi, và đồng đội dùng platform khác vẫn giữ setup của họ. Gỡ bằng
+`knowns qdrant setup --remove`: lệnh này xóa luôn container Docker, còn volume
+chứa vector chỉ bị xóa khi bạn xác nhận hoặc truyền `--volume`. `knowns init`
+cũng chạy phần dò này khi wizard bật semantic search.
+
+Knowns 0.34.x bỏ qua endpoint đã ghi. Phần còn lại của trang là cách làm thủ
+công, phiên bản nào cũng hỗ trợ.
+
 ## Khi nào cần external mode
 
 - Managed binary không chạy được trên platform của bạn. Knowns pin Qdrant 1.14.1
-  cho `darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64`. Bản
+  cho `darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64` và, từ
+  v1.0.0, `windows/amd64`. Bản
   `linux/amd64` link với glibc, nên sẽ không chạy trên distro dùng musl như
   Alpine.
 - Bạn đã chạy sẵn Qdrant, bằng Docker hoặc như một service dùng chung, và muốn
@@ -159,7 +192,7 @@ knowns doctor --scope search
 | `mode "external" requires externalURL` | Set `mode` trước khi set URL | Set `externalURL` trước, rồi mới set `mode` |
 | `qdrant install applies only to managed mode` | Chạy `knowns qdrant install` ở external mode | Đúng như thiết kế. Không có gì để install |
 | `qdrant pointer missing; run: knowns search index --wait` | Endpoint mới chưa có collection | Chạy `knowns search index --wait` |
-| `unsupported Qdrant platform <os>/<arch>` | Không có managed binary cho platform này | Trang này chính là câu trả lời. Cấu hình external endpoint |
+| `unsupported Qdrant platform <os>/<arch>` | Không có managed binary cho platform này | Chạy `knowns qdrant setup`, hoặc cấu hình external endpoint như trang này |
 
 ## Quay lại managed mode
 
@@ -185,7 +218,7 @@ Nhớ unset `KNOWNS_QDRANT_URL` nếu đang set. Nó override project config và
 | `KNOWNS_SEMANTIC_VECTOR_MANAGED_ROOT` | Managed runtime root, mặc định `~/.knowns/runtime/qdrant` |
 | `KNOWNS_QDRANT_MIRROR` | Host tải thay thế cho managed binary. Vẫn verify checksum như thường |
 
-Thứ tự ưu tiên: environment > project config > global settings > mặc định.
+Thứ tự ưu tiên: environment > endpoint mà `knowns qdrant setup` đã ghi cho máy này (v1.0.0) > project config > global settings > mặc định.
 
 ## Xem thêm
 

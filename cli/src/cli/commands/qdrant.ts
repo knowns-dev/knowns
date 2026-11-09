@@ -8,8 +8,10 @@ import {
   SUPPORTED_QDRANT_VERSION,
   statusJson,
 } from "../../runtime/qdrant.ts";
+import { type MachineEndpoint, resolveVectorStoreForEnv } from "../../runtime/qdrant-endpoint.ts";
 import { type CommandContext, defineCommand } from "../core/define.ts";
 import { Style } from "../core/plainoutput.ts";
+import { setupCommand } from "./qdrant-setup.ts";
 
 type SemanticSettings = import("../../models/config.ts").SemanticSearchSettings;
 
@@ -17,8 +19,13 @@ const BLUE = new Style(false, 34);
 const GREEN = new Style(false, 32);
 const YELLOW = new Style(false, 33);
 
+/** The manager plus the machine endpoint (D14) that resolution used, when one did. */
+type CommandManager = QdrantManager & { machineEndpoint?: MachineEndpoint };
+
+const DOCKER_CONTAINER_NAME = "knowns-qdrant";
+
 /** qdrantManagerForCommand: findStore (none outside a project) then qdrantManagerFromStore. */
-async function managerForCommand(ctx: CommandContext): Promise<QdrantManager> {
+async function managerForCommand(ctx: CommandContext): Promise<CommandManager> {
   const { semanticSettingsFor, optionalStorage } = await loadSupport();
   const storage = await optionalStorage(ctx.cwd);
   return semanticSettingsFor(storage, ctx.env);
@@ -48,7 +55,7 @@ async function loadSupport() {
     semanticSettingsFor(
       storage: ReturnType<typeof createStorage> | undefined,
       env: Record<string, string | undefined>,
-    ): QdrantManager {
+    ): CommandManager {
       let project: SemanticSettings | undefined;
       if (storage) {
         try {
@@ -66,8 +73,10 @@ async function loadSupport() {
       } catch {
         global = undefined;
       }
-      const res = models.resolveSemanticVectorStore(project, global, (k) => env[k]);
-      return new rt.QdrantManager(rt.configFromResolution(res));
+      const res = resolveVectorStoreForEnv(project, global, env);
+      return Object.assign(new rt.QdrantManager(rt.configFromResolution(res)), {
+        machineEndpoint: res.machineEndpoint,
+      });
     },
   };
 }
@@ -148,9 +157,57 @@ function zeroStatus(): QdrantRuntimeStatus {
   };
 }
 
-function renderStatus(ctx: CommandContext, status: QdrantRuntimeStatus): void {
-  if (ctx.json) ctx.printJSON(statusJson(status));
-  else if (ctx.plain) ctx.print(renderPlain(status));
+// Not in Go (D14): a machine endpoint whose Docker container Knowns created. status, start, stop
+// and logs act on that container; an endpoint recorded as "existing" stays external and is never
+// started, stopped or removed.
+type DockerStatus = QdrantRuntimeStatus & {
+  docker?: { container: string; image: string; volume: string; state: string };
+};
+
+function dockerOwnedEndpoint(mgr: CommandManager): MachineEndpoint | undefined {
+  const m = mgr.machineEndpoint;
+  return m?.source === "docker" && m.docker ? m : undefined;
+}
+
+async function dockerStatus(
+  mgr: CommandManager,
+  endpoint: MachineEndpoint,
+  message?: string,
+): Promise<DockerStatus> {
+  const { defaultDockerRunner, inspectContainer } = await import("../../runtime/qdrant-docker.ts");
+  const { qdrantSetupSeams } = await import("../../runtime/qdrant-setup.ts");
+  const run = qdrantSetupSeams().docker ?? defaultDockerRunner;
+  // start, stop and remove act on the fixed name, so status reads that same container.
+  const c = await inspectContainer(run);
+  const state = !c.exists ? "missing" : c.running ? "running" : "stopped";
+  const base = mgr.status();
+  const name = endpoint.docker?.container ?? "";
+  return {
+    ...base,
+    managed: c.exists && c.owned,
+    state: state === "missing" ? "not-installed" : state,
+    running: c.running,
+    installed: c.exists,
+    message:
+      message ??
+      (state === "missing"
+        ? `Docker container ${name} does not exist; run \`knowns qdrant setup\``
+        : `Docker container ${name} is ${state}`),
+    docker: { ...(endpoint.docker as NonNullable<MachineEndpoint["docker"]>), state },
+  };
+}
+
+function renderStatus(ctx: CommandContext, status: DockerStatus): void {
+  if (ctx.json) {
+    const out = statusJson(status) as Record<string, unknown>;
+    ctx.printJSON(status.docker ? { ...out, docker: status.docker } : out);
+  } else if (ctx.plain && status.docker) {
+    ctx.print(`${renderPlain(status)}docker\t${status.docker.container} ${status.docker.state}\n`);
+  } else if (!ctx.plain && status.docker) {
+    ctx.print(
+      `${renderStyled(status)}  Docker: ${status.docker.container} (${status.docker.image}) ${status.docker.state}\n`,
+    );
+  } else if (ctx.plain) ctx.print(renderPlain(status));
   else ctx.print(renderStyled(status));
 }
 
@@ -195,7 +252,8 @@ const status = defineCommand({
   short: "Show Qdrant runtime status and paths",
   async run(ctx) {
     const mgr = await managerForCommand(ctx);
-    renderStatus(ctx, mgr.status());
+    const docker = dockerOwnedEndpoint(mgr);
+    renderStatus(ctx, docker ? await dockerStatus(mgr, docker) : mgr.status());
   },
 });
 
@@ -204,6 +262,33 @@ const start = defineCommand({
   short: "Start managed Qdrant when in managed mode",
   async run(ctx) {
     const mgr = await managerForCommand(ctx);
+    const docker = dockerOwnedEndpoint(mgr);
+    if (docker) {
+      const [{ defaultDockerRunner, startContainer }, setup] = await Promise.all([
+        import("../../runtime/qdrant-docker.ts"),
+        import("../../runtime/qdrant-setup.ts"),
+      ]);
+      const seams = setup.qdrantSetupSeams();
+      const outcome = await startContainer(seams.docker ?? defaultDockerRunner);
+      const deadline = Date.now() + (seams.healthTimeoutMs ?? 60_000);
+      while (!(await setup.probeQdrant(docker.url, "machine", { fetch: seams.fetch })).answering) {
+        if (Date.now() > deadline) {
+          throw new Error(
+            `Qdrant in Docker did not answer at ${docker.url}; inspect it with \`knowns qdrant logs\``,
+          );
+        }
+        await Bun.sleep(500);
+      }
+      renderStatus(
+        ctx,
+        await dockerStatus(
+          mgr,
+          docker,
+          `Docker container ${docker.docker?.container} ${outcome === "running" ? "is already running" : "started"}`,
+        ),
+      );
+      return;
+    }
     try {
       renderStatus(ctx, await mgr.start());
     } catch (err) {
@@ -218,6 +303,23 @@ const stop = defineCommand({
   short: "Stop managed Qdrant when Knowns owns a local process",
   async run(ctx) {
     const mgr = await managerForCommand(ctx);
+    const docker = dockerOwnedEndpoint(mgr);
+    if (docker) {
+      const [{ defaultDockerRunner, stopContainer }, setup] = await Promise.all([
+        import("../../runtime/qdrant-docker.ts"),
+        import("../../runtime/qdrant-setup.ts"),
+      ]);
+      const stopped = await stopContainer(setup.qdrantSetupSeams().docker ?? defaultDockerRunner);
+      renderStatus(
+        ctx,
+        await dockerStatus(
+          mgr,
+          docker,
+          `Docker container ${docker.docker?.container} ${stopped ? "stopped" : "was not running"}`,
+        ),
+      );
+      return;
+    }
     renderStatus(ctx, await mgr.stop());
   },
 });
@@ -236,6 +338,19 @@ const logs = defineCommand({
   ],
   async run(ctx) {
     const mgr = await managerForCommand(ctx);
+    const docker = dockerOwnedEndpoint(mgr);
+    if (docker) {
+      const [{ defaultDockerRunner }, setup] = await Promise.all([
+        import("../../runtime/qdrant-docker.ts"),
+        import("../../runtime/qdrant-setup.ts"),
+      ]);
+      const run = setup.qdrantSetupSeams().docker ?? defaultDockerRunner;
+      // The managed path treats a non-positive count as 50; so does this one.
+      const tail = ctx.flags.int("tail") > 0 ? ctx.flags.int("tail") : 50;
+      const r = await run(["logs", "--tail", String(tail), DOCKER_CONTAINER_NAME], 30_000);
+      ctx.print(r.stdout + r.stderr);
+      return;
+    }
     ctx.print(mgr.tailLog(ctx.flags.int("tail")));
   },
 });
@@ -258,5 +373,5 @@ export default defineCommand({
 Managed mode owns a local Qdrant process rooted at ~/.knowns/runtime/qdrant.
 External URL mode reports the configured endpoint and bypasses local process
 start/stop/cleanup ownership.`,
-  subcommands: [install, purge, status, start, stop, logs, cleanup],
+  subcommands: [install, purge, status, start, stop, logs, cleanup, setupCommand],
 });

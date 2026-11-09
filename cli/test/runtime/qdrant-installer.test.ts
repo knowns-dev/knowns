@@ -18,7 +18,7 @@ import {
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gzipSync } from "node:zlib";
+import { crc32, deflateRawSync, gzipSync } from "node:zlib";
 import { goNotExistReason } from "../../src/platform/goerror.ts";
 import { pathsForRoot, SUPPORTED_QDRANT_VERSION } from "../../src/runtime/qdrant.ts";
 import {
@@ -94,6 +94,39 @@ function archiveOf(binary: Buffer, name = "qdrant"): Buffer {
   return gzipSync(tarBytes([{ name, body: binary }]));
 }
 
+/** A single-entry zip (deflate, or stored with method 0), the shape of Qdrant's Windows asset. */
+function zipOf(binary: Buffer, name = "qdrant.exe", method: 0 | 8 = 8): Buffer {
+  const data = method === 8 ? deflateRawSync(binary) : binary;
+  const nameBuf = Buffer.from(name);
+  const crc = crc32(binary);
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt16LE(method, 8);
+  local.writeUInt32LE(crc, 14);
+  local.writeUInt32LE(data.length, 18);
+  local.writeUInt32LE(binary.length, 22);
+  local.writeUInt16LE(nameBuf.length, 26);
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt16LE(method, 10);
+  central.writeUInt32LE(crc, 16);
+  central.writeUInt32LE(data.length, 20);
+  central.writeUInt32LE(binary.length, 24);
+  central.writeUInt16LE(nameBuf.length, 28);
+  const centralOffset = local.length + nameBuf.length + data.length;
+  const centralSize = central.length + nameBuf.length;
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(centralOffset, 16);
+  return Buffer.concat([local, nameBuf, data, central, nameBuf, end]);
+}
+
 function sha(data: Buffer): string {
   return createHash("sha256").update(data).digest("hex");
 }
@@ -154,21 +187,86 @@ describe("pinned artifact table", () => {
     expect(qdrantArtifactFor("linux", "arm64")?.filename).toBe(
       "qdrant-aarch64-unknown-linux-musl.tar.gz",
     );
-    expect(qdrantArtifactFor("windows", "amd64")).toBeUndefined();
+    // D14 (spec qdrant-setup-wizard D5): not in Go 0.34.1.
+    expect(qdrantArtifactFor("windows", "amd64")).toEqual({
+      os: "windows",
+      arch: "amd64",
+      filename: "qdrant-x86_64-pc-windows-msvc.zip",
+      sha256: "52f3e58a73709b81f13b035fac144089b7317da259ae2e6e71c949c536081854",
+    });
+    expect(qdrantArtifactFor("windows", "arm64")).toBeUndefined();
   });
 
   test("unsupported platform fails with Go's text before touching disk", async () => {
     const root = join(tmp(), "rt");
     for (const [goos, goarch] of [
       ["plan9", "mips"],
-      ["windows", "amd64"],
+      ["windows", "arm64"],
     ] as const) {
       await expect(makeInstaller(root, { goos, goarch }).install()).rejects.toThrow(
-        `unsupported Qdrant platform ${goos}/${goarch}; configure an external Qdrant endpoint`,
+        `unsupported Qdrant platform ${goos}/${goarch}; configure an external Qdrant endpoint or run \`knowns qdrant setup\``,
       );
     }
     expect(existsSync(root)).toBe(false);
   });
+});
+
+describe("windows zip artifact", () => {
+  for (const method of [8, 0] as const) {
+    test(`installs qdrant.exe from a zip (method ${method})`, async () => {
+      const zip = zipOf(Buffer.from("windows-binary"), "qdrant.exe", method);
+      const { rewrite } = serve({ "/mirror/w.zip": { body: zip } });
+      const root = tmp();
+      const artifacts = {
+        "windows/amd64": { os: "windows", arch: "amd64", filename: "w.zip", sha256: sha(zip) },
+      };
+      const paths = await makeInstaller(root, {
+        goos: "windows",
+        goarch: "amd64",
+        mirror: "https://mirror.test/mirror/",
+        fetch: rewrite,
+        artifacts,
+      }).install();
+      expect(readFileSync(paths.binaryPath, "utf8")).toBe("windows-binary");
+      const manifest = JSON.parse(readFileSync(join(root, "install.json"), "utf8"));
+      expect(manifest).toEqual({ version: "1.14.1", sha256: sha(zip), artifact: "w.zip" });
+      expect(leftovers(root)).toEqual([]);
+    });
+  }
+
+  test("a zip whose entry is corrupted fails the crc check", async () => {
+    const zip = zipOf(Buffer.from("windows-binary"), "qdrant.exe", 0);
+    const at = 30 + "qdrant.exe".length;
+    zip.writeUInt8((zip.readUInt8(at) ^ 0xff) & 0xff, at);
+    const dir = tmp();
+    const archive = join(dir, "bad.zip");
+    writeFileSync(archive, zip);
+    await expect(extractBinary(archive, join(dir, "q.exe"))).rejects.toThrow("zip: checksum error");
+  });
+
+  test("a zip without qdrant.exe fails", async () => {
+    const dir = tmp();
+    const archive = join(dir, "other.zip");
+    writeFileSync(archive, zipOf(Buffer.from("x"), "readme.txt"));
+    await expect(extractBinary(archive, join(dir, "q.exe"))).rejects.toThrow();
+  });
+
+  // The real 25 MB release asset, when a copy is at hand (KNOWNS_QDRANT_WIN_ZIP=<path>).
+  const real = process.env.KNOWNS_QDRANT_WIN_ZIP;
+  test.skipIf(!real || !existsSync(real))(
+    "the pinned release zip verifies and extracts",
+    async () => {
+      const file = real as string;
+      const pinned = qdrantArtifactFor("windows", "amd64") as QdrantArtifact;
+      expect(sha(readFileSync(file))).toBe(pinned.sha256);
+      const dst = join(tmp(), "qdrant.exe");
+      await extractBinary(file, dst);
+      const exe = readFileSync(dst);
+      expect(exe.length).toBe(75_142_144);
+      expect(exe.subarray(0, 2).toString()).toBe("MZ");
+    },
+    60_000,
+  );
 });
 
 describe("install over http", () => {

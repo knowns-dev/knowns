@@ -468,7 +468,7 @@ function retryWhileBusy<T>(op: () => T): T {
   }
 }
 
-function renameOverFile(tmp: string, path: string): void {
+export function renameOverFile(tmp: string, path: string): void {
   retryWhileBusy(() => renameSync(tmp, path));
 }
 

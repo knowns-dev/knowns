@@ -192,7 +192,7 @@ function firstNonEmpty(...values: string[]): string {
   return "";
 }
 
-function sanitizedEndpoint(raw: string): string {
+export function sanitizedEndpoint(raw: string): string {
   try {
     const u = new URL(raw.trim());
     u.username = "";

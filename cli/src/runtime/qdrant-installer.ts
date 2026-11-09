@@ -4,9 +4,9 @@
 // injectable fetch, and the platform through goos/goarch, the same seams Go's Installer exposes
 // (HTTPClient, GOOS, GOARCH, Mirror).
 //
-// Go ships no Windows artifact: on windows/* the installer fails with Go's unsupported-platform
-// error and the user points Knowns at an external Qdrant. The zip branch of extractBinary is kept
-// because Go keeps it, but no pinned artifact reaches it.
+// Not in Go (rewrite spec D14, @doc/specs/2026-11-07/qdrant-setup-wizard D5): windows/amd64 has a
+// pinned artifact, the only .zip in the table. Go 0.34.1 fails there with the unsupported-platform
+// error. windows/arm64 still does: Qdrant publishes no Windows arm64 build.
 
 import { createHash } from "node:crypto";
 import {
@@ -65,6 +65,14 @@ const SUPPORTED_ARTIFACTS: Record<string, QdrantArtifact> = {
     arch: "arm64",
     filename: "qdrant-aarch64-unknown-linux-musl.tar.gz",
     sha256: "ed221c141e240d1443535ba44e71c965f1d2d5e702f01c52c5ad4b7fc64bb604",
+  },
+  // GitHub publishes no digest for this v1.14.1 asset; the checksum was taken from the downloaded
+  // file on 2026-11-07 (25138850 bytes, one entry: qdrant.exe).
+  "windows/amd64": {
+    os: "windows",
+    arch: "amd64",
+    filename: "qdrant-x86_64-pc-windows-msvc.zip",
+    sha256: "52f3e58a73709b81f13b035fac144089b7317da259ae2e6e71c949c536081854",
   },
 };
 
@@ -163,7 +171,7 @@ export class QdrantInstaller {
     const artifact = (this.opts.artifacts ?? SUPPORTED_ARTIFACTS)[`${osName}/${arch}`];
     if (!artifact) {
       throw new Error(
-        `unsupported Qdrant platform ${osName}/${arch}; configure an external Qdrant endpoint`,
+        `unsupported Qdrant platform ${osName}/${arch}; configure an external Qdrant endpoint or run \`knowns qdrant setup\``,
       );
     }
     const paths = pathsForRoot(this.opts.root);

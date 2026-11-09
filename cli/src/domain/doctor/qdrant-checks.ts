@@ -14,7 +14,7 @@ import type { LocalState } from "./local.ts";
 import type { Checker, CheckOutcome, Evidence } from "./model.ts";
 
 export interface QdrantSnapshot {
-  resolution: SemanticVectorStoreResolution;
+  resolution: SemanticVectorStoreResolution & { machineEndpoint?: { url: string; source: string } };
   runtime?: QdrantRuntimeStatus;
   pointer?: QdrantPointer;
   readiness?: SemanticIndexReadiness;
@@ -24,6 +24,13 @@ export interface QdrantSnapshot {
   healthy: boolean;
   probeErrorCode: string;
   orphans: string[];
+  /**
+   * Not in Go (D14): the endpoint `knowns qdrant setup` recorded for this machine, when resolution
+   * used it. Only its source and liveness, never the URL.
+   */
+  machine?: { source: string; answering: boolean; probed: boolean };
+  /** The machine endpoint file exists but cannot be read; resolution ignored it. */
+  machineFileError?: string;
 }
 
 const BACKEND_NONE = "none";
@@ -50,11 +57,13 @@ function qdrantSkip(
   return undefined;
 }
 
+// D14 (spec qdrant-setup-wizard FR-12): 0.34.1 ends at the docs reference; the TS build points at
+// the setup command last.
 const EXTERNAL_ESCAPE =
   " If the managed binary cannot run on this platform, " +
   "configure an external Qdrant endpoint instead: set " +
   "settings.semanticSearch.vectorStore.externalURL and then .mode to external, " +
-  "or export KNOWNS_QDRANT_URL. See docs/en/reference/external-qdrant.md.";
+  "or export KNOWNS_QDRANT_URL (see docs/en/reference/external-qdrant.md), or run `knowns qdrant setup`.";
 
 const DEAD_LETTER_SAMPLE_LIMIT = 10;
 
@@ -166,6 +175,58 @@ export function qdrantCheckers(state: LocalState): Checker[] {
     checker(
       "search.qdrant-runtime",
       (s): CheckOutcome => {
+        if (s.machineFileError !== undefined) {
+          return {
+            status: "warn",
+            summary: "The Qdrant endpoint recorded for this machine cannot be read",
+            evidence: { recorded: true, readable: false },
+            remediation: {
+              description: "Record the endpoint again, or forget it.",
+              command: "knowns qdrant setup",
+            },
+          };
+        }
+        if (s.machine) {
+          const docker = s.machine.source === "docker";
+          const evidence: Evidence = {
+            backend: "qdrant",
+            mode: "external",
+            recorded: true,
+            source: s.machine.source,
+            managed: docker,
+            healthy: s.machine.answering,
+          };
+          if (!s.machine.probed) {
+            evidence.probed = false;
+            delete evidence.healthy;
+            return {
+              status: "pass",
+              summary: `A remote Qdrant is recorded for this machine (${s.machine.source}); offline doctor does not probe it`,
+              evidence,
+            };
+          }
+          if (s.machine.answering) {
+            return {
+              status: "pass",
+              summary: `The Qdrant recorded for this machine answers (${s.machine.source})`,
+              evidence,
+            };
+          }
+          return {
+            status: "warn",
+            summary: "The Qdrant recorded for this machine does not answer",
+            evidence,
+            remediation: docker
+              ? {
+                  description: "Start the knowns-qdrant Docker container.",
+                  command: "knowns qdrant start",
+                }
+              : {
+                  description: "Start that Qdrant, or set up another one.",
+                  command: "knowns qdrant setup",
+                },
+          };
+        }
         if (s.resolution.mode === MODE_EXTERNAL) {
           return {
             status: "pass",
@@ -445,6 +506,21 @@ export async function inspectQdrantReadOnly(
     orphans: [],
   };
   if (!resolution.enabled || resolution.backend !== BACKEND_QDRANT) return snapshot;
+  const { readMachineEndpoint } = await import("../../runtime/qdrant-endpoint.ts");
+  const recorded = readMachineEndpoint(env);
+  if (recorded.error !== undefined) snapshot.machineFileError = recorded.error;
+  if (resolution.machineEndpoint) {
+    // Offline doctor only talks to loopback: a recorded remote endpoint is reported, not probed.
+    const { probeQdrant, isLoopbackURL } = await import("../../runtime/qdrant-setup.ts");
+    const { url, source } = resolution.machineEndpoint;
+    if (isLoopbackURL(url)) {
+      const p = await probeQdrant(url, "machine", {
+        apiKey: (env.KNOWNS_QDRANT_API_KEY ?? "").trim(),
+        signal,
+      });
+      snapshot.machine = { source, answering: p.answering && !p.error, probed: true };
+    } else snapshot.machine = { source, answering: false, probed: false };
+  }
 
   const manager = new QdrantManager(configFromResolution(resolution));
   const runtime = manager.status();

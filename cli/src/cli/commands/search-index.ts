@@ -5,7 +5,6 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { buildSearchEnvironment } from "../../domain/searchenv/index.ts";
 import {
-  resolveSemanticVectorStore,
   SEMANTIC_VECTOR_BACKEND_QDRANT,
   SEMANTIC_VECTOR_STORE_MODE_MANAGED,
   semanticSearchSettingsSchema,
@@ -14,6 +13,7 @@ import { executeRuntimeJob } from "../../runtime/executor.ts";
 import { IndexService } from "../../runtime/index/index-service.ts";
 import { autoReindexIfStale, initSemanticSqlite } from "../../runtime/index/init-semantic.ts";
 import { configFromResolution, installQdrant, QdrantManager } from "../../runtime/qdrant.ts";
+import { resolveVectorStoreForEnv } from "../../runtime/qdrant-endpoint.ts";
 import {
   acquireClient,
   enqueueReindex,
@@ -220,7 +220,7 @@ export async function runSearchIndex(
     global = undefined;
   }
   // Go passes a nil lookup, which means the process environment.
-  const res = resolveSemanticVectorStore(project, global, (k) => envVars[k]);
+  const res = resolveVectorStoreForEnv(project, global, envVars);
   if (!res.enabled || res.optedOut) {
     throw new Error("semantic vector search is disabled; enable it before indexing");
   }

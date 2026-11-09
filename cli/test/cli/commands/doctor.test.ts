@@ -9,11 +9,13 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { VERSION } from "../../../src/version.ts";
+import { withoutD14 } from "../../helpers/d14.ts";
 import { hasGoBin, makeFixtureProject, writeFixtureText } from "./search-harness.ts";
 import { expectParity as parity } from "./search-parity.ts";
 
+// D14: the managed-binary remediation also names `knowns qdrant setup`; map it back to 0.34.1.
 const expectParity: typeof parity = (fixture, steps, opts = {}) =>
-  parity(fixture, steps, { map: sameVersion, ...opts });
+  parity(fixture, steps, { map: (t) => withoutD14(sameVersion(t)), ...opts });
 
 const cases = hasGoBin ? describe : describe.skip;
 const SLOW = 180_000;

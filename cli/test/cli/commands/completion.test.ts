@@ -3,6 +3,7 @@
 // the `:<directive>` line) for commands, subcommands, flags and flag values.
 import { describe, expect, test } from "bun:test";
 import { withoutD13 } from "../../helpers/d13.ts";
+import { withoutD14 } from "../../helpers/d14.ts";
 import { hasGoBin, runGo, runTs } from "../oracle.ts";
 
 const t = test.skipIf(!hasGoBin);
@@ -10,7 +11,9 @@ const t = test.skipIf(!hasGoBin);
 async function same(args: string[], env: Record<string, string> = {}): Promise<void> {
   const go = runGo(args, env);
   const raw = await runTs(args, { env });
-  const ts = { ...raw, stdout: withoutD13(raw.stdout) };
+  // A bare `setup` candidate is also the root `knowns setup` command, so D14 applies after `qdrant` only.
+  const d13 = withoutD13(raw.stdout);
+  const ts = { ...raw, stdout: args.includes("qdrant") ? withoutD14(d13) : d13 };
   expect(ts).toEqual(go);
 }
 

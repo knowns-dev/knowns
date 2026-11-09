@@ -3,7 +3,7 @@ id: doc-7c0dbdd40f8c36d3f72dc2c758d3e55b
 title: knowns-typescript-rewrite
 description: Specification for rewriting Knowns from Go back to TypeScript on Bun
 createdAt: '2026-11-02T19:05:28.224Z'
-updatedAt: '2026-11-06T18:01:54.116Z'
+updatedAt: '2026-11-07T06:46:52.578Z'
 tags:
   - spec
   - draft
@@ -27,7 +27,7 @@ Predecessor: @doc/specs/knowns-go-rewrite (the opposite migration, 2026-03).
 - D3: TypeScript work lives on one long-lived branch in this repository and merges once at the switch. Go code is deleted in that merge.
 - D4: Runtime is Bun with `bun build --compile`: one binary per platform, no Node or Bun required on the user's machine. Distribution keeps per-platform npm packages and `install.sh` / `install.ps1`.
 - D5: Budgets that block release: on each platform, the binary may exceed an empty Bun-compiled binary for the same target by at most 30MB (Knowns code plus embedded UI); `knowns --version` and MCP readiness each at most 150ms. Revised 2026-11-03 after TSR-5BRB3D measured the stub (raw): darwin 65-70MB, linux 102MB, windows 114-117MB, because the Bun runtime alone is about 100MB on linux and more on windows. The original fixed 100MB limit was unreachable. Go 0.34.1 for reference: 35MB raw, 12MB gzip.
-- D6: Full parity of commands, flags, output formats (`--plain`, `--json`), MCP tools and schemas, HTTP endpoints and SSE/WebSocket events, and the `.knowns/` data format. The only exceptions are D7, D8, D13 and the divergences D12 allows.
+- D6: Full parity of commands, flags, output formats (`--plain`, `--json`), MCP tools and schemas, HTTP endpoints and SSE/WebSocket events, and the `.knowns/` data format. The only exceptions are D7, D8, D13, D14 and the divergences D12 allows.
 - D7: `knowns reconcile preview` and `knowns reconcile apply` are removed. `knowns reconcile restore` stays. The automatic reconciler (watcher, history, tombstones, restore) is ported and follows @decision/20260912-1650-a-briefly-missing-file-is-not-a-deletion.
 - D8: `knowns import` (list, add, remove, status, sync) is removed. Content already present in `.knowns/imports/` stays readable and searchable; `knowns doctor` reports that import management was removed. The web server keeps the read endpoints of `/api/imports` and drops add, remove and sync; the UI hides those actions (decided 2026-11-06, @task-TSR-0MM0QC).
 - D9: Direct switch with no beta channel: the TypeScript build becomes the stable release.
@@ -35,6 +35,7 @@ Predecessor: @doc/specs/knowns-go-rewrite (the opposite migration, 2026-03).
 - D11: Release gate for v1.0.0: the Go e2e suite passes with `TEST_BINARY` pointed at the TypeScript binary on all 6 platforms; OS regression tests (FR-9) pass; UI Playwright e2e passes; and the maintainer has used the TypeScript build on this repository for at least 2 consecutive weeks with no data-loss bug.
 - D12: The TypeScript build may differ from 0.34.1 only to fix unsafe behavior, a data-integrity hole or a false success report in 0.34.1. Each divergence is listed under Approved Divergences with its task and a test that fails without the fix, keeps 0.34.1's output and exit code wherever the fix allows, and never breaks D10. Added 2026-11-06.
 - D13: v1.0.0 adds contributor PR #156 (tasks by assignee) on top of 0.34.1: `knowns task list --unassigned`, the `knowns task assignees` command (task counts per assignee, broken down by status, taking the same filters as `task list`, with `--plain` and `--json`), the MCP `tasks` list parameter `unassigned`, assignee filters in the CLI and MCP that compare trimmed values (a whitespace-only assignee counts as unassigned), and filtering and grouping by assignee on the UI Tasks page. A Go binary built from the PR head (2b3f88d) is the oracle for these behaviors. The PR is not merged into the Go code (D2). Added 2026-11-07.
+- D14: v1.0.0 adds `knowns qdrant setup` per @doc/specs/2026-11-07/qdrant-setup-wizard: a wizard that detects an answering Qdrant, the managed artifact and Docker and picks by that priority, a Docker branch that runs and manages container `knowns-qdrant` on loopback, a per-machine endpoint file outranking project config (never written into `.knowns/`, so D10 holds), the `knowns init` wizard hook, warnings that point at `knowns qdrant setup`, and a pinned managed artifact for `windows/amd64`. Go 0.34.1 is not changed (D2). Added 2026-11-07.
 
 ## Approved Divergences
 

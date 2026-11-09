@@ -183,7 +183,8 @@ Creates a .knowns/ directory with the required structure and a default config.js
       }
     }
     let cfg: InitConfig;
-    if (interactive && ctx.args.length === 0) {
+    const wizardRan = interactive && ctx.args.length === 0;
+    if (wizardRan) {
       // Pre-fill from the global defaults and, with --force, the existing config.
       const wizard = await import("../tui/init-wizard.ts");
       const { createPrompter, isUserAborted } = await import("../tui/prompter.ts");
@@ -296,6 +297,13 @@ Creates a .knowns/ directory with the required structure and a default config.js
       await runInitSteps(ctx, steps);
     } catch (e) {
       throw new Error(`init failed: ${(e as Error).message}`);
+    }
+
+    // Not in Go (rewrite spec D14, qdrant-setup-wizard D3): the wizard that enabled semantic search
+    // also finds a Qdrant for it. On a managed platform this stays lazy and asks nothing.
+    if (wizardRan && cfg.enableSemantic) {
+      const { setupQdrantAfterInit } = await import("./qdrant-setup.ts");
+      await setupQdrantAfterInit(ctx);
     }
 
     ctx.print("\n");

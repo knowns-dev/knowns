@@ -315,6 +315,71 @@ describe("local checks over fake dependencies", () => {
     expect(other.every((c) => c.skipReason === "not_applicable")).toBe(true);
   });
 
+  // D14 (spec qdrant-setup-wizard FR-12, FR-13): the endpoint recorded by `knowns qdrant setup`.
+  test("a recorded machine endpoint is reported by source and liveness, never by URL", async () => {
+    const byId = async (s: QdrantSnapshot) =>
+      Object.fromEntries((await qdrant(s)).map((c) => [c.id, c]));
+    const ext = { ...snapshot().resolution, mode: "external" };
+    const up = (
+      await byId(
+        snapshot({ resolution: ext, machine: { source: "docker", answering: true, probed: true } }),
+      )
+    )["search.qdrant-runtime"];
+    expect(up).toMatchObject({
+      status: "pass",
+      summary: "The Qdrant recorded for this machine answers (docker)",
+      evidence: { recorded: true, source: "docker", managed: true, healthy: true },
+    });
+    expect(JSON.stringify(up)).not.toContain("http");
+    const downDocker = (
+      await byId(
+        snapshot({
+          resolution: ext,
+          machine: { source: "docker", answering: false, probed: true },
+        }),
+      )
+    )["search.qdrant-runtime"];
+    expect(downDocker).toMatchObject({
+      status: "warn",
+      summary: "The Qdrant recorded for this machine does not answer",
+      remediation: { command: "knowns qdrant start" },
+    });
+    const downExisting = (
+      await byId(
+        snapshot({
+          resolution: ext,
+          machine: { source: "existing", answering: false, probed: true },
+        }),
+      )
+    )["search.qdrant-runtime"];
+    expect(downExisting?.remediation?.command).toBe("knowns qdrant setup");
+    const remote = (
+      await byId(
+        snapshot({
+          resolution: ext,
+          machine: { source: "existing", answering: false, probed: false },
+        }),
+      )
+    )["search.qdrant-runtime"];
+    expect(remote).toMatchObject({
+      status: "pass",
+      evidence: { recorded: true, source: "existing", probed: false },
+    });
+    expect(remote?.summary).toContain("offline doctor does not probe it");
+    const unreadable = (await byId(snapshot({ machineFileError: "Unexpected token" })))[
+      "search.qdrant-runtime"
+    ];
+    expect(unreadable).toMatchObject({
+      status: "warn",
+      summary: "The Qdrant endpoint recorded for this machine cannot be read",
+      evidence: { recorded: true, readable: false },
+    });
+    const missing = (
+      await byId(snapshot({ runtime: { state: "not-installed", installed: false } as never }))
+    )["search.qdrant-runtime"];
+    expect(missing?.remediation?.description?.endsWith("or run `knowns qdrant setup`.")).toBe(true);
+  });
+
   test("managed runtime states", async () => {
     const byId = async (s: QdrantSnapshot) =>
       Object.fromEntries((await qdrant(s)).map((c) => [c.id, c]));

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { compare, dispose, hasGoBin, type Step } from "../cli/commands/search-harness.ts";
+import { withoutD14 } from "../helpers/d14.ts";
 
 const cases = hasGoBin ? describe : describe.skip;
 const cleanups: Array<() => void> = [];
@@ -41,7 +42,8 @@ async function parity(steps: Array<string[] | Step>, setup: (dir: string) => voi
   const normalized: Step[] = steps.map((s) => (Array.isArray(s) ? { args: s } : s));
   // Semantic search is off by default, which would hide every other state.
   for (const s of normalized) s.env = { KNOWNS_SEMANTIC_VECTOR_ENABLED: "true", ...env, ...s.env };
-  const c = await compare("full", normalized, { setup });
+  // D14: the `setup` subcommand row is dropped from TS help before the diff (Go output has none).
+  const c = await compare("full", normalized, { setup, map: withoutD14 });
   cleanups.push(
     () => dispose(c.goP),
     () => dispose(c.tsP),
@@ -193,6 +195,10 @@ cases("qdrant command matches Go", () => {
     "install: external mode, bad mirrors, unsupported mirror scheme, missing/ bad file mirror",
     async () => {
       await parity([["qdrant", "install"]], () => {}, { KNOWNS_SEMANTIC_VECTOR_MODE: "external" });
+      // D14: windows/amd64 has a managed artifact in the TS build, so it reaches the mirror checks
+      // where Go 0.34.1 stops at "unsupported Qdrant platform". The mirror cases only compare
+      // where both have an artifact; the Windows installer is covered in qdrant-installer.test.ts.
+      if (process.platform === "win32") return;
       for (const mirror of [
         "http://mirror.example.com",
         "/plain/path",

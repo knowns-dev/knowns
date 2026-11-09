@@ -2,12 +2,8 @@
 // semantic_readiness.go resolveEffectiveVectorStore): which embedder, model and vector store a
 // project resolves to. The machine-level embedding registry is injected because it is not part of
 // the per-project storage factory.
-import {
-  resolveSemanticVectorStore,
-  type SemanticSearchSettings,
-  type SemanticVectorStoreResolution,
-  semanticSearchSettingsSchema,
-} from "../models/config.ts";
+import { type SemanticSearchSettings, semanticSearchSettingsSchema } from "../models/config.ts";
+import { type ResolvedVectorStore, resolveVectorStoreForEnv } from "../runtime/qdrant-endpoint.ts";
 import type { Storage } from "../storage/adapters.ts";
 import type { APIEmbedderConfig } from "./embedder.ts";
 import type { ReferenceExtractor } from "./engine.ts";
@@ -186,13 +182,12 @@ export function loadSemanticRuntimeConfig(
   };
 }
 
-/** env override > project config > machine settings > defaults. */
+/** env override > machine endpoint file (D14) > project config > global settings > defaults. */
 export function resolveEffectiveVectorStore(
   storage: Storage | undefined,
   env: SearchEnvironment,
-): SemanticVectorStoreResolution {
-  if (!storage)
-    return resolveSemanticVectorStore(undefined, undefined, (k) => environmentOf(env)[k]);
+): ResolvedVectorStore {
+  if (!storage) return resolveVectorStoreForEnv(undefined, undefined, environmentOf(env));
   let project: SemanticSearchSettings | undefined;
   try {
     project = storage.config.load().settings.semanticSearch;
@@ -207,5 +202,5 @@ export function resolveEffectiveVectorStore(
   } catch {
     global = undefined;
   }
-  return resolveSemanticVectorStore(project, global, (k) => environmentOf(env)[k]);
+  return resolveVectorStoreForEnv(project, global, environmentOf(env));
 }
