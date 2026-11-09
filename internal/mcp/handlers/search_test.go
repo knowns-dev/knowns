@@ -15,6 +15,7 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -125,7 +126,7 @@ func TestHandleSearchHybridFallsBackToKeywordCompatibleResults(t *testing.T) {
 }
 
 func TestHandleSearchConcurrentHybridUsesSingleSemanticRuntimeEntry(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	search.DefaultSemanticRuntime().Close()
 	t.Cleanup(search.DefaultSemanticRuntime().Close)
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
@@ -357,7 +358,7 @@ func TestHandleSearchAndRetrieveIncludeHistoricalDecisions(t *testing.T) {
 }
 
 func TestResolveReferenceJSON(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 
 	root := filepath.Join(t.TempDir(), ".knowns")
 	store := storage.NewStore(root)

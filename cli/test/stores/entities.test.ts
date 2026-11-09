@@ -17,17 +17,20 @@ import {
   WorkspaceStore,
   yamlScalar,
 } from "../../src/storage/stores/index.ts";
+import { setProcessHome } from "../helpers/process-env.ts";
 import { tmp } from "./helpers.ts";
 
 const roots: string[] = [];
+const restores: (() => void)[] = [];
 afterAll(() => {
+  for (const restore of restores.reverse()) restore();
   for (const r of roots) rmSync(r, { recursive: true, force: true });
 });
 
 function fresh() {
   const root = tmp();
   roots.push(root);
-  process.env.HOME = join(root, "home");
+  restores.push(setProcessHome(join(root, "home")));
   const store = Store.open(join(root, "proj", ".knowns"));
   store.init("proj");
   return { root, store, home: join(root, "home", ".knowns") };

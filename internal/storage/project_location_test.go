@@ -8,6 +8,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/registry"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 // locationFixture isolates the machine registry under a temporary HOME and
@@ -17,7 +18,7 @@ import (
 func locationFixture(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	return home
 }
 

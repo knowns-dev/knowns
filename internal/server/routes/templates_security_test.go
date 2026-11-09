@@ -10,10 +10,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestTemplatePreviewRejectsTraversalAndAllowsTemplateFile(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	base := t.TempDir()
 	store := storage.NewStore(filepath.Join(base, ".knowns"))
 	if err := store.Init("template-preview-security"); err != nil {

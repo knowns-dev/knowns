@@ -10,6 +10,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestBM25TokenizeDeterministicTokenBoundaries(t *testing.T) {
@@ -345,7 +346,7 @@ func TestSearchWithLexicalBackendComparesHeuristicAndBM25Internally(t *testing.T
 
 func newSearchTestStore(t *testing.T) *storage.Store {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	root := filepath.Join(t.TempDir(), ".knowns")
 	store := storage.NewStore(root)
 	if err := store.Init("search-test"); err != nil {

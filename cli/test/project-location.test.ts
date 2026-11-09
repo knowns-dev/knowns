@@ -25,20 +25,20 @@ import {
   Manager,
   Store,
 } from "../src/storage/core/index.ts";
+import { setProcessHome } from "./helpers/process-env.ts";
 
 let home: string;
-const savedHome = process.env.HOME;
+let restoreHome: () => void;
 
 beforeEach(() => {
   // Left unresolved on purpose: on macOS the temp dir sits behind /var -> /private/var, the shape
   // safepath-style checks must accept for a store outside the project directory.
   home = mkdtempSync(join(tmpdir(), "knowns-loc-"));
-  process.env.HOME = home;
+  restoreHome = setProcessHome(home);
 });
 
 afterEach(() => {
-  if (savedHome === undefined) delete process.env.HOME;
-  else process.env.HOME = savedHome;
+  restoreHome();
   rmSync(home, { recursive: true, force: true });
 });
 

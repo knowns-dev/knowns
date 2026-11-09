@@ -15,6 +15,7 @@ import (
 	"github.com/howznguyen/knowns/internal/runtimeinstall"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -135,18 +136,7 @@ func TestRunInitNoWizardUsesGlobalDefaults(t *testing.T) {
 	if err := os.Chdir(projectRoot); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-	oldHome := os.Getenv("HOME")
-	oldUserProfile := os.Getenv("USERPROFILE")
-	if err := os.Setenv("HOME", home); err != nil {
-		t.Fatalf("set HOME: %v", err)
-	}
-	if err := os.Setenv("USERPROFILE", home); err != nil {
-		t.Fatalf("set USERPROFILE: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Setenv("HOME", oldHome)
-		_ = os.Setenv("USERPROFILE", oldUserProfile)
-	})
+	testutil.SetHome(t, home)
 
 	settingsPath := filepath.Join(home, ".knowns", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
@@ -883,8 +873,7 @@ func TestRunInitProceedsAtWizardMinWidth(t *testing.T) {
 	if err := os.Chdir(projectRoot); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	testutil.SetHome(t, home)
 
 	terminalWidthFn = func() int { return wizardMinWidth }
 	isTTYFn = func() bool { return true }
@@ -1412,8 +1401,7 @@ func runNoWizardInitCapture(t *testing.T, name string) (projectRoot string, stdo
 	if err := os.Chdir(projectRoot); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	testutil.SetHome(t, home)
 
 	setInitBoolFlag(t, "no-wizard", true)
 	setInitBoolFlag(t, "no-open", true)

@@ -12,6 +12,7 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 type initialMockAdapter struct {
@@ -84,7 +85,7 @@ func TestBuildInitialInstructionsLineLimit(t *testing.T) {
 }
 
 func TestSemanticRuntimeLineIncludesStatus(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	search.DefaultSemanticRuntime().Close()
 	t.Cleanup(search.DefaultSemanticRuntime().Close)
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))

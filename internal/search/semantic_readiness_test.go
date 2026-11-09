@@ -13,6 +13,7 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/runtimequeue"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 // configureSemanticStore enables semantic search on a fresh test store with the
@@ -399,7 +400,7 @@ func TestSemanticIndexAvailableForRuntimeBackendNone(t *testing.T) {
 }
 
 func TestSearchWithRuntimeHybridQdrantPointerReady(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := newRuntimeSearchStore(t)
 	seedRuntimeSearchIndex(t, store.Root, "gte-small", 384)
 	writeReadyQdrantPointer(t, store)

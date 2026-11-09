@@ -13,6 +13,7 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/runtimequeue"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestSearchWithRuntimeKeywordBypassesSemanticRuntime(t *testing.T) {
@@ -253,7 +254,7 @@ func TestSearchWithRuntimeHybridStaleIndexDoesNotOpenProvider(t *testing.T) {
 }
 
 func TestSearchWithRuntimeDaemonRoutingSharesProviderAcrossConcurrentCalls(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := newRuntimeSearchStore(t)
 	seedRuntimeSearchIndex(t, store.Root, "gte-small", 384)
 	openCount := 0

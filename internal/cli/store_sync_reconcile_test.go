@@ -10,6 +10,7 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/runtimequeue"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 // A Doc that arrives through store sync is recorded in local history and
@@ -17,7 +18,7 @@ import (
 func TestSyncedDocIsReconciledAndQueuedForIndexing(t *testing.T) {
 	runtimequeue.SetTestBypass(true)
 	defer runtimequeue.SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	ctx := context.Background()
 
 	// The file as another machine wrote it.

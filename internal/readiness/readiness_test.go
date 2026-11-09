@@ -11,6 +11,7 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestLSPStatusFromRuntimeIncludesRuntimeFields(t *testing.T) {
@@ -196,7 +197,7 @@ func writeReadinessQdrantPointer(t *testing.T, storeRoot string) {
 
 func newReadinessStore(t *testing.T, name string) *storage.Store {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init(name); err != nil {
 		t.Fatal(err)
@@ -300,7 +301,7 @@ func TestBuildSearchSQLiteLegacyFallback(t *testing.T) {
 }
 
 func TestBuildReadinessIncludesDecisionCountsAndCapabilities(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init("readiness-decisions"); err != nil {
 		t.Fatal(err)

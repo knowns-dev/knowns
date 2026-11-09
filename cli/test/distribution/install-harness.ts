@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { homeEnv } from "../helpers/process-env.ts";
 
 export const INSTALL_SH = resolve(import.meta.dir, "../../../install/install.sh");
 export const INSTALL_PS1 = resolve(import.meta.dir, "../../../install/install.ps1");
@@ -100,7 +101,7 @@ export function runInstall(opts: {
     sys,
   ];
   const env: Record<string, string> = {
-    HOME: opts.sandbox.home,
+    ...homeEnv(opts.sandbox.home),
     PATH: pathParts.join(":"),
     TMPDIR: tmpdir(),
     KNOWNS_BASE_URL: opts.baseUrl,

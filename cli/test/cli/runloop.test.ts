@@ -9,6 +9,7 @@ import { defineCommand } from "../../src/cli/core/define.ts";
 import { exitCode, exitError, SilentExit } from "../../src/cli/core/exit.ts";
 import { renderSuccess } from "../../src/cli/core/plainoutput.ts";
 import { shouldCheckForUpdate, shouldSkipCLIWarnings } from "../../src/cli/core/root.ts";
+import { homeEnv } from "../helpers/process-env.ts";
 import { hasGoBin, runGo, runTs, sandbox } from "./oracle.ts";
 
 const t = test.skipIf(!hasGoBin);
@@ -389,7 +390,7 @@ describe("lazy loading", () => {
     const code = await execute(["provider", "list"], {
       io,
       loaders,
-      env: { HOME: sandbox, NO_UPDATE_CHECK: "1", CI: "1" },
+      env: { ...homeEnv(sandbox), NO_UPDATE_CHECK: "1", CI: "1" },
       cwd: sandbox,
       skipConfigWarning: true,
     });

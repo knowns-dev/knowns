@@ -10,6 +10,7 @@ import (
 	"github.com/howznguyen/knowns/internal/runtimequeue"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestSortServiceStatusesRunningFirst(t *testing.T) {
@@ -40,7 +41,7 @@ func TestSortServiceStatusesRunningFirst(t *testing.T) {
 }
 
 func TestDetectEmbeddingReportsRuntimeDisabled(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	t.Setenv("KNOWNS_SEMANTIC_RUNTIME_DISABLED", "1")
 	search.DefaultSemanticRuntime().Close()
 	t.Cleanup(search.DefaultSemanticRuntime().Close)
@@ -60,7 +61,7 @@ func TestDetectEmbeddingReportsRuntimeDisabled(t *testing.T) {
 }
 
 func TestDetectEmbeddingReportsUnloadedRuntimeWithoutAPIProbe(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	search.DefaultSemanticRuntime().Close()
 	t.Cleanup(search.DefaultSemanticRuntime().Close)
 	store := newStatusSemanticStore(t)
@@ -85,7 +86,7 @@ func TestDetectEmbeddingReportsUnloadedRuntimeWithoutAPIProbe(t *testing.T) {
 }
 
 func TestDetectEmbeddingReportsLoadedRuntimeConsumers(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	search.DefaultSemanticRuntime().Close()
 	t.Cleanup(search.DefaultSemanticRuntime().Close)
 	store := newStatusSemanticStore(t)
@@ -113,7 +114,7 @@ func TestDetectEmbeddingReportsLoadedRuntimeConsumers(t *testing.T) {
 }
 
 func TestDetectEmbeddingReportsSemanticJobDegradedState(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	runtimequeue.SetTestBypass(true)
 	t.Cleanup(func() { runtimequeue.SetTestBypass(false) })
 	search.DefaultSemanticRuntime().Close()
@@ -142,7 +143,7 @@ func TestDetectEmbeddingReportsSemanticJobDegradedState(t *testing.T) {
 }
 
 func TestDetectEmbeddingIgnoresRecoveredSemanticJobFailures(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	runtimequeue.SetTestBypass(true)
 	t.Cleanup(func() { runtimequeue.SetTestBypass(false) })
 	search.DefaultSemanticRuntime().Close()

@@ -18,6 +18,7 @@ import (
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/services"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestSearchChecksReportUnavailableModelAndEmptyIndex(t *testing.T) {
@@ -800,7 +801,7 @@ func newDoctorStore(t *testing.T) *storage.Store {
 	// ~/.knowns/settings.json when the project leaves semantic search unset.
 	// A developer whose global defaults enable it would otherwise see a
 	// "disabled" fixture probe their real managed Qdrant.
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init("doctor-local-test"); err != nil {
 		t.Fatalf("Init() error = %v", err)

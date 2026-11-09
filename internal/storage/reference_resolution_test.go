@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestStoreResolveRawReference(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 
 	root := filepath.Join(t.TempDir(), ".knowns")
 	store := NewStore(root)

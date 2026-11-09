@@ -15,6 +15,7 @@ import { Store } from "../../src/storage/core/index.ts";
 import { ConfigStore, projectToGo } from "../../src/storage/stores/config-store.ts";
 import { Registry } from "../../src/storage/stores/registry.ts";
 import { fixtureRoot, readFixture } from "../helpers/fixtures.ts";
+import { setProcessHome } from "../helpers/process-env.ts";
 import { goCli, hasGoCli, runGo } from "./cfg-go.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "knowns-cfg-"));
@@ -145,8 +146,7 @@ describe("Store.init config", () => {
 describe("store-linked project split (D13)", () => {
   test("personal and machine settings leave config.json and are overlaid on load", () => {
     const home = fresh();
-    const oldHome = process.env.HOME;
-    process.env.HOME = home;
+    const restoreHome = setProcessHome(home);
     try {
       const repo = fresh();
       const kn = join(home, ".knowns", "stores", "team", "proj");
@@ -180,7 +180,7 @@ describe("store-linked project split (D13)", () => {
       expect(regFile[0].machine).toEqual({ serverPort: 7777 });
       expect(existsSync(join(home, ".knowns", "registry.json"))).toBe(true);
     } finally {
-      process.env.HOME = oldHome;
+      restoreHome();
     }
   });
 });

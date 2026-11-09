@@ -8,6 +8,7 @@ import { buildSearchEnvironment, searchRuntimeHooks } from "../../../src/domain/
 import { searchWithRuntime } from "../../../src/search/index.ts";
 import { createStorage } from "../../../src/storage/adapters.ts";
 import { Store } from "../../../src/storage/core/store.ts";
+import { setProcessHome } from "../../helpers/process-env.ts";
 import { dispose, hasGoBin, makeFixtureProject } from "./search-harness.ts";
 import { expectParity } from "./search-parity.ts";
 
@@ -56,16 +57,14 @@ describe("buildSearchEnvironment", () => {
 
   test("opens the global semantic store once, under the machine root", () => {
     const { p } = open();
-    const saved = process.env.HOME;
-    process.env.HOME = p.home;
+    const restoreHome = setProcessHome(p.home);
     try {
       const env = buildSearchEnvironment();
       const a = env.globalStorage?.();
       expect(a?.store.root).toBe(join(p.home, ".knowns", "global"));
       expect(env.globalStorage?.()).toBe(a);
     } finally {
-      if (saved === undefined) delete process.env.HOME;
-      else process.env.HOME = saved;
+      restoreHome();
     }
   });
 

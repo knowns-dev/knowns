@@ -11,12 +11,13 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 // Search is discovery: an archived Task is still findable when the caller asks
 // for history, and stays out of the default result set.
 func TestSearchRouteIncludeHistorical(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init("search-archived"); err != nil {
 		t.Fatalf("init store: %v", err)

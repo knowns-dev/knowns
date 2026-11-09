@@ -13,6 +13,7 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/qdrantruntime"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 	"github.com/spf13/cobra"
 )
 
@@ -172,7 +173,7 @@ func TestQdrantLogsCommandTailsManagedLog(t *testing.T) {
 }
 
 func TestQdrantManagerFromStoreResolvesExternalURL(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("qdrant-test"); err != nil {

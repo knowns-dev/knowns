@@ -8,6 +8,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 	"github.com/spf13/cobra"
 )
 
@@ -29,7 +30,7 @@ func newTaskCreateTestCommand() *cobra.Command {
 }
 
 func TestRunTaskCreateUsesDefaultAndCustomPrefixes(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectDir := t.TempDir()
 	root := filepath.Join(projectDir, ".knowns")
 	store := storage.NewStore(root)
@@ -110,7 +111,7 @@ func TestRunTaskCreateUsesDefaultAndCustomPrefixes(t *testing.T) {
 // Renamed from a test that asserted bare six-character IDs. Generation now
 // always adds a prefix; IDs written before this keep resolving unchanged.
 func TestRunTaskCreateDerivesAPrefixWithoutConfiguration(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectDir := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectDir, ".knowns"))
 	if err := store.Init("task-legacy-cli"); err != nil {

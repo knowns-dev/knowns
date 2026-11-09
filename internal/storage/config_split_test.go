@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/howznguyen/knowns/internal/registry"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func readTeamConfig(t *testing.T, store *Store) map[string]any {
@@ -122,7 +123,7 @@ func TestTwoMachinesKeepTheirOwnAssignee(t *testing.T) {
 		t.Fatal("setting a personal value on machine B must not change the synced team file")
 	}
 
-	t.Setenv("HOME", homeA)
+	testutil.SetHome(t, homeA)
 	pA, _ = storeA.Config.Load()
 	if pA.Settings.DefaultAssignee != "@alice" {
 		t.Fatalf("machine A assignee = %q, want @alice", pA.Settings.DefaultAssignee)

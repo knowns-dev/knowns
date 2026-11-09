@@ -11,6 +11,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 	"github.com/spf13/cobra"
 )
 
@@ -151,7 +152,7 @@ func TestRunMemoryCleanupPlain(t *testing.T) {
 
 func setupMemoryCleanupCLIProject(t *testing.T) string {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("memory-cleanup-cli-test"); err != nil {
@@ -183,7 +184,7 @@ func setupMemoryCleanupCLIProject(t *testing.T) string {
 
 func setupEmptyMemoryCLIProject(t *testing.T) string {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("memory-cli-test"); err != nil {

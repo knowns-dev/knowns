@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestNewIDIsUniqueAcrossConcurrentCalls(t *testing.T) {
@@ -42,6 +44,7 @@ func TestNewIDIsUniqueAcrossConcurrentCalls(t *testing.T) {
 
 func TestGlobalRootHonorsHOMEOverride(t *testing.T) {
 	home := t.TempDir()
+	// HOME and USERPROFILE differ on purpose: HOME must win.
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", t.TempDir())
 
@@ -69,7 +72,7 @@ func TestIsGoTestBinaryRecognizesWindowsExe(t *testing.T) {
 func TestEnqueueCoalescesDuplicateJobs(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	storeRoot := filepath.Join(t.TempDir(), ".knowns")
 
 	job1, err := Enqueue(storeRoot, JobIndexTask, "abc")
@@ -98,7 +101,7 @@ func TestEnqueueCoalescesDuplicateJobs(t *testing.T) {
 func TestEnqueueRequiresExplicitAPIForReindex(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	storeRoot := filepath.Join(t.TempDir(), ".knowns")
 
 	if _, err := Enqueue(storeRoot, JobReindex, storeRoot); err == nil {
@@ -120,7 +123,7 @@ func TestEnqueueRequiresExplicitAPIForReindex(t *testing.T) {
 func TestQdrantIntentFailurePersistsAcrossReloadAndRetry(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	root := filepath.Join(t.TempDir(), ".knowns")
 	job, err := EnqueueQdrantIntent(root, QdrantIntent{EntityType: "task", EntityID: "retry", Revision: 3, Operation: "update", CanonicalHash: "hash"})
 	if err != nil {
@@ -162,7 +165,7 @@ func TestQdrantIntentFailurePersistsAcrossReloadAndRetry(t *testing.T) {
 func TestQdrantIntentRunningSuccessorSurvivesOlderCompletion(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	root := filepath.Join(t.TempDir(), ".knowns")
 	first, err := EnqueueQdrantIntent(root, QdrantIntent{EntityType: "doc", EntityID: "doc-1", Revision: 1, Operation: "update", Path: "docs/a.md"})
 	if err != nil {
@@ -194,7 +197,7 @@ func TestQdrantIntentRunningSuccessorSurvivesOlderCompletion(t *testing.T) {
 func TestAcquireClientTracksIndependentLeases(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	storeRoot := filepath.Join(t.TempDir(), ".knowns")
 
 	first, err := AcquireClient("mcp", storeRoot, false)
@@ -415,7 +418,7 @@ func TestWatchLifecycleDoesNotOverlapCanceledGenerationOnReacquire(t *testing.T)
 func TestWatchLifecycleHeartbeatExpiryPreservesQueuedWorkAndReload(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	current := time.Date(2026, 8, 14, 7, 0, 0, 0, time.UTC)
 	storeRoot := filepath.Join(t.TempDir(), ".knowns")
 	job, err := EnqueueReindex(storeRoot)
@@ -475,7 +478,7 @@ func TestWatchLifecycleHeartbeatExpiryPreservesQueuedWorkAndReload(t *testing.T)
 
 func TestWatchEnabledForClientUsesProjectConfiguration(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	projectRoot := filepath.Join(t.TempDir(), ".knowns")
 	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
 		t.Fatal(err)
@@ -497,7 +500,7 @@ func TestWatchEnabledForClientUsesProjectConfiguration(t *testing.T) {
 }
 
 func TestActiveLeasesDropsExpiredWatchLease(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	if err := os.MkdirAll(leaseDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -531,7 +534,7 @@ func TestActiveLeasesDropsExpiredWatchLease(t *testing.T) {
 func TestRunDaemonStopsAfterIdle(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	t.Setenv("KNOWNS_RUNTIME_IDLE_TIMEOUT_MS", "100")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -551,7 +554,7 @@ func TestRunDaemonStopsAfterIdle(t *testing.T) {
 func TestRequestReloadPersistsRequest(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 
 	request, err := RequestReload()
 	if err != nil {
@@ -578,7 +581,7 @@ func TestRequestReloadPersistsRequest(t *testing.T) {
 func TestWaitForReloadIgnoresStaleAcknowledgement(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 
 	if err := writeJSON(reloadStatusPath(), ReloadStatus{
 		RequestID:   "old-request",
@@ -596,7 +599,7 @@ func TestWaitForReloadIgnoresStaleAcknowledgement(t *testing.T) {
 func TestRunDaemonProcessesReloadAtSafePoint(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	t.Setenv("KNOWNS_RUNTIME_IDLE_TIMEOUT_MS", "2000")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -653,7 +656,7 @@ func TestRunDaemonProcessesReloadAtSafePoint(t *testing.T) {
 func TestRunDaemonDefersReloadWhileJobIsRunning(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	t.Setenv("KNOWNS_RUNTIME_IDLE_TIMEOUT_MS", "2000")
 	storeRoot := filepath.Join(t.TempDir(), ".knowns")
 	if _, err := EnqueueReindex(storeRoot); err != nil {
@@ -718,7 +721,7 @@ func TestRunDaemonDefersReloadWhileJobIsRunning(t *testing.T) {
 func TestLoadJobSnapshotFindsQueuedAndCompletedJobs(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	storeRoot := filepath.Join(t.TempDir(), ".knowns")
 
 	job, err := EnqueueReindex(storeRoot)
@@ -759,7 +762,7 @@ func TestLoadJobSnapshotFindsQueuedAndCompletedJobs(t *testing.T) {
 func TestLoadJobSnapshotMissingJob(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	storeRoot := filepath.Join(t.TempDir(), ".knowns")
 
 	snapshot, err := LoadJobSnapshot(storeRoot, "missing-job")
@@ -774,7 +777,7 @@ func TestLoadJobSnapshotMissingJob(t *testing.T) {
 func TestWaitForJobReturnsCompletedSnapshotResult(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	storeRoot := filepath.Join(t.TempDir(), ".knowns")
 
 	job, err := EnqueueReindex(storeRoot)
@@ -801,7 +804,7 @@ func TestWaitForJobReturnsCompletedSnapshotResult(t *testing.T) {
 func TestRunDaemonStaysAliveWhileKeepAliveAndRunsServices(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	t.Setenv("KNOWNS_RUNTIME_IDLE_TIMEOUT_MS", "100")
 	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
 	defer cancel()

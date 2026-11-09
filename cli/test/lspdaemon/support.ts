@@ -5,20 +5,11 @@ import { join } from "node:path";
 import type { Ctx } from "../../src/lsp/context.ts";
 import type { LanguageRuntimeStatus, Session } from "../../src/lsp/types.ts";
 import type { DaemonManager } from "../../src/lspdaemon/server.ts";
+import { setProcessHome } from "../helpers/process-env.ts";
 
-/** Isolates HOME for the test file; returns a restore function. */
+/** Isolates the user home (HOME and USERPROFILE) for the test file; returns a restore function. */
 export function isolateHome(): () => void {
-  const prev = process.env.HOME;
-  const prevProfile = process.env.USERPROFILE;
-  const home = realpathSync(mkdtempSync(join(tmpdir(), "lspd-home-")));
-  process.env.HOME = home;
-  process.env.USERPROFILE = home;
-  return () => {
-    if (prev === undefined) delete process.env.HOME;
-    else process.env.HOME = prev;
-    if (prevProfile === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = prevProfile;
-  };
+  return setProcessHome(realpathSync(mkdtempSync(join(tmpdir(), "lspd-home-"))));
 }
 
 export function tempProject(): string {

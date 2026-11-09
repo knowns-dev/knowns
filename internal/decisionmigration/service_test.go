@@ -13,6 +13,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestPreviewIsDeterministicClassifiedAndReadOnly(t *testing.T) {
@@ -379,7 +380,7 @@ func TestRollbackRejectsPostMigrationMemoryDrift(t *testing.T) {
 
 func setupMigrationStore(t *testing.T) *storage.Store {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	root := filepath.Join(t.TempDir(), ".knowns")
 	store := storage.NewStore(root)
 	if err := store.Init("decision-migration-test"); err != nil {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/howznguyen/knowns/internal/registry"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func requireGit(t *testing.T) {
@@ -26,7 +27,7 @@ func requireGit(t *testing.T) {
 func isolateGit(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	return home

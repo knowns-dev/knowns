@@ -7,13 +7,14 @@ import (
 	"testing"
 
 	"github.com/howznguyen/knowns/internal/registry"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 // A repository linked to a store that still carries an un-migrated .knowns/
 // resolves to the store, and the command warns naming the ignored directory.
 func TestCommandsUseStoreAndWarnAboutIgnoredInRepoKnowns(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	code := filepath.Join(home, "work", "shop-api")
 	if err := os.MkdirAll(filepath.Join(code, ".knowns"), 0o755); err != nil {
 		t.Fatal(err)

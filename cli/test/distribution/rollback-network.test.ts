@@ -3,6 +3,7 @@
 // install goes into a temp npm prefix / temp HOME; nothing global is touched.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { homeEnv } from "../helpers/process-env.ts";
 import { INSTALL_SH, makeSandbox, run, tempDir } from "./install-harness.ts";
 
 const enabled = process.env.KNOWNS_NETWORK_TESTS === "1" && process.platform !== "win32";
@@ -26,7 +27,7 @@ describe.skipIf(!enabled)("AC2 (network): 0.34.x still resolves the Go build", (
   test("install.sh with KNOWNS_VERSION=0.34.1 installs the Go release asset", () => {
     const sb = makeSandbox();
     const r = run(["sh", INSTALL_SH], {
-      HOME: sb.home,
+      ...homeEnv(sb.home),
       PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
       TMPDIR: tempDir("tmp"),
       KNOWNS_VERSION: "0.34.1",
@@ -35,7 +36,7 @@ describe.skipIf(!enabled)("AC2 (network): 0.34.x still resolves the Go build", (
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("Version:  v0.34.1");
     const v = run([join(sb.home, ".knowns", "bin", "knowns"), "--version"], {
-      HOME: sb.home,
+      ...homeEnv(sb.home),
       NO_UPDATE_CHECK: "1",
     });
     expect(v.stdout).toBe("knowns version 0.34.1\n");

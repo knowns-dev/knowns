@@ -12,6 +12,7 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/registry"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func requireGit(t *testing.T) {
@@ -44,7 +45,7 @@ func storeFixture(t *testing.T) (string, string) {
 	t.Helper()
 	requireGit(t)
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 
 	remote := filepath.Join(home, "remotes", "team-knowledge.git")

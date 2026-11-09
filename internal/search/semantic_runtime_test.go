@@ -14,6 +14,7 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/runtimequeue"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 type countingEmbedder struct {
@@ -166,7 +167,7 @@ func TestSemanticRuntimeConcurrentSessionsOpenSingleProvider(t *testing.T) {
 }
 
 func TestSemanticRuntimeCacheKeySeparatesDimensions(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	// Two distinct model names, not one model name with two Dimensions
 	// overrides: under provider: ollama, dimensions are a property of the
 	// registered model (looked up by name), not a per-project override, so
@@ -206,7 +207,7 @@ func TestSemanticRuntimeCacheKeySeparatesDimensions(t *testing.T) {
 
 func TestSemanticRuntimeCacheKeySeparatesAPIProviderSettings(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	store := newSemanticRuntimeTestStoreWithProvider(t, "api-model", 384, "api")
 	saveEmbeddingSettings(t, "first-key")
 	openCount := 0
@@ -241,7 +242,7 @@ func TestSemanticRuntimeCacheKeySeparatesAPIProviderSettings(t *testing.T) {
 
 func TestSemanticRuntimeOllamaProviderUsesRuntimeConfig(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	store := newSemanticRuntimeTestStoreWithProvider(t, "api-model", 384, "ollama")
 	saveEmbeddingSettings(t, "ollama-key")
 	openCount := 0
@@ -298,7 +299,7 @@ func TestSemanticRuntimeDisabledByEnv(t *testing.T) {
 }
 
 func TestObservedSemanticRuntimeStatusUsesPersistedSnapshot(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	writeCurrentRuntimePIDForTest(t)
 	store := newSemanticRuntimeTestStore(t, "gte-small", 384)
 	rt := NewSemanticRuntime(SemanticRuntimeOptions{
@@ -339,7 +340,7 @@ func TestObservedSemanticRuntimeStatusUsesPersistedSnapshot(t *testing.T) {
 }
 
 func TestObservedSemanticRuntimeStatusIgnoresSnapshotWhenDaemonStopped(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := newSemanticRuntimeTestStore(t, "gte-small", 384)
 	rt := NewSemanticRuntime(SemanticRuntimeOptions{
 		IdleTimeout: time.Hour,
@@ -443,7 +444,7 @@ func TestSemanticRuntimeDoesNotUnloadActiveSession(t *testing.T) {
 }
 
 func TestReloadDefaultSemanticRuntimeClosesCacheAndPersistsMetadata(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := newSemanticRuntimeTestStore(t, "gte-small", 384)
 	closeCount := 0
 	rt := NewSemanticRuntime(SemanticRuntimeOptions{
@@ -519,8 +520,7 @@ func newSemanticRuntimeTestStoreWithProvider(t *testing.T, model string, dimensi
 		// settings store never reads it.
 		if !strings.HasPrefix(os.Getenv("HOME"), os.TempDir()) {
 			home := t.TempDir()
-			t.Setenv("HOME", home)
-			t.Setenv("USERPROFILE", home)
+			testutil.SetHome(t, home)
 		} else if os.Getenv("USERPROFILE") != os.Getenv("HOME") {
 			t.Setenv("USERPROFILE", os.Getenv("HOME"))
 		}

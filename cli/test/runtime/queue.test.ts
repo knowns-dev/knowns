@@ -5,19 +5,20 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as q from "../../src/runtime/queue.ts";
+import { setProcessHome } from "../helpers/process-env.ts";
 
 const home = mkdtempSync(join(tmpdir(), "knowns-queue-"));
 const root = join(home, "proj", ".knowns");
-const saved = { HOME: process.env.HOME, INLINE: process.env.KNOWNS_RUNTIME_INLINE };
+const saved = { INLINE: process.env.KNOWNS_RUNTIME_INLINE };
+let restoreHome: () => void = () => {};
 
 beforeAll(() => {
-  process.env.HOME = home;
+  restoreHome = setProcessHome(home);
   process.env.KNOWNS_RUNTIME_INLINE = "1";
   mkdirSync(root, { recursive: true });
 });
 afterAll(() => {
-  if (saved.HOME === undefined) delete process.env.HOME;
-  else process.env.HOME = saved.HOME;
+  restoreHome();
   if (saved.INLINE === undefined) delete process.env.KNOWNS_RUNTIME_INLINE;
   else process.env.KNOWNS_RUNTIME_INLINE = saved.INLINE;
   rmSync(home, { recursive: true, force: true });
