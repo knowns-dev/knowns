@@ -3,7 +3,7 @@ id: doc-7c0dbdd40f8c36d3f72dc2c758d3e55b
 title: knowns-typescript-rewrite
 description: Specification for rewriting Knowns from Go back to TypeScript on Bun
 createdAt: '2026-11-02T19:05:28.224Z'
-updatedAt: '2026-11-09T07:10:40.390Z'
+updatedAt: '2026-11-09T10:19:20.783Z'
 tags:
   - spec
   - draft
@@ -31,11 +31,11 @@ Predecessor: @doc/specs/knowns-go-rewrite (the opposite migration, 2026-03).
 - D7: `knowns reconcile preview` and `knowns reconcile apply` are removed. `knowns reconcile restore` stays. The automatic reconciler (watcher, history, tombstones, restore) is ported and follows @decision/20260912-1650-a-briefly-missing-file-is-not-a-deletion.
 - D8: `knowns import` (list, add, remove, status, sync) is removed. Content already present in `.knowns/imports/` stays readable and searchable; `knowns doctor` reports that import management was removed. The web server keeps the read endpoints of `/api/imports` and drops add, remove and sync; the UI hides those actions (decided 2026-11-06, @task-TSR-0MM0QC).
 - D9: Direct switch with no beta channel: the TypeScript build becomes the stable release.
-- D10: The TypeScript build ships as v1.0.0. The last Go release (0.34.x) stays installable via `npm i knowns@0.34` and `install.sh --version 0.34.x`. The TypeScript build never writes `.knowns/` data that 0.34.x cannot read.
-- D11: Release gate for v1.0.0: the Go e2e suite passes with `TEST_BINARY` pointed at the TypeScript binary on all 6 platforms; OS regression tests (FR-9) pass; UI Playwright e2e passes; and the maintainer has used the TypeScript build on this repository for at least 2 consecutive weeks with no data-loss bug.
+- D10: The TypeScript build ships as v0.35.0. The last Go release (0.34.x) stays installable via `npm i knowns@0.34` and `install.sh --version 0.34.x`. The TypeScript build never writes `.knowns/` data that 0.34.x cannot read. Revised 2026-11-09: the version was v1.0.0. It is v0.35.0 so the first TypeScript release still reads as pre-1.0 while it may carry bugs, and it sorts above 0.34.1 so `knowns update`, the update notice, doctor and `npm update` move Go users onto it (0.9.0 would sort below 0.34.1 and strand them). v1.0.0 follows once 0.35.x is stable.
+- D11: Release gate for v0.35.0: the Go e2e suite passes with `TEST_BINARY` pointed at the TypeScript binary on all 6 platforms; OS regression tests (FR-9) pass; UI Playwright e2e passes; and the maintainer has used the TypeScript build on this repository for at least 2 consecutive weeks with no data-loss bug.
 - D12: The TypeScript build may differ from 0.34.1 only to fix unsafe behavior, a data-integrity hole or a false success report in 0.34.1. Each divergence is listed under Approved Divergences with its task and a test that fails without the fix, keeps 0.34.1's output and exit code wherever the fix allows, and never breaks D10. Added 2026-11-06.
-- D13: v1.0.0 adds contributor PR #156 (tasks by assignee) on top of 0.34.1: `knowns task list --unassigned`, the `knowns task assignees` command (task counts per assignee, broken down by status, taking the same filters as `task list`, with `--plain` and `--json`), the MCP `tasks` list parameter `unassigned`, assignee filters in the CLI and MCP that compare trimmed values (a whitespace-only assignee counts as unassigned), and filtering and grouping by assignee on the UI Tasks page. A Go binary built from the PR head (2b3f88d) is the oracle for these behaviors. The PR is not merged into the Go code (D2). Added 2026-11-07.
-- D14: v1.0.0 adds `knowns qdrant setup` per @doc/specs/2026-11-07/qdrant-setup-wizard: a wizard that detects an answering Qdrant, the managed artifact and Docker and picks by that priority, a Docker branch that runs and manages container `knowns-qdrant` on loopback, a per-machine endpoint file outranking project config (never written into `.knowns/`, so D10 holds), the `knowns init` wizard hook, warnings that point at `knowns qdrant setup`, and a pinned managed artifact for `windows/amd64`. Go 0.34.1 is not changed (D2). Added 2026-11-07.
+- D13: v0.35.0 adds contributor PR #156 (tasks by assignee) on top of 0.34.1: `knowns task list --unassigned`, the `knowns task assignees` command (task counts per assignee, broken down by status, taking the same filters as `task list`, with `--plain` and `--json`), the MCP `tasks` list parameter `unassigned`, assignee filters in the CLI and MCP that compare trimmed values (a whitespace-only assignee counts as unassigned), and filtering and grouping by assignee on the UI Tasks page. A Go binary built from the PR head (2b3f88d) is the oracle for these behaviors. The PR is not merged into the Go code (D2). Added 2026-11-07.
+- D14: v0.35.0 adds `knowns qdrant setup` per @doc/specs/2026-11-07/qdrant-setup-wizard: a wizard that detects an answering Qdrant, the managed artifact and Docker and picks by that priority, a Docker branch that runs and manages container `knowns-qdrant` on loopback, a per-machine endpoint file outranking project config (never written into `.knowns/`, so D10 holds), the `knowns init` wizard hook, warnings that point at `knowns qdrant setup`, and a pinned managed artifact for `windows/amd64`. Go 0.34.1 is not changed (D2). Added 2026-11-07.
 
 ## Approved Divergences
 
@@ -64,7 +64,7 @@ Each item differs from 0.34.1 under D12. Where only a side effect differs, outpu
 
 - Impact: draft new
 - Decision: @decision/20261103-1709-knowns-runtime-is-typescript-compiled-with-bun
-- Acceptance gate: the decision becomes accepted only when AC-1 through AC-6 pass and the v1.0.0 release gate (D11) is met. Until then Go remains the shipped runtime.
+- Acceptance gate: the decision becomes accepted only when AC-1 through AC-6 pass and the v0.35.0 release gate (D11) is met. Until then Go remains the shipped runtime.
 
 ## Requirements
 
@@ -100,33 +100,33 @@ Each item differs from 0.34.1 under D12. Where only a side effect differs, outpu
 - [ ] AC-6: An existing 0.34.1 project, including one with `.knowns/imports/` content and Qdrant-indexed semantic search, works under the TypeScript build with no migration step; imported content appears in `search`.
 - [ ] AC-7: `knowns import` and `knowns reconcile preview|apply` print a removal message and exit non-zero; `knowns reconcile restore` works as in 0.34.1.
 - [ ] AC-8: The maintainer has used the TypeScript build on this repository for at least 14 consecutive days with no data-loss bug, recorded in the release task.
-- [ ] AC-9: v1.0.0 is published to npm and the install scripts; `npm i knowns@0.34` and `install.sh --version 0.34.x` still install the Go build.
+- [ ] AC-9: v0.35.0 is published to npm and the install scripts; `npm i knowns@0.34` and `install.sh --version 0.34.x` still install the Go build.
 
 ## Scenarios
 
 ### Scenario 1: Upgrade an existing project
 **Given** a project last used with knowns 0.34.1, with tasks, docs, memory, history, and a Qdrant semantic index
-**When** the user installs v1.0.0 and runs `knowns task list --plain`, `knowns search "<query>" --plain`, and `knowns mcp`
+**When** the user installs v0.35.0 and runs `knowns task list --plain`, `knowns search "<query>" --plain`, and `knowns mcp`
 **Then** output matches 0.34.1, semantic results come from the existing index, and no migration is required
 
 ### Scenario 2: Roll back after a bad release
-**Given** a project modified by v1.0.0
+**Given** a project modified by v0.35.0
 **When** the user installs 0.34.x and runs `knowns validate`
-**Then** validation passes and every entity written by v1.0.0 is readable
+**Then** validation passes and every entity written by v0.35.0 is readable
 
 ### Scenario 3: Project with imported packages
 **Given** a project with content in `.knowns/imports/`
-**When** the user runs `knowns search` and `knowns import sync` on v1.0.0
+**When** the user runs `knowns search` and `knowns import sync` on v0.35.0
 **Then** search returns imported content, and `import sync` prints the removal message and exits non-zero
 
 ### Scenario 4: Git stash removes files briefly
-**Given** a project on v1.0.0 with the watcher running
+**Given** a project on v0.35.0 with the watcher running
 **When** `git stash -u` removes untracked docs and `git stash pop` restores them byte-identical
 **Then** reconciliation records a restore and later writes to those docs succeed
 
 ### Scenario 5: Windows install
 **Given** a Windows machine where PowerShell writes UTF-8 with BOM
-**When** the user installs v1.0.0 with `install.ps1` and later runs `knowns update`
+**When** the user installs v0.35.0 with `install.ps1` and later runs `knowns update`
 **Then** install metadata is read without error (regression of #155) and the binary is linked onto PATH
 
 ### Scenario 6: Ollama unavailable
@@ -160,12 +160,12 @@ Execution order; wave 1 runs in parallel, wave 2 blocks everything after it.
 - @task-TSR-XSEKND - Port code intelligence: LSP manager, daemon and adapters
 - @task-TSR-2P6ZDV - Port setup, sync, doctor, update, migrate and interactive TUI
 - @task-TSR-8WCHX1 - Handle removed import command and keep imported content readable
-- @task-TSR-Z7CRS1 - Ship v1.0.0 distribution with Go rollback path
-- @task-TSR-9VVJA6 - Pass the v1.0.0 release gate
+- @task-TSR-Z7CRS1 - Ship v0.35.0 distribution with Go rollback path
+- @task-TSR-9VVJA6 - Pass the v0.35.0 release gate
 
 ## Open Questions
 
-- [ ] After the switch the Go e2e suite still needs the Go toolchain in CI. Keep it in Go, or port it to TypeScript after v1.0.0?
+- [ ] After the switch the Go e2e suite still needs the Go toolchain in CI. Keep it in Go, or port it to TypeScript after v0.35.0?
 - [ ] D2 freezes Go for many months. Is there a maximum freeze length after which the plan is re-evaluated?
 - [ ] Which TUI library replaces bubbletea, and does the interactive `settings` and `init` wizard need pixel-identical rendering or only equivalent behavior?
 

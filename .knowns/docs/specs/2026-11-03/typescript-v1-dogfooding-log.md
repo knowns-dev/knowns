@@ -3,14 +3,14 @@ id: doc-cf43bc1b2def706508a1fe44daf93c3f
 title: TypeScript v1 dogfooding log
 description: Daily log for the 14-day maintainer dogfooding of the TypeScript build on this repository (TSR-9VVJA6 AC3, spec D11)
 createdAt: '2026-11-06T06:01:59.325Z'
-updatedAt: '2026-11-06T16:23:42.799Z'
+updatedAt: '2026-11-09T10:19:28.968Z'
 tags:
   - dogfood,release-gate,typescript-rewrite
 ---
 
 ## Purpose
 
-D11 requires the maintainer to use the TypeScript build on this repository for at least 14 consecutive days with no data-loss bug before v1.0.0 ships. This log is the evidence for @task-TSR-9VVJA6 AC3. Spec: @doc/specs/2026-11-03/knowns-typescript-rewrite
+D11 requires the maintainer to use the TypeScript build on this repository for at least 14 consecutive days with no data-loss bug before v0.35.0 ships. This log is the evidence for @task-TSR-9VVJA6 AC3. Spec: @doc/specs/2026-11-03/knowns-typescript-rewrite
 
 ## Setup
 

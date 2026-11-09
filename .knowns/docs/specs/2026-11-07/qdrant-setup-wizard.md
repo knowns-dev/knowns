@@ -3,7 +3,7 @@ id: doc-044e9a2c85a806614c9f015ee4c90fc4
 title: Qdrant Setup Wizard
 description: 'Specification for knowns qdrant setup: auto-detect and set up a Qdrant backend (existing, managed, Docker), plus the Windows x64 managed artifact'
 createdAt: '2026-11-07T06:23:09.819Z'
-updatedAt: '2026-11-07T09:33:27.340Z'
+updatedAt: '2026-11-09T10:19:38.822Z'
 tags:
   - spec
   - approved
@@ -15,14 +15,14 @@ Semantic search needs a Qdrant endpoint. Knowns 0.34.1 only offers managed Qdran
 
 This spec adds `knowns qdrant setup`, a wizard that detects what the machine can run and picks the best Qdrant backend on its own, asking only when there is a real choice or a side effect. It also adds the pinned Windows x64 managed artifact, so most Windows users never need the wizard's Docker branch.
 
-Scope: the TypeScript build only (v1.0.0). It is recorded as a v1.0.0 addition in @doc/specs/2026-11-03/knowns-typescript-rewrite, the way D13 records PR #156. Go 0.34.1 stays frozen.
+Scope: the TypeScript build only (v0.35.0). It is recorded as a v0.35.0 addition in @doc/specs/2026-11-03/knowns-typescript-rewrite, the way D13 records PR #156. Go 0.34.1 stays frozen.
 
 ## Locked Decisions
 
 - D1: The wizard detects first and chooses by priority, asking only when more than one option is valid or an option has side effects. Priority: (1) a Qdrant already answering at `KNOWNS_QDRANT_URL` or `127.0.0.1:6333` with a compatible version: write config only, install nothing; (2) managed, when the platform has a pinned artifact; (3) Docker, when `docker` exists and its daemon answers; (4) nothing usable: report keyword-only search with guidance to install Docker or point at an endpoint. `--yes` or no TTY (CI) takes the first valid option without asking.
 - D2: The Docker branch runs and manages the container itself. After one confirmation (skipped by `--yes`) it runs the pinned image `qdrant/qdrant:v1.14.1` as container `knowns-qdrant` with a named volume, publishes only `127.0.0.1:6333`, sets `--restart unless-stopped`, waits for `/healthz` and then records the endpoint. `knowns qdrant status`, `start` and `stop` recognize and act on that container.
 - D3: Entry points: the explicit `knowns qdrant setup` command, and the `knowns init` wizard when it enables semantic search. When init finds managed it stays lazy (D10 of @doc/specs/2026-08-13/qdrant-default-vector-backend: nothing is downloaded at init). `knowns init --no-wizard` asks nothing. Warnings from sync, reindex and search that today say "configure an external Qdrant endpoint" point at `knowns qdrant setup` instead.
-- D4: TypeScript v1.0.0 only, recorded as a v1.0.0 addition (D14) in @doc/specs/2026-11-03/knowns-typescript-rewrite. Go 0.34.1 is not changed.
+- D4: TypeScript v0.35.0 only, recorded as a v0.35.0 addition (D14) in @doc/specs/2026-11-03/knowns-typescript-rewrite. Go 0.34.1 is not changed.
 - D5: The managed installer gains a pinned `windows/amd64` artifact: `qdrant-x86_64-pc-windows-msvc.zip` from the Qdrant v1.14.1 release (the asset exists, checked 2026-11-07), with its SHA256 taken from the downloaded file. Install, start and index are verified on a real Windows x64 machine.
 - D6: The wizard's choice is stored per machine, never in the project. A machine file under the managed Qdrant root (for example `~/.knowns/runtime/qdrant/endpoint.json`) records the endpoint, its source (`existing`, `docker`) and whether Knowns owns a Docker container. Resolution order becomes env > machine file > project config > global settings > defaults. `.knowns/config.json` is never changed by the wizard, so teammates on other platforms keep managed, and the rewrite spec's D10 holds. Go 0.34.x ignores the machine file.
 
