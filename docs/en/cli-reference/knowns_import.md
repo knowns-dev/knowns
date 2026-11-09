@@ -1,6 +1,18 @@
 # knowns import
 
-Manage imported Knowns packages
+Removed (imported content stays readable)
+
+The import command and its subcommands (list, add, remove, status, sync) were removed.
+
+Content already present in .knowns/imports/ stays readable and searchable through
+'knowns doc', 'knowns template' and 'knowns search'. There is no further management
+of imports: nothing adds, updates or removes them.
+
+## Usage
+
+```
+knowns import
+```
 
 ## Inherited flags
 
@@ -13,11 +25,11 @@ Manage imported Knowns packages
 
 ## Subcommands
 
-- [`knowns import add`](knowns_import_add.md) — Add an import source
-- [`knowns import list`](knowns_import_list.md) — List all imported packages
-- [`knowns import remove`](knowns_import_remove.md) — Remove an imported package
-- [`knowns import status`](knowns_import_status.md) — Show import status
-- [`knowns import sync`](knowns_import_sync.md) — Sync all imported packages
+- [`knowns import add`](knowns_import_add.md) — Add an import source (removed)
+- [`knowns import list`](knowns_import_list.md) — List imports (removed)
+- [`knowns import remove`](knowns_import_remove.md) — Remove an import (removed)
+- [`knowns import status`](knowns_import_status.md) — Show import status (removed)
+- [`knowns import sync`](knowns_import_sync.md) — Sync imports (removed)
 
 ## See also
 

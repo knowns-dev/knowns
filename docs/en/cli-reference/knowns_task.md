@@ -35,6 +35,7 @@ knowns task [id]
 ## Subcommands
 
 - [`knowns task archive`](knowns_task_archive.md) — Archive a task
+- [`knowns task assignees`](knowns_task_assignees.md) — Count tasks per assignee
 - [`knowns task batch-archive`](knowns_task_batch-archive.md) — Preview or execute a batch archive
 - [`knowns task batch-unarchive`](knowns_task_batch-unarchive.md) — Preview or execute a batch unarchive
 - [`knowns task create`](knowns_task_create.md) — Create a new task

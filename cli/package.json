@@ -11,7 +11,9 @@
     "build": "bun scripts/build.ts",
     "budget": "bun scripts/budget.ts",
     "fixtures": "bun scripts/gen-fixtures.ts",
-    "fixtures:verify": "bun scripts/gen-fixtures.ts --verify"
+    "fixtures:verify": "bun scripts/gen-fixtures.ts --verify",
+    "cli-docs": "bun scripts/gen-cli-docs.ts",
+    "cli-docs:check": "bun scripts/gen-cli-docs.ts --check && bun scripts/gen-cli-docs.ts --lint"
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",

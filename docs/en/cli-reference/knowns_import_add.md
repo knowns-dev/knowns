@@ -1,10 +1,12 @@
 # knowns import add
 
-Add an import source
+Add an import source (removed)
 
-Add a Knowns package import. The source can be:
-  - A local path: ./path/to/package
-  - An npm package: @scope/package or package-name
+The import command and its subcommands (list, add, remove, status, sync) were removed.
+
+Content already present in .knowns/imports/ stays readable and searchable through
+'knowns doc', 'knowns template' and 'knowns search'. There is no further management
+of imports: nothing adds, updates or removes them.
 
 ## Usage
 
@@ -23,7 +25,7 @@ knowns import add <source>
 
 ## See also
 
-- [`knowns import`](knowns_import.md) — Manage imported Knowns packages
+- [`knowns import`](knowns_import.md) — Removed (imported content stays readable)
 
 ---
 

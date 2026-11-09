@@ -54,7 +54,8 @@ constrains it. Resolution is what makes the store a graph rather than a folder.
 cmd/knowns/main.go        Entry point; calls internal/cli.Execute
 internal/                 All application code (30 packages, 34 with subpackages)
 ui/                       React 19 + Vite web UI, embedded into the binary
-tools/gendocs/            Generates and verifies the CLI reference
+cli/scripts/gen-cli-docs.ts  Generates and verifies the CLI reference (TS tree)
+tools/gendocs/            The Go generator it replaced; unused, goes with the Go code
 docs/                     Hand-written docs (en, vi) plus the generated reference
 tests/                    CLI and MCP end-to-end tests
 ```

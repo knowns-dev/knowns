@@ -244,17 +244,19 @@ test-ui-report: all
 	cd ui && bun exec playwright show-report
 
 # Regenerate everything derived from the command tree: the human CLI reference
-# and the contract snapshot that also covers hidden, machine-facing commands.
+# (from the TypeScript command tree) and the Go contract snapshot that also
+# covers hidden, machine-facing commands.
 cli-docs:
-	go run ./tools/gendocs
+	cd cli && bun scripts/gen-cli-docs.ts
 	go test ./internal/cli -run TestCommandContract -update-contract
 
 # Fail if the committed CLI reference drifted from the command tree, or if a
 # hand-written doc shows a command or flag the binary does not have. The
-# contract snapshot is checked by `go test ./...`, so CI needs only this.
+# contract snapshot is checked by `go test ./...`, so CI needs only this, and
+# it needs no Go toolchain.
 cli-docs-check:
-	go run ./tools/gendocs --check
-	go run ./tools/gendocs --lint
+	cd cli && bun scripts/gen-cli-docs.ts --check
+	cd cli && bun scripts/gen-cli-docs.ts --lint
 
 # Run linter
 lint:

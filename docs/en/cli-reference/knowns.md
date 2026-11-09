@@ -28,7 +28,7 @@ knowns [options] [command]
 - [`knowns doc`](knowns_doc.md) — Manage documentation
 - [`knowns doctor`](knowns_doctor.md) — Diagnose project and local integration health
 - [`knowns eval`](knowns_eval.md) — Evaluate deterministic quality gates
-- [`knowns import`](knowns_import.md) — Manage imported Knowns packages
+- [`knowns import`](knowns_import.md) — Removed (imported content stays readable)
 - [`knowns init`](knowns_init.md) — Initialize a new Knowns project
 - [`knowns lsp`](knowns_lsp.md) — Manage LSP language servers
 - [`knowns mcp`](knowns_mcp.md) — Start the MCP (Model Context Protocol) server

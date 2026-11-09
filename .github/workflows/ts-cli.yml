@@ -3,10 +3,10 @@ name: TS CLI
 on:
   push:
     branches: [feat/typescript-rewrite]
-    paths: ['cli/**', 'ui/**', 'npm/**', 'install/**', 'scripts/**', '.github/workflows/ts-cli.yml', 'internal/**', 'cmd/**']
+    paths: ['cli/**', 'ui/**', 'npm/**', 'install/**', 'scripts/**', '.github/workflows/ts-cli.yml', 'internal/**', 'cmd/**', 'docs/**', '*.md']
   pull_request:
     branches: [feat/typescript-rewrite]
-    paths: ['cli/**', 'ui/**', 'npm/**', 'install/**', 'scripts/**', '.github/workflows/ts-cli.yml', 'internal/**', 'cmd/**']
+    paths: ['cli/**', 'ui/**', 'npm/**', 'install/**', 'scripts/**', '.github/workflows/ts-cli.yml', 'internal/**', 'cmd/**', 'docs/**', '*.md']
   workflow_dispatch:
 
 concurrency:
@@ -67,6 +67,14 @@ jobs:
         run: bun scripts/gen-instructions.ts --check
       - name: Check (typecheck + lint)
         run: bun run check
+      # The CLI reference is generated from the TS command tree (scripts/gen-cli-docs.ts). Linux
+      # only: the output is identical across platforms.
+      - name: Check CLI reference matches the command tree
+        if: runner.os == 'Linux'
+        run: bun scripts/gen-cli-docs.ts --check
+      - name: Check docs only use commands that exist
+        if: runner.os == 'Linux'
+        run: bun scripts/gen-cli-docs.ts --lint
       - name: Unit tests
         run: bun run test
       # The compiled-binary tests compare against the Go 0.34.1 oracle (and unbuilt source reports
