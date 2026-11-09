@@ -28,6 +28,44 @@ describe("install.ps1 (static)", () => {
   });
 });
 
+// TSR-SCTJSW (contributor PR #157): Windows PowerShell 5.1's `Set-Content -Encoding UTF8` writes a
+// BOM, and 0.34.x `knowns update` could not parse install.json then (issue #155).
+const metadataWrite = src
+  .split(/\r?\n/)
+  .find((l) => l.includes('"install.json"') && /Set-Content|WriteAllText|Out-File/.test(l));
+
+describe("install.ps1 install.json encoding", () => {
+  test("install.json is written as UTF-8 without a BOM", () => {
+    expect(metadataWrite).toBeDefined();
+    expect(metadataWrite).not.toContain("-Encoding UTF8");
+    expect(metadataWrite).toContain("New-Object System.Text.UTF8Encoding $false");
+  });
+
+  // Runs only the metadata write, in Windows PowerShell 5.1 (the shell `irm | iex` users get):
+  // the full script would also edit the persistent user PATH.
+  const winps = process.platform === "win32" ? Bun.which("powershell") : null;
+  test.skipIf(!winps)("Windows PowerShell 5.1 writes it without a BOM", () => {
+    const home = tempDir("ps1-meta");
+    const script = [
+      `$KnownsHome = '${home.replaceAll("'", "''")}'`,
+      `$metadata = @{ method = "script"; version = "1.0.0" }`,
+      (metadataWrite as string).trim(),
+    ].join("\n");
+    const r = run([
+      winps as string,
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      script,
+    ]);
+    expect(r.stderr).toBe("");
+    const bytes = readFileSync(join(home, "install.json"));
+    expect([...bytes.subarray(0, 3)]).not.toEqual([0xef, 0xbb, 0xbf]);
+    expect(JSON.parse(bytes.toString("utf8")).version).toBe("1.0.0");
+  });
+});
+
 describe.skipIf(!runExecuted)("install.ps1 (executed)", () => {
   test("installs knowns.exe and kn.exe from a local HTTP mirror into a temp profile", async () => {
     const profile = makeSandbox().home;

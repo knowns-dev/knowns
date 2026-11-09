@@ -430,11 +430,55 @@ function writeJSON(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o755 });
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, `${goJson(value, { indent: 2 })}\n`, { mode: 0o644 });
-  renameSync(tmp, path);
+  renameOverFile(tmp, path);
 }
 
 function readJSONFile(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8"));
+}
+
+// --- Windows busy files (TSR-5EEY7V, from contributor PR #157) ----------------------------------
+// Readers such as loadQueue take no lock. On Windows a rename over a file another process has
+// open fails until it closes it, and the rename that replaces a file briefly refuses new handles,
+// so both sides retry a transient failure for a bounded time.
+
+/** How long a rename or read waits out another handle on Windows, and the delay between tries. */
+const WINDOWS_FILE_BUSY_TIMEOUT_MS = 2000;
+const WINDOWS_FILE_BUSY_RETRY_DELAY_MS = 5;
+
+/**
+ * ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION, as libuv reports them
+ * (EPERM, EBUSY; EACCES for some access-denied paths), and only on Windows.
+ */
+export function isWindowsFileBusy(err: unknown, platform: string = process.platform): boolean {
+  if (platform !== "win32") return false;
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  return code === "EPERM" || code === "EBUSY" || code === "EACCES";
+}
+
+function retryWhileBusy<T>(op: () => T): T {
+  const deadline = Date.now() + WINDOWS_FILE_BUSY_TIMEOUT_MS;
+  for (;;) {
+    try {
+      return op();
+    } catch (err) {
+      if (!isWindowsFileBusy(err) || Date.now() > deadline) throw err;
+      sleepSync(WINDOWS_FILE_BUSY_RETRY_DELAY_MS);
+    }
+  }
+}
+
+function renameOverFile(tmp: string, path: string): void {
+  retryWhileBusy(() => renameSync(tmp, path));
+}
+
+/** readFileSync(path, "utf8") for a file writeJSON replaces. */
+function readFileRetrying(path: string): string {
+  return retryWhileBusy(() => readFileSync(path, "utf8"));
+}
+
+function readJSONRetrying(path: string): unknown {
+  return JSON.parse(readFileRetrying(path));
 }
 
 // --- locking (O_EXCL lock files, like Go) -------------------------------------------------------
@@ -467,7 +511,7 @@ function acquireLock(path: string, timeoutMs: number): () => void {
 export function loadQueue(storeRoot: string): QueueState {
   let data: string;
   try {
-    data = readFileSync(queuePath(storeRoot), "utf8");
+    data = readFileRetrying(queuePath(storeRoot));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return { jobs: [], recent: [] };
     throw err;
@@ -536,7 +580,7 @@ function pruneDeadLetters(storeRoot: string, state: QueueState, now: number): vo
 export function registeredProjects(): string[] {
   let data: string;
   try {
-    data = readFileSync(projectsRegistryPath(), "utf8");
+    data = readFileRetrying(projectsRegistryPath());
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;
@@ -593,7 +637,7 @@ function registerProject(storeRoot: string): void {
 
 function runningDaemonVersion(): string {
   try {
-    const persisted = readJSONFile(statusPath()) as { version?: string };
+    const persisted = readJSONRetrying(statusPath()) as { version?: string };
     return persisted.version ?? "";
   } catch {
     return "";
@@ -631,7 +675,7 @@ export function requestReload(): ReloadRequest {
 }
 
 export function loadReloadStatus(): ReloadStatus {
-  return readJSONFile(reloadStatusPath()) as ReloadStatus;
+  return readJSONRetrying(reloadStatusPath()) as ReloadStatus;
 }
 
 export async function waitForReload(requestId: string, timeoutMs: number): Promise<ReloadStatus> {
@@ -656,7 +700,7 @@ export async function waitForReload(requestId: string, timeoutMs: number): Promi
 function pendingReload(): ReloadRequest | undefined {
   let data: string;
   try {
-    data = readFileSync(reloadRequestPath(), "utf8");
+    data = readFileRetrying(reloadRequestPath());
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw err;
@@ -1250,7 +1294,7 @@ export function activeLeases(): Lease[] {
     let lease: Lease;
     try {
       if (statSync(path).isDirectory()) continue;
-      lease = readJSONFile(path) as Lease;
+      lease = readJSONRetrying(path) as Lease;
     } catch {
       continue;
     }
@@ -1280,7 +1324,7 @@ export function loadStatus(): Status {
     status.pid = pid;
   }
   try {
-    const persisted = readJSONFile(statusPath()) as {
+    const persisted = readJSONRetrying(statusPath()) as {
       version?: string;
       startedAt?: string | null;
       watchers?: WatcherStatus[];
