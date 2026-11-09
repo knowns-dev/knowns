@@ -3,7 +3,7 @@ id: doc-7c0dbdd40f8c36d3f72dc2c758d3e55b
 title: knowns-typescript-rewrite
 description: Specification for rewriting Knowns from Go back to TypeScript on Bun
 createdAt: '2026-11-02T19:05:28.224Z'
-updatedAt: '2026-11-07T06:46:52.578Z'
+updatedAt: '2026-11-09T07:10:40.390Z'
 tags:
   - spec
   - draft
@@ -58,6 +58,7 @@ Each item differs from 0.34.1 under D12. Where only a side effect differs, outpu
 - `knowns update` verifies the downloaded archive against the `<asset>.sha256` published next to it, and refuses a mismatching, missing or malformed checksum without touching the current binary. 0.34.1 installed whatever the download returned. Successful updates print exactly what 0.34.1 prints. (@task-TSR-CRAT15)
 - `knowns update` extracts the release into a directory of its own and installs only a binary found there. 0.34.1 extracted next to the downloaded `knowns-<platform>.tar.gz`, which its `knowns-*` matcher also accepts, so the archive itself could be installed as the binary while it reported "Upgrade complete." (@task-TSR-CRAT15)
 - Runtime queue on Windows: a rename over the queue, status, reload or registry file, and a read of one, retries for up to 2 s while another process holds the file open (access denied, sharing or lock violation). 0.34.1 failed the queue update or the reader, so a job could be lost or a CLI could fail while the daemon was writing. Same change as contributor PR #157. (@task-TSR-5EEY7V)
+- Full reindex stamps entity watermarks that have no manifest entry, from their own canonical fields. 0.34.1 stamped only manifest entries, so a store used only through the CLI kept every watermark stale after a reindex that reported success, and semantic search stayed on keyword. (@task-TSR-6T3JVM)
 
 ## System Decision Impact
 

@@ -265,9 +265,22 @@ export function stampWatermarksFromGeneration(
   at: string,
 ): number {
   if (indexedSourceIds.size === 0) return 0;
-  const entries = readManifestEntries(storeRoot);
-  if (!entries) return 0;
   const values = loadWatermarks(storeRoot);
+  // The manifest is absent in a store used only through the CLI. Readiness still tracks those
+  // entities through their watermarks, so a watermark with no manifest entry is stamped from its
+  // own canonical fields (TSR-6T3JVM; Go 0.34.1 skips them and leaves them stale).
+  const entries: Record<string, ManifestEntry> = { ...(readManifestEntries(storeRoot) ?? {}) };
+  for (const [key, wm] of Object.entries(values)) {
+    if (key in entries || wm.removed || wm.pendingRemoval) continue;
+    if (!wm.entityType || !wm.entityId || !wm.canonicalHash) continue;
+    entries[key] = {
+      entityType: wm.entityType,
+      entityId: wm.entityId,
+      path: wm.path ?? "",
+      hash: wm.canonicalHash,
+      revision: wm.revision ?? 0,
+    };
+  }
   let stamped = 0;
   for (const [key, entry] of Object.entries(entries)) {
     if (!indexedSourceIds.has(sourceIdForManifestEntry(entry))) continue;
