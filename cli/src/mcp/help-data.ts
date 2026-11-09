@@ -55,6 +55,7 @@ export const TASK_ACTION_PARAMS: Record<string, Record<string, string>> = {
     status: "filter by task status",
     priority: "filter by low | medium | high",
     assignee: "filter by assignee",
+    unassigned: "only Tasks with no assignee; not with assignee",
     label: "filter by one label",
     spec: "filter by linked spec doc path",
     includeHistorical: "include archived Tasks in the result",

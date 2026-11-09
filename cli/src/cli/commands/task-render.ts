@@ -1,6 +1,8 @@
 // Renderers for `task` output (the helpers at the bottom of internal/cli/task.go).
 import type { Task } from "../../models/task.ts";
 import type { TaskVersion, TaskVersionHistory } from "../../models/version.ts";
+import { goTrimSpace } from "../../storage/core/util.ts";
+import { compareBytes } from "../../storage/stores/go-shape.ts";
 import { formatDuration } from "../core/helpers.ts";
 import { type MarkdownBodyRenderer, passthroughMarkdown, terminalWidth } from "../core/markdown.ts";
 import {
@@ -104,7 +106,7 @@ export function sortTasksForList(tasks: Task[]): Task[] {
 const plainAssignee = (t: Task): string => (t.assignee ? t.assignee : "-");
 export const pluralTasks = (n: number): string => (n === 1 ? "task" : "tasks");
 
-function plainStatusSummary(tasks: Task[]): string {
+export function plainStatusSummary(tasks: Task[]): string {
   const counts = new Map<string, number>();
   for (const t of tasks) counts.set(t.status, (counts.get(t.status) ?? 0) + 1);
   const statuses = [...counts.keys()].sort((a, b) => taskStatusListRank(a) - taskStatusListRank(b));
@@ -300,6 +302,115 @@ export function renderTaskTable(tasks: Task[], width: number = terminalWidth()):
   if (tasks.length > 0) {
     b += `\n${pad}${StyleDim.render(`Total: ${tasks.length} ${pluralTasks(tasks.length)} (${plainStatusSummary(tasks)})`)}\n`;
   }
+  return b;
+}
+
+// --- assignees (D13, PR #156 internal/cli/task_assignees.go) --------------------------------------
+
+/**
+ * One assignee's share of the filtered tasks. The unassigned bucket has an empty `assignee` and
+ * `unassigned` set, so a consumer never has to guess whether "" is a name.
+ */
+export interface AssigneeBucket {
+  assignee: string;
+  unassigned: boolean;
+  total: number;
+  byStatus: Map<string, number>;
+  tasks: Task[];
+}
+
+/**
+ * bucketTasksByAssignee: tasks grouped by trimmed assignee (whitespace-only joins the unassigned
+ * bucket), largest bucket first, ties by name (Go byte order), the unassigned bucket last.
+ */
+export function bucketTasksByAssignee(tasks: Task[]): AssigneeBucket[] {
+  const byName = new Map<string, AssigneeBucket>();
+  for (const t of tasks) {
+    const name = goTrimSpace(t.assignee ?? "");
+    let b = byName.get(name);
+    if (!b) {
+      b = { assignee: name, unassigned: name === "", total: 0, byStatus: new Map(), tasks: [] };
+      byName.set(name, b);
+    }
+    b.total++;
+    b.byStatus.set(t.status, (b.byStatus.get(t.status) ?? 0) + 1);
+    b.tasks.push(t);
+  }
+  return [...byName.values()].sort((l, r) => {
+    if (l.unassigned !== r.unassigned) return l.unassigned ? 1 : -1;
+    if (l.total !== r.total) return r.total - l.total;
+    return compareBytes(l.assignee, r.assignee);
+  });
+}
+
+/** The JSON form: struct field order, `unassigned` omitted when false, byStatus keys sorted. */
+export function assigneeBucketsToWire(buckets: AssigneeBucket[]): unknown[] {
+  return buckets.map((b) => {
+    const byStatus: Record<string, number> = {};
+    for (const k of [...b.byStatus.keys()].sort(compareBytes))
+      byStatus[k] = b.byStatus.get(k) as number;
+    return {
+      assignee: b.assignee,
+      ...(b.unassigned ? { unassigned: true } : {}),
+      total: b.total,
+      byStatus,
+    };
+  });
+}
+
+/** The unassigned bucket prints as "-", as the list does. */
+const bucketLabel = (b: AssigneeBucket): string => (b.unassigned ? "-" : b.assignee);
+
+export function sprintAssigneesPlain(buckets: AssigneeBucket[], total: number): string {
+  let nameW = 0;
+  let totalW = 0;
+  for (const bk of buckets) {
+    nameW = Math.max(nameW, stringWidth(bucketLabel(bk)));
+    totalW = Math.max(totalW, String(bk.total).length);
+  }
+  let b = "";
+  for (const bk of buckets) {
+    b += `${padRight(bucketLabel(bk), nameW)}  ${String(bk.total).padStart(totalW)}  (${plainStatusSummary(bk.tasks)})\n`;
+  }
+  b += `\nTotal: ${total} ${pluralTasks(total)}\n`;
+  return b;
+}
+
+/** Each "N status" part of plainStatusSummary in its status colour, so both views keep one order. */
+function styledStatusSummary(tasks: Task[]): string {
+  return plainStatusSummary(tasks)
+    .split(", ")
+    .map((part) => {
+      const sp = part.indexOf(" ");
+      return sp < 0 ? part : statusStyle(part.slice(sp + 1)).render(part);
+    })
+    .join(", ");
+}
+
+export function renderAssigneesTable(buckets: AssigneeBucket[], total: number): string {
+  const indent = 2;
+  const gap = 2;
+  let nameW = "ASSIGNEE".length;
+  const totalW = "TASKS".length;
+  let statusW = "STATUS".length;
+  for (const bk of buckets) {
+    nameW = Math.max(nameW, stringWidth(bucketLabel(bk)));
+    statusW = Math.max(statusW, stringWidth(plainStatusSummary(bk.tasks)));
+  }
+  const sep = " ".repeat(gap);
+  const pad = " ".repeat(indent);
+  let b = `${pad}${[
+    StyleBold.render(padRight("ASSIGNEE", nameW)),
+    StyleBold.render(padRight("TASKS", totalW)),
+    StyleBold.render("STATUS"),
+  ].join(sep)}\n`;
+  b += `${pad}${renderSeparator(nameW + totalW + statusW + gap * 2)}\n`;
+  for (const bk of buckets) {
+    let name = padRight(bucketLabel(bk), nameW);
+    if (bk.unassigned) name = StyleDim.render(name);
+    b += `${pad}${[name, padRight(String(bk.total), totalW), styledStatusSummary(bk.tasks)].join(sep)}\n`;
+  }
+  b += `\n${pad}${StyleDim.render(`Total: ${total} ${pluralTasks(total)}`)}\n`;
   return b;
 }
 

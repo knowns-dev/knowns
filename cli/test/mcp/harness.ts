@@ -34,6 +34,8 @@ export interface SessionOptions {
   env?: Record<string, string>;
   /** Extra CLI arguments after `mcp --stdio`. */
   args?: string[];
+  /** Overrides the binary (for example a Go build of a contributor PR a spec decision adopts). */
+  bin?: string;
 }
 
 function command(side: Side): string[] {
@@ -69,7 +71,8 @@ export class McpSession {
       KNOWNS_LSP_DAEMON: "0",
       ...opts.env,
     };
-    this.proc = Bun.spawn([...command(side), "mcp", "--stdio", ...(opts.args ?? [])], {
+    const cmd = opts.bin ? [opts.bin] : command(side);
+    this.proc = Bun.spawn([...cmd, "mcp", "--stdio", ...(opts.args ?? [])], {
       cwd: opts.cwd,
       env,
       stdin: "pipe",
@@ -299,7 +302,7 @@ export interface DiffResult {
 export async function runDiff(
   fixture: string | undefined,
   steps: Step[],
-  opts: { env?: Record<string, string>; setup?: (dir: string) => void } = {},
+  opts: { env?: Record<string, string>; setup?: (dir: string) => void; goBin?: string } = {},
 ): Promise<{
   results: DiffResult[];
   go: Sandbox;
@@ -312,7 +315,12 @@ export async function runDiff(
   const ts = makeSandbox(fixture);
   opts.setup?.(go.dir);
   opts.setup?.(ts.dir);
-  const goS = new McpSession("go", { cwd: go.dir, home: go.home, env: opts.env ?? {} });
+  const goS = new McpSession("go", {
+    cwd: go.dir,
+    home: go.home,
+    env: opts.env ?? {},
+    ...(opts.goBin ? { bin: opts.goBin } : {}),
+  });
   const tsS = new McpSession("ts", { cwd: ts.dir, home: ts.home, env: opts.env ?? {} });
   const mask = new Mask({ go: go.dir, ts: ts.dir }, { go: go.home, ts: ts.home });
   const caps: Record<Side, Record<string, string>> = { go: {}, ts: {} };

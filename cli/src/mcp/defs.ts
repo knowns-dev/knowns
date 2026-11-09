@@ -59,7 +59,7 @@ export const tasksTool = (): Tool =>
 - get: Read task details. Required: taskId. Optional: none. Returns: task metadata, acceptance criteria, plan, notes, spec links, and time spent.
 - update: Modify task fields, ACs, plan, or notes. Required: taskId. Optional: title, description, status, priority, assignee, labels, spec, fulfills, order, addAc, checkAc, uncheckAc, removeAc, plan, notes, appendNotes, clear, return. Returns: compact summary by default; use return=full for the legacy task payload.
 - delete: Remove a task or preview removal. Required: taskId. Optional: dryRun (default true). Returns: deletion preview or confirmation.
-- list: List tasks with filters. Required: none. Optional: status, priority, assignee, label, spec, includeHistorical. Returns: matching task summaries with IDs, titles, statuses, priorities, assignees, labels, and spec links.
+- list: List tasks with filters. Required: none. Optional: status, priority, assignee, unassigned, label, spec, includeHistorical. Returns: matching task summaries with IDs, titles, statuses, priorities, assignees, labels, and spec links.
 - history: View task change history. Required: taskId. Optional: none. Returns: chronological change entries with timestamps and metadata.
 - board: Show tasks grouped by status. Required: none. Optional: none. Returns: board columns containing task summaries by status.
 - archive/unarchive: Preview by default; set execute=true to mutate. Required: taskId.
@@ -123,6 +123,7 @@ export const tasksTool = (): Tool =>
         { enum: MUTATION_ENUM },
       ),
       str("label", "Filter by label (list)"),
+      bool("unassigned", "Only Tasks with no assignee; cannot be combined with assignee (list)"),
       bool("includeHistorical", "Include archived Tasks in the result (list)"),
       bool("dryRun", "Preview only without deleting (default: true) (delete)"),
       strArr("ids", "Task IDs for batch lifecycle actions"),

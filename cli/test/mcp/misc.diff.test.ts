@@ -1,6 +1,7 @@
 // Go-vs-TS differential session for the remaining tools: project, validate, initial, time,
 // memory, decision, search, templates and the code tool's argument and error paths.
 import { afterAll, describe, expect, test } from "bun:test";
+import { withoutD13 } from "../helpers/d13.ts";
 import { firstDiff, hasGoBin, runDiff, type Step } from "./harness.ts";
 
 const sortById = (text: string): string => {
@@ -234,6 +235,7 @@ describe.skipIf(!hasGoBin)("remaining tools match Go", () => {
         Bun.write(`${dir}/src.txt`, "a a a\n");
       },
     });
+    for (const r of session.results) r.tsMasked = withoutD13(r.tsMasked);
     const diffs = session.results.filter((r) => r.goMasked !== r.tsMasked);
     if (diffs.length > 0) {
       console.log(

@@ -47,6 +47,19 @@ jobs:
       - name: Build UI
         working-directory: ui
         run: bun install --frozen-lockfile && bun run build
+      # Spec D13 adopts contributor PR #156 (tasks by assignee). Its behavior is diffed against a Go
+      # build of the PR head, pinned by SHA (reachable through refs/pull/156/head).
+      - name: Build PR #156 reference binary (spec D13)
+        working-directory: .
+        env:
+          PR156_SHA: 2b3f88d24864f5810c82b935138268f76560ae74
+          EXE: ${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$PR156_SHA"
+          git worktree add --detach "$RUNNER_TEMP/pr156" "$PR156_SHA"
+          cp -R ui/dist "$RUNNER_TEMP/pr156/ui/"
+          (cd "$RUNNER_TEMP/pr156" && go build -o "$RUNNER_TEMP/knowns-go-pr156$EXE" ./cmd/knowns)
+          echo "KNOWNS_GO_PR156_BIN=$RUNNER_TEMP/knowns-go-pr156$EXE" >> "$GITHUB_ENV"
       - run: bun install --frozen-lockfile
       # Before anything regenerates it: the committed embedded skills/guidelines must match what
       # Go embeds from internal/instructions, or a Go-side edit would ship stale content.

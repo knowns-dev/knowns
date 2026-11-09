@@ -2,6 +2,7 @@
 // unsupported requests, sent as raw lines to Go and TS. Responses are compared by id (tool calls
 // answer from a worker pool in Go, so arrival order is not part of the contract).
 import { describe, expect, test } from "bun:test";
+import { withoutD13 } from "../helpers/d13.ts";
 import { hasGoBin, McpSession, makeSandbox, maskPath } from "./harness.ts";
 
 const LINES: string[] = [
@@ -77,7 +78,8 @@ async function collect(side: "go" | "ts"): Promise<string[]> {
   for (const l of LINES) s.sendRaw(l);
   await Bun.sleep(1500);
   await s.close();
-  return s.lines.map((l) => maskPath(l, sb.dir, "<DIR>")).sort();
+  const lines = s.lines.map((l) => maskPath(l, sb.dir, "<DIR>"));
+  return (side === "ts" ? lines.map(withoutD13) : lines).sort();
 }
 
 describe.skipIf(!hasGoBin)("wire protocol matches Go", () => {

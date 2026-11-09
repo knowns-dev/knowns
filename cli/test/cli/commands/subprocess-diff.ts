@@ -148,6 +148,16 @@ export function runGoIn(t: Sandbox, args: string[], opts: RunOptions = {}): Prom
   return runIn([GO_BIN], t, args, opts, true);
 }
 
+/** runGoIn with another Go oracle, e.g. a build of a contributor PR that a spec decision adopts. */
+export function runOracleIn(
+  bin: string,
+  t: Sandbox,
+  args: string[],
+  opts: RunOptions = {},
+): Promise<Outcome> {
+  return runIn([bin], t, args, opts, true);
+}
+
 export function runTsIn(t: Sandbox, args: string[], opts: RunOptions = {}): Promise<Outcome> {
   return runIn([process.execPath, TS_ENTRY], t, args, opts, false);
 }

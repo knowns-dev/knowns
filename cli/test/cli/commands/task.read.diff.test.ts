@@ -1,6 +1,7 @@
 // `knowns task` read paths against the Go 0.34.1 binary: list, view, history, help, argument errors.
 // Skipped without KNOWNS_GO_BIN.
 import { beforeAll, describe, expect, test } from "bun:test";
+import { withoutD13 } from "../../helpers/d13.ts";
 import { hasGoBin, makePair, normalized, type Pair, runBoth, treesOf } from "./harness.ts";
 
 const FX = {
@@ -21,7 +22,8 @@ describe.skipIf(!hasGoBin)("task read commands match Go", () => {
   async function parity(args: string[]): Promise<void> {
     const run = await runBoth(pair, args);
     const n = normalized(pair, run);
-    expect({ args, ...n.ts }).toEqual({ args, ...n.go });
+    const ts = { ...n.ts, stdout: withoutD13(n.ts.stdout), stderr: withoutD13(n.ts.stderr) };
+    expect({ args, ...ts }).toEqual({ args, ...n.go });
   }
 
   const cases: Record<string, string[][]> = {

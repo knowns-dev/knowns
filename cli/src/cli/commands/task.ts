@@ -8,7 +8,8 @@ import {
 } from "../../domain/tasklifecycle/index.ts";
 import type { AcceptanceCriterion, Task } from "../../models/task.ts";
 import type { TaskVersionHistory } from "../../models/version.ts";
-import { arbitraryArgs, exactArgs, minimumNArgs } from "../core/args.ts";
+import { goTrimSpace } from "../../storage/core/util.ts";
+import { arbitraryArgs, exactArgs, minimumNArgs, noArgs } from "../core/args.ts";
 import { type CommandContext, defineCommand, type FlagSpec } from "../core/define.ts";
 import { goQuote } from "../core/gofmt.ts";
 import { splitCSV } from "../core/helpers.ts";
@@ -27,6 +28,9 @@ import {
   runCLILifecycle,
 } from "./task-lifecycle.ts";
 import {
+  assigneeBucketsToWire,
+  bucketTasksByAssignee,
+  renderAssigneesTable,
   renderPlainFullTaskHistory,
   renderPlainTaskHistory,
   renderTaskDetailed,
@@ -34,6 +38,7 @@ import {
   renderTaskTable,
   renderTaskTree,
   sortTasksForList,
+  sprintAssigneesPlain,
   sprintTaskListPlain,
   sprintTaskPlain,
   sprintTaskTreePlain,
@@ -167,14 +172,37 @@ async function runTaskCreate(ctx: CommandContext): Promise<void> {
 
 // --- task list -------------------------------------------------------------------------------
 
-async function runTaskList(ctx: CommandContext): Promise<void> {
+/** The filters listFilteredTasks reads, declared on every command that filters through it. */
+const TASK_LIST_FILTER_FLAGS: FlagSpec[] = [
+  { type: "string", name: "status", usage: "Filter by status" },
+  { type: "string", name: "assignee", usage: "Filter by assignee" },
+  { type: "bool", name: "unassigned", usage: "Only tasks with no assignee" },
+  { type: "string", name: "priority", usage: "Filter by priority" },
+  { type: "string", name: "label", usage: "Filter by label" },
+  {
+    type: "bool",
+    name: "include-historical",
+    usage: "Include historical entities, including archived Tasks",
+  },
+];
+
+/**
+ * listFilteredTasks (D13, PR #156): the tasks the shared list filters select. `task list` and
+ * `task assignees` both read their flags through it, so a summary always counts exactly the rows
+ * the list would print for the same flags. Assignees compare trimmed, as the UI does: a
+ * whitespace-only assignee is unassigned, and " alice " is alice. The match is otherwise exact.
+ */
+async function listFilteredTasks(ctx: CommandContext): Promise<Task[]> {
   const storage = await openStorage(ctx);
   const statusFilter = ctx.flags.string("status");
-  const assigneeFilter = ctx.flags.string("assignee");
+  const assigneeFilter = goTrimSpace(ctx.flags.string("assignee"));
   const priorityFilter = ctx.flags.string("priority");
   const labelFilter = ctx.flags.string("label");
-  const treeMode = ctx.flags.bool("tree");
   const includeHistorical = ctx.flags.bool("include-historical");
+  const unassigned = ctx.flags.bool("unassigned");
+  if (unassigned && assigneeFilter !== "") {
+    throw new Error("--unassigned and --assignee cannot be used together");
+  }
 
   let tasks: Task[];
   try {
@@ -182,18 +210,22 @@ async function runTaskList(ctx: CommandContext): Promise<void> {
   } catch (e) {
     throw wrapErr("list tasks", e);
   }
+  return tasks.filter((t) => {
+    const assignee = goTrimSpace(t.assignee ?? "");
+    return !(
+      (statusFilter !== "" && t.status !== statusFilter) ||
+      (assigneeFilter !== "" && assignee !== assigneeFilter) ||
+      (unassigned && assignee !== "") ||
+      (priorityFilter !== "" && t.priority !== priorityFilter) ||
+      (labelFilter !== "" && !(t.labels ?? []).includes(labelFilter))
+    );
+  });
+}
 
-  let filtered = tasks.filter(
-    (t) =>
-      !(
-        (statusFilter !== "" && t.status !== statusFilter) ||
-        (assigneeFilter !== "" && (t.assignee ?? "") !== assigneeFilter) ||
-        (priorityFilter !== "" && t.priority !== priorityFilter) ||
-        (labelFilter !== "" && !(t.labels ?? []).includes(labelFilter))
-      ),
-  );
+async function runTaskList(ctx: CommandContext): Promise<void> {
+  const treeMode = ctx.flags.bool("tree");
   // One sort, above the fork into plain / table / JSON, so all render the same rows in order.
-  filtered = sortTasksForList(filtered);
+  const filtered = sortTasksForList(await listFilteredTasks(ctx));
 
   if (ctx.json) {
     // Go's sort returns a nil slice for an empty list, which marshals as null.
@@ -233,6 +265,23 @@ async function runTaskList(ctx: CommandContext): Promise<void> {
     if (page < totalPages) out += `Use --page ${page + 1} to see more results.\n`;
   }
   ctx.print(out);
+}
+
+// --- task assignees (D13, PR #156) -----------------------------------------------------------
+
+async function runTaskAssignees(ctx: CommandContext): Promise<void> {
+  const tasks = await listFilteredTasks(ctx);
+  const buckets = bucketTasksByAssignee(tasks);
+  if (ctx.json) {
+    ctx.printJSON(assigneeBucketsToWire(buckets));
+    return;
+  }
+  if (buckets.length === 0) {
+    ctx.print(`${StyleDim.render("No tasks found.")}\n`);
+    return;
+  }
+  if (ctx.plain) ctx.print(sprintAssigneesPlain(buckets, tasks.length));
+  else ctx.print(renderAssigneesTable(buckets, tasks.length));
 }
 
 // --- task edit -------------------------------------------------------------------------------
@@ -499,19 +548,14 @@ export default defineCommand({
   # Your own high-priority work
   knowns task list --assignee @me --priority high
 
+  # Work nobody has picked up yet
+  knowns task list --unassigned
+
   # As a parent/child tree
   knowns task list --tree`,
       flags: [
-        { type: "string", name: "status", usage: "Filter by status" },
-        { type: "string", name: "assignee", usage: "Filter by assignee" },
-        { type: "string", name: "priority", usage: "Filter by priority" },
-        { type: "string", name: "label", usage: "Filter by label" },
+        ...TASK_LIST_FILTER_FLAGS,
         { type: "bool", name: "tree", usage: "Show tasks as tree hierarchy" },
-        {
-          type: "bool",
-          name: "include-historical",
-          usage: "Include historical entities, including archived Tasks",
-        },
       ],
       run: runTaskList,
     }),
@@ -682,6 +726,27 @@ export default defineCommand({
         { type: "string", name: "revision", usage: "Load one revision detail (vN or numeric)" },
       ],
       run: runTaskHistory,
+    }),
+    defineCommand({
+      use: "assignees",
+      example: `  # Who holds how much work, by status
+  knowns task assignees
+
+  # Only what is in flight
+  knowns task assignees --status in-progress
+
+  # Parseable output for an agent
+  knowns task assignees --json`,
+      short: "Count tasks per assignee",
+      long: `Count tasks per assignee, broken down by status. Tasks with no assignee
+are counted in a final unassigned bucket. Takes the same filters as "task list".
+
+Assignees match exactly and case-sensitively after trimming spaces (@Alice is
+not @alice), "@me" is not resolved and is matched literally, and a task holds
+one assignee string, so "@a, @b" is a single bucket.`,
+      args: noArgs,
+      flags: TASK_LIST_FILTER_FLAGS,
+      run: runTaskAssignees,
     }),
   ],
 });

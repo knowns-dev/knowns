@@ -350,10 +350,16 @@ async function list(state: McpState, req: CallToolRequest): Promise<CallToolResu
   const args = argsOf(req);
   const [statusFilter] = stringArg(args, "status");
   const [priorityFilter] = stringArg(args, "priority");
-  const [assigneeFilter] = stringArg(args, "assignee");
+  const [rawAssignee] = stringArg(args, "assignee");
+  const assigneeFilter = goTrimSpace(rawAssignee);
   const [labelFilter] = stringArg(args, "label");
   const [specFilter] = stringArg(args, "spec");
+  const unassigned = boolArg(args, "unassigned");
   const includeHistorical = boolArg(args, "includeHistorical");
+  // D13 (PR #156).
+  if (unassigned && assigneeFilter !== "") {
+    return errorResult("unassigned and assignee cannot be used together");
+  }
   const { storage } = project;
   let tasks: Task[];
   try {
@@ -363,16 +369,18 @@ async function list(state: McpState, req: CallToolRequest): Promise<CallToolResu
   }
   // Go: ListActive returns a nil slice when there are none (JSON null); ListAll never does.
   const nilSource = !includeHistorical && tasks.length === 0;
-  const filtered = tasks.filter(
-    (t) =>
-      !(
-        (statusFilter !== "" && t.status !== statusFilter) ||
-        (priorityFilter !== "" && t.priority !== priorityFilter) ||
-        (assigneeFilter !== "" && (t.assignee ?? "") !== assigneeFilter) ||
-        (labelFilter !== "" && !(t.labels ?? []).includes(labelFilter)) ||
-        (specFilter !== "" && (t.spec ?? "") !== specFilter)
-      ),
-  );
+  const filtered = tasks.filter((t) => {
+    // Trimmed like the CLI and UI: a whitespace-only assignee is unassigned (D13).
+    const assignee = goTrimSpace(t.assignee ?? "");
+    return !(
+      (statusFilter !== "" && t.status !== statusFilter) ||
+      (priorityFilter !== "" && t.priority !== priorityFilter) ||
+      (assigneeFilter !== "" && assignee !== assigneeFilter) ||
+      (unassigned && assignee !== "") ||
+      (labelFilter !== "" && !(t.labels ?? []).includes(labelFilter)) ||
+      (specFilter !== "" && (t.spec ?? "") !== specFilter)
+    );
+  });
   if (filtered.length === 0) {
     return textResult(
       marshalIndent(

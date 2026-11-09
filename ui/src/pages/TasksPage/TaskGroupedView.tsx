@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Plus, ClipboardList } from "lucide-react";
-import type { Task } from "@/models/task";
+import type { Task } from "@/ui/models/task";
 import { ScrollArea } from "@/ui/components/ui/ScrollArea";
 import {
 	Select,
@@ -14,6 +14,7 @@ import { StatusBadge, PriorityBadge, LabelList } from "@/ui/components/molecules
 import { useConfig } from "@/ui/contexts/ConfigContext";
 import { getStatusLabel, buildStatusOptions } from "@/ui/utils/colors";
 import { TaskLifecycleBadge } from "@/ui/components/molecules/TaskLifecycleBadge";
+import { assigneeLabel, groupTasksByAssignee } from "./assignees";
 
 interface TaskGroupedViewProps {
 	tasks: Task[];
@@ -23,6 +24,7 @@ interface TaskGroupedViewProps {
 
 export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedViewProps) {
 	const { config } = useConfig();
+	const [groupBy, setGroupBy] = useState<"status" | "assignee">("status");
 	const [statusFilter, setStatusFilter] = useState<string>("all");
 	const [parentFilter, setParentFilter] = useState<string>("all");
 	const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
@@ -59,17 +61,13 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 		}
 		// Group filtered tasks
 		for (const task of filteredTasks) {
-			if (groups[task.status]) {
-				groups[task.status].push(task);
-			} else {
-				// Handle tasks with unknown status (not in config)
-				groups[task.status] = [task];
-			}
+			// Tasks with a status not in config get their own group
+			(groups[task.status] ??= []).push(task);
 		}
 		// Sort by priority within each group
 		const priorityOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
-		for (const status in groups) {
-			groups[status].sort((a, b) => {
+		for (const statusTasks of Object.values(groups)) {
+			statusTasks.sort((a, b) => {
 				const diff = (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2);
 				if (diff !== 0) return diff;
 				return String(a.id ?? "").localeCompare(String(b.id ?? ""), undefined, { numeric: true });
@@ -78,11 +76,39 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 		return groups;
 	}, [availableStatuses, filteredTasks]);
 
+	// By person, each keeping the status-then-priority order of the status groups.
+	const sections = useMemo(() => {
+		if (groupBy === "assignee") {
+			const prioritized = Object.values(groupedTasks).flat();
+			return groupTasksByAssignee(prioritized).map((group) => ({
+				key: group.key,
+				label: assigneeLabel(group.key),
+				tasks: group.tasks,
+			}));
+		}
+		return Object.entries(groupedTasks).map(([status, statusTasks]) => ({
+			key: status,
+			label: getStatusLabel(status),
+			tasks: statusTasks,
+		}));
+	}, [groupBy, groupedTasks]);
+
 	return (
 		<div className="h-full flex flex-col">
 			{/* Toolbar */}
 			<div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-4 mb-6">
 				<div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+					{/* Group By */}
+					<Select value={groupBy} onValueChange={(value) => setGroupBy(value as typeof groupBy)}>
+						<SelectTrigger aria-label="Group by" className="w-[150px] sm:w-[170px] h-8 text-sm border-border/40">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="status">Group by Status</SelectItem>
+							<SelectItem value="assignee">Group by Assignee</SelectItem>
+						</SelectContent>
+					</Select>
+
 					{/* Status Filter */}
 					<Select value={statusFilter} onValueChange={setStatusFilter}>
 						<SelectTrigger className="w-[100px] sm:w-[130px] h-8 text-sm border-border/40">
@@ -132,13 +158,13 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 			{/* Task Groups */}
 			<ScrollArea className="flex-1">
 				<div className="space-y-8 pr-4">
-					{Object.entries(groupedTasks).map(([status, statusTasks]) => {
+					{sections.map(({ key, label, tasks: statusTasks }) => {
 						if (statusTasks.length === 0) return null;
 
 						return (
-							<div key={status}>
+							<div key={key}>
 								<h2 className="text-lg font-semibold mb-1">
-									{getStatusLabel(status)}
+									{label}
 									<span className="text-sm font-normal text-muted-foreground ml-2">{statusTasks.length}</span>
 								</h2>
 								<div className="border-t border-border/40 pt-2">

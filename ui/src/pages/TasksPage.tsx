@@ -6,6 +6,13 @@ import { Board, TaskNotionList } from "../components/organisms";
 import { TaskDetailSheet } from "../components/organisms/TaskDetail/TaskDetailSheet";
 import { TaskGroupedView } from "./TasksPage/TaskGroupedView";
 import { TaskTableView } from "./TasksPage/TaskTableView";
+import {
+	ALL_ASSIGNEES,
+	assigneeLabel,
+	filterTasksByAssignee,
+	groupTasksByAssignee,
+} from "./TasksPage/assignees";
+import { mergeTaskSubset } from "./TasksPage/mergeTasks";
 import { Button } from "../components/ui/button";
 import {
 	DropdownMenu,
@@ -97,6 +104,7 @@ export default function TasksPage({
 	}, []);
 	const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 	const [lifecycleFilter, setLifecycleFilter] = useState<"current" | "active" | "done" | "archived" | "all">("current");
+	const [assigneeFilter, setAssigneeFilter] = useState<string>(ALL_ASSIGNEES);
 	const [restoreOpen, setRestoreOpen] = useState(false);
 	const [restoreResponse, setRestoreResponse] = useState<TaskLifecycleResponse | null>(null);
 	const [restoreError, setRestoreError] = useState<string | null>(null);
@@ -157,7 +165,7 @@ export default function TasksPage({
 
 	const taskSource = historicalMode ? historicalTasks || [] : tasks;
 
-	const visibleTasks = useMemo(() => {
+	const lifecycleTasks = useMemo(() => {
 		switch (lifecycleFilter) {
 			case "active": return taskSource.filter((task) => task.lifecycleState === "active");
 			case "done": return taskSource.filter((task) => task.lifecycleState === "done");
@@ -166,6 +174,23 @@ export default function TasksPage({
 			default: return taskSource.filter((task) => task.lifecycleState !== "archived");
 		}
 	}, [taskSource, lifecycleFilter]);
+
+	// Counts follow the lifecycle filter so each option says how many Tasks picking it shows.
+	const assigneeGroups = useMemo(() => groupTasksByAssignee(lifecycleTasks), [lifecycleTasks]);
+
+	const visibleTasks = useMemo(
+		() => filterTasksByAssignee(lifecycleTasks, assigneeFilter),
+		[lifecycleTasks, assigneeFilter],
+	);
+
+	// The Board hands back the subset it was given; merge it so filtered-out Tasks
+	// are not dropped from the app's Task set. A historical Board shows archived
+	// Tasks too: only update known ids and reload the historical list it reads.
+	const replaceBoardTasks = useCallback((updated: Task[]) => {
+		if (onTasksReplace) onTasksReplace(mergeTaskSubset(tasks, updated, { appendNew: !historicalMode }));
+		else onTasksUpdate();
+		if (historicalMode) void loadHistorical();
+	}, [tasks, onTasksReplace, onTasksUpdate, historicalMode, loadHistorical]);
 
 	const archivedIDs = useMemo(
 		() => taskSource.filter((task) => task.lifecycleState === "archived").map((task) => task.id),
@@ -320,6 +345,8 @@ export default function TasksPage({
 			<FeatureHeader
 				icon={ListTodo}
 				title="Tasks"
+				// The filters can outgrow one line; wrap them instead of squeezing the title to nothing.
+				className="h-auto min-h-12 flex-wrap py-2"
 				status={
 					<span className="tabular-nums">
 						{visibleTasks.length} {visibleTasks.length === 1 ? "task" : "tasks"}
@@ -339,6 +366,24 @@ export default function TasksPage({
 							<option value="done">Done</option>
 							<option value="archived">Archived</option>
 							<option value="all">All lifecycle states</option>
+						</select>
+						<label className="text-xs text-muted-foreground" htmlFor="task-assignee-filter">Assignee</label>
+						<select
+							id="task-assignee-filter"
+							value={assigneeFilter}
+							onChange={(event) => setAssigneeFilter(event.target.value)}
+							className="h-11 max-w-full rounded-md border bg-background px-2 text-xs sm:h-8"
+						>
+							<option value={ALL_ASSIGNEES}>All assignees ({lifecycleTasks.length})</option>
+							{/* Keep a picked person listed at 0 when the lifecycle filter empties them. */}
+							{assigneeFilter !== ALL_ASSIGNEES && !assigneeGroups.some((group) => group.key === assigneeFilter) && (
+								<option value={assigneeFilter}>{assigneeLabel(assigneeFilter)} (0)</option>
+							)}
+							{assigneeGroups.map((group) => (
+								<option key={group.key} value={group.key}>
+									{assigneeLabel(group.key)} ({group.tasks.length})
+								</option>
+							))}
 						</select>
 						{archivedIDs.length > 0 && (lifecycleFilter === "archived" || lifecycleFilter === "all") && (
 							<Button variant="outline" size="sm" onClick={previewRestore} className="h-11 gap-1.5 sm:h-8">
@@ -416,7 +461,7 @@ export default function TasksPage({
 					<Board
 						tasks={visibleTasks}
 						loading={false}
-						onTasksUpdate={onTasksReplace ?? (() => onTasksUpdate())}
+						onTasksUpdate={replaceBoardTasks}
 						onTaskClick={handleTaskClick}
 					/>
 				) : viewMode === "list" ? (

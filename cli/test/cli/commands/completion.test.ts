@@ -2,13 +2,15 @@
 // --no-descriptions variants and help text, and the hidden __complete protocol (candidates plus
 // the `:<directive>` line) for commands, subcommands, flags and flag values.
 import { describe, expect, test } from "bun:test";
+import { withoutD13 } from "../../helpers/d13.ts";
 import { hasGoBin, runGo, runTs } from "../oracle.ts";
 
 const t = test.skipIf(!hasGoBin);
 
 async function same(args: string[], env: Record<string, string> = {}): Promise<void> {
   const go = runGo(args, env);
-  const ts = await runTs(args, { env });
+  const raw = await runTs(args, { env });
+  const ts = { ...raw, stdout: withoutD13(raw.stdout) };
   expect(ts).toEqual(go);
 }
 

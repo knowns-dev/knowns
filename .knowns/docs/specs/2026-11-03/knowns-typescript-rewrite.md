@@ -3,7 +3,7 @@ id: doc-7c0dbdd40f8c36d3f72dc2c758d3e55b
 title: knowns-typescript-rewrite
 description: Specification for rewriting Knowns from Go back to TypeScript on Bun
 createdAt: '2026-11-02T19:05:28.224Z'
-updatedAt: '2026-11-06T10:44:53.978Z'
+updatedAt: '2026-11-06T18:01:54.116Z'
 tags:
   - spec
   - draft
@@ -27,13 +27,14 @@ Predecessor: @doc/specs/knowns-go-rewrite (the opposite migration, 2026-03).
 - D3: TypeScript work lives on one long-lived branch in this repository and merges once at the switch. Go code is deleted in that merge.
 - D4: Runtime is Bun with `bun build --compile`: one binary per platform, no Node or Bun required on the user's machine. Distribution keeps per-platform npm packages and `install.sh` / `install.ps1`.
 - D5: Budgets that block release: on each platform, the binary may exceed an empty Bun-compiled binary for the same target by at most 30MB (Knowns code plus embedded UI); `knowns --version` and MCP readiness each at most 150ms. Revised 2026-11-03 after TSR-5BRB3D measured the stub (raw): darwin 65-70MB, linux 102MB, windows 114-117MB, because the Bun runtime alone is about 100MB on linux and more on windows. The original fixed 100MB limit was unreachable. Go 0.34.1 for reference: 35MB raw, 12MB gzip.
-- D6: Full parity of commands, flags, output formats (`--plain`, `--json`), MCP tools and schemas, HTTP endpoints and SSE/WebSocket events, and the `.knowns/` data format. The only exceptions are D7, D8 and the divergences D12 allows.
+- D6: Full parity of commands, flags, output formats (`--plain`, `--json`), MCP tools and schemas, HTTP endpoints and SSE/WebSocket events, and the `.knowns/` data format. The only exceptions are D7, D8, D13 and the divergences D12 allows.
 - D7: `knowns reconcile preview` and `knowns reconcile apply` are removed. `knowns reconcile restore` stays. The automatic reconciler (watcher, history, tombstones, restore) is ported and follows @decision/20260912-1650-a-briefly-missing-file-is-not-a-deletion.
 - D8: `knowns import` (list, add, remove, status, sync) is removed. Content already present in `.knowns/imports/` stays readable and searchable; `knowns doctor` reports that import management was removed. The web server keeps the read endpoints of `/api/imports` and drops add, remove and sync; the UI hides those actions (decided 2026-11-06, @task-TSR-0MM0QC).
 - D9: Direct switch with no beta channel: the TypeScript build becomes the stable release.
 - D10: The TypeScript build ships as v1.0.0. The last Go release (0.34.x) stays installable via `npm i knowns@0.34` and `install.sh --version 0.34.x`. The TypeScript build never writes `.knowns/` data that 0.34.x cannot read.
 - D11: Release gate for v1.0.0: the Go e2e suite passes with `TEST_BINARY` pointed at the TypeScript binary on all 6 platforms; OS regression tests (FR-9) pass; UI Playwright e2e passes; and the maintainer has used the TypeScript build on this repository for at least 2 consecutive weeks with no data-loss bug.
 - D12: The TypeScript build may differ from 0.34.1 only to fix unsafe behavior, a data-integrity hole or a false success report in 0.34.1. Each divergence is listed under Approved Divergences with its task and a test that fails without the fix, keeps 0.34.1's output and exit code wherever the fix allows, and never breaks D10. Added 2026-11-06.
+- D13: v1.0.0 adds contributor PR #156 (tasks by assignee) on top of 0.34.1: `knowns task list --unassigned`, the `knowns task assignees` command (task counts per assignee, broken down by status, taking the same filters as `task list`, with `--plain` and `--json`), the MCP `tasks` list parameter `unassigned`, assignee filters in the CLI and MCP that compare trimmed values (a whitespace-only assignee counts as unassigned), and filtering and grouping by assignee on the UI Tasks page. A Go binary built from the PR head (2b3f88d) is the oracle for these behaviors. The PR is not merged into the Go code (D2). Added 2026-11-07.
 
 ## Approved Divergences
 
@@ -55,6 +56,7 @@ Each item differs from 0.34.1 under D12. Where only a side effect differs, outpu
 - Web server: a request Origin is accepted only when it names the server's own host and port (loopback aliases on the same port count as one host). 0.34.1 trusted every loopback origin on any port, so another local page could read and write the knowledge base. Requests without an Origin are unchanged, and `KNOWNS_ALLOWED_ORIGINS` lists exact extra origins, for example the Vite dev UI. (@task-TSR-X86JV4)
 - `knowns update` verifies the downloaded archive against the `<asset>.sha256` published next to it, and refuses a mismatching, missing or malformed checksum without touching the current binary. 0.34.1 installed whatever the download returned. Successful updates print exactly what 0.34.1 prints. (@task-TSR-CRAT15)
 - `knowns update` extracts the release into a directory of its own and installs only a binary found there. 0.34.1 extracted next to the downloaded `knowns-<platform>.tar.gz`, which its `knowns-*` matcher also accepts, so the archive itself could be installed as the binary while it reported "Upgrade complete." (@task-TSR-CRAT15)
+- Runtime queue on Windows: a rename over the queue, status, reload or registry file, and a read of one, retries for up to 2 s while another process holds the file open (access denied, sharing or lock violation). 0.34.1 failed the queue update or the reader, so a job could be lost or a CLI could fail while the daemon was writing. Same change as contributor PR #157. (@task-TSR-5EEY7V)
 
 ## System Decision Impact
 
