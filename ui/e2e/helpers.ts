@@ -222,6 +222,32 @@ export async function startServer(): Promise<TestServer> {
 	};
 
 	const cleanup = () => {
+		// Each spec gets its own HOME, so each one starts its own runtime daemon and LSP daemon.
+		// Left running they pile up (one pair per spec) until a 6 GB Windows box runs out and
+		// `knowns init` starts failing, so stop both before removing the project.
+		try {
+			execFileSync(BINARY, ["runtime", "stop"], { cwd: projectDir, env: testEnv, stdio: "ignore", timeout: 15_000 });
+		} catch {
+			// no runtime running, or it already stopped
+		}
+		try {
+			if (isWindows) {
+				const dir = projectDir.replace(/'/g, "''");
+				spawnSync(
+					"powershell",
+					[
+						"-NoProfile",
+						"-Command",
+						`Get-CimInstance Win32_Process -Filter "Name='knowns.exe'" | Where-Object { $_.CommandLine -like '*${dir}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
+					],
+					{ stdio: "ignore", timeout: 15_000 },
+				);
+			} else {
+				spawnSync("pkill", ["-f", projectDir], { stdio: "ignore" });
+			}
+		} catch {
+			// best effort
+		}
 		serverProcess.kill("SIGTERM");
 		// Wait for process to fully exit before removing files
 		if (isWindows) {
