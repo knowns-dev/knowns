@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LayoutList, LayoutGrid, ListTodo, ArchiveRestore, Archive, ChevronDown, Columns3, Plus, Table2 } from "lucide-react";
+import { LayoutList, LayoutGrid, ListTodo, ArchiveRestore, Archive, ChevronDown, Columns3, Layers, Plus, Table2, UserX, Users } from "lucide-react";
+import { Avatar as KnAvatar } from "@/ui/components/ui/knowns/avatar";
+import { Combobox, type ComboboxOption } from "@/ui/components/ui/knowns/combobox";
+import { Select as KnSelect } from "@/ui/components/ui/knowns/select";
 import type { Task } from "@/ui/models/task";
 import { navigateTo } from "../lib/navigation";
 import { Board, TaskNotionList } from "../components/organisms";
@@ -11,6 +14,7 @@ import {
 	assigneeLabel,
 	filterTasksByAssignee,
 	groupTasksByAssignee,
+	UNASSIGNED,
 } from "./TasksPage/assignees";
 import { mergeTaskSubset } from "./TasksPage/mergeTasks";
 import { Button } from "../components/ui/button";
@@ -63,6 +67,14 @@ interface TasksPageProps {
 type ViewMode = "board" | "list" | "table" | "grouped";
 
 const VIEW_STORAGE_KEY = "knowns.tasks.view";
+
+const LIFECYCLE_OPTIONS = [
+	{ value: "current", label: "Current (active + done)" },
+	{ value: "active", label: "Active" },
+	{ value: "done", label: "Done" },
+	{ value: "archived", label: "Archived" },
+	{ value: "all", label: "All lifecycle states" },
+];
 
 const VIEW_OPTIONS: { value: ViewMode; label: string; icon: typeof LayoutList }[] = [
 	{ value: "board", label: "Board", icon: Columns3 },
@@ -177,6 +189,26 @@ export default function TasksPage({
 
 	// Counts follow the lifecycle filter so each option says how many Tasks picking it shows.
 	const assigneeGroups = useMemo(() => groupTasksByAssignee(lifecycleTasks), [lifecycleTasks]);
+	const assigneeOptions = useMemo<ComboboxOption[]>(() => {
+		const count = (n: number) => `${n} ${n === 1 ? "task" : "tasks"}`;
+		const person = (key: string, n: number): ComboboxOption =>
+			key === UNASSIGNED
+				? { value: key, label: assigneeLabel(key), supportingText: count(n), icon: <UserX className="h-3.5 w-3.5" /> }
+				: {
+						value: key,
+						label: assigneeLabel(key),
+						supportingText: count(n),
+						avatar: <KnAvatar label={assigneeLabel(key).replace(/^@/, "")} size="xs" shape="circle" decorative />,
+					};
+		return [
+			{ value: ALL_ASSIGNEES, label: "All assignees", supportingText: count(lifecycleTasks.length), icon: <Users className="h-3.5 w-3.5" /> },
+			// Keep a picked person listed at 0 when the lifecycle filter empties them.
+			...(assigneeFilter !== ALL_ASSIGNEES && !assigneeGroups.some((group) => group.key === assigneeFilter)
+				? [person(assigneeFilter, 0)]
+				: []),
+			...assigneeGroups.map((group) => person(group.key, group.tasks.length)),
+		];
+	}, [assigneeGroups, assigneeFilter, lifecycleTasks.length]);
 
 	const visibleTasks = useMemo(
 		() => filterTasksByAssignee(lifecycleTasks, assigneeFilter),
@@ -354,37 +386,26 @@ export default function TasksPage({
 				}
 				actions={
 					<div className="flex flex-wrap items-center gap-2">
-						<label className="text-xs text-muted-foreground" htmlFor="task-lifecycle-filter">Show</label>
-						<select
+						<KnSelect
 							id="task-lifecycle-filter"
+							aria-label="Show tasks"
+							size="sm"
+							icon={<Layers className="h-3.5 w-3.5" />}
 							value={lifecycleFilter}
 							onChange={(event) => setLifecycleFilter(event.target.value as typeof lifecycleFilter)}
-							className="h-11 max-w-full rounded-md border bg-background px-2 text-xs sm:h-8"
-						>
-							<option value="current">Current (active + done)</option>
-							<option value="active">Active</option>
-							<option value="done">Done</option>
-							<option value="archived">Archived</option>
-							<option value="all">All lifecycle states</option>
-						</select>
-						<label className="text-xs text-muted-foreground" htmlFor="task-assignee-filter">Assignee</label>
-						<select
+							options={LIFECYCLE_OPTIONS}
+							className="w-auto min-w-44"
+						/>
+						<Combobox
 							id="task-assignee-filter"
+							aria-label="Assignee"
+							size="sm"
+							searchable
 							value={assigneeFilter}
-							onChange={(event) => setAssigneeFilter(event.target.value)}
-							className="h-11 max-w-full rounded-md border bg-background px-2 text-xs sm:h-8"
-						>
-							<option value={ALL_ASSIGNEES}>All assignees ({lifecycleTasks.length})</option>
-							{/* Keep a picked person listed at 0 when the lifecycle filter empties them. */}
-							{assigneeFilter !== ALL_ASSIGNEES && !assigneeGroups.some((group) => group.key === assigneeFilter) && (
-								<option value={assigneeFilter}>{assigneeLabel(assigneeFilter)} (0)</option>
-							)}
-							{assigneeGroups.map((group) => (
-								<option key={group.key} value={group.key}>
-									{assigneeLabel(group.key)} ({group.tasks.length})
-								</option>
-							))}
-						</select>
+							onValueChange={setAssigneeFilter}
+							options={assigneeOptions}
+							className="w-auto min-w-56"
+						/>
 						{archivedIDs.length > 0 && (lifecycleFilter === "archived" || lifecycleFilter === "all") && (
 							<Button variant="outline" size="sm" onClick={previewRestore} className="h-11 gap-1.5 sm:h-8">
 								<ArchiveRestore className="h-3.5 w-3.5" /> Restore archived…

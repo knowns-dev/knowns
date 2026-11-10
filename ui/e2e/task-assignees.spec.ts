@@ -21,20 +21,27 @@ test.describe("Tasks by assignee", () => {
 		await page.goto(`${server.baseURL}/tasks`);
 		// The list loads after the shell; wait for it before reading the filter options.
 		await expect(page.getByText("Nobody owns this")).toBeVisible({ timeout: 20_000 });
+		// The filter is the Knowns UI combobox: a button that opens a listbox of options.
 		const filter = page.locator("#task-assignee-filter");
+		const pick = async (name: RegExp) => {
+			await filter.click();
+			await page.getByRole("listbox").getByRole("option", { name }).click();
+		};
 
 		await test.step("options carry per-person counts, Unassigned last", async () => {
-			const options = await filter.locator("option").allTextContents();
-			expect(options).toEqual([
-				"All assignees (4)",
-				"@alice (2)",
-				"@bob (1)",
-				"Unassigned (1)",
+			await filter.click();
+			// Each row is label + count as separate spans (plus avatar initials), so match patterns in order.
+			await expect(page.getByRole("listbox").getByRole("option")).toHaveText([
+				/All assignees\s*4 tasks/,
+				/@alice\s*2 tasks/,
+				/@bob\s*1 task/,
+				/Unassigned\s*1 task/,
 			]);
+			await page.keyboard.press("Escape");
 		});
 
 		await test.step("a person shows only their Tasks", async () => {
-			await filter.selectOption({ label: "@alice (2)" });
+			await pick(/^@alice/);
 			await expect(page.getByText("Alice first")).toBeVisible();
 			await expect(page.getByText("Alice second")).toBeVisible();
 			await expect(page.getByText("Bob only")).toHaveCount(0);
@@ -43,7 +50,7 @@ test.describe("Tasks by assignee", () => {
 		});
 
 		await test.step("Unassigned shows only Tasks without an assignee", async () => {
-			await filter.selectOption({ label: "Unassigned (1)" });
+			await pick(/^Unassigned/);
 			await expect(page.getByText("Nobody owns this")).toBeVisible();
 			await expect(page.getByText("Alice first")).toHaveCount(0);
 			await expect(page.locator("span.tabular-nums").first()).toHaveText("1 task");
