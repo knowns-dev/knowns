@@ -377,8 +377,6 @@ export default function TasksPage({
 			<FeatureHeader
 				icon={ListTodo}
 				title="Tasks"
-				// The filters can outgrow one line; wrap them instead of squeezing the title to nothing.
-				className="h-auto min-h-12 flex-wrap py-2"
 				status={
 					<span className="tabular-nums">
 						{visibleTasks.length} {visibleTasks.length === 1 ? "task" : "tasks"}
@@ -394,7 +392,7 @@ export default function TasksPage({
 							value={lifecycleFilter}
 							onChange={(event) => setLifecycleFilter(event.target.value as typeof lifecycleFilter)}
 							options={LIFECYCLE_OPTIONS}
-							className="w-auto min-w-44"
+							className="w-full min-w-44 sm:w-auto"
 						/>
 						<Combobox
 							id="task-assignee-filter"
@@ -404,7 +402,7 @@ export default function TasksPage({
 							value={assigneeFilter}
 							onValueChange={setAssigneeFilter}
 							options={assigneeOptions}
-							className="w-auto min-w-56"
+							className="w-full min-w-56 sm:w-auto"
 						/>
 						{archivedIDs.length > 0 && (lifecycleFilter === "archived" || lifecycleFilter === "all") && (
 							<Button variant="outline" size="sm" onClick={previewRestore} className="h-11 gap-1.5 sm:h-8">

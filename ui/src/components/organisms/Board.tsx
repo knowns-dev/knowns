@@ -10,6 +10,7 @@ import { api } from "../../api/client";
 import { useConfig } from "../../contexts/ConfigContext";
 import { DEFAULT_STATUS_COLORS, type ColorName } from "../../utils/colors";
 import { toast } from "../ui/sonner";
+import { useIsMobile } from "../../hooks/useMobile";
 import { KanbanBoard } from "../ui/knowns/kanban/kanban-board";
 import type {
 	KanbanCard,
@@ -120,6 +121,7 @@ interface BoardProps {
 
 export default function Board({ tasks, onTasksUpdate, onTaskClick }: BoardProps) {
 	const { config, updateConfig } = useConfig();
+	const isMobile = useIsMobile();
 	const statuses = (config?.statuses as TaskStatus[]) || ["todo", "in-progress", "in-review", "done", "blocked"];
 	// Settings can save an empty or stale list (every column unticked, a status removed): show all then,
 	// since a board with no columns has nothing to drop onto.
@@ -144,7 +146,11 @@ export default function Board({ tasks, onTasksUpdate, onTaskClick }: BoardProps)
 	}, [tasks]);
 
 	const columnToggles = (
-		<div className="flex flex-wrap items-center gap-1" role="group" aria-label="Visible columns">
+		<div
+			className="-mx-1 flex max-w-full items-center gap-1 overflow-x-auto px-1 [scrollbar-width:none] sm:flex-wrap sm:overflow-visible"
+			role="group"
+			aria-label="Visible columns"
+		>
 			{statuses.map((status) => {
 				const on = visible.has(status);
 				return (
@@ -154,7 +160,7 @@ export default function Board({ tasks, onTasksUpdate, onTaskClick }: BoardProps)
 						aria-pressed={on}
 						onClick={() => toggleColumn(status)}
 						className={cn(
-							"flex h-8 items-center gap-1.5 rounded-md px-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+							"flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
 							on ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
 						)}
 					>
@@ -262,7 +268,8 @@ export default function Board({ tasks, onTasksUpdate, onTaskClick }: BoardProps)
 			}}
 			actions={columnToggles}
 			surface="none"
-			columnMinWidth={216}
+			// On phones a column takes most of the screen so a card reads whole; swipe for the next one.
+			columnMinWidth={isMobile ? 280 : 216}
 			className="min-h-0 flex-1"
 			aria-label="Task board"
 		/>

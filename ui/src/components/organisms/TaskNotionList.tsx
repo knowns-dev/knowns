@@ -161,7 +161,7 @@ export function TaskNotionList({ tasks, onTaskClick, onNewTask }: TaskNotionList
 		<div className="h-full flex flex-col">
 			{/* Filter bar — pill style */}
 			<div className="flex items-center gap-2 flex-wrap mb-4">
-				<div className="relative flex-1 min-w-[180px] max-w-[280px]">
+				<div className="relative w-full min-w-[180px] sm:w-auto sm:max-w-[280px] sm:flex-1">
 					<Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
 					<Input
 						placeholder="Search..."
@@ -180,13 +180,13 @@ export function TaskNotionList({ tasks, onTaskClick, onNewTask }: TaskNotionList
 					)}
 				</div>
 
-				{/* Status pills */}
-				<div className="flex items-center gap-1">
+				{/* Status pills: one line that scrolls sideways on phones */}
+				<div className="-mx-1 flex max-w-full items-center gap-1 overflow-x-auto px-1 [scrollbar-width:none]">
 					<button
 						type="button"
 						onClick={() => setStatusFilter("all")}
 						className={cn(
-							"px-2.5 py-1 rounded-full text-xs transition-colors",
+							"shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-xs transition-colors",
 							statusFilter === "all"
 								? "bg-foreground text-background"
 								: "bg-muted/60 text-muted-foreground hover:bg-muted",
@@ -200,7 +200,7 @@ export function TaskNotionList({ tasks, onTaskClick, onNewTask }: TaskNotionList
 							type="button"
 							onClick={() => setStatusFilter(statusFilter === opt.value ? "all" : opt.value)}
 							className={cn(
-								"px-2.5 py-1 rounded-full text-xs transition-colors",
+								"shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-xs transition-colors",
 								statusFilter === opt.value
 									? "bg-foreground text-background"
 									: "bg-muted/60 text-muted-foreground hover:bg-muted",
@@ -212,14 +212,14 @@ export function TaskNotionList({ tasks, onTaskClick, onNewTask }: TaskNotionList
 				</div>
 
 				{/* Priority pills */}
-				<div className="flex items-center gap-1">
+				<div className="flex shrink-0 items-center gap-1">
 					{(["high", "medium", "low"] as const).map((p) => (
 						<button
 							key={p}
 							type="button"
 							onClick={() => setPriorityFilter(priorityFilter === p ? "all" : p)}
 							className={cn(
-								"px-2.5 py-1 rounded-full text-xs capitalize transition-colors",
+								"shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-xs capitalize transition-colors",
 								priorityFilter === p
 									? "bg-foreground text-background"
 									: "bg-muted/60 text-muted-foreground hover:bg-muted",
@@ -348,16 +348,17 @@ function TaskRow({ task, isNew, onClick }: { task: Task; isNew?: boolean; onClic
 			<div className="relative z-10 min-w-0 flex-1">
 				<div className="flex items-center gap-2">
 					<span className="text-sm font-medium truncate">{task.title}</span>
-					<span className="text-[11px] font-mono text-muted-foreground/60 shrink-0">
+					<span className="hidden shrink-0 font-mono text-[11px] text-muted-foreground/60 sm:inline">
 						#{task.id}
 					</span>
-					<TaskLifecycleBadge state={task.lifecycleState} />
+					<span className="hidden shrink-0 sm:inline-flex">
+						<TaskLifecycleBadge state={task.lifecycleState} />
+					</span>
 				</div>
-				{task.description && (
-					<p className="text-xs text-muted-foreground truncate mt-0.5 max-w-lg">
-						{task.description}
-					</p>
-				)}
+				<p className="mt-0.5 flex min-w-0 max-w-lg items-baseline gap-1.5 text-xs text-muted-foreground">
+					<span className="shrink-0 font-mono text-[11px] text-muted-foreground/60 sm:hidden">#{task.id}</span>
+					{task.description && <span className="truncate">{task.description}</span>}
+				</p>
 			</div>
 
 			{/* Properties — right side */}
