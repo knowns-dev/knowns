@@ -1,34 +1,38 @@
 import { useState, useRef, type ReactNode } from "react";
 import { ClipboardCheck, Check, Loader2 } from "lucide-react";
+import hljs from "highlight.js";
+import { CodeBlock } from "@/ui/components/ui/knowns/code-block/code-block";
+import { resolveLanguage, tokenize, type CodeLines } from "@/ui/components/ui/knowns/code-block/code-block-utils";
 import { extractTextFromChildren, slugifyHeading, type HeadingMeta } from "./headingUtils";
+import { hljsHtmlToLines } from "./hljsTokens";
 
-/** Copyable code block wrapper. */
-export function CopyablePre({ children, ...props }: { children?: ReactNode }) {
-  const [copied, setCopied] = useState(false);
-  const preRef = useRef<HTMLPreElement>(null);
+/**
+ * The Knowns UI tokenizer for the languages it knows (so code reads the same as everywhere else in
+ * the app), highlight.js mapped onto the same token colours for the rest.
+ */
+function highlightCode(code: string, language: string | undefined): CodeLines {
+  if (resolveLanguage(language)) return tokenize(code, language);
+  try {
+    const html = language && hljs.getLanguage(language)
+      ? hljs.highlight(code, { language }).value
+      : hljs.highlightAuto(code).value;
+    return hljsHtmlToLines(html);
+  } catch {
+    return tokenize(code, undefined);
+  }
+}
 
-  const handleCopy = () => {
-    const text = preRef.current?.textContent || "";
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
-
+/** A fenced code block in rendered markdown: language label, copy, wrap, and a fold past 30 lines. */
+export function MarkdownCodeBlock({ code, language }: { code: string; language?: string }) {
   return (
-    <div className="group relative">
-      <button
-        type="button"
-        onClick={handleCopy}
-        className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md bg-muted hover:bg-muted/80 border border-border text-muted-foreground hover:text-foreground"
-        title="Copy code"
-      >
-        {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <ClipboardCheck className="w-3.5 h-3.5" />}
-      </button>
-      <pre ref={preRef} className="p-4 rounded-lg overflow-x-auto text-sm hljs-pre" {...props}>
-        {children}
-      </pre>
-    </div>
+    <CodeBlock
+      code={code}
+      language={language}
+      highlight={highlightCode}
+      collapseAfter={30}
+      className="my-4"
+      aria-label={language ? `${language} code` : "Code"}
+    />
   );
 }
 
