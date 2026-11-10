@@ -172,18 +172,6 @@ export default function AppShell() {
 	}, [isDark]);
 
 	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-				e.preventDefault();
-				setShowCommandDialog((prev) => !prev);
-			}
-		};
-
-		window.addEventListener("keydown", handleKeyDown);
-		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, []);
-
-	useEffect(() => {
 		getProjectStatus()
 			.then((s) => {
 				setProjectActive(s.active);
@@ -295,11 +283,16 @@ export default function AppShell() {
 		);
 	};
 
-	const handleSearchTaskSelect = (task: Task) => {
-		navigate({ to: `/tasks/${task.id}` });
-	};
+	// The command menu binds ⌘K itself; these keep its props stable between renders.
+	const handleOpenCreateForm = useCallback(() => setShowCreateForm(true), []);
+	const handleOpenWorkspacePicker = useCallback(() => setShowWorkspacePicker(true), []);
+	const handleToggleThemeQuietly = useCallback(() => setIsDark((dark) => !dark), []);
 
-	const handleSearchDocSelect = (doc?: { path?: string; filename?: string }) => {
+	const handleSearchTaskSelect = useCallback((task: Task) => {
+		navigate({ to: `/tasks/${task.id}` });
+	}, [navigate]);
+
+	const handleSearchDocSelect = useCallback((doc?: { path?: string; filename?: string }) => {
 		if (doc?.path) {
 			navigate({ to: `/docs/${doc.path}` });
 		} else if (doc?.filename) {
@@ -307,7 +300,7 @@ export default function AppShell() {
 		} else {
 			navigate({ to: "/docs" });
 		}
-	};
+	}, [navigate]);
 
 	const renderPage = () => {
 		switch (currentPage) {
@@ -423,6 +416,10 @@ export default function AppShell() {
 					onOpenChange={setShowCommandDialog}
 					onTaskSelect={handleSearchTaskSelect}
 					onDocSelect={handleSearchDocSelect}
+					onNewTask={handleOpenCreateForm}
+					onSwitchWorkspace={handleOpenWorkspacePicker}
+					isDark={isDark}
+					onToggleTheme={handleToggleThemeQuietly}
 				/>
 
 				<WorkspacePicker

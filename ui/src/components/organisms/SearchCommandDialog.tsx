@@ -1,27 +1,35 @@
-import { useEffect, useState } from "react";
-import { FileText, ListTodo } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import {
-	Command,
-	CommandGroup,
-	CommandInput,
-	CommandItem,
-	CommandList,
-	CommandSeparator,
-} from "../ui/command";
-import { Dialog, DialogContent } from "../ui/dialog";
+	Activity,
+	ArrowRightLeft,
+	Brain,
+	FileText,
+	Import,
+	LayoutDashboard,
+	ListTodo,
+	Monitor,
+	Moon,
+	Network,
+	Plus,
+	ScrollText,
+	Settings,
+	Sun,
+} from "lucide-react";
+import {
+	CommandMenu,
+	type CommandItem,
+	type CommandPage,
+} from "@/ui/components/ui/knowns/command-menu/command-menu";
+import { TaskStatusIcon } from "../molecules/TaskStatusIcon";
 import type { Task } from "@/ui/models/task";
 import { API_BASE, apiFetch } from "@/ui/api/client";
 
-interface SearchCommandDialogProps {
-	open: boolean;
-	onOpenChange: (open: boolean) => void;
-	onTaskSelect: (task: Task) => void;
-	onDocSelect: (doc?: { path?: string; filename?: string }) => void;
-}
-
+/** A doc as /api/search returns it (title, path); older shapes carried filename and metadata. */
 interface DocItem {
-	filename: string;
 	path: string;
+	title?: string;
+	filename?: string;
 	metadata?: {
 		title?: string;
 		description?: string;
@@ -29,183 +37,240 @@ interface DocItem {
 	};
 }
 
-interface SearchResult {
-	tasks: Task[];
-	docs: DocItem[];
+interface SearchCommandDialogProps {
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	onTaskSelect: (task: Task) => void;
+	onDocSelect: (doc?: { path?: string; filename?: string }) => void;
+	onNewTask: () => void;
+	onSwitchWorkspace: () => void;
+	isDark: boolean;
+	onToggleTheme: () => void;
 }
 
-// Status badge colors
-const STATUS_COLORS: Record<string, string> = {
-	"todo": "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-	"in-progress": "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
-	"in-review": "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
-	"done": "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
-	"blocked": "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
-	"on-hold": "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300",
-};
+/** What a picked task or doc needs to show up again in Recent after a reload. */
+type RecentEntity =
+	| { kind: "task"; id: string; title: string; status: string }
+	| { kind: "doc"; path: string; title: string };
 
-// Status labels
-const STATUS_LABELS: Record<string, string> = {
-	"todo": "To Do",
-	"in-progress": "In Progress",
-	"in-review": "In Review",
-	"done": "Done",
-	"blocked": "Blocked",
-	"on-hold": "On Hold",
-};
+interface StoredRecents {
+	ids: string[];
+	entities: Record<string, RecentEntity>;
+}
 
+const RECENTS_KEY = "knowns.commandMenu.recents";
+const MAX_RESULTS = 8;
+const RECENT_PAGE = "__recent";
+
+const GROUP_PAGES = "Pages";
+const GROUP_ACTIONS = "Actions";
+const GROUP_TASKS = "Tasks";
+const GROUP_DOCS = "Docs";
+
+const PAGES = [
+	{ id: "dashboard", label: "Dashboard", to: "/", icon: LayoutDashboard },
+	{ id: "tasks", label: "Tasks", to: "/tasks", icon: ListTodo, keywords: ["board", "kanban"] },
+	{ id: "docs", label: "Docs", to: "/docs", icon: FileText, keywords: ["documentation"] },
+	{ id: "graph", label: "Graph", to: "/graph", icon: Network },
+	{ id: "memory", label: "Memories", to: "/memory", icon: Brain },
+	{ id: "decisions", label: "System Decisions", to: "/decisions", icon: ScrollText },
+	{ id: "runtime", label: "Runtime", to: "/runtime", icon: Monitor },
+	{ id: "audit", label: "Audit Trail", to: "/audit", icon: Activity, keywords: ["history", "log"] },
+	{ id: "imports", label: "Imports", to: "/imports", icon: Import },
+	{ id: "config", label: "Settings", to: "/config", icon: Settings, keywords: ["config", "preferences"] },
+];
+
+function readRecents(): StoredRecents {
+	try {
+		const raw = localStorage.getItem(RECENTS_KEY);
+		if (!raw) return { ids: [], entities: {} };
+		const data = JSON.parse(raw) as Partial<StoredRecents>;
+		return {
+			ids: Array.isArray(data.ids) ? data.ids.filter((id) => typeof id === "string") : [],
+			entities: data.entities && typeof data.entities === "object" ? data.entities : {},
+		};
+	} catch {
+		return { ids: [], entities: {} };
+	}
+}
+
+function writeRecents(value: StoredRecents) {
+	try {
+		localStorage.setItem(RECENTS_KEY, JSON.stringify(value));
+	} catch {
+		// Storage can be full or blocked (private windows): recents then last only this session.
+	}
+}
+
+/**
+ * The global ⌘K palette: jump to a page, run an action, or search tasks and docs on the server.
+ * Recently picked items (tasks and docs included) are kept per browser.
+ */
 export default function SearchCommandDialog({
 	open,
 	onOpenChange,
 	onTaskSelect,
 	onDocSelect,
+	onNewTask,
+	onSwitchWorkspace,
+	isDark,
+	onToggleTheme,
 }: SearchCommandDialogProps) {
-	const [search, setSearch] = useState("");
-	const [results, setResults] = useState<SearchResult>({ tasks: [], docs: [] });
-	const [loading, setLoading] = useState(false);
+	const navigate = useNavigate();
+	const [recents, setRecents] = useState<StoredRecents>(readRecents);
+	// Filled by a task or doc item's onSelect, which runs just before onRecentsChange.
+	const pendingEntity = useRef<{ id: string; entity: RecentEntity } | null>(null);
 
-	const hasResults = results.tasks.length > 0 || results.docs.length > 0;
-	const showEmpty = !loading && !!search.trim() && !hasResults;
-
-	// Search using API with debounce
+	// Radix dialogs (the task sheet) close on an Escape they catch on the document before it reaches this
+	// native dialog. While the menu is open, take Escape first on the window so it closes only the menu.
 	useEffect(() => {
-		if (!open) {
-			setSearch("");
-			setResults({ tasks: [], docs: [] });
-			return;
-		}
+		if (!open) return;
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.key !== "Escape") return;
+			e.stopPropagation();
+			onOpenChange(false);
+		};
+		window.addEventListener("keydown", onKeyDown, true);
+		return () => window.removeEventListener("keydown", onKeyDown, true);
+	}, [open, onOpenChange]);
 
-		if (!search.trim()) {
-			setResults({ tasks: [], docs: [] });
-			return;
-		}
+	const taskItem = useCallback(
+		(task: Pick<Task, "id" | "title" | "status">): CommandItem => ({
+			id: `task:${task.id}`,
+			label: task.title,
+			group: GROUP_TASKS,
+			icon: <ListTodo />,
+			badge: <TaskStatusIcon status={task.status} showLabel />,
+			description: <span className="font-mono">#{task.id}</span>,
+			onSelect: () => {
+				pendingEntity.current = {
+					id: `task:${task.id}`,
+					entity: { kind: "task", id: task.id, title: task.title, status: task.status },
+				};
+				onTaskSelect(task as Task);
+			},
+		}),
+		[onTaskSelect],
+	);
 
-		setLoading(true);
-		const timeoutId = setTimeout(() => {
-			apiFetch(
-				`${API_BASE}/api/search?q=${encodeURIComponent(search)}&includeHistorical=true`,
-			)
-				.then((res) => res.json())
-				.then((data) => {
-					setResults({
-						tasks: data.tasks || [],
-						docs: data.docs || [],
-					});
-				})
-				.catch((err) => {
-					console.error("Search failed:", err);
-					setResults({ tasks: [], docs: [] });
-				})
-				.finally(() => {
-					setLoading(false);
-				});
-		}, 300); // Debounce 300ms
+	const docItem = useCallback(
+		(doc: DocItem): CommandItem => {
+			const title = doc.title || doc.metadata?.title || doc.filename || doc.path;
+			return {
+				id: `doc:${doc.path}`,
+				label: title,
+				group: GROUP_DOCS,
+				icon: <FileText />,
+				description: doc.path,
+				onSelect: () => {
+					pendingEntity.current = {
+						id: `doc:${doc.path}`,
+						entity: { kind: "doc", path: doc.path, title },
+					};
+					onDocSelect(doc);
+				},
+			};
+		},
+		[onDocSelect],
+	);
 
-		return () => clearTimeout(timeoutId);
-	}, [search, open]);
+	const items = useMemo<CommandItem[]>(
+		() => [
+			...PAGES.map(({ id, label, to, icon: Icon, keywords }) => ({
+				id: `page:${id}`,
+				label,
+				group: GROUP_PAGES,
+				icon: <Icon />,
+				keywords,
+				onSelect: () => navigate({ to }),
+			})),
+			{
+				id: "action:new-task",
+				label: "New task",
+				group: GROUP_ACTIONS,
+				icon: <Plus />,
+				keywords: ["create", "add"],
+				onSelect: onNewTask,
+			},
+			{
+				id: "action:theme",
+				label: isDark ? "Switch to light theme" : "Switch to dark theme",
+				group: GROUP_ACTIONS,
+				icon: isDark ? <Sun /> : <Moon />,
+				keywords: ["theme", "appearance", "dark", "light", "mode"],
+				onSelect: onToggleTheme,
+			},
+			{
+				id: "action:workspace",
+				label: "Switch workspace",
+				group: GROUP_ACTIONS,
+				icon: <ArrowRightLeft />,
+				keywords: ["project", "open"],
+				onSelect: onSwitchWorkspace,
+			},
+		],
+		[navigate, onNewTask, onToggleTheme, onSwitchWorkspace, isDark],
+	);
 
-	const handleTaskSelect = (task: Task) => {
-		onTaskSelect(task);
-		onOpenChange(false);
-		setSearch("");
-	};
+	// Tasks and docs picked earlier live on a page nobody opens, so the menu can resolve their recent ids.
+	const pages = useMemo<CommandPage[]>(() => {
+		const recentItems = recents.ids.flatMap((id) => {
+			const entity = recents.entities[id];
+			if (!entity) return [];
+			return [
+				entity.kind === "task"
+					? taskItem(entity)
+					: docItem({ path: entity.path, title: entity.title }),
+			];
+		});
+		return [{ id: RECENT_PAGE, title: "Recent", items: recentItems }];
+	}, [recents, taskItem, docItem]);
 
-	const handleDocSelect = (doc: DocItem) => {
-		onDocSelect(doc);
-		onOpenChange(false);
-		setSearch("");
-	};
+	const load = useCallback(
+		async (query: string, signal: AbortSignal): Promise<CommandItem[]> => {
+			const res = await apiFetch(
+				`${API_BASE}/api/search?q=${encodeURIComponent(query)}&includeHistorical=true`,
+				{ signal },
+			);
+			if (!res.ok) throw new Error(`Search failed: ${res.status}`);
+			const data = (await res.json()) as { tasks?: Task[]; docs?: DocItem[] };
+			return [
+				...(data.tasks ?? []).slice(0, MAX_RESULTS).map(taskItem),
+				...(data.docs ?? []).slice(0, MAX_RESULTS).map(docItem),
+			];
+		},
+		[taskItem, docItem],
+	);
+
+	const handleRecentsChange = useCallback((ids: string[]) => {
+		setRecents((prev) => {
+			const entities: Record<string, RecentEntity> = {};
+			const picked = pendingEntity.current;
+			pendingEntity.current = null;
+			for (const id of ids) {
+				const entity = picked?.id === id ? picked.entity : prev.entities[id];
+				if (entity) entities[id] = entity;
+			}
+			const next = { ids, entities };
+			writeRecents(next);
+			return next;
+		});
+	}, []);
 
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="overflow-hidden p-0 max-w-2xl" hideClose>
-				<Command shouldFilter={false}>
-					<CommandInput
-						placeholder="Search tasks and docs..."
-						value={search}
-						onValueChange={setSearch}
-					/>
-					<CommandList>
-						{showEmpty && (
-							<div className="py-6 text-center text-sm text-muted-foreground">
-								No results found.
-							</div>
-						)}
-						{!search.trim() && !loading && (
-							<div className="py-6 text-center text-sm text-muted-foreground">
-								Type to search...
-							</div>
-						)}
-						{loading && (
-							<div className="py-6 text-center text-sm text-muted-foreground">
-								Searching...
-							</div>
-						)}
-
-						{results.tasks.length > 0 && (
-							<CommandGroup heading="Tasks">
-								{results.tasks.slice(0, 8).map((task) => {
-									const statusColor = STATUS_COLORS[task.status] || STATUS_COLORS.todo;
-									const statusLabel = STATUS_LABELS[task.status] || task.status;
-
-									return (
-										<CommandItem
-											key={task.id}
-											value={`task-${task.id}`}
-											onSelect={() => handleTaskSelect(task)}
-										>
-											<ListTodo className="mr-2 h-4 w-4 shrink-0" />
-											<div className="flex-1 min-w-0">
-												<div className="flex items-center gap-2 mb-1">
-													<span className="text-xs font-mono text-muted-foreground">
-														#{task.id}
-													</span>
-													<span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColor}`}>
-														{statusLabel}
-													</span>
-												</div>
-												<div className="font-medium truncate">
-													{task.title}
-												</div>
-											</div>
-										</CommandItem>
-									);
-								})}
-							</CommandGroup>
-						)}
-
-						{results.tasks.length > 0 && results.docs.length > 0 && (
-							<CommandSeparator />
-						)}
-
-						{results.docs.length > 0 && (
-							<CommandGroup heading="Documentation">
-								{results.docs.slice(0, 8).map((doc) => {
-									const title = doc.metadata?.title || doc.filename;
-
-									return (
-										<CommandItem
-											key={doc.path}
-											value={`doc-${doc.path}`}
-											onSelect={() => handleDocSelect(doc)}
-										>
-											<FileText className="mr-2 h-4 w-4 shrink-0" />
-											<div className="flex-1 min-w-0">
-												<div className="font-medium truncate mb-1">
-													{title}
-												</div>
-												<div className="flex items-center gap-2 text-xs text-muted-foreground">
-													<span className="truncate">{doc.path}</span>
-												</div>
-											</div>
-										</CommandItem>
-									);
-								})}
-							</CommandGroup>
-						)}
-					</CommandList>
-				</Command>
-			</DialogContent>
-		</Dialog>
+		<CommandMenu
+			open={open}
+			onOpenChange={onOpenChange}
+			items={items}
+			pages={pages}
+			groups={[GROUP_PAGES, GROUP_ACTIONS, GROUP_TASKS, GROUP_DOCS]}
+			load={load}
+			debounce={200}
+			recents={recents.ids}
+			onRecentsChange={handleRecentsChange}
+			placeholder="Search tasks and docs, or jump to a page…"
+			empty={(query) => <>No tasks, docs or pages match “{query}”</>}
+			aria-label="Search"
+		/>
 	);
 }
