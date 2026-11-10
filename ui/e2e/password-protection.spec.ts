@@ -178,7 +178,8 @@ test.describe("Password Protection", () => {
 		await test.step("Enter wrong password and submit", async () => {
 			const passwordInput = page.locator('input[type="password"]');
 			await passwordInput.fill("wrongpassword");
-			await page.getByRole("button").first().click();
+			// By name: the password field's show/hide toggle is now the first button.
+			await page.getByRole("button", { name: /unlock/i }).click();
 		});
 
 		await test.step("Error message is shown", async () => {
