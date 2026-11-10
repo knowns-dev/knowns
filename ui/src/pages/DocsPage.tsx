@@ -5,7 +5,6 @@ import {
 	Check,
 	X,
 	Copy,
-	ArrowLeft,
 	Maximize2,
 	Minimize2,
 	Menu,
@@ -27,7 +26,7 @@ import { Sheet, SheetContent, SheetTitle } from "../components/ui/sheet";
 
 import { DocsDocHeader } from "./docs/DocsDocHeader";
 import { DocsCreateView } from "./docs/DocsCreateView";
-import { DocsLibrary } from "../components/organisms/DocsLibrary";
+import { PageError, PageLoading } from "../components/templates/PageShell";
 import { DocMiniGraph } from "./docs/DocMiniGraph";
 import { DocHistorySheet } from "./docs/DocHistorySheet";
 import { MDRenderWithHighlight } from "../components/editor/MDRenderWithHighlight";
@@ -121,6 +120,17 @@ function DocsPageInner() {
 		};
 		return { prev: link(index - 1), next: link(index + 1) };
 	}, [readingOrder, selectedDoc]);
+
+	// One layout for the whole Docs area: with no doc in the URL (/docs, or a folder path), open a
+	// doc instead of a separate library page. A folder opens its first doc; otherwise the root
+	// README, otherwise the first doc in reading order.
+	const defaultDocHref = useMemo(() => {
+		if (readingOrder.length === 0) return null;
+		const folder = currentFolder?.replace(/^\/+|\/+$/g, "");
+		const inFolder = folder ? readingOrder.find((page) => page.id.startsWith(`${folder}/`)) : undefined;
+		const readme = readingOrder.find((page) => /^readme(\.md)?$/i.test(page.id));
+		return (inFolder ?? readme ?? readingOrder[0])?.href ?? null;
+	}, [readingOrder, currentFolder]);
 
 	const markdownPreviewRef = useRef<HTMLDivElement>(null);
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -395,28 +405,14 @@ function DocsPageInner() {
 			]
 		: [];
 
-	// Loading and load errors use the library's own skeleton rows and error state.
-	if (loading || error) {
-		return (
-			<DocsLibrary
-				docs={docs}
-				loading={loading}
-				error={error}
-				initialFolder={currentFolder}
-				onCreateDoc={openCreateView}
-				onSelectDoc={setSelectedDoc}
-				onRetry={loadDocs}
-			/>
-		);
-	}
-
-	// With no doc open the page is the Docs Library: a full-width browse view.
-	// The navigation sidebar only earns its space once a doc is being read.
-	const libraryMode = !selectedDoc && !showCreateView;
+	const opensDefaultDoc = !loading && !error && !selectedDoc && !showCreateView && Boolean(defaultDocHref);
+	useEffect(() => {
+		if (opensDefaultDoc && defaultDocHref) void navigateTo(defaultDocHref, { replace: true });
+	}, [opensDefaultDoc, defaultDocHref]);
 
 	return (
 		<div className="h-full flex overflow-hidden bg-background">
-			{!libraryMode && !sidebarCollapsed && (
+			{!sidebarCollapsed && (
 				<aside aria-label="Docs library" className="hidden w-[272px] shrink-0 border-r border-border/55 lg:flex">
 					<div className="flex h-full w-full flex-col pt-4 pb-3 pl-3">{sidebarContent}</div>
 				</aside>
@@ -450,10 +446,6 @@ function DocsPageInner() {
 							>
 								{sidebarCollapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
 							</Button>
-							<Button variant="ghost" size="sm" onClick={() => navigateToFolder(selectedDoc.folder || currentFolder || null)} className={toolbarButton}>
-								<ArrowLeft className="size-4" /><span className="hidden sm:inline">Back</span>
-							</Button>
-							<span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />
 							<button
 								type="button"
 								onClick={handleCopyPath}
@@ -590,16 +582,21 @@ function DocsPageInner() {
 						onCreated={() => { setShowCreateView(false); setMobileSidebarOpen(false); loadDocs(); }}
 						onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
 					/>
+				) : error ? (
+					<PageError description={error} onRetry={loadDocs} className="flex-1" />
+				) : loading || opensDefaultDoc ? (
+					<PageLoading label="Loading docs" className="flex-1" />
 				) : (
-					<DocsLibrary
-						docs={docs}
-						loading={loading}
-						error={error}
-						initialFolder={currentFolder}
-						onCreateDoc={openCreateView}
-						onSelectDoc={setSelectedDoc}
-						onRetry={loadDocs}
-					/>
+					<div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+						<Button variant="ghost" size="sm" onClick={() => setMobileSidebarOpen(true)} className={`${toolbarButton} lg:hidden`} aria-label="Browse docs">
+							<Menu className="size-4" />
+						</Button>
+						<p className="text-sm font-medium">No docs yet</p>
+						<p className="max-w-sm text-xs text-muted-foreground">Create the first doc in this project, or add one with `knowns doc create`.</p>
+						<Button size="sm" onClick={openCreateView} className="mt-1 h-8 gap-1.5">
+							<Pencil className="size-3.5" /> New doc
+						</Button>
+					</div>
 				)}
 			</div>
 			{selectedDoc && (

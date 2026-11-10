@@ -11,9 +11,4 @@ export { FormField } from "./FormField";
 export { HeaderTimeTracker } from "./HeaderTimeTracker";
 export { TimeTrackingLogs } from "./TimeTrackingLogs";
 export { AppBreadcrumb } from "./AppBreadcrumb";
-export {
-	DocsLibraryToolbar,
-	type DocsFilter,
-	type DocsSort,
-} from "./DocsLibraryToolbar";
 export { SidebarThemeControl } from "./SidebarThemeControl";

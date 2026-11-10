@@ -15,4 +15,3 @@ export { default as VersionDiffViewer } from "./VersionDiffViewer";
 export { default as AssigneeDropdown } from "./AssigneeDropdown";
 export { TaskDataTable } from "./TaskDataTable";
 export { TaskNotionList } from "./TaskNotionList";
-export { DocsLibrary } from "./DocsLibrary";

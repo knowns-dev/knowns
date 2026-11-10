@@ -71,8 +71,9 @@ test.describe("Documentation Page", () => {
 		});
 
 		await test.step("All docs are listed", async () => {
-			await expect(page.getByText("API Reference")).toBeVisible();
-			await expect(page.getByText("Setup Guide")).toBeVisible();
+			const list = page.getByRole("complementary", { name: "Docs library" });
+			await expect(list.getByRole("link", { name: /API Reference/ }).first()).toBeVisible();
+			await expect(list.getByRole("link", { name: /Setup Guide/ }).first()).toBeVisible();
 		});
 	});
 });
