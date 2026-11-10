@@ -253,7 +253,7 @@ test.describe("Document Interactions via UI", () => {
 		});
 
 		await test.step("Click '+ New Doc' button", async () => {
-			await page.getByTitle("Create new document").click();
+			await page.getByRole("button", { name: "New Doc", exact: true }).first().click();
 		});
 
 		await test.step("Page switches to doc editor with title", async () => {
@@ -344,8 +344,8 @@ test.describe("Document Interactions via UI", () => {
 		});
 
 		await test.step("Click Edit button", async () => {
-			// Edit button is in the toolbar: pencil icon + "Edit" text
-			const editBtn = page.locator("button", { hasText: "Edit" }).first();
+			// The toolbar's Edit button. Match the name exactly: the doc chip "@doc/edit-test-doc" also contains "edit".
+			const editBtn = page.getByRole("button", { name: "Edit", exact: true });
 			await expect(editBtn).toBeVisible();
 			await editBtn.click();
 		});
@@ -355,7 +355,7 @@ test.describe("Document Interactions via UI", () => {
 			// After clicking edit, page should show editor with save/back controls
 			const saveBtn = page.getByRole("button", { name: /save|update|back/i }).first();
 			const editor = page.locator("[contenteditable], textarea, .tiptap, .ProseMirror, [class*=editor]").first();
-			await expect(saveBtn.or(editor)).toBeVisible();
+			await expect(saveBtn.or(editor).first()).toBeVisible();
 		});
 	});
 });
