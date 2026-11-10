@@ -3,6 +3,21 @@ import { LayoutList, LayoutGrid, ListTodo, ArchiveRestore, Archive, ChevronDown,
 import type { Task } from "@/ui/models/task";
 import { navigateTo } from "../lib/navigation";
 import { Board, TaskNotionList } from "../components/organisms";
+import BoardNext from "../components/organisms/BoardNext";
+
+// Pilot switch for the Knowns UI board: ?board=next turns it on and ?board=old turns it off. The
+// choice is remembered, because opening a Task changes the URL to /kanban/<id> without the query.
+const BOARD_PREF_KEY = "knowns.board";
+const isBoardNext = () => {
+	if (typeof window === "undefined") return false;
+	const param = new URLSearchParams(window.location.search).get("board");
+	try {
+		if (param === "next" || param === "old") localStorage.setItem(BOARD_PREF_KEY, param);
+		return (param ?? localStorage.getItem(BOARD_PREF_KEY)) === "next";
+	} catch {
+		return param === "next";
+	}
+};
 import { TaskDetailSheet } from "../components/organisms/TaskDetail/TaskDetailSheet";
 import { TaskGroupedView } from "./TasksPage/TaskGroupedView";
 import { TaskTableView } from "./TasksPage/TaskTableView";
@@ -457,6 +472,13 @@ export default function TasksPage({
 					/>
 				) : historicalMode && historicalLoading && historicalTasks === null ? (
 					<PageLoading label="Loading historical Tasks" className="flex-1" />
+				) : viewMode === "board" && isBoardNext() ? (
+					<BoardNext
+						tasks={visibleTasks}
+						loading={false}
+						onTasksUpdate={replaceBoardTasks}
+						onTaskClick={handleTaskClick}
+					/>
 				) : viewMode === "board" ? (
 					<Board
 						tasks={visibleTasks}
