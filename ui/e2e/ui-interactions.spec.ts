@@ -369,18 +369,18 @@ test.describe("Search via UI", () => {
 
 		await test.step("Navigate to dashboard", async () => {
 			await page.goto(server.baseURL);
+			await expect(page.getByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
 		});
 
-		await test.step("Open search with Cmd+K", async () => {
-			await page.keyboard.press("Meta+k");
+		await test.step("Open search with Cmd+K (Ctrl+K off macOS)", async () => {
+			await page.keyboard.press("ControlOrMeta+k");
 		});
 
 		await test.step("Type search query and see results", async () => {
-			const searchInput = page.getByPlaceholder(/search/i).first();
-			if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-				await searchInput.fill("Login");
-				await expect(page.getByText("Login Authentication Feature").first()).toBeVisible();
-			}
+			const searchInput = page.getByRole("dialog", { name: "Search", exact: true }).getByRole("combobox");
+			await expect(searchInput).toBeVisible();
+			await searchInput.fill("Login");
+			await expect(page.getByRole("option", { name: /Login Authentication Feature/ })).toBeVisible();
 		});
 	});
 
@@ -395,18 +395,17 @@ test.describe("Search via UI", () => {
 
 		await test.step("Click search in sidebar to open search dialog", async () => {
 			// Sidebar search is a button that opens the search command dialog
-			const searchBtn = page.locator("button", { hasText: /search/i }).first();
-			await searchBtn.click();
+			await page.getByRole("button", { name: /^Search\.\.\./ }).click();
 		});
 
 		await test.step("Type search query", async () => {
-			const input = page.getByPlaceholder(/search/i).first();
-			await expect(input).toBeVisible({ timeout: 3000 });
+			const input = page.getByRole("dialog", { name: "Search", exact: true }).getByRole("combobox");
+			await expect(input).toBeVisible();
 			await input.fill("Sidebar Search");
 		});
 
 		await test.step("Results appear", async () => {
-			await expect(page.getByText("Sidebar Search Target").first()).toBeVisible();
+			await expect(page.getByRole("option", { name: /Sidebar Search Target/ })).toBeVisible();
 		});
 	});
 });
@@ -501,16 +500,15 @@ test.describe("Full User Workflows (no CLI)", () => {
 		});
 
 		await test.step("Wait for task on board", async () => {
-			await page.waitForTimeout(1000);
+			await expect(page.getByText("Unique Searchable XYZ123").first()).toBeVisible();
 		});
 
 		await test.step("Open search and find the task", async () => {
-			await page.keyboard.press("Meta+k");
-			const searchInput = page.getByPlaceholder(/search/i).first();
-			if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-				await searchInput.fill("Unique Searchable");
-				await expect(page.getByText("Unique Searchable XYZ123").first()).toBeVisible();
-			}
+			await page.keyboard.press("ControlOrMeta+k");
+			const searchInput = page.getByRole("dialog", { name: "Search", exact: true }).getByRole("combobox");
+			await expect(searchInput).toBeVisible();
+			await searchInput.fill("Unique Searchable");
+			await expect(page.getByRole("option", { name: /Unique Searchable XYZ123/ })).toBeVisible();
 		});
 	});
 });

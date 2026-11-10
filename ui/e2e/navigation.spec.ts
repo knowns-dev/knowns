@@ -87,17 +87,17 @@ test.describe("Navigation & Global Features", () => {
 	test("search dialog opens with keyboard shortcut", async ({ page }) => {
 		await test.step("Navigate to dashboard", async () => {
 			await page.goto(server.baseURL);
+			await expect(page.getByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
 		});
 
-		await test.step("Open search with Cmd+K", async () => {
-			await page.keyboard.press("Meta+k");
+		await test.step("Open search with Cmd+K (Ctrl+K off macOS)", async () => {
+			await page.keyboard.press("ControlOrMeta+k");
 		});
 
 		await test.step("Search dialog is visible", async () => {
-			const searchInput = page.getByPlaceholder(/search/i).first();
-			await expect(searchInput).toBeVisible({ timeout: 3000 }).catch(() => {
-				// Cmd+K may not work in test env, that's ok
-			});
+			const searchInput = page.getByRole("dialog", { name: "Search", exact: true }).getByRole("combobox");
+			await expect(searchInput).toBeVisible();
+			await expect(searchInput).toBeFocused();
 		});
 	});
 

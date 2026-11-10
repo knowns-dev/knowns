@@ -197,6 +197,8 @@ test.describe("Decision processing flow", () => {
 		expect((pickerBox?.x || 0) + (pickerBox?.width || 0)).toBeLessThanOrEqual(390);
 		expect((pickerBox?.y || 0) + (pickerBox?.height || 0)).toBeLessThanOrEqual(844);
 		await page.keyboard.press("Escape");
+		// The picker animates out; until it is gone it is the top layer and takes the next Escape.
+		await expect(picker).toBeHidden();
 		await expect(create).toBeVisible();
 		await page.keyboard.press("Escape");
 		await expect(create).toBeHidden();

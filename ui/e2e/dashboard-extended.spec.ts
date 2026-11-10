@@ -21,30 +21,43 @@ test.afterAll(() => {
 test.describe("Dashboard Extended", () => {
 	test("uses configured and actual statuses in work aging", async ({ page }) => {
 		await page.goto(server.baseURL);
+		await page.getByRole("tab", { name: "Analytics" }).click();
 
-		await expect(page.getByText("On Hold", { exact: true }).first()).toBeVisible();
-		await expect(page.getByText("Update-age proxy")).toBeVisible();
+		const aging = page.getByRole("region", { name: "Where does work get stuck?" });
+		await expect(aging.getByRole("img", { name: /Open tasks by status and days since last update/ })).toBeVisible();
+		await expect(aging.getByRole("rowheader", { name: "On Hold", exact: true })).toBeAttached();
+		await expect(aging.getByText("All 3 open tasks moved in the last week. Nothing looks stuck.")).toBeVisible();
+		await expect(aging.getByText(/Knowns does not record when work started/)).toBeVisible();
 	});
 
 	test("shows a continuable focus and ranked attention queue", async ({ page }) => {
 		await page.goto(server.baseURL);
 
-		await expect(page.getByText("Dashboard Current Focus")).toBeVisible();
-		await expect(page.getByRole("link", { name: /Continue task/ })).toBeVisible();
-		await expect(page.getByText("Dashboard High Priority")).toBeVisible();
-		await expect(page.getByText("high priority", { exact: true })).toBeVisible();
+		const focus = page.getByRole("region", { name: "Continue working" }).getByRole("link", { name: /Dashboard Current Focus/ });
+		await expect(focus).toBeVisible();
+		const attention = page.getByRole("region", { name: "Needs your attention" }).getByRole("link", { name: /Dashboard High Priority/ });
+		await expect(attention).toBeVisible();
+		await expect(attention.getByText("high priority", { exact: true })).toBeVisible();
+
+		await focus.click();
+		await expect(page).toHaveURL(/\/tasks\/[a-z0-9.-]+$/i);
 	});
 
 	test("switches throughput periods", async ({ page }) => {
 		await page.goto(server.baseURL);
+		const progress = page.getByRole("region", { name: "Progress" });
 
-		await page.getByRole("button", { name: "7d" }).click();
-		await expect(page.getByRole("button", { name: "7d" })).toHaveAttribute("aria-pressed", "true");
-		await expect(page.getByText("7 buckets")).toBeVisible();
+		await progress.getByRole("button", { name: "7d" }).click();
+		await expect(progress.getByRole("button", { name: "7d" })).toHaveAttribute("aria-pressed", "true");
+		await expect(progress.getByRole("img", { name: /last 7 days\. bar chart, 7 points/ })).toBeVisible();
 
-		await page.getByRole("button", { name: "90d" }).click();
-		await expect(page.getByRole("button", { name: "90d" })).toHaveAttribute("aria-pressed", "true");
-		await expect(page.getByText("13 buckets")).toBeVisible();
+		await progress.getByRole("button", { name: "90d" }).click();
+		await expect(progress.getByRole("button", { name: "90d" })).toHaveAttribute("aria-pressed", "true");
+		await expect(progress.getByRole("img", { name: /last 90 days\. bar chart, 13 points/ })).toBeVisible();
+
+		// The Analytics tab shares the range.
+		await page.getByRole("tab", { name: "Analytics" }).click();
+		await expect(page.getByRole("radio", { name: "90 days" })).toBeChecked();
 	});
 
 	test("keeps available knowledge signals visible when one source fails", async ({ page }) => {
@@ -53,30 +66,35 @@ test.describe("Dashboard Extended", () => {
 		});
 		await page.goto(server.baseURL);
 
-		await expect(page.getByText(/Partial data/)).toBeVisible({ timeout: 10_000 });
-		await expect(page.getByText(/Unavailable now: Spec coverage/)).toBeVisible();
-		await expect(page.getByText("Document inventory")).toBeVisible();
+		await expect(page.getByText("Partial data", { exact: true })).toBeVisible({ timeout: 10_000 });
+		await page.getByRole("tab", { name: "Analytics" }).click();
+		const knowledge = page.getByRole("region", { name: "Is knowledge keeping up with the work?" });
+		await expect(knowledge.getByText(/Could not load Spec coverage\. The other numbers are current\./)).toBeVisible();
+		await expect(knowledge.getByText("Spec coverage is unavailable")).toBeVisible();
+		await expect(knowledge.getByText("Memories confirmed")).toBeVisible();
+		await expect(knowledge.getByText("Decisions settled")).toBeVisible();
 	});
 
-	test("places project pulse before analytics on a narrow viewport", async ({ page }) => {
+	test("stacks the side widgets after the main ones on a narrow viewport", async ({ page }) => {
 		await page.setViewportSize({ width: 390, height: 844 });
 		await page.goto(server.baseURL);
 
-		const pulseBox = await page.getByRole("heading", { name: "Project pulse" }).boundingBox();
-		const throughputBox = await page.getByRole("heading", { name: "Throughput" }).boundingBox();
-		expect(pulseBox).not.toBeNull();
-		expect(throughputBox).not.toBeNull();
-		expect(pulseBox!.y).toBeLessThan(throughputBox!.y);
+		const mainBox = await page.getByRole("heading", { name: "Needs your attention" }).boundingBox();
+		const sideBox = await page.getByRole("heading", { name: "Waiting for you" }).boundingBox();
+		expect(mainBox).not.toBeNull();
+		expect(sideBox).not.toBeNull();
+		expect(mainBox!.y).toBeLessThan(sideBox!.y);
 	});
 
-	test("keeps desktop analysis first and project pulse sticky-ready", async ({ page }) => {
+	test("puts the side widgets in a column beside the main ones on desktop", async ({ page }) => {
 		await page.setViewportSize({ width: 1440, height: 900 });
 		await page.goto(server.baseURL);
 
-		const throughputBox = await page.getByRole("heading", { name: "Throughput" }).boundingBox();
-		const pulseBox = await page.getByRole("heading", { name: "Project pulse" }).boundingBox();
-		expect(throughputBox).not.toBeNull();
-		expect(pulseBox).not.toBeNull();
-		expect(throughputBox!.x).toBeLessThan(pulseBox!.x);
+		const mainBox = await page.getByRole("heading", { name: "Continue working" }).boundingBox();
+		const sideBox = await page.getByRole("heading", { name: "Waiting for you" }).boundingBox();
+		expect(mainBox).not.toBeNull();
+		expect(sideBox).not.toBeNull();
+		expect(mainBox!.x).toBeLessThan(sideBox!.x);
+		expect(Math.abs(mainBox!.y - sideBox!.y)).toBeLessThan(40);
 	});
 });

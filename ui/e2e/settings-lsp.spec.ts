@@ -58,9 +58,10 @@ test.describe("Settings — LSP (Code tab)", () => {
 		});
 
 		await test.step("Dropdown is visible", async () => {
-			// The dropdown appears as a floating element after click
-			const dropdown = page.locator(".z-50, [class*='z-50']");
-			await expect(dropdown.or(page.locator("div.absolute"))).toBeVisible();
+			await expect(page.getByRole("button", { name: "Add" })).toHaveAttribute("aria-expanded", "true");
+			const dropdown = page.getByRole("group", { name: "Available languages" });
+			await expect(dropdown).toBeVisible();
+			await expect(dropdown.getByRole("button").first()).toBeVisible();
 		});
 	});
 
