@@ -4,7 +4,6 @@ import {
 	useMemo,
 	useRef,
 	useState,
-	type ComponentType,
 	type ReactNode,
 } from "react";
 
@@ -13,8 +12,10 @@ import { navigateTo } from "@/ui/lib/navigation";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import {
 	MemoryReviewRequiredError,
+	auditApi,
 	memoryApi,
 	search as searchKnowns,
+	type AuditEvent,
 	type KnownsSearchResult,
 	type KnownsSearchResponse,
 	type MemoryBulkAction,
@@ -33,12 +34,9 @@ import {
 	Brain,
 	Check,
 	CheckCircle2,
-	ChevronRight,
 	CircleAlert,
-	Clock3,
 	Copy,
 	FileText,
-	FileQuestion,
 	GitMerge,
 	History,
 	Inbox,
@@ -63,9 +61,28 @@ import {
 	DialogDescription,
 	DialogTitle,
 } from "@/ui/components/ui/dialog";
-import { TopLayer } from "@/ui/components/ui/top-layer";
+import { toast } from "@/ui/components/ui/sonner";
+import {
+	AgentMemory,
+	type MemoryItem,
+	type MemoryScope,
+	type MemoryUse,
+	type ScopeFilter,
+} from "@/ui/components/ui/knowns/agent-memory/agent-memory";
+import { ago } from "@/ui/components/ui/knowns/agent-memory/memory-utils";
+import { Badge, type BadgeTone } from "@/ui/components/ui/knowns/badge";
+import { Checkbox } from "@/ui/components/ui/knowns/checkbox";
+import { Input } from "@/ui/components/ui/knowns/input";
+import { SegmentedControl } from "@/ui/components/ui/knowns/segmented-control";
+import { Tabs, TabsList, TabsTrigger } from "@/ui/components/ui/knowns/tabs";
 import { FeatureHeader } from "@/ui/components/templates";
-import { PageContent, PageShell } from "@/ui/components/templates/PageShell";
+import {
+	PageContent,
+	PageError,
+	PageLoading,
+	PageShell,
+} from "@/ui/components/templates/PageShell";
+import { useIsMobile } from "@/ui/hooks/useMobile";
 import { cn } from "@/ui/lib/utils";
 
 type MemoryView = "trusted" | "review" | "history";
@@ -120,7 +137,7 @@ const destinations: Array<{
 	id: MemoryView;
 	label: string;
 	path: "/memory" | "/memory/review" | "/memory/history";
-	icon: ComponentType<{ className?: string }>;
+	icon: LucideIcon;
 }> = [
 	{ id: "trusted", label: "Trusted", path: "/memory", icon: ShieldCheck },
 	{ id: "review", label: "Review Inbox", path: "/memory/review", icon: Inbox },
@@ -160,8 +177,28 @@ const sourceReasons = new Set<MemoryReviewReason>([
 	"source_decision_superseded",
 ]);
 
+/*
+ * The Knowns memory model on the agent-memory block:
+ * - layer -> scope: global is the user's own recall across projects, project stays project,
+ *   working is the short-lived session layer. The labels keep the Knowns names.
+ * - pin -> the "pinned" tag, so it survives in the markdown and needs no new field.
+ * - forget -> archive. Trusted recall is never deleted from here; it moves to History.
+ * - "Why was this used?" -> MCP audit events that read the memory (memory get with its id).
+ */
+const PIN_TAG = "pinned";
+const layerScope: Record<string, MemoryScope> = { global: "user", project: "project", working: "session" };
+const scopeLabels: Record<MemoryScope, string> = { user: "Global", project: "Project", session: "Working" };
+const scopeHints: Record<MemoryScope, string> = {
+	user: "Global: your own recall, shared by every project",
+	project: "Project: only this project",
+	session: "Working: short-lived, this session only",
+};
+const scopeLayer: Record<MemoryScope, string> = { user: "global", project: "project", session: "working" };
+const confidenceValue: Record<string, number> = { low: 0.35, medium: 0.65, high: 0.9 };
+
 export default function MemoryPage() {
 	const navigate = useNavigate();
+	const isMobile = useIsMobile();
 	const pathname = useRouterState({ select: (state) => state.location.pathname });
 	const view = viewFromPath(pathname);
 	// The graph links straight to one entry, e.g. /memory/<id>, so a node there
@@ -175,7 +212,8 @@ export default function MemoryPage() {
 	const [memories, setMemories] = useState<MemoryEntry[]>([]);
 	const [inbox, setInbox] = useState<MemoryReviewInboxResponse>(emptyInbox);
 	const [reviewAvailable, setReviewAvailable] = useState(true);
-	const [layerFilter, setLayerFilter] = useState<string>("all");
+	const [uses, setUses] = useState<Map<string, MemoryUse[]> | null>(null);
+	const [scope, setScope] = useState<ScopeFilter>("all");
 	const [selectedID, setSelectedID] = useState<string | null>(null);
 	const [selectedIDs, setSelectedIDs] = useState<Set<string>>(() => new Set());
 	const [query, setQuery] = useState("");
@@ -184,7 +222,6 @@ export default function MemoryPage() {
 	const [createOpen, setCreateOpen] = useState(false);
 	const [bulkAction, setBulkAction] = useState<MemoryBulkAction | null>(null);
 	const [errorMessage, setErrorMessage] = useState("");
-	const [notice, setNotice] = useState("");
 	const [dataWarning, setDataWarning] = useState("");
 	const lastOpenedMemoryID = useRef<string | null>(null);
 
@@ -242,6 +279,17 @@ export default function MemoryPage() {
 		};
 	}, []);
 
+	// Usage comes from the MCP audit log and is optional: without it the rows simply
+	// leave out "Used N times".
+	const loadUses = useCallback(async () => {
+		try {
+			const { events } = await auditApi.recent({ tool: "memory", limit: 500 });
+			setUses(usesFromAudit(events));
+		} catch {
+			setUses(null);
+		}
+	}, []);
+
 	useEffect(() => {
 		let cancelled = false;
 		setLoading(true);
@@ -254,10 +302,11 @@ export default function MemoryPage() {
 			.finally(() => {
 				if (!cancelled) setLoading(false);
 			});
+		void loadUses();
 		return () => {
 			cancelled = true;
 		};
-	}, [loadMemories]);
+	}, [loadMemories, loadUses]);
 
 	useEffect(() => {
 		setSelectedID(null);
@@ -288,63 +337,32 @@ export default function MemoryPage() {
 		[memories],
 	);
 
-	const destinationMemories = useMemo(() => {
-		switch (view) {
-			case "review":
-				return inbox.items.map((item) => item.memory);
-			case "history":
-				return historicalMemories;
-			default:
-				return trustedMemories;
-		}
-	}, [historicalMemories, inbox.items, trustedMemories, view]);
+	const trustedItems = useMemo(
+		() => trustedMemories.map((memory) => toMemoryItem(memory, uses)),
+		[trustedMemories, uses],
+	);
+	const historyItems = useMemo(
+		() => historicalMemories.map((memory) => toMemoryItem(memory, uses)),
+		[historicalMemories, uses],
+	);
 
-	// The layers to offer come from every memory the page knows about, not just the
-	// open tab, so the control keeps the same shape as you move between tabs. A
-	// layer only some projects use (working) still earns its own filter.
-	const knownLayers = useMemo(() => {
-		const layers = new Set<string>();
-		for (const memory of memoryByID.values()) layers.add(memory.layer);
-		return [...layers].sort();
-	}, [memoryByID]);
+	// The block searches its own text; ours also matches ids, content, tags and sources.
+	const matchMemory = useCallback(
+		(item: MemoryItem, q: string) => {
+			const memory = memoryByID.get(item.id);
+			return memory ? memoryMatches(memory, q, itemByID.get(item.id)) : false;
+		},
+		[itemByID, memoryByID],
+	);
 
-	// Counts follow the open tab, so a zero says "none in here" rather than
-	// hiding the fact that this layer exists at all.
-	const layerCounts = useMemo(() => {
-		const counts = new Map<string, number>();
-		for (const memory of destinationMemories) {
-			counts.set(memory.layer, (counts.get(memory.layer) || 0) + 1);
-		}
-		return counts;
-	}, [destinationMemories]);
-
-	useEffect(() => {
-		if (layerFilter !== "all" && !knownLayers.includes(layerFilter)) setLayerFilter("all");
-	}, [knownLayers, layerFilter]);
-
-	const visibleMemories = useMemo(() => {
-		const byLayer =
-			layerFilter === "all"
-				? destinationMemories
-				: destinationMemories.filter((memory) => memory.layer === layerFilter);
-		const normalized = query.trim().toLowerCase();
-		if (!normalized) return byLayer;
-		return byLayer.filter((memory) => {
-			const reviewItem = itemByID.get(memory.id);
-			return [
-				memory.title,
-				memory.id,
-				memory.content,
-				memory.layer,
-				memory.category,
-				...(memory.tags || []),
-				...(memory.sources || []),
-				...(reviewItem?.reasons || []),
-			]
-				.filter(Boolean)
-				.some((value) => String(value).toLowerCase().includes(normalized));
-		});
-	}, [destinationMemories, itemByID, layerFilter, query]);
+	const reviewMemories = useMemo(() => {
+		const byScope = inbox.items
+			.map((item) => item.memory)
+			.filter((memory) => scope === "all" || memory.layer === scopeLayer[scope]);
+		const q = query.trim();
+		if (!q) return byScope;
+		return byScope.filter((memory) => memoryMatches(memory, q, itemByID.get(memory.id)));
+	}, [inbox.items, itemByID, query, scope]);
 
 	// A linked entry may sit in a tab that has not been fetched yet — a proposal
 	// while the trusted list is showing, say — so fall back to loading it alone.
@@ -417,9 +435,9 @@ export default function MemoryPage() {
 		const memoryID = lastOpenedMemoryID.current;
 		if (!memoryID) return;
 		requestAnimationFrame(() => {
-			const memoryRow = document.querySelector<HTMLButtonElement>(
-				`[data-testid="memory-row-${memoryID}"]`,
-			);
+			const memoryRow =
+				document.querySelector<HTMLButtonElement>(`[data-testid="memory-row-${memoryID}"]`) ||
+				document.querySelector<HTMLButtonElement>(`[data-memory-open="${CSS.escape(memoryID)}"]`);
 			const activeDestination =
 				document.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]');
 			(memoryRow || activeDestination)?.focus();
@@ -428,20 +446,19 @@ export default function MemoryPage() {
 
 	const handleRefresh = useCallback(async () => {
 		setLoading(true);
-		setNotice("");
 		try {
 			await loadMemories();
+			void loadUses();
 		} catch (error) {
 			setErrorMessage(error instanceof Error ? error.message : "Failed to refresh Memories");
 		} finally {
 			setLoading(false);
 		}
-	}, [loadMemories]);
+	}, [loadMemories, loadUses]);
 
 	const handleReviewAction = useCallback(
 		async (memory: MemoryEntry, action: ReviewAction) => {
 			setActionBusy(true);
-			setErrorMessage("");
 			try {
 				switch (action.kind) {
 					case "merge_existing":
@@ -474,7 +491,7 @@ export default function MemoryPage() {
 				}
 				const refreshed = await loadMemories();
 				const stillNeedsReview = refreshed.inbox.items.some((item) => item.memory.id === memory.id);
-				setNotice(reviewActionNotice(action, memory));
+				toast.success(reviewActionNotice(action, memory));
 				if (stillNeedsReview && refreshed.reviewAvailable) {
 					setSelectedID(memory.id);
 				} else {
@@ -482,7 +499,7 @@ export default function MemoryPage() {
 				}
 				return true;
 			} catch (error) {
-				setErrorMessage(error instanceof Error ? error.message : "Memory review action failed");
+				toast.error(error instanceof Error ? error.message : "Memory review action failed");
 				return false;
 			} finally {
 				setActionBusy(false);
@@ -494,15 +511,14 @@ export default function MemoryPage() {
 	const handleBulkAction = useCallback(async () => {
 		if (!bulkAction || selectedIDs.size === 0) return;
 		setActionBusy(true);
-		setErrorMessage("");
 		try {
 			await memoryApi.bulkAction(bulkAction, Array.from(selectedIDs));
 			await loadMemories();
 			setBulkAction(null);
 			setSelectedIDs(new Set());
-			setNotice(`${bulkActionLabel(bulkAction)} completed for ${selectedIDs.size} Memories.`);
+			toast.success(`${bulkActionLabel(bulkAction)} completed for ${selectedIDs.size} Memories.`);
 		} catch (error) {
-			setErrorMessage(error instanceof Error ? error.message : "Bulk Memory action failed");
+			toast.error(error instanceof Error ? error.message : "Bulk Memory action failed");
 		} finally {
 			setActionBusy(false);
 		}
@@ -523,9 +539,9 @@ export default function MemoryPage() {
 			handleNavigate("review");
 			try {
 				await loadMemories();
-				setNotice(`Proposal @memory/${created.id} saved to Review Inbox.`);
+				toast.success(`Proposal @memory/${created.id} saved to Review Inbox.`);
 			} catch (error) {
-				setErrorMessage(
+				toast.error(
 					error instanceof Error
 						? `Memory was saved, but Review Inbox could not refresh: ${error.message}`
 						: "Memory was saved, but Review Inbox could not refresh.",
@@ -535,7 +551,86 @@ export default function MemoryPage() {
 		[handleNavigate, loadMemories],
 	);
 
-	if (loading) return <MemoryLoadingState />;
+	// Block callbacks. Each applies locally first, so the row does not jump back while
+	// the server answers, and reloads from the server if the save fails.
+	const patchLocal = useCallback((id: string, patch: Partial<MemoryEntry>) => {
+		setMemories((current) => current.map((memory) => (memory.id === id ? { ...memory, ...patch } : memory)));
+	}, []);
+
+	const handleEdit = useCallback(
+		async (id: string, text: string) => {
+			const memory = memoryByID.get(id);
+			if (!memory) return;
+			// The row shows the title when there is one, so that is what an edit changes.
+			const patch: Partial<MemoryEntry> = memory.title?.trim() ? { title: text } : { content: text };
+			patchLocal(id, patch);
+			try {
+				const saved = await memoryApi.update(id, patch);
+				patchLocal(id, saved);
+				toast.success("Memory updated");
+			} catch (error) {
+				toast.error(error instanceof Error ? error.message : "Failed to update Memory");
+				void loadMemories();
+			}
+		},
+		[loadMemories, memoryByID, patchLocal],
+	);
+
+	const handlePin = useCallback(
+		async (id: string, pinned: boolean) => {
+			const memory = memoryByID.get(id);
+			if (!memory) return;
+			const others = (memory.tags || []).filter((tag) => tag !== PIN_TAG);
+			const tags = pinned ? [...others, PIN_TAG] : others;
+			patchLocal(id, { tags });
+			try {
+				await memoryApi.update(id, { tags });
+			} catch (error) {
+				toast.error(error instanceof Error ? error.message : "Failed to pin Memory");
+				void loadMemories();
+			}
+		},
+		[loadMemories, memoryByID, patchLocal],
+	);
+
+	// Runs after the block's undo window has passed: archive, never delete.
+	const handleForget = useCallback(
+		async (ids: string[]) => {
+			try {
+				await memoryApi.bulkAction("archive", ids);
+				await loadMemories();
+				toast.success(
+					`${ids.length === 1 ? "1 Memory" : `${ids.length} Memories`} moved to History.`,
+				);
+			} catch (error) {
+				toast.error(error instanceof Error ? error.message : "Failed to archive Memories");
+				void loadMemories();
+			}
+		},
+		[loadMemories],
+	);
+
+	const historyMeta = useCallback(
+		(item: MemoryItem) => {
+			const memory = memoryByID.get(item.id);
+			if (!memory) return null;
+			return (
+				<>
+					<StatusBadge status={normalizedStatus(memory)} />
+					<MemoryMeta memory={memory} />
+				</>
+			);
+		},
+		[memoryByID],
+	);
+
+	const trustedMeta = useCallback(
+		(item: MemoryItem) => {
+			const memory = memoryByID.get(item.id);
+			return memory ? <MemoryMeta memory={memory} /> : null;
+		},
+		[memoryByID],
+	);
 
 	return (
 		<PageShell>
@@ -545,18 +640,16 @@ export default function MemoryPage() {
 				status={headerStatus}
 				actions={
 					<>
-						{view === "review" ? (
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								onClick={() => setCreateOpen(true)}
-								className="h-11 sm:h-8"
-							>
-								<Plus className="h-4 w-4" />
-								New proposal
-							</Button>
-						) : null}
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							onClick={() => setCreateOpen(true)}
+							className="h-11 sm:h-8"
+						>
+							<Plus className="h-4 w-4" />
+							New proposal
+						</Button>
 						<Button
 							type="button"
 							variant="ghost"
@@ -571,152 +664,118 @@ export default function MemoryPage() {
 				}
 			/>
 
-			{errorMessage ? (
-				<TopLayer>
-					<div
-						role="alert"
-						className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-destructive/30 bg-card px-4 py-3 text-sm text-destructive shadow-lg"
-					>
-						{errorMessage}
-					</div>
-				</TopLayer>
-			) : null}
-			{notice ? (
-				<TopLayer>
-					<div
-						role="status"
-						aria-live="polite"
-						className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-emerald-200 bg-card px-4 py-3 text-sm text-emerald-700 shadow-lg dark:border-emerald-500/30 dark:text-emerald-400"
-					>
-						{notice}
-					</div>
-				</TopLayer>
-			) : null}
-
-			<div className="flex h-[58px] shrink-0 items-center border-b bg-card px-4 sm:px-6">
-				<div className="flex w-full items-center gap-4">
-					<label className="relative min-w-0 flex-1">
-						<span className="sr-only">Search this destination</span>
-						<Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-						<input
-							value={query}
-							onChange={(event) => setQuery(event.target.value)}
-							placeholder="Search title, ID, source…"
-							className="h-11 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring sm:h-9"
-						/>
-					</label>
-					{knownLayers.length > 1 && (
-						<div
-							role="group"
-							aria-label="Filter by layer"
-							className="flex shrink-0 items-center gap-1 rounded-lg border bg-background p-0.5"
-						>
-							{[["all", "All"] as const, ...knownLayers.map((layer) => [layer, layer] as const)].map(
-								([value, label]) => {
-									const active = layerFilter === value;
-									const count = value === "all" ? destinationMemories.length : (layerCounts.get(value) ?? 0);
-									const empty = count === 0 && value !== "all";
-									return (
-										<button
-											key={value}
-											type="button"
-											aria-pressed={active}
-											disabled={empty}
-											title={empty ? `No ${value} memories in this tab` : undefined}
-											onClick={() => setLayerFilter(value)}
-											className={cn(
-												"flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium capitalize transition-colors",
-												active ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
-												empty && "cursor-not-allowed opacity-40 hover:text-muted-foreground",
-											)}
-										>
-											{value === "all" ? (
-												label
-											) : (
-												<LayerBadge layer={value} className={active ? "" : "opacity-70"} />
-											)}
-											<span className="tabular-nums text-[11px] text-muted-foreground">{count}</span>
-										</button>
-									);
-								},
-							)}
-						</div>
-					)}
-
-					<div
-						role="tablist"
-						aria-label="Memory destinations"
-						className="flex shrink-0 gap-1 overflow-x-auto"
-					>
+			<div className="shrink-0 px-4 pt-2 sm:px-6">
+				<Tabs value={view} onValueChange={(value) => handleNavigate(value as MemoryView)}>
+					<TabsList aria-label="Memory destinations">
 						{destinations.map((destination) => {
 							const Icon = destination.icon;
-							const active = view === destination.id;
 							return (
-								<button
+								<TabsTrigger
 									key={destination.id}
-									type="button"
-									role="tab"
-									aria-selected={active}
-									onClick={() => handleNavigate(destination.id)}
-									className={cn(
-										"min-h-11 shrink-0 border-b-2 px-4 py-2 text-sm font-medium transition-colors sm:min-h-10",
-										active
-											? "border-primary text-primary"
-											: "border-transparent text-muted-foreground hover:text-foreground",
-									)}
+									value={destination.id}
+									icon={<Icon />}
+									badge={<span className="tabular-nums">{destinationCounts[destination.id]}</span>}
 								>
-									<span className="flex items-center gap-2">
-										<Icon className="h-4 w-4" />
-										{destination.label}
-										<span className="rounded bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">
-											{destinationCounts[destination.id]}
-										</span>
-									</span>
-								</button>
+									{destination.label}
+								</TabsTrigger>
 							);
 						})}
-					</div>
-				</div>
+					</TabsList>
+				</Tabs>
 			</div>
 
-			<PageContent size="full" className="flex min-h-0 flex-1 flex-col">
-				<div data-testid={`memory-${view}-destination`}>
-					{dataWarning ? (
-						<p
-							role="status"
-							className="mb-4 flex items-start gap-2 border-y border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
-						>
-							<CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-							{dataWarning}
-						</p>
-					) : null}
+			<PageContent className="flex min-h-0 flex-1 flex-col">
+				{errorMessage && memories.length === 0 ? (
+					<PageError
+						title="Memories could not load"
+						description={errorMessage}
+						onRetry={() => void handleRefresh()}
+						className="flex-1"
+					/>
+				) : loading && memories.length === 0 ? (
+					<PageLoading label="Loading Memories" className="flex-1" />
+				) : (
+					<div data-testid={`memory-${view}-destination`} className="flex flex-col gap-4">
+						{dataWarning ? (
+							<p
+								role="status"
+								className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+							>
+								<CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+								{dataWarning}
+							</p>
+						) : null}
 
-					{view === "review" && selectedIDs.size > 0 ? (
-						<BulkActionBar
-							selectedCount={selectedIDs.size}
-							canVerify={canVerifySelected}
-							canReject={canRejectSelected}
-							onAction={setBulkAction}
-							onClear={() => setSelectedIDs(new Set())}
-						/>
-					) : null}
-
-					{view === "review" && !reviewAvailable ? (
-						<EmptyState
-							title="Review Inbox is temporarily unavailable"
-							description="Trusted and History remain readable. Refresh when review metadata is available again."
-						/>
-					) : (
-						<MemoryRegister
-							view={view}
-							memories={visibleMemories}
-							itemByID={itemByID}
-							selectedIDs={selectedIDs}
-							onSelect={handleSelect}
-							onOpen={handleOpenMemory}
-						/>
-					)}
-				</div>
+						{view === "trusted" ? (
+							<AgentMemory
+								key="trusted"
+								variant={isMobile ? "compact" : "default"}
+								title="Trusted"
+								description="What agents recall by default. Correct it, pin what matters, forget what is wrong: forgotten Memories move to History."
+								emptyText="No trusted Memories yet. Proposals become trusted once you review them."
+								items={trustedItems}
+								scope={scope}
+								onScopeChange={setScope}
+								query={query}
+								onQueryChange={setQuery}
+								scopeLabels={scopeLabels}
+								scopeHints={scopeHints}
+								match={matchMemory}
+								meta={trustedMeta}
+								onOpen={handleOpenMemory}
+								onEdit={(id, text) => void handleEdit(id, text)}
+								onPin={(id, pinned) => void handlePin(id, pinned)}
+								onForget={(ids) => void handleForget(ids)}
+								onNavigate={navigateTo}
+							/>
+						) : view === "history" ? (
+							<AgentMemory
+								key="history"
+								variant={isMobile ? "compact" : "default"}
+								title="History"
+								description="Archived, rejected, merged and deprecated Memories. Kept for provenance; agents do not recall them by default."
+								emptyText="Nothing in History yet."
+								items={historyItems}
+								scope={scope}
+								onScopeChange={setScope}
+								query={query}
+								onQueryChange={setQuery}
+								scopeLabels={scopeLabels}
+								scopeHints={scopeHints}
+								match={matchMemory}
+								meta={historyMeta}
+								onOpen={handleOpenMemory}
+								onNavigate={navigateTo}
+							/>
+						) : (
+							<ReviewInbox
+								available={reviewAvailable}
+								total={inbox.items.length}
+								memories={reviewMemories}
+								itemByID={itemByID}
+								counts={scopeCountsOf(inbox.items.map((item) => item.memory))}
+								scope={scope}
+								onScopeChange={setScope}
+								query={query}
+								onQueryChange={setQuery}
+								selectedIDs={selectedIDs}
+								onSelect={handleSelect}
+								onOpen={handleOpenMemory}
+								bulkBar={
+									selectedIDs.size > 0 ? (
+										<BulkActionBar
+											selectedCount={selectedIDs.size}
+											canVerify={canVerifySelected}
+											canReject={canRejectSelected}
+											onAction={setBulkAction}
+											onClear={() => setSelectedIDs(new Set())}
+										/>
+									) : null
+								}
+							/>
+						)}
+					</div>
+				)}
 			</PageContent>
 
 			<Dialog open={selectedMemory !== null} onOpenChange={(open) => !open && handleCloseMemory()}>
@@ -742,7 +801,7 @@ export default function MemoryPage() {
 						) : (
 							<ReadOnlyMemoryDetail
 								memory={selectedMemory}
-								trusted={view === "trusted"}
+								trusted={normalizedStatus(selectedMemory) === "active"}
 								busy={actionBusy}
 								onClose={handleCloseMemory}
 								onRemoveFromTrusted={(memory) =>
@@ -771,125 +830,292 @@ export default function MemoryPage() {
 	);
 }
 
-function MemoryRegister({
-	view,
+/**
+ * Review Inbox: the triage the agent-memory block does not cover (selection, bulk
+ * outcomes, review state). Drawn as the same card as the block so the three tabs read
+ * as one surface: header with count, search and scope, then divided rows.
+ */
+function ReviewInbox({
+	available,
+	total,
 	memories,
 	itemByID,
+	counts,
+	scope,
+	onScopeChange,
+	query,
+	onQueryChange,
 	selectedIDs,
 	onSelect,
 	onOpen,
+	bulkBar,
 }: {
-	view: MemoryView;
+	available: boolean;
+	total: number;
 	memories: MemoryEntry[];
 	itemByID: Map<string, MemoryReviewItem>;
+	counts: Record<ScopeFilter, number>;
+	scope: ScopeFilter;
+	onScopeChange: (scope: ScopeFilter) => void;
+	query: string;
+	onQueryChange: (query: string) => void;
 	selectedIDs: Set<string>;
 	onSelect: (id: string, checked: boolean) => void;
 	onOpen: (id: string) => void;
+	bulkBar: ReactNode;
 }) {
-	if (memories.length === 0) {
-		return (
-			<EmptyState
-				title={view === "review" ? "Review Inbox is clear" : "No Memories here"}
-				description={
-					view === "review"
-						? "New proposals, stale recall, and source repairs will appear here."
-						: "No records match this destination and search."
-				}
-			/>
-		);
-	}
-
+	const visibleIDs = memories.map((memory) => memory.id);
+	const selectedVisible = visibleIDs.filter((id) => selectedIDs.has(id)).length;
 	return (
-		<div
-			className="overflow-hidden rounded-lg border bg-card"
-			data-testid="memory-list"
+		<section
+			aria-labelledby="memory-review-heading"
+			className="flex w-full flex-col rounded-2xl border bg-card text-card-foreground"
 		>
-			<div
-				className={cn(
-					"hidden gap-4 border-b bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground md:grid",
-					view === "review"
-						? "grid-cols-[32px_minmax(0,1fr)_160px_150px_32px]"
-						: "grid-cols-[minmax(0,1fr)_160px_150px_32px]",
-				)}
-			>
-				{view === "review" ? <span aria-hidden="true" /> : null}
-				<span>Memory</span>
-				<span>{view === "review" ? "Review state" : "Lifecycle"}</span>
-				<span>Updated</span>
-				<span aria-hidden="true" />
-			</div>
-			<div className="divide-y divide-border">
-				{memories.map((memory) => {
-					const reviewItem = itemByID.get(memory.id);
-					return (
-						<div
-							key={memory.id}
-							className={cn(
-								"group grid min-h-[76px] items-center gap-3 px-4 py-3 hover:bg-muted/40 md:gap-4",
-								view === "review"
-									? "grid-cols-[32px_minmax(0,1fr)_auto] md:grid-cols-[32px_minmax(0,1fr)_160px_150px_32px]"
-									: "grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1fr)_160px_150px_32px]",
-							)}
-							data-testid={`memory-register-item-${memory.id}`}
-						>
-							{view === "review" ? (
-								<label className="flex h-8 w-8 items-center justify-center" title="Select Memory">
-									<input
-										type="checkbox"
-										checked={selectedIDs.has(memory.id)}
-										onChange={(event) => onSelect(memory.id, event.target.checked)}
-										className="h-4 w-4 accent-primary"
-										aria-label={`Select ${memory.title || memory.id}`}
-									/>
-								</label>
-							) : null}
-							<button
-								type="button"
-								onClick={() => onOpen(memory.id)}
-								className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-								data-testid={`memory-row-${memory.id}`}
-							>
-								<span className="block truncate text-sm font-medium text-foreground">
-									{memory.title || "Untitled memory"}
-								</span>
-								<span className="mt-1 flex items-center gap-1.5">
-									<LayerBadge layer={memory.layer} />
-									<span className="truncate font-mono text-xs text-muted-foreground">
-										@memory/{memory.id}
-										{memory.category ? ` · ${memory.category}` : ""}
-									</span>
-								</span>
-							</button>
-							<span className="hidden md:block">
-								{view === "review" && reviewItem ? (
-									<ReviewStatePill state={reviewState(reviewItem)} />
-								) : (
-									<StatusPill status={normalizedStatus(memory)} trusted={view === "trusted"} />
-								)}
-							</span>
-							<span className="hidden text-sm tabular-nums text-muted-foreground md:block">
-								{formatDate(memory.updatedAt)}
-							</span>
-							<button
-								type="button"
-								onClick={() => onOpen(memory.id)}
-								aria-label={`Open ${memory.title || memory.id}`}
-								className="flex items-center gap-2 justify-self-end rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							>
-								<span className="md:hidden">
-									{view === "review" && reviewItem ? (
-										<ReviewStatePill state={reviewState(reviewItem)} />
-									) : (
-										<StatusPill status={normalizedStatus(memory)} trusted={view === "trusted"} />
+			<header className="flex flex-col gap-3 border-b px-4 py-3.5 sm:px-5">
+				<div className="flex items-baseline justify-between gap-3">
+					<h3 id="memory-review-heading" className="text-[15px] font-semibold tracking-tight">
+						Review Inbox
+					</h3>
+					<span className="text-[12.5px] tabular-nums text-muted-foreground">
+						{`${total} ${total === 1 ? "proposal" : "proposals"}`}
+					</span>
+				</div>
+				<p className="-mt-2 text-[13px] text-muted-foreground">
+					New proposals, stale recall and broken sources. Nothing here is recalled by default until you trust it.
+				</p>
+				<div className="flex flex-wrap items-center gap-2">
+					<Input
+						type="search"
+						size="sm"
+						value={query}
+						onChange={(event) => onQueryChange(event.target.value)}
+						placeholder="Search proposals"
+						aria-label="Search proposals"
+						icon={<Search className="h-4 w-4" />}
+						className="min-w-[180px] flex-1 sm:max-w-[260px]"
+					/>
+					<SegmentedControl
+						aria-label="Scope"
+						size="sm"
+						value={scope}
+						onValueChange={(value) => onScopeChange(value as ScopeFilter)}
+						options={[
+							{ value: "all", label: "All" },
+							...(["user", "project", "session"] as MemoryScope[]).map((value) => ({
+								value,
+								label: `${scopeLabels[value]} ${counts[value]}`,
+							})),
+						]}
+					/>
+				</div>
+				{bulkBar}
+			</header>
+
+			{!available ? (
+				<EmptyState
+					title="Review Inbox is temporarily unavailable"
+					description="Trusted and History remain readable. Refresh when review metadata is available again."
+				/>
+			) : memories.length === 0 ? (
+				<p className="px-5 py-12 text-center text-[13px] text-muted-foreground">
+					{total === 0
+						? "Review Inbox is clear. New proposals, stale recall and source repairs will appear here."
+						: query
+							? `No proposals match "${query}".`
+							: "No proposals in this scope."}
+				</p>
+			) : (
+				<>
+					<div className="flex items-center gap-3 border-b px-4 py-2 text-[12px] text-muted-foreground sm:px-5">
+						<Checkbox
+							size="sm"
+							checked={selectedVisible > 0 && selectedVisible === visibleIDs.length}
+							indeterminate={selectedVisible > 0 && selectedVisible < visibleIDs.length}
+							onChange={(event) => {
+								for (const id of visibleIDs) onSelect(id, event.target.checked);
+							}}
+							aria-label="Select all shown proposals"
+						/>
+						<span>{selectedVisible > 0 ? `${selectedVisible} of ${visibleIDs.length} selected` : "Select to verify, archive or reject in bulk"}</span>
+					</div>
+					<ul className="divide-y" aria-label="Proposals" data-testid="memory-list">
+						{memories.map((memory) => {
+							const reviewItem = itemByID.get(memory.id);
+							const state = reviewItem ? reviewState(reviewItem) : null;
+							const title = memory.title || "Untitled memory";
+							return (
+								<li
+									key={memory.id}
+									className={cn(
+										"flex gap-3 px-4 py-3.5 sm:px-5",
+										selectedIDs.has(memory.id) && "bg-muted/25",
 									)}
-								</span>
-								<ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-							</button>
-						</div>
-					);
-				})}
-			</div>
-		</div>
+									data-testid={`memory-register-item-${memory.id}`}
+								>
+									<div className="pt-0.5">
+										<Checkbox
+											size="sm"
+											checked={selectedIDs.has(memory.id)}
+											onChange={(event) => onSelect(memory.id, event.target.checked)}
+											aria-label={`Select ${memory.title || memory.id}`}
+										/>
+									</div>
+									<div className="min-w-0 flex-1">
+										<button
+											type="button"
+											onClick={() => onOpen(memory.id)}
+											className="rounded text-left text-[14px] leading-relaxed underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+											data-testid={`memory-row-${memory.id}`}
+										>
+											{title}
+										</button>
+										<div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-muted-foreground">
+											<LayerBadge layer={memory.layer} />
+											{state ? <ReviewStateBadge state={state} /> : null}
+											{reviewItem?.reasons.map((reason) => (
+												<Badge key={reason} size="sm" variant="outline">
+													{reasonLabels[reason]}
+												</Badge>
+											))}
+											<MemoryMeta memory={memory} />
+											<span>{`Updated ${ago(memory.updatedAt)}`}</span>
+										</div>
+									</div>
+								</li>
+							);
+						})}
+					</ul>
+				</>
+			)}
+		</section>
+	);
+}
+
+/** Category, tags (not the pin tag) and the reference, as quiet metadata after the scope badge. */
+function MemoryMeta({ memory }: { memory: MemoryEntry }) {
+	const tags = (memory.tags || []).filter((tag) => tag !== PIN_TAG);
+	return (
+		<>
+			{memory.category ? <span>{memory.category}</span> : null}
+			{tags.slice(0, 3).map((tag) => (
+				<span key={tag} className="font-mono text-[11.5px]">
+					#{tag}
+				</span>
+			))}
+			{tags.length > 3 ? <span>+{tags.length - 3}</span> : null}
+			<span className="hidden font-mono text-[11.5px] sm:inline">@memory/{memory.id}</span>
+		</>
+	);
+}
+
+function toMemoryItem(memory: MemoryEntry, uses: Map<string, MemoryUse[]> | null): MemoryItem {
+	const source = memory.sources?.[0];
+	const memoryUses = uses ? (uses.get(memory.id) ?? []) : undefined;
+	return {
+		id: memory.id,
+		text: memory.title?.trim() || firstLine(memory.content) || "Untitled memory",
+		scope: layerScope[memory.layer] ?? "project",
+		source: source
+			? { id: source, label: sourceLabel(source), href: sourceHref(source) }
+			: undefined,
+		createdAt: memory.createdAt,
+		lastUsedAt: memoryUses?.[0]?.at ?? null,
+		confidence: memory.confidence ? confidenceValue[memory.confidence] : undefined,
+		pinned: (memory.tags || []).includes(PIN_TAG),
+		uses: memoryUses,
+	};
+}
+
+/** Reads of a memory from the MCP audit log, newest first, keyed by memory id. */
+function usesFromAudit(events: AuditEvent[]): Map<string, MemoryUse[]> {
+	const byID = new Map<string, MemoryUse[]>();
+	const sorted = [...events].sort((a, b) => dateValue(b.timestamp) - dateValue(a.timestamp));
+	for (const [index, event] of sorted.entries()) {
+		if (event.result !== "success" || event.action !== "get") continue;
+		for (const ref of event.entityRefs || []) {
+			if (!ref.startsWith("memory:")) continue;
+			const id = ref.slice("memory:".length);
+			const list = byID.get(id) ?? [];
+			list.push({
+				id: `${event.timestamp}-${index}`,
+				label: event.projectRoot
+					? `An agent read it in ${event.projectRoot.split(/[\\/]/).filter(Boolean).pop()}`
+					: "An agent read it",
+				href: "/audit",
+				at: event.timestamp,
+			});
+			byID.set(id, list);
+		}
+	}
+	return byID;
+}
+
+function memoryMatches(memory: MemoryEntry, query: string, reviewItem?: MemoryReviewItem) {
+	const normalized = query.trim().toLowerCase();
+	if (!normalized) return true;
+	return [
+		memory.title,
+		memory.id,
+		memory.content,
+		memory.layer,
+		memory.category,
+		...(memory.tags || []),
+		...(memory.sources || []),
+		...(reviewItem?.reasons || []),
+	]
+		.filter(Boolean)
+		.some((value) => String(value).toLowerCase().includes(normalized));
+}
+
+function scopeCountsOf(list: MemoryEntry[]): Record<ScopeFilter, number> {
+	const counts: Record<ScopeFilter, number> = { all: 0, user: 0, project: 0, session: 0 };
+	for (const memory of list) {
+		counts.all++;
+		counts[layerScope[memory.layer] ?? "project"]++;
+	}
+	return counts;
+}
+
+function firstLine(content?: string) {
+	const line = (content || "")
+		.split("\n")
+		.map((value) => value.replace(/^#+\s*/, "").trim())
+		.find(Boolean);
+	if (!line) return "";
+	return line.length > 200 ? `${line.slice(0, 200)}…` : line;
+}
+
+function sourceLabel(source: string) {
+	return source.length > 48 ? `${source.slice(0, 47)}…` : source;
+}
+
+function sourceHref(source: string): string | undefined {
+	if (/^https?:\/\//.test(source)) return source;
+	const match = source.match(/^@(doc|task|memory|decision)\/(.+?)(?:\{.*\})?$/);
+	if (!match) return undefined;
+	const kind = match[1];
+	const id = match[2] ?? "";
+	if (kind === "doc") return `/docs/${id.replace(/\.md$/, "")}`;
+	if (kind === "task") return `/tasks/${encodeURIComponent(id)}`;
+	if (kind === "memory") return `/memory/${encodeURIComponent(id)}`;
+	return `/decisions/${encodeURIComponent(id)}`;
+}
+
+const statusTone: Record<MemoryStatus, BadgeTone> = {
+	proposed: "info",
+	active: "success",
+	stale: "warning",
+	deprecated: "neutral",
+	archived: "neutral",
+	rejected: "danger",
+	merged: "accent",
+};
+
+function StatusBadge({ status }: { status: MemoryStatus }) {
+	return (
+		<Badge size="sm" variant="outline" tone={statusTone[status]}>
+			{statusLabels[status]}
+		</Badge>
 	);
 }
 
@@ -1932,54 +2158,32 @@ function DuplicateReviewPanel({
 	);
 }
 
-function MemoryLoadingState() {
+function StatusPill({ status }: { status: MemoryStatus; trusted?: boolean }) {
+	return <StatusBadge status={status} />;
+}
+
+const reviewStateTone: Record<MemoryReviewState, BadgeTone> = {
+	ready_for_review: "success",
+	needs_resolution: "accent",
+	needs_reverification: "warning",
+	needs_evidence: "warning",
+};
+
+function ReviewStateBadge({ state }: { state: MemoryReviewState }) {
 	return (
-		<div className="flex h-full flex-col bg-background" aria-label="Loading Memories">
-			<div className="border-b bg-card px-4 py-5 sm:px-6">
-				<div className="h-7 w-36 animate-pulse rounded bg-muted" />
-				<div className="mt-3 h-4 w-[min(560px,80vw)] animate-pulse rounded bg-muted/60" />
-			</div>
-			<div className="w-full px-4 py-6 sm:px-6">
-				<div className="space-y-px overflow-hidden border-y">
-					{Array.from({ length: 6 }).map((_, index) => (
-						<div key={index} className="h-20 animate-pulse bg-muted/40" />
-					))}
-				</div>
-			</div>
-		</div>
+		<Badge size="sm" tone={reviewStateTone[state]}>
+			{reviewStateLabels[state]}
+		</Badge>
 	);
 }
 
-function StatusPill({ status, trusted = false }: { status: MemoryStatus; trusted?: boolean }) {
-	return (
-		<span
-			className={cn(
-				"inline-flex rounded-md px-2 py-0.5 text-xs font-medium",
-				trusted || status === "active"
-					? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
-					: "bg-muted text-muted-foreground",
-			)}
-		>
-			{statusLabels[status]}
-		</span>
-	);
-}
-
-function ReviewStatePill({ state }: { state: MemoryReviewState }) {
-	const tone =
-		state === "ready_for_review"
-			? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
-			: state === "needs_resolution"
-				? "bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
-				: "bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300";
-	return <span className={cn("inline-flex rounded-md px-2 py-0.5 text-xs font-medium", tone)}>{reviewStateLabels[state]}</span>;
-}
+const ReviewStatePill = ReviewStateBadge;
 
 function ReasonPill({ reason }: { reason: MemoryReviewReason }) {
 	return (
-		<span className="inline-flex rounded-md border px-2 py-0.5 text-xs text-muted-foreground">
+		<Badge size="sm" variant="outline">
 			{reasonLabels[reason]}
-		</span>
+		</Badge>
 	);
 }
 
@@ -2038,7 +2242,7 @@ function ActionButton({
 
 function EmptyState({ title, description }: { title: string; description: string }) {
 	return (
-		<div className="flex min-h-52 flex-col items-center justify-center rounded-lg border border-dashed px-4 py-10 text-center">
+		<div className="flex min-h-52 flex-col items-center justify-center px-4 py-10 text-center">
 			<Brain className="h-6 w-6 text-muted-foreground" />
 			<p className="mt-3 text-sm font-medium">{title}</p>
 			<p className="mt-1 max-w-[52ch] text-sm leading-6 text-muted-foreground">{description}</p>
@@ -2055,25 +2259,12 @@ function FormField({ label, children }: { label: string; children: ReactNode }) 
 	);
 }
 
-const layerStyles: Record<string, string> = {
-	// Mirrors memoryLayerColors in the graph, so a memory keeps one colour across
-	// the list and the constellation.
-	project: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-	global: "border-purple-500/30 bg-purple-500/10 text-purple-700 dark:text-purple-400",
-	working: "border-slate-500/30 bg-slate-500/10 text-slate-700 dark:text-slate-400",
-};
-
-function LayerBadge({ layer, className }: { layer: string; className?: string }) {
+function LayerBadge({ layer }: { layer: string }) {
+	const scope = layerScope[layer] ?? "project";
 	return (
-		<span
-			className={cn(
-				"inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-				layerStyles[layer] || layerStyles.working,
-				className,
-			)}
-		>
-			{layer}
-		</span>
+		<Badge size="sm" tone={scope === "user" ? "accent" : scope === "project" ? "info" : "neutral"} title={scopeHints[scope]}>
+			{scopeLabels[scope]}
+		</Badge>
 	);
 }
 
