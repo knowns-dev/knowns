@@ -56,7 +56,6 @@
     "remark-gfm": "^4.0.1",
     "shadcn": "^4.23.0",
     "sigma": "^3.0.3",
-    "sonner": "^2.0.7",
     "strip-ansi": "^7.1.0",
     "tailwind-merge": "^3.7.0",
     "tunnel-rat": "^0.1.2",
