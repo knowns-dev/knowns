@@ -789,10 +789,20 @@ export function setDaemonCommand(fn: (() => { cmd: string; args: string[] }) | u
   daemonCommandOverride = fn;
 }
 
+/**
+ * Whether argv[1] is the embedded entry of a `bun build --compile` binary rather than a script on
+ * disk. POSIX binaries report /$bunfs/root/...; Windows ones report B:/~BUN/root/... with forward
+ * slashes (Bun 1.3.12), so a backslash-only check spawned `knowns.exe B:/~BUN/root/bin.js
+ * __runtime run` and the daemon never started on Windows.
+ */
+export function isCompiledEntry(script: string): boolean {
+  return script === "" || script.startsWith("/$bunfs/") || /^[A-Za-z]:[\\/]~BUN[\\/]/.test(script);
+}
+
 export function daemonCommand(): { cmd: string; args: string[] } {
   if (daemonCommandOverride) return daemonCommandOverride();
   const script = process.argv[1] ?? "";
-  const compiled = script === "" || script.startsWith("/$bunfs") || script.startsWith("B:\\~BUN");
+  const compiled = isCompiledEntry(script);
   return compiled
     ? { cmd: process.execPath, args: ["__runtime", "run"] }
     : { cmd: process.execPath, args: [script, "__runtime", "run"] };
