@@ -1316,6 +1316,12 @@ body {
   --analysis-error: #c2413e;
   --analysis-critical: #ad6664;
   --analysis-neutral: #7b8494;
+  /* Time since last update, calm to hot. */
+  --analysis-age-0: #94a3b8;
+  --analysis-age-1: #e0a526;
+  --analysis-age-2: #d0700f;
+  --analysis-age-3: #b42318;
+  --analysis-stage-todo: #a3adbb;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1331,6 +1337,11 @@ body {
   --analysis-error: #f87171;
   --analysis-critical: #c97876;
   --analysis-neutral: #a8b0be;
+  --analysis-age-0: #5b6779;
+  --analysis-age-1: #c99a1e;
+  --analysis-age-2: #ec8a2c;
+  --analysis-age-3: #f2645a;
+  --analysis-stage-todo: #5b6779;
 }
 
 .analysis-workbench .analysis-rule {

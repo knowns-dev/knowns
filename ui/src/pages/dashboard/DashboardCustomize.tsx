@@ -60,7 +60,7 @@ export function DashboardCustomize({ open, onOpenChange, layout, isVisible, onTo
 					))}
 				</Group>
 				<p className="text-xs leading-5 text-muted-foreground">
-					Charts on throughput, work aging, lead time and knowledge health are on the Analytics tab.
+					Charts on finishing pace, stuck work, time to finish, workload, growing areas and knowledge are on the Analytics tab.
 				</p>
 			</div>
 		</Sheet>
