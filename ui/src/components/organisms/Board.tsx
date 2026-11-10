@@ -246,7 +246,14 @@ export default function Board({ tasks, onTasksUpdate, onTaskClick }: BoardProps)
 		(column: string, title: string) => {
 			api
 				.createTask({ title, status: column as TaskStatus })
-				.then((task) => onTasksUpdate([...tasksRef.current, task]))
+				// The server's task-created event can land before this response: replace, never add twice.
+				.then((task) =>
+					onTasksUpdate(
+						tasksRef.current.some((t) => t.id === task.id)
+							? tasksRef.current.map((t) => (t.id === task.id ? task : t))
+							: [...tasksRef.current, task],
+					),
+				)
 				.catch((err: unknown) =>
 					toast.error("Failed to create Task", { description: err instanceof Error ? err.message : String(err) }),
 				);

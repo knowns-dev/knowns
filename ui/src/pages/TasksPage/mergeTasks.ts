@@ -11,5 +11,6 @@ export function mergeTaskSubset(all: Task[], updated: Task[], { appendNew }: { a
 	const merged = all.map((task) => byId.get(task.id) ?? task);
 	if (!appendNew) return merged;
 	const known = new Set(all.map((task) => task.id));
-	return [...merged, ...updated.filter((task) => !known.has(task.id))];
+	// From the map, so a Task listed twice in `updated` (a stale list plus the created one) is added once.
+	return [...merged, ...[...byId.values()].filter((task) => !known.has(task.id))];
 }

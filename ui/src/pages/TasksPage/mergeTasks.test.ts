@@ -18,3 +18,11 @@ test("without appendNew only Tasks already in the set are updated", () => {
 	const merged = mergeTaskSubset(all, updated, { appendNew: false });
 	expect(merged.map((t) => [t.id, t.status])).toEqual([["1", "done"], ["2", "todo"]]);
 });
+
+// "Add card" appends the created Task to a list that may already hold it from the server's
+// task-created event, while `all` is an older snapshot: the board showed the card twice.
+test("a Task listed twice in the update is appended once", () => {
+	const created = { id: "3", status: "todo" } as Task;
+	const merged = mergeTaskSubset(all, [...all, created, created], { appendNew: true });
+	expect(merged.map((t) => t.id)).toEqual(["1", "2", "3"]);
+});
