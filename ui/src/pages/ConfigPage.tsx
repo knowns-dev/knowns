@@ -1,4 +1,5 @@
 import { type KeyboardEvent, useEffect, useState, useRef, useCallback } from "react";
+import { FeatureHeader } from "../components/templates/FeatureHeader";
 import {
 	Settings,
 	Check,
@@ -1925,12 +1926,7 @@ export default function ConfigPage() {
 	return (
 		<div className="flex h-full min-w-0 flex-col overflow-hidden">
 			{/* Top bar */}
-			<div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-4 md:px-6">
-				<h1 className="text-lg font-semibold">Settings</h1>
-				<Badge variant="outline" className="max-w-[60vw] truncate text-xs md:max-w-80">
-					{config.name || "Unknown"}
-				</Badge>
-			</div>
+			<FeatureHeader title="Settings" status={`Project ${config.name || "Unknown"}`} />
 
 			<div className="flex min-h-0 min-w-0 flex-1 flex-col md:flex-row">
 				{/* Sidebar (desktop) */}

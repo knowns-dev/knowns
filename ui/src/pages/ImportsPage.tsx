@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { PageHeader } from "@/ui/components/ui/knowns/blocks/page-header";
 import {
 	ChevronRight,
 	GitBranch,
@@ -304,13 +305,13 @@ export default function ImportsPage() {
 			) : (
 				/* List View */
 				<>
-					<div className="mb-8">
-						<h1 className="text-3xl font-semibold tracking-tight">Imports</h1>
-						<p className="text-sm text-muted-foreground mt-1">
-							Templates and docs imported earlier. Import management was removed; these stay
-							readable and searchable.
-						</p>
-					</div>
+					<PageHeader
+						className="mb-6 bg-transparent"
+						title="Imports"
+						titleText="Imports"
+						description="Templates and docs imported earlier. Import management was removed; these stay readable and searchable."
+						condense={false}
+					/>
 
 					{imports.length === 0 ? (
 						<div className="py-16 text-center">

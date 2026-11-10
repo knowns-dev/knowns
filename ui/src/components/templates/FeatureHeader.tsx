@@ -1,12 +1,13 @@
 import type { ComponentType, ReactNode } from "react";
+import { PageHeader as KnPageHeader } from "@/ui/components/ui/knowns/blocks/page-header";
 import { cn } from "@/ui/lib/utils";
 
 interface FeatureHeaderProps {
-	/** Lucide-style icon component. */
+	/** Lucide-style icon component. Kept for callers; the Knowns UI header shows the title alone. */
 	icon?: ComponentType<{ className?: string }>;
 	title: string;
 	/**
-	 * Short context shown inline after the title, e.g. "12 proposals need review"
+	 * Short context shown under the title, e.g. "12 proposals need review"
 	 * or "143 docs". A fragment, never a full sentence.
 	 */
 	status?: ReactNode;
@@ -15,28 +16,20 @@ interface FeatureHeaderProps {
 }
 
 /**
- * The compact feature header shared by every feature page.
- *
- * Feature pages are dense (tables, canvases, long lists), so they get this 48px
- * bar rather than the tall `PageHeader`: title and status sit on one line and
- * the remaining vertical space goes to the content.
+ * The header shared by every feature page, drawn with the Knowns UI page header so all pages
+ * (and the Dashboard, which uses it directly) start the same way: a title, a muted line of
+ * context under it, and the page's own controls on the right.
  */
-export function FeatureHeader({ icon: Icon, title, status, actions, className }: FeatureHeaderProps) {
+export function FeatureHeader({ title, status, actions, className }: FeatureHeaderProps) {
 	return (
-		<header
-			className={cn(
-				"flex h-12 shrink-0 items-center gap-3 border-b border-border/55 px-4 sm:px-6",
-				className,
-			)}
-		>
-			<div className="flex min-w-0 items-center gap-2">
-				{Icon && <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />}
-				<h1 className="truncate text-sm font-semibold tracking-tight">{title}</h1>
-				{status && (
-					<span className="truncate text-xs tabular-nums text-muted-foreground">{status}</span>
-				)}
-			</div>
-			{actions && <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>}
-		</header>
+		<div className={cn("shrink-0 border-b border-border/55 px-4 pt-4 sm:px-6", className)}>
+			<KnPageHeader
+				title={title}
+				titleText={title}
+				description={status ? <span className="tabular-nums">{status}</span> : undefined}
+				trailing={actions ? <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div> : undefined}
+				condense={false}
+			/>
+		</div>
 	);
 }
