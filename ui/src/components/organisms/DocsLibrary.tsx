@@ -10,6 +10,7 @@ import {
 	BookOpenText,
 	ChevronLeft,
 	ChevronRight,
+	Folder,
 	ClipboardCheck,
 	Clock3,
 	FileText,
@@ -28,7 +29,10 @@ import {
 } from "../molecules/DocsLibraryToolbar";
 import { Button } from "../ui/button";
 import { FeatureHeader } from "../templates/FeatureHeader";
-import { Skeleton } from "../ui/skeleton";
+import { Skeleton } from "@/ui/components/ui/knowns/skeleton";
+import { Breadcrumb } from "@/ui/components/ui/knowns/breadcrumb";
+import { Badge } from "@/ui/components/ui/knowns/badge";
+import { Progress } from "@/ui/components/ui/knowns/progress";
 import {
 	cn,
 	isSpec,
@@ -195,7 +199,11 @@ function readViewState(
 function loadViewState(initialFolder: string | null): DocsLibraryViewState {
 	try {
 		const raw = localStorage.getItem(VIEW_STATE_STORAGE_KEY);
-		if (raw) return readViewState(JSON.parse(raw), initialFolder);
+		if (raw) {
+			const stored = readViewState(JSON.parse(raw), initialFolder);
+			// A folder in the URL (/docs/specs, or Back from a doc) wins over the remembered one.
+			return initialFolder ? { ...stored, folder: initialFolder, selectedKey: null, scrollTop: 0 } : stored;
+		}
 	} catch {
 		// Ignore parse/storage errors and fall back to defaults.
 	}
@@ -374,21 +382,21 @@ function QuickAccessRow({
 	onTogglePin: (doc: Doc) => void;
 }) {
 	return (
-		<div className="group flex min-w-0 items-center border-t border-border/45 first:border-t-0">
+		<div className="group flex min-w-0 items-center rounded-lg transition-colors hover:bg-muted/50">
 			<button
 				type="button"
 				onClick={() => onOpen(doc)}
-				className="flex min-w-0 flex-1 items-center gap-2.5 px-1 py-2 text-left outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+				className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
 				aria-label={`Open ${doc.metadata.title}`}
 			>
 				{isSpec(doc) ? (
-					<ClipboardCheck className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+					<ClipboardCheck className="h-4 w-4 shrink-0 text-sky-600 dark:text-sky-400" />
 				) : (
 					<FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
 				)}
 				<span className="min-w-0 flex-1">
 					<span className="flex items-center gap-1.5">
-						<span className="truncate text-[13px] font-medium">
+						<span className="truncate text-[13.5px] font-medium">
 							{doc.metadata.title}
 						</span>
 						<DocKindBadges doc={doc} />
@@ -405,9 +413,9 @@ function QuickAccessRow({
 				type="button"
 				onClick={() => onTogglePin(doc)}
 				className={cn(
-					"mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+					"mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
 					pinned
-						? "text-blue-600 dark:text-blue-400"
+						? "text-foreground"
 						: "opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100",
 				)}
 				aria-label={
@@ -446,6 +454,15 @@ export function DocsLibrary({
 	useEffect(() => {
 		setHydrated(true);
 	}, []);
+
+	useEffect(() => {
+		if (!initialFolder) return;
+		setViewState((current) =>
+			current.folder === initialFolder
+				? current
+				: { ...current, folder: initialFolder, selectedKey: null, scrollTop: 0 },
+		);
+	}, [initialFolder]);
 
 	const persistViewState = useCallback((next: DocsLibraryViewState) => {
 		saveViewState(next);
@@ -781,27 +798,19 @@ export function DocsLibrary({
 
 			{hasQuickAccess && !loading && !error && (
 				<section
-					className="shrink-0 border-b border-border/45 px-4 py-3 sm:px-6"
+					className="shrink-0 border-b border-border/55 px-2 py-3 sm:px-4"
 					aria-labelledby="quick-access-heading"
 				>
-					<div className="mb-1.5 flex items-center gap-2">
-						<h2
-							id="quick-access-heading"
-							className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground"
-						>
-							Quick access
-						</h2>
-						<span className="text-[11px] text-muted-foreground/70">
-							{visiblePinned.length + visibleRecent.length} items
-						</span>
-					</div>
-					<div className="grid gap-x-8 md:grid-cols-2">
+					<h2 id="quick-access-heading" className="sr-only">
+						Quick access
+					</h2>
+					<div className="grid gap-x-6 gap-y-3 md:grid-cols-2">
 						{visiblePinned.length > 0 && (
 							<div className="min-w-0">
-								<div className="flex h-6 items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-									<Pin className="h-3 w-3" />
+								<h3 className="flex h-7 items-center gap-1.5 px-2 text-[12px] font-medium text-muted-foreground">
+									<Pin className="h-3.5 w-3.5" />
 									Pinned
-								</div>
+								</h3>
 								{visiblePinned.map((doc) => (
 									<QuickAccessRow
 										key={`pinned:${doc.path}`}
@@ -815,10 +824,10 @@ export function DocsLibrary({
 						)}
 						{visibleRecent.length > 0 && (
 							<div className="min-w-0">
-								<div className="flex h-6 items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-									<Clock3 className="h-3 w-3" />
-									Recent
-								</div>
+								<h3 className="flex h-7 items-center gap-1.5 px-2 text-[12px] font-medium text-muted-foreground">
+									<Clock3 className="h-3.5 w-3.5" />
+									Recently opened
+								</h3>
 								{visibleRecent.map((doc) => (
 									<QuickAccessRow
 										key={`recent:${doc.path}`}
@@ -835,41 +844,19 @@ export function DocsLibrary({
 			)}
 
 			<div className="flex min-h-0 flex-1 flex-col">
-				<div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/45 px-4 sm:px-6">
-					<nav
-						className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground"
+				<div className="flex h-11 shrink-0 items-center gap-2 border-b border-border/55 px-4 sm:px-6">
+					<Breadcrumb
 						aria-label="Document folder"
-					>
-						<button
-							type="button"
-							onClick={() => openFolder(null)}
-							className={cn(
-								"rounded px-1.5 py-1 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
-								!viewState.folder && "font-medium text-foreground",
-							)}
-						>
-							Docs
-						</button>
-						{folderSegments.map((segment, index) => {
-							const folder = folderSegments.slice(0, index + 1).join("/");
-							const isCurrent = index === folderSegments.length - 1;
-							return (
-								<span key={folder} className="flex min-w-0 items-center gap-1">
-									<ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/60" />
-									<button
-										type="button"
-										onClick={() => openFolder(folder)}
-										className={cn(
-											"max-w-[180px] truncate rounded px-1.5 py-1 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
-											isCurrent && "font-medium text-foreground",
-										)}
-									>
-										{segment}
-									</button>
-								</span>
-							);
-						})}
-					</nav>
+						size="sm"
+						className="min-w-0"
+						items={[
+							{ label: "Docs", icon: <BookOpenText />, onClick: () => openFolder(null) },
+							...folderSegments.map((segment, index) => ({
+								label: segment,
+								onClick: () => openFolder(folderSegments.slice(0, index + 1).join("/")),
+							})),
+						]}
+					/>
 					<div className="flex-1" />
 					{viewState.query ? (
 						<span className="text-xs tabular-nums text-muted-foreground">
@@ -879,7 +866,7 @@ export function DocsLibrary({
 						<button
 							type="button"
 							onClick={() => openFolder(parentFolder(viewState.folder!))}
-							className="flex items-center gap-1 rounded px-1.5 py-1 text-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+							className="flex h-7 items-center gap-1 rounded-md px-2 text-[12.5px] text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
 						>
 							<ChevronLeft className="h-3 w-3" />
 							Up
@@ -887,11 +874,11 @@ export function DocsLibrary({
 					) : null}
 				</div>
 
-				<div className="hidden h-8 shrink-0 grid-cols-[minmax(0,1fr)_96px] items-center gap-3 border-b border-border/45 px-4 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground sm:grid sm:grid-cols-[minmax(240px,1.4fr)_minmax(160px,1fr)_96px] sm:px-6 xl:grid-cols-[minmax(280px,1.7fr)_minmax(180px,1fr)_minmax(140px,0.75fr)_96px]">
+				<div className="hidden h-9 shrink-0 grid-cols-[minmax(0,1fr)_120px] items-center gap-3 border-b border-border/55 bg-muted/30 pl-4 pr-[56px] text-[12px] font-medium text-muted-foreground sm:grid sm:grid-cols-[minmax(240px,1.4fr)_minmax(160px,1fr)_120px] sm:pl-6 sm:pr-[60px] xl:grid-cols-[minmax(280px,1.7fr)_minmax(180px,1fr)_minmax(140px,0.75fr)_120px]">
 					<span>Title</span>
 					<span className="hidden sm:block">Path</span>
 					<span className="hidden xl:block">Tags</span>
-					<span>Updated</span>
+					<span className="text-right">Updated</span>
 				</div>
 
 				<div
@@ -905,7 +892,7 @@ export function DocsLibrary({
 							{Array.from({ length: 9 }).map((_, index) => (
 								<div
 									key={index}
-									className="grid h-11 grid-cols-[minmax(0,1fr)_96px] items-center gap-3 border-b border-border/35 sm:grid-cols-[minmax(240px,1.4fr)_minmax(160px,1fr)_96px] xl:grid-cols-[minmax(280px,1.7fr)_minmax(180px,1fr)_minmax(140px,0.75fr)_96px]"
+									className="grid h-12 grid-cols-[minmax(0,1fr)_120px] items-center gap-3 border-b border-border/40 sm:grid-cols-[minmax(240px,1.4fr)_minmax(160px,1fr)_120px] xl:grid-cols-[minmax(280px,1.7fr)_minmax(180px,1fr)_minmax(140px,0.75fr)_120px]"
 								>
 									<Skeleton className="h-4 w-2/3" />
 									<Skeleton className="hidden h-3 w-3/4 sm:block" />
@@ -917,7 +904,7 @@ export function DocsLibrary({
 					) : error ? (
 						<div className="flex min-h-[280px] items-center justify-center px-6 py-12">
 							<div className="max-w-sm text-center">
-								<RotateCcw className="mx-auto mb-3 h-6 w-6 text-muted-foreground" />
+								<span className="mx-auto mb-4 grid size-10 place-items-center rounded-xl border bg-card text-muted-foreground"><RotateCcw className="size-4.5" /></span>
 								<h2 className="text-sm font-semibold">
 									Docs could not be loaded
 								</h2>
@@ -936,9 +923,9 @@ export function DocsLibrary({
 						<div className="flex min-h-[300px] items-center justify-center px-6 py-12">
 							<div className="max-w-sm text-center">
 								{viewState.query || viewState.filter !== "all" ? (
-									<Search className="mx-auto mb-3 h-6 w-6 text-muted-foreground" />
+									<span className="mx-auto mb-4 grid size-10 place-items-center rounded-xl border bg-card text-muted-foreground"><Search className="size-4.5" /></span>
 								) : (
-									<PackageOpen className="mx-auto mb-3 h-6 w-6 text-muted-foreground" />
+									<span className="mx-auto mb-4 grid size-10 place-items-center rounded-xl border bg-card text-muted-foreground"><FileText className="size-4.5" /></span>
 								)}
 								<h2 className="text-sm font-semibold">
 									{viewState.query
@@ -1003,10 +990,8 @@ export function DocsLibrary({
 											key={entry.key}
 											role="listitem"
 											className={cn(
-												"border-b border-border/35 border-l-2 border-l-transparent transition-colors duration-150",
-												selected
-													? "border-l-blue-500 bg-blue-50/70 dark:bg-blue-950/25"
-													: "hover:bg-muted/35",
+												"group flex border-b border-border/40 transition-colors duration-150",
+												selected ? "bg-muted/70" : "hover:bg-muted/40",
 											)}
 										>
 											<button
@@ -1017,46 +1002,63 @@ export function DocsLibrary({
 												type="button"
 												data-doc-library-row
 												onClick={() => activateEntry(entry)}
-												className="grid min-h-11 w-full grid-cols-[minmax(0,1fr)_96px] items-center gap-3 px-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[minmax(240px,1.4fr)_minmax(160px,1fr)_96px] sm:px-6 xl:grid-cols-[minmax(280px,1.7fr)_minmax(180px,1fr)_minmax(140px,0.75fr)_96px]"
+												className="grid min-h-12 min-w-0 flex-1 grid-cols-[minmax(0,1fr)_120px] items-center gap-3 px-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[minmax(240px,1.4fr)_minmax(160px,1fr)_120px] sm:pl-6 sm:pr-3 xl:grid-cols-[minmax(280px,1.7fr)_minmax(180px,1fr)_minmax(140px,0.75fr)_120px]"
 												aria-label={`Open folder ${entry.name}, ${entry.docCount} documents`}
 												aria-current={selected ? "true" : undefined}
 											>
 												<span className="flex min-w-0 items-center gap-2.5">
-													<FolderOpen className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+													<Folder className="h-4 w-4 shrink-0 fill-muted-foreground/15 text-muted-foreground" />
 													<span className="min-w-0">
 														<span className="flex items-center gap-2">
-															<span className="truncate text-[13px] font-medium">
+															<span className="truncate text-[13.5px] font-medium">
 																{entry.name}
 															</span>
-															<span className="shrink-0 text-[11px] text-muted-foreground">
+															<Badge size="sm" className="shrink-0 tabular-nums">
 																{entry.docCount}{" "}
 																{entry.docCount === 1 ? "doc" : "docs"}
-															</span>
+															</Badge>
 															{entry.specProgress && (
-																<span className="hidden shrink-0 text-[11px] text-muted-foreground md:inline">
-																	{entry.specProgress.completed}/
-																	{entry.specProgress.total} ACs
+																<span className="hidden shrink-0 text-[12px] tabular-nums text-muted-foreground md:inline xl:hidden">
+																	{entry.specProgress.completed}/{entry.specProgress.total} ACs
 																</span>
 															)}
+															
 														</span>
 														<span className="block truncate font-mono text-[10px] text-muted-foreground sm:hidden">
 															{entry.fullPath}
 														</span>
 													</span>
 												</span>
-												<span className="hidden truncate font-mono text-[11px] text-muted-foreground sm:block">
+												<span className="hidden truncate font-mono text-[12px] text-muted-foreground sm:block">
 													{entry.fullPath}
 												</span>
-												<span className="hidden text-[11px] text-muted-foreground xl:block">
-													{entry.specProgress
-														? `${entry.specProgress.completed}/${entry.specProgress.total} ACs`
-														: "Folder"}
+												<span className="hidden min-w-0 xl:block">
+													{entry.specProgress ? (
+														<Progress
+															value={entry.specProgress.completed}
+															max={entry.specProgress.total}
+															size="sm"
+															tone={entry.specProgress.completed === entry.specProgress.total ? "success" : "accent"}
+															format={(value) => `${value}/${entry.specProgress!.total} ACs`}
+															aria-label={`Acceptance criteria done in ${entry.name}`}
+															className="max-w-[160px]"
+														/>
+													) : (
+														<span className="text-[12px] text-muted-foreground/70">Folder</span>
+													)}
 												</span>
-												<span className="flex items-center justify-end gap-2 text-right text-[11px] tabular-nums text-muted-foreground">
+												<span className="text-right text-[12px] tabular-nums text-muted-foreground">
 													{formatRelativeDate(entry.updatedAt)}
-													<ChevronRight className="h-3.5 w-3.5 text-muted-foreground/60" />
 												</span>
 											</button>
+											{/* As wide as a doc row's pin button, so every column lines up. */}
+											<span
+												aria-hidden="true"
+												onClick={() => activateEntry(entry)}
+												className="mr-3 flex w-7 shrink-0 cursor-pointer items-center justify-center self-stretch text-muted-foreground/60 transition-colors group-hover:text-foreground sm:mr-5"
+											>
+												<ChevronRight className="h-3.5 w-3.5" />
+											</span>
 										</div>
 									);
 								}
@@ -1070,10 +1072,8 @@ export function DocsLibrary({
 										key={entry.key}
 										role="listitem"
 										className={cn(
-											"group flex border-b border-border/35 border-l-2 border-l-transparent transition-colors duration-150",
-											selected
-												? "border-l-blue-500 bg-blue-50/70 dark:bg-blue-950/25"
-												: "hover:bg-muted/35",
+											"group flex border-b border-border/40 transition-colors duration-150",
+											selected ? "bg-muted/70" : "hover:bg-muted/40",
 										)}
 									>
 										<button
@@ -1084,21 +1084,21 @@ export function DocsLibrary({
 											type="button"
 											data-doc-library-row
 											onClick={() => activateEntry(entry)}
-											className="grid min-h-11 min-w-0 flex-1 grid-cols-[minmax(0,1fr)_96px] items-center gap-3 px-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[minmax(240px,1.4fr)_minmax(160px,1fr)_96px] sm:pl-6 sm:pr-3 xl:grid-cols-[minmax(280px,1.7fr)_minmax(180px,1fr)_minmax(140px,0.75fr)_96px]"
+											className="grid min-h-12 min-w-0 flex-1 grid-cols-[minmax(0,1fr)_120px] items-center gap-3 px-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[minmax(240px,1.4fr)_minmax(160px,1fr)_120px] sm:pl-6 sm:pr-3 xl:grid-cols-[minmax(280px,1.7fr)_minmax(180px,1fr)_minmax(140px,0.75fr)_120px]"
 											aria-label={`Open ${doc.metadata.title}`}
 											aria-current={selected ? "true" : undefined}
 										>
 											<span className="flex min-w-0 items-center gap-2.5">
 												{isSpec(doc) ? (
-													<ClipboardCheck className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+													<ClipboardCheck className="h-4 w-4 shrink-0 text-sky-600 dark:text-sky-400" />
 												) : doc.isImported ? (
-													<PackageOpen className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-400" />
+													<PackageOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
 												) : (
 													<FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
 												)}
 												<span className="min-w-0">
 													<span className="flex min-w-0 items-center gap-1.5">
-														<span className="truncate text-[13px] font-medium">
+														<span className="truncate text-[13.5px] font-medium">
 															{doc.metadata.title}
 														</span>
 														<DocKindBadges doc={doc} />
@@ -1108,30 +1108,27 @@ export function DocsLibrary({
 													</span>
 												</span>
 											</span>
-											<span className="hidden truncate font-mono text-[11px] text-muted-foreground sm:block">
+											<span className="hidden truncate font-mono text-[12px] text-muted-foreground sm:block">
 												{pathWithoutExtension(path)}
 											</span>
 											<span className="hidden min-w-0 items-center gap-1 xl:flex">
 												{tags.slice(0, 2).map((tag) => (
-													<span
-														key={tag}
-														className="max-w-24 truncate rounded border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-													>
+													<Badge key={tag} variant="outline" size="sm" className="max-w-24 truncate">
 														{tag}
-													</span>
+													</Badge>
 												))}
 												{tags.length > 2 && (
-													<span className="text-[10px] text-muted-foreground">
+													<span className="text-[11px] tabular-nums text-muted-foreground">
 														+{tags.length - 2}
 													</span>
 												)}
 												{tags.length === 0 && (
-													<span className="text-[11px] text-muted-foreground/60">
+													<span className="text-[12px] text-muted-foreground/60">
 														No tags
 													</span>
 												)}
 											</span>
-											<span className="text-right text-[11px] tabular-nums text-muted-foreground">
+											<span className="text-right text-[12px] tabular-nums text-muted-foreground">
 												{formatRelativeDate(doc.metadata.updatedAt)}
 											</span>
 										</button>
@@ -1141,7 +1138,7 @@ export function DocsLibrary({
 											className={cn(
 												"mr-3 flex w-7 shrink-0 items-center justify-center self-stretch text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:mr-5",
 												pinned
-													? "text-blue-600 dark:text-blue-400"
+													? "text-foreground"
 													: "opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100",
 											)}
 											aria-label={

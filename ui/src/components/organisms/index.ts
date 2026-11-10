@@ -14,6 +14,5 @@ export { default as TaskHistoryPanel } from "./TaskHistoryPanel";
 export { default as VersionDiffViewer } from "./VersionDiffViewer";
 export { default as AssigneeDropdown } from "./AssigneeDropdown";
 export { TaskDataTable } from "./TaskDataTable";
-export { DocsFileManager } from "./DocsFileManager";
 export { TaskNotionList } from "./TaskNotionList";
 export { DocsLibrary } from "./DocsLibrary";

@@ -19,16 +19,16 @@ async function openDocFromList(page: import("@playwright/test").Page, label: str
 
 async function enterDocEditMode(page: import("@playwright/test").Page) {
 	for (let attempt = 0; attempt < 3; attempt++) {
-		const editBtn = page.locator("button").filter({ hasText: "Edit" }).first();
+		const editBtn = page.getByRole("button", { name: "Edit", exact: true }).first();
 		await expect(editBtn).toBeVisible({ timeout: 3000 });
 		await editBtn.click();
-		const saveBtn = page.locator("button").filter({ hasText: "Save" }).first();
+		const saveBtn = page.getByRole("button", { name: "Save", exact: true }).first();
 		if (await saveBtn.isVisible({ timeout: 1500 }).catch(() => false)) {
 			return;
 		}
 		await page.waitForTimeout(300);
 	}
-	await expect(page.locator("button").filter({ hasText: "Save" }).first()).toBeVisible();
+	await expect(page.getByRole("button", { name: "Save", exact: true }).first()).toBeVisible();
 }
 
 test.describe("Doc Creation with Full Fields", () => {
@@ -105,7 +105,7 @@ test.describe("Doc Creation with Full Fields", () => {
 		});
 
 		await test.step("Verify metadata displayed", async () => {
-			await expect(page.getByText("How to set up the project").first()).toBeVisible({ timeout: 3000 });
+			await expect(page.locator('input[placeholder="Add a description..."]').first()).toHaveValue("How to set up the project", { timeout: 3000 });
 		});
 	});
 });
@@ -126,15 +126,15 @@ test.describe("Doc Content Editing", () => {
 		});
 
 		await test.step("Click Edit button in toolbar", async () => {
-			const editBtn = page.locator("button").filter({ hasText: "Edit" }).first();
+			const editBtn = page.getByRole("button", { name: "Edit", exact: true }).first();
 			await expect(editBtn).toBeVisible({ timeout: 3000 });
 			await editBtn.click();
 			await page.waitForTimeout(1000);
 		});
 
 		await test.step("Editor is visible (edit mode active)", async () => {
-			const saveBtn = page.locator("button").filter({ hasText: "Save" }).first();
-			const editBtn = page.locator("button").filter({ hasText: "Edit" }).first();
+			const saveBtn = page.getByRole("button", { name: "Save", exact: true }).first();
+			const editBtn = page.getByRole("button", { name: "Edit", exact: true }).first();
 			if (await saveBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
 				await expect(saveBtn).toBeVisible();
 				return;
@@ -143,8 +143,8 @@ test.describe("Doc Content Editing", () => {
 		});
 
 		await test.step("Save and Cancel buttons are visible", async () => {
-			const saveBtn = page.locator("button").filter({ hasText: "Save" }).first();
-			const cancelBtn = page.locator("button").filter({ hasText: "Cancel" }).first();
+			const saveBtn = page.getByRole("button", { name: "Save", exact: true }).first();
+			const cancelBtn = page.getByRole("button", { name: "Cancel", exact: true }).first();
 			if (await saveBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
 				await expect(saveBtn).toBeVisible({ timeout: 3000 });
 				await expect(cancelBtn).toBeVisible({ timeout: 3000 });
@@ -152,7 +152,7 @@ test.describe("Doc Content Editing", () => {
 		});
 
 		await test.step("Click Cancel to exit edit mode", async () => {
-			const cancelBtn = page.locator("button").filter({ hasText: "Cancel" }).first();
+			const cancelBtn = page.getByRole("button", { name: "Cancel", exact: true }).first();
 			if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
 				await cancelBtn.click();
 				await page.waitForTimeout(300);
@@ -180,15 +180,15 @@ test.describe("Doc Content Editing", () => {
 		});
 
 		await test.step("Editor is visible (edit mode active)", async () => {
-			await expect(page.locator("button").filter({ hasText: "Save" }).first()).toBeVisible();
+			await expect(page.getByRole("button", { name: "Save", exact: true }).first()).toBeVisible();
 		});
 
 		await test.step("Save without changes to verify save flow works", async () => {
-			const saveBtn = page.locator("button").filter({ hasText: "Save" }).first();
+			const saveBtn = page.getByRole("button", { name: "Save", exact: true }).first();
 			await saveBtn.click();
 			// After save, view switches back to read mode
 			// Edit button should reappear
-			await expect(page.locator("button").filter({ hasText: "Edit" }).first()).toBeVisible({ timeout: 10000 });
+			await expect(page.getByRole("button", { name: "Edit", exact: true }).first()).toBeVisible({ timeout: 10000 });
 		});
 
 		await test.step("Back in view mode after save", async () => {
@@ -199,7 +199,8 @@ test.describe("Doc Content Editing", () => {
 			server.cli('doc edit "save-test" -c "## After Edit\\n\\nUpdated content here."');
 			await page.reload();
 			await page.waitForTimeout(1000);
-			await openDocFromList(page, "Save Test");
+			// The doc view's library sidebar lists docs as links.
+			await page.getByRole("navigation", { name: "Docs" }).getByRole("link", { name: "Save Test" }).click();
 			await page.waitForTimeout(500);
 			await expect(page.getByText("After Edit").first()).toBeVisible();
 		});
@@ -228,7 +229,7 @@ test.describe("Inline Metadata Editing (Notion-like)", () => {
 		});
 
 		await test.step("Verify title updated after navigating back", async () => {
-			const backBtn = page.locator("button").filter({ hasText: "Back" }).first();
+			const backBtn = page.getByRole("button", { name: "Back", exact: true }).first();
 			await backBtn.click();
 			await page.waitForTimeout(500);
 			await expect(page.getByText("New Title").first()).toBeVisible();
@@ -258,7 +259,7 @@ test.describe("Inline Metadata Editing (Notion-like)", () => {
 
 		await test.step("Verify description field remains editable after navigating back and reopening", async () => {
 			// Navigate back to doc list
-			const backBtn = page.locator("button").filter({ hasText: "Back" }).first();
+			const backBtn = page.getByRole("button", { name: "Back", exact: true }).first();
 			await backBtn.click();
 			await page.waitForTimeout(1000);
 			// Wait for the file manager to be visible. The rework labels entries
@@ -318,7 +319,7 @@ test.describe("Doc Back Navigation", () => {
 		});
 
 		await test.step("Click Back button", async () => {
-			const backBtn = page.locator("button").filter({ hasText: "Back" }).first();
+			const backBtn = page.getByRole("button", { name: "Back", exact: true }).first();
 			await expect(backBtn).toBeVisible({ timeout: 3000 });
 			await backBtn.click();
 			await page.waitForTimeout(300);

@@ -41,29 +41,30 @@ export function DocsCreateView({ currentFolder, onClose, onCreated, onOpenMobile
 
   return (
     <>
-      <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 border-b border-border/40 shrink-0 bg-background/90 backdrop-blur-sm">
+      <div className="flex h-12 shrink-0 items-center gap-1 border-b border-border/55 bg-background px-2 sm:px-4">
         <Button
           variant="ghost"
           size="sm"
           onClick={onOpenMobileSidebar}
-          className="h-7 px-2 text-muted-foreground hover:text-foreground lg:hidden"
+          className="h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground lg:hidden"
+        aria-label="Browse docs"
         >
-          <Menu className="w-3.5 h-3.5" />
+          <Menu className="size-4" />
         </Button>
         <Button
           variant="ghost"
           size="sm"
           onClick={onClose}
           disabled={creating}
-          className="h-7 px-2 text-muted-foreground hover:text-foreground"
+          className="h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
         >
-          <ArrowLeft className="w-3.5 h-3.5 sm:mr-1" />
-          <span className="hidden sm:inline text-xs">Back</span>
+          <ArrowLeft className="size-4" />
+          <span className="hidden sm:inline">Back</span>
         </Button>
         <div className="flex-1" />
-        <Button size="sm" onClick={handleCreateDoc} disabled={creating || !newDocTitle.trim()} className="h-7 px-3">
-          <Check className="w-3.5 h-3.5 sm:mr-1" />
-          <span className="text-xs">{creating ? "Creating..." : "Create"}</span>
+        <Button size="sm" onClick={handleCreateDoc} disabled={creating || !newDocTitle.trim()} className="h-8 gap-1.5">
+          <Check className="size-3.5" />
+          <span>{creating ? "Creating..." : "Create"}</span>
         </Button>
       </div>
 

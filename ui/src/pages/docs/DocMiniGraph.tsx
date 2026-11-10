@@ -283,9 +283,9 @@ export function DocMiniGraph({ docPath }: { docPath: string }) {
 		<>
 			<div
 				ref={containerRef}
-				className="mb-5 h-[140px] w-full overflow-hidden rounded-lg border border-border/50 bg-background/40 cursor-pointer hover:border-border transition-colors"
+				className="h-[140px] w-full shrink-0 cursor-pointer overflow-hidden rounded-xl border bg-card transition-colors hover:border-foreground/20"
 				onClick={() => setPopupOpen(true)}
-				title="Click to expand graph"
+				title="Connections: click to expand the graph"
 			>
 				<GraphCanvas
 					forceData={forceData}
