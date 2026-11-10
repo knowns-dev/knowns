@@ -253,6 +253,11 @@ jobs:
             case "$p" in win-*) exe=knowns.exe ;; *) exe=knowns ;; esac
             [ -f "$pkg/$exe" ] || { echo "FATAL: $pkg/$exe is missing"; exit 1; }
             tar -tzf "release/assets/knowns-$p.tar.gz" | grep -Fx "./$exe" >/dev/null || { echo "FATAL: knowns-$p.tar.gz missing ./$exe"; exit 1; }
+            # Go 0.34.x `knowns update` installs the first knowns-* name in sorted order, which on
+            # Windows is the archive itself unless this link sorts first (KN-6M228C).
+            case "$p" in win-*)
+              tar -tzf "release/assets/knowns-$p.tar.gz" | grep -Fx "./knowns-0.34-update.exe" >/dev/null || { echo "FATAL: knowns-$p.tar.gz missing ./knowns-0.34-update.exe"; exit 1; } ;;
+            esac
             echo "ok $p"
           done
 

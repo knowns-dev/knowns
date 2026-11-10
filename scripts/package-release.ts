@@ -11,6 +11,7 @@ import {
   chmodSync,
   cpSync,
   existsSync,
+  linkSync,
   mkdirSync,
   readFileSync,
   rmSync,
@@ -34,6 +35,22 @@ export const PLATFORMS: readonly PlatformMap[] = [
   { dist: "windows-arm64", npm: "win-arm64", exe: "knowns.exe" },
   { dist: "windows-x64", npm: "win-x64", exe: "knowns.exe" },
 ];
+
+/**
+ * A second name for knowns.exe in the Windows archives, so a 0.34.x Go `knowns update` installs a
+ * runnable binary. Go 0.34.1 extracts next to the downloaded `knowns-win-<arch>.tar.gz`, walks that
+ * directory in sorted order and takes the first file named knowns.exe or starting with `knowns-`.
+ * `knowns-win-<arch>.tar.gz` sorts before `knowns.exe` ('-' < '.'), so without this entry Go
+ * installs the gzip archive itself and prints "Upgrade complete." (KN-6M228C). This name starts
+ * with `knowns-` and sorts before `knowns-win-`, so Go takes it first. It is a tar hard link, so
+ * the archive grows by one header. install.ps1 and TS `knowns update` still pick knowns.exe.
+ */
+export const GO_UPDATE_ENTRY = "knowns-0.34-update.exe";
+
+/** Archive members in order; the first one carries the data, a second is a hard link to it. */
+export function archiveEntries(p: PlatformMap): string[] {
+  return p.npm.startsWith("win-") ? [`./${p.exe}`, `./${GO_UPDATE_ENTRY}`] : [`./${p.exe}`];
+}
 
 export interface PackageOptions {
   version: string;
@@ -80,15 +97,28 @@ export function packageRelease(opts: PackageOptions): PackageResult {
     chmodSync(join(pkgDir, p.exe), 0o755);
     result.packages.push(pkgDir);
 
-    // Release asset: only the binary, at the archive root as ./knowns[.exe].
+    // Release asset: the binary at the archive root as ./knowns[.exe], plus on Windows the
+    // GO_UPDATE_ENTRY hard link to it. Staged apart from the npm package, whose files list is exact.
     const asset = join(assetsOut, `knowns-${p.npm}.tar.gz`);
-    const tar = Bun.spawnSync(["tar", "-czf", asset, "-C", join(pkgDir), `./${p.exe}`], {
+    const stage = join(opts.outDir, "stage", p.npm);
+    rmSync(stage, { recursive: true, force: true });
+    mkdirSync(stage, { recursive: true });
+    cpSync(bin, join(stage, p.exe));
+    chmodSync(join(stage, p.exe), 0o755);
+    const entries = archiveEntries(p);
+    if (entries.length > 1) linkSync(join(stage, p.exe), join(stage, GO_UPDATE_ENTRY));
+    // COPYFILE_DISABLE: macOS bsdtar otherwise adds a ._<name> AppleDouble entry for any file with
+    // xattrs (com.apple.provenance on locally built binaries), which extracts as junk elsewhere.
+    const tar = Bun.spawnSync(["tar", "-czf", asset, "-C", stage, ...entries], {
       stderr: "pipe",
+      env: { ...process.env, COPYFILE_DISABLE: "1" },
     });
+    rmSync(stage, { recursive: true, force: true });
     if (tar.exitCode !== 0) throw new Error(`tar failed for ${p.npm}: ${tar.stderr.toString()}`);
     writeFileSync(`${asset}.sha256`, `${sha256File(asset)}  knowns-${p.npm}.tar.gz\n`);
     result.assets.push(asset);
   }
+  rmSync(join(opts.outDir, "stage"), { recursive: true, force: true });
 
   // The wrapper: same files as npm/knowns minus tests, pinned to this version.
   const wrapperOut = join(npmOut, "knowns");
