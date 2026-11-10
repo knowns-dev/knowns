@@ -145,15 +145,14 @@ test.describe("Memory lifecycle destinations", () => {
 		await focus.getByRole("button", { name: "Browse existing" }).click();
 		const browser = page.getByTestId("reference-browser");
 		await expect(browser).toBeVisible();
-		const layers = await page.evaluate(() => {
-			const focusDialog = document.querySelector('[data-testid="memory-focus-dialog"]');
-			const referenceBrowser = document.querySelector('[data-testid="reference-browser"]');
-			return {
-				focus: Number.parseInt(getComputedStyle(focusDialog as Element).zIndex || "0", 10),
-				browser: Number.parseInt(getComputedStyle(referenceBrowser as Element).zIndex || "0", 10),
-			};
+		// The picker renders inside the focus view's modal <dialog> (top layer) and is the topmost thing at its centre.
+		const layering = await browser.evaluate((element) => {
+			const host = element.closest("dialog[open]");
+			const r = element.getBoundingClientRect();
+			const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+			return { sameLayer: !!host?.querySelector('[data-testid="memory-focus-dialog"]'), onTop: !!hit && element.contains(hit) };
 		});
-		expect(layers.browser).toBeGreaterThan(layers.focus);
+		expect(layering).toEqual({ sameLayer: true, onTop: true });
 		await page.keyboard.press("Escape");
 		await expect(browser).toHaveCount(0);
 

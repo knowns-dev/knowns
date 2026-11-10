@@ -3,6 +3,7 @@
 // ToastProvider and registers itself as the host that actually shows them.
 
 import { useEffect, type ReactNode } from "react";
+import { TopLayer } from "@/ui/components/ui/top-layer";
 import { ToastProvider, useDismissToast, useToast, type ToastOptions, type ToastTone } from "@/ui/components/ui/knowns/toast";
 
 export type ToastId = string | number;
@@ -101,11 +102,15 @@ function ToastBridgeHost() {
 	return null;
 }
 
-/** Mount once near the app root; toasts render bottom right. */
+/**
+ * Mount once near the app root; toasts render bottom right, above any open dialog (see TopLayer).
+ */
 export function Toaster() {
 	return (
-		<ToastProvider>
-			<ToastBridgeHost />
-		</ToastProvider>
+		<TopLayer passThrough>
+			<ToastProvider>
+				<ToastBridgeHost />
+			</ToastProvider>
+		</TopLayer>
 	);
 }

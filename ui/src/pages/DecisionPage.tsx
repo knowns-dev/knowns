@@ -38,6 +38,7 @@ import {
 	DialogDescription,
 	DialogTitle,
 } from "@/ui/components/ui/dialog";
+import { TopLayer } from "@/ui/components/ui/top-layer";
 import { PageContent, PageShell } from "@/ui/components/templates/PageShell";
 import { FeatureHeader } from "@/ui/components/templates";
 import { cn } from "@/ui/lib/utils";
@@ -439,14 +440,18 @@ export default function DecisionPage() {
 			/>
 
 			{errorMessage ? (
-				<div role="alert" className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-destructive/30 bg-card px-4 py-3 text-sm text-destructive shadow-lg">
-					{errorMessage}
-				</div>
+				<TopLayer>
+					<div role="alert" className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-destructive/30 bg-card px-4 py-3 text-sm text-destructive shadow-lg">
+						{errorMessage}
+					</div>
+				</TopLayer>
 			) : null}
 			{notice ? (
-				<div role="status" aria-live="polite" className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-emerald-200 bg-card px-4 py-3 text-sm text-emerald-700 shadow-lg dark:border-emerald-500/30 dark:text-emerald-300">
-					{notice}
-				</div>
+				<TopLayer>
+					<div role="status" aria-live="polite" className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-emerald-200 bg-card px-4 py-3 text-sm text-emerald-700 shadow-lg dark:border-emerald-500/30 dark:text-emerald-300">
+						{notice}
+					</div>
+				</TopLayer>
 			) : null}
 
 			<div className="flex h-[58px] shrink-0 items-center border-b border-border bg-card">
@@ -508,7 +513,6 @@ export default function DecisionPage() {
 			<Dialog open={selectedDecision !== null} onOpenChange={(open) => !open && handleCloseDecision()}>
 				<DialogContent
 					hideCloseButton
-					overlayClassName="bg-black/45 backdrop-blur-[1.5px]"
 					className="left-0 top-0 flex h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-card p-0 shadow-none sm:left-1/2 sm:top-1/2 sm:h-[min(860px,calc(100dvh-3rem))] sm:w-[min(1120px,calc(100vw-3rem))] sm:max-w-[1120px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:border sm:border-border sm:shadow-[0_12px_32px_rgba(0,0,0,0.16)]"
 					onCloseAutoFocus={(event) => event.preventDefault()}
 					data-testid="decision-focus-dialog"
@@ -542,7 +546,6 @@ export default function DecisionPage() {
 			<Dialog open={createOpen} onOpenChange={setCreateOpen}>
 				<DialogContent
 					hideCloseButton
-					overlayClassName="bg-black/45 backdrop-blur-[1.5px]"
 					className="left-0 top-0 flex h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-card p-0 shadow-none sm:left-1/2 sm:top-1/2 sm:h-auto sm:max-h-[calc(100dvh-3rem)] sm:w-[min(900px,calc(100vw-3rem))] sm:max-w-[900px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:border sm:border-border sm:shadow-[0_12px_32px_rgba(0,0,0,0.16)]"
 					id="decision-create-workflow"
 				>
@@ -912,7 +915,6 @@ function ReviewActionDialog({
 		<Dialog open onOpenChange={(open) => !open && onCancel()}>
 			<DialogContent
 				hideCloseButton
-				overlayClassName="z-[65] bg-black/55"
 				className="z-[70] w-[calc(100vw-2rem)] max-w-lg gap-0 overflow-hidden rounded-xl border border-border bg-card p-0 shadow-[0_16px_48px_rgba(0,0,0,0.22)]"
 				data-testid="decision-action-confirmation"
 			>

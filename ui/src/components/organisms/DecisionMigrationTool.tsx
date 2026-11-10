@@ -135,7 +135,6 @@ export default function DecisionMigrationTool() {
 			<Dialog open={open} onOpenChange={setOpen}>
 				<DialogContent
 					hideCloseButton
-					overlayClassName="bg-zinc-950/50 backdrop-blur-[1.5px]"
 					className="left-0 top-0 flex h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-white p-0 shadow-none dark:bg-background sm:left-1/2 sm:top-1/2 sm:h-[min(900px,calc(100dvh-3rem))] sm:w-[min(1180px,calc(100vw-3rem))] sm:max-w-[1180px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:border sm:border-zinc-200 sm:shadow-[0_12px_32px_rgba(0,0,0,0.16)] dark:sm:border-border"
 					data-testid="decision-migration-panel"
 				>

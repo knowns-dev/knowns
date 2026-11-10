@@ -119,11 +119,14 @@ test.describe("Decision processing flow", () => {
 		await sources.fill("https://example.test/external-evidence");
 		await review.getByRole("button", { name: "Browse existing" }).first().click();
 		const browser = page.getByTestId("reference-browser");
-		const browserZIndex = await browser.evaluate((element) => Number.parseInt(window.getComputedStyle(element).zIndex, 10));
-		const detailZIndex = await page
-			.getByTestId("decision-focus-dialog")
-			.evaluate((element) => Number.parseInt(window.getComputedStyle(element).zIndex, 10));
-		expect(browserZIndex).toBeGreaterThan(detailZIndex);
+		// The picker renders inside the detail's modal <dialog> (top layer) and is the topmost thing at its centre.
+		const layering = await browser.evaluate((element) => {
+			const host = element.closest("dialog[open]");
+			const r = element.getBoundingClientRect();
+			const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+			return { sameLayer: !!host?.querySelector('[data-testid="decision-focus-dialog"]'), onTop: !!hit && element.contains(hit) };
+		});
+		expect(layering).toEqual({ sameLayer: true, onTop: true });
 		const search = browser.getByPlaceholder("Search by title, path, or ID…");
 		await search.fill(seed.evidenceDoc);
 		await browser.getByRole("button", { name: /Add Doc:/ }).first().click();

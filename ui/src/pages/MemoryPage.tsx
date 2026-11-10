@@ -63,6 +63,7 @@ import {
 	DialogDescription,
 	DialogTitle,
 } from "@/ui/components/ui/dialog";
+import { TopLayer } from "@/ui/components/ui/top-layer";
 import { FeatureHeader } from "@/ui/components/templates";
 import { PageContent, PageShell } from "@/ui/components/templates/PageShell";
 import { cn } from "@/ui/lib/utils";
@@ -571,21 +572,25 @@ export default function MemoryPage() {
 			/>
 
 			{errorMessage ? (
-				<div
-					role="alert"
-					className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-destructive/30 bg-card px-4 py-3 text-sm text-destructive shadow-lg"
-				>
-					{errorMessage}
-				</div>
+				<TopLayer>
+					<div
+						role="alert"
+						className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-destructive/30 bg-card px-4 py-3 text-sm text-destructive shadow-lg"
+					>
+						{errorMessage}
+					</div>
+				</TopLayer>
 			) : null}
 			{notice ? (
-				<div
-					role="status"
-					aria-live="polite"
-					className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-emerald-200 bg-card px-4 py-3 text-sm text-emerald-700 shadow-lg dark:border-emerald-500/30 dark:text-emerald-400"
-				>
-					{notice}
-				</div>
+				<TopLayer>
+					<div
+						role="status"
+						aria-live="polite"
+						className="fixed left-1/2 top-4 z-[90] w-[min(92vw,640px)] -translate-x-1/2 rounded-lg border border-emerald-200 bg-card px-4 py-3 text-sm text-emerald-700 shadow-lg dark:border-emerald-500/30 dark:text-emerald-400"
+					>
+						{notice}
+					</div>
+				</TopLayer>
 			) : null}
 
 			<div className="flex h-[58px] shrink-0 items-center border-b bg-card px-4 sm:px-6">
@@ -717,7 +722,6 @@ export default function MemoryPage() {
 			<Dialog open={selectedMemory !== null} onOpenChange={(open) => !open && handleCloseMemory()}>
 				<DialogContent
 					hideCloseButton
-					overlayClassName="bg-black/45 backdrop-blur-[1.5px]"
 					className="left-0 top-0 flex h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-background p-0 shadow-none sm:left-1/2 sm:top-1/2 sm:h-[min(860px,calc(100dvh-3rem))] sm:w-[min(1120px,calc(100vw-3rem))] sm:max-w-[1120px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:border sm:shadow-[0_12px_32px_rgba(0,0,0,0.16)]"
 					onCloseAutoFocus={(event) => event.preventDefault()}
 					data-testid="memory-focus-dialog"
@@ -1536,7 +1540,6 @@ function ConfirmReviewActionDialog({
 		<Dialog open={action !== null} onOpenChange={(open) => !open && !busy && onCancel()}>
 			<DialogContent
 				hideCloseButton
-				overlayClassName="z-[90] bg-black/55"
 				className="z-[100] w-[min(560px,calc(100vw-2rem))] gap-0 overflow-hidden rounded-xl bg-background p-0 shadow-[0_12px_32px_rgba(0,0,0,0.2)]"
 				data-testid="memory-impact-dialog"
 			>
@@ -1647,7 +1650,6 @@ function ConfirmBulkActionDialog({
 		<Dialog open={action !== null} onOpenChange={(open) => !open && !busy && onCancel()}>
 			<DialogContent
 				hideCloseButton
-				overlayClassName="z-[90] bg-black/55"
 				className="z-[100] w-[min(520px,calc(100vw-2rem))] gap-0 overflow-hidden rounded-xl bg-background p-0 shadow-[0_12px_32px_rgba(0,0,0,0.2)]"
 			>
 				<DialogTitle className="border-b px-5 py-4 text-base">
@@ -1751,7 +1753,6 @@ function CreateMemoryDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent
 				hideCloseButton
-				overlayClassName="bg-black/45 backdrop-blur-[1.5px]"
 				className="left-0 top-0 flex h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-background p-0 shadow-none sm:left-1/2 sm:top-1/2 sm:h-auto sm:max-h-[calc(100dvh-3rem)] sm:w-[min(900px,calc(100vw-3rem))] sm:max-w-[900px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:border sm:shadow-[0_12px_32px_rgba(0,0,0,0.16)]"
 				data-testid="memory-create-dialog"
 			>
