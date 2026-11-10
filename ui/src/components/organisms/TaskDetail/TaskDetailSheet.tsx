@@ -1,17 +1,13 @@
-import { useState, useCallback, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Maximize2, Minimize2, X } from "lucide-react";
-import {
-	Sheet,
-	SheetContent,
-} from "../../ui/sheet";
-import {
-	Dialog,
-	DialogContent,
-	DialogTitle,
-} from "../../ui/dialog";
-import { Button } from "../../ui/button";
-import { ScrollArea } from "../../ui/ScrollArea";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { Archive, ArchiveRestore, CheckCircle2, Link2, Maximize2, Minimize2, AtSign, Trash2, X } from "lucide-react";
+import { Sheet, SheetContent } from "../../ui/sheet";
+import { Dialog, DialogContent, DialogTitle } from "../../ui/dialog";
+import { Button } from "@/ui/components/ui/knowns/button";
+import { Avatar } from "@/ui/components/ui/knowns/avatar";
+import { TabsContent } from "@/ui/components/ui/knowns/tabs";
+import { PageHeader, type PageHeaderAction, type PageHeaderMeta } from "@/ui/components/ui/knowns/blocks/page-header";
+import { Breadcrumb, type BreadcrumbItem } from "@/ui/components/ui/knowns/breadcrumb";
+import { writeClipboard } from "@/ui/lib/knowns/utils";
 import type { Task } from "@/ui/models/task";
 import { api, LifecycleAPIError, updateTask } from "../../../api/client";
 import type { TaskLifecycleResponse } from "../../../models/taskLifecycle";
@@ -20,7 +16,8 @@ import { toast } from "../../ui/sonner";
 import { useCurrentUser } from "../../../contexts/UserContext";
 import { useUIPreferences } from "../../../contexts/UIPreferencesContext";
 import { useIsMobile } from "../../../hooks/useMobile";
-import { TaskHeader } from "./TaskHeader";
+import { getStatusLabel } from "../../../utils/colors";
+import { TaskTitle } from "./TaskTitle";
 import { TaskDescription } from "./TaskDescription";
 import { TaskAcceptanceCriteria } from "./TaskAcceptanceCriteria";
 import { TaskImplementationSection } from "./TaskImplementationSection";
@@ -30,6 +27,7 @@ import TaskHistoryPanel from "../TaskHistoryPanel";
 import { TaskLifecycleDialog } from "../TaskLifecycleDialog";
 import { TaskHardDeleteDialog } from "../TaskHardDeleteDialog";
 import { useConfig } from "../../../contexts/ConfigContext";
+import { formatTracked, priorityOptions, statusTone } from "./types";
 
 interface TaskDetailSheetProps {
 	task: Task | null;
@@ -88,23 +86,6 @@ export function TaskDetailSheet({
 		setHardDeleteOpen(false);
 		setHardDeleteError(null);
 	}, [task?.id]);
-	// Animation variants
-	const contentVariants = {
-		hidden: { opacity: 0, y: 20, scale: 0.98 },
-		visible: {
-			opacity: 1,
-			y: 0,
-			scale: 1,
-			transition: { duration: 0.2, ease: "easeOut" }
-		},
-		exit: {
-			opacity: 0,
-			y: 10,
-			scale: 0.98,
-			transition: { duration: 0.15, ease: "easeIn" }
-		}
-	};
-
 	const handleSave = useCallback(
 		async (updates: Partial<Task>) => {
 			if (!task) return;
@@ -229,147 +210,257 @@ export function TaskDetailSheet({
 		}
 	}, [task, onLifecycleChange, onClose]);
 
-	// Handle markdown link clicks for internal navigation
+	const [tab, setTab] = useState("overview");
+	const scrollRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
-		const handleLinkClick = (e: MouseEvent) => {
-			let target = e.target as HTMLElement;
+		setTab("overview");
+		scrollRef.current?.scrollTo({ top: 0 });
+	}, [task?.id]);
 
-			while (target && target.tagName !== "A" && target !== contentRef.current) {
-				target = target.parentElement as HTMLElement;
+	/** "/kanban" when the detail sits on the board, else "/tasks": the task URLs keep their section. */
+	const section = typeof window !== "undefined" && window.location.pathname.startsWith("/kanban") ? "/kanban" : "/tasks";
+
+	const openTask = useCallback(
+		(id: string) => {
+			if (onNavigateToTask) onNavigateToTask(id);
+			else navigateTo(`${section}/${id}`);
+		},
+		[onNavigateToTask, section],
+	);
+
+	// Links inside the detail: task links open in place, section links close, docs leave for the Docs page.
+	const handleLinkClick = useCallback(
+		(e: React.MouseEvent) => {
+			if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+			const anchor = (e.target as HTMLElement).closest("a");
+			if (!anchor || !contentRef.current?.contains(anchor)) return;
+			const href = anchor.getAttribute("href");
+			if (!href) return;
+
+			const taskRoute = href.match(/^\/(?:tasks|kanban)\/([^/?#]+)$/);
+			if (taskRoute) {
+				e.preventDefault();
+				openTask(decodeURIComponent(taskRoute[1] ?? ""));
+				return;
 			}
-
-			if (target && target.tagName === "A") {
-				const anchor = target as HTMLAnchorElement;
-				const href = anchor.getAttribute("href");
-
-				if (href && href.startsWith("/")) {
-					onClose();
-					return;
-				}
-
-				if (href && /^(task-)?\d+(\.md)?$/.test(href)) {
-					e.preventDefault();
-					const taskId = href.replace(/^task-/, "").replace(/\.md$/, "");
-					navigateTo(`/tasks/${taskId}`);
-					onClose();
-					return;
-				}
-
-				if (href && (href.endsWith(".md") || href.includes(".md#"))) {
-					e.preventDefault();
-					const normalizedPath = href.replace(/^\.\//, "").replace(/^\//, "");
-					navigateTo(`/docs/${normalizedPath}`);
-					onClose();
-				}
+			if (href === "/tasks" || href === "/kanban") {
+				e.preventDefault();
+				onClose();
+				return;
 			}
-		};
+			if (href.startsWith("/")) {
+				onClose();
+				return;
+			}
+			if (/^task-[\w-]+(\.md)?$/.test(href) || /^\d+(\.md)?$/.test(href)) {
+				e.preventDefault();
+				openTask(href.replace(/^task-/, "").replace(/\.md$/, ""));
+				return;
+			}
+			if (href.endsWith(".md") || href.includes(".md#")) {
+				e.preventDefault();
+				navigateTo(`/docs/${href.replace(/^\.\//, "").replace(/^\//, "")}`);
+				onClose();
+			}
+		},
+		[onClose, openTask],
+	);
 
-		const contentEl = contentRef.current;
-		if (contentEl) {
-			contentEl.addEventListener("click", handleLinkClick);
-			return () => contentEl.removeEventListener("click", handleLinkClick);
-		}
-	}, [onClose]);
+	const allTasksById = useMemo(() => new Map(allTasks.map((t) => [t.id, t])), [allTasks]);
 
 	if (!task) return null;
 
-	// Header component (shared)
-	const Header = (
-		<div className="flex items-center justify-between gap-2 px-6 py-4 border-b border-border/40">
-			<div className="flex-1 min-w-0">
-				<TaskHeader task={task} onSave={handleSave} saving={saving} />
-			</div>
-			<div className="flex items-center gap-0.5 shrink-0">
-				{/* Hide maximize button on mobile - only sheet mode available */}
-				{!isMobile && (
-					<Button
-						variant="ghost"
-						size="icon"
-						onClick={toggleTaskDetailLayout}
-						className="h-8 w-8 text-muted-foreground hover:text-foreground"
-						title={isMaximized ? "Minimize" : "Maximize"}
-					>
-						{isMaximized ? (
-							<Minimize2 className="w-4 h-4" />
-						) : (
-							<Maximize2 className="w-4 h-4" />
-						)}
-					</Button>
-				)}
+	const archived = task.lifecycleState === "archived";
+	const canHardDelete = config.capabilities?.taskHardDelete === true;
+	const busy = saving || lifecycleLoading;
+	const parentTask = task.parent ? allTasksById.get(task.parent) : undefined;
+	const ac = task.acceptanceCriteria ?? [];
+	const acDone = ac.filter((a) => a.completed).length;
+	const sessions = (task.timeEntries ?? []).filter((e) => e.endedAt).length;
+
+	const breadcrumbs: BreadcrumbItem[] = [
+		{ label: section === "/kanban" ? "Board" : "Tasks", href: section },
+		...(parentTask ? [{ label: `#${parentTask.id}`, href: `${section}/${parentTask.id}` }] : []),
+		{ label: `#${task.id}` },
+	];
+
+	const updated = new Date(task.updatedAt);
+	const created = new Date(task.createdAt);
+	const meta: PageHeaderMeta[] = [
+		{
+			id: "assignee",
+			content: task.assignee ? (
+				<span className="inline-flex items-center gap-1.5">
+					<Avatar label={task.assignee.replace(/^@/, "")} size="xs" shape="circle" decorative />
+					{task.assignee}
+				</span>
+			) : (
+				<span className="text-muted-foreground">Unassigned</span>
+			),
+		},
+		{ id: "priority", label: "Priority", content: priorityOptions.find((p) => p.value === task.priority)?.label ?? task.priority },
+		...(task.timeSpent > 0 ? [{ id: "tracked", label: "Tracked", content: <span className="tabular-nums">{formatTracked(task.timeSpent)}</span> }] : []),
+		{
+			id: "created",
+			label: "Created",
+			content: (
+				<time dateTime={created.toISOString()} title={created.toLocaleString()}>
+					{created.toLocaleDateString(undefined, { month: "short", day: "numeric", year: created.getFullYear() === new Date().getFullYear() ? undefined : "numeric" })}
+				</time>
+			),
+		},
+		{
+			id: "updated",
+			label: "Updated",
+			content: (
+				<time dateTime={updated.toISOString()} title={updated.toLocaleString()}>
+					{updated.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+				</time>
+			),
+		},
+	];
+
+	const primaryAction: PageHeaderAction | undefined = archived
+		? { id: "restore", label: "Restore Task", icon: <ArchiveRestore />, disabled: busy, onSelect: () => previewLifecycle("unarchive") }
+		: task.status !== "done"
+			? { id: "done", label: "Mark as Done", icon: <CheckCircle2 />, disabled: busy, onSelect: () => handleSave({ status: "done" }) }
+			: undefined;
+
+	const archiveAction: PageHeaderAction[] = archived
+		? []
+		: [{ id: "archive", label: "Archive Task", icon: <Archive />, disabled: busy, onSelect: () => previewLifecycle("archive") }];
+	// Phones: only the primary action sits beside the title; the rest live in the overflow menu.
+	const actions = isMobile ? [] : archiveAction;
+
+	const copy = (text: string, done: string) => async () => {
+		try {
+			await writeClipboard(text);
+			toast.success(done);
+		} catch {
+			toast.error("Could not copy to the clipboard");
+		}
+		return done;
+	};
+	const moreActions: PageHeaderAction[] = [
+		...(isMobile ? archiveAction : []),
+		{ id: "copy-link", label: "Copy link", icon: <Link2 />, onSelect: copy(`${window.location.origin}${section}/${task.id}`, "Link copied") },
+		{ id: "copy-ref", label: "Copy reference", icon: <AtSign />, onSelect: copy(`@task-${task.id}`, "Reference copied") },
+		...(canHardDelete
+			? [
+					{
+						id: "hard-delete",
+						label: "Permanently delete…",
+						icon: <Trash2 />,
+						danger: true,
+						disabled: busy,
+						onSelect: () => {
+							setHardDeleteError(null);
+							setHardDeleteOpen(true);
+						},
+					},
+				]
+			: []),
+		...(onDelete
+			? [
+					{
+						id: "delete",
+						label: "Delete Task",
+						icon: <Trash2 />,
+						danger: true,
+						disabled: busy,
+						onSelect: () => {
+							if (confirm("Delete this task?")) onDelete(task.id);
+						},
+					},
+				]
+			: []),
+	];
+
+	const showMaximize = !isMobile;
+	const windowControls = (
+		<div className="flex flex-none items-center gap-0.5">
+			{showMaximize && (
 				<Button
 					variant="ghost"
-					size="icon"
-					onClick={onClose}
-					className="h-8 w-8 text-muted-foreground hover:text-foreground"
-					title="Close"
-				>
-					<X className="w-4 h-4" />
-				</Button>
-			</div>
-		</div>
-	);
-
-	// Main content section (shared)
-	const MainContent = (
-		<div className="px-6 py-8 space-y-0">
-			<TaskDescription task={task} onSave={handleSave} saving={saving} />
-
-			<div className="border-t border-border/40" />
-			<TaskAcceptanceCriteria task={task} onSave={handleSave} saving={saving} />
-
-			<div className="border-t border-border/40" />
-			<TaskImplementationSection
-				task={task}
-				onSave={handleSave}
-				saving={saving}
-				type="plan"
-			/>
-
-			<div className="border-t border-border/40" />
-			<TaskImplementationSection
-				task={task}
-				onSave={handleSave}
-				saving={saving}
-				type="notes"
-			/>
-
-			{/* AI Workspace — normal position when not running */}
-			{/* Time Tracking */}
-			<div className="border-t border-border/40" />
-			<div className="pt-8">
-				<TimeTrackingLogs
-					taskId={task.id}
-					timeEntries={task.timeEntries}
-					timeSpent={task.timeSpent}
+					icon={isMaximized ? <Minimize2 /> : <Maximize2 />}
+					onClick={toggleTaskDetailLayout}
+					aria-label={isMaximized ? "Show as side sheet" : "Expand to full width"}
+					title={isMaximized ? "Show as side sheet" : "Expand to full width"}
+					className="text-muted-foreground max-md:hidden"
 				/>
-			</div>
-
-			{/* History */}
-			<div className="border-t border-border/40" />
-			<div className="pt-8 pb-4">
-				<TaskHistoryPanel taskId={task.id} />
-			</div>
+			)}
+			<Button variant="ghost" icon={<X />} onClick={onClose} aria-label="Close" title="Close" className="text-muted-foreground" />
 		</div>
 	);
 
-	// Sidebar component (shared)
-	const Sidebar = (
-		<TaskSidebar
-			task={task}
-			allTasks={allTasks}
-			currentUser={currentUser}
-			onSave={handleSave}
-			onDelete={onDelete}
-			onArchive={() => previewLifecycle("archive")}
-			onUnarchive={() => previewLifecycle("unarchive")}
-			onHardDelete={() => {
-				setHardDeleteError(null);
-				setHardDeleteOpen(true);
-			}}
-			canHardDelete={config.capabilities?.taskHardDelete === true}
-			onNavigateToTask={onNavigateToTask}
-			saving={saving || lifecycleLoading}
-		/>
+	const body = (
+		<div ref={contentRef} onClick={handleLinkClick} className="flex h-full min-h-0 flex-col">
+			{/* Stays put while the body scrolls, so Close is always one tap away (phones have no Escape). */}
+			<div className="flex h-12 flex-none items-center gap-3 px-3 pt-[env(safe-area-inset-top)] sm:h-14 sm:px-6">
+				<Breadcrumb items={breadcrumbs} size="sm" separator="slash" aria-label={`Breadcrumb: task ${task.id}`} className="min-w-0 flex-1" />
+				{windowControls}
+			</div>
+			<div
+				ref={scrollRef}
+				data-autofocus
+				tabIndex={-1}
+				className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(3rem,env(safe-area-inset-bottom))] outline-none [scrollbar-gutter:stable] sm:px-8"
+			>
+				<PageHeader
+					layout="stacked"
+					size="lg"
+					className="pt-1"
+					title={<TaskTitle task={task} onSave={handleSave} saving={saving} />}
+					titleText={task.title}
+					status={{ label: getStatusLabel(task.status), tone: statusTone(task.status, (config.statusColors || {}) as Record<string, string>) }}
+					meta={meta}
+					progress={ac.length > 0 ? { value: acDone, total: ac.length, unit: "criteria", label: "Acceptance criteria done" } : undefined}
+					tabs={[
+						{ value: "overview", label: "Overview" },
+						{ value: "time", label: "Time", count: sessions || undefined },
+						{ value: "history", label: "History" },
+					]}
+					tab={tab}
+					onTabChange={setTab}
+					primaryAction={primaryAction}
+					actions={actions}
+					moreActions={moreActions}
+					scrollContainer={scrollRef}
+				>
+					<div className="@container/detail">
+						<div className="grid grid-cols-1 gap-x-10 gap-y-10 pt-6 @[760px]/detail:grid-cols-[minmax(0,1fr)_15.5rem]">
+							<div className="min-w-0">
+								<TabsContent value="overview" className="flex flex-col gap-9">
+									<TaskDescription task={task} onSave={handleSave} saving={saving} />
+									<TaskAcceptanceCriteria task={task} onSave={handleSave} saving={saving} />
+									<TaskImplementationSection task={task} onSave={handleSave} saving={saving} type="plan" />
+									<TaskImplementationSection task={task} onSave={handleSave} saving={saving} type="notes" />
+								</TabsContent>
+								<TabsContent value="time">
+									<TimeTrackingLogs taskId={task.id} timeEntries={task.timeEntries ?? []} timeSpent={task.timeSpent} disabled={archived} />
+								</TabsContent>
+								<TabsContent value="history">
+									<TaskHistoryPanel taskId={task.id} />
+								</TabsContent>
+							</div>
+							<aside
+								aria-label="Properties"
+								className="min-w-0 border-t border-[color-mix(in_srgb,var(--foreground)_9%,transparent)] pt-6 @[760px]/detail:self-start @[760px]/detail:border-t-0 @[760px]/detail:border-l @[760px]/detail:pt-0 @[760px]/detail:pl-6"
+							>
+								<TaskSidebar
+									task={task}
+									allTasks={allTasks}
+									currentUser={currentUser}
+									onSave={handleSave}
+									onNavigateToTask={openTask}
+									saving={busy}
+								/>
+							</aside>
+						</div>
+					</div>
+				</PageHeader>
+			</div>
+		</div>
 	);
 
 	const LifecycleDialogs = (
@@ -388,7 +479,7 @@ export function TaskDetailSheet({
 				onConfirm={executeLifecycle}
 				allowCancelWhileLoading={lifecyclePreview?.phase === "preview"}
 			/>
-			{config.capabilities?.taskHardDelete === true && (
+			{canHardDelete && (
 				<TaskHardDeleteDialog
 					task={task}
 					open={hardDeleteOpen}
@@ -401,100 +492,32 @@ export function TaskDetailSheet({
 		</>
 	);
 
-	// Centered Dialog mode (default) - Sidebar on RIGHT
-	// On mobile, always use Sheet mode (no center dialog)
+	const label = <DialogTitle className="sr-only">Task details: {task.title}</DialogTitle>;
+
+	// Expanded: a wide centred dialog. Phones always get the full-height sheet.
 	if (isMaximized && !isMobile) {
 		return (
-			<AnimatePresence>
-				{task && (
-					<Dialog open={!!task} onOpenChange={(open) => !open && onClose()}>
-						<DialogContent
-							className="max-w-6xl w-[95vw] h-[90vh] p-0 gap-0 overflow-hidden flex flex-col"
-							hideCloseButton
-						>
-							<DialogTitle className="sr-only">Task Details: {task.title}</DialogTitle>
-							<motion.div
-								ref={contentRef}
-								className="flex flex-col h-full overflow-hidden"
-								variants={contentVariants}
-								initial="hidden"
-								animate="visible"
-								exit="exit"
-							>
-								{Header}
-								<div className="flex-1 flex overflow-hidden">
-									{/* Main Content */}
-									<ScrollArea className="flex-1">
-										{MainContent}
-									</ScrollArea>
-									{/* Sidebar on right */}
-									<div className="shrink-0 w-72 border-l border-border/40 overflow-hidden">
-										<ScrollArea className="h-full w-full">
-											<div className="p-5 w-full max-w-full overflow-hidden">{Sidebar}</div>
-										</ScrollArea>
-									</div>
-								</div>
-							</motion.div>
-								{LifecycleDialogs}
-							</DialogContent>
-					</Dialog>
-				)}
-			</AnimatePresence>
+			<Dialog open={!!task} onOpenChange={(open) => !open && onClose()}>
+				<DialogContent className="flex h-[min(92vh,60rem)] w-[min(96vw,76rem)] max-w-none flex-col gap-0 overflow-hidden p-0" hideCloseButton>
+					{label}
+					{body}
+					{LifecycleDialogs}
+				</DialogContent>
+			</Dialog>
 		);
 	}
 
-	// Side Sheet mode - Sidebar on TOP (compact)
 	return (
-		<AnimatePresence>
-			{task && (
-				<Sheet open={!!task} onOpenChange={(open) => !open && onClose()}>
-					<SheetContent
-						side="right"
-						className="w-full sm:max-w-2xl lg:max-w-3xl xl:max-w-4xl p-0 flex flex-col gap-0"
-						hideCloseButton
-					>
-						<motion.div
-							ref={contentRef}
-							className="flex flex-col h-full overflow-hidden"
-							variants={contentVariants}
-							initial="hidden"
-							animate="visible"
-							exit="exit"
-						>
-							{Header}
-							<div className="flex-1 flex flex-col overflow-hidden">
-								{/* Sidebar on top - compact mode */}
-								<div className="shrink-0 border-b border-border/40">
-									<div className="px-6 py-4">
-										<TaskSidebar
-											task={task}
-											allTasks={allTasks}
-											currentUser={currentUser}
-											onSave={handleSave}
-											onDelete={onDelete}
-											onArchive={() => previewLifecycle("archive")}
-											onUnarchive={() => previewLifecycle("unarchive")}
-											onHardDelete={() => {
-												setHardDeleteError(null);
-												setHardDeleteOpen(true);
-											}}
-											canHardDelete={config.capabilities?.taskHardDelete === true}
-											onNavigateToTask={onNavigateToTask}
-											saving={saving || lifecycleLoading}
-											compact
-										/>
-									</div>
-								</div>
-								{/* Main Content below */}
-								<ScrollArea className="flex-1">
-									{MainContent}
-								</ScrollArea>
-							</div>
-						</motion.div>
-					{LifecycleDialogs}
-				</SheetContent>
-				</Sheet>
-			)}
-		</AnimatePresence>
+		<Sheet open={!!task} onOpenChange={(open) => !open && onClose()}>
+			<SheetContent
+				side="right"
+				className="flex h-dvh w-full flex-col gap-0 p-0 max-sm:border-l-0 sm:max-w-3xl xl:max-w-[60rem]"
+				hideCloseButton
+			>
+				{label}
+				{body}
+				{LifecycleDialogs}
+			</SheetContent>
+		</Sheet>
 	);
 }

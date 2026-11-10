@@ -1,16 +1,13 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { History, ChevronDown, ChevronRight, Filter, RotateCcw, GitCompare, ArrowRight } from "lucide-react";
+import { History, ChevronRight, RotateCcw, GitCompare, ArrowRight } from "lucide-react";
 import type { TaskVersion, TaskChange, TaskHistoryMetadata } from "@/ui/models/version";
 import { createTaskDiff } from "@/ui/models/version";
 import { api } from "../../api/client";
-import Avatar from "../atoms/Avatar";
-import { Button } from "../ui/button";
-import {
-	Collapsible,
-	CollapsibleContent,
-	CollapsibleTrigger,
-} from "../ui/collapsible";
+import { Avatar } from "@/ui/components/ui/knowns/avatar";
+import { Button } from "@/ui/components/ui/knowns/button";
 import { Combobox } from "@/ui/components/ui/knowns/combobox";
+import { SegmentedControl } from "@/ui/components/ui/knowns/segmented-control";
+import { cn, focusRing } from "@/ui/lib/knowns/utils";
 import VersionDiffViewer from "./VersionDiffViewer";
 
 interface TaskHistoryPanelProps {
@@ -29,11 +26,14 @@ const FIELD_LABELS: Record<string, string> = {
 	acceptanceCriteria: "Acceptance Criteria",
 	implementationPlan: "Implementation Plan",
 	implementationNotes: "Implementation Notes",
+	timeSpent: "Time spent",
+	parent: "Parent",
+	spec: "Linked Spec",
 };
 
 // Change type categories for filtering
 const CHANGE_TYPES = [
-	{ value: "all", label: "All Changes" },
+	{ value: "all", label: "All" },
 	{ value: "status", label: "Status" },
 	{ value: "assignee", label: "Assignee" },
 	{ value: "content", label: "Content" },
@@ -100,8 +100,7 @@ export default function TaskHistoryPanel({ taskId, onRestore }: TaskHistoryPanel
 	const [loading, setLoading] = useState(true);
 	const [hasMore, setHasMore] = useState(false);
 	const [tailTruncated, setTailTruncated] = useState(false);
-	const [isOpen, setIsOpen] = useState(true);
-	const [filter, setFilter] = useState("all");
+		const [filter, setFilter] = useState("all");
 	const [expandedVersions, setExpandedVersions] = useState<Set<number>>(new Set());
 
 	// Compare mode state
@@ -217,7 +216,7 @@ export default function TaskHistoryPanel({ taskId, onRestore }: TaskHistoryPanel
 	// Keyboard navigation handlers
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
-			if (!isOpen || filteredVersions.length === 0) return;
+			if (filteredVersions.length === 0) return;
 
 			switch (e.key) {
 				case "ArrowDown":
@@ -263,7 +262,7 @@ export default function TaskHistoryPanel({ taskId, onRestore }: TaskHistoryPanel
 				}
 			}
 		},
-		[isOpen, filteredVersions, focusedIndex, toggleVersion]
+		[filteredVersions, focusedIndex, toggleVersion]
 	);
 
 	// Reset focus when list changes
@@ -277,269 +276,198 @@ export default function TaskHistoryPanel({ taskId, onRestore }: TaskHistoryPanel
 		setToVersion("");
 	}, [versions]);
 
+	const summary = loading ? "Loading history" : `${versions.length}${hasMore ? "+" : ""} change${versions.length === 1 ? "" : "s"}`;
+
 	return (
-		<Collapsible open={isOpen} onOpenChange={setIsOpen}>
-			<div className="flex items-center gap-2 mb-3 text-secondary-foreground">
-				<CollapsibleTrigger asChild>
-					<Button variant="ghost" size="sm" className="p-0 h-auto">
-						{isOpen ? (
-							<ChevronDown className="w-5 h-5" />
-						) : (
-							<ChevronRight className="w-5 h-5" />
-						)}
-					</Button>
-				</CollapsibleTrigger>
-				<History className="w-5 h-5" />
-				<h3 className="font-semibold">History</h3>
+		<section aria-label="History" className="flex flex-col gap-4">
+			<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+				<p className="text-[13px] text-muted-foreground tabular-nums">{summary}</p>
 				{versions.length > 0 && (
-					<span className="text-sm text-muted-foreground">
-						({versions.length} changes)
-					</span>
+					<div className="flex flex-wrap items-center gap-2">
+						<SegmentedControl
+							size="sm"
+							aria-label="Filter changes"
+							value={filter}
+							onValueChange={setFilter}
+							disabled={compareMode}
+							options={CHANGE_TYPES}
+						/>
+						<Button
+							size="sm"
+							variant={compareMode ? "secondary" : "ghost"}
+							icon={<GitCompare />}
+							aria-pressed={compareMode}
+							onClick={() => setCompareMode(!compareMode)}
+						>
+							Compare
+						</Button>
+					</div>
 				)}
 			</div>
 
-			<CollapsibleContent>
-				{tailTruncated && (
-					<div className="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-						The final history append is incomplete and was ignored. Run reconciliation before restoring that revision.
-					</div>
-				)}
-				{/* Controls: Filter and Compare Mode */}
-				{versions.length > 0 && (
-					<div className="space-y-3 mb-4">
-						{/* Filter and Compare Toggle */}
-						<div className="flex items-center justify-between gap-2">
-							<div className="flex items-center gap-2">
-								<Filter className="w-4 h-4 text-muted-foreground" />
-								<select
-									value={filter}
-									onChange={(e) => setFilter(e.target.value)}
-									className="text-sm rounded px-2 py-1 bg-card border border-border text-secondary-foreground"
-									disabled={compareMode}
-								>
-									{CHANGE_TYPES.map((type) => (
-										<option key={type.value} value={type.value}>
-											{type.label}
-										</option>
-									))}
-								</select>
-							</div>
-							<Button
-								variant={compareMode ? "secondary" : "ghost"}
-								size="sm"
-								onClick={() => setCompareMode(!compareMode)}
-								className="text-xs"
-							>
-								<GitCompare className="w-3 h-3 mr-1" />
-								Compare
-							</Button>
-						</div>
+			{tailTruncated && (
+				<div role="alert" className="rounded-lg bg-amber-500/10 px-3 py-2 text-[13px] text-amber-900 dark:text-amber-100">
+					The final history append is incomplete and was ignored. Run reconciliation before restoring that revision.
+				</div>
+			)}
 
-						{/* Version Selectors for Compare Mode */}
-						{compareMode && (
-							<div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg border border-border">
-								<Combobox
-									size="sm"
-									aria-label="From version"
-									placeholder="From v..."
-									value={fromVersion || null}
-									onValueChange={setFromVersion}
-									options={versions.map((v) => ({ value: String(v.version), label: `v${v.version}`, disabled: String(v.version) === toVersion }))}
-									className="w-[120px] text-xs"
-								/>
-
-								<ArrowRight className="w-4 h-4 text-muted-foreground" />
-
-								<Combobox
-									size="sm"
-									aria-label="To version"
-									placeholder="To v..."
-									value={toVersion || null}
-									onValueChange={setToVersion}
-									options={versions.map((v) => ({ value: String(v.version), label: `v${v.version}`, disabled: String(v.version) === fromVersion }))}
-									className="w-[120px] text-xs"
-								/>
-
-								{fromVersion && toVersion && fromVersion !== toVersion && (
-									<span className="text-xs text-muted-foreground ml-2">
-										{comparisonDiff.length === 0
-											? "No changes"
-											: `${comparisonDiff.length} field${comparisonDiff.length > 1 ? "s" : ""} changed`}
-									</span>
-								)}
-							</div>
+			{compareMode && versions.length > 0 && (
+				<div className="flex flex-col gap-3">
+					<div className="flex flex-wrap items-center gap-2">
+						<Combobox
+							size="sm"
+							aria-label="From version"
+							placeholder="From version"
+							value={fromVersion || null}
+							onValueChange={setFromVersion}
+							options={versions.map((v) => ({ value: String(v.version), label: `v${v.version}`, disabled: String(v.version) === toVersion }))}
+							className="w-32"
+						/>
+						<ArrowRight aria-hidden className="size-4 text-muted-foreground" />
+						<Combobox
+							size="sm"
+							aria-label="To version"
+							placeholder="To version"
+							value={toVersion || null}
+							onValueChange={setToVersion}
+							options={versions.map((v) => ({ value: String(v.version), label: `v${v.version}`, disabled: String(v.version) === fromVersion }))}
+							className="w-32"
+						/>
+						{fromVersion && toVersion && fromVersion !== toVersion && (
+							<span className="text-[12.5px] text-muted-foreground">
+								{comparisonDiff.length === 0
+									? "No changes"
+									: `${comparisonDiff.length} field${comparisonDiff.length > 1 ? "s" : ""} changed`}
+							</span>
 						)}
+					</div>
+					{fromVersion && toVersion && fromVersion !== toVersion ? (
+						<>
+							<VersionDiffViewer changes={comparisonDiff} viewType="split" showToggle />
+							{onRestore && toVersionObj && toVersionObj.version > 1 && (
+								<div className="flex justify-end">
+									<Button size="sm" variant="secondary" icon={<RotateCcw />} onClick={() => onRestore(toVersionObj)}>
+										Restore to v{toVersionObj.version}
+									</Button>
+								</div>
+							)}
+						</>
+					) : (
+						<p className="text-[13px] text-muted-foreground">Pick two versions to see what changed between them.</p>
+					)}
+				</div>
+			)}
 
-						{/* Comparison Diff View */}
-						{compareMode && fromVersion && toVersion && fromVersion !== toVersion && (
-							<div className="space-y-3">
-								<VersionDiffViewer
-									changes={comparisonDiff}
-									viewType="split"
-									showToggle={true}
-								/>
-								{onRestore && toVersionObj && toVersionObj.version > 1 && (
-									<div className="flex justify-end">
-										<Button
-											variant="outline"
-											size="sm"
-											onClick={() => onRestore(toVersionObj)}
-											className="text-xs"
-										>
-											<RotateCcw className="w-3 h-3 mr-1" />
-											Restore to v{toVersionObj.version}
-										</Button>
+			{loading ? (
+				<div className="flex flex-col gap-3" aria-hidden>
+					{[0, 1, 2].map((i) => (
+						<div key={i} className="flex items-center gap-3">
+							<span className="size-6 rounded-md bg-muted motion-safe:animate-pulse" />
+							<span className="h-3 flex-1 rounded bg-muted motion-safe:animate-pulse" />
+						</div>
+					))}
+				</div>
+			) : filteredVersions.length === 0 ? (
+				<p className="py-2 text-[13px] text-muted-foreground">
+					{versions.length === 0 ? "No history yet. Edits to this task show up here." : "No changes of this kind."}
+				</p>
+			) : !compareMode ? (
+				<div
+					ref={listRef}
+					className="flex flex-col"
+					onKeyDown={handleKeyDown}
+					role="listbox"
+					aria-label="Version history"
+					tabIndex={focusedIndex >= 0 ? -1 : 0}
+					onFocus={(e) => {
+						if (e.target === e.currentTarget && filteredVersions.length > 0) {
+							const first = filteredVersions[0];
+							setFocusedIndex(0);
+							if (first) itemRefs.current.get(first.version)?.focus();
+						}
+					}}
+				>
+					{filteredVersions.map((version, index) => {
+						const isExpanded = expandedVersions.has(version.version);
+						const isFocused = focusedIndex === index;
+						const who = version.author || version.actor;
+
+						return (
+							<div key={version.id} className="border-b border-[color-mix(in_srgb,var(--foreground)_8%,transparent)] last:border-b-0">
+								<button
+									ref={(el) => {
+										if (el) itemRefs.current.set(version.version, el);
+										else itemRefs.current.delete(version.version);
+									}}
+									type="button"
+									onClick={() => toggleVersion(version.version)}
+									onFocus={() => setFocusedIndex(index)}
+									className={cn(
+										"-mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2.5 text-left transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--foreground)_4%,transparent)]",
+										focusRing,
+									)}
+									role="option"
+									aria-selected={isExpanded}
+									aria-expanded={isExpanded}
+									tabIndex={isFocused || (focusedIndex < 0 && index === 0) ? 0 : -1}
+								>
+									{who ? (
+										<Avatar label={who} size="sm" shape="circle" decorative />
+									) : (
+										<span aria-hidden className="grid size-6 flex-none place-items-center rounded-full bg-muted text-muted-foreground">
+											<History className="size-3.5" />
+										</span>
+									)}
+									<span className="min-w-0 flex-1">
+										<span className="block truncate text-[13.5px] text-foreground">
+											{getChangeSummary(version, loadedVersions.has(version.version))}
+										</span>
+										<span className="block truncate text-[12.5px] text-muted-foreground">
+											{who ? `${who} · ` : ""}
+											<time dateTime={version.timestamp.toISOString()} title={version.timestamp.toLocaleString()}>
+												{formatRelativeTime(version.timestamp)}
+											</time>
+										</span>
+									</span>
+									<span className="flex-none font-mono text-[12px] text-muted-foreground tabular-nums">v{version.version}</span>
+									<ChevronRight
+										aria-hidden
+										className={cn("size-4 flex-none text-muted-foreground transition-[rotate] duration-200", isExpanded && "rotate-90")}
+									/>
+								</button>
+								{isExpanded && (
+									<div className="pb-4 pl-9 max-sm:pl-0">
+										<VersionDiffViewer changes={version.changes} viewType="unified" showToggle={false} />
+										{onRestore && version.version > 1 && (
+											<div className="mt-3 flex justify-end">
+												<Button
+													size="sm"
+													variant="secondary"
+													icon={<RotateCcw />}
+													onClick={() => {
+														void loadVersionDetail(version.version).then((detail) => {
+															if (detail) onRestore(detail);
+														});
+													}}
+												>
+													Restore to v{version.version}
+												</Button>
+											</div>
+										)}
 									</div>
 								)}
 							</div>
-						)}
-
-						{/* Keyboard hints */}
-						{!compareMode && (
-							<div className="text-xs text-muted-foreground flex items-center gap-3">
-								<span>
-									<kbd className="px-1.5 py-0.5 rounded bg-muted border border-border text-[10px]">↑</kbd>
-									<kbd className="px-1.5 py-0.5 rounded bg-muted border border-border text-[10px] ml-0.5">↓</kbd>
-									<span className="ml-1">navigate</span>
-								</span>
-								<span>
-									<kbd className="px-1.5 py-0.5 rounded bg-muted border border-border text-[10px]">Enter</kbd>
-									<span className="ml-1">expand</span>
-								</span>
-							</div>
-						)}
-					</div>
-				)}
-
-				{loading ? (
-					<div className="text-sm text-muted-foreground py-4 text-center">
-						Loading history...
-					</div>
-				) : filteredVersions.length === 0 ? (
-					<div className="text-sm text-muted-foreground py-4 text-center">
-						No history available
-					</div>
-				) : !compareMode ? (
-					<div
-						ref={listRef}
-						className="space-y-2 relative"
-						onKeyDown={handleKeyDown}
-						role="listbox"
-						aria-label="Version history"
-						tabIndex={0}
-					>
-						{/* Timeline line */}
-						<div className="absolute left-3 top-2 bottom-2 w-0.5 bg-border" />
-
-						{filteredVersions.map((version, index) => {
-							const isExpanded = expandedVersions.has(version.version);
-							const isFocused = focusedIndex === index;
-
-							return (
-								<div key={version.id} className="relative pl-8">
-									{/* Timeline dot */}
-									<div
-										className={`absolute left-1.5 top-3 w-3 h-3 rounded-full border-2 bg-background transition-colors ${
-											isFocused
-												? "border-primary ring-2 ring-primary/20"
-												: "border-blue-500 dark:border-blue-400"
-										}`}
-									/>
-
-									<button
-										ref={(el) => {
-											if (el) {
-												itemRefs.current.set(version.version, el);
-											} else {
-												itemRefs.current.delete(version.version);
-											}
-										}}
-										type="button"
-										onClick={() => toggleVersion(version.version)}
-										onFocus={() => setFocusedIndex(index)}
-										className={`w-full bg-card rounded-lg p-3 text-left hover:bg-accent transition-colors border ${
-											isFocused
-												? "border-primary ring-2 ring-primary/20"
-												: "border-border"
-										}`}
-										role="option"
-										aria-selected={isExpanded}
-										aria-expanded={isExpanded}
-										tabIndex={isFocused ? 0 : -1}
-									>
-										{/* Header */}
-										<div className="flex items-start justify-between gap-2">
-											<div className="flex items-center gap-2">
-												{version.author && (
-													<Avatar name={version.author} size="sm" />
-												)}
-												<div>
-													<div className="text-sm font-medium text-secondary-foreground">
-													{getChangeSummary(version, loadedVersions.has(version.version))}
-													</div>
-													<div className="text-xs text-muted-foreground">
-														{version.author && (
-															<span>{version.author} &bull; </span>
-														)}
-														{formatRelativeTime(version.timestamp)}
-													</div>
-												</div>
-											</div>
-											<div className="flex items-center gap-1">
-												<span className="text-xs text-muted-foreground">
-													v{version.version}
-												</span>
-												{isExpanded ? (
-													<ChevronDown className="w-4 h-4 text-muted-foreground" />
-												) : (
-													<ChevronRight className="w-4 h-4 text-muted-foreground" />
-												)}
-											</div>
-										</div>
-
-										{/* Expanded diff view */}
-										{isExpanded && (
-											<div
-												className="mt-3 pt-3 border-t border-dashed border-border"
-												onClick={(e) => e.stopPropagation()}
-											>
-												<VersionDiffViewer
-													changes={version.changes}
-													viewType="unified"
-													showToggle={false}
-												/>
-												{onRestore && version.version > 1 && (
-													<div className="mt-3 flex justify-end">
-														<Button
-															variant="outline"
-															size="sm"
-															onClick={(e) => {
-																e.stopPropagation();
-															void loadVersionDetail(version.version).then((detail) => {
-																if (detail) onRestore(detail);
-															});
-															}}
-															className="text-xs"
-														>
-															<RotateCcw className="w-3 h-3 mr-1" />
-															Restore to v{version.version}
-														</Button>
-													</div>
-												)}
-											</div>
-										)}
-									</button>
-								</div>
-							);
-						})}
-						{hasMore && (
-							<div className="pt-2 text-center">
-								<Button variant="ghost" size="sm" onClick={() => void loadMore()}>Load more history</Button>
-							</div>
-						)}
-					</div>
-				) : null}
-			</CollapsibleContent>
-		</Collapsible>
+						);
+					})}
+					{hasMore && (
+						<div className="pt-3">
+							<Button variant="ghost" size="sm" onClick={() => void loadMore()}>
+								Load more history
+							</Button>
+						</div>
+					)}
+				</div>
+			) : null}
+		</section>
 	);
 }

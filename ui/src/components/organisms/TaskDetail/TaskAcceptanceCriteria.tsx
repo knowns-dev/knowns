@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from "react";
-import { Plus, Trash2 } from "lucide-react";
-import { Button } from "../../ui/button";
-import { Checkbox } from "../../ui/checkbox";
-import { Input } from "../../ui/input";
-import { Progress } from "../../ui/progress";
+import { GripVertical, Plus, Trash2 } from "lucide-react";
+import { Button } from "@/ui/components/ui/knowns/button";
+import { Checkbox } from "@/ui/components/ui/knowns/checkbox";
+import { Input } from "@/ui/components/ui/knowns/input";
 import type { Task } from "@/ui/models/task";
-import { cn } from "@/ui/lib/utils";
+import { cn, focusRing } from "@/ui/lib/knowns/utils";
+import { DetailSection } from "./DetailSection";
+import { moveItem } from "./types";
 
 interface TaskAcceptanceCriteriaProps {
 	task: Task;
@@ -18,7 +19,12 @@ export function TaskAcceptanceCriteria({ task, onSave, saving }: TaskAcceptanceC
 	const [newText, setNewText] = useState("");
 	const [editingIndex, setEditingIndex] = useState<number | null>(null);
 	const [editingText, setEditingText] = useState("");
+	const [dragFrom, setDragFrom] = useState<number | null>(null);
+	const [dragOver, setDragOver] = useState<number | null>(null);
+	const [announce, setAnnounce] = useState("");
 	const inputRef = useRef<HTMLInputElement>(null);
+	const handleRefs = useRef<(HTMLButtonElement | null)[]>([]);
+	const focusAfterMove = useRef<number | null>(null);
 
 	useEffect(() => {
 		if (adding && inputRef.current) inputRef.current.focus();
@@ -27,162 +33,218 @@ export function TaskAcceptanceCriteria({ task, onSave, saving }: TaskAcceptanceC
 	const ac = task.acceptanceCriteria ?? [];
 	const completedCount = ac.filter((a) => a.completed).length;
 	const totalCount = ac.length;
-	const progress = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
+
+	// After a keyboard move the list re-renders from the saved task; keep focus on the moved handle.
+	useEffect(() => {
+		if (focusAfterMove.current === null) return;
+		handleRefs.current[focusAfterMove.current]?.focus();
+		focusAfterMove.current = null;
+	}, [task.acceptanceCriteria]);
 
 	const handleToggle = (index: number) => {
-		const newAC = (task.acceptanceCriteria ?? []).map((ac, i) =>
-			i === index ? { ...ac, completed: !ac.completed } : ac
-		);
-		onSave({ acceptanceCriteria: newAC });
+		onSave({ acceptanceCriteria: ac.map((item, i) => (i === index ? { ...item, completed: !item.completed } : item)) });
 	};
 
 	const handleAdd = () => {
 		if (!newText.trim()) return;
-		onSave({
-			acceptanceCriteria: [
-				...(task.acceptanceCriteria ?? []),
-				{ text: newText.trim(), completed: false },
-			],
-		});
+		onSave({ acceptanceCriteria: [...ac, { text: newText.trim(), completed: false }] });
 		setNewText("");
-		setAdding(false);
+		// Stay in add mode so several criteria can be typed in a row.
+		inputRef.current?.focus();
 	};
 
 	const handleDelete = (index: number) => {
-		onSave({
-			acceptanceCriteria: (task.acceptanceCriteria ?? []).filter((_, i) => i !== index),
-		});
+		onSave({ acceptanceCriteria: ac.filter((_, i) => i !== index) });
+	};
+
+	const handleMove = (from: number, to: number, viaKeyboard = false) => {
+		const next = moveItem(ac, from, to);
+		if (next === ac) return;
+		const landed = Math.max(0, Math.min(ac.length - 1, to));
+		if (viaKeyboard) focusAfterMove.current = landed;
+		setAnnounce(`Moved "${ac[from]?.text ?? "criterion"}" to position ${landed + 1} of ${ac.length}`);
+		onSave({ acceptanceCriteria: next });
 	};
 
 	const handleEditStart = (index: number) => {
 		setEditingIndex(index);
-		setEditingText((task.acceptanceCriteria ?? [])[index]?.text || "");
+		setEditingText(ac[index]?.text || "");
 	};
 
 	const handleEditSave = () => {
 		if (editingIndex === null) return;
-		const currentAC = (task.acceptanceCriteria ?? [])[editingIndex];
-		if (currentAC && editingText.trim() && editingText !== currentAC.text) {
-			onSave({
-				acceptanceCriteria: (task.acceptanceCriteria ?? []).map((ac, i) =>
-					i === editingIndex ? { ...ac, text: editingText.trim() } : ac
-				),
-			});
+		const current = ac[editingIndex];
+		if (current && editingText.trim() && editingText !== current.text) {
+			onSave({ acceptanceCriteria: ac.map((item, i) => (i === editingIndex ? { ...item, text: editingText.trim() } : item)) });
 		}
 		setEditingIndex(null);
 		setEditingText("");
 	};
 
 	return (
-		<div className="py-6">
-			<div className="flex items-center justify-between mb-3">
-				<h3 className="text-base font-semibold">
-					Acceptance Criteria
-					{totalCount > 0 && (
-						<span className="text-sm font-normal text-muted-foreground ml-2">
-							{completedCount}/{totalCount}
-						</span>
-					)}
-				</h3>
+		<DetailSection title="Acceptance Criteria" count={totalCount > 0 ? `${completedCount}/${totalCount}` : undefined}>
+			<div role="status" aria-live="polite" className="sr-only">
+				{announce}
 			</div>
 			{totalCount > 0 && (
-				<div className="flex items-center gap-2 mb-4">
-					<span className="text-xs text-muted-foreground w-8">{Math.round(progress)}%</span>
-					<Progress value={progress} className="flex-1 h-1.5" />
-				</div>
-			)}
-			<div className="space-y-0.5">
-				{(task.acceptanceCriteria ?? []).map((ac, index) => (
-					<div
-						key={index}
-						className="flex items-start gap-3 py-1.5 px-2 -mx-2 rounded-md hover:bg-muted/50 group transition-colors"
-					>
-						<Checkbox
-							checked={ac.completed}
-							onCheckedChange={() => handleToggle(index)}
-							disabled={saving}
-							className="mt-0.5"
-						/>
-						{editingIndex === index ? (
-							<Input
-								value={editingText}
-								onChange={(e) => setEditingText(e.target.value)}
-								onBlur={handleEditSave}
+				<ul aria-label="Acceptance criteria" className="-mx-2 flex flex-col">
+					{ac.map((item, index) => (
+						<li
+							key={`${index}-${item.text}`}
+							onDragOver={(e) => {
+								if (dragFrom === null) return;
+								e.preventDefault();
+								e.dataTransfer.dropEffect = "move";
+								if (dragOver !== index) setDragOver(index);
+							}}
+							onDrop={(e) => {
+								e.preventDefault();
+								if (dragFrom !== null) handleMove(dragFrom, index);
+								setDragFrom(null);
+								setDragOver(null);
+							}}
+							className={cn(
+								"group/ac relative flex items-start gap-1.5 rounded-lg py-1.5 pr-1 pl-0.5 sm:pl-2 transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)]",
+								dragFrom === index && "opacity-50",
+								dragOver === index && dragFrom !== null && dragFrom !== index && "bg-[color-mix(in_srgb,var(--foreground)_5%,transparent)]",
+							)}
+						>
+							{dragOver === index && dragFrom !== null && dragFrom !== index && (
+								<span
+									aria-hidden
+									className={cn("absolute inset-x-2 h-0.5 rounded-full bg-[color:var(--kn-accent,var(--primary))]", dragFrom < index ? "-bottom-px" : "-top-px")}
+								/>
+							)}
+							<button
+								ref={(el) => {
+									handleRefs.current[index] = el;
+								}}
+								type="button"
+								draggable={!saving}
+								onDragStart={(e) => {
+									setDragFrom(index);
+									e.dataTransfer.effectAllowed = "move";
+									e.dataTransfer.setData("text/plain", item.text);
+								}}
+								onDragEnd={() => {
+									setDragFrom(null);
+									setDragOver(null);
+								}}
 								onKeyDown={(e) => {
-									if (e.key === "Enter") handleEditSave();
-									if (e.key === "Escape") {
-										setEditingIndex(null);
-										setEditingText("");
+									if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+										e.preventDefault();
+										handleMove(index, index + (e.key === "ArrowUp" ? -1 : 1), true);
 									}
 								}}
-								className="flex-1 h-7 text-sm border-none shadow-none px-0 focus-visible:ring-0"
-								autoFocus
-							/>
-						) : (
-							<span
+								disabled={saving || totalCount < 2}
+								aria-label={`Reorder "${item.text}", position ${index + 1} of ${totalCount}. Use arrow keys to move.`}
+								title="Drag or use arrow keys to reorder"
 								className={cn(
-									"flex-1 text-sm cursor-pointer",
-									ac.completed && "line-through text-muted-foreground"
+									"mt-px grid size-5 flex-none cursor-grab sm:absolute sm:top-2 sm:-left-6 place-items-center rounded-[5px] text-muted-foreground/70 transition-opacity duration-150 hover:text-foreground active:cursor-grabbing disabled:invisible",
+									"opacity-100 sm:opacity-0 sm:group-hover/ac:opacity-100 sm:focus-visible:opacity-100",
+									focusRing,
 								)}
-								onClick={() => handleEditStart(index)}
 							>
-								{ac.text}
-							</span>
-						)}
+								<GripVertical className="size-3.5" aria-hidden />
+							</button>
+							<Checkbox
+								checked={item.completed}
+								onChange={() => handleToggle(index)}
+								disabled={saving}
+								aria-label={item.text}
+								className="mt-0.5"
+							/>
+							{editingIndex === index ? (
+								<Input
+									size="sm"
+									value={editingText}
+									onChange={(e) => setEditingText(e.target.value)}
+									onBlur={handleEditSave}
+									onKeyDown={(e) => {
+										if (e.key === "Enter") handleEditSave();
+										if (e.key === "Escape") {
+											e.stopPropagation();
+											setEditingIndex(null);
+											setEditingText("");
+										}
+									}}
+									aria-label="Edit criterion"
+									className="-my-1 ml-1 flex-1"
+									autoFocus
+								/>
+							) : (
+								<button
+									type="button"
+									onClick={() => handleEditStart(index)}
+									className={cn(
+										"ml-1 min-w-0 flex-1 cursor-text rounded-[5px] text-left text-[14px] leading-snug break-words",
+										item.completed ? "text-muted-foreground line-through decoration-muted-foreground/50" : "text-foreground",
+										focusRing,
+									)}
+								>
+									{item.text}
+								</button>
+							)}
+							<Button
+								size="xs"
+								variant="ghost"
+								icon={<Trash2 />}
+								aria-label={`Remove "${item.text}"`}
+								className="flex-none text-muted-foreground opacity-100 hover:text-red-600 sm:opacity-0 sm:group-hover/ac:opacity-100 sm:focus-visible:opacity-100 dark:hover:text-red-400"
+								onClick={() => handleDelete(index)}
+								disabled={saving}
+							/>
+						</li>
+					))}
+				</ul>
+			)}
+
+			{adding ? (
+				<div className="flex flex-col gap-2 pt-1">
+					<Input
+						ref={inputRef}
+						value={newText}
+						onChange={(e) => setNewText(e.target.value)}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" && newText.trim()) handleAdd();
+							if (e.key === "Escape") {
+								e.stopPropagation();
+								setNewText("");
+								setAdding(false);
+							}
+						}}
+						placeholder="Add acceptance criterion..."
+						aria-label="New acceptance criterion"
+					/>
+					<div className="flex gap-2">
+						<Button size="sm" onClick={handleAdd} disabled={!newText.trim()}>
+							Add
+						</Button>
 						<Button
+							size="sm"
 							variant="ghost"
-							size="icon"
-							className="h-6 w-6 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
-							onClick={() => handleDelete(index)}
+							onClick={() => {
+								setNewText("");
+								setAdding(false);
+							}}
 						>
-							<Trash2 className="w-3 h-3" />
+							Done
 						</Button>
 					</div>
-				))}
-
-				{adding ? (
-					<div className="py-1.5 space-y-2">
-						<Input
-							ref={inputRef}
-							value={newText}
-							onChange={(e) => setNewText(e.target.value)}
-							onKeyDown={(e) => {
-								if (e.key === "Enter" && newText.trim()) handleAdd();
-								if (e.key === "Escape") {
-									setNewText("");
-									setAdding(false);
-								}
-							}}
-							placeholder="Add acceptance criterion..."
-							className="text-sm"
-						/>
-						<div className="flex gap-2">
-							<Button size="sm" onClick={handleAdd} disabled={!newText.trim()}>
-								Add
-							</Button>
-							<Button
-								size="sm"
-								variant="ghost"
-								onClick={() => {
-									setNewText("");
-									setAdding(false);
-								}}
-							>
-								Cancel
-							</Button>
-						</div>
-					</div>
-				) : (
-					<button
-						type="button"
-						className="flex items-center gap-2 py-1.5 px-2 -mx-2 text-sm text-muted-foreground hover:text-foreground transition-colors w-full rounded-md hover:bg-muted/50"
-						onClick={() => setAdding(true)}
-					>
-						<Plus className="w-4 h-4" />
-						Add criterion
-					</button>
-				)}
-			</div>
-		</div>
+				</div>
+			) : (
+				<button
+					type="button"
+					className={cn(
+						"-mx-2 flex items-center gap-2 self-start rounded-lg px-2 py-1.5 text-[13.5px] text-muted-foreground transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--foreground)_4%,transparent)] hover:text-foreground",
+						focusRing,
+					)}
+					onClick={() => setAdding(true)}
+				>
+					<Plus className="size-4" aria-hidden />
+					Add criterion
+				</button>
+			)}
+		</DetailSection>
 	);
 }
