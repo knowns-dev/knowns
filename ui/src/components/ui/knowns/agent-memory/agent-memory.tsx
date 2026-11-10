@@ -73,6 +73,8 @@ export interface AgentMemoryProps {
   emptyText?: ReactNode;
   /** In-app navigation for source and usage links (plain clicks only); otherwise they are normal links. */
   onNavigate?: (href: string) => void;
+  /** Page use: the title stays only for screen readers (it still names the region), no description, and the count sits at the end of the toolbar. */
+  hideHeading?: boolean;
 }
 
 const SCOPE_TONE: Record<MemoryScope, BadgeTone> = { user: "accent", project: "info", session: "neutral" };
@@ -101,6 +103,7 @@ export function AgentMemory({
   meta,
   emptyText = "Nothing remembered yet. The agent saves facts here as it works with you.",
   onNavigate,
+  hideHeading = false,
 }: AgentMemoryProps) {
   // React events bubble through portals, so this also catches links in the "Why was this used?" popover.
   const routeLinks = (e: MouseEvent<HTMLElement>) => {
@@ -160,15 +163,21 @@ export function AgentMemory({
   return (
     <section aria-labelledby={headingId} onClick={routeLinks} className={cn("relative flex w-full flex-col rounded-2xl border bg-card text-card-foreground", className)}>
       <header className={cn("flex flex-col gap-3 border-b", compact ? "px-3 py-3" : "px-4 py-3.5 sm:px-5")}>
-        <div className="flex items-baseline justify-between gap-3">
-          <h3 id={headingId} className={cn("font-semibold tracking-tight", compact ? "text-[14px]" : "text-[15px]")}>
+        {hideHeading ? (
+          <h3 id={headingId} className="sr-only">
             {title}
           </h3>
-          <span className="text-[12.5px] text-muted-foreground tabular-nums">
-            {`${counts.all} ${counts.all === 1 ? "memory" : "memories"}`}
-          </span>
-        </div>
-        {description && !compact && <p className="-mt-2 text-[13px] text-muted-foreground">{description}</p>}
+        ) : (
+          <div className="flex items-baseline justify-between gap-3">
+            <h3 id={headingId} className={cn("font-semibold tracking-tight", compact ? "text-[14px]" : "text-[15px]")}>
+              {title}
+            </h3>
+            <span className="text-[12.5px] text-muted-foreground tabular-nums">
+              {`${counts.all} ${counts.all === 1 ? "memory" : "memories"}`}
+            </span>
+          </div>
+        )}
+        {description && !compact && !hideHeading && <p className="-mt-2 text-[13px] text-muted-foreground">{description}</p>}
         <div className={cn("flex gap-2", compact ? "flex-col" : "flex-wrap items-center")}>
           <Input
             type="search"
@@ -190,6 +199,11 @@ export function AgentMemory({
               ...SCOPES.map((s) => ({ value: s, label: compact ? label(s) : `${label(s)} ${counts[s]}` })),
             ]}
           />
+          {hideHeading && !compact && (
+            <span className="ml-auto text-[12.5px] text-muted-foreground tabular-nums">
+              {`${counts.all} ${counts.all === 1 ? "memory" : "memories"}`}
+            </span>
+          )}
         </div>
       </header>
 
@@ -328,9 +342,16 @@ function MemoryRow({
             </div>
           </div>
         ) : (
-          <p className={cn("text-pretty whitespace-pre-line", compact ? "line-clamp-3 text-[13px]" : "text-[14px] leading-relaxed")}>
+          <p
+            className={cn(
+              "text-pretty whitespace-pre-line",
+              compact ? "line-clamp-3 text-[13px]" : "text-[14px] leading-relaxed",
+              // Knowns: a button is always inline-block, so with onOpen the pin sits in a flex row (hanging indent).
+              onOpen && m.pinned && "flex items-start gap-1.5",
+            )}
+          >
             {m.pinned && (
-              <span className="mr-1.5 inline-flex translate-y-[2px] text-foreground" title="Pinned">
+              <span className={cn("inline-flex text-foreground", onOpen ? "flex-none translate-y-[4px]" : "mr-1.5 translate-y-[2px]")} title="Pinned">
                 <PinIcon filled />
                 <span className="sr-only">Pinned. </span>
               </span>
@@ -340,7 +361,7 @@ function MemoryRow({
                 type="button"
                 data-memory-open={m.id}
                 onClick={() => onOpen(m.id)}
-                className={cn("rounded text-left underline-offset-2 hover:underline", focusRing)}
+                className={cn("inline rounded text-left underline-offset-2 hover:underline", focusRing)}
               >
                 {m.text}
               </button>
