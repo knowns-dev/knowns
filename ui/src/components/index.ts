@@ -5,7 +5,7 @@
  * - atoms/     - Basic UI elements (Button, Input, Badge, etc.)
  * - molecules/ - Simple component groups (StatusBadge, FormField, etc.)
  * - organisms/ - Complex components (TaskCard, Board, etc.)
- * - templates/ - Page layouts (MainLayout, BoardLayout)
+ * - templates/ - Page layouts (MainLayout, PageShell)
  * - ui/        - Radix UI primitives (shadcn/ui)
  */
 

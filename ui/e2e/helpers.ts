@@ -8,6 +8,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Locator, Page } from "@playwright/test";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -274,4 +275,15 @@ function parseCliArgs(input: string): string[] {
 		args.push(current);
 	}
 	return args;
+}
+
+// Locators for the Tasks board (Knowns UI KanbanBoard). A column cell is a group carrying its
+// status id in data-col; a card is a group with aria-roledescription="card" labelled by its title.
+// With swimlanes on there is one cell per status and assignee; these match all of them.
+export function boardColumn(page: Page, status: string): Locator {
+	return page.locator(`[data-kb-cell][data-col="${status}"]`);
+}
+
+export function boardCard(scope: Page | Locator, title: string): Locator {
+	return scope.locator(`[aria-roledescription="card"][aria-label="${title.replace(/"/g, '\\"')}"]`);
 }

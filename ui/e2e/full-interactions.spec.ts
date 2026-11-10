@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { startServer, type TestServer } from "./helpers";
+import { boardCard, boardColumn, startServer, type TestServer } from "./helpers";
 
 let server: TestServer;
 
@@ -58,7 +58,7 @@ test.describe("Full Task Create Form", () => {
 
 		await test.step("Task appears on board", async () => {
 			await page.waitForTimeout(500);
-			await expect(page.locator("h3").filter({ hasText: "Implement user authentication" }).first()).toBeVisible();
+			await expect(boardCard(page, "Implement user authentication")).toBeVisible();
 		});
 	});
 
@@ -319,86 +319,57 @@ test.describe("Acceptance Criteria Interactions", () => {
 });
 
 test.describe("Kanban Drag and Drop", () => {
-	// Helper: drag a card from its current position to the center of a target column.
-	// Uses slow, multi-step mouse movements so dnd-kit's collision detection registers.
+	// Drag a card onto the middle of a target column with the mouse. The board starts a pointer
+	// drag after a few pixels of movement and drops where the pointer is released.
 	async function dragCardToColumn(
 		page: import("@playwright/test").Page,
-		cardLocator: import("@playwright/test").Locator,
-		targetColumnHeader: string,
+		card: import("@playwright/test").Locator,
+		status: string,
 	) {
-		const cardBox = await cardLocator.boundingBox();
+		const cardBox = await card.boundingBox();
 		expect(cardBox).toBeTruthy();
-
-		// Find the target column by its header text
-		const targetHeader = page.locator(".font-semibold").filter({ hasText: targetColumnHeader });
-		const targetCol = targetHeader.locator("xpath=ancestor::div[contains(@class,'min-h-40')]");
-		const colBox = await targetCol.boundingBox();
+		const colBox = await boardColumn(page, status).first().boundingBox();
 		expect(colBox).toBeTruthy();
 
 		const startX = cardBox!.x + cardBox!.width / 2;
-		const startY = cardBox!.y + cardBox!.height / 2;
+		const startY = cardBox!.y + 12; // the title row, away from links in the footer
 		const endX = colBox!.x + colBox!.width / 2;
-		const endY = colBox!.y + colBox!.height / 2;
+		const endY = colBox!.y + Math.min(colBox!.height / 2, 40);
 
-		// Mouse down on card center
 		await page.mouse.move(startX, startY);
 		await page.mouse.down();
-
-		// Move past 8px activation threshold first
 		await page.mouse.move(startX + 10, startY, { steps: 3 });
-		await page.waitForTimeout(100);
-
-		// Drag smoothly to target column center (many steps for collision detection)
 		await page.mouse.move(endX, endY, { steps: 20 });
-		await page.waitForTimeout(200);
-
-		// Drop
+		await page.waitForTimeout(100);
 		await page.mouse.up();
 		await page.waitForTimeout(500);
 	}
 
-	test("drag activation: card becomes semi-transparent when dragged", async ({ page }) => {
+	test("pointer drag shows a drop slot while dragging", async ({ page }) => {
 		await test.step("Create task", async () => {
 			server.cli('task create "Drag Activate" -d "Test drag activation"');
 		});
 
 		await test.step("Navigate to kanban", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.locator("h3").filter({ hasText: "Drag Activate" })).toBeVisible();
+			await expect(boardCard(page, "Drag Activate")).toBeVisible();
 		});
 
-		await test.step("Mouse down and move >8px activates drag", async () => {
-			const card = page.locator(".cursor-grab").filter({ hasText: "Drag Activate" }).first();
+		await test.step("Mouse down and move a few pixels starts the drag", async () => {
+			const card = boardCard(page, "Drag Activate");
 			const box = await card.boundingBox();
 			expect(box).toBeTruthy();
+			await expect(page.locator("[data-kb-slot]")).toHaveCount(0);
 
-			// Before drag: no opacity-30 elements
-			const beforeDrag = await page.locator(".opacity-30").count();
-			expect(beforeDrag).toBe(0);
-
-			// Mouse down on card center
-			await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+			await page.mouse.move(box!.x + box!.width / 2, box!.y + 12);
 			await page.mouse.down();
+			await page.mouse.move(box!.x + box!.width / 2 + 15, box!.y + 12, { steps: 5 });
 
-			// Move >8px to activate dnd-kit's MouseSensor
-			await page.mouse.move(box!.x + box!.width / 2 + 15, box!.y + box!.height / 2, { steps: 5 });
-			await page.waitForTimeout(300);
+			// While dragging, the board marks where the card will land.
+			await expect(page.locator("[data-kb-slot]")).toHaveCount(1);
 
-			// After activation: card should be semi-transparent (opacity-30)
-			const afterDrag = await page.locator(".opacity-30").count();
-			expect(afterDrag).toBeGreaterThan(0);
-
-			// Also verify DragOverlay is rendered (position: fixed)
-			const hasOverlay = await page.locator('[style*="position: fixed"]').count();
-			expect(hasOverlay).toBeGreaterThan(0);
-
-			// Release
 			await page.mouse.up();
-			await page.waitForTimeout(500);
-
-			// After release: opacity should be restored
-			const afterRelease = await page.locator(".opacity-30").count();
-			expect(afterRelease).toBe(0);
+			await expect(page.locator("[data-kb-slot]")).toHaveCount(0);
 		});
 	});
 
@@ -409,46 +380,49 @@ test.describe("Kanban Drag and Drop", () => {
 
 		await test.step("Navigate to kanban and verify in To Do", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.locator("h3").filter({ hasText: "Drag Cross" })).toBeVisible();
-
-			const isInTodo = await page.evaluate(() => {
-				const card = Array.from(document.querySelectorAll("h3")).find((h) => h.textContent?.includes("Drag Cross"));
-				const column = card?.closest("[class*='min-h-40']");
-				const header = column?.querySelector(".font-semibold");
-				return header?.textContent?.includes("To Do");
-			});
-			expect(isInTodo).toBe(true);
+			await expect(boardCard(boardColumn(page, "todo"), "Drag Cross")).toBeVisible();
 		});
 
 		await test.step("Drag card to In Progress column", async () => {
-			const card = page.locator(".cursor-grab").filter({ hasText: "Drag Cross" }).first();
-			await dragCardToColumn(page, card, "In Progress");
+			await dragCardToColumn(page, boardCard(page, "Drag Cross"), "in-progress");
 		});
 
 		await test.step("Card is now in In Progress column and API persisted", async () => {
-			// Wait for the toast confirming API call succeeded
 			await expect(page.getByText("Status updated")).toBeVisible();
-
-			const isInProgress = await page.evaluate(() => {
-				const card = Array.from(document.querySelectorAll("h3")).find((h) => h.textContent?.includes("Drag Cross"));
-				const column = card?.closest("[class*='min-h-40']");
-				const header = column?.querySelector(".font-semibold");
-				return header?.textContent?.includes("In Progress");
-			});
-			expect(isInProgress).toBe(true);
+			await expect(boardCard(boardColumn(page, "in-progress"), "Drag Cross")).toBeVisible();
 		});
 
 		await test.step("Status persists after reload", async () => {
 			await page.reload();
-			await expect(page.locator("h3").filter({ hasText: "Drag Cross" })).toBeVisible();
+			await expect(boardCard(boardColumn(page, "in-progress"), "Drag Cross")).toBeVisible();
+		});
+	});
 
-			const isStillInProgress = await page.evaluate(() => {
-				const card = Array.from(document.querySelectorAll("h3")).find((h) => h.textContent?.includes("Drag Cross"));
-				const column = card?.closest("[class*='min-h-40']");
-				const header = column?.querySelector(".font-semibold");
-				return header?.textContent?.includes("In Progress");
-			});
-			expect(isStillInProgress).toBe(true);
+	test("keyboard move: Space picks up, arrow moves, Space drops", async ({ page }) => {
+		let taskId = "";
+
+		await test.step("Create task in To Do", async () => {
+			const output = server.cli('task create "Keyboard Move" -d "Move with the keyboard"');
+			taskId = output.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
+		});
+
+		await test.step("Navigate to kanban", async () => {
+			await page.goto(`${server.baseURL}/kanban`);
+			await expect(boardCard(boardColumn(page, "todo"), "Keyboard Move")).toBeVisible();
+		});
+
+		await test.step("Move the card one column right", async () => {
+			// Each card has a focusable button labelled "#<id>, <title>".
+			await page.getByRole("button", { name: /Keyboard Move/ }).focus();
+			await page.keyboard.press("Space");
+			await page.keyboard.press("ArrowRight");
+			await page.keyboard.press("Space");
+		});
+
+		await test.step("Card is in In Progress and saved", async () => {
+			await expect(page.getByText("Status updated")).toBeVisible();
+			await expect(boardCard(boardColumn(page, "in-progress"), "Keyboard Move")).toBeVisible();
+			expect(server.cli(`task ${taskId} --plain`)).toMatch(/in-progress/i);
 		});
 	});
 
@@ -463,16 +437,7 @@ test.describe("Kanban Drag and Drop", () => {
 
 		await test.step("Navigate to kanban and verify task is in To Do column", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.locator("h3").filter({ hasText: "Column Move" })).toBeVisible();
-
-			// Verify card is inside the To Do column
-			const isInTodo = await page.evaluate(() => {
-				const card = Array.from(document.querySelectorAll("h3")).find((h) => h.textContent?.includes("Column Move"));
-				const column = card?.closest("[class*='min-h-40']");
-				const header = column?.querySelector(".font-semibold");
-				return header?.textContent?.includes("To Do");
-			});
-			expect(isInTodo).toBe(true);
+			await expect(boardCard(boardColumn(page, "todo"), "Column Move")).toBeVisible();
 		});
 
 		await test.step("Change status to in-progress via CLI", async () => {
@@ -482,15 +447,7 @@ test.describe("Kanban Drag and Drop", () => {
 		await test.step("Reload and verify card moved to In Progress column", async () => {
 			// Must reload - same-hash navigation doesn't refresh SPA data
 			await page.reload();
-			await expect(page.locator("h3").filter({ hasText: "Column Move" })).toBeVisible();
-
-			const isInProgress = await page.evaluate(() => {
-				const card = Array.from(document.querySelectorAll("h3")).find((h) => h.textContent?.includes("Column Move"));
-				const column = card?.closest("[class*='min-h-40']");
-				const header = column?.querySelector(".font-semibold");
-				return header?.textContent?.includes("In Progress");
-			});
-			expect(isInProgress).toBe(true);
+			await expect(boardCard(boardColumn(page, "in-progress"), "Column Move")).toBeVisible();
 		});
 	});
 
@@ -501,7 +458,7 @@ test.describe("Kanban Drag and Drop", () => {
 
 		await test.step("Navigate to kanban and open task detail", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await page.getByText("UI Move").first().click();
+			await boardCard(page, "UI Move").click();
 		});
 
 		await test.step("Change status to In Progress via dropdown", async () => {
@@ -515,30 +472,18 @@ test.describe("Kanban Drag and Drop", () => {
 
 		await test.step("Close detail and verify card is in In Progress column", async () => {
 			await page.keyboard.press("Escape");
-			await page.waitForTimeout(500);
-
-			const isInProgress = await page.evaluate(() => {
-				const card = Array.from(document.querySelectorAll("h3")).find((h) => h.textContent?.includes("UI Move"));
-				const column = card?.closest("[class*='min-h-40']");
-				const header = column?.querySelector(".font-semibold");
-				return header?.textContent?.includes("In Progress");
-			});
-			expect(isInProgress).toBe(true);
+			await expect(boardCard(boardColumn(page, "in-progress"), "UI Move")).toBeVisible();
 		});
 	});
 
 	test("task order is preserved after status change", async ({ page }) => {
-		let taskId1 = "";
 		let taskId2 = "";
-		let taskId3 = "";
 
 		await test.step("Create 3 tasks in To Do", async () => {
-			const out1 = server.cli('task create "Order First" -d "First task"');
-			taskId1 = out1.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
+			server.cli('task create "Order First" -d "First task"');
 			const out2 = server.cli('task create "Order Second" -d "Second task"');
 			taskId2 = out2.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
-			const out3 = server.cli('task create "Order Third" -d "Third task"');
-			taskId3 = out3.match(/Created task\s+([a-z0-9-]+)/i)?.[1] || "";
+			server.cli('task create "Order Third" -d "Third task"');
 		});
 
 		await test.step("Move middle task to in-progress via CLI", async () => {
@@ -547,32 +492,16 @@ test.describe("Kanban Drag and Drop", () => {
 
 		await test.step("Navigate to kanban", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.locator("h3").filter({ hasText: "Order Second" })).toBeVisible();
 		});
 
 		await test.step("Verify Order Second is in In Progress column", async () => {
-			const result = await page.evaluate(() => {
-				const card = Array.from(document.querySelectorAll("h3")).find((h) => h.textContent?.includes("Order Second"));
-				const column = card?.closest("[class*='min-h-40']");
-				const header = column?.querySelector(".font-semibold");
-				return header?.textContent?.includes("In Progress");
-			});
-			expect(result).toBe(true);
+			await expect(boardCard(boardColumn(page, "in-progress"), "Order Second")).toBeVisible();
 		});
 
 		await test.step("Verify Order First and Third remain in To Do", async () => {
-			const todoCards = await page.evaluate(() => {
-				const columns = document.querySelectorAll("[class*='min-h-40']");
-				for (const col of columns) {
-					const header = col.querySelector(".font-semibold");
-					if (header?.textContent?.includes("To Do")) {
-						return Array.from(col.querySelectorAll("h3")).map((h) => h.textContent);
-					}
-				}
-				return [];
-			});
-			expect(todoCards).toContain("Order First");
-			expect(todoCards).toContain("Order Third");
+			const todo = boardColumn(page, "todo");
+			await expect(boardCard(todo, "Order First")).toBeVisible();
+			await expect(boardCard(todo, "Order Third")).toBeVisible();
 		});
 	});
 
@@ -587,32 +516,15 @@ test.describe("Kanban Drag and Drop", () => {
 
 		await test.step("Navigate to kanban and verify in Done column", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.locator("h3").filter({ hasText: "Persist Status" })).toBeVisible();
-
-			const isInDone = await page.evaluate(() => {
-				const card = Array.from(document.querySelectorAll("h3")).find((h) => h.textContent?.includes("Persist Status"));
-				const column = card?.closest("[class*='min-h-40']");
-				const header = column?.querySelector(".font-semibold");
-				return header?.textContent?.includes("Done");
-			});
-			expect(isInDone).toBe(true);
+			await expect(boardCard(boardColumn(page, "done"), "Persist Status")).toBeVisible();
 		});
 
 		await test.step("Reload page", async () => {
 			await page.reload();
-			await page.waitForTimeout(1000);
 		});
 
 		await test.step("Task still in Done column after reload", async () => {
-			await expect(page.locator("h3").filter({ hasText: "Persist Status" }).first()).toBeVisible();
-
-			const stillInDone = await page.evaluate(() => {
-				const card = Array.from(document.querySelectorAll("h3")).find((h) => h.textContent?.includes("Persist Status"));
-				const column = card?.closest("[class*='min-h-40']");
-				const header = column?.querySelector(".font-semibold");
-				return header?.textContent?.includes("Done");
-			});
-			expect(stillInDone).toBe(true);
+			await expect(boardCard(boardColumn(page, "done"), "Persist Status")).toBeVisible();
 		});
 
 		await test.step("CLI confirms done status", async () => {

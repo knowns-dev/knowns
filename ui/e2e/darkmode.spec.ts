@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { startServer, type TestServer } from "./helpers";
+import { boardColumn, startServer, type TestServer } from "./helpers";
 
 let server: TestServer;
 
@@ -199,10 +199,9 @@ test.describe("Dark Mode on All Pages", () => {
 		});
 
 		await test.step("Kanban columns visible in dark mode", async () => {
-			const board = page.locator("[data-board-column]");
-			await expect(board.filter({ hasText: "To Do" }).first()).toBeVisible();
-			await expect(board.filter({ hasText: "In Progress" }).first()).toBeVisible();
-			await expect(board.filter({ hasText: "Done" }).first()).toBeVisible();
+			for (const status of ["todo", "in-progress", "done"]) {
+				await expect(boardColumn(page, status).first()).toBeVisible();
+			}
 		});
 
 		await test.step("Task cards visible in dark mode", async () => {

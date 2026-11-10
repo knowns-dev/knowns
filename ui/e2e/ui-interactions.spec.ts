@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { startServer, type TestServer } from "./helpers";
+import { boardCard, boardColumn, startServer, type TestServer } from "./helpers";
 
 let server: TestServer;
 
@@ -30,10 +30,8 @@ test.describe("Task Creation via UI", () => {
 		});
 
 		await test.step("Task appears on the kanban board", async () => {
-			// Use kanban-specific locator to avoid matching toast notification
-			await page.waitForTimeout(500);
-			await expect(page.locator("[data-board-column] >> text=Buy groceries for the week").first()
-				.or(page.locator("h3").filter({ hasText: "Buy groceries for the week" }))).toBeVisible();
+			// A board card, not the toast that also names the new Task
+			await expect(boardCard(page, "Buy groceries for the week")).toBeVisible();
 		});
 	});
 
@@ -65,31 +63,24 @@ test.describe("Task Creation via UI", () => {
 		});
 	});
 
-	test("creates task using inline 'Add an item' on kanban column", async ({ page }) => {
+	test("creates task using inline 'Add card' on kanban column", async ({ page }) => {
 		await test.step("Navigate to kanban page", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
 		});
 
-		const addBtn = page.getByRole("button", { name: "Add an item" }).first();
-		if (await addBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-			await test.step("Click 'Add an item' in column", async () => {
-				await addBtn.click();
-			});
+		await test.step("Click 'Add card' in the In Progress column", async () => {
+			await boardColumn(page, "in-progress").first().getByRole("button", { name: "Add card" }).click();
+		});
 
-			await test.step("Type task title", async () => {
-				await page.getByPlaceholder(/title/i).first().fill("Quick inline task");
-			});
+		await test.step("Type task title and press Enter", async () => {
+			const input = page.getByRole("textbox", { name: "New card in In Progress" });
+			await input.fill("Quick inline task");
+			await input.press("Enter");
+		});
 
-			await test.step("Submit", async () => {
-				await page.getByRole("button", { name: "Create Task" }).click();
-			});
-
-			await test.step("Task appears in the column", async () => {
-				await page.waitForTimeout(500);
-				await expect(page.locator("h3").filter({ hasText: "Quick inline task" }).first()
-					.or(page.getByText("Quick inline task").first())).toBeVisible();
-			});
-		}
+		await test.step("Task appears in the column", async () => {
+			await expect(boardCard(boardColumn(page, "in-progress"), "Quick inline task")).toBeVisible();
+		});
 	});
 });
 
@@ -455,9 +446,7 @@ test.describe("Full User Workflows (no CLI)", () => {
 		});
 
 		await test.step("Wait for task to appear on board", async () => {
-			await page.waitForTimeout(1000);
-			await expect(page.locator("h3").filter({ hasText: "Workflow Test Task" }).first()
-				.or(page.getByText("Workflow Test Task").first())).toBeVisible();
+			await expect(boardCard(page, "Workflow Test Task")).toBeVisible();
 		});
 
 		await test.step("Open task detail by clicking", async () => {
