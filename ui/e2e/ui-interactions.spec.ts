@@ -106,10 +106,10 @@ test.describe("Task Detail Interactions", () => {
 		});
 
 		await test.step("Sidebar shows status, priority, labels", async () => {
-			const dialog = page.locator('[role="dialog"]');
-			await expect(dialog.locator("span.text-xs", { hasText: "Status" }).first()).toBeVisible();
-			await expect(dialog.locator("span.text-xs", { hasText: "Priority" }).first()).toBeVisible();
-			await expect(dialog.locator("span.text-xs", { hasText: "Labels" }).first()).toBeVisible();
+			const properties = page.locator('[role="dialog"]').getByRole("complementary", { name: "Properties" });
+			await expect(properties.getByText("Status", { exact: true })).toBeVisible();
+			await expect(properties.getByText("Priority", { exact: true })).toBeVisible();
+			await expect(properties.getByText("Labels", { exact: true })).toBeVisible();
 		});
 
 		await test.step("Labels are displayed", async () => {

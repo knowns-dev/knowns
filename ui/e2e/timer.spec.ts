@@ -354,9 +354,9 @@ test.describe("Time Tracking Logs", () => {
 			await expect(page.getByRole("heading", { name: "Log Task", exact: true })).toBeVisible();
 		});
 
-		await test.step("Scroll to Time Tracking section", async () => {
+		await test.step("Open the Time tab", async () => {
+			await page.locator('[role="dialog"]').getByRole("tab", { name: /^Time/ }).click();
 			const timeSection = page.getByText("Time Tracking").first();
-			await timeSection.scrollIntoViewIfNeeded();
 			await expect(timeSection).toBeVisible();
 		});
 
@@ -380,9 +380,9 @@ test.describe("Time Tracking Logs", () => {
 			await expect(page.getByRole("heading", { name: "Multi Log", exact: true })).toBeVisible();
 		});
 
-		await test.step("Scroll to Time Tracking section", async () => {
+		await test.step("Open the Time tab", async () => {
+			await page.locator('[role="dialog"]').getByRole("tab", { name: /^Time/ }).click();
 			const timeSection = page.getByText("Time Tracking").first();
-			await timeSection.scrollIntoViewIfNeeded();
 			await expect(timeSection).toBeVisible();
 		});
 
@@ -405,9 +405,9 @@ test.describe("Time Tracking Logs", () => {
 			await expect(page.getByRole("heading", { name: "Active Task", exact: true })).toBeVisible();
 		});
 
-		await test.step("Scroll to Time Tracking and check Recording badge", async () => {
+		await test.step("Open the Time tab and check Recording badge", async () => {
+			await page.locator('[role="dialog"]').getByRole("tab", { name: /^Time/ }).click();
 			const timeSection = page.getByText("Time Tracking").first();
-			await timeSection.scrollIntoViewIfNeeded();
 			await expect(page.getByText("Recording...").first()).toBeVisible();
 		});
 

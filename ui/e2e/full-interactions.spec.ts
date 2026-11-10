@@ -144,7 +144,7 @@ test.describe("Task Detail Editing", () => {
 		});
 
 		await test.step("Click placeholder to add description", async () => {
-			const placeholder = page.getByText("Click to add description...");
+			const placeholder = page.getByRole("button", { name: "Add a description" });
 			await expect(placeholder).toBeVisible();
 			await placeholder.click();
 		});
