@@ -10,6 +10,7 @@ import { ErrorBoundary } from "./components/atoms";
 import { HeaderTimeTracker } from "./components/molecules";
 import { AppBreadcrumb } from "./components/molecules/AppBreadcrumb";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "./components/ui/knowns/blocks/sidebar/sidebar";
+import { SIDEBAR_STORAGE_KEY, rememberedSidebarCollapsed } from "./components/organisms/sidebarStorage";
 import { Separator } from "./components/ui/separator";
 import { Toaster } from "./components/ui/sonner";
 import { useConfig } from "./contexts/ConfigContext";
@@ -96,6 +97,8 @@ export default function AppShell() {
 	const [showCreateForm, setShowCreateForm] = useState(false);
 	const [showCommandDialog, setShowCommandDialog] = useState(false);
 	const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
+	// Read once, so the sidebar mounts as the remembered rail instead of animating to it.
+	const [sidebarStartsCollapsed] = useState(rememberedSidebarCollapsed);
 	const [isDark, setIsDark] = useState(() => {
 		if (typeof window !== "undefined") {
 			const saved = localStorage.getItem("theme");
@@ -360,7 +363,7 @@ export default function AppShell() {
 				<WelcomePage onProjectSelected={() => window.location.reload()} />
 			)}
 			{projectActive === true && (
-			<SidebarProvider storageKey="knowns-sidebar" className="h-dvh overflow-hidden">
+			<SidebarProvider storageKey={SIDEBAR_STORAGE_KEY} defaultCollapsed={sidebarStartsCollapsed} className="h-dvh overflow-hidden">
 				<AppSidebar
 					currentPage={currentPage}
 					onSearchClick={() => setShowCommandDialog(true)}
