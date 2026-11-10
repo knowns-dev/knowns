@@ -9,7 +9,7 @@ import { WelcomePage } from "./pages/WelcomePage";
 import { ErrorBoundary } from "./components/atoms";
 import { HeaderTimeTracker } from "./components/molecules";
 import { AppBreadcrumb } from "./components/molecules/AppBreadcrumb";
-import { SidebarProvider, SidebarTrigger } from "./components/ui/sidebar";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "./components/ui/knowns/blocks/sidebar/sidebar";
 import { Separator } from "./components/ui/separator";
 import { Toaster } from "./components/ui/sonner";
 import { useConfig } from "./contexts/ConfigContext";
@@ -96,7 +96,6 @@ export default function AppShell() {
 	const [showCreateForm, setShowCreateForm] = useState(false);
 	const [showCommandDialog, setShowCommandDialog] = useState(false);
 	const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
-	const [sidebarOpen, setSidebarOpen] = useState(true);
 	const [isDark, setIsDark] = useState(() => {
 		if (typeof window !== "undefined") {
 			const saved = localStorage.getItem("theme");
@@ -156,10 +155,6 @@ export default function AppShell() {
 		const projectName = config.name || "Knowns";
 		document.title = `${pageTitle} · ${projectName}`;
 	}, [currentPage, config.name]);
-
-	const handleSidebarOpenChange = (open: boolean) => {
-		setSidebarOpen(open);
-	};
 
 	useEffect(() => {
 		if (isDark) {
@@ -365,7 +360,7 @@ export default function AppShell() {
 				<WelcomePage onProjectSelected={() => window.location.reload()} />
 			)}
 			{projectActive === true && (
-			<SidebarProvider open={sidebarOpen} onOpenChange={handleSidebarOpenChange}>
+			<SidebarProvider storageKey="knowns-sidebar" className="h-dvh overflow-hidden">
 				<AppSidebar
 					currentPage={currentPage}
 					onSearchClick={() => setShowCommandDialog(true)}
@@ -374,9 +369,10 @@ export default function AppShell() {
 					onThemeToggle={toggleTheme}
 					serverVersion={serverVersion}
 				/>
-					<main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
+					<SidebarInset className="overflow-hidden bg-background">
+					<main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 						<header className="flex h-11 shrink-0 items-center gap-1.5 border-b border-border/50 bg-background px-2 sm:gap-2 sm:px-4">
-							<SidebarTrigger className="-ml-1" />
+							<SidebarTrigger className="-ml-1" labels={{ collapse: "Collapse sidebar", expand: "Expand sidebar" }} />
 							<Separator orientation="vertical" className="mr-1 h-4 sm:mr-2" />
 							<AppBreadcrumb
 								currentPage={currentPage}
@@ -403,6 +399,7 @@ export default function AppShell() {
 						</ErrorBoundary>
 					</div>
 					</main>
+					</SidebarInset>
 
 					<TaskCreateForm
 					isOpen={showCreateForm}
