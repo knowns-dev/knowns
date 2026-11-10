@@ -1140,6 +1140,8 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 					]}
 					// The compact sticky bar overlaps this scroll container's padded content; the tabs are enough.
 					condense={false}
+					// The canvas is a shade off the card colour; a solid header would paint a band across it.
+					className="bg-transparent"
 				>
 					<TabsContent value="overview" className="pt-5">
 						{dashboardLayout.isVisible("summary") && (
@@ -1155,7 +1157,7 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 							/>
 						)}
 						{(mainIds.length > 0 || sideIds.length > 0) && (
-							<div className={cn("grid items-start gap-5", mainIds.length > 0 && sideIds.length > 0 && "xl:grid-cols-[minmax(0,1fr)_22rem]")}>
+							<div className={cn("grid items-start gap-5", mainIds.length > 0 && sideIds.length > 0 && "xl:grid-cols-[minmax(0,1fr)_24rem]")}>
 								{mainIds.length > 0 && (
 									<div className="min-w-0 space-y-5">
 										{mainIds.map((id) => (
@@ -1164,7 +1166,7 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 									</div>
 								)}
 								{sideIds.length > 0 && (
-									<div className="min-w-0 space-y-5">
+									<div className="grid min-w-0 items-start gap-5 md:grid-cols-2 xl:grid-cols-1">
 										{sideIds.map((id) => (
 											<div key={id} data-dashboard-widget={id}>{overviewBlocks[id]}</div>
 										))}

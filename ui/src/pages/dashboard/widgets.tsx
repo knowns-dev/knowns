@@ -38,12 +38,13 @@ export function Panel({
 			)}
 			aria-label={title}
 		>
-			<header className="flex items-start justify-between gap-3 px-4 pb-2 pt-4">
-				<div className="min-w-0">
-					<h2 className="text-sm font-semibold tracking-[-0.01em]">{title}</h2>
-					{hint && <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{hint}</p>}
+			<header className="px-4 pb-2 pt-4">
+				{/* Title and action share one line so the action sits on the title, not beside a wrapped hint. */}
+				<div className="flex min-h-6 items-center justify-between gap-3">
+					<h2 className="truncate text-sm font-semibold tracking-[-0.01em]">{title}</h2>
+					{action}
 				</div>
-				{action}
+				{hint && <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{hint}</p>}
 			</header>
 			{children}
 		</section>
@@ -81,7 +82,7 @@ export function SummaryStrip({ tasks, doneByDay }: { tasks: Task[]; doneByDay: n
 		},
 	];
 	return (
-		<div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+		<div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
 			{tiles.map((t) => (
 				<Link
 					key={t.label}
@@ -141,7 +142,7 @@ export function ContinueWorking({
 								<Link
 									to="/tasks/$taskId"
 									params={{ taskId: task.id }}
-									className="group flex items-center gap-3 px-4 py-3 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+									className="group flex items-center gap-4 px-4 py-2.5 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
 								>
 									<div className="min-w-0 flex-1">
 										<div className="flex items-center gap-2">
@@ -157,7 +158,10 @@ export function ContinueWorking({
 											{task.assignee && <span>{task.assignee}</span>}
 											{seconds > 0 && <span>{formatDuration(seconds)} tracked</span>}
 										</div>
-										{ac.total > 0 && (
+									</div>
+									{/* Criteria progress sits in its own right-hand column so each row stays two lines tall. */}
+									<div className="hidden w-44 shrink-0 sm:block">
+										{ac.total > 0 ? (
 											<Progress
 												value={ac.done}
 												max={ac.total}
@@ -165,8 +169,9 @@ export function ContinueWorking({
 												tone="accent"
 												aria-label={`${ac.done} of ${ac.total} acceptance criteria done`}
 												format={() => `${ac.done}/${ac.total} criteria`}
-												className="mt-2 max-w-sm"
 											/>
+										) : (
+											<span className="text-[11px] text-muted-foreground">No criteria</span>
 										)}
 									</div>
 									<ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
@@ -196,7 +201,13 @@ export function NeedsAttention({ items }: { items: AttentionItem[] }) {
 		<Panel
 			title="Needs your attention"
 			hint="Blocked, waiting for review, or important and untouched for a while."
-			action={<span className="text-xs tabular-nums text-muted-foreground">{items.length}</span>}
+			action={
+				items.length > 0 ? (
+					<Badge tone="neutral" size="sm" shape="pill" className="tabular-nums">
+						{items.length}
+					</Badge>
+				) : undefined
+			}
 		>
 			{items.length === 0 ? (
 				<p className="flex items-center gap-2 px-4 pb-4 text-sm text-muted-foreground">
@@ -209,11 +220,12 @@ export function NeedsAttention({ items }: { items: AttentionItem[] }) {
 							<Link
 								to="/tasks/$taskId"
 								params={{ taskId: item.task.id }}
-								className="flex items-start gap-3 px-4 py-2.5 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+								className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
 							>
-								<span className="min-w-0 flex-1">
-									<span className="line-clamp-1 text-sm font-medium">{item.task.title}</span>
-									<span className="mt-1 flex flex-wrap gap-1">
+								{/* One line per task: title, then why it needs you, then its id. */}
+								<span className="flex min-w-0 flex-1 items-center gap-2">
+									<span className="truncate text-sm font-medium">{item.task.title}</span>
+									<span className="flex shrink-0 gap-1">
 										{item.reason.split(" · ").map((r) => (
 											<Badge key={r} tone={REASON_TONE(r)} size="sm">
 												{r}
@@ -221,7 +233,7 @@ export function NeedsAttention({ items }: { items: AttentionItem[] }) {
 										))}
 									</span>
 								</span>
-								<span className="shrink-0 pt-0.5 font-mono text-[11px] text-muted-foreground">#{item.task.id}</span>
+								<span className="shrink-0 font-mono text-[11px] text-muted-foreground">#{item.task.id}</span>
 							</Link>
 						</li>
 					))}
