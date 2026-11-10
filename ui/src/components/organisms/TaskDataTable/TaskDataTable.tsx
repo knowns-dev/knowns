@@ -4,13 +4,7 @@ import { X, Search, Plus } from "lucide-react";
 
 import { Button } from "@/ui/components/ui/button";
 import { Input } from "@/ui/components/ui/input";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/ui/components/ui/select";
+import { Combobox } from "@/ui/components/ui/knowns/combobox";
 import { DataTable } from "@/ui/components/ui/DataTable";
 import { taskColumns } from "./columns";
 import type { Task } from "@/models/task";
@@ -59,45 +53,37 @@ function TaskDataTableToolbar({
 						className="pl-8 border-border/40"
 					/>
 				</div>
-				<Select value={statusFilter} onValueChange={setStatusFilter}>
-					<SelectTrigger className="w-[100px] sm:w-[130px] h-9 text-sm border-border/40">
-						<SelectValue placeholder="Status" />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="all">All Status</SelectItem>
-						{statusOptions.map((opt) => (
-							<SelectItem key={opt.value} value={opt.value}>
-								{opt.label}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
-				<Select value={priorityFilter} onValueChange={setPriorityFilter}>
-					<SelectTrigger className="w-[100px] sm:w-[130px] h-9 text-sm border-border/40">
-						<SelectValue placeholder="Priority" />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="all">All Priority</SelectItem>
-						<SelectItem value="high">High</SelectItem>
-						<SelectItem value="medium">Medium</SelectItem>
-						<SelectItem value="low">Low</SelectItem>
-					</SelectContent>
-				</Select>
+				<Combobox
+					aria-label="Status"
+					value={statusFilter}
+					onValueChange={setStatusFilter}
+					options={[{ value: "all", label: "All Status" }, ...statusOptions]}
+					className="w-[100px] sm:w-[130px] h-9 text-sm"
+				/>
+				<Combobox
+					aria-label="Priority"
+					value={priorityFilter}
+					onValueChange={setPriorityFilter}
+					options={[
+						{ value: "all", label: "All Priority" },
+						{ value: "high", label: "High" },
+						{ value: "medium", label: "Medium" },
+						{ value: "low", label: "Low" },
+					]}
+					className="w-[100px] sm:w-[130px] h-9 text-sm"
+				/>
 				{availableSpecs.length > 0 && (
-					<Select value={specFilter} onValueChange={setSpecFilter}>
-						<SelectTrigger className="w-[100px] sm:w-[130px] h-9 text-sm border-border/40">
-							<SelectValue placeholder="Spec" />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="all">All Specs</SelectItem>
-							<SelectItem value="none">No Spec</SelectItem>
-							{availableSpecs.map((spec) => (
-								<SelectItem key={spec} value={spec}>
-									{spec.split("/").pop()}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
+					<Combobox
+						aria-label="Spec"
+						value={specFilter}
+						onValueChange={setSpecFilter}
+						options={[
+							{ value: "all", label: "All Specs" },
+							{ value: "none", label: "No Spec" },
+							...availableSpecs.map((spec) => ({ value: spec, label: spec.split("/").pop() ?? spec })),
+						]}
+						className="w-[100px] sm:w-[130px] h-9 text-sm"
+					/>
 				)}
 				{isFiltered && (
 					<button

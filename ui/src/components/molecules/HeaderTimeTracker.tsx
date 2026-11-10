@@ -2,13 +2,7 @@ import { useState } from "react";
 import { Play, Pause, Square, Timer, ChevronDown, StopCircle } from "lucide-react";
 import { useTimeTracker } from "../../contexts/TimeTrackerContext";
 import { Button } from "../ui/button";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuSeparator,
-	DropdownMenuTrigger,
-} from "../ui/DropdownMenu";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { cn } from "@/ui/lib/utils";
 import type { ActiveTimer } from "../../api/client";
 
@@ -241,8 +235,8 @@ export function HeaderTimeTracker({ className, onTaskClick }: HeaderTimeTrackerP
 				</span>
 			)}
 
-			<DropdownMenu open={open} onOpenChange={setOpen}>
-				<DropdownMenuTrigger asChild>
+			<Popover open={open} onOpenChange={setOpen}>
+				<PopoverTrigger asChild>
 					<Button
 						variant="ghost"
 						size="sm"
@@ -259,14 +253,10 @@ export function HeaderTimeTracker({ className, onTaskClick }: HeaderTimeTrackerP
 						</span>
 						<ChevronDown className="w-3 h-3 ml-0.5" />
 					</Button>
-				</DropdownMenuTrigger>
-				<DropdownMenuContent align="end" className="w-80">
+				</PopoverTrigger>
+				<PopoverContent align="end" aria-label="Active timers" className="w-80 p-1">
 					{activeTimers.map((timer) => (
-						<DropdownMenuItem
-							key={timer.taskId}
-							className="p-0 focus:bg-transparent"
-							onSelect={(e) => e.preventDefault()}
-						>
+						<div key={timer.taskId} className="rounded-[8px] hover:bg-muted/60">
 							<TimerItem
 								timer={timer}
 								elapsed={getElapsedForTask(timer.taskId)}
@@ -277,18 +267,19 @@ export function HeaderTimeTracker({ className, onTaskClick }: HeaderTimeTrackerP
 									setOpen(false);
 								}}
 							/>
-						</DropdownMenuItem>
+						</div>
 					))}
-					<DropdownMenuSeparator />
-					<DropdownMenuItem
-						className="text-red-600 dark:text-red-400 focus:text-red-600 dark:focus:text-red-400"
+					<div aria-hidden className="mx-1.5 my-1 h-px bg-border" />
+					<button
+						type="button"
+						className="flex w-full items-center rounded-[8px] px-2 py-1.5 text-left text-sm text-red-600 transition-colors hover:bg-red-500/10 focus-visible:outline-2 focus-visible:outline-ring dark:text-red-400"
 						onClick={handleStopAll}
 					>
 						<StopCircle className="w-4 h-4 mr-2" />
 						Stop all timers
-					</DropdownMenuItem>
-				</DropdownMenuContent>
-			</DropdownMenu>
+					</button>
+				</PopoverContent>
+			</Popover>
 
 			{/* Separator */}
 			<div className="h-5 w-px bg-border ml-1" />

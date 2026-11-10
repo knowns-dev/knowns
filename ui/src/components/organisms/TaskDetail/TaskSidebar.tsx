@@ -5,13 +5,7 @@ import { Button } from "../../ui/button";
 import { Badge } from "../../ui/badge";
 import { Input } from "../../ui/input";
 import { Label } from "@/ui/components/ui/label";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "../../ui/select";
+import { Combobox } from "@/ui/components/ui/knowns/combobox";
 import AssigneeDropdown from "../AssigneeDropdown";
 import type { Task, TaskStatus, TaskPriority } from "@models/task";
 import { priorityOptions, priorityColors } from "./types";
@@ -162,42 +156,26 @@ export function TaskSidebar({
 				<div className="grid grid-cols-3 gap-3">
 					<div className="space-y-1">
 						<span className="text-xs text-muted-foreground">Status</span>
-						<Select
+						<Combobox
+							options={statusOptions}
+							aria-label="Status"
 							value={task.status}
-							onValueChange={(value) => onSave({ status: value as TaskStatus })}
+							onValueChange={(value) => value !== task.status && onSave({ status: value as TaskStatus })}
 							disabled={saving || task.lifecycleState === "archived"}
-						>
-							<SelectTrigger className={cn("w-full h-8 text-sm", getStatusBadgeClasses(task.status, configStatusColors))}>
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								{statusOptions.map((opt) => (
-									<SelectItem key={opt.value} value={opt.value}>
-										{opt.label}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
+							className={cn("w-full h-8 text-sm", getStatusBadgeClasses(task.status, configStatusColors))}
+						/>
 					</div>
 
 					<div className="space-y-1">
 						<span className="text-xs text-muted-foreground">Priority</span>
-						<Select
+						<Combobox
+							options={priorityOptions}
+							aria-label="Priority"
 							value={task.priority}
-							onValueChange={(value) => onSave({ priority: value as TaskPriority })}
+							onValueChange={(value) => value !== task.priority && onSave({ priority: value as TaskPriority })}
 							disabled={saving}
-						>
-							<SelectTrigger className={cn("w-full h-8 text-sm", priorityColors[task.priority])}>
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								{priorityOptions.map((opt) => (
-									<SelectItem key={opt.value} value={opt.value}>
-										{opt.label}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
+							className={cn("w-full h-8 text-sm", priorityColors[task.priority])}
+						/>
 					</div>
 
 					<div className="space-y-1">
@@ -434,43 +412,27 @@ export function TaskSidebar({
 					<span className="text-xs text-muted-foreground">Status</span>
 					<TaskLifecycleBadge state={task.lifecycleState} />
 				</div>
-				<Select
+				<Combobox
+					options={statusOptions}
+					aria-label="Status"
 					value={task.status}
-					onValueChange={(value) => onSave({ status: value as TaskStatus })}
+					onValueChange={(value) => value !== task.status && onSave({ status: value as TaskStatus })}
 					disabled={saving || task.lifecycleState === "archived"}
-				>
-					<SelectTrigger className={cn("w-full h-8 text-sm", getStatusBadgeClasses(task.status, configStatusColors))}>
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						{statusOptions.map((opt) => (
-							<SelectItem key={opt.value} value={opt.value}>
-								{opt.label}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
+					className={cn("w-full h-8 text-sm", getStatusBadgeClasses(task.status, configStatusColors))}
+				/>
 			</div>
 
 			{/* Priority */}
 			<div className="space-y-1.5">
 				<span className="text-xs text-muted-foreground">Priority</span>
-				<Select
+				<Combobox
+					options={priorityOptions}
+					aria-label="Priority"
 					value={task.priority}
-					onValueChange={(value) => onSave({ priority: value as TaskPriority })}
+					onValueChange={(value) => value !== task.priority && onSave({ priority: value as TaskPriority })}
 					disabled={saving}
-				>
-					<SelectTrigger className={cn("w-full h-8 text-sm", priorityColors[task.priority])}>
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						{priorityOptions.map((opt) => (
-							<SelectItem key={opt.value} value={opt.value}>
-								{opt.label}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
+					className={cn("w-full h-8 text-sm", priorityColors[task.priority])}
+				/>
 			</div>
 
 			{/* Assignee */}

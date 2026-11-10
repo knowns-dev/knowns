@@ -1,7 +1,7 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlignLeft, ClipboardCheck, Plus, Trash2, ArrowUp, Maximize2, Minimize2, X, FileText, StickyNote } from "lucide-react";
+import { AlignLeft, ClipboardCheck, Plus, Trash2, Maximize2, Minimize2, X, FileText, StickyNote } from "lucide-react";
 import type { Task, TaskPriority, TaskStatus } from "@models/task";
 import { useCurrentUser } from "../../contexts/UserContext";
 import { useUIPreferences } from "../../contexts/UIPreferencesContext";
@@ -17,28 +17,8 @@ import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "../ui/select";
-import {
-	Popover,
-	PopoverContent,
-	PopoverTrigger,
-} from "../ui/popover";
-import {
-	Command,
-	CommandEmpty,
-	CommandGroup,
-	CommandInput,
-	CommandItem,
-	CommandList,
-} from "../ui/command";
+import { Combobox } from "@/ui/components/ui/knowns/combobox";
 import { cn } from "@/ui/lib/utils";
-import { Check, ChevronsUpDown } from "lucide-react";
 import { buildStatusOptions, getStatusBadgeClasses, type ColorName } from "../../utils/colors";
 import { useIsMobile } from "../../hooks/useMobile";
 
@@ -102,7 +82,6 @@ export default function TaskCreateForm({
 	const [addingAC, setAddingAC] = useState(false);
 	const [newLabel, setNewLabel] = useState("");
 	const [addingLabel, setAddingLabel] = useState(false);
-	const [parentComboOpen, setParentComboOpen] = useState(false);
 
 	// Layout preference from context
 	const { preferences, toggleTaskCreateLayout } = useUIPreferences();
@@ -148,7 +127,6 @@ export default function TaskCreateForm({
 			setAddingAC(false);
 			setNewLabel("");
 			setAddingLabel(false);
-			setParentComboOpen(false);
 		}
 	}, [isOpen]);
 
@@ -247,7 +225,13 @@ export default function TaskCreateForm({
 		}
 	};
 
-	const parentTask = parentId ? allTasks.find((t) => t.id === parentId) : null;
+	const parentOptions = useMemo(
+		() => [
+			{ value: "", label: "None" },
+			...allTasks.map((t) => ({ value: t.id, label: t.title, supportingText: `#${t.id}` })),
+		],
+		[allTasks],
+	);
 
 	// Header component (shared)
 	const Header = (
@@ -465,22 +449,14 @@ export default function TaskCreateForm({
 				<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 					Status
 				</Label>
-				<Select
+				<Combobox
+					options={statusOptions}
+					aria-label="Status"
 					value={status}
-					onValueChange={(value) => setStatus(value as TaskStatus)}
+					onValueChange={(value) => value !== status && setStatus(value as TaskStatus)}
 					disabled={saving}
-				>
-					<SelectTrigger className={cn("w-full", getStatusBadgeClasses(status, configStatusColors))}>
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						{statusOptions.map((opt) => (
-							<SelectItem key={opt.value} value={opt.value}>
-								{opt.label}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
+					className={cn("w-full", getStatusBadgeClasses(status, configStatusColors))}
+				/>
 			</div>
 
 			{/* Priority */}
@@ -488,22 +464,14 @@ export default function TaskCreateForm({
 				<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 					Priority
 				</Label>
-				<Select
+				<Combobox
+					options={priorityOptions}
+					aria-label="Priority"
 					value={priority}
-					onValueChange={(value) => setPriority(value as TaskPriority)}
+					onValueChange={(value) => value !== priority && setPriority(value as TaskPriority)}
 					disabled={saving}
-				>
-					<SelectTrigger className={cn("w-full", priorityColors[priority])}>
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						{priorityOptions.map((opt) => (
-							<SelectItem key={opt.value} value={opt.value}>
-								{opt.label}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
+					className={cn("w-full", priorityColors[priority])}
+				/>
 			</div>
 
 			{/* Assignee */}
@@ -516,7 +484,6 @@ export default function TaskCreateForm({
 					onChange={setAssignee}
 					showGrabButton={false}
 					currentUser={currentUser}
-					container={contentRef.current}
 				/>
 			</div>
 
@@ -608,78 +575,17 @@ export default function TaskCreateForm({
 				<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 					Parent Task
 				</Label>
-				<Popover open={parentComboOpen} onOpenChange={setParentComboOpen}>
-					<PopoverTrigger asChild>
-						<Button
-							variant="outline"
-							role="combobox"
-							aria-expanded={parentComboOpen}
-							className="w-full justify-between h-auto min-h-10 py-2"
-							disabled={saving}
-							title={parentTask ? `#${parentTask.id} - ${parentTask.title}` : undefined}
-						>
-							{parentTask ? (
-								<div className="flex items-center gap-2 text-left overflow-hidden min-w-0 flex-1">
-									<ArrowUp className="w-4 h-4 shrink-0 text-muted-foreground" />
-									<div className="overflow-hidden min-w-0 flex-1">
-										<span className="text-xs text-muted-foreground font-mono block">#{parentTask.id}</span>
-										<p className="truncate text-sm">{parentTask.title}</p>
-									</div>
-								</div>
-							) : (
-								<span className="text-muted-foreground">Select parent task...</span>
-							)}
-							<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-						</Button>
-					</PopoverTrigger>
-					<PopoverContent className="w-[400px] p-0" align="start">
-						<Command>
-							<CommandInput placeholder="Search tasks..." />
-							<CommandList>
-								<CommandEmpty>No task found.</CommandEmpty>
-								<CommandGroup>
-									<CommandItem
-										value="none"
-										onSelect={() => {
-											setParentId("");
-											setParentComboOpen(false);
-										}}
-									>
-										<Check
-											className={cn(
-												"mr-2 h-4 w-4 shrink-0",
-												!parentId ? "opacity-100" : "opacity-0"
-											)}
-										/>
-										<span className="text-muted-foreground">None</span>
-									</CommandItem>
-									{allTasks.map((t) => (
-										<CommandItem
-											key={t.id}
-											value={`${t.id} ${t.title}`}
-											onSelect={() => {
-												setParentId(t.id);
-												setParentComboOpen(false);
-											}}
-											title={`#${t.id} - ${t.title}`}
-										>
-											<Check
-												className={cn(
-													"mr-2 h-4 w-4 shrink-0",
-													parentId === t.id ? "opacity-100" : "opacity-0"
-												)}
-											/>
-											<div className="overflow-hidden min-w-0 flex-1">
-												<span className="text-xs text-muted-foreground font-mono block">#{t.id}</span>
-												<p className="truncate text-sm">{t.title}</p>
-											</div>
-										</CommandItem>
-									))}
-								</CommandGroup>
-							</CommandList>
-						</Command>
-					</PopoverContent>
-				</Popover>
+				<Combobox
+					options={parentOptions}
+					value={parentId}
+					onValueChange={setParentId}
+					searchable
+					presentation="auto"
+					aria-label="Parent task"
+					emptyText="No task found."
+					disabled={saving}
+					className="w-full"
+				/>
 			</div>
 		</div>
 	);
@@ -779,43 +685,27 @@ export default function TaskCreateForm({
 												<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 													Status
 												</Label>
-												<Select
+												<Combobox
+													options={statusOptions}
+													aria-label="Status"
 													value={status}
-													onValueChange={(value) => setStatus(value as TaskStatus)}
+													onValueChange={(value) => value !== status && setStatus(value as TaskStatus)}
 													disabled={saving}
-												>
-													<SelectTrigger className={cn("w-full h-9", getStatusBadgeClasses(status, configStatusColors))}>
-														<SelectValue />
-													</SelectTrigger>
-													<SelectContent>
-														{statusOptions.map((opt) => (
-															<SelectItem key={opt.value} value={opt.value}>
-																{opt.label}
-															</SelectItem>
-														))}
-													</SelectContent>
-												</Select>
+													className={cn("w-full h-9", getStatusBadgeClasses(status, configStatusColors))}
+												/>
 											</div>
 											<div className="space-y-1">
 												<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 													Priority
 												</Label>
-												<Select
+												<Combobox
+													options={priorityOptions}
+													aria-label="Priority"
 													value={priority}
-													onValueChange={(value) => setPriority(value as TaskPriority)}
+													onValueChange={(value) => value !== priority && setPriority(value as TaskPriority)}
 													disabled={saving}
-												>
-													<SelectTrigger className={cn("w-full h-9", priorityColors[priority])}>
-														<SelectValue />
-													</SelectTrigger>
-													<SelectContent>
-														{priorityOptions.map((opt) => (
-															<SelectItem key={opt.value} value={opt.value}>
-																{opt.label}
-															</SelectItem>
-														))}
-													</SelectContent>
-												</Select>
+													className={cn("w-full h-9", priorityColors[priority])}
+												/>
 											</div>
 											<div className="space-y-1">
 												<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -826,7 +716,6 @@ export default function TaskCreateForm({
 													onChange={setAssignee}
 													showGrabButton={false}
 													currentUser={currentUser}
-													container={contentRef.current}
 												/>
 											</div>
 											<div className="space-y-1">
@@ -915,74 +804,18 @@ export default function TaskCreateForm({
 												<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground shrink-0">
 													Parent:
 												</Label>
-												<Popover open={parentComboOpen} onOpenChange={setParentComboOpen}>
-													<PopoverTrigger asChild>
-														<Button
-															variant="outline"
-															role="combobox"
-															size="sm"
-															className="h-7 justify-between min-w-[120px] max-w-[250px]"
-															disabled={saving}
-															title={parentTask ? `#${parentTask.id} - ${parentTask.title}` : undefined}
-														>
-															{parentTask ? (
-																<span className="truncate text-xs">
-																	#{parentTask.id} - {parentTask.title}
-																</span>
-															) : (
-																<span className="text-muted-foreground text-xs">None</span>
-															)}
-															<ChevronsUpDown className="ml-1 h-3 w-3 shrink-0 opacity-50" />
-														</Button>
-													</PopoverTrigger>
-													<PopoverContent className="w-[400px] p-0" align="end">
-														<Command>
-															<CommandInput placeholder="Search tasks..." />
-															<CommandList>
-																<CommandEmpty>No task found.</CommandEmpty>
-																<CommandGroup>
-																	<CommandItem
-																		value="none"
-																		onSelect={() => {
-																			setParentId("");
-																			setParentComboOpen(false);
-																		}}
-																	>
-																		<Check
-																			className={cn(
-																				"mr-2 h-4 w-4 shrink-0",
-																				!parentId ? "opacity-100" : "opacity-0"
-																			)}
-																		/>
-																		<span className="text-muted-foreground">None</span>
-																	</CommandItem>
-																	{allTasks.map((t) => (
-																		<CommandItem
-																			key={t.id}
-																			value={`${t.id} ${t.title}`}
-																			onSelect={() => {
-																				setParentId(t.id);
-																				setParentComboOpen(false);
-																			}}
-																			title={`#${t.id} - ${t.title}`}
-																		>
-																			<Check
-																				className={cn(
-																					"mr-2 h-4 w-4 shrink-0",
-																					parentId === t.id ? "opacity-100" : "opacity-0"
-																				)}
-																			/>
-																			<div className="overflow-hidden min-w-0 flex-1">
-																				<span className="text-xs text-muted-foreground font-mono block">#{t.id}</span>
-																				<p className="truncate text-sm">{t.title}</p>
-																			</div>
-																		</CommandItem>
-																	))}
-																</CommandGroup>
-															</CommandList>
-														</Command>
-													</PopoverContent>
-												</Popover>
+												<Combobox
+													options={parentOptions}
+													value={parentId}
+													onValueChange={setParentId}
+													searchable
+													presentation="auto"
+													aria-label="Parent task"
+													emptyText="No task found."
+													disabled={saving}
+													size="sm"
+													className="w-auto min-w-[120px] max-w-[250px]"
+												/>
 											</div>
 										</div>
 									</div>

@@ -10,13 +10,7 @@ import {
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from "../ui/collapsible";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "../ui/select";
+import { Combobox } from "@/ui/components/ui/knowns/combobox";
 import VersionDiffViewer from "./VersionDiffViewer";
 
 interface TaskHistoryPanelProps {
@@ -344,41 +338,27 @@ export default function TaskHistoryPanel({ taskId, onRestore }: TaskHistoryPanel
 						{/* Version Selectors for Compare Mode */}
 						{compareMode && (
 							<div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg border border-border">
-								<Select value={fromVersion} onValueChange={setFromVersion}>
-									<SelectTrigger className="w-[120px] h-8 text-xs">
-										<SelectValue placeholder="From v..." />
-									</SelectTrigger>
-									<SelectContent>
-										{versions.map((v) => (
-											<SelectItem
-												key={v.version}
-												value={String(v.version)}
-												disabled={String(v.version) === toVersion}
-											>
-												v{v.version}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
+								<Combobox
+									size="sm"
+									aria-label="From version"
+									placeholder="From v..."
+									value={fromVersion || null}
+									onValueChange={setFromVersion}
+									options={versions.map((v) => ({ value: String(v.version), label: `v${v.version}`, disabled: String(v.version) === toVersion }))}
+									className="w-[120px] text-xs"
+								/>
 
 								<ArrowRight className="w-4 h-4 text-muted-foreground" />
 
-								<Select value={toVersion} onValueChange={setToVersion}>
-									<SelectTrigger className="w-[120px] h-8 text-xs">
-										<SelectValue placeholder="To v..." />
-									</SelectTrigger>
-									<SelectContent>
-										{versions.map((v) => (
-											<SelectItem
-												key={v.version}
-												value={String(v.version)}
-												disabled={String(v.version) === fromVersion}
-											>
-												v{v.version}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
+								<Combobox
+									size="sm"
+									aria-label="To version"
+									placeholder="To v..."
+									value={toVersion || null}
+									onValueChange={setToVersion}
+									options={versions.map((v) => ({ value: String(v.version), label: `v${v.version}`, disabled: String(v.version) === fromVersion }))}
+									className="w-[120px] text-xs"
+								/>
 
 								{fromVersion && toVersion && fromVersion !== toVersion && (
 									<span className="text-xs text-muted-foreground ml-2">

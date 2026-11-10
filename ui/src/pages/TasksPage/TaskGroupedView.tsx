@@ -2,13 +2,7 @@ import { useMemo, useState } from "react";
 import { Plus, ClipboardList } from "lucide-react";
 import type { Task } from "@/ui/models/task";
 import { ScrollArea } from "@/ui/components/ui/ScrollArea";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/ui/components/ui/select";
+import { Combobox } from "@/ui/components/ui/knowns/combobox";
 import { Button } from "@/ui/components/ui/button";
 import { StatusBadge, PriorityBadge, LabelList } from "@/ui/components/molecules";
 import { useConfig } from "@/ui/contexts/ConfigContext";
@@ -99,50 +93,39 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 			<div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-4 mb-6">
 				<div className="flex items-center gap-2 sm:gap-3 flex-wrap">
 					{/* Group By */}
-					<Select value={groupBy} onValueChange={(value) => setGroupBy(value as typeof groupBy)}>
-						<SelectTrigger aria-label="Group by" className="w-[150px] sm:w-[170px] h-8 text-sm border-border/40">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="status">Group by Status</SelectItem>
-							<SelectItem value="assignee">Group by Assignee</SelectItem>
-						</SelectContent>
-					</Select>
+					<Combobox
+						aria-label="Group by"
+						value={groupBy}
+						onValueChange={(value) => setGroupBy(value as typeof groupBy)}
+						options={[
+							{ value: "status", label: "Group by Status" },
+							{ value: "assignee", label: "Group by Assignee" },
+						]}
+						className="w-[150px] sm:w-[170px] text-sm"
+					/>
 
 					{/* Status Filter */}
-					<Select value={statusFilter} onValueChange={setStatusFilter}>
-						<SelectTrigger className="w-[100px] sm:w-[130px] h-8 text-sm border-border/40">
-							<SelectValue placeholder="Status" />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="all">All Status</SelectItem>
-							{statusOptions.map((opt) => (
-								<SelectItem key={opt.value} value={opt.value}>
-									{opt.label}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
+					<Combobox
+						aria-label="Status"
+						value={statusFilter}
+						onValueChange={setStatusFilter}
+						options={[{ value: "all", label: "All Status" }, ...statusOptions]}
+						className="w-[100px] sm:w-[130px] text-sm"
+					/>
 
 					{/* Parent Filter */}
-					<Select value={parentFilter} onValueChange={setParentFilter}>
-						<SelectTrigger className="w-[130px] sm:w-[180px] h-8 text-sm border-border/40">
-							<SelectValue placeholder="Parent" />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="all">All Tasks</SelectItem>
-							<SelectItem value="root">Root Tasks Only</SelectItem>
-							{parentTasks.map((parent) => {
-								const fullText = `Subtasks of #${parent.id}: ${parent.title}`;
-								const displayText = fullText.length > 40 ? fullText.substring(0, 40) + "..." : fullText;
-								return (
-									<SelectItem key={parent.id} value={parent.id} title={fullText}>
-										{displayText}
-									</SelectItem>
-								);
-							})}
-						</SelectContent>
-					</Select>
+					<Combobox
+						aria-label="Parent"
+						searchable
+						value={parentFilter}
+						onValueChange={setParentFilter}
+						options={[
+							{ value: "all", label: "All Tasks" },
+							{ value: "root", label: "Root Tasks Only" },
+							...parentTasks.map((parent) => ({ value: parent.id, label: `Subtasks of ${parent.title}`, supportingText: `#${parent.id}` })),
+						]}
+						className="w-[130px] sm:w-[180px] text-sm"
+					/>
 
 					<span className="text-muted-foreground text-xs">
 						{filteredTasks.length} {filteredTasks.length === 1 ? "task" : "tasks"}

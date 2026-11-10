@@ -18,12 +18,7 @@ import {
 } from "./TasksPage/assignees";
 import { mergeTaskSubset } from "./TasksPage/mergeTasks";
 import { Button } from "../components/ui/button";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from "../components/ui/DropdownMenu";
+import { Menu } from "@/ui/components/ui/knowns/menu";
 import { api, LifecycleAPIError } from "../api/client";
 import type { TaskLifecycleResponse } from "../models/taskLifecycle";
 import { TaskLifecycleDialog } from "../components/organisms/TaskLifecycleDialog";
@@ -410,9 +405,15 @@ export default function TasksPage({
 							</Button>
 						)}
 						{/* Batch Archive Dropdown */}
-						{/* Not modal: a modal menu locks the page for the preview dialog it opens, which then stays unclickable after Cancel. */}
-						<DropdownMenu modal={false}>
-							<DropdownMenuTrigger asChild>
+						<Menu
+							aria-label="Archive completed Tasks"
+							align="end"
+							items={BATCH_ARCHIVE_OPTIONS.map((option) => ({ id: String(option.value), label: `Done before ${option.label}` }))}
+							onSelect={(item) => {
+								const option = BATCH_ARCHIVE_OPTIONS.find((o) => String(o.value) === item.id);
+								if (option) handleBatchArchivePreview(option.value, option.label);
+							}}
+							trigger={
 								<Button
 									variant="outline"
 									size="sm"
@@ -423,18 +424,8 @@ export default function TasksPage({
 									<span className="hidden sm:inline text-sm">Archive</span>
 									<ChevronDown className="w-3 h-3" />
 								</Button>
-							</DropdownMenuTrigger>
-							<DropdownMenuContent align="end">
-								{BATCH_ARCHIVE_OPTIONS.map((option) => (
-										<DropdownMenuItem
-											key={option.value}
-											onClick={() => handleBatchArchivePreview(option.value, option.label)}
-										>
-											<span className="flex-1">Done before {option.label}</span>
-										</DropdownMenuItem>
-								))}
-							</DropdownMenuContent>
-						</DropdownMenu>
+							}
+						/>
 						{/* View Toggle */}
 						<div className="flex items-center rounded-md bg-muted/70 p-0.5" aria-label="Task view">
 							{VIEW_OPTIONS.map((option) => {
