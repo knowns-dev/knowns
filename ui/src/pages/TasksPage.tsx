@@ -410,7 +410,8 @@ export default function TasksPage({
 							</Button>
 						)}
 						{/* Batch Archive Dropdown */}
-						<DropdownMenu>
+						{/* Not modal: a modal menu locks the page for the preview dialog it opens, which then stays unclickable after Cancel. */}
+						<DropdownMenu modal={false}>
 							<DropdownMenuTrigger asChild>
 								<Button
 									variant="outline"

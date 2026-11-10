@@ -1189,13 +1189,14 @@ export default function ConfigPage() {
 							size="sm"
 							variant="outline"
 							onClick={() => setShowAddDropdown(!showAddDropdown)}
+							aria-expanded={showAddDropdown}
 							disabled={unconfiguredLangs.length === 0}
 						>
 							<Plus className="w-3.5 h-3.5 mr-1" />
 							Add
 						</Button>
 						{showAddDropdown && (
-							<div className="absolute right-0 top-full mt-1 z-50 min-w-48 rounded-lg border bg-popover shadow-lg">
+							<div role="group" aria-label="Available languages" className="absolute right-0 top-full mt-1 z-50 min-w-48 rounded-lg border bg-popover shadow-lg">
 								{unconfiguredLangs.length === 0 ? (
 									<div className="px-3 py-2 text-xs text-muted-foreground">No languages available</div>
 								) : (
