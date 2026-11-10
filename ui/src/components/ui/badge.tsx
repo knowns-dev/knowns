@@ -1,36 +1,37 @@
-import * as React from "react"
-import { cva, type VariantProps } from "class-variance-authority"
+// The app's Badge keeps its shadcn API (variant default | secondary | destructive | outline) but
+// renders Knowns UI's badge, so labels look the same everywhere.
+import type * as React from "react"
 
-import { cn } from "@/ui/lib/utils"
+import { Badge as KnBadge } from "./knowns/badge"
 
-const badgeVariants = cva(
-  "inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
-  {
-    variants: {
-      variant: {
-        default:
-          "border-transparent bg-primary text-primary-foreground shadow hover:bg-primary/80",
-        secondary:
-          "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        destructive:
-          "border-transparent bg-destructive text-destructive-foreground shadow hover:bg-destructive/80",
-        outline: "text-foreground",
-      },
-    },
-    defaultVariants: {
-      variant: "default",
-    },
-  }
-)
+type Variant = "default" | "secondary" | "destructive" | "outline"
 
-export interface BadgeProps
-  extends React.HTMLAttributes<HTMLDivElement>,
-    VariantProps<typeof badgeVariants> {}
+const LOOK: Record<Variant, { tone: "neutral" | "accent" | "danger"; variant: "soft" | "outline" | "solid" }> = {
+  default: { tone: "neutral", variant: "solid" },
+  secondary: { tone: "neutral", variant: "soft" },
+  destructive: { tone: "danger", variant: "soft" },
+  outline: { tone: "neutral", variant: "outline" },
+}
 
-function Badge({ className, variant, ...props }: BadgeProps) {
-  return (
-    <div className={cn(badgeVariants({ variant }), className)} {...props} />
-  )
+export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
+  variant?: Variant | null
+}
+
+function Badge({ variant, ...props }: BadgeProps) {
+  const look = LOOK[variant ?? "default"]
+  return <KnBadge tone={look.tone} variant={look.variant} {...props} />
+}
+
+/** Class string for the badge look on another element, as the shadcn helper allowed. */
+function badgeVariants({ variant }: { variant?: Variant | null } = {}) {
+  const v = variant ?? "default"
+  return v === "outline"
+    ? "inline-flex h-5.5 items-center gap-1.5 rounded-md border border-border px-1.5 text-[11.5px] font-medium text-muted-foreground"
+    : v === "destructive"
+      ? "inline-flex h-5.5 items-center gap-1.5 rounded-md bg-red-500/12 px-1.5 text-[11.5px] font-medium text-red-700 dark:text-red-300"
+      : v === "secondary"
+        ? "inline-flex h-5.5 items-center gap-1.5 rounded-md bg-muted px-1.5 text-[11.5px] font-medium text-muted-foreground"
+        : "inline-flex h-5.5 items-center gap-1.5 rounded-md bg-foreground px-1.5 text-[11.5px] font-medium text-background"
 }
 
 export { Badge, badgeVariants }
