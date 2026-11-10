@@ -63,7 +63,7 @@ test.describe("Audit Trail", () => {
 
 		await test.step("Either shows events or empty state", async () => {
 			const emptyState = page.getByText("No audit events found.");
-			const eventRows = page.locator(".space-y-1 > div").first();
+			const eventRows = page.locator("[data-audit-event]").first();
 			// Wait for loading to finish
 			await page.waitForTimeout(2000);
 			const isEmptyVisible = await emptyState.isVisible({ timeout: 3000 }).catch(() => false);
@@ -149,31 +149,64 @@ test.describe("Audit Trail", () => {
 		});
 	});
 
-	test("event rows show expandable details", async ({ page }) => {
-		await test.step("Ensure events exist", async () => {
-			server.cli('task create "Detail Check Task" -d "For verifying event details"');
+	test("an event opens a detail sheet with its arguments", async ({ page }) => {
+		await test.step("Create an audited MCP call", async () => {
+			server.mcp("tasks", {
+				action: "create",
+				title: "Detail Sheet Task",
+				description: "For verifying event details",
+			});
 		});
 
-		await test.step("Navigate to audit page", async () => {
+		await test.step("Open the newest tasks.create event", async () => {
 			await page.goto(`${server.baseURL}/audit`);
+			const row = page.locator('[data-audit-event="tasks.create"]').first();
+			await expect(row).toBeVisible({ timeout: 10000 });
+			await expect(row.locator("time")).toHaveAttribute("title", /\d/);
+			await row.click();
 		});
 
-		await test.step("Wait for events to load", async () => {
-			await page.waitForTimeout(2000);
+		await test.step("The sheet shows facts, arguments and the raw JSON", async () => {
+			const detail = page.getByTestId("audit-event-detail");
+			await expect(detail).toBeVisible();
+			await expect(detail.getByText("Success", { exact: true })).toBeVisible();
+			await expect(detail.getByRole("heading", { name: "Arguments" })).toBeVisible();
+			await expect(detail.getByText("Detail Sheet Task").first()).toBeVisible();
+			await expect(detail.getByRole("heading", { name: "Raw event" })).toBeVisible();
+			await expect(detail.getByText('"toolName"')).toBeVisible();
 		});
 
-		await test.step("Event rows are interactive", async () => {
-			// Check that event row elements exist (contain ts/tool/result)
-			const eventElements = page.locator(".space-y-1 > div");
-			const count = await eventElements.count();
-			if (count > 0) {
-				// First event row should show tool name in font-mono text
-				const firstEvent = eventElements.first();
-				await expect(firstEvent).toBeVisible();
-				// Try clicking the first event to expand (if it has details)
-				await firstEvent.click({ timeout: 2000 }).catch(() => {});
-				await page.waitForTimeout(300);
-			}
+		await test.step("Escape closes the sheet", async () => {
+			await page.keyboard.press("Escape");
+			await expect(page.getByTestId("audit-event-detail")).toBeHidden();
+		});
+	});
+
+	test("search and filters narrow the event list", async ({ page }) => {
+		await test.step("Create a read and a write event", async () => {
+			server.mcp("tasks", { action: "list" });
+			server.mcp("tasks", { action: "create", title: "Searchable Audit Task" });
+		});
+
+		await page.goto(`${server.baseURL}/audit`);
+		await expect(page.locator("[data-audit-event]").first()).toBeVisible({ timeout: 10000 });
+
+		await test.step("Search matches arguments", async () => {
+			await page.getByLabel("Search audit events").fill("Searchable Audit Task");
+			const rows = page.locator("[data-audit-event]");
+			await expect(rows.first()).toHaveAttribute("data-audit-event", "tasks.create");
+			await expect(page.getByText(/^\d+ of \d+ events loaded$/)).toBeVisible();
+			await page.getByLabel("Search audit events").fill("no-such-event-anywhere");
+			await expect(page.getByText("No loaded events match this search.")).toBeVisible();
+			await page.getByLabel("Search audit events").fill("");
+		});
+
+		await test.step("The result filter asks the server for errors only", async () => {
+			const request = page.waitForRequest((req) => req.url().includes("/api/audit/recent") && req.url().includes("result=error"));
+			await page.getByLabel("Filter by result").click();
+			await page.getByRole("option", { name: "Error" }).click();
+			await request;
+			await expect(page.locator('[data-audit-event]').first().or(page.getByText("No audit events match these filters."))).toBeVisible();
 		});
 	});
 
@@ -213,7 +246,7 @@ test.describe("Audit Trail", () => {
 		await expect(errorState).toContainText("Audit activity unavailable");
 		await expect(errorState.getByRole("button", { name: "Try again" })).toBeVisible();
 		await expect(
-			page.getByRole("region", { name: "Audit status summary" }).getByText("—"),
+			page.getByRole("region", { name: "Audit status summary" }).getByText("–"),
 		).toHaveCount(3);
 	});
 });

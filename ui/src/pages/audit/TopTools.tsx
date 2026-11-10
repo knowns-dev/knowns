@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { AuditToolStats } from "@/ui/api/client";
-import { Button } from "@/ui/components/ui/button";
+import { Button as KnButton } from "@/ui/components/ui/knowns/button";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
 function getOutcomeCount(
@@ -119,26 +119,16 @@ export function TopTools({
 			)}
 
 			{rankedTools.length > 10 ? (
-				<Button
-					type="button"
+				<KnButton
 					variant="ghost"
 					size="sm"
+					icon={showAll ? <ChevronUp /> : <ChevronDown />}
 					onClick={() => setShowAll((current) => !current)}
 					aria-expanded={showAll}
-					className="mt-3 min-h-10 w-full text-xs"
+					className="mt-3 w-full text-xs"
 				>
-					{showAll ? (
-						<>
-							<ChevronUp className="h-3.5 w-3.5" />
-							Show top 10
-						</>
-					) : (
-						<>
-							<ChevronDown className="h-3.5 w-3.5" />
-							Show all {rankedTools.length}
-						</>
-					)}
-				</Button>
+					{showAll ? "Show top 10" : `Show all ${rankedTools.length}`}
+				</KnButton>
 			) : null}
 		</section>
 	);

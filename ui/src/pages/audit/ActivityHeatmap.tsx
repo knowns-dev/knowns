@@ -72,29 +72,29 @@ function HeatmapTooltip({ bucket }: { bucket: AuditDailyBucket }) {
 			<dl className="grid grid-cols-2 gap-x-4 gap-y-1 tabular-nums">
 				<div className="flex justify-between gap-3">
 					<dt className="text-primary-foreground/70">Total</dt>
-					<dd>{bucket.covered ? bucket.totalCalls : "—"}</dd>
+					<dd>{bucket.covered ? bucket.totalCalls : "–"}</dd>
 				</div>
 				<div className="flex justify-between gap-3">
 					<dt className="text-primary-foreground/70">Success</dt>
-					<dd>{bucket.covered ? bucket.successCount : "—"}</dd>
+					<dd>{bucket.covered ? bucket.successCount : "–"}</dd>
 				</div>
 				<div className="flex justify-between gap-3">
 					<dt className="text-primary-foreground/70">Errors</dt>
-					<dd>{bucket.covered ? bucket.errorCount : "—"}</dd>
+					<dd>{bucket.covered ? bucket.errorCount : "–"}</dd>
 				</div>
 				<div className="flex justify-between gap-3">
 					<dt className="text-primary-foreground/70">Denied</dt>
-					<dd>{bucket.covered ? bucket.deniedCount : "—"}</dd>
+					<dd>{bucket.covered ? bucket.deniedCount : "–"}</dd>
 				</div>
 			</dl>
 			<div className="border-t border-primary-foreground/20 pt-2">
 				<p>
 					<span className="text-primary-foreground/70">Top tool: </span>
-					<span className="font-mono">{bucket.topTool || "—"}</span>
+					<span className="font-mono">{bucket.topTool || "–"}</span>
 				</p>
 				<p>
 					<span className="text-primary-foreground/70">Average latency: </span>
-					{bucket.covered ? formatLatency(bucket.averageDurationMs) : "—"}
+					{bucket.covered ? formatLatency(bucket.averageDurationMs) : "–"}
 				</p>
 			</div>
 		</div>
