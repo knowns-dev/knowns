@@ -34,6 +34,10 @@ import {
 	Brain,
 	Check,
 	CheckCircle2,
+	ChevronDown,
+	ExternalLink,
+	Pencil,
+	Quote,
 	CircleAlert,
 	FileText,
 	GitMerge,
@@ -62,7 +66,11 @@ import {
 } from "@/ui/components/ui/dialog";
 import { toast } from "@/ui/components/ui/sonner";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/ui/components/ui/sheet";
-import { DetailSection, MarkdownField } from "@/ui/components/organisms/TaskDetail/DetailSection";
+import { DetailSection } from "@/ui/components/organisms/TaskDetail/DetailSection";
+import { MDEditor } from "@/ui/components/editor";
+import { MDRenderWithHighlight } from "@/ui/components/editor/MDRenderWithHighlight";
+import { parseSource } from "@/ui/components/molecules/SourceLinkList";
+import { Fold } from "@/ui/lib/knowns/motion";
 import { Breadcrumb } from "@/ui/components/ui/knowns/breadcrumb";
 import { Button as KnButton } from "@/ui/components/ui/knowns/button";
 import { Tag } from "@/ui/components/ui/knowns/tag";
@@ -1155,11 +1163,11 @@ function StatusBadge({ status }: { status: MemoryStatus }) {
 type DetailMode = "trusted" | "review" | "history";
 
 /**
- * A Memory's own page in a side sheet, laid out like the task detail: breadcrumbs and Close on a
- * fixed bar, then the Knowns UI page header (status, layer, category, confidence, updated, copy
- * actions) over the content, with the properties in a column beside it on wide sheets and under it
- * on phones. Review work (why it needs review, evidence repair, similar Memories, the trust decision)
- * sits in the main column; lifecycle outcomes sit at the end of the properties.
+ * A Memory's own page in a side sheet, laid out for reading. The title and one line of trust
+ * context come first, then the body in the Docs reader (same typography, code blocks and
+ * @doc/@task chips) at a comfortable measure. Everything else (layer, category, confidence,
+ * tags, sources, dates, usage) sits out of the reading path: a compact column beside the body on
+ * wide sheets, a folded "Details" section under it on phones. Review work follows the body.
  */
 function MemoryDetail({
 	memory,
@@ -1182,9 +1190,12 @@ function MemoryDetail({
 	onAction: (memory: MemoryEntry, action: ReviewAction) => Promise<boolean>;
 	onSaveContent: (memory: MemoryEntry, content: string) => void;
 }) {
+	const isMobile = useIsMobile();
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [sourceText, setSourceText] = useState("");
 	const [action, setAction] = useState<ReviewAction | null>(null);
+	const [detailsOpen, setDetailsOpen] = useState(false);
+	const [editing, setEditing] = useState(false);
 	const status = normalizedStatus(memory);
 	const reference = `@memory/${memory.id}`;
 	const title = memory.title || "Untitled memory";
@@ -1200,6 +1211,8 @@ function MemoryDetail({
 	useEffect(() => {
 		setSourceText("");
 		setAction(null);
+		setDetailsOpen(false);
+		setEditing(false);
 		scrollRef.current?.scrollTo({ top: 0 });
 	}, [memory.id]);
 
@@ -1219,14 +1232,18 @@ function MemoryDetail({
 		return done;
 	};
 
-	// In-app links (breadcrumbs, sources) navigate without a reload and close the sheet.
+	const go = (path: string) => {
+		onClose();
+		navigateTo(path);
+	};
+
+	// In-app links (breadcrumbs, sources, links in the body) navigate without a reload and close the sheet.
 	const handleLinkClick = (event: React.MouseEvent) => {
 		if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
 		const href = (event.target as HTMLElement).closest("a")?.getAttribute("href");
 		if (!href || !href.startsWith("/")) return;
 		event.preventDefault();
-		onClose();
-		navigateTo(href);
+		go(href);
 	};
 
 	const statusBadge =
@@ -1243,31 +1260,6 @@ function MemoryDetail({
 				? "Available to default retrieval. Agents recall it without asking."
 				: "Historical record. Kept for provenance; agents do not recall it by default.";
 
-	const updated = memory.updatedAt ? new Date(memory.updatedAt) : null;
-	const meta: PageHeaderMeta[] = [
-		{ id: "layer", content: <LayerBadge layer={memory.layer} /> },
-		...((memory.tags || []).includes(PIN_TAG)
-			? [{ id: "pinned", content: <Badge size="sm" variant="outline">Pinned</Badge> }]
-			: []),
-		{ id: "category", label: "Category", content: memory.category || "Uncategorized" },
-		...(memory.confidence
-			? [{ id: "confidence", label: "Confidence", content: <span className="capitalize">{memory.confidence}</span> }]
-			: []),
-		...(updated && !Number.isNaN(updated.getTime())
-			? [
-					{
-						id: "updated",
-						label: "Updated",
-						content: (
-							<time dateTime={updated.toISOString()} title={updated.toLocaleString()}>
-								{ago(updated)}
-							</time>
-						),
-					},
-				]
-			: []),
-	];
-
 	const moreActions: PageHeaderAction[] = [
 		{ id: "copy-ref", label: "Copy reference", icon: <AtSign />, onSelect: copy(reference, "Reference copied") },
 		{
@@ -1278,7 +1270,53 @@ function MemoryDetail({
 		},
 	];
 
-	const tags = (memory.tags || []).filter((tag) => tag !== PIN_TAG);
+	// Phones keep the title wide: Edit moves into the overflow menu, as in the task detail.
+	const editAction: PageHeaderAction | undefined =
+		mode !== "history" && !editing && (memory.content || "").trim()
+			? { id: "edit", label: "Edit", icon: <Pencil />, onSelect: () => setEditing(true) }
+			: undefined;
+
+	const details = <MemoryDetails memory={memory} uses={uses} onOpenSource={go} />;
+	const lifecycle =
+		mode === "history" ? null : (
+			<div className="flex flex-col gap-2">
+				<span className="text-[12px] font-medium text-muted-foreground">Lifecycle</span>
+				{mode === "trusted" ? (
+					<>
+						<p className="text-[12.5px] leading-5 text-muted-foreground">
+							Stop default retrieval and move it to History. Content and provenance are kept.
+						</p>
+						<ActionButton
+							label="Remove from Trusted"
+							Icon={Archive}
+							fullWidth
+							disabled={busy}
+							onClick={() => setAction({ kind: "archive" })}
+						/>
+					</>
+				) : (
+					<>
+						<ActionButton
+							label="Review archive"
+							Icon={Archive}
+							fullWidth
+							disabled={busy}
+							onClick={() => setAction({ kind: "archive" })}
+						/>
+						{canReject ? (
+							<ActionButton
+								label="Review rejection"
+								Icon={XCircle}
+								fullWidth
+								danger
+								disabled={busy}
+								onClick={() => setAction({ kind: "reject" })}
+							/>
+						) : null}
+					</>
+				)}
+			</div>
+		);
 
 	return (
 		<div
@@ -1312,7 +1350,7 @@ function MemoryDetail({
 				ref={scrollRef}
 				data-autofocus
 				tabIndex={-1}
-				className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(3rem,env(safe-area-inset-bottom))] outline-none [scrollbar-gutter:stable] sm:px-8"
+				className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-[max(3rem,env(safe-area-inset-bottom))] outline-none [scrollbar-gutter:stable] sm:px-8"
 			>
 				<PageHeader
 					layout="stacked"
@@ -1322,13 +1360,24 @@ function MemoryDetail({
 					titleText={title}
 					status={statusBadge}
 					description={context}
-					meta={meta}
-					moreActions={moreActions}
+					actions={editAction && !isMobile ? [editAction] : undefined}
+					moreActions={editAction && isMobile ? [editAction, ...moreActions] : moreActions}
 					scrollContainer={scrollRef}
 				>
 					<div className="@container/detail">
-						<div className="grid grid-cols-1 gap-x-10 gap-y-10 pt-6 @[760px]/detail:grid-cols-[minmax(0,1fr)_15.5rem]">
-							<div className="flex min-w-0 flex-col gap-9">
+						<div className="grid grid-cols-1 gap-x-12 gap-y-8 pt-5 @[820px]/detail:grid-cols-[minmax(0,1fr)_15rem]">
+							<div className="flex min-w-0 flex-col gap-10">
+								<MemoryReader
+									content={memory.content || ""}
+									editable={mode !== "history"}
+									editing={editing}
+									onEditingChange={setEditing}
+									saving={saving}
+									onSave={(next) => onSaveContent(memory, next)}
+									onOpenDoc={(path) => go(`/docs/${path}`)}
+									onOpenTask={(id) => go(`/tasks/${id}`)}
+								/>
+
 								{mode === "review" && reviewItem ? (
 									<DetailSection title="Why this needs review">
 										<div className="flex flex-wrap gap-1.5">
@@ -1348,28 +1397,6 @@ function MemoryDetail({
 										) : null}
 									</DetailSection>
 								) : null}
-
-								{mode === "history" ? (
-									<DetailSection title="Content">
-										{memory.content ? (
-											<MDRender
-												markdown={memory.content}
-												className="prose prose-sm max-w-[72ch] text-[14px] leading-relaxed dark:prose-invert [&>:first-child]:mt-0! [&>:last-child]:mb-0!"
-											/>
-										) : (
-											<p className="text-[13.5px] text-muted-foreground">No content.</p>
-										)}
-									</DetailSection>
-								) : (
-									<MarkdownField
-										title="Content"
-										value={memory.content || ""}
-										placeholder="Write durable recall in markdown"
-										emptyText="No content yet. Click to write what agents should recall."
-										saving={saving}
-										onSave={(next) => onSaveContent(memory, next)}
-									/>
-								)}
 
 								{hasSourceIssue ? (
 									<div data-testid="memory-source-panel">
@@ -1468,117 +1495,40 @@ function MemoryDetail({
 
 							<aside
 								aria-label="Properties"
-								className="min-w-0 border-t border-[color-mix(in_srgb,var(--foreground)_9%,transparent)] pt-6 @[760px]/detail:self-start @[760px]/detail:border-t-0 @[760px]/detail:border-l @[760px]/detail:pt-0 @[760px]/detail:pl-6"
+								className="flex min-w-0 flex-col gap-6 border-t border-[color-mix(in_srgb,var(--foreground)_9%,transparent)] pt-5 @[820px]/detail:self-start @[820px]/detail:border-t-0 @[820px]/detail:border-l @[820px]/detail:pt-1 @[820px]/detail:pl-6"
 							>
-								<div className="@container">
-									<div className="grid grid-cols-1 gap-x-6 gap-y-5 @[440px]:grid-cols-2">
-										{mode !== "trusted" ? (
-											<Property label="Status">
-												<span className="flex flex-wrap items-center gap-1.5">
-													<StatusBadge status={status} />
-												</span>
-											</Property>
-										) : null}
-										<Property label="Last verified">
-											<span className="text-[13.5px]">{formatDate(memory.lastVerified)}</span>
-										</Property>
-										<Property label="Re-verify every">
-											<span className="text-[13.5px]">{memory.ttlDays ? `${memory.ttlDays} days` : "Not set"}</span>
-										</Property>
-										<Property label="Created">
-											<span className="text-[13.5px]">{formatDate(memory.createdAt)}</span>
-										</Property>
-										{tags.length > 0 ? (
-											<Property label="Tags" wide>
-												<span className="flex flex-wrap gap-1.5">
-													{tags.map((tag) => (
-														<Tag key={tag} size="sm">
-															{tag}
-														</Tag>
-													))}
-												</span>
-											</Property>
-										) : null}
-										<Property label="Sources" wide>
-											<SourceLinkList
-												sources={memory.sources || []}
-												onOpen={(ref) => {
-													onClose();
-													if (ref.kind === "doc") navigateTo(`/docs/${ref.path}`);
-													else if (ref.kind === "task") navigateTo(`/tasks/${ref.id}`);
-													else if (ref.kind === "memory") navigateTo(`/memory/${encodeURIComponent(ref.id)}`);
-													else navigateTo(`/decisions/${encodeURIComponent(ref.id)}`);
-												}}
-											/>
-										</Property>
-										{memory.mergedInto ? (
-											<Property label="Merged into" wide>
-												<a
-													href={`/memory/${encodeURIComponent(memory.mergedInto)}`}
-													className={cn("break-all font-mono text-[12px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline", focusRing)}
-												>
-													@memory/{memory.mergedInto}
-												</a>
-											</Property>
-										) : null}
-										{uses ? (
-											<Property label={uses.length === 0 ? "Recent use" : `Recent use · ${uses.length}`} wide>
-												{uses.length === 0 ? (
-													<span className="text-[13.5px] text-muted-foreground">No agent has read it yet.</span>
-												) : (
-													<ul className="flex flex-col">
-														{uses.slice(0, 4).map((use) => (
-															<li key={use.id} className="flex items-baseline justify-between gap-3 py-1 text-[13px]">
-																<span className="min-w-0 truncate">{use.label}</span>
-																<span className="flex-none text-[12px] text-muted-foreground">{ago(use.at)}</span>
-															</li>
-														))}
-													</ul>
-												)}
-											</Property>
-										) : null}
-										{mode !== "history" ? (
-											<Property label="Lifecycle" wide>
-												<div className="flex flex-col gap-2">
-													{mode === "trusted" ? (
-														<>
-															<p className="text-[12.5px] leading-5 text-muted-foreground">
-																Stop default retrieval and move it to History. Content and provenance are kept.
-															</p>
-															<ActionButton
-																label="Remove from Trusted"
-																Icon={Archive}
-																fullWidth
-																disabled={busy}
-																onClick={() => setAction({ kind: "archive" })}
-															/>
-														</>
-													) : (
-														<>
-															<ActionButton
-																label="Review archive"
-																Icon={Archive}
-																fullWidth
-																disabled={busy}
-																onClick={() => setAction({ kind: "archive" })}
-															/>
-															{canReject ? (
-																<ActionButton
-																	label="Review rejection"
-																	Icon={XCircle}
-																	fullWidth
-																	danger
-																	disabled={busy}
-																	onClick={() => setAction({ kind: "reject" })}
-																/>
-															) : null}
-														</>
+								{isMobile ? (
+									<div>
+										<button
+											type="button"
+											aria-expanded={detailsOpen}
+											onClick={() => setDetailsOpen((open) => !open)}
+											className={cn(
+												"-mx-2 flex w-[calc(100%+1rem)] items-center justify-between gap-3 rounded-lg px-2 py-2 text-left text-[13.5px] font-semibold transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-[color-mix(in_srgb,var(--foreground)_4%,transparent)]",
+												focusRing,
+											)}
+										>
+											<span>Details</span>
+											<span className="flex items-center gap-2 text-[12.5px] font-normal text-muted-foreground">
+												{scopeLabels[layerScope[memory.layer] ?? "project"]}
+												{memory.category ? ` · ${memory.category}` : ""}
+												<ChevronDown
+													aria-hidden
+													className={cn(
+														"h-4 w-4 transition-transform duration-(--kn-dur) ease-(--kn-ease-inout)",
+														detailsOpen && "rotate-180",
 													)}
-												</div>
-											</Property>
-										) : null}
+												/>
+											</span>
+										</button>
+										<Fold open={detailsOpen}>
+											<div className="pt-3">{details}</div>
+										</Fold>
 									</div>
-								</div>
+								) : (
+									details
+								)}
+								{lifecycle}
 							</aside>
 						</div>
 					</div>
@@ -1596,14 +1546,279 @@ function MemoryDetail({
 	);
 }
 
-/** One property: a muted label over its value (same as the task detail sidebar). */
-function Property({ label, children, wide }: { label: string; children: ReactNode; wide?: boolean }) {
+/**
+ * The memory body in the Docs reader: same typography, code blocks and @doc/@task chips, at a
+ * reading measure of about 68 characters. Edit (in the page header) swaps in the markdown editor.
+ */
+function MemoryReader({
+	content,
+	editable,
+	editing,
+	onEditingChange: setEditing,
+	saving,
+	onSave,
+	onOpenDoc,
+	onOpenTask,
+}: {
+	content: string;
+	editable: boolean;
+	editing: boolean;
+	onEditingChange: (editing: boolean) => void;
+	saving: boolean;
+	onSave: (next: string) => void;
+	onOpenDoc: (path: string) => void;
+	onOpenTask: (id: string) => void;
+}) {
+	const [draft, setDraft] = useState(content);
+	useEffect(() => {
+		if (!editing) setDraft(content);
+	}, [content, editing]);
+	const save = () => {
+		if (draft !== content) onSave(draft);
+		setEditing(false);
+	};
+	const cancel = () => {
+		setDraft(content);
+		setEditing(false);
+	};
+
+	if (editing) {
+		return (
+			<section
+				aria-label="Edit content"
+				className="flex flex-col gap-2"
+				onKeyDown={(event) => {
+					if (event.key === "Escape") {
+						event.stopPropagation();
+						cancel();
+					}
+					if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+						event.preventDefault();
+						save();
+					}
+				}}
+			>
+				<MDEditor markdown={draft} onChange={setDraft} placeholder="Write durable recall in markdown" readOnly={saving} height={320} />
+				<div className="flex items-center gap-2">
+					<KnButton size="sm" onClick={save} disabled={saving}>
+						Save
+					</KnButton>
+					<KnButton size="sm" variant="ghost" onClick={cancel}>
+						Cancel
+					</KnButton>
+					<span className="ml-auto hidden text-[12px] text-muted-foreground sm:inline">Ctrl+Enter to save, Esc to cancel</span>
+				</div>
+			</section>
+		);
+	}
+
+	if (!content.trim()) {
+		return editable ? (
+			<button
+				type="button"
+				onClick={() => setEditing(true)}
+				className={cn(
+					"rounded-lg border border-dashed border-[color-mix(in_srgb,var(--foreground)_14%,transparent)] px-3 py-3 text-left text-[13.5px] text-muted-foreground transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:border-[color-mix(in_srgb,var(--foreground)_24%,transparent)] hover:text-foreground",
+					focusRing,
+				)}
+			>
+				No content yet. Click to write what agents should recall.
+			</button>
+		) : (
+			<p className="text-[14px] text-muted-foreground">No content.</p>
+		);
+	}
+
 	return (
-		<div className={cn("flex min-w-0 flex-col gap-1.5", wide && "@[440px]:col-span-2")}>
+		<section aria-label="Content">
+			<div className="prose-neutral max-w-[68ch] dark:prose-invert [&_.md-render-wrapper>:first-child]:mt-0! [&_.md-render-wrapper>:last-child]:mb-0!">
+				<MDRenderWithHighlight
+					content={readableMarkdown(content)}
+					lineHighlight={null}
+					onDocLinkClick={onOpenDoc}
+					onTaskLinkClick={onOpenTask}
+				/>
+			</div>
+		</section>
+	);
+}
+
+/** Compact facts beside the body: one row per fact, long values truncate (full value on hover). */
+function MemoryDetails({
+	memory,
+	uses,
+	onOpenSource,
+}: {
+	memory: MemoryEntry;
+	uses?: MemoryUse[];
+	onOpenSource: (path: string) => void;
+}) {
+	const tags = (memory.tags || []).filter((tag) => tag !== PIN_TAG);
+	const pinned = (memory.tags || []).includes(PIN_TAG);
+	const scope = layerScope[memory.layer] ?? "project";
+	const sources = memory.sources || [];
+	return (
+		<div className="flex flex-col gap-5 text-[13px]">
+			<dl className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-3 gap-y-2.5">
+				<Fact label="Layer">
+					<span className="flex flex-wrap items-center gap-1.5">
+						<LayerBadge layer={memory.layer} />
+						{pinned ? (
+							<Badge size="sm" variant="outline">
+								Pinned
+							</Badge>
+						) : null}
+					</span>
+				</Fact>
+				{normalizedStatus(memory) !== "active" ? (
+					<Fact label="Status">
+						<StatusBadge status={normalizedStatus(memory)} />
+					</Fact>
+				) : null}
+				<Fact label="Category">{memory.category || "Uncategorized"}</Fact>
+				<Fact label="Confidence">
+					<span className="capitalize">{memory.confidence || "Not set"}</span>
+				</Fact>
+				<Fact label="Updated" title={formatDate(memory.updatedAt)}>
+					{memory.updatedAt ? ago(memory.updatedAt) : "Not set"}
+				</Fact>
+				<Fact label="Created" title={formatDate(memory.createdAt)}>
+					{memory.createdAt ? ago(memory.createdAt) : "Not set"}
+				</Fact>
+				<Fact label="Verified">{formatDate(memory.lastVerified)}</Fact>
+				{memory.ttlDays ? <Fact label="Re-verify">{`Every ${memory.ttlDays} days`}</Fact> : null}
+			</dl>
+			<p className="sr-only">{scopeHints[scope]}</p>
+
+			{tags.length > 0 ? (
+				<FactGroup label="Tags">
+					<span className="flex flex-wrap gap-1.5">
+						{tags.map((tag) => (
+							<Tag key={tag} size="sm">
+								{tag}
+							</Tag>
+						))}
+					</span>
+				</FactGroup>
+			) : null}
+
+			<FactGroup label={sources.length > 1 ? `Sources · ${sources.length}` : "Source"}>
+				{sources.length === 0 ? (
+					<span className="text-muted-foreground">No source linked.</span>
+				) : (
+					<ul className="flex flex-col">
+						{sources.map((source) => {
+							const ref = parseSource(source);
+							const Icon = ref.kind === "task" ? ListTodo : ref.kind === "url" ? ExternalLink : ref.kind === "text" ? Quote : FileText;
+							const path =
+								ref.kind === "doc"
+									? `/docs/${ref.path}`
+									: ref.kind === "task"
+										? `/tasks/${ref.id}`
+										: ref.kind === "memory"
+											? `/memory/${encodeURIComponent(ref.id)}`
+											: ref.kind === "decision"
+												? `/decisions/${encodeURIComponent(ref.id)}`
+												: null;
+							const label = <span className="min-w-0 truncate font-mono text-[12px]">{source}</span>;
+							return (
+								<li key={source} className="min-w-0">
+									{path ? (
+										<button
+											type="button"
+											title={source}
+											onClick={() => onOpenSource(path)}
+											className={cn(
+												"-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left text-muted-foreground transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-[color-mix(in_srgb,var(--foreground)_4%,transparent)] hover:text-foreground",
+												focusRing,
+											)}
+										>
+											<Icon aria-hidden className="h-3.5 w-3.5 flex-none" />
+											{label}
+										</button>
+									) : ref.kind === "url" ? (
+										<a
+											href={ref.href}
+											target="_blank"
+											rel="noreferrer"
+											title={source}
+											className={cn("-mx-1.5 flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-muted-foreground hover:text-foreground", focusRing)}
+										>
+											<Icon aria-hidden className="h-3.5 w-3.5 flex-none" />
+											{label}
+										</a>
+									) : (
+										<span title={source} className="flex min-w-0 items-center gap-2 py-1 text-muted-foreground">
+											<Icon aria-hidden className="h-3.5 w-3.5 flex-none" />
+											{label}
+										</span>
+									)}
+								</li>
+							);
+						})}
+					</ul>
+				)}
+			</FactGroup>
+
+			{memory.mergedInto ? (
+				<FactGroup label="Merged into">
+					<a
+						href={`/memory/${encodeURIComponent(memory.mergedInto)}`}
+						className={cn("block truncate font-mono text-[12px] text-muted-foreground hover:text-foreground", focusRing)}
+					>
+						@memory/{memory.mergedInto}
+					</a>
+				</FactGroup>
+			) : null}
+
+			{uses ? (
+				<FactGroup label={uses.length === 0 ? "Recent use" : `Recent use · ${uses.length}`}>
+					{uses.length === 0 ? (
+						<span className="text-muted-foreground">No agent has read it yet.</span>
+					) : (
+						<ul className="flex flex-col">
+							{uses.slice(0, 4).map((use) => (
+								<li key={use.id} className="flex items-baseline justify-between gap-3 py-0.5">
+									<span className="min-w-0 truncate">{use.label}</span>
+									<span className="flex-none text-[12px] text-muted-foreground">{ago(use.at)}</span>
+								</li>
+							))}
+						</ul>
+					)}
+				</FactGroup>
+			) : null}
+		</div>
+	);
+}
+
+function Fact({ label, title, children }: { label: string; title?: string; children: ReactNode }) {
+	return (
+		<>
+			<dt className="text-muted-foreground">{label}</dt>
+			<dd className="min-w-0 truncate" title={title}>
+				{children}
+			</dd>
+		</>
+	);
+}
+
+function FactGroup({ label, children }: { label: string; children: ReactNode }) {
+	return (
+		<div className="flex min-w-0 flex-col gap-1.5">
 			<span className="text-[12px] font-medium text-muted-foreground">{label}</span>
 			{children}
 		</div>
 	);
+}
+
+/**
+ * Plain text reads as written: when a memory has no markdown, single line breaks stay line breaks
+ * (markdown would join them into one paragraph). Markdown is left alone.
+ */
+function readableMarkdown(content: string) {
+	const looksLikeMarkdown = /(^|\n)\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>|```|\|)|`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\)/.test(content);
+	if (looksLikeMarkdown) return content;
+	return content.replace(/\r\n/g, "\n").replace(/([^\n])\n(?!\n)/g, "$1  \n");
 }
 
 function SuggestedSources({
