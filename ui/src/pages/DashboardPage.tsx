@@ -15,11 +15,12 @@ import {
 	LayoutDashboard,
 	ListChecks,
 	RefreshCw,
+	SlidersHorizontal,
 	Sparkles,
 	Timer,
 	TriangleAlert,
 } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
 	auditApi,
 	decisionApi,
@@ -49,6 +50,12 @@ import { useConfig } from "../contexts/ConfigContext";
 import { useTimeTracker } from "../contexts/TimeTrackerContext";
 import { cn } from "../lib/utils";
 import type { Task } from "@/ui/models/task";
+import { DashboardCustomize } from "./dashboard/DashboardCustomize";
+import { type MainWidgetId, type SideWidgetId, useDashboardLayout } from "./dashboard/layout";
+import { ContinueWorking, NeedsAttention, Panel, Problems, ProgressChart, ReviewInbox, SummaryStrip } from "./dashboard/widgets";
+import ActivityFeed from "../components/organisms/ActivityFeed";
+import { PageHeader } from "@/ui/components/ui/knowns/blocks/page-header";
+import { TabsContent } from "@/ui/components/ui/knowns/tabs";
 import {
 	buildThroughput,
 	buildWorkAging,
@@ -699,6 +706,10 @@ function FilterBar({
 
 export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 	const { config } = useConfig();
+	const dashboardLayout = useDashboardLayout();
+	const [tab, setTab] = useState("overview");
+	const [customizeOpen, setCustomizeOpen] = useState(false);
+	const scrollRef = useRef<HTMLDivElement>(null);
 	const { activeTimers, getElapsedForTask } = useTimeTracker();
 	const [period, setPeriod] = useState<number>(30);
 	const [assignee, setAssignee] = useState(ALL_ASSIGNEES);
@@ -913,71 +924,9 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 	const hasThroughput = throughputSummary.created + throughputSummary.completed > 0;
 	const gap = throughputSummary.created - throughputSummary.completed;
 
-	return (
-		<div className="analysis-workbench h-full overflow-auto bg-[var(--analysis-canvas)] text-foreground">
-			<FeatureHeader
-				icon={LayoutDashboard}
-				title="Dashboard"
-				status={
-					<span className="inline-flex items-center gap-1.5">
-						<span className={cn("h-1.5 w-1.5 rounded-full", remote.errors.length > 0 ? "bg-[var(--analysis-risk)]" : "bg-[var(--analysis-completed)]")} />
-						{remote.errors.length > 0
-							? "Partial data"
-							: remote.loading
-								? "Refreshing"
-								: "All sources ready"}
-						{" · Updated "}
-						{remote.refreshedAt ? formatRelativeTime(remote.refreshedAt) : "—"}
-					</span>
-				}
-				actions={
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => void loadRemoteData()}
-						disabled={remote.loading}
-						aria-label="Refresh dashboard data"
-					>
-						<RefreshCw className={cn(remote.loading && "animate-spin motion-reduce:animate-none")} />
-						Refresh
-					</Button>
-				}
-			/>
-
-			<div className="w-full px-4 py-5 sm:px-6">
-				<FilterBar
-					period={period}
-					onPeriodChange={setPeriod}
-					assignee={assignee}
-					onAssigneeChange={setAssignee}
-					label={label}
-					onLabelChange={setLabel}
-					assignees={assignees}
-					labels={labels}
-					filteredCount={filteredTasks.length}
-				/>
-
-				{loading ? (
-					<div className="mb-5 grid grid-cols-3 gap-4">
-						<Skeleton className="h-[68px]" />
-						<Skeleton className="h-[68px]" />
-						<Skeleton className="h-[68px]" />
-					</div>
-				) : (
-					<div className="mb-5 grid grid-cols-3 gap-4">
-						<MetricTile label="Created" value={String(throughputSummary.created)} tone="created" />
-						<MetricTile label="Completed" value={String(throughputSummary.completed)} tone="completed" />
-						<MetricTile
-							label="Flow gap"
-							value={`${gap > 0 ? "+" : ""}${gap}`}
-							detail={gap > 0 ? "intake above output" : gap < 0 ? "output above intake" : "balanced"}
-							tone={gap > 0 ? "risk" : undefined}
-						/>
-					</div>
-				)}
-
-				<div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_23rem]">
-					<main className="order-2 min-w-0 space-y-5 xl:order-1">
+	// The analytics charts, unchanged, now on the Analytics tab.
+	const analyticsBlocks: Record<"throughput" | "aging" | "leadtime" | "knowledge", ReactNode> = {
+		throughput: (
 						<SectionCard>
 							<SectionHeader
 								icon={Activity}
@@ -1004,8 +953,8 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 								</>
 							)}
 						</SectionCard>
-
-						<div className="grid min-w-0 gap-5 lg:grid-cols-2">
+		),
+		aging: (
 							<SectionCard className="min-w-0">
 								<SectionHeader
 									icon={Clock3}
@@ -1019,7 +968,8 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 								/>
 								{loading ? <ChartLoading /> : <WorkAgingChart rows={workAging} />}
 							</SectionCard>
-
+		),
+		leadtime: (
 							<SectionCard className="min-w-0">
 								<SectionHeader
 									icon={Timer}
@@ -1038,8 +988,8 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 									/>
 								)}
 							</SectionCard>
-						</div>
-
+		),
+		knowledge: (
 						<SectionCard>
 							<SectionHeader
 								icon={Sparkles}
@@ -1076,203 +1026,204 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 								</>
 							)}
 						</SectionCard>
-					</main>
-
-					<aside className="order-1 min-w-0 xl:sticky xl:top-5 xl:order-2" aria-label="Project pulse">
-						<SectionCard className="overflow-hidden">
-							<SectionHeader
-								icon={Flame}
-								title="Project pulse"
-								description="Current focus, attention queue, and recent failures"
-							/>
-
-							<div className="border-b border-border/60 p-4">
-								<div className="mb-3 flex items-center justify-between gap-3">
-									<p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-										{focusLabel}
-									</p>
-									{focusTask && (
-										<span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-											<span
-												className="h-1.5 w-1.5 rounded-full"
-												style={{ backgroundColor: statusColor(focusTask.status, config.statusColors) }}
-											/>
-											{formatStatus(focusTask.status)}
-										</span>
-									)}
-								</div>
-								{focusTask ? (
-									<div>
-										<div className="flex items-start justify-between gap-3">
-											<div className="min-w-0">
-												<Link
-													to="/tasks/$taskId"
-													params={{ taskId: focusTask.id }}
-													className="line-clamp-2 text-sm font-semibold leading-5 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-												>
-													{focusTask.title}
-												</Link>
-												<p className="mt-1 font-mono text-[10px] text-muted-foreground">#{focusTask.id}</p>
-												{isRecommendedFocus && recommendedItem && (
-													<p className="mt-2 text-[11px] leading-4 text-muted-foreground">
-														Why now: {recommendedItem.reason}
-													</p>
-												)}
-											</div>
-											<span className={cn(
-												"rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em]",
-												focusTask.priority === "high"
-													? "border-[var(--analysis-error)]/30 text-[var(--analysis-error)]"
-													: "border-border text-muted-foreground",
-											)}>
-												{focusTask.priority}
-											</span>
-										</div>
-										<div className="mt-4 grid grid-cols-2 gap-3 border-y border-border/60 py-3">
-											<div>
-												<p className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground">Tracked</p>
-												<p className="mt-1 text-sm font-medium tabular-nums">{formatDuration(focusSeconds)}</p>
-											</div>
-											<div>
-												<p className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground">Acceptance</p>
-												<p className="mt-1 text-sm font-medium tabular-nums">
-													{focusTotalAC > 0 ? `${focusCompletedAC}/${focusTotalAC}` : "No ACs"}
-												</p>
-											</div>
-										</div>
-										{focusTotalAC > 0 && (
-											<Progress
-												value={focusProgress}
-												className="mt-3 h-1.5"
-												aria-label={`Acceptance criteria ${focusProgress}% complete`}
-											/>
-										)}
-										<Button asChild className="mt-4 w-full" size="sm">
-											<Link to="/tasks/$taskId" params={{ taskId: focusTask.id }}>
-												{isRecommendedFocus ? "Review task" : "Continue task"}
-												<ArrowRight />
-											</Link>
-										</Button>
-									</div>
-								) : (
-									<EmptyState
-										icon={CheckCircle2}
-										title="No active focus"
-										detail="Start a timer or move a task into progress to pin it here."
-									/>
-								)}
-							</div>
-
-							<div className="border-b border-border/60">
-								<div className="flex items-center justify-between px-4 pb-2 pt-4">
-									<h3 className="text-xs font-semibold">Needs attention</h3>
-									<span className="text-[11px] tabular-nums text-muted-foreground">{visibleAttentionItems.length}</span>
-								</div>
-								{loading ? (
-									<div className="space-y-2 px-4 pb-4">
-										<Skeleton className="h-12" />
-										<Skeleton className="h-12" />
-									</div>
-								) : visibleAttentionItems.length > 0 ? (
-									<ol className="pb-3">
-										{visibleAttentionItems.map((item, index) => (
-											<li key={item.task.id}>
-												<Link
-													to="/tasks/$taskId"
-													params={{ taskId: item.task.id }}
-													className="grid grid-cols-[1rem_minmax(0,1fr)] gap-2 px-4 py-2.5 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-												>
-													<span className="pt-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
-														{String(index + 1).padStart(2, "0")}
-													</span>
-													<span className="min-w-0">
-														<span className="line-clamp-2 text-xs font-medium leading-5">{item.task.title}</span>
-														<span className="mt-0.5 block line-clamp-2 text-[10px] leading-4 text-muted-foreground">{item.reason}</span>
-													</span>
-												</Link>
-											</li>
-										))}
-									</ol>
-								) : (
-									<p className="px-4 pb-4 text-xs leading-5 text-muted-foreground">
-										No blocked, urgent, review-bound, high-priority, or aging tasks match these filters.
-									</p>
-								)}
-							</div>
-
-							<div>
-								<div className="flex items-center justify-between px-4 pb-2 pt-4">
-									<h3 className="text-xs font-semibold">Recent failures</h3>
-									<Link to="/audit" className="text-[11px] text-muted-foreground hover:text-foreground hover:underline">
-										Audit trail
-									</Link>
-								</div>
-								{remote.loading && !remote.refreshedAt ? (
-									<div className="space-y-2 px-4 pb-4">
-										<Skeleton className="h-12" />
-										<Skeleton className="h-12" />
-									</div>
-								) : remote.auditErrors === null && remote.services === null ? (
-									<div className="flex items-start gap-2 px-4 pb-4 text-xs leading-5 text-[var(--analysis-risk-text)]">
-										<AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-										Failure sources are unavailable.
-									</div>
-								) : runtimeFailures.length === 0 && (remote.auditErrors?.length ?? 0) === 0 ? (
-									<div className="flex items-center gap-2 px-4 pb-4 text-xs text-muted-foreground">
-										<CheckCircle2 className="h-4 w-4 text-[var(--analysis-completed)]" />
-										No recent runtime or tool failures.
-									</div>
-								) : (
-									<ul className="pb-3">
-										{runtimeFailures.slice(0, 2).map((service) => (
-											<li key={service.name} className="flex items-start gap-2 px-4 py-2.5">
-												<AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--analysis-error)]" />
-												<div className="min-w-0">
-													<p className="truncate text-xs font-medium">{service.name}</p>
-													<p className="mt-0.5 text-[10px] text-muted-foreground">Runtime service reports an error</p>
-												</div>
-											</li>
-										))}
-										{remote.auditErrors?.slice(0, Math.max(1, 4 - runtimeFailures.length)).map((event, index) => (
-											<li key={`${event.timestamp}-${event.toolName}-${index}`}>
-												<Link
-													to="/audit"
-													className="flex items-start gap-2 px-4 py-2.5 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-												>
-													<AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--analysis-error)]" />
-													<span className="min-w-0">
-														<span className="block truncate text-xs font-medium">{event.toolName}</span>
-														<span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
-															{event.errorMessage || event.action || event.actionClass} · {formatRelativeTime(event.timestamp)}
-														</span>
-													</span>
-												</Link>
-											</li>
-										))}
-									</ul>
-								)}
-							</div>
-						</SectionCard>
-
-						<div className="mt-3 grid grid-cols-2 gap-2">
-							<Link
-								to="/tasks"
-								className="flex items-center justify-center gap-2 rounded-lg border border-border/70 bg-card px-3 py-2 text-xs font-medium hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							>
-								<BookOpen className="h-3.5 w-3.5" />
-								All tasks
-							</Link>
-							<Link
-								to="/graph"
-								className="flex items-center justify-center gap-2 rounded-lg border border-border/70 bg-card px-3 py-2 text-xs font-medium hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							>
-								<Database className="h-3.5 w-3.5" />
-								Knowledge graph
-							</Link>
-						</div>
-					</aside>
+		),
+	};
+	// Overview data: all tasks, not the Analytics filters.
+	const overviewAttention = getAttentionItems(tasks);
+	const overviewThroughput = buildThroughput(tasks, period);
+	const doneByDay = Array.from({ length: 7 }, (_, i) => {
+		const day = new Date();
+		day.setHours(0, 0, 0, 0);
+		day.setDate(day.getDate() - (6 - i));
+		const next = new Date(day);
+		next.setDate(day.getDate() + 1);
+		return tasks.filter((t) => t.completedAt && t.completedAt >= day && t.completedAt < next).length;
+	});
+	const openTasks = tasks.filter((t) => !t.archived && t.lifecycleState !== "done" && !t.completedAt);
+	const inProgressCount = openTasks.filter((t) => t.status.toLowerCase().includes("progress")).length;
+	const blockedCount = openTasks.filter((t) => t.status.toLowerCase() === "blocked").length;
+	const summarySentence = loading
+		? "Loading your project…"
+		: [
+				`${inProgressCount} in progress`,
+				blockedCount > 0 ? `${blockedCount} blocked` : null,
+				overviewAttention.length > 0 ? `${overviewAttention.length} need your attention` : "nothing needs your attention",
+			]
+				.filter(Boolean)
+				.join(" · ");
+	const problems =
+		remote.auditErrors === null && remote.services === null
+			? null
+			: [
+					...runtimeFailures.map((s) => ({ key: `svc-${s.name}`, title: s.name, detail: "Runtime service reports an error" })),
+					...(remote.auditErrors ?? []).slice(0, 4).map((e, i) => ({
+						key: `audit-${e.timestamp}-${i}`,
+						title: e.toolName,
+						detail: `${e.errorMessage || e.action || e.actionClass} · ${formatRelativeTime(e.timestamp)}`,
+					})),
+				];
+	const overviewBlocks: Record<MainWidgetId | SideWidgetId, ReactNode> = {
+		continue: (
+			<ContinueWorking
+				tasks={tasks}
+				timedTaskId={timedTask?.id}
+				trackedSeconds={(t) =>
+					(t.timeSpent ?? 0) + (activeTimers.some((a) => a.taskId === t.id) ? getElapsedForTask(t.id) / 1000 : 0)
+				}
+			/>
+		),
+		attention: <NeedsAttention items={overviewAttention} />,
+		progress: <ProgressChart buckets={overviewThroughput} period={period} onPeriodChange={setPeriod} />,
+		review: (
+			<ReviewInbox
+				proposedMemories={remote.memories?.filter((m) => m.status === "proposed").length}
+				decisionsWaiting={remote.decisionReview?.length}
+				specCoverage={remote.sdd?.stats.coverage}
+			/>
+		),
+		activity: (
+			<Panel title="Recent activity" hint="What changed in this project lately.">
+				<div className="px-2 pb-2">
+					<ActivityFeed limit={8} showFilter={false} showHeader={false} />
 				</div>
+			</Panel>
+		),
+		problems: <Problems failures={problems} />,
+	};
+	const mainIds = dashboardLayout.layout.main.filter(dashboardLayout.isVisible);
+	const sideIds = dashboardLayout.layout.side.filter(dashboardLayout.isVisible);
+	const nothingVisible = !dashboardLayout.isVisible("summary") && mainIds.length === 0 && sideIds.length === 0;
+	return (
+		<div ref={scrollRef} className="analysis-workbench h-full overflow-auto bg-[var(--analysis-canvas)] text-foreground">
+			<div className="w-full px-4 py-5 sm:px-6">
+				<PageHeader
+					title="Dashboard"
+					status={{
+						label: remote.errors.length > 0 ? "Partial data" : remote.loading ? "Refreshing" : "Up to date",
+						tone: remote.errors.length > 0 ? "warning" : "success",
+						dot: true,
+					}}
+					description={summarySentence}
+					meta={[
+						{
+							id: "updated",
+							label: "Updated",
+							content: remote.refreshedAt ? formatRelativeTime(remote.refreshedAt) : "—",
+						},
+					]}
+					tabs={[
+						{ value: "overview", label: "Overview" },
+						{ value: "analytics", label: "Analytics" },
+					]}
+					tab={tab}
+					onTabChange={setTab}
+					actions={[
+						{
+							id: "customize",
+							label: "Customize",
+							icon: <SlidersHorizontal className="h-4 w-4" />,
+							onSelect: () => {
+								setTab("overview");
+								setCustomizeOpen(true);
+							},
+						},
+						{
+							id: "refresh",
+							label: "Refresh",
+							icon: <RefreshCw className="h-4 w-4" />,
+							disabled: remote.loading,
+							onSelect: () => {
+								void loadRemoteData();
+								return "Refreshing dashboard";
+							},
+						},
+					]}
+					// The compact sticky bar overlaps this scroll container's padded content; the tabs are enough.
+					condense={false}
+				>
+					<TabsContent value="overview" className="pt-5">
+						{dashboardLayout.isVisible("summary") && (
+							<div className="mb-5">
+								<SummaryStrip tasks={tasks} doneByDay={doneByDay} />
+							</div>
+						)}
+						{nothingVisible && (
+							<EmptyState
+								icon={LayoutDashboard}
+								title="Every widget is hidden"
+								detail="Use Customize to choose what this dashboard shows."
+							/>
+						)}
+						{(mainIds.length > 0 || sideIds.length > 0) && (
+							<div className={cn("grid items-start gap-5", mainIds.length > 0 && sideIds.length > 0 && "xl:grid-cols-[minmax(0,1fr)_22rem]")}>
+								{mainIds.length > 0 && (
+									<div className="min-w-0 space-y-5">
+										{mainIds.map((id) => (
+											<div key={id} data-dashboard-widget={id}>{overviewBlocks[id]}</div>
+										))}
+									</div>
+								)}
+								{sideIds.length > 0 && (
+									<div className="min-w-0 space-y-5">
+										{sideIds.map((id) => (
+											<div key={id} data-dashboard-widget={id}>{overviewBlocks[id]}</div>
+										))}
+									</div>
+								)}
+							</div>
+						)}
+					</TabsContent>
+					<TabsContent value="analytics" className="pt-5">
+				<FilterBar
+					period={period}
+					onPeriodChange={setPeriod}
+					assignee={assignee}
+					onAssigneeChange={setAssignee}
+					label={label}
+					onLabelChange={setLabel}
+					assignees={assignees}
+					labels={labels}
+					filteredCount={filteredTasks.length}
+				/>
+
+				{loading ? (
+					<div className="mb-5 grid grid-cols-3 gap-4">
+						<Skeleton className="h-[68px]" />
+						<Skeleton className="h-[68px]" />
+						<Skeleton className="h-[68px]" />
+					</div>
+				) : (
+					<div className="mb-5 grid grid-cols-3 gap-4">
+						<MetricTile label="Created" value={String(throughputSummary.created)} tone="created" />
+						<MetricTile label="Completed" value={String(throughputSummary.completed)} tone="completed" />
+						<MetricTile
+							label="Flow gap"
+							value={`${gap > 0 ? "+" : ""}${gap}`}
+							detail={gap > 0 ? "intake above output" : gap < 0 ? "output above intake" : "balanced"}
+							tone={gap > 0 ? "risk" : undefined}
+						/>
+					</div>
+				)}
+						<div className="space-y-5">
+							{analyticsBlocks.throughput}
+							<div className="grid gap-5 lg:grid-cols-2">
+								<div className="min-w-0">{analyticsBlocks.aging}</div>
+								<div className="min-w-0">{analyticsBlocks.leadtime}</div>
+							</div>
+							{analyticsBlocks.knowledge}
+						</div>
+					</TabsContent>
+				</PageHeader>
 			</div>
+			<DashboardCustomize
+				open={customizeOpen}
+				onOpenChange={setCustomizeOpen}
+				layout={dashboardLayout.layout}
+				isVisible={dashboardLayout.isVisible}
+				onToggle={dashboardLayout.toggle}
+				onMove={dashboardLayout.move}
+				onReset={dashboardLayout.reset}
+			/>
 		</div>
 	);
 }

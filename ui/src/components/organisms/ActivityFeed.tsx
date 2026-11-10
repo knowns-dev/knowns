@@ -10,6 +10,7 @@ import { ScrollArea } from "../ui/ScrollArea";
 interface ActivityFeedProps {
 	limit?: number;
 	showFilter?: boolean;
+	showHeader?: boolean;
 	onTaskClick?: (taskId: string) => void;
 }
 
@@ -95,6 +96,7 @@ function getActivityColor(changes: ActivityType["changes"]): string {
 export default function ActivityFeed({
 	limit = 20,
 	showFilter = true,
+	showHeader = true,
 	onTaskClick,
 }: ActivityFeedProps) {
 	const [activities, setActivities] = useState<ActivityType[]>([]);
@@ -139,8 +141,8 @@ export default function ActivityFeed({
 
 	return (
 		<div className="flex flex-col h-full">
-			{/* Header */}
-			<div className="flex items-center justify-between mb-3">
+			{/* Header (a host panel with its own title hides it) */}
+			<div className={showHeader ? "flex items-center justify-between mb-3" : "hidden"}>
 				<div className="flex items-center gap-2">
 					<Activity className="w-5 h-5" />
 					<h3 className="font-semibold">Recent Activity</h3>
