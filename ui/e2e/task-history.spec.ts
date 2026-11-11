@@ -11,10 +11,10 @@ test.afterAll(() => {
 	server?.cleanup();
 });
 
-/** Helper: open the History tab of the task detail. */
+/** Helper: open the Activity tab (the version history) of the task detail. */
 async function expandHistory(page: import("@playwright/test").Page) {
 	const dialog = page.locator('[role="dialog"]');
-	const historyTab = dialog.getByRole("tab", { name: "History" });
+	const historyTab = dialog.getByRole("tab", { name: "Activity" });
 	await historyTab.click();
 	await expect(historyTab).toHaveAttribute("aria-selected", "true");
 	await expect(dialog.getByRole("region", { name: "History" })).toBeVisible();
@@ -37,7 +37,7 @@ test.describe("Task History Panel", () => {
 			await expect(page.getByRole("heading", { name: "History Task", exact: true })).toBeVisible();
 		});
 
-		await test.step("Open the History tab", async () => {
+		await test.step("Open the Activity tab", async () => {
 			await expandHistory(page);
 		});
 

@@ -5,6 +5,7 @@ import { Checkbox } from "@/ui/components/ui/knowns/checkbox";
 import { Input } from "@/ui/components/ui/knowns/input";
 import type { Task } from "@/ui/models/task";
 import { cn, focusRing } from "@/ui/lib/knowns/utils";
+import { ProgressReadout } from "@/ui/components/ui/knowns/blocks/task-detail";
 import { DetailSection } from "./DetailSection";
 import { moveItem } from "./types";
 
@@ -86,6 +87,7 @@ export function TaskAcceptanceCriteria({ task, onSave, saving }: TaskAcceptanceC
 			<div role="status" aria-live="polite" className="sr-only">
 				{announce}
 			</div>
+			{totalCount > 0 && <ProgressReadout value={completedCount} total={totalCount} unit="criteria" label="Acceptance criteria done" />}
 			{totalCount > 0 && (
 				<ul aria-label="Acceptance criteria" className="-mx-2 flex flex-col">
 					{ac.map((item, index) => (

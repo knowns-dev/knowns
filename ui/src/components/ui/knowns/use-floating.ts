@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type Ref, type RefObject } from "react";
+import { MOTION } from "@/ui/lib/knowns/motion-utils";
 
 export type FloatingSide = "top" | "bottom" | "left" | "right";
 export type FloatingAlign = "start" | "center" | "end";
@@ -103,8 +104,8 @@ export function setRefs<T>(node: T | null, ...refs: (Ref<T> | undefined)[]) {
 
 type Placed = { width?: number } & Position;
 
-/** How long a closing panel stays mounted: a little over the 120ms exit (`--kn-dur-fast`). */
-export const FLOAT_EXIT_MS = 140;
+/** How long a closing panel stays mounted: the exit (`--kn-dur-fast`) plus 20ms of room, so the timer never cuts the fade. */
+export const FLOAT_EXIT_MS = MOTION.fast + 20;
 
 /**
  * The shared enter and exit of every floating panel: a short opacity fade, no travel. The exit is the enter
