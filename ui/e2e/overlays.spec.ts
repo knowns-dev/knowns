@@ -28,21 +28,20 @@ test.describe("Nested overlays", () => {
 	test("create form: select, searchable parent picker and assignee picker work inside the form", async ({ page }) => {
 		await page.goto(`${server.baseURL}/kanban`);
 		await page.getByRole("button", { name: /new task/i }).click();
-		const form = page.locator('[role="dialog"]').filter({ has: page.getByPlaceholder("Enter task title...") });
+		const form = page.getByRole("dialog", { name: "New task" });
 		await expect(form).toBeVisible();
 		await page.getByPlaceholder("Enter task title...").fill("Overlay Created Child");
 
-		await test.step("priority select opens inside the form and picks", async () => {
-			await form.getByRole("combobox", { name: "Priority", exact: true }).click();
-			await page.getByRole("listbox", { name: "Priority" }).getByRole("option", { name: "High" }).click();
-			await expect(form.getByRole("combobox", { name: "Priority", exact: true })).toHaveText(/High/);
+		await test.step("priority select picks", async () => {
+			await form.getByLabel("Priority", { exact: true }).selectOption("high");
+			await expect(form.getByLabel("Priority", { exact: true })).toHaveValue("high");
 		});
 
 		await test.step("Escape closes only the open list, not the form", async () => {
-			await form.getByRole("combobox", { name: "Priority", exact: true }).click();
-			await expect(page.getByRole("listbox", { name: "Priority" })).toBeVisible();
+			await form.getByRole("combobox", { name: "Parent task", exact: true }).click();
+			await expect(page.getByRole("combobox", { name: /Search Parent task/ })).toBeVisible();
 			await page.keyboard.press("Escape");
-			await expect(page.getByRole("listbox", { name: "Priority" })).toBeHidden();
+			await expect(page.getByRole("combobox", { name: /Search Parent task/ })).toBeHidden();
 			await expect(form).toBeVisible();
 		});
 

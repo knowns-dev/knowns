@@ -22,34 +22,25 @@ test.describe("Full Task Create Form", () => {
 			await page.getByPlaceholder("Enter task title...").fill("Implement user authentication");
 		});
 
-		await test.step("Type description in editor", async () => {
-			const descPlaceholder = page.getByText("Add a more detailed description...");
-			if (await descPlaceholder.isVisible({ timeout: 2000 }).catch(() => false)) {
-				await descPlaceholder.click();
-				await page.keyboard.type("Users need to login with email and password");
-			}
+		await test.step("Type description", async () => {
+			await page.getByLabel("Description").fill("Users need to login with email and password");
 		});
 
 		await test.step("Change priority to High", async () => {
-			const prioritySection = page.locator("text=PRIORITY").locator("..");
-			const combobox = prioritySection.getByRole("combobox");
-			if (await combobox.isVisible({ timeout: 2000 }).catch(() => false)) {
-				await combobox.click();
-				await page.getByRole("option", { name: /high/i }).click();
-			}
+			await page.getByLabel("Priority", { exact: true }).selectOption("high");
+		});
+
+		await test.step("Add labels", async () => {
+			await page.getByLabel("Labels", { exact: true }).fill("auth");
+			await page.keyboard.press("Enter");
+			await expect(page.getByRole("button", { name: "Remove label auth" })).toBeVisible();
 		});
 
 		await test.step("Add acceptance criteria", async () => {
-			const addBtn = page.getByRole("button", { name: "Add an item" });
-			if (await addBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-				await addBtn.click();
-				await page.getByPlaceholder("Add an item...").fill("User can login");
-				await page.getByRole("button", { name: "Add" }).first().click();
-
-				await page.getByRole("button", { name: "Add an item" }).click();
-				await page.getByPlaceholder("Add an item...").fill("Invalid credentials show error");
-				await page.getByRole("button", { name: "Add" }).first().click();
-			}
+			await page.getByRole("button", { name: "Add an item" }).click();
+			await page.getByLabel("Acceptance criterion 1").fill("User can login");
+			await page.keyboard.press("Enter");
+			await page.getByLabel("Acceptance criterion 2").fill("Invalid credentials show error");
 		});
 
 		await test.step("Submit the task", async () => {
@@ -545,12 +536,8 @@ test.describe("Full Workflow: Pure UI", () => {
 			await page.getByRole("button", { name: /new task/i }).first().click();
 			await page.getByPlaceholder("Enter task title...").fill("Workflow Task");
 
-			const addBtn = page.getByRole("button", { name: "Add an item" });
-			if (await addBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-				await addBtn.click();
-				await page.getByPlaceholder("Add an item...").fill("Step completed");
-				await page.getByRole("button", { name: "Add" }).first().click();
-			}
+			await page.getByRole("button", { name: "Add an item" }).click();
+			await page.getByLabel("Acceptance criterion 1").fill("Step completed");
 
 			await page.getByRole("button", { name: "Create Task" }).click();
 			await page.waitForTimeout(500);

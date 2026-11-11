@@ -1,26 +1,18 @@
-import type React from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { AlignLeft, ClipboardCheck, Plus, Trash2, Maximize2, Minimize2, X, FileText, StickyNote } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Task, TaskPriority, TaskStatus } from "@models/task";
 import { useCurrentUser } from "../../contexts/UserContext";
-import { useUIPreferences } from "../../contexts/UIPreferencesContext";
 import { useConfig } from "../../contexts/ConfigContext";
 import { createTask } from "../../api/client";
 import { toast } from "../ui/sonner";
 import AssigneeDropdown from "./AssigneeDropdown";
-import { MDEditor } from "../editor";
-import { ScrollArea } from "../ui/ScrollArea";
-import { Sheet, SheetContent } from "../ui/sheet";
-import { Dialog, DialogContent, DialogTitle } from "../ui/dialog";
-import { Button } from "../ui/button";
-import { Badge } from "../ui/badge";
-import { Input } from "../ui/input";
-import { Label } from "../ui/label";
+import { Dialog } from "@/ui/components/ui/knowns/dialog";
+import { Button } from "@/ui/components/ui/knowns/button";
 import { Combobox } from "@/ui/components/ui/knowns/combobox";
-import { cn } from "@/ui/lib/utils";
-import { buildStatusOptions, getStatusBadgeClasses, type ColorName } from "../../utils/colors";
-import { useIsMobile } from "../../hooks/useMobile";
+import { Field, Input } from "@/ui/components/ui/knowns/input";
+import { Select } from "@/ui/components/ui/knowns/select";
+import { Tag } from "@/ui/components/ui/knowns/tag";
+import { Textarea } from "@/ui/components/ui/knowns/textarea";
+import { buildStatusOptions } from "../../utils/colors";
 
 interface TaskCreateFormProps {
 	isOpen: boolean;
@@ -29,201 +21,100 @@ interface TaskCreateFormProps {
 	onCreated: () => void;
 }
 
-const priorityOptions: { value: TaskPriority; label: string }[] = [
+const PRIORITY_OPTIONS: { value: TaskPriority; label: string }[] = [
 	{ value: "low", label: "Low" },
 	{ value: "medium", label: "Medium" },
 	{ value: "high", label: "High" },
 ];
 
-const priorityColors: Record<TaskPriority, string> = {
-	low: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400",
-	medium: "bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300",
-	high: "bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300",
-};
+const TITLE_MAX = 200;
+const PREFIX_PATTERN = /^[A-Z][A-Z0-9]{1,7}$/;
 
-export default function TaskCreateForm({
-	isOpen,
-	allTasks,
-	onClose,
-	onCreated,
-}: TaskCreateFormProps) {
+interface CriterionRow {
+	id: string;
+	text: string;
+}
+
+type FieldName = "title" | "prefix" | "criteria" | "labels";
+type Errors = Partial<Record<FieldName, string>>;
+
+const newRow = (text = ""): CriterionRow => ({ id: crypto.randomUUID(), text });
+
+export default function TaskCreateForm({ isOpen, allTasks, onClose, onCreated }: TaskCreateFormProps) {
 	const { currentUser } = useCurrentUser();
 	const { config } = useConfig();
-	const titleInputRef = useRef<HTMLInputElement>(null);
-	const contentRef = useRef<HTMLDivElement>(null);
+	const uid = useId();
+	const formId = `${uid}-form`;
+	const ids = {
+		title: `${uid}-title`,
+		description: `${uid}-description`,
+		status: `${uid}-status`,
+		priority: `${uid}-priority`,
+		labels: `${uid}-labels`,
+		parent: `${uid}-parent`,
+		prefix: `${uid}-prefix`,
+	};
 
-	// Build status options from config
-	const statusOptions = useMemo(() => {
-		const statuses = config.statuses || ["todo", "in-progress", "in-review", "done", "blocked"];
-		return buildStatusOptions(statuses);
-	}, [config.statuses]);
+	const statusOptions = useMemo(
+		() => buildStatusOptions(config.statuses || ["todo", "in-progress", "in-review", "done", "blocked"]),
+		[config.statuses],
+	);
 
-	// Get status colors from config
-	const configStatusColors = (config.statusColors || {}) as Record<string, ColorName>;
-
-	// Form states
 	const [title, setTitle] = useState("");
 	const [description, setDescription] = useState("");
 	const [status, setStatus] = useState<TaskStatus>("todo");
 	const [priority, setPriority] = useState<TaskPriority>("medium");
 	const [assignee, setAssignee] = useState("");
 	const [labels, setLabels] = useState<string[]>([]);
-	const [parentId, setParentId] = useState<string>("");
-	const [taskIDPrefix, setTaskIDPrefix] = useState("");
-	const [acceptanceCriteria, setAcceptanceCriteria] = useState<{ id: string; text: string }[]>([]);
-	const [implementationPlan, setImplementationPlan] = useState("");
-	const [implementationNotes, setImplementationNotes] = useState("");
+	const [labelDraft, setLabelDraft] = useState("");
+	const [parentId, setParentId] = useState("");
+	const [prefix, setPrefix] = useState("");
+	const [criteria, setCriteria] = useState<CriterionRow[]>([]);
+	const [showAdvanced, setShowAdvanced] = useState(false);
 
-	// UI states
+	const [errors, setErrors] = useState<Errors>({});
+	const [submitError, setSubmitError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-	const [success, setSuccess] = useState(false);
-	const [newACText, setNewACText] = useState("");
-	const [addingAC, setAddingAC] = useState(false);
-	const [newLabel, setNewLabel] = useState("");
-	const [addingLabel, setAddingLabel] = useState(false);
 
-	// Layout preference from context
-	const { preferences, toggleTaskCreateLayout } = useUIPreferences();
-	const isMaximized = preferences.taskCreateLayout === "maximized";
-	const isMobile = useIsMobile();
+	const criterionRefs = useRef(new Map<string, HTMLInputElement>());
+	const pendingFocus = useRef<string | null>(null);
 
-	const newACInputRef = useRef<HTMLInputElement>(null);
-
-	// Animation variants
-	const contentVariants = {
-		hidden: { opacity: 0, y: 20, scale: 0.98 },
-		visible: {
-			opacity: 1,
-			y: 0,
-			scale: 1,
-			transition: { duration: 0.2, ease: "easeOut" }
-		},
-		exit: {
-			opacity: 0,
-			y: 10,
-			scale: 0.98,
-			transition: { duration: 0.15, ease: "easeIn" }
-		}
-	};
-
-	// Reset form when closed
-	useEffect(() => {
-		if (!isOpen) {
-			setTitle("");
-			setDescription("");
-			setStatus("todo");
-			setPriority("medium");
-			setAssignee("");
-			setLabels([]);
-			setParentId("");
-			setTaskIDPrefix("");
-			setAcceptanceCriteria([]);
-			setImplementationPlan("");
-			setImplementationNotes("");
-			setError(null);
-			setSuccess(false);
-			setNewACText("");
-			setAddingAC(false);
-			setNewLabel("");
-			setAddingLabel(false);
-		}
-	}, [isOpen]);
-
-	// Focus title input when opened
+	// Keep the dialog in the DOM only while open (plus its exit fade), so its labels never leak into page queries.
+	const [mounted, setMounted] = useState(isOpen);
 	useEffect(() => {
 		if (isOpen) {
-			setTimeout(() => titleInputRef.current?.focus(), 100);
+			setMounted(true);
+			return;
 		}
-	}, [isOpen, isMaximized]);
+		const timer = window.setTimeout(() => setMounted(false), 250);
+		return () => window.clearTimeout(timer);
+	}, [isOpen]);
 
+	// Start clean every time the form closes.
 	useEffect(() => {
-		if (addingAC && newACInputRef.current) newACInputRef.current.focus();
-	}, [addingAC]);
+		if (isOpen) return;
+		setTitle("");
+		setDescription("");
+		setStatus("todo");
+		setPriority("medium");
+		setAssignee("");
+		setLabels([]);
+		setLabelDraft("");
+		setParentId("");
+		setPrefix("");
+		setCriteria([]);
+		setShowAdvanced(false);
+		setErrors({});
+		setSubmitError(null);
+		setSaving(false);
+	}, [isOpen]);
 
-	// AC handlers
-	const handleACAdd = useCallback(() => {
-		if (!newACText.trim()) return;
-		setAcceptanceCriteria(prev => [
-			...prev,
-			{ id: crypto.randomUUID(), text: newACText.trim() },
-		]);
-		setNewACText("");
-		setAddingAC(false);
-	}, [newACText]);
-
-	const handleACDelete = useCallback((id: string) => {
-		setAcceptanceCriteria(prev => prev.filter((ac) => ac.id !== id));
-	}, []);
-
-	// Label handlers
-	const handleLabelAdd = useCallback(() => {
-		if (!newLabel.trim()) return;
-		if (!labels.includes(newLabel.trim())) {
-			setLabels(prev => [...prev, newLabel.trim()]);
-		}
-		setNewLabel("");
-		setAddingLabel(false);
-	}, [newLabel, labels]);
-
-	const handleLabelRemove = useCallback((label: string) => {
-		setLabels(prev => prev.filter((l) => l !== label));
-	}, []);
-
-	const handleSubmit = async (e: React.FormEvent) => {
-		e.preventDefault();
-		setError(null);
-
-		if (!title.trim()) {
-			setError("Title is required");
-			return;
-		}
-		const normalizedPrefix = taskIDPrefix.trim().toUpperCase();
-		if (normalizedPrefix && !/^[A-Z][A-Z0-9]{1,7}$/.test(normalizedPrefix)) {
-			setError("Task ID prefix must be 2-8 letters or numbers and start with a letter");
-			return;
-		}
-
-		setSaving(true);
-
-		try {
-			const taskData = {
-				title: title.trim(),
-				description: description.trim() || undefined,
-				status,
-				priority,
-				labels,
-				assignee: assignee.trim() || undefined,
-				parent: parentId || undefined,
-				prefix: normalizedPrefix || undefined,
-				acceptanceCriteria: acceptanceCriteria.map((ac) => ({
-					text: ac.text,
-					completed: false,
-				})),
-				implementationPlan: implementationPlan.trim() || undefined,
-				implementationNotes: implementationNotes.trim() || undefined,
-			};
-
-			await createTask(taskData);
-			setSuccess(true);
-			toast.success("Task created successfully", {
-				description: title.trim(),
-			});
-
-			setTimeout(() => {
-				onCreated();
-				onClose();
-			}, 800);
-		} catch (err) {
-			const errorMessage = err instanceof Error ? err.message : "Failed to create task";
-			setError(errorMessage);
-			toast.error("Failed to create task", {
-				description: errorMessage,
-			});
-		} finally {
-			setSaving(false);
-		}
-	};
+	// Focus a freshly added acceptance criterion row.
+	useEffect(() => {
+		if (!pendingFocus.current) return;
+		criterionRefs.current.get(pendingFocus.current)?.focus();
+		pendingFocus.current = null;
+	}, [criteria]);
 
 	const parentOptions = useMemo(
 		() => [
@@ -233,603 +124,334 @@ export default function TaskCreateForm({
 		[allTasks],
 	);
 
-	// Header component (shared)
-	const Header = (
-		<div className="flex items-center justify-between gap-2 p-3 sm:p-4 border-b bg-green-700">
-			<div className="flex-1 min-w-0">
-				<span className="text-green-100 text-xs font-medium uppercase tracking-wide">New Task</span>
-				<input
-					ref={titleInputRef}
-					type="text"
-					value={title}
-					onChange={(e) => setTitle(e.target.value)}
-					placeholder="Enter task title..."
-					className="w-full text-lg font-semibold bg-white/20 text-white placeholder-white/60 border-0 rounded px-2 py-1 mt-1 focus:outline-none focus:ring-2 focus:ring-white/50"
-					disabled={saving}
-				/>
-			</div>
-			<div className="flex items-center gap-1 shrink-0">
-				{/* Hide maximize button on mobile - only sheet mode available */}
-				{!isMobile && (
-					<Button
-						variant="ghost"
-						size="icon"
-						onClick={toggleTaskCreateLayout}
-						className="h-8 w-8 text-foreground hover:text-foreground"
-						title={isMaximized ? "Minimize" : "Maximize"}
-					>
-						{isMaximized ? (
-							<Minimize2 className="w-4 h-4" />
-						) : (
-							<Maximize2 className="w-4 h-4" />
-						)}
-					</Button>
-				)}
-				<Button
-					variant="ghost"
-					size="icon"
-					onClick={onClose}
-					className="h-8 w-8 text-foreground hover:text-foreground"
-					title="Close"
-				>
-					<X className="w-4 h-4" />
-				</Button>
-			</div>
-		</div>
-	);
+	const knownLabels = useMemo(() => {
+		const all = new Set<string>();
+		for (const t of allTasks) for (const l of t.labels ?? []) all.add(l);
+		return [...all].filter((l) => !labels.includes(l)).sort();
+	}, [allTasks, labels]);
 
-	// Notifications component (shared)
-	const Notifications = (success || error) && (
-		<div className="px-3 sm:px-4 pt-3 sm:pt-4">
-			{success && (
-				<div className="bg-green-50 dark:bg-green-900/50 border border-green-200 dark:border-green-700 text-green-700 dark:text-green-300 px-4 py-2 rounded-lg text-sm">
-					Task created successfully!
-				</div>
-			)}
-			{error && (
-				<div className="bg-red-50 dark:bg-red-900/50 border border-red-200 dark:border-red-700 text-red-700 dark:text-red-300 px-4 py-2 rounded-lg text-sm">
-					{error}
-				</div>
-			)}
-		</div>
-	);
+	const clearError = (name: FieldName) => setErrors((prev) => (prev[name] ? { ...prev, [name]: undefined } : prev));
 
-	// Main content section (shared)
-	const MainContent = (
-		<div className="p-3 sm:p-6 space-y-3 sm:space-y-6">
-			{/* Description */}
-			<section>
-				<div className="flex items-center gap-2 mb-3">
-					<AlignLeft className="w-5 h-5 text-muted-foreground" />
-					<h3 className="font-semibold text-sm text-muted-foreground">Description</h3>
-				</div>
-				<MDEditor
-					markdown={description}
-					onChange={setDescription}
-					placeholder="Add a more detailed description..."
-					readOnly={saving}
-				/>
-			</section>
+	// Labels
+	const addLabel = (raw: string) => {
+		const label = raw.trim().replace(/,$/, "").trim();
+		if (!label) return;
+		setLabels((prev) => (prev.includes(label) ? prev : [...prev, label]));
+		setLabelDraft("");
+		clearError("labels");
+	};
+	const onLabelKey = (e: KeyboardEvent<HTMLInputElement>) => {
+		if (e.key === "Enter" || e.key === ",") {
+			if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) return; // submit shortcut
+			e.preventDefault();
+			addLabel(labelDraft);
+		} else if (e.key === "Backspace" && !labelDraft) {
+			setLabels((prev) => prev.slice(0, -1));
+		}
+	};
 
-			{/* Acceptance Criteria */}
-			<section>
-				<div className="flex items-center justify-between mb-3">
-					<div className="flex items-center gap-2">
-						<ClipboardCheck className="w-5 h-5 text-muted-foreground" />
-						<h3 className="font-semibold text-sm text-muted-foreground">Acceptance Criteria</h3>
-						{acceptanceCriteria.length > 0 && (
-							<span className="text-xs text-muted-foreground">
-								({acceptanceCriteria.length})
-							</span>
-						)}
-					</div>
-				</div>
+	// Acceptance criteria
+	const addCriterion = () => {
+		const row = newRow();
+		pendingFocus.current = row.id;
+		setCriteria((prev) => [...prev, row]);
+	};
+	const removeCriterion = (id: string, focusPrev = false) => {
+		setCriteria((prev) => {
+			const index = prev.findIndex((r) => r.id === id);
+			if (focusPrev) {
+				const target = prev[index - 1] ?? prev[index + 1];
+				if (target) pendingFocus.current = target.id;
+			}
+			return prev.filter((r) => r.id !== id);
+		});
+		clearError("criteria");
+	};
+	const onCriterionKey = (e: KeyboardEvent<HTMLInputElement>, row: CriterionRow) => {
+		if (e.key === "Enter" && !(e.metaKey || e.ctrlKey)) {
+			e.preventDefault();
+			if (row.text.trim()) addCriterion();
+		} else if (e.key === "Backspace" && !row.text) {
+			e.preventDefault();
+			removeCriterion(row.id, true);
+		}
+	};
 
-				{/* AC List */}
-				<div className="space-y-2">
-					{acceptanceCriteria.map((ac) => (
-						<div
-							key={ac.id}
-							className="flex items-start gap-2 bg-muted/50 rounded-lg px-3 py-2 group hover:shadow-sm transition-shadow"
-						>
-							<input
-								type="checkbox"
-								checked={false}
-								disabled
-								className="mt-1 w-4 h-4 rounded cursor-not-allowed opacity-50"
-							/>
-							<span className="flex-1 text-sm">{ac.text}</span>
-							<button
-								type="button"
-								onClick={() => handleACDelete(ac.id)}
-								className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-500 p-1 transition-all"
-								title="Delete"
-							>
-								<Trash2 className="w-4 h-4" />
-							</button>
-						</div>
-					))}
-				</div>
+	const validate = (): Errors => {
+		const next: Errors = {};
+		const trimmed = title.trim();
+		if (!trimmed) next.title = "Title is required.";
+		else if (trimmed.length > TITLE_MAX) next.title = `Title must be ${TITLE_MAX} characters or fewer.`;
 
-				{/* Add AC */}
-				{addingAC ? (
-					<div className="mt-2 bg-muted/50 rounded-lg px-3 py-2">
-						<input
-							ref={newACInputRef}
-							type="text"
-							value={newACText}
-							onChange={(e) => setNewACText(e.target.value)}
-							onKeyDown={(e) => {
-								if (e.key === "Enter" && newACText.trim()) {
-									e.preventDefault();
-									handleACAdd();
-								}
-								if (e.key === "Escape") {
-									setNewACText("");
-									setAddingAC(false);
-								}
-							}}
-							placeholder="Add an item..."
-							className="w-full border border-input rounded px-2 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-green-500"
-							disabled={saving}
-						/>
-						<div className="flex gap-2 mt-2">
-							<Button
-								type="button"
-								size="sm"
-								onClick={handleACAdd}
-								disabled={!newACText.trim() || saving}
-								className="bg-green-700 hover:bg-green-800 text-white"
-							>
-								Add
-							</Button>
-							<Button
-								type="button"
-								variant="ghost"
-								size="sm"
-								onClick={() => {
-									setNewACText("");
-									setAddingAC(false);
-								}}
-							>
-								Cancel
-							</Button>
-						</div>
-					</div>
-				) : (
-					<button
-						type="button"
-						onClick={() => setAddingAC(true)}
-						className="mt-2 flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground hover:bg-muted px-3 py-2 rounded-lg transition-colors w-full"
-						disabled={saving}
-					>
-						<Plus className="w-4 h-4" />
-						<span>Add an item</span>
-					</button>
-				)}
-			</section>
+		const normalizedPrefix = prefix.trim().toUpperCase();
+		if (normalizedPrefix && !PREFIX_PATTERN.test(normalizedPrefix))
+			next.prefix = "Use 2 to 8 letters or numbers, starting with a letter.";
 
-			{/* Implementation Plan */}
-			<section>
-				<div className="flex items-center gap-2 mb-3">
-					<FileText className="w-5 h-5 text-muted-foreground" />
-					<h3 className="font-semibold text-sm text-muted-foreground">Implementation Plan</h3>
-					<span className="text-xs text-muted-foreground">(optional)</span>
-				</div>
-				<MDEditor
-					markdown={implementationPlan}
-					onChange={setImplementationPlan}
-					placeholder="Describe how you plan to implement this task..."
-					readOnly={saving}
-				/>
-			</section>
+		const seen = new Set<string>();
+		for (const row of criteria) {
+			const text = row.text.trim().toLowerCase();
+			if (!text) continue;
+			if (seen.has(text)) {
+				next.criteria = "Two acceptance criteria are identical.";
+				break;
+			}
+			seen.add(text);
+		}
+		return next;
+	};
 
-			{/* Implementation Notes */}
-			<section>
-				<div className="flex items-center gap-2 mb-3">
-					<StickyNote className="w-5 h-5 text-muted-foreground" />
-					<h3 className="font-semibold text-sm text-muted-foreground">Implementation Notes</h3>
-					<span className="text-xs text-muted-foreground">(optional)</span>
-				</div>
-				<MDEditor
-					markdown={implementationNotes}
-					onChange={setImplementationNotes}
-					placeholder="Add notes, observations, or any other relevant information..."
-					readOnly={saving}
-				/>
-			</section>
-		</div>
-	);
+	const focusFirstInvalid = (found: Errors) => {
+		const order: [FieldName, () => HTMLElement | null | undefined][] = [
+			["title", () => document.getElementById(ids.title)],
+			["prefix", () => document.getElementById(ids.prefix)],
+			["criteria", () => criterionRefs.current.get(criteria[0]?.id ?? "")],
+		];
+		for (const [name, get] of order) {
+			if (!found[name]) continue;
+			if (name === "prefix") setShowAdvanced(true);
+			// The advanced section mounts on the next paint.
+			requestAnimationFrame(() => get()?.focus());
+			return;
+		}
+	};
 
-	// Sidebar component (shared)
-	const SidebarContent = (
-		<div className="p-4 space-y-6">
-			{/* Status */}
-			<div className="space-y-2">
-				<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-					Status
-				</Label>
-				<Combobox
-					options={statusOptions}
-					aria-label="Status"
-					value={status}
-					onValueChange={(value) => value !== status && setStatus(value as TaskStatus)}
-					disabled={saving}
-					className={cn("w-full", getStatusBadgeClasses(status, configStatusColors))}
-				/>
-			</div>
+	const submit = async () => {
+		if (saving) return;
+		setSubmitError(null);
+		const found = validate();
+		setErrors(found);
+		if (Object.values(found).some(Boolean)) {
+			focusFirstInvalid(found);
+			return;
+		}
 
-			{/* Priority */}
-			<div className="space-y-2">
-				<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-					Priority
-				</Label>
-				<Combobox
-					options={priorityOptions}
-					aria-label="Priority"
-					value={priority}
-					onValueChange={(value) => value !== priority && setPriority(value as TaskPriority)}
-					disabled={saving}
-					className={cn("w-full", priorityColors[priority])}
-				/>
-			</div>
+		setSaving(true);
+		try {
+			const normalizedPrefix = prefix.trim().toUpperCase();
+			await createTask({
+				title: title.trim(),
+				description: description.trim() || undefined,
+				status,
+				priority,
+				labels,
+				assignee: assignee.trim() || undefined,
+				parent: parentId || undefined,
+				prefix: normalizedPrefix || undefined,
+				acceptanceCriteria: criteria
+					.map((row) => row.text.trim())
+					.filter(Boolean)
+					.map((text) => ({ text, completed: false })),
+			});
+			toast.success("Task created", { description: title.trim() });
+			onCreated();
+			onClose();
+		} catch (err) {
+			const message = err instanceof Error ? err.message : "Failed to create task";
+			setSubmitError(message);
+			toast.error("Failed to create task", { description: message });
+			setSaving(false);
+		}
+	};
 
-			{/* Assignee */}
-			<div className="space-y-2">
-				<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-					Assignee
-				</Label>
-				<AssigneeDropdown
-					value={assignee}
-					onChange={setAssignee}
-					showGrabButton={false}
-					currentUser={currentUser}
-				/>
-			</div>
+	const onFormKey = (e: KeyboardEvent<HTMLFormElement>) => {
+		if (e.key !== "Enter") return;
+		if (e.metaKey || e.ctrlKey) {
+			e.preventDefault();
+			void submit();
+			return;
+		}
+		// Plain Enter in a single-line field never submits by accident.
+		const el = e.target as HTMLElement;
+		if (el instanceof HTMLInputElement && !e.defaultPrevented) {
+			e.preventDefault();
+			if (el.id === ids.title) document.getElementById(ids.description)?.focus();
+		}
+	};
 
-			{/* Task ID prefix */}
-			<div className="space-y-2">
-				<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-					Task ID Prefix
-				</Label>
-				<Input
-					value={taskIDPrefix}
-					onChange={(event) => setTaskIDPrefix(event.target.value.toUpperCase())}
-					placeholder={config.defaultTaskIdPrefix || "Project default"}
-					maxLength={8}
-					disabled={saving}
-				/>
-				<p className="text-xs text-muted-foreground">Optional override for this task only.</p>
-			</div>
+	if (!isOpen && !mounted) return null;
 
-			{/* Labels */}
-			<div className="space-y-2">
-				<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-					Labels
-				</Label>
-				<div className="flex flex-wrap gap-1">
-					{labels.map((label) => (
-						<Badge key={label} variant="secondary" className="gap-1 pr-1">
-							{label}
-							<button
-								type="button"
-								onClick={() => handleLabelRemove(label)}
-								className="ml-1 hover:text-destructive"
-							>
-								<X className="w-3 h-3" />
-							</button>
-						</Badge>
-					))}
-				</div>
-				{addingLabel ? (
-					<div className="space-y-2">
-						<Input
-							value={newLabel}
-							onChange={(e) => setNewLabel(e.target.value)}
-							onKeyDown={(e) => {
-								if (e.key === "Enter" && newLabel.trim()) {
-									e.preventDefault();
-									handleLabelAdd();
-								}
-								if (e.key === "Escape") {
-									setNewLabel("");
-									setAddingLabel(false);
-								}
-							}}
-							placeholder="Label name"
-							disabled={saving}
-							autoFocus
-						/>
-						<div className="flex gap-2">
-							<Button size="sm" onClick={handleLabelAdd} disabled={!newLabel.trim() || saving}>
-								Add
-							</Button>
-							<Button
-								size="sm"
-								variant="ghost"
-								onClick={() => {
-									setNewLabel("");
-									setAddingLabel(false);
-								}}
-							>
-								Cancel
-							</Button>
-						</div>
-					</div>
-				) : (
-					<Button
-						variant="ghost"
-						size="sm"
-						className="w-full justify-start text-muted-foreground"
-						onClick={() => setAddingLabel(true)}
-						disabled={saving}
-					>
-						<Plus className="w-4 h-4 mr-2" />
-						Add label
-					</Button>
-				)}
-			</div>
-
-			{/* Parent Task */}
-			<div className="space-y-2">
-				<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-					Parent Task
-				</Label>
-				<Combobox
-					options={parentOptions}
-					value={parentId}
-					onValueChange={setParentId}
-					searchable
-					presentation="auto"
-					aria-label="Parent task"
-					emptyText="No task found."
-					disabled={saving}
-					className="w-full"
-				/>
-			</div>
-		</div>
-	);
-
-	// Footer component (shared)
-	const Footer = (
-		<div className="border-t px-3 sm:px-6 py-3 sm:py-4 bg-muted/30 flex justify-end gap-2 sm:gap-3">
-			<Button
-				type="button"
-				variant="ghost"
-				onClick={onClose}
-				disabled={saving}
-			>
-				Cancel
-			</Button>
-			<Button
-				type="button"
-				onClick={handleSubmit}
-				className="bg-green-700 hover:bg-green-800 text-white"
-				disabled={saving || success || !title.trim()}
-			>
-				{saving ? "Creating..." : "Create Task"}
-			</Button>
-		</div>
-	);
-
-	// Centered Dialog mode (default) - Sidebar on RIGHT
-	// On mobile, always use Sheet mode (no center dialog)
-	if (isMaximized && !isMobile) {
-		return (
-			<AnimatePresence>
-				{isOpen && (
-					<Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-						<DialogContent
-							className="max-w-6xl w-[95vw] h-[90vh] p-0 gap-0 overflow-hidden flex flex-col"
-							hideCloseButton
-						>
-							<DialogTitle className="sr-only">Create New Task</DialogTitle>
-							<motion.div
-								ref={contentRef}
-								className="flex flex-col h-full overflow-hidden"
-								variants={contentVariants}
-								initial="hidden"
-								animate="visible"
-								exit="exit"
-							>
-								{Header}
-								{Notifications}
-								<div className="flex-1 flex overflow-hidden">
-									{/* Main Content */}
-									<ScrollArea className="flex-1">
-										{MainContent}
-									</ScrollArea>
-									{/* Sidebar on right */}
-									<div className="shrink-0 w-72 border-l bg-muted/20">
-										<ScrollArea className="h-full">
-											{SidebarContent}
-										</ScrollArea>
-									</div>
-								</div>
-								{Footer}
-							</motion.div>
-						</DialogContent>
-					</Dialog>
-				)}
-			</AnimatePresence>
-		);
-	}
-
-	// Side Sheet mode - Sidebar on TOP (compact)
 	return (
-		<AnimatePresence>
-			{isOpen && (
-				<Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
-					<SheetContent
-						side="right"
-						className="w-full sm:max-w-2xl lg:max-w-3xl xl:max-w-4xl p-0 flex flex-col gap-0"
-						hideCloseButton
-					>
-						<motion.div
-							ref={contentRef}
-							className="flex flex-col h-full overflow-hidden"
-							variants={contentVariants}
-							initial="hidden"
-							animate="visible"
-							exit="exit"
-						>
-							{Header}
-							{Notifications}
-							<div className="flex-1 flex flex-col overflow-hidden">
-								{/* Sidebar on top - compact layout */}
-								<div className="shrink-0 border-b bg-muted/20">
-									<div className="p-3 sm:p-4 space-y-3">
-										{/* Row 1: Status, Priority, Assignee, ID prefix */}
-										<div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
-											<div className="space-y-1">
-												<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-													Status
-												</Label>
-												<Combobox
-													options={statusOptions}
-													aria-label="Status"
-													value={status}
-													onValueChange={(value) => value !== status && setStatus(value as TaskStatus)}
-													disabled={saving}
-													className={cn("w-full h-9", getStatusBadgeClasses(status, configStatusColors))}
-												/>
-											</div>
-											<div className="space-y-1">
-												<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-													Priority
-												</Label>
-												<Combobox
-													options={priorityOptions}
-													aria-label="Priority"
-													value={priority}
-													onValueChange={(value) => value !== priority && setPriority(value as TaskPriority)}
-													disabled={saving}
-													className={cn("w-full h-9", priorityColors[priority])}
-												/>
-											</div>
-											<div className="space-y-1">
-												<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-													Assignee
-												</Label>
-												<AssigneeDropdown
-													value={assignee}
-													onChange={setAssignee}
-													showGrabButton={false}
-													currentUser={currentUser}
-												/>
-											</div>
-											<div className="space-y-1">
-												<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-													ID Prefix
-												</Label>
-												<Input
-													value={taskIDPrefix}
-													onChange={(event) => setTaskIDPrefix(event.target.value.toUpperCase())}
-													placeholder={config.defaultTaskIdPrefix || "Default"}
-													maxLength={8}
-													disabled={saving}
-													className="h-9"
-												/>
-											</div>
-										</div>
+		<Dialog
+			open={isOpen}
+			onOpenChange={(open) => !open && !saving && onClose()}
+			title="New task"
+			description="Capture the work. You can fill in the rest from the task detail later."
+			size="lg"
+			sheet
+			className="open:flex max-h-[calc(100dvh-2rem)] flex-col"
+			bodyClassName="min-h-0 flex-1 overflow-y-auto px-5 py-3"
+			footer={
+				<>
+					<span className="mr-auto hidden items-center text-xs text-muted-foreground sm:flex">
+						Press Ctrl or Cmd + Enter to create
+					</span>
+					<Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
+						Cancel
+					</Button>
+					<Button type="submit" form={formId} loading={saving}>
+						{saving ? "Creating..." : "Create Task"}
+					</Button>
+				</>
+			}
+		>
+			<form id={formId} noValidate onSubmit={(e) => { e.preventDefault(); void submit(); }} onKeyDown={onFormKey} className="flex flex-col gap-4">
+				{submitError && (
+					<p role="alert" className="rounded-[9px] bg-red-500/[0.06] px-3 py-2 text-sm text-red-700 shadow-[0_0_0_1px_rgb(239_68_68/0.22)] dark:text-red-300">
+						{submitError}
+					</p>
+				)}
 
-										{/* Row 2: Labels + Parent Task */}
-										<div className="flex items-start gap-4 flex-wrap">
-											{/* Labels */}
-											<div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
-												<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground shrink-0">
-													Labels:
-												</Label>
-												<div className="flex flex-wrap gap-1 flex-1">
-													{labels.map((label) => (
-														<Badge key={label} variant="secondary" className="gap-1 pr-1 text-xs">
-															{label}
-															<button
-																type="button"
-																onClick={() => handleLabelRemove(label)}
-																className="ml-0.5 hover:text-destructive"
-															>
-																<X className="w-3 h-3" />
-															</button>
-														</Badge>
-													))}
-													{!addingLabel && (
-														<Button
-															variant="ghost"
-															size="sm"
-															className="h-6 px-2 text-xs text-muted-foreground"
-															onClick={() => setAddingLabel(true)}
-														>
-															<Plus className="w-3 h-3 mr-1" />
-															Add
-														</Button>
-													)}
-												</div>
-												{addingLabel && (
-													<div className="flex items-center gap-2">
-														<Input
-															value={newLabel}
-															onChange={(e) => setNewLabel(e.target.value)}
-															onKeyDown={(e) => {
-																if (e.key === "Enter" && newLabel.trim()) handleLabelAdd();
-																if (e.key === "Escape") {
-																	setNewLabel("");
-																	setAddingLabel(false);
-																}
-															}}
-															placeholder="Label"
-															className="h-7 w-24 text-xs"
-															autoFocus
-														/>
-														<Button size="sm" className="h-7 px-2" onClick={handleLabelAdd} disabled={!newLabel.trim()}>
-															Add
-														</Button>
-														<Button
-															size="sm"
-															variant="ghost"
-															className="h-7 px-2"
-															onClick={() => {
-																setNewLabel("");
-																setAddingLabel(false);
-															}}
-														>
-															<X className="w-3 h-3" />
-														</Button>
-													</div>
-												)}
-											</div>
+				<Field label="Title" id={ids.title} required error={errors.title}>
+					<Input
+						id={ids.title}
+						data-autofocus
+						value={title}
+						onChange={(e) => {
+							setTitle(e.target.value);
+							clearError("title");
+						}}
+						placeholder="Enter task title..."
+						autoComplete="off"
+						disabled={saving}
+					/>
+				</Field>
 
-											{/* Parent Task - compact */}
-											<div className="flex items-center gap-2 shrink-0">
-												<Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground shrink-0">
-													Parent:
-												</Label>
-												<Combobox
-													options={parentOptions}
-													value={parentId}
-													onValueChange={setParentId}
-													searchable
-													presentation="auto"
-													aria-label="Parent task"
-													emptyText="No task found."
-													disabled={saving}
-													size="sm"
-													className="w-auto min-w-[120px] max-w-[250px]"
-												/>
-											</div>
-										</div>
-									</div>
-								</div>
-								{/* Main Content below */}
-								<ScrollArea className="flex-1">
-									{MainContent}
-								</ScrollArea>
-							</div>
-							{Footer}
-						</motion.div>
-					</SheetContent>
-				</Sheet>
-			)}
-		</AnimatePresence>
+				<Field label="Description" id={ids.description} optional>
+					<Textarea
+						id={ids.description}
+						value={description}
+						onChange={(e) => setDescription(e.target.value)}
+						placeholder="What needs to happen, and why. Markdown works."
+						autosize
+						minRows={3}
+						maxRows={8}
+						disabled={saving}
+					/>
+				</Field>
+
+				<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+					<Field label="Status" id={ids.status}>
+						<Select id={ids.status} options={statusOptions} value={status} onChange={(e) => setStatus(e.target.value as TaskStatus)} disabled={saving} />
+					</Field>
+					<Field label="Priority" id={ids.priority}>
+						<Select id={ids.priority} options={PRIORITY_OPTIONS} value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority)} disabled={saving} />
+					</Field>
+					<div className="flex flex-col gap-1.5">
+						<span className="text-[13px] font-medium">Assignee</span>
+						<AssigneeDropdown value={assignee} onChange={setAssignee} showGrabButton={false} currentUser={currentUser} />
+					</div>
+					<Field label="Parent task" id={ids.parent} optional>
+						<Combobox
+							id={ids.parent}
+							options={parentOptions}
+							value={parentId}
+							onValueChange={setParentId}
+							searchable
+							presentation="auto"
+							aria-label="Parent task"
+							emptyText="No task found."
+							disabled={saving}
+						/>
+					</Field>
+				</div>
+
+				<Field label="Labels" id={ids.labels} optional hint="Press Enter or comma to add a label." error={errors.labels}>
+					<div className="flex flex-col gap-2">
+						<Input
+							id={ids.labels}
+							value={labelDraft}
+							onChange={(e) => setLabelDraft(e.target.value)}
+							onKeyDown={onLabelKey}
+							onBlur={() => addLabel(labelDraft)}
+							placeholder="Add a label..."
+							list={`${uid}-label-options`}
+							autoComplete="off"
+							disabled={saving}
+						/>
+						<datalist id={`${uid}-label-options`}>
+							{knownLabels.map((l) => (
+								<option key={l} value={l} />
+							))}
+						</datalist>
+						{labels.length > 0 && (
+							<ul className="flex flex-wrap gap-1.5" aria-label="Selected labels">
+								{labels.map((label) => (
+									<li key={label}>
+										<Tag size="sm" onRemove={() => setLabels((prev) => prev.filter((l) => l !== label))} removeLabel={`Remove label ${label}`}>
+											{label}
+										</Tag>
+									</li>
+								))}
+							</ul>
+						)}
+					</div>
+				</Field>
+
+				<fieldset className="flex flex-col gap-2" disabled={saving}>
+					<legend className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium">
+						Acceptance criteria
+						<span className="text-[12px] font-normal text-muted-foreground">Optional</span>
+					</legend>
+					{criteria.map((row, i) => (
+						<div key={row.id} className="flex items-center gap-2">
+							<Input
+								ref={(el) => {
+									if (el) criterionRefs.current.set(row.id, el);
+									else criterionRefs.current.delete(row.id);
+								}}
+								value={row.text}
+								onChange={(e) => {
+									const text = e.target.value;
+									setCriteria((prev) => prev.map((r) => (r.id === row.id ? { ...r, text } : r)));
+									clearError("criteria");
+								}}
+								onKeyDown={(e) => onCriterionKey(e, row)}
+								aria-label={`Acceptance criterion ${i + 1}`}
+								aria-invalid={errors.criteria ? true : undefined}
+								placeholder="Add an item..."
+								autoComplete="off"
+							/>
+							<Button type="button" variant="ghost" aria-label={`Remove criterion ${i + 1}`} onClick={() => removeCriterion(row.id, true)} icon={<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>} />
+						</div>
+					))}
+					{errors.criteria && (
+						<p className="text-xs text-red-600 dark:text-red-400" role="alert">
+							{errors.criteria}
+						</p>
+					)}
+					<div>
+						<Button type="button" variant="secondary" size="sm" onClick={addCriterion} icon={<svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>}>
+							Add an item
+						</Button>
+					</div>
+				</fieldset>
+
+				<div className="flex flex-col gap-3">
+					<div>
+						<Button type="button" variant="quiet" size="sm" aria-expanded={showAdvanced} aria-controls={`${uid}-advanced`} onClick={() => setShowAdvanced((v) => !v)}>
+							{showAdvanced ? "Hide advanced" : "Advanced"}
+						</Button>
+					</div>
+					{showAdvanced && (
+						<div id={`${uid}-advanced`}>
+							<Field label="Task ID prefix" id={ids.prefix} optional hint="Overrides the project default for this task only." error={errors.prefix}>
+								<Input
+									id={ids.prefix}
+									value={prefix}
+									onChange={(e) => {
+										setPrefix(e.target.value.toUpperCase());
+										clearError("prefix");
+									}}
+									placeholder={config.defaultTaskIdPrefix || "Project default"}
+									maxLength={8}
+									autoComplete="off"
+									disabled={saving}
+								/>
+							</Field>
+						</div>
+					)}
+				</div>
+			</form>
+		</Dialog>
 	);
 }

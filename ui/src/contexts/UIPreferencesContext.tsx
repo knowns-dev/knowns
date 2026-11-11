@@ -4,19 +4,16 @@ const STORAGE_KEY = "knowns-ui-preferences";
 
 export interface UIPreferences {
 	taskDetailLayout: "maximized" | "minimized";
-	taskCreateLayout: "maximized" | "minimized";
 }
 
 const DEFAULT_PREFERENCES: UIPreferences = {
 	taskDetailLayout: "maximized",
-	taskCreateLayout: "maximized",
 };
 
 interface UIPreferencesContextType {
 	preferences: UIPreferences;
 	setPreference: <K extends keyof UIPreferences>(key: K, value: UIPreferences[K]) => void;
 	toggleTaskDetailLayout: () => void;
-	toggleTaskCreateLayout: () => void;
 }
 
 const UIPreferencesContext = createContext<UIPreferencesContextType | undefined>(undefined);
@@ -63,24 +60,12 @@ export function UIPreferencesProvider({ children }: { children: ReactNode }) {
 		});
 	}, []);
 
-	const toggleTaskCreateLayout = useCallback(() => {
-		setPreferences((prev) => {
-			const next = {
-				...prev,
-				taskCreateLayout: prev.taskCreateLayout === "maximized" ? "minimized" : "maximized",
-			} as UIPreferences;
-			savePreferences(next);
-			return next;
-		});
-	}, []);
-
 	return (
 		<UIPreferencesContext.Provider
 			value={{
 				preferences,
 				setPreference,
 				toggleTaskDetailLayout,
-				toggleTaskCreateLayout,
 			}}
 		>
 			{children}

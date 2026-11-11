@@ -35,6 +35,33 @@ test.describe("Task Creation via UI", () => {
 		});
 	});
 
+	test("create form validates inline and submits from the keyboard", async ({ page }) => {
+		await page.goto(`${server.baseURL}/kanban`);
+		await page.getByRole("button", { name: /new task/i }).click();
+		const form = page.getByRole("dialog", { name: "New task" });
+		await expect(form).toBeVisible();
+
+		await test.step("empty title shows an inline error and keeps focus on the field", async () => {
+			await form.getByRole("button", { name: "Create Task" }).click();
+			await expect(form.getByText("Title is required.")).toBeVisible();
+			await expect(form.getByPlaceholder("Enter task title...")).toBeFocused();
+			await expect(form.getByPlaceholder("Enter task title...")).toHaveAttribute("aria-invalid", "true");
+		});
+
+		await test.step("typing clears the error, Enter does not submit", async () => {
+			await page.keyboard.type("Keyboard Created Task");
+			await expect(form.getByText("Title is required.")).toBeHidden();
+			await page.keyboard.press("Enter");
+			await expect(form).toBeVisible();
+		});
+
+		await test.step("Ctrl+Enter creates the task and it shows on the board", async () => {
+			await page.keyboard.press("Control+Enter");
+			await expect(form).toBeHidden();
+			await expect(boardCard(page, "Keyboard Created Task")).toBeVisible();
+		});
+	});
+
 	test("creates task from tasks page", async ({ page }) => {
 		await test.step("Navigate to tasks page", async () => {
 			await page.goto(`${server.baseURL}/tasks`);
