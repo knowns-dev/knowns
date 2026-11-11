@@ -1,6 +1,9 @@
 import { useState } from "react";
 import type { TaskChange } from "@/ui/models/version";
-import { InlineDiff, type DiffView } from "@/ui/components/ui/knowns/diff/inline-diff";
+import type { DiffView } from "@/ui/components/ui/knowns/diff/inline-diff";
+import { ChangeSummary } from "@/ui/components/ui/knowns/diff/change-summary";
+import { TextChangeDiff, usesProse } from "./history/TextChangeDiff";
+import { changedFiles } from "./history/historyDiff";
 import { SegmentedControl } from "@/ui/components/ui/knowns/segmented-control";
 import { getStatusLabel } from "../../utils/colors";
 import { formatTracked } from "./TaskDetail/types";
@@ -29,6 +32,9 @@ const FIELD_LABELS: Record<string, string> = {
 
 /** Fields that read as prose or lists: shown as a line diff. Everything else is a short before / after. */
 const TEXT_FIELDS = new Set(["description", "acceptanceCriteria", "implementationPlan", "implementationNotes"]);
+
+/** Of those, the ones written as sentences: shown as a word diff. Acceptance criteria stay a list. */
+const PROSE_FIELDS = new Set(["description", "implementationPlan", "implementationNotes"]);
 
 // Convert value to string for display
 export function valueToString(field: string, value: unknown): string {
@@ -88,10 +94,14 @@ export default function VersionDiffViewer({ changes, viewType: initialViewType =
 
 	const scalars = changes.filter((c) => !TEXT_FIELDS.has(c.field));
 	const texts = changes.filter((c) => TEXT_FIELDS.has(c.field));
+	const label = (field: string) => FIELD_LABELS[field] || field;
+	const lineDiffs = texts.some(
+		(c) => !usesProse(PROSE_FIELDS.has(c.field), valueToString(c.field, c.oldValue), valueToString(c.field, c.newValue)),
+	);
 
 	return (
 		<div className="flex flex-col gap-3">
-			{showToggle && texts.length > 0 && (
+			{showToggle && lineDiffs && (
 				<div className="flex justify-end">
 					<SegmentedControl
 						size="sm"
@@ -105,6 +115,12 @@ export default function VersionDiffViewer({ changes, viewType: initialViewType =
 					/>
 				</div>
 			)}
+			<ChangeSummary
+				title={`${changes.length} ${changes.length === 1 ? "field" : "fields"} changed`}
+				files={changedFiles(changes, label, valueToString)}
+				view={view}
+				onViewChange={setView}
+			/>
 			{scalars.length > 0 && (
 				<div className="divide-y divide-[color-mix(in_srgb,var(--foreground)_8%,transparent)]">
 					{scalars.map((change, idx) => (
@@ -118,14 +134,14 @@ export default function VersionDiffViewer({ changes, viewType: initialViewType =
 				</div>
 			)}
 			{texts.map((change, idx) => (
-				<InlineDiff
+				<TextChangeDiff
 					key={`${change.field}-${idx}`}
-					path={FIELD_LABELS[change.field] || change.field}
+					label={label(change.field)}
 					before={valueToString(change.field, change.oldValue)}
 					after={valueToString(change.field, change.newValue)}
+					prose={PROSE_FIELDS.has(change.field)}
 					view={view}
 					onViewChange={setView}
-					wrap
 				/>
 			))}
 		</div>

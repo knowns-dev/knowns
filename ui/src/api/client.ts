@@ -832,6 +832,16 @@ export async function getDocRevisionDiff(path: string, revisionId: string): Prom
 	return res.json();
 }
 
+/** One revision as the server stores it, with the document's state at that revision in `snapshot`. */
+export async function getDocRevision(path: string, revisionId: string): Promise<DocVersion> {
+	const encodedPath = encodeDocPath(path);
+	const res = await apiFetch(`${API_BASE}/api/docs/${encodedPath}/history/${encodeURIComponent(revisionId)}`);
+	if (!res.ok) {
+		throw new Error(`Failed to fetch doc revision ${revisionId}`);
+	}
+	return res.json();
+}
+
 export async function restoreDocRevision(
 	path: string,
 	data: { revisionId: string; mode?: "document" | "section"; section?: string },

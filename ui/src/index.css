@@ -1220,3 +1220,13 @@ body {
     inherits: false;
     initial-value: 0px;
 }
+  @property --kn-fade-l {
+    syntax: "<length>";
+    inherits: false;
+    initial-value: 0px;
+}
+  @property --kn-fade-r {
+    syntax: "<length>";
+    inherits: false;
+    initial-value: 0px;
+}
