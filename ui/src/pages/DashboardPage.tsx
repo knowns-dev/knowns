@@ -22,7 +22,8 @@ import { ALL, AnalyticsTab, UNASSIGNED } from "./dashboard/AnalyticsTab";
 import { DashboardCustomize } from "./dashboard/DashboardCustomize";
 import { type MainWidgetId, type SideWidgetId, useDashboardLayout } from "./dashboard/layout";
 import { ContinueWorking, NeedsAttention, Panel, Problems, ProgressChart, ReviewInbox, SummaryStrip } from "./dashboard/widgets";
-import ActivityFeed from "../components/organisms/ActivityFeed";
+import { OnboardingCard } from "./dashboard/OnboardingCard";
+import { RecentActivity } from "./dashboard/RecentActivity";
 import { PageHeader } from "@/ui/components/ui/knowns/blocks/page-header";
 import { TabsContent } from "@/ui/components/ui/knowns/tabs";
 import { buildThroughput, getAttentionItems } from "./dashboard/analytics";
@@ -218,9 +219,7 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 		),
 		activity: (
 			<Panel title="Recent activity" hint="What changed in this project lately.">
-				<div className="px-2 pb-2">
-					<ActivityFeed limit={8} showFilter={false} showHeader={false} />
-				</div>
+				<RecentActivity />
 			</Panel>
 		),
 		problems: <Problems failures={problems} />,
@@ -279,6 +278,7 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 					className="bg-transparent"
 				>
 					<TabsContent value="overview" className="pt-5">
+						<OnboardingCard tasks={tasks.length} docs={remote.docs?.length ?? null} semanticSearch={!!config?.semanticSearch?.enabled} />
 						{dashboardLayout.isVisible("summary") && (
 							<div className="mb-5">
 								<SummaryStrip tasks={tasks} doneByDay={doneByDay} />

@@ -19,6 +19,7 @@ import type {
   TaskVersionHistory,
   TaskVersionHistoryPage,
 } from "../../models/version.ts";
+import { safeHistoryId } from "../core/locks.ts";
 import { goTrimSpace, writeJson } from "../core/util.ts";
 import { MutationConflictError } from "./conflicts.ts";
 import {
@@ -323,17 +324,8 @@ export class VersionStore {
 
   /** ListRecentActivities: scans legacy task version files, newest first. */
   listRecentActivities(limit = 0, typeFilter = ""): ActivityEntry[] {
-    const dir = this.versionsDir();
-    if (!existsSync(dir)) return [];
     const all: ActivityEntry[] = [];
-    for (const name of readdirSync(dir).sort()) {
-      if (!name.startsWith("task-") || !name.endsWith(".json")) continue;
-      let h: TaskVersionHistory;
-      try {
-        h = decodeTaskVersionHistory(JSON.parse(readFileSync(join(dir, name), "utf8")));
-      } catch {
-        continue;
-      }
+    const push = (h: TaskVersionHistory) => {
       for (const v of h.versions ?? []) {
         if (!v.changes || v.changes.length === 0) continue;
         if (typeFilter !== "" && !matchesTypeFilter(v.changes, typeFilter)) continue;
@@ -346,6 +338,40 @@ export class VersionStore {
           ...(v.author ? { author: v.author } : {}),
           changes: v.changes,
         });
+      }
+    };
+    // Current histories are JSONL streams (history/tasks/<id>.jsonl). Ids that need hashing for the
+    // file name cannot be recovered from it and are skipped, as are streams that fail to verify.
+    const seen = new Set<string>();
+    const streamDir = this.history.entityDir("task");
+    if (existsSync(streamDir)) {
+      for (const name of readdirSync(streamDir).sort()) {
+        if (!name.endsWith(".jsonl")) continue;
+        const taskId = name.slice(0, -".jsonl".length);
+        if (safeHistoryId(taskId) !== taskId) continue;
+        try {
+          const result = this.history.readPreview("task", taskId);
+          if ((result.records ?? []).length === 0) continue;
+          push(taskHistoryFromRecords(taskId, result.records ?? []));
+          seen.add(taskId);
+        } catch {
+          // A broken stream must not take the whole feed down.
+        }
+      }
+    }
+    // Legacy versions/task-<id>.json files, for tasks that have not been migrated to a stream yet.
+    const dir = this.versionsDir();
+    if (existsSync(dir)) {
+      for (const name of readdirSync(dir).sort()) {
+        if (!name.startsWith("task-") || !name.endsWith(".json")) continue;
+        if (seen.has(name.slice("task-".length, -".json".length))) continue;
+        let h: TaskVersionHistory;
+        try {
+          h = decodeTaskVersionHistory(JSON.parse(readFileSync(join(dir, name), "utf8")));
+        } catch {
+          continue;
+        }
+        push(h);
       }
     }
     all.sort((a, b) => timeMs(b.timestamp) - timeMs(a.timestamp));
