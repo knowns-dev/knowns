@@ -41,13 +41,39 @@ test.describe("Tasks Page", () => {
 		await test.step("Tasks heading is visible", async () => {
 			await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
 			await expect(page.getByText(/^\d+ tasks?$/).first()).toBeVisible();
-			await page.getByRole("button", { name: "Table view" }).click();
-			await expect(page.getByRole("button", { name: "Table view" })).toHaveAttribute("aria-pressed", "true");
+			await page.getByRole("button", { name: "List view" }).click();
+			await expect(page.getByRole("button", { name: "List view" })).toHaveAttribute("aria-pressed", "true");
 		});
 
 		await test.step("Tasks appear in the list", async () => {
 			await expect(page.getByText("Task Alpha")).toBeVisible();
 			await expect(page.getByText("Task Beta")).toBeVisible();
+		});
+	});
+
+	test("searches, groups and archives selected rows in the list", async ({ page }) => {
+		server.cli('task create "List Needle Task"');
+		server.cli('task create "List Other Task"');
+		await page.goto(`${server.baseURL}/tasks`);
+		await page.getByRole("button", { name: "List view" }).click();
+
+		await test.step("Search narrows the rows", async () => {
+			await page.getByRole("searchbox", { name: "Search Tasks" }).fill("Needle");
+			await expect(page.getByText("List Needle Task")).toBeVisible();
+			await expect(page.getByText("List Other Task")).toHaveCount(0);
+			await page.getByRole("searchbox", { name: "Search Tasks" }).fill("");
+		});
+
+		await test.step("Group by status stacks one table per status", async () => {
+			await page.getByRole("radio", { name: "By status" }).click();
+			await expect(page.getByRole("heading", { name: "Todo" })).toBeVisible();
+			await page.getByRole("radio", { name: "Flat" }).click();
+		});
+
+		await test.step("Selecting a row offers a bulk archive", async () => {
+			await page.getByRole("checkbox", { name: /Select row/ }).first().check();
+			await page.getByRole("button", { name: /Archive 1 selected/ }).click();
+			await expect(page.getByRole("heading", { name: "Archive completed Tasks" })).toBeVisible();
 		});
 	});
 
@@ -79,7 +105,7 @@ test.describe("Tasks Page", () => {
 			if (await newBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
 				await newBtn.click();
 			} else {
-				// Table view shows a compact "New" button
+				// A narrow header shows a compact "New" button
 				await page.getByRole("button", { name: /^new$/i }).first().click();
 			}
 		});

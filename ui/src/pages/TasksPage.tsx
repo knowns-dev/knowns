@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LayoutList, LayoutGrid, ListTodo, ArchiveRestore, Archive, ChevronDown, Columns3, Layers, Plus, Table2, UserX, Users } from "lucide-react";
+import { LayoutList, LayoutGrid, ListTodo, ArchiveRestore, Archive, ChevronDown, Columns3, Layers, Plus, UserX, Users } from "lucide-react";
 import { Avatar as KnAvatar } from "@/ui/components/ui/knowns/avatar";
 import { Combobox, type ComboboxOption } from "@/ui/components/ui/knowns/combobox";
 import { Select as KnSelect } from "@/ui/components/ui/knowns/select";
 import type { Task } from "@/ui/models/task";
 import { navigateTo } from "../lib/navigation";
-import { Board, TaskNotionList } from "../components/organisms";
+import { Board } from "../components/organisms";
 import { TaskDetailSheet } from "../components/organisms/TaskDetail/TaskDetailSheet";
 import { TaskGroupedView } from "./TasksPage/TaskGroupedView";
-import { TaskTableView } from "./TasksPage/TaskTableView";
+import { TaskListView } from "./TasksPage/TaskListView";
 import {
 	ALL_ASSIGNEES,
 	assigneeLabel,
@@ -33,6 +33,9 @@ import {
 import { FeatureHeader } from "../components/templates";
 
 // Time duration options for batch archive (in milliseconds)
+// Label used when the archive preview comes from selected rows, not an age window.
+const SELECTED_ARCHIVE_LABEL = "the selected rows";
+
 const BATCH_ARCHIVE_OPTIONS = [
 	{ label: "now", value: 0 },
 	{ label: "1 hour ago", value: 1 * 60 * 60 * 1000 },
@@ -59,7 +62,7 @@ interface TasksPageProps {
 	detailBasePath?: "/tasks" | "/kanban";
 }
 
-type ViewMode = "board" | "list" | "table" | "grouped";
+type ViewMode = "board" | "list" | "grouped";
 
 const VIEW_STORAGE_KEY = "knowns.tasks.view";
 
@@ -74,7 +77,6 @@ const LIFECYCLE_OPTIONS = [
 const VIEW_OPTIONS: { value: ViewMode; label: string; icon: typeof LayoutList }[] = [
 	{ value: "board", label: "Board", icon: Columns3 },
 	{ value: "list", label: "List", icon: LayoutList },
-	{ value: "table", label: "Table", icon: Table2 },
 	{ value: "grouped", label: "Grouped", icon: LayoutGrid },
 ];
 
@@ -289,7 +291,7 @@ export default function TasksPage({
 		else onTasksUpdate();
 	};
 
-	const handleBatchArchivePreview = async (minimumAgeMs: number, label: string) => {
+	const handleBatchArchivePreview = async (minimumAgeMs: number, label: string, selectedIds?: readonly string[]) => {
 		const generation = ++archiveGenerationRef.current;
 		setArchiveRequest({ generation, minimumAgeMs, label });
 		setArchiveDialogOpen(true);
@@ -297,7 +299,7 @@ export default function TasksPage({
 		setArchiveError(null);
 		setArchiveLoading(true);
 		try {
-			const response = await api.batchArchiveTasks({ minimumAgeMs });
+			const response = await api.batchArchiveTasks({ minimumAgeMs, ids: selectedIds ? [...selectedIds] : undefined });
 			if (archiveGenerationRef.current !== generation) return;
 			setArchiveRequest({ generation, minimumAgeMs, label, ids: Object.freeze(response.items.map((item) => item.taskId)) });
 			setArchiveResponse(response);
@@ -475,13 +477,11 @@ export default function TasksPage({
 						onTaskClick={handleTaskClick}
 					/>
 				) : viewMode === "list" ? (
-					<TaskNotionList
+					<TaskListView
 						tasks={visibleTasks}
 						onTaskClick={handleTaskClick}
-						onNewTask={onNewTask}
+						onArchiveSelected={(ids) => void handleBatchArchivePreview(0, SELECTED_ARCHIVE_LABEL, ids)}
 					/>
-				) : viewMode === "table" ? (
-					<TaskTableView tasks={visibleTasks} onTaskClick={handleTaskClick} />
 				) : (
 					<TaskGroupedView
 						tasks={visibleTasks}
@@ -520,7 +520,7 @@ export default function TasksPage({
 				open={archiveDialogOpen}
 				onOpenChange={closeArchiveDialog}
 				title="Archive completed Tasks"
-				description={`Preview for Tasks completed before ${archiveRequest?.label || "the selected retention window"}. Eligibility and warnings come from the backend.`}
+				description={archiveRequest?.label === SELECTED_ARCHIVE_LABEL ? "Preview for the Tasks you selected. Eligibility and warnings come from the backend." : `Preview for Tasks completed before ${archiveRequest?.label || "the selected retention window"}. Eligibility and warnings come from the backend.`}
 				response={archiveResponse}
 				loading={archiveLoading}
 				error={archiveError}
