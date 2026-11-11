@@ -121,6 +121,12 @@ const auditRoute = createRoute({
 	component: EmptyRoute,
 });
 
+const contextRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/context",
+	component: EmptyRoute,
+});
+
 const runtimeRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/runtime",
@@ -158,6 +164,7 @@ const routeTree = rootRoute.addChildren([
 	decisionsHistoryRoute,
 	decisionDetailRoute,
 	auditRoute,
+	contextRoute,
 	runtimeRoute,
 	configRoute,
 	fallbackRoute,

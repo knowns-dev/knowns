@@ -10,6 +10,7 @@ import {
 	ScrollText,
 	Activity,
 	Monitor,
+	Layers,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ComponentProps } from "react";
@@ -64,6 +65,7 @@ const navigationGroups: { label: string; items: SidebarNode[] }[] = [
 			{ id: "graph", label: "Graph", icon: <Network />, href: "/graph" },
 			{ id: "memory", label: "Memories", icon: <Brain />, href: "/memory" },
 			{ id: "decisions", label: "System Decisions", icon: <ScrollText />, href: "/decisions" },
+			{ id: "context", label: "Context pack", icon: <Layers />, href: "/context" },
 		],
 	},
 	{
