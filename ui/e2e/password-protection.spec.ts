@@ -217,7 +217,7 @@ test.describe("Password Protection", () => {
 		});
 	});
 
-	test("shows Protected status in Security settings after login", async ({ page }) => {
+	test("shows Protected status in Access settings after login", async ({ page }) => {
 		await test.step("Login with correct password", async () => {
 			await page.goto(server.baseURL);
 			const passwordInput = page.locator('input[type="password"]');
@@ -227,9 +227,9 @@ test.describe("Password Protection", () => {
 			await expect(passwordInput).not.toBeVisible({ timeout: 15000 });
 		});
 
-		await test.step("Navigate to Security settings", async () => {
+		await test.step("Navigate to Access settings", async () => {
 			await page.goto(`${server.baseURL}/config`);
-			await page.getByText(/security/i).first().click();
+			await page.getByRole("button", { name: "Access" }).click();
 		});
 
 		await test.step("Protected status is shown", async () => {
@@ -251,9 +251,9 @@ test.describe("Password Protection", () => {
 			await expect(passwordInput).not.toBeVisible({ timeout: 15000 });
 		});
 
-		await test.step("Navigate to Security settings", async () => {
+		await test.step("Navigate to Access settings", async () => {
 			await page.goto(`${server.baseURL}/config`);
-			await page.getByText(/security/i).first().click();
+			await page.getByRole("button", { name: "Access" }).click();
 		});
 
 		await test.step("Click Remove Password", async () => {
@@ -267,7 +267,7 @@ test.describe("Password Protection", () => {
 		});
 	});
 
-	test("can set new password from Security settings", async ({ page }) => {
+	test("can set new password from Access settings", async ({ page }) => {
 		await test.step("Login with correct password", async () => {
 			await page.goto(server.baseURL);
 			const passwordInput = page.locator('input[type="password"]');
@@ -280,9 +280,9 @@ test.describe("Password Protection", () => {
 			}
 		});
 
-		await test.step("Navigate to Security settings", async () => {
+		await test.step("Navigate to Access settings", async () => {
 			await page.goto(`${server.baseURL}/config`);
-			await page.getByText(/security/i).first().click();
+			await page.getByRole("button", { name: "Access" }).click();
 		});
 
 		await test.step("Enter new password and click Set", async () => {

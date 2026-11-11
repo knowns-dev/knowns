@@ -11,14 +11,14 @@ test.afterAll(() => {
 	server?.cleanup();
 });
 
-test.describe("Settings — Security (set from UI)", () => {
-	test("Security tab shows Unprotected status initially", async ({ page }) => {
+test.describe("Settings — Access (password)", () => {
+	test("Access section shows Unprotected status initially", async ({ page }) => {
 		await test.step("Navigate to Settings", async () => {
 			await page.goto(`${server.baseURL}/config`);
 		});
 
-		await test.step("Click Security tab", async () => {
-			await page.getByText("Security").first().click();
+		await test.step("Open the Access section", async () => {
+			await page.getByRole("button", { name: "Access" }).click();
 		});
 
 		await test.step("Unprotected status is shown", async () => {
@@ -27,9 +27,9 @@ test.describe("Settings — Security (set from UI)", () => {
 	});
 
 	test("Password Protection section is visible", async ({ page }) => {
-		await test.step("Navigate to Settings → Security", async () => {
+		await test.step("Navigate to Settings → Access", async () => {
 			await page.goto(`${server.baseURL}/config`);
-			await page.getByText("Security").first().click();
+			await page.getByRole("button", { name: "Access" }).click();
 		});
 
 		await test.step("Password Protection header is visible", async () => {
@@ -38,9 +38,9 @@ test.describe("Settings — Security (set from UI)", () => {
 	});
 
 	test("password input and Set button are visible when unprotected", async ({ page }) => {
-		await test.step("Navigate to Settings → Security", async () => {
+		await test.step("Navigate to Settings → Access", async () => {
 			await page.goto(`${server.baseURL}/config`);
-			await page.getByText("Security").first().click();
+			await page.getByRole("button", { name: "Access" }).click();
 		});
 
 		await test.step("Password input is visible", async () => {
@@ -54,9 +54,9 @@ test.describe("Settings — Security (set from UI)", () => {
 	});
 
 	test("setting a password changes status to Protected", async ({ page }) => {
-		await test.step("Navigate to Settings → Security", async () => {
+		await test.step("Navigate to Settings → Access", async () => {
 			await page.goto(`${server.baseURL}/config`);
-			await page.getByText("Security").first().click();
+			await page.getByRole("button", { name: "Access" }).click();
 		});
 
 		await test.step("Enter password and click Set", async () => {
@@ -121,10 +121,10 @@ test.describe("Settings — Security (set from UI)", () => {
 			}
 		});
 
-		await test.step("Navigate to Settings → Security", async () => {
+		await test.step("Navigate to Settings → Access", async () => {
 			await page.goto(`${server.baseURL}/config`);
 			await page.waitForTimeout(1000);
-			const securityBtn = page.getByRole("button", { name: "Security" });
+			const securityBtn = page.getByRole("button", { name: "Access" });
 			await expect(securityBtn).toBeVisible({ timeout: 15000 });
 			await securityBtn.click();
 		});

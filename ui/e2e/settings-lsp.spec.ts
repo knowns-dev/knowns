@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { startServer, type TestServer } from "./helpers";
 
 let server: TestServer;
@@ -11,169 +11,226 @@ test.afterAll(() => {
 	server?.cleanup();
 });
 
-test.describe("Settings — LSP (Code tab)", () => {
-	test("Code tab shows Language Server Protocol section", async ({ page }) => {
-		await test.step("Navigate to Settings → Code", async () => {
-			await page.goto(`${server.baseURL}/config`);
-			// Click the Code tab in the sidebar
-			await page.getByText("Code").first().click();
-		});
+const openSearchCode = async (page: Page) => {
+	await page.goto(`${server.baseURL}/config`);
+	await page.getByRole("button", { name: "Search & Code", exact: true }).click();
+};
 
-		await test.step("LSP section header is visible", async () => {
-			await expect(page.getByText("Language Server Protocol")).toBeVisible();
-		});
+// The server is shared by this file, so earlier tests leave languages behind: count rows, not "any row".
+const languageRows = (page: Page) => page.locator('[data-testid^="lsp-language-"]');
+
+/**
+ * Adds the first offered language. Returns false when the machine has no usable server for it: the add
+ * is refused with an error toast ("executable not found"), which is the right product behaviour.
+ */
+const addFirstLanguage = async (page: Page): Promise<boolean> => {
+	const before = await languageRows(page).count();
+	await page.getByRole("button", { name: "Add", exact: true }).click();
+	const first = page.getByRole("group", { name: "Available languages" }).getByRole("button").first();
+	await expect(first).toBeVisible();
+	await first.click();
+	let outcome = "pending";
+	await expect
+		.poll(
+			async () => {
+				if ((await languageRows(page).count()) > before) return (outcome = "added");
+				const refused = await page.getByText(/unavailable|not found|Failed to add language/i).first().isVisible().catch(() => false);
+				return (outcome = refused ? "refused" : "pending");
+			},
+			{ timeout: 20000 },
+		)
+		.not.toBe("pending");
+	return outcome === "added";
+};
+
+test.describe("Settings: LSP (Search & Code)", () => {
+	test("shows the Language Server Protocol section", async ({ page }) => {
+		await openSearchCode(page);
+		await expect(page.getByRole("heading", { name: "Language Server Protocol" })).toBeVisible();
 	});
 
-	test("LSP toggle switch is visible", async ({ page }) => {
-		await test.step("Navigate to Settings → Code", async () => {
-			await page.goto(`${server.baseURL}/config`);
-			await page.getByText("Code").first().click();
-		});
-
-		await test.step("Enabled toggle is visible", async () => {
-			await expect(page.getByText("Enabled")).toBeVisible();
-		});
+	test("shows the LSP enable switch", async ({ page }) => {
+		await openSearchCode(page);
+		await expect(page.getByRole("switch", { name: "Enable language servers" })).toBeVisible();
 	});
 
-	test("Add button for language is visible", async ({ page }) => {
-		await test.step("Navigate to Settings → Code", async () => {
-			await page.goto(`${server.baseURL}/config`);
-			await page.getByText("Code").first().click();
-		});
-
-		await test.step("Add language button is visible", async () => {
-			await expect(page.getByRole("button", { name: "Add" })).toBeVisible();
-		});
+	test("shows the Add button", async ({ page }) => {
+		await openSearchCode(page);
+		await expect(page.getByRole("button", { name: "Add", exact: true })).toBeVisible();
 	});
 
-	test("Add dropdown shows available languages when clicked", async ({ page }) => {
-		await test.step("Navigate to Settings → Code", async () => {
-			await page.goto(`${server.baseURL}/config`);
-			await page.getByText("Code").first().click();
-		});
-
-		await test.step("Click Add button", async () => {
-			await page.getByRole("button", { name: "Add" }).click();
-			await page.waitForTimeout(500);
-		});
-
-		await test.step("Dropdown is visible", async () => {
-			await expect(page.getByRole("button", { name: "Add" })).toHaveAttribute("aria-expanded", "true");
-			const dropdown = page.getByRole("group", { name: "Available languages" });
-			await expect(dropdown).toBeVisible();
-			await expect(dropdown.getByRole("button").first()).toBeVisible();
-		});
+	test("Add dropdown lists the available languages", async ({ page }) => {
+		await openSearchCode(page);
+		const add = page.getByRole("button", { name: "Add", exact: true });
+		await add.click();
+		await expect(add).toHaveAttribute("aria-expanded", "true");
+		const dropdown = page.getByRole("group", { name: "Available languages" });
+		await expect(dropdown).toBeVisible();
+		await expect(dropdown.getByRole("button").first()).toBeVisible();
 	});
 
-	test("can add a language and see it in the list", async ({ page }) => {
-		await test.step("Navigate to Settings → Code", async () => {
-			await page.goto(`${server.baseURL}/config`);
-			await page.getByText("Code").first().click();
-		});
-
-		await test.step("Click Add button", async () => {
-			await page.getByRole("button", { name: "Add" }).click();
-			await page.waitForTimeout(500);
-		});
-
-		await test.step("Click a language in the dropdown (if available)", async () => {
-			// Find the first language entry in the dropdown and click it
-			const langEntry = page.locator("button:has-text(/.+/)").first();
-			const hasEntry = await langEntry.isVisible().catch(() => false);
-
-			if (hasEntry) {
-				await langEntry.click();
-				await page.waitForTimeout(2000);
-
-				// The language should now appear in the list
-				const langList = page.locator('[class*="space-y-2"]').locator('[class*="bg-card"]').first();
-				await expect(langList.or(page.getByText(/running|installed|not installed/i).first())).toBeVisible({ timeout: 10000 });
-			}
-		});
+	test("adds a language as one row and keeps debug tools behind Details", async ({ page }) => {
+		await openSearchCode(page);
+		test.skip(!(await addFirstLanguage(page)), "no language server is installed on this machine");
+		const row = languageRows(page).last();
+		await expect(row.getByRole("button", { name: "Restart" })).toBeVisible();
+		// Install, Logs and Trace live behind Details, not on the row.
+		await expect(row.getByRole("button", { name: "Logs" })).toHaveCount(0);
+		await row.getByRole("button", { name: "Details" }).click();
+		await expect(row.getByRole("button", { name: "Logs" })).toBeVisible();
+		await expect(row.getByRole("button", { name: "Trace" }).first()).toBeVisible();
 	});
 
-	test("can toggle a language on/off", async ({ page }) => {
-		await test.step("Navigate to Settings → Code", async () => {
-			await page.goto(`${server.baseURL}/config`);
-			await page.getByText("Code").first().click();
-		});
-
-		await test.step("Add a language first", async () => {
-			const addBtn = page.getByRole("button", { name: "Add" });
-			await addBtn.click();
-			await page.waitForTimeout(500);
-
-			const firstLang = page.locator("button:has-text(/.+/)").first();
-			const hasEntry = await firstLang.isVisible().catch(() => false);
-
-			if (hasEntry) {
-				await firstLang.click();
-				await page.waitForTimeout(3000);
-			}
-		});
-
-		await test.step("Toggle the first language", async () => {
-			const firstSwitch = page.locator('[class*="space-y-2"]').locator('[role="switch"]').first();
-			const hasSwitch = await firstSwitch.isVisible().catch(() => false);
-
-			if (hasSwitch) {
-				await firstSwitch.click();
-				await page.waitForTimeout(1500);
-			}
-		});
+	test("toggles a language off and on", async ({ page }) => {
+		await openSearchCode(page);
+		test.skip(!(await addFirstLanguage(page)), "no language server is installed on this machine");
+		const toggle = languageRows(page).last().getByRole("switch").first();
+		await expect(toggle).toBeVisible();
+		const before = await toggle.getAttribute("aria-checked");
+		await toggle.click();
+		await expect(toggle).not.toHaveAttribute("aria-checked", before ?? "true", { timeout: 15000 });
 	});
 
-	test("can remove a language from the list", async ({ page }) => {
-		await test.step("Navigate to Settings → Code", async () => {
-			await page.goto(`${server.baseURL}/config`);
-			await page.getByText("Code").first().click();
-		});
-
-		await test.step("Add a language first", async () => {
-			const addBtn = page.getByRole("button", { name: "Add" });
-			await addBtn.click();
-			await page.waitForTimeout(500);
-
-			const firstLang = page.locator("button:has-text(/.+/)").first();
-			const hasEntry = await firstLang.isVisible().catch(() => false);
-
-			if (hasEntry) {
-				await firstLang.click();
-				await page.waitForTimeout(3000);
-			}
-		});
-
-		await test.step("Remove the language", async () => {
-			// Find the trash icon in the language card
-			const trashBtn = page.locator("button:has(svg)").filter({ hasText: /delete/i }).first();
-			const hasTrash = await trashBtn.isVisible().catch(() => false);
-
-			if (hasTrash) {
-				await trashBtn.click();
-				await page.waitForTimeout(2000);
-			}
-		});
+	test("removes a language from the list", async ({ page }) => {
+		await openSearchCode(page);
+		test.skip(!(await addFirstLanguage(page)), "no language server is installed on this machine");
+		const before = await languageRows(page).count();
+		await languageRows(page).last().getByRole("button", { name: /^Remove / }).click();
+		await expect(languageRows(page)).toHaveCount(before - 1, { timeout: 15000 });
 	});
 });
 
-test.describe("Settings — Runtime services", () => {
-	test("loads runtime services when the Runtime tab becomes active", async ({ page }) => {
-		await page.goto(`${server.baseURL}/config`);
+// The same row UI against fake language servers, so add, toggle, remove and Details are exercised on
+// machines (like CI or the Windows VM) where no real language server is installed.
+type FakeLsp = { enabled?: boolean; binary?: string };
 
-		const responsePromise = page.waitForResponse(
-			(response) =>
-				response.request().method() === "GET" &&
-				response.url().endsWith("/api/runtime/services"),
-		);
-		await page.getByText("Runtime").first().click();
+async function mockLsp(page: Page, configured: Record<string, FakeLsp>) {
+	let lsp: { enabled: boolean; languages: Record<string, FakeLsp> } = { enabled: true, languages: { ...configured } };
+	let base: Record<string, unknown> = {};
+	const patches: Array<Record<string, unknown>> = [];
+	const calls: string[] = [];
 
-		const response = await responsePromise;
-		const responseBody = await response.text();
-		expect(response.ok(), `runtime services returned ${response.status()}: ${responseBody}`).toBeTruthy();
-		const payload = JSON.parse(responseBody) as {
-			services?: Array<{ type?: string; name?: string }>;
-		};
-		expect(payload.services?.some((service) => service.type === "lsp")).toBeTruthy();
-		await expect(page.getByText(/^LSP \(/).first()).toBeVisible();
+	const info = (id: string, name: string) => ({
+		id,
+		name,
+		binary: `${id}-ls`,
+		installed: true,
+		running: false,
+		status: "stopped",
+		installState: "installed",
+		readinessState: "unknown",
+		installHint: `npm install -g ${id}-ls`,
+		capabilities: ["definition", "references"],
+	});
+
+	await page.route("**/api/config", async (route) => {
+		const method = route.request().method();
+		if (method === "GET") {
+			const response = await route.fetch();
+			const body = await response.json();
+			base = body.config || {};
+			await route.fulfill({ response, json: { ...body, config: { ...base, lsp } } });
+		} else if (method === "PATCH") {
+			const patch = route.request().postDataJSON() as Record<string, unknown>;
+			patches.push(patch);
+			if (patch.lsp) lsp = patch.lsp as typeof lsp;
+			await route.fulfill({ json: { config: { ...base, lsp } } });
+		} else {
+			await route.continue();
+		}
+	});
+
+	await page.route(/\/api\/lsp\/languages(\/[^/]+)?$/, async (route) => {
+		const request = route.request();
+		const url = new URL(request.url());
+		const id = decodeURIComponent(url.pathname.split("/").pop() ?? "");
+		if (request.method() === "GET") {
+			await route.fulfill({ json: { languages: [info("alpha", "Alpha Lang"), info("beta", "Beta Lang")] } });
+			return;
+		}
+		calls.push(`${request.method()} ${url.pathname.endsWith("/languages") ? "(add)" : id}`);
+		await route.fulfill({ json: { language: id, status: "ok", action: request.method().toLowerCase() } });
+	});
+
+	return { patches, calls };
+}
+
+const lastPatchedLanguages = (patches: Array<Record<string, unknown>>) => {
+	const last = [...patches].reverse().find((p) => p.lsp) as { lsp: { languages: Record<string, FakeLsp> } } | undefined;
+	return last?.lsp.languages;
+};
+
+test.describe("Settings: LSP rows (mocked language servers)", () => {
+	test("adds a language as a row and keeps the others in the saved lsp", async ({ page }) => {
+		const { patches } = await mockLsp(page, { alpha: { enabled: true, binary: "alpha-ls" } });
+		await openSearchCode(page);
+		await expect(languageRows(page)).toHaveCount(1);
+
+		await page.getByRole("button", { name: "Add", exact: true }).click();
+		const offered = page.getByRole("group", { name: "Available languages" });
+		await expect(offered.getByRole("button", { name: /Alpha Lang/ })).toHaveCount(0);
+		await offered.getByRole("button", { name: /Beta Lang/ }).click();
+
+		await expect(languageRows(page)).toHaveCount(2);
+		await expect.poll(() => lastPatchedLanguages(patches) !== undefined).toBe(true);
+		const saved = lastPatchedLanguages(patches)!;
+		expect(Object.keys(saved).sort()).toEqual(["alpha", "beta"]);
+		expect(saved.alpha).toEqual({ enabled: true, binary: "alpha-ls" });
+		expect(saved.beta.enabled).toBe(true);
+	});
+
+	test("toggling a language saves the full lsp with every language kept", async ({ page }) => {
+		const { patches, calls } = await mockLsp(page, {
+			alpha: { enabled: true, binary: "alpha-ls" },
+			beta: { enabled: true, binary: "beta-ls" },
+		});
+		await openSearchCode(page);
+		const toggle = page.getByRole("switch", { name: "Enable Alpha Lang" });
+		await expect(toggle).toHaveAttribute("aria-checked", "true");
+		await toggle.click();
+
+		await expect.poll(() => lastPatchedLanguages(patches) !== undefined).toBe(true);
+		const saved = lastPatchedLanguages(patches)!;
+		expect(Object.keys(saved).sort()).toEqual(["alpha", "beta"]);
+		expect(saved.alpha).toEqual({ enabled: false, binary: "alpha-ls" });
+		expect(saved.beta).toEqual({ enabled: true, binary: "beta-ls" });
+		expect(calls).toContain("PUT alpha");
+		await expect(toggle).toHaveAttribute("aria-checked", "false");
+	});
+
+	test("removing a language drops only that row from the saved lsp", async ({ page }) => {
+		const { patches, calls } = await mockLsp(page, {
+			alpha: { enabled: true, binary: "alpha-ls" },
+			beta: { enabled: true, binary: "beta-ls" },
+		});
+		await openSearchCode(page);
+		await expect(languageRows(page)).toHaveCount(2);
+		await page.getByRole("button", { name: "Remove Alpha Lang" }).click();
+
+		await expect(languageRows(page)).toHaveCount(1);
+		await expect(page.getByTestId("lsp-language-beta")).toBeVisible();
+		await expect.poll(() => lastPatchedLanguages(patches) !== undefined).toBe(true);
+		expect(lastPatchedLanguages(patches)).toEqual({ beta: { enabled: true, binary: "beta-ls" } });
+		expect(calls).toContain("DELETE alpha");
+	});
+
+	test("Details holds the debug tools, the row does not", async ({ page }) => {
+		await mockLsp(page, { alpha: { enabled: true, binary: "alpha-ls" } });
+		await openSearchCode(page);
+		const row = page.getByTestId("lsp-language-alpha");
+		await expect(row.getByRole("button", { name: "Restart" })).toBeVisible();
+		for (const tool of ["Install", "Update", "Cleanup", "Logs", "Trace"]) {
+			await expect(row.getByRole("button", { name: tool, exact: true })).toHaveCount(0);
+		}
+
+		const details = row.getByRole("button", { name: "Details" });
+		await expect(details).toHaveAttribute("aria-expanded", "false");
+		await details.click();
+		await expect(details).toHaveAttribute("aria-expanded", "true");
+		for (const tool of ["Install", "Update", "Cleanup", "Logs", "Trace"]) {
+			await expect(row.getByRole("button", { name: tool, exact: true })).toBeVisible();
+		}
+		await expect(row.getByText("Backend", { exact: true })).toBeVisible();
+		await expect(row.getByText("alpha-ls").first()).toBeVisible();
 	});
 });

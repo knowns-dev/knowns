@@ -26,14 +26,21 @@ test.describe("Configuration Page", () => {
 		});
 	});
 
+	test("offers exactly five sections and no Imports or Runtime", async ({ page }) => {
+		await page.goto(`${server.baseURL}/config`);
+		const nav = page.getByRole("navigation", { name: "Settings sections" });
+		await expect(nav.getByRole("button")).toHaveText(["General", "Workflow", "Search & Code", "Access", "Advanced"]);
+	});
+
 	test("shows board status configuration", async ({ page }) => {
 		await test.step("Navigate to config page", async () => {
 			await page.goto(`${server.baseURL}/config`);
 		});
 
-		await test.step("Board section is visible", async () => {
-			const boardSection = page.getByText(/board|statuses/i).first();
-			await expect(boardSection).toBeVisible();
+		await test.step("Workflow section lists statuses with Board visibility", async () => {
+			await page.getByRole("button", { name: "Workflow", exact: true }).click();
+			await expect(page.getByRole("heading", { name: "Statuses" })).toBeVisible();
+			await expect(page.getByRole("switch", { name: "Show To Do on Board" })).toBeVisible();
 		});
 	});
 
@@ -70,10 +77,10 @@ test.describe("Configuration Page", () => {
 		});
 
 		await page.goto(`${server.baseURL}/config`);
-		await page.getByRole("button", { name: "Search", exact: true }).click();
+		await page.getByRole("button", { name: "Search & Code", exact: true }).click();
 
 		await expect(page.getByTestId("local-onnx-unavailable")).toHaveCount(0);
-		const provider = page.getByRole("combobox");
+		const provider = page.getByRole("combobox", { name: "Provider" });
 		await expect(provider.locator('option[value="local"]')).toHaveCount(0);
 		await expect(provider.locator('option[value="ollama"]')).toHaveCount(1);
 		await expect(provider.locator('option[value="api"]')).toHaveCount(1);
@@ -82,10 +89,11 @@ test.describe("Configuration Page", () => {
 		await expect(provider).toHaveValue("ollama");
 		await expect(page.getByText("HuggingFace ID", { exact: true })).toHaveCount(0);
 
+		// Any semantic-search edit must save the effective provider, never the retired "local".
 		const saveRequest = page.waitForRequest(
 			(request) => request.url().endsWith("/api/config") && request.method() === "PATCH",
 		);
-		await page.getByRole("spinbutton").first().fill("768");
+		await page.getByRole("switch", { name: "Enable semantic search" }).click();
 		const request = await saveRequest;
 		expect(request.postDataJSON().semanticSearch.provider).toBe("ollama");
 	});
@@ -94,16 +102,16 @@ test.describe("Configuration Page", () => {
 		await page.setViewportSize({ width: 390, height: 844 });
 		await page.goto(`${server.baseURL}/config`);
 
-		const settingsTabs = page.getByRole("tablist", { name: "Settings categories" });
-		const generalTab = settingsTabs.getByRole("tab", { name: "General" });
-		await expect(settingsTabs).toBeVisible();
+		const sections = page.getByRole("navigation", { name: "Settings sections" });
+		const generalTab = sections.getByRole("button", { name: "General", exact: true });
+		await expect(sections).toBeVisible();
 		await expect(generalTab).toBeVisible();
-		await expect(generalTab).toHaveAttribute("aria-selected", "true");
+		await expect(generalTab).toHaveAttribute("aria-current", "page");
 		await expect(page.getByRole("heading", { name: "Project", exact: true })).toBeVisible();
 
-		const codeTab = settingsTabs.getByRole("tab", { name: "Code", exact: true });
+		const codeTab = sections.getByRole("button", { name: "Search & Code", exact: true });
 		await codeTab.click();
-		await expect(codeTab).toHaveAttribute("aria-selected", "true");
+		await expect(codeTab).toHaveAttribute("aria-current", "page");
 		await expect(page.getByRole("heading", { name: "Language Server Protocol", exact: true })).toBeVisible();
 
 		const codeTabBox = await codeTab.boundingBox();

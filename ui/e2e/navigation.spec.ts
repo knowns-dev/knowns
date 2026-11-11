@@ -41,6 +41,8 @@ test.describe("Navigation & Global Features", () => {
 		await test.step("Navigate to Settings via sidebar", async () => {
 			await page.getByText("Settings", { exact: true }).first().click();
 			await expect(page).toHaveURL(/\/config/);
+			await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+			await expect(page.getByRole("navigation", { name: "Settings sections" }).getByRole("button")).toHaveCount(5);
 		});
 	});
 

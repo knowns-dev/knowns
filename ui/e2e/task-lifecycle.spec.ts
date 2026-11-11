@@ -56,13 +56,12 @@ test.describe("Task lifecycle settings", () => {
 	test("shows backend defaults, autosaves valid values, and surfaces backend validation", async ({ page }) => {
 		const beforeConfig = await page.request.get(`${server.baseURL}/api/config`).then((response) => response.json());
 		await page.goto(`${server.baseURL}/config`);
-		await page.getByRole("button", { name: "Task lifecycle" }).click();
+		await page.getByRole("button", { name: "Workflow", exact: true }).click();
 
 		await expect(page.getByTestId("task-lifecycle-settings")).toBeVisible();
 		await expect(page.getByLabel("Exclude done Tasks from default AI retrieval")).toBeChecked();
 		await expect(page.getByLabel("Enable automatic Task archival")).toBeChecked();
 		await expect(page.getByLabel("Archive completed Tasks after")).toHaveValue("30d");
-		await expect(page.getByTestId("task-purge-disabled")).toContainText("Disabled");
 
 		const validSave = page.waitForResponse((response) =>
 			response.url().endsWith("/api/config") && response.request().method() === "PATCH" && response.status() === 200,
@@ -112,7 +111,7 @@ test.describe("Task lifecycle settings", () => {
 		});
 
 		await page.goto(`${server.baseURL}/config`);
-		await page.getByRole("button", { name: "Task lifecycle" }).click();
+		await page.getByRole("button", { name: "Workflow", exact: true }).click();
 		const archiveAfter = page.getByLabel("Archive completed Tasks after");
 		await archiveAfter.fill("51d");
 		await expect.poll(() => patches.length).toBe(1);
