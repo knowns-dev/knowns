@@ -1,6 +1,10 @@
+// The Runtime page: what the shared Knowns daemon is running for this workspace (daemon,
+// LSP servers, the search index and its embedder, tunnels), what it is working on, and what
+// needs a person. Built on Knowns UI: Badge, Card, Tabs, SegmentedControl, Progress and Fold.
 import { Link } from "@tanstack/react-router";
 import {
 	createContext,
+	type ReactNode,
 	useCallback,
 	useContext,
 	useEffect,
@@ -12,10 +16,11 @@ import {
 	AlertTriangle,
 	ArrowRight,
 	CheckCircle2,
-	ChevronDown,
 	ChevronRight,
-	Circle,
+	CircleDot,
 	Clock,
+	ListChecks,
+	Plug,
 	RefreshCw,
 	Server,
 	Settings2,
@@ -32,10 +37,17 @@ import type {
 } from "@/ui/api/client";
 import { useRuntimeMonitor } from "@/ui/hooks/useRuntimeMonitor";
 import { cn } from "@/ui/lib/utils";
+import { Badge, type BadgeTone } from "../ui/knowns/badge";
+import { Button as KnButton, buttonClass } from "../ui/knowns/button";
 import { Button } from "../ui/button";
-import { Skeleton } from "../ui/skeleton";
+import { Progress } from "../ui/knowns/progress";
+import { SegmentedControl } from "../ui/knowns/segmented-control";
+import { Skeleton } from "../ui/knowns/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/knowns/tabs";
+import { Fold } from "@/ui/lib/knowns/motion";
 import { FeatureHeader } from "../templates/FeatureHeader";
-import { PageContent } from "../templates/PageShell";
+import { PageContent, PageError, PageLoading } from "../templates/PageShell";
+
 
 type ServiceOperationalState =
 	| "attention"
@@ -70,7 +82,7 @@ function timeAgo(value?: string | null) {
 }
 
 function duration(start?: string, end?: string) {
-	if (!start || !end) return "—";
+	if (!start || !end) return "-";
 	const ms = Math.max(0, new Date(end).getTime() - new Date(start).getTime());
 	const seconds = Math.round(ms / 1000);
 	if (seconds < 60) return `${seconds}s`;
@@ -369,11 +381,125 @@ function isReachableService(service: RuntimeService) {
 	return detailIsTrue(service, "detected");
 }
 
+
+/* ------------------------------------------------------------------ look */
+
+// The same raised surface the Dashboard panels use, so the two operational pages read alike.
+const SURFACE =
+	"min-w-0 overflow-hidden rounded-xl bg-card shadow-[0_0_0_1px_color-mix(in_srgb,var(--foreground)_10%,transparent),0_1px_2px_rgb(0_0_0/0.05)]";
+// Hover is seen many times a day: colour only, fast.
+const ROW_HOVER =
+	"transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-muted/40";
+const FOCUS_INSET =
+	"outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+const COLUMN_HEAD =
+	"font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground";
+
+const SERVICE_TONE: Record<ServiceOperationalState, BadgeTone> = {
+	attention: "warning",
+	running: "success",
+	standby: "neutral",
+	disabled: "neutral",
+};
+
+const JOB_STATE: Record<JobLifecycleState, { label: string; tone: BadgeTone }> = {
+	running: { label: "Active", tone: "info" },
+	ready: { label: "Waiting", tone: "neutral" },
+	retrying: { label: "Retrying", tone: "warning" },
+	dead: { label: "Failed permanently", tone: "danger" },
+};
+
+type CalloutTone = "danger" | "warning" | "success" | "neutral";
+
+const CALLOUT_SURFACE: Record<CalloutTone, string> = {
+	danger: "border-red-500/25 bg-red-500/[0.06] dark:border-red-400/25 dark:bg-red-500/10",
+	warning: "border-amber-500/30 bg-amber-500/[0.07] dark:border-amber-400/25 dark:bg-amber-500/10",
+	success: "border-border bg-card",
+	neutral: "border-border bg-card",
+};
+
+const CALLOUT_ICON: Record<CalloutTone, string> = {
+	danger: "text-red-600 dark:text-red-400",
+	warning: "text-amber-600 dark:text-amber-400",
+	success: "text-emerald-600 dark:text-emerald-400",
+	neutral: "text-muted-foreground",
+};
+
+/** How long ago the daemon started, as a short uptime ("3h 12m"). */
+function uptimeSince(value?: string) {
+	if (!value) return "";
+	const started = new Date(value).getTime();
+	if (Number.isNaN(started)) return "";
+	const minutes = Math.floor(Math.max(0, Date.now() - started) / 60000);
+	if (minutes < 1) return "<1m";
+	if (minutes < 60) return `${minutes}m`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${hours}h ${minutes % 60}m`;
+	return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+
+const plural = (count: number, one: string, many: string) =>
+	`${count} ${count === 1 ? one : many}`;
+
+/* ------------------------------------------------------------ primitives */
+
 function KindBadge({ kind }: { kind: string }) {
 	return (
-		<span className="inline-flex shrink-0 items-center rounded-md bg-muted px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+		<Badge size="sm" variant="outline" className="shrink-0 font-mono text-[10px] uppercase tracking-wide">
 			{kind}
-		</span>
+		</Badge>
+	);
+}
+
+function Callout({
+	tone,
+	icon,
+	title,
+	children,
+	action,
+	role,
+	testId,
+	className,
+}: {
+	tone: CalloutTone;
+	icon?: ReactNode;
+	title: ReactNode;
+	children?: ReactNode;
+	action?: ReactNode;
+	role?: "alert" | "status";
+	testId?: string;
+	className?: string;
+}) {
+	return (
+		<div
+			role={role}
+			data-testid={testId}
+			className={cn(
+				"flex shrink-0 flex-col gap-3 rounded-xl border px-4 py-3 sm:flex-row sm:items-start",
+				CALLOUT_SURFACE[tone],
+				className,
+			)}
+		>
+			<div className="flex min-w-0 flex-1 items-start gap-3">
+				<span className={cn("mt-0.5 shrink-0 [&_svg]:size-4", CALLOUT_ICON[tone])} aria-hidden="true">
+					{icon ??
+						(tone === "success" ? <CheckCircle2 /> : <AlertTriangle />)}
+				</span>
+				<div className="min-w-0 flex-1">
+					<p className="text-sm font-medium">{title}</p>
+					{children && (
+						<div className="mt-0.5 text-xs leading-5 text-muted-foreground">
+							{children}
+						</div>
+					)}
+				</div>
+			</div>
+			{action && (
+				<div className="flex shrink-0 items-center gap-3 self-end sm:self-start">
+					{action}
+				</div>
+			)}
+		</div>
 	);
 }
 
@@ -381,25 +507,103 @@ function RuntimeEmptyState({
 	icon: Icon,
 	title,
 	description,
+	action,
 }: {
 	icon: typeof Activity;
 	title: string;
 	description: string;
+	action?: ReactNode;
 }) {
 	return (
-		<div className="flex items-start gap-3 px-4 py-5">
-			<div className="mt-0.5 rounded-md bg-muted p-2">
-				<Icon className="size-4 text-muted-foreground" aria-hidden="true" />
+		<div className="flex flex-col items-center px-6 py-10 text-center">
+			<div className="grid size-10 place-items-center rounded-full bg-muted">
+				<Icon className="size-4.5 text-muted-foreground" aria-hidden="true" />
 			</div>
-			<div>
-				<p className="text-sm font-medium">{title}</p>
-				<p className="mt-1 max-w-xl text-xs leading-5 text-muted-foreground">
-					{description}
-				</p>
-			</div>
+			<p className="mt-3 text-sm font-medium">{title}</p>
+			<p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">
+				{description}
+			</p>
+			{action && <div className="mt-4">{action}</div>}
 		</div>
 	);
 }
+
+function RuntimeListSkeleton({ rows = 3 }: { rows?: number }) {
+	return (
+		<div className="space-y-5 px-4 py-5" aria-hidden="true">
+			{Array.from({ length: rows }).map((_, index) => (
+				<div key={index} className="flex items-center gap-3">
+					<Skeleton className="size-3 rounded-full" />
+					<div className="flex-1 space-y-2">
+						<Skeleton className="h-3 w-2/3" />
+						<Skeleton className="h-2.5 w-1/2" />
+					</div>
+				</div>
+			))}
+		</div>
+	);
+}
+
+/** A chevron that turns when its region opens. Something already on screen moving: ease-inout. */
+function DisclosureChevron({ open, className }: { open: boolean; className?: string }) {
+	return (
+		<ChevronRight
+			className={cn(
+				"size-3.5 shrink-0 text-muted-foreground transition-transform duration-(--kn-dur) ease-(--kn-ease-inout) motion-reduce:transition-none",
+				open && "rotate-90",
+				className,
+			)}
+			aria-hidden="true"
+		/>
+	);
+}
+
+/* --------------------------------------------------------- health tiles */
+
+function HealthTile({
+	label,
+	icon,
+	tone,
+	value,
+	detail,
+	onSelect,
+	selectLabel,
+	testId,
+}: {
+	label: string;
+	icon: ReactNode;
+	tone: BadgeTone;
+	value: ReactNode;
+	detail: ReactNode;
+	onSelect: () => void;
+	selectLabel: string;
+	testId?: string;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onSelect}
+			aria-label={selectLabel}
+			data-testid={testId}
+			className={cn(
+				"group min-w-0 rounded-xl bg-card p-4 text-left",
+				"shadow-[0_0_0_1px_color-mix(in_srgb,var(--foreground)_10%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--foreground)_22%,transparent)]",
+				"transition-shadow duration-(--kn-dur-fast) ease-(--kn-ease-out) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+			)}
+		>
+			<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+				<Badge tone={tone} size="sm" className="h-5 w-5 justify-center p-0 [&_svg]:size-3.5">
+					{icon}
+				</Badge>
+				{label}
+			</div>
+			<div className="mt-2 truncate text-2xl font-semibold tabular-nums">{value}</div>
+			<p className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">{detail}</p>
+		</button>
+	);
+}
+
+/* --------------------------------------------------------------- services */
 
 function ServiceStateBadge({
 	service,
@@ -409,31 +613,15 @@ function ServiceStateBadge({
 	state: ServiceOperationalState;
 }) {
 	return (
-		<span
-			className={cn(
-				"inline-flex w-fit items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-medium",
-				state === "attention" &&
-					"border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-				state === "running" &&
-					"border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-				state === "standby" &&
-					"border-border bg-muted/45 text-muted-foreground",
-				state === "disabled" &&
-					"border-border/70 bg-background text-muted-foreground",
-			)}
+		<Badge
+			tone={SERVICE_TONE[state]}
+			variant={state === "disabled" ? "outline" : "soft"}
+			dot
+			size="sm"
+			className="w-fit shrink-0"
 		>
-			<Circle
-				className={cn(
-					"size-1.5 fill-current",
-					state === "attention" && "text-amber-500",
-					state === "running" && "text-emerald-500",
-					(state === "standby" || state === "disabled") &&
-						"text-muted-foreground/60",
-				)}
-				aria-hidden="true"
-			/>
 			{serviceStatusLabel(service, state)}
-		</span>
+		</Badge>
 	);
 }
 
@@ -442,54 +630,54 @@ function ServiceRow({ service }: { service: RuntimeService }) {
 	const details = serviceDetailItems(service);
 	const installCommand = detailValue(service, "install_cmd");
 	const processSummary = serviceProcessSummary(service, state);
+	const guidance = serviceGuidance(service, state);
 
 	return (
 		<article
+			data-service-state={state}
 			className={cn(
-				"grid gap-3 px-4 py-2.5 transition-colors hover:bg-muted/25 md:grid-cols-[minmax(12rem,1.05fr)_9rem_10rem_minmax(14rem,1.25fr)_auto] md:items-center",
-				state === "disabled" && "opacity-70",
+				"grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1.5 px-4 py-3 @4xl:grid-cols-[minmax(11rem,1fr)_8.5rem_9.5rem_minmax(14rem,1.4fr)_auto] @4xl:items-center @4xl:py-2.5",
+				ROW_HOVER,
 			)}
 		>
-			<div className="min-w-0">
+			<div className={cn("min-w-0", state === "disabled" && "opacity-70")}>
 				<div className="flex min-w-0 items-center gap-2">
-					<span className="truncate text-sm font-semibold" title={service.name}>
+					<span className="truncate text-sm font-medium" title={service.name}>
 						{service.name}
 					</span>
-					<span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.1em] text-muted-foreground">
+					<span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
 						{service.type}
 					</span>
 				</div>
-				<p className="mt-1 text-xs leading-5 text-muted-foreground md:hidden">
-					{serviceGuidance(service, state)}
-				</p>
 			</div>
 
-			<ServiceStateBadge service={service} state={state} />
-
-			<div className="text-xs text-muted-foreground">
-				<div className="font-mono tabular-nums text-foreground/85">
-					{processSummary}
-				</div>
-				{service.uptime && <div className="mt-1">Up {service.uptime}</div>}
+			<div className="justify-self-end @4xl:justify-self-start">
+				<ServiceStateBadge service={service} state={state} />
 			</div>
 
-			<div className="hidden min-w-0 md:block">
+			<div className="col-span-2 text-xs text-muted-foreground @4xl:col-span-1">
+				<span className="font-mono tabular-nums text-foreground/85">{processSummary}</span>
+				{service.uptime && (
+					<span className="ml-2 @4xl:ml-0 @4xl:mt-0.5 @4xl:block">Up {service.uptime}</span>
+				)}
+			</div>
+
+			<div className="col-span-2 min-w-0 @4xl:col-span-1">
 				<p
 					className={cn(
-						"truncate text-xs text-muted-foreground",
-						state === "attention" &&
-							"text-amber-700 dark:text-amber-300",
+						"text-xs leading-5 text-muted-foreground @4xl:truncate",
+						state === "attention" && "text-amber-700 dark:text-amber-300",
 					)}
-					title={serviceGuidance(service, state)}
+					title={guidance}
 				>
-					{serviceGuidance(service, state)}
+					{guidance}
 				</p>
 				{details.length > 0 && (state === "attention" || state === "running") && (
-					<div className="mt-1.5 flex min-w-0 flex-wrap gap-x-2 gap-y-1">
+					<div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1">
 						{details.map((item) => (
 							<span
 								key={item.key}
-								className="max-w-44 truncate font-mono text-[10px] text-muted-foreground/75"
+								className="max-w-44 truncate font-mono text-[10px] text-muted-foreground/80"
 								title={`${item.label}=${item.value}`}
 							>
 								{item.label}={item.value}
@@ -498,30 +686,29 @@ function ServiceRow({ service }: { service: RuntimeService }) {
 					</div>
 				)}
 				{state === "attention" && installCommand && (
-					<div
-						className="mt-1.5 truncate font-mono text-[10px] text-muted-foreground"
+					<code
+						className="mt-1.5 block truncate rounded-md bg-muted px-2 py-1 font-mono text-[10px] text-foreground/80"
 						title={installCommand}
 					>
 						{installCommand}
-					</div>
+					</code>
 				)}
 			</div>
 
-			<Button
-				asChild
-				variant="ghost"
-				size="sm"
-				className="h-8 w-fit gap-1 px-2 text-xs md:justify-self-end"
+			<Link
+				to="/config"
+				search={{ category: serviceSettingsCategory(service) }}
+				aria-label={`Configure ${service.name}`}
+				className={buttonClass(
+					"ghost",
+					"sm",
+					false,
+					"col-span-2 -ml-3 w-fit @4xl:col-span-1 @4xl:ml-0 @4xl:justify-self-end",
+				)}
 			>
-				<Link
-					to="/config"
-					search={{ category: serviceSettingsCategory(service) }}
-					aria-label={`Configure ${service.name}`}
-				>
-					Configure
-					<ArrowRight className="size-3.5" aria-hidden="true" />
-				</Link>
-			</Button>
+				Configure
+				<ArrowRight aria-hidden="true" />
+			</Link>
 		</article>
 	);
 }
@@ -536,15 +723,24 @@ function ServiceGroup({
 	// Standby/disabled services are the long tail (often 15+ rows) and rarely the
 	// reason someone opens this page, so they stay folded until asked for —
 	// unless they are all this filter has to show.
-	const openByDefault =
-		soleGroup || group.state === "attention" || group.state === "running";
+	const [open, setOpen] = useState(
+		soleGroup || group.state === "attention" || group.state === "running",
+	);
+	const regionId = `runtime-group-${group.state}`;
 	return (
-		<details className="group/svc" open={openByDefault} aria-label={group.title}>
-			<summary className="flex cursor-pointer list-none items-center gap-2 border-b border-border/45 bg-muted/15 px-4 py-2 transition-colors hover:bg-muted/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-				<ChevronRight
-					className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/svc:rotate-90 motion-reduce:transition-none"
-					aria-hidden="true"
-				/>
+		<section aria-label={group.title} data-testid={`runtime-group-${group.state}`}>
+			<button
+				type="button"
+				aria-expanded={open}
+				aria-controls={regionId}
+				onClick={() => setOpen((current) => !current)}
+				className={cn(
+					"flex w-full items-center gap-2 border-t border-border/50 bg-muted/25 px-4 py-2 text-left",
+					ROW_HOVER,
+					FOCUS_INSET,
+				)}
+			>
+				<DisclosureChevron open={open} />
 				<h3 className="text-xs font-semibold">{group.title}</h3>
 				<p className="hidden min-w-0 truncate text-[11px] text-muted-foreground sm:block">
 					{group.description}
@@ -552,18 +748,19 @@ function ServiceGroup({
 				<span className="ml-auto font-mono text-[11px] tabular-nums text-muted-foreground">
 					{group.services.length}
 				</span>
-			</summary>
-			<div className="divide-y divide-border/45">
-				{group.services.map((service) => (
-					<ServiceRow
-						key={`${service.type}-${service.name}`}
-						service={service}
-					/>
-				))}
-			</div>
-		</details>
+			</button>
+			<Fold open={open}>
+				<div id={regionId} className="divide-y divide-border/50 border-t border-border/50">
+					{group.services.map((service) => (
+						<ServiceRow key={`${service.type}-${service.name}`} service={service} />
+					))}
+				</div>
+			</Fold>
+		</section>
 	);
 }
+
+/* ------------------------------------------------------------------- jobs */
 
 type JobLifecycleState = "running" | "ready" | "retrying" | "dead";
 
@@ -587,40 +784,11 @@ interface JobFailureGroup {
 }
 
 function JobStateBadge({ state }: { state: JobLifecycleState }) {
-	const label =
-		state === "running"
-			? "Active"
-			: state === "dead"
-				? "Failed permanently"
-				: state === "retrying"
-					? "Retrying"
-					: "Waiting";
+	const meta = JOB_STATE[state];
 	return (
-		<span
-			className={cn(
-				"inline-flex w-fit shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.5 text-[10px] font-medium",
-				state === "running" &&
-					"border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-				state === "dead" &&
-					"border-destructive/30 bg-destructive/10 text-destructive",
-				state === "retrying" &&
-					"border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-				state === "ready" &&
-					"border-border bg-muted/45 text-muted-foreground",
-			)}
-		>
-			<Circle
-				className={cn(
-					"size-1.5 fill-current",
-					state === "running" && "text-emerald-500",
-					state === "dead" && "text-destructive",
-					state === "retrying" && "text-amber-500",
-					state === "ready" && "text-muted-foreground/60",
-				)}
-				aria-hidden="true"
-			/>
-			{label}
-		</span>
+		<Badge tone={meta.tone} dot size="sm" className="w-fit shrink-0">
+			{meta.label}
+		</Badge>
 	);
 }
 
@@ -637,27 +805,19 @@ function JobRow({
 		typeof job.processed === "number" &&
 		typeof job.total === "number" &&
 		job.total > 0;
-	const progress = hasProgress
-		? Math.min(
-				100,
-				Math.round(((job.processed ?? 0) / (job.total ?? 1)) * 100),
-			)
-		: 0;
 	const daemonStartedAt = useContext(DaemonStartedAtContext);
 	const stale =
 		state === "dead" && isErrorStale(job, Date.now(), daemonStartedAt);
 
 	return (
-		<div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/25">
+		<div className={cn("grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 px-4 py-3 sm:grid-cols-[auto_minmax(0,1fr)_auto]", ROW_HOVER)}>
 			<KindBadge kind={job.kind} />
 			<div className="min-w-0">
 				<div className="truncate text-sm" title={job.target || project.root}>
 					{job.target || projectName(project.root)}
 				</div>
 				<div className="mt-0.5 flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
-					<span className="truncate">
-						{job.phase || projectName(project.root)}
-					</span>
+					<span className="truncate">{job.phase || projectName(project.root)}</span>
 					{hasProgress && (
 						<span className="shrink-0 tabular-nums">
 							{job.processed}/{job.total}
@@ -665,24 +825,23 @@ function JobRow({
 					)}
 				</div>
 				{hasProgress && (
-					<div className="mt-2 h-1 overflow-hidden rounded-full bg-muted">
-						<div
-							className="h-full rounded-full bg-primary transition-[width] duration-200 motion-reduce:transition-none"
-							style={{ width: `${progress}%` }}
-						/>
-					</div>
+					<Progress
+						className="mt-2"
+						size="sm"
+						tone={state === "running" ? "info" : "neutral"}
+						value={job.processed ?? 0}
+						max={job.total ?? 1}
+						valueLabel="none"
+						aria-label={`${job.kind} progress`}
+					/>
 				)}
 				{job.lastError ? (
 					<p
 						className={cn(
 							"mt-1 truncate text-[11px]",
-							stale ? "text-muted-foreground italic" : "text-destructive",
+							stale ? "italic text-muted-foreground" : "text-red-600 dark:text-red-400",
 						)}
-						title={
-							stale
-								? staleErrorTitle(daemonStartedAt)
-								: job.lastError
-						}
+						title={stale ? staleErrorTitle(daemonStartedAt) : job.lastError}
 					>
 						{job.lastError}
 						{stale ? " (stale)" : ""}
@@ -695,7 +854,7 @@ function JobRow({
 					)
 				)}
 			</div>
-			<div className="flex flex-col items-end gap-1">
+			<div className="col-start-2 flex flex-wrap items-center gap-2 sm:col-start-3 sm:flex-col sm:items-end sm:gap-1">
 				<JobStateBadge state={state} />
 				<div className="flex items-center gap-1 text-[11px] text-muted-foreground">
 					<Clock className="size-3" aria-hidden="true" />
@@ -712,34 +871,66 @@ function JobRow({
 	);
 }
 
+function JobSection({
+	title,
+	jobs,
+	state,
+	hideHeader = false,
+}: {
+	title: string;
+	jobs: JobEntry[];
+	state: JobLifecycleState;
+	// A cause's expansion already states its own state badge and count in
+	// the row above; repeating "Failed permanently · 86" as a second header
+	// right beneath it would say the same thing twice.
+	hideHeader?: boolean;
+}) {
+	return (
+		<div>
+			{!hideHeader && (
+				<div className="flex items-center justify-between border-b border-border/50 bg-muted/25 px-4 py-2 text-[11px] font-medium text-muted-foreground">
+					<span>{title}</span>
+					<span className="font-mono tabular-nums">{jobs.length}</span>
+				</div>
+			)}
+			<div className="divide-y divide-border/50">
+				{jobs.slice(0, JOB_PREVIEW_LIMIT).map(({ job, project }) => (
+					<JobRow key={job.id} job={job} project={project} state={state} />
+				))}
+			</div>
+			{jobs.length > JOB_PREVIEW_LIMIT && (
+				<p className="border-t border-border/50 px-4 py-2 text-[11px] text-muted-foreground">
+					Showing {JOB_PREVIEW_LIMIT} of {jobs.length}.
+				</p>
+			)}
+		</div>
+	);
+}
+
 function RecentRow({ job }: { job: RuntimeJobResult }) {
 	const [open, setOpen] = useState(false);
-	const hasDetails = Boolean(
-		job.details?.stats || job.details?.phase || job.error,
-	);
+	const hasDetails = Boolean(job.details?.stats || job.details?.phase || job.error);
+	const Row = hasDetails ? "button" : "div";
 
 	return (
 		<div>
-			<button
-				type="button"
+			<Row
+				{...(hasDetails
+					? {
+							type: "button" as const,
+							onClick: () => setOpen((current) => !current),
+							"aria-expanded": open,
+						}
+					: {})}
 				className={cn(
 					"grid w-full grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 text-left",
-					hasDetails &&
-						"hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+					hasDetails && cn(ROW_HOVER, FOCUS_INSET),
 				)}
-				onClick={() => hasDetails && setOpen((current) => !current)}
-				aria-expanded={hasDetails ? open : undefined}
 			>
 				{job.success ? (
-					<CheckCircle2
-						className="size-3.5 text-emerald-500"
-						aria-label="Succeeded"
-					/>
+					<CheckCircle2 className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-label="Succeeded" />
 				) : (
-					<XCircle
-						className="size-3.5 text-destructive"
-						aria-label="Failed"
-					/>
+					<XCircle className="size-3.5 text-red-600 dark:text-red-400" aria-label="Failed" />
 				)}
 				<KindBadge kind={job.kind} />
 				<div className="min-w-0">
@@ -747,33 +938,25 @@ function RecentRow({ job }: { job: RuntimeJobResult }) {
 						{job.target || job.key}
 					</div>
 					{job.error && !open && (
-						<div className="truncate text-[11px] text-destructive">
-							{job.error}
-						</div>
+						<div className="truncate text-[11px] text-red-600 dark:text-red-400">{job.error}</div>
 					)}
 				</div>
 				<div className="flex items-center gap-1 font-mono text-[11px] tabular-nums text-muted-foreground">
 					{duration(job.startedAt, job.completedAt)}
-					{hasDetails &&
-						(open ? (
-							<ChevronDown className="size-3" />
-						) : (
-							<ChevronRight className="size-3" />
-						))}
+					{hasDetails && <DisclosureChevron open={open} className="size-3" />}
 				</div>
-			</button>
-			{open && (
+			</Row>
+			<Fold open={open}>
 				<div className="space-y-1 bg-muted/25 px-4 py-3 pl-12 text-[11px] text-muted-foreground">
 					<div>Completed {timeAgo(job.completedAt)}</div>
 					{job.attemptCount > 1 && <div>Attempts: {job.attemptCount}</div>}
 					{job.details?.phase && <div>Final phase: {job.details.phase}</div>}
-					{job.details?.processed !== undefined &&
-						job.details?.total !== undefined && (
-							<div>
-								Progress: {job.details.processed}/{job.details.total}
-							</div>
-						)}
-					{job.error && <div className="text-destructive">{job.error}</div>}
+					{job.details?.processed !== undefined && job.details?.total !== undefined && (
+						<div>
+							Progress: {job.details.processed}/{job.details.total}
+						</div>
+					)}
+					{job.error && <div className="text-red-600 dark:text-red-400">{job.error}</div>}
 					{job.details?.stats &&
 						Object.entries(job.details.stats).map(([key, value]) => (
 							<div key={key} className="capitalize">
@@ -781,48 +964,182 @@ function RecentRow({ job }: { job: RuntimeJobResult }) {
 							</div>
 						))}
 				</div>
-			)}
+			</Fold>
 		</div>
 	);
 }
 
-function RuntimeListSkeleton({ rows = 3 }: { rows?: number }) {
-	return (
-		<div className="space-y-5 px-4 py-5" aria-hidden="true">
-			{Array.from({ length: rows }).map((_, index) => (
-				<div key={index} className="flex items-center gap-3">
-					<Skeleton className="size-3 rounded-full" />
-					<div className="flex-1 space-y-2">
-						<Skeleton className="h-3 w-2/3" />
-						<Skeleton className="h-2.5 w-1/2" />
-					</div>
-				</div>
-			))}
-		</div>
-	);
-}
+// The cause table replaces the old By-project / Failures / per-job-list
+// trio: one row per distinct (kind, message) cause, project surfaced as a
+// column instead of a separate card, and the individual jobs it accounts
+// for live inside the row's own disclosure instead of a permanently visible
+// list (AC2, AC3, AC5, AC6).
+const CAUSE_COLUMNS =
+	"@2xl:grid-cols-[minmax(0,1fr)_3.5rem_5.5rem_10rem_5.5rem]";
 
-function SummaryFact({
-	label,
-	value,
-	detail,
+function CauseTable({
+	failures,
+	onRetry,
+	retryingKey,
+	version,
 }: {
-	label: string;
-	value: string | number;
-	detail: string;
+	failures: JobFailureGroup[];
+	onRetry: (failure: JobFailureGroup) => void;
+	retryingKey: string | null;
+	version?: string;
 }) {
 	return (
-		<div className="min-w-0 bg-card px-4 py-3">
-			<dt className="text-xs font-medium text-muted-foreground">{label}</dt>
-			<dd className="mt-1 flex items-baseline gap-2">
-				<span className="text-xl font-semibold tabular-nums">{value}</span>
-				<span className="truncate text-[11px] text-muted-foreground">
-					{detail}
+		<section className={cn(SURFACE, "@container")} aria-label="Failure causes" data-testid="runtime-failure-causes">
+			<div className={cn("hidden gap-3 border-b border-border/50 bg-muted/25 px-4 py-2 @2xl:grid", CAUSE_COLUMNS, COLUMN_HEAD)}>
+				<span className="pl-5.5">Cause</span>
+				<span className="text-right">Count</span>
+				<span>Newest</span>
+				<span>Project</span>
+				<span className="text-right">Action</span>
+			</div>
+			<div className="divide-y divide-border/50">
+				{failures.map((failure) => (
+					<CauseRow
+						key={failure.key}
+						failure={failure}
+						onRetry={onRetry}
+						retryingKey={retryingKey}
+						version={version}
+					/>
+				))}
+			</div>
+		</section>
+	);
+}
+
+function CauseRow({
+	failure,
+	onRetry,
+	retryingKey,
+	version,
+}: {
+	failure: JobFailureGroup;
+	onRetry: (failure: JobFailureGroup) => void;
+	retryingKey: string | null;
+	version?: string;
+}) {
+	const [open, setOpen] = useState(false);
+	const daemonStartedAt = useContext(DaemonStartedAtContext);
+	const isRetrying = retryingKey === failure.key;
+	const primaryProject = failure.projects[0];
+	const extraProjectCount = failure.projects.length - 1;
+	const projectLabel = primaryProject
+		? `${projectName(primaryProject.root)}${extraProjectCount > 0 ? ` +${extraProjectCount}` : ""}`
+		: "-";
+	const projectTitle = failure.projects
+		.map((p) => `${projectName(p.root)} (${p.count})`)
+		.join(", ");
+	const bucketState = failure.bucket === "dead" ? "dead" : "retrying";
+
+	return (
+		<div data-testid="runtime-failure-cause">
+			<div className={cn("grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 px-4 py-2.5 @2xl:items-center", CAUSE_COLUMNS, ROW_HOVER)}>
+				<button
+					type="button"
+					aria-expanded={open}
+					onClick={() => setOpen((current) => !current)}
+					className={cn("flex min-w-0 items-start gap-2 rounded-md text-left", FOCUS_INSET)}
+				>
+					<DisclosureChevron open={open} className="mt-1" />
+					<span className="min-w-0 flex-1">
+						<span className="flex min-w-0 flex-wrap items-center gap-1.5">
+							<KindBadge kind={failure.kind} />
+							<JobStateBadge state={bucketState} />
+							{failure.allStale && (
+								<Badge size="sm" variant="outline" title={staleErrorTitle(daemonStartedAt, version)}>
+									Stale
+								</Badge>
+							)}
+						</span>
+						<span
+							className={cn(
+								"mt-1 block text-[11px] leading-5 text-red-600 dark:text-red-400",
+								!open && "line-clamp-2",
+							)}
+						>
+							{failure.message}
+						</span>
+						<span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground @2xl:hidden">
+							<span className="font-mono tabular-nums">{failure.count}×</span>
+							<span>newest {timeAgo(failure.mostRecentFailedAt)}</span>
+							<span className="truncate" title={projectTitle}>
+								{projectLabel}
+							</span>
+						</span>
+					</span>
+				</button>
+				<span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground @2xl:block">
+					{failure.count}
 				</span>
-			</dd>
+				<span className="hidden text-xs text-muted-foreground @2xl:block">
+					{timeAgo(failure.mostRecentFailedAt)}
+				</span>
+				<span className="hidden min-w-0 truncate text-xs text-muted-foreground @2xl:block" title={projectTitle}>
+					{projectLabel}
+				</span>
+				<span className="flex justify-end">
+					{failure.bucket === "dead" && (
+						<KnButton
+							variant="secondary"
+							size="xs"
+							onClick={() => onRetry(failure)}
+							disabled={retryingKey !== null && !isRetrying}
+							loading={isRetrying}
+							aria-label={`Retry ${failure.count} ${failure.kind} ${failure.count === 1 ? "job" : "jobs"}`}
+						>
+							{isRetrying ? "Retrying" : "Retry"}
+						</KnButton>
+					)}
+				</span>
+			</div>
+			<Fold open={open}>
+				<div className="border-t border-border/50 bg-muted/20">
+					<JobSection title="Affected targets" jobs={failure.entries} state={bucketState} hideHeader />
+				</div>
+			</Fold>
 		</div>
 	);
 }
+
+function RecentCompletions({ jobs }: { jobs: RuntimeJobResult[] }) {
+	// Completed work stays available without occupying the top of the tab,
+	// and is collapsed by default (AC8).
+	const [open, setOpen] = useState(false);
+	const failed = jobs.filter((job) => !job.success).length;
+	return (
+		<section className={SURFACE} aria-label="Recent completions">
+			<button
+				type="button"
+				aria-expanded={open}
+				onClick={() => setOpen((current) => !current)}
+				className={cn("flex w-full items-center gap-2 px-4 py-2.5 text-left", ROW_HOVER, FOCUS_INSET)}
+			>
+				<DisclosureChevron open={open} />
+				<h3 className="text-xs font-semibold">Recent completions</h3>
+				{failed > 0 && (
+					<Badge tone="danger" size="sm">
+						{failed} failed
+					</Badge>
+				)}
+				<span className="ml-auto font-mono text-[11px] tabular-nums text-muted-foreground">{jobs.length}</span>
+			</button>
+			<Fold open={open}>
+				<div className="divide-y divide-border/50 border-t border-border/50">
+					{jobs.map((job) => (
+						<RecentRow key={job.jobId} job={job} />
+					))}
+				</div>
+			</Fold>
+		</section>
+	);
+}
+
+/* ------------------------------------------------------------------ page */
 
 export function RuntimeOverview() {
 	const {
@@ -856,9 +1173,7 @@ export function RuntimeOverview() {
 			setServicesUpdatedAt(new Date().toISOString());
 		} catch (error) {
 			setServicesError(
-				error instanceof Error
-					? error.message
-					: "Managed services could not be loaded.",
+				error instanceof Error ? error.message : "Managed services could not be loaded.",
 			);
 		} finally {
 			setServicesLoading(false);
@@ -871,7 +1186,6 @@ export function RuntimeOverview() {
 		const interval = window.setInterval(loadServices, 7000);
 		return () => window.clearInterval(interval);
 	}, [loadServices]);
-
 	// A queued job collapses three distinct backend states into one label if
 	// treated as a single bucket: ready to run now, waiting out a retry
 	// backoff, or dead-lettered (permanently skipped by the scheduler,
@@ -1117,6 +1431,9 @@ export function RuntimeOverview() {
 		[services],
 	);
 
+	const daemonDown =
+		Boolean(data) && !runtimeRunning && readyJobs.length + retryingJobs.length > 0;
+
 	const posture = useMemo(() => {
 		if (loading || servicesLoading) {
 			return {
@@ -1134,11 +1451,13 @@ export function RuntimeOverview() {
 				tone: "offline" as const,
 			};
 		}
-		if (!runtimeRunning) {
+		// The daemon exits after a short idle period with no client attached
+		// (runtime/queue.ts, DEFAULT_IDLE_TIMEOUT_MS) and starts again on the next
+		// write, search or agent. Not running is only a problem while work waits.
+		if (daemonDown) {
 			return {
 				title: "Runtime daemon is offline",
-				description:
-					"Background work cannot start until the Knowns runtime is available again.",
+				description: `${readyJobs.length + retryingJobs.length} queued ${readyJobs.length + retryingJobs.length === 1 ? "job is" : "jobs are"} waiting, but the Knowns runtime is not running to pick ${readyJobs.length + retryingJobs.length === 1 ? "it" : "them"} up.`,
 				tone: "offline" as const,
 			};
 		}
@@ -1186,6 +1505,14 @@ export function RuntimeOverview() {
 				tone: "working" as const,
 			};
 		}
+		if (!runtimeRunning) {
+			return {
+				title: "Idle",
+				description:
+					"The daemon starts on demand when a command, search or agent needs it.",
+				tone: "healthy" as const,
+			};
+		}
 		return {
 			title: "Operational",
 			description:
@@ -1205,6 +1532,7 @@ export function RuntimeOverview() {
 		runningJobs.length,
 		runningServiceCount,
 		runtimeRunning,
+		daemonDown,
 		servicesLoading,
 		stalledReadyJobs.length,
 		totalActive,
@@ -1250,7 +1578,7 @@ export function RuntimeOverview() {
 	const headerStatus = loading
 		? "checking…"
 		: [
-				runtimeRunning ? "daemon online" : "daemon offline",
+				runtimeRunning ? "daemon online" : daemonDown ? "daemon offline" : "daemon idle",
 				`${runningServiceCount} ${runningServiceCount === 1 ? "service" : "services"} active`,
 				`${totalActive} ${totalActive === 1 ? "job" : "jobs"}`,
 			].join(" · ");
@@ -1274,20 +1602,34 @@ export function RuntimeOverview() {
 		{ id: "clients", label: "Clients", count: clients.length },
 	];
 
-	const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-		const index = tabs.findIndex((entry) => entry.id === tab);
-		let nextIndex: number | null = null;
-		if (event.key === "ArrowLeft") nextIndex = (index + tabs.length - 1) % tabs.length;
-		else if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
-		else if (event.key === "Home") nextIndex = 0;
-		else if (event.key === "End") nextIndex = tabs.length - 1;
-		if (nextIndex === null) return;
-		event.preventDefault();
-		const next = tabs[nextIndex];
-		if (!next) return;
-		setTab(next.id);
-		document.getElementById(`runtime-tab-${next.id}`)?.focus();
+
+	const showServiceAttention = () => {
+		setTab("services");
+		setServiceFilter("attention");
 	};
+
+	// Nothing could be read at all: the page has no last snapshot to keep showing.
+	const nothingLoaded =
+		!isLoading && !servicesLoading && !data && services.length === 0;
+	const fullyUnavailable = nothingLoaded && errors.length > 0;
+	const firstLoad = isLoading && servicesLoading && !data && services.length === 0;
+
+	const daemonDetail = [
+		data?.status.version ? `v${data.status.version}` : null,
+		data?.status.pid ? `PID ${data.status.pid}` : null,
+		runtimeRunning && daemonStartedAt ? `up ${uptimeSince(daemonStartedAt)}` : null,
+	]
+		.filter(Boolean)
+		.join(" · ");
+
+	const queueTone: BadgeTone =
+		deadJobs.length > 0
+			? "danger"
+			: stalledReadyJobs.length > 0 && runningJobs.length === 0
+				? "warning"
+				: runningJobs.length > 0
+					? "info"
+					: "neutral";
 
 	return (
 		<DaemonStartedAtContext.Provider value={daemonStartedAt}>
@@ -1314,6 +1656,7 @@ export function RuntimeOverview() {
 							aria-label="Refresh runtime status"
 							title={lastSyncedAt ? `Page last synced ${timeAgo(lastSyncedAt)}` : undefined}
 						>
+							{/* A spinner is a progress signal: linear, and still under reduced motion. */}
 							<RefreshCw
 								className={cn("h-4 w-4", busy && "animate-spin motion-reduce:animate-none")}
 								aria-hidden="true"
@@ -1326,586 +1669,341 @@ export function RuntimeOverview() {
 
 			<PageContent
 				size="full"
-				className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden"
+				className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-8"
 				data-testid="runtime-page-overview"
 			>
-				{errors.length > 0 && (
-					<div
-						className="flex shrink-0 items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm"
-						role="alert"
-					>
-						<AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
-						<div className="min-w-0 flex-1">
-							<p className="font-medium">Live status is partially unavailable</p>
-							<p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+				{fullyUnavailable ? (
+					<PageError
+						title="Runtime status could not load"
+						description={`${errors.join(" ")} The Knowns server may be restarting; try again in a moment.`}
+						onRetry={() => void handleRefresh()}
+						className="flex-1"
+					/>
+				) : firstLoad ? (
+					<PageLoading label="Loading runtime status" className="flex-1" />
+				) : (
+					<>
+						{errors.length > 0 && (
+							<Callout
+								tone="danger"
+								role="alert"
+								title="Live status is partially unavailable"
+								action={
+									<KnButton variant="secondary" size="sm" onClick={() => void handleRefresh()} loading={busy}>
+										Retry
+									</KnButton>
+								}
+							>
 								{errors.join(" ")} Existing values remain visible until a refresh succeeds.
-							</p>
-						</div>
-						<Button
-							type="button"
-							variant="ghost"
-							size="sm"
-							className="h-7 shrink-0 px-2 text-xs"
-							onClick={() => void handleRefresh()}
-						>
-							Retry
-						</Button>
-					</div>
-				)}
-
-				{alert && (
-					<div
-						role="status"
-						data-testid="runtime-operational-posture"
-						className={cn(
-							"flex shrink-0 flex-col gap-3 rounded-lg border px-4 py-3 sm:flex-row sm:items-start",
-							alert.tone === "offline"
-								? "border-destructive/30 bg-destructive/5"
-								: "border-amber-500/30 bg-amber-500/5",
+							</Callout>
 						)}
-					>
-						<AlertTriangle
-							className={cn(
-								"mt-0.5 size-4 shrink-0",
-								alert.tone === "offline" ? "text-destructive" : "text-amber-600 dark:text-amber-400",
-							)}
-							aria-hidden="true"
-						/>
-						<div className="min-w-0 flex-1">
-							<p className="text-sm font-semibold">{alert.title}</p>
-							<p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+
+						{alert && (
+							<Callout
+								tone={alert.tone === "offline" ? "danger" : "warning"}
+								role="status"
+								testId="runtime-operational-posture"
+								title={<span className="font-semibold">{alert.title}</span>}
+								action={
+									attentionCount > 0 ? (
+										<KnButton variant="secondary" size="sm" onClick={showServiceAttention}>
+											Show {plural(attentionCount, "service", "services")}
+										</KnButton>
+									) : deadJobs.length > 0 && tab !== "activity" ? (
+										// The Activity tab owns recovery, so the banner hands the reader
+										// over to it instead of restating the CLI command beside a button
+										// that already does the work.
+										<KnButton variant="secondary" size="sm" onClick={() => setTab("activity")}>
+											Show failures
+										</KnButton>
+									) : undefined
+								}
+							>
 								{alert.description}
-							</p>
-						</div>
-						{attentionCount > 0 ? (
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								className="h-8 shrink-0 self-start text-xs"
-								onClick={() => {
-									setTab("services");
-									setServiceFilter("attention");
-								}}
-							>
-								Show {attentionCount} {attentionCount === 1 ? "service" : "services"}
-							</Button>
-						) : deadJobs.length > 0 && tab !== "activity" ? (
-							// The Activity tab owns recovery now, so the banner hands the
-							// reader over to it instead of restating the CLI command beside
-							// a button that already does the work.
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								className="h-8 shrink-0 self-start text-xs"
-								onClick={() => setTab("activity")}
-							>
-								Show failures
-							</Button>
-						) : null}
-					</div>
-				)}
-
-				<dl className="grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-4">
-					<SummaryFact
-						label="Daemon"
-						value={loading ? "—" : runtimeRunning ? "Online" : "Offline"}
-						detail={data?.status.version ? `v${data.status.version}` : "scheduler"}
-					/>
-					<SummaryFact
-						label="Services"
-						value={`${runningServiceCount}/${reachableServiceCount}`}
-						detail={attentionCount > 0 ? `${attentionCount} need setup` : "active now"}
-					/>
-					<SummaryFact
-						label="Queue"
-						value={readyJobs.length}
-						detail={[
-							`${runningJobs.length} running`,
-							retryingJobs.length > 0 ? `${retryingJobs.length} retrying` : null,
-							deadJobs.length > 0 ? `${deadJobs.length} failed` : null,
-						]
-							.filter(Boolean)
-							.join(" · ")}
-					/>
-					<SummaryFact
-						label="Clients"
-						value={clients.length}
-						detail={
-							clients.length > 0
-								? `heartbeat ${timeAgo(freshestClientHeartbeat)}`
-								: "none attached"
-						}
-					/>
-				</dl>
-
-				<div role="tablist" aria-label="Runtime views" className="flex shrink-0 gap-1 border-b">
-					{tabs.map((entry) => (
-						<button
-							key={entry.id}
-							type="button"
-							id={`runtime-tab-${entry.id}`}
-							role="tab"
-							aria-selected={tab === entry.id}
-							aria-controls={`runtime-panel-${entry.id}`}
-							tabIndex={tab === entry.id ? 0 : -1}
-							onClick={() => setTab(entry.id)}
-							onKeyDown={handleTabKeyDown}
-							className={cn(
-								"flex min-h-11 items-center gap-1.5 border-b-2 px-4 py-2 text-sm font-medium transition-colors",
-								tab === entry.id
-									? "border-primary text-primary"
-									: "border-transparent text-muted-foreground hover:text-foreground",
-							)}
-						>
-							{entry.label}
-							<span className="font-mono text-[11px] tabular-nums text-muted-foreground">
-								{entry.count}
-							</span>
-						</button>
-					))}
-				</div>
-
-				{tab === "services" && (
-					<section
-						id="runtime-panel-services"
-						role="tabpanel"
-						aria-labelledby="runtime-tab-services"
-						className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card"
-						data-testid="runtime-service-fleet"
-					>
-						<div className="flex shrink-0 flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
-							<p className="text-xs leading-5 text-muted-foreground">
-								Prioritized by what needs action, then by what is serving work now.
-							</p>
-							<div
-								className="flex max-w-full gap-1 overflow-x-auto pb-1 [scrollbar-width:none] lg:pb-0 [&::-webkit-scrollbar]:hidden"
-								aria-label="Filter managed services"
-							>
-								{filterOptions.map((option) => {
-									const active = serviceFilter === option.id;
-									return (
-										<button
-											key={option.id}
-											type="button"
-											aria-pressed={active}
-											aria-label={`Filter services: ${option.label}`}
-											onClick={() => setServiceFilter(option.id)}
-											className={cn(
-												"inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98] motion-reduce:transform-none",
-												active
-													? "bg-foreground text-background"
-													: "text-muted-foreground hover:bg-muted hover:text-foreground",
-											)}
-										>
-											{option.label}
-											<span
-												className={cn(
-													"font-mono text-[10px] tabular-nums",
-													active ? "text-background/70" : "text-muted-foreground/70",
-												)}
-											>
-												{option.count}
-											</span>
-										</button>
-									);
-								})}
-							</div>
-						</div>
-
-						<div className="hidden shrink-0 grid-cols-[minmax(12rem,1.05fr)_9rem_10rem_minmax(14rem,1.25fr)_auto] gap-3 border-y border-border/45 bg-muted/15 px-4 py-2 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground md:grid">
-							<span>Service</span>
-							<span>State</span>
-							<span>Process</span>
-							<span>Readiness</span>
-							<span className="text-right">Action</span>
-						</div>
-
-						{servicesLoading && services.length === 0 ? (
-							<RuntimeListSkeleton rows={5} />
-						) : services.length === 0 ? (
-							<RuntimeEmptyState
-								icon={Server}
-								title="No managed services reported"
-								description="Enable a runtime-backed feature in Settings to add it to this operational view."
-							/>
-						) : serviceGroups.length > 0 ? (
-							<div className="min-h-0 flex-1 overflow-auto border-t border-border/45 md:border-t-0">
-								{serviceGroups.map((group) => (
-									<ServiceGroup
-										key={group.state}
-										group={group}
-										soleGroup={serviceGroups.length === 1}
-									/>
-								))}
-							</div>
-						) : (
-							<RuntimeEmptyState
-								icon={Server}
-								title="No services match this filter"
-								description="Choose another state to continue inspecting the runtime fleet."
-							/>
+							</Callout>
 						)}
-					</section>
-				)}
 
-				{tab === "activity" && (
-					<section
-						id="runtime-panel-activity"
-						role="tabpanel"
-						aria-labelledby="runtime-tab-activity"
-						className="min-h-0 min-w-0 flex-1 space-y-4 overflow-auto"
-					>
-						{loading ? (
-							<div className="overflow-hidden rounded-lg border bg-card">
-								<RuntimeListSkeleton rows={2} />
-							</div>
-						) : (
-							<>
-								{/* One line for what's wrong and how to recover it, before
-								    any list (AC1). A backlog with nothing permanently dead
-								    reads as calm, not as an empty version of this same
-								    banner (AC10) — it gets a quieter, non-destructive line
-								    instead of an alert that has nothing to report. */}
-								{deadJobs.length > 0 ? (
-									<div className="shrink-0 overflow-hidden rounded-lg border border-destructive/30 bg-destructive/5">
-										<div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-											<div className="flex min-w-0 items-start gap-3">
-												<AlertTriangle
-													className="mt-0.5 size-4 shrink-0 text-destructive"
-													aria-hidden="true"
-												/>
-												<p className="text-sm font-medium">
-													{deadJobs.length}{" "}
-													{deadJobs.length === 1 ? "job" : "jobs"} failed
-													permanently across {deadProjectCount}{" "}
-													{deadProjectCount === 1 ? "project" : "projects"}
-												</p>
-											</div>
-											<div className="flex shrink-0 items-center gap-3 self-end sm:self-auto">
-												{oldestDeadFailedAt && (
-													<span className="whitespace-nowrap text-[11px] text-muted-foreground">
-														since {timeAgo(oldestDeadFailedAt)}
-													</span>
-												)}
-												<Button
-													type="button"
-													variant="outline"
-													size="sm"
-													className="h-8 shrink-0 text-xs"
-													onClick={() => void handleRetryAll()}
-													disabled={retryingKey !== null}
-													aria-busy={retryingKey === "all"}
-												>
-													{retryingKey === "all" ? "Retrying…" : "Retry all"}
-												</Button>
-											</div>
-										</div>
-										{retryError && (
-											<p
-												role="alert"
-												className="border-t border-destructive/20 px-4 py-2 text-[11px] text-destructive"
-											>
-												{retryError}
-											</p>
-										)}
-									</div>
-								) : (
-									<div className="flex shrink-0 items-center gap-3 rounded-lg border bg-card px-4 py-3">
-										<CheckCircle2
-											className="size-4 shrink-0 text-emerald-500"
-											aria-hidden="true"
-										/>
-										<p className="text-sm text-muted-foreground">
-											{jobFailures.length > 0
-												? `No permanent failures. ${retryingJobs.length} ${retryingJobs.length === 1 ? "job is" : "jobs are"} waiting out a retry.`
-												: "No failures. Background jobs are completing normally."}
+						<div className="grid shrink-0 grid-cols-2 gap-3 xl:grid-cols-4" data-testid="runtime-health">
+							<HealthTile
+								label="Daemon"
+								icon={<Server />}
+								tone={loading ? "neutral" : runtimeRunning ? "success" : daemonDown ? "danger" : "neutral"}
+								value={loading ? "-" : runtimeRunning ? "Online" : daemonDown ? "Offline" : "Idle"}
+								detail={runtimeRunning || daemonDown ? daemonDetail || "scheduler" : [data?.status.version ? `v${data.status.version}` : null, "starts on demand"].filter(Boolean).join(" · ")}
+								onSelect={() => setTab("clients")}
+								selectLabel="Daemon status, show attached clients"
+								testId="runtime-tile-daemon"
+							/>
+							<HealthTile
+								label="Services"
+								icon={<Plug />}
+								tone={attentionCount > 0 ? "warning" : runningServiceCount > 0 ? "success" : "neutral"}
+								value={`${runningServiceCount}/${reachableServiceCount}`}
+								detail={attentionCount > 0 ? `${attentionCount} need setup` : "active now"}
+								onSelect={() => (attentionCount > 0 ? showServiceAttention() : setTab("services"))}
+								selectLabel="Services status, show services"
+								testId="runtime-tile-services"
+							/>
+							<HealthTile
+								label="Queue"
+								icon={<ListChecks />}
+								tone={queueTone}
+								value={readyJobs.length}
+								detail={[
+									`${runningJobs.length} running`,
+									retryingJobs.length > 0 ? `${retryingJobs.length} retrying` : null,
+									deadJobs.length > 0 ? `${deadJobs.length} failed` : null,
+								]
+									.filter(Boolean)
+									.join(" · ")}
+								onSelect={() => setTab("activity")}
+								selectLabel="Queue status, show activity"
+								testId="runtime-tile-queue"
+							/>
+							<HealthTile
+								label="Clients"
+								icon={<Users />}
+								tone={clients.length > 0 ? "info" : "neutral"}
+								value={clients.length}
+								detail={
+									clients.length > 0
+										? `heartbeat ${timeAgo(freshestClientHeartbeat)}`
+										: "none attached"
+								}
+								onSelect={() => setTab("clients")}
+								selectLabel="Clients, show attached clients"
+								testId="runtime-tile-clients"
+							/>
+						</div>
+
+						<Tabs value={tab} onValueChange={(value) => setTab(value as RuntimeTab)} className="flex min-w-0 flex-col gap-3">
+							<TabsList aria-label="Runtime views">
+								{tabs.map((entry) => (
+									<TabsTrigger
+										key={entry.id}
+										value={entry.id}
+										icon={
+											entry.id === "services" ? <Plug /> : entry.id === "activity" ? <Activity /> : <Users />
+										}
+										badge={<span className="tabular-nums">{entry.count}</span>}
+									>
+										{entry.label}
+									</TabsTrigger>
+								))}
+							</TabsList>
+
+							<TabsContent value="services">
+								<section className={cn(SURFACE, "@container")} data-testid="runtime-service-fleet" aria-label="Managed services">
+									<div className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+										<p className="text-xs leading-5 text-muted-foreground">
+											Language servers, the search embedder and tunnels this daemon manages, by what needs action first.
 										</p>
-										{retryError && (
-											<p role="alert" className="ml-auto text-[11px] text-destructive">
-												{retryError}
-											</p>
-										)}
-									</div>
-								)}
-
-								{/* Every distinct cause, one row each, project as a column
-								    (AC2, AC3, AC5). A cause expands for its full error text
-								    and affected targets, collapsed by default (AC6). */}
-								{jobFailures.length > 0 && (
-									<CauseTable
-										failures={jobFailures}
-										onRetry={handleRetryCause}
-										retryingKey={retryingKey}
-										version={data?.status.version}
-									/>
-								)}
-
-								{/* Live counts, present but deliberately plain text so they
-								    never compete with the failure banner or cause table for
-								    attention (AC7). */}
-								<div className="shrink-0 px-1 text-xs text-muted-foreground">
-									<span className="font-mono tabular-nums text-foreground/80">
-										{runningJobs.length}
-									</span>{" "}
-									running
-									<span className="mx-1.5 text-border">·</span>
-									<span className="font-mono tabular-nums text-foreground/80">
-										{readyJobs.length}
-									</span>{" "}
-									ready
-									<span className="mx-1.5 text-border">·</span>
-									<span className="font-mono tabular-nums text-foreground/80">
-										{retryingJobs.length}
-									</span>{" "}
-									retrying
-								</div>
-
-								{/* Completed work stays available without occupying the top
-								    of the tab, and is collapsed by default (AC8). */}
-								{recentJobs.length > 0 && (
-									<details className="group/recent shrink-0 overflow-hidden rounded-lg border bg-card">
-										<summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2 transition-colors hover:bg-muted/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-											<ChevronRight
-												className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/recent:rotate-90 motion-reduce:transition-none"
-												aria-hidden="true"
+										<div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] lg:mx-0 lg:px-0 [&::-webkit-scrollbar]:hidden">
+											<SegmentedControl
+												size="sm"
+												aria-label="Filter managed services"
+												value={serviceFilter}
+												onValueChange={(value) => setServiceFilter(value as ServiceFilter)}
+												className="min-w-[27rem]"
+												options={filterOptions.map((option) => ({
+													value: option.id,
+													label: (
+														<span className="inline-flex items-center gap-1.5">
+															{option.label}
+															<span className="font-mono text-[10px] tabular-nums opacity-60">{option.count}</span>
+														</span>
+													),
+												}))}
 											/>
-											<h3 className="text-xs font-semibold">
-												Recent completions
-											</h3>
-											<span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground">
-												{recentJobs.length}
-											</span>
-										</summary>
-										<div className="divide-y divide-border/40 border-t border-border/45">
-											{recentJobs.map((job) => (
-												<RecentRow key={job.jobId} job={job} />
+										</div>
+									</div>
+
+									<div className={cn("hidden grid-cols-[minmax(11rem,1fr)_8.5rem_9.5rem_minmax(14rem,1.4fr)_auto] gap-3 border-t border-border/50 bg-muted/25 px-4 py-2 @4xl:grid", COLUMN_HEAD)}>
+										<span>Service</span>
+										<span>State</span>
+										<span>Process</span>
+										<span>Readiness</span>
+										<span className="text-right">Action</span>
+									</div>
+
+									{servicesLoading && services.length === 0 ? (
+										<RuntimeListSkeleton rows={5} />
+									) : services.length === 0 ? (
+										<RuntimeEmptyState
+											icon={Server}
+											title="No managed services reported"
+											description="Enable a runtime-backed feature, such as code intelligence or semantic search, to see it here."
+											action={
+												<Link to="/config" search={{ category: "runtime" }} className={buttonClass("secondary", "sm")}>
+													Open Settings
+												</Link>
+											}
+										/>
+									) : serviceGroups.length > 0 ? (
+										<div>
+											{serviceGroups.map((group) => (
+												<ServiceGroup
+													key={`${serviceFilter}-${group.state}`}
+													group={group}
+													soleGroup={serviceGroups.length === 1}
+												/>
 											))}
 										</div>
-									</details>
-								)}
-							</>
-						)}
-					</section>
-				)}
+									) : (
+										<RuntimeEmptyState
+											icon={CircleDot}
+											title="No services match this filter"
+											description="Choose another state to keep inspecting the runtime."
+											action={
+												<KnButton variant="secondary" size="sm" onClick={() => setServiceFilter("all")}>
+													Show all services
+												</KnButton>
+											}
+										/>
+									)}
+								</section>
+							</TabsContent>
 
-				{tab === "clients" && (
-					<section
-						id="runtime-panel-clients"
-						role="tabpanel"
-						aria-labelledby="runtime-tab-clients"
-						className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card"
-					>
-						<p className="shrink-0 border-b border-border/45 px-4 py-3 text-xs leading-5 text-muted-foreground">
-							CLI, MCP, and agent processes currently attached to this daemon.
-						</p>
-						{clients.length > 0 ? (
-							<div className="min-h-0 flex-1 divide-y divide-border/40 overflow-auto">
-								{clients.map((client) => (
-									<div
-										key={`${client.clientKind}-${client.projectRoot}-${client.pid}`}
-										className="grid gap-1 px-4 py-2.5 text-xs sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:items-center"
-									>
-										<span className="font-medium">{client.clientKind}</span>
-										<span
-											className="truncate font-mono text-[11px] text-muted-foreground"
-											title={client.projectRoot}
-										>
-											{projectPath(client.projectRoot)}
-										</span>
-										<span className="font-mono text-[10px] tabular-nums text-muted-foreground">
-											pid={client.pid || "?"} · {timeAgo(client.updatedAt)}
-										</span>
-									</div>
-								))}
-							</div>
-						) : (
-							<RuntimeEmptyState
-								icon={Users}
-								title="No clients attached"
-								description="CLI sessions, MCP servers, and agents appear here while they hold a runtime connection."
-							/>
-						)}
-					</section>
+							<TabsContent value="activity">
+								<div className="flex min-w-0 flex-col gap-4" data-testid="runtime-activity">
+									{loading ? (
+										<div className={SURFACE}>
+											<RuntimeListSkeleton rows={2} />
+										</div>
+									) : (
+										<>
+											{/* One line for what's wrong and how to recover it, before any
+											    list (AC1). A backlog with nothing permanently dead reads as
+											    calm (AC10). */}
+											{deadJobs.length > 0 ? (
+												<Callout
+													tone="danger"
+													title={`${plural(deadJobs.length, "job", "jobs")} failed permanently across ${plural(deadProjectCount, "project", "projects")}`}
+													action={
+														<>
+															{oldestDeadFailedAt && (
+																<span className="whitespace-nowrap text-[11px] text-muted-foreground">
+																	since {timeAgo(oldestDeadFailedAt)}
+																</span>
+															)}
+															<KnButton
+																variant="secondary"
+																size="sm"
+																onClick={() => void handleRetryAll()}
+																disabled={retryingKey !== null && retryingKey !== "all"}
+																loading={retryingKey === "all"}
+															>
+																{retryingKey === "all" ? "Retrying" : "Retry all"}
+															</KnButton>
+														</>
+													}
+												>
+													They will not run again on their own. Retry once the cause below is fixed.
+												</Callout>
+											) : (
+												<Callout
+													tone="success"
+													title={
+														<span className="font-normal text-muted-foreground">
+															{jobFailures.length > 0
+																? `No permanent failures. ${retryingJobs.length} ${retryingJobs.length === 1 ? "job is" : "jobs are"} waiting out a retry.`
+																: "No failures. Background jobs are completing normally."}
+														</span>
+													}
+												/>
+											)}
+											<Fold open={Boolean(retryError)}>
+												<p role="alert" className="px-1 text-xs text-red-600 dark:text-red-400">
+													{retryError}
+												</p>
+											</Fold>
+
+											{jobFailures.length > 0 && (
+												<CauseTable
+													failures={jobFailures}
+													onRetry={handleRetryCause}
+													retryingKey={retryingKey}
+													version={data?.status.version}
+												/>
+											)}
+
+											{runningJobs.length + readyJobs.length > 0 && (
+												<section className={SURFACE} aria-label="Work in progress" data-testid="runtime-work-queue">
+													<div className="px-4 py-3">
+														<h3 className="text-sm font-semibold">Work in progress</h3>
+														<p className="mt-0.5 text-xs text-muted-foreground">
+															Indexing, embedding and reconcile jobs the daemon is running or about to pick up.
+														</p>
+													</div>
+													{runningJobs.length > 0 && (
+														<JobSection title="Running" jobs={runningJobs} state="running" />
+													)}
+													{readyJobs.length > 0 && (
+														<JobSection title="Waiting to start" jobs={readyJobs} state="ready" />
+													)}
+												</section>
+											)}
+
+											{/* Live counts, deliberately plain text so they never compete
+											    with the failure banner or cause table (AC7). */}
+											<div className="px-1 text-xs text-muted-foreground">
+												<span className="font-mono tabular-nums text-foreground/80">{runningJobs.length}</span> running
+												<span className="mx-1.5 text-border">·</span>
+												<span className="font-mono tabular-nums text-foreground/80">{readyJobs.length}</span> ready
+												<span className="mx-1.5 text-border">·</span>
+												<span className="font-mono tabular-nums text-foreground/80">{retryingJobs.length}</span> retrying
+											</div>
+
+											{recentJobs.length > 0 && <RecentCompletions jobs={recentJobs} />}
+										</>
+									)}
+								</div>
+							</TabsContent>
+
+							<TabsContent value="clients">
+								<section className={SURFACE} aria-label="Attached clients" data-testid="runtime-clients">
+									<p className="border-b border-border/50 px-4 py-3 text-xs leading-5 text-muted-foreground">
+										CLI, MCP and agent processes holding a connection to this daemon.
+									</p>
+									{clients.length > 0 ? (
+										<div className="divide-y divide-border/50">
+											{clients.map((client) => (
+												<div
+													key={`${client.clientKind}-${client.projectRoot}-${client.pid}`}
+													className={cn(
+														"grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-4 py-2.5 text-xs sm:grid-cols-[9rem_minmax(0,1fr)_auto] sm:items-center",
+														ROW_HOVER,
+													)}
+												>
+													<span className="flex items-center gap-2 font-medium">
+														<span className="size-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden="true" />
+														{client.clientKind}
+													</span>
+													<span
+														className="col-span-2 row-start-2 truncate font-mono text-[11px] text-muted-foreground sm:col-span-1 sm:row-start-auto"
+														title={client.projectRoot}
+													>
+														{projectPath(client.projectRoot)}
+													</span>
+													<span className="justify-self-end font-mono text-[10px] tabular-nums text-muted-foreground">
+														pid {client.pid || "?"} · {timeAgo(client.updatedAt)}
+													</span>
+												</div>
+											))}
+										</div>
+									) : (
+										<RuntimeEmptyState
+											icon={Users}
+											title="No clients attached"
+											description="CLI sessions, MCP servers and agents appear here while they hold a runtime connection."
+										/>
+									)}
+								</section>
+							</TabsContent>
+						</Tabs>
+					</>
 				)}
 			</PageContent>
 		</DaemonStartedAtContext.Provider>
-	);
-}
-
-function JobSection({
-	title,
-	jobs,
-	state,
-	hideHeader = false,
-}: {
-	title: string;
-	jobs: JobEntry[];
-	state: JobLifecycleState;
-	// A cause's expansion already states its own state badge and count in
-	// the row above; repeating "Failed permanently · 86" as a second header
-	// right beneath it would say the same thing twice.
-	hideHeader?: boolean;
-}) {
-	return (
-		<div>
-			{!hideHeader && (
-				<div className="flex items-center justify-between border-b border-border/40 bg-muted/15 px-4 py-2 text-[11px] font-medium text-muted-foreground">
-					<span>{title}</span>
-					<span className="font-mono tabular-nums">{jobs.length}</span>
-				</div>
-			)}
-			<div className="divide-y divide-border/40">
-				{jobs.slice(0, JOB_PREVIEW_LIMIT).map(({ job, project }) => (
-					<JobRow key={job.id} job={job} project={project} state={state} />
-				))}
-			</div>
-			{jobs.length > JOB_PREVIEW_LIMIT && (
-				<p className="border-t border-border/40 px-4 py-2 text-[11px] text-muted-foreground">
-					Showing {JOB_PREVIEW_LIMIT} of {jobs.length}.
-				</p>
-			)}
-		</div>
-	);
-}
-
-// The cause table replaces the old By-project / Failures / per-job-list
-// trio: one row per distinct (kind, message) cause, project surfaced as a
-// column instead of a separate card, and the individual jobs it accounts
-// for live inside the row's own disclosure instead of a permanently visible
-// list (AC2, AC3, AC5, AC6).
-function CauseTable({
-	failures,
-	onRetry,
-	retryingKey,
-	version,
-}: {
-	failures: JobFailureGroup[];
-	onRetry: (failure: JobFailureGroup) => void;
-	retryingKey: string | null;
-	version?: string;
-}) {
-	return (
-		<div className="overflow-hidden rounded-lg border bg-card">
-			<div className="hidden grid-cols-[1.25rem_minmax(0,1fr)_3.5rem_5.5rem_11rem_5.5rem] gap-3 border-b border-border/45 bg-muted/15 px-4 py-2 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground md:grid">
-				<span />
-				<span>Cause</span>
-				<span className="text-right">Count</span>
-				<span>Newest</span>
-				<span>Project</span>
-				<span className="text-right">Action</span>
-			</div>
-			<div className="divide-y divide-border/40">
-				{failures.map((failure) => (
-					<CauseRow
-						key={failure.key}
-						failure={failure}
-						onRetry={onRetry}
-						retryingKey={retryingKey}
-						version={version}
-					/>
-				))}
-			</div>
-		</div>
-	);
-}
-
-function CauseRow({
-	failure,
-	onRetry,
-	retryingKey,
-	version,
-}: {
-	failure: JobFailureGroup;
-	onRetry: (failure: JobFailureGroup) => void;
-	retryingKey: string | null;
-	version?: string;
-}) {
-	const daemonStartedAt = useContext(DaemonStartedAtContext);
-	const isRetrying = retryingKey === failure.key;
-	const primaryProject = failure.projects[0];
-	const extraProjectCount = failure.projects.length - 1;
-	const projectLabel = primaryProject
-		? `${projectName(primaryProject.root)}${extraProjectCount > 0 ? ` +${extraProjectCount}` : ""}`
-		: "—";
-	const projectTitle = failure.projects
-		.map((p) => `${projectName(p.root)} (${p.count})`)
-		.join(", ");
-
-	return (
-		<details className="group/cause">
-			<summary className="grid cursor-pointer list-none grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-4 py-2.5 transition-colors hover:bg-muted/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:grid-cols-[1.25rem_minmax(0,1fr)_3.5rem_5.5rem_11rem_5.5rem] md:items-center [&::-webkit-details-marker]:hidden">
-				<ChevronRight
-					className="mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform group-open/cause:rotate-90 motion-reduce:transition-none md:mt-0"
-					aria-hidden="true"
-				/>
-				<div className="min-w-0">
-					<div className="flex min-w-0 flex-wrap items-center gap-2">
-						<KindBadge kind={failure.kind} />
-						<JobStateBadge
-							state={failure.bucket === "dead" ? "dead" : "retrying"}
-						/>
-						{failure.allStale && (
-							<span
-								className="shrink-0 rounded-md border border-border bg-muted/45 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
-								title={staleErrorTitle(daemonStartedAt, version)}
-							>
-								Stale
-							</span>
-						)}
-					</div>
-					<p className="mt-1 line-clamp-2 text-[11px] leading-5 text-destructive group-open/cause:line-clamp-none">
-						{failure.message}
-					</p>
-					<div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground md:hidden">
-						<span className="font-mono tabular-nums">{failure.count}×</span>
-						<span>newest {timeAgo(failure.mostRecentFailedAt)}</span>
-						<span className="truncate" title={projectTitle}>
-							{projectLabel}
-						</span>
-					</div>
-				</div>
-				<span className="hidden text-right font-mono text-xs tabular-nums text-muted-foreground md:block">
-					{failure.count}
-				</span>
-				<span className="hidden text-xs text-muted-foreground md:block">
-					{timeAgo(failure.mostRecentFailedAt)}
-				</span>
-				<span
-					className="hidden min-w-0 truncate text-xs text-muted-foreground md:block"
-					title={projectTitle}
-				>
-					{projectLabel}
-				</span>
-				<span className="flex items-start justify-end md:items-center">
-					{failure.bucket === "dead" && (
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							className="h-7 shrink-0 px-2 text-[11px]"
-							onClick={(event) => {
-								event.preventDefault();
-								event.stopPropagation();
-								onRetry(failure);
-							}}
-							disabled={retryingKey !== null}
-							aria-busy={isRetrying}
-						>
-							{isRetrying ? "Retrying…" : "Retry"}
-						</Button>
-					)}
-				</span>
-			</summary>
-			<div className="border-t border-border/40 bg-muted/10">
-				<JobSection
-					title="Affected targets"
-					jobs={failure.entries}
-					state={failure.bucket === "dead" ? "dead" : "retrying"}
-					hideHeader
-				/>
-			</div>
-		</details>
 	);
 }
