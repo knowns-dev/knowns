@@ -149,6 +149,114 @@ test.describe("Audit Trail", () => {
 		});
 	});
 
+	test("statistics shows the trend, what needs attention and opens Recent Activity from them", async ({ page }) => {
+		// One real call so the all-time totals are not empty; the range analytics and the failing calls are fixed below.
+		server.mcp("tasks", { action: "list" });
+
+		const bucket = (date: string, covered: boolean, success: number, errors: number, denied: number) => ({
+			date,
+			covered,
+			totalCalls: covered ? success + errors + denied : 0,
+			successCount: covered ? success : 0,
+			errorCount: covered ? errors : 0,
+			deniedCount: covered ? denied : 0,
+			needsAttention: covered ? errors + denied : 0,
+			averageDurationMs: covered ? 12 : 0,
+			topToolCalls: 0,
+		});
+		const buckets = [
+			bucket("2026-11-03", false, 0, 0, 0),
+			bucket("2026-11-04", false, 0, 0, 0),
+			bucket("2026-11-05", true, 4, 0, 0),
+			bucket("2026-11-06", true, 9, 2, 1),
+			bucket("2026-11-07", true, 6, 0, 0),
+		];
+		const failing = [
+			{ timestamp: "2026-11-06T09:00:00Z", toolName: "tasks", action: "get", actionClass: "read", result: "error", durationMs: 5, errorMessage: "task not found" },
+			{ timestamp: "2026-11-06T10:00:00Z", toolName: "tasks", action: "get", actionClass: "read", result: "error", durationMs: 5, errorMessage: "task not found" },
+		];
+
+		await page.route("**/api/audit/analytics*", async (route) => {
+			await route.fulfill({
+				contentType: "application/json",
+				body: JSON.stringify({
+					totalCalls: 22,
+					byTool: { "tasks.get": 3, "tasks.list": 19 },
+					byActionClass: { read: 22 },
+					byResult: { success: 19, error: 2, denied: 1 },
+					dryRunCount: 0,
+					executeCount: 22,
+					byToolResult: {},
+					timezone: "UTC",
+					rangeStart: "2026-11-03",
+					rangeEnd: "2026-11-07",
+					coverage: { startDate: "2026-11-05", endDate: "2026-11-07", partial: true },
+					dailyBuckets: buckets,
+					tools: [
+						{ tool: "tasks.list", totalCalls: 19, byResult: { success: 19 }, averageDurationMs: 10 },
+						{ tool: "tasks.get", totalCalls: 3, byResult: { error: 2, denied: 1 }, averageDurationMs: 14 },
+					],
+					byProject: {},
+					needsAttention: 3,
+					averageDurationMs: 12,
+				}),
+			});
+		});
+		await page.route("**/api/audit/recent*", async (route) => {
+			const url = new URL(route.request().url());
+			if (url.searchParams.get("result") === "error") {
+				await route.fulfill({ contentType: "application/json", body: JSON.stringify({ count: failing.length, events: failing }) });
+			} else if (url.searchParams.get("result") === "denied") {
+				await route.fulfill({ contentType: "application/json", body: JSON.stringify({ count: 0, events: [] }) });
+			} else {
+				await route.continue();
+			}
+		});
+
+		await page.goto(`${server.baseURL}/audit`);
+		await page.getByRole("tab", { name: "Statistics" }).click();
+
+		await test.step("Range summary tiles carry a sparkline each", async () => {
+			const summary = page.getByRole("region", { name: "Range summary" });
+			await expect(summary).toBeVisible();
+			await expect(summary.getByRole("img")).toHaveCount(4);
+		});
+
+		await test.step("One chart shows the covered days, and says how many earlier days have no history", async () => {
+			await expect(page.getByRole("heading", { name: "Calls per day" })).toBeVisible();
+			await expect(page.getByRole("img", { name: /MCP calls per day/ })).toBeVisible();
+			await expect(page.getByText("2 earlier days have no retained history.")).toBeVisible();
+		});
+
+		await test.step("The chart does not scroll sideways", async () => {
+			const section = page.getByRole("region", { name: "Calls per day" }).or(page.locator("section[aria-labelledby='audit-trend-heading']"));
+			const overflow = await section.first().evaluate((el) => el.scrollWidth - el.clientWidth);
+			expect(overflow).toBeLessThanOrEqual(1);
+		});
+
+		await test.step("What needs attention lists the failing tool with its common message", async () => {
+			const row = page.getByRole("button", { name: /tasks\.get: 2 errors, 1 denied/ });
+			await expect(row).toBeVisible();
+			await expect(row).toContainText("task not found");
+			await expect(row).toContainText("(2x)");
+		});
+
+		await test.step("The busiest day opens Recent Activity filtered to that day", async () => {
+			const request = page.waitForRequest((req) => req.url().includes("/api/audit/recent") && req.url().includes("from=2026-11-06"));
+			await page.getByRole("button", { name: /Nov 6: 12 calls/ }).click();
+			await request;
+			await expect(page.getByRole("tab", { name: "Recent Activity" })).toHaveAttribute("aria-selected", "true");
+		});
+
+		await test.step("A needs-attention row opens Recent Activity for that tool and result", async () => {
+			await page.getByRole("tab", { name: "Statistics" }).click();
+			const request = page.waitForRequest((req) => req.url().includes("/api/audit/recent") && req.url().includes("result=error") && req.url().includes("tool=tasks"));
+			await page.getByRole("button", { name: /tasks\.get: 2 errors, 1 denied/ }).click();
+			await request;
+			await expect(page.getByRole("tab", { name: "Recent Activity" })).toHaveAttribute("aria-selected", "true");
+		});
+	});
+
 	test("an event opens a detail sheet with its arguments", async ({ page }) => {
 		await test.step("Create an audited MCP call", async () => {
 			server.mcp("tasks", {

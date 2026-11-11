@@ -149,6 +149,10 @@ export default function AuditPage() {
 		updateFilters({ day: date });
 		setTab("recent");
 	};
+	const handleSelectAttention = (name: string, result: "error" | "denied") => {
+		updateFilters({ tool: name.split(".")[0] ?? name, result });
+		setTab("recent");
+	};
 	const handleSelectTool = (name: string) => {
 		updateFilters({ tool: name.split(".")[0] ?? name });
 		setTab("recent");
@@ -287,6 +291,7 @@ export default function AuditPage() {
 							onRetryAnalytics={fetchAnalytics}
 							onSelectDay={handleSelectDay}
 							onSelectTool={handleSelectTool}
+							onSelectAttention={handleSelectAttention}
 						/>
 					</TabsContent>
 				</Tabs>

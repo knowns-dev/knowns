@@ -1,3 +1,4 @@
+/** @registry part-of="chart" */
 import { cn } from "@/ui/lib/knowns/utils";
 import { areaPath, compact, isNum, linePath, seriesColor, sparkPoints, type ChartValue } from "./chart-utils";
 

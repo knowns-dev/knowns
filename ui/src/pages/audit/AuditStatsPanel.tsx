@@ -2,10 +2,11 @@ import type { AuditAnalytics, AuditRangeDays, AuditStats } from "@/ui/api/client
 import { Badge } from "@/ui/components/ui/knowns/badge";
 import { SegmentedControl } from "@/ui/components/ui/knowns/segmented-control";
 import { PageError, PageLoading } from "@/ui/components/templates/PageShell";
-import { ActivityHeatmap } from "./ActivityHeatmap";
-import { DailyTrend } from "./DailyTrend";
+import { Sparkline } from "@/ui/components/ui/knowns/chart/sparkline";
 import { TopTools } from "./TopTools";
-import { hasCoveredAuditDays } from "./analyticsMath";
+import { TrendChart } from "./TrendChart";
+import { WhatNeedsAttention } from "./WhatNeedsAttention";
+import { coveredWindow, hasCoveredAuditDays } from "./analyticsMath";
 import { classMeta, formatDuration, formatRangeDay, resultMeta } from "./auditFormat";
 
 const RANGE_OPTIONS: AuditRangeDays[] = [7, 30, 90];
@@ -23,6 +24,7 @@ export function AuditStatsPanel({
 	onRetryAnalytics,
 	onSelectDay,
 	onSelectTool,
+	onSelectAttention,
 }: {
 	stats: AuditStats | null;
 	loading: boolean;
@@ -36,6 +38,7 @@ export function AuditStatsPanel({
 	onRetryAnalytics: () => void;
 	onSelectDay: (date: string) => void;
 	onSelectTool: (tool: string) => void;
+	onSelectAttention: (tool: string, result: "error" | "denied") => void;
 }) {
 	if (loading && !stats) {
 		return <PageLoading label="Loading audit statistics" className="flex-1" />;
@@ -108,10 +111,8 @@ export function AuditStatsPanel({
 
 						{hasHistory && (
 							<>
-								<div className="grid min-w-0 gap-4 xl:grid-cols-2">
-									<ActivityHeatmap buckets={buckets} onSelectDay={onSelectDay} />
-									<DailyTrend buckets={buckets} onSelectDay={onSelectDay} />
-								</div>
+								<TrendChart buckets={buckets} onSelectDay={onSelectDay} />
+								<WhatNeedsAttention analytics={analytics} onSelect={onSelectAttention} />
 								<TopTools tools={analytics.tools} onSelectTool={onSelectTool} />
 							</>
 						)}
@@ -165,12 +166,23 @@ function AnalyticsSummary({ analytics }: { analytics: AuditAnalytics }) {
 		analytics.totalCalls > 0
 			? Math.round(((analytics.byResult.success || 0) / analytics.totalCalls) * 100)
 			: 0;
+	const days = coveredWindow(analytics.dailyBuckets).window;
 
 	const metrics = [
-		{ label: "Calls in range", value: analytics.totalCalls },
-		{ label: "Success rate", value: `${successRate}%` },
-		{ label: "Needs attention", value: analytics.needsAttention },
-		{ label: "Avg latency", value: formatDuration(analytics.averageDurationMs) },
+		{ label: "Calls in range", value: analytics.totalCalls, trend: days.map((d) => d.totalCalls), trendLabel: "Calls per day" },
+		{
+			label: "Success rate",
+			value: `${successRate}%`,
+			trend: days.map((d) => (d.totalCalls > 0 ? Math.round((d.successCount / d.totalCalls) * 100) : null)),
+			trendLabel: "Success rate per day",
+		},
+		{ label: "Needs attention", value: analytics.needsAttention, trend: days.map((d) => d.needsAttention), trendLabel: "Needs attention per day" },
+		{
+			label: "Avg latency",
+			value: formatDuration(analytics.averageDurationMs),
+			trend: days.map((d) => (d.totalCalls > 0 ? d.averageDurationMs : null)),
+			trendLabel: "Average latency per day",
+		},
 	];
 
 	return (
@@ -179,9 +191,10 @@ function AnalyticsSummary({ analytics }: { analytics: AuditAnalytics }) {
 			className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-4"
 		>
 			{metrics.map((metric) => (
-				<dl key={metric.label} className="bg-card px-4 py-3">
+				<dl key={metric.label} className="flex min-w-0 flex-col bg-card px-4 py-3">
 					<dt className="text-xs font-medium text-muted-foreground">{metric.label}</dt>
 					<dd className="mt-1 text-xl font-semibold tabular-nums">{metric.value}</dd>
+					<Sparkline values={metric.trend} label={metric.trendLabel} fluid height={24} className="mt-2" color="var(--chart-1)" />
 				</dl>
 			))}
 		</section>

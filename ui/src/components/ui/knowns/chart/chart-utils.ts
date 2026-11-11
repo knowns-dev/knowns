@@ -1,3 +1,6 @@
+/** @registry part-of="chart" */
+/** Pure helpers for Chart and Sparkline: scales, ticks, paths, stacking. No React, safe on the server. */
+
 export type ChartValue = number | null | undefined;
 export type ChartDatum = Record<string, string | number | null | undefined>;
 
@@ -192,4 +195,76 @@ export function sparkPoints(values: ChartValue[], w: number, h: number, pad = 2)
   const x = linear(0, values.length - 1, pad, w - pad);
   const y = linear(lo === hi ? lo - 1 : lo, lo === hi ? hi + 1 : hi, h - pad, pad);
   return values.map((v, i) => ({ x: x(i), y: isNum(v) ? y(v) : null }));
+}
+
+/* ── Motion on a data change (no intro: the first render is the final state) ── */
+
+/** A CSS cubic-bezier(x1, y1, x2, y2) as a function of progress 0..1, for a JS tween that must match a CSS easing. */
+export function cubicBezier(x1: number, y1: number, x2: number, y2: number): (t: number) => number {
+  const bx = (s: number) => 3 * x1 * s * (1 - s) ** 2 + 3 * x2 * s * s * (1 - s) + s ** 3;
+  const by = (s: number) => 3 * y1 * s * (1 - s) ** 2 + 3 * y2 * s * s * (1 - s) + s ** 3;
+  return (t: number) => {
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    // bx is monotonic for 0 <= x1, x2 <= 1: bisect for the s whose x is t.
+    let a = 0;
+    let b = 1;
+    for (let k = 0; k < 30; k++) {
+      const s = (a + b) / 2;
+      if (bx(s) < t) a = s;
+      else b = s;
+    }
+    return by((a + b) / 2);
+  };
+}
+
+/** The numbers of a "cubic-bezier(a, b, c, d)" string (as in EASE). */
+export const bezierOf = (css: string) => {
+  const [a, b, c, d] = (css.match(/-?[\d.]+/g) ?? []).map(Number);
+  return cubicBezier(a, b, c, d);
+};
+
+/** `points` resampled to `n` points along their order, so a line of 5 points can morph into one of 6. */
+export function resample(points: { x: number; y: number }[], n: number): { x: number; y: number }[] {
+  if (!points.length || n <= 0) return [];
+  if (points.length === 1 || n === 1) return Array.from({ length: n }, () => ({ ...points[0] }));
+  return Array.from({ length: n }, (_, i) => {
+    const f = (i * (points.length - 1)) / (n - 1);
+    const lo = Math.floor(f);
+    const hi = Math.min(points.length - 1, lo + 1);
+    const t = f - lo;
+    return { x: points[lo].x + (points[hi].x - points[lo].x) * t, y: points[lo].y + (points[hi].y - points[lo].y) * t };
+  });
+}
+
+/** Point lists `t` of the way from `from` (resampled to the length of `to`) to `to`. */
+export function lerpPoints(from: { x: number; y: number }[], to: { x: number; y: number }[], t: number): { x: number; y: number }[] {
+  const a = resample(from, to.length);
+  return to.map((p, i) => ({ x: a[i].x + (p.x - a[i].x) * t, y: a[i].y + (p.y - a[i].y) * t }));
+}
+
+/** Where a bar sits: its box and which end is its base (the axis, or the stack join below it). */
+export interface BarBox {
+  x: number;
+  top: number;
+  w: number;
+  h: number;
+  /** Grows upward from its bottom edge (false: hangs down from its top edge). */
+  up: boolean;
+}
+
+/**
+ * The FLIP start transform that puts a bar drawn at `next` back where `prev` was: a translate of its base point and a
+ * scale, about the base (transform-origin 50% 100% when up, 50% 0% when down, with transform-box fill-box).
+ * null when nothing moved, so an identical render plays nothing.
+ */
+export function barFlip(prev: BarBox, next: BarBox): string | null {
+  const baseY = (b: BarBox) => (b.up ? b.top + b.h : b.top);
+  const dx = prev.x + prev.w / 2 - (next.x + next.w / 2);
+  const dy = baseY(prev) - baseY(next);
+  const sx = next.w ? prev.w / next.w : 1;
+  const sy = next.h ? prev.h / next.h : 1;
+  const r = (v: number) => Math.round(v * 1000) / 1000;
+  if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01 && Math.abs(sx - 1) < 0.001 && Math.abs(sy - 1) < 0.001) return null;
+  return `translate(${r(dx)}px, ${r(dy)}px) scale(${r(sx)}, ${r(sy)})`;
 }

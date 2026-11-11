@@ -48,11 +48,12 @@
 	--sidebar-accent-foreground: hsl(240 5.9% 10%);
 	--sidebar-border: hsl(220 13% 91%);
 	--sidebar-ring: hsl(217.2 91.2% 59.8%);
-	--chart-1: oklch(0.87 0 0);
-	--chart-2: oklch(0.556 0 0);
-	--chart-3: oklch(0.439 0 0);
-	--chart-4: oklch(0.371 0 0);
-	--chart-5: oklch(0.269 0 0);
+	/* Chart series, in a fixed order: indigo, amber, teal, violet, rose. Checked with the dataviz palette validator (light: white surface, dark: #0A0A0B). */
+	--chart-1: #4F5BD5;
+	--chart-2: #D9780F;
+	--chart-3: #0F9D7A;
+	--chart-4: #8A5CC8;
+	--chart-5: #C8365B;
     --kn-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
     --kn-ease-in: cubic-bezier(0.4, 0, 1, 1);
     --kn-ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
@@ -109,11 +110,12 @@ body {
 	--sidebar-accent-foreground: hsl(240 4.8% 95.9%);
 	--sidebar-border: hsl(240 3.7% 15.9%);
 	--sidebar-ring: hsl(217.2 91.2% 59.8%);
-	--chart-1: oklch(0.87 0 0);
-	--chart-2: oklch(0.556 0 0);
-	--chart-3: oklch(0.439 0 0);
-	--chart-4: oklch(0.371 0 0);
-	--chart-5: oklch(0.269 0 0);
+	/* Chart series, in a fixed order: indigo, amber, teal, violet, rose. Checked with the dataviz palette validator (light: white surface, dark: #0A0A0B). */
+	--chart-1: #6B76E8;
+	--chart-2: #C9832A;
+	--chart-3: #2FA585;
+	--chart-4: #9B78DB;
+	--chart-5: #DE5575;
 }
 
 @theme inline {
