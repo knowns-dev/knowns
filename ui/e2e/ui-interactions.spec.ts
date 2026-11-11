@@ -62,6 +62,52 @@ test.describe("Task Creation via UI", () => {
 		});
 	});
 
+	test("create form starts from the default priority and labels in Settings", async ({ page }) => {
+		const cfgUrl = `${server.baseURL}/api/config`;
+		const before = ((await (await page.request.get(cfgUrl)).json()).config ?? {}) as { defaultPriority?: string; defaultLabels?: string[] };
+		const restore = { defaultPriority: before.defaultPriority || "medium", defaultLabels: before.defaultLabels ?? [] };
+		try {
+			const patched = await page.request.patch(cfgUrl, { data: { defaultPriority: "high", defaultLabels: ["alpha", "beta"] } });
+			expect(patched.ok()).toBeTruthy();
+
+			await page.goto(`${server.baseURL}/kanban`);
+			await page.getByRole("button", { name: /new task/i }).click();
+			const form = page.getByRole("dialog", { name: "New task" });
+			await expect(form).toBeVisible();
+
+			await test.step("priority and labels are prefilled", async () => {
+				await expect(form.getByLabel("Priority", { exact: true })).toHaveValue("high");
+				await expect(form.getByRole("button", { name: "Remove label alpha" })).toBeVisible();
+				await expect(form.getByRole("button", { name: "Remove label beta" })).toBeVisible();
+			});
+
+			await test.step("a default label can be removed and the task keeps the rest", async () => {
+				await form.getByRole("button", { name: "Remove label beta" }).click();
+				await form.getByPlaceholder("Enter task title...").fill("Defaults Seeded Task");
+				await form.getByRole("button", { name: "Create Task" }).click();
+				await expect(form).toBeHidden();
+				await expect
+					.poll(async () => {
+						const body = await (await page.request.get(`${server.baseURL}/api/tasks`)).json();
+						const list = (Array.isArray(body) ? body : body.tasks) as { title: string; priority: string; labels?: string[] }[];
+						const t = list.find((x) => x.title === "Defaults Seeded Task");
+						return t ? `${t.priority}|${(t.labels ?? []).join(",")}` : "";
+					})
+					.toBe("high|alpha");
+			});
+
+			await test.step("closing and reopening starts again from the defaults", async () => {
+				await page.getByRole("button", { name: /new task/i }).click();
+				await expect(form.getByLabel("Priority", { exact: true })).toHaveValue("high");
+				await expect(form.getByRole("button", { name: "Remove label beta" })).toBeVisible();
+				await page.keyboard.press("Escape");
+				await expect(form).toBeHidden();
+			});
+		} finally {
+			await page.request.patch(cfgUrl, { data: restore });
+		}
+	});
+
 	test("creates task from tasks page", async ({ page }) => {
 		await test.step("Navigate to tasks page", async () => {
 			await page.goto(`${server.baseURL}/tasks`);

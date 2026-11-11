@@ -40,6 +40,16 @@ type Errors = Partial<Record<FieldName, string>>;
 
 const newRow = (text = ""): CriterionRow => ({ id: crypto.randomUUID(), text });
 
+/** The Settings default priority, or medium when it is empty or not one of the known values. */
+function defaultPriorityOf(value: string | undefined): TaskPriority {
+	return PRIORITY_OPTIONS.some((o) => o.value === value) ? (value as TaskPriority) : "medium";
+}
+
+/** The Settings default labels, trimmed and without repeats. */
+function defaultLabelsOf(value: string[] | undefined): string[] {
+	return [...new Set((value ?? []).map((l) => l.trim()).filter(Boolean))];
+}
+
 export default function TaskCreateForm({ isOpen, allTasks, onClose, onCreated }: TaskCreateFormProps) {
 	const { currentUser } = useCurrentUser();
 	const { config } = useConfig();
@@ -90,15 +100,26 @@ export default function TaskCreateForm({ isOpen, allTasks, onClose, onCreated }:
 		return () => window.clearTimeout(timer);
 	}, [isOpen]);
 
+	// Seed from the Settings defaults when the form opens (not when it mounts), so the next form always sees
+	// the current defaults and the first frame is already right. Closing re-arms it.
+	const [seeded, setSeeded] = useState(false);
+	if (isOpen && !seeded) {
+		setSeeded(true);
+		setPriority(defaultPriorityOf(config.defaultPriority));
+		setLabels(defaultLabelsOf(config.defaultLabels));
+	} else if (!isOpen && seeded) {
+		setSeeded(false);
+	}
+
 	// Start clean every time the form closes.
 	useEffect(() => {
 		if (isOpen) return;
 		setTitle("");
 		setDescription("");
 		setStatus("todo");
-		setPriority("medium");
+		setPriority(defaultPriorityOf(config.defaultPriority));
 		setAssignee("");
-		setLabels([]);
+		setLabels(defaultLabelsOf(config.defaultLabels));
 		setLabelDraft("");
 		setParentId("");
 		setPrefix("");
