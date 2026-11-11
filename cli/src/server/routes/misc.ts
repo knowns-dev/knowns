@@ -348,6 +348,8 @@ function auditEventJson(e: import("../../models/audit.ts").AuditEvent): Obj {
   out.durationMs = e.durationMs;
   if (e.errorMessage) out.errorMessage = e.errorMessage;
   if (e.entityRefs && e.entityRefs.length > 0) out.entityRefs = e.entityRefs;
+  // KN-4FQN0P: the agent that made the call, only for known agent clients; absent otherwise, like Go.
+  if (e.client) out.client = e.client;
   if (e.argumentSummary && Object.keys(e.argumentSummary).length > 0) {
     out.argumentSummary = goMap(e.argumentSummary);
   }
