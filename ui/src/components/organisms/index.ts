@@ -7,7 +7,6 @@ export { default as TaskCreateForm } from "./TaskCreateForm";
 export { TaskDetailSheet } from "./TaskDetail";
 export { AppSidebar } from "./AppSidebar";
 export { default as NotificationBell } from "./NotificationBell";
-export { default as ActivityFeed } from "./ActivityFeed";
 export { default as SearchBox } from "./SearchBox";
 export { default as SearchCommandDialog } from "./SearchCommandDialog";
 export { default as TaskHistoryPanel } from "./TaskHistoryPanel";
