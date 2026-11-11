@@ -83,7 +83,7 @@ export function TaskTitle({ task, onSave, saving }: TaskTitleProps) {
 					setEditing(true);
 				}
 			}}
-			className={cn("-mx-1.5 cursor-text rounded-lg px-1.5 transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--foreground)_4%,transparent)]", focusRing)}
+			className={cn("-mx-1.5 cursor-text rounded-lg px-1.5 transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-[color-mix(in_srgb,var(--foreground)_4%,transparent)]", focusRing)}
 		>
 			{task.title}
 		</span>

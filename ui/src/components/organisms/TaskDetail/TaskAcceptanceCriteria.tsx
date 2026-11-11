@@ -106,7 +106,7 @@ export function TaskAcceptanceCriteria({ task, onSave, saving }: TaskAcceptanceC
 								setDragOver(null);
 							}}
 							className={cn(
-								"group/ac relative flex items-start gap-1.5 rounded-lg py-1.5 pr-1 pl-0.5 sm:pl-2 transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)]",
+								"group/ac relative flex items-start gap-1.5 rounded-lg py-1.5 pr-1 pl-0.5 sm:pl-2 transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)]",
 								dragFrom === index && "opacity-50",
 								dragOver === index && dragFrom !== null && dragFrom !== index && "bg-[color-mix(in_srgb,var(--foreground)_5%,transparent)]",
 							)}
@@ -142,7 +142,7 @@ export function TaskAcceptanceCriteria({ task, onSave, saving }: TaskAcceptanceC
 								aria-label={`Reorder "${item.text}", position ${index + 1} of ${totalCount}. Use arrow keys to move.`}
 								title="Drag or use arrow keys to reorder"
 								className={cn(
-									"mt-px grid size-5 flex-none cursor-grab sm:absolute sm:top-2 sm:-left-6 place-items-center rounded-[5px] text-muted-foreground/70 transition-opacity duration-150 hover:text-foreground active:cursor-grabbing disabled:invisible",
+									"mt-px grid size-5 flex-none cursor-grab sm:absolute sm:top-2 sm:-left-6 place-items-center rounded-[5px] text-muted-foreground/70 transition-opacity duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:text-foreground active:cursor-grabbing disabled:invisible",
 									"opacity-100 sm:opacity-0 sm:group-hover/ac:opacity-100 sm:focus-visible:opacity-100",
 									focusRing,
 								)}
@@ -238,7 +238,7 @@ export function TaskAcceptanceCriteria({ task, onSave, saving }: TaskAcceptanceC
 				<button
 					type="button"
 					className={cn(
-						"-mx-2 flex items-center gap-2 self-start rounded-lg px-2 py-1.5 text-[13.5px] text-muted-foreground transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--foreground)_4%,transparent)] hover:text-foreground",
+						"-mx-2 flex items-center gap-2 self-start rounded-lg px-2 py-1.5 text-[13.5px] text-muted-foreground transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-[color-mix(in_srgb,var(--foreground)_4%,transparent)] hover:text-foreground",
 						focusRing,
 					)}
 					onClick={() => setAdding(true)}

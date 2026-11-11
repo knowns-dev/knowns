@@ -158,7 +158,7 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 										return (
 											<div
 												key={task.id}
-												className="py-2.5 px-2 -mx-2 rounded-md transition-colors hover:bg-muted/50"
+												className="py-2.5 px-2 -mx-2 rounded-md transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-muted/50"
 											>
 												<div className="flex items-start gap-3">
 													{/* Task Info */}

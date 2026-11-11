@@ -41,7 +41,7 @@ function TaskLink({ task, onOpen, done }: { task: Task; onOpen?: (id: string) =>
 			onClick={() => onOpen?.(task.id)}
 			title={`#${task.id} ${task.title}`}
 			className={cn(
-				"-mx-2 flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--foreground)_4%,transparent)]",
+				"-mx-2 flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-[color-mix(in_srgb,var(--foreground)_4%,transparent)]",
 				focusRing,
 			)}
 		>
@@ -123,7 +123,7 @@ export function TaskSidebar({ task, allTasks, currentUser, onSave, onNavigateToT
 								Stop
 							</Button>
 							<span className="inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground">
-								<span aria-hidden className={cn("size-1.5 rounded-full", paused ? "bg-amber-500" : "bg-emerald-500 motion-safe:animate-pulse")} />
+								<span aria-hidden className={cn("size-1.5 rounded-full", paused ? "bg-amber-500" : "bg-emerald-500")} />
 								{paused ? "Paused" : "Running"}
 							</span>
 						</div>
@@ -186,7 +186,7 @@ export function TaskSidebar({ task, allTasks, currentUser, onSave, onNavigateToT
 								type="button"
 								onClick={() => setAddingLabel(true)}
 								className={cn(
-									"inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[12.5px] text-muted-foreground transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--foreground)_5%,transparent)] hover:text-foreground",
+									"inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[12.5px] text-muted-foreground transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-[color-mix(in_srgb,var(--foreground)_5%,transparent)] hover:text-foreground",
 									focusRing,
 								)}
 							>
@@ -238,7 +238,7 @@ export function TaskSidebar({ task, allTasks, currentUser, onSave, onNavigateToT
 							onClick={() => navigateTo(`/docs/${task.spec}.md`)}
 							title={`@doc/${task.spec}`}
 							className={cn(
-								"-mx-2 flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13.5px] text-foreground transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--foreground)_4%,transparent)]",
+								"-mx-2 flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13.5px] text-foreground transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-[color-mix(in_srgb,var(--foreground)_4%,transparent)]",
 								focusRing,
 							)}
 						>

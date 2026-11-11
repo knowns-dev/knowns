@@ -78,7 +78,7 @@ export function MarkdownField({
 						variant="ghost"
 						icon={<Pencil />}
 						aria-label={`Edit ${title}`}
-						className="text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover/section:opacity-100 sm:focus-visible:opacity-100"
+						className="text-muted-foreground opacity-100 transition-opacity duration-(--kn-dur-fast) ease-(--kn-ease-out) sm:opacity-0 sm:group-hover/section:opacity-100 sm:focus-visible:opacity-100"
 						onClick={() => setEditing(true)}
 					/>
 				) : undefined
@@ -125,7 +125,7 @@ export function MarkdownField({
 						if (e.target === e.currentTarget && e.key === "Enter") setEditing(true);
 					}}
 					className={cn(
-						"-mx-2 cursor-text rounded-lg px-2 py-1 transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)]",
+						"-mx-2 cursor-text rounded-lg px-2 py-1 transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)]",
 						focusRing,
 					)}
 				>
@@ -136,7 +136,7 @@ export function MarkdownField({
 					type="button"
 					onClick={() => setEditing(true)}
 					className={cn(
-						"-mx-2 rounded-lg border border-dashed border-[color-mix(in_srgb,var(--foreground)_14%,transparent)] px-3 py-3 text-left text-[13.5px] text-muted-foreground transition-colors duration-150 hover:border-[color-mix(in_srgb,var(--foreground)_24%,transparent)] hover:text-foreground",
+						"-mx-2 rounded-lg border border-dashed border-[color-mix(in_srgb,var(--foreground)_14%,transparent)] px-3 py-3 text-left text-[13.5px] text-muted-foreground transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:border-[color-mix(in_srgb,var(--foreground)_24%,transparent)] hover:text-foreground",
 						focusRing,
 					)}
 				>
