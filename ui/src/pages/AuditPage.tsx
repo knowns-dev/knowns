@@ -18,6 +18,7 @@ import {
 } from "@/ui/components/templates/PageShell";
 import { cn } from "@/ui/lib/utils";
 import { AuditEventSheet } from "./audit/AuditEventDetail";
+import { TraceSessionDialog } from "./audit/TraceSession";
 import { type AuditFilters, AuditEventList, AuditToolbar } from "./audit/AuditEventList";
 import { AuditStatsPanel } from "./audit/AuditStatsPanel";
 import { type AuditRow, browserTimezone, matchesQuery, toRows } from "./audit/auditFormat";
@@ -54,6 +55,7 @@ export default function AuditPage() {
 	const [analyticsError, setAnalyticsError] = useState<string | null>(null);
 
 	const [selectedKey, setSelectedKey] = useState<string | null>(null);
+	const [sessionEvent, setSessionEvent] = useState<AuditEvent | null>(null);
 
 	// A paging request keeps the list on screen; any other fetch shows the loading state.
 	const pagingRef = useRef(false);
@@ -303,7 +305,9 @@ export default function AuditPage() {
 				position={selectedRow ? { index: selectedIndex + 1, total: rows.length } : null}
 				onClose={() => setSelectedKey(null)}
 				onStep={stepSelection}
+				onViewSession={(row) => setSessionEvent(row.event)}
 			/>
+			<TraceSessionDialog event={sessionEvent} loaded={events} onClose={() => setSessionEvent(null)} />
 		</PageShell>
 	);
 }

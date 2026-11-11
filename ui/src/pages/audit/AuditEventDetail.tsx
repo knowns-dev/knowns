@@ -1,5 +1,5 @@
 import type { MouseEvent, ReactNode } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, GanttChart } from "lucide-react";
 import { Badge } from "@/ui/components/ui/knowns/badge";
 import { Button as KnButton } from "@/ui/components/ui/knowns/button";
 import { CodeBlock } from "@/ui/components/ui/knowns/code-block/code-block";
@@ -28,6 +28,7 @@ export function AuditEventSheet({
 	position,
 	onClose,
 	onStep,
+	onViewSession,
 }: {
 	row: AuditRow | null;
 	now: number;
@@ -35,6 +36,8 @@ export function AuditEventSheet({
 	position: { index: number; total: number } | null;
 	onClose: () => void;
 	onStep: (delta: -1 | 1) => void;
+	/** Opens the agent session this call belongs to as a trace waterfall. */
+	onViewSession: (row: AuditRow) => void;
 }) {
 	const isMobile = useIsMobile();
 	const event = row?.event;
@@ -87,12 +90,22 @@ export function AuditEventSheet({
 				)
 			}
 		>
-			{row && <AuditEventDetail row={row} now={now} onClose={onClose} />}
+			{row && <AuditEventDetail row={row} now={now} onClose={onClose} onViewSession={onViewSession} />}
 		</Sheet>
 	);
 }
 
-function AuditEventDetail({ row, now, onClose }: { row: AuditRow; now: number; onClose: () => void }) {
+function AuditEventDetail({
+	row,
+	now,
+	onClose,
+	onViewSession,
+}: {
+	row: AuditRow;
+	now: number;
+	onClose: () => void;
+	onViewSession: (row: AuditRow) => void;
+}) {
 	const { event, at } = row;
 	const result = resultMeta(event.result);
 	const kind = classMeta(event.actionClass);
@@ -122,6 +135,9 @@ function AuditEventDetail({ row, now, onClose }: { row: AuditRow; now: number; o
 						Dry run
 					</Badge>
 				)}
+				<KnButton variant="secondary" size="sm" icon={<GanttChart />} onClick={() => onViewSession(row)} className="ml-auto">
+					View session
+				</KnButton>
 			</div>
 
 			<dl className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-3 gap-y-2.5">

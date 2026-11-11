@@ -2130,6 +2130,8 @@ export interface AuditEvent {
 	errorMessage?: string;
 	entityRefs?: string[];
 	argumentSummary?: Record<string, string>;
+	/** The agent that made the call (a known agent client, e.g. "claude-code"); absent for other clients. */
+	client?: string;
 }
 
 export interface AuditStats {

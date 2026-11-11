@@ -290,6 +290,49 @@ test.describe("Audit Trail", () => {
 		});
 	});
 
+	test("an event opens its agent session as a trace waterfall", async ({ page }) => {
+		const base = Date.now() - 5 * 60_000;
+		const call = (offsetMs: number, over: Record<string, unknown> = {}) => ({
+			timestamp: new Date(base + offsetMs).toISOString(),
+			toolName: "tasks",
+			action: "get",
+			actionClass: "read",
+			result: "success",
+			durationMs: 40,
+			client: "claude-code",
+			...over,
+		});
+		const events = [
+			call(0, { toolName: "docs", action: "list" }),
+			call(120_000),
+			call(121_000, { result: "error", errorMessage: "task not found", durationMs: 900 }),
+			call(122_500, { action: "delete", actionClass: "delete", result: "denied", errorMessage: "Policy blocks delete" }),
+		].reverse();
+		await page.route("**/api/audit/recent*", async (route) => {
+			await route.fulfill({ contentType: "application/json", body: JSON.stringify({ events, count: events.length }) });
+		});
+
+		await page.goto(`${server.baseURL}/audit`);
+		await page.locator('[data-audit-event="tasks.delete"]').first().click();
+
+		await test.step("View session opens a waterfall of the calls around it, not the earlier burst", async () => {
+			await page.getByTestId("audit-event-detail").getByRole("button", { name: "View session" }).click();
+			const summary = page.getByTestId("audit-session-summary");
+			await expect(summary).toContainText("3 calls");
+			await expect(summary).toContainText("2 need attention");
+			const session = page.getByTestId("audit-session");
+			await expect(session.getByText(/Error: tasks\.get: task not found/).first()).toBeVisible();
+			await expect(session.getByText(/Denied: tasks\.delete/).first()).toBeVisible();
+			await expect(session.getByRole("treeitem", { name: /claude-code.*tasks\.get/ }).first()).toBeVisible();
+		});
+
+		await test.step("It fits the viewport and Escape closes it", async () => {
+			await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+			await page.keyboard.press("Escape");
+			await expect(page.getByTestId("audit-session")).toBeHidden();
+		});
+	});
+
 	test("search and filters narrow the event list", async ({ page }) => {
 		await test.step("Create a read and a write event", async () => {
 			server.mcp("tasks", { action: "list" });
