@@ -902,6 +902,56 @@ export async function search(
 	};
 }
 
+export interface RetrieveOptions {
+	mode?: "keyword" | "semantic" | "hybrid";
+	limit?: number;
+	sourceTypes?: Array<"doc" | "task" | "memory" | "decision">;
+	expandReferences?: boolean;
+}
+
+export interface RetrieveResponse {
+	query: string;
+	mode: string;
+	candidates: Array<{ type: string; id: string; title: string; score: number }>;
+	contextPack: {
+		mode: string;
+		items: Array<{
+			type: string;
+			id: string;
+			title: string;
+			content: string;
+			directMatch?: boolean;
+			expandedFrom?: string;
+			metadata?: Record<string, unknown>;
+		}>;
+	};
+}
+
+// Retrieve API: the context pack Knowns builds for a query
+export async function retrieve(
+	query: string,
+	options: RetrieveOptions = {},
+	signal?: AbortSignal,
+): Promise<RetrieveResponse> {
+	const params = new URLSearchParams({ q: query });
+	if (options.mode) params.set("mode", options.mode);
+	if (options.limit) params.set("limit", String(options.limit));
+	for (const type of options.sourceTypes ?? []) params.append("sourceType", type);
+	if (options.expandReferences) params.set("expandReferences", "true");
+	const res = await apiFetch(`${API_BASE}/api/retrieve?${params.toString()}`, { signal });
+	if (!res.ok) {
+		const body = await res.json().catch(() => null);
+		throw new Error(body?.error || "Failed to build the context pack");
+	}
+	const data = await res.json();
+	return {
+		query: data.query ?? query,
+		mode: data.mode ?? "hybrid",
+		candidates: data.candidates ?? [],
+		contextPack: { mode: data.contextPack?.mode ?? "", items: data.contextPack?.items ?? [] },
+	};
+}
+
 function normalizeSpecLink(path: string): string {
 	const normalized = path.replace(/\\/g, "/").replace(/^\//, "").replace(/\.md$/, "");
 	const specsIndex = normalized.indexOf("specs/");

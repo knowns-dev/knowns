@@ -45,6 +45,7 @@ const GraphPage = lazyWithRetry(() => import("./pages/GraphPage"));
 const MemoryPage = lazyWithRetry(() => import("./pages/MemoryPage"));
 const DecisionPage = lazyWithRetry(() => import("./pages/DecisionPage"));
 const AuditPage = lazyWithRetry(() => import("./pages/AuditPage"));
+const ContextPage = lazyWithRetry(() => import("./pages/ContextPage"));
 const RuntimePage = lazyWithRetry(() => import("./pages/RuntimePage"));
 
 function PageLoading() {
@@ -67,6 +68,7 @@ function getCurrentPage(pathname: string) {
 	if (pathname.startsWith("/memory")) return "memory";
 	if (pathname.startsWith("/decisions")) return "decisions";
 	if (pathname.startsWith("/audit")) return "audit";
+	if (pathname.startsWith("/context")) return "context";
 	if (pathname.startsWith("/runtime")) return "runtime";
 	if (pathname.startsWith("/config")) return "config";
 	if (pathname.startsWith("/kanban")) return "kanban";
@@ -151,6 +153,7 @@ export default function AppShell() {
 			memory: "Memories",
 			decisions: "Decisions",
 			audit: "Audit Trail",
+			context: "Context pack",
 			runtime: "Runtime",
 			imports: "Imports",
 			config: "Settings",
@@ -342,6 +345,8 @@ export default function AppShell() {
 				return <DecisionPage />;
 			case "audit":
 				return <AuditPage />;
+			case "context":
+				return <ContextPage />;
 			case "runtime":
 				return <RuntimePage />;
 			case "imports":
