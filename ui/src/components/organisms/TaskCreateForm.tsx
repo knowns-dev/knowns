@@ -243,6 +243,9 @@ export default function TaskCreateForm({ isOpen, allTasks, onClose, onCreated }:
 					.map((text) => ({ text, completed: false })),
 			});
 			toast.success("Task created", { description: title.trim() });
+			// Success path leaves at once: the new task's detail may open right away, and two sections with
+			// the same labels must never be in the page together. Cancel and Escape keep the exit fade.
+			setMounted(false);
 			onCreated();
 			onClose();
 		} catch (err) {
