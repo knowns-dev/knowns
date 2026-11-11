@@ -167,20 +167,23 @@ function AnalyticsSummary({ analytics }: { analytics: AuditAnalytics }) {
 			? Math.round(((analytics.byResult.success || 0) / analytics.totalCalls) * 100)
 			: 0;
 	const days = coveredWindow(analytics.dailyBuckets).window;
+	// A rate or an average on a day with no calls is undefined, not zero: draw one line through the days that had calls.
+	// One such day repeats itself so the tile shows a flat line instead of the empty placeholder.
+	const connected = (values: number[]) => (values.length === 1 ? [values[0] as number, values[0] as number] : values);
 
 	const metrics = [
 		{ label: "Calls in range", value: analytics.totalCalls, trend: days.map((d) => d.totalCalls), trendLabel: "Calls per day" },
 		{
 			label: "Success rate",
 			value: `${successRate}%`,
-			trend: days.map((d) => (d.totalCalls > 0 ? Math.round((d.successCount / d.totalCalls) * 100) : null)),
+			trend: connected(days.filter((d) => d.totalCalls > 0).map((d) => Math.round((d.successCount / d.totalCalls) * 100))),
 			trendLabel: "Success rate per day",
 		},
 		{ label: "Needs attention", value: analytics.needsAttention, trend: days.map((d) => d.needsAttention), trendLabel: "Needs attention per day" },
 		{
 			label: "Avg latency",
 			value: formatDuration(analytics.averageDurationMs),
-			trend: days.map((d) => (d.totalCalls > 0 ? d.averageDurationMs : null)),
+			trend: connected(days.filter((d) => d.totalCalls > 0).map((d) => d.averageDurationMs)),
 			trendLabel: "Average latency per day",
 		},
 	];
