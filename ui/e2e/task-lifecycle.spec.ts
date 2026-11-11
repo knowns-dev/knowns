@@ -256,7 +256,7 @@ test.describe("Task lifecycle workflows", () => {
 		await expect(page.getByTestId("task-lifecycle-state").filter({ hasText: "Archived" }).first()).toBeVisible();
 		await page.setViewportSize({ width: 640, height: 900 });
 		await page.getByText("Lifecycle Done").first().click();
-		const lifecycleSummary = page.getByLabel("Task lifecycle");
+		const lifecycleSummary = page.getByRole("group", { name: "Task lifecycle", exact: true });
 		await expect(lifecycleSummary.getByTestId("task-lifecycle-state")).toContainText("Archived");
 		await expect(lifecycleSummary.getByTestId("task-lifecycle-timestamps")).toContainText("Archived");
 		await expect(page.getByRole("button", { name: "Restore Task" }).first()).toBeVisible();

@@ -83,11 +83,11 @@ function syncOutside() {
     child.setAttribute(HIDDEN_MARK, "")
   }
 }
-function pushLayer(d: HTMLDialogElement) {
+export function pushLayer(d: HTMLDialogElement) {
   if (!stack.includes(d)) stack.push(d)
   syncOutside()
 }
-function popLayer(d: HTMLDialogElement) {
+export function popLayer(d: HTMLDialogElement) {
   const i = stack.indexOf(d)
   if (i === -1) return
   stack.splice(i, 1)

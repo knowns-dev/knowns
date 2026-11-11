@@ -1,7 +1,9 @@
 "use client";
 /** @registry name="task-detail" type="block" title="Task detail" description="A task's own page in a side sheet, built on Page header: breadcrumbs, status, meta, progress, milestones, steps, activity and files, with move and overflow actions." */
 
+import { createPortal } from "react-dom";
 import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { popLayer, pushLayer } from "@/ui/components/ui/modal-layer";
 import { cn, focusRing, writeClipboard } from "@/ui/lib/knowns/utils";
 import { modelIcon } from "@/ui/lib/knowns/icons/model-icons";
 import { PersonGlyph } from "@/ui/lib/knowns/icons/actor-icon";
@@ -590,16 +592,28 @@ export function DetailSheet({
     if (!d) return;
     if (open && !d.open) {
       d.showModal();
+      // Like the app's other modals: hide the page behind from assistive tech, not just from the pointer.
+      pushLayer(d);
       d.querySelector<HTMLElement>("[data-autofocus]")?.focus();
     }
-    if (!open && d.open) d.close();
+    if (!open && d.open) {
+      d.close();
+      popLayer(d);
+    }
   }, [open]);
+  useEffect(() => {
+    const d = ref.current;
+    return () => {
+      if (d) popLayer(d);
+    };
+  }, []);
 
   const close = (
     <Button variant="ghost" icon={Icon.close} aria-label="Close" data-autofocus onClick={() => onOpenChange(false)} />
   );
 
-  return (
+  // Portaled to <body> like the app's other modals, so the modal layer can hide the page beside it from assistive tech.
+  const sheet = (
     <dialog
       ref={ref}
       data-kn-td-sheet=""
@@ -631,6 +645,7 @@ export function DetailSheet({
       )}
     </dialog>
   );
+  return typeof document === "undefined" ? sheet : createPortal(sheet, document.body);
 }
 
 export default TaskDetail;
