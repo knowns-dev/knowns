@@ -19,21 +19,26 @@ const openSearchCode = async (page: Page) => {
 // The server is shared by this file, so earlier tests leave languages behind: count rows, not "any row".
 const languageRows = (page: Page) => page.locator('[data-testid^="lsp-language-"]');
 
+// The real-server tests target bash explicitly: it is the language whose server (bash-language-server)
+// is installed on the e2e machines. Where it is missing the add is refused and the test skips.
+const BASH = "bash";
+const bashRow = (page: Page) => page.getByTestId(`lsp-language-${BASH}`);
+
 /**
- * Adds the first offered language. Returns false when the machine has no usable server for it: the add
- * is refused with an error toast ("executable not found"), which is the right product behaviour.
+ * Makes sure the bash row exists, adding it when needed. Returns false when the machine has no usable
+ * bash-language-server: the add is refused with an error toast, which is the right product behaviour.
  */
-const addFirstLanguage = async (page: Page): Promise<boolean> => {
-	const before = await languageRows(page).count();
+const ensureBash = async (page: Page): Promise<boolean> => {
+	if (await bashRow(page).isVisible()) return true;
 	await page.getByRole("button", { name: "Add", exact: true }).click();
-	const first = page.getByRole("group", { name: "Available languages" }).getByRole("button").first();
-	await expect(first).toBeVisible();
-	await first.click();
+	const option = page.getByRole("group", { name: "Available languages" }).getByRole("button", { name: /bash/i });
+	await expect(option).toBeVisible();
+	await option.click();
 	let outcome = "pending";
 	await expect
 		.poll(
 			async () => {
-				if ((await languageRows(page).count()) > before) return (outcome = "added");
+				if (await bashRow(page).isVisible()) return (outcome = "added");
 				const refused = await page.getByText(/unavailable|not found|Failed to add language/i).first().isVisible().catch(() => false);
 				return (outcome = refused ? "refused" : "pending");
 			},
@@ -41,6 +46,17 @@ const addFirstLanguage = async (page: Page): Promise<boolean> => {
 		)
 		.not.toBe("pending");
 	return outcome === "added";
+};
+
+/** Each real-server test leaves the project as it found it: no bash row. */
+const cleanUpBash = async (page: Page) => {
+	await page.goto(`${server.baseURL}/config`);
+	await page.getByRole("button", { name: "Search & Code", exact: true }).click();
+	await expect(page.getByRole("heading", { name: "Language Server Protocol" })).toBeVisible();
+	if (await bashRow(page).isVisible()) {
+		await bashRow(page).getByRole("button", { name: /^Remove / }).click();
+		await expect(bashRow(page)).toHaveCount(0, { timeout: 15000 });
+	}
 };
 
 test.describe("Settings: LSP (Search & Code)", () => {
@@ -69,34 +85,40 @@ test.describe("Settings: LSP (Search & Code)", () => {
 		await expect(dropdown.getByRole("button").first()).toBeVisible();
 	});
 
-	test("adds a language as one row and keeps debug tools behind Details", async ({ page }) => {
-		await openSearchCode(page);
-		test.skip(!(await addFirstLanguage(page)), "no language server is installed on this machine");
-		const row = languageRows(page).last();
-		await expect(row.getByRole("button", { name: "Restart" })).toBeVisible();
-		// Install, Logs and Trace live behind Details, not on the row.
-		await expect(row.getByRole("button", { name: "Logs" })).toHaveCount(0);
-		await row.getByRole("button", { name: "Details" }).click();
-		await expect(row.getByRole("button", { name: "Logs" })).toBeVisible();
-		await expect(row.getByRole("button", { name: "Trace" }).first()).toBeVisible();
-	});
+	test.describe("with a real language server", () => {
+		test.afterEach(async ({ page }) => {
+			await cleanUpBash(page);
+		});
 
-	test("toggles a language off and on", async ({ page }) => {
-		await openSearchCode(page);
-		test.skip(!(await addFirstLanguage(page)), "no language server is installed on this machine");
-		const toggle = languageRows(page).last().getByRole("switch").first();
-		await expect(toggle).toBeVisible();
-		const before = await toggle.getAttribute("aria-checked");
-		await toggle.click();
-		await expect(toggle).not.toHaveAttribute("aria-checked", before ?? "true", { timeout: 15000 });
-	});
+		test("adds a language as one row and keeps debug tools behind Details", async ({ page }) => {
+			await openSearchCode(page);
+			test.skip(!(await ensureBash(page)), "bash-language-server is not installed on this machine");
+			const row = bashRow(page);
+			await expect(row.getByRole("button", { name: "Restart" })).toBeVisible();
+			// Install, Logs and Trace live behind Details, not on the row.
+			await expect(row.getByRole("button", { name: "Logs" })).toHaveCount(0);
+			await row.getByRole("button", { name: "Details" }).click();
+			await expect(row.getByRole("button", { name: "Logs" })).toBeVisible();
+			await expect(row.getByRole("button", { name: "Trace" }).first()).toBeVisible();
+		});
 
-	test("removes a language from the list", async ({ page }) => {
-		await openSearchCode(page);
-		test.skip(!(await addFirstLanguage(page)), "no language server is installed on this machine");
-		const before = await languageRows(page).count();
-		await languageRows(page).last().getByRole("button", { name: /^Remove / }).click();
-		await expect(languageRows(page)).toHaveCount(before - 1, { timeout: 15000 });
+		test("toggles a language off and on", async ({ page }) => {
+			await openSearchCode(page);
+			test.skip(!(await ensureBash(page)), "bash-language-server is not installed on this machine");
+			const toggle = bashRow(page).getByRole("switch").first();
+			await expect(toggle).toHaveAttribute("aria-checked", "true");
+			await toggle.click();
+			await expect(toggle).toHaveAttribute("aria-checked", "false", { timeout: 15000 });
+			await toggle.click();
+			await expect(toggle).toHaveAttribute("aria-checked", "true", { timeout: 15000 });
+		});
+
+		test("removes a language from the list", async ({ page }) => {
+			await openSearchCode(page);
+			test.skip(!(await ensureBash(page)), "bash-language-server is not installed on this machine");
+			await bashRow(page).getByRole("button", { name: /^Remove / }).click();
+			await expect(bashRow(page)).toHaveCount(0, { timeout: 15000 });
+		});
 	});
 });
 
