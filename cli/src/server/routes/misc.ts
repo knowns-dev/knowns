@@ -139,27 +139,24 @@ export function registerSmall(r: Router, app: App): void {
       try {
         const entries = s.versions.listRecentActivities(limit, c.query("type"));
         return jsonResponse(200, {
-          activities:
-            entries.length === 0
-              ? null
-              : entries.map((e) => {
-                  const o: Obj = {
-                    taskId: e.taskId,
-                    taskTitle: e.taskTitle,
-                    version: e.version,
-                    timestamp: e.timestamp,
-                  };
-                  if (e.author) o.author = e.author;
-                  o.changes =
-                    e.changes === null
-                      ? null
-                      : e.changes.map((ch) => ({
-                          field: ch.field,
-                          oldValue: sortKeysDeep(ch.oldValue ?? null),
-                          newValue: sortKeysDeep(ch.newValue ?? null),
-                        }));
-                  return o;
-                }),
+          activities: entries.map((e) => {
+            const o: Obj = {
+              taskId: e.taskId,
+              taskTitle: e.taskTitle,
+              version: e.version,
+              timestamp: e.timestamp,
+            };
+            if (e.author) o.author = e.author;
+            o.changes =
+              e.changes === null
+                ? null
+                : e.changes.map((ch) => ({
+                    field: ch.field,
+                    oldValue: sortKeysDeep(ch.oldValue ?? null),
+                    newValue: sortKeysDeep(ch.newValue ?? null),
+                  }));
+            return o;
+          }),
         });
       } catch (e) {
         return respondError(500, errMessage(e));

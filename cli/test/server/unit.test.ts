@@ -122,3 +122,17 @@ describe("cors", () => {
     );
   });
 });
+
+describe("GET /api/activities", () => {
+  test("an empty history is [] rather than null", async () => {
+    const { registerSmall } = await import("../../src/server/routes/misc.ts");
+    const r = new Router();
+    const store = { versions: { listRecentActivities: () => [] } };
+    const app = { manager: { getStore: () => store }, need: () => store };
+    registerSmall(r, app as never);
+    const hit = r.resolve("GET", "/api/activities");
+    if (!("handler" in hit)) throw new Error("no route");
+    const res = await hit.handler({ query: () => "" } as never);
+    expect(await res.json()).toEqual({ activities: [] });
+  });
+});

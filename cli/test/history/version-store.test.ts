@@ -658,3 +658,66 @@ describe("legacy files and cleanup", () => {
     void encodeDocVersionHistory;
   });
 });
+
+describe("listRecentActivities", () => {
+  const snap = (id: string, title: string, status: string) => ({
+    id,
+    title,
+    status,
+    priority: "low",
+    archived: false,
+    timeSpent: 0,
+  });
+
+  test("reads JSONL task histories, newest first, with the author", async () => {
+    const { versions } = setup();
+    expect(versions.listRecentActivities(10)).toEqual([]);
+    await versions.saveVersion("act1", {
+      changes: [],
+      snapshot: snap("act1", "First", "todo"),
+      timestamp: "2026-01-01T00:00:00Z",
+    });
+    await versions.saveVersion("act1", {
+      changes: [{ field: "status", oldValue: "todo", newValue: "done" }],
+      snapshot: snap("act1", "First", "done"),
+      timestamp: "2026-01-02T00:00:00Z",
+      author: "mcp:claude-code",
+    });
+    await versions.saveVersion("act2", {
+      changes: [],
+      snapshot: snap("act2", "Second", "todo"),
+      timestamp: "2026-01-03T00:00:00Z",
+    });
+    await versions.saveVersion("act2", {
+      changes: [{ field: "assignee", oldValue: "", newValue: "@me" }],
+      snapshot: snap("act2", "Second", "todo"),
+      timestamp: "2026-01-04T00:00:00Z",
+    });
+
+    const all = versions.listRecentActivities(10);
+    expect(all.map((a) => `${a.taskId}:${a.version}`)).toEqual(["act2:2", "act1:2"]);
+    expect(all[1]).toMatchObject({ taskTitle: "First", author: "mcp:claude-code" });
+    expect(versions.listRecentActivities(1)).toHaveLength(1);
+    expect(versions.listRecentActivities(10, "status").map((a) => a.taskId)).toEqual(["act1"]);
+  });
+
+  test("still reads legacy task-<id>.json histories", () => {
+    const { versions, root } = setup();
+    const h = {
+      taskId: "old2",
+      currentVersion: 1,
+      versions: [
+        {
+          id: "v1",
+          taskId: "old2",
+          version: 1,
+          timestamp: "2026-01-01T00:00:00Z",
+          changes: [{ field: "status", oldValue: "todo", newValue: "done" }],
+          snapshot: snap("old2", "Legacy", "done"),
+        },
+      ],
+    };
+    writeJson(join(root, "versions", "task-old2.json"), encodeTaskVersionHistory(h as never));
+    expect(versions.listRecentActivities(10).map((a) => a.taskTitle)).toEqual(["Legacy"]);
+  });
+});
