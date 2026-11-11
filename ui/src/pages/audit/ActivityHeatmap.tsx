@@ -163,7 +163,7 @@ export function ActivityHeatmap({
 												aria-label={describeDay(bucket)}
 												onClick={() => onSelectDay(bucket.date)}
 												className={cn(
-													"relative h-[1.125rem] w-[1.125rem] justify-self-center rounded-[3px] border transition-transform hover:z-10 hover:scale-125 focus-visible:z-10 focus-visible:scale-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 motion-reduce:transition-none",
+													"relative h-[1.125rem] w-[1.125rem] justify-self-center rounded-[3px] border hover:z-10 hover:scale-125 focus-visible:z-10 focus-visible:scale-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 motion-reduce:transition-none",
 													bucket.covered
 														? ACTIVITY_CLASSES[
 																getActivityLevel(bucket, thresholds)

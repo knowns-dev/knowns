@@ -505,7 +505,7 @@ function DocsPageInner() {
 						) : (
 							<div className="flex-1 overflow-y-auto relative" ref={scrollContainerRef}>
 								<div ref={docViewerRef} className="flex justify-center relative">
-									<article key={selectedDoc.path} className={`min-w-0 w-full px-5 sm:px-10 pt-8 pb-16 sm:pt-10 transition-[max-width] duration-300 ease-out animate-doc-in ${wideMode ? "max-w-[1080px]" : "max-w-[800px]"}`}>
+									<article key={selectedDoc.path} className={`min-w-0 w-full px-5 sm:px-10 pt-8 pb-16 sm:pt-10 animate-kn-doc-in ${wideMode ? "max-w-[1080px]" : "max-w-[800px]"}`}>
 										<DocsDocHeader
 											selectedDoc={selectedDoc}
 											reference={docReference}

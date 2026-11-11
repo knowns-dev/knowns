@@ -12,6 +12,7 @@ import {
   Check,
 } from "lucide-react";
 import { useTheme } from "../../App";
+import { prefersReducedMotion } from "@/ui/lib/knowns/motion";
 
 interface MermaidBlockProps {
   code: string;
@@ -368,7 +369,7 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
       style={{
         transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
         transformOrigin: "center center",
-        transition: isDragging ? "none" : "transform 0.15s ease-out",
+        transition: isDragging || prefersReducedMotion() ? "none" : "transform var(--kn-dur-fast) var(--kn-ease-inout)",
       }}
       dangerouslySetInnerHTML={{ __html: svg }}
     />

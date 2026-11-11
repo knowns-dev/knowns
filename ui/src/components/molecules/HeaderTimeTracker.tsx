@@ -34,10 +34,7 @@ function TimerItem({ timer, elapsed, onPauseResume, onStop, onTaskClick }: Timer
 		<div className="flex items-center gap-2 px-2 py-1.5 w-full">
 			{/* Status indicator */}
 			{!isPaused ? (
-				<span className="relative flex h-2 w-2 flex-shrink-0">
-					<span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-					<span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
-				</span>
+				<span data-timer-running className="h-2 w-2 rounded-full bg-red-500 flex-shrink-0" />
 			) : (
 				<span className="h-2 w-2 rounded-full bg-yellow-500 flex-shrink-0" />
 			)}
@@ -148,16 +145,13 @@ export function HeaderTimeTracker({ className, onTaskClick }: HeaderTimeTrackerP
 			<div
 				className={cn(
 					"flex items-center gap-1.5 h-8",
-					"animate-in fade-in slide-in-from-right-2 duration-200",
+					"animate-in fade-in slide-in-from-right-2 duration-(--kn-dur) ease-(--kn-ease-out)",
 					className
 				)}
 			>
 				{/* Recording indicator */}
 				{!isPaused && (
-					<span className="relative flex h-2 w-2">
-						<span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-						<span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
-					</span>
+					<span data-timer-running className="h-2 w-2 rounded-full bg-red-500" />
 				)}
 
 				{/* Task info button */}
@@ -223,16 +217,13 @@ export function HeaderTimeTracker({ className, onTaskClick }: HeaderTimeTrackerP
 		<div
 			className={cn(
 				"flex items-center gap-1.5 h-8",
-				"animate-in fade-in slide-in-from-right-2 duration-200",
+				"animate-in fade-in slide-in-from-right-2 duration-(--kn-dur) ease-(--kn-ease-out)",
 				className
 			)}
 		>
 			{/* Recording indicator - show if any timer is running */}
 			{runningCount > 0 && (
-				<span className="relative flex h-2 w-2">
-					<span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-					<span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
-				</span>
+				<span data-timer-running className="h-2 w-2 rounded-full bg-red-500" />
 			)}
 
 			<Popover open={open} onOpenChange={setOpen}>

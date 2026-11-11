@@ -17,6 +17,7 @@ import { useConfig } from "./contexts/ConfigContext";
 import { useGlobalTask } from "./contexts/GlobalTaskContext";
 import { Loader2 } from "lucide-react";
 import { ThemeContext } from "./App";
+import { EASE, MOTION } from "@/ui/lib/knowns/motion-utils";
 
 // Retry wrapper for lazy imports — auto-reloads when chunks are stale after a deploy.
 function lazyWithRetry(factory: () => Promise<{ default: React.ComponentType<any> }>) {
@@ -274,8 +275,8 @@ export default function AppShell() {
 				],
 			},
 			{
-				duration: 400,
-				easing: "ease-out",
+				duration: MOTION.slow,
+				easing: EASE.out,
 				pseudoElement: "::view-transition-new(root)",
 			},
 		);
@@ -394,7 +395,7 @@ export default function AppShell() {
 								<Suspense fallback={<PageLoading />}>
 									<div
 										key={currentPage}
-										className="animate-page-in flex-1 flex flex-col min-h-0"
+										className="animate-kn-page-in flex-1 flex flex-col min-h-0"
 									>
 										{renderPage()}
 									</div>

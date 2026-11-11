@@ -95,7 +95,7 @@ function FolderTree({ onSelect }: { onSelect: (path: string) => Promise<void> })
           >
             {n.loading
               ? <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-              : <ChevronRight className={cn("h-3 w-3 text-muted-foreground transition-transform", n.expanded && "rotate-90")} />
+              : <ChevronRight className={cn("h-3 w-3 text-muted-foreground transition-transform duration-(--kn-dur-fast) ease-(--kn-ease-inout)", n.expanded && "rotate-90")} />
             }
           </button>
           {n.entry.isProject

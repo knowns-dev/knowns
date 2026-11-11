@@ -1486,7 +1486,7 @@ function ReviewActionDialog({
 							disabled={busy}
 							className="min-h-11 sm:min-h-10"
 						>
-							{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <impact.icon className="h-4 w-4" />}
+							{busy ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <impact.icon className="h-4 w-4" />}
 							{impact.confirmLabel}
 						</Button>
 					) : null}
@@ -1650,7 +1650,7 @@ function CreateCandidateDialog({
 							Cancel
 						</Button>
 						<Button type="submit" variant="default" disabled={!canSubmit || busy} className="min-h-11 sm:min-h-9">
-							{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Inbox className="h-4 w-4" />}
+							{busy ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Inbox className="h-4 w-4" />}
 							{busy ? "Saving…" : "Save to Review Inbox"}
 						</Button>
 					</div>

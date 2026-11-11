@@ -106,7 +106,7 @@ export function AppSidebar({
 						className="flex h-11 w-full min-w-0 items-center gap-2.5 rounded-lg px-1.5 text-left outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50"
 					>
 						<img src={logoImage} alt="" className="size-8 shrink-0 rounded-lg object-contain" />
-						<span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground transition-opacity group-data-[rail]/sb:opacity-0">
+						<span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground transition-opacity duration-(--kn-dur-fast) ease-(--kn-ease-out) group-data-[rail]/sb:opacity-0">
 							{projectName}
 						</span>
 						<svg
@@ -117,7 +117,7 @@ export function AppSidebar({
 							strokeLinecap="round"
 							strokeLinejoin="round"
 							aria-hidden="true"
-							className="size-3.5 shrink-0 text-muted-foreground transition-opacity group-data-[rail]/sb:opacity-0"
+							className="size-3.5 shrink-0 text-muted-foreground transition-opacity duration-(--kn-dur-fast) ease-(--kn-ease-out) group-data-[rail]/sb:opacity-0"
 						>
 							<path d="M5 6l3-3 3 3M5 10l3 3 3-3" />
 						</svg>

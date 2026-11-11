@@ -64,7 +64,7 @@ export function CopyableTable({ children, ...props }: { children?: ReactNode }) 
       <button
         type="button"
         onClick={handleCopyTable}
-        className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md bg-muted hover:bg-muted/80 border border-border text-muted-foreground hover:text-foreground"
+        className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-(--kn-dur-fast) ease-(--kn-ease-out) p-1.5 rounded-md bg-muted hover:bg-muted/80 border border-border text-muted-foreground hover:text-foreground"
         title="Copy as Markdown"
       >
         {copied ? <Check className="w-4 h-4 text-green-500" /> : <ClipboardCheck className="w-4 h-4" />}

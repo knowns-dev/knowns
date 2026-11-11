@@ -346,7 +346,7 @@ export default function ImportsPage() {
 										<div>{imp.fileCount} files</div>
 										<div>{formatDate(imp.lastSync)}</div>
 									</div>
-									<ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+									<ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-(--kn-dur-fast) ease-(--kn-ease-out)" />
 								</button>
 							))}
 						</div>

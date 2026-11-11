@@ -191,7 +191,7 @@ export function AnnotationSelectionToolbar({ containerRef, active, docContent, o
 	return (
 		<div
 			ref={toolbarRef}
-			className="absolute z-50 animate-in fade-in-0 zoom-in-95 duration-100"
+			className="absolute z-50 animate-in fade-in-0 duration-(--kn-dur-fast) ease-(--kn-ease-out)"
 			style={{
 				top: position.top,
 				left: position.left,

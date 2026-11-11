@@ -31,7 +31,7 @@ export function ThemeToggle({
 			onClick={onToggle}
 			className={cn(
 				"relative inline-flex items-center shrink-0 cursor-pointer rounded-full border-2 border-transparent",
-				"transition-all duration-500 ease-in-out",
+				"transition-colors duration-(--kn-dur-slow) ease-(--kn-ease-inout)",
 				"focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
 				isDark
 					? "bg-indigo-950"
@@ -44,15 +44,15 @@ export function ThemeToggle({
 			<span className="absolute inset-0 overflow-hidden rounded-full pointer-events-none">
 				{[
 					{ top: "20%", left: "18%", size: "w-0.5 h-0.5", delay: "0ms" },
-					{ top: "55%", left: "25%", size: "w-1 h-1",     delay: "80ms" },
-					{ top: "30%", left: "35%", size: "w-0.5 h-0.5", delay: "160ms" },
+					{ top: "55%", left: "25%", size: "w-1 h-1",     delay: "40ms" },
+					{ top: "30%", left: "35%", size: "w-0.5 h-0.5", delay: "80ms" },
 				].map((star, i) => (
 					<span
 						key={i}
 						className={cn(
-							"absolute rounded-full bg-white transition-all duration-500",
+							"absolute rounded-full bg-white transition-opacity duration-(--kn-dur) ease-(--kn-ease-out)",
 							star.size,
-							isDark ? "opacity-80 scale-100" : "opacity-0 scale-0",
+							isDark ? "opacity-80" : "opacity-0",
 						)}
 						style={{ top: star.top, left: star.left, transitionDelay: isDark ? star.delay : "0ms" }}
 					/>
@@ -63,7 +63,7 @@ export function ThemeToggle({
 			<span
 				className={cn(
 					"relative inline-flex items-center justify-center rounded-full shadow-md",
-					"transition-all duration-500 ease-in-out",
+					"transition-[transform,background-color] duration-(--kn-dur-slow) ease-(--kn-ease-inout)",
 					isDark
 						? cn(s.translate, "bg-slate-800")
 						: cn(s.gap, "bg-white"),
@@ -72,20 +72,20 @@ export function ThemeToggle({
 			>
 				<Sun
 					className={cn(
-						"absolute transition-all duration-500",
+						"absolute transition-[opacity,transform] duration-(--kn-dur) ease-(--kn-ease-out)",
 						s.icon,
 						isDark
-							? "opacity-0 rotate-90 scale-0 text-amber-400"
-							: "opacity-100 rotate-0 scale-100 text-amber-500",
+							? "opacity-0 rotate-90 text-amber-400"
+							: "opacity-100 rotate-0 text-amber-500",
 					)}
 				/>
 				<Moon
 					className={cn(
-						"absolute transition-all duration-500",
+						"absolute transition-[opacity,transform] duration-(--kn-dur) ease-(--kn-ease-out)",
 						s.icon,
 						isDark
-							? "opacity-100 rotate-0 scale-100 text-slate-300"
-							: "opacity-0 -rotate-90 scale-0 text-slate-400",
+							? "opacity-100 rotate-0 text-slate-300"
+							: "opacity-0 -rotate-90 text-slate-400",
 					)}
 				/>
 			</span>

@@ -77,7 +77,7 @@ export function TopTools({
 											<span className="mt-1 block h-1 overflow-hidden rounded-full bg-muted">
 												<span
 													aria-hidden="true"
-													className="block h-full rounded-full bg-[#2DA44E] transition-[width] motion-reduce:transition-none"
+													className="block h-full rounded-full bg-[#2DA44E]"
 													style={{
 														width: `${Math.max(
 															4,

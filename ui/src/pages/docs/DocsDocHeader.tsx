@@ -237,7 +237,7 @@ export function DocsDocHeader({
 								{linkedTasks.length} linked {linkedTasks.length === 1 ? "task" : "tasks"}
 							</span>
 							{archivedCount > 0 && <span>{archivedCount} archived</span>}
-							<ChevronDown className={cn("ml-auto size-3.5 transition-transform", linkedTasksExpanded && "rotate-180")} aria-hidden="true" />
+							<ChevronDown className={cn("ml-auto size-3.5 transition-transform duration-(--kn-dur-fast) ease-(--kn-ease-inout)", linkedTasksExpanded && "rotate-180")} aria-hidden="true" />
 						</button>
 						{linkedTasksExpanded && (
 							<div className="border-t px-2 py-1.5">

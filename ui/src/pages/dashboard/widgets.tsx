@@ -174,7 +174,7 @@ export function ContinueWorking({
 											<span className="text-[11px] text-muted-foreground">No criteria</span>
 										)}
 									</div>
-									<ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+									<ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-opacity duration-(--kn-dur-fast) ease-(--kn-ease-out) group-hover:opacity-100" />
 								</Link>
 							</li>
 						);

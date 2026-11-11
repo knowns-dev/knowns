@@ -246,7 +246,7 @@ function transformMentionsInText(text: string): string {
 }
 
 const mentionBase =
-  "inline-flex items-center gap-1 px-1 py-px rounded text-[0.9em] font-medium cursor-pointer select-none transition-all no-underline";
+  "inline-flex items-center gap-1 px-1 py-px rounded text-[0.9em] font-medium cursor-pointer select-none transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) no-underline";
 
 export const taskMentionClass =
   `${mentionBase} bg-green-500/8 text-green-700 hover:bg-green-500/15 hover:underline decoration-green-500/40 dark:text-green-400`;

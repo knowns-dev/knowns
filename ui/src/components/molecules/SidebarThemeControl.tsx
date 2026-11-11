@@ -34,16 +34,16 @@ export function SidebarThemeControl({
 				)}
 			>
 				<Icon aria-hidden="true" className="size-4 shrink-0" />
-				<span className="min-w-0 flex-1 truncate transition-opacity group-data-[rail]/sb:pointer-events-none group-data-[rail]/sb:opacity-0">
+				<span className="min-w-0 flex-1 truncate transition-opacity duration-(--kn-dur-fast) ease-(--kn-ease-out) group-data-[rail]/sb:pointer-events-none group-data-[rail]/sb:opacity-0">
 					Dark mode
 				</span>
 				<span
 					aria-hidden="true"
-					className="flex h-4 w-7 shrink-0 items-center rounded-full bg-border p-0.5 transition-opacity group-data-[rail]/sb:opacity-0"
+					className="flex h-4 w-7 shrink-0 items-center rounded-full bg-border p-0.5 transition-opacity duration-(--kn-dur-fast) ease-(--kn-ease-out) group-data-[rail]/sb:opacity-0"
 				>
 					<span
 						className={cn(
-							"size-3 rounded-full bg-foreground transition-transform",
+							"size-3 rounded-full bg-foreground transition-transform duration-(--kn-dur-fast) ease-(--kn-ease-inout)",
 							isDark ? "translate-x-3" : "translate-x-0",
 						)}
 					/>

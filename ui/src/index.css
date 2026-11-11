@@ -253,221 +253,6 @@ body {
   background-color: hsl(240 3.7% 42%);
 }
 
-/* ===== Transition Animations ===== */
-
-/* Fade in animation */
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-/* Fade in and slide up */
-@keyframes fade-in-up {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Fade in and slide down */
-@keyframes fade-in-down {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Scale in */
-@keyframes scale-in {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-/* Slide in from left */
-@keyframes slide-in-left {
-  from {
-    opacity: 0;
-    transform: translateX(-20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-/* Slide in from right */
-@keyframes slide-in-right {
-  from {
-    opacity: 0;
-    transform: translateX(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-/* Pulse glow for active states */
-@keyframes pulse-glow {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4);
-  }
-  50% {
-    box-shadow: 0 0 0 8px rgba(59, 130, 246, 0);
-  }
-}
-
-/* Cursor blink animation for streaming text */
-@keyframes cursor-blink {
-  0%, 49% {
-    opacity: 1;
-  }
-  50%, 100% {
-    opacity: 0;
-  }
-}
-
-/* Animation utility classes */
-.animate-fade-in {
-  animation: fade-in 0.2s ease-out forwards;
-}
-
-.animate-fade-in-up {
-  animation: fade-in-up 0.3s ease-out forwards;
-}
-
-.animate-fade-in-down {
-  animation: fade-in-down 0.3s ease-out forwards;
-}
-
-.animate-scale-in {
-  animation: scale-in 0.2s ease-out forwards;
-}
-
-.animate-slide-in-left {
-  animation: slide-in-left 0.3s ease-out forwards;
-}
-
-.animate-slide-in-right {
-  animation: slide-in-right 0.3s ease-out forwards;
-}
-
-.animate-cursor-blink {
-  animation: cursor-blink 1s step-end infinite;
-}
-
-/* Staggered animations for lists */
-.stagger-animation > * {
-  opacity: 0;
-  animation: fade-in-up 0.3s ease-out forwards;
-}
-
-.stagger-animation > *:nth-child(1) { animation-delay: 0ms; }
-.stagger-animation > *:nth-child(2) { animation-delay: 30ms; }
-.stagger-animation > *:nth-child(3) { animation-delay: 60ms; }
-.stagger-animation > *:nth-child(4) { animation-delay: 90ms; }
-.stagger-animation > *:nth-child(5) { animation-delay: 120ms; }
-.stagger-animation > *:nth-child(6) { animation-delay: 150ms; }
-.stagger-animation > *:nth-child(7) { animation-delay: 180ms; }
-.stagger-animation > *:nth-child(8) { animation-delay: 210ms; }
-.stagger-animation > *:nth-child(9) { animation-delay: 240ms; }
-.stagger-animation > *:nth-child(10) { animation-delay: 270ms; }
-.stagger-animation > *:nth-child(n+11) { animation-delay: 300ms; }
-
-/* Task card transitions */
-.task-card {
-  transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
-}
-
-.task-card:hover {
-  transform: translateY(-2px);
-}
-
-.task-card:active {
-  transform: scale(0.98);
-}
-
-.task-card.dragging {
-  transform: rotate(3deg) scale(1.02);
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
-  z-index: 100;
-}
-
-/* Column transitions */
-.board-column {
-  transition: opacity 0.3s ease, transform 0.3s ease;
-}
-
-.board-column.entering {
-  animation: fade-in-up 0.3s ease-out forwards;
-}
-
-/* Button press effect */
-.btn-press {
-  transition: transform 0.1s ease;
-}
-
-.btn-press:active {
-  transform: scale(0.95);
-}
-
-/* Smooth content transitions */
-.content-transition {
-  transition: opacity 0.2s ease, transform 0.2s ease;
-}
-
-/* Badge/tag transitions */
-.badge-transition {
-  transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
-}
-
-.badge-transition:hover {
-  transform: scale(1.05);
-}
-
-/* Page transition wrapper */
-.page-enter {
-  animation: fade-in-up 0.3s ease-out forwards;
-}
-
-/* Skeleton loading animation */
-@keyframes shimmer {
-  0% {
-    background-position: -200% 0;
-  }
-  100% {
-    background-position: 200% 0;
-  }
-}
-
-.skeleton-shimmer {
-  background: linear-gradient(90deg,
-    var(--muted) 25%,
-    var(--muted-foreground) 50%,
-    var(--muted) 75%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-}
-
 /* ===== Markdown Editor (react-markdown-editor-lite) ===== */
 
 /* Base wrapper */
@@ -1198,49 +983,28 @@ body {
   view-transition-name: none;
 }
 
-/* ===== Doc Content Transition ===== */
-@keyframes doc-in {
+/* ===== Doc and page content ===== */
+/* Opening a doc or switching page happens many times a day: a short fade, no movement (see the kn-motion skill). */
+@keyframes kn-content-in {
   from {
     opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
   }
 }
 
-.animate-doc-in {
-  animation: doc-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+.animate-kn-doc-in,
+.animate-kn-page-in {
+  animation: kn-content-in var(--kn-dur-fast) var(--kn-ease-out) backwards;
 }
 
-@keyframes list-in {
-  from {
-    opacity: 0;
-    transform: translateX(-6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-.animate-list-in {
-  animation: list-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
+/* Reduced motion: every element using a kn- class or data-kn-m finishes its motion at once. */
 @media (prefers-reduced-motion: reduce) {
-  .animate-doc-in,
-  .animate-list-in {
-    animation: none;
-  }
   [class*="kn-"], [class*="kn-"]::before, [class*="kn-"]::after, [data-kn-m], [data-kn-m] * {
     animation-duration: 0.01ms !important;
     animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     transition-delay: 0ms !important;
-	}
+  }
 }
 
 /* ===== Dialog Animations ===== */
@@ -1277,28 +1041,6 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .animate-dialog-in,
   .animate-dialog-out {
-    animation: none;
-  }
-}
-
-/* ===== Page Transition Animation ===== */
-@keyframes page-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-page-in {
-  animation: page-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .animate-page-in {
     animation: none;
   }
 }

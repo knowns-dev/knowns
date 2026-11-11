@@ -64,7 +64,7 @@ export default function NotificationBell() {
 				>
 					<Bell className="h-4 w-4" />
 					{hasNew && (
-						<span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+						<span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-blue-500" />
 					)}
 				</Button>
 			</PopoverTrigger>

@@ -32,18 +32,15 @@ export function ConnectionStatus({ className }: ConnectionStatusProps) {
 						className={cn(
 							"flex items-center gap-1.5 px-2 py-1 rounded-md",
 							"bg-amber-500/10 text-amber-600 dark:text-amber-400",
-							"animate-in fade-in slide-in-from-left-2 duration-200",
+							"animate-in fade-in slide-in-from-left-2 duration-(--kn-dur) ease-(--kn-ease-out)",
 							className
 						)}
 						role="status"
 						aria-live="polite"
 						aria-label="Connection lost - attempting to reconnect"
 					>
-						{/* Animated disconnection indicator */}
-						<span className="relative flex h-2 w-2">
-							<span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-							<span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
-						</span>
+						{/* Disconnection indicator */}
+						<span className="h-2 w-2 rounded-full bg-amber-500" />
 						<span className="text-xs font-medium">Reconnecting...</span>
 					</div>
 				</TooltipTrigger>

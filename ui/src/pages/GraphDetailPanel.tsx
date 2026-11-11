@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ArrowDownLeft, ArrowUpRight, X } from "lucide-react";
 
 import type { GraphEdge, GraphNode } from "@/ui/api/client";
@@ -6,6 +6,7 @@ import { DetailSection } from "@/ui/components/organisms/TaskDetail/DetailSectio
 import { priorityTones, statusTone } from "@/ui/components/organisms/TaskDetail/types";
 import { Badge, type BadgeTone } from "@/ui/components/ui/knowns/badge";
 import { Button } from "@/ui/components/ui/knowns/button";
+import { MOTION } from "@/ui/lib/knowns/motion-utils";
 import { cn, focusRing } from "@/ui/lib/knowns/utils";
 
 import type { GraphReferenceItem, SelectedNodeReferences } from "./graph/constants";
@@ -262,13 +263,23 @@ function ConnectionRow({
  * kn-rise (a node pick happens a few times a session, so the standard 180ms) and does not replay
  * when another node is picked while it is open.
  */
-export function GraphDetailPanel({ node, colors, onClose, onNavigate, onSelectNode, references }: GraphDetailPanelProps) {
+export function GraphDetailPanel({ node: nodeProp, colors, onClose, onNavigate, onSelectNode, references }: GraphDetailPanelProps) {
 	const [showAll, setShowAll] = useState(false);
 	const [shownFor, setShownFor] = useState<string | null>(null);
-	if (node && shownFor !== node.id) {
-		setShownFor(node.id);
+	// The last node stays on screen for the exit fade, then goes.
+	const [last, setLast] = useState<GraphNode | null>(null);
+	if (nodeProp && shownFor !== nodeProp.id) {
+		setShownFor(nodeProp.id);
 		setShowAll(false);
 	}
+	if (nodeProp && last !== nodeProp) setLast(nodeProp);
+	useEffect(() => {
+		if (nodeProp || !last) return;
+		const timer = window.setTimeout(() => setLast(null), MOTION.fast);
+		return () => window.clearTimeout(timer);
+	}, [nodeProp, last]);
+	const node = nodeProp ?? last;
+	const leaving = !nodeProp;
 	if (!node) return null;
 
 	const [type = "", ...rest] = node.id.split(":");
@@ -289,8 +300,12 @@ export function GraphDetailPanel({ node, colors, onClose, onNavigate, onSelectNo
 				"inset-x-2 bottom-2 max-h-[min(55%,24rem)]",
 				"sm:inset-x-auto sm:bottom-auto sm:right-3 sm:top-3 sm:max-h-[calc(100%-1.5rem)]",
 				type === "code" ? "sm:w-96" : "sm:w-80",
-				"animate-[kn-rise_var(--kn-dur)_var(--kn-ease-out)_both] motion-reduce:animate-none",
+				leaving
+					? "pointer-events-none animate-[kn-fall_var(--kn-dur-fast)_var(--kn-ease-out)_both]"
+					: "animate-[kn-rise_var(--kn-dur)_var(--kn-ease-out)_both] motion-reduce:animate-none",
 			)}
+			aria-hidden={leaving || undefined}
+			inert={leaving || undefined}
 		>
 			<header className="flex shrink-0 items-start gap-2 border-b border-border/70 px-4 pb-3 pt-3.5">
 				<div className="min-w-0 flex-1">
