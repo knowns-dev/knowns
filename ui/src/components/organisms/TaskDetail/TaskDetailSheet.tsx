@@ -13,6 +13,7 @@ import { toast } from "../../ui/sonner";
 import { useCurrentUser } from "../../../contexts/UserContext";
 import { useUIPreferences } from "../../../contexts/UIPreferencesContext";
 import { useIsMobile } from "../../../hooks/useMobile";
+import { agentIcon, agentName, agentSince } from "@/ui/lib/agent";
 import { getStatusLabel } from "../../../utils/colors";
 import { TaskTitle } from "./TaskTitle";
 import { TaskDescription } from "./TaskDescription";
@@ -279,6 +280,23 @@ export function TaskDetailSheet({
 	const updated = new Date(view.updatedAt);
 	const created = new Date(view.createdAt);
 	const meta: PageHeaderMeta[] = [
+		...(view.workedBy
+			? [
+					{
+						id: "worked-by",
+						label: "Worked by",
+						content: (
+							<span className="inline-flex items-center gap-1.5" data-testid="worked-by">
+								<span aria-hidden className="grid size-4 flex-none place-items-center [&>*]:size-full [&_svg]:size-full">
+									{agentIcon(view.workedBy.client)}
+								</span>
+								{agentName(view.workedBy.client)}
+								<span className="text-muted-foreground tabular-nums">{view.workedBy.active ? agentSince(view.workedBy.since) : "paused"}</span>
+							</span>
+						),
+					},
+				]
+			: []),
 		{ id: "priority", label: "Priority", content: priorityOptions.find((p) => p.value === view.priority)?.label ?? view.priority },
 		...(view.timeSpent > 0 ? [{ id: "tracked", label: "Tracked", content: <span className="tabular-nums">{formatTracked(view.timeSpent)}</span> }] : []),
 		{

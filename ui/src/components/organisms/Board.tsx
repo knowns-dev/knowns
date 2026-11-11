@@ -5,6 +5,7 @@ import { Eye, EyeOff, FileText } from "lucide-react";
 import type { Task, TaskStatus } from "@/ui/models/task";
 import { getTaskLifecycleState } from "@/ui/models/taskLifecycle";
 import { cn } from "@/ui/lib/utils";
+import { agentIcon, agentName } from "@/ui/lib/agent";
 import { TaskLifecycleBadge } from "../molecules/TaskLifecycleBadge";
 import { api } from "../../api/client";
 import { useConfig } from "../../contexts/ConfigContext";
@@ -79,12 +80,17 @@ function toCard(task: Task): KanbanCard {
 		...(ac.length > 0
 			? { checklist: { done: ac.filter((a) => a.completed).length, total: ac.length } }
 			: {}),
-		...(task.status === "blocked" ? { state: "blocked" as const } : {}),
+		...(task.status === "blocked"
+			? { state: "blocked" as const }
+			: task.workedBy?.active
+				? { state: "busy" as const }
+				: {}),
 		...(hasFooter(task) ? { footer: <CardFooter task={task} /> } : {}),
 	};
 }
 
 const hasFooter = (task: Task) =>
+	!!task.workedBy ||
 	!!task.description || !!task.spec || getTaskLifecycleState(task) !== "active";
 
 /** What the old board showed under the title: description, spec link, and a non-active lifecycle. */
@@ -92,6 +98,18 @@ function CardFooter({ task }: { task: Task }) {
 	const lifecycle = getTaskLifecycleState(task);
 	return (
 		<div className="flex min-w-0 flex-col gap-1.5">
+			{task.workedBy && (
+				<span
+					data-testid="worked-by"
+					title={`Worked by ${agentName(task.workedBy.client)}${task.workedBy.active ? "" : " (timer not running)"}`}
+					className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+				>
+					<span aria-hidden className="grid size-4 flex-none place-items-center [&>*]:size-full [&_svg]:size-full">
+						{agentIcon(task.workedBy.client)}
+					</span>
+					<span className="truncate">{agentName(task.workedBy.client)}</span>
+				</span>
+			)}
 			{task.description && (
 				<p className="line-clamp-2 text-xs leading-4 text-muted-foreground">{task.description}</p>
 			)}

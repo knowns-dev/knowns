@@ -66,7 +66,7 @@ export interface TestServer {
 	/** Run a CLI command against the test project */
 	cli: (args: string) => string;
 	/** Invoke one MCP tool against the test project. */
-	mcp: (tool: string, args: Record<string, unknown>) => string;
+	mcp: (tool: string, args: Record<string, unknown>, clientName?: string) => string;
 	/** Stop the server and clean up */
 	cleanup: () => void;
 }
@@ -176,7 +176,7 @@ export async function startServer(): Promise<TestServer> {
 		}).trim();
 	};
 
-	const mcp = (tool: string, args: Record<string, unknown>): string => {
+	const mcp = (tool: string, args: Record<string, unknown>, clientName = "knowns-e2e"): string => {
 		const input = [
 			{
 				jsonrpc: "2.0",
@@ -185,7 +185,7 @@ export async function startServer(): Promise<TestServer> {
 				params: {
 					protocolVersion: "2024-11-05",
 					capabilities: {},
-					clientInfo: { name: "knowns-e2e", version: "1.0.0" },
+					clientInfo: { name: clientName, version: "1.0.0" },
 				},
 			},
 			{
