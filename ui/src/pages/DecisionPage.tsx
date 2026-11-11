@@ -57,6 +57,7 @@ import { Fold } from "@/ui/lib/knowns/motion";
 import { focusRing, writeClipboard } from "@/ui/lib/knowns/utils";
 import { navigateTo } from "@/ui/lib/navigation";
 import { cn } from "@/ui/lib/utils";
+import { EmptyInbox, NoRuns } from "@/ui/components/ui/knowns/illustrations/empty-states";
 
 type DecisionView = "current" | "review" | "history";
 type DetailMode = DecisionView;
@@ -728,16 +729,19 @@ function EmptyState({
 			body: "Superseded, rejected and archived Decisions stay readable here.",
 		},
 	};
+	const Art = view === "review" ? EmptyInbox : NoRuns;
 	return (
-		<div className="flex min-h-52 flex-col items-center justify-center px-4 py-10 text-center">
-			<ScrollText className="h-6 w-6 text-muted-foreground" />
-			<p className="mt-3 text-sm font-medium">{copy[view].title}</p>
-			<p className="mt-1 max-w-[52ch] text-sm leading-6 text-muted-foreground">{copy[view].body}</p>
-			{view === "review" ? (
-				<KnButton size="sm" variant="secondary" icon={<Plus />} onClick={onCreate} className="mt-4">
-					Propose a Decision
-				</KnButton>
-			) : null}
+		<div className="flex min-h-52 flex-col items-center justify-center px-4 py-10" data-testid="decision-empty">
+			<Art
+				compact
+				title={copy[view].title}
+				description={copy[view].body}
+				action={
+					<KnButton size="sm" variant="secondary" icon={<Plus />} onClick={onCreate}>
+						Propose a Decision
+					</KnButton>
+				}
+			/>
 		</div>
 	);
 }
