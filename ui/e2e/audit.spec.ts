@@ -169,7 +169,8 @@ test.describe("Audit Trail", () => {
 			bucket("2026-11-04", false, 0, 0, 0),
 			bucket("2026-11-05", true, 4, 0, 0),
 			bucket("2026-11-06", true, 9, 2, 1),
-			bucket("2026-11-07", true, 6, 0, 0),
+			bucket("2026-11-07", true, 0, 0, 0),
+			bucket("2026-11-08", true, 3, 0, 0),
 		];
 		const failing = [
 			{ timestamp: "2026-11-06T09:00:00Z", toolName: "tasks", action: "get", actionClass: "read", result: "error", durationMs: 5, errorMessage: "task not found" },
@@ -189,8 +190,8 @@ test.describe("Audit Trail", () => {
 					byToolResult: {},
 					timezone: "UTC",
 					rangeStart: "2026-11-03",
-					rangeEnd: "2026-11-07",
-					coverage: { startDate: "2026-11-05", endDate: "2026-11-07", partial: true },
+					rangeEnd: "2026-11-08",
+					coverage: { startDate: "2026-11-05", endDate: "2026-11-08", partial: true },
 					dailyBuckets: buckets,
 					tools: [
 						{ tool: "tasks.list", totalCalls: 19, byResult: { success: 19 }, averageDurationMs: 10 },
@@ -220,6 +221,11 @@ test.describe("Audit Trail", () => {
 			const summary = page.getByRole("region", { name: "Range summary" });
 			await expect(summary).toBeVisible();
 			await expect(summary.getByRole("img")).toHaveCount(4);
+			// 11-07 is covered but had no calls: the rate and latency lines skip it instead of breaking.
+			for (const name of [/Success rate per day/, /Average latency per day/]) {
+				const d = await summary.getByRole("img", { name }).locator("path").first().getAttribute("d");
+				expect((d ?? "").match(/M/g)).toHaveLength(1);
+			}
 		});
 
 		await test.step("One chart shows the covered days, and says how many earlier days have no history", async () => {
