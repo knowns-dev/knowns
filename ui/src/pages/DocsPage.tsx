@@ -35,6 +35,7 @@ import { AnnotationProvider, useAnnotationContext } from "../contexts/Annotation
 import { AnnotationSelectionToolbar } from "../components/annotations/AnnotationSelectionToolbar";
 import { AnnotationHighlighter } from "../components/annotations/AnnotationHighlighter";
 import { AnnotationBubble } from "../components/annotations/AnnotationBubble";
+import { NoResults } from "@/ui/components/ui/knowns/illustrations/empty-states";
 
 /** The header's previous / next arrows, routed in the app. */
 function PagerLink({ href, children, ...rest }: { href: string; children?: ReactNode; className?: string; rel?: string; "aria-label"?: string }) {
@@ -591,11 +592,15 @@ function DocsPageInner() {
 						<Button variant="ghost" size="sm" onClick={() => setMobileSidebarOpen(true)} className={`${toolbarButton} lg:hidden`} aria-label="Browse docs">
 							<Menu className="size-4" />
 						</Button>
-						<p className="text-sm font-medium">No docs yet</p>
-						<p className="max-w-sm text-xs text-muted-foreground">Create the first doc in this project, or add one with `knowns doc create`.</p>
-						<Button size="sm" onClick={openCreateView} className="mt-1 h-8 gap-1.5">
-							<Pencil className="size-3.5" /> New doc
-						</Button>
+						<NoResults
+							title="No docs yet"
+							description="Create the first doc in this project, or add one with `knowns doc create`."
+							action={
+								<Button size="sm" onClick={openCreateView} className="h-8 gap-1.5">
+									<Pencil className="size-3.5" /> New doc
+								</Button>
+							}
+						/>
 					</div>
 				)}
 			</div>

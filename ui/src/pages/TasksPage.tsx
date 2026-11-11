@@ -31,6 +31,7 @@ import {
 	PageShell,
 } from "../components/templates/PageShell";
 import { FeatureHeader } from "../components/templates";
+import { NoRuns } from "@/ui/components/ui/knowns/illustrations/empty-states";
 
 // Time duration options for batch archive (in milliseconds)
 // Label used when the archive preview comes from selected rows, not an age window.
@@ -470,6 +471,18 @@ export default function TasksPage({
 					/>
 				) : historicalMode && historicalLoading && historicalTasks === null ? (
 					<PageLoading label="Loading historical Tasks" className="flex-1" />
+				) : taskSource.length === 0 && !historicalMode ? (
+					<div className="flex flex-1 items-center justify-center" data-testid="tasks-empty">
+						<NoRuns
+							title="No Tasks yet"
+							description="Create the first Task, or let an agent create one over MCP."
+							action={
+								<Button size="sm" onClick={onNewTask} className="h-8 gap-1.5">
+									<Plus className="h-3.5 w-3.5" /> New Task
+								</Button>
+							}
+						/>
+					</div>
 				) : viewMode === "board" ? (
 					<Board
 						tasks={visibleTasks}

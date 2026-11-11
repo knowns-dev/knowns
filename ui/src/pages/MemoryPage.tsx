@@ -102,6 +102,7 @@ import {
 } from "@/ui/components/templates/PageShell";
 import { useIsMobile } from "@/ui/hooks/useMobile";
 import { cn } from "@/ui/lib/utils";
+import { NoTools } from "@/ui/components/ui/knowns/illustrations/empty-states";
 
 type MemoryView = "trusted" | "review" | "history";
 type MemoryReviewState = "needs_evidence" | "needs_resolution" | "needs_reverification" | "ready_for_review";
@@ -747,7 +748,19 @@ export default function MemoryPage() {
 							</p>
 						) : null}
 
-						{view === "trusted" ? (
+						{view === "trusted" && memories.length === 0 && inbox.items.length === 0 && !query ? (
+							<div className="flex flex-1 items-center justify-center py-10" data-testid="memory-empty">
+								<NoTools
+									title="No Memories yet"
+									description="Memories are facts the next session needs. Agents propose them as they work, and you review them here."
+									action={
+										<KnButton size="sm" variant="secondary" icon={<Plus />} onClick={() => setCreateOpen(true)}>
+											Propose a Memory
+										</KnButton>
+									}
+								/>
+							</div>
+						) : view === "trusted" ? (
 							<AgentMemory
 								key="trusted"
 								variant={isMobile ? "compact" : "default"}
