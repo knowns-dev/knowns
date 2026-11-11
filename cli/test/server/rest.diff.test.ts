@@ -28,6 +28,12 @@ interface Step {
   ) => Record<string, string | undefined>;
   /** do not compare these (nondeterministic by nature) */
   skipBody?: boolean;
+  /**
+   * D16 (approved divergence): Go 0.34.1 reads only legacy history files and answers
+   * `{"activities":null}`; TS also reads JSONL histories and answers a list. Status and headers
+   * are still compared; the body is checked on each side against its own contract.
+   */
+  d16?: "empty" | "entries";
 }
 
 // Starting two servers (and the Go init) is slow on Windows; hooks get the same budget as tests.
@@ -46,7 +52,7 @@ const steps: Step[] = [
   { name: "decisions", method: "GET", path: "/api/decisions" },
   { name: "graph", method: "GET", path: "/api/graph" },
   { name: "validate sdd", method: "GET", path: "/api/validate/sdd" },
-  { name: "activities", method: "GET", path: "/api/activities" },
+  { name: "activities", method: "GET", path: "/api/activities", d16: "empty" },
   { name: "imports", method: "GET", path: "/api/imports" },
   { name: "time status", method: "GET", path: "/api/time/status" },
   { name: "auth status", method: "GET", path: "/api/auth/status" },
@@ -306,7 +312,7 @@ const steps: Step[] = [
   { name: "config final", method: "GET", path: "/api/config" },
   { name: "graph 2", method: "GET", path: "/api/graph" },
   { name: "validate 2", method: "GET", path: "/api/validate/sdd" },
-  { name: "activities 2", method: "GET", path: "/api/activities" },
+  { name: "activities 2", method: "GET", path: "/api/activities", d16: "entries" },
   { name: "search 2", method: "GET", path: "/api/search?q=guide&type=doc" },
   { name: "search tasks", method: "GET", path: "/api/search?q=First" },
   { name: "retrieve 2", method: "GET", path: "/api/retrieve?q=guide&expandReferences=true" },
@@ -481,15 +487,26 @@ describe.skipIf(!enabled)("REST parity with the Go server", () => {
         }
         return t;
       };
+      if (step.d16) {
+        const goList = (JSON.parse(a.text) as { activities: unknown }).activities;
+        const tsList = (JSON.parse(b.text) as { activities: unknown }).activities;
+        const tsOk =
+          Array.isArray(tsList) && (step.d16 === "empty" ? tsList.length === 0 : tsList.length > 0);
+        if (goList !== null || !tsOk) {
+          failures.push(
+            `### ${step.name} (D16) go must stay null, ts must be ${step.d16 === "empty" ? "[]" : "a non-empty list"}\n go: ${a.text.slice(0, 300)}\n ts: ${b.text.slice(0, 300)}`,
+          );
+        }
+      }
       const am = {
         s: a.status,
         h: maskHeaders(a.headers, go),
-        b: step.skipBody ? "" : idMask(mask(a.text, go)),
+        b: step.skipBody || step.d16 ? "" : idMask(mask(a.text, go)),
       };
       const bm = {
         s: b.status,
         h: maskHeaders(b.headers, ts),
-        b: step.skipBody ? "" : idMask(mask(b.text, ts)),
+        b: step.skipBody || step.d16 ? "" : idMask(mask(b.text, ts)),
       };
       if (JSON.stringify(am) !== JSON.stringify(bm)) {
         failures.push(
