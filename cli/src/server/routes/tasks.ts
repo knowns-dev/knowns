@@ -31,6 +31,7 @@ import {
   HistoryConflictError,
   MutationConflictError,
 } from "../../storage/history/index.ts";
+import { attachWorkedBy } from "../../storage/stores/agent-work-store.ts";
 import { type App, requireStore } from "../app.ts";
 import { decodeStruct, type FieldType, jsonKind, timeField } from "../gojson.ts";
 import { type Ctx, errMessage, jsonResponse, type Router, respondError } from "../http.ts";
@@ -39,6 +40,15 @@ import { atoi, type Obj, readMap, readStruct } from "./support.ts";
 // ---- response shape -------------------------------------------------------------------------
 
 /** newTaskResponse: NormalizeTask then the derived lifecycleState after the Task fields. */
+/** Fills Task.workedBy (KN-4FQN0P) before a task is serialized; advisory, so it never fails a request. */
+export function attachAgent(s: Storage, tasks: Task[]): void {
+  try {
+    attachWorkedBy(tasks, s.agentWork, () => s.time.getState());
+  } catch {
+    // ignore
+  }
+}
+
 export function taskResponse(task: Task): Obj {
   const wire = taskToWire(task);
   if (wire.labels === null || wire.labels === undefined) wire.labels = [];
@@ -298,6 +308,7 @@ export function registerTasks(r: Router, app: App): void {
       } catch (e) {
         return respondError(500, errMessage(e));
       }
+      attachAgent(s, tasks);
       const out = sortTasks(tasks).map((t) => {
         loadTimeEntries(s, t);
         return taskResponse(t);
@@ -355,6 +366,7 @@ export function registerTasks(r: Router, app: App): void {
         return respondError(500, errMessage(e));
       }
       await bestEffort(() => taskLifecycleSeams.indexTask?.(s, task.id));
+      attachAgent(s, [task]);
       const response = taskResponse(task);
       app.sse.broadcast({ type: "tasks:updated", data: { task: response } });
       return jsonResponse(201, response);
@@ -375,6 +387,7 @@ export function registerTasks(r: Router, app: App): void {
       const timer = s.time.getActiveTimer(task.id);
       if (timer) task.activeTimer = timer;
       else delete task.activeTimer;
+      attachAgent(s, [task]);
       return jsonResponse(200, taskResponse(task));
     }),
   );
@@ -412,6 +425,7 @@ export function registerTasks(r: Router, app: App): void {
         if (findError(e, isConflictErr)) status = 409;
         return respondError(status, errMessage(e));
       }
+      attachAgent(s, [updated]);
       const response = taskResponse(updated);
       app.sse.broadcast({ type: "tasks:updated", data: { task: response } });
       return jsonResponse(200, response);

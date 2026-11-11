@@ -7,9 +7,10 @@ import { timeEntryToWire } from "../../domain/tasklifecycle/wire.ts";
 import type { Task } from "../../models/task.ts";
 import type { TimeEntry } from "../../models/time.ts";
 import { goTrimSpace } from "../../storage/core/util.ts";
+import { agentSlug, mcpActor } from "../agent-client.ts";
 import { ErrTaskIDReq, errFailed, errNotFound, noProjectError, stringArg } from "../args.ts";
 import { goMap, marshalIndent } from "../gojson.ts";
-import { notifyTimeUpdated } from "../notify.ts";
+import { notifyTaskUpdated, notifyTimeUpdated } from "../notify.ts";
 import type { McpState } from "../state.ts";
 import {
   argsOf,
@@ -104,7 +105,16 @@ async function start(state: McpState, req: CallToolRequest): Promise<CallToolRes
   } catch (e) {
     return errFailed("start timer", e);
   }
+  // A known agent starting its timer is working on the task (KN-4FQN0P); the assignee is not touched.
+  try {
+    const slug = agentSlug(state.clientInfo);
+    if (slug) await project.storage.agentWork.claim(task.id, slug, state.clientInfo?.version);
+  } catch {
+    // advisory data: never fail a timer over it
+  }
   notifyTimeUpdated(project.store);
+  // The agent chip on the board follows the claim; only agents trigger it, so other clients notify as before.
+  if (agentSlug(state.clientInfo)) notifyTaskUpdated(project.store, task.id);
   return textResult(
     marshalIndent(
       goMap({
@@ -125,13 +135,15 @@ async function stop(state: McpState, req: CallToolRequest): Promise<CallToolResu
   let entry: TimeEntry;
   try {
     entry = await newCLITaskLifecycleService(project.storage).stopTimer(id.value, {
-      actor: "mcp",
+      actor: mcpActor(state.clientInfo),
       expectedHash,
     });
   } catch (e) {
     return errFailed("stop timer", e);
   }
   notifyTimeUpdated(project.store);
+  // The agent chip on the board follows the claim; only agents trigger it, so other clients notify as before.
+  if (agentSlug(state.clientInfo)) notifyTaskUpdated(project.store, id.value);
   return textResult(
     marshalIndent(
       goMap({
@@ -183,7 +195,7 @@ async function add(state: McpState, req: CallToolRequest): Promise<CallToolResul
   const [expectedHash] = stringArg(args, "expectedHash");
   try {
     await newCLITaskLifecycleService(project.storage).addTimeEntry(id.value, {
-      actor: "mcp",
+      actor: mcpActor(state.clientInfo),
       expectedHash,
       entry,
     });

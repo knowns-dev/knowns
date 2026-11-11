@@ -22,6 +22,7 @@ import {
   VersionStore,
 } from "./history/index.ts";
 import {
+  AgentWorkStore,
   ConfigStore,
   DecisionStore,
   DocStore,
@@ -93,6 +94,7 @@ export interface Storage {
   docs: DocStore;
   memory: MemoryStore;
   time: TimeStore;
+  agentWork: AgentWorkStore;
   decisions: DecisionStore;
   templates: TemplateStore;
   workspaces: WorkspaceStore;
@@ -113,6 +115,7 @@ export function createStorage(store: Store, opts: CreateStorageOptions = {}): St
   const docs = new DocStore(store);
   const memory = new MemoryStore(store, opts.globalRoot);
   const time = new TimeStore(store);
+  const agentWork = new AgentWorkStore(store);
   const decisions = new DecisionStore(store);
   const templates = new TemplateStore(store);
   const workspaces = new WorkspaceStore(store);
@@ -142,6 +145,7 @@ export function createStorage(store: Store, opts: CreateStorageOptions = {}): St
     docs,
     memory,
     time,
+    agentWork,
     decisions,
     templates,
     workspaces,

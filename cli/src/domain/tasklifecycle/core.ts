@@ -11,6 +11,8 @@ export interface LifecycleStorage {
   tasks: { get(id: string): Task };
   config: { load(): { settings: { taskLifecycle?: unknown } & Record<string, unknown> } };
   ctx: import("../../storage/history/ports.ts").HistoryContext;
+  /** KN-4FQN0P: the agent claims; absent on storages that predate them. */
+  agentWork?: { release(taskId: string): Promise<void> };
 }
 
 export interface LifecycleCore {

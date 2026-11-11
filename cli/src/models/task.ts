@@ -1,5 +1,6 @@
 // Port of internal/models/task.go.
 import { z } from "zod";
+import { workedBySchema } from "./agent-work.ts";
 import { int, nilableArray, stringList, timestampSchema } from "./common.ts";
 import { activeTimerSchema, timeEntrySchema } from "./time.ts";
 
@@ -42,6 +43,8 @@ export const taskSchema = z.object({
   timeSpent: int,
   timeEntries: z.array(timeEntrySchema).optional(),
   activeTimer: activeTimerSchema.optional(),
+  /** Derived from .knowns/agent-work.json at read time; never persisted in the task file. */
+  workedBy: workedBySchema.optional(),
   canonicalHash: z.string().optional(),
   implementationPlan: z.string().optional(),
   implementationNotes: z.string().optional(),

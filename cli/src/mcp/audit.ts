@@ -66,6 +66,7 @@ export function auditEventFor(
   result: CallToolResult,
   root: string,
   now: Date = new Date(),
+  client?: string,
 ): AuditEvent {
   const args = req.args ?? {};
   let resultStatus = "success";
@@ -96,5 +97,6 @@ export function auditEventFor(
   if (refs.length > 0) event.entityRefs = refs;
   const summary = summarizeArgs(args);
   if (summary) event.argumentSummary = summary;
+  if (client) event.client = client;
   return event;
 }

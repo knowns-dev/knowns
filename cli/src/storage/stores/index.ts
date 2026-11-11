@@ -1,4 +1,5 @@
 // Entity stores: one module per Go store, same on-disk bytes as 0.34.1.
+export * from "./agent-work-store.ts";
 export * from "./audit-store.ts";
 export * from "./config-split.ts";
 export * from "./config-store.ts";

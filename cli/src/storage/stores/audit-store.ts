@@ -58,6 +58,7 @@ function eventJson(e: AuditEvent): Record<string, unknown> {
       sorted[k] = e.argumentSummary[k] as string;
     out.argumentSummary = sorted;
   }
+  if (e.client) out.client = e.client;
   return out;
 }
 

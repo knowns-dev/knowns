@@ -133,6 +133,14 @@ export function taskToWire(t: Task): Record<string, unknown> {
   if (t.timeEntries && t.timeEntries.length > 0)
     out.timeEntries = t.timeEntries.map(timeEntryToWire);
   if (t.activeTimer) out.activeTimer = activeTimerToWire(t.activeTimer);
+  if (t.workedBy) {
+    out.workedBy = {
+      client: t.workedBy.client,
+      ...(t.workedBy.version ? { version: t.workedBy.version } : {}),
+      since: t.workedBy.since,
+      active: t.workedBy.active,
+    };
+  }
   if (t.canonicalHash) out.canonicalHash = t.canonicalHash;
   if (t.implementationPlan) out.implementationPlan = t.implementationPlan;
   if (t.implementationNotes) out.implementationNotes = t.implementationNotes;

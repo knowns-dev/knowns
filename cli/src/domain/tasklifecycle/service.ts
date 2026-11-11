@@ -1153,8 +1153,17 @@ export class Service implements LifecycleCore {
     return entry;
   }
 
-  stopTimers(taskIds: string[], options: StopTimersOptions = {}): Promise<TimeEntry[]> {
-    return stopTimers(this, taskIds, options);
+  async stopTimers(taskIds: string[], options: StopTimersOptions = {}): Promise<TimeEntry[]> {
+    const entries = await stopTimers(this, taskIds, options);
+    // An agent's work ends with its timer, whoever stops it (KN-4FQN0P). Advisory: never fail a stop over it.
+    for (const id of taskIds) {
+      try {
+        await this.storage.agentWork?.release(id);
+      } catch {
+        // ignore
+      }
+    }
+    return entries;
   }
 
   /** Atomically appends a manual entry and updates Task.timeSpent. */

@@ -27,6 +27,8 @@ export interface ServerOptions {
   guard?: (req: CallToolRequest) => CallToolResult | undefined;
   /** Awaited before a tool call starts (project detection runs in the background). */
   ready?: () => Promise<void>;
+  /** Called with the handshake's clientInfo (name is the client, e.g. "claude-code"). */
+  onInitialize?: (info: { name: string; version?: string; title?: string } | undefined) => void;
   hooks?: {
     beforeCallTool?: (id: unknown, req: CallToolRequest) => void;
     afterCallTool?: (
@@ -333,6 +335,14 @@ export class McpServer {
   }
 
   private initialize(params: Record<string, unknown>): unknown {
+    const ci = params.clientInfo;
+    if (isObject(ci) && typeof ci.name === "string") {
+      this.opts.onInitialize?.({
+        name: ci.name,
+        ...(typeof ci.version === "string" ? { version: ci.version } : {}),
+        ...(typeof ci.title === "string" ? { title: ci.title } : {}),
+      });
+    } else this.opts.onInitialize?.(undefined);
     let client = typeof params.protocolVersion === "string" ? params.protocolVersion : "";
     if (client.length === 0) client = "2025-03-26";
     const protocolVersion = VALID_PROTOCOL_VERSIONS.includes(client)

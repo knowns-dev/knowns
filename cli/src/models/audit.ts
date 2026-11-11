@@ -16,6 +16,8 @@ export const auditEventSchema = z.object({
   errorMessage: z.string().optional(),
   entityRefs: z.array(z.string()).optional(),
   argumentSummary: z.record(z.string(), z.string()).optional(),
+  /** The MCP client that made the call (clientInfo.name), when it sent one. */
+  client: z.string().optional(),
 });
 export type AuditEvent = z.infer<typeof auditEventSchema>;
 

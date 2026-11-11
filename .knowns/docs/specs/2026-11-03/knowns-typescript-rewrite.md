@@ -3,7 +3,7 @@ id: doc-7c0dbdd40f8c36d3f72dc2c758d3e55b
 title: knowns-typescript-rewrite
 description: Specification for rewriting Knowns from Go back to TypeScript on Bun
 createdAt: '2026-11-02T19:05:28.224Z'
-updatedAt: '2026-11-09T18:01:55.403Z'
+updatedAt: '2026-11-11T12:24:10.934Z'
 tags:
   - spec
   - draft
@@ -36,6 +36,7 @@ Predecessor: @doc/specs/knowns-go-rewrite (the opposite migration, 2026-03).
 - D12: The TypeScript build may differ from 0.34.1 only to fix unsafe behavior, a data-integrity hole or a false success report in 0.34.1. Each divergence is listed under Approved Divergences with its task and a test that fails without the fix, keeps 0.34.1's output and exit code wherever the fix allows, and never breaks D10. Added 2026-11-06. Widened 2026-11-10: a false failure report that leads the user to repeat expensive work (a reindex reported as failed while the runtime job still runs) also qualifies (@task-KN-Q6DVKQ). Usability and performance changes (@task-KN-HDJWY6, @task-KN-V68H43) wait until after v0.35.0.
 - D13: v0.35.0 adds contributor PR #156 (tasks by assignee) on top of 0.34.1: `knowns task list --unassigned`, the `knowns task assignees` command (task counts per assignee, broken down by status, taking the same filters as `task list`, with `--plain` and `--json`), the MCP `tasks` list parameter `unassigned`, assignee filters in the CLI and MCP that compare trimmed values (a whitespace-only assignee counts as unassigned), and filtering and grouping by assignee on the UI Tasks page. A Go binary built from the PR head (2b3f88d) is the oracle for these behaviors. The PR is not merged into the Go code (D2). Added 2026-11-07.
 - D14: v0.35.0 adds `knowns qdrant setup` per @doc/specs/2026-11-07/qdrant-setup-wizard: a wizard that detects an answering Qdrant, the managed artifact and Docker and picks by that priority, a Docker branch that runs and manages container `knowns-qdrant` on loopback, a per-machine endpoint file outranking project config (never written into `.knowns/`, so D10 holds), the `knowns init` wizard hook, warnings that point at `knowns qdrant setup`, and a pinned managed artifact for `windows/amd64`. Go 0.34.1 is not changed (D2). Added 2026-11-07.
+- D15: v0.35.0 adds "worked by agent" tracking (@task-KN-4FQN0P). The MCP server keeps the session's `clientInfo`; when a known agent client (claude-code, codex, cursor and similar, never an unlisted client such as the Go e2e harness's `e2e-test`) moves a Task to in-progress or starts its timer, it records an ephemeral claim in `.knowns/agent-work.json` and the Task gains a derived, read-only `workedBy` (client, since, active) in the REST and MCP Task JSON. The claim is never written into the Task file, its canonical hash or its history snapshot, so 0.34.x reads every `.knowns/` file unchanged (D10), and a stale claim (dead process, or older than 12 hours without a running timer) is ignored. The assignee is never touched. MCP mutations by a known agent record the actor `mcp:<client>` instead of `mcp`, and the MCP audit event gains an optional `client`. Output for any other client is byte-identical to 0.34.1. Go 0.34.1 is not changed (D2). Added 2026-11-11.
 
 ## Approved Divergences
 

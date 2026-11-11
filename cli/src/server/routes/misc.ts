@@ -15,7 +15,7 @@ import { UserPrefsStore } from "../../storage/stores/user-prefs-store.ts";
 import { type App, requireStore } from "../app.ts";
 import { emptyJson, errMessage, jsonResponse, type Router, respondError } from "../http.ts";
 import { atoi, goMap, goTop, type Obj, readMap, readStruct } from "./support.ts";
-import { parseIncludeHistorical, taskResponse } from "./tasks.ts";
+import { attachAgent, parseIncludeHistorical, taskResponse } from "./tasks.ts";
 
 // ---- search -----------------------------------------------------------------------------------
 
@@ -199,6 +199,7 @@ export function registerSmall(r: Router, app: App): void {
       const s = app.need();
       try {
         const task = s.tasks.get(c.params.id as string);
+        attachAgent(s, [task]);
         app.sse.broadcast({ type: "tasks:updated", data: { task: taskResponse(task) } });
       } catch {
         app.sse.broadcast({ type: "tasks:refresh", data: {} });

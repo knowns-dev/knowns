@@ -3,6 +3,7 @@
 // `initialize` never waits for the storage libraries to load.
 import type { Storage } from "../storage/adapters.ts";
 import type { Store } from "../storage/core/store.ts";
+import type { ClientInfo } from "./agent-client.ts";
 import { buildHelpRegistry, type HelpEntry } from "./help-data.ts";
 import type { McpLogger } from "./log.ts";
 
@@ -16,6 +17,8 @@ type LspManager = import("../lsp/manager.ts").Manager;
 export class McpState {
   project: Project | undefined;
   root = "";
+  /** The MCP client that initialized this session (KN-4FQN0P); set by the initialize handshake. */
+  clientInfo: ClientInfo | undefined;
   private lspManagerCache: LspManager | undefined;
   private lspManagerBuilt = false;
   readonly help: Map<string, HelpEntry> = buildHelpRegistry();

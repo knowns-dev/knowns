@@ -12,6 +12,7 @@ import {
 import { parseBoundary } from "../../schema/index.ts";
 import type { Store } from "../core/store.ts";
 import { parseJsonPreservingNumbers, writeJson } from "../core/util.ts";
+import { AgentWorkStore } from "./agent-work-store.ts";
 import { goTimeJson, isNotFound, parseIso } from "./internal.ts";
 import { TaskStore } from "./task-store.ts";
 
@@ -38,10 +39,12 @@ const isoNow = () => new Date().toISOString();
 export class TimeStore {
   readonly root: string;
   private readonly tasks: TaskStore;
+  private readonly agentWork: AgentWorkStore;
 
   constructor(private readonly store: Pick<Store, "root" | "withTaskLifecycleLock">) {
     this.root = store.root;
     this.tasks = new TaskStore(store);
+    this.agentWork = new AgentWorkStore(store);
   }
 
   statePath(): string {
@@ -188,6 +191,12 @@ export class TimeStore {
         this.saveStateUnlocked(state);
       } catch (e) {
         throw new Error(`save state: ${(e as Error).message}`);
+      }
+      // The agent's work ends with its timer, whoever stops it (KN-4FQN0P). Advisory data: never fail a stop.
+      try {
+        this.agentWork.releaseUnlocked(taskId);
+      } catch {
+        // best effort
       }
       return entry;
     });

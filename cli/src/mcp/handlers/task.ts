@@ -11,6 +11,8 @@ import {
 } from "../../domain/tasklifecycle/index.ts";
 import { DEFAULT_STATUSES, type Task } from "../../models/task.ts";
 import { goTrimSpace } from "../../storage/core/util.ts";
+import { attachWorkedBy } from "../../storage/stores/agent-work-store.ts";
+import { agentSlug, mcpActor } from "../agent-client.ts";
 import {
   boolArg,
   ErrTaskIDReq,
@@ -113,6 +115,32 @@ function mutationResult(task: Task, mode: string): CallToolResult {
   );
 }
 
+/** Task.workedBy for tasks about to be serialized (KN-4FQN0P). */
+function attachAgent(project: Project, tasks: Task[]): void {
+  try {
+    attachWorkedBy(tasks, project.storage.agentWork, () => project.storage.time.getState());
+  } catch {
+    // advisory data: never fail a task call over it
+  }
+}
+
+/**
+ * Records or ends the agent's claim after a status change: a known agent moving a task to in-progress claims it,
+ * any other status or any other client ends the claim. The assignee is never touched.
+ */
+async function syncAgentClaim(state: McpState, project: Project, taskId: string, status: string) {
+  try {
+    const slug = agentSlug(state.clientInfo);
+    if (status === "in-progress" && slug) {
+      await project.storage.agentWork.claim(taskId, slug, state.clientInfo?.version);
+    } else {
+      await project.storage.agentWork.release(taskId);
+    }
+  } catch {
+    // advisory data: never fail a task call over it
+  }
+}
+
 async function create(state: McpState, req: CallToolRequest): Promise<CallToolResult> {
   const project = state.getProject();
   if (!project) return noProjectError();
@@ -190,6 +218,8 @@ async function create(state: McpState, req: CallToolRequest): Promise<CallToolRe
     return errFailed("create task", e);
   }
   await indexTask(project, task.id);
+  if (task.status === "in-progress") await syncAgentClaim(state, project, task.id, task.status);
+  attachAgent(project, [task]);
   notifyTaskUpdated(project.store, task.id);
   return mutationResult(task, rm.mode);
 }
@@ -234,6 +264,7 @@ async function get(state: McpState, req: CallToolRequest): Promise<CallToolResul
   }
   const timer = project.storage.time.getActiveTimer(task.id);
   if (timer) task.activeTimer = timer;
+  attachAgent(project, [task]);
   return textResult(marshalIndent(taskToWire(task)));
 }
 
@@ -252,7 +283,7 @@ async function update(state: McpState, req: CallToolRequest): Promise<CallToolRe
   let task: Task;
   try {
     task = await service.updateTask(id.value, {
-      actor: "mcp",
+      actor: mcpActor(state.clientInfo),
       expectedHash,
       mutate: (t) => {
         const [title, tok] = stringArg(args, "title");
@@ -323,10 +354,13 @@ async function update(state: McpState, req: CallToolRequest): Promise<CallToolRe
   } catch (e) {
     return errFailed("update task", e);
   }
+  const [newStatus, nsok] = stringArg(args, "status");
+  if (nsok) await syncAgentClaim(state, project, task.id, newStatus);
   notifyTaskUpdated(project.store, task.id);
   if (rm.mode === MUTATION_FULL) {
     const timer = storage.time.getActiveTimer(task.id);
     if (timer) task.activeTimer = timer;
+    attachAgent(project, [task]);
   }
   return mutationResult(task, rm.mode);
 }
@@ -393,6 +427,7 @@ async function list(state: McpState, req: CallToolRequest): Promise<CallToolResu
       ),
     );
   }
+  attachAgent(project, filtered);
   return textResult(marshalIndent(filtered.map(taskToWire)));
 }
 
@@ -406,7 +441,11 @@ async function lifecycle(
   const project = state.getProject();
   if (!project) return noProjectError();
   const args = argsOf(req);
-  const request: Request = { operation: "archive", execute: false, actor: "mcp" };
+  const request: Request = {
+    operation: "archive",
+    execute: false,
+    actor: mcpActor(state.clientInfo),
+  };
   const [taskId] = stringArg(args, "taskId");
   request.taskId = taskId;
   const [ids, idsOk] = stringSliceArg(args, "ids");

@@ -1,5 +1,6 @@
 // internal/mcp/server.go: NewMCPServer and Start. Tool definitions are light (defs.ts); handler
 // modules load on the first call of their tool so `initialize` and `tools/list` stay fast.
+import { agentSlug } from "./agent-client.ts";
 import { auditEventFor, type PendingCall } from "./audit.ts";
 import {
   codeTool,
@@ -88,6 +89,9 @@ export function newMcpApp(projectHint: string, log: McpLogger = new McpLogger())
     version: MCP_VERSION,
     instructions: INSTRUCTIONS,
     ready: () => begin(),
+    onInitialize: (info) => {
+      state.clientInfo = info;
+    },
     guard: (req) =>
       guard(req, () => {
         const project = state.getProject();
@@ -112,7 +116,14 @@ export function newMcpApp(projectHint: string, log: McpLogger = new McpLogger())
         if (!pc) return;
         pending.delete(req);
         if (pc.toolName === "audit") return;
-        const event = auditEventFor(pc, req, result, state.getRoot());
+        const event = auditEventFor(
+          pc,
+          req,
+          result,
+          state.getRoot(),
+          new Date(),
+          agentSlug(state.clientInfo),
+        );
         try {
           (await auditStore()).append(event);
         } catch (e) {
