@@ -86,7 +86,7 @@ test.describe("Task History Panel", () => {
 		await test.step("Click on a version entry to expand it", async () => {
 			const dialog = page.locator('[role="dialog"]');
 			const versionEntry = dialog.getByRole("option").first();
-			if (await versionEntry.isVisible({ timeout: 3000 }).catch(() => false)) {
+			if (await versionEntry.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false)) {
 				await versionEntry.click();
 				await page.waitForTimeout(500);
 			}

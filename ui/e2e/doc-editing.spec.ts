@@ -27,7 +27,7 @@ async function enterDocEditMode(page: import("@playwright/test").Page) {
 		await expect(editBtn).toBeVisible({ timeout: 3000 });
 		await editBtn.click();
 		const saveBtn = page.getByRole("button", { name: "Save", exact: true }).first();
-		if (await saveBtn.isVisible({ timeout: 1500 }).catch(() => false)) {
+		if (await saveBtn.waitFor({ state: "visible", timeout: 1500 }).then(() => true).catch(() => false)) {
 			return;
 		}
 		await page.waitForTimeout(300);
@@ -133,7 +133,7 @@ test.describe("Doc Content Editing", () => {
 		await test.step("Editor is visible (edit mode active)", async () => {
 			const saveBtn = page.getByRole("button", { name: "Save", exact: true }).first();
 			const editBtn = page.getByRole("button", { name: "Edit", exact: true }).first();
-			if (await saveBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+			if (await saveBtn.waitFor({ state: "visible", timeout: 2000 }).then(() => true).catch(() => false)) {
 				await expect(saveBtn).toBeVisible();
 				return;
 			}
@@ -143,7 +143,7 @@ test.describe("Doc Content Editing", () => {
 		await test.step("Save and Cancel buttons are visible", async () => {
 			const saveBtn = page.getByRole("button", { name: "Save", exact: true }).first();
 			const cancelBtn = page.getByRole("button", { name: "Cancel", exact: true }).first();
-			if (await saveBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+			if (await saveBtn.waitFor({ state: "visible", timeout: 1000 }).then(() => true).catch(() => false)) {
 				await expect(saveBtn).toBeVisible({ timeout: 3000 });
 				await expect(cancelBtn).toBeVisible({ timeout: 3000 });
 			}
@@ -151,7 +151,7 @@ test.describe("Doc Content Editing", () => {
 
 		await test.step("Click Cancel to exit edit mode", async () => {
 			const cancelBtn = page.getByRole("button", { name: "Cancel", exact: true }).first();
-			if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+			if (await cancelBtn.waitFor({ state: "visible", timeout: 1000 }).then(() => true).catch(() => false)) {
 				await cancelBtn.click();
 				await page.waitForTimeout(300);
 			}

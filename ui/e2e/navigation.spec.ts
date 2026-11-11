@@ -73,7 +73,7 @@ test.describe("Navigation & Global Features", () => {
 
 		await test.step("Find and click theme toggle", async () => {
 			const themeBtn = page.getByRole("button", { name: /theme|dark|light|mode/i }).first();
-			if (await themeBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+			if (await themeBtn.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false)) {
 				await themeBtn.click();
 				await page.waitForTimeout(500);
 			}

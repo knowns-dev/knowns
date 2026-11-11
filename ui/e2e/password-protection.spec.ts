@@ -139,6 +139,8 @@ let server: TestServer;
 const TEST_PASSWORD = "testpass123";
 
 test.beforeAll(async () => {
+	// Starting the server can pass the default hook timeout when the whole suite loads the machine.
+	test.setTimeout(180_000);
 	server = await startServerWithPassword(TEST_PASSWORD);
 });
 
@@ -270,7 +272,7 @@ test.describe("Password Protection", () => {
 			await page.goto(server.baseURL);
 			const passwordInput = page.locator('input[type="password"]');
 			// May or may not show login (depends on previous test removing password)
-			const needsLogin = await passwordInput.isVisible({ timeout: 3000 }).catch(() => false);
+			const needsLogin = await passwordInput.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false);
 			if (needsLogin) {
 				await passwordInput.fill(TEST_PASSWORD);
 				await page.getByRole("button", { name: /unlock/i }).click();

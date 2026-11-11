@@ -66,8 +66,8 @@ test.describe("Audit Trail", () => {
 			const eventRows = page.locator("[data-audit-event]").first();
 			// Wait for loading to finish
 			await page.waitForTimeout(2000);
-			const isEmptyVisible = await emptyState.isVisible({ timeout: 3000 }).catch(() => false);
-			const hasEvents = await eventRows.isVisible({ timeout: 3000 }).catch(() => false);
+			const isEmptyVisible = await emptyState.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false);
+			const hasEvents = await eventRows.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false);
 			expect(isEmptyVisible || hasEvents).toBeTruthy();
 		});
 	});
@@ -90,11 +90,11 @@ test.describe("Audit Trail", () => {
 			// Wait for loading to complete
 			await page.waitForTimeout(2000);
 			const emptyState = page.getByText("No audit events found.");
-			const isEmpty = await emptyState.isVisible({ timeout: 2000 }).catch(() => false);
+			const isEmpty = await emptyState.waitFor({ state: "visible", timeout: 2000 }).then(() => true).catch(() => false);
 			if (isEmpty) {
 				// Refresh button is available
 				const refreshBtn = page.getByRole("button", { name: /Refresh audit data/ });
-				if (await refreshBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+				if (await refreshBtn.waitFor({ state: "visible", timeout: 2000 }).then(() => true).catch(() => false)) {
 					await expect(refreshBtn).toBeEnabled();
 					await refreshBtn.click();
 					await page.waitForTimeout(2000);
@@ -143,8 +143,8 @@ test.describe("Audit Trail", () => {
 			const emptyState = page.getByText("No audit data available.");
 			// The rework renamed the headline metric to "Calls in range".
 			const rangeSummary = page.getByRole("region", { name: "Range summary" });
-			const isEmpty = await emptyState.isVisible({ timeout: 3000 }).catch(() => false);
-			const hasStats = await rangeSummary.isVisible({ timeout: 3000 }).catch(() => false);
+			const isEmpty = await emptyState.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false);
+			const hasStats = await rangeSummary.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false);
 			expect(isEmpty || hasStats).toBeTruthy();
 		});
 	});

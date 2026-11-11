@@ -407,7 +407,7 @@ test.describe("Doc Reference Copy", () => {
 		await test.step("Find and click copy reference button", async () => {
 			// Look for copy/reference button in the doc view
 			const copyBtn = page.getByRole("button", { name: /copy|reference|ref/i }).first();
-			if (await copyBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+			if (await copyBtn.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false)) {
 				await copyBtn.click();
 				await page.waitForTimeout(500);
 			}

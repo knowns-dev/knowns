@@ -114,13 +114,8 @@ test.describe("Task Creation via UI", () => {
 		});
 
 		await test.step("Click new task button", async () => {
-			const newTaskBtn = page.getByRole("button", { name: /new task/i }).first();
-			if (await newTaskBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-				await newTaskBtn.click();
-			} else {
-				// Table view shows a compact "New" button
-				await page.getByRole("button", { name: /^new$/i }).first().click();
-			}
+			// The header "New Task" button is on every view. click() waits for the lazy Tasks page; isVisible() would not.
+			await page.getByRole("button", { name: /new task/i }).first().click();
 		});
 
 		await test.step("Type task title", async () => {
@@ -211,7 +206,7 @@ test.describe("Task Detail Interactions", () => {
 			const checkbox = acRow.getByRole("checkbox").first()
 				.or(acRow.locator("button[role=checkbox]").first())
 				.or(page.getByRole("checkbox").first());
-			if (await checkbox.isVisible({ timeout: 2000 }).catch(() => false)) {
+			if (await checkbox.waitFor({ state: "visible", timeout: 2000 }).then(() => true).catch(() => false)) {
 				await checkbox.click();
 				await page.waitForTimeout(500);
 			}
@@ -263,7 +258,7 @@ test.describe("Task Detail Interactions", () => {
 
 		await test.step("Type label name and submit", async () => {
 			const labelInput = page.getByRole("textbox").last();
-			if (await labelInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+			if (await labelInput.waitFor({ state: "visible", timeout: 2000 }).then(() => true).catch(() => false)) {
 				await labelInput.fill("frontend");
 				await labelInput.press("Enter");
 			}
@@ -338,7 +333,7 @@ test.describe("Document Interactions via UI", () => {
 			// Title is an inline editable heading — find the input/editable element
 			const titleEl = page.locator("h1[contenteditable], input[type=text], h1 input").first()
 				.or(page.getByPlaceholder(/title|name/i).first());
-			if (await titleEl.isVisible({ timeout: 2000 }).catch(() => false)) {
+			if (await titleEl.waitFor({ state: "visible", timeout: 2000 }).then(() => true).catch(() => false)) {
 				await titleEl.click();
 				await titleEl.fill("My New Guide");
 			}
@@ -496,7 +491,7 @@ test.describe("Settings Page Interactions", () => {
 		await test.step("Project name field exists", async () => {
 			const nameInput = page.getByLabel(/project name/i).first()
 				.or(page.locator("input").first());
-			if (await nameInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+			if (await nameInput.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false)) {
 				await nameInput.clear();
 				await nameInput.fill("My Awesome Project");
 				await nameInput.press("Tab");

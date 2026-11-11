@@ -234,7 +234,7 @@ test.describe("Task Detail Editing", () => {
 			// Theme toggle is a switch in the header
 			const themeToggle = page.locator("button[role=switch]").first()
 				.or(page.getByRole("switch").first());
-			if (await themeToggle.isVisible({ timeout: 3000 }).catch(() => false)) {
+			if (await themeToggle.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false)) {
 				await themeToggle.click();
 				await page.waitForTimeout(300);
 
@@ -551,7 +551,7 @@ test.describe("Full Workflow: Pure UI", () => {
 		await test.step("Check AC checkbox", async () => {
 			await expect(page.getByText("Step completed")).toBeVisible();
 			const checkbox = page.getByRole("checkbox").first();
-			if (await checkbox.isVisible({ timeout: 2000 }).catch(() => false)) {
+			if (await checkbox.waitFor({ state: "visible", timeout: 2000 }).then(() => true).catch(() => false)) {
 				await checkbox.click();
 				await page.waitForTimeout(300);
 			}
