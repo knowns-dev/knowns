@@ -149,7 +149,7 @@ test.describe("Decision processing flow", () => {
 		await page.screenshot({ path: testInfo.outputPath("decision-review-ready.png"), fullPage: true });
 	});
 
-	test("keeps Legacy Decision Memory migration under Settings > Tools", async ({ page }) => {
+	test("keeps Legacy Decision Memory migration under Settings > Advanced", async ({ page }) => {
 		const memoryID = "leg001";
 		const title = `Legacy migration ${uniqueToken("memory")}`;
 		seedLegacyDecisionMemory(memoryID, title);
@@ -157,7 +157,7 @@ test.describe("Decision processing flow", () => {
 		await expect(page.getByText("Legacy Decision Memory migration")).toBeHidden();
 
 		await page.goto(`${server.baseURL}/config`);
-		await page.getByRole("button", { name: "Tools" }).click();
+		await page.getByRole("button", { name: "Advanced", exact: true }).click();
 		await expect(page.getByRole("heading", { name: "Legacy Decision Memory migration" })).toBeVisible();
 		await page.getByRole("button", { name: "Open migration workspace" }).click();
 		const migration = page.getByTestId("decision-migration-panel");
