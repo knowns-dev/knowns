@@ -153,7 +153,20 @@ test.describe("Runtime page", () => {
 		await expect(page.getByRole("radio", { name: /Attention/ })).toHaveAttribute("aria-checked", "true");
 		await expect(fleet.locator("[data-service-state]")).toHaveCount(1);
 
-		await expect(fleet.getByRole("link", { name: "Configure pyright" })).toHaveAttribute("href", /\/config\?category=code/);
+		const configure = fleet.getByRole("link", { name: "Configure pyright" });
+		await expect(configure).toHaveAttribute("href", /\/config\?category=search-code/);
+		await configure.click();
+		await expect(page).toHaveURL(/\/config\?category=search-code/);
+		await expect(page.getByRole("button", { name: "Search & Code", exact: true })).toHaveAttribute("aria-current", "page");
+		await expect(page.getByRole("heading", { name: "Language Server Protocol" })).toBeVisible();
+	});
+
+	test("links to no runtime settings section: runtime tuning is CLI-only", async ({ page }) => {
+		await page.goto(`${server.baseURL}/runtime`);
+		await expect(page.getByRole("heading", { name: "Runtime", level: 1 })).toBeVisible();
+		// Only the sidebar's own Settings link remains; the page header no longer has one.
+		await expect(page.getByRole("link", { name: "Settings", exact: true })).toHaveCount(1);
+		await expect(page.locator('a[href*="category=runtime"]')).toHaveCount(0);
 	});
 
 	test("groups failures by cause and retries them", async ({ page }) => {

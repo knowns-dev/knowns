@@ -23,7 +23,6 @@ import {
 	Plug,
 	RefreshCw,
 	Server,
-	Settings2,
 	Users,
 	XCircle,
 } from "lucide-react";
@@ -362,11 +361,14 @@ function serviceDetailItems(service: RuntimeService) {
 		.slice(0, 4);
 }
 
-function serviceSettingsCategory(service: RuntimeService) {
-	if (service.type === "lsp") return "code";
-	if (service.type === "cloudflared") return "tunnel";
-	if (service.type === "embedding") return "search";
-	return "runtime";
+/**
+ * The Settings section that configures a service. Runtime tuning (memory limits) is CLI-only, so a
+ * service with no section gets no Configure link.
+ */
+function serviceSettingsCategory(service: RuntimeService): "search-code" | "access" | null {
+	if (service.type === "lsp" || service.type === "embedding") return "search-code";
+	if (service.type === "cloudflared") return "access";
+	return null;
 }
 
 // The service list always reports every built-in LSP adapter this binary
@@ -627,6 +629,7 @@ function ServiceStateBadge({
 
 function ServiceRow({ service }: { service: RuntimeService }) {
 	const state = serviceOperationalState(service);
+	const settingsCategory = serviceSettingsCategory(service);
 	const details = serviceDetailItems(service);
 	const installCommand = detailValue(service, "install_cmd");
 	const processSummary = serviceProcessSummary(service, state);
@@ -695,20 +698,22 @@ function ServiceRow({ service }: { service: RuntimeService }) {
 				)}
 			</div>
 
-			<Link
-				to="/config"
-				search={{ category: serviceSettingsCategory(service) }}
-				aria-label={`Configure ${service.name}`}
-				className={buttonClass(
-					"ghost",
-					"sm",
-					false,
-					"col-span-2 -ml-3 w-fit @4xl:col-span-1 @4xl:ml-0 @4xl:justify-self-end",
-				)}
-			>
-				Configure
-				<ArrowRight aria-hidden="true" />
-			</Link>
+			{settingsCategory && (
+				<Link
+					to="/config"
+					search={{ category: settingsCategory }}
+					aria-label={`Configure ${service.name}`}
+					className={buttonClass(
+						"ghost",
+						"sm",
+						false,
+						"col-span-2 -ml-3 w-fit @4xl:col-span-1 @4xl:ml-0 @4xl:justify-self-end",
+					)}
+				>
+					Configure
+					<ArrowRight aria-hidden="true" />
+				</Link>
+			)}
 		</article>
 	);
 }
@@ -1639,12 +1644,6 @@ export function RuntimeOverview() {
 				status={headerStatus}
 				actions={
 					<>
-						<Button asChild variant="outline" size="sm" className="h-11 gap-1.5 sm:h-8">
-							<Link to="/config" search={{ category: "runtime" }}>
-								<Settings2 className="h-4 w-4" aria-hidden="true" />
-								Settings
-							</Link>
-						</Button>
 						<Button
 							type="button"
 							variant="outline"
@@ -1834,7 +1833,7 @@ export function RuntimeOverview() {
 											title="No managed services reported"
 											description="Enable a runtime-backed feature, such as code intelligence or semantic search, to see it here."
 											action={
-												<Link to="/config" search={{ category: "runtime" }} className={buttonClass("secondary", "sm")}>
+												<Link to="/config" search={{ category: "search-code" }} className={buttonClass("secondary", "sm")}>
 													Open Settings
 												</Link>
 											}

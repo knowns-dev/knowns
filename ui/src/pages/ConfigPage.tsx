@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouterState } from "@tanstack/react-router";
 import { Globe, Search, Settings, SlidersHorizontal, Workflow } from "lucide-react";
 import { SettingsLayout, type SettingsNavItem } from "@/ui/components/ui/knowns/blocks/settings/settings-layout";
 import { AccessSection } from "./config/AccessSection";
@@ -18,13 +19,28 @@ const SECTIONS: SettingsNavItem[] = [
 	{ id: "advanced", label: "Advanced", icon: <SlidersHorizontal /> },
 ];
 
+/** Older deep links (/config?category=code) still land on the right section. */
+const CATEGORY_ALIASES: Record<string, SectionId> = { code: "search-code" };
+
+function sectionFromCategory(category: unknown): SectionId {
+	const value = typeof category === "string" ? category : "";
+	if (SECTIONS.some((section) => section.id === value)) return value as SectionId;
+	return CATEGORY_ALIASES[value] ?? "general";
+}
+
 /**
  * Project settings. Every control autosaves through PATCH /api/config (see useConfigDraft); the
  * layout's Save bar is not used. Keys with no control here stay valid in config.json.
  */
 export default function ConfigPage() {
 	const draft = useConfigDraft();
-	const [active, setActive] = useState<SectionId>("general");
+	const category = useRouterState({ select: (state) => (state.location.search as Record<string, unknown>).category });
+	const [active, setActive] = useState<SectionId>(() => sectionFromCategory(category));
+
+	// A link to /config?category=... while Settings is already open switches the section too.
+	useEffect(() => {
+		setActive(sectionFromCategory(category));
+	}, [category]);
 
 	if (draft.loading) {
 		return (

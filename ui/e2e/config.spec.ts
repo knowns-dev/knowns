@@ -32,6 +32,24 @@ test.describe("Configuration Page", () => {
 		await expect(nav.getByRole("button")).toHaveText(["General", "Workflow", "Search & Code", "Access", "Advanced"]);
 	});
 
+	test("opens the section named by ?category, with older aliases and a General fallback", async ({ page }) => {
+		const current = (name: string) =>
+			expect(page.getByRole("navigation", { name: "Settings sections" }).getByRole("button", { name, exact: true })).toHaveAttribute(
+				"aria-current",
+				"page",
+			);
+		await page.goto(`${server.baseURL}/config?category=access`);
+		await current("Access");
+		await page.goto(`${server.baseURL}/config?category=code`);
+		await current("Search & Code");
+		await page.goto(`${server.baseURL}/config?category=search-code`);
+		await current("Search & Code");
+		await page.goto(`${server.baseURL}/config?category=runtime`);
+		await current("General");
+		await page.goto(`${server.baseURL}/config?category=nonsense`);
+		await current("General");
+	});
+
 	test("shows board status configuration", async ({ page }) => {
 		await test.step("Navigate to config page", async () => {
 			await page.goto(`${server.baseURL}/config`);
