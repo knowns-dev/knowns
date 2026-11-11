@@ -66,7 +66,7 @@ test.describe("Tasks Page", () => {
 
 		await test.step("Group by status stacks one table per status", async () => {
 			await page.getByRole("radio", { name: "By status" }).click();
-			await expect(page.getByRole("heading", { name: "Todo" })).toBeVisible();
+			await expect(page.getByRole("heading", { name: "To Do" })).toBeVisible();
 			await page.getByRole("radio", { name: "Flat" }).click();
 		});
 
@@ -101,13 +101,9 @@ test.describe("Tasks Page", () => {
 		});
 
 		await test.step("Click new task button", async () => {
-			const newBtn = page.getByRole("button", { name: /new task/i }).first();
-			if (await newBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-				await newBtn.click();
-			} else {
-				// A narrow header shows a compact "New" button
-				await page.getByRole("button", { name: /^new$/i }).first().click();
-			}
+			// The header "New Task" button is on every view. click() waits for it; isVisible() does not
+			// wait, so it raced the lazy-loaded Tasks page.
+			await page.getByRole("button", { name: /new task/i }).first().click();
 		});
 
 		await test.step("Fill in task form", async () => {
