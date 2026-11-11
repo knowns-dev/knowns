@@ -1,285 +1,348 @@
+import { useState, type ReactNode } from "react";
+import { ArrowDownLeft, ArrowUpRight, X } from "lucide-react";
+
 import type { GraphEdge, GraphNode } from "@/ui/api/client";
-import { ExternalLink, Zap, X } from "lucide-react";
-import { cn } from "@/ui/lib/utils";
+import { DetailSection } from "@/ui/components/organisms/TaskDetail/DetailSection";
+import { priorityTones, statusTone } from "@/ui/components/organisms/TaskDetail/types";
+import { Badge, type BadgeTone } from "@/ui/components/ui/knowns/badge";
+import { Button } from "@/ui/components/ui/knowns/button";
+import { cn, focusRing } from "@/ui/lib/knowns/utils";
+
 import type { GraphReferenceItem, SelectedNodeReferences } from "./graph/constants";
+import { nodeColor } from "./graph/graphModel";
+import type { GraphColors } from "./graph/theme";
 
 interface GraphDetailPanelProps {
 	node: GraphNode | null;
+	colors: GraphColors;
 	onClose: () => void;
 	onNavigate: (node: GraphNode) => void;
 	onSelectNode?: (nodeId: string) => void;
 	references?: SelectedNodeReferences;
 }
 
-const statusBadgeColors: Record<string, string> = {
-	todo: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-	"in-progress": "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
-	"in-review": "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
-	done: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
-	blocked: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
-	"on-hold": "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
-	urgent: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
+const TYPE_LABELS: Record<string, string> = {
+	task: "Task",
+	doc: "Doc",
+	memory: "Memory",
+	decision: "Decision",
+	template: "Template",
+	code: "Code",
+	external: "External",
 };
 
-const priorityLabels: Record<string, string> = {
-	high: "High",
-	medium: "Medium",
-	low: "Low",
-};
-
-const edgeTypeLabels: Record<GraphEdge["type"], string> = {
+const EDGE_LABELS: Record<GraphEdge["type"], string> = {
 	parent: "Parent",
 	spec: "Spec",
 	mention: "Mention",
-	"template-doc": "Template Doc",
-	"code-ref": "Code Ref",
+	"template-doc": "Template doc",
+	"code-ref": "Code ref",
 	calls: "Calls",
 	imports: "Imports",
 	contains: "Contains",
 	instantiates: "Creates",
 	implements: "Implements",
 	references: "References",
-	"blocked-by": "Blocked By",
+	"blocked-by": "Blocked by",
 	related: "Related",
 	depends: "Depends",
 	follows: "Follows",
 };
 
-const nodeTypeBadgeStyles: Record<GraphNode["type"] | "external", string> = {
-	task: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-	doc: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
-	template: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
-	memory: "bg-green-500/10 text-green-600 dark:text-green-400",
-	decision: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
-	code: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
-	external: "bg-muted text-muted-foreground",
+const PRIORITY_LABELS: Record<string, string> = { high: "High", medium: "Medium", low: "Low" };
+const LAYER_LABELS: Record<string, string> = { global: "Global", project: "Project", working: "Working" };
+const LAYER_TONES: Record<string, BadgeTone> = { global: "accent", project: "success", working: "neutral" };
+const DECISION_TONES: Record<string, BadgeTone> = {
+	accepted: "success",
+	proposed: "info",
+	rejected: "danger",
+	superseded: "neutral",
+	deprecated: "warning",
 };
 
-const resolutionBadgeStyles: Record<string, string> = {
-	resolved_external: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-	unresolved: "bg-muted text-muted-foreground",
-};
+const OPENABLE = new Set(["task", "doc", "memory", "decision"]);
+/** Long reference lists push the Open button off a phone screen: show this many, then a toggle. */
+const CONNECTIONS_SHOWN = 8;
 
-const resolutionBadgeLabels: Record<string, string> = {
-	resolved_external: "External",
-	unresolved: "Unresolved",
-};
+const str = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+const strings = (value: unknown) => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item !== "") : []);
+const titleCase = (value: string) => value.replace(/[-_]/g, " ").replace(/^\w/, (char) => char.toUpperCase());
 
-function GraphReferenceList({
-	title,
-	items,
-	onSelectNode,
-}: {
-	title: string;
-	items: GraphReferenceItem[];
-	onSelectNode?: (nodeId: string) => void;
-}) {
-	if (items.length === 0) return null;
-
+function Field({ label, children }: { label: string; children: ReactNode }) {
 	return (
-		<div className="space-y-1.5">
-			<div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</div>
-			<div className="space-y-1">
-				{items.map((item, index) => {
-					const itemKey = `${title}-${item.edgeType}-${item.nodeId}-${item.label}-${item.resolutionStatus || "none"}-${index}`;
-					const isNavigable = !item.isVirtual && item.type !== "external" && !!onSelectNode;
-					const content = (
-						<div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-							<span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide shrink-0", nodeTypeBadgeStyles[item.type])}>
-								{item.type}
-							</span>
-							<span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground shrink-0">
-								{edgeTypeLabels[item.edgeType]}
-							</span>
-							{item.resolutionStatus && resolutionBadgeLabels[item.resolutionStatus] && (
-								<span
-									className={cn(
-										"rounded px-1.5 py-0.5 text-[10px] font-medium shrink-0",
-										resolutionBadgeStyles[item.resolutionStatus] || "bg-muted text-muted-foreground",
-									)}
-								>
-									{resolutionBadgeLabels[item.resolutionStatus]}
-								</span>
-							)}
-							<span className="truncate text-foreground min-w-0 flex-1">{item.label}</span>
-						</div>
-					);
-
-					if (!isNavigable) {
-						return (
-							<div
-								key={itemKey}
-								className="w-full rounded-md border border-border/60 px-2 py-1.5 text-left bg-muted/20"
-							>
-								{content}
-							</div>
-						);
-					}
-
-					return (
-						<button
-							key={itemKey}
-							type="button"
-							onClick={() => onSelectNode?.(item.nodeId)}
-							className="w-full rounded-md border border-border/60 px-2 py-1.5 text-left hover:bg-accent transition-colors"
-						>
-							{content}
-						</button>
-					);
-				})}
-			</div>
+		<div className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-start gap-3 py-1">
+			<dt className="pt-0.5 text-[12.5px] text-muted-foreground">{label}</dt>
+			<dd className="min-w-0 text-[13px] text-foreground">{children}</dd>
 		</div>
 	);
 }
 
-export function GraphDetailPanel({ node, onClose, onNavigate, onSelectNode, references }: GraphDetailPanelProps) {
-	if (!node) return null;
+function TagList({ items }: { items: string[] }) {
+	return (
+		<div className="flex flex-wrap gap-1">
+			{items.map((item) => (
+				<Badge key={item} size="sm">
+					{item}
+				</Badge>
+			))}
+		</div>
+	);
+}
 
-	const [type, ...rest] = node.id.split(":");
-	const entityId = rest.join(":");
-	const codeKind = typeof node.data.kind === "string" ? node.data.kind : null;
-	const codeContent = typeof node.data.content === "string" ? node.data.content.trim() : "";
-	const previewLines = codeContent ? codeContent.split("\n") : [];
-	const codePreview = previewLines.slice(0, 8).join("\n");
-	const hasMoreCode = previewLines.length > 8;
-	const incomingRefs = references?.incoming || [];
-	const outgoingRefs = references?.outgoing || [];
-	const panelWidth = type === "code" ? "w-96" : "w-72";
+function NodeFields({ node, type }: { node: GraphNode; type: string }) {
+	const data = node.data ?? {};
+	const fields: ReactNode[] = [];
+	const description = str(data.description);
+	const status = str(data.status);
+	const tags = strings(data.tags);
+
+	if (type === "task") {
+		const priority = str(data.priority);
+		const assignee = str(data.assignee);
+		const labels = strings(data.labels);
+		if (status)
+			fields.push(
+				<Field key="status" label="Status">
+					<Badge tone={statusTone(status)} dot>
+						{titleCase(status)}
+					</Badge>
+				</Field>,
+			);
+		if (priority)
+			fields.push(
+				<Field key="priority" label="Priority">
+					<Badge tone={priorityTones[priority as keyof typeof priorityTones] ?? "neutral"}>
+						{PRIORITY_LABELS[priority] ?? titleCase(priority)}
+					</Badge>
+				</Field>,
+			);
+		fields.push(
+			<Field key="assignee" label="Assignee">
+				{assignee || <span className="text-muted-foreground">Unassigned</span>}
+			</Field>,
+		);
+		if (labels.length > 0)
+			fields.push(
+				<Field key="labels" label="Labels">
+					<TagList items={labels} />
+				</Field>,
+			);
+	}
+
+	if (type === "memory") {
+		const layer = str(data.layer) || "project";
+		const category = str(data.category);
+		fields.push(
+			<Field key="layer" label="Layer">
+				<Badge tone={LAYER_TONES[layer] ?? "neutral"}>{LAYER_LABELS[layer] ?? titleCase(layer)}</Badge>
+			</Field>,
+		);
+		if (category)
+			fields.push(
+				<Field key="category" label="Category">
+					{titleCase(category)}
+				</Field>,
+			);
+	}
+
+	if (type === "decision" && status)
+		fields.push(
+			<Field key="status" label="Status">
+				<Badge tone={DECISION_TONES[status] ?? "neutral"} dot>
+					{titleCase(status)}
+				</Badge>
+			</Field>,
+		);
+
+	if (type === "template") {
+		const source = str(data.source);
+		if (source)
+			fields.push(
+				<Field key="source" label="Imported">
+					<span className="font-mono text-[12.5px]">{source}</span>
+				</Field>,
+			);
+	}
+
+	if (type === "code") {
+		const kind = str(data.kind);
+		const docPath = str(data.docPath);
+		if (kind)
+			fields.push(
+				<Field key="kind" label="Kind">
+					{titleCase(kind)}
+				</Field>,
+			);
+		if (docPath)
+			fields.push(
+				<Field key="file" label="File">
+					<span className="break-all font-mono text-[12.5px]">{docPath}</span>
+				</Field>,
+			);
+	}
+
+	if ((type === "doc" || type === "memory" || type === "decision") && tags.length > 0)
+		fields.push(
+			<Field key="tags" label="Tags">
+				<TagList items={tags} />
+			</Field>,
+		);
+
+	const code = type === "code" ? str(data.content) : "";
+	const codeLines = code ? code.split("\n") : [];
 
 	return (
-		<div className={cn("absolute top-3 right-3 rounded-lg border bg-background/95 backdrop-blur-sm shadow-lg overflow-hidden animate-in slide-in-from-right-2 duration-200 max-h-[calc(100vh-1.5rem)] flex flex-col", panelWidth)}>
-			<div className="flex items-start gap-2 p-3 border-b border-border/50 shrink-0">
-				<div className="flex-1 min-w-0">
-					<div className="flex items-center gap-1.5 mb-1">
-						<span
-							className={cn(
-								"inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
-								type === "task" && "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-								type === "doc" && "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-								type === "memory" && "bg-green-500/10 text-green-600 dark:text-green-400",
-								type === "code" && "bg-purple-500/10 text-purple-600 dark:text-purple-400",
-								type === "template" && "bg-purple-500/10 text-purple-600 dark:text-purple-400",
-							)}
+		<>
+			{description && <p className="text-[13px] leading-relaxed text-muted-foreground">{description}</p>}
+			{fields.length > 0 && <dl className="flex flex-col">{fields}</dl>}
+			{codeLines.length > 0 && (
+				<pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-[10px] border border-border/70 bg-muted/40 p-2.5 font-mono text-[12px] leading-relaxed">
+					{codeLines.slice(0, 8).join("\n")}
+					{codeLines.length > 8 ? "\n…" : ""}
+				</pre>
+			)}
+		</>
+	);
+}
+
+type Connection = GraphReferenceItem & { direction: "in" | "out" };
+
+function ConnectionRow({
+	item,
+	colors,
+	onSelectNode,
+}: {
+	item: Connection;
+	colors: GraphColors;
+	onSelectNode?: (nodeId: string) => void;
+}) {
+	const navigable = !item.isVirtual && item.type !== "external" && Boolean(onSelectNode);
+	const Arrow = item.direction === "out" ? ArrowUpRight : ArrowDownLeft;
+	const content = (
+		<>
+			<span
+				aria-hidden="true"
+				className="size-2 shrink-0 rounded-full"
+				style={{ backgroundColor: item.type === "external" ? colors.neutral : nodeColor({ type: item.type, data: {} }, colors) }}
+			/>
+			<span className="sr-only">{TYPE_LABELS[item.type] ?? item.type}: </span>
+			<span className="min-w-0 flex-1 truncate">{item.label}</span>
+			{item.resolutionStatus === "unresolved" && <Badge size="sm">Unresolved</Badge>}
+			{item.resolutionStatus === "resolved_external" && (
+				<Badge size="sm" tone="warning">
+					External
+				</Badge>
+			)}
+			<span className="flex shrink-0 items-center gap-1 text-[12px] text-muted-foreground">
+				<Arrow aria-hidden="true" className="size-3" />
+				<span className="sr-only">{item.direction === "out" ? "outgoing" : "incoming"}</span>
+				{EDGE_LABELS[item.edgeType] ?? item.edgeType}
+			</span>
+		</>
+	);
+	const rowClass = "flex min-h-8 w-full items-center gap-2 rounded-[8px] px-2 text-left text-[13px] pointer-coarse:min-h-11";
+
+	if (!navigable) return <li className={cn(rowClass, "text-muted-foreground")}>{content}</li>;
+	return (
+		<li>
+			<button
+				type="button"
+				onClick={() => onSelectNode?.(item.nodeId)}
+				className={cn(rowClass, "text-foreground transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-muted", focusRing)}
+			>
+				{content}
+			</button>
+		</li>
+	);
+}
+
+/**
+ * What the selected entity is and what it touches. A card at the top right of the canvas on wider
+ * screens; docked to the bottom on a phone so the graph above it stays usable. It enters with
+ * kn-rise (a node pick happens a few times a session, so the standard 180ms) and does not replay
+ * when another node is picked while it is open.
+ */
+export function GraphDetailPanel({ node, colors, onClose, onNavigate, onSelectNode, references }: GraphDetailPanelProps) {
+	const [showAll, setShowAll] = useState(false);
+	const [shownFor, setShownFor] = useState<string | null>(null);
+	if (node && shownFor !== node.id) {
+		setShownFor(node.id);
+		setShowAll(false);
+	}
+	if (!node) return null;
+
+	const [type = "", ...rest] = node.id.split(":");
+	const entityId = rest.join(":");
+	const typeLabel = TYPE_LABELS[type] ?? titleCase(type);
+	const connections: Connection[] = [
+		...(references?.outgoing ?? []).map((item) => ({ ...item, direction: "out" as const })),
+		...(references?.incoming ?? []).map((item) => ({ ...item, direction: "in" as const })),
+	];
+	const visible = showAll ? connections : connections.slice(0, CONNECTIONS_SHOWN);
+
+	return (
+		<aside
+			aria-label={`${typeLabel} details`}
+			data-testid="graph-detail-panel"
+			className={cn(
+				"absolute z-20 flex flex-col overflow-hidden rounded-2xl border border-border bg-card text-card-foreground shadow-[0_12px_32px_-12px_rgb(0_0_0/0.3),0_2px_6px_rgb(0_0_0/0.06)]",
+				"inset-x-2 bottom-2 max-h-[min(55%,24rem)]",
+				"sm:inset-x-auto sm:bottom-auto sm:right-3 sm:top-3 sm:max-h-[calc(100%-1.5rem)]",
+				type === "code" ? "sm:w-96" : "sm:w-80",
+				"animate-[kn-rise_var(--kn-dur)_var(--kn-ease-out)_both] motion-reduce:animate-none",
+			)}
+		>
+			<header className="flex shrink-0 items-start gap-2 border-b border-border/70 px-4 pb-3 pt-3.5">
+				<div className="min-w-0 flex-1">
+					<div className="mb-1 flex min-w-0 items-center gap-2">
+						<Badge
+							size="sm"
+							icon={<span className="size-1.5 rounded-full" style={{ backgroundColor: nodeColor(node, colors) }} />}
 						>
-							{type}
-						</span>
-						<span className="text-[10px] text-muted-foreground font-mono truncate">{entityId}</span>
+							{typeLabel}
+						</Badge>
+						<span className="truncate font-mono text-[12px] text-muted-foreground">{entityId}</span>
 					</div>
-					<h3 className="text-sm font-medium leading-snug break-words">{node.label}</h3>
+					<h2 className="break-words text-[15px] font-semibold leading-snug tracking-tight text-foreground">{node.label}</h2>
 				</div>
-				<button
-					type="button"
-					onClick={onClose}
-					className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0"
-				>
-					<X className="w-3.5 h-3.5" />
-				</button>
-			</div>
+				<Button variant="ghost" size="sm" icon={<X />} aria-label="Close details" onClick={onClose} className="-mr-1.5 -mt-0.5" />
+			</header>
 
-			<div className="p-3 space-y-2.5 text-xs overflow-y-auto min-h-0">
-				{type === "task" && (
-					<>
-						<div className="flex items-center gap-2">
-							{!!node.data.status && (
-								<span
-									className={cn(
-										"rounded-full px-2 py-0.5 text-[10px] font-medium",
-										statusBadgeColors[node.data.status as string] || "bg-muted text-muted-foreground",
-									)}
-								>
-									{node.data.status as string}
-								</span>
-							)}
-							{!!node.data.priority && (
-								<span className="text-muted-foreground">
-									{priorityLabels[node.data.priority as string] || (node.data.priority as string)} priority
-								</span>
-							)}
-						</div>
-						{node.data.assignee && (
-							<div className="text-muted-foreground">
-								Assignee: <span className="text-foreground">{node.data.assignee as string}</span>
-							</div>
-						)}
-						{Array.isArray(node.data.labels) && (node.data.labels as string[]).length > 0 && (
-							<div className="flex flex-wrap gap-1">
-								{(node.data.labels as string[]).map((label) => (
-									<span
-										key={label}
-										className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground"
-									>
-										{label}
-									</span>
+			<div className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain px-4 py-3">
+				<NodeFields node={node} type={type} />
+
+				<DetailSection title="Connections" count={connections.length}>
+					{connections.length === 0 ? (
+						<p className="text-[13px] text-muted-foreground">No relations with the current filters.</p>
+					) : (
+						<>
+							<ul className="-mx-2 flex flex-col">
+								{visible.map((item, index) => (
+									<ConnectionRow
+										key={`${item.direction}-${item.edgeType}-${item.nodeId}-${index}`}
+										item={item}
+										colors={colors}
+										onSelectNode={onSelectNode}
+									/>
 								))}
-							</div>
-						)}
-					</>
-				)}
-
-				{type === "doc" && (
-					<>
-						{node.data.description && (
-							<p className="text-muted-foreground leading-relaxed">{node.data.description as string}</p>
-						)}
-						{Array.isArray(node.data.tags) && (node.data.tags as string[]).length > 0 && (
-							<div className="flex flex-wrap gap-1">
-								{(node.data.tags as string[]).map((tag) => (
-									<span
-										key={tag}
-										className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground"
-									>
-										{tag}
-									</span>
-								))}
-							</div>
-						)}
-					</>
-				)}
-
-				{type === "code" && (
-					<>
-						<div className="flex flex-wrap gap-1.5">
-							{codeKind && (
-								<span className="rounded-full bg-purple-500/10 px-2 py-0.5 text-[10px] font-medium text-purple-600 dark:text-purple-400">
-									{codeKind}
-								</span>
+							</ul>
+							{connections.length > CONNECTIONS_SHOWN && (
+								<Button variant="quiet" size="sm" className="self-start" onClick={() => setShowAll((value) => !value)}>
+									{showAll ? "Show fewer" : `Show all ${connections.length}`}
+								</Button>
 							)}
-							{typeof node.data.docPath === "string" && (
-								<span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground font-mono break-all">
-									{node.data.docPath as string}
-								</span>
-							)}
-						</div>
-						{codePreview && (
-							<div className="space-y-1.5">
-								<div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Preview</div>
-								<pre className="rounded-md border bg-muted/40 p-2 text-[11px] leading-relaxed overflow-x-auto whitespace-pre-wrap break-words">
-									{codePreview}
-									{hasMoreCode ? "\n…" : ""}
-								</pre>
-							</div>
-						)}
-						<GraphReferenceList title={`Incoming refs (${incomingRefs.length})`} items={incomingRefs} onSelectNode={onSelectNode} />
-						<GraphReferenceList title={`Outgoing refs (${outgoingRefs.length})`} items={outgoingRefs} onSelectNode={onSelectNode} />
-						{incomingRefs.length === 0 && outgoingRefs.length === 0 && (
-							<div className="text-muted-foreground">No visible refs for this code node with the current graph data.</div>
-						)}
-					</>
-				)}
+						</>
+					)}
+				</DetailSection>
 			</div>
 
-			<div className="px-3 pb-3 flex flex-col gap-1.5 shrink-0">
-				{(type === "task" || type === "doc" || type === "memory" || type === "decision") && (
-					<button
-						type="button"
-						onClick={() => onNavigate(node)}
-						className="flex items-center gap-1.5 w-full rounded-md border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors justify-center"
-					>
-						<ExternalLink className="w-3 h-3" />
-						Preview {type}
-					</button>
-				)}
-			</div>
-		</div>
+			{OPENABLE.has(type) && (
+				<footer className="shrink-0 border-t border-border/70 px-4 py-3">
+					<Button size="sm" className="w-full" onClick={() => onNavigate(node)}>
+						Open {typeLabel.toLowerCase()}
+					</Button>
+				</footer>
+			)}
+		</aside>
 	);
 }

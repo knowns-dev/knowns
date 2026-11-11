@@ -11,17 +11,10 @@ import {
 	type ConstellationLink,
 	type ConstellationNode,
 } from "./graphModel";
+import type { ConstellationPalette } from "./theme";
+import { MOTION, prefersReducedMotion } from "@/ui/lib/knowns/motion";
 
-export interface ConstellationPalette {
-	canvas: string;
-	labelSurface: string;
-	labelBorder: string;
-	text: string;
-	nodeOutline: string;
-	dimNode: string;
-	link: string;
-	dimLink: string;
-}
+export type { ConstellationPalette };
 
 export interface SigmaConstellationHandle {
 	/** Frame the whole graph. */
@@ -90,6 +83,14 @@ function withAlpha(color: string, alpha: number): string {
 
 function truncateLabel(label: string, maxLength: number): string {
 	return label.length > maxLength ? `${label.slice(0, maxLength - 1)}…` : label;
+}
+
+/**
+ * Camera moves follow kn-motion: something already on screen moves, so ease-in-out, and the whole
+ * view is the largest thing that moves, so never longer than MOTION.slow. Reduced motion jumps.
+ */
+function cameraMove(duration: number) {
+	return { duration: prefersReducedMotion() ? 0 : duration, easing: "cubicInOut" as const };
 }
 
 export const SigmaConstellation = forwardRef<SigmaConstellationHandle, SigmaConstellationProps>(
@@ -305,7 +306,7 @@ export const SigmaConstellation = forwardRef<SigmaConstellationHandle, SigmaCons
 
 					let color = colors.link;
 					if (!inNeighborhood) color = colors.dimLink;
-					else if (impact) color = edgeColor(link);
+					else if (impact) color = edgeColor(link, colors.colors);
 					else if (link.muted) color = colors.dimLink;
 
 					return { ...data, size: link.width, color };
@@ -434,7 +435,7 @@ export const SigmaConstellation = forwardRef<SigmaConstellationHandle, SigmaCons
 				}
 				if (ticks >= COOLDOWN_TICKS || performance.now() - startedAt > COOLDOWN_MS) {
 					onEngineRunningChangeRef.current(false);
-					sigma.getCamera().animatedReset({ duration: 250 });
+					sigma.getCamera().animatedReset(cameraMove(MOTION.slow));
 					return;
 				}
 				frame = requestAnimationFrame(step);
@@ -460,7 +461,7 @@ export const SigmaConstellation = forwardRef<SigmaConstellationHandle, SigmaCons
 			ref,
 			() => ({
 				fitView() {
-					sigmaRef.current?.getCamera().animatedReset({ duration: 350 });
+					sigmaRef.current?.getCamera().animatedReset(cameraMove(MOTION.slow));
 				},
 				centerOnNode(id) {
 					const sigma = sigmaRef.current;
@@ -469,12 +470,12 @@ export const SigmaConstellation = forwardRef<SigmaConstellationHandle, SigmaCons
 					if (!display) return;
 					const camera = sigma.getCamera();
 					const ratio = Math.min(camera.getState().ratio, 0.7);
-					camera.animate({ x: display.x, y: display.y, ratio }, { duration: 250 });
+					camera.animate({ x: display.x, y: display.y, ratio }, cameraMove(MOTION.slow));
 				},
 				zoomBy(factor) {
 					const camera = sigmaRef.current?.getCamera();
 					if (!camera) return;
-					camera.animate({ ratio: camera.getBoundedRatio(camera.getState().ratio / factor) }, { duration: 200 });
+					camera.animate({ ratio: camera.getBoundedRatio(camera.getState().ratio / factor) }, cameraMove(MOTION.base));
 				},
 			}),
 			[],
@@ -485,17 +486,18 @@ export const SigmaConstellation = forwardRef<SigmaConstellationHandle, SigmaCons
 				<div
 					role="status"
 					data-graph-fallback="no-webgl"
-					className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center"
+					className="absolute inset-0 flex items-center justify-center px-6"
 					style={{ background: palette.canvas }}
 				>
-					<p className="text-sm font-medium text-foreground">
-						The graph needs WebGL, which this browser has not made available.
-					</p>
-					<p className="max-w-md text-xs leading-relaxed text-muted-foreground">
-						Hardware acceleration is usually off, blocked by policy, or unsupported by the
-						graphics driver. Entity and relation counts stay available in the toolbar, and
-						every other page works as usual.
-					</p>
+					<div className="flex max-w-md flex-col gap-1.5 text-center">
+						<p className="text-[14px] font-semibold text-foreground">
+							The graph needs WebGL, which this browser has not made available.
+						</p>
+						<p className="text-[13px] leading-relaxed text-muted-foreground">
+							Hardware acceleration is usually off, blocked by policy, or unsupported by the graphics driver.
+							Entity and relation counts stay in the header, and every other page works as usual.
+						</p>
+					</div>
 				</div>
 			);
 		}

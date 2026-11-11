@@ -1,28 +1,5 @@
 import type { GraphData, GraphEdge, GraphNode } from "@/ui/api/client";
 
-export const TASK_COLOR = "#6366f1";
-export const DOC_COLOR = "#f59e0b";
-export const MEMORY_COLOR = "#22c55e";
-export const DECISION_COLOR = "#e11d48";
-export const TEMPLATE_COLOR = "#06b6d4";
-export const CODE_COLOR = "#ec4899";
-
-export const statusBorderColors: Record<string, string> = {
-	todo: "#6b7280",
-	"in-progress": "#f59e0b",
-	"in-review": "#a855f7",
-	done: "#22c55e",
-	blocked: "#ef4444",
-	"on-hold": "#8b5cf6",
-	urgent: "#dc2626",
-};
-
-export const memoryLayerColors: Record<string, string> = {
-	working: "#6b7280",
-	project: "#22c55e",
-	global: "#a855f7",
-};
-
 export interface FilterState {
 	tasks: boolean;
 	docs: boolean;
@@ -69,15 +46,6 @@ export const knowledgeSemanticEdgeLabels: Record<KnowledgeSemanticEdgeKind, stri
 	related: "Related",
 	depends: "Depends",
 	follows: "Follows",
-};
-
-export const knowledgeSemanticEdgeColors: Record<KnowledgeSemanticEdgeKind, string> = {
-	references: "#64748b",
-	implements: "#6366f1",
-	"blocked-by": "#ef4444",
-	related: "#8b5cf6",
-	depends: "#0ea5e9",
-	follows: "#22c55e",
 };
 
 export function isKnowledgeSemanticEdge(type: GraphEdge["type"]): type is KnowledgeSemanticEdgeKind {
