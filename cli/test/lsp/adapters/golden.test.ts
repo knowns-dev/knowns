@@ -165,7 +165,7 @@ for (const g of golden) {
     }
     const norm = (v: unknown): unknown =>
       process.platform === "win32"
-        ? JSON.parse(JSON.stringify(v).replaceAll("file:///C:/", "file:///"))
+        ? JSON.parse(JSON.stringify(v).replace(/file:\/\/\/[A-Za-z]:\//g, "file:///"))
         : v;
     expect(norm(got)).toEqual(norm(g));
   });

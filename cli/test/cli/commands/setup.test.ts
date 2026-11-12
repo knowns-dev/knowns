@@ -8,7 +8,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { GO_BIN } from "../oracle.ts";
 import {
   compareInit,
@@ -31,8 +31,12 @@ afterAll(() => rmSync(fakeBin, { recursive: true, force: true }));
 const withFakeClis = { PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}` };
 
 const exeForms = (): string[] => {
-  const raw = [GO_BIN ?? "", process.execPath];
-  return raw.flatMap((p) => (p === "" ? [] : [p, JSON.stringify(p).slice(1, -1)]));
+  // A binary reports its own path normalized (D:\a\_temp\knowns-go.exe on Windows), which can
+  // differ in separators from the KNOWNS_GO_BIN value the runner set (D:\a\_temp/knowns-go.exe).
+  const raw = [
+    ...new Set([GO_BIN ?? "", process.execPath].flatMap((p) => (p === "" ? [] : [p, resolve(p)]))),
+  ];
+  return raw.flatMap((p) => [p, JSON.stringify(p).slice(1, -1)]);
 };
 const exeNorm = (m: Map<string, string>): Map<string, string> => {
   const out = new Map<string, string>();

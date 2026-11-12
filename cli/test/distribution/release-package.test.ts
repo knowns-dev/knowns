@@ -57,7 +57,8 @@ describe("package-release", () => {
   test("archives hold ./knowns or ./knowns.exe at the root and checksums verify", () => {
     for (const p of PLATFORMS) {
       const archive = join(out, "assets", `knowns-${p.npm}.tar.gz`);
-      const listing = run(["tar", "-tzf", archive]).stdout.trim().split("\n");
+      // Windows tar.exe ends listing lines with \r\n.
+      const listing = run(["tar", "-tzf", archive]).stdout.trim().split(/\r?\n/);
       expect(listing).toEqual(
         p.npm.startsWith("win-") ? [`./${p.exe}`, `./${GO_UPDATE_ENTRY}`] : [`./${p.exe}`],
       );
