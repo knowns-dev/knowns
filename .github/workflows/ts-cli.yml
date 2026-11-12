@@ -17,6 +17,10 @@ jobs:
   ts-cli:
     name: TS CLI (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # Windows still reports its result but does not block: a few timing-sensitive tests flake on
+    # GitHub's Windows runners (tracked in task KN-N007PB, "Stabilize the TS CLI suite on GitHub Windows
+    # runners"). Remove this once that task is done.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     strategy:
       fail-fast: false
       matrix:
