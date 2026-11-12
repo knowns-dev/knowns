@@ -180,7 +180,9 @@ describe("TypeScript runtime daemon store sync", () => {
       const status = runGoSide(b, ["store", "status"]);
       expect(status.stdout).toContain("paused: conflict");
       const tsStatus = await runTsSide(b, ["store", "status"]);
-      expect(tsStatus.stdout).toBe(status.stdout);
+      // The two runs are seconds apart, so relative times ("1s ago" vs "2s ago") may differ.
+      const ago = (s: string) => s.replace(/\b\d+[smhd] ago\b/g, "<N> ago");
+      expect(ago(tsStatus.stdout)).toBe(ago(status.stdout));
       db = daemon(b, "go");
       await new Promise((r) => setTimeout(r, 2500));
       expect(readState(b).conflicts).toHaveLength(1);
