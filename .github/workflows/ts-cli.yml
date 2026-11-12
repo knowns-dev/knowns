@@ -5,7 +5,7 @@ on:
     branches: [feat/typescript-rewrite]
     paths: ['cli/**', 'ui/**', 'npm/**', 'install/**', 'scripts/**', '.github/workflows/ts-cli.yml', 'internal/**', 'cmd/**', 'docs/**', '*.md']
   pull_request:
-    branches: [feat/typescript-rewrite]
+    branches: [feat/typescript-rewrite, develop, main]
     paths: ['cli/**', 'ui/**', 'npm/**', 'install/**', 'scripts/**', '.github/workflows/ts-cli.yml', 'internal/**', 'cmd/**', 'docs/**', '*.md']
   workflow_dispatch:
 
