@@ -6,3 +6,6 @@
 # so a Windows checkout must not rewrite them to CRLF.
 internal/instructions/** text eol=lf
 cli/src/domain/instructions/embedded.generated.ts text eol=lf
+
+# The TS CLI is formatted and checked as LF (Biome), and some tests read its own sources.
+cli/** text=auto eol=lf
