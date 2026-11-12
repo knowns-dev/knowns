@@ -227,6 +227,8 @@ func TestStoreNameFromRemote(t *testing.T) {
 		"https://gitlab.com/team/knowledge":          "knowledge",
 		"https://gitlab.com/team/knowledge/":         "knowledge",
 		"/srv/git/team.git":                          "team",
+		`C:\srv\git\team.git`:                        "team",
+		`C:\srv\git\team\`:                           "team",
 	} {
 		if got := storeNameFromRemote(remote); got != want {
 			t.Fatalf("storeNameFromRemote(%q) = %q, want %q", remote, got, want)

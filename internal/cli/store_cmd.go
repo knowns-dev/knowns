@@ -160,7 +160,9 @@ func ensureStoreClone(ctx context.Context, dir, remote string) (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return false, fmt.Errorf("create stores directory: %w", err)
 	}
-	if _, err := runStoreGit(ctx, "", "clone", "--", remote, dir); err != nil {
+	// Knowledge files are hashed byte for byte; keep Git on Windows from turning LF into CRLF in the
+	// clone. -c on clone is stored in the new repository, so every later sync keeps it.
+	if _, err := runStoreGit(ctx, "", "clone", "-c", "core.autocrlf=false", "--", remote, dir); err != nil {
 		_ = os.RemoveAll(dir)
 		return false, fmt.Errorf("could not clone store %s: %w", remote, err)
 	}
@@ -207,11 +209,11 @@ func runStoreUnlink(cmd *cobra.Command, args []string) error {
 }
 
 // storeNameFromRemote derives a store folder name from a Git remote:
-// git@host:team/knowledge.git and https://host/team/knowledge both give
-// "knowledge".
+// git@host:team/knowledge.git, https://host/team/knowledge and a Windows
+// path C:\git\knowledge.git all give "knowledge".
 func storeNameFromRemote(remote string) string {
-	name := strings.TrimRight(remote, "/")
-	if i := strings.LastIndexAny(name, "/:"); i >= 0 {
+	name := strings.TrimRight(remote, `/\`)
+	if i := strings.LastIndexAny(name, `/\:`); i >= 0 {
 		name = name[i+1:]
 	}
 	return strings.TrimSuffix(name, ".git")

@@ -13,10 +13,13 @@ import {
 import { dirname, join, relative, sep } from "node:path";
 import { DEFAULT_GIT_TIMEOUT_MS, git } from "./git.ts";
 
-/** storeNameFromRemote: git@host:team/knowledge.git and https://host/team/knowledge give "knowledge". */
+/**
+ * storeNameFromRemote: git@host:team/knowledge.git, https://host/team/knowledge and a Windows path
+ * C:\git\knowledge.git all give "knowledge".
+ */
 export function storeNameFromRemote(remote: string): string {
-  let name = remote.replace(/\/+$/, "");
-  const i = Math.max(name.lastIndexOf("/"), name.lastIndexOf(":"));
+  let name = remote.replace(/[/\\]+$/, "");
+  const i = Math.max(name.lastIndexOf("/"), name.lastIndexOf("\\"), name.lastIndexOf(":"));
   if (i >= 0) name = name.slice(i + 1);
   return name.endsWith(".git") ? name.slice(0, -4) : name;
 }
@@ -83,7 +86,9 @@ export async function ensureStoreClone(
     throw new Error(`create stores directory: ${(e as Error).message}`);
   }
   try {
-    await runStoreGit(signal, "", "clone", "--", remote, dir);
+    // Knowledge files are hashed byte for byte; keep Git on Windows from turning LF into CRLF in the
+    // clone. -c on clone is stored in the new repository, so every later sync keeps it.
+    await runStoreGit(signal, "", "clone", "-c", "core.autocrlf=false", "--", remote, dir);
   } catch (e) {
     rmSync(dir, { recursive: true, force: true });
     throw new Error(`could not clone store ${remote}: ${(e as Error).message}`);
