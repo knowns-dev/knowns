@@ -79,10 +79,14 @@ cases("lsp commands", () => {
     // `lsp install ruby` checks the no-gem error path; with gem on PATH (GitHub's ubuntu image)
     // both sides start a real ruby-lsp install instead.
     const skip = args[2] === "ruby" && hasBin("gem");
-    test.skipIf(skip)(args.join(" "), async () => {
-      const { go, ts } = await both(pair, args);
-      expect(ts).toEqual(go);
-    }, 60_000);
+    test.skipIf(skip)(
+      args.join(" "),
+      async () => {
+        const { go, ts } = await both(pair, args);
+        expect(ts).toEqual(go);
+      },
+      60_000,
+    );
   }
 
   test.skipIf(!hasBin("gopls"))(

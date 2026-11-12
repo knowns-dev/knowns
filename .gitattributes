@@ -5,3 +5,4 @@
 # Skills and guidelines are embedded byte for byte (Go go:embed, TS embedded.generated.ts),
 # so a Windows checkout must not rewrite them to CRLF.
 internal/instructions/** text eol=lf
+cli/src/domain/instructions/embedded.generated.ts text eol=lf
