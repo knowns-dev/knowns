@@ -5,7 +5,7 @@
 <h1 align="center">Knowns</h1>
 
 <p align="center">
-  <a href="https://go.dev/"><img src="https://img.shields.io/badge/go-%3E%3D1.24.2-00ADD8?style=flat-square&logo=go" alt="Go"></a>
+  <a href="https://bun.sh/"><img src="https://img.shields.io/badge/bun-%3E%3D1.3.12-000000?style=flat-square&logo=bun" alt="Bun"></a>
   <a href="https://github.com/knowns-dev/knowns/releases"><img src="https://img.shields.io/github/v/release/knowns-dev/knowns?style=flat-square" alt="Release"></a>
   <a href="https://github.com/knowns-dev/knowns/stargazers"><img src="https://img.shields.io/github/stars/knowns-dev/knowns?style=flat-square" alt="GitHub stars"></a>
   <a href="https://github.com/knowns-dev/knowns/actions/workflows/ci.yml"><img src="https://github.com/knowns-dev/knowns/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -240,7 +240,7 @@ Memory category `decision` là legacy và read-only đối với write mới. Re
 
 ### Semantic search
 
-Tìm theo ý nghĩa, không chỉ keyword. Chạy local bằng ONNX models — offline hoàn toàn, không cần API key.
+Tìm theo ý nghĩa, không chỉ keyword. Embedding lấy từ model [Ollama](https://ollama.com) chạy local, vector lưu trong Qdrant local do Knowns quản lý (hoặc dùng `knowns qdrant setup` để chọn Docker hay Qdrant có sẵn) - offline hoàn toàn, không cần API key.
 
 ```bash
 knowns search "how does authentication work" --plain
@@ -462,17 +462,21 @@ npm install -g knowns
 npx knowns
 ```
 
-### Build từ source (Go 1.24.2+)
+### Build từ source (Bun 1.3.12+)
+
+Knowns được build bằng [Bun](https://bun.sh) thành một binary duy nhất, chạy độc lập. Chỉ cần Bun khi build.
 
 ```bash
-go install github.com/howznguyen/knowns/cmd/knowns@latest
-
-# Hoặc clone rồi build
 git clone https://github.com/knowns-dev/knowns.git
 cd knowns
-make build        # Output: bin/knowns
-make install      # Cài vào GOPATH/bin
+(cd ui && bun install && bun run build)   # binary nhúng sẵn Web UI đã build
+cd cli && bun install
+bun run build bun-darwin-arm64            # Output: cli/dist/darwin-arm64/knowns
 ```
+
+Chọn target theo máy của bạn: `bun-darwin-arm64`, `bun-darwin-x64`, `bun-linux-x64`, `bun-linux-arm64`, `bun-windows-x64` hoặc `bun-windows-arm64`. Không truyền target thì `bun run build` build cả sáu. Sau đó copy binary vào một thư mục có trong `PATH`.
+
+> Các bản đến 0.34.1 được viết bằng Go. Mã Go vẫn nằm trong `cmd/` và `internal/` làm bản tham chiếu để test bản TypeScript; `go install github.com/howznguyen/knowns/cmd/knowns@latest` sẽ build 0.34.1, không phải bản phát hành hiện tại.
 
 ### Gỡ cài đặt
 
@@ -488,7 +492,7 @@ npm uninstall -g knowns
 # Shell installer (macOS/Linux)
 curl -fsSL https://knowns.sh/script/uninstall | sh
 
-# Go install
+# Go install (0.34.1 trở về trước)
 rm -f "$(go env GOPATH)/bin/knowns"
 ```
 
@@ -596,27 +600,27 @@ Optional self-hosted sync server cho shared visibility mà không bỏ local-fir
 
 ## Development
 
-Cần **Go 1.24.2+** và tùy chọn **Node.js + pnpm** cho UI development.
+Cần **Bun 1.3.12+**. **Go 1.25+** là tùy chọn: test parity tự build bản tham chiếu Go 0.34.1 từ `cmd/`, và bỏ qua phần so sánh với Go nếu không có Go.
 
 ```bash
-make build              # Build binary -> bin/knowns
-make dev                # Build với race detector
-make test               # Unit tests
-make test-e2e           # CLI + MCP E2E tests
-make test-e2e-semantic  # E2E tests bao gồm semantic search
-make lint               # golangci-lint
-make cross-compile      # Build cho 6 platforms
-make ui                 # Rebuild embedded Web UI (cần pnpm)
+make ui                          # Build Web UI để nhúng vào binary (cd ui && bun run build)
+cd cli && bun install
+bun run check                    # Typecheck + lint (Biome)
+bun run test                     # Unit test và test parity
+bun run build bun-linux-x64      # Build một target -> cli/dist/linux-x64/knowns
+bun run build                    # Build cả 6 target
+bun run cli-docs:check           # CLI reference khớp với cây lệnh
 ```
 
-Khi chạy trực tiếp Go E2E suite, dùng `scripts/go-e2e.sh` (hoặc `scripts/go-e2e.ps1` trên Windows), ví dụ `TEST_BINARY=cli/dist/linux-x64/knowns scripts/go-e2e.sh -v`: script đặt home tạm cho suite để project test không bao giờ rơi vào `~/.knowns` thật của bạn.
+Test parity so sánh từng byte output của CLI TypeScript với bản tham chiếu Go 0.34.1. Để dùng lại một bản Go đã build thay vì build mỗi lần chạy, trỏ `KNOWNS_GO_BIN` tới nó (`go build -o /tmp/knowns-go ./cmd/knowns`, sau khi chạy `make ui`).
+
+Bộ E2E cho CLI + MCP trong `tests/` viết bằng Go và chạy được với binary bất kỳ. Khi chạy suite này, dùng `scripts/go-e2e.sh` (hoặc `scripts/go-e2e.ps1` trên Windows), ví dụ `TEST_BINARY=cli/dist/linux-x64/knowns scripts/go-e2e.sh -v`: script đặt home tạm cho suite để project test không bao giờ rơi vào `~/.knowns` thật của bạn.
 
 #### Phát triển Web UI
 
 Vite dev UI chạy ở `http://localhost:6421` và gọi API server ở `:6420` (`API_URL`).
 
 ```bash
-make dev-all            # Go server (hot reload) + Vite dev UI
 make dev-all-ts         # TypeScript server + Vite dev UI
 make dev-ui             # Chỉ Vite dev UI
 make dev-ts             # Chỉ TypeScript server
@@ -634,18 +638,22 @@ KNOWNS_ALLOWED_ORIGINS=http://localhost:6421 knowns browser --port 6420 --no-ope
 ### Project structure
 
 ```
-cmd/knowns/          # CLI entry point
-internal/
-  cli/               # Cobra commands
-  models/            # Domain models
-  storage/           # File-based storage (.knowns/)
-  server/            # HTTP server, SSE, WebSocket
-    routes/          # REST API handlers
-    workspace/       # Agent orchestrator, process manager, worktree
-  mcp/               # MCP server (stdio)
-  search/            # Semantic search (ONNX)
-ui/                  # Embedded React UI (built assets)
-tests/               # E2E tests
+cli/                 # Knowns CLI (TypeScript trên Bun)
+  src/
+    main.ts          # CLI entry point
+    cli/             # Các lệnh
+    models/          # Domain models
+    storage/         # File-based storage (.knowns/)
+    server/          # HTTP server, SSE, WebSocket
+    mcp/             # MCP server (stdio)
+    search/          # Keyword search và semantic search
+    runtime/         # Runtime daemon chạy nền
+    lsp/             # Code intelligence dựa trên LSP
+  test/              # Unit test và test parity với Go
+  scripts/           # Build, fixtures, sinh CLI reference
+ui/                  # React Web UI (Knowns UI), nhúng vào binary
+cmd/, internal/      # Bản tham chiếu Go 0.34.1
+tests/               # E2E tests (Go)
 ```
 
 ---
