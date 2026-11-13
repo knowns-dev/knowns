@@ -4,6 +4,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { allAdapters } from "../../src/lsp/adapters/index.ts";
 import { hasGoBin, makePair, normalized, runBoth } from "../cli/commands/harness.ts";
 
 const env = { KNOWNS_LSP_DAEMON: "0", KNOWN_LSP_AUTO_INSTALL: "0", KNOWNS_RUNTIME_INLINE: "1" };
@@ -43,8 +44,33 @@ async function both(pair: ReturnType<typeof makePair>, args: string[]) {
   };
 }
 
+/**
+ * Both sides give each server's version check 2 s, and runBoth runs Go first. The first start of a
+ * server binary on a fresh CI image (clangd on windows-latest) can take longer than that, so Go
+ * alone would see it as missing. Run every check once here, with room to spare, so both sides see
+ * a warm binary. The product timeout stays 2 s.
+ */
+function warmServersOnPath(): void {
+  for (const adapter of allAdapters()) {
+    for (const b of adapter.binaries()) {
+      const path = Bun.which(b.name, { PATH: process.env.PATH ?? "" });
+      if (!path || !b.check_args?.length) continue;
+      try {
+        Bun.spawnSync([path, ...b.check_args], {
+          stdout: "ignore",
+          stderr: "ignore",
+          timeout: 30_000,
+        });
+      } catch {
+        // A check that cannot even start fails the same way on both sides.
+      }
+    }
+  }
+}
+
 cases("lsp commands", () => {
   const pair = makePair("empty");
+  beforeAll(warmServersOnPath, 120_000);
   // The in-process TS CLI reads HOME from process.env (the Go child gets it from the harness).
   beforeAll(() => {
     saved.HOME = process.env.HOME;

@@ -30,8 +30,13 @@ test("queue updates and cross-process reads never fail each other", async () => 
       let reads = 0;
       const errors = [];
       writeFileSync(ready, "1");
+      // Real readers poll (waitForJob every 200 ms). A reader with no pause at all keeps the file
+      // open almost continuously, so on a 2-core runner four of them starve the writer's rename
+      // past its 2 s retry budget: a load no Knowns process produces. A 1 ms pause still overlaps
+      // every update while leaving the writer the gaps a real poller leaves.
       while (!existsSync(stop)) {
         try { loadQueue(storeRoot); reads++; } catch (e) { errors.push(String(e?.code ?? e)); }
+        Bun.sleepSync(1);
       }
       console.log(JSON.stringify({ reads, errors: errors.slice(0, 5), errorCount: errors.length }));
     `;
