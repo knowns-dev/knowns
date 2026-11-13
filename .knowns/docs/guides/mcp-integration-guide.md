@@ -3,7 +3,7 @@ id: doc-6168fb62f0324ea88503bd09983a3917
 title: MCP Integration Guide
 description: Setup MCP server for AI assistants (Claude, Cursor, etc.)
 createdAt: '2026-02-24T08:45:15.876Z'
-updatedAt: '2026-07-22T04:43:55.205Z'
+updatedAt: '2026-11-13T07:15:18.326Z'
 tags:
   - guide
   - mcp
@@ -36,8 +36,8 @@ Knowns is a compiled Go binary. Install it first, then configure MCP.
 # Via npm (downloads platform-specific Go binary)
 npm install -g knowns
 
-# Via Go
-go install github.com/howznguyen/knowns/cmd/knowns@latest
+# Via Homebrew (macOS/Linux)
+brew install knowns-dev/tap/knowns
 
 # Via curl (Linux/macOS)
 curl -fsSL https://raw.githubusercontent.com/howznguyen/knowns/main/install/install.sh | sh
