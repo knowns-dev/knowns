@@ -1,0 +1,130 @@
+[
+  {
+    "id": "FX-19XJKQ",
+    "title": "Prod is down",
+    "status": "urgent",
+    "priority": "high",
+    "assignee": "@fixture",
+    "labels": null,
+    "createdAt": "2026-11-03T13:37:36.278Z",
+    "updatedAt": "2026-11-03T13:37:36.278Z",
+    "archived": false,
+    "acceptanceCriteria": null,
+    "timeSpent": 0,
+    "canonicalHash": "27de8882a68ae49e8370e54263ee0fde4e80d7b78e7559776b5232c7d740ae58"
+  },
+  {
+    "id": "FX-X82CAD",
+    "title": "Blocked on vendor",
+    "status": "blocked",
+    "priority": "low",
+    "assignee": "@fixture",
+    "labels": null,
+    "createdAt": "2026-11-03T13:37:36.179Z",
+    "updatedAt": "2026-11-03T13:37:36.179Z",
+    "archived": false,
+    "acceptanceCriteria": null,
+    "timeSpent": 0,
+    "canonicalHash": "6ede0d6fa14d15ca2b332b8d64bd4c5349b88bef237d456274b9720eed04bddf"
+  },
+  {
+    "id": "FX-60REC2",
+    "title": "Plain todo",
+    "status": "todo",
+    "priority": "medium",
+    "assignee": "@fixture",
+    "labels": null,
+    "createdAt": "2026-11-03T13:37:36.445Z",
+    "updatedAt": "2026-11-03T13:37:37.448Z",
+    "archived": false,
+    "acceptanceCriteria": null,
+    "timeSpent": 0,
+    "canonicalHash": "7719bd660c8817817971c0c56a8ea47062cbe9e23c29f24e8a00f255abc35a06"
+  },
+  {
+    "id": "FX-P6DXEY",
+    "title": "Fix: unicode 日本語 title / with \"quotes\" \u0026 colon",
+    "description": "Ünïcödé body",
+    "status": "todo",
+    "priority": "medium",
+    "assignee": "@fixture",
+    "labels": null,
+    "createdAt": "2026-11-03T13:37:36.385Z",
+    "updatedAt": "2026-11-03T13:37:36.385Z",
+    "archived": false,
+    "acceptanceCriteria": null,
+    "timeSpent": 0,
+    "canonicalHash": "011de8f3305f68fbfbaefe600a40b66d196e3cbe298d3ea5fb4d0360c81c9ab2"
+  },
+  {
+    "id": "OPS-HYNFXR",
+    "title": "Rotate keys",
+    "status": "todo",
+    "priority": "medium",
+    "assignee": "@fixture",
+    "labels": [
+      "ops"
+    ],
+    "createdAt": "2026-11-03T13:37:36.327Z",
+    "updatedAt": "2026-11-03T13:37:36.327Z",
+    "archived": false,
+    "acceptanceCriteria": null,
+    "timeSpent": 0,
+    "canonicalHash": "7c95dcbe7d982ba90b17dbb602ef94463c653818d8a9fe8b19bbae7b3c0d9005"
+  },
+  {
+    "id": "FX-E9KG7F",
+    "title": "Parked idea",
+    "status": "on-hold",
+    "priority": "medium",
+    "assignee": "@fixture",
+    "labels": null,
+    "createdAt": "2026-11-03T13:37:36.234Z",
+    "updatedAt": "2026-11-03T13:37:36.234Z",
+    "archived": false,
+    "acceptanceCriteria": null,
+    "timeSpent": 0,
+    "canonicalHash": "4346996dddf341f70e9366b3ca478902591a117776673d01b13b30a5a7d33ea2"
+  },
+  {
+    "id": "FX-3VT2SR",
+    "title": "Implement login flow (v2)",
+    "description": "Users sign in with email and password.\n\nSecond paragraph with `code` and a | pipe.",
+    "status": "done",
+    "priority": "high",
+    "assignee": "@fixture",
+    "labels": [
+      "auth",
+      "feature",
+      "shipped"
+    ],
+    "spec": "specs/login",
+    "fulfills": [
+      "AC-1",
+      "AC-2"
+    ],
+    "order": 3,
+    "createdAt": "2026-11-03T13:37:35.144Z",
+    "updatedAt": "2026-11-03T13:37:37.363Z",
+    "completedAt": "2026-11-03T13:37:35.549Z",
+    "archived": false,
+    "acceptanceCriteria": [
+      {
+        "text": "User can log in",
+        "completed": true
+      },
+      {
+        "text": "Bad passwords are rejected",
+        "completed": true
+      },
+      {
+        "text": "Sessions expire after 24h",
+        "completed": true
+      }
+    ],
+    "timeSpent": 8100,
+    "canonicalHash": "1a9c159b26bb5ec63b609df11424400e656e7b2ef6979ccd11e6e21337a293c1",
+    "implementationPlan": "1. Design\n2. Build\n3. Test",
+    "implementationNotes": "Initial notes\n\nImplemented the happy path"
+  }
+]

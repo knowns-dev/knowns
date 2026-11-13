@@ -276,3 +276,47 @@ func TestWorkspaceSwitchByCaseVariantPath(t *testing.T) {
 			len(mgr.GetRegistry().Projects))
 	}
 }
+
+func TestWorkspaceListKeepsStoreLinkedProjectsAndRegistryIntact(t *testing.T) {
+	r, _, mgr, tmpDir := setupWorkspaceTest(t)
+	reg := mgr.GetRegistry()
+
+	// A registered project whose .knowns/ was deleted is filtered out.
+	gone := filepath.Join(tmpDir, "gone")
+	os.MkdirAll(filepath.Join(gone, ".knowns"), 0755)
+	os.WriteFile(filepath.Join(gone, ".knowns", "config.json"), []byte(`{"name":"gone"}`), 0644)
+	if _, err := reg.Add(gone); err != nil {
+		t.Fatal(err)
+	}
+	os.RemoveAll(filepath.Join(gone, ".knowns"))
+
+	// A store-linked project has no .knowns/ in the repository and stays listed.
+	linked := filepath.Join(tmpDir, "shop-web")
+	os.MkdirAll(linked, 0755)
+	storeFolder := filepath.Join(reg.StoresRoot(), "team", "shop-web")
+	os.MkdirAll(storeFolder, 0755)
+	os.WriteFile(filepath.Join(storeFolder, "config.json"), []byte(`{"name":"shop-web"}`), 0644)
+	if _, err := reg.AddStoreLinked(linked, registry.StoreMapping{Name: "team", Project: "shop-web"}); err != nil {
+		t.Fatal(err)
+	}
+	before := len(reg.Projects)
+
+	req := httptest.NewRequest("GET", "/workspaces", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	var projects []registry.Project
+	if err := json.Unmarshal(w.Body.Bytes(), &projects); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	names := map[string]bool{}
+	for _, p := range projects {
+		names[p.Name] = true
+	}
+	if !names["test-project"] || !names["shop-web"] || names["gone"] || len(projects) != 2 {
+		t.Fatalf("listed %+v, want test-project and shop-web only", projects)
+	}
+	if len(reg.Projects) != before || reg.FindByPath(gone) == nil {
+		t.Fatalf("listing must not rewrite the registry in memory, got %+v", reg.Projects)
+	}
+}

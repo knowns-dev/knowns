@@ -1,4 +1,5 @@
 ---
+id: doc-6168fb62f0324ea88503bd09983a3917
 title: MCP Integration Guide
 description: Setup MCP server for AI assistants (Claude, Cursor, etc.)
 createdAt: '2026-02-24T08:45:15.876Z'

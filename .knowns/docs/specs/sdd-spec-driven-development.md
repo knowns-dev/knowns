@@ -1,4 +1,5 @@
 ---
+id: doc-12713f56a72ea5568f80d020ef670247
 title: SDD (Spec-Driven Development)
 description: Spec-Driven Development workflow - flexible, opt-in approach to write specs before code
 createdAt: '2026-02-03T18:03:17.210Z'

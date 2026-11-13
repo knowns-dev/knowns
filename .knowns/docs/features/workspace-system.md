@@ -1,4 +1,5 @@
 ---
+id: doc-b9eb05ff870cfe9c5c41d0d18ecb355e
 title: Workspace System
 createdAt: '2026-03-04T10:19:33.635Z'
 updatedAt: '2026-03-04T10:21:49.207Z'

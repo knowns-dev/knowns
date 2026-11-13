@@ -1,0 +1,14 @@
+{
+  "id": "doc-f8f5f059990a91c0ffe3cdfbead46a36",
+  "path": "architecture",
+  "title": "Architecture",
+  "description": "System design",
+  "content": "# Architecture\n\nOverview.",
+  "tags": [
+    "core",
+    "design"
+  ],
+  "createdAt": "2026-11-03T13:37:36.502Z",
+  "updatedAt": "2026-11-03T13:37:36.502Z",
+  "canonicalHash": "33c8c65919d731dfc24a0bc22e64e6c5d3be61f871236dca9cb1be9b1c88d4d4"
+}

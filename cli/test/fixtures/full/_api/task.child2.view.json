@@ -1,0 +1,17 @@
+{
+  "id": "FX-7TGPH1",
+  "title": "Child two",
+  "status": "done",
+  "priority": "medium",
+  "assignee": "@fixture",
+  "labels": null,
+  "parent": "FX-65T7HG",
+  "createdAt": "2026-11-03T13:37:35.706Z",
+  "updatedAt": "2026-11-03T13:37:36.056Z",
+  "completedAt": "2026-11-03T13:37:35.843Z",
+  "archivedAt": "2026-11-03T13:37:36.056Z",
+  "archived": true,
+  "acceptanceCriteria": null,
+  "timeSpent": 0,
+  "canonicalHash": "ec9d597d1902a341eb8612732da347b1a89da19674ad966c2ef38e61040e966b"
+}

@@ -1,4 +1,5 @@
 ---
+id: doc-5c489bbb209e8bf6e3571a68312204fd
 title: 'Research: Graph Code UX'
 description: Research and recommendations for keeping a single GraphPage while making code graphs easier to use and less overwhelming.
 createdAt: '2026-04-06T04:39:19.404Z'

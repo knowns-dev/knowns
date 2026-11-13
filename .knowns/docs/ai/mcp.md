@@ -1,4 +1,5 @@
 ---
+id: doc-6dcf538b7984e748efdf212bc6eb2b8b
 title: MCP Configuration
 description: MCP server setup — Claude Code and OpenCode supported, others for reference
 createdAt: '2026-01-23T04:07:55.764Z'

@@ -11,21 +11,13 @@ test.afterAll(() => {
 	server?.cleanup();
 });
 
-/**
- * Helper: scroll to History heading in the task detail dialog, then click the
- * CollapsibleTrigger button (chevron) to expand it.
- * The History section uses <Collapsible> — clicking the heading text does nothing;
- * we must click the sibling <button> that wraps the chevron icon.
- */
+/** Helper: open the Activity tab (the version history) of the task detail. */
 async function expandHistory(page: import("@playwright/test").Page) {
 	const dialog = page.locator('[role="dialog"]');
-	const historyHeading = dialog.getByRole("heading", { name: "History", level: 3 });
-	await historyHeading.scrollIntoViewIfNeeded();
-	await expect(historyHeading).toBeVisible();
-	const triggerBtn = historyHeading.locator("xpath=preceding-sibling::button[1]");
-	await expect(triggerBtn).toBeVisible();
-	await triggerBtn.click();
-	await page.waitForTimeout(500);
+	const historyTab = dialog.getByRole("tab", { name: "Activity" });
+	await historyTab.click();
+	await expect(historyTab).toHaveAttribute("aria-selected", "true");
+	await expect(dialog.getByRole("region", { name: "History" })).toBeVisible();
 }
 
 test.describe("Task History Panel", () => {
@@ -45,7 +37,7 @@ test.describe("Task History Panel", () => {
 			await expect(page.getByRole("heading", { name: "History Task", exact: true })).toBeVisible();
 		});
 
-		await test.step("Expand history via chevron button", async () => {
+		await test.step("Open the Activity tab", async () => {
 			await expandHistory(page);
 		});
 
@@ -70,13 +62,9 @@ test.describe("Task History Panel", () => {
 		});
 
 		await test.step("History summary count is visible", async () => {
+			await expandHistory(page);
 			const dialog = page.locator('[role="dialog"]');
-			await expect(dialog.getByText(/\(3 changes\)|\(\d+ changes\)/).first()).toBeVisible();
-		});
-
-		await test.step("History heading remains visible", async () => {
-			const dialog = page.locator('[role="dialog"]');
-			await expect(dialog.getByRole("heading", { name: "History", level: 3 })).toBeVisible();
+			await expect(dialog.getByText(/\d+ changes/).first()).toBeVisible();
 		});
 	});
 
@@ -98,17 +86,16 @@ test.describe("Task History Panel", () => {
 		await test.step("Click on a version entry to expand it", async () => {
 			const dialog = page.locator('[role="dialog"]');
 			const versionEntry = dialog.getByRole("option").first();
-			if (await versionEntry.isVisible({ timeout: 3000 }).catch(() => false)) {
+			if (await versionEntry.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false)) {
 				await versionEntry.click();
 				await page.waitForTimeout(500);
 			}
 		});
 
 		await test.step("Diff details are shown", async () => {
-			const dialog = page.locator('[role="dialog"]');
-			const hasStatus = await dialog.getByText("Status").isVisible({ timeout: 3000 }).catch(() => false);
-			const hasInProgress = await dialog.getByText("In Progress").isVisible({ timeout: 1000 }).catch(() => false);
-			expect(hasStatus || hasInProgress).toBe(true);
+			// Scope to the history panel: the header pill and the Status property also say "In Progress".
+			const history = page.locator('[role="dialog"]').getByRole("region", { name: "History" });
+			await expect(history.getByText("In Progress").first()).toBeVisible();
 		});
 	});
 
@@ -126,13 +113,9 @@ test.describe("Task History Panel", () => {
 		await test.step("Open task and verify history summary", async () => {
 			await page.goto(`${server.baseURL}/kanban/${taskId}`);
 			await expect(page.getByRole("heading", { name: "Filter Task", exact: true })).toBeVisible();
+			await expandHistory(page);
 			const dialog = page.locator('[role="dialog"]');
-			await expect(dialog.getByText(/\(4 changes\)|\(\d+ changes\)/).first()).toBeVisible();
-		});
-
-		await test.step("History section is visible", async () => {
-			const dialog = page.locator('[role="dialog"]');
-			await expect(dialog.getByRole("heading", { name: "History", level: 3 })).toBeVisible();
+			await expect(dialog.getByText(/\d+ changes/).first()).toBeVisible();
 		});
 	});
 });

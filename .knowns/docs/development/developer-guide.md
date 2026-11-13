@@ -3,7 +3,7 @@ id: doc-0d348a7070f27690ec75bcd4b23881dd
 title: Developer Guide
 description: Technical documentation for contributors and developers
 createdAt: '2025-12-29T11:50:54.275Z'
-updatedAt: '2026-09-24T19:16:36.443Z'
+updatedAt: '2026-11-06T10:22:01.905Z'
 tags:
   - docs
   - developer
@@ -575,6 +575,32 @@ make install
 The React web UI is compiled separately and embedded into the Go binary via `go:embed`:
 
 ```bash
+# Build the React UI (requires Node.js + pnpm)
+make ui
+
+# Then rebuild the Go binary to embed the new UI assets
+make build
+```
+
+#### Web UI development
+
+The Vite dev UI runs on `http://localhost:6421` and calls the API server on `:6420` (override with `API_URL`):
+
+```bash
+make dev-all      # Go server (hot reload) + Vite dev UI
+make dev-all-ts   # TypeScript server + Vite dev UI
+make dev-ui       # Vite dev UI only
+make dev-ts       # TypeScript server only
+```
+
+The TypeScript web server accepts requests only from its own origin (spec D12, TSR-X86JV4), so a UI served from another port must be listed in `KNOWNS_ALLOWED_ORIGINS`: exact origins (`scheme://host:port`), comma-separated, no wildcards. `make dev-ts` and `make dev-all-ts` set it to `http://localhost:6421,http://127.0.0.1:6421` (both spellings, because the match is exact). If you start the server yourself, set it too, otherwise every API call from the dev UI fails with `403 untrusted request origin`:
+
+```bash
+KNOWNS_ALLOWED_ORIGINS=http://localhost:6421 knowns browser --port 6420 --no-open
+```
+
+The Go server (`make dev-go`, `make dev-all`) still trusts every loopback origin and needs no variable.
+
 # Build the React UI (requires Node.js + pnpm)
 make ui
 

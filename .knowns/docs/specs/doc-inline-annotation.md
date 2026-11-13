@@ -1,4 +1,5 @@
 ---
+id: doc-d60cfda835c2bd3b1663e0bac3391e32
 title: Doc Inline Annotation
 description: Specification for inline annotation on rendered docs in WebUI — select text, annotate (comment/replace/delete), stack across docs, copy structured markdown for agent feedback.
 createdAt: '2026-05-04T19:33:07.814Z'

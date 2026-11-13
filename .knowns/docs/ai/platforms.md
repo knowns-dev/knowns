@@ -1,4 +1,5 @@
 ---
+id: doc-df57683a623053b51f85cd056ea7f655
 title: AI Platforms
 description: 'Supported AI platforms: Claude Code, OpenCode. Reference configs for others.'
 createdAt: '2026-01-23T04:07:55.100Z'

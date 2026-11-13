@@ -1,4 +1,5 @@
 ---
+id: doc-fec7d958c6d0cf0e38d7f35e5bf2dd07
 title: Template Config
 createdAt: '2026-01-23T04:00:55.418Z'
 updatedAt: '2026-03-09T06:40:05.853Z'

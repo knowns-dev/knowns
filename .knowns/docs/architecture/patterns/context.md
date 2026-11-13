@@ -1,4 +1,5 @@
 ---
+id: doc-36fc5faa881d4f1f29add4d940a07af3
 title: Context Pattern
 createdAt: '2025-12-29T09:01:30.859Z'
 updatedAt: '2025-12-29T09:03:35.271Z'

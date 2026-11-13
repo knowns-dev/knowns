@@ -609,6 +609,28 @@ make cross-compile      # Build cho 6 platforms
 make ui                 # Rebuild embedded Web UI (cần pnpm)
 ```
 
+Khi chạy trực tiếp Go E2E suite, dùng `scripts/go-e2e.sh` (hoặc `scripts/go-e2e.ps1` trên Windows), ví dụ `TEST_BINARY=cli/dist/linux-x64/knowns scripts/go-e2e.sh -v`: script đặt home tạm cho suite để project test không bao giờ rơi vào `~/.knowns` thật của bạn.
+
+#### Phát triển Web UI
+
+Vite dev UI chạy ở `http://localhost:6421` và gọi API server ở `:6420` (`API_URL`).
+
+```bash
+make dev-all            # Go server (hot reload) + Vite dev UI
+make dev-all-ts         # TypeScript server + Vite dev UI
+make dev-ui             # Chỉ Vite dev UI
+make dev-ts             # Chỉ TypeScript server
+```
+
+Web server TypeScript chỉ nhận request từ origin của chính nó, nên dev UI ở cổng khác phải được cho
+phép qua `KNOWNS_ALLOWED_ORIGINS` (origin chính xác, phân tách bằng dấu phẩy, không wildcard).
+`make dev-ts` đặt sẵn `http://localhost:6421,http://127.0.0.1:6421`; nếu tự chạy server thì đặt
+giống vậy, nếu không UI sẽ nhận `403 untrusted request origin`:
+
+```bash
+KNOWNS_ALLOWED_ORIGINS=http://localhost:6421 knowns browser --port 6420 --no-open
+```
+
 ### Project structure
 
 ```

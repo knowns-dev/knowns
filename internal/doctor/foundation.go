@@ -16,7 +16,7 @@ func ProjectFromStore(store *storage.Store) ProjectInfo {
 	if store == nil {
 		return InactiveProject()
 	}
-	projectPath := filepath.Dir(store.Root)
+	projectPath := store.ProjectRoot
 	info := ProjectInfo{
 		Active:        true,
 		Name:          filepath.Base(projectPath),

@@ -41,7 +41,11 @@ test.describe("Memory lifecycle destinations", () => {
 		await expect(page.getByTestId("memory-trusted-destination")).toBeVisible();
 		await expect(page.getByText(seed.activeTitle, { exact: true })).toBeVisible();
 		await expect(page.getByText(seed.proposedTitle, { exact: true })).toHaveCount(0);
-		await expect(page.getByRole("button", { name: "New proposal" })).toHaveCount(0);
+		// Trusted is the agent-memory block: search, scope filter, and per-row pin, edit and forget.
+		const trusted = page.getByRole("region", { name: "Trusted" });
+		await expect(trusted.getByRole("searchbox", { name: "Search memories" })).toBeVisible();
+		await expect(trusted.getByRole("radiogroup", { name: "Scope" })).toBeVisible();
+		await expect(trusted.getByRole("button", { name: `Forget: ${short(seed.activeTitle)}` })).toBeVisible();
 
 		await page.getByText(seed.activeTitle, { exact: true }).click();
 		await expect(page.getByTestId("memory-readonly-detail")).toBeVisible();
@@ -70,7 +74,7 @@ test.describe("Memory lifecycle destinations", () => {
 		const seed = await seedMemoryReview(page);
 		await page.goto(`${server.baseURL}/memory`);
 
-		await page.getByTestId(`memory-row-${seed.activeId}`).click();
+		await trustedRow(page, seed.activeId).click();
 		const detail = page.getByTestId("memory-readonly-detail");
 		await detail.getByRole("button", { name: "Remove from Trusted" }).click();
 
@@ -90,17 +94,87 @@ test.describe("Memory lifecycle destinations", () => {
 			.getByRole("button", { name: "Confirm outcome" })
 			.click();
 
-		await expect(page.getByTestId(`memory-row-${seed.activeId}`)).toHaveCount(0);
+		await expect(trustedRow(page, seed.activeId)).toHaveCount(0);
 		await expect(page.getByRole("tab", { name: /Trusted/ })).toBeFocused();
 
 		await page.getByRole("tab", { name: /History/ }).click();
-		await expect(page.getByTestId(`memory-row-${seed.activeId}`)).toBeVisible();
-		await page.getByTestId(`memory-row-${seed.activeId}`).click();
+		await expect(trustedRow(page, seed.activeId)).toBeVisible();
+		await trustedRow(page, seed.activeId).click();
 		const historicalDetail = page.getByTestId("memory-readonly-detail");
 		await expect(historicalDetail).toContainText("Historical record");
 		await expect(historicalDetail).toContainText(`@decision/${seed.currentDecisionId}`);
 		await expect(historicalDetail.getByRole("button", { name: "Remove from Trusted" })).toHaveCount(0);
 		await expect(historicalDetail.getByRole("button", { name: /delete|permanent/i })).toHaveCount(0);
+	});
+
+	test("forgets trusted recall with undo, then archives it to History", async ({ page }) => {
+		const seed = await seedMemoryReview(page);
+		await page.goto(`${server.baseURL}/memory`);
+		const trusted = page.getByRole("region", { name: "Trusted" });
+
+		await trusted.getByRole("button", { name: `Forget: ${short(seed.activeTitle)}` }).click();
+		await expect(trustedRow(page, seed.activeId)).toHaveCount(0);
+		await expect(trusted.getByText("Forgot 1 memory")).toBeVisible();
+		await trusted.getByRole("button", { name: "Undo" }).click();
+		await expect(trustedRow(page, seed.activeId)).toBeVisible();
+
+		await trusted.getByRole("button", { name: `Forget: ${short(seed.activeTitle)}` }).click();
+		await expect(trusted.getByText("Forgot 1 memory")).toBeVisible();
+		// The archive runs once the undo window (6s) closes.
+		await expect(trusted.getByText("Forgot 1 memory")).toHaveCount(0, { timeout: 10_000 });
+		await expect
+			.poll(async () => (await (await page.request.get(`${server.baseURL}/api/memories/${seed.activeId}`)).json()).status, {
+				timeout: 10_000,
+			})
+			.toBe("archived");
+		await page.getByRole("tab", { name: /History/ }).click();
+		await expect(trustedRow(page, seed.activeId)).toBeVisible();
+		await expect(page.getByRole("button", { name: /^Forget:/ })).toHaveCount(0);
+	});
+
+	test("edits and pins trusted recall in place and keeps it after reload", async ({ page }) => {
+		const seed = await seedMemoryReview(page);
+		await page.goto(`${server.baseURL}/memory`);
+		const trusted = page.getByRole("region", { name: "Trusted" });
+		const renamed = `Renamed target ${seed.prefix}`;
+
+		await trusted.getByRole("button", { name: `Edit: ${short(seed.activeTitle)}` }).click();
+		const editor = trusted.getByLabel("Edit memory");
+		await editor.fill(renamed);
+		await editor.press("Enter");
+		await expect(trustedRow(page, seed.activeId)).toHaveText(renamed);
+
+		await trusted.getByRole("button", { name: `Pin: ${short(renamed)}` }).click();
+		await expect(trusted.getByRole("button", { name: `Unpin: ${short(renamed)}` })).toHaveAttribute("aria-pressed", "true");
+		// Pinned memories sort first.
+		await expect(trusted.locator("li[data-memory-id]").first()).toHaveAttribute("data-memory-id", seed.activeId);
+
+		await expect
+			.poll(async () => {
+				const memory = await (await page.request.get(`${server.baseURL}/api/memories/${seed.activeId}`)).json();
+				return `${memory.title}|${(memory.tags || []).includes("pinned")}`;
+			})
+			.toBe(`${renamed}|true`);
+		await page.reload();
+		await expect(trustedRow(page, seed.activeId)).toHaveText(renamed);
+		await expect(page.getByRole("button", { name: `Unpin: ${short(renamed)}` })).toBeVisible();
+	});
+
+	test("filters trusted recall by search and Knowns layer", async ({ page }) => {
+		const seed = await seedMemoryReview(page);
+		await page.goto(`${server.baseURL}/memory`);
+		const trusted = page.getByRole("region", { name: "Trusted" });
+
+		// Search also matches what the row does not show, such as the source ref.
+		await trusted.getByRole("searchbox", { name: "Search memories" }).fill(seed.currentDecisionId);
+		await expect(trustedRow(page, seed.activeId)).toBeVisible();
+		await expect(trusted.getByText(seed.missingSourceTitle, { exact: true })).toHaveCount(0);
+		await trusted.getByRole("searchbox", { name: "Search memories" }).fill("");
+
+		await trusted.getByRole("radio", { name: /^Global/ }).click();
+		await expect(trusted.getByText("No global memories.")).toBeVisible();
+		await trusted.getByRole("radio", { name: /^Project/ }).click();
+		await expect(trustedRow(page, seed.activeId)).toBeVisible();
 	});
 
 	test("shows explicit impact before item and bulk review outcomes", async ({ page }) => {
@@ -145,15 +219,14 @@ test.describe("Memory lifecycle destinations", () => {
 		await focus.getByRole("button", { name: "Browse existing" }).click();
 		const browser = page.getByTestId("reference-browser");
 		await expect(browser).toBeVisible();
-		const layers = await page.evaluate(() => {
-			const focusDialog = document.querySelector('[data-testid="memory-focus-dialog"]');
-			const referenceBrowser = document.querySelector('[data-testid="reference-browser"]');
-			return {
-				focus: Number.parseInt(getComputedStyle(focusDialog as Element).zIndex || "0", 10),
-				browser: Number.parseInt(getComputedStyle(referenceBrowser as Element).zIndex || "0", 10),
-			};
+		// The picker renders inside the focus view's modal <dialog> (top layer) and is the topmost thing at its centre.
+		const layering = await browser.evaluate((element) => {
+			const host = element.closest("dialog[open]");
+			const r = element.getBoundingClientRect();
+			const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+			return { sameLayer: !!host?.querySelector('[data-testid="memory-focus-dialog"]'), onTop: !!hit && element.contains(hit) };
 		});
-		expect(layers.browser).toBeGreaterThan(layers.focus);
+		expect(layering).toEqual({ sameLayer: true, onTop: true });
 		await page.keyboard.press("Escape");
 		await expect(browser).toHaveCount(0);
 
@@ -273,6 +346,12 @@ test.describe("Memory lifecycle destinations", () => {
 		await expectControlsFit(page);
 		await page.screenshot({ path: testInfo.outputPath("memory-review-mobile.png"), fullPage: true });
 
+		await page.goto(`${server.baseURL}/memory`);
+		await expect(trustedRow(page, seed.activeId)).toBeVisible();
+		await expectNoHorizontalOverflow(page);
+		await page.screenshot({ path: testInfo.outputPath("memory-trusted-mobile.png"), fullPage: true });
+
+		await page.goto(`${server.baseURL}/memory/review`);
 		await page.getByText(seed.missingSourceTitle, { exact: true }).click();
 		const mobileRecommendations = page.getByTestId("memory-source-recommendations");
 		await expect(mobileRecommendations).toBeVisible();
@@ -281,6 +360,16 @@ test.describe("Memory lifecycle destinations", () => {
 		await page.screenshot({ path: testInfo.outputPath("memory-source-recommendations-mobile.png"), fullPage: true });
 	});
 });
+
+/** A Trusted or History row: the agent-memory block's open button for this memory. */
+function trustedRow(page: Page, id: string) {
+	return page.locator(`[data-memory-open="${id}"]`);
+}
+
+/** The block names row actions after the first 40 characters of the memory. */
+function short(text: string) {
+	return text.length > 40 ? `${text.slice(0, 40)}…` : text;
+}
 
 async function seedMemoryReview(page: Page): Promise<MemorySeed> {
 	const prefix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;

@@ -157,7 +157,7 @@ export default function ReferencePicker({
 						>
 							<Search className="h-4 w-4" />
 							{browseLabel}
-							<ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} />
+							<ChevronDown className={cn("h-4 w-4 transition-transform duration-(--kn-dur-fast) ease-(--kn-ease-inout)", open && "rotate-180")} />
 						</button>
 					</PopoverTrigger>
 				</div>

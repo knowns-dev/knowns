@@ -1,0 +1,1785 @@
+[
+  {
+    "binaries": [
+      {
+        "name": "gopls",
+        "args": ["serve"],
+        "check_args": ["version"]
+      }
+    ],
+    "canInstall": false,
+    "defaultArgs": ["serve"],
+    "extensions": [".go"],
+    "id": "go",
+    "ignoredDirs": ["vendor", "node_modules", "dist", "build"],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "command": "go install golang.org/x/tools/gopls@latest",
+      "url": "https://pkg.go.dev/golang.org/x/tools/gopls",
+      "notes": "Requires Go 1.21+ installed"
+    },
+    "name": "Go",
+    "prerequisites": [
+      {
+        "name": "Go 1.21+",
+        "check_cmd": "go version",
+        "install_hint": "Install Go from https://go.dev/dl/"
+      }
+    ],
+    "runtimeDeps": [],
+    "supportsImplementation": true,
+    "supportsReferences": true
+  },
+  {
+    "binaries": [
+      {
+        "name": "typescript-language-server",
+        "args": ["--stdio"],
+        "check_args": ["--version"]
+      }
+    ],
+    "canInstall": true,
+    "defaultArgs": ["--stdio"],
+    "documentSync": {
+      "A.JSX": {
+        "languageID": "javascriptreact",
+        "suppress": false
+      },
+      "C:\\r\\i.JS": {
+        "languageID": "javascript",
+        "suppress": false
+      },
+      "C:\\repo\\X.TFVARS.JSON": {
+        "languageID": "typescript",
+        "suppress": false
+      },
+      "a.js": {
+        "languageID": "javascript",
+        "suppress": false
+      },
+      "a.jsx": {
+        "languageID": "javascriptreact",
+        "suppress": false
+      },
+      "a.ts": {
+        "languageID": "typescript",
+        "suppress": false
+      },
+      "a.tsx": {
+        "languageID": "typescriptreact",
+        "suppress": false
+      },
+      "main.tf": {
+        "languageID": "typescript",
+        "suppress": false
+      },
+      "net.tf.json": {
+        "languageID": "typescript",
+        "suppress": false
+      },
+      "vars.tfvars": {
+        "languageID": "typescript",
+        "suppress": false
+      },
+      "x.d.ts": {
+        "languageID": "typescript",
+        "suppress": false
+      },
+      "x.py": {
+        "languageID": "typescript",
+        "suppress": false
+      }
+    },
+    "extensions": [".ts", ".tsx", ".js", ".jsx"],
+    "id": "typescript",
+    "ignoredDirs": ["node_modules", "dist", "build", ".next"],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "command": "npm install -g typescript-language-server typescript",
+      "knowns_cmd": "knowns lsp install typescript",
+      "notes": "Requires Node.js 18+ installed"
+    },
+    "name": "TypeScript",
+    "prerequisites": [
+      {
+        "name": "Node.js 18+",
+        "check_cmd": "node --version",
+        "install_hint": "Install Node.js 18+ from https://nodejs.org/"
+      }
+    ],
+    "runtimeDeps": [
+      {
+        "id": "typescript-language-server",
+        "version": "latest",
+        "source": "npm",
+        "archive_type": "npm",
+        "binary_name": "typescript-language-server",
+        "package_name": "typescript-language-server",
+        "packages": ["typescript-language-server", "typescript"]
+      }
+    ],
+    "supportsImplementation": true,
+    "supportsReferences": true
+  },
+  {
+    "binaries": [
+      {
+        "name": "pylsp",
+        "check_args": ["--version"]
+      },
+      {
+        "name": "pyright-langserver",
+        "args": ["--stdio"],
+        "check_args": ["--version"]
+      }
+    ],
+    "canInstall": true,
+    "defaultArgs": [],
+    "extensions": [".py"],
+    "id": "python",
+    "ignoredDirs": ["__pycache__", ".venv", "venv", ".tox", ".mypy_cache"],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "command": "pip install python-lsp-server",
+      "knowns_cmd": "knowns lsp install python",
+      "notes": "Requires Python 3.9+ installed; pyright-langserver is also supported"
+    },
+    "name": "Python",
+    "prerequisites": [
+      {
+        "name": "Python 3.9+",
+        "check_cmd": "python3 --version",
+        "install_hint": "Install Python 3.9+ from https://www.python.org/downloads/"
+      }
+    ],
+    "runtimeDeps": [],
+    "supportsImplementation": true,
+    "supportsReferences": true
+  },
+  {
+    "binaries": [
+      {
+        "name": "rust-analyzer",
+        "check_args": ["--version"]
+      }
+    ],
+    "canInstall": true,
+    "defaultArgs": [],
+    "extensions": [".rs"],
+    "id": "rust",
+    "ignoredDirs": ["target"],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "command": "rustup component add rust-analyzer",
+      "url": "https://rust-analyzer.github.io/",
+      "knowns_cmd": "knowns lsp install rust",
+      "notes": "Requires rustup installed"
+    },
+    "name": "Rust",
+    "prerequisites": [
+      {
+        "name": "rustup",
+        "check_cmd": "rustup --version",
+        "install_hint": "Install Rust via https://rustup.rs/"
+      }
+    ],
+    "runtimeDeps": [],
+    "supportsImplementation": true,
+    "supportsReferences": true
+  },
+  {
+    "binaries": [
+      {
+        "name": "clangd",
+        "check_args": ["--version"]
+      }
+    ],
+    "canInstall": true,
+    "defaultArgs": [],
+    "extensions": [".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"],
+    "id": "c_cpp",
+    "ignoredDirs": ["build", "cmake-build-debug", "cmake-build-release", ".cache"],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "url": "https://clangd.llvm.org/installation",
+      "knowns_cmd": "knowns lsp install c_cpp",
+      "notes": "Standalone clangd binaries can be installed by Knowns for supported platforms"
+    },
+    "name": "C/C++",
+    "prerequisites": [],
+    "runtimeDeps": [
+      {
+        "id": "18.1.3",
+        "platform_id": "darwin-arm64",
+        "url": "https://github.com/clangd/clangd/releases/download/18.1.3/clangd-mac-18.1.3.zip",
+        "sha256": "TODO",
+        "archive_type": "zip",
+        "binary_name": "clangd",
+        "extract_path": "clangd_18.1.3/bin"
+      },
+      {
+        "id": "18.1.3",
+        "platform_id": "darwin-amd64",
+        "url": "https://github.com/clangd/clangd/releases/download/18.1.3/clangd-mac-18.1.3.zip",
+        "sha256": "TODO",
+        "archive_type": "zip",
+        "binary_name": "clangd",
+        "extract_path": "clangd_18.1.3/bin"
+      },
+      {
+        "id": "18.1.3",
+        "platform_id": "linux-amd64",
+        "url": "https://github.com/clangd/clangd/releases/download/18.1.3/clangd-linux-18.1.3.zip",
+        "sha256": "TODO",
+        "archive_type": "zip",
+        "binary_name": "clangd",
+        "extract_path": "clangd_18.1.3/bin"
+      },
+      {
+        "id": "18.1.3",
+        "platform_id": "linux-arm64",
+        "url": "https://github.com/clangd/clangd/releases/download/18.1.3/clangd-linux-18.1.3.zip",
+        "sha256": "TODO",
+        "archive_type": "zip",
+        "binary_name": "clangd",
+        "extract_path": "clangd_18.1.3/bin"
+      },
+      {
+        "id": "18.1.3",
+        "platform_id": "windows-amd64",
+        "url": "https://github.com/clangd/clangd/releases/download/18.1.3/clangd-windows-18.1.3.zip",
+        "sha256": "TODO",
+        "archive_type": "zip",
+        "binary_name": "clangd",
+        "extract_path": "clangd_18.1.3/bin"
+      }
+    ],
+    "supportsImplementation": true,
+    "supportsReferences": true
+  },
+  {
+    "binaries": [
+      {
+        "name": "jdtls",
+        "check_args": ["--version"]
+      }
+    ],
+    "canInstall": true,
+    "defaultArgs": [],
+    "extensions": [".java"],
+    "id": "java",
+    "ignoredDirs": ["build", "target", ".gradle", ".idea", "out"],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "url": "https://github.com/eclipse-jdtls/eclipse.jdt.ls",
+      "knowns_cmd": "knowns lsp install java",
+      "notes": "Requires JDK 17+"
+    },
+    "name": "Java",
+    "prerequisites": [
+      {
+        "name": "Java JDK 17+",
+        "check_cmd": "java -version",
+        "install_hint": "Install JDK 17+ from https://adoptium.net/"
+      }
+    ],
+    "runtimeDeps": [
+      {
+        "id": "1.58.0",
+        "platform_id": "darwin-arm64",
+        "url": "https://download.eclipse.org/jdtls/milestones/1.58.0/jdt-language-server-1.58.0-202604151538.tar.gz",
+        "sha256": "2a5bbe55ec91b4325392050dc422cead3220a2459b3766be35e1fff45b4a50d9",
+        "archive_type": "tar.gz",
+        "binary_name": "jdtls",
+        "extract_path": "bin/jdtls"
+      },
+      {
+        "id": "1.58.0",
+        "platform_id": "darwin-amd64",
+        "url": "https://download.eclipse.org/jdtls/milestones/1.58.0/jdt-language-server-1.58.0-202604151538.tar.gz",
+        "sha256": "2a5bbe55ec91b4325392050dc422cead3220a2459b3766be35e1fff45b4a50d9",
+        "archive_type": "tar.gz",
+        "binary_name": "jdtls",
+        "extract_path": "bin/jdtls"
+      },
+      {
+        "id": "1.58.0",
+        "platform_id": "linux-amd64",
+        "url": "https://download.eclipse.org/jdtls/milestones/1.58.0/jdt-language-server-1.58.0-202604151538.tar.gz",
+        "sha256": "2a5bbe55ec91b4325392050dc422cead3220a2459b3766be35e1fff45b4a50d9",
+        "archive_type": "tar.gz",
+        "binary_name": "jdtls",
+        "extract_path": "bin/jdtls"
+      },
+      {
+        "id": "1.58.0",
+        "platform_id": "linux-arm64",
+        "url": "https://download.eclipse.org/jdtls/milestones/1.58.0/jdt-language-server-1.58.0-202604151538.tar.gz",
+        "sha256": "2a5bbe55ec91b4325392050dc422cead3220a2459b3766be35e1fff45b4a50d9",
+        "archive_type": "tar.gz",
+        "binary_name": "jdtls",
+        "extract_path": "bin/jdtls"
+      },
+      {
+        "id": "1.58.0",
+        "platform_id": "windows-amd64",
+        "url": "https://download.eclipse.org/jdtls/milestones/1.58.0/jdt-language-server-1.58.0-202604151538.tar.gz",
+        "sha256": "2a5bbe55ec91b4325392050dc422cead3220a2459b3766be35e1fff45b4a50d9",
+        "archive_type": "tar.gz",
+        "binary_name": "jdtls",
+        "extract_path": "bin/jdtls"
+      }
+    ],
+    "supportsImplementation": true,
+    "supportsReferences": true
+  },
+  {
+    "binaries": [
+      {
+        "name": "roslyn-ls",
+        "check_args": ["--version"]
+      },
+      {
+        "name": "csharp-ls",
+        "check_args": ["--version"]
+      },
+      {
+        "name": "omnisharp",
+        "args": ["--languageserver"],
+        "check_args": ["--version"]
+      }
+    ],
+    "canInstall": true,
+    "defaultArgs": [],
+    "extensions": [".cs"],
+    "id": "csharp",
+    "ignoredDirs": ["bin", "obj", ".vs", "packages"],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "command": "knowns lsp install csharp",
+      "url": "https://www.nuget.org/packages/Microsoft.CodeAnalysis.LanguageServer.neutral",
+      "knowns_cmd": "knowns lsp install csharp",
+      "notes": "Downloads Roslyn LS from NuGet and requires .NET SDK 10+"
+    },
+    "name": "C#",
+    "prerequisites": [
+      {
+        "name": ".NET SDK 10+",
+        "check_cmd": "dotnet --version",
+        "install_hint": "Install .NET SDK 10+ from https://dotnet.microsoft.com/download"
+      }
+    ],
+    "runtimeDeps": [
+      {
+        "id": "Microsoft.CodeAnalysis.LanguageServer.osx-arm64",
+        "platform_id": "darwin-arm64",
+        "version": "5.0.0-1.25277.114",
+        "source": "nuget",
+        "archive_type": "nupkg",
+        "binary_name": "Microsoft.CodeAnalysis.LanguageServer.dll",
+        "extract_path": "content/LanguageServer/osx-arm64/Microsoft.CodeAnalysis.LanguageServer.dll",
+        "package_name": "Microsoft.CodeAnalysis.LanguageServer.osx-arm64"
+      }
+    ],
+    "supportsImplementation": true,
+    "supportsReferences": true
+  },
+  {
+    "binaries": [
+      {
+        "name": "dart",
+        "args": ["language-server"],
+        "check_args": ["--version"]
+      }
+    ],
+    "canInstall": false,
+    "defaultArgs": ["language-server"],
+    "extensions": [".dart"],
+    "id": "dart",
+    "ignoredDirs": ["build", ".dart_tool", ".pub", ".packages"],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "command": "Install Dart SDK from https://dart.dev/get-dart",
+      "url": "https://dart.dev/get-dart",
+      "notes": "Dart language server is bundled with the Dart SDK"
+    },
+    "name": "Dart",
+    "prerequisites": [
+      {
+        "name": "Dart SDK",
+        "check_cmd": "dart --version",
+        "install_hint": "Install Dart SDK from https://dart.dev/get-dart"
+      }
+    ],
+    "runtimeDeps": [],
+    "supportsImplementation": true,
+    "supportsReferences": true
+  },
+  {
+    "binaries": [
+      {
+        "name": "sourcekit-lsp",
+        "check_args": ["--help"]
+      }
+    ],
+    "canInstall": false,
+    "defaultArgs": [],
+    "extensions": [".swift"],
+    "id": "swift",
+    "ignoredDirs": [".build", ".swiftpm", "DerivedData", "Pods"],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "command": "Install the Swift toolchain from https://swift.org/install",
+      "url": "https://swift.org/install",
+      "notes": "sourcekit-lsp ships inside the Swift toolchain and Xcode; it is never downloaded separately"
+    },
+    "name": "Swift",
+    "prerequisites": [
+      {
+        "name": "Swift toolchain",
+        "check_cmd": "swift --version",
+        "install_hint": "Install the Swift toolchain from https://swift.org/install, or Xcode on macOS"
+      }
+    ],
+    "runtimeDeps": [],
+    "supportsImplementation": true,
+    "supportsReferences": true
+  },
+  {
+    "binaries": [
+      {
+        "name": "ruby-lsp",
+        "check_args": ["--version"]
+      }
+    ],
+    "canInstall": true,
+    "defaultArgs": [],
+    "extensions": [".rb", ".rake", ".gemspec"],
+    "id": "ruby",
+    "ignoredDirs": ["vendor", ".bundle", "tmp"],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "command": "gem install ruby-lsp",
+      "url": "https://github.com/Shopify/ruby-lsp",
+      "notes": "Requires Ruby 3.1+"
+    },
+    "name": "Ruby",
+    "prerequisites": [
+      {
+        "name": "Ruby 3.1+",
+        "check_cmd": "ruby --version",
+        "install_hint": "Install Ruby 3.1+ from https://www.ruby-lang.org/en/downloads/"
+      }
+    ],
+    "runtimeDeps": [],
+    "supportsImplementation": true,
+    "supportsReferences": true
+  },
+  {
+    "binaries": [
+      {
+        "name": "intelephense",
+        "args": ["--stdio"],
+        "check_args": ["--version"]
+      }
+    ],
+    "canInstall": true,
+    "defaultArgs": ["--stdio"],
+    "extensions": [".php"],
+    "id": "php",
+    "ignoredDirs": ["vendor", "node_modules", "storage", "bootstrap/cache"],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "command": "npm install -g intelephense",
+      "url": "https://intelephense.com/",
+      "knowns_cmd": "knowns lsp install php",
+      "notes": "Requires Node.js 18+"
+    },
+    "name": "PHP",
+    "prerequisites": [
+      {
+        "name": "Node.js 18+",
+        "check_cmd": "node --version",
+        "install_hint": "Install Node.js 18+ from https://nodejs.org/"
+      }
+    ],
+    "runtimeDeps": [
+      {
+        "id": "intelephense",
+        "version": "latest",
+        "source": "npm",
+        "archive_type": "npm",
+        "binary_name": "intelephense",
+        "package_name": "intelephense"
+      }
+    ],
+    "supportsImplementation": true,
+    "supportsReferences": true
+  },
+  {
+    "binaries": [
+      {
+        "name": "some-sass-language-server",
+        "args": ["--stdio"],
+        "check_args": ["--version"]
+      }
+    ],
+    "canInstall": true,
+    "defaultArgs": ["--stdio"],
+    "extensions": [".scss", ".sass", ".css"],
+    "id": "scss",
+    "ignoredDirs": ["node_modules", "dist", "build", ".next"],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "command": "npm install -g some-sass-language-server",
+      "knowns_cmd": "knowns lsp install scss",
+      "notes": "Requires Node.js 18+; handles .scss, .sass, and .css files"
+    },
+    "name": "SCSS/Sass/CSS",
+    "prerequisites": [
+      {
+        "name": "Node.js 18+",
+        "check_cmd": "node --version",
+        "install_hint": "Install Node.js 18+ from https://nodejs.org/"
+      }
+    ],
+    "runtimeDeps": [
+      {
+        "id": "some-sass-language-server",
+        "version": "latest",
+        "source": "npm",
+        "archive_type": "npm",
+        "binary_name": "some-sass-language-server",
+        "package_name": "some-sass-language-server"
+      }
+    ],
+    "supportsImplementation": true,
+    "supportsReferences": true
+  },
+  {
+    "binaries": [
+      {
+        "name": "marksman",
+        "args": ["server"],
+        "check_args": ["--version"]
+      }
+    ],
+    "canInstall": true,
+    "capabilityProfile": {
+      "enforceAdvertised": true,
+      "legacyPushDiagnostics": true,
+      "required": ["document_symbols", "diagnostics"]
+    },
+    "defaultArgs": ["server"],
+    "extensions": [".md", ".markdown"],
+    "id": "markdown",
+    "ignoredDirs": [],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "url": "https://github.com/artempyanykh/marksman",
+      "knowns_cmd": "knowns lsp install markdown",
+      "notes": "Standalone Marksman binaries are installed on demand; existing PATH binaries take precedence"
+    },
+    "lazyStart": true,
+    "name": "Markdown",
+    "pathMatchers": [
+      {
+        "explicitOnly": false,
+        "kind": "suffix",
+        "pattern": ".markdown",
+        "priority": 100
+      },
+      {
+        "explicitOnly": false,
+        "kind": "suffix",
+        "pattern": ".md",
+        "priority": 100
+      }
+    ],
+    "prerequisites": [],
+    "runtimeDeps": [
+      {
+        "id": "2026-02-08",
+        "platform_id": "darwin-arm64",
+        "version": "2026-02-08",
+        "recommended_version": "2026-02-08",
+        "recommended_integrity": "sha256:6a801c17b5ac0dba69787c5282b3b3bd416e66c96253fae098d311c6bbd1833b",
+        "source": "release",
+        "url": "https://github.com/artempyanykh/marksman/releases/download/2026-02-08/marksman-macos",
+        "sha256": "6a801c17b5ac0dba69787c5282b3b3bd416e66c96253fae098d311c6bbd1833b",
+        "package_source": "https://github.com/artempyanykh/marksman",
+        "archive_type": "binary",
+        "binary_name": "marksman"
+      },
+      {
+        "id": "2026-02-08",
+        "platform_id": "darwin-amd64",
+        "version": "2026-02-08",
+        "recommended_version": "2026-02-08",
+        "recommended_integrity": "sha256:6a801c17b5ac0dba69787c5282b3b3bd416e66c96253fae098d311c6bbd1833b",
+        "source": "release",
+        "url": "https://github.com/artempyanykh/marksman/releases/download/2026-02-08/marksman-macos",
+        "sha256": "6a801c17b5ac0dba69787c5282b3b3bd416e66c96253fae098d311c6bbd1833b",
+        "package_source": "https://github.com/artempyanykh/marksman",
+        "archive_type": "binary",
+        "binary_name": "marksman"
+      },
+      {
+        "id": "2026-02-08",
+        "platform_id": "linux-arm64",
+        "version": "2026-02-08",
+        "recommended_version": "2026-02-08",
+        "recommended_integrity": "sha256:db8e124527f7f8048e3e6c91821b9c52ef173d92c01e47d221bf1337afd962fb",
+        "source": "release",
+        "url": "https://github.com/artempyanykh/marksman/releases/download/2026-02-08/marksman-linux-arm64",
+        "sha256": "db8e124527f7f8048e3e6c91821b9c52ef173d92c01e47d221bf1337afd962fb",
+        "package_source": "https://github.com/artempyanykh/marksman",
+        "archive_type": "binary",
+        "binary_name": "marksman"
+      },
+      {
+        "id": "2026-02-08",
+        "platform_id": "linux-amd64",
+        "version": "2026-02-08",
+        "recommended_version": "2026-02-08",
+        "recommended_integrity": "sha256:be5098e8213219269c47fc0d916a66fa31ce0602ec967475c722260aabf26087",
+        "source": "release",
+        "url": "https://github.com/artempyanykh/marksman/releases/download/2026-02-08/marksman-linux-x64",
+        "sha256": "be5098e8213219269c47fc0d916a66fa31ce0602ec967475c722260aabf26087",
+        "package_source": "https://github.com/artempyanykh/marksman",
+        "archive_type": "binary",
+        "binary_name": "marksman"
+      },
+      {
+        "id": "2026-02-08",
+        "platform_id": "windows-amd64",
+        "version": "2026-02-08",
+        "recommended_version": "2026-02-08",
+        "recommended_integrity": "sha256:a6d05beb08ebe41b0a9f09c98a438540421436fa5531424c22e0bb1d22529705",
+        "source": "release",
+        "url": "https://github.com/artempyanykh/marksman/releases/download/2026-02-08/marksman.exe",
+        "sha256": "a6d05beb08ebe41b0a9f09c98a438540421436fa5531424c22e0bb1d22529705",
+        "package_source": "https://github.com/artempyanykh/marksman",
+        "archive_type": "binary",
+        "binary_name": "marksman"
+      }
+    ],
+    "supportsImplementation": false,
+    "supportsReferences": true
+  },
+  {
+    "binaries": [
+      {
+        "name": "bash-language-server",
+        "args": ["start"],
+        "check_args": ["--version"]
+      }
+    ],
+    "canInstall": true,
+    "capabilityProfile": {
+      "enforceAdvertised": true,
+      "legacyPushDiagnostics": false,
+      "required": ["document_symbols", "definition", "references"]
+    },
+    "defaultArgs": ["start"],
+    "extensions": [".sh", ".bash"],
+    "id": "bash",
+    "ignoredDirs": ["vendor", "node_modules", "dist", ".git", "generated"],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "command": "npm install -g bash-language-server@5.6.0",
+      "url": "https://github.com/bash-lsp/bash-language-server",
+      "knowns_cmd": "knowns lsp install bash",
+      "notes": "Requires Node.js 20+; Knowns uses the pinned recommended version by default"
+    },
+    "lazyStart": true,
+    "name": "Bash",
+    "pathMatchers": [
+      {
+        "explicitOnly": false,
+        "kind": "suffix",
+        "pattern": ".bash",
+        "priority": 220
+      },
+      {
+        "explicitOnly": false,
+        "kind": "suffix",
+        "pattern": ".sh",
+        "priority": 210
+      },
+      {
+        "explicitOnly": false,
+        "kind": "shebang",
+        "pattern": "bash",
+        "priority": 120
+      },
+      {
+        "explicitOnly": false,
+        "kind": "shebang",
+        "pattern": "sh",
+        "priority": 110
+      }
+    ],
+    "prerequisites": [
+      {
+        "name": "Node.js 20+",
+        "check_cmd": "node --version",
+        "install_hint": "Install Node.js 20+ from https://nodejs.org/"
+      }
+    ],
+    "runtimeDeps": [
+      {
+        "id": "bash-language-server",
+        "version": "5.6.0",
+        "recommended_version": "5.6.0",
+        "recommended_integrity": "sha512-DCuV+/BZAAozsp5blvi6jDnU/ZDaTpJpWM0zqwGjnirfqv7iBsMK32xOze/jipxU0PUZ6CBUKgRUMKI7Kk70Lg==",
+        "source": "npm",
+        "archive_type": "npm",
+        "binary_name": "bash-language-server",
+        "package_name": "bash-language-server",
+        "packages": ["bash-language-server"]
+      }
+    ],
+    "supportsImplementation": true,
+    "supportsReferences": true
+  },
+  {
+    "binaries": [
+      {
+        "name": "vscode-json-languageserver",
+        "args": ["--stdio"]
+      }
+    ],
+    "canInstall": true,
+    "capabilityProfile": {
+      "enforceAdvertised": true,
+      "legacyPushDiagnostics": true,
+      "required": ["document_symbols", "diagnostics"]
+    },
+    "defaultArgs": ["--stdio"],
+    "extensions": [".json", ".jsonc"],
+    "id": "json",
+    "ignoredDirs": ["node_modules", "dist", "build"],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "command": "npm install -g vscode-json-languageserver@1.3.4",
+      "url": "https://www.npmjs.com/package/vscode-json-languageserver",
+      "knowns_cmd": "knowns lsp install json",
+      "notes": "Requires Node.js; Knowns installs the recommended integrity-pinned version"
+    },
+    "lazyStart": true,
+    "name": "JSON/JSONC",
+    "pathMatchers": [
+      {
+        "explicitOnly": true,
+        "kind": "exact_name",
+        "pattern": "package-lock.json",
+        "priority": 200
+      },
+      {
+        "explicitOnly": true,
+        "kind": "exact_name",
+        "pattern": "npm-shrinkwrap.json",
+        "priority": 200
+      },
+      {
+        "explicitOnly": true,
+        "kind": "suffix",
+        "pattern": ".generated.json",
+        "priority": 200
+      },
+      {
+        "explicitOnly": false,
+        "kind": "suffix",
+        "pattern": ".jsonc",
+        "priority": 100
+      },
+      {
+        "explicitOnly": false,
+        "kind": "suffix",
+        "pattern": ".json",
+        "priority": 100
+      }
+    ],
+    "prerequisites": [
+      {
+        "name": "Node.js",
+        "check_cmd": "node --version",
+        "install_hint": "Install Node.js from https://nodejs.org/"
+      }
+    ],
+    "runtimeDeps": [
+      {
+        "id": "vscode-json-languageserver",
+        "version": "1.3.4",
+        "recommended_version": "1.3.4",
+        "recommended_integrity": "sha512-+ghebnslXk6fVDySBrT0BVqozLDdmKY/qxgkDD4JtOQcU2vXc3e7jh7YyMxvuvE93E9OLvBqUrvajttj8xf3BA==",
+        "source": "npm",
+        "archive_type": "npm",
+        "binary_name": "vscode-json-languageserver",
+        "package_name": "vscode-json-languageserver",
+        "packages": ["vscode-json-languageserver"]
+      }
+    ],
+    "supportsImplementation": false,
+    "supportsReferences": false
+  },
+  {
+    "binaries": [
+      {
+        "name": "terraform-ls",
+        "args": ["serve"],
+        "check_args": ["version"]
+      }
+    ],
+    "canInstall": true,
+    "capabilityProfile": {
+      "enforceAdvertised": true,
+      "legacyPushDiagnostics": false,
+      "required": ["document_symbols", "definition", "references"]
+    },
+    "defaultArgs": ["serve"],
+    "documentSync": {
+      "A.JSX": {
+        "languageID": "terraform",
+        "suppress": false
+      },
+      "C:\\r\\i.JS": {
+        "languageID": "terraform",
+        "suppress": false
+      },
+      "C:\\repo\\X.TFVARS.JSON": {
+        "languageID": "terraform-vars",
+        "suppress": true
+      },
+      "a.js": {
+        "languageID": "terraform",
+        "suppress": false
+      },
+      "a.jsx": {
+        "languageID": "terraform",
+        "suppress": false
+      },
+      "a.ts": {
+        "languageID": "terraform",
+        "suppress": false
+      },
+      "a.tsx": {
+        "languageID": "terraform",
+        "suppress": false
+      },
+      "main.tf": {
+        "languageID": "terraform",
+        "suppress": false
+      },
+      "net.tf.json": {
+        "languageID": "terraform",
+        "suppress": true
+      },
+      "vars.tfvars": {
+        "languageID": "terraform-vars",
+        "suppress": false
+      },
+      "x.d.ts": {
+        "languageID": "terraform",
+        "suppress": false
+      },
+      "x.py": {
+        "languageID": "terraform",
+        "suppress": false
+      }
+    },
+    "extensions": [".tf", ".tfvars", ".tf.json", ".tfvars.json"],
+    "id": "terraform",
+    "ignoredDirs": [".terraform"],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "url": "https://github.com/hashicorp/terraform-ls",
+      "knowns_cmd": "knowns lsp install terraform",
+      "notes": "Requires Terraform CLI; existing PATH terraform-ls binaries take precedence over the managed release"
+    },
+    "lazyStart": true,
+    "name": "Terraform",
+    "pathCapability": {
+      "A.JSX|": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "A.JSX|definition": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "C:\\r\\i.JS|": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "C:\\r\\i.JS|definition": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "C:\\repo\\X.TFVARS.JSON|": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "terraform-ls does not support Terraform JSON configuration documents",
+        "handled": true,
+        "supported": false
+      },
+      "C:\\repo\\X.TFVARS.JSON|definition": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "terraform-ls does not support Terraform JSON configuration documents; action \"definition\" is unavailable for C:\\repo\\X.TFVARS.JSON",
+        "handled": true,
+        "supported": false
+      },
+      "a.jsx|": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "a.jsx|definition": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "a.js|": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "a.js|definition": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "a.tsx|": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "a.tsx|definition": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "a.ts|": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "a.ts|definition": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "main.tf|": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "main.tf|definition": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "net.tf.json|": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "terraform-ls does not support Terraform JSON configuration documents",
+        "handled": true,
+        "supported": false
+      },
+      "net.tf.json|definition": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "terraform-ls does not support Terraform JSON configuration documents; action \"definition\" is unavailable for net.tf.json",
+        "handled": true,
+        "supported": false
+      },
+      "vars.tfvars|": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "vars.tfvars|definition": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "x.d.ts|": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "x.d.ts|definition": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "x.py|": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      },
+      "x.py|definition": {
+        "advertised": [],
+        "capabilities": [],
+        "explanation": "",
+        "handled": false,
+        "supported": false
+      }
+    },
+    "pathMatchers": [
+      {
+        "explicitOnly": false,
+        "kind": "suffix",
+        "pattern": ".tfvars.json",
+        "priority": 300
+      },
+      {
+        "explicitOnly": false,
+        "kind": "suffix",
+        "pattern": ".tf.json",
+        "priority": 300
+      },
+      {
+        "explicitOnly": false,
+        "kind": "suffix",
+        "pattern": ".tfvars",
+        "priority": 200
+      },
+      {
+        "explicitOnly": false,
+        "kind": "suffix",
+        "pattern": ".tf",
+        "priority": 200
+      }
+    ],
+    "prerequisites": [
+      {
+        "name": "Terraform CLI",
+        "check_cmd": "terraform version",
+        "install_hint": "Install Terraform from https://developer.hashicorp.com/terraform/install"
+      }
+    ],
+    "runtimeDeps": [
+      {
+        "id": "0.38.8",
+        "platform_id": "darwin-amd64",
+        "version": "0.38.8",
+        "recommended_version": "0.38.8",
+        "recommended_integrity": "sha256:34cfe6cbbb61da5b8fd21721e14be0f134417f249350872da1669454dc8762a4",
+        "source": "release",
+        "url": "https://releases.hashicorp.com/terraform-ls/0.38.8/terraform-ls_0.38.8_darwin_amd64.zip",
+        "sha256": "34cfe6cbbb61da5b8fd21721e14be0f134417f249350872da1669454dc8762a4",
+        "package_source": "https://releases.hashicorp.com/terraform-ls",
+        "archive_type": "zip",
+        "binary_name": "terraform-ls",
+        "extract_path": "terraform-ls"
+      },
+      {
+        "id": "0.38.8",
+        "platform_id": "darwin-arm64",
+        "version": "0.38.8",
+        "recommended_version": "0.38.8",
+        "recommended_integrity": "sha256:510a506f7bf1550294202347261961e52daa4664a795e2deffbf7df7296b1f6c",
+        "source": "release",
+        "url": "https://releases.hashicorp.com/terraform-ls/0.38.8/terraform-ls_0.38.8_darwin_arm64.zip",
+        "sha256": "510a506f7bf1550294202347261961e52daa4664a795e2deffbf7df7296b1f6c",
+        "package_source": "https://releases.hashicorp.com/terraform-ls",
+        "archive_type": "zip",
+        "binary_name": "terraform-ls",
+        "extract_path": "terraform-ls"
+      },
+      {
+        "id": "0.38.8",
+        "platform_id": "linux-amd64",
+        "version": "0.38.8",
+        "recommended_version": "0.38.8",
+        "recommended_integrity": "sha256:d16077d9c83f13ac33501af49ea75f43218d3fa2437c6c1374550b2625edc3ef",
+        "source": "release",
+        "url": "https://releases.hashicorp.com/terraform-ls/0.38.8/terraform-ls_0.38.8_linux_amd64.zip",
+        "sha256": "d16077d9c83f13ac33501af49ea75f43218d3fa2437c6c1374550b2625edc3ef",
+        "package_source": "https://releases.hashicorp.com/terraform-ls",
+        "archive_type": "zip",
+        "binary_name": "terraform-ls",
+        "extract_path": "terraform-ls"
+      },
+      {
+        "id": "0.38.8",
+        "platform_id": "linux-arm64",
+        "version": "0.38.8",
+        "recommended_version": "0.38.8",
+        "recommended_integrity": "sha256:762db754428dd188b949533ca05437955e26f4b3fc699d4b93392668a24e7a10",
+        "source": "release",
+        "url": "https://releases.hashicorp.com/terraform-ls/0.38.8/terraform-ls_0.38.8_linux_arm64.zip",
+        "sha256": "762db754428dd188b949533ca05437955e26f4b3fc699d4b93392668a24e7a10",
+        "package_source": "https://releases.hashicorp.com/terraform-ls",
+        "archive_type": "zip",
+        "binary_name": "terraform-ls",
+        "extract_path": "terraform-ls"
+      },
+      {
+        "id": "0.38.8",
+        "platform_id": "windows-amd64",
+        "version": "0.38.8",
+        "recommended_version": "0.38.8",
+        "recommended_integrity": "sha256:5152e76e45103ea2a31b8a8dadc43833ae559a4aba4cb12f57c1c006c11dda8c",
+        "source": "release",
+        "url": "https://releases.hashicorp.com/terraform-ls/0.38.8/terraform-ls_0.38.8_windows_amd64.zip",
+        "sha256": "5152e76e45103ea2a31b8a8dadc43833ae559a4aba4cb12f57c1c006c11dda8c",
+        "package_source": "https://releases.hashicorp.com/terraform-ls",
+        "archive_type": "zip",
+        "binary_name": "terraform-ls",
+        "extract_path": "terraform-ls.exe"
+      },
+      {
+        "id": "0.38.8",
+        "platform_id": "windows-arm64",
+        "version": "0.38.8",
+        "recommended_version": "0.38.8",
+        "recommended_integrity": "sha256:5cee26a3645487125bf65daee8cfc85c84d8c7e03bbb00662fb12225afe9d6cd",
+        "source": "release",
+        "url": "https://releases.hashicorp.com/terraform-ls/0.38.8/terraform-ls_0.38.8_windows_arm64.zip",
+        "sha256": "5cee26a3645487125bf65daee8cfc85c84d8c7e03bbb00662fb12225afe9d6cd",
+        "package_source": "https://releases.hashicorp.com/terraform-ls",
+        "archive_type": "zip",
+        "binary_name": "terraform-ls",
+        "extract_path": "terraform-ls.exe"
+      }
+    ],
+    "supportsImplementation": false,
+    "supportsReferences": true
+  },
+  {
+    "binaries": [
+      {
+        "name": "yaml-language-server",
+        "args": ["--stdio"]
+      }
+    ],
+    "canInstall": true,
+    "capabilityProfile": {
+      "enforceAdvertised": true,
+      "legacyPushDiagnostics": true,
+      "required": ["document_symbols", "diagnostics"]
+    },
+    "defaultArgs": ["--stdio"],
+    "extensions": [".yaml", ".yml"],
+    "id": "yaml",
+    "ignoredDirs": ["vendor", "node_modules", "dist", "build", "generated", "testdata"],
+    "initializationOptions": {
+      "empty": {},
+      "flat": {
+        "a": 1
+      },
+      "initopt": {
+        "foo": "bar"
+      },
+      "nil": {}
+    },
+    "initializeParams": {
+      "empty": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      },
+      "flat": {
+        "initializationOptions": {
+          "a": 1
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "initopt": {
+        "initializationOptions": {
+          "foo": "bar"
+        },
+        "rootUri": "file:///nonexistent/project"
+      },
+      "nil": {
+        "initializationOptions": {},
+        "rootUri": "file:///nonexistent/project"
+      }
+    },
+    "installGuide": {
+      "command": "npm install -g yaml-language-server@1.24.0",
+      "url": "https://github.com/redhat-developer/yaml-language-server",
+      "knowns_cmd": "knowns lsp install yaml",
+      "notes": "Requires Node.js 12+; Knowns installs the recommended integrity-pinned version"
+    },
+    "lazyStart": true,
+    "name": "YAML",
+    "pathMatchers": [
+      {
+        "explicitOnly": false,
+        "kind": "suffix",
+        "pattern": ".yaml",
+        "priority": 100
+      },
+      {
+        "explicitOnly": false,
+        "kind": "suffix",
+        "pattern": ".yml",
+        "priority": 100
+      }
+    ],
+    "prerequisites": [
+      {
+        "name": "Node.js 12+",
+        "check_cmd": "node --version",
+        "install_hint": "Install Node.js 12+ from https://nodejs.org/"
+      }
+    ],
+    "runtimeDeps": [
+      {
+        "id": "yaml-language-server",
+        "version": "1.24.0",
+        "recommended_version": "1.24.0",
+        "recommended_integrity": "sha512-+HGcwu4M7IC+UDhDZScTZR8qsl2MMj/X1E5e83QcWzWn2pctj0fv8HHdrHHcbc1KB3CuRPJ4gc1Nm36D0iCu0g==",
+        "source": "npm",
+        "archive_type": "npm",
+        "binary_name": "yaml-language-server",
+        "package_name": "yaml-language-server",
+        "packages": ["yaml-language-server"]
+      }
+    ],
+    "supportsImplementation": false,
+    "supportsReferences": false
+  }
+]

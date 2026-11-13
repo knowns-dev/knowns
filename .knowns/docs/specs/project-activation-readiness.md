@@ -1,4 +1,5 @@
 ---
+id: doc-81c035e0fc96dfa7071f07336415a49e
 title: Project Activation Readiness
 description: Specification for a unified project activation and readiness model across CLI, browser, runtime, and AI clients.
 createdAt: '2026-04-22T08:51:27.505Z'

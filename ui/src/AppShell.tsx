@@ -9,13 +9,15 @@ import { WelcomePage } from "./pages/WelcomePage";
 import { ErrorBoundary } from "./components/atoms";
 import { HeaderTimeTracker } from "./components/molecules";
 import { AppBreadcrumb } from "./components/molecules/AppBreadcrumb";
-import { SidebarProvider, SidebarTrigger } from "./components/ui/sidebar";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "./components/ui/knowns/blocks/sidebar/sidebar";
+import { SIDEBAR_STORAGE_KEY, rememberedSidebarCollapsed } from "./components/organisms/sidebarStorage";
 import { Separator } from "./components/ui/separator";
 import { Toaster } from "./components/ui/sonner";
 import { useConfig } from "./contexts/ConfigContext";
 import { useGlobalTask } from "./contexts/GlobalTaskContext";
 import { Loader2 } from "lucide-react";
 import { ThemeContext } from "./App";
+import { EASE, MOTION } from "@/ui/lib/knowns/motion-utils";
 
 // Retry wrapper for lazy imports — auto-reloads when chunks are stale after a deploy.
 function lazyWithRetry(factory: () => Promise<{ default: React.ComponentType<any> }>) {
@@ -43,6 +45,7 @@ const GraphPage = lazyWithRetry(() => import("./pages/GraphPage"));
 const MemoryPage = lazyWithRetry(() => import("./pages/MemoryPage"));
 const DecisionPage = lazyWithRetry(() => import("./pages/DecisionPage"));
 const AuditPage = lazyWithRetry(() => import("./pages/AuditPage"));
+const ContextPage = lazyWithRetry(() => import("./pages/ContextPage"));
 const RuntimePage = lazyWithRetry(() => import("./pages/RuntimePage"));
 
 function PageLoading() {
@@ -65,6 +68,7 @@ function getCurrentPage(pathname: string) {
 	if (pathname.startsWith("/memory")) return "memory";
 	if (pathname.startsWith("/decisions")) return "decisions";
 	if (pathname.startsWith("/audit")) return "audit";
+	if (pathname.startsWith("/context")) return "context";
 	if (pathname.startsWith("/runtime")) return "runtime";
 	if (pathname.startsWith("/config")) return "config";
 	if (pathname.startsWith("/kanban")) return "kanban";
@@ -96,7 +100,8 @@ export default function AppShell() {
 	const [showCreateForm, setShowCreateForm] = useState(false);
 	const [showCommandDialog, setShowCommandDialog] = useState(false);
 	const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
-	const [sidebarOpen, setSidebarOpen] = useState(true);
+	// Read once, so the sidebar mounts as the remembered rail instead of animating to it.
+	const [sidebarStartsCollapsed] = useState(rememberedSidebarCollapsed);
 	const [isDark, setIsDark] = useState(() => {
 		if (typeof window !== "undefined") {
 			const saved = localStorage.getItem("theme");
@@ -148,6 +153,7 @@ export default function AppShell() {
 			memory: "Memories",
 			decisions: "Decisions",
 			audit: "Audit Trail",
+			context: "Context pack",
 			runtime: "Runtime",
 			imports: "Imports",
 			config: "Settings",
@@ -156,10 +162,6 @@ export default function AppShell() {
 		const projectName = config.name || "Knowns";
 		document.title = `${pageTitle} · ${projectName}`;
 	}, [currentPage, config.name]);
-
-	const handleSidebarOpenChange = (open: boolean) => {
-		setSidebarOpen(open);
-	};
 
 	useEffect(() => {
 		if (isDark) {
@@ -170,18 +172,6 @@ export default function AppShell() {
 			localStorage.setItem("theme", "light");
 		}
 	}, [isDark]);
-
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-				e.preventDefault();
-				setShowCommandDialog((prev) => !prev);
-			}
-		};
-
-		window.addEventListener("keydown", handleKeyDown);
-		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, []);
 
 	useEffect(() => {
 		getProjectStatus()
@@ -288,18 +278,23 @@ export default function AppShell() {
 				],
 			},
 			{
-				duration: 400,
-				easing: "ease-out",
+				duration: MOTION.slow,
+				easing: EASE.out,
 				pseudoElement: "::view-transition-new(root)",
 			},
 		);
 	};
 
-	const handleSearchTaskSelect = (task: Task) => {
-		navigate({ to: `/tasks/${task.id}` });
-	};
+	// The command menu binds ⌘K itself; these keep its props stable between renders.
+	const handleOpenCreateForm = useCallback(() => setShowCreateForm(true), []);
+	const handleOpenWorkspacePicker = useCallback(() => setShowWorkspacePicker(true), []);
+	const handleToggleThemeQuietly = useCallback(() => setIsDark((dark) => !dark), []);
 
-	const handleSearchDocSelect = (doc?: { path?: string; filename?: string }) => {
+	const handleSearchTaskSelect = useCallback((task: Task) => {
+		navigate({ to: `/tasks/${task.id}` });
+	}, [navigate]);
+
+	const handleSearchDocSelect = useCallback((doc?: { path?: string; filename?: string }) => {
 		if (doc?.path) {
 			navigate({ to: `/docs/${doc.path}` });
 		} else if (doc?.filename) {
@@ -307,7 +302,7 @@ export default function AppShell() {
 		} else {
 			navigate({ to: "/docs" });
 		}
-	};
+	}, [navigate]);
 
 	const renderPage = () => {
 		switch (currentPage) {
@@ -350,6 +345,8 @@ export default function AppShell() {
 				return <DecisionPage />;
 			case "audit":
 				return <AuditPage />;
+			case "context":
+				return <ContextPage />;
 			case "runtime":
 				return <RuntimePage />;
 			case "imports":
@@ -372,7 +369,7 @@ export default function AppShell() {
 				<WelcomePage onProjectSelected={() => window.location.reload()} />
 			)}
 			{projectActive === true && (
-			<SidebarProvider open={sidebarOpen} onOpenChange={handleSidebarOpenChange}>
+			<SidebarProvider storageKey={SIDEBAR_STORAGE_KEY} defaultCollapsed={sidebarStartsCollapsed} className="h-dvh overflow-hidden">
 				<AppSidebar
 					currentPage={currentPage}
 					onSearchClick={() => setShowCommandDialog(true)}
@@ -381,9 +378,10 @@ export default function AppShell() {
 					onThemeToggle={toggleTheme}
 					serverVersion={serverVersion}
 				/>
-					<main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
+					<SidebarInset className="overflow-hidden bg-background">
+					<main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 						<header className="flex h-11 shrink-0 items-center gap-1.5 border-b border-border/50 bg-background px-2 sm:gap-2 sm:px-4">
-							<SidebarTrigger className="-ml-1" />
+							<SidebarTrigger className="-ml-1" labels={{ collapse: "Collapse sidebar", expand: "Expand sidebar" }} />
 							<Separator orientation="vertical" className="mr-1 h-4 sm:mr-2" />
 							<AppBreadcrumb
 								currentPage={currentPage}
@@ -402,7 +400,7 @@ export default function AppShell() {
 								<Suspense fallback={<PageLoading />}>
 									<div
 										key={currentPage}
-										className="animate-page-in flex-1 flex flex-col min-h-0"
+										className="animate-kn-page-in flex-1 flex flex-col min-h-0"
 									>
 										{renderPage()}
 									</div>
@@ -410,6 +408,7 @@ export default function AppShell() {
 						</ErrorBoundary>
 					</div>
 					</main>
+					</SidebarInset>
 
 					<TaskCreateForm
 					isOpen={showCreateForm}
@@ -423,6 +422,10 @@ export default function AppShell() {
 					onOpenChange={setShowCommandDialog}
 					onTaskSelect={handleSearchTaskSelect}
 					onDocSelect={handleSearchDocSelect}
+					onNewTask={handleOpenCreateForm}
+					onSwitchWorkspace={handleOpenWorkspacePicker}
+					isDark={isDark}
+					onToggleTheme={handleToggleThemeQuietly}
 				/>
 
 				<WorkspacePicker

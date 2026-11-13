@@ -1,0 +1,14 @@
+{
+  "id": "FX-60REC2",
+  "title": "Plain todo",
+  "status": "todo",
+  "priority": "medium",
+  "assignee": "@fixture",
+  "labels": null,
+  "createdAt": "2026-11-03T13:37:36.445Z",
+  "updatedAt": "2026-11-03T13:37:37.448Z",
+  "archived": false,
+  "acceptanceCriteria": null,
+  "timeSpent": 0,
+  "canonicalHash": "7719bd660c8817817971c0c56a8ea47062cbe9e23c29f24e8a00f255abc35a06"
+}

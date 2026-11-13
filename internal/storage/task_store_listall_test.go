@@ -6,11 +6,12 @@ import (
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func newListAllStore(t *testing.T) *Store {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init("listall-test"); err != nil {
 		t.Fatalf("init store: %v", err)

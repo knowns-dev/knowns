@@ -62,7 +62,7 @@ test.describe("Timer Start & Stop", () => {
 		await test.step("Header shows running timer with animated indicator", async () => {
 			await page.keyboard.press("Escape");
 			await page.waitForTimeout(300);
-			await expect(page.locator(".animate-ping").first()).toBeVisible();
+			await expect(page.locator("[data-timer-running]").first()).toBeVisible();
 			await expect(page.getByText(`#${taskId}`).first()).toBeVisible();
 		});
 
@@ -117,7 +117,7 @@ test.describe("Timer Start & Stop", () => {
 		await test.step("Header no longer shows timer indicator", async () => {
 			await page.keyboard.press("Escape");
 			await page.waitForTimeout(500);
-			const pingCount = await page.locator(".animate-ping").count();
+			const pingCount = await page.locator("[data-timer-running]").count();
 			expect(pingCount).toBe(0);
 		});
 	});
@@ -133,7 +133,7 @@ test.describe("Timer Start & Stop", () => {
 
 		await test.step("Navigate to kanban and verify timer", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.locator(".animate-ping").first()).toBeVisible();
+			await expect(page.locator("[data-timer-running]").first()).toBeVisible();
 		});
 
 		await test.step("Click stop button in header (title=Stop)", async () => {
@@ -144,7 +144,7 @@ test.describe("Timer Start & Stop", () => {
 		});
 
 		await test.step("Timer indicator gone", async () => {
-			const pingCount = await page.locator(".animate-ping").count();
+			const pingCount = await page.locator("[data-timer-running]").count();
 			expect(pingCount).toBe(0);
 		});
 	});
@@ -207,7 +207,7 @@ test.describe("Timer Pause & Resume", () => {
 
 		await test.step("Navigate and verify running indicator", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.locator(".animate-ping").first()).toBeVisible();
+			await expect(page.locator("[data-timer-running]").first()).toBeVisible();
 		});
 
 		await test.step("Click Pause in header", async () => {
@@ -217,8 +217,8 @@ test.describe("Timer Pause & Resume", () => {
 			await page.waitForTimeout(500);
 		});
 
-		await test.step("Paused indicator shown (no more red ping)", async () => {
-			const pingCount = await page.locator(".animate-ping").count();
+		await test.step("Paused indicator shown (no more red dot)", async () => {
+			const pingCount = await page.locator("[data-timer-running]").count();
 			expect(pingCount).toBe(0);
 			// Resume button appears in header (title changes from Pause to Resume)
 			await expect(page.locator("button[title='Resume']").first()).toBeVisible();
@@ -231,7 +231,7 @@ test.describe("Timer Pause & Resume", () => {
 		});
 
 		await test.step("Red running indicator returns", async () => {
-			await expect(page.locator(".animate-ping").first()).toBeVisible();
+			await expect(page.locator("[data-timer-running]").first()).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -254,24 +254,24 @@ test.describe("Timer Persistence", () => {
 
 		await test.step("Kanban page - timer visible", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.locator(".animate-ping").first()).toBeVisible();
+			await expect(page.locator("[data-timer-running]").first()).toBeVisible();
 		});
 
 		await test.step("Tasks page - timer still visible", async () => {
 			await page.getByText("Tasks", { exact: true }).first().click();
 			await expect(page).toHaveURL(/\/tasks/);
-			await expect(page.locator(".animate-ping").first()).toBeVisible();
+			await expect(page.locator("[data-timer-running]").first()).toBeVisible();
 		});
 
 		await test.step("Docs page - timer still visible", async () => {
 			await page.getByText("Docs", { exact: true }).first().click();
 			await expect(page).toHaveURL(/\/docs/);
-			await expect(page.locator(".animate-ping").first()).toBeVisible();
+			await expect(page.locator("[data-timer-running]").first()).toBeVisible();
 		});
 
 		await test.step("Dashboard - timer still visible", async () => {
 			await page.getByText("Dashboard", { exact: true }).first().click();
-			await expect(page.locator(".animate-ping").first()).toBeVisible();
+			await expect(page.locator("[data-timer-running]").first()).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -290,7 +290,7 @@ test.describe("Timer Persistence", () => {
 
 		await test.step("Navigate and verify", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.locator(".animate-ping").first()).toBeVisible();
+			await expect(page.locator("[data-timer-running]").first()).toBeVisible();
 		});
 
 		await test.step("Reload page", async () => {
@@ -299,7 +299,7 @@ test.describe("Timer Persistence", () => {
 		});
 
 		await test.step("Timer still visible after reload", async () => {
-			await expect(page.locator(".animate-ping").first()).toBeVisible();
+			await expect(page.locator("[data-timer-running]").first()).toBeVisible();
 			await expect(page.getByText(`#${taskId}`).first()).toBeVisible();
 		});
 
@@ -319,7 +319,7 @@ test.describe("Timer Persistence", () => {
 
 		await test.step("Navigate - timer visible in header", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.locator(".animate-ping").first()).toBeVisible();
+			await expect(page.locator("[data-timer-running]").first()).toBeVisible();
 			await expect(page.getByText(`#${taskId}`).first()).toBeVisible();
 		});
 
@@ -354,9 +354,9 @@ test.describe("Time Tracking Logs", () => {
 			await expect(page.getByRole("heading", { name: "Log Task", exact: true })).toBeVisible();
 		});
 
-		await test.step("Scroll to Time Tracking section", async () => {
+		await test.step("Open the Time tab", async () => {
+			await page.locator('[role="dialog"]').getByRole("tab", { name: /^Time/ }).click();
 			const timeSection = page.getByText("Time Tracking").first();
-			await timeSection.scrollIntoViewIfNeeded();
 			await expect(timeSection).toBeVisible();
 		});
 
@@ -380,9 +380,9 @@ test.describe("Time Tracking Logs", () => {
 			await expect(page.getByRole("heading", { name: "Multi Log", exact: true })).toBeVisible();
 		});
 
-		await test.step("Scroll to Time Tracking section", async () => {
+		await test.step("Open the Time tab", async () => {
+			await page.locator('[role="dialog"]').getByRole("tab", { name: /^Time/ }).click();
 			const timeSection = page.getByText("Time Tracking").first();
-			await timeSection.scrollIntoViewIfNeeded();
 			await expect(timeSection).toBeVisible();
 		});
 
@@ -405,9 +405,9 @@ test.describe("Time Tracking Logs", () => {
 			await expect(page.getByRole("heading", { name: "Active Task", exact: true })).toBeVisible();
 		});
 
-		await test.step("Scroll to Time Tracking and check Recording badge", async () => {
+		await test.step("Open the Time tab and check Recording badge", async () => {
+			await page.locator('[role="dialog"]').getByRole("tab", { name: /^Time/ }).click();
 			const timeSection = page.getByText("Time Tracking").first();
-			await timeSection.scrollIntoViewIfNeeded();
 			await expect(page.getByText("Recording...").first()).toBeVisible();
 		});
 
@@ -541,7 +541,7 @@ test.describe("Multiple Timers", () => {
 		});
 
 		await test.step("No timer indicators remain", async () => {
-			const pingCount = await page.locator(".animate-ping").count();
+			const pingCount = await page.locator("[data-timer-running]").count();
 			expect(pingCount).toBe(0);
 		});
 	});

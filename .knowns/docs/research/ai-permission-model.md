@@ -1,4 +1,5 @@
 ---
+id: doc-30d3a68f5510706a754eab0b7f68c630
 title: AI Permission Model
 description: Research note on introducing a capability-based permission model for AI actions in Knowns.
 createdAt: '2026-04-22T08:56:30.398Z'

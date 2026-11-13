@@ -1,33 +1,25 @@
-import { Clock, Play } from "lucide-react";
+import { Play } from "lucide-react";
 import type { TimeEntry } from "@/ui/models/task";
 import { useTimeTracker } from "../../contexts/TimeTrackerContext";
-import { Button } from "../ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { Button } from "@/ui/components/ui/knowns/button";
+import { formatTracked } from "../organisms/TaskDetail/types";
 
 interface TimeTrackingLogsProps {
 	taskId: string;
 	timeEntries: TimeEntry[];
 	timeSpent: number;
+	/** Start is unavailable (archived Tasks). */
+	disabled?: boolean;
 }
 
-function formatDuration(seconds: number): string {
-	const hours = Math.floor(seconds / 3600);
-	const minutes = Math.floor((seconds % 3600) / 60);
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	if (minutes === 0 && seconds > 0) {
-		return `${seconds}s`;
-	}
-	return `${minutes}m`;
+function dayLabel(date: Date): string {
+	return date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 }
 
-export function TimeTrackingLogs({ taskId, timeEntries, timeSpent }: TimeTrackingLogsProps) {
+export function TimeTrackingLogs({ taskId, timeEntries, timeSpent, disabled = false }: TimeTrackingLogsProps) {
 	const { isTaskRunning, start } = useTimeTracker();
-
 	const isThisTaskActive = isTaskRunning(taskId);
-
-	const completedEntries = timeEntries.filter((e) => e.endedAt);
+	const completedEntries = (timeEntries ?? []).filter((e) => e.endedAt).slice().reverse();
 
 	const handleStartTimer = async () => {
 		if (isThisTaskActive) return;
@@ -39,73 +31,49 @@ export function TimeTrackingLogs({ taskId, timeEntries, timeSpent }: TimeTrackin
 	};
 
 	return (
-		<Card>
-			<CardHeader className="pb-3">
-				<div className="flex items-center justify-between">
-					<CardTitle className="flex items-center gap-2 text-base">
-						<Clock className="w-4 h-4" />
+		<section aria-labelledby={`time-${taskId}`} className="flex flex-col gap-4">
+			<div className="flex flex-wrap items-end justify-between gap-3">
+				<div className="flex flex-col gap-0.5">
+					<h3 id={`time-${taskId}`} className="text-[13.5px] font-semibold text-foreground">
 						Time Tracking
-					</CardTitle>
-					<div className="flex items-center gap-3">
-						<span className="text-sm text-muted-foreground">
-							Total: <span className="font-semibold text-foreground">{formatDuration(timeSpent)}</span>
-						</span>
-						{!isThisTaskActive && (
-							<Button
-								size="sm"
-								variant="default"
-								onClick={handleStartTimer}
-								className="gap-1.5"
-							>
-								<Play className="w-3.5 h-3.5" />
-								Start Timer
-							</Button>
-						)}
-						{isThisTaskActive && (
-							<span className="text-xs px-2 py-1 rounded-full bg-green-500/10 text-green-600 dark:text-green-400 font-medium animate-pulse">
-								Recording...
-							</span>
-						)}
-					</div>
-				</div>
-			</CardHeader>
-			<CardContent>
-				{completedEntries.length === 0 ? (
-					<p className="text-sm text-muted-foreground text-center py-4">
-						No time entries yet. Click "Start Timer" to begin tracking.
+					</h3>
+					<p className="text-[13px] text-muted-foreground">
+						<span className="text-[20px] font-semibold tracking-tight text-foreground tabular-nums">{formatTracked(timeSpent)}</span>{" "}
+						tracked in {completedEntries.length} {completedEntries.length === 1 ? "session" : "sessions"}
 					</p>
+				</div>
+				{isThisTaskActive ? (
+					<span className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[12.5px] font-medium text-emerald-700 dark:text-emerald-300">
+						<span aria-hidden className="size-1.5 rounded-full bg-current motion-safe:animate-pulse" />
+						Recording...
+					</span>
 				) : (
-					<div className="space-y-1 max-h-48 overflow-y-auto">
-						{completedEntries
-							.slice()
-							.reverse()
-							.map((entry) => (
-								<div
-									key={entry.id}
-									className="flex justify-between items-center text-sm py-1.5 px-2 rounded hover:bg-muted/50"
-								>
-									<div className="flex-1 min-w-0">
-										<span className="text-muted-foreground">
-											{entry.startedAt.toLocaleDateString()}{" "}
-											{entry.startedAt.toLocaleTimeString([], {
-												hour: "2-digit",
-												minute: "2-digit",
-											})}
-										</span>
-										{entry.note && (
-											<span className="text-muted-foreground/70 ml-2 truncate">
-												- {entry.note}
-											</span>
-										)}
-									</div>
-									<span className="font-medium text-foreground shrink-0 ml-2">
-										{formatDuration(entry.duration)}
-									</span>
-								</div>
-							))}
-					</div>
+					<Button size="sm" variant="secondary" icon={<Play />} onClick={handleStartTimer} disabled={disabled}>
+						Start Timer
+					</Button>
 				)}
-			</CardContent>
-		</Card>
+			</div>
+			{completedEntries.length === 0 ? (
+				<p className="text-[13px] text-muted-foreground">No sessions yet. Start the timer to log time against this task.</p>
+			) : (
+				<ol aria-label="Time entries" className="divide-y divide-[color-mix(in_srgb,var(--foreground)_8%,transparent)]">
+					{completedEntries.map((entry) => (
+						<li key={entry.id} className="flex items-baseline gap-3 py-2.5 text-[13.5px]">
+							<time dateTime={entry.startedAt.toISOString()} className="w-28 flex-none text-muted-foreground tabular-nums max-sm:w-24">
+								{dayLabel(entry.startedAt)}
+							</time>
+							<span className="min-w-0 flex-1 truncate text-foreground/85">
+								{entry.note || (
+									<span className="text-muted-foreground">
+										{entry.startedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+									</span>
+								)}
+							</span>
+							<span className="flex-none font-medium text-foreground tabular-nums">{formatTracked(entry.duration)}</span>
+						</li>
+					))}
+				</ol>
+			)}
+		</section>
 	);
 }

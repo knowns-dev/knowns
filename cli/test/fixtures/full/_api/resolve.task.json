@@ -1,0 +1,24 @@
+{
+  "reference": {
+    "raw": "@task-FX-3VT2SR",
+    "canonical": "@task/FX-3VT2SR",
+    "type": "task",
+    "target": "FX-3VT2SR",
+    "relation": "references",
+    "validRelation": true,
+    "legacy": true
+  },
+  "entity": {
+    "type": "task",
+    "id": "FX-3VT2SR",
+    "title": "Implement login flow (v2)",
+    "status": "done",
+    "priority": "high",
+    "tags": [
+      "auth",
+      "feature",
+      "shipped"
+    ]
+  },
+  "found": true
+}

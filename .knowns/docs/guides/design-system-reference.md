@@ -1,4 +1,5 @@
 ---
+id: doc-b519804c004ac3299f93db87523e654a
 title: Design System Reference
 description: Bộ quy tắc thiết kế cho SVG diagrams, Web UI và knowns.sh — đảm bảo visual consistency
 createdAt: '2026-04-12T06:13:53.895Z'

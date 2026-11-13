@@ -1,4 +1,5 @@
 ---
+id: doc-9954f611c027768fb585112109d9b0ef
 title: 'Pattern: Drag-Resize Panel'
 createdAt: '2026-03-05T05:31:55.966Z'
 updatedAt: '2026-03-05T05:32:39.065Z'

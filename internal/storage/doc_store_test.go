@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestDocStoreRejectsTraversalAndSymlinkEscape(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	base := t.TempDir()
 	store := NewStore(filepath.Join(base, ".knowns"))
 	if err := store.Init("doc-path-security"); err != nil {
@@ -53,7 +54,7 @@ func TestDocStoreRejectsTraversalAndSymlinkEscape(t *testing.T) {
 }
 
 func TestDocStoreAllowsNestedRelativePath(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init("doc-path-security"); err != nil {
 		t.Fatal(err)
@@ -69,7 +70,7 @@ func TestDocStoreAllowsNestedRelativePath(t *testing.T) {
 }
 
 func TestDocStoreRenameAndRewriteDocReferences(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 
 	root := filepath.Join(t.TempDir(), ".knowns")
 	store := NewStore(root)
@@ -173,7 +174,7 @@ func TestDocStoreRenameAndRewriteDocReferences(t *testing.T) {
 }
 
 func TestDocStoreApprovedLockedDecisionEditRequiresReview(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init("spec-review-gate-test"); err != nil {
 		t.Fatalf("init store: %v", err)

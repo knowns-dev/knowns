@@ -20,9 +20,9 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// projectRoot returns the project root directory (parent of .knowns/).
+// projectRoot returns the code repository root of the store.
 func projectRoot(store *storage.Store) string {
-	return filepath.Dir(store.Root)
+	return store.ProjectRoot
 }
 
 // RegisterCodeTool registers the consolidated code intelligence MCP tool.

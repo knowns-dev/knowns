@@ -18,17 +18,22 @@ const globalSemanticStoreDir = "global"
 
 // Store is the top-level coordinator for all .knowns/ sub-stores.
 type Store struct {
-	// Root is the absolute path to the .knowns/ directory.
-	Root       string
-	Tasks      *TaskStore
-	Docs       *DocStore
-	Config     *ConfigStore
-	Time       *TimeStore
-	Templates  *TemplateStore
-	Versions   *VersionStore
-	Workspaces *WorkspaceStore
-	Memory     *MemoryStore
-	Decisions  *DecisionStore
+	// Root is the absolute path to the directory holding the project's
+	// knowledge: the in-repo .knowns/ directory, or a project folder in a store.
+	Root string
+	// ProjectRoot is the absolute path to the code repository. It is an
+	// independent value: code paths must read it rather than derive it from Root,
+	// because a store-linked project keeps its knowledge outside the repository.
+	ProjectRoot string
+	Tasks       *TaskStore
+	Docs        *DocStore
+	Config      *ConfigStore
+	Time        *TimeStore
+	Templates   *TemplateStore
+	Versions    *VersionStore
+	Workspaces  *WorkspaceStore
+	Memory      *MemoryStore
+	Decisions   *DecisionStore
 
 	taskLifecycleLock     *taskLifecycleLock
 	decisionMigrationLock *decisionMemoryMigrationLock
@@ -37,18 +42,29 @@ type Store struct {
 	renameReferencePreflight func()
 }
 
-// NewStore creates a Store rooted at the given .knowns/ directory path.
-// The directory does not need to exist yet; call Init to create it.
+// NewStore creates a Store rooted at the given knowledge directory. For an
+// in-repo .knowns/ the code root is its parent; for a project folder in a store
+// clone it is the repository the machine registry maps to it. The directory
+// does not need to exist yet; call Init to create it.
 func NewStore(root string) *Store {
+	return NewStoreWithProjectRoot(root, projectRootForKnowledgeRoot(root))
+}
+
+// NewStoreWithProjectRoot creates a Store whose knowledge root and code root are
+// given separately, as for a project whose knowledge lives in a store.
+func NewStoreWithProjectRoot(root, projectRoot string) *Store {
 	globalRoot := GlobalRootPath()
 
 	lifecycleLock := newTaskLifecycleLock(root)
 	decisionLock := newDecisionLifecycleLock(root)
 	migrationLock := newDecisionMemoryMigrationLock(root)
-	s := &Store{Root: root, taskLifecycleLock: lifecycleLock, decisionMigrationLock: migrationLock}
+	s := &Store{Root: root, ProjectRoot: projectRoot, taskLifecycleLock: lifecycleLock, decisionMigrationLock: migrationLock}
 	s.Tasks = &TaskStore{root: root, lifecycleLock: lifecycleLock}
 	s.Docs = &DocStore{root: root}
 	s.Config = &ConfigStore{root: root}
+	if inStoresDir(root) {
+		s.Config.split = newConfigSplit(projectRoot)
+	}
 	s.Time = &TimeStore{root: root, lifecycleLock: lifecycleLock}
 	s.Templates = &TemplateStore{root: root}
 	s.Versions = &VersionStore{root: root, lifecycleLock: lifecycleLock, history: NewHistoryStore(root)}
@@ -76,7 +92,13 @@ func (s *Store) WithDecisionMemoryMigrationLock(ctx context.Context, fn func() e
 // Store instances and processes that point at the same project. The callback
 // receives lock-aware storage primitives and must not call the public TaskStore
 // mutation methods, which acquire the same lock.
+// A stale-hash conflict whose current state arrived through store sync is
+// returned as a SyncConflictError that explains it (FR-12, FR-13).
 func (s *Store) WithTaskLifecycleTransaction(ctx context.Context, fn func(*TaskLifecycleTransaction) error) error {
+	return s.explainConflict(s.withTaskLifecycleTransaction(ctx, fn))
+}
+
+func (s *Store) withTaskLifecycleTransaction(ctx context.Context, fn func(*TaskLifecycleTransaction) error) error {
 	if s == nil || s.taskLifecycleLock == nil {
 		return fmt.Errorf("task lifecycle transaction: store is not initialized")
 	}
@@ -148,25 +170,23 @@ func (s *Store) CodeRefExists(docPath, symbol string) bool {
 	return false
 }
 
-// FindProjectRoot walks up from startDir looking for a .knowns/ directory
-// that contains a config.json (i.e. a properly initialized project).
-// Returns the absolute path to the .knowns/ directory, or an error if not found.
+// inRepoProjectRoot is the code root of a project whose knowledge lives in an
+// in-repo .knowns/ directory: its parent. It is the only place that relation
+// is encoded; everything else reads Store.ProjectRoot.
+func inRepoProjectRoot(knowledgeRoot string) string {
+	return filepath.Dir(knowledgeRoot)
+}
+
+// FindProjectRoot walks up from startDir to the nearest project and returns
+// its knowledge root: the in-repo .knowns/ directory, or the project's folder
+// in a store when the registry links the repository to one. Callers that also
+// need the code root use LocateProject.
 func FindProjectRoot(startDir string) (string, error) {
-	dir := startDir
-	for {
-		candidate := filepath.Join(dir, ".knowns")
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			if _, cfgErr := os.Stat(filepath.Join(candidate, "config.json")); cfgErr == nil {
-				return candidate, nil
-			}
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
+	loc, err := LocateProject(startDir)
+	if err != nil {
+		return "", err
 	}
-	return "", fmt.Errorf("no .knowns/ directory found (started from %s)", startDir)
+	return loc.KnowledgeRoot, nil
 }
 
 // Init creates the .knowns/ directory structure for a new project.

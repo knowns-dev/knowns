@@ -1,4 +1,5 @@
 ---
+id: doc-e1ae0d44925bfa522ef6f465d2df9841
 title: tree-sitter-sidecar
 description: Migrate tree-sitter AST parsing from Go CGO bindings to TS/Bun sidecar via JSON-RPC
 createdAt: '2026-04-18T17:29:29.428Z'

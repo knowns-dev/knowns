@@ -1,4 +1,5 @@
 ---
+id: doc-ff29dbbf8e5c00936de9c59300dd47ae
 title: LSP-Enriched Code Intelligence
 description: Specification for replacing heuristic code graph with LSP-backed precise code intelligence, removing code embedding, and exposing LSP capabilities via MCP tools
 createdAt: '2026-05-20T08:35:06.856Z'

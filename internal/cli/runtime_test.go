@@ -12,6 +12,7 @@ import (
 	"github.com/howznguyen/knowns/internal/runtimequeue"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/services"
+	"github.com/howznguyen/knowns/internal/testutil"
 	"github.com/spf13/cobra"
 )
 
@@ -325,7 +326,7 @@ func TestSemanticReindexRemediation(t *testing.T) {
 }
 
 func TestCLIRuntimeReadinessProbesRuntimeQueueStatus(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	if err := os.MkdirAll(filepath.Dir(runtimequeue.PIDFile()), 0o755); err != nil {
 		t.Fatal(err)
 	}

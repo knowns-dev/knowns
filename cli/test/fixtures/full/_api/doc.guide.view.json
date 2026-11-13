@@ -1,0 +1,15 @@
+{
+  "id": "doc-ac898e8a05113b487005ded81365e568",
+  "path": "guides/setup-guide",
+  "title": "Setup guide v2",
+  "description": "How to set up",
+  "content": "# Setup\n\n## Install\n\nRun it.\n\n## Configure\n\nNew configure text.\nAppended line.",
+  "tags": [
+    "guide",
+    "setup"
+  ],
+  "createdAt": "2026-11-03T13:37:36.556Z",
+  "updatedAt": "2026-11-03T13:37:36.854Z",
+  "folder": "guides",
+  "canonicalHash": "43a777dcd56f7dc4138b0d7590f3ef05060c03e120224972b974475ab21983e4"
+}

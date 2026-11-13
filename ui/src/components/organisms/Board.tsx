@@ -1,33 +1,25 @@
-import { useEffect, useState, useMemo, useRef, useCallback } from "react";
-import { Eye, EyeOff, ClipboardList, ChevronDown, ChevronUp, FileText } from "lucide-react";
+// The Tasks board, on Knowns UI's KanbanBoard: keyboard and touch drag that saves status and order,
+// swimlanes per assignee that reassign, quick add, and column visibility saved to config.
+import { useCallback, useMemo, useRef } from "react";
+import { Eye, EyeOff, FileText } from "lucide-react";
 import type { Task, TaskStatus } from "@/ui/models/task";
+import { getTaskLifecycleState } from "@/ui/models/taskLifecycle";
+import { cn } from "@/ui/lib/utils";
+import { agentIcon, agentName } from "@/ui/lib/agent";
+import { TaskLifecycleBadge } from "../molecules/TaskLifecycleBadge";
 import { api } from "../../api/client";
 import { useConfig } from "../../contexts/ConfigContext";
-import { useNewTaskIds } from "../../hooks/useNewTaskIds";
-import { ScrollArea, ScrollBar } from "../ui/ScrollArea";
-import {
-	KanbanProvider,
-	KanbanBoard,
-	KanbanHeader,
-	KanbanCards,
-	KanbanCard,
-	type DragEndEvent,
-} from "../ui/kanban";
-import { Avatar } from "../atoms";
-import {
-	getColumnClasses,
-	getStatusBadgeClasses,
-	DEFAULT_STATUS_COLORS,
-	type ColorName,
-} from "../../utils/colors";
-import { cn } from "@/ui/lib/utils";
-import { useIsMobile } from "@/ui/hooks/useMobile";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
+import { DEFAULT_STATUS_COLORS, type ColorName } from "../../utils/colors";
 import { toast } from "../ui/sonner";
-import { TaskLifecycleBadge } from "../molecules/TaskLifecycleBadge";
-import { LabelList, PriorityBadge } from "../molecules";
+import { useIsMobile } from "../../hooks/useMobile";
+import { KanbanBoard } from "../ui/knowns/kanban/kanban-board";
+import type {
+	KanbanCard,
+	KanbanColumn,
+	KanbanMove,
+	KanbanPerson,
+} from "../ui/knowns/kanban/types";
 
-// Default column labels (can be overridden by config)
 const DEFAULT_COLUMN_LABELS: Record<string, string> = {
 	todo: "To Do",
 	"in-progress": "In Progress",
@@ -37,467 +29,274 @@ const DEFAULT_COLUMN_LABELS: Record<string, string> = {
 	"on-hold": "On Hold",
 };
 
-// Convert status slug to readable label
-function getColumnLabel(status: string): string {
-	if (DEFAULT_COLUMN_LABELS[status]) {
-		return DEFAULT_COLUMN_LABELS[status];
-	}
-	return status
-		.split("-")
-		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-		.join(" ");
-}
-
-// Kanban item type that extends Task with required kanban fields
-type KanbanTaskItem = {
-	id: string;
-	name: string;
-	column: string;
-	task: Task;
-};
-
-// Kanban column type
-type KanbanColumn = {
-	id: string;
-	name: string;
-	color: string;
-};
-
-interface BoardProps {
-	tasks: Task[];
-	loading: boolean;
-	onTasksUpdate: (tasks: Task[]) => void;
-	/** Opening a Task is the page's job: it owns the single TaskDetailSheet. */
-	onTaskClick: (task: Task) => void;
-}
-
-export default function Board({ tasks, loading, onTasksUpdate, onTaskClick }: BoardProps) {
-	const { config, updateConfig } = useConfig();
-	const newTaskIds = useNewTaskIds(tasks);
-	const [visibleColumns, setVisibleColumns] = useState<Set<TaskStatus>>(new Set());
-	const [columnControlsOpen, setColumnControlsOpen] = useState(false);
-	const [isDragging, setIsDragging] = useState(false);
-	const isMobile = useIsMobile();
-	// Get statuses from config
-	const availableStatuses = (config?.statuses as TaskStatus[]) || [
-		"todo",
-		"in-progress",
-		"in-review",
-		"done",
-		"blocked",
-	];
-
-	// Get status colors from config
-	const statusColors = (config?.statusColors as Record<string, ColorName>) || DEFAULT_STATUS_COLORS;
-
-	// Convert statuses to kanban columns
-	const columns: KanbanColumn[] = useMemo(() => {
-		return availableStatuses
-			.filter((status) => visibleColumns.has(status))
-			.map((status) => ({
-				id: status,
-				name: getColumnLabel(status),
-				color: statusColors[status] || "gray",
-			}));
-	}, [availableStatuses, visibleColumns, statusColors]);
-
-	// Priority order for sorting (lower number = higher priority)
-	const priorityOrder: Record<string, number> = {
-		high: 0,
-		medium: 1,
-		low: 2,
-	};
-
-	// Convert tasks to kanban items with sorting
-	const kanbanDataFromTasks: KanbanTaskItem[] = useMemo(() => {
-		const sortedTasks = [...tasks].sort((a, b) => {
-			const hasOrderA = a.order != null;
-			const hasOrderB = b.order != null;
-
-			if (hasOrderA && hasOrderB) {
-				return a.order! - b.order!;
-			}
-			if (hasOrderA) return -1;
-			if (hasOrderB) return 1;
-
-			const priorityA = priorityOrder[a.priority] ?? 2;
-			const priorityB = priorityOrder[b.priority] ?? 2;
-			if (priorityA !== priorityB) {
-				return priorityA - priorityB;
-			}
-			return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-		});
-
-		return sortedTasks.map((task) => ({
-			id: task.id,
-			name: task.title,
-			column: task.status,
-			task,
-		}));
-	}, [tasks]);
-	const [kanbanData, setKanbanData] = useState<KanbanTaskItem[]>(kanbanDataFromTasks);
-
-	// Get selected task from URL hash
-	useEffect(() => {
-		if (!isDragging) {
-			setKanbanData(kanbanDataFromTasks);
-		}
-	}, [isDragging, kanbanDataFromTasks]);
-
-	// Initialize visible columns from config
-	useEffect(() => {
-		if (config?.visibleColumns) {
-			setVisibleColumns(new Set(config.visibleColumns as TaskStatus[]));
-		} else {
-			setVisibleColumns(new Set(availableStatuses));
-		}
-	}, [config?.visibleColumns, availableStatuses.join(",")]);
-
-	// Save visible columns to config when changed
-	const saveVisibleColumns = async (columns: Set<TaskStatus>) => {
-		try {
-			await updateConfig({ visibleColumns: [...columns] });
-		} catch (err) {
-			console.error("Failed to save config:", err);
-		}
-	};
-
-	const toggleColumn = (column: TaskStatus) => {
-		setVisibleColumns((prev) => {
-			const next = new Set(prev);
-			if (next.has(column)) {
-				next.delete(column);
-			} else {
-				next.add(column);
-			}
-			saveVisibleColumns(next);
-			return next;
-		});
-	};
-
-	// --- Drag-and-drop: refs to defer API calls until drag ends ---
-	const lastDropDataRef = useRef<KanbanTaskItem[] | null>(null);
-	const preDragTasksRef = useRef<Task[]>([]);
-	const tasksRef = useRef(tasks);
-	tasksRef.current = tasks;
-
-	const handleDragStart = useCallback(() => {
-		setIsDragging(true);
-		lastDropDataRef.current = null;
-		preDragTasksRef.current = tasksRef.current;
-	}, []);
-
-	const flushAfterDrag = useCallback(async () => {
-		const newData = lastDropDataRef.current;
-		lastDropDataRef.current = null;
-		if (!newData) {
-			setIsDragging(false);
-			return;
-		}
-
-		const currentTasks = tasksRef.current;
-		// Compare against pre-drag snapshot to detect changes, since
-		// currentTasks may already reflect optimistic updates
-		const originalTasks = preDragTasksRef.current;
-
-		// Status changes
-		const statusChanges = newData.filter((item) => {
-			const orig = originalTasks.find((t) => t.id === item.id);
-			return orig && orig.status !== item.column;
-		});
-
-		// Order changes - update ALL tasks in each column to ensure consistent ordering
-		const orderUpdates: Array<{ id: string; order: number }> = [];
-		for (const col of columns) {
-			const colItems = newData.filter((item) => item.column === col.id);
-			colItems.forEach((item, index) => {
-				orderUpdates.push({ id: item.id, order: index });
-			});
-		}
-
-		// Apply order optimistically
-		if (orderUpdates.length > 0) {
-			const orderMap = new Map(orderUpdates.map((o) => [o.id, o.order]));
-			onTasksUpdate(
-				currentTasks.map((task) => {
-					const newOrder = orderMap.get(task.id);
-					const newItem = newData.find((item) => item.id === task.id);
-					const newStatus = newItem && newItem.column !== task.status
-						? (newItem.column as TaskStatus)
-						: task.status;
-					if (newOrder !== undefined || newStatus !== task.status) {
-						return { ...task, status: newStatus, ...(newOrder !== undefined ? { order: newOrder } : {}) };
-					}
-					return task;
-				}),
-			);
-		}
-
-		// Fire API calls — status changes first, then reorder, to avoid
-		// race conditions where reorder reads stale status from disk.
-		if (statusChanges.length === 0 && orderUpdates.length === 0) {
-			setIsDragging(false);
-			return;
-		}
-
-		try {
-			// Apply status changes first (sequentially to avoid file conflicts)
-			for (const item of statusChanges) {
-				await api.updateTask(item.id, { status: item.column as TaskStatus });
-				toast.success("Status updated", {
-					description: `#${item.id} moved to ${getColumnLabel(item.column)}`,
-				});
-			}
-
-			// Then apply order changes
-			if (orderUpdates.length > 0) {
-				await api.reorderTasks(orderUpdates);
-			}
-		} catch (error) {
-			console.error("Failed to update tasks:", error);
-			toast.error("Failed to update", {
-				description: error instanceof Error ? error.message : "Unknown error",
-			});
-			api.getTasks().then(onTasksUpdate).catch(console.error);
-		} finally {
-			setIsDragging(false);
-		}
-	}, [columns, onTasksUpdate]);
-
-	const handleDragEnd = useCallback(() => {
-		setTimeout(flushAfterDrag, 0);
-	}, [flushAfterDrag]);
-
-	const handleDataChange = (newData: KanbanTaskItem[]) => {
-		lastDropDataRef.current = newData;
-		setKanbanData(newData);
-	};
-
-	if (loading) {
-		return (
-			<div className="flex items-center justify-center h-64">
-				<div className="text-muted-foreground">Loading tasks...</div>
-			</div>
-		);
-	}
-
+function columnLabel(status: string): string {
 	return (
-		<div className="flex flex-col h-full">
-			{/* Column Visibility Controls */}
-			{isMobile ? (
-				<Collapsible
-					open={columnControlsOpen}
-					onOpenChange={setColumnControlsOpen}
-					className="shrink-0 mb-4"
+		DEFAULT_COLUMN_LABELS[status] ??
+		status
+			.split("-")
+			.map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+			.join(" ")
+	);
+}
+
+type Tone = NonNullable<KanbanColumn["tone"]>;
+
+const TONE_BY_COLOR: Partial<Record<ColorName, Tone>> = {
+	gray: "neutral",
+	blue: "info",
+	green: "success",
+	yellow: "warning",
+	orange: "warning",
+	red: "danger",
+	purple: "accent",
+};
+
+const PRIORITY_TONE: Record<string, Tone> = { high: "danger", medium: "warning", low: "neutral" };
+const PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
+
+function sortTasks(tasks: Task[]): Task[] {
+	return [...tasks].sort((a, b) => {
+		if (a.order != null && b.order != null) return a.order - b.order;
+		if (a.order != null) return -1;
+		if (b.order != null) return 1;
+		const p = (PRIORITY_RANK[a.priority] ?? 2) - (PRIORITY_RANK[b.priority] ?? 2);
+		if (p !== 0) return p;
+		return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+	});
+}
+
+function toCard(task: Task): KanbanCard {
+	const ac = task.acceptanceCriteria ?? [];
+	return {
+		id: task.id,
+		column: task.status,
+		title: task.title,
+		key: `#${task.id}`,
+		labels: [
+			{ text: task.priority, tone: PRIORITY_TONE[task.priority] ?? "neutral" },
+			...(task.labels ?? []).slice(0, 2).map((text) => ({ text })),
+		],
+		...(task.assignee ? { assignee: task.assignee } : {}),
+		...(ac.length > 0
+			? { checklist: { done: ac.filter((a) => a.completed).length, total: ac.length } }
+			: {}),
+		...(task.status === "blocked"
+			? { state: "blocked" as const }
+			: task.workedBy?.active
+				? { state: "busy" as const }
+				: {}),
+		...(hasFooter(task) ? { footer: <CardFooter task={task} /> } : {}),
+	};
+}
+
+const hasFooter = (task: Task) =>
+	!!task.workedBy ||
+	!!task.description || !!task.spec || getTaskLifecycleState(task) !== "active";
+
+/** What the old board showed under the title: description, spec link, and a non-active lifecycle. */
+function CardFooter({ task }: { task: Task }) {
+	const lifecycle = getTaskLifecycleState(task);
+	return (
+		<div className="flex min-w-0 flex-col gap-1.5">
+			{task.workedBy && (
+				<span
+					data-testid="worked-by"
+					title={`Worked by ${agentName(task.workedBy.client)}${task.workedBy.active ? "" : " (timer not running)"}`}
+					className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
 				>
-					<CollapsibleTrigger className="flex items-center justify-between w-full py-2">
-						<span className="text-sm text-muted-foreground">
-							Columns ({visibleColumns.size}/{availableStatuses.length})
-						</span>
-						{columnControlsOpen ? (
-							<ChevronUp className="w-4 h-4 text-muted-foreground" />
-						) : (
-							<ChevronDown className="w-4 h-4 text-muted-foreground" />
-						)}
-					</CollapsibleTrigger>
-					<CollapsibleContent>
-						<div className="flex flex-wrap gap-1.5 pt-2">
-							{availableStatuses.map((column) => {
-								const isVisible = visibleColumns.has(column);
-								const taskCount = tasks.filter((t) => t.status === column).length;
-								return (
-									<button
-										key={column}
-										type="button"
-										onClick={() => toggleColumn(column)}
-										className={cn(
-											"flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors text-xs",
-											isVisible
-												? "bg-muted text-foreground"
-												: "text-muted-foreground hover:text-foreground"
-										)}
-									>
-										{isVisible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-										<span>{getColumnLabel(column)} ({taskCount})</span>
-									</button>
-								);
-							})}
-						</div>
-					</CollapsibleContent>
-				</Collapsible>
-			) : (
-				<div className="shrink-0 mb-4">
-					<div className="flex items-center gap-1.5 flex-wrap">
-						<span className="text-sm text-muted-foreground mr-1">Columns</span>
-						{availableStatuses.map((column) => {
-							const isVisible = visibleColumns.has(column);
-							const taskCount = tasks.filter((t) => t.status === column).length;
-							return (
-								<button
-									key={column}
-									type="button"
-									onClick={() => toggleColumn(column)}
-									className={cn(
-										"flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors text-sm",
-										isVisible
-											? "bg-muted text-foreground"
-											: "text-muted-foreground hover:text-foreground"
-									)}
-								>
-									{isVisible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-									<span>{getColumnLabel(column)} ({taskCount})</span>
-								</button>
-							);
-						})}
-					</div>
+					<span aria-hidden className="grid size-4 flex-none place-items-center [&>*]:size-full [&_svg]:size-full">
+						{agentIcon(task.workedBy.client)}
+					</span>
+					<span className="truncate">{agentName(task.workedBy.client)}</span>
+				</span>
+			)}
+			{task.description && (
+				<p className="line-clamp-2 text-xs leading-4 text-muted-foreground">{task.description}</p>
+			)}
+			{(task.spec || lifecycle !== "active") && (
+				<div className="flex min-w-0 flex-wrap items-center gap-1.5">
+					{task.spec && (
+						<a
+							href={`/docs/${task.spec}`}
+							className="flex min-w-0 items-center gap-1 text-xs text-purple-600 hover:underline dark:text-purple-400"
+						>
+							<FileText className="h-3 w-3 shrink-0" aria-hidden="true" />
+							<span className="truncate">{task.spec.replace(/^specs\//, "")}</span>
+						</a>
+					)}
+					{lifecycle !== "active" && <TaskLifecycleBadge state={task.lifecycleState} />}
 				</div>
 			)}
-
-			{/* Kanban Board */}
-			<ScrollArea className="flex-1">
-				{visibleColumns.size > 0 ? (
-					<KanbanProvider
-						columns={columns}
-						data={kanbanData}
-						onDataChange={handleDataChange}
-						onDragStart={handleDragStart}
-						onDragEnd={handleDragEnd}
-						className="min-h-full pb-4"
-					>
-						{(column) => {
-							const columnClasses = getColumnClasses(column.id as TaskStatus, statusColors);
-							const taskCount = kanbanData.filter((item) => item.column === column.id).length;
-
-							return (
-								<KanbanBoard
-									id={column.id}
-									key={column.id}
-									className={cn(
-										"min-w-[300px] max-w-[360px]",
-										isMobile && "min-w-0 max-w-none w-full",
-										columnClasses.bg,
-										columnClasses.border
-									)}
-								>
-									<KanbanHeader className="flex items-center justify-between">
-										<span className="font-semibold text-sm text-foreground">
-											{column.name}
-										</span>
-										<span className="text-xs text-muted-foreground">
-											{taskCount}
-										</span>
-									</KanbanHeader>
-									<KanbanCards<KanbanTaskItem> id={column.id}>
-										{(item) => (
-											<TaskKanbanCard
-												key={item.id}
-												item={item}
-												isNew={newTaskIds.has(item.id)}
-												statusColors={statusColors}
-												onClick={() => onTaskClick(item.task)}
-											/>
-										)}
-									</KanbanCards>
-								</KanbanBoard>
-							);
-						}}
-					</KanbanProvider>
-				) : (
-					<div className="text-center py-12">
-						<p className="text-sm text-muted-foreground">
-							No columns visible. Select at least one column above.
-						</p>
-					</div>
-				)}
-				<ScrollBar orientation="horizontal" />
-			</ScrollArea>
 		</div>
 	);
 }
 
-// Task card content component for KanbanCard
-interface TaskKanbanCardProps {
-	item: KanbanTaskItem;
-	isNew?: boolean;
-	statusColors: Record<string, ColorName>;
-	onClick: () => void;
+interface BoardProps {
+	tasks: Task[];
+	onTasksUpdate: (tasks: Task[]) => void;
+	onTaskClick: (task: Task) => void;
 }
 
-function TaskKanbanCard({ item, isNew, statusColors, onClick }: TaskKanbanCardProps) {
-	const { task } = item;
-	const statusBadgeClasses = getStatusBadgeClasses(task.status, statusColors);
-	const ac = task.acceptanceCriteria ?? [];
-	const completedAC = ac.filter((a) => a.completed).length;
-	const totalAC = ac.length;
-	return (
-		<KanbanCard
-			id={item.id}
-			name={item.name}
-			column={item.column}
-			className={cn("w-full group/card", isNew && "animate-[fade-in-up_0.5s_ease-out]")}
+export default function Board({ tasks, onTasksUpdate, onTaskClick }: BoardProps) {
+	const { config, updateConfig } = useConfig();
+	const isMobile = useIsMobile();
+	const statuses = (config?.statuses as TaskStatus[]) || ["todo", "in-progress", "in-review", "done", "blocked"];
+	// Settings can save an empty or stale list (every column unticked, a status removed): show all then,
+	// since a board with no columns has nothing to drop onto.
+	const saved = ((config?.visibleColumns as TaskStatus[] | undefined) ?? []).filter((s) => statuses.includes(s));
+	const visible = new Set(config?.visibleColumns && saved.length > 0 ? saved : statuses);
+
+	const toggleColumn = (status: TaskStatus) => {
+		const next = new Set(visible);
+		if (next.has(status)) next.delete(status);
+		else next.add(status);
+		// Keep the configured order; at least one column stays visible.
+		if (next.size === 0) return;
+		updateConfig({ visibleColumns: statuses.filter((s) => next.has(s)) }).catch((err: unknown) =>
+			toast.error("Failed to save columns", { description: err instanceof Error ? err.message : String(err) }),
+		);
+	};
+
+	const countByStatus = useMemo(() => {
+		const counts = new Map<string, number>();
+		for (const t of tasks) counts.set(t.status, (counts.get(t.status) ?? 0) + 1);
+		return counts;
+	}, [tasks]);
+
+	const columnToggles = (
+		<div
+			className="-mx-1 flex max-w-full items-center gap-1 overflow-x-auto px-1 [scrollbar-width:none] sm:flex-wrap sm:overflow-visible"
+			role="group"
+			aria-label="Visible columns"
 		>
-			<div
-				onClick={onClick}
-				onKeyDown={(e) => e.key === "Enter" && onClick()}
-				role="button"
-				tabIndex={0}
-				className="cursor-pointer"
-			>
-				<div className="mb-1.5 flex items-center justify-between gap-2">
-					<div className="flex min-w-0 items-center gap-2">
-						<PriorityBadge priority={task.priority} />
-						<span className="truncate font-mono text-[11px] text-muted-foreground">
-							#{task.id}
-						</span>
-					</div>
-					<div className="flex items-center gap-1 flex-wrap justify-end">
-						<TaskLifecycleBadge state={task.lifecycleState} />
-					</div>
-				</div>
-
-				<h3 className="mb-1 line-clamp-2 text-sm font-medium leading-5 text-foreground">
-					{task.title}
-				</h3>
-
-				{task.description && (
-					<p className="mb-2 line-clamp-2 text-xs leading-4 text-muted-foreground">
-						{task.description}
-					</p>
-				)}
-
-				{totalAC > 0 && (
-					<div className="flex items-center gap-1.5 text-xs mb-2 text-muted-foreground">
-						<ClipboardList className="w-3 h-3" aria-hidden="true" />
-						<span>
-							{completedAC}/{totalAC}
-						</span>
-					</div>
-				)}
-
-				{(task.labels ?? []).length > 0 && (
-					<LabelList labels={task.labels ?? []} maxVisible={2} className="mb-2" />
-				)}
-
-				{/* Spec link */}
-				{task.spec && (
-					<a
-						href={`/docs/${task.spec}`}
-						onClick={(e) => e.stopPropagation()}
-						className="flex items-center gap-1.5 text-xs mb-2 text-purple-600 dark:text-purple-400 hover:underline"
+			{statuses.map((status) => {
+				const on = visible.has(status);
+				return (
+					<button
+						key={status}
+						type="button"
+						aria-pressed={on}
+						onClick={() => toggleColumn(status)}
+						className={cn(
+							"flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+							on ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
+						)}
 					>
-						<FileText className="w-3 h-3" aria-hidden="true" />
-						<span className="truncate">{task.spec.replace(/^specs\//, "")}</span>
-					</a>
-				)}
+						{on ? <Eye className="h-3.5 w-3.5" aria-hidden="true" /> : <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />}
+						<span>
+							{columnLabel(status)} <span className="tabular-nums text-muted-foreground">{countByStatus.get(status) ?? 0}</span>
+						</span>
+					</button>
+				);
+			})}
+		</div>
+	);
+	const statusColors = (config?.statusColors as Record<string, ColorName>) || DEFAULT_STATUS_COLORS;
 
-				{task.assignee && (
-					<div className="flex items-center gap-1.5 text-xs mt-2 text-muted-foreground">
-						<Avatar name={task.assignee} size="sm" />
-						<span>{task.assignee}</span>
-					</div>
-				)}
+	const columns: KanbanColumn[] = statuses
+		.filter((s) => visible.has(s))
+		.map((s) => ({ id: s, title: columnLabel(s), tone: TONE_BY_COLOR[statusColors[s] ?? "gray"] ?? "neutral" }));
 
-			</div>
-		</KanbanCard>
+	const cards = useMemo(() => sortTasks(tasks).map(toCard), [tasks]);
+
+	const people: KanbanPerson[] = useMemo(() => {
+		const ids = [...new Set(tasks.map((t) => t.assignee).filter((a): a is string => !!a))];
+		return ids.map((id) => ({ id, name: id.replace(/^@/, "") }));
+	}, [tasks]);
+
+	const tasksRef = useRef(tasks);
+	tasksRef.current = tasks;
+
+	// Swimlane moves reassign: the board reports them only through onCardsChange.
+	const handleCardsChange = useCallback(
+		(next: KanbanCard[]) => {
+			const byId = new Map(tasksRef.current.map((t) => [t.id, t]));
+			for (const card of next) {
+				const task = byId.get(card.id);
+				if (!task || (task.assignee ?? undefined) === (card.assignee ?? undefined)) continue;
+				onTasksUpdate(tasksRef.current.map((t) => (t.id === task.id ? { ...t, assignee: card.assignee } : t)));
+				api
+					.updateTask(task.id, { assignee: card.assignee ?? "" })
+					.catch((err: unknown) => {
+						toast.error("Failed to reassign", { description: err instanceof Error ? err.message : String(err) });
+						api.getTasks().then(onTasksUpdate).catch(console.error);
+					});
+			}
+		},
+		[onTasksUpdate],
+	);
+
+	const handleMove = useCallback(
+		(move: KanbanMove) => {
+			const current = tasksRef.current;
+			const moved = current.find((t) => t.id === move.card);
+			if (!moved) return false;
+			const target = sortTasks(current).filter((t) => t.status === move.to && t.id !== moved.id);
+			target.splice(move.index, 0, { ...moved, status: move.to as TaskStatus });
+			const orders = target.map((t, order) => ({ id: t.id, order }));
+			const orderOf = new Map(orders.map((o) => [o.id, o.order]));
+			onTasksUpdate(
+				current.map((t) =>
+					t.id === moved.id
+						? { ...t, status: move.to as TaskStatus, order: orderOf.get(t.id) }
+						: orderOf.has(t.id)
+							? { ...t, order: orderOf.get(t.id) }
+							: t,
+				),
+			);
+			void (async () => {
+				try {
+					if (move.from !== move.to) {
+						await api.updateTask(moved.id, { status: move.to as TaskStatus });
+						toast.success("Status updated", { description: `#${moved.id} moved to ${columnLabel(move.to)}` });
+					}
+					await api.reorderTasks(orders);
+				} catch (err) {
+					toast.error("Failed to update", { description: err instanceof Error ? err.message : String(err) });
+					api.getTasks().then(onTasksUpdate).catch(console.error);
+				}
+			})();
+		},
+		[onTasksUpdate],
+	);
+
+	const handleAddCard = useCallback(
+		(column: string, title: string) => {
+			api
+				.createTask({ title, status: column as TaskStatus })
+				// The server's task-created event can land before this response: replace, never add twice.
+				.then((task) =>
+					onTasksUpdate(
+						tasksRef.current.some((t) => t.id === task.id)
+							? tasksRef.current.map((t) => (t.id === task.id ? task : t))
+							: [...tasksRef.current, task],
+					),
+				)
+				.catch((err: unknown) =>
+					toast.error("Failed to create Task", { description: err instanceof Error ? err.message : String(err) }),
+				);
+		},
+		[onTasksUpdate],
+	);
+
+	return (
+		<KanbanBoard
+			columns={columns}
+			people={people}
+			cards={cards}
+			onCardsChange={handleCardsChange}
+			onMove={handleMove}
+			onAddCard={handleAddCard}
+			onCardOpen={(card) => {
+				const task = tasksRef.current.find((t) => t.id === card.id);
+				if (task) onTaskClick(task);
+			}}
+			actions={columnToggles}
+			surface="none"
+			// On phones a column takes most of the screen so a card reads whole; swipe for the next one.
+			columnMinWidth={isMobile ? 280 : 216}
+			className="min-h-0 flex-1"
+			aria-label="Task board"
+		/>
 	);
 }

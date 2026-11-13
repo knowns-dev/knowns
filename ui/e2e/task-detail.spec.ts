@@ -92,9 +92,46 @@ test.describe("Task Detail Sheet", () => {
 			await page.getByText("Planned Task").first().click();
 		});
 
-		await test.step("Plan section is visible", async () => {
+		await test.step("Plan is in its own tab", async () => {
+			await page.getByRole("tab", { name: "Plan" }).click();
 			await expect(page.getByText("Design the feature")).toBeVisible();
 		});
+	});
+
+	test("exposes Plan, Notes, Time and Activity as tabs", async ({ page }) => {
+		server.cli('task create "Tabbed Task" -d "Has tabs"');
+		await page.goto(`${server.baseURL}/kanban`);
+		await page.getByText("Tabbed Task").first().click();
+		const dialog = page.locator('[role="dialog"]');
+		for (const name of ["Overview", "Plan", "Notes", "Time", "Activity"]) {
+			const tab = dialog.getByRole("tab", { name });
+			await tab.click();
+			await expect(tab).toHaveAttribute("aria-selected", "true");
+		}
+	});
+
+	test("acceptance criteria show progress and can be checked", async ({ page }) => {
+		server.cli('task create "Checklist Task" -d "Has criteria" --ac "First" --ac "Second"');
+		await page.goto(`${server.baseURL}/kanban`);
+		await page.getByText("Checklist Task").first().click();
+		const dialog = page.locator('[role="dialog"]');
+		await expect(dialog.getByText("0 of 2 criteria done")).toBeVisible();
+		await dialog.getByRole("checkbox", { name: "First" }).click();
+		await expect(dialog.getByText("1 of 2 criteria done")).toBeVisible();
+	});
+
+	test("Escape closes the archive dialog first, then the sheet", async ({ page }) => {
+		server.cli('task create "Escape Task" -d "Nested dialogs"');
+		await page.goto(`${server.baseURL}/kanban`);
+		await page.getByText("Escape Task").first().click();
+		await page.getByRole("button", { name: "Archive Task" }).first().click();
+		const child = page.getByTestId("task-lifecycle-dialog");
+		await expect(child).toBeVisible();
+		await page.keyboard.press("Escape");
+		await expect(child).toBeHidden();
+		await expect(page.getByRole("heading", { name: "Description" })).toBeVisible();
+		await page.keyboard.press("Escape");
+		await expect(page.getByRole("heading", { name: "Description" })).toBeHidden();
 	});
 
 	test("closes detail sheet", async ({ page }) => {

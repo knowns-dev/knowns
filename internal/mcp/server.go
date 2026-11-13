@@ -289,7 +289,7 @@ func NewMCPServer(projectHint string) *MCPServer {
 			lspDaemonDisabledWarnOnce.Do(func() { mcpLog.Print("warn: " + lspdaemon.DisabledWarning()) })
 			return handlers.NewManagerCodeRuntime(getLSPManager())
 		}
-		return lspdaemon.NewRuntime(context.Background(), filepath.Dir(store.Root))
+		return lspdaemon.NewRuntime(context.Background(), store.ProjectRoot)
 	}
 
 	getLSPStatuses := func(ctx context.Context) []lsp.LanguageRuntimeStatus {
@@ -304,7 +304,7 @@ func NewMCPServer(projectHint string) *MCPServer {
 			}
 			return nil
 		}
-		if client, err := lspdaemon.EnsureClient(ctx, filepath.Dir(store.Root)); err == nil {
+		if client, err := lspdaemon.EnsureClient(ctx, store.ProjectRoot); err == nil {
 			if statuses, err := client.RuntimeStatuses(ctx); err == nil {
 				return statuses
 			}
@@ -480,17 +480,14 @@ func NewMCPServer(projectHint string) *MCPServer {
 }
 
 // autoDetectProject tries to find and set the project store automatically.
-// It checks the hint path first, then walks up from cwd.
+// It checks the hint path first, then walks up from cwd. Both honour a store
+// link in the machine registry.
 func (s *MCPServer) autoDetectProject(setStore func(*storage.Store, string), hint string) {
 	// 1. Try explicit hint path
 	if hint != "" {
-		knownsDir := filepath.Join(hint, ".knowns")
-		if info, err := os.Stat(knownsDir); err == nil && info.IsDir() {
-			store := storage.NewStore(knownsDir)
-			if _, err := store.Config.Load(); err == nil {
-				setStore(store, hint)
-				return
-			}
+		if loc, err := storage.LocateProjectAt(hint); err == nil {
+			useLocatedProject(setStore, loc)
+			return
 		}
 	}
 
@@ -499,23 +496,20 @@ func (s *MCPServer) autoDetectProject(setStore func(*storage.Store, string), hin
 	if err != nil {
 		return
 	}
-
-	dir := cwd
-	for {
-		knownsDir := filepath.Join(dir, ".knowns")
-		if info, err := os.Stat(knownsDir); err == nil && info.IsDir() {
-			store := storage.NewStore(knownsDir)
-			if _, err := store.Config.Load(); err == nil {
-				setStore(store, dir)
-			}
-			return
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return // reached filesystem root
-		}
-		dir = parent
+	if loc, err := storage.LocateProject(cwd); err == nil {
+		useLocatedProject(setStore, loc)
 	}
+}
+
+func useLocatedProject(setStore func(*storage.Store, string), loc storage.ProjectLocation) {
+	store := loc.Open()
+	if _, err := store.Config.Load(); err != nil {
+		return
+	}
+	for _, msg := range loc.Warnings() {
+		mcpLog.Print("warn: " + msg)
+	}
+	setStore(store, loc.ProjectRoot)
 }
 
 // Start begins serving MCP requests over stdio transport.

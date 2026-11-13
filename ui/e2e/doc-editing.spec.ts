@@ -11,24 +11,28 @@ test.afterAll(() => {
 	server?.cleanup();
 });
 
+// Docs is one layout: the sidebar lists every doc as a link, and searching it expands folders.
 async function openDocFromList(page: import("@playwright/test").Page, label: string) {
-	const docItem = page.getByRole("button", { name: new RegExp(label, "i") }).first();
+	const sidebar = page.getByRole("complementary", { name: "Docs library" });
+	await sidebar.getByRole("searchbox", { name: "Search docs" }).or(sidebar.getByLabel("Search docs")).first().fill(label);
+	const docItem = sidebar.getByRole("link", { name: new RegExp(label, "i") }).first();
 	await expect(docItem).toBeVisible();
 	await docItem.click();
+	await expect(page.locator('input[placeholder="Untitled"]').first()).toHaveValue(new RegExp(label, "i"), { timeout: 5000 });
 }
 
 async function enterDocEditMode(page: import("@playwright/test").Page) {
 	for (let attempt = 0; attempt < 3; attempt++) {
-		const editBtn = page.locator("button").filter({ hasText: "Edit" }).first();
+		const editBtn = page.getByRole("button", { name: "Edit", exact: true }).first();
 		await expect(editBtn).toBeVisible({ timeout: 3000 });
 		await editBtn.click();
-		const saveBtn = page.locator("button").filter({ hasText: "Save" }).first();
-		if (await saveBtn.isVisible({ timeout: 1500 }).catch(() => false)) {
+		const saveBtn = page.getByRole("button", { name: "Save", exact: true }).first();
+		if (await saveBtn.waitFor({ state: "visible", timeout: 1500 }).then(() => true).catch(() => false)) {
 			return;
 		}
 		await page.waitForTimeout(300);
 	}
-	await expect(page.locator("button").filter({ hasText: "Save" }).first()).toBeVisible();
+	await expect(page.getByRole("button", { name: "Save", exact: true }).first()).toBeVisible();
 }
 
 test.describe("Doc Creation with Full Fields", () => {
@@ -77,11 +81,6 @@ test.describe("Doc Creation with Full Fields", () => {
 			await expect(createBtn).toBeEnabled();
 			await createBtn.click();
 			await page.waitForTimeout(1000);
-			const newDocBtn = page.locator("button").filter({ hasText: "New Doc" }).first();
-			await expect(newDocBtn).toBeVisible();
-			const folderBtn = page.getByRole("button", { name: /guides/i }).first();
-			await expect(folderBtn).toBeVisible();
-			await folderBtn.click();
 			await openDocFromList(page, "API Guidelines");
 			await expect(page.locator('input[placeholder="Untitled"]').first()).toHaveValue("API Guidelines", { timeout: 5000 });
 		});
@@ -96,8 +95,7 @@ test.describe("Doc Creation with Full Fields", () => {
 		await test.step("Navigate to docs and open the doc", async () => {
 			await page.goto(`${server.baseURL}/docs`);
 			await page.waitForTimeout(1000);
-			await page.getByText("Setup Guide").first().click();
-			await page.waitForTimeout(500);
+			await openDocFromList(page, "Setup Guide");
 		});
 
 		await test.step("Verify doc content renders", async () => {
@@ -105,7 +103,7 @@ test.describe("Doc Creation with Full Fields", () => {
 		});
 
 		await test.step("Verify metadata displayed", async () => {
-			await expect(page.getByText("How to set up the project").first()).toBeVisible({ timeout: 3000 });
+			await expect(page.locator('input[placeholder="Add a description..."]').first()).toHaveValue("How to set up the project", { timeout: 3000 });
 		});
 	});
 });
@@ -126,16 +124,16 @@ test.describe("Doc Content Editing", () => {
 		});
 
 		await test.step("Click Edit button in toolbar", async () => {
-			const editBtn = page.locator("button").filter({ hasText: "Edit" }).first();
+			const editBtn = page.getByRole("button", { name: "Edit", exact: true }).first();
 			await expect(editBtn).toBeVisible({ timeout: 3000 });
 			await editBtn.click();
 			await page.waitForTimeout(1000);
 		});
 
 		await test.step("Editor is visible (edit mode active)", async () => {
-			const saveBtn = page.locator("button").filter({ hasText: "Save" }).first();
-			const editBtn = page.locator("button").filter({ hasText: "Edit" }).first();
-			if (await saveBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+			const saveBtn = page.getByRole("button", { name: "Save", exact: true }).first();
+			const editBtn = page.getByRole("button", { name: "Edit", exact: true }).first();
+			if (await saveBtn.waitFor({ state: "visible", timeout: 2000 }).then(() => true).catch(() => false)) {
 				await expect(saveBtn).toBeVisible();
 				return;
 			}
@@ -143,17 +141,17 @@ test.describe("Doc Content Editing", () => {
 		});
 
 		await test.step("Save and Cancel buttons are visible", async () => {
-			const saveBtn = page.locator("button").filter({ hasText: "Save" }).first();
-			const cancelBtn = page.locator("button").filter({ hasText: "Cancel" }).first();
-			if (await saveBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+			const saveBtn = page.getByRole("button", { name: "Save", exact: true }).first();
+			const cancelBtn = page.getByRole("button", { name: "Cancel", exact: true }).first();
+			if (await saveBtn.waitFor({ state: "visible", timeout: 1000 }).then(() => true).catch(() => false)) {
 				await expect(saveBtn).toBeVisible({ timeout: 3000 });
 				await expect(cancelBtn).toBeVisible({ timeout: 3000 });
 			}
 		});
 
 		await test.step("Click Cancel to exit edit mode", async () => {
-			const cancelBtn = page.locator("button").filter({ hasText: "Cancel" }).first();
-			if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+			const cancelBtn = page.getByRole("button", { name: "Cancel", exact: true }).first();
+			if (await cancelBtn.waitFor({ state: "visible", timeout: 1000 }).then(() => true).catch(() => false)) {
 				await cancelBtn.click();
 				await page.waitForTimeout(300);
 			}
@@ -180,15 +178,15 @@ test.describe("Doc Content Editing", () => {
 		});
 
 		await test.step("Editor is visible (edit mode active)", async () => {
-			await expect(page.locator("button").filter({ hasText: "Save" }).first()).toBeVisible();
+			await expect(page.getByRole("button", { name: "Save", exact: true }).first()).toBeVisible();
 		});
 
 		await test.step("Save without changes to verify save flow works", async () => {
-			const saveBtn = page.locator("button").filter({ hasText: "Save" }).first();
+			const saveBtn = page.getByRole("button", { name: "Save", exact: true }).first();
 			await saveBtn.click();
 			// After save, view switches back to read mode
 			// Edit button should reappear
-			await expect(page.locator("button").filter({ hasText: "Edit" }).first()).toBeVisible({ timeout: 10000 });
+			await expect(page.getByRole("button", { name: "Edit", exact: true }).first()).toBeVisible({ timeout: 10000 });
 		});
 
 		await test.step("Back in view mode after save", async () => {
@@ -199,7 +197,8 @@ test.describe("Doc Content Editing", () => {
 			server.cli('doc edit "save-test" -c "## After Edit\\n\\nUpdated content here."');
 			await page.reload();
 			await page.waitForTimeout(1000);
-			await openDocFromList(page, "Save Test");
+			// The doc view's library sidebar lists docs as links.
+			await page.getByRole("navigation", { name: "Docs" }).getByRole("link", { name: "Save Test" }).click();
 			await page.waitForTimeout(500);
 			await expect(page.getByText("After Edit").first()).toBeVisible();
 		});
@@ -215,8 +214,7 @@ test.describe("Inline Metadata Editing (Notion-like)", () => {
 		await test.step("Open doc", async () => {
 			await page.goto(`${server.baseURL}/docs`);
 			await page.waitForTimeout(1000);
-			await page.getByText("Old Title").first().click();
-			await page.waitForTimeout(500);
+			await openDocFromList(page, "Old Title");
 		});
 
 		await test.step("Edit title inline", async () => {
@@ -227,11 +225,11 @@ test.describe("Inline Metadata Editing (Notion-like)", () => {
 			await page.waitForTimeout(500);
 		});
 
-		await test.step("Verify title updated after navigating back", async () => {
-			const backBtn = page.locator("button").filter({ hasText: "Back" }).first();
-			await backBtn.click();
-			await page.waitForTimeout(500);
-			await expect(page.getByText("New Title").first()).toBeVisible();
+		await test.step("Verify title updated in the doc list after reload", async () => {
+			await page.reload();
+			await expect(
+				page.getByRole("complementary", { name: "Docs library" }).getByRole("link", { name: /New Title/ }).first(),
+			).toBeVisible();
 		});
 	});
 
@@ -257,17 +255,9 @@ test.describe("Inline Metadata Editing (Notion-like)", () => {
 		});
 
 		await test.step("Verify description field remains editable after navigating back and reopening", async () => {
-			// Navigate back to doc list
-			const backBtn = page.locator("button").filter({ hasText: "Back" }).first();
-			await backBtn.click();
-			await page.waitForTimeout(1000);
-			// Wait for the file manager to be visible. The rework labels entries
-			// "Open <title>" rather than exposing the path slug.
-			await expect(
-				page.getByRole("button", { name: "Open Desc Test Doc" }).first(),
-			).toBeVisible();
-			await openDocFromList(page, "Open Desc Test Doc");
-			await page.waitForTimeout(500);
+			// Leave the doc from the sidebar and come back to it.
+			await page.goto(`${server.baseURL}/docs`);
+			await openDocFromList(page, "Desc Test Doc");
 			const descInput = page.locator('input[placeholder="Add a description..."]').first();
 			await expect(descInput).toBeVisible();
 		});
@@ -304,28 +294,22 @@ test.describe("Inline Metadata Editing (Notion-like)", () => {
 	});
 });
 
-test.describe("Doc Back Navigation", () => {
-	test("back button returns to doc list", async ({ page }) => {
+test.describe("Docs layout", () => {
+	test("/docs opens a doc next to the doc list, with no separate library page", async ({ page }) => {
 		await test.step("Create doc", async () => {
 			server.cli('doc create "Back Nav Doc" -d "Test navigation" -t "test"');
 		});
 
-		await test.step("Open doc", async () => {
+		await test.step("Visiting /docs opens a doc in the docs layout", async () => {
 			await page.goto(`${server.baseURL}/docs`);
-			await page.waitForTimeout(1000);
-			await page.getByText("Back Nav Doc").first().click();
-			await page.waitForTimeout(500);
+			await expect(page).toHaveURL(/\/docs\/.+/);
+			await expect(page.getByRole("button", { name: "Edit", exact: true }).first()).toBeVisible();
+			await expect(page.getByRole("button", { name: "Back", exact: true })).toHaveCount(0);
 		});
 
-		await test.step("Click Back button", async () => {
-			const backBtn = page.locator("button").filter({ hasText: "Back" }).first();
-			await expect(backBtn).toBeVisible({ timeout: 3000 });
-			await backBtn.click();
-			await page.waitForTimeout(300);
-		});
-
-		await test.step("Doc list is visible again", async () => {
-			await expect(page.getByText("Back Nav Doc").first()).toBeVisible({ timeout: 3000 });
+		await test.step("The doc list sits beside it and opens another doc in place", async () => {
+			await openDocFromList(page, "Back Nav Doc");
+			await expect(page).toHaveURL(/\/docs\/back-nav-doc/);
 		});
 	});
 });

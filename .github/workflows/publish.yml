@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to publish (e.g., 1.0.0)"
+        description: "Version to publish (e.g., 0.35.0)"
         required: false
         type: string
 
@@ -58,7 +58,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: ">=1.3.10"
+          bun-version: 1.3.12
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -96,11 +96,20 @@ jobs:
             exit 1
           fi
 
+      # The Go suite stays in the release gate until the switch merge: it is the parity oracle
+      # for the TypeScript CLI (spec D3). The shipped binary is the TypeScript one below.
       - name: Run Go tests
         run: go test -v -race ./...
 
       - name: Run Go vet
         run: go vet ./...
+
+      - name: TS CLI check and unit tests
+        working-directory: cli
+        run: |
+          bun install --frozen-lockfile
+          bun run check
+          bun run test
 
       - name: Upload UI artifact
         uses: actions/upload-artifact@v4
@@ -109,43 +118,62 @@ jobs:
           path: ui/dist/
           retention-days: 1
 
+  # One Bun job cross-compiles all six targets. It runs on macOS so the darwin binaries get the
+  # ad-hoc re-sign in cli/scripts/lib.ts; the version is injected with --define from the tag.
   build-binaries:
     needs: [meta, verify]
+    runs-on: macos-15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.12
+
+      - name: Download UI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist/
+
+      - name: Build TypeScript binaries (6 targets)
+        working-directory: cli
+        env:
+          KNOWNS_VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Package npm packages and release assets
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: bun scripts/package-release.ts --version "$VERSION" --dist cli/dist --out release
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: release/
+          retention-days: 1
+
+  # Every asset runs `--version` on its own OS/arch before anything is published.
+  smoke:
+    needs: [meta, build-binaries]
     strategy:
       fail-fast: false
       matrix:
-        # CGO is not required. github.com/yalue/onnxruntime_go was the only
-        # package in this module that needed a C toolchain, and it was removed
-        # with the local ONNX embedding path (spec ollama-only-embedding FR-2).
-        # Everything left is pure Go - notably modernc.org/sqlite, which is a
-        # pure-Go SQLite rather than a cgo binding - so every target builds
-        # with CGO_ENABLED=0 and no per-platform C compiler.
         include:
-          - runner: macos-15
-            goos: darwin
-            goarch: arm64
-            npm_pkg: knowns-darwin-arm64
-            ext: ""
-          - runner: macos-15-intel
-            goos: darwin
-            goarch: amd64
-            npm_pkg: knowns-darwin-x64
-            ext: ""
-          - runner: ubuntu-latest
-            goos: linux
-            goarch: amd64
-            npm_pkg: knowns-linux-x64
-            ext: ""
-          - runner: ubuntu-24.04-arm
-            goos: linux
-            goarch: arm64
-            npm_pkg: knowns-linux-arm64
-            ext: ""
-          - runner: windows-latest
-            goos: windows
-            goarch: amd64
-            npm_pkg: knowns-win-x64
-            ext: ".exe"
+          - { runner: macos-15, platform: darwin-arm64, exe: knowns }
+          - { runner: macos-15-intel, platform: darwin-x64, exe: knowns }
+          - { runner: ubuntu-latest, platform: linux-x64, exe: knowns }
+          - { runner: ubuntu-24.04-arm, platform: linux-arm64, exe: knowns }
+          - { runner: windows-latest, platform: win-x64, exe: knowns.exe }
+          - { runner: windows-11-arm, platform: win-arm64, exe: knowns.exe }
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
@@ -154,61 +182,34 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.26"
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: ">=1.3.10"
+          bun-version: 1.3.12
 
-      - name: Download UI artifact
+      - name: Download release artifact
         uses: actions/download-artifact@v4
         with:
-          name: ui-dist
-          path: ui/dist/
+          name: release
+          path: release/
 
-      - name: Run npm installer tests
-        if: matrix.goos == 'windows' || (matrix.goos == 'darwin' && matrix.goarch == 'amd64')
-        run: bun test npm/knowns/install.test.js
-
-      - name: Trace downloaded UI artifact
-        env:
-          EXPECTED_VERSION: ${{ needs.meta.outputs.version }}
-        run: |
-          echo "checking downloaded ui artifact"
-          ls -la ui/dist
-          ls -la ui/dist/assets || true
-          grep -RhoE '[0-9]+\.[0-9]+\.[0-9]+' ui/dist | sort -u || true
-          if grep -R "$EXPECTED_VERSION" ui/dist >/dev/null 2>&1; then
-            echo "OK: found expected version $EXPECTED_VERSION in downloaded UI artifact"
-          else
-            echo "ERROR: expected version $EXPECTED_VERSION not found in downloaded UI artifact"
-            exit 1
-          fi
-
-      - name: Build release binary
+      - name: Binary reports the release version
         env:
           VERSION: ${{ needs.meta.outputs.version }}
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
         run: |
-          LDFLAGS="-s -w -X github.com/howznguyen/knowns/internal/util.Version=${VERSION}"
-          mkdir -p "artifacts/${{ matrix.npm_pkg }}"
-          go build -ldflags "$LDFLAGS" -o "artifacts/${{ matrix.npm_pkg }}/knowns${{ matrix.ext }}" ./cmd/knowns
+          dir=$(mktemp -d)
+          tar -xzf "release/assets/knowns-${{ matrix.platform }}.tar.gz" -C "$dir"
+          chmod +x "$dir/${{ matrix.exe }}" || true
+          got=$(NO_UPDATE_CHECK=1 "$dir/${{ matrix.exe }}" --version | tr -d '\r')
+          echo "$got"
+          [ "$got" = "knowns version ${VERSION}" ] || { echo "FATAL: expected knowns version ${VERSION}"; exit 1; }
 
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.npm_pkg }}
-          path: artifacts/${{ matrix.npm_pkg }}/
-          retention-days: 1
+      - name: Run npm installer tests
+        if: runner.os == 'Windows' || matrix.platform == 'darwin-x64'
+        run: bun test npm/knowns/install.test.js
 
   publish:
-    needs: [meta, build-binaries]
+    needs: [meta, smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -225,108 +226,60 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Download binary artifacts
+      - name: Download release artifact
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
-
-      - name: Test Linux binary
-        env:
-          VERSION: ${{ needs.meta.outputs.version }}
-        run: |
-          chmod +x artifacts/knowns-linux-x64/knowns
-          artifacts/knowns-linux-x64/knowns --version
-          artifacts/knowns-linux-x64/knowns --version | grep -q "$VERSION" || echo "Warning: Version mismatch"
+          name: release
+          path: release/
 
       - name: Prepare npm packages
+        run: |
+          cp README.md release/npm/knowns/README.md
+          for pkg in release/npm/knowns-*; do
+            for exe in "$pkg/knowns" "$pkg/knowns.exe"; do
+              [ -f "$exe" ] && chmod +x "$exe" || true
+            done
+          done
+
+      - name: Verify package contents and binary architectures
         env:
           VERSION: ${{ needs.meta.outputs.version }}
         run: |
-          cp README.md npm/knowns/README.md
-
-          PLATFORM_PKGS="knowns-darwin-arm64 knowns-darwin-x64 knowns-linux-arm64 knowns-linux-x64 knowns-win-x64"
-
-          for pkg in $PLATFORM_PKGS; do
-            (
-              cd "npm/$pkg"
-              npm version "$VERSION" --no-git-tag-version --allow-same-version
-            )
-          done
-
-          (
-            cd npm/knowns
-            npm version "$VERSION" --no-git-tag-version --allow-same-version
-          )
-
-          for dir in artifacts/knowns-*/; do
-            pkg=$(basename "$dir")
-            case " $PLATFORM_PKGS " in
-              *" $pkg "*) ;;
-              *) continue ;;
+          set -e
+          for p in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win-arm64 win-x64; do
+            pkg="release/npm/knowns-$p"
+            v=$(node -p "require('./$pkg/package.json').version")
+            [ "$v" = "$VERSION" ] || { echo "FATAL: $pkg is $v, expected $VERSION"; exit 1; }
+            case "$p" in win-*) exe=knowns.exe ;; *) exe=knowns ;; esac
+            [ -f "$pkg/$exe" ] || { echo "FATAL: $pkg/$exe is missing"; exit 1; }
+            tar -tzf "release/assets/knowns-$p.tar.gz" | grep -Fx "./$exe" >/dev/null || { echo "FATAL: knowns-$p.tar.gz missing ./$exe"; exit 1; }
+            # Go 0.34.x `knowns update` installs the first knowns-* name in sorted order, which on
+            # Windows is the archive itself unless this link sorts first (KN-6M228C).
+            case "$p" in win-*)
+              tar -tzf "release/assets/knowns-$p.tar.gz" | grep -Fx "./knowns-0.34-update.exe" >/dev/null || { echo "FATAL: knowns-$p.tar.gz missing ./knowns-0.34-update.exe"; exit 1; } ;;
             esac
-            mkdir -p "npm/$pkg"
-            cp -R "$dir"/. "npm/$pkg/"
-            # Mark executables
-            for exe in "npm/$pkg/knowns" "npm/$pkg/knowns.exe"; do
-              [ -f "$exe" ] && chmod +x "$exe" 2>/dev/null || true
-            done
-            if [ ! -f "npm/$pkg/knowns" ] && [ ! -f "npm/$pkg/knowns.exe" ]; then
-              echo "Missing main binary for $pkg"
-              exit 1
-            fi
+            echo "ok $p"
           done
 
-          node <<'EOF'
-          const fs = require('fs');
-          const path = require('path');
-          const version = process.env.VERSION;
-          const repo = { type: 'git', url: 'git+https://github.com/knowns-dev/knowns.git' };
-          for (const dir of fs.readdirSync('npm')) {
-            const pkgPath = path.join('npm', dir, 'package.json');
-            if (!fs.existsSync(pkgPath)) continue;
-            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-            pkg.repository = repo;
-            pkg.homepage = 'https://knowns.sh';
-            if (pkg.name === 'knowns') {
-              pkg.bin = { knowns: 'bin/knowns.js', kn: 'bin/knowns.js' };
-              pkg.optionalDependencies = {
-                '@knowns/darwin-arm64': version,
-                '@knowns/darwin-x64': version,
-                '@knowns/linux-arm64': version,
-                '@knowns/linux-x64': version,
-                '@knowns/win-x64': version,
-              };
-            }
-            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
-          }
-          EOF
+          # ELF e_machine at offset 18: 3e00 = x86_64, b700 = aarch64.
+          elf() { m=$(od -An -tx1 -j18 -N2 "$1" | tr -d ' '); [ "$m" = "$2" ] || { echo "FATAL: $1 ELF machine $m, expected $2"; exit 1; }; }
+          elf release/npm/knowns-linux-x64/knowns 3e00
+          elf release/npm/knowns-linux-arm64/knowns b700
+          file release/npm/knowns-darwin-x64/knowns | grep -q "x86_64" || { echo "FATAL: darwin-x64 is not x86_64"; exit 1; }
+          file release/npm/knowns-darwin-arm64/knowns | grep -q "arm64" || { echo "FATAL: darwin-arm64 is not arm64"; exit 1; }
+          file release/npm/knowns-win-x64/knowns.exe | grep -q "x86-64" || { echo "FATAL: win-x64 is not x86-64"; exit 1; }
+          file release/npm/knowns-win-arm64/knowns.exe | grep -qi "aarch64\|arm64" || { echo "FATAL: win-arm64 is not arm64"; exit 1; }
 
-      - name: Verify npm package contents
-        run: |
-          echo "=== Verifying platform packages ==="
-
-          # Main binary in all packages
-          for pkg in knowns-darwin-arm64 knowns-darwin-x64 knowns-linux-arm64 knowns-linux-x64; do
-            if [ ! -f "npm/$pkg/knowns" ]; then
-              echo "FATAL: npm/$pkg/knowns is missing!"
-              exit 1
-            fi
-            echo "✓ $pkg/knowns"
-          done
-          if [ ! -f "npm/knowns-win-x64/knowns.exe" ]; then
-            echo "FATAL: npm/knowns-win-x64/knowns.exe is missing!"
-            exit 1
-          fi
-          echo "✓ knowns-win-x64/knowns.exe"
+          node -p "JSON.stringify(require('./release/npm/knowns/package.json').optionalDependencies)"
 
       - name: Publish platform packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          PLATFORM_PKGS="knowns-darwin-arm64 knowns-darwin-x64 knowns-linux-arm64 knowns-linux-x64 knowns-win-x64"
+          PLATFORM_PKGS="knowns-darwin-arm64 knowns-darwin-x64 knowns-linux-arm64 knowns-linux-x64 knowns-win-arm64 knowns-win-x64"
           for pkg in $PLATFORM_PKGS; do
             (
-              cd "npm/$pkg"
+              cd "release/npm/$pkg"
               PKG_NAME=$(node -p "require('./package.json').name")
               PKG_VERSION=$(node -p "require('./package.json').version")
 
@@ -359,7 +312,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          cd npm/knowns
+          cd release/npm/knowns
           PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VERSION=$(node -p "require('./package.json').version")
 
@@ -385,74 +338,6 @@ jobs:
           echo "Failed to publish ${PKG_NAME}@${PKG_VERSION} after retries"
           exit 1
 
-      - name: Create tarballs
-        run: |
-          for pkgdir in \
-            npm/knowns-darwin-arm64 \
-            npm/knowns-darwin-x64 \
-            npm/knowns-linux-arm64 \
-            npm/knowns-linux-x64 \
-            npm/knowns-win-x64; do
-            pkg=$(basename "$pkgdir")
-            staging=$(mktemp -d)
-            find "$pkgdir" -maxdepth 1 -mindepth 1 \
-              ! -name 'package.json' \
-              ! -name 'README.md' \
-              -exec cp -R {} "$staging/" \;
-            tar -czvf "${pkg}.tar.gz" -C "$staging" .
-            shasum -a 256 "${pkg}.tar.gz" > "${pkg}.tar.gz.sha256"
-            rm -rf "$staging"
-          done
-
-      - name: Verify tarball contents
-        run: |
-          for archive in \
-            knowns-darwin-arm64.tar.gz; do
-            tar -tzf "$archive" | grep -Fx "./knowns" >/dev/null || { echo "$archive missing knowns"; exit 1; }
-          done
-
-          tar -tzf knowns-darwin-x64.tar.gz | grep -Fx "./knowns" >/dev/null || {
-            echo "knowns-darwin-x64.tar.gz missing knowns"
-            exit 1
-          }
-
-          for archive in \
-            knowns-linux-arm64.tar.gz \
-            knowns-linux-x64.tar.gz; do
-            tar -tzf "$archive" | grep -Fx "./knowns" >/dev/null || { echo "$archive missing knowns"; exit 1; }
-          done
-
-          for archive in knowns-win-x64.tar.gz; do
-            tar -tzf "$archive" | grep -Fx "./knowns.exe" >/dev/null || { echo "$archive missing knowns.exe"; exit 1; }
-          done
-
-          # Verify ELF architecture matches package platform.
-          # e_machine at ELF offset 18: 0x3E = x86_64, 0xB7 = aarch64.
-          verify_elf_arch() {
-            local archive="$1" file="$2" expected_hex="$3" label="$4"
-            tmpdir=$(mktemp -d)
-            tar -xzf "$archive" -C "$tmpdir"
-            machine=$(od -An -tx1 -j18 -N2 "$tmpdir/$file" | tr -d ' ')
-            rm -rf "$tmpdir"
-            if [ "$machine" != "$expected_hex" ]; then
-              echo "FATAL: $archive contains $file with wrong ELF arch (got $machine, expected $expected_hex for $label)"
-              exit 1
-            fi
-            echo "✓ $archive $file arch=$label"
-          }
-
-          verify_elf_arch knowns-linux-x64.tar.gz   ./knowns            "3e00" "x86_64"
-          verify_elf_arch knowns-linux-arm64.tar.gz  ./knowns            "b700" "aarch64"
-
-          macho_dir=$(mktemp -d)
-          tar -xzf knowns-darwin-x64.tar.gz -C "$macho_dir"
-          (file "$macho_dir/knowns" | grep -q "Mach-O 64-bit" &&
-            file "$macho_dir/knowns" | grep -q "x86_64") || {
-            echo "FATAL: knowns-darwin-x64.tar.gz contains the wrong binary architecture"
-            exit 1
-          }
-          rm -rf "$macho_dir"
-
       - name: Ensure GitHub release exists
         if: github.event_name == 'release'
         env:
@@ -462,13 +347,14 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes
 
+      # Same asset names as the 0.34.x Go releases, so pinned old versions keep resolving.
       - name: Upload binaries to release
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.meta.outputs.tag }}
         run: |
-          for file in *.tar.gz *.sha256 install/install.sh install/install.ps1 install/uninstall.sh install/uninstall.ps1; do
+          for file in release/assets/*; do
             gh release upload "$TAG" "$file" --repo "$GITHUB_REPOSITORY" --clobber
           done
 
@@ -483,9 +369,9 @@ jobs:
             exit 0
           fi
 
-          SHA_DARWIN_ARM64=$(awk '{print $1}' knowns-darwin-arm64.tar.gz.sha256)
-          SHA_DARWIN_X64=$(awk '{print $1}' knowns-darwin-x64.tar.gz.sha256)
-          SHA_LINUX_X64=$(awk '{print $1}' knowns-linux-x64.tar.gz.sha256)
+          SHA_DARWIN_ARM64=$(awk '{print $1}' release/assets/knowns-darwin-arm64.tar.gz.sha256)
+          SHA_DARWIN_X64=$(awk '{print $1}' release/assets/knowns-darwin-x64.tar.gz.sha256)
+          SHA_LINUX_X64=$(awk '{print $1}' release/assets/knowns-linux-x64.tar.gz.sha256)
 
           git clone https://x-access-token:${GH_TOKEN}@github.com/knowns-dev/homebrew-tap.git
           cd homebrew-tap

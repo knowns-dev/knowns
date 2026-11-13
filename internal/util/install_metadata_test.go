@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 // install.sh writes linkPaths and uninstall.sh reads them back. A self-update
@@ -11,8 +13,7 @@ import (
 // must survive that round trip or uninstall leaves them behind.
 func TestInstallMetadataKeepsScriptLinkPaths(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads this on Windows
+	testutil.SetHome(t, home)
 
 	written := `{
   "method": "script",
@@ -60,8 +61,7 @@ func TestInstallMetadataKeepsScriptLinkPaths(t *testing.T) {
 func TestDetectInstallMethodFollowsInstallerLink(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads this on Windows
+	testutil.SetHome(t, home)
 	t.Setenv("npm_config_user_agent", "")
 
 	binDir := filepath.Join(home, ".knowns", "bin")

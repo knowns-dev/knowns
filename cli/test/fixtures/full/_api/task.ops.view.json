@@ -1,0 +1,16 @@
+{
+  "id": "OPS-HYNFXR",
+  "title": "Rotate keys",
+  "status": "todo",
+  "priority": "medium",
+  "assignee": "@fixture",
+  "labels": [
+    "ops"
+  ],
+  "createdAt": "2026-11-03T13:37:36.327Z",
+  "updatedAt": "2026-11-03T13:37:36.327Z",
+  "archived": false,
+  "acceptanceCriteria": null,
+  "timeSpent": 0,
+  "canonicalHash": "7c95dcbe7d982ba90b17dbb602ef94463c653818d8a9fe8b19bbae7b3c0d9005"
+}

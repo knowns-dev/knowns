@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestDecisionStoreCreateDefaultsAndBodyRoundTrip(t *testing.T) {
@@ -290,7 +291,7 @@ func TestDecisionStoreAcceptIsRollbackSafeAndIdempotent(t *testing.T) {
 
 func setupDecisionStore(t *testing.T) *Store {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	root := filepath.Join(t.TempDir(), ".knowns")
 	store := NewStore(root)
 	if err := store.Init("decision-store-test"); err != nil {

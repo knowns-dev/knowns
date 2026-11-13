@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 // newTestStoreWithData creates a temp store seeded with docs, tasks, and memories
 // for structural traversal testing.
 func newTestStoreWithData(t *testing.T) *Store {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 
 	root := filepath.Join(t.TempDir(), ".knowns")
 	store := NewStore(root)
@@ -201,7 +202,7 @@ func TestStructuralResolve_MultiHopBlockedChain(t *testing.T) {
 }
 
 func TestStructuralResolve_CanonicalAndLegacyRefs(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	root := filepath.Join(t.TempDir(), ".knowns")
 	store := NewStore(root)
 	if err := store.Init("canonical-ref-test"); err != nil {
@@ -263,7 +264,7 @@ func TestStructuralResolve_CanonicalAndLegacyRefs(t *testing.T) {
 
 // Scenario 3: Mixed origins — deduplication (field-backed wins over inline).
 func TestStructuralResolve_MixedOriginDedup(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 
 	root := filepath.Join(t.TempDir(), ".knowns")
 	store := NewStore(root)
@@ -391,7 +392,7 @@ func TestStructuralResolve_DepthLimit(t *testing.T) {
 
 // Scenario 7: Doc rename preserves edges.
 func TestStructuralResolve_DocRenamePreservesEdges(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 
 	root := filepath.Join(t.TempDir(), ".knowns")
 	store := NewStore(root)
@@ -529,7 +530,7 @@ func TestStructuralResolve_BothDirection(t *testing.T) {
 
 // Test backward compatibility: no structural params returns error-free.
 func TestStructuralResolve_InvalidRef(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	root := filepath.Join(t.TempDir(), ".knowns")
 	store := NewStore(root)
 	if err := store.Init("invalid-test"); err != nil {

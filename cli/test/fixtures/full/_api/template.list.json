@@ -1,0 +1,29 @@
+[
+  {
+    "name": "component",
+    "description": "A component",
+    "version": "1.0.0",
+    "destination": "src",
+    "doc": "patterns/controllers/controller-pattern",
+    "prompts": [
+      {
+        "name": "name",
+        "type": "text",
+        "message": "Name?",
+        "validate": "required"
+      }
+    ],
+    "actions": [
+      {
+        "type": "add",
+        "template": "main.hbs",
+        "path": "{{kebabCase name}}.ts",
+        "skipIfExists": true
+      }
+    ],
+    "messages": {
+      "success": "Created: {{name}}\n"
+    },
+    "path": "<project>/.knowns/templates/component"
+  }
+]

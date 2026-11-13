@@ -8,6 +8,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 type stubEmbedder struct{}
@@ -794,7 +795,7 @@ func newRetrievalTestStore(t *testing.T) *storage.Store {
 	// so on a machine with Ollama actually running this test would flip
 	// from "semantic unavailable" to available for reasons having nothing
 	// to do with what it is testing.
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	root := filepath.Join(t.TempDir(), ".knowns")
 	store := storage.NewStore(root)
 	if err := store.Init("retrieval-test"); err != nil {

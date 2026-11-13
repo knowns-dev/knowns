@@ -170,7 +170,7 @@ func aiPlatformConfigChecker(state *localState) Checker {
 			if err != nil {
 				return CheckResult{}, err
 			}
-			projectRoot := filepath.Dir(state.store.Root)
+			projectRoot := state.store.ProjectRoot
 			platforms := normalizedStrings(project.Settings.Platforms)
 			expectedByPlatform := make(map[string]string)
 			if len(platforms) > 0 {
@@ -245,7 +245,7 @@ func aiInstructionsChecker(state *localState) Checker {
 			if err != nil {
 				return CheckResult{}, err
 			}
-			projectRoot := filepath.Dir(state.store.Root)
+			projectRoot := state.store.ProjectRoot
 			platforms := normalizedStrings(project.Settings.Platforms)
 			expected := make([]string, 0, len(platforms))
 			for _, platform := range platforms {
@@ -326,7 +326,7 @@ func aiSkillsChecker(state *localState) Checker {
 			if err != nil {
 				return CheckResult{}, err
 			}
-			projectRoot := filepath.Dir(state.store.Root)
+			projectRoot := state.store.ProjectRoot
 			platforms := normalizedStrings(project.Settings.Platforms)
 			scope := models.ResolveSkillsScope(project.Settings.SkillsScope, state.deps.globalScope())
 

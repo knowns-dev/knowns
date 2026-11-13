@@ -246,8 +246,14 @@ function writeDownloadedPackageMetadata(dest, platformPackage, version) {
   );
 }
 
+// Asset names (knowns-<os>-<arch>.tar.gz) and the tag scheme (v<version>) are the same for the
+// Go releases (0.34.x) and the TypeScript releases (1.x), so one function serves both.
+function releaseAssetUrl(platformPackage, version) {
+  return `https://github.com/knowns-dev/knowns/releases/download/v${version}/${platformPackage.asset}.tar.gz`;
+}
+
 async function downloadPackageFromGitHubRelease(packageRoot, platformPackage, version) {
-  const baseUrl = `https://github.com/knowns-dev/knowns/releases/download/v${version}/${platformPackage.asset}.tar.gz`;
+  const baseUrl = releaseAssetUrl(platformPackage, version);
   const checksumUrl = `${baseUrl}.sha256`;
 
   const [archive, checksumFile] = await Promise.all([fetchBuffer(baseUrl), fetchBuffer(checksumUrl)]);
@@ -341,6 +347,7 @@ module.exports = {
   getRequestedVersion,
   installPackageIntoPackageRoot,
   parseSha256,
+  releaseAssetUrl,
   resolveBinaryFromPackageDir,
   resolveInstalledPackageDir,
   verifySha256,

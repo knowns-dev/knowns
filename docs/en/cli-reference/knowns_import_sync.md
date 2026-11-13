@@ -1,11 +1,17 @@
 # knowns import sync
 
-Sync all imported packages
+Sync imports (removed)
+
+The import command and its subcommands (list, add, remove, status, sync) were removed.
+
+Content already present in .knowns/imports/ stays readable and searchable through
+'knowns doc', 'knowns template' and 'knowns search'. There is no further management
+of imports: nothing adds, updates or removes them.
 
 ## Usage
 
 ```
-knowns import sync
+knowns import sync [name]
 ```
 
 ## Inherited flags
@@ -19,7 +25,7 @@ knowns import sync
 
 ## See also
 
-- [`knowns import`](knowns_import.md) — Manage imported Knowns packages
+- [`knowns import`](knowns_import.md) — Removed (imported content stays readable)
 
 ---
 

@@ -6,10 +6,11 @@ import (
 	"testing"
 
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestSemanticEvaluationRuntimeIdentityIsStableAndNonSecret(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	registerOllamaTestModel(t, "gte-small", 384)
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init("evaluation-runtime"); err != nil {
@@ -46,7 +47,7 @@ func TestSemanticEvaluationRuntimeIdentityIsStableAndNonSecret(t *testing.T) {
 }
 
 func TestRequirePinnedSemanticEvaluationRuntimeRejectsMismatchBeforeFallback(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	registerOllamaTestModel(t, "gte-small", 384)
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init("evaluation-runtime"); err != nil {

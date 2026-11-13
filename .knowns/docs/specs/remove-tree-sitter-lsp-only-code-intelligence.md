@@ -1,4 +1,5 @@
 ---
+id: doc-c8629e7e992d711b5a9cde0f3e846348
 title: Remove Tree-sitter, LSP-Only Code Intelligence
 description: Specification for removing tree-sitter dependency and switching to LSP-only code intelligence with real-time queries, adding code editing actions (rename, replace, replace_symbol_body)
 createdAt: '2026-05-20T18:12:39.553Z'

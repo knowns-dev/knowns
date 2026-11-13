@@ -9,6 +9,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestValidateTask_NoTitle(t *testing.T) {
@@ -452,7 +453,7 @@ func TestValidateMemory_DecisionSourceRefs(t *testing.T) {
 
 func newValidateTestStore(t *testing.T) *storage.Store {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init("validate-test"); err != nil {
 		t.Fatalf("init store: %v", err)

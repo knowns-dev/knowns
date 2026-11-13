@@ -1,0 +1,4 @@
+[test]
+# Every test process runs with a temp HOME/USERPROFILE and fails if the real ~/.knowns gains
+# temp projects. See test/helpers/sandbox-home.ts.
+preload = ["./test/helpers/sandbox-home.ts"]

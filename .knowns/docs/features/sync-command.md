@@ -1,4 +1,5 @@
 ---
+id: doc-1a0265cd7f8305b7b463bae86350c567
 title: Sync Command
 description: knowns sync — apply config.json to set up skills, instructions, model, git, and search index
 createdAt: '2026-03-27T07:10:42.070Z'

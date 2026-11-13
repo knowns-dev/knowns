@@ -1,4 +1,5 @@
 ---
+id: doc-cc5a1bd3a4caa90444c1b44d9eba1339
 title: Qdrant Vector Store Placement Pattern
 description: Architecture pattern for managed Qdrant runtime placement, collection UUID ownership, project metadata pointers, and default semantic vector backend behavior.
 createdAt: '2026-08-13T06:54:52.545Z'

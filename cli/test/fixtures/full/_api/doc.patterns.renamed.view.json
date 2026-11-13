@@ -1,0 +1,13 @@
+{
+  "id": "doc-355f19d320419652930fe10189143ee2",
+  "path": "patterns/controllers/controller-pattern",
+  "title": "Controller Pattern",
+  "content": "Pattern body",
+  "tags": [
+    "pattern"
+  ],
+  "createdAt": "2026-11-03T13:37:36.661Z",
+  "updatedAt": "2026-11-03T13:37:36.905Z",
+  "folder": "patterns/controllers",
+  "canonicalHash": "bc4bb4be2c2c6ebf06dc618acad857a2c31d4336843d5d9da2771983296f615a"
+}

@@ -1,4 +1,5 @@
 ---
+id: doc-ab201531df7c06a00d79929f04754b38
 title: Auto-Sync Version Tracking
 description: Pattern for automatically syncing skills when CLI version changes
 createdAt: '2026-02-24T07:31:11.375Z'

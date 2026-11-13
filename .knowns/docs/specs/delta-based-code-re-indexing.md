@@ -1,4 +1,5 @@
 ---
+id: doc-c4f93af1e750f83474cbd3d2fada51f1
 title: Delta-based Code Re-indexing
 description: Specification for two-tier delta detection in knowns code ingest — file hash skips parse, chunk hash skips embed
 createdAt: '2026-05-04T08:42:52.856Z'

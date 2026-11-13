@@ -1,32 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, RefreshCw } from "lucide-react";
+import { X } from "lucide-react";
 
-import { useTheme } from "@/ui/App";
 import { getGraph, type GraphData, type GraphNode } from "@/ui/api/client";
 import { DecisionPreviewDialog } from "@/ui/components/organisms/DecisionPreview/DecisionPreviewDialog";
 import { DocPreviewDialog } from "@/ui/components/organisms/DocsPreview/DocPreviewDialog";
 import { MemoryPreviewDialog } from "@/ui/components/organisms/MemoryPreview/MemoryPreviewDialog";
 import { TaskPreviewDialog } from "@/ui/components/organisms/TaskDetail/TaskPreviewDialog";
+import { PageError, PageLoading } from "@/ui/components/templates";
+import { Button } from "@/ui/components/ui/knowns/button";
+import { Spinner } from "@/ui/components/ui/knowns/spinner";
+import { toast } from "@/ui/components/ui/sonner";
 import { useSSEEvent } from "@/ui/contexts/SSEContext";
+import { cn } from "@/ui/lib/utils";
 
 import { GraphDetailPanel } from "./GraphDetailPanel";
-import {
-	buildSelectedNodeReferences,
-	DECISION_COLOR,
-	DOC_COLOR,
-	KNOWLEDGE_FILTERS,
-	MEMORY_COLOR,
-	TASK_COLOR,
-	TEMPLATE_COLOR,
-	type FilterState,
-} from "./graph/constants";
+import { buildSelectedNodeReferences, KNOWLEDGE_FILTERS, type FilterState } from "./graph/constants";
 import {
 	buildConstellationData,
 	type ConstellationLink,
 	type ConstellationNode,
 } from "./graph/graphModel";
+import { GraphTypeKey } from "./graph/GraphLegend";
 import { GraphToolbar } from "./graph/GraphToolbar";
 import { SigmaConstellation, type SigmaConstellationHandle } from "./graph/SigmaConstellation";
+import { useGraphTheme } from "./graph/theme";
 import { useContainerSize } from "./graph/useContainerSize";
 
 const EMPTY_FORCE_DATA: {
@@ -34,14 +31,6 @@ const EMPTY_FORCE_DATA: {
 	links: ConstellationLink[];
 	matches: number;
 } = { nodes: [], links: [], matches: 0 };
-
-const GRAPH_TYPE_KEY = [
-	{ label: "Tasks", color: TASK_COLOR },
-	{ label: "Docs", color: DOC_COLOR },
-	{ label: "Memories", color: MEMORY_COLOR },
-	{ label: "Decisions", color: DECISION_COLOR },
-	{ label: "Templates", color: TEMPLATE_COLOR },
-];
 
 function filterGraphData(data: GraphData, filters: FilterState): GraphData {
 	const visibleNodeIds = new Set(
@@ -118,14 +107,17 @@ function toGraphNode(node: ConstellationNode): GraphNode {
 	return { id: node.id, label: node.label, type: node.type, data: node.data };
 }
 
+const sameFilters = (a: FilterState, b: FilterState) =>
+	(Object.keys(a) as (keyof FilterState)[]).every((key) => a[key] === b[key]);
+
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
 export default function GraphPage() {
-	const graphShellRef = useRef<HTMLDivElement>(null);
-	const graphContainerRef = useRef<HTMLDivElement>(null);
 	const constellationRef = useRef<SigmaConstellationHandle>(null);
 	const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const stableForceDataRef = useRef(EMPTY_FORCE_DATA);
-	const { isDark } = useTheme();
-	const { width, height } = useContainerSize(graphContainerRef);
+	const palette = useGraphTheme();
+	const { ref: graphContainerRef, width, height } = useContainerSize<HTMLElement>();
 
 	const [data, setData] = useState<GraphData | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -144,32 +136,8 @@ export default function GraphPage() {
 	const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
 	const [impactNodeId, setImpactNodeId] = useState<string | null>(null);
 	const [engineRunning, setEngineRunning] = useState(false);
-
-	const canvasPalette = useMemo(
-		() =>
-			isDark
-				? {
-						canvas: "#0b1020",
-						labelSurface: "#111a2e",
-						labelBorder: "#25314d",
-						text: "#e5e7eb",
-						nodeOutline: "#0b1020",
-						dimNode: "#334155",
-						link: "#3f4a63",
-						dimLink: "#1b2338",
-					}
-				: {
-						canvas: "#ffffff",
-						labelSurface: "#f8fafc",
-						labelBorder: "#e2e8f0",
-						text: "#111827",
-						nodeOutline: "#ffffff",
-						dimNode: "#cbd5e1",
-						link: "#cbd5e1",
-						dimLink: "#eef2f6",
-					},
-		[isDark],
-	);
+	const hasDataRef = useRef(false);
+	hasDataRef.current = data !== null;
 
 	const fetchGraph = useCallback(async () => {
 		setLoading(true);
@@ -178,8 +146,10 @@ export default function GraphPage() {
 			setData(graphData);
 			setError(null);
 		} catch (fetchError) {
-			setError("We couldn’t load the graph.");
 			console.error(fetchError);
+			// A refresh that fails keeps the graph on screen: say so, do not blank the page.
+			if (hasDataRef.current) toast.error("Could not refresh the graph");
+			else setError("Check that the local server is running, then try again.");
 		} finally {
 			setLoading(false);
 		}
@@ -201,9 +171,12 @@ export default function GraphPage() {
 		};
 	}, [searchQuery]);
 
+	// Fullscreen covers the window with the graph page and asks the browser for real fullscreen on
+	// the whole document, so popovers, tooltips and toasts (portalled to <body>) keep working.
+	// Leaving browser fullscreen (Escape) leaves the graph fullscreen too.
 	useEffect(() => {
 		const handleFullscreenChange = () => {
-			setIsFullscreen(document.fullscreenElement === graphShellRef.current);
+			if (!document.fullscreenElement) setIsFullscreen(false);
 		};
 		document.addEventListener("fullscreenchange", handleFullscreenChange);
 		return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
@@ -229,7 +202,7 @@ export default function GraphPage() {
 
 	const forceData = useMemo(() => {
 		if (!filteredData) return EMPTY_FORCE_DATA;
-		const built = buildConstellationData(filteredData, debouncedSearchQuery);
+		const built = buildConstellationData(filteredData, debouncedSearchQuery, palette.colors);
 		// Paint order decides both what is drawn on top and, more importantly, which
 		// node wins a click where hit areas overlap: the last one painted takes it.
 		// Draw the biggest first so small nodes end up on top and stay clickable
@@ -276,7 +249,7 @@ export default function GraphPage() {
 		};
 		stableForceDataRef.current = merged;
 		return merged;
-	}, [filteredData, debouncedSearchQuery]);
+	}, [filteredData, debouncedSearchQuery, palette.colors]);
 
 	const fitView = useCallback(() => {
 		constellationRef.current?.fitView();
@@ -314,12 +287,20 @@ export default function GraphPage() {
 	}, []);
 
 	const toggleFullscreen = useCallback(async () => {
-		try {
-			if (document.fullscreenElement === graphShellRef.current) await document.exitFullscreen();
-			else await graphShellRef.current?.requestFullscreen();
-		} catch (fullscreenError) {
-			console.error("Unable to toggle graph fullscreen", fullscreenError);
+		if (isFullscreen) {
+			setIsFullscreen(false);
+			if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
+			return;
 		}
+		setIsFullscreen(true);
+		// Not every browser has element fullscreen (iPhone Safari): the page still covers the window.
+		await document.documentElement.requestFullscreen?.().catch(() => undefined);
+	}, [isFullscreen]);
+
+	const resetFilters = useCallback(() => {
+		setFilters(KNOWLEDGE_FILTERS);
+		setSelectedNode(null);
+		setImpactNodeId(null);
 	}, []);
 
 	const handleNodeNavigate = useCallback(
@@ -355,156 +336,148 @@ export default function GraphPage() {
 
 	const handleCanvasKeyDown = useCallback(
 		(event: React.KeyboardEvent<HTMLDivElement>) => {
-			if (event.key === "Escape") clearSelection();
+			if (event.key === "Escape") {
+				if (selectedNode) clearSelection();
+				else if (isFullscreen && !document.fullscreenElement) setIsFullscreen(false);
+			}
 			if (event.key.toLocaleLowerCase() === "f" && !event.metaKey && !event.ctrlKey && !event.altKey) {
 				event.preventDefault();
 				handleZoomToFit();
 			}
 		},
-		[clearSelection, handleZoomToFit],
+		[clearSelection, handleZoomToFit, selectedNode, isFullscreen],
 	);
 
 	const nodeCount = forceData.nodes.length;
 	const edgeCount = forceData.links.length;
-	const isEmpty = !loading && !error && filteredData !== null && nodeCount === 0;
+	const filtersChanged = !sameFilters(filters, KNOWLEDGE_FILTERS);
+	const projectEmpty = data !== null && data.nodes.length === 0;
+	const filteredEmpty = !projectEmpty && filteredData !== null && nodeCount === 0;
+	const showCanvas = data !== null;
 
 	return (
-		<div ref={graphShellRef} className="flex min-h-0 flex-1 flex-col bg-background">
+		<div
+			className={cn(
+				"flex min-h-0 flex-1 flex-col bg-background",
+				isFullscreen && "fixed inset-0 z-50 h-dvh pt-[env(safe-area-inset-top)]",
+			)}
+		>
 			<GraphToolbar
 				data={data}
 				filters={filters}
+				filtersChanged={filtersChanged}
+				colors={palette.colors}
 				searchQuery={searchQuery}
 				searchMatchCount={forceData.matches}
-				impactNodeId={impactNodeId}
 				isFullscreen={isFullscreen}
 				nodeCount={nodeCount}
 				edgeCount={edgeCount}
 				onToggleFilter={toggleFilter}
+				onResetFilters={resetFilters}
 				onSearchChange={setSearchQuery}
-				onClearImpact={clearSelection}
 				onZoomToFit={handleZoomToFit}
 				onToggleFullscreen={toggleFullscreen}
 				includeArchived={includeArchived}
 				onToggleArchived={() => setIncludeArchived((previous) => !previous)}
 			/>
 
-			<main
-				ref={graphContainerRef}
-				role="region"
-				aria-label={`Knowledge graph with ${nodeCount} entities and ${edgeCount} relations`}
-				aria-describedby="graph-keyboard-help"
-				aria-busy={loading}
-				tabIndex={0}
-				className="relative min-h-0 flex-1 overflow-hidden bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-				onKeyDown={handleCanvasKeyDown}
-			>
-				<span id="graph-keyboard-help" className="sr-only">
-					Drag to pan, scroll to zoom, press F to fit the graph, and press Escape to clear the selected entity.
-				</span>
-
-				{filteredData && width > 0 && height > 0 && (
-					<SigmaConstellation
-						ref={constellationRef}
-						nodes={forceData.nodes}
-						links={forceData.links}
-						palette={canvasPalette}
-						selectedNodeId={selectedNode?.id ?? null}
-						impactNeighborhood={impactNeighborhood}
-						searchActive={forceData.matches > 0}
-						compact={width < 640}
-						onSelectNode={selectNode}
-						onBackgroundClick={clearSelection}
-						onEngineRunningChange={setEngineRunning}
-					/>
-				)}
-
-				<div className="pointer-events-none absolute bottom-3 left-3 z-10 hidden items-center gap-3 rounded-md border border-border bg-background px-3 py-2 shadow-sm lg:flex">
-					{GRAPH_TYPE_KEY.map((item) => (
-						<span key={item.label} className="flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
-							<span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
-							{item.label}
-						</span>
-					))}
+			{!showCanvas && (
+				<div className="min-h-0 flex-1 overflow-auto px-4 py-5 sm:px-6">
+					{loading || !error ? (
+						<PageLoading label="Loading the graph" />
+					) : (
+						<PageError title="We couldn’t load the graph" description={error} onRetry={fetchGraph} />
+					)}
 				</div>
+			)}
 
-				{loading && (
-					<div className="absolute inset-0 z-20 flex items-center justify-center bg-background" aria-live="polite">
-						<div className="w-64 space-y-4 text-center">
-							<div className="relative mx-auto h-24 w-40 motion-safe:animate-pulse" aria-hidden="true">
-								<span className="absolute left-4 top-8 h-8 w-8 rounded-full bg-muted" />
-								<span className="absolute left-16 top-2 h-11 w-11 rounded-full bg-muted" />
-								<span className="absolute right-3 top-12 h-7 w-7 rounded-full bg-muted" />
-								<span className="absolute left-9 top-12 h-px w-14 rotate-[-25deg] bg-border" />
-								<span className="absolute right-8 top-10 h-px w-12 rotate-[28deg] bg-border" />
-							</div>
-							<div>
-								<div className="text-sm font-medium text-foreground">Mapping your knowledge</div>
-								<div className="mt-1 text-xs text-muted-foreground">Finding communities and high-impact entities…</div>
+			{showCanvas && (
+				<main
+					ref={graphContainerRef}
+					role="region"
+					aria-label={`Knowledge graph with ${nodeCount} entities and ${edgeCount} relations`}
+					aria-describedby="graph-keyboard-help"
+					aria-busy={loading}
+					tabIndex={0}
+					className="relative min-h-0 flex-1 overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+					style={{ background: palette.canvas }}
+					onKeyDown={handleCanvasKeyDown}
+				>
+					<span id="graph-keyboard-help" className="sr-only">
+						Drag to pan, scroll to zoom, press F to fit the graph, and press Escape to clear the selected entity.
+					</span>
+
+					{width > 0 && height > 0 && (
+						<SigmaConstellation
+							ref={constellationRef}
+							nodes={forceData.nodes}
+							links={forceData.links}
+							palette={palette}
+							selectedNodeId={selectedNode?.id ?? null}
+							impactNeighborhood={impactNeighborhood}
+							searchActive={forceData.matches > 0}
+							compact={width < 640}
+							onSelectNode={selectNode}
+							onBackgroundClick={clearSelection}
+							onEngineRunningChange={setEngineRunning}
+						/>
+					)}
+
+					{(projectEmpty || filteredEmpty) && (
+						<div className="absolute inset-0 z-10 flex items-center justify-center px-6">
+							<div className="flex max-w-sm flex-col items-center gap-1.5 text-center">
+								<h2 className="text-[14px] font-semibold text-foreground">
+									{projectEmpty ? "Nothing to map yet" : "No entities match these filters"}
+								</h2>
+								<p className="text-[13px] leading-relaxed text-muted-foreground">
+									{projectEmpty
+										? "Tasks, docs, memories and decisions appear here once the project has some, linked by the references between them."
+										: "Turn an entity type back on, or show isolated entities, to bring the graph back."}
+								</p>
+								{filteredEmpty && filtersChanged && (
+									<Button variant="secondary" size="sm" className="mt-2" onClick={resetFilters}>
+										Reset filters
+									</Button>
+								)}
 							</div>
 						</div>
-					</div>
-				)}
+					)}
 
-				{error && !loading && (
-					<div className="absolute inset-0 z-20 flex items-center justify-center bg-background px-6" role="alert">
-						<div className="max-w-sm text-center">
-							<AlertCircle aria-hidden="true" className="mx-auto h-7 w-7 text-destructive" />
-							<h2 className="mt-3 text-sm font-semibold text-foreground">{error}</h2>
-							<p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-								Check that the local server is running, then try again.
-							</p>
-							<button
-								type="button"
-								onClick={fetchGraph}
-								className="mt-4 inline-flex h-11 items-center gap-2 rounded-md border border-border px-4 text-xs font-semibold text-foreground transition-colors duration-150 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					{/* Top left: what the canvas is doing, then the focus the selection put it in. */}
+					<div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-2 sm:max-w-[calc(100%-22rem)]">
+						{engineRunning && !error && (
+							<div
+								className="flex items-center gap-2 rounded-[10px] border border-border/70 bg-background/90 px-2.5 py-1.5 text-[12px] text-muted-foreground shadow-xs backdrop-blur-sm"
+								aria-live="polite"
 							>
-								<RefreshCw aria-hidden="true" className="h-3.5 w-3.5" />
-								Retry
-							</button>
-						</div>
+								<Spinner className="size-3.5" label="" />
+								Arranging communities…
+							</div>
+						)}
+						{impactSummary && (
+							<div className="pointer-events-auto flex items-center gap-2 rounded-[10px] border border-border/70 bg-background/90 py-1 pl-2.5 pr-1 text-[12.5px] shadow-xs backdrop-blur-sm">
+								<span aria-hidden="true" className="size-1.5 rounded-full bg-[color:var(--kn-accent,var(--primary))]" />
+								<span className="font-medium text-foreground">2-hop focus</span>
+								<span className="text-muted-foreground">
+									Affects {plural(impactSummary.tasks, "task", "tasks")}, {plural(impactSummary.docs, "doc", "docs")}
+								</span>
+								<Button variant="ghost" size="xs" icon={<X />} aria-label="Clear focus" onClick={clearSelection} />
+							</div>
+						)}
 					</div>
-				)}
 
-				{isEmpty && (
-					<div className="absolute inset-0 z-20 flex items-center justify-center bg-background px-6">
-						<div className="max-w-sm text-center">
-							<h2 className="text-sm font-semibold text-foreground">No entities match these filters</h2>
-							<p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-								Open Filters and turn on an entity type to bring the constellation back.
-							</p>
-						</div>
-					</div>
-				)}
+					{!projectEmpty && <GraphTypeKey colors={palette.colors} className="pointer-events-none absolute bottom-3 left-3 z-10 max-md:hidden" />}
 
-				{engineRunning && !loading && !error && (
-					<div
-						className="pointer-events-none absolute left-3 top-3 z-10 rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[0.6875rem] text-muted-foreground shadow-sm"
-						aria-live="polite"
-					>
-						Arranging communities…
-					</div>
-				)}
-
-				{impactSummary && (
-					<div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-lg border border-border bg-background/95 px-4 py-2 text-xs shadow-lg backdrop-blur-sm">
-						<span className="font-medium text-foreground">Impact: </span>
-						<span className="text-muted-foreground">
-							Affects {impactSummary.tasks} task{impactSummary.tasks !== 1 ? "s" : ""}, {impactSummary.docs} doc
-							{impactSummary.docs !== 1 ? "s" : ""}
-						</span>
-					</div>
-				)}
-
-				<div className="absolute right-3 top-3 z-10">
 					<GraphDetailPanel
 						node={selectedNode}
+						colors={palette.colors}
 						onClose={clearSelection}
 						onNavigate={handleNodeNavigate}
 						onSelectNode={selectNodeById}
 						references={selectedNodeReferences}
 					/>
-				</div>
-			</main>
+				</main>
+			)}
 
 			<TaskPreviewDialog
 				taskId={previewTaskId}

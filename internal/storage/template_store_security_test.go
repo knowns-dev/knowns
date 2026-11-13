@@ -4,10 +4,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestTemplateStoreRejectsUnsafeNames(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	base := t.TempDir()
 	store := NewStore(filepath.Join(base, ".knowns"))
 	if err := store.Init("template-name-security"); err != nil {

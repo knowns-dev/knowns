@@ -1,4 +1,5 @@
 ---
+id: doc-e23c975a2cac166dcec925d986729e4d
 title: Knowledge Graph WebUI Learnings
 description: Knowledge graph WebUI implementation learnings, patterns, decisions, and failures.
 createdAt: '2026-04-02T10:17:20.355Z'

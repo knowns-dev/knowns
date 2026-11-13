@@ -166,7 +166,7 @@ test.describe("Knowledge Graph", () => {
 
 		await test.step("Click on canvas area (ForceGraph2D canvas)", async () => {
 			const canvas = page.locator("canvas").first();
-			if (await canvas.isVisible({ timeout: 5000 })) {
+			if (await canvas.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false)) {
 				await canvas.click({ force: true });
 				await page.waitForTimeout(300);
 			}
@@ -191,7 +191,7 @@ test.describe("Knowledge Graph", () => {
 			// Impact summary only shows when a node is selected and has connections
 			// Just verify the page is stable after interaction
 			const canvas = page.locator("canvas").first();
-			if (await canvas.isVisible({ timeout: 5000 })) {
+			if (await canvas.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false)) {
 				await canvas.click({ force: true });
 				await page.waitForTimeout(500);
 			}

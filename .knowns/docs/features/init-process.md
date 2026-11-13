@@ -1,4 +1,5 @@
 ---
+id: doc-53883390f6f89fc6cb20d82add783e42
 title: Init Process
 description: Detailed init wizard flow and configuration steps
 createdAt: '2026-01-23T04:13:12.738Z'

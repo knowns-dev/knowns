@@ -1,4 +1,5 @@
 ---
+id: doc-00e4dddf6cbe0a2be033d72e1f5ea4f3
 title: Mention Playground
 description: Playground document for testing advanced mention rendering in the WebUI.
 createdAt: '2026-04-17T07:01:00.408Z'

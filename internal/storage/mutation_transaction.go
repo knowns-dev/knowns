@@ -94,7 +94,13 @@ func removeDocDeleteTransaction(root, id string) error {
 
 // DeleteDocWithExpectedHash removes a document only when its fresh canonical
 // hash matches the caller's expected base and durable history head.
+// A stale-hash conflict whose current state arrived through store sync is
+// returned as a SyncConflictError that explains it (FR-12, FR-13).
 func (s *Store) DeleteDocWithExpectedHash(ctx context.Context, path string, opts DocDeleteOptions) error {
+	return s.explainConflict(s.deleteDocWithExpectedHash(ctx, path, opts))
+}
+
+func (s *Store) deleteDocWithExpectedHash(ctx context.Context, path string, opts DocDeleteOptions) error {
 	if s == nil || s.Docs == nil {
 		return fmt.Errorf("document delete: store is unavailable")
 	}
@@ -254,7 +260,13 @@ func (s *Store) CreateTaskWithHistoryPrefixed(ctx context.Context, task *models.
 // MutateDocWithHistory atomically creates, updates, or renames a canonical
 // document and appends its history. oldDoc must be the caller's observed
 // state for updates and renames; it is re-read under the path lock.
+// A stale-hash conflict whose current state arrived through store sync is
+// returned as a SyncConflictError that explains it (FR-12, FR-13).
 func (s *Store) MutateDocWithHistory(ctx context.Context, oldDoc, newDoc *models.Doc, opts DocMutationOptions) error {
+	return s.explainConflict(s.mutateDocWithHistory(ctx, oldDoc, newDoc, opts))
+}
+
+func (s *Store) mutateDocWithHistory(ctx context.Context, oldDoc, newDoc *models.Doc, opts DocMutationOptions) error {
 	if s == nil || s.Docs == nil || s.Versions == nil {
 		return fmt.Errorf("document mutation: store is unavailable")
 	}

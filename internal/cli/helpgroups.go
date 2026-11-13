@@ -31,7 +31,7 @@ var helpGroups = []helpGroup{
 	},
 	{
 		Title:    "Project setup and health",
-		Commands: []string{"init", "quickstart", "status", "doctor", "config", "settings", "sync", "setup", "agents", "validate"},
+		Commands: []string{"init", "quickstart", "status", "doctor", "config", "settings", "sync", "store", "setup", "agents", "validate"},
 	},
 	{
 		Title:    "Code intelligence",

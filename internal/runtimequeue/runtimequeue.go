@@ -264,6 +264,12 @@ type DaemonOptions struct {
 	Executor       Executor
 	WatcherFactory WatcherFactory
 	ReloadHandler  ReloadHandler
+	// Services run for the daemon's lifetime, each in its own goroutine, and
+	// stop when the daemon context ends.
+	Services []func(ctx context.Context)
+	// KeepAlive, when it returns true, prevents the idle shutdown: a service
+	// still has work to do with no client connected.
+	KeepAlive func() bool
 }
 
 type Executor func(storeRoot string, job Job) error
@@ -1573,6 +1579,23 @@ func RunDaemonWithOptions(ctx context.Context, opts DaemonOptions) error {
 	defer os.Remove(PIDFile())
 	_ = os.Remove(stopFlagPath())
 
+	serviceCtx, stopServices := context.WithCancel(ctx)
+	var services sync.WaitGroup
+	for _, service := range opts.Services {
+		if service == nil {
+			continue
+		}
+		services.Add(1)
+		go func(run func(context.Context)) {
+			defer services.Done()
+			run(serviceCtx)
+		}(service)
+	}
+	defer func() {
+		stopServices()
+		services.Wait()
+	}()
+
 	watchLifecycle := NewWatchLifecycle(nil, projectWatchGracePeriod)
 	defer watchLifecycle.Stop()
 	ticker := time.NewTicker(defaultPollInterval)
@@ -1635,7 +1658,8 @@ func RunDaemonWithOptions(ctx context.Context, opts DaemonOptions) error {
 			return nil
 		}
 
-		if len(leases) == 0 && pendingJobs == 0 && running == nil && !watchLifecycle.hasActiveOrGrace() {
+		keepAlive := opts.KeepAlive != nil && opts.KeepAlive()
+		if len(leases) == 0 && pendingJobs == 0 && running == nil && !watchLifecycle.hasActiveOrGrace() && !keepAlive {
 			if idleSince.IsZero() {
 				idleSince = time.Now().UTC()
 			} else if time.Since(idleSince) >= idleTimeout() {

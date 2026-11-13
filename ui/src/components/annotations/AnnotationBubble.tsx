@@ -138,7 +138,7 @@ export function AnnotationBubble({ containerRef, onNavigateToDoc }: AnnotationBu
 				type="button"
 				onMouseDown={handleMouseDown}
 				className={cn(
-					"relative w-11 h-11 rounded-full flex items-center justify-center shadow-lg transition-all select-none",
+					"relative w-11 h-11 rounded-full flex items-center justify-center shadow-lg select-none",
 					"bg-popover border border-border hover:shadow-xl cursor-grab",
 				)}
 			>
@@ -154,7 +154,7 @@ export function AnnotationBubble({ containerRef, onNavigateToDoc }: AnnotationBu
 
 			{/* Expanded panel */}
 			{panelOpen && (
-				<div className="absolute bottom-14 right-0 w-80 max-h-96 bg-popover border border-border rounded-xl shadow-2xl animate-in fade-in-0 slide-in-from-bottom-2 duration-150 overflow-hidden">
+				<div className="absolute bottom-14 right-0 w-80 max-h-96 bg-popover border border-border rounded-xl shadow-2xl animate-in fade-in-0 slide-in-from-bottom-2 duration-(--kn-dur) ease-(--kn-ease-out) overflow-hidden">
 					{/* Header */}
 					<div className="flex items-center justify-between px-3 py-2 border-b border-border">
 						<span className="text-sm font-medium">
@@ -295,7 +295,7 @@ function AnnotationPanelItem({
 			<button
 				type="button"
 				onClick={(e) => { e.stopPropagation(); onRemove(annotation.id); }}
-				className="shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-opacity"
+				className="shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-[opacity,color,background-color] duration-(--kn-dur-fast) ease-(--kn-ease-out)"
 				title="Remove annotation"
 			>
 				<X className="w-3 h-3" />

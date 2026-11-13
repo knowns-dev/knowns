@@ -1,4 +1,5 @@
 ---
+id: doc-fb02fdd45c30ae58306f35291360059e
 title: Knowns Evolution Research 2026
 description: 'Paper-backed research on the next product and architecture directions for Knowns: measurable retrieval, budgeted context, temporal/provenance-aware memory, evidence graphs, secure consolidation, and adaptive workflows.'
 createdAt: '2026-07-23T04:23:57.854Z'

@@ -1,0 +1,11 @@
+# Managed by Knowns CLI — do not edit manually.
+# Run 'knowns init' to regenerate.
+
+# Runtime & cache
+.search/
+.working-memory/
+runtime/
+worktrees/
+.server-port
+.DS_Store
+memories/

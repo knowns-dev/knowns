@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestGitTokenInjectionRequiresExactConfiguredHTTPSHost(t *testing.T) {
@@ -44,7 +45,7 @@ func TestGitURLDetectionDoesNotTreatLocalDotGitPathAsRemote(t *testing.T) {
 }
 
 func TestGitEnvironmentTokenRequiresEnvironmentHost(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	t.Setenv("KNOWNS_GIT_TOKEN", "environment-secret")
 	t.Setenv("KNOWNS_GIT_HOST", "")
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))

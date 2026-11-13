@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { AuditToolStats } from "@/ui/api/client";
-import { Button } from "@/ui/components/ui/button";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { Button as KnButton } from "@/ui/components/ui/knowns/button";
+import { Ban, ChevronDown, ChevronUp, CircleAlert } from "lucide-react";
 
 function getOutcomeCount(
 	tool: AuditToolStats,
@@ -39,106 +39,69 @@ export function TopTools({
 					No tool activity in this range.
 				</p>
 			) : (
-				<>
-					<div className="mt-4 grid grid-cols-[1.25rem_minmax(0,1fr)_4rem] gap-2 px-1.5 text-[9px] uppercase tracking-wide text-muted-foreground">
-						<span aria-hidden="true" />
-						<span>Tool / calls</span>
-						<span className="grid grid-cols-3 gap-1 text-center">
-							<span title="Success">S</span>
-							<span title="Error">E</span>
-							<span title="Denied">D</span>
-						</span>
-					</div>
-					<ol className="mt-1 space-y-1.5">
-						{visibleTools.map((tool, index) => {
-							const success = getOutcomeCount(tool, "success");
-							const error = getOutcomeCount(tool, "error");
-							const denied = getOutcomeCount(tool, "denied");
-							return (
-								<li key={tool.tool}>
-									<button
-										type="button"
-										onClick={() => onSelectTool(tool.tool)}
-										aria-label={`${tool.tool}: ${tool.totalCalls} calls, ${success} successful, ${error} errors, ${denied} denied. Filter Recent Activity by this tool.`}
-										className="group grid min-h-12 w-full grid-cols-[1.25rem_minmax(0,1fr)_auto] items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-									>
-										<span className="text-right text-[10px] tabular-nums text-muted-foreground">
-											{index + 1}
-										</span>
-										<span className="min-w-0">
-											<span className="flex items-center justify-between gap-2">
-												<span className="truncate font-mono text-xs font-medium">
-													{tool.tool}
-												</span>
-												<span className="text-xs font-semibold tabular-nums">
-													{tool.totalCalls}
-												</span>
+				<ol className="mt-3 flex flex-col">
+					{visibleTools.map((tool, index) => {
+						const success = getOutcomeCount(tool, "success");
+						const error = getOutcomeCount(tool, "error");
+						const denied = getOutcomeCount(tool, "denied");
+						return (
+							<li key={tool.tool}>
+								<button
+									type="button"
+									onClick={() => onSelectTool(tool.tool)}
+									aria-label={`${tool.tool}: ${tool.totalCalls} calls, ${success} successful, ${error} errors, ${denied} denied. Filter Recent Activity by this tool.`}
+									className="group -mx-2 grid w-[calc(100%+1rem)] grid-cols-[1.25rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1 rounded-lg px-2 py-2 text-left transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								>
+									<span className="text-right text-xs tabular-nums text-muted-foreground">{index + 1}</span>
+									<span className="flex min-w-0 items-center justify-between gap-3">
+										<span className="truncate font-mono text-xs font-medium">{tool.tool}</span>
+										<span className="text-xs font-semibold tabular-nums">{tool.totalCalls}</span>
+									</span>
+									<span aria-hidden="true" />
+									<span className="block h-1.5 overflow-hidden rounded-full bg-muted">
+										<span
+											aria-hidden="true"
+											className="block h-full rounded-full bg-foreground/40"
+											style={{ width: `${Math.max(4, (tool.totalCalls / maxCalls) * 100)}%` }}
+										/>
+									</span>
+									{error + denied > 0 && (
+										<>
+											<span aria-hidden="true" />
+											<span className="flex flex-wrap items-center gap-x-3 text-xs">
+												{error > 0 && (
+													<span className="inline-flex items-center gap-1 text-red-700 dark:text-red-300">
+														<CircleAlert className="size-3.5" aria-hidden />
+														<span className="tabular-nums">{error} {error === 1 ? "error" : "errors"}</span>
+													</span>
+												)}
+												{denied > 0 && (
+													<span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
+														<Ban className="size-3.5" aria-hidden />
+														<span className="tabular-nums">{denied} denied</span>
+													</span>
+												)}
 											</span>
-											<span className="mt-1 block h-1 overflow-hidden rounded-full bg-muted">
-												<span
-													aria-hidden="true"
-													className="block h-full rounded-full bg-[#2DA44E] transition-[width] motion-reduce:transition-none"
-													style={{
-														width: `${Math.max(
-															4,
-															(tool.totalCalls / maxCalls) * 100,
-														)}%`,
-													}}
-												/>
-											</span>
-										</span>
-										<span className="grid min-w-16 grid-cols-3 gap-1 text-center text-[9px] tabular-nums">
-											<span
-												className="text-[#1A7F37] dark:text-[#56D364]"
-												title={`${success} successful`}
-											>
-												{success}
-												<span className="sr-only"> successful</span>
-											</span>
-											<span
-												className="text-[#CF222E] dark:text-[#FF7B72]"
-												title={`${error} errors`}
-											>
-												{error}
-												<span className="sr-only"> errors</span>
-											</span>
-											<span
-												className="text-[#9A6700] dark:text-[#E3B341]"
-												title={`${denied} denied`}
-											>
-												{denied}
-												<span className="sr-only"> denied</span>
-											</span>
-										</span>
-									</button>
-								</li>
-							);
-						})}
-					</ol>
-				</>
+										</>
+									)}
+								</button>
+							</li>
+						);
+					})}
+				</ol>
 			)}
 
 			{rankedTools.length > 10 ? (
-				<Button
-					type="button"
+				<KnButton
 					variant="ghost"
 					size="sm"
+					icon={showAll ? <ChevronUp /> : <ChevronDown />}
 					onClick={() => setShowAll((current) => !current)}
 					aria-expanded={showAll}
-					className="mt-3 min-h-10 w-full text-xs"
+					className="mt-3 w-full text-xs"
 				>
-					{showAll ? (
-						<>
-							<ChevronUp className="h-3.5 w-3.5" />
-							Show top 10
-						</>
-					) : (
-						<>
-							<ChevronDown className="h-3.5 w-3.5" />
-							Show all {rankedTools.length}
-						</>
-					)}
-				</Button>
+					{showAll ? "Show top 10" : `Show all ${rankedTools.length}`}
+				</KnButton>
 			) : null}
 		</section>
 	);

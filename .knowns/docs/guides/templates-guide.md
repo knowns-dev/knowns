@@ -1,4 +1,5 @@
 ---
+id: doc-d843ea03ca3518e1a8a8f2b232a69d5e
 title: Templates Guide
 createdAt: '2026-02-24T08:45:43.864Z'
 updatedAt: '2026-03-09T06:39:27.334Z'

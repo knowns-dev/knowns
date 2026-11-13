@@ -101,6 +101,11 @@ knowns search index	visible	runnable	--wait:bool
 knowns settings	visible	runnable	--global:bool
 knowns setup	visible	runnable	--force:bool --global:bool
 knowns status	visible	runnable
+knowns store	visible	group
+knowns store link	visible	runnable	--as:string --migrate:bool --store:string
+knowns store resolve	visible	runnable	--keep:string --store:string
+knowns store status	visible	runnable
+knowns store unlink	visible	runnable
 knowns sync	visible	runnable	--force:bool --instructions:bool --model:bool --platform:string --skills:bool
 knowns task	visible	runnable
 knowns task archive	visible	runnable	--expected-hash:string --yes:bool

@@ -3,15 +3,15 @@ id: doc-05a73b393bd320c8f8da464f60539745
 title: Git-Backed Shared Knowledge Store Sync
 description: Specification for syncing tasks, docs, decisions, and project memory through a shared Git store repository that serves multiple code repositories, without writing any file into those repositories.
 createdAt: '2026-09-09T11:29:21.682Z'
-updatedAt: '2026-09-12T04:51:33.674Z'
+updatedAt: '2026-09-29T07:52:17.480Z'
 tags:
   - spec
-  - draft
-  - review-required
   - sync
   - git
   - store
   - team
+  - draft
+  - review-required
 ---
 
 ## Overview
@@ -40,55 +40,61 @@ This feature deliberately does not attempt coordination, contracts, or permissio
 
 ## Locked Decisions
 
-- **D1: Content scope.** The store carries `tasks/`, `docs/`, `decisions/`, `memory/`, `templates/`, and the team portion of project configuration defined by D13. It does not carry `.search/` (a rebuildable index), `history/` (append-only JSONL with a hash chain, kept Git-ignored by D3 of @doc/specs/2026-08-14/shared-task-doc-history-reconciliation), `time.json`, `time-entries.json`, `workspaces.json`, or `.server-port`. Global memory under `~/.knowns/memory` is personal and never enters a store.
+- D1: **Content scope.** The store carries `tasks/`, `docs/`, `decisions/`, `memory/`, `templates/`, and the team portion of project configuration defined by D13. It does not carry `.search/` (a rebuildable index), `history/` (append-only JSONL with a hash chain, kept Git-ignored by D3 of @doc/specs/2026-08-14/shared-task-doc-history-reconciliation), `time.json`, `time-entries.json`, `workspaces.json`, or `.server-port`. Global memory under `~/.knowns/memory` is personal and never enters a store.
 
-- **D2: Conflict handling.** When Git cannot merge automatically, sync pauses for that project only. The local working state is preserved untouched, the conflict is surfaced, and the user settles it with an explicit resolve command. Sync for every other project continues. Knowns never silently overwrites newer state, consistent with D7 of @doc/specs/2026-08-14/shared-task-doc-history-reconciliation.
+- D2: **Conflict handling.** When Git cannot merge automatically, sync pauses for that project only. The local working state is preserved untouched, the conflict is surfaced, and the user settles it with an explicit resolve command. Sync for every other project continues. Knowns never silently overwrites newer state, consistent with D7 of @doc/specs/2026-08-14/shared-task-doc-history-reconciliation.
 
-- **D3: Execution model.** All Git work runs inside the existing machine-level shared runtime, `knowns __runtime run`, which already holds one PID for the machine and already manages per-project watchers keyed by project root. No new daemon process is introduced. Local writes are committed after a 3 second debounce and pushed; remote changes are fetched on a 30 second interval. No user-facing Knowns command ever waits on the network. When the network is unavailable, commits still succeed locally and queue for a later push.
+- D3: **Execution model.** All Git work runs inside the existing machine-level shared runtime, `knowns __runtime run`, which already holds one PID for the machine and already manages per-project watchers keyed by project root. No new daemon process is introduced. Local writes are committed after a 3 second debounce and pushed; remote changes are fetched on a 30 second interval. No user-facing Knowns command ever waits on the network. When the network is unavailable, commits still succeed locally and queue for a later push.
 
-- **D4: Credentials.** Knowns never stores a credential. Push and fetch use the machine's existing `ssh-agent` or Git credential helper. The daemon runs with `GIT_TERMINAL_PROMPT=0` and SSH `BatchMode=yes` so a missing credential fails fast with an actionable message instead of hanging on an invisible prompt.
+- D4: **Credentials.** Knowns never stores a credential. Push and fetch use the machine's existing `ssh-agent` or Git credential helper. The daemon runs with `GIT_TERMINAL_PROMPT=0` and SSH `BatchMode=yes` so a missing credential fails fast with an actionable message instead of hanging on an invisible prompt.
 
-- **D5: Store location and linkage.** A store clone lives at `~/.knowns/stores/<store-name>/`, alongside the existing `global`, `memory`, `handoffs`, and `models` directories. Each project occupies one subdirectory. The code repository receives **zero** Knowns files: no `.knowns/`, no pointer file, no `.gitignore` entry, and no `.git/info/exclude` entry. The link is recorded per machine in `~/.knowns/registry.json` and established by `knowns link <store-remote>`.
+- D5: **Store location and linkage.** A store clone lives at `~/.knowns/stores/<store-name>/`, alongside the existing `global`, `memory`, `handoffs`, and `models` directories. Each project occupies one subdirectory. The code repository receives **zero** Knowns files: no `.knowns/`, no pointer file, no `.gitignore` entry, and no `.git/info/exclude` entry. The link is recorded per machine in `~/.knowns/registry.json` and established by `knowns store link <store-remote>`.
 
-- **D6: Agent delivery through hooks.** The existing `SessionStart` and `UserPromptSubmit` hooks report sync state to the agent. `SessionStart` may request an immediate fetch and wait for it, but only within a bounded budget, and must proceed regardless of the outcome. `UserPromptSubmit` performs no network operation of any kind and reads only local state, which the daemon already keeps current under D3. Both events report a paused store, because an agent working against knowledge that stopped syncing two days ago is the failure this feature must not introduce silently. These two events are chosen because they are the ones where `additionalContext` is reliable; the brief at @doc/handoffs/hof-2026-08-24-hub-coordination-layer/brief.v2 records open upstream defects on the others.
+- D6: **Agent delivery through hooks.** The existing `SessionStart` and `UserPromptSubmit` hooks report sync state to the agent. `SessionStart` may request an immediate fetch and wait for it, but only within a bounded budget, and must proceed regardless of the outcome. `UserPromptSubmit` performs no network operation of any kind and reads only local state, which the daemon already keeps current under D3. Both events report a paused store, because an agent working against knowledge that stopped syncing two days ago is the failure this feature must not introduce silently. These two events are chosen because they are the ones where `additionalContext` is reliable; the brief at @doc/handoffs/hof-2026-08-24-hub-coordination-layer/brief.v2 records open upstream defects on the others.
 
-- **D7: Push is optimistic, safety comes from the remote.** The daemon does not fetch before pushing as a collision check. A pre-push fetch cannot close the window between the fetch and the push, whereas the remote's atomic non-fast-forward rejection closes it completely. Rejection triggers fetch, rebase, and retry, bounded. Force pushing is never used.
+- D7: **Push is optimistic, safety comes from the remote.** The daemon does not fetch before pushing as a collision check. A pre-push fetch cannot close the window between the fetch and the push, whereas the remote's atomic non-fast-forward rejection closes it completely. Rejection triggers fetch, rebase, and retry, bounded. Force pushing is never used.
 
-- **D8: Two conflict layers, kept separate.** A Git-level conflict is textual and belongs to the daemon, resolved under D2. A Knowns-level conflict is a stale expected hash and belongs to the mutation path, resolved by rereading and rewriting under D7 of @doc/specs/2026-08-14/shared-task-doc-history-reconciliation. The daemon must never create a third category by writing the working tree while a local mutation is in flight. The remaining window, between a caller's read and its write, is genuinely optimistic and correctly ends in a conflict error rather than a lost update.
+- D8: **Two conflict layers, kept separate.** A Git-level conflict is textual and belongs to the daemon, resolved under D2. A Knowns-level conflict is a stale expected hash and belongs to the mutation path, resolved by rereading and rewriting under D7 of @doc/specs/2026-08-14/shared-task-doc-history-reconciliation. The daemon must never create a third category by writing the working tree while a local mutation is in flight. The remaining window, between a caller's read and its write, is genuinely optimistic and correctly ends in a conflict error rather than a lost update.
 
-- **D9: Two records, two jobs, neither replaces the other.** Git commits are the shared ledger: who changed what, when, across machines. Local JSONL history is the local record: field-level deltas such as `status: todo -> done` or `AC 3 checked`, restore, and the diff views the browser already serves. Git stores text diffs of files and cannot answer a field-level question without reparsing markdown, which is the defect family this project has already shipped twice. Because D1 excludes history from the store, each machine's JSONL history necessarily differs: it holds that machine's own changes plus one coalesced revision per entity for anything that arrived through sync. That divergence is accepted, not a defect. History is not removed, not synced, and not treated as redundant with Git.
+- D9: **Two records, two jobs, neither replaces the other.** Git commits are the shared ledger: who changed what, when, across machines. Local JSONL history is the local record: field-level deltas such as `status: todo -> done` or `AC 3 checked`, restore, and the diff views the browser already serves. Git stores text diffs of files and cannot answer a field-level question without reparsing markdown, which is the defect family this project has already shipped twice. Because D1 excludes history from the store, each machine's JSONL history necessarily differs: it holds that machine's own changes plus one coalesced revision per entity for anything that arrived through sync. That divergence is accepted, not a defect. History is not removed, not synced, and not treated as redundant with Git.
 
-- **D10: Docs are already serialised, and the daemon joins that lock.** An earlier draft of this spec claimed Docs had no mutation lock, from reading `DocStore` alone. That was wrong. Every Doc write goes through `MutateDocWithHistory` or `DeleteDocWithExpectedHash`, both under `Store.withDocMutationLocks` in `internal/storage/mutation_transaction.go`, and nothing outside `internal/storage` writes through `DocStore` directly. No new lock is needed: the daemon acquires `withDocMutationLocks` for a Doc like any other writer, which is what makes D8 hold for Docs and AC-19 passable.
+- D10: **Docs are already serialised, and the daemon joins that lock.** An earlier draft of this spec claimed Docs had no mutation lock, from reading `DocStore` alone. That was wrong. Every Doc write goes through `MutateDocWithHistory` or `DeleteDocWithExpectedHash`, both under `Store.withDocMutationLocks` in `internal/storage/mutation_transaction.go`, and nothing outside `internal/storage` writes through `DocStore` directly. No new lock is needed: the daemon acquires `withDocMutationLocks` for a Doc like any other writer, which is what makes D8 hold for Docs and AC-19 passable.
 
-- **D11: UI notification is process-local and separate from reconciliation.** Verified: the knowledge watcher runs inside `knowns __runtime run`, while SSE lives in the browser server, and these are different processes. The server gains its own lightweight watcher whose only job is to emit SSE for entities that changed on disk. It does not reconcile, does not write history, and does not index; that remains the runtime's watcher under the lease model of D1 of @doc/specs/2026-08-14/shared-task-doc-history-reconciliation. No new inter-process protocol is introduced, because a notification-only watcher is cheaper than a protocol and cannot desynchronise from the filesystem it reads.
+- D11: **UI notification is process-local and separate from reconciliation.** Verified: the knowledge watcher runs inside `knowns __runtime run`, while SSE lives in the browser server, and these are different processes. The server gains its own lightweight watcher whose only job is to emit SSE for entities that changed on disk. It does not reconcile, does not write history, and does not index; that remains the runtime's watcher under the lease model of D1 of @doc/specs/2026-08-14/shared-task-doc-history-reconciliation. No new inter-process protocol is introduced, because a notification-only watcher is cheaper than a protocol and cannot desynchronise from the filesystem it reads.
 
-- **D12: The registry accepts a project that has no local `.knowns/`.** Verified: `Registry.Add` currently rejects any path lacking `.knowns/config.json`, which would reject exactly the projects D5 creates. Validity becomes: a local `.knowns/` with a config, **or** a store mapping resolving to an initialized store directory. Every existing consumer of that invariant is updated with it rather than after it.
+- D12: **The registry accepts a project that has no local `.knowns/`.** Verified: `Registry.Add` currently rejects any path lacking `.knowns/config.json`, which would reject exactly the projects D5 creates. Validity becomes: a local `.knowns/` with a config, **or** a store mapping resolving to an initialized store directory. Every existing consumer of that invariant is updated with it rather than after it.
 
-- **D13: Configuration stays JSON, is split by owner, and has exactly one writer format.** Reproduced on two simulated machines with the real binary on 2026-09-11: syncing today's `config.json` as one unit fails three ways. `defaultAssignee` propagates silently, so every Task a teammate creates is assigned to whoever last pushed the file, because `internal/cli/task.go` applies it on create with no warning. Opening `knowns browser` rewrites the file with no user action through `savePortToConfig`, so two machines on different ports produce a textual conflict that pauses the whole project under D2. And `ConfigStore.Save` serialises a struct in declaration order while `ConfigStore.Set` serialises a map in sorted order, so every alternation between them rewrites nearly every line and makes any concurrent edit conflict. The format is not the cause: the same experiment with `gopkg.in/yaml.v3` showed identical order drift and additionally destroyed every comment, so JSON is kept, consistent with every other configuration and state file Knowns writes. Configuration is split by owner. Team policy (`statuses`, `statusColors`, `visibleColumns`, `defaultPriority`, `taskLifecycle`, project identity) stays in the store and syncs. Personal settings (`defaultAssignee`, `platforms`) move to `~/.knowns/settings.json`. Machine state (`serverPort`, detected `lsp` languages) moves to this project's entry in `~/.knowns/registry.json`. Browser startup writes no configuration at all, since `.knowns/.server-port` already serves discovery. Every writer of the team file emits one canonical JSON form with a fixed key order, so identical content always produces identical bytes.
+- D13: **Configuration stays JSON, is split by owner, and has exactly one writer format.** Reproduced on two simulated machines with the real binary on 2026-09-11: syncing today's `config.json` as one unit fails three ways. `defaultAssignee` propagates silently, so every Task a teammate creates is assigned to whoever last pushed the file, because `internal/cli/task.go` applies it on create with no warning. Opening `knowns browser` rewrites the file with no user action through `savePortToConfig`, so two machines on different ports produce a textual conflict that pauses the whole project under D2. And `ConfigStore.Save` serialises a struct in declaration order while `ConfigStore.Set` serialises a map in sorted order, so every alternation between them rewrites nearly every line and makes any concurrent edit conflict. The format is not the cause: the same experiment with `gopkg.in/yaml.v3` showed identical order drift and additionally destroyed every comment, so JSON is kept, consistent with every other configuration and state file Knowns writes. Configuration is split by owner. Team policy (`statuses`, `statusColors`, `visibleColumns`, `defaultPriority`, `taskLifecycle`, project identity) stays in the store and syncs. Personal settings (`defaultAssignee`, `platforms`) move to `~/.knowns/settings.json`. Machine state (`serverPort`, detected `lsp` languages) moves to this project's entry in `~/.knowns/registry.json`. Browser startup writes no configuration at all, since `.knowns/.server-port` already serves discovery. Every writer of the team file emits one canonical JSON form with a fixed key order, so identical content always produces identical bytes.
 
-- **D14: A file that disappears and returns unchanged is not a deletion.** Observed on this spec itself on 2026-09-10: a `git stash -u` removed three untracked Docs for a few seconds, the watcher recorded tombstones after the quiet window, and when the files returned byte-identical, ordinary reconciliation compared hashes, found them equal, and recorded nothing. History then asserted deletion while the files lived, and every later write failed with `Doc canonical hash mismatch`. For a Doc whose last revision was section-scoped, the tombstone checkpoint was also written without its content, because `replaySnapshot` reuses a display snapshot from which section-scoped revisions deliberately drop content. The repair `reactivateTombstonedEntity` exists and is tested for Tasks, but `FilesystemReconciler.Restore` has no production caller. Under this feature Git removes and restores files routinely during pull, rebase, and checkout, so this must be closed before sync ships: lifecycle snapshots carry full state, the watcher reactivates a tombstoned entity automatically when its file reappears carrying exactly the tombstoned hash, and a user-facing command exposes `Restore` for every other case. Tracked in @task-KN-00TYF2.
+- D14: **A file that disappears and returns unchanged is not a deletion.** Observed on this spec itself on 2026-09-10: a `git stash -u` removed three untracked Docs for a few seconds, the watcher recorded tombstones after the quiet window, and when the files returned byte-identical, ordinary reconciliation compared hashes, found them equal, and recorded nothing. History then asserted deletion while the files lived, and every later write failed with `Doc canonical hash mismatch`. For a Doc whose last revision was section-scoped, the tombstone checkpoint was also written without its content, because `replaySnapshot` reuses a display snapshot from which section-scoped revisions deliberately drop content. The repair `reactivateTombstonedEntity` exists and is tested for Tasks, but `FilesystemReconciler.Restore` has no production caller. Under this feature Git removes and restores files routinely during pull, rebase, and checkout, so this must be closed before sync ships: lifecycle snapshots carry full state, the watcher reactivates a tombstoned entity automatically when its file reappears carrying exactly the tombstoned hash, and a user-facing command exposes `Restore` for every other case. Tracked in @task-KN-00TYF2.
+
+- D15: **Sharing on write is the point of the feature.** Under D3 a half-written Task or an unfinished note reaches the team within seconds, and that is accepted: it is the change this feature exists to make. A notion of work that stays local until released is out of scope here and, if wanted, is a separate spec. The same applies to shared folders (@doc/specs/2026-09-29/shared-project-folders).
+
+- D16: **During migration, the store wins.** When a code repository has a registry store mapping and also still contains an in-repo `.knowns/`, every resolution path uses the store and ignores the in-repo directory. Every Knowns command run in that repository prints a warning naming the ignored directory until it is removed, so a teammate who has not migrated sees the divergence instead of silently working against stale knowledge.
+
+- D17: **Store commands live under `knowns store`.** Linking is `knowns store link`, alongside `knowns store status` and `knowns store unlink`, so every store operation is discoverable from one command group.
 
 ## System Decision Impact
 
-- Impact: **draft new**
-- Decision: to be created before implementation begins. It records the durable change that a project's knowledge store may live outside the project directory, and that `Store.Root` and `Store.ProjectRoot` are independent values rather than one derived from the other.
+- Impact: draft new
+- Decision: @decision/20260929-1112-project-knowledge-may-live-outside-the-project-directory (draft). It records the durable change that a project's knowledge store may live outside the project directory, and that `Store.Root` and `Store.ProjectRoot` are independent values rather than one derived from the other.
 - Acceptance gate: the draft is not accepted until AC-7 and AC-11 pass, proving that no code-intelligence, LSP, template, sync, or validation path resolves the project root from the store path.
 
 ## Requirements
 
 ### Functional Requirements
 
-- **FR-1:** `knowns link <store-remote> [--as <project>]`, run inside a code repository, clones the store into `~/.knowns/stores/<store-name>/` when it is not already present, creates or adopts the project subdirectory, and records the mapping in `~/.knowns/registry.json`. `<project>` defaults to the basename of the current directory.
+- **FR-1:** `knowns store link <store-remote> [--as <project>]`, run inside a code repository, clones the store into `~/.knowns/stores/<store-name>/` when it is not already present, creates or adopts the project subdirectory, and records the mapping in `~/.knowns/registry.json`. `<project>` defaults to the basename of the current directory.
 
 - **FR-2:** Store resolution is changed at **every** entry point that resolves a project today, not only one. Those are: the walk-up in `storage.FindProjectRoot`, the `--project` flag and `KNOWNS_PROJECT` environment variable in `internal/cli/mcp.go`, `autoDetectProject` in `internal/mcp/server.go`, and the registry lookups the browser performs in `internal/cli/browser.go`. Each consults the registry mapping for the nearest enclosing registered project path. When no mapping exists, each falls back to its current behaviour, so existing projects keep working unchanged.
 
-- **FR-3:** `Store` carries `Root` (where knowledge lives) and `ProjectRoot` (where code lives) as independent fields. Every caller that today computes `filepath.Dir(store.Root)` reads `store.ProjectRoot` instead. There are 18 such non-test call sites.
+- **FR-3:** `Store` carries `Root` (where knowledge lives) and `ProjectRoot` (where code lives) as independent fields. Every caller that today computes `filepath.Dir(store.Root)` reads `store.ProjectRoot` instead. There were 18 such non-test call sites when this spec was drafted and 22 on 2026-09-29, in several spellings (`store.Root`, `state.store.Root`, `s.Root`, `m.active.Root`, `tr.getStore().Root`); AC-11 asserts that none remain rather than counting them.
 
 - **FR-4:** `registry.Project` gains a store mapping field. Registry files written before this change load unchanged and are treated as projects with no mapping.
 
 - **FR-5:** `Registry.Add` accepts a path that has no local `.knowns/` when a store mapping is supplied and that mapping resolves to an initialized store directory, per D12. A path with neither remains an error, with a message that names both ways to make it valid.
 
-- **FR-6:** `Registry.Scan` continues to discover projects that have a local `.knowns/`, and does not report a store-linked project as undiscovered or broken. Discovery of store-linked projects is by `knowns link` only, and any surface offering a scan says so rather than implying the list is complete.
+- **FR-6:** `Registry.Scan` continues to discover projects that have a local `.knowns/`, and does not report a store-linked project as undiscovered or broken. Discovery of store-linked projects is by `knowns store link` only, and any surface offering a scan says so rather than implying the list is complete.
 
 - **FR-7:** The daemon commits and pushes local changes within the D1 content scope after the D3 debounce, and fetches and fast-forwards remote changes on the D3 interval, for every project in the registry that has a store mapping.
 
@@ -104,7 +110,7 @@ This feature deliberately does not attempt coordination, contracts, or permissio
 
 - **FR-13:** That failure names the Git author, the time the change arrived, that the source was sync, and the recovery action, which is to reread the entity and reapply the change. It does not report only the two hash values. An agent must be able to recover from the error text alone, without a second diagnostic call, and the text must not suggest overwriting.
 
-- **FR-14:** `knowns sync --resolve` lists paused projects and their conflicting entities, shows the local and remote versions of each, and applies the user's choice per entity before resuming sync for that project.
+- **FR-14:** `knowns store resolve` lists paused projects and their conflicting entities, shows the local and remote versions of each, and applies the user's choice per entity before resuming sync for that project.
 
 - **FR-15:** `knowns store status` reports, per project: store name, project subdirectory, last successful push, last successful fetch, queued commit count, and pause reason when paused.
 
@@ -112,7 +118,7 @@ This feature deliberately does not attempt coordination, contracts, or permissio
 
 - **FR-17:** When a credential is missing or rejected, the daemon pauses that store with a message naming the remote and the credential mechanism it attempted. It never prompts and never blocks.
 
-- **FR-18:** `knowns link --migrate` moves an existing in-repo `.knowns/` into the store, preserving Git history of the store repository, and records the mapping. It reports what it excluded per D1 and leaves the code repository's own Git state unchanged.
+- **FR-18:** `knowns store link --migrate` moves an existing in-repo `.knowns/` into the store, preserving Git history of the store repository, and records the mapping. It reports what it excluded per D1 and leaves the code repository's own Git state unchanged.
 
 - **FR-19:** A machine may link different projects to different store repositories simultaneously. Store-level pause, credential failure, and conflict state are isolated per store.
 
@@ -134,7 +140,7 @@ This feature deliberately does not attempt coordination, contracts, or permissio
 
 - **FR-28:** The browser renders both records described by D9 for a Task or Doc: local field-level revisions from JSONL, and shared commits from Git with their authors. The two are presented as distinct sources rather than interleaved into one list that implies a single ledger.
 
-- **FR-29:** Conflict resolution is available in the browser as a side-by-side view of the local and remote versions per entity, applying the same resolution semantics as `knowns sync --resolve`. Neither surface is authoritative over the other, and a conflict settled on one surface is reflected on the other.
+- **FR-29:** Conflict resolution is available in the browser as a side-by-side view of the local and remote versions per entity, applying the same resolution semantics as `knowns store resolve`. Neither surface is authoritative over the other, and a conflict settled on one surface is reflected on the other.
 
 ### Non-Functional Requirements
 
@@ -144,15 +150,15 @@ This feature deliberately does not attempt coordination, contracts, or permissio
 
 - **NFR-3:** No conflict path may discard local content. Every resolution route either keeps the local version, keeps the remote version by explicit user choice, or keeps both.
 
-- **NFR-4:** After `knowns link`, the code repository's working tree and Git index are byte-identical to their state before the command ran.
+- **NFR-4:** After `knowns store link`, the code repository's working tree and Git index are byte-identical to their state before the command ran.
 
 - **NFR-5:** The daemon's steady-state cost for an idle project is one `git fetch` per interval per store, not per project.
 
-- **NFR-6:** Hook cost is bounded and fails open. `UserPromptSubmit` adds no network time at all. `SessionStart` adds at most the FR-14 budget, and an unreachable remote, an unauthenticated store, or a stopped daemon degrades the report rather than the session.
+- **NFR-6:** Hook cost is bounded and fails open. `UserPromptSubmit` adds no network time at all. `SessionStart` adds at most the FR-22 budget, and an unreachable remote, an unauthenticated store, or a stopped daemon degrades the report rather than the session.
 
 ## Acceptance Criteria
 
-- [ ] **AC-1:** After `knowns link <remote>` in a clean code repository, `git status --porcelain` in that repository produces no output, and no file or directory named `.knowns`, `.knowns-store.json`, or similar exists in its working tree. `.git/info/exclude` is also unchanged.
+- [ ] **AC-1:** After `knowns store link <remote>` in a clean code repository, `git status --porcelain` in that repository produces no output, and no file or directory named `.knowns`, `.knowns-store.json`, or similar exists in its working tree. `.git/info/exclude` is also unchanged.
 - [ ] **AC-2:** A Task created on machine A is readable by `knowns task list` on machine B within 60 seconds, with no command run on either machine beyond the create.
 - [ ] **AC-3:** With the network disabled, `knowns task create` succeeds and returns. After the network is restored, the Task reaches the remote without any user command.
 - [ ] **AC-4:** When machine A and machine B change the same line of the same Task and both push, machine B reports a conflict for that project, the Task file on machine B still holds B's content, and a second project linked to the same store continues to sync.
@@ -160,7 +166,7 @@ This feature deliberately does not attempt coordination, contracts, or permissio
 - [ ] **AC-6:** After a full sync cycle, no file whose content originated in `~/.knowns/memory` exists anywhere in the store clone.
 - [ ] **AC-7:** With a project linked to a store, a code-intelligence query resolves file paths against the code repository. A file that exists only in the store directory is not reachable as a project file, and a file that exists only in the code repository is.
 - [ ] **AC-8:** With three code repositories linked to one store, a single fetch cycle makes changes from all three visible locally.
-- [ ] **AC-9:** `knowns link --migrate` on a project with a committed in-repo `.knowns/` leaves the code repository's `HEAD` and index unchanged, and the migrated Tasks and Docs are readable afterwards with identical IDs.
+- [ ] **AC-9:** `knowns store link --migrate` on a project with a committed in-repo `.knowns/` leaves the code repository's `HEAD` and index unchanged, and the migrated Tasks and Docs are readable afterwards with identical IDs.
 - [ ] **AC-10:** `knowns store status` distinguishes a healthy project, a project paused by conflict, and a store paused by credential failure, and names the cause for each paused entry.
 - [ ] **AC-11:** A repository-wide search for `filepath.Dir(store.Root)` and its variants returns no non-test call site.
 - [ ] **AC-12:** A project with an in-repo `.knowns/` and no registry mapping behaves exactly as it does today, with no daemon involvement. Its history, restore, and browser diff views are unchanged.
@@ -176,8 +182,8 @@ This feature deliberately does not attempt coordination, contracts, or permissio
 - [ ] **AC-22:** With a board open and untouched in the browser, a Task changed on another machine appears in its new column within one fetch interval plus one second, with no page refresh and no user interaction.
 - [ ] **AC-23:** With a project paused, the store state is visible on the browser page itself without opening a menu or a terminal, and it names the cause and the age of the pause.
 - [ ] **AC-24:** The history view of a Task changed both locally and by a teammate shows the local field-level revisions and the shared Git commits, each labelled with its source. A reader can tell which changes came from this machine and which arrived through sync.
-- [ ] **AC-25:** A conflict settled in the browser is reflected by `knowns store status` on the command line without any further action, and a conflict settled by `knowns sync --resolve` clears in an open browser tab over SSE.
-- [ ] **AC-26:** `knowns link` on a code repository with no `.knowns/` succeeds and the project appears in `knowns store status`. Running it on a path with neither a local `.knowns/` nor a store mapping fails with a message naming both ways to make it valid.
+- [ ] **AC-25:** A conflict settled in the browser is reflected by `knowns store status` on the command line without any further action, and a conflict settled by `knowns store resolve` clears in an open browser tab over SSE.
+- [ ] **AC-26:** `knowns store link` on a code repository with no `.knowns/` succeeds and the project appears in `knowns store status`. Running it on a path with neither a local `.knowns/` nor a store mapping fails with a message naming both ways to make it valid.
 - [ ] **AC-27:** A `registry.json` written before this feature loads without modification, and its projects continue to resolve exactly as they do today.
 - [ ] **AC-28:** Every Doc write path, the daemon's included, acquires `withDocMutationLocks`. A test that writes one Doc from many goroutines while a fetch rewrites the same file leaves the Doc parseable after every operation, and a repository-wide check finds no Doc write that reaches the filesystem without holding the lock.
 - [ ] **AC-29:** Resolving the same project through the walk-up, through `KNOWNS_PROJECT`, through `--project`, and through the browser's registry lookup yields the same store root and the same project root. A project with a store mapping resolves identically on all four.
@@ -188,13 +194,13 @@ This feature deliberately does not attempt coordination, contracts, or permissio
 ### Scenario 1: Linking the first project
 
 **Given** a developer has a code repository at `~/Workspaces/knowns` with no Knowns store, and an empty repository at `git@github.com:knowns-dev/knowns-tasks.git`
-**When** they run `knowns link git@github.com:knowns-dev/knowns-tasks.git`
+**When** they run `knowns store link git@github.com:knowns-dev/knowns-tasks.git`
 **Then** the store is cloned to `~/.knowns/stores/knowns-tasks/`, the subdirectory `knowns/` is created and initialized, `~/.knowns/registry.json` records the mapping, and `git status` in the code repository shows no change
 
 ### Scenario 2: A second developer joins
 
 **Given** the store repository already contains the `knowns/` subdirectory with Tasks and Docs, and a developer has just cloned the code repository
-**When** they run `knowns link git@github.com:knowns-dev/knowns-tasks.git`
+**When** they run `knowns store link git@github.com:knowns-dev/knowns-tasks.git`
 **Then** the store is cloned, the existing `knowns/` subdirectory is adopted rather than recreated, and `knowns task list` immediately shows the team's existing Tasks
 
 ### Scenario 3: A change propagates without anyone committing
@@ -224,7 +230,7 @@ This feature deliberately does not attempt coordination, contracts, or permissio
 ### Scenario 7: Migrating a project that already tracks .knowns in code
 
 **Given** a code repository whose `.knowns/` is committed and shared through code review
-**When** the developer runs `knowns link <remote> --migrate`
+**When** the developer runs `knowns store link <remote> --migrate`
 **Then** the content within the D1 scope is copied into the store subdirectory, the excluded paths are reported, the mapping is recorded, and the code repository's `HEAD`, index, and working tree are unchanged so the team can remove the old directory as a normal reviewed commit when they choose
 
 ### Scenario 8: Two stores with different audiences
@@ -235,7 +241,7 @@ This feature deliberately does not attempt coordination, contracts, or permissio
 
 ### Scenario 9: Store repository reachable but project subdirectory absent
 
-**Given** a developer runs `knowns link <remote> --as backend` and the store contains no `backend/` subdirectory
+**Given** a developer runs `knowns store link <remote> --as backend` and the store contains no `backend/` subdirectory
 **When** the command runs
 **Then** it reports that it is creating a new project subdirectory rather than adopting an existing one, and requires confirmation before initializing, so a typo in `--as` does not silently create a second empty project
 
@@ -316,16 +322,87 @@ FR-3 is a mechanical refactor but it must be complete. A resolver with no call s
 ## Task Generation
 
 - Task Prefix: GST
+- Delivery phases, each shippable and verifiable on its own:
+  - **Phase 1, resolution:** FR-1 through FR-6 and FR-21 (store link and unlink, registry mapping, independent `Root` and `ProjectRoot`). No sync. AC-1, AC-7, AC-11, AC-12, AC-26, AC-27, AC-29.
+  - **Phase 2, sync:** FR-7 through FR-20. AC-2 through AC-6, AC-8 through AC-10, AC-17 through AC-21, AC-28.
+  - **Phase 3, agent hooks:** FR-22 through FR-25. AC-13 through AC-16.
+  - **Phase 4, browser:** FR-26 through FR-29. AC-22 through AC-25, AC-30.
+  - @doc/specs/2026-09-29/shared-project-folders depends on Phases 1 and 2.
 
 ## Task Links
 
-Generated tasks will be linked here after `/kn-plan --from @doc/specs/2026-09-09/git-backed-shared-knowledge-store-sync` runs.
+## Task Links
+
+Phase 1, resolution (done):
+
+- @task-GST-W7ZY37 Store keeps knowledge root and code root as independent values (done)
+- @task-GST-3XGQ4Q Registry records a store mapping and accepts store-linked projects (done)
+- @task-GST-MXJ2TS Every project entry point resolves through the store mapping (done)
+- @task-GST-ZXDBPR knowns store link and unlink connect a repository to a store (done)
+
+Phase 2, sync (done):
+
+- @task-GST-CDCBV8 The store carries only shareable knowledge (done)
+- @task-GST-2V9CG2 Configuration is split by owner and written in one canonical form (done)
+- @task-GST-TR2S2N The runtime keeps linked stores in sync in the background (done)
+- @task-GST-A4NHX3 Push races and rebase conflicts pause a project instead of losing work (done)
+- @task-GST-QMZ6DA Sync never races local mutations (done)
+- @task-GST-NHW1GW A stale write caused by sync explains itself (done)
+- @task-GST-RMQ4SR Store status and conflict resolution are available from the command line (done)
+- @task-GST-EXPZQM An existing in-repo .knowns/ can move into a store (done)
+
+Phases 3 and 4 (agent hooks, browser) are not generated yet.
+
+## Task Links
+
+Phase 1, resolution (done):
+
+- @task-GST-W7ZY37 Store keeps knowledge root and code root as independent values (done)
+- @task-GST-3XGQ4Q Registry records a store mapping and accepts store-linked projects (done)
+- @task-GST-MXJ2TS Every project entry point resolves through the store mapping (done)
+- @task-GST-ZXDBPR knowns store link and unlink connect a repository to a store (done)
+
+Phase 2, sync:
+
+- @task-GST-CDCBV8 The store carries only shareable knowledge (todo)
+- @task-GST-2V9CG2 Configuration is split by owner and written in one canonical form (todo)
+- @task-GST-TR2S2N The runtime keeps linked stores in sync in the background (todo)
+- @task-GST-A4NHX3 Push races and rebase conflicts pause a project instead of losing work (todo)
+- @task-GST-QMZ6DA Sync never races local mutations (todo)
+- @task-GST-NHW1GW A stale write caused by sync explains itself (todo)
+- @task-GST-RMQ4SR Store status and conflict resolution are available from the command line (todo)
+- @task-GST-EXPZQM An existing in-repo .knowns/ can move into a store (todo)
+
+Phases 3 and 4 are generated after Phase 2 completes.
+
+## Task Links
+
+Phase 1, resolution (done):
+
+- @task-GST-W7ZY37 Store keeps knowledge root and code root as independent values (done)
+- @task-GST-3XGQ4Q Registry records a store mapping and accepts store-linked projects (done)
+- @task-GST-MXJ2TS Every project entry point resolves through the store mapping (done)
+- @task-GST-ZXDBPR knowns store link and unlink connect a repository to a store (done)
+
+Phases 2 to 4 are generated next.
+
+## Task Links
+
+Phase 1, resolution:
+
+- @task-GST-W7ZY37 Store keeps knowledge root and code root as independent values (todo)
+- @task-GST-3XGQ4Q Registry records a store mapping and accepts store-linked projects (todo)
+- @task-GST-MXJ2TS Every project entry point resolves through the store mapping (todo)
+- @task-GST-ZXDBPR knowns store link and unlink connect a repository to a store (todo)
+
+Phases 2 to 4 are generated after Phase 1 completes.
 
 ## Open Questions
 
-- [ ] Is the command `knowns link` as proposed, or `knowns store link` for symmetry with `knowns store status` and `knowns store unlink`?
 - [ ] Should the store repository have a retention policy? Tasks and Docs accumulate indefinitely, and a store serving ten projects for two years is a repository nobody prunes.
-- [ ] When a code repository already has a team-committed `.knowns/` and one developer migrates while others have not, what does the un-migrated developer see? Scenario 7 leaves the old directory in place deliberately, but the transition window is not specified.
 - [ ] Is 500 milliseconds the right `SessionStart` budget? It is long enough for a warm fetch on a fast link and short enough to be unnoticeable, but it is a guess until measured against a real remote over a VPN.
-- [ ] **Is there any state that should not be shared the moment it is written?** Under D3 a half-written Task, an unfinished plan, and a mid-thought note all reach the team within three seconds. Today `.knowns/` is effectively private until someone commits, and that pause is where drafts get cleaned up. This spec removes the pause without replacing it. Either that is accepted as the point of the feature, or the model needs a notion of work that is local until released, which nothing in D1 through D7 currently provides.
 - [ ] Tasks and Docs stop being tied to a code branch. Today a Task created on a feature branch disappears with that branch; afterwards it outlives it. This is mostly an improvement, but a team that uses branch lifetime as implicit Task cleanup will notice the change.
+
+## Related Extensions
+
+- Shared folders that several code repositories mount, read and write: @doc/specs/2026-09-29/shared-project-folders (approved). That spec depends on Phases 1 and 2 of this one and does not change D1 through D17.

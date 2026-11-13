@@ -1,0 +1,33 @@
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "radix-nova",
+  "rsc": false,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "src/index.css",
+    "baseColor": "neutral",
+    "cssVariables": true,
+    "prefix": ""
+  },
+  "iconLibrary": "lucide",
+  "rtl": false,
+  "aliases": {
+    "components": "@/ui/components",
+    "utils": "@/ui/lib/utils",
+    "ui": "@/ui/components/ui",
+    "lib": "@/ui/lib",
+    "hooks": "@/ui/hooks"
+  },
+  "menuColor": "default",
+  "menuAccent": "subtle",
+  "registries": {
+    "@knowns-ui": "https://ui.knowns.dev/r/{name}.json",
+    "@knowns-ui-pro": {
+      "url": "https://ui.knowns.dev/r/pro/{name}.json",
+      "headers": {
+        "Authorization": "Bearer ${KNOWNS_LICENSE_KEY}"
+      }
+    }
+  }
+}

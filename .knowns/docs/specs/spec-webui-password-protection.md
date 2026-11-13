@@ -1,4 +1,5 @@
 ---
+id: doc-0ec986172180b9f5ce9c153f3c9648dc
 title: 'Spec: WebUI Password Protection'
 description: Spec for in-memory password protection with CLI flag and WebUI login gate
 createdAt: '2026-05-28T08:44:46.846Z'

@@ -1,19 +1,14 @@
 import { useMemo, useState } from "react";
 import { Plus, ClipboardList } from "lucide-react";
-import type { Task } from "@/models/task";
+import type { Task } from "@/ui/models/task";
 import { ScrollArea } from "@/ui/components/ui/ScrollArea";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/ui/components/ui/select";
+import { Combobox } from "@/ui/components/ui/knowns/combobox";
 import { Button } from "@/ui/components/ui/button";
 import { StatusBadge, PriorityBadge, LabelList } from "@/ui/components/molecules";
 import { useConfig } from "@/ui/contexts/ConfigContext";
 import { getStatusLabel, buildStatusOptions } from "@/ui/utils/colors";
 import { TaskLifecycleBadge } from "@/ui/components/molecules/TaskLifecycleBadge";
+import { assigneeLabel, groupTasksByAssignee } from "./assignees";
 
 interface TaskGroupedViewProps {
 	tasks: Task[];
@@ -23,6 +18,7 @@ interface TaskGroupedViewProps {
 
 export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedViewProps) {
 	const { config } = useConfig();
+	const [groupBy, setGroupBy] = useState<"status" | "assignee">("status");
 	const [statusFilter, setStatusFilter] = useState<string>("all");
 	const [parentFilter, setParentFilter] = useState<string>("all");
 	const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
@@ -59,17 +55,13 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 		}
 		// Group filtered tasks
 		for (const task of filteredTasks) {
-			if (groups[task.status]) {
-				groups[task.status].push(task);
-			} else {
-				// Handle tasks with unknown status (not in config)
-				groups[task.status] = [task];
-			}
+			// Tasks with a status not in config get their own group
+			(groups[task.status] ??= []).push(task);
 		}
 		// Sort by priority within each group
 		const priorityOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
-		for (const status in groups) {
-			groups[status].sort((a, b) => {
+		for (const statusTasks of Object.values(groups)) {
+			statusTasks.sort((a, b) => {
 				const diff = (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2);
 				if (diff !== 0) return diff;
 				return String(a.id ?? "").localeCompare(String(b.id ?? ""), undefined, { numeric: true });
@@ -78,45 +70,62 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 		return groups;
 	}, [availableStatuses, filteredTasks]);
 
+	// By person, each keeping the status-then-priority order of the status groups.
+	const sections = useMemo(() => {
+		if (groupBy === "assignee") {
+			const prioritized = Object.values(groupedTasks).flat();
+			return groupTasksByAssignee(prioritized).map((group) => ({
+				key: group.key,
+				label: assigneeLabel(group.key),
+				tasks: group.tasks,
+			}));
+		}
+		return Object.entries(groupedTasks).map(([status, statusTasks]) => ({
+			key: status,
+			label: getStatusLabel(status),
+			tasks: statusTasks,
+		}));
+	}, [groupBy, groupedTasks]);
+
 	return (
 		<div className="h-full flex flex-col">
 			{/* Toolbar */}
 			<div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-4 mb-6">
 				<div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+					{/* Group By */}
+					<Combobox
+						aria-label="Group by"
+						value={groupBy}
+						onValueChange={(value) => setGroupBy(value as typeof groupBy)}
+						options={[
+							{ value: "status", label: "Group by Status" },
+							{ value: "assignee", label: "Group by Assignee" },
+						]}
+						className="w-[150px] sm:w-[170px] text-sm"
+					/>
+
 					{/* Status Filter */}
-					<Select value={statusFilter} onValueChange={setStatusFilter}>
-						<SelectTrigger className="w-[100px] sm:w-[130px] h-8 text-sm border-border/40">
-							<SelectValue placeholder="Status" />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="all">All Status</SelectItem>
-							{statusOptions.map((opt) => (
-								<SelectItem key={opt.value} value={opt.value}>
-									{opt.label}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
+					<Combobox
+						aria-label="Status"
+						value={statusFilter}
+						onValueChange={setStatusFilter}
+						options={[{ value: "all", label: "All Status" }, ...statusOptions]}
+						className="w-[100px] sm:w-[130px] text-sm"
+					/>
 
 					{/* Parent Filter */}
-					<Select value={parentFilter} onValueChange={setParentFilter}>
-						<SelectTrigger className="w-[130px] sm:w-[180px] h-8 text-sm border-border/40">
-							<SelectValue placeholder="Parent" />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="all">All Tasks</SelectItem>
-							<SelectItem value="root">Root Tasks Only</SelectItem>
-							{parentTasks.map((parent) => {
-								const fullText = `Subtasks of #${parent.id}: ${parent.title}`;
-								const displayText = fullText.length > 40 ? fullText.substring(0, 40) + "..." : fullText;
-								return (
-									<SelectItem key={parent.id} value={parent.id} title={fullText}>
-										{displayText}
-									</SelectItem>
-								);
-							})}
-						</SelectContent>
-					</Select>
+					<Combobox
+						aria-label="Parent"
+						searchable
+						value={parentFilter}
+						onValueChange={setParentFilter}
+						options={[
+							{ value: "all", label: "All Tasks" },
+							{ value: "root", label: "Root Tasks Only" },
+							...parentTasks.map((parent) => ({ value: parent.id, label: `Subtasks of ${parent.title}`, supportingText: `#${parent.id}` })),
+						]}
+						className="w-[130px] sm:w-[180px] text-sm"
+					/>
 
 					<span className="text-muted-foreground text-xs">
 						{filteredTasks.length} {filteredTasks.length === 1 ? "task" : "tasks"}
@@ -132,13 +141,13 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 			{/* Task Groups */}
 			<ScrollArea className="flex-1">
 				<div className="space-y-8 pr-4">
-					{Object.entries(groupedTasks).map(([status, statusTasks]) => {
+					{sections.map(({ key, label, tasks: statusTasks }) => {
 						if (statusTasks.length === 0) return null;
 
 						return (
-							<div key={status}>
+							<div key={key}>
 								<h2 className="text-lg font-semibold mb-1">
-									{getStatusLabel(status)}
+									{label}
 									<span className="text-sm font-normal text-muted-foreground ml-2">{statusTasks.length}</span>
 								</h2>
 								<div className="border-t border-border/40 pt-2">
@@ -149,7 +158,7 @@ export function TaskGroupedView({ tasks, onTaskClick, onNewTask }: TaskGroupedVi
 										return (
 											<div
 												key={task.id}
-												className="py-2.5 px-2 -mx-2 rounded-md transition-colors hover:bg-muted/50"
+												className="py-2.5 px-2 -mx-2 rounded-md transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-muted/50"
 											>
 												<div className="flex items-start gap-3">
 													{/* Task Info */}

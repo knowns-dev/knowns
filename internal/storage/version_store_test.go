@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestVersionStoreHistoryMetadataPageNewestFirstAndRootIdentity(t *testing.T) {
@@ -843,7 +844,7 @@ func TestApplyDocHistoryRetentionMaxAge(t *testing.T) {
 
 func newVersionTestStore(t *testing.T) *Store {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	root := filepath.Join(t.TempDir(), ".knowns")
 	return NewStore(root)
 }

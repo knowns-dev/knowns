@@ -1,4 +1,5 @@
 ---
+id: doc-06afab5e25be66accad21983024e49c8
 title: MCP Audit Trail And Tool Stats
 description: Draft specification for structured MCP tool-call auditing, recent activity views, and aggregate usage statistics.
 createdAt: '2026-04-22T08:51:27.571Z'

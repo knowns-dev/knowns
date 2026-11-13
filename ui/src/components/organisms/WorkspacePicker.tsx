@@ -115,7 +115,7 @@ function SavedTab({ onSwitch }: { onSwitch: (id: string) => Promise<void> }) {
 							{switching === p.id && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />}
 							<button
 								type="button"
-								className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 hover:text-destructive transition-all"
+								className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 hover:text-destructive transition-[opacity,color,background-color] duration-(--kn-dur-fast) ease-(--kn-ease-out)"
 								onClick={e => { e.stopPropagation(); handleRemove(p.id); }}
 								aria-label={`Remove ${p.name}`}
 							>
@@ -233,7 +233,7 @@ function BrowseTab({ onSwitch }: { onSwitch: (path: string) => Promise<void> }) 
 						>
 							{n.loading
 								? <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-								: <ChevronRight className={cn("h-3 w-3 text-muted-foreground transition-transform", n.expanded && "rotate-90")} />
+								: <ChevronRight className={cn("h-3 w-3 text-muted-foreground transition-transform duration-(--kn-dur-fast) ease-(--kn-ease-inout)", n.expanded && "rotate-90")} />
 							}
 						</button>
 

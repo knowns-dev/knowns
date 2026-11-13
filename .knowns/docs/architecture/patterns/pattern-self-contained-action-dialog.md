@@ -1,4 +1,5 @@
 ---
+id: doc-6b8a233e957b398d6c2721942165484e
 title: 'Pattern: Self-Contained Action Dialog'
 createdAt: '2026-03-05T05:31:55.137Z'
 updatedAt: '2026-03-05T05:32:19.888Z'

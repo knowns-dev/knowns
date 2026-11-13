@@ -1,4 +1,5 @@
 ---
+id: doc-b056c58abfb74e5884b20247484e6e5b
 title: Decision Taxonomy Workflow Enforcement
 description: Specification for separating Spec Decisions from System Decisions, enforcing both in workflows, deprecating Decision Memories, and migrating legacy guidance safely.
 createdAt: '2026-07-22T17:08:28.261Z'

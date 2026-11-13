@@ -1,0 +1,57 @@
+{
+  "createdAt": "2026-11-03T13:37:34.543322Z",
+  "id": "fixture-full",
+  "name": "fixture-full",
+  "schemaVersion": 1,
+  "settings": {
+    "defaultAssignee": "@fixture",
+    "defaultPriority": "medium",
+    "defaultTaskIdPrefix": "FX",
+    "editor": "vim",
+    "gitTracking": {
+      "decisions": true,
+      "docs": true,
+      "memories": false,
+      "tasks": true,
+      "templates": true
+    },
+    "gitTrackingMode": "git-tracked",
+    "platforms": [
+      "claude-code",
+      "agents"
+    ],
+    "serverPort": 6420,
+    "statusColors": {
+      "blocked": "red",
+      "done": "green",
+      "in-progress": "blue",
+      "in-review": "purple",
+      "on-hold": "yellow",
+      "todo": "gray",
+      "urgent": "orange"
+    },
+    "statuses": [
+      "todo",
+      "in-progress",
+      "in-review",
+      "done",
+      "blocked",
+      "on-hold",
+      "urgent"
+    ],
+    "taskLifecycle": {
+      "archiveAfter": "30d",
+      "autoArchive": true,
+      "excludeDoneFromDefaultRetrieval": true,
+      "purgeAfter": null
+    },
+    "timeFormat": "24h",
+    "visibleColumns": [
+      "todo",
+      "in-progress",
+      "blocked",
+      "done",
+      "in-review"
+    ]
+  }
+}

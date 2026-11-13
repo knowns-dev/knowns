@@ -1,4 +1,5 @@
 ---
+id: doc-955d0daf23fc2f9b748aa6faa4c91f43
 title: AI Permission Model
 description: Draft specification for a capability-based permission model for AI actions across MCP, browser, runtime, and future platform flows.
 createdAt: '2026-04-23T07:57:37.028Z'

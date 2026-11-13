@@ -23,6 +23,7 @@ start/stop/cleanup ownership.
 - [`knowns qdrant install`](knowns_qdrant_install.md) — Install the pinned managed Qdrant binary with checksum verification
 - [`knowns qdrant logs`](knowns_qdrant_logs.md) — Show managed Qdrant log lines
 - [`knowns qdrant purge`](knowns_qdrant_purge.md) — Immediately purge positively owned semantic collections
+- [`knowns qdrant setup`](knowns_qdrant_setup.md) — Detect and set up a Qdrant for semantic search on this machine
 - [`knowns qdrant start`](knowns_qdrant_start.md) — Start managed Qdrant when in managed mode
 - [`knowns qdrant status`](knowns_qdrant_status.md) — Show Qdrant runtime status and paths
 - [`knowns qdrant stop`](knowns_qdrant_stop.md) — Stop managed Qdrant when Knowns owns a local process

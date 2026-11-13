@@ -1,4 +1,5 @@
 ---
+id: doc-65874eda24d725ead3d44a32c271dd10
 title: Naming Conventions
 description: File and code naming conventions for the project
 createdAt: '2025-12-25T15:16:58.868Z'

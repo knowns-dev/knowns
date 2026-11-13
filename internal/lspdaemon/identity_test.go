@@ -14,6 +14,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 var safeKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*-[0-9a-f]{16}$`)
@@ -368,13 +369,7 @@ func newTestPaths(t *testing.T) (Paths, string, string) {
 
 func isolateHome(t *testing.T) string {
 	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	volume := filepath.VolumeName(home)
-	t.Setenv("HOMEDRIVE", volume)
-	t.Setenv("HOMEPATH", strings.TrimPrefix(home, volume))
-	return home
+	return testutil.TempHome(t)
 }
 
 func canonicalForTest(t *testing.T, path string) string {

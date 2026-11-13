@@ -1,4 +1,5 @@
 ---
+id: doc-aca383f93d7d7dbbe0d0123e71e94629
 title: Priority Built-in LSP Expansion
 description: Specification for adding Markdown, Bash, JSON/JSONC, Terraform/HCL, and YAML as capability-aware built-in LSP adapters
 createdAt: '2026-07-20T14:45:24.386Z'

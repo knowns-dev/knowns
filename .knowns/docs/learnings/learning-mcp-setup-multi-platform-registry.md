@@ -1,4 +1,5 @@
 ---
+id: doc-430e9b78ddf8b273d3f4aa284cdd9a4d
 title: 'Learning: MCP Setup Multi-Platform Registry'
 description: Learnings from rewriting knowns mcp setup to support per-platform selection and 10 platforms
 createdAt: '2026-04-30T12:58:14.440Z'

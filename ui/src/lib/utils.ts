@@ -65,6 +65,8 @@ export interface Doc {
 	content: string;
 	isImported?: boolean;
 	source?: string;
+	/** Canonical hash of the version this client read; sent back as expectedHash on save. */
+	canonicalHash?: string;
 }
 
 /**

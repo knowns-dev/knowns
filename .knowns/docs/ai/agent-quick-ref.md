@@ -1,4 +1,5 @@
 ---
+id: doc-d7d0fbb94b24b726c5462ffb01ab6c65
 title: AI Agent Quick Reference
 createdAt: '2025-12-31T11:45:09.512Z'
 updatedAt: '2026-01-11T08:59:19.311Z'
