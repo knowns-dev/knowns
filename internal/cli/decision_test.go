@@ -10,6 +10,7 @@ import (
 	"github.com/howznguyen/knowns/internal/decisionreview"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 	"github.com/spf13/cobra"
 )
 
@@ -339,7 +340,7 @@ func newDecisionMigrationApplyTestCmd() *cobra.Command {
 
 func setupEmptyDecisionCLIProject(t *testing.T) string {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("decision-cli-test"); err != nil {

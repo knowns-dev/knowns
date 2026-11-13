@@ -148,7 +148,7 @@ export function AnnotationHighlighter({
 				return (
 					<div
 						ref={popoverRef}
-						className="absolute z-50 bg-popover border border-border rounded-lg shadow-lg p-3 w-72 animate-in fade-in-0 zoom-in-95"
+						className="absolute z-50 bg-popover border border-border rounded-lg shadow-lg p-3 w-72 animate-in fade-in-0 duration-(--kn-dur-fast) ease-(--kn-ease-out)"
 						style={{
 							top: rect.bottom - containerRect.top + (containerRef.current?.scrollTop ?? 0) + 4,
 							left: rect.left - containerRect.left + rect.width / 2,

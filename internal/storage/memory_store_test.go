@@ -10,10 +10,11 @@ import (
 	"time"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestMemoryStoreRejectsNewDecisionMemoryAndConstrainsLegacyWrites(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init("legacy-decision-memory-policy"); err != nil {
 		t.Fatalf("init store: %v", err)
@@ -65,7 +66,7 @@ func TestMemoryStoreRejectsNewDecisionMemoryAndConstrainsLegacyWrites(t *testing
 }
 
 func TestMemoryStoreRejectsUnsafeIDs(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init("memory-id-security"); err != nil {
 		t.Fatal(err)
@@ -143,7 +144,7 @@ func TestParseMemoryContentDefaultsNoFrontmatterLifecycle(t *testing.T) {
 
 func TestMemoryStoreListLoadsLegacyLifecycle(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	root := filepath.Join(t.TempDir(), ".knowns")
 	memoryDir := filepath.Join(root, "memory")
 	if err := os.MkdirAll(memoryDir, 0o755); err != nil {

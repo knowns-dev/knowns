@@ -1,3 +1,11 @@
 # Golden files are compared byte for byte against output the code generates
 # with "\n", so they must stay LF even where core.autocrlf rewrites checkouts.
 **/testdata/** text eol=lf
+
+# Skills and guidelines are embedded byte for byte (Go go:embed, TS embedded.generated.ts),
+# so a Windows checkout must not rewrite them to CRLF.
+internal/instructions/** text eol=lf
+cli/src/domain/instructions/embedded.generated.ts text eol=lf
+
+# The TS CLI is formatted and checked as LF (Biome), and some tests read its own sources.
+cli/** text=auto eol=lf

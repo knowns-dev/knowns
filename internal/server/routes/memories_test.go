@@ -15,6 +15,7 @@ import (
 	"github.com/howznguyen/knowns/internal/memoryreview"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestMemoryRoutesLegacyDecisionWritePolicy(t *testing.T) {
@@ -349,7 +350,7 @@ func createMemoryRouteMemory(t *testing.T, store *storage.Store, entry *models.M
 
 func setupMemoryRouteStore(t *testing.T) *storage.Store {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init("memory-route-test"); err != nil {
 		t.Fatalf("init store: %v", err)

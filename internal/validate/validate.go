@@ -178,7 +178,7 @@ func Run(store *storage.Store, opts Options) *Result {
 				Message: fmt.Sprintf("Failed to list templates: %s", templateListErr.Error()),
 			})
 		} else {
-			projectRoot := filepath.Dir(store.Root)
+			projectRoot := store.ProjectRoot
 			engine := codegen.NewEngine(projectRoot)
 			for _, tmpl := range templates {
 				if opts.Entity != "" && opts.Entity != tmpl.Name {

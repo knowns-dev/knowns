@@ -40,7 +40,7 @@ PLATFORMS := \
 	windows/amd64 \
 	windows/arm64
 
-.PHONY: all build clean test test-e2e test-e2e-semantic test-e2e-ui lint cli-docs cli-docs-check dev dev-go dev-ui dev-all install cross-compile ui embed npm-build release runtime-docker-build runtime-docker-smoke runtime-docker-project-stress runtime-docker-ai-stress runtime-docker-shell runtime-docker-lsp-build runtime-docker-lsp-fixtures
+.PHONY: all build clean test test-e2e test-e2e-semantic test-e2e-ui lint cli-docs cli-docs-check dev dev-go dev-ui dev-all dev-ts dev-all-ts install cross-compile ui embed npm-build release runtime-docker-build runtime-docker-smoke runtime-docker-project-stress runtime-docker-ai-stress runtime-docker-shell runtime-docker-lsp-build runtime-docker-lsp-fixtures
 
 all: ui build
 
@@ -193,6 +193,21 @@ dev-go:
 dev-ui:
 	cd ui && bun install && bun dev
 
+# Run the TypeScript CLI web server for UI development (API on :6420, like dev-go). The TS server
+# accepts only its own Origin, so the Vite dev UI (dev-ui, :6421) must be listed explicitly:
+# KNOWNS_ALLOWED_ORIGINS takes exact origins (scheme://host:port), comma-separated, no wildcards.
+# Both loopback spellings are listed because the match is exact. Override on the command line.
+KNOWNS_ALLOWED_ORIGINS ?= http://localhost:6421,http://127.0.0.1:6421
+dev-ts:
+	cd cli && KNOWNS_ALLOWED_ORIGINS="$(KNOWNS_ALLOWED_ORIGINS)" bun src/main.ts browser --restart --dev --port 6420 --no-open
+
+# Run the TypeScript web server and the frontend Vite dev server together
+dev-all-ts:
+	@trap 'kill 0' INT TERM EXIT; \
+	$(MAKE) dev-ts & \
+	$(MAKE) dev-ui & \
+	wait
+
 # Run Go hot reload server and frontend Vite dev server together
 dev-all:
 	@trap 'kill 0' INT TERM EXIT; \
@@ -208,17 +223,18 @@ install:
 test:
 	go test -v -race -count=1 ./...
 
-# Run E2E tests (requires built binary)
+# Run E2E tests (requires built binary). scripts/go-e2e.sh gives the suite a temp HOME so its test
+# projects never land in the real ~/.knowns; set TEST_BINARY to run it against another binary.
 test-e2e: build
 	@echo "Running CLI E2E tests..."
-	cd tests && go test -v -timeout 300s -count=1 -run TestCLI ./...
+	scripts/go-e2e.sh -v -timeout 300s -run TestCLI
 	@echo "Running MCP E2E tests..."
-	cd tests && go test -v -timeout 300s -count=1 -run TestMCP ./...
+	scripts/go-e2e.sh -v -timeout 300s -run TestMCP
 
 # Run E2E tests including semantic search (requires ONNX Runtime + model)
 test-e2e-semantic: build
 	@echo "Running ALL E2E tests (including semantic search)..."
-	cd tests && TEST_SEMANTIC=1 go test -v -timeout 600s -count=1 ./...
+	TEST_SEMANTIC=1 scripts/go-e2e.sh -v -timeout 600s
 
 # Run UI E2E tests with Playwright (requires built binary)
 test-e2e-ui: all
@@ -228,17 +244,19 @@ test-ui-report: all
 	cd ui && bun exec playwright show-report
 
 # Regenerate everything derived from the command tree: the human CLI reference
-# and the contract snapshot that also covers hidden, machine-facing commands.
+# (from the TypeScript command tree) and the Go contract snapshot that also
+# covers hidden, machine-facing commands.
 cli-docs:
-	go run ./tools/gendocs
+	cd cli && bun scripts/gen-cli-docs.ts
 	go test ./internal/cli -run TestCommandContract -update-contract
 
 # Fail if the committed CLI reference drifted from the command tree, or if a
 # hand-written doc shows a command or flag the binary does not have. The
-# contract snapshot is checked by `go test ./...`, so CI needs only this.
+# contract snapshot is checked by `go test ./...`, so CI needs only this, and
+# it needs no Go toolchain.
 cli-docs-check:
-	go run ./tools/gendocs --check
-	go run ./tools/gendocs --lint
+	cd cli && bun scripts/gen-cli-docs.ts --check
+	cd cli && bun scripts/gen-cli-docs.ts --lint
 
 # Run linter
 lint:
@@ -286,3 +304,17 @@ embed:
 	@if [ ! -f ui/dist/index.html ]; then \
 		echo '<!DOCTYPE html><html><body>Build UI first: make ui</body></html>' > ui/dist/index.html; \
 	fi
+
+# TypeScript CLI (cli/). The version is the release tag: KNOWNS_VERSION if set, else an exact git
+# tag on HEAD, else 0.0.0-dev (cli/scripts/version.ts). Nothing reads cli/package.json for it.
+.PHONY: ts-build ts-release ts-test-dist
+ts-build:
+	cd cli && bun run build
+
+# Builds all 6 targets and stages release/npm/<pkg> plus release/assets/knowns-<platform>.tar.gz.
+ts-release: ts-build
+	bun scripts/package-release.ts --version "$$(cd cli && bun -e 'import { resolveVersion } from "./scripts/version.ts"; console.log(resolveVersion())')" --dist cli/dist --out release
+
+# Install script, packaging and version tests (KNOWNS_NETWORK_TESTS=1 adds the 0.34.x rollback check).
+ts-test-dist:
+	cd cli && bun test test/distribution

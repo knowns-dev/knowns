@@ -1,4 +1,5 @@
 ---
+id: doc-9e81609752a0166f05452512f0b73ae4
 title: Runtime Process Dashboard
 description: 'Specification for extending `knowns runtime ps` to display all managed sub-processes: OpenCode daemon, LSP servers, Cloudflared tunnel, and Embedding sidecar'
 createdAt: '2026-05-27T07:41:28.849Z'

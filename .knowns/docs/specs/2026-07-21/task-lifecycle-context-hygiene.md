@@ -1,4 +1,5 @@
 ---
+id: doc-1e0db43919a7afc52dafdfab85b25e01
 title: Task Lifecycle Context Hygiene
 description: Specification for lifecycle-aware Task retrieval, delayed archival, reversible reopening, consistent surfaces, and auditable deletion.
 createdAt: '2026-07-21T09:36:31.494Z'

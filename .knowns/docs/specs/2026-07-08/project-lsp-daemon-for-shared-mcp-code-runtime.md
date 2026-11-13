@@ -1,4 +1,5 @@
 ---
+id: doc-a59415556c8bcfc2674653490392a1a7
 title: Project LSP Daemon for Shared MCP Code Runtime
 description: 'Specification for a project-scoped daemon that owns LSP/code intelligence runtime across multiple MCP sessions, preventing per-session LSP process fan-out and unintended C# startup.'
 createdAt: '2026-07-07T17:06:25.909Z'

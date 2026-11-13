@@ -1,16 +1,7 @@
 import type { GraphData, GraphEdge, GraphNode } from "@/ui/api/client";
 
-import {
-	CODE_COLOR,
-	DECISION_COLOR,
-	DOC_COLOR,
-	isKnowledgeSemanticEdge,
-	knowledgeSemanticEdgeColors,
-	MEMORY_COLOR,
-	memoryLayerColors,
-	TASK_COLOR,
-	TEMPLATE_COLOR,
-} from "./constants";
+import { isKnowledgeSemanticEdge } from "./constants";
+import type { GraphColors } from "./theme";
 
 export type ConstellationNode = GraphNode & {
 	color: string;
@@ -46,8 +37,7 @@ type ForceFn = {
 	initialize?: (nodes: ConstellationNode[]) => void;
 };
 
-/** Dimmed fills are never painted directly — the canvas swaps in a themed colour. */
-const NEUTRAL_COLOR = "#94a3b8";
+/** Dimmed fills are never painted directly: the canvas swaps in a themed colour. */
 const DIM_COLOR = "rgba(148,163,184,0.25)";
 
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
@@ -61,36 +51,31 @@ function hashString(value: string): number {
 	return hash >>> 0;
 }
 
-function nodeColor(node: GraphNode): string {
+export function nodeColor(node: Pick<GraphNode, "type" | "data">, colors: GraphColors): string {
 	switch (node.type) {
 	case "task":
-		return TASK_COLOR;
+		return colors.task;
 	case "doc":
-		return DOC_COLOR;
-	case "memory":
-		return memoryLayerColors[(node.data.layer as string) || "project"] || MEMORY_COLOR;
+		return colors.doc;
+	case "memory": {
+		const layer = (node.data?.layer as keyof GraphColors["memoryLayers"]) || "project";
+		return colors.memoryLayers[layer] ?? colors.memory;
+	}
 	case "decision":
-		return DECISION_COLOR;
+		return colors.decision;
 	case "template":
-		return TEMPLATE_COLOR;
+		return colors.template;
 	case "code":
-		return CODE_COLOR;
+		return colors.code;
 	default:
-		return NEUTRAL_COLOR;
+		return colors.neutral;
 	}
 }
 
-export function edgeColor(edge: Pick<GraphEdge, "type">): string {
-	switch (edge.type) {
-	case "spec":
-		return TASK_COLOR;
-	case "parent":
-	case "mention":
-		return NEUTRAL_COLOR;
-	default:
-		if (isKnowledgeSemanticEdge(edge.type)) return knowledgeSemanticEdgeColors[edge.type];
-		return NEUTRAL_COLOR;
-	}
+export function edgeColor(edge: Pick<GraphEdge, "type">, colors: GraphColors): string {
+	if (edge.type === "spec") return colors.task;
+	if (isKnowledgeSemanticEdge(edge.type)) return colors.edges[edge.type];
+	return colors.neutral;
 }
 
 function edgeId(edge: GraphEdge): string {
@@ -272,6 +257,7 @@ function buildAnchors(data: GraphData) {
 export function buildConstellationData(
 	data: GraphData,
 	searchQuery: string,
+	colors: GraphColors,
 ): { nodes: ConstellationNode[]; links: ConstellationLink[]; matches: number } {
 	const query = searchQuery.trim().toLocaleLowerCase();
 	const matchedIds = new Set<string>();
@@ -300,7 +286,7 @@ export function buildConstellationData(
 			const highlighted = matchedIds.size === 0 || matchedIds.has(node.id);
 			return {
 				...node,
-				color: highlighted ? nodeColor(node) : DIM_COLOR,
+				color: highlighted ? nodeColor(node, colors) : DIM_COLOR,
 				val: anchor.isIsolated ? 2.2 : 3.1 + Math.min(7.5, Math.sqrt(nodeDegree + 1) * 1.45),
 				degree: nodeDegree,
 				componentId: anchor.componentId,
@@ -321,7 +307,7 @@ export function buildConstellationData(
 		return {
 			...edge,
 			id: edgeId(edge),
-			color: highlighted ? edgeColor(edge) : DIM_COLOR,
+			color: highlighted ? edgeColor(edge, colors) : DIM_COLOR,
 			width: 0.55,
 			dashed: edge.type === "spec" || (isKnowledgeSemanticEdge(edge.type) && edge.type !== "references"),
 			muted: !highlighted,

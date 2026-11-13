@@ -1,4 +1,5 @@
 ---
+id: doc-4d381a6792bb4be0a332e7e7f9c3d84d
 title: Graph Intelligence Features
 description: Specification for graph-enhanced search, impact analysis, and cluster detection
 createdAt: '2026-04-02T09:42:57.532Z'

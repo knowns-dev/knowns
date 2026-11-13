@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
+import { portalHostFor } from "@/ui/components/ui/knowns/use-floating";
 import mermaid from "mermaid";
 import {
   ZoomIn,
@@ -11,6 +12,7 @@ import {
   Check,
 } from "lucide-react";
 import { useTheme } from "../../App";
+import { prefersReducedMotion } from "@/ui/lib/knowns/motion";
 
 interface MermaidBlockProps {
   code: string;
@@ -101,6 +103,8 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [copied, setCopied] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // Inside an open modal <dialog> (task detail), the fullscreen view must render in it: the top layer covers <body>.
+  const [fullscreenHost, setFullscreenHost] = useState<HTMLElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const { isDark } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -221,7 +225,11 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
   // ESC to close fullscreen
   useEffect(() => {
     if (!isFullscreen) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setIsFullscreen(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault(); // close only the fullscreen view, not an enclosing dialog
+      setIsFullscreen(false);
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [isFullscreen]);
@@ -315,7 +323,13 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
       {/* Top-right: Fullscreen + Copy */}
       <div className="absolute top-3 right-3 flex gap-1 z-20">
         {!isFullscreen && (
-          <ControlButton onClick={() => setIsFullscreen(true)} title="Fullscreen">
+          <ControlButton
+            onClick={() => {
+              setFullscreenHost(portalHostFor(containerRef.current));
+              setIsFullscreen(true);
+            }}
+            title="Fullscreen"
+          >
             <Maximize2 className="w-4 h-4 text-muted-foreground" />
           </ControlButton>
         )}
@@ -355,7 +369,7 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
       style={{
         transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
         transformOrigin: "center center",
-        transition: isDragging ? "none" : "transform 0.15s ease-out",
+        transition: isDragging || prefersReducedMotion() ? "none" : "transform var(--kn-dur-fast) var(--kn-ease-inout)",
       }}
       dangerouslySetInnerHTML={{ __html: svg }}
     />
@@ -383,7 +397,7 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
           </div>
         </div>
       </div>,
-      document.body
+      fullscreenHost ?? document.body
     );
   }
 

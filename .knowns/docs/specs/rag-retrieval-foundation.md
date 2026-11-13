@@ -1,4 +1,5 @@
 ---
+id: doc-2a30af804fc1ed691abd46c43f9ee402
 title: RAG Retrieval Foundation
 description: Specification for retrieval foundation across docs, tasks, and memories
 createdAt: '2026-04-07T07:05:04.856Z'

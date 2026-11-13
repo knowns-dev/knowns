@@ -1,4 +1,5 @@
 ---
+id: doc-84612469f9569c74c57ef6a1f5e24d42
 title: Server Pattern
 createdAt: '2025-12-29T07:04:39.771Z'
 updatedAt: '2026-03-09T06:40:13.337Z'

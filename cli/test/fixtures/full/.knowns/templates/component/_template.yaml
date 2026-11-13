@@ -1,0 +1,29 @@
+# Template: component
+name: component
+description: A component
+version: 1.0.0
+
+# Link to documentation (optional)
+doc: "patterns/controllers/controller-pattern"
+
+# Base destination path relative to project root
+destination: src
+
+# Interactive prompts
+prompts:
+  - name: name
+    type: text
+    message: "Name?"
+    validate: required
+
+# File generation actions
+actions:
+  - type: add
+    template: "main.hbs"
+    path: "{{kebabCase name}}.ts"
+    skipIfExists: true
+
+# Success/failure messages
+messages:
+  success: |
+    Created: {{name}}

@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import {
 	getDocHistoryMetadata,
+	getDocRevision,
 	getDocRevisionDiff,
 	restoreDocRevision,
 	type DocChange,
@@ -25,6 +26,9 @@ import {
 } from "../../api/client";
 import { Button } from "../../components/ui/button";
 import { DiffViewer } from "../../components/ui/DiffViewer";
+import { Combobox } from "@/ui/components/ui/knowns/combobox";
+import { ReadOnlyProseDiff } from "@/ui/components/organisms/history/ReadOnlyProseDiff";
+import { snapshotChanges, textDiffMode } from "@/ui/components/organisms/history/historyDiff";
 import { ScrollArea } from "../../components/ui/ScrollArea";
 import {
 	Sheet,
@@ -51,6 +55,14 @@ const FIELD_LABELS: Record<string, string> = {
 	content: "Content",
 	tags: "Tags",
 };
+
+/** Fields a document snapshot holds, in the order a comparison lists them. */
+const SNAPSHOT_FIELDS = ["path", "title", "description", "content", "tags"];
+
+/** Written as sentences, so shown as a word diff when small enough. */
+const PROSE_FIELDS = new Set(["description", "content"]);
+
+const PREVIOUS = "previous";
 
 function valueToString(value: unknown): string {
 	if (value === null || value === undefined) return "";
@@ -179,6 +191,10 @@ export function DocHistorySheet({
 	const [error, setError] = useState<string | null>(null);
 	const [restoring, setRestoring] = useState<"document" | "section" | null>(null);
 	const [copied, setCopied] = useState(false);
+	// "previous" shows what the version changed; another version id compares the two.
+	const [compareWith, setCompareWith] = useState<string>(PREVIOUS);
+	const [compareChanges, setCompareChanges] = useState<DocChange[] | null>(null);
+	const [loadingCompare, setLoadingCompare] = useState(false);
 
 	const versions = useMemo(
 		() => [...(history?.versions || [])].sort((a, b) => b.version - a.version),
@@ -280,6 +296,42 @@ export function DocHistorySheet({
 			cancelled = true;
 		};
 	}, [docPath, open, selectedRevision]);
+
+	useEffect(() => {
+		setCompareWith(PREVIOUS);
+	}, [selectedRevision, docPath]);
+
+	useEffect(() => {
+		if (!open || !docPath || !selectedRevision || compareWith === PREVIOUS) {
+			setCompareChanges(null);
+			return;
+		}
+		let cancelled = false;
+		setLoadingCompare(true);
+		setError(null);
+		const path = toDisplayPath(docPath).replace(/\.md$/, "");
+		Promise.all([getDocRevision(path, compareWith), getDocRevision(path, selectedRevision)])
+			.then(([a, b]) => {
+				if (cancelled) return;
+				const [older, newer] = a.version <= b.version ? [a, b] : [b, a];
+				setCompareChanges(snapshotChanges(older.snapshot, newer.snapshot, SNAPSHOT_FIELDS));
+			})
+			.catch((err) => {
+				if (cancelled) return;
+				setCompareChanges(null);
+				setError(err instanceof Error ? err.message : "Failed to compare revisions");
+			})
+			.finally(() => {
+				if (!cancelled) setLoadingCompare(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [compareWith, docPath, open, selectedRevision]);
+
+	const comparing = compareWith !== PREVIOUS;
+	const shownChanges = comparing ? compareChanges : diff?.changes;
+	const showLoading = comparing ? loadingCompare : loadingDiff;
 
 	const handleCopy = async () => {
 		if (!changedContent) return;
@@ -502,23 +554,39 @@ export function DocHistorySheet({
 											<div className="space-y-3">
 												<div className="flex items-center justify-between">
 													<h3 className="text-sm font-semibold">Diff</h3>
-													{diff?.previousRevisionId && (
+													<div className="flex items-center gap-2">
+														<span className="text-xs text-muted-foreground">Compare with</span>
+														<Combobox
+															size="sm"
+															aria-label="Compare with version"
+															value={compareWith}
+															onValueChange={setCompareWith}
+															options={[
+																{ value: PREVIOUS, label: "Previous version" },
+																...versions
+																	.filter((v) => v.id !== selectedRevision)
+																	.map((v) => ({ value: v.id, label: `v${v.version}` })),
+															]}
+															className="w-40"
+														/>
+													</div>
+													{!comparing && diff?.previousRevisionId && (
 														<span className="font-mono text-xs text-muted-foreground">
 															{diff.previousRevisionId}{" -> "}{diff.revisionId}
 														</span>
 													)}
 												</div>
-												{loadingDiff ? (
+												{showLoading ? (
 													<div className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
 														Loading diff...
 													</div>
-												) : diff?.changes.length ? (
+												) : shownChanges?.length ? (
 													<div className="space-y-3">
-														{diff.changes.map((change, index) => (
+														{shownChanges.map((change, index) => (
 															<DocChangeDiff
 																key={`${change.field}-${index}`}
 																change={change}
-																scope={diff.changedScopes?.find((scope) => scope.field === change.field)}
+																scope={comparing ? undefined : diff?.changedScopes?.find((scope) => scope.field === change.field)}
 															/>
 														))}
 													</div>
@@ -568,7 +636,11 @@ function DocChangeDiff({ change, scope }: { change: DocChange; scope?: DocChange
 					{change.field}
 				</span>
 			</div>
-			<DiffViewer oldValue={oldValue} newValue={newValue} className="rounded-none border-0" />
+			{PROSE_FIELDS.has(change.field) && textDiffMode(oldValue, newValue) === "prose" ? (
+				<ReadOnlyProseDiff before={oldValue} after={newValue} />
+			) : (
+				<DiffViewer oldValue={oldValue} newValue={newValue} className="rounded-none border-0" />
+			)}
 		</div>
 	);
 }

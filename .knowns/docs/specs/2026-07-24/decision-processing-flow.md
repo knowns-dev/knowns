@@ -1,4 +1,5 @@
 ---
+id: doc-217f1294b2d1b3f3d7898f34a27303f1
 title: Decision Processing Flow
 description: Specification for workflow-first System Decision capture, persistent review, current-truth reading, and separation of Spec Decisions and Legacy Decision Memory migration.
 createdAt: '2026-07-23T18:48:02.849Z'

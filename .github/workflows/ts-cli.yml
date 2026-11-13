@@ -1,0 +1,136 @@
+name: TS CLI
+
+on:
+  push:
+    branches: [feat/typescript-rewrite]
+    paths: ['cli/**', 'ui/**', 'npm/**', 'install/**', 'scripts/**', '.github/workflows/ts-cli.yml', 'internal/**', 'cmd/**', 'docs/**', '*.md']
+  pull_request:
+    branches: [feat/typescript-rewrite, develop, main]
+    paths: ['cli/**', 'ui/**', 'npm/**', 'install/**', 'scripts/**', '.github/workflows/ts-cli.yml', 'internal/**', 'cmd/**', 'docs/**', '*.md']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ts-cli:
+    name: TS CLI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Windows still reports its result but does not block: a few timing-sensitive tests flake on
+    # GitHub's Windows runners (tracked in task KN-N007PB, "Stabilize the TS CLI suite on GitHub Windows
+    # runners"). Remove this once that task is done.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: bun-linux-x64
+          - os: macos-latest
+            target: bun-darwin-arm64
+          - os: windows-latest
+            target: bun-windows-x64
+    defaults:
+      run:
+        shell: bash
+        working-directory: cli
+    steps:
+      # Windows: run the suite in the environment it was verified in on a Windows PC. Go embeds and
+      # TS embeds compare byte for byte, so no CRLF checkout anywhere in the tree.
+      - name: Keep LF on checkout (Windows)
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      # The runner's TEMP is the 8.3 form C:\Users\RUNNER~1\..., while the code (rightly) resolves
+      # real long paths, so every temp-dir comparison would differ. RUNNER_TEMP is a long path.
+      - name: Use a long-path temp dir (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          echo "TEMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "TMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.12
+      # Go interop tests (locks, safe paths, fixtures) skip without a Go toolchain.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      # The Go binary embeds ui/dist (ui/embed.go), so the UI must be built first.
+      - name: Build UI
+        working-directory: ui
+        run: bun install --frozen-lockfile && bun run build
+      - name: Build Go reference binary
+        working-directory: .
+        run: go build -o "$RUNNER_TEMP/knowns-go${{ runner.os == 'Windows' && '.exe' || '' }}" ./cmd/knowns && echo "KNOWNS_GO_BIN=$RUNNER_TEMP/knowns-go${{ runner.os == 'Windows' && '.exe' || '' }}" >> "$GITHUB_ENV"
+      # Spec D13 adopts contributor PR #156 (tasks by assignee). Its behavior is diffed against a Go
+      # build of the PR head, pinned by SHA (reachable through refs/pull/156/head).
+      - name: Build PR #156 reference binary (spec D13)
+        working-directory: .
+        env:
+          PR156_SHA: 2b3f88d24864f5810c82b935138268f76560ae74
+          EXE: ${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$PR156_SHA"
+          git worktree add --detach "$RUNNER_TEMP/pr156" "$PR156_SHA"
+          cp -R ui/dist "$RUNNER_TEMP/pr156/ui/"
+          (cd "$RUNNER_TEMP/pr156" && go build -o "$RUNNER_TEMP/knowns-go-pr156$EXE" ./cmd/knowns)
+          echo "KNOWNS_GO_PR156_BIN=$RUNNER_TEMP/knowns-go-pr156$EXE" >> "$GITHUB_ENV"
+      - run: bun install --frozen-lockfile
+      # Before anything regenerates it: the committed embedded skills/guidelines must match what
+      # Go embeds from internal/instructions, or a Go-side edit would ship stale content.
+      - name: Embedded instructions are in sync with internal/instructions
+        run: bun scripts/gen-instructions.ts --check
+      - name: Check (typecheck + lint)
+        run: bun run check
+      # The CLI reference is generated from the TS command tree (scripts/gen-cli-docs.ts). Linux
+      # only: the output is identical across platforms.
+      - name: Check CLI reference matches the command tree
+        if: runner.os == 'Linux'
+        run: bun scripts/gen-cli-docs.ts --check
+      - name: Check docs only use commands that exist
+        if: runner.os == 'Linux'
+        run: bun scripts/gen-cli-docs.ts --lint
+      - name: Unit tests
+        if: runner.os != 'Windows'
+        run: bun run test
+      # Windows tests shell out to `tar` with C:\ paths: under Git Bash that is GNU tar, which reads
+      # "C:" as a remote host. pwsh resolves the Windows tar.exe, as on a Windows PC.
+      - name: Unit tests (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: bun run test
+      # The compiled-binary tests compare against the Go 0.34.1 oracle (and unbuilt source reports
+      # that baseline too, cli/src/version.ts), so the host test build is stamped with it.
+      # Releases use the tag.
+      - name: Build host target
+        env:
+          KNOWNS_VERSION: 0.34.1
+        run: bun run build ${{ matrix.target }}
+      - name: Unit tests against compiled binary
+        if: runner.os != 'Windows'
+        run: bun run test
+      - name: Unit tests against compiled binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: bun run test
+      - name: Budget (size and startup)
+        run: bun run budget
+      # Built the way publish.yml builds a release: the version comes from KNOWNS_VERSION (the tag).
+      - name: Cross-compile all targets and check sizes
+        if: runner.os == 'Linux'
+        env:
+          KNOWNS_VERSION: 1.0.0-ci
+        run: |
+          bun run build
+          bun run budget dist/*/knowns*
+          got=$(NO_UPDATE_CHECK=1 dist/linux-x64/knowns --version)
+          [ "$got" = "knowns version 1.0.0-ci" ] || { echo "FATAL: --version printed: $got"; exit 1; }
+      - name: Package release (npm packages and Go-compatible assets)
+        if: runner.os == 'Linux'
+        run: |
+          bun ../scripts/package-release.ts --version 1.0.0-ci --dist dist --out "$RUNNER_TEMP/release"
+          ls -l "$RUNNER_TEMP/release/assets"

@@ -1,4 +1,5 @@
 ---
+id: doc-e4861b8e2162738d4cf97f1d1012040b
 title: Task Lifecycle
 description: User and operator guide for Task lifecycle visibility, archival, recovery, and Hard Delete.
 createdAt: '2026-07-22T04:43:30.907Z'

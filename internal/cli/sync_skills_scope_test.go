@@ -7,6 +7,7 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 // projectSkillDirsExist reports whether sync materialized skills into the
@@ -35,7 +36,7 @@ func TestSyncSkillsScopeNoneLeavesProjectUntouched(t *testing.T) {
 
 func TestSyncSkillsScopeGlobalLeavesProjectUntouched(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	if err := runSyncSkillsForScope(root, true, []string{"claude-code"}, models.SkillsScopeGlobal); err != nil {
 		t.Fatalf("runSyncSkillsForScope: %v", err)
 	}
@@ -136,6 +137,5 @@ func TestEmptyScopeStaysEmpty(t *testing.T) {
 // these tests came to read back a global default a sibling test had saved.
 func setHome(t *testing.T, dir string) {
 	t.Helper()
-	t.Setenv("HOME", dir)
-	t.Setenv("USERPROFILE", dir)
+	testutil.SetHome(t, dir)
 }

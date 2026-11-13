@@ -1,4 +1,5 @@
 ---
+id: doc-0cc966025504dccfa70937e8afeac0b6
 title: Project Semantic Embedding Runtime
 description: Specification for a shared semantic embedding runtime that centralizes embedding-heavy indexing, search, retrieval, and review workflows to reduce OOM risk across MCP sessions.
 createdAt: '2026-07-08T07:02:56.266Z'

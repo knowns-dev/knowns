@@ -1,4 +1,5 @@
 ---
+id: doc-432c0839bf339f7de8cc523eb86bfee9
 title: Keyword Search Benchmark Matrix
 description: Benchmark matrix for evaluating current keyword search quality before considering BM25
 createdAt: '2026-04-07T08:01:46.678Z'

@@ -1,223 +1,277 @@
-import { FileText, ListChecks, ChevronDown, ChevronUp } from "lucide-react";
-import { Progress } from "../../components/ui/progress";
-import { toDisplayPath, isSpec, getSpecStatus, parseACProgress } from "../../lib/utils";
+import type { ElementType } from "react";
+import { ChevronDown, ListChecks, Link2, AtSign, History } from "lucide-react";
+import {
+	CopyPageButton,
+	DocsPageHeader,
+	type DocsPageLink,
+} from "@/ui/components/ui/knowns/blocks/docs/docs-page-header";
+import type { BreadcrumbItem } from "@/ui/components/ui/knowns/breadcrumb";
+import { Badge, type BadgeTone } from "@/ui/components/ui/knowns/badge";
+import { Progress } from "@/ui/components/ui/knowns/progress";
+import { toast } from "../../components/ui/sonner";
+import { cn, getSpecStatus, isSpec, parseACProgress } from "../../lib/utils";
 
 interface DocData {
-  path: string;
-  content: string;
-  isImported?: boolean;
-  metadata: {
-    title?: string;
-    description?: string;
-    tags?: string[];
-    updatedAt: string;
-  };
+	path: string;
+	content: string;
+	isImported?: boolean;
+	metadata: {
+		title?: string;
+		description?: string;
+		tags?: string[];
+		updatedAt: string;
+		status?: string;
+		type?: string;
+	};
 }
 
 interface LinkedTask {
-  id: string;
-  title: string;
-  status: string;
-  archived?: boolean;
+	id: string;
+	title: string;
+	status: string;
+	archived?: boolean;
 }
 
+type MetaField = "title" | "description" | "tags";
+
 interface DocsDocHeaderProps {
-  selectedDoc: DocData;
-  metaTitle: string;
-  setMetaTitle: (v: string) => void;
-  metaDescription: string;
-  setMetaDescription: (v: string) => void;
-  metaTags: string;
-  setMetaTags: (v: string) => void;
-  handleSaveMetadata: (field: "title" | "description" | "tags") => void;
-  linkedTasks: LinkedTask[];
-  linkedTasksExpanded: boolean;
-  setLinkedTasksExpanded: (v: boolean) => void;
-  openTask: (id: string) => void;
+	selectedDoc: DocData;
+	/** `@doc/specs/password-reset`, what Copy reference puts on the clipboard. */
+	reference: string;
+	breadcrumb: BreadcrumbItem[];
+	prev?: DocsPageLink | null;
+	next?: DocsPageLink | null;
+	pagerLinkAs?: ElementType;
+	onOpenHistory: () => void;
+	metaTitle: string;
+	setMetaTitle: (v: string) => void;
+	metaDescription: string;
+	setMetaDescription: (v: string) => void;
+	metaTags: string;
+	setMetaTags: (v: string) => void;
+	handleSaveMetadata: (field: MetaField) => void;
+	/** The last failed metadata save, shown under its field. */
+	metaError?: { field: MetaField; message: string } | null;
+	linkedTasks: LinkedTask[];
+	linkedTasksExpanded: boolean;
+	setLinkedTasksExpanded: (v: boolean) => void;
+	openTask: (id: string) => void;
+}
+
+const SPEC_STATUS_TONE: Record<string, BadgeTone> = { approved: "success", implemented: "info", draft: "warning" };
+const TASK_DOT: Record<string, string> = {
+	done: "bg-emerald-500",
+	"in-progress": "bg-amber-500",
+	"in-review": "bg-violet-500",
+	blocked: "bg-red-500",
+};
+
+function formatUpdated(value: string): string {
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return "";
+	return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
 export function DocsDocHeader({
-  selectedDoc,
-  metaTitle,
-  setMetaTitle,
-  metaDescription,
-  setMetaDescription,
-  metaTags,
-  setMetaTags,
-  handleSaveMetadata,
-  linkedTasks,
-  linkedTasksExpanded,
-  setLinkedTasksExpanded,
-  openTask,
+	selectedDoc,
+	reference,
+	breadcrumb,
+	prev,
+	next,
+	pagerLinkAs,
+	onOpenHistory,
+	metaTitle,
+	setMetaTitle,
+	metaDescription,
+	setMetaDescription,
+	metaTags,
+	setMetaTags,
+	handleSaveMetadata,
+	metaError,
+	linkedTasks,
+	linkedTasksExpanded,
+	setLinkedTasksExpanded,
+	openTask,
 }: DocsDocHeaderProps) {
-  return (
-    <header className="mb-10">
-      {/* Title */}
-      {selectedDoc.isImported ? (
-        <h1 className="text-4xl font-semibold tracking-tight mb-2 text-balance">
-          {selectedDoc.metadata.title}
-        </h1>
-      ) : (
-        <input
-          type="text"
-          value={metaTitle}
-          onChange={(e) => setMetaTitle(e.target.value)}
-          onBlur={() => handleSaveMetadata("title")}
-          onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-          className="text-4xl font-semibold tracking-tight bg-transparent w-full outline-none border-none p-0 mb-2 placeholder:text-muted-foreground/35"
-          placeholder="Untitled"
-        />
-      )}
+	const readOnly = Boolean(selectedDoc.isImported);
+	const spec = isSpec(selectedDoc as Parameters<typeof isSpec>[0]);
+	const specStatus = spec ? getSpecStatus(selectedDoc as Parameters<typeof getSpecStatus>[0]) : undefined;
+	const acProgress = spec ? parseACProgress(selectedDoc.content) : { total: 0, completed: 0 };
+	const archivedCount = linkedTasks.filter((task) => task.archived).length;
+	const blurOnEnter = (event: React.KeyboardEvent<HTMLInputElement>) => {
+		if (event.key === "Enter") event.currentTarget.blur();
+	};
 
-      {/* Description */}
-      {selectedDoc.isImported ? (
-        selectedDoc.metadata.description && (
-          <p className="text-[15px] leading-7 text-muted-foreground mb-4 max-w-2xl">
-            {selectedDoc.metadata.description}
-          </p>
-        )
-      ) : (
-        <input
-          type="text"
-          value={metaDescription}
-          onChange={(e) => setMetaDescription(e.target.value)}
-          onBlur={() => handleSaveMetadata("description")}
-          onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-          className="text-[15px] leading-7 text-muted-foreground bg-transparent w-full outline-none border-none p-0 mb-4 placeholder:text-muted-foreground/35 max-w-2xl"
-          placeholder="Add a description..."
-        />
-      )}
+	const copy = (text: string, message: string) => {
+		void navigator.clipboard.writeText(text).then(() => toast.success(message));
+	};
 
-      {/* Tags */}
-      <div className="mb-4 space-y-2">
-        {!selectedDoc.isImported ? (
-          <input
-            type="text"
-            value={metaTags}
-            onChange={(e) => setMetaTags(e.target.value)}
-            onBlur={() => handleSaveMetadata("tags")}
-            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-            className="bg-transparent outline-none border-none p-0 text-[12px] text-muted-foreground/75 placeholder:text-muted-foreground/40 w-full"
-            placeholder="Add tags..."
-          />
-        ) : (
-          selectedDoc.metadata.tags &&
-          selectedDoc.metadata.tags.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              {selectedDoc.metadata.tags.map((tag) => (
-                <span key={tag} className="rounded-full bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground">
-                  {tag}
-                </span>
-              ))}
-            </div>
-          )
-        )}
-        <div className="text-[11px] font-mono text-muted-foreground/65 break-all">
-          @doc/{toDisplayPath(selectedDoc.path).replace(/\.md$/, "")}
-        </div>
-      </div>
+	return (
+		<div className="mb-10">
+			<DocsPageHeader
+				breadcrumb={breadcrumb}
+				title={
+					readOnly ? (
+						selectedDoc.metadata.title
+					) : (
+						<input
+							type="text"
+							value={metaTitle}
+							onChange={(event) => setMetaTitle(event.target.value)}
+							onBlur={() => handleSaveMetadata("title")}
+							onKeyDown={blurOnEnter}
+							aria-label="Doc title"
+							aria-invalid={metaError?.field === "title" || undefined}
+							placeholder="Untitled"
+							className="min-w-[6ch] max-w-full rounded-md bg-transparent p-0 outline-none [field-sizing:content] placeholder:text-muted-foreground/40 focus-visible:bg-muted/40"
+						/>
+					)
+				}
+				badge={
+					(spec || readOnly) && (
+						<span className="flex items-center gap-1.5" data-toc="false">
+							{spec && <Badge tone="info" size="sm">Spec</Badge>}
+							{specStatus && (
+								<Badge tone={SPEC_STATUS_TONE[specStatus] ?? "neutral"} size="sm" dot>
+									{specStatus.charAt(0).toUpperCase() + specStatus.slice(1)}
+								</Badge>
+							)}
+							{readOnly && <Badge tone="neutral" variant="outline" size="sm">Imported</Badge>}
+						</span>
+					)
+				}
+				lead={
+					readOnly ? (
+						selectedDoc.metadata.description || undefined
+					) : (
+						<input
+							type="text"
+							value={metaDescription}
+							onChange={(event) => setMetaDescription(event.target.value)}
+							onBlur={() => handleSaveMetadata("description")}
+							onKeyDown={blurOnEnter}
+							aria-label="Doc description"
+							aria-invalid={metaError?.field === "description" || undefined}
+							placeholder="Add a description..."
+							className="w-full rounded-md bg-transparent p-0 text-inherit outline-none placeholder:text-muted-foreground/45 focus-visible:bg-muted/40"
+						/>
+					)
+				}
+				actions={
+					<CopyPageButton
+						getText={() => selectedDoc.content || ""}
+						label="Copy page"
+						onCopied={() => toast.success("Copied the doc as Markdown")}
+						items={[
+							{ id: "reference", label: "Copy reference", description: reference, icon: <AtSign /> },
+							{ id: "link", label: "Copy link", icon: <Link2 /> },
+							{ id: "history", label: "Version history", icon: <History /> },
+						]}
+						onSelect={(item) => {
+							if (item.id === "reference") copy(reference, `Copied ${reference}`);
+							else if (item.id === "link") copy(window.location.href.split("#")[0] ?? window.location.href, "Copied the link");
+							else if (item.id === "history") onOpenHistory();
+						}}
+					/>
+				}
+				prev={prev}
+				next={next}
+				linkAs={pagerLinkAs}
+			/>
+			<FieldError error={metaError} field="title" />
+			<FieldError error={metaError} field="description" />
 
-      {/* Metadata row */}
-      <div className="flex items-center gap-2.5 flex-wrap text-[11px] text-muted-foreground/85">
-        {isSpec(selectedDoc) && (
-          <span className="px-2 py-0.5 text-[10px] font-medium bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-200 rounded-full">
-            SPEC
-          </span>
-        )}
-        {isSpec(selectedDoc) && getSpecStatus(selectedDoc) && (
-          <span
-            className={`px-2 py-0.5 text-[10px] font-medium rounded-full ${
-              getSpecStatus(selectedDoc) === "approved"
-                ? "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300"
-                : getSpecStatus(selectedDoc) === "implemented"
-                  ? "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
-                  : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300"
-            }`}
-          >
-            {(getSpecStatus(selectedDoc) ?? "").charAt(0).toUpperCase() +
-              (getSpecStatus(selectedDoc) ?? "").slice(1)}
-          </span>
-        )}
-        {selectedDoc.isImported && (
-          <span className="px-2 py-0.5 text-[10px] font-medium bg-muted text-muted-foreground rounded-full">
-            Imported
-          </span>
-        )}
-        <span>
-          Updated {new Date(selectedDoc.metadata.updatedAt).toLocaleDateString()}
-        </span>
-      </div>
+			<div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12.5px] text-muted-foreground">
+				{readOnly ? (
+					(selectedDoc.metadata.tags?.length ?? 0) > 0 && (
+						<span className="flex flex-wrap items-center gap-1.5">
+							{selectedDoc.metadata.tags!.map((tag) => (
+								<Badge key={tag} variant="outline" size="sm">{tag}</Badge>
+							))}
+						</span>
+					)
+				) : (
+					<label className="flex min-w-[12rem] flex-1 items-center gap-2">
+						<span className="shrink-0">Tags</span>
+						<input
+							type="text"
+							value={metaTags}
+							onChange={(event) => setMetaTags(event.target.value)}
+							onBlur={() => handleSaveMetadata("tags")}
+							onKeyDown={blurOnEnter}
+							aria-invalid={metaError?.field === "tags" || undefined}
+							placeholder="Add tags..."
+							className="h-7 min-w-0 flex-1 rounded-md bg-transparent px-1.5 text-[12.5px] text-foreground outline-none placeholder:text-muted-foreground/45 hover:bg-muted/40 focus-visible:bg-muted/50"
+						/>
+					</label>
+				)}
+				<span className="tabular-nums">Updated {formatUpdated(selectedDoc.metadata.updatedAt)}</span>
+			</div>
+			<FieldError error={metaError} field="tags" />
 
-      {/* Spec AC Progress */}
-      {isSpec(selectedDoc) &&
-        (() => {
-          const acProgress = parseACProgress(selectedDoc.content);
-          return acProgress.total > 0 ? (
-            <div className="flex items-center gap-2 mt-4 rounded-2xl bg-muted/35 px-3 py-2 w-fit">
-              <ListChecks className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-              <Progress
-                value={Math.round((acProgress.completed / acProgress.total) * 100)}
-                className="flex-1 h-1.5 max-w-[180px]"
-              />
-              <span className="text-xs text-muted-foreground">
-                {acProgress.completed}/{acProgress.total}
-              </span>
-            </div>
-          ) : null;
-        })()}
+			{spec && (
+				<section aria-label="Spec progress" className="mt-5 overflow-hidden rounded-xl border bg-card">
+					{acProgress.total > 0 && (
+						<div className="flex items-center gap-3 px-4 py-3">
+							<ListChecks className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+							<span className="shrink-0 text-[13px] font-medium">Acceptance criteria</span>
+							<Progress
+								value={acProgress.completed}
+								max={acProgress.total}
+								tone={acProgress.completed === acProgress.total ? "success" : "accent"}
+								size="sm"
+								format={(value) => `${value}/${acProgress.total}`}
+								aria-label="Acceptance criteria done"
+								className="min-w-24 flex-1"
+							/>
+						</div>
+					)}
+					<div className={cn(acProgress.total > 0 && "border-t")}>
+						<button
+							type="button"
+							onClick={() => setLinkedTasksExpanded(!linkedTasksExpanded)}
+							aria-expanded={linkedTasksExpanded}
+							className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-[13px] text-muted-foreground outline-none transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+						>
+							<span className="font-medium text-foreground">
+								{linkedTasks.length} linked {linkedTasks.length === 1 ? "task" : "tasks"}
+							</span>
+							{archivedCount > 0 && <span>{archivedCount} archived</span>}
+							<ChevronDown className={cn("ml-auto size-3.5 transition-transform duration-(--kn-dur-fast) ease-(--kn-ease-inout)", linkedTasksExpanded && "rotate-180")} aria-hidden="true" />
+						</button>
+						{linkedTasksExpanded && (
+							<div className="border-t px-2 py-1.5">
+								{linkedTasks.length === 0 ? (
+									<p className="px-2 py-1.5 text-[13px] text-muted-foreground">No tasks are linked to this spec yet.</p>
+								) : (
+									linkedTasks.map((task) => (
+										<button
+											type="button"
+											key={task.id}
+											onClick={() => openTask(task.id)}
+											className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-[13px] outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
+										>
+											<span className={cn("size-1.5 shrink-0 rounded-full", TASK_DOT[task.status] ?? "bg-muted-foreground/50")} aria-hidden="true" />
+											<span className="min-w-0 flex-1 truncate">{task.title}</span>
+											<span className="shrink-0 text-[12px] text-muted-foreground">{task.status}</span>
+											{task.archived && <Badge variant="outline" size="sm">archived</Badge>}
+										</button>
+									))
+								)}
+							</div>
+						)}
+					</div>
+				</section>
+			)}
+		</div>
+	);
+}
 
-      {/* Linked tasks */}
-      {isSpec(selectedDoc) && (
-        <div className="mt-4 rounded-2xl bg-muted/25 px-3 py-2.5">
-          <button
-            type="button"
-            onClick={() => setLinkedTasksExpanded(!linkedTasksExpanded)}
-            className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <FileText className="w-3.5 h-3.5" />
-            <span>
-              {linkedTasks.length} linked tasks
-              {linkedTasks.some((task) => task.archived) &&
-                ` (${linkedTasks.filter((task) => task.archived).length} archived)`}
-            </span>
-            {linkedTasksExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-          </button>
-          {linkedTasksExpanded && (
-            <div className="space-y-1 mt-2">
-              {linkedTasks.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No tasks are linked to this spec yet.</p>
-              ) : (
-                linkedTasks.map((task) => (
-                  <button
-                    type="button"
-                    key={task.id}
-                    onClick={() => openTask(task.id)}
-                    className="flex items-center gap-1.5 p-1.5 rounded-xl hover:bg-accent/60 transition-colors w-full text-left"
-                  >
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                        task.status === "done"
-                          ? "bg-green-500"
-                          : task.status === "in-progress"
-                            ? "bg-yellow-500"
-                            : task.status === "blocked"
-                              ? "bg-red-500"
-                              : "bg-gray-400"
-                      }`}
-                    />
-                    <span className="text-xs truncate">{task.title}</span>
-                    {task.archived && (
-                      <span className="ml-auto shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                        archived
-                      </span>
-                    )}
-                  </button>
-                ))
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </header>
-  );
+function FieldError({ error, field }: { error?: { field: MetaField; message: string } | null; field: MetaField }) {
+	if (!error || error.field !== field) return null;
+	return (
+		<p role="alert" className="mt-2 max-w-2xl text-xs leading-5 text-destructive">
+			{error.message}
+		</p>
+	);
 }

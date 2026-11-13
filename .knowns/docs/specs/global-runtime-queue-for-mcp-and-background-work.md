@@ -1,4 +1,5 @@
 ---
+id: doc-e4a3b88722ea59c4ab599570a6a137b7
 title: Global Runtime Queue For MCP And Background Work
 description: Specification for a global runtime that centralizes watch, reindex, indexing jobs, and installer-aware self-update while MCP remains fast on read and write paths.
 createdAt: '2026-04-11T13:23:13.229Z'

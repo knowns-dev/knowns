@@ -73,6 +73,22 @@ npm run test
 npm run lint
 ```
 
+### Web UI development
+
+The Vite dev UI (`ui/`) runs on `http://localhost:6421` and calls the API server on `:6420`
+(override with `API_URL`). Start both with `make dev-all` (Go server with hot reload) or
+`make dev-all-ts` (TypeScript server).
+
+The TypeScript web server accepts requests only from its own origin, so a UI served from another
+port must be listed in `KNOWNS_ALLOWED_ORIGINS`: exact origins (`scheme://host:port`),
+comma-separated, no wildcards. `make dev-ts` and `make dev-all-ts` set it to
+`http://localhost:6421,http://127.0.0.1:6421`. If you start the server yourself, set it too,
+otherwise every API call from the dev UI fails with `403 untrusted request origin`:
+
+```bash
+KNOWNS_ALLOWED_ORIGINS=http://localhost:6421 knowns browser --port 6420 --no-open
+```
+
 ### Project Structure
 
 ```

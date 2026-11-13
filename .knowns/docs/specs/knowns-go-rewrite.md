@@ -1,4 +1,5 @@
 ---
+id: doc-8f8e0a05dcdade4346622b1eee239be6
 title: Knowns Go Rewrite
 createdAt: "2026-03-06T04:12:36.486Z"
 updatedAt: "2026-03-06T04:17:04.041Z"

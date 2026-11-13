@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 // markDeadLetter turns the single queued job into a retained dead letter, the
@@ -28,7 +30,7 @@ func markDeadLetter(t *testing.T, storeRoot string, requestedAt time.Time) {
 func TestRunDaemonStopsWhenOnlyDeadLettersRemain(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	t.Setenv("KNOWNS_RUNTIME_IDLE_TIMEOUT_MS", "100")
 
 	storeRoot := filepath.Join(t.TempDir(), ".knowns")
@@ -103,7 +105,7 @@ func TestPruneDeadLettersDropsExpiredAndCapsRetention(t *testing.T) {
 func TestRegisterProjectUnregistersVanishedRootsWithoutQueuedJobs(t *testing.T) {
 	SetTestBypass(true)
 	defer SetTestBypass(false)
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 
 	gone := filepath.Join(t.TempDir(), "deleted", ".knowns")
 	if err := registerProject(gone); err != nil {

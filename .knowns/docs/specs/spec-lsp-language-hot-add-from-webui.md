@@ -1,4 +1,5 @@
 ---
+id: doc-9ac20efe8d8ec426419c6b7b5a3b86b3
 title: 'Spec: LSP Language Hot-Add from WebUI'
 description: Spec for adding LSP languages from WebUI with hot-reload and CLI status output
 createdAt: '2026-05-28T08:45:19.270Z'

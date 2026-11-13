@@ -1,4 +1,5 @@
 ---
+id: doc-d90652964aa9f401d52446b1d5f3501a
 title: Structural Knowledge Retrieval
 description: Research note on moving Knowns from search-first retrieval toward relation-aware structural knowledge retrieval.
 createdAt: '2026-04-22T08:56:30.308Z'

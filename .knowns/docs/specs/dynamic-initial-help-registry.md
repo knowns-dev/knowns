@@ -1,4 +1,5 @@
 ---
+id: doc-d985065d0ed63ad8c9ac572eac32bfc6
 title: 'Dynamic Initial & Help Registry'
 description: Spec for refactoring MCP initial tool output to be dynamic and adding a help registry for on-demand tool documentation
 createdAt: '2026-05-20T18:52:03.545Z'

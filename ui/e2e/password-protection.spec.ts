@@ -61,6 +61,10 @@ async function startServerWithPassword(password: string): Promise<TestServer> {
 	}
 
 	const projectDir = mkdtempSync(join(tmpdir(), "knowns-e2e-pw-"));
+	// Like helpers.ts startServer: a temp HOME keeps init and the server out of the real
+	// ~/.knowns (they registered this project in the real registry.json before).
+	const homeDir = mkdtempSync(join(tmpdir(), "knowns-e2e-pw-home-"));
+	const testEnv = { ...process.env, HOME: homeDir, USERPROFILE: homeDir, NO_COLOR: "1", NO_UPDATE_CHECK: "1" };
 
 	execSync("git init", { cwd: projectDir, stdio: "ignore" });
 	execSync("git config user.email test@test.com", { cwd: projectDir, stdio: "ignore" });
@@ -70,11 +74,13 @@ async function startServerWithPassword(password: string): Promise<TestServer> {
 		execFileSync(BINARY, ["init", "E2E Password Test", "--no-wizard", "--no-open"], {
 			cwd: projectDir,
 			stdio: "ignore",
+			env: testEnv,
 		});
 	} else {
 		execSync(`${BINARY} init "E2E Password Test" --no-wizard --no-open`, {
 			cwd: projectDir,
 			stdio: "ignore",
+			env: testEnv,
 		});
 	}
 
@@ -85,7 +91,7 @@ async function startServerWithPassword(password: string): Promise<TestServer> {
 		{
 			cwd: projectDir,
 			stdio: ["ignore", "pipe", "pipe"],
-			env: { ...process.env, NO_COLOR: "1" },
+			env: testEnv,
 		},
 	);
 
@@ -101,6 +107,7 @@ async function startServerWithPassword(password: string): Promise<TestServer> {
 	} catch (err) {
 		serverProcess.kill("SIGTERM");
 		rmSync(projectDir, { recursive: true, force: true });
+		rmSync(homeDir, { recursive: true, force: true });
 		const detail = serverStderr ? `\nServer stderr:\n${serverStderr}` : "";
 		throw new Error(`Server not ready at ${baseURL} after timeout.${detail}`);
 	}
@@ -119,6 +126,7 @@ async function startServerWithPassword(password: string): Promise<TestServer> {
 		}
 		try {
 			rmSync(projectDir, { recursive: true, force: true });
+			rmSync(homeDir, { recursive: true, force: true });
 		} catch {
 			// EBUSY on Windows
 		}
@@ -131,6 +139,8 @@ let server: TestServer;
 const TEST_PASSWORD = "testpass123";
 
 test.beforeAll(async () => {
+	// Starting the server can pass the default hook timeout when the whole suite loads the machine.
+	test.setTimeout(180_000);
 	server = await startServerWithPassword(TEST_PASSWORD);
 });
 
@@ -170,7 +180,8 @@ test.describe("Password Protection", () => {
 		await test.step("Enter wrong password and submit", async () => {
 			const passwordInput = page.locator('input[type="password"]');
 			await passwordInput.fill("wrongpassword");
-			await page.getByRole("button").first().click();
+			// By name: the password field's show/hide toggle is now the first button.
+			await page.getByRole("button", { name: /unlock/i }).click();
 		});
 
 		await test.step("Error message is shown", async () => {
@@ -206,7 +217,7 @@ test.describe("Password Protection", () => {
 		});
 	});
 
-	test("shows Protected status in Security settings after login", async ({ page }) => {
+	test("shows Protected status in Access settings after login", async ({ page }) => {
 		await test.step("Login with correct password", async () => {
 			await page.goto(server.baseURL);
 			const passwordInput = page.locator('input[type="password"]');
@@ -216,9 +227,9 @@ test.describe("Password Protection", () => {
 			await expect(passwordInput).not.toBeVisible({ timeout: 15000 });
 		});
 
-		await test.step("Navigate to Security settings", async () => {
+		await test.step("Navigate to Access settings", async () => {
 			await page.goto(`${server.baseURL}/config`);
-			await page.getByText(/security/i).first().click();
+			await page.getByRole("button", { name: "Access" }).click();
 		});
 
 		await test.step("Protected status is shown", async () => {
@@ -240,9 +251,9 @@ test.describe("Password Protection", () => {
 			await expect(passwordInput).not.toBeVisible({ timeout: 15000 });
 		});
 
-		await test.step("Navigate to Security settings", async () => {
+		await test.step("Navigate to Access settings", async () => {
 			await page.goto(`${server.baseURL}/config`);
-			await page.getByText(/security/i).first().click();
+			await page.getByRole("button", { name: "Access" }).click();
 		});
 
 		await test.step("Click Remove Password", async () => {
@@ -256,12 +267,12 @@ test.describe("Password Protection", () => {
 		});
 	});
 
-	test("can set new password from Security settings", async ({ page }) => {
+	test("can set new password from Access settings", async ({ page }) => {
 		await test.step("Login with correct password", async () => {
 			await page.goto(server.baseURL);
 			const passwordInput = page.locator('input[type="password"]');
 			// May or may not show login (depends on previous test removing password)
-			const needsLogin = await passwordInput.isVisible({ timeout: 3000 }).catch(() => false);
+			const needsLogin = await passwordInput.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false);
 			if (needsLogin) {
 				await passwordInput.fill(TEST_PASSWORD);
 				await page.getByRole("button", { name: /unlock/i }).click();
@@ -269,9 +280,9 @@ test.describe("Password Protection", () => {
 			}
 		});
 
-		await test.step("Navigate to Security settings", async () => {
+		await test.step("Navigate to Access settings", async () => {
 			await page.goto(`${server.baseURL}/config`);
-			await page.getByText(/security/i).first().click();
+			await page.getByRole("button", { name: "Access" }).click();
 		});
 
 		await test.step("Enter new password and click Set", async () => {

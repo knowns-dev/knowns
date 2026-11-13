@@ -1,0 +1,21 @@
+{
+  "reference": {
+    "raw": "@doc/architecture",
+    "canonical": "@doc/architecture",
+    "type": "doc",
+    "target": "architecture",
+    "relation": "references",
+    "validRelation": true
+  },
+  "entity": {
+    "type": "doc",
+    "id": "architecture",
+    "path": "architecture",
+    "title": "Architecture",
+    "tags": [
+      "core",
+      "design"
+    ]
+  },
+  "found": true
+}

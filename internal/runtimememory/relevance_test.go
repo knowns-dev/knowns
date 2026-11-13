@@ -9,11 +9,12 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/search"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func relevanceStore(t *testing.T, entries ...*models.MemoryEntry) (*storage.Store, string) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	root := t.TempDir()
 	store := storage.NewStore(filepath.Join(root, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {

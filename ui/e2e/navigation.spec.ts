@@ -41,6 +41,8 @@ test.describe("Navigation & Global Features", () => {
 		await test.step("Navigate to Settings via sidebar", async () => {
 			await page.getByText("Settings", { exact: true }).first().click();
 			await expect(page).toHaveURL(/\/config/);
+			await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+			await expect(page.getByRole("navigation", { name: "Settings sections" }).getByRole("button")).toHaveCount(5);
 		});
 	});
 
@@ -73,7 +75,7 @@ test.describe("Navigation & Global Features", () => {
 
 		await test.step("Find and click theme toggle", async () => {
 			const themeBtn = page.getByRole("button", { name: /theme|dark|light|mode/i }).first();
-			if (await themeBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+			if (await themeBtn.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false)) {
 				await themeBtn.click();
 				await page.waitForTimeout(500);
 			}
@@ -87,17 +89,17 @@ test.describe("Navigation & Global Features", () => {
 	test("search dialog opens with keyboard shortcut", async ({ page }) => {
 		await test.step("Navigate to dashboard", async () => {
 			await page.goto(server.baseURL);
+			await expect(page.getByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
 		});
 
-		await test.step("Open search with Cmd+K", async () => {
-			await page.keyboard.press("Meta+k");
+		await test.step("Open search with Cmd+K (Ctrl+K off macOS)", async () => {
+			await page.keyboard.press("ControlOrMeta+k");
 		});
 
 		await test.step("Search dialog is visible", async () => {
-			const searchInput = page.getByPlaceholder(/search/i).first();
-			await expect(searchInput).toBeVisible({ timeout: 3000 }).catch(() => {
-				// Cmd+K may not work in test env, that's ok
-			});
+			const searchInput = page.getByRole("dialog", { name: "Search", exact: true }).getByRole("combobox");
+			await expect(searchInput).toBeVisible();
+			await expect(searchInput).toBeFocused();
 		});
 	});
 

@@ -1,4 +1,5 @@
-import { type KeyboardEvent, useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BarChart3, Clock, RefreshCw } from "lucide-react";
 import {
 	auditApi,
 	type AuditAnalytics,
@@ -6,24 +7,8 @@ import {
 	type AuditRangeDays,
 	type AuditStats,
 } from "@/ui/api/client";
-import {
-	Activity,
-	AlertCircle,
-	CheckCircle2,
-	ChevronDown,
-	ChevronRight,
-	Clock,
-	Filter,
-	FolderOpen,
-	RefreshCw,
-	ShieldAlert,
-	BarChart3,
-	X,
-} from "lucide-react";
-import { cn } from "@/ui/lib/utils";
-import { Button } from "@/ui/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/ui/components/ui/card";
-import { ScrollArea } from "@/ui/components/ui/ScrollArea";
+import { Button as KnButton } from "@/ui/components/ui/knowns/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/components/ui/knowns/tabs";
 import { FeatureHeader } from "@/ui/components/templates";
 import {
 	PageContent,
@@ -31,109 +16,88 @@ import {
 	PageLoading,
 	PageShell,
 } from "@/ui/components/templates/PageShell";
-import { ActivityHeatmap } from "./audit/ActivityHeatmap";
-import { DailyTrend } from "./audit/DailyTrend";
-import { TopTools } from "./audit/TopTools";
-import { hasCoveredAuditDays } from "./audit/analyticsMath";
+import { cn } from "@/ui/lib/utils";
+import { AuditEventSheet } from "./audit/AuditEventDetail";
+import { TraceSessionDialog } from "./audit/TraceSession";
+import { type AuditFilters, AuditEventList, AuditToolbar } from "./audit/AuditEventList";
+import { AuditStatsPanel } from "./audit/AuditStatsPanel";
+import { type AuditRow, browserTimezone, matchesQuery, toRows } from "./audit/auditFormat";
 
 type Tab = "recent" | "stats";
 
-const RANGE_OPTIONS: AuditRangeDays[] = [7, 30, 90];
+/** Events per page. "Show older" asks for one more page. */
+const PAGE_SIZE = 100;
 
-function browserTimezone(): string {
-	return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+const EMPTY_FILTERS: AuditFilters = { query: "", tool: "", result: "", actionClass: "", day: "" };
+
+function errorText(caught: unknown, fallback: string): string {
+	return caught instanceof Error ? caught.message : fallback;
 }
-
-function formatRangeDay(date: string): string {
-	return new Intl.DateTimeFormat(undefined, {
-		month: "short",
-		day: "numeric",
-		year: "numeric",
-		timeZone: "UTC",
-	}).format(new Date(`${date}T00:00:00Z`));
-}
-
-const resultColors: Record<string, { bg: string; text: string; icon: typeof CheckCircle2 }> = {
-	success: {
-		bg: "bg-emerald-500/10",
-		text: "text-emerald-600 dark:text-emerald-400",
-		icon: CheckCircle2,
-	},
-	error: {
-		bg: "bg-red-500/10",
-		text: "text-red-600 dark:text-red-400",
-		icon: AlertCircle,
-	},
-	denied: {
-		bg: "bg-yellow-500/10",
-		text: "text-yellow-600 dark:text-yellow-400",
-		icon: ShieldAlert,
-	},
-};
-
-const classColors: Record<string, string> = {
-	read: "text-blue-600 dark:text-blue-400",
-	write: "text-orange-600 dark:text-orange-400",
-	delete: "text-red-600 dark:text-red-400",
-	generate: "text-purple-600 dark:text-purple-400",
-	admin: "text-gray-600 dark:text-gray-400",
-};
 
 export default function AuditPage() {
 	const [tab, setTab] = useState<Tab>("recent");
+	const [filters, setFilters] = useState<AuditFilters>(EMPTY_FILTERS);
+	const [limit, setLimit] = useState(PAGE_SIZE);
+
 	const [events, setEvents] = useState<AuditEvent[]>([]);
-	const [stats, setStats] = useState<AuditStats | null>(null);
 	const [loading, setLoading] = useState(true);
+	const [loadingMore, setLoadingMore] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [toolFilter, setToolFilter] = useState("");
-	const [resultFilter, setResultFilter] = useState("");
-	const [dayFilter, setDayFilter] = useState("");
+	const [now, setNow] = useState(() => Date.now());
+
+	const [stats, setStats] = useState<AuditStats | null>(null);
+	const [statsLoading, setStatsLoading] = useState(true);
+	const [statsError, setStatsError] = useState<string | null>(null);
+
 	const [range, setRange] = useState<AuditRangeDays>(30);
 	const [analytics, setAnalytics] = useState<AuditAnalytics | null>(null);
 	const [analyticsLoading, setAnalyticsLoading] = useState(true);
 	const [analyticsError, setAnalyticsError] = useState<string | null>(null);
 
+	const [selectedKey, setSelectedKey] = useState<string | null>(null);
+	const [sessionEvent, setSessionEvent] = useState<AuditEvent | null>(null);
+
+	// A paging request keeps the list on screen; any other fetch shows the loading state.
+	const pagingRef = useRef(false);
+	const { tool, result, day } = filters;
+
 	const fetchRecent = useCallback(async () => {
-		setLoading(true);
+		const paging = pagingRef.current;
+		pagingRef.current = false;
+		if (paging) setLoadingMore(true);
+		else setLoading(true);
 		setError(null);
 		try {
-			const opts: Parameters<typeof auditApi.recent>[0] = { limit: 100 };
-			if (toolFilter) opts.tool = toolFilter;
-			if (resultFilter) opts.result = resultFilter;
-			if (dayFilter) {
-				opts.from = dayFilter;
-				opts.to = dayFilter;
+			const opts: Parameters<typeof auditApi.recent>[0] = { limit };
+			if (tool) opts.tool = tool;
+			if (result) opts.result = result;
+			if (day) {
+				opts.from = day;
+				opts.to = day;
 				opts.timezone = browserTimezone();
 			}
 			const data = await auditApi.recent(opts);
 			setEvents(data.events || []);
+			setNow(Date.now());
 		} catch (caught) {
 			setEvents([]);
-			setError(
-				caught instanceof Error
-					? caught.message
-					: "The audit events could not be loaded.",
-			);
+			setError(errorText(caught, "The audit events could not be loaded."));
 		} finally {
 			setLoading(false);
+			setLoadingMore(false);
 		}
-	}, [toolFilter, resultFilter, dayFilter]);
+	}, [tool, result, day, limit]);
 
 	const fetchStats = useCallback(async () => {
-		setLoading(true);
-		setError(null);
+		setStatsLoading(true);
+		setStatsError(null);
 		try {
-			const data = await auditApi.stats();
-			setStats(data);
+			setStats(await auditApi.stats());
 		} catch (caught) {
 			setStats(null);
-			setError(
-				caught instanceof Error
-					? caught.message
-					: "The audit statistics could not be loaded.",
-			);
+			setStatsError(errorText(caught, "The audit statistics could not be loaded."));
 		} finally {
-			setLoading(false);
+			setStatsLoading(false);
 		}
 	}, []);
 
@@ -141,177 +105,185 @@ export default function AuditPage() {
 		setAnalyticsLoading(true);
 		setAnalyticsError(null);
 		try {
-			const data = await auditApi.analytics({
-				days: range,
-				timezone: browserTimezone(),
-				scope: "all",
-			});
-			setAnalytics(data);
+			setAnalytics(
+				await auditApi.analytics({ days: range, timezone: browserTimezone(), scope: "all" }),
+			);
 		} catch (caught) {
 			setAnalytics(null);
-			setAnalyticsError(
-				caught instanceof Error
-					? caught.message
-					: "The audit analytics could not be loaded.",
-			);
+			setAnalyticsError(errorText(caught, "The audit analytics could not be loaded."));
 		} finally {
 			setAnalyticsLoading(false);
 		}
 	}, [range]);
 
 	useEffect(() => {
-		if (tab === "recent") {
-			fetchRecent();
-			return;
-		}
+		if (tab === "recent") fetchRecent();
+	}, [tab, fetchRecent]);
+
+	// Stats name the tools for the filter, so they load once up front; the charts load with their tab.
+	useEffect(() => {
 		fetchStats();
-		fetchAnalytics();
-	}, [tab, fetchRecent, fetchStats, fetchAnalytics]);
+	}, [fetchStats]);
+
+	useEffect(() => {
+		if (tab === "stats") fetchAnalytics();
+	}, [tab, fetchAnalytics]);
+
+	const refresh = () => {
+		if (tab === "recent") fetchRecent();
+		else fetchAnalytics();
+		fetchStats();
+	};
+
+	const updateFilters = (patch: Partial<AuditFilters>) => {
+		setFilters((current) => ({ ...current, ...patch }));
+		// A new server-side filter starts again from the first page.
+		if ("tool" in patch || "result" in patch || "day" in patch) setLimit(PAGE_SIZE);
+	};
+
+	const loadOlder = () => {
+		pagingRef.current = true;
+		setLimit((current) => current + PAGE_SIZE);
+	};
 
 	// Clicking a day or a tool in the charts drills into the event list.
 	const handleSelectDay = (date: string) => {
-		setDayFilter(date);
+		updateFilters({ day: date });
 		setTab("recent");
 	};
-	const handleSelectTool = (tool: string) => {
-		setToolFilter(tool.split(".")[0] ?? tool);
+	const handleSelectAttention = (name: string, result: "error" | "denied") => {
+		updateFilters({ tool: name.split(".")[0] ?? name, result });
+		setTab("recent");
+	};
+	const handleSelectTool = (name: string) => {
+		updateFilters({ tool: name.split(".")[0] ?? name });
 		setTab("recent");
 	};
 
-	const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-		let nextTab: Tab | null = null;
-		if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-			nextTab = tab === "recent" ? "stats" : "recent";
-		} else if (event.key === "Home") {
-			nextTab = "recent";
-		} else if (event.key === "End") {
-			nextTab = "stats";
+	const allRows = useMemo(() => toRows(events), [events]);
+	const rows = useMemo(
+		() =>
+			allRows.filter(
+				(row) =>
+					(!filters.actionClass || row.event.actionClass === filters.actionClass) &&
+					matchesQuery(row.event, filters.query),
+			),
+		[allRows, filters.actionClass, filters.query],
+	);
+
+	const tools = useMemo(() => {
+		const counts = new Map<string, number | undefined>();
+		// Stats count per "tool.action"; the server filters by tool name, so sum the actions per tool.
+		for (const [key, count] of Object.entries(stats?.byTool ?? {})) {
+			const name = key.split(".")[0] ?? key;
+			counts.set(name, (counts.get(name) ?? 0) + count);
 		}
+		for (const event of events) if (!counts.has(event.toolName)) counts.set(event.toolName, undefined);
+		if (filters.tool && !counts.has(filters.tool)) counts.set(filters.tool, undefined);
+		return [...counts.entries()]
+			.map(([name, count]) => ({ name, count }))
+			.sort((a, b) => (b.count ?? 0) - (a.count ?? 0) || a.name.localeCompare(b.name));
+	}, [stats, events, filters.tool]);
 
-		if (!nextTab) return;
-		event.preventDefault();
-		setTab(nextTab);
-		document.getElementById(`audit-tab-${nextTab}`)?.focus();
+	const selectedIndex = selectedKey ? rows.findIndex((row) => row.key === selectedKey) : -1;
+	const selectedRow: AuditRow | null = selectedIndex >= 0 ? rows[selectedIndex]! : null;
+	const stepSelection = (delta: -1 | 1) => {
+		const next = rows[selectedIndex + delta];
+		if (next) setSelectedKey(next.key);
 	};
+
+	const hasMore = !error && events.length >= limit;
+	const filtersActive = Boolean(
+		filters.query || filters.tool || filters.result || filters.actionClass || filters.day,
+	);
+	const busy = tab === "recent" ? loading : analyticsLoading;
 
 	return (
 		<PageShell>
 			<FeatureHeader
-				icon={Activity}
 				title="MCP Audit Trail"
-				status={
-					tab === "recent"
-						? `${events.length} events`
-						: `${stats?.totalCalls ?? 0} calls`
-				}
+				status={tab === "recent" ? `${events.length} events` : `${stats?.totalCalls ?? 0} calls`}
 				actions={
-					<Button
-						type="button"
-						variant="outline"
+					<KnButton
+						variant="secondary"
 						size="sm"
-						onClick={() => (tab === "recent" ? fetchRecent() : fetchStats())}
-						disabled={loading}
+						icon={<RefreshCw className={cn(busy && "animate-spin motion-reduce:animate-none")} />}
+						onClick={refresh}
+						disabled={busy}
 						aria-label="Refresh audit data"
-						aria-busy={loading}
-						className="h-11 sm:h-8"
+						aria-busy={busy}
 					>
-						<RefreshCw className={cn("w-4 h-4", loading && "animate-spin motion-reduce:animate-none")} />
-						{loading ? "Refreshing" : "Refresh"}
-					</Button>
+						{busy ? "Refreshing" : "Refresh"}
+					</KnButton>
 				}
 			/>
 
 			<PageContent size="full" className="flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden">
 				<AuditStatusSummary
 					tab={tab}
-					events={events}
+					rows={allRows}
 					stats={stats}
-					loading={loading}
-					hasError={Boolean(error)}
+					unavailable={tab === "recent" ? loading || Boolean(error) : statsLoading || Boolean(statsError)}
 				/>
 
-				<div
-					role="tablist"
-					aria-label="Audit views"
-					className="flex gap-1 border-b"
+				<Tabs
+					value={tab}
+					onValueChange={(value) => setTab(value as Tab)}
+					className="sm:min-h-0 sm:flex-1"
 				>
-					<button
-						type="button"
-						id="audit-tab-recent"
-						role="tab"
-						aria-selected={tab === "recent"}
-						aria-controls="audit-panel-recent"
-						tabIndex={tab === "recent" ? 0 : -1}
-						onClick={() => setTab("recent")}
-						onKeyDown={handleTabKeyDown}
-						className={cn(
-							"min-h-11 px-4 py-2 text-sm font-medium border-b-2 transition-colors",
-							tab === "recent"
-								? "border-primary text-primary"
-								: "border-transparent text-muted-foreground hover:text-foreground",
-						)}
-					>
-						<span className="flex items-center gap-1.5">
-							<Clock className="w-4 h-4" />
+					<TabsList aria-label="Audit views">
+						<TabsTrigger value="recent" icon={<Clock className="size-4" />}>
 							Recent Activity
-						</span>
-					</button>
-					<button
-						type="button"
-						id="audit-tab-stats"
-						role="tab"
-						aria-selected={tab === "stats"}
-						aria-controls="audit-panel-stats"
-						tabIndex={tab === "stats" ? 0 : -1}
-						onClick={() => setTab("stats")}
-						onKeyDown={handleTabKeyDown}
-						className={cn(
-							"min-h-11 px-4 py-2 text-sm font-medium border-b-2 transition-colors",
-							tab === "stats"
-								? "border-primary text-primary"
-								: "border-transparent text-muted-foreground hover:text-foreground",
-						)}
-					>
-						<span className="flex items-center gap-1.5">
-							<BarChart3 className="w-4 h-4" />
+						</TabsTrigger>
+						<TabsTrigger value="stats" icon={<BarChart3 className="size-4" />}>
 							Statistics
-						</span>
-					</button>
-				</div>
+						</TabsTrigger>
+					</TabsList>
 
-				{tab === "recent" ? (
-					<div
-						id="audit-panel-recent"
-						role="tabpanel"
-						aria-labelledby="audit-tab-recent"
-						aria-busy={loading}
-						className="flex min-h-0 min-w-0 flex-1"
-					>
-						<RecentTab
-							events={events}
-							loading={loading}
-							error={error}
-							toolFilter={toolFilter}
-							resultFilter={resultFilter}
-							dayFilter={dayFilter}
-							onToolFilter={setToolFilter}
-							onResultFilter={setResultFilter}
-							onClearDay={() => setDayFilter("")}
-							onRetry={fetchRecent}
+					<TabsContent value="recent" className="flex flex-col gap-3 sm:min-h-0 sm:flex-1">
+						<AuditToolbar
+							filters={filters}
+							tools={tools}
+							shown={rows.length}
+							loaded={events.length}
+							onChange={updateFilters}
 						/>
-					</div>
-				) : (
-					<div
-						id="audit-panel-stats"
-						role="tabpanel"
-						aria-labelledby="audit-tab-stats"
-						aria-busy={loading}
-						className="flex min-h-0 min-w-0 flex-1"
-					>
-						<StatsTab
+						<div aria-busy={loading} className="flex min-w-0 flex-col sm:min-h-0 sm:flex-1">
+							{loading ? (
+								<PageLoading label="Loading audit events" className="flex-1" />
+							) : error ? (
+								<PageError
+									title="Audit activity unavailable"
+									description={error}
+									onRetry={fetchRecent}
+									className="flex-1"
+								/>
+							) : (
+								<AuditEventList
+									rows={rows}
+									now={now}
+									selectedKey={selectedKey}
+									onSelect={(row) => setSelectedKey(row.key)}
+									hasMore={hasMore}
+									loadingMore={loadingMore}
+									onLoadMore={loadOlder}
+									emptyText={
+										events.length === 0
+											? filtersActive
+												? "No audit events match these filters."
+												: "No audit events found."
+											: "No loaded events match this search."
+									}
+								/>
+							)}
+						</div>
+					</TabsContent>
+
+					<TabsContent value="stats" className="flex flex-col sm:min-h-0 sm:flex-1">
+						<AuditStatsPanel
 							stats={stats}
-							loading={loading}
-							error={error}
+							loading={statsLoading}
+							error={statsError}
 							onRetry={fetchStats}
 							analytics={analytics}
 							analyticsLoading={analyticsLoading}
@@ -321,498 +293,67 @@ export default function AuditPage() {
 							onRetryAnalytics={fetchAnalytics}
 							onSelectDay={handleSelectDay}
 							onSelectTool={handleSelectTool}
+							onSelectAttention={handleSelectAttention}
 						/>
-					</div>
-				)}
+					</TabsContent>
+				</Tabs>
 			</PageContent>
+
+			<AuditEventSheet
+				row={selectedRow}
+				now={now}
+				position={selectedRow ? { index: selectedIndex + 1, total: rows.length } : null}
+				onClose={() => setSelectedKey(null)}
+				onStep={stepSelection}
+				onViewSession={(row) => setSessionEvent(row.event)}
+			/>
+			<TraceSessionDialog event={sessionEvent} loaded={events} onClose={() => setSessionEvent(null)} />
 		</PageShell>
 	);
 }
 
 function AuditStatusSummary({
 	tab,
-	events,
+	rows,
 	stats,
-	loading,
-	hasError,
+	unavailable,
 }: {
 	tab: Tab;
-	events: AuditEvent[];
+	rows: AuditRow[];
 	stats: AuditStats | null;
-	loading: boolean;
-	hasError: boolean;
+	unavailable: boolean;
 }) {
-	const source = tab === "recent" ? events : null;
-	const total = source ? source.length : stats?.totalCalls;
-	const successful = source
-		? source.filter((event) => event.result === "success").length
-		: stats?.byResult.success;
-	const needsAttention = source
-		? source.filter((event) => event.result === "error" || event.result === "denied")
-				.length
-		: (stats?.byResult.error || 0) + (stats?.byResult.denied || 0);
-	const unavailable = loading || hasError;
+	const recent = tab === "recent";
+	const total = recent ? rows.length : (stats?.totalCalls ?? 0);
+	const successful = recent
+		? rows.filter((row) => row.event.result === "success").length
+		: (stats?.byResult.success ?? 0);
+	const attention = recent
+		? rows.filter((row) => row.event.result === "error" || row.event.result === "denied").length
+		: (stats?.byResult.error ?? 0) + (stats?.byResult.denied ?? 0);
 
 	const metrics = [
-		{
-			label: tab === "recent" ? "Events loaded" : "Calls recorded",
-			value: unavailable ? "—" : (total ?? 0),
-		},
-		{
-			label: "Successful",
-			value: unavailable ? "—" : (successful ?? 0),
-		},
-		{
-			label: "Errors / denied",
-			value: unavailable ? "—" : needsAttention,
-		},
+		{ label: recent ? "Events loaded" : "Calls recorded", value: total },
+		{ label: "Successful", value: successful },
+		{ label: "Errors / denied", value: attention, warn: attention > 0 },
 	];
 
 	return (
 		<section
 			aria-label="Audit status summary"
-			className="grid grid-cols-3 overflow-hidden rounded-lg border bg-card"
+			className="grid grid-cols-3 overflow-hidden rounded-xl border border-border bg-card"
 		>
 			{metrics.map((metric, index) => (
-				<dl
-					key={metric.label}
-					className={cn(
-						"px-4 py-3",
-						index > 0 && "border-l",
-					)}
-				>
-					<dt className="text-xs font-medium text-muted-foreground">
-						{metric.label}
-					</dt>
-					<dd className="mt-1 text-xl font-semibold tabular-nums">
-						{metric.value}
+				<dl key={metric.label} className={cn("min-w-0 px-3 py-3 sm:px-4", index > 0 && "border-l border-border")}>
+					<dt className="truncate text-xs font-medium text-muted-foreground">{metric.label}</dt>
+					<dd
+						className={cn(
+							"mt-1 text-xl font-semibold tabular-nums",
+							!unavailable && metric.warn && "text-red-600 dark:text-red-400",
+						)}
+					>
+						{unavailable ? "–" : metric.value}
 					</dd>
-				</dl>
-			))}
-		</section>
-	);
-}
-
-function RecentTab({
-	events,
-	loading,
-	error,
-	toolFilter,
-	resultFilter,
-	dayFilter,
-	onToolFilter,
-	onResultFilter,
-	onClearDay,
-	onRetry,
-}: {
-	events: AuditEvent[];
-	loading: boolean;
-	error: string | null;
-	toolFilter: string;
-	resultFilter: string;
-	dayFilter: string;
-	onToolFilter: (v: string) => void;
-	onResultFilter: (v: string) => void;
-	onClearDay: () => void;
-	onRetry: () => void;
-}) {
-	// Extract unique tool names for filter.
-	const tools = [...new Set(events.map((event) => event.toolName))].sort();
-
-	return (
-		<div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
-			<div className="flex flex-wrap items-center gap-2 text-sm">
-				<Filter className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
-				<select
-					aria-label="Filter by tool"
-					value={toolFilter}
-					onChange={(event) => onToolFilter(event.target.value)}
-					className="min-h-11 rounded-md border bg-background px-3 py-1 text-sm sm:min-h-9"
-				>
-					<option value="">All tools</option>
-					{tools.map((tool) => (
-						<option key={tool} value={tool}>
-							{tool}
-						</option>
-					))}
-				</select>
-				<select
-					aria-label="Filter by result"
-					value={resultFilter}
-					onChange={(event) => onResultFilter(event.target.value)}
-					className="min-h-11 rounded-md border bg-background px-3 py-1 text-sm sm:min-h-9"
-				>
-					<option value="">All results</option>
-					<option value="success">Success</option>
-					<option value="error">Error</option>
-					<option value="denied">Denied</option>
-				</select>
-				{dayFilter && (
-					<button
-						type="button"
-						onClick={onClearDay}
-						className="inline-flex h-9 items-center gap-1.5 rounded-md border bg-muted/40 px-2.5 text-xs font-medium transition-colors hover:bg-muted"
-						aria-label={`Clear the ${formatRangeDay(dayFilter)} filter`}
-					>
-						{formatRangeDay(dayFilter)}
-						<X className="h-3.5 w-3.5" aria-hidden="true" />
-					</button>
-				)}
-				<span className="w-full text-right text-muted-foreground sm:ml-auto sm:w-auto">
-					{events.length} events loaded
-				</span>
-			</div>
-
-			{loading ? (
-				<PageLoading label="Loading audit events" className="flex-1" />
-			) : error ? (
-				<PageError
-					title="Audit activity unavailable"
-					description={error}
-					onRetry={onRetry}
-					className="flex-1"
-				/>
-			) : events.length === 0 ? (
-				<div className="flex flex-1 items-center justify-center rounded-lg border border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
-					No audit events found.
-				</div>
-			) : (
-				<ScrollArea className="flex-1 rounded-lg border bg-card">
-					<div className="divide-y divide-border/40">
-						{events.map((event, index) => (
-							<EventRow
-								key={`${event.timestamp}-${event.toolName}-${event.action || ""}-${index}`}
-								event={event}
-							/>
-						))}
-					</div>
-				</ScrollArea>
-			)}
-		</div>
-	);
-}
-
-function EventRow({ event }: { event: AuditEvent }) {
-	const [expanded, setExpanded] = useState(false);
-	const detailsId = useId();
-	const rc = resultColors[event.result] ?? {
-		bg: "bg-gray-500/10",
-		text: "text-gray-600 dark:text-gray-400",
-		icon: CheckCircle2,
-	};
-	const ResultIcon = rc.icon;
-	const ts = new Date(event.timestamp);
-	const timeStr = ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-	const dateStr = ts.toLocaleDateString([], { month: "short", day: "numeric" });
-
-	const toolDisplay = event.action ? `${event.toolName}.${event.action}` : event.toolName;
-
-	const hasDetails =
-		(event.argumentSummary && Object.keys(event.argumentSummary).length > 0) ||
-		event.projectRoot;
-	const toggleExpanded = () => {
-		if (hasDetails) setExpanded((current) => !current);
-	};
-
-	return (
-		<div
-			className={cn(
-				"hover:bg-muted/50 transition-colors group",
-				expanded && "bg-muted/30",
-			)}
-		>
-			<div
-				role={hasDetails ? "button" : undefined}
-				tabIndex={hasDetails ? 0 : undefined}
-				aria-expanded={hasDetails ? expanded : undefined}
-				aria-controls={hasDetails ? detailsId : undefined}
-				className={cn(
-					"flex items-center gap-2.5 px-3 py-1.5",
-					hasDetails && "cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-				)}
-				onClick={toggleExpanded}
-				onKeyDown={(keyboardEvent) => {
-					if (keyboardEvent.key !== "Enter" && keyboardEvent.key !== " ") return;
-					keyboardEvent.preventDefault();
-					toggleExpanded();
-				}}
-			>
-				{/* Expand indicator */}
-				<div className="w-3.5 flex-shrink-0">
-					{hasDetails ? (
-						expanded ? (
-							<ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-						) : (
-							<ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
-						)
-					) : null}
-				</div>
-
-				<div className={cn("shrink-0 rounded p-0.5", rc.bg)}>
-					<ResultIcon className={cn("w-3.5 h-3.5", rc.text)} />
-				</div>
-				<div className="flex-1 min-w-0">
-					<div className="flex min-w-0 items-center gap-2">
-						<span className="max-w-full truncate font-mono text-sm font-medium">{toolDisplay}</span>
-						<span className={cn("text-xs font-medium", rc.text)}>
-							{event.result}
-						</span>
-						<span className={cn("text-xs", classColors[event.actionClass] || "text-muted-foreground")}>
-							{event.actionClass}
-						</span>
-						{event.dryRun && (
-							<span className="text-xs px-1.5 py-0.5 rounded bg-yellow-500/10 text-yellow-600 dark:text-yellow-400">
-								dry-run
-							</span>
-						)}
-						{event.errorMessage ? (
-							<span className="min-w-0 truncate text-xs text-red-500" title={event.errorMessage}>
-								{event.errorMessage}
-							</span>
-						) : event.entityRefs && event.entityRefs.length > 0 ? (
-							<span
-								className="min-w-0 truncate text-xs text-muted-foreground"
-								title={event.entityRefs.join(", ")}
-							>
-								{event.entityRefs.join(", ")}
-							</span>
-						) : null}
-						<span className="ml-auto hidden shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground sm:inline">
-							{event.durationMs}ms
-						</span>
-					</div>
-					<p className="text-[11px] text-muted-foreground sm:hidden">
-						{dateStr} · {timeStr} · {event.durationMs}ms
-					</p>
-				</div>
-				<div className="hidden shrink-0 whitespace-nowrap text-right font-mono text-[11px] tabular-nums text-muted-foreground sm:block">
-					{dateStr} · {timeStr}
-				</div>
-			</div>
-
-			{/* Expanded details */}
-			{expanded && hasDetails && (
-				<div id={detailsId} className="ml-9 space-y-2 border-t border-border/50 px-3 pb-3 pt-2">
-					{event.projectRoot && (
-						<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-							<FolderOpen className="w-3 h-3 flex-shrink-0" />
-							<span className="font-medium">Project:</span>
-							<span className="font-mono truncate">{event.projectRoot}</span>
-						</div>
-					)}
-					{event.argumentSummary && Object.keys(event.argumentSummary).length > 0 && (
-						<div>
-							<p className="text-xs font-medium text-muted-foreground mb-1">Arguments</p>
-							<div className="rounded-md bg-muted/50 border border-border/50 overflow-hidden">
-								<table className="w-full text-xs">
-									<tbody>
-										{Object.entries(event.argumentSummary).map(([key, value]) => (
-											<tr key={key} className="border-b border-border/30 last:border-b-0">
-												<td className="px-2 py-1 font-mono font-medium text-muted-foreground whitespace-nowrap align-top">
-													{key}
-												</td>
-												<td className="px-2 py-1 font-mono break-all">
-													{value}
-												</td>
-											</tr>
-										))}
-									</tbody>
-								</table>
-							</div>
-						</div>
-					)}
-				</div>
-			)}
-		</div>
-	);
-}
-
-function StatsTab({
-	stats,
-	loading,
-	error,
-	onRetry,
-	analytics,
-	analyticsLoading,
-	analyticsError,
-	range,
-	onRangeChange,
-	onRetryAnalytics,
-	onSelectDay,
-	onSelectTool,
-}: {
-	stats: AuditStats | null;
-	loading: boolean;
-	error: string | null;
-	onRetry: () => void;
-	analytics: AuditAnalytics | null;
-	analyticsLoading: boolean;
-	analyticsError: string | null;
-	range: AuditRangeDays;
-	onRangeChange: (days: AuditRangeDays) => void;
-	onRetryAnalytics: () => void;
-	onSelectDay: (date: string) => void;
-	onSelectTool: (tool: string) => void;
-}) {
-	if (loading) {
-		return <PageLoading label="Loading audit statistics" className="flex-1" />;
-	}
-
-	if (error) {
-		return (
-			<PageError
-				title="Audit statistics unavailable"
-				description={error}
-				onRetry={onRetry}
-				className="flex-1"
-			/>
-		);
-	}
-
-	if (!stats || stats.totalCalls === 0) {
-		return (
-			<div className="flex flex-1 items-center justify-center rounded-lg border border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
-				No audit data available.
-			</div>
-		);
-	}
-
-	const classEntries = Object.entries(stats.byActionClass).sort((a, b) => b[1] - a[1]);
-	const buckets = analytics?.dailyBuckets ?? [];
-	const hasHistory = hasCoveredAuditDays(buckets);
-
-	return (
-		<ScrollArea className="flex-1">
-			<div className="flex min-w-0 flex-col gap-4 pr-1">
-				{/* Range selector + headline aggregates for the selected window */}
-				<section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3">
-					<div className="flex min-w-0 flex-col">
-						<h3 className="text-sm font-semibold">Activity over time</h3>
-						<p className="mt-0.5 text-xs text-muted-foreground">
-							{analytics
-								? `${formatRangeDay(analytics.rangeStart)} – ${formatRangeDay(analytics.rangeEnd)} · ${analytics.timezone}`
-								: "Loading range…"}
-						</p>
-					</div>
-					<div
-						className="flex shrink-0 gap-1"
-						role="group"
-						aria-label="Analytics range"
-					>
-						{RANGE_OPTIONS.map((option) => (
-							<button
-								key={option}
-								type="button"
-								aria-pressed={range === option}
-								onClick={() => onRangeChange(option)}
-								className={cn(
-									"inline-flex h-8 items-center rounded-md px-2.5 text-xs font-medium transition-colors",
-									range === option
-										? "bg-foreground text-background"
-										: "text-muted-foreground hover:bg-muted hover:text-foreground",
-								)}
-							>
-								{option}d
-							</button>
-						))}
-					</div>
-				</section>
-
-				{analyticsError ? (
-					<PageError
-						title="Audit analytics unavailable"
-						description={analyticsError}
-						onRetry={onRetryAnalytics}
-					/>
-				) : analyticsLoading && !analytics ? (
-					<PageLoading label="Loading audit analytics" />
-				) : analytics ? (
-					<>
-						<AnalyticsSummary analytics={analytics} />
-
-						{analytics.coverage.partial && (
-							<p className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-2.5 text-xs text-amber-700 dark:text-amber-300">
-								{hasHistory
-									? `Retained history only covers ${formatRangeDay(analytics.coverage.startDate ?? analytics.rangeStart)} – ${formatRangeDay(analytics.coverage.endDate ?? analytics.rangeEnd)}. Days outside that window are shown as uncovered rather than empty.`
-									: "No retained audit history overlaps this range. Older events were rotated out of the log."}
-							</p>
-						)}
-
-						{hasHistory && (
-							<>
-								<div className="grid min-w-0 gap-4 xl:grid-cols-2">
-									<ActivityHeatmap buckets={buckets} onSelectDay={onSelectDay} />
-									<DailyTrend buckets={buckets} onSelectDay={onSelectDay} />
-								</div>
-								<TopTools tools={analytics.tools} onSelectTool={onSelectTool} />
-							</>
-						)}
-					</>
-				) : null}
-
-				{/* All-time breakdowns (not range-scoped) */}
-				<section className="rounded-lg border bg-card px-4 py-3">
-					<h3 className="text-sm font-semibold">All-time totals</h3>
-					<div className="mt-3 flex flex-wrap gap-2">
-						{Object.entries(stats.byResult).map(([result, count]) => {
-							const rc = resultColors[result] ?? {
-								bg: "bg-gray-500/10",
-								text: "text-gray-600 dark:text-gray-400",
-								icon: CheckCircle2,
-							};
-							return (
-								<div key={result} className={cn("rounded-md px-3 py-1.5", rc.bg)}>
-									<span className={cn("text-sm font-medium", rc.text)}>
-										{result}: {count}
-									</span>
-								</div>
-							);
-						})}
-						{classEntries.map(([cls, count]) => (
-							<div key={cls} className="rounded-md bg-muted px-3 py-1.5">
-								<span className={cn("text-sm", classColors[cls] || "text-foreground")}>
-									{cls}
-								</span>
-								<span className="ml-1.5 text-sm text-muted-foreground">{count}</span>
-							</div>
-						))}
-						<div className="rounded-md bg-muted px-3 py-1.5 text-sm">
-							dry-run
-							<span className="ml-1.5 text-muted-foreground">{stats.dryRunCount}</span>
-						</div>
-					</div>
-				</section>
-			</div>
-		</ScrollArea>
-	);
-}
-
-function AnalyticsSummary({ analytics }: { analytics: AuditAnalytics }) {
-	const successRate =
-		analytics.totalCalls > 0
-			? Math.round(((analytics.byResult.success || 0) / analytics.totalCalls) * 100)
-			: 0;
-	const latency =
-		analytics.averageDurationMs >= 1000
-			? `${(analytics.averageDurationMs / 1000).toFixed(2)} s`
-			: `${Math.round(analytics.averageDurationMs)} ms`;
-
-	const metrics = [
-		{ label: "Calls in range", value: analytics.totalCalls },
-		{ label: "Success rate", value: `${successRate}%` },
-		{ label: "Needs attention", value: analytics.needsAttention },
-		{ label: "Avg latency", value: latency },
-	];
-
-	return (
-		<section
-			aria-label="Range summary"
-			className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-4"
-		>
-			{metrics.map((metric) => (
-				<dl key={metric.label} className="bg-card px-4 py-3">
-					<dt className="text-xs font-medium text-muted-foreground">{metric.label}</dt>
-					<dd className="mt-1 text-xl font-semibold tabular-nums">{metric.value}</dd>
 				</dl>
 			))}
 		</section>

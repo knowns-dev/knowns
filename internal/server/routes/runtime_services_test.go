@@ -12,12 +12,12 @@ import (
 	"github.com/howznguyen/knowns/internal/lsp"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestRuntimeServicesUsesInjectedLSPRuntimeSnapshot(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	testutil.SetHome(t, home)
 
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Config.Save(&models.Project{Name: "runtime-services-test", ID: "runtime-services-test"}); err != nil {

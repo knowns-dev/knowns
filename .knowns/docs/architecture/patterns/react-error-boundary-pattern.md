@@ -1,4 +1,5 @@
 ---
+id: doc-8b24ea5e13b9dafdae3bd7220af19bc1
 title: React Error Boundary Pattern
 createdAt: '2026-02-24T08:27:07.958Z'
 updatedAt: '2026-02-24T08:27:07.958Z'

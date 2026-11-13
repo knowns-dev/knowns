@@ -1,4 +1,5 @@
 ---
+id: doc-2f8aeef761931182c58744ca89b48234
 title: MCP Audit Trail And Tool Stats
 description: Research note on structured MCP audit events, recent activity views, and aggregate tool usage statistics.
 createdAt: '2026-04-22T08:56:30.406Z'

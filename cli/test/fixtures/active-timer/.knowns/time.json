@@ -1,0 +1,18 @@
+{
+  "active": [
+    {
+      "taskId": "TM-B9YGFM",
+      "taskTitle": "Running timer task",
+      "startedAt": "2026-11-03T13:37:39.295Z",
+      "pausedAt": null,
+      "totalPausedMs": 0
+    },
+    {
+      "taskId": "TM-Q3M99R",
+      "taskTitle": "Paused timer task",
+      "startedAt": "2026-11-03T13:37:39.334Z",
+      "pausedAt": "2026-11-03T13:37:39.379Z",
+      "totalPausedMs": 0
+    }
+  ]
+}

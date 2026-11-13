@@ -32,3 +32,11 @@ test-results/
 
 # Local Qdrant bootstrap marker
 .qdrant-initialized
+
+# TypeScript CLI
+cli/dist/
+cli/node_modules/
+cli/src/ui-assets.generated.ts
+
+# Local env files (Knowns UI Pro license key)
+.env*.local

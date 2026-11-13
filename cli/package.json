@@ -1,0 +1,27 @@
+{
+  "name": "knowns-cli",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "gen": "bun scripts/gen-ui-assets.ts && bun scripts/gen-instructions.ts",
+    "typecheck": "bun run gen && tsc --noEmit",
+    "lint": "biome check src scripts test",
+    "check": "bun run typecheck && bun run lint",
+    "test": "bun run gen && bun test",
+    "build": "bun scripts/build.ts",
+    "budget": "bun scripts/budget.ts",
+    "fixtures": "bun scripts/gen-fixtures.ts",
+    "fixtures:verify": "bun scripts/gen-fixtures.ts --verify",
+    "cli-docs": "bun scripts/gen-cli-docs.ts",
+    "cli-docs:check": "bun scripts/gen-cli-docs.ts --check && bun scripts/gen-cli-docs.ts --lint"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.8.1",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.0",
+    "@types/bun": "^1.3.0",
+    "typescript": "^5.9.0"
+  }
+}

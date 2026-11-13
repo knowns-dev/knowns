@@ -11,6 +11,8 @@
 #   KNOWNS_LINK_DIR     - directory on PATH to link knowns and kn into
 #                         (default: ~/.local/bin, when it is already on PATH)
 #   KNOWNS_NO_LINK      - set to 1 to skip linking into a PATH directory
+#   KNOWNS_BASE_URL     - release download prefix (default: GitHub releases);
+#                         archives are fetched from <base>/<tag>/knowns-<os>-<arch>.tar.gz
 
 set -e
 
@@ -56,6 +58,16 @@ detect_platform() {
         aarch64|arm64) ARCH="arm64" ;;
         *)             error "Unsupported architecture: $ARCH" ;;
     esac
+
+    # An x86_64 shell on Apple Silicon runs under Rosetta 2, so uname -m says x86_64. The x64
+    # build then runs translated, and Rosetta has no AVX, so it warns on every run. The machine
+    # runs the arm64 build natively.
+    ROSETTA=0
+    if [ "$OS" = "darwin" ] && [ "$ARCH" = "x64" ] &&
+        [ "$({ sysctl -in sysctl.proc_translated || /usr/sbin/sysctl -in sysctl.proc_translated; } 2>/dev/null)" = "1" ]; then
+        ARCH="arm64"
+        ROSETTA=1
+    fi
 
     PLATFORM="${OS}-${ARCH}"
 }
@@ -136,6 +148,18 @@ on_path() {
         *":$1:"*) return 0 ;;
     esac
     return 1
+}
+
+# Copies $1 to $2 through a temp file and a rename, so $2 gets a new inode.
+# A plain cp rewrites the old inode in place; on macOS the kernel keeps the
+# code signature of that inode cached for any knowns process still running,
+# and SIGKILLs every later launch of the new binary.
+install_file() {
+    tmp="$2.new.$$"
+    cp "$1" "$tmp" && chmod "$3" "$tmp" && mv -f "$tmp" "$2" || {
+        rm -f "$tmp"
+        error "Could not install $2"
+    }
 }
 
 # Links $2 -> $1, refusing to replace anything that is not a symlink, so a
@@ -224,11 +248,17 @@ main() {
     resolve_version
 
     ARCHIVE="${BINARY}-${PLATFORM}.tar.gz"
-    URL="https://github.com/${REPO}/releases/download/${VERSION}/${ARCHIVE}"
+    # KNOWNS_BASE_URL replaces the release download prefix (mirrors, offline tests).
+    # Assets are looked up as ${KNOWNS_BASE_URL}/${VERSION}/${ARCHIVE}.
+    BASE_URL="${KNOWNS_BASE_URL:-https://github.com/${REPO}/releases/download}"
+    URL="${BASE_URL%/}/${VERSION}/${ARCHIVE}"
     CHECKSUM_URL="${URL}.sha256"
 
     info "Version:  ${VERSION}"
     info "Platform: ${PLATFORM}"
+    if [ "$ROSETTA" = "1" ]; then
+        info "          (this shell runs under Rosetta; installing the native Apple Silicon build)"
+    fi
     info "Install:  ${INSTALL_DIR}"
     printf "\n"
 
@@ -276,14 +306,13 @@ main() {
     printf "  ${DIM}⠋${RESET} Installing to ${INSTALL_DIR}...\r"
     mkdir -p "$INSTALL_DIR" 2>/dev/null || true
 
-    cp "$EXTRACTED_BIN" "${INSTALL_DIR}/${BINARY}"
-    chmod +x "${INSTALL_DIR}/${BINARY}"
+    install_file "$EXTRACTED_BIN" "${INSTALL_DIR}/${BINARY}" 755
 
     # Install colocated ONNX Runtime native libs (dylib/so/dll)
     for f in "${EXTRACT_ROOT}"/libonnxruntime* \
              "${EXTRACT_ROOT}"/onnxruntime.dll; do
         [ -e "$f" ] || continue
-        cp "$f" "${INSTALL_DIR}/"
+        install_file "$f" "${INSTALL_DIR}/$(basename "$f")" 644
     done
 
     success "Installed to ${INSTALL_DIR}/${BINARY}"

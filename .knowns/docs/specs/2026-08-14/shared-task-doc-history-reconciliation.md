@@ -1,4 +1,5 @@
 ---
+id: doc-691cc18a6e081b3e8d07f4f1ac9ec801
 title: Shared Task Doc History Reconciliation
 description: Specification for daemon-managed Task/Doc filesystem reconciliation, append-only JSONL history, concurrent-session safety, retention, and incremental Qdrant synchronization.
 createdAt: '2026-08-14T04:54:30.343Z'

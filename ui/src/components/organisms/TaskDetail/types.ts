@@ -1,4 +1,4 @@
-import type { Task, TaskPriority, TaskStatus } from "@models/task";
+import type { Task, TaskPriority, TaskStatus } from "@/ui/models/task";
 
 export interface TaskDetailProps {
 	task: Task;
@@ -46,3 +46,61 @@ export const priorityColors: Record<TaskPriority, string> = {
 	medium: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-300",
 	high: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
 };
+
+/** Knowns UI tone for a status colour name from config (Badge, Combobox dot). */
+export type DetailTone = "neutral" | "accent" | "info" | "success" | "warning" | "danger";
+
+const COLOR_TONES: Record<string, DetailTone> = {
+	gray: "neutral",
+	red: "danger",
+	orange: "warning",
+	yellow: "warning",
+	green: "success",
+	teal: "success",
+	blue: "info",
+	cyan: "info",
+	purple: "accent",
+	indigo: "accent",
+	pink: "accent",
+};
+
+const DEFAULT_STATUS_TONE_COLORS: Record<string, string> = {
+	todo: "gray",
+	"in-progress": "blue",
+	"in-review": "purple",
+	done: "green",
+	blocked: "red",
+	"on-hold": "yellow",
+	urgent: "orange",
+};
+
+export function statusTone(status: string, configColors: Record<string, string> = {}): DetailTone {
+	const color = configColors[status] || DEFAULT_STATUS_TONE_COLORS[status] || "gray";
+	return COLOR_TONES[color] ?? "neutral";
+}
+
+export const priorityTones: Record<TaskPriority, DetailTone> = {
+	low: "neutral",
+	medium: "warning",
+	high: "danger",
+};
+
+/** "2h 5m", "45m", "30s". */
+export function formatTracked(seconds: number): string {
+	const hours = Math.floor(seconds / 3600);
+	const minutes = Math.floor((seconds % 3600) / 60);
+	if (hours > 0) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+	if (minutes === 0 && seconds > 0) return `${seconds}s`;
+	return `${minutes}m`;
+}
+
+/** Move one item of a list from `from` to `to` (both clamped). */
+export function moveItem<T>(list: T[], from: number, to: number): T[] {
+	if (from < 0 || from >= list.length) return list;
+	const target = Math.max(0, Math.min(list.length - 1, to));
+	if (target === from) return list;
+	const next = list.slice();
+	const [item] = next.splice(from, 1);
+	if (item !== undefined) next.splice(target, 0, item);
+	return next;
+}

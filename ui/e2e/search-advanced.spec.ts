@@ -17,21 +17,24 @@ test.afterAll(() => {
 	server?.cleanup();
 });
 
+const searchDialog = (page: Page) => page.getByRole("dialog", { name: "Search", exact: true });
+const searchInput = (page: Page) => searchDialog(page).getByRole("combobox", { name: "Search commands" });
+const sidebarSearchButton = (page: Page) => page.getByRole("button", { name: /^Search\.\.\./ });
+
 async function openSearchDialog(page: Page) {
 	await page.goto(`${server.baseURL}/kanban`);
-	const searchButton = page.getByRole("button", { name: /search/i }).first();
-	await expect(searchButton).toBeVisible();
-	await searchButton.click();
-	const searchInput = page.getByPlaceholder("Search tasks and docs...");
-	await expect(searchInput).toBeVisible();
-	return searchInput;
+	await expect(sidebarSearchButton(page)).toBeVisible();
+	await sidebarSearchButton(page).click();
+	await expect(searchInput(page)).toBeVisible();
+	await expect(searchInput(page)).toBeFocused();
+	return searchInput(page);
 }
 
 test.describe("Search Command Dialog", () => {
 	test("opens search with Cmd+K and shows results", async ({ page }) => {
 		await test.step("Navigate to kanban", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await expect(page.getByRole("button", { name: /search/i }).first()).toBeVisible();
+			await expect(sidebarSearchButton(page)).toBeVisible();
 		});
 
 		await test.step("Open search dialog with Cmd+K", async () => {
@@ -39,32 +42,33 @@ test.describe("Search Command Dialog", () => {
 		});
 
 		await test.step("Search dialog is visible", async () => {
-			await expect(page.getByPlaceholder("Search tasks and docs...")).toBeVisible();
+			await expect(searchInput(page)).toBeVisible();
+			await expect(searchInput(page)).toHaveAttribute("placeholder", "Search tasks and docs, or jump to a page…");
 		});
 
 		await test.step("Type search query", async () => {
-			await page.getByPlaceholder("Search tasks and docs...").fill("Auth");
+			await searchInput(page).fill("Auth");
 		});
 
 		await test.step("Results show matching tasks and docs", async () => {
-			// Should find "Auth Module" task and "Auth Guide" doc
-			await expect(page.getByText("Auth Module").first()).toBeVisible();
+			await expect(searchDialog(page).getByRole("group", { name: "Tasks" }).getByRole("option", { name: /Auth Module/ })).toBeVisible();
+			await expect(searchDialog(page).getByRole("group", { name: "Docs" }).getByRole("option", { name: /Auth Guide/ })).toBeVisible();
 		});
 
 		await test.step("Close search with Escape", async () => {
 			await page.keyboard.press("Escape");
-			await page.waitForTimeout(300);
+			await expect(searchDialog(page)).toBeHidden();
 		});
 	});
 
 	test("search finds tasks by description content", async ({ page }) => {
 		await test.step("Open search and enter description content", async () => {
-			const searchInput = await openSearchDialog(page);
-			await searchInput.fill("authentication");
+			const input = await openSearchDialog(page);
+			await input.fill("authentication");
 		});
 
 		await test.step("Task with matching description found", async () => {
-			await expect(page.getByText("Auth Module").first()).toBeVisible();
+			await expect(searchDialog(page).getByRole("option", { name: /Auth Module/ })).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -74,12 +78,12 @@ test.describe("Search Command Dialog", () => {
 
 	test("search finds docs", async ({ page }) => {
 		await test.step("Open search and enter doc title", async () => {
-			const searchInput = await openSearchDialog(page);
-			await searchInput.fill("Architecture");
+			const input = await openSearchDialog(page);
+			await input.fill("Architecture");
 		});
 
 		await test.step("Doc result appears", async () => {
-			await expect(page.getByText("Architecture").first()).toBeVisible();
+			await expect(searchDialog(page).getByRole("group", { name: "Docs" }).getByRole("option", { name: /Architecture/ })).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -89,12 +93,13 @@ test.describe("Search Command Dialog", () => {
 
 	test("empty search shows no results message", async ({ page }) => {
 		await test.step("Open search and enter non-existent term", async () => {
-			const searchInput = await openSearchDialog(page);
-			await searchInput.fill("zzzznonexistent12345");
+			const input = await openSearchDialog(page);
+			await input.fill("zzzznonexistent12345");
 		});
 
 		await test.step("No results shown", async () => {
-			await expect(page.getByText(/no result/i).first()).toBeVisible();
+			await expect(searchDialog(page).getByText("No tasks, docs or pages match “zzzznonexistent12345”")).toBeVisible();
+			await expect(searchDialog(page).getByRole("option")).toHaveCount(0);
 		});
 
 		await test.step("Cleanup", async () => {
@@ -104,33 +109,43 @@ test.describe("Search Command Dialog", () => {
 
 	test("clicking search result navigates to it", async ({ page }) => {
 		await test.step("Open search and click a task result", async () => {
-			const searchInput = await openSearchDialog(page);
-			await searchInput.fill("Login Page");
-			// Click the CommandItem (role="option") containing "Login Page", not the input text
-			const resultItem = page.locator('[role="option"]').filter({ hasText: "Login Page" }).first();
+			const input = await openSearchDialog(page);
+			await input.fill("Login Page");
+			const resultItem = searchDialog(page).getByRole("option", { name: /Login Page/ }).first();
 			await expect(resultItem).toBeVisible();
 			await resultItem.click();
-			await page.waitForTimeout(500);
 		});
 
 		await test.step("Task detail opens", async () => {
+			await expect(searchDialog(page)).toBeHidden();
 			await expect(page.getByRole("heading", { name: "Login Page", exact: true })).toBeVisible();
 		});
 	});
 });
 
 test.describe("Sidebar Search", () => {
-	test("sidebar search input filters navigation", async ({ page }) => {
+	test("sidebar search button opens the command menu and jumps to a page", async ({ page }) => {
 		await test.step("Navigate to dashboard", async () => {
 			await page.goto(server.baseURL);
-			await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+			await expect(page.getByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
 		});
 
-		await test.step("Find search button or input in sidebar", async () => {
-			const searchBtn = page.locator('[title*="earch"], [placeholder*="earch"]').first();
-			if (await searchBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-				await searchBtn.click();
-			}
+		await test.step("Open search from the sidebar", async () => {
+			await sidebarSearchButton(page).click();
+			await expect(searchInput(page)).toBeVisible();
+		});
+
+		await test.step("Pages are listed before typing and filter as you type", async () => {
+			await expect(searchDialog(page).getByRole("group", { name: "Pages" }).getByRole("option", { name: "Settings" })).toBeVisible();
+			await searchInput(page).fill("Memor");
+			await expect(searchDialog(page).getByRole("option", { name: "Memories" })).toBeVisible();
+			await expect(searchDialog(page).getByRole("option", { name: "Settings" })).toHaveCount(0);
+		});
+
+		await test.step("Choosing a page navigates there", async () => {
+			await page.keyboard.press("Enter");
+			await expect(searchDialog(page)).toBeHidden();
+			await expect(page).toHaveURL(/\/memory$/);
 		});
 	});
 });

@@ -12,6 +12,7 @@ import (
 	"github.com/howznguyen/knowns/internal/decisionreview"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -253,7 +254,7 @@ func decisionToolResultText(t *testing.T, result *mcp.CallToolResult, err error)
 
 func setupDecisionHandlerStore(t *testing.T) *storage.Store {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init("decision-handler-test"); err != nil {
 		t.Fatalf("init store: %v", err)

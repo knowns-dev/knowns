@@ -1,18 +1,20 @@
+import { Badge } from "@/ui/components/ui/knowns/badge";
 import type { Doc } from "../../lib/utils";
 import { isSpec } from "../../lib/utils";
 
+/** "Spec" and "Imported" marks after a doc's title, as Knowns UI badges. */
 export function DocKindBadges({ doc }: { doc: Doc }) {
 	return (
 		<>
 			{isSpec(doc) && (
-				<span className="inline-flex h-5 items-center rounded border border-blue-200 bg-blue-50 px-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-blue-700 dark:border-blue-900 dark:bg-blue-950/50 dark:text-blue-300">
+				<Badge tone="info" size="sm" className="shrink-0">
 					Spec
-				</span>
+				</Badge>
 			)}
 			{doc.isImported && (
-				<span className="inline-flex h-5 items-center rounded border border-violet-200 bg-violet-50 px-1.5 text-[10px] font-medium text-violet-700 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-300">
+				<Badge tone="neutral" variant="outline" size="sm" className="shrink-0">
 					Imported
-				</span>
+				</Badge>
 			)}
 		</>
 	);

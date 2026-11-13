@@ -1,4 +1,5 @@
 ---
+id: doc-f8ffa6b9b5f1ecbec164cce7f7503fa7
 title: Agent Workspace
 description: Specification for Agent Workspace feature - spawn and stream AI coding agents from browser with git worktree isolation
 createdAt: '2026-03-04T10:19:30.912Z'

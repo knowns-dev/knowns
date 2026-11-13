@@ -1,0 +1,671 @@
+{
+  "taskId": "FX-3VT2SR",
+  "currentVersion": 10,
+  "versions": [
+    {
+      "id": "v1",
+      "taskId": "FX-3VT2SR",
+      "version": 1,
+      "timestamp": "2026-11-03T13:37:35.146061Z",
+      "author": "@fixture",
+      "changes": [
+        {
+          "field": "status",
+          "oldValue": null,
+          "newValue": "todo"
+        },
+        {
+          "field": "priority",
+          "oldValue": null,
+          "newValue": "high"
+        }
+      ],
+      "snapshot": {
+        "acceptanceCriteria": [
+          {
+            "completed": false,
+            "text": "User can log in"
+          },
+          {
+            "completed": false,
+            "text": "Bad passwords are rejected"
+          },
+          {
+            "completed": false,
+            "text": "Sessions expire after 24h"
+          }
+        ],
+        "archived": false,
+        "assignee": "@fixture",
+        "createdAt": "2026-11-03T13:37:35.144326Z",
+        "description": "Users sign in with email and password.\n\nSecond paragraph with `code` and a | pipe.",
+        "fulfills": [
+          "AC-1",
+          "AC-2"
+        ],
+        "id": "FX-3VT2SR",
+        "implementationNotes": "Initial notes",
+        "implementationPlan": "1. Design\n2. Build\n3. Test",
+        "labels": [
+          "auth",
+          "feature"
+        ],
+        "priority": "high",
+        "spec": "specs/login",
+        "status": "todo",
+        "timeSpent": 0,
+        "title": "Implement login flow",
+        "updatedAt": "2026-11-03T13:37:35.144326Z"
+      },
+      "schemaVersion": 1,
+      "newHash": "b0a53b84c310ae4443c65cc761634b751861d1da11ad13c84316172dfd6e65a6",
+      "checkpoint": true
+    },
+    {
+      "id": "v2",
+      "taskId": "FX-3VT2SR",
+      "version": 2,
+      "timestamp": "2026-11-03T13:37:35.211313Z",
+      "author": "cli",
+      "changes": [
+        {
+          "field": "status",
+          "oldValue": "todo",
+          "newValue": "in-progress"
+        }
+      ],
+      "snapshot": {
+        "acceptanceCriteria": [
+          {
+            "completed": false,
+            "text": "User can log in"
+          },
+          {
+            "completed": false,
+            "text": "Bad passwords are rejected"
+          },
+          {
+            "completed": false,
+            "text": "Sessions expire after 24h"
+          }
+        ],
+        "archived": false,
+        "assignee": "@fixture",
+        "createdAt": "2026-11-03T13:37:35.144326Z",
+        "description": "Users sign in with email and password.\n\nSecond paragraph with `code` and a | pipe.",
+        "fulfills": [
+          "AC-1",
+          "AC-2"
+        ],
+        "id": "FX-3VT2SR",
+        "implementationNotes": "Initial notes",
+        "implementationPlan": "1. Design\n2. Build\n3. Test",
+        "labels": [
+          "auth",
+          "feature"
+        ],
+        "priority": "high",
+        "spec": "specs/login",
+        "status": "in-progress",
+        "timeSpent": 0,
+        "title": "Implement login flow",
+        "updatedAt": "2026-11-03T13:37:35.144326Z"
+      },
+      "schemaVersion": 1,
+      "baseHash": "b0a53b84c310ae4443c65cc761634b751861d1da11ad13c84316172dfd6e65a6",
+      "newHash": "bca9ef826ebb195ee7e42624bdf5ed3dbf47b3407a23e3dfd5b1fd545793ff73"
+    },
+    {
+      "id": "v3",
+      "taskId": "FX-3VT2SR",
+      "version": 3,
+      "timestamp": "2026-11-03T13:37:35.270338Z",
+      "author": "cli",
+      "changes": [
+        {
+          "field": "acceptanceCriteria",
+          "oldValue": [
+            {
+              "completed": false,
+              "text": "User can log in"
+            },
+            {
+              "completed": false,
+              "text": "Bad passwords are rejected"
+            },
+            {
+              "completed": false,
+              "text": "Sessions expire after 24h"
+            }
+          ],
+          "newValue": [
+            {
+              "completed": true,
+              "text": "User can log in"
+            },
+            {
+              "completed": false,
+              "text": "Bad passwords are rejected"
+            },
+            {
+              "completed": false,
+              "text": "Sessions expire after 24h"
+            }
+          ]
+        },
+        {
+          "field": "order",
+          "oldValue": null,
+          "newValue": 3
+        }
+      ],
+      "snapshot": {
+        "acceptanceCriteria": [
+          {
+            "completed": true,
+            "text": "User can log in"
+          },
+          {
+            "completed": false,
+            "text": "Bad passwords are rejected"
+          },
+          {
+            "completed": false,
+            "text": "Sessions expire after 24h"
+          }
+        ],
+        "archived": false,
+        "assignee": "@fixture",
+        "createdAt": "2026-11-03T13:37:35.144326Z",
+        "description": "Users sign in with email and password.\n\nSecond paragraph with `code` and a | pipe.",
+        "fulfills": [
+          "AC-1",
+          "AC-2"
+        ],
+        "id": "FX-3VT2SR",
+        "implementationNotes": "Initial notes",
+        "implementationPlan": "1. Design\n2. Build\n3. Test",
+        "labels": [
+          "auth",
+          "feature"
+        ],
+        "order": 3,
+        "priority": "high",
+        "spec": "specs/login",
+        "status": "in-progress",
+        "timeSpent": 0,
+        "title": "Implement login flow",
+        "updatedAt": "2026-11-03T13:37:35.144326Z"
+      },
+      "schemaVersion": 1,
+      "baseHash": "bca9ef826ebb195ee7e42624bdf5ed3dbf47b3407a23e3dfd5b1fd545793ff73",
+      "newHash": "366d1dadcc066ee801bdbf17516a097fc7ec3131f758f680502d12e0b8e1c288"
+    },
+    {
+      "id": "v4",
+      "taskId": "FX-3VT2SR",
+      "version": 4,
+      "timestamp": "2026-11-03T13:37:35.32382Z",
+      "author": "cli",
+      "changes": [
+        {
+          "field": "implementationNotes",
+          "oldValue": "Initial notes",
+          "newValue": "Initial notes\n\nImplemented the happy path"
+        }
+      ],
+      "snapshot": {
+        "acceptanceCriteria": [
+          {
+            "completed": true,
+            "text": "User can log in"
+          },
+          {
+            "completed": false,
+            "text": "Bad passwords are rejected"
+          },
+          {
+            "completed": false,
+            "text": "Sessions expire after 24h"
+          }
+        ],
+        "archived": false,
+        "assignee": "@fixture",
+        "createdAt": "2026-11-03T13:37:35.144326Z",
+        "description": "Users sign in with email and password.\n\nSecond paragraph with `code` and a | pipe.",
+        "fulfills": [
+          "AC-1",
+          "AC-2"
+        ],
+        "id": "FX-3VT2SR",
+        "implementationNotes": "Initial notes\n\nImplemented the happy path",
+        "implementationPlan": "1. Design\n2. Build\n3. Test",
+        "labels": [
+          "auth",
+          "feature"
+        ],
+        "order": 3,
+        "priority": "high",
+        "spec": "specs/login",
+        "status": "in-progress",
+        "timeSpent": 0,
+        "title": "Implement login flow",
+        "updatedAt": "2026-11-03T13:37:35.144326Z"
+      },
+      "schemaVersion": 1,
+      "baseHash": "366d1dadcc066ee801bdbf17516a097fc7ec3131f758f680502d12e0b8e1c288",
+      "newHash": "80db80604c2368848f91e0da677bf83c3c53b410eb5a9083c6c66b85c8964bbe"
+    },
+    {
+      "id": "v5",
+      "taskId": "FX-3VT2SR",
+      "version": 5,
+      "timestamp": "2026-11-03T13:37:35.379335Z",
+      "author": "cli",
+      "changes": [
+        {
+          "field": "title",
+          "oldValue": "Implement login flow",
+          "newValue": "Implement login flow (v2)"
+        },
+        {
+          "field": "status",
+          "oldValue": "in-progress",
+          "newValue": "in-review"
+        }
+      ],
+      "snapshot": {
+        "acceptanceCriteria": [
+          {
+            "completed": true,
+            "text": "User can log in"
+          },
+          {
+            "completed": false,
+            "text": "Bad passwords are rejected"
+          },
+          {
+            "completed": false,
+            "text": "Sessions expire after 24h"
+          }
+        ],
+        "archived": false,
+        "assignee": "@fixture",
+        "createdAt": "2026-11-03T13:37:35.144326Z",
+        "description": "Users sign in with email and password.\n\nSecond paragraph with `code` and a | pipe.",
+        "fulfills": [
+          "AC-1",
+          "AC-2"
+        ],
+        "id": "FX-3VT2SR",
+        "implementationNotes": "Initial notes\n\nImplemented the happy path",
+        "implementationPlan": "1. Design\n2. Build\n3. Test",
+        "labels": [
+          "auth",
+          "feature"
+        ],
+        "order": 3,
+        "priority": "high",
+        "spec": "specs/login",
+        "status": "in-review",
+        "timeSpent": 0,
+        "title": "Implement login flow (v2)",
+        "updatedAt": "2026-11-03T13:37:35.144326Z"
+      },
+      "schemaVersion": 1,
+      "baseHash": "80db80604c2368848f91e0da677bf83c3c53b410eb5a9083c6c66b85c8964bbe",
+      "newHash": "94ea911d1b5627ade0007bec88638850c68876e615b04859326183d06336c9d7"
+    },
+    {
+      "id": "v6",
+      "taskId": "FX-3VT2SR",
+      "version": 6,
+      "timestamp": "2026-11-03T13:37:35.441284Z",
+      "author": "cli",
+      "changes": [
+        {
+          "field": "acceptanceCriteria",
+          "oldValue": [
+            {
+              "completed": true,
+              "text": "User can log in"
+            },
+            {
+              "completed": false,
+              "text": "Bad passwords are rejected"
+            },
+            {
+              "completed": false,
+              "text": "Sessions expire after 24h"
+            }
+          ],
+          "newValue": [
+            {
+              "completed": true,
+              "text": "User can log in"
+            },
+            {
+              "completed": true,
+              "text": "Bad passwords are rejected"
+            },
+            {
+              "completed": false,
+              "text": "Sessions expire after 24h"
+            }
+          ]
+        }
+      ],
+      "snapshot": {
+        "acceptanceCriteria": [
+          {
+            "completed": true,
+            "text": "User can log in"
+          },
+          {
+            "completed": true,
+            "text": "Bad passwords are rejected"
+          },
+          {
+            "completed": false,
+            "text": "Sessions expire after 24h"
+          }
+        ],
+        "archived": false,
+        "assignee": "@fixture",
+        "createdAt": "2026-11-03T13:37:35.144326Z",
+        "description": "Users sign in with email and password.\n\nSecond paragraph with `code` and a | pipe.",
+        "fulfills": [
+          "AC-1",
+          "AC-2"
+        ],
+        "id": "FX-3VT2SR",
+        "implementationNotes": "Initial notes\n\nImplemented the happy path",
+        "implementationPlan": "1. Design\n2. Build\n3. Test",
+        "labels": [
+          "auth",
+          "feature"
+        ],
+        "order": 3,
+        "priority": "high",
+        "spec": "specs/login",
+        "status": "in-review",
+        "timeSpent": 0,
+        "title": "Implement login flow (v2)",
+        "updatedAt": "2026-11-03T13:37:35.144326Z"
+      },
+      "schemaVersion": 1,
+      "baseHash": "94ea911d1b5627ade0007bec88638850c68876e615b04859326183d06336c9d7",
+      "newHash": "52dc05de128948799093b3bd6e236278a2df3e6826bdd5d76c425facdc1dea40"
+    },
+    {
+      "id": "v7",
+      "taskId": "FX-3VT2SR",
+      "version": 7,
+      "timestamp": "2026-11-03T13:37:35.492676Z",
+      "author": "cli",
+      "changes": [
+        {
+          "field": "labels",
+          "oldValue": [
+            "auth",
+            "feature"
+          ],
+          "newValue": [
+            "auth",
+            "feature",
+            "shipped"
+          ]
+        },
+        {
+          "field": "acceptanceCriteria",
+          "oldValue": [
+            {
+              "completed": true,
+              "text": "User can log in"
+            },
+            {
+              "completed": true,
+              "text": "Bad passwords are rejected"
+            },
+            {
+              "completed": false,
+              "text": "Sessions expire after 24h"
+            }
+          ],
+          "newValue": [
+            {
+              "completed": true,
+              "text": "User can log in"
+            },
+            {
+              "completed": true,
+              "text": "Bad passwords are rejected"
+            },
+            {
+              "completed": true,
+              "text": "Sessions expire after 24h"
+            }
+          ]
+        }
+      ],
+      "snapshot": {
+        "acceptanceCriteria": [
+          {
+            "completed": true,
+            "text": "User can log in"
+          },
+          {
+            "completed": true,
+            "text": "Bad passwords are rejected"
+          },
+          {
+            "completed": true,
+            "text": "Sessions expire after 24h"
+          }
+        ],
+        "archived": false,
+        "assignee": "@fixture",
+        "createdAt": "2026-11-03T13:37:35.144326Z",
+        "description": "Users sign in with email and password.\n\nSecond paragraph with `code` and a | pipe.",
+        "fulfills": [
+          "AC-1",
+          "AC-2"
+        ],
+        "id": "FX-3VT2SR",
+        "implementationNotes": "Initial notes\n\nImplemented the happy path",
+        "implementationPlan": "1. Design\n2. Build\n3. Test",
+        "labels": [
+          "auth",
+          "feature",
+          "shipped"
+        ],
+        "order": 3,
+        "priority": "high",
+        "spec": "specs/login",
+        "status": "in-review",
+        "timeSpent": 0,
+        "title": "Implement login flow (v2)",
+        "updatedAt": "2026-11-03T13:37:35.144326Z"
+      },
+      "schemaVersion": 1,
+      "baseHash": "52dc05de128948799093b3bd6e236278a2df3e6826bdd5d76c425facdc1dea40",
+      "newHash": "77d9a97119f95f24609a52194dfe36de15284202785e13f04dc123d198a8aae4"
+    },
+    {
+      "id": "v8",
+      "taskId": "FX-3VT2SR",
+      "version": 8,
+      "timestamp": "2026-11-03T13:37:35.549505Z",
+      "author": "cli",
+      "changes": [
+        {
+          "field": "status",
+          "oldValue": "in-review",
+          "newValue": "done"
+        },
+        {
+          "field": "completedAt",
+          "oldValue": null,
+          "newValue": "2026-11-03T13:37:35.549505Z"
+        }
+      ],
+      "snapshot": {
+        "acceptanceCriteria": [
+          {
+            "completed": true,
+            "text": "User can log in"
+          },
+          {
+            "completed": true,
+            "text": "Bad passwords are rejected"
+          },
+          {
+            "completed": true,
+            "text": "Sessions expire after 24h"
+          }
+        ],
+        "archived": false,
+        "assignee": "@fixture",
+        "completedAt": "2026-11-03T13:37:35.549505Z",
+        "createdAt": "2026-11-03T13:37:35.144326Z",
+        "description": "Users sign in with email and password.\n\nSecond paragraph with `code` and a | pipe.",
+        "fulfills": [
+          "AC-1",
+          "AC-2"
+        ],
+        "id": "FX-3VT2SR",
+        "implementationNotes": "Initial notes\n\nImplemented the happy path",
+        "implementationPlan": "1. Design\n2. Build\n3. Test",
+        "labels": [
+          "auth",
+          "feature",
+          "shipped"
+        ],
+        "order": 3,
+        "priority": "high",
+        "spec": "specs/login",
+        "status": "done",
+        "timeSpent": 0,
+        "title": "Implement login flow (v2)",
+        "updatedAt": "2026-11-03T13:37:35.144326Z"
+      },
+      "schemaVersion": 1,
+      "baseHash": "77d9a97119f95f24609a52194dfe36de15284202785e13f04dc123d198a8aae4",
+      "newHash": "ec66b80ee3f34cdd09c5131c2d096020b22de3e795eba8dd48deda1cce2a1da7"
+    },
+    {
+      "id": "v9",
+      "taskId": "FX-3VT2SR",
+      "version": 9,
+      "timestamp": "2026-11-03T13:37:37.26873Z",
+      "author": "cli",
+      "changes": [
+        {
+          "field": "timeSpent",
+          "oldValue": null,
+          "newValue": 5400
+        }
+      ],
+      "snapshot": {
+        "acceptanceCriteria": [
+          {
+            "completed": true,
+            "text": "User can log in"
+          },
+          {
+            "completed": true,
+            "text": "Bad passwords are rejected"
+          },
+          {
+            "completed": true,
+            "text": "Sessions expire after 24h"
+          }
+        ],
+        "archived": false,
+        "assignee": "@fixture",
+        "completedAt": "2026-11-03T13:37:35.549505Z",
+        "createdAt": "2026-11-03T13:37:35.144326Z",
+        "description": "Users sign in with email and password.\n\nSecond paragraph with `code` and a | pipe.",
+        "fulfills": [
+          "AC-1",
+          "AC-2"
+        ],
+        "id": "FX-3VT2SR",
+        "implementationNotes": "Initial notes\n\nImplemented the happy path",
+        "implementationPlan": "1. Design\n2. Build\n3. Test",
+        "labels": [
+          "auth",
+          "feature",
+          "shipped"
+        ],
+        "order": 3,
+        "priority": "high",
+        "spec": "specs/login",
+        "status": "done",
+        "timeSpent": 5400,
+        "title": "Implement login flow (v2)",
+        "updatedAt": "2026-11-03T13:37:35.144326Z"
+      },
+      "schemaVersion": 1,
+      "baseHash": "ec66b80ee3f34cdd09c5131c2d096020b22de3e795eba8dd48deda1cce2a1da7",
+      "newHash": "f697d98dbc53e70bf89c21dc1d333142f28b6fdf86c994714885fa1c74ffee4c"
+    },
+    {
+      "id": "v10",
+      "taskId": "FX-3VT2SR",
+      "version": 10,
+      "timestamp": "2026-11-03T13:37:37.363533Z",
+      "author": "cli",
+      "changes": [
+        {
+          "field": "timeSpent",
+          "oldValue": 5400,
+          "newValue": 8100
+        }
+      ],
+      "snapshot": {
+        "acceptanceCriteria": [
+          {
+            "completed": true,
+            "text": "User can log in"
+          },
+          {
+            "completed": true,
+            "text": "Bad passwords are rejected"
+          },
+          {
+            "completed": true,
+            "text": "Sessions expire after 24h"
+          }
+        ],
+        "archived": false,
+        "assignee": "@fixture",
+        "completedAt": "2026-11-03T13:37:35.549505Z",
+        "createdAt": "2026-11-03T13:37:35.144326Z",
+        "description": "Users sign in with email and password.\n\nSecond paragraph with `code` and a | pipe.",
+        "fulfills": [
+          "AC-1",
+          "AC-2"
+        ],
+        "id": "FX-3VT2SR",
+        "implementationNotes": "Initial notes\n\nImplemented the happy path",
+        "implementationPlan": "1. Design\n2. Build\n3. Test",
+        "labels": [
+          "auth",
+          "feature",
+          "shipped"
+        ],
+        "order": 3,
+        "priority": "high",
+        "spec": "specs/login",
+        "status": "done",
+        "timeSpent": 8100,
+        "title": "Implement login flow (v2)",
+        "updatedAt": "2026-11-03T13:37:35.144326Z"
+      },
+      "schemaVersion": 1,
+      "baseHash": "f697d98dbc53e70bf89c21dc1d333142f28b6fdf86c994714885fa1c74ffee4c",
+      "newHash": "1a9c159b26bb5ec63b609df11424400e656e7b2ef6979ccd11e6e21337a293c1"
+    }
+  ]
+}

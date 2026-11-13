@@ -1,4 +1,5 @@
 ---
+id: doc-202ecc6a0efc26eb247c19f3d1e2e32b
 title: UI Pattern
 createdAt: '2025-12-29T07:05:40.711Z'
 updatedAt: '2025-12-29T08:14:07.599Z'

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { SidebarProvider, SidebarInset, SidebarTrigger } from "../ui/sidebar";
+import { SidebarProvider, SidebarInset, SidebarTrigger } from "../ui/knowns/blocks/sidebar/sidebar";
 import { AppSidebar } from "../organisms/AppSidebar";
 
 interface MainLayoutProps {
@@ -10,7 +10,7 @@ interface MainLayoutProps {
 
 export function MainLayout({ children, currentPage = "dashboard", onSearchClick = () => {} }: MainLayoutProps) {
 	return (
-		<SidebarProvider>
+		<SidebarProvider className="h-dvh overflow-hidden">
 			<AppSidebar
 				currentPage={currentPage}
 				onSearchClick={onSearchClick}
@@ -18,7 +18,7 @@ export function MainLayout({ children, currentPage = "dashboard", onSearchClick 
 				isDark={false}
 				onThemeToggle={() => {}}
 			/>
-			<SidebarInset>
+			<SidebarInset className="overflow-hidden">
 				<header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
 					<SidebarTrigger className="-ml-1" />
 				</header>

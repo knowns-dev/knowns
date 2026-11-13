@@ -28,7 +28,7 @@ knowns [options] [command]
 - [`knowns doc`](knowns_doc.md) — Manage documentation
 - [`knowns doctor`](knowns_doctor.md) — Diagnose project and local integration health
 - [`knowns eval`](knowns_eval.md) — Evaluate deterministic quality gates
-- [`knowns import`](knowns_import.md) — Manage imported Knowns packages
+- [`knowns import`](knowns_import.md) — Removed (imported content stays readable)
 - [`knowns init`](knowns_init.md) — Initialize a new Knowns project
 - [`knowns lsp`](knowns_lsp.md) — Manage LSP language servers
 - [`knowns mcp`](knowns_mcp.md) — Start the MCP (Model Context Protocol) server
@@ -45,6 +45,7 @@ knowns [options] [command]
 - [`knowns settings`](knowns_settings.md) — Open interactive project settings
 - [`knowns setup`](knowns_setup.md) — Configure AI tool integrations
 - [`knowns status`](knowns_status.md) — Show project readiness summary
+- [`knowns store`](knowns_store.md) — Keep project knowledge in a shared Git store instead of the repository
 - [`knowns sync`](knowns_sync.md) — Sync project from config.json (skills, instructions, model, search index)
 - [`knowns task`](knowns_task.md) — Manage tasks
 - [`knowns template`](knowns_template.md) — Manage code generation templates

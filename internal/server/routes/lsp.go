@@ -4,7 +4,6 @@ package routes
 import (
 	"errors"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -35,7 +34,7 @@ func (lr *LSPRoutes) daemonClient(r *http.Request) (*lspdaemon.Client, bool, err
 	if store == nil || lspdaemon.DisabledByEnv() {
 		return nil, false, nil
 	}
-	client, err := lspdaemon.EnsureClient(r.Context(), filepath.Dir(store.Root))
+	client, err := lspdaemon.EnsureClient(r.Context(), store.ProjectRoot)
 	if err != nil {
 		return nil, true, err
 	}

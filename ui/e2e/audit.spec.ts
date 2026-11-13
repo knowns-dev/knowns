@@ -63,11 +63,11 @@ test.describe("Audit Trail", () => {
 
 		await test.step("Either shows events or empty state", async () => {
 			const emptyState = page.getByText("No audit events found.");
-			const eventRows = page.locator(".space-y-1 > div").first();
+			const eventRows = page.locator("[data-audit-event]").first();
 			// Wait for loading to finish
 			await page.waitForTimeout(2000);
-			const isEmptyVisible = await emptyState.isVisible({ timeout: 3000 }).catch(() => false);
-			const hasEvents = await eventRows.isVisible({ timeout: 3000 }).catch(() => false);
+			const isEmptyVisible = await emptyState.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false);
+			const hasEvents = await eventRows.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false);
 			expect(isEmptyVisible || hasEvents).toBeTruthy();
 		});
 	});
@@ -90,11 +90,11 @@ test.describe("Audit Trail", () => {
 			// Wait for loading to complete
 			await page.waitForTimeout(2000);
 			const emptyState = page.getByText("No audit events found.");
-			const isEmpty = await emptyState.isVisible({ timeout: 2000 }).catch(() => false);
+			const isEmpty = await emptyState.waitFor({ state: "visible", timeout: 2000 }).then(() => true).catch(() => false);
 			if (isEmpty) {
 				// Refresh button is available
 				const refreshBtn = page.getByRole("button", { name: /Refresh audit data/ });
-				if (await refreshBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+				if (await refreshBtn.waitFor({ state: "visible", timeout: 2000 }).then(() => true).catch(() => false)) {
 					await expect(refreshBtn).toBeEnabled();
 					await refreshBtn.click();
 					await page.waitForTimeout(2000);
@@ -143,37 +143,227 @@ test.describe("Audit Trail", () => {
 			const emptyState = page.getByText("No audit data available.");
 			// The rework renamed the headline metric to "Calls in range".
 			const rangeSummary = page.getByRole("region", { name: "Range summary" });
-			const isEmpty = await emptyState.isVisible({ timeout: 3000 }).catch(() => false);
-			const hasStats = await rangeSummary.isVisible({ timeout: 3000 }).catch(() => false);
+			const isEmpty = await emptyState.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false);
+			const hasStats = await rangeSummary.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false);
 			expect(isEmpty || hasStats).toBeTruthy();
 		});
 	});
 
-	test("event rows show expandable details", async ({ page }) => {
-		await test.step("Ensure events exist", async () => {
-			server.cli('task create "Detail Check Task" -d "For verifying event details"');
-		});
+	test("statistics shows the trend, what needs attention and opens Recent Activity from them", async ({ page }) => {
+		// One real call so the all-time totals are not empty; the range analytics and the failing calls are fixed below.
+		server.mcp("tasks", { action: "list" });
 
-		await test.step("Navigate to audit page", async () => {
-			await page.goto(`${server.baseURL}/audit`);
+		const bucket = (date: string, covered: boolean, success: number, errors: number, denied: number) => ({
+			date,
+			covered,
+			totalCalls: covered ? success + errors + denied : 0,
+			successCount: covered ? success : 0,
+			errorCount: covered ? errors : 0,
+			deniedCount: covered ? denied : 0,
+			needsAttention: covered ? errors + denied : 0,
+			averageDurationMs: covered ? 12 : 0,
+			topToolCalls: 0,
 		});
+		const buckets = [
+			bucket("2026-11-03", false, 0, 0, 0),
+			bucket("2026-11-04", false, 0, 0, 0),
+			bucket("2026-11-05", true, 4, 0, 0),
+			bucket("2026-11-06", true, 9, 2, 1),
+			bucket("2026-11-07", true, 0, 0, 0),
+			bucket("2026-11-08", true, 3, 0, 0),
+		];
+		const failing = [
+			{ timestamp: "2026-11-06T09:00:00Z", toolName: "tasks", action: "get", actionClass: "read", result: "error", durationMs: 5, errorMessage: "task not found" },
+			{ timestamp: "2026-11-06T10:00:00Z", toolName: "tasks", action: "get", actionClass: "read", result: "error", durationMs: 5, errorMessage: "task not found" },
+		];
 
-		await test.step("Wait for events to load", async () => {
-			await page.waitForTimeout(2000);
+		await page.route("**/api/audit/analytics*", async (route) => {
+			await route.fulfill({
+				contentType: "application/json",
+				body: JSON.stringify({
+					totalCalls: 22,
+					byTool: { "tasks.get": 3, "tasks.list": 19 },
+					byActionClass: { read: 22 },
+					byResult: { success: 19, error: 2, denied: 1 },
+					dryRunCount: 0,
+					executeCount: 22,
+					byToolResult: {},
+					timezone: "UTC",
+					rangeStart: "2026-11-03",
+					rangeEnd: "2026-11-08",
+					coverage: { startDate: "2026-11-05", endDate: "2026-11-08", partial: true },
+					dailyBuckets: buckets,
+					tools: [
+						{ tool: "tasks.list", totalCalls: 19, byResult: { success: 19 }, averageDurationMs: 10 },
+						{ tool: "tasks.get", totalCalls: 3, byResult: { error: 2, denied: 1 }, averageDurationMs: 14 },
+					],
+					byProject: {},
+					needsAttention: 3,
+					averageDurationMs: 12,
+				}),
+			});
 		});
-
-		await test.step("Event rows are interactive", async () => {
-			// Check that event row elements exist (contain ts/tool/result)
-			const eventElements = page.locator(".space-y-1 > div");
-			const count = await eventElements.count();
-			if (count > 0) {
-				// First event row should show tool name in font-mono text
-				const firstEvent = eventElements.first();
-				await expect(firstEvent).toBeVisible();
-				// Try clicking the first event to expand (if it has details)
-				await firstEvent.click({ timeout: 2000 }).catch(() => {});
-				await page.waitForTimeout(300);
+		await page.route("**/api/audit/recent*", async (route) => {
+			const url = new URL(route.request().url());
+			if (url.searchParams.get("result") === "error") {
+				await route.fulfill({ contentType: "application/json", body: JSON.stringify({ count: failing.length, events: failing }) });
+			} else if (url.searchParams.get("result") === "denied") {
+				await route.fulfill({ contentType: "application/json", body: JSON.stringify({ count: 0, events: [] }) });
+			} else {
+				await route.continue();
 			}
+		});
+
+		await page.goto(`${server.baseURL}/audit`);
+		await page.getByRole("tab", { name: "Statistics" }).click();
+
+		await test.step("Range summary tiles carry a sparkline each", async () => {
+			const summary = page.getByRole("region", { name: "Range summary" });
+			await expect(summary).toBeVisible();
+			await expect(summary.getByRole("img")).toHaveCount(4);
+			// 11-07 is covered but had no calls: the rate and latency lines skip it instead of breaking.
+			for (const name of [/Success rate per day/, /Average latency per day/]) {
+				const d = await summary.getByRole("img", { name }).locator("path").first().getAttribute("d");
+				expect((d ?? "").match(/M/g)).toHaveLength(1);
+			}
+		});
+
+		await test.step("One chart shows the covered days, and says how many earlier days have no history", async () => {
+			await expect(page.getByRole("heading", { name: "Calls per day" })).toBeVisible();
+			await expect(page.getByRole("img", { name: /MCP calls per day/ })).toBeVisible();
+			await expect(page.getByText("2 earlier days have no retained history.")).toBeVisible();
+		});
+
+		await test.step("The chart does not scroll sideways", async () => {
+			const section = page.getByRole("region", { name: "Calls per day" }).or(page.locator("section[aria-labelledby='audit-trend-heading']"));
+			const overflow = await section.first().evaluate((el) => el.scrollWidth - el.clientWidth);
+			expect(overflow).toBeLessThanOrEqual(1);
+		});
+
+		await test.step("What needs attention lists the failing tool with its common message", async () => {
+			const row = page.getByRole("button", { name: /tasks\.get: 2 errors, 1 denied/ });
+			await expect(row).toBeVisible();
+			await expect(row).toContainText("task not found");
+			await expect(row).toContainText("(2x)");
+		});
+
+		await test.step("The busiest day opens Recent Activity filtered to that day", async () => {
+			const request = page.waitForRequest((req) => req.url().includes("/api/audit/recent") && req.url().includes("from=2026-11-06"));
+			await page.getByRole("button", { name: /Nov 6: 12 calls/ }).click();
+			await request;
+			await expect(page.getByRole("tab", { name: "Recent Activity" })).toHaveAttribute("aria-selected", "true");
+		});
+
+		await test.step("A needs-attention row opens Recent Activity for that tool and result", async () => {
+			await page.getByRole("tab", { name: "Statistics" }).click();
+			const request = page.waitForRequest((req) => req.url().includes("/api/audit/recent") && req.url().includes("result=error") && req.url().includes("tool=tasks"));
+			await page.getByRole("button", { name: /tasks\.get: 2 errors, 1 denied/ }).click();
+			await request;
+			await expect(page.getByRole("tab", { name: "Recent Activity" })).toHaveAttribute("aria-selected", "true");
+		});
+	});
+
+	test("an event opens a detail sheet with its arguments", async ({ page }) => {
+		await test.step("Create an audited MCP call", async () => {
+			server.mcp("tasks", {
+				action: "create",
+				title: "Detail Sheet Task",
+				description: "For verifying event details",
+			});
+		});
+
+		await test.step("Open the newest tasks.create event", async () => {
+			await page.goto(`${server.baseURL}/audit`);
+			const row = page.locator('[data-audit-event="tasks.create"]').first();
+			await expect(row).toBeVisible({ timeout: 10000 });
+			await expect(row.locator("time")).toHaveAttribute("title", /\d/);
+			await row.click();
+		});
+
+		await test.step("The sheet shows facts, arguments and the raw JSON", async () => {
+			const detail = page.getByTestId("audit-event-detail");
+			await expect(detail).toBeVisible();
+			await expect(detail.getByText("Success", { exact: true })).toBeVisible();
+			await expect(detail.getByRole("heading", { name: "Arguments" })).toBeVisible();
+			await expect(detail.getByText("Detail Sheet Task").first()).toBeVisible();
+			await expect(detail.getByRole("heading", { name: "Raw event" })).toBeVisible();
+			await expect(detail.getByText('"toolName"')).toBeVisible();
+		});
+
+		await test.step("Escape closes the sheet", async () => {
+			await page.keyboard.press("Escape");
+			await expect(page.getByTestId("audit-event-detail")).toBeHidden();
+		});
+	});
+
+	test("an event opens its agent session as a trace waterfall", async ({ page }) => {
+		const base = Date.now() - 5 * 60_000;
+		const call = (offsetMs: number, over: Record<string, unknown> = {}) => ({
+			timestamp: new Date(base + offsetMs).toISOString(),
+			toolName: "tasks",
+			action: "get",
+			actionClass: "read",
+			result: "success",
+			durationMs: 40,
+			client: "claude-code",
+			...over,
+		});
+		const events = [
+			call(0, { toolName: "docs", action: "list" }),
+			call(120_000),
+			call(121_000, { result: "error", errorMessage: "task not found", durationMs: 900 }),
+			call(122_500, { action: "delete", actionClass: "delete", result: "denied", errorMessage: "Policy blocks delete" }),
+		].reverse();
+		await page.route("**/api/audit/recent*", async (route) => {
+			await route.fulfill({ contentType: "application/json", body: JSON.stringify({ events, count: events.length }) });
+		});
+
+		await page.goto(`${server.baseURL}/audit`);
+		await page.locator('[data-audit-event="tasks.delete"]').first().click();
+
+		await test.step("View session opens a waterfall of the calls around it, not the earlier burst", async () => {
+			await page.getByTestId("audit-event-detail").getByRole("button", { name: "View session" }).click();
+			const summary = page.getByTestId("audit-session-summary");
+			await expect(summary).toContainText("3 calls");
+			await expect(summary).toContainText("2 need attention");
+			const session = page.getByTestId("audit-session");
+			await expect(session.getByText(/Error: tasks\.get: task not found/).first()).toBeVisible();
+			await expect(session.getByText(/Denied: tasks\.delete/).first()).toBeVisible();
+			await expect(session.getByRole("treeitem", { name: /claude-code.*tasks\.get/ }).first()).toBeVisible();
+		});
+
+		await test.step("It fits the viewport and Escape closes it", async () => {
+			await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+			await page.keyboard.press("Escape");
+			await expect(page.getByTestId("audit-session")).toBeHidden();
+		});
+	});
+
+	test("search and filters narrow the event list", async ({ page }) => {
+		await test.step("Create a read and a write event", async () => {
+			server.mcp("tasks", { action: "list" });
+			server.mcp("tasks", { action: "create", title: "Searchable Audit Task" });
+		});
+
+		await page.goto(`${server.baseURL}/audit`);
+		await expect(page.locator("[data-audit-event]").first()).toBeVisible({ timeout: 10000 });
+
+		await test.step("Search matches arguments", async () => {
+			await page.getByLabel("Search audit events").fill("Searchable Audit Task");
+			const rows = page.locator("[data-audit-event]");
+			await expect(rows.first()).toHaveAttribute("data-audit-event", "tasks.create");
+			await expect(page.getByText(/^\d+ of \d+ events loaded$/)).toBeVisible();
+			await page.getByLabel("Search audit events").fill("no-such-event-anywhere");
+			await expect(page.getByText("No loaded events match this search.")).toBeVisible();
+			await page.getByLabel("Search audit events").fill("");
+		});
+
+		await test.step("The result filter asks the server for errors only", async () => {
+			const request = page.waitForRequest((req) => req.url().includes("/api/audit/recent") && req.url().includes("result=error"));
+			await page.getByLabel("Filter by result").click();
+			await page.getByRole("option", { name: "Error" }).click();
+			await request;
+			await expect(page.locator('[data-audit-event]').first().or(page.getByText("No audit events match these filters."))).toBeVisible();
 		});
 	});
 
@@ -213,7 +403,7 @@ test.describe("Audit Trail", () => {
 		await expect(errorState).toContainText("Audit activity unavailable");
 		await expect(errorState.getByRole("button", { name: "Try again" })).toBeVisible();
 		await expect(
-			page.getByRole("region", { name: "Audit status summary" }).getByText("—"),
+			page.getByRole("region", { name: "Audit status summary" }).getByText("–"),
 		).toHaveCount(3);
 	});
 });

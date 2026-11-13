@@ -8,6 +8,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Locator, Page } from "@playwright/test";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -65,7 +66,7 @@ export interface TestServer {
 	/** Run a CLI command against the test project */
 	cli: (args: string) => string;
 	/** Invoke one MCP tool against the test project. */
-	mcp: (tool: string, args: Record<string, unknown>) => string;
+	mcp: (tool: string, args: Record<string, unknown>, clientName?: string) => string;
 	/** Stop the server and clean up */
 	cleanup: () => void;
 }
@@ -175,7 +176,7 @@ export async function startServer(): Promise<TestServer> {
 		}).trim();
 	};
 
-	const mcp = (tool: string, args: Record<string, unknown>): string => {
+	const mcp = (tool: string, args: Record<string, unknown>, clientName = "knowns-e2e"): string => {
 		const input = [
 			{
 				jsonrpc: "2.0",
@@ -184,7 +185,7 @@ export async function startServer(): Promise<TestServer> {
 				params: {
 					protocolVersion: "2024-11-05",
 					capabilities: {},
-					clientInfo: { name: "knowns-e2e", version: "1.0.0" },
+					clientInfo: { name: clientName, version: "1.0.0" },
 				},
 			},
 			{
@@ -221,6 +222,32 @@ export async function startServer(): Promise<TestServer> {
 	};
 
 	const cleanup = () => {
+		// Each spec gets its own HOME, so each one starts its own runtime daemon and LSP daemon.
+		// Left running they pile up (one pair per spec) until a 6 GB Windows box runs out and
+		// `knowns init` starts failing, so stop both before removing the project.
+		try {
+			execFileSync(BINARY, ["runtime", "stop"], { cwd: projectDir, env: testEnv, stdio: "ignore", timeout: 15_000 });
+		} catch {
+			// no runtime running, or it already stopped
+		}
+		try {
+			if (isWindows) {
+				const dir = projectDir.replace(/'/g, "''");
+				spawnSync(
+					"powershell",
+					[
+						"-NoProfile",
+						"-Command",
+						`Get-CimInstance Win32_Process -Filter "Name='knowns.exe'" | Where-Object { $_.CommandLine -like '*${dir}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
+					],
+					{ stdio: "ignore", timeout: 15_000 },
+				);
+			} else {
+				spawnSync("pkill", ["-f", projectDir], { stdio: "ignore" });
+			}
+		} catch {
+			// best effort
+		}
 		serverProcess.kill("SIGTERM");
 		// Wait for process to fully exit before removing files
 		if (isWindows) {
@@ -274,4 +301,15 @@ function parseCliArgs(input: string): string[] {
 		args.push(current);
 	}
 	return args;
+}
+
+// Locators for the Tasks board (Knowns UI KanbanBoard). A column cell is a group carrying its
+// status id in data-col; a card is a group with aria-roledescription="card" labelled by its title.
+// With swimlanes on there is one cell per status and assignee; these match all of them.
+export function boardColumn(page: Page, status: string): Locator {
+	return page.locator(`[data-kb-cell][data-col="${status}"]`);
+}
+
+export function boardCard(scope: Page | Locator, title: string): Locator {
+	return scope.locator(`[aria-roledescription="card"][aria-label="${title.replace(/"/g, '\\"')}"]`);
 }

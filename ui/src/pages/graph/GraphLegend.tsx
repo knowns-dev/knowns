@@ -1,48 +1,47 @@
-import type { GraphData } from "@/ui/api/client";
-import { Check } from "lucide-react";
+import type { ReactNode } from "react";
 
-import { cn } from "@/ui/lib/utils";
+import type { GraphData } from "@/ui/api/client";
+import { cn, focusRing } from "@/ui/lib/knowns/utils";
 
 import {
-	DECISION_COLOR,
-	DOC_COLOR,
 	isKnowledgeSemanticEdge,
 	KNOWLEDGE_SEMANTIC_EDGE_ORDER,
-	knowledgeSemanticEdgeColors,
 	knowledgeSemanticEdgeFilterKey,
 	knowledgeSemanticEdgeLabels,
-	MEMORY_COLOR,
-	TASK_COLOR,
-	TEMPLATE_COLOR,
 	type FilterState,
 } from "./constants";
+import type { GraphColors } from "./theme";
 
-interface GraphLegendProps {
-	data: GraphData | null;
-	filters: FilterState;
-	onToggleFilter: (key: keyof FilterState) => void;
+export function entityTypeItems(colors: GraphColors) {
+	return [
+		{ key: "tasks" as const, type: "task", label: "Tasks", color: colors.task },
+		{ key: "docs" as const, type: "doc", label: "Docs", color: colors.doc },
+		{ key: "memories" as const, type: "memory", label: "Memories", color: colors.memory },
+		{ key: "decisions" as const, type: "decision", label: "Decisions", color: colors.decision },
+		{ key: "templates" as const, type: "template", label: "Templates", color: colors.template },
+	];
 }
 
-function countKnowledgeNodeTypes(data: GraphData | null) {
-	const counts = { task: 0, doc: 0, memory: 0, decision: 0, template: 0 };
-	if (!data) return counts;
-	for (const node of data.nodes) {
-		if (node.type in counts) counts[node.type as keyof typeof counts] += 1;
+function countNodeTypes(data: GraphData | null) {
+	const counts: Record<string, number> = {};
+	for (const node of data?.nodes ?? []) counts[node.type] = (counts[node.type] ?? 0) + 1;
+	return counts;
+}
+
+function countEdgeTypes(data: GraphData | null) {
+	const counts: Record<string, number> = {};
+	for (const edge of data?.edges ?? []) {
+		if (edge.type === "parent" || edge.type === "spec" || isKnowledgeSemanticEdge(edge.type)) {
+			counts[edge.type] = (counts[edge.type] ?? 0) + 1;
+		}
 	}
 	return counts;
 }
 
-function countKnowledgeEdgeTypes(data: GraphData | null) {
-	const counts: Record<string, number> = { parent: 0, spec: 0 };
-	for (const kind of KNOWLEDGE_SEMANTIC_EDGE_ORDER) counts[kind] = 0;
-	if (!data) return counts;
-	for (const edge of data.edges) {
-		if (edge.type === "parent" || edge.type === "spec") counts[edge.type] = (counts[edge.type] ?? 0) + 1;
-		else if (isKnowledgeSemanticEdge(edge.type)) counts[edge.type] = (counts[edge.type] ?? 0) + 1;
-	}
-	return counts;
-}
-
+/**
+ * One toggle per row. The row itself is the button (aria-pressed), so the whole line is the hit
+ * area on a phone; the check on the right is drawn, not a second control.
+ */
 function FilterRow({
 	active,
 	count,
@@ -54,7 +53,7 @@ function FilterRow({
 	count?: number;
 	label: string;
 	onClick: () => void;
-	marker: React.ReactNode;
+	marker: ReactNode;
 }) {
 	return (
 		<button
@@ -62,82 +61,90 @@ function FilterRow({
 			aria-pressed={active}
 			onClick={onClick}
 			className={cn(
-				"group flex min-h-11 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors duration-150 sm:min-h-10",
-				active ? "text-foreground hover:bg-accent" : "text-muted-foreground hover:bg-accent/70",
+				"flex min-h-8 w-full items-center gap-2.5 rounded-[8px] px-2 text-left text-[13px] transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-muted pointer-coarse:min-h-11",
+				active ? "text-foreground" : "text-muted-foreground",
+				focusRing,
 			)}
 		>
-			<span className={cn("flex w-4 shrink-0 justify-center transition-opacity", active ? "opacity-100" : "opacity-35")}>
-				{marker}
-			</span>
-			<span className="min-w-0 flex-1 truncate">{label}</span>
-			{typeof count === "number" && (
-				<span className="font-mono text-[0.6875rem] tabular-nums text-muted-foreground">{count}</span>
-			)}
 			<span
 				aria-hidden="true"
 				className={cn(
-					"flex h-4 w-4 items-center justify-center rounded-[0.25rem] border",
-					active ? "border-foreground/40 bg-foreground text-background" : "border-border bg-background",
+					"flex w-4 shrink-0 justify-center transition-opacity duration-(--kn-dur-fast) ease-(--kn-ease-out)",
+					!active && "opacity-40",
 				)}
 			>
-				{active && <Check className="h-3 w-3" strokeWidth={2.5} />}
+				{marker}
+			</span>
+			<span className="min-w-0 flex-1 truncate">{label}</span>
+			{typeof count === "number" && <span className="text-[12px] tabular-nums text-muted-foreground">{count}</span>}
+			<span
+				aria-hidden="true"
+				className={cn(
+					"grid size-4 shrink-0 place-items-center rounded-[5px] border transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out)",
+					active
+						? "border-transparent bg-[color:var(--kn-accent,var(--primary))] text-[color:var(--kn-accent-foreground,var(--primary-foreground))]"
+						: "border-border bg-background",
+				)}
+			>
+				{active && (
+					<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-3">
+						<path d="m4 8.5 2.5 2.5L12 5.5" />
+					</svg>
+				)}
 			</span>
 		</button>
 	);
 }
 
-export function GraphLegend({ data, filters, onToggleFilter }: GraphLegendProps) {
-	const nodeCounts = countKnowledgeNodeTypes(data);
-	const edgeCounts = countKnowledgeEdgeTypes(data);
-	const nodeItems = [
-		{ key: "tasks" as const, label: "Tasks", color: TASK_COLOR, count: nodeCounts.task },
-		{ key: "docs" as const, label: "Docs", color: DOC_COLOR, count: nodeCounts.doc },
-		{ key: "memories" as const, label: "Memories", color: MEMORY_COLOR, count: nodeCounts.memory },
-		{ key: "decisions" as const, label: "Decisions", color: DECISION_COLOR, count: nodeCounts.decision },
-		{ key: "templates" as const, label: "Templates", color: TEMPLATE_COLOR, count: nodeCounts.template },
-	];
+function SectionTitle({ id, children }: { id: string; children: ReactNode }) {
+	return (
+		<h3 id={id} className="mb-1 px-2 text-[12px] font-medium text-muted-foreground">
+			{children}
+		</h3>
+	);
+}
+
+interface GraphLegendProps {
+	data: GraphData | null;
+	filters: FilterState;
+	colors: GraphColors;
+	onToggleFilter: (key: keyof FilterState) => void;
+}
+
+/** The body of the Filters popover: entity types, what to show, and relation types. */
+export function GraphLegend({ data, filters, colors, onToggleFilter }: GraphLegendProps) {
+	const nodeCounts = countNodeTypes(data);
+	const edgeCounts = countEdgeTypes(data);
 	const relationItems = [
-		{ key: "edgeParent" as const, label: "Parent", color: "#94a3b8", count: edgeCounts.parent ?? 0, dashed: false },
-		{ key: "edgeSpec" as const, label: "Spec", color: TASK_COLOR, count: edgeCounts.spec ?? 0, dashed: true },
+		{ key: "edgeParent" as const, label: "Parent", color: colors.neutral, count: edgeCounts.parent ?? 0, dashed: false },
+		{ key: "edgeSpec" as const, label: "Spec", color: colors.task, count: edgeCounts.spec ?? 0, dashed: true },
 		...KNOWLEDGE_SEMANTIC_EDGE_ORDER.map((kind) => ({
 			key: knowledgeSemanticEdgeFilterKey(kind),
 			label: knowledgeSemanticEdgeLabels[kind],
-			color: knowledgeSemanticEdgeColors[kind],
+			color: colors.edges[kind],
 			count: edgeCounts[kind] ?? 0,
 			dashed: kind !== "references",
 		})),
 	].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 
 	return (
-		<div className="space-y-4">
+		<div className="flex flex-col gap-3">
 			<section aria-labelledby="graph-entity-filter-heading">
-				<div
-					id="graph-entity-filter-heading"
-					className="mb-1 px-2 text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-muted-foreground"
-				>
-					Entity types
-				</div>
-				<div className="space-y-0.5">
-					{nodeItems.map((item) => (
-						<FilterRow
-							key={item.key}
-							active={filters[item.key]}
-							count={item.count}
-							label={item.label}
-							onClick={() => onToggleFilter(item.key)}
-							marker={<span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />}
-						/>
-					))}
-				</div>
+				<SectionTitle id="graph-entity-filter-heading">Entity types</SectionTitle>
+				{entityTypeItems(colors).map((item) => (
+					<FilterRow
+						key={item.key}
+						active={filters[item.key]}
+						count={nodeCounts[item.type] ?? 0}
+						label={item.label}
+						onClick={() => onToggleFilter(item.key)}
+						marker={<span className="size-2.5 rounded-full" style={{ backgroundColor: item.color }} />}
+					/>
+				))}
 			</section>
 
-			<section aria-labelledby="graph-visibility-filter-heading" className="border-t border-border pt-3">
-				<div
-					id="graph-visibility-filter-heading"
-					className="mb-1 px-2 text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-muted-foreground"
-				>
-					Visibility
-				</div>
+			<section aria-labelledby="graph-visibility-filter-heading" className="border-t border-border/70 pt-3">
+				<SectionTitle id="graph-visibility-filter-heading">Visibility</SectionTitle>
 				<FilterRow
 					active={filters.showEdges}
 					label="Relations"
@@ -148,18 +155,13 @@ export function GraphLegend({ data, filters, onToggleFilter }: GraphLegendProps)
 					active={filters.showIsolated}
 					label="Isolated entities"
 					onClick={() => onToggleFilter("showIsolated")}
-					marker={<span className="h-2 w-2 rounded-full border border-foreground/70" />}
+					marker={<span className="size-2 rounded-full border border-foreground/70" />}
 				/>
 			</section>
 
-			<section aria-labelledby="graph-relation-filter-heading" className="border-t border-border pt-3">
-				<div
-					id="graph-relation-filter-heading"
-					className="mb-1 px-2 text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-muted-foreground"
-				>
-					Relation types
-				</div>
-				<div className="max-h-48 space-y-0.5 overflow-y-auto pr-1">
+			<section aria-labelledby="graph-relation-filter-heading" className="border-t border-border/70 pt-3">
+				<SectionTitle id="graph-relation-filter-heading">Relation types</SectionTitle>
+				<div className="max-h-52 overflow-y-auto">
 					{relationItems.map((item) => (
 						<FilterRow
 							key={item.key}
@@ -167,16 +169,31 @@ export function GraphLegend({ data, filters, onToggleFilter }: GraphLegendProps)
 							count={item.count}
 							label={item.label}
 							onClick={() => onToggleFilter(item.key)}
-							marker={
-								<span
-									className={cn("w-4 border-t-2", item.dashed && "border-dashed")}
-									style={{ borderColor: item.color }}
-								/>
-							}
+							marker={<span className={cn("w-4 border-t-2", item.dashed && "border-dashed")} style={{ borderColor: item.color }} />}
 						/>
 					))}
 				</div>
 			</section>
 		</div>
+	);
+}
+
+/** The colour key over the canvas: which dot is which entity type. Read-only. */
+export function GraphTypeKey({ colors, className }: { colors: GraphColors; className?: string }) {
+	return (
+		<ul
+			aria-label="Entity colours"
+			className={cn(
+				"flex items-center gap-3 rounded-[10px] border border-border/70 bg-background/90 px-3 py-1.5 text-[12px] text-muted-foreground shadow-xs backdrop-blur-sm",
+				className,
+			)}
+		>
+			{entityTypeItems(colors).map((item) => (
+				<li key={item.key} className="flex items-center gap-1.5">
+					<span aria-hidden="true" className="size-2 rounded-full" style={{ backgroundColor: item.color }} />
+					{item.label}
+				</li>
+			))}
+		</ul>
 	);
 }

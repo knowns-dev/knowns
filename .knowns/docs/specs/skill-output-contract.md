@@ -1,4 +1,5 @@
 ---
+id: doc-9fa89bda0082b0803fcdd82eed451ec2
 title: Skill Output Contract
 description: Specification for a consistent output contract across all built-in skills
 createdAt: '2026-03-13T10:07:47.595Z'

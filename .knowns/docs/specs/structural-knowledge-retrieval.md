@@ -1,4 +1,5 @@
 ---
+id: doc-b77ee4ea5b8e1a016315ab6adf2a0c61
 title: Structural Knowledge Retrieval
 description: Draft specification for relation-aware structural retrieval across Knowns entities and graph edges.
 createdAt: '2026-04-22T08:51:27.393Z'

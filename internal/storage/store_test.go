@@ -4,11 +4,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestGlobalRootPathPrefersHOMEOverride(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 
 	got := GlobalRootPath()
 	want := filepath.Join(home, ".knowns")

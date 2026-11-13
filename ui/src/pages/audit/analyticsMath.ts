@@ -1,165 +1,126 @@
-import type { AuditDailyBucket } from "@/ui/api/client";
-
-export type HeatmapActivityLevel = 0 | 1 | 2 | 3 | 4;
-
-export interface CalendarWeek {
-	startDate: string;
-	days: Array<AuditDailyBucket | null>;
-}
-
-export interface MonthLabel {
-	label: string;
-	weekIndex: number;
-}
-
-export interface CalendarLayout {
-	weeks: CalendarWeek[];
-	monthLabels: MonthLabel[];
-}
-
-export interface ChartPoint {
-	x: number;
-	y: number;
-	covered: boolean;
-}
+import type { AuditDailyBucket, AuditEvent, AuditToolStats } from "@/ui/api/client";
+import { errorSummary, toolLabel } from "./auditFormat";
 
 export function hasCoveredAuditDays(buckets: AuditDailyBucket[]): boolean {
 	return buckets.some((bucket) => bucket.covered);
 }
 
-function parseCalendarDate(value: string): Date {
-	const [year = 0, month = 1, day = 1] = value.split("-").map(Number);
-	return new Date(Date.UTC(year, month - 1, day));
+/**
+ * The buckets from the first to the last day the retained log covers, and how many earlier days it does not.
+ * Days after the covered window (none in practice) are dropped too, so the chart never starts with a blank stretch.
+ */
+export function coveredWindow(buckets: AuditDailyBucket[]): { window: AuditDailyBucket[]; earlierUncovered: number } {
+	const first = buckets.findIndex((bucket) => bucket.covered);
+	if (first < 0) return { window: [], earlierUncovered: buckets.length };
+	let last = buckets.length - 1;
+	while (last > first && !buckets[last]?.covered) last -= 1;
+	return { window: buckets.slice(first, last + 1), earlierUncovered: first };
 }
 
-function formatCalendarDate(value: Date): string {
-	return value.toISOString().slice(0, 10);
+export interface TrendPoint {
+	/** First day of the point (a day, or the Monday of a week). */
+	date: string;
+	/** Last day the point stands for (same as `date` for a day). */
+	endDate: string;
+	succeeded: number;
+	attention: number;
+	total: number;
+	days: number;
 }
 
-function addCalendarDays(value: Date, amount: number): Date {
-	const next = new Date(value);
-	next.setUTCDate(next.getUTCDate() + amount);
-	return next;
-}
-
-function quantile(sortedValues: number[], fraction: number): number {
-	const index = Math.max(
-		0,
-		Math.min(sortedValues.length - 1, Math.ceil(sortedValues.length * fraction) - 1),
-	);
-	return sortedValues[index] ?? 0;
-}
-
-export function getActivityThresholds(
-	buckets: AuditDailyBucket[],
-): [number, number, number] {
-	const values = buckets
-		.filter((bucket) => bucket.covered && bucket.totalCalls > 0)
-		.map((bucket) => bucket.totalCalls)
-		.sort((left, right) => left - right);
-
-	if (values.length === 0) return [0, 0, 0];
-
-	return [
-		quantile(values, 0.25),
-		quantile(values, 0.5),
-		quantile(values, 0.75),
-	];
-}
-
-export function getActivityLevel(
-	bucket: AuditDailyBucket,
-	thresholds: [number, number, number],
-): HeatmapActivityLevel {
-	if (!bucket.covered || bucket.totalCalls === 0) return 0;
-
-	let level: HeatmapActivityLevel = 1;
-	if (bucket.totalCalls > thresholds[0]) level = 2;
-	if (bucket.totalCalls > thresholds[1]) level = 3;
-	if (bucket.totalCalls > thresholds[2]) level = 4;
-	return level;
-}
-
-export function buildCalendarLayout(
-	buckets: AuditDailyBucket[],
-	locale = "en-US",
-): CalendarLayout {
-	if (buckets.length === 0) return { weeks: [], monthLabels: [] };
-
-	const byDate = new Map(buckets.map((bucket) => [bucket.date, bucket]));
-	const firstBucket = buckets[0];
-	const lastBucket = buckets[buckets.length - 1];
-	if (!firstBucket || !lastBucket) return { weeks: [], monthLabels: [] };
-	const first = parseCalendarDate(firstBucket.date);
-	const last = parseCalendarDate(lastBucket.date);
-	const gridStart = addCalendarDays(first, -first.getUTCDay());
-	const gridEnd = addCalendarDays(last, 6 - last.getUTCDay());
-	const weeks: CalendarWeek[] = [];
-
-	for (
-		let cursor = gridStart;
-		cursor.getTime() <= gridEnd.getTime();
-		cursor = addCalendarDays(cursor, 7)
-	) {
-		const days = Array.from({ length: 7 }, (_, dayOffset) => {
-			const date = formatCalendarDate(addCalendarDays(cursor, dayOffset));
-			return byDate.get(date) ?? null;
-		});
-		weeks.push({ startDate: formatCalendarDate(cursor), days });
-	}
-
-	const monthLabels: MonthLabel[] = [];
-	let previousLabel = "";
-	for (let weekIndex = 0; weekIndex < weeks.length; weekIndex += 1) {
-		const week = weeks[weekIndex];
-		if (!week) continue;
-		const representative =
-			week.days.find((day) => day !== null)?.date ?? week.startDate;
-		const label = new Intl.DateTimeFormat(locale, {
-			month: "short",
-			timeZone: "UTC",
-		}).format(parseCalendarDate(representative));
-		if (label !== previousLabel) {
-			monthLabels.push({ label, weekIndex });
-			previousLabel = label;
-		}
-	}
-
-	return { weeks, monthLabels };
-}
-
-export function createChartPoints(
-	buckets: AuditDailyBucket[],
-	value: (bucket: AuditDailyBucket) => number,
-	width: number,
-	height: number,
-	domainMax?: number,
-): ChartPoint[] {
-	const maxValue = Math.max(
-		1,
-		domainMax ?? Math.max(...buckets.filter((bucket) => bucket.covered).map(value)),
-	);
-	const lastIndex = Math.max(1, buckets.length - 1);
-
-	return buckets.map((bucket, index) => ({
-		x: (index / lastIndex) * width,
-		y: height - (value(bucket) / maxValue) * height,
-		covered: bucket.covered,
+/** One point per day, or per week when `weekly`. Uncovered days count as nothing. */
+export function toTrendPoints(buckets: AuditDailyBucket[], weekly: boolean): TrendPoint[] {
+	const perDay = buckets.map<TrendPoint>((bucket) => ({
+		date: bucket.date,
+		endDate: bucket.date,
+		succeeded: bucket.successCount,
+		attention: bucket.needsAttention,
+		total: bucket.totalCalls,
+		days: 1,
 	}));
+	if (!weekly) return perDay;
+	const out: TrendPoint[] = [];
+	for (let i = 0; i < perDay.length; i += 7) {
+		const chunk = perDay.slice(i, i + 7);
+		const first = chunk[0];
+		const last = chunk[chunk.length - 1];
+		if (!first || !last) continue;
+		out.push({
+			date: first.date,
+			endDate: last.date,
+			succeeded: chunk.reduce((sum, p) => sum + p.succeeded, 0),
+			attention: chunk.reduce((sum, p) => sum + p.attention, 0),
+			total: chunk.reduce((sum, p) => sum + p.total, 0),
+			days: chunk.length,
+		});
+	}
+	return out;
 }
 
-export function createSegmentedLinePath(points: ChartPoint[]): string {
-	let path = "";
-	let drawing = false;
+/** The days with the most calls, busiest first; ties go to the more recent day. */
+export function busiestDays(buckets: AuditDailyBucket[], count = 5): AuditDailyBucket[] {
+	return buckets
+		.filter((bucket) => bucket.covered && bucket.totalCalls > 0)
+		.sort((a, b) => b.totalCalls - a.totalCalls || b.date.localeCompare(a.date))
+		.slice(0, count);
+}
 
-	for (const point of points) {
-		if (!point.covered) {
-			drawing = false;
-			continue;
-		}
-		path += `${drawing ? " L" : "M"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
-		drawing = true;
+export interface AttentionRow {
+	/** "tasks.create", as the tool list names it. */
+	tool: string;
+	errors: number;
+	denied: number;
+	total: number;
+	/** Which result the row opens Recent Activity on: the larger of the two. */
+	dominant: "error" | "denied";
+	/** The most frequent message among the failing calls that were loaded, if any of them had one. */
+	topMessage?: string;
+	topMessageCount?: number;
+	/** Timestamp (ms) of the latest failing call that was loaded. */
+	lastSeen?: number;
+}
+
+/**
+ * Tools with errors or denials, worst first. The counts come from the range analytics; the most common message and
+ * the last-seen time come from the failing calls that were loaded (the latest ones), so a tool whose failures are all
+ * older than those carries a count but no message.
+ */
+export function attentionRows(tools: AuditToolStats[], failing: AuditEvent[]): AttentionRow[] {
+	const byTool = new Map<string, { messages: Map<string, number>; lastSeen: number }>();
+	for (const event of failing) {
+		const key = toolLabel(event);
+		const entry = byTool.get(key) ?? { messages: new Map<string, number>(), lastSeen: 0 };
+		const message = errorSummary(event);
+		if (message) entry.messages.set(message, (entry.messages.get(message) ?? 0) + 1);
+		const at = Date.parse(event.timestamp);
+		if (Number.isFinite(at)) entry.lastSeen = Math.max(entry.lastSeen, at);
+		byTool.set(key, entry);
 	}
 
-	return path.trim();
+	const rows: AttentionRow[] = [];
+	for (const tool of tools) {
+		const errors = tool.byResult.error ?? 0;
+		const denied = tool.byResult.denied ?? 0;
+		if (errors + denied === 0) continue;
+		const seen = byTool.get(tool.tool);
+		let topMessage: string | undefined;
+		let topMessageCount = 0;
+		for (const [message, count] of seen?.messages ?? []) {
+			if (count > topMessageCount) {
+				topMessage = message;
+				topMessageCount = count;
+			}
+		}
+		rows.push({
+			tool: tool.tool,
+			errors,
+			denied,
+			total: tool.totalCalls,
+			dominant: errors >= denied ? "error" : "denied",
+			topMessage,
+			topMessageCount: topMessage ? topMessageCount : undefined,
+			lastSeen: seen?.lastSeen || undefined,
+		});
+	}
+	return rows.sort((a, b) => b.errors + b.denied - (a.errors + a.denied) || a.tool.localeCompare(b.tool));
 }

@@ -1,0 +1,20 @@
+{
+  "doc:doc-54b23691f251e859d66cfe92dd04917a": {
+    "entityType": "doc",
+    "entityId": "doc-54b23691f251e859d66cfe92dd04917a",
+    "canonicalHash": "460b59bb66d2d7f103ab1d26aaeaf7b7b392c988da3811d3df37b6611b0a6464",
+    "revision": 1,
+    "path": "docs/a-doc.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  },
+  "task:BM-H4YXED": {
+    "entityType": "task",
+    "entityId": "BM-H4YXED",
+    "canonicalHash": "f8de578017627e47140af149f92ceb5b005a4da13f54d6913f39d3a31a6715dc",
+    "revision": 1,
+    "path": "tasks/BM-H4YXED.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  }
+}

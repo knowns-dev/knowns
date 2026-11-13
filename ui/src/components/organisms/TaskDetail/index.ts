@@ -1,5 +1,5 @@
 export { TaskDetailSheet } from "./TaskDetailSheet";
-export { TaskHeader } from "./TaskHeader";
+export { TaskTitle } from "./TaskTitle";
 export { TaskDescription } from "./TaskDescription";
 export { TaskAcceptanceCriteria } from "./TaskAcceptanceCriteria";
 export { TaskImplementationSection } from "./TaskImplementationSection";

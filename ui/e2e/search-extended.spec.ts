@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { startServer, type TestServer } from "./helpers";
 
 let server: TestServer;
@@ -17,24 +17,33 @@ test.afterAll(() => {
 	server?.cleanup();
 });
 
+const dialog = (page: Page) => page.getByRole("dialog", { name: "Search", exact: true });
+const input = (page: Page) => dialog(page).getByRole("combobox", { name: "Search commands" });
+const group = (page: Page, name: string) => dialog(page).getByRole("group", { name, exact: true });
+
+/** Go to a page once the app has loaded, then open the menu with the platform shortcut (Ctrl+K, ⌘K on macOS). */
+async function openSearch(page: Page, path = "/kanban") {
+	await page.goto(`${server.baseURL}${path}`);
+	await expect(page.getByRole("button", { name: /^Search\.\.\./ })).toBeVisible();
+	await page.keyboard.press("ControlOrMeta+k");
+	await expect(input(page)).toBeVisible();
+}
+
 test.describe("Search Command Dialog (Cmd+K)", () => {
-	test("opens with Meta+K and shows search input", async ({ page }) => {
-		await test.step("Navigate to kanban", async () => {
-			await page.goto(`${server.baseURL}/kanban`);
-			await page.waitForTimeout(500);
-		});
-
+	test("opens with the platform shortcut and shows search input", async ({ page }) => {
 		await test.step("Open search dialog", async () => {
-			await page.keyboard.press("Meta+k");
-			await page.waitForTimeout(300);
+			await openSearch(page);
 		});
 
-		await test.step("Search dialog and input are visible", async () => {
-			await expect(page.getByPlaceholder("Search tasks and docs...")).toBeVisible();
+		await test.step("Search input is focused", async () => {
+			await expect(input(page)).toBeFocused();
+			await expect(input(page)).toHaveValue("");
 		});
 
-		await test.step("Initial empty state shown", async () => {
-			await expect(page.getByText("Type to search...")).toBeVisible();
+		await test.step("Initial state lists pages and actions", async () => {
+			await expect(group(page, "Pages").getByRole("option", { name: "Dashboard" })).toBeVisible();
+			await expect(group(page, "Actions").getByRole("option", { name: "New task" })).toBeVisible();
+			await expect(group(page, "Tasks")).toHaveCount(0);
 		});
 
 		await test.step("Cleanup", async () => {
@@ -43,18 +52,19 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 	});
 
 	test("opens with Ctrl+K on non-mac", async ({ page }) => {
+		test.skip(process.platform === "darwin", "macOS uses ⌘K");
+
 		await test.step("Navigate to kanban", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
-			await page.waitForTimeout(500);
+			await expect(page.getByRole("button", { name: /^Search\.\.\./ })).toBeVisible();
 		});
 
 		await test.step("Open with Ctrl+K", async () => {
 			await page.keyboard.press("Control+k");
-			await page.waitForTimeout(300);
 		});
 
 		await test.step("Dialog is visible", async () => {
-			await expect(page.getByPlaceholder("Search tasks and docs...")).toBeVisible();
+			await expect(input(page)).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -62,45 +72,29 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 		});
 	});
 
-	test("toggles dialog with Meta+K", async ({ page }) => {
-		await test.step("Navigate to kanban", async () => {
-			await page.goto(`${server.baseURL}/kanban`);
-			await page.waitForTimeout(500);
-		});
-
+	test("toggles dialog with the shortcut", async ({ page }) => {
 		await test.step("Open then close with same shortcut", async () => {
-			await page.keyboard.press("Meta+k");
-			await page.waitForTimeout(300);
-			await expect(page.getByPlaceholder("Search tasks and docs...")).toBeVisible();
-			await page.keyboard.press("Meta+k");
-			await page.waitForTimeout(300);
-			await expect(page.getByPlaceholder("Search tasks and docs...")).not.toBeVisible();
+			await openSearch(page);
+			await page.keyboard.press("ControlOrMeta+k");
+			await expect(dialog(page)).toBeHidden();
 		});
 	});
 
 	test("search finds tasks by title", async ({ page }) => {
-		await test.step("Navigate and open search", async () => {
-			await page.goto(`${server.baseURL}/kanban`);
-			await page.waitForTimeout(500);
-			await page.keyboard.press("Meta+k");
-			await page.waitForTimeout(300);
+		await test.step("Open search", async () => {
+			await openSearch(page);
 		});
 
 		await test.step("Search for 'Auth'", async () => {
-			await page.getByPlaceholder("Search tasks and docs...").fill("Auth");
-			await page.waitForTimeout(600); // debounce 300ms + network
+			await input(page).fill("Auth");
 		});
 
-		await test.step("Task group heading appears", async () => {
-			await expect(page.getByText("Tasks").first()).toBeVisible();
-		});
-
-		await test.step("Matching task result visible", async () => {
-			await expect(page.getByText("Search Auth Module").first()).toBeVisible();
+		await test.step("Matching task result visible in the Tasks group", async () => {
+			await expect(group(page, "Tasks").getByRole("option", { name: /Search Auth Module/ })).toBeVisible();
 		});
 
 		await test.step("Status badge shown on result", async () => {
-			await expect(page.getByText("To Do").first()).toBeVisible();
+			await expect(group(page, "Tasks").getByRole("option", { name: /Search Auth Module/ }).getByText("To Do")).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -109,20 +103,16 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 	});
 
 	test("search finds tasks by description content", async ({ page }) => {
-		await test.step("Navigate and open search", async () => {
-			await page.goto(`${server.baseURL}/kanban`);
-			await page.waitForTimeout(500);
-			await page.keyboard.press("Meta+k");
-			await page.waitForTimeout(300);
+		await test.step("Open search", async () => {
+			await openSearch(page);
 		});
 
 		await test.step("Search for description content", async () => {
-			await page.getByPlaceholder("Search tasks and docs...").fill("refresh tokens");
-			await page.waitForTimeout(600);
+			await input(page).fill("refresh tokens");
 		});
 
 		await test.step("Task with matching description appears", async () => {
-			await expect(page.getByText("Search Auth Module").first()).toBeVisible();
+			await expect(dialog(page).getByRole("option", { name: /Search Auth Module/ })).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -131,25 +121,16 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 	});
 
 	test("search finds docs", async ({ page }) => {
-		await test.step("Navigate and open search", async () => {
-			await page.goto(`${server.baseURL}/kanban`);
-			await page.waitForTimeout(500);
-			await page.keyboard.press("Meta+k");
-			await page.waitForTimeout(300);
+		await test.step("Open search", async () => {
+			await openSearch(page);
 		});
 
 		await test.step("Search for doc", async () => {
-			await page.getByPlaceholder("Search tasks and docs...").fill("API Reference");
-			await page.waitForTimeout(600);
+			await input(page).fill("API Reference");
 		});
 
-		await test.step("Doc result appears or no results", async () => {
-			const docResult = page.getByText("Search API Reference").first();
-			const noResults = page.getByText("No results found.");
-			const hasDoc = await docResult.isVisible({ timeout: 5000 }).catch(() => false);
-			const hasNoResults = await noResults.isVisible({ timeout: 2000 }).catch(() => false);
-			// Docs may not be indexed immediately
-			expect(hasDoc || hasNoResults || true).toBeTruthy();
+		await test.step("Doc result appears in the Docs group", async () => {
+			await expect(group(page, "Docs").getByRole("option", { name: /Search API Reference/ })).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -157,22 +138,18 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 		});
 	});
 
-	test("search shows both tasks and docs with separator", async ({ page }) => {
-		await test.step("Navigate and open search", async () => {
-			await page.goto(`${server.baseURL}/kanban`);
-			await page.waitForTimeout(500);
-			await page.keyboard.press("Meta+k");
-			await page.waitForTimeout(300);
+	test("search shows both tasks and docs in separate groups", async ({ page }) => {
+		await test.step("Open search", async () => {
+			await openSearch(page);
 		});
 
 		await test.step("Search for term matching both", async () => {
-			await page.getByPlaceholder("Search tasks and docs...").fill("Search");
-			await page.waitForTimeout(600);
+			await input(page).fill("Search");
 		});
 
 		await test.step("Both groups appear", async () => {
-			await expect(page.getByText("Tasks").first()).toBeVisible();
-			await expect(page.getByText("Documentation").first()).toBeVisible();
+			await expect(group(page, "Tasks").getByRole("option").first()).toBeVisible();
+			await expect(group(page, "Docs").getByRole("option").first()).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -181,20 +158,17 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 	});
 
 	test("empty search after typing shows no results", async ({ page }) => {
-		await test.step("Navigate and open search", async () => {
-			await page.goto(`${server.baseURL}/kanban`);
-			await page.waitForTimeout(500);
-			await page.keyboard.press("Meta+k");
-			await page.waitForTimeout(300);
+		await test.step("Open search", async () => {
+			await openSearch(page);
 		});
 
 		await test.step("Search for non-existent term", async () => {
-			await page.getByPlaceholder("Search tasks and docs...").fill("zzznonexistenttask999");
-			await page.waitForTimeout(600);
+			await input(page).fill("zzznonexistenttask999");
 		});
 
 		await test.step("No results message shown", async () => {
-			await expect(page.getByText("No results found.")).toBeVisible();
+			await expect(dialog(page).getByText("No tasks, docs or pages match “zzznonexistenttask999”")).toBeVisible();
+			await expect(dialog(page).getByRole("option")).toHaveCount(0);
 		});
 
 		await test.step("Cleanup", async () => {
@@ -202,27 +176,20 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 		});
 	});
 
-	test("clearing search input resets to empty state", async ({ page }) => {
-		await test.step("Navigate and open search", async () => {
-			await page.goto(`${server.baseURL}/kanban`);
-			await page.waitForTimeout(500);
-			await page.keyboard.press("Meta+k");
-			await page.waitForTimeout(300);
+	test("clearing search input resets to the initial list", async ({ page }) => {
+		await test.step("Open search", async () => {
+			await openSearch(page);
 		});
 
 		await test.step("Type then clear search", async () => {
-			await page.getByPlaceholder("Search tasks and docs...").fill("Auth");
-			await page.waitForTimeout(600);
-			// Result may or may not appear depending on indexing
-			await page.getByPlaceholder("Search tasks and docs...").fill("");
-			await page.waitForTimeout(300);
+			await input(page).fill("Auth");
+			await expect(group(page, "Tasks").getByRole("option", { name: /Search Auth Module/ })).toBeVisible();
+			await input(page).fill("");
 		});
 
-		await test.step("Empty state returns", async () => {
-			const typeToSearch = page.getByText("Type to search...");
-			const isEmpty = await typeToSearch.isVisible({ timeout: 3000 }).catch(() => false);
-			// Dialog may show empty state or just be empty
-			expect(isEmpty || true).toBeTruthy();
+		await test.step("Initial list returns", async () => {
+			await expect(group(page, "Pages").getByRole("option", { name: "Dashboard" })).toBeVisible();
+			await expect(group(page, "Tasks")).toHaveCount(0);
 		});
 
 		await test.step("Cleanup", async () => {
@@ -230,93 +197,88 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 		});
 	});
 
-	test("clicking task result navigates to kanban", async ({ page }) => {
-		await test.step("Navigate and open search", async () => {
-			await page.goto(`${server.baseURL}/kanban`);
-			await page.waitForTimeout(500);
-			await page.keyboard.press("Meta+k");
-			await page.waitForTimeout(300);
+	test("clicking task result opens the task", async ({ page }) => {
+		await test.step("Open search", async () => {
+			await openSearch(page);
 		});
 
 		await test.step("Search and click result", async () => {
-			await page.getByPlaceholder("Search tasks and docs...").fill("Login UI");
-			await page.waitForTimeout(600);
-			const resultItem = page.locator('[role="option"]').filter({ hasText: "Search Login UI" }).first();
+			await input(page).fill("Login UI");
+			const resultItem = dialog(page).getByRole("option", { name: /Search Login UI/ }).first();
 			await expect(resultItem).toBeVisible();
 			await resultItem.click();
 		});
 
 		await test.step("Dialog closes and task detail opens", async () => {
-			await expect(page.getByPlaceholder("Search tasks and docs...")).not.toBeVisible();
+			await expect(dialog(page)).toBeHidden();
 			await expect(page.getByRole("heading", { name: "Search Login UI", exact: true })).toBeVisible();
 		});
 	});
 
 	test("clicking doc result navigates to docs", async ({ page }) => {
-		await test.step("Navigate and open search", async () => {
-			await page.goto(`${server.baseURL}/kanban`);
-			await page.waitForTimeout(500);
-			await page.keyboard.press("Meta+k");
-			await page.waitForTimeout(300);
+		await test.step("Open search", async () => {
+			await openSearch(page);
 		});
 
 		await test.step("Search and click doc result", async () => {
-			await page.getByPlaceholder("Search tasks and docs...").fill("Auth Guide");
-			await page.waitForTimeout(600);
-			const resultItem = page.locator('[role="option"]').filter({ hasText: "Auth Guide" }).first();
-			const hasResult = await resultItem.isVisible({ timeout: 5000 }).catch(() => false);
-			if (hasResult) {
-				await resultItem.click();
-				await expect(page).toHaveURL(/\/docs/);
-			} else {
-				// Docs may not be indexed — skip navigation check
-				await page.keyboard.press("Escape");
-			}
+			await input(page).fill("Auth Guide");
+			const resultItem = group(page, "Docs").getByRole("option", { name: /Search Auth Guide/ }).first();
+			await expect(resultItem).toBeVisible();
+			await resultItem.click();
+		});
+
+		await test.step("Docs page opens", async () => {
+			await expect(dialog(page)).toBeHidden();
+			await expect(page).toHaveURL(/\/docs/);
+		});
+	});
+
+	test("picked results show under Recent next time", async ({ page }) => {
+		await test.step("Pick a task", async () => {
+			await openSearch(page);
+			await input(page).fill("API Integration");
+			await dialog(page).getByRole("option", { name: /Search API Integration/ }).first().click();
+			await expect(dialog(page)).toBeHidden();
+		});
+
+		await test.step("Reopen with an empty query", async () => {
+			await page.keyboard.press("Escape");
+			await page.keyboard.press("ControlOrMeta+k");
+			await expect(input(page)).toBeVisible();
+			await expect(group(page, "Recent").getByRole("option", { name: /Search API Integration/ })).toBeVisible();
+		});
+
+		await test.step("Cleanup", async () => {
+			await page.keyboard.press("Escape");
 		});
 	});
 
 	test("dialog closes on Escape", async ({ page }) => {
-		await test.step("Navigate and open search", async () => {
-			await page.goto(`${server.baseURL}/kanban`);
-			await page.waitForTimeout(500);
-			await page.keyboard.press("Meta+k");
-			await page.waitForTimeout(300);
+		await test.step("Open search", async () => {
+			await openSearch(page);
 		});
 
 		await test.step("Type a search", async () => {
-			await page.getByPlaceholder("Search tasks and docs...").fill("test");
-			await page.waitForTimeout(600);
+			await input(page).fill("test");
 		});
 
 		await test.step("Press Escape to close", async () => {
 			await page.keyboard.press("Escape");
-			await page.waitForTimeout(300);
 		});
 
 		await test.step("Dialog is gone", async () => {
-			await expect(page.getByPlaceholder("Search tasks and docs...")).not.toBeVisible();
+			await expect(dialog(page)).toBeHidden();
 		});
 	});
 
 	test("search from dashboard page", async ({ page }) => {
-		await test.step("Navigate to dashboard", async () => {
-			await page.goto(server.baseURL);
-			await page.waitForTimeout(500);
-		});
-
 		await test.step("Open search from dashboard", async () => {
-			await page.keyboard.press("Meta+k");
-			await page.waitForTimeout(300);
-		});
-
-		await test.step("Dialog visible", async () => {
-			await expect(page.getByPlaceholder("Search tasks and docs...")).toBeVisible();
+			await openSearch(page, "/");
 		});
 
 		await test.step("Search works", async () => {
-			await page.getByPlaceholder("Search tasks and docs...").fill("Auth");
-			await page.waitForTimeout(600);
-			await expect(page.getByText("Search Auth Module").first()).toBeVisible();
+			await input(page).fill("Auth");
+			await expect(dialog(page).getByRole("option", { name: /Search Auth Module/ })).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -329,17 +291,13 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 			server.cli('task create "Search Fresh Task" -d "Created during test"');
 		});
 
-		await test.step("Navigate and open search", async () => {
-			await page.goto(`${server.baseURL}/kanban`);
-			await page.waitForTimeout(500);
-			await page.keyboard.press("Meta+k");
-			await page.waitForTimeout(300);
+		await test.step("Open search", async () => {
+			await openSearch(page);
 		});
 
 		await test.step("Fresh task appears in results", async () => {
-			await page.getByPlaceholder("Search tasks and docs...").fill("Fresh Task");
-			await page.waitForTimeout(600);
-			await expect(page.getByText("Search Fresh Task").first()).toBeVisible();
+			await input(page).fill("Fresh Task");
+			await expect(dialog(page).getByRole("option", { name: /Search Fresh Task/ })).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -348,21 +306,17 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 	});
 
 	test("task ID shown in search result", async ({ page }) => {
-		await test.step("Navigate and open search", async () => {
-			await page.goto(`${server.baseURL}/kanban`);
-			await page.waitForTimeout(500);
-			await page.keyboard.press("Meta+k");
-			await page.waitForTimeout(300);
+		await test.step("Open search", async () => {
+			await openSearch(page);
 		});
 
-		await test.step("Search and check ID format", async () => {
-			await page.getByPlaceholder("Search tasks and docs...").fill("API Integration");
-			await page.waitForTimeout(600);
+		await test.step("Search", async () => {
+			await input(page).fill("API Integration");
 		});
 
 		await test.step("Task ID visible in result (e.g., #<id>)", async () => {
-			// Results show "#{id}" in font-mono text
-			await expect(page.locator('[role="option"] .font-mono').first()).toBeVisible();
+			const option = group(page, "Tasks").getByRole("option", { name: /Search API Integration/ });
+			await expect(option.getByText(/^#[a-z0-9.-]+$/i)).toBeVisible();
 		});
 
 		await test.step("Cleanup", async () => {
@@ -377,23 +331,18 @@ test.describe("Search Command Dialog (Cmd+K)", () => {
 			}
 		});
 
-		await test.step("Navigate and open search", async () => {
-			await page.goto(`${server.baseURL}/kanban`);
-			await page.waitForTimeout(500);
-			await page.keyboard.press("Meta+k");
-			await page.waitForTimeout(300);
+		await test.step("Open search", async () => {
+			await openSearch(page);
 		});
 
 		await test.step("Search for limit keyword", async () => {
-			await page.getByPlaceholder("Search tasks and docs...").fill("Search Limit");
-			await page.waitForTimeout(600);
+			await input(page).fill("Search Limit");
 		});
 
-		await test.step("Result count is capped (not all 12 shown)", async () => {
-			const options = page.locator('[role="option"]');
-			const count = await options.count();
-			// Should be capped at some limit, not all 12. May be 0 if indexing is slow.
-			expect(count).toBeLessThanOrEqual(12);
+		await test.step("Task results are capped at 8", async () => {
+			const tasks = group(page, "Tasks").getByRole("option");
+			await expect(tasks.first()).toBeVisible();
+			await expect(tasks).toHaveCount(8);
 		});
 
 		await test.step("Cleanup", async () => {

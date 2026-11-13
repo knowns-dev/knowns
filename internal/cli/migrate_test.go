@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +25,7 @@ func newMigrateTestCmd(write bool) *cobra.Command {
 // function directly, the same pattern TestRunDecisionMigrationCommands uses.
 func setupUnmigratedCLIProject(t *testing.T) string {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	knownsDir := filepath.Join(projectRoot, ".knowns")
 	if err := os.MkdirAll(knownsDir, 0o755); err != nil {
@@ -138,7 +139,7 @@ func TestRunMigratePreviewNamesTheThreeFollowUpSteps(t *testing.T) {
 // therefore do not apply, and advising a reindex when nothing changed is
 // simply wrong. The steps must appear only when there are real field changes.
 func TestRunMigrateOnAlreadyOllamaProjectOmitsFollowUpSteps(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	knownsDir := filepath.Join(projectRoot, ".knowns")
 	if err := os.MkdirAll(knownsDir, 0o755); err != nil {
@@ -257,7 +258,7 @@ func TestRunMigrateWriteTwiceIsNoOp(t *testing.T) {
 // Migration's output must depend only on the project file it reads.
 func TestRunMigrateWriteIgnoresMachineDefaultEmbeddingModel(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testutil.SetHome(t, home)
 	knownsHome := filepath.Join(home, ".knowns")
 	if err := os.MkdirAll(knownsHome, 0o755); err != nil {
 		t.Fatalf("mkdir home .knowns: %v", err)

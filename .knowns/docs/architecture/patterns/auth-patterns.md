@@ -1,4 +1,5 @@
 ---
+id: doc-3cd319a2beb3ecff3aac15cdf8b70325
 title: Auth Patterns
 createdAt: '2026-02-24T10:28:43.531Z'
 updatedAt: '2026-02-24T10:29:50.517Z'

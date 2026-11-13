@@ -42,17 +42,26 @@ function taskDTO(id: string, title: string, lifecycleState: "active" | "done" | 
 	};
 }
 
+/** Hard-delete sits in the task detail's "More actions" menu; without the capability the menu has no such item. */
+async function expectNoHardDelete(page: import("@playwright/test").Page) {
+	await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+	await page.getByRole("button", { name: "More actions" }).click();
+	await expect(page.getByRole("menuitem", { name: "Copy link" })).toBeVisible();
+	await expect(page.getByRole("menuitem", { name: /Permanently delete/ })).toHaveCount(0);
+	await page.keyboard.press("Escape");
+	await expect(page.getByRole("menuitem", { name: "Copy link" })).toHaveCount(0);
+}
+
 test.describe("Task lifecycle settings", () => {
 	test("shows backend defaults, autosaves valid values, and surfaces backend validation", async ({ page }) => {
 		const beforeConfig = await page.request.get(`${server.baseURL}/api/config`).then((response) => response.json());
 		await page.goto(`${server.baseURL}/config`);
-		await page.getByRole("button", { name: "Task lifecycle" }).click();
+		await page.getByRole("button", { name: "Workflow", exact: true }).click();
 
 		await expect(page.getByTestId("task-lifecycle-settings")).toBeVisible();
 		await expect(page.getByLabel("Exclude done Tasks from default AI retrieval")).toBeChecked();
 		await expect(page.getByLabel("Enable automatic Task archival")).toBeChecked();
 		await expect(page.getByLabel("Archive completed Tasks after")).toHaveValue("30d");
-		await expect(page.getByTestId("task-purge-disabled")).toContainText("Disabled");
 
 		const validSave = page.waitForResponse((response) =>
 			response.url().endsWith("/api/config") && response.request().method() === "PATCH" && response.status() === 200,
@@ -102,7 +111,7 @@ test.describe("Task lifecycle settings", () => {
 		});
 
 		await page.goto(`${server.baseURL}/config`);
-		await page.getByRole("button", { name: "Task lifecycle" }).click();
+		await page.getByRole("button", { name: "Workflow", exact: true }).click();
 		const archiveAfter = page.getByLabel("Archive completed Tasks after");
 		await archiveAfter.fill("51d");
 		await expect.poll(() => patches.length).toBe(1);
@@ -246,7 +255,7 @@ test.describe("Task lifecycle workflows", () => {
 		await expect(page.getByTestId("task-lifecycle-state").filter({ hasText: "Archived" }).first()).toBeVisible();
 		await page.setViewportSize({ width: 640, height: 900 });
 		await page.getByText("Lifecycle Done").first().click();
-		const lifecycleSummary = page.getByLabel("Task lifecycle");
+		const lifecycleSummary = page.getByRole("group", { name: "Task lifecycle", exact: true });
 		await expect(lifecycleSummary.getByTestId("task-lifecycle-state")).toContainText("Archived");
 		await expect(lifecycleSummary.getByTestId("task-lifecycle-timestamps")).toContainText("Archived");
 		await expect(page.getByRole("button", { name: "Restore Task" }).first()).toBeVisible();
@@ -416,7 +425,7 @@ test.describe("Task lifecycle workflows", () => {
 	test("hides hard-delete without capability and keeps permission failures inside the guarded flow", async ({ page }) => {
 		const taskID = createTask("Lifecycle Guarded Delete", "--status done");
 		await page.goto(`${server.baseURL}/tasks/${taskID}`);
-		await expect(page.getByRole("button", { name: /Permanently delete/ })).toHaveCount(0);
+		await expectNoHardDelete(page);
 
 		await page.goto(`${server.baseURL}/config`);
 		await page.getByRole("button", { name: "Advanced" }).click();
@@ -432,7 +441,7 @@ test.describe("Task lifecycle workflows", () => {
 		expect(forgedResponse.status()).toBe(400);
 		expect(forgedResponse.request().postDataJSON().capabilities).toBeUndefined();
 		await page.goto(`${server.baseURL}/tasks/${taskID}`);
-		await expect(page.getByRole("button", { name: /Permanently delete/ })).toHaveCount(0);
+		await expectNoHardDelete(page);
 
 		await page.route("**/api/config", async (route) => {
 			const response = await route.fetch();
@@ -456,7 +465,8 @@ test.describe("Task lifecycle workflows", () => {
 		});
 
 		await page.reload();
-		await page.getByRole("button", { name: /Permanently delete/ }).first().click();
+		await page.getByRole("button", { name: "More actions" }).click();
+		await page.getByRole("menuitem", { name: /Permanently delete/ }).click();
 		const guard = page.getByTestId("task-hard-delete-dialog");
 		await expect(guard.getByRole("button", { name: "Permanently delete" })).toBeDisabled();
 		await guard.getByLabel("Reason").fill("Approved E2E cleanup");

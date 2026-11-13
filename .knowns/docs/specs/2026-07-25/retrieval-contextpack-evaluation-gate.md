@@ -1,4 +1,5 @@
 ---
+id: doc-70b176d893e5b48464cf1c4004a9b6d8
 title: Retrieval ContextPack Evaluation Gate
 description: Specification for deterministic retrieval and ContextPack quality evaluation with committed baselines, CI regression gates, and optional project-local report-only cases.
 createdAt: '2026-07-24T22:53:06.195Z'

@@ -1,4 +1,5 @@
 ---
+id: doc-fb03eafd3783a9c89d546c1be1f6dfeb
 title: Documentation Organization
 description: Folder structure and grouping conventions for Knowns documentation
 createdAt: '2026-03-18T19:05:31.723Z'

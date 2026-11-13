@@ -1,4 +1,5 @@
 ---
+id: doc-63de5d968d183c5c8466fa8862d4f298
 title: MCP Tool Consolidation Spec
 description: Spec for refactoring 46 MCP tools into 10 domain-grouped tools
 createdAt: '2026-04-23T04:42:19.999Z'

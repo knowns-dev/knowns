@@ -360,8 +360,8 @@ export const api = {
 		if (!res.ok) {
 			throw new Error("Failed to fetch activities");
 		}
-		const data = (await res.json()) as { activities: ActivityDTO[] };
-		return data.activities.map(parseActivityDTO);
+		const data = (await res.json()) as { activities: ActivityDTO[] | null };
+		return (data.activities ?? []).map(parseActivityDTO);
 	},
 };
 
@@ -763,7 +763,7 @@ export async function createDoc(data: Record<string, unknown>): Promise<unknown>
 
 export async function updateDoc(
 	path: string,
-	data: { content?: string; title?: string; description?: string; tags?: string[] },
+	data: { content?: string; title?: string; description?: string; tags?: string[]; expectedHash?: string },
 ): Promise<Doc> {
 	const encodedPath = encodeDocPath(path);
 	const res = await apiFetch(`${API_BASE}/api/docs/${encodedPath}`, {
@@ -826,6 +826,16 @@ export async function getDocRevisionDiff(path: string, revisionId: string): Prom
 	const encodedPath = encodeDocPath(path);
 	const encodedRevision = encodeURIComponent(revisionId);
 	const res = await apiFetch(`${API_BASE}/api/docs/${encodedPath}/history/${encodedRevision}/diff`);
+	if (!res.ok) {
+		throw new Error(`Failed to fetch doc revision ${revisionId}`);
+	}
+	return res.json();
+}
+
+/** One revision as the server stores it, with the document's state at that revision in `snapshot`. */
+export async function getDocRevision(path: string, revisionId: string): Promise<DocVersion> {
+	const encodedPath = encodeDocPath(path);
+	const res = await apiFetch(`${API_BASE}/api/docs/${encodedPath}/history/${encodeURIComponent(revisionId)}`);
 	if (!res.ok) {
 		throw new Error(`Failed to fetch doc revision ${revisionId}`);
 	}
@@ -899,6 +909,56 @@ export async function search(
 		memories: data.memories || [],
 		decisions: data.decisions || [],
 		code: data.code || [],
+	};
+}
+
+export interface RetrieveOptions {
+	mode?: "keyword" | "semantic" | "hybrid";
+	limit?: number;
+	sourceTypes?: Array<"doc" | "task" | "memory" | "decision">;
+	expandReferences?: boolean;
+}
+
+export interface RetrieveResponse {
+	query: string;
+	mode: string;
+	candidates: Array<{ type: string; id: string; title: string; score: number }>;
+	contextPack: {
+		mode: string;
+		items: Array<{
+			type: string;
+			id: string;
+			title: string;
+			content: string;
+			directMatch?: boolean;
+			expandedFrom?: string;
+			metadata?: Record<string, unknown>;
+		}>;
+	};
+}
+
+// Retrieve API: the context pack Knowns builds for a query
+export async function retrieve(
+	query: string,
+	options: RetrieveOptions = {},
+	signal?: AbortSignal,
+): Promise<RetrieveResponse> {
+	const params = new URLSearchParams({ q: query });
+	if (options.mode) params.set("mode", options.mode);
+	if (options.limit) params.set("limit", String(options.limit));
+	for (const type of options.sourceTypes ?? []) params.append("sourceType", type);
+	if (options.expandReferences) params.set("expandReferences", "true");
+	const res = await apiFetch(`${API_BASE}/api/retrieve?${params.toString()}`, { signal });
+	if (!res.ok) {
+		const body = await res.json().catch(() => null);
+		throw new Error(body?.error || "Failed to build the context pack");
+	}
+	const data = await res.json();
+	return {
+		query: data.query ?? query,
+		mode: data.mode ?? "hybrid",
+		candidates: data.candidates ?? [],
+		contextPack: { mode: data.contextPack?.mode ?? "", items: data.contextPack?.items ?? [] },
 	};
 }
 
@@ -2130,6 +2190,8 @@ export interface AuditEvent {
 	errorMessage?: string;
 	entityRefs?: string[];
 	argumentSummary?: Record<string, string>;
+	/** The agent that made the call (a known agent client, e.g. "claude-code"); absent for other clients. */
+	client?: string;
 }
 
 export interface AuditStats {

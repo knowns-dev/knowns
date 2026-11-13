@@ -1,0 +1,128 @@
+{
+  "doc:doc-355f19d320419652930fe10189143ee2": {
+    "entityType": "doc",
+    "entityId": "doc-355f19d320419652930fe10189143ee2",
+    "canonicalHash": "bc4bb4be2c2c6ebf06dc618acad857a2c31d4336843d5d9da2771983296f615a",
+    "revision": 2,
+    "path": "docs/patterns/controllers/controller-pattern.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  },
+  "doc:doc-ac898e8a05113b487005ded81365e568": {
+    "entityType": "doc",
+    "entityId": "doc-ac898e8a05113b487005ded81365e568",
+    "canonicalHash": "43a777dcd56f7dc4138b0d7590f3ef05060c03e120224972b974475ab21983e4",
+    "revision": 4,
+    "path": "docs/guides/setup-guide.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  },
+  "doc:doc-e3261dff68f481dd202ef414a23d665f": {
+    "entityType": "doc",
+    "entityId": "doc-e3261dff68f481dd202ef414a23d665f",
+    "canonicalHash": "a99a886873d3d14b71eb9303dbb43c8510bf44c90c00a5f37bd666bea4ff4e51",
+    "revision": 1,
+    "path": "docs/guides/deep/er/nested-doc.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  },
+  "doc:doc-f8f5f059990a91c0ffe3cdfbead46a36": {
+    "entityType": "doc",
+    "entityId": "doc-f8f5f059990a91c0ffe3cdfbead46a36",
+    "canonicalHash": "33c8c65919d731dfc24a0bc22e64e6c5d3be61f871236dca9cb1be9b1c88d4d4",
+    "revision": 1,
+    "path": "docs/architecture.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  },
+  "task:FX-19XJKQ": {
+    "entityType": "task",
+    "entityId": "FX-19XJKQ",
+    "canonicalHash": "27de8882a68ae49e8370e54263ee0fde4e80d7b78e7559776b5232c7d740ae58",
+    "revision": 1,
+    "path": "tasks/FX-19XJKQ.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  },
+  "task:FX-3GCY37": {
+    "entityType": "task",
+    "entityId": "FX-3GCY37",
+    "canonicalHash": "feaf789f40cd82e3107677c99d5660f1a643615ec6f9b30fa7d5268d06e70bb7",
+    "revision": 3,
+    "path": "archive/FX-3GCY37.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  },
+  "task:FX-3VT2SR": {
+    "entityType": "task",
+    "entityId": "FX-3VT2SR",
+    "canonicalHash": "1a9c159b26bb5ec63b609df11424400e656e7b2ef6979ccd11e6e21337a293c1",
+    "revision": 10,
+    "path": "tasks/FX-3VT2SR.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  },
+  "task:FX-60REC2": {
+    "entityType": "task",
+    "entityId": "FX-60REC2",
+    "canonicalHash": "7719bd660c8817817971c0c56a8ea47062cbe9e23c29f24e8a00f255abc35a06",
+    "revision": 1,
+    "path": "tasks/FX-60REC2.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  },
+  "task:FX-65T7HG": {
+    "entityType": "task",
+    "entityId": "FX-65T7HG",
+    "canonicalHash": "fa78aee7717ce978e0c1afca0d95451488429cb818784fc3988de2fd018377d6",
+    "revision": 3,
+    "path": "archive/FX-65T7HG.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  },
+  "task:FX-7TGPH1": {
+    "entityType": "task",
+    "entityId": "FX-7TGPH1",
+    "canonicalHash": "ec9d597d1902a341eb8612732da347b1a89da19674ad966c2ef38e61040e966b",
+    "revision": 3,
+    "path": "archive/FX-7TGPH1.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  },
+  "task:FX-E9KG7F": {
+    "entityType": "task",
+    "entityId": "FX-E9KG7F",
+    "canonicalHash": "4346996dddf341f70e9366b3ca478902591a117776673d01b13b30a5a7d33ea2",
+    "revision": 1,
+    "path": "tasks/FX-E9KG7F.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  },
+  "task:FX-P6DXEY": {
+    "entityType": "task",
+    "entityId": "FX-P6DXEY",
+    "canonicalHash": "011de8f3305f68fbfbaefe600a40b66d196e3cbe298d3ea5fb4d0360c81c9ab2",
+    "revision": 1,
+    "path": "tasks/FX-P6DXEY.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  },
+  "task:FX-X82CAD": {
+    "entityType": "task",
+    "entityId": "FX-X82CAD",
+    "canonicalHash": "6ede0d6fa14d15ca2b332b8d64bd4c5349b88bef237d456274b9720eed04bddf",
+    "revision": 1,
+    "path": "tasks/FX-X82CAD.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  },
+  "task:OPS-HYNFXR": {
+    "entityType": "task",
+    "entityId": "OPS-HYNFXR",
+    "canonicalHash": "7c95dcbe7d982ba90b17dbb602ef94463c653818d8a9fe8b19bbae7b3c0d9005",
+    "revision": 1,
+    "path": "tasks/OPS-HYNFXR.md",
+    "indexedAt": "0001-01-01T00:00:00Z",
+    "stale": true
+  }
+}

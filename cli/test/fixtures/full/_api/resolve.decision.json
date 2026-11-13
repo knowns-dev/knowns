@@ -1,0 +1,20 @@
+{
+  "reference": {
+    "raw": "@decision/20261103-1337-use-bun-for-everything",
+    "canonical": "@decision/20261103-1337-use-bun-for-everything",
+    "type": "decision",
+    "target": "20261103-1337-use-bun-for-everything",
+    "relation": "references",
+    "validRelation": true
+  },
+  "entity": {
+    "type": "decision",
+    "id": "20261103-1337-use-bun-for-everything",
+    "title": "Use bun for everything",
+    "status": "accepted",
+    "tags": [
+      "runtime"
+    ]
+  },
+  "found": true
+}

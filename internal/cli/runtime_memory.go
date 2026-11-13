@@ -55,16 +55,25 @@ func runRuntimeMemoryHook(cmd *cobra.Command, args []string) error {
 	if workingDir == "" {
 		workingDir, _ = os.Getwd()
 	}
-	if projectRoot == "" && workingDir != "" {
-		if root, err := storage.FindProjectRoot(workingDir); err == nil {
-			projectRoot = filepath.Dir(root)
+	var store *storage.Store
+	switch {
+	case projectRoot != "":
+		if loc, err := storage.LocateProjectAt(projectRoot); err == nil {
+			store, projectRoot = loc.Open(), loc.ProjectRoot
+		} else {
+			// An explicit --project that is not a project keeps working with
+			// default settings, as it always has.
+			store = storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 		}
-	}
-	if projectRoot == "" {
+	case workingDir != "":
+		loc, err := storage.LocateProject(workingDir)
+		if err != nil {
+			return nil
+		}
+		store, projectRoot = loc.Open(), loc.ProjectRoot
+	default:
 		return nil
 	}
-
-	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	settings := runtimememory.NormalizeSettings(nil)
 	if project, err := store.Config.Load(); err == nil {
 		settings = runtimememory.NormalizeSettings(project.Settings.RuntimeMemory)

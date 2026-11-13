@@ -7,11 +7,12 @@ import (
 	"testing"
 
 	"github.com/howznguyen/knowns/internal/models"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func setupPrefixStore(t *testing.T, projectName string) *Store {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init(projectName); err != nil {
 		t.Fatalf("Init: %v", err)

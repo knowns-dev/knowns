@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { startServer, type TestServer } from "./helpers";
+import { boardCard, boardColumn, startServer, type TestServer } from "./helpers";
 
 let server: TestServer;
 
@@ -27,13 +27,11 @@ test.describe("Kanban Board", () => {
 		});
 
 		await test.step("Board columns are rendered", async () => {
-			await expect(page.locator("[data-board-column], [class*=kanban]").first()).toBeVisible().catch(() => {
-				// Fallback: just check page loaded without error
-			});
-		});
-
-		await test.step("Page loaded without crashing", async () => {
-			await expect(page.locator("body")).toBeVisible();
+			await expect(page.getByRole("region", { name: "Task board" })).toBeVisible();
+			for (const name of ["To Do", "In Progress", "Done"]) {
+				await expect(page.getByRole("heading", { level: 3, name, exact: true })).toBeVisible();
+			}
+			await expect(boardColumn(page, "todo").first()).toBeVisible();
 		});
 	});
 
@@ -46,8 +44,8 @@ test.describe("Kanban Board", () => {
 			await page.goto(`${server.baseURL}/kanban`);
 		});
 
-		await test.step("Task is visible on the board", async () => {
-			await expect(page.getByText("Kanban Visible Task")).toBeVisible();
+		await test.step("Task is visible in the To Do column", async () => {
+			await expect(boardCard(boardColumn(page, "todo"), "Kanban Visible Task")).toBeVisible();
 		});
 	});
 
@@ -61,7 +59,7 @@ test.describe("Kanban Board", () => {
 		});
 
 		await test.step("Click the task card", async () => {
-			await page.getByText("Clickable Task").first().click();
+			await boardCard(page, "Clickable Task").click();
 		});
 
 		await test.step("Task detail sheet opens with description", async () => {
@@ -74,23 +72,59 @@ test.describe("Kanban Board", () => {
 			await page.goto(`${server.baseURL}/kanban`);
 		});
 
-		const addButton = page.getByRole("button", { name: "Add an item" }).first();
-		if (await addButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-			await test.step("Click 'Add an item' button", async () => {
-				await addButton.click();
-			});
+		await test.step("Open 'Add card' in the To Do column", async () => {
+			await boardColumn(page, "todo").first().getByRole("button", { name: "Add card" }).click();
+		});
 
-			await test.step("Fill in task title", async () => {
-				await page.getByPlaceholder(/title/i).first().fill("Board Created Task");
-			});
+		await test.step("Type the title and press Enter", async () => {
+			const input = page.getByRole("textbox", { name: "New card in To Do" });
+			await input.fill("Board Created Task");
+			await input.press("Enter");
+		});
 
-			await test.step("Submit the form", async () => {
-				await page.getByRole("button", { name: "Create Task" }).click();
-			});
+		await test.step("New task appears in the To Do column", async () => {
+			await expect(boardCard(boardColumn(page, "todo"), "Board Created Task")).toBeVisible();
+		});
+	});
 
-			await test.step("New task appears on the board", async () => {
-				await expect(page.getByText("Board Created Task")).toBeVisible();
-			});
-		}
+	test("hides and shows a column", async ({ page }) => {
+		await test.step("Navigate to kanban page", async () => {
+			await page.goto(`${server.baseURL}/kanban`);
+			await expect(boardColumn(page, "blocked").first()).toBeVisible();
+		});
+
+		const toggle = page.getByRole("group", { name: "Visible columns" }).getByRole("button", { name: /^Blocked/ });
+
+		await test.step("Hide Blocked", async () => {
+			await toggle.click();
+			await expect(toggle).toHaveAttribute("aria-pressed", "false");
+			await expect(boardColumn(page, "blocked")).toHaveCount(0);
+		});
+
+		await test.step("Choice survives a reload", async () => {
+			await page.reload();
+			await expect(boardColumn(page, "todo").first()).toBeVisible();
+			await expect(boardColumn(page, "blocked")).toHaveCount(0);
+		});
+
+		await test.step("Show Blocked again", async () => {
+			await toggle.click();
+			await expect(boardColumn(page, "blocked").first()).toBeVisible();
+		});
+	});
+
+	test("swimlanes per assignee", async ({ page }) => {
+		await test.step("Create an assigned task", async () => {
+			server.cli('task create "Lane Task" -a @alice');
+		});
+
+		await test.step("Navigate to kanban and group by assignee", async () => {
+			await page.goto(`${server.baseURL}/kanban`);
+			await page.getByRole("radio", { name: "Assignee" }).click();
+		});
+
+		await test.step("The card sits in alice's To Do lane", async () => {
+			await expect(boardCard(page.getByRole("group", { name: "To Do, alice" }), "Lane Task")).toBeVisible();
+		});
 	});
 });

@@ -39,9 +39,21 @@ export interface Task {
 	timeSpent: number; // Total seconds
 	timeEntries: TimeEntry[];
 
+	/** The MCP agent working on this task now (KN-4FQN0P). The assignee stays the accountable person. */
+	workedBy?: WorkedBy;
+
 	// Notes
 	implementationPlan?: string;
 	implementationNotes?: string;
+}
+
+export interface WorkedBy {
+	/** Client slug, e.g. "claude-code". */
+	client: string;
+	version?: string;
+	since: string;
+	/** True while the task's timer runs. */
+	active: boolean;
 }
 
 export interface AcceptanceCriterion {

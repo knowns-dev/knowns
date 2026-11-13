@@ -1,18 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LayoutList, LayoutGrid, ListTodo, ArchiveRestore, Archive, ChevronDown, Columns3, Plus, Table2 } from "lucide-react";
+import { LayoutList, LayoutGrid, ListTodo, ArchiveRestore, Archive, ChevronDown, Columns3, Layers, Plus, UserX, Users } from "lucide-react";
+import { Avatar as KnAvatar } from "@/ui/components/ui/knowns/avatar";
+import { Combobox, type ComboboxOption } from "@/ui/components/ui/knowns/combobox";
+import { Select as KnSelect } from "@/ui/components/ui/knowns/select";
 import type { Task } from "@/ui/models/task";
 import { navigateTo } from "../lib/navigation";
-import { Board, TaskNotionList } from "../components/organisms";
+import { Board } from "../components/organisms";
 import { TaskDetailSheet } from "../components/organisms/TaskDetail/TaskDetailSheet";
 import { TaskGroupedView } from "./TasksPage/TaskGroupedView";
-import { TaskTableView } from "./TasksPage/TaskTableView";
-import { Button } from "../components/ui/button";
+import { TaskListView } from "./TasksPage/TaskListView";
 import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from "../components/ui/DropdownMenu";
+	ALL_ASSIGNEES,
+	assigneeLabel,
+	filterTasksByAssignee,
+	groupTasksByAssignee,
+	UNASSIGNED,
+} from "./TasksPage/assignees";
+import { mergeTaskSubset } from "./TasksPage/mergeTasks";
+import { Button } from "../components/ui/button";
+import { Menu } from "@/ui/components/ui/knowns/menu";
 import { api, LifecycleAPIError } from "../api/client";
 import type { TaskLifecycleResponse } from "../models/taskLifecycle";
 import { TaskLifecycleDialog } from "../components/organisms/TaskLifecycleDialog";
@@ -25,8 +31,12 @@ import {
 	PageShell,
 } from "../components/templates/PageShell";
 import { FeatureHeader } from "../components/templates";
+import { NoRuns } from "@/ui/components/ui/knowns/illustrations/empty-states";
 
 // Time duration options for batch archive (in milliseconds)
+// Label used when the archive preview comes from selected rows, not an age window.
+const SELECTED_ARCHIVE_LABEL = "the selected rows";
+
 const BATCH_ARCHIVE_OPTIONS = [
 	{ label: "now", value: 0 },
 	{ label: "1 hour ago", value: 1 * 60 * 60 * 1000 },
@@ -53,14 +63,21 @@ interface TasksPageProps {
 	detailBasePath?: "/tasks" | "/kanban";
 }
 
-type ViewMode = "board" | "list" | "table" | "grouped";
+type ViewMode = "board" | "list" | "grouped";
 
 const VIEW_STORAGE_KEY = "knowns.tasks.view";
+
+const LIFECYCLE_OPTIONS = [
+	{ value: "current", label: "Current (active + done)" },
+	{ value: "active", label: "Active" },
+	{ value: "done", label: "Done" },
+	{ value: "archived", label: "Archived" },
+	{ value: "all", label: "All lifecycle states" },
+];
 
 const VIEW_OPTIONS: { value: ViewMode; label: string; icon: typeof LayoutList }[] = [
 	{ value: "board", label: "Board", icon: Columns3 },
 	{ value: "list", label: "List", icon: LayoutList },
-	{ value: "table", label: "Table", icon: Table2 },
 	{ value: "grouped", label: "Grouped", icon: LayoutGrid },
 ];
 
@@ -97,6 +114,7 @@ export default function TasksPage({
 	}, []);
 	const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 	const [lifecycleFilter, setLifecycleFilter] = useState<"current" | "active" | "done" | "archived" | "all">("current");
+	const [assigneeFilter, setAssigneeFilter] = useState<string>(ALL_ASSIGNEES);
 	const [restoreOpen, setRestoreOpen] = useState(false);
 	const [restoreResponse, setRestoreResponse] = useState<TaskLifecycleResponse | null>(null);
 	const [restoreError, setRestoreError] = useState<string | null>(null);
@@ -157,7 +175,7 @@ export default function TasksPage({
 
 	const taskSource = historicalMode ? historicalTasks || [] : tasks;
 
-	const visibleTasks = useMemo(() => {
+	const lifecycleTasks = useMemo(() => {
 		switch (lifecycleFilter) {
 			case "active": return taskSource.filter((task) => task.lifecycleState === "active");
 			case "done": return taskSource.filter((task) => task.lifecycleState === "done");
@@ -166,6 +184,43 @@ export default function TasksPage({
 			default: return taskSource.filter((task) => task.lifecycleState !== "archived");
 		}
 	}, [taskSource, lifecycleFilter]);
+
+	// Counts follow the lifecycle filter so each option says how many Tasks picking it shows.
+	const assigneeGroups = useMemo(() => groupTasksByAssignee(lifecycleTasks), [lifecycleTasks]);
+	const assigneeOptions = useMemo<ComboboxOption[]>(() => {
+		const count = (n: number) => `${n} ${n === 1 ? "task" : "tasks"}`;
+		const person = (key: string, n: number): ComboboxOption =>
+			key === UNASSIGNED
+				? { value: key, label: assigneeLabel(key), supportingText: count(n), icon: <UserX className="h-3.5 w-3.5" /> }
+				: {
+						value: key,
+						label: assigneeLabel(key),
+						supportingText: count(n),
+						avatar: <KnAvatar label={assigneeLabel(key).replace(/^@/, "")} size="xs" shape="circle" decorative />,
+					};
+		return [
+			{ value: ALL_ASSIGNEES, label: "All assignees", supportingText: count(lifecycleTasks.length), icon: <Users className="h-3.5 w-3.5" /> },
+			// Keep a picked person listed at 0 when the lifecycle filter empties them.
+			...(assigneeFilter !== ALL_ASSIGNEES && !assigneeGroups.some((group) => group.key === assigneeFilter)
+				? [person(assigneeFilter, 0)]
+				: []),
+			...assigneeGroups.map((group) => person(group.key, group.tasks.length)),
+		];
+	}, [assigneeGroups, assigneeFilter, lifecycleTasks.length]);
+
+	const visibleTasks = useMemo(
+		() => filterTasksByAssignee(lifecycleTasks, assigneeFilter),
+		[lifecycleTasks, assigneeFilter],
+	);
+
+	// The Board hands back the subset it was given; merge it so filtered-out Tasks
+	// are not dropped from the app's Task set. A historical Board shows archived
+	// Tasks too: only update known ids and reload the historical list it reads.
+	const replaceBoardTasks = useCallback((updated: Task[]) => {
+		if (onTasksReplace) onTasksReplace(mergeTaskSubset(tasks, updated, { appendNew: !historicalMode }));
+		else onTasksUpdate();
+		if (historicalMode) void loadHistorical();
+	}, [tasks, onTasksReplace, onTasksUpdate, historicalMode, loadHistorical]);
 
 	const archivedIDs = useMemo(
 		() => taskSource.filter((task) => task.lifecycleState === "archived").map((task) => task.id),
@@ -237,7 +292,7 @@ export default function TasksPage({
 		else onTasksUpdate();
 	};
 
-	const handleBatchArchivePreview = async (minimumAgeMs: number, label: string) => {
+	const handleBatchArchivePreview = async (minimumAgeMs: number, label: string, selectedIds?: readonly string[]) => {
 		const generation = ++archiveGenerationRef.current;
 		setArchiveRequest({ generation, minimumAgeMs, label });
 		setArchiveDialogOpen(true);
@@ -245,7 +300,7 @@ export default function TasksPage({
 		setArchiveError(null);
 		setArchiveLoading(true);
 		try {
-			const response = await api.batchArchiveTasks({ minimumAgeMs });
+			const response = await api.batchArchiveTasks({ minimumAgeMs, ids: selectedIds ? [...selectedIds] : undefined });
 			if (archiveGenerationRef.current !== generation) return;
 			setArchiveRequest({ generation, minimumAgeMs, label, ids: Object.freeze(response.items.map((item) => item.taskId)) });
 			setArchiveResponse(response);
@@ -327,27 +382,41 @@ export default function TasksPage({
 				}
 				actions={
 					<div className="flex flex-wrap items-center gap-2">
-						<label className="text-xs text-muted-foreground" htmlFor="task-lifecycle-filter">Show</label>
-						<select
+						<KnSelect
 							id="task-lifecycle-filter"
+							aria-label="Show tasks"
+							size="sm"
+							icon={<Layers className="h-3.5 w-3.5" />}
 							value={lifecycleFilter}
 							onChange={(event) => setLifecycleFilter(event.target.value as typeof lifecycleFilter)}
-							className="h-11 max-w-full rounded-md border bg-background px-2 text-xs sm:h-8"
-						>
-							<option value="current">Current (active + done)</option>
-							<option value="active">Active</option>
-							<option value="done">Done</option>
-							<option value="archived">Archived</option>
-							<option value="all">All lifecycle states</option>
-						</select>
+							options={LIFECYCLE_OPTIONS}
+							className="w-full min-w-44 sm:w-auto"
+						/>
+						<Combobox
+							id="task-assignee-filter"
+							aria-label="Assignee"
+							size="sm"
+							searchable
+							value={assigneeFilter}
+							onValueChange={setAssigneeFilter}
+							options={assigneeOptions}
+							className="w-full min-w-56 sm:w-auto"
+						/>
 						{archivedIDs.length > 0 && (lifecycleFilter === "archived" || lifecycleFilter === "all") && (
 							<Button variant="outline" size="sm" onClick={previewRestore} className="h-11 gap-1.5 sm:h-8">
 								<ArchiveRestore className="h-3.5 w-3.5" /> Restore archived…
 							</Button>
 						)}
 						{/* Batch Archive Dropdown */}
-						<DropdownMenu>
-							<DropdownMenuTrigger asChild>
+						<Menu
+							aria-label="Archive completed Tasks"
+							align="end"
+							items={BATCH_ARCHIVE_OPTIONS.map((option) => ({ id: String(option.value), label: `Done before ${option.label}` }))}
+							onSelect={(item) => {
+								const option = BATCH_ARCHIVE_OPTIONS.find((o) => String(o.value) === item.id);
+								if (option) handleBatchArchivePreview(option.value, option.label);
+							}}
+							trigger={
 								<Button
 									variant="outline"
 									size="sm"
@@ -358,18 +427,8 @@ export default function TasksPage({
 									<span className="hidden sm:inline text-sm">Archive</span>
 									<ChevronDown className="w-3 h-3" />
 								</Button>
-							</DropdownMenuTrigger>
-							<DropdownMenuContent align="end">
-								{BATCH_ARCHIVE_OPTIONS.map((option) => (
-										<DropdownMenuItem
-											key={option.value}
-											onClick={() => handleBatchArchivePreview(option.value, option.label)}
-										>
-											<span className="flex-1">Done before {option.label}</span>
-										</DropdownMenuItem>
-								))}
-							</DropdownMenuContent>
-						</DropdownMenu>
+							}
+						/>
 						{/* View Toggle */}
 						<div className="flex items-center rounded-md bg-muted/70 p-0.5" aria-label="Task view">
 							{VIEW_OPTIONS.map((option) => {
@@ -412,21 +471,23 @@ export default function TasksPage({
 					/>
 				) : historicalMode && historicalLoading && historicalTasks === null ? (
 					<PageLoading label="Loading historical Tasks" className="flex-1" />
+				) : taskSource.length === 0 && !historicalMode && viewMode !== "board" ? (
+					// The board keeps its empty columns (they are drop targets); the header owns "New Task".
+					<div className="flex flex-1 items-center justify-center" data-testid="tasks-empty">
+						<NoRuns title="No Tasks yet" description="Create the first Task with New Task, or let an agent create one over MCP." />
+					</div>
 				) : viewMode === "board" ? (
 					<Board
 						tasks={visibleTasks}
-						loading={false}
-						onTasksUpdate={onTasksReplace ?? (() => onTasksUpdate())}
+						onTasksUpdate={replaceBoardTasks}
 						onTaskClick={handleTaskClick}
 					/>
 				) : viewMode === "list" ? (
-					<TaskNotionList
+					<TaskListView
 						tasks={visibleTasks}
 						onTaskClick={handleTaskClick}
-						onNewTask={onNewTask}
+						onArchiveSelected={(ids) => void handleBatchArchivePreview(0, SELECTED_ARCHIVE_LABEL, ids)}
 					/>
-				) : viewMode === "table" ? (
-					<TaskTableView tasks={visibleTasks} onTaskClick={handleTaskClick} />
 				) : (
 					<TaskGroupedView
 						tasks={visibleTasks}
@@ -465,7 +526,7 @@ export default function TasksPage({
 				open={archiveDialogOpen}
 				onOpenChange={closeArchiveDialog}
 				title="Archive completed Tasks"
-				description={`Preview for Tasks completed before ${archiveRequest?.label || "the selected retention window"}. Eligibility and warnings come from the backend.`}
+				description={archiveRequest?.label === SELECTED_ARCHIVE_LABEL ? "Preview for the Tasks you selected. Eligibility and warnings come from the backend." : `Preview for Tasks completed before ${archiveRequest?.label || "the selected retention window"}. Eligibility and warnings come from the backend.`}
 				response={archiveResponse}
 				loading={archiveLoading}
 				error={archiveError}

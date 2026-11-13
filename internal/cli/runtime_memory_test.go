@@ -11,11 +11,12 @@ import (
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/runtimememory"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 	"github.com/spf13/cobra"
 )
 
 func TestRuntimeMemoryHookModeOffPlainSilentAndSkipsCapture(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	t.Setenv("KNOWNS_RUNTIME_PROMPT", "toi muon AI tu luu memory, khong doi toi nhac moi them")
 	projectRoot, store := setupRuntimeMemoryHookStore(t)
 	entry := &models.MemoryEntry{
@@ -80,7 +81,7 @@ func TestRuntimeMemoryHookModeOffPlainSilentAndSkipsCapture(t *testing.T) {
 }
 
 func TestRuntimeMemoryHookDebugJSONIncludesMetadataWithoutPlainPayload(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	t.Setenv("KNOWNS_RUNTIME_PROMPT", "runtime review proposals")
 	projectRoot, store := setupRuntimeMemoryHookStore(t)
 	entry := &models.MemoryEntry{
@@ -135,7 +136,7 @@ func TestRuntimeMemoryHookDebugJSONIncludesMetadataWithoutPlainPayload(t *testin
 }
 
 func TestRuntimeMemoryHookCaptureDisabledConfigStillInjects(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	t.Setenv("KNOWNS_RUNTIME_PROMPT", "Use the runtime queue pattern for prompt injection jobs in this repo.")
 	projectRoot, store := setupRuntimeMemoryHookStore(t)
 	project, err := store.Config.Load()
@@ -188,7 +189,7 @@ func TestRuntimeMemoryHookCaptureDisabledConfigStillInjects(t *testing.T) {
 }
 
 func TestRuntimeMemoryHookCaptureDisabledFlagSkipsCapture(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	t.Setenv("KNOWNS_RUNTIME_PROMPT", "AGENTS.md should start with Knowns MCP initial in this repo")
 	projectRoot, store := setupRuntimeMemoryHookStore(t)
 
@@ -216,7 +217,7 @@ func TestRuntimeMemoryHookCaptureDisabledFlagSkipsCapture(t *testing.T) {
 }
 
 func TestRuntimeMemoryHookHighConfidenceDoesNotInferProjectDecision(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	t.Setenv("KNOWNS_RUNTIME_PROMPT", "AGENTS.md should start with Knowns MCP initial in this repo")
 	projectRoot, store := setupRuntimeMemoryHookStore(t)
 

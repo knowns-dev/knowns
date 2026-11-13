@@ -1,4 +1,5 @@
 ---
+id: doc-12ece0d9956aaee2b9448cc2cb09426c
 title: Semantic Reference Runtime
 description: Design notes for stable entity IDs, mutable paths, semantic ref resolution, and inline WebUI rendering.
 createdAt: '2026-04-15T08:33:06.772Z'

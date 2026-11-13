@@ -1,4 +1,5 @@
 ---
+id: doc-ecd9b265097aa3d6f5966aef5a16ff31
 title: MCP Mutation Response Compaction
 description: Specification for token-efficient success responses from MCP task and document create/update actions.
 createdAt: '2026-07-24T10:06:24.162Z'

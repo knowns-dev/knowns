@@ -793,7 +793,10 @@ func TestMCP_SemanticSearch(t *testing.T) {
 		t.Logf("task search result: %s", truncate(raw, 300))
 	})
 
-	t.Run("search rejects code type", func(t *testing.T) {
+	// The old expectation (an MCP error for type=code) was stale: Go 0.34.1 treats
+	// "code" as a real chunk type (search.chunkTypesForRuntimePreflight), so the
+	// call succeeds and may only return code results; this project has none.
+	t.Run("search with code type returns only code results", func(t *testing.T) {
 		raw := client.CallToolRaw("search", map[string]any{
 			"action": "search",
 			"query":  "authentication security patterns",
@@ -801,17 +804,30 @@ func TestMCP_SemanticSearch(t *testing.T) {
 			"mode":   "hybrid",
 			"limit":  10,
 		})
-		if !strings.Contains(raw, "error") {
-			t.Fatalf("expected MCP error for code search type, got: %s", raw)
+		var got struct {
+			Results []struct {
+				Type string `json:"type"`
+			} `json:"results"`
+		}
+		if err := json.Unmarshal([]byte(raw), &got); err != nil {
+			t.Fatalf("expected a JSON search result for type=code, got: %s", raw)
+		}
+		for _, r := range got.Results {
+			if r.Type != "code" {
+				t.Fatalf("type=code search returned a %q result: %s", r.Type, raw)
+			}
 		}
 	})
 
-	t.Run("code graph action is unsupported", func(t *testing.T) {
+	// The old expectation ("unsupported action: graph") was stale: since ea69c7b
+	// removed tree-sitter, Go 0.34.1 answers the graph action with an explicit
+	// removal error.
+	t.Run("code graph action reports removal", func(t *testing.T) {
 		raw := client.CallToolRaw("code", map[string]any{
 			"action": "graph",
 		})
-		if !strings.Contains(raw, "unsupported action: graph") {
-			t.Fatalf("expected unsupported graph action, got: %s", raw)
+		if !strings.Contains(raw, "Action 'graph' has been removed.") {
+			t.Fatalf("expected the graph removal error, got: %s", raw)
 		}
 	})
 }

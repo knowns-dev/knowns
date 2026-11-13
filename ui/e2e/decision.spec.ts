@@ -119,11 +119,14 @@ test.describe("Decision processing flow", () => {
 		await sources.fill("https://example.test/external-evidence");
 		await review.getByRole("button", { name: "Browse existing" }).first().click();
 		const browser = page.getByTestId("reference-browser");
-		const browserZIndex = await browser.evaluate((element) => Number.parseInt(window.getComputedStyle(element).zIndex, 10));
-		const detailZIndex = await page
-			.getByTestId("decision-focus-dialog")
-			.evaluate((element) => Number.parseInt(window.getComputedStyle(element).zIndex, 10));
-		expect(browserZIndex).toBeGreaterThan(detailZIndex);
+		// The picker renders inside the detail's modal <dialog> (top layer) and is the topmost thing at its centre.
+		const layering = await browser.evaluate((element) => {
+			const host = element.closest("dialog[open]");
+			const r = element.getBoundingClientRect();
+			const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+			return { sameLayer: !!host?.querySelector('[data-testid="decision-focus-dialog"]'), onTop: !!hit && element.contains(hit) };
+		});
+		expect(layering).toEqual({ sameLayer: true, onTop: true });
 		const search = browser.getByPlaceholder("Search by title, path, or ID…");
 		await search.fill(seed.evidenceDoc);
 		await browser.getByRole("button", { name: /Add Doc:/ }).first().click();
@@ -146,7 +149,7 @@ test.describe("Decision processing flow", () => {
 		await page.screenshot({ path: testInfo.outputPath("decision-review-ready.png"), fullPage: true });
 	});
 
-	test("keeps Legacy Decision Memory migration under Settings > Tools", async ({ page }) => {
+	test("keeps Legacy Decision Memory migration under Settings > Advanced", async ({ page }) => {
 		const memoryID = "leg001";
 		const title = `Legacy migration ${uniqueToken("memory")}`;
 		seedLegacyDecisionMemory(memoryID, title);
@@ -154,7 +157,7 @@ test.describe("Decision processing flow", () => {
 		await expect(page.getByText("Legacy Decision Memory migration")).toBeHidden();
 
 		await page.goto(`${server.baseURL}/config`);
-		await page.getByRole("button", { name: "Tools" }).click();
+		await page.getByRole("button", { name: "Advanced", exact: true }).click();
 		await expect(page.getByRole("heading", { name: "Legacy Decision Memory migration" })).toBeVisible();
 		await page.getByRole("button", { name: "Open migration workspace" }).click();
 		const migration = page.getByTestId("decision-migration-panel");
@@ -197,6 +200,8 @@ test.describe("Decision processing flow", () => {
 		expect((pickerBox?.x || 0) + (pickerBox?.width || 0)).toBeLessThanOrEqual(390);
 		expect((pickerBox?.y || 0) + (pickerBox?.height || 0)).toBeLessThanOrEqual(844);
 		await page.keyboard.press("Escape");
+		// The picker animates out; until it is gone it is the top layer and takes the next Escape.
+		await expect(picker).toBeHidden();
 		await expect(create).toBeVisible();
 		await page.keyboard.press("Escape");
 		await expect(create).toBeHidden();

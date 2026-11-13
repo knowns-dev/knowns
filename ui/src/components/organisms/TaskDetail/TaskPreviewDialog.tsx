@@ -1,7 +1,13 @@
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogTitle } from "../../ui/dialog";
-import { Button } from "../../ui/button";
-import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
+import { Badge } from "@/ui/components/ui/knowns/badge";
+import { Button } from "@/ui/components/ui/knowns/button";
+import { Skeleton } from "@/ui/components/ui/knowns/skeleton";
+import { useConfig } from "../../../contexts/ConfigContext";
+import { getStatusLabel } from "../../../utils/colors";
+import { DetailSection } from "./DetailSection";
+import { formatTracked, priorityOptions, statusTone } from "./types";
 import type { Task } from "@/ui/models/task";
 import { getTask } from "../../../api/client";
 import { navigateTo } from "../../../lib/navigation";
@@ -13,21 +19,12 @@ interface TaskPreviewDialogProps {
 	onOpenChange: (open: boolean) => void;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-	todo: "bg-gray-500",
-	"in-progress": "bg-blue-500",
-	"in-review": "bg-yellow-500",
-	done: "bg-green-500",
-	blocked: "bg-red-500",
-	"on-hold": "bg-orange-500",
-	urgent: "bg-red-600",
-};
-
 export function TaskPreviewDialog({
 	taskId,
 	open,
 	onOpenChange,
 }: TaskPreviewDialogProps) {
+	const { config } = useConfig();
 	const [task, setTask] = useState<Task | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -61,136 +58,93 @@ export function TaskPreviewDialog({
 		}
 	};
 
-	const statusColor = task ? STATUS_COLORS[task.status] || "bg-gray-500" : "";
-	const descriptionPreview = task?.description || "";
 	const acceptanceCriteria = task?.acceptanceCriteria || [];
-	const implementationPlan = task?.implementationPlan || "";
-	const implementationNotes = task?.implementationNotes || "";
+	const prose = "prose prose-sm max-w-[72ch] text-[14px] leading-relaxed dark:prose-invert [&>:first-child]:mt-0! [&>:last-child]:mb-0!";
+	const markdown = (value: string | undefined, empty: string) =>
+		value ? <MDRender markdown={value} className={prose} /> : <p className="text-[13.5px] text-muted-foreground">{empty}</p>;
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-w-3xl w-[95vw] p-0 gap-0 max-h-[90vh] overflow-hidden border-border/60 bg-background/95 shadow-2xl flex flex-col">
-				<DialogTitle className="sr-only">
-					Task Preview: {taskId}
-				</DialogTitle>
+			<DialogContent className="flex max-h-[min(88vh,52rem)] w-[min(94vw,46rem)] max-w-none flex-col gap-0 overflow-hidden p-0">
+				<DialogTitle className="sr-only">Task Preview: {task?.title ?? taskId}</DialogTitle>
 
 				{loading && (
-					<div className="flex items-center justify-center p-12">
-						<Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+					<div className="flex flex-col gap-3 p-6" aria-busy="true" aria-label="Loading task">
+						<Skeleton className="h-4 w-32" />
+						<Skeleton className="h-7 w-3/4" />
+						<Skeleton className="h-4 w-full" />
+						<Skeleton className="h-4 w-5/6" />
 					</div>
 				)}
 
-				{error && (
-					<div className="p-6 text-center">
-						<p className="text-destructive">{error}</p>
+				{error && !loading && (
+					<div role="alert" className="p-6 text-[14px]">
+						<p className="font-medium text-foreground">Could not load task #{taskId}</p>
+						<p className="mt-1 text-muted-foreground">{error}</p>
 					</div>
 				)}
 
 				{task && !loading && !error && (
 					<>
-						<div className="border-b border-border/50 bg-muted/20 px-6 py-5 shrink-0">
-							<div className="mb-2 flex items-center gap-2">
-								<span
-									className={`h-2 w-2 rounded-full ${statusColor}`}
-								/>
-								<span className="rounded-md bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground shadow-sm">
-									#{task.id}
-								</span>
-								<span className="rounded-md border border-border/60 bg-background px-2 py-1 text-[11px] text-muted-foreground">
-									{task.status}
-								</span>
-								{task.priority && (
-									<span className="rounded-md border border-border/60 bg-background px-2 py-1 text-[11px] text-muted-foreground">
-										{task.priority}
-									</span>
-								)}
+						<header className="flex flex-none flex-col gap-2 px-6 pt-6 pb-4 pr-14">
+							<div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
+								<span className="font-mono">#{task.id}</span>
+								<Badge tone={statusTone(task.status, (config.statusColors || {}) as Record<string, string>)} dot shape="pill" size="sm">
+									{getStatusLabel(task.status)}
+								</Badge>
+								<span>Priority {priorityOptions.find((p) => p.value === task.priority)?.label ?? task.priority}</span>
+								{task.assignee && <span>{task.assignee}</span>}
+								{task.timeSpent > 0 && <span className="tabular-nums">{formatTracked(task.timeSpent)} tracked</span>}
 							</div>
-							<h2 className="text-2xl font-semibold tracking-tight leading-tight">
-								{task.title}
-							</h2>
-						</div>
+							<h2 className="text-[22px] leading-tight font-semibold tracking-tight text-balance text-foreground">{task.title}</h2>
+						</header>
 
-						<div className="min-h-0 flex-1 overflow-y-auto bg-background">
-							<div className="space-y-8 px-6 py-6">
-								<section className="space-y-3">
-									<h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Description</h3>
-									{descriptionPreview ? (
-										<MDRender
-											markdown={descriptionPreview}
-											className="prose prose-sm max-w-none dark:prose-invert [&_p]:leading-7"
-										/>
-									) : (
-										<p className="text-sm italic text-muted-foreground">No description</p>
-									)}
-								</section>
-
-								<section className="space-y-3">
-									<div className="flex items-center gap-2">
-										<h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Acceptance Criteria</h3>
-										{acceptanceCriteria.length > 0 && (
-											<span className="text-xs text-muted-foreground">
-												{acceptanceCriteria.filter((item) => item.completed).length}/{acceptanceCriteria.length}
-											</span>
-										)}
-									</div>
+						<div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6">
+							<div className="flex flex-col gap-8">
+								<DetailSection title="Description">{markdown(task.description, "No description.")}</DetailSection>
+								<DetailSection
+									title="Acceptance Criteria"
+									count={acceptanceCriteria.length > 0 ? `${acceptanceCriteria.filter((item) => item.completed).length}/${acceptanceCriteria.length}` : undefined}
+								>
 									{acceptanceCriteria.length > 0 ? (
-										<div className="space-y-2">
+										<ul className="flex flex-col">
 											{acceptanceCriteria.map((item, index) => (
-												<div
-													key={`${task.id}-ac-${index}`}
-													className="flex items-start gap-3 rounded-xl border border-border/60 bg-muted/10 px-3 py-2"
-												>
-													<CheckCircle2
-														className={`mt-0.5 h-4 w-4 shrink-0 ${item.completed ? "text-emerald-500" : "text-muted-foreground/50"}`}
-													/>
-													<span className={`text-sm ${item.completed ? "text-muted-foreground line-through" : "text-foreground/90"}`}>
-														{item.text}
+												<li key={`${task.id}-ac-${index}`} className="flex items-start gap-2.5 py-1.5 text-[14px] leading-snug">
+													<span
+														aria-hidden
+														className={
+															item.completed
+																? "mt-0.5 grid size-4 flex-none place-items-center rounded-[5px] bg-[color:var(--kn-accent,var(--primary))] text-[color:var(--kn-accent-foreground,var(--primary-foreground))]"
+																: "mt-0.5 size-4 flex-none rounded-[5px] shadow-[0_0_0_1px_color-mix(in_srgb,var(--foreground)_24%,transparent)]"
+														}
+													>
+														{item.completed && (
+															<svg viewBox="0 0 16 16" className="size-3">
+																<path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+															</svg>
+														)}
 													</span>
-												</div>
+													<span className={item.completed ? "text-muted-foreground line-through decoration-muted-foreground/50" : "text-foreground"}>
+														{item.text}
+														<span className="sr-only">{item.completed ? ", done" : ", open"}</span>
+													</span>
+												</li>
 											))}
-										</div>
+										</ul>
 									) : (
-										<p className="text-sm italic text-muted-foreground">No acceptance criteria</p>
+										<p className="text-[13.5px] text-muted-foreground">No acceptance criteria.</p>
 									)}
-								</section>
-
-								<section className="space-y-3">
-									<h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Implementation Plan</h3>
-									{implementationPlan ? (
-										<MDRender
-											markdown={implementationPlan}
-											className="prose prose-sm max-w-none dark:prose-invert [&_p]:leading-7"
-										/>
-									) : (
-										<p className="text-sm italic text-muted-foreground">No implementation plan</p>
-									)}
-								</section>
-
-								<section className="space-y-3">
-									<h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Implementation Notes</h3>
-									{implementationNotes ? (
-										<MDRender
-											markdown={implementationNotes}
-											className="prose prose-sm max-w-none dark:prose-invert [&_p]:leading-7"
-										/>
-									) : (
-										<p className="text-sm italic text-muted-foreground">No implementation notes</p>
-									)}
-								</section>
+								</DetailSection>
+								<DetailSection title="Implementation Plan">{markdown(task.implementationPlan, "No implementation plan.")}</DetailSection>
+								<DetailSection title="Implementation Notes">{markdown(task.implementationNotes, "No implementation notes.")}</DetailSection>
 							</div>
 						</div>
 
-						<div className="flex justify-end border-t border-border/50 bg-muted/10 px-6 py-3">
-							<Button
-								variant="outline"
-								size="sm"
-								onClick={handleViewInKanban}
-								className="h-7 gap-1.5 rounded-md text-[11px]"
-							>
-								<ExternalLink className="h-4 w-4" />
-								View in Kanban
+						<footer className="flex flex-none justify-end border-t border-[color-mix(in_srgb,var(--foreground)_9%,transparent)] px-6 py-3">
+							<Button size="sm" variant="secondary" iconRight={<ArrowUpRight />} onClick={handleViewInKanban}>
+								Open task
 							</Button>
-						</div>
+						</footer>
 					</>
 				)}
 			</DialogContent>

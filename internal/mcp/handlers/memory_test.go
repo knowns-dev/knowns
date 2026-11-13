@@ -10,6 +10,7 @@ import (
 	"github.com/howznguyen/knowns/internal/memoryreview"
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -196,7 +197,7 @@ func TestMemoryUpdateTouchRemovesEntryFromCleanup(t *testing.T) {
 
 func setupMemoryCleanupStore(t *testing.T) *storage.Store {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	store := storage.NewStore(filepath.Join(t.TempDir(), ".knowns"))
 	if err := store.Init("memory-cleanup-test"); err != nil {
 		t.Fatalf("init store: %v", err)

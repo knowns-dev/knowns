@@ -221,7 +221,7 @@ func runCodeSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	store := getStore()
-	root := filepath.Dir(store.Root)
+	root := store.ProjectRoot
 
 	var summaries []search.CodeSummary
 	lspMgr := getLSPManagerForRoot(root)

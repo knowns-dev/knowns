@@ -1,8 +1,9 @@
 ---
+id: doc-3089705c9f77ee529eebc8713178d489
 title: User Guide
 description: Comprehensive user documentation for Knowns CLI and Web UI
 createdAt: '2025-12-29T11:49:48.531Z'
-updatedAt: '2026-07-26T06:58:54.779Z'
+updatedAt: '2026-11-13T07:15:18.104Z'
 tags:
   - docs
   - guide
@@ -23,8 +24,8 @@ Complete guide for using Knowns - a CLI-first knowledge layer and task managemen
 # Install via npm (downloads platform-specific Go binary)
 npm install -g knowns
 
-# Install via Go
-go install github.com/howznguyen/knowns/cmd/knowns@latest
+# Install via Homebrew (macOS/Linux)
+brew install knowns-dev/tap/knowns
 
 # Install via curl (Linux/macOS)
 curl -fsSL https://raw.githubusercontent.com/howznguyen/knowns/main/install/install.sh | sh

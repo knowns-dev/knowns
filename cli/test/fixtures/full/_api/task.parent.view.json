@@ -1,0 +1,17 @@
+{
+  "id": "FX-65T7HG",
+  "title": "Parent epic",
+  "description": "Holds two children",
+  "status": "done",
+  "priority": "medium",
+  "assignee": "@fixture",
+  "labels": null,
+  "createdAt": "2026-11-03T13:37:35.595Z",
+  "updatedAt": "2026-11-03T13:37:36.12Z",
+  "completedAt": "2026-11-03T13:37:35.898Z",
+  "archivedAt": "2026-11-03T13:37:36.12Z",
+  "archived": true,
+  "acceptanceCriteria": null,
+  "timeSpent": 0,
+  "canonicalHash": "fa78aee7717ce978e0c1afca0d95451488429cb818784fc3988de2fd018377d6"
+}

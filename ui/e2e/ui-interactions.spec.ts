@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { startServer, type TestServer } from "./helpers";
+import { boardCard, boardColumn, startServer, type TestServer } from "./helpers";
 
 let server: TestServer;
 
@@ -30,11 +30,82 @@ test.describe("Task Creation via UI", () => {
 		});
 
 		await test.step("Task appears on the kanban board", async () => {
-			// Use kanban-specific locator to avoid matching toast notification
-			await page.waitForTimeout(500);
-			await expect(page.locator("[data-board-column] >> text=Buy groceries for the week").first()
-				.or(page.locator("h3").filter({ hasText: "Buy groceries for the week" }))).toBeVisible();
+			// A board card, not the toast that also names the new Task
+			await expect(boardCard(page, "Buy groceries for the week")).toBeVisible();
 		});
+	});
+
+	test("create form validates inline and submits from the keyboard", async ({ page }) => {
+		await page.goto(`${server.baseURL}/kanban`);
+		await page.getByRole("button", { name: /new task/i }).click();
+		const form = page.getByRole("dialog", { name: "New task" });
+		await expect(form).toBeVisible();
+
+		await test.step("empty title shows an inline error and keeps focus on the field", async () => {
+			await form.getByRole("button", { name: "Create Task" }).click();
+			await expect(form.getByText("Title is required.")).toBeVisible();
+			await expect(form.getByPlaceholder("Enter task title...")).toBeFocused();
+			await expect(form.getByPlaceholder("Enter task title...")).toHaveAttribute("aria-invalid", "true");
+		});
+
+		await test.step("typing clears the error, Enter does not submit", async () => {
+			await page.keyboard.type("Keyboard Created Task");
+			await expect(form.getByText("Title is required.")).toBeHidden();
+			await page.keyboard.press("Enter");
+			await expect(form).toBeVisible();
+		});
+
+		await test.step("Ctrl+Enter creates the task and it shows on the board", async () => {
+			await page.keyboard.press("Control+Enter");
+			await expect(form).toBeHidden();
+			await expect(boardCard(page, "Keyboard Created Task")).toBeVisible();
+		});
+	});
+
+	test("create form starts from the default priority and labels in Settings", async ({ page }) => {
+		const cfgUrl = `${server.baseURL}/api/config`;
+		const before = ((await (await page.request.get(cfgUrl)).json()).config ?? {}) as { defaultPriority?: string; defaultLabels?: string[] };
+		const restore = { defaultPriority: before.defaultPriority || "medium", defaultLabels: before.defaultLabels ?? [] };
+		try {
+			const patched = await page.request.patch(cfgUrl, { data: { defaultPriority: "high", defaultLabels: ["alpha", "beta"] } });
+			expect(patched.ok()).toBeTruthy();
+
+			await page.goto(`${server.baseURL}/kanban`);
+			await page.getByRole("button", { name: /new task/i }).click();
+			const form = page.getByRole("dialog", { name: "New task" });
+			await expect(form).toBeVisible();
+
+			await test.step("priority and labels are prefilled", async () => {
+				await expect(form.getByLabel("Priority", { exact: true })).toHaveValue("high");
+				await expect(form.getByRole("button", { name: "Remove label alpha" })).toBeVisible();
+				await expect(form.getByRole("button", { name: "Remove label beta" })).toBeVisible();
+			});
+
+			await test.step("a default label can be removed and the task keeps the rest", async () => {
+				await form.getByRole("button", { name: "Remove label beta" }).click();
+				await form.getByPlaceholder("Enter task title...").fill("Defaults Seeded Task");
+				await form.getByRole("button", { name: "Create Task" }).click();
+				await expect(form).toBeHidden();
+				await expect
+					.poll(async () => {
+						const body = await (await page.request.get(`${server.baseURL}/api/tasks`)).json();
+						const list = (Array.isArray(body) ? body : body.tasks) as { title: string; priority: string; labels?: string[] }[];
+						const t = list.find((x) => x.title === "Defaults Seeded Task");
+						return t ? `${t.priority}|${(t.labels ?? []).join(",")}` : "";
+					})
+					.toBe("high|alpha");
+			});
+
+			await test.step("closing and reopening starts again from the defaults", async () => {
+				await page.getByRole("button", { name: /new task/i }).click();
+				await expect(form.getByLabel("Priority", { exact: true })).toHaveValue("high");
+				await expect(form.getByRole("button", { name: "Remove label beta" })).toBeVisible();
+				await page.keyboard.press("Escape");
+				await expect(form).toBeHidden();
+			});
+		} finally {
+			await page.request.patch(cfgUrl, { data: restore });
+		}
 	});
 
 	test("creates task from tasks page", async ({ page }) => {
@@ -43,13 +114,8 @@ test.describe("Task Creation via UI", () => {
 		});
 
 		await test.step("Click new task button", async () => {
-			const newTaskBtn = page.getByRole("button", { name: /new task/i }).first();
-			if (await newTaskBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-				await newTaskBtn.click();
-			} else {
-				// Table view shows a compact "New" button
-				await page.getByRole("button", { name: /^new$/i }).first().click();
-			}
+			// The header "New Task" button is on every view. click() waits for the lazy Tasks page; isVisible() would not.
+			await page.getByRole("button", { name: /new task/i }).first().click();
 		});
 
 		await test.step("Type task title", async () => {
@@ -65,31 +131,24 @@ test.describe("Task Creation via UI", () => {
 		});
 	});
 
-	test("creates task using inline 'Add an item' on kanban column", async ({ page }) => {
+	test("creates task using inline 'Add card' on kanban column", async ({ page }) => {
 		await test.step("Navigate to kanban page", async () => {
 			await page.goto(`${server.baseURL}/kanban`);
 		});
 
-		const addBtn = page.getByRole("button", { name: "Add an item" }).first();
-		if (await addBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-			await test.step("Click 'Add an item' in column", async () => {
-				await addBtn.click();
-			});
+		await test.step("Click 'Add card' in the In Progress column", async () => {
+			await boardColumn(page, "in-progress").first().getByRole("button", { name: "Add card" }).click();
+		});
 
-			await test.step("Type task title", async () => {
-				await page.getByPlaceholder(/title/i).first().fill("Quick inline task");
-			});
+		await test.step("Type task title and press Enter", async () => {
+			const input = page.getByRole("textbox", { name: "New card in In Progress" });
+			await input.fill("Quick inline task");
+			await input.press("Enter");
+		});
 
-			await test.step("Submit", async () => {
-				await page.getByRole("button", { name: "Create Task" }).click();
-			});
-
-			await test.step("Task appears in the column", async () => {
-				await page.waitForTimeout(500);
-				await expect(page.locator("h3").filter({ hasText: "Quick inline task" }).first()
-					.or(page.getByText("Quick inline task").first())).toBeVisible();
-			});
-		}
+		await test.step("Task appears in the column", async () => {
+			await expect(boardCard(boardColumn(page, "in-progress"), "Quick inline task")).toBeVisible();
+		});
 	});
 });
 
@@ -115,10 +174,10 @@ test.describe("Task Detail Interactions", () => {
 		});
 
 		await test.step("Sidebar shows status, priority, labels", async () => {
-			const dialog = page.locator('[role="dialog"]');
-			await expect(dialog.locator("span.text-xs", { hasText: "Status" }).first()).toBeVisible();
-			await expect(dialog.locator("span.text-xs", { hasText: "Priority" }).first()).toBeVisible();
-			await expect(dialog.locator("span.text-xs", { hasText: "Labels" }).first()).toBeVisible();
+			const properties = page.locator('[role="dialog"]').getByRole("complementary", { name: "Properties" });
+			await expect(properties.getByText("Status", { exact: true })).toBeVisible();
+			await expect(properties.getByText("Priority", { exact: true })).toBeVisible();
+			await expect(properties.getByText("Labels", { exact: true })).toBeVisible();
 		});
 
 		await test.step("Labels are displayed", async () => {
@@ -147,7 +206,7 @@ test.describe("Task Detail Interactions", () => {
 			const checkbox = acRow.getByRole("checkbox").first()
 				.or(acRow.locator("button[role=checkbox]").first())
 				.or(page.getByRole("checkbox").first());
-			if (await checkbox.isVisible({ timeout: 2000 }).catch(() => false)) {
+			if (await checkbox.waitFor({ state: "visible", timeout: 2000 }).then(() => true).catch(() => false)) {
 				await checkbox.click();
 				await page.waitForTimeout(500);
 			}
@@ -199,7 +258,7 @@ test.describe("Task Detail Interactions", () => {
 
 		await test.step("Type label name and submit", async () => {
 			const labelInput = page.getByRole("textbox").last();
-			if (await labelInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+			if (await labelInput.waitFor({ state: "visible", timeout: 2000 }).then(() => true).catch(() => false)) {
 				await labelInput.fill("frontend");
 				await labelInput.press("Enter");
 			}
@@ -262,7 +321,7 @@ test.describe("Document Interactions via UI", () => {
 		});
 
 		await test.step("Click '+ New Doc' button", async () => {
-			await page.getByTitle("Create new document").click();
+			await page.getByRole("button", { name: "New Doc", exact: true }).first().click();
 		});
 
 		await test.step("Page switches to doc editor with title", async () => {
@@ -274,7 +333,7 @@ test.describe("Document Interactions via UI", () => {
 			// Title is an inline editable heading — find the input/editable element
 			const titleEl = page.locator("h1[contenteditable], input[type=text], h1 input").first()
 				.or(page.getByPlaceholder(/title|name/i).first());
-			if (await titleEl.isVisible({ timeout: 2000 }).catch(() => false)) {
+			if (await titleEl.waitFor({ state: "visible", timeout: 2000 }).then(() => true).catch(() => false)) {
 				await titleEl.click();
 				await titleEl.fill("My New Guide");
 			}
@@ -353,8 +412,8 @@ test.describe("Document Interactions via UI", () => {
 		});
 
 		await test.step("Click Edit button", async () => {
-			// Edit button is in the toolbar: pencil icon + "Edit" text
-			const editBtn = page.locator("button", { hasText: "Edit" }).first();
+			// The toolbar's Edit button. Match the name exactly: the doc chip "@doc/edit-test-doc" also contains "edit".
+			const editBtn = page.getByRole("button", { name: "Edit", exact: true });
 			await expect(editBtn).toBeVisible();
 			await editBtn.click();
 		});
@@ -364,7 +423,7 @@ test.describe("Document Interactions via UI", () => {
 			// After clicking edit, page should show editor with save/back controls
 			const saveBtn = page.getByRole("button", { name: /save|update|back/i }).first();
 			const editor = page.locator("[contenteditable], textarea, .tiptap, .ProseMirror, [class*=editor]").first();
-			await expect(saveBtn.or(editor)).toBeVisible();
+			await expect(saveBtn.or(editor).first()).toBeVisible();
 		});
 	});
 });
@@ -378,18 +437,18 @@ test.describe("Search via UI", () => {
 
 		await test.step("Navigate to dashboard", async () => {
 			await page.goto(server.baseURL);
+			await expect(page.getByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
 		});
 
-		await test.step("Open search with Cmd+K", async () => {
-			await page.keyboard.press("Meta+k");
+		await test.step("Open search with Cmd+K (Ctrl+K off macOS)", async () => {
+			await page.keyboard.press("ControlOrMeta+k");
 		});
 
 		await test.step("Type search query and see results", async () => {
-			const searchInput = page.getByPlaceholder(/search/i).first();
-			if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-				await searchInput.fill("Login");
-				await expect(page.getByText("Login Authentication Feature").first()).toBeVisible();
-			}
+			const searchInput = page.getByRole("dialog", { name: "Search", exact: true }).getByRole("combobox");
+			await expect(searchInput).toBeVisible();
+			await searchInput.fill("Login");
+			await expect(page.getByRole("option", { name: /Login Authentication Feature/ })).toBeVisible();
 		});
 	});
 
@@ -404,18 +463,17 @@ test.describe("Search via UI", () => {
 
 		await test.step("Click search in sidebar to open search dialog", async () => {
 			// Sidebar search is a button that opens the search command dialog
-			const searchBtn = page.locator("button", { hasText: /search/i }).first();
-			await searchBtn.click();
+			await page.getByRole("button", { name: /^Search\.\.\./ }).click();
 		});
 
 		await test.step("Type search query", async () => {
-			const input = page.getByPlaceholder(/search/i).first();
-			await expect(input).toBeVisible({ timeout: 3000 });
+			const input = page.getByRole("dialog", { name: "Search", exact: true }).getByRole("combobox");
+			await expect(input).toBeVisible();
 			await input.fill("Sidebar Search");
 		});
 
 		await test.step("Results appear", async () => {
-			await expect(page.getByText("Sidebar Search Target").first()).toBeVisible();
+			await expect(page.getByRole("option", { name: /Sidebar Search Target/ })).toBeVisible();
 		});
 	});
 });
@@ -433,7 +491,7 @@ test.describe("Settings Page Interactions", () => {
 		await test.step("Project name field exists", async () => {
 			const nameInput = page.getByLabel(/project name/i).first()
 				.or(page.locator("input").first());
-			if (await nameInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+			if (await nameInput.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false)) {
 				await nameInput.clear();
 				await nameInput.fill("My Awesome Project");
 				await nameInput.press("Tab");
@@ -455,9 +513,7 @@ test.describe("Full User Workflows (no CLI)", () => {
 		});
 
 		await test.step("Wait for task to appear on board", async () => {
-			await page.waitForTimeout(1000);
-			await expect(page.locator("h3").filter({ hasText: "Workflow Test Task" }).first()
-				.or(page.getByText("Workflow Test Task").first())).toBeVisible();
+			await expect(boardCard(page, "Workflow Test Task")).toBeVisible();
 		});
 
 		await test.step("Open task detail by clicking", async () => {
@@ -512,16 +568,15 @@ test.describe("Full User Workflows (no CLI)", () => {
 		});
 
 		await test.step("Wait for task on board", async () => {
-			await page.waitForTimeout(1000);
+			await expect(page.getByText("Unique Searchable XYZ123").first()).toBeVisible();
 		});
 
 		await test.step("Open search and find the task", async () => {
-			await page.keyboard.press("Meta+k");
-			const searchInput = page.getByPlaceholder(/search/i).first();
-			if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-				await searchInput.fill("Unique Searchable");
-				await expect(page.getByText("Unique Searchable XYZ123").first()).toBeVisible();
-			}
+			await page.keyboard.press("ControlOrMeta+k");
+			const searchInput = page.getByRole("dialog", { name: "Search", exact: true }).getByRole("combobox");
+			await expect(searchInput).toBeVisible();
+			await searchInput.fill("Unique Searchable");
+			await expect(page.getByRole("option", { name: /Unique Searchable XYZ123/ })).toBeVisible();
 		});
 	});
 });

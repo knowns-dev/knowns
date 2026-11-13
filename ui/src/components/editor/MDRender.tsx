@@ -9,7 +9,6 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import hljs from "highlight.js";
 import { Check } from "lucide-react";
 import { useTheme } from "../../App";
 import { cn } from "../../lib/utils";
@@ -23,7 +22,7 @@ import {
 import { SemanticReferenceBadge } from "./SemanticReferenceBadge";
 import { MarkdownErrorBoundary } from "./MarkdownErrorBoundary";
 import { parseHeadingMeta } from "./headingUtils";
-import { CopyablePre, CopyableTable, StableHeading, MermaidLoading } from "./mdComponents";
+import { CopyableTable, MarkdownCodeBlock, StableHeading, MermaidLoading } from "./mdComponents";
 
 // Lazy load MermaidBlock for better performance
 const MermaidBlock = lazy(() => import("./MermaidBlock"));
@@ -144,33 +143,12 @@ const MDRender = forwardRef<MDRenderRef, MDRenderProps>(
             );
           }
 
-          let highlightedCode: string;
-          try {
-            if (language && hljs.getLanguage(language)) {
-              highlightedCode = hljs.highlight(codeContent, { language }).value;
-            } else {
-              highlightedCode = hljs.highlightAuto(codeContent).value;
-            }
-          } catch {
-            highlightedCode = codeContent;
-          }
-
-          return (
-            <code
-              className={`hljs ${language ? `language-${language}` : ""}`}
-              dangerouslySetInnerHTML={{ __html: highlightedCode }}
-            />
-          );
+          return <MarkdownCodeBlock code={codeContent} language={language} />;
         },
 
-        pre: ({ children, node, ...props }: { children?: ReactNode; node?: any }) => {
-          // Mermaid blocks have their own controls — skip CopyablePre wrapper
-          const codeNode = node?.children?.[0];
-          if (codeNode?.type === "element" && codeNode?.properties?.className?.some?.((c: string) => c === "language-mermaid")) {
-            return <>{children}</>;
-          }
-          return <CopyablePre {...props}>{children}</CopyablePre>;
-        },
+        // Fenced code is drawn by the Knowns UI code block (its own frame, copy and wrap) and
+        // Mermaid by its own viewer, so the markdown <pre> around them adds nothing.
+        pre: ({ children }: { children?: ReactNode }) => <>{children}</>,
 
         input: ({ type, checked, disabled, ...props }: { type?: string; checked?: boolean; disabled?: boolean }) => {
           if (type === "checkbox") {

@@ -6,6 +6,7 @@ import { navigateTo } from "../../../lib/navigation";
 import { SourceLinkList, type SourceRef } from "../../molecules/SourceLinkList";
 import { MDRenderWithHighlight } from "../../editor/MDRenderWithHighlight";
 import { Button } from "../../ui/button";
+import { Badge, type BadgeTone } from "../../ui/knowns/badge";
 import { Dialog, DialogContent, DialogTitle } from "../../ui/dialog";
 
 interface MemoryPreviewDialogProps {
@@ -57,10 +58,14 @@ export function MemoryPreviewDialog({ memoryId, open, onOpenChange, onOpenSource
 		onOpenChange(false);
 	};
 
-	const facts = memory
-		? [memory.layer, memory.category, memory.status, memory.confidence && `${memory.confidence} confidence`].filter(
-				Boolean,
-			)
+	// Same names and tones as the Memories page (agent-memory scopes), so a memory reads the same everywhere.
+	const facts: Array<{ label: string; tone: BadgeTone; variant?: "outline" }> = memory
+		? [
+				{ label: layerLabels[memory.layer] ?? memory.layer, tone: layerTones[memory.layer] ?? "neutral" },
+				...(memory.status ? [{ label: statusLabel(memory.status), tone: statusTones[memory.status] ?? "neutral", variant: "outline" as const }] : []),
+				...(memory.category ? [{ label: memory.category, tone: "neutral" as BadgeTone, variant: "outline" as const }] : []),
+				...(memory.confidence ? [{ label: `${memory.confidence} confidence`, tone: "neutral" as BadgeTone, variant: "outline" as const }] : []),
+			]
 		: [];
 
 	return (
@@ -85,20 +90,15 @@ export function MemoryPreviewDialog({ memoryId, open, onOpenChange, onOpenSource
 						<div className="shrink-0 border-b border-border/50 bg-muted/20 px-6 py-5">
 							<div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
 								<Brain className="h-3.5 w-3.5" />
-								<span className="rounded-md bg-background px-2 py-1 font-mono text-[11px] shadow-sm">
-									@memory/{memory.id}
-								</span>
+								<span className="font-mono text-[11.5px]">@memory/{memory.id}</span>
 							</div>
 							<h2 className="text-2xl font-semibold leading-tight tracking-tight">{memory.title}</h2>
 							{facts.length > 0 && (
 								<div className="mt-3 flex flex-wrap gap-1.5">
 									{facts.map((fact) => (
-										<span
-											key={String(fact)}
-											className="rounded-md border border-border/60 bg-background px-2 py-1 text-[11px] text-muted-foreground"
-										>
-											{fact}
-										</span>
+										<Badge key={fact.label} size="sm" tone={fact.tone} variant={fact.variant}>
+											{fact.label}
+										</Badge>
 									))}
 								</div>
 							)}
@@ -141,7 +141,6 @@ export function MemoryPreviewDialog({ memoryId, open, onOpenChange, onOpenSource
 								variant="outline"
 								size="sm"
 								onClick={handleViewInMemories}
-								className="h-7 gap-1.5 rounded-md text-[11px]"
 							>
 								<ExternalLink className="h-4 w-4" />
 								View in Memories
@@ -153,3 +152,16 @@ export function MemoryPreviewDialog({ memoryId, open, onOpenChange, onOpenSource
 		</Dialog>
 	);
 }
+
+const layerLabels: Record<string, string> = { global: "Global", project: "Project", working: "Working" };
+const layerTones: Record<string, BadgeTone> = { global: "accent", project: "info", working: "neutral" };
+const statusTones: Record<string, BadgeTone> = {
+	proposed: "info",
+	active: "success",
+	stale: "warning",
+	deprecated: "neutral",
+	archived: "neutral",
+	rejected: "danger",
+	merged: "accent",
+};
+const statusLabel = (status: string) => status.charAt(0).toUpperCase() + status.slice(1);

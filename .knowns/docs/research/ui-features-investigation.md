@@ -1,4 +1,5 @@
 ---
+id: doc-52d96e6581db0f54ffd9abbe62e3af02
 title: "Research: UI Features Investigation"
 description: Research results for UI features
 createdAt: "2026-03-16T18:17:54.254Z"

@@ -1,4 +1,5 @@
 ---
+id: doc-5dca6c0f513a39c4957fc2b65bc51d66
 title: GitHub Bots Setup
 createdAt: '2026-01-06T07:54:55.826Z'
 updatedAt: '2026-01-06T07:55:11.958Z'

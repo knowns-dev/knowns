@@ -1,0 +1,16 @@
+{
+  "id": "20261103-1337-adopt-a-monorepo",
+  "title": "Adopt a monorepo",
+  "status": "draft",
+  "reviewState": "needs_evidence",
+  "reviewBlockers": [
+    "candidate needs at least one source before acceptance"
+  ],
+  "reviewEvaluatedAt": "2026-11-03T13:37:36.963Z",
+  "reviewEvaluatedHash": "6dc9ed40fbed05baf79b5e33a350937430909fb9aa7db45ae0b880c6b18febf3",
+  "createdAt": "2026-11-03T13:37:36.963Z",
+  "updatedAt": "2026-11-03T13:37:36.963Z",
+  "context": "Many repos",
+  "decision": "One repo",
+  "content": "## Context\n\nMany repos\n\n## Decision\n\nOne repo\n\n## Alternatives Considered\n\n\n## Consequences"
+}

@@ -44,7 +44,7 @@ func runAgents(cmd *cobra.Command, args []string) error {
 
 	jsonOut := isJSON(cmd)
 
-	projectRoot := filepath.Dir(store.Root)
+	projectRoot := store.ProjectRoot
 
 	return runAgentsStatus(cmd, projectRoot, jsonOut)
 }

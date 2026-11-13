@@ -13,17 +13,27 @@ import (
 // ConfigStore reads and writes .knowns/config.json.
 type ConfigStore struct {
 	root string
+	// split is set for a store-linked project, whose config.json syncs with
+	// the team: settings owned by one person or one machine live elsewhere
+	// (store spec D13). Nil for in-repo projects, which keep every setting in
+	// config.json.
+	split *configSplit
 }
 
 func (cs *ConfigStore) configPath() string {
 	return filepath.Join(cs.root, "config.json")
 }
 
-// Load reads and returns the project configuration.
+// Load reads and returns the project configuration. For a store-linked
+// project the personal and machine settings are overlaid from their homes.
 func (cs *ConfigStore) Load() (*models.Project, error) {
-	data, err := os.ReadFile(cs.configPath())
+	raw, err := cs.loadMerged()
 	if err != nil {
-		return nil, fmt.Errorf("load config: %w", err)
+		return nil, err
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	var p models.Project
 	if err := json.Unmarshal(data, &p); err != nil {
@@ -49,14 +59,21 @@ func (cs *ConfigStore) Save(project *models.Project) error {
 	if err := project.Settings.Validate(); err != nil {
 		return fmt.Errorf("validate config: %w", err)
 	}
-	return writeJSON(cs.configPath(), project)
+	if cs.split == nil {
+		return writeCanonicalJSON(cs.configPath(), project)
+	}
+	raw, err := toGenericMap(project)
+	if err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	return cs.writeTeam(raw)
 }
 
 // Get retrieves a single config value using dot-notation
 // (e.g., "settings.serverPort", "settings.defaultAssignee").
 // The config file is re-read from disk on each call.
 func (cs *ConfigStore) Get(key string) (any, error) {
-	raw, err := cs.loadRaw()
+	raw, err := cs.loadMerged()
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +86,7 @@ func (cs *ConfigStore) Get(key string) (any, error) {
 
 // Set updates a single config value using dot-notation and persists the change.
 func (cs *ConfigStore) Set(key string, value any) error {
-	raw, err := cs.loadRaw()
+	raw, err := cs.loadMerged()
 	if err != nil {
 		return err
 	}
@@ -93,7 +110,32 @@ func (cs *ConfigStore) Set(key string, value any) error {
 	if key == "settings.defaultTaskIdPrefix" || project.Settings.DefaultTaskIDPrefix != "" {
 		setNestedKey(raw, "settings.defaultTaskIdPrefix", project.Settings.DefaultTaskIDPrefix)
 	}
-	return writeJSON(cs.configPath(), raw)
+	return cs.writeTeam(raw)
+}
+
+// writeTeam writes config.json in its one canonical form. For a store-linked
+// project it first moves personal and machine settings to their homes, so
+// the synced file carries team policy only.
+func (cs *ConfigStore) writeTeam(raw map[string]any) error {
+	if cs.split != nil {
+		if err := cs.split.storeOwned(raw); err != nil {
+			return err
+		}
+	}
+	return writeCanonicalJSON(cs.configPath(), raw)
+}
+
+// loadMerged reads config.json as a generic map and, for a store-linked
+// project, overlays personal and machine settings from their homes.
+func (cs *ConfigStore) loadMerged() (map[string]any, error) {
+	raw, err := cs.loadRaw()
+	if err != nil {
+		return nil, err
+	}
+	if cs.split != nil {
+		cs.split.overlay(raw)
+	}
+	return raw, nil
 }
 
 // loadRaw reads config.json into a generic map to support dot-notation access
@@ -103,8 +145,8 @@ func (cs *ConfigStore) loadRaw() (map[string]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
+	m, err := decodeGenericObject(data)
+	if err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	return m, nil
@@ -125,5 +167,5 @@ func (cs *ConfigStore) initDefault(name string) error {
 		// should never trigger the FR-4 unmigrated notice.
 		SchemaVersion: CurrentSchemaVersion(),
 	}
-	return writeJSON(cs.configPath(), p)
+	return writeCanonicalJSON(cs.configPath(), p)
 }

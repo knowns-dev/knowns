@@ -1,4 +1,5 @@
 ---
+id: doc-2459918a522ea56c8818e3cb6983b84a
 title: Memory Auto-Cleanup
 description: Specification for agent-triggered memory cleanup via MCP — list stale candidates for AI review and deletion
 createdAt: '2026-05-20T07:09:09.943Z'

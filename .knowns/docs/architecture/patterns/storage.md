@@ -1,4 +1,5 @@
 ---
+id: doc-5a7f994fb763f9df18cd76dd3dda0b8a
 title: Storage Pattern
 createdAt: '2025-12-29T07:03:35.974Z'
 updatedAt: '2026-03-08T18:20:29.588Z'

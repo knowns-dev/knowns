@@ -5,6 +5,7 @@
 # Options (via env vars):
 #   $env:KNOWNS_INSTALL_DIR  — install directory (default: ~\.knowns\bin)
 #   $env:KNOWNS_VERSION      — specific version (default: latest)
+#   $env:KNOWNS_BASE_URL     — release download prefix (default: GitHub releases)
 
 $ErrorActionPreference = "Stop"
 
@@ -59,7 +60,8 @@ $Platform = Get-Platform
 $Version = Get-Version
 
 $Archive = "knowns-$Platform.tar.gz"
-$Url = "https://github.com/$Repo/releases/download/$Version/$Archive"
+$BaseUrl = if ($env:KNOWNS_BASE_URL) { $env:KNOWNS_BASE_URL.TrimEnd('/') } else { "https://github.com/$Repo/releases/download" }
+$Url = "$BaseUrl/$Version/$Archive"
 $ChecksumUrl = "$Url.sha256"
 
 Write-Host "  Version:  $Version" -ForegroundColor DarkGray
@@ -134,7 +136,8 @@ try {
         installedAt = [DateTime]::UtcNow.ToString("o")
     }
     New-Item -ItemType Directory -Path $KnownsHome -Force | Out-Null
-    $metadata | ConvertTo-Json | Set-Content -Path (Join-Path $KnownsHome "install.json") -Encoding UTF8
+    # Windows PowerShell 5.1's -Encoding UTF8 adds a BOM; write BOM-less UTF-8.
+    [IO.File]::WriteAllText((Join-Path $KnownsHome "install.json"), ($metadata | ConvertTo-Json), (New-Object System.Text.UTF8Encoding $false))
     Write-Host "  + Recorded install metadata in $KnownsHome\install.json" -ForegroundColor Green
 
     # Add to PATH if not already there

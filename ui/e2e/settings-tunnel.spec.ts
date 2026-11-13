@@ -11,14 +11,14 @@ test.afterAll(() => {
 	server?.cleanup();
 });
 
-test.describe("Settings — Tunnel", () => {
-	test("Tunnel tab shows Cloudflare Tunnel section", async ({ page }) => {
+test.describe("Settings — Access (Tunnel)", () => {
+	test("Tunnel section shows Cloudflare Tunnel section", async ({ page }) => {
 		await test.step("Navigate to Settings", async () => {
 			await page.goto(`${server.baseURL}/config`);
 		});
 
-		await test.step("Click Tunnel tab", async () => {
-			await page.getByText("Tunnel").first().click();
+		await test.step("Open the Access section", async () => {
+			await page.getByRole("button", { name: "Access" }).click();
 		});
 
 		await test.step("Cloudflare Tunnel section is visible", async () => {
@@ -27,9 +27,9 @@ test.describe("Settings — Tunnel", () => {
 	});
 
 	test("Tunnel status shows Stopped initially", async ({ page }) => {
-		await test.step("Navigate to Settings → Tunnel", async () => {
+		await test.step("Navigate to Settings → Access", async () => {
 			await page.goto(`${server.baseURL}/config`);
-			await page.getByText("Tunnel").first().click();
+			await page.getByRole("button", { name: "Access" }).click();
 		});
 
 		await test.step("Status indicator shows Stopped", async () => {
@@ -38,9 +38,9 @@ test.describe("Settings — Tunnel", () => {
 	});
 
 	test("Start Tunnel button exists", async ({ page }) => {
-		await test.step("Navigate to Settings → Tunnel", async () => {
+		await test.step("Navigate to Settings → Access", async () => {
 			await page.goto(`${server.baseURL}/config`);
-			await page.getByText("Tunnel").first().click();
+			await page.getByRole("button", { name: "Access" }).click();
 		});
 
 		await test.step("Start Tunnel button is visible", async () => {
@@ -50,9 +50,9 @@ test.describe("Settings — Tunnel", () => {
 	});
 
 	test("clicking Start Tunnel shows result (success or error)", async ({ page }) => {
-		await test.step("Navigate to Settings → Tunnel", async () => {
+		await test.step("Navigate to Settings → Access", async () => {
 			await page.goto(`${server.baseURL}/config`);
-			await page.getByText("Tunnel").first().click();
+			await page.getByRole("button", { name: "Access" }).click();
 		});
 
 		await test.step("Click Start Tunnel", async () => {

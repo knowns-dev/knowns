@@ -189,12 +189,12 @@ func handleProjectSet(setStore func(*storage.Store, string), req mcp.CallToolReq
 		return errResult(err.Error())
 	}
 
-	knownsDir := filepath.Join(projectRoot, ".knowns")
-	if _, err := os.Stat(knownsDir); err != nil {
+	loc, err := storage.LocateProjectAt(projectRoot)
+	if err != nil {
 		return errResultf(ErrNoKnownsDir, projectRoot)
 	}
-
-	store := storage.NewStore(knownsDir)
+	store := loc.Open()
+	projectRoot = loc.ProjectRoot
 
 	proj, err := store.Config.Load()
 	if err != nil {

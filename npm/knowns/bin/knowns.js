@@ -159,9 +159,46 @@ function getBinaryPath() {
   process.exit(1);
 }
 
+// An x64 Node on Apple Silicon runs under Rosetta 2, so npm installed the darwin-x64 build. That
+// build runs translated, and Rosetta has no AVX, so the Bun runtime warns on every run. The fix is
+// an arm64 Node, which makes npm install the native build; say so when someone is watching.
+function rosettaHint(options = {}) {
+  const platform = options.platform || process.platform;
+  const arch = options.arch || process.arch;
+  const isTTY = options.isTTY !== undefined ? options.isTTY : Boolean(process.stderr.isTTY);
+  if (platform !== "darwin" || arch !== "x64" || !isTTY) {
+    return null;
+  }
+  const translated =
+    options.translated !== undefined
+      ? options.translated
+      : (() => {
+          try {
+            const out = execFileSync("/usr/sbin/sysctl", ["-in", "sysctl.proc_translated"], {
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "ignore"],
+            });
+            return out.trim() === "1";
+          } catch {
+            return false;
+          }
+        })();
+  if (!translated) {
+    return null;
+  }
+  return (
+    "knowns: this is the Intel build running under Rosetta (installed by an x64 Node).\n" +
+    "knowns: reinstall knowns with an arm64 Node to get the native Apple Silicon build.\n"
+  );
+}
+
 function main() {
   const binary = stageWindowsBinary(getBinaryPath());
   const args = process.argv.slice(2);
+  const hint = rosettaHint();
+  if (hint) {
+    process.stderr.write(hint);
+  }
 
   try {
     ensureExecutable(binary);
@@ -184,5 +221,6 @@ if (require.main === module) {
 module.exports = {
   getBinaryPath,
   getWindowsRuntimeCacheRoot,
+  rosettaHint,
   stageWindowsBinary,
 };

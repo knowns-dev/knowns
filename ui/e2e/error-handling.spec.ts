@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { startServer, type TestServer } from "./helpers";
+import { boardColumn, startServer, type TestServer } from "./helpers";
 
 let server: TestServer;
 
@@ -18,10 +18,9 @@ test.describe("Empty States", () => {
 		});
 
 		await test.step("Column headers visible even with no tasks", async () => {
-			const board = page.locator("[data-board-column]");
-			await expect(board.filter({ hasText: "To Do" }).first()).toBeVisible();
-			await expect(board.filter({ hasText: "In Progress" }).first()).toBeVisible();
-			await expect(board.filter({ hasText: "Done" }).first()).toBeVisible();
+			for (const status of ["todo", "in-progress", "done"]) {
+				await expect(boardColumn(page, status).first()).toBeVisible();
+			}
 		});
 	});
 
@@ -110,7 +109,7 @@ test.describe("Connection Status", () => {
 		await test.step("Connection status indicator exists", async () => {
 			// The connection indicator is in the footer/sidebar area
 			const connected = page.locator('[title*="onnect"], [aria-label*="onnect"]').first();
-			if (await connected.isVisible({ timeout: 2000 }).catch(() => false)) {
+			if (await connected.waitFor({ state: "visible", timeout: 2000 }).then(() => true).catch(() => false)) {
 				expect(true).toBe(true);
 			} else {
 				// Connection status might be shown differently - verify page works
@@ -162,7 +161,7 @@ test.describe("Rapid Operations", () => {
 		await test.step("Task appears in Done column", async () => {
 			// The task should be in the "Done" column
 			const doneColumn = page.locator('[data-column="done"], [data-status="done"]').first();
-			if (await doneColumn.isVisible({ timeout: 2000 }).catch(() => false)) {
+			if (await doneColumn.waitFor({ state: "visible", timeout: 2000 }).then(() => true).catch(() => false)) {
 				await expect(doneColumn.getByText("Status Flipper")).toBeVisible();
 			} else {
 				// Verify task exists somewhere on the board

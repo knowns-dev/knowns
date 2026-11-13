@@ -20,6 +20,9 @@ knowns task list [flags]
   # Your own high-priority work
   knowns task list --assignee @me --priority high
 
+  # Work nobody has picked up yet
+  knowns task list --unassigned
+
   # As a parent/child tree
   knowns task list --tree
 ```
@@ -34,6 +37,7 @@ knowns task list [flags]
 | `--priority` | `string` | — | Filter by priority |
 | `--status` | `string` | — | Filter by status |
 | `--tree` | `bool` | — | Show tasks as tree hierarchy |
+| `--unassigned` | `bool` | — | Only tasks with no assignee |
 
 ## Inherited flags
 

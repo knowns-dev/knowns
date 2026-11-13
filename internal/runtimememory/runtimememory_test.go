@@ -9,10 +9,11 @@ import (
 
 	"github.com/howznguyen/knowns/internal/models"
 	"github.com/howznguyen/knowns/internal/storage"
+	"github.com/howznguyen/knowns/internal/testutil"
 )
 
 func TestBuildSelectsRelevantProjectAndGlobalMemories(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {
@@ -87,7 +88,7 @@ func TestBuildSelectsRelevantProjectAndGlobalMemories(t *testing.T) {
 }
 
 func TestBuildReturnsNoneWhenNoRelevantMemoryExists(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {
@@ -112,7 +113,7 @@ func TestBuildReturnsNoneWhenNoRelevantMemoryExists(t *testing.T) {
 }
 
 func TestBuildExcludesNonActiveMemoryByDefault(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {
@@ -194,7 +195,7 @@ func TestBuildExcludesNonActiveMemoryByDefault(t *testing.T) {
 }
 
 func TestBuildSkipsLowSignalPrompts(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {
@@ -240,7 +241,7 @@ func TestBuildSkipsLowSignalPrompts(t *testing.T) {
 // is the length bias this threshold no longer has. Here the memory matches one
 // of four content words.
 func TestBuildSkipsWeakSingleCandidate(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {
@@ -271,7 +272,7 @@ func TestBuildSkipsWeakSingleCandidate(t *testing.T) {
 }
 
 func TestBuildModeOffSuppressesInjectionAndCapture(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {
@@ -355,7 +356,7 @@ func TestNormalizeSettingsIncludesIndependentCaptureControl(t *testing.T) {
 }
 
 func TestCaptureDisabledStillAllowsInjection(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {
@@ -408,7 +409,7 @@ func TestCaptureDisabledStillAllowsInjection(t *testing.T) {
 }
 
 func TestHighConfidenceCaptureDoesNotInferProjectDecision(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {
@@ -441,7 +442,7 @@ func TestHighConfidenceCaptureDoesNotInferProjectDecision(t *testing.T) {
 }
 
 func TestBuildDebugIsInspectOnly(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {
@@ -512,7 +513,7 @@ func TestSerializePrefixAddsSilentInstructionForOpenCode(t *testing.T) {
 }
 
 func TestBuildSessionBaselineIncludesProjectGuidance(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {
@@ -539,7 +540,7 @@ func TestBuildSessionBaselineIncludesProjectGuidance(t *testing.T) {
 }
 
 func TestBuildHonorsItemAndByteLimits(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {
@@ -746,7 +747,7 @@ func TestBuildUsesHybridCandidatesWhenAvailable(t *testing.T) {
 }
 
 func TestBuildFallsBackWhenHybridUnavailable(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	t.Cleanup(func() {
 		lookupHybridCandidates = defaultHybridCandidates
 	})
@@ -796,7 +797,7 @@ func TestBuildFallsBackWhenHybridUnavailable(t *testing.T) {
 }
 
 func TestBuildKeepsEmptyPackCleanWhenHybridReturnsNoUsableCandidates(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	t.Cleanup(func() {
 		lookupHybridCandidates = defaultHybridCandidates
 	})
@@ -866,7 +867,7 @@ func TestCaptureNeverWritesFromPromptText(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
+			testutil.TempHome(t)
 			projectRoot := t.TempDir()
 			store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 			if err := store.Init("runtime-memory"); err != nil {
@@ -909,7 +910,7 @@ func TestCaptureNeverWritesFromPromptText(t *testing.T) {
 }
 
 func TestCaptureDoesNotInferProjectDecisionFromPrompt(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {
@@ -953,7 +954,7 @@ func TestHookGuidanceDefinesWhatAMemoryIs(t *testing.T) {
 	// what belongs in the store. Without it the only place that says so is the
 	// kn-extract skill, which has to be invoked, while the hook that fires on
 	// every message explains only which tool to call.
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {
@@ -979,7 +980,7 @@ func TestExpireAbandonedProposalsRetiresOnlyTheAbandoned(t *testing.T) {
 	// Driven with an explicit clock rather than time.Now, so it keeps testing
 	// the rule after the grace window for the pre-existing backlog has passed
 	// and stops depending on what day it is run.
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {
@@ -1028,7 +1029,7 @@ func TestExpireAbandonedProposalsRetiresOnlyTheAbandoned(t *testing.T) {
 func TestCaptureReportsTheExpirySweep(t *testing.T) {
 	// The hook's write path used to manufacture junk. It now runs the sweep,
 	// so the queue is bounded without anyone remembering to run a command.
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {
@@ -1209,7 +1210,7 @@ func TestBaselineRanksCommitmentsAboveContextDependentFacts(t *testing.T) {
 }
 
 func TestSessionBaselineCapsItemsEvenWhenConfigAsksForMore(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.TempHome(t)
 	projectRoot := t.TempDir()
 	store := storage.NewStore(filepath.Join(projectRoot, ".knowns"))
 	if err := store.Init("runtime-memory"); err != nil {

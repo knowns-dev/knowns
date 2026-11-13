@@ -1,0 +1,20 @@
+{
+  "id": "kunv9q",
+  "title": "Pattern: keep stores small",
+  "layer": "project",
+  "category": "pattern",
+  "content": "Keep stores small.\n\nDetail below.",
+  "status": "proposed",
+  "lastVerified": "0001-01-01T00:00:00Z",
+  "tags": [
+    "storage"
+  ],
+  "createdAt": "2026-11-03T13:37:37.141Z",
+  "updatedAt": "2026-11-03T13:37:37.141Z",
+  "lifecycleMetadataMissing": [
+    "confidence",
+    "lastVerified",
+    "ttlDays",
+    "sources"
+  ]
+}

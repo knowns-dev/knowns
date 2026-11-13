@@ -5,7 +5,7 @@
 <h1 align="center">Knowns</h1>
 
 <p align="center">
-  <a href="https://go.dev/"><img src="https://img.shields.io/badge/go-%3E%3D1.24.2-00ADD8?style=flat-square&logo=go" alt="Go"></a>
+  <a href="https://bun.sh/"><img src="https://img.shields.io/badge/bun-%3E%3D1.3.12-000000?style=flat-square&logo=bun" alt="Bun"></a>
   <a href="https://github.com/knowns-dev/knowns/releases"><img src="https://img.shields.io/github/v/release/knowns-dev/knowns?style=flat-square" alt="Release"></a>
   <a href="https://github.com/knowns-dev/knowns/stargazers"><img src="https://img.shields.io/github/stars/knowns-dev/knowns?style=flat-square" alt="GitHub stars"></a>
   <a href="https://github.com/knowns-dev/knowns/actions/workflows/ci.yml"><img src="https://github.com/knowns-dev/knowns/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -240,7 +240,7 @@ Memory category `decision` is legacy and read-only for new writes. Review it wit
 
 ### Semantic Search
 
-Search by meaning, not just keywords. Runs locally with ONNX models - fully offline, no API keys needed.
+Search by meaning, not just keywords. Embeddings come from a local [Ollama](https://ollama.com) model and vectors live in a local Qdrant that Knowns manages (or `knowns qdrant setup` for Docker or your own) - offline, no API keys needed.
 
 ```bash
 knowns search "how does authentication work" --plain
@@ -464,17 +464,21 @@ npm install -g knowns
 npx knowns
 ```
 
-### From source (Go 1.24.2+)
+### From source (Bun 1.3.12+)
+
+Knowns is built with [Bun](https://bun.sh) as a single self-contained binary. Bun is only needed to build it.
 
 ```bash
-go install github.com/howznguyen/knowns/cmd/knowns@latest
-
-# Or clone and build
 git clone https://github.com/knowns-dev/knowns.git
 cd knowns
-make build        # Output: bin/knowns
-make install      # Install to GOPATH/bin
+(cd ui && bun install && bun run build)   # the binary embeds the built Web UI
+cd cli && bun install
+bun run build bun-darwin-arm64            # Output: cli/dist/darwin-arm64/knowns
 ```
+
+Pick your platform's target: `bun-darwin-arm64`, `bun-darwin-x64`, `bun-linux-x64`, `bun-linux-arm64`, `bun-windows-x64` or `bun-windows-arm64`. With no target, `bun run build` builds all six. Copy the binary to a directory on your `PATH`.
+
+> Releases up to 0.34.1 were written in Go. That code still lives in `cmd/` and `internal/` as the reference the TypeScript build is tested against; `go install github.com/howznguyen/knowns/cmd/knowns@latest` builds 0.34.1, not the current release.
 
 ### Uninstall
 
@@ -490,7 +494,7 @@ npm uninstall -g knowns
 # Shell installer (macOS/Linux)
 curl -fsSL https://knowns.sh/script/uninstall | sh
 
-# Go install
+# Go install (0.34.1 and earlier)
 rm -f "$(go env GOPATH)/bin/knowns"
 ```
 
@@ -598,34 +602,60 @@ Optional self-hosted sync server for shared visibility without giving up local-f
 
 ## Development
 
-Requires **Go 1.24.2+** and optionally **Node.js + pnpm** for UI development.
+Requires **Bun 1.3.12+**. **Go 1.25+** is optional: the parity tests build the Go 0.34.1 reference from `cmd/` and skip the Go comparisons without it.
 
 ```bash
-make build              # Build binary -> bin/knowns
-make dev                # Build with race detector
-make test               # Run unit tests
-make test-e2e           # Run CLI + MCP E2E tests
-make test-e2e-semantic  # E2E tests including semantic search
-make lint               # Run golangci-lint
-make cross-compile      # Build for all 6 platforms
-make ui                 # Rebuild embedded Web UI (requires pnpm)
+make ui                          # Build the Web UI the binary embeds (cd ui && bun run build)
+cd cli && bun install
+bun run check                    # Typecheck + lint (Biome)
+bun run test                     # Unit and parity tests
+bun run build bun-linux-x64      # Build one target -> cli/dist/linux-x64/knowns
+bun run build                    # Build all 6 targets
+bun run cli-docs:check           # CLI reference matches the command tree
+```
+
+Parity tests compare the TypeScript CLI with the Go 0.34.1 reference byte for byte. To reuse a Go build instead of building one per run, point `KNOWNS_GO_BIN` at it (`go build -o /tmp/knowns-go ./cmd/knowns`, after `make ui`).
+
+The CLI + MCP E2E suite in `tests/` is written in Go and runs against any binary. Run it through `scripts/go-e2e.sh` (or `scripts/go-e2e.ps1` on Windows), for example `TEST_BINARY=cli/dist/linux-x64/knowns scripts/go-e2e.sh -v`: it gives the suite a temporary home so its test projects never land in your real `~/.knowns`.
+
+#### Web UI development
+
+The Vite dev UI runs on `http://localhost:6421` and calls the API server on `:6420` (`API_URL`).
+
+```bash
+make dev-all-ts         # TypeScript server + Vite dev UI
+make dev-ui             # Vite dev UI only
+make dev-ts             # TypeScript server only
+```
+
+The TypeScript web server accepts requests only from its own origin, so the dev UI on another port
+must be allowed with `KNOWNS_ALLOWED_ORIGINS` (exact origins, comma-separated, no wildcards).
+`make dev-ts` sets it to `http://localhost:6421,http://127.0.0.1:6421`; when you start the server
+yourself, set it the same way, or the UI gets `403 untrusted request origin`:
+
+```bash
+KNOWNS_ALLOWED_ORIGINS=http://localhost:6421 knowns browser --port 6420 --no-open
 ```
 
 ### Project Structure
 
 ```
-cmd/knowns/          # CLI entry point
-internal/
-  cli/               # Cobra commands
-  models/            # Domain models
-  storage/           # File-based storage (.knowns/)
-  server/            # HTTP server, SSE, WebSocket
-    routes/          # REST API handlers
-    workspace/       # Agent orchestrator, process manager, worktree
-  mcp/               # MCP server (stdio)
-  search/            # Semantic search (ONNX)
-ui/                  # Embedded React UI (built assets)
-tests/               # E2E tests
+cli/                 # The Knowns CLI (TypeScript on Bun)
+  src/
+    main.ts          # CLI entry point
+    cli/             # Commands
+    models/          # Domain models
+    storage/         # File-based storage (.knowns/)
+    server/          # HTTP server, SSE, WebSocket
+    mcp/             # MCP server (stdio)
+    search/          # Keyword and semantic search
+    runtime/         # Background runtime daemon
+    lsp/             # LSP-based code intelligence
+  test/              # Unit and Go parity tests
+  scripts/           # Build, fixtures and CLI reference generation
+ui/                  # React Web UI (Knowns UI), embedded into the binary
+cmd/, internal/      # Go 0.34.1 reference implementation
+tests/               # E2E tests (Go)
 ```
 
 ---

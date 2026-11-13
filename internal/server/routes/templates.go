@@ -402,7 +402,7 @@ func (tr *TemplateRoutes) run(w http.ResponseWriter, r *http.Request) {
 		skipped := false
 		skipReason := ""
 		if action.SkipIfExists && !req.DryRun {
-			projectRoot := filepath.Dir(tr.getStore().Root)
+			projectRoot := tr.getStore().ProjectRoot
 			if _, statErr := os.Stat(filepath.Join(projectRoot, path)); statErr == nil {
 				skipped = true
 				skipReason = "file exists"

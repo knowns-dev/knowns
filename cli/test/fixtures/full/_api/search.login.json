@@ -1,0 +1,27 @@
+[
+  {
+    "type": "task",
+    "id": "FX-3VT2SR",
+    "title": "Implement login flow (v2)",
+    "score": 11.859850595870167,
+    "snippet": "FX-3VT2SR",
+    "matchedBy": [
+      "keyword"
+    ],
+    "status": "done",
+    "priority": "high",
+    "lifecycleState": "done",
+    "completedAt": "2026-11-03T13:37:35.549Z",
+    "tags": [
+      "auth",
+      "feature",
+      "shipped"
+    ],
+    "_runtime": {
+      "degraded": true,
+      "mode": "hybrid",
+      "reason": "disabled",
+      "message": "semantic runtime unavailable; returned keyword results only: semantic runtime disabled: KNOWNS_SEMANTIC_RUNTIME_DISABLED"
+    }
+  }
+]

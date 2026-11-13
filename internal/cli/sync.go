@@ -61,7 +61,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	projectRoot := filepath.Dir(store.Root)
+	projectRoot := store.ProjectRoot
 	configPlatforms := cfg.Settings.Platforms
 	selectedPlatforms, err := resolveSyncPlatformSelection(platform, configPlatforms)
 	if err != nil {

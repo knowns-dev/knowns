@@ -1,4 +1,5 @@
 ---
+id: doc-143a4c50eee6d053997fc747d906f500
 title: Architecture Overview
 createdAt: '2025-12-29T07:06:54.131Z'
 updatedAt: '2026-03-08T18:17:38.612Z'

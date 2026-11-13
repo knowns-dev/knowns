@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { stageWindowsBinary } = require("./bin/knowns.js");
+const { rosettaHint, stageWindowsBinary } = require("./bin/knowns.js");
 
 const tempRoots = [];
 
@@ -53,4 +53,20 @@ test("does not stage binaries on non-Windows platforms", () => {
 
   expect(stageWindowsBinary(binary, { platform: "linux", arch: "x64", cacheRoot })).toBe(binary);
   expect(fs.existsSync(cacheRoot)).toBe(false);
+});
+
+// KN-N2M8CS: the darwin-x64 build warns about missing AVX on every run under Rosetta 2.
+test("hints at an arm64 Node when the Intel build runs under Rosetta on a terminal", () => {
+  const hint = rosettaHint({ platform: "darwin", arch: "x64", isTTY: true, translated: true });
+  expect(hint).toContain("running under Rosetta");
+  expect(hint).toContain("arm64 Node");
+});
+
+test.each([
+  ["a real Intel Mac", { platform: "darwin", arch: "x64", isTTY: true, translated: false }],
+  ["a non-interactive stderr", { platform: "darwin", arch: "x64", isTTY: false, translated: true }],
+  ["the native arm64 build", { platform: "darwin", arch: "arm64", isTTY: true, translated: true }],
+  ["Linux x64", { platform: "linux", arch: "x64", isTTY: true, translated: true }],
+])("no Rosetta hint on %s", (_name, options) => {
+  expect(rosettaHint(options)).toBeNull();
 });
