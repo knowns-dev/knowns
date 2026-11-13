@@ -104,6 +104,21 @@ jobs:
       - name: Run Go vet
         run: go vet ./...
 
+      # The TS differential suites compare against Go builds and refuse to skip under CI, so build
+      # the same references ts-cli.yml does: Go 0.34.1 from this tree (it embeds the ui/dist built
+      # above) and the PR #156 head for spec D13.
+      - name: Build Go reference binaries
+        env:
+          PR156_SHA: 2b3f88d24864f5810c82b935138268f76560ae74
+        run: |
+          go build -o "$RUNNER_TEMP/knowns-go" ./cmd/knowns
+          echo "KNOWNS_GO_BIN=$RUNNER_TEMP/knowns-go" >> "$GITHUB_ENV"
+          git fetch --no-tags --depth=1 origin "$PR156_SHA"
+          git worktree add --detach "$RUNNER_TEMP/pr156" "$PR156_SHA"
+          cp -R ui/dist "$RUNNER_TEMP/pr156/ui/"
+          (cd "$RUNNER_TEMP/pr156" && go build -o "$RUNNER_TEMP/knowns-go-pr156" ./cmd/knowns)
+          echo "KNOWNS_GO_PR156_BIN=$RUNNER_TEMP/knowns-go-pr156" >> "$GITHUB_ENV"
+
       - name: TS CLI check and unit tests
         working-directory: cli
         run: |
