@@ -146,3 +146,83 @@ describe("tasks board", () => {
     expect(bad.isError).toBe(true);
   });
 });
+
+describe("keyset cursor (KN-6DVWN6)", () => {
+  test("tasks leaving the filter between pages do not shift page 2", async () => {
+    const { call, list } = await project(120);
+    const first = await list({ status: "todo", limit: 50 });
+    const all = await list({ status: "todo", limit: 200 });
+    const ids = all.page?.results.map((t) => t.id) ?? [];
+    expect(first.page?.results.map((t) => t.id)).toEqual(ids.slice(0, 50));
+    // The agent finishes the whole first page, so the todo filter shrinks by 50.
+    for (const t of first.page?.results ?? []) {
+      const r = await call({ action: "update", taskId: t.id, status: "done" });
+      expect(r.isError).toBe(false);
+    }
+    const second = await list({ status: "todo", limit: 50, cursor: first.page?.nextCursor });
+    expect(second.page?.results[0]?.id).toBe(ids[50]);
+    expect(second.page?.results.map((t) => t.id)).toEqual(ids.slice(50, 100));
+  });
+
+  test("the same holds for a board column", async () => {
+    const { call } = await project(120);
+    const b1 = JSON.parse(
+      (await call({ action: "board", status: "todo", limit: 20 })).text,
+    ) as Board;
+    const col = b1.columns[0];
+    const wide = JSON.parse(
+      (await call({ action: "board", status: "todo", limit: 200 })).text,
+    ) as Board;
+    const ids = wide.columns[0]?.tasks.map((t) => t.id) ?? [];
+    for (const t of col?.tasks ?? [])
+      await call({ action: "update", taskId: t.id, status: "done" });
+    const b2 = JSON.parse(
+      (await call({ action: "board", status: "todo", limit: 20, cursor: col?.nextCursor })).text,
+    ) as Board;
+    expect(b2.columns[0]?.tasks.map((t) => t.id)).toEqual(ids.slice(20, 40));
+  });
+
+  test("the legacy offset argument and old offset cursors still work", async () => {
+    const { list } = await project(30);
+    const all = await list({ limit: 200 });
+    const ids = all.page?.results.map((t) => t.id) ?? [];
+    const off = await list({ limit: 5, offset: 10 });
+    expect(off.page?.results.map((t) => t.id)).toEqual(ids.slice(10, 15));
+  });
+
+  test("more results carry hasMore and a hint; the last page does not", async () => {
+    const { list } = await project(60);
+    const p = await list({ limit: 10 });
+    const raw = JSON.parse(p.r.text) as Record<string, unknown>;
+    expect(raw.hasMore).toBe(true);
+    expect(String(raw._hint)).toContain("nextCursor");
+    const last = await list({ limit: 200 });
+    expect((JSON.parse(last.r.text) as Record<string, unknown>).hasMore).toBeUndefined();
+  });
+});
+
+describe("limit and board status checks", () => {
+  test("a numeric string limit is accepted, a junk limit is an error", async () => {
+    const { list } = await project(20);
+    const s = await list({ limit: "5" });
+    expect(s.page?.results.length).toBe(5);
+    expect((await list({ limit: "many" })).r.isError).toBe(true);
+    expect((await list({ limit: 2.5 })).r.isError).toBe(true);
+    expect((await list({ limit: 0 })).r.isError).toBe(true);
+  });
+
+  test("board status filter: total is the column count, an unknown status lists the valid ones", async () => {
+    const { call } = await project(40);
+    const b = JSON.parse((await call({ action: "board", status: "todo", limit: 5 })).text) as Board;
+    expect(b.total).toBe(b.columns[0]?.count ?? -1);
+    const bad = await call({ action: "board", status: "nope" });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toContain("todo");
+  });
+
+  test("assignee filtering trims the same way for padded values", async () => {
+    const { list } = await project(5);
+    const r = await list({ unassigned: true, limit: 200 });
+    expect((r.page?.total ?? 0) >= 5).toBe(true);
+  });
+});

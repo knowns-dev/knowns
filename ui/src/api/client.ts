@@ -257,24 +257,6 @@ export const api = {
 		return data.map(parseTaskDTO);
 	},
 
-	/** One page of summaries; follow nextCursor for more. Filters apply before the page is cut. */
-	async getTasksPage(options: {
-		limit: number;
-		cursor?: string;
-		status?: string;
-		includeHistorical?: boolean;
-		signal?: AbortSignal;
-	}): Promise<{ tasks: Task[]; total: number; nextCursor?: string }> {
-		const params = new URLSearchParams({ summary: "true", limit: String(options.limit) });
-		if (options.cursor) params.set("cursor", options.cursor);
-		if (options.status) params.set("status", options.status);
-		if (options.includeHistorical) params.set("includeHistorical", "true");
-		const res = await apiFetch(`${API_BASE}/api/tasks?${params.toString()}`, { signal: options.signal });
-		if (!res.ok) throw new Error("Failed to fetch tasks");
-		const data = (await res.json()) as { tasks: TaskDTO[]; total: number; nextCursor?: string };
-		return { tasks: data.tasks.map(parseTaskDTO), total: data.total, nextCursor: data.nextCursor };
-	},
-
 	async getTask(id: string, options?: { signal?: AbortSignal }): Promise<Task> {
 		const res = await apiFetch(`${API_BASE}/api/tasks/${id}`, { signal: options?.signal });
 		if (!res.ok) {

@@ -15,10 +15,12 @@ import {
   Service,
 } from "../../domain/tasklifecycle/index.ts";
 import {
-  clampLimit,
   DEFAULT_PAGE_SIZE,
   matchesQuery,
+  orderKey,
   pageTasks,
+  parseLimit,
+  type SortKey,
 } from "../../domain/tasklifecycle/summary.ts";
 import {
   eventToWire,
@@ -219,14 +221,12 @@ function summaryResponse(task: Task): Obj {
 function parseListQuery(c: Ctx) {
   const p = c.url.searchParams;
   const limitRaw = p.get("limit");
-  const limit = limitRaw === null ? undefined : Number(limitRaw);
-  if (limit !== undefined && !(Number.isInteger(limit) && limit >= 1)) {
-    return "limit must be a positive integer";
-  }
+  const limit = parseLimit(limitRaw ?? undefined, DEFAULT_PAGE_SIZE);
+  if (typeof limit !== "number") return limit.error;
   return {
     summary: p.get("summary") === "true" || p.get("summary") === "1",
     paged: limitRaw !== null || p.has("cursor"),
-    limit: clampLimit(limit, DEFAULT_PAGE_SIZE),
+    limit,
     cursor: p.get("cursor") ?? undefined,
     query: {
       status: p.get("status") ?? undefined,
@@ -237,6 +237,11 @@ function parseListQuery(c: Ctx) {
       query: p.get("query") ?? undefined,
     },
   };
+}
+
+/** The key sortTasks orders by: lifecycle, then order (unset last), then id. */
+function lifecycleKey(t: Task): SortKey {
+  return [lifecycleRank(t), ...orderKey(t)];
 }
 
 function lifecycleRank(t: Task): number {
@@ -369,7 +374,7 @@ export function registerTasks(r: Router, app: App): void {
           }),
         );
       }
-      const page = pageTasks(sorted, q.limit, q.cursor);
+      const page = pageTasks(sorted, q.limit, q.cursor, lifecycleKey);
       if ("error" in page) return respondError(400, page.error);
       attachAgent(s, page.items);
       const body: Obj = {
