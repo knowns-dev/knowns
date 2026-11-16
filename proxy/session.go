@@ -161,8 +161,14 @@ func (s *session) handleIn(line []byte) {
 		return
 	}
 	if trimmed[0] == '[' {
-		// MCP has no batches; the ids inside one cannot be tracked, so it is refused outright.
-		s.emit([]byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"JSON-RPC batch requests are not supported"}}` + "\n"))
+		// MCP has no batches, so the engine decides what to answer, and the proxy keeps the answer
+		// identical to the in-process one. The ids inside cannot be tracked: a batch lost with the
+		// connection is not replayed and not reported.
+		if s.cur != nil {
+			if err := s.cur.write(line); err != nil {
+				s.dropLocked(s.cur, "dropped", "write to "+s.cur.kind+" failed")
+			}
+		}
 		return
 	}
 	f, _, dup := scanObject(line, "id", "method", "params")
