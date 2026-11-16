@@ -47,3 +47,12 @@ describe("launcher helpers (spec mcp-thin-proxy D10)", () => {
     expect(r?.remediation?.command).toBe("knowns update");
   });
 });
+
+describe("daemon identity with the engine name", () => {
+  test("a daemon started as knowns-engine __runtime run is a Knowns runtime daemon", async () => {
+    const { isRuntimeDaemonCommand } = await import("../../src/runtime/process-identity.ts");
+    expect(isRuntimeDaemonCommand("/x/bin/knowns-engine __runtime run")).toBe(true);
+    expect(isRuntimeDaemonCommand('"C:\\k\\knowns-engine.exe" __runtime run')).toBe(true);
+    expect(isRuntimeDaemonCommand("/x/bin/other __runtime run")).toBe(false);
+  });
+});
