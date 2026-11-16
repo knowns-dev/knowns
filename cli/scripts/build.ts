@@ -43,7 +43,11 @@ for (const target of list) {
     );
     console.log(`ok   ${target} -> dist/${platformOf(target)}/${exeName(target)}`);
     if (goOk) {
-      buildLauncher(target, version, join(cliDir, "dist", platformOf(target), launcherExeName(target)));
+      buildLauncher(
+        target,
+        version,
+        join(cliDir, "dist", platformOf(target), launcherExeName(target)),
+      );
       console.log(`ok   ${target} -> dist/${platformOf(target)}/${launcherExeName(target)}`);
     }
   } catch (e) {
