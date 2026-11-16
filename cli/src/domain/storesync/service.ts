@@ -99,8 +99,39 @@ export interface FoundStore {
   projects: string[];
 }
 
-/** discoverStores groups the registry's store-linked projects by store. */
+/**
+ * discoverStores groups the registry's store-linked projects by store. The daemon asks every few
+ * seconds (each tick and each keep-alive check); loading the registry canonicalizes every project
+ * path against the disk, which was the largest cost of an otherwise idle daemon with a UI open. The
+ * answer only depends on the registry file, so it is kept per stat signature and re-read when the
+ * file changes or after DISCOVER_TTL_MS.
+ */
+const DISCOVER_TTL_MS = 30_000;
+const discovered = new Map<string, { sig: string; at: number; found: FoundStore[] }>();
+export const discoverStats = { loads: 0 };
+
+function registrySig(path: string): string {
+  try {
+    const st = statSync(path);
+    return `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
+  } catch {
+    return "missing";
+  }
+}
+
 export function discoverStores(registryPath: string): FoundStore[] {
+  const sig = registrySig(registryPath);
+  const hit = discovered.get(registryPath);
+  if (hit && hit.sig === sig && Date.now() - hit.at < DISCOVER_TTL_MS) {
+    return hit.found.map((f) => ({ ...f, projects: [...f.projects] }));
+  }
+  const found = loadStores(registryPath);
+  discoverStats.loads++;
+  discovered.set(registryPath, { sig, at: Date.now(), found });
+  return found.map((f) => ({ ...f, projects: [...f.projects] }));
+}
+
+function loadStores(registryPath: string): FoundStore[] {
   const reg = new MachineRegistry(registryPath);
   try {
     reg.loadReadOnly();
