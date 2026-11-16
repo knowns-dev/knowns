@@ -52,6 +52,7 @@ export type { ServerOptions };
 
 const SERVICE_STATUS_INTERVAL_MS = 7000;
 const TASK_SWEEP_INTERVAL_MS = 3_600_000;
+const FIRST_SWEEP_DELAY_MS = 5_000;
 
 interface ServiceStatusLike {
   name: string;
@@ -485,11 +486,16 @@ export class Server {
         });
       }
     };
-    void run().finally(() => {
-      if (this.stopped) return;
-      this.sweepTimer = setInterval(() => void run(), TASK_SWEEP_INTERVAL_MS);
-      this.sweepTimer.unref();
-    });
+    // The first sweep waits until the server has answered its first requests: listing thousands of
+    // Tasks blocks the event loop for a second or two.
+    const first = setTimeout(() => {
+      void run().finally(() => {
+        if (this.stopped) return;
+        this.sweepTimer = setInterval(() => void run(), TASK_SWEEP_INTERVAL_MS);
+        this.sweepTimer.unref();
+      });
+    }, FIRST_SWEEP_DELAY_MS);
+    first.unref();
   }
 
   private portFile(): string | undefined {

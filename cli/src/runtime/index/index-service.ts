@@ -66,6 +66,9 @@ function allTasksForIndex(storage: Storage): Task[] {
   return [...byId.values()];
 }
 
+const REINDEX_BATCH = 16;
+const REINDEX_YIELD_MS = 5;
+
 export class IndexService {
   constructor(
     private readonly storage: Storage,
@@ -82,6 +85,17 @@ export class IndexService {
     fn: (tx: Parameters<Parameters<typeof withTaskLifecycleTransaction>[1]>[0]) => Promise<T> | T,
   ) {
     return withTaskLifecycleTransaction(this.storage.ctx, fn);
+  }
+
+  /**
+   * A reindex runs inside the shared runtime daemon: after every REINDEX_BATCH entries it gives the
+   * event loop (heartbeats, queue, other projects) and the machine a short turn instead of running
+   * the whole project in one burst.
+   */
+  private reindexCount = 0;
+  private async pace(): Promise<void> {
+    if (++this.reindexCount % REINDEX_BATCH !== 0) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, REINDEX_YIELD_MS));
   }
 
   private async embedTask(task: Task): Promise<Chunk[]> {
@@ -136,6 +150,7 @@ export class IndexService {
     const tok = this.embedder.getTokenizer();
 
     for (const [i, task] of tasks.entries()) {
+      await this.pace();
       progress?.("tasks", i + 1, tasks.length);
       const hash = contentHash(taskContentForHash(task));
       if (vec.getContentHash(`task:${task.id}`) === hash) {
@@ -151,6 +166,7 @@ export class IndexService {
 
     const indexDocs = async (list: typeof docs, phase: string) => {
       for (const [i, doc] of list.entries()) {
+        await this.pace();
         progress?.(phase, i + 1, list.length);
         const sourceId = `doc:${doc.path}`;
         currentIds.add(sourceId);
@@ -186,6 +202,7 @@ export class IndexService {
       memories = [];
     }
     for (const [i, entry] of memories.entries()) {
+      await this.pace();
       progress?.("memories", i + 1, memories.length);
       const sourceId = `memory:${entry.id}`;
       currentIds.add(sourceId);
@@ -197,6 +214,7 @@ export class IndexService {
     }
 
     for (const [i, decision] of decisions.entries()) {
+      await this.pace();
       progress?.("decisions", i + 1, decisions.length);
       const sourceId = `decision:${decision.id}`;
       if (!decisionCurrentForDefaultRetrieval(decision)) {

@@ -7,6 +7,7 @@ const run = defineCommand({
   short: "Run the internal shared runtime",
   hidden: true,
   async run() {
+    (await import("../../runtime/priority.ts")).lowerProcessPriority();
     const { runDaemon } = await import("../../runtime/queue.ts");
     const { executeRuntimeJob, reloadSemanticRuntime, runtimeIndexEnqueuer, runtimeSeams } =
       await import("../../runtime/executor.ts");

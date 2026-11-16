@@ -93,6 +93,12 @@ export interface Result {
   deadline?: string;
 }
 
+/** Children by parent and the Tasks by id at one moment: what the descendant check reads. */
+export interface TaskTreeSnapshot {
+  children: Map<string, string[]>;
+  tasks: Map<string, { archived: boolean; status: string }>;
+}
+
 export interface ArchiveOptions {
   actor?: string;
   expectedHash?: string;
@@ -100,6 +106,8 @@ export interface ArchiveOptions {
   automatic?: boolean;
   /** A caller-selected retention threshold in ms; an explicit 0 stays distinct from "none". */
   minimumAgeMs?: number;
+  /** Internal: a snapshot of the Task tree shared by the Tasks of one automatic sweep chunk. */
+  taskTree?: TaskTreeSnapshot;
 }
 
 export interface ReopenOptions {
@@ -122,6 +130,8 @@ export interface BatchOptions {
   automatic?: boolean;
   minimumAgeMs?: number;
   expectedHashes?: Record<string, string>;
+  /** Internal: see ArchiveOptions.taskTree. */
+  taskTree?: TaskTreeSnapshot;
 }
 
 export interface BatchResult {
