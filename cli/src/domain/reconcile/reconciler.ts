@@ -472,6 +472,7 @@ export class FilesystemReconciler {
   /** Reconcile: a startup/explicit pass. Without `execute` it is entirely read-only. */
   reconcile(execute: boolean): Promise<ReconcileResult[]> {
     return this.mu.run(async () => {
+      this.writerLockTimedOut = false;
       const paths = this.canonicalFiles();
       const manifest = readManifestFile(this.manifestPath());
       const results: ReconcileResult[] = [];
@@ -513,6 +514,7 @@ export class FilesystemReconciler {
   /** ReconcileHints: reconcile exactly the files a watcher named. */
   reconcileHints(hints: readonly ReconcileHint[], execute: boolean): Promise<ReconcileResult[]> {
     return this.mu.run(async () => {
+      this.writerLockTimedOut = false;
       const { resolved, diagnostics } = await this.resolveHints(hints);
       const results: ReconcileResult[] = [...diagnostics];
       const seen = new Set<string>();
@@ -586,9 +588,17 @@ export class FilesystemReconciler {
   ): Promise<void> {
     let result: ReconcileResult;
     let entry: ManifestEntry;
+    if (execute && this.writerLockTimedOut) {
+      results.push(this.busyResult(path)); // one timeout per batch, not one per file
+      return;
+    }
     try {
       ({ result, entry } = await this.reconcileFile(path, execute));
     } catch (e) {
+      if (isLockTimeout(e)) {
+        results.push(this.busyResult(path, e));
+        return;
+      }
       // A malformed or ambiguous file is an actionable, content-free result; other files may
       // still be safely reconciled in the same pass.
       results.push(emptyResult({ path, diagnostic: (e as Error).message }));
@@ -658,28 +668,77 @@ export class FilesystemReconciler {
     execute: boolean,
   ): Promise<{ result: ReconcileResult; entry: ManifestEntry }> {
     if (!execute) return this.reconcileFileUnlocked(path, execute);
-    if (!this.isTaskPath(path)) {
-      // The same for a Doc, under its mutation lock (a doc write is file first, history second).
-      const rel = this.relative(path).replace(/\\/g, "/");
-      const docPath = rel.replace(/^docs\//, "").replace(/\.md$/, "");
-      return this.storage.store.withDocMutationLocks(
-        [docPath],
-        () => this.reconcileFileUnlocked(path, execute),
-        { timeoutMs: 10_000 },
-      );
-    }
-    return this.storage.store.withTaskLifecycleLock(
-      () => this.reconcileFileUnlocked(path, execute),
-      {
-        timeoutMs: 10_000,
-      },
+    const kind: Kind = this.isTaskPath(path) ? "task" : "doc";
+    const done = await this.withWriterLock(kind, [this.relative(path)], () =>
+      this.reconcileFileUnlocked(path, execute),
     );
+    // The index handoff (Store.open, settings, the job queue) runs after the writer lock is
+    // released: it can take long, and a callback that takes the same lock must not hang.
+    if (done.handoff && this.index) {
+      try {
+        await this.index(done.result);
+      } catch (e) {
+        if (done.handoff === "raw") throw e;
+        throw new Error(
+          `filesystem revision durable but indexing handoff failed: ${(e as Error).message}`,
+          { cause: e },
+        );
+      }
+    }
+    return { result: done.result, entry: done.entry };
+  }
+
+  private writerLockTimeoutMs = 10_000;
+
+  /** Test seam: how long to wait for a writer's lock before deferring the file. */
+  setWriterLockTimeout(ms: number): void {
+    this.writerLockTimeoutMs = ms;
+  }
+
+  /** True once a writer lock timed out in this pass: the rest of the batch is deferred, not waited. */
+  private writerLockTimedOut = false;
+
+  /** A result that defers a file whose writer lock was busy; the watcher re-queues it with backoff. */
+  private busyResult(path: string, e?: unknown): ReconcileResult {
+    this.writerLockTimedOut = true;
+    return emptyResult({
+      path: this.relative(path),
+      diagnostic: `writer lock busy; will retry${e ? `: ${(e as Error).message}` : ""}`,
+      pending: true,
+      retryAt: new Date(this.lifecycleNow().getTime() + 1000),
+    });
+  }
+
+  /**
+   * Runs fn under the lock the WRITERS of this entity take (a Task: the task lifecycle lock; a Doc:
+   * its mutation lock, one per path), so the reconciler sees the state before or after a write and
+   * never the middle of one (file written, history not yet). Bounded wait: a timeout throws, it
+   * never runs unlocked. `relPaths` are store-relative canonical paths (docs/<path>.md).
+   */
+  private withWriterLock<T>(kind: string, relPaths: string[], fn: () => Promise<T>): Promise<T> {
+    const timeoutMs = this.writerLockTimeoutMs;
+    if (kind === "task") return this.storage.store.withTaskLifecycleLock(fn, { timeoutMs });
+    const docPaths = [
+      ...new Set(
+        relPaths.map((rel) =>
+          rel
+            .replace(/\\/g, "/")
+            .replace(/^docs\//, "")
+            .replace(/\.md$/, ""),
+        ),
+      ),
+    ].sort();
+    return this.storage.store.withDocMutationLocks(docPaths, fn, { timeoutMs });
   }
 
   private async reconcileFileUnlocked(
     path: string,
     execute: boolean,
-  ): Promise<{ result: ReconcileResult; entry: ManifestEntry }> {
+  ): Promise<{
+    result: ReconcileResult;
+    entry: ManifestEntry;
+    handoff?: "wrapped" | "raw";
+  }> {
     const data = this.readStable(path);
     const kind: Kind = this.isTaskPath(path) ? "task" : "doc";
     const parsed = this.parseCanonical(kind, path, data);
@@ -762,8 +821,7 @@ export class FilesystemReconciler {
             entry.headHash = tail.newHash ?? "";
             result.revision = tail.revision;
             result.changed = tail.source === "filesystem";
-            if (result.changed && this.index) await this.index(result);
-            return { result, entry };
+            return { result, entry, handoff: result.changed ? "raw" : undefined };
           }
           const legacy = await this.legacyHead(kind, entityId, hash, parsed.doc);
           if (legacy.revision > 0) {
@@ -782,8 +840,7 @@ export class FilesystemReconciler {
             result.changed = true;
             result.revision = again1.revision;
           }
-          if (result.changed && this.index) await this.index(result);
-          return { result, entry };
+          return { result, entry, handoff: result.changed ? "raw" : undefined };
         }
       }
       if (!execute) {
@@ -810,19 +867,7 @@ export class FilesystemReconciler {
       result.changed = true;
       result.revision = 1;
     }
-    if (result.changed && this.index) {
-      try {
-        await this.index(result);
-      } catch (e) {
-        throw new Error(
-          `filesystem revision durable but indexing handoff failed: ${(e as Error).message}`,
-          {
-            cause: e,
-          },
-        );
-      }
-    }
-    return { result, entry };
+    return { result, entry, handoff: result.changed ? "wrapped" : undefined };
   }
 
   private async legacyHead(
@@ -1236,7 +1281,10 @@ export class FilesystemReconciler {
     execute: boolean,
     optsIn: LifecycleOptions,
   ): Promise<ReconcileResult[]> {
-    return this.mu.run(() => this.lifecyclePass(execute, optsIn));
+    return this.mu.run(() => {
+      this.writerLockTimedOut = false;
+      return this.lifecyclePass(execute, optsIn);
+    });
   }
 
   private async lifecyclePass(
@@ -1376,14 +1424,20 @@ export class FilesystemReconciler {
         if (batchId === "")
           batchId = lifecycleBatchId(this.storeRoot, source, [`${key}\0${currentRel}`]);
         try {
-          const { result, next } = await this.reconcileLifecycleFile(
-            current,
-            entry,
-            execute,
-            source,
-            batchId,
-            LIFECYCLE_OPERATION_RENAME,
-          );
+          // A rename writes the file at the new path, then history: take the writers' lock for
+          // both paths so the reconciler never records the half-done rename as its own revision.
+          const run = () =>
+            this.reconcileLifecycleFile(
+              current,
+              entry,
+              execute,
+              source,
+              batchId,
+              LIFECYCLE_OPERATION_RENAME,
+            );
+          const { result, next } = execute
+            ? await this.withWriterLock(entry.entityType, [entry.path, currentRel], run)
+            : await run();
           results.push(result);
           if (execute) upserts[key] = next;
         } catch (e) {
@@ -1552,12 +1606,21 @@ export class FilesystemReconciler {
       this.activeCurrentPath = this.relative(path);
       let settled: { result: ReconcileResult; entry: ManifestEntry } | undefined;
       let failure: unknown;
+      if (execute && this.writerLockTimedOut) {
+        this.restoreActive(saved);
+        results.push(this.busyResult(path));
+        continue;
+      }
       try {
         settled = await this.reconcileFile(path, execute);
       } catch (e) {
         failure = e;
       } finally {
         this.restoreActive(saved);
+      }
+      if (!settled && isLockTimeout(failure)) {
+        results.push(this.busyResult(path, failure));
+        continue;
       }
       if (!settled) {
         results.push(
@@ -1843,9 +1906,13 @@ export class FilesystemReconciler {
     source: string,
     batchId: string,
   ): Promise<ReconcileResult> {
-    return this.withLifecycleEntityLock(entry.entityType, entry.entityId, () =>
-      this.appendLifecycleTombstoneLocked(entry, execute, source, batchId),
-    );
+    const run = () =>
+      this.withLifecycleEntityLock(entry.entityType, entry.entityId, () =>
+        this.appendLifecycleTombstoneLocked(entry, execute, source, batchId),
+      );
+    // Writers' lock first (their order is writer lock, then entity lock), so a tombstone is never
+    // recorded for a file a writer is in the middle of moving.
+    return execute ? this.withWriterLock(entry.entityType, [entry.path], run) : run();
   }
 
   private async appendLifecycleTombstoneLocked(
@@ -3105,4 +3172,9 @@ function goNanoTime(d: Date): string {
 /** `%q` for an identifier. */
 function goQuoted(s: string): string {
   return JSON.stringify(s);
+}
+
+/** The bounded wait for a writer lock ran out (withFileLock rejects with a TimeoutError). */
+function isLockTimeout(e: unknown): boolean {
+  return (e as { name?: string } | undefined)?.name === "TimeoutError";
 }

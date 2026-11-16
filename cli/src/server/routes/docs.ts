@@ -326,21 +326,28 @@ export function registerDocs(r: Router, app: App): void {
       const v = body.v;
       const doc: Doc = { ...oldDoc, path, updatedAt: goNow() };
       const oldPath = path;
-      if (v.title !== undefined) doc.title = v.title as string;
-      if (v.description !== undefined) {
-        if (v.description === "") delete doc.description;
-        else doc.description = v.description as string;
-      }
-      if (v.content !== undefined) doc.content = v.content as string;
-      if (v.tags !== undefined) doc.tags = v.tags as string[];
+      // The fields the request sets, as a function of the current document: re-applied under the
+      // lock when no expectedHash was sent, so a concurrent edit to another field is kept.
+      const applyFields = (d: Doc): void => {
+        d.updatedAt = goNow();
+        if (v.title !== undefined) d.title = v.title as string;
+        if (v.description !== undefined) {
+          if (v.description === "") delete d.description;
+          else d.description = v.description as string;
+        }
+        if (v.content !== undefined) d.content = v.content as string;
+        if (v.tags !== undefined) d.tags = v.tags as string[];
+        if (!d.tags) d.tags = [];
+      };
+      applyFields(doc);
       if (v.path !== undefined) {
         let p = v.path as string;
         if (p.endsWith(".md")) p = p.slice(0, -3);
         doc.path = p.replace(/^\/+|\/+$/g, "");
       }
-      if (!doc.tags) doc.tags = [];
       try {
         await mutateDocWithHistory(s.ctx, oldDoc, doc, {
+          ...(v.path === undefined && (v.section ?? "") === "" ? { rebase: applyFields } : {}),
           section: (v.section as string | undefined) ?? "",
           actor: "webui",
           source: "webui",

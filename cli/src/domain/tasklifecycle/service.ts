@@ -13,6 +13,7 @@ import type { TaskLifecyclePending } from "../../models/task-lifecycle.ts";
 import type { TimeEntry } from "../../models/time.ts";
 import {
   canonicalTaskHash,
+  MutationConflictError,
   purgeTaskLifecycle,
   type TaskLifecycleTransaction,
   type TaskPurgeReconciler,
@@ -225,7 +226,36 @@ export class Service implements LifecycleCore {
     return result;
   }
 
-  private async archiveOut(taskId: string, options: ArchiveOptions): Promise<Out<Result>> {
+  /**
+   * A caller that passed no expectedHash asked for "do this to whatever is current". The base is
+   * observed before the lifecycle lock and rechecked inside it, so a writer slipping in between is a
+   * spurious conflict: observe again and retry a few times instead of failing the caller. An
+   * explicit expectedHash is never retried.
+   */
+  private async retryUnhashed<T>(
+    given: string | undefined,
+    run: () => Promise<Out<T>>,
+  ): Promise<Out<T>> {
+    for (let attempt = 0; ; attempt++) {
+      const out = await run();
+      const err = out[1];
+      if (!blank(given) || attempt >= 4 || !err || !hasMutationConflict(err)) return out;
+    }
+  }
+
+  private archiveOut(taskId: string, options: ArchiveOptions): Promise<Out<Result>> {
+    return this.retryUnhashed(options.expectedHash, () => this.archiveOutOnce(taskId, options));
+  }
+
+  private reopenOut(taskId: string, options: ReopenOptions): Promise<Out<Result>> {
+    return this.retryUnhashed(options.expectedHash, () => this.reopenOutOnce(taskId, options));
+  }
+
+  private hardDeleteOut(taskId: string, options: HardDeleteOptions): Promise<Out<Result>> {
+    return this.retryUnhashed(options.expectedHash, () => this.hardDeleteOutOnce(taskId, options));
+  }
+
+  private async archiveOutOnce(taskId: string, options: ArchiveOptions): Promise<Out<Result>> {
     const opts = { ...options };
     let result: Result = {
       taskId,
@@ -291,7 +321,7 @@ export class Service implements LifecycleCore {
     return result;
   }
 
-  private async reopenOut(taskId: string, options: ReopenOptions): Promise<Out<Result>> {
+  private async reopenOutOnce(taskId: string, options: ReopenOptions): Promise<Out<Result>> {
     const opts = { ...options };
     let status = (opts.status ?? "").trim();
     if (status === "" || status === "done") status = "todo";
@@ -526,7 +556,10 @@ export class Service implements LifecycleCore {
     return result;
   }
 
-  private async hardDeleteOut(taskId: string, options: HardDeleteOptions): Promise<Out<Result>> {
+  private async hardDeleteOutOnce(
+    taskId: string,
+    options: HardDeleteOptions,
+  ): Promise<Out<Result>> {
     const opts = { ...options };
     const now = this.clock();
     const result: Result = {
@@ -1012,12 +1045,26 @@ export class Service implements LifecycleCore {
       try {
         await tx.saveTaskVersion(before, candidate, options.actor ?? "", wireTime(now), "");
       } catch (e) {
+        // The two undo steps are independent: restore the file even if the trim refuses, and
+        // report every failure.
+        const rollbackErrors: Error[] = [];
         try {
-          await tx.trimTaskHistory(taskId, historyMark, canonicalTaskHash(candidate));
+          await tx.trimTaskHistory(taskId, historyMark, {
+            newHash: canonicalTaskHash(candidate),
+            baseHash: canonicalTaskHash(before),
+            author: options.actor ?? "",
+          });
+        } catch (trimErr) {
+          rollbackErrors.push(toError(trimErr));
+        }
+        try {
           await tx.updateTask(before);
-        } catch (rollbackErr) {
+        } catch (restoreErr) {
+          rollbackErrors.push(toError(restoreErr));
+        }
+        if (rollbackErrors.length > 0) {
           throw new Error(
-            `${toError(e).message}; rollback Task "${taskId}" failed: ${toError(rollbackErr).message}`,
+            `${toError(e).message}; rollback Task "${taskId}" failed: ${rollbackErrors.map((r) => r.message).join("; ")}`,
             { cause: e },
           );
         }
@@ -1042,6 +1089,21 @@ export class Service implements LifecycleCore {
    * indexing hooks run only after the complete commit.
    */
   async reorderTasks(
+    items: ReorderItem[],
+    expectedHashes?: Record<string, string>,
+  ): Promise<number> {
+    // Items without a caller hash are observed before the lock; a writer slipping in is retried.
+    const unhashed = items.some((i) => blank(expectedHashes?.[i.taskId]));
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.reorderTasksOnce(items, expectedHashes);
+      } catch (e) {
+        if (!unhashed || attempt >= 4 || !hasMutationConflict(e)) throw e;
+      }
+    }
+  }
+
+  private async reorderTasksOnce(
     items: ReorderItem[],
     expectedHashes?: Record<string, string>,
   ): Promise<number> {
@@ -1591,4 +1653,13 @@ async function resumeLifecycleMutation(
   pending.canonicalComplete = true;
   savePending(tx, pending);
   return taskWithLifecycleData(task, pending.desired);
+}
+
+/** Whether a stale-base MutationConflictError is in the error's cause chain. */
+function hasMutationConflict(err: unknown): boolean {
+  for (let e: unknown = err, depth = 0; e && depth < 8; depth++) {
+    if (e instanceof MutationConflictError) return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
 }

@@ -76,7 +76,93 @@ describe("a failure after the history append", () => {
     const read = await store.read("task", t.id);
     const ownHashOfMiddle = (read.records ?? [])[1]?.newHash as string;
     // the stream is 3 records; asking to drop "ours" at length 1 while the tail is not it must refuse
-    expect(await store.removeTailIfOwn("task", t.id, 1, ownHashOfMiddle)).toBe(false);
+    expect(await store.removeTailIfOwn("task", t.id, 1, { newHash: ownHashOfMiddle })).toBe(false);
     expect((await store.read("task", t.id)).records ?? []).toHaveLength(3);
+  });
+});
+
+describe("review fixes", () => {
+  test("a legacy-history Task: the mark and the trim count the same records after migration", async () => {
+    const e = env();
+    const t = await addTask(e, "legacy");
+    await e.service.updateTask(t.id, note("one"));
+    const versions = e.storage.ctx.versions;
+    // Turn the stream back into the legacy single-JSON form.
+    const history = await versions.getHistory(t.id);
+    const { encodeTaskVersionHistory } = await import("../../../src/storage/history/legacy.ts");
+    const { rmSync, writeFileSync, mkdirSync } = await import("node:fs");
+    const { dirname } = await import("node:path");
+    rmSync(versions.historyStore().entityPath("task", t.id), { force: true });
+    mkdirSync(dirname(versions.versionPath(t.id)), { recursive: true });
+    writeFileSync(versions.versionPath(t.id), JSON.stringify(encodeTaskVersionHistory(history)));
+    expect(versions.hasJsonlHistory("task", t.id)).toBe(false);
+    const original = versions.saveVersionUnlocked.bind(versions);
+    versions.saveVersionUnlocked = async (id: string, v: never) => {
+      await original(id, v);
+      throw new Error("sync history directory: injected");
+    };
+    await expect(e.service.updateTask(t.id, note("lost"))).rejects.toThrow(/injected/);
+    versions.saveVersionUnlocked = original;
+    expect(e.storage.tasks.get(t.id).implementationNotes).toBe("one");
+    expect((await versions.getHistory(t.id)).versions).toHaveLength(history.versions?.length ?? 0);
+  });
+
+  test("removeTailIfOwn also checks the tail's baseHash and author", async () => {
+    const e = env();
+    const t = await addTask(e, "own");
+    await e.service.updateTask(t.id, { actor: "alice", ...note("a") });
+    const store = e.storage.ctx.versions.historyStore();
+    const tail = ((await store.read("task", t.id)).records ?? []).at(-1);
+    const n = (await store.countRecords("task", t.id)) - 1;
+    const own = {
+      newHash: tail?.newHash as string,
+      baseHash: tail?.baseHash ?? "",
+      author: "alice",
+    };
+    expect(await store.removeTailIfOwn("task", t.id, n, { ...own, author: "bob" })).toBe(false);
+    expect(await store.removeTailIfOwn("task", t.id, n, { ...own, baseHash: "other" })).toBe(false);
+    expect(await store.countRecords("task", t.id)).toBe(n + 1);
+    expect(await store.removeTailIfOwn("task", t.id, n, own)).toBe(true);
+    expect(await store.countRecords("task", t.id)).toBe(n);
+  });
+
+  test("when the trim refuses, the file is still restored and both failures are reported", async () => {
+    const e = env();
+    const t = await addTask(e, "indep");
+    await e.service.updateTask(t.id, note("kept"));
+    const versions = e.storage.ctx.versions;
+    const original = versions.saveVersionUnlocked.bind(versions);
+    versions.saveVersionUnlocked = async (id: string, v: never) => {
+      await original(id, v);
+      // another writer appends after ours: the trim must refuse
+      await versions.historyStore().removeLast("task", id);
+      throw new Error("sync history directory: injected");
+    };
+    await expect(e.service.updateTask(t.id, note("lost"))).rejects.toThrow();
+    versions.saveVersionUnlocked = original;
+    expect(e.storage.tasks.get(t.id).implementationNotes).toBe("kept");
+  });
+});
+
+describe("the other lifecycle operations without expectedHash", () => {
+  test("reorder and archive are not failed by writers slipping in before the lock", async () => {
+    const e = env();
+    const t = await addTask(e, "busy", { status: "done", completedAt: e.clock.now.toISOString() });
+    const noise = Array.from({ length: 6 }, (_, i) =>
+      e.service.updateTask(t.id, note(`n${i}`)).catch(() => undefined),
+    );
+    const reorder = Array.from({ length: 4 }, (_, i) =>
+      e.service.reorderTasks([{ taskId: t.id, order: i + 1 }]),
+    );
+    const settled = await Promise.allSettled(reorder);
+    expect(settled.filter((r) => r.status === "rejected")).toHaveLength(0);
+    await Promise.all(noise);
+    const archiveRace = await Promise.allSettled([
+      e.service.archive(t.id, { actor: "t" }),
+      ...Array.from({ length: 4 }, (_, i) =>
+        e.service.updateTask(t.id, note(`m${i}`)).catch(() => undefined),
+      ),
+    ]);
+    expect(archiveRace[0]?.status).toBe("fulfilled");
   });
 });

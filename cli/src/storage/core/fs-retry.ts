@@ -13,7 +13,7 @@
 //  - withRetryBudget() gives a whole listing one shared deadline, so one locked file among
 //    hundreds cannot multiply the wait.
 
-import { linkSync, readFileSync, renameSync, statSync } from "node:fs";
+import { linkSync, readFileSync, renameSync, statSync, truncateSync } from "node:fs";
 
 /** How long a read, and a rename or link, waits out another handle on Windows. */
 export const READ_BUSY_TIMEOUT_MS = 250;
@@ -125,6 +125,11 @@ export function retryWhileBusy<T>(op: () => T, opts: RetryOptions = {}): T {
 
 export function renameRetrying(from: string, to: string): void {
   retryWhileBusy(() => renameSync(from, to), { target: to });
+}
+
+/** truncateSync for a file another process may have open (a history log being rolled back). */
+export function truncateRetrying(path: string, size: number): void {
+  retryWhileBusy(() => truncateSync(path, size), { target: path });
 }
 
 export function linkRetrying(from: string, to: string): void {

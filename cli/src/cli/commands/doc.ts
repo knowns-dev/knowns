@@ -5,6 +5,7 @@ import type { Doc } from "../../models/doc.ts";
 import type { Storage } from "../../storage/adapters.ts";
 import { goTrimSpace } from "../../storage/core/util.ts";
 import { goNow } from "../../storage/history/go-json.ts";
+import { HistoryConflictError } from "../../storage/history/index.ts";
 import { type FieldKind, shapeStruct } from "../../storage/stores/go-shape.ts";
 import { arbitraryArgs, exactArgs, minimumNArgs } from "../core/args.ts";
 import type { Command } from "../core/command.ts";
@@ -508,44 +509,52 @@ const docEditCmd = defineCommand({
     }
     const oldDoc: Doc = { ...doc }; // snapshot before changes
 
-    if (ctx.flags.changed("title")) doc.title = ctx.flags.string("title");
-    if (ctx.flags.changed("description")) {
-      const v = ctx.flags.string("description");
-      if (v === "") delete doc.description;
-      else doc.description = v;
-    }
-    if (ctx.flags.changed("tags")) doc.tags = splitCSV(ctx.flags.string("tags"));
     const oldPath = path;
-    if (ctx.flags.changed("path")) {
-      const v = ctx.flags.string("path");
-      doc.path = trimSlashes(v.endsWith(".md") ? v.slice(0, -3) : v);
-    }
-
     const targetSection = ctx.flags.string("section");
     const expectedHash = ctx.flags.string("expected-hash");
+    // The edit is a function of the current document, so it can be re-applied to the copy read
+    // under the document lock when no --expected-hash was given (a concurrent edit is kept, not a
+    // spurious conflict). A section edit must then still address the same section.
+    const applyEdit = (doc: Doc, rebasing = false): void => {
+      if (ctx.flags.changed("title")) doc.title = ctx.flags.string("title");
+      if (ctx.flags.changed("description")) {
+        const v = ctx.flags.string("description");
+        if (v === "") delete doc.description;
+        else doc.description = v;
+      }
+      if (ctx.flags.changed("tags")) doc.tags = splitCSV(ctx.flags.string("tags"));
+      if (ctx.flags.changed("path")) {
+        const v = ctx.flags.string("path");
+        doc.path = trimSlashes(v.endsWith(".md") ? v.slice(0, -3) : v);
+      }
 
-    if (ctx.flags.changed("content")) {
-      const v = ctx.flags.string("content");
-      const next =
-        targetSection !== "" ? replaceDocSection(doc.content ?? "", targetSection, v) : v;
-      if (next === "") delete doc.content;
-      else doc.content = next;
-    }
-    if (ctx.flags.changed("append")) {
-      const v = ctx.flags.string("append");
-      const cur = doc.content ?? "";
-      let next: string;
-      if (cur === "") next = v;
-      else next = (cur.endsWith("\n") ? cur : `${cur}\n`) + v;
-      if (next === "") delete doc.content;
-      else doc.content = next;
-    }
+      if (ctx.flags.changed("content")) {
+        const v = ctx.flags.string("content");
+        const next =
+          targetSection !== ""
+            ? replaceSectionChecked(doc.content ?? "", targetSection, v, rebasing)
+            : v;
+        if (next === "") delete doc.content;
+        else doc.content = next;
+      }
+      if (ctx.flags.changed("append")) {
+        const v = ctx.flags.string("append");
+        const cur = doc.content ?? "";
+        let next: string;
+        if (cur === "") next = v;
+        else next = (cur.endsWith("\n") ? cur : `${cur}\n`) + v;
+        if (next === "") delete doc.content;
+        else doc.content = next;
+      }
 
-    doc.updatedAt = goNow();
+      doc.updatedAt = goNow();
+    };
+    applyEdit(doc);
 
     const { mutateDocWithHistory } = await import("../../storage/history/index.ts");
     try {
       await mutateDocWithHistory(storage.ctx, oldDoc, doc, {
+        rebase: ctx.flags.changed("path") ? undefined : (d) => applyEdit(d, true),
         section: targetSection,
         actor: "cli",
         source: "cli",
@@ -560,6 +569,28 @@ const docEditCmd = defineCommand({
     ctx.print(`${renderSuccess(`Updated doc: ${doc.path}`)}\n`);
   },
 });
+
+/** replaceDocSection; re-applied to a changed document it must still address the same section. */
+function replaceSectionChecked(
+  content: string,
+  target: string,
+  value: string,
+  rebasing: boolean,
+): string {
+  if (rebasing) {
+    if (/^\s*\d+\s*$/.test(target)) {
+      throw new HistoryConflictError(
+        "section index cannot be re-applied to a document that changed; read it again or pass --expected-hash",
+      );
+    }
+    if (replaceDocSection(content, target, "\u0000probe") === content) {
+      throw new HistoryConflictError(
+        `section "${target}" no longer exists in the changed document; read it again`,
+      );
+    }
+  }
+  return replaceDocSection(content, target, value);
+}
 
 // --- doc delete ----------------------------------------------------------------------------------
 

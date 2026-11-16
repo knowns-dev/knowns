@@ -271,22 +271,32 @@ export class TaskLifecycleTransaction {
     await this.ctx.versions.saveVersionUnlocked(newTask.id, version);
   }
 
-  /** How many history revisions the Task has; the mark a failed write trims back to. */
+  /**
+   * The mark a failed write trims back to: the number of JSONL records the Task has. A Task that
+   * still has legacy version JSON is migrated first (what the save would do anyway), so the mark
+   * and the later check count the same thing.
+   */
   async taskHistoryLength(taskId: string): Promise<number> {
-    const history = await this.ctx.versions.getHistory(taskId);
-    return (history.versions ?? []).length;
+    if (!this.ctx.versions.hasJsonlHistory("task", taskId)) {
+      await this.ctx.versions.migrateLegacyTask(taskId);
+      if (!this.ctx.versions.hasJsonlHistory("task", taskId)) return 0;
+    }
+    return this.ctx.versions.historyStore().countRecords("task", taskId);
   }
 
   /**
    * A rejected or failed write must leave no history record, even when the append landed before
-   * something after it failed. Removes the record this write appended (stream is `length` + 1 and
-   * its tail has `newHash`); if another writer got in, truncates nothing and throws.
+   * something after it failed. Removes the record this write appended (stream is `length` + 1, its
+   * tail has `own.newHash` and, when given, baseHash and author); if another writer got in,
+   * truncates nothing and throws.
    */
-  async trimTaskHistory(taskId: string, length: number, newHash: string): Promise<void> {
+  async trimTaskHistory(
+    taskId: string,
+    length: number,
+    own: { newHash: string; baseHash?: string; author?: string },
+  ): Promise<void> {
     if (!this.ctx.versions.hasJsonlHistory("task", taskId)) return;
-    const ok = await this.ctx.versions
-      .historyStore()
-      .removeTailIfOwn("task", taskId, length, newHash);
+    const ok = await this.ctx.versions.historyStore().removeTailIfOwn("task", taskId, length, own);
     if (!ok) {
       throw new Error(`history of Task "${taskId}" changed during a failed write; not truncating`);
     }

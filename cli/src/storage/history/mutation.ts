@@ -485,9 +485,7 @@ async function mutateDocInner(
     const candidate: Doc = { ...newDoc };
     const docId = firstNonEmpty(candidate.id, current.id);
     const hasStream = docId !== "" && ctx.versions.hasJsonlHistory("doc", docId);
-    const mark = hasStream
-      ? ((await ctx.versions.historyStore().read("doc", docId)).records ?? []).length
-      : 0;
+    const mark = hasStream ? await ctx.versions.historyStore().countRecords("doc", docId) : 0;
     await ctx.docs.update(candidate);
     try {
       await ctx.versions.saveDocRevisionWithOptions(oldCanonical, candidate, {
@@ -496,24 +494,33 @@ async function mutateDocInner(
         section: opts.section,
       });
     } catch (err) {
-      let rollbackErr: unknown;
+      // Two independent undo steps; both run and every failure is reported. The append may have
+      // landed before the failing step: remove exactly that record (and nothing else).
+      const rollbackErrors: string[] = [];
       try {
-        // The append may have landed before the failing step: remove exactly that record (and
-        // nothing else), then restore the file.
         if (hasStream) {
-          const ok = await ctx.versions
-            .historyStore()
-            .removeTailIfOwn("doc", docId, mark, canonicalDocHash(candidate));
+          const ok = await ctx.versions.historyStore().removeTailIfOwn("doc", docId, mark, {
+            newHash: canonicalDocHash(candidate),
+            baseHash: hashDoc(docStateOf(oldCanonical)),
+            author: opts.actor ?? "",
+          });
           if (!ok)
             throw new Error(
               `history of Doc "${docId}" changed during a failed write; not truncating`,
             );
         }
+      } catch (e) {
+        rollbackErrors.push((e as Error).message);
+      }
+      try {
         await ctx.docs.writeExact(oldCanonical);
       } catch (e) {
-        rollbackErr = e;
+        rollbackErrors.push((e as Error).message);
       }
-      throw combineMutationRollbackError(err, rollbackErr);
+      throw combineMutationRollbackError(
+        err,
+        rollbackErrors.length > 0 ? new Error(rollbackErrors.join("; ")) : undefined,
+      );
     }
     newDoc.canonicalHash = canonicalDocHash(candidate);
   });

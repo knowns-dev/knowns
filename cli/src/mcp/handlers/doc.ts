@@ -2,6 +2,7 @@
 import { docHooks } from "../../cli/commands/doc-hooks.ts";
 import type { Doc } from "../../models/doc.ts";
 import { goTrimSpace } from "../../storage/core/util.ts";
+import { HistoryConflictError } from "../../storage/history/index.ts";
 import {
   boolArg,
   ErrPathReq,
@@ -440,7 +441,10 @@ async function update(state: McpState, req: CallToolRequest): Promise<CallToolRe
   // The edit is a function of the current document, so it can be re-applied to the fresh copy read
   // under the document lock when the caller gave no expectedHash (a concurrent edit is then kept,
   // not a spurious conflict).
-  const applyEdit = (doc: Doc): void => {
+  // `rebasing` is true when it is re-applied to the copy read under the lock: a section edit must
+  // then still address the same section, or it is a conflict (never a silent no-op or a write to
+  // another section).
+  const applyEdit = (doc: Doc, rebasing = false): void => {
     const [title, tok] = stringArg(args, "title");
     if (clear.has("title")) doc.title = "";
     else if (tok && title !== "") doc.title = title;
@@ -461,9 +465,22 @@ async function update(state: McpState, req: CallToolRequest): Promise<CallToolRe
     const cur = doc.content ?? "";
     let next = cur;
     if (clear.has("content")) next = "";
-    else if (hasSection && sectionTarget !== "" && hasContent)
+    else if (hasSection && sectionTarget !== "" && hasContent) {
+      if (rebasing) {
+        if (/^\s*\d+\s*$/.test(sectionTarget)) {
+          throw new HistoryConflictError(
+            "section index cannot be re-applied to a document that changed; read it again or pass expectedHash",
+          );
+        }
+        const probe = replaceSection(cur, sectionTarget, "\u0000probe");
+        if (probe === cur) {
+          throw new HistoryConflictError(
+            `section "${sectionTarget}" no longer exists in the changed document; read it again`,
+          );
+        }
+      }
       next = replaceSection(cur, sectionTarget, newContent);
-    else if (hasContent && newContent !== "") next = newContent;
+    } else if (hasContent && newContent !== "") next = newContent;
     if (hasAppend && appendContent !== "") {
       if (next === "") next = appendContent;
       else {
@@ -481,7 +498,7 @@ async function update(state: McpState, req: CallToolRequest): Promise<CallToolRe
   try {
     const { mutateDocWithHistory } = await import("../../storage/history/index.ts");
     await mutateDocWithHistory(storage.ctx, oldDoc, doc, {
-      rebase: npok && goTrimSpace(newPath) !== "" ? undefined : applyEdit,
+      rebase: npok && goTrimSpace(newPath) !== "" ? undefined : (d) => applyEdit(d, true),
       section: sectionTarget,
       actor: "mcp",
       source: "mcp",

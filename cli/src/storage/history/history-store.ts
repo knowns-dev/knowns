@@ -24,7 +24,7 @@ import type {
   HistoryRecord,
   TaskVersionHistory,
 } from "../../models/version.ts";
-import { readFileRetrying, renameRetrying } from "../core/fs-retry.ts";
+import { readFileRetrying, renameRetrying, truncateRetrying } from "../core/fs-retry.ts";
 import { type LockOptions, safeHistoryId, withHistoryEntityLock } from "../core/locks.ts";
 import { goJsonStringify } from "../core/util.ts";
 import {
@@ -122,6 +122,45 @@ interface ReadInternal extends HistoryReadResult {
   records: HistoryRecord[];
   validBytes: number;
   validOffsets: number[];
+}
+
+interface LineStats {
+  count: number;
+  /** Byte offset where the last complete line starts. */
+  lastStart: number;
+  lastLine?: string;
+  /** Bytes after the last newline: an incomplete record. */
+  partialTail: boolean;
+}
+
+/** Counts newline-terminated lines of a log without parsing them. */
+function lineStats(path: string): LineStats {
+  let data: Buffer;
+  try {
+    data = readFileRetrying(path);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT")
+      return { count: 0, lastStart: 0, partialTail: false };
+    throw new Error(`read history log: ${(e as Error).message}`, { cause: e });
+  }
+  let count = 0;
+  let start = 0;
+  let lastStart = 0;
+  let lastEnd = 0;
+  for (;;) {
+    const nl = data.indexOf(0x0a, start);
+    if (nl < 0) break;
+    count++;
+    lastStart = start;
+    lastEnd = nl;
+    start = nl + 1;
+  }
+  return {
+    count,
+    lastStart,
+    ...(count > 0 ? { lastLine: data.toString("utf8", lastStart, lastEnd) } : {}),
+    partialTail: start < data.length,
+  };
 }
 
 /**
@@ -644,35 +683,61 @@ export class HistoryStore {
     await this.withEntityLock(entityType, entityId, () => {
       const read = this.readFile(path, entityType, entityId);
       if (read.records.length === 0) return;
-      truncateSync(path, read.validOffsets[read.validOffsets.length - 2] as number);
+      truncateRetrying(path, read.validOffsets[read.validOffsets.length - 2] as number);
       syncFilePath(path);
       syncDirectory(dirname(path));
     });
   }
 
+  /** Which record a failed write appended: what the tail must show for it to be removable. */
+  // (see removeTailIfOwn)
+
+  /**
+   * Number of complete records, counted from the file's newlines (no parse, no chain check), so a
+   * failed write can take its mark cheaply. A missing file is 0.
+   */
+  async countRecords(entityType: string, entityId: string): Promise<number> {
+    if (!validHistoryEntityType(entityType)) {
+      throw new Error(`unsupported history entity type "${entityType}"`);
+    }
+    const path = this.entityPath(entityType, entityId);
+    return this.withEntityLock(entityType, entityId, () => lineStats(path).count);
+  }
+
   /**
    * Removes the tail record only if the stream is exactly `length + 1` records long and that tail
-   * carries `newHash`, i.e. it is the record this writer appended and nobody appended after it. The
-   * check and the truncate run under one entity lock. Returns false (and truncates nothing) when
-   * the stream is not in that state; the caller must then fail loudly. The remaining stream is a
-   * plain prefix, so its prevRecordHash chain and Go's reader stay valid.
+   * is the record this writer appended: its newHash matches and, when given, so do its baseHash and
+   * author. Nobody appended after it, and the check and the truncate run under one entity lock.
+   * Returns false (and truncates nothing) when the stream is not in that state; the caller must
+   * then fail loudly. Only the tail line is parsed; the remaining stream is a plain prefix, so its
+   * prevRecordHash chain and Go's reader stay valid.
    */
   async removeTailIfOwn(
     entityType: string,
     entityId: string,
     length: number,
-    newHash: string,
+    own: { newHash: string; baseHash?: string; author?: string },
   ): Promise<boolean> {
     if (!validHistoryEntityType(entityType)) {
       throw new Error(`unsupported history entity type "${entityType}"`);
     }
     const path = this.entityPath(entityType, entityId);
     return this.withEntityLock(entityType, entityId, () => {
-      const read = this.readFile(path, entityType, entityId);
-      if (read.records.length === length) return true; // nothing landed
-      const tail = read.records[read.records.length - 1];
-      if (read.records.length !== length + 1 || !tail || tail.newHash !== newHash) return false;
-      truncateSync(path, read.validOffsets[read.validOffsets.length - 2] as number);
+      const stats = lineStats(path);
+      if (stats.count === length && !stats.partialTail) return true; // nothing landed
+      if (stats.count !== length + 1 || stats.partialTail || stats.lastLine === undefined) {
+        return false;
+      }
+      let tail: { newHash?: string; baseHash?: string; author?: string };
+      try {
+        tail = JSON.parse(stats.lastLine);
+      } catch {
+        return false;
+      }
+      if (tail.newHash !== own.newHash) return false;
+      if (own.baseHash !== undefined && (tail.baseHash ?? "") !== own.baseHash) return false;
+      if (own.author !== undefined && (tail.author ?? "") !== own.author) return false;
+      truncateRetrying(path, stats.lastStart);
       syncFilePath(path);
       syncDirectory(dirname(path));
       return true;
