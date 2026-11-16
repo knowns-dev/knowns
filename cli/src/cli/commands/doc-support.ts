@@ -1,5 +1,6 @@
 // Pure helpers shared by the doc commands (internal/cli/doc.go "helpers" and runtime.go display
 // helpers). No I/O; reusable by the MCP/server layers.
+import { bareIndex, headingLineIndexes } from "../../storage/core/doc-sections.ts";
 import { goTrimSpace } from "../../storage/core/util.ts";
 import { goQuote } from "../core/gofmt.ts";
 
@@ -197,8 +198,9 @@ function headingLevel(line: string): number {
 /** extractHeadings: every non-empty `#` heading line. */
 export function extractHeadings(content: string): Heading[] {
   const headings: Heading[] = [];
-  for (const line of content.split("\n")) {
-    if (!line.startsWith("#")) continue;
+  const all = content.split("\n");
+  for (const idx of headingLineIndexes(all)) {
+    const line = all[idx] as string;
     const level = headingLevel(line);
     const text = goTrimSpace(line.slice(level));
     if (text !== "") headings.push({ level, text });
@@ -206,12 +208,13 @@ export function extractHeadings(content: string): Heading[] {
   return headings;
 }
 
-function sectionMatches(count: number, text: string, ref: string): boolean {
-  return (
-    String(count) === ref ||
-    text.toLowerCase() === ref.toLowerCase() ||
-    text.toLowerCase().includes(ref.toLowerCase())
-  );
+/** A bare integer is the heading's index; anything else (even "2. Access") is a title. */
+function sectionMatches(count: number, text: string, ref: string, asTitle: boolean): boolean {
+  const num = bareIndex(ref);
+  if (num !== undefined && !asTitle) return num === count;
+  const t = text.toLowerCase();
+  const r = ref.trim().toLowerCase();
+  return t === r || t.includes(r);
 }
 
 /** Finds the section `ref` (1-based heading number or title text) and its end line. */
@@ -219,18 +222,19 @@ function findSection(
   lines: readonly string[],
   ref: string,
 ): { start: number; end: number; level: number } | undefined {
+  const heads = headingLineIndexes(lines);
+  // An integer that names no heading falls back to a title match ("2024" can be a title).
+  const asTitle = bareIndex(ref) !== undefined && (bareIndex(ref) as number) > heads.length;
   let count = 0;
-  for (let i = 0; i < lines.length; i++) {
+  for (const i of heads) {
     const line = lines[i] ?? "";
-    if (!line.startsWith("#")) continue;
     count++;
     const level = headingLevel(line);
     const text = goTrimSpace(line.slice(level));
-    if (!sectionMatches(count, text, ref)) continue;
+    if (!sectionMatches(count, text, ref, asTitle)) continue;
     let end = lines.length;
-    for (let j = i + 1; j < lines.length; j++) {
-      const next = lines[j] ?? "";
-      if (next.startsWith("#") && headingLevel(next) <= level) {
+    for (const j of heads) {
+      if (j > i && headingLevel(lines[j] ?? "") <= level) {
         end = j;
         break;
       }

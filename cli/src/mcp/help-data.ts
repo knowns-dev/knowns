@@ -222,9 +222,11 @@ export function buildHelpRegistry(): Map<string, HelpEntry> {
       path: "required — current document path",
       title: "new document title",
       description: "new document description",
-      content: "replacement markdown content, or section content when section is set",
+      content:
+        "replacement markdown content, or section content when section is set. A section update replaces the section INCLUDING its heading line, so start content with the heading (same or higher level); content that does not start with a heading is kept as the body under the existing heading",
       appendContent: "markdown content to append",
-      section: "heading title or section number to replace",
+      section:
+        'heading title, or a bare integer for the nth heading (a title like "2. Access control" is a title, not index 2); lines in code fences, HTML comments and indented code are never headings',
       newPath: "new document path",
       tags: "replacement tag list",
       clear: "string fields to clear",
