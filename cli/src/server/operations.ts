@@ -65,6 +65,13 @@ interface Entry {
   expiry?: ReturnType<typeof setTimeout>;
 }
 
+/**
+ * The daemon jobs a person asked for or would wait for: a full reindex and a full file index. The
+ * rest (one task, doc or file re-indexed, Qdrant and knowledge reconciles) is queued by every edit,
+ * dozens at a time during a batch, so it is shown only when it failed.
+ */
+const VISIBLE_JOB_KINDS = new Set(["reindex-search", "index-all-files"]);
+
 export class OperationRegistry {
   private readonly entries = new Map<string, Entry>();
   private readonly dismissedJobs = new Set<string>();
@@ -206,20 +213,10 @@ export class OperationRegistry {
           error: "this job cannot be cancelled safely",
         };
       }
-      if (result === "cancelled") {
-        const t = this.now();
-        e.op.state = "cancelled";
-        e.op.cancellable = false;
-        e.op.updatedAt = t;
-        e.op.finishedAt = t;
-        this.send("operation:finished", e);
-        this.armExpiry(e);
-      } else {
-        e.op.state = "cancelling";
-        e.op.cancellable = false;
-        e.op.updatedAt = this.now();
-        this.stateChanged(e);
-      }
+      e.op.state = "cancelling";
+      e.op.cancellable = false;
+      e.op.updatedAt = this.now();
+      this.stateChanged(e);
       return { status: "ok", operation: { ...e.op } };
     }
     e.cancelRequested = true;
@@ -242,8 +239,15 @@ export class OperationRegistry {
       const ok =
         src && e.op.projectRoot ? await src.retryJobOperation(e.op.projectRoot, jobId) : false;
       if (!ok) return { status: "conflict", error: "the job could not be retried" };
-      this.remove(id);
-      return { status: "ok", operation: { ...e.op } };
+      // The source may already have reported the job as queued again (same id): then that is the
+      // live operation. Otherwise the failed entry goes and the re-queued job is picked up.
+      const cur = this.entries.get(id);
+      if (cur && isTerminalState(cur.op.state)) {
+        this.remove(id);
+        this.refreshJobs();
+      }
+      const again = this.entries.get(id);
+      return { status: "ok", operation: { ...(again?.op ?? e.op) } };
     }
     const fresh = await e.retry?.();
     this.remove(id);
@@ -306,12 +310,16 @@ export class OperationRegistry {
       this.mergeJob(op);
     }
     for (const [id, e] of this.entries) {
-      if (!e.web && !seen.has(id) && !isTerminalState(e.op.state)) this.remove(id);
+      if (!e.web && !seen.has(id) && !isTerminalState(e.op.state) && e.op.state !== "cancelling") {
+        this.remove(id);
+      }
     }
   }
 
   private mergeJob(op: Operation): void {
     if (this.closed || this.dismissedJobs.has(op.id)) return;
+    // Housekeeping jobs are shown only when they failed (see VISIBLE_JOB_KINDS).
+    if (!VISIBLE_JOB_KINDS.has(op.kind) && op.state !== "failed") return;
     const cur = this.entries.get(op.id);
     if (!cur) {
       const e: Entry = {

@@ -154,7 +154,7 @@ describe("OperationRegistry", () => {
     const job = (state: Operation["state"], done = 0): Operation => ({
       id: "job:j1",
       source: "daemon",
-      kind: "reindex",
+      kind: "reindex-search",
       title: "Reindexing project",
       project: "p",
       projectRoot: "/p",
