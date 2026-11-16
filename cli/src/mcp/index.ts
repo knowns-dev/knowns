@@ -68,7 +68,17 @@ export interface McpApp {
   cleanup: (reason: string) => void;
 }
 
-export function newMcpApp(projectHint: string, log: McpLogger = new McpLogger()): McpApp {
+export interface McpAppOptions {
+  /** The directory project detection walks up from when the hint finds nothing. A session hosted
+   * by the runtime daemon passes the client's directory; the default is this process's. */
+  cwd?: string;
+}
+
+export function newMcpApp(
+  projectHint: string,
+  log: McpLogger = new McpLogger(),
+  opts: McpAppOptions = {},
+): McpApp {
   const state = new McpState(log);
   const pending = new WeakMap<CallToolRequest, PendingCall>();
   let auditStorePromise: Promise<import("../storage/stores/audit-store.ts").AuditStore> | undefined;
@@ -161,7 +171,7 @@ export function newMcpApp(projectHint: string, log: McpLogger = new McpLogger())
   const begin = (): Promise<void> => {
     ready ??= (async () => {
       try {
-        await autoDetectProject(state, projectHint);
+        await autoDetectProject(state, projectHint, opts.cwd);
         const project = state.getProject();
         if (project) {
           const { shouldBypassDaemon, acquireConfiguredClient, startHeartbeat } = await import(
@@ -201,7 +211,11 @@ export function newMcpApp(projectHint: string, log: McpLogger = new McpLogger())
 }
 
 /** autoDetectProject: the hint (honouring store links), then a walk up from the working directory. */
-async function autoDetectProject(state: McpState, hint: string): Promise<void> {
+async function autoDetectProject(
+  state: McpState,
+  hint: string,
+  cwdOverride?: string,
+): Promise<void> {
   const core = await import("../storage/core/index.ts");
   const { goGetwd } = await import("../storage/core/getwd.ts");
   const use = async (loc: ReturnType<typeof core.locateProject>): Promise<void> => {
@@ -225,7 +239,7 @@ async function autoDetectProject(state: McpState, hint: string): Promise<void> {
   }
   let cwd: string;
   try {
-    cwd = goGetwd();
+    cwd = cwdOverride && cwdOverride !== "" ? cwdOverride : goGetwd();
   } catch {
     return;
   }
