@@ -8,6 +8,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, normalize, relative, sep } from "node:path";
 import { effectiveTaskLifecycle, type TaskLifecycleSettings } from "../../models/config.ts";
+import { parseTaskLifecycleDuration } from "../../models/duration.ts";
 import { type Task, type TaskTombstone, taskLifecycleState } from "../../models/task.ts";
 import type { TaskLifecyclePending } from "../../models/task-lifecycle.ts";
 import type { TimeEntry } from "../../models/time.ts";
@@ -39,6 +40,7 @@ import {
   durableKnowledgeWarnings,
   evaluateInTransaction,
   type ReferenceExtractor,
+  snapshotTaskTree,
 } from "./policy.ts";
 import { addTimeEntry, stopTimers } from "./time.ts";
 import type {
@@ -59,6 +61,7 @@ import type {
   Result,
   StopTimerOptions,
   StopTimersOptions,
+  TaskTreeSnapshot,
   TaskUpdateOptions,
   TimeMutationOptions,
   Warning,
@@ -149,6 +152,11 @@ function appendWarnings(result: Result, warnings: Warning[]): void {
   if (warnings.length === 0) return;
   result.warnings = [...(result.warnings ?? []), ...warnings];
 }
+
+/** Tasks archived per batch by the automatic sweep, and the pause between batches. */
+const AUTO_ARCHIVE_CHUNK = 10;
+const AUTO_ARCHIVE_YIELD_MS = 5;
+const AUTO_ARCHIVE_TREE_TTL_MS = 30_000;
 
 export class Service implements LifecycleCore {
   readonly clock: Clock;
@@ -408,6 +416,7 @@ export class Service implements LifecycleCore {
       ...(options.actor !== undefined && { actor: options.actor }),
       ...(options.automatic !== undefined && { automatic: options.automatic }),
       ...(options.minimumAgeMs !== undefined && { minimumAgeMs: options.minimumAgeMs }),
+      ...(options.taskTree !== undefined && { taskTree: options.taskTree }),
     };
     const [ids, idsErr] = await attempt(() => this.resolveBatchIds(options.ids ?? []));
     if (idsErr || !ids) return [batch, idsErr];
@@ -504,8 +513,71 @@ export class Service implements LifecycleCore {
     return [batch, joinErrors(failures)];
   }
 
-  autoArchive(actor: string): Promise<BatchResult> {
-    return this.batchArchive({ execute: true, actor, automatic: true });
+  /**
+   * The automatic sweep (server start, then hourly). Archiving a Task costs a transaction, so the
+   * sweep names only the Tasks that can possibly be eligible by age (done, not archived, past the
+   * archive deadline) plus the ones with a pending archive record, and archives them in small
+   * batches that yield to the event loop in between. Everything else would only have been reported
+   * ineligible after a per-Task transaction, which with thousands of Tasks held the server for minutes.
+   */
+  async autoArchive(actor: string): Promise<BatchResult> {
+    const settings = this.settings();
+    const merged: BatchResult = {
+      operation: "batch_archive",
+      execute: true,
+      completed: false,
+      processed: 0,
+      changed: 0,
+      items: [],
+    };
+    if (!settings.autoArchive) {
+      merged.completed = true;
+      return merged;
+    }
+    const ageMs = Number(parseTaskLifecycleDuration(settings.archiveAfter) / 1_000_000n);
+    const nowMs = this.clock().getTime();
+    const ids: string[] = [];
+    await this.withTransaction(async (tx) => {
+      for (const task of await tx.listActiveTasks()) {
+        if (task.archived || task.status !== "done") continue;
+        // A done Task without a completion time is reported by the full evaluation.
+        if (task.completedAt !== undefined && epochMs(task.completedAt) + ageMs > nowMs) continue;
+        ids.push(task.id);
+      }
+      for (const record of tx.listTaskLifecyclePending("archive")) ids.push(record.taskId);
+    });
+    const failures: Error[] = [];
+    const unique = uniqueSorted(ids);
+    let taskTree: TaskTreeSnapshot | undefined;
+    let taskTreeAt = 0;
+    for (let i = 0; i < unique.length; i += AUTO_ARCHIVE_CHUNK) {
+      // One listing of the tree for many Tasks, not one per Task: archiving a finished Task cannot
+      // change whether its ancestors have unfinished descendants. Listing thousands of Tasks blocks
+      // the event loop for a second or two, so the snapshot is renewed only when it is old.
+      if (!taskTree || Date.now() - taskTreeAt > AUTO_ARCHIVE_TREE_TTL_MS) {
+        taskTree = await this.withTransaction((tx) => snapshotTaskTree(tx));
+        taskTreeAt = Date.now();
+      }
+      const [batch, err] = await this.batchArchiveOut({
+        execute: true,
+        actor,
+        automatic: true,
+        taskTree,
+        ids: unique.slice(i, i + AUTO_ARCHIVE_CHUNK),
+      });
+      merged.processed += batch.processed;
+      merged.changed += batch.changed;
+      merged.items.push(...batch.items);
+      if (batch.failedTaskId !== undefined && merged.failedTaskId === undefined) {
+        merged.failedTaskId = batch.failedTaskId;
+      }
+      if (err) failures.push(err);
+      await new Promise((r) => setTimeout(r, AUTO_ARCHIVE_YIELD_MS));
+    }
+    merged.completed = true;
+    const err = joinErrors(failures);
+    if (err) throw withPartial(err, merged);
+    return merged;
   }
 
   private async resolveBatchIds(requested: string[]): Promise<string[]> {
