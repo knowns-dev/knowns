@@ -3,6 +3,7 @@
 // answer from a worker pool in Go, so arrival order is not part of the contract).
 import { describe, expect, test } from "bun:test";
 import { withoutD13 } from "../helpers/d13.ts";
+import { withoutKn6dvwn6 } from "../helpers/kn-6dvwn6.ts";
 import { hasGoBin, McpSession, makeSandbox, maskPath } from "./harness.ts";
 
 const LINES: string[] = [
@@ -79,7 +80,7 @@ async function collect(side: "go" | "ts"): Promise<string[]> {
   await Bun.sleep(1500);
   await s.close();
   const lines = s.lines.map((l) => maskPath(l, sb.dir, "<DIR>"));
-  return (side === "ts" ? lines.map(withoutD13) : lines).sort();
+  return (side === "ts" ? lines.map((l) => withoutD13(withoutKn6dvwn6(l))) : lines).sort();
 }
 
 describe.skipIf(!hasGoBin)("wire protocol matches Go", () => {

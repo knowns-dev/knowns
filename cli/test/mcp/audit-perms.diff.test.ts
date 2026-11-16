@@ -3,16 +3,15 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { projectTaskList } from "../helpers/kn-6dvwn6.ts";
 import { firstDiff, GO_BIN, hasGoBin, maskPath, runDiff, type Step, TS_BIN } from "./harness.ts";
 
 const steps: Step[] = [
   {
     tool: "tasks",
     args: { action: "list" },
-    normalize: (t) =>
-      JSON.stringify(
-        JSON.parse(t).sort((a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id)),
-      ),
+    // KN-6DVWN6: list returns summaries; both sides are projected to the same fields.
+    normalize: projectTaskList,
   },
   { tool: "tasks", args: { action: "create", title: "blocked" } },
   {
