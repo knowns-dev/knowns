@@ -491,6 +491,7 @@ function readJSONRetrying(path: string): unknown {
 function acquireLock(path: string, timeoutMs: number): () => void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o755 });
   const deadline = Date.now() + timeoutMs;
+  let lastCode = "EEXIST";
   for (;;) {
     try {
       writeFileSync(path, String(process.pid), { flag: "wx", mode: 0o644 });
@@ -498,7 +499,8 @@ function acquireLock(path: string, timeoutMs: number): () => void {
     } catch (err) {
       // Windows reports EPERM, not EEXIST, when the lock file is delete-pending (its owner just
       // released it while another handle was still open): wait it out like an existing lock.
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST" && !isWindowsFileBusy(err)) throw err;
+      lastCode = (err as NodeJS.ErrnoException).code ?? lastCode;
+      if (lastCode !== "EEXIST" && !isWindowsFileBusy(err)) throw err;
     }
     try {
       if (Date.now() - statSync(path).mtimeMs > DEFAULT_LOCK_STALE_AGE_MS) {
@@ -508,7 +510,9 @@ function acquireLock(path: string, timeoutMs: number): () => void {
     } catch {
       // vanished: retry
     }
-    if (Date.now() > deadline) throw new Error(`timed out waiting for lock ${path}`);
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for lock ${path} (last error: ${lastCode})`);
+    }
     sleepSync(50);
   }
 }
@@ -542,6 +546,12 @@ interface QueueScanEntry {
   live: { job: Job; due: number }[];
 }
 const queueScanCache = new Map<string, QueueScanEntry>();
+
+/** Forgets the scans of queue files no registered project owns any more. */
+export function pruneQueueScanCache(projects: string[]): void {
+  const keep = new Set(projects.map((p) => queuePath(p)));
+  for (const path of queueScanCache.keys()) if (!keep.has(path)) queueScanCache.delete(path);
+}
 const EMPTY_ENTRY: QueueScanEntry = { sig: "", state: { jobs: [], recent: [] }, live: [] };
 
 function loadQueueEntry(storeRoot: string): QueueScanEntry {
@@ -688,14 +698,27 @@ function readMissingSince(): Record<string, number> {
 /** Removes the queue file of an unregistered project. */
 function removeProjectQueueFiles(storeRoot: string): void {
   const path = queuePath(storeRoot);
-  for (const p of [path, `${path}.lock`, `${path}.tmp`]) {
-    try {
-      rmSync(p, { force: true });
-    } catch {
-      // best effort
-    }
+  // Under the queue lock, and only if still empty: a client may have enqueued since the caller
+  // looked. The lock file is the lock's own to remove on release, never deleted from the outside.
+  let unlock: (() => void) | undefined;
+  try {
+    unlock = acquireLock(`${path}.lock`, DEFAULT_LOCK_TIMEOUT_MS);
+  } catch {
+    return; // someone is using the queue: leave it
   }
-  queueScanCache.delete(path);
+  try {
+    if (projectHasQueuedJobs(storeRoot)) return;
+    for (const p of [path, `${path}.tmp`]) {
+      try {
+        rmSync(p, { force: true });
+      } catch {
+        // best effort
+      }
+    }
+    queueScanCache.delete(path);
+  } finally {
+    unlock();
+  }
 }
 
 /** Drops registered roots that have been missing past the grace period and hold no jobs. */
@@ -781,10 +804,17 @@ export function pruneRuntimeFiles(now: number = Date.now()): void {
     const path = join(dir, name);
     try {
       if (now - statSync(path).mtimeMs < ORPHAN_QUEUE_MIN_AGE_MS) continue;
-      const parsed = JSON.parse(readFileSync(path, "utf8")) as { jobs?: unknown[] } | null;
-      if (Array.isArray(parsed?.jobs) && parsed.jobs.length > 0) continue;
-      rmSync(path, { force: true });
-      removed++;
+      // Take the queue's lock, then look again: a job enqueued after the first look must survive.
+      const unlock = acquireLock(`${path}.lock`, DEFAULT_LOCK_TIMEOUT_MS);
+      try {
+        const parsed = JSON.parse(readFileSync(path, "utf8")) as { jobs?: unknown[] } | null;
+        if (Array.isArray(parsed?.jobs) && parsed.jobs.length > 0) continue;
+        rmSync(path, { force: true });
+        queueScanCache.delete(path);
+        removed++;
+      } finally {
+        unlock();
+      }
     } catch {
       // unreadable or racing: leave it
     }
@@ -1548,7 +1578,11 @@ export function activeLeases(): Lease[] {
   mkdirSync(leaseDir(), { recursive: true, mode: 0o755 });
   const now = Date.now();
   const leases: Lease[] = [];
-  for (const name of readdirSync(leaseDir())) {
+  const names = readdirSync(leaseDir());
+  // A lease file that is gone must not stay in the cache for the life of the daemon.
+  const present = new Set(names.map((n) => join(leaseDir(), n)));
+  for (const path of leaseScanCache.keys()) if (!present.has(path)) leaseScanCache.delete(path);
+  for (const name of names) {
     const path = join(leaseDir(), name);
     if (extname(name) !== ".json") continue;
     let lease: Lease;
@@ -1977,26 +2011,41 @@ function watchRuntimeDirs(): {
     woken = true;
     release?.();
   };
-  const watchers: FSWatcher[] = [];
-  for (const dir of [runtimeRoot(), leaseDir(), dirname(queuePath("x"))]) {
+  const dirs = [runtimeRoot(), leaseDir(), dirname(queuePath("x"))];
+  const watchers = new Map<string, FSWatcher>();
+  const attach = (dir: string): void => {
     try {
       mkdirSync(dir, { recursive: true, mode: 0o755 });
       const w = watch(dir, { persistent: false }, (_event, filename) => {
         if (filename && OWN_WRITES.test(String(filename))) return;
         poke();
       });
-      w.on("error", () => {});
-      watchers.push(w);
+      w.on("error", () => {
+        // A watched directory that was removed and recreated: drop the dead watch so the next
+        // sleep attaches a new one.
+        try {
+          w.close();
+        } catch {
+          // already closed
+        }
+        if (watchers.get(dir) === w) watchers.delete(dir);
+      });
+      watchers.set(dir, w);
     } catch {
       // polling fallback
     }
-  }
+  };
+  for (const dir of dirs) attach(dir);
   return {
-    async sleep(ms, signal) {
+    async sleep(msIn, signal) {
       if (woken) {
         woken = false;
         return;
       }
+      // A directory without a live watch is retried here, and until it has one the wait stays short
+      // so a lease or an enqueue in it is noticed by polling.
+      for (const dir of dirs) if (!watchers.has(dir)) attach(dir);
+      const ms = dirs.every((d) => watchers.has(d)) ? msIn : Math.min(msIn, 1000);
       await new Promise<void>((resolve) => {
         const t = setTimeout(done, ms);
         function done() {
@@ -2012,7 +2061,7 @@ function watchRuntimeDirs(): {
       woken = false;
     },
     close() {
-      for (const w of watchers) w.close();
+      for (const w of watchers.values()) w.close();
     },
   };
 }
@@ -2071,7 +2120,10 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
           goLogf(`[runtime] housekeeping failed: ${(err as Error).message}`);
         }
         missingRoots = new Set(projects.filter(projectRootMissing));
+        pruneQueueScanCache(projects);
       }
+      // A root that came back (a drive remounted) is picked up on this tick, not at housekeeping.
+      for (const p of [...missingRoots]) if (!projectRootMissing(p)) missingRoots.delete(p);
       const leasedRoots = new Set(leases.map((l) => l.projectRoot));
       const scanned = projects.filter((p) => leasedRoots.has(p) || !missingRoots.has(p));
       watchLifecycle.reconcile(leases, opts.watcherFactory);
@@ -2085,7 +2137,16 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
         lastFingerprint = scan.fingerprint;
         busy = true;
       }
-      const pendingJobs = scan.pending;
+      // Jobs of a root that is not there are not run, but they are work the daemon still owes.
+      let pendingJobs = scan.pending;
+      for (const p of missingRoots) {
+        if (leasedRoots.has(p)) continue;
+        try {
+          pendingJobs += loadQueueEntry(p).live.length;
+        } catch {
+          // an unreadable queue counts for nothing
+        }
+      }
       if (running === undefined) {
         let request: ReloadRequest | undefined;
         let reloadErr: unknown;

@@ -1060,6 +1060,7 @@ export class FilesystemReconciler {
     try {
       sig = statSignature(lstatSync(full, { bigint: true }));
     } catch {
+      this.identityCache.delete(`${kind}:${full}`); // the file is gone: forget what it declared
       return undefined;
     }
     if (this.freshReads > 0) sig = undefined;
