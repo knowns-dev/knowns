@@ -25,10 +25,12 @@ export async function compile(
   target: string,
   outfile: string,
   define: Record<string, string> = {},
+  /** Worker thread entry files: Bun embeds a worker only when it is an entrypoint of the build. */
+  workers: string[] = [],
 ): Promise<void> {
   mkdirSync(dirname(outfile), { recursive: true });
   const res = await Bun.build({
-    entrypoints: [entry],
+    entrypoints: [entry, ...workers],
     minify: true,
     define,
     compile: { target: target as Bun.Build.CompileTarget, outfile },

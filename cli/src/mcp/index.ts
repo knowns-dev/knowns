@@ -154,8 +154,27 @@ export function newMcpApp(
     async (ctx, req) =>
       (await load()).handle(state, ctx, req);
 
+  // A daemon-hosted session runs search on a worker thread: a cold index is above 50 ms of
+  // synchronous work and would stall every other session (spec D4).
+  const offThread =
+    (load: () => Promise<HandlerModule>): ToolHandler =>
+    async (ctx, req) => {
+      const project = state.getProject();
+      if (!project) return (await load()).handle(state, ctx, req);
+      const { sharedSearchPool } = await import("./pool.ts");
+      const pool = await sharedSearchPool();
+      const res = await pool.run(
+        { storeRoot: project.store.root, projectRoot: state.getRoot(), req },
+        ctx.signal,
+      );
+      return { text: res.text, isError: res.isError };
+    };
+
   const add = (tool: Tool, load: () => Promise<HandlerModule>): void => {
-    const handler = lazy(load);
+    const handler =
+      opts.daemonHosted && tool.name === "search" && process.env.KNOWNS_MCP_SEARCH_WORKERS !== "0"
+        ? offThread(load)
+        : lazy(load);
     server.addTool(tool, WRAPPED_TOOLS.has(tool.name) ? rejectUnknown(tool, handler) : handler);
   };
 

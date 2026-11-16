@@ -21,9 +21,13 @@ let failed = 0;
 for (const target of list) {
   const out = join(cliDir, "dist", platformOf(target), exeName(target));
   try {
-    await compile(join(cliDir, "src", "bin.ts"), target, out, {
-      KNOWNS_VERSION: JSON.stringify(version),
-    });
+    await compile(
+      join(cliDir, "src", "bin.ts"),
+      target,
+      out,
+      { KNOWNS_VERSION: JSON.stringify(version) },
+      [join(cliDir, "src", "mcp", "search-worker.ts")],
+    );
     console.log(`ok   ${target} -> dist/${platformOf(target)}/${exeName(target)}`);
   } catch (e) {
     failed++;
