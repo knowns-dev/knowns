@@ -151,6 +151,21 @@ export function SSEProvider({ children }: { children: ReactNode }) {
 			? `${API_BASE}/api/events?token=${encodeURIComponent(token)}`
 			: `${API_BASE}/api/events`;
 
+		// A batch (archiving 500 cards) emits one lifecycle event per Task. Each used to trigger a
+		// full refresh in every listener, so the page refetched hundreds of times. A burst now asks
+		// for one refresh, after it has been quiet for a moment (and at the latest every 2 s).
+		let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+		let refreshDueBy = 0;
+		const scheduleTasksRefresh = () => {
+			const now = Date.now();
+			if (refreshTimer === undefined) refreshDueBy = now + 2000;
+			else clearTimeout(refreshTimer);
+			refreshTimer = setTimeout(() => {
+				refreshTimer = undefined;
+				emit("tasks:refresh", {});
+			}, Math.max(0, Math.min(300, refreshDueBy - now)));
+		};
+
 		// Store named handler references for proper cleanup
 		const handlers: Array<{ event: string; handler: (e: MessageEvent) => void }> = [];
 
@@ -295,7 +310,7 @@ export function SSEProvider({ children }: { children: ReactNode }) {
 					if (oldest) seenLifecycleEventIDsRef.current.delete(oldest);
 				}
 				emit("tasks:lifecycle", { event: { ...data, at: new Date(data.at) } });
-				emit("tasks:refresh", {});
+				scheduleTasksRefresh();
 			});
 
 			addHandler(eventSource, "tasks:lifecycle-sweep", (e) => {
@@ -336,6 +351,7 @@ export function SSEProvider({ children }: { children: ReactNode }) {
 		connect();
 
 		return () => {
+			if (refreshTimer !== undefined) clearTimeout(refreshTimer);
 			if (eventSourceRef.current) {
 				removeAllHandlers(eventSourceRef.current);
 				eventSourceRef.current.close();

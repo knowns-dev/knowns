@@ -427,6 +427,48 @@ describe("batches", () => {
   });
 });
 
+describe("a named batch (web UI, CLI, MCP) at scale", () => {
+  test("many ids archive across chunks with one tree listing per chunk, and a parent with an open child stays", async () => {
+    const e = env();
+    const ids: string[] = [];
+    for (let i = 0; i < 60; i++) {
+      ids.push(
+        (await addTask(e, `done ${i}`, { status: "done", completedAt: e.clock.now.toISOString() }))
+          .id,
+      );
+    }
+    const parent = await addTask(e, "parent", {
+      status: "done",
+      completedAt: e.clock.now.toISOString(),
+    });
+    await addTask(e, "open child", { status: "todo", parent: parent.id });
+    const all = [...ids, parent.id];
+    const lists: number[] = [];
+    const tasks = e.storage.tasks;
+    const real = tasks.listActive.bind(tasks);
+    let count = 0;
+    (tasks as { listActive: typeof real }).listActive = (...a) => {
+      count++;
+      return real(...a);
+    };
+    e.clock.advance(1000);
+    const batch = await e.service
+      .batchArchive({ ids: all, execute: true, actor: "ui" })
+      .catch((err) => partialOf<Awaited<ReturnType<Service["batchArchive"]>>>(err));
+    if (!batch) throw new Error("no batch result");
+    lists.push(count);
+    expect(batch.processed).toBe(61);
+    expect(batch.changed).toBe(60);
+    for (const id of ids) expect(e.storage.tasks.get(id).archived).toBe(true);
+    // The parent's open child still blocks it, although it was cleared by a fresh snapshot.
+    expect(e.storage.tasks.get(parent.id).archived).toBe(false);
+    const blocked = batch.items.find((i) => i.taskId === parent.id);
+    expect(blocked?.reasons?.map((r) => r.code)).toContain("unfinished_descendant");
+    // 61 ids in chunks of 25 = 3 snapshots; the old code listed the whole store once per Task.
+    expect(lists[0]).toBeLessThanOrEqual(10);
+  });
+});
+
 describe("auto-archive with a stale task tree snapshot", () => {
   test("a child added after the snapshot still blocks archiving its parent", async () => {
     const e = env();

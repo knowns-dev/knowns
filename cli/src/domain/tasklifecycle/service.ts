@@ -158,6 +158,13 @@ function appendWarnings(result: Result, warnings: Warning[]): void {
 const AUTO_ARCHIVE_CHUNK = 10;
 const AUTO_ARCHIVE_YIELD_MS = 5;
 const AUTO_ARCHIVE_TREE_TTL_MS = 30_000;
+/**
+ * A batch the caller names (web UI, CLI, MCP): Tasks per tree listing, and the longest stretch the
+ * event loop may be held before the batch yields. One listing per Task made 500 Tasks take minutes
+ * and froze every other request meanwhile.
+ */
+const BATCH_TREE_CHUNK = 25;
+const BATCH_MAX_BLOCK_MS = 40;
 
 export class Service implements LifecycleCore {
   readonly clock: Clock;
@@ -450,7 +457,24 @@ export class Service implements LifecycleCore {
     };
     const [ids, idsErr] = await attempt(() => this.resolveBatchIds(options.ids ?? []));
     if (idsErr || !ids) return [batch, idsErr];
-    for (const id of ids) {
+    // One fresh listing of the tree per chunk (not per Task) unless the caller shares a snapshot,
+    // and a yield whenever the loop has been held for BATCH_MAX_BLOCK_MS.
+    const ownTree = options.taskTree === undefined && ids.length > 1;
+    let blockedSince = Date.now();
+    for (let n = 0; n < ids.length; n++) {
+      const id = ids[n] as string;
+      if (ownTree && n % BATCH_TREE_CHUNK === 0) {
+        const [tree, treeErr] = await attempt(() =>
+          this.withTransaction((tx) => snapshotTaskTree(tx)),
+        );
+        if (treeErr || !tree) return [batch, treeErr];
+        archiveOptions.taskTree = tree;
+        archiveOptions.taskTreeFresh = true;
+      }
+      if (Date.now() - blockedSince > BATCH_MAX_BLOCK_MS) {
+        await new Promise((r) => setTimeout(r, 0));
+        blockedSince = Date.now();
+      }
       archiveOptions.expectedHash = options.expectedHashes?.[id] ?? "";
       let item: Result | undefined;
       let err: Error | undefined;

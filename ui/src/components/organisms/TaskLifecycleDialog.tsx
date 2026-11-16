@@ -23,6 +23,8 @@ interface TaskLifecycleDialogProps {
 	confirmLabel?: string;
 	onConfirm: () => void;
 	allowCancelWhileLoading?: boolean;
+	/** While a batch runs: how many Tasks are done out of how many. */
+	progress?: { done: number; total: number } | null;
 }
 
 function ResultRow({ item, execute }: { item: TaskLifecycleResult; execute: boolean }) {
@@ -107,6 +109,7 @@ export function TaskLifecycleDialog({
 	confirmLabel = "Confirm",
 	onConfirm,
 	allowCancelWhileLoading = false,
+	progress = null,
 }: TaskLifecycleDialogProps) {
 	const eligible = response?.items.filter((item) => item.eligible && item.reasons.length === 0).length ?? 0;
 	const canExecute = !!response && !response.execute && eligible > 0;
@@ -152,7 +155,7 @@ export function TaskLifecycleDialog({
 					{(canExecute || canRetry) && (
 						<Button onClick={onConfirm} disabled={loading} data-testid="lifecycle-confirm">
 							{canRetry && <RotateCcw className="mr-2 h-4 w-4" />}
-							{loading ? "Working…" : canRetry ? "Retry remaining" : confirmLabel}
+							{loading ? (progress ? `Working… ${Math.min(progress.done, progress.total)} / ${progress.total}` : "Working…") : canRetry ? "Retry remaining" : confirmLabel}
 						</Button>
 					)}
 				</DialogFooter>

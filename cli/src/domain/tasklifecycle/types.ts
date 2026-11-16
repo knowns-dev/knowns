@@ -108,6 +108,8 @@ export interface ArchiveOptions {
   minimumAgeMs?: number;
   /** Internal: a snapshot of the Task tree shared by the Tasks of one automatic sweep chunk. */
   taskTree?: TaskTreeSnapshot;
+  /** Internal: taskTree was listed for this very chunk, so the per-Task re-listing is skipped. */
+  taskTreeFresh?: boolean;
 }
 
 export interface ReopenOptions {

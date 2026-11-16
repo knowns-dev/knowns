@@ -118,7 +118,10 @@ export async function evaluateInTransaction(
   // child reopened or created since the snapshot still blocks the archive.
   let unfinished: string[] = [];
   if (options.taskTree) unfinished = await unfinishedDescendants(tx, task.id, options.taskTree);
-  if (unfinished.length === 0) unfinished = await unfinishedDescendants(tx, task.id);
+  // A snapshot listed for the current chunk is as fresh as a listing here; only an old one needs it.
+  if (unfinished.length === 0 && !options.taskTreeFresh) {
+    unfinished = await unfinishedDescendants(tx, task.id);
+  }
   for (const descendantId of unfinished) {
     reasons.push({
       code: "unfinished_descendant",
