@@ -26,6 +26,16 @@ import { goJson } from "../search/json.ts";
 import { goClean } from "../search/qdrant/pointer.ts";
 import { goTimeString } from "../search/time.ts";
 import { VERSION } from "../version.ts";
+import {
+  checkRunner,
+  claimRunner,
+  findDaemon,
+  isRegisteredPid,
+  partitionLeases,
+  registerDaemon,
+  releaseRunner,
+  unregisterDaemon,
+} from "./daemon-registry.ts";
 
 export type JobKind =
   | "index-task"
@@ -43,6 +53,26 @@ export type JobKind =
   | "reindex-search"
   | "reconcile-knowledge"
   | "reconcile-qdrant";
+
+/** The kinds this version can execute. A job of another kind (written by a newer version) is left
+ * alone in the queue: not run, not counted as pending, never dead-lettered. */
+const KNOWN_JOB_KINDS: ReadonlySet<string> = new Set<JobKind>([
+  "index-task",
+  "index-doc",
+  "remove-task",
+  "remove-doc",
+  "index-memory",
+  "remove-memory",
+  "index-decision",
+  "remove-decision",
+  "semantic-search",
+  "index-all-files",
+  "index-file",
+  "remove-file",
+  "reindex-search",
+  "reconcile-knowledge",
+  "reconcile-qdrant",
+]);
 
 export const JOB_REINDEX: JobKind = "reindex-search";
 export const JOB_QDRANT_RECONCILE: JobKind = "reconcile-qdrant";
@@ -135,6 +165,8 @@ export interface Lease {
   projectRoot: string;
   watch: boolean;
   pid?: number;
+  /** The version of the client that wrote the lease; the daemon of that version owns it. */
+  version?: string;
   createdAt: string;
   updatedAt: string;
   expiresAt: string;
@@ -234,6 +266,9 @@ export interface DaemonOptions {
   /** Services run for the daemon's lifetime and stop when the signal aborts. */
   services?: ((signal: AbortSignal) => Promise<void>)[];
   keepAlive?: () => boolean;
+  /** In-memory and cheap: true while the daemon has live work of its own (open MCP sessions). It
+   * is asked every tick, unlike keepAlive, so a session that just opened is never missed. */
+  busy?: () => boolean;
 }
 
 // --- environment and paths ----------------------------------------------------------------------
@@ -460,7 +495,7 @@ export function isWindowsFileBusy(err: unknown, platform: string = process.platf
   return code === "EPERM" || code === "EBUSY" || code === "EACCES";
 }
 
-function retryWhileBusy<T>(op: () => T): T {
+export function retryWhileBusy<T>(op: () => T): T {
   const deadline = Date.now() + WINDOWS_FILE_BUSY_TIMEOUT_MS;
   for (;;) {
     try {
@@ -558,7 +593,7 @@ function loadQueueEntry(storeRoot: string): QueueScanEntry {
   if (hit && hit.sig === sig) return hit;
   const state = loadQueue(storeRoot);
   const live = state.jobs
-    .filter((j) => !j.deadLetter)
+    .filter((j) => !j.deadLetter && KNOWN_JOB_KINDS.has(j.kind))
     .map((job) => ({ job, due: parseMs(job.runAfter), req: parseMs(job.requestedAt) }))
     .sort((a, b) => a.due - b.due || a.req - b.req)
     .map(({ job, due }) => ({ job, due }));
@@ -988,44 +1023,49 @@ export function daemonSpawnEnv(env: Env): Env {
   return rest;
 }
 
-/** EnsureDaemon: start the shared runtime daemon unless one runs (or inline mode is on). */
-export function ensureDaemon(): void {
-  if (shouldBypassDaemon()) return;
-  if (isRunning()) {
-    const v = runningDaemonVersion();
-    if (v !== "" && v !== VERSION) {
-      try {
-        requestShutdown(10_000);
-      } catch (err) {
-        try {
-          forceKillDaemon();
-        } catch {
-          throw new Error(
-            `stop outdated runtime (v${v}, want v${VERSION}): ${(err as Error).message}`,
-          );
-        }
-        const deadline = Date.now() + 5_000;
-        while (Date.now() < deadline && isRunning()) sleepSync(100);
-        if (isRunning()) {
-          throw new Error(
-            `stop outdated runtime (v${v}, want v${VERSION}): ${(err as Error).message}`,
-          );
-        }
-      }
-    } else {
-      return;
+/**
+ * A daemon from before the version registry owns the pid file and knows nothing of runner.json, so
+ * it would run jobs next to ours: stop it, as an outdated daemon always was.
+ */
+function retireUnregisteredDaemon(): void {
+  const pid = readPID();
+  if (pid === undefined || !isProcessAlive(pid) || isRegisteredPid(pid)) return;
+  const v = runningDaemonVersion();
+  try {
+    requestShutdown(10_000);
+  } catch (err) {
+    try {
+      forceKillDaemon();
+    } catch {
+      throw new Error(`stop outdated runtime (v${v}, want v${VERSION}): ${(err as Error).message}`);
+    }
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && isProcessAlive(pid)) sleepSync(100);
+    if (isProcessAlive(pid)) {
+      throw new Error(`stop outdated runtime (v${v}, want v${VERSION}): ${(err as Error).message}`);
     }
   }
+}
+
+/**
+ * EnsureDaemon: start the shared runtime daemon of this version unless one runs (or inline mode
+ * is on). Daemons are version scoped: another version's daemon is left alone, it keeps serving its
+ * own sessions and exits after the last one (spec D3).
+ */
+export function ensureDaemon(): void {
+  if (shouldBypassDaemon()) return;
+  if (findDaemon(VERSION)) return;
+  retireUnregisteredDaemon();
   mkdirSync(runtimeRoot(), { recursive: true, mode: 0o755 });
   let unlock: () => void;
   try {
     unlock = acquireLock(join(runtimeRoot(), "start.lock"), DEFAULT_LOCK_TIMEOUT_MS);
   } catch (err) {
-    if (isRunning()) return;
+    if (findDaemon(VERSION)) return;
     throw err;
   }
   try {
-    if (isRunning()) return;
+    if (findDaemon(VERSION)) return;
     const logFd = openRuntimeLogFile();
     try {
       const { cmd, args } = daemonCommand();
@@ -1037,7 +1077,7 @@ export function ensureDaemon(): void {
     }
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
-      if (isRunning()) return;
+      if (findDaemon(VERSION)) return;
       sleepSync(100);
     }
     throw new Error("timed out waiting for runtime to start");
@@ -1452,6 +1492,7 @@ export function leaseJson(l: Lease): unknown {
     projectRoot: l.projectRoot,
     watch: l.watch,
     ...(l.pid ? { pid: l.pid } : {}),
+    ...(l.version ? { version: l.version } : {}),
     createdAt: goTimeString(l.createdAt),
     updatedAt: goTimeString(l.updatedAt),
     expiresAt: goTimeString(l.expiresAt),
@@ -1475,6 +1516,7 @@ export function acquireClient(
     projectRoot,
     watch,
     pid: process.pid,
+    version: VERSION,
     createdAt: nowString(now),
     updatedAt: nowString(now),
     expiresAt: nowString(now + leaseTtlMs()),
@@ -1872,6 +1914,9 @@ function statusKey(leases: Lease[], projects: string[], watchers: WatcherStatus[
 const STATUS_REFRESH_MS = 30_000;
 const IDLE_POLL_MAX_MS = 5_000;
 const KEEP_ALIVE_REFRESH_MS = 2_000;
+/** How often a daemon rechecks whether it is the runner (one small file read). */
+const ROLE_REFRESH_MS = 2_000;
+const STANDBY_SCAN: QueueScan = { pending: 0, fingerprint: "" };
 /** Registered project roots that stay missing this long, and hold no jobs, are unregistered. */
 const MISSING_PROJECT_GRACE_MS = 30 * 24 * 3_600_000;
 const HOUSEKEEPING_INTERVAL_MS = 10 * 60_000;
@@ -1958,7 +2003,7 @@ export function jobGapMs(ranMs: number): number {
 
 /** Files the daemon writes itself: they must not wake its own sleep. */
 const OWN_WRITES =
-  /^(status\.json|semantic-status\.json|projects-missing\.json|knowns-runtime\.pid)(\.tmp)?$/;
+  /^(status\.json|semantic-status\.json|projects-missing\.json|knowns-runtime\.pid|runner\.json|runner\.lock)(\.\d+)?(\.tmp)?$/;
 
 /**
  * One fs.watch per runtime directory (root, leases, queues): a lease, an enqueue, a reload request
@@ -2018,8 +2063,17 @@ function watchRuntimeDirs(): {
 /** RunDaemonWithOptions. Resolves when the daemon decides to exit (idle, stop flag, abort). */
 export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promise<void> {
   mkdirSync(runtimeRoot(), { recursive: true, mode: 0o755 });
-  writeFileSync(pidFile(), String(process.pid), { mode: 0o644 });
-  rmSync(stopFlagPath(), { force: true });
+  // Version scoped (spec D3): register, then try to become the runner, the one daemon that runs
+  // queue jobs and watchers and owns the pid and status files 0.34.x reads.
+  registerDaemon(VERSION);
+  let isRunner = claimRunner(VERSION);
+  let roleCheckedAt = Date.now();
+  const takeRunnerFiles = (): void => {
+    writeFileSync(pidFile(), String(process.pid), { mode: 0o644 });
+    rmSync(stopFlagPath(), { force: true });
+  };
+  if (isRunner) takeRunnerFiles();
+  goLogf(`[runtime] started (version=${VERSION}, role=${isRunner ? "runner" : "standby"})`);
 
   const serviceAbort = new AbortController();
   const services = (opts.services ?? []).map((run) => run(serviceAbort.signal).catch(() => {}));
@@ -2046,20 +2100,36 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
   try {
     for (;;) {
       const tickNow = Date.now();
-      const leases = (() => {
+      const allLeases = (() => {
         try {
           return activeLeases();
         } catch {
           return [] as Lease[];
         }
       })();
+      if (tickNow - roleCheckedAt >= ROLE_REFRESH_MS) {
+        roleCheckedAt = tickNow;
+        const was = isRunner;
+        isRunner = checkRunner(VERSION);
+        // A runner that never noticed it was replaced (the newer daemon died within one refresh)
+        // must still take the files back: the pid file went with the newer daemon.
+        if (isRunner && (!was || readPID() !== process.pid)) {
+          takeRunnerFiles();
+          lastStatusKey = "";
+          goLogf("[runtime] role: runner");
+        } else if (!isRunner && was) {
+          goLogf("[runtime] role: standby (a newer daemon runs jobs)");
+        }
+      }
+      // A daemon answers for its own version's leases; only the runner watches and runs jobs.
+      const { own: leases, watchFor } = partitionLeases(allLeases, VERSION, isRunner);
       let projects: string[] = [];
       try {
         projects = registeredProjects();
       } catch {
         projects = [];
       }
-      for (const lease of leases)
+      for (const lease of watchFor)
         if (!projects.includes(lease.projectRoot)) projects.push(lease.projectRoot);
       if (tickNow >= nextHousekeeping) {
         nextHousekeeping = tickNow + HOUSEKEEPING_INTERVAL_MS;
@@ -2070,21 +2140,21 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
         }
         missingRoots = new Set(projects.filter(projectRootMissing));
       }
-      const leasedRoots = new Set(leases.map((l) => l.projectRoot));
+      const leasedRoots = new Set(watchFor.map((l) => l.projectRoot));
       const scanned = projects.filter((p) => leasedRoots.has(p) || !missingRoots.has(p));
-      watchLifecycle.reconcile(leases, opts.watcherFactory);
-      const watcherStates = watchLifecycle.status(leases);
+      watchLifecycle.reconcile(watchFor, opts.watcherFactory);
+      const watcherStates = watchLifecycle.status(watchFor);
 
       const leaseIdentity = leases.map((l) => `${l.id}:${l.projectRoot}:${l.watch}`).join("|");
       let busy = running !== undefined || leaseIdentity !== lastLeaseIdentity;
       lastLeaseIdentity = leaseIdentity;
-      const scan = scanQueues(scanned, lastServed, tickNow);
+      const scan = isRunner ? scanQueues(scanned, lastServed, tickNow) : STANDBY_SCAN;
       if (scan.fingerprint !== lastFingerprint) {
         lastFingerprint = scan.fingerprint;
         busy = true;
       }
       const pendingJobs = scan.pending;
-      if (running === undefined) {
+      if (running === undefined && isRunner) {
         let request: ReloadRequest | undefined;
         let reloadErr: unknown;
         try {
@@ -2101,8 +2171,8 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
             goLogf(`[runtime] reload failed: ${(err as Error).message}`);
           }
           try {
-            writeStatusFile(leases, projects, watcherStates);
-            lastStatusKey = statusKey(leases, projects, watcherStates);
+            writeStatusFile(watchFor, projects, watcherStates);
+            lastStatusKey = statusKey(watchFor, projects, watcherStates);
             lastStatusAt = Date.now();
           } catch {
             // ignore
@@ -2138,12 +2208,12 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
           }
         }
       }
-      {
+      if (isRunner) {
         const statusNow = Date.now();
-        const key = statusKey(leases, projects, watcherStates);
+        const key = statusKey(watchFor, projects, watcherStates);
         if (key !== lastStatusKey || statusNow - lastStatusAt >= STATUS_REFRESH_MS) {
           try {
-            writeStatusFile(leases, projects, watcherStates);
+            writeStatusFile(watchFor, projects, watcherStates);
             lastStatusKey = key;
             lastStatusAt = statusNow;
           } catch {
@@ -2151,7 +2221,8 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
           }
         }
       }
-      if (shouldStop()) {
+      // The stop flag addresses the daemon that owns the pid file (what `runtime stop` targets).
+      if (shouldStop() && readPID() === process.pid) {
         rmSync(stopFlagPath(), { force: true });
         return;
       }
@@ -2167,7 +2238,8 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
         pendingJobs === 0 &&
         running === undefined &&
         !watchLifecycle.hasActiveOrGrace() &&
-        !keepAlive
+        !keepAlive &&
+        opts.busy?.() !== true
       ) {
         if (idleSince === 0) idleSince = Date.now();
         else if (Date.now() - idleSince >= idleTimeoutMs()) return;
@@ -2212,5 +2284,7 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
     serviceAbort.abort();
     await Promise.allSettled(services);
     if (readPID() === process.pid) rmSync(pidFile(), { force: true });
+    releaseRunner();
+    unregisterDaemon(VERSION);
   }
 }

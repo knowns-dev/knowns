@@ -24,12 +24,15 @@ const run = defineCommand({
     const stop = () => ac.abort();
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
-    // The MCP session endpoint (KN-QS0B82): serves proxies for as long as the daemon runs. It is
-    // never blocks the daemon when it cannot listen. KNOWNS_MCP_PROXY=0 is a client-side opt-out only.
+    // The MCP session endpoint (KN-QS0B82): serves proxies for as long as the daemon runs. It never
+    // blocks the daemon when it cannot listen. KNOWNS_MCP_PROXY=0 is a client-side opt-out only.
     const services = [...(runtimeSeams.services ?? [])];
+    // An open MCP session keeps the daemon alive even when it holds no lease (no project).
+    let sessionCount = (): number => 0;
     services.push(async (signal) => {
       const { McpHost } = await import("../../runtime/mcp-host.ts");
       const host = new McpHost();
+      sessionCount = () => host.sessions().length;
       try {
         await host.start();
       } catch (err) {
@@ -47,6 +50,7 @@ const run = defineCommand({
       reloadHandler: (reload) => reloadSemanticRuntime(reload),
       ...(runtimeSeams.watcherFactory ? { watcherFactory: runtimeSeams.watcherFactory } : {}),
       services,
+      busy: () => sessionCount() > 0,
       ...(runtimeSeams.keepAlive ? { keepAlive: runtimeSeams.keepAlive } : {}),
     });
     process.off("SIGINT", stop);
