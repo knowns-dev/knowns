@@ -688,7 +688,7 @@ function useNativeBinaryOnWindows(packageRoot, platformPackage, options = {}) {
   }
 
   // Only now stage the 100 MB runtime: nothing to point at without a shim to rewrite.
-  const stage = options.stage || require("./bin/knowns.js").stageWindowsBinary;
+  const stage = options.stage || require("./bin/runtime.js").stageWindowsBinary;
   const exe = stage(source, options.stageOptions);
   if (!(options.verify || nativeBinaryRuns)(exe)) {
     return 0;

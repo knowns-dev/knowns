@@ -335,3 +335,28 @@ unix("bin/knowns-proxy.js becomes the native proxy too, and a missing proxy leav
   const run = spawnSync(proxyShim, ["mcp", "--stdio"], { encoding: "utf8" });
   expect(run.stdout.trim()).toBe("proxy mcp --stdio");
 });
+
+test("knowns-proxy.js still runs after bin/knowns.js was swapped for the native binary", () => {
+  if (process.platform === "win32") return;
+  const { packageRoot, shim } = installLayout();
+  const bin = path.dirname(shim);
+  for (const name of ["knowns-proxy.js", "runtime.js"]) {
+    fs.copyFileSync(path.join(__dirname, "bin", name), path.join(bin, name));
+  }
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  const plat = { darwin: "darwin", linux: "linux" }[process.platform];
+  const pkgDir = path.join(packageRoot, "node_modules", "@knowns", `${plat}-${arch}`);
+  fs.mkdirSync(pkgDir, { recursive: true });
+  fs.writeFileSync(path.join(pkgDir, "knowns"), "#!/bin/sh\necho knowns-binary\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(pkgDir, "knowns-proxy"), '#!/bin/sh\necho "proxy $@"\n', { mode: 0o755 });
+  // The knowns swap: bin/knowns.js is now not JavaScript at all.
+  fs.writeFileSync(shim, "\x7fELF-not-javascript", { mode: 0o755 });
+
+  const run = spawnSync(process.execPath, [path.join(bin, "knowns-proxy.js"), "mcp", "--stdio"], {
+    encoding: "utf8",
+    env: { ...process.env, NO_UPDATE_CHECK: "1" },
+  });
+  expect(run.stderr).toBe("");
+  expect(run.stdout).toBe("proxy mcp --stdio\n");
+  expect(run.status).toBe(0);
+});
