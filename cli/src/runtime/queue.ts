@@ -3,7 +3,6 @@
 // files and JSON shapes the Go 0.34.1 binary uses, so a TS process and a Go daemon can share one
 // runtime directory. Queue operations are synchronous (like Go's), the daemon loop is async.
 
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   closeSync,
@@ -20,6 +19,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join } from "node:path";
 import { effectiveRuntimeWatch } from "../models/config.ts";
+import { spawnDetached } from "../platform/detached-spawn.ts";
 import { goJson } from "../search/json.ts";
 import { goClean } from "../search/qdrant/pointer.ts";
 import { goTimeString } from "../search/time.ts";
@@ -849,13 +849,7 @@ export function ensureDaemon(): void {
     const logFd = openRuntimeLogFile();
     try {
       const { cmd, args } = daemonCommand();
-      const child = spawn(cmd, args, {
-        detached: true,
-        stdio: ["ignore", logFd, logFd],
-        windowsHide: true,
-      });
-      child.on("error", () => {});
-      child.unref();
+      spawnDetached(cmd, args, { logPath: runtimeLogPath() });
     } catch (err) {
       throw new Error(`start runtime: ${(err as Error).message}`);
     } finally {
