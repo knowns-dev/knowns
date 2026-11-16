@@ -1,7 +1,7 @@
 // Port of internal/storage/audit_store.go: append-only MCP audit events in ~/.knowns/audit.jsonl,
 // with size-based rotation (audit.jsonl.1, audit.jsonl.2).
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   type AuditAnalytics,
@@ -13,7 +13,7 @@ import {
   type AuditToolStats,
   UNKNOWN_AUDIT_PROJECT,
 } from "../../models/audit.ts";
-import { renameRetrying } from "../core/fs-retry.ts";
+import { readFileRetrying, renameRetrying } from "../core/fs-retry.ts";
 import { globalRootPath } from "../core/global-root.ts";
 import { goJsonStringify } from "../core/util.ts";
 import { goTimeJson, parseIso } from "./internal.ts";
@@ -313,7 +313,7 @@ export class AuditStore {
 function readAuditFile(path: string): AuditEvent[] {
   let text: string;
   try {
-    text = readFileSync(path, "utf8");
+    text = readFileRetrying(path, "utf8");
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw new Error(`audit: open file: ${(e as Error).message}`);

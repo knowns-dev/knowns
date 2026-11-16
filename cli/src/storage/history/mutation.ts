@@ -2,22 +2,14 @@
 // canonical file and its history together, with expected-hash (optimistic concurrency) checks and
 // rollback. The entity stores are reached through the ports in ports.ts.
 import { createHash } from "node:crypto";
-import {
-  closeSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeSync,
-} from "node:fs";
+import { closeSync, fsyncSync, mkdirSync, openSync, rmSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Doc } from "../../models/doc.ts";
 import { deriveTaskIdPrefix, normalizeTaskIdPrefix } from "../../models/id.ts";
 import type { MemoryEntry } from "../../models/memory.ts";
 import type { Task } from "../../models/task.ts";
 import type { HistoryRecord, TaskVersion } from "../../models/version.ts";
+import { readFileRetrying, renameRetrying } from "../core/fs-retry.ts";
 import { withDocMutationLocks } from "../core/locks.ts";
 import { goTrimSpace } from "../core/util.ts";
 import { DocIdentityConflictError, MutationConflictError } from "./conflicts.ts";
@@ -99,7 +91,7 @@ function writeDocDeleteTransaction(root: string, m: DocDeleteTransaction): void 
     } finally {
       closeSync(fd);
     }
-    renameSync(tmp, docDeleteTransactionPath(root, m.entityId));
+    renameRetrying(tmp, docDeleteTransactionPath(root, m.entityId));
   } finally {
     rmSync(tmp, { force: true });
   }
@@ -520,7 +512,7 @@ interface MemoryRewrite {
 
 async function docRawBytes(ctx: HistoryContext, path: string): Promise<Buffer | undefined> {
   try {
-    return readFileSync(join(ctx.root, "docs", ...`${path}.md`.split("/")));
+    return readFileRetrying(join(ctx.root, "docs", ...`${path}.md`.split("/")));
   } catch {
     return undefined;
   }

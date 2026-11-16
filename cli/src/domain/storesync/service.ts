@@ -2,10 +2,11 @@
 // their remotes from inside the shared runtime (store spec D3). Every Git decision, state field and
 // message follows the Go service so Go and TypeScript can alternate on one linked store.
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { goLogf } from "../../runtime/queue.ts";
+import { readFileRetrying } from "../../storage/core/fs-retry.ts";
 import { globalRootPath } from "../../storage/core/global-root.ts";
 import { withSyncLocks } from "../../storage/core/locks.ts";
 import { MachineRegistry } from "../../storage/core/machine-registry.ts";
@@ -722,7 +723,7 @@ export class Service {
     const local = new Map<string, Buffer>();
     for (const p of paths) {
       try {
-        local.set(p, readFileSync(join(clone, p)));
+        local.set(p, readFileRetrying(join(clone, p)));
       } catch {
         // absent locally
       }
@@ -844,7 +845,7 @@ export class Service {
         const p = statusPath(line);
         if (p === "") continue;
         try {
-          saved.set(p, readFileSync(join(clone, p)));
+          saved.set(p, readFileRetrying(join(clone, p)));
         } catch (e) {
           if ((e as NodeJS.ErrnoException).code === "ENOENT") removed.push(p);
         }

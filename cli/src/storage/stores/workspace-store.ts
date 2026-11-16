@@ -1,8 +1,8 @@
 // Port of internal/storage/workspace_store.go: .knowns/workspaces.json (a JSON array).
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Workspace, workspacesFileSchema } from "../../models/workspace.ts";
 import { parseBoundary } from "../../schema/index.ts";
+import { readFileRetrying } from "../core/fs-retry.ts";
 import { parseJsonPreservingNumbers, writeJson } from "../core/util.ts";
 import { isNotFound } from "./internal.ts";
 
@@ -19,7 +19,7 @@ export class WorkspaceStore {
   list(): Workspace[] {
     let data: string;
     try {
-      data = readFileSync(this.filePath(), "utf8");
+      data = readFileRetrying(this.filePath(), "utf8");
     } catch (e) {
       if (isNotFound(e)) return [];
       throw new Error(`read workspaces.json: ${(e as Error).message}`);

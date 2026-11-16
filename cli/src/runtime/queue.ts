@@ -11,8 +11,6 @@ import {
   mkdirSync,
   openSync,
   readdirSync,
-  readFileSync,
-  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -23,6 +21,7 @@ import { effectiveRuntimeWatch } from "../models/config.ts";
 import { goJson } from "../search/json.ts";
 import { goClean } from "../search/qdrant/pointer.ts";
 import { goTimeString } from "../search/time.ts";
+import { isWindowsFileBusy, readUtf8Retrying, renameRetrying } from "../storage/core/fs-retry.ts";
 import { VERSION } from "../version.ts";
 
 export type JobKind =
@@ -334,7 +333,7 @@ function forceKillDaemon(): void {
 
 function readPID(): number | undefined {
   try {
-    const text = readFileSync(pidFile(), "utf8").replace(/^\s+|\s+$/g, "");
+    const text = readUtf8Retrying(pidFile()).replace(/^\s+|\s+$/g, "");
     return /^[+-]?\d+$/.test(text) ? Number(text) : undefined;
   } catch {
     return undefined;
@@ -434,7 +433,7 @@ function writeJSON(path: string, value: unknown): void {
 }
 
 function readJSONFile(path: string): unknown {
-  return JSON.parse(readFileSync(path, "utf8"));
+  return JSON.parse(readUtf8Retrying(path));
 }
 
 // --- Windows busy files (TSR-5EEY7V, from contributor PR #157) ----------------------------------
@@ -442,39 +441,17 @@ function readJSONFile(path: string): unknown {
 // open fails until it closes it, and the rename that replaces a file briefly refuses new handles,
 // so both sides retry a transient failure for a bounded time.
 
-/** How long a rename or read waits out another handle on Windows, and the delay between tries. */
-const WINDOWS_FILE_BUSY_TIMEOUT_MS = 2000;
-const WINDOWS_FILE_BUSY_RETRY_DELAY_MS = 5;
-
-/**
- * ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION, as libuv reports them
- * (EPERM, EBUSY; EACCES for some access-denied paths), and only on Windows.
- */
-export function isWindowsFileBusy(err: unknown, platform: string = process.platform): boolean {
-  if (platform !== "win32") return false;
-  const code = (err as NodeJS.ErrnoException | undefined)?.code;
-  return code === "EPERM" || code === "EBUSY" || code === "EACCES";
-}
-
-function retryWhileBusy<T>(op: () => T): T {
-  const deadline = Date.now() + WINDOWS_FILE_BUSY_TIMEOUT_MS;
-  for (;;) {
-    try {
-      return op();
-    } catch (err) {
-      if (!isWindowsFileBusy(err) || Date.now() > deadline) throw err;
-      sleepSync(WINDOWS_FILE_BUSY_RETRY_DELAY_MS);
-    }
-  }
-}
+// The Windows busy-file retry lives in storage/core/fs-retry.ts (one implementation for the store
+// and the runtime).
+export { isWindowsFileBusy };
 
 export function renameOverFile(tmp: string, path: string): void {
-  retryWhileBusy(() => renameSync(tmp, path));
+  renameRetrying(tmp, path);
 }
 
 /** readFileSync(path, "utf8") for a file writeJSON replaces. */
 function readFileRetrying(path: string): string {
-  return retryWhileBusy(() => readFileSync(path, "utf8"));
+  return readUtf8Retrying(path);
 }
 
 function readJSONRetrying(path: string): unknown {
@@ -769,13 +746,13 @@ function rotateLogFiles(path: string, maxBytes: number, backups: number): void {
   rmSync(`${path}.${backups}`, { force: true });
   for (let i = backups - 1; i >= 1; i--) {
     try {
-      renameSync(`${path}.${i}`, `${path}.${i + 1}`);
+      renameRetrying(`${path}.${i}`, `${path}.${i + 1}`);
     } catch {
       // missing
     }
   }
   try {
-    renameSync(path, `${path}.1`);
+    renameRetrying(path, `${path}.1`);
   } catch {
     // ignore
   }

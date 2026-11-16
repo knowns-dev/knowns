@@ -1,12 +1,12 @@
 // KN-4FQN0P: .knowns/agent-work.json, the ephemeral record of which MCP agent is working on which task.
 // Not part of 0.34.x: Go ignores the file and the TS task file never carries it, so D10 holds. Claims are
 // advisory: Task.workedBy is derived from them (see deriveWorkedBy) and a stale claim is simply ignored.
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type AgentClaim, agentWorkFileSchema, type WorkedBy } from "../../models/agent-work.ts";
 import type { Task } from "../../models/task.ts";
 import type { TimeState } from "../../models/time.ts";
 import { parseBoundary } from "../../schema/index.ts";
+import { readFileRetrying } from "../core/fs-retry.ts";
 import type { Store } from "../core/store.ts";
 import { parseJsonPreservingNumbers, writeJson } from "../core/util.ts";
 import { isNotFound } from "./internal.ts";
@@ -46,7 +46,7 @@ export class AgentWorkStore {
   list(): AgentClaim[] {
     let data: string;
     try {
-      data = readFileSync(this.path(), "utf8");
+      data = readFileRetrying(this.path(), "utf8");
     } catch (e) {
       if (isNotFound(e)) return [];
       return [];

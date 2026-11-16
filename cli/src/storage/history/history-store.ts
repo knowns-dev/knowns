@@ -11,8 +11,6 @@ import {
   mkdirSync,
   openSync,
   readdirSync,
-  readFileSync,
-  renameSync,
   rmSync,
   statSync,
   truncateSync,
@@ -26,6 +24,7 @@ import type {
   HistoryRecord,
   TaskVersionHistory,
 } from "../../models/version.ts";
+import { readFileRetrying, renameRetrying } from "../core/fs-retry.ts";
 import { type LockOptions, safeHistoryId, withHistoryEntityLock } from "../core/locks.ts";
 import { goJsonStringify } from "../core/util.ts";
 import {
@@ -189,7 +188,7 @@ export function durableWriteJson(path: string, value: unknown): void {
     } finally {
       closeSync(fd);
     }
-    renameSync(tmp, path);
+    renameRetrying(tmp, path);
   } finally {
     rmSync(tmp, { force: true });
   }
@@ -591,7 +590,7 @@ export class HistoryStore {
       }
       if (info.isDirectory()) throw new Error("legacy cleanup target is not a regular file");
       if (!info.isFile() || info.isSymbolicLink()) return;
-      const data = readFileSync(canonical);
+      const data = readFileRetrying(canonical);
       const identity = legacyIdentity(data);
       if (identity === undefined || identity.value !== entityId) return;
       const marker: AnyMap = {
@@ -616,7 +615,7 @@ export class HistoryStore {
       try {
         const currentInfo = lstatSync(canonical);
         if (!currentInfo.isFile() || currentInfo.isSymbolicLink()) throw new Error("changed");
-        current = readFileSync(canonical);
+        current = readFileRetrying(canonical);
       } catch {
         throw new Error("legacy cleanup target changed after reservation");
       }
@@ -658,7 +657,7 @@ export class HistoryStore {
     const result: ReadInternal = { records: [], validBytes: 0, validOffsets: [0] };
     let data: Buffer;
     try {
-      data = readFileSync(path);
+      data = readFileRetrying(path);
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") return result;
       throw new Error(`read history log: ${(e as Error).message}`, { cause: e });
@@ -737,7 +736,7 @@ export class HistoryStore {
         if (!regular) throw new Error("legacy provenance source is not a regular file");
         let currentDigest: string;
         try {
-          currentDigest = sha256Hex(readFileSync(legacyPath));
+          currentDigest = sha256Hex(readFileRetrying(legacyPath));
         } catch (e) {
           throw new Error(`read legacy provenance source: ${(e as Error).message}`, { cause: e });
         }
@@ -871,7 +870,7 @@ export class HistoryStore {
         { cause: e },
       );
     }
-    const rename = this.opts.rename ?? renameSync;
+    const rename = this.opts.rename ?? renameRetrying;
     let backup = "";
     if (existsSync(path)) {
       backup = `${path}.history-backup`;
@@ -901,7 +900,7 @@ export class HistoryStore {
     } catch (e) {
       // Roll back the newly named file; this preserves the previous durable head.
       try {
-        if (backup !== "") renameSync(backup, path);
+        if (backup !== "") renameRetrying(backup, path);
         else rmSync(path, { force: true });
         syncDir(dir);
       } catch {
@@ -932,7 +931,7 @@ export class HistoryStore {
     legacyPath = canonical;
     let legacyBytes: Buffer;
     try {
-      legacyBytes = readFileSync(legacyPath);
+      legacyBytes = readFileRetrying(legacyPath);
     } catch (e) {
       throw new Error(`read legacy Task provenance: ${(e as Error).message}`, { cause: e });
     }
@@ -1023,7 +1022,7 @@ export class HistoryStore {
     legacyPath = canonical;
     let legacyBytes: Buffer;
     try {
-      legacyBytes = readFileSync(legacyPath);
+      legacyBytes = readFileRetrying(legacyPath);
     } catch (e) {
       throw new Error(`read legacy Doc provenance: ${(e as Error).message}`, { cause: e });
     }
@@ -1238,7 +1237,7 @@ export class HistoryStore {
       let digest = "";
       if (pathOk) {
         try {
-          digest = sha256Hex(readFileSync(path));
+          digest = sha256Hex(readFileRetrying(path));
         } catch (e) {
           pathOk = false;
           pathErr = e as Error;
@@ -1389,7 +1388,7 @@ export function legacyFileMatches(
 ): boolean {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(legacyPath, "utf8"));
+    parsed = JSON.parse(readFileRetrying(legacyPath, "utf8"));
   } catch {
     return false;
   }

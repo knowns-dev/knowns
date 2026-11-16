@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import type { Doc } from "../../models/doc.ts";
-import { readUtf8Retrying } from "../core/fs-retry.ts";
+import { readUtf8Retrying, withRetryBudget } from "../core/fs-retry.ts";
 import { resolveSafe } from "../core/safe-path.ts";
 import { atomicWrite, goTrimSpace, splitFrontmatter } from "../core/util.ts";
 import { canonicalDocHash, newDocId } from "../history/entities.ts";
@@ -184,6 +184,8 @@ const normalizeDocPathForStore = (p: string) =>
 
 export type DocPathRewriter = (content: string, oldPath: string, newPath: string) => string;
 
+const LIST_RETRY_BUDGET_MS = 1000;
+
 export class DocStore {
   readonly root: string;
   constructor(store: { root: string }) {
@@ -198,6 +200,10 @@ export class DocStore {
   }
 
   list(): Doc[] {
+    return withRetryBudget(LIST_RETRY_BUDGET_MS, () => this.listUnbudgeted());
+  }
+
+  private listUnbudgeted(): Doc[] {
     const docs = this.walkDocs(this.docsDir(), "", false, "");
     let imported: Doc[] = [];
     try {
@@ -441,7 +447,7 @@ export class DocStore {
   ): Doc {
     let data: string;
     try {
-      data = readUtf8Retrying(abs);
+      data = readUtf8Retrying(abs, { listed: true });
     } catch (e) {
       throw new Error(`parseFile ${abs}: ${(e as Error).message}`);
     }

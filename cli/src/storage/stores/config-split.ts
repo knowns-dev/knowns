@@ -1,9 +1,9 @@
 // Port of internal/storage/config_split.go: where a store-linked project keeps the settings that
 // belong to one person or one machine instead of the team (store spec D13).
 
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RegistryProject } from "../../models/registry.ts";
+import { readFileRetrying } from "../core/fs-retry.ts";
 import { globalRootPath } from "../core/global-root.ts";
 import { decodeGenericObject, writeCanonicalJson } from "../core/util.ts";
 import type { JsonObject } from "./go-shape.ts";
@@ -29,7 +29,7 @@ export function settingsMap(raw: JsonObject): JsonObject {
 }
 
 function readGenericJson(path: string): JsonObject {
-  const text = readFileSync(path, "utf8");
+  const text = readFileRetrying(path, "utf8");
   try {
     return decodeGenericObject(text);
   } catch (e) {

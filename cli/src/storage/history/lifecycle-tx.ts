@@ -2,12 +2,13 @@
 // primitives that are safe to compose while the task lifecycle lock is held, and the Task
 // hard-delete coordinator.
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Task, TaskTombstone } from "../../models/task.ts";
 import type { TaskLifecyclePending } from "../../models/task-lifecycle.ts";
 import type { TimeEntry, TimeState } from "../../models/time.ts";
 import type { TaskChange, TaskVersion } from "../../models/version.ts";
+import { readFileRetrying } from "../core/fs-retry.ts";
 import { goTrimSpace, writeJson } from "../core/util.ts";
 import { MutationConflictError } from "./conflicts.ts";
 import { canonicalTaskHash, taskToSnapshot, trackTaskChanges } from "./entities.ts";
@@ -146,7 +147,7 @@ export class TaskLifecycleTransaction {
       if (!name.endsWith(".json")) continue;
       let pending: TaskLifecyclePending;
       try {
-        pending = JSON.parse(readFileSync(join(dir, name), "utf8")) as TaskLifecyclePending;
+        pending = JSON.parse(readFileRetrying(join(dir, name), "utf8")) as TaskLifecyclePending;
       } catch (e) {
         throw new Error(`parse pending Task lifecycle "${name}": ${(e as Error).message}`, {
           cause: e,
@@ -201,7 +202,7 @@ export class TaskLifecycleTransaction {
     const path = this.pendingPath(taskId, operation, eventId);
     let data: string;
     try {
-      data = readFileSync(path, "utf8");
+      data = readFileRetrying(path, "utf8");
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw new Error(

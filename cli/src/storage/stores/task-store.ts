@@ -1,7 +1,7 @@
 // Port of internal/storage/task_store.go: tasks in .knowns/tasks/ and .knowns/archive/, deletion
 // tombstones, and the byte-exact markdown renderer.
 
-import { existsSync, linkSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize } from "node:path";
 import {
   newPrefixedTaskId,
@@ -10,7 +10,12 @@ import {
   taskFileName,
 } from "../../models/id.ts";
 import type { Task, TaskTombstone } from "../../models/task.ts";
-import { readUtf8Retrying, renameRetrying } from "../core/fs-retry.ts";
+import {
+  linkRetrying,
+  readUtf8Retrying,
+  renameRetrying,
+  withRetryBudget,
+} from "../core/fs-retry.ts";
 import type { Store } from "../core/store.ts";
 import {
   atomicWrite,
@@ -151,6 +156,8 @@ function sameClean(a: string, b: string): boolean {
   return normalize(a) === normalize(b);
 }
 
+const LIST_RETRY_BUDGET_MS = 1000;
+
 export class TaskStore {
   readonly root: string;
 
@@ -196,7 +203,12 @@ export class TaskStore {
     return all;
   }
 
+  /** One shared retry budget for the whole listing: a locked file cannot multiply the wait. */
   private listDir(dir: string): Task[] {
+    return withRetryBudget(LIST_RETRY_BUDGET_MS, () => this.listDirUnbudgeted(dir));
+  }
+
+  private listDirUnbudgeted(dir: string): Task[] {
     const names = readDirSorted(dir)
       .filter((e) => !e.isDirectory() && e.name.endsWith(".md"))
       .map((e) => e.name);
@@ -408,7 +420,7 @@ export class TaskStore {
     const tmp = join(dirname(path), `.tombstone-${crypto.randomUUID().slice(0, 8)}`);
     writeFileSync(tmp, data, { mode: 0o644 });
     try {
-      linkSync(tmp, path);
+      linkRetrying(tmp, path);
       return;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") {
@@ -480,7 +492,8 @@ export class TaskStore {
   parseFile(path: string): Task {
     let data: string;
     try {
-      data = readUtf8Retrying(path);
+      // A listing or a lookup just found this file: one retry if it reads as missing mid-replace.
+      data = readUtf8Retrying(path, { listed: true });
     } catch (e) {
       throw new Error(`parseFile ${path}: ${(e as Error).message}`);
     }

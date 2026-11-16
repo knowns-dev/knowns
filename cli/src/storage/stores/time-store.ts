@@ -1,6 +1,5 @@
 // Port of internal/storage/time_store.go: .knowns/time.json (active timers) and
 // .knowns/time-entries.json (completed entries keyed by task id).
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   type ActiveTimer,
@@ -10,6 +9,7 @@ import {
   timeStateSchema,
 } from "../../models/time.ts";
 import { parseBoundary } from "../../schema/index.ts";
+import { readFileRetrying } from "../core/fs-retry.ts";
 import type { Store } from "../core/store.ts";
 import { parseJsonPreservingNumbers, writeJson } from "../core/util.ts";
 import { AgentWorkStore } from "./agent-work-store.ts";
@@ -62,7 +62,7 @@ export class TimeStore {
   getState(): TimeState {
     let data: string;
     try {
-      data = readFileSync(this.statePath(), "utf8");
+      data = readFileRetrying(this.statePath(), "utf8");
     } catch (e) {
       if (isNotFound(e)) return { active: [] };
       throw new Error(`read time.json: ${(e as Error).message}`);
@@ -91,7 +91,7 @@ export class TimeStore {
   getAllEntries(): Record<string, TimeEntry[]> {
     let data: string;
     try {
-      data = readFileSync(this.entriesPath(), "utf8");
+      data = readFileRetrying(this.entriesPath(), "utf8");
     } catch (e) {
       if (isNotFound(e)) return {};
       throw new Error(`read time-entries.json: ${(e as Error).message}`);

@@ -10,7 +10,6 @@ import {
   lstatSync,
   mkdirSync,
   readdirSync,
-  readFileSync,
   rmSync,
   statSync,
 } from "node:fs";
@@ -21,6 +20,7 @@ import type { Task } from "../../models/task.ts";
 import type { HistoryRecord } from "../../models/version.ts";
 import { createStorage, type Storage } from "../../storage/adapters.ts";
 import { withFileLock } from "../../storage/core/file-lock.ts";
+import { readFileRetrying } from "../../storage/core/fs-retry.ts";
 import { safeHistoryId, withDocMutationLocks } from "../../storage/core/locks.ts";
 import { Store } from "../../storage/core/store.ts";
 import { atomicWrite, goJsonStringify, goTrimSpace } from "../../storage/core/util.ts";
@@ -837,7 +837,7 @@ export class FilesystemReconciler {
     }
     let data: string;
     try {
-      data = readFileSync(this.storage.versions.versionPath(id), "utf8");
+      data = readFileRetrying(this.storage.versions.versionPath(id), "utf8");
     } catch (e) {
       if (isNotExist(e)) return { taskId: id, currentVersion: 0, versions: [] };
       throw e;
@@ -1110,7 +1110,10 @@ export class FilesystemReconciler {
     if (this.missingSince) return this.missingSince;
     let values: Record<string, string> = {};
     try {
-      values = JSON.parse(readFileSync(this.missingStatePath(), "utf8")) as Record<string, string>;
+      values = JSON.parse(readFileRetrying(this.missingStatePath(), "utf8")) as Record<
+        string,
+        string
+      >;
     } catch (e) {
       if (!isNotExist(e)) throw e;
     }
@@ -1919,7 +1922,7 @@ export class FilesystemReconciler {
       if (file.isDirectory() || !file.name.endsWith(".json")) continue;
       let raw: string;
       try {
-        raw = readFileSync(join(dir, file.name), "utf8");
+        raw = readFileRetrying(join(dir, file.name), "utf8");
       } catch (e) {
         results.push(emptyResult({ diagnostic: (e as Error).message }));
         continue;
@@ -2599,7 +2602,7 @@ export class FilesystemReconciler {
       hasReservation = false;
     }
     if (hasReservation) {
-      const marker = JSON.parse(readFileSync(reservation, "utf8")) as Record<string, unknown>;
+      const marker = JSON.parse(readFileRetrying(reservation, "utf8")) as Record<string, unknown>;
       const markerKind = typeof marker.entityType === "string" ? marker.entityType : "";
       if (markerKind !== "" && markerKind !== entityType)
         throw unsafe("purge marker entity mismatch");
@@ -2864,7 +2867,7 @@ export class FilesystemReconciler {
 
   private readIntents(): Record<string, ReconcileResult> {
     const out: Record<string, ReconcileResult> = {};
-    const raw = JSON.parse(readFileSync(this.lifecycleIntentPath(), "utf8")) as Record<
+    const raw = JSON.parse(readFileRetrying(this.lifecycleIntentPath(), "utf8")) as Record<
       string,
       Record<string, unknown>
     > | null;

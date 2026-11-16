@@ -1,9 +1,9 @@
 // Port of internal/storage/sync_provenance.go: remembers which files last changed through store
 // sync, so a stale-hash conflict on such a file can say who changed it and when (FR-12, FR-13).
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import type { Doc } from "../../models/doc.ts";
+import { readFileRetrying } from "../core/fs-retry.ts";
 import { writeJson } from "../core/util.ts";
 import { asMutationConflict, MutationConflictError } from "./conflicts.ts";
 import { normalizeDocPath } from "./entities.ts";
@@ -28,12 +28,12 @@ export function syncArrivalsPath(knowledgeRoot: string): string {
 }
 
 function fileSha(path: string): string {
-  return createHash("sha256").update(readFileSync(path)).digest("hex");
+  return createHash("sha256").update(readFileRetrying(path)).digest("hex");
 }
 
 function readArrivals(root: string): Record<string, SyncArrival> | undefined {
   try {
-    const parsed = JSON.parse(readFileSync(syncArrivalsPath(root), "utf8"));
+    const parsed = JSON.parse(readFileRetrying(syncArrivalsPath(root), "utf8"));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : undefined;
   } catch {
     return undefined;
@@ -145,7 +145,7 @@ async function conflictPaths(r: SyncConflictResolver, c: MutationConflictError):
     const paths = [`docs/${id}.md`];
     let exists = true;
     try {
-      readFileSync(join(r.root, "docs", ...`${id}.md`.split("/")));
+      readFileRetrying(join(r.root, "docs", ...`${id}.md`.split("/")));
     } catch {
       exists = false;
     }

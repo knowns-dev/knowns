@@ -3,7 +3,7 @@
 // atomic pointer swap, watermark stamping and retention cleanup. The rebuild stages every chunk in
 // memory (Go's qdrantStageStore) and only then touches Qdrant.
 
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   DEFAULT_SEMANTIC_VECTOR_RETENTION_GENERATIONS,
@@ -48,6 +48,7 @@ import {
 import type { WritableVectorStore } from "../../search/sqlite-store.ts";
 import { CHUNK_VERSION, type Chunk, type EmbedderProvider } from "../../search/types.ts";
 import type { Storage } from "../../storage/adapters.ts";
+import { readFileRetrying } from "../../storage/core/fs-retry.ts";
 import { globalSemanticStoreRoot } from "../../storage/core/store.ts";
 import { withTaskLifecycleTransaction } from "../../storage/history/lifecycle-tx.ts";
 import { goLogf, isProcessAlive, parseGoDurationMs, sleep } from "../queue.ts";
@@ -134,7 +135,7 @@ async function acquireGenerationFileLock(
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
     try {
-      const m = /^pid=(\d+)/m.exec(readFileSync(path, "utf8"));
+      const m = /^pid=(\d+)/m.exec(readFileRetrying(path, "utf8"));
       const holder = m ? Number(m[1]) : 0;
       if (holder > 0 && !isProcessAlive(holder)) {
         rmSync(path, { force: true });
