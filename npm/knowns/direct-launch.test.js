@@ -8,6 +8,8 @@ const path = require("node:path");
 
 const {
   getPlatformPackage,
+  pruneNpmRuntimes,
+  sweepStrayTmp,
   useNativeBinaryDirectly,
   useNativeBinaryOnWindows,
   windowsShimContents,
@@ -106,34 +108,39 @@ test("Windows is left to the shim rewrite, not the bin swap", () => {
 
 // --- Windows shim rewrite (pure file work, so it runs on every OS) -------------------------------
 
-function npmWindowsShims(dir) {
+// Real output of npm's cmd-shim 7.0.0 for a bin that runs node_modules/knowns/bin/knowns.js.
+const FIXTURES = path.join(__dirname, "testdata", "npm-shims");
+const npmShim = (name, local) => {
+  const text = fs.readFileSync(path.join(FIXTURES, name), "utf8");
+  // A local install's .bin shims reach the package as ..\knowns\bin\knowns.js.
+  return local ? text.replace(/node_modules([\\/])knowns/g, "..$1knowns") : text;
+};
+function writeNpmShims(dir, local = false) {
   fs.mkdirSync(dir, { recursive: true });
-  const target = "%dp0%\\node_modules\\knowns\\bin\\knowns.js";
-  const files = {
-    knowns: `#!/bin/sh\nexec node "$basedir/node_modules/knowns/bin/knowns.js" "$@"\n`,
-    "knowns.cmd": `@ECHO off\r\nnode "${target}" %*\r\n`,
-    "knowns.ps1": `& node "$basedir/node_modules/knowns/bin/knowns.js" $args\n`,
-    "kn.cmd": `@ECHO off\r\nnode "${target}" %*\r\n`,
-  };
-  for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), text);
+  for (const name of ["knowns", "kn"]) {
+    for (const ext of ["", ".cmd", ".ps1"]) {
+      fs.writeFileSync(path.join(dir, name + ext), npmShim(`knowns${ext}`, local));
+    }
+  }
 }
+const WIN = getPlatformPackage("win32", "x64");
+const winLayout = () =>
+  installLayout({ binary: "exe", pkgName: "@knowns/win-x64", binaryName: "knowns.exe" });
+const EXE = "C:\\Users\\me\\AppData\\Local\\Knowns\\npm-runtime\\9.9.9-x64\\knowns.exe";
+const LOCAL = "C:\\Users\\me\\AppData\\Local";
 
-test("npm's Windows shims are rewritten to start the staged binary directly", () => {
-  const { root, packageRoot } = installLayout({
-    binary: "exe",
-    pkgName: "@knowns/win-x64",
-    binaryName: "knowns.exe",
-  });
-  const prefix = path.join(root, "node_modules", "..");
-  npmWindowsShims(prefix);
+test("a global install's shims are rewritten to start the staged binary directly", () => {
+  const { root, packageRoot } = winLayout();
+  writeNpmShims(root);
   const staged = [];
-  const exe = "C:\\Users\\me\\AppData\\Local\\Knowns\\npm-runtime\\9.9.9-x64\\knowns.exe";
 
-  const count = useNativeBinaryOnWindows(packageRoot, getPlatformPackage("win32", "x64"), {
+  const count = useNativeBinaryOnWindows(packageRoot, WIN, {
     platform: "win32",
+    env: { npm_config_global: "true", npm_config_prefix: root },
+    localAppData: LOCAL,
     stage: (source) => {
       staged.push(source);
-      return exe;
+      return EXE;
     },
     verify: () => true,
   });
@@ -141,61 +148,70 @@ test("npm's Windows shims are rewritten to start the staged binary directly", ()
   expect(staged).toEqual([
     path.join(packageRoot, "node_modules", "@knowns", "win-x64", "knowns.exe"),
   ]);
-  expect(count).toBe(4);
-  for (const name of ["knowns.cmd", "kn.cmd"]) {
-    expect(fs.readFileSync(path.join(prefix, name), "utf8")).toBe(`@ECHO off\r\n"${exe}" %*\r\n`);
-  }
-  expect(fs.readFileSync(path.join(prefix, "knowns.ps1"), "utf8")).toContain(`& "${exe}" $args`);
-  expect(fs.readFileSync(path.join(prefix, "knowns"), "utf8")).toContain("exec ");
+  expect(count).toBe(6);
+  const cmd = fs.readFileSync(path.join(root, "knowns.cmd"), "utf8");
+  expect(cmd).toContain('SET "KN_EXE=%LOCALAPPDATA%\\Knowns\\npm-runtime\\9.9.9-x64\\knowns.exe"');
+  expect(cmd).toContain('node "%~dp0node_modules\\knowns\\bin\\knowns.js" %*');
+  expect(fs.readFileSync(path.join(root, "kn.ps1"), "utf8")).toContain(
+    "Join-Path $env:LOCALAPPDATA 'Knowns\\npm-runtime\\9.9.9-x64\\knowns.exe'",
+  );
+  expect(fs.readFileSync(path.join(root, "knowns"), "utf8")).toContain(
+    '"$LOCALAPPDATA/Knowns/npm-runtime/9.9.9-x64/knowns.exe"',
+  );
+});
+
+test("a local install is rewritten in node_modules/.bin only, never in the project root", () => {
+  const { root, packageRoot } = winLayout();
+  const bin = path.join(root, "node_modules", ".bin");
+  writeNpmShims(bin, true);
+  writeNpmShims(root); // look-alikes in the project root (packageRoot/../..): must stay untouched
+  const before = fs.readFileSync(path.join(root, "knowns.cmd"), "utf8");
+
+  const count = useNativeBinaryOnWindows(packageRoot, WIN, {
+    platform: "win32",
+    env: {},
+    localAppData: LOCAL,
+    stage: () => EXE,
+    verify: () => true,
+  });
+
+  expect(count).toBe(6);
+  expect(fs.readFileSync(path.join(root, "knowns.cmd"), "utf8")).toBe(before);
+  expect(fs.readFileSync(path.join(bin, "knowns.cmd"), "utf8")).toContain(
+    'node "%~dp0..\\knowns\\bin\\knowns.js" %*',
+  );
 });
 
 test("a staged binary that does not run leaves npm's shims alone", () => {
-  const { root, packageRoot } = installLayout({
-    binary: "exe",
-    pkgName: "@knowns/win-x64",
-    binaryName: "knowns.exe",
-  });
-  const prefix = path.join(root, "node_modules", "..");
-  npmWindowsShims(prefix);
+  const { root, packageRoot } = winLayout();
+  writeNpmShims(root);
 
-  const count = useNativeBinaryOnWindows(packageRoot, getPlatformPackage("win32", "x64"), {
+  const count = useNativeBinaryOnWindows(packageRoot, WIN, {
     platform: "win32",
+    env: { npm_config_global: "true", npm_config_prefix: root },
     stage: () => "C:\\nope\\knowns.exe",
     verify: () => false,
   });
 
   expect(count).toBe(0);
-  expect(fs.readFileSync(path.join(prefix, "knowns.cmd"), "utf8")).toContain("knowns.js");
+  expect(fs.readFileSync(path.join(root, "knowns.cmd"), "utf8")).toContain("knowns.js");
 });
 
-test("shim templates call the binary with no node in the line", () => {
-  const exe = "C:\\Users\\me\\AppData\\Local\\Knowns\\npm-runtime\\9.9.9-x64\\knowns.exe";
-
-  const cmd = windowsShimContents(".cmd", exe);
-  expect(cmd).toBe(`@ECHO off\r\n"${exe}" %*\r\n`);
-  expect(cmd).not.toContain("node");
-
-  const ps1 = windowsShimContents(".ps1", exe);
-  expect(ps1).toContain(`& "${exe}" $args`);
-  expect(ps1).toContain("exit $LASTEXITCODE");
-
-  expect(windowsShimContents("", exe)).toContain(
-    'exec "C:/Users/me/AppData/Local/Knowns/npm-runtime/9.9.9-x64/knowns.exe" "$@"',
-  );
-});
-
-test("files that are not npm's shim for knowns are never rewritten", () => {
-  const { root, packageRoot } = installLayout({
-    binary: "exe",
-    pkgName: "@knowns/win-x64",
-    binaryName: "knowns.exe",
-  });
-  const prefix = path.join(root, "node_modules", "..");
-  fs.writeFileSync(path.join(prefix, "knowns.cmd"), "@echo my own wrapper\r\n");
+test("a user's own wrapper, even one that runs knowns.js, is never rewritten", () => {
+  const { root, packageRoot } = winLayout();
+  const wrappers = {
+    "knowns.cmd": "@echo off\r\nset FOO=1\r\nnode \"%~dp0node_modules\\knowns\\bin\\knowns.js\" %*\r\n",
+    "knowns.ps1": "$env:FOO=1\n& node \"$PSScriptRoot/node_modules/knowns/bin/knowns.js\" $args\n",
+    // npm's own shape with one extra line added by the user
+    knowns: `${npmShim("knowns", false)}echo done\n`,
+    "kn.cmd": "@echo my own wrapper\r\n",
+  };
+  for (const [name, text] of Object.entries(wrappers)) fs.writeFileSync(path.join(root, name), text);
   let staged = 0;
 
-  const count = useNativeBinaryOnWindows(packageRoot, getPlatformPackage("win32", "x64"), {
+  const count = useNativeBinaryOnWindows(packageRoot, WIN, {
     platform: "win32",
+    env: { npm_config_global: "true", npm_config_prefix: root },
     stage: () => {
       staged++;
       return "x";
@@ -204,5 +220,99 @@ test("files that are not npm's shim for knowns are never rewritten", () => {
 
   expect(count).toBe(0);
   expect(staged).toBe(0);
-  expect(fs.readFileSync(path.join(prefix, "knowns.cmd"), "utf8")).toBe("@echo my own wrapper\r\n");
+  for (const [name, text] of Object.entries(wrappers)) {
+    expect(fs.readFileSync(path.join(root, name), "utf8")).toBe(text);
+  }
+});
+
+test("shims are plain ASCII for a non-ASCII profile and still name the staged exe", () => {
+  const profile = "C:\\Users\\Nguyễn";
+  const exe = `${profile}\\AppData\\Local\\Knowns\\npm-runtime\\9.9.9-x64\\knowns.exe`;
+  for (const ext of ["", ".cmd", ".ps1"]) {
+    const text = windowsShimContents(ext, exe, {
+      localAppData: `${profile}\\AppData\\Local`,
+      fallbackRel: "node_modules/knowns/bin/knowns.js",
+    });
+    expect(/^[\x00-\x7f]*$/.test(text)).toBe(true);
+    expect(text).toContain("LOCALAPPDATA");
+    expect(text).toContain("npm-runtime");
+  }
+  // Outside LOCALAPPDATA the literal path is all there is.
+  expect(windowsShimContents(".cmd", "D:\\kn\\knowns.exe", { localAppData: LOCAL })).toContain(
+    'SET "KN_EXE=D:\\kn\\knowns.exe"',
+  );
+});
+
+test("shims fall back to node bin/knowns.js and keep exit codes (sh, run for real)", () => {
+  if (process.platform === "win32") return;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "knowns-shim-"));
+  tempRoots.push(dir);
+  const pkgBin = path.join(dir, "node_modules", "knowns", "bin");
+  fs.mkdirSync(pkgBin, { recursive: true });
+  fs.writeFileSync(path.join(pkgBin, "knowns.js"), "process.exit(Number(process.argv[2] ?? 0) + 40);\n");
+  const localAppData = path.join(dir, "local");
+  const exe = path.join(localAppData, "Knowns", "npm-runtime", "1-x64", "knowns.exe");
+  const shim = path.join(dir, "knowns");
+  const text = windowsShimContents("", exe, { localAppData, fallbackRel: "node_modules/knowns/bin/knowns.js" });
+  fs.writeFileSync(shim, text, { mode: 0o755 });
+  const env = { ...process.env, LOCALAPPDATA: localAppData };
+
+  // exe missing: the node fallback runs and its exit code comes through
+  expect(spawnSync("sh", [shim, "2"], { env }).status).toBe(42);
+  // exe present: it runs instead, and its exit code comes through
+  fs.mkdirSync(path.dirname(exe), { recursive: true });
+  fs.writeFileSync(exe, "#!/bin/sh\nexit 7\n", { mode: 0o755 });
+  expect(spawnSync("sh", [shim, "2"], { env }).status).toBe(7);
+});
+
+test("the .cmd and .ps1 fall back to node and propagate the exit code in their text", () => {
+  const opts = { localAppData: LOCAL, fallbackRel: "node_modules/knowns/bin/knowns.js" };
+  const cmd = windowsShimContents(".cmd", EXE, opts);
+  expect(cmd).toBe(
+    [
+      "@ECHO off",
+      "SETLOCAL",
+      'SET "KN_EXE=%LOCALAPPDATA%\\Knowns\\npm-runtime\\9.9.9-x64\\knowns.exe"',
+      'IF NOT EXIST "%KN_EXE%" GOTO kn_fallback',
+      '"%KN_EXE%" %*',
+      "EXIT /B %ERRORLEVEL%",
+      ":kn_fallback",
+      'node "%~dp0node_modules\\knowns\\bin\\knowns.js" %*',
+      "EXIT /B %ERRORLEVEL%",
+      "",
+    ].join("\r\n"),
+  );
+  const ps1 = windowsShimContents(".ps1", EXE, opts);
+  expect(ps1).toContain("if (Test-Path -LiteralPath $kn_exe) {");
+  expect(ps1).toContain("& node (Join-Path $PSScriptRoot 'node_modules/knowns/bin/knowns.js') $args");
+  expect(ps1.trimEnd().endsWith("exit $LASTEXITCODE")).toBe(true);
+});
+
+test("stray bin swap leftovers are swept and unused staged runtimes are pruned", () => {
+  const { packageRoot } = installLayout();
+  const bin = path.join(packageRoot, "bin");
+  fs.writeFileSync(path.join(bin, "knowns.js.123.tmp"), "x");
+  fs.writeFileSync(path.join(bin, "knowns.js.9.tmp"), "x");
+  expect(sweepStrayTmp(packageRoot)).toBe(2);
+  expect(fs.readdirSync(bin)).toEqual(["knowns.js"]);
+
+  const cache = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "knowns-cache-")), "npm-runtime");
+  tempRoots.push(path.dirname(cache));
+  for (const v of ["0.33.0-x64", "0.34.0-x64", "0.35.0-x64"]) {
+    fs.mkdirSync(path.join(cache, v), { recursive: true });
+    fs.writeFileSync(path.join(cache, v, "knowns.exe"), "x");
+  }
+  fs.mkdirSync(path.join(cache, ".staging-abc"));
+  expect(pruneNpmRuntimes(cache, path.join(cache, "0.35.0-x64")).sort()).toEqual([
+    ".staging-abc",
+    "0.33.0-x64",
+    "0.34.0-x64",
+  ]);
+  expect(fs.readdirSync(cache)).toEqual(["0.35.0-x64"]);
+  // never prune a directory that is not the npm-runtime cache
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "knowns-other-"));
+  tempRoots.push(other);
+  fs.mkdirSync(path.join(other, "keep"));
+  expect(pruneNpmRuntimes(other, path.join(other, "x"))).toEqual([]);
+  expect(fs.readdirSync(other)).toEqual(["keep"]);
 });
