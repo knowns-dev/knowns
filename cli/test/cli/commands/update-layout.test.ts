@@ -96,19 +96,15 @@ function sandbox(files: Record<string, string>, extraEnv: Record<string, string>
       binaryPath: join(bin, "knowns"),
     }),
   );
-  return {
-    home,
-    project,
-    bin,
-    env: {
+  const env: Record<string, string> = {
       HOME: home,
       USERPROFILE: home,
       NO_UPDATE_CHECK: "1",
       CI: "1",
       KNOWNS_RUNTIME_INLINE: "1",
       ...extraEnv,
-    },
   };
+  return { home, project, bin, env };
 }
 
 const saved = { ...updateSeams };
