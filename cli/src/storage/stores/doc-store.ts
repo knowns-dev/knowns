@@ -5,6 +5,7 @@ import { dirname, join, relative, sep } from "node:path";
 import type { Doc } from "../../models/doc.ts";
 import { readUtf8Retrying, withRetryBudget } from "../core/fs-retry.ts";
 import { resolveSafe } from "../core/safe-path.ts";
+import { StatCache } from "../core/stat-cache.ts";
 import { atomicWrite, goTrimSpace, splitFrontmatter } from "../core/util.ts";
 import { canonicalDocHash, newDocId } from "../history/entities.ts";
 import {
@@ -186,6 +187,16 @@ export type DocPathRewriter = (content: string, oldPath: string, newPath: string
 
 const LIST_RETRY_BUDGET_MS = 1000;
 
+/** Parsed doc files by path, validated against the file's stat (see StatCache). */
+const sharedDocParses = new StatCache<Doc>();
+
+type DocReader = { read: (path: string, parse: () => Doc) => Doc };
+
+/** Drops this store's parsed docs from the shared cache (the project was closed or switched). */
+export function releaseDocCache(root: string): void {
+  sharedDocParses.dropPrefix(root + sep);
+}
+
 export class DocStore {
   readonly root: string;
   constructor(store: { root: string }) {
@@ -200,14 +211,33 @@ export class DocStore {
   }
 
   list(): Doc[] {
-    return withRetryBudget(LIST_RETRY_BUDGET_MS, () => this.listUnbudgeted());
+    return this.listBudgeted(undefined);
   }
 
-  private listUnbudgeted(): Doc[] {
-    const docs = this.walkDocs(this.docsDir(), "", false, "");
+  /** list() under one shared retry budget, so one locked file cannot multiply the wait. */
+  private listBudgeted(cache: DocReader | undefined): Doc[] {
+    return withRetryBudget(LIST_RETRY_BUDGET_MS, () => this.listWith(cache));
+  }
+
+  /**
+   * list() for read-only callers (keyword search): the same docs in the same order, but a file whose
+   * stat is unchanged is neither reread nor reparsed. The Docs are shared between calls and deeply
+   * frozen: they cannot be mutated.
+   */
+  listReadOnly(): Doc[] {
+    const pass = sharedDocParses.pass(this.root + sep);
+    try {
+      return this.listBudgeted(pass);
+    } finally {
+      pass.end(); // forget the files that are gone
+    }
+  }
+
+  private listWith(cache: DocReader | undefined): Doc[] {
+    const docs = this.walkDocs(this.docsDir(), "", false, "", cache);
     let imported: Doc[] = [];
     try {
-      imported = this.listImported();
+      imported = this.listImported(cache);
     } catch {
       return docs; // non-fatal
     }
@@ -232,12 +262,14 @@ export class DocStore {
     }
   }
 
-  private listImported(): Doc[] {
+  private listImported(cache?: DocReader): Doc[] {
     const docs: Doc[] = [];
     for (const e of readDirSorted(this.importsDir())) {
       if (!e.isDirectory()) continue;
       try {
-        docs.push(...this.walkDocs(join(this.importsDir(), e.name, "docs"), "", true, e.name));
+        docs.push(
+          ...this.walkDocs(join(this.importsDir(), e.name, "docs"), "", true, e.name, cache),
+        );
       } catch {
         // skip an unreadable import
       }
@@ -245,14 +277,20 @@ export class DocStore {
     return docs;
   }
 
-  private walkDocs(dir: string, relBase: string, imported: boolean, importSource: string): Doc[] {
+  private walkDocs(
+    dir: string,
+    relBase: string,
+    imported: boolean,
+    importSource: string,
+    cache?: DocReader,
+  ): Doc[] {
     const docs: Doc[] = [];
     for (const e of readDirSorted(dir)) {
       const full = join(dir, e.name);
       if (e.isDirectory()) {
         const sub = relBase === "" ? e.name : `${relBase}/${e.name}`;
         try {
-          docs.push(...this.walkDocs(full, sub, imported, importSource));
+          docs.push(...this.walkDocs(full, sub, imported, importSource, cache));
         } catch {
           // skip
         }
@@ -262,7 +300,8 @@ export class DocStore {
       const base = e.name.slice(0, -3);
       const rel = relBase === "" ? base : `${relBase}/${base}`;
       try {
-        docs.push(this.parseFile(full, rel, relBase, imported, importSource));
+        const parse = () => this.parseFile(full, rel, relBase, imported, importSource);
+        docs.push(cache ? cache.read(full, parse) : parse());
       } catch {
         // skip
       }

@@ -37,6 +37,7 @@ export class McpState {
 
   /** setStore: switching projects drops the LSP manager (rebuilt on next use). */
   async setProject(store: Store | undefined, root: string): Promise<void> {
+    this.releaseCaches(); // the previous project's parsed files are not needed any more
     if (store) {
       const { createStorage } = await import("../storage/adapters.ts");
       this.project = { store, storage: createStorage(store) };
@@ -46,6 +47,14 @@ export class McpState {
     this.root = root;
     this.lspManagerCache = undefined;
     this.lspManagerBuilt = false;
+  }
+
+  /** Drops the parsed task and doc files this project put in the shared search caches. */
+  releaseCaches(): void {
+    const root = this.project?.store.root;
+    if (!root) return;
+    void import("../storage/stores/task-store.ts").then((m) => m.releaseTaskCache(root));
+    void import("../storage/stores/doc-store.ts").then((m) => m.releaseDocCache(root));
   }
 
   /** getLSPManager: built on first use from the project config and the machine defaults. */
