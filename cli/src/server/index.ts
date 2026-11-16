@@ -528,6 +528,17 @@ export class Server {
     if (this.opts.tunnel && !this.auth.hasPassword()) {
       throw new Error("tunnel requires password protection");
     }
+    this.begin(bun);
+    const onSignal = (): void => this.shutdownResolve?.();
+    process.on("SIGINT", onSignal);
+    process.on("SIGTERM", onSignal);
+    await this.shutdownPromise;
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+    await this.shutdown();
+  }
+
+  private begin(bun: ReturnType<typeof Bun.serve>): void {
     this.bun = bun;
     this.startTaskSweeper();
     const pf = this.portFile();
@@ -541,14 +552,17 @@ export class Server {
     }
     this.startServiceMonitor();
     if (this.opts.tunnel) void this.autoStartTunnel();
+  }
 
-    const onSignal = (): void => this.shutdownResolve?.();
-    process.on("SIGINT", onSignal);
-    process.on("SIGTERM", onSignal);
-    await this.shutdownPromise;
-    process.off("SIGINT", onSignal);
-    process.off("SIGTERM", onSignal);
-    await this.shutdown();
+  /**
+   * Serves on a listener the caller owns, inside a process that is not this server's (the runtime
+   * daemon, KN-B3NWK3): no signal handlers, and the returned promise settles after POST
+   * /api/shutdown or stop() has cleaned up, so a stopped listener frees its port at once.
+   */
+  attach(bun: ReturnType<typeof Bun.serve>): { done: Promise<void>; stop(): void } {
+    this.begin(bun);
+    const done = this.shutdownPromise.then(() => this.shutdown());
+    return { done, stop: () => this.shutdownResolve?.() };
   }
 
   private async autoStartTunnel(): Promise<void> {

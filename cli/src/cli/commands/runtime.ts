@@ -80,6 +80,10 @@ const status = defineCommand({
       ctx.print(`  Available: ${s.available}\n`);
       if (s.details && s.details.length > 0) ctx.print(`  Details: ${s.details.join("; ")}\n`);
     }
+    // Sessions, UI listeners and proxy fallbacks of the shared daemon (KN-A1Q129); nothing when none.
+    const live = await import("../../runtime/live-lines.ts");
+    const view = live.loadLiveView();
+    if (!live.liveViewEmpty(view)) ctx.print(`\n${live.liveViewLines(view).join("\n")}\n`);
   },
 });
 
