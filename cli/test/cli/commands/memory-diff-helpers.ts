@@ -284,6 +284,11 @@ export interface ParityOptions {
   stdin?: string;
   /** The output is a list in Go's (random) generated-id order: compare its blocks as a set. */
   unordered?: boolean;
+  /**
+   * An approved divergence from Go 0.34.1: normalizeTs maps TS output (stdout, stderr and file
+   * contents) onto what Go prints. The reason must name the task that approved it.
+   */
+  divergence?: { reason: string; normalizeTs: (t: string) => string };
 }
 
 /**
@@ -294,11 +299,14 @@ export function expectParity(pair: Pair, args: Args, opts: ParityOptions = {}): 
   const label = typeof args === "function" ? args(pair.ts).join(" ") : args.join(" ");
   const r = runBoth(pair, args, opts);
   const fix = (t: string) => sortMatchedBy(opts.unordered ? sortBlocks(t) : t);
+  const norm = opts.divergence?.normalizeTs ?? ((t: string) => t);
   expect(r.ts.code, `exit code of: ${label}`).toBe(r.go.code);
-  expect(fix(r.ts.stdout), `stdout of: ${label}`).toBe(fix(r.go.stdout));
-  expect(r.ts.stderr, `stderr of: ${label}`).toBe(r.go.stderr);
+  expect(fix(norm(r.ts.stdout)), `stdout of: ${label}`).toBe(fix(r.go.stdout));
+  expect(norm(r.ts.stderr), `stderr of: ${label}`).toBe(r.go.stderr);
   const sorted = (t: Record<string, string>) =>
     Object.entries(t).sort(([a], [b]) => (a < b ? -1 : 1));
-  expect(sorted(r.tsTree), `file tree after: ${label}`).toEqual(sorted(r.goTree));
+  const normTree = (t: Record<string, string>) =>
+    Object.fromEntries(Object.entries(t).map(([k, v]) => [k, norm(v)]));
+  expect(sorted(normTree(r.tsTree)), `file tree after: ${label}`).toEqual(sorted(r.goTree));
   return r.go;
 }

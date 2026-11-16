@@ -36,6 +36,15 @@ export { decisionReviewIsStale } from "./hash.ts";
 export type { DecisionMatch, DecisionReviewResult };
 export { canonicalDecisionHash, decisionJson, decisionResultJson };
 
+export interface RestoreMergedJson {
+  state: "preview" | "restored" | "already_restored";
+  message?: string;
+  entries: { kind: string; entry: string; action: string }[];
+  draft: unknown;
+  target: unknown;
+  changedIds: string[];
+}
+
 export const RESULT_CREATED = "created";
 export const RESULT_REVIEW_REQUIRED = "review_required";
 export const RESULT_RESOLVED = "resolved";
@@ -43,8 +52,11 @@ export const RESULT_RESOLVED = "resolved";
 export const RESOLUTION_SUPERSEDE_EXISTING = "supersede_existing";
 export const RESOLUTION_CREATE_DRAFT = "create_draft";
 export const RESOLUTION_LINK_AS_RELATED = "link_as_related";
+export const RESOLUTION_MERGE_DUPLICATE = "merge_duplicate";
 export const RESOLUTION_REJECT_NEW = "reject_new";
 export const RESOLUTION_ACCEPT_NEW = "accept_new";
+/** KN-PRGZMS: a reviewer judges that every match is distinct and keeps the matched decisions current. */
+export const RESOLUTION_ACCEPT_DISTINCT = "accept_distinct";
 
 export const MATCH_DUPLICATE = "duplicate";
 export const MATCH_CONFLICT = "conflict";
@@ -53,8 +65,10 @@ const DEFAULT_REVIEW_LIMIT = 5;
 const DEFAULT_REVIEW_THRESHOLD = 0.72;
 
 export const ALLOWED_RESOLUTIONS: readonly string[] = [
+  RESOLUTION_ACCEPT_DISTINCT,
   RESOLUTION_SUPERSEDE_EXISTING,
   RESOLUTION_LINK_AS_RELATED,
+  RESOLUTION_MERGE_DUPLICATE,
   RESOLUTION_REJECT_NEW,
 ];
 export const READY_RESOLUTIONS: readonly string[] = [RESOLUTION_ACCEPT_NEW, RESOLUTION_REJECT_NEW];
@@ -80,9 +94,13 @@ export interface AddOptions {
 
 export interface AcceptOptions {
   supersedes?: string[];
+  /** KN-PRGZMS: reviewer reason for accepting a draft whose matches are all distinct. */
+  distinctReason?: string;
 }
 
 export interface ResolveOptions {
+  /** Reviewer reason, required by accept_distinct. */
+  reason?: string;
   candidateId?: string;
   resolution: string;
   targetId?: string;
@@ -156,16 +174,31 @@ export class DecisionReviewService {
     if (id === "") throw new Error("decision ID is required");
     const entry = this.storage.decisions.get(id);
     const supersedes = opts.supersedes ?? [];
+    const distinctReason = goTrimSpace(opts.distinctReason ?? "");
+    const reviewLines: string[] = [];
     if (entry.status === "draft") {
       const { matches, blockers } = await this.evaluateCandidate(entry);
       this.applyReviewMetadata(entry, matches, blockers);
       await this.storage.decisions.update(entry);
       if (blockers.length > 0) throw new Error(blockers[0] as string);
-      if (matches.length > 0 && supersedes.length === 0) {
+      if (distinctReason !== "") {
+        for (const m of matches) {
+          if (isExactDuplicate(m)) {
+            throw new Error(
+              `decision "${id}" is an exact duplicate of "${m.id}"; accept_distinct does not apply, use merge_duplicate`,
+            );
+          }
+        }
+        for (const m of matches) {
+          reviewLines.push(
+            `review: accepted as distinct from @decision/${m.id} (${m.kind || "match"}): ${distinctReason}`,
+          );
+        }
+      } else if (matches.length > 0 && supersedes.length === 0) {
         throw new Error(`decision "${id}" needs duplicate/conflict resolution before acceptance`);
       }
     }
-    const evidence = this.verificationEvidence(entry);
+    const evidence = [...this.verificationEvidence(entry), ...reviewLines];
     const { accepted, replaced } = await this.storage.decisions.accept(
       id,
       evidence,
@@ -295,6 +328,10 @@ export class DecisionReviewService {
       }
       case RESOLUTION_LINK_AS_RELATED:
         return this.linkAsRelated(candidate, opts);
+      case RESOLUTION_MERGE_DUPLICATE:
+        throw new Error(
+          `${opts.resolution} needs a persisted candidateId: it folds an existing draft into the target`,
+        );
       case RESOLUTION_REJECT_NEW: {
         const input = cloneDecision(candidate) ?? blankDecision();
         input.status = "rejected";
@@ -304,6 +341,40 @@ export class DecisionReviewService {
       default:
         throw new Error(`unsupported decision review resolution: ${opts.resolution}`);
     }
+  }
+
+  /**
+   * Restore a draft folded by the old link_as_related (now merge_duplicate). Dry run unless
+   * apply is set; see DecisionStore.restoreMergedCandidate for the no-guessing contract.
+   */
+  async restoreMerged(
+    draftId: string,
+    targetId: string,
+    opts: { keep?: string[]; apply?: boolean } = {},
+  ): Promise<RestoreMergedJson> {
+    if (goTrimSpace(draftId) === "" || goTrimSpace(targetId) === "") {
+      throw new Error("draft id and target id are required");
+    }
+    const r = await this.storage.decisions.restoreMergedCandidate(draftId, targetId, {
+      keep: opts.keep,
+      apply: opts.apply,
+      at: this.now(),
+    });
+    let draft = r.draft;
+    if (r.state === "restored") draft = await this.refreshCandidate(draft.id);
+    const out: RestoreMergedJson = {
+      state: r.state,
+      entries: r.entries,
+      draft: decisionJson(draft),
+      target: decisionJson(r.target),
+      changedIds: r.state === "restored" ? [draft.id, r.target.id] : [],
+    };
+    if (r.message) out.message = r.message;
+    if (r.state === "preview") {
+      out.message =
+        "Dry run. A pre-merge state is not stored, so every entry the draft shares with the target is listed. Compare with git log -p -- .knowns/decisions/<target file> before applying; re-run with apply and keep for entries the target owned.";
+    }
+    return out;
   }
 
   private async resolvePersistedCandidate(
@@ -321,6 +392,14 @@ export class DecisionReviewService {
           );
         }
         const result = await this.accept(candidate.id, {});
+        result.resolution = opts.resolution;
+        return result;
+      }
+      case RESOLUTION_ACCEPT_DISTINCT: {
+        const reason = goTrimSpace(opts.reason ?? "");
+        if (reason === "") throw new Error("reason is required for accept_distinct");
+        if (candidate.status === "accepted") return this.accept(candidate.id, {});
+        const result = await this.accept(candidate.id, { distinctReason: reason });
         result.resolution = opts.resolution;
         return result;
       }
@@ -345,6 +424,25 @@ export class DecisionReviewService {
         return result;
       }
       case RESOLUTION_LINK_AS_RELATED: {
+        // A pure link (KN-XAA6KA): both decisions keep status and review state, each gains only a
+        // @decision ref to the other. Nothing is copied and the draft stays a draft.
+        if (goTrimSpace(opts.targetId ?? "") === "") {
+          throw new Error(`targetId is required for ${opts.resolution}`);
+        }
+        const { first, second } = await this.storage.decisions.linkDecisions(
+          candidate.id,
+          opts.targetId as string,
+          this.now(),
+        );
+        return {
+          status: RESULT_RESOLVED,
+          resolution: opts.resolution,
+          decision: first,
+          current: second,
+          changedIds: [first.id, second.id],
+        };
+      }
+      case RESOLUTION_MERGE_DUPLICATE: {
         if (goTrimSpace(opts.targetId ?? "") === "") {
           throw new Error(`targetId is required for ${opts.resolution}`);
         }
@@ -352,7 +450,7 @@ export class DecisionReviewService {
         if (candidate.status === "draft") {
           candidate = await this.refreshCandidate(candidate.id);
           if (candidate.reviewState === "needs_evidence") {
-            throw new Error(`decision "${candidate.id}" needs evidence before linking`);
+            throw new Error(`decision "${candidate.id}" needs evidence before merging`);
           }
           if (!candidateHasReviewMatch(candidate, target)) {
             throw new Error(
@@ -361,7 +459,7 @@ export class DecisionReviewService {
           }
         }
         const { candidate: rejected, target: current } =
-          await this.storage.decisions.linkCandidateToCurrent(candidate.id, target, this.now());
+          await this.storage.decisions.mergeCandidateIntoCurrent(candidate.id, target, this.now());
         return {
           status: RESULT_RESOLVED,
           resolution: opts.resolution,
@@ -661,6 +759,10 @@ function persistedMatches(matches: DecisionMatch[]): DecisionReviewMatch[] {
     if (match.tags && match.tags.length > 0) out.tags = [...match.tags];
     return out;
   });
+}
+
+function isExactDuplicate(match: DecisionMatch): boolean {
+  return (match.matchedBy ?? []).some((r) => r === "lexical:title" || r === "lexical:decision");
 }
 
 function candidateHasReviewMatch(candidate: DecisionEntry, targetId: string): boolean {

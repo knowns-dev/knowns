@@ -490,14 +490,16 @@ export function buildHelpRegistry(): Map<string, HelpEntry> {
     when: "Use for first-class System Decision lifecycle operations and explicit reviewed Legacy Decision Memory migration.",
     params: {
       action:
-        "Required: create, list, get, link, accept, supersede, review_inbox, resolve, migration_preview, migration_apply, migration_rollback.",
+        "Required: create, list, get, link, accept, supersede, review_inbox, resolve, restore, migration_preview, migration_apply, migration_rollback.",
       title: "Required for create.",
       id: "Required for get/link; accepted as old decision ID for supersede if oldId is omitted.",
       candidateId:
         "Required for persisted candidate resolution; never use targetId as the candidate.",
       "oldId/newId": "Required pair for supersede.",
       resolution:
-        "Decision review resolution: accept_new, supersede_existing, link_as_related, reject_new; create_draft remains a compatibility no-op for an existing draft.",
+        "Decision review resolution: accept_new, accept_distinct (needs reason; keeps matched decisions current; refused for exact duplicates), supersede_existing, link_as_related (pure link: both decisions keep status, each gains only a @decision ref), merge_duplicate (merges the draft into the target and REJECTS the draft), reject_new; create_draft remains a compatibility no-op for an existing draft.",
+      "restore/apply/keep":
+        "restore undoes a fold made by the old link_as_related: candidateId is the rejected draft, targetId the decision it was folded into. Dry run by default; apply removes every shared entry except those listed in keep. A pre-merge state is not stored, so compare with git history first.",
       "sources/docs":
         "Sources and related docs/tasks remain evidence links; every create defaults to draft.",
       accept:
