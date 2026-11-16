@@ -2021,11 +2021,16 @@ function watchRuntimeDirs(): {
     release?.();
   };
   const watchers: FSWatcher[] = [];
-  for (const dir of [runtimeRoot(), leaseDir(), dirname(queuePath("x"))]) {
+  const leases = leaseDir();
+  for (const dir of [runtimeRoot(), leases, dirname(queuePath("x"))]) {
     try {
       mkdirSync(dir, { recursive: true, mode: 0o755 });
-      const w = watch(dir, { persistent: false }, (_event, filename) => {
+      const w = watch(dir, { persistent: false }, (event, filename) => {
         if (filename && OWN_WRITES.test(String(filename))) return;
+        // A heartbeat rewrites an existing lease in place ("change"); only a lease appearing or
+        // going away ("rename") changes what the loop would do. Waking for every heartbeat of every
+        // session kept an otherwise idle daemon ticking several times a second.
+        if (dir === leases && event === "change") return;
         poke();
       });
       w.on("error", () => {});
