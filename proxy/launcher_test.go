@@ -330,7 +330,7 @@ func TestLauncherReportsAMissingEngine(t *testing.T) {
 	}
 	// --version still says something useful: the launcher's own version, plus the error.
 	out, stderr, code := run(t, launcher, "", cleanEnv(), "--version")
-	if code == 0 || !strings.Contains(out, "knowns version dev") || !strings.Contains(stderr, engineName()) {
+	if code == 0 || !strings.HasPrefix(out, "knowns version ") || !strings.Contains(stderr, engineName()) {
 		t.Errorf("--version without an engine: code %d out %q err %q", code, out, stderr)
 	}
 }
