@@ -220,8 +220,8 @@ describe("failure classification (Locked Decision D3)", () => {
       embedder: new FakeEmbedder(),
       vecStore: new FakeVectors([]),
     });
-    // Keyword search reads docs through listShared; patch both so the test does not care which.
-    f.storage.docs.listShared = f.storage.docs.list = () => {
+    // Keyword search reads docs through listReadOnly; patch both so the test does not care which.
+    f.storage.docs.listReadOnly = f.storage.docs.list = () => {
       throw new Error("disk on fire");
     };
     await expect(engine.search({ query: "login", mode: "keyword" })).rejects.toThrow(

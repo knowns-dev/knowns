@@ -186,6 +186,13 @@ export type DocPathRewriter = (content: string, oldPath: string, newPath: string
 /** Parsed doc files by path, validated against the file's stat (see StatCache). */
 const sharedDocParses = new StatCache<Doc>();
 
+type DocReader = { read: (path: string, parse: () => Doc) => Doc };
+
+/** Drops this store's parsed docs from the shared cache (the project was closed or switched). */
+export function releaseDocCache(root: string): void {
+  sharedDocParses.dropPrefix(root + sep);
+}
+
 export class DocStore {
   readonly root: string;
   constructor(store: { root: string }) {
@@ -205,14 +212,19 @@ export class DocStore {
 
   /**
    * list() for read-only callers (keyword search): the same docs in the same order, but a file whose
-   * stat is unchanged is neither reread nor reparsed. The Docs are shared between calls and must
-   * not be mutated.
+   * stat is unchanged is neither reread nor reparsed. The Docs are shared between calls and deeply
+   * frozen: they cannot be mutated.
    */
-  listShared(): Doc[] {
-    return this.listWith(sharedDocParses);
+  listReadOnly(): Doc[] {
+    const pass = sharedDocParses.pass(this.root + sep);
+    try {
+      return this.listWith(pass);
+    } finally {
+      pass.end(); // forget the files that are gone
+    }
   }
 
-  private listWith(cache: StatCache<Doc> | undefined): Doc[] {
+  private listWith(cache: DocReader | undefined): Doc[] {
     const docs = this.walkDocs(this.docsDir(), "", false, "", cache);
     let imported: Doc[] = [];
     try {
@@ -241,7 +253,7 @@ export class DocStore {
     }
   }
 
-  private listImported(cache?: StatCache<Doc>): Doc[] {
+  private listImported(cache?: DocReader): Doc[] {
     const docs: Doc[] = [];
     for (const e of readDirSorted(this.importsDir())) {
       if (!e.isDirectory()) continue;
@@ -261,7 +273,7 @@ export class DocStore {
     relBase: string,
     imported: boolean,
     importSource: string,
-    cache?: StatCache<Doc>,
+    cache?: DocReader,
   ): Doc[] {
     const docs: Doc[] = [];
     for (const e of readDirSorted(dir)) {

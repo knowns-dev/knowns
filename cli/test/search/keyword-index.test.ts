@@ -1,17 +1,24 @@
 // Keyword search reuses parsed files and tokenized documents between queries (StatCache plus the
 // LexicalDoc memo). The index is an optimisation only: every query must return exactly what a full
 // rescan returns, scores included, however the files change in between.
-import { afterAll, describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { bm25Search, type LexicalSource } from "../../src/search/lexical.ts";
 import type { SearchOptions } from "../../src/search/types.ts";
 import type { Storage } from "../../src/storage/adapters.ts";
-import { StatCache } from "../../src/storage/core/stat-cache.ts";
+import { RACY_WINDOW_MS, StatCache, setCacheClock } from "../../src/storage/core/stat-cache.ts";
 import { cleanup, openFixture } from "./helpers.ts";
 
 const dirs: string[] = [];
-afterAll(() => cleanup(...dirs));
+afterAll(() => {
+  setCacheClock(undefined);
+  cleanup(...dirs);
+});
+// Files made by a test are brand new, which the racy rule never serves from memory. Moving the
+// shared caches' clock an hour ahead lets these tests exercise real cache hits; the racy rule has
+// its own tests with the clock under control.
+beforeAll(() => setCacheClock(() => Date.now() + 3_600_000));
 
 function open() {
   const f = openFixture("full");
@@ -30,8 +37,8 @@ const opts = (extra: Partial<SearchOptions> = {}): SearchOptions => ({
 /** What the engine feeds the backend, from the shared (indexed) listings. */
 function indexed(storage: Storage): LexicalSource {
   return {
-    tasks: () => storage.tasks.listActiveShared(),
-    docs: () => storage.docs.listShared(),
+    tasks: () => storage.tasks.listActiveReadOnly(),
+    docs: () => storage.docs.listReadOnly(),
     memories: () => storage.memory.list(""),
     decisions: () => storage.decisions.list(),
   };
@@ -149,10 +156,12 @@ describe("indexed keyword search equals a full scan", () => {
 });
 
 describe("StatCache", () => {
+  const later = () => Date.now() + 3_600_000;
+
   test("parses once per file version and again after a change", () => {
     const f = open();
     const file = firstFile(join(f.root, "tasks"));
-    const cache = new StatCache<string>();
+    const cache = new StatCache<string>({ now: later });
     let parses = 0;
     const read = () =>
       cache.read(file, () => {
@@ -177,11 +186,148 @@ describe("StatCache", () => {
     expect(cache.size).toBe(0);
   });
 
-  test("is dropped when it grows past its bound", () => {
+  test("is held under its byte budget, least recently used first", () => {
     const f = open();
     const files = readdirSync(join(f.root, "tasks")).map((n) => join(f.root, "tasks", n));
-    const cache = new StatCache<number>(2);
+    const cache = new StatCache<number>({ budgetBytes: 2000, now: later });
     for (const file of files) cache.read(file, () => 1);
-    expect(cache.size).toBeLessThanOrEqual(2);
+    expect(cache.cost).toBeLessThanOrEqual(2000);
+    expect(cache.size).toBeLessThan(files.length);
+    const last = files[files.length - 1] as string;
+    let parses = 0;
+    cache.read(last, () => ++parses);
+    expect(parses).toBe(0); // the most recent entry survived eviction
+  });
+
+  test("a listing pass forgets files that are gone, and dropPrefix a whole project", () => {
+    const f = open();
+    const cache = new StatCache<number>({ now: later });
+    const tasks = join(f.root, "tasks");
+    const files = readdirSync(tasks).map((n) => join(tasks, n));
+    const first = cache.pass(`${tasks}/`);
+    for (const file of files) first.read(file, () => 1);
+    first.end();
+    expect(cache.size).toBe(files.length);
+    rmSync(files[0] as string);
+    const second = cache.pass(`${tasks}/`);
+    for (const file of files.slice(1)) second.read(file, () => 1);
+    second.end();
+    expect(cache.size).toBe(files.length - 1);
+    cache.dropPrefix(`${tasks}/`);
+    expect(cache.size).toBe(0);
+    expect(cache.cost).toBe(0);
+  });
+
+  test("P2-1: a file modified within the racy margin of being cached is parsed again", () => {
+    const f = open();
+    const file = firstFile(join(f.root, "tasks"));
+    const st = statSync(file, { bigint: true });
+    const newest = Number((st.mtimeNs > st.ctimeNs ? st.mtimeNs : st.ctimeNs) / 1_000_000n);
+    let clock = newest + 50; // cached 50 ms after the last change: a later write could share its tick
+    const cache = new StatCache<number>({ now: () => clock });
+    let parses = 0;
+    const read = () => cache.read(file, () => ++parses);
+    read();
+    read();
+    expect(parses).toBe(2); // a racy entry is never trusted
+    clock = newest + RACY_WINDOW_MS + 100; // the file had been quiet long enough when cached
+    read();
+    read();
+    read();
+    expect(parses).toBe(3); // cached once, then served
+  });
+
+  test("P2-1: a same-size rewrite with an unchanged mtime, right after a query, is seen", () => {
+    const f = open();
+    const file = firstFile(join(f.root, "tasks"));
+    const text = readFileSync(file, "utf8");
+    const a = text.replace(/^title: .*$/m, "title: AAAA");
+    const b = a.replace("AAAA", "BBBB"); // same size
+    const t = new Date();
+    writeFileSync(file, a);
+    utimesSync(file, t, t);
+    const cache = new StatCache<string>(); // the real clock: the file was just written
+    const read = () => cache.read(file, () => readFileSync(file, "utf8"));
+    expect(read()).toContain("AAAA");
+    writeFileSync(file, b);
+    utimesSync(file, t, t); // the coarse-timestamp case: the same mtime as before
+    expect(read()).toContain("BBBB");
+  });
+
+  test("P3-1: shared values are deeply frozen", () => {
+    const f = open();
+    const file = firstFile(join(f.root, "tasks"));
+    const cache = new StatCache<{ list: string[]; n: { a: number } }>({ now: later });
+    const v = cache.read(file, () => ({ list: ["x"], n: { a: 1 } }));
+    expect(() => v.list.push("y")).toThrow();
+    expect(() => {
+      v.n.a = 2;
+    }).toThrow();
+  });
+});
+
+describe("parents and duplicates (P2-2, P3-2, P2-4)", () => {
+  function withParent() {
+    const f = open();
+    const dir = join(f.root, "tasks");
+    const names = readdirSync(dir).sort();
+    const parentFile = join(dir, names[0] as string);
+    const childFile = join(dir, names[1] as string);
+    const parentId = /^id: (.+)$/m.exec(readFileSync(parentFile, "utf8"))?.[1] as string;
+    const child = readFileSync(childFile, "utf8");
+    writeFileSync(childFile, child.replace("\nassignee:", `\nparent: ${parentId}\nassignee:`));
+    return { f, dir, parentId, parentFile, childFile };
+  }
+
+  test("P2-2: a parent keeps its identity across calls", () => {
+    const { f, parentId } = withParent();
+    const a = f.storage.tasks.listActiveReadOnly();
+    const b = f.storage.tasks.listActiveReadOnly();
+    const pa = a.find((t) => t.id === parentId);
+    expect(pa?.subtasks?.length).toBe(1);
+    expect(b.find((t) => t.id === parentId)).toBe(pa);
+    expect(a.every((t, i) => t === b[i])).toBe(true);
+  });
+
+  test("P2-2: a parent's view is rebuilt when its children change", () => {
+    const { f, parentId, childFile } = withParent();
+    const before = f.storage.tasks.listActiveReadOnly().find((t) => t.id === parentId);
+    writeFileSync(childFile, readFileSync(childFile, "utf8").replace(/^parent: .*\n/m, ""));
+    const after = f.storage.tasks.listActiveReadOnly().find((t) => t.id === parentId);
+    expect(after).not.toBe(before);
+    expect(after?.subtasks ?? []).toEqual([]);
+  });
+
+  test("P3-2: indexed search equals a scan with a parent task, including a term only it has", () => {
+    const { f, parentFile } = withParent();
+    writeFileSync(
+      parentFile,
+      readFileSync(parentFile, "utf8").replace(
+        "\nassignee:",
+        "\nlabels: [zzparentonly]\nassignee:",
+      ),
+    );
+    expectSame(f.storage);
+    const hits = bm25Search(indexed(f.storage), "zzparentonly", opts({ query: "zzparentonly" }));
+    expect(hits.length).toBeGreaterThan(0);
+    expectSame(f.storage);
+  });
+
+  test("P2-4: a duplicate id is resolved like listActive, but a search deletes no file", () => {
+    const f = open();
+    const dir = join(f.root, "tasks");
+    const file = firstFile(dir);
+    const copy = join(dir, "zz-duplicate.md");
+    writeFileSync(
+      copy,
+      readFileSync(file, "utf8").replace(/^title: .*$/m, "title: Stale duplicate"),
+    );
+    const before = readdirSync(dir).sort();
+    const shared = f.storage.tasks.listActiveReadOnly();
+    expect(readdirSync(dir).sort()).toEqual(before); // nothing removed
+    const id = /^id: (.+)$/m.exec(readFileSync(file, "utf8"))?.[1];
+    expect(shared.filter((t) => t.id === id)).toHaveLength(1);
+    f.storage.tasks.listActive(); // the write path is the one that repairs
+    expect(readdirSync(dir).length).toBe(before.length - 1);
   });
 });

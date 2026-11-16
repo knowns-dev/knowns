@@ -9,7 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, normalize } from "node:path";
+import { basename, dirname, join, normalize, sep } from "node:path";
 import {
   newPrefixedTaskId,
   newTaskId,
@@ -17,7 +17,7 @@ import {
   taskFileName,
 } from "../../models/id.ts";
 import type { Task, TaskTombstone } from "../../models/task.ts";
-import { StatCache } from "../core/stat-cache.ts";
+import { deepFreeze, StatCache } from "../core/stat-cache.ts";
 import type { Store } from "../core/store.ts";
 import {
   atomicWrite,
@@ -161,6 +161,18 @@ function sameClean(a: string, b: string): boolean {
 /** Parsed task files by path, validated against the file's stat (see StatCache). */
 const sharedTaskParses = new StatCache<Task>();
 
+/**
+ * A parent task as the listing shows it (its children's ids appended to subtasks), by the parsed
+ * task it was made from. Handing out the same object while the task and its children are the same
+ * keeps identity stable, which the lexical memo and corpus statistics depend on.
+ */
+const parentViews = new WeakMap<Task, { key: string; view: Task }>();
+
+/** Drops this store's parsed tasks from the shared cache (the project was closed or switched). */
+export function releaseTaskCache(root: string): void {
+  sharedTaskParses.dropPrefix(root + sep);
+}
+
 export class TaskStore {
   readonly root: string;
 
@@ -187,28 +199,48 @@ export class TaskStore {
   /**
    * listActive for read-only callers (keyword search): the same tasks in the same order, but a file
    * whose stat is unchanged is neither reread nor reparsed. The returned Tasks are shared between
-   * calls and must not be mutated. A duplicate id falls back to listActive, which repairs it.
+   * calls and deeply frozen. A search never changes the store: a duplicate id keeps the copy with
+   * the latest updatedAt (what listActive keeps) but the other file is left for the write and
+   * doctor paths to repair.
    */
-  listActiveShared(): Task[] {
-    return this.listDirShared(this.tasksDir());
+  listActiveReadOnly(): Task[] {
+    return this.listDirReadOnly(this.tasksDir());
   }
 
-  listArchivedShared(): Task[] {
-    return this.listDirShared(this.archiveDir());
+  listArchivedReadOnly(): Task[] {
+    return this.listDirReadOnly(this.archiveDir());
   }
 
-  private listDirShared(dir: string): Task[] {
+  private listDirReadOnly(dir: string): Task[] {
+    const pass = sharedTaskParses.pass(dir + sep);
+    try {
+      return this.listDirShared(dir, pass);
+    } finally {
+      pass.end(); // forget the files that are gone
+    }
+  }
+
+  private listDirShared(
+    dir: string,
+    cache: { read: (path: string, parse: () => Task) => Task },
+  ): Task[] {
     const byId = new Map<string, Task>();
     for (const e of readDirSorted(dir)) {
       if (e.isDirectory() || !e.name.endsWith(".md")) continue;
       const path = join(dir, e.name);
       let task: Task;
       try {
-        task = sharedTaskParses.read(path, () => this.parseFile(path));
+        task = cache.read(path, () => this.parseFile(path));
       } catch {
         continue;
       }
-      if (byId.has(task.id)) return this.listDir(dir);
+      const existing = byId.get(task.id);
+      if (
+        existing &&
+        (parseIso(task.updatedAt)?.ms ?? 0) <= (parseIso(existing.updatedAt)?.ms ?? 0)
+      ) {
+        continue; // the same winner listDir picks, without removing the loser
+      }
       byId.set(task.id, task);
     }
     // listDir links children into their parent's subtasks; do it on copies so the shared Tasks stay
@@ -223,7 +255,17 @@ export class TaskStore {
     const out: Task[] = [];
     for (const t of byId.values()) {
       const ids = children.get(t.id);
-      out.push(ids ? { ...t, subtasks: [...(t.subtasks ?? []), ...ids] } : t);
+      if (!ids) {
+        out.push(t);
+        continue;
+      }
+      const key = ids.join("\0");
+      let memo = parentViews.get(t);
+      if (!memo || memo.key !== key) {
+        memo = { key, view: deepFreeze({ ...t, subtasks: [...(t.subtasks ?? []), ...ids] }) };
+        parentViews.set(t, memo);
+      }
+      out.push(memo.view);
     }
     return out;
   }
