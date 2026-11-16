@@ -362,13 +362,22 @@ function useNativeBinaryDirectly(packageRoot, platformPackage, options = {}) {
   if (platform === "win32") {
     return false;
   }
-  const dest = path.join(packageRoot, "bin", "knowns.js");
-  if (!fs.existsSync(dest) || !isShim(dest)) {
-    return false;
-  }
   const pkgDir = resolveInstalledPackageDir(packageRoot, platformPackage.name, platformPackage.ext);
   const source = pkgDir && resolveBinaryFromPackageDir(pkgDir, platformPackage.ext);
   if (!source) {
+    return false;
+  }
+  const done = linkNativeInto(path.join(packageRoot, "bin", "knowns.js"), source);
+  // The proxy command gets the same treatment when the platform package ships one.
+  const proxySource = path.join(pkgDir, `knowns-proxy${platformPackage.ext}`);
+  if (fs.existsSync(proxySource)) {
+    linkNativeInto(path.join(packageRoot, "bin", "knowns-proxy.js"), proxySource);
+  }
+  return done;
+}
+
+function linkNativeInto(dest, source) {
+  if (!fs.existsSync(dest) || !isShim(dest)) {
     return false;
   }
 

@@ -389,14 +389,35 @@ async function downloadAndReplaceBinary(
       throw new Error(`extract release artifact: ${(e as Error).message}`);
     }
     const binaryName = seams.goos() === "windows" ? "knowns.exe" : "knowns";
-    const extracted = findFile(
-      extractDir,
-      (n) => n === binaryName.toLowerCase() || n.startsWith("knowns-"),
-    );
+    // The exact name wins; the knowns-* match is only for the 0.34 Windows alias, and it must not
+    // pick knowns-proxy, which now sits in the same archive.
+    const isProxy = (n: string): boolean => n.startsWith("knowns-proxy");
+    let extracted: string;
+    try {
+      extracted = findFile(extractDir, (n) => n === binaryName.toLowerCase());
+    } catch {
+      extracted = findFile(extractDir, (n) => n.startsWith("knowns-") && !isProxy(n));
+    }
     try {
       replaceBinary(extracted, binaryPath, seams.goos());
     } catch (e) {
       throw new Error(`replace binary: ${(e as Error).message}`);
+    }
+    // The proxy only finds a daemon of its own version, so a stale one next to the new knowns would
+    // fall back to in-process on every session. Install it the same way (temp copy, then rename).
+    const proxyName = seams.goos() === "windows" ? "knowns-proxy.exe" : "knowns-proxy";
+    let proxySrc: string | undefined;
+    try {
+      proxySrc = findFile(extractDir, (n) => n === proxyName);
+    } catch {
+      proxySrc = undefined;
+    }
+    if (proxySrc !== undefined) {
+      try {
+        replaceBinary(proxySrc, join(dirname(binaryPath), proxyName), seams.goos());
+      } catch (e) {
+        throw new Error(`replace proxy: ${(e as Error).message}`);
+      }
     }
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });

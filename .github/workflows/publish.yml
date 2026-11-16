@@ -147,6 +147,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -158,10 +163,11 @@ jobs:
           name: ui-dist
           path: ui/dist/
 
-      - name: Build Windows binaries (x64, arm64)
+      - name: Build Windows binaries (x64, arm64) and the proxy
         working-directory: cli
         env:
           KNOWNS_VERSION: ${{ needs.meta.outputs.version }}
+          KNOWNS_REQUIRE_PROXY: "1"
         run: |
           bun install --frozen-lockfile
           bun run build bun-windows-x64 bun-windows-arm64
@@ -175,6 +181,9 @@ jobs:
             $v = (Get-Item "cli/dist/$t/knowns.exe").VersionInfo
             Write-Host "$t product=$($v.ProductName) description=$($v.FileDescription) version=$($v.FileVersion)"
             if ($v.ProductName -ne 'Knowns' -or $v.FileDescription -ne 'Knowns') { throw "$t does not carry the Knowns metadata" }
+            $p = (Get-Item "cli/dist/$t/knowns-proxy.exe").VersionInfo
+            Write-Host "$t proxy product=$($p.ProductName) description=$($p.FileDescription) version=$($p.FileVersion)"
+            if ($p.ProductName -ne 'Knowns' -or $p.FileDescription -ne 'Knowns') { throw "$t proxy does not carry the Knowns metadata" }
           }
 
       - name: Upload Windows binaries
@@ -197,6 +206,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -208,10 +222,11 @@ jobs:
           name: ui-dist
           path: ui/dist/
 
-      - name: Build TypeScript binaries (4 Unix targets)
+      - name: Build TypeScript binaries and the proxy (4 Unix targets)
         working-directory: cli
         env:
           KNOWNS_VERSION: ${{ needs.meta.outputs.version }}
+          KNOWNS_REQUIRE_PROXY: "1"
         run: |
           bun install --frozen-lockfile
           bun run build bun-darwin-arm64 bun-darwin-x64 bun-linux-x64 bun-linux-arm64
@@ -277,6 +292,19 @@ jobs:
           echo "$got"
           [ "$got" = "knowns version ${VERSION}" ] || { echo "FATAL: expected knowns version ${VERSION}"; exit 1; }
 
+      - name: Proxy runs and reports the release version
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          dir=$(mktemp -d)
+          tar -xzf "release/assets/knowns-${{ matrix.platform }}.tar.gz" -C "$dir"
+          proxy="$dir/knowns-proxy"
+          case "${{ matrix.platform }}" in win-*) proxy="$dir/knowns-proxy.exe" ;; esac
+          chmod +x "$proxy" || true
+          got=$("$proxy" --version | tr -d '\r')
+          echo "$got"
+          [ "$got" = "knowns-proxy version ${VERSION}" ] || { echo "FATAL: expected knowns-proxy version ${VERSION}"; exit 1; }
+
       - name: Run npm installer tests
         if: runner.os == 'Windows' || matrix.platform == 'darwin-x64'
         run: bun test npm/knowns/install.test.js npm/knowns/direct-launch.test.js
@@ -325,6 +353,9 @@ jobs:
             [ "$v" = "$VERSION" ] || { echo "FATAL: $pkg is $v, expected $VERSION"; exit 1; }
             case "$p" in win-*) exe=knowns.exe ;; *) exe=knowns ;; esac
             [ -f "$pkg/$exe" ] || { echo "FATAL: $pkg/$exe is missing"; exit 1; }
+            case "$p" in win-*) proxy=knowns-proxy.exe ;; *) proxy=knowns-proxy ;; esac
+            [ -f "$pkg/$proxy" ] || { echo "FATAL: $pkg/$proxy is missing"; exit 1; }
+            tar -tzf "release/assets/knowns-$p.tar.gz" | grep -Fx "./$proxy" >/dev/null || { echo "FATAL: knowns-$p.tar.gz missing ./$proxy"; exit 1; }
             tar -tzf "release/assets/knowns-$p.tar.gz" | grep -Fx "./$exe" >/dev/null || { echo "FATAL: knowns-$p.tar.gz missing ./$exe"; exit 1; }
             # Go 0.34.x `knowns update` installs the first knowns-* name in sorted order, which on
             # Windows is the archive itself unless this link sorts first (KN-6M228C).
@@ -342,6 +373,12 @@ jobs:
           file release/npm/knowns-darwin-arm64/knowns | grep -q "arm64" || { echo "FATAL: darwin-arm64 is not arm64"; exit 1; }
           file release/npm/knowns-win-x64/knowns.exe | grep -q "x86-64" || { echo "FATAL: win-x64 is not x86-64"; exit 1; }
           file release/npm/knowns-win-arm64/knowns.exe | grep -qi "aarch64\|arm64" || { echo "FATAL: win-arm64 is not arm64"; exit 1; }
+          elf release/npm/knowns-linux-x64/knowns-proxy 3e00
+          elf release/npm/knowns-linux-arm64/knowns-proxy b700
+          file release/npm/knowns-darwin-x64/knowns-proxy | grep -q "x86_64" || { echo "FATAL: darwin-x64 proxy is not x86_64"; exit 1; }
+          file release/npm/knowns-darwin-arm64/knowns-proxy | grep -q "arm64" || { echo "FATAL: darwin-arm64 proxy is not arm64"; exit 1; }
+          file release/npm/knowns-win-x64/knowns-proxy.exe | grep -q "x86-64" || { echo "FATAL: win-x64 proxy is not x86-64"; exit 1; }
+          file release/npm/knowns-win-arm64/knowns-proxy.exe | grep -qi "aarch64\|arm64" || { echo "FATAL: win-arm64 proxy is not arm64"; exit 1; }
 
           node -p "JSON.stringify(require('./release/npm/knowns/package.json').optionalDependencies)"
 
@@ -476,6 +513,7 @@ jobs:
 
             def install
               bin.install "knowns"
+              bin.install "knowns-proxy"
               bin.install_symlink "knowns" => "kn"
             end
 

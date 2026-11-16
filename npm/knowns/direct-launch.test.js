@@ -316,3 +316,22 @@ test("stray bin swap leftovers are swept and unused staged runtimes are pruned",
   expect(pruneNpmRuntimes(other, path.join(other, "x"))).toEqual([]);
   expect(fs.readdirSync(other)).toEqual(["keep"]);
 });
+
+unix("bin/knowns-proxy.js becomes the native proxy too, and a missing proxy leaves its shim", () => {
+  const { packageRoot, shim } = installLayout({ binary: '#!/bin/sh\necho "native $@"\n' });
+  const proxyShim = path.join(packageRoot, "bin", "knowns-proxy.js");
+  fs.writeFileSync(proxyShim, SHIM, { mode: 0o755 });
+  const platformPackage = getPlatformPackage("linux", "x64");
+
+  // Without a proxy in the platform package the shim is untouched.
+  expect(useNativeBinaryDirectly(packageRoot, platformPackage, { platform: "linux" })).toBe(true);
+  expect(fs.readFileSync(proxyShim, "utf8")).toBe(SHIM);
+
+  // With one, it is replaced by the native file.
+  const pkgDir = path.join(packageRoot, "node_modules", "@knowns", "linux-x64");
+  fs.writeFileSync(path.join(pkgDir, "knowns-proxy"), '#!/bin/sh\necho "proxy $@"\n', { mode: 0o755 });
+  fs.writeFileSync(shim, SHIM, { mode: 0o755 });
+  expect(useNativeBinaryDirectly(packageRoot, platformPackage, { platform: "linux" })).toBe(true);
+  const run = spawnSync(proxyShim, ["mcp", "--stdio"], { encoding: "utf8" });
+  expect(run.stdout.trim()).toBe("proxy mcp --stdio");
+});

@@ -117,18 +117,45 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: bun run test
+      - name: Proxy (vet and tests)
+        working-directory: proxy
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go vet ./...
+          go test -count=1 ./...
       - name: Budget (size and startup)
         run: bun run budget
+      # Spec mcp-thin-proxy D7 / NFR-1: 5 proxy sessions plus the daemon and the UI under load and
+      # idle, p95 per tool against the in-process engine, and no process, descriptor, socket or pipe
+      # left after close. Limits live in cli/scripts/proxy-budget.config.json; memory limits are the
+      # spec's on every OS, and on hosted runners (CI=true) only idle CPU (3%) and p95 (x1.5 + 25 ms)
+      # get slack.
+      - name: Proxy resource budget (NFR-1)
+        run: bun scripts/proxy-budget.ts --ui --json proxy-budget.json
+      - name: Upload proxy budget numbers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxy-budget-${{ matrix.os }}
+          path: cli/proxy-budget.json
+          if-no-files-found: ignore
       # Built the way publish.yml builds a release: the version comes from KNOWNS_VERSION (the tag).
       - name: Cross-compile all targets and check sizes
         if: runner.os == 'Linux'
         env:
           KNOWNS_VERSION: 1.0.0-ci
+          KNOWNS_REQUIRE_PROXY: "1"
         run: |
           bun run build
-          bun run budget dist/*/knowns*
+          bun run budget dist/*/knowns dist/*/knowns.exe
           got=$(NO_UPDATE_CHECK=1 dist/linux-x64/knowns --version)
           [ "$got" = "knowns version 1.0.0-ci" ] || { echo "FATAL: --version printed: $got"; exit 1; }
+          got=$(dist/linux-x64/knowns-proxy --version)
+          [ "$got" = "knowns-proxy version 1.0.0-ci" ] || { echo "FATAL: proxy --version printed: $got"; exit 1; }
+          for t in darwin-arm64 darwin-x64 linux-x64 linux-arm64 windows-x64 windows-arm64; do
+            ls dist/$t/knowns-proxy* >/dev/null || { echo "FATAL: no proxy for $t"; exit 1; }
+          done
       - name: Package release (npm packages and Go-compatible assets)
         if: runner.os == 'Linux'
         run: |

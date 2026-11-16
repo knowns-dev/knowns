@@ -127,7 +127,7 @@ export async function startServer(): Promise<TestServer> {
 	const port = await findPort();
 	const serverProcess: ChildProcess = spawn(
 		BINARY,
-		["browser", "--port", String(port), "--no-open"],
+		["browser", "--foreground", "--port", String(port), "--no-open"],
 		{
 			cwd: projectDir,
 			stdio: ["ignore", "pipe", "pipe"],

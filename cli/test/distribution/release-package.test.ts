@@ -28,6 +28,7 @@ function fakeDist(): string {
   for (const p of PLATFORMS) {
     mkdirSync(join(dist, p.dist), { recursive: true });
     writeFileSync(join(dist, p.dist, p.exe), `binary:${p.dist}`);
+    writeFileSync(join(dist, p.dist, p.proxy), `proxy:${p.dist}`);
   }
   return dist;
 }
@@ -60,7 +61,9 @@ describe("package-release", () => {
       // Windows tar.exe ends listing lines with \r\n.
       const listing = run(["tar", "-tzf", archive]).stdout.trim().split(/\r?\n/);
       expect(listing).toEqual(
-        p.npm.startsWith("win-") ? [`./${p.exe}`, `./${GO_UPDATE_ENTRY}`] : [`./${p.exe}`],
+        p.npm.startsWith("win-")
+          ? [`./${p.exe}`, `./${GO_UPDATE_ENTRY}`, `./${p.proxy}`]
+          : [`./${p.exe}`, `./${p.proxy}`],
       );
       const sum = readFileSync(`${archive}.sha256`, "utf8");
       expect(sum).toBe(`${sha256File(archive)}  knowns-${p.npm}.tar.gz\n`);
@@ -182,8 +185,11 @@ describe("package-release npm output", () => {
       );
       expect(pkg.name).toBe(`@knowns/${p.npm}`);
       expect(pkg.version).toBe("1.0.0");
-      expect(pkg.files).toEqual([p.exe]);
+      expect(pkg.files).toEqual([p.exe, p.proxy]);
       expect(existsSync(join(out, "npm", `knowns-${p.npm}`, p.exe))).toBe(true);
+      expect(readFileSync(join(out, "npm", `knowns-${p.npm}`, p.proxy), "utf8")).toBe(
+        `proxy:${p.dist}`,
+      );
     }
     const wrapper = JSON.parse(readFileSync(join(out, "npm", "knowns", "package.json"), "utf8"));
     expect(wrapper.version).toBe("1.0.0");
