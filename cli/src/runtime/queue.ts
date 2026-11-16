@@ -25,6 +25,7 @@ import { spawnDetached } from "../platform/detached-spawn.ts";
 import { goJson } from "../search/json.ts";
 import { goClean } from "../search/qdrant/pointer.ts";
 import { goTimeString } from "../search/time.ts";
+import { statSignature } from "../storage/core/stat-signature.ts";
 import { VERSION } from "../version.ts";
 import {
   checkRunner,
@@ -526,6 +527,7 @@ function readJSONRetrying(path: string): unknown {
 function acquireLock(path: string, timeoutMs: number): () => void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o755 });
   const deadline = Date.now() + timeoutMs;
+  let lastCode = "EEXIST";
   for (;;) {
     try {
       writeFileSync(path, String(process.pid), { flag: "wx", mode: 0o644 });
@@ -533,7 +535,8 @@ function acquireLock(path: string, timeoutMs: number): () => void {
     } catch (err) {
       // Windows reports EPERM, not EEXIST, when the lock file is delete-pending (its owner just
       // released it while another handle was still open): wait it out like an existing lock.
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST" && !isWindowsFileBusy(err)) throw err;
+      lastCode = (err as NodeJS.ErrnoException).code ?? lastCode;
+      if (lastCode !== "EEXIST" && !isWindowsFileBusy(err)) throw err;
     }
     try {
       if (Date.now() - statSync(path).mtimeMs > DEFAULT_LOCK_STALE_AGE_MS) {
@@ -543,7 +546,9 @@ function acquireLock(path: string, timeoutMs: number): () => void {
     } catch {
       // vanished: retry
     }
-    if (Date.now() > deadline) throw new Error(`timed out waiting for lock ${path}`);
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for lock ${path} (last error: ${lastCode})`);
+    }
     sleepSync(50);
   }
 }
@@ -577,20 +582,25 @@ interface QueueScanEntry {
   live: { job: Job; due: number }[];
 }
 const queueScanCache = new Map<string, QueueScanEntry>();
+
+/** Forgets the scans of queue files no registered project owns any more. */
+export function pruneQueueScanCache(projects: string[]): void {
+  const keep = new Set(projects.map((p) => queuePath(p)));
+  for (const path of queueScanCache.keys()) if (!keep.has(path)) queueScanCache.delete(path);
+}
 const EMPTY_ENTRY: QueueScanEntry = { sig: "", state: { jobs: [], recent: [] }, live: [] };
 
 function loadQueueEntry(storeRoot: string): QueueScanEntry {
   const path = queuePath(storeRoot);
-  let sig: string;
+  let sig: string | undefined;
   try {
-    const st = statSync(path);
-    sig = `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
+    sig = statSignature(statSync(path, { bigint: true }));
   } catch (err) {
     queueScanCache.delete(path);
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return EMPTY_ENTRY;
     throw err;
   }
-  const hit = queueScanCache.get(path);
+  const hit = sig === undefined ? undefined : queueScanCache.get(path);
   if (hit && hit.sig === sig) return hit;
   const state = loadQueue(storeRoot);
   const live = state.jobs
@@ -598,8 +608,10 @@ function loadQueueEntry(storeRoot: string): QueueScanEntry {
     .map((job) => ({ job, due: parseMs(job.runAfter), req: parseMs(job.requestedAt) }))
     .sort((a, b) => a.due - b.due || a.req - b.req)
     .map(({ job, due }) => ({ job, due }));
-  const entry: QueueScanEntry = { sig, state, live };
-  queueScanCache.set(path, entry);
+  const entry: QueueScanEntry = { sig: sig ?? "", state, live };
+  // A file touched in the last few seconds has no signature: reread every time, never cached.
+  if (sig !== undefined) queueScanCache.set(path, entry);
+  else queueScanCache.delete(path);
   return entry;
 }
 
@@ -664,9 +676,9 @@ let registryCache: { sig: string; projects: string[] } | undefined;
 export function registeredProjects(): string[] {
   let sig = "";
   try {
-    const st = statSync(projectsRegistryPath());
-    sig = `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
-    if (registryCache && registryCache.sig === sig) return [...registryCache.projects];
+    sig = statSignature(statSync(projectsRegistryPath(), { bigint: true })) ?? "";
+    if (sig !== "" && registryCache && registryCache.sig === sig)
+      return [...registryCache.projects];
   } catch {
     // fall through to the read, which reports ENOENT
   }
@@ -722,14 +734,27 @@ function readMissingSince(): Record<string, number> {
 /** Removes the queue file of an unregistered project. */
 function removeProjectQueueFiles(storeRoot: string): void {
   const path = queuePath(storeRoot);
-  for (const p of [path, `${path}.lock`, `${path}.tmp`]) {
-    try {
-      rmSync(p, { force: true });
-    } catch {
-      // best effort
-    }
+  // Under the queue lock, and only if still empty: a client may have enqueued since the caller
+  // looked. The lock file is the lock's own to remove on release, never deleted from the outside.
+  let unlock: (() => void) | undefined;
+  try {
+    unlock = acquireLock(`${path}.lock`, DEFAULT_LOCK_TIMEOUT_MS);
+  } catch {
+    return; // someone is using the queue: leave it
   }
-  queueScanCache.delete(path);
+  try {
+    if (projectHasQueuedJobs(storeRoot)) return;
+    for (const p of [path, `${path}.tmp`]) {
+      try {
+        rmSync(p, { force: true });
+      } catch {
+        // best effort
+      }
+    }
+    queueScanCache.delete(path);
+  } finally {
+    unlock();
+  }
 }
 
 /** Drops registered roots that have been missing past the grace period and hold no jobs. */
@@ -815,10 +840,17 @@ export function pruneRuntimeFiles(now: number = Date.now()): void {
     const path = join(dir, name);
     try {
       if (now - statSync(path).mtimeMs < ORPHAN_QUEUE_MIN_AGE_MS) continue;
-      const parsed = JSON.parse(readFileSync(path, "utf8")) as { jobs?: unknown[] } | null;
-      if (Array.isArray(parsed?.jobs) && parsed.jobs.length > 0) continue;
-      rmSync(path, { force: true });
-      removed++;
+      // Take the queue's lock, then look again: a job enqueued after the first look must survive.
+      const unlock = acquireLock(`${path}.lock`, DEFAULT_LOCK_TIMEOUT_MS);
+      try {
+        const parsed = JSON.parse(readFileSync(path, "utf8")) as { jobs?: unknown[] } | null;
+        if (Array.isArray(parsed?.jobs) && parsed.jobs.length > 0) continue;
+        rmSync(path, { force: true });
+        queueScanCache.delete(path);
+        removed++;
+      } finally {
+        unlock();
+      }
     } catch {
       // unreadable or racing: leave it
     }
@@ -1607,21 +1639,27 @@ export function activeLeases(): Lease[] {
   mkdirSync(leaseDir(), { recursive: true, mode: 0o755 });
   const now = Date.now();
   const leases: Lease[] = [];
-  for (const name of readdirSync(leaseDir())) {
+  const names = readdirSync(leaseDir());
+  // A lease file that is gone must not stay in the cache for the life of the daemon.
+  const present = new Set(names.map((n) => join(leaseDir(), n)));
+  for (const path of leaseScanCache.keys()) if (!present.has(path)) leaseScanCache.delete(path);
+  for (const name of names) {
     const path = join(leaseDir(), name);
     if (extname(name) !== ".json") continue;
     let lease: Lease;
     try {
-      const st = statSync(path);
+      const st = statSync(path, { bigint: true });
       if (st.isDirectory()) continue;
-      // A heartbeat rewrites the file; between heartbeats the daemon reuses the parsed lease.
-      const sig = `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
-      const hit = leaseScanCache.get(path);
+      // A heartbeat rewrites the file; between heartbeats the daemon reuses the parsed lease. A
+      // lease touched in the last few seconds (every heartbeat) has no signature and is reread.
+      const sig = statSignature(st);
+      const hit = sig === undefined ? undefined : leaseScanCache.get(path);
       if (hit && hit.sig === sig) {
         lease = hit.lease;
       } else {
         lease = readJSONRetrying(path) as Lease;
-        leaseScanCache.set(path, { sig, lease });
+        if (sig !== undefined) leaseScanCache.set(path, { sig, lease });
+        else leaseScanCache.delete(path);
       }
     } catch {
       continue;
@@ -1926,6 +1964,11 @@ const ORPHAN_QUEUE_MIN_AGE_MS = 7 * 24 * 3_600_000;
 export interface QueueScan {
   /** The job to run next: earliest due across projects, skipping `avoid` while another has work. */
   next?: { storeRoot: string; job: Job };
+  /**
+   * A due job a client is waiting for (an interactive semantic search from a client that does not
+   * run it itself). It goes first, whatever else is due, and does not wait out the pause after a job.
+   */
+  interactive?: { storeRoot: string; job: Job };
   /** Jobs that are not dead letters, due or not. */
   pending: number;
   /** Earliest runAfter of a job that is not due yet, so the daemon sleeps no longer than that. */
@@ -1933,6 +1976,9 @@ export interface QueueScan {
   /** Changes whenever a project's jobs change; used to leave the idle backoff. */
   fingerprint: string;
 }
+
+/** Kinds a client blocks on: they are never held back by the pause that paces background work. */
+const CLIENT_WAITED_KINDS: ReadonlySet<string> = new Set(["semantic-search"]);
 
 const jobIsBefore = (a: Job, b: Job): boolean =>
   parseMs(a.runAfter) < parseMs(b.runAfter) ||
@@ -1950,6 +1996,7 @@ export function scanQueues(
 ): QueueScan {
   let chosen: { storeRoot: string; job: Job } | undefined;
   let fallback: { storeRoot: string; job: Job } | undefined;
+  let interactive: { storeRoot: string; job: Job } | undefined;
   let pending = 0;
   let wakeAt: number | undefined;
   const parts: string[] = [];
@@ -1964,6 +2011,10 @@ export function scanQueues(
     if (live === 0) continue;
     pending += live;
     parts.push(`${projectRoot}:${live}:${entry.state.updatedAt ?? ""}`);
+    const waited = entry.live.find((x) => x.due <= now && CLIENT_WAITED_KINDS.has(x.job.kind));
+    if (waited && (!interactive || jobIsBefore(waited.job, interactive.job))) {
+      interactive = { storeRoot: projectRoot, job: waited.job };
+    }
     // Sorted by due time: the first job is the best candidate, and if it is not due yet nothing is.
     const first = entry.live[0] as { job: Job; due: number };
     if (first.due > now) {
@@ -1982,6 +2033,9 @@ export function scanQueues(
   const pick = chosen ?? fallback;
   return {
     ...(pick ? { next: { storeRoot: pick.storeRoot, job: { ...pick.job } } } : {}),
+    ...(interactive
+      ? { interactive: { storeRoot: interactive.storeRoot, job: { ...interactive.job } } }
+      : {}),
     pending,
     ...(wakeAt !== undefined ? { wakeAt } : {}),
     fingerprint: parts.join("|"),
@@ -2021,9 +2075,10 @@ function watchRuntimeDirs(): {
     woken = true;
     release?.();
   };
-  const watchers: FSWatcher[] = [];
   const leases = leaseDir();
-  for (const dir of [runtimeRoot(), leases, dirname(queuePath("x"))]) {
+  const dirs = [runtimeRoot(), leases, dirname(queuePath("x"))];
+  const watchers = new Map<string, FSWatcher>();
+  const attach = (dir: string): void => {
     try {
       mkdirSync(dir, { recursive: true, mode: 0o755 });
       const w = watch(dir, { persistent: false }, (event, filename) => {
@@ -2034,18 +2089,32 @@ function watchRuntimeDirs(): {
         if (dir === leases && event === "change") return;
         poke();
       });
-      w.on("error", () => {});
-      watchers.push(w);
+      w.on("error", () => {
+        // A watched directory that was removed and recreated: drop the dead watch so the next
+        // sleep attaches a new one.
+        try {
+          w.close();
+        } catch {
+          // already closed
+        }
+        if (watchers.get(dir) === w) watchers.delete(dir);
+      });
+      watchers.set(dir, w);
     } catch {
       // polling fallback
     }
-  }
+  };
+  for (const dir of dirs) attach(dir);
   return {
-    async sleep(ms, signal) {
+    async sleep(msIn, signal) {
       if (woken) {
         woken = false;
         return;
       }
+      // A directory without a live watch is retried here, and until it has one the wait stays short
+      // so a lease or an enqueue in it is noticed by polling.
+      for (const dir of dirs) if (!watchers.has(dir)) attach(dir);
+      const ms = dirs.every((d) => watchers.has(d)) ? msIn : Math.min(msIn, 1000);
       await new Promise<void>((resolve) => {
         const t = setTimeout(done, ms);
         function done() {
@@ -2061,7 +2130,7 @@ function watchRuntimeDirs(): {
       woken = false;
     },
     close() {
-      for (const w of watchers) w.close();
+      for (const w of watchers.values()) w.close();
     },
   };
 }
@@ -2145,7 +2214,10 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
           goLogf(`[runtime] housekeeping failed: ${(err as Error).message}`);
         }
         missingRoots = new Set(projects.filter(projectRootMissing));
+        pruneQueueScanCache(projects);
       }
+      // A root that came back (a drive remounted) is picked up on this tick, not at housekeeping.
+      for (const p of [...missingRoots]) if (!projectRootMissing(p)) missingRoots.delete(p);
       const leasedRoots = new Set(watchFor.map((l) => l.projectRoot));
       const scanned = projects.filter((p) => leasedRoots.has(p) || !missingRoots.has(p));
       watchLifecycle.reconcile(watchFor, opts.watcherFactory);
@@ -2159,7 +2231,16 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
         lastFingerprint = scan.fingerprint;
         busy = true;
       }
-      const pendingJobs = scan.pending;
+      // Jobs of a root that is not there are not run, but they are work the daemon still owes.
+      let pendingJobs = scan.pending;
+      for (const p of missingRoots) {
+        if (leasedRoots.has(p)) continue;
+        try {
+          pendingJobs += loadQueueEntry(p).live.length;
+        } catch {
+          // an unreadable queue counts for nothing
+        }
+      }
       if (running === undefined && isRunner) {
         let request: ReloadRequest | undefined;
         let reloadErr: unknown;
@@ -2188,7 +2269,8 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
         }
         // At most one job runs at a time, and a finished job is followed by a pause as long as the
         // job took, so a backlog runs at half duty instead of in one burst.
-        const next = tickNow >= cooldownUntil ? scan.next : undefined;
+        // A job a client waits for skips the pause and goes before background work.
+        const next = scan.interactive ?? (tickNow >= cooldownUntil ? scan.next : undefined);
         if (scan.next && !next) busy = true;
         if (next) {
           try {

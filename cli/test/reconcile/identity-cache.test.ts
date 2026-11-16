@@ -94,3 +94,56 @@ test("outside a scope every check walks the disk (the destructive paths rely on 
   writeFileSync(join(tasks, "zz-claimant.md"), text);
   expect(() => rec.uniqueIdentity("task", id, original)).toThrow(/ambiguous/);
 });
+
+// Review of perf/runtime-idle: a stale cache entry (a same-tick rewrite the signature cannot see)
+// must not feed a destructive decision or be written into history.
+type Poisonable = {
+  canonicalCache: Map<string, { sig: string; kind: string; id: string; hash: string }>;
+  resolveCanonicalHint(path: string): Promise<{ kind: string; id: string; hash: string }>;
+  canonicalIdentityPaths(entityType: string, entityId: string): Promise<string[]>;
+  reconcileLifecycleFile(
+    path: string,
+    previous: Record<string, unknown>,
+    execute: boolean,
+    source: string,
+    batchId: string,
+    operation: string,
+  ): Promise<unknown>;
+};
+
+test("identity proofs read the file, not the cache; a lifecycle write refuses a cached hash that disagrees", async () => {
+  process.env.KNOWNS_STAT_RACY_MS = "-1"; // let fresh files be cached, as an old file would be
+  try {
+    const { root, original, id } = taskFixture();
+    const rec = new FilesystemReconciler(root) as unknown as Poisonable;
+    const truth = await rec.resolveCanonicalHint(original); // cached under the file's signature
+    expect(truth.id).toBe(id);
+    // A same-tick rewrite the signature missed: the cache now describes some other content.
+    const entry = rec.canonicalCache.get(original);
+    expect(entry).toBeDefined();
+    rec.canonicalCache.set(original, {
+      ...(entry as NonNullable<typeof entry>),
+      id: "TSK-STALE0",
+      hash: "stale",
+    });
+    // canonicalIdentityPaths backs hard delete and restore proofs: it must see the real owner.
+    expect(await rec.canonicalIdentityPaths("task", id)).toHaveLength(1);
+    // The lifecycle write path records the hash of the bytes it read, and refuses a disagreement.
+    rec.canonicalCache.set(original, {
+      ...(entry as NonNullable<typeof entry>),
+      hash: "stale",
+    });
+    await expect(
+      rec.reconcileLifecycleFile(
+        original,
+        { entityType: "task", entityId: id, path: original, hash: truth.hash },
+        false,
+        "",
+        "b1",
+        "update",
+      ),
+    ).rejects.toThrow(/unstable canonical file; retry/);
+  } finally {
+    delete process.env.KNOWNS_STAT_RACY_MS;
+  }
+});

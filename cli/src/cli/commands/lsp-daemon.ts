@@ -10,7 +10,7 @@ const run = defineCommand({
   async run(ctx) {
     const project = ctx.flags.string("project");
     const root = project === "" ? process.cwd() : project;
-    (await import("../../runtime/priority.ts")).lowerProcessPriority();
+    // Not lowered: this daemon and its language servers answer interactive `code` requests.
     const { run: runDaemon } = await import("../../lspdaemon/server.ts");
     const ac = new AbortController();
     const stop = () => ac.abort();

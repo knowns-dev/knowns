@@ -15,6 +15,7 @@ import { spawnDetached } from "../platform/detached-spawn.ts";
 import { goJson } from "../search/json.ts";
 import { goTimeString } from "../search/time.ts";
 import { globalRootPath } from "../storage/core/global-root.ts";
+import { restoreNormalPriority } from "./priority.ts";
 import { isProcessAlive, nowString, sleep } from "./queue.ts";
 
 export const DEFAULT_HTTP_PORT = 6333;
@@ -90,11 +91,15 @@ export interface ProcessController {
 
 export const defaultProcessController: ProcessController = {
   start(binary, env, logPath) {
+    let pid: number;
     try {
-      return spawnDetached(binary, [], { env, logPath });
+      pid = spawnDetached(binary, [], { env, logPath });
     } catch (err) {
       throw new Error(`start qdrant: ${(err as Error).message}`);
     }
+    // Qdrant answers vector searches: it must not inherit the daemon's background priority.
+    restoreNormalPriority(pid);
+    return pid;
   },
   async stop(pid, timeoutMs) {
     if (pid <= 0) return;
