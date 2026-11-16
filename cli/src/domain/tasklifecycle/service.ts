@@ -163,7 +163,7 @@ const AUTO_ARCHIVE_TREE_TTL_MS = 30_000;
  * event loop may be held before the batch yields. One listing per Task made 500 Tasks take minutes
  * and froze every other request meanwhile.
  */
-const BATCH_TREE_CHUNK = 25;
+const BATCH_TREE_CHUNK = 10;
 const BATCH_MAX_BLOCK_MS = 40;
 
 export class Service implements LifecycleCore {
@@ -461,9 +461,18 @@ export class Service implements LifecycleCore {
     // and a yield whenever the loop has been held for BATCH_MAX_BLOCK_MS.
     const ownTree = options.taskTree === undefined && ids.length > 1;
     let blockedSince = Date.now();
+    let chunkOuts: Out<Result>[] = [];
     for (let n = 0; n < ids.length; n++) {
       const id = ids[n] as string;
-      if (ownTree && n % BATCH_TREE_CHUNK === 0) {
+      if (execute && ownTree && n % BATCH_TREE_CHUNK === 0) {
+        // The tree is listed under the lifecycle lock that also holds the chunk's archives, so a
+        // concurrent create or reopen waits for the chunk and the check sees the truth.
+        chunkOuts = await this.archiveChunkOut(
+          ids.slice(n, n + BATCH_TREE_CHUNK),
+          archiveOptions,
+          options.expectedHashes,
+        );
+      } else if (!execute && ownTree && n % BATCH_TREE_CHUNK === 0) {
         const [tree, treeErr] = await attempt(() =>
           this.withTransaction((tx) => snapshotTaskTree(tx)),
         );
@@ -479,7 +488,9 @@ export class Service implements LifecycleCore {
       let item: Result | undefined;
       let err: Error | undefined;
       if (execute) {
-        [item, err] = await this.archiveOut(id, archiveOptions);
+        [item, err] = ownTree
+          ? (chunkOuts[n % BATCH_TREE_CHUNK] as Out<Result>)
+          : await this.archiveOut(id, archiveOptions);
       } else {
         const [eligibility, evalErr] = await attempt(() => this.evaluate(id, archiveOptions));
         err = evalErr;
@@ -501,6 +512,122 @@ export class Service implements LifecycleCore {
     }
     batch.completed = true;
     return [batch, joinErrors(failures)];
+  }
+
+  /**
+   * Archives one chunk of a named batch inside ONE lifecycle transaction. The Task tree is listed
+   * after the lock is taken and stays the truth for the whole chunk: a Task created or reopened
+   * concurrently waits for the lock, so a parent cannot be archived over a child that appeared
+   * mid-chunk. The per-Task work that needs its own transaction (pending records, the index) runs
+   * before and after the locked part.
+   */
+  private async archiveChunkOut(
+    ids: string[],
+    base: ArchiveOptions,
+    expectedHashes: Record<string, string> | undefined,
+  ): Promise<Out<Result>[]> {
+    interface Step {
+      id: string;
+      opts: ArchiveOptions;
+      result: Result;
+      err?: Error;
+      preWarnings: Warning[];
+      prePending: boolean;
+      done?: boolean;
+    }
+    const outs: Out<Result>[] = new Array(ids.length);
+    const steps: Step[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i] as string;
+      const opts: ArchiveOptions = { ...base, expectedHash: expectedHashes?.[id] ?? "" };
+      delete opts.taskTree;
+      delete opts.taskTreeFresh;
+      const result: Result = {
+        taskId: id,
+        operation: "archive",
+        changed: false,
+        eligible: false,
+        before: "",
+        after: "",
+        reasons: [],
+      };
+      let preWarnings: Warning[] = [];
+      let prePending = false;
+      if (blank(opts.expectedHash)) {
+        const pre = await this.flushTaskLifecyclePending(id);
+        preWarnings = pre.warnings;
+        prePending = pre.hadPending;
+        appendWarnings(result, preWarnings);
+        if (pre.error) {
+          outs[i] = [result, pre.error];
+          continue;
+        }
+        const [hash, hashErr] = await attempt(() => this.observedTaskHash(id));
+        if (hashErr) {
+          outs[i] = [result, hashErr];
+          continue;
+        }
+        opts.expectedHash = hash;
+      }
+      steps.push({ id, opts, result, preWarnings, prePending });
+    }
+    const hashless = new Set(ids.filter((id) => blank(expectedHashes?.[id])));
+    if (steps.length > 0) {
+      const [settings, settingsErr] = await attempt(() => this.settings());
+      const now = this.clock();
+      if (settingsErr || !settings) {
+        for (const st of steps) st.err = settingsErr ?? new Error("lifecycle settings unavailable");
+      } else {
+        const [, txErr] = await attempt(() =>
+          this.withTransaction(async (tx) => {
+            const tree = await snapshotTaskTree(tx);
+            for (const st of steps) {
+              const [mutated, mutateErr] = await this.archiveInTransaction(
+                tx,
+                st.id,
+                { ...st.opts, taskTree: tree, taskTreeFresh: true },
+                settings,
+                now,
+              );
+              mutated.warnings = [...st.preWarnings, ...(mutated.warnings ?? [])];
+              if (mutated.warnings.length === 0) delete mutated.warnings;
+              st.result = mutated;
+              if (mutateErr) st.err = mutateErr;
+              st.done = true;
+            }
+          }),
+        );
+        if (txErr) for (const st of steps) if (!st.done) st.err = txErr;
+      }
+    }
+    for (const st of steps) {
+      const i = ids.indexOf(st.id);
+      if (st.err && hashless.has(st.id) && hasMutationConflict(st.err)) {
+        // Changed between the hash read and the lock: take the single-Task path, which retries.
+        outs[i] = await this.archiveOut(st.id, { ...base, expectedHash: "" });
+        continue;
+      }
+      if (st.err) {
+        outs[i] = [st.result, st.err];
+        continue;
+      }
+      const post = await this.flushTaskLifecyclePending(st.id);
+      appendWarnings(st.result, post.warnings);
+      if (post.error) {
+        outs[i] = [st.result, post.error];
+        continue;
+      }
+      if (st.result.eligible && !st.result.changed && !st.prePending && !post.hadPending) {
+        const [, indexErr] = await attempt(() => this.indexTask(st.id));
+        if (indexErr) {
+          outs[i] = [st.result, indexErr];
+          continue;
+        }
+      }
+      this.populateResultLifecycle(st.result);
+      outs[i] = [st.result, undefined];
+    }
+    return outs;
   }
 
   /** Previews or restores archived/done Tasks. Preview never mutates canonical state. */

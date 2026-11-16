@@ -469,6 +469,62 @@ describe("a named batch (web UI, CLI, MCP) at scale", () => {
   });
 });
 
+describe("a named batch holds the lifecycle lock for the chunk", () => {
+  test("a child created while a chunk runs waits for the lock, so no parent is archived over a child that appeared mid-chunk", async () => {
+    const e = env();
+    const done = { status: "done", completedAt: e.clock.now.toISOString() } as const;
+    const parent = await addTask(e, "parent", done);
+    const other = await addTask(e, "other", done);
+    e.clock.advance(1000);
+    const events: string[] = [];
+    let child: Promise<unknown> | undefined;
+    const real = e.service.withTransaction.bind(e.service);
+    (e.service as { withTransaction: typeof real }).withTransaction = (fn) =>
+      real(async (tx) => {
+        // The chunk's first read of a Task happens after the tree was listed under the lock.
+        const getTask = tx.getTask.bind(tx);
+        let started = false;
+        (tx as { getTask: typeof getTask }).getTask = async (id) => {
+          if (!started) {
+            started = true;
+            events.push("chunk-has-tree");
+            child = addTask(e, "late child", { status: "todo", parent: parent.id }).then(() => {
+              events.push("child-created");
+            });
+            await new Promise((r) => setTimeout(r, 50));
+          }
+          return getTask(id);
+        };
+        const out = await fn(tx);
+        events.push("chunk-end");
+        return out;
+      });
+    const batch = await e.service.batchArchive({ ids: [parent.id, other.id], execute: true });
+    await child;
+    expect(batch.changed).toBe(2);
+    // The child could not be created until the chunk released the lock.
+    expect(events.indexOf("chunk-end")).toBeLessThan(events.indexOf("child-created"));
+    expect(e.storage.tasks.get(parent.id).archived).toBe(true);
+  });
+
+  test("a child that exists before the chunk blocks its parent, whatever else is in the batch", async () => {
+    const e = env();
+    const done = { status: "done", completedAt: e.clock.now.toISOString() } as const;
+    const parent = await addTask(e, "parent", done);
+    const other = await addTask(e, "other", done);
+    await addTask(e, "child", { status: "todo", parent: parent.id });
+    e.clock.advance(1000);
+    const batch = await e.service
+      .batchArchive({ ids: [parent.id, other.id], execute: true })
+      .catch((err) => partialOf<Awaited<ReturnType<Service["batchArchive"]>>>(err));
+    expect(batch?.items.find((i) => i.taskId === parent.id)?.reasons?.[0]?.code).toBe(
+      "unfinished_descendant",
+    );
+    expect(e.storage.tasks.get(parent.id).archived).toBe(false);
+    expect(e.storage.tasks.get(other.id).archived).toBe(true);
+  });
+});
+
 describe("auto-archive with a stale task tree snapshot", () => {
   test("a child added after the snapshot still blocks archiving its parent", async () => {
     const e = env();
