@@ -47,7 +47,6 @@ import {
 } from "../../domain/update/layout.ts";
 import { fetchLatestVersion } from "../../domain/update/notifier.ts";
 import { compareVersions, normalizeVersionTag } from "../../domain/update/version.ts";
-import { selfExecutable } from "../../platform/launcher.ts";
 import { VERSION } from "../../version.ts";
 import { type CommandContext, defineCommand } from "../core/define.ts";
 import { ErrCommandCancelled } from "../core/exit.ts";
@@ -182,7 +181,7 @@ class UpdateDeferred extends Error {}
 export const updateSeams: UpdateSeams = {
   fetchLatest: () => fetchLatestVersion(),
   isTTY: () => isTTY(),
-  executable: () => selfExecutable(),
+  executable: () => process.execPath,
   goos: () => (process.platform === "win32" ? "windows" : process.platform),
   run: defaultRun,
   download: defaultDownload,
