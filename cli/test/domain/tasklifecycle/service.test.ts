@@ -399,6 +399,32 @@ describe("batches", () => {
     expect(e.storage.tasks.get(fresh.id).archived).toBe(false);
     expect(batch.items.find((i) => i.taskId === old.id)?.event?.automatic).toBe(true);
   });
+
+  test("autoArchive names only candidates: ineligible tasks get no transaction and many eligible ones archive in chunks", async () => {
+    const e = env();
+    const eligible: string[] = [];
+    for (let i = 0; i < 25; i++) {
+      eligible.push(
+        (await addTask(e, `old ${i}`, { status: "done", completedAt: e.clock.now.toISOString() }))
+          .id,
+      );
+    }
+    e.clock.advance(31 * 24 * 3600 * 1000);
+    const todo = await addTask(e, "still todo");
+    const fresh = await addTask(e, "fresh", {
+      status: "done",
+      completedAt: e.clock.now.toISOString(),
+    });
+    const batch = await e.service.autoArchive("scheduler");
+    expect(batch.completed).toBe(true);
+    expect(batch.changed).toBe(25);
+    // Only the 25 candidates were processed; the todo and the fresh done task never were.
+    expect(batch.processed).toBe(25);
+    expect(batch.items.some((i) => i.taskId === todo.id || i.taskId === fresh.id)).toBe(false);
+    for (const id of eligible) expect(e.storage.tasks.get(id).archived).toBe(true);
+    expect(e.storage.tasks.get(todo.id).archived).toBe(false);
+    expect(e.storage.tasks.get(fresh.id).archived).toBe(false);
+  });
 });
 
 describe("hardDelete", () => {
