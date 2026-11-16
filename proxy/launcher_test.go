@@ -25,9 +25,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 )
 
 func main() {
@@ -40,9 +42,26 @@ func main() {
 		case "cat":
 			io.Copy(os.Stdout, os.Stdin)
 			return
+		case "sleep":
+			time.Sleep(120 * time.Second)
+			return
+		case "spawn":
+			// spawn detached|normal: start a long sleeper, report its pid, and wait for stdin to close.
+			child := exec.Command(os.Args[0], "sleep")
+			child.SysProcAttr = spawnAttr(args[1] == "detached")
+			if err := child.Start(); err != nil {
+				fmt.Println("spawn failed:", err)
+				os.Exit(2)
+			}
+			fmt.Printf("child=%d\n", child.Process.Pid)
+			if len(args) > 2 && args[2] == "stay" {
+				time.Sleep(120 * time.Second)
+			}
+			return
 		case "wait-signal":
 			c := make(chan os.Signal, 1)
 			signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+			fmt.Printf("pid=%d\n", os.Getpid())
 			fmt.Println("ready")
 			<-c
 			fmt.Println("got signal")
@@ -55,6 +74,29 @@ func main() {
 	}
 	fmt.Printf("launcher=%s\n", os.Getenv("KNOWNS_LAUNCHER"))
 	fmt.Printf("proxy=%s\n", os.Getenv("KNOWNS_MCP_PROXY"))
+}
+`
+
+const fakeAttrUnix = `//go:build !windows
+
+package main
+
+import "syscall"
+
+func spawnAttr(detached bool) *syscall.SysProcAttr { return &syscall.SysProcAttr{Setsid: detached} }
+`
+
+const fakeAttrWindows = `//go:build windows
+
+package main
+
+import "syscall"
+
+func spawnAttr(detached bool) *syscall.SysProcAttr {
+	if detached {
+		return &syscall.SysProcAttr{CreationFlags: 0x01000000} // CREATE_BREAKAWAY_FROM_JOB
+	}
+	return &syscall.SysProcAttr{}
 }
 `
 
@@ -75,6 +117,11 @@ func exeSuffix() string {
 func buildBoth(t *testing.T) (string, string) {
 	t.Helper()
 	buildOnce.Do(func() {
+		// A cross-compiled run (the Windows PC has no Go) brings its own binaries.
+		if l, e := os.Getenv("KNOWNS_TEST_LAUNCHER"), os.Getenv("KNOWNS_TEST_FAKE_ENGINE"); l != "" && e != "" {
+			launcherExe, fakeEngineEx = l, e
+			return
+		}
 		dir, err := os.MkdirTemp("", "knowns-launcher-test-")
 		if err != nil {
 			buildErr = err
@@ -89,6 +136,8 @@ func buildBoth(t *testing.T) (string, string) {
 		src := filepath.Join(dir, "engine-src")
 		os.MkdirAll(src, 0o755)
 		os.WriteFile(filepath.Join(src, "main.go"), []byte(fakeEngineSrc), 0o644)
+		os.WriteFile(filepath.Join(src, "attr_unix.go"), []byte(fakeAttrUnix), 0o644)
+		os.WriteFile(filepath.Join(src, "attr_windows.go"), []byte(fakeAttrWindows), 0o644)
 		os.WriteFile(filepath.Join(src, "go.mod"), []byte("module fakeengine\n\ngo 1.21\n"), 0o644)
 		fakeEngineEx = filepath.Join(dir, "engine"+exeSuffix())
 		cmd := exec.Command("go", "build", "-o", fakeEngineEx, ".")
@@ -250,9 +299,14 @@ func TestLauncherDeliversInterruptToTheEngine(t *testing.T) {
 		t.Fatal(err)
 	}
 	br := bufio.NewReader(stdout)
-	line, _ := br.ReadString('\n')
-	if strings.TrimSpace(line) != "ready" {
-		t.Fatalf("engine not ready: %q", line)
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatalf("engine not ready: %q %v", line, err)
+		}
+		if strings.TrimSpace(line) == "ready" {
+			break
+		}
 	}
 	cmd.Process.Signal(syscall.SIGINT) // exec replaced the launcher: this pid is the engine
 	rest, _ := io.ReadAll(br)
@@ -379,4 +433,20 @@ func TestLauncherMcpFallsBackToTheEngineChild(t *testing.T) {
 	stdin.Close()
 	cmd.Process.Kill() // the proxy session end is covered by its own tests
 	cmd.Wait()
+}
+
+// TestDumpFakeEngine writes the fake engine's source to $KNOWNS_TEST_DUMP_ENGINE so it can be
+// cross-compiled for a machine without Go (the Windows PC).
+func TestDumpFakeEngine(t *testing.T) {
+	dir := os.Getenv("KNOWNS_TEST_DUMP_ENGINE")
+	if dir == "" {
+		t.Skip("not dumping")
+	}
+	os.MkdirAll(dir, 0o755)
+	for name, text := range map[string]string{
+		"main.go": fakeEngineSrc, "attr_unix.go": fakeAttrUnix, "attr_windows.go": fakeAttrWindows,
+		"go.mod": "module fakeengine\n\ngo 1.21\n",
+	} {
+		os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644)
+	}
 }
