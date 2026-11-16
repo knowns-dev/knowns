@@ -32,6 +32,15 @@ import (
 	"time"
 )
 
+func logf(format string, a ...any) {
+	if p := os.Getenv("FAKE_LOG"); p != "" {
+		if f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintf(f, "%d %s\n", os.Getpid(), fmt.Sprintf(format, a...))
+			f.Close()
+		}
+	}
+}
+
 func main() {
 	args := os.Args[1:]
 	if len(args) > 0 {
@@ -66,20 +75,28 @@ func main() {
 			signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 			fmt.Printf("pid=%d\n", os.Getpid())
 			fmt.Println("ready")
+			logf("ready")
 			<-c
+			logf("handler fired")
 			fmt.Println("got signal")
+			logf("printed got signal")
 			// Count a second delivery for a moment: one Ctrl+C must reach the engine exactly once.
 			n := 1
 			t := time.After(400 * time.Millisecond)
+			logf("waiting for a second delivery")
 			for done := false; !done; {
 				select {
 				case <-c:
 					n++
+					logf("second delivery %d", n)
 				case <-t:
+					logf("timer fired")
 					done = true
 				}
 			}
+			logf("counted %d, printing", n)
 			fmt.Printf("signals=%d\n", n)
+			logf("printed, exiting 130")
 			os.Exit(130)
 		}
 	}
