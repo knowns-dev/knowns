@@ -85,6 +85,28 @@ describe("queue scan cache", () => {
 });
 
 describe("scanQueues", () => {
+  test("a due semantic-search job a client waits for is offered first, behind any other work", () => {
+    const p = project("interactive");
+    const now = Date.now();
+    q.updateQueue(p, (st) => {
+      st.jobs.push(due("old-index", now - 9000));
+      st.jobs.push({
+        ...due("search", now - 1000),
+        kind: "semantic-search" as const,
+        key: "semantic-search::s",
+      });
+    });
+    const scan = q.scanQueues([p], undefined, now);
+    expect(scan.next?.job.id).toBe("old-index");
+    expect(scan.interactive?.job.id).toBe("search");
+    // Nothing a client waits for: no interactive pick.
+    const idle = project("not-interactive");
+    q.updateQueue(idle, (st) => {
+      st.jobs.push(due("i1", now - 1000));
+    });
+    expect(q.scanQueues([idle], undefined, now).interactive).toBeUndefined();
+  });
+
   test("round-robin: the project served last waits while another has due work", () => {
     const a = project("rr-a");
     const b = project("rr-b");

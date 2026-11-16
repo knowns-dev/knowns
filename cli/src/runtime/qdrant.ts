@@ -24,6 +24,7 @@ import {
 import { goJson } from "../search/json.ts";
 import { goTimeString } from "../search/time.ts";
 import { globalRootPath } from "../storage/core/global-root.ts";
+import { restoreNormalPriority } from "./priority.ts";
 import { isProcessAlive, nowString, sleep } from "./queue.ts";
 
 export const DEFAULT_HTTP_PORT = 6333;
@@ -108,6 +109,8 @@ export const defaultProcessController: ProcessController = {
     child.on("error", () => {});
     child.unref();
     if (child.pid === undefined) throw new Error("start qdrant: no pid");
+    // Qdrant answers vector searches: it must not inherit the daemon's background priority.
+    restoreNormalPriority(child.pid);
     return child.pid;
   },
   async stop(pid, timeoutMs) {

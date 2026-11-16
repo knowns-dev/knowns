@@ -1866,6 +1866,11 @@ const ORPHAN_QUEUE_MIN_AGE_MS = 7 * 24 * 3_600_000;
 export interface QueueScan {
   /** The job to run next: earliest due across projects, skipping `avoid` while another has work. */
   next?: { storeRoot: string; job: Job };
+  /**
+   * A due job a client is waiting for (an interactive semantic search from a client that does not
+   * run it itself). It goes first, whatever else is due, and does not wait out the pause after a job.
+   */
+  interactive?: { storeRoot: string; job: Job };
   /** Jobs that are not dead letters, due or not. */
   pending: number;
   /** Earliest runAfter of a job that is not due yet, so the daemon sleeps no longer than that. */
@@ -1873,6 +1878,9 @@ export interface QueueScan {
   /** Changes whenever a project's jobs change; used to leave the idle backoff. */
   fingerprint: string;
 }
+
+/** Kinds a client blocks on: they are never held back by the pause that paces background work. */
+const CLIENT_WAITED_KINDS: ReadonlySet<string> = new Set(["semantic-search"]);
 
 const jobIsBefore = (a: Job, b: Job): boolean =>
   parseMs(a.runAfter) < parseMs(b.runAfter) ||
@@ -1890,6 +1898,7 @@ export function scanQueues(
 ): QueueScan {
   let chosen: { storeRoot: string; job: Job } | undefined;
   let fallback: { storeRoot: string; job: Job } | undefined;
+  let interactive: { storeRoot: string; job: Job } | undefined;
   let pending = 0;
   let wakeAt: number | undefined;
   const parts: string[] = [];
@@ -1904,6 +1913,10 @@ export function scanQueues(
     if (live === 0) continue;
     pending += live;
     parts.push(`${projectRoot}:${live}:${entry.state.updatedAt ?? ""}`);
+    const waited = entry.live.find((x) => x.due <= now && CLIENT_WAITED_KINDS.has(x.job.kind));
+    if (waited && (!interactive || jobIsBefore(waited.job, interactive.job))) {
+      interactive = { storeRoot: projectRoot, job: waited.job };
+    }
     // Sorted by due time: the first job is the best candidate, and if it is not due yet nothing is.
     const first = entry.live[0] as { job: Job; due: number };
     if (first.due > now) {
@@ -1922,6 +1935,9 @@ export function scanQueues(
   const pick = chosen ?? fallback;
   return {
     ...(pick ? { next: { storeRoot: pick.storeRoot, job: { ...pick.job } } } : {}),
+    ...(interactive
+      ? { interactive: { storeRoot: interactive.storeRoot, job: { ...interactive.job } } }
+      : {}),
     pending,
     ...(wakeAt !== undefined ? { wakeAt } : {}),
     fingerprint: parts.join("|"),
@@ -2098,7 +2114,8 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
         }
         // At most one job runs at a time, and a finished job is followed by a pause as long as the
         // job took, so a backlog runs at half duty instead of in one burst.
-        const next = tickNow >= cooldownUntil ? scan.next : undefined;
+        // A job a client waits for skips the pause and goes before background work.
+        const next = scan.interactive ?? (tickNow >= cooldownUntil ? scan.next : undefined);
         if (scan.next && !next) busy = true;
         if (next) {
           try {
