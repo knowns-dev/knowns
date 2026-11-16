@@ -362,13 +362,22 @@ function useNativeBinaryDirectly(packageRoot, platformPackage, options = {}) {
   if (platform === "win32") {
     return false;
   }
-  const dest = path.join(packageRoot, "bin", "knowns.js");
-  if (!fs.existsSync(dest) || !isShim(dest)) {
-    return false;
-  }
   const pkgDir = resolveInstalledPackageDir(packageRoot, platformPackage.name, platformPackage.ext);
   const source = pkgDir && resolveBinaryFromPackageDir(pkgDir, platformPackage.ext);
   if (!source) {
+    return false;
+  }
+  const done = linkNativeInto(path.join(packageRoot, "bin", "knowns.js"), source);
+  // The proxy command gets the same treatment when the platform package ships one.
+  const proxySource = path.join(pkgDir, `knowns-proxy${platformPackage.ext}`);
+  if (fs.existsSync(proxySource)) {
+    linkNativeInto(path.join(packageRoot, "bin", "knowns-proxy.js"), proxySource);
+  }
+  return done;
+}
+
+function linkNativeInto(dest, source) {
+  if (!fs.existsSync(dest) || !isShim(dest)) {
     return false;
   }
 
@@ -395,11 +404,11 @@ function useNativeBinaryDirectly(packageRoot, platformPackage, options = {}) {
   }
 }
 
-const WINDOWS_SHIM_NAMES = ["knowns", "kn"];
+const WINDOWS_SHIM_NAMES = ["knowns", "kn", "knowns-proxy"];
 
 function isNpmShimFor(file) {
   try {
-    return /knowns[\\/]+bin[\\/]+knowns\.js/.test(fs.readFileSync(file, "utf8"));
+    return /knowns[\\/]+bin[\\/]+knowns(-proxy)?\.js/.test(fs.readFileSync(file, "utf8"));
   } catch {
     return false;
   }
@@ -444,7 +453,7 @@ function useNativeBinaryOnWindows(packageRoot, platformPackage, options = {}) {
       for (const ext of ["", ".cmd", ".ps1"]) {
         const file = path.join(dir, `${name}${ext}`);
         if (fs.existsSync(file) && isNpmShimFor(file)) {
-          targets.push({ file, ext });
+          targets.push({ file, ext, name });
         }
       }
     }
@@ -460,9 +469,16 @@ function useNativeBinaryOnWindows(packageRoot, platformPackage, options = {}) {
     return 0;
   }
   let rewritten = 0;
-  for (const { file, ext } of targets) {
+  // The staged directory holds the whole platform package, so the proxy sits next to the binary.
+  const proxyExe = path.join(path.dirname(exe), "knowns-proxy.exe");
+  for (const { file, ext, name } of targets) {
     try {
-      fs.writeFileSync(file, windowsShimContents(ext, exe));
+      if (name === "knowns-proxy") {
+        if (!fs.existsSync(proxyExe)) continue;
+        fs.writeFileSync(file, windowsShimContents(ext, proxyExe));
+      } else {
+        fs.writeFileSync(file, windowsShimContents(ext, exe));
+      }
       rewritten++;
     } catch {}
   }

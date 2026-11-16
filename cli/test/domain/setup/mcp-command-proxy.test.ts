@@ -88,3 +88,27 @@ describe("mcpCommand with the native proxy", () => {
     expect(read(theirs).command).toBe("node");
   });
 });
+
+describe("findMissingProxyEntries", () => {
+  test("reports a proxy entry whose binary is gone and nothing else", async () => {
+    const { findMissingProxyEntries } = await import("../../../src/domain/setup/mcp-audit.ts");
+    const root = tmp();
+    const bin = tmp();
+    writeFileSync(
+      join(root, ".mcp.json"),
+      JSON.stringify({
+        mcpServers: { knowns: { command: "knowns-proxy", args: ["mcp", "--stdio"] } },
+      }),
+    );
+    mkdirSync(join(root, ".cursor"));
+    writeFileSync(
+      join(root, ".cursor", "mcp.json"),
+      JSON.stringify({ mcpServers: { knowns: { command: "knowns", args: ["mcp", "--stdio"] } } }),
+    );
+    expect(findMissingProxyEntries(root, { PATH: bin })).toEqual([
+      { file: ".mcp.json", command: "knowns-proxy" },
+    ]);
+    exe(bin, "knowns-proxy");
+    expect(findMissingProxyEntries(root, { PATH: bin })).toEqual([]);
+  });
+});

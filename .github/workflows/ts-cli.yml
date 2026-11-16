@@ -117,6 +117,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: bun run test
+      - name: Proxy (vet and tests)
+        working-directory: proxy
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go vet ./...
+          go test -count=1 ./...
       - name: Budget (size and startup)
         run: bun run budget
       # Built the way publish.yml builds a release: the version comes from KNOWNS_VERSION (the tag).
@@ -124,11 +131,17 @@ jobs:
         if: runner.os == 'Linux'
         env:
           KNOWNS_VERSION: 1.0.0-ci
+          KNOWNS_REQUIRE_PROXY: "1"
         run: |
           bun run build
-          bun run budget dist/*/knowns*
+          bun run budget dist/*/knowns dist/*/knowns.exe
           got=$(NO_UPDATE_CHECK=1 dist/linux-x64/knowns --version)
           [ "$got" = "knowns version 1.0.0-ci" ] || { echo "FATAL: --version printed: $got"; exit 1; }
+          got=$(dist/linux-x64/knowns-proxy --version)
+          [ "$got" = "knowns-proxy version 1.0.0-ci" ] || { echo "FATAL: proxy --version printed: $got"; exit 1; }
+          for t in darwin-arm64 darwin-x64 linux-x64 linux-arm64 windows-x64 windows-arm64; do
+            ls dist/$t/knowns-proxy* >/dev/null || { echo "FATAL: no proxy for $t"; exit 1; }
+          done
       - name: Package release (npm packages and Go-compatible assets)
         if: runner.os == 'Linux'
         run: |

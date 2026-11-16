@@ -61,7 +61,7 @@ remove_link() {
     link="$1"
     [ -L "$link" ] || return 1
     case "$(readlink "$link")" in
-        "${INSTALL_DIR}/knowns") ;;
+        "${INSTALL_DIR}/knowns" | "${INSTALL_DIR}/knowns-proxy") ;;
         *) warn "Left ${link}: it does not point at ${INSTALL_DIR}/knowns"; return 1 ;;
     esac
     remove_path "$link"
@@ -76,6 +76,11 @@ main() {
 
     if remove_path "${INSTALL_DIR}/knowns"; then
         success "Removed ${INSTALL_DIR}/knowns"
+        removed=1
+    fi
+
+    if remove_path "${INSTALL_DIR}/knowns-proxy"; then
+        success "Removed ${INSTALL_DIR}/knowns-proxy"
         removed=1
     fi
 

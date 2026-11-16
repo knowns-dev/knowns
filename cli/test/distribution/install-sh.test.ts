@@ -60,6 +60,39 @@ describe.skipIf(!posix)("install.sh", () => {
     ).toEqual([]);
   });
 
+  test("installs knowns-proxy next to knowns by rename and links it; older archives without one still install", () => {
+    const sb = makeSandbox();
+    const dir = join(sb.home, ".knowns", "bin");
+    mkdirSync(dir, { recursive: true });
+    const old = join(dir, "knowns-proxy");
+    writeFileSync(old, "#!/bin/sh\necho old-proxy\n", { mode: 0o755 });
+    const inodeBefore = statSync(old).ino;
+    const keep = join(dir, "old-proxy-inode");
+    run(["ln", old, keep]);
+    const rel = makeRelease("v1.0.0", "linux-x64", "1.0.0", undefined, true);
+    const r = runInstall({
+      sandbox: sb,
+      baseUrl: rel.baseUrl,
+      version: "1.0.0",
+      uname: ["Linux", "x86_64"],
+    });
+    expect(r.code).toBe(0);
+    expect(statSync(old).ino).not.toBe(inodeBefore);
+    expect(readFileSync(keep, "utf8")).toContain("old-proxy");
+    expect(run([old]).stdout).toBe("knowns-proxy version 1.0.0\n");
+
+    const sb2 = makeSandbox();
+    const rel2 = makeRelease("v0.9.0", "linux-x64", "0.9.0");
+    const r2 = runInstall({
+      sandbox: sb2,
+      baseUrl: rel2.baseUrl,
+      version: "0.9.0",
+      uname: ["Linux", "x86_64"],
+    });
+    expect(r2.code).toBe(0);
+    expect(existsSync(join(sb2.home, ".knowns", "bin", "knowns-proxy"))).toBe(false);
+  });
+
   // Row 16 (75b0470): link onto a PATH dir, never edit rc files.
   test("row 16: links knowns and kn into ~/.local/bin when it is on PATH, without touching rc files", () => {
     const sb = makeSandbox([".local/bin"]);

@@ -115,6 +115,18 @@ try {
     Copy-Item -Path $ExtractedBin.FullName -Destination (Join-Path $InstallDir $Binary) -Force
     Copy-Item -Path $ExtractedBin.FullName -Destination (Join-Path $InstallDir $AliasBinary) -Force
 
+    # The native MCP proxy sits next to knowns. A running proxy cannot be overwritten on Windows but
+    # can be renamed, so move the old one aside first. Releases before it do not ship one.
+    $ProxySrc = Join-Path $ExtractRoot "knowns-proxy.exe"
+    if (Test-Path $ProxySrc) {
+        $ProxyDest = Join-Path $InstallDir "knowns-proxy.exe"
+        if (Test-Path $ProxyDest) {
+            Remove-Item -Path "$ProxyDest.old" -Force -ErrorAction SilentlyContinue
+            Move-Item -Path $ProxyDest -Destination "$ProxyDest.old" -Force -ErrorAction SilentlyContinue
+        }
+        Copy-Item -Path $ProxySrc -Destination $ProxyDest -Force
+    }
+
     # Colocated ONNX Runtime DLLs
     foreach ($pattern in @("onnxruntime*.dll")) {
         Get-ChildItem -Path $ExtractRoot -Filter $pattern -ErrorAction SilentlyContinue | ForEach-Object {
