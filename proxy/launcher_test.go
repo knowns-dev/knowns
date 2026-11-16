@@ -70,7 +70,7 @@ func main() {
 			fmt.Println("got signal")
 			// Count a second delivery for a moment: one Ctrl+C must reach the engine exactly once.
 			n := 1
-			t := time.After(1500 * time.Millisecond)
+			t := time.After(400 * time.Millisecond)
 			for done := false; !done; {
 				select {
 				case <-c:
