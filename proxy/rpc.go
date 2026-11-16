@@ -8,7 +8,7 @@ import (
 
 // reqInfo is what the proxy remembers about a request that has not been answered yet.
 type reqInfo struct {
-	rawID     string
+	rawID     string // the id exactly as the agent wrote it, for an error response
 	line      []byte // the original line, including the trailing newline
 	method    string
 	params    []byte
@@ -23,39 +23,71 @@ func unquote(raw []byte) string {
 	return string(raw)
 }
 
-var readActions = map[string]bool{
-	"get": true, "list": true, "history": true, "board": true, "diff": true,
-	"review_inbox": true, "migration_preview": true, "report": true,
-	// code
-	"search": true, "symbols": true, "deps": true, "graph": true, "find": true,
-	"definition": true, "references": true, "implementations": true, "diagnostics": true,
-	// project (a selection is replayed on every switch anyway)
-	"detect": true, "current": true, "status": true, "set": true,
-	// search tool
-	"retrieve": true, "resolve": true,
+// readMethods are the JSON-RPC methods that cannot change anything, so they may be sent twice.
+// Every other method, including one the proxy has never heard of, counts as a write.
+var readMethods = map[string]bool{
+	"initialize": true, "ping": true, "tools/list": true,
+	"resources/list": true, "resources/read": true, "resources/templates/list": true,
+	"prompts/list": true, "prompts/get": true, "completion/complete": true,
 }
 
-// classify decides whether a request may be sent twice. Anything it does not know may write.
-func classify(method string, params []byte) (readOnly, isProject bool) {
-	if method != "tools/call" {
-		return true, false
+// readActions lists, per tool, the actions that only read. The lists are per tool on purpose:
+// `resolve` reads under `search` but writes under `memory` and `decision`. A tool or action that
+// is not listed is a write.
+var readActions = map[string]map[string]bool{
+	"tasks":     set("get", "list", "history", "board"),
+	"docs":      set("get", "list", "history", "diff"),
+	"memory":    set("get", "list"),
+	"decision":  set("get", "list", "review_inbox", "migration_preview"),
+	"templates": set("get", "list"),
+	"time":      set("report"),
+	"code": set("search", "symbols", "deps", "graph", "find", "definition", "references",
+		"implementations", "diagnostics"),
+	// a project selection is replayed on every switch anyway, so resending it is harmless
+	"project": set("detect", "current", "status", "set"),
+}
+
+// readTools are tools whose every action reads.
+var readTools = set("initial", "help", "search")
+
+func set(names ...string) map[string]bool {
+	m := make(map[string]bool, len(names))
+	for _, n := range names {
+		m[n] = true
 	}
-	f, ok := topLevel(params, "name", "arguments")
-	if !ok {
+	return m
+}
+
+// classify decides whether a request may be sent twice. dup means a top-level key was repeated,
+// which the two JSON parsers read differently, so the request counts as a write.
+func classify(method string, params []byte, dup bool) (readOnly, isProject bool) {
+	if dup {
+		return false, false
+	}
+	if method != "tools/call" {
+		return readMethods[method], false
+	}
+	f, ok, d := scanObject(params, "name", "arguments")
+	if !ok || d {
 		return false, false
 	}
 	name := unquote(f["name"])
-	args, _ := topLevel(f["arguments"], "action", "fix")
+	args, aok, ad := scanObject(f["arguments"], "action", "fix")
+	if f["arguments"] != nil && (!aok || ad) {
+		return false, false
+	}
 	action := unquote(args["action"])
-	switch name {
-	case "initial", "help", "search":
+	isProject = name == "project" && (action == "set" || action == "detect")
+	switch {
+	case readTools[name]:
 		return true, false
-	case "project":
-		return readActions[action] || action == "", action == "set" || action == "detect"
-	case "validate":
+	case name == "validate":
 		return string(args["fix"]) != "true", false
-	case "tasks", "docs", "memory", "decision", "templates", "time", "code":
-		return readActions[action], false
+	case readActions[name] != nil:
+		if name == "project" && action == "" {
+			return true, false
+		}
+		return readActions[name][action], isProject
 	}
 	return false, false
 }

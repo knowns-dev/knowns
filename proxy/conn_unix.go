@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func dial(kind, addr string) (io.ReadWriteCloser, error) {
+func dial(kind, addr string, _ int) (io.ReadWriteCloser, error) {
 	if kind != "unix_socket" {
 		return nil, errors.New("unsupported endpoint kind " + kind)
 	}
@@ -31,5 +31,5 @@ func daemonFiles() ([]*os.File, func()) {
 	}
 }
 
-func daemonAttr() *syscall.SysProcAttr { return &syscall.SysProcAttr{Setsid: true} }
-func childAttr() *syscall.SysProcAttr  { return nil }
+func daemonAttr(bool) *syscall.SysProcAttr { return &syscall.SysProcAttr{Setsid: true} }
+func childAttr() *syscall.SysProcAttr      { return nil }

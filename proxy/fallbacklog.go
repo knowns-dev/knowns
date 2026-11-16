@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -40,7 +41,20 @@ func recordEvent(kind, code, reason, session string) {
 	}
 }
 
+// trimEvents keeps the last rows. Trimmers take a lock file (created exclusively, stale after 10 s)
+// and write through a temp file of their own, so two proxies never share a temp path. A row appended
+// between the read and the rename can be lost; the log is advisory, so that is accepted.
 func trimEvents(path string) {
+	lock := path + ".lock"
+	lf, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		if st, serr := os.Stat(lock); serr == nil && time.Since(st.ModTime()) > 10*time.Second {
+			_ = os.Remove(lock)
+		}
+		return
+	}
+	lf.Close()
+	defer os.Remove(lock)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return
@@ -49,9 +63,13 @@ func trimEvents(path string) {
 	if len(rows) > fallbackKeepRows {
 		rows = rows[len(rows)-fallbackKeepRows:]
 	}
-	tmp := path + ".tmp"
-	if os.WriteFile(tmp, append(bytes.Join(rows, []byte("\n")), '\n'), 0o600) != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "proxy-fallback-*.tmp")
+	if err != nil {
 		return
 	}
-	_ = os.Rename(tmp, path)
+	_, werr := tmp.Write(append(bytes.Join(rows, []byte("\n")), '\n'))
+	cerr := tmp.Close()
+	if werr != nil || cerr != nil || os.Rename(tmp.Name(), path) != nil {
+		os.Remove(tmp.Name())
+	}
 }
