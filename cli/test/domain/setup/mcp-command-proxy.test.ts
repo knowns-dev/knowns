@@ -155,4 +155,41 @@ describe("findMissingProxyEntries", () => {
     exe(bin, "knowns-proxy");
     expect(findMissingProxyEntries(root, { PATH: bin })).toEqual([]);
   });
+  test("also covers Codex TOML, Antigravity and the user-level Claude config", async () => {
+    const { findMissingProxyEntries, codexKnownsCommand } = await import(
+      "../../../src/domain/setup/mcp-audit.ts"
+    );
+    const root = tmp();
+    const home = tmp();
+    const bin = tmp();
+    mkdirSync(join(root, ".codex"));
+    writeFileSync(
+      join(root, ".codex", "config.toml"),
+      '[mcp_servers.other]\ncommand = "node"\n\n[mcp_servers.knowns]\ncommand = "knowns-proxy"\nargs = ["mcp", "--stdio"]\n',
+    );
+    mkdirSync(join(home, ".gemini", "antigravity"), { recursive: true });
+    const entry = { command: "knowns-proxy", args: ["mcp", "--stdio", "--project", root] };
+    writeFileSync(
+      join(home, ".gemini", "antigravity", "mcp_config.json"),
+      JSON.stringify({ mcpServers: { knowns: entry } }),
+    );
+    writeFileSync(
+      join(home, ".claude.json"),
+      JSON.stringify({
+        mcpServers: { knowns: { command: "knowns-proxy", args: ["mcp", "--stdio"] } },
+        projects: { [root]: { mcpServers: { knowns: { command: "knowns-proxy", args: [] } } } },
+      }),
+    );
+    const env = { PATH: bin, HOME: home, USERPROFILE: home };
+    expect(codexKnownsCommand('[mcp_servers.knowns]\ncommand = "x"\n')).toBe("x");
+    expect(codexKnownsCommand('[mcp_servers.other]\ncommand = "x"\n')).toBeUndefined();
+    expect(findMissingProxyEntries(root, env).map((e) => e.file)).toEqual([
+      ".codex/config.toml",
+      "~/.gemini/antigravity/mcp_config.json",
+      "~/.claude.json",
+      "~/.claude.json",
+    ]);
+    exe(bin, "knowns-proxy");
+    expect(findMissingProxyEntries(root, env)).toEqual([]);
+  });
 });
