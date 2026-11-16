@@ -71,7 +71,8 @@ describe("mcpCommand with the native proxy", () => {
     expect(isKnownsWritten("knowns", [...mcp, "--debug"])).toBe(false);
     expect(isKnownsWritten("knowns-proxy", ["mcp", "--stdio", "--project", "/p"])).toBe(false);
     expect(isKnownsWritten("/home/me/.knowns-ts/bin/knowns", mcp)).toBe(false);
-    expect(isKnownsWritten("npx", ["-y", "knowns", "mcp"])).toBe(false);
+    expect(isKnownsWritten("npx", ["-y", "knowns", "mcp"])).toBe(true); // older releases
+    expect(isKnownsWritten("npx", ["-y", "knowns", "serve"])).toBe(false);
     expect(isKnownsWritten("npx", ["-y", "knowns", "mcp", "--stdio", "--x"])).toBe(false);
     expect(isKnownsWritten("node", ["my-server.js"])).toBe(false);
     expect(isKnownsWritten("knowns", ["something-else"])).toBe(false);

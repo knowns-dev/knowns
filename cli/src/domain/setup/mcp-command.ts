@@ -51,7 +51,7 @@ const isPath = (command: string): boolean => /[\\/]/.test(command) || /^[A-Za-z]
  * and sync leaves it alone. Knowns writes:
  *   - the bare name `knowns` or `knowns-proxy`, with args exactly ["mcp", "--stdio"];
  *   - the absolute path of the knowns-proxy next to the knowns on PATH (proxyCommand), same args;
- *   - npx with ["-y", "knowns", "mcp", "--stdio"];
+ *   - npx with ["-y", "knowns", "mcp", "--stdio"] (older releases: without "--stdio");
  * and, for a tool that needs a project root in the entry (Antigravity), a trailing
  * ["--project", <root>] when `allowProject` is set. An absolute path to `knowns` itself is never
  * Knowns's: it is a custom install.
@@ -69,7 +69,10 @@ export function isKnownsWritten(
   const same = (want: string[]): boolean =>
     a.length === want.length && a.every((v, i) => v === want[i]);
   const base = command.replace(/^.*[\\/]/, "").replace(/\.(exe|cmd)$/i, "");
-  if (base === "npx" && !isPath(command)) return same(["-y", "knowns", "mcp", "--stdio"]);
+  // The pre-proxy releases wrote npx without --stdio; that form is still Knowns's.
+  if (base === "npx" && !isPath(command)) {
+    return same(["-y", "knowns", "mcp", "--stdio"]) || same(["-y", "knowns", "mcp"]);
+  }
   if (!same(["mcp", "--stdio"])) return false;
   if (!isPath(command)) return command === "knowns" || command === PROXY_NAME;
   return base === PROXY_NAME;
