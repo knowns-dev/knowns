@@ -305,6 +305,24 @@ jobs:
           echo "$got"
           [ "$got" = "knowns-proxy version ${VERSION}" ] || { echo "FATAL: expected knowns-proxy version ${VERSION}"; exit 1; }
 
+      # A 0.34.x `knowns update` downloads this archive and installs the file named like its own
+      # binary: the exact name wins and a `knowns-*` match is only its fallback for an alias. The
+      # archive now also holds knowns-proxy, so the exact name must be present beside it (an old
+      # updater then installs knowns and leaves the old proxy, which falls back in-process), and
+      # the proxy must not be the only `knowns-*` candidate.
+      - name: A 0.34.x updater still finds the binary it expects
+        run: |
+          dir=$(mktemp -d)
+          tar -xzf "release/assets/knowns-${{ matrix.platform }}.tar.gz" -C "$dir"
+          ls -la "$dir"
+          [ -f "$dir/${{ matrix.exe }}" ] || { echo "FATAL: ${{ matrix.exe }} is not at the archive root"; exit 1; }
+          proxy="$dir/knowns-proxy"
+          case "${{ matrix.platform }}" in win-*) proxy="$dir/knowns-proxy.exe" ;; esac
+          [ -f "$proxy" ] || { echo "FATAL: no proxy in the archive"; exit 1; }
+          # nothing else may look like the main binary to the exact-name rule
+          count=$(ls "$dir" | grep -c -x -i "${{ matrix.exe }}")
+          [ "$count" = "1" ] || { echo "FATAL: expected exactly one ${{ matrix.exe }}, got $count"; exit 1; }
+
       - name: Run npm installer tests
         if: runner.os == 'Windows' || matrix.platform == 'darwin-x64'
         run: bun test npm/knowns/install.test.js npm/knowns/direct-launch.test.js
