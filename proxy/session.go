@@ -114,10 +114,8 @@ func (s *session) readStdin() {
 			s.mu.Unlock()
 			return
 		}
-		if len(line) > 0 {
-			if line[len(line)-1] != '\n' {
-				line = append(line, '\n')
-			}
+		// A last line the agent never terminated is dropped, as `knowns mcp --stdio` drops it at EOF.
+		if len(line) > 0 && line[len(line)-1] == '\n' {
 			s.handleIn(line)
 		}
 		if err != nil {
@@ -169,6 +167,9 @@ func (s *session) handleIn(line []byte) {
 	}
 	f, _, dup := scanObject(line, "id", "method", "params")
 	method := unquote(f["method"])
+	if m := f["method"]; len(m) == 0 || m[0] != '"' {
+		method = "" // not a JSON string: the engine answers it itself, there is nothing to track
+	}
 	id := idKey(f["id"])
 	s.maybeSwitchBack()
 	switch method {

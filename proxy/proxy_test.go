@@ -676,3 +676,74 @@ func TestResponsesAlreadyReadSurviveADrop(t *testing.T) {
 		t.Fatalf("answered calls must not be reported as lost: %s | %s", a, b)
 	}
 }
+
+// A final line without a newline is dropped, as `knowns mcp --stdio` drops it at EOF.
+func TestUnterminatedFinalLineIsDropped(t *testing.T) {
+	e := newEnv(t)
+	var mu sync.Mutex
+	var got []string
+	e.startDaemon(func(c net.Conn, br *bufio.Reader) {
+		defer c.Close()
+		for {
+			line, err := br.ReadBytes('\n')
+			if len(line) > 0 {
+				mu.Lock()
+				got = append(got, string(line))
+				mu.Unlock()
+			}
+			if err != nil || isControl(line) {
+				return
+			}
+			c.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}` + "\n"))
+		}
+	})
+	h := start(t, "")
+	h.send(`{"jsonrpc":"2.0","id":1,"method":"ping"}`)
+	h.recv(t)
+	io.WriteString(h.in, `{"jsonrpc":"2.0","id":2,"method":"ping"}`)
+	h.in.Close()
+	<-h.done
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	n := 0
+	for _, l := range got {
+		if strings.Contains(l, `"id":2`) {
+			t.Fatalf("the unterminated line reached the daemon: %s", l)
+		}
+		n++
+	}
+	if n == 0 {
+		t.Fatal("the terminated line never arrived")
+	}
+}
+
+// A request whose method is not a string is not tracked: the engine answers it with an error that
+// carries no usable id, and the proxy must not report it as lost at the end of the session.
+func TestNonStringMethodIsNotTracked(t *testing.T) {
+	e := newEnv(t)
+	e.startDaemon(func(c net.Conn, br *bufio.Reader) {
+		defer c.Close()
+		for {
+			line, err := br.ReadBytes('\n')
+			if err != nil || isControl(line) {
+				return
+			}
+			c.Write([]byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"bad"}}` + "\n"))
+		}
+	})
+	h := start(t, "")
+	h.send(`{"jsonrpc":"2.0","id":22,"method":5}`)
+	if got := h.recv(t); !strings.Contains(got, "-32600") {
+		t.Fatalf("answer not forwarded: %s", got)
+	}
+	h.in.Close()
+	select {
+	case code := <-h.done:
+		if code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the proxy kept waiting for an answer that will never come")
+	}
+}
