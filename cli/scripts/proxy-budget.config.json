@@ -16,5 +16,5 @@
     "p95SlackMs": 25
   },
   "orphanWaitSeconds": 75,
-  "daemonIdleTimeoutMs": 3000
+  "daemonIdleTimeoutMs": 15000
 }

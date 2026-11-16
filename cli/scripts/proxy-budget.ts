@@ -170,7 +170,10 @@ class Session {
   }
 }
 const proxySession = () =>
-  new Session([PROXY, "mcp", "--stdio"], { ...env, KNOWNS_PROXY_KNOWNS_BIN: KNOWNS });
+  new Session([PROXY, "mcp", "--stdio"], {
+    ...env,
+    KNOWNS_PROXY_KNOWNS_BIN: process.env.BUDGET_PROXY_KNOWNS ?? KNOWNS,
+  });
 const directSession = () =>
   new Session([KNOWNS, "mcp", "--stdio"], { ...env, KNOWNS_MCP_PROXY: "0" });
 
@@ -221,18 +224,46 @@ function daemonPid(): number | undefined {
     if (/^endpoint-.*\.json$/.test(f)) return JSON.parse(readFileSync(join(dir, f), "utf8")).pid;
   return undefined;
 }
+const tabAbort = new AbortController();
 async function budget() {
   const ss = Array.from({ length: N }, proxySession);
   await Promise.all(ss.map((s) => s.ready()));
   let ui: ReturnType<typeof Bun.spawn> | undefined;
   if (withUi) {
-    ui = Bun.spawn([KNOWNS, "browser", "--no-open", "--port", "16420", "--project", proj], {
-      cwd: proj,
-      env: { ...env, KNOWNS_MCP_PROXY: "0" },
-      stdout: "ignore",
-      stderr: "ignore",
-    });
+    ui = Bun.spawn(
+      [
+        process.env.BUDGET_PROXY_KNOWNS ?? KNOWNS,
+        "browser",
+        "--no-open",
+        "--port",
+        "16420",
+        "--project",
+        proj,
+      ],
+      {
+        cwd: proj,
+        env: { ...env, KNOWNS_MCP_PROXY: "0" },
+        stdout: "ignore",
+        stderr: "ignore",
+      },
+    );
     await Bun.sleep(4000);
+    // Model a real open tab, not just a bound listener: /api/runtime/ps every 2 s and an SSE stream.
+    const url = "http://127.0.0.1:16420";
+    void fetch(`${url}/api/events`, { signal: tabAbort.signal })
+      .then(async (r) => {
+        for await (const _ of r.body as ReadableStream<Uint8Array>)
+          if (tabAbort.signal.aborted) break;
+      })
+      .catch(() => {});
+    void (async () => {
+      while (!tabAbort.signal.aborted) {
+        await fetch(`${url}/api/runtime/ps`, { signal: tabAbort.signal })
+          .then((r) => r.text())
+          .catch(() => {});
+        await Bun.sleep(2000);
+      }
+    })();
   }
   const t0 = Date.now();
   let calls = 0;
@@ -258,7 +289,7 @@ async function budget() {
   await Bun.sleep(2000);
   const c0 = sample(all);
   const w0 = performance.now();
-  await Bun.sleep(cfg.idleSeconds * 1000);
+  await Bun.sleep(Number(process.env.BUDGET_IDLE_SECONDS ?? cfg.idleSeconds) * 1000);
   const c1 = sample(all);
   const wall = (performance.now() - w0) / 1000;
   const cpuPct = (pid: number) => {
@@ -302,6 +333,7 @@ async function budget() {
         .map((f) => JSON.parse(readFileSync(join(rt, "mcp", f), "utf8")))
     : [];
   await Promise.all(ss.map((s) => s.close()));
+  tabAbort.abort();
   if (ui) ui.kill();
   const closedAt = Date.now();
   const deadline = closedAt + cfg.orphanWaitSeconds * 1000;
