@@ -24,6 +24,7 @@ interface TaskDTO {
 	id: string;
 	title: string;
 	description?: string;
+	descriptionPreview?: string;
 	status: string;
 	priority: string;
 	assignee?: string;
@@ -242,9 +243,11 @@ async function lifecycleFetch(
 }
 
 export const api = {
-	async getTasks(options?: { includeHistorical?: boolean; signal?: AbortSignal }): Promise<Task[]> {
+	/** summary drops description, notes, plan and time entries; open a task with getTask for those. */
+	async getTasks(options?: { includeHistorical?: boolean; summary?: boolean; signal?: AbortSignal }): Promise<Task[]> {
 		const params = new URLSearchParams();
 		if (options?.includeHistorical) params.set("includeHistorical", "true");
+		if (options?.summary) params.set("summary", "true");
 		const query = params.size ? `?${params.toString()}` : "";
 		const res = await apiFetch(`${API_BASE}/api/tasks${query}`, { signal: options?.signal });
 		if (!res.ok) {
@@ -252,6 +255,24 @@ export const api = {
 		}
 		const data = (await res.json()) as TaskDTO[];
 		return data.map(parseTaskDTO);
+	},
+
+	/** One page of summaries; follow nextCursor for more. Filters apply before the page is cut. */
+	async getTasksPage(options: {
+		limit: number;
+		cursor?: string;
+		status?: string;
+		includeHistorical?: boolean;
+		signal?: AbortSignal;
+	}): Promise<{ tasks: Task[]; total: number; nextCursor?: string }> {
+		const params = new URLSearchParams({ summary: "true", limit: String(options.limit) });
+		if (options.cursor) params.set("cursor", options.cursor);
+		if (options.status) params.set("status", options.status);
+		if (options.includeHistorical) params.set("includeHistorical", "true");
+		const res = await apiFetch(`${API_BASE}/api/tasks?${params.toString()}`, { signal: options.signal });
+		if (!res.ok) throw new Error("Failed to fetch tasks");
+		const data = (await res.json()) as { tasks: TaskDTO[]; total: number; nextCursor?: string };
+		return { tasks: data.tasks.map(parseTaskDTO), total: data.total, nextCursor: data.nextCursor };
 	},
 
 	async getTask(id: string, options?: { signal?: AbortSignal }): Promise<Task> {

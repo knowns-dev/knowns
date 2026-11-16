@@ -141,7 +141,7 @@ export default function TasksPage({
 		historicalRequestRef.current = { generation, controller };
 		setHistoricalLoading(true);
 		try {
-			const data = await api.getTasks({ includeHistorical: true, signal: controller.signal });
+			const data = await api.getTasks({ includeHistorical: true, summary: true, signal: controller.signal });
 			if (historicalRequestRef.current.generation === generation) setHistoricalTasks(data);
 		} catch (error) {
 			if (!(error instanceof DOMException && error.name === "AbortError")) {
@@ -168,7 +168,22 @@ export default function TasksPage({
 	}, [historicalMode, loadHistorical]);
 
 	useSSEEvent("tasks:refresh", invalidateHistorical, [invalidateHistorical]);
-	useSSEEvent("tasks:updated", invalidateHistorical, [invalidateHistorical]);
+	// One task changed: patch it in the historical list instead of refetching every task.
+	useSSEEvent(
+		"tasks:updated",
+		({ task }) => {
+			if (!historicalMode) return;
+			setHistoricalTasks((prev) => {
+				if (prev === null) return prev;
+				const i = prev.findIndex((t) => t.id === task.id);
+				if (i < 0) return [...prev, task];
+				const next = [...prev];
+				next[i] = task;
+				return next;
+			});
+		},
+		[historicalMode],
+	);
 	useSSEEvent("tasks:archived", invalidateHistorical, [invalidateHistorical]);
 	useSSEEvent("tasks:unarchived", invalidateHistorical, [invalidateHistorical]);
 	useSSEEvent("tasks:batch-archived", invalidateHistorical, [invalidateHistorical]);
@@ -287,7 +302,7 @@ export default function TasksPage({
 	};
 
 	const reconcileTasks = async () => {
-		const current = await api.getTasks();
+		const current = await api.getTasks({ summary: true });
 		if (onTasksReplace) onTasksReplace(current);
 		else onTasksUpdate();
 	};

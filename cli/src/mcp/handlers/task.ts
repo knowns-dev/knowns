@@ -12,7 +12,6 @@ import {
 import {
   clampLimit,
   DEFAULT_COLUMN_PAGE_SIZE,
-  DEFAULT_PAGE_SIZE,
   encodeCursor,
   matchesQuery,
   pageTasks,

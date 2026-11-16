@@ -15,6 +15,12 @@ import {
   Service,
 } from "../../domain/tasklifecycle/index.ts";
 import {
+  clampLimit,
+  DEFAULT_PAGE_SIZE,
+  matchesQuery,
+  pageTasks,
+} from "../../domain/tasklifecycle/summary.ts";
+import {
   eventToWire,
   historyMetadataPageToWire,
   responseToWire,
@@ -193,6 +199,46 @@ function parseIncludeHistorical(c: Ctx): boolean | string {
 
 export { parseIncludeHistorical };
 
+/** Fields a list view never reads; GET /api/tasks/:id has them (KN-F1DQ03). */
+const HEAVY_FIELDS = ["description", "implementationPlan", "implementationNotes", "timeEntries"];
+
+const PREVIEW_CHARS = 140;
+
+/** Everything but the heavy fields, plus one short line of the description for cards. */
+function summaryResponse(task: Task): Obj {
+  const wire = taskResponse(task);
+  for (const k of HEAVY_FIELDS) delete wire[k];
+  const flat = (task.description ?? "").replace(/\s+/g, " ").trim();
+  if (flat !== "")
+    wire.descriptionPreview =
+      flat.length > PREVIEW_CHARS ? `${flat.slice(0, PREVIEW_CHARS - 1)}…` : flat;
+  return wire;
+}
+
+/** limit, cursor and the filters of GET /api/tasks; any of limit or cursor switches to the paged envelope. */
+function parseListQuery(c: Ctx) {
+  const p = c.url.searchParams;
+  const limitRaw = p.get("limit");
+  const limit = limitRaw === null ? undefined : Number(limitRaw);
+  if (limit !== undefined && !(Number.isInteger(limit) && limit >= 1)) {
+    return "limit must be a positive integer";
+  }
+  return {
+    summary: p.get("summary") === "true" || p.get("summary") === "1",
+    paged: limitRaw !== null || p.has("cursor"),
+    limit: clampLimit(limit, DEFAULT_PAGE_SIZE),
+    cursor: p.get("cursor") ?? undefined,
+    query: {
+      status: p.get("status") ?? undefined,
+      priority: p.get("priority") ?? undefined,
+      assignee: p.get("assignee") ?? undefined,
+      label: p.get("label") ?? undefined,
+      parent: p.get("parent") ?? undefined,
+      query: p.get("query") ?? undefined,
+    },
+  };
+}
+
 function lifecycleRank(t: Task): number {
   const s = taskLifecycleState(t);
   return s === "active" ? 0 : s === "done" ? 1 : 2;
@@ -308,12 +354,35 @@ export function registerTasks(r: Router, app: App): void {
       } catch (e) {
         return respondError(500, errMessage(e));
       }
-      attachAgent(s, tasks);
-      const out = sortTasks(tasks).map((t) => {
-        loadTimeEntries(s, t);
-        return taskResponse(t);
-      });
-      return jsonResponse(200, out);
+      const q = parseListQuery(c);
+      if (typeof q === "string") return respondError(400, q);
+      const sorted = sortTasks(tasks.filter((t) => matchesQuery(t, q.query)));
+      if (!q.paged) {
+        // The unpaged call old UIs make: every task, in full unless summary=true.
+        attachAgent(s, sorted);
+        return jsonResponse(
+          200,
+          sorted.map((t) => {
+            if (q.summary) return summaryResponse(t);
+            loadTimeEntries(s, t);
+            return taskResponse(t);
+          }),
+        );
+      }
+      const page = pageTasks(sorted, q.limit, q.cursor);
+      if ("error" in page) return respondError(400, page.error);
+      attachAgent(s, page.items);
+      const body: Obj = {
+        tasks: page.items.map((t) => {
+          if (q.summary) return summaryResponse(t);
+          loadTimeEntries(s, t);
+          return taskResponse(t);
+        }),
+        total: page.total,
+        limit: page.limit,
+      };
+      if (page.nextCursor) body.nextCursor = page.nextCursor;
+      return jsonResponse(200, body);
     }),
   );
 
