@@ -129,7 +129,7 @@ let searchPool: import("./search-pool.ts").SearchPool | undefined;
 
 /** The worker threads behind the search tool, sized like the heavy gate. */
 export async function sharedSearchPool(): Promise<import("./search-pool.ts").SearchPool> {
-  if (!searchPool) {
+  if (!searchPool || searchPool.isStopped) {
     const { SearchPool } = await import("./search-pool.ts");
     searchPool = new SearchPool(sharedToolPool().width);
   }

@@ -2,6 +2,7 @@
 // ToolPool already limits how many heavy calls run at once to the pool width, so a job always finds
 // a worker. A worker whose call is cancelled (deadline, session end) is terminated: synchronous
 // work cannot be interrupted any other way.
+import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import type { CallToolRequest } from "./tool.ts";
 
@@ -27,11 +28,14 @@ interface Slot {
  * (scripts/build.ts lists it as an entrypoint); from source it is the TypeScript file.
  */
 function spawnSearchWorker(): Worker {
-  const compiled = /\$bunfs|~BUN/.test(import.meta.url);
+  const compiled = /\$bunfs|~BUN/i.test(decodeURIComponent(import.meta.url));
   const url = compiled
     ? new URL("./mcp/search-worker.js", import.meta.url)
     : new URL("./search-worker.ts", import.meta.url);
-  return new Worker(url, { workerData: { env: { ...process.env } } });
+  // The embedded file system of a Windows binary is looked up with forward slashes only.
+  const target =
+    compiled && process.platform === "win32" ? fileURLToPath(url).replaceAll("\\", "/") : url;
+  return new Worker(target, { workerData: { env: { ...process.env } } });
 }
 
 export class SearchPool {
@@ -43,6 +47,10 @@ export class SearchPool {
     private readonly width: number,
     private readonly spawn: () => Worker = spawnSearchWorker,
   ) {}
+
+  get isStopped(): boolean {
+    return this.stopped;
+  }
 
   get size(): number {
     return this.slots.length;

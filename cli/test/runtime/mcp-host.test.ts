@@ -107,6 +107,8 @@ class Client {
 
   async tool(id: number, name: string, args: Record<string, unknown>): Promise<string> {
     const r = await this.rpc(id, "tools/call", { name, arguments: args });
+    // A JSON-RPC error has no result: say what it was instead of a TypeError.
+    if (!r.result) throw new Error(`${name} failed: ${JSON.stringify(r.error ?? r)}`);
     const res = r.result as { content: Array<{ text: string }> };
     return res.content[0]?.text ?? "";
   }

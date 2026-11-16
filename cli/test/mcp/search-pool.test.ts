@@ -38,7 +38,7 @@ describe("SearchPool", () => {
     const t = setInterval(() => ticks++, 5);
     await new Promise((r) => setTimeout(r, 200));
     clearInterval(t);
-    expect(ticks).toBeGreaterThan(20);
+    expect(ticks).toBeGreaterThan(5); // a blocked loop would see none (Windows timers tick at ~15 ms)
     ac.abort();
     await run;
     await pool.stop();
