@@ -44,6 +44,7 @@ import {
 import { lifecycleService, registerTasks } from "./routes/tasks.ts";
 import { registerTemplates, registerValidate } from "./routes/templates.ts";
 import { registerTime } from "./routes/time.ts";
+import { ServiceMonitor, type ServiceStatusLike } from "./service-monitor.ts";
 import { detectRuntimeServices, goDurationSeconds, registerRuntimeServices } from "./services.ts";
 import { SSEBroker } from "./sse.ts";
 import { serveUi } from "./static.ts";
@@ -58,38 +59,6 @@ const SERVICE_IDLE_INTERVAL_MS = 30_000;
 const TASK_SWEEP_INTERVAL_MS = 3_600_000;
 const FIRST_SWEEP_DELAY_MS = 5_000;
 
-interface ServiceStatusLike {
-  name: string;
-  type: string;
-  status: string;
-  pid?: number;
-  port?: number;
-  uptime?: number;
-  enabledInConfig: boolean;
-  details: Record<string, string>;
-}
-
-const serviceKey = (s: ServiceStatusLike): string =>
-  s.details.language ? `${s.type}:${s.details.language}` : `${s.type}:${s.name}`;
-
-function serviceJson(s: ServiceStatusLike): Record<string, unknown> {
-  const keys = Object.keys(s.details).sort((a, b) =>
-    Buffer.compare(Buffer.from(a), Buffer.from(b)),
-  );
-  const details: Record<string, string> = {};
-  for (const k of keys) details[k] = s.details[k] as string;
-  return {
-    name: s.name,
-    type: s.type,
-    status: s.status,
-    ...(s.pid ? { pid: s.pid } : {}),
-    ...(s.port ? { port: s.port } : {}),
-    ...(s.uptime ? { uptime: s.uptime } : {}),
-    enabledInConfig: s.enabledInConfig,
-    ...(keys.length > 0 ? { details } : {}),
-  };
-}
-
 export class Server {
   readonly sse = new SSEBroker();
   readonly auth: AuthManager;
@@ -103,12 +72,10 @@ export class Server {
   private readonly shutdownPromise = new Promise<void>((r) => {
     this.shutdownResolve = r;
   });
-  private monitorTimer: ReturnType<typeof setTimeout> | undefined;
+  private serviceMonitor: ServiceMonitor | undefined;
   private unsubStatus: (() => void) | undefined;
-  private serviceWatchAt = 0;
   private sweepTimer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
-  private prevServices: ServiceStatusLike[] = [];
   private readonly app: App;
 
   constructor(
@@ -444,60 +411,18 @@ export class Server {
   }
 
   watchServices(): void {
-    this.serviceWatchAt = Date.now();
+    this.serviceMonitor?.watch();
   }
 
   private startServiceMonitor(): void {
-    const tick = async (): Promise<void> => {
-      if (this.stopped) return;
-      // Nobody has looked at runtime or service status lately (no Runtime page open and visible):
-      // the inventory (LSP which/spawn lookups) is not worth running; check again later.
-      const watched = Date.now() - this.serviceWatchAt < SERVICE_WATCH_WINDOW_MS;
-      const next = watched ? await this.snapshotServices(false) : undefined;
-      if (next && !this.stopped) {
-        const prevBy = new Map(this.prevServices.map((s) => [serviceKey(s), s]));
-        const now = new Date().toISOString().replace(/\.(\d{3})Z$/, ".$1000Z");
-        const changes: Record<string, unknown>[] = [];
-        for (const s of next) {
-          const prev = prevBy.get(serviceKey(s));
-          if (
-            !prev ||
-            (prev.status === s.status &&
-              prev.pid === s.pid &&
-              prev.port === s.port &&
-              prev.enabledInConfig === s.enabledInConfig)
-          ) {
-            continue;
-          }
-          changes.push({
-            name: s.name,
-            type: s.type,
-            previousStatus: prev.status,
-            status: s.status,
-            timestamp: now,
-            service: serviceJson(s),
-          });
-        }
-        this.prevServices = next;
-        if (changes.length > 0) this.sse.broadcast({ type: "service:status", data: changes });
-      }
-      if (!this.stopped) {
-        this.monitorTimer = setTimeout(
-          tick,
-          Date.now() - this.serviceWatchAt < SERVICE_WATCH_WINDOW_MS
-            ? SERVICE_STATUS_INTERVAL_MS
-            : SERVICE_IDLE_INTERVAL_MS,
-        );
-        this.monitorTimer.unref();
-      }
-    };
-    void (async () => {
-      const first = await this.snapshotServices(false);
-      if (first) this.prevServices = first;
-      if (this.stopped) return;
-      this.monitorTimer = setTimeout(tick, SERVICE_STATUS_INTERVAL_MS);
-      this.monitorTimer.unref();
-    })();
+    this.serviceMonitor = new ServiceMonitor({
+      snapshot: () => this.snapshotServices(false),
+      emit: (changes) => this.sse.broadcast({ type: "service:status", data: changes }),
+      watchWindowMs: SERVICE_WATCH_WINDOW_MS,
+      statusIntervalMs: SERVICE_STATUS_INTERVAL_MS,
+      idleIntervalMs: SERVICE_IDLE_INTERVAL_MS,
+    });
+    this.serviceMonitor.start();
   }
 
   /** StartTaskAutoArchiveSweeper: one bounded sweep at start, then hourly. */
@@ -637,7 +562,7 @@ export class Server {
       }
     };
     await step(() => {
-      if (this.monitorTimer) clearTimeout(this.monitorTimer);
+      this.serviceMonitor?.stop();
       if (this.sweepTimer) clearInterval(this.sweepTimer);
     });
     await step(() => this.unsubStatus?.());

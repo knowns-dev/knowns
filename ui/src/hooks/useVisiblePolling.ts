@@ -8,6 +8,14 @@ export const VISIBLE_POLL_MS = 15_000;
  * Runs `fn` at once, then every `intervalMs` while the document is visible. A hidden document polls
  * nothing; becoming visible again runs `fn` at once. An SSE event named in `events` also runs it,
  * so a real change shows within moments without a fast poll.
+ *
+ * Two invariants callers rely on:
+ * - It fetches at mount. The server sends SSE events only to tabs that are connected, so an event
+ *   that fired while no tab was open (or while this page was not mounted) is gone; the page must
+ *   not wait for one to learn the current state.
+ * - A server that runs in the foreground (not behind the runtime daemon) sends no status events
+ *   for some changes, so what the page shows can be up to `intervalMs` (15 s) stale. That is
+ *   accepted; a control that needs an exact answer must fetch on demand.
  */
 export function useVisiblePolling(
 	fn: () => void | Promise<void>,
