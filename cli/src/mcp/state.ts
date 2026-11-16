@@ -116,6 +116,7 @@ export class McpState {
 
   async dispose(): Promise<void> {
     liveStates.delete(this);
+    this.releaseCaches(); // the shared search caches must not keep this project's parsed files
     const manager = this.lspManagerCache;
     this.lspManagerCache = undefined;
     this.lspManagerBuilt = true;

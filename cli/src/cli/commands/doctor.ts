@@ -9,6 +9,7 @@ import type {
   Status,
   Verdict,
 } from "../../domain/doctor/model.ts";
+import { findMissingProxyEntries } from "../../domain/setup/mcp-audit.ts";
 import { type CommandContext, defineCommand } from "../core/define.ts";
 import { exitError, SilentExit } from "../core/exit.ts";
 import {
@@ -284,7 +285,7 @@ async function defaultCheckers(
   );
 }
 
-export const doctorDeps: DoctorRunDeps = {};
+export const doctorDeps: DoctorRunDeps = { findMissingProxyEntries };
 
 export default defineCommand({
   use: "doctor",

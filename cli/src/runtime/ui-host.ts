@@ -33,6 +33,7 @@ import net from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { VERSION } from "../version.ts";
+import { checkDescriptorLocation } from "./mcp-endpoint.ts";
 import { goLogf, isProcessAlive, nowString, runtimeRoot } from "./queue.ts";
 
 export const UI_PROTOCOL = 1;
@@ -112,16 +113,6 @@ function address(
     address: join(dir, `ui-${shortHash([root, version], 12)}.sock`),
     dir,
   };
-}
-
-/** Where the daemon may write the token (Windows): the user's profile, as for the MCP endpoint. */
-function checkProfileLocation(root: string): void {
-  if (!isWindows) return;
-  if ((process.env.KNOWNS_RUNTIME_ROOT ?? "").trim() !== "") return;
-  const rel = relative(resolve(homedir()).toLowerCase(), resolve(root).toLowerCase());
-  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    throw new Error(`runtime root ${root} is outside the user profile; refusing to write a token`);
-  }
 }
 
 /** Removes a socket nobody listens on; refuses when a live daemon holds it. */
@@ -229,7 +220,7 @@ export class UiHost {
 
   async start(): Promise<UiDescriptor> {
     this.stopping = false;
-    checkProfileLocation(this.root);
+    checkDescriptorLocation(this.root);
     const ep = address(this.version, this.root);
     if (ep.dir) {
       privateDir(ep.dir);
