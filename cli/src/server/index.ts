@@ -580,16 +580,33 @@ export class Server {
 
   private async shutdown(): Promise<void> {
     this.stopped = true;
-    if (this.monitorTimer) clearTimeout(this.monitorTimer);
-    if (this.sweepTimer) clearInterval(this.sweepTimer);
-    this.sse.closeAll();
-    this.bun?.stop(true);
-    const pf = this.portFile();
-    if (pf) rmSync(pf, { force: true });
-    const status = this.tunnel.status();
-    if (status.running && status.startedByUs) await this.tunnel.stop().catch(() => undefined);
-    if (this.lspManager) await this.lspManager.stopAll(undefined).catch(() => undefined);
-    await this.releaseLspLease();
+    // Each step is independent: one failing (a file busy on Windows) must not skip the rest, above
+    // all the one that frees the port, or reject into a process that serves other sessions.
+    const step = async (fn: () => unknown): Promise<void> => {
+      try {
+        await fn();
+      } catch {
+        // best effort
+      }
+    };
+    await step(() => {
+      if (this.monitorTimer) clearTimeout(this.monitorTimer);
+      if (this.sweepTimer) clearInterval(this.sweepTimer);
+    });
+    await step(() => this.sse.closeAll());
+    await step(() => this.bun?.stop(true));
+    await step(() => {
+      const pf = this.portFile();
+      if (pf) rmSync(pf, { force: true });
+    });
+    await step(async () => {
+      const status = this.tunnel.status();
+      if (status.running && status.startedByUs) await this.tunnel.stop().catch(() => undefined);
+    });
+    await step(async () => {
+      if (this.lspManager) await this.lspManager.stopAll(undefined).catch(() => undefined);
+    });
+    await step(() => this.releaseLspLease());
   }
 
   /** Requests a graceful stop (tests and the init --open path). */

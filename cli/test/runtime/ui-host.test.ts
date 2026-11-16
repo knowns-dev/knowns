@@ -193,3 +193,151 @@ describe("ui host", () => {
     expect(await answers(port)).toBe(false);
   });
 });
+
+// --- review follow-ups (ca1e097) ---------------------------------------------------------------
+
+type Stub = {
+  port: number;
+  done: Promise<void>;
+  stop(): void;
+  finish(): void;
+  fail(e: Error): void;
+};
+function stubServe(delayMs = 0, out: { last?: Stub; stops: number } = { stops: 0 }) {
+  const serve: NonNullable<ConstructorParameters<typeof UiHost>[0]>["serve"] = async (_r, bind) => {
+    const bound = await bind(async () => new Response("x"));
+    if (delayMs > 0) await Bun.sleep(delayMs);
+    let resolve: () => void = () => {};
+    let reject: (e: Error) => void = () => {};
+    const done = new Promise<void>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    const stub: Stub = {
+      port: bound.port,
+      done,
+      stop: () => {
+        out.stops++;
+        bound.bun.stop(true);
+        resolve();
+      },
+      finish: () => {
+        bound.bun.stop(true);
+        resolve();
+      },
+      fail: (e) => {
+        bound.bun.stop(true);
+        reject(e);
+      },
+    };
+    out.last = stub;
+    return stub;
+  };
+  return { serve, out };
+}
+const newHost = (serve: ReturnType<typeof stubServe>["serve"]) =>
+  new UiHost({
+    root: mkdtempSync(join(tmpdir(), "knowns-ui-host3-")),
+    logger: () => undefined,
+    serve,
+  });
+
+function frames(path: string, send: Record<string, unknown>) {
+  const got: Record<string, unknown>[] = [];
+  let buf = "";
+  const sock = net.connect({ path });
+  sock.on("error", () => undefined);
+  sock.on("data", (c) => {
+    buf += c.toString("utf8");
+    for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+      got.push(JSON.parse(buf.slice(0, nl)));
+      buf = buf.slice(nl + 1);
+    }
+  });
+  sock.once("connect", () => sock.write(`${JSON.stringify(send)}\n`));
+  const closed = new Promise<void>((r) => sock.on("close", () => r()));
+  return { sock, got, closed };
+}
+
+describe("review follow-ups", () => {
+  test("a listener stopped on its own says bye stopped", async () => {
+    const { serve, out } = stubServe();
+    const h = newHost(serve);
+    const d = await h.start();
+    const port = await freePort();
+    const c = frames(d.address, { ...request(port), token: d.token });
+    expect(await until(() => c.got.length === 1, 2000)).toBe(true);
+    out.last?.finish(); // what POST /api/shutdown does
+    await c.closed;
+    expect(c.got.map((f) => f.type)).toEqual(["listening", "bye"]);
+    expect(c.got[1]?.reason).toBe("stopped");
+    await h.stop();
+  });
+
+  test("a listener whose shutdown throws does not crash the daemon", async () => {
+    const seen: unknown[] = [];
+    const onRej = (e: unknown): void => void seen.push(e);
+    process.on("unhandledRejection", onRej);
+    const { serve, out } = stubServe();
+    const h = newHost(serve);
+    const d = await h.start();
+    const port = await freePort();
+    const c = frames(d.address, { ...request(port), token: d.token });
+    expect(await until(() => c.got.length === 1, 2000)).toBe(true);
+    out.last?.fail(new Error("EBUSY: .server-port"));
+    await c.closed;
+    await Bun.sleep(50);
+    process.off("unhandledRejection", onRej);
+    expect(seen).toEqual([]);
+    expect(h.listeners()).toEqual([]);
+    await h.stop();
+  });
+
+  test("a client that gives up while the server starts leaves no listener behind", async () => {
+    const { serve, out } = stubServe(400);
+    const h = newHost(serve);
+    const d = await h.start();
+    const port = await freePort();
+    const c = frames(d.address, { ...request(port), token: d.token });
+    await Bun.sleep(100);
+    c.sock.destroy(); // gave up
+    expect(await until(() => out.stops === 1, 3000)).toBe(true);
+    expect(await until(async () => !(await answers(port)), 2000)).toBe(true);
+    expect(h.listeners()).toEqual([]);
+    await h.stop();
+  });
+
+  test("stopping the host while a server starts drops that listener too", async () => {
+    const { serve, out } = stubServe(400);
+    const h = newHost(serve);
+    const d = await h.start();
+    const port = await freePort();
+    const c = frames(d.address, { ...request(port), token: d.token });
+    await Bun.sleep(100);
+    await h.stop();
+    expect(await until(() => out.stops === 1, 3000)).toBe(true);
+    expect(await until(async () => !(await answers(port)), 2000)).toBe(true);
+    c.sock.destroy();
+  });
+
+  test("start refuses a live endpoint, replaces a stale socket, and cleans up when it cannot publish", async () => {
+    const { serve } = stubServe();
+    const root2 = mkdtempSync(join(tmpdir(), "knowns-ui-host4-"));
+    const a = new UiHost({ root: root2, logger: () => undefined, serve });
+    await a.start();
+    const b = new UiHost({ root: root2, logger: () => undefined, serve });
+    await expect(b.start()).rejects.toThrow(/already active/);
+    await a.stop();
+    // The descriptor directory cannot be created: the socket must not stay open.
+    const root3 = mkdtempSync(join(tmpdir(), "knowns-ui-host5-"));
+    await Bun.write(join(root3, "ui"), "not a directory");
+    const c = new UiHost({ root: root3, logger: () => undefined, serve });
+    await expect(c.start()).rejects.toThrow();
+    // A new host on the same root can listen: nothing from the failed start is left holding it.
+    await Bun.file(join(root3, "ui")).exists();
+    rmSync(join(root3, "ui"), { force: true });
+    const d = new UiHost({ root: root3, logger: () => undefined, serve });
+    await d.start();
+    await d.stop();
+  });
+});

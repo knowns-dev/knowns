@@ -7,13 +7,20 @@ import {
   readFallbacks,
   readLiveReports,
 } from "./live-report.ts";
+import { runtimeRoot } from "./queue.ts";
+
+/** Text a proxy wrote: one line, no control characters, bounded. */
+const clean = (v: string, max: number): string =>
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
+  v.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").slice(0, max);
 
 export interface LiveView {
   reports: LiveReport[];
   fallbacks: FallbackRecord[];
 }
 
-export function loadLiveView(root?: string): LiveView {
+export function loadLiveView(env: Record<string, string | undefined> = process.env): LiveView {
+  const root = runtimeRoot(env);
   return { reports: readLiveReports(root), fallbacks: readFallbacks(root) };
 }
 
@@ -52,7 +59,9 @@ export function liveViewLines(v: LiveView): string[] {
   if (v.fallbacks.length > 0) {
     out.push(`Recent MCP proxy fallbacks: ${v.fallbacks.length}`);
     for (const f of v.fallbacks.slice(-5)) {
-      out.push(`  ${f.at}  pid ${f.pid}  ${f.code || "fallback"}: ${f.reason}`);
+      out.push(
+        `  ${f.at}  pid ${f.pid}  ${clean(f.code || "fallback", 40)}: ${clean(f.reason, 120)}`,
+      );
     }
   }
   return out;

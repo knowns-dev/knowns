@@ -205,3 +205,36 @@ describe("what is shown", () => {
     expect(r?.evidence?.files).toEqual([".cursor/mcp.json", ".mcp.json"]);
   });
 });
+
+describe("proxy text is cleaned and the env's runtime root is used", () => {
+  test("control characters and long reasons never reach the terminal", async () => {
+    const { liveViewLines: lines } = await import("../../src/runtime/live-lines.ts");
+    const fb = [
+      {
+        at: "2026-11-16T10:00:00Z",
+        pid: 1,
+        version: "v",
+        kind: "fallback" as const,
+        code: "busy",
+        reason: `\u001b[31mred\u001b[0m\nsecond line ${"x".repeat(500)}`,
+      },
+    ];
+    const text = lines({ reports: [], fallbacks: fb }).join("\n");
+    expect(text).not.toContain("\u001b");
+    expect(text.split("\n").length).toBe(2);
+    expect(text.length).toBeLessThan(260);
+  });
+
+  test("loadLiveView reads the root of the env it is given", async () => {
+    const { loadLiveView } = await import("../../src/runtime/live-lines.ts");
+    const mine = mkdtempSync(join(tmpdir(), "knowns-live-env-"));
+    mkdirSync(join(mine, "mcp"), { recursive: true });
+    writeFileSync(
+      join(mine, "mcp", "proxy-fallback.jsonl"),
+      `${JSON.stringify({ at: new Date().toISOString(), pid: process.pid, version: "v", kind: "fallback", code: "c", reason: "r" })}\n`,
+    );
+    expect(loadLiveView({ KNOWNS_RUNTIME_ROOT: mine }).fallbacks).toHaveLength(1);
+    expect(loadLiveView({ KNOWNS_RUNTIME_ROOT: join(mine, "other") }).fallbacks).toHaveLength(0);
+    rmSync(mine, { recursive: true, force: true });
+  });
+});

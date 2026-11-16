@@ -24,8 +24,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import net from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { VERSION } from "../version.ts";
 import { goLogf, isProcessAlive, nowString, runtimeRoot } from "./queue.ts";
 
@@ -89,6 +89,40 @@ function address(
     address: join(dir, `ui-${shortHash([root, version], 12)}.sock`),
     dir,
   };
+}
+
+/** Where the daemon may write the token (Windows): the user's profile, as for the MCP endpoint. */
+function checkProfileLocation(root: string): void {
+  if (!isWindows) return;
+  if ((process.env.KNOWNS_RUNTIME_ROOT ?? "").trim() !== "") return;
+  const rel = relative(resolve(homedir()).toLowerCase(), resolve(root).toLowerCase());
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error(`runtime root ${root} is outside the user profile; refusing to write a token`);
+  }
+}
+
+/** Removes a socket nobody listens on; refuses when a live daemon holds it. */
+async function freeSocket(path: string): Promise<void> {
+  if (!existsSync(path)) return;
+  // Only a refused connection proves nobody listens; a timeout counts as alive.
+  const alive = await new Promise<boolean>((done) => {
+    const sock = net.connect({ path });
+    const timer = setTimeout(() => {
+      sock.destroy();
+      done(true);
+    }, 1000);
+    sock.once("connect", () => {
+      clearTimeout(timer);
+      sock.destroy();
+      done(true);
+    });
+    sock.once("error", () => {
+      clearTimeout(timer);
+      done(false);
+    });
+  });
+  if (alive) throw new Error(`UI endpoint already active: ${path}`);
+  rmSync(path, { force: true });
 }
 
 function privateDir(dir: string): void {
@@ -163,10 +197,11 @@ export class UiHost {
 
   async start(): Promise<UiDescriptor> {
     this.stopping = false;
+    checkProfileLocation(this.root);
     const ep = address(this.version, this.root);
     if (ep.dir) {
       privateDir(ep.dir);
-      if (existsSync(ep.address)) rmSync(ep.address, { force: true });
+      await freeSocket(ep.address);
     }
     const server = net.createServer({ allowHalfOpen: false }, (sock) => this.onConnection(sock));
     await new Promise<void>((resolve, reject) => {
@@ -176,7 +211,6 @@ export class UiHost {
         resolve();
       });
     });
-    if (!isWindows) chmodSync(ep.address, 0o600);
     const descriptor: UiDescriptor = {
       ui_protocol: UI_PROTOCOL,
       version: this.version,
@@ -186,11 +220,19 @@ export class UiHost {
       pid: process.pid,
       started_at: nowString(),
     };
-    privateDir(join(this.root, "ui"));
-    const path = uiDescriptorPath(this.version, this.root);
-    const tmp = `${path}.${process.pid}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify(descriptor)}\n`, { mode: 0o600 });
-    renameSync(tmp, path);
+    try {
+      if (!isWindows) chmodSync(ep.address, 0o600);
+      privateDir(join(this.root, "ui"));
+      const path = uiDescriptorPath(this.version, this.root);
+      const tmp = `${path}.${process.pid}.tmp`;
+      writeFileSync(tmp, `${JSON.stringify(descriptor)}\n`, { mode: 0o600 });
+      renameSync(tmp, path);
+    } catch (e) {
+      // Never keep listening on an endpoint nobody can authenticate to, or one that is not private.
+      server.close();
+      if (descriptor.kind === "unix_socket") rmSync(descriptor.address, { force: true });
+      throw e;
+    }
     server.on("error", (e) => this.log(`[ui-host] listener error: ${e.message}`));
     this.server = server;
     this.descriptor = descriptor;
@@ -288,6 +330,12 @@ export class UiHost {
     if (req.port < 1 || req.port > 65535) return fail("bad_request", "port out of range");
     const owner = Number.isInteger(m.pid) && (m.pid as number) > 0 ? (m.pid as number) : undefined;
 
+    // The control connection is the lease: watch it from the start, so a client that gives up
+    // (or a daemon that stops) while the server is still starting never leaves a listener behind.
+    let sockGone = sock.destroyed;
+    sock.on("close", () => {
+      sockGone = true;
+    });
     const serve = this.opts.serve ?? defaultServe;
     const { bindBrowserPort } = await import("../server/listen.ts");
     let handle: Awaited<ReturnType<typeof serve>>;
@@ -299,6 +347,14 @@ export class UiHost {
       return fail("internal", (e as Error).message);
     }
     const id = `u-${(++this.seq).toString(16).padStart(4, "0")}`;
+    if (sockGone || this.stopping) {
+      handle.stop();
+      await handle.done.catch(() => undefined);
+      this.log(`[ui-host] ${id} dropped before it was announced`);
+      if (!sockGone)
+        sock.end(frame({ type: "error", code: "shutting_down", message: "daemon is exiting" }));
+      return;
+    }
     const info: UiListenerInfo = {
       id,
       port: handle.port,
@@ -323,13 +379,20 @@ export class UiHost {
     }, OWNER_CHECK_MS);
     this.live.set(id, { info, stop });
     sock.on("close", () => stop("closed"));
-    void handle.done.finally(() => {
-      ended = true;
-      clearInterval(poll);
-      this.live.delete(id);
-      sock.destroy();
-      this.log(`[ui-host] ${id} on port ${info.port} stopped`);
-    });
+    // A listener that stopped on its own (POST /api/shutdown) tells the launcher so; one that failed
+    // to clean up must not take the shared daemon down with an unhandled rejection.
+    void handle.done
+      .catch((e) => this.log(`[ui-host] ${id} shutdown error: ${(e as Error).message}`))
+      .finally(() => {
+        const byRequest = !ended;
+        ended = true;
+        clearInterval(poll);
+        this.live.delete(id);
+        if (byRequest && !sock.destroyed) sock.write(frame({ type: "bye", reason: "stopped" }));
+        sock.end();
+        setTimeout(() => sock.destroy(), 1000).unref();
+        this.log(`[ui-host] ${id} on port ${info.port} stopped`);
+      });
     this.log(`[ui-host] ${id} listening on ${info.port}`);
     sock.write(frame({ type: "listening", port: handle.port, id }));
   }
@@ -346,13 +409,19 @@ const defaultServe: NonNullable<UiHostOptions["serve"]> = async (req, bind) => {
     resolveReady = r;
   });
   const bound = await bind(async (r, srv) => (await ready)(r, srv));
-  const server = new Server(store, req.projectRoot, bound.port, {
-    dev: req.dev,
-    allowedOrigins: req.allowedOrigins,
-    tunnel: false,
-    password: req.password,
-    allowTaskHardDelete: req.allowTaskHardDelete,
-  });
+  let server: InstanceType<typeof Server>;
+  try {
+    server = new Server(store, req.projectRoot, bound.port, {
+      dev: req.dev,
+      allowedOrigins: req.allowedOrigins,
+      tunnel: false,
+      password: req.password,
+      allowTaskHardDelete: req.allowTaskHardDelete,
+    });
+  } catch (e) {
+    bound.bun.stop(true);
+    throw e;
+  }
   resolveReady(server.fetchHandler());
   const att = server.attach(bound.bun);
   return { port: bound.port, done: att.done, stop: att.stop };

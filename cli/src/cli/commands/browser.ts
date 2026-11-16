@@ -161,7 +161,7 @@ interface DaemonServeArgs {
 async function serveFromDaemon(
   ctx: CommandContext,
   a: DaemonServeArgs,
-): Promise<"served" | "fallback"> {
+): Promise<{ served: true } | { served: false; port: number }> {
   const { requestDaemonListener } = await import("../../runtime/ui-client.ts");
   const outcome = await requestDaemonListener(
     {
@@ -178,7 +178,7 @@ async function serveFromDaemon(
   if (!outcome.ok) {
     if (ctx.env.KNOWNS_DEBUG_PROXY === "1")
       ctx.printErr(`daemon UI unavailable: ${outcome.reason}\n`);
-    return "fallback";
+    return { served: false, port: a.port };
   }
   const { listener } = outcome;
   const url = `http://localhost:${listener.port}`;
@@ -203,17 +203,17 @@ async function serveFromDaemon(
   };
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
-  await listener.closed;
+  const end = await listener.closed;
   process.off("SIGINT", onSignal);
   process.off("SIGTERM", onSignal);
-  if (userEnded) return "served";
-  // The daemon stopped the listener (POST /api/shutdown) or went away.
-  const stillThere = await dial("127.0.0.1", listener.port, 300);
-  if (!stillThere) {
-    ctx.print(`${StyleDim.render("Server stopped.")}\n`);
-    return "served";
-  }
-  return "fallback";
+  // The user ended it, or the server was stopped on purpose (POST /api/shutdown): done.
+  if (userEnded || end === "released" || end === "stopped") return { served: true };
+  // The daemon is exiting or died: the UI must not just vanish (D6, same rule as D2). Wait for the
+  // port to free, then serve in this process on the SAME port.
+  ctx.print(`  ${StyleWarning.render("↻")}  Runtime stopped; continuing with a local server\n`);
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && (await dial("127.0.0.1", listener.port, 200))) await sleep(100);
+  return { served: false, port: listener.port };
 }
 
 export default defineCommand({
@@ -331,7 +331,8 @@ export default defineCommand({
 
     // The daemon serves the UI when it can (spec D6). --tunnel keeps the in-process server: the
     // tunnel manager is tied to the process that owns the listener.
-    if (!tunnelFlag && store) {
+    // --dev logs verbosely to this terminal, so it stays in-process too.
+    if (!tunnelFlag && !dev && store) {
       const outcome = await serveFromDaemon(ctx, {
         port,
         storeRoot: store.root,
@@ -342,7 +343,8 @@ export default defineCommand({
         allowTaskHardDelete,
         shouldOpen,
       });
-      if (outcome === "served") return;
+      if (outcome.served) return;
+      port = outcome.port;
     }
 
     const { Server } = await import("../../server/index.ts");

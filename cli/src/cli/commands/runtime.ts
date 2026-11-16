@@ -82,7 +82,7 @@ const status = defineCommand({
     }
     // Sessions, UI listeners and proxy fallbacks of the shared daemon (KN-A1Q129); nothing when none.
     const live = await import("../../runtime/live-lines.ts");
-    const view = live.loadLiveView();
+    const view = live.loadLiveView(ctx.env);
     if (!live.liveViewEmpty(view)) ctx.print(`\n${live.liveViewLines(view).join("\n")}\n`);
   },
 });

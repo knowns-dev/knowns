@@ -1496,7 +1496,7 @@ installation state, use knowns runtime status. For raw logs, use knowns runtime 
         const services = detectAllServices(await projectStore(ctx), ctx.env);
         // A Go map: keys come out sorted.
         const live = await import("../../runtime/live-lines.ts");
-        const view = live.loadLiveView();
+        const view = live.loadLiveView(ctx.env);
         ctx.printJSON({
           ...(live.liveViewEmpty(view) ? {} : { mcp: live.liveViewJson(view) }),
           options: opts,
@@ -1511,7 +1511,7 @@ installation state, use knowns runtime status. For raw logs, use knowns runtime 
       }
       if (watch) ctx.print("\x1b[2J\x1b[H");
       const live = await import("../../runtime/live-lines.ts");
-      const view = live.loadLiveView();
+      const view = live.loadLiveView(ctx.env);
       const extra = live.liveViewEmpty(view) ? "" : `\n${live.liveViewLines(view).join("\n")}\n`;
       if (ctx.plain) {
         ctx.print(renderPsPlain(status, snapshots, summary, opts, semantic, reload) + extra);
