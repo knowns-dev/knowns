@@ -75,7 +75,7 @@ export function endpointAddress(
 }
 
 /** Throws when a directory that must be private to this user is not. */
-function ensurePrivateDir(dir: string): void {
+export function ensurePrivateDir(dir: string): void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   if (isWindows) return;
   const st = lstatSync(dir);
@@ -88,7 +88,7 @@ function ensurePrivateDir(dir: string): void {
 }
 
 /** On Windows the pipe is not a trust boundary, so the token file must sit in the user's profile. */
-function checkDescriptorLocation(root: string): void {
+export function checkDescriptorLocation(root: string): void {
   if (!isWindows) return;
   if ((process.env[ENV_RUNTIME_ROOT] ?? "").trim() !== "") return;
   const home = homedir();
