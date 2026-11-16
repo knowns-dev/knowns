@@ -763,3 +763,38 @@ func TestNonStringMethodIsNotTracked(t *testing.T) {
 		t.Fatal("the proxy kept waiting for an answer that will never come")
 	}
 }
+
+// The engine answers {"jsonrpc":2,...} with an id-less error, so the request stays "in flight". At
+// a clean end that must not produce a second, invented answer.
+func TestCleanEndAfterAnIdlessErrorAddsNothing(t *testing.T) {
+	e := newEnv(t)
+	e.startDaemon(func(c net.Conn, br *bufio.Reader) {
+		defer c.Close()
+		for {
+			line, err := br.ReadBytes('\n')
+			if err != nil || isControl(line) {
+				return
+			}
+			c.Write([]byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Failed to parse message"}}` + "\n"))
+		}
+	})
+	h := start(t, "")
+	h.send(`{"jsonrpc":2,"id":21,"method":"ping"}`)
+	h.recv(t)
+	h.in.Close()
+	select {
+	case code := <-h.done:
+		if code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no clean end")
+	}
+	rest, _ := io.ReadAll(h.out)
+	if len(strings.TrimSpace(string(rest))) != 0 {
+		t.Fatalf("extra output after the clean end: %q", rest)
+	}
+	if len(e.events()) != 0 {
+		t.Fatalf("a clean end is not a fallback: %v", e.events())
+	}
+}
