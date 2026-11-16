@@ -199,8 +199,24 @@ async function editThroughDaemon(workers: "0" | "1"): Promise<string[]> {
       },
       `status projects: ${readFileSyncSafe(join(runtime, "status.json")).slice(0, 300)}`,
     );
-    await sleep(3000);
     const store = join(sb.dir, ".knowns");
+    // The startup reconcile (watcher start, index jobs) runs at its own pace, slower on a loaded
+    // machine: a fixed sleep let the edit land in the middle of it, so the history of the two
+    // runs differed in length. Wait until the store has been quiet for 2 s instead.
+    const settle = async (): Promise<void> => {
+      let last = JSON.stringify(listFiles(store));
+      let since = Date.now();
+      const stop = Date.now() + 40_000;
+      while (Date.now() - since < 2000 && Date.now() < stop) {
+        await sleep(200);
+        const now = JSON.stringify(listFiles(store));
+        if (now !== last) {
+          last = now;
+          since = Date.now();
+        }
+      }
+    };
+    await settle();
     const before = new Set(listFiles(store));
     appendFileSync(
       join(store, "docs", "architecture.md"),
