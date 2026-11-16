@@ -28,6 +28,7 @@ import {
   routingPath,
 } from "./http.ts";
 import { createLspManager, lspRuntimeStatuses, registerLsp } from "./lsp.ts";
+import { OperationRegistry } from "./operations.ts";
 import { registerConfig } from "./routes/config.ts";
 import { registerDecisions } from "./routes/decisions.ts";
 import { registerDocs } from "./routes/docs.ts";
@@ -41,6 +42,7 @@ import {
   registerSmall,
   registerWorkspaces,
 } from "./routes/misc.ts";
+import { registerOperations } from "./routes/operations.ts";
 import { lifecycleService, registerTasks } from "./routes/tasks.ts";
 import { registerTemplates, registerValidate } from "./routes/templates.ts";
 import { registerTime } from "./routes/time.ts";
@@ -74,6 +76,7 @@ export class Server {
   });
   private serviceMonitor: ServiceMonitor | undefined;
   private unsubStatus: (() => void) | undefined;
+  private readonly operations: OperationRegistry;
   private sweepTimer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
   private readonly app: App;
@@ -113,8 +116,14 @@ export class Server {
       }
     }
 
+    this.operations = new OperationRegistry({
+      emit: (name, data) => this.sse.broadcast({ type: name, data }),
+      jobs: async () => import("../runtime/job-operations.ts"),
+    });
+    this.sse.onChange = (n) => this.operations.clientsChanged(n);
     this.app = {
       sse: this.sse,
+      operations: this.operations,
       watchServices: () => this.watchServices(),
       auth: this.auth,
       manager: this.manager,
@@ -161,6 +170,7 @@ export class Server {
     });
     r.post("/api/runtime/retry", (c) => this.handleRuntimeRetry(c));
 
+    registerOperations(r, app);
     registerTasks(r, app);
     registerDocs(r, app);
     registerConfig(r, app);
@@ -532,7 +542,10 @@ export class Server {
       done,
       stop: () => this.shutdownResolve?.(),
       onClients: (cb) => {
-        this.sse.onChange = cb;
+        this.sse.onChange = (n) => {
+          this.operations.clientsChanged(n);
+          cb(n);
+        };
       },
     };
   }
@@ -566,6 +579,7 @@ export class Server {
       if (this.sweepTimer) clearInterval(this.sweepTimer);
     });
     await step(() => this.unsubStatus?.());
+    await step(() => this.operations.close());
     await step(() => this.sse.closeAll());
     await step(() => this.bun?.stop(true));
     await step(() => {
