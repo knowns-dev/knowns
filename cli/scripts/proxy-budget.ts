@@ -1,5 +1,5 @@
 // Spec mcp-thin-proxy D7 / NFR-1..3: the resource budget of the thin proxy, measured on the built
-// binaries (cli/dist/<platform>/knowns[.exe] and knowns-proxy[.exe]) on macOS, Linux and Windows.
+// binaries (cli/dist/<platform>/knowns[.exe], the engine, and knowns.launcher[.exe]) on macOS, Linux and Windows.
 //   1. p95 of each tool through the proxy against the in-process engine (KNOWNS_MCP_PROXY=0)
 //   2. N proxy sessions (and optionally the UI) under load, then idle: working set per process and
 //      CPU, against the limits in proxy-budget.config.json
@@ -33,7 +33,7 @@ const platDir = val(
 );
 const bin = (n: string) => resolve(cliDir, platDir, isWin ? `${n}.exe` : n);
 const KNOWNS = bin("knowns");
-const PROXY = bin("knowns-proxy");
+const PROXY = bin("knowns.launcher");
 for (const f of [KNOWNS, PROXY])
   if (!existsSync(f)) throw new Error(`missing ${f}; run bun run build first`);
 
