@@ -36,6 +36,43 @@ function registry(over: Partial<ConstructorParameters<typeof OperationRegistry>[
 const names = (seen: Seen[]) => seen.map((s) => s.name);
 
 describe("OperationRegistry", () => {
+  test("the queue watch exists only while an event stream is open, and a poke re-reads the source", async () => {
+    let started = 0;
+    let stopped = 0;
+    let observed = 0;
+    let poke: (() => void) | undefined;
+    const src: JobOperationSource = {
+      listJobOperations: () => [],
+      onJobOperation: () => () => {},
+      cancelJobOperation: async () => "gone",
+      retryJobOperation: async () => false,
+      observeJobs: () => {
+        observed++;
+      },
+    };
+    const reg = new OperationRegistry({
+      emit: () => {},
+      jobs: async () => src,
+      watchJobs: (p) => {
+        started++;
+        poke = p;
+        return () => {
+          stopped++;
+        };
+      },
+    });
+    expect(started).toBe(0);
+    reg.clientsChanged(1);
+    await Bun.sleep(20);
+    expect({ started, observed }).toEqual({ started: 1, observed: 1 }); // baseline taken at attach
+    poke?.();
+    expect(observed).toBe(2);
+    reg.clientsChanged(0);
+    expect(stopped).toBe(1);
+    poke?.(); // a late poke after detach does nothing harmful
+    reg.close();
+  });
+
   test("a burst of progress is coalesced: leading edge, then at most one event per window", async () => {
     const { reg, seen } = registry();
     const h = reg.start({

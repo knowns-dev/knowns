@@ -75,6 +75,8 @@ export interface JobOperationSource {
   onJobOperation(cb: (op: Operation) => void): () => void;
   cancelJobOperation(projectRoot: string, jobId: string): Promise<JobCancelResult>;
   retryJobOperation(projectRoot: string, jobId: string): Promise<boolean>;
+  /** Re-reads the queues and reports what changed to the subscribers (the daemon loop calls it on its tick; a server without that loop calls it from a directory watch). */
+  observeJobs?(): void;
 }
 
 export const OPERATION_EVENT_MIN_INTERVAL_MS = 250;

@@ -21,6 +21,12 @@ export interface RegistryDeps {
   emit: (name: OperationEventName, data: OperationEvent | OperationRemovedEvent) => void;
   /** The daemon job source (loaded lazily); undefined when there is none (foreground server). */
   jobs?: () => Promise<JobOperationSource | undefined>;
+  /**
+   * Starts whatever tells this process that a queue changed (a directory watch); `poke` makes the
+   * job source re-read the queues. Returns the stop function. Used only while an event stream is
+   * open and only for a server that does not run the daemon loop itself, which observes on its own.
+   */
+  watchJobs?: (poke: () => void) => () => void;
   now?: () => number;
   minIntervalMs?: number;
   doneExpiryMs?: number;
@@ -79,6 +85,7 @@ export class OperationRegistry {
   private counter = 0;
   private clients = 0;
   private jobSource: JobOperationSource | undefined;
+  private stopWatch: (() => void) | undefined;
   private unsubJobs: (() => void) | undefined;
   private closed = false;
   private readonly now: () => number;
@@ -286,10 +293,16 @@ export class OperationRegistry {
     if (!src || this.closed || this.clients === 0 || this.unsubJobs) return;
     this.jobSource = src;
     this.unsubJobs = src.onJobOperation((op) => this.mergeJob(op));
+    // The first observation is the source's baseline: take it before the snapshot, so a change
+    // between the two is reported rather than lost.
+    src.observeJobs?.();
+    this.stopWatch = this.deps.watchJobs?.(() => this.jobSource?.observeJobs?.());
     this.refreshJobs();
   }
 
   private detachJobs(): void {
+    this.stopWatch?.();
+    this.stopWatch = undefined;
     this.unsubJobs?.();
     this.unsubJobs = undefined;
   }

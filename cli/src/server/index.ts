@@ -27,6 +27,7 @@ import {
   respondError,
   routingPath,
 } from "./http.ts";
+import { watchJobQueues } from "./job-watch.ts";
 import { createLspManager, lspRuntimeStatuses, registerLsp } from "./lsp.ts";
 import { OperationRegistry } from "./operations.ts";
 import { registerConfig } from "./routes/config.ts";
@@ -119,6 +120,7 @@ export class Server {
     this.operations = new OperationRegistry({
       emit: (name, data) => this.sse.broadcast({ type: name, data }),
       jobs: async () => import("../runtime/job-operations.ts"),
+      watchJobs: (poke) => watchJobQueues(poke),
     });
     this.sse.onChange = (n) => this.operations.clientsChanged(n);
     this.app = {
