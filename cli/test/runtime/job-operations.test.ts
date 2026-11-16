@@ -22,6 +22,7 @@ beforeAll(() => {
   restoreHome = setProcessHome(home);
   prevInline = process.env.KNOWNS_RUNTIME_INLINE;
   process.env.KNOWNS_RUNTIME_INLINE = "1";
+  process.env.KNOWNS_JOB_CANCEL_GRACE_MS = "40";
   mkdirSync(root, { recursive: true });
 });
 afterAll(() => {
@@ -100,7 +101,10 @@ describe("job operations", () => {
     ops.observeJobs([root]);
     expect(await ops.cancelJobOperation(root, job.id)).toBe("cancelled");
     expect(q.loadQueue(root).jobs).toHaveLength(0);
+    expect(got.at(-1)).toMatchObject({ state: "cancelling", cancellable: false });
+    await Bun.sleep(80); // the grace window passes with no start and no result
     expect(got.at(-1)).toMatchObject({ state: "cancelled", cancellable: false });
+    expect(cancelRequested(job.id)).toBe(false);
     expect(await ops.cancelJobOperation(root, job.id)).toBe("gone");
     off();
   });
@@ -149,9 +153,12 @@ describe("job operations", () => {
     ops.observeJobs([root]);
     expect(await ops.cancelJobOperation(root, job.id)).toBe("cancelled");
     expect(cancelRequested(job.id)).toBe(true);
+    expect(got.at(-1)).toMatchObject({ state: "cancelling" });
     q.completeJob(root, held, undefined); // it was not cancellable: it finishes
     ops.observeJobs([root]);
     expect(got.at(-1)).toMatchObject({ id: `job:${job.id}`, state: "done" });
+    await Bun.sleep(80);
+    expect(got.map((o) => o.state)).toEqual(["cancelling", "done"]); // never cancelled -> done
     clearJobCancel(job.id);
     off();
   });
@@ -167,7 +174,8 @@ describe("job operations", () => {
     expect(cancelRequested(job.id)).toBe(true); // the runner's first check sees it
     q.completeJob(root, held, new JobCancelledError());
     ops.observeJobs([root]);
-    expect(got.at(-1)).toMatchObject({ state: "cancelled" });
+    await Bun.sleep(80);
+    expect(got.map((o) => o.state)).toEqual(["cancelling", "cancelled"]);
     clearJobCancel(job.id);
     off();
   });

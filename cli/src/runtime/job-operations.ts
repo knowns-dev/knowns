@@ -6,7 +6,12 @@
 // diffs the queues against what it reported last and calls the subscribers. The queue format is
 // untouched, so 0.34.x reads the same files.
 import { basename, dirname } from "node:path";
-import { cancelRequested, isCancellableKind, requestJobCancel } from "./job-cancel.ts";
+import {
+  cancelRequested,
+  clearJobCancel,
+  isCancellableKind,
+  requestJobCancel,
+} from "./job-cancel.ts";
 import type { JobCancelResult, Operation, OperationState } from "./operation-types.ts";
 import {
   enqueueReindex,
@@ -139,6 +144,22 @@ let seen: Map<string, string> | undefined;
 const reportedResults = new Set<string>();
 const MAX_REPORTED = 500;
 
+/**
+ * A cancelled queued job is "cancelling" until the outcome is certain: its result arrives (the
+ * runner had already taken it) or this long passes with neither a start nor a result. It is longer
+ * than the runner's start-mark delay (300 ms).
+ */
+const cancelGraceMs = (): number => Number(process.env.KNOWNS_JOB_CANCEL_GRACE_MS) || 1000;
+const pendingCancel = new Map<string, { op: Operation; timer: ReturnType<typeof setTimeout> }>();
+
+function settleCancel(id: string): void {
+  const p = pendingCancel.get(id);
+  if (!p) return;
+  pendingCancel.delete(id);
+  clearTimeout(p.timer);
+  clearJobCancel(id.slice("job:".length));
+}
+
 const sig = (o: Operation): string =>
   `${o.state}|${o.progress?.done ?? ""}/${o.progress?.total ?? ""}|${o.message ?? ""}|${o.error ?? ""}|${o.cancellable}`;
 
@@ -147,6 +168,7 @@ export function onJobOperation(cb: (op: Operation) => void): () => void {
   return () => {
     listeners.delete(cb);
     if (listeners.size === 0) {
+      for (const id of [...pendingCancel.keys()]) settleCancel(id);
       seen = undefined;
       reportedResults.clear();
     }
@@ -202,6 +224,7 @@ export function observeJobs(projects: string[] = readProjects()): void {
     }
     if (now.has(id)) continue; // a retry copy of the same job is back in the queue
     reportedResults.add(id);
+    settleCancel(id);
     emit(resultOperation(root, r));
   }
   if (reportedResults.size > MAX_REPORTED) {
@@ -254,16 +277,25 @@ export async function cancelJobOperation(
   // the result of any job it has not reported a result for.
   requestJobCancel(jobId);
   const op = jobOperation(projectRoot, removed, false);
-  const t = Date.now();
-  emit({
+  const id = `job:${jobId}`;
+  const cancelling: Operation = {
     ...op,
-    state: "cancelled",
+    state: "cancelling",
     cancellable: false,
     retryable: false,
     message: "Removed from the queue",
-    updatedAt: t,
-    finishedAt: t,
-  });
+    updatedAt: Date.now(),
+  };
+  emit(cancelling);
+  const timer = setTimeout(() => {
+    const p = pendingCancel.get(id);
+    if (!p) return;
+    settleCancel(id);
+    const t = Date.now();
+    emit({ ...p.op, state: "cancelled", updatedAt: t, finishedAt: t });
+  }, cancelGraceMs());
+  timer.unref?.();
+  pendingCancel.set(id, { op: cancelling, timer });
   if (seen) seen.delete(`job:${jobId}`);
   return "cancelled";
 }
