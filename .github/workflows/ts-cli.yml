@@ -60,6 +60,11 @@ jobs:
           go-version-file: go.mod
           cache: false
       # The Go binary embeds ui/dist (ui/embed.go), so the UI must be built first.
+      # The Go launcher (the `knowns` command, spec mcp-thin-proxy D10): its tests build it and a fake
+      # engine, and run on all three OSes. Linux and macOS cover TTY detection under a pty (script(1)).
+      - name: Test the launcher
+        working-directory: proxy
+        run: go test -count=1 -timeout 10m ./...
       - name: Build UI
         working-directory: ui
         run: bun install --frozen-lockfile && bun run build
