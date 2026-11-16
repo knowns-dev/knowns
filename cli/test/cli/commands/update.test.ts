@@ -158,6 +158,11 @@ function seams(overrides: Partial<typeof updateSeams>): void {
     // Package-manager upgrades are deferred on Windows; tests that want that say so.
     goos: () => "linux",
     restartRuntime: async () => {},
+    // Fail closed: a test that reaches a package manager, brew or curl without saying so must
+    // throw, never run the real command on the developer's machine.
+    run: async (bin: string, args: string[]) => {
+      throw new Error(`unstubbed run: ${bin} ${args.join(" ")}`);
+    },
     releaseUrl: () => `${base()}/knowns-linux-x64.tar.gz`,
     ...overrides,
   });
