@@ -463,12 +463,30 @@ export function resultJson(r: JobResult): unknown {
   };
 }
 
+/** Directories this process already created: a recursive mkdir is a syscall on every write. A
+ * removed directory is noticed by the write failing with ENOENT, which creates it and retries. */
+const madeDirs = new Set<string>();
+function ensureDir(dir: string): void {
+  if (madeDirs.has(dir)) return;
+  mkdirSync(dir, { recursive: true, mode: 0o755 });
+  madeDirs.add(dir);
+}
+
 function writeJSON(path: string, value: unknown): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o755 });
+  const dir = dirname(path);
+  ensureDir(dir);
   const tmp = `${path}.tmp`;
   const body = `${goJson(value, { indent: 2 })}\n`;
   // Windows: a scanner or another handle can still hold the tmp from the previous write.
-  retryWhileBusy(() => writeFileSync(tmp, body, { mode: 0o644 }));
+  const write = (): void => retryWhileBusy(() => writeFileSync(tmp, body, { mode: 0o644 }));
+  try {
+    write();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    madeDirs.delete(dir);
+    ensureDir(dir);
+    write();
+  }
   renameOverFile(tmp, path);
 }
 
@@ -522,8 +540,11 @@ function readJSONRetrying(path: string): unknown {
 
 // --- locking (O_EXCL lock files, like Go) -------------------------------------------------------
 
+const LOCK_POLL_MS = 20;
+const START_MARK_DELAY_MS = 300;
+
 function acquireLock(path: string, timeoutMs: number): () => void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o755 });
+  ensureDir(dirname(path));
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     try {
@@ -543,7 +564,37 @@ function acquireLock(path: string, timeoutMs: number): () => void {
       // vanished: retry
     }
     if (Date.now() > deadline) throw new Error(`timed out waiting for lock ${path}`);
-    sleepSync(50);
+    sleepSync(LOCK_POLL_MS);
+  }
+}
+
+/** acquireLock for callers that can await: waiting for the holder does not block the event loop. */
+async function acquireLockAsync(path: string, timeoutMs: number): Promise<() => void> {
+  ensureDir(dirname(path));
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      writeFileSync(path, String(process.pid), { flag: "wx", mode: 0o644 });
+      return () => retryWhileBusy(() => rmSync(path, { force: true }));
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        madeDirs.delete(dirname(path));
+        ensureDir(dirname(path));
+        continue;
+      }
+      if (code !== "EEXIST" && !isWindowsFileBusy(err)) throw err;
+    }
+    try {
+      if (Date.now() - statSync(path).mtimeMs > DEFAULT_LOCK_STALE_AGE_MS) {
+        rmSync(path, { force: true });
+        continue;
+      }
+    } catch {
+      // vanished: retry
+    }
+    if (Date.now() > deadline) throw new Error(`timed out waiting for lock ${path}`);
+    await sleep(LOCK_POLL_MS);
   }
 }
 
@@ -578,12 +629,23 @@ interface QueueScanEntry {
 const queueScanCache = new Map<string, QueueScanEntry>();
 const EMPTY_ENTRY: QueueScanEntry = { sig: "", state: { jobs: [], recent: [] }, live: [] };
 
+const fileSig = (st: { mtimeMs: number; ctimeMs: number; size: number; ino: number }): string =>
+  `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
+
+function buildEntry(sig: string, state: QueueState): QueueScanEntry {
+  const live = state.jobs
+    .filter((j) => !j.deadLetter && KNOWN_JOB_KINDS.has(j.kind))
+    .map((job) => ({ job, due: parseMs(job.runAfter), req: parseMs(job.requestedAt) }))
+    .sort((a, b) => a.due - b.due || a.req - b.req)
+    .map(({ job, due }) => ({ job, due }));
+  return { sig, state, live };
+}
+
 function loadQueueEntry(storeRoot: string): QueueScanEntry {
   const path = queuePath(storeRoot);
   let sig: string;
   try {
-    const st = statSync(path);
-    sig = `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
+    sig = fileSig(statSync(path));
   } catch (err) {
     queueScanCache.delete(path);
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return EMPTY_ENTRY;
@@ -591,15 +653,43 @@ function loadQueueEntry(storeRoot: string): QueueScanEntry {
   }
   const hit = queueScanCache.get(path);
   if (hit && hit.sig === sig) return hit;
-  const state = loadQueue(storeRoot);
-  const live = state.jobs
-    .filter((j) => !j.deadLetter && KNOWN_JOB_KINDS.has(j.kind))
-    .map((job) => ({ job, due: parseMs(job.runAfter), req: parseMs(job.requestedAt) }))
-    .sort((a, b) => a.due - b.due || a.req - b.req)
-    .map(({ job, due }) => ({ job, due }));
-  const entry: QueueScanEntry = { sig, state, live };
+  const entry = buildEntry(sig, loadQueue(storeRoot));
   queueScanCache.set(path, entry);
   return entry;
+}
+
+/**
+ * The state for a read-modify-write under the queue lock. When the file is the one this process
+ * last read or wrote (same signature) the parsed state is reused instead of parsed again: while
+ * the lock is held nobody else can have changed it. The copy is one level deep, which is all the
+ * mutators touch.
+ */
+function loadForUpdate(storeRoot: string): QueueState {
+  const path = queuePath(storeRoot);
+  try {
+    const hit = queueScanCache.get(path);
+    if (hit && hit.sig === fileSig(statSync(path))) {
+      const s = hit.state;
+      return {
+        jobs: s.jobs.map((j) => ({ ...j })),
+        recent: (s.recent ?? []).slice(),
+        ...(s.updatedAt ? { updatedAt: s.updatedAt } : {}),
+      };
+    }
+  } catch {
+    // missing or unreadable: the ordinary load decides
+  }
+  return loadQueue(storeRoot);
+}
+
+/** After our own write the file's signature is known: the next read is a cache hit, not a parse. */
+function rememberWritten(storeRoot: string, state: QueueState): void {
+  const path = queuePath(storeRoot);
+  try {
+    queueScanCache.set(path, buildEntry(fileSig(statSync(path)), state));
+  } catch {
+    queueScanCache.delete(path);
+  }
 }
 
 export function loadQueueCached(storeRoot: string): QueueState {
@@ -614,14 +704,32 @@ function stateJson(state: QueueState): unknown {
   };
 }
 
+function applyUpdate(storeRoot: string, fn: (state: QueueState) => void): void {
+  const state = loadForUpdate(storeRoot);
+  fn(state);
+  pruneDeadLetters(storeRoot, state, Date.now());
+  state.updatedAt = nowString();
+  writeJSON(queuePath(storeRoot), stateJson(state));
+  rememberWritten(storeRoot, state);
+}
+
 export function updateQueue(storeRoot: string, fn: (state: QueueState) => void): void {
   const unlock = acquireLock(`${queuePath(storeRoot)}.lock`, DEFAULT_LOCK_TIMEOUT_MS);
   try {
-    const state = loadQueue(storeRoot);
-    fn(state);
-    pruneDeadLetters(storeRoot, state, Date.now());
-    state.updatedAt = nowString();
-    writeJSON(queuePath(storeRoot), stateJson(state));
+    applyUpdate(storeRoot, fn);
+  } finally {
+    unlock();
+  }
+}
+
+/** updateQueue for callers that can await (the daemon): waiting for the lock never blocks it. */
+export async function updateQueueAsync(
+  storeRoot: string,
+  fn: (state: QueueState) => void,
+): Promise<void> {
+  const unlock = await acquireLockAsync(`${queuePath(storeRoot)}.lock`, DEFAULT_LOCK_TIMEOUT_MS);
+  try {
+    applyUpdate(storeRoot, fn);
   } finally {
     unlock();
   }
@@ -1092,10 +1200,19 @@ export function jobKey(kind: JobKind, target: string): string {
   return `${kind}::${target}`;
 }
 
+/** When this process last registered a project and checked the daemon for it. */
+const preparedAt = new Map<string, number>();
+const PREPARE_TTL_MS = 5_000;
+
 function prepareEnqueue(storeRoot: string): void {
-  mkdirSync(dirname(queuePath(storeRoot)), { recursive: true, mode: 0o755 });
+  // Registering the project and checking for a daemon cost a lock, two file reads and a write; a
+  // burst of enqueues for one project does them once, not once per job.
+  const last = preparedAt.get(storeRoot);
+  if (last !== undefined && Date.now() - last < PREPARE_TTL_MS) return;
+  ensureDir(dirname(queuePath(storeRoot)));
   registerProject(storeRoot);
   ensureDaemon();
+  preparedAt.set(storeRoot, Date.now());
 }
 
 function enqueue(storeRoot: string, kind: JobKind, target: string): Job {
@@ -1303,16 +1420,26 @@ export function loadJobSnapshot(storeRoot: string, jobId: string): JobSnapshot {
   return { found: false, completed: false };
 }
 
-export function markJobStarted(storeRoot: string, jobId: string): Job {
-  let started: Job | undefined;
-  updateQueue(storeRoot, (state) => {
+function startMutation(jobId: string, out: { job?: Job }): (state: QueueState) => void {
+  return (state) => {
     const job = state.jobs.find((j) => j.id === jobId);
     if (!job) throw new Error(`job ${jobId} not found`);
     job.startedAt = nowString();
     job.attempts = (job.attempts ?? 0) + 1;
-    started = { ...job };
-  });
-  return started as unknown as Job;
+    out.job = { ...job };
+  };
+}
+
+export function markJobStarted(storeRoot: string, jobId: string): Job {
+  const out: { job?: Job } = {};
+  updateQueue(storeRoot, startMutation(jobId, out));
+  return out.job as Job;
+}
+
+export async function markJobStartedAsync(storeRoot: string, jobId: string): Promise<Job> {
+  const out: { job?: Job } = {};
+  await updateQueueAsync(storeRoot, startMutation(jobId, out));
+  return out.job as Job;
 }
 
 export function reportProgress(
@@ -1345,7 +1472,19 @@ export function qdrantRetryDelayMs(attempt: number): number {
 }
 
 export function completeJob(storeRoot: string, job: Job, err: Error | undefined): void {
-  updateQueue(storeRoot, (state) => {
+  updateQueue(storeRoot, completeMutation(job, err));
+}
+
+export async function completeJobAsync(
+  storeRoot: string,
+  job: Job,
+  err: Error | undefined,
+): Promise<void> {
+  await updateQueueAsync(storeRoot, completeMutation(job, err));
+}
+
+function completeMutation(job: Job, err: Error | undefined): (state: QueueState) => void {
+  return (state) => {
     let finalJob: Job = job;
     let queuedCurrent: Job | undefined;
     const jobs: Job[] = [];
@@ -1414,7 +1553,7 @@ export function completeJob(storeRoot: string, job: Job, err: Error | undefined)
       };
     }
     state.recent = [result, ...(state.recent ?? [])].slice(0, MAX_RECENT_RESULTS);
-  });
+  };
 }
 
 // --- dead letters -------------------------------------------------------------------------------
@@ -1472,10 +1611,16 @@ export class ClientHandle {
     const now = Date.now();
     this.lease.updatedAt = nowString(now);
     this.lease.expiresAt = nowString(now + leaseTtlMs());
-    mkdirSync(leaseDir(), { recursive: true, mode: 0o755 });
-    writeFileSync(leasePath(this.lease.id), `${goJson(leaseJson(this.lease), { indent: 2 })}\n`, {
-      mode: 0o644,
-    });
+    ensureDir(leaseDir());
+    const body = `${goJson(leaseJson(this.lease), { indent: 2 })}\n`;
+    try {
+      writeFileSync(leasePath(this.lease.id), body, { mode: 0o644 });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      madeDirs.delete(leaseDir());
+      ensureDir(leaseDir());
+      writeFileSync(leasePath(this.lease.id), body, { mode: 0o644 });
+    }
   }
 
   release(): void {
@@ -1603,10 +1748,19 @@ export function startHeartbeat(signal: AbortSignal, handle: ClientHandle): void 
 const leaseScanCache = new Map<string, { sig: string; lease: Lease }>();
 
 export function activeLeases(): Lease[] {
-  mkdirSync(leaseDir(), { recursive: true, mode: 0o755 });
+  ensureDir(leaseDir());
   const now = Date.now();
   const leases: Lease[] = [];
-  for (const name of readdirSync(leaseDir())) {
+  let names: string[];
+  try {
+    names = readdirSync(leaseDir());
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    madeDirs.delete(leaseDir());
+    ensureDir(leaseDir());
+    names = [];
+  }
+  for (const name of names) {
     const path = join(leaseDir(), name);
     if (extname(name) !== ".json") continue;
     let lease: Lease;
@@ -2079,7 +2233,14 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
   const services = (opts.services ?? []).map((run) => run(serviceAbort.signal).catch(() => {}));
   const watchLifecycle = new WatchLifecycle();
   let running:
-    | { storeRoot: string; job: Job; done: Promise<Error | undefined>; startedMs: number }
+    | {
+        storeRoot: string;
+        job: Job;
+        done: Promise<Error | undefined>;
+        startedMs: number;
+        /** Cancels the deferred start mark; undefined once the mark is on disk. */
+        cancelStartMark?: () => Promise<boolean>;
+      }
     | undefined;
   let idleSince = 0;
   // Idle cost: the tick backs off from POLL to IDLE_POLL_MAX_MS while nothing changes, and a file
@@ -2186,7 +2347,14 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
         if (scan.next && !next) busy = true;
         if (next) {
           try {
-            const started = markJobStarted(next.storeRoot, next.job.id);
+            // The start mark (startedAt, attempts) is written only when the job runs longer than
+            // START_MARK_DELAY_MS; a quick job gets it together with its completion, in one
+            // rewrite of the queue file instead of two.
+            const started: Job = {
+              ...next.job,
+              startedAt: nowString(),
+              attempts: (next.job.attempts ?? 0) + 1,
+            };
             lastServed = next.storeRoot;
             const done = (async (): Promise<Error | undefined> => {
               try {
@@ -2196,11 +2364,23 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
                 return err instanceof Error ? err : new Error(String(err));
               }
             })();
+            let markPending = true;
+            let markInFlight: Promise<unknown> | undefined;
+            const markTimer = setTimeout(() => {
+              markPending = false;
+              markInFlight = markJobStartedAsync(next.storeRoot, next.job.id).catch(() => {});
+            }, START_MARK_DELAY_MS);
             running = {
               storeRoot: next.storeRoot,
               job: started,
               done,
               startedMs: Date.now(),
+              cancelStartMark: async () => {
+                clearTimeout(markTimer);
+                // A mark already on its way lands before the completion, never after it.
+                await markInFlight;
+                return markPending;
+              },
             };
             busy = true;
           } catch {
@@ -2269,7 +2449,19 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
         ]);
         if (outcome !== "tick") {
           try {
-            completeJob(current.storeRoot, current.job, outcome.err);
+            const markUnwritten = (await current.cancelStartMark?.()) ?? false;
+            await updateQueueAsync(
+              current.storeRoot,
+              markUnwritten
+                ? (state) => {
+                    const out: { job?: Job } = {};
+                    if (state.jobs.some((j) => j.id === current.job.id)) {
+                      startMutation(current.job.id, out)(state);
+                    }
+                    completeMutation(current.job, outcome.err)(state);
+                  }
+                : completeMutation(current.job, outcome.err),
+            );
           } catch {
             // ignore
           }

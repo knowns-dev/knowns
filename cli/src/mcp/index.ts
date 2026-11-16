@@ -141,7 +141,9 @@ export function newMcpApp(
           agentSlug(state.clientInfo),
         );
         try {
-          (await auditStore()).append(event);
+          const store = await auditStore();
+          if (opts.daemonHosted) store.appendBuffered(event);
+          else store.append(event);
         } catch (e) {
           log.printf(`audit: write failed: ${(e as Error).message}`);
         }

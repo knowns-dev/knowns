@@ -81,6 +81,8 @@ const run = defineCommand({
       ...(runtimeSeams.keepAlive ? { keepAlive: runtimeSeams.keepAlive } : {}),
     });
     await Promise.all([jobWorker?.stop(), watchWorker?.stop()]);
+    // Audit events of the hosted sessions are written in batches; nothing may be left behind.
+    await (await import("../../storage/stores/audit-store.ts")).flushAudit();
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
   },
