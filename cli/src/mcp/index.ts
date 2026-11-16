@@ -19,6 +19,7 @@ import {
 } from "./defs.ts";
 import { McpLogger } from "./log.ts";
 import { guard } from "./permissions.ts";
+import { sharedToolPool } from "./pool.ts";
 import { McpServer } from "./server.ts";
 import { McpState } from "./state.ts";
 import {
@@ -103,6 +104,7 @@ export function newMcpApp(
     version: MCP_VERSION,
     instructions: INSTRUCTIONS,
     ready: () => begin(),
+    ...(opts.daemonHosted ? { pool: sharedToolPool() } : {}),
     onInitialize: (info) => {
       state.clientInfo = info;
     },
