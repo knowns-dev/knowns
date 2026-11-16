@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { dirname, join, normalize, sep } from "node:path";
 import { z } from "zod";
-import { readFileRetrying, renameRetrying } from "../../storage/core/fs-retry.ts";
+import { readFileRetrying, renameRetrying } from "../../platform/fs-retry.ts";
 import { contentHash } from "../hash.ts";
 import { goJson } from "../json.ts";
 import { goTimeString } from "../time.ts";

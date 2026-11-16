@@ -1,14 +1,6 @@
 // Port of internal/storage/audit_store.go: append-only MCP audit events in ~/.knowns/audit.jsonl,
 // with size-based rotation (audit.jsonl.1, audit.jsonl.2).
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-} from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
