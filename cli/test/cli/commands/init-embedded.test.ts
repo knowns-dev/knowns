@@ -1,13 +1,13 @@
-// The instruction and skill content init, sync and agents write must be the bytes Go embeds
-// (`//go:embed kn-*` in internal/instructions/skills, `//go:embed unified/*.md` in
-// internal/instructions/guidelines). embedded.generated.ts is produced by scripts/gen-instructions.ts;
-// these tests read the Go source tree directly and compare, so a stale or lossy module fails.
+// The instruction and skill content init, sync and agents write must be the bytes of the sources
+// (cli/instructions/skills/kn-* and cli/instructions/guidelines/*.md). embedded.generated.ts is
+// produced by scripts/gen-instructions.ts; these tests read the source tree directly and compare,
+// so a stale or lossy module fails.
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { guidelineFiles, skillFiles } from "../../../src/domain/instructions/embedded.generated.ts";
 
-const root = resolve(import.meta.dir, "..", "..", "..", "..", "internal", "instructions");
+const root = resolve(import.meta.dir, "..", "..", "..", "instructions");
 
 /** go:embed rule for directories: skip names starting with "." or "_". */
 function walk(dir: string): string[] {
@@ -20,7 +20,7 @@ function walk(dir: string): string[] {
     });
 }
 
-describe("embedded instructions are the bytes Go embeds", () => {
+describe("embedded instructions are the bytes of cli/instructions", () => {
   test("skills: same files, byte for byte", () => {
     const base = join(root, "skills");
     const dirs = readdirSync(base).filter(
@@ -39,7 +39,7 @@ describe("embedded instructions are the bytes Go embeds", () => {
   });
 
   test("guidelines: unified/*.md, byte for byte", () => {
-    const base = join(root, "guidelines", "unified");
+    const base = join(root, "guidelines");
     const names = readdirSync(base)
       .filter((n) => n.endsWith(".md"))
       .sort();

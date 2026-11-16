@@ -3,7 +3,7 @@ id: doc-0d348a7070f27690ec75bcd4b23881dd
 title: Developer Guide
 description: Technical documentation for contributors and developers
 createdAt: '2025-12-29T11:50:54.275Z'
-updatedAt: '2026-11-06T10:22:01.905Z'
+updatedAt: '2026-11-16T07:07:50.610Z'
 tags:
   - docs
   - developer

@@ -66,11 +66,13 @@ irm https://knowns.sh/script/install.ps1 | iex
 
 ## Build từ source
 
+Cần [Bun](https://bun.sh) 1.3.12+.
+
 ```bash
-go build -o ./bin/knowns ./cmd/knowns
+make build   # binary cho máy hiện tại -> cli/dist/<os>-<arch>/knowns
 ```
 
-Dùng khi đang dev chính Knowns.
+`make ts-build` build cả 6 target. Dùng khi đang dev chính Knowns.
 
 ## Kiểm tra
 

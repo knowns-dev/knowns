@@ -25,6 +25,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
+import { builtinSkill } from "../../helpers/builtin-skills.ts";
 import { withProcessEnv } from "../../helpers/process-env.ts";
 import { GO_BIN, hasGoBin, normalizeGo, type Result, runTs } from "../oracle.ts";
 
@@ -187,7 +188,10 @@ export function snapshotTree(root: string, p: InitProject, skip: (rel: string) =
       if (st.isDirectory()) {
         out.set(`${rel}/`, mode);
         walk(full);
-      } else out.set(rel, `${mode} ${normalizeInit(readFileSync(full, "utf8"), p)}`);
+      } else {
+        const text = readFileSync(full, "utf8");
+        out.set(rel, `${mode} ${builtinSkill(rel, text) ?? normalizeInit(text, p)}`);
+      }
     }
   };
   walk(root);

@@ -1,6 +1,6 @@
 // Port of internal/codegen/skill_sync.go (the skill half) and the instruction-file rendering in
 // internal/cli/init.go + sync.go. Skills come from the generated embed of
-// internal/instructions/skills, so a sync writes the bytes Go embeds.
+// cli/instructions/skills (scripts/gen-instructions.ts).
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { guidelineFiles, skillFiles } from "./embedded.generated.ts";

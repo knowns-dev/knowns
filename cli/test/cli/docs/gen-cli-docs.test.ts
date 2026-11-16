@@ -21,6 +21,7 @@ import {
 } from "../../../src/cli/docs/lint.ts";
 import { renderPage, renderTree } from "../../../src/cli/docs/render.ts";
 import { loadCommandTree } from "../../../src/cli/docs/tree.ts";
+import { GO_SRC, hasGoSrc } from "../../helpers/go-src.ts";
 import { withoutHotfix } from "../../helpers/kn-prgzms.ts";
 
 const CLI = resolve(import.meta.dir, "../../..");
@@ -145,22 +146,20 @@ describe("CLI reference from the TS command tree", () => {
   });
 });
 
-// --- against tools/gendocs (Go 0.34.1) -----------------------------------------------------------
+// --- against tools/gendocs (Go 0.34.1), built from the pinned Go checkout (test/helpers/go-src.ts) -
 
-const hasGo = Bun.which("go") !== null;
+const hasGo = hasGoSrc;
 let goDir: string | undefined;
-let goBin: string | undefined;
 
 // A cold `go build` can outlast bun's 5s test timeout, so build at load time, outside any test.
 if (hasGo) {
   const dir = mkdtempSync(join(tmpdir(), "gendocs-oracle-"));
   const exe = join(dir, process.platform === "win32" ? "gendocs.exe" : "gendocs");
   const b = spawnSync("go", ["build", "-o", exe, "./tools/gendocs"], {
-    cwd: REPO,
+    cwd: GO_SRC,
     encoding: "utf8",
   });
   if (b.status !== 0) throw new Error(`go build ./tools/gendocs failed: ${b.stderr}`);
-  goBin = exe;
   goDir = join(dir, "pages");
   const r = spawnSync(exe, ["--out", goDir], { cwd: REPO, encoding: "utf8" });
   if (r.status !== 0) throw new Error(`gendocs failed: ${r.stderr}`);
@@ -178,17 +177,14 @@ describe.skipIf(!hasGo)("parity with tools/gendocs", () => {
     // The D8 pages are the same set of commands, now documented as removed.
     expect([...go.keys()].filter(isD8Page)).toEqual([...tsPages.keys()].filter(isD8Page).sort());
   });
+});
 
-  test("--lint output and exit code equal gendocs --lint", () => {
-    const go = spawnSync(goBin as string, ["--lint"], { cwd: REPO, encoding: "utf8" });
-    const ts = gen("--lint");
-    expect({ status: ts.status, stdout: ts.stdout, stderr: ts.stderr }).toEqual({
-      status: go.status ?? -1,
-      stdout: go.stdout,
-      stderr: go.stderr,
-    });
-    expect(ts.stdout).toMatch(/^Docs are consistent with the command tree \(\d+ invocations/);
-  });
+// gendocs --lint scanned internal/ and cmd/, which no longer exist, so its output stopped being
+// comparable when Go left the tree (KN-NDD5YY). The lint rules themselves are ported below.
+test("--lint passes on this repository", () => {
+  const ts = gen("--lint");
+  expect({ status: ts.status, stderr: ts.stderr }).toEqual({ status: 0, stderr: "" });
+  expect(ts.stdout).toMatch(/^Docs are consistent with the command tree \(\d+ invocations/);
 });
 
 // --- lint and render units (tools/gendocs/lint_test.go, ported) ---------------------------------
@@ -240,15 +236,17 @@ describe("lint", () => {
     expect(findings(tree(), line)).toEqual(want);
   });
 
-  test("source files are scanned, markdown and the generated reference are not", () => {
-    for (const p of [
-      "internal/cli/agents.go",
-      "ui/src/pages/WelcomePage.tsx",
-      "cmd/knowns/main.go",
-    ]) {
+  test("source files are scanned; markdown, generated modules and the reference are not", () => {
+    for (const p of ["cli/src/cli/commands/init.ts", "ui/src/pages/WelcomePage.tsx"]) {
       expect({ p, scanned: isSourceFile(p) }).toEqual({ p, scanned: true });
     }
-    for (const p of ["README.md", "docs/en/cli-reference/knowns_task.md", "ui/src/styles.css"]) {
+    for (const p of [
+      "README.md",
+      "docs/en/cli-reference/knowns_task.md",
+      "ui/src/styles.css",
+      "cli/src/domain/instructions/embedded.generated.ts",
+      "internal/cli/agents.go",
+    ]) {
       expect({ p, scanned: isSourceFile(p) }).toEqual({ p, scanned: false });
     }
   });

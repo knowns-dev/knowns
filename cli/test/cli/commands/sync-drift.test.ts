@@ -1,9 +1,8 @@
-// AC2: what sync writes comes from the same files Go embeds, and a change to either side fails.
+// AC2: what sync writes comes from the instruction sources, and a change to either side fails.
 //
-// Go embeds internal/instructions/skills/kn-* and internal/instructions/guidelines/unified/*.md
-// (`//go:embed`, which skips names starting with "." or "_"). The TypeScript build embeds a
-// generated copy of the same trees; these tests compare it with the sources byte for byte, then
-// check that a real sync writes exactly those bytes.
+// The sources are cli/instructions/skills/kn-* and cli/instructions/guidelines/*.md (names starting
+// with "." or "_" are skipped). The build embeds a generated copy of those trees; these tests
+// compare it with the sources byte for byte, then check that a real sync writes exactly those bytes.
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,9 +25,9 @@ import {
   syncInstructionPlatformDefs,
 } from "../../../src/domain/setup/sync-platforms.ts";
 
-const root = resolve(import.meta.dir, "..", "..", "..", "..");
-const skillsSrc = join(root, "internal", "instructions", "skills");
-const guidelinesSrc = join(root, "internal", "instructions", "guidelines", "unified");
+const cliRoot = resolve(import.meta.dir, "..", "..", "..");
+const skillsSrc = join(cliRoot, "instructions", "skills");
+const guidelinesSrc = join(cliRoot, "instructions", "guidelines");
 
 function walk(dir: string): string[] {
   return readdirSync(dir)
@@ -40,7 +39,7 @@ function walk(dir: string): string[] {
     });
 }
 
-/** The embedded file map the sources imply, with the same rules go:embed applies. */
+/** The embedded file map the sources imply, with the same skip rules the generator applies. */
 function sourceMap(base: string, filter: (rel: string) => boolean): Record<string, string> {
   const out: Record<string, string> = {};
   for (const f of walk(base)) {
@@ -50,8 +49,8 @@ function sourceMap(base: string, filter: (rel: string) => boolean): Record<strin
   return out;
 }
 
-describe("embedded instruction sources have not drifted from the Go embed trees", () => {
-  test("skills: same paths and same bytes as internal/instructions/skills/kn-*", () => {
+describe("embedded instructions have not drifted from cli/instructions", () => {
+  test("skills: same paths and same bytes as cli/instructions/skills/kn-*", () => {
     const src = sourceMap(skillsSrc, (rel) => rel.startsWith("kn-"));
     expect(Object.keys(skillFiles).sort()).toEqual(Object.keys(src).sort());
     for (const [path, content] of Object.entries(src)) {
@@ -60,7 +59,7 @@ describe("embedded instruction sources have not drifted from the Go embed trees"
     expect(builtInSkillCount()).toBeGreaterThan(0);
   });
 
-  test("guidelines: same paths and same bytes as guidelines/unified/*.md", () => {
+  test("guidelines: same paths and same bytes as cli/instructions/guidelines/*.md", () => {
     const src = sourceMap(guidelinesSrc, (rel) => rel.endsWith(".md") && !rel.includes("/"));
     expect(Object.keys(guidelineFiles).sort()).toEqual(Object.keys(src).sort());
     for (const [path, content] of Object.entries(src)) {
@@ -151,7 +150,7 @@ describe("platform selection", () => {
 
 describe("layering", () => {
   test("nothing under src/domain imports src/cli", () => {
-    const domain = join(root, "cli", "src", "domain");
+    const domain = join(cliRoot, "src", "domain");
     const offenders: string[] = [];
     const visit = (dir: string) => {
       for (const name of readdirSync(dir)) {

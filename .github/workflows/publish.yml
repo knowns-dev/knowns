@@ -50,10 +50,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Only to build the parity oracle from the pinned last-Go commit (cli/scripts/go-oracle.ts).
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
+          go-version: "1.25.8"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -96,23 +97,14 @@ jobs:
             exit 1
           fi
 
-      # The Go suite stays in the release gate until the switch merge: it is the parity oracle
-      # for the TypeScript CLI (spec D3). The shipped binary is the TypeScript one below.
-      - name: Run Go tests
-        run: go test -v -race ./...
-
-      - name: Run Go vet
-        run: go vet ./...
-
-      # The TS differential suites compare against Go builds and refuse to skip under CI, so build
-      # the same references ts-cli.yml does: Go 0.34.1 from this tree (it embeds the ui/dist built
-      # above) and the PR #156 head for spec D13.
+      # The TS differential suites compare against Go builds, so build the same references
+      # ts-cli.yml does: the oracle from the pinned last-Go commit (it embeds the ui/dist built
+      # above; exports KNOWNS_GO_SRC and KNOWNS_GO_BIN) and the PR #156 head for spec D13.
       - name: Build Go reference binaries
         env:
           PR156_SHA: 2b3f88d24864f5810c82b935138268f76560ae74
         run: |
-          go build -o "$RUNNER_TEMP/knowns-go" ./cmd/knowns
-          echo "KNOWNS_GO_BIN=$RUNNER_TEMP/knowns-go" >> "$GITHUB_ENV"
+          (cd cli && bun scripts/go-oracle.ts --dir "$RUNNER_TEMP/go-oracle" --github-env)
           git fetch --no-tags --depth=1 origin "$PR156_SHA"
           git worktree add --detach "$RUNNER_TEMP/pr156" "$PR156_SHA"
           cp -R ui/dist "$RUNNER_TEMP/pr156/ui/"

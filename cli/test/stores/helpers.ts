@@ -12,8 +12,9 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { Store } from "../../src/storage/core/store.ts";
 import { fixtureRoot } from "../helpers/fixtures.ts";
+import { GO_SRC, hasGoSrc } from "../helpers/go-src.ts";
 
-const REPO = resolve(import.meta.dir, "..", "..", "..");
+const REPO = GO_SRC as string;
 const OUT = join(tmpdir(), "knowns-ts-test-stores-go");
 
 let cliBin: string | undefined | null = null;
@@ -24,6 +25,10 @@ export function goCli(): string | undefined {
   const fromEnv = process.env.KNOWNS_GO_BIN;
   if (fromEnv) {
     cliBin = resolve(fromEnv);
+    return cliBin;
+  }
+  if (!hasGoSrc) {
+    cliBin = undefined;
     return cliBin;
   }
   mkdirSync(OUT, { recursive: true });

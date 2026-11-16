@@ -478,7 +478,7 @@ bun run build bun-darwin-arm64            # Output: cli/dist/darwin-arm64/knowns
 
 Pick your platform's target: `bun-darwin-arm64`, `bun-darwin-x64`, `bun-linux-x64`, `bun-linux-arm64`, `bun-windows-x64` or `bun-windows-arm64`. With no target, `bun run build` builds all six. Copy the binary to a directory on your `PATH`.
 
-> Releases up to 0.34.1 were written in Go. That code still lives in `cmd/` and `internal/` as the reference the TypeScript build is tested against; `go install github.com/howznguyen/knowns/cmd/knowns@latest` builds 0.34.1, not the current release.
+> Releases up to 0.34.1 were written in Go. The Go code was removed from the repository after 0.35.0, so there is nothing to build with Go any more; the history and the release tags keep it.
 
 ### Uninstall
 
@@ -602,21 +602,28 @@ Optional self-hosted sync server for shared visibility without giving up local-f
 
 ## Development
 
-Requires **Bun 1.3.12+**. **Go 1.25+** is optional: the parity tests build the Go 0.34.1 reference from `cmd/` and skip the Go comparisons without it.
+Requires **Bun 1.3.12+**. A Go toolchain is optional and only used by the differential tests (see below).
 
 ```bash
 make ui                          # Build the Web UI the binary embeds (cd ui && bun run build)
-cd cli && bun install
-bun run check                    # Typecheck + lint (Biome)
-bun run test                     # Unit and parity tests
-bun run build bun-linux-x64      # Build one target -> cli/dist/linux-x64/knowns
-bun run build                    # Build all 6 targets
-bun run cli-docs:check           # CLI reference matches the command tree
+make build                       # Host binary -> cli/dist/<os>-<arch>/knowns
+make ts-build                    # All 6 targets
+make test                        # cd cli && bun run check && bun run test
+make test-e2e                    # cli/test/e2e against the compiled binary (KNOWNS_TS_BIN)
+make test-e2e-semantic           # The same suite with the semantic search test enabled
+make test-e2e-ui                 # Playwright UI e2e
+make lint                        # Typecheck + lint (bun run check)
+cd cli && bun run build bun-linux-x64   # One target -> cli/dist/linux-x64/knowns
+cd cli && bun run cli-docs:check        # CLI reference matches the command tree
 ```
 
-Parity tests compare the TypeScript CLI with the Go 0.34.1 reference byte for byte. To reuse a Go build instead of building one per run, point `KNOWNS_GO_BIN` at it (`go build -o /tmp/knowns-go ./cmd/knowns`, after `make ui`).
+The differential tests compare the TypeScript CLI with Go 0.34.1, built from the pinned commit `069954a`. They need a Go toolchain; without one they skip. Set the oracle up with:
 
-The CLI + MCP E2E suite in `tests/` is written in Go and runs against any binary. Run it through `scripts/go-e2e.sh` (or `scripts/go-e2e.ps1` on Windows), for example `TEST_BINARY=cli/dist/linux-x64/knowns scripts/go-e2e.sh -v`: it gives the suite a temporary home so its test projects never land in your real `~/.knowns`.
+```bash
+eval "$(make -s go-oracle)"      # runs cli/scripts/go-oracle.ts, exports KNOWNS_GO_SRC and KNOWNS_GO_BIN
+```
+
+The skills (`kn-*`) and guidelines that `knowns sync` writes live in `cli/instructions/skills` and `cli/instructions/guidelines`. `cli/scripts/gen-instructions.ts` embeds them into the binary.
 
 #### Web UI development
 
@@ -651,11 +658,10 @@ cli/                 # The Knowns CLI (TypeScript on Bun)
     search/          # Keyword and semantic search
     runtime/         # Background runtime daemon
     lsp/             # LSP-based code intelligence
-  test/              # Unit and Go parity tests
+  test/              # Unit tests, differential tests and e2e (test/e2e)
+  instructions/      # Skills and guidelines embedded into the binary
   scripts/           # Build, fixtures and CLI reference generation
 ui/                  # React Web UI (Knowns UI), embedded into the binary
-cmd/, internal/      # Go 0.34.1 reference implementation
-tests/               # E2E tests (Go)
 ```
 
 ---

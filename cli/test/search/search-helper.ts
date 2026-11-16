@@ -1,17 +1,22 @@
-// Builds and drives cli/test/search/search-helper.go, which calls the real Go internal/search
-// code. Tests that need it are skipped when no Go toolchain is available.
+// Builds and drives cli/test/search/search-helper.go from the pinned Go checkout (KNOWNS_GO_SRC,
+// see test/helpers/go-src.ts), which calls the real Go internal/search code. Tests that need it
+// skip without that checkout.
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { GO_SRC, hasGoSrc } from "../helpers/go-src.ts";
 
-const REPO = resolve(import.meta.dir, "..", "..", "..");
-const SOURCE = join(import.meta.dir, "search-helper.go");
 const OUT_DIR = join(tmpdir(), "knowns-ts-test-search-helper");
 
 let built: string | undefined | null = null;
 
 export function searchHelperPath(): string | undefined {
   if (built !== null) return built;
+  if (!hasGoSrc || !GO_SRC) {
+    built = undefined;
+    return built;
+  }
+  const SOURCE = join(GO_SRC, "cli", "test", "search", "search-helper.go");
   const exe = join(OUT_DIR, process.platform === "win32" ? "search-helper.exe" : "search-helper");
   mkdirSync(OUT_DIR, { recursive: true });
   if (existsSync(exe) && statSync(exe).mtimeMs > statSync(SOURCE).mtimeMs) {
@@ -19,7 +24,7 @@ export function searchHelperPath(): string | undefined {
     return built;
   }
   const res = Bun.spawnSync(["go", "build", "-o", exe, SOURCE], {
-    cwd: REPO,
+    cwd: GO_SRC,
     stderr: "pipe",
     stdout: "pipe",
   });

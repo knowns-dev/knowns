@@ -1,12 +1,13 @@
 // Go binary and throwaway Go tools for the config/registry/embedding store tests.
-// KNOWNS_GO_BIN wins; otherwise the CLI is built once into the OS temp dir. Tools are compiled
-// with `go build -overlay`, so a temporary main package can import the repo's internal packages
-// without adding a file to the repository.
+// KNOWNS_GO_BIN wins; otherwise the CLI is built once into the OS temp dir from the pinned Go
+// checkout (KNOWNS_GO_SRC, test/helpers/go-src.ts). Tools are compiled there with `go build
+// -overlay`, so a temporary main package can import its internal packages without adding a file.
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { GO_SRC, hasGoSrc } from "../helpers/go-src.ts";
 
-const REPO = resolve(import.meta.dir, "..", "..", "..");
+const REPO = GO_SRC as string;
 const OUT = join(tmpdir(), "knowns-ts-test-cfg-go");
 
 let cliBin: string | undefined | null = null;
@@ -16,6 +17,10 @@ export function goCli(): string | undefined {
   const fromEnv = process.env.KNOWNS_GO_BIN;
   if (fromEnv) {
     cliBin = resolve(fromEnv);
+    return cliBin;
+  }
+  if (!hasGoSrc) {
+    cliBin = undefined;
     return cliBin;
   }
   mkdirSync(OUT, { recursive: true });
@@ -78,6 +83,10 @@ const tools = new Map<string, string | undefined>();
 /** Compile a main package that may import github.com/howznguyen/knowns/internal/...; cached. */
 export function goTool(name: string, source: string): string | undefined {
   if (tools.has(name)) return tools.get(name);
+  if (!hasGoSrc) {
+    tools.set(name, undefined);
+    return undefined;
+  }
   mkdirSync(OUT, { recursive: true });
   const dir = mkdtempSync(join(OUT, `${name}-`));
   const src = join(dir, "main.go");

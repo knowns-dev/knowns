@@ -6,8 +6,11 @@
 // separate worker's), then copied byte for byte to a Go side and a TS side, each with its own HOME.
 //
 // Normalised, and only because the sides legitimately differ: the temp root, wall-clock
-// timestamps, the oracle's `dev` version, and the absolute path of the running executable (Go's
-// os.Executable() versus bun's process.execPath), which runtime hooks embed.
+// timestamps, the oracle's `dev` version, the absolute path of the running executable (Go's
+// os.Executable() versus bun's process.execPath), which runtime hooks embed, and the bytes of a
+// built-in skill file. The oracle is frozen at the last Go commit while the skill sources keep
+// changing, so a file that is exactly a built-in skill (Go's pinned copy or the current embed) is
+// compared by identity, <builtin-skill:kn-x/SKILL.md>; anything else is compared byte for byte.
 import {
   cpSync,
   existsSync,
@@ -22,6 +25,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
+import { builtinSkill } from "../../helpers/builtin-skills.ts";
 import { GO_BIN, hasGoBin, normalizeGo, type Result, runTs } from "../oracle.ts";
 
 export { hasGoBin };
@@ -143,7 +147,13 @@ export function tree(root: string, s: Side, skip: RegExp[] = []): Map<string, st
       if (statSync(full).isDirectory()) {
         out.set(`${rel}/`, "");
         walk(full);
-      } else out.set(rel, normalize(readFileSync(full).toString("latin1"), s));
+      } else {
+        const bytes = readFileSync(full);
+        out.set(
+          rel,
+          builtinSkill(rel, bytes.toString("utf8")) ?? normalize(bytes.toString("latin1"), s),
+        );
+      }
     }
   };
   walk(root);
