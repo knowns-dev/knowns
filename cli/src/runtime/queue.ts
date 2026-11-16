@@ -37,6 +37,7 @@ import {
   releaseRunner,
   unregisterDaemon,
 } from "./daemon-registry.ts";
+import { type IdentitySeams, isKnownsRuntimeDaemon } from "./process-identity.ts";
 
 export type JobKind =
   | "index-task"
@@ -371,8 +372,24 @@ export function isProcessAlive(pid: number): boolean {
 function forceKillDaemon(): void {
   const pid = readPID();
   if (pid === undefined) throw new Error("no runtime pid");
+  // Never on a pid file's word alone: it may name an unrelated process after a crash or reboot.
+  if (!pidFileNamesDaemon(pid)) throw new Error("the runtime pid is not a Knowns daemon");
   process.kill(pid, "SIGKILL");
 }
+
+/** Does the pid file's pid provably belong to a Knowns runtime daemon (and not to this process)? */
+function pidFileNamesDaemon(pid: number): boolean {
+  let writtenAt = Date.now();
+  try {
+    writtenAt = statSync(pidFile()).mtimeMs;
+  } catch {
+    return false;
+  }
+  return isKnownsRuntimeDaemon(pid, writtenAt, identitySeams);
+}
+
+/** A seam for tests that play a daemon without being one. */
+export const identitySeams: IdentitySeams = {};
 
 function readPID(): number | undefined {
   try {
@@ -1140,9 +1157,19 @@ export function daemonSpawnEnv(env: Env): Env {
  * A daemon from before the version registry owns the pid file and knows nothing of runner.json, so
  * it would run jobs next to ours: stop it, as an outdated daemon always was.
  */
-function retireUnregisteredDaemon(): void {
+export function retireUnregisteredDaemon(): void {
   const pid = readPID();
   if (pid === undefined || !isProcessAlive(pid) || isRegisteredPid(pid)) return;
+  if (!pidFileNamesDaemon(pid)) {
+    // A stale pid file (the number was reused, or it is this very process): not a daemon, so
+    // nothing is asked to stop and nothing is killed. Drop the file and carry on.
+    try {
+      if (readPID() === pid) rmSync(pidFile(), { force: true });
+    } catch {
+      // best effort
+    }
+    return;
+  }
   const v = runningDaemonVersion();
   try {
     requestShutdown(10_000);
