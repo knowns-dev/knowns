@@ -43,14 +43,34 @@ export function mcpCommandFlat(env: Env = process.env): string[] {
   return [command, ...args];
 }
 
+const isPath = (command: string): boolean => /[\\/]/.test(command) || /^[A-Za-z]:/.test(command);
+
 /**
- * Whether an existing MCP entry was written by Knowns: it starts `mcp` through knowns,
- * knowns-proxy or npx. Anything else is the user's own and sync leaves it alone.
+ * Whether an existing MCP entry is exactly what Knowns writes, so sync may rewrite it. Anything
+ * else (extra arguments, a custom binary such as a dogfood build, the user's own server) is theirs
+ * and sync leaves it alone. Knowns writes:
+ *   - the bare name `knowns` or `knowns-proxy`, with args exactly ["mcp", "--stdio"];
+ *   - the absolute path of the knowns-proxy next to the knowns on PATH (proxyCommand), same args;
+ *   - npx with ["-y", "knowns", "mcp", "--stdio"];
+ * and, for a tool that needs a project root in the entry (Antigravity), a trailing
+ * ["--project", <root>] when `allowProject` is set. An absolute path to `knowns` itself is never
+ * Knowns's: it is a custom install.
  */
-export function isKnownsWritten(command: unknown, args: unknown): boolean {
+export function isKnownsWritten(
+  command: unknown,
+  args: unknown,
+  options: { allowProject?: boolean } = {},
+): boolean {
   if (typeof command !== "string" || !Array.isArray(args)) return false;
-  const a = args.map(String);
+  let a = args.map(String);
+  if (options.allowProject && a.length >= 2 && a[a.length - 2] === "--project") {
+    a = a.slice(0, -2);
+  }
+  const same = (want: string[]): boolean =>
+    a.length === want.length && a.every((v, i) => v === want[i]);
   const base = command.replace(/^.*[\\/]/, "").replace(/\.(exe|cmd)$/i, "");
-  if (base === "knowns" || base === PROXY_NAME) return a.includes("mcp");
-  return base === "npx" && a.includes("knowns") && a.includes("mcp");
+  if (base === "npx" && !isPath(command)) return same(["-y", "knowns", "mcp", "--stdio"]);
+  if (!same(["mcp", "--stdio"])) return false;
+  if (!isPath(command)) return command === "knowns" || command === PROXY_NAME;
+  return base === PROXY_NAME;
 }
