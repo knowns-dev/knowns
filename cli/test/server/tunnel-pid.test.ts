@@ -57,3 +57,25 @@ test("a pid file naming an unrelated live process is dropped and that process su
     child.kill();
   }
 });
+
+test("a live unrelated pid in the pid file does not make a stale URL look healthy", async () => {
+  const home = mkdtempSync(join(tmpdir(), "tunnel-pid-"));
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  const d = new Daemon(47997);
+  mkdirSync(dirname(d.pidFile), { recursive: true });
+  const [cmd, args] =
+    process.platform === "win32" ? ["ping", ["-n", "60", "127.0.0.1"]] : ["sleep", ["60"]];
+  const child = spawn(cmd as string, args as string[], { stdio: "ignore" });
+  try {
+    await new Promise((r) => setTimeout(r, 300));
+    writeFileSync(d.pidFile, String(child.pid));
+    writeFileSync(
+      join(dirname(d.pidFile), "cloudflared-47997.url"),
+      "https://old.trycloudflare.com",
+    );
+    expect(d.isHealthy()).toBe(false);
+  } finally {
+    child.kill();
+  }
+});

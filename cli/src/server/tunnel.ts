@@ -96,6 +96,21 @@ export class Daemon {
     return readFileSync(this.urlFile, "utf8").trim();
   }
 
+  /** Is this pid a cloudflared tunnel that started no later than the pid file? */
+  private isOurTunnel(pid: number): boolean {
+    let writtenAt = 0;
+    try {
+      writtenAt = statSync(this.pidFile).mtimeMs;
+    } catch {
+      return false;
+    }
+    return isProcessInstance(pid, {
+      names: ["cloudflared"],
+      args: ["tunnel"],
+      startedBefore: writtenAt,
+    });
+  }
+
   isHealthy(): boolean {
     let pid: number;
     try {
@@ -103,7 +118,7 @@ export class Daemon {
     } catch {
       return false;
     }
-    if (!isProcessAlive(pid)) return false;
+    if (!isProcessAlive(pid) || !this.isOurTunnel(pid)) return false;
     try {
       return this.publicURL() !== "";
     } catch {
@@ -114,7 +129,9 @@ export class Daemon {
   private cleanupStale(): void {
     try {
       const pid = this.readPID();
-      if (!isProcessAlive(pid)) {
+      // A pid that is alive but is not our cloudflared (reused after a crash or reboot) is as stale
+      // as a dead one: its URL must not look healthy.
+      if (!isProcessAlive(pid) || !this.isOurTunnel(pid)) {
         rmSync(this.pidFile, { force: true });
         rmSync(this.urlFile, { force: true });
       }
@@ -148,19 +165,7 @@ export class Daemon {
     }
     // A pid file can outlive its process and name an unrelated one after a crash or reboot: signal
     // only a cloudflared tunnel that started no later than the file.
-    let writtenAt = 0;
-    try {
-      writtenAt = statSync(this.pidFile).mtimeMs;
-    } catch {
-      // no file: nothing proves it
-    }
-    if (
-      !isProcessInstance(pid, {
-        names: ["cloudflared"],
-        args: ["tunnel"],
-        startedBefore: writtenAt,
-      })
-    ) {
+    if (!this.isOurTunnel(pid)) {
       rmSync(this.pidFile, { force: true });
       rmSync(this.urlFile, { force: true });
       return;
