@@ -113,7 +113,13 @@ export async function evaluateInTransaction(
   }
   if (hasActiveTimer) reasons.push({ code: "active_timer", message: "Task has an active timer" });
 
-  for (const descendantId of await unfinishedDescendants(tx, task.id, options.taskTree)) {
+  // A shared snapshot (an automatic sweep) may be old: it is a pre-filter that can only refuse. A
+  // Task it clears is checked again against the tree as it is now, inside this transaction, so a
+  // child reopened or created since the snapshot still blocks the archive.
+  let unfinished: string[] = [];
+  if (options.taskTree) unfinished = await unfinishedDescendants(tx, task.id, options.taskTree);
+  if (unfinished.length === 0) unfinished = await unfinishedDescendants(tx, task.id);
+  for (const descendantId of unfinished) {
     reasons.push({
       code: "unfinished_descendant",
       message: `Descendant Task ${descendantId} is not done or archived`,

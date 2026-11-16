@@ -427,6 +427,52 @@ describe("batches", () => {
   });
 });
 
+describe("auto-archive with a stale task tree snapshot", () => {
+  test("a child added after the snapshot still blocks archiving its parent", async () => {
+    const e = env();
+    const parent = await addTask(e, "parent", {
+      status: "done",
+      completedAt: e.clock.now.toISOString(),
+    });
+    // What the sweep saw: the parent alone, done, with no children.
+    const stale = {
+      children: new Map<string, string[]>(),
+      tasks: new Map([[parent.id, { archived: false, status: "done" }]]),
+    };
+    // Then a child is created (or reopened) before the parent's own transaction runs.
+    await addTask(e, "late child", { status: "todo", parent: parent.id });
+    const batch = await e.service
+      .batchArchive({ execute: true, taskTree: stale, ids: [parent.id] })
+      .catch((err) => partialOf(err));
+    expect(e.storage.tasks.get(parent.id).archived).toBe(false);
+    const item = batch?.items.find((i) => i.taskId === parent.id);
+    expect(item?.reasons?.map((r) => r.code)).toContain("unfinished_descendant");
+  });
+
+  test("a snapshot that already shows an unfinished child is trusted as a pre-filter", async () => {
+    const e = env();
+    const parent = await addTask(e, "parent", {
+      status: "done",
+      completedAt: e.clock.now.toISOString(),
+    });
+    const child = await addTask(e, "child", { status: "done", parent: parent.id });
+    const stale = {
+      children: new Map([[parent.id, [child.id]]]),
+      tasks: new Map([
+        [parent.id, { archived: false, status: "done" }],
+        [child.id, { archived: false, status: "todo" }],
+      ]),
+    };
+    const batch = await e.service
+      .batchArchive({ execute: true, taskTree: stale, ids: [parent.id] })
+      .catch((err) => partialOf(err));
+    expect(e.storage.tasks.get(parent.id).archived).toBe(false);
+    expect(batch?.items.find((i) => i.taskId === parent.id)?.reasons?.map((r) => r.code)).toContain(
+      "unfinished_descendant",
+    );
+  });
+});
+
 describe("hardDelete", () => {
   test("needs confirmation and a reason, and says so for each", async () => {
     const e = env();
