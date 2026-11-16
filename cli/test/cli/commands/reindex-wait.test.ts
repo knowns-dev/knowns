@@ -13,8 +13,10 @@ import {
   ReindexStillRunning,
   runReindex,
 } from "../../../src/cli/commands/search-index.ts";
+import { registerDaemon } from "../../../src/runtime/daemon-registry.ts";
 import * as q from "../../../src/runtime/queue.ts";
 import type { Storage } from "../../../src/storage/adapters.ts";
+import { VERSION } from "../../../src/version.ts";
 import { setProcessHome } from "../../helpers/process-env.ts";
 
 const STALL_MS = 400;
@@ -25,8 +27,10 @@ let restoreHome: () => void = () => {};
 beforeAll(() => {
   restoreHome = setProcessHome(home);
   delete process.env.KNOWNS_RUNTIME_INLINE;
-  // A pid file naming this process makes ensureDaemon see a running daemon and spawn nothing.
+  // A registered daemon of this version makes ensureDaemon see a running daemon and spawn nothing.
+  // (A pid file alone would not do: a pid that is not provably a Knowns daemon is treated as stale.)
   mkdirSync(q.runtimeRoot(), { recursive: true });
+  registerDaemon(VERSION);
   writeFileSync(q.pidFile(), String(process.pid));
 });
 afterAll(() => {

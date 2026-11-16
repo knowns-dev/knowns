@@ -3,7 +3,6 @@
 // files and JSON shapes the Go 0.34.1 binary uses, so a TS process and a Go daemon can share one
 // runtime directory. Queue operations are synchronous (like Go's), the daemon loop is async.
 
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   closeSync,
@@ -20,6 +19,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join } from "node:path";
 import { effectiveRuntimeWatch } from "../models/config.ts";
+import { spawnDetached } from "../platform/detached-spawn.ts";
 import { goJson } from "../search/json.ts";
 import { goClean } from "../search/qdrant/pointer.ts";
 import { goTimeString } from "../search/time.ts";
@@ -29,8 +29,20 @@ import {
   renameRetrying,
   retryWhileBusy,
 } from "../storage/core/fs-retry.ts";
-import { statSignature } from "../storage/core/stat-signature.ts";
+import { statSignature, statSignatureStrict } from "../storage/core/stat-signature.ts";
 import { VERSION } from "../version.ts";
+import {
+  checkRunner,
+  claimRunner,
+  DaemonAlreadyRunning,
+  findDaemon,
+  isRegisteredPid,
+  partitionLeases,
+  registerDaemon,
+  releaseRunner,
+  unregisterDaemon,
+} from "./daemon-registry.ts";
+import { type IdentitySeams, isKnownsRuntimeDaemon } from "./process-identity.ts";
 
 export type JobKind =
   | "index-task"
@@ -48,6 +60,26 @@ export type JobKind =
   | "reindex-search"
   | "reconcile-knowledge"
   | "reconcile-qdrant";
+
+/** The kinds this version can execute. A job of another kind (written by a newer version) is left
+ * alone in the queue: not run, not counted as pending, never dead-lettered. */
+const KNOWN_JOB_KINDS: ReadonlySet<string> = new Set<JobKind>([
+  "index-task",
+  "index-doc",
+  "remove-task",
+  "remove-doc",
+  "index-memory",
+  "remove-memory",
+  "index-decision",
+  "remove-decision",
+  "semantic-search",
+  "index-all-files",
+  "index-file",
+  "remove-file",
+  "reindex-search",
+  "reconcile-knowledge",
+  "reconcile-qdrant",
+]);
 
 export const JOB_REINDEX: JobKind = "reindex-search";
 export const JOB_QDRANT_RECONCILE: JobKind = "reconcile-qdrant";
@@ -140,6 +172,8 @@ export interface Lease {
   projectRoot: string;
   watch: boolean;
   pid?: number;
+  /** The version of the client that wrote the lease; the daemon of that version owns it. */
+  version?: string;
   createdAt: string;
   updatedAt: string;
   expiresAt: string;
@@ -233,12 +267,19 @@ export type WatcherFactory = (signal: AbortSignal, storeRoot: string) => Promise
 export type ReloadHandler = (reload: ReloadStatus) => Promise<void> | void;
 
 export interface DaemonOptions {
+  /** Stops advertising this daemon's endpoints (sessions already connected carry on). */
+  retire?: () => void | Promise<void>;
+  /** Undoes retire: a session arrived while the daemon was about to exit. */
+  reopen?: () => void | Promise<void>;
   executor: Executor;
   watcherFactory?: WatcherFactory;
   reloadHandler?: ReloadHandler;
   /** Services run for the daemon's lifetime and stop when the signal aborts. */
   services?: ((signal: AbortSignal) => Promise<void>)[];
   keepAlive?: () => boolean;
+  /** In-memory and cheap: true while the daemon has live work of its own (open MCP sessions). It
+   * is asked every tick, unlike keepAlive, so a session that just opened is never missed. */
+  busy?: () => boolean;
 }
 
 // --- environment and paths ----------------------------------------------------------------------
@@ -336,8 +377,24 @@ export function isProcessAlive(pid: number): boolean {
 function forceKillDaemon(): void {
   const pid = readPID();
   if (pid === undefined) throw new Error("no runtime pid");
+  // Never on a pid file's word alone: it may name an unrelated process after a crash or reboot.
+  if (!pidFileNamesDaemon(pid)) throw new Error("the runtime pid is not a Knowns daemon");
   process.kill(pid, "SIGKILL");
 }
+
+/** Does the pid file's pid provably belong to a Knowns runtime daemon (and not to this process)? */
+function pidFileNamesDaemon(pid: number): boolean {
+  let writtenAt = Date.now();
+  try {
+    writtenAt = statSync(pidFile()).mtimeMs;
+  } catch {
+    return false;
+  }
+  return isKnownsRuntimeDaemon(pid, writtenAt, identitySeams);
+}
+
+/** A seam for tests that play a daemon without being one. */
+export const identitySeams: IdentitySeams = {};
 
 function readPID(): number | undefined {
   try {
@@ -433,12 +490,30 @@ export function resultJson(r: JobResult): unknown {
   };
 }
 
+/** Directories this process already created: a recursive mkdir is a syscall on every write. A
+ * removed directory is noticed by the write failing with ENOENT, which creates it and retries. */
+const madeDirs = new Set<string>();
+function ensureDir(dir: string): void {
+  if (madeDirs.has(dir)) return;
+  mkdirSync(dir, { recursive: true, mode: 0o755 });
+  madeDirs.add(dir);
+}
+
 function writeJSON(path: string, value: unknown): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o755 });
+  const dir = dirname(path);
+  ensureDir(dir);
   const tmp = `${path}.tmp`;
   const body = `${goJson(value, { indent: 2 })}\n`;
   // Windows: a scanner or another handle can still hold the tmp from the previous write.
-  retryWhileBusy(() => writeFileSync(tmp, body, { mode: 0o644 }));
+  const write = (): void => retryWhileBusy(() => writeFileSync(tmp, body, { mode: 0o644 }));
+  try {
+    write();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    madeDirs.delete(dir);
+    ensureDir(dir);
+    write();
+  }
   renameOverFile(tmp, path);
 }
 
@@ -470,8 +545,11 @@ function readJSONRetrying(path: string): unknown {
 
 // --- locking (O_EXCL lock files, like Go) -------------------------------------------------------
 
+const LOCK_POLL_MS = 20;
+const START_MARK_DELAY_MS = 300;
+
 function acquireLock(path: string, timeoutMs: number): () => void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o755 });
+  ensureDir(dirname(path));
   const deadline = Date.now() + timeoutMs;
   let lastCode = "EEXIST";
   for (;;) {
@@ -495,7 +573,41 @@ function acquireLock(path: string, timeoutMs: number): () => void {
     if (Date.now() > deadline) {
       throw new Error(`timed out waiting for lock ${path} (last error: ${lastCode})`);
     }
-    sleepSync(50);
+    sleepSync(LOCK_POLL_MS);
+  }
+}
+
+/** acquireLock for callers that can await: waiting for the holder does not block the event loop. */
+async function acquireLockAsync(path: string, timeoutMs: number): Promise<() => void> {
+  ensureDir(dirname(path));
+  const deadline = Date.now() + timeoutMs;
+  let lastCode = "EEXIST";
+  for (;;) {
+    try {
+      writeFileSync(path, String(process.pid), { flag: "wx", mode: 0o644 });
+      return () => retryWhileBusy(() => rmSync(path, { force: true }));
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        madeDirs.delete(dirname(path));
+        ensureDir(dirname(path));
+        continue;
+      }
+      lastCode = code ?? lastCode;
+      if (code !== "EEXIST" && !isWindowsFileBusy(err)) throw err;
+    }
+    try {
+      if (Date.now() - statSync(path).mtimeMs > DEFAULT_LOCK_STALE_AGE_MS) {
+        rmSync(path, { force: true });
+        continue;
+      }
+    } catch {
+      // vanished: retry
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for lock ${path} (last error: ${lastCode})`);
+    }
+    await sleep(LOCK_POLL_MS);
   }
 }
 
@@ -526,6 +638,8 @@ interface QueueScanEntry {
   state: QueueState;
   /** Jobs that are not dead letters, earliest due first (ties: earliest requested, file order). */
   live: { job: Job; due: number }[];
+  /** Written by this process under the queue lock: its strict signature proves it unchanged. */
+  own?: boolean;
 }
 const queueScanCache = new Map<string, QueueScanEntry>();
 
@@ -536,29 +650,75 @@ export function pruneQueueScanCache(projects: string[]): void {
 }
 const EMPTY_ENTRY: QueueScanEntry = { sig: "", state: { jobs: [], recent: [] }, live: [] };
 
+/** Under the queue lock (our own writes): the signature without the racy gate. */
+const fileSig = (path: string): string => statSignatureStrict(statSync(path, { bigint: true }));
+
+function buildEntry(sig: string, state: QueueState): QueueScanEntry {
+  const live = state.jobs
+    .filter((j) => !j.deadLetter && KNOWN_JOB_KINDS.has(j.kind))
+    .map((job) => ({ job, due: parseMs(job.runAfter), req: parseMs(job.requestedAt) }))
+    .sort((a, b) => a.due - b.due || a.req - b.req)
+    .map(({ job, due }) => ({ job, due }));
+  return { sig, state, live };
+}
+
 function loadQueueEntry(storeRoot: string): QueueScanEntry {
   const path = queuePath(storeRoot);
   let sig: string | undefined;
+  let strict = "";
   try {
-    sig = statSignature(statSync(path, { bigint: true }));
+    const st = statSync(path, { bigint: true });
+    sig = statSignature(st);
+    strict = statSignatureStrict(st);
   } catch (err) {
     queueScanCache.delete(path);
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return EMPTY_ENTRY;
     throw err;
   }
-  const hit = sig === undefined ? undefined : queueScanCache.get(path);
+  const cached = queueScanCache.get(path);
+  // Our own write is known content: its signature proves it even while the file is racy.
+  if (cached?.own && cached.sig === strict) return cached;
+  const hit = sig === undefined ? undefined : cached;
   if (hit && hit.sig === sig) return hit;
-  const state = loadQueue(storeRoot);
-  const live = state.jobs
-    .filter((j) => !j.deadLetter)
-    .map((job) => ({ job, due: parseMs(job.runAfter), req: parseMs(job.requestedAt) }))
-    .sort((a, b) => a.due - b.due || a.req - b.req)
-    .map(({ job, due }) => ({ job, due }));
-  const entry: QueueScanEntry = { sig: sig ?? "", state, live };
+  const entry = buildEntry(sig ?? "", loadQueue(storeRoot));
   // A file touched in the last few seconds has no signature: reread every time, never cached.
   if (sig !== undefined) queueScanCache.set(path, entry);
   else queueScanCache.delete(path);
   return entry;
+}
+
+/**
+ * The state for a read-modify-write under the queue lock. When the file is the one this process
+ * last read or wrote (same signature) the parsed state is reused instead of parsed again: while
+ * the lock is held nobody else can have changed it. The copy is one level deep, which is all the
+ * mutators touch.
+ */
+function loadForUpdate(storeRoot: string): QueueState {
+  const path = queuePath(storeRoot);
+  try {
+    const hit = queueScanCache.get(path);
+    if (hit && hit.sig === fileSig(path)) {
+      const s = hit.state;
+      return {
+        jobs: s.jobs.map((j) => ({ ...j })),
+        recent: (s.recent ?? []).slice(),
+        ...(s.updatedAt ? { updatedAt: s.updatedAt } : {}),
+      };
+    }
+  } catch {
+    // missing or unreadable: the ordinary load decides
+  }
+  return loadQueue(storeRoot);
+}
+
+/** After our own write the file's signature is known: the next read is a cache hit, not a parse. */
+function rememberWritten(storeRoot: string, state: QueueState): void {
+  const path = queuePath(storeRoot);
+  try {
+    queueScanCache.set(path, { ...buildEntry(fileSig(path), state), own: true });
+  } catch {
+    queueScanCache.delete(path);
+  }
 }
 
 export function loadQueueCached(storeRoot: string): QueueState {
@@ -573,14 +733,32 @@ function stateJson(state: QueueState): unknown {
   };
 }
 
+function applyUpdate(storeRoot: string, fn: (state: QueueState) => void): void {
+  const state = loadForUpdate(storeRoot);
+  fn(state);
+  pruneDeadLetters(storeRoot, state, Date.now());
+  state.updatedAt = nowString();
+  writeJSON(queuePath(storeRoot), stateJson(state));
+  rememberWritten(storeRoot, state);
+}
+
 export function updateQueue(storeRoot: string, fn: (state: QueueState) => void): void {
   const unlock = acquireLock(`${queuePath(storeRoot)}.lock`, DEFAULT_LOCK_TIMEOUT_MS);
   try {
-    const state = loadQueue(storeRoot);
-    fn(state);
-    pruneDeadLetters(storeRoot, state, Date.now());
-    state.updatedAt = nowString();
-    writeJSON(queuePath(storeRoot), stateJson(state));
+    applyUpdate(storeRoot, fn);
+  } finally {
+    unlock();
+  }
+}
+
+/** updateQueue for callers that can await (the daemon): waiting for the lock never blocks it. */
+export async function updateQueueAsync(
+  storeRoot: string,
+  fn: (state: QueueState) => void,
+): Promise<void> {
+  const unlock = await acquireLockAsync(`${queuePath(storeRoot)}.lock`, DEFAULT_LOCK_TIMEOUT_MS);
+  try {
+    applyUpdate(storeRoot, fn);
   } finally {
     unlock();
   }
@@ -992,54 +1170,73 @@ export function daemonCommand(): { cmd: string; args: string[] } {
     : { cmd: process.execPath, args: [script, "__runtime", "run"] };
 }
 
-/** EnsureDaemon: start the shared runtime daemon unless one runs (or inline mode is on). */
-export function ensureDaemon(): void {
-  if (shouldBypassDaemon()) return;
-  if (isRunning()) {
-    const v = runningDaemonVersion();
-    if (v !== "" && v !== VERSION) {
-      try {
-        requestShutdown(10_000);
-      } catch (err) {
-        try {
-          forceKillDaemon();
-        } catch {
-          throw new Error(
-            `stop outdated runtime (v${v}, want v${VERSION}): ${(err as Error).message}`,
-          );
-        }
-        const deadline = Date.now() + 5_000;
-        while (Date.now() < deadline && isRunning()) sleepSync(100);
-        if (isRunning()) {
-          throw new Error(
-            `stop outdated runtime (v${v}, want v${VERSION}): ${(err as Error).message}`,
-          );
-        }
-      }
-    } else {
-      return;
+/**
+ * The environment a daemon is started with. KNOWNS_MCP_PROXY=0 is a client-side opt-out (FR-9):
+ * a client that opts out must still start a normal daemon, or every later proxy would find it
+ * without an endpoint.
+ */
+export function daemonSpawnEnv(env: Env): Env {
+  const { KNOWNS_MCP_PROXY: _drop, ...rest } = env;
+  return rest;
+}
+
+/**
+ * A daemon from before the version registry owns the pid file and knows nothing of runner.json, so
+ * it would run jobs next to ours: stop it, as an outdated daemon always was.
+ */
+export function retireUnregisteredDaemon(): void {
+  const pid = readPID();
+  if (pid === undefined || !isProcessAlive(pid) || isRegisteredPid(pid)) return;
+  if (!pidFileNamesDaemon(pid)) {
+    // A stale pid file (the number was reused, or it is this very process): not a daemon, so
+    // nothing is asked to stop and nothing is killed. Drop the file and carry on.
+    try {
+      if (readPID() === pid) rmSync(pidFile(), { force: true });
+    } catch {
+      // best effort
+    }
+    return;
+  }
+  const v = runningDaemonVersion();
+  try {
+    requestShutdown(10_000);
+  } catch (err) {
+    try {
+      forceKillDaemon();
+    } catch {
+      throw new Error(`stop outdated runtime (v${v}, want v${VERSION}): ${(err as Error).message}`);
+    }
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && isProcessAlive(pid)) sleepSync(100);
+    if (isProcessAlive(pid)) {
+      throw new Error(`stop outdated runtime (v${v}, want v${VERSION}): ${(err as Error).message}`);
     }
   }
+}
+
+/**
+ * EnsureDaemon: start the shared runtime daemon of this version unless one runs (or inline mode
+ * is on). Daemons are version scoped: another version's daemon is left alone, it keeps serving its
+ * own sessions and exits after the last one (spec D3).
+ */
+export function ensureDaemon(): void {
+  if (shouldBypassDaemon()) return;
+  if (findDaemon(VERSION)) return;
+  retireUnregisteredDaemon();
   mkdirSync(runtimeRoot(), { recursive: true, mode: 0o755 });
   let unlock: () => void;
   try {
     unlock = acquireLock(join(runtimeRoot(), "start.lock"), DEFAULT_LOCK_TIMEOUT_MS);
   } catch (err) {
-    if (isRunning()) return;
+    if (findDaemon(VERSION)) return;
     throw err;
   }
   try {
-    if (isRunning()) return;
+    if (findDaemon(VERSION)) return;
     const logFd = openRuntimeLogFile();
     try {
       const { cmd, args } = daemonCommand();
-      const child = spawn(cmd, args, {
-        detached: true,
-        stdio: ["ignore", logFd, logFd],
-        windowsHide: true,
-      });
-      child.on("error", () => {});
-      child.unref();
+      spawnDetached(cmd, args, { logPath: runtimeLogPath(), env: daemonSpawnEnv(process.env) });
     } catch (err) {
       throw new Error(`start runtime: ${(err as Error).message}`);
     } finally {
@@ -1047,7 +1244,7 @@ export function ensureDaemon(): void {
     }
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
-      if (isRunning()) return;
+      if (findDaemon(VERSION)) return;
       sleepSync(100);
     }
     throw new Error("timed out waiting for runtime to start");
@@ -1062,10 +1259,19 @@ export function jobKey(kind: JobKind, target: string): string {
   return `${kind}::${target}`;
 }
 
+/** When this process last registered a project and checked the daemon for it. */
+const preparedAt = new Map<string, number>();
+const PREPARE_TTL_MS = 5_000;
+
 function prepareEnqueue(storeRoot: string): void {
-  mkdirSync(dirname(queuePath(storeRoot)), { recursive: true, mode: 0o755 });
+  // Registering the project and checking for a daemon cost a lock, two file reads and a write; a
+  // burst of enqueues for one project does them once, not once per job.
+  const last = preparedAt.get(storeRoot);
+  if (last !== undefined && Date.now() - last < PREPARE_TTL_MS) return;
+  ensureDir(dirname(queuePath(storeRoot)));
   registerProject(storeRoot);
   ensureDaemon();
+  preparedAt.set(storeRoot, Date.now());
 }
 
 function enqueue(storeRoot: string, kind: JobKind, target: string): Job {
@@ -1273,16 +1479,26 @@ export function loadJobSnapshot(storeRoot: string, jobId: string): JobSnapshot {
   return { found: false, completed: false };
 }
 
-export function markJobStarted(storeRoot: string, jobId: string): Job {
-  let started: Job | undefined;
-  updateQueue(storeRoot, (state) => {
+function startMutation(jobId: string, out: { job?: Job }): (state: QueueState) => void {
+  return (state) => {
     const job = state.jobs.find((j) => j.id === jobId);
     if (!job) throw new Error(`job ${jobId} not found`);
     job.startedAt = nowString();
     job.attempts = (job.attempts ?? 0) + 1;
-    started = { ...job };
-  });
-  return started as unknown as Job;
+    out.job = { ...job };
+  };
+}
+
+export function markJobStarted(storeRoot: string, jobId: string): Job {
+  const out: { job?: Job } = {};
+  updateQueue(storeRoot, startMutation(jobId, out));
+  return out.job as Job;
+}
+
+export async function markJobStartedAsync(storeRoot: string, jobId: string): Promise<Job> {
+  const out: { job?: Job } = {};
+  await updateQueueAsync(storeRoot, startMutation(jobId, out));
+  return out.job as Job;
 }
 
 export function reportProgress(
@@ -1315,7 +1531,19 @@ export function qdrantRetryDelayMs(attempt: number): number {
 }
 
 export function completeJob(storeRoot: string, job: Job, err: Error | undefined): void {
-  updateQueue(storeRoot, (state) => {
+  updateQueue(storeRoot, completeMutation(job, err));
+}
+
+export async function completeJobAsync(
+  storeRoot: string,
+  job: Job,
+  err: Error | undefined,
+): Promise<void> {
+  await updateQueueAsync(storeRoot, completeMutation(job, err));
+}
+
+function completeMutation(job: Job, err: Error | undefined): (state: QueueState) => void {
+  return (state) => {
     let finalJob: Job = job;
     let queuedCurrent: Job | undefined;
     const jobs: Job[] = [];
@@ -1384,7 +1612,7 @@ export function completeJob(storeRoot: string, job: Job, err: Error | undefined)
       };
     }
     state.recent = [result, ...(state.recent ?? [])].slice(0, MAX_RECENT_RESULTS);
-  });
+  };
 }
 
 // --- dead letters -------------------------------------------------------------------------------
@@ -1442,10 +1670,16 @@ export class ClientHandle {
     const now = Date.now();
     this.lease.updatedAt = nowString(now);
     this.lease.expiresAt = nowString(now + leaseTtlMs());
-    mkdirSync(leaseDir(), { recursive: true, mode: 0o755 });
-    writeFileSync(leasePath(this.lease.id), `${goJson(leaseJson(this.lease), { indent: 2 })}\n`, {
-      mode: 0o644,
-    });
+    ensureDir(leaseDir());
+    const body = `${goJson(leaseJson(this.lease), { indent: 2 })}\n`;
+    try {
+      writeFileSync(leasePath(this.lease.id), body, { mode: 0o644 });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      madeDirs.delete(leaseDir());
+      ensureDir(leaseDir());
+      writeFileSync(leasePath(this.lease.id), body, { mode: 0o644 });
+    }
   }
 
   release(): void {
@@ -1462,17 +1696,23 @@ export function leaseJson(l: Lease): unknown {
     projectRoot: l.projectRoot,
     watch: l.watch,
     ...(l.pid ? { pid: l.pid } : {}),
+    ...(l.version ? { version: l.version } : {}),
     createdAt: goTimeString(l.createdAt),
     updatedAt: goTimeString(l.updatedAt),
     expiresAt: goTimeString(l.expiresAt),
   };
 }
 
-export function acquireClient(kind: string, projectRoot: string, watch: boolean): ClientHandle {
+export function acquireClient(
+  kind: string,
+  projectRoot: string,
+  watch: boolean,
+  opts: { ensure?: boolean } = {},
+): ClientHandle {
   if (projectRoot === "") throw new Error("project root is required");
   mkdirSync(leaseDir(), { recursive: true, mode: 0o755 });
   registerProject(projectRoot);
-  ensureDaemon();
+  if (opts.ensure !== false) ensureDaemon();
   const now = Date.now();
   const handle = new ClientHandle({
     id: randomUUID(),
@@ -1480,6 +1720,7 @@ export function acquireClient(kind: string, projectRoot: string, watch: boolean)
     projectRoot,
     watch,
     pid: process.pid,
+    version: VERSION,
     createdAt: nowString(now),
     updatedAt: nowString(now),
     expiresAt: nowString(now + leaseTtlMs()),
@@ -1532,11 +1773,20 @@ export function watchEnabledForClient(kind: string, projectRoot: string): boolea
   return false;
 }
 
-export function acquireConfiguredClient(kind: string, projectRoot: string): ClientHandle {
-  return acquireClient(kind, projectRoot, watchEnabledForClient(kind, projectRoot));
+export function acquireConfiguredClient(
+  kind: string,
+  projectRoot: string,
+  opts: { ensure?: boolean } = {},
+): ClientHandle {
+  return acquireClient(kind, projectRoot, watchEnabledForClient(kind, projectRoot), opts);
 }
 
 export function startHeartbeat(signal: AbortSignal, handle: ClientHandle): void {
+  // An already-aborted signal never fires its listener: release now instead of leaking the lease.
+  if (signal.aborted) {
+    handle.release();
+    return;
+  }
   const timer = setInterval(() => {
     try {
       handle.refresh();
@@ -1557,10 +1807,18 @@ export function startHeartbeat(signal: AbortSignal, handle: ClientHandle): void 
 const leaseScanCache = new Map<string, { sig: string; lease: Lease }>();
 
 export function activeLeases(): Lease[] {
-  mkdirSync(leaseDir(), { recursive: true, mode: 0o755 });
+  ensureDir(leaseDir());
   const now = Date.now();
   const leases: Lease[] = [];
-  const names = readdirSync(leaseDir());
+  let names: string[];
+  try {
+    names = readdirSync(leaseDir());
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    madeDirs.delete(leaseDir());
+    ensureDir(leaseDir());
+    names = [];
+  }
   // A lease file that is gone must not stay in the cache for the life of the daemon.
   const present = new Set(names.map((n) => join(leaseDir(), n)));
   for (const path of leaseScanCache.keys()) if (!present.has(path)) leaseScanCache.delete(path);
@@ -1745,8 +2003,15 @@ export function parseGoDurationMs(text: string): number | undefined {
   return sign * total;
 }
 
+/** A watcher that keeps failing is retried after 1 s, 2 s, 4 s ... up to a minute. */
+const WATCH_BACKOFF_MIN_MS = 1000;
+const WATCH_BACKOFF_MAX_MS = 60_000;
+/** A watcher that ran this long before it failed starts the ladder over. */
+const WATCH_HEALTHY_MS = 30_000;
+
 export class WatchLifecycle {
   private watchers = new Map<string, WatchEntry>();
+  private backoff = new Map<string, { until: number; fails: number }>();
 
   constructor(
     private now: () => number = Date.now,
@@ -1786,13 +2051,27 @@ export class WatchLifecycle {
     if (!factory) return;
     for (const [projectRoot, count] of demand) {
       if (count === 0 || this.watchers.has(projectRoot)) continue;
+      // One failing project must not be restarted every tick (a shared worker would be recycled
+      // for all of them each time).
+      if (now < (this.backoff.get(projectRoot)?.until ?? 0)) continue;
       const abort = new AbortController();
       const entry: WatchEntry = { abort, graceUntil: 0, state: "running", done: false };
       this.watchers.set(projectRoot, entry);
-      factory(abort.signal, projectRoot)
+      const startedAt = now;
+      let started: Promise<void>;
+      try {
+        started = factory(abort.signal, projectRoot);
+      } catch (err) {
+        started = Promise.reject(err); // a factory that throws is a failed watcher, not a crash
+      }
+      started
         .catch((err) => {
-          if (!abort.signal.aborted)
-            goLogf(`[runtime] watcher failed for ${projectRoot}: ${(err as Error).message}`);
+          if (abort.signal.aborted) return;
+          goLogf(`[runtime] watcher failed for ${projectRoot}: ${(err as Error).message}`);
+          const prev = this.backoff.get(projectRoot);
+          const fails = this.now() - startedAt >= WATCH_HEALTHY_MS ? 1 : (prev?.fails ?? 0) + 1;
+          const wait = Math.min(WATCH_BACKOFF_MAX_MS, WATCH_BACKOFF_MIN_MS * 2 ** (fails - 1));
+          this.backoff.set(projectRoot, { until: this.now() + wait, fails });
         })
         .finally(() => {
           entry.done = true;
@@ -1874,6 +2153,9 @@ function statusKey(leases: Lease[], projects: string[], watchers: WatcherStatus[
 const STATUS_REFRESH_MS = 30_000;
 const IDLE_POLL_MAX_MS = 5_000;
 const KEEP_ALIVE_REFRESH_MS = 2_000;
+/** How often a daemon rechecks whether it is the runner (one small file read). */
+const ROLE_REFRESH_MS = 2_000;
+const STANDBY_SCAN: QueueScan = { pending: 0, fingerprint: "" };
 /** Registered project roots that stay missing this long, and hold no jobs, are unregistered. */
 const MISSING_PROJECT_GRACE_MS = 30 * 24 * 3_600_000;
 const HOUSEKEEPING_INTERVAL_MS = 10 * 60_000;
@@ -1976,7 +2258,7 @@ export function jobGapMs(ranMs: number): number {
 
 /** Files the daemon writes itself: they must not wake its own sleep. */
 const OWN_WRITES =
-  /^(status\.json|semantic-status\.json|projects-missing\.json|knowns-runtime\.pid)(\.tmp)?$/;
+  /^(status\.json|semantic-status\.json|projects-missing\.json|knowns-runtime\.pid|runner\.json|runner\.lock)(\.\d+)?(\.tmp)?$/;
 
 /**
  * One fs.watch per runtime directory (root, leases, queues): a lease, an enqueue, a reload request
@@ -2051,14 +2333,39 @@ function watchRuntimeDirs(): {
 /** RunDaemonWithOptions. Resolves when the daemon decides to exit (idle, stop flag, abort). */
 export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promise<void> {
   mkdirSync(runtimeRoot(), { recursive: true, mode: 0o755 });
-  writeFileSync(pidFile(), String(process.pid), { mode: 0o644 });
-  rmSync(stopFlagPath(), { force: true });
+  // Version scoped (spec D3): register, then try to become the runner, the one daemon that runs
+  // queue jobs and watchers and owns the pid and status files 0.34.x reads.
+  try {
+    registerDaemon(VERSION);
+  } catch (err) {
+    if (err instanceof DaemonAlreadyRunning) {
+      // Two daemons of one version would fight over the endpoint and the runner files.
+      goLogf(`[runtime] ${err.message}; exiting`);
+      return;
+    }
+    throw err;
+  }
+  let isRunner = claimRunner(VERSION);
+  let roleCheckedAt = Date.now();
+  const takeRunnerFiles = (): void => {
+    writeFileSync(pidFile(), String(process.pid), { mode: 0o644 });
+    rmSync(stopFlagPath(), { force: true });
+  };
+  if (isRunner) takeRunnerFiles();
+  goLogf(`[runtime] started (version=${VERSION}, role=${isRunner ? "runner" : "standby"})`);
 
   const serviceAbort = new AbortController();
   const services = (opts.services ?? []).map((run) => run(serviceAbort.signal).catch(() => {}));
   const watchLifecycle = new WatchLifecycle();
   let running:
-    | { storeRoot: string; job: Job; done: Promise<Error | undefined>; startedMs: number }
+    | {
+        storeRoot: string;
+        job: Job;
+        done: Promise<Error | undefined>;
+        startedMs: number;
+        /** Cancels the deferred start mark; undefined once the mark is on disk. */
+        cancelStartMark?: () => Promise<boolean>;
+      }
     | undefined;
   let idleSince = 0;
   // Idle cost: the tick backs off from POLL to IDLE_POLL_MAX_MS while nothing changes, and a file
@@ -2079,20 +2386,36 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
   try {
     for (;;) {
       const tickNow = Date.now();
-      const leases = (() => {
+      const allLeases = (() => {
         try {
           return activeLeases();
         } catch {
           return [] as Lease[];
         }
       })();
+      if (tickNow - roleCheckedAt >= ROLE_REFRESH_MS) {
+        roleCheckedAt = tickNow;
+        const was = isRunner;
+        isRunner = checkRunner(VERSION);
+        // A runner that never noticed it was replaced (the newer daemon died within one refresh)
+        // must still take the files back: the pid file went with the newer daemon.
+        if (isRunner && (!was || readPID() !== process.pid)) {
+          takeRunnerFiles();
+          lastStatusKey = "";
+          goLogf("[runtime] role: runner");
+        } else if (!isRunner && was) {
+          goLogf("[runtime] role: standby (a newer daemon runs jobs)");
+        }
+      }
+      // A daemon answers for its own version's leases; only the runner watches and runs jobs.
+      const { own: leases, watchFor } = partitionLeases(allLeases, VERSION, isRunner);
       let projects: string[] = [];
       try {
         projects = registeredProjects();
       } catch {
         projects = [];
       }
-      for (const lease of leases)
+      for (const lease of watchFor)
         if (!projects.includes(lease.projectRoot)) projects.push(lease.projectRoot);
       if (tickNow >= nextHousekeeping) {
         nextHousekeeping = tickNow + HOUSEKEEPING_INTERVAL_MS;
@@ -2106,15 +2429,15 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
       }
       // A root that came back (a drive remounted) is picked up on this tick, not at housekeeping.
       for (const p of [...missingRoots]) if (!projectRootMissing(p)) missingRoots.delete(p);
-      const leasedRoots = new Set(leases.map((l) => l.projectRoot));
+      const leasedRoots = new Set(watchFor.map((l) => l.projectRoot));
       const scanned = projects.filter((p) => leasedRoots.has(p) || !missingRoots.has(p));
-      watchLifecycle.reconcile(leases, opts.watcherFactory);
-      const watcherStates = watchLifecycle.status(leases);
+      watchLifecycle.reconcile(watchFor, opts.watcherFactory);
+      const watcherStates = watchLifecycle.status(watchFor);
 
       const leaseIdentity = leases.map((l) => `${l.id}:${l.projectRoot}:${l.watch}`).join("|");
       let busy = running !== undefined || leaseIdentity !== lastLeaseIdentity;
       lastLeaseIdentity = leaseIdentity;
-      const scan = scanQueues(scanned, lastServed, tickNow);
+      const scan = isRunner ? scanQueues(scanned, lastServed, tickNow) : STANDBY_SCAN;
       if (scan.fingerprint !== lastFingerprint) {
         lastFingerprint = scan.fingerprint;
         busy = true;
@@ -2129,7 +2452,7 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
           // an unreadable queue counts for nothing
         }
       }
-      if (running === undefined) {
+      if (running === undefined && isRunner) {
         let request: ReloadRequest | undefined;
         let reloadErr: unknown;
         try {
@@ -2146,8 +2469,8 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
             goLogf(`[runtime] reload failed: ${(err as Error).message}`);
           }
           try {
-            writeStatusFile(leases, projects, watcherStates);
-            lastStatusKey = statusKey(leases, projects, watcherStates);
+            writeStatusFile(watchFor, projects, watcherStates);
+            lastStatusKey = statusKey(watchFor, projects, watcherStates);
             lastStatusAt = Date.now();
           } catch {
             // ignore
@@ -2162,7 +2485,14 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
         if (scan.next && !next) busy = true;
         if (next) {
           try {
-            const started = markJobStarted(next.storeRoot, next.job.id);
+            // The start mark (startedAt, attempts) is written only when the job runs longer than
+            // START_MARK_DELAY_MS; a quick job gets it together with its completion, in one
+            // rewrite of the queue file instead of two.
+            const started: Job = {
+              ...next.job,
+              startedAt: nowString(),
+              attempts: (next.job.attempts ?? 0) + 1,
+            };
             lastServed = next.storeRoot;
             const done = (async (): Promise<Error | undefined> => {
               try {
@@ -2172,11 +2502,23 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
                 return err instanceof Error ? err : new Error(String(err));
               }
             })();
+            let markPending = true;
+            let markInFlight: Promise<unknown> | undefined;
+            const markTimer = setTimeout(() => {
+              markPending = false;
+              markInFlight = markJobStartedAsync(next.storeRoot, next.job.id).catch(() => {});
+            }, START_MARK_DELAY_MS);
             running = {
               storeRoot: next.storeRoot,
               job: started,
               done,
               startedMs: Date.now(),
+              cancelStartMark: async () => {
+                clearTimeout(markTimer);
+                // A mark already on its way lands before the completion, never after it.
+                await markInFlight;
+                return markPending;
+              },
             };
             busy = true;
           } catch {
@@ -2184,12 +2526,12 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
           }
         }
       }
-      {
+      if (isRunner) {
         const statusNow = Date.now();
-        const key = statusKey(leases, projects, watcherStates);
+        const key = statusKey(watchFor, projects, watcherStates);
         if (key !== lastStatusKey || statusNow - lastStatusAt >= STATUS_REFRESH_MS) {
           try {
-            writeStatusFile(leases, projects, watcherStates);
+            writeStatusFile(watchFor, projects, watcherStates);
             lastStatusKey = key;
             lastStatusAt = statusNow;
           } catch {
@@ -2197,7 +2539,8 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
           }
         }
       }
-      if (shouldStop()) {
+      // The stop flag addresses the daemon that owns the pid file (what `runtime stop` targets).
+      if (shouldStop() && readPID() === process.pid) {
         rmSync(stopFlagPath(), { force: true });
         return;
       }
@@ -2216,10 +2559,28 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
         pendingJobs === 0 &&
         running === undefined &&
         !watchLifecycle.hasActiveOrGrace() &&
-        !keepAlive
+        !keepAlive &&
+        opts.busy?.() !== true
       ) {
         if (idleSince === 0) idleSince = Date.now();
-        else if (Date.now() - idleSince >= idleTimeoutMs()) return;
+        else if (Date.now() - idleSince >= idleTimeoutMs()) {
+          // Stop advertising first, then look once more: a proxy that connected a moment ago
+          // keeps the daemon (re-register and listen again); otherwise nobody is sent to a
+          // daemon that is leaving.
+          await opts.retire?.();
+          unregisterDaemon(VERSION);
+          releaseRunner();
+          if (!opts.busy?.()) return;
+          try {
+            registerDaemon(VERSION);
+          } catch {
+            return; // a replacement of this version started meanwhile: leave it the field
+          }
+          isRunner = claimRunner(VERSION);
+          if (isRunner) takeRunnerFiles();
+          await opts.reopen?.();
+          idleSince = 0;
+        }
       } else {
         idleSince = 0;
       }
@@ -2243,7 +2604,19 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
         ]);
         if (outcome !== "tick") {
           try {
-            completeJob(current.storeRoot, current.job, outcome.err);
+            const markUnwritten = (await current.cancelStartMark?.()) ?? false;
+            await updateQueueAsync(
+              current.storeRoot,
+              markUnwritten
+                ? (state) => {
+                    const out: { job?: Job } = {};
+                    if (state.jobs.some((j) => j.id === current.job.id)) {
+                      startMutation(current.job.id, out)(state);
+                    }
+                    completeMutation(current.job, outcome.err)(state);
+                  }
+                : completeMutation(current.job, outcome.err),
+            );
           } catch {
             // ignore
           }
@@ -2258,8 +2631,17 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
   } finally {
     wake.close();
     watchLifecycle.stop();
+    // Leave the registry and stop advertising before waiting for the services to drain, so a
+    // proxy arriving meanwhile starts a replacement instead of falling back for no reason.
+    try {
+      await opts.retire?.();
+    } catch {
+      // best effort
+    }
+    if (readPID() === process.pid) rmSync(pidFile(), { force: true });
+    releaseRunner();
+    unregisterDaemon(VERSION);
     serviceAbort.abort();
     await Promise.allSettled(services);
-    if (readPID() === process.pid) rmSync(pidFile(), { force: true });
   }
 }

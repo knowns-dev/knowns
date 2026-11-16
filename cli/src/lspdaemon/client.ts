@@ -1,7 +1,6 @@
 // Port of client.go: the client side (EnsureClient, daemon start/recovery) and the remote Session.
 
-import { spawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { type Ctx, ctxErr, sleep, withTimeout } from "../lsp/context.ts";
 import { errorAs, errorIs, errorMessage } from "../lsp/errors.ts";
@@ -15,6 +14,7 @@ import type {
   WorkspaceEdit,
   WorkspaceSymbolResult,
 } from "../lsp/types.ts";
+import { spawnDetached } from "../platform/detached-spawn.ts";
 import { acquireProjectLock, ensureToken } from "./files.ts";
 import {
   endpoint,
@@ -108,10 +108,20 @@ export class Client {
   }
 
   /** ttlMs <= 0 uses KNOWNS_LSP_DAEMON_LEASE_TTL (default 30m). */
-  async acquireLease(ctx: Ctx, ownerIn: string, ttlMs = 0): Promise<LanguageRuntimeStatus[]> {
+  async acquireLease(
+    ctx: Ctx,
+    ownerIn: string,
+    ttlMs = 0,
+    ownerPid = process.pid,
+  ): Promise<LanguageRuntimeStatus[]> {
     const owner = validateLeaseOwner(ownerIn);
     const ttl = ttlMs > 0 ? ttlMs : leaseTTLFromEnv();
-    return this.statusCall(ctx, { operation: "lease_acquire", owner, ttlMillis: Math.trunc(ttl) });
+    return this.statusCall(ctx, {
+      operation: "lease_acquire",
+      owner,
+      ttlMillis: Math.trunc(ttl),
+      ownerPid,
+    });
   }
 
   async releaseLease(ctx: Ctx, ownerIn: string): Promise<void> {
@@ -214,20 +224,11 @@ export class Client {
         // not running: start it
       }
       mkdirSync(dirname(this.paths.logPath), { recursive: true, mode: 0o700 });
-      const logFd = openSync(this.paths.logPath, "a", 0o600);
       try {
         const { cmd, args } = await daemonStartCommand(this.identity.root);
-        const child = spawn(cmd, args, {
-          detached: true,
-          stdio: ["ignore", logFd, logFd],
-          windowsHide: true,
-        });
-        child.on("error", () => {});
-        child.unref();
+        spawnDetached(cmd, args, { logPath: this.paths.logPath, logMode: 0o600 });
       } catch (e) {
         throw new Error(`start LSP daemon: ${errorMessage(e)}`);
-      } finally {
-        closeSync(logFd);
       }
       await this.waitReady(ctx, defaultStartTimeoutMs);
     } finally {

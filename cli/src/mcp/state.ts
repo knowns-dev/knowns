@@ -95,7 +95,36 @@ export class McpState {
       this.log.printf(`warn: could not load LSP plugin adapter: ${err.message}`);
     }
     this.lspManagerCache = manager;
+    liveStates.add(this);
     return manager;
+  }
+
+  /** Ends the session: stops the language servers this session started (a daemon-hosted session
+   * outlives no process of its own, so nothing else would). */
+  /** Stops this session's language servers and lets the next call build fresh ones. */
+  async restartLsp(): Promise<void> {
+    const manager = this.lspManagerCache;
+    this.lspManagerCache = undefined;
+    this.lspManagerBuilt = false;
+    if (!manager) return;
+    try {
+      await manager.stopAll(undefined);
+    } catch {
+      // the servers may already be gone
+    }
+  }
+
+  async dispose(): Promise<void> {
+    liveStates.delete(this);
+    const manager = this.lspManagerCache;
+    this.lspManagerCache = undefined;
+    this.lspManagerBuilt = true;
+    if (!manager) return;
+    try {
+      await manager.stopAll(undefined);
+    } catch {
+      // the servers may already be gone
+    }
   }
 
   /** The once-only "LSP daemon disabled" warning. */
@@ -104,4 +133,11 @@ export class McpState {
     this.daemonWarned = true;
     this.log.printf(`warn: ${text}`);
   }
+}
+
+const liveStates = new Set<McpState>();
+
+/** Restarts the language servers of every session in this process (hung heavy calls, pool leak). */
+export async function restartAllLanguageServers(): Promise<void> {
+  await Promise.allSettled([...liveStates].map((st) => st.restartLsp()));
 }

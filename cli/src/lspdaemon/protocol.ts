@@ -60,6 +60,8 @@ export interface Request {
   newName?: string;
   owner?: string;
   ttlMillis?: number;
+  /** Not in Go: the lease holder's pid, so the daemon can drop the lease when that process dies. */
+  ownerPid?: number;
 }
 
 export interface RuntimeErrorPayload {

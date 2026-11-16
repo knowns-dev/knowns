@@ -19,6 +19,7 @@ import {
 } from "./defs.ts";
 import { McpLogger } from "./log.ts";
 import { guard } from "./permissions.ts";
+import { sharedToolPool } from "./pool.ts";
 import { McpServer } from "./server.ts";
 import { McpState } from "./state.ts";
 import {
@@ -68,7 +69,20 @@ export interface McpApp {
   cleanup: (reason: string) => void;
 }
 
-export function newMcpApp(projectHint: string, log: McpLogger = new McpLogger()): McpApp {
+export interface McpAppOptions {
+  /** The directory project detection walks up from when the hint finds nothing. A session hosted
+   * by the runtime daemon passes the client's directory; the default is this process's. */
+  cwd?: string;
+  /** Hosted by the runtime daemon: the session lease is written without ensuring a daemon (this
+   * process is the daemon, and must never stop or start another one). */
+  daemonHosted?: boolean;
+}
+
+export function newMcpApp(
+  projectHint: string,
+  log: McpLogger = new McpLogger(),
+  opts: McpAppOptions = {},
+): McpApp {
   const state = new McpState(log);
   const pending = new WeakMap<CallToolRequest, PendingCall>();
   let auditStorePromise: Promise<import("../storage/stores/audit-store.ts").AuditStore> | undefined;
@@ -81,6 +95,7 @@ export function newMcpApp(projectHint: string, log: McpLogger = new McpLogger())
 
   const ac = new AbortController();
   let lease: { release: () => void } | undefined;
+  let closed = false;
 
   let ready: Promise<void> | undefined;
 
@@ -89,6 +104,7 @@ export function newMcpApp(projectHint: string, log: McpLogger = new McpLogger())
     version: MCP_VERSION,
     instructions: INSTRUCTIONS,
     ready: () => begin(),
+    ...(opts.daemonHosted ? { pool: sharedToolPool() } : {}),
     onInitialize: (info) => {
       state.clientInfo = info;
     },
@@ -125,7 +141,9 @@ export function newMcpApp(projectHint: string, log: McpLogger = new McpLogger())
           agentSlug(state.clientInfo),
         );
         try {
-          (await auditStore()).append(event);
+          const store = await auditStore();
+          if (opts.daemonHosted) store.appendBuffered(event);
+          else store.append(event);
         } catch (e) {
           log.printf(`audit: write failed: ${(e as Error).message}`);
         }
@@ -138,8 +156,27 @@ export function newMcpApp(projectHint: string, log: McpLogger = new McpLogger())
     async (ctx, req) =>
       (await load()).handle(state, ctx, req);
 
+  // A daemon-hosted session runs search on a worker thread: a cold index is above 50 ms of
+  // synchronous work and would stall every other session (spec D4).
+  const offThread =
+    (load: () => Promise<HandlerModule>): ToolHandler =>
+    async (ctx, req) => {
+      const project = state.getProject();
+      if (!project) return (await load()).handle(state, ctx, req);
+      const { sharedSearchPool } = await import("./pool.ts");
+      const pool = await sharedSearchPool();
+      const res = await pool.run(
+        { storeRoot: project.store.root, projectRoot: state.getRoot(), req },
+        ctx.signal,
+      );
+      return { text: res.text, isError: res.isError };
+    };
+
   const add = (tool: Tool, load: () => Promise<HandlerModule>): void => {
-    const handler = lazy(load);
+    const handler =
+      opts.daemonHosted && tool.name === "search" && process.env.KNOWNS_MCP_SEARCH_WORKERS !== "0"
+        ? offThread(load)
+        : lazy(load);
     server.addTool(tool, WRAPPED_TOOLS.has(tool.name) ? rejectUnknown(tool, handler) : handler);
   };
 
@@ -161,17 +198,21 @@ export function newMcpApp(projectHint: string, log: McpLogger = new McpLogger())
   const begin = (): Promise<void> => {
     ready ??= (async () => {
       try {
-        await autoDetectProject(state, projectHint);
+        await autoDetectProject(state, projectHint, opts.cwd);
         const project = state.getProject();
         if (project) {
           const { shouldBypassDaemon, acquireConfiguredClient, startHeartbeat } = await import(
             "../runtime/queue.ts"
           );
-          if (!shouldBypassDaemon()) {
+          if (!shouldBypassDaemon() && !closed) {
             try {
-              const handle = acquireConfiguredClient("mcp", project.store.root);
+              const handle = acquireConfiguredClient("mcp", project.store.root, {
+                ensure: !opts.daemonHosted,
+              });
               lease = handle;
-              startHeartbeat(ac.signal, handle);
+              // The session may have ended while the lease was being taken.
+              if (closed) handle.release();
+              else startHeartbeat(ac.signal, handle);
             } catch (e) {
               log.printf(`runtime lease unavailable: ${(e as Error).message}`);
             }
@@ -190,7 +231,9 @@ export function newMcpApp(projectHint: string, log: McpLogger = new McpLogger())
     begin,
     cleanup: (reason) => {
       log.printf(`shutdown: ${reason}`);
+      closed = true;
       ac.abort();
+      void state.dispose();
       try {
         lease?.release();
       } catch {
@@ -201,7 +244,11 @@ export function newMcpApp(projectHint: string, log: McpLogger = new McpLogger())
 }
 
 /** autoDetectProject: the hint (honouring store links), then a walk up from the working directory. */
-async function autoDetectProject(state: McpState, hint: string): Promise<void> {
+async function autoDetectProject(
+  state: McpState,
+  hint: string,
+  cwdOverride?: string,
+): Promise<void> {
   const core = await import("../storage/core/index.ts");
   const { goGetwd } = await import("../storage/core/getwd.ts");
   const use = async (loc: ReturnType<typeof core.locateProject>): Promise<void> => {
@@ -225,7 +272,7 @@ async function autoDetectProject(state: McpState, hint: string): Promise<void> {
   }
   let cwd: string;
   try {
-    cwd = goGetwd();
+    cwd = cwdOverride && cwdOverride !== "" ? cwdOverride : goGetwd();
   } catch {
     return;
   }

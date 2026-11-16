@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { errorAs } from "../../src/lsp/errors.ts";
 import { RuntimeError } from "../../src/lsp/runtime-error.ts";
 import {
@@ -151,6 +151,49 @@ describe("daemon over the local transport", () => {
       d.done,
       new Promise((_, r) => setTimeout(() => r(new Error("no idle exit")), 2000)),
     ]);
+  });
+});
+
+describe("an owner that is gone", () => {
+  const within = (p: Promise<unknown>, what: string) =>
+    Promise.race([p, new Promise((_, r) => setTimeout(() => r(new Error(what)), 3000))]);
+
+  async function deadPid(): Promise<number> {
+    const child = Bun.spawn([process.execPath, "-e", ""], {
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    await child.exited;
+    return child.pid;
+  }
+
+  test("its lease no longer keeps the daemon alive", async () => {
+    const root = tempProject();
+    const d = start(root, 100);
+    const c = newClient(root);
+    await waitFor(() => c.ping());
+    await c.acquireLease(undefined, "webui", 60_000, await deadPid());
+    await within(d.done, "a lease held by a dead process kept the daemon alive");
+  });
+
+  test("a lease held by a live process still does", async () => {
+    const root = tempProject();
+    const d = start(root, 100);
+    const c = newClient(root);
+    await waitFor(() => c.ping());
+    await c.acquireLease(undefined, "webui", 60_000, process.pid);
+    await new Promise((r) => setTimeout(r, 400));
+    await c.ping();
+    d.ac.abort();
+    await d.done;
+  });
+
+  test("the daemon exits when its project directory disappears", async () => {
+    const root = tempProject();
+    const d = start(root, 0);
+    const c = newClient(root);
+    await waitFor(() => c.ping());
+    rmSync(root, { recursive: true, force: true });
+    await within(d.done, "the daemon outlived its project directory");
   });
 });
 

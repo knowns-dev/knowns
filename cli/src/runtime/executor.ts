@@ -164,6 +164,11 @@ function sessionSkippable(err: unknown): boolean {
   );
 }
 
+/** The job itself, without republishing the daemon's status (that is the main thread's file). */
+export async function executeRuntimeJobCore(storeRoot: string, job: Job): Promise<void> {
+  await executeInner(storeRoot, job);
+}
+
 export async function executeRuntimeJob(storeRoot: string, job: Job): Promise<void> {
   try {
     await executeInner(storeRoot, job);

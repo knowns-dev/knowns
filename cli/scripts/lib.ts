@@ -52,8 +52,14 @@ export async function compile(
   target: string,
   outfile: string,
   define: Record<string, string> = {},
-  releaseVersion?: string,
+  opts: {
+    /** Stamps Windows version info and icon when set. */
+    releaseVersion?: string;
+    /** Worker thread entry files: Bun embeds a worker only when it is an entrypoint of the build. */
+    workers?: string[];
+  } = {},
 ): Promise<void> {
+  const { releaseVersion, workers = [] } = opts;
   mkdirSync(dirname(outfile), { recursive: true });
   const windows =
     releaseVersion !== undefined && platformOf(target).startsWith("windows")
@@ -65,7 +71,7 @@ export async function compile(
     );
   }
   const res = await Bun.build({
-    entrypoints: [entry],
+    entrypoints: [entry, ...workers],
     minify: true,
     define,
     compile: {

@@ -68,11 +68,14 @@ describe("queue scan cache", () => {
     delete process.env.KNOWNS_STAT_RACY_MS;
   });
 
-  test("a queue file rewritten moments ago is reread, never served from the cache", () => {
+  test("a queue file another process rewrote moments ago is reread, never served from the cache", () => {
     const p = project("racy");
     q.updateQueue(p, (s) => {
       s.jobs.push(due("a", Date.now()));
     });
+    // Not our own write (that one is remembered, see queue-crash-rerun.test.ts): a foreign rewrite.
+    const file = q.queuePath(p);
+    writeFileSync(file, readFileSync(file, "utf8"));
     const first = q.loadQueueCached(p);
     const again = q.loadQueueCached(p);
     expect(again).not.toBe(first); // no signature for a fresh file: parsed each time

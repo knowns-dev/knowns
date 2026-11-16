@@ -26,7 +26,13 @@ for (const target of list) {
       target,
       out,
       { KNOWNS_VERSION: JSON.stringify(version) },
-      version,
+      {
+        releaseVersion: version,
+        workers: [
+          join(cliDir, "src", "mcp", "search-worker.ts"),
+          join(cliDir, "src", "runtime", "runner-worker-entry.ts"),
+        ],
+      },
     );
     console.log(`ok   ${target} -> dist/${platformOf(target)}/${exeName(target)}`);
   } catch (e) {

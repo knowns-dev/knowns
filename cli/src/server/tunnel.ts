@@ -1,19 +1,14 @@
 // internal/tunnel/cloudflared/daemon.go, internal/server/tunnel.go and routes/tunnel.go: a shared
 // `cloudflared tunnel --url` process keyed by local port, with state in
 // ~/.knowns/cloudflared-<port>.{pid,url,log}.
+
 import { spawnSync } from "node:child_process";
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { spawnDetached } from "../platform/detached-spawn.ts";
 import { goLookPathError } from "../platform/goerror.ts";
+import { isProcessInstance } from "../runtime/process-identity.ts";
 import type { App } from "./app.ts";
 import { jsonResponse, type Router, respondError } from "./http.ts";
 import type { Broadcaster } from "./sse.ts";
@@ -101,6 +96,21 @@ export class Daemon {
     return readFileSync(this.urlFile, "utf8").trim();
   }
 
+  /** Is this pid a cloudflared tunnel that started no later than the pid file? */
+  private isOurTunnel(pid: number): boolean {
+    let writtenAt = 0;
+    try {
+      writtenAt = statSync(this.pidFile).mtimeMs;
+    } catch {
+      return false;
+    }
+    return isProcessInstance(pid, {
+      names: ["cloudflared"],
+      args: ["tunnel"],
+      startedBefore: writtenAt,
+    });
+  }
+
   isHealthy(): boolean {
     let pid: number;
     try {
@@ -108,7 +118,7 @@ export class Daemon {
     } catch {
       return false;
     }
-    if (!isProcessAlive(pid)) return false;
+    if (!isProcessAlive(pid) || !this.isOurTunnel(pid)) return false;
     try {
       return this.publicURL() !== "";
     } catch {
@@ -119,7 +129,9 @@ export class Daemon {
   private cleanupStale(): void {
     try {
       const pid = this.readPID();
-      if (!isProcessAlive(pid)) {
+      // A pid that is alive but is not our cloudflared (reused after a crash or reboot) is as stale
+      // as a dead one: its URL must not look healthy.
+      if (!isProcessAlive(pid) || !this.isOurTunnel(pid)) {
         rmSync(this.pidFile, { force: true });
         rmSync(this.urlFile, { force: true });
       }
@@ -151,6 +163,13 @@ export class Daemon {
       rmSync(this.urlFile, { force: true });
       return;
     }
+    // A pid file can outlive its process and name an unrelated one after a crash or reboot: signal
+    // only a cloudflared tunnel that started no later than the file.
+    if (!this.isOurTunnel(pid)) {
+      rmSync(this.pidFile, { force: true });
+      rmSync(this.urlFile, { force: true });
+      return;
+    }
     try {
       if (process.platform === "win32") process.kill(pid, "SIGKILL");
       else process.kill(pid, "SIGTERM");
@@ -174,29 +193,27 @@ export class Daemon {
 
   private async start(): Promise<void> {
     mkdirSync(dirname(this.pidFile), { recursive: true, mode: 0o755 });
-    let fd: number;
     try {
-      fd = openSync(this.logFile, "w", 0o644);
+      writeFileSync(this.logFile, "", { mode: 0o644 });
     } catch (e) {
       throw new Error(`open cloudflared log: ${(e as Error).message}`);
     }
-    let proc: ReturnType<typeof Bun.spawn>;
+    let pid: number;
     try {
       // The child writes straight to the log file (no pipe to this process), so it outlives the
-      // server without SIGPIPE; the public URL is read back from the log.
-      proc = Bun.spawn(
-        ["cloudflared", "tunnel", "--no-autoupdate", "--url", `http://localhost:${this.localPort}`],
-        { stdin: "ignore", stdout: fd, stderr: fd, detached: true, windowsHide: true },
+      // server without SIGPIPE; the public URL is read back from the log. spawnDetached keeps it
+      // from inheriting this server's listening socket.
+      pid = spawnDetached(
+        "cloudflared",
+        ["tunnel", "--no-autoupdate", "--url", `http://localhost:${this.localPort}`],
+        { logPath: this.logFile },
       );
     } catch (e) {
-      closeSync(fd);
       throw new Error(`start cloudflared: ${(e as Error).message}`);
     }
-    closeSync(fd);
-    proc.unref();
     try {
       mkdirSync(dirname(this.pidFile), { recursive: true, mode: 0o755 });
-      writeFileSync(this.pidFile, String(proc.pid), { mode: 0o644 });
+      writeFileSync(this.pidFile, String(pid), { mode: 0o644 });
     } catch {
       // logged in Go
     }
@@ -215,7 +232,11 @@ export class Daemon {
         writeFileSync(this.urlFile, m[0], { mode: 0o644 });
         return;
       }
-      if (proc.exitCode !== null) break;
+      try {
+        process.kill(pid, 0);
+      } catch {
+        break;
+      }
       await new Promise((r) => setTimeout(r, 100));
     }
     throw new Error(`timed out waiting for cloudflared public URL (see ${this.logFile})`);

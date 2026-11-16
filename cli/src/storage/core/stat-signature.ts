@@ -16,9 +16,17 @@ function racyWindowMs(): number {
   return raw !== undefined && /^-?\d+$/.test(raw) ? Number(raw) : RACY_WINDOW_MS;
 }
 
+/**
+ * The same signature without the racy gate, for a writer that holds the file's lock and knows the
+ * content it just wrote (the queue's write-through cache). Never use it for a lock-free reader.
+ */
+export function statSignatureStrict(st: BigIntStats): string {
+  return `${st.mtimeNs}:${st.ctimeNs}:${st.size}:${st.ino}`;
+}
+
 /** The signature of a stat taken with { bigint: true }, or undefined while the file is racy. */
 export function statSignature(st: BigIntStats, now: number = Date.now()): string | undefined {
   const horizon = BigInt(Math.trunc(now - racyWindowMs()));
   if (st.mtimeMs >= horizon || st.ctimeMs >= horizon) return undefined;
-  return `${st.mtimeNs}:${st.ctimeNs}:${st.size}:${st.ino}`;
+  return statSignatureStrict(st);
 }
