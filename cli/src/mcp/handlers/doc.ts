@@ -436,44 +436,52 @@ async function update(state: McpState, req: CallToolRequest): Promise<CallToolRe
   const oldPath = doc.path;
   const [expectedHash] = stringArg(args, "expectedHash");
 
-  const [title, tok] = stringArg(args, "title");
-  if (clear.has("title")) doc.title = "";
-  else if (tok && title !== "") doc.title = title;
-  const [description, dok] = stringArg(args, "description");
-  if (clear.has("description")) delete doc.description;
-  else if (dok && description !== "") doc.description = description;
-  if (Object.hasOwn(args, "tags")) {
-    const [tags, ok] = stringSliceArg(args, "tags");
-    doc.tags = ok ? tags : [];
-  }
   const [newPath, npok] = stringArg(args, "newPath");
-  if (npok && goTrimSpace(newPath) !== "") {
-    const noMd = newPath.endsWith(".md") ? newPath.slice(0, -3) : newPath;
-    doc.path = noMd.replace(/^\/+|\/+$/g, "");
-  }
-  const [sectionTarget, hasSection] = stringArg(args, "section");
-  const [newContent, hasContent] = stringArg(args, "content");
-  const [appendContent, hasAppend] = stringArg(args, "appendContent");
-  const cur = doc.content ?? "";
-  let next = cur;
-  if (clear.has("content")) next = "";
-  else if (hasSection && sectionTarget !== "" && hasContent)
-    next = replaceSection(cur, sectionTarget, newContent);
-  else if (hasContent && newContent !== "") next = newContent;
-  if (hasAppend && appendContent !== "") {
-    if (next === "") next = appendContent;
-    else {
-      if (!next.endsWith("\n")) next += "\n";
-      next += appendContent;
+  // The edit is a function of the current document, so it can be re-applied to the fresh copy read
+  // under the document lock when the caller gave no expectedHash (a concurrent edit is then kept,
+  // not a spurious conflict).
+  const applyEdit = (doc: Doc): void => {
+    const [title, tok] = stringArg(args, "title");
+    if (clear.has("title")) doc.title = "";
+    else if (tok && title !== "") doc.title = title;
+    const [description, dok] = stringArg(args, "description");
+    if (clear.has("description")) delete doc.description;
+    else if (dok && description !== "") doc.description = description;
+    if (Object.hasOwn(args, "tags")) {
+      const [tags, ok] = stringSliceArg(args, "tags");
+      doc.tags = ok ? tags : [];
     }
-  }
-  if (next === "") delete doc.content;
-  else doc.content = next;
-  doc.updatedAt = new Date().toISOString();
+    if (npok && goTrimSpace(newPath) !== "") {
+      const noMd = newPath.endsWith(".md") ? newPath.slice(0, -3) : newPath;
+      doc.path = noMd.replace(/^\/+|\/+$/g, "");
+    }
+    const [sectionTarget, hasSection] = stringArg(args, "section");
+    const [newContent, hasContent] = stringArg(args, "content");
+    const [appendContent, hasAppend] = stringArg(args, "appendContent");
+    const cur = doc.content ?? "";
+    let next = cur;
+    if (clear.has("content")) next = "";
+    else if (hasSection && sectionTarget !== "" && hasContent)
+      next = replaceSection(cur, sectionTarget, newContent);
+    else if (hasContent && newContent !== "") next = newContent;
+    if (hasAppend && appendContent !== "") {
+      if (next === "") next = appendContent;
+      else {
+        if (!next.endsWith("\n")) next += "\n";
+        next += appendContent;
+      }
+    }
+    if (next === "") delete doc.content;
+    else doc.content = next;
+    doc.updatedAt = new Date().toISOString();
+  };
+  applyEdit(doc);
+  const [sectionTarget] = stringArg(args, "section");
 
   try {
     const { mutateDocWithHistory } = await import("../../storage/history/index.ts");
     await mutateDocWithHistory(storage.ctx, oldDoc, doc, {
+      rebase: npok && goTrimSpace(newPath) !== "" ? undefined : applyEdit,
       section: sectionTarget,
       actor: "mcp",
       source: "mcp",

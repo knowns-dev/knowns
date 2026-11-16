@@ -982,12 +982,15 @@ export class Service implements LifecycleCore {
    * after the lock is released.
    */
   async updateTask(taskId: string, options: TaskUpdateOptions = {}): Promise<Task> {
-    let expectedHash = options.expectedHash ?? "";
-    if (blank(expectedHash)) expectedHash = this.observedTaskHash(taskId);
+    // An explicit expectedHash is optimistic: a stale base is a conflict. Without one the caller
+    // asked for "apply this change to whatever is current": `mutate` runs on the fresh copy read
+    // inside the lifecycle lock, so concurrent updates serialize on that lock instead of failing
+    // on a hash that was observed before it (a spurious conflict).
+    const expectedHash = options.expectedHash ?? "";
     let updated: Task | undefined;
     await this.withTransaction(async (tx) => {
       const current = await tx.getTask(taskId);
-      tx.checkTaskExpectedHash(current, expectedHash);
+      if (!blank(expectedHash)) tx.checkTaskExpectedHash(current, expectedHash);
       if (current.archived) {
         throw new Error(`Task "${taskId}" is archived; reopen it before updating`);
       }
@@ -1004,11 +1007,13 @@ export class Service implements LifecycleCore {
       const now = this.clock();
       applyStatusTransition(candidate, requestedStatus, now);
       candidate.updatedAt = wireTime(now);
+      const historyMark = await tx.taskHistoryLength(taskId);
       await tx.updateTask(candidate);
       try {
         await tx.saveTaskVersion(before, candidate, options.actor ?? "", wireTime(now), "");
       } catch (e) {
         try {
+          await tx.trimTaskHistory(taskId, historyMark, canonicalTaskHash(candidate));
           await tx.updateTask(before);
         } catch (rollbackErr) {
           throw new Error(

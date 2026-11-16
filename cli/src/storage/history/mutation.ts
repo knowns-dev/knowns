@@ -40,6 +40,12 @@ import type { DocRevisionOptions } from "./version-store.ts";
 
 /** DocMutationOptions: audit context for an atomic document mutation. */
 export interface DocMutationOptions {
+  /**
+   * With no expectedHash: re-applies the caller's edit to the document read under the lock, so a
+   * concurrent writer's change is kept and the update never fails on a hash observed before the
+   * lock. Same-path updates only.
+   */
+  rebase?: (doc: Doc) => void;
   actor?: string;
   source?: string;
   section?: string;
@@ -445,9 +451,16 @@ async function mutateDocInner(
     }
     await ctx.docs.validateStableId(firstNonEmpty(current.id, newDoc.id), oldPath);
     let expected = goTrimSpace(opts.expectedHash ?? "");
+    const rebased = expected === "" && opts.rebase !== undefined && oldPath === newPath;
+    if (rebased) {
+      const fresh: Doc = { ...current };
+      opts.rebase?.(fresh);
+      for (const k of Object.keys(newDoc)) delete (newDoc as unknown as Record<string, unknown>)[k];
+      Object.assign(newDoc, fresh);
+    }
     if (expected === "") expected = hashDoc(docStateOf(oldDoc));
     const currentHash = hashDoc(docStateOf(current));
-    if (expected !== currentHash) {
+    if (!rebased && expected !== currentHash) {
       throw new MutationConflictError(
         "doc",
         firstNonEmpty(current.id, newDoc.id, oldPath),
@@ -470,6 +483,11 @@ async function mutateDocInner(
 
     const oldCanonical: Doc = { ...current };
     const candidate: Doc = { ...newDoc };
+    const docId = firstNonEmpty(candidate.id, current.id);
+    const hasStream = docId !== "" && ctx.versions.hasJsonlHistory("doc", docId);
+    const mark = hasStream
+      ? ((await ctx.versions.historyStore().read("doc", docId)).records ?? []).length
+      : 0;
     await ctx.docs.update(candidate);
     try {
       await ctx.versions.saveDocRevisionWithOptions(oldCanonical, candidate, {
@@ -480,6 +498,17 @@ async function mutateDocInner(
     } catch (err) {
       let rollbackErr: unknown;
       try {
+        // The append may have landed before the failing step: remove exactly that record (and
+        // nothing else), then restore the file.
+        if (hasStream) {
+          const ok = await ctx.versions
+            .historyStore()
+            .removeTailIfOwn("doc", docId, mark, canonicalDocHash(candidate));
+          if (!ok)
+            throw new Error(
+              `history of Doc "${docId}" changed during a failed write; not truncating`,
+            );
+        }
         await ctx.docs.writeExact(oldCanonical);
       } catch (e) {
         rollbackErr = e;

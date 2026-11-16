@@ -650,6 +650,35 @@ export class HistoryStore {
     });
   }
 
+  /**
+   * Removes the tail record only if the stream is exactly `length + 1` records long and that tail
+   * carries `newHash`, i.e. it is the record this writer appended and nobody appended after it. The
+   * check and the truncate run under one entity lock. Returns false (and truncates nothing) when
+   * the stream is not in that state; the caller must then fail loudly. The remaining stream is a
+   * plain prefix, so its prevRecordHash chain and Go's reader stay valid.
+   */
+  async removeTailIfOwn(
+    entityType: string,
+    entityId: string,
+    length: number,
+    newHash: string,
+  ): Promise<boolean> {
+    if (!validHistoryEntityType(entityType)) {
+      throw new Error(`unsupported history entity type "${entityType}"`);
+    }
+    const path = this.entityPath(entityType, entityId);
+    return this.withEntityLock(entityType, entityId, () => {
+      const read = this.readFile(path, entityType, entityId);
+      if (read.records.length === length) return true; // nothing landed
+      const tail = read.records[read.records.length - 1];
+      if (read.records.length !== length + 1 || !tail || tail.newHash !== newHash) return false;
+      truncateSync(path, read.validOffsets[read.validOffsets.length - 2] as number);
+      syncFilePath(path);
+      syncDirectory(dirname(path));
+      return true;
+    });
+  }
+
   // --- parsing ---------------------------------------------------------------------------------
 
   /** readFile: parse and fully verify a stream; a missing file is an empty stream. */

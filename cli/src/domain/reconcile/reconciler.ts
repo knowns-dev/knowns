@@ -646,7 +646,37 @@ export class FilesystemReconciler {
     if (this.activePreviousPath !== "") record.previousPath = this.activePreviousPath;
   }
 
+  /**
+   * A Task write is canonical file first, history second, both under the task lifecycle lock. A
+   * reconcile that reads the file in between would record the half-done write as a watcher
+   * revision of its own (an extra revision). So a Task is reconciled under that same lock: it then
+   * sees the state before or after a write, never the middle. The wait is bounded; on timeout the
+   * file is simply reconciled on a later pass.
+   */
   private async reconcileFile(
+    path: string,
+    execute: boolean,
+  ): Promise<{ result: ReconcileResult; entry: ManifestEntry }> {
+    if (!execute) return this.reconcileFileUnlocked(path, execute);
+    if (!this.isTaskPath(path)) {
+      // The same for a Doc, under its mutation lock (a doc write is file first, history second).
+      const rel = this.relative(path).replace(/\\/g, "/");
+      const docPath = rel.replace(/^docs\//, "").replace(/\.md$/, "");
+      return this.storage.store.withDocMutationLocks(
+        [docPath],
+        () => this.reconcileFileUnlocked(path, execute),
+        { timeoutMs: 10_000 },
+      );
+    }
+    return this.storage.store.withTaskLifecycleLock(
+      () => this.reconcileFileUnlocked(path, execute),
+      {
+        timeoutMs: 10_000,
+      },
+    );
+  }
+
+  private async reconcileFileUnlocked(
     path: string,
     execute: boolean,
   ): Promise<{ result: ReconcileResult; entry: ManifestEntry }> {
