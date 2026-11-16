@@ -222,6 +222,11 @@ export class FilesystemReconciler {
   /** uniqueIdentity: the identity each Markdown file had at its last parse, by stat signature. */
   private readonly identityCache = new Map<string, { sig: string; id: string | null }>();
   private identityScope = 0;
+  /** resolveCanonicalHint: what each canonical file resolved to, by stat signature. */
+  private readonly canonicalCache = new Map<
+    string,
+    { sig: string; kind: Kind; id: string; hash: string }
+  >();
   private readonly identityIndex = new Map<
     string,
     { builtAt: number; ids: Map<string, string[]> }
@@ -372,10 +377,28 @@ export class FilesystemReconciler {
         throw unsafe(`${basename(path)}: ${(e as Error).message}`);
       }
     }
+    // A lifecycle pass resolves every canonical file, so each pass read and parsed the whole
+    // project for one changed file. A file whose stat signature is unchanged since it was last
+    // read stably keeps the identity and hash it had then (the signature is taken before the read,
+    // so a write that lands in between only costs one more read).
+    let sig: string | undefined;
+    try {
+      const st = lstatSync(path);
+      sig = `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
+    } catch {
+      this.canonicalCache.delete(path);
+    }
+    const hit = sig === undefined ? undefined : this.canonicalCache.get(path);
+    if (hit && hit.sig === sig) {
+      this.uniqueIdentity(hit.kind, hit.id, path);
+      return { kind: hit.kind, id: hit.id, hash: hit.hash };
+    }
     const data = this.readStable(path);
     const kind: Kind = this.isTaskPath(path) ? "task" : "doc";
     const parsed = this.parseCanonical(kind, path, data);
     this.uniqueIdentity(kind, parsed.id, path);
+    if (sig !== undefined)
+      this.canonicalCache.set(path, { sig, kind, id: parsed.id, hash: parsed.hash });
     return { kind, id: parsed.id, hash: parsed.hash };
   }
 
