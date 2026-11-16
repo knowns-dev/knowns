@@ -36,6 +36,7 @@ import {
   releaseRunner,
   unregisterDaemon,
 } from "./daemon-registry.ts";
+import { emitRuntimeStatus } from "./status-events.ts";
 
 export type JobKind =
   | "index-task"
@@ -2216,6 +2217,7 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
       if (isRunner) {
         const statusNow = Date.now();
         const key = statusKey(watchFor, projects, watcherStates);
+        emitRuntimeStatus(key, scan.fingerprint);
         if (key !== lastStatusKey || statusNow - lastStatusAt >= STATUS_REFRESH_MS) {
           try {
             writeStatusFile(watchFor, projects, watcherStates);

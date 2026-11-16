@@ -263,7 +263,7 @@ async function budget() {
       check(code === 0, "knowns browser handed the UI to the daemon and exited 0");
       ui = undefined;
     }
-    // Model a real open tab, not just a bound listener: /api/runtime/ps every 2 s and an SSE stream.
+    // Model a real open tab, not just a bound listener: /api/runtime/ps every tabPollMs (the Runtime page visible: 15 s) and an SSE stream.
     const url = "http://127.0.0.1:16420";
     void fetch(`${url}/api/events`, { signal: tabAbort.signal })
       .then(async (r) => {
@@ -276,7 +276,7 @@ async function budget() {
         await fetch(`${url}/api/runtime/ps`, { signal: tabAbort.signal })
           .then((r) => r.text())
           .catch(() => {});
-        await Bun.sleep(2000);
+        await Bun.sleep(Number(process.env.BUDGET_TAB_POLL_MS ?? cfg.tabPollMs ?? 15000));
       }
     })();
   }

@@ -8,6 +8,7 @@ import { partialOf } from "../domain/tasklifecycle/errors.ts";
 import { responseToWire } from "../domain/tasklifecycle/wire.ts";
 import type { Manager as LspManager } from "../lsp/manager.ts";
 import type { Project } from "../models/config.ts";
+import { onRuntimeStatusChange } from "../runtime/status-events.ts";
 import { Manager } from "../storage/core/manager.ts";
 import type { Store } from "../storage/core/store.ts";
 import { Registry } from "../storage/stores/registry.ts";
@@ -51,6 +52,9 @@ import { registerTunnel, ServerTunnelManager } from "./tunnel.ts";
 export type { ServerOptions };
 
 const SERVICE_STATUS_INTERVAL_MS = 7000;
+/** The service monitor runs only this long after a request that shows runtime or service status. */
+const SERVICE_WATCH_WINDOW_MS = 30_000;
+const SERVICE_IDLE_INTERVAL_MS = 30_000;
 const TASK_SWEEP_INTERVAL_MS = 3_600_000;
 const FIRST_SWEEP_DELAY_MS = 5_000;
 
@@ -100,6 +104,8 @@ export class Server {
     this.shutdownResolve = r;
   });
   private monitorTimer: ReturnType<typeof setTimeout> | undefined;
+  private unsubStatus: (() => void) | undefined;
+  private serviceWatchAt = 0;
   private sweepTimer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
   private prevServices: ServiceStatusLike[] = [];
@@ -142,6 +148,7 @@ export class Server {
 
     this.app = {
       sse: this.sse,
+      watchServices: () => this.watchServices(),
       auth: this.auth,
       manager: this.manager,
       registry: this.registry,
@@ -181,7 +188,10 @@ export class Server {
       return jsonResponse(200, { status: "shutting down" });
     });
     r.get("/api/status", (c) => this.handleStatus(c));
-    r.get("/api/runtime/ps", () => this.handleRuntimePs());
+    r.get("/api/runtime/ps", () => {
+      this.watchServices();
+      return this.handleRuntimePs();
+    });
     r.post("/api/runtime/retry", (c) => this.handleRuntimeRetry(c));
 
     registerTasks(r, app);
@@ -419,10 +429,31 @@ export class Server {
     }
   }
 
+  /** Tells open tabs the runtime status changed, so the Runtime page does not have to poll for it. */
+  private startRuntimeStatusEvents(): void {
+    let pending = false;
+    this.unsubStatus = onRuntimeStatusChange(() => {
+      if (pending || this.sse.size === 0) return;
+      pending = true;
+      // Coalesce a burst (a lease and a job change together) into one event.
+      setTimeout(() => {
+        pending = false;
+        this.sse.broadcast({ type: "runtime:status", data: {} });
+      }, 250).unref();
+    });
+  }
+
+  watchServices(): void {
+    this.serviceWatchAt = Date.now();
+  }
+
   private startServiceMonitor(): void {
     const tick = async (): Promise<void> => {
       if (this.stopped) return;
-      const next = await this.snapshotServices(false);
+      // Nobody has looked at runtime or service status lately (no Runtime page open and visible):
+      // the inventory (LSP which/spawn lookups) is not worth running; check again later.
+      const watched = Date.now() - this.serviceWatchAt < SERVICE_WATCH_WINDOW_MS;
+      const next = watched ? await this.snapshotServices(false) : undefined;
       if (next && !this.stopped) {
         const prevBy = new Map(this.prevServices.map((s) => [serviceKey(s), s]));
         const now = new Date().toISOString().replace(/\.(\d{3})Z$/, ".$1000Z");
@@ -451,7 +482,12 @@ export class Server {
         if (changes.length > 0) this.sse.broadcast({ type: "service:status", data: changes });
       }
       if (!this.stopped) {
-        this.monitorTimer = setTimeout(tick, SERVICE_STATUS_INTERVAL_MS);
+        this.monitorTimer = setTimeout(
+          tick,
+          Date.now() - this.serviceWatchAt < SERVICE_WATCH_WINDOW_MS
+            ? SERVICE_STATUS_INTERVAL_MS
+            : SERVICE_IDLE_INTERVAL_MS,
+        );
         this.monitorTimer.unref();
       }
     };
@@ -550,6 +586,7 @@ export class Server {
         process.stderr.write(`warn: could not write .server-port: ${errMessage(e)}\n`);
       }
     }
+    this.startRuntimeStatusEvents();
     this.startServiceMonitor();
     if (this.opts.tunnel) void this.autoStartTunnel();
   }
@@ -603,6 +640,7 @@ export class Server {
       if (this.monitorTimer) clearTimeout(this.monitorTimer);
       if (this.sweepTimer) clearInterval(this.sweepTimer);
     });
+    await step(() => this.unsubStatus?.());
     await step(() => this.sse.closeAll());
     await step(() => this.bun?.stop(true));
     await step(() => {

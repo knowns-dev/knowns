@@ -30,6 +30,8 @@ export interface App {
   storage(): Storage | undefined;
   /** Same, but throws if there is none (handlers behind requireStore). */
   need(): Storage;
+  /** A request that shows runtime or service status came in: the service monitor keeps running. */
+  watchServices(): void;
 }
 
 const cache = new WeakMap<Store, Storage>();
