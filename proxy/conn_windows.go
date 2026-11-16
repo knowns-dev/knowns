@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 	"runtime"
-	"sync/atomic"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -17,14 +17,19 @@ const (
 	createNoWindow  = 0x08000000
 	detachedProcess = 0x00000008
 	newProcGroup    = 0x00000200
+	breakawayJob    = 0x01000000
 )
 
 func daemonFiles() ([]*os.File, func()) { return []*os.File{nil, nil, nil}, func() {} }
 
 // DETACHED_PROCESS, no console window, no inherited handles: with nil files os.StartProcess passes
 // an empty handle list, so nothing leaks from the agent's process into the daemon.
-func daemonAttr() *syscall.SysProcAttr {
-	return &syscall.SysProcAttr{HideWindow: true, CreationFlags: detachedProcess | newProcGroup | createNoWindow}
+func daemonAttr(breakaway bool) *syscall.SysProcAttr {
+	flags := uint32(detachedProcess | newProcGroup | createNoWindow)
+	if breakaway {
+		flags |= breakawayJob
+	}
+	return &syscall.SysProcAttr{HideWindow: true, CreationFlags: flags}
 }
 
 // The child keeps the three standard handles (os/exec restricts inheritance to exactly those).
@@ -41,14 +46,18 @@ var (
 	pGetOverlapped = k32.NewProc("GetOverlappedResult")
 	pCancelIoEx    = k32.NewProc("CancelIoEx")
 	pWaitPipe      = k32.NewProc("WaitNamedPipeW")
+	pServerPid     = k32.NewProc("GetNamedPipeServerProcessId")
 )
 
 const (
 	genericRW      = 0xC0000000
 	openExisting   = 3
 	flagOverlapped = 0x40000000
-	errIOPending   = 997
-	errPipeBusy    = 231
+	// SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION: the server can learn who connected but can
+	// never impersonate this user, so a pipe squatting on the daemon's name gains nothing.
+	flagIdentify = 0x00100000 | 0x00010000
+	errIOPending = 997
+	errPipeBusy  = 231
 )
 
 type overlapped struct {
@@ -66,10 +75,13 @@ func newOverlapped(ev syscall.Handle) *overlapped { return &overlapped{HEvent: e
 type winPipe struct {
 	h        syscall.Handle
 	rev, wev syscall.Handle
-	closed   atomic.Bool
+
+	mu     sync.Mutex
+	closed bool
+	active sync.WaitGroup // calls inside ReadFile/WriteFile; Close waits for them before CloseHandle
 }
 
-func dial(kind, addr string) (io.ReadWriteCloser, error) {
+func dial(kind, addr string, wantPid int) (io.ReadWriteCloser, error) {
 	if kind != "windows_pipe" {
 		return nil, errors.New("unsupported endpoint kind " + kind)
 	}
@@ -77,23 +89,63 @@ func dial(kind, addr string) (io.ReadWriteCloser, error) {
 	if err != nil {
 		return nil, err
 	}
+	var h syscall.Handle
+	var lastErr error
 	for i := 0; i < 20; i++ {
-		h, _, e := pCreateFile.Call(uintptr(unsafe.Pointer(name)), genericRW, 0, 0, openExisting, flagOverlapped, 0)
-		if syscall.Handle(h) != syscall.InvalidHandle {
-			rev, _, _ := pCreateEvent.Call(0, 1, 0, 0)
-			wev, _, _ := pCreateEvent.Call(0, 1, 0, 0)
-			return &winPipe{h: syscall.Handle(h), rev: syscall.Handle(rev), wev: syscall.Handle(wev)}, nil
+		r, _, e := pCreateFile.Call(uintptr(unsafe.Pointer(name)), genericRW, 0, 0, openExisting, flagOverlapped|flagIdentify, 0)
+		if syscall.Handle(r) != syscall.InvalidHandle {
+			h = syscall.Handle(r)
+			break
 		}
+		lastErr = e
 		if e == syscall.Errno(errPipeBusy) {
 			pWaitPipe.Call(uintptr(unsafe.Pointer(name)), 200)
 			continue
 		}
 		return nil, e
 	}
-	return nil, errors.New("pipe busy")
+	if h == 0 {
+		if lastErr == nil {
+			lastErr = errors.New("pipe busy")
+		}
+		return nil, lastErr
+	}
+	if wantPid > 0 {
+		var pid uint32
+		if r, _, _ := pServerPid.Call(uintptr(h), uintptr(unsafe.Pointer(&pid))); r == 0 || int(pid) != wantPid {
+			syscall.CloseHandle(h)
+			return nil, errBadServer
+		}
+	}
+	rev, _, e1 := pCreateEvent.Call(0, 1, 0, 0)
+	if rev == 0 {
+		syscall.CloseHandle(h)
+		return nil, e1
+	}
+	wev, _, e2 := pCreateEvent.Call(0, 1, 0, 0)
+	if wev == 0 {
+		syscall.CloseHandle(syscall.Handle(rev))
+		syscall.CloseHandle(h)
+		return nil, e2
+	}
+	return &winPipe{h: h, rev: syscall.Handle(rev), wev: syscall.Handle(wev)}, nil
+}
+
+func (p *winPipe) enter() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return false
+	}
+	p.active.Add(1)
+	return true
 }
 
 func (p *winPipe) do(fn *syscall.LazyProc, ev syscall.Handle, b []byte) (int, error) {
+	if !p.enter() {
+		return 0, io.ErrClosedPipe
+	}
+	defer p.active.Done()
 	o := newOverlapped(ev)
 	var n uint32
 	r, _, e := fn.Call(uintptr(p.h), uintptr(unsafe.Pointer(&b[0])), uintptr(len(b)), uintptr(unsafe.Pointer(&n)), uintptr(unsafe.Pointer(o)))
@@ -116,11 +168,11 @@ func (p *winPipe) Read(b []byte) (int, error) {
 		return 0, nil
 	}
 	for {
-		if p.closed.Load() {
-			return 0, io.EOF
-		}
 		n, err := p.do(pReadFile, p.rev, b)
 		if err != nil {
+			if err == io.ErrClosedPipe {
+				return n, io.EOF
+			}
 			if errno, ok := err.(syscall.Errno); ok && (errno == 109 || errno == 233 || errno == 995 || errno == 6) {
 				return n, io.EOF
 			}
@@ -135,9 +187,6 @@ func (p *winPipe) Read(b []byte) (int, error) {
 func (p *winPipe) Write(b []byte) (int, error) {
 	total := 0
 	for total < len(b) {
-		if p.closed.Load() {
-			return total, io.ErrClosedPipe
-		}
 		n, err := p.do(pWriteFile, p.wev, b[total:])
 		if err != nil {
 			return total, err
@@ -147,12 +196,28 @@ func (p *winPipe) Write(b []byte) (int, error) {
 	return total, nil
 }
 
+// Close stops new calls, cancels the ones in progress and only then closes the handle, so a reader
+// that was descheduled can never call ReadFile on a handle value the system has already reused.
 func (p *winPipe) Close() error {
-	if p.closed.Swap(true) {
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
 		return nil
 	}
-	pCancelIoEx.Call(uintptr(p.h), 0)
-	time.Sleep(5 * time.Millisecond)
+	p.closed = true
+	p.mu.Unlock()
+	done := make(chan struct{})
+	go func() { p.active.Wait(); close(done) }()
+	for waiting := true; waiting; {
+		pCancelIoEx.Call(uintptr(p.h), 0)
+		select {
+		case <-done:
+			waiting = false
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 	syscall.CloseHandle(p.h)
+	syscall.CloseHandle(p.rev)
+	syscall.CloseHandle(p.wev)
 	return nil
 }

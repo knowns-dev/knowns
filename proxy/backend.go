@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +24,8 @@ type backend struct {
 	lines   chan []byte
 	closeFn func()
 	session string
+	started time.Time
+	exited  chan struct{} // closed when a child process has been reaped; nil for the daemon
 
 	mu  sync.Mutex
 	bye string
@@ -34,21 +35,40 @@ func (b *backend) write(line []byte) error { _, err := b.w.Write(line); return e
 func (b *backend) close()                  { b.closeFn() }
 func (b *backend) byeReason() string       { b.mu.Lock(); defer b.mu.Unlock(); return b.bye }
 
+// isControl: a control frame is a JSON object with a top-level knowns_mcp member and no jsonrpc
+// member. Only short lines are looked at; a real MCP message that mentions the word in a payload
+// is never mistaken for one.
 func isControl(line []byte) bool {
-	head := line
-	if len(head) > 64 {
-		head = head[:64]
+	if len(line) > 4096 {
+		return false
 	}
-	return bytes.Contains(head, []byte(`"knowns_mcp"`))
+	f, ok := topLevel(line, "knowns_mcp", "jsonrpc")
+	return ok && f["knowns_mcp"] != nil && f["jsonrpc"] == nil
 }
 
-func readLoop(b *backend, br *bufio.Reader, wait func()) {
-	defer close(b.lines)
-	if wait != nil {
-		defer wait()
-	}
+var errFrameTooLarge = errors.New("frame larger than 16 MiB")
+
+// readLine reads one line including its newline, refusing anything over maxFrame.
+func readLine(br *bufio.Reader) ([]byte, error) {
+	var out []byte
 	for {
-		line, err := br.ReadBytes('\n')
+		chunk, err := br.ReadSlice('\n')
+		if len(out)+len(chunk) > maxFrame {
+			return nil, errFrameTooLarge
+		}
+		if err == bufio.ErrBufferFull {
+			out = append(out, chunk...)
+			continue
+		}
+		out = append(out, chunk...)
+		return out, err
+	}
+}
+
+func readLoop(b *backend, br *bufio.Reader) {
+	defer close(b.lines)
+	for {
+		line, err := readLine(br)
 		if len(line) > 0 {
 			if line[len(line)-1] != '\n' {
 				line = append(line, '\n')
@@ -138,16 +158,21 @@ func startChild(c *config) (*backend, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	b := &backend{kind: "child", w: stdin, lines: make(chan []byte, 64)}
+	b := &backend{kind: "child", w: stdin, lines: make(chan []byte, 64), started: time.Now(), exited: make(chan struct{})}
 	var once sync.Once
+	// Closing the child's stdin is the clean end; it is killed if it has not exited 3 s later.
 	b.closeFn = func() {
 		once.Do(func() {
 			stdin.Close()
-			t := time.AfterFunc(3*time.Second, func() { _ = cmd.Process.Kill() })
-			go func() { _ = cmd.Wait(); t.Stop() }()
+			time.AfterFunc(3*time.Second, func() { _ = cmd.Process.Kill() })
 		})
 	}
-	go readLoop(b, bufio.NewReaderSize(stdout, 64<<10), nil)
+	br := bufio.NewReaderSize(stdout, 64<<10)
+	go func() {
+		readLoop(b, br)
+		_ = cmd.Wait() // reaps the child once its stdout is drained
+		close(b.exited)
+	}()
 	return b, nil
 }
 
@@ -181,16 +206,25 @@ func startDaemon() error {
 	}
 	files, closeFiles := daemonFiles()
 	defer closeFiles()
-	p, err := os.StartProcess(bin, []string{bin, "__runtime", "run"}, &os.ProcAttr{
-		Dir:   os.TempDir(),
-		Env:   envWithout("KNOWNS_MCP_PROXY"),
-		Files: files,
-		Sys:   daemonAttr(),
-	})
+	start := func(breakaway bool) (*os.Process, error) {
+		return os.StartProcess(bin, []string{bin, "__runtime", "run"}, &os.ProcAttr{
+			Dir:   os.TempDir(),
+			Env:   envWithout("KNOWNS_MCP_PROXY"),
+			Files: files,
+			Sys:   daemonAttr(breakaway),
+		})
+	}
+	// Leave the agent's job object when it allows that, so the daemon outlives a session killed
+	// with its job; a job that forbids breakaway refuses the flag, then start without it.
+	p, err := start(true)
+	if err != nil && isWindows {
+		p, err = start(false)
+	}
 	if err != nil {
 		return err
 	}
-	return p.Release()
+	go func() { _, _ = p.Wait() }() // reap it when it exits, so it never lingers as a zombie
+	return nil
 }
 
 type daemonError struct {
@@ -204,7 +238,13 @@ func (e *daemonError) retryable() bool { return e.retryAfter > 0 }
 
 // handshake dials d and performs hello/welcome. It returns a daemonError for a typed refusal.
 func handshake(c *config, d *descriptor) (*backend, error) {
-	conn, err := dial(d.Kind, d.Address)
+	if d.ProxyProtocol != 1 {
+		return nil, &daemonError{code: "unsupported_protocol"}
+	}
+	conn, err := dial(d.Kind, d.Address, d.Pid)
+	if errors.Is(err, errBadServer) {
+		return nil, &daemonError{code: "bad_server"}
+	}
 	if err != nil {
 		return nil, &daemonError{code: "no_daemon"}
 	}
@@ -246,10 +286,10 @@ func handshake(c *config, d *descriptor) (*backend, error) {
 		return nil, &daemonError{code: "bad_welcome"}
 	}
 	if f.Type == "welcome" {
-		b := &backend{kind: "daemon", w: conn, lines: make(chan []byte, 64), session: f.Session}
+		b := &backend{kind: "daemon", w: conn, lines: make(chan []byte, 64), session: f.Session, started: time.Now()}
 		var once sync.Once
 		b.closeFn = func() { once.Do(func() { conn.Close() }) }
-		go readLoop(b, br, nil)
+		go readLoop(b, br)
 		return b, nil
 	}
 	conn.Close()
@@ -319,4 +359,5 @@ func retryableCode(code string) bool {
 	return strings.HasPrefix(code, "bye_")
 }
 
-var _ = strconv.Itoa
+// errBadServer: the named pipe is served by a process other than the one the descriptor names.
+var errBadServer = errors.New("pipe server is not the daemon named in the descriptor")

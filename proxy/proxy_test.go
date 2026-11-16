@@ -164,6 +164,9 @@ func echoHandler(c net.Conn, br *bufio.Reader) {
 	defer c.Close()
 	for {
 		line, err := br.ReadBytes('\n')
+		if isControl(line) {
+			return // the close frame: nothing in flight, the daemon closes
+		}
 		if len(line) > 0 {
 			f, _ := topLevel(line, "id", "method", "params")
 			if len(f["id"]) > 0 {
@@ -249,24 +252,46 @@ func TestForwardsThroughDaemonAndSendsHello(t *testing.T) {
 	}
 }
 
-func TestStdinEOFClosesTheConnection(t *testing.T) {
+// Clean end: stdin EOF sends the close frame (never a half-close); the daemon finishes the call it
+// already has, answers, and closes. The proxy delivers the answer and exits 0.
+func TestStdinEOFSendsCloseFrameAndWaitsForTheAnswer(t *testing.T) {
 	e := newEnv(t)
-	closed := make(chan struct{})
+	gotClose := make(chan struct{})
 	e.startDaemon(func(c net.Conn, br *bufio.Reader) {
-		line, _ := br.ReadBytes('\n')
-		_ = line
+		defer c.Close()
+		br.ReadBytes('\n')
 		c.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}` + "\n"))
-		io.Copy(io.Discard, br)
-		close(closed)
+		br.ReadBytes('\n') // request 2, answered only after the close frame
+		line, _ := br.ReadBytes('\n')
+		if strings.Contains(string(line), `"type":"close"`) {
+			close(gotClose)
+			c.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"late":true}}` + "\n"))
+		}
 	})
 	h := start(t, "")
 	h.send(initReq)
 	h.recv(t)
+	h.send(call(2, "tasks", `{"action":"list"}`))
+	time.Sleep(100 * time.Millisecond)
 	h.in.Close()
 	select {
-	case <-closed:
+	case <-gotClose:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the daemon never saw the connection close, so the lease would stay held")
+		t.Fatal("the daemon never received the close frame")
+	}
+	if got := h.recv(t); !strings.Contains(got, "late") {
+		t.Fatalf("the in-flight answer was lost: %s", got)
+	}
+	select {
+	case code := <-h.done:
+		if code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the proxy did not exit after the daemon closed")
+	}
+	if len(e.events()) != 0 {
+		t.Fatalf("a clean end is not a fallback: %v", e.events())
 	}
 }
 
@@ -451,12 +476,12 @@ func TestClassify(t *testing.T) {
 		{"unknown_tool", `{}`, false},
 	}
 	for _, c := range cases {
-		ro, _ := classify("tools/call", []byte(`{"name":"`+c.name+`","arguments":`+c.args+`}`))
+		ro, _ := classify("tools/call", []byte(`{"name":"`+c.name+`","arguments":`+c.args+`}`), false)
 		if ro != c.ro {
 			t.Errorf("%s %s: readOnly=%v want %v", c.name, c.args, ro, c.ro)
 		}
 	}
-	if ro, _ := classify("tools/list", nil); !ro {
+	if ro, _ := classify("tools/list", nil, false); !ro {
 		t.Error("tools/list is read-only")
 	}
 }
@@ -484,7 +509,8 @@ func TestIDsMatchByParsedValue(t *testing.T) {
 	e.startDaemon(func(c net.Conn, br *bufio.Reader) {
 		defer c.Close()
 		for {
-			if _, err := br.ReadBytes('\n'); err != nil {
+			line, err := br.ReadBytes('\n')
+			if err != nil || isControl(line) {
 				return
 			}
 			c.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}` + "\n"))
@@ -498,5 +524,155 @@ func TestIDsMatchByParsedValue(t *testing.T) {
 	case <-h.done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the in-flight call was never cleared, so the proxy waits out its 30 s drain")
+	}
+}
+
+func TestWritesThatShareAnActionNameWithReads(t *testing.T) {
+	cases := []struct {
+		name, args string
+		ro         bool
+	}{
+		{"memory", `{"action":"resolve"}`, false},
+		{"decision", `{"action":"resolve"}`, false},
+		{"search", `{"action":"resolve"}`, true},
+		{"decision", `{"action":"accept"}`, false},
+		{"memory", `{"action":"get"}`, true},
+		{"templates", `{"action":"run"}`, false},
+	}
+	for _, c := range cases {
+		ro, _ := classify("tools/call", []byte(`{"name":"`+c.name+`","arguments":`+c.args+`}`), false)
+		if ro != c.ro {
+			t.Errorf("%s %s: readOnly=%v want %v", c.name, c.args, ro, c.ro)
+		}
+	}
+}
+
+func TestUnknownMethodsAndRepeatedKeysAreWrites(t *testing.T) {
+	for _, m := range []string{"tools/call2", "sampling/createMessage", "logging/setLevel", "x/y"} {
+		if ro, _ := classify(m, nil, false); ro {
+			t.Errorf("%s must be a write", m)
+		}
+	}
+	for _, m := range []string{"initialize", "ping", "tools/list", "resources/read", "prompts/get", "completion/complete"} {
+		if ro, _ := classify(m, nil, false); !ro {
+			t.Errorf("%s must be a read", m)
+		}
+	}
+	// the engine's JSON.parse keeps the last "action", Go's scanner the first
+	params := []byte(`{"name":"tasks","arguments":{"action":"list","action":"update"}}`)
+	if ro, _ := classify("tools/call", params, false); ro {
+		t.Error("a repeated key inside arguments must count as a write")
+	}
+	_, _, dup := scanObject([]byte(`{"a":1,"a":2}`), "a")
+	if !dup {
+		t.Error("scanObject must report a repeated key")
+	}
+}
+
+func TestIsControlNeedsATopLevelMemberAndNoJSONRPC(t *testing.T) {
+	if !isControl([]byte(`{"knowns_mcp":1,"type":"bye","reason":"shutdown"}`)) {
+		t.Error("a bye frame is control")
+	}
+	if isControl([]byte(`{"jsonrpc":"2.0","id":1,"result":{"text":"\"knowns_mcp\""}}`)) {
+		t.Error("a payload that mentions the word is not control")
+	}
+	if isControl([]byte(`{"jsonrpc":"2.0","knowns_mcp":1,"id":1}`)) {
+		t.Error("a message with jsonrpc is never control")
+	}
+	if isControl([]byte(`{"knowns_mcp":1,"pad":"` + strings.Repeat("x", 5000) + `"}`)) {
+		t.Error("long lines are never control")
+	}
+}
+
+// Two requests share an id and the daemon dies with no child available: the give-up path must
+// answer both and exit 1 instead of dereferencing a request that is no longer in flight.
+func TestGiveUpWithRepeatedIDsDoesNotPanic(t *testing.T) {
+	e := newEnv(t)
+	t.Setenv("KNOWNS_PROXY_KNOWNS_BIN", filepath.Join(e.root, "missing-knowns"))
+	gate := make(chan struct{})
+	e.startDaemon(func(c net.Conn, br *bufio.Reader) {
+		br.ReadBytes('\n')
+		br.ReadBytes('\n')
+		<-gate
+		c.Close()
+	})
+	h := start(t, "")
+	h.send(call(7, "tasks", `{"action":"update"}`))
+	h.send(call(7, "tasks", `{"action":"update"}`))
+	time.Sleep(200 * time.Millisecond)
+	close(gate)
+	_ = h.recv(t)
+	select {
+	case code := <-h.done:
+		if code != 1 {
+			t.Fatalf("exit %d, want 1", code)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the proxy did not give up")
+	}
+}
+
+func TestBatchIsRefused(t *testing.T) {
+	e := newEnv(t)
+	e.startDaemon(echoHandler)
+	h := start(t, "")
+	h.send(`[{"jsonrpc":"2.0","id":1,"method":"tools/list"}]`)
+	if got := h.recv(t); !strings.Contains(got, "-32600") {
+		t.Fatalf("batch not refused: %s", got)
+	}
+}
+
+func TestConcurrentFallbackWritersKeepEveryRowValid(t *testing.T) {
+	newEnv(t)
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 120; i++ {
+				recordEvent("fallback", "dropped", strings.Repeat("r", 200), "s")
+			}
+		}()
+	}
+	wg.Wait()
+	data, err := os.ReadFile(fallbackLogPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(rows) == 0 || len(rows) > 400 {
+		t.Fatalf("unexpected row count %d", len(rows))
+	}
+	for _, r := range rows {
+		var m map[string]any
+		if json.Unmarshal([]byte(r), &m) != nil {
+			t.Fatalf("corrupt row: %q", r)
+		}
+	}
+	left, _ := filepath.Glob(filepath.Join(mcpDir(), "*.tmp"))
+	if len(left) != 0 {
+		t.Fatalf("temp files left behind: %v", left)
+	}
+}
+
+// Responses the daemon had already delivered when it dropped are passed on, not discarded.
+func TestResponsesAlreadyReadSurviveADrop(t *testing.T) {
+	e := newEnv(t)
+	e.startDaemon(func(c net.Conn, br *bufio.Reader) {
+		br.ReadBytes('\n')
+		br.ReadBytes('\n')
+		c.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"first":true}}` + "\n"))
+		c.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"second":true}}` + "\n"))
+		c.Close()
+	})
+	h := start(t, "")
+	h.send(call(1, "tasks", `{"action":"update"}`))
+	h.send(call(2, "tasks", `{"action":"update"}`))
+	a, b := h.recv(t), h.recv(t)
+	if !strings.Contains(a, "first") || !strings.Contains(b, "second") {
+		t.Fatalf("answers lost: %s | %s", a, b)
+	}
+	if strings.Contains(a+b, `"error"`) {
+		t.Fatalf("answered calls must not be reported as lost: %s | %s", a, b)
 	}
 }
