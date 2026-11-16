@@ -279,7 +279,7 @@ jobs:
 
       - name: Run npm installer tests
         if: runner.os == 'Windows' || matrix.platform == 'darwin-x64'
-        run: bun test npm/knowns/install.test.js
+        run: bun test npm/knowns/install.test.js npm/knowns/direct-launch.test.js
 
   publish:
     needs: [meta, smoke]
