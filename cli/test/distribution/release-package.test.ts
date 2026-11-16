@@ -12,7 +12,9 @@ import {
 } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import {
+  archiveEntries,
   GO_UPDATE_ENTRY,
+  LAYOUT_FILE,
   PLATFORMS,
   packageRelease,
   sha256File,
@@ -28,7 +30,7 @@ function fakeDist(): string {
   for (const p of PLATFORMS) {
     mkdirSync(join(dist, p.dist), { recursive: true });
     writeFileSync(join(dist, p.dist, p.exe), `binary:${p.dist}`);
-    writeFileSync(join(dist, p.dist, p.proxy), `proxy:${p.dist}`);
+    writeFileSync(join(dist, p.dist, p.launcher), `launcher:${p.dist}`);
   }
   return dist;
 }
@@ -60,15 +62,42 @@ describe("package-release", () => {
       const archive = join(out, "assets", `knowns-${p.npm}.tar.gz`);
       // Windows tar.exe ends listing lines with \r\n.
       const listing = run(["tar", "-tzf", archive]).stdout.trim().split(/\r?\n/);
+      expect(listing).toEqual(archiveEntries(p));
       expect(listing).toEqual(
         p.npm.startsWith("win-")
-          ? [`./${p.exe}`, `./${GO_UPDATE_ENTRY}`, `./${p.proxy}`]
-          : [`./${p.exe}`, `./${p.proxy}`],
+          ? [`./${p.exe}`, `./${p.engine}`, `./${GO_UPDATE_ENTRY}`, `./${p.launcher}`, `./${LAYOUT_FILE}`]
+          : [`./${p.exe}`, `./${p.engine}`, `./${p.launcher}`, `./${LAYOUT_FILE}`],
       );
       const sum = readFileSync(`${archive}.sha256`, "utf8");
       expect(sum).toBe(`${sha256File(archive)}  knowns-${p.npm}.tar.gz\n`);
     }
     expect(existsSync(join(out, "stage"))).toBe(false);
+  });
+
+  test("layout.json maps the launcher and the engine to their installed names", () => {
+    for (const p of PLATFORMS) {
+      const dir = tempDir("layout");
+      run(["tar", "-xzf", join(out, "assets", `knowns-${p.npm}.tar.gz`), "-C", dir]);
+      const layout = JSON.parse(readFileSync(join(dir, LAYOUT_FILE), "utf8"));
+      expect(layout).toEqual({
+        layout: 1,
+        version: "1.0.0",
+        launcher: { file: p.launcher, installAs: p.exe },
+        engine: { file: p.exe, installAs: p.engine },
+      });
+      expect(readFileSync(join(dir, p.launcher), "utf8")).toBe(`launcher:${p.dist}`);
+      expect(readFileSync(join(dir, p.exe), "utf8")).toBe(`binary:${p.dist}`);
+      expect(readFileSync(join(dir, p.engine), "utf8")).toBe(`binary:${p.dist}`);
+    }
+  });
+
+  test("engine and the Windows update entry are hard links to knowns[.exe], not second copies", () => {
+    for (const p of PLATFORMS) {
+      const verbose = run(["tar", "-tvzf", join(out, "assets", `knowns-${p.npm}.tar.gz`)]).stdout;
+      expect(verbose).toMatch(
+        new RegExp(`^h.*\\./${p.engine.replace(/\./g, "\\.")} link to \\./${p.exe.replace(/\./g, "\\.")}$`, "m"),
+      );
+    }
   });
 
   test("the Windows update entry is a hard link to knowns.exe, not a second copy", () => {
@@ -159,6 +188,22 @@ describe("KN-6M228C: a Go 0.34.1 `knowns update` installs the binary, not the ar
     }
   });
 
+  test("every file an old updater could pick is the engine, whichever it takes", () => {
+    for (const p of PLATFORMS) {
+      const dir = tempDir("cands");
+      run(["tar", "-xzf", join(out, "assets", `knowns-${p.npm}.tar.gz`), "-C", dir]);
+      const candidates = readdirSync(dir).filter((n) => {
+        const l = n.toLowerCase();
+        return l === p.exe || l.startsWith("knowns-");
+      });
+      expect(candidates.length).toBeGreaterThan(1);
+      for (const n of candidates) expect(readFileSync(join(dir, n), "utf8")).toBe(`binary:${p.dist}`);
+      // The launcher's name matches neither rule, and exactly one file carries the exact name.
+      expect(candidates).not.toContain(p.launcher);
+      expect(readdirSync(dir).filter((n) => n.toLowerCase() === p.exe)).toEqual([p.exe]);
+    }
+  });
+
   test("without the update entry the picker takes the Windows archive itself", () => {
     const p = PLATFORMS.find((x) => x.npm === "win-x64");
     if (!p) throw new Error("win-x64 missing");
@@ -185,10 +230,13 @@ describe("package-release npm output", () => {
       );
       expect(pkg.name).toBe(`@knowns/${p.npm}`);
       expect(pkg.version).toBe("1.0.0");
-      expect(pkg.files).toEqual([p.exe, p.proxy]);
-      expect(existsSync(join(out, "npm", `knowns-${p.npm}`, p.exe))).toBe(true);
-      expect(readFileSync(join(out, "npm", `knowns-${p.npm}`, p.proxy), "utf8")).toBe(
-        `proxy:${p.dist}`,
+      // The npm package holds the installed names: the launcher as knowns[.exe], the engine beside it.
+      expect(pkg.files).toEqual([p.exe, p.engine]);
+      expect(readFileSync(join(out, "npm", `knowns-${p.npm}`, p.exe), "utf8")).toBe(
+        `launcher:${p.dist}`,
+      );
+      expect(readFileSync(join(out, "npm", `knowns-${p.npm}`, p.engine), "utf8")).toBe(
+        `binary:${p.dist}`,
       );
     }
     const wrapper = JSON.parse(readFileSync(join(out, "npm", "knowns", "package.json"), "utf8"));
