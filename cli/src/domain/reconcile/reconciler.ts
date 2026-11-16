@@ -216,6 +216,8 @@ export class FilesystemReconciler {
   private readonly mu = new AsyncMutex();
   private index: IndexIntent | undefined;
   private readonly allowArchive: boolean;
+  /** uniqueIdentity: the identity each Markdown file had at its last parse, by stat signature. */
+  private readonly identityCache = new Map<string, { sig: string; id: string | null }>();
   private readonly signal: AbortSignal | undefined;
   // Lifecycle metadata is set only while the serialized lifecycle resolver invokes the baseline
   // content reconciler.
@@ -1021,30 +1023,47 @@ export class FilesystemReconciler {
           continue;
         }
         if (!entry.name.endsWith(".md")) continue;
-        let data: Buffer;
+        // Every file reconciled walks and parses every file of its kind, which is quadratic over a
+        // pass (the runtime's startup reconcile of ~900 entries pinned a core for minutes). A file
+        // whose stat signature is unchanged keeps the identity it had when it was last parsed.
+        let sig: string;
         try {
-          data = stableRead(full);
+          const st = lstatSync(full);
+          sig = `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
         } catch {
           continue;
         }
-        try {
-          if (kind === "task") {
-            const t = parseTaskContent(data.toString("utf8"));
-            if (t.id === id) matches.push(full);
-          } else {
-            const rel = this.docRel(full);
-            const d = parseDocContent(
-              data.toString("utf8"),
-              rel.endsWith(".md") ? rel.slice(0, -3) : rel,
-              posix.dirname(rel),
-              false,
-              "",
-            );
-            if (d.id === id) matches.push(full);
+        const cached = this.identityCache.get(`${kind}:${full}`);
+        let owner: string | null;
+        if (cached && cached.sig === sig) {
+          owner = cached.id;
+        } else {
+          let data: Buffer;
+          try {
+            data = stableRead(full);
+          } catch {
+            continue;
           }
-        } catch {
-          // unparseable files own no identity
+          try {
+            if (kind === "task") {
+              owner = parseTaskContent(data.toString("utf8")).id;
+            } else {
+              const rel = this.docRel(full);
+              owner = parseDocContent(
+                data.toString("utf8"),
+                rel.endsWith(".md") ? rel.slice(0, -3) : rel,
+                posix.dirname(rel),
+                false,
+                "",
+              ).id;
+            }
+          } catch {
+            // unparseable files own no identity
+            owner = null;
+          }
+          this.identityCache.set(`${kind}:${full}`, { sig, id: owner });
         }
+        if (owner === id) matches.push(full);
       }
     };
     for (const root of roots) visit(root);
