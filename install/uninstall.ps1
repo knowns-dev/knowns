@@ -36,7 +36,7 @@ Write-Host ""
 
 $removed = $false
 
-foreach ($name in @($Binary, $AliasBinary)) {
+foreach ($name in @($Binary, $AliasBinary, "knowns-proxy.exe", "knowns-proxy.exe.old")) {
     $target = Join-Path $InstallDir $name
     if (Test-Path $target) {
         Remove-Item -Path $target -Force

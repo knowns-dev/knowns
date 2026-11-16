@@ -26,6 +26,7 @@ export function makeRelease(
   platform: string,
   label: string,
   dir = tempDir("rel"),
+  withProxy = false,
 ): Release {
   const stage = tempDir("stage");
   const bin = join(stage, "knowns");
@@ -33,7 +34,14 @@ export function makeRelease(
   chmodSync(bin, 0o755);
   mkdirSync(join(dir, tag), { recursive: true });
   const archive = join(dir, tag, `knowns-${platform}.tar.gz`);
-  run(["tar", "-czf", archive, "-C", stage, "./knowns"]);
+  const members = ["./knowns"];
+  if (withProxy) {
+    const proxy = join(stage, "knowns-proxy");
+    writeFileSync(proxy, `#!/bin/sh\necho "knowns-proxy version ${label}"\n`);
+    chmodSync(proxy, 0o755);
+    members.push("./knowns-proxy");
+  }
+  run(["tar", "-czf", archive, "-C", stage, ...members]);
   const sum = sha256Hex(archive);
   writeFileSync(`${archive}.sha256`, `${sum}  knowns-${platform}.tar.gz\n`);
   return { baseUrl: `file://${dir}`, dir };

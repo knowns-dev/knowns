@@ -51,7 +51,7 @@ jobs:
 
       - name: Run npm installer tests
         if: runner.os == 'Windows'
-        run: bun test npm/knowns/install.test.js
+        run: bun test npm/knowns/install.test.js npm/knowns/direct-launch.test.js
 
       - name: Build Go binary (Unix)
         if: runner.os != 'Windows'
@@ -142,7 +142,7 @@ jobs:
         run: |
           go test ./internal/search ./internal/cli ./internal/server/routes ./internal/doctor
           go test ./internal/search -run '^TestKeywordModeUsesBM25WithoutSemanticAndPreservesResultShape$'
-          bun test npm/knowns/install.test.js
+          bun test npm/knowns/install.test.js npm/knowns/direct-launch.test.js
 
       - name: Build native Intel binary
         run: go build -ldflags "-s -w -X github.com/howznguyen/knowns/internal/util.Version=${GITHUB_SHA}" -o bin/knowns ./cmd/knowns
