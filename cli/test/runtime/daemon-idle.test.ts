@@ -51,6 +51,8 @@ const due = (id: string, requestedAt: number) => ({
 
 describe("queue scan cache", () => {
   test("an unchanged queue file is not parsed again, a changed one is", () => {
+    // A file written seconds ago is never trusted (see stat-signature.ts); this test needs the cache.
+    process.env.KNOWNS_STAT_RACY_MS = "-1";
     const p = project("cache");
     q.updateQueue(p, (s) => {
       s.jobs.push(due("a", Date.now()));
@@ -63,6 +65,18 @@ describe("queue scan cache", () => {
     const next = q.loadQueueCached(p);
     expect(next).not.toBe(first);
     expect(next.jobs.map((j) => j.id)).toEqual(["a", "b"]);
+    delete process.env.KNOWNS_STAT_RACY_MS;
+  });
+
+  test("a queue file rewritten moments ago is reread, never served from the cache", () => {
+    const p = project("racy");
+    q.updateQueue(p, (s) => {
+      s.jobs.push(due("a", Date.now()));
+    });
+    const first = q.loadQueueCached(p);
+    const again = q.loadQueueCached(p);
+    expect(again).not.toBe(first); // no signature for a fresh file: parsed each time
+    expect(again.jobs.map((j) => j.id)).toEqual(["a"]);
   });
 
   test("a project without a queue file scans as empty", () => {

@@ -354,7 +354,7 @@ describe("batches", () => {
     expect(batch?.failedTaskId).toBe("missing");
     expect(e.storage.tasks.get(d1.id).archived).toBe(true);
     expect(e.storage.tasks.get(open.id).archived).toBe(false);
-    const openItem = batch?.items.find((i) => i.taskId === open.id);
+    const openItem = batch?.items?.find((i) => i.taskId === open.id);
     expect(openItem?.reasons?.[0]?.code).toBe("not_done");
   });
 
@@ -397,7 +397,7 @@ describe("batches", () => {
     expect(batch.changed).toBe(1);
     expect(e.storage.tasks.get(old.id).archived).toBe(true);
     expect(e.storage.tasks.get(fresh.id).archived).toBe(false);
-    expect(batch.items.find((i) => i.taskId === old.id)?.event?.automatic).toBe(true);
+    expect(batch.items?.find((i) => i.taskId === old.id)?.event?.automatic).toBe(true);
   });
 
   test("autoArchive names only candidates: ineligible tasks get no transaction and many eligible ones archive in chunks", async () => {
@@ -443,9 +443,11 @@ describe("auto-archive with a stale task tree snapshot", () => {
     await addTask(e, "late child", { status: "todo", parent: parent.id });
     const batch = await e.service
       .batchArchive({ execute: true, taskTree: stale, ids: [parent.id] })
-      .catch((err) => partialOf(err));
+      .catch(
+        (err) => partialOf(err) as { items?: { taskId: string; reasons?: { code: string }[] }[] },
+      );
     expect(e.storage.tasks.get(parent.id).archived).toBe(false);
-    const item = batch?.items.find((i) => i.taskId === parent.id);
+    const item = batch?.items?.find((i) => i.taskId === parent.id);
     expect(item?.reasons?.map((r) => r.code)).toContain("unfinished_descendant");
   });
 
@@ -465,11 +467,13 @@ describe("auto-archive with a stale task tree snapshot", () => {
     };
     const batch = await e.service
       .batchArchive({ execute: true, taskTree: stale, ids: [parent.id] })
-      .catch((err) => partialOf(err));
+      .catch(
+        (err) => partialOf(err) as { items?: { taskId: string; reasons?: { code: string }[] }[] },
+      );
     expect(e.storage.tasks.get(parent.id).archived).toBe(false);
-    expect(batch?.items.find((i) => i.taskId === parent.id)?.reasons?.map((r) => r.code)).toContain(
-      "unfinished_descendant",
-    );
+    expect(
+      batch?.items?.find((i) => i.taskId === parent.id)?.reasons?.map((r) => r.code),
+    ).toContain("unfinished_descendant");
   });
 });
 

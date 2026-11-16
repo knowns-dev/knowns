@@ -22,6 +22,7 @@ import type { HistoryRecord } from "../../models/version.ts";
 import { createStorage, type Storage } from "../../storage/adapters.ts";
 import { withFileLock } from "../../storage/core/file-lock.ts";
 import { safeHistoryId, withDocMutationLocks } from "../../storage/core/locks.ts";
+import { statSignature } from "../../storage/core/stat-signature.ts";
 import { Store } from "../../storage/core/store.ts";
 import { atomicWrite, goJsonStringify, goTrimSpace } from "../../storage/core/util.ts";
 import {
@@ -221,6 +222,21 @@ export class FilesystemReconciler {
   private readonly allowArchive: boolean;
   /** uniqueIdentity: the identity each Markdown file had at its last parse, by stat signature. */
   private readonly identityCache = new Map<string, { sig: string; id: string | null }>();
+  /**
+   * While above zero, stat-signature caches are neither read nor written. Destructive and
+   * proof-bearing paths (hard delete, restore, identity lookups for them, replacement proofs) must
+   * decide from the bytes on disk, not from a cache that a same-tick rewrite could fool.
+   */
+  private freshReads = 0;
+
+  private async withFreshReads<T>(fn: () => Promise<T>): Promise<T> {
+    this.freshReads++;
+    try {
+      return await fn();
+    } finally {
+      this.freshReads--;
+    }
+  }
   private identityScope = 0;
   /** resolveCanonicalHint: what each canonical file resolved to, by stat signature. */
   private readonly canonicalCache = new Map<
@@ -383,11 +399,11 @@ export class FilesystemReconciler {
     // so a write that lands in between only costs one more read).
     let sig: string | undefined;
     try {
-      const st = lstatSync(path);
-      sig = `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
+      sig = statSignature(lstatSync(path, { bigint: true }));
     } catch {
       this.canonicalCache.delete(path);
     }
+    if (this.freshReads > 0) sig = undefined;
     const hit = sig === undefined ? undefined : this.canonicalCache.get(path);
     if (hit && hit.sig === sig) {
       this.uniqueIdentity(hit.kind, hit.id, path);
@@ -1040,14 +1056,14 @@ export class FilesystemReconciler {
    * it cannot be read. Kept per stat signature: a file that has not changed is not read again.
    */
   private identityOf(kind: Kind, full: string): string | null | undefined {
-    let sig: string;
+    let sig: string | undefined;
     try {
-      const st = lstatSync(full);
-      sig = `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
+      sig = statSignature(lstatSync(full, { bigint: true }));
     } catch {
       return undefined;
     }
-    const cached = this.identityCache.get(`${kind}:${full}`);
+    if (this.freshReads > 0) sig = undefined;
+    const cached = sig === undefined ? undefined : this.identityCache.get(`${kind}:${full}`);
     if (cached && cached.sig === sig) return cached.id;
     let data: Buffer;
     try {
@@ -1074,7 +1090,7 @@ export class FilesystemReconciler {
       // unparseable files own no identity
       owner = null;
     }
-    this.identityCache.set(`${kind}:${full}`, { sig, id: owner });
+    if (sig !== undefined) this.identityCache.set(`${kind}:${full}`, { sig, id: owner });
     return owner;
   }
 
@@ -1485,7 +1501,7 @@ export class FilesystemReconciler {
         // create for the new owner. Never infer the old content from the replacement bytes.
         let ident: { kind: Kind; id: string };
         try {
-          ident = await this.resolveCanonicalHint(owned);
+          ident = await this.withFreshReads(() => this.resolveCanonicalHint(owned));
         } catch (e) {
           results.push(
             emptyResult({
@@ -1794,11 +1810,17 @@ export class FilesystemReconciler {
     } catch {
       throw unsafe("unstable canonical file");
     }
-    const { kind, id, hash } = await this.resolveCanonicalHint(path);
+    const hinted = await this.resolveCanonicalHint(path);
+    const { kind, id } = hinted;
     if (kind !== previous.entityType || id !== previous.entityId) {
       throw unsafe("lifecycle identity changed");
     }
     const parsed = this.parseCanonical(kind, path, data);
+    // The hash recorded in the result, the history record and the manifest is the one of the bytes
+    // read above, never a cached one: a cache hit that disagrees with them is a file that changed
+    // under us, and recording the cached hash would leave history unable to see the edit again.
+    const hash = parsed.hash;
+    if (hinted.hash !== hash) throw unsafe("unstable canonical file; retry");
     const snapshot = parsed.snapshot;
     const stream = await this.history.read(kind, id);
     const records = stream.records ?? [];
@@ -2189,7 +2211,9 @@ export class FilesystemReconciler {
     opts: RestoreOptions = {},
   ): Promise<ReconcileResult> {
     return this.withLifecycleEntityLock(entityType, entityId, () =>
-      this.mu.run(() => this.restoreLocked(entityType as Kind, entityId, opts)),
+      this.mu.run(() =>
+        this.withFreshReads(() => this.restoreLocked(entityType as Kind, entityId, opts)),
+      ),
     );
   }
 
@@ -2447,7 +2471,14 @@ export class FilesystemReconciler {
     return result;
   }
 
-  private async canonicalIdentityPaths(entityType: string, entityId: string): Promise<string[]> {
+  private canonicalIdentityPaths(entityType: string, entityId: string): Promise<string[]> {
+    return this.withFreshReads(() => this.canonicalIdentityPathsCached(entityType, entityId));
+  }
+
+  private async canonicalIdentityPathsCached(
+    entityType: string,
+    entityId: string,
+  ): Promise<string[]> {
     const matched: string[] = [];
     for (const path of this.canonicalFiles()) {
       try {
@@ -2675,7 +2706,9 @@ export class FilesystemReconciler {
     entityId: string,
     optsIn: HardDeleteOptions,
   ): Promise<void> {
-    return this.mu.run(() => this.hardDeleteBody(entityType, entityId, optsIn));
+    return this.mu.run(() =>
+      this.withFreshReads(() => this.hardDeleteBody(entityType, entityId, optsIn)),
+    );
   }
 
   private async hardDeleteBody(

@@ -25,6 +25,7 @@ import { effectiveRuntimeWatch } from "../models/config.ts";
 import { goJson } from "../search/json.ts";
 import { goClean } from "../search/qdrant/pointer.ts";
 import { goTimeString } from "../search/time.ts";
+import { statSignature } from "../storage/core/stat-signature.ts";
 import { VERSION } from "../version.ts";
 
 export type JobKind =
@@ -545,16 +546,15 @@ const EMPTY_ENTRY: QueueScanEntry = { sig: "", state: { jobs: [], recent: [] }, 
 
 function loadQueueEntry(storeRoot: string): QueueScanEntry {
   const path = queuePath(storeRoot);
-  let sig: string;
+  let sig: string | undefined;
   try {
-    const st = statSync(path);
-    sig = `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
+    sig = statSignature(statSync(path, { bigint: true }));
   } catch (err) {
     queueScanCache.delete(path);
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return EMPTY_ENTRY;
     throw err;
   }
-  const hit = queueScanCache.get(path);
+  const hit = sig === undefined ? undefined : queueScanCache.get(path);
   if (hit && hit.sig === sig) return hit;
   const state = loadQueue(storeRoot);
   const live = state.jobs
@@ -562,8 +562,10 @@ function loadQueueEntry(storeRoot: string): QueueScanEntry {
     .map((job) => ({ job, due: parseMs(job.runAfter), req: parseMs(job.requestedAt) }))
     .sort((a, b) => a.due - b.due || a.req - b.req)
     .map(({ job, due }) => ({ job, due }));
-  const entry: QueueScanEntry = { sig, state, live };
-  queueScanCache.set(path, entry);
+  const entry: QueueScanEntry = { sig: sig ?? "", state, live };
+  // A file touched in the last few seconds has no signature: reread every time, never cached.
+  if (sig !== undefined) queueScanCache.set(path, entry);
+  else queueScanCache.delete(path);
   return entry;
 }
 
@@ -628,9 +630,9 @@ let registryCache: { sig: string; projects: string[] } | undefined;
 export function registeredProjects(): string[] {
   let sig = "";
   try {
-    const st = statSync(projectsRegistryPath());
-    sig = `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
-    if (registryCache && registryCache.sig === sig) return [...registryCache.projects];
+    sig = statSignature(statSync(projectsRegistryPath(), { bigint: true })) ?? "";
+    if (sig !== "" && registryCache && registryCache.sig === sig)
+      return [...registryCache.projects];
   } catch {
     // fall through to the read, which reports ENOENT
   }
@@ -1551,16 +1553,18 @@ export function activeLeases(): Lease[] {
     if (extname(name) !== ".json") continue;
     let lease: Lease;
     try {
-      const st = statSync(path);
+      const st = statSync(path, { bigint: true });
       if (st.isDirectory()) continue;
-      // A heartbeat rewrites the file; between heartbeats the daemon reuses the parsed lease.
-      const sig = `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
-      const hit = leaseScanCache.get(path);
+      // A heartbeat rewrites the file; between heartbeats the daemon reuses the parsed lease. A
+      // lease touched in the last few seconds (every heartbeat) has no signature and is reread.
+      const sig = statSignature(st);
+      const hit = sig === undefined ? undefined : leaseScanCache.get(path);
       if (hit && hit.sig === sig) {
         lease = hit.lease;
       } else {
         lease = readJSONRetrying(path) as Lease;
-        leaseScanCache.set(path, { sig, lease });
+        if (sig !== undefined) leaseScanCache.set(path, { sig, lease });
+        else leaseScanCache.delete(path);
       }
     } catch {
       continue;
