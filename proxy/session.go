@@ -53,7 +53,7 @@ func newSession(c *config) *session {
 }
 
 func (s *session) note(msg string) {
-	io.WriteString(s.c.stderr, "knowns-proxy: "+msg+"\n")
+	io.WriteString(s.c.stderr, "knowns: "+msg+"\n")
 }
 
 // run serves one agent session and returns the process exit code.

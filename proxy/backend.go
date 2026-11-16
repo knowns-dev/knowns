@@ -95,28 +95,8 @@ func readLoop(b *backend, br *bufio.Reader) {
 
 // ---- the in-process child (D2, D8) ----
 
-func findKnowns() string {
-	if v := os.Getenv("KNOWNS_PROXY_KNOWNS_BIN"); v != "" {
-		return v
-	}
-	name := "knowns"
-	if isWindows {
-		name = "knowns.exe"
-	}
-	if self, err := os.Executable(); err == nil {
-		p := self[:len(self)-len(baseName(self))] + name
-		if p != self {
-			if st, err := os.Stat(p); err == nil && !st.IsDir() {
-				return p
-			}
-		}
-	}
-	if p, err := exec.LookPath("knowns"); err == nil {
-		return p
-	}
-	return ""
-}
-
+// findEngine (engine.go) names the binary the child and the daemon run; there is no PATH lookup,
+// because `knowns` on PATH is this launcher.
 func baseName(p string) string {
 	i := strings.LastIndexAny(p, `/\`)
 	return p[i+1:]
@@ -134,16 +114,16 @@ func envWithout(key string, add ...string) []string {
 }
 
 func startChild(c *config) (*backend, error) {
-	bin := findKnowns()
-	if bin == "" {
-		return nil, errors.New("cannot find the knowns binary next to the proxy or on PATH")
+	bin, err := findEngine()
+	if err != nil {
+		return nil, err
 	}
 	args := []string{"mcp", "--stdio"}
 	if c.project != "" {
 		args = append(args, "--project", c.project)
 	}
 	cmd := exec.Command(bin, args...)
-	cmd.Env = envWithout("KNOWNS_MCP_PROXY", "KNOWNS_MCP_PROXY=0")
+	cmd.Env = launcherEnv(envWithout("KNOWNS_MCP_PROXY", "KNOWNS_MCP_PROXY=0"))
 	cmd.Dir = c.cwd
 	cmd.SysProcAttr = childAttr()
 	cmd.Stderr = c.stderr
@@ -200,16 +180,16 @@ func readDescriptor() *descriptor {
 }
 
 func startDaemon() error {
-	bin := findKnowns()
-	if bin == "" {
-		return errors.New("cannot find the knowns binary")
+	bin, err := findEngine()
+	if err != nil {
+		return err
 	}
 	files, closeFiles := daemonFiles()
 	defer closeFiles()
 	start := func(breakaway bool) (*os.Process, error) {
 		return os.StartProcess(bin, []string{bin, "__runtime", "run"}, &os.ProcAttr{
 			Dir:   os.TempDir(),
-			Env:   envWithout("KNOWNS_MCP_PROXY"),
+			Env:   launcherEnv(envWithout("KNOWNS_MCP_PROXY")),
 			Files: files,
 			Sys:   daemonAttr(breakaway),
 		})
@@ -251,7 +231,7 @@ func handshake(c *config, d *descriptor) (*backend, error) {
 	hello, _ := json.Marshal(map[string]any{
 		"knowns_mcp": 1, "type": "hello", "version": version, "token": d.Token,
 		"pid": os.Getpid(), "cwd": c.cwd, "project": c.project,
-		"client": map[string]string{"name": "knowns-proxy", "version": version},
+		"client": map[string]string{"name": "knowns-launcher", "version": version},
 	})
 	if _, err := conn.Write(append(hello, '\n')); err != nil {
 		conn.Close()
