@@ -24,6 +24,7 @@ interface TaskDTO {
 	id: string;
 	title: string;
 	description?: string;
+	descriptionPreview?: string;
 	status: string;
 	priority: string;
 	assignee?: string;
@@ -242,9 +243,11 @@ async function lifecycleFetch(
 }
 
 export const api = {
-	async getTasks(options?: { includeHistorical?: boolean; signal?: AbortSignal }): Promise<Task[]> {
+	/** summary drops description, notes, plan and time entries; open a task with getTask for those. */
+	async getTasks(options?: { includeHistorical?: boolean; summary?: boolean; signal?: AbortSignal }): Promise<Task[]> {
 		const params = new URLSearchParams();
 		if (options?.includeHistorical) params.set("includeHistorical", "true");
+		if (options?.summary) params.set("summary", "true");
 		const query = params.size ? `?${params.toString()}` : "";
 		const res = await apiFetch(`${API_BASE}/api/tasks${query}`, { signal: options?.signal });
 		if (!res.ok) {

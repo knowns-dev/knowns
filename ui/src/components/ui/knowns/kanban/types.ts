@@ -72,6 +72,10 @@ export interface KanbanBoardProps {
   /** Shows "Add card" at the bottom of each unlocked column. */
   onAddCard?: (column: string, title: string) => void;
   onCardOpen?: (card: KanbanCard) => void;
+  /** Column totals to show when `cards` holds only the loaded part of a column. Default: count the cards. */
+  columnCounts?: Record<string, number>;
+  /** Rendered under the cards of each column in the status view, e.g. a load-more sentinel. Keep it stable. */
+  renderColumnFooter?: (column: KanbanColumn) => ReactNode;
   /** Override card rendering; the default card is exported as <KanbanCardView>. */
   renderCard?: (card: KanbanCard, ctx: { dragging: boolean; person?: KanbanPerson }) => ReactNode;
   title?: ReactNode;

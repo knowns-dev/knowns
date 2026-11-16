@@ -2,6 +2,7 @@
 // servers, each in its own copy of the "full" fixture, compared after masking only wall-clock
 // times, hashes, sandbox paths and generated task ids.
 import { afterAll, describe, expect, test } from "bun:test";
+import { summarize } from "../helpers/kn-6dvwn6.ts";
 import { firstDiff, hasGoBin, runDiff, type Step } from "./harness.ts";
 
 const ID = /"(?:taskId|id)": "(FX-[0-9A-Z]{6})"|Created task (\S+)/;
@@ -151,11 +152,21 @@ function sortJsonArray(text: string): string {
   try {
     const v = JSON.parse(text);
     const subs = (t: { subtasks?: string[] }) => t.subtasks?.sort();
+    if (Array.isArray(v) && v.every((t) => typeof t === "object" && t && "title" in t)) {
+      return JSON.stringify(v.map(summarize).sort(byId), null, 2);
+    }
+    if (v && Array.isArray(v.results) && "total" in v) {
+      return JSON.stringify(v.results.map(summarize).sort(byId), null, 2);
+    }
     if (Array.isArray(v)) {
       v.sort(byId);
       for (const t of v) subs(t);
     } else if (v && Array.isArray(v.columns)) {
-      for (const c of v.columns) c.tasks.sort(byId);
+      delete v.limit;
+      for (const c of v.columns) {
+        c.tasks = c.tasks.map(summarize).sort(byId);
+        delete c.nextCursor;
+      }
       // Statuses outside the configured columns follow in Go map order.
       const rest = v.columns.splice(5);
       rest.sort((a: { status: string }, b: { status: string }) => a.status.localeCompare(b.status));

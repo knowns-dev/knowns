@@ -155,6 +155,10 @@ Spec Decisions are different: keep every D-ID canonically in the spec's `Locked 
 mcp_knowns_tasks({ "action": "list", "spec": "<spec-path-from-task>" })
 ```
 
+`list` returns `{ results, total, nextCursor }`: summaries (id, title, status, priority, assignee,
+labels, parent, order, updatedAt), 50 per page. If `nextCursor` is present, pass it as `cursor` to get
+the next page; pass `"detail": "full"` only when you need full task bodies.
+
 Use the returned task metadata as a compact sibling summary. Sort siblings by:
 1. `order` when present
 2. explicit dependency information when available

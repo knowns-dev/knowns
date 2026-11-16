@@ -58,7 +58,13 @@ export const TASK_ACTION_PARAMS: Record<string, Record<string, string>> = {
     unassigned: "only Tasks with no assignee; not with assignee",
     label: "filter by one label",
     spec: "filter by linked spec doc path",
+    parent: "only subtasks of this Task ID",
+    query: "case-insensitive text in title or description",
     includeHistorical: "include archived Tasks in the result",
+    limit: "page size, default 50, max 200",
+    cursor: "nextCursor of the previous page",
+    offset: "start offset; prefer cursor",
+    detail: "summary (default) | full task payloads",
   },
   history: {
     taskId: "required - task ID",
@@ -67,7 +73,11 @@ export const TASK_ACTION_PARAMS: Record<string, Record<string, string>> = {
     offset: "history metadata offset, newest first",
     revision: "explicit revision detail (vN or numeric)",
   },
-  board: {},
+  board: {
+    status: "only this column",
+    limit: "tasks per column, default 20, max 200",
+    cursor: "nextCursor of a column; requires status",
+  },
   archive: {
     taskId: "required",
     execute: "false previews; true mutates",
@@ -165,7 +175,7 @@ export function buildHelpRegistry(): Map<string, HelpEntry> {
     why: "Default dryRun protects against accidental deletion.",
   });
   add("tasks.list", {
-    when: "Find tasks by status, owner, priority, label, or spec before choosing work or checking remaining scope.",
+    when: "Find tasks by status, owner, priority, label, spec, parent or text before choosing work or checking remaining scope. Returns summaries, 50 per page: follow nextCursor, use detail=full or tasks.get for full fields.",
     params: tp.list,
   });
   add("tasks.history", {

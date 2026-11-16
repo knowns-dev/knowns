@@ -61,6 +61,9 @@ mcp__knowns__list_tasks({
 })
 ```
 
+`list_tasks` returns summaries, 50 per page, as `{ results, total, nextCursor }`. Follow `nextCursor`
+only if you need more; use `detail: "full"` or `get` for task bodies.
+
 ---
 {{/if}}
 
