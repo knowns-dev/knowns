@@ -3,14 +3,7 @@
 // to Qdrant) and `search index` (start after an install). The artifact installer (installer.go) is
 // ported in qdrant-installer.ts; installQdrant below is its entry point.
 
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   SEMANTIC_VECTOR_BACKEND_QDRANT,

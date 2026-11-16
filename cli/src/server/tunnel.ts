@@ -2,13 +2,7 @@
 // `cloudflared tunnel --url` process keyed by local port, with state in
 // ~/.knowns/cloudflared-<port>.{pid,url,log}.
 import { spawnSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnDetached } from "../platform/detached-spawn.ts";
