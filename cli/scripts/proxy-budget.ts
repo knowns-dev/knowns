@@ -185,6 +185,9 @@ const TOOLS: Array<[string, Record<string, unknown>]> = [
   ["project", { action: "current" }],
   ["help", { queries: ["tasks.*"] }],
 ];
+// Diagnosis: BUDGET_TOOL_ORDER=reverse measures the tools last-first, to tell a per-tool cost from
+// work the daemon is still doing right after the seed (its index and reconcile sweep).
+if (process.env.BUDGET_TOOL_ORDER === "reverse") TOOLS.reverse();
 const p95 = (xs: number[]): number =>
   [...xs].sort((a, b) => a - b)[Math.max(0, Math.ceil(xs.length * 0.95) - 1)] ?? 0;
 

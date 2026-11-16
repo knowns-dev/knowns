@@ -61,9 +61,13 @@ export async function handle(
   }
 }
 
+// The module is imported once per process. A dynamic import() inside the per-doc call re-resolved
+// the specifier on every call (about 2.5 ms each in the compiled Windows binary, which made a
+// docs list of 5 docs ~13 ms slower in the daemon than in a process that had it loaded already).
+let docJsonFn: Promise<(d: Doc) => Record<string, unknown>> | undefined;
 async function docJson(doc: Doc): Promise<Record<string, unknown>> {
-  const { docJSON } = await import("../../cli/commands/doc.ts");
-  return docJSON(doc);
+  docJsonFn ??= import("../../cli/commands/doc.ts").then((m) => m.docJSON);
+  return (await docJsonFn)(doc);
 }
 
 async function mutationResult(
