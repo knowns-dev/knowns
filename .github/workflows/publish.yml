@@ -133,10 +133,62 @@ jobs:
           path: ui/dist/
           retention-days: 1
 
-  # One Bun job cross-compiles all six targets. It runs on macOS so the darwin binaries get the
-  # ad-hoc re-sign in cli/scripts/lib.ts; the version is injected with --define from the tag.
-  build-binaries:
+  # The two Windows targets are compiled on Windows: Bun only applies the icon and version resource
+  # (compile.windows, see cli/scripts/lib.ts) when the host is Windows, and a macOS host silently
+  # leaves Bun's own icon and "Bun" product name on knowns.exe. The arm64 target cross-compiles
+  # fine from the x64 runner.
+  build-windows-binaries:
     needs: [meta, verify]
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.12
+
+      - name: Download UI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist/
+
+      - name: Build Windows binaries (x64, arm64)
+        working-directory: cli
+        env:
+          KNOWNS_VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          bun install --frozen-lockfile
+          bun run build bun-windows-x64 bun-windows-arm64
+
+      - name: Binaries carry the Knowns icon and version resource
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        shell: pwsh
+        run: |
+          foreach ($t in 'windows-x64', 'windows-arm64') {
+            $v = (Get-Item "cli/dist/$t/knowns.exe").VersionInfo
+            Write-Host "$t product=$($v.ProductName) description=$($v.FileDescription) version=$($v.FileVersion)"
+            if ($v.ProductName -ne 'Knowns' -or $v.FileDescription -ne 'Knowns') { throw "$t does not carry the Knowns metadata" }
+          }
+
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries
+          path: cli/dist/
+          retention-days: 1
+
+  # One Bun job cross-compiles the four Unix targets. It runs on macOS so the darwin binaries get
+  # the ad-hoc re-sign in cli/scripts/lib.ts; the version is injected with --define from the tag.
+  # The Windows binaries come from build-windows-binaries.
+  build-binaries:
+    needs: [meta, verify, build-windows-binaries]
     runs-on: macos-15
     defaults:
       run:
@@ -156,13 +208,19 @@ jobs:
           name: ui-dist
           path: ui/dist/
 
-      - name: Build TypeScript binaries (6 targets)
+      - name: Build TypeScript binaries (4 Unix targets)
         working-directory: cli
         env:
           KNOWNS_VERSION: ${{ needs.meta.outputs.version }}
         run: |
           bun install --frozen-lockfile
-          bun run build
+          bun run build bun-darwin-arm64 bun-darwin-x64 bun-linux-x64 bun-linux-arm64
+
+      - name: Download Windows binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-binaries
+          path: cli/dist/
 
       - name: Package npm packages and release assets
         env:
