@@ -18,6 +18,7 @@ set -e
 
 REPO="knowns-dev/knowns"
 BINARY="knowns"
+PROXY="knowns-proxy"
 DEFAULT_INSTALL_DIR="${HOME}/.knowns/bin"
 INSTALL_DIR="${KNOWNS_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
 KNOWN_DIR="${HOME}/.knowns"
@@ -199,6 +200,9 @@ link_into_path() {
     fi
 
     link_one "${INSTALL_DIR}/${BINARY}" "${link_dir}/${BINARY}" || return 0
+    if [ -f "${INSTALL_DIR}/${PROXY}" ]; then
+        link_one "${INSTALL_DIR}/${PROXY}" "${link_dir}/${PROXY}" || true
+    fi
     if [ "${KNOWNS_NO_SYMLINK:-0}" != "1" ]; then
         link_one "${INSTALL_DIR}/${BINARY}" "${link_dir}/kn" || true
     fi
@@ -307,6 +311,11 @@ main() {
     mkdir -p "$INSTALL_DIR" 2>/dev/null || true
 
     install_file "$EXTRACTED_BIN" "${INSTALL_DIR}/${BINARY}" 755
+
+    # The native MCP proxy sits next to knowns. Releases before it do not ship one.
+    if [ -f "${EXTRACT_ROOT}/${PROXY}" ]; then
+        install_file "${EXTRACT_ROOT}/${PROXY}" "${INSTALL_DIR}/${PROXY}" 755
+    fi
 
     # Install colocated ONNX Runtime native libs (dylib/so/dll)
     for f in "${EXTRACT_ROOT}"/libonnxruntime* \

@@ -318,9 +318,190 @@ async function ensurePlatformBinary() {
   }
 }
 
+// --- direct launch --------------------------------------------------------------------------
+//
+// bin/knowns.js is a Node shim that execFileSync's the native binary and waits, so every npm
+// installed `knowns mcp --stdio` costs a node process (about 65 MB working set on Windows) next to
+// knowns itself. After the platform binary is in place the postinstall makes the command start the
+// binary directly. The Node shim stays as the fallback: --ignore-scripts, a missing platform
+// package, or any failure below leaves it exactly as shipped.
+
+/** True when file starts with a "#!" line, i.e. it is still the Node shim. */
+function isShim(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, "r");
+    const head = Buffer.alloc(2);
+    fs.readSync(fd, head, 0, 2, 0);
+    return head[0] === 0x23 && head[1] === 0x21;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+function nativeBinaryRuns(binary) {
+  const r = spawnSync(binary, ["--version"], {
+    stdio: "ignore",
+    timeout: 30000,
+    env: { ...process.env, NO_UPDATE_CHECK: "1" },
+  });
+  return r.status === 0;
+}
+
+/**
+ * macOS and Linux (what esbuild does): put the native binary where bin/knowns.js is, so npm's bin
+ * symlinks, which point at that path, launch it with no Node in between. Hard link when possible
+ * (no second copy on disk), renamed into place so a running process never sees a half-written
+ * file and macOS never re-validates a rewritten inode. Returns true when the command now starts
+ * the native binary.
+ */
+function useNativeBinaryDirectly(packageRoot, platformPackage, options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform === "win32") {
+    return false;
+  }
+  const pkgDir = resolveInstalledPackageDir(packageRoot, platformPackage.name, platformPackage.ext);
+  const source = pkgDir && resolveBinaryFromPackageDir(pkgDir, platformPackage.ext);
+  if (!source) {
+    return false;
+  }
+  const done = linkNativeInto(path.join(packageRoot, "bin", "knowns.js"), source);
+  // The proxy command gets the same treatment when the platform package ships one.
+  const proxySource = path.join(pkgDir, `knowns-proxy${platformPackage.ext}`);
+  if (fs.existsSync(proxySource)) {
+    linkNativeInto(path.join(packageRoot, "bin", "knowns-proxy.js"), proxySource);
+  }
+  return done;
+}
+
+function linkNativeInto(dest, source) {
+  if (!fs.existsSync(dest) || !isShim(dest)) {
+    return false;
+  }
+
+  const tmp = `${dest}.${process.pid}.tmp`;
+  try {
+    fs.rmSync(tmp, { force: true });
+    try {
+      fs.linkSync(source, tmp);
+    } catch {
+      fs.copyFileSync(source, tmp);
+    }
+    fs.chmodSync(tmp, 0o755);
+    if (!nativeBinaryRuns(tmp)) {
+      fs.rmSync(tmp, { force: true });
+      return false;
+    }
+    fs.renameSync(tmp, dest);
+    return true;
+  } catch {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {}
+    return false;
+  }
+}
+
+const WINDOWS_SHIM_NAMES = ["knowns", "kn", "knowns-proxy"];
+
+function isNpmShimFor(file) {
+  try {
+    return /knowns[\\/]+bin[\\/]+knowns(-proxy)?\.js/.test(fs.readFileSync(file, "utf8"));
+  } catch {
+    return false;
+  }
+}
+
+function windowsShimContents(ext, exe) {
+  if (ext === ".cmd") {
+    return `@ECHO off\r\n"${exe}" %*\r\n`;
+  }
+  if (ext === ".ps1") {
+    return `#!/usr/bin/env pwsh\n& "${exe}" $args\nexit $LASTEXITCODE\n`;
+  }
+  // The extensionless file is for Git Bash and similar: mixed C:/ paths work there.
+  return `#!/bin/sh\nexec "${exe.replace(/\\/g, "/")}" "$@"\n`;
+}
+
+/**
+ * Windows cannot replace a process image, and npm writes knowns.cmd / knowns.ps1 to run
+ * `node bin/knowns.js`. npm has already written them when postinstall runs, so rewrite them to
+ * start the binary directly. They point at the staged copy under %LOCALAPPDATA% (the same copy the
+ * Node shim stages), never at node_modules, because a running knowns.exe there would lock the file
+ * and make `npm i -g knowns@new` fail with EBUSY. Returns how many shim files were rewritten.
+ */
+function useNativeBinaryOnWindows(packageRoot, platformPackage, options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform !== "win32") {
+    return 0;
+  }
+  const pkgDir = resolveInstalledPackageDir(packageRoot, platformPackage.name, platformPackage.ext);
+  const source = pkgDir && resolveBinaryFromPackageDir(pkgDir, platformPackage.ext);
+  if (!source) {
+    return 0;
+  }
+
+  const dirs = [path.join(packageRoot, "..", ".bin"), path.join(packageRoot, "..", "..")];
+  if (process.env.npm_config_global === "true" && process.env.npm_config_prefix) {
+    dirs.push(process.env.npm_config_prefix);
+  }
+  const targets = [];
+  for (const dir of new Set(dirs.map((d) => path.resolve(d)))) {
+    for (const name of WINDOWS_SHIM_NAMES) {
+      for (const ext of ["", ".cmd", ".ps1"]) {
+        const file = path.join(dir, `${name}${ext}`);
+        if (fs.existsSync(file) && isNpmShimFor(file)) {
+          targets.push({ file, ext, name });
+        }
+      }
+    }
+  }
+  if (targets.length === 0) {
+    return 0;
+  }
+
+  // Only now stage the 100 MB runtime: nothing to point at without a shim to rewrite.
+  const stage = options.stage || require("./bin/knowns.js").stageWindowsBinary;
+  const exe = stage(source, options.stageOptions);
+  if (!(options.verify || nativeBinaryRuns)(exe)) {
+    return 0;
+  }
+  let rewritten = 0;
+  // The staged directory holds the whole platform package, so the proxy sits next to the binary.
+  const proxyExe = path.join(path.dirname(exe), "knowns-proxy.exe");
+  for (const { file, ext, name } of targets) {
+    try {
+      if (name === "knowns-proxy") {
+        if (!fs.existsSync(proxyExe)) continue;
+        fs.writeFileSync(file, windowsShimContents(ext, proxyExe));
+      } else {
+        fs.writeFileSync(file, windowsShimContents(ext, exe));
+      }
+      rewritten++;
+    } catch {}
+  }
+  return rewritten;
+}
+
+function enableDirectLaunch(packageRoot, platformPackage) {
+  try {
+    useNativeBinaryDirectly(packageRoot, platformPackage);
+    useNativeBinaryOnWindows(packageRoot, platformPackage);
+  } catch {
+    // The Node shim keeps working; never fail an install over an optimisation.
+  }
+}
+
 async function main() {
   try {
     await ensurePlatformBinary();
+    const platformPackage = getPlatformPackage();
+    const version = platformPackage && getRequestedVersion(getPackageRoot(), platformPackage.name);
+    if (platformPackage && version && version !== "0.0.0") {
+      enableDirectLaunch(getPackageRoot(), platformPackage);
+    }
   } catch (error) {
     const platformPackage = getPlatformPackage();
     const details = error && error.message ? error.message : String(error);
@@ -350,6 +531,9 @@ module.exports = {
   releaseAssetUrl,
   resolveBinaryFromPackageDir,
   resolveInstalledPackageDir,
+  useNativeBinaryDirectly,
+  useNativeBinaryOnWindows,
   verifySha256,
+  windowsShimContents,
   writeDownloadedPackageMetadata,
 };
