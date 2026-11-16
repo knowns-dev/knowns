@@ -6,6 +6,7 @@
 // Everything that touches the network, the running binary or another process goes through
 // `updateSeams`, so tests drive the whole flow against a local server and a temp "binary" without
 // ever replacing the real executable or downloading a release.
+import { selfExecutable } from "../../platform/launcher.ts";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -174,7 +175,7 @@ class UpdateDeferred extends Error {}
 export const updateSeams: UpdateSeams = {
   fetchLatest: () => fetchLatestVersion(),
   isTTY: () => isTTY(),
-  executable: () => process.execPath,
+  executable: () => selfExecutable(),
   goos: () => (process.platform === "win32" ? "windows" : process.platform),
   run: defaultRun,
   download: defaultDownload,

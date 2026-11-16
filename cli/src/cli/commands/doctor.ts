@@ -9,7 +9,8 @@ import type {
   Status,
   Verdict,
 } from "../../domain/doctor/model.ts";
-import { findMissingProxyEntries } from "../../domain/setup/mcp-audit.ts";
+import { launcherProblem } from "../../platform/launcher.ts";
+import { findProxyNamedEntries } from "../../domain/setup/mcp-audit.ts";
 import { type CommandContext, defineCommand } from "../core/define.ts";
 import { exitError, SilentExit } from "../core/exit.ts";
 import {
@@ -194,11 +195,11 @@ export interface DoctorRunDeps {
     project: import("../../domain/doctor/foundation.ts").DoctorProject | undefined,
     ctx: CommandContext,
   ) => Promise<import("../../domain/doctor/model.ts").Checker[]>;
-  /** MCP entries that start a knowns-proxy that is missing; wired to findMissingProxyEntries. */
-  findMissingProxyEntries?: (
+  /** MCP entries that start a knowns-proxy that is missing; wired to findProxyNamedEntries. */
+  findProxyNamedEntries?: (
     projectRoot: string,
     env: Record<string, string | undefined>,
-  ) => import("../../domain/doctor/proxy-checks.ts").MissingProxyEntry[];
+  ) => import("../../domain/doctor/proxy-checks.ts").ProxyNamedEntry[];
 }
 
 async function defaultCheckers(
@@ -227,7 +228,7 @@ async function defaultCheckers(
 
   // KN-A1Q129: checks that exist only when the daemon serves sessions, a proxy fell back, or an
   // MCP entry points at a missing knowns-proxy. The finder is a seam: integration passes
-  // findMissingProxyEntries from domain/setup/mcp-audit.ts (feat/thin-proxy-pkg).
+  // findProxyNamedEntries from domain/setup/mcp-audit.ts (feat/thin-proxy-pkg).
   const { proxyCheckers } = await import("../../domain/doctor/proxy-checks.ts");
   const { loadLiveView } = await import("../../runtime/live-lines.ts");
   const { proxyEnabled } = await import("../../runtime/proxy-mode.ts");
@@ -236,9 +237,10 @@ async function defaultCheckers(
     proxyEnabled: proxyEnabled(env),
     reports: view.reports,
     fallbacks: view.fallbacks,
-    missingEntries:
-      project && doctorDeps.findMissingProxyEntries
-        ? doctorDeps.findMissingProxyEntries(project.store.projectRoot, env)
+    launcher: launcherProblem(env),
+    proxyNamedEntries:
+      project && doctorDeps.findProxyNamedEntries
+        ? doctorDeps.findProxyNamedEntries(project.store.projectRoot, env)
         : [],
   });
 
@@ -285,7 +287,7 @@ async function defaultCheckers(
   );
 }
 
-export const doctorDeps: DoctorRunDeps = { findMissingProxyEntries };
+export const doctorDeps: DoctorRunDeps = { findProxyNamedEntries };
 
 export default defineCommand({
   use: "doctor",
