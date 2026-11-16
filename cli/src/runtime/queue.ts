@@ -29,6 +29,7 @@ import { VERSION } from "../version.ts";
 import {
   checkRunner,
   claimRunner,
+  DaemonAlreadyRunning,
   findDaemon,
   isRegisteredPid,
   partitionLeases,
@@ -260,6 +261,10 @@ export type WatcherFactory = (signal: AbortSignal, storeRoot: string) => Promise
 export type ReloadHandler = (reload: ReloadStatus) => Promise<void> | void;
 
 export interface DaemonOptions {
+  /** Stops advertising this daemon's endpoints (sessions already connected carry on). */
+  retire?: () => void | Promise<void>;
+  /** Undoes retire: a session arrived while the daemon was about to exit. */
+  reopen?: () => void | Promise<void>;
   executor: Executor;
   watcherFactory?: WatcherFactory;
   reloadHandler?: ReloadHandler;
@@ -1939,8 +1944,15 @@ export function parseGoDurationMs(text: string): number | undefined {
   return sign * total;
 }
 
+/** A watcher that keeps failing is retried after 1 s, 2 s, 4 s ... up to a minute. */
+const WATCH_BACKOFF_MIN_MS = 1000;
+const WATCH_BACKOFF_MAX_MS = 60_000;
+/** A watcher that ran this long before it failed starts the ladder over. */
+const WATCH_HEALTHY_MS = 30_000;
+
 export class WatchLifecycle {
   private watchers = new Map<string, WatchEntry>();
+  private backoff = new Map<string, { until: number; fails: number }>();
 
   constructor(
     private now: () => number = Date.now,
@@ -1980,13 +1992,27 @@ export class WatchLifecycle {
     if (!factory) return;
     for (const [projectRoot, count] of demand) {
       if (count === 0 || this.watchers.has(projectRoot)) continue;
+      // One failing project must not be restarted every tick (a shared worker would be recycled
+      // for all of them each time).
+      if (now < (this.backoff.get(projectRoot)?.until ?? 0)) continue;
       const abort = new AbortController();
       const entry: WatchEntry = { abort, graceUntil: 0, state: "running", done: false };
       this.watchers.set(projectRoot, entry);
-      factory(abort.signal, projectRoot)
+      const startedAt = now;
+      let started: Promise<void>;
+      try {
+        started = factory(abort.signal, projectRoot);
+      } catch (err) {
+        started = Promise.reject(err); // a factory that throws is a failed watcher, not a crash
+      }
+      started
         .catch((err) => {
-          if (!abort.signal.aborted)
-            goLogf(`[runtime] watcher failed for ${projectRoot}: ${(err as Error).message}`);
+          if (abort.signal.aborted) return;
+          goLogf(`[runtime] watcher failed for ${projectRoot}: ${(err as Error).message}`);
+          const prev = this.backoff.get(projectRoot);
+          const fails = this.now() - startedAt >= WATCH_HEALTHY_MS ? 1 : (prev?.fails ?? 0) + 1;
+          const wait = Math.min(WATCH_BACKOFF_MAX_MS, WATCH_BACKOFF_MIN_MS * 2 ** (fails - 1));
+          this.backoff.set(projectRoot, { until: this.now() + wait, fails });
         })
         .finally(() => {
           entry.done = true;
@@ -2219,7 +2245,16 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
   mkdirSync(runtimeRoot(), { recursive: true, mode: 0o755 });
   // Version scoped (spec D3): register, then try to become the runner, the one daemon that runs
   // queue jobs and watchers and owns the pid and status files 0.34.x reads.
-  registerDaemon(VERSION);
+  try {
+    registerDaemon(VERSION);
+  } catch (err) {
+    if (err instanceof DaemonAlreadyRunning) {
+      // Two daemons of one version would fight over the endpoint and the runner files.
+      goLogf(`[runtime] ${err.message}; exiting`);
+      return;
+    }
+    throw err;
+  }
   let isRunner = claimRunner(VERSION);
   let roleCheckedAt = Date.now();
   const takeRunnerFiles = (): void => {
@@ -2425,7 +2460,24 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
         opts.busy?.() !== true
       ) {
         if (idleSince === 0) idleSince = Date.now();
-        else if (Date.now() - idleSince >= idleTimeoutMs()) return;
+        else if (Date.now() - idleSince >= idleTimeoutMs()) {
+          // Stop advertising first, then look once more: a proxy that connected a moment ago
+          // keeps the daemon (re-register and listen again); otherwise nobody is sent to a
+          // daemon that is leaving.
+          await opts.retire?.();
+          unregisterDaemon(VERSION);
+          releaseRunner();
+          if (!opts.busy?.()) return;
+          try {
+            registerDaemon(VERSION);
+          } catch {
+            return; // a replacement of this version started meanwhile: leave it the field
+          }
+          isRunner = claimRunner(VERSION);
+          if (isRunner) takeRunnerFiles();
+          await opts.reopen?.();
+          idleSince = 0;
+        }
       } else {
         idleSince = 0;
       }
@@ -2476,10 +2528,17 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
   } finally {
     wake.close();
     watchLifecycle.stop();
-    serviceAbort.abort();
-    await Promise.allSettled(services);
+    // Leave the registry and stop advertising before waiting for the services to drain, so a
+    // proxy arriving meanwhile starts a replacement instead of falling back for no reason.
+    try {
+      await opts.retire?.();
+    } catch {
+      // best effort
+    }
     if (readPID() === process.pid) rmSync(pidFile(), { force: true });
     releaseRunner();
     unregisterDaemon(VERSION);
+    serviceAbort.abort();
+    await Promise.allSettled(services);
   }
 }

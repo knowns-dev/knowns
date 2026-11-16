@@ -273,6 +273,21 @@ export class McpHost {
     this.descriptor = undefined;
   }
 
+  /**
+   * Stops advertising and accepting (descriptor and socket removed) while the sessions already
+   * connected carry on. A daemon that is about to exit calls this first, so a proxy that arrives
+   * during the drain starts a new daemon instead of finding a descriptor nobody will serve.
+   */
+  retire(): void {
+    const server = this.server;
+    const d = this.descriptor;
+    this.server = undefined;
+    this.descriptor = undefined;
+    for (const s of this.pendingSockets) s.destroy();
+    if (d) removeDescriptor(d, this.root);
+    server?.close(); // does not wait: established connections stay open
+  }
+
   evict(id: string): boolean {
     const s = this.sessionsById.get(id);
     if (!s) return false;

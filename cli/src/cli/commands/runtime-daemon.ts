@@ -36,6 +36,12 @@ const run = defineCommand({
         };
     const ac = new AbortController();
     const stop = () => ac.abort();
+    // Whatever ends the process (a signal handler, an uncaught error, process.exit) writes out the
+    // audit events still buffered; only a hard kill (SIGKILL, Windows TerminateProcess) can lose
+    // the last ~25 ms.
+    const auditMod = await import("../../storage/stores/audit-store.ts");
+    const onExit = () => auditMod.flushAuditSync();
+    process.on("exit", onExit);
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
     // The MCP session endpoint (KN-QS0B82): serves proxies for as long as the daemon runs. It never
@@ -43,9 +49,11 @@ const run = defineCommand({
     const services = [...(runtimeSeams.services ?? [])];
     // An open MCP session keeps the daemon alive even when it holds no lease (no project).
     let sessionCount = (): number => 0;
+    let hostRef: { retire(): void; start(): Promise<unknown> } | undefined;
     services.push(async (signal) => {
       const { McpHost } = await import("../../runtime/mcp-host.ts");
       const host = new McpHost();
+      hostRef = host;
       sessionCount = () => host.sessions().length;
       try {
         await host.start();
@@ -78,11 +86,16 @@ const run = defineCommand({
       ...(runtimeSeams.watcherFactory ? { watcherFactory: runtimeSeams.watcherFactory } : {}),
       services,
       busy: () => sessionCount() > 0,
+      retire: () => hostRef?.retire(),
+      reopen: async () => {
+        await hostRef?.start();
+      },
       ...(runtimeSeams.keepAlive ? { keepAlive: runtimeSeams.keepAlive } : {}),
     });
     await Promise.all([jobWorker?.stop(), watchWorker?.stop()]);
     // Audit events of the hosted sessions are written in batches; nothing may be left behind.
     await (await import("../../storage/stores/audit-store.ts")).flushAudit();
+    process.off("exit", onExit);
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
   },

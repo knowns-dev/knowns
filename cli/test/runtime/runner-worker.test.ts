@@ -18,6 +18,7 @@ import { join, relative } from "node:path";
 import { Worker } from "node:worker_threads";
 import { readDescriptor } from "../../src/runtime/mcp-endpoint.ts";
 import type { Job } from "../../src/runtime/queue.ts";
+import * as q from "../../src/runtime/queue.ts";
 import { RunnerWorker } from "../../src/runtime/runner-worker.ts";
 import { VERSION } from "../../src/version.ts";
 import { makeSandbox } from "../mcp/harness.ts";
@@ -246,4 +247,91 @@ describe("a daemon reconciling an edited doc", () => {
     expect(on.length).toBeGreaterThan(0);
     expect(on).toEqual(off);
   }, 120_000);
+});
+
+describe("worker failures never throw into the daemon (KN-69EHXE P2-4, P3-3, P3-4)", () => {
+  const broken = (): Worker => {
+    throw new Error("spawn failed: EMFILE");
+  };
+
+  test("P2-4: a worker that cannot start rejects watch and runJob instead of throwing", async () => {
+    const rw = new RunnerWorker(broken);
+    const w = rw.watch(new AbortController().signal, "/p");
+    await expect(w).rejects.toThrow("EMFILE");
+    await expect(rw.runJob("/p", job)).rejects.toThrow("EMFILE");
+    expect(rw.running).toBe(false);
+  });
+
+  test("P2-4: a factory that throws leaves no ghost watcher, and P3-4 backs the retry off", async () => {
+    let now = 1_000_000;
+    let calls = 0;
+    const life = new q.WatchLifecycle(
+      () => now,
+      () => 0,
+    );
+    const lease = {
+      id: "l",
+      projectRoot: "/p",
+      watch: true,
+      expiresAt: new Date(now + 60_000).toISOString(),
+    } as unknown as q.Lease;
+    const factory = () => {
+      calls++;
+      throw new Error("no worker");
+    };
+    expect(() => life.reconcile([lease], factory)).not.toThrow();
+    await sleep(20);
+    life.reconcile([lease], factory); // inside the 1 s backoff: not restarted
+    expect(calls).toBe(1);
+    now += 1500;
+    life.reconcile([lease], factory);
+    expect(calls).toBe(2);
+    await sleep(20);
+    now += 1500; // the second failure waits 2 s
+    life.reconcile([lease], factory);
+    expect(calls).toBe(2);
+    now += 1000;
+    life.reconcile([lease], factory);
+    expect(calls).toBe(3);
+  });
+
+  test("P3-3: the next request waits for the terminated thread before starting a new one", async () => {
+    let live = 0;
+    let peak = 0;
+    const mk = (): Worker => {
+      const w = script(ECHO)();
+      live++;
+      peak = Math.max(peak, live);
+      w.on("exit", () => live--);
+      return w;
+    };
+    const rw = new RunnerWorker(mk, 30);
+    const hang = new RunnerWorker(() => {
+      const w = script("setInterval(() => {}, 1000)")();
+      live++;
+      peak = Math.max(peak, live);
+      w.on("exit", () => live--);
+      return w;
+    }, 30);
+    await expect(hang.runJob("/p", job)).rejects.toThrow("timed out");
+    await expect(rw.runJob("/p", job)).resolves.toBeUndefined();
+    await Promise.all([rw.stop(), hang.stop()]);
+    expect(peak).toBeLessThanOrEqual(2);
+    // After a timeout the same host starts its next worker only once the old thread is gone.
+    live = 0;
+    peak = 0;
+    const both = new RunnerWorker(() => {
+      const w = script("setInterval(() => {}, 1000)")();
+      live++;
+      peak = Math.max(peak, live);
+      w.on("exit", () => live--);
+      return w;
+    }, 30);
+    await expect(both.runJob("/p", job)).rejects.toThrow("timed out");
+    const second = both.runJob("/p", job).catch(() => undefined);
+    await sleep(100);
+    expect(peak).toBe(1);
+    await both.stop();
+    await second;
+  });
 });

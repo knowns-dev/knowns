@@ -124,3 +124,38 @@ describe("search through a daemon-hosted session", () => {
     await (await sharedSearchPool()).stop();
   }, 60_000);
 });
+
+describe("SearchPool idle workers (KN-69EHXE P2-3)", () => {
+  const reply =
+    "import {parentPort} from 'node:worker_threads'; parentPort.on('message', m => parentPort.postMessage({id: m.id, text: 'ok', isError: false}));";
+
+  test("an idle worker that crashes is dropped without an unhandled error, then replaced", async () => {
+    let n = 0;
+    const dying = scriptWorker(
+      `${reply} parentPort.on('message', () => setTimeout(() => { throw new Error('late crash'); }, 20));`,
+    );
+    const echo = scriptWorker(reply);
+    const pool = new SearchPool(1, () => (n++ === 0 ? dying() : echo()));
+    const job = { storeRoot: "/s", projectRoot: "/p", req };
+    expect((await pool.run(job)).text).toBe("ok");
+    await new Promise((r) => setTimeout(r, 200)); // the idle worker dies here
+    expect(pool.size).toBe(0);
+    expect((await pool.run(job)).text).toBe("ok"); // a fresh worker, not a hang
+    await pool.stop();
+  });
+
+  test("an idle worker that exits is dropped", async () => {
+    let n = 0;
+    const exiting = scriptWorker(
+      `${reply} parentPort.on('message', () => setTimeout(() => process.exit(0), 20));`,
+    );
+    const echo = scriptWorker(reply);
+    const pool = new SearchPool(1, () => (n++ === 0 ? exiting() : echo()));
+    const job = { storeRoot: "/s", projectRoot: "/p", req };
+    await pool.run(job);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(pool.size).toBe(0);
+    expect((await pool.run(job)).text).toBe("ok");
+    await pool.stop();
+  });
+});

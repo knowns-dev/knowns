@@ -9,7 +9,17 @@
 //   knowns-runtime.pid, status.json   unchanged for 0.34.x readers, written by the runner only
 //
 // A function that touches the disk reads the runtime root at call time, so tests can move it.
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  linkSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { uptime } from "node:os";
 import { dirname, join } from "node:path";
 import type { Lease } from "./queue.ts";
 import {
@@ -75,7 +85,35 @@ export function compareVersions(a: string, b: string): number {
 
 // --- registry ------------------------------------------------------------------------------------
 
+/**
+ * A registry file written before the machine last booted names a process that cannot be running:
+ * after a reboot the pid may belong to something else entirely. `clock` is a seam for tests.
+ */
+export function predatesBoot(
+  startedAt: string,
+  clock: { now: number; uptimeSec: number } = { now: Date.now(), uptimeSec: uptime() },
+): boolean {
+  const t = Date.parse(startedAt);
+  if (Number.isNaN(t)) return false;
+  const bootedAt = clock.now - clock.uptimeSec * 1000;
+  return t < bootedAt - 60_000; // a minute of slack for clock steps
+}
+
+/** Thrown by registerDaemon when another live process already is the daemon of this version. */
+export class DaemonAlreadyRunning extends Error {
+  constructor(
+    readonly version: string,
+    readonly pid: number,
+  ) {
+    super(`a daemon of version ${version} is already running (pid ${pid})`);
+  }
+}
+
 export function registerDaemon(version: string, pid: number = process.pid): void {
+  const cur = readJson<DaemonEntry>(daemonFile(version));
+  if (cur && cur.pid !== pid && isProcessAlive(cur.pid) && !predatesBoot(cur.startedAt)) {
+    throw new DaemonAlreadyRunning(version, cur.pid);
+  }
   writeAtomic(daemonFile(version), { pid, version, startedAt: nowString() } satisfies DaemonEntry);
 }
 
@@ -90,7 +128,7 @@ export function unregisterDaemon(version: string, pid: number = process.pid): vo
 export function findDaemon(version: string): DaemonEntry | undefined {
   const cur = readJson<DaemonEntry>(daemonFile(version));
   if (!cur) return undefined;
-  if (isProcessAlive(cur.pid)) return cur;
+  if (isProcessAlive(cur.pid) && !predatesBoot(cur.startedAt)) return cur;
   rmSync(daemonFile(version), { force: true });
   return undefined;
 }
@@ -106,7 +144,7 @@ export function listDaemons(): DaemonEntry[] {
   for (const n of names) {
     if (!n.endsWith(".json")) continue;
     const e = readJson<DaemonEntry>(join(daemonsDir(), n));
-    if (e && isProcessAlive(e.pid)) out.push(e);
+    if (e && isProcessAlive(e.pid) && !predatesBoot(e.startedAt)) out.push(e);
   }
   return out.sort((a, b) => compareVersions(a.version, b.version));
 }
@@ -141,6 +179,40 @@ function holderGone(h: LockHolder | undefined, mtimeMs: number): boolean {
   return Date.now() - h.at > LOCK_MAX_AGE_MS;
 }
 
+let stealSeq = 0;
+
+/**
+ * Removes a stale lock so that only one contender wins: the file is renamed to a name of our own
+ * (rename succeeds for exactly one of several racers), its content is checked again, and only a
+ * lock that is really stale is deleted. A live lock that was caught by mistake (its owner replaced
+ * the stale one between our check and our rename) is put back. Returns whether the lock is gone.
+ */
+function stealStaleLock(path: string): boolean {
+  const mine = `${path}.stale.${process.pid}.${++stealSeq}`;
+  try {
+    renameSync(path, mine);
+  } catch {
+    return true; // someone else removed or replaced it first: look again
+  }
+  let st: { mtimeMs: number };
+  try {
+    st = statSync(mine);
+  } catch {
+    return true;
+  }
+  if (holderGone(readJson<LockHolder>(mine), st.mtimeMs)) {
+    rmSync(mine, { force: true });
+    return true;
+  }
+  try {
+    linkSync(mine, path); // fails if a newer lock already exists
+  } catch {
+    // the owner's lock is gone for good: it will notice at release, which is best effort anyway
+  }
+  rmSync(mine, { force: true });
+  return false;
+}
+
 /** Takes runner.lock, replacing a holder that crashed; throws when it cannot within timeoutMs. */
 function acquireRunnerLock(timeoutMs: number): () => void {
   const path = runnerLock();
@@ -166,8 +238,7 @@ function acquireRunnerLock(timeoutMs: number): () => void {
     try {
       const st = statSync(path);
       if (holderGone(readJson<LockHolder>(path), st.mtimeMs)) {
-        rmSync(path, { force: true });
-        continue;
+        if (stealStaleLock(path)) continue;
       }
     } catch {
       continue; // vanished: retry at once
@@ -181,7 +252,10 @@ function acquireRunnerLock(timeoutMs: number): () => void {
 
 export function currentRunner(): RunnerClaim | undefined {
   const c = readJson<RunnerClaim>(runnerFile());
-  return c && isProcessAlive(c.pid) ? c : undefined;
+  if (!c || !isProcessAlive(c.pid)) return undefined;
+  // Only a registered daemon of that version can be the runner: after a reboot the pid may have
+  // been reused by an unrelated process, and the claim file outlives the daemon.
+  return listDaemons().some((d) => d.pid === c.pid && d.version === c.version) ? c : undefined;
 }
 
 /**

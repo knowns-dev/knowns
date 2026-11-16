@@ -99,6 +99,10 @@ export class SearchPool {
     if (this.slots.length >= this.width) return undefined;
     const slot: Slot = { worker: this.spawn(), busy: false };
     slot.worker.unref();
+    // Permanent listeners: a worker that crashes or exits while idle must not raise an unhandled
+    // 'error' (it would bring the daemon down) nor stay in the pool (the next call would hang).
+    slot.worker.on("error", () => this.drop(slot));
+    slot.worker.on("exit", () => this.drop(slot));
     this.slots.push(slot);
     return slot;
   }

@@ -21,6 +21,8 @@ export type RunnerRequest =
 export type RunnerReply = { t: "done" | "ended"; id: number; error?: string };
 
 const DEFAULT_JOB_TIMEOUT_MS = 30 * 60_000;
+/** How long the next request waits for a terminated worker thread to be gone. */
+const TERMINATE_WAIT_MS = 2000;
 
 interface Pending {
   resolve: () => void;
@@ -37,6 +39,7 @@ export class RunnerWorker {
   private readonly pending = new Map<number, Pending>();
   private nextId = 1;
   private stopped = false;
+  private terminating: Promise<unknown> | undefined;
 
   constructor(
     private readonly spawn: () => Worker = spawnRunnerWorker,
@@ -57,13 +60,21 @@ export class RunnerWorker {
   watch(signal: AbortSignal, storeRoot: string): Promise<void> {
     if (signal.aborted) return Promise.resolve();
     let id = 0;
-    const p = this.request((i) => {
-      id = i;
-      return { t: "watch", id, storeRoot };
-    });
-    signal.addEventListener("abort", () => this.worker?.postMessage({ t: "unwatch", id }), {
-      once: true,
-    });
+    const p = this.request(
+      (i) => {
+        id = i;
+        return { t: "watch", id, storeRoot };
+      },
+      undefined,
+      signal,
+    );
+    signal.addEventListener(
+      "abort",
+      () => {
+        if (id !== 0) this.worker?.postMessage({ t: "unwatch", id });
+      },
+      { once: true },
+    );
     return p;
   }
 
@@ -75,8 +86,29 @@ export class RunnerWorker {
     await w?.terminate();
   }
 
-  private request(make: (id: number) => RunnerRequest, timeoutMs?: number): Promise<void> {
-    if (this.stopped) return Promise.reject(new Error("runner worker stopped"));
+  /**
+   * Always returns a promise: a worker that cannot be started (a missing entry in a compiled
+   * build, EMFILE) or written to rejects it instead of throwing into the daemon loop.
+   */
+  private async request(
+    make: (id: number) => RunnerRequest,
+    timeoutMs?: number,
+    cancel?: AbortSignal,
+  ): Promise<void> {
+    if (this.stopped) throw new Error("runner worker stopped");
+    // The previous thread may still be inside a native call: wait for it to end (bounded).
+    if (this.terminating) {
+      let cap: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        this.terminating,
+        new Promise<void>((r) => {
+          cap = setTimeout(r, TERMINATE_WAIT_MS);
+        }),
+      ]);
+      if (cap) clearTimeout(cap);
+      if (this.stopped) throw new Error("runner worker stopped");
+    }
+    if (cancel?.aborted) return;
     const w = this.ensure();
     const id = this.nextId++;
     return new Promise<void>((resolve, reject) => {
@@ -88,7 +120,13 @@ export class RunnerWorker {
         }, timeoutMs);
       }
       this.pending.set(id, entry);
-      w.postMessage(make(id));
+      try {
+        w.postMessage(make(id));
+      } catch (err) {
+        this.pending.delete(id);
+        if (entry.timer) clearTimeout(entry.timer);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   }
 
@@ -119,7 +157,12 @@ export class RunnerWorker {
     const w = this.worker;
     this.worker = undefined;
     this.failAll(reason);
-    void w?.terminate();
+    if (!w) return;
+    const t = w.terminate().catch(() => undefined);
+    this.terminating = t;
+    void t.then(() => {
+      if (this.terminating === t) this.terminating = undefined;
+    });
   }
 
   private failAll(reason: Error): void {

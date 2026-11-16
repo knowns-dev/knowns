@@ -69,6 +69,9 @@ describe("registry and runner election", () => {
   });
 
   test("the first daemon becomes the runner; an older one does not displace a newer", () => {
+    // A daemon registers before it claims (the runner must be a registered daemon).
+    registerDaemon("1.0.0", ME);
+    registerDaemon("1.1.0", OTHER);
     expect(claimRunner("1.0.0", ME)).toBe(true);
     expect(currentRunner()?.version).toBe("1.0.0");
     // A newer version alive (OTHER) takes over from the older runner.
@@ -81,6 +84,8 @@ describe("registry and runner election", () => {
   });
 
   test("an older daemon takes the role back when the newer runner is gone", () => {
+    registerDaemon("1.1.0", OTHER);
+    registerDaemon("1.0.0", ME);
     claimRunner("1.1.0", OTHER);
     releaseRunner(OTHER);
     expect(currentRunner()).toBeUndefined();
@@ -93,6 +98,7 @@ describe("registry and runner election", () => {
       join(root, "runner.json"),
       JSON.stringify({ pid: 2 ** 22 + 99, version: "9.9.9", claimedAt: "x" }),
     );
+    registerDaemon("1.0.0", ME);
     expect(checkRunner("1.0.0", ME)).toBe(true);
     expect(currentRunner()?.version).toBe("1.0.0");
   });

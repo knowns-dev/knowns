@@ -23,18 +23,38 @@ export class CallTimeoutError extends Error {
     readonly tool: string,
     readonly ms: number,
   ) {
-    super(`${tool} timed out after ${ms} ms`);
+    super(
+      HEAVY_TOOLS.has(tool)
+        ? `${tool} timed out after ${ms} ms`
+        : // A light tool may be a write: its handler keeps running after the deadline.
+          `${tool} did not answer within ${ms} ms; the operation may still complete, so check the result before retrying`,
+    );
   }
 }
+
+/** How long after the deadline a heavy handler that ignores its signal keeps its slot. */
+export const DEFAULT_SLOT_GRACE_MS = 30_000;
+/** Leaked slots after which the pool asks for a restart of what is hanging (the language servers). */
+export const LEAK_CAP = 2;
 
 export class ToolPool {
   private active = 0;
   private readonly waiting: Array<() => void> = [];
 
+  private leaked = 0;
+
   constructor(
     readonly width: number = defaultPoolWidth(),
     readonly timeoutMs: number = DEFAULT_CALL_TIMEOUT_MS,
+    readonly slotGraceMs: number = DEFAULT_SLOT_GRACE_MS,
+    /** Called once the number of leaked slots reaches LEAK_CAP (it may restart the hung part). */
+    readonly onLeakCap?: () => void,
   ) {}
+
+  /** Slots given up on because their handler never settled. */
+  get leakedSlots(): number {
+    return this.leaked;
+  }
 
   get running(): number {
     return this.active;
@@ -58,16 +78,31 @@ export class ToolPool {
     if (outer?.aborted) ac.abort();
     else outer?.addEventListener("abort", onOuter, { once: true });
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+    let held = false;
+    let gaveUp = false;
+    const heavy = HEAVY_TOOLS.has(tool);
     const deadline = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
         reject(new CallTimeoutError(tool, this.timeoutMs));
         ac.abort();
+        // A handler that ignores its signal (a stuck language server) would hold its slot for
+        // ever and starve every session on a small machine: after a grace the slot is given up.
+        if (heavy && held) {
+          graceTimer = setTimeout(() => {
+            if (!held) return;
+            held = false;
+            gaveUp = true;
+            this.leaked++;
+            this.release();
+            if (this.leaked === LEAK_CAP) this.onLeakCap?.();
+          }, this.slotGraceMs);
+          graceTimer.unref?.();
+        }
       }, this.timeoutMs);
     });
     deadline.catch(() => undefined);
-    const heavy = HEAVY_TOOLS.has(tool);
     const work = (async (): Promise<T> => {
-      let held = false;
       if (heavy) {
         await this.acquire(ac.signal);
         held = true;
@@ -75,7 +110,15 @@ export class ToolPool {
       try {
         return await fn(ac.signal);
       } finally {
-        if (held) this.release();
+        if (graceTimer) clearTimeout(graceTimer);
+        if (held) {
+          held = false;
+          this.release();
+        } else if (gaveUp) {
+          // The handler finally settled after its slot was given up: the leak is repaid.
+          gaveUp = false;
+          this.leaked = Math.max(0, this.leaked - 1);
+        }
       }
     })();
     work.catch(() => undefined); // a late failure after the deadline is not unhandled
@@ -120,7 +163,17 @@ let shared: ToolPool | undefined;
 export function sharedToolPool(): ToolPool {
   if (!shared) {
     const ms = Number(process.env.KNOWNS_MCP_CALL_TIMEOUT_MS);
-    shared = new ToolPool(undefined, Number.isFinite(ms) && ms > 0 ? ms : DEFAULT_CALL_TIMEOUT_MS);
+    shared = new ToolPool(
+      undefined,
+      Number.isFinite(ms) && ms > 0 ? ms : DEFAULT_CALL_TIMEOUT_MS,
+      DEFAULT_SLOT_GRACE_MS,
+      () => {
+        // Hung heavy handlers have used up their slots: stop every language server so the
+        // requests they wait on fail and the next call starts fresh ones.
+        process.stderr.write("[mcp] heavy-call slots leaked; restarting language servers\n");
+        void import("./state.ts").then((m) => m.restartAllLanguageServers()).catch(() => {});
+      },
+    );
   }
   return shared;
 }

@@ -151,3 +151,45 @@ describe("McpServer with a pool", () => {
     await Promise.all(heavy);
   });
 });
+
+describe("ToolPool review fixes (KN-69EHXE)", () => {
+  test("P2-5: a timed-out light tool says the operation may still complete", async () => {
+    const pool = new ToolPool(1, 40);
+    const err = (await pool.run("tasks", () => sleep(150)).catch((e) => e)) as Error;
+    expect(err).toBeInstanceOf(CallTimeoutError);
+    expect(String(err.message)).toContain("may still complete");
+    const heavy = (await pool.run("search", () => sleep(150)).catch((e) => e)) as Error;
+    expect(String(heavy.message)).not.toContain("may still complete");
+  });
+
+  test("P2-6: a hung heavy call gives its slot up after the grace, and the cap fires the hook", async () => {
+    let capped = 0;
+    const pool = new ToolPool(1, 30, 40, () => {
+      capped++;
+    });
+    const never = new Promise<void>(() => {});
+    const hung = pool.run("code", () => never).catch(() => undefined);
+    await hung; // deadline error
+    expect(pool.running).toBe(1);
+    await sleep(80); // grace passed
+    expect(pool.running).toBe(0);
+    expect(pool.leakedSlots).toBe(1);
+    // The slot is usable again.
+    expect(await pool.run("code", async () => "ok")).toBe("ok");
+    // A second hung call reaches the cap (LEAK_CAP = 2).
+    await pool.run("code", () => never).catch(() => undefined);
+    await sleep(80);
+    expect(pool.leakedSlots).toBe(2);
+    expect(capped).toBe(1);
+  });
+
+  test("P2-6: a handler that settles after its slot was given up repays the leak", async () => {
+    const pool = new ToolPool(1, 20, 30);
+    await pool.run("code", () => sleep(120)).catch(() => undefined);
+    await sleep(50);
+    expect(pool.leakedSlots).toBe(1);
+    await sleep(120);
+    expect(pool.leakedSlots).toBe(0);
+    expect(pool.running).toBe(0);
+  });
+});
