@@ -125,7 +125,7 @@ describe("what is shown", () => {
     const view = { reports: [], fallbacks: [] };
     expect(liveViewEmpty(view)).toBe(true);
     expect(
-      proxyCheckers({ proxyEnabled: true, reports: [], fallbacks: [], missingEntries: [] }),
+      proxyCheckers({ proxyEnabled: true, reports: [], fallbacks: [], proxyNamedEntries: [] }),
     ).toEqual([]);
   });
 
@@ -172,7 +172,7 @@ describe("what is shown", () => {
       proxyEnabled: true,
       reports: [report],
       fallbacks: fb,
-      missingEntries: [],
+      proxyNamedEntries: [],
     });
     expect(warn.map((c) => c.id)).toEqual(["runtime.mcp-proxy"]);
     const w = await warn[0]?.check(new AbortController().signal);
@@ -183,17 +183,17 @@ describe("what is shown", () => {
       proxyEnabled: true,
       reports: [report],
       fallbacks: [],
-      missingEntries: [],
+      proxyNamedEntries: [],
     });
     expect((await pass[0]?.check(new AbortController().signal))?.status).toBe("pass");
   });
 
-  test("doctor: a config entry pointing at a missing knowns-proxy says run knowns sync", async () => {
+  test("doctor: a config entry that names the dropped knowns-proxy says run knowns sync", async () => {
     const checks = proxyCheckers({
       proxyEnabled: true,
       reports: [],
       fallbacks: [],
-      missingEntries: [
+      proxyNamedEntries: [
         { file: ".mcp.json", command: "knowns-proxy" },
         { file: ".cursor/mcp.json", command: "/x/knowns-proxy" },
       ],

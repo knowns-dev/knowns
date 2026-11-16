@@ -1,5 +1,7 @@
-// Builds the native MCP proxy (proxy/, a separate Go module) for the release targets. The proxy
-// ships next to knowns in every package as knowns-proxy[.exe] (spec mcp-thin-proxy D8, FR-11).
+// Builds the Go launcher (proxy/, a separate Go module) for the release targets (spec
+// mcp-thin-proxy D8, D10). It is the `knowns` users run: it serves `mcp --stdio` natively and hands
+// everything else to the Bun engine, `knowns-engine`. Built as knowns.launcher[.exe] next to the
+// engine; the archive and the installers decide the installed names (scripts/package-release.ts).
 // CGO is off, so every target cross-compiles from any host; only the Windows resource (icon and
 // version info) needs a build-time tool, go-winres, declared as a go.mod tool dependency.
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
@@ -12,9 +14,13 @@ export const PROXY_DIR = resolve(import.meta.dir, "..", "..", "proxy");
 export const GO_WINRES = "go-winres";
 const ICON = join(import.meta.dir, "assets", "knowns.ico");
 
-export function proxyExeName(target: string): string {
-  return platformOf(target).startsWith("windows") ? "knowns-proxy.exe" : "knowns-proxy";
+/** The launcher's build and archive name. It must neither equal `knowns` nor start with `knowns-`:
+ * a 0.34.x or 0.35.0 updater takes the first file with such a name and installs it as knowns. */
+export function launcherExeName(target: string): string {
+  return platformOf(target).startsWith("windows") ? "knowns.launcher.exe" : "knowns.launcher";
 }
+/** Kept for callers of the old name. */
+export const proxyExeName = launcherExeName;
 
 /** bun-darwin-arm64 -> { goos: "darwin", goarch: "arm64" }. */
 export function goTarget(target: string): { goos: string; goarch: string } {
@@ -64,7 +70,7 @@ export function generateWindowsResource(version: string, dir: string = PROXY_DIR
       "--copyright",
       "Copyright (c) Knowns contributors",
       "--original-filename",
-      "knowns-proxy.exe",
+      "knowns.exe",
       "--out",
       join(dir, "rsrc"),
     ],
@@ -84,8 +90,8 @@ export function haveGo(): boolean {
   }
 }
 
-/** Builds the proxy for `target` into `outfile`. */
-export function buildProxy(target: string, version: string, outfile: string): void {
+/** Builds the launcher for `target` into `outfile`. */
+export function buildLauncher(target: string, version: string, outfile: string): void {
   const { goos, goarch } = goTarget(target);
   mkdirSync(dirname(outfile), { recursive: true });
   const windows = goos === "windows";
@@ -100,3 +106,5 @@ export function buildProxy(target: string, version: string, outfile: string): vo
     if (windows) removeWindowsResource();
   }
 }
+
+export const buildProxy = buildLauncher;

@@ -30,33 +30,20 @@ const exe = (dir: string, name: string): void => {
   chmodSync(f, 0o755);
 };
 
-describe("mcpCommand with the native proxy", () => {
-  test("the proxy on PATH wins", () => {
+describe("mcpCommand with the launcher", () => {
+  test("knowns on PATH is the command, even when a stale knowns-proxy sits beside it", () => {
     const bin = tmp();
     exe(bin, "knowns");
     exe(bin, "knowns-proxy");
-    expect(mcpCommand({ PATH: bin })).toEqual({
-      command: "knowns-proxy",
-      args: ["mcp", "--stdio"],
-    });
-  });
-
-  test("a proxy next to the real knowns binary is used by absolute path", () => {
-    if (process.platform === "win32") return;
-    const bin = tmp();
-    exe(bin, "knowns");
-    exe(bin, "knowns-proxy");
-    const other = tmp();
-    symlinkSync(join(bin, "knowns"), join(other, "knowns"));
-    expect(mcpCommand({ PATH: other }).command).toBe(join(realpathSync(bin), "knowns-proxy"));
-  });
-
-  test("KNOWNS_MCP_PROXY=0 and a missing proxy keep knowns mcp --stdio", () => {
-    const bin = tmp();
-    exe(bin, "knowns");
-    expect(mcpCommand({ PATH: bin }).command).toBe("knowns");
-    exe(bin, "knowns-proxy");
+    expect(mcpCommand({ PATH: bin })).toEqual({ command: "knowns", args: ["mcp", "--stdio"] });
     expect(mcpCommand({ PATH: bin, KNOWNS_MCP_PROXY: "0" }).command).toBe("knowns");
+  });
+
+  test("without knowns on PATH it falls back to npx", () => {
+    expect(mcpCommand({ PATH: tmp() })).toEqual({
+      command: "npx",
+      args: ["-y", "knowns", "mcp", "--stdio"],
+    });
   });
 
   test("isKnownsWritten accepts only exactly what Knowns writes", () => {
@@ -111,7 +98,7 @@ describe("mcpCommand with the native proxy", () => {
     }
   });
 
-  test("sync moves a Knowns-written entry to the proxy and leaves a user's entry alone", () => {
+  test("sync rewrites a retired knowns-proxy entry to knowns and leaves a user's entry alone", () => {
     const bin = tmp();
     exe(bin, "knowns");
     exe(bin, "knowns-proxy");
@@ -119,7 +106,7 @@ describe("mcpCommand with the native proxy", () => {
     const mine = tmp();
     const theirs = tmp();
     for (const [dir, entry] of [
-      [mine, { command: "knowns", args: ["mcp", "--stdio"] }],
+      [mine, { command: "knowns-proxy", args: ["mcp", "--stdio"] }],
       [theirs, { command: "node", args: ["custom.js"] }],
     ] as const) {
       mkdirSync(join(dir, ".knowns"));
@@ -128,14 +115,14 @@ describe("mcpCommand with the native proxy", () => {
     }
     const read = (d: string) =>
       JSON.parse(readFileSync(join(d, ".mcp.json"), "utf8")).mcpServers.knowns;
-    expect(read(mine).command).toBe("knowns-proxy");
+    expect(read(mine).command).toBe("knowns");
     expect(read(theirs).command).toBe("node");
   });
 });
 
-describe("findMissingProxyEntries", () => {
-  test("reports a proxy entry whose binary is gone and nothing else", async () => {
-    const { findMissingProxyEntries } = await import("../../../src/domain/setup/mcp-audit.ts");
+describe("findProxyNamedEntries", () => {
+  test("reports an entry that names knowns-proxy, whether or not the file exists, and nothing else", async () => {
+    const { findProxyNamedEntries } = await import("../../../src/domain/setup/mcp-audit.ts");
     const root = tmp();
     const bin = tmp();
     writeFileSync(
@@ -149,14 +136,16 @@ describe("findMissingProxyEntries", () => {
       join(root, ".cursor", "mcp.json"),
       JSON.stringify({ mcpServers: { knowns: { command: "knowns", args: ["mcp", "--stdio"] } } }),
     );
-    expect(findMissingProxyEntries(root, { PATH: bin })).toEqual([
+    expect(findProxyNamedEntries(root, { PATH: bin })).toEqual([
       { file: ".mcp.json", command: "knowns-proxy" },
     ]);
     exe(bin, "knowns-proxy");
-    expect(findMissingProxyEntries(root, { PATH: bin })).toEqual([]);
+    expect(findProxyNamedEntries(root, { PATH: bin })).toEqual([
+      { file: ".mcp.json", command: "knowns-proxy" },
+    ]);
   });
   test("also covers Codex TOML, Antigravity and the user-level Claude config", async () => {
-    const { findMissingProxyEntries, codexKnownsCommand } = await import(
+    const { findProxyNamedEntries, codexKnownsCommand } = await import(
       "../../../src/domain/setup/mcp-audit.ts"
     );
     const root = tmp();
@@ -183,13 +172,13 @@ describe("findMissingProxyEntries", () => {
     const env = { PATH: bin, HOME: home, USERPROFILE: home };
     expect(codexKnownsCommand('[mcp_servers.knowns]\ncommand = "x"\n')).toBe("x");
     expect(codexKnownsCommand('[mcp_servers.other]\ncommand = "x"\n')).toBeUndefined();
-    expect(findMissingProxyEntries(root, env).map((e) => e.file)).toEqual([
+    expect(findProxyNamedEntries(root, env).map((e) => e.file)).toEqual([
       ".codex/config.toml",
       "~/.gemini/antigravity/mcp_config.json",
       "~/.claude.json",
       "~/.claude.json",
     ]);
     exe(bin, "knowns-proxy");
-    expect(findMissingProxyEntries(root, env)).toEqual([]);
+    expect(findProxyNamedEntries(root, env)).toHaveLength(4);
   });
 });

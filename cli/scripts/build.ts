@@ -1,6 +1,6 @@
 import { join, resolve } from "node:path";
 import { compile, exeName, platformOf, TARGETS } from "./lib.ts";
-import { buildProxy, haveGo, proxyExeName } from "./proxy.ts";
+import { buildLauncher, haveGo, launcherExeName } from "./proxy.ts";
 import { resolveVersion } from "./version.ts";
 
 const cliDir = resolve(import.meta.dir, "..");
@@ -18,10 +18,11 @@ const list: string[] = wanted.length > 0 ? wanted : [...TARGETS];
 const version = resolveVersion();
 console.log(`version ${version}`);
 let failed = 0;
-// The native MCP proxy ships next to knowns. CI always has Go; a local build without it warns and
-// skips (KNOWNS_REQUIRE_PROXY=1 makes that an error), and knowns still works in-process.
+// The Go launcher (knowns.launcher) ships next to the engine (dist/<platform>/knowns, installed as
+// knowns-engine). CI always has Go; a local build without it warns and skips
+// (KNOWNS_REQUIRE_PROXY=1 makes that an error), and the engine still works on its own.
 const goOk = haveGo();
-if (!goOk) console.warn("warn go not found: knowns-proxy is not built");
+if (!goOk) console.warn("warn go not found: knowns.launcher is not built");
 if (!goOk && process.env.KNOWNS_REQUIRE_PROXY === "1") process.exit(1);
 
 for (const target of list) {
@@ -42,8 +43,12 @@ for (const target of list) {
     );
     console.log(`ok   ${target} -> dist/${platformOf(target)}/${exeName(target)}`);
     if (goOk) {
-      buildProxy(target, version, join(cliDir, "dist", platformOf(target), proxyExeName(target)));
-      console.log(`ok   ${target} -> dist/${platformOf(target)}/${proxyExeName(target)}`);
+      buildLauncher(
+        target,
+        version,
+        join(cliDir, "dist", platformOf(target), launcherExeName(target)),
+      );
+      console.log(`ok   ${target} -> dist/${platformOf(target)}/${launcherExeName(target)}`);
     }
   } catch (e) {
     failed++;

@@ -163,7 +163,7 @@ jobs:
           name: ui-dist
           path: ui/dist/
 
-      - name: Build Windows binaries (x64, arm64) and the proxy
+      - name: Build Windows binaries (x64, arm64) and the launcher
         working-directory: cli
         env:
           KNOWNS_VERSION: ${{ needs.meta.outputs.version }}
@@ -181,9 +181,9 @@ jobs:
             $v = (Get-Item "cli/dist/$t/knowns.exe").VersionInfo
             Write-Host "$t product=$($v.ProductName) description=$($v.FileDescription) version=$($v.FileVersion)"
             if ($v.ProductName -ne 'Knowns' -or $v.FileDescription -ne 'Knowns') { throw "$t does not carry the Knowns metadata" }
-            $p = (Get-Item "cli/dist/$t/knowns-proxy.exe").VersionInfo
-            Write-Host "$t proxy product=$($p.ProductName) description=$($p.FileDescription) version=$($p.FileVersion)"
-            if ($p.ProductName -ne 'Knowns' -or $p.FileDescription -ne 'Knowns') { throw "$t proxy does not carry the Knowns metadata" }
+            $p = (Get-Item "cli/dist/$t/knowns.launcher.exe").VersionInfo
+            Write-Host "$t launcher product=$($p.ProductName) description=$($p.FileDescription) version=$($p.FileVersion)"
+            if ($p.ProductName -ne 'Knowns' -or $p.FileDescription -ne 'Knowns') { throw "$t launcher does not carry the Knowns metadata" }
           }
 
       - name: Upload Windows binaries
@@ -222,7 +222,7 @@ jobs:
           name: ui-dist
           path: ui/dist/
 
-      - name: Build TypeScript binaries and the proxy (4 Unix targets)
+      - name: Build TypeScript binaries and the launcher (4 Unix targets)
         working-directory: cli
         env:
           KNOWNS_VERSION: ${{ needs.meta.outputs.version }}
@@ -292,36 +292,49 @@ jobs:
           echo "$got"
           [ "$got" = "knowns version ${VERSION}" ] || { echo "FATAL: expected knowns version ${VERSION}"; exit 1; }
 
-      - name: Proxy runs and reports the release version
+      # The launcher is what users run as `knowns` (spec mcp-thin-proxy D10). In the archive it is
+      # knowns.launcher and the engine is knowns-engine beside it, so it finds the engine by
+      # directory; it must hand `--version` to that engine and report the release version.
+      - name: Launcher finds its engine and reports the release version
         env:
           VERSION: ${{ needs.meta.outputs.version }}
         run: |
           dir=$(mktemp -d)
           tar -xzf "release/assets/knowns-${{ matrix.platform }}.tar.gz" -C "$dir"
-          proxy="$dir/knowns-proxy"
-          case "${{ matrix.platform }}" in win-*) proxy="$dir/knowns-proxy.exe" ;; esac
-          chmod +x "$proxy" || true
-          got=$("$proxy" --version | tr -d '\r')
+          launcher="$dir/knowns.launcher"
+          case "${{ matrix.platform }}" in win-*) launcher="$dir/knowns.launcher.exe" ;; esac
+          chmod +x "$launcher" || true
+          got=$(NO_UPDATE_CHECK=1 "$launcher" --version | tr -d '\r')
           echo "$got"
-          [ "$got" = "knowns-proxy version ${VERSION}" ] || { echo "FATAL: expected knowns-proxy version ${VERSION}"; exit 1; }
+          [ "$got" = "knowns version ${VERSION}" ] || { echo "FATAL: expected knowns version ${VERSION} (is the engine beside the launcher?)"; exit 1; }
 
-      # A 0.34.x `knowns update` downloads this archive and installs the file named like its own
-      # binary: the exact name wins and a `knowns-*` match is only its fallback for an alias. The
-      # archive now also holds knowns-proxy, so the exact name must be present beside it (an old
-      # updater then installs knowns and leaves the old proxy, which falls back in-process), and
-      # the proxy must not be the only `knowns-*` candidate.
-      - name: A 0.34.x updater still finds the binary it expects
+      # The archive layout (spec mcp-thin-proxy D10). A 0.34.x or 0.35.0 `knowns update` takes the
+      # first file named like its own binary or starting with `knowns-` and installs only that, so
+      # every such file must be the full engine (same bytes), exactly one file may carry the exact
+      # name, and the launcher's name must match neither rule. The new tools read layout.json.
+      - name: Every file an old updater could pick is the engine
         run: |
           dir=$(mktemp -d)
           tar -xzf "release/assets/knowns-${{ matrix.platform }}.tar.gz" -C "$dir"
           ls -la "$dir"
-          [ -f "$dir/${{ matrix.exe }}" ] || { echo "FATAL: ${{ matrix.exe }} is not at the archive root"; exit 1; }
-          proxy="$dir/knowns-proxy"
-          case "${{ matrix.platform }}" in win-*) proxy="$dir/knowns-proxy.exe" ;; esac
-          [ -f "$proxy" ] || { echo "FATAL: no proxy in the archive"; exit 1; }
-          # nothing else may look like the main binary to the exact-name rule
-          count=$(ls "$dir" | grep -c -x -i "${{ matrix.exe }}")
-          [ "$count" = "1" ] || { echo "FATAL: expected exactly one ${{ matrix.exe }}, got $count"; exit 1; }
+          exe=knowns; launcher=knowns.launcher
+          case "${{ matrix.platform }}" in win-*) exe=knowns.exe; launcher=knowns.launcher.exe ;; esac
+          [ -f "$dir/$exe" ] || { echo "FATAL: $exe is not at the archive root"; exit 1; }
+          [ -f "$dir/$launcher" ] || { echo "FATAL: no launcher in the archive"; exit 1; }
+          [ -f "$dir/layout.json" ] || { echo "FATAL: no layout.json in the archive"; exit 1; }
+          count=$(ls "$dir" | grep -c -x -i "$exe")
+          [ "$count" = "1" ] || { echo "FATAL: expected exactly one $exe, got $count"; exit 1; }
+          want=$(cd "$dir" && (sha256sum "$exe" 2>/dev/null || shasum -a 256 "$exe") | cut -d' ' -f1)
+          for f in $(ls "$dir"); do
+            lower=$(echo "$f" | tr 'A-Z' 'a-z')
+            case "$lower" in
+              "$exe"|knowns-*)
+                got=$(cd "$dir" && (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f") | cut -d' ' -f1)
+                [ "$got" = "$want" ] || { echo "FATAL: $f can be picked by an old updater but is not the engine"; exit 1; }
+                ;;
+            esac
+          done
+          [ "$(cd "$dir" && (sha256sum "$launcher" 2>/dev/null || shasum -a 256 "$launcher") | cut -d' ' -f1)" != "$want" ] || { echo "FATAL: the launcher is the engine"; exit 1; }
 
       - name: Run npm installer tests
         if: runner.os == 'Windows' || matrix.platform == 'darwin-x64'
@@ -355,7 +368,7 @@ jobs:
         run: |
           cp README.md release/npm/knowns/README.md
           for pkg in release/npm/knowns-*; do
-            for exe in "$pkg/knowns" "$pkg/knowns.exe"; do
+            for exe in "$pkg/knowns" "$pkg/knowns.exe" "$pkg/knowns-engine" "$pkg/knowns-engine.exe"; do
               [ -f "$exe" ] && chmod +x "$exe" || true
             done
           done
@@ -371,10 +384,12 @@ jobs:
             [ "$v" = "$VERSION" ] || { echo "FATAL: $pkg is $v, expected $VERSION"; exit 1; }
             case "$p" in win-*) exe=knowns.exe ;; *) exe=knowns ;; esac
             [ -f "$pkg/$exe" ] || { echo "FATAL: $pkg/$exe is missing"; exit 1; }
-            case "$p" in win-*) proxy=knowns-proxy.exe ;; *) proxy=knowns-proxy ;; esac
-            [ -f "$pkg/$proxy" ] || { echo "FATAL: $pkg/$proxy is missing"; exit 1; }
-            tar -tzf "release/assets/knowns-$p.tar.gz" | grep -Fx "./$proxy" >/dev/null || { echo "FATAL: knowns-$p.tar.gz missing ./$proxy"; exit 1; }
-            tar -tzf "release/assets/knowns-$p.tar.gz" | grep -Fx "./$exe" >/dev/null || { echo "FATAL: knowns-$p.tar.gz missing ./$exe"; exit 1; }
+            # The npm package holds the installed names: the launcher as knowns[.exe], the engine beside it.
+            case "$p" in win-*) engine=knowns-engine.exe; launcher=knowns.launcher.exe ;; *) engine=knowns-engine; launcher=knowns.launcher ;; esac
+            [ -f "$pkg/$engine" ] || { echo "FATAL: $pkg/$engine is missing"; exit 1; }
+            for member in "./$exe" "./$engine" "./$launcher" ./layout.json; do
+              tar -tzf "release/assets/knowns-$p.tar.gz" | grep -Fx "$member" >/dev/null || { echo "FATAL: knowns-$p.tar.gz missing $member"; exit 1; }
+            done
             # Go 0.34.x `knowns update` installs the first knowns-* name in sorted order, which on
             # Windows is the archive itself unless this link sorts first (KN-6M228C).
             case "$p" in win-*)
@@ -391,12 +406,12 @@ jobs:
           file release/npm/knowns-darwin-arm64/knowns | grep -q "arm64" || { echo "FATAL: darwin-arm64 is not arm64"; exit 1; }
           file release/npm/knowns-win-x64/knowns.exe | grep -q "x86-64" || { echo "FATAL: win-x64 is not x86-64"; exit 1; }
           file release/npm/knowns-win-arm64/knowns.exe | grep -qi "aarch64\|arm64" || { echo "FATAL: win-arm64 is not arm64"; exit 1; }
-          elf release/npm/knowns-linux-x64/knowns-proxy 3e00
-          elf release/npm/knowns-linux-arm64/knowns-proxy b700
-          file release/npm/knowns-darwin-x64/knowns-proxy | grep -q "x86_64" || { echo "FATAL: darwin-x64 proxy is not x86_64"; exit 1; }
-          file release/npm/knowns-darwin-arm64/knowns-proxy | grep -q "arm64" || { echo "FATAL: darwin-arm64 proxy is not arm64"; exit 1; }
-          file release/npm/knowns-win-x64/knowns-proxy.exe | grep -q "x86-64" || { echo "FATAL: win-x64 proxy is not x86-64"; exit 1; }
-          file release/npm/knowns-win-arm64/knowns-proxy.exe | grep -qi "aarch64\|arm64" || { echo "FATAL: win-arm64 proxy is not arm64"; exit 1; }
+          elf release/npm/knowns-linux-x64/knowns-engine 3e00
+          elf release/npm/knowns-linux-arm64/knowns-engine b700
+          file release/npm/knowns-darwin-x64/knowns-engine | grep -q "x86_64" || { echo "FATAL: darwin-x64 engine is not x86_64"; exit 1; }
+          file release/npm/knowns-darwin-arm64/knowns-engine | grep -q "arm64" || { echo "FATAL: darwin-arm64 engine is not arm64"; exit 1; }
+          file release/npm/knowns-win-x64/knowns-engine.exe | grep -q "x86-64" || { echo "FATAL: win-x64 engine is not x86-64"; exit 1; }
+          file release/npm/knowns-win-arm64/knowns-engine.exe | grep -qi "aarch64\|arm64" || { echo "FATAL: win-arm64 engine is not arm64"; exit 1; }
 
           node -p "JSON.stringify(require('./release/npm/knowns/package.json').optionalDependencies)"
 
@@ -530,8 +545,10 @@ jobs:
             end
 
             def install
-              bin.install "knowns"
-              bin.install "knowns-proxy"
+              # The archive's `knowns` is the engine and `knowns.launcher` the launcher (layout.json);
+              # installed, the launcher is `knowns` and the engine sits beside it as knowns-engine.
+              bin.install "knowns" => "knowns-engine"
+              bin.install "knowns.launcher" => "knowns"
               bin.install_symlink "knowns" => "kn"
             end
 

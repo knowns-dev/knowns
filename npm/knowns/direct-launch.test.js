@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 /** node_modules/knowns with the Node shim, plus (optionally) the platform package holding `binary`. */
-function installLayout({ binary, pkgName = "@knowns/linux-x64", binaryName = "knowns" } = {}) {
+function installLayout({ binary, pkgName = "@knowns/linux-x64", binaryName = "knowns", withEngine = true } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "knowns-direct-"));
   tempRoots.push(root);
   const packageRoot = path.join(root, "node_modules", "knowns");
@@ -35,6 +35,11 @@ function installLayout({ binary, pkgName = "@knowns/linux-x64", binaryName = "kn
     const pkgDir = path.join(packageRoot, "node_modules", ...pkgName.split("/"));
     fs.mkdirSync(pkgDir, { recursive: true });
     fs.writeFileSync(path.join(pkgDir, binaryName), binary, { mode: 0o755 });
+    // D10: the platform package holds the engine beside the launcher.
+    if (withEngine) {
+      const engineName = binaryName.endsWith(".exe") ? "knowns-engine.exe" : "knowns-engine";
+      fs.writeFileSync(path.join(pkgDir, engineName), "engine", { mode: 0o755 });
+    }
     fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ version: "9.9.9" }));
   }
   return { root, packageRoot, shim: path.join(packageRoot, "bin", "knowns.js") };
@@ -317,46 +322,25 @@ test("stray bin swap leftovers are swept and unused staged runtimes are pruned",
   expect(fs.readdirSync(other)).toEqual(["keep"]);
 });
 
-unix("bin/knowns-proxy.js becomes the native proxy too, and a missing proxy leaves its shim", () => {
+unix("the engine is linked into bin/ beside the launcher, so the launcher finds it", () => {
   const { packageRoot, shim } = installLayout({ binary: '#!/bin/sh\necho "native $@"\n' });
-  const proxyShim = path.join(packageRoot, "bin", "knowns-proxy.js");
-  fs.writeFileSync(proxyShim, SHIM, { mode: 0o755 });
   const platformPackage = getPlatformPackage("linux", "x64");
 
-  // Without a proxy in the platform package the shim is untouched.
   expect(useNativeBinaryDirectly(packageRoot, platformPackage, { platform: "linux" })).toBe(true);
-  expect(fs.readFileSync(proxyShim, "utf8")).toBe(SHIM);
-
-  // With one, it is replaced by the native file.
-  const pkgDir = path.join(packageRoot, "node_modules", "@knowns", "linux-x64");
-  fs.writeFileSync(path.join(pkgDir, "knowns-proxy"), '#!/bin/sh\necho "proxy $@"\n', { mode: 0o755 });
-  fs.writeFileSync(shim, SHIM, { mode: 0o755 });
-  expect(useNativeBinaryDirectly(packageRoot, platformPackage, { platform: "linux" })).toBe(true);
-  const run = spawnSync(proxyShim, ["mcp", "--stdio"], { encoding: "utf8" });
-  expect(run.stdout.trim()).toBe("proxy mcp --stdio");
+  const engine = path.join(path.dirname(shim), "knowns-engine");
+  expect(fs.readFileSync(engine, "utf8")).toBe("engine");
+  expect(fs.statSync(engine).mode & 0o111).not.toBe(0);
 });
 
-test("knowns-proxy.js still runs after bin/knowns.js was swapped for the native binary", () => {
-  if (process.platform === "win32") return;
-  const { packageRoot, shim } = installLayout();
-  const bin = path.dirname(shim);
-  for (const name of ["knowns-proxy.js", "runtime.js"]) {
-    fs.copyFileSync(path.join(__dirname, "bin", name), path.join(bin, name));
-  }
-  const arch = process.arch === "arm64" ? "arm64" : "x64";
-  const plat = { darwin: "darwin", linux: "linux" }[process.platform];
-  const pkgDir = path.join(packageRoot, "node_modules", "@knowns", `${plat}-${arch}`);
-  fs.mkdirSync(pkgDir, { recursive: true });
-  fs.writeFileSync(path.join(pkgDir, "knowns"), "#!/bin/sh\necho knowns-binary\n", { mode: 0o755 });
-  fs.writeFileSync(path.join(pkgDir, "knowns-proxy"), '#!/bin/sh\necho "proxy $@"\n', { mode: 0o755 });
-  // The knowns swap: bin/knowns.js is now not JavaScript at all.
-  fs.writeFileSync(shim, "\x7fELF-not-javascript", { mode: 0o755 });
-
-  const run = spawnSync(process.execPath, [path.join(bin, "knowns-proxy.js"), "mcp", "--stdio"], {
-    encoding: "utf8",
-    env: { ...process.env, NO_UPDATE_CHECK: "1" },
+unix("a platform package without the engine is not usable, and the shim stays", () => {
+  const { packageRoot, shim } = installLayout({
+    binary: '#!/bin/sh\necho "native $@"\n',
+    withEngine: false,
   });
-  expect(run.stderr).toBe("");
-  expect(run.stdout).toBe("proxy mcp --stdio\n");
-  expect(run.status).toBe(0);
+  const before = fs.readFileSync(shim, "utf8");
+
+  expect(
+    useNativeBinaryDirectly(packageRoot, getPlatformPackage("linux", "x64"), { platform: "linux" }),
+  ).toBe(false);
+  expect(fs.readFileSync(shim, "utf8")).toBe(before);
 });

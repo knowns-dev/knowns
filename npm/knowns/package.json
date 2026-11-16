@@ -4,8 +4,7 @@
   "description": "AI-native project management CLI",
   "bin": {
     "knowns": "bin/knowns.js",
-    "kn": "bin/knowns.js",
-    "knowns-proxy": "bin/knowns-proxy.js"
+    "kn": "bin/knowns.js"
   },
   "scripts": {
     "postinstall": "node install.js"

@@ -1,11 +1,11 @@
-// Finds Knowns-written MCP entries that start knowns-proxy when that binary cannot be found, so
-// `knowns doctor` can say "run knowns sync" (sync rewrites them to the binary that exists).
-import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
-import { type Env, lookPath, userHomeDir } from "./env.ts";
+// Finds Knowns-written MCP entries that still name the dropped knowns-proxy (spec mcp-thin-proxy
+// D10), so `knowns doctor` can say "run knowns sync" (sync rewrites them to bare `knowns`).
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { type Env, userHomeDir } from "./env.ts";
 import { PROXY_NAME } from "./mcp-command.ts";
 
-export interface MissingProxyEntry {
+export interface ProxyNamedEntry {
   /** Config file relative to the project root. */
   file: string;
   /** The command the entry runs. */
@@ -47,17 +47,15 @@ function readJson(path: string): unknown {
   }
 }
 
-export function findMissingProxyEntries(
+export function findProxyNamedEntries(
   projectRoot: string,
   env: Env = process.env,
-): MissingProxyEntry[] {
-  const out: MissingProxyEntry[] = [];
+): ProxyNamedEntry[] {
+  const out: ProxyNamedEntry[] = [];
   const check = (label: string, command: string | undefined): void => {
     if (command === undefined) return;
     const base = command.replace(/^.*[\\/]/, "").replace(/\.exe$/i, "");
-    if (base !== PROXY_NAME) return;
-    const found = isAbsolute(command) ? existsSync(command) : lookPath(command, env) !== undefined;
-    if (!found) out.push({ file: label, command });
+    if (base === PROXY_NAME) out.push({ file: label, command });
   };
   const serversOf = (cfg: unknown, parent: string): Record<string, unknown> | undefined =>
     ((cfg as Record<string, unknown> | null | undefined)?.[parent] as
