@@ -135,7 +135,8 @@ export async function listenMcpEndpoint(
 ): Promise<ListenResult> {
   const version = opts.version ?? VERSION;
   const root = opts.root ?? runtimeRoot();
-  checkDescriptorLocation(root);
+  // A caller that names the root itself has made the choice; the default must sit in the profile.
+  if (opts.root === undefined) checkDescriptorLocation(root);
   const ep = endpointAddress(version, root);
   if (ep.dir) {
     ensurePrivateDir(ep.dir);

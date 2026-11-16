@@ -294,16 +294,16 @@ describe("session behaviour", () => {
     // Detection starts after the first response; a tool call waits for it.
     const curX = await x.c.tool(2, "project", { action: "current" });
     const curY = await y.c.tool(2, "project", { action: "current" });
-    expect(curX).toContain(a.dir);
-    expect(curX).not.toContain(b.dir);
-    expect(curY).toContain(b.dir);
-    expect(curY).not.toContain(a.dir);
+    expect(hasPath(curX, a.dir)).toBe(true);
+    expect(hasPath(curX, b.dir)).toBe(false);
+    expect(hasPath(curY, b.dir)).toBe(true);
+    expect(hasPath(curY, a.dir)).toBe(false);
 
     // Switching project in one session does not move the other.
     const c = makeSandbox("full");
     await x.c.tool(3, "project", { action: "set", projectRoot: c.dir });
-    expect(await x.c.tool(4, "project", { action: "current" })).toContain(c.dir);
-    expect(await y.c.tool(3, "project", { action: "current" })).toContain(b.dir);
+    expect(hasPath(await x.c.tool(4, "project", { action: "current" }), c.dir)).toBe(true);
+    expect(hasPath(await y.c.tool(3, "project", { action: "current" }), b.dir)).toBe(true);
 
     const sessions = host.sessions();
     expect(new Set(sessions.map((s) => s.id)).size).toBe(2);
@@ -318,7 +318,7 @@ describe("session behaviour", () => {
     const { c } = await connect({ cwd: a.dir, project: b.dir });
     await c.rpc(1, "initialize", INIT);
     const cur = await c.tool(2, "project", { action: "current" });
-    expect(cur).toContain(b.dir);
+    expect(hasPath(cur, b.dir)).toBe(true);
     c.sock.end();
   }, 60_000);
 
@@ -342,7 +342,7 @@ describe("session behaviour", () => {
     x.c.sock.destroy();
     await new Promise((r) => setTimeout(r, 100));
     expect(host.sessions().length).toBe(1);
-    expect(await y.c.tool(2, "project", { action: "current" })).toContain(sb.dir);
+    expect(hasPath(await y.c.tool(2, "project", { action: "current" }), sb.dir)).toBe(true);
     y.c.sock.end();
   }, 60_000);
 
@@ -452,6 +452,10 @@ async function hostWith(createApp: () => HostedApp): Promise<void> {
   await host.start();
 }
 
+/** A path as it appears in tool text: raw, or with its backslashes JSON-escaped (Windows). */
+const hasPath = (text: string, p: string): boolean =>
+  [p, p.replaceAll("\\", "\\\\"), p.replaceAll("\\", "\\\\\\\\")].some((v) => text.includes(v));
+
 const callLines = (n: number) =>
   Array.from({ length: n }, (_, i) =>
     JSON.stringify({
@@ -510,7 +514,7 @@ describe("P2-6: relative paths are anchored on the client, not the daemon", () =
     const { c, w } = await connect({ cwd: parent, project: "project" });
     expect(w.type).toBe("welcome");
     await c.rpc(1, "initialize", INIT);
-    expect(await c.tool(2, "project", { action: "current" })).toContain(sb.dir);
+    expect(hasPath(await c.tool(2, "project", { action: "current" }), sb.dir)).toBe(true);
     c.sock.end();
   }, 60_000);
 });

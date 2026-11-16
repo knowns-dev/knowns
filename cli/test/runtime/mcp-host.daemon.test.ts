@@ -2,7 +2,14 @@
 // HOME and runtime root: the descriptor appears, a proxy-style client gets an MCP session, the
 // session holds a runtime lease while it lives, and a clean daemon stop removes the descriptor.
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,6 +47,17 @@ describe("runtime daemon hosting MCP sessions", () => {
         cwd: base,
         env: {
           PATH: process.env.PATH ?? "",
+          // Windows needs its system variables for sockets and temp files; user dirs stay sandboxed.
+          ...(process.platform === "win32"
+            ? {
+                SystemRoot: process.env.SystemRoot ?? "",
+                windir: process.env.windir ?? "",
+                TEMP: home,
+                TMP: home,
+                APPDATA: home,
+                LOCALAPPDATA: home,
+              }
+            : {}),
           HOME: home,
           USERPROFILE: home,
           KNOWNS_RUNTIME_ROOT: runtime,
@@ -104,7 +122,12 @@ describe("runtime daemon hosting MCP sessions", () => {
       `${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "project", arguments: { action: "current" } } })}\n`,
     );
     const res = await frame((j) => j.id === 2);
-    expect(JSON.stringify(res)).toContain(sb.dir.replaceAll("\\", "\\\\"));
+    const text = JSON.stringify(res);
+    expect(
+      [sb.dir, sb.dir.replaceAll("\\", "\\\\"), sb.dir.replaceAll("\\", "\\\\\\\\")].some((v) =>
+        text.includes(v),
+      ),
+    ).toBe(true);
 
     // The session holds a runtime lease for its project while it is open.
     const leaseDir = join(runtime, "leases");
@@ -125,8 +148,10 @@ describe("runtime daemon hosting MCP sessions", () => {
       return l.length === 0 ? true : undefined;
     });
 
-    // A clean stop removes the descriptor (the daemon exits on SIGTERM).
-    daemon.kill("SIGTERM");
+    // A clean stop removes the descriptor. SIGTERM is a hard kill on Windows, so there the daemon
+    // is asked to stop through its stop flag, as `knowns runtime stop` does.
+    if (process.platform === "win32") writeFileSync(join(runtime, "stop.flag"), "");
+    else daemon.kill("SIGTERM");
     await daemon.exited;
     expect(readDescriptor(VERSION, runtime)).toBeUndefined();
   }, 120_000);

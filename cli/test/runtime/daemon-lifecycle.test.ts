@@ -213,6 +213,17 @@ class Env {
         cwd: this.base,
         env: {
           PATH: process.env.PATH ?? "",
+          // Windows needs its system variables for sockets and temp files; user dirs stay sandboxed.
+          ...(process.platform === "win32"
+            ? {
+                SystemRoot: process.env.SystemRoot ?? "",
+                windir: process.env.windir ?? "",
+                TEMP: this.home,
+                TMP: this.home,
+                APPDATA: this.home,
+                LOCALAPPDATA: this.home,
+              }
+            : {}),
           HOME: this.home,
           USERPROFILE: this.home,
           KNOWNS_RUNTIME_ROOT: this.runtime,
@@ -372,7 +383,9 @@ describe("two daemons of different versions", () => {
     );
     await until(() => env.pidFile() === a.pid, 15_000, "pid file");
     await until(() => env.json<{ pid: number }>("status.json")?.pid === a.pid, 15_000, "A status");
-    expect(env.descriptor("1.1.0")).toBeUndefined();
+    // Windows ends a killed process without running its cleanup, so its descriptor stays; readers
+    // tell by the dead pid.
+    if (process.platform !== "win32") expect(env.descriptor("1.1.0")).toBeUndefined();
     expect(await onA.ping(1)).toMatchObject({ id: 1 });
     onA.close();
     await a.exited;
