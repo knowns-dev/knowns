@@ -87,6 +87,8 @@ describe("ToolPool", () => {
   });
 });
 
+type Reply = { id: number; result: { isError?: boolean; content: { text: string }[] } };
+
 describe("McpServer with a pool", () => {
   function serverWith(pool: ToolPool): McpServer {
     const server = new McpServer({ name: "t", version: "0", instructions: "", pool });
@@ -100,8 +102,8 @@ describe("McpServer with a pool", () => {
     return server;
   }
 
-  async function exchange(server: McpServer, lines: object[], waitMs: number): Promise<any[]> {
-    const out: any[] = [];
+  async function exchange(server: McpServer, lines: object[], waitMs: number): Promise<Reply[]> {
+    const out: Reply[] = [];
     const input = (async function* () {
       yield new TextEncoder().encode(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
       await sleep(waitMs);
@@ -118,9 +120,10 @@ describe("McpServer with a pool", () => {
 
   test("a timed-out call answers its own session with an error result", async () => {
     const out = await exchange(serverWith(new ToolPool(2, 100)), [call(1, "code")], 300);
-    expect(out[0].id).toBe(1);
-    expect(out[0].result.isError).toBe(true);
-    expect(out[0].result.content[0].text).toContain("timed out");
+    const r = out[0] as Reply;
+    expect(r.id).toBe(1);
+    expect(r.result.isError).toBe(true);
+    expect(r.result.content[0]?.text).toContain("timed out");
   });
 
   test("a timeout in one session leaves another session on the same pool working", async () => {
@@ -129,8 +132,8 @@ describe("McpServer with a pool", () => {
       exchange(serverWith(pool), [call(1, "code")], 300),
       exchange(serverWith(pool), [call(2, "tasks"), call(3, "tasks")], 100),
     ]);
-    expect(a[0].result.isError).toBe(true);
-    expect(b.map((r) => r.result.content[0].text)).toEqual(["ok", "ok"]);
+    expect(a[0]?.result.isError).toBe(true);
+    expect(b.map((r) => r.result.content[0]?.text)).toEqual(["ok", "ok"]);
   });
 
   test("light calls stay fast while every heavy slot is busy (AC-1 shape)", async () => {
