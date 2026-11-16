@@ -30,7 +30,9 @@ export type SSEEventType =
 	| "time:refresh"
 	| "docs:updated"
 	| "docs:refresh"
-	| "refresh";
+	| "refresh"
+	| "runtime:status"
+	| "service:status";
 
 // Event payload types
 export interface SSEEventPayloads {
@@ -47,6 +49,8 @@ export interface SSEEventPayloads {
 	"docs:updated": { docPath: string };
 	"docs:refresh": Record<string, never>;
 	"refresh": { full?: boolean; reason?: string };
+	"runtime:status": Record<string, never>;
+	"service:status": unknown;
 }
 
 // Callback type for event listeners
@@ -301,6 +305,14 @@ export function SSEProvider({ children }: { children: ReactNode }) {
 			addHandler(eventSource, "time:updated", (e) => {
 				const data = JSON.parse(e.data);
 				emit("time:updated", data);
+			});
+
+			addHandler(eventSource, "runtime:status", () => {
+				emit("runtime:status", {});
+			});
+
+			addHandler(eventSource, "service:status", (e) => {
+				emit("service:status", JSON.parse(e.data));
 			});
 
 			addHandler(eventSource, "docs:updated", (e) => {

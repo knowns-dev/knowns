@@ -15,6 +15,7 @@
     "p95RatioMax": 1.5,
     "p95SlackMs": 25
   },
+  "tabPollMs": 15000,
   "orphanWaitSeconds": 75,
   "daemonIdleTimeoutMs": 15000
 }

@@ -8,6 +8,7 @@ import { partialOf } from "../domain/tasklifecycle/errors.ts";
 import { responseToWire } from "../domain/tasklifecycle/wire.ts";
 import type { Manager as LspManager } from "../lsp/manager.ts";
 import type { Project } from "../models/config.ts";
+import { onRuntimeStatusChange } from "../runtime/status-events.ts";
 import { Manager } from "../storage/core/manager.ts";
 import type { Store } from "../storage/core/store.ts";
 import { Registry } from "../storage/stores/registry.ts";
@@ -43,6 +44,7 @@ import {
 import { lifecycleService, registerTasks } from "./routes/tasks.ts";
 import { registerTemplates, registerValidate } from "./routes/templates.ts";
 import { registerTime } from "./routes/time.ts";
+import { ServiceMonitor, type ServiceStatusLike } from "./service-monitor.ts";
 import { detectRuntimeServices, goDurationSeconds, registerRuntimeServices } from "./services.ts";
 import { SSEBroker } from "./sse.ts";
 import { serveUi } from "./static.ts";
@@ -51,40 +53,11 @@ import { registerTunnel, ServerTunnelManager } from "./tunnel.ts";
 export type { ServerOptions };
 
 const SERVICE_STATUS_INTERVAL_MS = 7000;
+/** The service monitor runs only this long after a request that shows runtime or service status. */
+const SERVICE_WATCH_WINDOW_MS = 30_000;
+const SERVICE_IDLE_INTERVAL_MS = 30_000;
 const TASK_SWEEP_INTERVAL_MS = 3_600_000;
 const FIRST_SWEEP_DELAY_MS = 5_000;
-
-interface ServiceStatusLike {
-  name: string;
-  type: string;
-  status: string;
-  pid?: number;
-  port?: number;
-  uptime?: number;
-  enabledInConfig: boolean;
-  details: Record<string, string>;
-}
-
-const serviceKey = (s: ServiceStatusLike): string =>
-  s.details.language ? `${s.type}:${s.details.language}` : `${s.type}:${s.name}`;
-
-function serviceJson(s: ServiceStatusLike): Record<string, unknown> {
-  const keys = Object.keys(s.details).sort((a, b) =>
-    Buffer.compare(Buffer.from(a), Buffer.from(b)),
-  );
-  const details: Record<string, string> = {};
-  for (const k of keys) details[k] = s.details[k] as string;
-  return {
-    name: s.name,
-    type: s.type,
-    status: s.status,
-    ...(s.pid ? { pid: s.pid } : {}),
-    ...(s.port ? { port: s.port } : {}),
-    ...(s.uptime ? { uptime: s.uptime } : {}),
-    enabledInConfig: s.enabledInConfig,
-    ...(keys.length > 0 ? { details } : {}),
-  };
-}
 
 export class Server {
   readonly sse = new SSEBroker();
@@ -99,10 +72,10 @@ export class Server {
   private readonly shutdownPromise = new Promise<void>((r) => {
     this.shutdownResolve = r;
   });
-  private monitorTimer: ReturnType<typeof setTimeout> | undefined;
+  private serviceMonitor: ServiceMonitor | undefined;
+  private unsubStatus: (() => void) | undefined;
   private sweepTimer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
-  private prevServices: ServiceStatusLike[] = [];
   private readonly app: App;
 
   constructor(
@@ -142,6 +115,7 @@ export class Server {
 
     this.app = {
       sse: this.sse,
+      watchServices: () => this.watchServices(),
       auth: this.auth,
       manager: this.manager,
       registry: this.registry,
@@ -181,7 +155,10 @@ export class Server {
       return jsonResponse(200, { status: "shutting down" });
     });
     r.get("/api/status", (c) => this.handleStatus(c));
-    r.get("/api/runtime/ps", () => this.handleRuntimePs());
+    r.get("/api/runtime/ps", () => {
+      this.watchServices();
+      return this.handleRuntimePs();
+    });
     r.post("/api/runtime/retry", (c) => this.handleRuntimeRetry(c));
 
     registerTasks(r, app);
@@ -419,49 +396,33 @@ export class Server {
     }
   }
 
+  /** Tells open tabs the runtime status changed, so the Runtime page does not have to poll for it. */
+  private startRuntimeStatusEvents(): void {
+    let pending = false;
+    this.unsubStatus = onRuntimeStatusChange(() => {
+      if (pending || this.sse.size === 0) return;
+      pending = true;
+      // Coalesce a burst (a lease and a job change together) into one event.
+      setTimeout(() => {
+        pending = false;
+        this.sse.broadcast({ type: "runtime:status", data: {} });
+      }, 250).unref();
+    });
+  }
+
+  watchServices(): void {
+    this.serviceMonitor?.watch();
+  }
+
   private startServiceMonitor(): void {
-    const tick = async (): Promise<void> => {
-      if (this.stopped) return;
-      const next = await this.snapshotServices(false);
-      if (next && !this.stopped) {
-        const prevBy = new Map(this.prevServices.map((s) => [serviceKey(s), s]));
-        const now = new Date().toISOString().replace(/\.(\d{3})Z$/, ".$1000Z");
-        const changes: Record<string, unknown>[] = [];
-        for (const s of next) {
-          const prev = prevBy.get(serviceKey(s));
-          if (
-            !prev ||
-            (prev.status === s.status &&
-              prev.pid === s.pid &&
-              prev.port === s.port &&
-              prev.enabledInConfig === s.enabledInConfig)
-          ) {
-            continue;
-          }
-          changes.push({
-            name: s.name,
-            type: s.type,
-            previousStatus: prev.status,
-            status: s.status,
-            timestamp: now,
-            service: serviceJson(s),
-          });
-        }
-        this.prevServices = next;
-        if (changes.length > 0) this.sse.broadcast({ type: "service:status", data: changes });
-      }
-      if (!this.stopped) {
-        this.monitorTimer = setTimeout(tick, SERVICE_STATUS_INTERVAL_MS);
-        this.monitorTimer.unref();
-      }
-    };
-    void (async () => {
-      const first = await this.snapshotServices(false);
-      if (first) this.prevServices = first;
-      if (this.stopped) return;
-      this.monitorTimer = setTimeout(tick, SERVICE_STATUS_INTERVAL_MS);
-      this.monitorTimer.unref();
-    })();
+    this.serviceMonitor = new ServiceMonitor({
+      snapshot: () => this.snapshotServices(false),
+      emit: (changes) => this.sse.broadcast({ type: "service:status", data: changes }),
+      watchWindowMs: SERVICE_WATCH_WINDOW_MS,
+      statusIntervalMs: SERVICE_STATUS_INTERVAL_MS,
+      idleIntervalMs: SERVICE_IDLE_INTERVAL_MS,
+    });
+    this.serviceMonitor.start();
   }
 
   /** StartTaskAutoArchiveSweeper: one bounded sweep at start, then hourly. */
@@ -550,6 +511,7 @@ export class Server {
         process.stderr.write(`warn: could not write .server-port: ${errMessage(e)}\n`);
       }
     }
+    this.startRuntimeStatusEvents();
     this.startServiceMonitor();
     if (this.opts.tunnel) void this.autoStartTunnel();
   }
@@ -600,9 +562,10 @@ export class Server {
       }
     };
     await step(() => {
-      if (this.monitorTimer) clearTimeout(this.monitorTimer);
+      this.serviceMonitor?.stop();
       if (this.sweepTimer) clearInterval(this.sweepTimer);
     });
+    await step(() => this.unsubStatus?.());
     await step(() => this.sse.closeAll());
     await step(() => this.bun?.stop(true));
     await step(() => {

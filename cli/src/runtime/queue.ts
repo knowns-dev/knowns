@@ -43,6 +43,7 @@ import {
   unregisterDaemon,
 } from "./daemon-registry.ts";
 import { type IdentitySeams, isKnownsRuntimeDaemon } from "./process-identity.ts";
+import { emitRuntimeStatus } from "./status-events.ts";
 
 export type JobKind =
   | "index-task"
@@ -1670,16 +1671,10 @@ export class ClientHandle {
     const now = Date.now();
     this.lease.updatedAt = nowString(now);
     this.lease.expiresAt = nowString(now + leaseTtlMs());
-    ensureDir(leaseDir());
-    const body = `${goJson(leaseJson(this.lease), { indent: 2 })}\n`;
-    try {
-      writeFileSync(leasePath(this.lease.id), body, { mode: 0o644 });
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-      madeDirs.delete(leaseDir());
-      ensureDir(leaseDir());
-      writeFileSync(leasePath(this.lease.id), body, { mode: 0o644 });
-    }
+    // Atomic (temp file + rename): a scan of the lease directory, or a daemon that reads while a
+    // heartbeat lands, sees the old lease or the whole new one, never an empty or partial file
+    // that would drop a live client.
+    writeJSON(leasePath(this.lease.id), leaseJson(this.lease));
   }
 
   release(): void {
@@ -2265,23 +2260,38 @@ const OWN_WRITES =
  * or a stop flag ends the idle wait at once, so the idle tick can be long. If a watch cannot start
  * the daemon still polls at the idle interval.
  */
-function watchRuntimeDirs(): {
+export function watchRuntimeDirs(onPoke?: () => void): {
   sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   close: () => void;
+  /** The lease file names the last scan saw; events on those that still exist are heartbeats. */
+  setLeases: (names: Iterable<string>) => void;
 } {
   let woken = false;
   let release: (() => void) | undefined;
+  const knownLeases = new Set<string>();
   const poke = () => {
+    onPoke?.();
     woken = true;
     release?.();
   };
-  const dirs = [runtimeRoot(), leaseDir(), dirname(queuePath("x"))];
+  const leases = leaseDir();
+  const dirs = [runtimeRoot(), leases, dirname(queuePath("x"))];
   const watchers = new Map<string, FSWatcher>();
   const attach = (dir: string): void => {
     try {
       mkdirSync(dir, { recursive: true, mode: 0o755 });
-      const w = watch(dir, { persistent: false }, (_event, filename) => {
+      const w = watch(dir, { persistent: false }, (event, filename) => {
         if (filename && OWN_WRITES.test(String(filename))) return;
+        // A heartbeat rewrites a lease the daemon already knows; only a lease appearing or going
+        // away changes what the loop would do, and waking for every heartbeat of every session kept
+        // an otherwise idle daemon ticking several times a second. The test is on the NAME, not on
+        // the event type: an atomic rewrite shows as "rename" on Linux and a new file may arrive as
+        // "change" on FSEvents and Windows (events are coalesced).
+        if (dir === leases) {
+          const name = filename === null || filename === undefined ? "" : String(filename);
+          if (name.endsWith(".tmp")) return; // the temp file of an atomic write
+          if (name !== "" && knownLeases.has(name) && existsSync(join(leases, name))) return;
+        }
         poke();
       });
       w.on("error", () => {
@@ -2326,6 +2336,10 @@ function watchRuntimeDirs(): {
     },
     close() {
       for (const w of watchers.values()) w.close();
+    },
+    setLeases(names) {
+      knownLeases.clear();
+      for (const n of names) knownLeases.add(n);
     },
   };
 }
@@ -2393,6 +2407,7 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
           return [] as Lease[];
         }
       })();
+      wake.setLeases(allLeases.map((l) => `${l.id}.json`));
       if (tickNow - roleCheckedAt >= ROLE_REFRESH_MS) {
         roleCheckedAt = tickNow;
         const was = isRunner;
@@ -2529,6 +2544,7 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
       if (isRunner) {
         const statusNow = Date.now();
         const key = statusKey(watchFor, projects, watcherStates);
+        emitRuntimeStatus(key, scan.fingerprint);
         if (key !== lastStatusKey || statusNow - lastStatusAt >= STATUS_REFRESH_MS) {
           try {
             writeStatusFile(watchFor, projects, watcherStates);

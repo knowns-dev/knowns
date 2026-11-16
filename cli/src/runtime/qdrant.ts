@@ -93,14 +93,15 @@ export interface ProcessController {
 
 export const defaultProcessController: ProcessController = {
   start(binary, env, logPath) {
+    let pid: number;
     try {
-      const pid = spawnDetached(binary, [], { env, logPath });
-      // Qdrant answers vector searches: it must not inherit the daemon's background priority.
-      restoreNormalPriority(pid);
-      return pid;
+      pid = spawnDetached(binary, [], { env, logPath });
     } catch (err) {
       throw new Error(`start qdrant: ${(err as Error).message}`);
     }
+    // Qdrant answers vector searches: it must not inherit the daemon's background priority.
+    restoreNormalPriority(pid);
+    return pid;
   },
   async stop(pid, timeoutMs, expect) {
     if (pid <= 0) return;
