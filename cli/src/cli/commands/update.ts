@@ -402,6 +402,27 @@ function asideFor(dest: string, goos: string, remove: (p: string) => void): stri
   }
 }
 
+/**
+ * A release without a proxy must not leave the previous release's proxy beside the new knowns: it
+ * would keep launching and fall back to in-process on every session. On Windows a running proxy
+ * cannot be deleted but can be renamed, and the .old is swept by the next update.
+ */
+export function removeStaleProxy(dir: string, goos: string): boolean {
+  const path = join(dir, goos === "windows" ? "knowns-proxy.exe" : "knowns-proxy");
+  if (!existsSync(path)) return false;
+  try {
+    rmSync(path, { force: true });
+    return true;
+  } catch {
+    try {
+      renameSync(path, `${path}.old.${Date.now()}`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
 /** Delete leftover dest.old / dest.old.<ts> files of a previous update; locked ones stay for later. */
 export function sweepOldBinaries(dir: string): number {
   let n = 0;
@@ -531,6 +552,7 @@ async function downloadAndReplaceBinary(
     } catch (e) {
       throw new Error(`replace binary: ${(e as Error).message}`);
     }
+    if (proxySrc === undefined) removeStaleProxy(dir, seams.goos());
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
   }

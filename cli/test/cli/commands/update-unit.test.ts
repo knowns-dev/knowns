@@ -14,7 +14,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { replaceBinaries, sweepOldBinaries } from "../../../src/cli/commands/update.ts";
+import {
+  removeStaleProxy,
+  replaceBinaries,
+  sweepOldBinaries,
+} from "../../../src/cli/commands/update.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -103,6 +107,14 @@ describe("replaceBinaries", () => {
       expect(warnings.join("\n")).toContain("knowns-proxy");
       expect(existsSync(`${files.proxy}.tmp`)).toBe(false);
     }
+  });
+
+  test("removeStaleProxy deletes the previous proxy, or moves a locked one aside", () => {
+    const { bin, files } = setup("linux");
+    expect(removeStaleProxy(bin, "linux")).toBe(true);
+    expect(existsSync(files.proxy)).toBe(false);
+    expect(removeStaleProxy(bin, "linux")).toBe(false);
+    expect(existsSync(files.knowns)).toBe(true);
   });
 
   test("sweepOldBinaries removes previous .old files and leaves the binaries", () => {

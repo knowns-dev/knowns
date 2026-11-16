@@ -112,20 +112,36 @@ try {
     # Install bundle
     Write-Host "  . Installing to $InstallDir..." -NoNewline -ForegroundColor DarkGray
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-    Copy-Item -Path $ExtractedBin.FullName -Destination (Join-Path $InstallDir $Binary) -Force
-    Copy-Item -Path $ExtractedBin.FullName -Destination (Join-Path $InstallDir $AliasBinary) -Force
-
-    # The native MCP proxy sits next to knowns. A running proxy cannot be overwritten on Windows but
-    # can be renamed, so move the old one aside first. Releases before it do not ship one.
-    $ProxySrc = Join-Path $ExtractRoot "knowns-proxy.exe"
-    if (Test-Path $ProxySrc) {
-        $ProxyDest = Join-Path $InstallDir "knowns-proxy.exe"
-        if (Test-Path $ProxyDest) {
-            Remove-Item -Path "$ProxyDest.old" -Force -ErrorAction SilentlyContinue
-            Move-Item -Path $ProxyDest -Destination "$ProxyDest.old" -Force -ErrorAction SilentlyContinue
+    # A running exe cannot be overwritten or deleted on Windows but can be renamed, so each file is
+    # moved aside to <name>.old first. A previous .old that is still running is locked: give the new
+    # one a unique name rather than fail; the next install sweeps them.
+    function Install-Exe($Source, $Dest) {
+        if (Test-Path $Dest) {
+            $aside = "$Dest.old"
+            Remove-Item -Path $aside -Force -ErrorAction SilentlyContinue
+            if (Test-Path $aside) { $aside = "$Dest.old.$([DateTime]::UtcNow.Ticks)" }
+            Move-Item -Path $Dest -Destination $aside -Force
         }
-        Copy-Item -Path $ProxySrc -Destination $ProxyDest -Force
+        Copy-Item -Path $Source -Destination $Dest -Force
     }
+    Get-ChildItem -Path $InstallDir -Filter "*.exe.old*" -ErrorAction SilentlyContinue | ForEach-Object {
+        Remove-Item -Path $_.FullName -Force -ErrorAction SilentlyContinue
+    }
+
+    # The native MCP proxy sits next to knowns and goes in first: it only finds a daemon of its own
+    # version and otherwise falls back to in-process, so a failure after it leaves a working pair.
+    # A release that does not ship one must not leave the previous release's proxy behind.
+    $ProxySrc = Join-Path $ExtractRoot "knowns-proxy.exe"
+    $ProxyDest = Join-Path $InstallDir "knowns-proxy.exe"
+    if (Test-Path $ProxySrc) {
+        Install-Exe $ProxySrc $ProxyDest
+    } elseif (Test-Path $ProxyDest) {
+        Remove-Item -Path $ProxyDest -Force -ErrorAction SilentlyContinue
+        if (Test-Path $ProxyDest) { Move-Item -Path $ProxyDest -Destination "$ProxyDest.old.$([DateTime]::UtcNow.Ticks)" -Force -ErrorAction SilentlyContinue }
+    }
+
+    Install-Exe $ExtractedBin.FullName (Join-Path $InstallDir $Binary)
+    Install-Exe $ExtractedBin.FullName (Join-Path $InstallDir $AliasBinary)
 
     # Colocated ONNX Runtime DLLs
     foreach ($pattern in @("onnxruntime*.dll")) {

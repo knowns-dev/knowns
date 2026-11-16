@@ -202,6 +202,9 @@ link_into_path() {
     link_one "${INSTALL_DIR}/${BINARY}" "${link_dir}/${BINARY}" || return 0
     if [ -f "${INSTALL_DIR}/${PROXY}" ]; then
         link_one "${INSTALL_DIR}/${PROXY}" "${link_dir}/${PROXY}" || true
+    elif [ -L "${link_dir}/${PROXY}" ]; then
+        # No proxy in this release: drop the previous release's link (it would dangle).
+        rm -f "${link_dir}/${PROXY}"
     fi
     if [ "${KNOWNS_NO_SYMLINK:-0}" != "1" ]; then
         link_one "${INSTALL_DIR}/${BINARY}" "${link_dir}/kn" || true
@@ -310,12 +313,16 @@ main() {
     printf "  ${DIM}⠋${RESET} Installing to ${INSTALL_DIR}...\r"
     mkdir -p "$INSTALL_DIR" 2>/dev/null || true
 
-    install_file "$EXTRACTED_BIN" "${INSTALL_DIR}/${BINARY}" 755
-
-    # The native MCP proxy sits next to knowns. Releases before it do not ship one.
+    # The native MCP proxy sits next to knowns and goes in first: it only finds a daemon of its own
+    # version and otherwise falls back to in-process, so a failure after this leaves a working pair.
+    # A release that does not ship one must not leave the previous release's proxy behind.
     if [ -f "${EXTRACT_ROOT}/${PROXY}" ]; then
         install_file "${EXTRACT_ROOT}/${PROXY}" "${INSTALL_DIR}/${PROXY}" 755
+    else
+        rm -f "${INSTALL_DIR}/${PROXY}"
     fi
+
+    install_file "$EXTRACTED_BIN" "${INSTALL_DIR}/${BINARY}" 755
 
     # Install colocated ONNX Runtime native libs (dylib/so/dll)
     for f in "${EXTRACT_ROOT}"/libonnxruntime* \

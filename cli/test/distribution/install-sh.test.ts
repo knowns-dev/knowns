@@ -93,6 +93,35 @@ describe.skipIf(!posix)("install.sh", () => {
     expect(existsSync(join(sb2.home, ".knowns", "bin", "knowns-proxy"))).toBe(false);
   });
 
+  test("a release without a proxy removes the previous proxy and its PATH link", () => {
+    const sb = makeSandbox([".local/bin"]);
+    const withProxy = makeRelease("v1.0.0", "linux-x64", "1.0.0", undefined, true);
+    const first = runInstall({
+      sandbox: sb,
+      baseUrl: withProxy.baseUrl,
+      version: "1.0.0",
+      uname: ["Linux", "x86_64"],
+    });
+    expect(first.code).toBe(0);
+    const bin = join(sb.home, ".knowns", "bin");
+    const link = join(sb.home, ".local", "bin", "knowns-proxy");
+    expect(existsSync(join(bin, "knowns-proxy"))).toBe(true);
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+
+    // A downgrade to a release that never shipped one.
+    const without = makeRelease("v0.9.0", "linux-x64", "0.9.0");
+    const second = runInstall({
+      sandbox: sb,
+      baseUrl: without.baseUrl,
+      version: "0.9.0",
+      uname: ["Linux", "x86_64"],
+    });
+    expect(second.code).toBe(0);
+    expect(existsSync(join(bin, "knowns-proxy"))).toBe(false);
+    expect(() => lstatSync(link)).toThrow();
+    expect(run([join(bin, "knowns")]).stdout).toBe("knowns version 0.9.0\n");
+  });
+
   // Row 16 (75b0470): link onto a PATH dir, never edit rc files.
   test("row 16: links knowns and kn into ~/.local/bin when it is on PATH, without touching rc files", () => {
     const sb = makeSandbox([".local/bin"]);
