@@ -87,7 +87,16 @@ export async function startSide(
   const cmd =
     name === "go"
       ? [GO_BIN as string, "browser", "--port", String(port), "--no-open", ...(extra.args ?? [])]
-      : ["bun", MAIN, "browser", "--port", String(port), "--no-open", ...(extra.args ?? [])];
+      : [
+          "bun",
+          MAIN,
+          "browser",
+          "--foreground",
+          "--port",
+          String(port),
+          "--no-open",
+          ...(extra.args ?? []),
+        ];
   const proc = Bun.spawn(cmd, {
     cwd: dir,
     env: { ...testEnv(home), ...(extra.env ?? {}) },

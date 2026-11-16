@@ -559,10 +559,20 @@ export class Server {
    * daemon, KN-B3NWK3): no signal handlers, and the returned promise settles after POST
    * /api/shutdown or stop() has cleaned up, so a stopped listener frees its port at once.
    */
-  attach(bun: ReturnType<typeof Bun.serve>): { done: Promise<void>; stop(): void } {
+  attach(bun: ReturnType<typeof Bun.serve>): {
+    done: Promise<void>;
+    stop(): void;
+    onClients(cb: (n: number) => void): void;
+  } {
     this.begin(bun);
     const done = this.shutdownPromise.then(() => this.shutdown());
-    return { done, stop: () => this.shutdownResolve?.() };
+    return {
+      done,
+      stop: () => this.shutdownResolve?.(),
+      onClients: (cb) => {
+        this.sse.onChange = cb;
+      },
+    };
   }
 
   private async autoStartTunnel(): Promise<void> {

@@ -19,6 +19,8 @@ export type ListenerEnd = "stopped" | "released" | "shutdown" | "lost";
 
 export interface DaemonListener {
   port: number;
+  /** Detached listener that was already running for this project. */
+  reused: boolean;
   /** Settles when the daemon side of the connection ends. */
   closed: Promise<ListenerEnd>;
   /** Releases the listener: the daemon frees the port. */
@@ -129,6 +131,7 @@ export async function requestDaemonListener(
     ok: true,
     listener: {
       port: reply.port,
+      reused: reply.reused === true,
       closed,
       release: () => {
         end = "released";
@@ -136,4 +139,48 @@ export async function requestDaemonListener(
       },
     },
   };
+}
+
+/**
+ * Asks the daemon to stop the UI listeners on a port or of a project (`knowns browser --stop`).
+ * Returns the ports it stopped, or undefined when there is no daemon to ask.
+ */
+export async function stopDaemonListeners(
+  target: { port?: number; projectRoot?: string },
+  opts: {
+    env?: Record<string, string | undefined>;
+    descriptor?: UiDescriptor;
+    replyMs?: number;
+  } = {},
+): Promise<number[] | undefined> {
+  const desc = opts.descriptor ?? readUiDescriptor(VERSION);
+  if (!desc || !isProcessAlive(desc.pid)) return undefined;
+  return await new Promise<number[] | undefined>((resolve) => {
+    const sock = net.connect({ path: desc.address });
+    let buf = "";
+    const done = (v: number[] | undefined): void => {
+      clearTimeout(timer);
+      sock.destroy();
+      resolve(v);
+    };
+    const timer = setTimeout(() => done(undefined), opts.replyMs ?? 10_000);
+    sock.on("error", () => done(undefined));
+    sock.once("close", () => done(undefined));
+    sock.once("connect", () =>
+      sock.write(
+        `${JSON.stringify({ knowns_ui: 1, type: "stop", version: VERSION, token: desc.token, ...target })}\n`,
+      ),
+    );
+    sock.on("data", (chunk) => {
+      buf += chunk.toString("utf8");
+      const nl = buf.indexOf("\n");
+      if (nl < 0) return;
+      try {
+        const m = JSON.parse(buf.slice(0, nl)) as { type?: string; ports?: unknown };
+        done(m.type === "stopped" && Array.isArray(m.ports) ? (m.ports as number[]) : undefined);
+      } catch {
+        done(undefined);
+      }
+    });
+  });
 }
