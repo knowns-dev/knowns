@@ -1,14 +1,7 @@
 // Port of internal/storage/task_store.go: tasks in .knowns/tasks/ and .knowns/archive/, deletion
 // tombstones, and the byte-exact markdown renderer.
-import {
-  existsSync,
-  linkSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+
+import { existsSync, linkSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize } from "node:path";
 import {
   newPrefixedTaskId,
@@ -17,6 +10,7 @@ import {
   taskFileName,
 } from "../../models/id.ts";
 import type { Task, TaskTombstone } from "../../models/task.ts";
+import { readUtf8Retrying, renameRetrying } from "../core/fs-retry.ts";
 import type { Store } from "../core/store.ts";
 import {
   atomicWrite,
@@ -371,7 +365,7 @@ export class TaskStore {
     if (this.scanForId(this.archiveDir(), id) !== undefined) {
       throw new Error(`archive: task "${id}" already exists in archive`);
     }
-    renameSync(src, join(this.archiveDir(), basename(src)));
+    renameRetrying(src, join(this.archiveDir(), basename(src)));
   }
 
   unarchive(id: string): Promise<void> {
@@ -388,7 +382,7 @@ export class TaskStore {
     if (this.scanForId(this.tasksDir(), id) !== undefined) {
       throw new Error(`unarchive: task "${id}" already exists in active storage`);
     }
-    renameSync(src, join(this.tasksDir(), basename(src)));
+    renameRetrying(src, join(this.tasksDir(), basename(src)));
   }
 
   // --- tombstones ------------------------------------------------------------------------------
@@ -440,7 +434,7 @@ export class TaskStore {
     const path = this.tombstonePath(id);
     let data: string;
     try {
-      data = readFileSync(path, "utf8");
+      data = readUtf8Retrying(path);
     } catch (e) {
       if (isNotFound(e)) throw new Error(`task tombstone "${id}" not found`);
       throw new Error(`read task tombstone "${id}": ${(e as Error).message}`);
@@ -486,7 +480,7 @@ export class TaskStore {
   parseFile(path: string): Task {
     let data: string;
     try {
-      data = readFileSync(path, "utf8");
+      data = readUtf8Retrying(path);
     } catch (e) {
       throw new Error(`parseFile ${path}: ${(e as Error).message}`);
     }
@@ -506,7 +500,7 @@ export class TaskStore {
    */
   patchLifecycleUnlocked(task: Task): void {
     const path = this.findFile(task.id);
-    const content = readFileSync(path, "utf8");
+    const content = readUtf8Retrying(path);
     const { yaml, body } = splitFrontmatter(content);
     if (yaml === "") throw new Error(`patch Task "${task.id}" lifecycle: missing YAML frontmatter`);
     const newline = content.includes("\r\n") ? "\r\n" : "\n";

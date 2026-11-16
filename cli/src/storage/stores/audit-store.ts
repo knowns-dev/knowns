@@ -1,14 +1,7 @@
 // Port of internal/storage/audit_store.go: append-only MCP audit events in ~/.knowns/audit.jsonl,
 // with size-based rotation (audit.jsonl.1, audit.jsonl.2).
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-} from "node:fs";
+
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   type AuditAnalytics,
@@ -20,6 +13,7 @@ import {
   type AuditToolStats,
   UNKNOWN_AUDIT_PROJECT,
 } from "../../models/audit.ts";
+import { renameRetrying } from "../core/fs-retry.ts";
 import { globalRootPath } from "../core/global-root.ts";
 import { goJsonStringify } from "../core/util.ts";
 import { goTimeJson, parseIso } from "./internal.ts";
@@ -176,9 +170,9 @@ export class AuditStore {
     for (let i = MAX_BACKUPS; i >= 1; i--) {
       const src = `${path}.${i}`;
       if (i === MAX_BACKUPS) rmSync(src, { force: true });
-      else if (existsSync(src)) renameSync(src, `${path}.${i + 1}`);
+      else if (existsSync(src)) renameRetrying(src, `${path}.${i + 1}`);
     }
-    renameSync(path, `${path}.1`);
+    renameRetrying(path, `${path}.1`);
   }
 
   /** Recent: the most recent N events, newest first. */

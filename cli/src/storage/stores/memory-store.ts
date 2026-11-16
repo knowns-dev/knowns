@@ -1,6 +1,7 @@
 // Port of internal/storage/memory_store.go: memories in .knowns/memory/ (project layer) and
 // ~/.knowns/memory/ (global layer). Mutations take the per-memory lock under the global root.
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { GO_ZERO_TIME } from "../../models/common.ts";
 import { newTaskId } from "../../models/id.ts";
@@ -20,6 +21,7 @@ import {
   validateNewMemoryCategory,
   validMemoryLayer,
 } from "../../models/memory.ts";
+import { readUtf8Retrying } from "../core/fs-retry.ts";
 import { globalRootPath } from "../core/global-root.ts";
 import type { Store } from "../core/store.ts";
 import { atomicWrite, goTrimSpace, splitFrontmatter } from "../core/util.ts";
@@ -436,7 +438,7 @@ export class MemoryStore {
   parseFile(abs: string, layer: string): MemoryEntry {
     let data: string;
     try {
-      data = readFileSync(abs, "utf8");
+      data = readUtf8Retrying(abs);
     } catch (e) {
       throw new Error(`parseFile ${abs}: ${(e as Error).message}`);
     }

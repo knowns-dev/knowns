@@ -1,7 +1,9 @@
 // Port of internal/storage/doc_store.go: docs in .knowns/docs/ and .knowns/imports/*/docs/.
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import type { Doc } from "../../models/doc.ts";
+import { readUtf8Retrying } from "../core/fs-retry.ts";
 import { resolveSafe } from "../core/safe-path.ts";
 import { atomicWrite, goTrimSpace, splitFrontmatter } from "../core/util.ts";
 import { canonicalDocHash, newDocId } from "../history/entities.ts";
@@ -439,7 +441,7 @@ export class DocStore {
   ): Doc {
     let data: string;
     try {
-      data = readFileSync(abs, "utf8");
+      data = readUtf8Retrying(abs);
     } catch (e) {
       throw new Error(`parseFile ${abs}: ${(e as Error).message}`);
     }
