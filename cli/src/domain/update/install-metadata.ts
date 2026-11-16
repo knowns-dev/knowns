@@ -20,6 +20,8 @@ export interface InstallMetadata {
   linkPaths?: string[];
   version?: string;
   installedAt?: string;
+  /** "split" (launcher + engine) or "single" (a release that ships the engine alone). */
+  layout?: string;
 }
 
 /** The fields in Go's struct order (the order MarshalIndent writes them). */
@@ -34,6 +36,7 @@ const FIELDS = [
   "linkPaths",
   "version",
   "installedAt",
+  "layout",
 ] as const;
 
 /** "" when the home directory is unknown, like Go. */

@@ -506,3 +506,16 @@ func TestDumpFakeEngine(t *testing.T) {
 		os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644)
 	}
 }
+
+// The built launcher (a release build has no override) ignores both engine variables: with no
+// knowns-engine beside it, an engine named in the environment must not be run.
+func TestBuiltLauncherIgnoresEngineEnvironment(t *testing.T) {
+	_, e := buildBoth(t)
+	_, launcher := install(t, false)
+	for _, k := range []string{"KNOWNS_ENGINE_BIN", "KNOWNS_PROXY_KNOWNS_BIN"} {
+		out, _, code := run(t, launcher, "", cleanEnv(k+"="+e), "tty")
+		if code != 127 || strings.Contains(out, "stdin_tty") {
+			t.Errorf("%s was honoured: exit %d, stdout %q", k, code, out)
+		}
+	}
+}

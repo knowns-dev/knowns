@@ -112,7 +112,9 @@ export function proxyCheckers(input: ProxyCheckInput): Checker[] {
       id: "runtime.launcher",
       scope: "runtime",
       check: (): CheckOutcome => ({
-        status: "fail",
+        // A launcher that moved (a package manager's versioned path) is a warning; a launcher that
+        // cannot find its engine cannot run anything.
+        status: lp.kind === "engine-missing" ? "fail" : "warn",
         summary:
           lp.kind === "engine-missing"
             ? "The knowns launcher cannot find its engine (knowns-engine)"

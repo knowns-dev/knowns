@@ -156,8 +156,12 @@ jobs:
           bun run budget dist/*/knowns dist/*/knowns.exe
           got=$(NO_UPDATE_CHECK=1 dist/linux-x64/knowns --version)
           [ "$got" = "knowns version 1.0.0-ci" ] || { echo "FATAL: --version printed: $got"; exit 1; }
-          # In dist/ the engine is `knowns`, not knowns-engine, so the launcher is pointed at it.
-          got=$(NO_UPDATE_CHECK=1 KNOWNS_ENGINE_BIN="$PWD/dist/linux-x64/knowns" dist/linux-x64/knowns.launcher --version)
+          # In dist/ the engine is `knowns`, not knowns-engine: stage an install (launcher + engine),
+          # since a release launcher takes no engine from the environment.
+          stage=$(mktemp -d)
+          cp dist/linux-x64/knowns.launcher "$stage/knowns"
+          cp dist/linux-x64/knowns "$stage/knowns-engine"
+          got=$(NO_UPDATE_CHECK=1 "$stage/knowns" --version)
           [ "$got" = "knowns version 1.0.0-ci" ] || { echo "FATAL: launcher --version printed: $got"; exit 1; }
           for t in darwin-arm64 darwin-x64 linux-x64 linux-arm64 windows-x64 windows-arm64; do
             ls dist/$t/knowns.launcher* >/dev/null || { echo "FATAL: no launcher for $t"; exit 1; }

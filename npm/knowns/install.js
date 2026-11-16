@@ -241,19 +241,64 @@ function extractTarToDir(buffer, dest) {
  * old updater installs something that runs) and the launcher has a name no old updater matches;
  * layout.json says which becomes which. Without it (an archive of 0.35 or older) nothing changes.
  */
+// The same rules as parseArchiveLayout in cli/src/domain/update/layout.ts (a test runs both on one
+// table): layout 1, and plain file names for the launcher and the engine.
+function parseArchiveLayout(text) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new Error("release layout.json is not valid JSON");
+  }
+  if (raw === null || typeof raw !== "object" || raw.layout !== 1) {
+    throw new Error(
+      `release archive layout ${String(raw === null ? null : raw.layout)} is newer than this knowns understands; reinstall from the install script`
+    );
+  }
+  const plain = (n) =>
+    typeof n === "string" && n !== "" && n === path.basename(n) && !/[\\/]/.test(n) && n !== "..";
+  const { launcher, engine } = raw;
+  if (
+    !launcher ||
+    !engine ||
+    !plain(launcher.file) ||
+    !plain(launcher.installAs) ||
+    !plain(engine.file) ||
+    !plain(engine.installAs)
+  ) {
+    throw new Error("release layout.json names no launcher or engine");
+  }
+  return {
+    layout: 1,
+    version: typeof raw.version === "string" ? raw.version : "",
+    launcher: { file: launcher.file, installAs: launcher.installAs },
+    engine: { file: engine.file, installAs: engine.installAs },
+  };
+}
+
+// The archive's `knowns` is the engine and the launcher has another name; both are renamed to their
+// installed names. The two renames are one step: a failure of the second puts the first back.
 function applyArchiveLayout(dest) {
   const layoutPath = path.join(dest, "layout.json");
   if (!fs.existsSync(layoutPath)) {
     return false;
   }
-  const layout = JSON.parse(fs.readFileSync(layoutPath, "utf8"));
-  const engine = layout.engine;
-  const launcher = layout.launcher;
-  if (!engine || !launcher) {
-    throw new Error("layout.json names no launcher or engine");
+  const layout = parseArchiveLayout(fs.readFileSync(layoutPath, "utf8"));
+  const engineFrom = path.join(dest, layout.engine.file);
+  const engineTo = path.join(dest, layout.engine.installAs);
+  const launcherFrom = path.join(dest, layout.launcher.file);
+  const launcherTo = path.join(dest, layout.launcher.installAs);
+  fs.renameSync(engineFrom, engineTo);
+  try {
+    fs.renameSync(launcherFrom, launcherTo);
+  } catch (error) {
+    try {
+      fs.renameSync(engineTo, engineFrom);
+    } catch {
+      // the original error below is the one that matters
+    }
+    throw error;
   }
-  fs.renameSync(path.join(dest, engine.file), path.join(dest, engine.installAs));
-  fs.renameSync(path.join(dest, launcher.file), path.join(dest, launcher.installAs));
   for (const name of fs.readdirSync(dest)) {
     if (/^knowns-0\.34-update(\.exe)?$/.test(name) || name === "layout.json") {
       fs.rmSync(path.join(dest, name), { force: true });
@@ -833,6 +878,7 @@ module.exports = {
   useNativeBinaryDirectly,
   useNativeBinaryOnWindows,
   applyArchiveLayout,
+  parseArchiveLayout,
   verifySha256,
   windowsShimContents,
   writeDownloadedPackageMetadata,

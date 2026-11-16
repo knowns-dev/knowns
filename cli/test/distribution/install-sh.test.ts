@@ -151,6 +151,32 @@ describe.skipIf(!posix)("install.sh", () => {
     ).toEqual([]);
   });
 
+  test("an engine that cannot be backed up aborts the install before anything is replaced", () => {
+    const sb = makeSandbox(["fakebin"]);
+    const bin = join(sb.home, ".knowns", "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "knowns-engine"), "#!/bin/sh\necho old-engine\n", { mode: 0o755 });
+    writeFileSync(join(bin, "knowns"), "#!/bin/sh\necho old-launcher\n", { mode: 0o755 });
+    // Neither ln nor cp -p can make the rollback copy.
+    for (const name of ["ln", "cp"]) {
+      writeFileSync(
+        join(sb.home, "fakebin", name),
+        `#!/bin/sh\nfor a; do case "$a" in *knowns-engine.rollback.*) exit 1;; esac; done\nexec /bin/${name} "$@"\n`,
+        { mode: 0o755 },
+      );
+    }
+    const rel = makeRelease("v1.0.0", "linux-x64", "1.0.0", undefined, true);
+    const r = runInstall({
+      sandbox: sb,
+      baseUrl: rel.baseUrl,
+      version: "1.0.0",
+      uname: ["Linux", "x86_64"],
+    });
+    expect(r.code).not.toBe(0);
+    expect(run([join(bin, "knowns-engine")]).stdout).toBe("old-engine\n");
+    expect(run([join(bin, "knowns")]).stdout).toBe("old-launcher\n");
+  });
+
   // Row 16 (75b0470): link onto a PATH dir, never edit rc files.
   test("row 16: links knowns and kn into ~/.local/bin when it is on PATH, without touching rc files", () => {
     const sb = makeSandbox([".local/bin"]);
