@@ -41,3 +41,28 @@ test("an unchanged registry is loaded once, a changed one is loaded again", () =
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("the idle wait ends at once when the registry changes, and on abort", async () => {
+  const { sleepUntilChange } = await import("../../src/domain/storesync/service.ts");
+  const dir = mkdtempSync(join(tmpdir(), "knowns-idlewait-"));
+  try {
+    const path = join(dir, "registry.json");
+    const ctl = new AbortController();
+    const t0 = Date.now();
+    const waiting = sleepUntilChange(path, 8000, ctl.signal);
+    await Bun.sleep(150);
+    writeFileSync(path, "[]");
+    await waiting;
+    // Where the platform does not deliver the event the 8 s timeout is the wake-up; the watch
+    // normally ends it well before that.
+    expect(Date.now() - t0).toBeLessThan(8000);
+
+    const t1 = Date.now();
+    const again = sleepUntilChange(path, 8000, ctl.signal);
+    ctl.abort();
+    await again;
+    expect(Date.now() - t1).toBeLessThan(1000);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

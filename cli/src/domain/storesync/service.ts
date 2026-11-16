@@ -2,7 +2,7 @@
 // their remotes from inside the shared runtime (store spec D3). Every Git decision, state field and
 // message follows the Go service so Go and TypeScript can alternate on one linked store.
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, watch, writeFileSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { goLogf } from "../../runtime/queue.ts";
@@ -112,8 +112,8 @@ export const discoverStats = { loads: 0 };
 
 function registrySig(path: string): string {
   try {
-    const st = statSync(path);
-    return `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
+    const st = statSync(path, { bigint: true });
+    return `${st.mtimeNs}:${st.ctimeNs}:${st.size}:${st.ino}`;
   } catch {
     return "missing";
   }
@@ -173,6 +173,46 @@ const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
     }, ms);
     signal.addEventListener("abort", done, { once: true });
   });
+
+const IDLE_TICK_MS = 5000;
+
+/** Sleeps up to ms; a change in the registry's directory (best effort) or an abort ends it early. */
+export function sleepUntilChange(
+  registryPath: string,
+  ms: number,
+  signal: AbortSignal,
+): Promise<void> {
+  return new Promise((resolve) => {
+    let w: ReturnType<typeof watch> | undefined;
+    const finish = () => {
+      clearTimeout(t);
+      w?.close();
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const t = setTimeout(finish, ms);
+    if (signal.aborted) return finish();
+    signal.addEventListener("abort", finish, { once: true });
+    try {
+      const base = registryPath.slice(
+        0,
+        Math.max(registryPath.lastIndexOf("/"), registryPath.lastIndexOf("\\")),
+      );
+      w = watch(base === "" ? "." : base, (_e, name) => {
+        if (
+          name === undefined ||
+          name === null ||
+          name.toString() === "registry.json" ||
+          name.toString().startsWith("registry")
+        )
+          finish();
+      });
+      w.on("error", () => {});
+    } catch {
+      // no watch: the timeout is the wake-up
+    }
+  });
+}
 
 /** statusPath: the path of one `git status --porcelain` line. */
 export function statusPath(line: string): string {
@@ -256,7 +296,13 @@ export class Service {
         goLogf(`[storesync] sync pass failed: ${(e as Error).message}`);
       }
       if (signal.aborted) return;
-      await sleep(this.cfg.tickMs, signal);
+      // With no store linked nothing here can change except the registry, so wait longer and let a
+      // registry change end the wait at once (one watch on the registry's directory; the longer
+      // wait is also the fallback where a watch does not fire).
+      const idle = this.stores.size === 0 && discoverStores(this.cfg.registryPath).length === 0;
+      await (idle
+        ? sleepUntilChange(this.cfg.registryPath, IDLE_TICK_MS, signal)
+        : sleep(this.cfg.tickMs, signal));
       if (signal.aborted) return;
     }
   }
