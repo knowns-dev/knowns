@@ -17,6 +17,7 @@ import {
   taskFileName,
 } from "../../models/id.ts";
 import type { Task, TaskTombstone } from "../../models/task.ts";
+import { StatCache } from "../core/stat-cache.ts";
 import type { Store } from "../core/store.ts";
 import {
   atomicWrite,
@@ -157,6 +158,9 @@ function sameClean(a: string, b: string): boolean {
   return normalize(a) === normalize(b);
 }
 
+/** Parsed task files by path, validated against the file's stat (see StatCache). */
+const sharedTaskParses = new StatCache<Task>();
+
 export class TaskStore {
   readonly root: string;
 
@@ -178,6 +182,50 @@ export class TaskStore {
 
   listActive(): Task[] {
     return this.listDir(this.tasksDir());
+  }
+
+  /**
+   * listActive for read-only callers (keyword search): the same tasks in the same order, but a file
+   * whose stat is unchanged is neither reread nor reparsed. The returned Tasks are shared between
+   * calls and must not be mutated. A duplicate id falls back to listActive, which repairs it.
+   */
+  listActiveShared(): Task[] {
+    return this.listDirShared(this.tasksDir());
+  }
+
+  listArchivedShared(): Task[] {
+    return this.listDirShared(this.archiveDir());
+  }
+
+  private listDirShared(dir: string): Task[] {
+    const byId = new Map<string, Task>();
+    for (const e of readDirSorted(dir)) {
+      if (e.isDirectory() || !e.name.endsWith(".md")) continue;
+      const path = join(dir, e.name);
+      let task: Task;
+      try {
+        task = sharedTaskParses.read(path, () => this.parseFile(path));
+      } catch {
+        continue;
+      }
+      if (byId.has(task.id)) return this.listDir(dir);
+      byId.set(task.id, task);
+    }
+    // listDir links children into their parent's subtasks; do it on copies so the shared Tasks stay
+    // as parsed.
+    const children = new Map<string, string[]>();
+    for (const t of byId.values()) {
+      if (!t.parent || !byId.has(t.parent)) continue;
+      const ids = children.get(t.parent);
+      if (ids) ids.push(t.id);
+      else children.set(t.parent, [t.id]);
+    }
+    const out: Task[] = [];
+    for (const t of byId.values()) {
+      const ids = children.get(t.id);
+      out.push(ids ? { ...t, subtasks: [...(t.subtasks ?? []), ...ids] } : t);
+    }
+    return out;
   }
 
   listArchived(): Task[] {

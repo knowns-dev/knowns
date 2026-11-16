@@ -45,7 +45,10 @@ interface LexicalField {
   name: string;
   text: string;
   weight: number;
-  tokens: string[];
+  /** Number of tokens in the field (what BM25 calls the field length). */
+  len: number;
+  /** Occurrences of each token; the count a scan would get by comparing every token. */
+  tf: Map<string, number>;
 }
 
 interface LexicalDoc {
@@ -130,7 +133,26 @@ function uniqueTokens(tokens: readonly string[]): string[] {
 }
 
 function newField(name: string, text: string, weight: number): LexicalField {
-  return { name, text, weight, tokens: bm25Tokenize(text) };
+  const tokens = bm25Tokenize(text);
+  const tf = new Map<string, number>();
+  for (const t of tokens) tf.set(t, (tf.get(t) ?? 0) + 1);
+  return { name, text, weight, len: tokens.length, tf };
+}
+
+/**
+ * LexicalDocs by the entity object they were built from. The stores hand out the same object for a
+ * file until the file changes (StatCache), so a repeated query skips tokenizing entirely; a changed
+ * file is a new object and is tokenized once. Weak keys: nothing outlives the entity it describes.
+ */
+const lexicalDocs = new WeakMap<object, LexicalDoc>();
+
+function memoDoc<T extends object>(entity: T, build: (e: T) => LexicalDoc): LexicalDoc {
+  let doc = lexicalDocs.get(entity);
+  if (!doc) {
+    doc = build(entity);
+    lexicalDocs.set(entity, doc);
+  }
+  return doc;
 }
 
 function snippetForDoc(fields: LexicalField[], fallback: string): string {
@@ -274,7 +296,7 @@ function toSearchResult(d: LexicalDoc, score: number): SearchResult {
     status: d.status,
     priority: d.priority,
     path: d.path,
-    tags: d.tags,
+    tags: [...d.tags],
     memoryLayer: d.memoryLayer,
     category: d.category,
     memoryStore: d.memoryStore,
@@ -302,12 +324,36 @@ function newStats(corpus: LexicalDoc[]): CorpusStats {
   for (const doc of corpus) {
     const docTerms = new Set<string>();
     for (const f of doc.fields) {
-      stats.fieldLengths.set(f.name, (stats.fieldLengths.get(f.name) ?? 0) + f.tokens.length);
+      stats.fieldLengths.set(f.name, (stats.fieldLengths.get(f.name) ?? 0) + f.len);
       stats.fieldDocCounts.set(f.name, (stats.fieldDocCounts.get(f.name) ?? 0) + 1);
-      for (const t of uniqueTokens(f.tokens)) docTerms.add(t);
+      for (const t of f.tf.keys()) docTerms.add(t);
     }
     for (const t of docTerms) stats.documentFreqs.set(t, (stats.documentFreqs.get(t) ?? 0) + 1);
   }
+  return stats;
+}
+
+/**
+ * Corpus statistics depend only on which documents are in the corpus, and consecutive queries
+ * usually see the same ones, so the last result is reused while the corpus is the same objects in
+ * the same order. The statistics are integers, so reuse is exact.
+ */
+let lastStats: { corpus: LexicalDoc[]; stats: CorpusStats } | undefined;
+
+function statsFor(corpus: LexicalDoc[]): CorpusStats {
+  const last = lastStats;
+  if (last && last.corpus.length === corpus.length) {
+    let same = true;
+    for (let i = 0; i < corpus.length; i++) {
+      if (last.corpus[i] !== corpus[i]) {
+        same = false;
+        break;
+      }
+    }
+    if (same) return last.stats;
+  }
+  const stats = newStats(corpus);
+  lastStats = { corpus, stats };
   return stats;
 }
 
@@ -324,14 +370,23 @@ function avgFieldLength(stats: CorpusStats, field: string): number {
   return avg <= 0 ? 1 : avg;
 }
 
-function termFrequency(tokens: readonly string[], term: string): number {
-  let n = 0;
-  for (const t of tokens) if (t === term) n++;
-  return n;
+/** What a query contributes to every document's score, worked out once per query. */
+interface PreparedQuery {
+  queryTokens: string[];
+  unique: string[];
+  queryLower: string;
 }
 
-function rerankBoost(doc: LexicalDoc, query: string, queryTokens: string[]): number {
-  const queryLower = goToLower(goTrimSpace(query));
+function prepareQuery(query: string, queryTokens: string[]): PreparedQuery {
+  return {
+    queryTokens,
+    unique: uniqueTokens(queryTokens),
+    queryLower: goToLower(goTrimSpace(query)),
+  };
+}
+
+function rerankBoost(doc: LexicalDoc, q: PreparedQuery): number {
+  const { queryLower, queryTokens, unique } = q;
   if (queryLower === "") return 0;
   let boost = 0;
   const titleLower = goToLower(doc.title);
@@ -352,7 +407,6 @@ function rerankBoost(doc: LexicalDoc, query: string, queryTokens: string[]): num
       break;
     }
   }
-  const unique = uniqueTokens(queryTokens);
   let matchedTitleTerms = 0;
   for (const token of unique) if (wordBoundaryCount(doc.title, token) > 0) matchedTitleTerms++;
   if (matchedTitleTerms > 0 && queryTokens.length > 1) {
@@ -363,23 +417,24 @@ function rerankBoost(doc: LexicalDoc, query: string, queryTokens: string[]): num
 
 function scoreDocument(
   doc: LexicalDoc,
-  query: string,
-  queryTokens: string[],
+  q: PreparedQuery,
+  termIdfs: readonly number[],
   stats: CorpusStats,
 ): number {
   let bm25 = 0;
-  for (const term of uniqueTokens(queryTokens)) {
-    const termIdf = idf(stats, term);
+  for (let i = 0; i < q.unique.length; i++) {
+    const term = q.unique[i] as string;
+    const termIdf = termIdfs[i] as number;
     for (const field of doc.fields) {
-      const tf = termFrequency(field.tokens, term);
+      const tf = field.tf.get(term) ?? 0;
       if (tf === 0) continue;
-      const fieldLen = field.tokens.length;
+      const fieldLen = field.len;
       const norm = mulAdd(BM25_B, fieldLen / avgFieldLength(stats, field.name), 1 - BM25_B);
       const denom = mulAdd(BM25_K1, norm, tf);
       bm25 = mulAdd(field.weight * termIdf, (tf * BM25_K1_PLUS_1) / denom, bm25);
     }
   }
-  let boost = rerankBoost(doc, query, queryTokens);
+  let boost = rerankBoost(doc, q);
   // The source-type boost only applies to a real BM25 match; otherwise every document would
   // score above zero for any query.
   if (bm25 > 0) {
@@ -408,13 +463,13 @@ function buildCorpus(src: LexicalSource, opts: SearchOptions): LexicalDoc[] {
   if (all || type === "task") {
     for (const task of src.tasks(opts)) {
       if (!taskVisibleForSearch(task, opts) || !taskMatchesSearchFilters(task, opts)) continue;
-      corpus.push(fromTask(task));
+      corpus.push(memoDoc(task, fromTask));
     }
   }
   if (all || type === "doc") {
     for (const doc of src.docs()) {
       if (opts.tag && !containsStr(doc.tags, opts.tag)) continue;
-      corpus.push(fromDoc(doc));
+      corpus.push(memoDoc(doc, fromDoc));
     }
   }
   if (all || type === "memory") {
@@ -440,10 +495,12 @@ export function bm25Search(src: LexicalSource, query: string, opts: SearchOption
   if (queryTokens.length === 0) return [];
   const corpus = buildCorpus(src, opts);
   if (corpus.length === 0) return [];
-  const stats = newStats(corpus);
+  const stats = statsFor(corpus);
+  const q = prepareQuery(query, queryTokens);
+  const termIdfs = q.unique.map((term) => idf(stats, term));
   const results: SearchResult[] = [];
   for (const doc of corpus) {
-    const score = scoreDocument(doc, query, queryTokens, stats);
+    const score = scoreDocument(doc, q, termIdfs, stats);
     if (score <= 0) continue;
     results.push(toSearchResult(doc, score));
   }

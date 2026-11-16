@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import type { Doc } from "../../models/doc.ts";
 import { resolveSafe } from "../core/safe-path.ts";
+import { StatCache } from "../core/stat-cache.ts";
 import { atomicWrite, goTrimSpace, splitFrontmatter } from "../core/util.ts";
 import { canonicalDocHash, newDocId } from "../history/entities.ts";
 import {
@@ -182,6 +183,9 @@ const normalizeDocPathForStore = (p: string) =>
 
 export type DocPathRewriter = (content: string, oldPath: string, newPath: string) => string;
 
+/** Parsed doc files by path, validated against the file's stat (see StatCache). */
+const sharedDocParses = new StatCache<Doc>();
+
 export class DocStore {
   readonly root: string;
   constructor(store: { root: string }) {
@@ -196,10 +200,23 @@ export class DocStore {
   }
 
   list(): Doc[] {
-    const docs = this.walkDocs(this.docsDir(), "", false, "");
+    return this.listWith(undefined);
+  }
+
+  /**
+   * list() for read-only callers (keyword search): the same docs in the same order, but a file whose
+   * stat is unchanged is neither reread nor reparsed. The Docs are shared between calls and must
+   * not be mutated.
+   */
+  listShared(): Doc[] {
+    return this.listWith(sharedDocParses);
+  }
+
+  private listWith(cache: StatCache<Doc> | undefined): Doc[] {
+    const docs = this.walkDocs(this.docsDir(), "", false, "", cache);
     let imported: Doc[] = [];
     try {
-      imported = this.listImported();
+      imported = this.listImported(cache);
     } catch {
       return docs; // non-fatal
     }
@@ -224,12 +241,14 @@ export class DocStore {
     }
   }
 
-  private listImported(): Doc[] {
+  private listImported(cache?: StatCache<Doc>): Doc[] {
     const docs: Doc[] = [];
     for (const e of readDirSorted(this.importsDir())) {
       if (!e.isDirectory()) continue;
       try {
-        docs.push(...this.walkDocs(join(this.importsDir(), e.name, "docs"), "", true, e.name));
+        docs.push(
+          ...this.walkDocs(join(this.importsDir(), e.name, "docs"), "", true, e.name, cache),
+        );
       } catch {
         // skip an unreadable import
       }
@@ -237,14 +256,20 @@ export class DocStore {
     return docs;
   }
 
-  private walkDocs(dir: string, relBase: string, imported: boolean, importSource: string): Doc[] {
+  private walkDocs(
+    dir: string,
+    relBase: string,
+    imported: boolean,
+    importSource: string,
+    cache?: StatCache<Doc>,
+  ): Doc[] {
     const docs: Doc[] = [];
     for (const e of readDirSorted(dir)) {
       const full = join(dir, e.name);
       if (e.isDirectory()) {
         const sub = relBase === "" ? e.name : `${relBase}/${e.name}`;
         try {
-          docs.push(...this.walkDocs(full, sub, imported, importSource));
+          docs.push(...this.walkDocs(full, sub, imported, importSource, cache));
         } catch {
           // skip
         }
@@ -254,7 +279,8 @@ export class DocStore {
       const base = e.name.slice(0, -3);
       const rel = relBase === "" ? base : `${relBase}/${base}`;
       try {
-        docs.push(this.parseFile(full, rel, relBase, imported, importSource));
+        const parse = () => this.parseFile(full, rel, relBase, imported, importSource);
+        docs.push(cache ? cache.read(full, parse) : parse());
       } catch {
         // skip
       }
