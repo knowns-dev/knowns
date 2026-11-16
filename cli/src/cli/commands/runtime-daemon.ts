@@ -9,17 +9,31 @@ const run = defineCommand({
   async run() {
     (await import("../../runtime/priority.ts")).lowerProcessPriority();
     const { runDaemon } = await import("../../runtime/queue.ts");
-    const { executeRuntimeJob, reloadSemanticRuntime, runtimeIndexEnqueuer, runtimeSeams } =
-      await import("../../runtime/executor.ts");
+    const {
+      executeRuntimeJob,
+      persistSemanticRuntimeStatus,
+      reloadSemanticRuntime,
+      runtimeIndexEnqueuer,
+      runtimeSeams,
+    } = await import("../../runtime/executor.ts");
+    // Reconcile and indexing run on worker threads so they never stall the sessions this daemon
+    // hosts (spec D4). A test that installs its own watcher seam keeps the inline path.
+    const { RunnerWorker, runnerWorkersEnabled } = await import("../../runtime/runner-worker.ts");
+    const useWorkers = runnerWorkersEnabled() && runtimeSeams.watcherFactory === undefined;
+    const jobWorker = useWorkers ? new RunnerWorker() : undefined;
+    const watchWorker = useWorkers ? new RunnerWorker() : undefined;
     // startRuntimeWatcher: the project knowledge watcher for watch-enabled client leases.
-    runtimeSeams.watcherFactory ??= async (signal, storeRoot) => {
-      const { startRuntimeWatcher } = await import("../../domain/reconcile/watcher.ts");
-      await startRuntimeWatcher(storeRoot, {
-        signal,
-        index: runtimeIndexEnqueuer(storeRoot),
-        onError: (err) => process.stderr.write(`[runtime] watcher: ${(err as Error).message}\n`),
-      });
-    };
+    runtimeSeams.watcherFactory ??= watchWorker
+      ? (signal, storeRoot) => watchWorker.watch(signal, storeRoot)
+      : async (signal, storeRoot) => {
+          const { startRuntimeWatcher } = await import("../../domain/reconcile/watcher.ts");
+          await startRuntimeWatcher(storeRoot, {
+            signal,
+            index: runtimeIndexEnqueuer(storeRoot),
+            onError: (err) =>
+              process.stderr.write(`[runtime] watcher: ${(err as Error).message}\n`),
+          });
+        };
     const ac = new AbortController();
     const stop = () => ac.abort();
     process.on("SIGINT", stop);
@@ -46,13 +60,27 @@ const run = defineCommand({
       await host.stop("shutdown");
     });
     await runDaemon(ac.signal, {
-      executor: executeRuntimeJob,
+      executor: jobWorker
+        ? async (storeRoot, job) => {
+            try {
+              await jobWorker.runJob(storeRoot, job);
+            } finally {
+              // The status file is the main thread's: the worker only did the job.
+              try {
+                persistSemanticRuntimeStatus();
+              } catch {
+                // best effort
+              }
+            }
+          }
+        : executeRuntimeJob,
       reloadHandler: (reload) => reloadSemanticRuntime(reload),
       ...(runtimeSeams.watcherFactory ? { watcherFactory: runtimeSeams.watcherFactory } : {}),
       services,
       busy: () => sessionCount() > 0,
       ...(runtimeSeams.keepAlive ? { keepAlive: runtimeSeams.keepAlive } : {}),
     });
+    await Promise.all([jobWorker?.stop(), watchWorker?.stop()]);
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
   },

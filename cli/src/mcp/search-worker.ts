@@ -3,13 +3,14 @@
 // The worker keeps one McpState per project, builds its own storage and index cache, and answers
 // one request at a time.
 import { parentPort, workerData } from "node:worker_threads";
+import { applyParentEnv } from "../util/worker.ts";
 import { McpLogger } from "./log.ts";
 import type { SearchJob, SearchReply } from "./search-pool.ts";
 import { McpState } from "./state.ts";
 
 // Bun starts a worker with the environment the process began with, not the parent's current one
 // (HOME and the runtime root are often set after start), so the parent sends its own.
-if (workerData?.env) Object.assign(process.env, workerData.env);
+applyParentEnv(workerData);
 
 const states = new Map<string, Promise<McpState>>();
 
