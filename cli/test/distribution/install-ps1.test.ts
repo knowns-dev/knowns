@@ -3,7 +3,7 @@
 // the persistent user PATH through the .NET environment API: harmless on a CI runner, not on a
 // developer machine. Elsewhere only the static checks run.
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { INSTALL_PS1, makeSandbox, run, sha256Hex, tempDir } from "./install-harness.ts";
 
@@ -121,4 +121,68 @@ describe.skipIf(!runExecuted)("install.ps1 (executed)", () => {
       server.stop(true);
     }
   }, 120_000);
+
+  // The proxy goes in with knowns, a release without one removes the old proxy, and a leftover .old
+  // that cannot be removed never fails the install.
+  test("installs the proxy beside knowns and removes it again for a release without one", async () => {
+    const profile = makeSandbox().home;
+    const mirror = tempDir("mirror");
+    const arch = process.arch === "arm64" ? "arm64" : "x64";
+    const asset = `knowns-win-${arch}.tar.gz`;
+    const release = (tag: string, label: string, withProxy: boolean) => {
+      const stage = tempDir("stage");
+      writeFileSync(join(stage, "knowns.exe"), `K-${label}`);
+      const members = ["knowns.exe"];
+      if (withProxy) {
+        writeFileSync(join(stage, "knowns-proxy.exe"), `P-${label}`);
+        members.push("knowns-proxy.exe");
+      }
+      mkdirSync(join(mirror, tag), { recursive: true });
+      const archive = join(mirror, tag, asset);
+      expect(run(["tar", "-czf", archive, "-C", stage, ...members]).code).toBe(0);
+      writeFileSync(`${archive}.sha256`, `${sha256Hex(archive)}  ${asset}\n`);
+    };
+    release("v1.0.0", "1", true);
+    release("v0.9.0", "0", false);
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const file = Bun.file(join(mirror, decodeURIComponent(new URL(req.url).pathname)));
+        return file.size > 0 ? new Response(file) : new Response("not found", { status: 404 });
+      },
+    });
+    const install = async (version: string) => {
+      const child = Bun.spawn(
+        [pwsh as string, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", INSTALL_PS1],
+        {
+          env: {
+            ...(process.env as Record<string, string>),
+            USERPROFILE: profile,
+            KNOWNS_VERSION: version,
+            KNOWNS_BASE_URL: `http://127.0.0.1:${server.port}`,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const [out, err, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+      return { out: out + err, code };
+    };
+    try {
+      const bin = join(profile, ".knowns", "bin");
+      expect((await install("1.0.0")).code).toBe(0);
+      expect(readFileSync(join(bin, "knowns-proxy.exe"), "utf8")).toBe("P-1");
+      expect(readFileSync(join(bin, "knowns.exe"), "utf8")).toBe("K-1");
+
+      expect((await install("0.9.0")).code).toBe(0);
+      expect(readFileSync(join(bin, "knowns.exe"), "utf8")).toBe("K-0");
+      expect(existsSync(join(bin, "knowns-proxy.exe"))).toBe(false);
+    } finally {
+      server.stop(true);
+    }
+  }, 180_000);
 });

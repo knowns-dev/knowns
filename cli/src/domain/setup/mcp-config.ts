@@ -246,7 +246,7 @@ export function syncMcpConfigs(
       "~/.gemini/antigravity/mcp_config.json",
       "mcpServers",
       (k) => {
-        if (!isKnownsWritten(k.command, k.args)) return false;
+        if (!isKnownsWritten(k.command, k.args, { allowProject: true })) return false;
         if (k.command === cmd && sameStrings(k.args, expected)) return false;
         k.command = cmd;
         k.args = expected;
@@ -264,9 +264,10 @@ export function syncMcpConfigs(
       "mcp",
       (k) => {
         const existing = k.command;
-        if (Array.isArray(existing) && !isKnownsWritten(existing[0], existing.slice(1)))
+        // Only an array command can be Knowns's; a string or missing one is the user's own.
+        if (!Array.isArray(existing) || !isKnownsWritten(existing[0], existing.slice(1)))
           return false;
-        if (Array.isArray(existing) && existing.length > 0 && existing[0] === cmd) return false;
+        if (existing.length > 0 && existing[0] === cmd) return false;
         k.command = [cmd, ...args];
         return true;
       },

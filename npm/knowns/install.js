@@ -413,7 +413,7 @@ function sweepStrayTmp(packageRoot) {
     names = fs.readdirSync(dir);
   } catch {}
   for (const name of names) {
-    if (/^knowns\.js\.\d+\.tmp$/.test(name)) {
+    if (/^knowns(?:-proxy)?\.js\.\d+\.tmp$/.test(name)) {
       try {
         fs.rmSync(path.join(dir, name), { force: true });
         n++;
@@ -449,7 +449,7 @@ function pruneNpmRuntimes(cacheRoot, keepDir) {
   return removed;
 }
 
-const WINDOWS_SHIM_NAMES = ["knowns", "kn"];
+const WINDOWS_SHIM_NAMES = ["knowns", "kn", "knowns-proxy"];
 
 // The exact text npm (cmd-shim 7) writes for a bin that runs a Node script. Only a file that is
 // this text, with the script path and nothing else varying, is ours to rewrite: a user's own
@@ -526,7 +526,7 @@ const NPM_SHIM_TEMPLATES = {
   ],
 };
 
-const SHIM_TARGET = /^(?:node_modules[\\/]knowns|\.\.[\\/]knowns)[\\/]bin[\\/]knowns\.js$/;
+const SHIM_TARGET = /^(?:node_modules[\\/]knowns|\.\.[\\/]knowns)[\\/]bin[\\/](?:knowns|knowns-proxy)\.js$/;
 
 /** Where knowns.js is (relative to the shim, with /) when file is exactly npm's shim for knowns, else null. */
 function npmShimTarget(file, ext) {
@@ -685,7 +685,7 @@ function useNativeBinaryOnWindows(packageRoot, platformPackage, options = {}) {
   }
 
   // Only now stage the 100 MB runtime: nothing to point at without a shim to rewrite.
-  const stage = options.stage || require("./bin/knowns.js").stageWindowsBinary;
+  const stage = options.stage || require("./bin/runtime.js").stageWindowsBinary;
   const exe = stage(source, options.stageOptions);
   if (!(options.verify || nativeBinaryRuns)(exe)) {
     return 0;
@@ -698,7 +698,10 @@ function useNativeBinaryOnWindows(packageRoot, platformPackage, options = {}) {
         .replace(/\\/g, "/");
       fs.writeFileSync(
         file,
-        windowsShimContents(ext, exe, { fallbackRel, localAppData: options.localAppData }),
+        windowsShimContents(ext, exe, {
+          fallbackRel,
+          localAppData: options.localAppData,
+        }),
       );
       rewritten++;
     } catch {}

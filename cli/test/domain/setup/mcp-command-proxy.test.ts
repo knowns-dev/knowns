@@ -59,12 +59,56 @@ describe("mcpCommand with the native proxy", () => {
     expect(mcpCommand({ PATH: bin, KNOWNS_MCP_PROXY: "0" }).command).toBe("knowns");
   });
 
-  test("isKnownsWritten recognizes Knowns entries and not the user's own", () => {
-    expect(isKnownsWritten("knowns", ["mcp", "--stdio"])).toBe(true);
-    expect(isKnownsWritten("/x/knowns-proxy", ["mcp", "--stdio", "--project", "/p"])).toBe(true);
-    expect(isKnownsWritten("npx", ["-y", "knowns", "mcp"])).toBe(true);
+  test("isKnownsWritten accepts only exactly what Knowns writes", () => {
+    const mcp = ["mcp", "--stdio"];
+    // written by Knowns
+    expect(isKnownsWritten("knowns", mcp)).toBe(true);
+    expect(isKnownsWritten("knowns-proxy", mcp)).toBe(true);
+    expect(isKnownsWritten("/x/bin/knowns-proxy", mcp)).toBe(true);
+    expect(isKnownsWritten("C:\\kn\\knowns-proxy.exe", mcp)).toBe(true);
+    expect(isKnownsWritten("npx", ["-y", "knowns", "mcp", "--stdio"])).toBe(true);
+    // theirs: extra args, a custom absolute binary (the dogfood build), other servers
+    expect(isKnownsWritten("knowns", [...mcp, "--debug"])).toBe(false);
+    expect(isKnownsWritten("knowns-proxy", ["mcp", "--stdio", "--project", "/p"])).toBe(false);
+    expect(isKnownsWritten("/home/me/.knowns-ts/bin/knowns", mcp)).toBe(false);
+    expect(isKnownsWritten("npx", ["-y", "knowns", "mcp"])).toBe(true); // older releases
+    expect(isKnownsWritten("npx", ["-y", "knowns", "serve"])).toBe(false);
+    expect(isKnownsWritten("npx", ["-y", "knowns", "mcp", "--stdio", "--x"])).toBe(false);
     expect(isKnownsWritten("node", ["my-server.js"])).toBe(false);
     expect(isKnownsWritten("knowns", ["something-else"])).toBe(false);
+    // Antigravity entries carry the project root; only there is that accepted
+    const withProject = [...mcp, "--project", "/p"];
+    expect(isKnownsWritten("knowns", withProject, { allowProject: true })).toBe(true);
+    expect(isKnownsWritten("knowns", [...withProject, "--x"], { allowProject: true })).toBe(false);
+  });
+
+  test("sync leaves a custom binary, extra args and a non-array opencode command alone", () => {
+    const bin = tmp();
+    exe(bin, "knowns");
+    exe(bin, "knowns-proxy");
+    const env = { PATH: `${bin}${delimiter}`, HOME: tmp() };
+    const cases: Array<[string, unknown]> = [
+      ["custom", { command: "/home/me/.knowns-ts/bin/knowns", args: ["mcp", "--stdio"] }],
+      ["extra", { command: "knowns", args: ["mcp", "--stdio", "--debug"] }],
+    ];
+    for (const [name, entry] of cases) {
+      const dir = tmp();
+      mkdirSync(join(dir, ".knowns"));
+      writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { knowns: entry } }));
+      writeFileSync(
+        join(dir, "opencode.json"),
+        JSON.stringify({ mcp: { knowns: { type: "local", command: "knowns mcp --stdio" } } }),
+      );
+      syncMcpConfigs(dir, env, () => {});
+      expect(
+        JSON.parse(readFileSync(join(dir, ".mcp.json"), "utf8")).mcpServers.knowns,
+        name,
+      ).toEqual(entry);
+      expect(
+        JSON.parse(readFileSync(join(dir, "opencode.json"), "utf8")).mcp.knowns.command,
+        name,
+      ).toBe("knowns mcp --stdio");
+    }
   });
 
   test("sync moves a Knowns-written entry to the proxy and leaves a user's entry alone", () => {
@@ -110,5 +154,42 @@ describe("findMissingProxyEntries", () => {
     ]);
     exe(bin, "knowns-proxy");
     expect(findMissingProxyEntries(root, { PATH: bin })).toEqual([]);
+  });
+  test("also covers Codex TOML, Antigravity and the user-level Claude config", async () => {
+    const { findMissingProxyEntries, codexKnownsCommand } = await import(
+      "../../../src/domain/setup/mcp-audit.ts"
+    );
+    const root = tmp();
+    const home = tmp();
+    const bin = tmp();
+    mkdirSync(join(root, ".codex"));
+    writeFileSync(
+      join(root, ".codex", "config.toml"),
+      '[mcp_servers.other]\ncommand = "node"\n\n[mcp_servers.knowns]\ncommand = "knowns-proxy"\nargs = ["mcp", "--stdio"]\n',
+    );
+    mkdirSync(join(home, ".gemini", "antigravity"), { recursive: true });
+    const entry = { command: "knowns-proxy", args: ["mcp", "--stdio", "--project", root] };
+    writeFileSync(
+      join(home, ".gemini", "antigravity", "mcp_config.json"),
+      JSON.stringify({ mcpServers: { knowns: entry } }),
+    );
+    writeFileSync(
+      join(home, ".claude.json"),
+      JSON.stringify({
+        mcpServers: { knowns: { command: "knowns-proxy", args: ["mcp", "--stdio"] } },
+        projects: { [root]: { mcpServers: { knowns: { command: "knowns-proxy", args: [] } } } },
+      }),
+    );
+    const env = { PATH: bin, HOME: home, USERPROFILE: home };
+    expect(codexKnownsCommand('[mcp_servers.knowns]\ncommand = "x"\n')).toBe("x");
+    expect(codexKnownsCommand('[mcp_servers.other]\ncommand = "x"\n')).toBeUndefined();
+    expect(findMissingProxyEntries(root, env).map((e) => e.file)).toEqual([
+      ".codex/config.toml",
+      "~/.gemini/antigravity/mcp_config.json",
+      "~/.claude.json",
+      "~/.claude.json",
+    ]);
+    exe(bin, "knowns-proxy");
+    expect(findMissingProxyEntries(root, env)).toEqual([]);
   });
 });

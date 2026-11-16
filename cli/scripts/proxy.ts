@@ -1,13 +1,15 @@
 // Builds the native MCP proxy (proxy/, a separate Go module) for the release targets. The proxy
 // ships next to knowns in every package as knowns-proxy[.exe] (spec mcp-thin-proxy D8, FR-11).
 // CGO is off, so every target cross-compiles from any host; only the Windows resource (icon and
-// version info) needs a build-time tool, go-winres, which is never a dependency of the proxy.
+// version info) needs a build-time tool, go-winres, declared as a go.mod tool dependency.
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { platformOf, windowsFileVersion } from "./lib.ts";
 
 export const PROXY_DIR = resolve(import.meta.dir, "..", "..", "proxy");
-export const GO_WINRES = "github.com/tc-hib/go-winres@v0.3.3";
+// Pinned in proxy/go.mod as a `tool` dependency (with go.sum hashes), so `go tool go-winres` runs the
+// reviewed version; it is never linked into the proxy.
+export const GO_WINRES = "go-winres";
 const ICON = join(import.meta.dir, "assets", "knowns.ico");
 
 export function proxyExeName(target: string): string {
@@ -42,7 +44,7 @@ export function generateWindowsResource(version: string, dir: string = PROXY_DIR
   run(
     [
       "go",
-      "run",
+      "tool",
       GO_WINRES,
       "simply",
       "--arch",

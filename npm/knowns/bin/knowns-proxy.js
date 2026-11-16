@@ -6,7 +6,7 @@
 const { execFileSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
-const { getBinaryPath, stageWindowsBinary } = require("./knowns.js");
+const { getBinaryPath, stageWindowsBinary } = require("./runtime.js");
 
 function main() {
   const binary = stageWindowsBinary(getBinaryPath());

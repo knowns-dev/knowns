@@ -9,8 +9,10 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  copyFileSync,
   createWriteStream,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -278,6 +280,168 @@ function findFile(root: string, match: (name: string) => boolean): string {
   return found;
 }
 
+/** One binary to install: src is the new file, dest where it goes. An optional one only warns. */
+export interface BinarySwap {
+  src: string;
+  dest: string;
+  optional?: boolean;
+}
+
+export interface SwapSeams {
+  rename?: (from: string, to: string) => void;
+  remove?: (path: string) => void;
+  warn?: (message: string) => void;
+}
+
+/**
+ * Install several binaries as one unit (knowns and its proxy). Every new file is first written
+ * next to its destination, then swapped in; if a required swap fails, the ones already done are
+ * put back, so an update never leaves a new knowns beside an old proxy or no knowns at all. A
+ * failure on an optional binary (the proxy) is only a warning: it keeps its old file, which still
+ * works because a proxy that finds no daemon of its own version falls back to in-process.
+ * Windows cannot overwrite or delete a running exe but can rename it, so the old file is moved
+ * aside; a previous .old that is still locked (an older process still runs from it) is not an
+ * error, the new one just gets a unique name and `sweepOldBinaries` removes them later.
+ */
+export function replaceBinaries(items: BinarySwap[], goos: string, seams: SwapSeams = {}): void {
+  const rename = seams.rename ?? renameSync;
+  const remove = seams.remove ?? ((p: string) => rmSync(p, { force: true }));
+  const warn = seams.warn ?? (() => {});
+  const staged: Array<BinarySwap & { tmp: string }> = [];
+  const dropTmp = (): void => {
+    for (const it of staged) rmSync(it.tmp, { force: true });
+  };
+  for (const it of items) {
+    const tmp = `${it.dest}.tmp`;
+    try {
+      mkdirSync(dirname(it.dest), { recursive: true, mode: 0o755 });
+      writeFileSync(tmp, readFileSync(it.src), { mode: 0o755 });
+      staged.push({ ...it, tmp });
+    } catch (e) {
+      rmSync(tmp, { force: true });
+      if (!it.optional) {
+        dropTmp();
+        throw e;
+      }
+      warn(`could not stage ${basename(it.dest)}: ${(e as Error).message}`);
+    }
+  }
+
+  const undo: Array<() => void> = [];
+  const cleanup: string[] = [];
+  try {
+    for (const it of staged) {
+      try {
+        const aside = existsSync(it.dest) ? asideFor(it.dest, goos, remove) : undefined;
+        if (aside !== undefined) {
+          if (goos === "windows") rename(it.dest, aside);
+          else {
+            try {
+              linkSync(it.dest, aside);
+            } catch {
+              copyFileSync(it.dest, aside);
+            }
+          }
+        }
+        try {
+          rename(it.tmp, it.dest);
+        } catch (e) {
+          // The rename is atomic off Windows, so only Windows has lost its destination.
+          if (aside !== undefined && goos === "windows") {
+            try {
+              rename(aside, it.dest);
+            } catch {
+              // the error below still reports the failure; the aside file keeps the old binary
+            }
+          } else if (aside !== undefined) {
+            remove(aside);
+          }
+          throw e;
+        }
+        if (aside !== undefined) {
+          if (goos !== "windows") cleanup.push(aside);
+          undo.push(() => {
+            if (goos === "windows") remove(it.dest);
+            rename(aside, it.dest);
+          });
+        } else {
+          undo.push(() => remove(it.dest));
+        }
+      } catch (e) {
+        if (!it.optional) throw e;
+        warn(`could not replace ${basename(it.dest)}: ${(e as Error).message}`);
+      }
+    }
+  } catch (e) {
+    for (const u of undo.reverse()) {
+      try {
+        u();
+      } catch {
+        // best effort: the aside files keep the previous binaries
+      }
+    }
+    dropTmp();
+    throw e;
+  }
+  dropTmp();
+  for (const p of cleanup) {
+    try {
+      remove(p);
+    } catch {}
+  }
+}
+
+/** Where the old file goes: dest.old, or a unique name when a previous .old cannot be removed. */
+function asideFor(dest: string, goos: string, remove: (p: string) => void): string {
+  const plain = goos === "windows" ? `${dest}.old` : `${dest}.rollback`;
+  try {
+    remove(plain);
+    return plain;
+  } catch {
+    return `${dest}.old.${Date.now()}`;
+  }
+}
+
+/**
+ * A release without a proxy must not leave the previous release's proxy beside the new knowns: it
+ * would keep launching and fall back to in-process on every session. On Windows a running proxy
+ * cannot be deleted but can be renamed, and the .old is swept by the next update.
+ */
+export function removeStaleProxy(dir: string, goos: string): boolean {
+  const path = join(dir, goos === "windows" ? "knowns-proxy.exe" : "knowns-proxy");
+  if (!existsSync(path)) return false;
+  try {
+    rmSync(path, { force: true });
+    return true;
+  } catch {
+    try {
+      renameSync(path, `${path}.old.${Date.now()}`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/** Delete leftover dest.old / dest.old.<ts> files of a previous update; locked ones stay for later. */
+export function sweepOldBinaries(dir: string): number {
+  let n = 0;
+  let names: string[] = [];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  for (const name of names) {
+    if (!/^knowns(-proxy)?(\.exe)?\.(old(\.\d+)?|rollback)$/i.test(name)) continue;
+    try {
+      rmSync(join(dir, name), { force: true });
+      n++;
+    } catch {}
+  }
+  return n;
+}
+
 /** Exported, with a rename seam, for the Windows rollback test. */
 export function replaceBinary(
   src: string,
@@ -285,42 +449,7 @@ export function replaceBinary(
   goos: string,
   rename: (from: string, to: string) => void = renameSync,
 ): void {
-  mkdirSync(dirname(dest), { recursive: true, mode: 0o755 });
-  const data = readFileSync(src);
-  const tmp = `${dest}.tmp`;
-  try {
-    writeFileSync(tmp, data, { mode: 0o755 });
-  } catch (e) {
-    rmSync(tmp, { force: true });
-    throw e;
-  }
-  let movedAside = false;
-  if (goos === "windows") {
-    rmSync(`${dest}.old`, { force: true });
-    if (existsSync(dest)) {
-      try {
-        rename(dest, `${dest}.old`);
-        movedAside = true;
-      } catch (e) {
-        rmSync(tmp, { force: true });
-        throw e;
-      }
-    }
-  }
-  try {
-    rename(tmp, dest);
-  } catch (e) {
-    // Not in Go: a failed final rename on Windows left no knowns.exe at all. Put the old one back.
-    if (movedAside) {
-      try {
-        rename(`${dest}.old`, dest);
-      } catch {
-        // the error below still reports the failure; .old keeps the previous binary
-      }
-    }
-    rmSync(tmp, { force: true });
-    throw e;
-  }
+  replaceBinaries([{ src, dest }], goos, { rename });
 }
 
 /** The digest in a `<hex>  <file>` (or bare `<hex>`) checksum file, or undefined if malformed. */
@@ -398,13 +527,9 @@ async function downloadAndReplaceBinary(
     } catch {
       extracted = findFile(extractDir, (n) => n.startsWith("knowns-") && !isProxy(n));
     }
-    try {
-      replaceBinary(extracted, binaryPath, seams.goos());
-    } catch (e) {
-      throw new Error(`replace binary: ${(e as Error).message}`);
-    }
     // The proxy only finds a daemon of its own version, so a stale one next to the new knowns would
-    // fall back to in-process on every session. Install it the same way (temp copy, then rename).
+    // fall back to in-process on every session. It goes in as one unit with knowns (temp copy, then
+    // rename, rolled back together); a proxy that cannot be replaced is only a warning.
     const proxyName = seams.goos() === "windows" ? "knowns-proxy.exe" : "knowns-proxy";
     let proxySrc: string | undefined;
     try {
@@ -412,13 +537,22 @@ async function downloadAndReplaceBinary(
     } catch {
       proxySrc = undefined;
     }
+    const dir = dirname(binaryPath);
+    sweepOldBinaries(dir);
+    const items: BinarySwap[] = [];
+    // The proxy first: if knowns then fails, the proxy is put back with it.
     if (proxySrc !== undefined) {
-      try {
-        replaceBinary(proxySrc, join(dirname(binaryPath), proxyName), seams.goos());
-      } catch (e) {
-        throw new Error(`replace proxy: ${(e as Error).message}`);
-      }
+      items.push({ src: proxySrc, dest: join(dir, proxyName), optional: true });
     }
+    items.push({ src: extracted, dest: binaryPath });
+    try {
+      replaceBinaries(items, seams.goos(), {
+        warn: (m) => process.stderr.write(`warning: ${m}\n`),
+      });
+    } catch (e) {
+      throw new Error(`replace binary: ${(e as Error).message}`);
+    }
+    if (proxySrc === undefined) removeStaleProxy(dir, seams.goos());
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
   }
