@@ -39,6 +39,7 @@ type session struct {
 	projectParams   []byte
 
 	eof        bool
+	closeSent  bool // the close frame went out; the daemon closing next is the clean end
 	finished   bool
 	done       chan struct{}
 	exitCode   int
@@ -130,6 +131,7 @@ func (s *session) readStdin() {
 	// daemon finishes what it already received, answers, then closes; wait for that (30 s at most).
 	if s.cur != nil && s.cur.kind == "daemon" {
 		if s.cur.write([]byte(closeFrame)) == nil {
+			s.closeSent = true
 			time.AfterFunc(30*time.Second, func() { s.mu.Lock(); s.finishLocked(0); s.mu.Unlock() })
 			return
 		}
@@ -230,7 +232,9 @@ func (s *session) pump(b *backend) {
 	if s.cur != b || s.finished {
 		return
 	}
-	if s.eof && len(s.inflight) == 0 {
+	// After the close frame the daemon closing is the clean end. What it never answered (a request
+	// the engine rejects with an id-less error, for one) has no one left to be reported to.
+	if s.eof && (len(s.inflight) == 0 || s.closeSent) {
 		s.finishLocked(0)
 		return
 	}
