@@ -534,10 +534,16 @@ export function loadQueue(storeRoot: string): QueueState {
 // The daemon polls every registered project. A queue file that has not changed since the last
 // poll is not read or parsed again: one stat per project per tick. Callers must not mutate the
 // returned state.
-const queueScanCache = new Map<string, { sig: string; state: QueueState }>();
-const EMPTY_QUEUE: QueueState = { jobs: [], recent: [] };
+interface QueueScanEntry {
+  sig: string;
+  state: QueueState;
+  /** Jobs that are not dead letters, earliest due first (ties: earliest requested, file order). */
+  live: { job: Job; due: number }[];
+}
+const queueScanCache = new Map<string, QueueScanEntry>();
+const EMPTY_ENTRY: QueueScanEntry = { sig: "", state: { jobs: [], recent: [] }, live: [] };
 
-export function loadQueueCached(storeRoot: string): QueueState {
+function loadQueueEntry(storeRoot: string): QueueScanEntry {
   const path = queuePath(storeRoot);
   let sig: string;
   try {
@@ -545,14 +551,24 @@ export function loadQueueCached(storeRoot: string): QueueState {
     sig = `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
   } catch (err) {
     queueScanCache.delete(path);
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return EMPTY_QUEUE;
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return EMPTY_ENTRY;
     throw err;
   }
   const hit = queueScanCache.get(path);
-  if (hit && hit.sig === sig) return hit.state;
+  if (hit && hit.sig === sig) return hit;
   const state = loadQueue(storeRoot);
-  queueScanCache.set(path, { sig, state });
-  return state;
+  const live = state.jobs
+    .filter((j) => !j.deadLetter)
+    .map((job) => ({ job, due: parseMs(job.runAfter), req: parseMs(job.requestedAt) }))
+    .sort((a, b) => a.due - b.due || a.req - b.req)
+    .map(({ job, due }) => ({ job, due }));
+  const entry: QueueScanEntry = { sig, state, live };
+  queueScanCache.set(path, entry);
+  return entry;
+}
+
+export function loadQueueCached(storeRoot: string): QueueState {
+  return loadQueueEntry(storeRoot).state;
 }
 
 function stateJson(state: QueueState): unknown {
@@ -1837,6 +1853,7 @@ function statusKey(leases: Lease[], projects: string[], watchers: WatcherStatus[
 /** Status is rewritten when it changes, and otherwise at most this often. */
 const STATUS_REFRESH_MS = 30_000;
 const IDLE_POLL_MAX_MS = 5_000;
+const KEEP_ALIVE_REFRESH_MS = 2_000;
 /** Registered project roots that stay missing this long, and hold no jobs, are unregistered. */
 const MISSING_PROJECT_GRACE_MS = 30 * 24 * 3_600_000;
 const HOUSEKEEPING_INTERVAL_MS = 10 * 60_000;
@@ -1873,28 +1890,23 @@ export function scanQueues(
   let wakeAt: number | undefined;
   const parts: string[] = [];
   for (const projectRoot of projects) {
-    let queue: QueueState;
+    let entry: QueueScanEntry;
     try {
-      queue = loadQueueCached(projectRoot);
+      entry = loadQueueEntry(projectRoot);
     } catch {
       continue;
     }
-    let best: Job | undefined;
-    let live = 0;
-    for (const job of queue.jobs) {
-      if (job.deadLetter) continue;
-      live++;
-      const due = parseMs(job.runAfter);
-      if (due > now) {
-        if (wakeAt === undefined || due < wakeAt) wakeAt = due;
-        continue;
-      }
-      if (!best || jobIsBefore(job, best)) best = job;
-    }
+    const live = entry.live.length;
     if (live === 0) continue;
     pending += live;
-    parts.push(`${projectRoot}:${live}:${queue.updatedAt ?? ""}`);
-    if (!best) continue;
+    parts.push(`${projectRoot}:${live}:${entry.state.updatedAt ?? ""}`);
+    // Sorted by due time: the first job is the best candidate, and if it is not due yet nothing is.
+    const first = entry.live[0] as { job: Job; due: number };
+    if (first.due > now) {
+      if (wakeAt === undefined || first.due < wakeAt) wakeAt = first.due;
+      continue;
+    }
+    const best = first.job;
     const candidate = { storeRoot: projectRoot, job: best };
     const slot = projectRoot === avoid ? "fallback" : "chosen";
     const current = slot === "chosen" ? chosen : fallback;
@@ -2008,6 +2020,8 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
   let lastStatusKey = "";
   let lastStatusAt = 0;
   let nextHousekeeping = 0;
+  let keepAliveValue = false;
+  let keepAliveAt = 0;
   let missingRoots = new Set<string>();
   const wake = watchRuntimeDirs();
 
@@ -2123,7 +2137,13 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
         rmSync(stopFlagPath(), { force: true });
         return;
       }
-      const keepAlive = opts.keepAlive?.() === true;
+      // keepAlive probes the store registry from disk; it only decides when to exit, so a
+      // answer a few seconds old is as good, and a busy daemon does not ask on every tick.
+      if (opts.keepAlive && Date.now() - keepAliveAt >= KEEP_ALIVE_REFRESH_MS) {
+        keepAliveValue = opts.keepAlive() === true;
+        keepAliveAt = Date.now();
+      }
+      const keepAlive = keepAliveValue;
       if (
         leases.length === 0 &&
         pendingJobs === 0 &&

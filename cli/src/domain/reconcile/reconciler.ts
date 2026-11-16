@@ -1046,16 +1046,17 @@ export class FilesystemReconciler {
           }
           try {
             if (kind === "task") {
-              owner = parseTaskContent(data.toString("utf8")).id;
+              owner = parseTaskContent(data.toString("utf8")).id ?? null;
             } else {
               const rel = this.docRel(full);
-              owner = parseDocContent(
-                data.toString("utf8"),
-                rel.endsWith(".md") ? rel.slice(0, -3) : rel,
-                posix.dirname(rel),
-                false,
-                "",
-              ).id;
+              owner =
+                parseDocContent(
+                  data.toString("utf8"),
+                  rel.endsWith(".md") ? rel.slice(0, -3) : rel,
+                  posix.dirname(rel),
+                  false,
+                  "",
+                ).id ?? null;
             }
           } catch {
             // unparseable files own no identity
