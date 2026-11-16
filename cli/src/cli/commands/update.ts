@@ -410,6 +410,13 @@ async function runScriptManagedUpgrade(
 ): Promise<void> {
   let binaryPath = (meta.binaryPath ?? "").trim();
   if (binaryPath === "") binaryPath = resolveExecutable(seams.executable());
+  // An npm install hard-links the platform package's binary to the npm bin entry, so one inode is
+  // shared with the package manager's copy: writing it in place would corrupt both.
+  if (/[\\/]node_modules[\\/]/i.test(binaryPath)) {
+    throw new Error(
+      `${binaryPath} belongs to a package manager (node_modules); updating it in place would corrupt the package. Run: npm i -g knowns`,
+    );
+  }
   if (!isUserWritable(binaryPath)) {
     throw new Error(
       `script-managed install at ${binaryPath} is not writable by the current user; reinstall to ~/.knowns/bin or set KNOWNS_INSTALL_DIR to a user-writable path`,
