@@ -1,9 +1,14 @@
 package main
 
-import "bytes"
+import (
+	"bytes"
+	"encoding/json"
+	"strconv"
+)
 
 // reqInfo is what the proxy remembers about a request that has not been answered yet.
 type reqInfo struct {
+	rawID     string
 	line      []byte // the original line, including the trailing newline
 	method    string
 	params    []byte
@@ -53,4 +58,23 @@ func classify(method string, params []byte) (readOnly, isProject bool) {
 		return readActions[action], false
 	}
 	return false, false
+}
+
+// idKey is the identity of a JSON-RPC id: strings and numbers by parsed value, so `1`, `1.0` and
+// `1e0` match each other but never the string "1".
+func idKey(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	if raw[0] == '"' {
+		var s string
+		if json.Unmarshal(raw, &s) == nil {
+			return "s:" + s
+		}
+		return "s:" + string(raw)
+	}
+	if f, err := strconv.ParseFloat(string(raw), 64); err == nil {
+		return "n:" + strconv.FormatFloat(f, 'g', -1, 64)
+	}
+	return "r:" + string(raw)
 }

@@ -131,7 +131,7 @@ func (s *session) handleIn(line []byte) {
 	}
 	f, _ := topLevel(line, "id", "method", "params")
 	method := unquote(f["method"])
-	id := string(f["id"])
+	id := idKey(f["id"])
 	s.maybeSwitchBack()
 	switch method {
 	case "initialize":
@@ -143,7 +143,7 @@ func (s *session) handleIn(line []byte) {
 	}
 	if id != "" && method != "" {
 		ro, isProj := classify(method, f["params"])
-		s.inflight[id] = &reqInfo{line: line, method: method, params: append([]byte(nil), f["params"]...), readOnly: ro, isProject: isProj}
+		s.inflight[id] = &reqInfo{rawID: string(f["id"]), line: line, method: method, params: append([]byte(nil), f["params"]...), readOnly: ro, isProject: isProj}
 		s.order = append(s.order, id)
 	}
 	if s.cur == nil {
@@ -192,7 +192,7 @@ func (s *session) pump(b *backend) {
 func (s *session) handleOut(line []byte) {
 	f, ok := topLevel(line, "id", "method", "result", "error")
 	if ok && len(f["id"]) > 0 && len(f["method"]) == 0 {
-		key := string(f["id"])
+		key := idKey(f["id"])
 		if info, found := s.inflight[key]; found {
 			delete(s.inflight, key)
 			s.removeOrder(key)
@@ -251,7 +251,7 @@ func (s *session) dropLocked(b *backend, code, reason string) {
 	}
 	if s.cur == nil {
 		for _, key := range s.order {
-			s.emit(s.errorResponse(key))
+			s.emit(s.errorResponse(s.inflight[key].rawID))
 		}
 		s.inflight = map[string]*reqInfo{}
 		s.order = nil
@@ -298,7 +298,7 @@ func (s *session) replay(b *backend) bool {
 			}
 			keep = append(keep, key)
 		} else {
-			s.emit(s.errorResponse(key))
+			s.emit(s.errorResponse(s.inflight[key].rawID))
 			delete(s.inflight, key)
 		}
 	}
@@ -320,7 +320,7 @@ func (s *session) call(b *backend, id, method string, params []byte) bool {
 				return false
 			}
 			f, _ := topLevel(line, "id", "method", "error")
-			if string(f["id"]) == id && len(f["method"]) == 0 {
+			if idKey(f["id"]) == idKey([]byte(id)) && len(f["method"]) == 0 {
 				return len(f["error"]) == 0
 			}
 		case <-timeout:

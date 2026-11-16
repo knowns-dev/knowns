@@ -468,3 +468,35 @@ func TestTopLevelScanner(t *testing.T) {
 		t.Fatalf("%v %q", ok, f)
 	}
 }
+
+func TestIDsMatchByParsedValue(t *testing.T) {
+	if idKey([]byte("1")) != idKey([]byte("1.0")) || idKey([]byte("1")) != idKey([]byte("1e0")) {
+		t.Fatal("numeric ids must match by value")
+	}
+	if idKey([]byte("1")) == idKey([]byte(`"1"`)) {
+		t.Fatal("a number never matches the string with the same digits")
+	}
+	if idKey([]byte(`"ab"`)) != idKey([]byte(`"ab"`)) {
+		t.Fatal("string escapes must match by value")
+	}
+	// end to end: the daemon echoes 1 for a request sent with 1.0, and the call still clears
+	e := newEnv(t)
+	e.startDaemon(func(c net.Conn, br *bufio.Reader) {
+		defer c.Close()
+		for {
+			if _, err := br.ReadBytes('\n'); err != nil {
+				return
+			}
+			c.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}` + "\n"))
+		}
+	})
+	h := start(t, "")
+	h.send(`{"jsonrpc":"2.0","id":1.0,"method":"tools/list"}`)
+	h.recv(t)
+	h.in.Close()
+	select {
+	case <-h.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the in-flight call was never cleared, so the proxy waits out its 30 s drain")
+	}
+}
