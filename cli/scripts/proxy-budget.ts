@@ -192,7 +192,51 @@ const p95 = (xs: number[]): number =>
   [...xs].sort((a, b) => a - b)[Math.max(0, Math.ceil(xs.length * 0.95) - 1)] ?? 0;
 
 // ---- 1. p95 against in-process -----------------------------------------------------------------
+/** Jobs still queued for any project of the sandbox runtime root (the seed's index work). */
+function queuedJobs(): number {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const dir = join(rt, "queues");
+  let n = 0;
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      try {
+        const q = JSON.parse(readFileSync(join(dir, f), "utf8")) as { jobs?: unknown[] };
+        n += (q.jobs ?? []).length;
+      } catch {
+        // a file being rewritten: count it next poll
+      }
+    }
+  } catch {
+    // no queue directory yet
+  }
+  return n;
+}
+
+// BUDGET_WAIT_QUEUE=1: wait until the daemon has drained the seed's queue before measuring, and
+// report the drain time on its own. It tells a transient backlog from a steady-state stall.
+async function drainBacklog() {
+  if (process.env.BUDGET_WAIT_QUEUE !== "1") return;
+  const probe = proxySession();
+  await probe.ready(); // starts the daemon
+  const t0 = Date.now();
+  let quietSince = 0;
+  while (Date.now() - t0 < 120_000) {
+    if (queuedJobs() === 0) {
+      quietSince ||= Date.now();
+      if (Date.now() - quietSince > 2000) break;
+    } else quietSince = 0;
+    await Bun.sleep(250);
+  }
+  const sec = (Date.now() - t0 - (quietSince ? 2000 : 0)) / 1000;
+  report.backlogDrainSec = sec;
+  console.log(
+    `     queue drained ${sec.toFixed(1)} s after the daemon started (${queuedJobs()} jobs left)`,
+  );
+  await probe.close();
+}
+
 async function latency() {
+  await drainBacklog();
   const rows: Record<string, { direct: number; proxy: number }> = {};
   const d = directSession();
   const p = proxySession();
