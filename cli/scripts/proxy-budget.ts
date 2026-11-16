@@ -5,7 +5,15 @@
 //      CPU, against the limits in proxy-budget.config.json
 //   3. after every session closes: no knowns process, descriptor, socket or pipe remains
 // Usage: bun scripts/proxy-budget.ts [--sessions N] [--ui | --ui-inproc] [--dir dist/<platform>] [--json out.json]
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -296,7 +304,49 @@ async function budget() {
   await Bun.sleep(2000);
   const c0 = sample(all);
   const w0 = performance.now();
-  await Bun.sleep(Number(process.env.BUDGET_IDLE_SECONDS ?? cfg.idleSeconds) * 1000);
+  // Who writes while idle: every runtime and home file's mtime is polled; a file that keeps
+  // changing is a write on an idle path (reported, not asserted).
+  const writes = new Map<string, number>();
+  const seenAt = new Map<string, number>();
+  const census = () => {
+    const walk = (dir: string, depth = 0) => {
+      let names: string[] = [];
+      try {
+        names = readdirSync(dir);
+      } catch {
+        return;
+      }
+      for (const n of names) {
+        const p = join(dir, n);
+        try {
+          const st = statSync(p);
+          if (st.isDirectory()) {
+            if (depth < 4 && n !== "lsp-servers" && n !== "node_modules") walk(p, depth + 1);
+          } else {
+            const prev = seenAt.get(p);
+            if (prev !== undefined && prev !== st.mtimeMs) writes.set(p, (writes.get(p) ?? 0) + 1);
+            seenAt.set(p, st.mtimeMs);
+          }
+        } catch {}
+      }
+    };
+    walk(rt);
+    walk(join(home, ".knowns"));
+    walk(join(proj, ".knowns"));
+  };
+  census();
+  const idleMs = Number(process.env.BUDGET_IDLE_SECONDS ?? cfg.idleSeconds) * 1000;
+  for (const end = Date.now() + idleMs; Date.now() < end; ) {
+    await Bun.sleep(500);
+    census();
+  }
+  for (const [p, n] of [...writes].sort((a, b) => b[1] - a[1]).slice(0, 8))
+    console.log(
+      `     idle write: ${p.replace(base, "<sandbox>")} changed ${n}x in ${idleMs / 1000} s`,
+    );
+  report.idleWrites = Object.fromEntries(
+    [...writes].map(([p, n]) => [p.replace(base, "<sandbox>"), n]),
+  );
   const c1 = sample(all);
   const wall = (performance.now() - w0) / 1000;
   const cpuPct = (pid: number) => {
