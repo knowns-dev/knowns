@@ -4,7 +4,7 @@
 //   2. N proxy sessions (and optionally the UI) under load, then idle: working set per process and
 //      CPU, against the limits in proxy-budget.config.json
 //   3. after every session closes: no knowns process, descriptor, socket or pipe remains
-// Usage: bun scripts/proxy-budget.ts [--sessions N] [--ui] [--dir dist/<platform>] [--json out.json]
+// Usage: bun scripts/proxy-budget.ts [--sessions N] [--ui | --ui-inproc] [--dir dist/<platform>] [--json out.json]
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -18,7 +18,7 @@ const isWin = process.platform === "win32";
 const hosted = process.env.CI === "1" || process.env.CI === "true";
 const limits = { ...cfg.limits, ...(hosted ? cfg.hosted : {}) };
 const N = Number(val("sessions", String(cfg.sessions)));
-const withUi = flag("ui") >= 0;
+const withUi = flag("ui") >= 0 || flag("ui-inproc") >= 0;
 const platDir = val(
   "dir",
   `dist/${process.platform === "win32" ? "windows" : process.platform}-${process.arch === "arm64" ? "arm64" : "x64"}`,
@@ -242,7 +242,7 @@ async function budget() {
       ],
       {
         cwd: proj,
-        env: { ...env, KNOWNS_MCP_PROXY: "0" },
+        env: flag("ui-inproc") >= 0 ? { ...env, KNOWNS_MCP_PROXY: "0" } : env, // default: the daemon serves the UI (D6)
         stdout: "ignore",
         stderr: "ignore",
       },
