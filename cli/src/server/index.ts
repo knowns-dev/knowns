@@ -528,6 +528,17 @@ export class Server {
     if (this.opts.tunnel && !this.auth.hasPassword()) {
       throw new Error("tunnel requires password protection");
     }
+    this.begin(bun);
+    const onSignal = (): void => this.shutdownResolve?.();
+    process.on("SIGINT", onSignal);
+    process.on("SIGTERM", onSignal);
+    await this.shutdownPromise;
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+    await this.shutdown();
+  }
+
+  private begin(bun: ReturnType<typeof Bun.serve>): void {
     this.bun = bun;
     this.startTaskSweeper();
     const pf = this.portFile();
@@ -541,14 +552,17 @@ export class Server {
     }
     this.startServiceMonitor();
     if (this.opts.tunnel) void this.autoStartTunnel();
+  }
 
-    const onSignal = (): void => this.shutdownResolve?.();
-    process.on("SIGINT", onSignal);
-    process.on("SIGTERM", onSignal);
-    await this.shutdownPromise;
-    process.off("SIGINT", onSignal);
-    process.off("SIGTERM", onSignal);
-    await this.shutdown();
+  /**
+   * Serves on a listener the caller owns, inside a process that is not this server's (the runtime
+   * daemon, KN-B3NWK3): no signal handlers, and the returned promise settles after POST
+   * /api/shutdown or stop() has cleaned up, so a stopped listener frees its port at once.
+   */
+  attach(bun: ReturnType<typeof Bun.serve>): { done: Promise<void>; stop(): void } {
+    this.begin(bun);
+    const done = this.shutdownPromise.then(() => this.shutdown());
+    return { done, stop: () => this.shutdownResolve?.() };
   }
 
   private async autoStartTunnel(): Promise<void> {
@@ -566,16 +580,33 @@ export class Server {
 
   private async shutdown(): Promise<void> {
     this.stopped = true;
-    if (this.monitorTimer) clearTimeout(this.monitorTimer);
-    if (this.sweepTimer) clearInterval(this.sweepTimer);
-    this.sse.closeAll();
-    this.bun?.stop(true);
-    const pf = this.portFile();
-    if (pf) rmSync(pf, { force: true });
-    const status = this.tunnel.status();
-    if (status.running && status.startedByUs) await this.tunnel.stop().catch(() => undefined);
-    if (this.lspManager) await this.lspManager.stopAll(undefined).catch(() => undefined);
-    await this.releaseLspLease();
+    // Each step is independent: one failing (a file busy on Windows) must not skip the rest, above
+    // all the one that frees the port, or reject into a process that serves other sessions.
+    const step = async (fn: () => unknown): Promise<void> => {
+      try {
+        await fn();
+      } catch {
+        // best effort
+      }
+    };
+    await step(() => {
+      if (this.monitorTimer) clearTimeout(this.monitorTimer);
+      if (this.sweepTimer) clearInterval(this.sweepTimer);
+    });
+    await step(() => this.sse.closeAll());
+    await step(() => this.bun?.stop(true));
+    await step(() => {
+      const pf = this.portFile();
+      if (pf) rmSync(pf, { force: true });
+    });
+    await step(async () => {
+      const status = this.tunnel.status();
+      if (status.running && status.startedByUs) await this.tunnel.stop().catch(() => undefined);
+    });
+    await step(async () => {
+      if (this.lspManager) await this.lspManager.stopAll(undefined).catch(() => undefined);
+    });
+    await step(() => this.releaseLspLease());
   }
 
   /** Requests a graceful stop (tests and the init --open path). */

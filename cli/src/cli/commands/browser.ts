@@ -1,7 +1,7 @@
 // internal/cli/browser.go: `knowns browser`, the web UI server. The server module (and Bun.serve)
 // load only when the command runs.
-import { createConnection } from "node:net";
 import { join, resolve } from "node:path";
+import { bindBrowserPort, dial } from "../../server/listen.ts";
 import { VERSION } from "../../version.ts";
 import type { CommandContext } from "../core/define.ts";
 import { defineCommand } from "../core/define.ts";
@@ -57,52 +57,7 @@ async function resolveProject(
   }
 }
 
-function dial(host: string, port: number, timeoutMs: number): Promise<boolean> {
-  return new Promise((resolveDial) => {
-    const sock = createConnection({ host, port });
-    const done = (ok: boolean): void => {
-      sock.destroy();
-      resolveDial(ok);
-    };
-    sock.setTimeout(timeoutMs, () => done(false));
-    sock.once("connect", () => done(true));
-    sock.once("error", () => done(false));
-  });
-}
-
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-/** bindBrowserPort: skip ports something already answers on, then bind the first free one. */
-async function bindBrowserPort(
-  startPort: number,
-  attempts: number,
-  fetchImpl: (
-    req: Request,
-    srv: { requestIP(req: Request): { address: string } | null },
-  ) => Promise<Response>,
-): Promise<{ bun: ReturnType<typeof Bun.serve>; port: number }> {
-  for (let offset = 0; offset < attempts; offset++) {
-    const port = startPort + offset;
-    if (await dial("127.0.0.1", port, 200)) continue;
-    try {
-      const bun = Bun.serve({
-        port,
-        hostname: "127.0.0.1",
-        idleTimeout: 0,
-        fetch: fetchImpl,
-        error: () => new Response("Internal Server Error\n", { status: 500 }),
-      });
-      return { bun, port };
-    } catch (e) {
-      const code = (e as { code?: string }).code;
-      const msg = e instanceof Error ? e.message.toLowerCase() : "";
-      if (code === "EADDRINUSE" || msg.includes("in use") || msg.includes("address already"))
-        continue;
-      throw new Error(`check port ${port}: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-  throw new Error(`no available port in range ${startPort}-${startPort + attempts - 1}`);
-}
 
 async function waitForHTTPServer(port: number, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
@@ -185,6 +140,80 @@ export async function openProjectBrowser(ctx: CommandContext, cwd: string): Prom
   const server = new Server(store, cwd, port, {});
   ctx.print(`  ${StyleInfo.render("→")}  ${StyleBold.render(url)}\n\n`);
   await server.start();
+}
+
+interface DaemonServeArgs {
+  port: number;
+  storeRoot: string;
+  projectRoot: string;
+  password: string;
+  allowedOrigins: string[];
+  dev: boolean;
+  allowTaskHardDelete: boolean;
+  shouldOpen: boolean;
+}
+
+/**
+ * Asks the runtime daemon to serve the UI and waits here as the listener's lease. Returns "served"
+ * when the user ended it, "fallback" when the daemon could not (or stopped) serving, in which case
+ * the caller starts its own server as in 0.35.x.
+ */
+async function serveFromDaemon(
+  ctx: CommandContext,
+  a: DaemonServeArgs,
+): Promise<{ served: true } | { served: false; port: number }> {
+  const { requestDaemonListener } = await import("../../runtime/ui-client.ts");
+  const outcome = await requestDaemonListener(
+    {
+      port: a.port,
+      storeRoot: a.storeRoot,
+      projectRoot: a.projectRoot,
+      password: a.password,
+      allowedOrigins: a.allowedOrigins,
+      dev: a.dev,
+      allowTaskHardDelete: a.allowTaskHardDelete,
+    },
+    { env: ctx.env },
+  );
+  if (!outcome.ok) {
+    if (ctx.env.KNOWNS_DEBUG_PROXY === "1")
+      ctx.printErr(`daemon UI unavailable: ${outcome.reason}\n`);
+    return { served: false, port: a.port };
+  }
+  const { listener } = outcome;
+  const url = `http://localhost:${listener.port}`;
+  ctx.print("\n");
+  ctx.print(
+    `  ${StyleSuccess.render("●")}  ${StyleBold.render("Knowns")} ${StyleDim.render(`v${VERSION}`)}\n`,
+  );
+  ctx.print("\n");
+  if (listener.port !== a.port) {
+    ctx.print(
+      `  ${StyleWarning.render("↷")}  Port ${a.port} is busy, using ${listener.port} instead\n`,
+    );
+  }
+  ctx.print(`  ${StyleInfo.render("→")}  ${StyleBold.render(url)}\n`);
+  ctx.print(`  ${StyleInfo.render("⌁")}  ${StyleBold.render(a.projectRoot)}\n\n`);
+  if (a.password !== "") ctx.print(`  ${StyleSuccess.render("🔒")}  Password protection active\n`);
+  if (a.shouldOpen) openBrowser(url);
+  let userEnded = false;
+  const onSignal = (): void => {
+    userEnded = true;
+    listener.release();
+  };
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
+  const end = await listener.closed;
+  process.off("SIGINT", onSignal);
+  process.off("SIGTERM", onSignal);
+  // The user ended it, or the server was stopped on purpose (POST /api/shutdown): done.
+  if (userEnded || end === "released" || end === "stopped") return { served: true };
+  // The daemon is exiting or died: the UI must not just vanish (D6, same rule as D2). Wait for the
+  // port to free, then serve in this process on the SAME port.
+  ctx.print(`  ${StyleWarning.render("↻")}  Runtime stopped; continuing with a local server\n`);
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && (await dial("127.0.0.1", listener.port, 200))) await sleep(100);
+  return { served: false, port: listener.port };
 }
 
 export default defineCommand({
@@ -277,11 +306,45 @@ export default defineCommand({
       }
     }
 
+    const shouldOpen = openFlag && !noOpen;
+    // Exact origins trusted on top of the server's own (the Vite dev UI on another port). Not in
+    // 0.34.1, which trusted every loopback port (D12, TSR-X86JV4).
+    const allowedOrigins = (ctx.env.KNOWNS_ALLOWED_ORIGINS ?? "")
+      .split(",")
+      .map((o) => o.trim())
+      .filter((o) => o !== "")
+      .map((o) => {
+        try {
+          return new URL(o).origin;
+        } catch {
+          return "";
+        }
+      })
+      .filter((o) => o !== "" && o !== "null");
+
     if (restart) {
       ctx.print(
         `${StyleWarning.render("↻")} Attempting to stop existing server on port ${port}...\n`,
       );
       await stopExistingServer(ctx, port);
+    }
+
+    // The daemon serves the UI when it can (spec D6). --tunnel keeps the in-process server: the
+    // tunnel manager is tied to the process that owns the listener.
+    // --dev logs verbosely to this terminal, so it stays in-process too.
+    if (!tunnelFlag && !dev && store) {
+      const outcome = await serveFromDaemon(ctx, {
+        port,
+        storeRoot: store.root,
+        projectRoot,
+        password: passwordFlag,
+        allowedOrigins,
+        dev,
+        allowTaskHardDelete,
+        shouldOpen,
+      });
+      if (outcome.served) return;
+      port = outcome.port;
     }
 
     const { Server } = await import("../../server/index.ts");
@@ -307,21 +370,6 @@ export default defineCommand({
     }
     port = bound.port;
 
-    const shouldOpen = openFlag && !noOpen;
-    // Exact origins trusted on top of the server's own (the Vite dev UI on another port). Not in
-    // 0.34.1, which trusted every loopback port (D12, TSR-X86JV4).
-    const allowedOrigins = (ctx.env.KNOWNS_ALLOWED_ORIGINS ?? "")
-      .split(",")
-      .map((o) => o.trim())
-      .filter((o) => o !== "")
-      .map((o) => {
-        try {
-          return new URL(o).origin;
-        } catch {
-          return "";
-        }
-      })
-      .filter((o) => o !== "" && o !== "null");
     const server = new Server(store, projectRoot, port, {
       dev,
       allowedOrigins,
