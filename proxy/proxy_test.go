@@ -612,13 +612,29 @@ func TestGiveUpWithRepeatedIDsDoesNotPanic(t *testing.T) {
 	}
 }
 
-func TestBatchIsRefused(t *testing.T) {
+// The engine decides what a batch gets; the proxy forwards it unchanged and does not track it.
+func TestBatchIsForwardedUntracked(t *testing.T) {
 	e := newEnv(t)
-	e.startDaemon(echoHandler)
+	e.startDaemon(func(c net.Conn, br *bufio.Reader) {
+		defer c.Close()
+		for {
+			line, err := br.ReadBytes('\n')
+			if err != nil || isControl(line) {
+				return
+			}
+			c.Write([]byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"engine says no"}}` + "\n"))
+		}
+	})
 	h := start(t, "")
 	h.send(`[{"jsonrpc":"2.0","id":1,"method":"tools/list"}]`)
-	if got := h.recv(t); !strings.Contains(got, "-32600") {
-		t.Fatalf("batch not refused: %s", got)
+	if got := h.recv(t); !strings.Contains(got, "engine says no") {
+		t.Fatalf("the engine's answer was not passed through: %s", got)
+	}
+	h.in.Close()
+	select {
+	case <-h.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("an untracked batch must not keep the proxy waiting")
 	}
 }
 
