@@ -1,0 +1,20 @@
+{
+  "_comment": "Spec mcp-thin-proxy D7 / NFR-1. Limits are the spec's. 'hosted' applies when CI=1 (GitHub hosted runners are slower and noisier, and their memory accounting differs): the memory limits stay the spec's, only timing and CPU get slack.",
+  "sessions": 5,
+  "loadSeconds": 15,
+  "idleSeconds": 12,
+  "limits": {
+    "proxyWorkingSetMB": 40,
+    "totalWorkingSetMB": 300,
+    "idleCpuPercent": 1,
+    "p95RatioMax": 1.2,
+    "p95SlackMs": 5
+  },
+  "hosted": {
+    "idleCpuPercent": 3,
+    "p95RatioMax": 1.5,
+    "p95SlackMs": 25
+  },
+  "orphanWaitSeconds": 75,
+  "daemonIdleTimeoutMs": 15000
+}

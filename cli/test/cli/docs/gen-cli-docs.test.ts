@@ -63,6 +63,12 @@ function withoutSpecDeltas(ts: Map<string, string>): Map<string, string> {
     let b = body;
     if (name === "knowns.md") b = b.replace(D8_ROOT_ROW[0], D8_ROOT_ROW[1]);
     if (name === "knowns_qdrant.md") b = b.replace(D14_SETUP_ROW, "");
+    if (name === "knowns_browser.md") {
+      b = b
+        .split("\n")
+        .filter((l) => !l.startsWith("| `--foreground` |") && !l.startsWith("| `--stop` |"))
+        .join("\n");
+    }
     if (name === "knowns_task.md") {
       b = b.replace(
         "- [`knowns task assignees`](knowns_task_assignees.md) — Count tasks per assignee\n",
@@ -291,6 +297,14 @@ describe("lint", () => {
     expect(findings(root, "knowns task list --unasigned")).toEqual([
       "knowns task list does not accept --unasigned",
     ]);
+  });
+});
+
+describe("D9", () => {
+  test("browser documents --foreground and --stop", () => {
+    const page = tsPages.get("knowns_browser.md") ?? "";
+    expect(page).toContain("| `--foreground` |");
+    expect(page).toContain("| `--stop` |");
   });
 });
 

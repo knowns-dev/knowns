@@ -151,6 +151,8 @@ interface DaemonServeArgs {
   dev: boolean;
   allowTaskHardDelete: boolean;
   shouldOpen: boolean;
+  /** 0.35.x behavior: stay in the terminal as the listener's lease (D9). */
+  foreground: boolean;
 }
 
 /**
@@ -172,6 +174,10 @@ async function serveFromDaemon(
       allowedOrigins: a.allowedOrigins,
       dev: a.dev,
       allowTaskHardDelete: a.allowTaskHardDelete,
+      mode: a.foreground ? "lease" : "detached",
+      ...(Number(ctx.env.KNOWNS_UI_IDLE_MS) > 0
+        ? { idleMs: Number(ctx.env.KNOWNS_UI_IDLE_MS) }
+        : {}),
     },
     { env: ctx.env },
   );
@@ -195,6 +201,19 @@ async function serveFromDaemon(
   ctx.print(`  ${StyleInfo.render("→")}  ${StyleBold.render(url)}\n`);
   ctx.print(`  ${StyleInfo.render("⌁")}  ${StyleBold.render(a.projectRoot)}\n\n`);
   if (a.password !== "") ctx.print(`  ${StyleSuccess.render("🔒")}  Password protection active\n`);
+  if (!a.foreground) {
+    // D9: the daemon owns the listener now; this process is done.
+    if (listener.reused) ctx.print(`  ${StyleDim.render("Already running; reusing it")}\n`);
+    ctx.print(
+      `  ${StyleDim.render(`Stop it with: knowns browser --stop --port ${listener.port}`)}\n`,
+    );
+    ctx.print(
+      `  ${StyleDim.render("It closes by itself after a while with no tab open (KNOWNS_UI_IDLE_MS)")}\n\n`,
+    );
+    if (a.shouldOpen) openBrowser(url);
+    listener.release();
+    return { served: true };
+  }
   if (a.shouldOpen) openBrowser(url);
   let userEnded = false;
   const onSignal = (): void => {
@@ -274,12 +293,27 @@ export default defineCommand({
       usage: "Grant this server instance Task hard-delete capability",
       default: false,
     },
+    {
+      type: "bool",
+      name: "foreground",
+      usage:
+        "Keep serving in this terminal; Ctrl+C stops the UI (default: the runtime daemon serves it)",
+      default: false,
+    },
+    {
+      type: "bool",
+      name: "stop",
+      usage: "Stop the UI running on --port, or for this project",
+      default: false,
+    },
   ],
   async run(ctx) {
     let port = ctx.flags.int("port");
     const openFlag = ctx.flags.bool("open");
     const noOpen = ctx.flags.bool("no-open");
     const restart = ctx.flags.bool("restart");
+    const foreground = ctx.flags.bool("foreground");
+    const stopFlag = ctx.flags.bool("stop");
     const dev = ctx.flags.bool("dev");
     const tunnelFlag = ctx.flags.bool("tunnel");
     const passwordFlag = ctx.flags.string("password");
@@ -291,8 +325,23 @@ export default defineCommand({
     const { installWiring } = await import("../../wiring/index.ts");
     await installWiring();
 
+    const portGiven = port !== 0;
     const { store, projectRoot } = await resolveProject(ctx);
     if (port === 0) port = DEFAULT_BROWSER_PORT;
+
+    if (stopFlag) {
+      const { stopDaemonListeners } = await import("../../runtime/ui-client.ts");
+      const ports = await stopDaemonListeners(
+        portGiven ? { port } : projectRoot !== "" ? { projectRoot } : { port },
+      );
+      if (ports && ports.length > 0) {
+        ctx.print(`${StyleSuccess.render("Stopped")} the UI on port ${ports.join(", ")}\n`);
+        return;
+      }
+      // Not served by the daemon (a foreground or in-process server): ask it to shut down.
+      if (!(await stopExistingServer(ctx, port))) process.exitCode = 1;
+      return;
+    }
 
     if (store) {
       try {
@@ -342,6 +391,7 @@ export default defineCommand({
         dev,
         allowTaskHardDelete,
         shouldOpen,
+        foreground,
       });
       if (outcome.served) return;
       port = outcome.port;

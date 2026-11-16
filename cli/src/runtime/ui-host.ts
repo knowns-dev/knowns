@@ -9,6 +9,12 @@
 //                      "projectRoot","password","allowedOrigins":[],"dev","allowTaskHardDelete"}
 //   daemon -> client  {"knowns_ui":1,"type":"listening","port":N}
 //                  or {"knowns_ui":1,"type":"error","code","message"}   (then the daemon closes)
+// D9: a listen frame with "mode":"detached" (and optional "idleMs") hands the listener to the
+// daemon for good: the reply carries "reused":true when a detached listener of the same project
+// already runs, and the connection is closed right after it. The listener lives while a tab holds
+// an SSE connection and ends idleMs (default 30 min, KNOWNS_UI_IDLE_MS) after the last one leaves.
+//   client -> daemon  {"knowns_ui":1,"type":"stop","version","token","port"?,"projectRoot"?}
+//   daemon -> client  {"knowns_ui":1,"type":"stopped","ports":[N,...]}
 //                  later {"knowns_ui":1,"type":"bye","reason":"shutdown"} just before closing
 // Access control as for the MCP endpoint: the descriptor file (0600, in the 0700 `ui` directory)
 // carries a random token that must be in the first frame, compared in constant time.
@@ -55,6 +61,22 @@ export interface UiListenRequest {
   allowedOrigins: string[];
   dev: boolean;
   allowTaskHardDelete: boolean;
+  /** "lease" (default): the connection is the lease. "detached": the daemon owns the listener. */
+  mode?: "lease" | "detached";
+  /** Detached only: idle grace in ms after the last SSE client leaves. */
+  idleMs?: number;
+}
+
+export const DEFAULT_UI_IDLE_MS = 30 * 60_000;
+
+/** The idle grace: the request's, else KNOWNS_UI_IDLE_MS of the daemon, else 30 minutes. */
+export function uiIdleMs(
+  requested: number | undefined,
+  env: Record<string, string | undefined> = process.env,
+): number {
+  if (requested !== undefined && Number.isFinite(requested) && requested > 0) return requested;
+  const n = Number(env.KNOWNS_UI_IDLE_MS);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_UI_IDLE_MS;
 }
 
 export interface UiListenerInfo {
@@ -63,6 +85,7 @@ export interface UiListenerInfo {
   projectRoot: string;
   pid: number | undefined;
   startedAt: string;
+  detached: boolean;
 }
 
 const versionToken = (v: string): string => v.replace(/[^A-Za-z0-9._+-]/g, "_");
@@ -153,7 +176,10 @@ const frame = (o: Record<string, unknown>): string =>
 
 interface Live {
   info: UiListenerInfo;
+  /** Same project, password and capabilities: a second `knowns browser` may share it. */
+  key: string;
   stop(reason: string): void;
+  done: Promise<void>;
 }
 
 export interface UiHostOptions {
@@ -167,7 +193,13 @@ export interface UiHostOptions {
       bun: ReturnType<typeof Bun.serve>;
       port: number;
     }>,
-  ) => Promise<{ port: number; done: Promise<void>; stop(): void }>;
+  ) => Promise<{
+    port: number;
+    done: Promise<void>;
+    stop(): void;
+    /** Called with the number of connected SSE clients whenever it changes. */
+    onClients?: (cb: (n: number) => void) => void;
+  }>;
 }
 
 export class UiHost {
@@ -311,10 +343,11 @@ export class UiHost {
     if (want === "" || a.length !== b.length || !timingSafeEqual(a, b)) {
       return fail("unauthorized", "bad token");
     }
-    if (m.knowns_ui !== UI_PROTOCOL || m.type !== "listen")
-      return fail("bad_request", "expected listen");
+    if (m.knowns_ui !== UI_PROTOCOL || (m.type !== "listen" && m.type !== "stop"))
+      return fail("bad_request", "expected listen or stop");
     if (m.version !== this.version) return fail("version_mismatch", `daemon is ${this.version}`);
     if (this.stopping) return fail("shutting_down", "daemon is exiting");
+    if (m.type === "stop") return this.handleStop(sock, m);
     const str = (k: string): string => (typeof m[k] === "string" ? (m[k] as string) : "");
     const req: UiListenRequest = {
       port: Number.isInteger(m.port) ? (m.port as number) : 0,
@@ -326,7 +359,29 @@ export class UiHost {
         : [],
       dev: m.dev === true,
       allowTaskHardDelete: m.allowTaskHardDelete === true,
+      mode: m.mode === "detached" ? "detached" : "lease",
+      ...(typeof m.idleMs === "number" ? { idleMs: m.idleMs } : {}),
     };
+    const detached = req.mode === "detached";
+    const key = shortHash(
+      [
+        req.projectRoot,
+        req.password,
+        String(req.dev),
+        String(req.allowTaskHardDelete),
+        req.allowedOrigins.join(","),
+      ],
+      16,
+    );
+    if (detached) {
+      for (const l of this.live.values()) {
+        if (l.info.detached && l.key === key) {
+          this.log(`[ui-host] ${l.info.id} reused on ${l.info.port}`);
+          sock.end(frame({ type: "listening", port: l.info.port, id: l.info.id, reused: true }));
+          return;
+        }
+      }
+    }
     if (req.port < 1 || req.port > 65535) return fail("bad_request", "port out of range");
     const owner = Number.isInteger(m.pid) && (m.pid as number) > 0 ? (m.pid as number) : undefined;
 
@@ -359,26 +414,51 @@ export class UiHost {
       id,
       port: handle.port,
       projectRoot: req.projectRoot,
-      pid: owner,
+      pid: detached ? undefined : owner,
       startedAt: nowString(),
+      detached,
     };
     let ended = false;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
     const stop = (reason: string): void => {
       if (ended) return;
       ended = true;
       clearInterval(poll);
-      if (reason === "shutdown" && !sock.destroyed) sock.write(frame({ type: "bye", reason }));
+      if (idleTimer) clearTimeout(idleTimer);
+      if ((reason === "shutdown" || reason === "stopped") && !sock.destroyed) {
+        sock.write(frame({ type: "bye", reason }));
+      }
       handle.stop();
       sock.end();
     };
+    if (detached) {
+      // The daemon owns the listener: it lives while a tab is connected and ends after the grace.
+      const grace = uiIdleMs(req.idleMs);
+      const arm = (): void => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          this.log(`[ui-host] ${id} idle for ${grace} ms`);
+          stop("idle");
+        }, grace);
+        idleTimer.unref?.();
+      };
+      arm();
+      handle.onClients?.((n) => {
+        if (ended) return;
+        if (n > 0) {
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = undefined;
+        } else arm();
+      });
+    }
     const poll = setInterval(() => {
-      if (owner !== undefined && !isProcessAlive(owner)) {
+      if (!detached && owner !== undefined && !isProcessAlive(owner)) {
         this.log(`[ui-host] ${id} owner ${owner} is gone`);
         stop("owner_gone");
       }
     }, OWNER_CHECK_MS);
-    this.live.set(id, { info, stop });
-    sock.on("close", () => stop("closed"));
+    this.live.set(id, { info, key, stop, done: handle.done.catch(() => undefined) });
+    if (!detached) sock.on("close", () => stop("closed"));
     // A listener that stopped on its own (POST /api/shutdown) tells the launcher so; one that failed
     // to clean up must not take the shared daemon down with an unhandled rejection.
     void handle.done
@@ -387,14 +467,38 @@ export class UiHost {
         const byRequest = !ended;
         ended = true;
         clearInterval(poll);
+        if (idleTimer) clearTimeout(idleTimer);
         this.live.delete(id);
-        if (byRequest && !sock.destroyed) sock.write(frame({ type: "bye", reason: "stopped" }));
+        if (byRequest && sock.writable) sock.write(frame({ type: "bye", reason: "stopped" }));
         sock.end();
         setTimeout(() => sock.destroy(), 1000).unref();
         this.log(`[ui-host] ${id} on port ${info.port} stopped`);
       });
     this.log(`[ui-host] ${id} listening on ${info.port}`);
-    sock.write(frame({ type: "listening", port: handle.port, id }));
+    if (detached) sock.end(frame({ type: "listening", port: handle.port, id }));
+    else sock.write(frame({ type: "listening", port: handle.port, id }));
+  }
+
+  /** Stops the listeners on a port or of a project, and answers once their ports are free. */
+  private async handleStop(sock: net.Socket, m: Record<string, unknown>): Promise<void> {
+    const port = Number.isInteger(m.port) ? (m.port as number) : 0;
+    const project = typeof m.projectRoot === "string" ? m.projectRoot : "";
+    if (port === 0 && project === "") {
+      sock.end(
+        frame({ type: "error", code: "bad_request", message: "stop needs a port or a project" }),
+      );
+      return;
+    }
+    const hit = [...this.live.values()].filter(
+      (l) =>
+        (port !== 0 && l.info.port === port) || (project !== "" && l.info.projectRoot === project),
+    );
+    for (const l of hit) l.stop("stopped");
+    await Promise.race([
+      Promise.all(hit.map((l) => l.done)),
+      new Promise((r) => setTimeout(r, 5000)),
+    ]);
+    sock.end(frame({ type: "stopped", ports: hit.map((l) => l.info.port) }));
   }
 }
 
@@ -424,5 +528,5 @@ const defaultServe: NonNullable<UiHostOptions["serve"]> = async (req, bind) => {
   }
   resolveReady(server.fetchHandler());
   const att = server.attach(bound.bun);
-  return { port: bound.port, done: att.done, stop: att.stop };
+  return { port: bound.port, done: att.done, stop: att.stop, onClients: att.onClients };
 };
