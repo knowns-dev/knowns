@@ -2139,7 +2139,10 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
       }
       // keepAlive probes the store registry from disk; it only decides when to exit, so a
       // answer a few seconds old is as good, and a busy daemon does not ask on every tick.
-      if (opts.keepAlive && Date.now() - keepAliveAt >= KEEP_ALIVE_REFRESH_MS) {
+      if (
+        opts.keepAlive &&
+        Date.now() - keepAliveAt >= Math.min(KEEP_ALIVE_REFRESH_MS, idleTimeoutMs() / 4)
+      ) {
         keepAliveValue = opts.keepAlive() === true;
         keepAliveAt = Date.now();
       }
