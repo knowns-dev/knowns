@@ -231,11 +231,13 @@ async function defaultCheckers(
   const { proxyCheckers } = await import("../../domain/doctor/proxy-checks.ts");
   const { loadLiveView } = await import("../../runtime/live-lines.ts");
   const { proxyEnabled } = await import("../../runtime/proxy-mode.ts");
+  const { isLegacyLayout } = await import("../../domain/update/layout.ts");
   const view = loadLiveView(env);
   const proxyChecks = proxyCheckers({
     proxyEnabled: proxyEnabled(env),
     reports: view.reports,
     fallbacks: view.fallbacks,
+    legacyLayout: isLegacyLayout(process.execPath, env),
     missingEntries:
       project && doctorDeps.findMissingProxyEntries
         ? doctorDeps.findMissingProxyEntries(project.store.projectRoot, env)

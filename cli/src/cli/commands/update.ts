@@ -38,6 +38,12 @@ import {
   type InstallMethod,
   resolveExecutable,
 } from "../../domain/update/install-method.ts";
+import {
+  ENGINE_NAME,
+  isLegacyLayout,
+  LEGACY_LAYOUT_COMMAND,
+  parseArchiveLayout,
+} from "../../domain/update/layout.ts";
 import { fetchLatestVersion } from "../../domain/update/notifier.ts";
 import { compareVersions, normalizeVersionTag } from "../../domain/update/version.ts";
 import { VERSION } from "../../version.ts";
@@ -403,12 +409,12 @@ function asideFor(dest: string, goos: string, remove: (p: string) => void): stri
 }
 
 /**
- * A release without a proxy must not leave the previous release's proxy beside the new knowns: it
- * would keep launching and fall back to in-process on every session. On Windows a running proxy
- * cannot be deleted but can be renamed, and the .old is swept by the next update.
+ * Deletes a file that is no longer part of the install (knowns-proxy, the launcher's old name; or
+ * knowns-engine when an archive without a launcher is installed). On Windows a running exe cannot
+ * be deleted but can be renamed, and the .old is swept by the next update.
  */
-export function removeStaleProxy(dir: string, goos: string): boolean {
-  const path = join(dir, goos === "windows" ? "knowns-proxy.exe" : "knowns-proxy");
+function removeInstalled(dir: string, name: string): boolean {
+  const path = join(dir, name);
   if (!existsSync(path)) return false;
   try {
     rmSync(path, { force: true });
@@ -423,6 +429,11 @@ export function removeStaleProxy(dir: string, goos: string): boolean {
   }
 }
 
+/** The retired knowns-proxy must not stay beside the new knowns: nothing would ever run it. */
+export function removeStaleProxy(dir: string, goos: string): boolean {
+  return removeInstalled(dir, goos === "windows" ? "knowns-proxy.exe" : "knowns-proxy");
+}
+
 /** Delete leftover dest.old / dest.old.<ts> files of a previous update; locked ones stay for later. */
 export function sweepOldBinaries(dir: string): number {
   let n = 0;
@@ -433,7 +444,7 @@ export function sweepOldBinaries(dir: string): number {
     return 0;
   }
   for (const name of names) {
-    if (!/^knowns(-proxy)?(\.exe)?\.(old(\.\d+)?|rollback)$/i.test(name)) continue;
+    if (!/^(knowns|kn)(-proxy|-engine)?(\.exe)?\.(old(\.\d+)?|rollback)$/i.test(name)) continue;
     try {
       rmSync(join(dir, name), { force: true });
       n++;
@@ -517,45 +528,79 @@ async function downloadAndReplaceBinary(
     } catch (e) {
       throw new Error(`extract release artifact: ${(e as Error).message}`);
     }
-    const binaryName = seams.goos() === "windows" ? "knowns.exe" : "knowns";
-    // The exact name wins; the knowns-* match is only for the 0.34 Windows alias, and it must not
-    // pick knowns-proxy, which now sits in the same archive.
-    const isProxy = (n: string): boolean => n.startsWith("knowns-proxy");
-    let extracted: string;
-    try {
-      extracted = findFile(extractDir, (n) => n === binaryName.toLowerCase());
-    } catch {
-      extracted = findFile(extractDir, (n) => n.startsWith("knowns-") && !isProxy(n));
-    }
-    // The proxy only finds a daemon of its own version, so a stale one next to the new knowns would
-    // fall back to in-process on every session. It goes in as one unit with knowns (temp copy, then
-    // rename, rolled back together); a proxy that cannot be replaced is only a warning.
-    const proxyName = seams.goos() === "windows" ? "knowns-proxy.exe" : "knowns-proxy";
-    let proxySrc: string | undefined;
-    try {
-      proxySrc = findFile(extractDir, (n) => n === proxyName);
-    } catch {
-      proxySrc = undefined;
-    }
+    const goos = seams.goos();
+    const ext = goos === "windows" ? ".exe" : "";
     const dir = dirname(binaryPath);
-    sweepOldBinaries(dir);
+    // Spec mcp-thin-proxy D10. A launcher archive has layout.json: its `knowns` is the ENGINE (so
+    // a 0.34.x or 0.35.0 updater, which takes the first file named knowns, installs something that
+    // runs) and the launcher has a name no older updater matches. The launcher becomes `knowns`
+    // here and the engine `knowns-engine`, as one unit: a failure rolls both back.
     const items: BinarySwap[] = [];
-    // The proxy first: if knowns then fails, the proxy is put back with it.
-    if (proxySrc !== undefined) {
-      items.push({ src: proxySrc, dest: join(dir, proxyName), optional: true });
-    }
-    items.push({ src: extracted, dest: binaryPath });
+    let split = false;
+    let layoutFile: string | undefined;
     try {
-      replaceBinaries(items, seams.goos(), {
+      layoutFile = findFile(extractDir, (n) => n === "layout.json");
+    } catch {
+      layoutFile = undefined;
+    }
+    if (layoutFile !== undefined) {
+      const layout = parseArchiveLayout(readFileSync(layoutFile, "utf8"));
+      const root = dirname(layoutFile);
+      const engineSrc = join(root, layout.engine.file);
+      const launcherSrc = join(root, layout.launcher.file);
+      if (!existsSync(engineSrc) || !existsSync(launcherSrc)) {
+        throw new Error("release artifact is missing the launcher or the engine");
+      }
+      // The engine first: an older launcher keeps working with a newer engine, not the reverse.
+      items.push({ src: engineSrc, dest: join(dir, `${ENGINE_NAME}${ext}`) });
+      items.push({ src: launcherSrc, dest: binaryPath });
+      // On Windows kn.exe is a copy of knowns.exe (no symlinks without privileges): keep it in step.
+      const alias = join(dir, `kn${ext}`);
+      if (goos === "windows" && existsSync(alias) && resolve(alias) !== resolve(binaryPath)) {
+        items.push({ src: launcherSrc, dest: alias, optional: true });
+      }
+      split = true;
+    } else {
+      // An archive without a launcher (0.35 and older): the engine alone is knowns. The exact name
+      // wins; the knowns-* match is only for the 0.34 Windows alias.
+      const binaryName = `knowns${ext}`;
+      let extracted: string;
+      try {
+        extracted = findFile(extractDir, (n) => n === binaryName);
+      } catch {
+        extracted = findFile(
+          extractDir,
+          (n) => n.startsWith("knowns-") && !n.startsWith("knowns-proxy") && !n.startsWith(ENGINE_NAME),
+        );
+      }
+      items.push({ src: extracted, dest: binaryPath });
+    }
+    sweepOldBinaries(dir);
+    try {
+      replaceBinaries(items, goos, {
         warn: (m) => process.stderr.write(`warning: ${m}\n`),
       });
     } catch (e) {
       throw new Error(`replace binary: ${(e as Error).message}`);
     }
-    if (proxySrc === undefined) removeStaleProxy(dir, seams.goos());
+    if (!split) removeInstalled(dir, `${ENGINE_NAME}${ext}`);
+    removeStaleProxy(dir, goos);
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
   }
+}
+
+/**
+ * The path `knowns` has in the install: the launcher. A running engine knows itself as
+ * knowns-engine, so a path taken from it is mapped to the launcher beside it (KNOWNS_LAUNCHER names
+ * it exactly when a launcher started this engine).
+ */
+export function launcherPathFor(binaryPath: string, env: Env, goos: string): string {
+  const fromLauncher = (env.KNOWNS_LAUNCHER ?? "").trim();
+  if (fromLauncher !== "" && !/[\\/]node_modules[\\/]/i.test(fromLauncher)) return fromLauncher;
+  const stem = basename(binaryPath).replace(/\.exe$/i, "").toLowerCase();
+  if (stem !== ENGINE_NAME) return binaryPath;
+  return join(dirname(binaryPath), goos === "windows" ? "knowns.exe" : "knowns");
 }
 
 async function runScriptManagedUpgrade(
@@ -565,6 +610,7 @@ async function runScriptManagedUpgrade(
 ): Promise<void> {
   let binaryPath = (meta.binaryPath ?? "").trim();
   if (binaryPath === "") binaryPath = resolveExecutable(seams.executable());
+  binaryPath = launcherPathFor(binaryPath, ctx.env, seams.goos());
   // An npm install hard-links the platform package's binary to the npm bin entry, so one inode is
   // shared with the package manager's copy: writing it in place would corrupt both.
   if (/[\\/]node_modules[\\/]/i.test(binaryPath)) {
@@ -757,15 +803,27 @@ Use --check to only check for updates without installing.`,
       throw new Error("could not reach the npm registry — check your network connection");
     }
     const current = VERSION;
-    if (compareVersions(latest, current) <= 0) {
+    const cmp = compareVersions(latest, current);
+    // Spec mcp-thin-proxy D10: an install that an older updater left as the engine alone is
+    // finished by this command even when the version is current. Only an equal version: a build
+    // newer than the latest release has no archive to take the launcher from.
+    const finishLayout = cmp === 0 && isLegacyLayout(seams.executable(), ctx.env);
+    if (cmp <= 0 && !finishLayout) {
       ctx.print(
         `  ${renderSuccess("")} Already on the latest version ${StyleBold.render(normalizeVersionTag(current))}\n`,
       );
       return;
     }
-    ctx.print(
-      `  ${StyleWarning.render("UPDATE")} → ${StyleBold.render(normalizeVersionTag(latest))} available (current ${StyleDim.render(normalizeVersionTag(current))})\n`,
-    );
+    if (finishLayout) {
+      ctx.print(
+        `  ${StyleInfo.render("ℹ")} Version ${StyleBold.render(normalizeVersionTag(current))} is current, but this install still has the old single-binary layout; ${checkOnly ? `run ${StyleInfo.render(LEGACY_LAYOUT_COMMAND)} to finish it` : "finishing it (launcher + engine)"}.\n`,
+      );
+      if (checkOnly) return;
+    } else {
+      ctx.print(
+        `  ${StyleWarning.render("UPDATE")} → ${StyleBold.render(normalizeVersionTag(latest))} available (current ${StyleDim.render(normalizeVersionTag(current))})\n`,
+      );
+    }
 
     if (checkOnly) {
       const d = detectInstallMethodFor(seams.executable(), { env: ctx.env });
