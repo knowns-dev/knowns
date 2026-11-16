@@ -42,6 +42,9 @@ func main() {
 		case "cat":
 			io.Copy(os.Stdout, os.Stdin)
 			return
+		case "tty":
+			fmt.Printf("stdin_tty=%v stdout_tty=%v stderr_tty=%v\n", isTTY(os.Stdin), isTTY(os.Stdout), isTTY(os.Stderr))
+			return
 		case "sleep":
 			time.Sleep(120 * time.Second)
 			return
@@ -81,16 +84,40 @@ const fakeAttrUnix = `//go:build !windows
 
 package main
 
-import "syscall"
+import (
+	"os"
+	"syscall"
+)
 
 func spawnAttr(detached bool) *syscall.SysProcAttr { return &syscall.SysProcAttr{Setsid: detached} }
+
+func isTTY(f *os.File) bool {
+	st, err := f.Stat()
+	if err != nil || st.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	null, err := os.Stat(os.DevNull)
+	return err != nil || !os.SameFile(st, null)
+}
 `
 
 const fakeAttrWindows = `//go:build windows
 
 package main
 
-import "syscall"
+import (
+	"os"
+	"syscall"
+	"unsafe"
+)
+
+var pGetConsoleMode = syscall.NewLazyDLL("kernel32.dll").NewProc("GetConsoleMode")
+
+func isTTY(f *os.File) bool {
+	var mode uint32
+	r, _, _ := pGetConsoleMode.Call(f.Fd(), uintptr(unsafe.Pointer(&mode)))
+	return r != 0
+}
 
 func spawnAttr(detached bool) *syscall.SysProcAttr {
 	if detached {
