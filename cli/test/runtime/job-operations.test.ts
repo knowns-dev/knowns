@@ -139,4 +139,36 @@ describe("job operations", () => {
     expect(q.loadQueue(root).jobs.some((j) => j.kind === "reindex-search")).toBe(true);
     off();
   });
+
+  test("the pick-up race: a job the runner already holds ends as done, not cancelled", async () => {
+    clearQueue();
+    const job = q.enqueueJob(root, "index-doc", "race.md");
+    const held = { ...job, startedAt: "x" } as q.Job; // the runner took it before any start mark
+    const got: Operation[] = [];
+    const off = ops.onJobOperation((o) => got.push(o));
+    ops.observeJobs([root]);
+    expect(await ops.cancelJobOperation(root, job.id)).toBe("cancelled");
+    expect(cancelRequested(job.id)).toBe(true);
+    q.completeJob(root, held, undefined); // it was not cancellable: it finishes
+    ops.observeJobs([root]);
+    expect(got.at(-1)).toMatchObject({ id: `job:${job.id}`, state: "done" });
+    clearJobCancel(job.id);
+    off();
+  });
+
+  test("the pick-up race for a reindex: the request stops it and it ends as cancelled", async () => {
+    clearQueue();
+    const job = q.enqueueReindex(root);
+    const held = { ...job, startedAt: "x" } as q.Job;
+    const got: Operation[] = [];
+    const off = ops.onJobOperation((o) => got.push(o));
+    ops.observeJobs([root]);
+    await ops.cancelJobOperation(root, job.id);
+    expect(cancelRequested(job.id)).toBe(true); // the runner's first check sees it
+    q.completeJob(root, held, new JobCancelledError());
+    ops.observeJobs([root]);
+    expect(got.at(-1)).toMatchObject({ state: "cancelled" });
+    clearJobCancel(job.id);
+    off();
+  });
 });

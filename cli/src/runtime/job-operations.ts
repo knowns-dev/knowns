@@ -248,8 +248,11 @@ export async function cancelJobOperation(
     // It started between the read and the write: treat it as a running job.
     return cancelJobOperation(projectRoot, jobId);
   }
-  // The runner may already hold it (its start mark is written late): stop a reindex all the same.
-  if (isCancellableKind((removed as Job).kind)) requestJobCancel(jobId);
+  // The runner may already hold it (its start mark is written late). The request makes a reindex
+  // it picked up stop at its first check. A job that cannot stop runs on, and its result then
+  // replaces the "cancelled" below with what really happened (done or failed): observeJobs reports
+  // the result of any job it has not reported a result for.
+  requestJobCancel(jobId);
   const op = jobOperation(projectRoot, removed, false);
   const t = Date.now();
   emit({
