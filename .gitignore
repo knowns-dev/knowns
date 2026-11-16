@@ -40,3 +40,4 @@ cli/src/ui-assets.generated.ts
 
 # Local env files (Knowns UI Pro license key)
 .env*.local
+proxy/*.syso

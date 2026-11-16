@@ -25,15 +25,17 @@ export interface PlatformMap {
   /** Platform suffix shared by the npm package (@knowns/<npm>), the npm dir and the release asset. */
   npm: string;
   exe: string;
+  /** The native MCP proxy shipped next to the binary (spec mcp-thin-proxy FR-11). */
+  proxy: string;
 }
 
 export const PLATFORMS: readonly PlatformMap[] = [
-  { dist: "darwin-arm64", npm: "darwin-arm64", exe: "knowns" },
-  { dist: "darwin-x64", npm: "darwin-x64", exe: "knowns" },
-  { dist: "linux-arm64", npm: "linux-arm64", exe: "knowns" },
-  { dist: "linux-x64", npm: "linux-x64", exe: "knowns" },
-  { dist: "windows-arm64", npm: "win-arm64", exe: "knowns.exe" },
-  { dist: "windows-x64", npm: "win-x64", exe: "knowns.exe" },
+  { dist: "darwin-arm64", npm: "darwin-arm64", exe: "knowns", proxy: "knowns-proxy" },
+  { dist: "darwin-x64", npm: "darwin-x64", exe: "knowns", proxy: "knowns-proxy" },
+  { dist: "linux-arm64", npm: "linux-arm64", exe: "knowns", proxy: "knowns-proxy" },
+  { dist: "linux-x64", npm: "linux-x64", exe: "knowns", proxy: "knowns-proxy" },
+  { dist: "windows-arm64", npm: "win-arm64", exe: "knowns.exe", proxy: "knowns-proxy.exe" },
+  { dist: "windows-x64", npm: "win-x64", exe: "knowns.exe", proxy: "knowns-proxy.exe" },
 ];
 
 /**
@@ -49,7 +51,11 @@ export const GO_UPDATE_ENTRY = "knowns-0.34-update.exe";
 
 /** Archive members in order; the first one carries the data, a second is a hard link to it. */
 export function archiveEntries(p: PlatformMap): string[] {
-  return p.npm.startsWith("win-") ? [`./${p.exe}`, `./${GO_UPDATE_ENTRY}`] : [`./${p.exe}`];
+  // The proxy comes last: it sorts after knowns and knowns-0.34-update.exe, so the 0.34 updater,
+  // which takes the first knowns or knowns-* file, still installs knowns.
+  return p.npm.startsWith("win-")
+    ? [`./${p.exe}`, `./${GO_UPDATE_ENTRY}`, `./${p.proxy}`]
+    : [`./${p.exe}`, `./${p.proxy}`];
 }
 
 export interface PackageOptions {
@@ -82,6 +88,8 @@ export function packageRelease(opts: PackageOptions): PackageResult {
   for (const p of platforms) {
     const bin = join(opts.distDir, p.dist, p.exe);
     if (!existsSync(bin)) throw new Error(`missing binary for ${p.npm}: ${bin}`);
+    const proxyBin = join(opts.distDir, p.dist, p.proxy);
+    if (!existsSync(proxyBin)) throw new Error(`missing proxy for ${p.npm}: ${proxyBin}`);
 
     const pkgDir = join(npmOut, `knowns-${p.npm}`);
     rmSync(pkgDir, { recursive: true, force: true });
@@ -91,10 +99,12 @@ export function packageRelease(opts: PackageOptions): PackageResult {
     );
     pkg.version = version;
     pkg.main = p.exe;
-    pkg.files = [p.exe];
+    pkg.files = [p.exe, p.proxy];
     writeFileSync(join(pkgDir, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
     cpSync(bin, join(pkgDir, p.exe));
     chmodSync(join(pkgDir, p.exe), 0o755);
+    cpSync(proxyBin, join(pkgDir, p.proxy));
+    chmodSync(join(pkgDir, p.proxy), 0o755);
     result.packages.push(pkgDir);
 
     // Release asset: the binary at the archive root as ./knowns[.exe], plus on Windows the
@@ -105,6 +115,8 @@ export function packageRelease(opts: PackageOptions): PackageResult {
     mkdirSync(stage, { recursive: true });
     cpSync(bin, join(stage, p.exe));
     chmodSync(join(stage, p.exe), 0o755);
+    cpSync(proxyBin, join(stage, p.proxy));
+    chmodSync(join(stage, p.proxy), 0o755);
     const entries = archiveEntries(p);
     if (entries.length > 1) linkSync(join(stage, p.exe), join(stage, GO_UPDATE_ENTRY));
     // COPYFILE_DISABLE: macOS bsdtar otherwise adds a ._<name> AppleDouble entry for any file with
