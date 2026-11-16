@@ -176,7 +176,10 @@ export const docsTool = (): Tool =>
       bool("includeHistory", "Include structured revision history metadata with get responses"),
       bool("info", "Return document stats without content (get)"),
       bool("toc", "Return table of contents only (get)"),
-      str("section", "Section by heading title or number (get, update)"),
+      str(
+        "section",
+        "Section by heading title or bare integer index (get, update). Update replaces the heading line too, so content should start with it; content without a heading keeps the existing heading",
+      ),
       str("line", "Specific lines e.g. '42' or '10-20' (get)"),
       str("appendContent", "Append to existing content (update)"),
       str("newPath", "Rename document to new path (update)"),

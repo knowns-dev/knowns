@@ -28,7 +28,7 @@ knowns doc [path] [flags]
 |---|---|---|---|
 | `--info` | `bool` | — | Show document stats without content |
 | `--line` | `string` | — | Show specific lines (e.g., '42' or '10-20') |
-| `--section` | `string` | — | Show specific section by number or title |
+| `--section` | `string` | — | Show specific section by number or title (a bare integer is the heading index; # lines in code fences are not headings) |
 | `--smart` | `bool` | — | Auto-optimize reading for large documents |
 | `--toc` | `bool` | — | Show table of contents only |
 

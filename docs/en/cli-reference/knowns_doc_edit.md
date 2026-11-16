@@ -17,7 +17,7 @@ knowns doc edit <path> [flags]
 | `-d, --description` | `string` | — | New description |
 | `--expected-hash` | `string` | — | Expected canonical hash for optimistic concurrency |
 | `--path` | `string` | — | Rename doc to a new path |
-| `--section` | `string` | — | Target section to replace (used with --content) |
+| `--section` | `string` | — | Target section to replace (used with --content); the heading line is kept and only the body is replaced, so --content must not repeat it |
 | `--tags` | `string` | — | New tags (comma-separated) |
 | `-t, --title` | `string` | — | New title |
 

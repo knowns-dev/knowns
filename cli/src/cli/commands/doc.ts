@@ -91,7 +91,12 @@ async function openStorage(ctx: CommandContext): Promise<Storage> {
 const viewFlags: FlagSpec[] = [
   { type: "bool", name: "toc", usage: "Show table of contents only", default: false },
   { type: "bool", name: "info", usage: "Show document stats without content", default: false },
-  { type: "string", name: "section", usage: "Show specific section by number or title" },
+  {
+    type: "string",
+    name: "section",
+    usage:
+      "Show specific section by number or title (a bare integer is the heading index; # lines in code fences are not headings)",
+  },
   { type: "string", name: "line", usage: "Show specific lines (e.g., '42' or '10-20')" },
   {
     type: "bool",
@@ -487,7 +492,8 @@ const docEditCmd = defineCommand({
     {
       type: "string",
       name: "section",
-      usage: "Target section to replace (used with --content)",
+      usage:
+        "Target section to replace (used with --content); the heading line is kept and only the body is replaced, so --content must not repeat it",
       default: "",
     },
     {

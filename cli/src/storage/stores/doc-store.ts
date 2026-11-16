@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import type { Doc } from "../../models/doc.ts";
+import { bareIndex, proseMask } from "../core/doc-sections.ts";
 import { readUtf8Retrying, withRetryBudget } from "../core/fs-retry.ts";
 import { resolveSafe } from "../core/safe-path.ts";
 import { StatCache } from "../core/stat-cache.ts";
@@ -126,12 +127,13 @@ interface MdSection {
 function markdownSections(content: string): MdSection[] {
   const lines = content.split("\n");
   const sections: MdSection[] = [];
+  const mask = proseMask(lines);
   lines.forEach((line, i) => {
-    const level = headingLevel(line);
+    const level = mask[i] ? headingLevel(line) : 0;
     if (level === 0) return;
     let end = lines.length;
     for (let j = i + 1; j < lines.length; j++) {
-      const next = headingLevel(lines[j] as string);
+      const next = mask[j] ? headingLevel(lines[j] as string) : 0;
       if (next > 0 && next <= level) {
         end = j;
         break;
@@ -151,9 +153,10 @@ function markdownSections(content: string): MdSection[] {
 function findMarkdownSection(content: string, ref: string): MdSection | undefined {
   const sections = markdownSections(content);
   const wanted = goTrimSpace(ref.replace(/^[# ]+/, ""));
+  const num = bareIndex(wanted);
+  if (num !== undefined && num >= 1 && num <= sections.length) return sections[num - 1];
   return sections.find(
     (s) =>
-      String(s.index) === wanted ||
       s.title.toLowerCase() === wanted.toLowerCase() ||
       s.title.toLowerCase().includes(wanted.toLowerCase()),
   );

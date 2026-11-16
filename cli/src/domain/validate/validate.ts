@@ -1,5 +1,6 @@
 // Port of internal/validate/validate.go: shared validation for tasks, docs, memories and templates.
 // The CLI `validate` command and (later) the MCP tool both call `run`. No CLI imports.
+
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Doc } from "../../models/doc.ts";
@@ -14,6 +15,7 @@ import {
 import type { Task } from "../../models/task.ts";
 import type { Template } from "../../models/template.ts";
 import type { Storage } from "../../storage/adapters.ts";
+import { proseMask } from "../../storage/core/doc-sections.ts";
 import { goTrimSpace } from "../../storage/core/util.ts";
 import { Engine } from "../codegen/index.ts";
 import { extract, parse } from "../references/references.ts";
@@ -546,7 +548,9 @@ export function markdownSectionContent(content: string, title: string): string |
   const lines = content.split("\n");
   let start = -1;
   let level = 0;
+  const mask = proseMask(lines);
   for (let i = 0; i < lines.length; i++) {
+    if (!mask[i] || !(lines[i] ?? "").startsWith("#")) continue;
     const trimmed = goTrimSpace(lines[i] ?? "");
     if (!trimmed.startsWith("#")) continue;
     const stripped = trimmed.replace(/^#+/, "");
