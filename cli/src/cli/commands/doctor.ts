@@ -9,8 +9,8 @@ import type {
   Status,
   Verdict,
 } from "../../domain/doctor/model.ts";
-import { launcherProblem } from "../../platform/launcher.ts";
 import { findProxyNamedEntries } from "../../domain/setup/mcp-audit.ts";
+import { launcherProblem } from "../../platform/launcher.ts";
 import { type CommandContext, defineCommand } from "../core/define.ts";
 import { exitError, SilentExit } from "../core/exit.ts";
 import {
@@ -232,12 +232,14 @@ async function defaultCheckers(
   const { proxyCheckers } = await import("../../domain/doctor/proxy-checks.ts");
   const { loadLiveView } = await import("../../runtime/live-lines.ts");
   const { proxyEnabled } = await import("../../runtime/proxy-mode.ts");
+  const { isLegacyLayout } = await import("../../domain/update/layout.ts");
   const view = loadLiveView(env);
   const proxyChecks = proxyCheckers({
     proxyEnabled: proxyEnabled(env),
     reports: view.reports,
     fallbacks: view.fallbacks,
     launcher: launcherProblem(env),
+    legacyLayout: isLegacyLayout(process.execPath, env),
     proxyNamedEntries:
       project && doctorDeps.findProxyNamedEntries
         ? doctorDeps.findProxyNamedEntries(project.store.projectRoot, env)

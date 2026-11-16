@@ -10,11 +10,16 @@ const os = require("os");
 const path = require("path");
 const zlib = require("zlib");
 
+// A platform package holds the launcher as knowns[.exe] and the engine beside it as
+// knowns-engine[.exe] (spec mcp-thin-proxy D10). The launcher is useless without the engine, so a
+// package missing either counts as not installed.
 function resolveBinaryFromPackageDir(pkgDir, ext) {
   for (const name of [`knowns${ext}`, "knowns"]) {
     const candidate = path.join(pkgDir, name);
     if (fs.existsSync(candidate)) {
-      return candidate;
+      return fs.existsSync(path.join(pkgDir, `knowns-engine${path.extname(candidate)}`))
+        ? candidate
+        : null;
     }
   }
   return null;
@@ -198,6 +203,7 @@ function extractTarToDir(buffer, dest) {
     const rawName = header.subarray(0, 100).toString("utf8").replace(/\0.*$/, "");
     const sizeText = header.subarray(124, 136).toString("utf8").replace(/\0.*$/, "").trim();
     const type = header.subarray(156, 157).toString("utf8") || "0";
+    const linkName = header.subarray(157, 257).toString("utf8").replace(/\0.*$/, "");
 
     if (!rawName && !sizeText) {
       break;
@@ -216,10 +222,44 @@ function extractTarToDir(buffer, dest) {
     } else if (type === "0" || type === "\0") {
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       fs.writeFileSync(filePath, buffer.subarray(offset, offset + size));
+    } else if (type === "1" && linkName) {
+      // A hard link (the archive stores knowns-engine and the Windows 0.34 alias as links to
+      // knowns): the data was written earlier under the link target's name, so copy it.
+      const target = path.join(dest, linkName.replace(/^\.\//, "").replace(/^package\//, ""));
+      if (fs.existsSync(target)) {
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.copyFileSync(target, filePath);
+      }
     }
 
     offset += Math.ceil(size / 512) * 512;
   }
+}
+
+/**
+ * Maps a release archive onto the installed names. The archive's knowns[.exe] is the engine (so an
+ * old updater installs something that runs) and the launcher has a name no old updater matches;
+ * layout.json says which becomes which. Without it (an archive of 0.35 or older) nothing changes.
+ */
+function applyArchiveLayout(dest) {
+  const layoutPath = path.join(dest, "layout.json");
+  if (!fs.existsSync(layoutPath)) {
+    return false;
+  }
+  const layout = JSON.parse(fs.readFileSync(layoutPath, "utf8"));
+  const engine = layout.engine;
+  const launcher = layout.launcher;
+  if (!engine || !launcher) {
+    throw new Error("layout.json names no launcher or engine");
+  }
+  fs.renameSync(path.join(dest, engine.file), path.join(dest, engine.installAs));
+  fs.renameSync(path.join(dest, launcher.file), path.join(dest, launcher.installAs));
+  for (const name of fs.readdirSync(dest)) {
+    if (/^knowns-0\.34-update(\.exe)?$/.test(name) || name === "layout.json") {
+      fs.rmSync(path.join(dest, name), { force: true });
+    }
+  }
+  return true;
 }
 
 function writeDownloadedPackageMetadata(dest, platformPackage, version) {
@@ -266,6 +306,7 @@ async function downloadPackageFromGitHubRelease(packageRoot, platformPackage, ve
 
   const extracted = zlib.gunzipSync(archive);
   extractTarToDir(extracted, dest);
+  applyArchiveLayout(dest);
   writeDownloadedPackageMetadata(dest, platformPackage, version);
 }
 
@@ -367,13 +408,41 @@ function useNativeBinaryDirectly(packageRoot, platformPackage, options = {}) {
   if (!source) {
     return false;
   }
+  // The launcher finds the engine beside itself, so the engine goes into bin/ first: the launcher
+  // is only swapped in once it runs (linkNativeInto starts it with --version).
+  const engineName = `knowns-engine${platformPackage.ext}`;
+  const engineDest = path.join(packageRoot, "bin", engineName);
+  const engineExisted = fs.existsSync(engineDest);
+  if (!linkFileInto(engineDest, path.join(pkgDir, engineName))) {
+    return false;
+  }
   const done = linkNativeInto(path.join(packageRoot, "bin", "knowns.js"), source);
-  // The proxy command gets the same treatment when the platform package ships one.
-  const proxySource = path.join(pkgDir, `knowns-proxy${platformPackage.ext}`);
-  if (fs.existsSync(proxySource)) {
-    linkNativeInto(path.join(packageRoot, "bin", "knowns-proxy.js"), proxySource);
+  if (!done && !engineExisted) {
+    fs.rmSync(engineDest, { force: true });
   }
   return done;
+}
+
+/** Hard link (or copy) source to dest through a temp name and a rename; true when dest is in place. */
+function linkFileInto(dest, source) {
+  const tmp = `${dest}.${process.pid}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.rmSync(tmp, { force: true });
+    try {
+      fs.linkSync(source, tmp);
+    } catch {
+      fs.copyFileSync(source, tmp);
+    }
+    fs.chmodSync(tmp, 0o755);
+    fs.renameSync(tmp, dest);
+    return true;
+  } catch {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {}
+    return false;
+  }
 }
 
 function linkNativeInto(dest, source) {
@@ -413,7 +482,7 @@ function sweepStrayTmp(packageRoot) {
     names = fs.readdirSync(dir);
   } catch {}
   for (const name of names) {
-    if (/^knowns(?:-proxy)?\.js\.\d+\.tmp$/.test(name)) {
+    if (/^knowns(?:-engine(?:\.exe)?|\.js)\.\d+\.tmp$/.test(name)) {
       try {
         fs.rmSync(path.join(dir, name), { force: true });
         n++;
@@ -449,7 +518,7 @@ function pruneNpmRuntimes(cacheRoot, keepDir) {
   return removed;
 }
 
-const WINDOWS_SHIM_NAMES = ["knowns", "kn", "knowns-proxy"];
+const WINDOWS_SHIM_NAMES = ["knowns", "kn"];
 
 // The exact text npm (cmd-shim 7) writes for a bin that runs a Node script. Only a file that is
 // this text, with the script path and nothing else varying, is ours to rewrite: a user's own
@@ -526,7 +595,7 @@ const NPM_SHIM_TEMPLATES = {
   ],
 };
 
-const SHIM_TARGET = /^(?:node_modules[\\/]knowns|\.\.[\\/]knowns)[\\/]bin[\\/](?:knowns|knowns-proxy)\.js$/;
+const SHIM_TARGET = /^(?:node_modules[\\/]knowns|\.\.[\\/]knowns)[\\/]bin[\\/]knowns\.js$/;
 
 /** Where knowns.js is (relative to the shim, with /) when file is exactly npm's shim for knowns, else null. */
 function npmShimTarget(file, ext) {
@@ -763,6 +832,7 @@ module.exports = {
   sweepStrayTmp,
   useNativeBinaryDirectly,
   useNativeBinaryOnWindows,
+  applyArchiveLayout,
   verifySha256,
   windowsShimContents,
   writeDownloadedPackageMetadata,

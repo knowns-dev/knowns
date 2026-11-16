@@ -21,6 +21,8 @@ export interface ProxyCheckInput {
   proxyNamedEntries: ProxyNamedEntry[];
   /** launcherProblem() from platform/launcher.ts; undefined when whole or there is no launcher. */
   launcher?: { kind: "launcher-missing" | "engine-missing"; path: string };
+  /** This install is the engine alone under the name knowns (spec mcp-thin-proxy D10). */
+  legacyLayout?: boolean;
 }
 
 export function proxyCheckers(input: ProxyCheckInput): Checker[] {
@@ -68,6 +70,22 @@ export function proxyCheckers(input: ProxyCheckInput): Checker[] {
           evidence,
         };
       },
+    });
+  }
+  if (input.legacyLayout) {
+    out.push({
+      id: "runtime.layout",
+      scope: "runtime",
+      check: (): CheckOutcome => ({
+        status: "warn",
+        summary: "old layout: knowns is the engine alone, without the launcher",
+        evidence: { layout: "single-binary" },
+        remediation: {
+          description:
+            "An older updater installed the engine as knowns. Run the update to finish the split into launcher + engine; every session otherwise starts the full engine.",
+          command: "knowns update",
+        },
+      }),
     });
   }
   if (input.proxyNamedEntries.length > 0) {

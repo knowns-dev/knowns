@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Env, userHomeDir } from "./env.ts";
-import { LEGACY_PROXY_NAME } from "./mcp-command.ts";
+import { PROXY_NAME } from "./mcp-command.ts";
 
 export interface ProxyNamedEntry {
   /** Config file relative to the project root. */
@@ -55,7 +55,7 @@ export function findProxyNamedEntries(
   const check = (label: string, command: string | undefined): void => {
     if (command === undefined) return;
     const base = command.replace(/^.*[\\/]/, "").replace(/\.exe$/i, "");
-    if (base === LEGACY_PROXY_NAME) out.push({ file: label, command });
+    if (base === PROXY_NAME) out.push({ file: label, command });
   };
   const serversOf = (cfg: unknown, parent: string): Record<string, unknown> | undefined =>
     ((cfg as Record<string, unknown> | null | undefined)?.[parent] as

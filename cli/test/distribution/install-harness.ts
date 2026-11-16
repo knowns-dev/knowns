@@ -20,13 +20,17 @@ export interface Release {
   dir: string;
 }
 
-/** Builds <dir>/<tag>/knowns-<platform>.tar.gz(.sha256) holding a stub `knowns` that prints `label`. */
+/**
+ * Builds <dir>/<tag>/knowns-<platform>.tar.gz(.sha256) holding a stub `knowns` that prints `label`.
+ * With `d10` the archive has the launcher + engine layout: knowns is the engine, knowns-engine a
+ * hard link to it, knowns.launcher the launcher (it prints "launcher version <label>"), layout.json.
+ */
 export function makeRelease(
   tag: string,
   platform: string,
   label: string,
   dir = tempDir("rel"),
-  withProxy = false,
+  d10 = false,
 ): Release {
   const stage = tempDir("stage");
   const bin = join(stage, "knowns");
@@ -35,11 +39,13 @@ export function makeRelease(
   mkdirSync(join(dir, tag), { recursive: true });
   const archive = join(dir, tag, `knowns-${platform}.tar.gz`);
   const members = ["./knowns"];
-  if (withProxy) {
-    const proxy = join(stage, "knowns-proxy");
-    writeFileSync(proxy, `#!/bin/sh\necho "knowns-proxy version ${label}"\n`);
-    chmodSync(proxy, 0o755);
-    members.push("./knowns-proxy");
+  if (d10) {
+    run(["ln", bin, join(stage, "knowns-engine")]);
+    const launcher = join(stage, "knowns.launcher");
+    writeFileSync(launcher, `#!/bin/sh\necho "launcher version ${label}"\n`);
+    chmodSync(launcher, 0o755);
+    writeFileSync(join(stage, "layout.json"), '{"layout":1,"version":"' + label + '"}\n');
+    members.push("./knowns-engine", "./knowns.launcher", "./layout.json");
   }
   run(["tar", "-czf", archive, "-C", stage, ...members]);
   const sum = sha256Hex(archive);
