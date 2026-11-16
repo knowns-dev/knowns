@@ -91,6 +91,57 @@ export function isRuntimeDaemonCommand(commandLine: string): boolean {
   return at === 2 && (exe === "bun" || exe === "node" || exe.startsWith("knowns"));
 }
 
+/** What a pid must be to be signalled: an instance of this executable, started in time. */
+export interface ProcessExpectation {
+  /** The exact executable path (case-insensitive on Windows); the command line must start with it. */
+  path?: string;
+  /** Or any of these executable base names, without `.exe`. */
+  names?: string[];
+  /** These words must appear next to each other in the command line, in order. */
+  args?: string[];
+  /** The process must have started no later than this (ms since epoch), plus a minute of slack. */
+  startedBefore?: number;
+}
+
+const stripExe = (name: string): string => name.toLowerCase().replace(/\.exe$/, "");
+const normPath = (p: string): string => p.replace(/\\/g, "/").toLowerCase();
+
+function hasWords(words: string[], want: string[]): boolean {
+  if (want.length === 0) return true;
+  for (let i = 0; i + want.length <= words.length; i++) {
+    if (want.every((w, j) => words[i + j] === w)) return true;
+  }
+  return false;
+}
+
+/**
+ * True only when `pid` is provably an instance of the expected executable (not this process, a
+ * readable command line that matches, started no later than `startedBefore`). Anything that cannot
+ * be established is "no": a caller treats the pid as stale and signals nothing.
+ */
+export function isProcessInstance(
+  pid: number,
+  exp: ProcessExpectation,
+  seams: IdentitySeams = {},
+): boolean {
+  if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) return false;
+  const info = (seams.info ?? readProcessInfo)(pid);
+  if (!info) return false;
+  const words = commandWords(info.commandLine);
+  if (exp.path !== undefined) {
+    const line = normPath(info.commandLine.replace(/^"/, ""));
+    if (!line.startsWith(normPath(exp.path))) return false;
+  } else if (exp.names !== undefined) {
+    const exe = stripExe(baseName(words[0] ?? ""));
+    if (!exp.names.map(stripExe).includes(exe)) return false;
+  } else {
+    return false; // an expectation must name the executable
+  }
+  if (!hasWords(words, exp.args ?? [])) return false;
+  if (exp.startedBefore !== undefined && info.startedAt > exp.startedBefore + 60_000) return false;
+  return true;
+}
+
 export interface IdentitySeams {
   info?: (pid: number) => ProcessInfo | undefined;
 }

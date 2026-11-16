@@ -1,12 +1,14 @@
 // internal/tunnel/cloudflared/daemon.go, internal/server/tunnel.go and routes/tunnel.go: a shared
 // `cloudflared tunnel --url` process keyed by local port, with state in
 // ~/.knowns/cloudflared-<port>.{pid,url,log}.
+
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnDetached } from "../platform/detached-spawn.ts";
 import { goLookPathError } from "../platform/goerror.ts";
+import { isProcessInstance } from "../runtime/process-identity.ts";
 import type { App } from "./app.ts";
 import { jsonResponse, type Router, respondError } from "./http.ts";
 import type { Broadcaster } from "./sse.ts";
@@ -140,6 +142,25 @@ export class Daemon {
     // Not in Go: a pid file holding 0, 1 or a negative number would signal a process group, init
     // or every process the user owns. Only a real child pid is ever written there.
     if (!Number.isSafeInteger(pid) || pid <= 1) {
+      rmSync(this.pidFile, { force: true });
+      rmSync(this.urlFile, { force: true });
+      return;
+    }
+    // A pid file can outlive its process and name an unrelated one after a crash or reboot: signal
+    // only a cloudflared tunnel that started no later than the file.
+    let writtenAt = 0;
+    try {
+      writtenAt = statSync(this.pidFile).mtimeMs;
+    } catch {
+      // no file: nothing proves it
+    }
+    if (
+      !isProcessInstance(pid, {
+        names: ["cloudflared"],
+        args: ["tunnel"],
+        startedBefore: writtenAt,
+      })
+    ) {
       rmSync(this.pidFile, { force: true });
       rmSync(this.urlFile, { force: true });
       return;

@@ -15,6 +15,7 @@ import { spawnDetached } from "../platform/detached-spawn.ts";
 import { goJson } from "../search/json.ts";
 import { goTimeString } from "../search/time.ts";
 import { globalRootPath } from "../storage/core/global-root.ts";
+import { isProcessInstance, type ProcessExpectation } from "./process-identity.ts";
 import { isProcessAlive, nowString, sleep } from "./queue.ts";
 
 export const DEFAULT_HTTP_PORT = 6333;
@@ -84,7 +85,8 @@ function withStatus<E extends Error>(err: E, status: QdrantRuntimeStatus): E & Q
 
 export interface ProcessController {
   start(binary: string, env: Record<string, string>, logPath: string): number;
-  stop(pid: number, timeoutMs: number): Promise<void>;
+  /** `expect`: what the pid must be to be signalled; omitted only for a process just spawned here. */
+  stop(pid: number, timeoutMs: number, expect?: ProcessExpectation): Promise<void>;
   alive(pid: number): boolean;
 }
 
@@ -96,8 +98,10 @@ export const defaultProcessController: ProcessController = {
       throw new Error(`start qdrant: ${(err as Error).message}`);
     }
   },
-  async stop(pid, timeoutMs) {
+  async stop(pid, timeoutMs, expect) {
     if (pid <= 0) return;
+    // A pid file can name a reused pid after a crash or reboot: signal only the managed binary.
+    if (expect && !isProcessInstance(pid, expect)) return;
     try {
       process.kill(pid, "SIGTERM");
     } catch {
@@ -116,6 +120,11 @@ export const defaultProcessController: ProcessController = {
   },
   alive: isProcessAlive,
 };
+
+/** The managed Qdrant binary a pid file's pid must be running before it is signalled. */
+function managedBinary(paths: QdrantPaths): ProcessExpectation {
+  return { path: paths.binaryPath };
+}
 
 export function defaultRoot(): string {
   return join(globalRootPath(), "runtime", "qdrant");
@@ -365,7 +374,7 @@ export class QdrantManager {
         this.writeStatus(status);
         return status;
       } catch (err) {
-        await this.controller.stop(status.pid ?? 0, 10_000);
+        await this.controller.stop(status.pid ?? 0, 10_000, managedBinary(status.paths));
         rmSync(status.paths.pidPath, { force: true });
         status.running = false;
         status.pid = undefined;
@@ -466,7 +475,7 @@ export class QdrantManager {
       }
       return status;
     }
-    await this.controller.stop(status.pid, 10_000);
+    await this.controller.stop(status.pid, 10_000, managedBinary(status.paths));
     rmSync(status.paths.pidPath, { force: true });
     status = this.status("managed Qdrant stopped");
     status.state = QDRANT_STATUS_STOPPED;

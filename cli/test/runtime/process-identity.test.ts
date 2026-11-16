@@ -8,6 +8,7 @@ import { join } from "node:path";
 import {
   commandWords,
   isKnownsRuntimeDaemon,
+  isProcessInstance,
   isRuntimeDaemonCommand,
   readProcessInfo,
 } from "../../src/runtime/process-identity.ts";
@@ -99,3 +100,58 @@ describe("a stale pid file", () => {
     }
   });
 });
+
+describe("isProcessInstance (generic)", () => {
+  const at = (commandLine: string, startedAt = 1_000_000) => ({
+    info: () => ({ commandLine, startedAt }),
+  });
+  test("by exact path, by names, by args", () => {
+    const q = "/home/u/.knowns/runtime/qdrant/bin/qdrant";
+    expect(isProcessInstance(4242, { path: q }, at(q))).toBe(true);
+    expect(isProcessInstance(4242, { path: q }, at("/usr/bin/sleep 60"))).toBe(false);
+    expect(
+      isProcessInstance(
+        4242,
+        { path: "C:\\Users\\a b\\qdrant.exe" },
+        at('"C:\\Users\\a b\\QDRANT.EXE" --x'),
+      ),
+    ).toBe(true);
+    const t = { names: ["cloudflared"], args: ["tunnel"] };
+    expect(
+      isProcessInstance(4242, t, at("/usr/local/bin/cloudflared tunnel --url http://localhost:1")),
+    ).toBe(true);
+    expect(isProcessInstance(4242, t, at("/usr/local/bin/cloudflared update"))).toBe(false);
+    expect(isProcessInstance(4242, t, at("/bin/vim tunnel"))).toBe(false);
+  });
+  test("start time, self, pid 1 and an empty expectation", () => {
+    const t = { names: ["cloudflared"], startedBefore: 500_000 };
+    expect(isProcessInstance(4242, t, at("cloudflared tunnel", 2_000_000))).toBe(false);
+    expect(isProcessInstance(4242, t, at("cloudflared tunnel", 400_000))).toBe(true);
+    expect(isProcessInstance(process.pid, { names: ["bun"] }, at("bun"))).toBe(false);
+    expect(isProcessInstance(1, { names: ["init"] }, at("init"))).toBe(false);
+    expect(isProcessInstance(4242, {}, at("anything"))).toBe(false);
+  });
+  test("a real unrelated process is not an instance of the tunnel or of qdrant", async () => {
+    const child = spawn(...unrelatedCommand());
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      const pid = child.pid as number;
+      expect(isProcessInstance(pid, { names: ["cloudflared"], args: ["tunnel"] })).toBe(false);
+      expect(isProcessInstance(pid, { path: "/nonexistent/runtime/qdrant/bin/qdrant" })).toBe(
+        false,
+      );
+      expect(
+        isProcessInstance(pid, { names: [process.platform === "win32" ? "ping" : "sleep"] }),
+      ).toBe(true);
+    } finally {
+      child.kill();
+    }
+  });
+});
+
+/** A long-running process that has nothing to do with Knowns, on any platform. */
+export function unrelatedCommand(): [string, string[], { stdio: "ignore" }] {
+  return process.platform === "win32"
+    ? ["ping", ["-n", "60", "127.0.0.1"], { stdio: "ignore" }]
+    : ["sleep", ["60"], { stdio: "ignore" }];
+}

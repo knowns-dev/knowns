@@ -2,6 +2,7 @@
 // A file holding 0, 1 or a negative number would signal a process group, init or every process the
 // user owns; such a file is now discarded without signalling anything.
 import { afterEach, expect, spyOn, test } from "bun:test";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -35,3 +36,24 @@ for (const bad of ["-1", "0", "1"]) {
     expect(existsSync(d.pidFile)).toBe(false);
   });
 }
+
+test("a pid file naming an unrelated live process is dropped and that process survives", async () => {
+  const home = mkdtempSync(join(tmpdir(), "tunnel-pid-"));
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  const d = new Daemon(47998);
+  mkdirSync(dirname(d.pidFile), { recursive: true });
+  const [cmd, args] =
+    process.platform === "win32" ? ["ping", ["-n", "60", "127.0.0.1"]] : ["sleep", ["60"]];
+  const child = spawn(cmd as string, args as string[], { stdio: "ignore" });
+  try {
+    await new Promise((r) => setTimeout(r, 300));
+    writeFileSync(d.pidFile, String(child.pid));
+    await d.stop();
+    expect(existsSync(d.pidFile)).toBe(false);
+    expect(child.exitCode).toBeNull();
+    expect(child.signalCode).toBeNull();
+  } finally {
+    child.kill();
+  }
+});
