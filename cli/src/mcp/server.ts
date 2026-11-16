@@ -196,6 +196,9 @@ function decodeCursor(cursor: string): { value: string } | { error: string } {
 
 export class McpServer {
   private readonly tools = new Map<string, Registered>();
+  /** Aborted when the session behind serve() ends abruptly: queued calls are dropped and running
+   * handlers see it as ctx.signal. */
+  private serveSignal: AbortSignal | undefined;
   constructor(private readonly opts: ServerOptions) {}
 
   addTool(tool: Tool, handler: ToolHandler): void {
@@ -380,7 +383,7 @@ export class McpServer {
     if (!entry) {
       return this.fail(id, INVALID_PARAMS, `tool '${name}' not found: tool not found`);
     }
-    const ctx: ToolContext = {};
+    const ctx: ToolContext = this.serveSignal ? { signal: this.serveSignal } : {};
     let result: CallToolResult;
     try {
       const denied = this.opts.guard?.(req);
@@ -407,7 +410,9 @@ export class McpServer {
     input: AsyncIterable<Uint8Array>,
     write: (text: string) => void,
     onError?: (msg: string) => void,
+    signal?: AbortSignal,
   ): Promise<void> {
+    this.serveSignal = signal;
     const out = (r: Response): void => {
       try {
         write(`${marshal(r)}\n`);
@@ -424,6 +429,10 @@ export class McpServer {
     };
     const pump = (): void => {
       while (running < TOOL_WORKERS && queue.length > 0) {
+        if (signal?.aborted) {
+          queue.length = 0;
+          return;
+        }
         const job = queue.shift() as () => Promise<void>;
         running++;
         track(
@@ -444,6 +453,7 @@ export class McpServer {
         return;
       }
       const run = async (): Promise<void> => {
+        if (signal?.aborted) return; // the session ended before this call started
         let res: Response | undefined;
         try {
           res = await this.handle(raw);
@@ -469,6 +479,7 @@ export class McpServer {
     const decoder = new TextDecoder();
     let buf = Buffer.alloc(0);
     for await (const chunk of input) {
+      if (signal?.aborted) break;
       buf = buf.length === 0 ? Buffer.from(chunk) : Buffer.concat([buf, chunk]);
       for (let nl = buf.indexOf(0x0a); nl >= 0; nl = buf.indexOf(0x0a)) {
         const line = decoder.decode(buf.subarray(0, nl + 1));

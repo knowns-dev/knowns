@@ -72,6 +72,9 @@ export interface McpAppOptions {
   /** The directory project detection walks up from when the hint finds nothing. A session hosted
    * by the runtime daemon passes the client's directory; the default is this process's. */
   cwd?: string;
+  /** Hosted by the runtime daemon: the session lease is written without ensuring a daemon (this
+   * process is the daemon, and must never stop or start another one). */
+  daemonHosted?: boolean;
 }
 
 export function newMcpApp(
@@ -91,6 +94,7 @@ export function newMcpApp(
 
   const ac = new AbortController();
   let lease: { release: () => void } | undefined;
+  let closed = false;
 
   let ready: Promise<void> | undefined;
 
@@ -177,11 +181,15 @@ export function newMcpApp(
           const { shouldBypassDaemon, acquireConfiguredClient, startHeartbeat } = await import(
             "../runtime/queue.ts"
           );
-          if (!shouldBypassDaemon()) {
+          if (!shouldBypassDaemon() && !closed) {
             try {
-              const handle = acquireConfiguredClient("mcp", project.store.root);
+              const handle = acquireConfiguredClient("mcp", project.store.root, {
+                ensure: !opts.daemonHosted,
+              });
               lease = handle;
-              startHeartbeat(ac.signal, handle);
+              // The session may have ended while the lease was being taken.
+              if (closed) handle.release();
+              else startHeartbeat(ac.signal, handle);
             } catch (e) {
               log.printf(`runtime lease unavailable: ${(e as Error).message}`);
             }
@@ -200,7 +208,9 @@ export function newMcpApp(
     begin,
     cleanup: (reason) => {
       log.printf(`shutdown: ${reason}`);
+      closed = true;
       ac.abort();
+      void state.dispose();
       try {
         lease?.release();
       } catch {

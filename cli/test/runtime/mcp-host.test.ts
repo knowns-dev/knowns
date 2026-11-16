@@ -2,7 +2,7 @@
 // in @doc/specs/2026-11-16/mcp-thin-proxy; these tests speak it with a bare socket client, the way
 // the Go proxy will.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -184,7 +184,10 @@ describe("handshake", () => {
   for (const [name, over, code] of refused) {
     test(`${name} is refused with ${code} and the connection closes`, async () => {
       const { c, w } = await connect(over);
-      expect(w).toMatchObject({ type: "error", code, daemon_version: VERSION });
+      expect(w).toMatchObject({ type: "error", code });
+      // The daemon's version is only told to a client that proved it holds the token.
+      if (code === "version_mismatch") expect(w.daemon_version).toBe(VERSION);
+      else expect(w.daemon_version).toBeUndefined();
       expect(w.retry_after_ms).toBeUndefined();
       await c.untilClosed();
       expect(host.sessions()).toEqual([]);
@@ -402,5 +405,222 @@ describe("another OS user", () => {
     // The directory this host created is ours and private.
     expect(statSync(dir).uid).toBe(process.getuid());
     expect(statSync(dir).mode & 0o077).toBe(0);
+  });
+});
+
+// --- review follow-up (d12a249) -----------------------------------------------------------------
+
+import { McpServer } from "../../src/mcp/server.ts";
+import { McpState } from "../../src/mcp/state.ts";
+import type { HostedApp } from "../../src/runtime/mcp-host.ts";
+import { acquireClient, daemonSpawnEnv, startHeartbeat } from "../../src/runtime/queue.ts";
+
+/** A hosted app whose only tool is slow and counts its runs: queued calls are visible. */
+function slowApp(counter: { runs: number; sawAbort: number }): HostedApp {
+  const server = new McpServer({ name: "t", version: "0", instructions: "" });
+  server.addTool(
+    {
+      name: "slow",
+      description: "",
+      properties: {},
+      required: [],
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    } as never,
+    async (ctx) => {
+      counter.runs++;
+      await new Promise((r) => setTimeout(r, 250));
+      if (ctx.signal?.aborted) counter.sawAbort++;
+      return { text: "done", isError: false } as never;
+    },
+  );
+  return {
+    server,
+    state: { clientInfo: undefined, getRoot: () => "", log: silent },
+    begin: async () => undefined,
+    cleanup: () => undefined,
+  } as unknown as HostedApp;
+}
+
+async function hostWith(createApp: () => HostedApp): Promise<void> {
+  await host.stop();
+  host = new McpHost({ version: VERSION, root, logger: () => undefined, createApp });
+  await host.start();
+}
+
+const callLines = (n: number) =>
+  Array.from({ length: n }, (_, i) =>
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 100 + i,
+      method: "tools/call",
+      params: { name: "slow", arguments: {} },
+    }),
+  ).join("\n");
+
+describe("P2-4: an abrupt end drops queued work, a clean one lets it finish", () => {
+  test("abrupt disconnect: only the calls already running complete", async () => {
+    const counter = { runs: 0, sawAbort: 0 };
+    await hostWith(() => slowApp(counter));
+    const { c } = await connect();
+    c.send(callLines(12)); // 5 run at once, 7 queue
+    await new Promise((r) => setTimeout(r, 100));
+    c.sock.destroy();
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(counter.runs).toBe(5);
+  });
+
+  test("close frame: every started and queued call is answered, then the daemon closes", async () => {
+    const counter = { runs: 0, sawAbort: 0 };
+    await hostWith(() => slowApp(counter));
+    const { c } = await connect();
+    c.send(callLines(8));
+    c.send({ knowns_mcp: 1, type: "close" });
+    await c.untilClosed(10_000);
+    expect(counter.runs).toBe(8);
+    expect(c.lines.length).toBe(8);
+  });
+
+  test("a bye (owner gone, evicted) is abrupt too", async () => {
+    const counter = { runs: 0, sawAbort: 0 };
+    await hostWith(() => slowApp(counter));
+    const { c, w } = await connect();
+    c.send(callLines(12));
+    await new Promise((r) => setTimeout(r, 100));
+    host.evict(w.session as string);
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(counter.runs).toBe(5);
+    expect(counter.sawAbort).toBe(5); // running handlers see ctx.signal aborted
+  });
+});
+
+describe("P2-6: relative paths are anchored on the client, not the daemon", () => {
+  test("a relative cwd is refused", async () => {
+    const { w } = await connect({ cwd: "relative/dir" });
+    expect(w).toMatchObject({ type: "error", code: "bad_hello" });
+  });
+
+  test("a relative project resolves against hello.cwd", async () => {
+    const sb = makeSandbox("full"); // <tmp>/project
+    const parent = join(sb.dir, "..");
+    const { c, w } = await connect({ cwd: parent, project: "project" });
+    expect(w.type).toBe("welcome");
+    await c.rpc(1, "initialize", INIT);
+    expect(await c.tool(2, "project", { action: "current" })).toContain(sb.dir);
+    c.sock.end();
+  }, 60_000);
+});
+
+describe("P2-7: hello cap and linear framing", () => {
+  test("an oversized hello (no newline) is refused at 64 KiB, not 16 MiB", async () => {
+    const c = new Client(host.address as string);
+    c.sock.write("x".repeat(70 * 1024));
+    expect(await c.next()).toMatchObject({ type: "error", code: "frame_too_large" });
+    await c.untilClosed();
+  });
+
+  test("a 4 MiB line in 1 KiB chunks is framed in linear time", async () => {
+    const { c } = await connect();
+    await c.rpc(1, "initialize", INIT);
+    const big = `{"jsonrpc":"2.0","id":7,"method":"ping","params":{"pad":"${"a".repeat(4 << 20)}"}}`;
+    const t = Date.now();
+    for (let i = 0; i < big.length; i += 1024) c.sock.write(big.slice(i, i + 1024));
+    c.sock.write("\n");
+    const r = await c.next(20_000);
+    expect(r.id).toBe(7);
+    expect(Date.now() - t).toBeLessThan(10_000);
+    c.sock.end();
+  }, 60_000);
+
+  test("a JSON-RPC line mentioning knowns_mcp is not taken for a control frame", async () => {
+    const { c } = await connect();
+    await c.rpc(1, "initialize", INIT);
+    c.send({ jsonrpc: "2.0", id: 9, method: "ping", params: { note: '"knowns_mcp"' } });
+    expect((await c.next()).id).toBe(9);
+    c.sock.end();
+  });
+});
+
+describe("P1: lease lifecycle of a daemon-hosted session", () => {
+  let leaseRoot: string;
+  let saved: Record<string, string | undefined>;
+  beforeEach(() => {
+    leaseRoot = mkdtempSync(join(tmpdir(), "kn-lease-"));
+    saved = {
+      KNOWNS_RUNTIME_ROOT: process.env.KNOWNS_RUNTIME_ROOT,
+      KNOWNS_RUNTIME_INLINE: process.env.KNOWNS_RUNTIME_INLINE,
+    };
+    process.env.KNOWNS_RUNTIME_ROOT = leaseRoot;
+    delete process.env.KNOWNS_RUNTIME_INLINE; // leases are really written
+  });
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+  const leases = () => {
+    try {
+      return readdirSync(join(leaseRoot, "leases")).filter((n) => n.endsWith(".json"));
+    } catch {
+      return [];
+    }
+  };
+
+  test("P1-1: a session closed while detection runs leaves no lease and no heartbeat", async () => {
+    const sb = makeSandbox("full");
+    const app = newMcpApp("", silent, { cwd: sb.dir, daemonHosted: true });
+    const began = app.begin();
+    app.cleanup("client left"); // before detection finished
+    await began;
+    await new Promise((r) => setTimeout(r, 100));
+    expect(leases()).toEqual([]);
+  });
+
+  test("P1-1: startHeartbeat on an aborted signal releases the lease", () => {
+    const sb = makeSandbox("full");
+    const handle = acquireClient("mcp", join(sb.dir, ".knowns"), false, { ensure: false });
+    expect(leases().length).toBe(1);
+    const ac = new AbortController();
+    ac.abort();
+    startHeartbeat(ac.signal, handle);
+    expect(leases()).toEqual([]);
+  });
+
+  test("P1-2: a hosted session takes its lease without ensuring a daemon", async () => {
+    const sb = makeSandbox("full");
+    const app = newMcpApp("", silent, { cwd: sb.dir, daemonHosted: true });
+    await app.begin();
+    expect(leases().length).toBe(1);
+    // ensureDaemon would have created the start lock, spawned a daemon and written its pid file.
+    expect(existsSync(join(leaseRoot, "start.lock"))).toBe(false);
+    expect(existsSync(join(leaseRoot, "knowns-runtime.pid"))).toBe(false);
+    app.cleanup("done");
+    expect(leases()).toEqual([]);
+  });
+
+  test("P1-3: KNOWNS_MCP_PROXY never reaches a daemon the client starts", () => {
+    const env = daemonSpawnEnv({ KNOWNS_MCP_PROXY: "0", PATH: "/bin", HOME: "/h" });
+    expect(env.KNOWNS_MCP_PROXY).toBeUndefined();
+    expect(env.PATH).toBe("/bin");
+  });
+});
+
+describe("P2-9: a session stops its language servers", () => {
+  test("dispose stops the manager once", async () => {
+    const state = new McpState(silent);
+    let stopped = 0;
+    (state as unknown as { lspManagerCache: unknown; lspManagerBuilt: boolean }).lspManagerCache = {
+      stopAll: async () => {
+        stopped++;
+      },
+    };
+    await state.dispose();
+    await state.dispose();
+    expect(stopped).toBe(1);
   });
 });

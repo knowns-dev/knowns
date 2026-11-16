@@ -44,6 +44,8 @@ describe("runtime daemon hosting MCP sessions", () => {
           USERPROFILE: home,
           KNOWNS_RUNTIME_ROOT: runtime,
           KNOWNS_LSP_DAEMON: "0",
+          // A client that opted out may be the one that started this daemon: the endpoint stays on.
+          KNOWNS_MCP_PROXY: "0",
           KNOWN_LSP_AUTO_INSTALL: "0",
           NO_UPDATE_CHECK: "1",
           CI: "1",

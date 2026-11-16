@@ -42,7 +42,7 @@ async function descriptor() {
 }
 
 const d = await descriptor();
-const sock = net.connect({ path: d.address, allowHalfOpen: true });
+const sock = net.connect({ path: d.address });
 sock.write(
   `${JSON.stringify({
     knowns_mcp: 1,
@@ -88,4 +88,5 @@ sock.on("close", () => {
   process.exit(0);
 });
 process.stdin.on("data", (c) => sock.write(c));
-process.stdin.on("end", () => sock.end());
+// No more requests: ask the daemon to answer what it has and close (a half-close would not do).
+process.stdin.on("end", () => sock.write(`${JSON.stringify({ knowns_mcp: 1, type: "close" })}\n`));

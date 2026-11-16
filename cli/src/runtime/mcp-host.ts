@@ -5,6 +5,7 @@
 // in @doc/specs/2026-11-16/mcp-thin-proxy.
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type net from "node:net";
+import { isAbsolute, resolve } from "node:path";
 import type { McpLogger } from "../mcp/log.ts";
 import { VERSION } from "../version.ts";
 import {
@@ -16,6 +17,12 @@ import {
 import { goLogf, isProcessAlive } from "./queue.ts";
 
 export const MAX_FRAME_BYTES = 16 << 20;
+/** Before authentication nobody is trusted: a hello is a few hundred bytes. */
+const MAX_HELLO_BYTES = 64 * 1024;
+/** A control frame is tiny; longer lines are never parsed as one. */
+const MAX_CONTROL_BYTES = 4096;
+/** A client that stops reading is cut off past this much unsent output. */
+const MAX_BUFFERED_WRITE = 64 << 20;
 const MAX_UNAUTHENTICATED = 8;
 const DEFAULT_MAX_SESSIONS = 64;
 
@@ -104,6 +111,8 @@ function parseHello(line: string): Hello {
   const str = (k: string): string => (typeof raw[k] === "string" ? (raw[k] as string) : "");
   const cwd = str("cwd");
   if (cwd === "") throw new HandshakeFailure("bad_hello", "hello.cwd is required");
+  // The daemon's own working directory means nothing to a client: a relative path is refused.
+  if (!isAbsolute(cwd)) throw new HandshakeFailure("bad_hello", "hello.cwd must be absolute");
   if (typeof raw.version !== "string" || raw.version === "") {
     throw new HandshakeFailure("bad_hello", "hello.version is required");
   }
@@ -121,15 +130,43 @@ function parseHello(line: string): Hello {
     version: raw.version,
     token: str("token"),
     cwd,
-    project: str("project"),
+    project: ((p) => (p === "" || isAbsolute(p) ? p : resolve(cwd, p)))(str("project")),
     pid,
     client,
   };
 }
 
+/** Splits a byte stream into lines, looking at each chunk once (no re-scan of what is buffered). */
+class LineSplitter {
+  private parts: Buffer[] = [];
+  private len = 0;
+  constructor(private readonly maxLine: number) {}
+
+  /** Complete lines (newline included) in this chunk, or "too_large" when a line exceeds the cap. */
+  push(chunk: Buffer): Buffer[] | "too_large" {
+    const out: Buffer[] = [];
+    let start = 0;
+    for (let nl = chunk.indexOf(0x0a, start); nl >= 0; nl = chunk.indexOf(0x0a, start)) {
+      const piece = chunk.subarray(start, nl + 1);
+      if (this.len + piece.length > this.maxLine) return "too_large";
+      out.push(this.parts.length === 0 ? piece : Buffer.concat([...this.parts, piece]));
+      this.parts = [];
+      this.len = 0;
+      start = nl + 1;
+    }
+    const rest = chunk.subarray(start);
+    if (rest.length > 0) {
+      if (this.len + rest.length > this.maxLine) return "too_large";
+      this.parts.push(rest);
+      this.len += rest.length;
+    }
+    return out;
+  }
+}
+
 /** A pull queue of byte chunks: serve() reads it as its stdin. */
 class Chunks implements AsyncIterable<Uint8Array> {
-  private readonly queue: Uint8Array[] = [];
+  private queue: Uint8Array[] = [];
   private waiter: (() => void) | undefined;
   private closed = false;
 
@@ -139,9 +176,16 @@ class Chunks implements AsyncIterable<Uint8Array> {
     this.wake();
   }
 
+  /** Clean end of input: what is queued is still read. */
   close(): void {
     this.closed = true;
     this.wake();
+  }
+
+  /** Abrupt end: what is queued is dropped. */
+  abort(): void {
+    this.queue = [];
+    this.close();
   }
 
   private wake(): void {
@@ -171,10 +215,14 @@ interface Live {
   end(reason: string): void;
 }
 
+/** Log text from a client: quoted, so a newline in a name cannot forge a log line. */
+const logSafe = (s: string): string => JSON.stringify(s.slice(0, 80));
+
 export class McpHost {
   private readonly version: string;
   private readonly root: string | undefined;
   private readonly sessionsById = new Map<string, Live>();
+  private readonly pendingSockets = new Set<net.Socket>();
   private descriptor: EndpointDescriptor | undefined;
   private server: net.Server | undefined;
   private unauthenticated = 0;
@@ -200,6 +248,7 @@ export class McpHost {
   }
 
   async start(): Promise<EndpointDescriptor> {
+    this.stopping = false;
     const { server, descriptor } = await listenMcpEndpoint((sock) => this.onConnection(sock), {
       version: this.version,
       ...(this.root !== undefined ? { root: this.root } : {}),
@@ -218,6 +267,7 @@ export class McpHost {
     const d = this.descriptor;
     this.server = undefined;
     for (const s of [...this.sessionsById.values()]) s.end(reason);
+    for (const s of this.pendingSockets) s.destroy(); // clients that never said hello
     if (d) removeDescriptor(d, this.root);
     await new Promise<void>((r) => (server ? server.close(() => r()) : r()));
     this.descriptor = undefined;
@@ -238,57 +288,67 @@ export class McpHost {
       return;
     }
     this.unauthenticated++;
+    this.pendingSockets.add(sock);
     let counted = true;
     const settleCount = (): void => {
       if (!counted) return;
       counted = false;
       this.unauthenticated--;
+      this.pendingSockets.delete(sock);
     };
     sock.on("error", () => undefined); // a reset is a session end, not a daemon error
     sock.on("close", settleCount);
 
-    let buf = Buffer.alloc(0);
+    // Before authentication the hello is capped far below a frame: nobody is trusted yet.
+    const parts: Buffer[] = [];
+    let len = 0;
     let done = false;
     const timer = setTimeout(
       () => fail(new HandshakeFailure("bad_hello", "no hello within the handshake window")),
       this.opts.helloTimeoutMs ?? 5000,
     );
-    const fail = (f: HandshakeFailure): void => {
+    const fail = (f: HandshakeFailure, authed = false): void => {
       if (done) return;
       done = true;
       clearTimeout(timer);
       settleCount();
       sock.removeListener("data", onData);
-      this.refuse(sock, f);
+      this.refuse(sock, f, authed);
     };
     const onData = (chunk: Buffer): void => {
       if (done) return;
-      buf = Buffer.concat([buf, chunk]);
-      const nl = buf.indexOf(0x0a);
-      if (nl < 0) {
-        if (buf.length > MAX_FRAME_BYTES) {
-          fail(new HandshakeFailure("frame_too_large", "hello frame too large"));
-        }
+      const nl = chunk.indexOf(0x0a);
+      const take = nl < 0 ? chunk.length : nl;
+      len += take;
+      if (len > MAX_HELLO_BYTES) {
+        fail(new HandshakeFailure("frame_too_large", "hello frame too large"));
         return;
       }
+      parts.push(nl < 0 ? chunk : chunk.subarray(0, nl));
+      if (nl < 0) return;
       done = true;
       clearTimeout(timer);
       sock.removeListener("data", onData);
-      const line = buf.subarray(0, nl).toString("utf8").replace(/\r$/, "");
-      const rest = buf.subarray(nl + 1);
+      const line = Buffer.concat(parts).toString("utf8").replace(/\r$/, "");
+      const rest = chunk.subarray(nl + 1);
+      done = false; // let fail() report errors below
       let hello: Hello;
+      let authed = false;
       try {
-        hello = this.validate(parseHello(line));
+        hello = parseHello(line);
+        this.validate(hello, () => {
+          authed = true;
+        });
       } catch (e) {
-        settleCount();
-        this.refuse(
-          sock,
+        fail(
           e instanceof HandshakeFailure ? e : new HandshakeFailure("internal", String(e)),
+          authed,
         );
         return;
       }
+      done = true;
       settleCount();
-      this.open(sock, hello, rest);
+      void this.open(sock, hello, rest);
     };
     sock.on("data", onData);
     sock.on("end", () => {
@@ -296,7 +356,7 @@ export class McpHost {
     });
   }
 
-  private validate(h: Hello): Hello {
+  private validate(h: Hello, authenticated: () => void): void {
     if (this.stopping) throw new HandshakeFailure("shutting_down", "daemon is shutting down");
     if (h.knowns_mcp !== PROXY_PROTOCOL) {
       throw new HandshakeFailure(
@@ -308,6 +368,7 @@ export class McpHost {
     if (token === "" || !tokenOk(token, h.token)) {
       throw new HandshakeFailure("unauthorized", "invalid token");
     }
+    authenticated();
     if (h.version !== this.version) {
       throw new HandshakeFailure(
         "version_mismatch",
@@ -317,17 +378,17 @@ export class McpHost {
     if (this.sessionsById.size >= (this.opts.maxSessions ?? DEFAULT_MAX_SESSIONS)) {
       throw new HandshakeFailure("busy", "session limit reached");
     }
-    return h;
   }
 
-  private refuse(sock: net.Socket, f: HandshakeFailure): void {
+  /** The daemon's version is only told to a client that proved it holds the token. */
+  private refuse(sock: net.Socket, f: HandshakeFailure, authed = false): void {
     const retry = RETRY_AFTER_MS[f.code];
     const frame = {
       knowns_mcp: PROXY_PROTOCOL,
       type: "error",
       code: f.code,
       message: f.message,
-      daemon_version: this.version,
+      ...(authed ? { daemon_version: this.version } : {}),
       ...(retry !== undefined ? { retry_after_ms: retry } : {}),
     };
     this.log(`[mcp-host] refused connection: ${f.code}`);
@@ -340,14 +401,21 @@ export class McpHost {
     setTimeout(() => sock.destroy(), 2000).unref();
   }
 
+  private newSessionId(): string {
+    for (;;) {
+      const id = `s-${randomBytes(4).toString("hex")}`;
+      if (!this.sessionsById.has(id)) return id;
+    }
+  }
+
   // --- sessions --------------------------------------------------------------------------------
 
-  private open(sock: net.Socket, hello: Hello, firstBytes: Buffer): void {
-    const id = `s-${randomBytes(4).toString("hex")}`;
+  private async open(sock: net.Socket, hello: Hello, firstBytes: Buffer): Promise<void> {
+    const id = this.newSessionId();
     const info: SessionInfo = {
       id,
       pid: hello.pid,
-      client: hello.client.name ?? "",
+      client: (hello.client.name ?? "").slice(0, 80),
       project: "",
       startedAt: new Date().toISOString(),
     };
@@ -355,27 +423,24 @@ export class McpHost {
       if (sock.destroyed || !sock.writable) return;
       sock.write(`${typeof frame === "string" ? frame : JSON.stringify(frame)}\n`);
     };
-    write({
-      knowns_mcp: PROXY_PROTOCOL,
-      type: "welcome",
-      version: this.version,
-      session: id,
-      daemon_pid: process.pid,
-      max_frame_bytes: MAX_FRAME_BYTES,
-    });
 
     const logger = this.sessionLogger(id);
-    let app: HostedApp | undefined;
     const chunks = new Chunks();
+    const abort = new AbortController();
+    let app: HostedApp | undefined;
     let ended = false;
     let byeReason: string | undefined;
     let ownerTimer: ReturnType<typeof setInterval> | undefined;
 
-    const finish = (reason: string): void => {
+    /** abrupt: queued and running work is dropped; a clean end lets started calls finish. */
+    const finish = (reason: string, abrupt: boolean): void => {
       if (ended) return;
       ended = true;
       if (ownerTimer) clearInterval(ownerTimer);
-      chunks.close();
+      if (abrupt) {
+        chunks.abort();
+        abort.abort();
+      } else chunks.close();
       this.sessionsById.delete(id);
       try {
         app?.cleanup(reason);
@@ -390,14 +455,60 @@ export class McpHost {
       end: (reason) => {
         byeReason = reason;
         write({ knowns_mcp: PROXY_PROTOCOL, type: "bye", reason });
-        finish(reason);
+        finish(reason, true);
         sock.end();
         setTimeout(() => sock.destroy(), 2000).unref();
       },
     };
+
+    // Input that arrives while the app loads is kept and served in order.
+    const splitter = new LineSplitter(MAX_FRAME_BYTES);
+    let overflow = false;
+    const feed = (data: Buffer): void => {
+      if (ended || overflow) return;
+      const lines = splitter.push(data);
+      if (lines === "too_large") {
+        overflow = true;
+        this.refuse(sock, new HandshakeFailure("frame_too_large", "frame exceeds the limit"), true);
+        finish("frame_too_large", true);
+        return;
+      }
+      for (const line of lines) {
+        if (this.control(line, write, () => chunks.close())) continue;
+        chunks.push(line);
+      }
+    };
+    sock.on("data", feed);
+    if (firstBytes.length > 0) feed(firstBytes);
+    sock.once("end", () => {
+      // half-close: drain, answer, then close
+      if (!ended) chunks.close();
+    });
+    sock.once("close", () => finish("connection closed", true));
+
+    // The app exists before the welcome, so a failure is an ordinary refusal.
+    try {
+      app = await (this.opts.createApp ?? defaultCreateApp)(hello.project, hello.cwd, logger);
+    } catch (e) {
+      sock.removeListener("data", feed);
+      this.refuse(sock, new HandshakeFailure("internal", (e as Error).message), true);
+      return;
+    }
+    if (ended || sock.destroyed) {
+      app.cleanup("session ended before start");
+      return;
+    }
     this.sessionsById.set(id, live);
+    write({
+      knowns_mcp: PROXY_PROTOCOL,
+      type: "welcome",
+      version: this.version,
+      session: id,
+      daemon_pid: process.pid,
+      max_frame_bytes: MAX_FRAME_BYTES,
+    });
     this.log(
-      `[mcp-host] session ${id} opened (client=${info.client || "?"}, pid=${hello.pid ?? 0})`,
+      `[mcp-host] session ${id} opened (client=${logSafe(info.client)}, pid=${hello.pid ?? 0})`,
     );
 
     if (hello.pid !== undefined) {
@@ -408,94 +519,57 @@ export class McpHost {
       ownerTimer.unref();
     }
 
-    // Frame splitter: control frames are answered here, everything else is raw MCP for serve().
-    let pending: Buffer = Buffer.alloc(0);
-    const feed = (data: Buffer): void => {
-      pending = pending.length === 0 ? data : Buffer.concat([pending, data]);
-      for (let nl = pending.indexOf(0x0a); nl >= 0; nl = pending.indexOf(0x0a)) {
-        const line = pending.subarray(0, nl + 1);
-        pending = pending.subarray(nl + 1);
-        if (this.control(line, write)) continue;
-        chunks.push(line);
-      }
-      if (pending.length > MAX_FRAME_BYTES) {
-        write({
-          knowns_mcp: PROXY_PROTOCOL,
-          type: "error",
-          code: "frame_too_large",
-          message: "frame exceeds the limit",
-          daemon_version: this.version,
-        });
-        finish("frame_too_large");
-        sock.destroy();
-      }
-    };
-    sock.on("data", feed);
-    if (firstBytes.length > 0) feed(firstBytes);
-    sock.once("end", () => chunks.close()); // half-close: drain, answer, then close
-    sock.once("close", () => finish("connection closed"));
-
-    void (async () => {
-      try {
-        app = await (this.opts.createApp ?? defaultCreateApp)(hello.project, hello.cwd, logger);
-      } catch (e) {
-        write({
-          knowns_mcp: PROXY_PROTOCOL,
-          type: "error",
-          code: "internal",
-          message: (e as Error).message,
-          daemon_version: this.version,
-        });
-        finish("internal error");
-        sock.end();
-        return;
-      }
-      if (ended) {
-        app.cleanup("session ended before start");
-        return;
-      }
-      const hosted = app;
-      let started = false;
-      try {
-        await hosted.server.serve(
-          chunks,
-          (text) => {
-            if (!sock.destroyed && sock.writable) sock.write(text);
-            // Like the stdio command: project detection starts after the first response.
-            if (!started) {
-              started = true;
-              setImmediate(() => {
-                void hosted.begin().then(() => {
-                  info.project = hosted.state.getRoot();
-                });
+    const hosted = app;
+    let started = false;
+    try {
+      await hosted.server.serve(
+        chunks,
+        (text) => {
+          if (sock.destroyed || !sock.writable) return;
+          sock.write(text);
+          // A client that stops reading must not grow the daemon without bound.
+          if (sock.writableLength > MAX_BUFFERED_WRITE) live.end("evicted");
+          // Like the stdio command: project detection starts after the first response.
+          if (!started) {
+            started = true;
+            setImmediate(() => {
+              if (ended) return;
+              void hosted.begin().then(() => {
+                info.project = hosted.state.getRoot();
               });
-            }
-          },
-          (msg) => logger.printf(msg),
-        );
-      } catch (e) {
-        logger.printf(`session ${id}: ${(e as Error).message}`);
-      }
-      info.project = hosted.state.getRoot();
-      if (byeReason === undefined) {
-        finish("client closed");
-        if (!sock.destroyed) sock.end();
-      }
-    })();
+            });
+          }
+        },
+        (msg) => logger.printf(msg),
+        abort.signal,
+      );
+    } catch (e) {
+      logger.printf(`session ${id}: ${(e as Error).message}`);
+    }
+    info.project = hosted.state.getRoot();
+    if (byeReason === undefined) {
+      finish("client closed", false);
+      if (!sock.destroyed) sock.end();
+    }
   }
 
   /** Handles a control frame; false when the line is MCP JSON-RPC. */
-  private control(line: Buffer, write: (f: unknown) => void): boolean {
-    // A control frame starts with {"knowns_mcp": ; anything else is JSON-RPC and is not parsed.
-    const head = line.subarray(0, 40).toString("utf8");
-    if (!/^\s*\{\s*"knowns_mcp"\s*:/.test(head)) return false;
+  private control(line: Buffer, write: (f: unknown) => void, onClose: () => void): boolean {
+    // A control frame is a small object with an integer knowns_mcp and no jsonrpc member; the
+    // substring test keeps JSON-RPC lines from being parsed here at all.
+    if (line.length > MAX_CONTROL_BYTES || !line.includes('"knowns_mcp"')) return false;
+    let f: unknown;
     try {
-      const f = JSON.parse(line.toString("utf8")) as Record<string, unknown>;
-      if (f.type === "ping") write({ knowns_mcp: PROXY_PROTOCOL, type: "pong", n: f.n });
+      f = JSON.parse(line.toString("utf8"));
     } catch {
-      // an unparsable control frame is ignored
+      return false;
     }
-    return true;
+    if (!isObject(f) || !Number.isInteger(f.knowns_mcp) || "jsonrpc" in f) return false;
+    if (f.type === "ping") write({ knowns_mcp: PROXY_PROTOCOL, type: "pong", n: f.n });
+    // "close": no more requests will follow. Drain what was sent, answer it, then close. A TCP-style
+    // half-close cannot carry this: Bun closes the whole socket when the peer shuts down writing.
+    else if (f.type === "close") onClose();
+    return true; // any other control type is ignored
   }
 
   private sessionLogger(id: string): McpLogger {
@@ -507,5 +581,5 @@ export class McpHost {
 async function defaultCreateApp(project: string, cwd: string, log: McpLogger): Promise<HostedApp> {
   // Loaded when the first session arrives, so an idle daemon never pays for the MCP modules.
   const { newMcpApp } = await import("../mcp/index.ts");
-  return newMcpApp(project, log, { cwd });
+  return newMcpApp(project, log, { cwd, daemonHosted: true });
 }

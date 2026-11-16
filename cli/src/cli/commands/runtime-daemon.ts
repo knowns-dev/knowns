@@ -25,25 +25,23 @@ const run = defineCommand({
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
     // The MCP session endpoint (KN-QS0B82): serves proxies for as long as the daemon runs. It is
-    // opt-out with KNOWNS_MCP_PROXY=0 (FR-9) and never blocks the daemon when it cannot listen.
+    // never blocks the daemon when it cannot listen. KNOWNS_MCP_PROXY=0 is a client-side opt-out only.
     const services = [...(runtimeSeams.services ?? [])];
-    if (process.env.KNOWNS_MCP_PROXY !== "0") {
-      services.push(async (signal) => {
-        const { McpHost } = await import("../../runtime/mcp-host.ts");
-        const host = new McpHost();
-        try {
-          await host.start();
-        } catch (err) {
-          process.stderr.write(`[runtime] mcp endpoint unavailable: ${(err as Error).message}\n`);
-          return;
-        }
-        await new Promise<void>((resolve) => {
-          if (signal.aborted) resolve();
-          else signal.addEventListener("abort", () => resolve(), { once: true });
-        });
-        await host.stop("shutdown");
+    services.push(async (signal) => {
+      const { McpHost } = await import("../../runtime/mcp-host.ts");
+      const host = new McpHost();
+      try {
+        await host.start();
+      } catch (err) {
+        process.stderr.write(`[runtime] mcp endpoint unavailable: ${(err as Error).message}\n`);
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
       });
-    }
+      await host.stop("shutdown");
+    });
     await runDaemon(ac.signal, {
       executor: executeRuntimeJob,
       reloadHandler: (reload) => reloadSemanticRuntime(reload),

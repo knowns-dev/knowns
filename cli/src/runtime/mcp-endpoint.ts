@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import net from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { VERSION } from "../version.ts";
 import { ENV_RUNTIME_ROOT, nowString, runtimeRoot } from "./queue.ts";
 
@@ -93,7 +93,7 @@ function checkDescriptorLocation(root: string): void {
   if ((process.env[ENV_RUNTIME_ROOT] ?? "").trim() !== "") return;
   const home = homedir();
   const rel = relative(resolve(home).toLowerCase(), resolve(root).toLowerCase());
-  if (rel.startsWith("..") || resolve(rel) === rel) {
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw new Error(`runtime root ${root} is outside the user profile; refusing to write a token`);
   }
 }
@@ -101,12 +101,14 @@ function checkDescriptorLocation(root: string): void {
 /** Removes a socket nobody listens on; refuses when a live daemon holds it. */
 async function freeSocket(path: string): Promise<void> {
   if (!existsSync(path)) return;
+  // Only a refused connection proves nobody listens: a daemon too busy to accept in time still
+  // owns its socket, so a timeout counts as alive and the path is left alone.
   const alive = await new Promise<boolean>((done) => {
     const sock = net.connect({ path });
     const timer = setTimeout(() => {
       sock.destroy();
-      done(false);
-    }, 300);
+      done(true);
+    }, 1000);
     sock.once("connect", () => {
       clearTimeout(timer);
       sock.destroy();

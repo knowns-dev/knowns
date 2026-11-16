@@ -89,6 +89,20 @@ export class McpState {
     return manager;
   }
 
+  /** Ends the session: stops the language servers this session started (a daemon-hosted session
+   * outlives no process of its own, so nothing else would). */
+  async dispose(): Promise<void> {
+    const manager = this.lspManagerCache;
+    this.lspManagerCache = undefined;
+    this.lspManagerBuilt = true;
+    if (!manager) return;
+    try {
+      await manager.stopAll(undefined);
+    } catch {
+      // the servers may already be gone
+    }
+  }
+
   /** The once-only "LSP daemon disabled" warning. */
   warnDaemonDisabledOnce(text: string): void {
     if (this.daemonWarned) return;

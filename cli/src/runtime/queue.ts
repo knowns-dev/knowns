@@ -978,6 +978,16 @@ export function daemonCommand(): { cmd: string; args: string[] } {
     : { cmd: process.execPath, args: [script, "__runtime", "run"] };
 }
 
+/**
+ * The environment a daemon is started with. KNOWNS_MCP_PROXY=0 is a client-side opt-out (FR-9):
+ * a client that opts out must still start a normal daemon, or every later proxy would find it
+ * without an endpoint.
+ */
+export function daemonSpawnEnv(env: Env): Env {
+  const { KNOWNS_MCP_PROXY: _drop, ...rest } = env;
+  return rest;
+}
+
 /** EnsureDaemon: start the shared runtime daemon unless one runs (or inline mode is on). */
 export function ensureDaemon(): void {
   if (shouldBypassDaemon()) return;
@@ -1019,7 +1029,7 @@ export function ensureDaemon(): void {
     const logFd = openRuntimeLogFile();
     try {
       const { cmd, args } = daemonCommand();
-      spawnDetached(cmd, args, { logPath: runtimeLogPath() });
+      spawnDetached(cmd, args, { logPath: runtimeLogPath(), env: daemonSpawnEnv(process.env) });
     } catch (err) {
       throw new Error(`start runtime: ${(err as Error).message}`);
     } finally {
@@ -1448,11 +1458,16 @@ export function leaseJson(l: Lease): unknown {
   };
 }
 
-export function acquireClient(kind: string, projectRoot: string, watch: boolean): ClientHandle {
+export function acquireClient(
+  kind: string,
+  projectRoot: string,
+  watch: boolean,
+  opts: { ensure?: boolean } = {},
+): ClientHandle {
   if (projectRoot === "") throw new Error("project root is required");
   mkdirSync(leaseDir(), { recursive: true, mode: 0o755 });
   registerProject(projectRoot);
-  ensureDaemon();
+  if (opts.ensure !== false) ensureDaemon();
   const now = Date.now();
   const handle = new ClientHandle({
     id: randomUUID(),
@@ -1512,11 +1527,20 @@ export function watchEnabledForClient(kind: string, projectRoot: string): boolea
   return false;
 }
 
-export function acquireConfiguredClient(kind: string, projectRoot: string): ClientHandle {
-  return acquireClient(kind, projectRoot, watchEnabledForClient(kind, projectRoot));
+export function acquireConfiguredClient(
+  kind: string,
+  projectRoot: string,
+  opts: { ensure?: boolean } = {},
+): ClientHandle {
+  return acquireClient(kind, projectRoot, watchEnabledForClient(kind, projectRoot), opts);
 }
 
 export function startHeartbeat(signal: AbortSignal, handle: ClientHandle): void {
+  // An already-aborted signal never fires its listener: release now instead of leaking the lease.
+  if (signal.aborted) {
+    handle.release();
+    return;
+  }
   const timer = setInterval(() => {
     try {
       handle.refresh();
