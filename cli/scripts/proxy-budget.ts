@@ -242,12 +242,19 @@ async function budget() {
       ],
       {
         cwd: proj,
-        env: flag("ui-inproc") >= 0 ? { ...env, KNOWNS_MCP_PROXY: "0" } : env, // default: the daemon serves the UI (D6)
+        // Default (D6, D9): the daemon serves the UI and `knowns browser` exits after the handoff.
+        // --ui-inproc keeps the 0.35.x process, which stays in the foreground.
+        env: flag("ui-inproc") >= 0 ? { ...env, KNOWNS_MCP_PROXY: "0" } : env,
         stdout: "ignore",
         stderr: "ignore",
       },
     );
-    await Bun.sleep(4000);
+    if (flag("ui-inproc") >= 0) await Bun.sleep(4000);
+    else {
+      const code = await ui.exited;
+      check(code === 0, "knowns browser handed the UI to the daemon and exited 0");
+      ui = undefined;
+    }
     // Model a real open tab, not just a bound listener: /api/runtime/ps every 2 s and an SSE stream.
     const url = "http://127.0.0.1:16420";
     void fetch(`${url}/api/events`, { signal: tabAbort.signal })
@@ -335,6 +342,11 @@ async function budget() {
   await Promise.all(ss.map((s) => s.close()));
   tabAbort.abort();
   if (ui) ui.kill();
+  else if (withUi) {
+    // Detached UI: the daemon owns the listener, so close it the way a user does.
+    const r = run([KNOWNS, "browser", "--stop", "--port", "16420"]);
+    check(r.exitCode === 0, "knowns browser --stop closed the daemon's UI listener");
+  }
   const closedAt = Date.now();
   const deadline = closedAt + cfg.orphanWaitSeconds * 1000;
   const pids = all.filter((p) => p !== ui?.pid);
