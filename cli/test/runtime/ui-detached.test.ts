@@ -51,7 +51,14 @@ function makeHost() {
         resolve();
       };
       servers.set(bound.port, { clients: (n) => cb(n), finish });
-      return { port: bound.port, done, stop: finish, onClients: (f) => void (cb = f) };
+      return {
+        port: bound.port,
+        done,
+        stop: finish,
+        onClients: (f) => {
+          cb = f;
+        },
+      };
     },
   });
   return { host, servers };
