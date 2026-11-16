@@ -3,12 +3,9 @@
 // to Qdrant) and `search index` (start after an install). The artifact installer (installer.go) is
 // ported in qdrant-installer.ts; installQdrant below is its entry point.
 
-import { spawn } from "node:child_process";
 import {
-  closeSync,
   existsSync,
   mkdirSync,
-  openSync,
   readFileSync,
   rmSync,
   statSync,
@@ -21,6 +18,7 @@ import {
   SEMANTIC_VECTOR_STORE_MODE_MANAGED,
   type SemanticVectorStoreResolution,
 } from "../models/config.ts";
+import { spawnDetached } from "../platform/detached-spawn.ts";
 import { goJson } from "../search/json.ts";
 import { goTimeString } from "../search/time.ts";
 import { globalRootPath } from "../storage/core/global-root.ts";
@@ -92,23 +90,18 @@ function withStatus<E extends Error>(err: E, status: QdrantRuntimeStatus): E & Q
 }
 
 export interface ProcessController {
-  start(binary: string, env: Record<string, string>, logFd: number): number;
+  start(binary: string, env: Record<string, string>, logPath: string): number;
   stop(pid: number, timeoutMs: number): Promise<void>;
   alive(pid: number): boolean;
 }
 
 export const defaultProcessController: ProcessController = {
-  start(binary, env, logFd) {
-    const child = spawn(binary, [], {
-      env,
-      detached: true,
-      stdio: ["ignore", logFd, logFd],
-      windowsHide: true,
-    });
-    child.on("error", () => {});
-    child.unref();
-    if (child.pid === undefined) throw new Error("start qdrant: no pid");
-    return child.pid;
+  start(binary, env, logPath) {
+    try {
+      return spawnDetached(binary, [], { env, logPath });
+    } catch (err) {
+      throw new Error(`start qdrant: ${(err as Error).message}`);
+    }
   },
   async stop(pid, timeoutMs) {
     if (pid <= 0) return;
@@ -413,18 +406,11 @@ export class QdrantManager {
         status,
       );
     }
-    let logFd: number;
-    try {
-      logFd = openSync(status.paths.logPath, "a", 0o644);
-    } catch (err) {
-      throw new Error(`open qdrant log: ${(err as Error).message}`);
-    }
-    let pid: number;
-    try {
-      pid = this.controller.start(status.paths.binaryPath, this.processEnv(status.paths), logFd);
-    } finally {
-      closeSync(logFd);
-    }
+    const pid = this.controller.start(
+      status.paths.binaryPath,
+      this.processEnv(status.paths),
+      status.paths.logPath,
+    );
     try {
       writeFileSync(status.paths.pidPath, String(pid), { mode: 0o644 });
     } catch (err) {
