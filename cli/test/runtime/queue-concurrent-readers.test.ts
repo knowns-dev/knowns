@@ -15,6 +15,7 @@ const root = mkdtempSync(join(tmpdir(), "knowns-queue-readers-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 test("queue updates and cross-process reads never fail each other", async () => {
+  const spawned: { kill: () => void }[] = [];
   const runtimeRoot = join(root, "runtime");
   const storeRoot = join(root, "store");
   const stop = join(root, "stop");
@@ -48,6 +49,7 @@ test("queue updates and cross-process reads never fail each other", async () => 
         stdout: "pipe",
         stderr: "pipe",
       });
+      spawned.push(proc);
       return { proc, ready };
     });
     const deadline = Date.now() + 30_000;
@@ -84,6 +86,9 @@ test("queue updates and cross-process reads never fail each other", async () => 
     expect(results.reduce((n, r) => n + r.reads, 0)).toBeGreaterThan(300);
     expect(loadQueue(storeRoot).updatedAt).toBeDefined();
   } finally {
+    // A failure or timeout must not leave readers spinning: they would starve later runtime tests.
+    writeFileSync(stop, "1");
+    for (const proc of spawned) proc.kill();
     if (prev === undefined) delete process.env.KNOWNS_RUNTIME_ROOT;
     else process.env.KNOWNS_RUNTIME_ROOT = prev;
   }
