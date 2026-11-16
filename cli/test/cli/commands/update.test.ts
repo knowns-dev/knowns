@@ -398,6 +398,35 @@ describe("update flow", () => {
     }
   });
 
+  test("an npm install is never updated in place, even when metadata says script", async () => {
+    const sb = sandbox();
+    const dir = join(sb.home, "proj", "node_modules", "knowns", "bin");
+    mkdirSync(dir, { recursive: true });
+    const shared = join(dir, "knowns.js");
+    writeFileSync(shared, "PACKAGE-BINARY");
+    chmodSync(shared, 0o755);
+    writeFileSync(
+      join(sb.home, ".knowns", "install.json"),
+      JSON.stringify({ method: "script", managedBy: "knowns-script", binaryPath: shared }),
+    );
+    // The package manager must never run from a test: stub it so a regression cannot touch the machine.
+    seams({
+      executable: () => sb.bin,
+      run: async () => {
+        throw new Error("no package manager in tests");
+      },
+    });
+    try {
+      const r = await update(sb);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("npm i -g knowns");
+      expect(readFileSync(shared, "utf8")).toBe("PACKAGE-BINARY");
+      expect(readdirSync(dir)).toEqual(["knowns.js"]);
+    } finally {
+      restore();
+    }
+  });
+
   test("a failing upgrade command fails the update", async () => {
     const sb = sandbox({ meta: null });
     const bin = tmp("knowns-fake-bin-");
