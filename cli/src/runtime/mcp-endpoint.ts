@@ -99,6 +99,11 @@ export interface DescriptorLocationSeams {
  * The profile is the OS home and, when set, HOME: globalRootPath() puts ~/.knowns under HOME first,
  * so a user whose HOME is on another drive keeps a runtime root under it. A root the user named
  * with KNOWNS_RUNTIME_ROOT is their own choice (any drive) and is not checked.
+ *
+ * HOME is trusted on purpose, at the same level as KNOWNS_RUNTIME_ROOT: both are set by the
+ * process's parent, which could equally launch the daemon with a hostile environment, so honouring
+ * HOME opens nothing the override does not already open. An ACL probe of the directory is not
+ * cheap on Windows (icacls per start) and would not change that trust.
  */
 export function checkDescriptorLocation(root: string, seams: DescriptorLocationSeams = {}): void {
   if (!(seams.windows ?? isWindows)) return;
