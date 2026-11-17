@@ -230,6 +230,12 @@ export class UiHost {
       privateDir(ep.dir);
       await freeSocket(ep.address);
     }
+    // On Windows a net.Server whose listen() fails on a pipe that is already served makes Bun 1.3.12
+    // panic when the process ends (reproduced with a bare node:net script; close() does not help),
+    // so a live pipe is detected by connecting to it and listen() is not even tried.
+    if (isWindows && (await endpointAlive(ep.address))) {
+      throw new Error(`UI endpoint already active: ${ep.address}`);
+    }
     const server = net.createServer({ allowHalfOpen: false }, (sock) => this.onConnection(sock));
     try {
       await new Promise<void>((resolve, reject) => {
