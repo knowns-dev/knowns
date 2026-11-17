@@ -6,6 +6,7 @@
 #   $env:KNOWNS_INSTALL_DIR  — install directory (default: ~\.knowns\bin)
 #   $env:KNOWNS_VERSION      — specific version (default: latest)
 #   $env:KNOWNS_BASE_URL     — release download prefix (default: GitHub releases)
+#   $env:KNOWNS_NO_MODIFY_PATH — set to 1 to leave your user PATH alone (a hint is printed instead)
 
 $ErrorActionPreference = "Stop"
 
@@ -235,12 +236,17 @@ try {
     [IO.File]::WriteAllText((Join-Path $KnownsHome "install.json"), ($metadata | ConvertTo-Json), (New-Object System.Text.UTF8Encoding $false))
     Write-Host "  + Recorded install metadata in $KnownsHome\install.json" -ForegroundColor Green
 
-    # Add to PATH if not already there
+    # Add to PATH if not already there. KNOWNS_NO_MODIFY_PATH=1 leaves the persistent user PATH alone.
     $UserPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
     if ($UserPath -notlike "*$InstallDir*") {
-        [System.Environment]::SetEnvironmentVariable("Path", "$InstallDir;$UserPath", "User")
-        $env:Path = "$InstallDir;$env:Path"
-        Write-Host "  + Added $InstallDir to PATH" -ForegroundColor Green
+        if ($env:KNOWNS_NO_MODIFY_PATH -eq "1") {
+            Write-Host "  . KNOWNS_NO_MODIFY_PATH=1: your PATH was not changed. To use knowns, add this directory to it:" -ForegroundColor DarkGray
+            Write-Host "      $InstallDir" -ForegroundColor DarkGray
+        } else {
+            [System.Environment]::SetEnvironmentVariable("Path", "$InstallDir;$UserPath", "User")
+            $env:Path = "$InstallDir;$env:Path"
+            Write-Host "  + Added $InstallDir to PATH" -ForegroundColor Green
+        }
     }
 
     # Verify

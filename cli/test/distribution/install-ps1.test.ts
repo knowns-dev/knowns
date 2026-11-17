@@ -23,6 +23,16 @@ describe("install.ps1 (static)", () => {
     expect(src).toContain("https://github.com/$Repo/releases/download");
     expect(src).toContain("$env:KNOWNS_BASE_URL");
   });
+  test("KNOWNS_NO_MODIFY_PATH=1 skips the persistent user PATH write and prints a hint", () => {
+    const setCall = src.indexOf("SetEnvironmentVariable");
+    expect(setCall).toBeGreaterThan(0);
+    const guard = src.indexOf('$env:KNOWNS_NO_MODIFY_PATH -eq "1"');
+    expect(guard).toBeGreaterThan(0);
+    // The opt-out is checked before the one write, and the only write is inside its else branch.
+    expect(guard).toBeLessThan(setCall);
+    expect(src.slice(guard, setCall)).toContain("} else {");
+    expect(src.split("SetEnvironmentVariable").length - 1).toBe(1);
+  });
   test("pinned versions get a v prefix so 0.34.x resolves the Go tags", () => {
     expect(src).toContain('if (-not $v.StartsWith("v")) { $v = "v$v" }');
   });
@@ -98,6 +108,7 @@ describe.skipIf(!runExecuted)("install.ps1 (executed)", () => {
             USERPROFILE: profile,
             KNOWNS_VERSION: "1.0.0",
             KNOWNS_BASE_URL: `http://127.0.0.1:${server.port}`,
+            KNOWNS_NO_MODIFY_PATH: "1",
           },
           stdout: "pipe",
           stderr: "pipe",
@@ -109,6 +120,7 @@ describe.skipIf(!runExecuted)("install.ps1 (executed)", () => {
         child.exited,
       ]);
       expect(out + err).toContain("Checksum verified");
+      expect(out + err).toContain("your PATH was not changed");
       expect(code).toBe(0);
       const bin = join(profile, ".knowns", "bin");
       expect(readFileSync(join(bin, "knowns.exe"), "utf8")).toBe("MZ-fake");
@@ -171,6 +183,7 @@ describe.skipIf(!runExecuted)("install.ps1 (executed)", () => {
             USERPROFILE: profile,
             KNOWNS_VERSION: version,
             KNOWNS_BASE_URL: `http://127.0.0.1:${server.port}`,
+            KNOWNS_NO_MODIFY_PATH: "1",
           },
           stdout: "pipe",
           stderr: "pipe",

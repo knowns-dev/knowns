@@ -64,6 +64,12 @@ curl -fsSL https://knowns.sh/script/install | KNOWNS_NO_LINK=1 sh
 irm https://knowns.sh/script/install.ps1 | iex
 ```
 
+To leave your user `PATH` untouched (for example in CI or on a shared machine), set `KNOWNS_NO_MODIFY_PATH=1`. The installer then prints the directory to add yourself:
+
+```powershell
+$env:KNOWNS_NO_MODIFY_PATH = "1"; irm https://knowns.sh/script/install.ps1 | iex
+```
+
 ## Build from source
 
 ```bash
