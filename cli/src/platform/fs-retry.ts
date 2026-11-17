@@ -6,7 +6,10 @@
 // The wait is synchronous (the storage layer is), so it is kept short where a daemon or server
 // might be the caller:
 //  - reads wait at most READ_BUSY_TIMEOUT_MS, renames and links at most WRITE_BUSY_TIMEOUT_MS;
-//  - the delay doubles from 1 ms to 50 ms, so a stalled call makes tens of attempts, not hundreds;
+//  - the delay doubles from 1 ms to 5 ms and then stays there (a real sleep, never a spin). A longer
+//    cap starves the writer: processes that re-open the file in a loop hold it most of the time
+//    and a writer that tries every 50 ms almost never finds the gap (EPERM after the whole budget
+//    in 14 of 30 loaded runs on Windows); a 5 ms cap gave 0 of 30 at the same budget;
 //  - EBUSY is always retried, but EPERM and EACCES only briefly (DENIAL_MAX_TRIES tries inside
 //    DENIAL_WINDOW_MS) unless the target is an ordinary writable file, the case a competing handle
 //    explains; a read-only file or an ACL denial fails fast with the original error;
@@ -22,7 +25,7 @@ export const WRITE_BUSY_TIMEOUT_MS = 2000;
 export const FILE_BUSY_TIMEOUT_MS = WRITE_BUSY_TIMEOUT_MS;
 /** First delay between tries; it doubles up to MAX_RETRY_DELAY_MS. */
 export const FILE_BUSY_RETRY_DELAY_MS = 1;
-export const MAX_RETRY_DELAY_MS = 50;
+export const MAX_RETRY_DELAY_MS = 5;
 /** An EPERM or EACCES on a target that does not look like a busy writable file. */
 export const DENIAL_MAX_TRIES = 5;
 export const DENIAL_WINDOW_MS = 100;

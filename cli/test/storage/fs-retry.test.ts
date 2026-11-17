@@ -53,7 +53,8 @@ describe("retryWhileBusy", () => {
       ),
     ).toThrow(e);
     expect(calls).toBeGreaterThan(3);
-    expect(calls).toBeLessThan(20);
+    // 10 ms first delay, doubling, capped at 5 ms: about 22 tries in a 100 ms budget.
+    expect(calls).toBeLessThan(40);
   });
 
   test("does not retry on macOS or Linux", () => {
@@ -99,7 +100,7 @@ describe("atomicWrite", () => {
 });
 
 describe("backoff, bounds and denials (review of KN-F5CP12)", () => {
-  test("the delay doubles from 1 ms to a 50 ms cap", () => {
+  test("the delay doubles from 1 ms to a 5 ms cap", () => {
     let t = 0;
     const slept: number[] = [];
     expect(() =>
@@ -118,7 +119,7 @@ describe("backoff, bounds and denials (review of KN-F5CP12)", () => {
         },
       ),
     ).toThrow("EBUSY");
-    expect(slept.slice(0, 8)).toEqual([1, 2, 4, 8, 16, 32, 50, 50]);
+    expect(slept.slice(0, 8)).toEqual([1, 2, 4, 5, 5, 5, 5, 5]);
   });
 
   test("with the real clock a 50 ms budget gives up in well under a second", () => {
@@ -195,7 +196,9 @@ describe("backoff, bounds and denials (review of KN-F5CP12)", () => {
     );
     // Ten files, one 100 ms budget: the first spends it, the other nine fail on their first try.
     expect(t).toBeLessThan(160);
-    expect(calls).toBeLessThan(10 + 12);
+    // The first call makes up to ~30 tries at the 5 ms cap; a shared budget keeps the other nine
+    // to one try each instead of 30 each (which would be about 300 calls).
+    expect(calls).toBeLessThan(10 + 40);
   });
 
   test("a listed file that reads as missing gets one more try, on win32 only", () => {
