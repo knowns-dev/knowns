@@ -4,16 +4,17 @@
 // plus the hidden root commands (they take part in cobra's name padding and in lookup).
 // The TypeScript root help lists these so `knowns --help` is complete while commands are still
 // being ported; a command that is not ported yet shows up here but fails honestly when run.
-// Usage: KNOWNS_GO_BIN=/path/to/knowns bun scripts/capture-help-manifest.ts [--out <file>]
+// Usage: eval "$(bun scripts/go-oracle.ts)" && bun scripts/capture-help-manifest.ts [--out <file>]
+// (needs KNOWNS_GO_BIN and KNOWNS_GO_SRC, the pinned Go checkout that holds the command contract)
 // test/cli/registry.test.ts runs it with --out and fails if the committed file is stale.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const cliDir = resolve(import.meta.dir, "..");
-const repo = resolve(cliDir, "..");
 const goBin = process.env.KNOWNS_GO_BIN;
-if (!goBin) {
-  console.error("set KNOWNS_GO_BIN to a Go knowns binary");
+const goSrc = process.env.KNOWNS_GO_SRC;
+if (!goBin || !goSrc) {
+  console.error('set KNOWNS_GO_BIN and KNOWNS_GO_SRC: eval "$(bun scripts/go-oracle.ts)"');
   process.exit(2);
 }
 
@@ -41,7 +42,7 @@ for (const line of help.split("\n")) {
 }
 
 // Hidden root commands come from the contract snapshot Go already maintains.
-const contract = readFileSync(join(repo, "internal/cli/testdata/command-contract.txt"), "utf8");
+const contract = readFileSync(join(goSrc, "internal/cli/testdata/command-contract.txt"), "utf8");
 for (const line of contract.split("\n")) {
   const cols = line.split("\t");
   const m = /^knowns (\S+)$/.exec(cols[0] ?? "");

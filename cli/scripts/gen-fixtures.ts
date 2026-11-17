@@ -35,7 +35,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
 const GO_VERSION = "0.34.1";
-const REPO = resolve(import.meta.dir, "..", "..");
+// Without KNOWNS_GO_BIN the CLI is built from the pinned Go checkout (scripts/go-oracle.ts).
+const GO_SRC = process.env.KNOWNS_GO_SRC;
 const DEFAULT_OUT = resolve(import.meta.dir, "..", "test", "fixtures");
 
 interface Manifest {
@@ -76,6 +77,8 @@ function goBinary(work: string): string {
   const fromEnv = process.env.KNOWNS_GO_BIN;
   const bin = fromEnv ? resolve(fromEnv) : join(work, "knowns-go", "knowns");
   if (!fromEnv) {
+    if (!GO_SRC)
+      throw new Error('set KNOWNS_GO_BIN or KNOWNS_GO_SRC: eval "$(bun scripts/go-oracle.ts)"');
     const res = Bun.spawnSync(
       [
         "go",
@@ -86,7 +89,7 @@ function goBinary(work: string): string {
         bin,
         "./cmd/knowns",
       ],
-      { cwd: REPO, stdout: "inherit", stderr: "inherit" },
+      { cwd: GO_SRC, stdout: "inherit", stderr: "inherit" },
     );
     if (res.exitCode !== 0) throw new Error("go build failed");
   }

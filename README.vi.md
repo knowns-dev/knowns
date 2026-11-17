@@ -476,7 +476,7 @@ bun run build bun-darwin-arm64            # Output: cli/dist/darwin-arm64/knowns
 
 Chọn target theo máy của bạn: `bun-darwin-arm64`, `bun-darwin-x64`, `bun-linux-x64`, `bun-linux-arm64`, `bun-windows-x64` hoặc `bun-windows-arm64`. Không truyền target thì `bun run build` build cả sáu. Sau đó copy binary vào một thư mục có trong `PATH`.
 
-> Các bản đến 0.34.1 được viết bằng Go. Mã Go vẫn nằm trong `cmd/` và `internal/` làm bản tham chiếu để test bản TypeScript; `go install github.com/howznguyen/knowns/cmd/knowns@latest` sẽ build 0.34.1, không phải bản phát hành hiện tại.
+> Các bản đến 0.34.1 được viết bằng Go. Mã Go đã bị xóa khỏi repository sau 0.35.0, nên không còn gì để build bằng Go; lịch sử git và các release tag vẫn giữ lại mã đó.
 
 ### Gỡ cài đặt
 
@@ -600,21 +600,28 @@ Optional self-hosted sync server cho shared visibility mà không bỏ local-fir
 
 ## Development
 
-Cần **Bun 1.3.12+**. **Go 1.25+** là tùy chọn: test parity tự build bản tham chiếu Go 0.34.1 từ `cmd/`, và bỏ qua phần so sánh với Go nếu không có Go.
+Cần **Bun 1.3.12+**. Go toolchain là tùy chọn và chỉ dùng cho các differential test (xem bên dưới).
 
 ```bash
 make ui                          # Build Web UI để nhúng vào binary (cd ui && bun run build)
-cd cli && bun install
-bun run check                    # Typecheck + lint (Biome)
-bun run test                     # Unit test và test parity
-bun run build bun-linux-x64      # Build một target -> cli/dist/linux-x64/knowns
-bun run build                    # Build cả 6 target
-bun run cli-docs:check           # CLI reference khớp với cây lệnh
+make build                       # Binary cho máy hiện tại -> cli/dist/<os>-<arch>/knowns
+make ts-build                    # Build cả 6 target
+make test                        # cd cli && bun run check && bun run test
+make test-e2e                    # cli/test/e2e chạy với binary đã build (KNOWNS_TS_BIN)
+make test-e2e-semantic           # Cùng suite, bật thêm test semantic search
+make test-e2e-ui                 # Playwright UI e2e
+make lint                        # Typecheck + lint (bun run check)
+cd cli && bun run build bun-linux-x64   # Một target -> cli/dist/linux-x64/knowns
+cd cli && bun run cli-docs:check        # CLI reference khớp với cây lệnh
 ```
 
-Test parity so sánh từng byte output của CLI TypeScript với bản tham chiếu Go 0.34.1. Để dùng lại một bản Go đã build thay vì build mỗi lần chạy, trỏ `KNOWNS_GO_BIN` tới nó (`go build -o /tmp/knowns-go ./cmd/knowns`, sau khi chạy `make ui`).
+Các differential test so sánh CLI TypeScript với Go 0.34.1, build từ commit cố định `069954a`. Chúng cần Go toolchain; không có thì các test này bị skip. Thiết lập oracle bằng:
 
-Bộ E2E cho CLI + MCP trong `tests/` viết bằng Go và chạy được với binary bất kỳ. Khi chạy suite này, dùng `scripts/go-e2e.sh` (hoặc `scripts/go-e2e.ps1` trên Windows), ví dụ `TEST_BINARY=cli/dist/linux-x64/knowns scripts/go-e2e.sh -v`: script đặt home tạm cho suite để project test không bao giờ rơi vào `~/.knowns` thật của bạn.
+```bash
+eval "$(make -s go-oracle)"      # chạy cli/scripts/go-oracle.ts, export KNOWNS_GO_SRC và KNOWNS_GO_BIN
+```
+
+Các skill (`kn-*`) và guideline mà `knowns sync` ghi ra nằm trong `cli/instructions/skills` và `cli/instructions/guidelines`. `cli/scripts/gen-instructions.ts` nhúng chúng vào binary.
 
 #### Phát triển Web UI
 
@@ -649,11 +656,10 @@ cli/                 # Knowns CLI (TypeScript trên Bun)
     search/          # Keyword search và semantic search
     runtime/         # Runtime daemon chạy nền
     lsp/             # Code intelligence dựa trên LSP
-  test/              # Unit test và test parity với Go
+  test/              # Unit test, differential test và e2e (test/e2e)
+  instructions/      # Skill và guideline nhúng vào binary
   scripts/           # Build, fixtures, sinh CLI reference
 ui/                  # React Web UI (Knowns UI), nhúng vào binary
-cmd/, internal/      # Bản tham chiếu Go 0.34.1
-tests/               # E2E tests (Go)
 ```
 
 ---

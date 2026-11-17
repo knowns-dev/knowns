@@ -1,13 +1,15 @@
-// Drives the Go codegen engine (test/helpers/codegen-oracle.go) in one process for a batch of
-// requests. `GO_ORACLE` is false when `go` is not installed; differential tests then skip.
+// Drives the Go codegen engine (cli/test/helpers/codegen-oracle.go in the pinned Go checkout, see
+// test/helpers/go-src.ts) in one process for a batch of requests. `GO_ORACLE` is false without that
+// checkout or without `go`; differential tests then skip.
 import { spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { GO_SRC, hasGoSrc } from "../../helpers/go-src.ts";
 
-export const GO_ORACLE = Bun.which("go") !== null;
+export const GO_ORACLE = hasGoSrc;
 
-const repoRoot = resolve(import.meta.dir, "../../../..");
+const repoRoot = GO_SRC as string;
 
 export interface OracleRequest {
   op: "render" | "validate" | "run";

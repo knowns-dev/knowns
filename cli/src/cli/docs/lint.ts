@@ -22,14 +22,14 @@ export const DOC_ROOTS = [
   "GEMINI.md",
   "OPENCODE.md",
   "docs",
-  "internal/instructions",
+  "cli/instructions",
 ];
 
 /**
  * Source files tell users what to run too: doctor remediations, error hints, and a UI alert saying
  * "Run 'knowns init' in your terminal". Every line counts there; there is no fence to be inside of.
  */
-export const SRC_ROOTS = ["internal", "cmd", "ui/src"];
+export const SRC_ROOTS = ["cli/src", "ui/src"];
 
 export const ALLOW_FILE = "docs/allowed-missing-paths.txt";
 
@@ -81,7 +81,12 @@ function readText(repo: string, rel: string): string | undefined {
 
 export function isSourceFile(path: string): boolean {
   const ext = extname(path);
-  return (ext === ".go" || ext === ".ts" || ext === ".tsx") && !path.includes("/cli-reference/");
+  // Generated modules (the embedded skills) are linted at their sources under cli/instructions.
+  return (
+    (ext === ".ts" || ext === ".tsx") &&
+    !path.includes("/cli-reference/") &&
+    !path.includes(".generated.")
+  );
 }
 
 /**
@@ -217,7 +222,7 @@ export function lintPaths(repo: string): {
  * partial path like "handlers/task.go" any file whose path ends with it.
  */
 function pathExists(repo: string, token: string, index: Set<string>): boolean {
-  for (const candidate of [token, join("internal", token)]) {
+  for (const candidate of [token, join("cli", token), join("cli", "src", token)]) {
     if (existsSync(join(repo, candidate))) return true;
   }
   if (!token.includes("/")) return index.has(token);

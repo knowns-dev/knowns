@@ -1,5 +1,8 @@
 name: CI
 
+# The Go implementation was removed after 0.35.0 (KN-NDD5YY). Every job here drives the compiled
+# TypeScript binary; the unit and differential suites run in ts-cli.yml.
+
 on:
   pull_request:
     branches: [main, develop]
@@ -16,35 +19,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            target: bun-linux-x64
+            bin: cli/dist/linux-x64/knowns
+          - os: windows-latest
+            target: bun-windows-x64
+            bin: cli/dist/windows-x64/knowns.exe
     name: Lint & Test (${{ matrix.os }})
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.12
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Install llvm-mingw toolchain
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          curl -L --retry 5 --retry-delay 5 \
-            -o llvm-mingw.zip \
-            "https://github.com/mstorsjo/llvm-mingw/releases/download/20260407/llvm-mingw-20260407-ucrt-x86_64.zip"
-          unzip -q llvm-mingw.zip -d "$RUNNER_TEMP/llvm-mingw"
-          TOOLCHAIN_DIR=$(find "$RUNNER_TEMP/llvm-mingw" -mindepth 1 -maxdepth 1 -type d | head -n 1)
-          if [ -z "$TOOLCHAIN_DIR" ]; then
-            echo "Failed to extract llvm-mingw toolchain"
-            exit 1
-          fi
-          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
-          echo "CC=x86_64-w64-mingw32-clang" >> "$GITHUB_ENV"
-          echo "CXX=x86_64-w64-mingw32-clang++" >> "$GITHUB_ENV"
-          echo "AR=x86_64-w64-mingw32-ar" >> "$GITHUB_ENV"
 
       - name: Build UI
         run: cd ui && bun install --frozen-lockfile && bun run build
@@ -53,42 +46,13 @@ jobs:
         if: runner.os == 'Windows'
         run: bun test npm/knowns/install.test.js
 
-      - name: Build Go binary (Unix)
-        if: runner.os != 'Windows'
-        run: make build
-
-      - name: Build Go binary (Windows)
-        if: runner.os == 'Windows'
-        env:
-          CGO_ENABLED: '1'
-        run: go build -ldflags "-s -w -X github.com/howznguyen/knowns/internal/util.Version=${env:GITHUB_SHA}" -o bin/knowns.exe ./cmd/knowns
-
-      # No ONNX Runtime download: github.com/yalue/onnxruntime_go was removed
-      # with the local ONNX embedding path (spec ollama-only-embedding FR-2),
-      # so no test needs a shared library on disk. CGO stays enabled on
-      # Windows because `go test -race` requires a C toolchain, not because
-      # anything in this module binds to C.
-
-      - name: Go vet (Unix)
-        if: runner.os != 'Windows'
-        run: go vet ./...
-
-      - name: Go vet (Windows)
-        if: runner.os == 'Windows'
-        env:
-          CGO_ENABLED: '1'
-        run: go vet ./...
-
-      # The CLI reference and the docs lint come from the TypeScript command tree
-      # (cli/scripts/gen-cli-docs.ts), so these steps need Bun, not Go.
       - name: Install TS CLI dependencies
-        if: runner.os == 'Linux'
         working-directory: cli
         run: bun install --frozen-lockfile
 
       # Catches a reference page describing a command the binary does not have,
       # and a command with no page at all. Linux only: the output is identical
-      # across platforms, so running it three times buys nothing.
+      # across platforms, so running it twice buys nothing.
       - name: Check CLI reference matches the command tree
         if: runner.os == 'Linux'
         working-directory: cli
@@ -101,19 +65,18 @@ jobs:
         working-directory: cli
         run: bun scripts/gen-cli-docs.ts --lint
 
-      - name: Run tests (Unix)
-        if: runner.os != 'Windows'
-        run: go test -v -race -count=1 ./...
-
-      - name: Run tests (Windows)
-        if: runner.os == 'Windows'
+      - name: Build TS binary
+        working-directory: cli
         env:
-          CGO_ENABLED: '1'
-        run: go test -v -race -count=1 ./...
+          KNOWNS_VERSION: 0.0.0-ci
+        run: bun scripts/gen-ui-assets.ts && bun run build ${{ matrix.target }}
+
+      - name: Verify binary
+        run: ${{ matrix.bin }} --version
 
       - name: Run canonical keyword retrieval evaluation gate
         if: runner.os != 'Windows'
-        run: ./bin/knowns --json eval retrieval --output "$RUNNER_TEMP/retrieval-evaluation-keyword.json"
+        run: ${{ matrix.bin }} --json eval retrieval --output "$RUNNER_TEMP/retrieval-evaluation-keyword.json"
 
       - name: Upload canonical keyword retrieval report
         if: runner.os != 'Windows'
@@ -130,38 +93,35 @@ jobs:
     name: macOS Intel CLI Smoke
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.12
 
       - name: Build UI
         run: cd ui && bun install --frozen-lockfile && bun run build
 
-      - name: Run platform and keyword fallback tests
-        run: |
-          go test ./internal/search ./internal/cli ./internal/server/routes ./internal/doctor
-          go test ./internal/search -run '^TestKeywordModeUsesBM25WithoutSemanticAndPreservesResultShape$'
-          bun test npm/knowns/install.test.js
+      - name: Run installer tests
+        run: bun test npm/knowns/install.test.js
 
       - name: Build native Intel binary
-        run: go build -ldflags "-s -w -X github.com/howznguyen/knowns/internal/util.Version=${GITHUB_SHA}" -o bin/knowns ./cmd/knowns
+        working-directory: cli
+        env:
+          KNOWNS_VERSION: 0.0.0-ci
+        run: |
+          bun install --frozen-lockfile
+          bun scripts/gen-ui-assets.ts
+          bun run build bun-darwin-x64
+          mkdir -p ../bin
+          cp dist/darwin-x64/knowns ../bin/knowns
 
-      # This job used to assert that the local ONNX path was *disabled* on
-      # macOS Intel, the one platform it was never bundled for. That path is
-      # gone everywhere now (spec ollama-only-embedding FR-1/FR-2), so Intel
-      # is no longer a special case. What is still worth smoking here is the
-      # native x86_64 build, the installer's platform detection, and the fact
-      # that a machine with no Ollama gets a working keyword-only project —
-      # which is exactly AC-13 and AC-7 end to end, on a runner that has no
-      # Ollama installed.
+      # What is worth smoking here is the native x86_64 build, the installer's
+      # platform detection, and the fact that a machine with no Ollama gets a
+      # working keyword-only project, on a runner that has no Ollama installed.
       - name: Verify installer and keyword-only project without Ollama
         shell: bash
         run: |
           file bin/knowns | grep -q "Mach-O 64-bit"
           file bin/knowns | grep -q "x86_64"
-          # No shared library is shipped alongside the binary any more.
-          test ! -e bin/libonnxruntime.dylib
           ./bin/knowns --version
 
           # Guard the removal itself: `knowns model` must not resolve.
@@ -189,16 +149,16 @@ jobs:
 
             init_output=$("$GITHUB_WORKSPACE/bin/knowns" init "Intel Smoke" --no-wizard --no-open 2>&1)
             echo "$init_output"
-            # AC-13: no reachable Ollama => semantic search written disabled,
-            # and the output tells the user keyword search still works, names
-            # the default model and how to get it, and where to read more.
+            # No reachable Ollama => semantic search written disabled, and the
+            # output tells the user keyword search still works, names the
+            # default model and how to get it, and where to read more.
             echo "$init_output" | grep -q "Keyword search still works without it"
             echo "$init_output" | grep -q "ollama pull qwen3-embedding:0.6b"
             echo "$init_output" | grep -q "Read more:"
             test "$(bun -e 'const c=require("fs").readFileSync(".knowns/config.json","utf8");console.log(JSON.stringify(JSON.parse(c).settings.semanticSearch ?? null))')" = "null"
 
-            # AC-3/AC-26/AC-27: a legacy `provider: local` config resolves and
-            # migrates without the file being touched until --write.
+            # A legacy `provider: local` config resolves and migrates without
+            # the file being touched until --write.
             bun -e 'const fs = require("fs"); const p = ".knowns/config.json"; const c = JSON.parse(fs.readFileSync(p, "utf8")); c.settings.semanticSearch = { enabled: true, provider: "local", model: "gte-small", huggingFaceId: "Xenova/gte-small", dimensions: 384, maxTokens: 512 }; delete c.schemaVersion; fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");'
             before=$(shasum -a 256 .knowns/config.json | cut -d" " -f1)
             "$GITHUB_WORKSPACE/bin/knowns" migrate
@@ -206,8 +166,7 @@ jobs:
             test "$before" = "$after"
             "$GITHUB_WORKSPACE/bin/knowns" migrate --write
             grep -q '"provider": "ollama"' .knowns/config.json
-            # AC-29: the rewritten config no longer carries huggingFaceId.
-            # `grep -v` would not assert this — it succeeds whenever *any*
+            # `grep -v` would not assert this: it succeeds whenever *any*
             # line fails to match, which is almost always.
             if grep -q "huggingFaceId" .knowns/config.json; then
               echo "huggingFaceId survived migrate --write"
@@ -216,8 +175,8 @@ jobs:
             second=$("$GITHUB_WORKSPACE/bin/knowns" migrate --write 2>&1)
             echo "$second" | grep -q "Nothing to migrate"
 
-            # AC-7: the configured embedder is unreachable on this runner, so
-            # search degrades to keyword results instead of failing.
+            # The configured embedder is unreachable on this runner, so search
+            # degrades to keyword results instead of failing.
             export KNOWN_RUNTIME_INLINE=1
             "$GITHUB_WORKSPACE/bin/knowns" task create "Intel keyword fallback" --description "BM25 remains available without an embedder"
             search_output=$("$GITHUB_WORKSPACE/bin/knowns" search "Intel keyword fallback" --plain 2>&1)
@@ -234,14 +193,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            target: bun-linux-x64
+            bin: dist/linux-x64/knowns
+          - os: macos-latest
+            target: bun-darwin-arm64
+            bin: dist/darwin-arm64/knowns
+          - os: windows-latest
+            target: bun-windows-x64
+            bin: dist/windows-x64/knowns.exe
     name: LSP Fixture Smoke (${{ matrix.os }})
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.12
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -255,33 +225,15 @@ jobs:
           terraform_version: '1.14.6'
           terraform_wrapper: false
 
-      - name: Install llvm-mingw toolchain
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          curl -L --retry 5 --retry-delay 5 \
-            -o llvm-mingw.zip \
-            "https://github.com/mstorsjo/llvm-mingw/releases/download/20260407/llvm-mingw-20260407-ucrt-x86_64.zip"
-          unzip -q llvm-mingw.zip -d "$RUNNER_TEMP/llvm-mingw"
-          TOOLCHAIN_DIR=$(find "$RUNNER_TEMP/llvm-mingw" -mindepth 1 -maxdepth 1 -type d | head -n 1)
-          if [ -z "$TOOLCHAIN_DIR" ]; then
-            echo "Failed to extract llvm-mingw toolchain"
-            exit 1
-          fi
-          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
-          echo "CC=x86_64-w64-mingw32-clang" >> "$GITHUB_ENV"
-          echo "CXX=x86_64-w64-mingw32-clang++" >> "$GITHUB_ENV"
-          echo "AR=x86_64-w64-mingw32-ar" >> "$GITHUB_ENV"
-
       - name: Install C# language server (Unix)
         if: runner.os != 'Windows'
-        shell: bash
         run: |
           dotnet tool install --global csharp-ls --version 0.25.0
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
 
       - name: Install C# language server (Windows)
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
           dotnet tool install --global csharp-ls --version 0.25.0
           "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
@@ -289,44 +241,24 @@ jobs:
       - name: Build UI
         run: cd ui && bun install --frozen-lockfile && bun run build
 
-      - name: Run doctor portability contract (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          go test -v -count=1 ./internal/doctor
-          go test -v -count=1 -run '^TestDoctor' ./internal/cli
-
-      - name: Run doctor portability contract (Windows)
-        if: runner.os == 'Windows'
+      - name: Build TS binary
+        working-directory: cli
         env:
-          CGO_ENABLED: '1'
+          KNOWNS_VERSION: 0.0.0-ci
         run: |
-          go test -v -count=1 ./internal/doctor
-          go test -v -count=1 -run '^TestDoctor' ./internal/cli
-
-      - name: Build Go binary (Unix)
-        if: runner.os != 'Windows'
-        run: go build -ldflags "-s -w -X github.com/howznguyen/knowns/internal/util.Version=${GITHUB_SHA}" -o bin/knowns ./cmd/knowns
-
-      - name: Build Go binary (Windows)
-        if: runner.os == 'Windows'
-        env:
-          CGO_ENABLED: '1'
-        run: go build -ldflags "-s -w -X github.com/howznguyen/knowns/internal/util.Version=${env:GITHUB_SHA}" -o bin/knowns.exe ./cmd/knowns
+          bun install --frozen-lockfile
+          bun scripts/gen-ui-assets.ts
+          bun run build ${{ matrix.target }}
+          echo "KNOWNS_TS_BIN=$PWD/${{ matrix.bin }}" >> "$GITHUB_ENV"
 
       - name: Install managed LSP fixtures and expose selected binaries
-        shell: bash
         run: |
-          KNOWNS_BINARY="$PWD/bin/knowns"
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            KNOWNS_BINARY="$PWD/bin/knowns.exe"
-          fi
-
           for language in markdown bash json terraform yaml; do
-            "$KNOWNS_BINARY" lsp install "$language"
+            "$KNOWNS_TS_BIN" lsp install "$language"
           done
 
           STATUS_FILE="$RUNNER_TEMP/knowns-lsp-status.json"
-          "$KNOWNS_BINARY" lsp list --json > "$STATUS_FILE"
+          "$KNOWNS_TS_BIN" lsp list --json > "$STATUS_FILE"
           node - "$STATUS_FILE" <<'NODE'
           const fs = require('fs');
           const path = require('path');
@@ -362,16 +294,10 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_PATH, `${directories.join('\n')}\n`);
           NODE
 
-      - name: Run LSP fixtures (Unix)
-        if: runner.os != 'Windows'
-        run: TEST_LSP_FIXTURES=1 TEST_BINARY="$PWD/bin/knowns" go test -v -timeout 15m -count=1 ./tests/lspfixtures
-
-      - name: Run LSP fixtures (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        env:
-          CGO_ENABLED: '1'
-        run: TEST_LSP_FIXTURES=1 TEST_BINARY="$PWD/bin/knowns.exe" go test -v -timeout 15m -count=1 ./tests/lspfixtures
+      # CI=1 is set by Actions, so a missing language server fails instead of skipping.
+      - name: Run LSP fixtures
+        working-directory: cli
+        run: TEST_LSP_FIXTURES=1 bun test test/e2e/lspfixtures --timeout 900000
 
   build-and-e2e:
     # ubuntu-latest moved to 26.04, which Playwright 1.58 cannot install browsers for.
@@ -380,14 +306,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            target: bun-linux-x64
+            bin: dist/linux-x64/knowns
+          - os: windows-latest
+            target: bun-windows-x64
+            bin: dist/windows-x64/knowns.exe
     name: Build & E2E (${{ matrix.os }})
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
-      # Same Bun as the TS CLI workflow, since this job compiles the TS binary for the UI tests.
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.12
@@ -395,114 +326,29 @@ jobs:
         with:
           node-version: '20'
 
-      # No semantic-model cache: `~/.knowns/models` was the local ONNX model
-      # store, removed with that path (spec ollama-only-embedding FR-1/D4).
-      # Ollama keeps its own models outside the workspace and CI pulls none.
-
-      - name: Install llvm-mingw toolchain
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          curl -L --retry 5 --retry-delay 5 \
-            -o llvm-mingw.zip \
-            "https://github.com/mstorsjo/llvm-mingw/releases/download/20260407/llvm-mingw-20260407-ucrt-x86_64.zip"
-          unzip -q llvm-mingw.zip -d "$RUNNER_TEMP/llvm-mingw"
-          TOOLCHAIN_DIR=$(find "$RUNNER_TEMP/llvm-mingw" -mindepth 1 -maxdepth 1 -type d | head -n 1)
-          if [ -z "$TOOLCHAIN_DIR" ]; then
-            echo "Failed to extract llvm-mingw toolchain"
-            exit 1
-          fi
-          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
-          echo "CC=x86_64-w64-mingw32-clang" >> "$GITHUB_ENV"
-          echo "CXX=x86_64-w64-mingw32-clang++" >> "$GITHUB_ENV"
-          echo "AR=x86_64-w64-mingw32-ar" >> "$GITHUB_ENV"
-
       - name: Build UI
         run: cd ui && bun install --frozen-lockfile && bun run build
 
-      - name: Build Go binary (Unix)
-        if: runner.os != 'Windows'
-        run: make build
-
-      - name: Build Go binary (Windows)
-        if: runner.os == 'Windows'
+      - name: Build TS binary
+        working-directory: cli
         env:
-          CGO_ENABLED: '1'
-        run: go build -ldflags "-s -w -X github.com/howznguyen/knowns/internal/util.Version=${env:GITHUB_SHA}" -o bin/knowns.exe ./cmd/knowns
+          KNOWNS_VERSION: 0.0.0-ci
+        run: |
+          bun install --frozen-lockfile
+          bun scripts/gen-ui-assets.ts
+          bun run build ${{ matrix.target }}
+          ${{ matrix.bin }} --version
+          echo "KNOWNS_TS_BIN=$PWD/${{ matrix.bin }}" >> "$GITHUB_ENV"
 
-      # No ONNX Runtime download here either — see the note in the test job.
-      # The E2E binary embeds no C library and needs none at runtime.
-
-      - name: Install Playwright browsers (Unix)
-        if: runner.os != 'Windows'
+      - name: Install Playwright browsers
         run: cd ui && bunx playwright install --with-deps chromium
 
-      - name: Install Playwright browsers (Windows)
-        if: runner.os == 'Windows'
-        run: cd ui && bunx playwright install --with-deps chromium
+      # The CLI and MCP end-to-end suites (ported from the Go tests/ suite) against the compiled
+      # binary, including the TEST_SEMANTIC subsets, which need no reachable embedder.
+      # lspfixtures/ skips here without TEST_LSP_FIXTURES; the lsp-fixtures job runs it.
+      - name: Run E2E tests
+        working-directory: cli
+        run: TEST_SEMANTIC=1 bun test test/e2e --timeout 300000
 
-      - name: Verify binary (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          ./bin/knowns --version
-          echo "Build verification passed"
-
-      - name: Verify binary (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          ./bin/knowns.exe --version
-          echo "Build verification passed"
-
-      - name: Run E2E tests (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          (cd tests && go test -v -timeout 300s -count=1 -run TestCLI ./...)
-          (cd tests && go test -v -timeout 300s -count=1 -run TestMCP ./...)
-
-      - name: Run E2E tests (Windows)
-        if: runner.os == 'Windows'
-        env:
-          CGO_ENABLED: '1'
-        shell: bash
-        run: |
-          (cd tests && go test -v -timeout 300s -count=1 -run TestCLI ./...)
-          (cd tests && go test -v -timeout 300s -count=1 -run TestMCP ./...)
-
-      - name: Run semantic CLI subset (Unix)
-        if: runner.os != 'Windows'
-        run: cd tests && TEST_SEMANTIC=1 TEST_BINARY=../bin/knowns go test -v -timeout 300s -count=1 -run TestCLI_SemanticSearch ./...
-
-      - name: Run semantic MCP subset (Unix)
-        if: runner.os != 'Windows'
-        run: cd tests && TEST_SEMANTIC=1 TEST_BINARY=../bin/knowns go test -v -timeout 300s -count=1 -run 'TestMCP_SemanticSearch/(reindex|keyword_search|hybrid_search|search_docs_only|search_tasks_only)$' ./...
-
-      - name: Run semantic CLI subset (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        env:
-          CGO_ENABLED: '1'
-        run: cd tests && TEST_SEMANTIC=1 TEST_BINARY=../bin/knowns.exe go test -v -timeout 300s -count=1 -run TestCLI_SemanticSearch ./...
-
-      - name: Run semantic MCP subset (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        env:
-          CGO_ENABLED: '1'
-        run: cd tests && TEST_SEMANTIC=1 TEST_BINARY=../bin/knowns.exe go test -v -timeout 300s -count=1 -run 'TestMCP_SemanticSearch/(reindex|keyword_search|hybrid_search|search_docs_only|search_tasks_only)$' ./...
-
-      # The web UI ships with the TypeScript build (spec: knowns-typescript-rewrite), so its
-      # Playwright suite runs against that binary; the Go e2e above keeps using the Go binary.
-      - name: Build TS binary for the UI tests
-        shell: bash
-        run: |
-          cd cli && bun install --frozen-lockfile && bun scripts/gen-ui-assets.ts
-          bun run build ${{ runner.os == 'Windows' && 'bun-windows-x64' || 'bun-linux-x64' }}
-
-      - name: Run UI Playwright tests (Unix)
-        if: runner.os != 'Windows'
-        run: cd ui && TEST_BINARY=../cli/dist/linux-x64/knowns bun test:e2e
-
-      - name: Run UI Playwright tests (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: cd ui && TEST_BINARY=../cli/dist/windows-x64/knowns.exe bun test:e2e
+      - name: Run UI Playwright tests
+        run: cd ui && TEST_BINARY="$KNOWNS_TS_BIN" bun test:e2e

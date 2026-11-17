@@ -29,6 +29,7 @@ import {
   detectInstallMethodFor,
   type InstallMethod,
 } from "../../../src/domain/update/install-method.ts";
+import { hasGoSrc } from "../../helpers/go-src.ts";
 import { goTool } from "../../stores/cfg-go.ts";
 
 const posix = process.platform !== "win32";
@@ -190,7 +191,7 @@ console.log(d.method + "\\t" + d.command);
   return tsHelper;
 }
 
-const hasGo = posix && Bun.which("go") !== null;
+const hasGo = posix && hasGoSrc;
 
 describe.skipIf(!posix)("row 18 through the executable seam (compiled TS)", () => {
   for (const l of LAYOUTS) {

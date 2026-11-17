@@ -1,12 +1,11 @@
-// Builds and drives cli/test/helpers/go-helper.go, which calls the real Go storage code.
-// Tests that need it call `requireGoHelper()` and are skipped when no Go toolchain is available.
+// Builds and drives cli/test/helpers/go-helper.go from the pinned Go checkout (KNOWNS_GO_SRC, see
+// go-src.ts), which calls the real Go storage code. Tests that need it skip without that checkout.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { GO_SRC, hasGoSrc } from "./go-src.ts";
 
-const REPO = resolve(import.meta.dir, "..", "..", "..");
-const SOURCE = join(import.meta.dir, "go-helper.go");
 const OUT_DIR = join(tmpdir(), "knowns-ts-test-go-helper");
 
 let built: string | undefined | null = null;
@@ -14,6 +13,11 @@ let built: string | undefined | null = null;
 /** Path of the built helper, or undefined when Go is unavailable or the build fails. */
 export function goHelperPath(): string | undefined {
   if (built !== null) return built;
+  if (!hasGoSrc || !GO_SRC) {
+    built = undefined;
+    return built;
+  }
+  const SOURCE = join(GO_SRC, "cli", "test", "helpers", "go-helper.go");
   const exe = join(OUT_DIR, process.platform === "win32" ? "go-helper.exe" : "go-helper");
   mkdirSync(OUT_DIR, { recursive: true });
   if (existsSync(exe) && statSync(exe).mtimeMs > statSync(SOURCE).mtimeMs) {
@@ -21,7 +25,7 @@ export function goHelperPath(): string | undefined {
     return built;
   }
   const res = Bun.spawnSync(["go", "build", "-o", exe, SOURCE], {
-    cwd: REPO,
+    cwd: GO_SRC,
     stderr: "pipe",
     stdout: "pipe",
   });

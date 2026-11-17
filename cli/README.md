@@ -12,6 +12,8 @@ bun run budget    # host binary: size delta vs an empty Bun binary <= 30MB, `--v
 bun run budget dist/linux-x64/knowns dist/windows-x64/knowns.exe   # size delta only (empty baselines cached in dist/.baseline)
 ```
 
+Go is removed from the repository after 0.35.0: `bun run test` needs no Go. The differential tests that compare against Go 0.34.1 skip without a Go oracle (see below). End to end tests live in `test/e2e` (`make test-e2e` from the repo root runs them against the compiled binary through `KNOWNS_TS_BIN`).
+
 The UI (`../ui/dist`) is embedded via a generated `src/ui-assets.generated.ts`
 (built automatically; the UI is built if `ui/dist` is missing). Use `getUiAsset(path)` from `src/ui.ts`.
 `knowns --debug-ui-asset index.html` proves an asset is readable from the binary.
@@ -21,8 +23,8 @@ Validate every boundary input with `parseBoundary` from `src/schema/`.
 
 - `src/models/` - one zod schema and type per Go model (`internal/models`), plus the pure helpers (ids, config resolution, decision and memory rules).
 - `src/storage/core/` - safe paths, project location, store layout and init, manager, store-clone gitignore, JSON/frontmatter utilities, and cross-process locks (`bun:ffi` to libc `flock` / kernel32 `LockFileEx`, same lock files as the Go binary).
-- `test/fixtures/` - golden projects written by the Go 0.34.1 binary. `bun run fixtures` regenerates them (builds Go, or set `KNOWNS_GO_BIN`); `bun run fixtures:verify` regenerates into a temp dir and checks the masked digests match the committed manifest.
-- `test/helpers/go-helper.go` - drives the real Go locks and safepath for interop tests; tests that need it skip when Go is not installed.
+- `test/fixtures/` - golden projects written by the Go 0.34.1 binary. `bun run fixtures` regenerates them with the pinned Go oracle (`eval "$(make -s go-oracle)"` from the repo root exports `KNOWNS_GO_SRC` and `KNOWNS_GO_BIN`; it needs a Go toolchain); `bun run fixtures:verify` regenerates into a temp dir and checks the masked digests match the committed manifest.
+- `test/helpers/go-helper.go` - drives the real Go locks and safepath for interop tests (differential tests, like the others); tests that need it skip when no Go toolchain is available.
 - `src/storage/stores/` - one entity store per Go store (tasks, docs, decisions, memory, templates, time, workspaces, user prefs, audit, config, embedding settings, registry) and the config migrations, with the same on-disk bytes as 0.34.1. `src/models/schema-version.ts` holds the config schema versions so core can stamp new projects without importing stores; `stores/migrations.ts` refuses to load if its registry disagrees.
 - `src/storage/history/` - JSONL history with hash chains, the version store, mutation and task lifecycle transactions, and the single implementation of the canonical task, doc and memory hashes (`history/entities.ts`). History reaches the entity stores only through the narrow ports in `history/ports.ts`.
 
@@ -118,7 +120,7 @@ audit: { load: () => import("./audit.ts") },
 
 ### Unported commands and the root help manifest
 
-`knowns --help` must list the whole 0.34.1 command set while most commands are not ported. `core/help-manifest.generated.ts` records every 0.34.1 root command (name, one-line summary, hidden or not) captured from the Go binary by `scripts/capture-help-manifest.ts`. Root help, the `Available Commands` block of usage errors, cobra's name padding and unknown-command suggestions are rendered from it. A manifest command with no loader is a placeholder that is listed but, when run, fails with `Error: "knowns <name>" is not available in the TypeScript build yet (the command has not been ported)` and exit 1. It is never a partial implementation. Adding a loader replaces the placeholder; `test/cli/registry.test.ts` checks that the ported command's summary and hidden flag equal the manifest, and (with `KNOWNS_GO_BIN`) that the committed manifest equals a fresh capture from Go, so it cannot drift. Regenerate with `KNOWNS_GO_BIN=... bun scripts/capture-help-manifest.ts`.
+`knowns --help` must list the whole 0.34.1 command set while most commands are not ported. `core/help-manifest.generated.ts` records every 0.34.1 root command (name, one-line summary, hidden or not) captured from the Go binary by `scripts/capture-help-manifest.ts`. Root help, the `Available Commands` block of usage errors, cobra's name padding and unknown-command suggestions are rendered from it. A manifest command with no loader is a placeholder that is listed but, when run, fails with `Error: "knowns <name>" is not available in the TypeScript build yet (the command has not been ported)` and exit 1. It is never a partial implementation. Adding a loader replaces the placeholder; `test/cli/registry.test.ts` checks that the ported command's summary and hidden flag equal the manifest, and (with `KNOWNS_GO_BIN`) that the committed manifest equals a fresh capture from Go, so it cannot drift. Regenerate with `eval "$(make -s go-oracle)" && bun scripts/capture-help-manifest.ts` (needs a Go toolchain).
 
 Global flags are the 0.34.1 root set: `--plain --json --page --page-size` and the hidden no-op `--no-pager`, plus `-h/--help` and `-v/--version` on the root only. There is no root `--project`; the commands that take one declare it themselves.
 
@@ -128,4 +130,4 @@ Known gaps: `completion` (shell completion scripts) is a placeholder like the un
 
 ### Tests
 
-`test/cli/golden.test.ts` compares stdout, stderr and exit code with the Go binary for root help, `--version`, the banner, unknown commands (with suggestions), bad flags, group and leaf help, `help <path>`, and usage errors, for the root and for `audit` and `lsp` registered through the framework (their definitions in `test/cli/fixtures.ts` mirror `internal/cli/audit.go` and `lsp.go`). Run with `KNOWNS_GO_BIN=/path/to/knowns bun test test/cli`; the Go comparisons skip without it. The Go binary built without release ldflags calls itself `dev`; the harness normalizes that to `VERSION`.
+`test/cli/golden.test.ts` compares stdout, stderr and exit code with the Go binary for root help, `--version`, the banner, unknown commands (with suggestions), bad flags, group and leaf help, `help <path>`, and usage errors, for the root and for `audit` and `lsp` registered through the framework (their definitions in `test/cli/fixtures.ts` mirror `internal/cli/audit.go` and `lsp.go`). Run with `eval "$(make -s go-oracle)"` (exports `KNOWNS_GO_SRC` and `KNOWNS_GO_BIN`, Go 0.34.1 built from the pinned commit `069954a`) and then `bun test test/cli`; the Go comparisons skip without it. The Go binary built without release ldflags calls itself `dev`; the harness normalizes that to `VERSION`.

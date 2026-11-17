@@ -11,7 +11,7 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import type { Doc } from "../../src/models/doc.ts";
 import type { MemoryEntry } from "../../src/models/memory.ts";
 import type { Task, TaskTombstone } from "../../src/models/task.ts";
@@ -27,8 +27,7 @@ import {
   VersionStore,
 } from "../../src/storage/history/index.ts";
 import { fixtureRoot } from "../helpers/fixtures.ts";
-
-const REPO = resolve(import.meta.dir, "..", "..", "..");
+import { GO_SRC, hasGoSrc } from "../helpers/go-src.ts";
 
 export function tempDir(prefix = "knowns-history-"): string {
   // Resolved, so Go (whose cwd is always the real path) and TypeScript agree on absolute paths.
@@ -61,12 +60,16 @@ export function copyFixture(name: string): { dir: string; root: string; home: st
 
 let goBin: string | undefined | null = null;
 
-/** The Go binary: KNOWNS_GO_BIN, else built once from ./cmd/knowns, else undefined. */
+/** The Go binary: KNOWNS_GO_BIN, else built once from the pinned Go checkout, else undefined. */
 export function goBinary(): string | undefined {
   if (goBin !== null) return goBin;
   const env = process.env.KNOWNS_GO_BIN;
   if (env && existsSync(env)) {
     goBin = env;
+    return goBin;
+  }
+  if (!hasGoSrc) {
+    goBin = undefined;
     return goBin;
   }
   const out = join(
@@ -76,7 +79,7 @@ export function goBinary(): string | undefined {
   );
   mkdirSync(join(tmpdir(), "knowns-ts-history-go"), { recursive: true });
   const res = Bun.spawnSync(["go", "build", "-o", out, "./cmd/knowns"], {
-    cwd: REPO,
+    cwd: GO_SRC,
     stderr: "pipe",
   });
   goBin = res.exitCode === 0 ? out : undefined;

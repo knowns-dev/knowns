@@ -66,11 +66,13 @@ irm https://knowns.sh/script/install.ps1 | iex
 
 ## Build from source
 
+Requires [Bun](https://bun.sh) 1.3.12+.
+
 ```bash
-go build -o ./bin/knowns ./cmd/knowns
+make build   # host binary -> cli/dist/<os>-<arch>/knowns
 ```
 
-Best option when developing Knowns itself.
+`make ts-build` builds all 6 targets. Best option when developing Knowns itself.
 
 ## Verify
 

@@ -3,7 +3,7 @@ id: doc-d93907fa6b5fc3c04541c72c96cde935
 title: Agent Skills
 description: Pattern for creating and managing Knowns agent skills across AI platforms
 createdAt: '2026-01-17T06:06:37.006Z'
-updatedAt: '2026-08-27T06:14:50.351Z'
+updatedAt: '2026-11-16T07:08:39.697Z'
 tags:
   - pattern
   - agents
@@ -28,7 +28,7 @@ Skills are not MCP tools. MCP tools are structured domain APIs such as `tasks`, 
 ## Skill Structure
 
 ```text
-internal/instructions/skills/
+cli/instructions/skills/
 ├── kn-init/
 │   └── SKILL.md
 ├── kn-plan/
@@ -134,7 +134,7 @@ Sync always overwrites generated files. The `--force` flag is deprecated.
 
 ### Source Location
 
-Skills source lives in `internal/instructions/skills/kn-*/SKILL.md`. These are embedded into the Go binary and synced to platform dirs during `knowns setup` / `knowns sync`.
+Skills source lives in `cli/instructions/skills/kn-*/SKILL.md` (guidelines in `cli/instructions/guidelines/*.md`). `cli/scripts/gen-instructions.ts` embeds them into `cli/src/domain/instructions/embedded.generated.ts`; the binary syncs them to platform dirs during `knowns setup` / `knowns sync`. After editing a skill, run `bun scripts/gen-instructions.ts` in `cli/` (CI fails on a stale embed via `--check`). Until 0.35.0 the sources lived in `internal/instructions/` and were embedded by Go.
 
 ### Sync Function
 
@@ -147,8 +147,8 @@ Built-in skill sources must describe runtime capabilities rather than require a 
 
 - `kn-research` is read-only by default. Persistence requires an explicit user request or authorization from an approved parent workflow.
 - External/current research prefers official or primary sources, verifies the source page when possible, cites exact references, and reports when no suitable capability is available instead of guessing.
-- Source instructions under `internal/instructions/skills/` are canonical. Platform directories are generated copies and must not be edited directly.
+- Source instructions under `cli/instructions/skills/` are canonical. Platform directories are generated copies and must not be edited directly.
 - Every built-in skill returns information in this order: goal/result, key details, then a next action only when a natural handoff exists. Fixed headings are optional; the information order is required.
-- Contract tests cover all embedded skill sources and a synced runtime copy so portability and workflow gates cannot drift silently.
+- Contract tests (`cli/test/instructions/skill-contracts.test.ts`) cover all embedded skill sources and a synced runtime copy so portability and workflow gates cannot drift silently.
 
 Memory category `decision` is legacy. Durable guidance uses first-class System Decisions; approved spec rules remain canonical in the spec's `Locked Decisions` section.

@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import {
   allowedRelation,
   allRelationKinds,
@@ -15,6 +15,7 @@ import {
   referenceExtractor,
   rewriteDocPath,
 } from "../../../src/domain/references/index.ts";
+import { GO_SRC, hasGoSrc } from "../../helpers/go-src.ts";
 
 describe("parse", () => {
   test("legacy task ref with relation", () => {
@@ -156,8 +157,9 @@ describe("rewriteDocPath", () => {
 
 // --- differential -------------------------------------------------------------------------------
 
-const hasGo = Bun.which("go") !== null;
-const repoRoot = resolve(import.meta.dir, "../../../..");
+// Built from the pinned Go checkout (test/helpers/go-src.ts); skipped without it.
+const hasGo = hasGoSrc;
+const repoRoot = GO_SRC as string;
 let binary: string | undefined;
 
 function oracleBinary(): string {

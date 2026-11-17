@@ -10,6 +10,7 @@ import { ROOT_MANIFEST } from "../../src/cli/core/help-manifest.generated.ts";
 import { groupRootCommands, HELP_GROUPS } from "../../src/cli/core/helpgroups.ts";
 import { REMOVED_COMMAND_SHORT } from "../../src/cli/core/removed.ts";
 import { createRoot } from "../../src/cli/core/root.ts";
+import { GO_SRC } from "../helpers/go-src.ts";
 import { GO_BIN, hasGoBin } from "./oracle.ts";
 
 describe("manifest", () => {
@@ -26,19 +27,22 @@ describe("manifest", () => {
     expect(groupRootCommands(createRoot()).some((g) => g.title === "Other")).toBe(false);
   });
 
-  test.skipIf(!hasGoBin)("is current with the Go binary and its command contract", () => {
-    const out = join(mkdtempSync(join(tmpdir(), "knowns-manifest-")), "manifest.ts");
-    const r = Bun.spawnSync(["bun", "scripts/capture-help-manifest.ts", "--out", out], {
-      cwd: join(import.meta.dir, "..", ".."),
-      env: { ...process.env, KNOWNS_GO_BIN: GO_BIN ?? "" },
-    });
-    expect(r.exitCode).toBe(0);
-    const committed = readFileSync(
-      join(import.meta.dir, "..", "..", "src/cli/core/help-manifest.generated.ts"),
-      "utf8",
-    );
-    expect(readFileSync(out, "utf8")).toBe(committed);
-  });
+  test.skipIf(!hasGoBin || !GO_SRC)(
+    "is current with the Go binary and its command contract",
+    () => {
+      const out = join(mkdtempSync(join(tmpdir(), "knowns-manifest-")), "manifest.ts");
+      const r = Bun.spawnSync(["bun", "scripts/capture-help-manifest.ts", "--out", out], {
+        cwd: join(import.meta.dir, "..", ".."),
+        env: { ...process.env, KNOWNS_GO_BIN: GO_BIN ?? "" },
+      });
+      expect(r.exitCode).toBe(0);
+      const committed = readFileSync(
+        join(import.meta.dir, "..", "..", "src/cli/core/help-manifest.generated.ts"),
+        "utf8",
+      );
+      expect(readFileSync(out, "utf8")).toBe(committed);
+    },
+  );
 });
 
 describe("loader registry", () => {

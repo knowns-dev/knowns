@@ -3,10 +3,10 @@ name: TS CLI
 on:
   push:
     branches: [feat/typescript-rewrite]
-    paths: ['cli/**', 'ui/**', 'npm/**', 'install/**', 'scripts/**', '.github/workflows/ts-cli.yml', 'internal/**', 'cmd/**', 'docs/**', '*.md']
+    paths: ['cli/**', 'ui/**', 'npm/**', 'install/**', 'scripts/**', '.github/workflows/ts-cli.yml', 'docs/**', '*.md']
   pull_request:
     branches: [feat/typescript-rewrite, develop, main]
-    paths: ['cli/**', 'ui/**', 'npm/**', 'install/**', 'scripts/**', '.github/workflows/ts-cli.yml', 'internal/**', 'cmd/**', 'docs/**', '*.md']
+    paths: ['cli/**', 'ui/**', 'npm/**', 'install/**', 'scripts/**', '.github/workflows/ts-cli.yml', 'docs/**', '*.md']
   workflow_dispatch:
 
 concurrency:
@@ -36,8 +36,8 @@ jobs:
         shell: bash
         working-directory: cli
     steps:
-      # Windows: run the suite in the environment it was verified in on a Windows PC. Go embeds and
-      # TS embeds compare byte for byte, so no CRLF checkout anywhere in the tree.
+      # Windows: run the suite in the environment it was verified in on a Windows PC. Embedded skills
+      # are compared with their sources byte for byte, so no CRLF checkout anywhere in the tree.
       - name: Keep LF on checkout (Windows)
         if: runner.os == 'Windows'
         working-directory: .
@@ -54,18 +54,20 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.12
-      # Go interop tests (locks, safe paths, fixtures) skip without a Go toolchain.
+      # Go is gone from the tree; the differential tests compare against Go built from the pinned
+      # last-Go commit (scripts/go-oracle.ts), so the toolchain is still needed to build that oracle.
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: '1.25.8'
           cache: false
-      # The Go binary embeds ui/dist (ui/embed.go), so the UI must be built first.
+      # The oracle embeds ui/dist, so the UI must be built first.
       - name: Build UI
         working-directory: ui
         run: bun install --frozen-lockfile && bun run build
-      - name: Build Go reference binary
-        working-directory: .
-        run: go build -o "$RUNNER_TEMP/knowns-go${{ runner.os == 'Windows' && '.exe' || '' }}" ./cmd/knowns && echo "KNOWNS_GO_BIN=$RUNNER_TEMP/knowns-go${{ runner.os == 'Windows' && '.exe' || '' }}" >> "$GITHUB_ENV"
+      # Exports KNOWNS_GO_SRC (the pinned checkout, where the Go test helpers are built) and
+      # KNOWNS_GO_BIN (the oracle CLI).
+      - name: Build Go oracle from the pinned commit
+        run: bun scripts/go-oracle.ts --dir "$RUNNER_TEMP/go-oracle" --github-env
       # Spec D13 adopts contributor PR #156 (tasks by assignee). Its behavior is diffed against a Go
       # build of the PR head, pinned by SHA (reachable through refs/pull/156/head).
       - name: Build PR #156 reference binary (spec D13)
@@ -80,9 +82,9 @@ jobs:
           (cd "$RUNNER_TEMP/pr156" && go build -o "$RUNNER_TEMP/knowns-go-pr156$EXE" ./cmd/knowns)
           echo "KNOWNS_GO_PR156_BIN=$RUNNER_TEMP/knowns-go-pr156$EXE" >> "$GITHUB_ENV"
       - run: bun install --frozen-lockfile
-      # Before anything regenerates it: the committed embedded skills/guidelines must match what
-      # Go embeds from internal/instructions, or a Go-side edit would ship stale content.
-      - name: Embedded instructions are in sync with internal/instructions
+      # Before anything regenerates it: the committed embedded skills/guidelines must match the
+      # sources in cli/instructions, or an edited skill would ship stale content.
+      - name: Embedded instructions are in sync with cli/instructions
         run: bun scripts/gen-instructions.ts --check
       - name: Check (typecheck + lint)
         run: bun run check
