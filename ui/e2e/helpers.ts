@@ -63,6 +63,8 @@ export interface TestServer {
 	port: number;
 	/** Path to the temporary project directory */
 	projectDir: string;
+	/** Process id of the server, for resource checks */
+	pid: number | undefined;
 	/** Run a CLI command against the test project */
 	cli: (args: string) => string;
 	/** Invoke one MCP tool against the test project. */
@@ -272,7 +274,7 @@ export async function startServer(): Promise<TestServer> {
 		}
 	};
 
-	return { baseURL, port, projectDir, cli, mcp, cleanup };
+	return { baseURL, port, projectDir, pid: serverProcess.pid, cli, mcp, cleanup };
 }
 
 /**
