@@ -86,6 +86,12 @@ async function openTray(page: Page) {
 	return page.getByTestId("activity-tray");
 }
 
+/** The card has unfolded: its button exists and nothing inside the tray is still animating or transitioning. */
+async function unfolded(page: Page, button: ReturnType<Page["getByRole"]>) {
+	await expect(button).toBeVisible();
+	await page.getByTestId("activity-tray").evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => undefined))));
+}
+
 test.describe("Activity tray", () => {
 	test("a background batch shows in the tray, finishes and leaves on its own", async ({ page }) => {
 		const ids = [1, 2, 3].map((n) => createTask(`Tray done ${n}`, "--status done"));
@@ -269,7 +275,8 @@ test.describe("Activity tray", () => {
 		await expect(page.getByTestId("activity-tray")).toContainText("not changed");
 		const tray = await openTray(page);
 		await tray.locator("ul").getByText("Archiving 2 tasks").click();
-		await page.waitForTimeout(400); // the card unfolds (180 ms); WebKit otherwise clicks while the button still moves
+		// Click only once the card has unfolded: WebKit otherwise clicks while the button still moves.
+		await unfolded(page, tray.getByRole("button", { name: "Dismiss" }));
 		await tray.getByRole("button", { name: "Dismiss" }).click();
 		const indicator = page.getByTestId("activity-indicator");
 		await expect(indicator).toBeHidden();
@@ -323,6 +330,7 @@ test.describe("Activity tray", () => {
 		await tray.locator("ul").getByText("Archiving 2 tasks").click();
 		await page.mouse.move(300, 500);
 		const dismiss = tray.getByRole("button", { name: "Dismiss" });
+		await unfolded(page, dismiss);
 		await dismiss.focus();
 		await expect(dismiss).toBeFocused();
 		await page.keyboard.press("Enter");
