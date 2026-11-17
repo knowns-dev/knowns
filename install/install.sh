@@ -176,7 +176,11 @@ install_pair() {
     had_engine=0
     if [ -f "$e_dest" ]; then
         had_engine=1
-        ln "$e_dest" "$e_old" 2>/dev/null || cp -p "$e_dest" "$e_old" || had_engine=0
+        # No backup, no change: without one a failed launcher install could not put the engine back.
+        ln "$e_dest" "$e_old" 2>/dev/null || cp -p "$e_dest" "$e_old" || {
+            rm -f "$l_tmp" "$e_tmp" "$e_old"
+            error "Could not back up the current $e_dest; nothing was changed"
+        }
     fi
     # The engine goes in first: an older launcher (or a 0.35 engine named knowns) keeps working with it.
     mv -f "$e_tmp" "$e_dest" || {

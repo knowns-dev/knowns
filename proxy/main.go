@@ -59,7 +59,7 @@ func main() {
 // only when the exec failed).
 func runEngine(args []string) int {
 	engine, err := findEngine()
-	if err == nil && os.Getenv("KNOWNS_ENGINE_BIN") == "" && os.Getenv("KNOWNS_PROXY_KNOWNS_BIN") == "" {
+	if err == nil && engineOverride() == "" {
 		// A directory entry that is not there or not a file is a missing engine, said clearly.
 		if st, serr := os.Stat(engine); serr != nil || st.IsDir() {
 			err = errNoEngine

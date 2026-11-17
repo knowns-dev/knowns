@@ -29,7 +29,11 @@ for (const d of [home, runtime, proj]) mkdirSync(d);
 mkdirSync(join(proj, ".knowns"));
 
 function build(version: string): { proxy: string; knowns: string } {
-  const proxy = join(base, `proxy-${version}`);
+  // A release launcher takes no engine from the environment: each version is an install of its own,
+  // `knowns` (the launcher) with a `knowns-engine` beside it.
+  const dir = join(base, `install-${version}`);
+  mkdirSync(dir);
+  const proxy = join(dir, "knowns");
   const r = Bun.spawnSync(
     ["go", "build", "-ldflags", `-X main.version=${version}`, "-o", proxy, "."],
     {
@@ -38,7 +42,7 @@ function build(version: string): { proxy: string; knowns: string } {
     },
   );
   if (r.exitCode !== 0) throw new Error(r.stderr.toString());
-  const knowns = join(base, `knowns-${version}`);
+  const knowns = join(dir, "knowns-engine");
   writeFileSync(
     knowns,
     `#!/bin/sh\nexec "${process.execPath}" --define 'KNOWNS_VERSION="${version}"' "${join(CLI_ROOT, "src", "main.ts")}" "$@"\n`,
@@ -54,7 +58,6 @@ const env = (knowns: string) => ({
   KNOWNS_RUNTIME_ROOT: runtime,
   KNOWNS_RUNTIME_IDLE_TIMEOUT_MS: "1500",
   KNOWNS_RUNTIME_WATCH_ENABLED: "0",
-  KNOWNS_PROXY_KNOWNS_BIN: knowns,
   KNOWNS_LSP_DAEMON: "0",
   NO_UPDATE_CHECK: "1",
   CI: "1",

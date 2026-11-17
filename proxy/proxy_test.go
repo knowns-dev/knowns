@@ -63,7 +63,7 @@ func newEnv(t *testing.T) *env {
 	t.Setenv("KNOWNS_RUNTIME_ROOT", filepath.Join(root, "rt"))
 	t.Setenv("GO_FAKE_KNOWNS", "1")
 	exe, _ := os.Executable()
-	t.Setenv("KNOWNS_PROXY_KNOWNS_BIN", exe)
+	t.Setenv("KNOWNS_ENGINE_BIN", exe)
 	e := &env{t: t, root: root, fakeLog: filepath.Join(root, "child.log")}
 	t.Setenv("FAKE_LOG", e.fakeLog)
 	version = "9.9.9-test"
@@ -297,11 +297,11 @@ func TestStdinEOFSendsCloseFrameAndWaitsForTheAnswer(t *testing.T) {
 
 func TestNoDaemonFallsBackToChild(t *testing.T) {
 	e := newEnv(t)
-	t.Setenv("KNOWNS_PROXY_KNOWNS_BIN", "") // no daemon can be started: only the child path below
+	t.Setenv("KNOWNS_ENGINE_BIN", "") // no daemon can be started: only the child path below
 	exe, _ := os.Executable()
 	// startDaemon runs the same binary with "__runtime run"; under GO_FAKE_KNOWNS it is a fake child
 	// that exits when its stdin closes and never writes a descriptor, so the poll ends with no_daemon.
-	t.Setenv("KNOWNS_PROXY_KNOWNS_BIN", exe)
+	t.Setenv("KNOWNS_ENGINE_BIN", exe)
 	start := time.Now()
 	h := start2(t)
 	h.send(initReq)
@@ -588,7 +588,7 @@ func TestIsControlNeedsATopLevelMemberAndNoJSONRPC(t *testing.T) {
 // answer both and exit 1 instead of dereferencing a request that is no longer in flight.
 func TestGiveUpWithRepeatedIDsDoesNotPanic(t *testing.T) {
 	e := newEnv(t)
-	t.Setenv("KNOWNS_PROXY_KNOWNS_BIN", filepath.Join(e.root, "missing-knowns"))
+	t.Setenv("KNOWNS_ENGINE_BIN", filepath.Join(e.root, "missing-knowns"))
 	gate := make(chan struct{})
 	e.startDaemon(func(c net.Conn, br *bufio.Reader) {
 		br.ReadBytes('\n')

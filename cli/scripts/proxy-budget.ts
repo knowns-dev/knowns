@@ -6,6 +6,8 @@
 //   3. after every session closes: no knowns process, descriptor, socket or pipe remains
 // Usage: bun scripts/proxy-budget.ts [--sessions N] [--ui | --ui-inproc] [--dir dist/<platform>] [--json out.json]
 import {
+  chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -15,7 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 const cliDir = resolve(import.meta.dir, "..");
 const cfg = JSON.parse(readFileSync(join(import.meta.dir, "proxy-budget.config.json"), "utf8"));
@@ -33,9 +35,23 @@ const platDir = val(
 );
 const bin = (n: string) => resolve(cliDir, platDir, isWin ? `${n}.exe` : n);
 const KNOWNS = bin("knowns");
-const PROXY = bin("knowns.launcher");
-for (const f of [KNOWNS, PROXY])
+const LAUNCHER_BUILT = bin("knowns.launcher");
+for (const f of [KNOWNS, LAUNCHER_BUILT])
   if (!existsSync(f)) throw new Error(`missing ${f}; run bun run build first`);
+
+// A release launcher takes its engine only from beside itself (never from the environment), so the
+// build output is staged as an install: knowns (the launcher) next to knowns-engine and its libraries.
+const stage = mkdtempSync(join(tmpdir(), "kn-budget-install-"));
+const PROXY = join(stage, isWin ? "knowns.exe" : "knowns");
+copyFileSync(LAUNCHER_BUILT, PROXY);
+chmodSync(PROXY, 0o755);
+copyFileSync(
+  process.env.BUDGET_PROXY_KNOWNS ?? KNOWNS,
+  join(stage, isWin ? "knowns-engine.exe" : "knowns-engine"),
+);
+chmodSync(join(stage, isWin ? "knowns-engine.exe" : "knowns-engine"), 0o755);
+for (const f of readdirSync(dirname(KNOWNS)))
+  if (/onnxruntime/i.test(f)) copyFileSync(join(dirname(KNOWNS), f), join(stage, f));
 
 const failures: string[] = [];
 const report: Record<string, unknown> = { limits, hosted };
@@ -177,11 +193,7 @@ class Session {
     this.p.kill();
   }
 }
-const proxySession = () =>
-  new Session([PROXY, "mcp", "--stdio"], {
-    ...env,
-    KNOWNS_PROXY_KNOWNS_BIN: process.env.BUDGET_PROXY_KNOWNS ?? KNOWNS,
-  });
+const proxySession = () => new Session([PROXY, "mcp", "--stdio"], { ...env });
 const directSession = () =>
   new Session([KNOWNS, "mcp", "--stdio"], { ...env, KNOWNS_MCP_PROXY: "0" });
 

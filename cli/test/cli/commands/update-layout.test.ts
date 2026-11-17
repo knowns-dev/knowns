@@ -50,6 +50,7 @@ const latest = "99.0.0";
 let server: ReturnType<typeof Bun.serve>;
 let d10: Uint8Array;
 let old: Uint8Array;
+let oldWin: Uint8Array;
 beforeAll(() => {
   d10 = tarball(
     {
@@ -65,11 +66,12 @@ beforeAll(() => {
     { "knowns-engine": "knowns" },
   );
   old = tarball({ knowns: "NEW-ENGINE-ONLY" });
+  oldWin = tarball({ "knowns.exe": "NEW-ENGINE-ONLY" });
   server = Bun.serve({
     port: 0,
     fetch(req) {
       const path = new URL(req.url).pathname;
-      const body = path.startsWith("/d10") ? d10 : old;
+      const body = path.startsWith("/d10") ? d10 : path.startsWith("/oldwin") ? oldWin : old;
       if (path.endsWith(".sha256")) return new Response(`${sha256(body)}  x.tar.gz\n`);
       return new Response(body);
     },
@@ -268,6 +270,67 @@ describe("update with a launcher archive", () => {
         expect({ code: r.code, stderr: r.stderr }).toEqual({ code: 0, stderr: "" });
         expect(read(join(sb.bin, "knowns"))).toBe("NEW-ENGINE-ONLY");
         expect(existsSync(join(sb.bin, "knowns-engine"))).toBe(false);
+        // recorded, so that an update at the same version does not fetch this archive again
+        expect(JSON.parse(read(join(sb.home, ".knowns", "install.json"))).layout).toBe("single");
+      } finally {
+        restore();
+      }
+    },
+    SLOW,
+  );
+
+  test(
+    "an archive without a launcher also replaces the kn.exe launcher copy on Windows",
+    async () => {
+      const sb = sandbox({
+        "knowns.exe": "LAUNCHER",
+        "kn.exe": "LAUNCHER",
+        "knowns-engine.exe": "ENGINE",
+      });
+      const meta = join(sb.home, ".knowns", "install.json");
+      writeFileSync(
+        meta,
+        JSON.stringify({ ...JSON.parse(read(meta)), binaryPath: join(sb.bin, "knowns.exe") }),
+      );
+      seams({
+        goos: () => "windows",
+        executable: () => join(sb.bin, "knowns.exe"),
+        releaseUrl: () => `${base()}/oldwin.tar.gz`,
+      });
+      try {
+        const r = await update(sb);
+        expect({ code: r.code, out: r.stdout.slice(-300), err: r.stderr }).toMatchObject({
+          code: 0,
+        });
+        expect(read(join(sb.bin, "knowns.exe"))).toBe("NEW-ENGINE-ONLY");
+        expect(read(join(sb.bin, "kn.exe"))).toBe("NEW-ENGINE-ONLY");
+        expect(existsSync(join(sb.bin, "knowns-engine.exe"))).toBe(false);
+      } finally {
+        restore();
+      }
+    },
+    SLOW,
+  );
+
+  test(
+    "at the same version a layout=single install is not finished again",
+    async () => {
+      const sb = sandbox({ knowns: "ENGINE-ONLY" });
+      const meta = join(sb.home, ".knowns", "install.json");
+      writeFileSync(meta, JSON.stringify({ ...JSON.parse(read(meta)), layout: "single" }));
+      let downloads = 0;
+      seams({
+        fetchLatest: async () => VERSION,
+        executable: () => join(sb.bin, "knowns"),
+        releaseUrl: () => {
+          downloads++;
+          return `${base()}/old.tar.gz`;
+        },
+      });
+      try {
+        const r = await update(sb);
+        expect(r.stdout).toContain("Already on the latest version");
+        expect(downloads).toBe(0);
       } finally {
         restore();
       }
@@ -281,7 +344,14 @@ describe("layout detection and the hint", () => {
     expect(isLegacyLayout("/x/bin/knowns", {})).toBe(true);
     expect(isLegacyLayout("C:\\k\\knowns.exe", {})).toBe(true);
     expect(isLegacyLayout("/x/bin/knowns-engine", {})).toBe(false);
-    expect(isLegacyLayout("/x/bin/knowns", { KNOWNS_LAUNCHER: "/x/bin/knowns" })).toBe(false);
+    const mine = {
+      execPath: "/x/bin/knowns-engine",
+      platform: "linux",
+      realpath: (p: string) => p,
+    };
+    expect(isLegacyLayout("/x/bin/knowns", { KNOWNS_LAUNCHER: "/x/bin/knowns" }, mine)).toBe(false);
+    // a KNOWNS_LAUNCHER that is not the launcher of this engine is no launcher at all
+    expect(isLegacyLayout("/x/bin/knowns", { KNOWNS_LAUNCHER: "/tmp/evil" }, mine)).toBe(true);
     expect(isLegacyLayout("/usr/local/bin/bun", {})).toBe(false);
   });
 
@@ -307,12 +377,24 @@ describe("layout detection and the hint", () => {
       exe: "/x/bin/knowns",
       env: { HOME: home, USERPROFILE: home } as Record<string, string>,
       isTTY: true,
+      stdinTTY: true,
       now: () => now,
     };
     expect(layoutHint(["task", "list"], { ...base, isTTY: false })).toBe("");
+    expect(layoutHint(["task", "list"], { ...base, stdinTTY: false })).toBe("");
     expect(layoutHint(["mcp", "--stdio"], base)).toBe("");
     for (const quiet of ["--json", "--plain", "update", "doctor"]) {
       expect(layoutHint(["task", "list", quiet], base)).toBe("");
+    }
+    // machine output spelled with a value: --flag=value, -o json, --format json
+    for (const args of [
+      ["task", "list", "--json=true"],
+      ["task", "list", "--plain=true"],
+      ["task", "list", "-o", "json"],
+      ["task", "list", "--format", "json"],
+      ["task", "list", "--output=yaml"],
+    ]) {
+      expect(layoutHint(args, base)).toBe("");
     }
     expect(layoutHint(["task", "list"], { ...base, exe: "/x/bin/knowns-engine" })).toBe("");
     expect(layoutHint(["task", "list"], { ...base, env: { ...base.env, CI: "1" } })).toBe("");
@@ -339,5 +421,94 @@ describe("knowns doctor", () => {
       summary: expect.stringContaining("old layout"),
       remediation: { command: "knowns update" },
     });
+  });
+});
+
+describe("single-binary releases and the npm installer share one layout.json rule", () => {
+  test("an install that recorded layout=single is not hinted at and not finished again", () => {
+    const home = tmp("knowns-hint-single-");
+    mkdirSync(join(home, ".knowns"), { recursive: true });
+    writeFileSync(
+      join(home, ".knowns", "install.json"),
+      JSON.stringify({ method: "script", layout: "single" }),
+    );
+    const seams = {
+      exe: "/x/bin/knowns",
+      env: { HOME: home, USERPROFILE: home } as Record<string, string>,
+      isTTY: true,
+      stdinTTY: true,
+    };
+    expect(layoutHint(["task", "list"], seams)).toBe("");
+  });
+
+  test("npm install.js parseArchiveLayout accepts and rejects exactly what update.ts does", () => {
+    // biome-ignore lint/style/noCommonJs: the npm installer is CommonJS
+    const npm = require("../../../../npm/knowns/install.js") as {
+      parseArchiveLayout: (t: string) => unknown;
+    };
+    const good = {
+      layout: 1,
+      version: "1",
+      launcher: { file: "knowns.launcher", installAs: "knowns" },
+      engine: { file: "knowns", installAs: "knowns-engine" },
+    };
+    const cases: string[] = [
+      JSON.stringify(good),
+      JSON.stringify({ ...good, layout: 2 }),
+      JSON.stringify({ ...good, launcher: { file: "../a", installAs: "knowns" } }),
+      JSON.stringify({ ...good, engine: { file: "a/b", installAs: "knowns-engine" } }),
+      JSON.stringify({ ...good, engine: { file: "knowns", installAs: "..\\x" } }),
+      JSON.stringify({ layout: 1 }),
+      JSON.stringify(null),
+      "{",
+    ];
+    for (const c of cases) {
+      let ours: unknown;
+      let theirs: unknown;
+      try {
+        ours = parseArchiveLayout(c);
+      } catch (e) {
+        ours = (e as Error).message;
+      }
+      try {
+        theirs = npm.parseArchiveLayout(c);
+      } catch (e) {
+        theirs = (e as Error).message;
+      }
+      expect(theirs).toEqual(ours);
+    }
+  });
+
+  test("npm applyArchiveLayout puts the engine back when the launcher rename fails", () => {
+    // biome-ignore lint/style/noCommonJs: the npm installer is CommonJS
+    const npm = require("../../../../npm/knowns/install.js") as {
+      applyArchiveLayout: (d: string) => boolean;
+    };
+    const dir = tmp("knowns-npm-layout-");
+    writeFileSync(join(dir, "knowns"), "engine");
+    // layout.json names a launcher file that is not there: the second rename fails
+    writeFileSync(
+      join(dir, "layout.json"),
+      JSON.stringify({
+        layout: 1,
+        launcher: { file: "missing.launcher", installAs: "knowns2" },
+        engine: { file: "knowns", installAs: "knowns-engine" },
+      }),
+    );
+    expect(() => npm.applyArchiveLayout(dir)).toThrow();
+    expect(readFileSync(join(dir, "knowns"), "utf8")).toBe("engine");
+    expect(existsSync(join(dir, "knowns-engine"))).toBe(false);
+    expect(() => npm.applyArchiveLayout(dir)).toThrow(); // still refuses, still whole
+    // a layout with a path in a name never touches anything
+    writeFileSync(
+      join(dir, "layout.json"),
+      JSON.stringify({
+        layout: 1,
+        launcher: { file: "../x", installAs: "k" },
+        engine: { file: "knowns", installAs: "e" },
+      }),
+    );
+    expect(() => npm.applyArchiveLayout(dir)).toThrow("no launcher");
+    expect(readFileSync(join(dir, "knowns"), "utf8")).toBe("engine");
   });
 });

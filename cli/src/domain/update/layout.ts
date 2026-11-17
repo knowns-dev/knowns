@@ -6,7 +6,9 @@
 // split; until then a one-line hint is shown at most once a day on interactive commands.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { type LauncherSeams, launcherPath } from "../../platform/launcher.ts";
 import { type Env, userHomeDir } from "../setup/env.ts";
+import { loadInstallMetadata } from "./install-metadata.ts";
 
 /** The engine's file name once the install is split. */
 export const ENGINE_NAME = "knowns-engine";
@@ -25,8 +27,13 @@ const stem = (exe: string): string =>
  * launcher started? A dev run (bun), the engine started by its launcher (KNOWNS_LAUNCHER set) and
  * the engine invoked by its own name are not.
  */
-export function isLegacyLayout(exe: string, env: Env = process.env): boolean {
-  if ((env[LAUNCHER_ENV] ?? "").trim() !== "") return false;
+export function isLegacyLayout(
+  exe: string,
+  env: Env = process.env,
+  seams: LauncherSeams = {},
+): boolean {
+  // Only a believable KNOWNS_LAUNCHER counts: a stale or hostile value must not hide the hint.
+  if (launcherPath(env, seams) !== undefined) return false;
   const s = stem(exe);
   return s === "knowns" || s === "kn";
 }
@@ -52,9 +59,9 @@ export function parseArchiveLayout(text: string): ArchiveLayout {
   } catch {
     throw new Error("release layout.json is not valid JSON");
   }
-  if (raw.layout !== 1) {
+  if (raw === null || typeof raw !== "object" || raw.layout !== 1) {
     throw new Error(
-      `release archive layout ${String(raw.layout)} is newer than this knowns understands; reinstall from the install script`,
+      `release archive layout ${String(raw === null ? null : raw?.layout)} is newer than this knowns understands; reinstall from the install script`,
     );
   }
   const { launcher, engine } = raw;
@@ -90,10 +97,35 @@ const QUIET_ARGS = new Set([
   "-h",
 ]);
 
+/** Machine-output flags that take a value: `-o json`, `--format json`, `--output=yaml`. */
+const OUTPUT_FLAGS = new Set(["-o", "--output", "--format", "-f", "--out"]);
+const MACHINE_FORMATS = new Set(["json", "yaml", "yml", "csv", "tsv", "xml", "plain", "raw"]);
+
+/** The arguments with `--flag=value` split into `--flag` and `value`. */
+const normaliseArgs = (argv: string[]): string[] =>
+  argv.flatMap((a) => {
+    const eq = a.startsWith("-") ? a.indexOf("=") : -1;
+    return eq > 0 ? [a.slice(0, eq), a.slice(eq + 1)] : [a];
+  });
+
+/** Whether the command asks for machine-readable output or is one that must stay quiet. */
+export function isQuietCommand(argv: string[]): boolean {
+  const args = normaliseArgs(argv);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string;
+    if (QUIET_ARGS.has(a) || a.startsWith("__")) return true;
+    // `--json=false` is still the json flag; being quiet there costs nothing.
+    if (OUTPUT_FLAGS.has(a) && MACHINE_FORMATS.has((args[i + 1] ?? "").toLowerCase())) return true;
+  }
+  return false;
+}
+
 export interface HintSeams {
   exe: string;
   env: Env;
   isTTY: boolean;
+  /** Whether standard input is a terminal: a piped command is a script, not a person. */
+  stdinTTY: boolean;
   now: () => number;
 }
 
@@ -115,9 +147,15 @@ export function layoutHint(argv: string[], seams: Partial<HintSeams> = {}): stri
   const env = seams.env ?? process.env;
   const isTTY = seams.isTTY ?? Boolean(process.stdout.isTTY && process.stderr.isTTY);
   const now = seams.now ?? Date.now;
-  if (!isTTY || !isLegacyLayout(exe, env)) return "";
+  const stdinTTY = seams.stdinTTY ?? Boolean(process.stdin.isTTY);
+  if (!isTTY || !stdinTTY || !isLegacyLayout(exe, env)) return "";
   if (env.NO_UPDATE_CHECK === "1" || (env.CI ?? "") !== "") return "";
-  if (argv.some((a) => QUIET_ARGS.has(a) || a.startsWith("__"))) return "";
+  if (isQuietCommand(argv)) return "";
+  try {
+    if (loadInstallMetadata(env)?.layout === "single") return ""; // nothing to finish
+  } catch {
+    // unreadable metadata: still hint
+  }
   const path = statePath(env);
   if (path === "") return "";
   try {

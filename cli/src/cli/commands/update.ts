@@ -47,6 +47,7 @@ import {
 } from "../../domain/update/layout.ts";
 import { fetchLatestVersion } from "../../domain/update/notifier.ts";
 import { compareVersions, normalizeVersionTag } from "../../domain/update/version.ts";
+import { launcherPath } from "../../platform/launcher.ts";
 import { VERSION } from "../../version.ts";
 import { type CommandContext, defineCommand } from "../core/define.ts";
 import { ErrCommandCancelled } from "../core/exit.ts";
@@ -502,7 +503,7 @@ async function downloadAndReplaceBinary(
   env: Env,
   url: string,
   binaryPath: string,
-): Promise<void> {
+): Promise<{ split: boolean }> {
   const tmpDir = mkdtempSync(join(tmpdir(), "knowns-update-"));
   try {
     const archive = join(tmpDir, basename(url));
@@ -576,6 +577,12 @@ async function downloadAndReplaceBinary(
         );
       }
       items.push({ src: extracted, dest: binaryPath });
+      // On Windows kn.exe is a copy of knowns.exe: an earlier split made it a launcher, which
+      // would find no engine once knowns-engine is removed below, so it takes the engine too.
+      const alias = join(dir, `kn${ext}`);
+      if (goos === "windows" && existsSync(alias) && resolve(alias) !== resolve(binaryPath)) {
+        items.push({ src: extracted, dest: alias, optional: true });
+      }
     }
     sweepOldBinaries(dir);
     try {
@@ -587,8 +594,18 @@ async function downloadAndReplaceBinary(
     }
     if (!split) removeInstalled(dir, `${ENGINE_NAME}${ext}`);
     removeStaleProxy(dir, goos);
+    return { split };
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+/** The last install recorded that the release has no launcher, so there is nothing to finish. */
+function layoutIsSingle(env: Env): boolean {
+  try {
+    return loadInstallMetadata(env)?.layout === "single";
+  } catch {
+    return false;
   }
 }
 
@@ -598,7 +615,7 @@ async function downloadAndReplaceBinary(
  * it exactly when a launcher started this engine).
  */
 export function launcherPathFor(binaryPath: string, env: Env, goos: string): string {
-  const fromLauncher = (env.KNOWNS_LAUNCHER ?? "").trim();
+  const fromLauncher = launcherPath(env) ?? "";
   if (fromLauncher !== "" && !/[\\/]node_modules[\\/]/i.test(fromLauncher)) return fromLauncher;
   const stem = basename(binaryPath)
     .replace(/\.exe$/i, "")
@@ -633,7 +650,9 @@ async function runScriptManagedUpgrade(
   ctx.print(
     `${StyleBold.render("Upgrading...")} ${StyleInfo.render(scriptInstallCmd(seams.goos()))}\n`,
   );
-  await downloadAndReplaceBinary(seams, ctx.env, url, binaryPath);
+  const { split } = await downloadAndReplaceBinary(seams, ctx.env, url, binaryPath);
+  // Recorded so that an equal-version update does not fetch the same single-binary archive forever.
+  meta.layout = split ? "split" : "single";
   meta.method = "script";
   if (!meta.managedBy) meta.managedBy = "knowns-script";
   meta.updateStrategy = "self-update";
@@ -811,7 +830,8 @@ Use --check to only check for updates without installing.`,
     // Spec mcp-thin-proxy D10: an install that an older updater left as the engine alone is
     // finished by this command even when the version is current. Only an equal version: a build
     // newer than the latest release has no archive to take the launcher from.
-    const finishLayout = cmp === 0 && isLegacyLayout(seams.executable(), ctx.env);
+    const finishLayout =
+      cmp === 0 && isLegacyLayout(seams.executable(), ctx.env) && !layoutIsSingle(ctx.env);
     if (cmp <= 0 && !finishLayout) {
       ctx.print(
         `  ${renderSuccess("")} Already on the latest version ${StyleBold.render(normalizeVersionTag(current))}\n`,

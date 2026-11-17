@@ -38,14 +38,16 @@ func launcherPath() string {
 
 var errNoEngine = errors.New("the knowns engine was not found")
 
-// findEngine returns the engine to run. KNOWNS_ENGINE_BIN names one explicitly (tests, development;
-// KNOWNS_PROXY_KNOWNS_BIN is the older spelling), else knowns-engine beside the launcher, else in
-// the npm platform package next to it. It never searches PATH: `knowns` there is this launcher.
+// engineOverride names an engine to run instead of the one beside the launcher. Release builds have
+// none: a variable in the environment must never be able to redirect `knowns` to another binary.
+// Only the test binary installs one (engine_override_test.go).
+var engineOverride = func() string { return "" }
+
+// findEngine returns the engine to run: knowns-engine beside the launcher, else in the npm platform
+// package next to it. It never searches PATH: `knowns` there is this launcher.
 func findEngine() (string, error) {
-	for _, k := range []string{"KNOWNS_ENGINE_BIN", "KNOWNS_PROXY_KNOWNS_BIN"} {
-		if v := os.Getenv(k); v != "" {
-			return v, nil
-		}
+	if v := engineOverride(); v != "" {
+		return v, nil
 	}
 	self := launcherPath()
 	if self == "" {
