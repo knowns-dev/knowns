@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { withoutD9 } from "../../helpers/d9.ts";
 import { withoutD13 } from "../../helpers/d13.ts";
 import { withoutD14 } from "../../helpers/d14.ts";
+import { withoutHotfix } from "../../helpers/kn-prgzms.ts";
 import { hasGoBin, runGo, runTs } from "../oracle.ts";
 
 const t = test.skipIf(!hasGoBin);
@@ -13,7 +14,7 @@ async function same(args: string[], env: Record<string, string> = {}): Promise<v
   const go = runGo(args, env);
   const raw = await runTs(args, { env });
   // A bare `setup` candidate is also the root `knowns setup` command, so D14 applies after `qdrant` only.
-  const d13 = withoutD13(raw.stdout);
+  const d13 = withoutHotfix(withoutD13(raw.stdout));
   const d14 = args.includes("qdrant") ? withoutD14(d13) : d13;
   const ts = { ...raw, stdout: args.includes("browser") ? withoutD9(d14) : d14 };
   expect(ts).toEqual(go);

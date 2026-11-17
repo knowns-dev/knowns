@@ -29,6 +29,7 @@ knowns decision
 - [`knowns decision list`](knowns_decision_list.md) — List decision records
 - [`knowns decision migrate`](knowns_decision_migrate.md) — Review and migrate legacy Decision Memories
 - [`knowns decision resolve`](knowns_decision_resolve.md) — Resolve a persisted System Decision candidate
+- [`knowns decision restore`](knowns_decision_restore.md) — Restore a draft folded into a decision by the old link_as_related
 - [`knowns decision supersede`](knowns_decision_supersede.md) — Mark one decision as superseded by another
 
 ## See also

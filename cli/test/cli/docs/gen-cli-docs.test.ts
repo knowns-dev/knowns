@@ -23,6 +23,7 @@ import {
 } from "../../../src/cli/docs/lint.ts";
 import { renderPage, renderTree } from "../../../src/cli/docs/render.ts";
 import { loadCommandTree } from "../../../src/cli/docs/tree.ts";
+import { withoutHotfix } from "../../helpers/kn-prgzms.ts";
 
 const CLI = resolve(import.meta.dir, "../../..");
 const REPO = resolve(CLI, "..");
@@ -49,6 +50,9 @@ const D8_ROOT_ROW: [string, string] = [
   "- [`knowns import`](knowns_import.md) — Removed (imported content stays readable)\n",
   "- [`knowns import`](knowns_import.md) — Manage imported Knowns packages\n",
 ];
+// KN-PRGZMS: `decision resolve` gains accept_distinct and --reason. Go 0.34.1 has neither;
+// withoutHotfix removes them, so the page is still compared with the Go page.
+const PRGZMS_PAGE = "knowns_decision_resolve.md";
 const isD8Page = (name: string): boolean => /^knowns_import(_[a-z]+)?\.md$/.test(name);
 
 const D15_SHOW: [string, string] = [
@@ -67,11 +71,14 @@ function withoutSpecDeltas(ts: Map<string, string>): Map<string, string> {
     if (
       isD8Page(name) ||
       name === "knowns_task_assignees.md" ||
-      name === "knowns_qdrant_setup.md"
+      name === "knowns_qdrant_setup.md" ||
+      name === "knowns_decision_restore.md" // KN-XAA6KA
     ) {
       continue;
     }
-    let b = body.replaceAll(D15_SHOW[0], D15_SHOW[1]).replaceAll(D15_EDIT[0], D15_EDIT[1]);
+    let b = withoutHotfix(body)
+      .replaceAll(D15_SHOW[0], D15_SHOW[1])
+      .replaceAll(D15_EDIT[0], D15_EDIT[1]);
     if (name === "knowns.md") b = b.replace(D8_ROOT_ROW[0], D8_ROOT_ROW[1]);
     if (name === "knowns_qdrant.md") b = b.replace(D14_SETUP_ROW, "");
     if (name === "knowns_browser.md") {
@@ -182,6 +189,8 @@ describe.skipIf(!hasGo)("parity with tools/gendocs", () => {
   test("same file set and content, apart from the D8, D13 and D14 deltas", () => {
     const go = readPages(goDir as string);
     const goComparable = new Map([...go].filter(([name]) => !isD8Page(name)));
+    expect(tsPages.get(PRGZMS_PAGE)).toContain("accept_distinct");
+    expect(tsPages.get(PRGZMS_PAGE)).toContain("--reason");
     expect(Object.fromEntries(withoutSpecDeltas(tsPages))).toEqual(
       Object.fromEntries(goComparable),
     );

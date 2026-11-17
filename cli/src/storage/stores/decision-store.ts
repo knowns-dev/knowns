@@ -381,8 +381,120 @@ export class DecisionStore {
     });
   }
 
-  /** LinkCandidateToCurrent: transfer a draft's provenance to a current decision and reject it. */
-  linkCandidateToCurrent(
+  /**
+   * LinkDecisions: a pure two-way link. Each decision gains only a @decision/<other> source; status,
+   * review state and every other field stay untouched (KN-XAA6KA). Repeating it is idempotent.
+   */
+  linkDecisions(
+    aId: string,
+    bId: string,
+    at?: Date,
+  ): Promise<{ first: DecisionEntry; second: DecisionEntry }> {
+    return this.withLock(() => {
+      const first = this.get(aId);
+      const second = this.get(bId);
+      if (first.id === second.id) throw new Error("the two decisions must be different");
+      const firstHas = contains(first.sources, decisionRef(second.id));
+      const secondHas = contains(second.sources, decisionRef(first.id));
+      if (firstHas && secondHas) return { first, second };
+      const stamp = (at ?? new Date()).toISOString();
+      if (!firstHas) {
+        first.sources = appendUniqueStrings(first.sources, decisionRef(second.id));
+        first.updatedAt = stamp;
+      }
+      if (!secondHas) {
+        second.sources = appendUniqueStrings(second.sources, decisionRef(first.id));
+        second.updatedAt = stamp;
+      }
+      this.writeDecisionSet(first, second);
+      return { first: this.get(aId), second: this.get(bId) };
+    });
+  }
+
+  /**
+   * RestoreMergedCandidate: undo a fold made by the old link_as_related (now merge_duplicate).
+   * The pre-merge target is not stored anywhere, so ownership is never guessed: every entry the
+   * draft holds that is also on the target is listed, and apply removes all of them except the
+   * ones named in `keep`. The two @decision refs stay as the pure link (KN-XAA6KA).
+   */
+  restoreMergedCandidate(
+    draftId: string,
+    targetId: string,
+    opts: { keep?: string[]; apply?: boolean; at?: Date } = {},
+  ): Promise<RestoreMergedResult> {
+    return this.withLock(() => {
+      const draft = this.get(draftId);
+      const target = this.get(targetId);
+      if (draft.id === target.id) throw new Error("draft and target decision must be different");
+      const draftRef = decisionRef(draft.id);
+      const targetRef = decisionRef(target.id);
+      const linked = contains(draft.sources, targetRef) && contains(target.sources, draftRef);
+      if (!linked) {
+        throw new Error(
+          `decision "${draft.id}" was not folded into "${target.id}": both need a @decision ref to the other`,
+        );
+      }
+      if (draft.status === "draft") {
+        return {
+          state: "already_restored",
+          message: `decision "${draft.id}" is already a draft; nothing to restore`,
+          entries: [],
+          draft,
+          target,
+        };
+      }
+      if (draft.status !== "rejected") {
+        throw new Error(
+          `decision "${draft.id}" is "${draft.status}", not a rejected fold; only a rejected draft can be restored`,
+        );
+      }
+      const keep = new Set((opts.keep ?? []).map((k) => goTrimSpace(k)));
+      const entries: RestoreEntry[] = [];
+      const collect = (
+        kind: RestoreEntry["kind"],
+        mine: string[] | undefined,
+        theirs: string[],
+      ) => {
+        for (const e of mine ?? []) {
+          if (kind === "source" && (e === targetRef || e === draftRef)) continue;
+          if (!contains(theirs, e)) continue;
+          entries.push({ kind, entry: e, action: keep.has(e) ? "keep" : "will remove" });
+        }
+      };
+      collect("source", draft.sources, target.sources ?? []);
+      collect("relatedDoc", draft.relatedDocs, target.relatedDocs ?? []);
+      collect("relatedTask", draft.relatedTasks, target.relatedTasks ?? []);
+      for (const k of keep) {
+        if (!entries.some((e) => e.entry === k)) {
+          throw new Error(`--keep "${k}" is not an entry the draft shares with the target`);
+        }
+      }
+      if (!opts.apply) {
+        return { state: "preview", entries, draft, target };
+      }
+      const drop = (list: string[] | undefined, kind: RestoreEntry["kind"]) => {
+        const gone = new Set(
+          entries.filter((e) => e.kind === kind && e.action === "will remove").map((e) => e.entry),
+        );
+        return (list ?? []).filter((x) => !gone.has(x));
+      };
+      const at = (opts.at ?? new Date()).toISOString();
+      target.sources = drop(target.sources, "source");
+      target.relatedDocs = drop(target.relatedDocs, "relatedDoc");
+      target.relatedTasks = drop(target.relatedTasks, "relatedTask");
+      target.updatedAt = at;
+      draft.status = "draft";
+      draft.reviewState = "";
+      delete draft.reviewBlockers;
+      delete draft.reviewAllowedResolutions;
+      draft.updatedAt = at;
+      this.writeDecisionSet(draft, target);
+      return { state: "restored", entries, draft: this.get(draftId), target: this.get(targetId) };
+    });
+  }
+
+  /** MergeCandidateIntoCurrent: transfer a draft's provenance to a current decision and reject it. */
+  mergeCandidateIntoCurrent(
     candidateId: string,
     targetId: string,
     resolvedAt?: Date,
@@ -673,4 +785,18 @@ export class DecisionStore {
     }
     return parseDecisionContent(data);
   }
+}
+
+export interface RestoreEntry {
+  kind: "source" | "relatedDoc" | "relatedTask";
+  entry: string;
+  action: "will remove" | "keep";
+}
+
+export interface RestoreMergedResult {
+  state: "preview" | "restored" | "already_restored";
+  message?: string;
+  entries: RestoreEntry[];
+  draft: DecisionEntry;
+  target: DecisionEntry;
 }

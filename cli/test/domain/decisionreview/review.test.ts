@@ -159,7 +159,7 @@ describe("accept and resolve", () => {
     );
   });
 
-  test("resolve link_as_related transfers provenance and rejects the duplicate", async () => {
+  test("resolve merge_duplicate transfers provenance and rejects the duplicate", async () => {
     const l = lab();
     const svc = new DecisionReviewService(l.storage);
     const added = await svc.add(
@@ -168,18 +168,65 @@ describe("accept and resolve", () => {
     const id = added.decision?.id as string;
     const r = await svc.resolve(undefined, {
       candidateId: id,
-      resolution: "link_as_related",
+      resolution: "merge_duplicate",
       targetId: BUN,
     });
     expect(r.decision?.status).toBe("rejected");
     expect(r.current?.sources).toContain(`@decision/${id}`);
+    expect(r.current?.sources).toContain("@doc/architecture");
+    expect(r.current?.relatedTasks).toContain("FX-3VT2SR");
     // idempotent
     const again = await svc.resolve(undefined, {
+      candidateId: id,
+      resolution: "merge_duplicate",
+      targetId: BUN,
+    });
+    expect(again.decision?.status).toBe("rejected");
+    expect(ALLOWED_RESOLUTIONS).toContain("merge_duplicate");
+  });
+
+  test("resolve link_as_related only links: statuses stay, nothing is copied (KN-XAA6KA)", async () => {
+    const l = lab();
+    const svc = new DecisionReviewService(l.storage);
+    const added = await svc.add(
+      cand("Use bun for everything", { decision: "Bun everywhere", ...evidence }),
+    );
+    const id = added.decision?.id as string;
+    const before = l.storage.decisions.get(BUN);
+    const r = await svc.resolve(undefined, {
       candidateId: id,
       resolution: "link_as_related",
       targetId: BUN,
     });
-    expect(again.decision?.status).toBe("rejected");
+    expect(r.decision?.status).toBe("draft");
+    expect(r.decision?.reviewState).toBe("needs_resolution");
+    const draft = l.storage.decisions.get(id);
+    const target = l.storage.decisions.get(BUN);
+    expect(target.status).toBe(before.status);
+    expect(draft.sources).toContain(`@decision/${BUN}`);
+    expect(target.sources).toContain(`@decision/${id}`);
+    // nothing copied either way
+    expect(target.sources).toEqual([...(before.sources ?? []), `@decision/${id}`]);
+    expect(target.relatedTasks).toEqual(before.relatedTasks);
+    expect(target.relatedDocs).toEqual(before.relatedDocs);
+    expect(draft.relatedTasks).toEqual(["FX-3VT2SR"]);
+    // idempotent
+    await svc.resolve(undefined, { candidateId: id, resolution: "link_as_related", targetId: BUN });
+    expect(l.storage.decisions.get(BUN).sources).toEqual(target.sources);
+    await expect(
+      svc.resolve(undefined, { candidateId: id, resolution: "link_as_related" }),
+    ).rejects.toThrow("targetId is required");
+  });
+
+  test("a decision written by the old link_as_related still reads and validates (KN-XAA6KA)", async () => {
+    const l = lab();
+    const svc = new DecisionReviewService(l.storage);
+    const added = await svc.add(cand("Use bun for everything", { decision: "x", ...evidence }));
+    const id = added.decision?.id as string;
+    await svc.resolve(undefined, { candidateId: id, resolution: "merge_duplicate", targetId: BUN });
+    // the folded shape is a rejected decision with refs both ways: plain frontmatter, no new field
+    expect(l.storage.decisions.get(id).status).toBe("rejected");
+    expect(l.storage.decisions.list().length).toBeGreaterThan(0);
   });
 
   test("resolve supersede_existing replaces the current decision", async () => {
