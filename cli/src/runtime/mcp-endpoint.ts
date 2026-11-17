@@ -18,6 +18,7 @@ import {
 import net from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join, win32 } from "node:path";
+import { endpointAlive } from "../util/endpoint-alive.ts";
 import { VERSION } from "../version.ts";
 import { ENV_RUNTIME_ROOT, nowString, runtimeRoot } from "./queue.ts";
 
@@ -123,25 +124,7 @@ export function checkDescriptorLocation(root: string, seams: DescriptorLocationS
 /** Removes a socket nobody listens on; refuses when a live daemon holds it. */
 async function freeSocket(path: string): Promise<void> {
   if (!existsSync(path)) return;
-  // Only a refused connection proves nobody listens: a daemon too busy to accept in time still
-  // owns its socket, so a timeout counts as alive and the path is left alone.
-  const alive = await new Promise<boolean>((done) => {
-    const sock = net.connect({ path });
-    const timer = setTimeout(() => {
-      sock.destroy();
-      done(true);
-    }, 1000);
-    sock.once("connect", () => {
-      clearTimeout(timer);
-      sock.destroy();
-      done(true);
-    });
-    sock.once("error", () => {
-      clearTimeout(timer);
-      done(false);
-    });
-  });
-  if (alive) throw new Error(`MCP endpoint already active: ${path}`);
+  if (await endpointAlive(path)) throw new Error(`MCP endpoint already active: ${path}`);
   rmSync(path, { force: true });
 }
 
@@ -163,6 +146,13 @@ export async function listenMcpEndpoint(
   if (ep.dir) {
     ensurePrivateDir(ep.dir);
     await freeSocket(ep.address);
+  }
+  // On Windows a net.Server whose listen() fails on a pipe that is already served makes Bun 1.3.12
+  // panic when the process ends (a bare node:net script shows it; close() does not help): the
+  // losing daemon of two that start together would die with that panic instead of "already
+  // active". Ask the pipe first and never call listen() on one that answers.
+  if (isWindows && (await endpointAlive(ep.address))) {
+    throw new Error(`MCP endpoint already active: ${ep.address}`);
   }
   const server = net.createServer({ allowHalfOpen: true }, onConnection);
   await new Promise<void>((resolveListen, reject) => {
