@@ -6,6 +6,22 @@
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 
+// Worker threads this module started and that have not exited. Bun 1.3.12 on Windows panics when
+// the process ends while worker threads are still alive ("Internal assertion failure", header
+// workers_spawned(n) workers_terminated(m) with m < n), so whoever owns a worker must stop it, and
+// this registry lets a test or a shutdown path see what is left.
+const live = new Map<Worker, string>();
+
+/** Bundled workers that have not exited, with the stack that started each. */
+export function liveBundledWorkers(): Array<{ worker: Worker; startedAt: string }> {
+  return [...live].map(([worker, startedAt]) => ({ worker, startedAt }));
+}
+
+/** Terminates every bundled worker still alive (a last resort at the end of a process). */
+export async function terminateBundledWorkers(): Promise<void> {
+  await Promise.all([...live.keys()].map((w) => w.terminate().catch(() => undefined)));
+}
+
 /**
  * @param sourceUrl      `new URL("./x-worker.ts", import.meta.url)` of the caller
  * @param bundledPath    the worker inside a compiled binary, e.g. "runtime/x-worker.js"
@@ -21,7 +37,10 @@ export function spawnBundledWorker(
   // The embedded file system of a Windows binary is looked up with forward slashes only.
   const target =
     compiled && process.platform === "win32" ? fileURLToPath(url).replaceAll("\\", "/") : url;
-  return new Worker(target, { workerData: { ...workerData, env: { ...process.env } } });
+  const worker = new Worker(target, { workerData: { ...workerData, env: { ...process.env } } });
+  live.set(worker, new Error("worker started here").stack ?? "");
+  worker.once("exit", () => live.delete(worker));
+  return worker;
 }
 
 /** Bun starts a worker with the environment the process began with, not the parent's current one,
