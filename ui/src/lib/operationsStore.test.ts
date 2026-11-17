@@ -6,8 +6,6 @@ import {
 	applyRemoved,
 	applySnapshot,
 	emptyOperations,
-	HIDE_FINISHED_AFTER_MS,
-	nextHideAt,
 	visibleOperations,
 } from "./operationsStore";
 
@@ -70,38 +68,21 @@ describe("operations store", () => {
 		expect(s.byId.op_new).toBeDefined();
 	});
 
-	test("done and cancelled hide after the delay, failed stays, running stays", () => {
-		const finished = 10_000;
+	test("a locally hidden row is left out; failed and running rows stay until hidden", () => {
 		const s = applySnapshot({
 			seq: 1,
 			operations: [
-				op("op_done", { state: "done", finishedAt: finished }),
-				op("op_cancelled", { state: "cancelled", finishedAt: finished }),
-				op("op_failed", { state: "failed", finishedAt: finished, error: "boom" }),
+				op("op_done", { state: "done", finishedAt: 10_000 }),
+				op("op_failed", { state: "failed", finishedAt: 10_000, error: "boom" }),
 				op("op_running"),
-				op("op_cancelling", { state: "cancelling", cancellable: false }),
 			],
 		});
-		const ids = (now: number) => visibleOperations(s, now).map((o) => o.id).sort();
-		expect(ids(finished + HIDE_FINISHED_AFTER_MS - 1)).toContain("op_done");
-		expect(ids(finished + HIDE_FINISHED_AFTER_MS)).toEqual(["op_cancelling", "op_failed", "op_running"]);
-	});
-
-	test("nextHideAt names the earliest pending hide", () => {
-		const s = applySnapshot({
-			seq: 1,
-			operations: [
-				op("op_a", { state: "done", finishedAt: 5000 }),
-				op("op_b", { state: "cancelled", finishedAt: 7000 }),
-				op("op_c", { state: "failed", finishedAt: 1000 }),
-			],
-		});
-		expect(nextHideAt(s, 6000)).toBe(5000 + HIDE_FINISHED_AFTER_MS);
-		expect(nextHideAt(s, 100_000)).toBeNull();
+		expect(visibleOperations(s, new Set()).map((o) => o.id).sort()).toEqual(["op_done", "op_failed", "op_running"]);
+		expect(visibleOperations(s, new Set(["op_done"])).map((o) => o.id).sort()).toEqual(["op_failed", "op_running"]);
 	});
 
 	test("rows are newest first", () => {
 		const s = applySnapshot({ seq: 1, operations: [op("op_old", { startedAt: 1 }), op("op_new", { startedAt: 9 })] });
-		expect(visibleOperations(s, 0).map((o) => o.id)).toEqual(["op_new", "op_old"]);
+		expect(visibleOperations(s, new Set()).map((o) => o.id)).toEqual(["op_new", "op_old"]);
 	});
 });

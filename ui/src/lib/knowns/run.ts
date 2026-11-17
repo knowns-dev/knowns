@@ -58,15 +58,16 @@ export function createAgentRun(options: AgentRunOptions = {}): AgentRun {
       }
       case "span.end": {
         const i = s.spans.findIndex((x) => x.id === e.id);
-        if (i === -1) return s;
+        const prev = s.spans[i];
+        if (!prev) return s;
         const spans = s.spans.slice();
         spans[i] = {
-          ...spans[i],
+          ...prev,
           endedAt: e.at ?? now(),
           outcome: e.outcome ?? "success",
-          summary: e.summary ?? spans[i].summary,
-          output: e.output ?? spans[i].output,
-          error: e.error ?? spans[i].error,
+          summary: e.summary ?? prev.summary,
+          output: e.output ?? prev.output,
+          error: e.error ?? prev.error,
         };
         return { ...s, spans };
       }
@@ -81,24 +82,26 @@ export function createAgentRun(options: AgentRunOptions = {}): AgentRun {
       }
       case "task.end": {
         const i = s.tasks.findIndex((x) => x.id === e.id);
-        if (i === -1 || s.tasks[i].outcome) return s;
+        const prev = s.tasks[i];
+        if (!prev || prev.outcome) return s;
         const tasks = s.tasks.slice();
         tasks[i] = {
-          ...tasks[i],
+          ...prev,
           endedAt: e.at ?? now(),
           outcome: e.outcome ?? "success",
-          summary: e.summary ?? tasks[i].summary,
-          handoffTo: e.handoffTo ?? tasks[i].handoffTo,
-          handoffItems: e.handoffItems ?? tasks[i].handoffItems,
+          summary: e.summary ?? prev.summary,
+          handoffTo: e.handoffTo ?? prev.handoffTo,
+          handoffItems: e.handoffItems ?? prev.handoffItems,
         };
         return { ...s, tasks };
       }
       case "task.item.restore": {
         const i = s.tasks.findIndex((x) => x.id === e.id);
-        const items = i === -1 ? undefined : s.tasks[i].handoffItems;
-        if (!items?.some((it) => it.id === e.item && it.lost)) return s;
+        const prev = s.tasks[i];
+        const items = prev?.handoffItems;
+        if (!prev || !items?.some((it) => it.id === e.item && it.lost)) return s;
         const tasks = s.tasks.slice();
-        tasks[i] = { ...tasks[i], handoffItems: items.map((it) => (it.id === e.item ? { id: it.id, label: it.label, kind: it.kind } : it)) };
+        tasks[i] = { ...prev, handoffItems: items.map((it) => (it.id === e.item ? { id: it.id, label: it.label, kind: it.kind } : it)) };
         return { ...s, tasks };
       }
       case "approval.request": {
@@ -107,9 +110,10 @@ export function createAgentRun(options: AgentRunOptions = {}): AgentRun {
       }
       case "approval.resolve": {
         const i = s.approvals.findIndex((x) => x.id === e.id);
-        if (i === -1 || s.approvals[i].decision) return s;
+        const prev = s.approvals[i];
+        if (!prev || prev.decision) return s;
         const approvals = s.approvals.slice();
-        approvals[i] = { ...approvals[i], decision: e.decision, decidedAt: e.at ?? now() };
+        approvals[i] = { ...prev, decision: e.decision, decidedAt: e.at ?? now() };
         return { ...s, approvals };
       }
       case "reset":

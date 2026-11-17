@@ -3,7 +3,6 @@
 // event of an older state can never overwrite a newer one.
 
 import {
-	isTerminalOperation,
 	type Operation,
 	type OperationEvent,
 	type OperationRemovedEvent,
@@ -17,9 +16,6 @@ export interface OperationsState {
 	/** True once a snapshot has been taken. Events before it are held back by the caller. */
 	ready: boolean;
 }
-
-/** done and cancelled rows are hidden after this long (the server removes them after 15 s). */
-export const HIDE_FINISHED_AFTER_MS = 4000;
 
 export const emptyOperations: OperationsState = { seq: 0, byId: {}, ready: false };
 
@@ -56,25 +52,12 @@ export function forgetOperation(state: OperationsState, id: string): OperationsS
 }
 
 /**
- * What the tray lists, newest activity first. A done or cancelled row stays HIDE_FINISHED_AFTER_MS
- * after it finished; a failed one stays until it is dismissed.
+ * What the tray lists, newest activity first. A done or cancelled row is hidden only in this tab,
+ * once the stack's single timer asks for it (the server removes it for everyone after 15 s); a
+ * failed row stays until it is dismissed.
  */
-export function visibleOperations(state: OperationsState, now: number): Operation[] {
+export function visibleOperations(state: OperationsState, hidden: ReadonlySet<string>): Operation[] {
 	return Object.values(state.byId)
-		.filter((op) => {
-			if (op.state === "failed" || !isTerminalOperation(op)) return true;
-			return now - (op.finishedAt ?? op.updatedAt) < HIDE_FINISHED_AFTER_MS;
-		})
+		.filter((op) => !hidden.has(op.id))
 		.sort((a, b) => b.startedAt - a.startedAt || (a.id < b.id ? 1 : -1));
-}
-
-/** When a finished row should disappear next, or null. Lets the caller schedule one timer. */
-export function nextHideAt(state: OperationsState, now: number): number | null {
-	let next: number | null = null;
-	for (const op of Object.values(state.byId)) {
-		if (op.state !== "done" && op.state !== "cancelled") continue;
-		const at = (op.finishedAt ?? op.updatedAt) + HIDE_FINISHED_AFTER_MS;
-		if (at > now && (next === null || at < next)) next = at;
-	}
-	return next;
 }
