@@ -1,7 +1,7 @@
 // A pid file is not proof of a daemon: after a crash or reboot its pid may belong to any process.
 // Nothing may be signalled unless the process is provably a Knowns runtime daemon.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -135,6 +135,72 @@ describe("readProcessInfo", () => {
     );
     expect(calls).toBe(3); // bounded
     expect(always.attempts).toBe(3);
+  });
+  test("when every retry is spurious the fallback runs once, and a real timeout never reaches it", () => {
+    const etimedout = Object.assign(new Error("spawnSync ETIMEDOUT"), { code: "ETIMEDOUT" });
+    let clock = 0;
+    let calls = 0;
+    let fell = 0;
+    const fallback = () => {
+      fell++;
+      return { status: 0 as number | null };
+    };
+    const out = spawnRetryingSpurious(
+      () => {
+        calls++;
+        clock += 15;
+        return { status: null as number | null, error: etimedout };
+      },
+      8000,
+      () => clock,
+      () => {},
+      fallback,
+    );
+    expect(calls).toBe(3);
+    expect(fell).toBe(1);
+    expect(out.usedFallback).toBe(true);
+    expect(out.result.status).toBe(0);
+
+    clock = 0;
+    calls = 0;
+    fell = 0;
+    const real = spawnRetryingSpurious(
+      () => {
+        calls++;
+        clock += 8000;
+        return { status: null as number | null, error: etimedout };
+      },
+      8000,
+      () => clock,
+      () => {},
+      fallback,
+    );
+    expect(calls).toBe(1);
+    expect(fell).toBe(0);
+    expect(real.usedFallback).toBe(false);
+
+    // a command that really ran and failed is an answer, not a spurious failure
+    fell = 0;
+    const ran = spawnRetryingSpurious(
+      () => ({ status: 1 as number | null }),
+      8000,
+      () => clock,
+      () => {},
+      fallback,
+    );
+    expect(fell).toBe(0);
+    expect(ran.result.status).toBe(1);
+  });
+  test("the PowerShell-side guarded query returns the record of this process", () => {
+    if (process.platform !== "win32") return;
+    const exe = `${process.env.SystemRoot ?? "C:\\Windows"}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+    const script = `(Get-CimInstance Win32_Process -Filter "ProcessId=${process.pid}").ProcessId`;
+    const guarded = `$j = Start-Job -ScriptBlock { ${script} }; if (Wait-Job $j -Timeout 8) { Receive-Job $j } else { Stop-Job $j; exit 3 }`;
+    const r = spawnSync(exe, ["-NoProfile", "-NonInteractive", "-Command", guarded], {
+      encoding: "utf8",
+    });
+    expect(r.status, String(r.stderr)).toBe(0);
+    expect(String(r.stdout).trim()).toBe(String(process.pid));
   });
   test("a pid that does not exist has no info", () => {
     expect(readProcessInfo(2 ** 22 - 3)).toBeUndefined();
