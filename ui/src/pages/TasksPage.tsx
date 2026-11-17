@@ -278,7 +278,6 @@ export default function TasksPage({
 			await api.startBatchInBackground("unarchive", [...ids]);
 			if (restoreGenerationRef.current !== generation) return;
 			closeRestore(false);
-			toast.success(`Restoring ${ids.length} task${ids.length === 1 ? "" : "s"} in the background`);
 		} catch (error) {
 			if (restoreGenerationRef.current === generation) {
 				if (error instanceof LifecycleAPIError) setRestoreResponse(error.response || null);
@@ -343,7 +342,6 @@ export default function TasksPage({
 			await api.startBatchInBackground("archive", [...ids], { minimumAgeMs });
 			if (archiveGenerationRef.current !== generation) return;
 			closeArchiveDialog(false);
-			toast.success(`Archiving ${ids.length} task${ids.length === 1 ? "" : "s"} in the background`);
 		} catch (error) {
 			if (archiveGenerationRef.current === generation) {
 				if (error instanceof LifecycleAPIError && error.response) setArchiveResponse(error.response);

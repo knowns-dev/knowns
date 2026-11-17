@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Operation } from "@/ui/models/operation";
-import { toActivityItem, type TrayHandlers } from "./toActivityItem";
+import { failureText, toActivityItem, type TrayHandlers } from "./toActivityItem";
 
 const op = (over: Partial<Operation>): Operation => ({
 	id: "op_1",
@@ -39,6 +39,11 @@ const operationItem = (o: Operation, h: TrayHandlers) => {
 	return item;
 };
 
+/** What the stack does: the timer calls onDismiss() with nothing, the Dismiss button with the click. */
+const timer = (item: ReturnType<typeof operationItem>) => item.onDismiss?.();
+const clickDismiss = (item: ReturnType<typeof operationItem>) =>
+	(item.onDismiss as (e: unknown) => void)?.({ type: "click" });
+
 describe("toActivityItem", () => {
 	test("buttons come from the flags, not the kind", () => {
 		const { h } = handlers();
@@ -68,25 +73,57 @@ describe("toActivityItem", () => {
 		expect(item.actions?.every((a) => a.disabled)).toBe(true);
 	});
 
-	test("done and cancelled age out locally; only a failed Dismiss goes to the server", () => {
-		for (const state of ["done", "cancelled"] as const) {
+	test("the timer hides done and a cancelled row with nothing to run again, locally and without a request", () => {
+		for (const o of [op({ state: "done", cancellable: false }), op({ state: "cancelled", cancellable: false, retryable: false })]) {
 			const { h, calls } = handlers();
-			operationItem(op({ state, cancellable: false, finishedAt: 2000 }), h).onDismiss?.();
+			timer(operationItem(o, h));
 			expect(calls).toEqual(["hide op_1"]);
 		}
-		const { h, calls } = handlers();
-		operationItem(op({ state: "failed", cancellable: false, error: "boom" }), h).onDismiss?.();
-		expect(calls).toEqual(["server-dismiss op_1"]);
 	});
 
-	test("the reasons of a partial failure reach the row: error and message pass through", () => {
+	test("the timer leaves a cancelled row with work left, and a failed row, alone", () => {
+		for (const o of [
+			op({ state: "cancelled", cancellable: false, retryable: true }),
+			op({ state: "failed", cancellable: false, error: "boom" }),
+		]) {
+			const { h, calls } = handlers();
+			timer(operationItem(o, h));
+			expect(calls).toEqual([]);
+		}
+	});
+
+	test("Dismiss on a failed row, or a cancelled one with work left, removes it on the server; on a done one it only hides", () => {
+		for (const o of [
+			op({ state: "failed", cancellable: false, error: "boom" }),
+			op({ state: "cancelled", cancellable: false, retryable: true }),
+		]) {
+			const { h, calls } = handlers();
+			clickDismiss(operationItem(o, h));
+			expect(calls).toEqual(["server-dismiss op_1"]);
+		}
+		const { h, calls } = handlers();
+		clickDismiss(operationItem(op({ state: "done", cancellable: false }), h));
+		expect(calls).toEqual(["hide op_1"]);
+	});
+
+	test("a failed row puts its reason on the collapsed line: the error and the counts with the reasons", () => {
+		const o = op({
+			state: "failed",
+			cancellable: false,
+			error: "Lifecycle request failed",
+			message: "2 archived, 1 not changed: #A must be done",
+		});
+		expect(failureText(o)).toBe("Lifecycle request failed · 2 archived, 1 not changed: #A must be done");
 		const { h } = handlers();
-		const item = operationItem(
-			op({ state: "failed", cancellable: false, error: "Lifecycle request failed", message: "2 archived, 1 not changed: #A must be done" }),
-			h,
-		);
-		expect(item.error).toBe("Lifecycle request failed");
-		expect(item.message).toBe("2 archived, 1 not changed: #A must be done");
+		const item = operationItem(o, h);
+		expect(item.message).toBeTruthy();
+		// the reason is in the line, so the open card does not repeat it
+		expect(item.error).toBeUndefined();
+	});
+
+	test("a row that is not failed passes its message through", () => {
+		const { h } = handlers();
+		expect(operationItem(op({ message: "125 archived, 375 left" }), h).message).toBe("125 archived, 375 left");
 	});
 
 	test("progress, state and times carry over; no progress stays null", () => {

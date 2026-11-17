@@ -1,35 +1,45 @@
 /**
  * Activity Tray state: what is running, queued or just finished, from the web server and the daemon.
- * On every SSE `connected` it takes GET /api/operations, then applies operation events whose seq is
- * newer than that snapshot (see lib/operationsStore.ts).
+ * One snapshot (GET /api/operations) per SSE `connected`; events that arrive before it is answered
+ * are buffered and replayed if newer (see lib/operationsStore.ts).
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, type ReactNode } from "react";
 import { OperationAPIError, operationsApi } from "../api/client";
 import {
 	adoptOperation,
 	applyOperationEvent,
 	applyRemoved,
 	applySnapshot,
+	beginSnapshot,
 	emptyOperations,
+	failSnapshot,
 	forgetOperation,
+	hideOperation,
 	visibleOperations,
 	type OperationsState,
 } from "../lib/operationsStore";
-import type { Operation, OperationSnapshot } from "../models/operation";
+import type { Operation, OperationEvent, OperationRemovedEvent, OperationSnapshot } from "../models/operation";
 import { useSSEEvent } from "./SSEContext";
 
 type Action =
-	| { type: "snapshot"; snapshot: OperationSnapshot }
-	| { type: "event"; seq: number; operation: Operation }
-	| { type: "removed"; seq: number; id: string }
+	| { type: "begin"; request: number }
+	| { type: "snapshot"; request: number; snapshot: OperationSnapshot; now: number }
+	| { type: "snapshot-failed"; request: number }
+	| ({ type: "event" } & OperationEvent)
+	| ({ type: "removed" } & OperationRemovedEvent)
 	| { type: "adopt"; operation: Operation }
-	| { type: "forget"; id: string };
+	| { type: "forget"; id: string }
+	| { type: "hide"; id: string };
 
 function reduce(state: OperationsState, action: Action): OperationsState {
 	switch (action.type) {
+		case "begin":
+			return beginSnapshot(state, action.request);
 		case "snapshot":
-			return applySnapshot(action.snapshot);
+			return applySnapshot(state, action.request, action.snapshot, action.now);
+		case "snapshot-failed":
+			return failSnapshot(state, action.request);
 		case "event":
 			return applyOperationEvent(state, { seq: action.seq, operation: action.operation });
 		case "removed":
@@ -38,13 +48,15 @@ function reduce(state: OperationsState, action: Action): OperationsState {
 			return adoptOperation(state, action.operation);
 		case "forget":
 			return forgetOperation(state, action.id);
+		case "hide":
+			return hideOperation(state, action.id);
 	}
 }
 
 interface OperationsContextType {
-	/** Newest first. A done or cancelled row stays until the tray asks to hide it (hideHere). */
+	/** Newest first. */
 	operations: Operation[];
-	/** Hide a row in THIS tab only (no request): the tray's one timer calls it for done and cancelled rows. */
+	/** Hide a row in THIS tab only (no request): the stack's one timer calls it for finished rows. */
 	hideHere: (id: string) => void;
 	cancel: (id: string) => Promise<void>;
 	/** Web operations come back under a new id; daemon jobs keep theirs. */
@@ -56,26 +68,27 @@ const OperationsContext = createContext<OperationsContextType | undefined>(undef
 
 export function OperationsProvider({ children }: { children: ReactNode }) {
 	const [state, dispatch] = useReducer(reduce, emptyOperations);
-	const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
+	const requests = useRef(0);
 
 	const loadSnapshot = useCallback(() => {
+		const request = ++requests.current;
+		dispatch({ type: "begin", request });
 		operationsApi
 			.snapshot()
-			.then((snapshot) => dispatch({ type: "snapshot", snapshot }))
-			.catch(() => {
-				// The next `connected` takes a fresh snapshot.
-			});
+			.then((snapshot) => dispatch({ type: "snapshot", request, snapshot, now: Date.now() }))
+			.catch(() => dispatch({ type: "snapshot-failed", request }));
 	}, []);
 
-	useEffect(loadSnapshot, [loadSnapshot]);
+	// One snapshot per connect, taken on the `connected` event the server sends first on every stream
+	// (both providers mount together, so the first one is not missed).
 	useSSEEvent("connected", loadSnapshot, [loadSnapshot]);
 	useSSEEvent("operation:started", (e) => dispatch({ type: "event", seq: e.seq, operation: e.operation }));
 	useSSEEvent("operation:updated", (e) => dispatch({ type: "event", seq: e.seq, operation: e.operation }));
 	useSSEEvent("operation:finished", (e) => dispatch({ type: "event", seq: e.seq, operation: e.operation }));
 	useSSEEvent("operation:removed", (e) => dispatch({ type: "removed", seq: e.seq, id: e.id }));
 
-	const operations = useMemo(() => visibleOperations(state, hidden), [state, hidden]);
-	const hideHere = useCallback((id: string) => setHidden((prev) => new Set(prev).add(id)), []);
+	const operations = useMemo(() => visibleOperations(state), [state]);
+	const hideHere = useCallback((id: string) => dispatch({ type: "hide", id }), []);
 
 	const cancel = useCallback(async (id: string) => {
 		try {
