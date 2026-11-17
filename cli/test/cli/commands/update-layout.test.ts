@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -37,7 +38,7 @@ function tarball(files: Record<string, string>, links: Record<string, string> = 
   const src = tmp("knowns-d10-src-");
   for (const [n, c] of Object.entries(files)) writeFileSync(join(src, n), c);
   for (const [n, target] of Object.entries(links)) {
-    Bun.spawnSync(["ln", join(src, target), join(src, n)]);
+    linkSync(join(src, target), join(src, n));
   }
   const out = join(tmp("knowns-d10-out-"), "a.tar.gz");
   const members = [...Object.keys(files), ...Object.keys(links)].map((n) => `./${n}`);
@@ -47,7 +48,7 @@ function tarball(files: Record<string, string>, links: Record<string, string> = 
 }
 
 const latest = "99.0.0";
-let server: ReturnType<typeof Bun.serve>;
+let server: ReturnType<typeof Bun.serve> | undefined;
 let d10: Uint8Array;
 let old: Uint8Array;
 let oldWin: Uint8Array;
@@ -77,8 +78,8 @@ beforeAll(() => {
     },
   });
 });
-afterAll(() => server.stop(true));
-const base = (): string => `http://127.0.0.1:${server.port}`;
+afterAll(() => server?.stop(true));
+const base = (): string => `http://127.0.0.1:${server?.port}`;
 
 function sandbox(files: Record<string, string>, extraEnv: Record<string, string> = {}) {
   const home = tmp("knowns-d10-home-");
