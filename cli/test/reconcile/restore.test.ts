@@ -116,6 +116,15 @@ describe("reconcile preview and apply are removed (D7)", () => {
   });
 });
 
+// A reconcile that deadlocks must fail the test in seconds, not eat the whole suite timeout.
+function within<T>(ms: number, what: string, p: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const guard = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} did not return within ${ms} ms`)), ms);
+  });
+  return Promise.race([p, guard]).finally(() => clearTimeout(timer));
+}
+
 describe("git stash -u of byte-identical docs", () => {
   test("records a restore and later writes succeed", async () => {
     const p = makeProject("full");
@@ -155,7 +164,9 @@ describe("git stash -u of byte-identical docs", () => {
 
     git("stash", "pop", "-q");
     expect(existsSync(join(root, "docs/architecture.md"))).toBe(true);
-    const third = await rec.reconcileLifecycle(true);
+    // Regression: restoring a reappeared doc took the doc mutation lock that reconcileFile already
+    // held (the lock is not reentrant), so this call never returned.
+    const third = await within(5000, "reconcile after stash pop", rec.reconcileLifecycle(true));
     const restores = third.filter((r) => r.operation === "restore" && r.diagnostic === "");
     expect(restores.length).toBeGreaterThan(0);
 
