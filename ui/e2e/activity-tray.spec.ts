@@ -311,6 +311,29 @@ test.describe("Activity tray", () => {
 		await expect(page.getByTestId("activity-indicator")).toBeHidden({ timeout: 15_000 });
 	});
 
+	test("keyboard: Dismiss with Enter while it has focus, then a new done row still leaves in about 4 s", async ({ page }) => {
+		const open = createTask("Key open", "--status in-progress");
+		const done = createTask("Key done", "--status done");
+		await page.goto(`${server.baseURL}/tasks`);
+		await startBatch(page, [done, open]);
+		await expect(page.getByTestId("activity-tray")).toContainText("not changed");
+		const tray = await openTray(page);
+		await page.mouse.move(300, 500); // the pointer is away; only the keyboard is in play
+		await tray.getByText("Archiving 2 tasks").click();
+		await page.mouse.move(300, 500);
+		const dismiss = tray.getByRole("button", { name: "Dismiss" });
+		await dismiss.focus();
+		await expect(dismiss).toBeFocused();
+		await page.keyboard.press("Enter");
+		const indicator = page.getByTestId("activity-indicator");
+		await expect(indicator).toBeHidden();
+		// The focused button is gone with its row (no blur is sent). A new done row must still age out.
+		const fine = createTask("Key fine", "--status done");
+		await startBatch(page, [fine]);
+		await expect(indicator).toBeVisible();
+		await expect(indicator).toBeHidden({ timeout: 9000 });
+	});
+
 	test("a reload with a failed row does not open the popover (a snapshot is not an event)", async ({ page }) => {
 		const open = createTask("Reload quiet open", "--status in-progress");
 		const done = createTask("Reload quiet done", "--status done");
