@@ -148,6 +148,19 @@ export function runBoth(
   };
 }
 
+/**
+ * The two sides must end the same way. A side that never exited (exit null: killed at the driver's
+ * limit) throws with the last screen of each side, so a CI failure says where it was stuck.
+ */
+export function assertSameExit(r: { go: PtyResult; ts: PtyResult }): void {
+  if (r.go.exit === r.ts.exit) return;
+  const screen = (x: PtyResult) => x.transcript.slice(-1200).replace(/\r/g, "");
+  throw new Error(
+    `exit differs: go ${r.go.exit === null ? "never exited" : r.go.exit}, ts ${r.ts.exit === null ? "never exited" : r.ts.exit}\n` +
+      `--- last go screen ---\n${screen(r.go)}\n--- last ts screen ---\n${screen(r.ts)}`,
+  );
+}
+
 /** The titles, in the order they first appear in a transcript. */
 export function askedInOrder(transcript: string, titles: string[]): string[] {
   const found = titles

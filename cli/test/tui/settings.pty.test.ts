@@ -7,7 +7,15 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type InitProject, treeDiff } from "../cli/commands/init-harness.ts";
 import { GO_BIN, hasGoBin } from "../cli/oracle.ts";
-import { askedInOrder, hasPty, KEY, type PtyStep, runBoth, sandboxPath } from "./pty-harness.ts";
+import {
+  askedInOrder,
+  assertSameExit,
+  hasPty,
+  KEY,
+  type PtyStep,
+  runBoth,
+  sandboxPath,
+} from "./pty-harness.ts";
 
 const cases = hasGoBin && hasPty ? describe : describe.skip;
 const E = KEY.enter;
@@ -57,7 +65,7 @@ function initialized(p: InitProject): void {
 const projectOpts = { setup: initialized };
 
 function expectSame(r: ReturnType<typeof runBoth>, titles = TITLES): void {
-  expect(r.ts.exit).toBe(r.go.exit);
+  assertSameExit(r);
   expect(askedInOrder(r.ts.transcript, titles)).toEqual(askedInOrder(r.go.transcript, titles));
   // The tail the commands print themselves (not form chrome).
   for (const line of ["Settings saved.", "Global settings saved.", "Aborted."]) {
