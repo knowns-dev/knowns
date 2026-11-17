@@ -19,13 +19,19 @@
 //
 // Limit: Bun fixes os.homedir() at process start, so code that calls homedir() without checking
 // HOME first still sees the real home. The guard in step 4 is what catches such a regression.
-import { afterAll } from "bun:test";
+import { afterAll, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setDaemonCommand } from "../../src/runtime/queue.ts";
 // Side effect: restores the fixtures' empty directories that a clean clone lacks.
 import "./fixture-dirs.ts";
+
+// Bun 1.3.12 ignores `timeout` in bunfig.toml, so the default per-test budget is raised here, the
+// one place every local and CI run loads. 5 s is too tight for tests that spawn real processes on
+// a loaded or Windows runner; 30 s still ends a hang fast. Files that call setDefaultTimeout or
+// pass a per-test timeout keep theirs.
+setDefaultTimeout(30_000);
 
 const realHome = homedir();
 const REAL_FILES = [
