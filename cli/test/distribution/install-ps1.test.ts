@@ -122,20 +122,31 @@ describe.skipIf(!runExecuted)("install.ps1 (executed)", () => {
     }
   }, 120_000);
 
-  // The proxy goes in with knowns, a release without one removes the old proxy, and a leftover .old
-  // that cannot be removed never fails the install.
-  test("installs the proxy beside knowns and removes it again for a release without one", async () => {
+  // Spec D10: a launcher archive (layout.json) installs the launcher as knowns.exe and kn.exe and
+  // the engine as knowns-engine.exe; a release without a launcher installs the engine alone and
+  // drops knowns-engine.exe; knowns-proxy.exe, the transitional launcher name, is removed either way.
+  test("installs launcher + engine for a layout release and the engine alone for one without; a leftover knowns-proxy.exe goes", async () => {
     const profile = makeSandbox().home;
     const mirror = tempDir("mirror");
     const arch = process.arch === "arm64" ? "arm64" : "x64";
     const asset = `knowns-win-${arch}.tar.gz`;
-    const release = (tag: string, label: string, withProxy: boolean) => {
+    const release = (tag: string, label: string, withLayout: boolean) => {
       const stage = tempDir("stage");
-      writeFileSync(join(stage, "knowns.exe"), `K-${label}`);
+      // In a launcher archive knowns.exe is the ENGINE and knowns.launcher.exe is the launcher.
+      writeFileSync(join(stage, "knowns.exe"), `E-${label}`);
       const members = ["knowns.exe"];
-      if (withProxy) {
-        writeFileSync(join(stage, "knowns-proxy.exe"), `P-${label}`);
-        members.push("knowns-proxy.exe");
+      if (withLayout) {
+        writeFileSync(join(stage, "knowns.launcher.exe"), `L-${label}`);
+        writeFileSync(
+          join(stage, "layout.json"),
+          JSON.stringify({
+            layout: 1,
+            version: label,
+            launcher: { file: "knowns.launcher.exe", installAs: "knowns.exe" },
+            engine: { file: "knowns.exe", installAs: "knowns-engine.exe" },
+          }),
+        );
+        members.push("knowns.launcher.exe", "layout.json");
       }
       mkdirSync(join(mirror, tag), { recursive: true });
       const archive = join(mirror, tag, asset);
@@ -174,12 +185,25 @@ describe.skipIf(!runExecuted)("install.ps1 (executed)", () => {
     };
     try {
       const bin = join(profile, ".knowns", "bin");
-      expect((await install("1.0.0")).code).toBe(0);
-      expect(readFileSync(join(bin, "knowns-proxy.exe"), "utf8")).toBe("P-1");
-      expect(readFileSync(join(bin, "knowns.exe"), "utf8")).toBe("K-1");
+      const read = (n: string) => readFileSync(join(bin, n), "utf8");
+      // A proxy left by an earlier install.
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, "knowns-proxy.exe"), "P-old");
 
+      expect((await install("1.0.0")).code).toBe(0);
+      expect(read("knowns.exe")).toBe("L-1");
+      expect(read("kn.exe")).toBe("L-1");
+      expect(read("knowns-engine.exe")).toBe("E-1");
+      expect(existsSync(join(bin, "knowns-proxy.exe"))).toBe(false);
+      expect(existsSync(join(bin, "knowns.launcher.exe"))).toBe(false);
+      expect(existsSync(join(bin, "layout.json"))).toBe(false);
+
+      // A release without a launcher: the engine alone, knowns-engine.exe dropped, proxy still gone.
+      writeFileSync(join(bin, "knowns-proxy.exe"), "P-again");
       expect((await install("0.9.0")).code).toBe(0);
-      expect(readFileSync(join(bin, "knowns.exe"), "utf8")).toBe("K-0");
+      expect(read("knowns.exe")).toBe("E-0");
+      expect(read("kn.exe")).toBe("E-0");
+      expect(existsSync(join(bin, "knowns-engine.exe"))).toBe(false);
       expect(existsSync(join(bin, "knowns-proxy.exe"))).toBe(false);
     } finally {
       server.stop(true);
