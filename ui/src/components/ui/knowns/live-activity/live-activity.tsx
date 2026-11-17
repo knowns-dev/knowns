@@ -155,11 +155,14 @@ const tickNow = (now?: Date) => (now ? now.getTime() : Date.now());
 /** The elapsed time since `startedAt`, once a second while `running`; fixed at `endedAt` when it has one. Pass `now` to pin the clock. */
 export function useElapsed(startedAt: Date, running: boolean, endedAt?: Date, now?: Date) {
   const [tick, setTick] = useState(() => tickNow(now));
+  // Keyed on the timestamps' values: a new Date of the same instant on every render must not restart the interval.
+  const ended = endedAt?.getTime();
+  const pinned = now?.getTime();
   useEffect(() => {
-    if (!running || endedAt || now) return;
+    if (!running || ended !== undefined || pinned !== undefined) return;
     const t = setInterval(() => setTick(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [running, endedAt, now]);
+  }, [running, ended, pinned]);
   const at = endedAt ? endedAt.getTime() : now ? now.getTime() : tick;
   return Math.max(0, at - startedAt.getTime());
 }
@@ -259,11 +262,12 @@ export interface ActivityCountdownProps extends Omit<LiveActivityProps, "trailin
 export function ActivityCountdown({ endsAt, totalMs, now, onDone, children, actions, ...rest }: ActivityCountdownProps) {
   const [tick, setTick] = useState(() => tickNow(now));
   const left = Math.max(0, endsAt.getTime() - (now ? now.getTime() : tick));
+  const pinned = now?.getTime();
   useEffect(() => {
-    if (now || left <= 0) return;
+    if (pinned !== undefined || left <= 0) return;
     const t = setInterval(() => setTick(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [now, left <= 0]);
+  }, [pinned, left <= 0]);
   const done = left <= 0;
   useEffect(() => {
     if (done) onDone?.();

@@ -208,7 +208,7 @@ export function ActivityTray() {
 				onPointerEnter={interact}
 				onFocusCapture={interact}
 				className={cn(
-					"absolute top-full right-0 z-50 mt-2 w-80 transition-[opacity,transform] duration-(--kn-dur) ease-(--kn-ease-out)",
+					"absolute top-full right-0 z-50 mt-2 w-80 max-h-[min(70vh,32rem)] overflow-y-auto p-2 transition-[opacity,transform] duration-(--kn-dur) ease-(--kn-ease-out)",
 					open
 						? "translate-y-0 opacity-100"
 						: // Closed: not visible and not reachable, but the stack's live region (a sibling of the
