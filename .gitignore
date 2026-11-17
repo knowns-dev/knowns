@@ -21,8 +21,8 @@ npm/knowns-*/knowns.exe
 release
 
 # UI
-**/node_modules/
-ui/node_modules/
+**/node_modules
+ui/node_modules
 ui/dist/
 sidecar/dist/
 ui/playwright-report/
@@ -35,7 +35,7 @@ test-results/
 
 # TypeScript CLI
 cli/dist/
-cli/node_modules/
+cli/node_modules
 cli/src/ui-assets.generated.ts
 
 # Local env files (Knowns UI Pro license key)
