@@ -34,13 +34,16 @@ describe("ToolPool", () => {
   });
 
   test("a deadline errors only that call and aborts its signal", async () => {
-    const pool = new ToolPool(2, 100);
+    // The other call must finish well inside the deadline even when a CI runner stalls for a
+    // while: 30 ms of work against a 250 ms deadline (it was 100 ms, and a macOS runner pause
+    // made the healthy call time out too).
+    const pool = new ToolPool(2, 250);
     let aborted = false;
     const slow = pool.run("code", (signal) => {
       signal.addEventListener("abort", () => {
         aborted = true;
       });
-      return sleep(400);
+      return sleep(1000);
     });
     const other = pool.run("code", async () => {
       await sleep(30);
@@ -49,6 +52,36 @@ describe("ToolPool", () => {
     await expect(slow).rejects.toBeInstanceOf(CallTimeoutError);
     expect(await other).toBe("fine");
     expect(aborted).toBe(true);
+  });
+
+  test("a deadline, or a handler that fails after it, never raises an unhandled rejection", async () => {
+    const seen: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      seen.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const pool = new ToolPool(2, 15, 10);
+      const calls: Promise<unknown>[] = [];
+      for (let i = 0; i < 40; i++) {
+        // light and heavy; some handlers ignore the signal and fail after the deadline, some
+        // wait for a slot behind a stuck one and are cancelled while queued
+        const tool = i % 2 === 0 ? "code" : "tasks";
+        calls.push(
+          pool
+            .run(tool, async () => {
+              await sleep(40);
+              if (i % 3 === 0) throw new Error("late failure");
+            })
+            .catch(() => undefined),
+        );
+      }
+      await Promise.all(calls);
+      await sleep(150); // late failures and grace timers land
+      expect(seen).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 
   test("a slot stays held until the handler settles, even after its deadline", async () => {
