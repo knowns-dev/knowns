@@ -150,7 +150,7 @@ bun install
 
 # Run full CI checks
 bun run lint
-bun test
+bun run test
 bun run build
 
 # Test the built CLI

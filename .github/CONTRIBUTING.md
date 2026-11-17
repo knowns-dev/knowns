@@ -73,8 +73,8 @@ bun run build
 # Link for local testing
 bun link
 
-# Run tests
-bun test
+# Run tests (not bare `bun test`: the 30 s suite-wide --timeout lives in this script)
+bun run test
 ```
 
 ## Pull Request Process
