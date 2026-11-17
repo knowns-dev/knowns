@@ -25,7 +25,7 @@ test.describe("Tasks Page", () => {
 		await page.goto(`${server.baseURL}/tasks`);
 
 		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
-		await expect(page.getByRole("alert")).toContainText("Unable to load this page");
+		await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toContainText("Unable to load this page");
 		await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
 	});
 
