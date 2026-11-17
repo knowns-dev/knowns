@@ -67,6 +67,21 @@ export function isActivityDone(item: ActivityItem): boolean {
   return false;
 }
 
+/** The words a screen reader gets for an item: its title as text, else the agent or the pair of a handoff. */
+export function activityName(item: ActivityItem): string {
+  if (item.kind === "handoff") return `${item.from} to ${item.to}`;
+  if (item.kind === "operation") return typeof item.title === "string" ? item.title : "Operation";
+  return typeof item.title === "string" ? item.title : item.agent;
+}
+
+/** The state an item is announced in: an operation's own word, else Done, Needs approval or Running. */
+export function activityStateWord(item: ActivityItem): string {
+  if (item.kind === "operation") return OPERATION_TONE[item.state].word;
+  if (isActivityDone(item)) return "Done";
+  if (item.kind === "run" && item.approval) return "Needs approval";
+  return "Running";
+}
+
 export interface ActivityStackProps {
   /** Newest first. */
   items: readonly ActivityItem[];
@@ -81,6 +96,18 @@ export interface ActivityStackProps {
   /** How long a finished capsule stays, dimmed, before onDismiss(id) is called. Default 4000. Pass 0 to never. */
   dismissAfterMs?: number;
   onDismiss?: (id: string) => void;
+  /** The list's accessible name. Default "Agent activities". */
+  label?: string;
+  /**
+   * Hold the dismiss timers while any capsule is open, hovered or has keyboard focus, and let them go on with the time they had left
+   * when it is released (WCAG 2.2.1: nothing is taken away while someone is reading it). Default true.
+   */
+  pauseOnInteract?: boolean;
+  /**
+   * A built-in, visually hidden live region that says "title: state" when an item arrives or changes state: polite, and assertive for
+   * a failed one. Silent on first render and on identical re-renders. Default false, for apps that already announce their own.
+   */
+  announce?: boolean;
   className?: string;
 }
 
@@ -188,7 +215,7 @@ function Capsule({ item, tone, expanded, onToggle, pulse }: { item: ActivityItem
  * the rest. A capsule that arrives rises in (180ms, staggered by 40ms for the first four); one that finishes dims its content to 60% (it keeps its own surface), and
  * `onDismiss` fires after `dismissAfterMs` so you can drop it, which collapses its row.
  */
-export function ActivityStack({ items, max = 3, expandedId, defaultExpandedId = null, onExpandedChange, tone = "auto", dismissAfterMs = 4000, onDismiss, className }: ActivityStackProps) {
+export function ActivityStack({ items, max = 3, expandedId, defaultExpandedId = null, onExpandedChange, tone = "auto", dismissAfterMs = 4000, onDismiss, label = "Agent activities", pauseOnInteract = true, announce = false, className }: ActivityStackProps) {
   const [kept, setKept] = useState<string | null>(defaultExpandedId);
   const [all, setAll] = useState(false);
   const open = expandedId !== undefined ? expandedId : kept;
@@ -201,44 +228,95 @@ export function ActivityStack({ items, max = 3, expandedId, defaultExpandedId = 
   const rows = useMotionList([...shown], (i) => i.id);
 
   // One timer per finished id, started once when it finishes and kept across re-renders: a parent that re-renders every second, or
-  // passes a new onDismiss each time, must not restart it. The latest onDismiss is read when the timer fires.
+  // passes a new onDismiss each time, must not restart it. The latest onDismiss is read when the timer fires. While the stack is
+  // held (open, hovered or focused) every timer stops and keeps the time it had left.
   const dismiss = useRef(onDismiss);
   dismiss.current = onDismiss;
   const live = useRef(items);
   live.current = items;
-  const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const held = pauseOnInteract && (open !== null || hovered || focused);
+  const heldRef = useRef(held);
+  heldRef.current = held;
+  const timers = useRef(new Map<string, { left: number; since: number | null; t?: ReturnType<typeof setTimeout> }>());
+  const arm = (id: string) => {
+    const e = timers.current.get(id);
+    if (!e) return;
+    e.since = Date.now();
+    e.t = setTimeout(() => {
+      timers.current.delete(id);
+      const it = live.current.find((i) => i.id === id);
+      if (it?.kind === "operation") it.onDismiss?.();
+      dismiss.current?.(id);
+    }, e.left);
+  };
   const doneIds = items.filter(isActivityDone).map((i) => i.id).join("|");
   useEffect(() => {
     const done = new Set(doneIds.split("|").filter(Boolean));
-    for (const [id, t] of timers.current) {
+    for (const [id, e] of timers.current) {
       if (!done.has(id)) {
-        clearTimeout(t);
+        clearTimeout(e.t);
         timers.current.delete(id);
       }
     }
     if (!dismissAfterMs) return;
     for (const id of done) {
       if (timers.current.has(id)) continue;
-      timers.current.set(
-        id,
-        setTimeout(() => {
-          timers.current.delete(id);
-          const it = live.current.find((i) => i.id === id);
-          if (it?.kind === "operation") it.onDismiss?.();
-          dismiss.current?.(id);
-        }, dismissAfterMs),
-      );
+      timers.current.set(id, { left: dismissAfterMs, since: null });
+      if (!heldRef.current) arm(id);
     }
   }, [doneIds, dismissAfterMs]);
-  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  useEffect(() => {
+    for (const [id, e] of timers.current) {
+      if (held && e.t !== undefined) {
+        clearTimeout(e.t);
+        e.t = undefined;
+        e.left = Math.max(0, e.left - (Date.now() - (e.since ?? Date.now())));
+        e.since = null;
+      } else if (!held && e.t === undefined) arm(id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [held]);
+  useEffect(() => () => timers.current.forEach((e) => clearTimeout(e.t)), []);
+
+  // The live region: what changed since the last render, never the first render.
+  const seen = useRef<Map<string, string> | null>(null);
+  const [said, setSaid] = useState({ polite: "", assertive: "" });
+  const states = items.map((i) => [i.id, activityStateWord(i), activityName(i)] as const);
+  const statesKey = states.map((x) => x.join("\u0001")).join("\u0002");
+  useEffect(() => {
+    if (!announce) {
+      seen.current = null;
+      return;
+    }
+    const next = new Map(states.map(([id, word]) => [id, word]));
+    const prev = seen.current;
+    seen.current = next;
+    if (!prev) return;
+    const polite: string[] = [];
+    const assertive: string[] = [];
+    for (const [id, word, name] of states) {
+      if (prev.get(id) === word) continue;
+      (word === OPERATION_TONE.failed.word ? assertive : polite).push(`${name}: ${word}`);
+    }
+    if (polite.length || assertive.length) setSaid({ polite: polite.join(". "), assertive: assertive.join(". ") });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statesKey, announce]);
   // One ping per stack: the open capsule, else the first one still running.
   const pingId = open ?? items.find((i) => !isActivityDone(i))?.id;
 
   let n = 0;
   return (
-    <div className={cn("flex w-full max-w-sm flex-col gap-2", className)}>
+    <div
+      className={cn("flex w-full max-w-sm flex-col gap-2", className)}
+      onPointerEnter={(e) => e.pointerType !== "touch" && setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setFocused(false)}
+    >
       <MotionStyle />
-      <ul className="flex flex-col" aria-label="Agent activities">
+      <ul className="flex flex-col" aria-label={label}>
         {rows.map((row) => {
           const item = row.item;
           const delay = row.entering && !row.exiting ? Math.min(n++, 3) * 40 : 0;
@@ -253,6 +331,16 @@ export function ActivityStack({ items, max = 3, expandedId, defaultExpandedId = 
         <button type="button" onClick={() => setAll(!all)} aria-expanded={all} className={cn("-mt-1 h-8 cursor-pointer self-center rounded-full border border-border px-3 text-[12.5px] font-medium text-muted-foreground tabular-nums transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-muted hover:text-foreground", )}>
           {all ? "Show fewer" : `+${hidden} more`}
         </button>
+      )}
+      {announce && (
+        <>
+          <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+            {said.polite}
+          </div>
+          <div role="alert" aria-live="assertive" aria-atomic="true" className="sr-only">
+            {said.assertive}
+          </div>
+        </>
       )}
     </div>
   );

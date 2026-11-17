@@ -401,6 +401,7 @@ export default function AppShell() {
 									navigate({ to: `/tasks/${taskId}` });
 								}}
 							/>
+							<ActivityTray />
 							<NotificationBell />
 						</header>
 
@@ -456,7 +457,6 @@ export default function AppShell() {
 			</SidebarProvider>
 			)}
 			<Toaster />
-			<ActivityTray />
 		</ThemeContext.Provider>
 	);
 }
