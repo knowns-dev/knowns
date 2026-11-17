@@ -24,7 +24,7 @@ import {
 import { open as openFile } from "node:fs/promises";
 import { STATUS_CODES } from "node:http";
 import { basename, join, posix } from "node:path";
-import { crc32, createGunzip, inflateRawSync } from "node:zlib";
+import { crc32, createGunzip, gunzipSync, inflateRawSync } from "node:zlib";
 import { goFsError, goTransportError } from "../platform/goerror.ts";
 import { pathsForRoot, type QdrantPaths, SUPPORTED_QDRANT_VERSION } from "./qdrant.ts";
 import { isProcessAlive, sleep } from "./queue.ts";
@@ -590,12 +590,42 @@ async function writeExclusive(
 }
 
 /** extractBinary: pull the single regular `qdrant` entry out of a .tar.gz or .zip archive. */
-export async function extractBinary(archive: string, dst: string): Promise<void> {
+export async function extractBinary(
+  archive: string,
+  dst: string,
+  /** The streaming gunzip; a seam for the test of the fallback below. */
+  gunzip: (path: string) => AsyncIterable<Buffer> = gunzipStream,
+): Promise<void> {
   if (archive.endsWith(".zip")) {
     await extractZip(archive, dst);
     return;
   }
-  await extractTarGz(archive, dst);
+  try {
+    await extractTarGz(archive, dst, gunzip);
+  } catch (err) {
+    // A streaming gunzip has been seen to report "unexpected EOF" for a complete archive (a CI
+    // run on ubuntu, one in several thousand; no local reproduction). Inflating the whole file in
+    // one call cannot race with the file stream, and a truly truncated archive fails the same way
+    // there, so the answer for a bad archive does not change.
+    if ((err as Error).message !== unexpectedEof().message) throw err;
+    rmSync(dst, { force: true });
+    await extractTarGz(archive, dst, gunzipWhole);
+  }
+}
+
+/** The whole file inflated in one synchronous call, handed over as a single chunk. */
+function gunzipWhole(path: string): AsyncIterable<Buffer> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      let out: Buffer;
+      try {
+        out = gunzipSync(readFileSync(path));
+      } catch (err) {
+        throw gzipError(err);
+      }
+      yield out;
+    },
+  };
 }
 
 // ---- tar.gz -------------------------------------------------------------------------------
@@ -798,11 +828,15 @@ async function nextTarEntry(reader: ByteReader): Promise<TarEntry | undefined> {
 
 const TAR_HEADER_ONLY = new Set(["1", "2", "3", "4", "5", "6"]);
 
-async function extractTarGz(archive: string, dst: string): Promise<void> {
+async function extractTarGz(
+  archive: string,
+  dst: string,
+  gunzip: (path: string) => AsyncIterable<Buffer>,
+): Promise<void> {
   const info = statOrUndefined(archive);
   if (!info) throw goFsError("open", archive, { code: "ENOENT" });
   if (info.size === 0) throw new Error("EOF");
-  const reader = new ByteReader(gunzipStream(archive));
+  const reader = new ByteReader(gunzip(archive));
   let found = false;
   try {
     for (;;) {
