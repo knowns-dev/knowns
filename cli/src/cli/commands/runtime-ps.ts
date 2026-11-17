@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, sep } from "node:path";
 import { buildSearchEnvironment } from "../../domain/searchenv/index.ts";
+import { lookPath } from "../../domain/setup/env.ts";
 import {
   globalRoot,
   isProcessAlive,
@@ -421,7 +422,8 @@ function detectCloudflared(): ServiceStatus[] {
     enabledInConfig: true,
     details: {},
   };
-  if (!Bun.which("cloudflared")) {
+  // lookPath reads the current PATH; Bun.which alone keeps the one the process started with.
+  if (!lookPath("cloudflared")) {
     ss.details.reason = "cloudflared not installed";
     return [ss];
   }
