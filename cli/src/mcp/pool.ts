@@ -188,3 +188,10 @@ export async function sharedSearchPool(): Promise<import("./search-pool.ts").Sea
   }
   return searchPool;
 }
+
+/** Stops the search workers, if any were started (daemon and host shutdown, end of a test run). */
+export async function stopSharedSearchPool(): Promise<void> {
+  const pool = searchPool;
+  searchPool = undefined;
+  await pool?.stop();
+}

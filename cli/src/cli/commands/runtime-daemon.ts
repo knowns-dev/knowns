@@ -161,7 +161,13 @@ const run = defineCommand({
       },
       ...(runtimeSeams.keepAlive ? { keepAlive: runtimeSeams.keepAlive } : {}),
     });
-    await Promise.all([jobWorker?.stop(), watchWorker?.stop()]);
+    await Promise.all([
+      jobWorker?.stop(),
+      watchWorker?.stop(),
+      // The hosted sessions' search workers: a process that exits with worker threads alive can
+      // panic Bun on Windows.
+      import("../../mcp/pool.ts").then((m) => m.stopSharedSearchPool()),
+    ]);
     // Audit events of the hosted sessions are written in batches; nothing may be left behind.
     await (await import("../../storage/stores/audit-store.ts")).flushAudit();
     process.off("exit", onExit);

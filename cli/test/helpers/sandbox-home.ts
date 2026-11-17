@@ -122,6 +122,27 @@ if (!alreadyApplied)
     }
   });
 
+// 5a. No worker thread may outlive the run. Bun 1.3.12 on Windows panics at process exit while a
+// worker is alive (CI: "Internal assertion failure", workers_spawned(11) workers_terminated(9),
+// exit 3, after the last test had passed). The shared search pool is stopped here, as the daemon
+// does on shutdown; any other bundled worker still alive is a leak and is named by its start stack.
+if (!alreadyApplied)
+  afterAll(async () => {
+    const { stopSharedSearchPool } = await import("../../src/mcp/pool.ts");
+    const { liveBundledWorkers } = await import("../../src/util/worker.ts");
+    await stopSharedSearchPool();
+    const end = Date.now() + 3000;
+    while (liveBundledWorkers().length > 0 && Date.now() < end) await Bun.sleep(25);
+    const left = liveBundledWorkers();
+    if (left.length === 0) return;
+    for (const { worker } of left) void worker.terminate();
+    throw new Error(
+      `${left.length} worker thread(s) were still alive at the end of the run; stop them in the file's afterAll:\n${left
+        .map((l) => l.startedAt.split("\n").slice(0, 6).join("\n"))
+        .join("\n--\n")}`,
+    );
+  });
+
 // 5. Fail the run when a runtime-selecting env key is still changed at its end. bun runs every
 // file in ONE process, so a file that sets KNOWNS_RUNTIME_ROOT and does not put it back points all
 // later files at its dead temp dir; one unrestored override once failed 24 tests in other suites.

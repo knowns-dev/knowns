@@ -32,6 +32,7 @@ import {
 import net from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { endpointAlive } from "../util/endpoint-alive.ts";
 import { VERSION } from "../version.ts";
 import { checkDescriptorLocation } from "./mcp-endpoint.ts";
 import { goLogf, isProcessAlive, nowString, runtimeRoot } from "./queue.ts";
@@ -113,26 +114,6 @@ function address(
     address: join(dir, `ui-${shortHash([root, version], 12)}.sock`),
     dir,
   };
-}
-
-/** Does something answer on this endpoint? Only a refused connection proves not; a timeout counts as alive. */
-function endpointAlive(path: string): Promise<boolean> {
-  return new Promise<boolean>((done) => {
-    const sock = net.connect({ path });
-    const timer = setTimeout(() => {
-      sock.destroy();
-      done(true);
-    }, 1000);
-    sock.once("connect", () => {
-      clearTimeout(timer);
-      sock.destroy();
-      done(true);
-    });
-    sock.once("error", () => {
-      clearTimeout(timer);
-      done(false);
-    });
-  });
 }
 
 /** Removes a socket nobody listens on; refuses when a live daemon holds it. */
@@ -229,6 +210,12 @@ export class UiHost {
     if (ep.dir) {
       privateDir(ep.dir);
       await freeSocket(ep.address);
+    }
+    // On Windows a net.Server whose listen() fails on a pipe that is already served makes Bun 1.3.12
+    // panic when the process ends (reproduced with a bare node:net script; close() does not help),
+    // so a live pipe is detected by connecting to it and listen() is not even tried.
+    if (isWindows && (await endpointAlive(ep.address))) {
+      throw new Error(`UI endpoint already active: ${ep.address}`);
     }
     const server = net.createServer({ allowHalfOpen: false }, (sock) => this.onConnection(sock));
     try {

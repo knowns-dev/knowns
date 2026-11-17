@@ -159,3 +159,29 @@ describe("SearchPool idle workers (KN-69EHXE P2-3)", () => {
     await pool.stop();
   });
 });
+
+describe("worker threads never outlive their owner", () => {
+  test("stopSharedSearchPool ends the search workers, and the registry shows none left", async () => {
+    const { liveBundledWorkers } = await import("../../src/util/worker.ts");
+    const { sharedSearchPool, stopSharedSearchPool } = await import("../../src/mcp/pool.ts");
+    const pool = await sharedSearchPool();
+    // A real bundled worker: the registry sees it while it runs.
+    await pool
+      .run({
+        storeRoot: "/nonexistent",
+        projectRoot: "/nonexistent",
+        req,
+      })
+      .catch(() => undefined);
+    expect(liveBundledWorkers().length).toBeGreaterThan(0);
+    await stopSharedSearchPool();
+    const end = Date.now() + 3000;
+    while (liveBundledWorkers().length > 0 && Date.now() < end) await Bun.sleep(25);
+    expect(liveBundledWorkers()).toEqual([]);
+    // Stopping again is harmless, and a later call starts a fresh pool.
+    await stopSharedSearchPool();
+    const again = await sharedSearchPool();
+    expect(again.isStopped).toBe(false);
+    await stopSharedSearchPool();
+  }, 30_000);
+});
