@@ -180,6 +180,49 @@ test.describe("Activity tray", () => {
 		expect(again?.progress?.total).toBe(left);
 	});
 
+	test("the elapsed clock of a running operation ticks (it is not stuck at 0:00)", async ({ page }) => {
+		const ids = await doneTasks(page, 600, "Clock");
+		await page.goto(`${server.baseURL}/tasks`);
+		const id = await startBatch(page, ids);
+		const tray = page.getByTestId("activity-tray");
+		await expect(tray).toContainText("Archiving 600 tasks");
+		await tray.getByText("Archiving 600 tasks").click();
+		// More than two seconds in, while it still runs: the clock must have moved off 0:00.
+		await expect.poll(async () => (await operations(page)).find((o) => o.id === id)?.state).toBe("running");
+		await page.waitForTimeout(2500);
+		const state = (await operations(page)).find((o) => o.id === id)?.state;
+		test.skip(state !== "running", "the batch finished before the clock could be sampled on this machine");
+		await expect(tray).toContainText(/0:0[2-9]|0:[1-5]\d|[1-9]:\d\d/);
+	});
+
+	test("Cancel reads Cancelling (not Running) before the final 'N archived, M left'", async ({ page }) => {
+		const ids = await doneTasks(page, 200, "Cancelling");
+		await page.goto(`${server.baseURL}/tasks`);
+		// Record every text the tray shows, so a short state is not missed by polling.
+		await page.evaluate(() => {
+			const w = window as unknown as { __tray: string[] };
+			w.__tray = [];
+			new MutationObserver(() => {
+				const el = document.querySelector('[data-testid="activity-tray"]');
+				const text = el?.textContent ?? "";
+				if (text && w.__tray[w.__tray.length - 1] !== text) w.__tray.push(text);
+			}).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
+		});
+		await startBatch(page, ids);
+		const tray = page.getByTestId("activity-tray");
+		await expect(tray).toContainText("Archiving 200 tasks");
+		await tray.getByText("Archiving 200 tasks").click();
+		await tray.getByRole("button", { name: "Cancel" }).click();
+		await expect(tray).toContainText(/\d+ archived, \d+ left/, { timeout: 30_000 });
+		const texts = await page.evaluate(() => (window as unknown as { __tray: string[] }).__tray);
+		const firstCancelling = texts.findIndex((x) => x.includes("Cancelling"));
+		const final = texts.findIndex((x) => /\d+ archived, \d+ left/.test(x));
+		expect(firstCancelling).toBeGreaterThanOrEqual(0);
+		expect(firstCancelling).toBeLessThan(final);
+		// and no frame between the click and the end still claims "Running" with Cancelling shown
+		for (const x of texts.slice(firstCancelling, final)) expect(x).not.toContain("Running");
+	});
+
 	test("a partly failed batch stays with its reasons, a Runtime link and Run again; Dismiss removes it on the server", async ({ page }) => {
 		const open = createTask("Tray still open", "--status in-progress");
 		const done = createTask("Tray finishable", "--status done");

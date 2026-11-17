@@ -24,7 +24,7 @@ const op = (over: Partial<Operation>): Operation => ({
 function handlers() {
 	const calls: string[] = [];
 	const h: TrayHandlers = {
-		pending: new Set(),
+		pending: new Map(),
 		cancel: (id) => calls.push(`cancel ${id}`),
 		retry: (id) => calls.push(`retry ${id}`),
 		dismissOnServer: (id) => calls.push(`server-dismiss ${id}`),
@@ -69,7 +69,7 @@ describe("toActivityItem", () => {
 
 	test("buttons are disabled while that row has a request in flight", () => {
 		const { h } = handlers();
-		const item = operationItem(op({ retryable: true }), { ...h, pending: new Set(["op_1"]) });
+		const item = operationItem(op({ retryable: true }), { ...h, pending: new Map([["op_1", "retry" as const]]) });
 		expect(item.actions?.every((a) => a.disabled)).toBe(true);
 	});
 
@@ -113,7 +113,7 @@ describe("toActivityItem", () => {
 			error: "Lifecycle request failed",
 			message: "2 archived, 1 not changed: #A must be done",
 		});
-		expect(failureText(o)).toBe("Lifecycle request failed · 2 archived, 1 not changed: #A must be done");
+		expect(failureText(o)).toBe("2 archived, 1 not changed: #A must be done · Lifecycle request failed");
 		const { h } = handlers();
 		const item = operationItem(o, h);
 		expect(item.message).toBeTruthy();
@@ -124,6 +124,27 @@ describe("toActivityItem", () => {
 	test("a row that is not failed passes its message through", () => {
 		const { h } = handlers();
 		expect(operationItem(op({ message: "125 archived, 375 left" }), h).message).toBe("125 archived, 375 left");
+	});
+
+	test("the same instant is the same Date, so the stack's elapsed ticker is not restarted by every progress event", () => {
+		const { h } = handlers();
+		const a = operationItem(op({ startedAt: 123_456, progress: { done: 1, total: 10 } }), h);
+		const b = operationItem(op({ startedAt: 123_456, progress: { done: 2, total: 10 } }), h);
+		expect(a.startedAt).toBe(b.startedAt);
+		expect(a.startedAt?.getTime()).toBe(123_456);
+		// and a Date in milliseconds, so an elapsed clock moves once time passes
+		expect(Date.now() - (a.startedAt?.getTime() ?? Date.now())).toBeGreaterThan(0);
+	});
+
+	test("pressing Cancel reads Cancelling at once, before the server answers", () => {
+		const { h } = handlers();
+		const item = operationItem(op({ state: "running" }), { ...h, pending: new Map([["op_1", "cancel" as const]]) });
+		expect(item.state).toBe("cancelling");
+		expect(item.actions?.every((a) => a.disabled)).toBe(true);
+		// a retry in flight does not claim the row is cancelling
+		expect(operationItem(op({ state: "running" }), { ...h, pending: new Map([["op_1", "retry" as const]]) }).state).toBe("running");
+		// and a row that already finished stays what it is
+		expect(operationItem(op({ state: "done" }), { ...h, pending: new Map([["op_1", "cancel" as const]]) }).state).toBe("done");
 	});
 
 	test("progress, state and times carry over; no progress stays null", () => {

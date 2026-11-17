@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityStack } from "../../ui/knowns/blocks/agents/activity-stack";
 import { useOperations } from "../../../contexts/OperationsContext";
 import { toast } from "../../ui/sonner";
-import { toActivityItem } from "./toActivityItem";
+import { toActivityItem, type PendingAction } from "./toActivityItem";
 
 // Stack props that ship with the next Activity Stack release (label, pauseOnInteract, announce).
 // An older copy ignores them; once the installed one declares them, drop the cast.
@@ -16,18 +16,18 @@ const STACK_PROPS = { label: "Background operations", pauseOnInteract: true, ann
 
 export function ActivityTray() {
 	const { operations, cancel, retry, dismiss, hideHere } = useOperations();
-	const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
+	const [pending, setPending] = useState<ReadonlyMap<string, PendingAction>>(() => new Map());
 	const box = useRef<HTMLDivElement>(null);
 	const hadFocus = useRef(false);
 
 	// One request at a time per row: the button is disabled while it is in flight.
-	const run = useCallback((id: string, fn: () => Promise<void>) => {
-		setPending((p) => new Set(p).add(id));
+	const run = useCallback((id: string, action: PendingAction, fn: () => Promise<void>) => {
+		setPending((p) => new Map(p).set(id, action));
 		fn()
 			.catch((error) => toast.error(error instanceof Error ? error.message : "That did not work"))
 			.finally(() =>
 				setPending((p) => {
-					const next = new Set(p);
+					const next = new Map(p);
 					next.delete(id);
 					return next;
 				}),
@@ -39,9 +39,9 @@ export function ActivityTray() {
 			operations.map((op) =>
 				toActivityItem(op, {
 					pending,
-					cancel: (id) => run(id, () => cancel(id)),
-					retry: (id) => run(id, () => retry(id)),
-					dismissOnServer: (id) => run(id, () => dismiss(id)),
+					cancel: (id) => run(id, "cancel", () => cancel(id)),
+					retry: (id) => run(id, "retry", () => retry(id)),
+					dismissOnServer: (id) => run(id, "dismiss", () => dismiss(id)),
 					hideHere,
 				}),
 			),
@@ -79,12 +79,13 @@ export function ActivityTray() {
 			el.removeEventListener("focusin", sync);
 			el.removeEventListener("focusout", sync);
 		};
-	}, [items.length > 0]);
+	}, []);
 
-	if (items.length === 0) return null;
 	return (
 		// Top right, under the 2.75rem (h-11) header; toasts stay bottom right, so they never meet.
-		<div ref={box} className="fixed top-[3.25rem] right-4 z-50 w-80" data-testid="activity-tray">
+		// The stack stays mounted while empty (the box is just hidden): a stack that mounts with its
+		// first row already in it plays nothing, and the first arrival is the one a person sees.
+		<div ref={box} hidden={items.length === 0} className="fixed top-[3.25rem] right-4 z-50 w-80" data-testid="activity-tray">
 			<ActivityStack items={items} {...STACK_PROPS} />
 		</div>
 	);
