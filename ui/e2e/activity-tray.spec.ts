@@ -86,6 +86,24 @@ async function openTray(page: Page) {
 	return page.getByTestId("activity-tray");
 }
 
+/**
+ * Load a page and wait until the tray can see events: its container is mounted (the header renders once
+ * the config is loaded) and the snapshot, taken on the stream's `connected`, has been answered.
+ */
+async function gotoReady(page: Page, path: string) {
+	const snapshot = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/operations");
+	await page.goto(`${server.baseURL}${path}`);
+	await snapshot;
+	await page.getByTestId("activity-tray-root").waitFor({ state: "attached" });
+}
+
+/** A failed row opens its own card; open it only if it is folded (a click on an open one would fold it). */
+async function expandRow(tray: ReturnType<Page["getByTestId"]>, title = "Archiving 2 tasks") {
+	const toggle = tray.locator("button[aria-expanded]", { hasText: title });
+	if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+	await expect(toggle).toHaveAttribute("aria-expanded", "true");
+}
+
 /** The card has unfolded: its button exists and nothing inside the tray is still animating or transitioning. */
 async function unfolded(page: Page, button: ReturnType<Page["getByRole"]>) {
 	await expect(button).toBeVisible();
@@ -95,7 +113,7 @@ async function unfolded(page: Page, button: ReturnType<Page["getByRole"]>) {
 test.describe("Activity tray", () => {
 	test("a background batch shows in the tray, finishes and leaves on its own", async ({ page }) => {
 		const ids = [1, 2, 3].map((n) => createTask(`Tray done ${n}`, "--status done"));
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await expect(page.getByText("Tray done 1").first()).toBeVisible();
 		await startBatch(page, ids);
 
@@ -112,7 +130,7 @@ test.describe("Activity tray", () => {
 	test("the indicator sits in the header next to the bell; nothing floats over page content at 1280 and 1440", async ({ page }) => {
 		const open = createTask("Layout still open", "--status in-progress");
 		const done = createTask("Layout finishable", "--status done");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await expect(page.getByTestId("activity-indicator")).toBeHidden(); // nothing running: no indicator
 		await startBatch(page, [done, open]);
 		const indicator = page.getByTestId("activity-indicator");
@@ -164,7 +182,7 @@ test.describe("Activity tray", () => {
 	test("the indicator toggles the popover; Escape closes it and returns focus; an outside click closes it", async ({ page }) => {
 		const open = createTask("Toggle open", "--status in-progress");
 		const done = createTask("Toggle done", "--status done");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await startBatch(page, [done, open]);
 		const tray = await openTray(page);
 		const indicator = page.getByTestId("activity-indicator");
@@ -188,7 +206,7 @@ test.describe("Activity tray", () => {
 		const done = createTask("Auto done", "--status done");
 		// The snapshot is taken on the stream's `connected`, so once it is answered events reach the page.
 		const live = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/operations");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await live;
 		// The header (and the tray in it) mounts once the config is loaded; give it a beat after that.
 		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
@@ -214,7 +232,7 @@ test.describe("Activity tray", () => {
 		const open = createTask("Focus hold open", "--status in-progress");
 		const done = createTask("Focus hold done", "--status done");
 		const live = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/operations");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await live;
 		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
 		await page.waitForTimeout(500);
@@ -232,7 +250,7 @@ test.describe("Activity tray", () => {
 		const open = createTask("Disclosure open", "--status in-progress");
 		const done = createTask("Disclosure done", "--status done");
 		const live = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/operations");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await live;
 		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
 		await page.waitForTimeout(500);
@@ -260,7 +278,7 @@ test.describe("Activity tray", () => {
 		});
 		const open = createTask("Snap retry open", "--status in-progress");
 		const done = createTask("Snap retry done", "--status done");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
 		await startBatch(page, [done, open]);
 		await expect(page.getByTestId("activity-indicator")).toBeVisible({ timeout: 15_000 });
@@ -270,11 +288,11 @@ test.describe("Activity tray", () => {
 	test("a done row leaves in about 4 s even after another row was expanded and dismissed", async ({ page }) => {
 		const open = createTask("Expand open", "--status in-progress");
 		const done = createTask("Expand done", "--status done");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await startBatch(page, [done, open]);
 		await expect(page.getByTestId("activity-tray")).toContainText("not changed");
 		const tray = await openTray(page);
-		await tray.locator("ul").getByText("Archiving 2 tasks").click();
+		await expandRow(tray);
 		// Click only once the card has unfolded: WebKit otherwise clicks while the button still moves.
 		await unfolded(page, tray.getByRole("button", { name: "Dismiss" }));
 		await tray.getByRole("button", { name: "Dismiss" }).click();
@@ -293,7 +311,7 @@ test.describe("Activity tray", () => {
 	test("a daemon reindex job shows as queued, then running, then done, without the Runtime page open (AC-2)", async ({ page }) => {
 		createTask("Job done", "--status done");
 		const live = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/operations");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await live;
 		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
 		await page.waitForTimeout(800);
@@ -322,12 +340,12 @@ test.describe("Activity tray", () => {
 	test("keyboard: Dismiss with Enter while it has focus, then a new done row still leaves in about 4 s", async ({ page }) => {
 		const open = createTask("Key open", "--status in-progress");
 		const done = createTask("Key done", "--status done");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await startBatch(page, [done, open]);
 		await expect(page.getByTestId("activity-tray")).toContainText("not changed");
 		const tray = await openTray(page);
 		await page.mouse.move(300, 500); // the pointer is away; only the keyboard is in play
-		await tray.locator("ul").getByText("Archiving 2 tasks").click();
+		await expandRow(tray);
 		await page.mouse.move(300, 500);
 		const dismiss = tray.getByRole("button", { name: "Dismiss" });
 		await unfolded(page, dismiss);
@@ -346,7 +364,7 @@ test.describe("Activity tray", () => {
 	test("a reload with a failed row does not open the popover (a snapshot is not an event)", async ({ page }) => {
 		const open = createTask("Reload quiet open", "--status in-progress");
 		const done = createTask("Reload quiet done", "--status done");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await startBatch(page, [done, open]);
 		await expect(page.getByTestId("activity-indicator")).toBeVisible();
 		await page.reload();
@@ -360,7 +378,7 @@ test.describe("Activity tray", () => {
 		const open = createTask("Announce open", "--status in-progress");
 		const done = createTask("Announce done", "--status done");
 		const live = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/operations");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await live;
 		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
 		await page.waitForTimeout(500);
@@ -381,7 +399,7 @@ test.describe("Activity tray", () => {
 		const open = createTask("RM auto open", "--status in-progress");
 		const done = createTask("RM auto done", "--status done");
 		const live = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/operations");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await live;
 		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
 		await page.waitForTimeout(500);
@@ -398,12 +416,12 @@ test.describe("Activity tray", () => {
 	test("an open failed row shows its whole reason wrapped, and the collapsed line carries it as a title", async ({ page }) => {
 		const open = createTask("Reason open", "--status in-progress");
 		const done = createTask("Reason done", "--status done");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await startBatch(page, [done, open]);
 		await expect(page.getByTestId("activity-tray")).toContainText("not changed");
 		const tray = await openTray(page);
 		await expect(tray.locator("[title*='not changed']").first()).toHaveAttribute("title", /must be done/);
-		await tray.locator("ul").getByText("Archiving 2 tasks").click();
+		await expandRow(tray);
 		const reason = tray.locator("p", { hasText: "not changed" });
 		await expect(reason).toBeVisible();
 		await expect(reason).toContainText(/must be done/);
@@ -441,7 +459,7 @@ test.describe("Activity tray", () => {
 
 	test("Cancel stops the batch with 'N archived, M left', untouched tasks stay done, and Run again finishes the rest", async ({ page }) => {
 		const ids = await doneTasks(page, 600, "Cancel");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		const id = await startBatch(page, ids);
 		await expect(page.getByTestId("activity-tray")).toContainText("Archiving 600 tasks");
 		const tray = await openTray(page);
@@ -472,7 +490,7 @@ test.describe("Activity tray", () => {
 		await expect(page.getByTestId("activity-indicator")).not.toHaveClass(/destructive/);
 
 		// Run again takes only what is left, and finishes.
-		await tray.locator("ul").getByText(/Archiving 600 tasks/).first().click();
+		await expandRow(tray, "Archiving 600 tasks");
 		await tray.getByRole("button", { name: "Run again" }).click();
 		await expect.poll(async () => {
 			const all = await statesOf(page, ids);
@@ -484,7 +502,7 @@ test.describe("Activity tray", () => {
 
 	test("the elapsed clock of a running operation ticks (it is not stuck at 0:00)", async ({ page }) => {
 		const ids = await doneTasks(page, 600, "Clock");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		const id = await startBatch(page, ids);
 		await expect(page.getByTestId("activity-tray")).toContainText("Archiving 600 tasks");
 		const tray = await openTray(page);
@@ -499,13 +517,13 @@ test.describe("Activity tray", () => {
 
 	test("Cancel reads Cancelling (not Running) before the final 'N archived, M left'", async ({ page }) => {
 		const ids = await doneTasks(page, 600, "Cancelling");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		// Record every text the tray shows, so a short state is not missed by polling.
 		await page.evaluate(() => {
 			const w = window as unknown as { __tray: string[] };
 			w.__tray = [];
 			new MutationObserver(() => {
-				const el = document.querySelector('[data-testid="activity-tray"]');
+				const el = document.querySelector('[data-testid="activity-tray"] ul');
 				const text = el?.textContent ?? "";
 				if (text && w.__tray[w.__tray.length - 1] !== text) w.__tray.push(text);
 			}).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
@@ -528,7 +546,7 @@ test.describe("Activity tray", () => {
 	test("a partly failed batch stays with its reasons, a Runtime link and Run again; Dismiss removes it on the server", async ({ page }) => {
 		const open = createTask("Tray still open", "--status in-progress");
 		const done = createTask("Tray finishable", "--status done");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		const id = await startBatch(page, [done, open]);
 
 		await expect(page.getByTestId("activity-tray")).toContainText("Archiving 2 tasks");
@@ -538,7 +556,7 @@ test.describe("Activity tray", () => {
 		await expect(tray).toContainText(`#${open}`);
 		const link = tray.getByRole("link", { name: "Open Runtime" });
 		await expect(link).toHaveAttribute("href", "/runtime");
-		await tray.locator("ul").getByText("Archiving 2 tasks").click();
+		await expandRow(tray);
 		await expect(tray.getByRole("button", { name: "Run again" })).toBeVisible();
 		// A failed row does not age out.
 		await page.waitForTimeout(5000);
@@ -553,10 +571,34 @@ test.describe("Activity tray", () => {
 		await expect.poll(async () => (await operations(page)).some((o) => o.id === id)).toBe(false);
 	});
 
+	test("a failure opens its own card, following Open Runtime does not fold it, and folding it by hand sticks", async ({ page }) => {
+		const open = createTask("Own card open", "--status in-progress");
+		const done = createTask("Own card done", "--status done");
+		await gotoReady(page, "/tasks");
+		await startBatch(page, [done, open]);
+		await expect(page.getByTestId("activity-tray")).toContainText("not changed");
+		const tray = await openTray(page);
+		const toggle = tray.locator("button[aria-expanded]", { hasText: "Archiving 2 tasks" });
+		// no click yet: the reason's card and its buttons are already open
+		await expect(toggle).toHaveAttribute("aria-expanded", "true");
+		await expect(tray.getByRole("button", { name: "Run again" })).toBeVisible();
+		await expect(tray.getByRole("button", { name: "Dismiss" })).toBeVisible();
+		// the link is inside the toggle button: following it must not fold the card
+		await tray.getByRole("link", { name: "Open Runtime" }).click();
+		await expect(page).toHaveURL(/\/runtime$/);
+		await page.waitForTimeout(600);
+		await expect(toggle).toHaveAttribute("aria-expanded", "true");
+		// folded by hand stays folded (a later update does not reopen it)
+		await toggle.click();
+		await expect(toggle).toHaveAttribute("aria-expanded", "false");
+		await page.waitForTimeout(1500);
+		await expect(toggle).toHaveAttribute("aria-expanded", "false");
+	});
+
 	test("a reload takes the snapshot back: a failed row is still there", async ({ page }) => {
 		const open = createTask("Tray reload open", "--status in-progress");
 		const done = createTask("Tray reload done", "--status done");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await startBatch(page, [done, open]);
 		await expect(page.getByTestId("activity-tray")).toContainText("Archiving 2 tasks");
 		await page.reload();
@@ -565,7 +607,7 @@ test.describe("Activity tray", () => {
 
 	test("a reload while a batch is RUNNING shows its current progress, then it finishes", async ({ page }) => {
 		const ids = await doneTasks(page, 400, "Running");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		const id = await startBatch(page, ids);
 		await expect.poll(async () => (await operations(page)).find((o) => o.id === id)?.progress?.done ?? 0, { timeout: 30_000 }).toBeGreaterThan(0);
 		await page.reload();
@@ -580,7 +622,7 @@ test.describe("Activity tray", () => {
 		page.on("request", (r) => {
 			if (r.method() === "GET" && new URL(r.url()).pathname === "/api/operations") snapshots++;
 		});
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
 		await page.waitForTimeout(30_000);
 		expect(snapshots).toBe(1);
@@ -590,7 +632,7 @@ test.describe("Activity tray", () => {
 		test.skip(process.platform === "win32", "ps is not on Windows; the proxy budget script measures it there");
 		const pid = server.pid;
 		if (!pid) throw new Error("no server pid");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
 		await page.waitForTimeout(2000); // let the page settle
 
@@ -612,11 +654,11 @@ test.describe("Activity tray", () => {
 		await page.emulateMedia({ reducedMotion: "reduce" });
 		const open = createTask("Tray rm open", "--status in-progress");
 		const done = createTask("Tray rm done", "--status done");
-		await page.goto(`${server.baseURL}/tasks`);
+		await gotoReady(page, "/tasks");
 		await startBatch(page, [done, open]);
 		await expect(page.getByTestId("activity-tray")).toContainText("not changed");
 		const tray = await openTray(page);
-		await tray.locator("ul").getByText("Archiving 2 tasks").click();
+		await expandRow(tray);
 
 		const offenders = await tray.evaluate((root) => {
 			const secs = (v: string) => v.split(",").map((x) => (x.trim().endsWith("ms") ? Number.parseFloat(x) / 1000 : Number.parseFloat(x)));

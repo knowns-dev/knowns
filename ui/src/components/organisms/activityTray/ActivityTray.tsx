@@ -32,6 +32,11 @@ export function ActivityTray() {
 	}, []);
 	const wrap = useRef<HTMLDivElement>(null);
 	const panelId = useId();
+	// One capsule open at a time. A failure opens its own card the first time it is seen, so the reason
+	// and the buttons (Run again, Dismiss) are on screen without a click; the person can fold it, and
+	// it stays folded. An id that left the list is not "open".
+	const [expanded, setExpanded] = useState<string | null>(null);
+	const seenFailed = useRef(new Set<string>());
 	const trigger = useRef<HTMLButtonElement>(null);
 	const autoTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const autoOpened = useRef(false);
@@ -67,6 +72,14 @@ export function ActivityTray() {
 		[operations, pending, run, cancel, retry, dismiss, hideHere],
 	);
 
+	useEffect(() => {
+		// `operations` is newest first: the newest failure not seen before takes the open card.
+		const fresh = operations.filter((o) => o.state === "failed" && !seenFailed.current.has(o.id));
+		if (fresh.length === 0) return;
+		for (const o of fresh) seenFailed.current.add(o.id);
+		setExpanded(fresh[0]?.id ?? null);
+	}, [operations]);
+	const expandedId = expanded !== null && operations.some((o) => o.id === expanded) ? expanded : null;
 	// Only a real failure is "failed" (red). A cancelled row with work left is the person's own doing: neutral.
 	const failed = operations.filter((o) => o.state === "failed").length;
 	const running = operations.filter((o) => o.state === "running" || o.state === "queued" || o.state === "cancelling").length;
@@ -259,7 +272,11 @@ export function ActivityTray() {
 					label="Background operations"
 					pauseOnInteract
 					announce
-					onExpandedChange={(id) => id && interact()}
+					expandedId={expandedId}
+					onExpandedChange={(id) => {
+						setExpanded(id);
+						if (id) interact();
+					}}
 				/>
 			</div>
 		</div>
