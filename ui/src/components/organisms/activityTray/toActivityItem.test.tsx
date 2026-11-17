@@ -117,8 +117,8 @@ describe("toActivityItem", () => {
 		const { h } = handlers();
 		const item = operationItem(o, h);
 		expect(item.message).toBeTruthy();
-		// the reason is in the line, so the open card does not repeat it
-		expect(item.error).toBeUndefined();
+		// the collapsed line is cut at the card's width, so the open card repeats the whole reason, wrapped
+		expect(item.error).toBe("2 archived, 1 not changed: #A must be done · Lifecycle request failed");
 	});
 
 	test("a row that is not failed passes its message through", () => {
@@ -154,5 +154,15 @@ describe("toActivityItem", () => {
 		expect(item.progress).toBeNull();
 		expect(item.startedAt).toEqual(new Date(1000));
 		expect(item.finishedAt).toEqual(new Date(5000));
+	});
+
+	test("a finished row keeps its duration, unless it took under a second (that reads 0:00, so no clock)", () => {
+		const { h } = handlers();
+		const long = operationItem(op({ state: "done", cancellable: false, startedAt: 1000, finishedAt: 4500 }), h);
+		expect(long.finishedAt!.getTime() - long.startedAt!.getTime()).toBe(3500);
+		const quick = operationItem(op({ state: "failed", cancellable: false, startedAt: 1000, finishedAt: 1031 }), h);
+		expect(quick.startedAt).toBeUndefined();
+		// a running row always has its start
+		expect(operationItem(op({ state: "running", startedAt: 1000 }), h).startedAt).toEqual(new Date(1000));
 	});
 });

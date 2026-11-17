@@ -218,21 +218,58 @@ test.describe("Activity tray", () => {
 	});
 
 	test("with the popover closed a failure is still announced (the live region stays mounted)", async ({ page }) => {
-		// Reduced motion: nothing opens by itself, so the popover is closed when the batch fails.
-		await page.emulateMedia({ reducedMotion: "reduce" });
 		const open = createTask("Announce open", "--status in-progress");
 		const done = createTask("Announce done", "--status done");
+		const live = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/operations");
 		await page.goto(`${server.baseURL}/tasks`);
+		await live;
 		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
+		await page.waitForTimeout(500);
 		await startBatch(page, [done, open]);
 		const indicator = page.getByTestId("activity-indicator");
-		await expect(indicator).toBeVisible();
-		await expect(indicator).toHaveAttribute("aria-expanded", "false");
 		const tray = page.getByTestId("activity-tray");
 		await expect(tray.getByRole("alert")).toHaveText(/Archiving 2 tasks: Failed/);
-		// the list itself is out of the accessibility tree while closed; only the live region speaks
+		// Close it: the list leaves the accessibility tree, but the live region stays and still holds the words.
+		await page.keyboard.press("Escape");
+		await expect(indicator).toHaveAttribute("aria-expanded", "false");
 		await expect(tray.getByRole("list")).toHaveCount(0);
+		await expect(tray.getByRole("alert")).toHaveText(/Archiving 2 tasks: Failed/);
 		await expect(tray.getByRole("status").first()).toBeAttached();
+	});
+
+	test("with reduced motion it still opens by itself and closes after about 4 s, only without any transition", async ({ page }) => {
+		await page.emulateMedia({ reducedMotion: "reduce" });
+		const open = createTask("RM auto open", "--status in-progress");
+		const done = createTask("RM auto done", "--status done");
+		const live = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/operations");
+		await page.goto(`${server.baseURL}/tasks`);
+		await live;
+		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
+		await page.waitForTimeout(500);
+		await startBatch(page, [done, open]);
+		const indicator = page.getByTestId("activity-indicator");
+		await expect(indicator).toHaveAttribute("aria-expanded", "true");
+		const tray = page.getByTestId("activity-tray");
+		// The global reduced-motion block makes it 1e-5 s: instant.
+		const durations = await tray.evaluate((el) => getComputedStyle(el).transitionDuration.split(",").map((x) => Number.parseFloat(x)));
+		expect(durations.every((d) => d < 0.001)).toBe(true);
+		await expect(indicator).toHaveAttribute("aria-expanded", "false", { timeout: 9000 });
+	});
+
+	test("an open failed row shows its whole reason wrapped, and the collapsed line carries it as a title", async ({ page }) => {
+		const open = createTask("Reason open", "--status in-progress");
+		const done = createTask("Reason done", "--status done");
+		await page.goto(`${server.baseURL}/tasks`);
+		await startBatch(page, [done, open]);
+		await expect(page.getByTestId("activity-tray")).toContainText("not changed");
+		const tray = await openTray(page);
+		await expect(tray.locator("[title*='not changed']").first()).toHaveAttribute("title", /must be done/);
+		await tray.getByText("Archiving 2 tasks").click();
+		const reason = tray.locator("p", { hasText: "not changed" });
+		await expect(reason).toBeVisible();
+		await expect(reason).toContainText(/must be done/);
+		// wrapped, not cut: the paragraph shows all of its text
+		expect(await reason.evaluate((el) => el.scrollWidth <= el.clientWidth + 1 && getComputedStyle(el).textOverflow !== "ellipsis")).toBe(true);
 	});
 
 	test("confirming the archive dialog closes it, no toast says so, and the tray follows done / total", async ({ page }) => {

@@ -19,9 +19,6 @@ import { toActivityItem, type PendingAction } from "./toActivityItem";
 /** How long the popover stays open on its own when something starts or fails. */
 export const AUTO_OPEN_MS = 4000;
 
-const reducedMotion = () =>
-	typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
 export function ActivityTray() {
 	const { operations, cancel, retry, dismiss, hideHere } = useOperations();
 	const [pending, setPending] = useState<ReadonlyMap<string, PendingAction>>(() => new Map());
@@ -95,7 +92,6 @@ export function ActivityTray() {
 	// A NEW operation, or one that fails, opens the popover for a few seconds. Only live events do:
 	// a reload or a reconnect brings a snapshot, which is not an event and never opens anything.
 	const peek = useCallback(() => {
-		if (reducedMotion()) return; // the indicator carries the state; nothing opens or moves
 		// Already open (the person has it open, or an earlier peek): leave it alone.
 		if (openRef.current) return;
 		autoOpened.current = true;

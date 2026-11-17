@@ -46,13 +46,14 @@ export const failureText = (op: Operation): string => [op.message, op.error].fil
 function failureDetail(op: Operation) {
 	const text = failureText(op);
 	// The link comes first: the line is cut at the card's width, and the way out must stay visible.
+	// The title carries the whole text for the cut collapsed line; the open card wraps it in full (see `error`).
 	return (
-		<>
+		<span title={text || undefined}>
 			<Link to="/runtime" className="underline underline-offset-2">
 				Open Runtime
 			</Link>
 			{text ? ` · ${text}` : null}
-		</>
+		</span>
 	);
 }
 
@@ -79,9 +80,12 @@ export function toActivityItem(op: Operation, h: TrayHandlers): ActivityItem {
 		message: failed ? failureDetail(op) : (op.message ?? undefined),
 		state,
 		progress: op.progress,
-		error: undefined,
+		// The open card shows this wrapped, never cut: the reason a person came to read.
+		error: failed ? failureText(op) || undefined : undefined,
 		actions,
-		startedAt: stableDate(op.startedAt),
+		// A finished row keeps its final duration; one that took under a second would read 0:00, which
+		// looks like a clock that never ran, so it shows no clock at all.
+		startedAt: op.finishedAt && op.finishedAt - op.startedAt < 1000 ? undefined : stableDate(op.startedAt),
 		finishedAt: op.finishedAt ? stableDate(op.finishedAt) : undefined,
 		// The stack calls this with no argument when its timer ends a finished row, and with the click
 		// when the person presses Dismiss. The timer ends only rows that age out (done, and cancelled
