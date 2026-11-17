@@ -56,6 +56,20 @@ describe("readProcessInfo", () => {
     expect(info?.commandLine.length).toBeGreaterThan(0);
     expect(Math.abs((info?.startedAt ?? 0) - Date.now())).toBeLessThan(24 * 3600 * 1000);
   });
+  test("still reads a live process when PATH does not lead to the system tools", () => {
+    // CI Windows: a PATH without System32 made `powershell.exe` unfindable and the read returned
+    // undefined in 5 ms; an unknown identity means no stale daemon is ever recognised.
+    const saved = process.env.PATH;
+    process.env.PATH = join(tmpdir(), "knowns-no-such-bin");
+    try {
+      const info = readProcessInfo(process.pid);
+      expect(info).toBeDefined();
+      expect(info?.commandLine.length).toBeGreaterThan(0);
+    } finally {
+      if (saved === undefined) delete process.env.PATH;
+      else process.env.PATH = saved;
+    }
+  });
   test("a pid that does not exist has no info", () => {
     expect(readProcessInfo(2 ** 22 - 3)).toBeUndefined();
   });

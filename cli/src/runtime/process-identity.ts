@@ -2,6 +2,8 @@
 // reboot the number can belong to anything the user runs. Nothing may be signalled on the strength
 // of a pid file alone, so a caller proves identity first and treats "cannot tell" as "not ours".
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 /** The file name of a path in either separator style (a Windows path is read on any host). */
 const baseName = (path: string): string => path.split(/[\\/]/).pop() ?? "";
@@ -23,11 +25,17 @@ export function readProcessInfo(pid: number): ProcessInfo | undefined {
   }
 }
 
+/** `ps` by its fixed location, for the same reason as windowsPowerShell(). */
+function unixPs(): string {
+  for (const p of ["/bin/ps", "/usr/bin/ps"]) if (existsSync(p)) return p;
+  return "ps";
+}
+
 function readUnix(pid: number): ProcessInfo | undefined {
   // LC_ALL=C pins lstart to "Mon Nov 16 10:00:00 2026" on every Unix.
   const env = { ...process.env, LC_ALL: "C", LANG: "C" };
   const run = (field: string): string | undefined => {
-    const r = spawnSync("ps", ["-ww", "-o", `${field}=`, "-p", String(pid)], {
+    const r = spawnSync(unixPs(), ["-ww", "-o", `${field}=`, "-p", String(pid)], {
       encoding: "utf8",
       env,
       timeout: 3000,
@@ -44,13 +52,24 @@ function readUnix(pid: number): ProcessInfo | undefined {
   return { commandLine, startedAt };
 }
 
+/**
+ * Windows PowerShell by its fixed system path. A bare "powershell.exe" is looked up on $PATH, and a
+ * PATH without System32 (a sandbox, a launcher, a test that swapped it) made the read return
+ * "unknown" in a few milliseconds: no stale daemon was ever recognised, so none was ever stopped.
+ */
+function windowsPowerShell(): string {
+  const root = process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows";
+  const fixed = join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  return existsSync(fixed) ? fixed : "powershell.exe";
+}
+
 function readWindows(pid: number): ProcessInfo | undefined {
   const script =
     `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; ` +
     "if ($p) { [pscustomobject]@{ c = ($p.CommandLine + ''); e = ($p.ExecutablePath + ''); " +
     "s = ([DateTimeOffset]$p.CreationDate).ToUnixTimeMilliseconds() } | ConvertTo-Json -Compress }";
   const r = spawnSync(
-    "powershell.exe",
+    windowsPowerShell(),
     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
     { encoding: "utf8", timeout: 8000, windowsHide: true },
   );
