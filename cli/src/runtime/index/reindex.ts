@@ -51,6 +51,7 @@ import type { Storage } from "../../storage/adapters.ts";
 import { readFileRetrying } from "../../storage/core/fs-retry.ts";
 import { globalSemanticStoreRoot } from "../../storage/core/store.ts";
 import { withTaskLifecycleTransaction } from "../../storage/history/lifecycle-tx.ts";
+import { JobCancelledError } from "../job-cancel.ts";
 import { goLogf, isProcessAlive, parseGoDurationMs, sleep } from "../queue.ts";
 import { IndexService, type ReindexProgress } from "./index-service.ts";
 import { stampWatermarksFromGeneration } from "./qdrant-intent.ts";
@@ -257,6 +258,8 @@ export interface QdrantGenerationOptions {
   client: QdrantClient;
   now?: () => number;
   progress?: ReindexProgress;
+  /** Asked between sources; true stops before activation, leaving the active generation intact. */
+  shouldStop?: () => boolean;
   retentionGenerations?: number;
   retentionTtlMs?: number;
   lockTimeoutMs?: number;
@@ -370,8 +373,9 @@ async function reindexLocked(
   try {
     const stage = new StageStore(embedding.model);
     try {
-      await new IndexService(storage, embedder, stage).reindex(opts.progress);
+      await new IndexService(storage, embedder, stage).reindex(opts.progress, opts.shouldStop);
     } catch (err) {
+      if (err instanceof JobCancelledError) throw err;
       throw new Error(
         `build next Qdrant generation from canonical sources: ${(err as Error).message}`,
       );

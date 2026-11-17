@@ -42,6 +42,8 @@ import {
   releaseRunner,
   unregisterDaemon,
 } from "./daemon-registry.ts";
+import { clearJobCancel, JobCancelledError, sweepCancelRequests } from "./job-cancel.ts";
+import { hasJobListeners, observeJobs } from "./job-operations.ts";
 import { type IdentitySeams, isKnownsRuntimeDaemon } from "./process-identity.ts";
 import { emitRuntimeStatus } from "./status-events.ts";
 
@@ -152,6 +154,8 @@ export interface JobResult {
   details?: JobDetails | null;
   retryable?: boolean;
   deadLetter?: boolean;
+  /** Stopped at a safe point on request (an extra field: 0.34.x ignores it). */
+  cancelled?: boolean;
 }
 
 export interface QueueState {
@@ -1580,6 +1584,15 @@ export async function completeJobAsync(
   await updateQueueAsync(storeRoot, completeMutation(job, err));
 }
 
+/** The error of a job that stopped on request; across the worker boundary only the message survives. */
+function isCancelError(err: Error): boolean {
+  return (
+    err instanceof JobCancelledError ||
+    err.name === "JobCancelledError" ||
+    err.message === "cancelled"
+  );
+}
+
 function completeMutation(job: Job, err: Error | undefined): (state: QueueState) => void {
   return (state) => {
     let finalJob: Job = job;
@@ -1620,6 +1633,7 @@ function completeMutation(job: Job, err: Error | undefined): (state: QueueState)
     };
     if (finalJob.target) result.target = finalJob.target;
     if (err) result.error = err.message;
+    if (err && isCancelError(err)) result.cancelled = true;
     if (finalJob.kind === JOB_QDRANT_RECONCILE && err) {
       result.retryable = true;
       if ((finalJob.attempts ?? 0) >= QDRANT_RETRY_LIMIT) {
@@ -2423,6 +2437,7 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
   // event in the runtime directories (enqueue, lease, reload, stop) ends the wait at once.
   let intervalMs = DEFAULT_POLL_INTERVAL_MS;
   let lastFingerprint = "";
+  let lastObserved = "";
   let lastLeaseIdentity = "";
   let lastServed: string | undefined;
   let cooldownUntil = 0;
@@ -2471,6 +2486,7 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
         if (!projects.includes(lease.projectRoot)) projects.push(lease.projectRoot);
       if (tickNow >= nextHousekeeping) {
         nextHousekeeping = tickNow + HOUSEKEEPING_INTERVAL_MS;
+        if (isRunner && running === undefined) sweepCancelRequests(new Set());
         try {
           pruneRuntimeFiles(tickNow);
         } catch (err) {
@@ -2578,6 +2594,10 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
           }
         }
       }
+      if (hasJobListeners() && (scan.fingerprint !== lastObserved || running !== undefined)) {
+        lastObserved = scan.fingerprint;
+        observeJobs(scanned);
+      }
       if (isRunner) {
         const statusNow = Date.now();
         const key = statusKey(watchFor, projects, watcherStates);
@@ -2673,6 +2693,8 @@ export async function runDaemon(signal: AbortSignal, opts: DaemonOptions): Promi
           } catch {
             // ignore
           }
+          clearJobCancel(current.job.id);
+          if (hasJobListeners()) observeJobs(scanned);
           running = undefined;
           cooldownUntil = Date.now() + jobGapMs(Date.now() - current.startedMs);
         }
