@@ -23,7 +23,11 @@ const D = KEY.down;
 // Not y/n: huh submits the field on those, clack waits for Enter. Left is Yes, right is No in both.
 const LEFT = "\x1b[D";
 const RIGHT = "\x1b[C";
-const step = (expect: string | null, keys: string): PtyStep => ({ expect, keys });
+const step = (expect: string | null, keys: string, resend = false): PtyStep => ({
+  expect,
+  keys,
+  resend,
+});
 const SLOW = 180_000;
 const MENU = "Project Settings";
 const GMENU = "Global Settings";
@@ -237,7 +241,7 @@ cases("settings (project) matches Go on a terminal", () => {
     () => {
       const r = runBoth(
         ["settings"],
-        [step(MENU, E), step("Project name", KEY.ctrlC), step(MENU, DONE)],
+        [step(MENU, E), step("Project name", KEY.ctrlC, true), step(MENU, DONE)],
         projectOpts,
       );
       // huh draws both inputs of a group at once, so only the first title is compared.
