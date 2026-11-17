@@ -204,6 +204,113 @@ test.describe("Activity tray", () => {
 		await expect(indicator).toHaveAttribute("aria-expanded", "true");
 	});
 
+	test("keyboard focus on the indicator holds the auto-open, and leaving it lets the auto-close resume", async ({ page }) => {
+		const open = createTask("Focus hold open", "--status in-progress");
+		const done = createTask("Focus hold done", "--status done");
+		const live = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/operations");
+		await page.goto(`${server.baseURL}/tasks`);
+		await live;
+		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
+		await page.waitForTimeout(500);
+		const indicator = page.getByTestId("activity-indicator");
+		await startBatch(page, [done, open]);
+		await expect(indicator).toHaveAttribute("aria-expanded", "true");
+		await indicator.focus();
+		await page.waitForTimeout(5500);
+		await expect(indicator).toHaveAttribute("aria-expanded", "true"); // held by focus
+		await indicator.blur();
+		await expect(indicator).toHaveAttribute("aria-expanded", "false", { timeout: 9000 }); // resumed
+	});
+
+	test("disclosure pattern, and Escape with focus elsewhere is not swallowed or turned into a focus move", async ({ page }) => {
+		const open = createTask("Disclosure open", "--status in-progress");
+		const done = createTask("Disclosure done", "--status done");
+		const live = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/operations");
+		await page.goto(`${server.baseURL}/tasks`);
+		await live;
+		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
+		await page.waitForTimeout(500);
+		const indicator = page.getByTestId("activity-indicator");
+		await startBatch(page, [done, open]);
+		await expect(indicator).toHaveAttribute("aria-expanded", "true");
+		const panelId = await page.getByTestId("activity-tray").getAttribute("id");
+		await expect(indicator).toHaveAttribute("aria-controls", panelId ?? "none");
+		await expect(indicator).not.toHaveAttribute("aria-haspopup", /.*/);
+		// focus is on the page, not in the tray: Escape closes the auto-opened popover, focus stays where it was
+		const field = page.locator("main input").first();
+		await field.focus();
+		await page.keyboard.press("Escape");
+		await expect(indicator).toHaveAttribute("aria-expanded", "false");
+		await expect(field).toBeFocused();
+	});
+
+	test("a snapshot that fails at first is retried, and the tray shows the operation", async ({ page }) => {
+		let failed = 0;
+		await page.route((url) => url.pathname === "/api/operations", async (route) => {
+			if (failed < 1) {
+				failed++;
+				await route.abort();
+			} else await route.continue();
+		});
+		const open = createTask("Snap retry open", "--status in-progress");
+		const done = createTask("Snap retry done", "--status done");
+		await page.goto(`${server.baseURL}/tasks`);
+		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
+		await startBatch(page, [done, open]);
+		await expect(page.getByTestId("activity-indicator")).toBeVisible({ timeout: 15_000 });
+		expect(failed).toBe(1);
+	});
+
+	test("a done row leaves in about 4 s even after another row was expanded and dismissed", async ({ page }) => {
+		const open = createTask("Expand open", "--status in-progress");
+		const done = createTask("Expand done", "--status done");
+		await page.goto(`${server.baseURL}/tasks`);
+		await startBatch(page, [done, open]);
+		await expect(page.getByTestId("activity-tray")).toContainText("not changed");
+		const tray = await openTray(page);
+		await tray.getByText("Archiving 2 tasks").click();
+		await tray.getByRole("button", { name: "Dismiss" }).click();
+		const indicator = page.getByTestId("activity-indicator");
+		await expect(indicator).toBeHidden();
+		await page.mouse.move(300, 500); // the pointer is not resting where the popover will open next
+		const fine = createTask("Expand fine", "--status done");
+		await startBatch(page, [fine]);
+		await expect(indicator).toBeVisible();
+		// While only done rows remain it reads as done: a check, in the done tone.
+		await expect(indicator).toHaveClass(/emerald/);
+		await expect(indicator.locator("svg")).toHaveCount(1);
+		await expect(indicator).toBeHidden({ timeout: 9000 }); // the done row left by the stack's 4 s timer
+	});
+
+	test("a daemon reindex job shows as queued, then running, then done, without the Runtime page open (AC-2)", async ({ page }) => {
+		createTask("Job done", "--status done");
+		const live = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/operations");
+		await page.goto(`${server.baseURL}/tasks`);
+		await live;
+		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
+		await page.waitForTimeout(800);
+		// Record every state word the row shows, so a short stage is not missed by polling.
+		await page.evaluate(() => {
+			const w = window as unknown as { __states: string[] };
+			w.__states = [];
+			new MutationObserver(() => {
+				const text = document.querySelector('[data-testid="activity-tray"]')?.textContent ?? "";
+				const m = /Rebuilding the search index(Queued|Running|Done|Failed)/.exec(text);
+				if (m?.[1] && w.__states[w.__states.length - 1] !== m[1]) w.__states.push(m[1]);
+			}).observe(document.body, { subtree: true, childList: true, characterData: true });
+		});
+		expect(server.cli("search index")).toContain("queued semantic reindex");
+		await expect(page.getByTestId("activity-indicator")).toBeVisible();
+		await expect(page.getByTestId("activity-tray")).toContainText("Rebuilding the search index");
+		await expect.poll(() => page.evaluate(() => (window as unknown as { __states: string[] }).__states), { timeout: 30_000 }).toContain("Done");
+		const states = await page.evaluate(() => (window as unknown as { __states: string[] }).__states);
+		expect(states[0]).toBe("Queued");
+		expect(states.indexOf("Running")).toBeGreaterThan(states.indexOf("Queued"));
+		expect(states.indexOf("Done")).toBeGreaterThan(states.indexOf("Running"));
+		await expect(page).toHaveURL(/\/tasks$/); // the whole time on the Tasks page
+		await expect(page.getByTestId("activity-indicator")).toBeHidden({ timeout: 15_000 });
+	});
+
 	test("a reload with a failed row does not open the popover (a snapshot is not an event)", async ({ page }) => {
 		const open = createTask("Reload quiet open", "--status in-progress");
 		const done = createTask("Reload quiet done", "--status done");
@@ -328,6 +435,9 @@ test.describe("Activity tray", () => {
 		await page.waitForTimeout(5500);
 		await expect(page.getByTestId("activity-indicator")).toBeVisible();
 		await expect(tray).toContainText("left");
+		// The person cancelled it: it is not a failure, so no "failed" and no red.
+		await expect(page.getByTestId("activity-indicator")).toHaveAccessibleName("1 background operation");
+		await expect(page.getByTestId("activity-indicator")).not.toHaveClass(/destructive/);
 
 		// Run again takes only what is left, and finishes.
 		await tray.getByText(/Archiving 600 tasks/).first().click();

@@ -22,10 +22,13 @@ import {
 import type { Operation, OperationEvent, OperationRemovedEvent, OperationSnapshot } from "../models/operation";
 import { useSSEEvent } from "./SSEContext";
 
+/** Waits before the 2nd, 3rd and 4th try of a failed snapshot. */
+export const SNAPSHOT_RETRY_MS = [1000, 3000, 9000];
+
 type Action =
-	| { type: "begin"; request: number }
+	| { type: "begin"; request: number; keepBuffer?: boolean }
 	| { type: "snapshot"; request: number; snapshot: OperationSnapshot; now: number }
-	| { type: "snapshot-failed"; request: number }
+	| { type: "snapshot-failed"; request: number; giveUp: boolean }
 	| ({ type: "event" } & OperationEvent)
 	| ({ type: "removed" } & OperationRemovedEvent)
 	| { type: "adopt"; operation: Operation }
@@ -35,11 +38,11 @@ type Action =
 function reduce(state: OperationsState, action: Action): OperationsState {
 	switch (action.type) {
 		case "begin":
-			return beginSnapshot(state, action.request);
+			return beginSnapshot(state, action.request, action.keepBuffer);
 		case "snapshot":
 			return applySnapshot(state, action.request, action.snapshot, action.now);
 		case "snapshot-failed":
-			return failSnapshot(state, action.request);
+			return failSnapshot(state, action.request, action.giveUp);
 		case "event":
 			return applyOperationEvent(state, { seq: action.seq, operation: action.operation });
 		case "removed":
@@ -70,18 +73,31 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
 	const [state, dispatch] = useReducer(reduce, emptyOperations);
 	const requests = useRef(0);
 
-	const loadSnapshot = useCallback(() => {
+	const retryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+	// A snapshot that fails is retried a few times with a growing wait (error recovery, not polling: it
+	// stops at the first answer). After the last try the tray goes ready with an empty list so the
+	// events that arrive from then on show.
+	const loadSnapshot = useCallback((attempt = 0) => {
+		clearTimeout(retryTimer.current);
 		const request = ++requests.current;
-		dispatch({ type: "begin", request });
+		dispatch({ type: "begin", request, keepBuffer: attempt > 0 });
 		operationsApi
 			.snapshot()
 			.then((snapshot) => dispatch({ type: "snapshot", request, snapshot, now: Date.now() }))
-			.catch(() => dispatch({ type: "snapshot-failed", request }));
+			.catch(() => {
+				const giveUp = attempt >= SNAPSHOT_RETRY_MS.length;
+				dispatch({ type: "snapshot-failed", request, giveUp });
+				if (!giveUp && request === requests.current) {
+					retryTimer.current = setTimeout(() => loadSnapshot(attempt + 1), SNAPSHOT_RETRY_MS[attempt]);
+				}
+			});
 	}, []);
+	useEffect(() => () => clearTimeout(retryTimer.current), []);
 
 	// One snapshot per connect, taken on the `connected` event the server sends first on every stream
 	// (both providers mount together, so the first one is not missed).
-	useSSEEvent("connected", loadSnapshot, [loadSnapshot]);
+	useSSEEvent("connected", () => loadSnapshot(0), [loadSnapshot]);
 	useSSEEvent("operation:started", (e) => dispatch({ type: "event", seq: e.seq, operation: e.operation }));
 	useSSEEvent("operation:updated", (e) => dispatch({ type: "event", seq: e.seq, operation: e.operation }));
 	useSSEEvent("operation:finished", (e) => dispatch({ type: "event", seq: e.seq, operation: e.operation }));

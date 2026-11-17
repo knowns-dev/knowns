@@ -100,6 +100,38 @@ describe("operations store: snapshot and events", () => {
 		expect(s.loading).toBe(false);
 	});
 
+	test("a first snapshot that fails: events wait for the retry, the retry keeps them and they show", () => {
+		let s = beginSnapshot(emptyOperations, 1);
+		s = applyOperationEvent(s, { seq: 5, operation: op("op_a") });
+		s = failSnapshot(s, 1); // not the last try
+		expect(s.ready).toBe(false);
+		expect(s.buffer).toHaveLength(1);
+		s = beginSnapshot(s, 2, true);
+		s = applyOperationEvent(s, { seq: 6, operation: op("op_b") });
+		s = applySnapshot(s, 2, { seq: 4, operations: [] }, 0);
+		expect(Object.keys(s.byId).sort()).toEqual(["op_a", "op_b"]);
+	});
+
+	test("first snapshot fails for good: ready with an empty list, the buffer applied, later events show", () => {
+		let s = beginSnapshot(emptyOperations, 1);
+		s = applyOperationEvent(s, { seq: 5, operation: op("op_a") });
+		s = failSnapshot(s, 1, true);
+		expect(s.ready).toBe(true);
+		expect(s.loading).toBe(false);
+		expect(s.buffer).toEqual([]);
+		expect(Object.keys(s.byId)).toEqual(["op_a"]);
+		s = applyOperationEvent(s, { seq: 6, operation: op("op_b") });
+		expect(Object.keys(s.byId).sort()).toEqual(["op_a", "op_b"]);
+	});
+
+	test("the buffer keeps the newest event per operation and stays small", () => {
+		let s = beginSnapshot(emptyOperations, 1);
+		for (let n = 1; n <= 500; n++) s = applyOperationEvent(s, { seq: n, operation: op("op_a", { updatedAt: n }) });
+		expect(s.buffer).toHaveLength(1);
+		for (let n = 0; n < 400; n++) s = applyOperationEvent(s, { seq: 1000 + n, operation: op(`op_${n}`) });
+		expect(s.buffer.length).toBeLessThanOrEqual(200);
+	});
+
 	test("removed drops the row and respects seq", () => {
 		let s = loaded(1, 1, [op("op_a")]);
 		s = applyRemoved(s, { seq: 1, id: "op_a" });

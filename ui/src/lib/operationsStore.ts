@@ -49,8 +49,18 @@ export const SHOW_FINISHED_FOR_MS = 4000;
  * A snapshot is about to be requested (the caller numbers its requests, 1, 2, 3...): later events
  * are kept until it is answered, and an answer for an older number is ignored.
  */
-export function beginSnapshot(state: OperationsState, request: number): OperationsState {
-	return { ...state, request, loading: true, buffer: [] };
+export function beginSnapshot(state: OperationsState, request: number, keepBuffer = false): OperationsState {
+	return { ...state, request, loading: true, buffer: keepBuffer ? state.buffer : [] };
+}
+
+/** Events kept for a replay: the newest per operation is all a replay needs, and the list stays small. */
+const BUFFER_LIMIT = 200;
+
+function buffered(buffer: Buffered[], e: Buffered): Buffered[] {
+	const id = e.kind === "event" ? e.operation.id : e.id;
+	const kept = buffer.filter((b) => (b.kind === "event" ? b.operation.id : b.id) !== id);
+	kept.push(e);
+	return kept.length > BUFFER_LIMIT ? kept.slice(kept.length - BUFFER_LIMIT) : kept;
 }
 
 function put(state: OperationsState, op: Operation): OperationsState {
@@ -91,11 +101,17 @@ export function applySnapshot(
 	return { ...next, buffer: [] };
 }
 
-/** The snapshot request failed: stop waiting, apply what was buffered on top of what we had. */
-export function failSnapshot(state: OperationsState, request: number): OperationsState {
+/**
+ * The snapshot request failed. Once a snapshot has been applied, what was buffered goes on top of
+ * what we had. Before the first one the caller retries (`giveUp` false: the buffer is kept for the
+ * next attempt) and, when it stops retrying, `giveUp` makes the tray ready with an empty list plus
+ * the buffered events, so later events show instead of piling up for a snapshot that never comes.
+ */
+export function failSnapshot(state: OperationsState, request: number, giveUp = false): OperationsState {
 	if (request !== state.request) return state;
-	let next: OperationsState = { ...state, loading: false };
-	if (next.ready) for (const e of state.buffer) next = applyBuffered(next, e);
+	if (!state.ready && !giveUp) return { ...state, loading: false };
+	let next: OperationsState = { ...state, loading: false, ready: true };
+	for (const e of state.buffer) next = applyBuffered(next, e);
 	return { ...next, buffer: [] };
 }
 
@@ -103,14 +119,14 @@ export function failSnapshot(state: OperationsState, request: number): Operation
 export function applyOperationEvent(state: OperationsState, event: OperationEvent): OperationsState {
 	if (state.loading || !state.ready) {
 		// Before the first snapshot, or while one is in flight: keep it for the replay.
-		return { ...state, buffer: [...state.buffer, { kind: "event", ...event }] };
+		return { ...state, buffer: buffered(state.buffer, { kind: "event", ...event }) };
 	}
 	return applyBuffered(state, { kind: "event", ...event });
 }
 
 export function applyRemoved(state: OperationsState, event: OperationRemovedEvent): OperationsState {
 	if (state.loading || !state.ready) {
-		return { ...state, buffer: [...state.buffer, { kind: "removed", ...event }] };
+		return { ...state, buffer: buffered(state.buffer, { kind: "removed", ...event }) };
 	}
 	return applyBuffered(state, { kind: "removed", ...event });
 }

@@ -6,8 +6,8 @@
  * shows and which buttons it has live in toActivityItem.tsx; the state is OperationsContext.
  */
 
-import { TriangleAlert } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check, TriangleAlert } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { cn } from "../../../lib/utils";
 import { useOperations } from "../../../contexts/OperationsContext";
 import { useSSEEvent } from "../../../contexts/SSEContext";
@@ -31,9 +31,16 @@ export function ActivityTray() {
 		setOpenState(value);
 	}, []);
 	const wrap = useRef<HTMLDivElement>(null);
+	const panelId = useId();
+	// One capsule open at a time. Controlled, so an id that left the list is no longer "open": the
+	// stack holds every dismiss timer while a capsule is open, and an open id that never came back
+	// would keep finished rows (and this indicator) on screen for good.
+	const [expanded, setExpanded] = useState<string | null>(null);
 	const trigger = useRef<HTMLButtonElement>(null);
 	const autoTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const autoOpened = useRef(false);
+	const hover = useRef(false);
+	const focus = useRef(false);
 	const failedSeen = useRef(new Set<string>());
 
 	// One request at a time per row: the button is disabled while it is in flight.
@@ -64,9 +71,24 @@ export function ActivityTray() {
 		[operations, pending, run, cancel, retry, dismiss, hideHere],
 	);
 
-	const failed = operations.filter((o) => o.state === "failed" || (o.state === "cancelled" && o.retryable)).length;
+	// The stack tracks hover and focus itself, and a Dismiss that removes the button under the pointer
+	// or the focus never sends the leave/blur, so those stay "held" and hold every dismiss timer. When
+	// the stack has emptied it is remounted (empty, so nothing is lost) and starts clean.
+	const [epoch, setEpoch] = useState(0);
+	const hadItems = useRef(false);
+	useEffect(() => {
+		if (operations.length > 0) hadItems.current = true;
+		else if (hadItems.current) {
+			hadItems.current = false;
+			setEpoch((n) => n + 1);
+		}
+	}, [operations.length]);
+	const expandedId = expanded !== null && operations.some((o) => o.id === expanded) ? expanded : null;
+	// Only a real failure is "failed" (red). A cancelled row with work left is the person's own doing: neutral.
+	const failed = operations.filter((o) => o.state === "failed").length;
 	const running = operations.filter((o) => o.state === "running" || o.state === "queued" || o.state === "cancelling").length;
 	const count = operations.length;
+	const onlyDone = count > 0 && operations.every((o) => o.state === "done");
 	const label = `${count} background operation${count === 1 ? "" : "s"}${failed ? `, ${failed} failed` : ""}`;
 
 	const clearAuto = useCallback(() => {
@@ -74,11 +96,32 @@ export function ActivityTray() {
 		autoTimer.current = undefined;
 	}, []);
 
-	// The person took over (hover, focus, a click): the auto-open no longer closes by itself.
+	// The person took over (a click, an expanded row): the auto-open no longer closes by itself.
 	const interact = useCallback(() => {
 		autoOpened.current = false;
 		clearAuto();
 	}, [clearAuto]);
+
+	const armAutoClose = useCallback(() => {
+		clearAuto();
+		autoTimer.current = setTimeout(() => {
+			if (autoOpened.current && !hover.current && !focus.current) {
+				autoOpened.current = false;
+				setOpen(false);
+			}
+		}, AUTO_OPEN_MS);
+	}, [clearAuto, setOpen]);
+
+	// Hover or keyboard focus only HOLDS an auto-open; once the person leaves, the wait starts over.
+	const hold = useCallback(
+		(kind: "hover" | "focus", on: boolean) => {
+			(kind === "hover" ? hover : focus).current = on;
+			if (!autoOpened.current) return;
+			if (hover.current || focus.current) clearAuto();
+			else armAutoClose();
+		},
+		[armAutoClose, clearAuto],
+	);
 
 	const close = useCallback(
 		(returnFocus: boolean) => {
@@ -96,14 +139,9 @@ export function ActivityTray() {
 		if (openRef.current) return;
 		autoOpened.current = true;
 		setOpen(true);
-		clearAuto();
-		autoTimer.current = setTimeout(() => {
-			if (autoOpened.current) {
-				autoOpened.current = false;
-				setOpen(false);
-			}
-		}, AUTO_OPEN_MS);
-	}, [clearAuto, setOpen]);
+		if (hover.current || focus.current) clearAuto();
+		else armAutoClose();
+	}, [armAutoClose, clearAuto, setOpen]);
 
 	useSSEEvent("operation:started", () => peek(), [peek]);
 	const onChanged = useCallback(
@@ -158,10 +196,13 @@ export function ActivityTray() {
 	useEffect(() => {
 		if (!open) return;
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
+			if (e.key !== "Escape") return;
+			// Focus is in the tray: this Escape is for it (and focus goes back to the indicator). Anywhere
+			// else it belongs to whatever has focus (a dialog, a menu): close quietly and do not swallow it.
+			if (wrap.current?.contains(document.activeElement)) {
 				e.stopPropagation();
 				close(true);
-			}
+			} else close(false);
 		};
 		const onDown = (e: PointerEvent) => {
 			if (wrap.current && !wrap.current.contains(e.target as Node)) close(false);
@@ -174,39 +215,53 @@ export function ActivityTray() {
 		};
 	}, [open, close]);
 
-	const tone = failed > 0 ? "text-destructive" : "text-foreground";
+	const tone = failed > 0 ? "text-destructive" : onlyDone && running === 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground";
 
 	return (
 		// The stack stays mounted while the popover is closed (and while the stack is empty, hidden):
 		// its live region must exist to announce, and a stack that mounts with its first row already
 		// in it plays no entrance, so the first arrival is the one a person sees.
-		<div ref={wrap} className="relative" hidden={count === 0} data-testid="activity-tray-root">
+		<div
+			ref={wrap}
+			className="relative"
+			data-testid="activity-tray-root"
+			onPointerEnter={(e) => e.pointerType !== "touch" && hold("hover", true)}
+			onPointerLeave={() => hold("hover", false)}
+			onFocus={() => hold("focus", true)}
+			onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && hold("focus", false)}
+			onClick={interact}
+		>
 			<button
 				ref={trigger}
 				type="button"
 				aria-label={label}
 				aria-expanded={open}
-				aria-haspopup="true"
+				aria-controls={panelId}
+				hidden={count === 0}
 				data-testid="activity-indicator"
 				onClick={() => {
 					interact();
 					setOpen((o) => !o);
 				}}
-				onPointerEnter={() => autoOpened.current && interact()}
 				className={cn(
 					"inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border/60 px-2.5 text-[12.5px] font-medium tabular-nums transition-colors duration-(--kn-dur-fast) ease-(--kn-ease-out) hover:bg-muted active:scale-[0.97]",
 					failed > 0 && "border-destructive/40",
 					tone,
 				)}
 			>
-				{running > 0 ? <Spinner label="" className="size-3.5" /> : failed > 0 ? <TriangleAlert aria-hidden className="size-3.5" /> : null}
+				{running > 0 ? (
+					<Spinner label="" className="size-3.5" />
+				) : failed > 0 ? (
+					<TriangleAlert aria-hidden className="size-3.5" />
+				) : onlyDone ? (
+					<Check aria-hidden className="size-3.5" />
+				) : null}
 				<span aria-hidden>{count}</span>
 			</button>
 			<div
+				id={panelId}
 				data-testid="activity-tray"
 				data-open={open}
-				onPointerEnter={interact}
-				onFocusCapture={interact}
 				className={cn(
 					"absolute top-full right-0 z-50 mt-2 w-80 max-h-[min(70vh,32rem)] overflow-y-auto p-2 transition-[opacity,transform] duration-(--kn-dur) ease-(--kn-ease-out)",
 					open
@@ -216,7 +271,18 @@ export function ActivityTray() {
 							"pointer-events-none -translate-y-1 opacity-0 [&_button]:invisible [&_ul]:invisible",
 				)}
 			>
-				<ActivityStack items={items} label="Background operations" pauseOnInteract announce />
+				<ActivityStack
+					key={epoch}
+					items={items}
+					label="Background operations"
+					pauseOnInteract
+					announce
+					expandedId={expandedId}
+					onExpandedChange={(id) => {
+						setExpanded(id);
+						if (id) interact();
+					}}
+				/>
 			</div>
 		</div>
 	);
