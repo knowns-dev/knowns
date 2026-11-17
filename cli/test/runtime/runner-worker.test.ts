@@ -105,14 +105,34 @@ afterAll(() => {
   for (const p of procs) p.kill();
 });
 
-/** path:size, so an appended history file counts as a change, not only a new file. */
+/**
+ * path:size, so an appended history file counts as a change, not only a new file. The daemon is
+ * still writing while this walks: an atomic write leaves a temp file (.lifecycle-durable-*.tmp)
+ * that is renamed away between readdir and stat. A file that vanished is not left behind, so it is
+ * skipped; any other error still fails the walk.
+ */
 function listFiles(root: string): string[] {
   const out: string[] = [];
+  const gone = (e: unknown): boolean => (e as NodeJS.ErrnoException)?.code === "ENOENT";
   const walk = (d: string) => {
-    for (const e of readdirSync(d, { withFileTypes: true })) {
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = readdirSync(d, { withFileTypes: true });
+    } catch (e) {
+      if (gone(e)) return;
+      throw e;
+    }
+    for (const e of entries) {
       const p = join(d, e.name);
-      if (e.isDirectory()) walk(p);
-      else out.push(`${relative(root, p).replaceAll("\\", "/")}:${statSync(p).size}`);
+      if (e.isDirectory()) {
+        walk(p);
+        continue;
+      }
+      try {
+        out.push(`${relative(root, p).replaceAll("\\", "/")}:${statSync(p).size}`);
+      } catch (err) {
+        if (!gone(err)) throw err;
+      }
     }
   };
   if (existsSync(root)) walk(root);
@@ -333,7 +353,10 @@ describe("worker failures never throw into the daemon (KN-69EHXE P2-4, P3-3, P3-
       w.on("exit", () => live--);
       return w;
     };
-    const rw = new RunnerWorker(mk, 30);
+    // The follow-up job gets a realistic budget: its timeout covers starting a real worker thread
+    // and one round trip, which takes longer than 30 ms on a loaded or Windows runner. Only the
+    // hanging runner needs the short timeout that terminates it.
+    const rw = new RunnerWorker(mk, 10_000);
     const hang = new RunnerWorker(() => {
       const w = script("setInterval(() => {}, 1000)")();
       live++;
@@ -342,7 +365,12 @@ describe("worker failures never throw into the daemon (KN-69EHXE P2-4, P3-3, P3-
       return w;
     }, 30);
     await expect(hang.runJob("/p", job)).rejects.toThrow("timed out");
-    await expect(rw.runJob("/p", job)).resolves.toBeUndefined();
+    // Report the rejection reason instead of a bare "rejected", so a failure here says why.
+    const followUp = await rw.runJob("/p", job).then(
+      () => "resolved",
+      (e: unknown) => `rejected: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    expect(followUp).toBe("resolved");
     await Promise.all([rw.stop(), hang.stop()]);
     expect(peak).toBeLessThanOrEqual(2);
     // After a timeout the same host starts its next worker only once the old thread is gone.
