@@ -15,6 +15,7 @@ import type { ActiveTimer } from "../api/client";
 import { getTaskLifecycleState } from "../models/taskLifecycle";
 import type { TaskLifecycleEvent } from "../models/taskLifecycle";
 import { toast } from "../components/ui/sonner";
+import type { OperationEvent, OperationRemovedEvent } from "../models/operation";
 
 // Event types that can be received from server
 export type SSEEventType =
@@ -32,7 +33,11 @@ export type SSEEventType =
 	| "docs:refresh"
 	| "refresh"
 	| "runtime:status"
-	| "service:status";
+	| "service:status"
+	| "operation:started"
+	| "operation:updated"
+	| "operation:finished"
+	| "operation:removed";
 
 // Event payload types
 export interface SSEEventPayloads {
@@ -51,6 +56,10 @@ export interface SSEEventPayloads {
 	"refresh": { full?: boolean; reason?: string };
 	"runtime:status": Record<string, never>;
 	"service:status": unknown;
+	"operation:started": OperationEvent;
+	"operation:updated": OperationEvent;
+	"operation:finished": OperationEvent;
+	"operation:removed": OperationRemovedEvent;
 }
 
 // Callback type for event listeners
@@ -329,6 +338,12 @@ export function SSEProvider({ children }: { children: ReactNode }) {
 			addHandler(eventSource, "service:status", (e) => {
 				emit("service:status", JSON.parse(e.data));
 			});
+
+			for (const name of ["operation:started", "operation:updated", "operation:finished", "operation:removed"] as const) {
+				addHandler(eventSource, name, (e) => {
+					emit(name, JSON.parse(e.data));
+				});
+			}
 
 			addHandler(eventSource, "docs:updated", (e) => {
 				const data = JSON.parse(e.data);
