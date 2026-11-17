@@ -39,10 +39,9 @@ const operationItem = (o: Operation, h: TrayHandlers) => {
 	return item;
 };
 
-/** What the stack does: the timer calls onDismiss() with nothing, the Dismiss button with the click. */
-const timer = (item: ReturnType<typeof operationItem>) => item.onDismiss?.();
-const clickDismiss = (item: ReturnType<typeof operationItem>) =>
-	(item.onDismiss as (e: unknown) => void)?.({ type: "click" });
+/** What the stack does: the timer calls onDismiss("timeout"), the Dismiss button onDismiss("user"). */
+const timer = (item: ReturnType<typeof operationItem>) => item.onDismiss?.("timeout");
+const clickDismiss = (item: ReturnType<typeof operationItem>) => item.onDismiss?.("user");
 
 describe("toActivityItem", () => {
 	test("buttons come from the flags, not the kind", () => {
@@ -78,17 +77,6 @@ describe("toActivityItem", () => {
 			const { h, calls } = handlers();
 			timer(operationItem(o, h));
 			expect(calls).toEqual(["hide op_1"]);
-		}
-	});
-
-	test("the timer leaves a cancelled row with work left, and a failed row, alone", () => {
-		for (const o of [
-			op({ state: "cancelled", cancellable: false, retryable: true }),
-			op({ state: "failed", cancellable: false, error: "boom" }),
-		]) {
-			const { h, calls } = handlers();
-			timer(operationItem(o, h));
-			expect(calls).toEqual([]);
 		}
 	});
 

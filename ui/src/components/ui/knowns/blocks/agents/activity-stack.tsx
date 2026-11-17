@@ -21,6 +21,9 @@ export type ActivityItem =
   | ({ kind: "handoff" } & Common & HandoffActivityProps)
   | ({ kind: "operation" } & Common & OperationActivityProps);
 
+/** Why an operation's onDismiss fired: its finished capsule timed out, or the user pressed Dismiss. */
+export type ActivityDismissReason = "timeout" | "user";
+
 export type OperationState = "queued" | "running" | "cancelling" | "done" | "failed" | "cancelled";
 export interface OperationAction {
   id: string;
@@ -41,8 +44,13 @@ export interface OperationActivityProps {
   error?: ReactNode;
   /** Buttons in the open capsule, in this order. */
   actions?: readonly OperationAction[];
-  /** Shows a Dismiss button once it has finished or failed; the stack also calls it when a finished capsule leaves. */
-  onDismiss?: () => void;
+  /** Shows a Dismiss button once it has finished or failed; the stack also calls it when a finished capsule leaves. Always called with the reason, never with the click event. */
+  onDismiss?: (reason: ActivityDismissReason) => void;
+  /**
+   * Whether it counts as finished: dimmed, and the stack asks you to drop it after dismissAfterMs. Default by state: done is, and cancelled
+   * is only when it has no `actions` (with actions it is waiting for a decision, such as Run again). Failed never is.
+   */
+  finished?: boolean;
   startedAt?: Date;
   finishedAt?: Date;
 }
@@ -63,7 +71,7 @@ export function isActivityDone(item: ActivityItem): boolean {
   if (item.kind === "run") return !!item.finished;
   if (item.kind === "eta") return item.etaMinutes <= 0;
   if (item.kind === "ring") return item.left <= 0;
-  if (item.kind === "operation") return OPERATION_TONE[item.state].finished;
+  if (item.kind === "operation") return item.finished ?? (OPERATION_TONE[item.state].finished && !(item.state === "cancelled" && !!item.actions?.length));
   return false;
 }
 
@@ -169,7 +177,7 @@ function OperationCapsule({ item, shared }: { item: OperationActivityProps; shar
               </Button>
             ))}
             {ended && item.onDismiss && (
-              <Button size="sm" variant="ghost" className="rounded-full" onClick={item.onDismiss}>
+              <Button size="sm" variant="ghost" className="rounded-full" onClick={() => item.onDismiss?.("user")}>
                 Dismiss
               </Button>
             )}
@@ -225,6 +233,15 @@ export function ActivityStack({ items, max = 3, expandedId, defaultExpandedId = 
   const [kept, setKept] = useState<string | null>(defaultExpandedId);
   const [all, setAll] = useState(false);
   const open = expandedId !== undefined ? expandedId : kept;
+  // An open id whose item has left (dismissed, timed out, removed) holds nothing: it must not keep every dismiss timer stopped for good.
+  const openPresent = open !== null && items.some((i) => i.id === open);
+  // Uncontrolled: forget the open id once its item has been here and then left. One that has not arrived yet (defaultExpandedId) stays set.
+  const seenOpen = useRef<string | null>(null);
+  useEffect(() => {
+    if (expandedId !== undefined || kept === null) return;
+    if (openPresent) seenOpen.current = kept;
+    else if (seenOpen.current === kept) setKept(null);
+  }, [expandedId, kept, openPresent]);
   const setOpen = (id: string | null) => {
     if (expandedId === undefined) setKept(id);
     onExpandedChange?.(id);
@@ -242,7 +259,7 @@ export function ActivityStack({ items, max = 3, expandedId, defaultExpandedId = 
   live.current = items;
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
-  const held = pauseOnInteract && (open !== null || hovered || focused);
+  const held = pauseOnInteract && (openPresent || hovered || focused);
   const heldRef = useRef(held);
   heldRef.current = held;
   const timers = useRef(new Map<string, { left: number; since: number | null; t?: ReturnType<typeof setTimeout> }>());
@@ -253,7 +270,7 @@ export function ActivityStack({ items, max = 3, expandedId, defaultExpandedId = 
     e.t = setTimeout(() => {
       timers.current.delete(id);
       const it = live.current.find((i) => i.id === id);
-      if (it?.kind === "operation") it.onDismiss?.();
+      if (it?.kind === "operation") it.onDismiss?.("timeout");
       dismiss.current?.(id);
     }, e.left);
   };
@@ -310,7 +327,7 @@ export function ActivityStack({ items, max = 3, expandedId, defaultExpandedId = 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statesKey, announce]);
   // One ping per stack: the open capsule, else the first one still running.
-  const pingId = open ?? items.find((i) => !isActivityDone(i))?.id;
+  const pingId = (openPresent ? open : null) ?? items.find((i) => !isActivityDone(i))?.id;
 
   let n = 0;
   return (

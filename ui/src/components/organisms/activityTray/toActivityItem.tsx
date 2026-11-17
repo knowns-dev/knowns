@@ -71,15 +71,12 @@ export function toActivityItem(op: Operation, h: TrayHandlers): ActivityItem {
 		// looks like a clock that never ran, so it shows no clock at all.
 		startedAt: op.finishedAt && op.finishedAt - op.startedAt < 1000 ? undefined : new Date(op.startedAt),
 		finishedAt: op.finishedAt ? new Date(op.finishedAt) : undefined,
-		// The stack calls this with no argument when its timer ends a finished row, and with the click
-		// when the person presses Dismiss. The timer ends only rows that age out (done, and cancelled
-		// with nothing left to run); a failed row, or a cancelled one with work left, waits for Dismiss.
-		onDismiss: (clicked?: unknown) => {
-			if (clicked === undefined) {
-				if (agesOut(op)) h.hideHere(op.id);
-				return;
-			}
-			if (agesOut(op)) h.hideHere(op.id);
+		// The stack says why: "timeout" (a finished row aged out; it never fires for a row that has
+		// actions, so a failed row or a cancelled one with work left waits) hides it in this tab; "user"
+		// (the Dismiss button) removes a failed or cancelled-with-work row on the server, and only hides a
+		// finished one.
+		onDismiss: (reason) => {
+			if (reason === "timeout" || agesOut(op)) h.hideHere(op.id);
 			else h.dismissOnServer(op.id);
 		},
 	};

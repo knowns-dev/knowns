@@ -32,10 +32,6 @@ export function ActivityTray() {
 	}, []);
 	const wrap = useRef<HTMLDivElement>(null);
 	const panelId = useId();
-	// One capsule open at a time. Controlled, so an id that left the list is no longer "open": the
-	// stack holds every dismiss timer while a capsule is open, and an open id that never came back
-	// would keep finished rows (and this indicator) on screen for good.
-	const [expanded, setExpanded] = useState<string | null>(null);
 	const trigger = useRef<HTMLButtonElement>(null);
 	const autoTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const autoOpened = useRef(false);
@@ -71,7 +67,6 @@ export function ActivityTray() {
 		[operations, pending, run, cancel, retry, dismiss, hideHere],
 	);
 
-	const expandedId = expanded !== null && operations.some((o) => o.id === expanded) ? expanded : null;
 	// Only a real failure is "failed" (red). A cancelled row with work left is the person's own doing: neutral.
 	const failed = operations.filter((o) => o.state === "failed").length;
 	const running = operations.filter((o) => o.state === "running" || o.state === "queued" || o.state === "cancelling").length;
@@ -264,11 +259,7 @@ export function ActivityTray() {
 					label="Background operations"
 					pauseOnInteract
 					announce
-					expandedId={expandedId}
-					onExpandedChange={(id) => {
-						setExpanded(id);
-						if (id) interact();
-					}}
+					onExpandedChange={(id) => id && interact()}
 				/>
 			</div>
 		</div>
