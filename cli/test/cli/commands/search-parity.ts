@@ -19,10 +19,18 @@ export async function expectParity(
   try {
     for (let i = 0; i < normalized.length; i++) {
       const label = (normalized[i] as Step).args.join(" ");
-      expect({ step: label, ...(c.ts[i] as object) }).toEqual({
-        step: label,
-        ...(c.go[i] as object),
-      });
+      try {
+        expect({ step: label, ...(c.ts[i] as object) }).toEqual({
+          step: label,
+          ...(c.go[i] as object),
+        });
+      } catch (err) {
+        if (c.retried.includes(i)) {
+          (err as Error).message +=
+            `\n(the Go capture of this step came back empty and was taken a second time; this is the second one)`;
+        }
+        throw err;
+      }
     }
     expect(treeContentDiff(c.goTree, c.tsTree)).toEqual([]);
   } finally {
