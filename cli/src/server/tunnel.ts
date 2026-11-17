@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnDetached } from "../platform/detached-spawn.ts";
 import { goLookPathError } from "../platform/goerror.ts";
-import { isProcessInstance } from "../runtime/process-identity.ts";
+import { isProcessInstance, windowsSystemTool } from "../runtime/process-identity.ts";
 import type { App } from "./app.ts";
 import { jsonResponse, type Router, respondError } from "./http.ts";
 import type { Broadcaster } from "./sse.ts";
@@ -38,7 +38,7 @@ export function installHint(): string {
 function isProcessAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   if (process.platform === "win32") {
-    const r = spawnSync("tasklist", ["/FI", `PID eq ${pid}`, "/NH"], {
+    const r = spawnSync(windowsSystemTool("tasklist.exe"), ["/FI", `PID eq ${pid}`, "/NH"], {
       encoding: "utf8",
       windowsHide: true,
     });

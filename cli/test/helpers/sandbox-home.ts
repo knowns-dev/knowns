@@ -145,6 +145,9 @@ const GUARDED_ENV = [
   "XDG_RUNTIME_DIR",
   "APPDATA",
   "LOCALAPPDATA",
+  // A test that points PATH at a sandbox bin and does not restore it leaves every later file in
+  // the process without System32 or /bin (CI Windows, readProcessInfo returned undefined).
+  "PATH",
 ] as const;
 const envSnapshot = new Map<string, string | undefined>(
   GUARDED_ENV.map((k) => [k, process.env[k]]),
