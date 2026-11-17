@@ -242,7 +242,13 @@ cases("settings (project) matches Go on a terminal", () => {
     SLOW,
   );
 
-  test(
+  // Skipped on Linux only: the Go 0.34.1 oracle loses the keys typed after an aborted huh sub-form
+  // there (ubuntu CI, every attempt: Go's last screen is the redrawn menu with "> Project" and
+  // nothing moved, while the TS side shows the expected flow). It never fails on macOS. The oracle
+  // is frozen, so the case cannot be made to hold on Linux; the TS behaviour is covered by this
+  // case on macOS and by the other cases here (which cancel at the menu and finish every form).
+  // Re-enabling it is tracked in @task-KN-7VK1NZ.
+  test.skipIf(process.platform === "linux")(
     "cancelling a sub-form returns to the menu",
     () => {
       const r = runBoth(
