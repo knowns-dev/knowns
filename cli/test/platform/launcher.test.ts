@@ -114,6 +114,54 @@ describe("launcher helpers (spec mcp-thin-proxy D10)", () => {
   });
 });
 
+// Real Windows paths, run on every OS: the helpers follow the platform they are asked about.
+describe("launcher helpers with Windows paths", () => {
+  const dir = "C:\\Users\\Admin\\.knowns\\bin";
+  const win = { execPath: `${dir}\\knowns-engine.exe`, platform: "win32" };
+  const same = (p: string) => p;
+
+  test("KNOWNS_LAUNCHER: knowns.exe, kn.exe, any case, only beside this engine", () => {
+    for (const name of ["knowns.exe", "kn.exe", "KNOWNS.EXE", "Knowns"]) {
+      const v = `${dir}\\${name}`;
+      expect(launcherPath({ KNOWNS_LAUNCHER: v }, { ...win, realpath: same })).toBe(v);
+    }
+    // wrong stem, relative, a POSIX-looking path, a drive-relative path
+    for (const v of [`${dir}\\evil.exe`, "bin\\knowns.exe", "/x/bin/knowns", "C:knowns.exe"]) {
+      expect(launcherPath({ KNOWNS_LAUNCHER: v }, { ...win, realpath: same })).toBeUndefined();
+    }
+  });
+
+  test("the engine comparison ignores case and a drive letter written differently", () => {
+    const upper = { ...win, execPath: `c:\\users\\admin\\.knowns\\bin\\KNOWNS-ENGINE.EXE` };
+    expect(
+      launcherPath({ KNOWNS_LAUNCHER: `${dir}\\knowns.exe` }, { ...upper, realpath: same }),
+    ).toBe(`${dir}\\knowns.exe`);
+    // a different engine beside the launcher is not this process
+    const other = { ...win, execPath: "D:\\elsewhere\\knowns-engine.exe" };
+    expect(
+      launcherPath({ KNOWNS_LAUNCHER: `${dir}\\knowns.exe` }, { ...other, realpath: same }),
+    ).toBeUndefined();
+  });
+
+  test("engineBeside keeps the directory and adds .exe; a UNC launcher works too", () => {
+    expect(engineBeside(`${dir}\\knowns.exe`, "win32")).toBe(`${dir}\\knowns-engine.exe`);
+    expect(engineBeside("\\\\srv\\share\\k\\knowns.exe", "win32")).toBe(
+      "\\\\srv\\share\\k\\knowns-engine.exe",
+    );
+  });
+
+  test("stableLauncherPath leaves a Windows path alone; launcherProblem sees a missing engine", () => {
+    expect(stableLauncherPath(`${dir}\\knowns.exe`, () => false)).toBe(`${dir}\\knowns.exe`);
+    const env = { KNOWNS_LAUNCHER: `${dir}\\knowns.exe`, PATH: "" };
+    const seams = { ...win, realpath: same };
+    expect(launcherProblem(env, () => true, "win32", seams)).toBeUndefined();
+    expect(launcherProblem(env, (p) => !p.endsWith("knowns-engine.exe"), "win32", seams)).toEqual({
+      kind: "engine-missing",
+      path: `${dir}\\knowns-engine.exe`,
+    });
+  });
+});
+
 describe("daemon identity with the engine name", () => {
   test("a daemon started as knowns-engine __runtime run is a Knowns runtime daemon", async () => {
     const { isRuntimeDaemonCommand } = await import("../../src/runtime/process-identity.ts");

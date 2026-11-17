@@ -220,7 +220,8 @@ export class UiHost {
 
   async start(): Promise<UiDescriptor> {
     this.stopping = false;
-    checkDescriptorLocation(this.root);
+    // A caller that names the root itself has made the choice, as for the MCP endpoint.
+    if (this.opts.root === undefined) checkDescriptorLocation(this.root);
     const ep = address(this.version, this.root);
     if (ep.dir) {
       privateDir(ep.dir);
