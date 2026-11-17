@@ -432,7 +432,9 @@ async function update(state: McpState, req: CallToolRequest): Promise<CallToolRe
     let next = cur;
     if (clear.has("content")) next = "";
     else if (hasSection && sectionTarget !== "" && hasContent) {
-      if (rebasing) {
+      // Only a document that changed since it was read is a rebase onto other content; the same
+      // content is just the first application, and a section index still means what it meant.
+      if (rebasing && cur !== (oldDoc.content ?? "")) {
         if (/^\s*\d+\s*$/.test(sectionTarget)) {
           throw new HistoryConflictError(
             "section index cannot be re-applied to a document that changed; read it again or pass expectedHash",
