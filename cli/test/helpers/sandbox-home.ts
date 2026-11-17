@@ -19,7 +19,7 @@
 //
 // Limit: Bun fixes os.homedir() at process start, so code that calls homedir() without checking
 // HOME first still sees the real home. The guard in step 4 is what catches such a regression.
-import { afterAll, setDefaultTimeout } from "bun:test";
+import { afterAll, afterEach, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -120,16 +120,19 @@ if (!alreadyApplied)
     }
   });
 
-// 5. Fail a test file that leaves a state-selecting env key changed. bun runs every file in ONE
-// process, so a file that sets KNOWNS_RUNTIME_ROOT (or HOME ...) and does not put it back points all
-// later files at its dead temp dir; that is how one unrestored override once failed 24 tests in
-// other suites. The snapshot is taken after step 2, so it holds the sandbox home. A file may change
-// these keys while it runs; it must restore them by the time its own afterAll hooks are done.
+// 5. Fail a test file that leaves a runtime-selecting env key changed. bun runs every file in ONE
+// process, so a file that sets KNOWNS_RUNTIME_ROOT and does not put it back points all later files
+// at its dead temp dir; one unrestored override once failed 24 tests in other suites. The snapshot
+// is taken after step 2. A file may change these keys while it runs; it must restore them by the
+// time its own afterAll hooks are done.
+//
+// HOME and USERPROFILE are not guarded: harnesses move them for the length of an in-process
+// runTs (withProcessEnv), and a call still in flight at a file boundary is not a leak.
+//
+// Hooks registered here run once for the whole run, not once per file, so the file is told apart
+// with Bun.main (the file whose code is running): the first test of the next file looks back at
+// the previous file's end state.
 const GUARDED_ENV = [
-  "HOME",
-  "USERPROFILE",
-  "HOMEDRIVE",
-  "HOMEPATH",
   "KNOWNS_RUNTIME_ROOT",
   "KNOWNS_HOME",
   "XDG_CONFIG_HOME",
@@ -143,20 +146,32 @@ const GUARDED_ENV = [
 const envSnapshot = new Map<string, string | undefined>(
   GUARDED_ENV.map((k) => [k, process.env[k]]),
 );
-afterAll(() => {
+function takeEnvDrift(): string[] {
   const drift: string[] = [];
   for (const [k, was] of envSnapshot) {
     const now = process.env[k];
-    if (now !== was) drift.push(`${k}: ${JSON.stringify(was)} -> ${JSON.stringify(now)}`);
-  }
-  if (drift.length === 0) return;
-  // Put them back so one leaking file fails once instead of every file after it.
-  for (const [k, was] of envSnapshot) {
+    if (now === was) continue;
+    drift.push(`${k}: ${JSON.stringify(was)} -> ${JSON.stringify(now)}`);
+    // Put it back so one leaking file fails once instead of every file after it.
     if (was === undefined) delete process.env[k];
     else process.env[k] = was;
   }
-  const file = Bun.main; // the test file whose hooks are running
+  return drift;
+}
+function failLeak(file: string, drift: string[]): never {
   throw new Error(
     `${file} left test-environment keys changed after its run; restore them in afterAll/finally:\n  ${drift.join("\n  ")}`,
   );
+}
+let lastFile = Bun.main;
+afterEach(() => {
+  if (Bun.main === lastFile) return;
+  const prev = lastFile;
+  lastFile = Bun.main;
+  const drift = takeEnvDrift();
+  if (drift.length > 0) failLeak(prev, drift);
+});
+afterAll(() => {
+  const drift = takeEnvDrift();
+  if (drift.length > 0) failLeak(lastFile, drift);
 });
