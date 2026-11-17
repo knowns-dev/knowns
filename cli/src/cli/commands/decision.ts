@@ -409,13 +409,20 @@ const decisionAccept = defineCommand({
 const decisionResolve = defineCommand({
   use: "resolve <resolution> <candidate-id>",
   short: "Resolve a persisted System Decision candidate",
-  long: "Resolve a persisted candidate with accept_new, link_as_related, reject_new, or supersede_existing. Link and replace require --target.",
+  long: "Resolve a persisted candidate with accept_new, accept_distinct, link_as_related, merge_duplicate, reject_new, or supersede_existing. link_as_related only links the two decisions (both keep their status). merge_duplicate folds the draft into the target and rejects the draft. Link, merge and replace require --target. accept_distinct accepts a draft whose matches are not duplicates, keeps the matched decisions current, and requires --reason (recorded on the accepted decision). It is a human-gated operation like accept_new.",
   args: exactArgs(2),
   flags: [
     {
       type: "string",
+      name: "reason",
+      usage: "Reviewer reason, required by accept_distinct",
+      default: "",
+    },
+    {
+      type: "string",
       name: "target",
-      usage: "Existing Decision ID required by link_as_related or supersede_existing",
+      usage:
+        "Existing Decision ID required by link_as_related, merge_duplicate or supersede_existing",
       default: "",
     },
     {
@@ -434,6 +441,7 @@ const decisionResolve = defineCommand({
       result = await reviewService(ctx, storage).resolve(undefined, {
         candidateId,
         resolution,
+        reason: ctx.flags.string("reason"),
         targetId: ctx.flags.string("target"),
         replacementId: ctx.flags.string("replacement-id"),
       });
@@ -457,6 +465,50 @@ const decisionResolve = defineCommand({
       return;
     }
     ctx.print(`${renderSuccess(`Resolved Decision review with ${resolution}`)}\n`);
+  },
+});
+
+const decisionRestore = defineCommand({
+  use: "restore <draft-id>",
+  short: "Restore a draft folded into a decision by the old link_as_related",
+  long: "Undo a fold: the rejected draft goes back to draft and the entries it shares with the --target decision are removed from the target. A pre-merge state is not stored, so this is a dry run by default that lists every shared entry as 'will remove'; compare with git log -p -- .knowns/decisions/<target file>, then re-run with --apply and one --keep <entry> for each entry the target owned. The @decision refs between the two stay as a plain link.",
+  args: exactArgs(1),
+  flags: [
+    { type: "string", name: "target", usage: "Decision ID the draft was folded into", default: "" },
+    {
+      type: "bool",
+      name: "apply",
+      usage: "Write the restore instead of previewing it",
+      default: false,
+    },
+    { type: "stringArray", name: "keep", usage: "Entry to keep on the target (repeatable)" },
+  ],
+  async run(ctx) {
+    const storage = await openStorage(ctx);
+    let result: Awaited<ReturnType<DecisionReviewService["restoreMerged"]>>;
+    try {
+      result = await reviewService(ctx, storage).restoreMerged(
+        ctx.args[0] as string,
+        ctx.flags.string("target"),
+        { keep: ctx.flags.strings("keep"), apply: ctx.flags.bool("apply") },
+      );
+    } catch (e) {
+      throw new Error(`restore decision: ${(e as Error).message}`, { cause: e });
+    }
+    for (const id of result.changedIds) await bestEffortIndexDecision(storage, id);
+    if (ctx.json) {
+      ctx.printJSON(result);
+      return;
+    }
+    let b = "";
+    if (result.state === "already_restored") {
+      ctx.print(`${result.message}\n`);
+      return;
+    }
+    for (const e of result.entries) b += `${e.action}: ${e.kind} ${e.entry}\n`;
+    if (result.state === "preview") b += `\n${result.message}\n`;
+    else b += `${renderSuccess("Restored draft " + ctx.args[0])}\n`;
+    ctx.print(b);
   },
 });
 
@@ -643,6 +695,7 @@ export default defineCommand({
     decisionSupersede,
     decisionAccept,
     decisionResolve,
+    decisionRestore,
     decisionMigrate,
   ],
 });

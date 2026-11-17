@@ -41,6 +41,31 @@ const STOP_WORDS = [
   "uses",
   "using",
   "with",
+  // KN-PRGZMS: Vietnamese function words of 3+ UTF-8 bytes. tokenSet keeps every token of three
+  // bytes or more, so these counted as shared topic words. Go 0.34.1 does not drop them.
+  "chỉ",
+  "của",
+  "cho",
+  "các",
+  "những",
+  "được",
+  "trong",
+  "với",
+  "là",
+  "và",
+  "khi",
+  "không",
+  "này",
+  "để",
+  "một",
+  "có",
+  "thì",
+  "như",
+  "nên",
+  "sau",
+  "trước",
+  "bằng",
+  "theo",
 ];
 
 export function significantTokenSet(text: string): Set<string> {

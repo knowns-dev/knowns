@@ -3,6 +3,7 @@
 // answer from a worker pool in Go, so arrival order is not part of the contract).
 import { describe, expect, test } from "bun:test";
 import { withoutD13 } from "../helpers/d13.ts";
+import { withoutHotfix } from "../helpers/kn-prgzms.ts";
 import { hasGoBin, McpSession, makeSandbox, maskPath } from "./harness.ts";
 
 const LINES: string[] = [
@@ -72,6 +73,9 @@ const LINES: string[] = [
   '{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"project","arguments":{}}}',
 ];
 
+// Divergences from Go 0.34.1 (KN-PRGZMS accept_distinct, KN-XAA6KA merge_duplicate and restore)
+// are taken out of the TS side only, by test/helpers/kn-prgzms.ts.
+
 async function collect(side: "go" | "ts"): Promise<string[]> {
   const sb = makeSandbox("full");
   const s = new McpSession(side, { cwd: sb.dir, home: sb.home });
@@ -79,7 +83,7 @@ async function collect(side: "go" | "ts"): Promise<string[]> {
   await Bun.sleep(1500);
   await s.close();
   const lines = s.lines.map((l) => maskPath(l, sb.dir, "<DIR>"));
-  return (side === "ts" ? lines.map(withoutD13) : lines).sort();
+  return (side === "ts" ? lines.map((l) => withoutHotfix(withoutD13(l))) : lines).sort();
 }
 
 describe.skipIf(!hasGoBin)("wire protocol matches Go", () => {

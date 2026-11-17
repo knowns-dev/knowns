@@ -228,6 +228,7 @@ export function registerDecisions(r: Router, app: App): void {
           candidateId: "string",
           targetId: "string",
           replacementId: "string",
+          reason: "string",
           status: "string",
           id: "string",
           title: "string",
@@ -250,6 +251,7 @@ export function registerDecisions(r: Router, app: App): void {
         const result = await (await service()).resolve(entryFrom(v, true), {
           candidateId: (v.candidateId as string | undefined) ?? "",
           resolution: v.resolution as string,
+          reason: (v.reason as string | undefined) ?? "",
           targetId: (v.targetId as string | undefined) ?? "",
           replacementId: (v.replacementId as string | undefined) ?? "",
           status: (v.status as string | undefined) ?? "",
@@ -259,6 +261,33 @@ export function registerDecisions(r: Router, app: App): void {
           broadcast("decisions:updated", { result: decisionResultJson(result) });
         }
         return jsonResponse(200, decisionResultJson(result));
+      } catch (e) {
+        return respondError(400, errMessage(e));
+      }
+    }),
+  );
+
+  r.post(
+    "/api/decisions/review/restore",
+    guard(async (c) => {
+      const s = app.need();
+      const body = await readStruct(
+        c,
+        "restoreDecisionRequest",
+        { candidateId: "string", targetId: "string", keep: "strings", apply: "bool" },
+        "",
+      );
+      if (!body.ok) return respondError(400, "invalid request body");
+      const v = body.v;
+      try {
+        const result = await (await service()).restoreMerged(
+          (v.candidateId as string | undefined) ?? "",
+          (v.targetId as string | undefined) ?? "",
+          { keep: (v.keep as string[] | undefined) ?? [], apply: v.apply === true },
+        );
+        for (const id of result.changedIds) await bestEffortIndexDecision(s, id);
+        if (result.changedIds.length > 0) broadcast("decisions:updated", { result });
+        return jsonResponse(200, result);
       } catch (e) {
         return respondError(400, errMessage(e));
       }

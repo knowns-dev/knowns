@@ -77,7 +77,9 @@ type DecisionDraft = {
 type ReviewAction =
 	| { kind: "link_evidence"; links: EvidenceLinks }
 	| { kind: "accept_new" }
+	| { kind: "accept_distinct" }
 	| { kind: "link_as_related"; targetID: string; targetTitle: string }
+	| { kind: "merge_duplicate"; targetID: string; targetTitle: string }
 	| { kind: "supersede_existing"; targetID: string; targetTitle: string }
 	| { kind: "reject_new" };
 
@@ -402,10 +404,10 @@ export default function DecisionPage() {
 	);
 
 	const handleResolveCandidate = useCallback(
-		async (candidate: DecisionEntry, resolution: DecisionReviewResolution, targetId?: string) => {
+		async (candidate: DecisionEntry, resolution: DecisionReviewResolution, targetId?: string, reason?: string) => {
 			setActionBusy(true);
 			try {
-				await decisionApi.resolveReview({ candidateId: candidate.id, resolution, targetId });
+				await decisionApi.resolveReview({ candidateId: candidate.id, resolution, targetId, reason });
 				await loadDecisions();
 				setSelectedID(null);
 				toast.success(resolutionNotice(resolution, candidate.title));
@@ -794,7 +796,12 @@ function DecisionDetail({
 	onClose: () => void;
 	onOpenDecision: (id: string) => void;
 	onLinkEvidence: (candidate: DecisionEntry, links: EvidenceLinks) => Promise<boolean>;
-	onResolve: (candidate: DecisionEntry, resolution: DecisionReviewResolution, targetId?: string) => Promise<boolean>;
+	onResolve: (
+		candidate: DecisionEntry,
+		resolution: DecisionReviewResolution,
+		targetId?: string,
+		reason?: string,
+	) => Promise<boolean>;
 }) {
 	const isMobile = useIsMobile();
 	const scrollRef = useRef<HTMLDivElement>(null);
@@ -812,12 +819,17 @@ function DecisionDetail({
 		scrollRef.current?.scrollTo({ top: 0 });
 	}, [decision.id]);
 
-	const confirmAction = async () => {
+	const confirmAction = async (reason?: string) => {
 		if (!action) return;
 		const succeeded =
 			action.kind === "link_evidence"
 				? await onLinkEvidence(decision, action.links)
-				: await onResolve(decision, action.kind, "targetID" in action ? action.targetID : undefined);
+				: await onResolve(
+						decision,
+						action.kind,
+						"targetID" in action ? action.targetID : undefined,
+						action.kind === "accept_distinct" ? reason : undefined,
+					);
 		if (succeeded) setAction(null);
 	};
 
@@ -1017,7 +1029,7 @@ function DecisionDetail({
 				candidate={decision}
 				busy={busy}
 				onCancel={() => setAction(null)}
-				onConfirm={() => void confirmAction()}
+				onConfirm={(reason) => void confirmAction(reason)}
 			/>
 		</div>
 	);
@@ -1162,8 +1174,19 @@ function ReviewPanels({
 			<div data-testid="decision-resolution-panel">
 				<DetailSection title="Resolve against current guidance" count={matches.length}>
 					<p className="max-w-[68ch] text-[13.5px] leading-6 text-muted-foreground">
-						This candidate overlaps current guidance. Link it to the current Decision, or replace that Decision with it.
+						This candidate overlaps current guidance. Link it to the current Decision, replace that Decision with it,
+						or accept it as distinct and keep the current Decision.
 					</p>
+					{allowed.has("accept_distinct") ? (
+						<div className="flex flex-wrap gap-2">
+							<ActionButton
+								label="Accept as distinct (keep current)"
+								Icon={ShieldCheck}
+								disabled={busy}
+								onClick={() => onAction({ kind: "accept_distinct" })}
+							/>
+						</div>
+					) : null}
 					<ul className="divide-y rounded-xl border">
 						{matches.map((match) => (
 							<li key={match.id} className="flex flex-col gap-3 px-3.5 py-3.5">
@@ -1181,11 +1204,21 @@ function ReviewPanels({
 								<div className="flex flex-wrap gap-2">
 									{allowed.has("link_as_related") ? (
 										<ActionButton
-											label="Link to current"
+											label="Link as related (both stay as they are)"
 											Icon={Link2}
 											disabled={busy}
 											onClick={() =>
 												onAction({ kind: "link_as_related", targetID: match.id, targetTitle: match.title })
+											}
+										/>
+									) : null}
+									{allowed.has("merge_duplicate") ? (
+										<ActionButton
+											label="Merge into current (rejects this draft)"
+											Icon={GitBranch}
+											disabled={busy}
+											onClick={() =>
+												onAction({ kind: "merge_duplicate", targetID: match.id, targetTitle: match.title })
 											}
 										/>
 									) : null}
@@ -1456,9 +1489,17 @@ function ReviewActionDialog({
 	candidate: DecisionEntry;
 	busy: boolean;
 	onCancel: () => void;
-	onConfirm: () => void;
+	onConfirm: (reason?: string) => void;
 }) {
 	const impact = action ? reviewActionImpact(action, candidate) : null;
+	const [reason, setReason] = useState("");
+	const needsReason = action?.kind === "accept_distinct";
+	const reasonMissing = needsReason && reason.trim() === "";
+
+	useEffect(() => {
+		setReason("");
+	}, [action]);
+
 	return (
 		<Dialog open={action !== null} onOpenChange={(open) => !open && !busy && onCancel()}>
 			<DialogContent
@@ -1476,6 +1517,23 @@ function ReviewActionDialog({
 							<ImpactRow label="Evidence outcome" value={impact.evidence} />
 							<ImpactRow label="Resulting lifecycle" value={impact.lifecycle} />
 						</dl>
+						{needsReason ? (
+							<div className="mt-4">
+								<Field
+									label="Reason"
+									id="decision-distinct-reason"
+									hint="Why this draft is distinct from the matched decisions. Recorded on the accepted decision."
+								>
+									<Textarea
+										id="decision-distinct-reason"
+										data-testid="decision-distinct-reason"
+										value={reason}
+										onChange={(event) => setReason(event.target.value)}
+										rows={3}
+									/>
+								</Field>
+							</div>
+						) : null}
 					</div>
 				) : null}
 				<div className="flex flex-col-reverse gap-2 border-t px-5 py-4 sm:flex-row sm:justify-end">
@@ -1486,8 +1544,8 @@ function ReviewActionDialog({
 						<Button
 							type="button"
 							variant={impact.danger ? "destructive" : "default"}
-							onClick={onConfirm}
-							disabled={busy}
+							onClick={() => onConfirm(needsReason ? reason.trim() : undefined)}
+							disabled={busy || reasonMissing}
 							className="min-h-11 sm:min-h-10"
 						>
 							{busy ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <impact.icon className="h-4 w-4" />}
@@ -1732,15 +1790,35 @@ function reviewActionImpact(action: ReviewAction, candidate: DecisionEntry) {
 				icon: ShieldCheck,
 				danger: false,
 			};
+		case "accept_distinct":
+			return {
+				title: "Confirm acceptance as distinct",
+				target: "No matched Decision is replaced or changed",
+				evidence: "Your reason is recorded as a verification line for each matched Decision.",
+				lifecycle: "Candidate becomes accepted; every matched Decision stays current.",
+				confirmLabel: "Accept as distinct",
+				icon: ShieldCheck,
+				danger: false,
+			};
 		case "link_as_related":
 			return {
-				title: "Confirm link to current",
+				title: "Confirm link as related",
 				target: `${action.targetTitle} (@decision/${action.targetID})`,
-				evidence: "Candidate provenance is transferred to the selected current Decision.",
-				lifecycle: "Candidate becomes rejected history; the selected Decision remains current.",
-				confirmLabel: "Link and close candidate",
+				evidence: "Each Decision gains only a @decision reference to the other. Nothing is copied.",
+				lifecycle: "Both Decisions keep their status; the candidate stays a draft.",
+				confirmLabel: "Link as related",
 				icon: Link2,
 				danger: false,
+			};
+		case "merge_duplicate":
+			return {
+				title: "Confirm merge into existing decision",
+				target: `${action.targetTitle} (@decision/${action.targetID})`,
+				evidence: "Candidate sources, docs and tasks are merged into the existing Decision.",
+				lifecycle: "Candidate becomes rejected history; the existing Decision remains current.",
+				confirmLabel: "Merge and reject draft",
+				icon: GitBranch,
+				danger: true,
 			};
 		case "supersede_existing":
 			return {
@@ -1877,8 +1955,12 @@ function resolutionNotice(resolution: DecisionReviewResolution, title: string) {
 			return `${title} is now current guidance.`;
 		case "supersede_existing":
 			return `${title} is current and the selected target moved to History.`;
+		case "accept_distinct":
+			return `${title} is now current guidance; the matched decisions stay current.`;
 		case "link_as_related":
-			return `${title} was linked to current guidance and moved to rejected History.`;
+			return `${title} was linked as related; both decisions keep their status.`;
+		case "merge_duplicate":
+			return `${title} was merged into current guidance and the draft moved to rejected History.`;
 		case "reject_new":
 			return `${title} was rejected and moved to History.`;
 		default:
