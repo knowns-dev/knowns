@@ -268,7 +268,8 @@ test.describe("Activity tray", () => {
 		await startBatch(page, [done, open]);
 		await expect(page.getByTestId("activity-tray")).toContainText("not changed");
 		const tray = await openTray(page);
-		await tray.getByText("Archiving 2 tasks").click();
+		await tray.locator("ul").getByText("Archiving 2 tasks").click();
+		await page.waitForTimeout(400); // the card unfolds (180 ms); WebKit otherwise clicks while the button still moves
 		await tray.getByRole("button", { name: "Dismiss" }).click();
 		const indicator = page.getByTestId("activity-indicator");
 		await expect(indicator).toBeHidden();
@@ -319,7 +320,7 @@ test.describe("Activity tray", () => {
 		await expect(page.getByTestId("activity-tray")).toContainText("not changed");
 		const tray = await openTray(page);
 		await page.mouse.move(300, 500); // the pointer is away; only the keyboard is in play
-		await tray.getByText("Archiving 2 tasks").click();
+		await tray.locator("ul").getByText("Archiving 2 tasks").click();
 		await page.mouse.move(300, 500);
 		const dismiss = tray.getByRole("button", { name: "Dismiss" });
 		await dismiss.focus();
@@ -394,7 +395,7 @@ test.describe("Activity tray", () => {
 		await expect(page.getByTestId("activity-tray")).toContainText("not changed");
 		const tray = await openTray(page);
 		await expect(tray.locator("[title*='not changed']").first()).toHaveAttribute("title", /must be done/);
-		await tray.getByText("Archiving 2 tasks").click();
+		await tray.locator("ul").getByText("Archiving 2 tasks").click();
 		const reason = tray.locator("p", { hasText: "not changed" });
 		await expect(reason).toBeVisible();
 		await expect(reason).toContainText(/must be done/);
@@ -436,7 +437,7 @@ test.describe("Activity tray", () => {
 		const id = await startBatch(page, ids);
 		await expect(page.getByTestId("activity-tray")).toContainText("Archiving 600 tasks");
 		const tray = await openTray(page);
-		await tray.getByText("Archiving 600 tasks").click();
+		await tray.locator("ul").getByText("Archiving 600 tasks").click();
 		await tray.getByRole("button", { name: "Cancel" }).click();
 
 		await expect.poll(async () => (await operations(page)).find((o) => o.id === id)?.state, { timeout: 30_000 }).toBe("cancelled");
@@ -463,7 +464,7 @@ test.describe("Activity tray", () => {
 		await expect(page.getByTestId("activity-indicator")).not.toHaveClass(/destructive/);
 
 		// Run again takes only what is left, and finishes.
-		await tray.getByText(/Archiving 600 tasks/).first().click();
+		await tray.locator("ul").getByText(/Archiving 600 tasks/).first().click();
 		await tray.getByRole("button", { name: "Run again" }).click();
 		await expect.poll(async () => {
 			const all = await statesOf(page, ids);
@@ -479,7 +480,7 @@ test.describe("Activity tray", () => {
 		const id = await startBatch(page, ids);
 		await expect(page.getByTestId("activity-tray")).toContainText("Archiving 600 tasks");
 		const tray = await openTray(page);
-		await tray.getByText("Archiving 600 tasks").click();
+		await tray.locator("ul").getByText("Archiving 600 tasks").click();
 		// More than two seconds in, while it still runs: the clock must have moved off 0:00.
 		await expect.poll(async () => (await operations(page)).find((o) => o.id === id)?.state).toBe("running");
 		await page.waitForTimeout(2500);
@@ -504,7 +505,7 @@ test.describe("Activity tray", () => {
 		await startBatch(page, ids);
 		await expect(page.getByTestId("activity-tray")).toContainText("Archiving 600 tasks");
 		const tray = await openTray(page);
-		await tray.getByText("Archiving 600 tasks").click();
+		await tray.locator("ul").getByText("Archiving 600 tasks").click();
 		await tray.getByRole("button", { name: "Cancel" }).click();
 		await expect(tray).toContainText(/\d+ archived, \d+ left/, { timeout: 30_000 });
 		const texts = await page.evaluate(() => (window as unknown as { __tray: string[] }).__tray);
@@ -529,7 +530,7 @@ test.describe("Activity tray", () => {
 		await expect(tray).toContainText(`#${open}`);
 		const link = tray.getByRole("link", { name: "Open Runtime" });
 		await expect(link).toHaveAttribute("href", "/runtime");
-		await tray.getByText("Archiving 2 tasks").click();
+		await tray.locator("ul").getByText("Archiving 2 tasks").click();
 		await expect(tray.getByRole("button", { name: "Run again" })).toBeVisible();
 		// A failed row does not age out.
 		await page.waitForTimeout(5000);
@@ -607,7 +608,7 @@ test.describe("Activity tray", () => {
 		await startBatch(page, [done, open]);
 		await expect(page.getByTestId("activity-tray")).toContainText("not changed");
 		const tray = await openTray(page);
-		await tray.getByText("Archiving 2 tasks").click();
+		await tray.locator("ul").getByText("Archiving 2 tasks").click();
 
 		const offenders = await tray.evaluate((root) => {
 			const secs = (v: string) => v.split(",").map((x) => (x.trim().endsWith("ms") ? Number.parseFloat(x) / 1000 : Number.parseFloat(x)));

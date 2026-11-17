@@ -71,18 +71,6 @@ export function ActivityTray() {
 		[operations, pending, run, cancel, retry, dismiss, hideHere],
 	);
 
-	// The stack tracks hover and focus itself, and a Dismiss that removes the button under the pointer
-	// or the focus never sends the leave/blur, so those stay "held" and hold every dismiss timer. When
-	// the stack has emptied it is remounted (empty, so nothing is lost) and starts clean.
-	const [epoch, setEpoch] = useState(0);
-	const hadItems = useRef(false);
-	useEffect(() => {
-		if (operations.length > 0) hadItems.current = true;
-		else if (hadItems.current) {
-			hadItems.current = false;
-			setEpoch((n) => n + 1);
-		}
-	}, [operations.length]);
 	const expandedId = expanded !== null && operations.some((o) => o.id === expanded) ? expanded : null;
 	// Only a real failure is "failed" (red). A cancelled row with work left is the person's own doing: neutral.
 	const failed = operations.filter((o) => o.state === "failed").length;
@@ -272,7 +260,6 @@ export function ActivityTray() {
 				)}
 			>
 				<ActivityStack
-					key={epoch}
 					items={items}
 					label="Background operations"
 					pauseOnInteract
