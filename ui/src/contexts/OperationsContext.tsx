@@ -13,7 +13,6 @@ import {
 	applySnapshot,
 	emptyOperations,
 	forgetOperation,
-	nextHideAt,
 	visibleOperations,
 	type OperationsState,
 } from "../lib/operationsStore";
@@ -43,8 +42,10 @@ function reduce(state: OperationsState, action: Action): OperationsState {
 }
 
 interface OperationsContextType {
-	/** Newest first. Done and cancelled rows leave a few seconds after they finish. */
+	/** Newest first. A done or cancelled row stays until the tray asks to hide it (hideHere). */
 	operations: Operation[];
+	/** Hide a row in THIS tab only (no request): the tray's one timer calls it for done and cancelled rows. */
+	hideHere: (id: string) => void;
 	cancel: (id: string) => Promise<void>;
 	/** Web operations come back under a new id; daemon jobs keep theirs. */
 	retry: (id: string) => Promise<void>;
@@ -55,7 +56,7 @@ const OperationsContext = createContext<OperationsContextType | undefined>(undef
 
 export function OperationsProvider({ children }: { children: ReactNode }) {
 	const [state, dispatch] = useReducer(reduce, emptyOperations);
-	const [now, setNow] = useState(() => Date.now());
+	const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
 
 	const loadSnapshot = useCallback(() => {
 		operationsApi
@@ -73,15 +74,8 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
 	useSSEEvent("operation:finished", (e) => dispatch({ type: "event", seq: e.seq, operation: e.operation }));
 	useSSEEvent("operation:removed", (e) => dispatch({ type: "removed", seq: e.seq, id: e.id }));
 
-	// One timer, for the next done or cancelled row that is about to leave.
-	useEffect(() => {
-		const at = nextHideAt(state, Date.now());
-		if (at === null) return;
-		const timer = setTimeout(() => setNow(Date.now()), Math.max(0, at - Date.now()) + 1);
-		return () => clearTimeout(timer);
-	}, [state]);
-
-	const operations = useMemo(() => visibleOperations(state, now), [state, now]);
+	const operations = useMemo(() => visibleOperations(state, hidden), [state, hidden]);
+	const hideHere = useCallback((id: string) => setHidden((prev) => new Set(prev).add(id)), []);
 
 	const cancel = useCallback(async (id: string) => {
 		try {
@@ -104,7 +98,10 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
 		dispatch({ type: "forget", id });
 	}, []);
 
-	const value = useMemo(() => ({ operations, cancel, retry, dismiss }), [operations, cancel, retry, dismiss]);
+	const value = useMemo(
+		() => ({ operations, hideHere, cancel, retry, dismiss }),
+		[operations, hideHere, cancel, retry, dismiss],
+	);
 	return <OperationsContext.Provider value={value}>{children}</OperationsContext.Provider>;
 }
 
