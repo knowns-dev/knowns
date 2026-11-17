@@ -68,6 +68,12 @@ const windowsPowerShell = (): string =>
   windowsSystemTool("powershell.exe", "WindowsPowerShell", "v1.0");
 
 let lastFailure = "";
+let lastPath = "";
+
+/** How the last successful Windows read was obtained ("elapsed=.. attempts=.. fallback=yes|no"). */
+export function lastReadPath(): string {
+  return lastPath;
+}
 
 /** Why the last readProcessInfo returned undefined ("" when it did not): for a debug line and a test message. */
 export function lastReadFailure(): string {
@@ -97,18 +103,30 @@ export function spawnRetryingSpurious<T extends { status: number | null; error?:
   timeoutMs: number,
   now: () => number = () => performance.now(),
   pause: (ms: number) => void = sleepMs,
-): { result: T; attempts: number; elapsedMs: number } {
+  /** One last attempt after the retries, without the spawn timeout that misfired (it guards its own hang). */
+  fallback?: () => T,
+): { result: T; attempts: number; elapsedMs: number; usedFallback: boolean } {
   const t0 = now();
+  // Failed in a way that says nothing about the command, and not a timeout that really elapsed.
+  const spurious = (r: T): boolean => {
+    if (r.status !== null || r.error === undefined) return false;
+    const timedOut = (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
+    return !(timedOut && now() - t0 >= timeoutMs / 2);
+  };
   let result = run();
   let attempts = 1;
-  for (; attempts < 3; attempts++) {
-    if (result.status !== null || result.error === undefined) break;
-    const timedOut = (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
-    if (timedOut && now() - t0 >= timeoutMs / 2) break; // a genuine timeout
+  for (; attempts < 3 && spurious(result); attempts++) {
     pause(50);
     result = run();
   }
-  return { result, attempts, elapsedMs: now() - t0 };
+  let usedFallback = false;
+  if (fallback !== undefined && spurious(result)) {
+    pause(50);
+    result = fallback();
+    attempts++;
+    usedFallback = true;
+  }
+  return { result, attempts, elapsedMs: now() - t0, usedFallback };
 }
 
 function readWindows(pid: number): ProcessInfo | undefined {
@@ -121,32 +139,44 @@ function readWindows(pid: number): ProcessInfo | undefined {
   const { PSModulePath: _inherited, ...env } = process.env;
   const exe = windowsPowerShell();
   const timeoutMs = 8000;
+  const args = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"];
+  // The fallback runs without spawnSync's timeout and bounds the query inside PowerShell instead.
+  const guarded =
+    `$j = Start-Job -ScriptBlock { ${script} }; ` +
+    "if (Wait-Job $j -Timeout 8) { Receive-Job $j } else { Stop-Job $j; exit 3 }";
   const {
     result: r,
     attempts,
     elapsedMs,
+    usedFallback,
   } = spawnRetryingSpurious(
     () =>
-      spawnSync(
-        exe,
-        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
-        { encoding: "utf8", timeout: timeoutMs, windowsHide: true, env },
-      ),
+      spawnSync(exe, [...args, script], {
+        encoding: "utf8",
+        timeout: timeoutMs,
+        windowsHide: true,
+        env,
+      }),
     timeoutMs,
+    undefined,
+    undefined,
+    () => spawnSync(exe, [...args, guarded], { encoding: "utf8", windowsHide: true, env }),
   );
+  const how = `elapsed=${Math.round(elapsedMs)}ms attempts=${attempts} fallback=${usedFallback ? "yes" : "no"}`;
   if (r.status !== 0) {
     return fail(
-      `${exe} status=${r.status} signal=${r.signal} error=${r.error ?? "none"} elapsed=${Math.round(elapsedMs)}ms attempts=${attempts} stderr=${(r.stderr ?? "").trim().slice(0, 300)}`,
+      `${exe} status=${r.status} signal=${r.signal} error=${r.error ?? "none"} ${how} stderr=${(r.stderr ?? "").trim().slice(0, 300)}`,
     );
   }
   const text = (r.stdout ?? "").trim();
   if (text === "")
-    return fail(`${exe} printed nothing for pid ${pid} (no such process, or no CIM)`);
+    return fail(`${exe} printed nothing for pid ${pid} (no such process, or no CIM) ${how}`);
   const j = JSON.parse(text) as { c: string; e: string; s: number };
   const commandLine = j.c !== "" ? j.c : j.e;
   if (commandLine === "" || !Number.isFinite(j.s))
     return fail(`unusable CIM record: ${text.slice(0, 200)}`);
   lastFailure = "";
+  lastPath = how;
   return { commandLine, startedAt: j.s };
 }
 
