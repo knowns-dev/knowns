@@ -458,6 +458,8 @@ test.describe("Activity tray", () => {
 	});
 
 	test("Cancel stops the batch with 'N archived, M left', untouched tasks stay done, and Run again finishes the rest", async ({ page }) => {
+		// 600 tasks are created, half archived, cancelled and archived again: well over the 90 s CI default on a slow runner.
+		test.setTimeout(300_000);
 		const ids = await doneTasks(page, 600, "Cancel");
 		await gotoReady(page, "/tasks");
 		const id = await startBatch(page, ids);
@@ -491,13 +493,19 @@ test.describe("Activity tray", () => {
 
 		// Run again takes only what is left, and finishes.
 		await expandRow(tray, "Archiving 600 tasks");
+		const rerunAt = Date.now();
 		await tray.getByRole("button", { name: "Run again" }).click();
+		// Poll the operation (one cheap request), not 600 task reads: its progress is also what a failure prints.
+		let last = "no operation yet";
 		await expect.poll(async () => {
-			const all = await statesOf(page, ids);
-			return all.filter((s) => s === "archived").length;
-		}, { timeout: 90_000 }).toBe(600);
+			const next = (await operations(page)).find((o) => o.id !== id);
+			last = next ? `${next.state} ${next.progress?.done ?? 0}/${next.progress?.total ?? "?"} after ${Date.now() - rerunAt} ms` : last;
+			return next?.state;
+		}, { timeout: 200_000, message: () => `Run again did not finish: ${last}` }).toBe("done");
+		test.info().annotations.push({ type: "rerun", description: `${left} tasks: ${last}` });
 		const again = (await operations(page)).find((o) => o.id !== id && o.state === "done");
 		expect(again?.progress?.total).toBe(left);
+		expect((await statesOf(page, ids)).filter((s) => s === "archived")).toHaveLength(600);
 	});
 
 	test("the elapsed clock of a running operation ticks (it is not stuck at 0:00)", async ({ page }) => {
