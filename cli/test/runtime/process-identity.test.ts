@@ -10,6 +10,7 @@ import {
   isKnownsRuntimeDaemon,
   isProcessInstance,
   isRuntimeDaemonCommand,
+  lastReadFailure,
   readProcessInfo,
 } from "../../src/runtime/process-identity.ts";
 import * as q from "../../src/runtime/queue.ts";
@@ -52,7 +53,8 @@ describe("isKnownsRuntimeDaemon", () => {
 describe("readProcessInfo", () => {
   test("reads a live process", () => {
     const info = readProcessInfo(process.pid);
-    expect(info).toBeDefined();
+    // The reason is the failure message, so a CI log says why it was unknown.
+    expect(info, lastReadFailure()).toBeDefined();
     expect(info?.commandLine.length).toBeGreaterThan(0);
     expect(Math.abs((info?.startedAt ?? 0) - Date.now())).toBeLessThan(24 * 3600 * 1000);
   });
@@ -68,6 +70,23 @@ describe("readProcessInfo", () => {
     } finally {
       if (saved === undefined) delete process.env.PATH;
       else process.env.PATH = saved;
+    }
+  });
+  test("still reads a live process with the PSModulePath that PowerShell 7 hands to its children", () => {
+    // pwsh 7 puts its own module directories first; a child Windows PowerShell 5.1 must not be
+    // misled by them (CI Windows runs the suite from `shell: pwsh`).
+    const saved = process.env.PSModulePath;
+    process.env.PSModulePath = [
+      "C:\\Users\\x\\Documents\\PowerShell\\Modules",
+      "C:\\Program Files\\PowerShell\\Modules",
+      "C:\\Program Files\\PowerShell\\7\\Modules",
+      "C:\\WINDOWS\\system32\\WindowsPowerShell\\v1.0\\Modules",
+    ].join(";");
+    try {
+      expect(readProcessInfo(process.pid), lastReadFailure()).toBeDefined();
+    } finally {
+      if (saved === undefined) delete process.env.PSModulePath;
+      else process.env.PSModulePath = saved;
     }
   });
   test("a pid that does not exist has no info", () => {

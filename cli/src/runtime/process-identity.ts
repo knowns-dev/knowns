@@ -67,22 +67,56 @@ export function windowsSystemTool(name: string, ...subdirs: string[]): string {
 const windowsPowerShell = (): string =>
   windowsSystemTool("powershell.exe", "WindowsPowerShell", "v1.0");
 
+let lastFailure = "";
+
+/** Why the last readProcessInfo returned undefined ("" when it did not): for a debug line and a test message. */
+export function lastReadFailure(): string {
+  return lastFailure;
+}
+
+function fail(reason: string): undefined {
+  lastFailure = reason;
+  if ((process.env.KNOWNS_DEBUG ?? "") !== "")
+    process.stderr.write(`knowns: process info: ${reason}\n`);
+  return undefined;
+}
+
 function readWindows(pid: number): ProcessInfo | undefined {
   const script =
     `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; ` +
     "if ($p) { [pscustomobject]@{ c = ($p.CommandLine + ''); e = ($p.ExecutablePath + ''); " +
     "s = ([DateTimeOffset]$p.CreationDate).ToUnixTimeMilliseconds() } | ConvertTo-Json -Compress }";
-  const r = spawnSync(
-    windowsPowerShell(),
-    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
-    { encoding: "utf8", timeout: 8000, windowsHide: true },
-  );
-  if (r.status !== 0) return undefined;
+  // Windows PowerShell 5.1 started from PowerShell 7 inherits its PSModulePath, which can lead it
+  // to modules built for 7 (CimCmdlets among them); without the variable 5.1 rebuilds its own.
+  const { PSModulePath: _inherited, ...env } = process.env;
+  const exe = windowsPowerShell();
+  const run = () =>
+    spawnSync(
+      exe,
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+      { encoding: "utf8", timeout: 8000, windowsHide: true, env },
+    );
+  let r = run();
+  // A spawn that fails outright (no exit status) is retried once: it is not an answer about pid.
+  if (
+    r.status === null &&
+    r.error !== undefined &&
+    (r.error as NodeJS.ErrnoException).code !== "ETIMEDOUT"
+  )
+    r = run();
+  if (r.status !== 0) {
+    return fail(
+      `${exe} status=${r.status} signal=${r.signal} error=${r.error ?? "none"} stderr=${(r.stderr ?? "").trim().slice(0, 300)}`,
+    );
+  }
   const text = (r.stdout ?? "").trim();
-  if (text === "") return undefined;
+  if (text === "")
+    return fail(`${exe} printed nothing for pid ${pid} (no such process, or no CIM)`);
   const j = JSON.parse(text) as { c: string; e: string; s: number };
   const commandLine = j.c !== "" ? j.c : j.e;
-  if (commandLine === "" || !Number.isFinite(j.s)) return undefined;
+  if (commandLine === "" || !Number.isFinite(j.s))
+    return fail(`unusable CIM record: ${text.slice(0, 200)}`);
+  lastFailure = "";
   return { commandLine, startedAt: j.s };
 }
 
