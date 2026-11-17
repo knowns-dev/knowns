@@ -37,6 +37,8 @@ export interface StatCacheOptions {
   budgetBytes?: number;
   /** The clock, for tests. */
   now?: () => number;
+  /** Key paths the Windows way (case-insensitive, either separator); tests force it on. */
+  windows?: boolean;
 }
 
 /** Freezes an object graph so a shared value cannot be changed by a later stage. */
@@ -61,8 +63,18 @@ export class StatCache<T> {
   private bytes = 0;
   private readonly budget: number;
   private readonly now: () => number;
+  private readonly windows: boolean;
+
+  /**
+   * The key of a path. On Windows a prefix written with "/" must match keys written with "\\", and
+   * NTFS ignores case, so both are folded; elsewhere the path is the key.
+   */
+  private key(path: string): string {
+    return this.windows ? path.replaceAll("\\", "/").toLowerCase() : path;
+  }
 
   constructor(opts: StatCacheOptions = {}) {
+    this.windows = opts.windows ?? process.platform === "win32";
     this.budget = opts.budgetBytes ?? DEFAULT_BUDGET_BYTES;
     this.now = opts.now ?? (() => clock());
   }
@@ -83,8 +95,9 @@ export class StatCache<T> {
 
   /** Forgets every entry under a directory (a project was closed or switched away from). */
   dropPrefix(prefix: string): void {
+    const p = this.key(prefix);
     for (const [path, e] of [...this.entries]) {
-      if (path.startsWith(prefix)) this.remove(path, e);
+      if (path.startsWith(p)) this.remove(path, e);
     }
   }
 
@@ -94,24 +107,26 @@ export class StatCache<T> {
    */
   pass(prefix: string): { read: (path: string, parse: () => T) => T; end: () => void } {
     const touched = new Set<string>();
+    const p = this.key(prefix);
     return {
       read: (path, parse) => {
-        touched.add(path);
+        touched.add(this.key(path));
         return this.read(path, parse);
       },
       end: () => {
         for (const [path, e] of [...this.entries]) {
-          if (path.startsWith(prefix) && !touched.has(path)) this.remove(path, e);
+          if (path.startsWith(p) && !touched.has(path)) this.remove(path, e);
         }
       },
     };
   }
 
   /** The cached value for path while its file is unchanged; otherwise parse() and remember. */
-  read(path: string, parse: () => T): T {
+  read(pathIn: string, parse: () => T): T {
+    const path = this.key(pathIn);
     let st: BigIntStats;
     try {
-      st = statSync(path, { bigint: true });
+      st = statSync(pathIn, { bigint: true });
     } catch {
       this.forget(path);
       return parse(); // let parse report the missing or unreadable file the way it always did

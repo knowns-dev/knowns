@@ -5,10 +5,16 @@
 // The variable is only a claim: any parent environment can set it. It is believed only when it names
 // a launcher (`knowns` or `kn`) whose neighbour `knowns-engine` is this very process.
 import { existsSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { posix, win32 } from "node:path";
 import { lookPath } from "../domain/setup/env.ts";
 
 type Env = Record<string, string | undefined>;
+
+/** The path rules of the platform being asked about, not of the machine running the check. */
+const pathFor = (platform: string) => (platform === "win32" ? win32 : posix);
+
+/** realpath that also resolves Windows 8.3 short names and normalises the drive letter. */
+const nativeRealpath = (p: string): string => realpathSync.native(p);
 
 /** The engine's file name next to the launcher. */
 export const engineFileName = (platform: string = process.platform): string =>
@@ -38,11 +44,11 @@ export function launcherPath(
   seams: LauncherSeams = {},
 ): string | undefined {
   const v = (env.KNOWNS_LAUNCHER ?? "").trim();
-  if (v === "" || !isAbsolute(v)) return undefined;
   const platform = seams.platform ?? process.platform;
+  if (v === "" || !pathFor(platform).isAbsolute(v)) return undefined;
   const stem = stemOf(v);
   if (stem !== "knowns" && stem !== "kn") return undefined;
-  const real = seams.realpath ?? realpathSync;
+  const real = seams.realpath ?? nativeRealpath;
   try {
     const engine = real(engineBeside(v, platform));
     const self = real(seams.execPath ?? process.execPath);
@@ -63,7 +69,7 @@ export function stableLauncherPath(
 ): string {
   const m = /^(.*)[\\/]Cellar[\\/][^\\/]+[\\/][^\\/]+[\\/]bin[\\/]([^\\/]+)$/.exec(launcher);
   if (m?.[1] && m[2]) {
-    const linked = join(m[1], "bin", m[2]);
+    const linked = posix.join(m[1], "bin", m[2]);
     return exists(linked) ? linked : m[2].replace(/\.exe$/i, "");
   }
   return launcher;
@@ -79,8 +85,10 @@ export function selfExecutable(env: Env = process.env, seams: LauncherSeams = {}
 }
 
 /** Where the engine should sit for a launcher at `launcher`. */
-export const engineBeside = (launcher: string, platform: string = process.platform): string =>
-  join(dirname(launcher), engineFileName(platform));
+export const engineBeside = (launcher: string, platform: string = process.platform): string => {
+  const p = pathFor(platform);
+  return p.join(p.dirname(launcher), engineFileName(platform));
+};
 
 /**
  * A problem with the launcher/engine pair, or undefined when it is whole (or there is no launcher).
@@ -105,7 +113,7 @@ export function launcherProblem(
   }
   let base = effective;
   try {
-    base = (seams.realpath ?? realpathSync)(effective);
+    base = (seams.realpath ?? nativeRealpath)(effective);
   } catch {
     // keep the path as given
   }

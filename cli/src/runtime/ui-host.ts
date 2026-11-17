@@ -115,11 +115,9 @@ function address(
   };
 }
 
-/** Removes a socket nobody listens on; refuses when a live daemon holds it. */
-async function freeSocket(path: string): Promise<void> {
-  if (!existsSync(path)) return;
-  // Only a refused connection proves nobody listens; a timeout counts as alive.
-  const alive = await new Promise<boolean>((done) => {
+/** Does something answer on this endpoint? Only a refused connection proves not; a timeout counts as alive. */
+function endpointAlive(path: string): Promise<boolean> {
+  return new Promise<boolean>((done) => {
     const sock = net.connect({ path });
     const timer = setTimeout(() => {
       sock.destroy();
@@ -135,7 +133,12 @@ async function freeSocket(path: string): Promise<void> {
       done(false);
     });
   });
-  if (alive) throw new Error(`UI endpoint already active: ${path}`);
+}
+
+/** Removes a socket nobody listens on; refuses when a live daemon holds it. */
+async function freeSocket(path: string): Promise<void> {
+  if (!existsSync(path)) return;
+  if (await endpointAlive(path)) throw new Error(`UI endpoint already active: ${path}`);
   rmSync(path, { force: true });
 }
 
@@ -220,20 +223,30 @@ export class UiHost {
 
   async start(): Promise<UiDescriptor> {
     this.stopping = false;
-    checkDescriptorLocation(this.root);
+    // A caller that names the root itself has made the choice, as for the MCP endpoint.
+    if (this.opts.root === undefined) checkDescriptorLocation(this.root);
     const ep = address(this.version, this.root);
     if (ep.dir) {
       privateDir(ep.dir);
       await freeSocket(ep.address);
     }
     const server = net.createServer({ allowHalfOpen: false }, (sock) => this.onConnection(sock));
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen({ path: ep.address }, () => {
-        server.off("error", reject);
-        resolve();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen({ path: ep.address }, () => {
+          server.off("error", reject);
+          resolve();
+        });
       });
-    });
+    } catch (e) {
+      // A named pipe has no file to probe beforehand, and Bun reports a taken one only as "Failed
+      // to listen": ask the pipe, so the user is told what is actually in the way.
+      if (isWindows && (await endpointAlive(ep.address))) {
+        throw new Error(`UI endpoint already active: ${ep.address}`, { cause: e });
+      }
+      throw e;
+    }
     const descriptor: UiDescriptor = {
       ui_protocol: UI_PROTOCOL,
       version: this.version,

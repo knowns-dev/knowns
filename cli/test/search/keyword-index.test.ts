@@ -218,6 +218,28 @@ describe("StatCache", () => {
     expect(cache.cost).toBe(0);
   });
 
+  test("Windows keys: a prefix with another separator or case still forgets deleted files", () => {
+    const f = open();
+    const tasks = join(f.root, "tasks");
+    const files = readdirSync(tasks).map((n) => join(tasks, n));
+    // Listing prefix as a Windows caller might write it: backslashes and a different case, while
+    // the cached keys came from join()/readdir.
+    const prefix = `${tasks.toUpperCase().replaceAll("/", "\\")}\\`;
+    const cache = new StatCache<number>({ now: later, windows: true });
+    const first = cache.pass(prefix);
+    for (const file of files) first.read(file, () => 1);
+    first.end();
+    expect(cache.size).toBe(files.length);
+    rmSync(files[0] as string);
+    const second = cache.pass(prefix);
+    for (const file of files.slice(1)) second.read(file, () => 1);
+    second.end();
+    expect(cache.size).toBe(files.length - 1); // was one too many: the prefix never matched
+    cache.dropPrefix(prefix);
+    expect(cache.size).toBe(0);
+    expect(cache.cost).toBe(0);
+  });
+
   test("P2-1: a file modified within the racy margin of being cached is parsed again", () => {
     const f = open();
     const file = firstFile(join(f.root, "tasks"));

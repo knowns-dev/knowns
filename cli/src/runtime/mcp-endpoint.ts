@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import net from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join, win32 } from "node:path";
 import { VERSION } from "../version.ts";
 import { ENV_RUNTIME_ROOT, nowString, runtimeRoot } from "./queue.ts";
 
@@ -87,13 +87,35 @@ export function ensurePrivateDir(dir: string): void {
   if ((st.mode & 0o077) !== 0) chmodSync(dir, 0o700);
 }
 
-/** On Windows the pipe is not a trust boundary, so the token file must sit in the user's profile. */
-export function checkDescriptorLocation(root: string): void {
-  if (!isWindows) return;
-  if ((process.env[ENV_RUNTIME_ROOT] ?? "").trim() !== "") return;
-  const home = homedir();
-  const rel = relative(resolve(home).toLowerCase(), resolve(root).toLowerCase());
-  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+/** Seams for checkDescriptorLocation; the defaults are the real machine. */
+export interface DescriptorLocationSeams {
+  windows?: boolean;
+  env?: Record<string, string | undefined>;
+  home?: string;
+}
+
+/**
+ * On Windows the pipe is not a trust boundary, so the token file must sit in the user's profile.
+ * The profile is the OS home and, when set, HOME: globalRootPath() puts ~/.knowns under HOME first,
+ * so a user whose HOME is on another drive keeps a runtime root under it. A root the user named
+ * with KNOWNS_RUNTIME_ROOT is their own choice (any drive) and is not checked.
+ *
+ * HOME is trusted on purpose, at the same level as KNOWNS_RUNTIME_ROOT: both are set by the
+ * process's parent, which could equally launch the daemon with a hostile environment, so honouring
+ * HOME opens nothing the override does not already open. An ACL probe of the directory is not
+ * cheap on Windows (icacls per start) and would not change that trust.
+ */
+export function checkDescriptorLocation(root: string, seams: DescriptorLocationSeams = {}): void {
+  if (!(seams.windows ?? isWindows)) return;
+  const env = seams.env ?? process.env;
+  if ((env[ENV_RUNTIME_ROOT] ?? "").trim() !== "") return;
+  const bases = [seams.home ?? homedir(), env.HOME ?? ""].filter((b) => b !== "");
+  const target = win32.resolve(root).toLowerCase();
+  const inside = bases.some((b) => {
+    const rel = win32.relative(win32.resolve(b).toLowerCase(), target);
+    return !(rel === ".." || rel.startsWith("..\\") || win32.isAbsolute(rel));
+  });
+  if (!inside) {
     throw new Error(`runtime root ${root} is outside the user profile; refusing to write a token`);
   }
 }

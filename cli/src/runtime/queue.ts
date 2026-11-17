@@ -2292,6 +2292,47 @@ export function jobGapMs(ranMs: number): number {
 const OWN_WRITES =
   /^(status\.json|semantic-status\.json|projects-missing\.json|knowns-runtime\.pid|runner\.json|runner\.lock)(\.\d+)?(\.tmp)?$/;
 
+const IS_WINDOWS = process.platform === "win32";
+
+/**
+ * Whether a file system event in one runtime directory should end the daemon's idle wait.
+ *
+ * A heartbeat rewrites a lease the daemon already knows; only a lease appearing or going away
+ * changes what the loop would do, and waking for every heartbeat of every session kept an otherwise
+ * idle daemon ticking several times a second. The test is on the NAME, not on the event type: an
+ * atomic rewrite shows as "rename" on Linux and a new file may arrive as "change" on FSEvents and
+ * Windows (events are coalesced). Windows also reports a change inside a subdirectory to the
+ * watcher of its parent (as the directory's own name, or as `leases\x.json`) and may spell names
+ * in another case, so the root watcher ignores the leases and queues directories (each has a watch
+ * of its own) and names are compared by their last segment, case-insensitively there.
+ */
+export function runtimeEventWakes(
+  where: "root" | "leases" | "queues",
+  filename: string,
+  knownLeases: ReadonlySet<string>,
+  leaseExists: (name: string) => boolean,
+  windows: boolean,
+): boolean {
+  const last = (filename.split(/[\\/]/).pop() ?? "").trim();
+  const fold = (n: string): string => (windows ? n.toLowerCase() : n);
+  if (last !== "" && OWN_WRITES.test(last)) return false;
+  if (where === "root") {
+    const first = fold(filename.split(/[\\/]/)[0] ?? "");
+    if (first === "leases" || first === "queues") return false;
+    return true;
+  }
+  if (where === "leases") {
+    if (last.endsWith(".tmp")) return false; // the temp file of an atomic write
+    if (last !== "") {
+      const known = windows
+        ? [...knownLeases].some((k) => k.toLowerCase() === last.toLowerCase())
+        : knownLeases.has(last);
+      if (known && leaseExists(last)) return false;
+    }
+  }
+  return true;
+}
+
 /**
  * One fs.watch per runtime directory (root, leases, queues): a lease, an enqueue, a reload request
  * or a stop flag ends the idle wait at once, so the idle tick can be long. If a watch cannot start
@@ -2312,22 +2353,25 @@ export function watchRuntimeDirs(onPoke?: () => void): {
     release?.();
   };
   const leases = leaseDir();
-  const dirs = [runtimeRoot(), leases, dirname(queuePath("x"))];
+  const queues = dirname(queuePath("x"));
+  const dirs = [runtimeRoot(), leases, queues];
   const watchers = new Map<string, FSWatcher>();
   const attach = (dir: string): void => {
     try {
       mkdirSync(dir, { recursive: true, mode: 0o755 });
-      const w = watch(dir, { persistent: false }, (event, filename) => {
-        if (filename && OWN_WRITES.test(String(filename))) return;
-        // A heartbeat rewrites a lease the daemon already knows; only a lease appearing or going
-        // away changes what the loop would do, and waking for every heartbeat of every session kept
-        // an otherwise idle daemon ticking several times a second. The test is on the NAME, not on
-        // the event type: an atomic rewrite shows as "rename" on Linux and a new file may arrive as
-        // "change" on FSEvents and Windows (events are coalesced).
-        if (dir === leases) {
-          const name = filename === null || filename === undefined ? "" : String(filename);
-          if (name.endsWith(".tmp")) return; // the temp file of an atomic write
-          if (name !== "" && knownLeases.has(name) && existsSync(join(leases, name))) return;
+      const w = watch(dir, { persistent: false }, (_event, filename) => {
+        const name = filename === null || filename === undefined ? "" : String(filename);
+        const where = dir === leases ? "leases" : dir === queues ? "queues" : "root";
+        if (
+          !runtimeEventWakes(
+            where,
+            name,
+            knownLeases,
+            (n) => existsSync(join(leases, n)),
+            IS_WINDOWS,
+          )
+        ) {
+          return;
         }
         poke();
       });

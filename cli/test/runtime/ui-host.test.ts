@@ -139,7 +139,7 @@ describe("ui host", () => {
 
   test("a dead owner pid stops the listener within a few seconds", async () => {
     const port = await freePort();
-    const child = Bun.spawn(["sleep", "30"]);
+    const child = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 30000)"]);
     const { sock, reply } = await talk(request(port, { pid: child.pid }));
     expect(reply.type).toBe("listening");
     child.kill();

@@ -65,6 +65,48 @@ describe("watchRuntimeDirs lease filter", () => {
   });
 });
 
+describe("runtimeEventWakes (the filter, with the platform's event spellings)", () => {
+  const known = new Set(["a.json"]);
+  const yes = () => true;
+  const no = () => false;
+
+  test("a known lease heartbeat never wakes, whatever the spelling", () => {
+    for (const windows of [false, true]) {
+      expect(q.runtimeEventWakes("leases", "a.json", known, yes, windows)).toBe(false);
+      expect(q.runtimeEventWakes("leases", "a.json.tmp", known, yes, windows)).toBe(false);
+    }
+    // Windows: another case, a path with a separator
+    expect(q.runtimeEventWakes("leases", "A.JSON", known, yes, true)).toBe(false);
+    expect(q.runtimeEventWakes("leases", "leases\\a.json", known, yes, true)).toBe(false);
+    // POSIX names are case-sensitive: a different case is a different (new) lease
+    expect(q.runtimeEventWakes("leases", "A.JSON", known, yes, false)).toBe(true);
+  });
+
+  test("a new lease, a vanished lease and an unnamed event wake", () => {
+    expect(q.runtimeEventWakes("leases", "b.json", known, yes, true)).toBe(true);
+    expect(q.runtimeEventWakes("leases", "a.json", known, no, true)).toBe(true);
+    expect(q.runtimeEventWakes("leases", "", known, yes, true)).toBe(true);
+  });
+
+  test("the root watcher ignores the leases and queues directories it is told about", () => {
+    for (const name of [
+      "leases",
+      "Leases",
+      "leases\\a.json",
+      "leases/a.json",
+      "queues",
+      "queues\\p.json",
+    ]) {
+      expect(q.runtimeEventWakes("root", name, known, yes, true)).toBe(false);
+    }
+    expect(q.runtimeEventWakes("root", "projects.json", known, yes, true)).toBe(true);
+    expect(q.runtimeEventWakes("root", "reload.json", known, yes, true)).toBe(true);
+    // the daemon's own files never wake it
+    expect(q.runtimeEventWakes("root", "status.json", known, yes, true)).toBe(false);
+    expect(q.runtimeEventWakes("root", "", known, yes, true)).toBe(true);
+  });
+});
+
 describe("ClientHandle.refresh", () => {
   test("never leaves a partial lease: every read during many refreshes parses", async () => {
     const handle = q.acquireClient("cli", join(home, "proj", ".knowns"), false, { ensure: false });
