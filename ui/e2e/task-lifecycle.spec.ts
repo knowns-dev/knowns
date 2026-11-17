@@ -155,7 +155,8 @@ test.describe("Task lifecycle workflows", () => {
 		await page.goto(`${server.baseURL}/tasks`);
 		await expect(page.getByText(active.title)).toBeVisible();
 		await expect(page.getByText(archived.title)).toHaveCount(0);
-		expect(listRequests).toEqual([""]);
+		// The shell asks for the light list (no description, notes, plan or time entries).
+		expect(listRequests).toEqual(["?summary=true"]);
 		await selectLifecycle(page, "archived");
 		await historicalStarted;
 		await selectLifecycle(page, "current");
