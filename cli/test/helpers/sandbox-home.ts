@@ -119,3 +119,44 @@ if (!alreadyApplied)
       );
     }
   });
+
+// 5. Fail a test file that leaves a state-selecting env key changed. bun runs every file in ONE
+// process, so a file that sets KNOWNS_RUNTIME_ROOT (or HOME ...) and does not put it back points all
+// later files at its dead temp dir; that is how one unrestored override once failed 24 tests in
+// other suites. The snapshot is taken after step 2, so it holds the sandbox home. A file may change
+// these keys while it runs; it must restore them by the time its own afterAll hooks are done.
+const GUARDED_ENV = [
+  "HOME",
+  "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "KNOWNS_RUNTIME_ROOT",
+  "KNOWNS_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_STATE_HOME",
+  "XDG_RUNTIME_DIR",
+  "APPDATA",
+  "LOCALAPPDATA",
+] as const;
+const envSnapshot = new Map<string, string | undefined>(
+  GUARDED_ENV.map((k) => [k, process.env[k]]),
+);
+afterAll(() => {
+  const drift: string[] = [];
+  for (const [k, was] of envSnapshot) {
+    const now = process.env[k];
+    if (now !== was) drift.push(`${k}: ${JSON.stringify(was)} -> ${JSON.stringify(now)}`);
+  }
+  if (drift.length === 0) return;
+  // Put them back so one leaking file fails once instead of every file after it.
+  for (const [k, was] of envSnapshot) {
+    if (was === undefined) delete process.env[k];
+    else process.env[k] = was;
+  }
+  const file = Bun.main; // the test file whose hooks are running
+  throw new Error(
+    `${file} left test-environment keys changed after its run; restore them in afterAll/finally:\n  ${drift.join("\n  ")}`,
+  );
+});
