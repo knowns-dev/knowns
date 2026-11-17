@@ -33,7 +33,12 @@ function failureDetail(op: Operation) {
 	// The title carries the whole text for the cut collapsed line; the open card wraps it in full (see `error`).
 	return (
 		<span title={text || undefined}>
-			<Link to="/runtime" className="underline underline-offset-2">
+			<Link
+				to="/runtime"
+				className="underline underline-offset-2"
+				// The link sits inside the row's toggle button: following it must not also fold the card.
+				onClick={(e) => e.stopPropagation()}
+			>
 				Open Runtime
 			</Link>
 			{text ? ` · ${text}` : null}
