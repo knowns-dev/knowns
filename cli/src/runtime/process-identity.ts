@@ -81,6 +81,36 @@ function fail(reason: string): undefined {
   return undefined;
 }
 
+const sleepMs = (ms: number): void => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+};
+
+/**
+ * Runs a spawnSync call, retrying (up to three attempts, a short pause between) when it failed in a
+ * way that says nothing about the command: no exit status because the spawn itself failed, or an
+ * ETIMEDOUT reported long before the timeout could have passed. Bun on a Windows CI runner did the
+ * latter: ETIMEDOUT/SIGTERM after 15 ms against an 8 s timeout, so every identity was "unknown".
+ * A real timeout (elapsed close to the limit) is not retried.
+ */
+export function spawnRetryingSpurious<T extends { status: number | null; error?: Error }>(
+  run: () => T,
+  timeoutMs: number,
+  now: () => number = () => performance.now(),
+  pause: (ms: number) => void = sleepMs,
+): { result: T; attempts: number; elapsedMs: number } {
+  const t0 = now();
+  let result = run();
+  let attempts = 1;
+  for (; attempts < 3; attempts++) {
+    if (result.status !== null || result.error === undefined) break;
+    const timedOut = (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
+    if (timedOut && now() - t0 >= timeoutMs / 2) break; // a genuine timeout
+    pause(50);
+    result = run();
+  }
+  return { result, attempts, elapsedMs: now() - t0 };
+}
+
 function readWindows(pid: number): ProcessInfo | undefined {
   const script =
     `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; ` +
@@ -90,23 +120,23 @@ function readWindows(pid: number): ProcessInfo | undefined {
   // to modules built for 7 (CimCmdlets among them); without the variable 5.1 rebuilds its own.
   const { PSModulePath: _inherited, ...env } = process.env;
   const exe = windowsPowerShell();
-  const run = () =>
-    spawnSync(
-      exe,
-      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
-      { encoding: "utf8", timeout: 8000, windowsHide: true, env },
-    );
-  let r = run();
-  // A spawn that fails outright (no exit status) is retried once: it is not an answer about pid.
-  if (
-    r.status === null &&
-    r.error !== undefined &&
-    (r.error as NodeJS.ErrnoException).code !== "ETIMEDOUT"
-  )
-    r = run();
+  const timeoutMs = 8000;
+  const {
+    result: r,
+    attempts,
+    elapsedMs,
+  } = spawnRetryingSpurious(
+    () =>
+      spawnSync(
+        exe,
+        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+        { encoding: "utf8", timeout: timeoutMs, windowsHide: true, env },
+      ),
+    timeoutMs,
+  );
   if (r.status !== 0) {
     return fail(
-      `${exe} status=${r.status} signal=${r.signal} error=${r.error ?? "none"} stderr=${(r.stderr ?? "").trim().slice(0, 300)}`,
+      `${exe} status=${r.status} signal=${r.signal} error=${r.error ?? "none"} elapsed=${Math.round(elapsedMs)}ms attempts=${attempts} stderr=${(r.stderr ?? "").trim().slice(0, 300)}`,
     );
   }
   const text = (r.stdout ?? "").trim();

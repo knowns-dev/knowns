@@ -12,6 +12,7 @@ import {
   isRuntimeDaemonCommand,
   lastReadFailure,
   readProcessInfo,
+  spawnRetryingSpurious,
 } from "../../src/runtime/process-identity.ts";
 import * as q from "../../src/runtime/queue.ts";
 import { setProcessHome } from "../helpers/process-env.ts";
@@ -88,6 +89,52 @@ describe("readProcessInfo", () => {
       if (saved === undefined) delete process.env.PSModulePath;
       else process.env.PSModulePath = saved;
     }
+  });
+  test("an ETIMEDOUT reported long before the timeout is retried; a real one is not", () => {
+    const etimedout = Object.assign(new Error("spawnSync ETIMEDOUT"), { code: "ETIMEDOUT" });
+    let clock = 0;
+    const now = () => clock;
+    let calls = 0;
+    const spurious = spawnRetryingSpurious(
+      () => {
+        calls++;
+        clock += 15; // 15 ms against an 8000 ms timeout
+        return calls < 3 ? { status: null, error: etimedout } : { status: 0 };
+      },
+      8000,
+      now,
+      () => {},
+    );
+    expect(spurious.result.status).toBe(0);
+    expect(spurious.attempts).toBe(3);
+
+    clock = 0;
+    calls = 0;
+    const real = spawnRetryingSpurious(
+      () => {
+        calls++;
+        clock += 8000;
+        return { status: null, error: etimedout };
+      },
+      8000,
+      now,
+      () => {},
+    );
+    expect(calls).toBe(1);
+    expect(real.result.status).toBeNull();
+
+    calls = 0;
+    const always = spawnRetryingSpurious(
+      () => {
+        calls++;
+        return { status: null, error: etimedout };
+      },
+      8000,
+      now,
+      () => {},
+    );
+    expect(calls).toBe(3); // bounded
+    expect(always.attempts).toBe(3);
   });
   test("a pid that does not exist has no info", () => {
     expect(readProcessInfo(2 ** 22 - 3)).toBeUndefined();
