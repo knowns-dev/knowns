@@ -335,6 +335,7 @@ function startBatchOperation(
   } catch {
     project = null;
   }
+  let remaining: readonly string[] = request.ids ?? [];
   const handle = app.operations.start({
     kind: request.operation,
     title: `${verb} ${total} ${total === 1 ? "task" : "tasks"}`,
@@ -342,7 +343,8 @@ function startBatchOperation(
     projectRoot: app.projectRoot,
     progress: { done: 0, total },
     cancellable: true,
-    retry: () => startBatchOperation(app, storage, { ...request }).operation,
+    // "Run again" retries only what is left: the tasks this run did not change.
+    retry: () => startBatchOperation(app, storage, { ...request, ids: [...remaining] }).operation,
   });
   const done = (async (): Promise<LifecycleOutcome> => {
     let outcome: LifecycleOutcome;
@@ -361,20 +363,45 @@ function startBatchOperation(
     }
     const r = outcome.response;
     const word = archive ? "archived" : "restored";
+    const changedIds = new Set(r.items.filter((i) => i.changed).map((i) => i.taskId));
+    remaining = (request.ids ?? []).filter((id) => !changedIds.has(id));
     const left = Math.max(0, total - r.processed);
-    if (r.stopped) handle.cancelled(`${r.changed} ${word}, ${left} left`);
+    const why = unchangedReasons(r.items);
+    if (r.stopped) handle.cancelled(`${r.changed} ${word}, ${left} left${why}`);
     else if (outcome.error) {
       handle.fail(
         firstLine(errMessage(outcome.error)),
-        `${r.changed} ${word}, ${r.processed - r.changed} not changed`,
+        `${r.changed} ${word}, ${r.items.filter((i) => !i.changed).length} not changed${why}`,
       );
-    } else handle.finish(`${r.changed} ${word}`);
+    } else {
+      const skipped = r.items.filter((i) => !i.changed).length;
+      handle.finish(`${r.changed} ${word}${skipped > 0 ? `, ${skipped} not changed` : ""}${why}`);
+    }
     return outcome;
   })();
   // Background callers never await it: a rejection must not become unhandled.
   done.catch(() => {});
   const operation = app.operations.get(handle.id) as TrayOperation;
   return { operation, done };
+}
+
+const REASONS_SHOWN = 3;
+
+/** ": #12 Task has an active child; #15 Task is not done (+4 more)": why tasks of a batch did not change. */
+function unchangedReasons(
+  items: readonly {
+    taskId: string;
+    changed: boolean;
+    reasons: readonly { message: string }[] | null;
+  }[],
+): string {
+  const rows = items.filter((i) => !i.changed && (i.reasons?.length ?? 0) > 0);
+  if (rows.length === 0) return "";
+  const shown = rows
+    .slice(0, REASONS_SHOWN)
+    .map((i) => `#${i.taskId} ${firstLine(i.reasons?.[0]?.message ?? "")}`);
+  const more = rows.length - shown.length;
+  return `: ${shown.join("; ")}${more > 0 ? ` (+${more} more)` : ""}`;
 }
 
 const firstLine = (s: string): string => s.split("\n", 1)[0]?.slice(0, 300) ?? "";

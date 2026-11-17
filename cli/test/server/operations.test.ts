@@ -453,4 +453,41 @@ describe("batch archive as an operation", () => {
       snap.operations.some((o: Operation) => o.kind === "batch_unarchive" && o.state === "done"),
     ).toBe(true);
   });
+
+  test("a batch that did not change every task says how many and why, and Run again takes only what is left", async () => {
+    const mk = async (title: string, status: string) => {
+      const r = await send(ts, "POST", "/api/tasks", {
+        body: JSON.stringify({ title, status }),
+        headers: J,
+      });
+      return JSON.parse(r.text).id as string;
+    };
+    const active = await mk("Not done yet", "in-progress");
+    const doneA = await mk("Done A", "done");
+    const doneB = await mk("Done B", "done");
+    const r = await send(ts, "POST", "/api/tasks/batch-archive", {
+      body: JSON.stringify({ ids: [doneA, active, doneB], execute: true, background: true }),
+      headers: J,
+    });
+    expect(r.status).toBe(202);
+    const op = JSON.parse(r.text).operation as Operation;
+    let last: Operation | undefined;
+    for (let i = 0; i < 200; i++) {
+      const snap = JSON.parse((await send(ts, "GET", "/api/operations")).text);
+      last = snap.operations.find((o: Operation) => o.id === op.id);
+      if (last && ["done", "failed", "cancelled"].includes(last.state)) break;
+      await Bun.sleep(50);
+    }
+    expect(last?.state).toBe("failed");
+    expect(last?.error).toBeTruthy();
+    expect(last?.message).toContain("2 archived");
+    expect(last?.message).toContain("1 not changed");
+    expect(last?.message).toContain(`#${active}`);
+    expect(last?.message).toContain("must be done");
+    // Whatever the state, the untouched task is the only one a re-run would carry.
+    expect(last?.retryable).toBe(true);
+    const again = JSON.parse((await send(ts, "POST", `/api/operations/${op.id}/retry`)).text)
+      .operation as Operation;
+    expect(again.progress?.total).toBe(1);
+  });
 });
