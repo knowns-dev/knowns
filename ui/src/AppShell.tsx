@@ -13,6 +13,7 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from "./components/ui/k
 import { SIDEBAR_STORAGE_KEY, rememberedSidebarCollapsed } from "./components/organisms/sidebarStorage";
 import { Separator } from "./components/ui/separator";
 import { Toaster } from "./components/ui/sonner";
+import { ActivityTray, activityTrayEnabled } from "./components/organisms/activityTray/ActivityTray";
 import { useConfig } from "./contexts/ConfigContext";
 import { useGlobalTask } from "./contexts/GlobalTaskContext";
 import { Loader2 } from "lucide-react";
@@ -455,6 +456,7 @@ export default function AppShell() {
 			</SidebarProvider>
 			)}
 			<Toaster />
+			{activityTrayEnabled() && <ActivityTray />}
 		</ThemeContext.Provider>
 	);
 }
