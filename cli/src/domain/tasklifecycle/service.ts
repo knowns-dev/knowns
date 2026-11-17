@@ -46,6 +46,7 @@ import {
 import { addTimeEntry, stopTimers } from "./time.ts";
 import type {
   ArchiveOptions,
+  BatchHooks,
   BatchOptions,
   BatchResult,
   Eligibility,
@@ -464,6 +465,10 @@ export class Service implements LifecycleCore {
     let chunkOuts: Out<Result>[] = [];
     for (let n = 0; n < ids.length; n++) {
       const id = ids[n] as string;
+      if (n > 0 && n % BATCH_TREE_CHUNK === 0 && options.hooks?.shouldStop?.()) {
+        batch.stopped = true;
+        return [batch, joinErrors(failures)];
+      }
       if (execute && ownTree && n % BATCH_TREE_CHUNK === 0) {
         // The tree is listed under the lifecycle lock that also holds the chunk's archives, so a
         // concurrent create or reopen waits for the chunk and the check sees the truth.
@@ -500,6 +505,7 @@ export class Service implements LifecycleCore {
         );
       }
       batch.processed++;
+      options.hooks?.onProgress?.(batch.processed, ids.length);
       if (item.taskId === "") item.taskId = id;
       if (item.operation === ("" as Operation)) item.operation = "archive";
       if (err && (item.reasons ?? []).length === 0) addReason(item, publicFailureReason(err));
@@ -649,7 +655,12 @@ export class Service implements LifecycleCore {
     };
     const failures: Error[] = [];
     const ids = uniqueSorted(options.ids ?? []);
-    for (const id of ids) {
+    for (let n = 0; n < ids.length; n++) {
+      const id = ids[n] as string;
+      if (n > 0 && n % BATCH_TREE_CHUNK === 0 && options.hooks?.shouldStop?.()) {
+        batch.stopped = true;
+        return [batch, joinErrors(failures)];
+      }
       const [task, getErr] = await attempt(() => this.storage.tasks.get(id));
       let err = getErr;
       let item: Result = {
@@ -683,6 +694,7 @@ export class Service implements LifecycleCore {
       if (item.taskId === "") item.taskId = id;
       if (item.operation === ("" as Operation)) item.operation = "reopen";
       batch.processed++;
+      options.hooks?.onProgress?.(batch.processed, ids.length);
       if (item.changed) batch.changed++;
       batch.items.push(item);
       if (err) {
@@ -1028,17 +1040,23 @@ export class Service implements LifecycleCore {
    * Maps the shared public request contract onto the lifecycle service. `hardDeleteAuthorized` is
    * supplied only by a trusted adapter boundary and is never read from the request.
    */
-  executePublic(request: Request, hardDeleteAuthorized: boolean): Promise<PublicOutcome> {
-    return this.executePublicWithCapabilities(request, {
-      archive: true,
-      hardDelete: hardDeleteAuthorized,
-    });
+  executePublic(
+    request: Request,
+    hardDeleteAuthorized: boolean,
+    hooks?: BatchHooks,
+  ): Promise<PublicOutcome> {
+    return this.executePublicWithCapabilities(
+      request,
+      { archive: true, hardDelete: hardDeleteAuthorized },
+      hooks,
+    );
   }
 
   /** For policy-aware trusted adapters such as MCP; capabilities are never read from request data. */
   async executePublicWithCapabilities(
     request: Request,
     capabilities: PublicCapabilities,
+    hooks?: BatchHooks,
   ): Promise<PublicOutcome> {
     const response: Response = {
       operation: request.operation,
@@ -1149,6 +1167,7 @@ export class Service implements LifecycleCore {
           ...(actor !== undefined && { actor }),
           ...(minimumAgeMs !== undefined && { minimumAgeMs }),
           ...(request.expectedHashes !== undefined && { expectedHashes: request.expectedHashes }),
+          ...(hooks !== undefined && { hooks }),
         });
         copyBatchResponse(response, batch);
         err = batchErr;
@@ -1160,6 +1179,7 @@ export class Service implements LifecycleCore {
           execute: request.execute,
           ...(actor !== undefined && { actor }),
           ...(request.expectedHashes !== undefined && { expectedHashes: request.expectedHashes }),
+          ...(hooks !== undefined && { hooks }),
         });
         copyBatchResponse(response, batch);
         err = batchErr;
@@ -1787,6 +1807,7 @@ function copyBatchResponse(response: Response, batch: BatchResult): void {
   response.changed = batch.changed;
   if (batch.failedTaskId !== undefined) response.failedTaskId = batch.failedTaskId;
   response.items = [...batch.items];
+  if (batch.stopped) response.stopped = true;
 }
 
 async function rollbackLifecycleMutation(
