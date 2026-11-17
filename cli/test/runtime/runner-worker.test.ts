@@ -75,12 +75,21 @@ describe("RunnerWorker", () => {
     let n = 0;
     const spin = script("for(;;){}");
     const echo = script(ECHO);
-    const w = new RunnerWorker(() => (n++ === 0 ? spin() : echo()), 150);
-    let ticks = 0;
-    const t = setInterval(() => ticks++, 5);
+    const w = new RunnerWorker(() => (n++ === 0 ? spin() : echo()), 600);
+    // The loop is "not blocked" if no gap between two timer ticks gets near the 600 ms deadline. A tick
+    // count is not a measure of that: Windows timers fire about every 15.6 ms whatever the interval
+    // (10 ticks in 150 ms with no worker at all) and a shared runner is slower still, so a count
+    // failed there (5 ticks) while the loop kept turning (measured on a Windows PC: baseline 10
+    // ticks, max gap 16 ms; with the stuck worker 9 to 11 ticks, max gap 16 ms).
+    const stamps: number[] = [performance.now()];
+    const t = setInterval(() => stamps.push(performance.now()), 5);
     await expect(w.runJob("/s", job)).rejects.toThrow(/timed out/);
+    stamps.push(performance.now());
     clearInterval(t);
-    expect(ticks).toBeGreaterThan(5);
+    const maxGap = Math.max(...stamps.slice(1).map((s, i) => s - (stamps[i] as number)));
+    // A blocked loop shows a gap as long as the deadline; a loaded host adds up to a few hundred ms
+    // (a cold worker start measured 200 ms on a busy Mac).
+    expect(maxGap).toBeLessThan(400);
     await w.runJob("/s", job); // restarted
     await w.stop();
   });
