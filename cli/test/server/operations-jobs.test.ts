@@ -209,6 +209,10 @@ describe.skipIf(!haveRealSource)("foreground server sees queue changes live (NFR
   test("a job enqueued while a foreground server has an SSE client shows started, then finished", async () => {
     side = await startSide("ts", seed(), { env: { KNOWNS_RUNTIME_ROOT: rt } });
     const storeRoot = join(side.dir, ".knowns");
+    // This process enqueues into the same runtime root as the server. bun runs every test file in
+    // one process, so the override is put back in the finally below: left set it points all later
+    // runtime tests (ps, reload, retry, daemon) at this dead directory.
+    const prevRuntimeRoot = process.env.KNOWNS_RUNTIME_ROOT;
     process.env.KNOWNS_RUNTIME_ROOT = rt;
     const events: { name: string; op: Operation }[] = [];
     const ctl = new AbortController();
@@ -264,6 +268,8 @@ describe.skipIf(!haveRealSource)("foreground server sees queue changes live (NFR
       );
     } finally {
       ctl.abort();
+      if (prevRuntimeRoot === undefined) delete process.env.KNOWNS_RUNTIME_ROOT;
+      else process.env.KNOWNS_RUNTIME_ROOT = prevRuntimeRoot;
     }
   });
 });
