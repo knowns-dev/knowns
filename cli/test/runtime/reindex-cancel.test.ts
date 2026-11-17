@@ -10,7 +10,10 @@ import { Store } from "../../src/storage/core/store.ts";
 import { dispose, makeProject, type Project } from "../reconcile/harness.ts";
 
 const projects: Project[] = [];
+const stores: SQLiteVectorStore[] = [];
 afterEach(() => {
+  // Windows cannot delete a database file that is still open.
+  for (const s of stores.splice(0)) s.close();
   for (const p of projects.splice(0)) dispose(p);
 });
 
@@ -39,6 +42,7 @@ test("stops between sources with JobCancelledError and resumes without redoing f
       embedder.dimensions(),
     );
     s.load();
+    stores.push(s);
     return s;
   };
 
