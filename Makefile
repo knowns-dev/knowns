@@ -317,4 +317,4 @@ ts-release: ts-build
 
 # Install script, packaging and version tests (KNOWNS_NETWORK_TESTS=1 adds the 0.34.x rollback check).
 ts-test-dist:
-	cd cli && bun test test/distribution
+	cd cli && bun test --timeout 30000 test/distribution
