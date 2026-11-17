@@ -53,15 +53,19 @@ function readUnix(pid: number): ProcessInfo | undefined {
 }
 
 /**
- * Windows PowerShell by its fixed system path. A bare "powershell.exe" is looked up on $PATH, and a
- * PATH without System32 (a sandbox, a launcher, a test that swapped it) made the read return
- * "unknown" in a few milliseconds: no stale daemon was ever recognised, so none was ever stopped.
+ * A Windows system tool by its fixed path under %SystemRoot%\\System32. A bare name is looked up on
+ * $PATH, and a PATH without System32 (a sandbox, a launcher, a test that swapped it) made a read
+ * return "unknown" in a few milliseconds: no stale daemon was ever recognised, so none was ever
+ * stopped. Falls back to the bare name when the file is not there.
  */
-function windowsPowerShell(): string {
+export function windowsSystemTool(name: string, ...subdirs: string[]): string {
   const root = process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows";
-  const fixed = join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  return existsSync(fixed) ? fixed : "powershell.exe";
+  const fixed = join(root, "System32", ...subdirs, name);
+  return existsSync(fixed) ? fixed : name;
 }
+
+const windowsPowerShell = (): string =>
+  windowsSystemTool("powershell.exe", "WindowsPowerShell", "v1.0");
 
 function readWindows(pid: number): ProcessInfo | undefined {
   const script =
