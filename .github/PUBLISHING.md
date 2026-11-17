@@ -148,7 +148,7 @@ Before publishing, test the build locally:
 rm -rf node_modules bun.lockb
 bun install
 
-# Run full CI checks
+# Run full CI checks (`bun run test`, not bare `bun test`: the 30 s suite-wide --timeout lives in that script)
 bun run lint
 bun run test
 bun run build
