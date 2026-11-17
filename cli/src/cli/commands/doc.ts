@@ -538,7 +538,13 @@ const docEditCmd = defineCommand({
         const v = ctx.flags.string("content");
         const next =
           targetSection !== ""
-            ? replaceSectionChecked(doc.content ?? "", targetSection, v, rebasing)
+            ? replaceSectionChecked(
+                doc.content ?? "",
+                targetSection,
+                v,
+                // Only a document that changed since it was read is a rebase onto other content.
+                rebasing && (doc.content ?? "") !== (oldDoc.content ?? ""),
+              )
             : v;
         if (next === "") delete doc.content;
         else doc.content = next;

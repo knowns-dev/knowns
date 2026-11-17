@@ -104,8 +104,11 @@ test("P2-1: a failed registry load is never cached as 'no stores'", () => {
     writeFileSync(path, '[{"id":"one",');
     expect(discoverStores(path).map((f) => f.store)).toEqual(["one"]);
     // The repaired file is picked up on the very next call (the failure was not cached for 30 s).
-    writeFileSync(path, JSON.stringify([{ ...entry, store: { ...entry.store, name: "two" } }]));
-    expect(discoverStores(path).map((f) => f.store)).toEqual(["two"]);
+    // A different length on purpose: this suite turns the racy rule off (KNOWNS_STAT_RACY_MS=-1), so on
+    // a filesystem whose mtime and ctime tick coarsely (ext4) a same-size rewrite would share the
+    // signature of the previous version. The racy rule itself is the next test.
+    writeFileSync(path, JSON.stringify([{ ...entry, store: { ...entry.store, name: "second" } }]));
+    expect(discoverStores(path).map((f) => f.store)).toEqual(["second"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

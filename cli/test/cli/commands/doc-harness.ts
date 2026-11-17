@@ -107,7 +107,22 @@ const TS_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}
 const DOC_ID_RE = /doc-[0-9a-f]{32}/g;
 const HASH_RE = /\b[0-9a-f]{64}\b/g;
 
+// Intentional divergence (f153f06, KN-W57R68): TS documents how a section is addressed and how a
+// section update treats the heading line. Both sides are mapped to the oracle's wording, so only
+// these two flag descriptions are excused and every other help line still has to match.
+const SECTION_USAGE_DIVERGENCE: ReadonlyArray<readonly [string, string]> = [
+  [
+    "Show specific section by number or title (a bare integer is the heading index; # lines in code fences are not headings)",
+    "Show specific section by number or title",
+  ],
+  [
+    "Target section to replace (used with --content); the heading line is kept and only the body is replaced, so --content must not repeat it",
+    "Target section to replace (used with --content)",
+  ],
+];
+
 export function normalize(text: string, p: Project): string {
+  for (const [ts, go] of SECTION_USAGE_DIVERGENCE) text = text.replaceAll(ts, go);
   return (
     text
       .replaceAll(p.base, "<ROOT>")

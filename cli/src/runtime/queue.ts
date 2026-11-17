@@ -500,7 +500,7 @@ function ensureDir(dir: string): void {
   madeDirs.add(dir);
 }
 
-function writeJSON(path: string, value: unknown): void {
+function writeJSON(path: string, value: unknown): string {
   const dir = dirname(path);
   ensureDir(dir);
   const tmp = `${path}.tmp`;
@@ -516,6 +516,7 @@ function writeJSON(path: string, value: unknown): void {
     write();
   }
   renameOverFile(tmp, path);
+  return body;
 }
 
 function readJSONFile(path: string): unknown {
@@ -634,13 +635,19 @@ export function loadQueue(storeRoot: string): QueueState {
 // The daemon polls every registered project. A queue file that has not changed since the last
 // poll is not read or parsed again: one stat per project per tick. Callers must not mutate the
 // returned state.
-interface QueueScanEntry {
+export interface QueueScanEntry {
   sig: string;
   state: QueueState;
   /** Jobs that are not dead letters, earliest due first (ties: earliest requested, file order). */
   live: { job: Job; due: number }[];
-  /** Written by this process under the queue lock: its strict signature proves it unchanged. */
+  /**
+   * Written by this process under the queue lock: its strict signature proves it unchanged once the
+   * file is older than the racy window. Inside the window a foreign write in the same timestamp tick
+   * (coarse ext4, FAT, SMB) can carry the same mtime, ctime and size, so `body`, exactly what we
+   * wrote, is compared with the file before the entry is trusted.
+   */
   own?: boolean;
+  body?: string;
 }
 const queueScanCache = new Map<string, QueueScanEntry>();
 
@@ -663,6 +670,16 @@ function buildEntry(sig: string, state: QueueState): QueueScanEntry {
   return { sig, state, live };
 }
 
+/** True when the file still holds what this process wrote: the signature alone is enough off the racy window. */
+export function ownContentHolds(path: string, entry: QueueScanEntry, outsideRacyWindow: boolean): boolean {
+  if (outsideRacyWindow || entry.body === undefined) return outsideRacyWindow;
+  try {
+    return readUtf8Retrying(path) === entry.body;
+  } catch {
+    return false;
+  }
+}
+
 function loadQueueEntry(storeRoot: string): QueueScanEntry {
   const path = queuePath(storeRoot);
   let sig: string | undefined;
@@ -677,8 +694,11 @@ function loadQueueEntry(storeRoot: string): QueueScanEntry {
     throw err;
   }
   const cached = queueScanCache.get(path);
-  // Our own write is known content: its signature proves it even while the file is racy.
-  if (cached?.own && cached.sig === strict) return cached;
+  // Our own write is known content: its signature proves it once the file is not racy; while it is
+  // racy the bytes must still be the ones we wrote.
+  if (cached?.own && cached.sig === strict && ownContentHolds(path, cached, sig !== undefined)) {
+    return cached;
+  }
   const hit = sig === undefined ? undefined : cached;
   if (hit && hit.sig === sig) return hit;
   const entry = buildEntry(sig ?? "", loadQueue(storeRoot));
@@ -694,11 +714,24 @@ function loadQueueEntry(storeRoot: string): QueueScanEntry {
  * the lock is held nobody else can have changed it. The copy is one level deep, which is all the
  * mutators touch.
  */
+/** ownContentHolds for a caller that has only the path: stats the file for the racy window. */
+function ownStillExact(path: string, entry: QueueScanEntry): boolean {
+  try {
+    return ownContentHolds(
+      path,
+      entry,
+      statSignature(statSync(path, { bigint: true })) !== undefined,
+    );
+  } catch {
+    return false;
+  }
+}
+
 function loadForUpdate(storeRoot: string): QueueState {
   const path = queuePath(storeRoot);
   try {
     const hit = queueScanCache.get(path);
-    if (hit && hit.sig === fileSig(path)) {
+    if (hit && hit.sig === fileSig(path) && (!hit.own || ownStillExact(path, hit))) {
       const s = hit.state;
       return {
         jobs: s.jobs.map((j) => ({ ...j })),
@@ -713,10 +746,10 @@ function loadForUpdate(storeRoot: string): QueueState {
 }
 
 /** After our own write the file's signature is known: the next read is a cache hit, not a parse. */
-function rememberWritten(storeRoot: string, state: QueueState): void {
+function rememberWritten(storeRoot: string, state: QueueState, body: string): void {
   const path = queuePath(storeRoot);
   try {
-    queueScanCache.set(path, { ...buildEntry(fileSig(path), state), own: true });
+    queueScanCache.set(path, { ...buildEntry(fileSig(path), state), own: true, body });
   } catch {
     queueScanCache.delete(path);
   }
@@ -739,8 +772,8 @@ function applyUpdate(storeRoot: string, fn: (state: QueueState) => void): void {
   fn(state);
   pruneDeadLetters(storeRoot, state, Date.now());
   state.updatedAt = nowString();
-  writeJSON(queuePath(storeRoot), stateJson(state));
-  rememberWritten(storeRoot, state);
+  const body = writeJSON(queuePath(storeRoot), stateJson(state));
+  rememberWritten(storeRoot, state, body);
 }
 
 export function updateQueue(storeRoot: string, fn: (state: QueueState) => void): void {

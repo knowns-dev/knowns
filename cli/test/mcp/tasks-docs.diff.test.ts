@@ -123,8 +123,12 @@ const steps: Step[] = [
     args: { action: "update", path: "guides/my-new-doc", appendContent: "tail", return: "full" },
   },
   {
+    // The content repeats its heading: the oracle replaces the whole section including the heading
+    // line, TS (f153f06) keeps the heading when the content does not start with one. A heading in
+    // the content makes both mean the same thing; the bare-body case is TS only and is covered by
+    // doc-rebase-sections.test.ts.
     tool: "docs",
-    args: { action: "update", path: "guides/my-new-doc", section: "B", content: "new b" },
+    args: { action: "update", path: "guides/my-new-doc", section: "B", content: "## B\n\nnew b" },
   },
   {
     tool: "docs",

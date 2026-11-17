@@ -2,6 +2,7 @@
 // memory, decision, search, templates and the code tool's argument and error paths.
 import { afterAll, describe, expect, test } from "bun:test";
 import { withoutD13 } from "../helpers/d13.ts";
+import { withoutDocSections } from "../helpers/doc-sections.ts";
 import { withoutKn6dvwn6 } from "../helpers/kn-6dvwn6.ts";
 import { firstDiff, hasGoBin, runDiff, type Step } from "./harness.ts";
 
@@ -236,7 +237,7 @@ describe.skipIf(!hasGoBin)("remaining tools match Go", () => {
         Bun.write(`${dir}/src.txt`, "a a a\n");
       },
     });
-    for (const r of session.results) r.tsMasked = withoutD13(withoutKn6dvwn6(r.tsMasked));
+    for (const r of session.results) r.tsMasked = withoutD13(withoutKn6dvwn6(withoutDocSections(r.tsMasked)));
     const diffs = session.results.filter((r) => r.goMasked !== r.tsMasked);
     if (diffs.length > 0) {
       console.log(

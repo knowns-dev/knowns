@@ -73,13 +73,31 @@ describe("queue scan cache", () => {
     q.updateQueue(p, (s) => {
       s.jobs.push(due("a", Date.now()));
     });
-    // Not our own write (that one is remembered, see queue-crash-rerun.test.ts): a foreign rewrite.
+    // Not our own write (that one is remembered, see queue-crash-rerun.test.ts): a foreign rewrite
+    // with different content of the same size, in place so the inode is the same too. On a
+    // filesystem with coarse timestamps (ext4's jiffy) its mtime, ctime, size and inode can equal
+    // the ones of our write.
     const file = q.queuePath(p);
-    writeFileSync(file, readFileSync(file, "utf8"));
-    const first = q.loadQueueCached(p);
-    const again = q.loadQueueCached(p);
-    expect(again).not.toBe(first); // no signature for a fresh file: parsed each time
-    expect(again.jobs.map((j) => j.id)).toEqual(["a"]);
+    writeFileSync(file, readFileSync(file, "utf8").replace('"id": "a"', '"id": "z"'));
+    const jobs = q.loadQueueCached(p).jobs.map((j) => j.id);
+    expect(jobs).toEqual(["z"]);
+    expect(q.loadQueueCached(p).jobs.map((j) => j.id)).toEqual(["z"]);
+  });
+
+  test("an own-write signature that collides with a foreign write is not trusted inside the racy window", () => {
+    const p = project("collide");
+    q.updateQueue(p, (s) => {
+      s.jobs.push(due("a", Date.now()));
+    });
+    const file = q.queuePath(p);
+    const written = readFileSync(file, "utf8");
+    const entry = { body: written } as q.QueueScanEntry;
+    // Same signature is all a same-tick foreign write leaves behind: only the bytes tell them apart.
+    expect(q.ownContentHolds(file, entry, false)).toBe(true);
+    writeFileSync(file, written.replace('"id": "a"', '"id": "z"'));
+    expect(q.ownContentHolds(file, entry, false)).toBe(false);
+    // Off the racy window the signature alone is proof.
+    expect(q.ownContentHolds(file, entry, true)).toBe(true);
   });
 
   test("a project without a queue file scans as empty", () => {

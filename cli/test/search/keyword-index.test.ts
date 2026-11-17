@@ -246,7 +246,10 @@ describe("StatCache", () => {
     const t = new Date();
     writeFileSync(file, a);
     utimesSync(file, t, t);
-    const cache = new StatCache<string>(); // the real clock: the file was just written
+    // The real clock, passed explicitly: the file-level beforeAll moves the shared default an hour
+    // ahead, which would make this just-written file look old and quiet (it only failed where the
+    // ctime is as coarse as the mtime, e.g. ext4).
+    const cache = new StatCache<string>({ now: Date.now });
     const read = () => cache.read(file, () => readFileSync(file, "utf8"));
     expect(read()).toContain("AAAA");
     writeFileSync(file, b);
