@@ -2,17 +2,44 @@
 // and what is masked). Legacy Decision Memories for the migration commands are written as the same
 // bytes into both worlds.
 import { afterAll, describe, expect, test } from "bun:test";
+import { withoutHotfix } from "../../helpers/kn-prgzms.ts";
 import {
   cleanupWorlds,
   decisionId,
-  expectParity,
+  expectParity as expectParityRaw,
   hasGoBin,
   makePair,
+  runBoth,
   type World,
   writeBoth,
 } from "./memory-diff-helpers.ts";
 
 afterAll(cleanupWorlds);
+
+// DIVERGENCES from Go 0.34.1. KN-PRGZMS: TS adds the accept_distinct resolution and the
+// `decision resolve --reason` flag (removed by withoutHotfix). KN-XAA6KA: TS adds the merge_duplicate resolution (the old
+// link_as_related fold) and a `decision restore` command. Go knows neither, so TS output is mapped
+// back before comparing: the extra resolution name in help text, in "Allowed resolutions" lines and
+// in persisted reviewAllowedResolutions, and the restore line in the `decision` command list.
+const KN_XAA6KA = {
+  reason:
+    "KN-PRGZMS and KN-XAA6KA: accept_distinct, merge_duplicate and decision restore exist only in TS",
+  normalizeTs: (t: string): string =>
+    // Whole-line rules run first: withoutHotfix strips inline tokens and would leave blank lines.
+    withoutHotfix(
+      t
+        .replace(/^ *- (merge_duplicate|accept_distinct)\n/gm, "")
+        .replace(/^ *"(merge_duplicate|accept_distinct)",\n/gm, "")
+        .replace(/^.*Restore a draft folded into a decision by the old link_as_related.*\n/gm, ""),
+    )
+      .replaceAll(
+        "link_as_related, merge_duplicate or supersede_existing",
+        "link_as_related or supersede_existing",
+      )
+      .replaceAll("link_as_related, merge_duplicate, reject_new", "link_as_related, reject_new"),
+};
+const expectParity: typeof expectParityRaw = (pair, args, opts = {}) =>
+  expectParityRaw(pair, args, { ...opts, divergence: KN_XAA6KA });
 
 const suite = hasGoBin ? describe : describe.skip;
 
@@ -158,28 +185,26 @@ suite("decision lifecycle", () => {
     expect(r.code).toBe(0);
   });
   test("resolve: link, supersede, accept, reject, create_draft", () => {
-    expectParity(
-      pair,
-      named([
-        "decision",
-        "resolve",
-        "link_as_related",
-        "@{use-bun-for-everything:1}",
-        "--target",
-        BUN,
-      ]),
-    );
-    expectParity(
-      pair,
-      named([
-        "decision",
-        "resolve",
-        "link_as_related",
-        "@{use-bun-for-everything:1}",
-        "--target",
-        BUN,
-      ]),
-    );
+    // DIVERGENCE from Go 0.34.1 (KN-XAA6KA): Go's link_as_related folds the draft into the target and
+    // rejects it; the TS link_as_related is a pure link and the fold is now merge_duplicate. The
+    // output text names the resolution, so only exit codes and the resulting file tree are
+    // compared: Go folds with link_as_related, TS folds with merge_duplicate.
+    for (let i = 0; i < 2; i++) {
+      const r = runBoth(pair, (w: World) =>
+        named([
+          "decision",
+          "resolve",
+          w === pair.go ? "link_as_related" : "merge_duplicate",
+          "@{use-bun-for-everything:1}",
+          "--target",
+          BUN,
+        ])(w),
+      );
+      expect(r.ts.code).toBe(r.go.code);
+      const norm = (t: Record<string, string>) =>
+        Object.fromEntries(Object.entries(t).map(([k, v]) => [k, KN_XAA6KA.normalizeTs(v)]));
+      expect(norm(r.tsTree)).toEqual(r.goTree);
+    }
     expectParity(
       pair,
       named([

@@ -1712,9 +1712,11 @@ export type DecisionStatus = "draft" | "accepted" | "superseded" | "rejected" | 
 export type DecisionReviewState = "needs_evidence" | "needs_resolution" | "ready_for_review";
 export type DecisionReviewResolution =
 	| "accept_new"
+	| "accept_distinct"
 	| "supersede_existing"
 	| "create_draft"
 	| "link_as_related"
+	| "merge_duplicate"
 	| "reject_new";
 
 export interface DecisionEntry {
@@ -1775,6 +1777,8 @@ export interface DecisionResolveRequest extends Partial<DecisionEntry> {
 	candidateId?: string;
 	targetId?: string;
 	replacementId?: string;
+	/** Reviewer reason, required by accept_distinct. */
+	reason?: string;
 	status?: DecisionStatus;
 }
 

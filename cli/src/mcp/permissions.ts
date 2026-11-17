@@ -78,6 +78,7 @@ export const ACTION_REGISTRY: Record<string, ActionMeta> = {
   "decision.create": m(CapWrite, "decision", "medium"),
   "decision.link": m(CapWrite, "decision", "medium"),
   "decision.resolve": m(CapWrite, "decision", "medium"),
+  "decision.restore": m(CapWrite, "decision", "medium"),
   "decision.accept": m(CapWrite, "decision", "high"),
   "decision.supersede": m(CapWrite, "decision", "high"),
   "decision.migration_apply": m(CapWrite, "decision", "high"),

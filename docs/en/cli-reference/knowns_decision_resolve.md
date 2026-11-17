@@ -2,7 +2,7 @@
 
 Resolve a persisted System Decision candidate
 
-Resolve a persisted candidate with accept_new, link_as_related, reject_new, or supersede_existing. Link and replace require --target.
+Resolve a persisted candidate with accept_new, accept_distinct, link_as_related, merge_duplicate, reject_new, or supersede_existing. link_as_related only links the two decisions (both keep their status). merge_duplicate folds the draft into the target and rejects the draft. Link, merge and replace require --target. accept_distinct accepts a draft whose matches are not duplicates, keeps the matched decisions current, and requires --reason (recorded on the accepted decision). It is a human-gated operation like accept_new.
 
 ## Usage
 
@@ -14,8 +14,9 @@ knowns decision resolve <resolution> <candidate-id> [flags]
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--reason` | `string` | — | Reviewer reason, required by accept_distinct |
 | `--replacement-id` | `string` | — | Existing verified replacement Decision ID for supersede_existing |
-| `--target` | `string` | — | Existing Decision ID required by link_as_related or supersede_existing |
+| `--target` | `string` | — | Existing Decision ID required by link_as_related, merge_duplicate or supersede_existing |
 
 ## Inherited flags
 
