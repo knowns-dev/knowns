@@ -20,6 +20,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { fixtureRoot } from "../../helpers/fixtures.ts";
+import { withProcessEnv } from "../../helpers/process-env.ts";
 import { GO_BIN, hasGoBin, normalizeGo, type Result, runTs } from "../oracle.ts";
 
 export { hasGoBin };
@@ -75,21 +76,10 @@ export async function runTsIn(p: Project, args: string[]): Promise<Result> {
   // The storage layer reads the machine root from process.env.HOME and the runtime queue reads its
   // knobs (KNOWNS_RUNTIME_INLINE) from process.env, so the in-process run needs the sandbox env
   // there too (a real binary gets it from its environment). PATH is left alone.
+  // Calls overlap in tests that run several commands with Promise.all; withProcessEnv restores
+  // the real values once the last of them ends (a per-call save/restore left HOME on a dead dir).
   const env = envFor(p);
-  const saved: Record<string, string | undefined> = {};
-  for (const [k, v] of Object.entries(env)) {
-    if (k === "PATH") continue;
-    saved[k] = process.env[k];
-    process.env[k] = v;
-  }
-  try {
-    return await runTs(args, { cwd: p.dir, env });
-  } finally {
-    for (const [k, v] of Object.entries(saved)) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
-    }
-  }
+  return withProcessEnv(env, () => runTs(args, { cwd: p.dir, env }), { keepPath: true });
 }
 
 /** The TS CLI as a real process, for commands that read stdin. */
