@@ -2658,6 +2658,8 @@ export class FilesystemReconciler {
           path: rel,
           batchId: this.activeBatchId,
         },
+        // reconcileFile holds this doc's mutation lock around us, and that lock is not reentrant.
+        true,
       );
     });
     if (settled && head) {
@@ -2685,6 +2687,7 @@ export class FilesystemReconciler {
     last: HistoryRecord,
     records: readonly HistoryRecord[],
     opts: RestoreOptions,
+    docLockHeld = false,
   ): Promise<ReconcileResult> {
     const info = lstatSync(abs);
     if (info.isSymbolicLink()) throw unsafe("restore path is symlink");
@@ -2715,7 +2718,7 @@ export class FilesystemReconciler {
       currentPath: path,
     };
     const appendRecord = () => this.appendHistoryRecord(record);
-    if (entityType === "doc") {
+    if (entityType === "doc" && !docLockHeld) {
       const publicPath = toSlash(path).replace(/^docs\//, "");
       await withDocMutationLocks(this.storeRoot, [publicPath], appendRecord);
     } else {

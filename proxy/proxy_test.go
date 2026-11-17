@@ -55,7 +55,12 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	root, err := os.MkdirTemp("/tmp", "kp")
+	// /tmp keeps unix socket paths short on macOS; Windows has no /tmp, so use the default there.
+	base := "/tmp"
+	if runtime.GOOS == "windows" {
+		base = ""
+	}
+	root, err := os.MkdirTemp(base, "kp")
 	if err != nil {
 		t.Fatal(err)
 	}

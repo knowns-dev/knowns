@@ -27,11 +27,13 @@ let fakeDir: string;
 
 beforeAll(async () => {
   if (!hasGoBin || process.platform === "win32") return;
+  // No `exec`: the shell must stay the process named cloudflared (exec would turn it into `sleep`
+  // and isProcessInstance would rightly refuse it). The trap takes the sleeper down with it.
   fakeDir = mkdtempSync(join(tmpdir(), "fake-cf-"));
   const script = join(fakeDir, "cloudflared");
   writeFileSync(
     script,
-    '#!/bin/sh\necho "INF Requesting new quick Tunnel on trycloudflare.com..." >&2\necho "INF |  https://fake-tunnel-abc.trycloudflare.com  |" >&2\nexec sleep 300\n',
+    '#!/bin/sh\necho "INF Requesting new quick Tunnel on trycloudflare.com..." >&2\necho "INF |  https://fake-tunnel-abc.trycloudflare.com  |" >&2\nsleep 300 & trap "kill $!; exit 0" TERM INT; wait\n',
   );
   chmodSync(script, 0o755);
   const tpl = seedTemplate();
