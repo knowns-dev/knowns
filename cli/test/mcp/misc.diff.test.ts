@@ -237,7 +237,8 @@ describe.skipIf(!hasGoBin)("remaining tools match Go", () => {
         Bun.write(`${dir}/src.txt`, "a a a\n");
       },
     });
-    for (const r of session.results) r.tsMasked = withoutD13(withoutKn6dvwn6(withoutDocSections(r.tsMasked)));
+    for (const r of session.results)
+      r.tsMasked = withoutD13(withoutKn6dvwn6(withoutDocSections(r.tsMasked)));
     const diffs = session.results.filter((r) => r.goMasked !== r.tsMasked);
     if (diffs.length > 0) {
       console.log(

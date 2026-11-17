@@ -671,7 +671,11 @@ function buildEntry(sig: string, state: QueueState): QueueScanEntry {
 }
 
 /** True when the file still holds what this process wrote: the signature alone is enough off the racy window. */
-export function ownContentHolds(path: string, entry: QueueScanEntry, outsideRacyWindow: boolean): boolean {
+export function ownContentHolds(
+  path: string,
+  entry: QueueScanEntry,
+  outsideRacyWindow: boolean,
+): boolean {
   if (outsideRacyWindow || entry.body === undefined) return outsideRacyWindow;
   try {
     return readUtf8Retrying(path) === entry.body;

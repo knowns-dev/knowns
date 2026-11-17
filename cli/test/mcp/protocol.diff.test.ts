@@ -81,7 +81,9 @@ async function collect(side: "go" | "ts"): Promise<string[]> {
   await Bun.sleep(1500);
   await s.close();
   const lines = s.lines.map((l) => maskPath(l, sb.dir, "<DIR>"));
-  return (side === "ts" ? lines.map((l) => withoutD13(withoutKn6dvwn6(withoutDocSections(l)))) : lines).sort();
+  return (
+    side === "ts" ? lines.map((l) => withoutD13(withoutKn6dvwn6(withoutDocSections(l)))) : lines
+  ).sort();
 }
 
 describe.skipIf(!hasGoBin)("wire protocol matches Go", () => {
