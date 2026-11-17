@@ -2348,6 +2348,29 @@ export function runtimeEventWakes(
 }
 
 /**
+ * How long the daemon lets a burst of file events settle before it reads what changed. A client
+ * (the Go 0.34 CLI, a hook, a second daemon) updates the registry and then a queue within a few
+ * milliseconds with a plain rename. On Windows every read, whatever the API, makes a rename over
+ * the same file fail with EPERM while the handle is open, and the client does not retry: waking
+ * on the first event and reading at once collided with the client's next write in about 1 to 3 of
+ * 100 writes. Reading after the burst keeps the daemon's reads out of the client's way.
+ */
+export const WAKE_SETTLE_MS = 40;
+
+async function settle(signal: AbortSignal | undefined): Promise<void> {
+  if (signal?.aborted) return;
+  await new Promise<void>((resolve) => {
+    const t = setTimeout(done, WAKE_SETTLE_MS);
+    function done() {
+      clearTimeout(t);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
+
+/**
  * One fs.watch per runtime directory (root, leases, queues): a lease, an enqueue, a reload request
  * or a stop flag ends the idle wait at once, so the idle tick can be long. If a watch cannot start
  * the daemon still polls at the idle interval.
@@ -2408,6 +2431,7 @@ export function watchRuntimeDirs(onPoke?: () => void): {
   return {
     async sleep(msIn, signal) {
       if (woken) {
+        await settle(signal);
         woken = false;
         return;
       }
@@ -2427,6 +2451,7 @@ export function watchRuntimeDirs(onPoke?: () => void): {
         if (signal?.aborted) return done();
         signal?.addEventListener("abort", done, { once: true });
       });
+      if (woken) await settle(signal);
       woken = false;
     },
     close() {

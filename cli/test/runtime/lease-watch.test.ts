@@ -65,6 +65,28 @@ describe("watchRuntimeDirs lease filter", () => {
   });
 });
 
+describe("watchRuntimeDirs settle", () => {
+  test("a woken sleep returns only after the burst had WAKE_SETTLE_MS to finish", async () => {
+    const w = q.watchRuntimeDirs();
+    try {
+      await Bun.sleep(300); // let the watches attach
+      const t0 = Date.now();
+      const slept = w.sleep(10_000);
+      // Two writes a millisecond apart, as a client updates the registry and then its queue.
+      writeFileSync(join(rt, "projects.json"), "[]");
+      await Bun.sleep(1);
+      mkdirSync(join(rt, "queues"), { recursive: true });
+      writeFileSync(join(rt, "queues", "p.json"), "{}");
+      await slept;
+      const waited = Date.now() - t0;
+      expect(waited).toBeGreaterThanOrEqual(q.WAKE_SETTLE_MS - 5);
+      expect(waited).toBeLessThan(2000);
+    } finally {
+      w.close();
+    }
+  });
+});
+
 describe("runtimeEventWakes (the filter, with the platform's event spellings)", () => {
   const known = new Set(["a.json"]);
   const yes = () => true;
