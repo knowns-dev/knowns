@@ -2,7 +2,7 @@
 """Drive a command on a pseudo-terminal (unix only).
 
 usage: ptydrive.py <cwd> <spec.json>
-spec: {"env": {...}, "argv": [...], "steps": [[expect_regex_or_null, keys], ...], "cols": 140, "rows": 50}
+spec: {"env": {...}, "argv": [...], "steps": [[expect_regex_or_null, keys, resend?], ...], "cols": 140, "rows": 50}
 The driver answers the terminal queries a real terminal answers (background colour OSC 11, cursor
 position CSI 6n): huh asks both at the start of every form and swallows the keys typed until the
 reply arrives or its own timeout passes, so on a slow host a key sent after the title appeared was
@@ -78,11 +78,23 @@ def settle(quiet=0.6, cap=6.0):
             since = time.time()
 
 
-for expect, keys in spec["steps"]:
+RESEND_AFTER = 4.0
+prev_keys, prev_at, prev_resend = None, 0.0, False
+for step in spec["steps"]:
+    expect, keys = step[0], step[1]
+    resend = len(step) > 2 and bool(step[2])
     if expect:
         deadline = time.time() + 20
         while alive and time.time() < deadline and not re.search(expect.encode(), ansi.sub(b"", window)):
             pump(0.1)
+            # A key that changed nothing on screen is sent once more: a program that was not reading
+            # its terminal yet drops it (the Go form's ctrl-C on a slow host), and the next step
+            # would then wait for a screen that never comes. Only steps marked "resend" (keys that
+            # are safe to repeat) are treated this way.
+            if prev_resend and prev_keys is not None and time.time() - prev_at > RESEND_AFTER:
+                window = b""
+                os.write(fd, prev_keys)
+                prev_resend = False
     else:
         pump(0.3)
     if not alive:
@@ -90,6 +102,7 @@ for expect, keys in spec["steps"]:
     settle()
     window = b""
     os.write(fd, keys.encode())
+    prev_keys, prev_at, prev_resend = keys.encode(), time.time(), resend
 
 deadline = time.time() + 20
 code = None

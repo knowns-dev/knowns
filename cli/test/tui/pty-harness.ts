@@ -35,6 +35,8 @@ export interface PtyStep {
   expect: string | null;
   /** Keys; "{toggle}" is x for Go and space for TS. */
   keys: string;
+  /** Send the keys once more if the screen did not change within 4 s (only for keys that are safe to repeat). */
+  resend?: boolean;
 }
 
 export interface PtyResult {
@@ -71,7 +73,11 @@ function run(
       ...env,
     },
     argv: side === "go" ? [GO_BIN as string, ...args] : [process.execPath, MAIN, ...args],
-    steps: steps.map((s) => [s.expect, s.keys.replaceAll("{toggle}", side === "go" ? "x" : " ")]),
+    steps: steps.map((s) => [
+      s.expect,
+      s.keys.replaceAll("{toggle}", side === "go" ? "x" : " "),
+      s.resend === true,
+    ]),
   };
   const specPath = join(p.base, `spec-${side}.json`);
   writeFileSync(specPath, JSON.stringify(spec));
