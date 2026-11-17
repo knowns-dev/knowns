@@ -27,10 +27,12 @@ import { setDaemonCommand } from "../../src/runtime/queue.ts";
 // Side effect: restores the fixtures' empty directories that a clean clone lacks.
 import "./fixture-dirs.ts";
 
-// Bun 1.3.12 ignores `timeout` in bunfig.toml, so the default per-test budget is raised here, the
-// one place every local and CI run loads. 5 s is too tight for tests that spawn real processes on
-// a loaded or Windows runner; 30 s still ends a hang fast. Files that call setDefaultTimeout or
-// pass a per-test timeout keep theirs.
+// Bun 1.3.12 ignores `timeout` in bunfig.toml, and this call only covers the first file of a
+// multi-file run (probed: with three 7 s async tests in three files, two died at 5 s). The real
+// default is the `--timeout 30000` flag in the `test` script of package.json, which CI uses; this
+// line only helps a bare `bun test` on a single file. 5 s is too tight for tests that spawn real
+// processes on a loaded or Windows runner; 30 s still ends a hang fast. Files that call
+// setDefaultTimeout or pass a per-test timeout keep theirs.
 setDefaultTimeout(30_000);
 
 const realHome = homedir();
