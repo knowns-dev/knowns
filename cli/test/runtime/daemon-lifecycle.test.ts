@@ -4,9 +4,11 @@
 // `__runtime run` processes under different versions (`bun --define KNOWNS_VERSION`).
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   realpathSync,
   writeFileSync,
@@ -182,6 +184,22 @@ afterAll(() => {
   for (const p of procs) p.kill();
 });
 
+// Each daemon's output goes to a file, and a wait that times out reports it: a daemon that never
+// answered (or exited on its idle timeout first) otherwise leaves no trace in a CI log.
+const daemonLogs: string[] = [];
+function daemonLogText(): string {
+  const parts: string[] = [];
+  for (const f of daemonLogs) {
+    try {
+      const text = readFileSync(f, "utf8");
+      parts.push(`--- ${f} (last 3000 chars)\n${text.slice(-3000)}`);
+    } catch {
+      parts.push(`--- ${f} (unreadable)`);
+    }
+  }
+  return parts.length > 0 ? `\n${parts.join("\n")}` : "";
+}
+
 async function until<T>(
   f: () => T | undefined | false,
   ms = 25_000,
@@ -191,7 +209,7 @@ async function until<T>(
   for (;;) {
     const v = f();
     if (v !== undefined && v !== false) return v;
-    if (Date.now() > end) throw new Error(`${what} not met in time`);
+    if (Date.now() > end) throw new Error(`${what} not met in time${daemonLogText()}`);
     await new Promise((r) => setTimeout(r, 50));
   }
 }
@@ -206,6 +224,9 @@ class Env {
   }
 
   daemon(version: string, extra: Record<string, string> = {}) {
+    const logPath = join(this.base, `daemon-${version}-${daemonLogs.length}.log`);
+    const logFd = openSync(logPath, "a");
+    daemonLogs.push(logPath);
     const p = Bun.spawn(
       [
         process.execPath,
@@ -240,10 +261,11 @@ class Env {
           CI: "1",
           ...extra,
         },
-        stdout: "ignore",
-        stderr: "ignore",
+        stdout: logFd,
+        stderr: logFd,
       },
     );
+    closeSync(logFd);
     procs.push(p);
     return p;
   }
