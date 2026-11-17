@@ -87,7 +87,10 @@ const STATUS_TEXT: Record<AvatarStatus, string> = { online: "online", offline: "
 export function initials(label: string): string {
   const parts = label.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "";
-  return (parts.length > 1 ? [...parts[0]][0] + [...parts[1]][0] : [...parts[0]].slice(0, 2).join("")).toUpperCase();
+  const [first = "", second] = parts;
+  const chars = (s: string) => [...s];
+  if (second !== undefined) return ((chars(first)[0] ?? "") + (chars(second)[0] ?? "")).toUpperCase();
+  return chars(first).slice(0, 2).join("").toUpperCase();
 }
 
 /** Accessible name: the label plus anything only shown visually ("Ada Lovelace, online, verified"). */
@@ -173,7 +176,7 @@ export function Avatar({
           aria-hidden="true"
           data-avatar-fallback=""
           className={cn(
-            "absolute inset-0 grid place-items-center transition-opacity duration-300 ease-[var(--kn-ease-out,cubic-bezier(.22,1,.36,1))] motion-reduce:transition-none",
+            "absolute inset-0 grid place-items-center transition-opacity duration-(--kn-dur-slow) ease-(--kn-ease-out) motion-reduce:transition-none",
             photoShown(src, loaded, failed) && "opacity-0",
           )}
         >
@@ -199,7 +202,7 @@ export function Avatar({
             onLoad={() => setLoaded(src)}
             onError={() => setFailed(src)}
             className={cn(
-              "absolute inset-0 size-full bg-background object-cover transition-opacity duration-300 ease-[var(--kn-ease-out,cubic-bezier(.22,1,.36,1))] motion-reduce:transition-none",
+              "absolute inset-0 size-full bg-background object-cover transition-opacity duration-(--kn-dur-slow) ease-(--kn-ease-out) motion-reduce:transition-none",
               loaded === src ? "opacity-100" : "opacity-0",
             )}
           />
@@ -228,7 +231,7 @@ export function Avatar({
             ringShadow,
             BADGE[size],
             circle ? "-right-0.5 -bottom-0.5 rounded-full" : "-right-1 -bottom-1",
-            badge ? "bg-card p-[12%] text-foreground [&>*]:size-full [&>svg]:size-full" : "bg-sky-500 p-[14%] text-white [&>svg]:size-full",
+            badge ? "bg-card p-[12%] text-foreground [&>*]:size-full [&>svg]:size-full" : "bg-[color:var(--kn-accent,var(--primary))] p-[14%] text-[color:var(--kn-accent-foreground,var(--primary-foreground))] [&>svg]:size-full",
           )}
         >
           {corner}
@@ -269,7 +272,7 @@ export function AvatarGroup({ children, max, size = "md", shape = "circle", labe
         <span
           key={child.key ?? i}
           className={cn(
-            "relative inline-grid transition-[translate] duration-200 ease-[var(--kn-ease-out,cubic-bezier(.22,1,.36,1))] hover:z-10 hover:-translate-y-0.5 motion-reduce:transition-none motion-reduce:hover:translate-y-0",
+            "relative inline-grid transition-[translate] duration-(--kn-dur) ease-(--kn-ease-out) hover:z-10 hover:-translate-y-0.5 motion-reduce:transition-none motion-reduce:hover:translate-y-0",
             i > 0 && OVERLAP[size],
           )}
         >
@@ -304,7 +307,7 @@ export function AvatarGroup({ children, max, size = "md", shape = "circle", labe
             onClick={onAdd}
             className={cn(
               "grid cursor-pointer place-items-center border border-dashed border-[color-mix(in_srgb,var(--foreground)_24%,transparent)] text-muted-foreground",
-              "transition-[color,background-color,border-color] duration-200 ease-[var(--kn-ease-out,cubic-bezier(.22,1,.36,1))]",
+              "transition-[color,background-color,border-color] duration-(--kn-dur) ease-(--kn-ease-out)",
               "hover:border-[color-mix(in_srgb,var(--foreground)_40%,transparent)] hover:bg-muted/60 hover:text-foreground",
               "[&>svg]:size-[45%]",
               SIZE[size],

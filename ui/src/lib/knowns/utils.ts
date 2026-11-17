@@ -9,6 +9,25 @@ export function cn(...classes: unknown[]) {
   return twMerge(clsx(classes as Parameters<typeof clsx>));
 }
 
+/**
+ * The two custom properties the `kn-scroll-fade-x` edge fade animates. They are registered here, not with an `@property`
+ * rule in the installed CSS: the shadcn CSS merge appends a bare `@property` on every install and never removes it.
+ * Registering twice throws, which is caught, so this is safe to run from any number of imports and next to an
+ * `@property` rule a page already has. The server has no `CSS`, so it does nothing there.
+ */
+export const FADE_PROPS = ["--kn-fade-l", "--kn-fade-r"] as const;
+export function registerFadeProps(css: { registerProperty?: (d: { name: string; syntax: string; inherits: boolean; initialValue: string }) => void } | undefined = typeof CSS === "undefined" ? undefined : CSS): void {
+  if (!css?.registerProperty) return;
+  for (const name of FADE_PROPS) {
+    try {
+      css.registerProperty({ name, syntax: "<length>", inherits: false, initialValue: "0px" });
+    } catch {
+      // Already registered (an @property rule, or an earlier call).
+    }
+  }
+}
+registerFadeProps();
+
 /** Shared focus ring for interactive elements. */
 export const focusRing = "focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
 

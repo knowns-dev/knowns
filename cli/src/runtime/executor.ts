@@ -32,6 +32,7 @@ import { IndexService } from "./index/index-service.ts";
 import { currentQdrantIntent } from "./index/qdrant-intent.ts";
 import { executeQdrantReconciliation } from "./index/reconcile.ts";
 import { reindexQdrantGeneration, retentionFromResolution } from "./index/reindex.ts";
+import { cancelRequested } from "./job-cancel.ts";
 import {
   configFromResolution,
   ensureManagedQdrant,
@@ -352,12 +353,13 @@ async function executeReindex(
         // progress is advisory
       }
     };
+    const stop = () => cancelRequested(job.id);
     if (res.backend !== SEMANTIC_VECTOR_BACKEND_QDRANT) {
       // session.Engine(store).Reindex: the SQLite index is rebuilt in place.
       if (!(session.vecStore instanceof SQLiteVectorStore)) {
         throw new Error(`reindex: ${res.backend} vector store is not writable`);
       }
-      await new IndexService(storage, session.embedder, session.vecStore).reindex(progress);
+      await new IndexService(storage, session.embedder, session.vecStore).reindex(progress, stop);
       return;
     }
     const client = qdrantClientForStore(storage, env);
@@ -367,6 +369,7 @@ async function executeReindex(
       retentionGenerations: keep,
       retentionTtlMs: ttlMs,
       progress,
+      shouldStop: stop,
     });
   } finally {
     await session.close();

@@ -24,8 +24,8 @@ export const formatUsd = (n: number) => `$${n.toFixed(2)}`;
 
 const INK_DARK = "#0a0a0a";
 function luminance(hex: string): number {
-  const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
-  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  const [r = 0, g = 0, b = 0] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 /** WCAG contrast ratio of two #rrggbb colours. */
 export function contrastRatio(a: string, b: string): number {
@@ -55,7 +55,7 @@ export function rootAgent(actors: Actor[]): Actor | undefined {
 
 export function initials(label: string) {
   const parts = label.trim().split(/\s+/).filter(Boolean);
-  if (parts.length > 1) return (parts[0][0] + parts[1][0]).toUpperCase();
+  if (parts.length > 1) return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase();
   return label.trim().slice(0, 2).toUpperCase();
 }
 
@@ -67,7 +67,7 @@ export function actorColors(actors: Actor[]): Map<string, string> {
   const root = rootAgent(actors);
   const agents = actors.filter((a) => a.type === "agent");
   const ordered = root ? [root, ...agents.filter((a) => a !== root)] : agents;
-  return new Map(ordered.map((a, i) => [a.id, AGENT_PALETTE[i % AGENT_PALETTE.length]]));
+  return new Map(ordered.map((a, i) => [a.id, AGENT_PALETTE[i % AGENT_PALETTE.length] ?? ""]));
 }
 
 /** Colour for a span or link: the specialist agent end, else any agent end, else indigo. */

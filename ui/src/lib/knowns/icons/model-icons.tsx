@@ -26,6 +26,8 @@ export function modelIcon(model?: string): ReactNode | null {
   if (!model) return null;
   const hit = RULES.find(([re]) => re.test(model));
   if (!hit) return null;
+  const svg = MODEL_SVGS[hit[1]];
+  if (!svg) return null;
   // Trusted, bundled SVG markup - inlined so monochrome logos follow currentColor.
-  return <span className={LOGO} dangerouslySetInnerHTML={{ __html: MODEL_SVGS[hit[1]] }} />;
+  return <span className={LOGO} dangerouslySetInnerHTML={{ __html: svg }} />;
 }

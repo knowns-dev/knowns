@@ -19,7 +19,7 @@ export function jsonTokens(text: string): JsonToken[] {
     if (m[1] && m[2]) out.push({ kind: "key", text: m[1] }, { kind: "plain", text: m[2] });
     else if (m[1]) out.push({ kind: "string", text: m[1] });
     else if (m[3]) out.push({ kind: "literal", text: m[3] });
-    else out.push({ kind: "number", text: m[4] });
+    else out.push({ kind: "number", text: m[4] ?? "" });
     last = re.lastIndex;
   }
   if (last < text.length) out.push({ kind: "plain", text: text.slice(last) });

@@ -1,7 +1,7 @@
 "use client";
 /** @registry name="motion" type="lib" title="Motion" description="Shared motion for state changes: duration and easing tokens, and helpers for a status icon that draws, shakes or pulses, a fold, rows that slide in and collapse out, a number that counts and a value that flashes. Reduced motion is instant." */
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "./utils";
 import { EASE, MOTION, countAt, mergeRows, type MotionRow } from "./motion-utils";
 
@@ -100,20 +100,25 @@ export function SwapText({ value, children, className }: { value: unknown; child
 export function Fold({ open, children, className, ms = MOTION.base, as: Tag = "div" }: { open: boolean; children: ReactNode; className?: string; ms?: number; as?: "div" | "span" }) {
   const [mounted, setMounted] = useState(open);
   const [shown, setShown] = useState(open);
+  const el = useRef<HTMLElement>(null);
+  // Opening: mount closed, flush its style once, then open before the browser paints, so the size change starts on the same frame as the click.
+  useLayoutEffect(() => {
+    if (open) setMounted(true);
+  }, [open]);
+  useLayoutEffect(() => {
+    if (!open || !mounted || shown) return;
+    if (!prefersReducedMotion()) el.current?.getBoundingClientRect();
+    setShown(true);
+  }, [open, mounted, shown]);
   useEffect(() => {
-    if (open) {
-      setMounted(true);
-      if (prefersReducedMotion()) return setShown(true);
-      const raf = requestAnimationFrame(() => requestAnimationFrame(() => setShown(true)));
-      return () => cancelAnimationFrame(raf);
-    }
+    if (open) return;
     setShown(false);
     const t = setTimeout(() => setMounted(false), prefersReducedMotion() ? 0 : ms);
     return () => clearTimeout(t);
   }, [open, ms]);
   if (!mounted) return null;
   return (
-    <Tag className={cn("kn-m-fold", className)} data-open={shown || undefined}>
+    <Tag ref={el as never} className={cn("kn-m-fold", className)} data-open={shown || undefined}>
       <Tag>{children}</Tag>
     </Tag>
   );

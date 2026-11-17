@@ -125,7 +125,17 @@ export interface HardDeleteOptions {
   expectedHash?: string;
 }
 
+/**
+ * Observers of a named batch (the Activity Tray). `shouldStop` is asked at each chunk boundary and
+ * ends the batch there, keeping everything already done; `onProgress` follows every Task.
+ */
+export interface BatchHooks {
+  onProgress?: (processed: number, total: number) => void;
+  shouldStop?: () => boolean;
+}
+
 export interface BatchOptions {
+  hooks?: BatchHooks;
   ids?: string[];
   execute?: boolean;
   actor?: string;
@@ -137,6 +147,8 @@ export interface BatchOptions {
 }
 
 export interface BatchResult {
+  /** The batch was stopped at a chunk boundary by `hooks.shouldStop`; processed Tasks stay done. */
+  stopped?: boolean;
   operation: Operation;
   execute: boolean;
   completed: boolean;
@@ -170,6 +182,8 @@ export interface PublicCapabilities {
 }
 
 export interface Response {
+  /** Set when a batch was stopped at a chunk boundary (never on the wire). */
+  stopped?: boolean;
   operation: Operation;
   execute: boolean;
   completed: boolean;

@@ -32,6 +32,7 @@ import {
 } from "../../domain/tasklifecycle/wire.ts";
 import { normalizeTaskIdPrefix } from "../../models/id.ts";
 import { type Task, taskLifecycleState } from "../../models/task.ts";
+import type { Operation as TrayOperation } from "../../runtime/operation-types.ts";
 import type { Storage } from "../../storage/adapters.ts";
 import { goNow } from "../../storage/history/go-json.ts";
 import {
@@ -291,15 +292,119 @@ function lifecycleStatus(response: Parameters<typeof failureKindFor>[0], err?: E
   }
 }
 
-async function executeLifecycle(app: App, request: LifecycleRequest): Promise<Response> {
+const isBatchRun = (r: LifecycleRequest): boolean =>
+  r.execute === true &&
+  (r.operation === "batch_archive" || r.operation === "batch_unarchive") &&
+  (r.ids?.length ?? 0) > 0;
+
+async function executeLifecycle(
+  app: App,
+  request: LifecycleRequest,
+  background = false,
+): Promise<Response> {
   const storage = app.need();
   if (!request.actor) request.actor = "api";
+  // An executed batch is an operation of the Activity Tray: progress per chunk, cancel after the
+  // current chunk, and (background) an answer at once so closing the dialog changes nothing.
+  if (isBatchRun(request)) {
+    const run = startBatchOperation(app, storage, request);
+    if (background) return jsonResponse(202, { operation: run.operation });
+    const { response, error } = await run.done;
+    return jsonResponse(lifecycleStatus(response, error), responseToWire(response));
+  }
   const { response, error } = await lifecycleService(app, storage).executePublic(
     request,
     app.opts.allowTaskHardDelete === true,
   );
   return jsonResponse(lifecycleStatus(response, error), responseToWire(response));
 }
+
+type LifecycleOutcome = Awaited<ReturnType<Service["executePublic"]>>;
+
+function startBatchOperation(
+  app: App,
+  storage: Storage,
+  request: LifecycleRequest,
+): { operation: TrayOperation; done: Promise<LifecycleOutcome> } {
+  const archive = request.operation === "batch_archive";
+  const total = request.ids?.length ?? 0;
+  const verb = archive ? "Archiving" : "Restoring";
+  let project: string | null = null;
+  try {
+    project = storage.config.load()?.name ?? null;
+  } catch {
+    project = null;
+  }
+  let remaining: readonly string[] = request.ids ?? [];
+  const handle = app.operations.start({
+    kind: request.operation,
+    title: `${verb} ${total} ${total === 1 ? "task" : "tasks"}`,
+    project,
+    projectRoot: app.projectRoot,
+    progress: { done: 0, total },
+    cancellable: true,
+    // "Run again" retries only what is left: the tasks this run did not change.
+    retry: () => startBatchOperation(app, storage, { ...request, ids: [...remaining] }).operation,
+  });
+  const done = (async (): Promise<LifecycleOutcome> => {
+    let outcome: LifecycleOutcome;
+    try {
+      outcome = await lifecycleService(app, storage).executePublic(
+        request,
+        app.opts.allowTaskHardDelete === true,
+        {
+          onProgress: (processed, of) => handle.progress(processed, of),
+          shouldStop: () => handle.cancelRequested,
+        },
+      );
+    } catch (e) {
+      handle.fail(errMessage(e));
+      throw e;
+    }
+    const r = outcome.response;
+    const word = archive ? "archived" : "restored";
+    const changedIds = new Set(r.items.filter((i) => i.changed).map((i) => i.taskId));
+    remaining = (request.ids ?? []).filter((id) => !changedIds.has(id));
+    const left = Math.max(0, total - r.processed);
+    const why = unchangedReasons(r.items);
+    if (r.stopped) handle.cancelled(`${r.changed} ${word}, ${left} left${why}`);
+    else if (outcome.error) {
+      handle.fail(
+        firstLine(errMessage(outcome.error)),
+        `${r.changed} ${word}, ${r.items.filter((i) => !i.changed).length} not changed${why}`,
+      );
+    } else {
+      const skipped = r.items.filter((i) => !i.changed).length;
+      handle.finish(`${r.changed} ${word}${skipped > 0 ? `, ${skipped} not changed` : ""}${why}`);
+    }
+    return outcome;
+  })();
+  // Background callers never await it: a rejection must not become unhandled.
+  done.catch(() => {});
+  const operation = app.operations.get(handle.id) as TrayOperation;
+  return { operation, done };
+}
+
+const REASONS_SHOWN = 3;
+
+/** ": #12 Task has an active child; #15 Task is not done (+4 more)": why tasks of a batch did not change. */
+function unchangedReasons(
+  items: readonly {
+    taskId: string;
+    changed: boolean;
+    reasons: readonly { message: string }[] | null;
+  }[],
+): string {
+  const rows = items.filter((i) => !i.changed && (i.reasons?.length ?? 0) > 0);
+  if (rows.length === 0) return "";
+  const shown = rows
+    .slice(0, REASONS_SHOWN)
+    .map((i) => `#${i.taskId} ${firstLine(i.reasons?.[0]?.message ?? "")}`);
+  const more = rows.length - shown.length;
+  return `: ${shown.join("; ")}${more > 0 ? ` (+${more} more)` : ""}`;
+}
+
+const firstLine = (s: string): string => s.split("\n", 1)[0]?.slice(0, 300) ?? "";
 
 const LIFECYCLE_FIELDS: Record<string, FieldType> = {
   operation: "string",
@@ -313,11 +418,14 @@ const LIFECYCLE_FIELDS: Record<string, FieldType> = {
   minimumAgeMs: "int64",
   expectedHash: "string",
   expectedHashes: "stringMap",
+  background: "bool",
 };
 
 async function decodeLifecycleRequest(
   c: Ctx,
-): Promise<{ ok: true; req: LifecycleRequest } | { ok: false; res: Response }> {
+): Promise<
+  { ok: true; req: LifecycleRequest; background?: boolean } | { ok: false; res: Response }
+> {
   const req = {
     operation: "" as LifecycleRequest["operation"],
     execute: false,
@@ -340,7 +448,7 @@ async function decodeLifecycleRequest(
   if (v.expectedHash !== undefined) req.expectedHash = v.expectedHash as string;
   if (v.expectedHashes !== undefined)
     req.expectedHashes = v.expectedHashes as Record<string, string>;
-  return { ok: true, req };
+  return { ok: true, req, background: v.background === true };
 }
 
 export function registerTasks(r: Router, app: App): void {
@@ -516,20 +624,25 @@ export function registerTasks(r: Router, app: App): void {
         minimumAgeMs: "int64",
         olderThanMs: "int64",
         expectedHashes: "stringMap",
+        background: "bool",
       });
       if (!body.ok) return body.res;
       const v = body.v;
       const minimumAge = (v.minimumAgeMs ?? v.olderThanMs) as number | undefined;
-      return executeLifecycle(app, {
-        operation: "batch_archive",
-        ...(v.ids !== undefined && { ids: v.ids as string[] }),
-        execute: (v.execute as boolean | undefined) ?? false,
-        ...(v.actor !== undefined && { actor: v.actor as string }),
-        ...(minimumAge !== undefined && { minimumAgeMs: minimumAge }),
-        ...(v.expectedHashes !== undefined && {
-          expectedHashes: v.expectedHashes as Record<string, string>,
-        }),
-      });
+      return executeLifecycle(
+        app,
+        {
+          operation: "batch_archive",
+          ...(v.ids !== undefined && { ids: v.ids as string[] }),
+          execute: (v.execute as boolean | undefined) ?? false,
+          ...(v.actor !== undefined && { actor: v.actor as string }),
+          ...(minimumAge !== undefined && { minimumAgeMs: minimumAge }),
+          ...(v.expectedHashes !== undefined && {
+            expectedHashes: v.expectedHashes as Record<string, string>,
+          }),
+        },
+        v.background === true,
+      );
     }),
   );
 
@@ -539,7 +652,7 @@ export function registerTasks(r: Router, app: App): void {
       const d = await decodeLifecycleRequest(c);
       if (!d.ok) return d.res;
       d.req.operation = "batch_unarchive";
-      return executeLifecycle(app, d.req);
+      return executeLifecycle(app, d.req, d.background === true);
     }),
   );
 

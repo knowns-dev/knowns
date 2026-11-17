@@ -1,6 +1,7 @@
 import type { Task, TimeEntry } from "@/ui/models/task";
 import type { TaskChange, TaskVersion, TaskHistoryMetadata } from "@/ui/models/version";
 import { getTaskLifecycleState } from "@/ui/models/taskLifecycle";
+import type { Operation, OperationSnapshot } from "@/ui/models/operation";
 import type {
 	TaskLifecycleEvent,
 	TaskLifecycleReason,
@@ -217,6 +218,56 @@ export class LifecycleAPIError extends Error {
 	}
 }
 
+async function readOperationResponse(res: Response, fallback: string): Promise<Operation> {
+	let body: { operation?: Operation; error?: string } | undefined;
+	try {
+		body = (await res.json()) as { operation?: Operation; error?: string };
+	} catch {
+		// keep the HTTP status as the message
+	}
+	if (!res.ok || !body?.operation) {
+		throw new OperationAPIError(body?.error || `${fallback} (${res.status})`, res.status, body?.operation);
+	}
+	return body.operation;
+}
+
+export class OperationAPIError extends Error {
+	constructor(
+		message: string,
+		readonly status: number,
+		/** A 409 carries the current operation, so the tray can show the truth. */
+		readonly operation?: Operation,
+	) {
+		super(message);
+		this.name = "OperationAPIError";
+	}
+}
+
+/** The Activity Tray endpoints. Cancel is idempotent; retry of a web operation returns a NEW id. */
+export const operationsApi = {
+	async snapshot(): Promise<OperationSnapshot> {
+		const res = await apiFetch(`${API_BASE}/api/operations`);
+		if (!res.ok) throw new Error(`Failed to load operations (${res.status})`);
+		return (await res.json()) as OperationSnapshot;
+	},
+	async cancel(id: string): Promise<Operation> {
+		return readOperationResponse(
+			await apiFetch(`${API_BASE}/api/operations/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+			"Could not cancel",
+		);
+	},
+	async retry(id: string): Promise<Operation> {
+		return readOperationResponse(
+			await apiFetch(`${API_BASE}/api/operations/${encodeURIComponent(id)}/retry`, { method: "POST" }),
+			"Could not run again",
+		);
+	},
+	async dismiss(id: string): Promise<void> {
+		const res = await apiFetch(`${API_BASE}/api/operations/${encodeURIComponent(id)}/dismiss`, { method: "POST" });
+		if (!res.ok && res.status !== 404) throw new OperationAPIError(`Could not dismiss (${res.status})`, res.status);
+	},
+};
+
 async function lifecycleFetch(
 	path: string,
 	request: Omit<TaskLifecycleRequest, "operation">,
@@ -331,6 +382,26 @@ export const api = {
 
 	async batchUnarchiveTasks(ids: string[], execute = false, status?: string): Promise<TaskLifecycleResponse> {
 		return lifecycleFetch("/api/tasks/batch-unarchive", { ids, execute, status });
+	},
+
+	/** Starts a named batch as a tray operation: answers 202 at once, progress arrives as operation events. */
+	async startBatchInBackground(
+		kind: "archive" | "unarchive",
+		ids: string[],
+		options: { status?: string; minimumAgeMs?: number } = {},
+	): Promise<Operation> {
+		const res = await apiFetch(`${API_BASE}/api/tasks/batch-${kind}`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				ids,
+				execute: true,
+				background: true,
+				...(options.status ? { status: options.status } : {}),
+				...(options.minimumAgeMs !== undefined ? { minimumAgeMs: options.minimumAgeMs } : {}),
+			}),
+		});
+		return readOperationResponse(res, "Could not start the batch");
 	},
 
 	async hardDeleteTask(id: string, reason: string, confirmed: boolean): Promise<TaskLifecycleResponse> {

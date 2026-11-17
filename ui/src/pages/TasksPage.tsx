@@ -132,7 +132,6 @@ export default function TasksPage({
 	const [archiveRequest, setArchiveRequest] = useState<{ generation: number; minimumAgeMs: number; label: string; ids?: readonly string[] } | null>(null);
 	const archiveGenerationRef = useRef(0);
 	const archiveInFlightRef = useRef(false);
-	const [archiveProgress, setArchiveProgress] = useState<{ done: number; total: number } | null>(null);
 	const historicalMode = lifecycleFilter === "archived" || lifecycleFilter === "all";
 
 	const loadHistorical = useCallback(async () => {
@@ -169,10 +168,6 @@ export default function TasksPage({
 	}, [historicalMode, loadHistorical]);
 
 	useSSEEvent("tasks:refresh", invalidateHistorical, [invalidateHistorical]);
-	// Each archived Task of a running batch is one lifecycle event: count them for the dialog.
-	useSSEEvent("tasks:lifecycle", () => {
-		if (archiveInFlightRef.current) setArchiveProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
-	}, []);
 	// One task changed: patch it in the historical list instead of refetching every task.
 	useSSEEvent(
 		"tasks:updated",
@@ -278,12 +273,11 @@ export default function TasksPage({
 		setRestoreLoading(true);
 		setRestoreError(null);
 		try {
-			const response = await api.batchUnarchiveTasks([...ids], true);
+			// The batch runs on the server as a tray operation: the dialog closes now and the tray
+			// shows progress, cancel and the outcome. The Task lists refresh from the lifecycle events.
+			await api.startBatchInBackground("unarchive", [...ids]);
 			if (restoreGenerationRef.current !== generation) return;
-			setRestoreResponse(response);
-			onTasksUpdate();
-			await loadHistorical();
-			if (!response.failedTaskId) toast.success(`Restored ${response.changed} task${response.changed === 1 ? "" : "s"}`);
+			closeRestore(false);
 		} catch (error) {
 			if (restoreGenerationRef.current === generation) {
 				if (error instanceof LifecycleAPIError) setRestoreResponse(error.response || null);
@@ -341,17 +335,13 @@ export default function TasksPage({
 		if (!archiveRequest?.ids || archiveInFlightRef.current) return;
 		const { generation, minimumAgeMs, ids } = archiveRequest;
 		archiveInFlightRef.current = true;
-		setArchiveProgress({ done: 0, total: ids.length });
 		setArchiveLoading(true);
 		setArchiveError(null);
 		try {
-			const response = await api.batchArchiveTasks({ ids: [...ids], minimumAgeMs, execute: true });
+			// Runs on the server as a tray operation: close the dialog and let the tray show it.
+			await api.startBatchInBackground("archive", [...ids], { minimumAgeMs });
 			if (archiveGenerationRef.current !== generation) return;
-			setArchiveResponse(response);
-			await reconcileTasks();
-			if (!response.failedTaskId) {
-				toast.success(`Archived ${response.changed} task${response.changed === 1 ? "" : "s"}`);
-			}
+			closeArchiveDialog(false);
 		} catch (error) {
 			if (archiveGenerationRef.current === generation) {
 				if (error instanceof LifecycleAPIError && error.response) setArchiveResponse(error.response);
@@ -360,7 +350,6 @@ export default function TasksPage({
 			await reconcileTasks().catch(() => {});
 		} finally {
 			archiveInFlightRef.current = false;
-			setArchiveProgress(null);
 			if (archiveGenerationRef.current === generation) setArchiveLoading(false);
 		}
 	};
@@ -551,7 +540,6 @@ export default function TasksPage({
 				description={archiveRequest?.label === SELECTED_ARCHIVE_LABEL ? "Preview for the Tasks you selected. Eligibility and warnings come from the backend." : `Preview for Tasks completed before ${archiveRequest?.label || "the selected retention window"}. Eligibility and warnings come from the backend.`}
 				response={archiveResponse}
 				loading={archiveLoading}
-				progress={archiveProgress}
 				error={archiveError}
 				confirmLabel="Archive eligible Tasks"
 				onConfirm={handleBatchArchiveExecute}

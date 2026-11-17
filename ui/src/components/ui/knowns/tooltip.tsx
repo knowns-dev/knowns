@@ -1,7 +1,7 @@
 "use client";
 /** @registry name="tooltip" type="ui" title="Tooltip" description="Short hint on hover or focus, four sides, optional description; portaled above everything." */
 
-import { cloneElement, isValidElement, useEffect, useId, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { cloneElement, isValidElement, useEffect, useId, useRef, useState, type CSSProperties, type ReactElement, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/ui/lib/knowns/utils";
 import { FLOAT_FADE, useFloating, type FloatingAlign, type FloatingSide } from "./use-floating";
@@ -22,6 +22,8 @@ export interface TooltipProps {
   disabled?: boolean;
   /** Classes for the inline wrapper around the trigger. */
   className?: string;
+  /** Style of the inline wrapper, for a trigger that has to be placed (a segment over a bar, say). */
+  style?: CSSProperties;
 }
 
 /** When a tooltip last closed: the next one within a moment opens at once, with no fade (a toolbar sweep). */
@@ -35,7 +37,7 @@ const isExpanded = (v: unknown) => v === true || v === "true";
  * keyboard users get the hint too. The hint renders in a portal with fixed positioning, flips when there
  * is no room, and hides itself while its trigger has an open popup (aria-expanded).
  */
-export function Tooltip({ content, description, children, side = "top", align = "center", delay = 300, closeDelay = 80, disabled, className }: TooltipProps) {
+export function Tooltip({ content, description, children, side = "top", align = "center", delay = 300, closeDelay = 80, disabled, className, style: wrapStyle }: TooltipProps) {
   const [want, setWant] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const id = useId();
@@ -81,6 +83,7 @@ export function Tooltip({ content, description, children, side = "top", align = 
     <span
       ref={triggerRef}
       className={cn("inline-flex", className)}
+      style={wrapStyle}
       onPointerEnter={(e) => e.pointerType !== "touch" && show()}
       onPointerLeave={() => hide()}
       onPointerDown={() => hide(true)}

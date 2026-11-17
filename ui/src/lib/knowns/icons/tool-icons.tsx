@@ -77,7 +77,8 @@ export function toolIcon(name?: string): ReactNode | null {
   if (!name) return null;
   const brand = BRANDS.find(([re]) => re.test(name));
   // Trusted, generated SVG markup.
-  if (brand) return <span className={LOGO} dangerouslySetInnerHTML={{ __html: onDark(TOOL_SVGS[brand[1]]) }} />;
+  const svg = brand ? TOOL_SVGS[brand[1]] : undefined;
+  if (svg) return <span className={LOGO} dangerouslySetInnerHTML={{ __html: onDark(svg) }} />;
   return GENERIC.find(([re]) => re.test(name))?.[1] ?? null;
 }
 
@@ -114,6 +115,7 @@ const MARKS: [RegExp, string][] = [
 export function brandMark(name?: string): ReactNode | null {
   if (!name) return null;
   const hit = MARKS.find(([re]) => re.test(name));
+  const svg = hit ? BRAND_MARK_SVGS[hit[1]] : undefined;
   // Trusted, generated SVG markup.
-  return hit ? <span className={LOGO} dangerouslySetInnerHTML={{ __html: BRAND_MARK_SVGS[hit[1]] }} /> : null;
+  return svg ? <span className={LOGO} dangerouslySetInnerHTML={{ __html: svg }} /> : null;
 }

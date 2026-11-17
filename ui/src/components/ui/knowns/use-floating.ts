@@ -108,11 +108,46 @@ type Placed = { width?: number } & Position;
 export const FLOAT_EXIT_MS = MOTION.fast + 20;
 
 /**
+ * The shared surface of every floating panel (menu, dropdown, user menu, popover, hover card, toast): radius 12px,
+ * a hairline ring instead of a border (it cannot shift layout), one soft shadow. Content panels pad 12px (`p-3`),
+ * list panels 4px (`p-1`) around rows that are 32px tall with an 8px radius. Modal surfaces (dialog, sheet, command
+ * menu) use the larger radius and shadow in their own files.
+ */
+export const FLOAT_SURFACE =
+  "rounded-xl bg-popover text-[13px] text-popover-foreground shadow-[0_0_0_1px_color-mix(in_srgb,var(--foreground)_12%,transparent),0_12px_32px_-12px_rgb(0_0_0/0.3),0_2px_6px_rgb(0_0_0/0.06)]";
+
+/**
  * The shared enter and exit of every floating panel: a short opacity fade, no travel. The exit is the enter
  * in reverse on the same curve, about two thirds as long. Set `data-state` to "closed" while `closing`.
  */
 export const FLOAT_FADE =
-  "transition-opacity duration-[var(--kn-dur-fast,120ms)] ease-[var(--kn-ease-out,cubic-bezier(.22,1,.36,1))] starting:opacity-0 data-[state=closed]:pointer-events-none data-[state=closed]:opacity-0 data-[state=closed]:duration-[calc(var(--kn-dur-fast,120ms)*.67)] motion-reduce:transition-none";
+  "transition-opacity duration-(--kn-dur-fast) ease-(--kn-ease-out) starting:opacity-0 data-[state=closed]:pointer-events-none data-[state=closed]:opacity-0 data-[state=closed]:duration-[calc(var(--kn-dur-fast)*.67)] motion-reduce:transition-none";
+
+/**
+ * Viewport point that `position: fixed` coordinates start from for `el`. Normally (0, 0), but an
+ * ancestor with a transform, translate, filter or containment becomes the containing block, and a
+ * sheet <dialog> always carries `translate`. Without this the panel lands offset by the host's
+ * position (a dropdown in a right-side sheet opened 620px too far right).
+ */
+export function fixedOrigin(el: Element | null): { x: number; y: number } {
+  for (let n = el?.parentElement ?? null; n && n !== document.documentElement; n = n.parentElement) {
+    const cs = getComputedStyle(n);
+    const makesBlock =
+      cs.transform !== "none" ||
+      (cs.translate && cs.translate !== "none") ||
+      (cs.scale && cs.scale !== "none") ||
+      (cs.rotate && cs.rotate !== "none") ||
+      cs.filter !== "none" ||
+      cs.perspective !== "none" ||
+      /paint|layout|strict|content/.test(cs.contain) ||
+      /transform|translate|filter/.test(cs.willChange);
+    if (makesBlock) {
+      const r = n.getBoundingClientRect();
+      return { x: r.left + n.clientLeft - n.scrollLeft, y: r.top + n.clientTop - n.scrollTop };
+    }
+  }
+  return { x: 0, y: 0 };
+}
 
 /**
  * Keeps a floating panel next to its trigger: fixed positioning from getBoundingClientRect, flip and
@@ -172,8 +207,12 @@ export function useFloating<T extends HTMLElement = HTMLElement, F extends HTMLE
     const size = { width: matchWidth ? r.width : f.offsetWidth, height: f.offsetHeight };
     f.style.maxHeight = maxHeight;
     f.style.maxWidth = maxWidth;
+    const origin = fixedOrigin(f);
+    const placed = computePosition({ x: r.left, y: r.top, width: r.width, height: r.height }, size, { width: window.innerWidth, height: window.innerHeight }, { side, align, offset, margin });
     const next: Placed = {
-      ...computePosition({ x: r.left, y: r.top, width: r.width, height: r.height }, size, { width: window.innerWidth, height: window.innerHeight }, { side, align, offset, margin }),
+      ...placed,
+      x: Math.round(placed.x - origin.x),
+      y: Math.round(placed.y - origin.y),
       width: matchWidth ? Math.round(r.width) : undefined,
     };
     setPos((p) =>
