@@ -126,14 +126,10 @@ describe("toActivityItem", () => {
 		expect(operationItem(op({ message: "125 archived, 375 left" }), h).message).toBe("125 archived, 375 left");
 	});
 
-	test("the same instant is the same Date, so the stack's elapsed ticker is not restarted by every progress event", () => {
+	test("startedAt is a Date in milliseconds, so an elapsed clock moves once time passes", () => {
 		const { h } = handlers();
-		const a = operationItem(op({ startedAt: 123_456, progress: { done: 1, total: 10 } }), h);
-		const b = operationItem(op({ startedAt: 123_456, progress: { done: 2, total: 10 } }), h);
-		expect(a.startedAt).toBe(b.startedAt);
-		expect(a.startedAt?.getTime()).toBe(123_456);
-		// and a Date in milliseconds, so an elapsed clock moves once time passes
-		expect(Date.now() - (a.startedAt?.getTime() ?? Date.now())).toBeGreaterThan(0);
+		const a = operationItem(op({ startedAt: Date.now() - 5000, progress: { done: 1, total: 10 } }), h);
+		expect(Date.now() - (a.startedAt?.getTime() ?? Date.now())).toBeGreaterThanOrEqual(5000);
 	});
 
 	test("pressing Cancel reads Cancelling at once, before the server answers", () => {

@@ -128,14 +128,20 @@ function OperationBody({ p }: { p: OperationActivityProps }) {
   );
 }
 
-/** Elapsed ms since startedAt, ticking while running; frozen at finishedAt. Null without a start. */
+/**
+ * Elapsed ms since startedAt, ticking while running; frozen at finishedAt. Null without a start. The effect depends on the
+ * timestamps' values, not the Dates: a parent that rebuilds its items on every event passes a new Date of the same instant
+ * each time, and that must not restart the one second interval (it would never fire).
+ */
 function useElapsedMs(startedAt: Date | undefined, running: boolean, finishedAt?: Date): number | null {
   const [now, setNow] = useState(() => Date.now());
+  const started = startedAt?.getTime();
+  const finished = finishedAt?.getTime();
   useEffect(() => {
-    if (!startedAt || !running || finishedAt) return;
+    if (started === undefined || !running || finished !== undefined) return;
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [startedAt, running, finishedAt]);
+  }, [started, running, finished]);
   if (!startedAt) return null;
   return Math.max(0, (finishedAt ? finishedAt.getTime() : now) - startedAt.getTime());
 }

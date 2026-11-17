@@ -6,22 +6,6 @@ import type { ActivityItem, OperationAction } from "@/ui/components/ui/knowns/bl
 import { agesOut } from "@/ui/lib/operationsStore";
 import type { Operation } from "@/ui/models/operation";
 
-/**
- * One Date per instant. The stack's elapsed clock restarts its 1 s ticker whenever the identity of
- * startedAt changes, and a row is rebuilt on every progress event (several per second): a fresh Date
- * each time meant the ticker never got to fire and the clock sat at 0:00.
- */
-const dates = new Map<number, Date>();
-export function stableDate(ms: number): Date {
-	let d = dates.get(ms);
-	if (!d) {
-		if (dates.size > 500) dates.clear();
-		d = new Date(ms);
-		dates.set(ms, d);
-	}
-	return d;
-}
-
 export type PendingAction = "cancel" | "retry" | "dismiss";
 
 export interface TrayHandlers {
@@ -85,8 +69,8 @@ export function toActivityItem(op: Operation, h: TrayHandlers): ActivityItem {
 		actions,
 		// A finished row keeps its final duration; one that took under a second would read 0:00, which
 		// looks like a clock that never ran, so it shows no clock at all.
-		startedAt: op.finishedAt && op.finishedAt - op.startedAt < 1000 ? undefined : stableDate(op.startedAt),
-		finishedAt: op.finishedAt ? stableDate(op.finishedAt) : undefined,
+		startedAt: op.finishedAt && op.finishedAt - op.startedAt < 1000 ? undefined : new Date(op.startedAt),
+		finishedAt: op.finishedAt ? new Date(op.finishedAt) : undefined,
 		// The stack calls this with no argument when its timer ends a finished row, and with the click
 		// when the person presses Dismiss. The timer ends only rows that age out (done, and cancelled
 		// with nothing left to run); a failed row, or a cancelled one with work left, waits for Dismiss.

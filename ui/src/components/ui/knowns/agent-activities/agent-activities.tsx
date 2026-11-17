@@ -407,11 +407,12 @@ export interface HandoffActivityProps extends Omit<Base, "agent" | "leading" | "
 export function HandoffActivity({ from, to, fromLogo, toLogo, endsAt, totalMs, now, onHandoff, onCancel, onDone, accent = ACCENT.handoff, defaultExpanded = true, ...rest }: HandoffActivityProps) {
   const [tick, setTick] = useState(() => (now ? now.getTime() : Date.now()));
   const left = Math.max(0, endsAt.getTime() - (now ? now.getTime() : tick));
+  const pinned = now?.getTime();
   useEffect(() => {
-    if (now || left <= 0) return;
+    if (pinned !== undefined || left <= 0) return;
     const t = setInterval(() => setTick(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [now, left <= 0]);
+  }, [pinned, left <= 0]);
   const done = left <= 0;
   useEffect(() => {
     if (done) onDone?.();
