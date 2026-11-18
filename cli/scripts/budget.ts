@@ -1,5 +1,6 @@
 // D5 budgets: per target, knowns may exceed an EMPTY Bun-compiled binary (same Bun version,
-// same target, same signing) by at most 30MB; `knowns --version` median <= 150ms on the host.
+// same target, same signing) by at most 30MB; `knowns --version` median <= 150ms on macOS/Linux and
+// <= 400ms on Windows (see MAX_MS).
 // Usage: bun scripts/budget.ts            -> host binary: size delta + startup
 //        bun scripts/budget.ts a b ...    -> size delta only for each path (dist/<platform>/knowns[.exe])
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
@@ -7,7 +8,13 @@ import { basename, dirname, join, resolve } from "node:path";
 import { compile, exeName } from "./lib.ts";
 
 const MAX_DELTA = 30 * 1024 * 1024;
-const MAX_MS = 150;
+// A Bun-compiled exe on Windows starts slower than on macOS/Linux whatever the code does: the PE
+// is ~127MB and Defender real-time protection is on. Measured 2026-11-18 with `knowns.exe --version`,
+// 25 interleaved runs x 3 on a Windows PC with Defender on: median 213ms for 8d5d3e8 and 217ms for
+// 56d4287 (no regression; the first run after a copy costs no more), and the hosted windows-latest
+// runner measured 225ms. 400ms is about 1.8x that floor: it still fails a real regression (a
+// startup that loads the engine eagerly adds hundreds of ms) without flaking on runner noise.
+const MAX_MS = process.platform === "win32" ? 400 : 150;
 const RUNS = 11;
 
 const cliDir = resolve(import.meta.dir, "..");
