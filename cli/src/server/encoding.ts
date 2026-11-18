@@ -3,8 +3,14 @@
 // Server-sent events and ranged or already-encoded responses are never touched.
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 
-/** Bodies below this size are sent as they are: the header cost outweighs the saving. */
+/** Static assets below this size are sent as they are: the header cost outweighs the saving. */
 export const MIN_COMPRESS_BYTES = 1024;
+/**
+ * API bodies below this size are sent as they are. Compressing adds `Vary: Accept-Encoding`, which
+ * the Go server never sent, so the small responses (config, one task, one doc, errors) stay
+ * byte-and-header identical to it; the lists that matter are far larger.
+ */
+export const MIN_COMPRESS_API_BYTES = 8192;
 
 const COMPRESSIBLE = /^(text\/|application\/(json|javascript|xml|wasm)|image\/svg\+xml)/i;
 
@@ -72,7 +78,7 @@ function addVary(h: Headers): void {
 
 /**
  * The API read path: an ETag and 304 for a GET that answered 200 JSON, then gzip (br when the
- * client takes only that) for a body of MIN_COMPRESS_BYTES or more.
+ * client takes only that) for a body of MIN_COMPRESS_API_BYTES or more.
  */
 export async function finishApiResponse(req: Request, res: Response): Promise<Response> {
   if (req.method !== "GET" || res.status !== 200 || res.body === null) return res;
@@ -83,21 +89,20 @@ export async function finishApiResponse(req: Request, res: Response): Promise<Re
   const headers = new Headers(res.headers);
   const etag = weakEtag(bytes);
   headers.set("ETag", etag);
-  // Revalidate on every use; the 304 is what makes a repeat load cheap.
-  if (!headers.has("Cache-Control")) headers.set("Cache-Control", "no-cache");
-  addVary(headers);
   if (matches(req.headers.get("If-None-Match"), etag)) {
+    addVary(headers);
     headers.delete("Content-Type");
     headers.delete("Content-Length");
     return new Response(null, { status: 304, headers });
   }
   const enc =
-    bytes.length >= MIN_COMPRESS_BYTES
+    bytes.length >= MIN_COMPRESS_API_BYTES
       ? pickEncoding(req.headers.get("Accept-Encoding"), false)
       : undefined;
   if (!enc) return new Response(bytes, { status: 200, headers });
   const body = encode(bytes, enc);
   headers.set("Content-Encoding", enc);
+  addVary(headers);
   headers.delete("Content-Length");
   return new Response(body, { status: 200, headers });
 }

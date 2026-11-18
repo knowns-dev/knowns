@@ -132,14 +132,52 @@ describe("embedded UI", () => {
     if (original.length >= 1024) expect(gz.headers.get("Content-Encoding")).toBe("gzip");
   });
 
-  test.skipIf(skip)("index.html and the SPA fallback are never cached hard", async () => {
+  test.skipIf(skip)("index.html and the SPA fallback carry no cache header, like Go", async () => {
     for (const url of ["/", "/docs/some/page"]) {
-      const res = await serveUi(get(url), url);
+      const res = await serveUi(get(url, { "Accept-Encoding": "gzip, br" }), url);
       expect(res.status).toBe(200);
       expect(res.headers.get("Content-Type")).toContain("text/html");
-      expect(res.headers.get("Cache-Control")).toBe("no-cache");
+      for (const h of ["cache-control", "etag", "vary", "content-encoding"])
+        expect([url, h, res.headers.get(h)]).toEqual([url, h, null]);
     }
   });
+});
+
+describe("root statics keep the Go FileServer's headers", () => {
+  const files = listUiAssets();
+  const root = files.filter(
+    (f) =>
+      !f.includes("/") && f !== "index.html" && /\.(png|ico|svg|json|txt|webmanifest)$/.test(f),
+  );
+  test.skipIf(root.length === 0)(
+    "no Cache-Control, ETag, Vary or Content-Encoding is added",
+    async () => {
+      for (const f of root) {
+        const res = await serveUi(get(`/${f}`, { "Accept-Encoding": "gzip, br" }), `/${f}`);
+        expect(res.status).toBe(200);
+        for (const h of ["cache-control", "etag", "vary", "content-encoding"])
+          expect([f, h, res.headers.get(h)]).toEqual([f, h, null]);
+        expect(res.headers.get("accept-ranges")).toBe("bytes");
+      }
+    },
+  );
+  test.skipIf(root.length === 0)("a ranged read of a root static is a plain 206", async () => {
+    const f = root[0] as string;
+    const res = await serveUi(get(`/${f}`, { Range: "bytes=0-9" }), `/${f}`);
+    expect(res.status).toBe(206);
+    expect(res.headers.get("cache-control")).toBeNull();
+    expect(res.headers.get("vary")).toBeNull();
+  });
+  test.skipIf(!files.some((f) => f.startsWith("assets/") && /\.(png|woff2?|jpe?g|webp)$/.test(f)))(
+    "an already-compressed asset is never encoded",
+    async () => {
+      const f = files.find(
+        (x) => x.startsWith("assets/") && /\.(png|woff2?|jpe?g|webp)$/.test(x),
+      ) as string;
+      const res = await serveUi(get(`/${f}`, { "Accept-Encoding": "gzip, br" }), `/${f}`);
+      expect(res.headers.get("content-encoding")).toBeNull();
+    },
+  );
 });
 
 describe("docs summary shape", () => {
