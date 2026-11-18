@@ -12,6 +12,7 @@ import {
 	type Density,
 } from "@/ui/components/ui/knowns/data-table/data-table";
 import { LabelList, PriorityBadge, TaskStatusIcon } from "@/ui/components/molecules";
+import { PageError } from "@/ui/components/templates/PageShell";
 import { ListTail } from "@/ui/components/molecules/ListTail";
 import { Skeleton } from "@/ui/components/ui/knowns/skeleton";
 import { useTaskColumns } from "@/ui/hooks/useTaskColumns";
@@ -376,6 +377,9 @@ export function TaskListView({ filters, onTotal, onTaskClick, onArchiveSelected 
 				{grouping === "flat" ? (
 					(() => {
 						const col = feeds.column("");
+						if (col.status === "error" && col.items.length === 0) {
+							return <PageError description={col.error ?? undefined} onRetry={() => feeds.retry("")} className="flex-1" />;
+						}
 						return (
 							<>
 								<DataTable
@@ -410,6 +414,12 @@ export function TaskListView({ filters, onTotal, onTaskClick, onArchiveSelected 
 							</>
 						);
 					})()
+				) : keys.some((k) => feeds.column(k).status === "error" && feeds.column(k).items.length === 0) ? (
+					<PageError
+						description={keys.map((k) => feeds.column(k).error).find(Boolean) ?? undefined}
+						onRetry={() => keys.forEach((k) => feeds.retry(k))}
+						className="flex-1"
+					/>
 				) : (
 					<div className="flex flex-col gap-4">
 						{keys.map((status) => {

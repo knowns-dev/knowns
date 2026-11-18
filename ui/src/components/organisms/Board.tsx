@@ -6,6 +6,7 @@ import type { Task, TaskStatus } from "@/ui/models/task";
 import { getTaskLifecycleState } from "@/ui/models/taskLifecycle";
 import { cn } from "@/ui/lib/utils";
 import { agentIcon, agentName } from "@/ui/lib/agent";
+import { PageError } from "@/ui/components/templates/PageShell";
 import { CardSkeleton, ListTail } from "../molecules/ListTail";
 import { useTaskColumns } from "../../hooks/useTaskColumns";
 import { useTaskCounts } from "../../hooks/useTaskCounts";
@@ -307,6 +308,11 @@ export default function Board({ filters = NO_FILTERS, onTaskClick, onChanged }: 
 		},
 		[refreshCounts, onChanged],
 	);
+
+	const allFailed = visibleStatuses.length > 0 && visibleStatuses.every((s) => feeds.column(s).status === "error" && feeds.column(s).items.length === 0);
+	if (allFailed) {
+		return <PageError description={feeds.column(visibleStatuses[0] as string).error ?? undefined} onRetry={() => visibleStatuses.forEach((s) => feeds.retry(s))} className="flex-1" />;
+	}
 
 	return (
 		<KanbanBoard

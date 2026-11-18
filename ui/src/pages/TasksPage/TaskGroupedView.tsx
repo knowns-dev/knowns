@@ -5,6 +5,7 @@ import { Combobox } from "@/ui/components/ui/knowns/combobox";
 import { Skeleton } from "@/ui/components/ui/knowns/skeleton";
 import { Button } from "@/ui/components/ui/button";
 import { StatusBadge, PriorityBadge, LabelList } from "@/ui/components/molecules";
+import { PageError } from "@/ui/components/templates/PageShell";
 import { ListTail } from "@/ui/components/molecules/ListTail";
 import { useConfig } from "@/ui/contexts/ConfigContext";
 import { useTaskColumns } from "@/ui/hooks/useTaskColumns";
@@ -135,6 +136,13 @@ export function TaskGroupedView({ filters, onTotal, onTaskClick, onNewTask }: Ta
 			</div>
 
 			{/* Task Groups: the container scrolls, each group pages as its end comes near */}
+			{keys.some((k) => feeds.column(k).status === "error" && feeds.column(k).items.length === 0) && (
+				<PageError
+					description={keys.map((k) => feeds.column(k).error).find(Boolean) ?? undefined}
+					onRetry={() => keys.forEach((k) => feeds.retry(k))}
+					className="flex-1"
+				/>
+			)}
 			<div className="flex-1 min-h-0 overflow-y-auto">
 				<div className="space-y-8 pr-4">
 					{groups.map((group) => {
