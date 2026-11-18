@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import type { Task, TaskPriority, TaskStatus } from "@models/task";
+import type { Task, TaskPriority, TaskStatus } from "@/ui/models/task";
 import { useCurrentUser } from "../../contexts/UserContext";
 import { useConfig } from "../../contexts/ConfigContext";
 import { api, createTask } from "../../api/client";
@@ -398,6 +398,7 @@ export default function TaskCreateForm({ isOpen, onClose, onCreated }: TaskCreat
 									setParentId(v);
 									setChosenParent(candidates.find((t) => t.id === v) ?? null);
 								}}
+								searchable
 								presentation="auto"
 								aria-label="Parent task"
 								emptyText="No task found."

@@ -126,6 +126,7 @@ export default function TasksPage({
 	const { counts: peopleCounts } = useTaskCounts(lifecycleOnly);
 	const { counts: shownCounts } = useTaskCounts(filters);
 	const shownTotal = shownCounts?.total ?? null;
+	const [viewTotal, setViewTotal] = useState<number | null>(null);
 
 	const assigneeOptions = useMemo<ComboboxOption[]>(() => {
 		const count = (n: number) => `${n} ${n === 1 ? "task" : "tasks"}`;
@@ -387,16 +388,22 @@ export default function TasksPage({
 			/>
 
 			<PageContent size="full" className="flex min-h-0 flex-1 flex-col overflow-hidden py-5">
-				{viewMode === "board" ? (
+				{viewMode !== "board" && lifecycleFilter === "current" && assigneeFilter === ALL_ASSIGNEES && viewTotal === 0 ? (
+					// The board keeps its empty columns (they are drop targets); the header owns "New Task".
+					<div className="flex flex-1 items-center justify-center" data-testid="tasks-empty">
+						<NoRuns title="No Tasks yet" description="Create the first Task with New Task, or let an agent create one over MCP." />
+					</div>
+				) : viewMode === "board" ? (
 					<Board filters={filters} onTaskClick={handleTaskClick} onChanged={onTasksUpdate} />
 				) : viewMode === "list" ? (
 					<TaskListView
 						filters={filters}
+						onTotal={setViewTotal}
 						onTaskClick={handleTaskClick}
 						onArchiveSelected={(ids) => void handleBatchArchivePreview(0, SELECTED_ARCHIVE_LABEL, ids)}
 					/>
 				) : (
-					<TaskGroupedView filters={filters} onTaskClick={handleTaskClick} onNewTask={onNewTask} />
+					<TaskGroupedView filters={filters} onTotal={setViewTotal} onTaskClick={handleTaskClick} onNewTask={onNewTask} />
 				)}
 			</PageContent>
 

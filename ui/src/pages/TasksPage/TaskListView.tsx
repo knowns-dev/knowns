@@ -295,7 +295,9 @@ export function TaskListView({ filters, onTotal, onTaskClick, onArchiveSelected 
 
 	const all = feeds.all;
 	const total = counts?.total ?? null;
-	useEffect(() => onTotal?.(total), [total, onTotal]);
+	const failed = keys.some((k) => feeds.column(k).status === "error" && feeds.column(k).items.length === 0);
+	// A failed first page is not an empty project: report "unknown" so the page shows the error, not "No Tasks yet".
+	useEffect(() => onTotal?.(failed || searchTerm ? null : total), [total, failed, searchTerm, onTotal]);
 
 	// Keep the selection to Tasks that still exist (archived rows leave the list).
 	useEffect(() => {
