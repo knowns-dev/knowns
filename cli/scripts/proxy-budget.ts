@@ -26,7 +26,14 @@ const flag = (n: string) => argv.indexOf(`--${n}`);
 const val = (n: string, d: string): string => (flag(n) >= 0 ? (argv[flag(n) + 1] ?? d) : d);
 const isWin = process.platform === "win32";
 const hosted = process.env.CI === "1" || process.env.CI === "true";
-const limits = { ...cfg.limits, ...(hosted ? cfg.hosted : {}) };
+const plat = (cfg as Record<string, any>)[process.platform] as
+  | { totalWorkingSetMB?: number }
+  | undefined;
+const limits = {
+  ...cfg.limits,
+  ...(hosted ? cfg.hosted : {}),
+  ...(plat?.totalWorkingSetMB ? { totalWorkingSetMB: plat.totalWorkingSetMB } : {}),
+};
 const N = Number(val("sessions", String(cfg.sessions)));
 const withUi = flag("ui") >= 0 || flag("ui-inproc") >= 0;
 const platDir = val(
@@ -435,12 +442,14 @@ async function budget() {
     total <= limits.totalWorkingSetMB,
     `daemon + ${N} proxies${ui ? " + UI" : ""}: ${total.toFixed(1)} MB <= ${limits.totalWorkingSetMB}`,
   );
+  const idleMB = c1.reduce((a, x) => a + x.mb, 0);
+  console.log(`     idle total after expiry: ${idleMB.toFixed(1)} MB`);
   const idle = rows.reduce((a, r) => a + r.idleCpu, 0);
   check(
     idle <= limits.idleCpuPercent,
     `idle CPU of all processes ${idle.toFixed(2)}% <= ${limits.idleCpuPercent}%`,
   );
-  report.budget = { rows, totalMB: total, idleCpuPercent: idle, calls };
+  report.budget = { rows, totalMB: total, idleTotalMB: idleMB, idleCpuPercent: idle, calls };
   // ---- 3. orphans after close ----
   const desc = existsSync(join(rt, "mcp"))
     ? (require("node:fs") as typeof import("node:fs"))

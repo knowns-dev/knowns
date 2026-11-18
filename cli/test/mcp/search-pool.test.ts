@@ -61,15 +61,92 @@ describe("SearchPool", () => {
 
   test("no more workers than the width", async () => {
     const echo = scriptWorker(
-      "import {parentPort} from 'node:worker_threads'; parentPort.on('message', m => setTimeout(() => parentPort.postMessage({id: m.id, text: 'ok', isError: false}), 50));",
+      "import {parentPort} from 'node:worker_threads'; parentPort.on('message', m => setTimeout(() => parentPort.postMessage({id: m.id, text: 'ok', isError: false}), 400));",
     );
-    const pool = new SearchPool(2, echo);
+    const pool = new SearchPool(2, echo, { growAfterMs: 20 });
     const a = pool.run({ storeRoot: "/s", projectRoot: "/p", req });
     const b = pool.run({ storeRoot: "/s", projectRoot: "/p", req });
     await expect(pool.run({ storeRoot: "/s", projectRoot: "/p", req })).rejects.toThrow(/no free/);
     await Promise.all([a, b]);
     expect(pool.size).toBe(2);
     await pool.stop();
+  });
+});
+
+const slowEcho = (ms: number) =>
+  scriptWorker(
+    `import {parentPort} from 'node:worker_threads'; parentPort.on('message', m => setTimeout(() => parentPort.postMessage({id: m.id, text: 'ok', isError: false}), ${ms}));`,
+  );
+const job = { storeRoot: "/s", projectRoot: "/p", req };
+
+describe("SearchPool grows and shrinks with demand", () => {
+  test("no worker exists until the first search", async () => {
+    const pool = new SearchPool(4, slowEcho(10));
+    expect(pool.size).toBe(0);
+    await pool.run(job);
+    expect(pool.size).toBe(1);
+    await pool.stop();
+  });
+
+  test("a second call that is served quickly by the one worker does not start another", async () => {
+    const pool = new SearchPool(4, slowEcho(30), { growAfterMs: 500 });
+    await Promise.all([pool.run(job), pool.run(job), pool.run(job)]);
+    expect(pool.size).toBe(1);
+    await pool.stop();
+  });
+
+  test("a call that waits longer than the grow delay starts another worker, up to the width", async () => {
+    const pool = new SearchPool(2, slowEcho(500), { growAfterMs: 50 });
+    const calls = [pool.run(job), pool.run(job)];
+    await Bun.sleep(200);
+    expect(pool.size).toBe(2);
+    await Promise.all(calls);
+    await pool.stop();
+  });
+
+  test("an idle worker is ended, and the next call starts a fresh one", async () => {
+    let spawned = 0;
+    const make = slowEcho(10);
+    const pool = new SearchPool(
+      2,
+      () => {
+        spawned++;
+        return make();
+      },
+      { idleMs: 120 },
+    );
+    await pool.run(job);
+    expect(pool.size).toBe(1);
+    await Bun.sleep(400);
+    expect(pool.size).toBe(0);
+    expect((await pool.run(job)).text).toBe("ok");
+    expect(spawned).toBe(2);
+    expect(pool.size).toBe(1);
+    await pool.stop();
+  });
+
+  test("a call arriving as the idle timer fires is answered, not lost", async () => {
+    const pool = new SearchPool(1, slowEcho(5), { idleMs: 60 });
+    for (let i = 0; i < 12; i++) {
+      await pool.run(job);
+      await Bun.sleep(55 + (i % 4) * 4); // straddles the 60 ms expiry
+    }
+    await pool.run(job);
+    await pool.stop();
+  });
+
+  test("a waiting call that is aborted leaves the queue, and stop rejects the rest", async () => {
+    const pool = new SearchPool(2, slowEcho(300), { growAfterMs: 5000 });
+    const first = pool.run(job);
+    const ac = new AbortController();
+    const waiting = pool.run(job, ac.signal);
+    ac.abort();
+    await expect(waiting).rejects.toThrow(/cancelled/);
+    const stuck = pool.run(job);
+    const stopping = pool.stop();
+    await expect(stuck).rejects.toThrow(/stopped/);
+    await first.catch(() => undefined);
+    await stopping;
   });
 });
 

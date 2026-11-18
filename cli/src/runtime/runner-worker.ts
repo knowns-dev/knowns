@@ -21,6 +21,12 @@ export type RunnerRequest =
 export type RunnerReply = { t: "done" | "ended"; id: number; error?: string };
 
 const DEFAULT_JOB_TIMEOUT_MS = 30 * 60_000;
+/**
+ * A worker thread keeps a whole copy of the module graph (~45 MB of working set on Windows), so one
+ * with nothing to do is ended and the next request starts a fresh one. A watcher is a request that
+ * stays open, so a worker serving one is never idle.
+ */
+const DEFAULT_IDLE_MS = 30_000;
 /** How long the next request waits for a terminated worker thread to be gone. */
 const TERMINATE_WAIT_MS = 2000;
 
@@ -40,11 +46,13 @@ export class RunnerWorker {
   private nextId = 1;
   private stopped = false;
   private terminating: Promise<unknown> | undefined;
+  private idleTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     private readonly spawn: () => Worker = spawnRunnerWorker,
     private readonly jobTimeoutMs: number = Number(process.env.KNOWNS_RUNNER_JOB_TIMEOUT_MS) ||
       DEFAULT_JOB_TIMEOUT_MS,
+    private readonly idleMs: number = Number(process.env.KNOWNS_RUNNER_IDLE_MS) || DEFAULT_IDLE_MS,
   ) {}
 
   get running(): boolean {
@@ -80,6 +88,7 @@ export class RunnerWorker {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.clearIdle();
     const w = this.worker;
     this.worker = undefined;
     this.failAll(new Error("runner worker stopped"));
@@ -110,6 +119,7 @@ export class RunnerWorker {
     }
     if (cancel?.aborted) return;
     const w = this.ensure();
+    this.clearIdle();
     const id = this.nextId++;
     return new Promise<void>((resolve, reject) => {
       const entry: Pending = { resolve, reject };
@@ -125,6 +135,7 @@ export class RunnerWorker {
       } catch (err) {
         this.pending.delete(id);
         if (entry.timer) clearTimeout(entry.timer);
+        this.armIdle();
         reject(err instanceof Error ? err : new Error(String(err)));
       }
     });
@@ -141,6 +152,7 @@ export class RunnerWorker {
       if (e.timer) clearTimeout(e.timer);
       if (m.error) e.reject(new Error(m.error));
       else e.resolve();
+      this.armIdle();
     });
     w.on("error", (err) => {
       if (this.worker === w) this.recycle(err instanceof Error ? err : new Error(String(err)));
@@ -152,8 +164,30 @@ export class RunnerWorker {
     return w;
   }
 
+  private clearIdle(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = undefined;
+  }
+
+  /**
+   * Ends the worker once nothing has been asked of it for idleMs. A request cannot be lost to the
+   * expiry: both run on the one event loop, so either the request is already pending (the timer
+   * is cleared, or finds it pending and does nothing) or the worker is already gone and the
+   * request starts a new one.
+   */
+  private armIdle(): void {
+    this.clearIdle();
+    if (!this.worker || this.pending.size > 0 || this.stopped || this.idleMs <= 0) return;
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = undefined;
+      if (this.worker && this.pending.size === 0) this.recycle(new Error("runner worker idle"));
+    }, this.idleMs);
+    this.idleTimer.unref?.();
+  }
+
   /** Ends the current worker and fails what was in it; the next request starts a new one. */
   private recycle(reason: Error): void {
+    this.clearIdle();
     const w = this.worker;
     this.worker = undefined;
     this.failAll(reason);

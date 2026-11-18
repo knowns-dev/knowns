@@ -63,10 +63,16 @@ for (const [name, c] of Object.entries(CASES)) {
     const dir = mkdtempSync(join(tmpdir(), "knowns-second-listener-"));
     const file = join(dir, "child.mjs");
     writeFileSync(file, c.body);
-    const r = Bun.spawnSync([process.execPath, file], {
-      env: { ...process.env, CASE_DIR: dir, KNOWNS_RUNTIME_INLINE: "1" },
-      timeout: 30_000,
-    });
+    const spawn = () =>
+      Bun.spawnSync([process.execPath, file], {
+        env: { ...process.env, CASE_DIR: dir, KNOWNS_RUNTIME_INLINE: "1" },
+        timeout: 30_000,
+      });
+    // Bun 1.3.12 on Windows sometimes returns a null exit code within milliseconds when the
+    // suite is busy (seen once per full test/runtime run, never alone): the child never ran. A
+    // panic is exit code 3, so retrying only a null code cannot hide it.
+    let r = spawn();
+    if (r.exitCode === null) r = spawn();
     const out = r.stdout.toString();
     expect({ code: r.exitCode, err: r.stderr.toString().slice(0, 400) }).toEqual({
       code: 0,

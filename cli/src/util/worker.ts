@@ -3,6 +3,7 @@
 // From source a worker is its TypeScript file next to the caller. A `bun build --compile` binary
 // embeds a worker only when the build lists it as an entrypoint (scripts/build.ts), and then it
 // sits beside the bundle as <dir>/<name>.js, so the path is given relative to the bundle root.
+import { appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 
@@ -10,6 +11,17 @@ import { Worker } from "node:worker_threads";
 // the process ends while worker threads are still alive ("Internal assertion failure", header
 // workers_spawned(n) workers_terminated(m) with m < n), so whoever owns a worker must stop it, and
 // this registry lets a test or a shutdown path see what is left.
+/** KNOWNS_WORKER_LOG=<file> appends one line per worker start and exit (memory investigations). */
+function traceWorker(line: string): void {
+  const file = process.env.KNOWNS_WORKER_LOG;
+  if (!file) return;
+  try {
+    appendFileSync(file, `${new Date().toISOString()} pid=${process.pid} ${line}\n`);
+  } catch {
+    // diagnostics only
+  }
+}
+
 const live = new Map<Worker, string>();
 
 /** Bundled workers that have not exited, with the stack that started each. */
@@ -39,7 +51,11 @@ export function spawnBundledWorker(
     compiled && process.platform === "win32" ? fileURLToPath(url).replaceAll("\\", "/") : url;
   const worker = new Worker(target, { workerData: { ...workerData, env: { ...process.env } } });
   live.set(worker, new Error("worker started here").stack ?? "");
-  worker.once("exit", () => live.delete(worker));
+  traceWorker(`start ${bundledPath} live=${live.size}`);
+  worker.once("exit", () => {
+    live.delete(worker);
+    traceWorker(`exit ${bundledPath} live=${live.size}`);
+  });
   return worker;
 }
 
