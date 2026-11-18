@@ -37,6 +37,66 @@ parentPort.on('message', m => {
   if (m.t === 'watch') parentPort.on('message', u => { if (u.t === 'unwatch' && u.id === m.id) parentPort.postMessage({t:'ended', id:m.id}); });
 });`;
 
+describe("RunnerWorker idles out", () => {
+  const counting = () => {
+    const make = script(ECHO);
+    const state = { spawned: 0 };
+    return {
+      state,
+      spawn: () => {
+        state.spawned++;
+        return make();
+      },
+    };
+  };
+
+  test("a worker with nothing to do is ended, and the next job starts a fresh one", async () => {
+    const { state, spawn } = counting();
+    const rw = new RunnerWorker(spawn, 60_000, 100);
+    await rw.runJob("/s", job);
+    expect(rw.running).toBe(true);
+    await sleep(350);
+    expect(rw.running).toBe(false);
+    await rw.runJob("/s", job);
+    expect(state.spawned).toBe(2);
+    await rw.stop();
+  });
+
+  test("a watcher keeps the worker alive for as long as it runs, and the worker idles out after it", async () => {
+    const { spawn } = counting();
+    const rw = new RunnerWorker(spawn, 60_000, 100);
+    const ac = new AbortController();
+    const watching = rw.watch(ac.signal, "/s");
+    await sleep(400);
+    expect(rw.running).toBe(true);
+    ac.abort();
+    await watching;
+    await sleep(350);
+    expect(rw.running).toBe(false);
+    await rw.stop();
+  });
+
+  test("a job that arrives as the idle timer fires is run, never lost", async () => {
+    const { spawn } = counting();
+    const rw = new RunnerWorker(spawn, 60_000, 60);
+    await rw.runJob("/s", job);
+    for (let i = 0; i < 15; i++) {
+      await sleep(52 + (i % 5) * 4); // straddles the 60 ms expiry
+      await rw.runJob("/s", job);
+    }
+    await rw.stop();
+  });
+
+  test("stop ends an idle worker and cancels its timer", async () => {
+    const { spawn } = counting();
+    const rw = new RunnerWorker(spawn, 60_000, 100);
+    await rw.runJob("/s", job);
+    await rw.stop();
+    expect(rw.running).toBe(false);
+    await sleep(250); // no timer left to fire into a stopped host
+  });
+});
+
 describe("RunnerWorker", () => {
   test("a job runs in the worker and its error comes back", async () => {
     const w = new RunnerWorker(script(ECHO), 5000);
