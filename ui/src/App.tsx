@@ -4,6 +4,7 @@ import { ConfigProvider } from "./contexts/ConfigContext";
 import { UserProvider } from "./contexts/UserContext";
 import { UIPreferencesProvider } from "./contexts/UIPreferencesContext";
 import { SSEProvider } from "./contexts/SSEContext";
+import { OperationsProvider } from "./contexts/OperationsContext";
 import { TimeTrackerProvider } from "./contexts/TimeTrackerContext";
 import { GlobalTaskProvider } from "./contexts/GlobalTaskContext";
 import { AuthProvider } from "./contexts/AuthContext";
@@ -40,12 +41,14 @@ export default function App() {
 					<UserProvider>
 						<UIPreferencesProvider>
 							<SSEProvider>
-								<TimeTrackerProvider>
-									<GlobalTaskProvider>
-										<RouterProvider router={router} />
-										{import.meta.env.DEV && <Agentation />}
-									</GlobalTaskProvider>
-								</TimeTrackerProvider>
+								<OperationsProvider>
+									<TimeTrackerProvider>
+										<GlobalTaskProvider>
+											<RouterProvider router={router} />
+											{import.meta.env.DEV && <Agentation />}
+										</GlobalTaskProvider>
+									</TimeTrackerProvider>
+								</OperationsProvider>
 							</SSEProvider>
 						</UIPreferencesProvider>
 					</UserProvider>

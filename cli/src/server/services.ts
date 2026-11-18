@@ -162,6 +162,7 @@ export function registerRuntimeServices(
   getManager: () => Manager | undefined,
 ): void {
   r.get("/api/runtime/services", async (c) => {
+    app.watchServices();
     if (app.manager.getStore() === undefined) return respondError(503, "no active project");
     const storage = app.need();
     const controller = new AbortController();

@@ -68,6 +68,13 @@ export class Normalizer {
   durations = false;
   /** Rewrite elapsed-time text of running timers (it reads the clock when the command runs). */
   elapsed = false;
+  /**
+   * Rewrite the ENDED column of a `time log` table. A timer stopped by the run ends "now", on each
+   * side's own wall clock, so a run that crosses a minute boundary between the Go and the TS side
+   * prints 14:06 against 14:07. Only for fixtures whose log rows end that way: the STARTED column
+   * and the rows of manual entries (fixed dates) must keep comparing exactly.
+   */
+  endedNow = false;
 
   /** Learn the ids a command created, by ordinal, from its stdout. */
   learn(side: "go" | "ts", stdout: string): void {
@@ -102,15 +109,23 @@ export class Normalizer {
       // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI styling is part of the output
       s = s.replace(/— (\x1b\[36m)?[0-9hms ]+(\x1b\[m)?/g, "— $1<E>$2");
     }
+    if (this.endedNow) {
+      // "  2026-11-03 13:37      2026-11-17 14:06      336h 29m": the second stamp is the stop time.
+      s = s.replace(
+        /^(\s*\d{4}-\d{2}-\d{2} \d{2}:\d{2}\s+)\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?=\s+\S)/gm,
+        "$1<ENDED>",
+      );
+    }
     if (this.durations) {
       s = s.replace(/Duration: [0-9hms ]+/g, "Duration: <D>");
       s = s.replace(/"duration":( ?)\d+/g, '"duration":$1<D>');
       s = s.replace(/"timeSpent":( ?)\d+/g, '"timeSpent":$1<D>');
       // history JSONL: {"field":"timeSpent","oldValue":null,"newValue":88287}
       s = s.replace(/("field":"timeSpent","oldValue":[^,]+,"newValue":)\d+/g, "$1<D>");
-      s = s.replace(/timeSpent: \d+/g, "timeSpent: <D>");
+      s = s.replace(/timeSpent: \d+(?:\.\d+)?(?:e[+-]?\d+)?/g, "timeSpent: <D>");
       // task history: "timeSpent: <nil> -> 88115"; Go and TS can straddle a second boundary.
-      s = s.replace(/(timeSpent: \S+ -> )\d+/g, "$1<D>");
+      // A long timer prints in exponent form ("1.178577e+06"), which differs in the last digits.
+      s = s.replace(/(timeSpent: \S+ -> )\d+(?:\.\d+)?(?:e[+-]?\d+)?/g, "$1<D>");
       // time log rows and totals ("24h 29m"): the running entry's length crosses minute boundaries.
       s = s.replace(/\b\d+h \d+m\b/g, "<D>");
       s = s.replace(/TIME SPENT: [0-9hms ]+/g, "TIME SPENT: <D>");

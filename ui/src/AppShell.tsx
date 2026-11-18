@@ -13,6 +13,7 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from "./components/ui/k
 import { SIDEBAR_STORAGE_KEY, rememberedSidebarCollapsed } from "./components/organisms/sidebarStorage";
 import { Separator } from "./components/ui/separator";
 import { Toaster } from "./components/ui/sonner";
+import { ActivityTray } from "./components/organisms/activityTray/ActivityTray";
 import { useConfig } from "./contexts/ConfigContext";
 import { useGlobalTask } from "./contexts/GlobalTaskContext";
 import { Loader2 } from "lucide-react";
@@ -125,7 +126,7 @@ export default function AppShell() {
 		currentRequestRef.current = { generation, controller };
 		if (showLoading) setLoading(true);
 		try {
-			const data = await api.getTasks({ signal: controller.signal });
+			const data = await api.getTasks({ summary: true, signal: controller.signal });
 			if (currentRequestRef.current.generation === generation) {
 				setTasks(data.filter((task) => task.lifecycleState !== "archived"));
 				setTaskLoadError(null);
@@ -190,7 +191,8 @@ export default function AppShell() {
 	useEffect(() => {
 		directRequestRef.current.controller?.abort();
 		const generation = directRequestRef.current.generation + 1;
-		if (!requestedDirectTaskId || tasks.some((task) => task.id === requestedDirectTaskId)) {
+		// The list holds summaries (no description, notes or time entries): an open task always comes from its own request.
+		if (!requestedDirectTaskId) {
 			directRequestRef.current = { generation };
 			setDirectTask(null);
 			return;
@@ -205,7 +207,13 @@ export default function AppShell() {
 				if (!(error instanceof DOMException && error.name === "AbortError")) setDirectTask(null);
 			});
 		return () => controller.abort();
-	}, [requestedDirectTaskId, tasks]);
+	}, [requestedDirectTaskId]);
+
+	// After the sheet or a form changed a task, reload the open one next to the list.
+	const refreshDirectTask = useCallback(() => {
+		if (!requestedDirectTaskId) return;
+		api.getTask(requestedDirectTaskId).then((task) => setDirectTask((cur) => (cur?.id === task.id ? task : cur))).catch(() => {});
+	}, [requestedDirectTaskId]);
 
 	useSSEEvent("tasks:updated", ({ task }) => {
 		currentRequestRef.current.controller?.abort();
@@ -238,6 +246,7 @@ export default function AppShell() {
 
 	const handleTaskCreated = () => {
 		void loadCurrentTasks();
+		refreshDirectTask();
 	};
 
 	const handleTasksUpdate = (updatedTasks: Task[]) => {
@@ -313,7 +322,7 @@ export default function AppShell() {
 			case "kanban":
 			case "tasks": {
 				const selectedTask = routeTaskId
-					? tasks.find((task) => task.id === routeTaskId) || (directTask?.id === routeTaskId ? directTask : null)
+					? (directTask?.id === routeTaskId ? directTask : null)
 					: null;
 				const boardRoute = currentPage === "kanban";
 
@@ -392,6 +401,7 @@ export default function AppShell() {
 									navigate({ to: `/tasks/${taskId}` });
 								}}
 							/>
+							<ActivityTray />
 							<NotificationBell />
 						</header>
 
@@ -435,10 +445,11 @@ export default function AppShell() {
 				/>
 
 				<TaskDetailSheet
-					task={currentTaskId ? tasks.find((t) => t.id === currentTaskId) || (directTask?.id === currentTaskId ? directTask : null) : null}
+					task={currentTaskId && directTask?.id === currentTaskId ? directTask : null}
 					allTasks={currentTasks}
 					onClose={closeTask}
 					onUpdate={(updatedTask) => {
+						setDirectTask((cur) => (cur?.id === updatedTask.id ? updatedTask : cur));
 						setTasks((prev) => prev.map((t) => (t.id === updatedTask.id ? updatedTask : t)));
 					}}
 					onLifecycleChange={handleTaskCreated}

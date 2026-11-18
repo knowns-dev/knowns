@@ -308,30 +308,34 @@ cases("sync matches Go: platform configs, MCP configs and hooks", () => {
   test(
     "stale MCP configs are rewritten to the current command",
     async () => {
+      // The oracle rewrites any `knowns` entry. TS rewrites only what Knowns itself wrote (see
+      // isKnownsWritten): an absolute path to knowns is a custom install and is left alone, which
+      // test/domain/setup covers. The stale form here is the retired proxy name, which both rewrite.
+      const OLD = "knowns-proxy";
       const stale = (command: string) =>
-        `${JSON.stringify({ mcpServers: { knowns: { command, args: ["mcp"] }, other: { command: "x" } } }, null, 2)}\n`;
+        `${JSON.stringify({ mcpServers: { knowns: { command, args: ["mcp", "--stdio"] }, other: { command: "x" } } }, null, 2)}\n`;
       await parity(allPlatforms(), [
         {
           args: ["sync"],
           before: both((dir, home) => {
-            writeText(dir, ".mcp.json", stale("/old/knowns"));
-            writeText(dir, ".kiro/settings/mcp.json", stale("/old/knowns"));
-            writeText(dir, ".cursor/mcp.json", stale("/old/knowns"));
+            writeText(dir, ".mcp.json", stale(OLD));
+            writeText(dir, ".kiro/settings/mcp.json", stale(OLD));
+            writeText(dir, ".cursor/mcp.json", stale(OLD));
             writeText(
               dir,
               "opencode.json",
-              `${JSON.stringify({ mcp: { knowns: { command: ["/old/knowns", "mcp"] } } }, null, 2)}\n`,
+              `${JSON.stringify({ mcp: { knowns: { command: [OLD, "mcp", "--stdio"] } } }, null, 2)}\n`,
             );
             writeText(
               dir,
               ".codex/config.toml",
-              '[mcp_servers.knowns]\ncommand = "/old/knowns"\nargs = ["mcp"]\n',
+              `[mcp_servers.knowns]\ncommand = "${OLD}"\nargs = ["mcp", "--stdio"]\n`,
             );
-            writeText(home, ".gemini/antigravity/mcp_config.json", stale("/old/knowns"));
+            writeText(home, ".gemini/antigravity/mcp_config.json", stale(OLD));
             writeText(
               home,
               ".hermes/config.yaml",
-              "mcp_servers:\n  knowns:\n    command: /old/knowns\n    args:\n      - mcp\n",
+              `mcp_servers:\n  knowns:\n    command: ${OLD}\n    args:\n      - mcp\n      - --stdio\n`,
             );
           }),
         },

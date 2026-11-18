@@ -1,10 +1,12 @@
 // status against the Go 0.34.1 oracle, plus the readiness library.
 //
 // One documented difference is normalised: the oracle prints `dev` as its version (handled by the
-// harness). The LSP section is compared as is: it is host state (which language servers are on
-// PATH or under the sandbox HOME), and both sides run on the same host (TSR-XSEKND ported it).
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+// harness). The LSP section is host state (which language servers are on PATH), so the parity
+// suite runs both sides with a PATH that holds no language server: the probe then finds the same
+// thing on both sides on every machine, and a load-dependent version probe cannot split them.
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { formatTimeSince, renderStatusPlain } from "../../../src/cli/commands/status.ts";
 import { buildReadiness, inactivePayload } from "../../../src/domain/readiness/index.ts";
@@ -21,6 +23,16 @@ const opts = {};
 const SLOW = 120_000;
 
 cases("status matches Go", () => {
+  // Both the oracle (baseEnv reads process.env.PATH) and the in-process TS run see this PATH.
+  const realPath = process.env.PATH;
+  beforeAll(() => {
+    process.env.PATH = realpathSync(mkdtempSync(join(tmpdir(), "knowns-status-nopath-")));
+  });
+  afterAll(() => {
+    if (realPath === undefined) delete process.env.PATH;
+    else process.env.PATH = realPath;
+  });
+
   test(
     "every output mode",
     async () => {

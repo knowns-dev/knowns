@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { rosettaHint, stageWindowsBinary } = require("./bin/knowns.js");
+const { rosettaHint, stageWindowsBinary } = require("./bin/runtime.js");
 
 const tempRoots = [];
 

@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { projectTaskList, withoutKn6dvwn6 } from "../helpers/kn-6dvwn6.ts";
 import { firstDiff, GO_BIN, hasGoBin, runDiff, type Step } from "./harness.ts";
 
 const PR_BIN = process.env.KNOWNS_GO_PR156_BIN;
@@ -32,7 +33,8 @@ function cli(dir: string, home: string, args: string[]): void {
 const sortById = (text: string): string => {
   try {
     const v = JSON.parse(text);
-    if (Array.isArray(v)) v.sort((a: { id: string }, b: { id: string }) => (a.id < b.id ? -1 : 1));
+    // KN-6DVWN6: list returns summaries in {results,total,limit}; project both sides alike.
+    if (Array.isArray(v) || Array.isArray(v?.results)) return projectTaskList(text);
     return JSON.stringify(v, null, 2);
   } catch {
     return text;
@@ -94,6 +96,9 @@ describe.skipIf(!hasPrBin)("tasks list unassigned matches the PR #156 Go build",
       setup: (dir) => cpSync(template, dir, { recursive: true }),
     });
     try {
+      // The KN-6DVWN6 pagination params and wording in the tasks.list help are reverted to the
+      // oracle's by literal pairs, so a removed or renamed parameter still fails.
+      for (const r of run.results) r.tsMasked = withoutKn6dvwn6(r.tsMasked);
       for (const r of run.results) {
         expect({ step: r.label, text: r.tsMasked }, firstDiff(r.goMasked, r.tsMasked)).toEqual({
           step: r.label,

@@ -10,7 +10,6 @@ import {
   lstatSync,
   mkdirSync,
   readdirSync,
-  readFileSync,
   rmSync,
   statSync,
 } from "node:fs";
@@ -21,7 +20,9 @@ import type { Task } from "../../models/task.ts";
 import type { HistoryRecord } from "../../models/version.ts";
 import { createStorage, type Storage } from "../../storage/adapters.ts";
 import { withFileLock } from "../../storage/core/file-lock.ts";
+import { readFileRetrying } from "../../storage/core/fs-retry.ts";
 import { safeHistoryId, withDocMutationLocks } from "../../storage/core/locks.ts";
+import { statSignature } from "../../storage/core/stat-signature.ts";
 import { Store } from "../../storage/core/store.ts";
 import { atomicWrite, goJsonStringify, goTrimSpace } from "../../storage/core/util.ts";
 import {
@@ -210,12 +211,42 @@ function docFromState(state: {
   return doc;
 }
 
+/** How long one walk of the tree answers identity checks inside a scope. */
+const IDENTITY_INDEX_TTL_MS = 2000;
+
 export class FilesystemReconciler {
   readonly storeRoot: string;
   readonly storage: Storage;
   private readonly mu = new AsyncMutex();
   private index: IndexIntent | undefined;
   private readonly allowArchive: boolean;
+  /** uniqueIdentity: the identity each Markdown file had at its last parse, by stat signature. */
+  private readonly identityCache = new Map<string, { sig: string; id: string | null }>();
+  /**
+   * While above zero, stat-signature caches are neither read nor written. Destructive and
+   * proof-bearing paths (hard delete, restore, identity lookups for them, replacement proofs) must
+   * decide from the bytes on disk, not from a cache that a same-tick rewrite could fool.
+   */
+  private freshReads = 0;
+
+  private async withFreshReads<T>(fn: () => Promise<T>): Promise<T> {
+    this.freshReads++;
+    try {
+      return await fn();
+    } finally {
+      this.freshReads--;
+    }
+  }
+  private identityScope = 0;
+  /** resolveCanonicalHint: what each canonical file resolved to, by stat signature. */
+  private readonly canonicalCache = new Map<
+    string,
+    { sig: string; kind: Kind; id: string; hash: string }
+  >();
+  private readonly identityIndex = new Map<
+    string,
+    { builtAt: number; ids: Map<string, string[]> }
+  >();
   private readonly signal: AbortSignal | undefined;
   // Lifecycle metadata is set only while the serialized lifecycle resolver invokes the baseline
   // content reconciler.
@@ -362,10 +393,28 @@ export class FilesystemReconciler {
         throw unsafe(`${basename(path)}: ${(e as Error).message}`);
       }
     }
+    // A lifecycle pass resolves every canonical file, so each pass read and parsed the whole
+    // project for one changed file. A file whose stat signature is unchanged since it was last
+    // read stably keeps the identity and hash it had then (the signature is taken before the read,
+    // so a write that lands in between only costs one more read).
+    let sig: string | undefined;
+    try {
+      sig = statSignature(lstatSync(path, { bigint: true }));
+    } catch {
+      this.canonicalCache.delete(path);
+    }
+    if (this.freshReads > 0) sig = undefined;
+    const hit = sig === undefined ? undefined : this.canonicalCache.get(path);
+    if (hit && hit.sig === sig) {
+      this.uniqueIdentity(hit.kind, hit.id, path);
+      return { kind: hit.kind, id: hit.id, hash: hit.hash };
+    }
     const data = this.readStable(path);
     const kind: Kind = this.isTaskPath(path) ? "task" : "doc";
     const parsed = this.parseCanonical(kind, path, data);
     this.uniqueIdentity(kind, parsed.id, path);
+    if (sig !== undefined)
+      this.canonicalCache.set(path, { sig, kind, id: parsed.id, hash: parsed.hash });
     return { kind, id: parsed.id, hash: parsed.hash };
   }
 
@@ -471,109 +520,115 @@ export class FilesystemReconciler {
 
   /** Reconcile: a startup/explicit pass. Without `execute` it is entirely read-only. */
   reconcile(execute: boolean): Promise<ReconcileResult[]> {
-    return this.mu.run(async () => {
-      const paths = this.canonicalFiles();
-      const manifest = readManifestFile(this.manifestPath());
-      const results: ReconcileResult[] = [];
-      const dirty: Record<string, ManifestEntry> = {};
-      for (const path of paths) {
-        this.checkAbort();
-        let ident: { kind: Kind; id: string };
-        try {
-          ident = await this.resolveCanonicalHint(path);
-        } catch (e) {
-          results.push(emptyResult({ path, diagnostic: (e as Error).message }));
-          continue;
-        }
-        const diagnostic = manifestPathConflict(
-          manifest,
-          ident.kind,
-          ident.id,
-          this.relative(path),
-        );
-        if (diagnostic !== "") {
-          results.push(
-            emptyResult({
-              entityType: ident.kind,
-              entityId: ident.id,
-              path: this.relative(path),
-              diagnostic,
-            }),
+    return this.mu.run(() =>
+      this.withIdentityScope(async () => {
+        this.writerLockTimedOut = false;
+        const paths = this.canonicalFiles();
+        const manifest = readManifestFile(this.manifestPath());
+        const results: ReconcileResult[] = [];
+        const dirty: Record<string, ManifestEntry> = {};
+        for (const path of paths) {
+          this.checkAbort();
+          let ident: { kind: Kind; id: string };
+          try {
+            ident = await this.resolveCanonicalHint(path);
+          } catch (e) {
+            results.push(emptyResult({ path, diagnostic: (e as Error).message }));
+            continue;
+          }
+          const diagnostic = manifestPathConflict(
+            manifest,
+            ident.kind,
+            ident.id,
+            this.relative(path),
           );
-          continue;
+          if (diagnostic !== "") {
+            results.push(
+              emptyResult({
+                entityType: ident.kind,
+                entityId: ident.id,
+                path: this.relative(path),
+                diagnostic,
+              }),
+            );
+            continue;
+          }
+          await this.settleFile(path, execute, manifest, dirty, results);
         }
-        await this.settleFile(path, execute, manifest, dirty, results);
-      }
-      await this.finishPass(execute, results, dirty);
-      results.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-      return results;
-    });
+        await this.finishPass(execute, results, dirty);
+        results.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+        return results;
+      }),
+    );
   }
 
   /** ReconcileHints: reconcile exactly the files a watcher named. */
   reconcileHints(hints: readonly ReconcileHint[], execute: boolean): Promise<ReconcileResult[]> {
-    return this.mu.run(async () => {
-      const { resolved, diagnostics } = await this.resolveHints(hints);
-      const results: ReconcileResult[] = [...diagnostics];
-      const seen = new Set<string>();
-      const paths: string[] = [];
-      for (const hint of resolved) {
-        let path: string;
-        try {
-          path = this.validateCanonicalPath(hint.path);
-        } catch {
-          paths.push(hint.path);
-          continue;
+    return this.mu.run(() =>
+      this.withIdentityScope(async () => {
+        this.writerLockTimedOut = false;
+        const { resolved, diagnostics } = await this.resolveHints(hints);
+        const results: ReconcileResult[] = [...diagnostics];
+        const seen = new Set<string>();
+        const paths: string[] = [];
+        for (const hint of resolved) {
+          let path: string;
+          try {
+            path = this.validateCanonicalPath(hint.path);
+          } catch {
+            paths.push(hint.path);
+            continue;
+          }
+          if (!seen.has(path)) {
+            seen.add(path);
+            paths.push(path);
+          }
         }
-        if (!seen.has(path)) {
-          seen.add(path);
-          paths.push(path);
-        }
-      }
-      paths.sort();
-      const manifest = readManifestFile(this.manifestPath());
-      const dirty: Record<string, ManifestEntry> = {};
-      for (const path of paths) {
-        try {
-          lstatSync(path);
-        } catch (e) {
-          results.push(
-            emptyResult({
-              path,
-              diagnostic: `filesystem hint unresolved: ${asPathError(e, "lstat", path).message}`,
-            }),
+        paths.sort();
+        const manifest = readManifestFile(this.manifestPath());
+        const dirty: Record<string, ManifestEntry> = {};
+        for (const path of paths) {
+          try {
+            lstatSync(path);
+          } catch (e) {
+            results.push(
+              emptyResult({
+                path,
+                diagnostic: `filesystem hint unresolved: ${asPathError(e, "lstat", path).message}`,
+              }),
+            );
+            continue;
+          }
+          let ident: { kind: Kind; id: string };
+          try {
+            ident = await this.resolveCanonicalHint(path);
+          } catch (e) {
+            results.push(emptyResult({ path, diagnostic: (e as Error).message }));
+            continue;
+          }
+          const diagnostic = manifestPathConflict(
+            manifest,
+            ident.kind,
+            ident.id,
+            this.relative(path),
           );
-          continue;
+          if (diagnostic !== "") {
+            results.push(
+              emptyResult({
+                entityType: ident.kind,
+                entityId: ident.id,
+                path: this.relative(path),
+                diagnostic,
+              }),
+            );
+            continue;
+          }
+          await this.settleFile(path, execute, manifest, dirty, results);
         }
-        let ident: { kind: Kind; id: string };
-        try {
-          ident = await this.resolveCanonicalHint(path);
-        } catch (e) {
-          results.push(emptyResult({ path, diagnostic: (e as Error).message }));
-          continue;
-        }
-        const diagnostic = manifestPathConflict(
-          manifest,
-          ident.kind,
-          ident.id,
-          this.relative(path),
-        );
-        if (diagnostic !== "") {
-          results.push(
-            emptyResult({
-              entityType: ident.kind,
-              entityId: ident.id,
-              path: this.relative(path),
-              diagnostic,
-            }),
-          );
-          continue;
-        }
-        await this.settleFile(path, execute, manifest, dirty, results);
-      }
-      await this.finishPass(execute, results, dirty);
-      return results;
-    });
+        await this.finishPass(execute, results, dirty);
+        return results;
+      }),
+    );
   }
 
   /** The loop body Reconcile and ReconcileHints share after the manifest-conflict check. */
@@ -586,9 +641,17 @@ export class FilesystemReconciler {
   ): Promise<void> {
     let result: ReconcileResult;
     let entry: ManifestEntry;
+    if (execute && this.writerLockTimedOut) {
+      results.push(this.busyResult(path)); // one timeout per batch, not one per file
+      return;
+    }
     try {
       ({ result, entry } = await this.reconcileFile(path, execute));
     } catch (e) {
+      if (isLockTimeout(e)) {
+        results.push(this.busyResult(path, e));
+        return;
+      }
       // A malformed or ambiguous file is an actionable, content-free result; other files may
       // still be safely reconciled in the same pass.
       results.push(emptyResult({ path, diagnostic: (e as Error).message }));
@@ -646,10 +709,89 @@ export class FilesystemReconciler {
     if (this.activePreviousPath !== "") record.previousPath = this.activePreviousPath;
   }
 
+  /**
+   * A Task write is canonical file first, history second, both under the task lifecycle lock. A
+   * reconcile that reads the file in between would record the half-done write as a watcher
+   * revision of its own (an extra revision). So a Task is reconciled under that same lock: it then
+   * sees the state before or after a write, never the middle. The wait is bounded; on timeout the
+   * file is simply reconciled on a later pass.
+   */
   private async reconcileFile(
     path: string,
     execute: boolean,
   ): Promise<{ result: ReconcileResult; entry: ManifestEntry }> {
+    if (!execute) return this.reconcileFileUnlocked(path, execute);
+    const kind: Kind = this.isTaskPath(path) ? "task" : "doc";
+    const done = await this.withWriterLock(kind, [this.relative(path)], () =>
+      this.reconcileFileUnlocked(path, execute),
+    );
+    // The index handoff (Store.open, settings, the job queue) runs after the writer lock is
+    // released: it can take long, and a callback that takes the same lock must not hang.
+    if (done.handoff && this.index) {
+      try {
+        await this.index(done.result);
+      } catch (e) {
+        if (done.handoff === "raw") throw e;
+        throw new Error(
+          `filesystem revision durable but indexing handoff failed: ${(e as Error).message}`,
+          { cause: e },
+        );
+      }
+    }
+    return { result: done.result, entry: done.entry };
+  }
+
+  private writerLockTimeoutMs = 10_000;
+
+  /** Test seam: how long to wait for a writer's lock before deferring the file. */
+  setWriterLockTimeout(ms: number): void {
+    this.writerLockTimeoutMs = ms;
+  }
+
+  /** True once a writer lock timed out in this pass: the rest of the batch is deferred, not waited. */
+  private writerLockTimedOut = false;
+
+  /** A result that defers a file whose writer lock was busy; the watcher re-queues it with backoff. */
+  private busyResult(path: string, e?: unknown): ReconcileResult {
+    this.writerLockTimedOut = true;
+    return emptyResult({
+      path: this.relative(path),
+      diagnostic: `writer lock busy; will retry${e ? `: ${(e as Error).message}` : ""}`,
+      pending: true,
+      retryAt: new Date(this.lifecycleNow().getTime() + 1000),
+    });
+  }
+
+  /**
+   * Runs fn under the lock the WRITERS of this entity take (a Task: the task lifecycle lock; a Doc:
+   * its mutation lock, one per path), so the reconciler sees the state before or after a write and
+   * never the middle of one (file written, history not yet). Bounded wait: a timeout throws, it
+   * never runs unlocked. `relPaths` are store-relative canonical paths (docs/<path>.md).
+   */
+  private withWriterLock<T>(kind: string, relPaths: string[], fn: () => Promise<T>): Promise<T> {
+    const timeoutMs = this.writerLockTimeoutMs;
+    if (kind === "task") return this.storage.store.withTaskLifecycleLock(fn, { timeoutMs });
+    const docPaths = [
+      ...new Set(
+        relPaths.map((rel) =>
+          rel
+            .replace(/\\/g, "/")
+            .replace(/^docs\//, "")
+            .replace(/\.md$/, ""),
+        ),
+      ),
+    ].sort();
+    return this.storage.store.withDocMutationLocks(docPaths, fn, { timeoutMs });
+  }
+
+  private async reconcileFileUnlocked(
+    path: string,
+    execute: boolean,
+  ): Promise<{
+    result: ReconcileResult;
+    entry: ManifestEntry;
+    handoff?: "wrapped" | "raw";
+  }> {
     const data = this.readStable(path);
     const kind: Kind = this.isTaskPath(path) ? "task" : "doc";
     const parsed = this.parseCanonical(kind, path, data);
@@ -732,8 +874,7 @@ export class FilesystemReconciler {
             entry.headHash = tail.newHash ?? "";
             result.revision = tail.revision;
             result.changed = tail.source === "filesystem";
-            if (result.changed && this.index) await this.index(result);
-            return { result, entry };
+            return { result, entry, handoff: result.changed ? "raw" : undefined };
           }
           const legacy = await this.legacyHead(kind, entityId, hash, parsed.doc);
           if (legacy.revision > 0) {
@@ -752,8 +893,7 @@ export class FilesystemReconciler {
             result.changed = true;
             result.revision = again1.revision;
           }
-          if (result.changed && this.index) await this.index(result);
-          return { result, entry };
+          return { result, entry, handoff: result.changed ? "raw" : undefined };
         }
       }
       if (!execute) {
@@ -780,19 +920,7 @@ export class FilesystemReconciler {
       result.changed = true;
       result.revision = 1;
     }
-    if (result.changed && this.index) {
-      try {
-        await this.index(result);
-      } catch (e) {
-        throw new Error(
-          `filesystem revision durable but indexing handoff failed: ${(e as Error).message}`,
-          {
-            cause: e,
-          },
-        );
-      }
-    }
-    return { result, entry };
+    return { result, entry, handoff: result.changed ? "wrapped" : undefined };
   }
 
   private async legacyHead(
@@ -837,7 +965,7 @@ export class FilesystemReconciler {
     }
     let data: string;
     try {
-      data = readFileSync(this.storage.versions.versionPath(id), "utf8");
+      data = readFileRetrying(this.storage.versions.versionPath(id), "utf8");
     } catch (e) {
       if (isNotExist(e)) return { taskId: id, currentVersion: 0, versions: [] };
       throw e;
@@ -998,13 +1126,58 @@ export class FilesystemReconciler {
     return files;
   }
 
-  private uniqueIdentity(kind: Kind, id: string, target: string): void {
+  /**
+   * The identity (`id`) a Markdown file declares, or null when it declares none, or undefined when
+   * it cannot be read. Kept per stat signature: a file that has not changed is not read again.
+   */
+  private identityOf(kind: Kind, full: string): string | null | undefined {
+    let sig: string | undefined;
+    try {
+      sig = statSignature(lstatSync(full, { bigint: true }));
+    } catch {
+      this.identityCache.delete(`${kind}:${full}`); // the file is gone: forget what it declared
+      return undefined;
+    }
+    if (this.freshReads > 0) sig = undefined;
+    const cached = sig === undefined ? undefined : this.identityCache.get(`${kind}:${full}`);
+    if (cached && cached.sig === sig) return cached.id;
+    let data: Buffer;
+    try {
+      data = stableRead(full);
+    } catch {
+      return undefined;
+    }
+    let owner: string | null;
+    try {
+      if (kind === "task") {
+        owner = parseTaskContent(data.toString("utf8")).id ?? null;
+      } else {
+        const rel = this.docRel(full);
+        owner =
+          parseDocContent(
+            data.toString("utf8"),
+            rel.endsWith(".md") ? rel.slice(0, -3) : rel,
+            posix.dirname(rel),
+            false,
+            "",
+          ).id ?? null;
+      }
+    } catch {
+      // unparseable files own no identity
+      owner = null;
+    }
+    if (sig !== undefined) this.identityCache.set(`${kind}:${full}`, { sig, id: owner });
+    return owner;
+  }
+
+  /** Every Markdown file of the kind by the identity it declares: one walk of the tree. */
+  private walkIdentities(kind: Kind): Map<string, string[]> {
     const roots = [join(this.storeRoot, `${kind}s`)];
     if (this.allowArchive && kind === "task") {
       // Authorized archive purges must prove uniqueness across both active and archived roots.
       roots.push(this.archiveRoot());
     }
-    const matches: string[] = [];
+    const byId = new Map<string, string[]>();
     const visit = (dir: string): void => {
       let entries: Dirent[];
       try {
@@ -1021,33 +1194,49 @@ export class FilesystemReconciler {
           continue;
         }
         if (!entry.name.endsWith(".md")) continue;
-        let data: Buffer;
-        try {
-          data = stableRead(full);
-        } catch {
-          continue;
-        }
-        try {
-          if (kind === "task") {
-            const t = parseTaskContent(data.toString("utf8"));
-            if (t.id === id) matches.push(full);
-          } else {
-            const rel = this.docRel(full);
-            const d = parseDocContent(
-              data.toString("utf8"),
-              rel.endsWith(".md") ? rel.slice(0, -3) : rel,
-              posix.dirname(rel),
-              false,
-              "",
-            );
-            if (d.id === id) matches.push(full);
-          }
-        } catch {
-          // unparseable files own no identity
-        }
+        const owner = this.identityOf(kind, full);
+        if (owner === undefined || owner === null) continue;
+        const list = byId.get(owner);
+        if (list) list.push(full);
+        else byId.set(owner, [full]);
       }
     };
     for (const root of roots) visit(root);
+    return byId;
+  }
+
+  /**
+   * Runs `fn` (a watcher batch or a lifecycle pass) with one shared identity index. Without a
+   * scope every identity check walks the whole tree, which is quadratic over a pass; inside one the
+   * tree is walked once per batch (and again after IDENTITY_INDEX_TTL_MS), and the file being
+   * reconciled is always checked on its own. Destructive paths (restore, hard delete) run outside a
+   * scope and still walk the disk for every check.
+   */
+  async withIdentityScope<T>(fn: () => Promise<T>): Promise<T> {
+    this.identityScope++;
+    try {
+      return await fn();
+    } finally {
+      if (--this.identityScope === 0) this.identityIndex.clear();
+    }
+  }
+
+  private uniqueIdentity(kind: Kind, id: string, target: string): void {
+    let matches: string[];
+    if (this.identityScope > 0) {
+      const key = `${kind}:${this.allowArchive}`;
+      let index = this.identityIndex.get(key);
+      if (!index || Date.now() - index.builtAt > IDENTITY_INDEX_TTL_MS) {
+        index = { builtAt: Date.now(), ids: this.walkIdentities(kind) };
+        this.identityIndex.set(key, index);
+      }
+      matches = [...(index.ids.get(id) ?? [])];
+      // The file being reconciled may be newer than the index (created or edited since).
+      if (!matches.some((m) => clean(m) === clean(target)) && this.identityOf(kind, target) === id)
+        matches.push(target);
+    } else {
+      matches = this.walkIdentities(kind).get(id) ?? [];
+    }
     const [only] = matches;
     if (matches.length !== 1 || only === undefined || clean(only) !== clean(target)) {
       throw unsafe(`ambiguous ${kind} identity ${goQuoted(id)}`);
@@ -1110,7 +1299,10 @@ export class FilesystemReconciler {
     if (this.missingSince) return this.missingSince;
     let values: Record<string, string> = {};
     try {
-      values = JSON.parse(readFileSync(this.missingStatePath(), "utf8")) as Record<string, string>;
+      values = JSON.parse(readFileRetrying(this.missingStatePath(), "utf8")) as Record<
+        string,
+        string
+      >;
     } catch (e) {
       if (!isNotExist(e)) throw e;
     }
@@ -1203,7 +1395,12 @@ export class FilesystemReconciler {
     execute: boolean,
     optsIn: LifecycleOptions,
   ): Promise<ReconcileResult[]> {
-    return this.mu.run(() => this.lifecyclePass(execute, optsIn));
+    return this.mu.run(() =>
+      this.withIdentityScope(() => {
+        this.writerLockTimedOut = false;
+        return this.lifecyclePass(execute, optsIn);
+      }),
+    );
   }
 
   private async lifecyclePass(
@@ -1343,14 +1540,20 @@ export class FilesystemReconciler {
         if (batchId === "")
           batchId = lifecycleBatchId(this.storeRoot, source, [`${key}\0${currentRel}`]);
         try {
-          const { result, next } = await this.reconcileLifecycleFile(
-            current,
-            entry,
-            execute,
-            source,
-            batchId,
-            LIFECYCLE_OPERATION_RENAME,
-          );
+          // A rename writes the file at the new path, then history: take the writers' lock for
+          // both paths so the reconciler never records the half-done rename as its own revision.
+          const run = () =>
+            this.reconcileLifecycleFile(
+              current,
+              entry,
+              execute,
+              source,
+              batchId,
+              LIFECYCLE_OPERATION_RENAME,
+            );
+          const { result, next } = execute
+            ? await this.withWriterLock(entry.entityType, [entry.path, currentRel], run)
+            : await run();
           results.push(result);
           if (execute) upserts[key] = next;
         } catch (e) {
@@ -1388,7 +1591,7 @@ export class FilesystemReconciler {
         // create for the new owner. Never infer the old content from the replacement bytes.
         let ident: { kind: Kind; id: string };
         try {
-          ident = await this.resolveCanonicalHint(owned);
+          ident = await this.withFreshReads(() => this.resolveCanonicalHint(owned));
         } catch (e) {
           results.push(
             emptyResult({
@@ -1519,12 +1722,21 @@ export class FilesystemReconciler {
       this.activeCurrentPath = this.relative(path);
       let settled: { result: ReconcileResult; entry: ManifestEntry } | undefined;
       let failure: unknown;
+      if (execute && this.writerLockTimedOut) {
+        this.restoreActive(saved);
+        results.push(this.busyResult(path));
+        continue;
+      }
       try {
         settled = await this.reconcileFile(path, execute);
       } catch (e) {
         failure = e;
       } finally {
         this.restoreActive(saved);
+      }
+      if (!settled && isLockTimeout(failure)) {
+        results.push(this.busyResult(path, failure));
+        continue;
       }
       if (!settled) {
         results.push(
@@ -1609,7 +1821,11 @@ export class FilesystemReconciler {
   }
 
   /** ReconcileLifecycleBatch: one bounded project-local burst, coalesced by stable identity. */
-  async reconcileLifecycleBatch(
+  reconcileLifecycleBatch(batchIn: LifecycleBatch, execute: boolean): Promise<ReconcileResult[]> {
+    return this.withIdentityScope(() => this.reconcileLifecycleBatchBody(batchIn, execute));
+  }
+
+  private async reconcileLifecycleBatchBody(
     batchIn: LifecycleBatch,
     execute: boolean,
   ): Promise<ReconcileResult[]> {
@@ -1693,11 +1909,17 @@ export class FilesystemReconciler {
     } catch {
       throw unsafe("unstable canonical file");
     }
-    const { kind, id, hash } = await this.resolveCanonicalHint(path);
+    const hinted = await this.resolveCanonicalHint(path);
+    const { kind, id } = hinted;
     if (kind !== previous.entityType || id !== previous.entityId) {
       throw unsafe("lifecycle identity changed");
     }
     const parsed = this.parseCanonical(kind, path, data);
+    // The hash recorded in the result, the history record and the manifest is the one of the bytes
+    // read above, never a cached one: a cache hit that disagrees with them is a file that changed
+    // under us, and recording the cached hash would leave history unable to see the edit again.
+    const hash = parsed.hash;
+    if (hinted.hash !== hash) throw unsafe("unstable canonical file; retry");
     const snapshot = parsed.snapshot;
     const stream = await this.history.read(kind, id);
     const records = stream.records ?? [];
@@ -1810,9 +2032,13 @@ export class FilesystemReconciler {
     source: string,
     batchId: string,
   ): Promise<ReconcileResult> {
-    return this.withLifecycleEntityLock(entry.entityType, entry.entityId, () =>
-      this.appendLifecycleTombstoneLocked(entry, execute, source, batchId),
-    );
+    const run = () =>
+      this.withLifecycleEntityLock(entry.entityType, entry.entityId, () =>
+        this.appendLifecycleTombstoneLocked(entry, execute, source, batchId),
+      );
+    // Writers' lock first (their order is writer lock, then entity lock), so a tombstone is never
+    // recorded for a file a writer is in the middle of moving.
+    return execute ? this.withWriterLock(entry.entityType, [entry.path], run) : run();
   }
 
   private async appendLifecycleTombstoneLocked(
@@ -1919,7 +2145,7 @@ export class FilesystemReconciler {
       if (file.isDirectory() || !file.name.endsWith(".json")) continue;
       let raw: string;
       try {
-        raw = readFileSync(join(dir, file.name), "utf8");
+        raw = readFileRetrying(join(dir, file.name), "utf8");
       } catch (e) {
         results.push(emptyResult({ diagnostic: (e as Error).message }));
         continue;
@@ -2088,7 +2314,9 @@ export class FilesystemReconciler {
     opts: RestoreOptions = {},
   ): Promise<ReconcileResult> {
     return this.withLifecycleEntityLock(entityType, entityId, () =>
-      this.mu.run(() => this.restoreLocked(entityType as Kind, entityId, opts)),
+      this.mu.run(() =>
+        this.withFreshReads(() => this.restoreLocked(entityType as Kind, entityId, opts)),
+      ),
     );
   }
 
@@ -2346,7 +2574,14 @@ export class FilesystemReconciler {
     return result;
   }
 
-  private async canonicalIdentityPaths(entityType: string, entityId: string): Promise<string[]> {
+  private canonicalIdentityPaths(entityType: string, entityId: string): Promise<string[]> {
+    return this.withFreshReads(() => this.canonicalIdentityPathsCached(entityType, entityId));
+  }
+
+  private async canonicalIdentityPathsCached(
+    entityType: string,
+    entityId: string,
+  ): Promise<string[]> {
     const matched: string[] = [];
     for (const path of this.canonicalFiles()) {
       try {
@@ -2423,6 +2658,8 @@ export class FilesystemReconciler {
           path: rel,
           batchId: this.activeBatchId,
         },
+        // reconcileFile holds this doc's mutation lock around us, and that lock is not reentrant.
+        true,
       );
     });
     if (settled && head) {
@@ -2450,6 +2687,7 @@ export class FilesystemReconciler {
     last: HistoryRecord,
     records: readonly HistoryRecord[],
     opts: RestoreOptions,
+    docLockHeld = false,
   ): Promise<ReconcileResult> {
     const info = lstatSync(abs);
     if (info.isSymbolicLink()) throw unsafe("restore path is symlink");
@@ -2480,7 +2718,7 @@ export class FilesystemReconciler {
       currentPath: path,
     };
     const appendRecord = () => this.appendHistoryRecord(record);
-    if (entityType === "doc") {
+    if (entityType === "doc" && !docLockHeld) {
       const publicPath = toSlash(path).replace(/^docs\//, "");
       await withDocMutationLocks(this.storeRoot, [publicPath], appendRecord);
     } else {
@@ -2574,7 +2812,9 @@ export class FilesystemReconciler {
     entityId: string,
     optsIn: HardDeleteOptions,
   ): Promise<void> {
-    return this.mu.run(() => this.hardDeleteBody(entityType, entityId, optsIn));
+    return this.mu.run(() =>
+      this.withFreshReads(() => this.hardDeleteBody(entityType, entityId, optsIn)),
+    );
   }
 
   private async hardDeleteBody(
@@ -2599,7 +2839,7 @@ export class FilesystemReconciler {
       hasReservation = false;
     }
     if (hasReservation) {
-      const marker = JSON.parse(readFileSync(reservation, "utf8")) as Record<string, unknown>;
+      const marker = JSON.parse(readFileRetrying(reservation, "utf8")) as Record<string, unknown>;
       const markerKind = typeof marker.entityType === "string" ? marker.entityType : "";
       if (markerKind !== "" && markerKind !== entityType)
         throw unsafe("purge marker entity mismatch");
@@ -2864,7 +3104,7 @@ export class FilesystemReconciler {
 
   private readIntents(): Record<string, ReconcileResult> {
     const out: Record<string, ReconcileResult> = {};
-    const raw = JSON.parse(readFileSync(this.lifecycleIntentPath(), "utf8")) as Record<
+    const raw = JSON.parse(readFileRetrying(this.lifecycleIntentPath(), "utf8")) as Record<
       string,
       Record<string, unknown>
     > | null;
@@ -3072,4 +3312,9 @@ function goNanoTime(d: Date): string {
 /** `%q` for an identifier. */
 function goQuoted(s: string): string {
   return JSON.stringify(s);
+}
+
+/** The bounded wait for a writer lock ran out (withFileLock rejects with a TimeoutError). */
+function isLockTimeout(e: unknown): boolean {
+  return (e as { name?: string } | undefined)?.name === "TimeoutError";
 }

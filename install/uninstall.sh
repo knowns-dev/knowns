@@ -61,7 +61,7 @@ remove_link() {
     link="$1"
     [ -L "$link" ] || return 1
     case "$(readlink "$link")" in
-        "${INSTALL_DIR}/knowns") ;;
+        "${INSTALL_DIR}/knowns" | "${INSTALL_DIR}/knowns-engine" | "${INSTALL_DIR}/knowns-proxy") ;;
         *) warn "Left ${link}: it does not point at ${INSTALL_DIR}/knowns"; return 1 ;;
     esac
     remove_path "$link"
@@ -78,6 +78,24 @@ main() {
         success "Removed ${INSTALL_DIR}/knowns"
         removed=1
     fi
+
+    # The engine sits beside the launcher (spec mcp-thin-proxy D10); knowns-proxy is the launcher's old name.
+    for name in knowns-engine knowns-proxy; do
+        if remove_path "${INSTALL_DIR}/${name}"; then
+            success "Removed ${INSTALL_DIR}/${name}"
+            removed=1
+        fi
+    done
+
+    # Leftovers of an interrupted install or update: knowns.new.<pid>, knowns-engine.rollback.<pid>, *.old
+    for f in "${INSTALL_DIR}"/knowns.new.* "${INSTALL_DIR}"/knowns-engine.new.* \
+             "${INSTALL_DIR}"/knowns-engine.rollback.* "${INSTALL_DIR}"/knowns.rollback \
+             "${INSTALL_DIR}"/knowns.old* "${INSTALL_DIR}"/knowns-engine.old* \
+             "${INSTALL_DIR}"/knowns-engine.rollback "${INSTALL_DIR}"/knowns.tmp \
+             "${INSTALL_DIR}"/knowns-engine.tmp; do
+        [ -e "$f" ] || continue
+        remove_path "$f" && success "Removed $f"
+    done
 
     if remove_path "${INSTALL_DIR}/kn"; then
         success "Removed ${INSTALL_DIR}/kn"

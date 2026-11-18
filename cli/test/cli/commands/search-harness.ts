@@ -110,7 +110,34 @@ export function makeFixtureProject(fixture: string, setup?: (dir: string) => voi
   return makeProject(fixture, setup);
 }
 
+/** Steps that cannot change anything: `<group> get|list|view|show ...` and help. */
+export function isReadOnlyStep(step: Step): boolean {
+  if (step.stdin !== undefined) return false;
+  if (step.args.includes("--help") || step.args[0] === "help") return true;
+  const words = step.args.filter((a) => !a.startsWith("-"));
+  return ["get", "list", "view", "show"].includes(words[1] ?? "");
+}
+
+/**
+ * A Go capture of exit 0 with nothing on stdout or stderr, next to a TS run that printed
+ * something, has been seen once on a macOS runner for a 1-byte output (Bun.spawnSync lost it; Go
+ * prints "\n" there). For a read-only step that capture is taken again, once. A write step is
+ * never run twice, and a second capture that still differs is compared as it is.
+ */
+export function retryLostCapture(
+  step: Step,
+  go: Result,
+  ts: Result,
+  rerun: () => Result,
+): { result: Result; retried: boolean } {
+  const lost = go.code === 0 && go.stdout === "" && go.stderr === "";
+  if (!lost || ts.stdout === "" || !isReadOnlyStep(step)) return { result: go, retried: false };
+  return { result: rerun(), retried: true };
+}
+
 export interface Compared {
+  /** Indexes of the steps whose Go capture was taken a second time (see retryLostCapture). */
+  retried: number[];
   go: Result[];
   ts: Result[];
   goTree: Map<string, string>;
@@ -135,19 +162,27 @@ export async function compare(
   const map = opts.map ?? ((t: string) => t);
   const go: Result[] = [];
   const ts: Result[] = [];
+  const retried: number[] = [];
+  const goResult = (g: Result): Result => ({
+    code: g.code,
+    stdout: map(normalize(normalizeVersion(stripUpdateNotice(normalizeGo(g.stdout))), goP)),
+    stderr: map(normalize(normalizeVersion(stripUpdateNotice(normalizeGo(g.stderr))), goP)),
+  });
   for (const s of steps) {
-    const g = runGo(goP, s);
-    go.push({
-      code: g.code,
-      stdout: map(normalize(normalizeVersion(stripUpdateNotice(normalizeGo(g.stdout))), goP)),
-      stderr: map(normalize(normalizeVersion(stripUpdateNotice(normalizeGo(g.stderr))), goP)),
-    });
+    let g = goResult(runGo(goP, s));
     const t = await runTsStep(tsP, s);
-    ts.push({
+    const tsRes: Result = {
       code: t.code,
       stdout: map(normalize(t.stdout, tsP)),
       stderr: map(normalize(t.stderr, tsP)),
-    });
+    };
+    const again = retryLostCapture(s, g, tsRes, () => goResult(runGo(goP, s)));
+    if (again.retried) {
+      retried.push(go.length);
+      g = again.result;
+    }
+    go.push(g);
+    ts.push(tsRes);
   }
-  return { go, ts, goTree: snapshot(goP), tsTree: snapshot(tsP), goP, tsP };
+  return { retried, go, ts, goTree: snapshot(goP), tsTree: snapshot(tsP), goP, tsP };
 }

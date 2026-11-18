@@ -1,0 +1,165 @@
+// KN-69EHXE-style review fix (storesync tick, P2-2/P3-1): heartbeats of leases the daemon already
+// knows must not wake it, however the platform reports an atomic rewrite; a lease appearing or
+// going away must. The lease file itself is written atomically.
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import * as q from "../../src/runtime/queue.ts";
+
+const home = mkdtempSync(join(tmpdir(), "knowns-leasewatch-"));
+const rt = join(home, "runtime");
+let saved: string | undefined;
+beforeAll(() => {
+  saved = process.env.KNOWNS_RUNTIME_ROOT;
+  process.env.KNOWNS_RUNTIME_ROOT = rt;
+  mkdirSync(join(rt, "leases"), { recursive: true });
+});
+afterAll(() => {
+  if (saved === undefined) delete process.env.KNOWNS_RUNTIME_ROOT;
+  else process.env.KNOWNS_RUNTIME_ROOT = saved;
+  rmSync(home, { recursive: true, force: true });
+});
+
+const leaseFile = (name: string) => join(rt, "leases", name);
+
+describe("watchRuntimeDirs lease filter", () => {
+  test("N heartbeats poke 0 times; a create and a delete poke twice", async () => {
+    writeFileSync(leaseFile("a.json"), "{}");
+    let pokes = 0;
+    const w = q.watchRuntimeDirs(() => {
+      pokes++;
+    });
+    try {
+      w.setLeases(["a.json"]);
+      await Bun.sleep(300); // let the watch settle
+      pokes = 0;
+      for (let i = 0; i < 12; i++) {
+        // An atomic rewrite, as ClientHandle.refresh does it.
+        writeFileSync(leaseFile("a.json.tmp"), JSON.stringify({ i }));
+        renameSync(leaseFile("a.json.tmp"), leaseFile("a.json"));
+        await Bun.sleep(30);
+      }
+      await Bun.sleep(300);
+      expect(pokes).toBe(0);
+
+      writeFileSync(leaseFile("b.json"), "{}"); // a new client
+      await Bun.sleep(400);
+      expect(pokes).toBeGreaterThanOrEqual(1);
+      const afterCreate = pokes;
+      w.setLeases(["a.json", "b.json"]); // the next scan saw it
+      rmSync(leaseFile("b.json")); // the client went away
+      await Bun.sleep(400);
+      expect(pokes).toBeGreaterThan(afterCreate);
+    } finally {
+      w.close();
+    }
+  });
+});
+
+describe("watchRuntimeDirs settle", () => {
+  test("a woken sleep returns only after the burst had WAKE_SETTLE_MS to finish", async () => {
+    const w = q.watchRuntimeDirs();
+    try {
+      await Bun.sleep(300); // let the watches attach
+      const t0 = Date.now();
+      const slept = w.sleep(10_000);
+      // Two writes a millisecond apart, as a client updates the registry and then its queue.
+      writeFileSync(join(rt, "projects.json"), "[]");
+      await Bun.sleep(1);
+      mkdirSync(join(rt, "queues"), { recursive: true });
+      writeFileSync(join(rt, "queues", "p.json"), "{}");
+      await slept;
+      const waited = Date.now() - t0;
+      expect(waited).toBeGreaterThanOrEqual(q.WAKE_SETTLE_MS - 5);
+      expect(waited).toBeLessThan(2000);
+    } finally {
+      w.close();
+    }
+  });
+});
+
+describe("runtimeEventWakes (the filter, with the platform's event spellings)", () => {
+  const known = new Set(["a.json"]);
+  const yes = () => true;
+  const no = () => false;
+
+  test("a known lease heartbeat never wakes, whatever the spelling", () => {
+    for (const windows of [false, true]) {
+      expect(q.runtimeEventWakes("leases", "a.json", known, yes, windows)).toBe(false);
+      expect(q.runtimeEventWakes("leases", "a.json.tmp", known, yes, windows)).toBe(false);
+    }
+    // Windows: another case, a path with a separator
+    expect(q.runtimeEventWakes("leases", "A.JSON", known, yes, true)).toBe(false);
+    expect(q.runtimeEventWakes("leases", "leases\\a.json", known, yes, true)).toBe(false);
+    // POSIX names are case-sensitive: a different case is a different (new) lease
+    expect(q.runtimeEventWakes("leases", "A.JSON", known, yes, false)).toBe(true);
+  });
+
+  test("a new lease, a vanished lease and an unnamed event wake", () => {
+    expect(q.runtimeEventWakes("leases", "b.json", known, yes, true)).toBe(true);
+    expect(q.runtimeEventWakes("leases", "a.json", known, no, true)).toBe(true);
+    expect(q.runtimeEventWakes("leases", "", known, yes, true)).toBe(true);
+  });
+
+  test("the root watcher ignores the leases and queues directories it is told about", () => {
+    for (const name of [
+      "leases",
+      "Leases",
+      "leases\\a.json",
+      "leases/a.json",
+      "queues",
+      "queues\\p.json",
+    ]) {
+      expect(q.runtimeEventWakes("root", name, known, yes, true)).toBe(false);
+    }
+    expect(q.runtimeEventWakes("root", "projects.json", known, yes, true)).toBe(true);
+    expect(q.runtimeEventWakes("root", "reload.json", known, yes, true)).toBe(true);
+    // the daemon's own files never wake it
+    expect(q.runtimeEventWakes("root", "status.json", known, yes, true)).toBe(false);
+    expect(q.runtimeEventWakes("root", "", known, yes, true)).toBe(true);
+  });
+});
+
+describe("ClientHandle.refresh", () => {
+  test("never leaves a partial lease: every read during many refreshes parses", async () => {
+    const handle = q.acquireClient("cli", join(home, "proj", ".knowns"), false, { ensure: false });
+    try {
+      const file = leaseFile(`${handle.lease.id}.json`);
+      let bad = 0;
+      let reads = 0;
+      let stop = false;
+      const reader = (async () => {
+        while (!stop) {
+          try {
+            JSON.parse(readFileSync(file, "utf8"));
+          } catch (e) {
+            if (
+              (e as NodeJS.ErrnoException).code !== "ENOENT" &&
+              !(e as NodeJS.ErrnoException).code
+            )
+              bad++;
+          }
+          reads++;
+          await Bun.sleep(0);
+        }
+      })();
+      for (let i = 0; i < 300; i++) handle.refresh();
+      stop = true;
+      await reader;
+      expect(reads).toBeGreaterThan(0);
+      expect(bad).toBe(0);
+      expect(existsSync(`${file}.tmp`)).toBe(false);
+    } finally {
+      handle.release();
+    }
+  });
+});

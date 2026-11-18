@@ -3,7 +3,7 @@
 // atomic pointer swap, watermark stamping and retention cleanup. The rebuild stages every chunk in
 // memory (Go's qdrantStageStore) and only then touches Qdrant.
 
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   DEFAULT_SEMANTIC_VECTOR_RETENTION_GENERATIONS,
@@ -48,8 +48,10 @@ import {
 import type { WritableVectorStore } from "../../search/sqlite-store.ts";
 import { CHUNK_VERSION, type Chunk, type EmbedderProvider } from "../../search/types.ts";
 import type { Storage } from "../../storage/adapters.ts";
+import { readFileRetrying } from "../../storage/core/fs-retry.ts";
 import { globalSemanticStoreRoot } from "../../storage/core/store.ts";
 import { withTaskLifecycleTransaction } from "../../storage/history/lifecycle-tx.ts";
+import { JobCancelledError } from "../job-cancel.ts";
 import { goLogf, isProcessAlive, parseGoDurationMs, sleep } from "../queue.ts";
 import { IndexService, type ReindexProgress } from "./index-service.ts";
 import { stampWatermarksFromGeneration } from "./qdrant-intent.ts";
@@ -134,7 +136,7 @@ async function acquireGenerationFileLock(
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
     try {
-      const m = /^pid=(\d+)/m.exec(readFileSync(path, "utf8"));
+      const m = /^pid=(\d+)/m.exec(readFileRetrying(path, "utf8"));
       const holder = m ? Number(m[1]) : 0;
       if (holder > 0 && !isProcessAlive(holder)) {
         rmSync(path, { force: true });
@@ -256,6 +258,8 @@ export interface QdrantGenerationOptions {
   client: QdrantClient;
   now?: () => number;
   progress?: ReindexProgress;
+  /** Asked between sources; true stops before activation, leaving the active generation intact. */
+  shouldStop?: () => boolean;
   retentionGenerations?: number;
   retentionTtlMs?: number;
   lockTimeoutMs?: number;
@@ -369,8 +373,9 @@ async function reindexLocked(
   try {
     const stage = new StageStore(embedding.model);
     try {
-      await new IndexService(storage, embedder, stage).reindex(opts.progress);
+      await new IndexService(storage, embedder, stage).reindex(opts.progress, opts.shouldStop);
     } catch (err) {
+      if (err instanceof JobCancelledError) throw err;
       throw new Error(
         `build next Qdrant generation from canonical sources: ${(err as Error).message}`,
       );

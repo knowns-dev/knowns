@@ -5,11 +5,12 @@
  * Interfaces mirror Go's structs; property order is Go's field order, undefined is omitempty.
  */
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ContextItem, RetrievalResponse } from "../../models/search.ts";
 import { goFsError } from "../../platform/goerror.ts";
 import { GoJsonError, scanFirstValue } from "../../server/gojson.ts";
+import { readFileRetrying, renameRetrying } from "../../storage/core/fs-retry.ts";
 import { D2_MODELS } from "../../storage/stores/embedding-registry-defaults.ts";
 import { formatFloat } from "../codegen/gofmt.ts";
 import { CANONICAL_BASELINE_JSON, CANONICAL_FIXTURE_JSON } from "./canonical-data.ts";
@@ -469,7 +470,7 @@ export function loadCanonicalEvaluationBaseline(): EvaluationBaseline {
 
 function readFileGo(path: string, what: string): string {
   try {
-    return readFileSync(path, "utf8");
+    return readFileRetrying(path, "utf8");
   } catch (e) {
     const msg = `read evaluation ${what} ${q(path)}: ${goFsError("open", path, e).message}`;
     if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new NotExistError(msg);
@@ -1361,7 +1362,7 @@ export function writeEvaluationBaseline(path: string, text: string): void {
     throw new Error(`write temporary evaluation baseline: ${(e as Error).message}`);
   }
   try {
-    renameSync(temp, path);
+    renameRetrying(temp, path);
   } catch (e) {
     if (process.platform !== "win32") {
       rmSync(temp, { force: true });
@@ -1369,7 +1370,7 @@ export function writeEvaluationBaseline(path: string, text: string): void {
     }
     try {
       rmSync(path, { force: true });
-      renameSync(temp, path);
+      renameRetrying(temp, path);
     } catch (retry) {
       rmSync(temp, { force: true });
       throw new Error(

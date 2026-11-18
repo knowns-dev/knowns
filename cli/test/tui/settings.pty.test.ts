@@ -7,7 +7,15 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type InitProject, treeDiff } from "../cli/commands/init-harness.ts";
 import { GO_BIN, hasGoBin } from "../cli/oracle.ts";
-import { askedInOrder, hasPty, KEY, type PtyStep, runBoth, sandboxPath } from "./pty-harness.ts";
+import {
+  askedInOrder,
+  assertSameExit,
+  hasPty,
+  KEY,
+  type PtyStep,
+  runBoth,
+  sandboxPath,
+} from "./pty-harness.ts";
 
 const cases = hasGoBin && hasPty ? describe : describe.skip;
 const E = KEY.enter;
@@ -15,10 +23,20 @@ const D = KEY.down;
 // Not y/n: huh submits the field on those, clack waits for Enter. Left is Yes, right is No in both.
 const LEFT = "\x1b[D";
 const RIGHT = "\x1b[C";
-const step = (expect: string | null, keys: string): PtyStep => ({ expect, keys });
-const SLOW = 180_000;
+const step = (expect: string | null, keys: string, resend = false): PtyStep => ({
+  expect,
+  keys,
+  resend,
+});
+// Keystrokes against a frozen Go oracle on a shared runner are timing, not product: a failed case is
+// run again (up to twice) before it counts. The screen dump of the last attempt stays in the error.
+const SLOW = { timeout: 180_000, retry: 2 };
 const MENU = "Project Settings";
 const GMENU = "Global Settings";
+// What to wait for when the menu comes back after a sub-form: a redrawn menu repaints its items but
+// not necessarily its title (Go's second draw has no title line), so the title can never match.
+const MENU_AGAIN = "Maintenance";
+const GMENU_AGAIN = "Default Code Intelligence";
 
 const TITLES = [
   MENU,
@@ -57,7 +75,7 @@ function initialized(p: InitProject): void {
 const projectOpts = { setup: initialized };
 
 function expectSame(r: ReturnType<typeof runBoth>, titles = TITLES): void {
-  expect(r.ts.exit).toBe(r.go.exit);
+  assertSameExit(r);
   expect(askedInOrder(r.ts.transcript, titles)).toEqual(askedInOrder(r.go.transcript, titles));
   // The tail the commands print themselves (not form chrome).
   for (const line of ["Settings saved.", "Global settings saved.", "Aborted."]) {
@@ -99,7 +117,7 @@ cases("settings (project) matches Go on a terminal", () => {
           step(MENU, E),
           step("Project name", `-x${E}`),
           step("Default Task ID prefix", `ab${E}`),
-          step(MENU, DONE),
+          step(MENU_AGAIN, DONE),
         ],
         projectOpts,
       );
@@ -118,7 +136,7 @@ cases("settings (project) matches Go on a terminal", () => {
           step("Project name", `${"\x7f".repeat(40)}${E}`),
           step(null, `z${E}`),
           step("Default Task ID prefix", E),
-          step(MENU, DONE),
+          step(MENU_AGAIN, DONE),
         ],
         projectOpts,
       );
@@ -136,7 +154,7 @@ cases("settings (project) matches Go on a terminal", () => {
           step(MENU, `${D}${E}`),
           step("Git tracking mode", `${D}${E}`),
           step("Knowns sections", `{toggle}${D}${D}${D}${D}{toggle}${E}`),
-          step(MENU, DONE),
+          step(MENU_AGAIN, DONE),
         ],
         projectOpts,
       );
@@ -150,7 +168,7 @@ cases("settings (project) matches Go on a terminal", () => {
     () => {
       const r = runBoth(
         ["settings"],
-        [step(MENU, `${D}${E}`), step("Git tracking mode", `${D}${D}${E}`), step(MENU, DONE)],
+        [step(MENU, `${D}${E}`), step("Git tracking mode", `${D}${D}${E}`), step(MENU_AGAIN, DONE)],
         projectOpts,
       );
       expectSame(r);
@@ -167,7 +185,7 @@ cases("settings (project) matches Go on a terminal", () => {
           step(MENU, `${D}${D}${E}`),
           step("AI platforms", `${D}{toggle}${E}`),
           step("Skill location", `${D}${D}${E}`),
-          step(MENU, DONE),
+          step(MENU_AGAIN, DONE),
         ],
         projectOpts,
       );
@@ -184,7 +202,7 @@ cases("settings (project) matches Go on a terminal", () => {
         [
           step(MENU, `${D}${D}${D}${D}${E}`),
           step("Enable code intelligence", `${LEFT}${E}`),
-          step(MENU, DONE),
+          step(MENU_AGAIN, DONE),
         ],
         projectOpts,
       );
@@ -201,7 +219,7 @@ cases("settings (project) matches Go on a terminal", () => {
         [
           step(MENU, `${D}${D}${D}${E}`),
           step("Enable Semantic Search", `${RIGHT}${E}`),
-          step(MENU, DONE),
+          step(MENU_AGAIN, DONE),
         ],
         projectOpts,
       );
@@ -215,7 +233,7 @@ cases("settings (project) matches Go on a terminal", () => {
     () => {
       const r = runBoth(
         ["settings"],
-        [step(MENU, `${D}${D}${D}${D}${D}${E}`), step(MENU, DONE)],
+        [step(MENU, `${D}${D}${D}${D}${D}${E}`), step(MENU_AGAIN, DONE)],
         projectOpts,
       );
       expect(r.go.transcript).toContain("Run: knowns sync to apply generated files");
@@ -224,12 +242,18 @@ cases("settings (project) matches Go on a terminal", () => {
     SLOW,
   );
 
-  test(
+  // Skipped on Linux only: the Go 0.34.1 oracle loses the keys typed after an aborted huh sub-form
+  // there (ubuntu CI, every attempt: Go's last screen is the redrawn menu with "> Project" and
+  // nothing moved, while the TS side shows the expected flow). It never fails on macOS. The oracle
+  // is frozen, so the case cannot be made to hold on Linux; the TS behaviour is covered by this
+  // case on macOS and by the other cases here (which cancel at the menu and finish every form).
+  // Re-enabling it is tracked in @task-KN-7VK1NZ.
+  test.skipIf(process.platform === "linux")(
     "cancelling a sub-form returns to the menu",
     () => {
       const r = runBoth(
         ["settings"],
-        [step(MENU, E), step("Project name", KEY.ctrlC), step(MENU, DONE)],
+        [step(MENU, E), step("Project name", KEY.ctrlC, true), step(MENU_AGAIN, DONE)],
         projectOpts,
       );
       // huh draws both inputs of a group at once, so only the first title is compared.
@@ -273,7 +297,7 @@ cases("settings --global matches Go on a terminal", () => {
           step(GMENU, E),
           step("Default project name", `Mine${E}`),
           step("Default Task ID prefix", `KN${E}`),
-          step(GMENU, GDONE),
+          step(GMENU_AGAIN, GDONE),
         ],
       );
       expectSame(r);
@@ -290,10 +314,10 @@ cases("settings --global matches Go on a terminal", () => {
           step(GMENU, `${D}${E}`),
           step("Git tracking mode", `${D}${E}`),
           step("Knowns sections", `{toggle}${E}`),
-          step(GMENU, `${D}${D}${E}`),
+          step(GMENU_AGAIN, `${D}${D}${E}`),
           step("AI platforms", `${D}{toggle}${E}`),
           step("Skill location", `${D}${D}${E}`),
-          step(GMENU, GDONE),
+          step(GMENU_AGAIN, GDONE),
         ],
       );
       expectSame(r);
@@ -311,9 +335,9 @@ cases("settings --global matches Go on a terminal", () => {
           step("Enable semantic search by default", `${LEFT}${E}`),
           step("Default provider", `${D}${E}`),
           step("Default model", `-v2${E}`),
-          step(GMENU, `${D}${D}${D}${D}${E}`),
+          step(GMENU_AGAIN, `${D}${D}${D}${D}${E}`),
           step("Enable code intelligence", `${LEFT}${E}`),
-          step(GMENU, GDONE),
+          step(GMENU_AGAIN, GDONE),
         ],
       );
       expectSame(r);

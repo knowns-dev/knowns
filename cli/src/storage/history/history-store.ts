@@ -11,8 +11,6 @@ import {
   mkdirSync,
   openSync,
   readdirSync,
-  readFileSync,
-  renameSync,
   rmSync,
   statSync,
   truncateSync,
@@ -26,6 +24,7 @@ import type {
   HistoryRecord,
   TaskVersionHistory,
 } from "../../models/version.ts";
+import { readFileRetrying, renameRetrying, truncateRetrying } from "../core/fs-retry.ts";
 import { type LockOptions, safeHistoryId, withHistoryEntityLock } from "../core/locks.ts";
 import { goJsonStringify } from "../core/util.ts";
 import {
@@ -125,6 +124,45 @@ interface ReadInternal extends HistoryReadResult {
   validOffsets: number[];
 }
 
+interface LineStats {
+  count: number;
+  /** Byte offset where the last complete line starts. */
+  lastStart: number;
+  lastLine?: string;
+  /** Bytes after the last newline: an incomplete record. */
+  partialTail: boolean;
+}
+
+/** Counts newline-terminated lines of a log without parsing them. */
+function lineStats(path: string): LineStats {
+  let data: Buffer;
+  try {
+    data = readFileRetrying(path);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT")
+      return { count: 0, lastStart: 0, partialTail: false };
+    throw new Error(`read history log: ${(e as Error).message}`, { cause: e });
+  }
+  let count = 0;
+  let start = 0;
+  let lastStart = 0;
+  let lastEnd = 0;
+  for (;;) {
+    const nl = data.indexOf(0x0a, start);
+    if (nl < 0) break;
+    count++;
+    lastStart = start;
+    lastEnd = nl;
+    start = nl + 1;
+  }
+  return {
+    count,
+    lastStart,
+    ...(count > 0 ? { lastLine: data.toString("utf8", lastStart, lastEnd) } : {}),
+    partialTail: start < data.length,
+  };
+}
+
 /**
  * Truncate a log opened for append. Windows opens an O_APPEND handle with FILE_APPEND_DATA but no
  * FILE_WRITE_DATA, so SetEndOfFile on it fails with "Access is denied" (Go's File.Truncate has the
@@ -189,7 +227,7 @@ export function durableWriteJson(path: string, value: unknown): void {
     } finally {
       closeSync(fd);
     }
-    renameSync(tmp, path);
+    renameRetrying(tmp, path);
   } finally {
     rmSync(tmp, { force: true });
   }
@@ -591,7 +629,7 @@ export class HistoryStore {
       }
       if (info.isDirectory()) throw new Error("legacy cleanup target is not a regular file");
       if (!info.isFile() || info.isSymbolicLink()) return;
-      const data = readFileSync(canonical);
+      const data = readFileRetrying(canonical);
       const identity = legacyIdentity(data);
       if (identity === undefined || identity.value !== entityId) return;
       const marker: AnyMap = {
@@ -616,7 +654,7 @@ export class HistoryStore {
       try {
         const currentInfo = lstatSync(canonical);
         if (!currentInfo.isFile() || currentInfo.isSymbolicLink()) throw new Error("changed");
-        current = readFileSync(canonical);
+        current = readFileRetrying(canonical);
       } catch {
         throw new Error("legacy cleanup target changed after reservation");
       }
@@ -645,9 +683,64 @@ export class HistoryStore {
     await this.withEntityLock(entityType, entityId, () => {
       const read = this.readFile(path, entityType, entityId);
       if (read.records.length === 0) return;
-      truncateSync(path, read.validOffsets[read.validOffsets.length - 2] as number);
+      truncateRetrying(path, read.validOffsets[read.validOffsets.length - 2] as number);
       syncFilePath(path);
       syncDirectory(dirname(path));
+    });
+  }
+
+  /** Which record a failed write appended: what the tail must show for it to be removable. */
+  // (see removeTailIfOwn)
+
+  /**
+   * Number of complete records, counted from the file's newlines (no parse, no chain check), so a
+   * failed write can take its mark cheaply. A missing file is 0.
+   */
+  async countRecords(entityType: string, entityId: string): Promise<number> {
+    if (!validHistoryEntityType(entityType)) {
+      throw new Error(`unsupported history entity type "${entityType}"`);
+    }
+    const path = this.entityPath(entityType, entityId);
+    return this.withEntityLock(entityType, entityId, () => lineStats(path).count);
+  }
+
+  /**
+   * Removes the tail record only if the stream is exactly `length + 1` records long and that tail
+   * is the record this writer appended: its newHash matches and, when given, so do its baseHash and
+   * author. Nobody appended after it, and the check and the truncate run under one entity lock.
+   * Returns false (and truncates nothing) when the stream is not in that state; the caller must
+   * then fail loudly. Only the tail line is parsed; the remaining stream is a plain prefix, so its
+   * prevRecordHash chain and Go's reader stay valid.
+   */
+  async removeTailIfOwn(
+    entityType: string,
+    entityId: string,
+    length: number,
+    own: { newHash: string; baseHash?: string; author?: string },
+  ): Promise<boolean> {
+    if (!validHistoryEntityType(entityType)) {
+      throw new Error(`unsupported history entity type "${entityType}"`);
+    }
+    const path = this.entityPath(entityType, entityId);
+    return this.withEntityLock(entityType, entityId, () => {
+      const stats = lineStats(path);
+      if (stats.count === length && !stats.partialTail) return true; // nothing landed
+      if (stats.count !== length + 1 || stats.partialTail || stats.lastLine === undefined) {
+        return false;
+      }
+      let tail: { newHash?: string; baseHash?: string; author?: string };
+      try {
+        tail = JSON.parse(stats.lastLine);
+      } catch {
+        return false;
+      }
+      if (tail.newHash !== own.newHash) return false;
+      if (own.baseHash !== undefined && (tail.baseHash ?? "") !== own.baseHash) return false;
+      if (own.author !== undefined && (tail.author ?? "") !== own.author) return false;
+      truncateRetrying(path, stats.lastStart);
+      syncFilePath(path);
+      syncDirectory(dirname(path));
+      return true;
     });
   }
 
@@ -658,7 +751,7 @@ export class HistoryStore {
     const result: ReadInternal = { records: [], validBytes: 0, validOffsets: [0] };
     let data: Buffer;
     try {
-      data = readFileSync(path);
+      data = readFileRetrying(path);
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") return result;
       throw new Error(`read history log: ${(e as Error).message}`, { cause: e });
@@ -737,7 +830,7 @@ export class HistoryStore {
         if (!regular) throw new Error("legacy provenance source is not a regular file");
         let currentDigest: string;
         try {
-          currentDigest = sha256Hex(readFileSync(legacyPath));
+          currentDigest = sha256Hex(readFileRetrying(legacyPath));
         } catch (e) {
           throw new Error(`read legacy provenance source: ${(e as Error).message}`, { cause: e });
         }
@@ -871,7 +964,7 @@ export class HistoryStore {
         { cause: e },
       );
     }
-    const rename = this.opts.rename ?? renameSync;
+    const rename = this.opts.rename ?? renameRetrying;
     let backup = "";
     if (existsSync(path)) {
       backup = `${path}.history-backup`;
@@ -901,7 +994,7 @@ export class HistoryStore {
     } catch (e) {
       // Roll back the newly named file; this preserves the previous durable head.
       try {
-        if (backup !== "") renameSync(backup, path);
+        if (backup !== "") renameRetrying(backup, path);
         else rmSync(path, { force: true });
         syncDir(dir);
       } catch {
@@ -932,7 +1025,7 @@ export class HistoryStore {
     legacyPath = canonical;
     let legacyBytes: Buffer;
     try {
-      legacyBytes = readFileSync(legacyPath);
+      legacyBytes = readFileRetrying(legacyPath);
     } catch (e) {
       throw new Error(`read legacy Task provenance: ${(e as Error).message}`, { cause: e });
     }
@@ -1023,7 +1116,7 @@ export class HistoryStore {
     legacyPath = canonical;
     let legacyBytes: Buffer;
     try {
-      legacyBytes = readFileSync(legacyPath);
+      legacyBytes = readFileRetrying(legacyPath);
     } catch (e) {
       throw new Error(`read legacy Doc provenance: ${(e as Error).message}`, { cause: e });
     }
@@ -1238,7 +1331,7 @@ export class HistoryStore {
       let digest = "";
       if (pathOk) {
         try {
-          digest = sha256Hex(readFileSync(path));
+          digest = sha256Hex(readFileRetrying(path));
         } catch (e) {
           pathOk = false;
           pathErr = e as Error;
@@ -1389,7 +1482,7 @@ export function legacyFileMatches(
 ): boolean {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(legacyPath, "utf8"));
+    parsed = JSON.parse(readFileRetrying(legacyPath, "utf8"));
   } catch {
     return false;
   }

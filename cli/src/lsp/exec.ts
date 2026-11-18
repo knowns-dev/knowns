@@ -21,7 +21,9 @@ export const lookPath: LookPath = (name) => {
       return undefined;
     }
   }
-  const found = Bun.which(name);
+  // PATH is passed explicitly: Bun.which alone keeps the PATH the process started with and
+  // ignores later changes to process.env.PATH (so an in-process run under a sandbox PATH sees the host's).
+  const found = Bun.which(name, { PATH: process.env.PATH ?? "" });
   return found ?? undefined;
 };
 

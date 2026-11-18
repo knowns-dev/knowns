@@ -2,18 +2,10 @@
 //
 // Go marshals the manifest and the intents file with encoding/json: struct fields in declaration
 // order, map keys sorted. The objects built here follow that order, so the bytes match.
-import {
-  closeSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeSync,
-} from "node:fs";
+import { closeSync, fsyncSync, mkdirSync, openSync, rmSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { GO_ZERO_TIME } from "../../models/common.ts";
+import { readFileRetrying, renameRetrying } from "../../storage/core/fs-retry.ts";
 import { goJsonStringify } from "../../storage/core/util.ts";
 import { goTime } from "../../storage/history/go-json.ts";
 import { syncDirectory } from "../../storage/history/history-store.ts";
@@ -38,7 +30,7 @@ export function writeFileDurable(path: string, text: string, tmpPrefix: string):
     } finally {
       closeSync(fd);
     }
-    renameSync(tmp, path);
+    renameRetrying(tmp, path);
   } finally {
     rmSync(tmp, { force: true });
   }
@@ -80,7 +72,7 @@ export function readManifestFile(path: string): ReconcileManifest {
   const m: ReconcileManifest = { schemaVersion: 1, entries: {} };
   let data: string;
   try {
-    data = readFileSync(path, "utf8");
+    data = readFileRetrying(path, "utf8");
   } catch (e) {
     if (isNotExist(e)) return m;
     throw e;

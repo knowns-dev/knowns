@@ -690,6 +690,57 @@ describe("extractBinary guards", () => {
     );
   });
 
+  describe("a streaming gunzip that reports EOF for a complete archive", () => {
+    const flaky = (): ((path: string) => AsyncIterable<Buffer>) => () => ({
+      async *[Symbol.asyncIterator]() {
+        yield Buffer.alloc(100);
+        throw new Error("unexpected EOF");
+      },
+    });
+
+    test("is retried with a whole-file inflate and the archive is read normally", async () => {
+      const dir = tmp();
+      const archive = join(dir, "a.tar.gz");
+      writeFileSync(archive, archiveOf(Buffer.from("payload")));
+      await extractBinary(archive, join(dir, "qdrant"), flaky());
+      expect(readFileSync(join(dir, "qdrant"), "utf8")).toBe("payload");
+      const none = join(dir, "n.tar.gz");
+      writeFileSync(none, gzipSync(tarBytes([{ name: "other", body: Buffer.from("x") }])));
+      await expect(extractBinary(none, join(dir, "q2"), flaky())).rejects.toThrow(
+        "qdrant binary missing from archive",
+      );
+    });
+
+    test("a really truncated archive still says unexpected EOF", async () => {
+      const dir = tmp();
+      const archive = join(dir, "t.tar.gz");
+      writeFileSync(archive, archiveOf(Buffer.alloc(5000, 1)).subarray(0, 60));
+      await expect(extractBinary(archive, join(dir, "qdrant"))).rejects.toThrow("unexpected EOF");
+      await expect(extractBinary(archive, join(dir, "qdrant"), flaky())).rejects.toThrow(
+        "unexpected EOF",
+      );
+    });
+  });
+
+  test("an archive with no qdrant says so every time (200 runs, 8 at once)", async () => {
+    const dir = tmp();
+    const archive = join(dir, "o.tar.gz");
+    writeFileSync(archive, gzipSync(tarBytes([{ name: "other", body: Buffer.from("x") }])));
+    const bad: string[] = [];
+    for (let round = 0; round < 25; round++) {
+      const results = await Promise.all(
+        Array.from({ length: 8 }, (_, i) =>
+          extractBinary(archive, join(dir, `q-${round}-${i}`)).then(
+            () => "extracted",
+            (e: Error) => e.message,
+          ),
+        ),
+      );
+      for (const r of results) if (r !== "qdrant binary missing from archive") bad.push(r);
+    }
+    expect(bad).toEqual([]);
+  });
+
   test("finds qdrant in a subdirectory and skips other entries with data", async () => {
     const out = await extract([
       { name: "README", body: Buffer.alloc(1500, 1) },

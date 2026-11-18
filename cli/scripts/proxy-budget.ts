@@ -1,0 +1,515 @@
+// Spec mcp-thin-proxy D7 / NFR-1..3: the resource budget of the thin proxy, measured on the built
+// binaries (cli/dist/<platform>/knowns[.exe], the engine, and knowns.launcher[.exe]) on macOS, Linux and Windows.
+//   1. p95 of each tool through the proxy against the in-process engine (KNOWNS_MCP_PROXY=0)
+//   2. N proxy sessions (and optionally the UI) under load, then idle: working set per process and
+//      CPU, against the limits in proxy-budget.config.json
+//   3. after every session closes: no knowns process, descriptor, socket or pipe remains
+// Usage: bun scripts/proxy-budget.ts [--sessions N] [--ui | --ui-inproc] [--dir dist/<platform>] [--json out.json]
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+
+const cliDir = resolve(import.meta.dir, "..");
+const cfg = JSON.parse(readFileSync(join(import.meta.dir, "proxy-budget.config.json"), "utf8"));
+const argv = process.argv.slice(2);
+const flag = (n: string) => argv.indexOf(`--${n}`);
+const val = (n: string, d: string): string => (flag(n) >= 0 ? (argv[flag(n) + 1] ?? d) : d);
+const isWin = process.platform === "win32";
+const hosted = process.env.CI === "1" || process.env.CI === "true";
+const plat = (cfg as Record<string, unknown>)[process.platform] as
+  | { totalWorkingSetMB?: number }
+  | undefined;
+const limits = {
+  ...cfg.limits,
+  ...(hosted ? cfg.hosted : {}),
+  ...(plat?.totalWorkingSetMB ? { totalWorkingSetMB: plat.totalWorkingSetMB } : {}),
+};
+const N = Number(val("sessions", String(cfg.sessions)));
+const withUi = flag("ui") >= 0 || flag("ui-inproc") >= 0;
+const platDir = val(
+  "dir",
+  `dist/${process.platform === "win32" ? "windows" : process.platform}-${process.arch === "arm64" ? "arm64" : "x64"}`,
+);
+const bin = (n: string) => resolve(cliDir, platDir, isWin ? `${n}.exe` : n);
+const KNOWNS = bin("knowns");
+const LAUNCHER_BUILT = bin("knowns.launcher");
+for (const f of [KNOWNS, LAUNCHER_BUILT])
+  if (!existsSync(f)) throw new Error(`missing ${f}; run bun run build first`);
+
+// A release launcher takes its engine only from beside itself (never from the environment), so the
+// build output is staged as an install: knowns (the launcher) next to knowns-engine and its libraries.
+const stage = mkdtempSync(join(tmpdir(), "kn-budget-install-"));
+const PROXY = join(stage, isWin ? "knowns.exe" : "knowns");
+copyFileSync(LAUNCHER_BUILT, PROXY);
+chmodSync(PROXY, 0o755);
+copyFileSync(
+  process.env.BUDGET_PROXY_KNOWNS ?? KNOWNS,
+  join(stage, isWin ? "knowns-engine.exe" : "knowns-engine"),
+);
+chmodSync(join(stage, isWin ? "knowns-engine.exe" : "knowns-engine"), 0o755);
+for (const f of readdirSync(dirname(KNOWNS)))
+  if (/onnxruntime/i.test(f)) copyFileSync(join(dirname(KNOWNS), f), join(stage, f));
+
+const failures: string[] = [];
+const report: Record<string, unknown> = { limits, hosted };
+const check = (ok: boolean, msg: string) => {
+  console.log(`${ok ? "ok  " : "FAIL"} ${msg}`);
+  if (!ok) failures.push(msg);
+};
+
+// ---- sandbox -----------------------------------------------------------------------------------
+const base = mkdtempSync(join(tmpdir(), "kn-budget-"));
+const home = join(base, "home");
+const proj = join(base, "proj");
+const rt = join(base, "rt");
+for (const d of [home, proj, rt]) mkdirSync(d, { recursive: true });
+const env: Record<string, string> = {
+  ...(process.env as Record<string, string>),
+  HOME: home,
+  USERPROFILE: home,
+  APPDATA: join(home, "AppData", "Roaming"),
+  LOCALAPPDATA: join(home, "AppData", "Local"),
+  KNOWNS_RUNTIME_ROOT: rt,
+  KNOWNS_RUNTIME_IDLE_TIMEOUT_MS: String(cfg.daemonIdleTimeoutMs),
+  KNOWNS_LSP_DAEMON: "0",
+  KNOWNS_SEMANTIC_VECTOR_ENABLED: "false",
+  NO_UPDATE_CHECK: "1",
+};
+delete env.KNOWNS_MCP_PROXY;
+const run = (cmd: string[], e = env, cwd = proj) =>
+  Bun.spawnSync(cmd, { cwd, env: e, stdout: "pipe", stderr: "pipe" });
+{
+  const e = { ...env, KNOWNS_MCP_PROXY: "0" };
+  run(["git", "init", "-q", "."]);
+  run([KNOWNS, "init", "budget"], e);
+  for (let i = 1; i <= 30; i++)
+    run([KNOWNS, "task", "create", `seed ${i}`, "-d", `seeded task ${i}`], e);
+  for (let i = 1; i <= 5; i++)
+    run([KNOWNS, "doc", "create", `Seed ${i}`, "-d", `seeded doc ${i}`], e);
+}
+
+// ---- process sampling (Windows: Get-Process, mac/linux: ps) -------------------------------------
+interface Sample {
+  pid: number;
+  mb: number;
+  cpuSec: number;
+}
+function sample(pids: number[]): Sample[] {
+  if (pids.length === 0) return [];
+  if (isWin) {
+    const ps = `Get-Process -Id ${pids.join(",")} -EA SilentlyContinue | % { "$($_.Id) $($_.WorkingSet64) $($_.TotalProcessorTime.TotalSeconds)" }`;
+    const out = Bun.spawnSync(["powershell", "-NoProfile", "-Command", ps]).stdout.toString();
+    return out
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((l) => {
+        const [pid, ws, cpu] = l.trim().split(/\s+/);
+        return { pid: Number(pid), mb: Number(ws) / 1048576, cpuSec: Number(cpu) };
+      });
+  }
+  const out = Bun.spawnSync([
+    "ps",
+    "-o",
+    "pid=,rss=,time=",
+    "-p",
+    pids.join(","),
+  ]).stdout.toString();
+  return out
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => {
+      const [pid, rss, time] = l.trim().split(/\s+/);
+      const parts = (time ?? "0").split(/[:-]/).map(Number).reverse(); // [s, m, h, d]
+      const cpuSec =
+        (parts[0] ?? 0) + (parts[1] ?? 0) * 60 + (parts[2] ?? 0) * 3600 + (parts[3] ?? 0) * 86400;
+      return { pid: Number(pid), mb: Number(rss) / 1024, cpuSec };
+    });
+}
+const alive = (pid: number) => sample([pid]).length > 0;
+
+// ---- MCP sessions ------------------------------------------------------------------------------
+class Session {
+  p!: ReturnType<typeof Bun.spawn>;
+  got = new Map<number, number>(); // id -> arrival ms
+  bad = 0;
+  private buf = "";
+  private n = 100;
+  constructor(cmd: string[], e: Record<string, string>) {
+    this.p = Bun.spawn(cmd, { cwd: proj, env: e, stdin: "pipe", stdout: "pipe", stderr: "ignore" });
+    void (async () => {
+      for await (const c of this.p.stdout as ReadableStream<Uint8Array>) {
+        this.buf += new TextDecoder().decode(c);
+        for (let i = this.buf.indexOf("\n"); i >= 0; i = this.buf.indexOf("\n")) {
+          const l = this.buf.slice(0, i);
+          this.buf = this.buf.slice(i + 1);
+          const m = /"id":(\d+)/.exec(l);
+          if (m) {
+            this.got.set(Number(m[1]), performance.now());
+            if (l.includes('"error"') && !l.includes('"result"')) this.bad++;
+          }
+        }
+      }
+    })();
+    this.send(1, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "budget", version: "1" },
+    });
+    (this.p.stdin as { write(s: string): void }).write(
+      '{"jsonrpc":"2.0","method":"notifications/initialized"}\n',
+    );
+  }
+  send(id: number, method: string, params: unknown) {
+    (this.p.stdin as { write(s: string): number; flush(): void }).write(
+      JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n",
+    );
+  }
+  async wait(id: number, ms = 30000) {
+    const t = performance.now();
+    while (performance.now() - t < ms) {
+      const a = this.got.get(id);
+      if (a !== undefined) return a;
+      await Bun.sleep(5);
+    }
+    throw new Error(`no answer to ${id} within ${ms} ms`);
+  }
+  async call(name: string, args: Record<string, unknown>): Promise<number> {
+    const id = ++this.n;
+    const t = performance.now();
+    this.send(id, "tools/call", { name, arguments: args });
+    return (await this.wait(id)) - t;
+  }
+  async ready() {
+    await this.wait(1, 60000);
+  }
+  async close() {
+    try {
+      (this.p.stdin as { end(): void }).end();
+    } catch {}
+    await Promise.race([this.p.exited, Bun.sleep(8000)]);
+    this.p.kill();
+  }
+}
+const proxySession = () => new Session([PROXY, "mcp", "--stdio"], { ...env });
+const directSession = () =>
+  new Session([KNOWNS, "mcp", "--stdio"], { ...env, KNOWNS_MCP_PROXY: "0" });
+
+const TOOLS: Array<[string, Record<string, unknown>]> = [
+  ["tasks", { action: "list" }],
+  ["tasks", { action: "get", taskId: "1" }],
+  ["docs", { action: "list" }],
+  ["search", { query: "seed" }],
+  ["project", { action: "current" }],
+  ["help", { queries: ["tasks.*"] }],
+];
+// Diagnosis: BUDGET_TOOL_ORDER=reverse measures the tools last-first, to tell a per-tool cost from
+// work the daemon is still doing right after the seed (its index and reconcile sweep).
+if (process.env.BUDGET_TOOL_ORDER === "reverse") TOOLS.reverse();
+const p95 = (xs: number[]): number =>
+  [...xs].sort((a, b) => a - b)[Math.max(0, Math.ceil(xs.length * 0.95) - 1)] ?? 0;
+
+// ---- 1. p95 against in-process -----------------------------------------------------------------
+/** Jobs still queued for any project of the sandbox runtime root (the seed's index work). */
+function queuedJobs(): number {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const dir = join(rt, "queues");
+  let n = 0;
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      try {
+        const q = JSON.parse(readFileSync(join(dir, f), "utf8")) as { jobs?: unknown[] };
+        n += (q.jobs ?? []).length;
+      } catch {
+        // a file being rewritten: count it next poll
+      }
+    }
+  } catch {
+    // no queue directory yet
+  }
+  return n;
+}
+
+// BUDGET_WAIT_QUEUE=1: wait until the daemon has drained the seed's queue before measuring, and
+// report the drain time on its own. It tells a transient backlog from a steady-state stall.
+async function drainBacklog() {
+  if (process.env.BUDGET_WAIT_QUEUE !== "1") return;
+  const probe = proxySession();
+  await probe.ready(); // starts the daemon
+  const t0 = Date.now();
+  let quietSince = 0;
+  while (Date.now() - t0 < 120_000) {
+    if (queuedJobs() === 0) {
+      quietSince ||= Date.now();
+      if (Date.now() - quietSince > 2000) break;
+    } else quietSince = 0;
+    await Bun.sleep(250);
+  }
+  const sec = (Date.now() - t0 - (quietSince ? 2000 : 0)) / 1000;
+  report.backlogDrainSec = sec;
+  console.log(
+    `     queue drained ${sec.toFixed(1)} s after the daemon started (${queuedJobs()} jobs left)`,
+  );
+  await probe.close();
+}
+
+async function latency() {
+  await drainBacklog();
+  const rows: Record<string, { direct: number; proxy: number }> = {};
+  const d = directSession();
+  const p = proxySession();
+  await Promise.all([d.ready(), p.ready()]);
+  for (const [t, a] of TOOLS)
+    for (const s of [d, p]) for (let i = 0; i < 5; i++) await s.call(t, a); // warm up
+  for (const [t, a] of TOOLS) {
+    const dl: number[] = [];
+    const pl: number[] = [];
+    for (let i = 0; i < 60; i++) {
+      dl.push(await d.call(t, a));
+      pl.push(await p.call(t, a));
+    }
+    const key = `${t}.${(a.action as string) ?? "call"}`;
+    rows[key] = { direct: p95(dl), proxy: p95(pl) };
+    const limit = rows[key].direct * limits.p95RatioMax + limits.p95SlackMs;
+    check(
+      rows[key].proxy <= limit,
+      `p95 ${key}: proxy ${rows[key].proxy.toFixed(1)} ms vs in-process ${rows[key].direct.toFixed(1)} ms (limit ${limit.toFixed(1)} ms)`,
+    );
+  }
+  report.p95 = rows;
+  await Promise.all([d.close(), p.close()]);
+  await Bun.sleep(1000);
+}
+
+// ---- 2. working set and idle CPU ---------------------------------------------------------------
+function daemonPid(): number | undefined {
+  const dir = join(rt, "mcp");
+  if (!existsSync(dir)) return undefined;
+  for (const f of (require("node:fs") as typeof import("node:fs")).readdirSync(dir))
+    if (/^endpoint-.*\.json$/.test(f)) return JSON.parse(readFileSync(join(dir, f), "utf8")).pid;
+  return undefined;
+}
+const tabAbort = new AbortController();
+async function budget() {
+  const ss = Array.from({ length: N }, proxySession);
+  await Promise.all(ss.map((s) => s.ready()));
+  let ui: ReturnType<typeof Bun.spawn> | undefined;
+  if (withUi) {
+    ui = Bun.spawn(
+      [
+        process.env.BUDGET_PROXY_KNOWNS ?? KNOWNS,
+        "browser",
+        "--no-open",
+        "--port",
+        "16420",
+        "--project",
+        proj,
+      ],
+      {
+        cwd: proj,
+        // Default (D6, D9): the daemon serves the UI and `knowns browser` exits after the handoff.
+        // --ui-inproc keeps the 0.35.x process, which stays in the foreground.
+        env: flag("ui-inproc") >= 0 ? { ...env, KNOWNS_MCP_PROXY: "0" } : env,
+        stdout: "ignore",
+        stderr: "ignore",
+      },
+    );
+    if (flag("ui-inproc") >= 0) await Bun.sleep(4000);
+    else {
+      const code = await ui.exited;
+      check(code === 0, "knowns browser handed the UI to the daemon and exited 0");
+      ui = undefined;
+    }
+    // Model a real open tab, not just a bound listener: /api/runtime/ps every tabPollMs (the Runtime page visible: 15 s) and an SSE stream.
+    const url = "http://127.0.0.1:16420";
+    void fetch(`${url}/api/events`, { signal: tabAbort.signal })
+      .then(async (r) => {
+        for await (const _ of r.body as ReadableStream<Uint8Array>)
+          if (tabAbort.signal.aborted) break;
+      })
+      .catch(() => {});
+    void (async () => {
+      while (!tabAbort.signal.aborted) {
+        await fetch(`${url}/api/runtime/ps`, { signal: tabAbort.signal })
+          .then((r) => r.text())
+          .catch(() => {});
+        await Bun.sleep(Number(process.env.BUDGET_TAB_POLL_MS ?? cfg.tabPollMs ?? 15000));
+      }
+    })();
+  }
+  const t0 = Date.now();
+  let calls = 0;
+  let k = 0;
+  while (Date.now() - t0 < cfg.loadSeconds * 1000) {
+    await Promise.all(
+      ss.map((s, i) => {
+        const [t, a] = TOOLS[(k + i) % TOOLS.length] as [string, Record<string, unknown>];
+        calls++;
+        return s.call(t, a);
+      }),
+    );
+    k++;
+    await Bun.sleep(50);
+  }
+  const dpid = daemonPid();
+  check(dpid !== undefined, "a daemon descriptor exists while sessions are open");
+  const proxies = ss.map((s) => s.p.pid);
+  const all = [...proxies, ...(dpid ? [dpid] : []), ...(ui ? [ui.pid] : [])];
+  const loaded = sample(all);
+  const errs = ss.reduce((a, s) => a + s.bad, 0);
+  check(errs === 0, `${calls} calls under load, ${errs} errors`);
+  await Bun.sleep(2000);
+  const c0 = sample(all);
+  const w0 = performance.now();
+  // Who writes while idle: every runtime and home file's mtime is polled; a file that keeps
+  // changing is a write on an idle path (reported, not asserted).
+  const writes = new Map<string, number>();
+  const seenAt = new Map<string, number>();
+  const census = () => {
+    const walk = (dir: string, depth = 0) => {
+      let names: string[] = [];
+      try {
+        names = readdirSync(dir);
+      } catch {
+        return;
+      }
+      for (const n of names) {
+        const p = join(dir, n);
+        try {
+          const st = statSync(p);
+          if (st.isDirectory()) {
+            if (depth < 4 && n !== "lsp-servers" && n !== "node_modules") walk(p, depth + 1);
+          } else {
+            const prev = seenAt.get(p);
+            if (prev !== undefined && prev !== st.mtimeMs) writes.set(p, (writes.get(p) ?? 0) + 1);
+            seenAt.set(p, st.mtimeMs);
+          }
+        } catch {}
+      }
+    };
+    walk(rt);
+    walk(join(home, ".knowns"));
+    walk(join(proj, ".knowns"));
+  };
+  census();
+  const idleMs = Number(process.env.BUDGET_IDLE_SECONDS ?? cfg.idleSeconds) * 1000;
+  for (const end = Date.now() + idleMs; Date.now() < end; ) {
+    await Bun.sleep(500);
+    census();
+  }
+  for (const [p, n] of [...writes].sort((a, b) => b[1] - a[1]).slice(0, 8))
+    console.log(
+      `     idle write: ${p.replace(base, "<sandbox>")} changed ${n}x in ${idleMs / 1000} s`,
+    );
+  report.idleWrites = Object.fromEntries(
+    [...writes].map(([p, n]) => [p.replace(base, "<sandbox>"), n]),
+  );
+  const c1 = sample(all);
+  const wall = (performance.now() - w0) / 1000;
+  const cpuPct = (pid: number) => {
+    const a = c0.find((x) => x.pid === pid);
+    const b = c1.find((x) => x.pid === pid);
+    return a && b ? ((b.cpuSec - a.cpuSec) / wall) * 100 : 0;
+  };
+  const peak = (pid: number) =>
+    Math.max(loaded.find((x) => x.pid === pid)?.mb ?? 0, c1.find((x) => x.pid === pid)?.mb ?? 0);
+  const rows = all.map((pid) => ({
+    pid,
+    role: pid === dpid ? "daemon" : pid === ui?.pid ? "ui" : "proxy",
+    mb: peak(pid),
+    idleCpu: cpuPct(pid),
+  }));
+  for (const r of rows)
+    console.log(
+      `     ${r.role.padEnd(6)} pid ${String(r.pid).padEnd(7)} ${r.mb.toFixed(1)} MB  idle cpu ${r.idleCpu.toFixed(2)}%`,
+    );
+  for (const r of rows.filter((x) => x.role === "proxy"))
+    check(
+      r.mb <= limits.proxyWorkingSetMB,
+      `proxy ${r.pid} working set ${r.mb.toFixed(1)} MB <= ${limits.proxyWorkingSetMB}`,
+    );
+  const total = rows.reduce((a, r) => a + r.mb, 0);
+  check(
+    total <= limits.totalWorkingSetMB,
+    `daemon + ${N} proxies${ui ? " + UI" : ""}: ${total.toFixed(1)} MB <= ${limits.totalWorkingSetMB}`,
+  );
+  const idleMB = c1.reduce((a, x) => a + x.mb, 0);
+  console.log(`     idle total after expiry: ${idleMB.toFixed(1)} MB`);
+  const idle = rows.reduce((a, r) => a + r.idleCpu, 0);
+  check(
+    idle <= limits.idleCpuPercent,
+    `idle CPU of all processes ${idle.toFixed(2)}% <= ${limits.idleCpuPercent}%`,
+  );
+  report.budget = { rows, totalMB: total, idleTotalMB: idleMB, idleCpuPercent: idle, calls };
+  // ---- 3. orphans after close ----
+  const desc = existsSync(join(rt, "mcp"))
+    ? (require("node:fs") as typeof import("node:fs"))
+        .readdirSync(join(rt, "mcp"))
+        .filter((f) => /^endpoint-.*\.json$/.test(f))
+        .map((f) => JSON.parse(readFileSync(join(rt, "mcp", f), "utf8")))
+    : [];
+  await Promise.all(ss.map((s) => s.close()));
+  tabAbort.abort();
+  if (ui) ui.kill();
+  else if (withUi) {
+    // Detached UI: the daemon owns the listener, so close it the way a user does.
+    const r = run([KNOWNS, "browser", "--stop", "--port", "16420"]);
+    check(r.exitCode === 0, "knowns browser --stop closed the daemon's UI listener");
+  }
+  const closedAt = Date.now();
+  const deadline = closedAt + cfg.orphanWaitSeconds * 1000;
+  const pids = all.filter((p) => p !== ui?.pid);
+  while (Date.now() < deadline && sample(pids).length > 0) await Bun.sleep(500);
+  const exitSec = (Date.now() - closedAt) / 1000;
+  report.exitAfterCloseSec = exitSec;
+  console.log(`     everything exited ${exitSec.toFixed(1)} s after the last session closed`);
+  const left = sample(pids).map((x) => x.pid);
+  check(
+    left.length === 0,
+    `no knowns or proxy process after close and the idle timeout${left.length ? ` (left: ${left})` : ""}`,
+  );
+  const mcpDir = join(rt, "mcp");
+  const files = existsSync(mcpDir)
+    ? (require("node:fs") as typeof import("node:fs"))
+        .readdirSync(mcpDir)
+        .filter((f) => /^endpoint-.*\.json$/.test(f))
+    : [];
+  check(files.length === 0, `no descriptor left${files.length ? ` (${files})` : ""}`);
+  for (const d of desc) {
+    if (d.kind === "unix_socket") check(!existsSync(d.address), `socket ${d.address} removed`);
+    else {
+      const pipe = String(d.address).split("\\").pop() as string;
+      const out = Bun.spawnSync([
+        "powershell",
+        "-NoProfile",
+        "-Command",
+        `[IO.Directory]::GetFiles('\\\\.\\pipe\\') -contains '\\\\.\\pipe\\${pipe}'`,
+      ])
+        .stdout.toString()
+        .trim();
+      check(out !== "True", `pipe ${pipe} removed`);
+    }
+  }
+}
+
+try {
+  await latency();
+  await budget();
+} finally {
+  if (flag("json") >= 0)
+    writeFileSync(
+      val("json", "proxy-budget.json"),
+      JSON.stringify({ ...report, failures }, null, 2),
+    );
+}
+console.log(failures.length ? `\n${failures.length} budget check(s) failed` : "\nproxy budget ok");
+process.exit(failures.length ? 1 : 0);

@@ -1,7 +1,10 @@
 // Port of internal/mcp/handlers/doc.go.
+
 import { docHooks } from "../../cli/commands/doc-hooks.ts";
 import type { Doc } from "../../models/doc.ts";
+import { bareIndex, headingLineIndexes } from "../../storage/core/doc-sections.ts";
 import { goTrimSpace } from "../../storage/core/util.ts";
+import { HistoryConflictError } from "../../storage/history/index.ts";
 import {
   boolArg,
   ErrPathReq,
@@ -61,9 +64,13 @@ export async function handle(
   }
 }
 
+// The module is imported once per process. A dynamic import() inside the per-doc call re-resolved
+// the specifier on every call (about 2.5 ms each in the compiled Windows binary, which made a
+// docs list of 5 docs ~13 ms slower in the daemon than in a process that had it loaded already).
+let docJsonFn: Promise<(d: Doc) => Record<string, unknown>> | undefined;
 async function docJson(doc: Doc): Promise<Record<string, unknown>> {
-  const { docJSON } = await import("../../cli/commands/doc.ts");
-  return docJSON(doc);
+  docJsonFn ??= import("../../cli/commands/doc.ts").then((m) => m.docJSON);
+  return (await docJsonFn)(doc);
 }
 
 async function mutationResult(
@@ -111,10 +118,10 @@ async function list(state: McpState, req: CallToolRequest): Promise<CallToolResu
   return textResult(marshalIndent(await Promise.all(filtered.map(docJson))));
 }
 
-/** extractHeadings: every line starting with #, trimmed; nil (null) when there are none. */
-function extractHeadings(content: string): string[] | null {
-  const out: string[] = [];
-  for (const line of content.split("\n")) if (line.startsWith("#")) out.push(goTrimSpace(line));
+/** extractHeadings: every heading line (fences and comments excluded), trimmed; null when none. */
+export function extractHeadings(content: string): string[] | null {
+  const lines = content.split("\n");
+  const out = headingLineIndexes(lines).map((i) => goTrimSpace(lines[i] as string));
   return out.length === 0 ? null : out;
 }
 
@@ -127,97 +134,57 @@ function headingLevel(line: string): number {
   return n;
 }
 
-/** fmt.Sscanf(s, "%d", &n) == 1: a leading (optionally signed) integer after blanks. */
-function sscanInt(s: string): number | undefined {
-  const m = /^[ \t\r\n]*([+-]?\d+)/.exec(s);
-  return m ? Number(m[1]) : undefined;
-}
-
 const trimLeftSet = (s: string, set: string): string => {
   let i = 0;
   while (i < s.length && set.includes(s[i] as string)) i++;
   return s.slice(i);
 };
 
-function extractSectionFromLine(lines: string[], startLine: number, level: number): string {
-  const result = [lines[startLine] as string];
-  for (let i = startLine + 1; i < lines.length; i++) {
-    const line = lines[i] as string;
-    if (line.startsWith("#") && headingLevel(line) <= level) break;
-    result.push(line);
+/** The 1-based index or title of a section ref resolved to its heading line, or -1. */
+function findHeading(lines: string[], ref: string, heads: number[]): number {
+  const num = bareIndex(ref);
+  if (num !== undefined && num >= 1 && num <= heads.length) return heads[num - 1] as number;
+  const want = goTrimSpace(trimLeftSet(ref, "# ")).toLowerCase();
+  for (const i of heads) {
+    if (goTrimSpace(trimLeftSet(lines[i] as string, "# ")).toLowerCase() === want) return i;
   }
-  return goTrimSpace(result.join("\n"));
+  return -1;
 }
 
-function extractSection(content: string, section: string): string {
-  const lines = content.split("\n");
-  const sectionNum = sscanInt(section);
-  if (sectionNum !== undefined) {
-    let count = 0;
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i] as string;
-      if (line.startsWith("#")) {
-        count++;
-        if (count === sectionNum) return extractSectionFromLine(lines, i, headingLevel(line));
-      }
-    }
-    return "";
+function sectionEnd(lines: string[], start: number, level: number, heads: number[]): number {
+  for (const i of heads) {
+    if (i > start && headingLevel(lines[i] as string) <= level) return i;
   }
-  const searchTitle = trimLeftSet(section, "# ");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] as string;
-    if (!line.startsWith("#")) continue;
-    const lineTitle = trimLeftSet(line, "# ");
-    if (goTrimSpace(lineTitle).toLowerCase() === goTrimSpace(searchTitle).toLowerCase()) {
-      return extractSectionFromLine(lines, i, headingLevel(line));
-    }
-  }
-  return "";
+  return lines.length;
 }
 
-function replaceSection(content: string, target: string, newContent: string): string {
+export function extractSection(content: string, section: string): string {
   const lines = content.split("\n");
-  let startLine = -1;
-  let level = 0;
-  const num = sscanInt(target);
-  if (num !== undefined) {
-    let count = 0;
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i] as string;
-      if (line.startsWith("#")) {
-        count++;
-        if (count === num) {
-          startLine = i;
-          level = headingLevel(line);
-          break;
-        }
-      }
-    }
-  } else {
-    const searchTitle = trimLeftSet(target, "# ");
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i] as string;
-      if (!line.startsWith("#")) continue;
-      if (
-        goTrimSpace(trimLeftSet(line, "# ")).toLowerCase() ===
-        goTrimSpace(searchTitle).toLowerCase()
-      ) {
-        startLine = i;
-        level = headingLevel(line);
-        break;
-      }
-    }
-  }
+  const heads = headingLineIndexes(lines);
+  const start = findHeading(lines, section, heads);
+  if (start < 0) return "";
+  const end = sectionEnd(lines, start, headingLevel(lines[start] as string), heads);
+  return goTrimSpace(lines.slice(start, end).join("\n"));
+}
+
+/**
+ * Replaces a section. `newContent` that starts with a heading of the same or a higher level
+ * replaces the heading line too (the Go behaviour); anything else is a new body under the existing
+ * heading, so a section update can never silently delete its own heading.
+ */
+export function replaceSection(content: string, target: string, newContent: string): string {
+  const lines = content.split("\n");
+  const heads = headingLineIndexes(lines);
+  const startLine = findHeading(lines, target, heads);
   if (startLine === -1) return content;
-  let endLine = lines.length;
-  for (let i = startLine + 1; i < lines.length; i++) {
-    const line = lines[i] as string;
-    if (line.startsWith("#") && headingLevel(line) <= level) {
-      endLine = i;
-      break;
-    }
+  const level = headingLevel(lines[startLine] as string);
+  const endLine = sectionEnd(lines, startLine, level, heads);
+  let replacement = newContent.split("\n");
+  const first = replacement.find((l) => goTrimSpace(l) !== "") ?? "";
+  const firstLevel = first.startsWith("#") ? headingLevel(first) : 0;
+  if (!(firstLevel > 0 && firstLevel <= level)) {
+    replacement = [lines[startLine] as string, "", ...replacement];
   }
-  const replacement = newContent.split("\n");
   const section = lines.slice(startLine, endLine);
   for (let i = section.length - 1; i >= 0 && goTrimSpace(section[i] as string) === ""; i--) {
     if (
@@ -436,44 +403,70 @@ async function update(state: McpState, req: CallToolRequest): Promise<CallToolRe
   const oldPath = doc.path;
   const [expectedHash] = stringArg(args, "expectedHash");
 
-  const [title, tok] = stringArg(args, "title");
-  if (clear.has("title")) doc.title = "";
-  else if (tok && title !== "") doc.title = title;
-  const [description, dok] = stringArg(args, "description");
-  if (clear.has("description")) delete doc.description;
-  else if (dok && description !== "") doc.description = description;
-  if (Object.hasOwn(args, "tags")) {
-    const [tags, ok] = stringSliceArg(args, "tags");
-    doc.tags = ok ? tags : [];
-  }
   const [newPath, npok] = stringArg(args, "newPath");
-  if (npok && goTrimSpace(newPath) !== "") {
-    const noMd = newPath.endsWith(".md") ? newPath.slice(0, -3) : newPath;
-    doc.path = noMd.replace(/^\/+|\/+$/g, "");
-  }
-  const [sectionTarget, hasSection] = stringArg(args, "section");
-  const [newContent, hasContent] = stringArg(args, "content");
-  const [appendContent, hasAppend] = stringArg(args, "appendContent");
-  const cur = doc.content ?? "";
-  let next = cur;
-  if (clear.has("content")) next = "";
-  else if (hasSection && sectionTarget !== "" && hasContent)
-    next = replaceSection(cur, sectionTarget, newContent);
-  else if (hasContent && newContent !== "") next = newContent;
-  if (hasAppend && appendContent !== "") {
-    if (next === "") next = appendContent;
-    else {
-      if (!next.endsWith("\n")) next += "\n";
-      next += appendContent;
+  // The edit is a function of the current document, so it can be re-applied to the fresh copy read
+  // under the document lock when the caller gave no expectedHash (a concurrent edit is then kept,
+  // not a spurious conflict).
+  // `rebasing` is true when it is re-applied to the copy read under the lock: a section edit must
+  // then still address the same section, or it is a conflict (never a silent no-op or a write to
+  // another section).
+  const applyEdit = (doc: Doc, rebasing = false): void => {
+    const [title, tok] = stringArg(args, "title");
+    if (clear.has("title")) doc.title = "";
+    else if (tok && title !== "") doc.title = title;
+    const [description, dok] = stringArg(args, "description");
+    if (clear.has("description")) delete doc.description;
+    else if (dok && description !== "") doc.description = description;
+    if (Object.hasOwn(args, "tags")) {
+      const [tags, ok] = stringSliceArg(args, "tags");
+      doc.tags = ok ? tags : [];
     }
-  }
-  if (next === "") delete doc.content;
-  else doc.content = next;
-  doc.updatedAt = new Date().toISOString();
+    if (npok && goTrimSpace(newPath) !== "") {
+      const noMd = newPath.endsWith(".md") ? newPath.slice(0, -3) : newPath;
+      doc.path = noMd.replace(/^\/+|\/+$/g, "");
+    }
+    const [sectionTarget, hasSection] = stringArg(args, "section");
+    const [newContent, hasContent] = stringArg(args, "content");
+    const [appendContent, hasAppend] = stringArg(args, "appendContent");
+    const cur = doc.content ?? "";
+    let next = cur;
+    if (clear.has("content")) next = "";
+    else if (hasSection && sectionTarget !== "" && hasContent) {
+      // Only a document that changed since it was read is a rebase onto other content; the same
+      // content is just the first application, and a section index still means what it meant.
+      if (rebasing && cur !== (oldDoc.content ?? "")) {
+        if (/^\s*\d+\s*$/.test(sectionTarget)) {
+          throw new HistoryConflictError(
+            "section index cannot be re-applied to a document that changed; read it again or pass expectedHash",
+          );
+        }
+        const probe = replaceSection(cur, sectionTarget, "\u0000probe");
+        if (probe === cur) {
+          throw new HistoryConflictError(
+            `section "${sectionTarget}" no longer exists in the changed document; read it again`,
+          );
+        }
+      }
+      next = replaceSection(cur, sectionTarget, newContent);
+    } else if (hasContent && newContent !== "") next = newContent;
+    if (hasAppend && appendContent !== "") {
+      if (next === "") next = appendContent;
+      else {
+        if (!next.endsWith("\n")) next += "\n";
+        next += appendContent;
+      }
+    }
+    if (next === "") delete doc.content;
+    else doc.content = next;
+    doc.updatedAt = new Date().toISOString();
+  };
+  applyEdit(doc);
+  const [sectionTarget] = stringArg(args, "section");
 
   try {
     const { mutateDocWithHistory } = await import("../../storage/history/index.ts");
     await mutateDocWithHistory(storage.ctx, oldDoc, doc, {
+      rebase: npok && goTrimSpace(newPath) !== "" ? undefined : (d) => applyEdit(d, true),
       section: sectionTarget,
       actor: "mcp",
       source: "mcp",

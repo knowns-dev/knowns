@@ -64,6 +64,12 @@ curl -fsSL https://knowns.sh/script/install | KNOWNS_NO_LINK=1 sh
 irm https://knowns.sh/script/install.ps1 | iex
 ```
 
+Để installer không đụng tới `PATH` của user (ví dụ trong CI hoặc trên máy dùng chung), đặt `KNOWNS_NO_MODIFY_PATH=1`. Khi đó installer chỉ in ra thư mục để bạn tự thêm vào `PATH`:
+
+```powershell
+$env:KNOWNS_NO_MODIFY_PATH = "1"; irm https://knowns.sh/script/install.ps1 | iex
+```
+
 ## Build từ source
 
 ```bash

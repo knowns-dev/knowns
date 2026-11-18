@@ -51,3 +51,24 @@ Claude, OpenAI, Vercel, React, Next.js, Vite, Tailwind CSS and shadcn/ui, extrac
 [`@iconify-json/simple-icons`](https://github.com/simple-icons/simple-icons) (Simple Icons Collaborators),
 [CC0-1.0](https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md) (public domain dedication).
 Simple Icons asks that each mark be used under its owner's brand guidelines.
+
+## Sign-in provider marks - `social-icons.data.ts`
+
+Google, Apple, GitHub, GitLab, Microsoft, X, Facebook, LinkedIn, Discord, Slack, Figma, Notion, Dropbox, Spotify,
+Twitch, Reddit, TikTok, Instagram, Telegram, WhatsApp, Amazon, Bitbucket, Auth0 and Okta. The SVG paths were extracted
+by `scripts/gen-social-icons.mjs` from [`@iconify-json/simple-icons`](https://github.com/simple-icons/simple-icons)
+1.2.101 (Simple Icons 16.36.0, Simple Icons Collaborators),
+[CC0-1.0](https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md) (public domain dedication). Each file
+holds one path and the brand's own colour. The Google and Microsoft marks in `social-button.tsx` are drawn by hand in
+their published four colours.
+
+The marks are trademarks of their owners, and the CC0 dedication covers the drawing, not the trademark. Unlike the
+model and tool logos above, these marks may be used in commercial apps, but only to identify the provider, for example
+on a sign-in button, and only by following that provider's brand guidelines:
+
+- Google: [Sign in with Google branding guidelines](https://developers.google.com/identity/branding-guidelines)
+- Apple: [Human Interface Guidelines, Sign in with Apple](https://developer.apple.com/design/human-interface-guidelines/sign-in-with-apple)
+- Microsoft: [Branding guidelines for applications](https://learn.microsoft.com/en-us/entra/identity-platform/howto-add-branding-in-apps)
+
+Follow the current guidelines of every provider you show. Do not recolour or distort a mark, and do not use it to
+suggest that its owner endorses you or your product.

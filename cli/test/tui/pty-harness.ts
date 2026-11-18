@@ -35,6 +35,8 @@ export interface PtyStep {
   expect: string | null;
   /** Keys; "{toggle}" is x for Go and space for TS. */
   keys: string;
+  /** Send the keys once more if the screen did not change within 4 s (only for keys that are safe to repeat). */
+  resend?: boolean;
 }
 
 export interface PtyResult {
@@ -71,7 +73,11 @@ function run(
       ...env,
     },
     argv: side === "go" ? [GO_BIN as string, ...args] : [process.execPath, MAIN, ...args],
-    steps: steps.map((s) => [s.expect, s.keys.replaceAll("{toggle}", side === "go" ? "x" : " ")]),
+    steps: steps.map((s) => [
+      s.expect,
+      s.keys.replaceAll("{toggle}", side === "go" ? "x" : " "),
+      s.resend === true,
+    ]),
   };
   const specPath = join(p.base, `spec-${side}.json`);
   writeFileSync(specPath, JSON.stringify(spec));
@@ -146,6 +152,19 @@ export function runBoth(
     goP,
     tsP,
   };
+}
+
+/**
+ * The two sides must end the same way. A side that never exited (exit null: killed at the driver's
+ * limit) throws with the last screen of each side, so a CI failure says where it was stuck.
+ */
+export function assertSameExit(r: { go: PtyResult; ts: PtyResult }): void {
+  if (r.go.exit === r.ts.exit) return;
+  const screen = (x: PtyResult) => x.transcript.slice(-1200).replace(/\r/g, "");
+  throw new Error(
+    `exit differs: go ${r.go.exit === null ? "never exited" : r.go.exit}, ts ${r.ts.exit === null ? "never exited" : r.ts.exit}\n` +
+      `--- last go screen ---\n${screen(r.go)}\n--- last ts screen ---\n${screen(r.ts)}`,
+  );
 }
 
 /** The titles, in the order they first appear in a transcript. */

@@ -58,7 +58,13 @@ export const TASK_ACTION_PARAMS: Record<string, Record<string, string>> = {
     unassigned: "only Tasks with no assignee; not with assignee",
     label: "filter by one label",
     spec: "filter by linked spec doc path",
+    parent: "only subtasks of this Task ID",
+    query: "case-insensitive text in title or description",
     includeHistorical: "include archived Tasks in the result",
+    limit: "page size, default 50, max 200",
+    cursor: "nextCursor of the previous page",
+    offset: "start offset; prefer cursor",
+    detail: "summary (default) | full task payloads",
   },
   history: {
     taskId: "required - task ID",
@@ -67,7 +73,11 @@ export const TASK_ACTION_PARAMS: Record<string, Record<string, string>> = {
     offset: "history metadata offset, newest first",
     revision: "explicit revision detail (vN or numeric)",
   },
-  board: {},
+  board: {
+    status: "only this column",
+    limit: "tasks per column, default 20, max 200",
+    cursor: "nextCursor of a column; requires status",
+  },
   archive: {
     taskId: "required",
     execute: "false previews; true mutates",
@@ -165,7 +175,7 @@ export function buildHelpRegistry(): Map<string, HelpEntry> {
     why: "Default dryRun protects against accidental deletion.",
   });
   add("tasks.list", {
-    when: "Find tasks by status, owner, priority, label, or spec before choosing work or checking remaining scope.",
+    when: "Find tasks by status, owner, priority, label, spec, parent or text before choosing work or checking remaining scope. Returns summaries, 50 per page: follow nextCursor, use detail=full or tasks.get for full fields.",
     params: tp.list,
   });
   add("tasks.history", {
@@ -222,9 +232,11 @@ export function buildHelpRegistry(): Map<string, HelpEntry> {
       path: "required — current document path",
       title: "new document title",
       description: "new document description",
-      content: "replacement markdown content, or section content when section is set",
+      content:
+        "replacement markdown content, or section content when section is set. A section update replaces the section INCLUDING its heading line, so start content with the heading (same or higher level); content that does not start with a heading is kept as the body under the existing heading",
       appendContent: "markdown content to append",
-      section: "heading title or section number to replace",
+      section:
+        'heading title, or a bare integer for the nth heading (a title like "2. Access control" is a title, not index 2); lines in code fences, HTML comments and indented code are never headings',
       newPath: "new document path",
       tags: "replacement tag list",
       clear: "string fields to clear",
@@ -490,14 +502,16 @@ export function buildHelpRegistry(): Map<string, HelpEntry> {
     when: "Use for first-class System Decision lifecycle operations and explicit reviewed Legacy Decision Memory migration.",
     params: {
       action:
-        "Required: create, list, get, link, accept, supersede, review_inbox, resolve, migration_preview, migration_apply, migration_rollback.",
+        "Required: create, list, get, link, accept, supersede, review_inbox, resolve, restore, migration_preview, migration_apply, migration_rollback.",
       title: "Required for create.",
       id: "Required for get/link; accepted as old decision ID for supersede if oldId is omitted.",
       candidateId:
         "Required for persisted candidate resolution; never use targetId as the candidate.",
       "oldId/newId": "Required pair for supersede.",
       resolution:
-        "Decision review resolution: accept_new, supersede_existing, link_as_related, reject_new; create_draft remains a compatibility no-op for an existing draft.",
+        "Decision review resolution: accept_new, accept_distinct (needs reason; keeps matched decisions current; refused for exact duplicates), supersede_existing, link_as_related (pure link: both decisions keep status, each gains only a @decision ref), merge_duplicate (merges the draft into the target and REJECTS the draft), reject_new; create_draft remains a compatibility no-op for an existing draft.",
+      "restore/apply/keep":
+        "restore undoes a fold made by the old link_as_related: candidateId is the rejected draft, targetId the decision it was folded into. Dry run by default; apply removes every shared entry except those listed in keep. A pre-merge state is not stored, so compare with git history first.",
       "sources/docs":
         "Sources and related docs/tasks remain evidence links; every create defaults to draft.",
       accept:

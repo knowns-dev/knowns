@@ -18,6 +18,10 @@ set -e
 
 REPO="knowns-dev/knowns"
 BINARY="knowns"
+ENGINE="knowns-engine"
+LAUNCHER_FILE="knowns.launcher"
+# knowns-proxy was a transitional name of the launcher; an install that has it is cleaned up.
+PROXY="knowns-proxy"
 DEFAULT_INSTALL_DIR="${HOME}/.knowns/bin"
 INSTALL_DIR="${KNOWNS_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
 KNOWN_DIR="${HOME}/.knowns"
@@ -154,6 +158,43 @@ on_path() {
 # A plain cp rewrites the old inode in place; on macOS the kernel keeps the
 # code signature of that inode cached for any knowns process still running,
 # and SIGKILLs every later launch of the new binary.
+# Installs the launcher as $BINARY and the engine as $ENGINE as one unit (spec mcp-thin-proxy D10):
+# both are staged first, then renamed in, and a failure of the second rename puts the first back.
+# A running knowns keeps working through the rename (it holds the old inode).
+install_pair() {
+    l_src="$1"
+    e_src="$2"
+    l_dest="${INSTALL_DIR}/${BINARY}"
+    e_dest="${INSTALL_DIR}/${ENGINE}"
+    l_tmp="${l_dest}.new.$$"
+    e_tmp="${e_dest}.new.$$"
+    e_old="${e_dest}.rollback.$$"
+    cp "$l_src" "$l_tmp" && chmod 755 "$l_tmp" && cp "$e_src" "$e_tmp" && chmod 755 "$e_tmp" || {
+        rm -f "$l_tmp" "$e_tmp"
+        error "Could not stage the new files in ${INSTALL_DIR}"
+    }
+    had_engine=0
+    if [ -f "$e_dest" ]; then
+        had_engine=1
+        # No backup, no change: without one a failed launcher install could not put the engine back.
+        ln "$e_dest" "$e_old" 2>/dev/null || cp -p "$e_dest" "$e_old" || {
+            rm -f "$l_tmp" "$e_tmp" "$e_old"
+            error "Could not back up the current $e_dest; nothing was changed"
+        }
+    fi
+    # The engine goes in first: an older launcher (or a 0.35 engine named knowns) keeps working with it.
+    mv -f "$e_tmp" "$e_dest" || {
+        rm -f "$l_tmp" "$e_tmp" "$e_old"
+        error "Could not install $e_dest"
+    }
+    mv -f "$l_tmp" "$l_dest" || {
+        if [ "$had_engine" = "1" ]; then mv -f "$e_old" "$e_dest"; else rm -f "$e_dest"; fi
+        rm -f "$l_tmp"
+        error "Could not install $l_dest"
+    }
+    rm -f "$e_old"
+}
+
 install_file() {
     tmp="$2.new.$$"
     cp "$1" "$tmp" && chmod "$3" "$tmp" && mv -f "$tmp" "$2" || {
@@ -199,6 +240,10 @@ link_into_path() {
     fi
 
     link_one "${INSTALL_DIR}/${BINARY}" "${link_dir}/${BINARY}" || return 0
+    if [ -L "${link_dir}/${PROXY}" ]; then
+        # knowns-proxy no longer exists (the launcher is knowns): drop the link, it would dangle.
+        rm -f "${link_dir}/${PROXY}"
+    fi
     if [ "${KNOWNS_NO_SYMLINK:-0}" != "1" ]; then
         link_one "${INSTALL_DIR}/${BINARY}" "${link_dir}/kn" || true
     fi
@@ -286,27 +331,47 @@ main() {
     tar -xzf "${TMP_DIR}/${ARCHIVE}" -C "$TMP_DIR"
     success "Extracted"
 
-    # Find the main binary in extracted files
+    # Find the archive root: the directory with layout.json (launcher + engine archives) or knowns.
+    LAYOUT_FILE_PATH=$(find "$TMP_DIR" -name layout.json | head -1)
     EXTRACTED_BIN=""
-    if [ -f "${TMP_DIR}/${BINARY}" ]; then
-        EXTRACTED_BIN="${TMP_DIR}/${BINARY}"
-    elif [ -f "${TMP_DIR}/${BINARY}-${PLATFORM}" ]; then
-        EXTRACTED_BIN="${TMP_DIR}/${BINARY}-${PLATFORM}"
+    EXTRACTED_LAUNCHER=""
+    if [ -n "$LAYOUT_FILE_PATH" ]; then
+        EXTRACT_ROOT=$(dirname "$LAYOUT_FILE_PATH")
+        layout_ver=$(sed -n 's/.*"layout"[^0-9]*\([0-9][0-9]*\).*/\1/p' "$LAYOUT_FILE_PATH" | head -1)
+        [ "$layout_ver" = "1" ] || error "Unsupported archive layout ${layout_ver:-?}; update install.sh"
+        # In the archive knowns is the engine (so an older updater installs something that runs)
+        # and the launcher has a name no older updater matches; layout.json says so.
+        EXTRACTED_BIN="${EXTRACT_ROOT}/${BINARY}"
+        EXTRACTED_LAUNCHER="${EXTRACT_ROOT}/${LAUNCHER_FILE}"
+        if [ ! -f "$EXTRACTED_BIN" ] || [ ! -f "$EXTRACTED_LAUNCHER" ]; then
+            error "Archive is missing the launcher or the engine"
+        fi
     else
-        EXTRACTED_BIN=$(find "$TMP_DIR" -name "${BINARY}" -o -name "${BINARY}-${PLATFORM}" | head -1)
+        if [ -f "${TMP_DIR}/${BINARY}" ]; then
+            EXTRACTED_BIN="${TMP_DIR}/${BINARY}"
+        elif [ -f "${TMP_DIR}/${BINARY}-${PLATFORM}" ]; then
+            EXTRACTED_BIN="${TMP_DIR}/${BINARY}-${PLATFORM}"
+        else
+            EXTRACTED_BIN=$(find "$TMP_DIR" -name "${BINARY}" -o -name "${BINARY}-${PLATFORM}" | head -1)
+        fi
+        if [ -z "$EXTRACTED_BIN" ] || [ ! -f "$EXTRACTED_BIN" ]; then
+            error "Binary not found in archive"
+        fi
+        EXTRACT_ROOT=$(dirname "$EXTRACTED_BIN")
     fi
 
-    if [ -z "$EXTRACTED_BIN" ] || [ ! -f "$EXTRACTED_BIN" ]; then
-        error "Binary not found in archive"
-    fi
-
-    EXTRACT_ROOT=$(dirname "$EXTRACTED_BIN")
-
-    # Install bundle (main binary + native libs)
+    # Install bundle (launcher + engine + native libs)
     printf "  ${DIM}⠋${RESET} Installing to ${INSTALL_DIR}...\r"
     mkdir -p "$INSTALL_DIR" 2>/dev/null || true
 
-    install_file "$EXTRACTED_BIN" "${INSTALL_DIR}/${BINARY}" 755
+    if [ -n "$EXTRACTED_LAUNCHER" ]; then
+        install_pair "$EXTRACTED_LAUNCHER" "$EXTRACTED_BIN"
+    else
+        # An archive without a launcher (0.35 and older) installs the engine alone as knowns.
+        install_file "$EXTRACTED_BIN" "${INSTALL_DIR}/${BINARY}" 755
+        rm -f "${INSTALL_DIR}/${ENGINE}"
+    fi
+    rm -f "${INSTALL_DIR}/${PROXY}"
 
     # Install colocated ONNX Runtime native libs (dylib/so/dll)
     for f in "${EXTRACT_ROOT}"/libonnxruntime* \

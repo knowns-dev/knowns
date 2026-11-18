@@ -244,6 +244,8 @@ export interface RunOptions extends RootOptions {
   cwd?: string;
   /** Overrides runtimeHooks.checkForUpdate. */
   checkForUpdate?: () => Promise<string>;
+  /** Overrides runtimeHooks.layoutHint. */
+  layoutHint?: (argv: string[]) => string;
   updateTimeoutMs?: number;
   /** Skip the unmigrated-config check (tests that must not touch the project registry). */
   skipConfigWarning?: boolean;
@@ -282,6 +284,15 @@ export async function execute(argv: string[], opts: RunOptions = {}): Promise<nu
       ]);
       if (timer) clearTimeout(timer);
       if (msg !== "") io.err.write(msg);
+    }
+  }
+  const layoutHint = opts.layoutHint ?? runtimeHooks.layoutHint;
+  if (!err && layoutHint) {
+    try {
+      const hint = layoutHint(argv);
+      if (hint !== "") io.err.write(hint);
+    } catch {
+      // a hint never fails a command
     }
   }
   if (err instanceof SilentExit) return err.code;

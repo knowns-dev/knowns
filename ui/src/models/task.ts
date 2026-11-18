@@ -16,6 +16,8 @@ export interface Task {
 	id: string; // task-{6_char_base36} for new tasks; legacy sequential IDs still supported
 	title: string;
 	description?: string;
+	/** One short line of the description; the list endpoint sends this instead of `description`. */
+	descriptionPreview?: string;
 	status: TaskStatus;
 	priority: TaskPriority;
 	assignee?: string; // "@harry"

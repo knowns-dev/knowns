@@ -11,6 +11,7 @@ import {
 	type Density,
 } from "@/ui/components/ui/knowns/data-table/data-table";
 import { LabelList, PriorityBadge, TaskStatusIcon } from "@/ui/components/molecules";
+import { LoadMore } from "@/ui/components/molecules/LoadMore";
 import { TaskLifecycleBadge } from "@/ui/components/molecules/TaskLifecycleBadge";
 import { useConfig } from "@/ui/contexts/ConfigContext";
 import { getStatusLabel } from "@/ui/utils/colors";
@@ -26,6 +27,8 @@ interface TaskListViewProps {
 type Grouping = "flat" | "status";
 
 const GROUP_STORAGE_KEY = "knowns.tasks.list.group";
+/** Rows a status group renders first, and how many each step adds. */
+const GROUP_PAGE = 100;
 const DENSITY_STORAGE_KEY = "knowns.tasks.list.density";
 const PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
@@ -243,7 +246,7 @@ export function TaskListView({ tasks, onTaskClick, onArchiveSelected }: TaskList
 			(t) =>
 				t.id.toLowerCase().includes(q) ||
 				t.title.toLowerCase().includes(q) ||
-				(t.description ?? "").toLowerCase().includes(q) ||
+				(t.description ?? t.descriptionPreview ?? "").toLowerCase().includes(q) ||
 				(t.assignee ?? "").toLowerCase().includes(q) ||
 				(t.labels ?? []).some((l) => l.toLowerCase().includes(q)),
 		);
@@ -279,6 +282,9 @@ export function TaskListView({ tasks, onTaskClick, onArchiveSelected }: TaskList
 		setDensity(value as Density);
 		writeStored(DENSITY_STORAGE_KEY, value);
 	}, []);
+
+	// A status group renders its first rows and grows as the user scrolls to its end (KN-F1DQ03).
+	const [groupShown, setGroupShown] = useState<Record<string, number>>({});
 
 	const getRowId = useCallback((t: Task) => t.id, []);
 	const empty = <span>{tasks.length === 0 ? "No Tasks yet." : "No Tasks match the current filters."}</span>;
@@ -347,26 +353,39 @@ export function TaskListView({ tasks, onTaskClick, onArchiveSelected }: TaskList
 					<div className="flex min-h-64 items-center justify-center text-sm text-muted-foreground">{empty}</div>
 				) : (
 					<div className="flex flex-col gap-4">
-						{groups.map((group) => (
-							<DataTable
-								key={group.status}
-								title={getStatusLabel(group.status)}
-								titleAs="h3"
-								rows={group.rows}
-								columns={visibleColumns}
-								getRowId={getRowId}
-								defaultSort={[{ id: "priority", desc: false }]}
-								selectable
-								selected={selected}
-								onSelectedChange={setSelected}
-								search={false}
-								controls={false}
-								pageSize={false}
-								maxHeight={360}
-								density={density}
-								onRowClick={onTaskClick}
-							/>
-						))}
+						{groups.map((group) => {
+							const have = groupShown[group.status] ?? GROUP_PAGE;
+							return (
+								<div key={group.status}>
+									<DataTable
+										title={getStatusLabel(group.status)}
+										titleAs="h3"
+										rows={group.rows.slice(0, have)}
+										columns={visibleColumns}
+										getRowId={getRowId}
+										defaultSort={[{ id: "priority", desc: false }]}
+										selectable
+										selected={selected}
+										onSelectedChange={setSelected}
+										search={false}
+										controls={false}
+										pageSize={false}
+										maxHeight={360}
+										density={density}
+										onRowClick={onTaskClick}
+									/>
+									{group.rows.length > have && (
+										<LoadMore
+											remaining={group.rows.length - have}
+											pageSize={GROUP_PAGE}
+											onMore={() =>
+												setGroupShown((s) => ({ ...s, [group.status]: (s[group.status] ?? GROUP_PAGE) + GROUP_PAGE }))
+											}
+										/>
+									)}
+								</div>
+							);
+						})}
 					</div>
 				)}
 			</div>

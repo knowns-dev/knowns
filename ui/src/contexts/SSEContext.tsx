@@ -15,6 +15,7 @@ import type { ActiveTimer } from "../api/client";
 import { getTaskLifecycleState } from "../models/taskLifecycle";
 import type { TaskLifecycleEvent } from "../models/taskLifecycle";
 import { toast } from "../components/ui/sonner";
+import type { OperationEvent, OperationRemovedEvent } from "../models/operation";
 
 // Event types that can be received from server
 export type SSEEventType =
@@ -30,7 +31,13 @@ export type SSEEventType =
 	| "time:refresh"
 	| "docs:updated"
 	| "docs:refresh"
-	| "refresh";
+	| "refresh"
+	| "runtime:status"
+	| "service:status"
+	| "operation:started"
+	| "operation:updated"
+	| "operation:finished"
+	| "operation:removed";
 
 // Event payload types
 export interface SSEEventPayloads {
@@ -47,6 +54,12 @@ export interface SSEEventPayloads {
 	"docs:updated": { docPath: string };
 	"docs:refresh": Record<string, never>;
 	"refresh": { full?: boolean; reason?: string };
+	"runtime:status": Record<string, never>;
+	"service:status": unknown;
+	"operation:started": OperationEvent;
+	"operation:updated": OperationEvent;
+	"operation:finished": OperationEvent;
+	"operation:removed": OperationRemovedEvent;
 }
 
 // Callback type for event listeners
@@ -146,6 +159,21 @@ export function SSEProvider({ children }: { children: ReactNode }) {
 		const sseUrl = token
 			? `${API_BASE}/api/events?token=${encodeURIComponent(token)}`
 			: `${API_BASE}/api/events`;
+
+		// A batch (archiving 500 cards) emits one lifecycle event per Task. Each used to trigger a
+		// full refresh in every listener, so the page refetched hundreds of times. A burst now asks
+		// for one refresh, after it has been quiet for a moment (and at the latest every 2 s).
+		let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+		let refreshDueBy = 0;
+		const scheduleTasksRefresh = () => {
+			const now = Date.now();
+			if (refreshTimer === undefined) refreshDueBy = now + 2000;
+			else clearTimeout(refreshTimer);
+			refreshTimer = setTimeout(() => {
+				refreshTimer = undefined;
+				emit("tasks:refresh", {});
+			}, Math.max(0, Math.min(300, refreshDueBy - now)));
+		};
 
 		// Store named handler references for proper cleanup
 		const handlers: Array<{ event: string; handler: (e: MessageEvent) => void }> = [];
@@ -291,7 +319,7 @@ export function SSEProvider({ children }: { children: ReactNode }) {
 					if (oldest) seenLifecycleEventIDsRef.current.delete(oldest);
 				}
 				emit("tasks:lifecycle", { event: { ...data, at: new Date(data.at) } });
-				emit("tasks:refresh", {});
+				scheduleTasksRefresh();
 			});
 
 			addHandler(eventSource, "tasks:lifecycle-sweep", (e) => {
@@ -302,6 +330,20 @@ export function SSEProvider({ children }: { children: ReactNode }) {
 				const data = JSON.parse(e.data);
 				emit("time:updated", data);
 			});
+
+			addHandler(eventSource, "runtime:status", () => {
+				emit("runtime:status", {});
+			});
+
+			addHandler(eventSource, "service:status", (e) => {
+				emit("service:status", JSON.parse(e.data));
+			});
+
+			for (const name of ["operation:started", "operation:updated", "operation:finished", "operation:removed"] as const) {
+				addHandler(eventSource, name, (e) => {
+					emit(name, JSON.parse(e.data));
+				});
+			}
 
 			addHandler(eventSource, "docs:updated", (e) => {
 				const data = JSON.parse(e.data);
@@ -324,6 +366,7 @@ export function SSEProvider({ children }: { children: ReactNode }) {
 		connect();
 
 		return () => {
+			if (refreshTimer !== undefined) clearTimeout(refreshTimer);
 			if (eventSourceRef.current) {
 				removeAllHandlers(eventSourceRef.current);
 				eventSourceRef.current.close();

@@ -1,11 +1,12 @@
 // The read side of internal/registry/registry.go, which is all storage needs to resolve a project:
 // load ~/.knowns/registry.json without writing, canonicalize path spellings, and look projects up.
 // Mutating operations (add, remove, scan, save) belong to the full registry port.
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { type RegistryProject, registryFileSchema } from "../../models/registry.ts";
 import { parseBoundary } from "../../schema/index.ts";
 import { canonicalPath } from "./canonical-path.ts";
+import { readFileRetrying } from "./fs-retry.ts";
 import { globalRootPath } from "./global-root.ts";
 import { parseJsonPreservingNumbers } from "./util.ts";
 
@@ -71,7 +72,7 @@ export class MachineRegistry implements ProjectRegistry {
   loadReadOnly(): void {
     let text: string;
     try {
-      text = readFileSync(this.filePath, "utf8");
+      text = readFileRetrying(this.filePath, "utf8");
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") {
         this.projects = [];

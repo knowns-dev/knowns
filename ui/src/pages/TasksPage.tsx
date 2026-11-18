@@ -141,7 +141,7 @@ export default function TasksPage({
 		historicalRequestRef.current = { generation, controller };
 		setHistoricalLoading(true);
 		try {
-			const data = await api.getTasks({ includeHistorical: true, signal: controller.signal });
+			const data = await api.getTasks({ includeHistorical: true, summary: true, signal: controller.signal });
 			if (historicalRequestRef.current.generation === generation) setHistoricalTasks(data);
 		} catch (error) {
 			if (!(error instanceof DOMException && error.name === "AbortError")) {
@@ -168,7 +168,22 @@ export default function TasksPage({
 	}, [historicalMode, loadHistorical]);
 
 	useSSEEvent("tasks:refresh", invalidateHistorical, [invalidateHistorical]);
-	useSSEEvent("tasks:updated", invalidateHistorical, [invalidateHistorical]);
+	// One task changed: patch it in the historical list instead of refetching every task.
+	useSSEEvent(
+		"tasks:updated",
+		({ task }) => {
+			if (!historicalMode) return;
+			setHistoricalTasks((prev) => {
+				if (prev === null) return prev;
+				const i = prev.findIndex((t) => t.id === task.id);
+				if (i < 0) return [...prev, task];
+				const next = [...prev];
+				next[i] = task;
+				return next;
+			});
+		},
+		[historicalMode],
+	);
 	useSSEEvent("tasks:archived", invalidateHistorical, [invalidateHistorical]);
 	useSSEEvent("tasks:unarchived", invalidateHistorical, [invalidateHistorical]);
 	useSSEEvent("tasks:batch-archived", invalidateHistorical, [invalidateHistorical]);
@@ -258,12 +273,11 @@ export default function TasksPage({
 		setRestoreLoading(true);
 		setRestoreError(null);
 		try {
-			const response = await api.batchUnarchiveTasks([...ids], true);
+			// The batch runs on the server as a tray operation: the dialog closes now and the tray
+			// shows progress, cancel and the outcome. The Task lists refresh from the lifecycle events.
+			await api.startBatchInBackground("unarchive", [...ids]);
 			if (restoreGenerationRef.current !== generation) return;
-			setRestoreResponse(response);
-			onTasksUpdate();
-			await loadHistorical();
-			if (!response.failedTaskId) toast.success(`Restored ${response.changed} task${response.changed === 1 ? "" : "s"}`);
+			closeRestore(false);
 		} catch (error) {
 			if (restoreGenerationRef.current === generation) {
 				if (error instanceof LifecycleAPIError) setRestoreResponse(error.response || null);
@@ -287,7 +301,7 @@ export default function TasksPage({
 	};
 
 	const reconcileTasks = async () => {
-		const current = await api.getTasks();
+		const current = await api.getTasks({ summary: true });
 		if (onTasksReplace) onTasksReplace(current);
 		else onTasksUpdate();
 	};
@@ -324,13 +338,10 @@ export default function TasksPage({
 		setArchiveLoading(true);
 		setArchiveError(null);
 		try {
-			const response = await api.batchArchiveTasks({ ids: [...ids], minimumAgeMs, execute: true });
+			// Runs on the server as a tray operation: close the dialog and let the tray show it.
+			await api.startBatchInBackground("archive", [...ids], { minimumAgeMs });
 			if (archiveGenerationRef.current !== generation) return;
-			setArchiveResponse(response);
-			await reconcileTasks();
-			if (!response.failedTaskId) {
-				toast.success(`Archived ${response.changed} task${response.changed === 1 ? "" : "s"}`);
-			}
+			closeArchiveDialog(false);
 		} catch (error) {
 			if (archiveGenerationRef.current === generation) {
 				if (error instanceof LifecycleAPIError && error.response) setArchiveResponse(error.response);

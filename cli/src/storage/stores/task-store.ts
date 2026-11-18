@@ -1,15 +1,7 @@
 // Port of internal/storage/task_store.go: tasks in .knowns/tasks/ and .knowns/archive/, deletion
 // tombstones, and the byte-exact markdown renderer.
-import {
-  existsSync,
-  linkSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { basename, dirname, join, normalize } from "node:path";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, normalize, sep } from "node:path";
 import {
   newPrefixedTaskId,
   newTaskId,
@@ -17,6 +9,13 @@ import {
   taskFileName,
 } from "../../models/id.ts";
 import type { Task, TaskTombstone } from "../../models/task.ts";
+import {
+  linkRetrying,
+  readUtf8Retrying,
+  renameRetrying,
+  withRetryBudget,
+} from "../core/fs-retry.ts";
+import { deepFreeze, StatCache } from "../core/stat-cache.ts";
 import type { Store } from "../core/store.ts";
 import {
   atomicWrite,
@@ -157,6 +156,23 @@ function sameClean(a: string, b: string): boolean {
   return normalize(a) === normalize(b);
 }
 
+const LIST_RETRY_BUDGET_MS = 1000;
+
+/** Parsed task files by path, validated against the file's stat (see StatCache). */
+const sharedTaskParses = new StatCache<Task>();
+
+/**
+ * A parent task as the listing shows it (its children's ids appended to subtasks), by the parsed
+ * task it was made from. Handing out the same object while the task and its children are the same
+ * keeps identity stable, which the lexical memo and corpus statistics depend on.
+ */
+const parentViews = new WeakMap<Task, { key: string; view: Task }>();
+
+/** Drops this store's parsed tasks from the shared cache (the project was closed or switched). */
+export function releaseTaskCache(root: string): void {
+  sharedTaskParses.dropPrefix(root + sep);
+}
+
 export class TaskStore {
   readonly root: string;
 
@@ -178,6 +194,80 @@ export class TaskStore {
 
   listActive(): Task[] {
     return this.listDir(this.tasksDir());
+  }
+
+  /**
+   * listActive for read-only callers (keyword search): the same tasks in the same order, but a file
+   * whose stat is unchanged is neither reread nor reparsed. The returned Tasks are shared between
+   * calls and deeply frozen. A search never changes the store: a duplicate id keeps the copy with
+   * the latest updatedAt (what listActive keeps) but the other file is left for the write and
+   * doctor paths to repair.
+   */
+  listActiveReadOnly(): Task[] {
+    return this.listDirReadOnly(this.tasksDir());
+  }
+
+  listArchivedReadOnly(): Task[] {
+    return this.listDirReadOnly(this.archiveDir());
+  }
+
+  private listDirReadOnly(dir: string): Task[] {
+    const pass = sharedTaskParses.pass(dir + sep);
+    try {
+      return this.listDirShared(dir, pass);
+    } finally {
+      pass.end(); // forget the files that are gone
+    }
+  }
+
+  private listDirShared(
+    dir: string,
+    cache: { read: (path: string, parse: () => Task) => Task },
+  ): Task[] {
+    const byId = new Map<string, Task>();
+    for (const e of readDirSorted(dir)) {
+      if (e.isDirectory() || !e.name.endsWith(".md")) continue;
+      const path = join(dir, e.name);
+      let task: Task;
+      try {
+        task = cache.read(path, () => this.parseFile(path));
+      } catch {
+        continue;
+      }
+      const existing = byId.get(task.id);
+      if (
+        existing &&
+        (parseIso(task.updatedAt)?.ms ?? 0) <= (parseIso(existing.updatedAt)?.ms ?? 0)
+      ) {
+        continue; // the same winner listDir picks, without removing the loser
+      }
+      byId.set(task.id, task);
+    }
+    // listDir links children into their parent's subtasks; do it on copies so the shared Tasks stay
+    // as parsed.
+    const children = new Map<string, string[]>();
+    for (const t of byId.values()) {
+      if (!t.parent || !byId.has(t.parent)) continue;
+      const ids = children.get(t.parent);
+      if (ids) ids.push(t.id);
+      else children.set(t.parent, [t.id]);
+    }
+    const out: Task[] = [];
+    for (const t of byId.values()) {
+      const ids = children.get(t.id);
+      if (!ids) {
+        out.push(t);
+        continue;
+      }
+      const key = ids.join("\0");
+      let memo = parentViews.get(t);
+      if (!memo || memo.key !== key) {
+        memo = { key, view: deepFreeze({ ...t, subtasks: [...(t.subtasks ?? []), ...ids] }) };
+        parentViews.set(t, memo);
+      }
+      out.push(memo.view);
+    }
+    return out;
   }
 
   listArchived(): Task[] {
@@ -202,7 +292,12 @@ export class TaskStore {
     return all;
   }
 
+  /** One shared retry budget for the whole listing: a locked file cannot multiply the wait. */
   private listDir(dir: string): Task[] {
+    return withRetryBudget(LIST_RETRY_BUDGET_MS, () => this.listDirUnbudgeted(dir));
+  }
+
+  private listDirUnbudgeted(dir: string): Task[] {
     const names = readDirSorted(dir)
       .filter((e) => !e.isDirectory() && e.name.endsWith(".md"))
       .map((e) => e.name);
@@ -371,7 +466,7 @@ export class TaskStore {
     if (this.scanForId(this.archiveDir(), id) !== undefined) {
       throw new Error(`archive: task "${id}" already exists in archive`);
     }
-    renameSync(src, join(this.archiveDir(), basename(src)));
+    renameRetrying(src, join(this.archiveDir(), basename(src)));
   }
 
   unarchive(id: string): Promise<void> {
@@ -388,7 +483,7 @@ export class TaskStore {
     if (this.scanForId(this.tasksDir(), id) !== undefined) {
       throw new Error(`unarchive: task "${id}" already exists in active storage`);
     }
-    renameSync(src, join(this.tasksDir(), basename(src)));
+    renameRetrying(src, join(this.tasksDir(), basename(src)));
   }
 
   // --- tombstones ------------------------------------------------------------------------------
@@ -414,7 +509,7 @@ export class TaskStore {
     const tmp = join(dirname(path), `.tombstone-${crypto.randomUUID().slice(0, 8)}`);
     writeFileSync(tmp, data, { mode: 0o644 });
     try {
-      linkSync(tmp, path);
+      linkRetrying(tmp, path);
       return;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") {
@@ -440,7 +535,7 @@ export class TaskStore {
     const path = this.tombstonePath(id);
     let data: string;
     try {
-      data = readFileSync(path, "utf8");
+      data = readUtf8Retrying(path);
     } catch (e) {
       if (isNotFound(e)) throw new Error(`task tombstone "${id}" not found`);
       throw new Error(`read task tombstone "${id}": ${(e as Error).message}`);
@@ -486,7 +581,8 @@ export class TaskStore {
   parseFile(path: string): Task {
     let data: string;
     try {
-      data = readFileSync(path, "utf8");
+      // A listing or a lookup just found this file: one retry if it reads as missing mid-replace.
+      data = readUtf8Retrying(path, { listed: true });
     } catch (e) {
       throw new Error(`parseFile ${path}: ${(e as Error).message}`);
     }
@@ -506,7 +602,7 @@ export class TaskStore {
    */
   patchLifecycleUnlocked(task: Task): void {
     const path = this.findFile(task.id);
-    const content = readFileSync(path, "utf8");
+    const content = readUtf8Retrying(path);
     const { yaml, body } = splitFrontmatter(content);
     if (yaml === "") throw new Error(`patch Task "${task.id}" lifecycle: missing YAML frontmatter`);
     const newline = content.includes("\r\n") ? "\r\n" : "\n";

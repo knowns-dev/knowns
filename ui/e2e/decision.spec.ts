@@ -84,7 +84,7 @@ test.describe("Decision processing flow", () => {
 		await expect(review).toContainText("Persisted candidate");
 		await expect(review).toContainText("Needs resolution");
 		await expect(review.getByRole("button", { name: "Review acceptance" })).toBeHidden();
-		await expect(review.getByRole("button", { name: "Link to current" }).first()).toBeVisible();
+		await expect(review.getByRole("button", { name: "Link as related (both stay as they are)" }).first()).toBeVisible();
 		await expect(review.getByRole("button", { name: "Replace current" }).first()).toBeVisible();
 		await review.getByRole("button", { name: "Replace current" }).first().click();
 

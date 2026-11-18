@@ -2,20 +2,13 @@
 // ~/.knowns/registry.json. Extends the read side in storage/core with every mutating operation.
 // The file is written exactly as Go does: json.MarshalIndent of the project array, two-space
 // indent, NO trailing newline, mode 0644 (not atomic).
-import {
-  type Dirent,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { type Dirent, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import type { RegistryProject, StoreMapping } from "../../models/registry.ts";
 import { registryFileSchema } from "../../models/registry.ts";
 import { parseBoundary } from "../../schema/index.ts";
 import { canonicalPath } from "../core/canonical-path.ts";
+import { readFileRetrying } from "../core/fs-retry.ts";
 import { globalRootPath } from "../core/global-root.ts";
 import { MachineRegistry } from "../core/machine-registry.ts";
 import { goJsonStringify, parseJsonPreservingNumbers, sortKeysDeep } from "../core/util.ts";
@@ -146,7 +139,7 @@ export class Registry extends MachineRegistry {
     // Delegate reading (and BOM stripping) to the base reader without its path repair, by
     // parsing here: the base loadReadOnly also canonicalizes, which loadFile redoes to track
     // whether anything changed.
-    const text = readFileSync(this.filePath, "utf8");
+    const text = readFileRetrying(this.filePath, "utf8");
     return parseBoundary(registryFileSchema, parseJsonPreservingNumbers(text), "registry.json");
   }
 

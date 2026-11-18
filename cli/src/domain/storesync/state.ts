@@ -2,15 +2,9 @@
 // resolve.go Resolution). Both files are shared with Go 0.34.1 when the runtime changes hands, so
 // the JSON is written exactly as encoding/json does: struct field order, time.Time always present
 // (the zero time as 0001-01-01T00:00:00Z), omitempty fields dropped, two-space indent.
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { readFileRetrying, renameRetrying } from "../../storage/core/fs-retry.ts";
 import { goJsonStringify } from "../../storage/core/util.ts";
 import { goNow } from "../../storage/history/go-json.ts";
 
@@ -118,7 +112,7 @@ const strs = (v: unknown): string[] =>
 
 /** LoadState reads the persisted state of a store; throws when the file is missing or invalid. */
 export function loadState(stateDir: string, store: string): StoreState {
-  const raw: unknown = JSON.parse(readFileSync(join(stateDir, `${store}.json`), "utf8"));
+  const raw: unknown = JSON.parse(readFileRetrying(join(stateDir, `${store}.json`), "utf8"));
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error("json: cannot unmarshal into StoreState");
   }
@@ -165,7 +159,7 @@ export function persistState(stateDir: string, state: StoreState): void {
     mkdirSync(stateDir, { recursive: true, mode: 0o755 });
     const tmp = join(stateDir, `.${state.store}.json.tmp`);
     writeFileSync(tmp, `${goJsonStringify(stateForJson(state))}\n`, { mode: 0o644 });
-    renameSync(tmp, join(stateDir, `${state.store}.json`));
+    renameRetrying(tmp, join(stateDir, `${state.store}.json`));
   } catch {
     // Go ignores persistence failures; the next tick writes again
   }
@@ -195,7 +189,7 @@ export function recordResolution(stateDir: string, store: string, r: Resolution)
   };
   let pending: unknown[] = [];
   try {
-    const parsed: unknown = JSON.parse(readFileSync(resolutionsPath(stateDir, store), "utf8"));
+    const parsed: unknown = JSON.parse(readFileRetrying(resolutionsPath(stateDir, store), "utf8"));
     if (Array.isArray(parsed)) pending = parsed;
   } catch {
     // an unreadable file starts a new queue, as in Go
@@ -205,7 +199,7 @@ export function recordResolution(stateDir: string, store: string, r: Resolution)
   const path = resolutionsPath(stateDir, store);
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, `${goJsonStringify(pending)}\n`, { mode: 0o644 });
-  renameSync(tmp, path);
+  renameRetrying(tmp, path);
 }
 
 /** readResolutions: the queued resolutions, or undefined when there is no file. Throws when unreadable. */
@@ -213,7 +207,7 @@ export function readResolutions(path: string): Resolution[] | undefined {
   if (!existsSync(path)) return undefined;
   let text: string;
   try {
-    text = readFileSync(path, "utf8");
+    text = readFileRetrying(path, "utf8");
   } catch {
     return undefined;
   }

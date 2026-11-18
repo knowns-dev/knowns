@@ -304,6 +304,7 @@ interface CellProps {
   hintId: string;
   people: Map<string, KanbanPerson>;
   renderCard: RenderCard;
+  renderFooter?: (column: KanbanColumn) => ReactNode;
   h: CellHandlers;
 }
 
@@ -324,6 +325,7 @@ const Cell = memo(function Cell({
   hintId,
   people,
   renderCard,
+  renderFooter,
   h,
 }: CellProps) {
   const list = useRef<HTMLDivElement>(null);
@@ -423,6 +425,7 @@ const Cell = memo(function Cell({
       <div ref={list} data-kb-list className="relative flex min-h-10 flex-col gap-2">
         {items}
       </div>
+      {renderFooter?.(column)}
       {addable && <AddCard column={column} onAdd={h.add} />}
     </div>
   );
@@ -530,6 +533,8 @@ export function KanbanBoard({
   onGroupByChange,
   onAddCard,
   onCardOpen,
+  columnCounts,
+  renderColumnFooter,
   renderCard,
   title,
   actions,
@@ -1008,7 +1013,7 @@ export function KanbanBoard({
           }
         >
           {columns.map((col) => (
-            <ColumnHeader key={col.id} column={col} count={counts.get(col.id) ?? 0} bare={bare} />
+            <ColumnHeader key={col.id} column={col} count={columnCounts?.[col.id] ?? counts.get(col.id) ?? 0} bare={bare} />
           ))}
           {lanes.map((lane) => {
             const name = laneName(lane, people);
@@ -1040,7 +1045,8 @@ export function KanbanBoard({
                       slot={tgt ? drag!.over!.index : null}
                       slotHeight={tgt ? drag!.height : 0}
                       slotCard={tgt && drag!.mode === "keyboard" ? (dragCard ?? null) : null}
-                      over={wip(counts.get(col.id) ?? 0, col.limit).over}
+                      over={wip(columnCounts?.[col.id] ?? counts.get(col.id) ?? 0, col.limit).over}
+                      renderFooter={groupBy === "status" ? renderColumnFooter : undefined}
                       dimmed={!!drag && !!col.locked}
                       addable={!!onAddCard && groupBy === "status" && !col.locked}
                       reduced={reduced}

@@ -2,7 +2,7 @@
 //
 // Every writer emits the canonical form (sorted keys, two-space indent, trailing newline), so a
 // struct write (save) and a raw-map write (set) of the same content produce the same bytes.
-import { readFileSync } from "node:fs";
+
 import { join } from "node:path";
 import {
   defaultProjectSettings,
@@ -13,6 +13,7 @@ import {
   validateProjectSettings,
 } from "../../models/config.ts";
 import { parseBoundary } from "../../schema/index.ts";
+import { readUtf8Retrying } from "../core/fs-retry.ts";
 import {
   decodeGenericObject,
   getNestedKey,
@@ -240,7 +241,7 @@ export class ConfigStore {
   private loadRaw(): JsonObject {
     let text: string;
     try {
-      text = readFileSync(this.configPath, "utf8");
+      text = readUtf8Retrying(this.configPath);
     } catch (e) {
       throw new Error(`load config: ${(e as Error).message}`);
     }

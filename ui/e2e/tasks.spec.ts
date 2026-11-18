@@ -13,7 +13,8 @@ test.afterAll(() => {
 
 test.describe("Tasks Page", () => {
 	test("keeps page context and offers retry when Tasks fail to load", async ({ page }) => {
-		await page.route("**/api/tasks", async (route) => {
+		// The list request carries a query (?summary=true), so match by path, not by exact URL.
+		await page.route((url) => url.pathname === "/api/tasks", async (route) => {
 			await route.fulfill({
 				status: 500,
 				contentType: "application/json",
@@ -24,7 +25,7 @@ test.describe("Tasks Page", () => {
 		await page.goto(`${server.baseURL}/tasks`);
 
 		await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
-		await expect(page.getByRole("alert")).toContainText("Unable to load this page");
+		await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toContainText("Unable to load this page");
 		await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
 	});
 

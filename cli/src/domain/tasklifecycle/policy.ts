@@ -8,7 +8,7 @@ import type { TaskLifecycleTransaction } from "../../storage/history/index.ts";
 import { extract as defaultExtractReferences } from "../references/index.ts";
 import { epochMs, wireTime } from "./clock.ts";
 import { wrap } from "./errors.ts";
-import type { ArchiveOptions, Eligibility, Reason, Warning } from "./types.ts";
+import type { ArchiveOptions, Eligibility, Reason, TaskTreeSnapshot, Warning } from "./types.ts";
 
 /**
  * Records the completion clock when entering done and clears stale live lifecycle clocks when
@@ -113,7 +113,16 @@ export async function evaluateInTransaction(
   }
   if (hasActiveTimer) reasons.push({ code: "active_timer", message: "Task has an active timer" });
 
-  for (const descendantId of await unfinishedDescendants(tx, task.id)) {
+  // A shared snapshot (an automatic sweep) may be old: it is a pre-filter that can only refuse. A
+  // Task it clears is checked again against the tree as it is now, inside this transaction, so a
+  // child reopened or created since the snapshot still blocks the archive.
+  let unfinished: string[] = [];
+  if (options.taskTree) unfinished = await unfinishedDescendants(tx, task.id, options.taskTree);
+  // A snapshot listed for the current chunk is as fresh as a listing here; only an old one needs it.
+  if (unfinished.length === 0 && !options.taskTreeFresh) {
+    unfinished = await unfinishedDescendants(tx, task.id);
+  }
+  for (const descendantId of unfinished) {
     reasons.push({
       code: "unfinished_descendant",
       message: `Descendant Task ${descendantId} is not done or archived`,
@@ -131,20 +140,33 @@ export type ReferenceExtractor = (
 
 const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-async function unfinishedDescendants(
-  tx: TaskLifecycleTransaction,
-  rootId: string,
-): Promise<string[]> {
+/** The whole Task tree as it is now: one listing of every active and archived Task. */
+export async function snapshotTaskTree(tx: TaskLifecycleTransaction): Promise<TaskTreeSnapshot> {
   const active = await tx.listActiveTasks();
   const archived = await tx.listArchivedTasks();
   const all = new Map<string, Task>();
   for (const task of active) all.set(task.id, task);
   for (const task of archived) all.set(task.id, task);
   const children = new Map<string, string[]>();
+  const tasks = new Map<string, { archived: boolean; status: string }>();
   for (const task of all.values()) {
-    if (task.parent) children.set(task.parent, [...(children.get(task.parent) ?? []), task.id]);
+    tasks.set(task.id, { archived: task.archived, status: task.status });
+    if (task.parent) {
+      const list = children.get(task.parent);
+      if (list) list.push(task.id);
+      else children.set(task.parent, [task.id]);
+    }
   }
   for (const list of children.values()) list.sort(byCodeUnit);
+  return { children, tasks };
+}
+
+async function unfinishedDescendants(
+  tx: TaskLifecycleTransaction,
+  rootId: string,
+  shared?: TaskTreeSnapshot,
+): Promise<string[]> {
+  const { children, tasks: all } = shared ?? (await snapshotTaskTree(tx));
 
   const visited = new Set<string>([rootId]);
   const queue = [...(children.get(rootId) ?? [])];

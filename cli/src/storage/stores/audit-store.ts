@@ -1,15 +1,8 @@
 // Port of internal/storage/audit_store.go: append-only MCP audit events in ~/.knowns/audit.jsonl,
 // with size-based rotation (audit.jsonl.1, audit.jsonl.2).
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-} from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { appendFile, mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import {
   type AuditAnalytics,
   type AuditAnalyticsQuery,
@@ -20,6 +13,7 @@ import {
   type AuditToolStats,
   UNKNOWN_AUDIT_PROJECT,
 } from "../../models/audit.ts";
+import { readFileRetrying, renameRetrying } from "../core/fs-retry.ts";
 import { globalRootPath } from "../core/global-root.ts";
 import { goJsonStringify } from "../core/util.ts";
 import { goTimeJson, parseIso } from "./internal.ts";
@@ -145,8 +139,77 @@ function topTool(tools: Map<string, number>): { tool: string; calls: number } {
   return { tool, calls };
 }
 
+// Events a long-lived process (the runtime daemon hosting MCP sessions) has accepted but not yet
+// written. appendBuffered batches them so a tool call never waits on the file system.
+const pending = new Map<string, { lines: string[]; timer?: ReturnType<typeof setTimeout> }>();
+let flushChain: Promise<unknown> = Promise.resolve();
+const FLUSH_DELAY_MS = 25;
+const lastRotateCheck = new Map<string, number>();
+
+/** Writes every buffered event now, synchronously (shutdown, and before a read of the file). */
+export function flushAuditSync(path?: string): void {
+  for (const [file, buf] of [...pending]) {
+    if (path !== undefined && file !== path) continue;
+    if (buf.timer) clearTimeout(buf.timer);
+    pending.delete(file);
+    if (buf.lines.length === 0) continue;
+    mkdirSync(dirname(file), { recursive: true, mode: 0o755 });
+    appendFileSync(file, buf.lines.join(""), { mode: 0o644 });
+  }
+}
+
+/** Waits for in-flight background flushes, then writes the rest. */
+export async function flushAudit(): Promise<void> {
+  await flushChain;
+  flushAuditSync();
+}
+
 export class AuditStore {
   constructor(readonly dir: string = globalRootPath()) {}
+
+  /**
+   * append for callers that must not block: the event is queued and written within ~25 ms by one
+   * asynchronous append for the whole batch. The rotation check runs at most every 5 s, and the
+   * directory is created once. Reads of this store write the queue out first.
+   */
+  appendBuffered(event: AuditEvent): void {
+    const file = this.filePath();
+    let buf = pending.get(file);
+    if (!buf) {
+      buf = { lines: [] };
+      pending.set(file, buf);
+    }
+    buf.lines.push(`${goJsonStringify(eventJson(event), 0)}\n`);
+    if (buf.timer) return;
+    const b = buf;
+    b.timer = setTimeout(() => {
+      b.timer = undefined;
+      flushChain = flushChain.then(() => this.flushBackground(file, b)).catch(() => {});
+    }, FLUSH_DELAY_MS);
+    b.timer.unref?.();
+  }
+
+  private async flushBackground(file: string, b: { lines: string[] }): Promise<void> {
+    if (b.lines.length === 0) return;
+    const text = b.lines.join("");
+    b.lines.length = 0;
+    const now = Date.now();
+    if (now - (lastRotateCheck.get(file) ?? 0) > 5000) {
+      lastRotateCheck.set(file, now);
+      try {
+        this.rotateIfNeeded();
+      } catch {
+        // rotation failure never blocks audit writes
+      }
+    }
+    try {
+      await appendFile(file, text, { mode: 0o644 });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      await mkdir(dirname(file), { recursive: true, mode: 0o755 });
+      await appendFile(file, text, { mode: 0o644 });
+    }
+  }
 
   filePath(): string {
     return join(this.dir, AUDIT_FILE);
@@ -176,9 +239,9 @@ export class AuditStore {
     for (let i = MAX_BACKUPS; i >= 1; i--) {
       const src = `${path}.${i}`;
       if (i === MAX_BACKUPS) rmSync(src, { force: true });
-      else if (existsSync(src)) renameSync(src, `${path}.${i + 1}`);
+      else if (existsSync(src)) renameRetrying(src, `${path}.${i + 1}`);
     }
-    renameSync(path, `${path}.1`);
+    renameRetrying(path, `${path}.1`);
   }
 
   /** Recent: the most recent N events, newest first. */
@@ -198,6 +261,7 @@ export class AuditStore {
 
   /** readRetained: rotated backups oldest first, then the live file, stably sorted by time. */
   readRetained(): AuditEvent[] {
+    flushAuditSync(this.filePath());
     const path = this.filePath();
     const paths: string[] = [];
     for (let i = MAX_BACKUPS; i >= 1; i--) paths.push(`${path}.${i}`);
@@ -319,7 +383,7 @@ export class AuditStore {
 function readAuditFile(path: string): AuditEvent[] {
   let text: string;
   try {
-    text = readFileSync(path, "utf8");
+    text = readFileRetrying(path, "utf8");
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw new Error(`audit: open file: ${(e as Error).message}`);

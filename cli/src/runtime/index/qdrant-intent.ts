@@ -13,8 +13,6 @@ import {
   mkdirSync,
   openSync,
   readdirSync,
-  readFileSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -23,6 +21,7 @@ import type { HistoryRecord } from "../../models/version.ts";
 import { qdrantWatermarkPath } from "../../search/readiness.ts";
 import type { Storage } from "../../storage/adapters.ts";
 import { tryAcquireFileLock } from "../../storage/core/file-lock.ts";
+import { readFileRetrying, renameRetrying } from "../../storage/core/fs-retry.ts";
 import { qdrantWatermarkLockPath } from "../../storage/core/locks.ts";
 import { canonicalDocHash, canonicalTaskHash } from "../../storage/history/entities.ts";
 import { type QdrantIntent, sleepSync } from "../queue.ts";
@@ -72,7 +71,7 @@ function watermarkJson(w: Watermark): unknown {
 export function loadWatermarks(storeRoot: string): Watermarks {
   let data: string;
   try {
-    data = readFileSync(qdrantWatermarkPath(storeRoot), "utf8");
+    data = readFileRetrying(qdrantWatermarkPath(storeRoot), "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
     throw err;
@@ -110,7 +109,7 @@ export function saveWatermarks(storeRoot: string, values: Watermarks): void {
     } finally {
       closeSync(fd);
     }
-    renameSync(tmp, path);
+    renameRetrying(tmp, path);
   } finally {
     rmSync(tmp, { force: true });
   }
@@ -249,7 +248,7 @@ function manifestPath(storeRoot: string): string {
 export function readManifestEntries(storeRoot: string): Record<string, ManifestEntry> | undefined {
   let data: string;
   try {
-    data = readFileSync(manifestPath(storeRoot), "utf8");
+    data = readFileRetrying(manifestPath(storeRoot), "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw err;
@@ -374,7 +373,7 @@ function purgedMarkers(storeRoot: string): PurgeMarker[] | undefined {
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
     try {
-      out.push(JSON.parse(readFileSync(join(dir, name), "utf8")) as PurgeMarker);
+      out.push(JSON.parse(readFileRetrying(join(dir, name), "utf8")) as PurgeMarker);
     } catch {
       // unreadable or malformed markers are skipped
     }
@@ -703,7 +702,7 @@ function proveHistoryRemoval(storage: Storage, intent: QdrantIntent): boolean {
   const historyPath = storage.history.entityPath(intent.entityType, intent.entityId);
   let data: string;
   try {
-    data = readFileSync(historyPath, "utf8");
+    data = readFileRetrying(historyPath, "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw err;

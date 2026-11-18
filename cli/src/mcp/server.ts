@@ -3,7 +3,15 @@
 // the Go error codes and texts, sorted tool listing, a 5-wide tool-call pool, panic recovery and the
 // before/after tool-call hooks. Byte parity of the wire matters, so this is not the TS SDK.
 import { type Args, marshal, sortKeysDeep } from "./gojson.ts";
-import type { CallToolRequest, CallToolResult, Tool, ToolContext, ToolHandler } from "./tool.ts";
+import { CallTimeoutError, type ToolPool } from "./pool.ts";
+import {
+  type CallToolRequest,
+  type CallToolResult,
+  errorResult,
+  type Tool,
+  type ToolContext,
+  type ToolHandler,
+} from "./tool.ts";
 
 export const PARSE_ERROR = -32700;
 export const INVALID_REQUEST = -32600;
@@ -27,6 +35,8 @@ export interface ServerOptions {
   guard?: (req: CallToolRequest) => CallToolResult | undefined;
   /** Awaited before a tool call starts (project detection runs in the background). */
   ready?: () => Promise<void>;
+  /** Daemon-hosted: heavy tools share a bounded gate and every call has a deadline. */
+  pool?: ToolPool;
   /** Called with the handshake's clientInfo (name is the client, e.g. "claude-code"). */
   onInitialize?: (info: { name: string; version?: string; title?: string } | undefined) => void;
   hooks?: {
@@ -196,6 +206,9 @@ function decodeCursor(cursor: string): { value: string } | { error: string } {
 
 export class McpServer {
   private readonly tools = new Map<string, Registered>();
+  /** Aborted when the session behind serve() ends abruptly: queued calls are dropped and running
+   * handlers see it as ctx.signal. */
+  private serveSignal: AbortSignal | undefined;
   constructor(private readonly opts: ServerOptions) {}
 
   addTool(tool: Tool, handler: ToolHandler): void {
@@ -380,11 +393,23 @@ export class McpServer {
     if (!entry) {
       return this.fail(id, INVALID_PARAMS, `tool '${name}' not found: tool not found`);
     }
-    const ctx: ToolContext = {};
+    const pool = this.opts.pool;
     let result: CallToolResult;
     try {
       const denied = this.opts.guard?.(req);
-      result = denied ?? (await entry.handler(ctx, req));
+      if (denied) result = denied;
+      else if (pool) {
+        // A deadline only errors this call, in this session; the handler's signal tells it to stop.
+        result = await pool
+          .run(name, (signal) => entry.handler({ signal }, req), this.serveSignal)
+          .catch((e: unknown) => {
+            if (e instanceof CallTimeoutError) return errorResult(e.message);
+            throw e;
+          });
+      } else {
+        const ctx: ToolContext = this.serveSignal ? { signal: this.serveSignal } : {};
+        result = await entry.handler(ctx, req);
+      }
     } catch (e) {
       // WithRecovery: a panic in a handler becomes an INTERNAL_ERROR response.
       const msg = e instanceof Error ? e.message : String(e);
@@ -407,7 +432,9 @@ export class McpServer {
     input: AsyncIterable<Uint8Array>,
     write: (text: string) => void,
     onError?: (msg: string) => void,
+    signal?: AbortSignal,
   ): Promise<void> {
+    this.serveSignal = signal;
     const out = (r: Response): void => {
       try {
         write(`${marshal(r)}\n`);
@@ -424,6 +451,10 @@ export class McpServer {
     };
     const pump = (): void => {
       while (running < TOOL_WORKERS && queue.length > 0) {
+        if (signal?.aborted) {
+          queue.length = 0;
+          return;
+        }
         const job = queue.shift() as () => Promise<void>;
         running++;
         track(
@@ -444,6 +475,7 @@ export class McpServer {
         return;
       }
       const run = async (): Promise<void> => {
+        if (signal?.aborted) return; // the session ended before this call started
         let res: Response | undefined;
         try {
           res = await this.handle(raw);
@@ -469,6 +501,7 @@ export class McpServer {
     const decoder = new TextDecoder();
     let buf = Buffer.alloc(0);
     for await (const chunk of input) {
+      if (signal?.aborted) break;
       buf = buf.length === 0 ? Buffer.from(chunk) : Buffer.concat([buf, chunk]);
       for (let nl = buf.indexOf(0x0a); nl >= 0; nl = buf.indexOf(0x0a)) {
         const line = decoder.decode(buf.subarray(0, nl + 1));

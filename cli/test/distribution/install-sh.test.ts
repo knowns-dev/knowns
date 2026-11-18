@@ -60,6 +60,123 @@ describe.skipIf(!posix)("install.sh", () => {
     ).toEqual([]);
   });
 
+  test("a launcher + engine archive installs the launcher as knowns and the engine as knowns-engine, by rename", () => {
+    const sb = makeSandbox();
+    const dir = join(sb.home, ".knowns", "bin");
+    mkdirSync(dir, { recursive: true });
+    // A 0.35 install: the engine alone, named knowns. A running one keeps its old inode.
+    const knowns = join(dir, "knowns");
+    writeFileSync(knowns, "#!/bin/sh\necho old-engine\n", { mode: 0o755 });
+    const keep = join(dir, "old-inode");
+    run(["ln", knowns, keep]);
+    const rel = makeRelease("v1.0.0", "linux-x64", "1.0.0", undefined, true);
+    const r = runInstall({
+      sandbox: sb,
+      baseUrl: rel.baseUrl,
+      version: "1.0.0",
+      uname: ["Linux", "x86_64"],
+    });
+    expect(r.code).toBe(0);
+    expect(run([knowns]).stdout).toBe("launcher version 1.0.0\n");
+    expect(run([join(dir, "knowns-engine")]).stdout).toBe("knowns version 1.0.0\n");
+    expect(readFileSync(keep, "utf8")).toContain("old-engine");
+    expect(statSync(knowns).ino).not.toBe(statSync(keep).ino);
+    // layout.json and the Windows alias never land in the install dir; no temp files stay.
+    expect(existsSync(join(dir, "layout.json"))).toBe(false);
+    expect(existsSync(join(dir, "knowns.launcher"))).toBe(false);
+    expect(
+      run(["ls", dir])
+        .stdout.split("\n")
+        .filter((n) => n.includes(".new.") || n.includes(".rollback.")),
+    ).toEqual([]);
+  });
+
+  test("an install that has the retired knowns-proxy loses it and its PATH link; a 0.35 archive installs the engine alone", () => {
+    const sb = makeSandbox([".local/bin"]);
+    const bin = join(sb.home, ".knowns", "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "knowns-proxy"), "#!/bin/sh\necho p\n", { mode: 0o755 });
+    const link = join(sb.home, ".local", "bin", "knowns-proxy");
+    run(["ln", "-s", join(bin, "knowns-proxy"), link]);
+    const rel = makeRelease("v1.0.0", "linux-x64", "1.0.0", undefined, true);
+    expect(
+      runInstall({
+        sandbox: sb,
+        baseUrl: rel.baseUrl,
+        version: "1.0.0",
+        uname: ["Linux", "x86_64"],
+      }).code,
+    ).toBe(0);
+    expect(existsSync(join(bin, "knowns-proxy"))).toBe(false);
+    expect(() => lstatSync(link)).toThrow();
+
+    // A downgrade to an archive that predates the launcher: knowns is the engine again.
+    const old = makeRelease("v0.35.0", "linux-x64", "0.35.0");
+    expect(
+      runInstall({
+        sandbox: sb,
+        baseUrl: old.baseUrl,
+        version: "0.35.0",
+        uname: ["Linux", "x86_64"],
+      }).code,
+    ).toBe(0);
+    expect(run([join(bin, "knowns")]).stdout).toBe("knowns version 0.35.0\n");
+    expect(existsSync(join(bin, "knowns-engine"))).toBe(false);
+  });
+
+  test("a failed second rename puts the previous engine back", () => {
+    const sb = makeSandbox(["fakebin"]);
+    const bin = join(sb.home, ".knowns", "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "knowns-engine"), "#!/bin/sh\necho old-engine\n", { mode: 0o755 });
+    // A `mv` that refuses to move onto knowns makes the second rename fail.
+    writeFileSync(
+      join(sb.home, "fakebin", "mv"),
+      '#!/bin/sh\nfor a; do case "$a" in */bin/knowns) exit 1;; esac; done\nexec /bin/mv "$@"\n',
+      { mode: 0o755 },
+    );
+    const rel = makeRelease("v1.0.0", "linux-x64", "1.0.0", undefined, true);
+    const r = runInstall({
+      sandbox: sb,
+      baseUrl: rel.baseUrl,
+      version: "1.0.0",
+      uname: ["Linux", "x86_64"],
+    });
+    expect(r.code).not.toBe(0);
+    expect(run([join(bin, "knowns-engine")]).stdout).toBe("old-engine\n");
+    expect(
+      run(["ls", bin])
+        .stdout.split("\n")
+        .filter((n) => n.includes(".new.") || n.includes(".rollback.")),
+    ).toEqual([]);
+  });
+
+  test("an engine that cannot be backed up aborts the install before anything is replaced", () => {
+    const sb = makeSandbox(["fakebin"]);
+    const bin = join(sb.home, ".knowns", "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "knowns-engine"), "#!/bin/sh\necho old-engine\n", { mode: 0o755 });
+    writeFileSync(join(bin, "knowns"), "#!/bin/sh\necho old-launcher\n", { mode: 0o755 });
+    // Neither ln nor cp -p can make the rollback copy.
+    for (const name of ["ln", "cp"]) {
+      writeFileSync(
+        join(sb.home, "fakebin", name),
+        `#!/bin/sh\nfor a; do case "$a" in *knowns-engine.rollback.*) exit 1;; esac; done\nexec /bin/${name} "$@"\n`,
+        { mode: 0o755 },
+      );
+    }
+    const rel = makeRelease("v1.0.0", "linux-x64", "1.0.0", undefined, true);
+    const r = runInstall({
+      sandbox: sb,
+      baseUrl: rel.baseUrl,
+      version: "1.0.0",
+      uname: ["Linux", "x86_64"],
+    });
+    expect(r.code).not.toBe(0);
+    expect(run([join(bin, "knowns-engine")]).stdout).toBe("old-engine\n");
+    expect(run([join(bin, "knowns")]).stdout).toBe("old-launcher\n");
+  });
+
   // Row 16 (75b0470): link onto a PATH dir, never edit rc files.
   test("row 16: links knowns and kn into ~/.local/bin when it is on PATH, without touching rc files", () => {
     const sb = makeSandbox([".local/bin"]);

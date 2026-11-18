@@ -4,7 +4,7 @@
 // different platforms keeps its own vector-store settings and Go 0.34.x still reads it. Go ignores
 // the file. Resolution order: env > this file > project config > global settings > defaults.
 
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import {
@@ -17,6 +17,7 @@ import {
   type SemanticSearchSettings,
   type SemanticVectorStoreResolution,
 } from "../models/config.ts";
+import { readFileRetrying } from "../storage/core/fs-retry.ts";
 import { renameOverFile } from "./queue.ts";
 
 /**
@@ -117,7 +118,7 @@ export function readMachineEndpoint(env: Env = process.env): {
   if (path === "") return { path };
   let raw: string;
   try {
-    raw = readFileSync(path, "utf8");
+    raw = readFileRetrying(path, "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return { path };
     return { path, error: (err as Error).message };

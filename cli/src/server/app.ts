@@ -5,6 +5,7 @@ import type { Store } from "../storage/core/store.ts";
 import type { Registry } from "../storage/stores/registry.ts";
 import type { AuthManager } from "./auth.ts";
 import { type Ctx, type Handler, respondError } from "./http.ts";
+import type { OperationRegistry } from "./operations.ts";
 import type { SSEBroker } from "./sse.ts";
 
 export interface ServerOptions {
@@ -18,6 +19,8 @@ export interface ServerOptions {
 
 export interface App {
   sse: SSEBroker;
+  /** The Activity Tray's operations (web-started and daemon jobs). */
+  operations: OperationRegistry;
   auth: AuthManager;
   manager: Manager;
   registry: Registry | undefined;
@@ -30,6 +33,8 @@ export interface App {
   storage(): Storage | undefined;
   /** Same, but throws if there is none (handlers behind requireStore). */
   need(): Storage;
+  /** A request that shows runtime or service status came in: the service monitor keeps running. */
+  watchServices(): void;
 }
 
 const cache = new WeakMap<Store, Storage>();

@@ -14,6 +14,7 @@ import type { Chunk, EmbedderProvider } from "../../search/types.ts";
 import type { Storage } from "../../storage/adapters.ts";
 import { globalSemanticStoreRoot } from "../../storage/core/store.ts";
 import { withTaskLifecycleTransaction } from "../../storage/history/lifecycle-tx.ts";
+import { JobCancelledError } from "../job-cancel.ts";
 
 export type ReindexProgress = (phase: string, current: number, total: number) => void;
 
@@ -66,6 +67,9 @@ function allTasksForIndex(storage: Storage): Task[] {
   return [...byId.values()];
 }
 
+const REINDEX_BATCH = 16;
+const REINDEX_YIELD_MS = 5;
+
 export class IndexService {
   constructor(
     private readonly storage: Storage,
@@ -82,6 +86,17 @@ export class IndexService {
     fn: (tx: Parameters<Parameters<typeof withTaskLifecycleTransaction>[1]>[0]) => Promise<T> | T,
   ) {
     return withTaskLifecycleTransaction(this.storage.ctx, fn);
+  }
+
+  /**
+   * A reindex runs inside the shared runtime daemon: after every REINDEX_BATCH entries it gives the
+   * event loop (heartbeats, queue, other projects) and the machine a short turn instead of running
+   * the whole project in one burst.
+   */
+  private reindexCount = 0;
+  private async pace(): Promise<void> {
+    if (++this.reindexCount % REINDEX_BATCH !== 0) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, REINDEX_YIELD_MS));
   }
 
   private async embedTask(task: Task): Promise<Chunk[]> {
@@ -114,8 +129,20 @@ export class IndexService {
     }
   }
 
-  /** Reindex: re-indexes everything, skipping unchanged sources via content hashes. */
-  async reindex(progress?: ReindexProgress): Promise<void> {
+  /**
+   * Reindex: re-indexes everything, skipping unchanged sources via content hashes.
+   *
+   * `shouldStop` is asked between sources, the safe points. When it answers true the work done so
+   * far is committed (the same transaction, minus the removal of sources not seen yet, which would
+   * delete what a partial pass has not reached) and JobCancelledError is thrown, so the next run
+   * finds those sources unchanged by their content hashes and does not redo them.
+   */
+  async reindex(progress?: ReindexProgress, shouldStop?: () => boolean): Promise<void> {
+    let stopped = false;
+    const stop = (): boolean => {
+      if (!stopped && shouldStop?.() === true) stopped = true;
+      return stopped;
+    };
     const vec = this.vec;
     const storage = this.storage;
     if (vec.needsRebuild(vec.model())) {
@@ -136,6 +163,8 @@ export class IndexService {
     const tok = this.embedder.getTokenizer();
 
     for (const [i, task] of tasks.entries()) {
+      if (stop()) break;
+      await this.pace();
       progress?.("tasks", i + 1, tasks.length);
       const hash = contentHash(taskContentForHash(task));
       if (vec.getContentHash(`task:${task.id}`) === hash) {
@@ -151,6 +180,8 @@ export class IndexService {
 
     const indexDocs = async (list: typeof docs, phase: string) => {
       for (const [i, doc] of list.entries()) {
+        if (stop()) return;
+        await this.pace();
         progress?.(phase, i + 1, list.length);
         const sourceId = `doc:${doc.path}`;
         currentIds.add(sourceId);
@@ -176,8 +207,8 @@ export class IndexService {
         vec.setContentHash(sourceId, hash);
       }
     };
-    await indexDocs(docs, "docs");
-    await indexDocs(importedDocs, "imports");
+    if (!stopped) await indexDocs(docs, "docs");
+    if (!stopped) await indexDocs(importedDocs, "imports");
 
     let memories: MemoryEntry[] = [];
     try {
@@ -185,7 +216,9 @@ export class IndexService {
     } catch {
       memories = [];
     }
-    for (const [i, entry] of memories.entries()) {
+    for (const [i, entry] of stopped ? [] : memories.entries()) {
+      if (stop()) break;
+      await this.pace();
       progress?.("memories", i + 1, memories.length);
       const sourceId = `memory:${entry.id}`;
       currentIds.add(sourceId);
@@ -196,7 +229,9 @@ export class IndexService {
       vec.setContentHash(sourceId, hash);
     }
 
-    for (const [i, decision] of decisions.entries()) {
+    for (const [i, decision] of stopped ? [] : decisions.entries()) {
+      if (stop()) break;
+      await this.pace();
       progress?.("decisions", i + 1, decisions.length);
       const sourceId = `decision:${decision.id}`;
       if (!decisionCurrentForDefaultRetrieval(decision)) {
@@ -264,7 +299,7 @@ export class IndexService {
         vec.addChunks(candidate.chunks);
         vec.setContentHash(sourceId, candidate.hash);
       }
-      for (const id of vec.listContentHashes().keys()) {
+      for (const id of stopped ? [] : vec.listContentHashes().keys()) {
         if (currentIds.has(id)) continue;
         if (atomic && id.startsWith("task:")) {
           deleteTaskSource(id.slice("task:".length), "", false);
@@ -283,6 +318,7 @@ export class IndexService {
       }
       vec.save();
     });
+    if (stopped) throw new JobCancelledError();
   }
 
   async indexTask(taskId: string): Promise<void> {

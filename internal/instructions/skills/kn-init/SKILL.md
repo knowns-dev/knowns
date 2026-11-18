@@ -57,6 +57,10 @@ mcp_knowns_tasks({ "action": "list", "status": "in-progress" })
 mcp_knowns_tasks({ "action": "board" })
 ```
 
+`list` and `board` return summaries, one page at a time: `list` gives `{ results, total, nextCursor }`
+(50 per page; pass `nextCursor` back as `cursor`), `board` gives the first 20 tasks per column with a
+`count` (page one column with `status` plus `cursor`). Read one task in full with `tasks get`.
+
 Note the shape of the Task IDs you get back. New IDs always carry a prefix,
 from `settings.defaultTaskIdPrefix` or, when that is unset, derived from the
 project name, so they look like `KN-4F7Q2M`. Older tasks may still have plain

@@ -9,6 +9,8 @@ import type {
   Status,
   Verdict,
 } from "../../domain/doctor/model.ts";
+import { findProxyNamedEntries } from "../../domain/setup/mcp-audit.ts";
+import { launcherProblem } from "../../platform/launcher.ts";
 import { type CommandContext, defineCommand } from "../core/define.ts";
 import { exitError, SilentExit } from "../core/exit.ts";
 import {
@@ -193,6 +195,11 @@ export interface DoctorRunDeps {
     project: import("../../domain/doctor/foundation.ts").DoctorProject | undefined,
     ctx: CommandContext,
   ) => Promise<import("../../domain/doctor/model.ts").Checker[]>;
+  /** MCP entries that start a knowns-proxy that is missing; wired to findProxyNamedEntries. */
+  findProxyNamedEntries?: (
+    projectRoot: string,
+    env: Record<string, string | undefined>,
+  ) => import("../../domain/doctor/proxy-checks.ts").ProxyNamedEntry[];
 }
 
 async function defaultCheckers(
@@ -219,45 +226,70 @@ async function defaultCheckers(
   const env = ctx.env;
   const settingsPath = (): string => join(userHomeDir(env), ".knowns", "settings.json");
 
-  return allCheckers(project, {
-    project,
-    env,
-    readiness: () => {
-      if (!project) return inactivePayload();
-      return buildReadiness(project.storage, buildSearchEnvironment({ env }), { lsp: [] });
-    },
-    embedding: () => detectEmbedding(project?.store, env),
-    lspStatuses: async () => {
-      if (!project) return [];
-      const { collectProjectRuntimeStatuses } = await import("../../lsp/project.ts");
-      return collectProjectRuntimeStatuses(project.store.projectRoot);
-    },
-    lspIds: () =>
-      allLspAdapters()
-        .map((a) => a.id())
-        .sort(cmp),
-    runtimeHooks: () => statusAll(defaultOptions(env, ctx.cwd)),
-    runtimeNames,
-    skillsOutOfSync,
-    globalSkills: () => {
-      try {
-        return staleSkillDirs(skillRootsUnder(userHomeDir(env)));
-      } catch {
-        return [];
-      }
-    },
-    globalScope: () => globalSkillsScopeDefault(new EmbeddingSettingsStore(settingsPath())),
-    exists: defaultExists,
-    lookPath: (n) => lookPath(n, env),
-    readFile: defaultReadFile,
-    qdrant: (signal) => {
-      if (!project) throw new Error("project store unavailable");
-      return inspectQdrantReadOnly(project, env, signal);
-    },
+  // KN-A1Q129: checks that exist only when the daemon serves sessions, a proxy fell back, or an
+  // MCP entry points at a missing knowns-proxy. The finder is a seam: integration passes
+  // findProxyNamedEntries from domain/setup/mcp-audit.ts (feat/thin-proxy-pkg).
+  const { proxyCheckers } = await import("../../domain/doctor/proxy-checks.ts");
+  const { loadLiveView } = await import("../../runtime/live-lines.ts");
+  const { proxyEnabled } = await import("../../runtime/proxy-mode.ts");
+  const { isLegacyLayout } = await import("../../domain/update/layout.ts");
+  const view = loadLiveView(env);
+  const proxyChecks = proxyCheckers({
+    proxyEnabled: proxyEnabled(env),
+    reports: view.reports,
+    fallbacks: view.fallbacks,
+    launcher: launcherProblem(env),
+    legacyLayout: isLegacyLayout(process.execPath, env),
+    proxyNamedEntries:
+      project && doctorDeps.findProxyNamedEntries
+        ? doctorDeps.findProxyNamedEntries(project.store.projectRoot, env)
+        : [],
   });
+
+  return allCheckers(
+    project,
+    {
+      project,
+      env,
+      readiness: () => {
+        if (!project) return inactivePayload();
+        return buildReadiness(project.storage, buildSearchEnvironment({ env }), { lsp: [] });
+      },
+      embedding: () => detectEmbedding(project?.store, env),
+      lspStatuses: async () => {
+        if (!project) return [];
+        const { collectProjectRuntimeStatuses } = await import("../../lsp/project.ts");
+        return collectProjectRuntimeStatuses(project.store.projectRoot);
+      },
+      lspIds: () =>
+        allLspAdapters()
+          .map((a) => a.id())
+          .sort(cmp),
+      runtimeHooks: () => statusAll(defaultOptions(env, ctx.cwd)),
+      runtimeNames,
+      skillsOutOfSync,
+      globalSkills: () => {
+        try {
+          return staleSkillDirs(skillRootsUnder(userHomeDir(env)));
+        } catch {
+          return [];
+        }
+      },
+      globalScope: () => globalSkillsScopeDefault(new EmbeddingSettingsStore(settingsPath())),
+      exists: defaultExists,
+      lookPath: (n) => lookPath(n, env),
+      readFile: defaultReadFile,
+      qdrant: (signal) => {
+        if (!project) throw new Error("project store unavailable");
+        return inspectQdrantReadOnly(project, env, signal);
+      },
+    },
+    undefined,
+    proxyChecks,
+  );
 }
 
-export const doctorDeps: DoctorRunDeps = {};
+export const doctorDeps: DoctorRunDeps = { findProxyNamedEntries };
 
 export default defineCommand({
   use: "doctor",

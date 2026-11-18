@@ -1,8 +1,10 @@
 // Port of internal/runtimeinstall/runtimeinstall.go: install, uninstall and report the runtime
 // memory hooks of Claude Code, Codex, Kiro and OpenCode. Paths and file bytes match Go; the
 // executable recorded in a hook is Options.executablePath (os.Executable() there).
+
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { selfExecutable } from "../../platform/launcher.ts";
 import { type Env, lookPath, userHomeDir } from "./env.ts";
 import { isMap, type JsonMap, readJsonMap, readTextIfExists, writeJsonMap } from "./json-files.ts";
 
@@ -91,7 +93,7 @@ export function defaultOptions(env: Env = process.env, cwd: string = process.cwd
   const goos = process.platform === "win32" ? "windows" : process.platform;
   return {
     homeDir,
-    executablePath: process.execPath || "knowns",
+    executablePath: selfExecutable() || "knowns",
     lookPath: (name) => lookPath(name, env),
     goos,
     cwd,

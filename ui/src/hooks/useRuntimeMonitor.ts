@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useVisiblePolling } from "./useVisiblePolling";
 import { getRuntimePs, type RuntimeStatusResponse } from "@/ui/api/client";
 
 export function useRuntimeMonitor() {
@@ -41,14 +42,13 @@ export function useRuntimeMonitor() {
 
 	useEffect(() => {
 		mounted.current = true;
-		void refresh();
-		const interval = window.setInterval(refresh, 3000);
-
 		return () => {
 			mounted.current = false;
-			window.clearInterval(interval);
 		};
-	}, [refresh]);
+	}, []);
+
+	// Every 15 s while the page is visible, never while hidden; a daemon status change arrives by SSE.
+	useVisiblePolling(refresh, ["runtime:status"]);
 
 	// A dead-lettered job is permanently skipped by the scheduler and will not
 	// run again without a manual retry — it isn't "active" work in progress,

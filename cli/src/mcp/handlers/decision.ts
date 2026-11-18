@@ -61,6 +61,8 @@ export async function handle(
       return reviewInbox(state);
     case "resolve":
       return resolve(state, req);
+    case "restore":
+      return restore(state, req);
     case "migration_preview":
       return migrationPreview(state);
     case "migration_apply":
@@ -316,6 +318,26 @@ async function accept(state: McpState, req: CallToolRequest): Promise<CallToolRe
   }
 }
 
+async function restore(state: McpState, req: CallToolRequest): Promise<CallToolResult> {
+  const project = state.getProject();
+  if (!project) return noProjectError();
+  const args = argsOf(req);
+  const [candidateId] = stringArg(args, "candidateId");
+  const [targetId] = stringArg(args, "targetId");
+  const [keep] = stringSliceArg(args, "keep");
+  const apply = args.apply === true;
+  try {
+    const r = await (await review(project)).restoreMerged(candidateId, targetId, {
+      keep,
+      apply,
+    });
+    for (const id of r.changedIds) await indexDecision(project, id);
+    return result(r);
+  } catch (e) {
+    return errFailed("restore decision", e);
+  }
+}
+
 async function resolve(state: McpState, req: CallToolRequest): Promise<CallToolResult> {
   const project = state.getProject();
   if (!project) return noProjectError();
@@ -326,8 +348,10 @@ async function resolve(state: McpState, req: CallToolRequest): Promise<CallToolR
   const [candidateId] = stringArg(args, "candidateId");
   const [replacementId] = stringArg(args, "replacementId");
   const [status] = stringArg(args, "status");
+  const [reason] = stringArg(args, "reason");
   try {
     const r = await (await review(project)).resolve(inputFromArgs(args, true), {
+      reason,
       candidateId,
       resolution,
       targetId,

@@ -29,6 +29,13 @@ function clockSensitive(pair: Pair): Pair {
   return pair;
 }
 
+/** The active-timer fixture stops a running timer, so the ENDED column of its log is "now". */
+function activeTimer(): Pair {
+  const pair = clockSensitive(makePair("active-timer"));
+  pair.norm.endedNow = true;
+  return pair;
+}
+
 const RUNNING = "TM-B9YGFM";
 const PAUSED = "TM-Q3M99R";
 
@@ -42,7 +49,7 @@ const SETTLE: string[] = [];
 
 describe.skipIf(!hasGoBin)("time on the active-timer fixture", () => {
   test("status, pause, resume and stop with explicit and implicit task ids", async () => {
-    const pair = clockSensitive(makePair("active-timer"));
+    const pair = activeTimer();
     const steps: string[][] = [
       ["time", "status"],
       ["time", "status", "--plain"],
@@ -80,7 +87,7 @@ describe.skipIf(!hasGoBin)("time on the active-timer fixture", () => {
   });
 
   test("the timer shows on task view while it runs", async () => {
-    const pair = clockSensitive(makePair("active-timer"));
+    const pair = activeTimer();
     await step(pair, ["task", RUNNING, "--plain"]);
     await step(pair, ["task", RUNNING]);
     await step(pair, ["task", PAUSED, "--json"]);
@@ -89,7 +96,7 @@ describe.skipIf(!hasGoBin)("time on the active-timer fixture", () => {
   });
 
   test("a stale expected hash rejects the stop and leaves the timer running", async () => {
-    const pair = clockSensitive(makePair("active-timer"));
+    const pair = activeTimer();
     await step(pair, ["time", "stop", RUNNING, "--expected-hash", "deadbeef"]);
     await step(pair, ["time", "status", "--plain"]);
     sameTree(pair);

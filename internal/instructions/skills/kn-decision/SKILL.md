@@ -100,27 +100,29 @@ mcp_knowns_decision({ "action": "link", "id": "<decision-id>",
 
 ## Step 3: Resolve
 
-`resolve` decides what happens to a draft relative to existing guidance. Three of the five resolutions settle it; two leave it pending on purpose.
+`resolve` decides what happens to a draft relative to existing guidance. Five of the seven resolutions settle it; `create_draft` and `link_as_related` leave the draft pending on purpose.
 
 | Resolution | Meaning | Gate |
 |------------|---------|------|
 | `create_draft` | Keep it as a draft for now | free |
-| `link_as_related` | Fold a true duplicate into the existing Decision: its sources and links move there and the draft becomes `rejected`. Not for a draft that only looks similar | free |
+| `link_as_related` | Pure link: both Decisions keep their status, each gains only a `@decision/<other>` source. Nothing is copied | free |
+| `merge_duplicate` | Merge a true duplicate into the existing Decision: its sources, docs and tasks move there and the draft becomes `rejected`. Not for a draft that only looks similar | free |
 | `accept_new` | Promote this draft to current guidance | **stop for human** |
+| `accept_distinct` | Promote this draft although its matches are only similar or conflicting, keeping every matched Decision current. Needs a non-empty `reason`, recorded on the accepted Decision. Refused when a match is an exact duplicate (fold it with `merge_duplicate` instead) | **stop for human** |
 | `supersede_existing` | Promote it and retire the Decision it replaces | **stop for human** |
 | `reject_new` | Reject the draft outright | **stop for human** |
 
 ```json
 mcp_knowns_decision({ "action": "resolve",
   "candidateId": "<draft-id>",
-  "resolution": "<one of the five>",
+  "resolution": "<one of the six>",
   "targetId": "<existing decision id, when the resolution needs one>"
 })
 ```
 
 ## Step 4: The Human Gate
 
-Five operations change what binds future work: `accept`, `supersede`, and the `accept_new`, `supersede_existing`, `reject_new` resolutions.
+Five operations change what binds future work: `accept`, `supersede`, and the `accept_new`, `accept_distinct`, `supersede_existing`, `reject_new` resolutions.
 
 Before any of them, stop and present:
 

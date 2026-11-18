@@ -9,6 +9,16 @@ import {
   taskVersionHistoryToWire,
   taskVersionToWire,
 } from "../../domain/tasklifecycle/index.ts";
+import {
+  DEFAULT_COLUMN_PAGE_SIZE,
+  DEFAULT_PAGE_SIZE,
+  encodeCursor,
+  idKey,
+  matchesQuery,
+  pageTasks,
+  parseLimit,
+  taskSummary,
+} from "../../domain/tasklifecycle/summary.ts";
 import { DEFAULT_STATUSES, type Task } from "../../models/task.ts";
 import { goTrimSpace } from "../../storage/core/util.ts";
 import { attachWorkedBy } from "../../storage/stores/agent-work-store.ts";
@@ -71,7 +81,7 @@ export async function handle(
     case "history":
       return history(state, req);
     case "board":
-      return board(state);
+      return board(state, req);
     case "restore":
       return restore(state, req);
     case "archive":
@@ -389,6 +399,16 @@ async function list(state: McpState, req: CallToolRequest): Promise<CallToolResu
   const [labelFilter] = stringArg(args, "label");
   const [specFilter] = stringArg(args, "spec");
   const unassigned = boolArg(args, "unassigned");
+  const [parentFilter] = stringArg(args, "parent");
+  const [queryFilter] = stringArg(args, "query");
+  const [detail] = stringArg(args, "detail");
+  if (detail !== "" && detail !== "summary" && detail !== "full")
+    return errorResult("detail must be summary or full");
+  const [cursorArg] = stringArg(args, "cursor");
+  const [offsetArg, hasOffset] = intArg(args, "offset");
+  const parsedLimit = parseLimit(args.limit, DEFAULT_PAGE_SIZE);
+  if (typeof parsedLimit !== "number") return errorResult(parsedLimit.error);
+  const limit = parsedLimit;
   const includeHistorical = boolArg(args, "includeHistorical");
   // D13 (PR #156).
   if (unassigned && assigneeFilter !== "") {
@@ -403,18 +423,19 @@ async function list(state: McpState, req: CallToolRequest): Promise<CallToolResu
   }
   // Go: ListActive returns a nil slice when there are none (JSON null); ListAll never does.
   const nilSource = !includeHistorical && tasks.length === 0;
-  const filtered = tasks.filter((t) => {
-    // Trimmed like the CLI and UI: a whitespace-only assignee is unassigned (D13).
-    const assignee = goTrimSpace(t.assignee ?? "");
-    return !(
-      (statusFilter !== "" && t.status !== statusFilter) ||
-      (priorityFilter !== "" && t.priority !== priorityFilter) ||
-      (assigneeFilter !== "" && assignee !== assigneeFilter) ||
-      (unassigned && assignee !== "") ||
-      (labelFilter !== "" && !(t.labels ?? []).includes(labelFilter)) ||
-      (specFilter !== "" && (t.spec ?? "") !== specFilter)
-    );
-  });
+  // Filters run before the page is cut (matchesQuery trims the assignee, D13).
+  const filtered = tasks.filter((t) =>
+    matchesQuery(t, {
+      status: statusFilter,
+      priority: priorityFilter,
+      assignee: assigneeFilter,
+      unassigned,
+      label: labelFilter,
+      spec: specFilter,
+      parent: parentFilter,
+      query: queryFilter,
+    }),
+  );
   if (filtered.length === 0) {
     return textResult(
       marshalIndent(
@@ -427,8 +448,26 @@ async function list(state: McpState, req: CallToolRequest): Promise<CallToolResu
       ),
     );
   }
-  attachAgent(project, filtered);
-  return textResult(marshalIndent(filtered.map(taskToWire)));
+  const cursor =
+    cursorArg !== "" ? cursorArg : hasOffset && offsetArg > 0 ? encodeCursor(offsetArg) : undefined;
+  // Id order (the order storage lists tasks in). The cursor is the last id served, so tasks that
+  // leave the filter between pages do not shift the next page; `offset` stays for old callers.
+  const page = pageTasks(filtered, limit, cursor, idKey);
+  if ("error" in page) return errorResult(page.error);
+  attachAgent(project, page.items);
+  let results: unknown[];
+  if (detail === "full") {
+    results = page.items.map(taskToWire);
+  } else {
+    results = page.items.map(taskSummary);
+  }
+  const out: Record<string, unknown> = { results, total: page.total, limit: page.limit };
+  if (page.nextCursor) {
+    out.nextCursor = page.nextCursor;
+    out.hasMore = true;
+    out._hint = `Showing ${results.length} of ${page.total} tasks; pass nextCursor as cursor (or add filters) to see the rest.`;
+  }
+  return textResult(marshalIndent(goMap(out)));
 }
 
 async function lifecycle(
@@ -564,9 +603,17 @@ async function del(state: McpState, req: CallToolRequest): Promise<CallToolResul
   );
 }
 
-async function board(state: McpState): Promise<CallToolResult> {
+async function board(state: McpState, req: CallToolRequest): Promise<CallToolResult> {
   const project = state.getProject();
   if (!project) return noProjectError();
+  const args = argsOf(req);
+  const [onlyStatus] = stringArg(args, "status");
+  const [cursorArg] = stringArg(args, "cursor");
+  if (cursorArg !== "" && onlyStatus === "")
+    return errorResult("cursor requires status: page one column at a time");
+  const parsedColLimit = parseLimit(args.limit, DEFAULT_COLUMN_PAGE_SIZE);
+  if (typeof parsedColLimit !== "number") return errorResult(parsedColLimit.error);
+  const colLimit = parsedColLimit;
   const { storage } = project;
   let tasks: Task[];
   try {
@@ -610,15 +657,35 @@ async function board(state: McpState): Promise<CallToolResult> {
     if (c) ordered.push(c);
   }
   const total = ordered.reduce((n, c) => n + c.count, 0);
+  // Each column returns summaries for its first page; count is the whole column.
+  const shown = onlyStatus === "" ? ordered : ordered.filter((c) => c.status === onlyStatus);
+  if (onlyStatus !== "" && shown.length === 0)
+    return errorResult(
+      `unknown status "${onlyStatus}"; valid statuses: ${ordered.map((c) => c.status).join(", ")}`,
+    );
+  const columnsOut: Record<string, unknown>[] = [];
+  for (const c of shown) {
+    const page = pageTasks(c.tasks, colLimit, cursorArg || undefined, idKey);
+    if ("error" in page) return errorResult(page.error);
+    attachAgent(project, page.items);
+    const col: Record<string, unknown> = {
+      status: c.status,
+      tasks: page.items.map(taskSummary),
+      count: c.count,
+    };
+    if (page.nextCursor) {
+      col.nextCursor = page.nextCursor;
+      col.hasMore = true;
+    }
+    columnsOut.push(col);
+  }
   return textResult(
     marshalIndent(
       goMap({
-        columns: ordered.map((c) => ({
-          status: c.status,
-          tasks: c.tasks.map(taskToWire),
-          count: c.count,
-        })),
-        total,
+        columns: columnsOut,
+        // With a status filter the total is that column's count, so it matches what is returned.
+        total: onlyStatus === "" ? total : (shown[0]?.count ?? 0),
+        limit: colLimit,
       }),
     ),
   );
