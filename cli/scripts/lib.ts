@@ -47,6 +47,14 @@ export function windowsCompileOptions(
   };
 }
 
+/** The real messages inside Bun.build's AggregateError (its own message is just "Bundle failed"). */
+export function describeBuildError(e: unknown): string {
+  const inner = (e as { errors?: unknown[] } | null)?.errors;
+  const parts = Array.isArray(inner) ? inner.map((x) => String((x as Error)?.message ?? x)) : [];
+  const own = e instanceof Error ? e.message : String(e);
+  return parts.length ? `${own}: ${parts.join("; ")}` : own;
+}
+
 export async function compile(
   entry: string,
   target: string,
@@ -70,16 +78,22 @@ export async function compile(
       `warn ${target}: built off Windows, so knowns.exe keeps Bun's icon and version info`,
     );
   }
-  const res = await Bun.build({
-    entrypoints: [entry, ...workers],
-    minify: true,
-    define,
-    compile: {
-      target: target as Bun.Build.CompileTarget,
-      outfile,
-      ...(windows ? { windows } : {}),
-    },
-  });
+  let res: Awaited<ReturnType<typeof Bun.build>>;
+  try {
+    res = await Bun.build({
+      entrypoints: [entry, ...workers],
+      minify: true,
+      define,
+      compile: {
+        target: target as Bun.Build.CompileTarget,
+        outfile,
+        ...(windows ? { windows } : {}),
+      },
+    });
+  } catch (e) {
+    // Bun.build throws an AggregateError whose own message is only "Bundle failed".
+    throw new Error(`compile failed for ${target}: ${describeBuildError(e)}`);
+  }
   if (!res.success) {
     throw new Error(`compile failed for ${target}: ${res.logs.map(String).join("\n")}`);
   }
