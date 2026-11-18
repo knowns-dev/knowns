@@ -45,6 +45,7 @@ import {
   newScanState,
   type ScanState,
 } from "../storage/core/dir-freshness.ts";
+import { goTrimSpace } from "../storage/core/util.ts";
 import type { DocScanTrack, DocStore } from "../storage/stores/doc-store.ts";
 import { parseIso } from "../storage/stores/internal.ts";
 import type { TaskStore } from "../storage/stores/task-store.ts";
@@ -62,12 +63,16 @@ export interface IndexPage<T> {
 }
 
 /** First index whose key sorts after `after` (entries are sorted by key). */
-function upperBound<T>(list: Entry<T>[], after: SortKey): number {
+function upperBound<T>(
+  list: Entry<T>[],
+  after: SortKey,
+  cmp: (a: SortKey, b: SortKey) => number,
+): number {
   let lo = 0;
   let hi = list.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    if (compareKeys((list[mid] as Entry<T>).key, after) > 0) hi = mid;
+    if (cmp((list[mid] as Entry<T>).key, after) > 0) hi = mid;
     else lo = mid + 1;
   }
   return lo;
@@ -79,6 +84,7 @@ export function pageEntries<T>(
   limit: number,
   cursor: string | undefined,
   pred?: (item: T) => boolean,
+  cmp: (a: SortKey, b: SortKey) => number = compareKeys,
 ): IndexPage<T> | { error: string } {
   const rows = pred ? list.filter((e) => pred(e.item)) : list;
   let start = 0;
@@ -86,7 +92,7 @@ export function pageEntries<T>(
     const c = decodeCursor(cursor);
     if (c === undefined)
       return { error: "cursor is not valid; use the nextCursor of a previous call" };
-    start = "offset" in c ? c.offset : upperBound(rows, c.after);
+    start = "offset" in c ? c.offset : upperBound(rows, c.after, cmp);
   }
   const slice = rows.slice(start, start + limit);
   const page: IndexPage<T> = { items: slice.map((e) => e.item), total: rows.length, limit };
@@ -120,14 +126,6 @@ const updatedMs = (iso: string): number => parseIso(iso)?.ms ?? 0;
 
 // ---- tasks ----------------------------------------------------------------------------------
 
-export type TaskSort = "order" | "updated-desc";
-
-export function parseTaskSort(raw: string | null): TaskSort | undefined {
-  if (raw === null || raw === "" || raw === "order") return "order";
-  if (raw === "updated-desc") return "updated-desc";
-  return undefined;
-}
-
 function lifecycleRank(t: Task): number {
   const s = taskLifecycleState(t);
   return s === "active" ? 0 : s === "done" ? 1 : 2;
@@ -136,10 +134,139 @@ function lifecycleRank(t: Task): number {
 /** The key GET /api/tasks has always ordered by: lifecycle, then order (unset last), then id. */
 export const lifecycleKey = (t: Task): SortKey => [lifecycleRank(t), ...orderKey(t)];
 
-const sortKeys: Record<TaskSort, (t: Task) => SortKey> = {
-  order: lifecycleKey,
-  "updated-desc": (t) => [-updatedMs(t.updatedAt), t.id],
+const PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
+
+function progressKey(t: Task): SortKey {
+  const ac = t.acceptanceCriteria ?? [];
+  if (ac.length === 0) return [1, 0, t.id];
+  return [0, ac.filter((a) => a.completed).length / ac.length, t.id];
+}
+
+interface SortDef {
+  /** A key that ends with the id, so the order is total and a cursor never repeats an id. */
+  keyOf: (t: Task) => SortKey;
+  /** Key[0] is a "has no value" flag: those tasks come last in both directions. */
+  nullable?: true;
+}
+
+const SORT_DEFS: Record<string, SortDef> = {
+  order: { keyOf: lifecycleKey },
+  id: { keyOf: (t) => [t.id] },
+  title: { keyOf: (t) => [t.title.toLowerCase(), t.id] },
+  status: { keyOf: (t) => [t.status, t.id] },
+  priority: { keyOf: (t) => [PRIORITY_RANK[t.priority] ?? 3, t.id] },
+  assignee: {
+    keyOf: (t) => {
+      const a = goTrimSpace(t.assignee ?? "");
+      return [a === "" ? 1 : 0, a.toLowerCase(), t.id];
+    },
+    nullable: true,
+  },
+  spec: { keyOf: (t) => [t.spec ? 0 : 1, t.spec ?? "", t.id], nullable: true },
+  progress: { keyOf: progressKey, nullable: true },
+  updated: { keyOf: (t) => [updatedMs(t.updatedAt), t.id] },
+  created: { keyOf: (t) => [updatedMs(t.createdAt), t.id] },
 };
+
+export const TASK_SORT_KEYS = Object.keys(SORT_DEFS);
+
+export interface TaskSortSpec {
+  /** The value of `sort=`, normalized; also the cache key of its view. */
+  name: string;
+  keyOf: (t: Task) => SortKey;
+  /** Compares two keys of this sort, direction included. */
+  cmp: (a: SortKey, b: SortKey) => number;
+}
+
+/**
+ * `sort=<key>` or `sort=<key>-desc` (empty is `order`). Every key ends with the task id.
+ * A cursor is the key of the last task served, so a task whose key a write can move may be served
+ * twice in one traversal: that is every key but id, created and created-desc (nothing rewrites
+ * those) and updated-desc (an update only moves a task to the top, before every cursor).
+ */
+export function parseTaskSort(raw: string | null): TaskSortSpec | { error: string } {
+  const name = raw === null || raw === "" ? "order" : raw;
+  const desc = name.endsWith("-desc");
+  const base = desc ? name.slice(0, -5) : name;
+  const def = SORT_DEFS[base];
+  if (def === undefined) {
+    return {
+      error: `sort must be one of: ${TASK_SORT_KEYS.join(", ")}; each also as <key>-desc`,
+    };
+  }
+  const nullable = def.nullable === true;
+  const cmp = (a: SortKey, b: SortKey): number => {
+    let from = 0;
+    if (nullable) {
+      if (a[0] !== b[0]) return (a[0] as number) < (b[0] as number) ? -1 : 1;
+      from = 1;
+    }
+    for (let i = from; i < Math.max(a.length, b.length); i++) {
+      const x = a[i];
+      const y = b[i];
+      if (x === y) continue;
+      if (x === undefined) return desc ? 1 : -1;
+      if (y === undefined) return desc ? -1 : 1;
+      return (x < y ? -1 : 1) * (desc ? -1 : 1);
+    }
+    return 0;
+  };
+  return { name: desc ? `${base}-desc` : base, keyOf: def.keyOf, cmp };
+}
+
+export const TASK_LIFECYCLES = ["current", "active", "done", "archived", "all"] as const;
+export type TaskLifecycle = (typeof TASK_LIFECYCLES)[number];
+
+/** `lifecycle=`; without it includeHistorical=true means all and nothing means current. */
+export function parseLifecycle(
+  raw: string | null,
+  includeHistorical: boolean,
+): TaskLifecycle | { error: string } {
+  if (raw === null || raw === "") return includeHistorical ? "all" : "current";
+  return (TASK_LIFECYCLES as readonly string[]).includes(raw)
+    ? (raw as TaskLifecycle)
+    : { error: `lifecycle must be one of: ${TASK_LIFECYCLES.join(", ")}` };
+}
+
+/** current = active and done, not archived (what the list always showed). */
+const lifecyclePred: Record<TaskLifecycle, ((t: Task) => boolean) | undefined> = {
+  current: undefined,
+  all: undefined,
+  archived: undefined,
+  active: (t) => t.status !== "done",
+  done: (t) => t.status === "done",
+};
+
+/** TaskQuery; `parent: "none"` means root tasks only, any other parent is an id. */
+export type ListFilter = TaskQuery;
+
+/**
+ * The server-side list filter. Like matchesQuery, with three differences the list UI needs: the
+ * free-text `query` also matches the id, the assignee and the labels; `unassigned` wins over
+ * `assignee`; and `parent=none` is the root tasks.
+ */
+export function matchesList(t: Task, f: ListFilter): boolean {
+  const { query, parent, assignee, ...rest } = f;
+  if (
+    !matchesQuery(t, {
+      ...rest,
+      ...(f.unassigned ? {} : assignee !== undefined && { assignee }),
+      ...(parent !== undefined && parent !== "none" && { parent }),
+    })
+  )
+    return false;
+  if (parent === "none" && (t.parent ?? "") !== "") return false;
+  if (query) {
+    const needle = query.toLowerCase();
+    const hay = [t.id, t.title, t.description ?? "", t.assignee ?? "", ...(t.labels ?? [])];
+    if (!hay.some((h) => h.toLowerCase().includes(needle))) return false;
+  }
+  return true;
+}
+
+type TaskSource = "current" | "archived" | "all";
+const sourceOf = (l: TaskLifecycle): TaskSource =>
+  l === "archived" ? "archived" : l === "all" ? "all" : "current";
 
 interface TaskView {
   all: Entry<Task>[];
@@ -162,12 +289,19 @@ export interface TaskCounts {
   byStatus: Record<string, number>;
 }
 
+export interface TaskCountsResult extends TaskCounts {
+  /** Tasks of the lifecycle by assignee ("" is unassigned), under every filter but assignee and status. */
+  byAssignee: Record<string, number>;
+  /** The archived tasks that pass the filters. */
+  archived: TaskCounts;
+}
+
 export class TaskIndex {
   private readonly active: Part<Task>;
   private readonly archived: Part<Task>;
   private views = new Map<string, TaskView>();
   private viewsAt = "";
-  private countsMemo = new Map<string, { total: TaskCounts; archived: TaskCounts }>();
+  private countsMemo = new Map<string, TaskCountsResult>();
   /** Counts how many times a scan ran; the bench and tests read it. */
   scans = 0;
 
@@ -200,29 +334,33 @@ export class TaskIndex {
     part.fresh.commit(pass, [dir], state.skipped === 0);
   }
 
-  private load(includeArchived: boolean): void {
-    this.refresh(this.active, this.store.tasksDir(), (s) => this.store.listActiveReadOnly(s));
-    if (includeArchived)
+  private load(source: TaskSource): void {
+    if (source !== "archived")
+      this.refresh(this.active, this.store.tasksDir(), (s) => this.store.listActiveReadOnly(s));
+    if (source !== "current")
       this.refresh(this.archived, this.store.archiveDir(), (s) =>
         this.store.listArchivedReadOnly(s),
       );
   }
 
-  private view(includeArchived: boolean, sort: TaskSort): TaskView {
+  private tasksOf(source: TaskSource): readonly Task[] {
+    if (source === "archived") return this.archived.items ?? [];
+    if (source === "all")
+      return withoutDuplicates(this.active.items ?? [], this.archived.items ?? []);
+    return this.active.items ?? [];
+  }
+
+  private view(source: TaskSource, sort: TaskSortSpec): TaskView {
     const at = `${this.active.version}:${this.archived.version}`;
     if (at !== this.viewsAt) {
       this.views = new Map();
       this.viewsAt = at;
     }
-    const k = `${includeArchived}:${sort}`;
+    const k = `${source}:${sort.name}`;
     let v = this.views.get(k);
     if (v) return v;
-    const tasks = includeArchived
-      ? withoutDuplicates(this.active.items ?? [], this.archived.items ?? [])
-      : (this.active.items ?? []);
-    const keyOf = sortKeys[sort];
-    const all = tasks.map((item) => ({ item, key: keyOf(item) }));
-    all.sort((a, b) => compareKeys(a.key, b.key));
+    const all = this.tasksOf(source).map((item) => ({ item, key: sort.keyOf(item) }));
+    all.sort((a, b) => sort.cmp(a.key, b.key));
     const byStatus = new Map<string, Entry<Task>[]>();
     for (const e of all) {
       const list = byStatus.get(e.item.status);
@@ -234,62 +372,80 @@ export class TaskIndex {
     return v;
   }
 
-  /** A page of the (optionally archived-inclusive) list, filtered like GET /api/tasks. */
+  private rows(
+    lifecycle: TaskLifecycle,
+    sort: TaskSortSpec,
+    filter: ListFilter,
+  ): { base: Entry<Task>[]; pred: ((t: Task) => boolean) | undefined } {
+    const source = sourceOf(lifecycle);
+    this.load(source);
+    const view = this.view(source, sort);
+    const { status, ...rest } = filter;
+    const base = status ? (view.byStatus.get(status) ?? []) : view.all;
+    const lp = lifecyclePred[lifecycle];
+    const others = Object.values(rest).some((v) => v !== undefined && v !== "" && v !== false);
+    const pred =
+      others || lp ? (t: Task) => (lp ? lp(t) : true) && matchesList(t, rest) : undefined;
+    return { base, pred };
+  }
+
+  /** A page of the list of one lifecycle, in one sort, under the filters. */
   page(args: {
-    includeArchived: boolean;
-    sort: TaskSort;
-    query: TaskQuery;
+    lifecycle: TaskLifecycle;
+    sort: TaskSortSpec;
+    query: ListFilter;
     limit: number;
     cursor?: string;
   }): IndexPage<Task> | { error: string } {
-    this.load(args.includeArchived);
-    const view = this.view(args.includeArchived, args.sort);
-    const { status, ...rest } = args.query;
-    const base = status ? (view.byStatus.get(status) ?? []) : view.all;
-    const others = Object.values(rest).some((v) => v !== undefined && v !== "" && v !== false);
-    return pageEntries(
-      base,
-      args.limit,
-      args.cursor,
-      others ? (t) => matchesQuery(t, rest) : undefined,
-    );
+    const { base, pred } = this.rows(args.lifecycle, args.sort, args.query);
+    return pageEntries(base, args.limit, args.cursor, pred, args.sort.cmp);
   }
 
   /** Every task in list order, for the unpaged call old UIs make. */
-  all(args: { includeArchived: boolean; sort: TaskSort; query: TaskQuery }): Task[] {
-    this.load(args.includeArchived);
-    const view = this.view(args.includeArchived, args.sort);
-    const { status, ...rest } = args.query;
-    const base = status ? (view.byStatus.get(status) ?? []) : view.all;
-    return base.map((e) => e.item).filter((t) => matchesQuery(t, rest));
+  all(args: { lifecycle: TaskLifecycle; sort: TaskSortSpec; query: ListFilter }): Task[] {
+    const { base, pred } = this.rows(args.lifecycle, args.sort, args.query);
+    const items = base.map((e) => e.item);
+    return pred ? items.filter(pred) : items;
   }
 
-  /** Counts per status of the active and the archived tasks that pass every filter but status. */
-  counts(query: TaskQuery): {
-    total: number;
-    byStatus: Record<string, number>;
-    archived: TaskCounts;
-  } {
-    this.load(true);
+  /**
+   * Counts of the lifecycle's tasks per status and per assignee, and of the archive, under every
+   * filter but status (and, for byAssignee, assignee and unassigned).
+   */
+  counts(query: ListFilter, lifecycle: TaskLifecycle = "current"): TaskCountsResult {
+    this.load("all");
     const { status: _status, ...rest } = query;
-    const key = `${this.active.version}:${this.archived.version}:${JSON.stringify(rest)}`;
+    const { assignee: _a, unassigned: _u, ...restNoAssignee } = rest;
+    const key = `${this.active.version}:${this.archived.version}:${lifecycle}:${JSON.stringify(rest)}`;
     let memo = this.countsMemo.get(key);
     if (!memo) {
       if (this.countsMemo.size > 16) this.countsMemo.clear();
-      const count = (tasks: readonly Task[] | undefined): TaskCounts => {
-        const byStatus: Record<string, number> = {};
-        let total = 0;
-        for (const t of tasks ?? []) {
-          if (!matchesQuery(t, rest)) continue;
+      const lp = lifecyclePred[lifecycle];
+      const inLifecycle = this.tasksOf(sourceOf(lifecycle));
+      const byStatus: Record<string, number> = {};
+      const byAssignee: Record<string, number> = {};
+      let total = 0;
+      for (const t of inLifecycle) {
+        if (lp && !lp(t)) continue;
+        if (matchesList(t, rest)) {
           total++;
           byStatus[t.status] = (byStatus[t.status] ?? 0) + 1;
         }
-        return { total, byStatus };
-      };
-      memo = { total: count(this.active.items), archived: count(this.archived.items) };
+        if (matchesList(t, restNoAssignee)) {
+          const a = goTrimSpace(t.assignee ?? "");
+          byAssignee[a] = (byAssignee[a] ?? 0) + 1;
+        }
+      }
+      const arch: TaskCounts = { total: 0, byStatus: {} };
+      for (const t of this.archived.items ?? []) {
+        if (!matchesList(t, rest)) continue;
+        arch.total++;
+        arch.byStatus[t.status] = (arch.byStatus[t.status] ?? 0) + 1;
+      }
+      memo = { total, byStatus, byAssignee, archived: arch };
       this.countsMemo.set(key, memo);
     }
-    return { ...memo.total, archived: memo.archived };
+    return memo;
   }
 }
 

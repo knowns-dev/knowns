@@ -37,7 +37,7 @@ import { attachWorkedBy } from "../../storage/stores/agent-work-store.ts";
 import { type App, requireStore } from "../app.ts";
 import { decodeStruct, type FieldType, jsonKind, timeField } from "../gojson.ts";
 import { type Ctx, errMessage, jsonResponse, type Router, respondError } from "../http.ts";
-import { parseTaskSort, taskIndexFor } from "../list-index.ts";
+import { parseLifecycle, parseTaskSort, taskIndexFor } from "../list-index.ts";
 import { atoi, type Obj, readMap, readStruct } from "./support.ts";
 
 // ---- response shape -------------------------------------------------------------------------
@@ -219,10 +219,12 @@ function parseListQuery(c: Ctx) {
   const limit = parseLimit(limitRaw ?? undefined, DEFAULT_PAGE_SIZE);
   if (typeof limit !== "number") return limit.error;
   const sort = parseTaskSort(p.get("sort"));
-  if (sort === undefined) return "sort must be order or updated-desc";
+  if ("error" in sort) return sort.error;
+  const flag = (name: string) => p.get(name) === "true" || p.get(name) === "1";
   return {
     sort,
-    summary: p.get("summary") === "true" || p.get("summary") === "1",
+    lifecycleRaw: p.get("lifecycle"),
+    summary: flag("summary"),
     paged: limitRaw !== null || p.has("cursor"),
     limit,
     cursor: p.get("cursor") ?? undefined,
@@ -230,6 +232,7 @@ function parseListQuery(c: Ctx) {
       status: p.get("status") ?? undefined,
       priority: p.get("priority") ?? undefined,
       assignee: p.get("assignee") ?? undefined,
+      unassigned: flag("unassigned") || undefined,
       label: p.get("label") ?? undefined,
       parent: p.get("parent") ?? undefined,
       query: p.get("query") ?? undefined,
@@ -434,6 +437,8 @@ export function registerTasks(r: Router, app: App): void {
       if (typeof inc === "string") return respondError(400, inc);
       const q = parseListQuery(c);
       if (typeof q === "string") return respondError(400, q);
+      const lifecycle = parseLifecycle(q.lifecycleRaw, inc);
+      if (typeof lifecycle !== "string") return respondError(400, lifecycle.error);
       const index = taskIndexFor(s.tasks);
       // The index serves frozen, shared tasks; a response copies the ones it shows.
       const shown = (tasks: readonly Task[]): Task[] => {
@@ -449,11 +454,11 @@ export function registerTasks(r: Router, app: App): void {
       try {
         if (!q.paged) {
           // The unpaged call old UIs make: every task, in full unless summary=true.
-          const all = index.all({ includeArchived: inc, sort: q.sort, query: q.query });
+          const all = index.all({ lifecycle, sort: q.sort, query: q.query });
           return jsonResponse(200, shown(all).map(wire));
         }
         const page = index.page({
-          includeArchived: inc,
+          lifecycle,
           sort: q.sort,
           query: q.query,
           limit: q.limit,
@@ -479,8 +484,12 @@ export function registerTasks(r: Router, app: App): void {
     guard((c) => {
       const q = parseListQuery(c);
       if (typeof q === "string") return respondError(400, q);
+      const inc = parseIncludeHistorical(c);
+      if (typeof inc === "string") return respondError(400, inc);
+      const lifecycle = parseLifecycle(q.lifecycleRaw, inc);
+      if (typeof lifecycle !== "string") return respondError(400, lifecycle.error);
       try {
-        return jsonResponse(200, taskIndexFor(app.need().tasks).counts(q.query));
+        return jsonResponse(200, taskIndexFor(app.need().tasks).counts(q.query, lifecycle));
       } catch (e) {
         return respondError(500, errMessage(e));
       }
