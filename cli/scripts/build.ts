@@ -28,6 +28,32 @@ if (!goOk && process.env.KNOWNS_REQUIRE_PROXY === "1") process.exit(1);
 for (const target of list) {
   const out = join(cliDir, "dist", platformOf(target), exeName(target));
   try {
+    // A cross-target compile downloads that target's Bun runtime first; a failed download shows up
+    // as "Bundle failed". Retry twice, printing the real error each time (see compile()).
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await compileEngine();
+        break;
+      } catch (e) {
+        if (attempt >= 3) throw e;
+        console.warn(`warn ${target}: attempt ${attempt} failed, retrying: ${e}`);
+        await Bun.sleep(5000 * attempt);
+      }
+    }
+    console.log(`ok   ${target} -> dist/${platformOf(target)}/${exeName(target)}`);
+    if (goOk) {
+      buildLauncher(
+        target,
+        version,
+        join(cliDir, "dist", platformOf(target), launcherExeName(target)),
+      );
+      console.log(`ok   ${target} -> dist/${platformOf(target)}/${launcherExeName(target)}`);
+    }
+  } catch (e) {
+    failed++;
+    console.error(`FAIL ${target}: ${e}`);
+  }
+  async function compileEngine() {
     await compile(
       join(cliDir, "src", "bin.ts"),
       target,
@@ -41,18 +67,6 @@ for (const target of list) {
         ],
       },
     );
-    console.log(`ok   ${target} -> dist/${platformOf(target)}/${exeName(target)}`);
-    if (goOk) {
-      buildLauncher(
-        target,
-        version,
-        join(cliDir, "dist", platformOf(target), launcherExeName(target)),
-      );
-      console.log(`ok   ${target} -> dist/${platformOf(target)}/${launcherExeName(target)}`);
-    }
-  } catch (e) {
-    failed++;
-    console.error(`FAIL ${target}: ${e}`);
   }
 }
 process.exit(failed > 0 ? 1 : 0);
