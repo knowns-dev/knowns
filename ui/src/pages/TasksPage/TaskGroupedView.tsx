@@ -82,8 +82,10 @@ export function TaskGroupedView({ filters, onTotal, onTaskClick, onNewTask }: Ta
 		if (!counts) return null;
 		return statusFilter === "all" ? counts.total : (counts.byStatus[statusFilter] ?? 0);
 	}, [counts, statusFilter]);
+	const answered = keys.every((k) => feeds.column(k).status === "ready");
+	const emptyTotal = feeds.all.length > 0 ? feeds.all.length : answered ? total : null;
 	const failed = keys.some((k) => feeds.column(k).status === "error" && feeds.column(k).items.length === 0);
-	useEffect(() => onTotal?.(failed ? null : total), [total, failed, onTotal]);
+	useEffect(() => onTotal?.(failed ? null : emptyTotal), [emptyTotal, failed, onTotal]);
 
 	// Parents to filter by: those among the Tasks loaded so far that have subtasks.
 	const parentTasks = feeds.all.filter((t) => t.subtasks && t.subtasks.length > 0);

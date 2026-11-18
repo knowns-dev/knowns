@@ -295,9 +295,13 @@ export function TaskListView({ filters, onTotal, onTaskClick, onArchiveSelected 
 
 	const all = feeds.all;
 	const total = counts?.total ?? null;
+	// "Empty" is only claimed when the lists themselves answered and hold nothing: a lagging count or a
+	// loading list must never replace rows with the empty state.
+	const answered = keys.every((k) => feeds.column(k).status === "ready");
+	const emptyTotal = all.length > 0 ? all.length : answered ? (total ?? null) : null;
 	const failed = keys.some((k) => feeds.column(k).status === "error" && feeds.column(k).items.length === 0);
 	// A failed first page is not an empty project: report "unknown" so the page shows the error, not "No Tasks yet".
-	useEffect(() => onTotal?.(failed || searchTerm ? null : total), [total, failed, searchTerm, onTotal]);
+	useEffect(() => onTotal?.(failed || searchTerm ? null : emptyTotal), [emptyTotal, failed, searchTerm, onTotal]);
 
 	// Keep the selection to Tasks that still exist (archived rows leave the list).
 	useEffect(() => {
