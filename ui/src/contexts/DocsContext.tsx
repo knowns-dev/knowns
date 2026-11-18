@@ -44,7 +44,7 @@ function withCachedBody(doc: Doc, cache: Map<string, { key: string; content: str
 
 const DocsContext = createContext<DocsContextType | null>(null);
 
-const DOC_PAGE = 100;
+const DOC_PAGE = 200;
 
 export function DocsProvider({ children }: { children: React.ReactNode }) {
 	const location = useRouterState({ select: (state) => state.location });

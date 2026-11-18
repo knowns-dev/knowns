@@ -303,14 +303,18 @@ export function TaskListView({ filters, onTotal, onTaskClick, onArchiveSelected 
 	// A failed first page is not an empty project: report "unknown" so the page shows the error, not "No Tasks yet".
 	useEffect(() => onTotal?.(failed || searchTerm ? null : emptyTotal), [emptyTotal, failed, searchTerm, onTotal]);
 
-	// Keep the selection to Tasks that still exist (archived rows leave the list).
+	// Keep the selection to Tasks that still exist (archived rows leave the list). Only once every
+	// list has answered: while a list restarts (a search or grouping change settling) it is briefly
+	// empty, and that must not read as "the selected Tasks are gone".
+	const settled = keys.every((k) => feeds.column(k).status === "ready");
 	useEffect(() => {
+		if (!settled) return;
 		const ids = new Set(all.map((t) => t.id));
 		setSelected((current) => {
 			const next = current.filter((id) => ids.has(id));
 			return next.length === current.length ? current : next;
 		});
-	}, [all]);
+	}, [all, settled]);
 
 	// The Task column header shows id and title together; a click sorts by id on the server.
 	const onSortChange = useCallback((rules: SortRule[]) => {
