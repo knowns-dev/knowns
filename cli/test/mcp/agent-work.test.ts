@@ -112,8 +112,8 @@ describe("MCP tools record the agent", () => {
     });
     const got = await s.tasks({ action: "get", taskId: s.id });
     expect(got.workedBy?.client).toBe("claude-code");
-    const list = (await s.tasks({ action: "list" })) as unknown as TaskJson[];
-    expect(list.find((t) => t.id === s.id)?.workedBy?.client).toBe("claude-code");
+    const list = (await s.tasks({ action: "list" })) as unknown as { results: TaskJson[] };
+    expect(list.results.find((t) => t.id === s.id)?.workedBy?.client).toBe("claude-code");
   });
 
   test("the claim and the task file stay separate: nothing agent-related is in the task markdown", async () => {

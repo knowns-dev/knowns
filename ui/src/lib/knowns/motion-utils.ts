@@ -30,7 +30,8 @@ export function mergeRows<T>(prev: MotionRow<T>[], items: T[], keyOf: (item: T) 
     // Keep it after the nearest earlier row that is still there, so it leaves from where it was.
     let at = 0;
     for (let j = i - 1; j >= 0; j--) {
-      const idx = next.findIndex((r) => r.key === prev[j].key);
+      const prevKey = prev[j]?.key;
+      const idx = next.findIndex((r) => r.key === prevKey);
       if (idx >= 0) {
         at = idx + 1;
         break;

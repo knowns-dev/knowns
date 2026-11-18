@@ -1,7 +1,7 @@
 // Port of internal/storage/template_store.go: templates in .knowns/templates/ and
 // .knowns/imports/*/templates/. A template is a folder with a `_template.yaml`.
 
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type {
   PromptChoice,
@@ -11,6 +11,7 @@ import type {
   TemplatePrompt,
 } from "../../models/template.ts";
 import { goFsMessage, goNotExistReason } from "../../platform/goerror.ts";
+import { readFileRetrying } from "../core/fs-retry.ts";
 import { resolveSafe } from "../core/safe-path.ts";
 import { atomicWrite } from "../core/util.ts";
 import { asStr, parseYamlMap, readDirSorted } from "./internal.ts";
@@ -167,7 +168,7 @@ export class TemplateStore {
   ): Template {
     let data: string;
     try {
-      data = readFileSync(join(dir, "_template.yaml"), "utf8");
+      data = readFileRetrying(join(dir, "_template.yaml"), "utf8");
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       const file = join(dir, "_template.yaml");

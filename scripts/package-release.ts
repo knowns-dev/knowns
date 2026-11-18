@@ -25,15 +25,19 @@ export interface PlatformMap {
   /** Platform suffix shared by the npm package (@knowns/<npm>), the npm dir and the release asset. */
   npm: string;
   exe: string;
+  /** The Go launcher built by cli/scripts/proxy.ts (spec mcp-thin-proxy D10), under its build name. */
+  launcher: string;
+  /** The engine's installed name, next to the launcher (`knowns-engine[.exe]`). */
+  engine: string;
 }
 
 export const PLATFORMS: readonly PlatformMap[] = [
-  { dist: "darwin-arm64", npm: "darwin-arm64", exe: "knowns" },
-  { dist: "darwin-x64", npm: "darwin-x64", exe: "knowns" },
-  { dist: "linux-arm64", npm: "linux-arm64", exe: "knowns" },
-  { dist: "linux-x64", npm: "linux-x64", exe: "knowns" },
-  { dist: "windows-arm64", npm: "win-arm64", exe: "knowns.exe" },
-  { dist: "windows-x64", npm: "win-x64", exe: "knowns.exe" },
+  { dist: "darwin-arm64", npm: "darwin-arm64", exe: "knowns", launcher: "knowns.launcher", engine: "knowns-engine" },
+  { dist: "darwin-x64", npm: "darwin-x64", exe: "knowns", launcher: "knowns.launcher", engine: "knowns-engine" },
+  { dist: "linux-arm64", npm: "linux-arm64", exe: "knowns", launcher: "knowns.launcher", engine: "knowns-engine" },
+  { dist: "linux-x64", npm: "linux-x64", exe: "knowns", launcher: "knowns.launcher", engine: "knowns-engine" },
+  { dist: "windows-arm64", npm: "win-arm64", exe: "knowns.exe", launcher: "knowns.launcher.exe", engine: "knowns-engine.exe" },
+  { dist: "windows-x64", npm: "win-x64", exe: "knowns.exe", launcher: "knowns.launcher.exe", engine: "knowns-engine.exe" },
 ];
 
 /**
@@ -47,9 +51,43 @@ export const PLATFORMS: readonly PlatformMap[] = [
  */
 export const GO_UPDATE_ENTRY = "knowns-0.34-update.exe";
 
-/** Archive members in order; the first one carries the data, a second is a hard link to it. */
+/**
+ * Release archive members (spec mcp-thin-proxy D10). The rule: every file an older updater could
+ * pick is the full engine, so an old install ends working whichever one it takes.
+ *   knowns[.exe]            the engine, the only file with the exact name 0.34.x, 0.35.0 and the install
+ *                           scripts look for
+ *   knowns-engine[.exe]     hard link to it: the name the engine has once the install is split, and a
+ *                           `knowns-*` candidate for the updaters that accept that prefix
+ *   knowns-0.34-update.exe  (Windows) hard link, see GO_UPDATE_ENTRY
+ *   knowns.launcher[.exe]   the Go launcher. Its name neither equals `knowns` nor starts with
+ *                           `knowns-`, so no old matcher can pick it
+ *   layout.json             which member is installed under which name
+ */
+export const LAYOUT_FILE = "layout.json";
+
 export function archiveEntries(p: PlatformMap): string[] {
-  return p.npm.startsWith("win-") ? [`./${p.exe}`, `./${GO_UPDATE_ENTRY}`] : [`./${p.exe}`];
+  const win = p.npm.startsWith("win-");
+  return [
+    `./${p.exe}`,
+    `./${p.engine}`,
+    ...(win ? [`./${GO_UPDATE_ENTRY}`] : []),
+    `./${p.launcher}`,
+    `./${LAYOUT_FILE}`,
+  ];
+}
+
+/** What the new installers read: install `launcher` as `knowns` and `engine` as `knowns-engine`. */
+export function layoutJson(p: PlatformMap, version: string): string {
+  return `${JSON.stringify(
+    {
+      layout: 1,
+      version,
+      launcher: { file: p.launcher, installAs: p.exe },
+      engine: { file: p.exe, installAs: p.engine },
+    },
+    null,
+    2,
+  )}\n`;
 }
 
 export interface PackageOptions {
@@ -82,6 +120,10 @@ export function packageRelease(opts: PackageOptions): PackageResult {
   for (const p of platforms) {
     const bin = join(opts.distDir, p.dist, p.exe);
     if (!existsSync(bin)) throw new Error(`missing binary for ${p.npm}: ${bin}`);
+    const launcherBin = join(opts.distDir, p.dist, p.launcher);
+    if (!existsSync(launcherBin)) {
+      throw new Error(`missing launcher for ${p.npm}: ${launcherBin}`);
+    }
 
     const pkgDir = join(npmOut, `knowns-${p.npm}`);
     rmSync(pkgDir, { recursive: true, force: true });
@@ -91,10 +133,13 @@ export function packageRelease(opts: PackageOptions): PackageResult {
     );
     pkg.version = version;
     pkg.main = p.exe;
-    pkg.files = [p.exe];
+    // The npm package holds the installed names: the launcher is the `knowns` bin, the engine sits beside it.
+    pkg.files = [p.exe, p.engine];
     writeFileSync(join(pkgDir, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
-    cpSync(bin, join(pkgDir, p.exe));
+    cpSync(launcherBin, join(pkgDir, p.exe));
     chmodSync(join(pkgDir, p.exe), 0o755);
+    cpSync(bin, join(pkgDir, p.engine));
+    chmodSync(join(pkgDir, p.engine), 0o755);
     result.packages.push(pkgDir);
 
     // Release asset: the binary at the archive root as ./knowns[.exe], plus on Windows the
@@ -105,8 +150,12 @@ export function packageRelease(opts: PackageOptions): PackageResult {
     mkdirSync(stage, { recursive: true });
     cpSync(bin, join(stage, p.exe));
     chmodSync(join(stage, p.exe), 0o755);
+    cpSync(launcherBin, join(stage, p.launcher));
+    chmodSync(join(stage, p.launcher), 0o755);
+    writeFileSync(join(stage, LAYOUT_FILE), layoutJson(p, version));
     const entries = archiveEntries(p);
-    if (entries.length > 1) linkSync(join(stage, p.exe), join(stage, GO_UPDATE_ENTRY));
+    linkSync(join(stage, p.exe), join(stage, p.engine));
+    if (p.npm.startsWith("win-")) linkSync(join(stage, p.exe), join(stage, GO_UPDATE_ENTRY));
     // COPYFILE_DISABLE: macOS bsdtar otherwise adds a ._<name> AppleDouble entry for any file with
     // xattrs (com.apple.provenance on locally built binaries), which extracts as junk elsewhere.
     const tar = Bun.spawnSync(["tar", "-czf", asset, "-C", stage, ...entries], {

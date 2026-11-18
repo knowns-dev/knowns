@@ -36,12 +36,32 @@ Write-Host ""
 
 $removed = $false
 
-foreach ($name in @($Binary, $AliasBinary)) {
-    $target = Join-Path $InstallDir $name
+# The launcher is knowns.exe (and the kn.exe copy), the engine sits beside it as knowns-engine.exe
+# (spec mcp-thin-proxy D10), knowns-proxy.exe is the launcher's old name. The *.old, *.new and
+# *.tmp leftovers of an install or update go too; one still held by a running process stays and is
+# reported, the next install sweeps it.
+$names = @($Binary, $AliasBinary, "knowns-engine.exe", "knowns-proxy.exe")
+$targets = @()
+foreach ($name in $names) {
+    $targets += (Join-Path $InstallDir $name)
+    $targets += @(Get-ChildItem -Path $InstallDir -Filter "$name.*" -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+}
+foreach ($target in ($targets | Select-Object -Unique)) {
     if (Test-Path $target) {
-        Remove-Item -Path $target -Force
-        Write-Host "  + Removed $target" -ForegroundColor Green
-        $removed = $true
+        try {
+            Remove-Item -Path $target -Force -ErrorAction Stop
+            Write-Host "  + Removed $target" -ForegroundColor Green
+            $removed = $true
+        } catch {
+            # A running exe cannot be deleted but can be renamed out of the way.
+            try {
+                Move-Item -Path $target -Destination "$target.old.$([DateTime]::UtcNow.Ticks)" -Force -ErrorAction Stop
+                Write-Host "  + Moved aside $target (in use; remove the .old file after it exits)" -ForegroundColor Yellow
+                $removed = $true
+            } catch {
+                Write-Host "  x Could not remove $target ($($_.Exception.Message))" -ForegroundColor Red
+            }
+        }
     }
 }
 

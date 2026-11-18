@@ -60,6 +60,11 @@ jobs:
           go-version-file: go.mod
           cache: false
       # The Go binary embeds ui/dist (ui/embed.go), so the UI must be built first.
+      # The Go launcher (the `knowns` command, spec mcp-thin-proxy D10): its tests build it and a fake
+      # engine, and run on all three OSes. Linux and macOS cover TTY detection under a pty (script(1)).
+      - name: Test the launcher
+        working-directory: proxy
+        run: go test -count=1 -timeout 10m ./...
       - name: Build UI
         working-directory: ui
         run: bun install --frozen-lockfile && bun run build
@@ -99,10 +104,12 @@ jobs:
         run: bun run test
       # Windows tests shell out to `tar` with C:\ paths: under Git Bash that is GNU tar, which reads
       # "C:" as a remote host. pwsh resolves the Windows tar.exe, as on a Windows PC.
+      # Windows runs the suite in three bun processes (cli/scripts/test-groups.ts): one process over
+      # the whole suite lived ~280 s and then Bun 1.3.12 panicked (exit 3, after ui-host.test.ts).
       - name: Unit tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: bun run test
+        run: bun run test:groups
       # The compiled-binary tests compare against the Go 0.34.1 oracle (and unbuilt source reports
       # that baseline too, cli/src/version.ts), so the host test build is stamped with it.
       # Releases use the tag.
@@ -116,19 +123,51 @@ jobs:
       - name: Unit tests against compiled binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: bun run test
+        run: bun run test:groups
+      - name: Proxy (vet and tests)
+        working-directory: proxy
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go vet ./...
+          go test -count=1 ./...
       - name: Budget (size and startup)
         run: bun run budget
+      # Spec mcp-thin-proxy D7 / NFR-1: 5 proxy sessions plus the daemon and the UI under load and
+      # idle, p95 per tool against the in-process engine, and no process, descriptor, socket or pipe
+      # left after close. Limits live in cli/scripts/proxy-budget.config.json; memory limits are the
+      # spec's on every OS, and on hosted runners (CI=true) only idle CPU (3%) and p95 (x1.5 + 25 ms)
+      # get slack.
+      - name: Proxy resource budget (NFR-1)
+        run: bun scripts/proxy-budget.ts --ui --json proxy-budget.json
+      - name: Upload proxy budget numbers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxy-budget-${{ matrix.os }}
+          path: cli/proxy-budget.json
+          if-no-files-found: ignore
       # Built the way publish.yml builds a release: the version comes from KNOWNS_VERSION (the tag).
       - name: Cross-compile all targets and check sizes
         if: runner.os == 'Linux'
         env:
           KNOWNS_VERSION: 1.0.0-ci
+          KNOWNS_REQUIRE_PROXY: "1"
         run: |
           bun run build
-          bun run budget dist/*/knowns*
+          bun run budget dist/*/knowns dist/*/knowns.exe
           got=$(NO_UPDATE_CHECK=1 dist/linux-x64/knowns --version)
           [ "$got" = "knowns version 1.0.0-ci" ] || { echo "FATAL: --version printed: $got"; exit 1; }
+          # In dist/ the engine is `knowns`, not knowns-engine: stage an install (launcher + engine),
+          # since a release launcher takes no engine from the environment.
+          stage=$(mktemp -d)
+          cp dist/linux-x64/knowns.launcher "$stage/knowns"
+          cp dist/linux-x64/knowns "$stage/knowns-engine"
+          got=$(NO_UPDATE_CHECK=1 "$stage/knowns" --version)
+          [ "$got" = "knowns version 1.0.0-ci" ] || { echo "FATAL: launcher --version printed: $got"; exit 1; }
+          for t in darwin-arm64 darwin-x64 linux-x64 linux-arm64 windows-x64 windows-arm64; do
+            ls dist/$t/knowns.launcher* >/dev/null || { echo "FATAL: no launcher for $t"; exit 1; }
+          done
       - name: Package release (npm packages and Go-compatible assets)
         if: runner.os == 'Linux'
         run: |

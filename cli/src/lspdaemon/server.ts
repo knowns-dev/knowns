@@ -1,4 +1,5 @@
 // Port of server.go: the project-scoped daemon that wraps one lsp.Manager and serves local clients.
+import { existsSync } from "node:fs";
 import type net from "node:net";
 import { join } from "node:path";
 import { type Ctx, withTimeout } from "../lsp/context.ts";
@@ -78,6 +79,18 @@ export async function runWithOptions(ctx: Ctx, root: string, opts: RunOptions): 
 interface Lease {
   owner: string;
   expiresAt: number;
+  /** The holder's pid; a lease whose holder is gone no longer keeps the daemon alive. */
+  pid?: number;
+}
+
+/** True unless the OS says pid does not exist (EPERM means it exists). */
+export function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as { code?: string }).code === "EPERM";
+  }
 }
 
 export class Server {
@@ -122,19 +135,28 @@ export class Server {
       let timer: ReturnType<typeof setInterval> | undefined;
       if (ctx?.aborted) return closeAll();
       ctx?.addEventListener("abort", onAbort, { once: true });
-      if (this.idleTimeoutMs > 0) {
-        let interval = this.idleTimeoutMs / 4;
-        if (interval <= 0 || interval > 1000) interval = 1000;
-        if (interval < 20) interval = 20;
-        timer = setInterval(() => {
-          if (this.shouldExitIdle(Date.now())) {
-            process.stderr.write(
-              `[knowns-lsp-daemon] idle timeout reached; exiting project=${this.identity.root} timeout=${this.idleTimeoutMs}ms\n`,
-            );
-            closeAll();
-          }
-        }, interval);
-      }
+      let interval = this.idleTimeoutMs / 4;
+      if (interval <= 0 || interval > 1000) interval = 1000;
+      if (interval < 20) interval = 20;
+      let missingTicks = 0;
+      timer = setInterval(() => {
+        // Not in Go: a project directory that is gone leaves nothing to serve, however long the
+        // leases run. Two ticks in a row, so a directory being replaced is not mistaken for gone.
+        missingTicks = existsSync(this.identity.root) ? 0 : missingTicks + 1;
+        if (missingTicks >= 2) {
+          process.stderr.write(
+            `[knowns-lsp-daemon] project directory is gone; exiting project=${this.identity.root}\n`,
+          );
+          closeAll();
+          return;
+        }
+        if (this.shouldExitIdle(Date.now())) {
+          process.stderr.write(
+            `[knowns-lsp-daemon] idle timeout reached; exiting project=${this.identity.root} timeout=${this.idleTimeoutMs}ms\n`,
+          );
+          closeAll();
+        }
+      }, interval);
     });
   }
 
@@ -240,7 +262,7 @@ export class Server {
           resp.statuses = await this.runtimeStatuses(ctx);
           break;
         case "lease_acquire":
-          this.acquireLease(req.owner ?? "", req.ttlMillis ?? 0);
+          this.acquireLease(req.owner ?? "", req.ttlMillis ?? 0, req.ownerPid);
           resp.statuses = await this.runtimeStatuses(ctx);
           break;
         case "lease_release":
@@ -312,7 +334,7 @@ export class Server {
     const owners: string[] = [];
     let latest = 0;
     for (const [owner, lease] of [...this.leases]) {
-      if (lease.expiresAt <= now) {
+      if (lease.expiresAt <= now || (lease.pid !== undefined && !processAlive(lease.pid))) {
         this.leases.delete(owner);
         continue;
       }
@@ -323,11 +345,12 @@ export class Server {
     return [owners, latest];
   }
 
-  private acquireLease(ownerIn: string, ttlMillis: number): void {
+  private acquireLease(ownerIn: string, ttlMillis: number, ownerPid?: number): void {
     const owner = validateLeaseOwner(ownerIn);
     const ttl = ttlMillis > 0 ? ttlMillis : leaseTTLFromEnv();
     const expiresAt = Date.now() + ttl;
-    this.leases.set(owner, { owner, expiresAt });
+    const pid = Number.isInteger(ownerPid) && (ownerPid as number) > 0 ? ownerPid : undefined;
+    this.leases.set(owner, { owner, expiresAt, pid });
     process.stderr.write(
       `[knowns-lsp-daemon] lease acquired owner=${owner} ttl=${ttl}ms expires=${formatDeadline(expiresAt)}\n`,
     );

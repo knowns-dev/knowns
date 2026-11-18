@@ -8,6 +8,7 @@ import { partialOf } from "../domain/tasklifecycle/errors.ts";
 import { responseToWire } from "../domain/tasklifecycle/wire.ts";
 import type { Manager as LspManager } from "../lsp/manager.ts";
 import type { Project } from "../models/config.ts";
+import { onRuntimeStatusChange } from "../runtime/status-events.ts";
 import { Manager } from "../storage/core/manager.ts";
 import type { Store } from "../storage/core/store.ts";
 import { Registry } from "../storage/stores/registry.ts";
@@ -26,7 +27,9 @@ import {
   respondError,
   routingPath,
 } from "./http.ts";
+import { watchJobQueues } from "./job-watch.ts";
 import { createLspManager, lspRuntimeStatuses, registerLsp } from "./lsp.ts";
+import { OperationRegistry } from "./operations.ts";
 import { registerConfig } from "./routes/config.ts";
 import { registerDecisions } from "./routes/decisions.ts";
 import { registerDocs } from "./routes/docs.ts";
@@ -40,9 +43,11 @@ import {
   registerSmall,
   registerWorkspaces,
 } from "./routes/misc.ts";
+import { registerOperations } from "./routes/operations.ts";
 import { lifecycleService, registerTasks } from "./routes/tasks.ts";
 import { registerTemplates, registerValidate } from "./routes/templates.ts";
 import { registerTime } from "./routes/time.ts";
+import { ServiceMonitor, type ServiceStatusLike } from "./service-monitor.ts";
 import { detectRuntimeServices, goDurationSeconds, registerRuntimeServices } from "./services.ts";
 import { SSEBroker } from "./sse.ts";
 import { serveUi } from "./static.ts";
@@ -51,39 +56,11 @@ import { registerTunnel, ServerTunnelManager } from "./tunnel.ts";
 export type { ServerOptions };
 
 const SERVICE_STATUS_INTERVAL_MS = 7000;
+/** The service monitor runs only this long after a request that shows runtime or service status. */
+const SERVICE_WATCH_WINDOW_MS = 30_000;
+const SERVICE_IDLE_INTERVAL_MS = 30_000;
 const TASK_SWEEP_INTERVAL_MS = 3_600_000;
-
-interface ServiceStatusLike {
-  name: string;
-  type: string;
-  status: string;
-  pid?: number;
-  port?: number;
-  uptime?: number;
-  enabledInConfig: boolean;
-  details: Record<string, string>;
-}
-
-const serviceKey = (s: ServiceStatusLike): string =>
-  s.details.language ? `${s.type}:${s.details.language}` : `${s.type}:${s.name}`;
-
-function serviceJson(s: ServiceStatusLike): Record<string, unknown> {
-  const keys = Object.keys(s.details).sort((a, b) =>
-    Buffer.compare(Buffer.from(a), Buffer.from(b)),
-  );
-  const details: Record<string, string> = {};
-  for (const k of keys) details[k] = s.details[k] as string;
-  return {
-    name: s.name,
-    type: s.type,
-    status: s.status,
-    ...(s.pid ? { pid: s.pid } : {}),
-    ...(s.port ? { port: s.port } : {}),
-    ...(s.uptime ? { uptime: s.uptime } : {}),
-    enabledInConfig: s.enabledInConfig,
-    ...(keys.length > 0 ? { details } : {}),
-  };
-}
+const FIRST_SWEEP_DELAY_MS = 5_000;
 
 export class Server {
   readonly sse = new SSEBroker();
@@ -98,10 +75,11 @@ export class Server {
   private readonly shutdownPromise = new Promise<void>((r) => {
     this.shutdownResolve = r;
   });
-  private monitorTimer: ReturnType<typeof setTimeout> | undefined;
+  private serviceMonitor: ServiceMonitor | undefined;
+  private unsubStatus: (() => void) | undefined;
+  private readonly operations: OperationRegistry;
   private sweepTimer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
-  private prevServices: ServiceStatusLike[] = [];
   private readonly app: App;
 
   constructor(
@@ -139,8 +117,16 @@ export class Server {
       }
     }
 
+    this.operations = new OperationRegistry({
+      emit: (name, data) => this.sse.broadcast({ type: name, data }),
+      jobs: async () => import("../runtime/job-operations.ts"),
+      watchJobs: (poke) => watchJobQueues(poke),
+    });
+    this.sse.onChange = (n) => this.operations.clientsChanged(n);
     this.app = {
       sse: this.sse,
+      operations: this.operations,
+      watchServices: () => this.watchServices(),
       auth: this.auth,
       manager: this.manager,
       registry: this.registry,
@@ -180,9 +166,13 @@ export class Server {
       return jsonResponse(200, { status: "shutting down" });
     });
     r.get("/api/status", (c) => this.handleStatus(c));
-    r.get("/api/runtime/ps", () => this.handleRuntimePs());
+    r.get("/api/runtime/ps", () => {
+      this.watchServices();
+      return this.handleRuntimePs();
+    });
     r.post("/api/runtime/retry", (c) => this.handleRuntimeRetry(c));
 
+    registerOperations(r, app);
     registerTasks(r, app);
     registerDocs(r, app);
     registerConfig(r, app);
@@ -418,49 +408,33 @@ export class Server {
     }
   }
 
+  /** Tells open tabs the runtime status changed, so the Runtime page does not have to poll for it. */
+  private startRuntimeStatusEvents(): void {
+    let pending = false;
+    this.unsubStatus = onRuntimeStatusChange(() => {
+      if (pending || this.sse.size === 0) return;
+      pending = true;
+      // Coalesce a burst (a lease and a job change together) into one event.
+      setTimeout(() => {
+        pending = false;
+        this.sse.broadcast({ type: "runtime:status", data: {} });
+      }, 250).unref();
+    });
+  }
+
+  watchServices(): void {
+    this.serviceMonitor?.watch();
+  }
+
   private startServiceMonitor(): void {
-    const tick = async (): Promise<void> => {
-      if (this.stopped) return;
-      const next = await this.snapshotServices(false);
-      if (next && !this.stopped) {
-        const prevBy = new Map(this.prevServices.map((s) => [serviceKey(s), s]));
-        const now = new Date().toISOString().replace(/\.(\d{3})Z$/, ".$1000Z");
-        const changes: Record<string, unknown>[] = [];
-        for (const s of next) {
-          const prev = prevBy.get(serviceKey(s));
-          if (
-            !prev ||
-            (prev.status === s.status &&
-              prev.pid === s.pid &&
-              prev.port === s.port &&
-              prev.enabledInConfig === s.enabledInConfig)
-          ) {
-            continue;
-          }
-          changes.push({
-            name: s.name,
-            type: s.type,
-            previousStatus: prev.status,
-            status: s.status,
-            timestamp: now,
-            service: serviceJson(s),
-          });
-        }
-        this.prevServices = next;
-        if (changes.length > 0) this.sse.broadcast({ type: "service:status", data: changes });
-      }
-      if (!this.stopped) {
-        this.monitorTimer = setTimeout(tick, SERVICE_STATUS_INTERVAL_MS);
-        this.monitorTimer.unref();
-      }
-    };
-    void (async () => {
-      const first = await this.snapshotServices(false);
-      if (first) this.prevServices = first;
-      if (this.stopped) return;
-      this.monitorTimer = setTimeout(tick, SERVICE_STATUS_INTERVAL_MS);
-      this.monitorTimer.unref();
-    })();
+    this.serviceMonitor = new ServiceMonitor({
+      snapshot: () => this.snapshotServices(false),
+      emit: (changes) => this.sse.broadcast({ type: "service:status", data: changes }),
+      watchWindowMs: SERVICE_WATCH_WINDOW_MS,
+      statusIntervalMs: SERVICE_STATUS_INTERVAL_MS,
+      idleIntervalMs: SERVICE_IDLE_INTERVAL_MS,
+    });
+    this.serviceMonitor.start();
   }
 
   /** StartTaskAutoArchiveSweeper: one bounded sweep at start, then hourly. */
@@ -485,11 +459,16 @@ export class Server {
         });
       }
     };
-    void run().finally(() => {
-      if (this.stopped) return;
-      this.sweepTimer = setInterval(() => void run(), TASK_SWEEP_INTERVAL_MS);
-      this.sweepTimer.unref();
-    });
+    // The first sweep waits until the server has answered its first requests: listing thousands of
+    // Tasks blocks the event loop for a second or two.
+    const first = setTimeout(() => {
+      void run().finally(() => {
+        if (this.stopped) return;
+        this.sweepTimer = setInterval(() => void run(), TASK_SWEEP_INTERVAL_MS);
+        this.sweepTimer.unref();
+      });
+    }, FIRST_SWEEP_DELAY_MS);
+    first.unref();
   }
 
   private portFile(): string | undefined {
@@ -522,6 +501,17 @@ export class Server {
     if (this.opts.tunnel && !this.auth.hasPassword()) {
       throw new Error("tunnel requires password protection");
     }
+    this.begin(bun);
+    const onSignal = (): void => this.shutdownResolve?.();
+    process.on("SIGINT", onSignal);
+    process.on("SIGTERM", onSignal);
+    await this.shutdownPromise;
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+    await this.shutdown();
+  }
+
+  private begin(bun: ReturnType<typeof Bun.serve>): void {
     this.bun = bun;
     this.startTaskSweeper();
     const pf = this.portFile();
@@ -533,16 +523,33 @@ export class Server {
         process.stderr.write(`warn: could not write .server-port: ${errMessage(e)}\n`);
       }
     }
+    this.startRuntimeStatusEvents();
     this.startServiceMonitor();
     if (this.opts.tunnel) void this.autoStartTunnel();
+  }
 
-    const onSignal = (): void => this.shutdownResolve?.();
-    process.on("SIGINT", onSignal);
-    process.on("SIGTERM", onSignal);
-    await this.shutdownPromise;
-    process.off("SIGINT", onSignal);
-    process.off("SIGTERM", onSignal);
-    await this.shutdown();
+  /**
+   * Serves on a listener the caller owns, inside a process that is not this server's (the runtime
+   * daemon, KN-B3NWK3): no signal handlers, and the returned promise settles after POST
+   * /api/shutdown or stop() has cleaned up, so a stopped listener frees its port at once.
+   */
+  attach(bun: ReturnType<typeof Bun.serve>): {
+    done: Promise<void>;
+    stop(): void;
+    onClients(cb: (n: number) => void): void;
+  } {
+    this.begin(bun);
+    const done = this.shutdownPromise.then(() => this.shutdown());
+    return {
+      done,
+      stop: () => this.shutdownResolve?.(),
+      onClients: (cb) => {
+        this.sse.onChange = (n) => {
+          this.operations.clientsChanged(n);
+          cb(n);
+        };
+      },
+    };
   }
 
   private async autoStartTunnel(): Promise<void> {
@@ -560,16 +567,35 @@ export class Server {
 
   private async shutdown(): Promise<void> {
     this.stopped = true;
-    if (this.monitorTimer) clearTimeout(this.monitorTimer);
-    if (this.sweepTimer) clearInterval(this.sweepTimer);
-    this.sse.closeAll();
-    this.bun?.stop(true);
-    const pf = this.portFile();
-    if (pf) rmSync(pf, { force: true });
-    const status = this.tunnel.status();
-    if (status.running && status.startedByUs) await this.tunnel.stop().catch(() => undefined);
-    if (this.lspManager) await this.lspManager.stopAll(undefined).catch(() => undefined);
-    await this.releaseLspLease();
+    // Each step is independent: one failing (a file busy on Windows) must not skip the rest, above
+    // all the one that frees the port, or reject into a process that serves other sessions.
+    const step = async (fn: () => unknown): Promise<void> => {
+      try {
+        await fn();
+      } catch {
+        // best effort
+      }
+    };
+    await step(() => {
+      this.serviceMonitor?.stop();
+      if (this.sweepTimer) clearInterval(this.sweepTimer);
+    });
+    await step(() => this.unsubStatus?.());
+    await step(() => this.operations.close());
+    await step(() => this.sse.closeAll());
+    await step(() => this.bun?.stop(true));
+    await step(() => {
+      const pf = this.portFile();
+      if (pf) rmSync(pf, { force: true });
+    });
+    await step(async () => {
+      const status = this.tunnel.status();
+      if (status.running && status.startedByUs) await this.tunnel.stop().catch(() => undefined);
+    });
+    await step(async () => {
+      if (this.lspManager) await this.lspManager.stopAll(undefined).catch(() => undefined);
+    });
+    await step(() => this.releaseLspLease());
   }
 
   /** Requests a graceful stop (tests and the init --open path). */

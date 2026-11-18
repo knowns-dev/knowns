@@ -1,11 +1,12 @@
 // The Tasks board, on Knowns UI's KanbanBoard: keyboard and touch drag that saves status and order,
 // swimlanes per assignee that reassign, quick add, and column visibility saved to config.
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Eye, EyeOff, FileText } from "lucide-react";
 import type { Task, TaskStatus } from "@/ui/models/task";
 import { getTaskLifecycleState } from "@/ui/models/taskLifecycle";
 import { cn } from "@/ui/lib/utils";
 import { agentIcon, agentName } from "@/ui/lib/agent";
+import { LoadMore } from "../molecules/LoadMore";
 import { TaskLifecycleBadge } from "../molecules/TaskLifecycleBadge";
 import { api } from "../../api/client";
 import { useConfig } from "../../contexts/ConfigContext";
@@ -91,7 +92,7 @@ function toCard(task: Task): KanbanCard {
 
 const hasFooter = (task: Task) =>
 	!!task.workedBy ||
-	!!task.description || !!task.spec || getTaskLifecycleState(task) !== "active";
+	!!task.description || !!task.descriptionPreview || !!task.spec || getTaskLifecycleState(task) !== "active";
 
 /** What the old board showed under the title: description, spec link, and a non-active lifecycle. */
 function CardFooter({ task }: { task: Task }) {
@@ -110,8 +111,8 @@ function CardFooter({ task }: { task: Task }) {
 					<span className="truncate">{agentName(task.workedBy.client)}</span>
 				</span>
 			)}
-			{task.description && (
-				<p className="line-clamp-2 text-xs leading-4 text-muted-foreground">{task.description}</p>
+			{(task.description ?? task.descriptionPreview) && (
+				<p className="line-clamp-2 text-xs leading-4 text-muted-foreground">{task.description ?? task.descriptionPreview}</p>
 			)}
 			{(task.spec || lifecycle !== "active") && (
 				<div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -130,6 +131,9 @@ function CardFooter({ task }: { task: Task }) {
 		</div>
 	);
 }
+
+/** Cards a column renders first, and how many more each step adds (KN-F1DQ03). */
+const COLUMN_PAGE = 50;
 
 interface BoardProps {
 	tasks: Task[];
@@ -197,7 +201,34 @@ export default function Board({ tasks, onTasksUpdate, onTaskClick }: BoardProps)
 		.filter((s) => visible.has(s))
 		.map((s) => ({ id: s, title: columnLabel(s), tone: TONE_BY_COLOR[statusColors[s] ?? "gray"] ?? "neutral" }));
 
-	const cards = useMemo(() => sortTasks(tasks).map(toCard), [tasks]);
+	// A column renders its first page of cards and grows as the user scrolls to its end.
+	const [shown, setShown] = useState<Record<string, number>>({});
+	const cards = useMemo(() => {
+		const perColumn = new Map<string, number>();
+		const out: Task[] = [];
+		for (const task of sortTasks(tasks)) {
+			const n = perColumn.get(task.status) ?? 0;
+			perColumn.set(task.status, n + 1);
+			if (n < (shown[task.status] ?? COLUMN_PAGE)) out.push(task);
+		}
+		return out.map(toCard);
+	}, [tasks, shown]);
+	const columnCounts = useMemo(() => Object.fromEntries(countByStatus), [countByStatus]);
+	const renderColumnFooter = useCallback(
+		(column: KanbanColumn) => {
+			const total = columnCounts[column.id] ?? 0;
+			const have = shown[column.id] ?? COLUMN_PAGE;
+			if (total <= have) return null;
+			return (
+				<LoadMore
+					remaining={total - have}
+					pageSize={COLUMN_PAGE}
+					onMore={() => setShown((s) => ({ ...s, [column.id]: (s[column.id] ?? COLUMN_PAGE) + COLUMN_PAGE }))}
+				/>
+			);
+		},
+		[columnCounts, shown],
+	);
 
 	const people: KanbanPerson[] = useMemo(() => {
 		const ids = [...new Set(tasks.map((t) => t.assignee).filter((a): a is string => !!a))];
@@ -219,7 +250,7 @@ export default function Board({ tasks, onTasksUpdate, onTaskClick }: BoardProps)
 					.updateTask(task.id, { assignee: card.assignee ?? "" })
 					.catch((err: unknown) => {
 						toast.error("Failed to reassign", { description: err instanceof Error ? err.message : String(err) });
-						api.getTasks().then(onTasksUpdate).catch(console.error);
+						api.getTasks({ summary: true }).then(onTasksUpdate).catch(console.error);
 					});
 			}
 		},
@@ -253,7 +284,7 @@ export default function Board({ tasks, onTasksUpdate, onTaskClick }: BoardProps)
 					await api.reorderTasks(orders);
 				} catch (err) {
 					toast.error("Failed to update", { description: err instanceof Error ? err.message : String(err) });
-					api.getTasks().then(onTasksUpdate).catch(console.error);
+					api.getTasks({ summary: true }).then(onTasksUpdate).catch(console.error);
 				}
 			})();
 		},
@@ -284,6 +315,8 @@ export default function Board({ tasks, onTasksUpdate, onTaskClick }: BoardProps)
 			columns={columns}
 			people={people}
 			cards={cards}
+			columnCounts={columnCounts}
+			renderColumnFooter={renderColumnFooter}
 			onCardsChange={handleCardsChange}
 			onMove={handleMove}
 			onAddCard={handleAddCard}

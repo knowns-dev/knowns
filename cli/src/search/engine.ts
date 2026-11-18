@@ -266,9 +266,9 @@ export class Engine {
     if (opts.type && opts.type !== "all" && opts.type !== "task") return opts;
     const { tasks } = this.storage;
     await this.storage.ctx.withTaskLifecycleLock(async () => {
-      const active = tasks.listActive();
+      const active = tasks.listActiveReadOnly();
       if (opts.taskVisibility === "active-done-archived") {
-        for (const task of tasks.listArchived()) {
+        for (const task of tasks.listArchivedReadOnly()) {
           if (!tasks.isIdReserved(task.id)) snapshot.set(task.id, task);
         }
       }
@@ -306,8 +306,8 @@ export class Engine {
     const { storage } = this;
     return {
       tasks: (opts) =>
-        opts.taskSnapshot ? [...opts.taskSnapshot.values()] : storage.tasks.listActive(),
-      docs: () => storage.docs.list(),
+        opts.taskSnapshot ? [...opts.taskSnapshot.values()] : storage.tasks.listActiveReadOnly(),
+      docs: () => storage.docs.listReadOnly(),
       memories: () => storage.memory.list(""),
       decisions: () => storage.decisions.list(),
     };

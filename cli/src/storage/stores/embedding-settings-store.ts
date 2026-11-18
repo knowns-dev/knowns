@@ -2,7 +2,7 @@
 // model registry at ~/.knowns/settings.json. Unknown keys on the file, on providers and on models
 // survive a load/save round trip (AC-6); when any are present Go marshals through a map, so the
 // object's keys come out sorted - reproduced here.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   normalizeProjectSettings,
@@ -10,6 +10,7 @@ import {
   validateProjectSettings,
 } from "../../models/config.ts";
 import { parseBoundary } from "../../schema/index.ts";
+import { readFileRetrying } from "../core/fs-retry.ts";
 import { globalRootPath } from "../core/global-root.ts";
 import { goJsonStringify, parseJsonPreservingNumbers } from "../core/util.ts";
 import { settingsToGo } from "./config-store.ts";
@@ -219,7 +220,7 @@ export class EmbeddingSettingsStore {
     }
     let raw: unknown;
     try {
-      raw = parseJsonPreservingNumbers(readFileSync(this.filePath, "utf8"));
+      raw = parseJsonPreservingNumbers(readFileRetrying(this.filePath, "utf8"));
     } catch (e) {
       throw new Error(`parse embedding settings: ${(e as Error).message}`);
     }

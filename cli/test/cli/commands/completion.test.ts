@@ -2,6 +2,7 @@
 // --no-descriptions variants and help text, and the hidden __complete protocol (candidates plus
 // the `:<directive>` line) for commands, subcommands, flags and flag values.
 import { describe, expect, test } from "bun:test";
+import { withoutD9 } from "../../helpers/d9.ts";
 import { withoutD13 } from "../../helpers/d13.ts";
 import { withoutD14 } from "../../helpers/d14.ts";
 import { withoutHotfix } from "../../helpers/kn-prgzms.ts";
@@ -14,7 +15,8 @@ async function same(args: string[], env: Record<string, string> = {}): Promise<v
   const raw = await runTs(args, { env });
   // A bare `setup` candidate is also the root `knowns setup` command, so D14 applies after `qdrant` only.
   const d13 = withoutHotfix(withoutD13(raw.stdout));
-  const ts = { ...raw, stdout: args.includes("qdrant") ? withoutD14(d13) : d13 };
+  const d14 = args.includes("qdrant") ? withoutD14(d13) : d13;
+  const ts = { ...raw, stdout: args.includes("browser") ? withoutD9(d14) : d14 };
   expect(ts).toEqual(go);
 }
 
@@ -158,6 +160,12 @@ describe("__complete protocol matches Go", () => {
     t(`__complete ${label}`, () => same(["__complete", ...line]));
     t(`__completeNoDesc ${label}`, () => same(["__completeNoDesc", ...line]));
   }
+
+  test("browser completes the D9 flags the oracle does not have", async () => {
+    const out = (await runTs(["__complete", "browser", "--"])).stdout;
+    expect(out).toContain("--foreground");
+    expect(out).toContain("--stop");
+  });
 
   t("no arguments is an error", () => same(["__complete"]));
   t("COBRA_COMPLETION_DESCRIPTIONS=0 drops descriptions", () =>

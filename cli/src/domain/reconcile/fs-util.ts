@@ -1,7 +1,8 @@
 // Filesystem helpers of internal/storage/reconciler.go: the stable read, the containment test and
 // the Go-shaped errors the reconciler wraps its diagnostics in.
-import { lstatSync, readFileSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { readFileRetrying } from "../../storage/core/fs-retry.ts";
 import { HistoryConflictError } from "../../storage/history/records.ts";
 
 /** ErrReconcileUnsafe. */
@@ -93,7 +94,7 @@ export function stableRead(path: string): Buffer {
   };
   const read = () => {
     try {
-      return readFileSync(path);
+      return readFileRetrying(path);
     } catch (e) {
       throw asPathError(e, "open", path);
     }

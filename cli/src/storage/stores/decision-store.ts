@@ -1,5 +1,6 @@
 // Port of internal/storage/decision_store.go: System Decisions in .knowns/decisions/.
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
   type DecisionEntry,
@@ -12,6 +13,7 @@ import {
   validDecisionReviewState,
   validDecisionStatus,
 } from "../../models/decision.ts";
+import { readUtf8Retrying } from "../core/fs-retry.ts";
 import type { Store } from "../core/store.ts";
 import { atomicWrite, goTrimSpace, splitFrontmatter } from "../core/util.ts";
 import {
@@ -743,7 +745,7 @@ export class DecisionStore {
       const path = join(this.decisionsDir(), decisionFileName(d.id));
       let data: string;
       try {
-        data = readFileSync(path, "utf8");
+        data = readUtf8Retrying(path);
       } catch (e) {
         throw new Error(`snapshot decision "${d.id}": ${(e as Error).message}`);
       }
@@ -777,7 +779,7 @@ export class DecisionStore {
   parseFile(abs: string): DecisionEntry {
     let data: string;
     try {
-      data = readFileSync(abs, "utf8");
+      data = readUtf8Retrying(abs);
     } catch (e) {
       throw new Error(`parse decision ${abs}: ${(e as Error).message}`);
     }

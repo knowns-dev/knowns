@@ -399,7 +399,7 @@ test.describe("Audit Trail", () => {
 
 		await page.goto(`${server.baseURL}/audit`);
 
-		const errorState = page.getByRole("alert");
+		const errorState = page.getByRole("alert").filter({ hasText: /\S/ });
 		await expect(errorState).toContainText("Audit activity unavailable");
 		await expect(errorState.getByRole("button", { name: "Try again" })).toBeVisible();
 		await expect(

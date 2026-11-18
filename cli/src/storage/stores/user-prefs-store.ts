@@ -1,7 +1,8 @@
 // Port of internal/storage/user_prefs_store.go: ~/.knowns/preferences.json.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { readFileRetrying } from "../core/fs-retry.ts";
 import { goJsonStringify, parseJsonPreservingNumbers } from "../core/util.ts";
 import { isNotFound } from "./internal.ts";
 
@@ -16,7 +17,7 @@ export class UserPrefsStore {
   load(): UserPrefs {
     let data: string;
     try {
-      data = readFileSync(this.filePath, "utf8");
+      data = readFileRetrying(this.filePath, "utf8");
     } catch (e) {
       if (isNotFound(e)) return {};
       throw new Error(`read user prefs: ${(e as Error).message}`);

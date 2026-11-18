@@ -8,7 +8,7 @@
 // projectDefaults, or from the existing config with --force, so those are the way platform
 // selections are exercised here. MCP configs and skills belong to `setup` / `sync`, not init; the
 // "no extra files" assertions prove init writes none of them.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
@@ -25,6 +25,13 @@ import {
 } from "./init-harness.ts";
 
 const cases = hasGoBin ? describe : describe.skip;
+
+// Every case here starts real Go and Bun processes (up to four init runs per test, two sides each).
+// On a loaded macOS runner running the compiled-binary job, "a second run and --force see the same
+// project" took more than the 5 s test limit and was cut at exactly 5026 ms; its init steps do not
+// install language servers (the harness sets KNOWN_LSP_AUTO_INSTALL=0 for both sides). Set here, as
+// the server diff suites do, so this file does not depend on the global default.
+setDefaultTimeout(60_000);
 
 function put(dir: string, rel: string, text: string): void {
   const p = join(dir, rel);

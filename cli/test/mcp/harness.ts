@@ -9,6 +9,7 @@ export const GO_BIN = process.env.KNOWNS_GO_BIN;
 export const hasGoBin = GO_BIN !== undefined && existsSync(GO_BIN);
 export const TS_BIN = process.env.KNOWNS_TS_BIN;
 const CLI_ROOT = join(import.meta.dir, "..", "..");
+const VIA_DAEMON = process.env.KNOWNS_MCP_TEST_VIA_DAEMON === "1";
 export const FIXTURES = join(CLI_ROOT, "test", "fixtures");
 
 export type Side = "go" | "ts";
@@ -72,7 +73,13 @@ export class McpSession {
       ...opts.env,
     };
     const cmd = opts.bin ? [opts.bin] : command(side);
-    this.proc = Bun.spawn([...cmd, "mcp", "--stdio", ...(opts.args ?? [])], {
+    // KNOWNS_MCP_TEST_VIA_DAEMON=1 serves the TS session from a runtime daemon over the MCP
+    // endpoint (test/mcp/daemon-bridge.ts) instead of in-process, with the same suites (AC-2).
+    const viaDaemon = side === "ts" && !opts.bin && !TS_BIN && VIA_DAEMON;
+    const argv = viaDaemon
+      ? [process.execPath, join(CLI_ROOT, "test", "mcp", "daemon-bridge.ts"), ...(opts.args ?? [])]
+      : [...cmd, "mcp", "--stdio", ...(opts.args ?? [])];
+    this.proc = Bun.spawn(argv, {
       cwd: opts.cwd,
       env,
       stdin: "pipe",

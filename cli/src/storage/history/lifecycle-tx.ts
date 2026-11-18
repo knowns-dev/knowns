@@ -2,12 +2,13 @@
 // primitives that are safe to compose while the task lifecycle lock is held, and the Task
 // hard-delete coordinator.
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Task, TaskTombstone } from "../../models/task.ts";
 import type { TaskLifecyclePending } from "../../models/task-lifecycle.ts";
 import type { TimeEntry, TimeState } from "../../models/time.ts";
 import type { TaskChange, TaskVersion } from "../../models/version.ts";
+import { readFileRetrying } from "../core/fs-retry.ts";
 import { goTrimSpace, writeJson } from "../core/util.ts";
 import { MutationConflictError } from "./conflicts.ts";
 import { canonicalTaskHash, taskToSnapshot, trackTaskChanges } from "./entities.ts";
@@ -146,7 +147,7 @@ export class TaskLifecycleTransaction {
       if (!name.endsWith(".json")) continue;
       let pending: TaskLifecyclePending;
       try {
-        pending = JSON.parse(readFileSync(join(dir, name), "utf8")) as TaskLifecyclePending;
+        pending = JSON.parse(readFileRetrying(join(dir, name), "utf8")) as TaskLifecyclePending;
       } catch (e) {
         throw new Error(`parse pending Task lifecycle "${name}": ${(e as Error).message}`, {
           cause: e,
@@ -201,7 +202,7 @@ export class TaskLifecycleTransaction {
     const path = this.pendingPath(taskId, operation, eventId);
     let data: string;
     try {
-      data = readFileSync(path, "utf8");
+      data = readFileRetrying(path, "utf8");
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw new Error(
@@ -268,6 +269,37 @@ export class TaskLifecycleTransaction {
       snapshot: taskToSnapshot(newTask),
     };
     await this.ctx.versions.saveVersionUnlocked(newTask.id, version);
+  }
+
+  /**
+   * The mark a failed write trims back to: the number of JSONL records the Task has. A Task that
+   * still has legacy version JSON is migrated first (what the save would do anyway), so the mark
+   * and the later check count the same thing.
+   */
+  async taskHistoryLength(taskId: string): Promise<number> {
+    if (!this.ctx.versions.hasJsonlHistory("task", taskId)) {
+      await this.ctx.versions.migrateLegacyTask(taskId);
+      if (!this.ctx.versions.hasJsonlHistory("task", taskId)) return 0;
+    }
+    return this.ctx.versions.historyStore().countRecords("task", taskId);
+  }
+
+  /**
+   * A rejected or failed write must leave no history record, even when the append landed before
+   * something after it failed. Removes the record this write appended (stream is `length` + 1, its
+   * tail has `own.newHash` and, when given, baseHash and author); if another writer got in,
+   * truncates nothing and throws.
+   */
+  async trimTaskHistory(
+    taskId: string,
+    length: number,
+    own: { newHash: string; baseHash?: string; author?: string },
+  ): Promise<void> {
+    if (!this.ctx.versions.hasJsonlHistory("task", taskId)) return;
+    const ok = await this.ctx.versions.historyStore().removeTailIfOwn("task", taskId, length, own);
+    if (!ok) {
+      throw new Error(`history of Task "${taskId}" changed during a failed write; not truncating`);
+    }
   }
 
   async hasTaskLifecycleVersion(taskId: string, eventId: string): Promise<boolean> {

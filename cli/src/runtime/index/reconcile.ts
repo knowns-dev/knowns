@@ -173,11 +173,24 @@ export async function executeQdrantReconciliation(
 ): Promise<void> {
   const storeRoot = storage.store.root;
   const now = deps.now ?? (() => nowString());
-  if (!proveQdrantIntent(storage, intent)) return;
-  const resolved = resolveEffectiveVectorStore(storage, env);
-  if (!resolved.enabled || resolved.backend !== SEMANTIC_VECTOR_BACKEND_QDRANT) return;
-  const pointer = loadQdrantPointer(storeRoot);
+  // Proving an intent validates the whole history chain of the entity, which grows with every
+  // edit. A project that has no Qdrant collection has nothing to reconcile, so the cheap checks
+  // come first: all of them return without side effects, exactly as an unproven intent does.
+  let resolved: ReturnType<typeof resolveEffectiveVectorStore>;
+  let pointer: QdrantPointer | undefined;
+  try {
+    resolved = resolveEffectiveVectorStore(storage, env);
+    if (!resolved.enabled || resolved.backend !== SEMANTIC_VECTOR_BACKEND_QDRANT) return;
+    pointer = loadQdrantPointer(storeRoot);
+  } catch (err) {
+    // A corrupt pointer or settings file must not turn a stale or unproven intent into a failed
+    // job (and a dead letter): an intent that proves nothing is dropped, as it always was. Only a
+    // proven intent reports the problem.
+    if (!proveQdrantIntent(storage, intent)) return;
+    throw err;
+  }
   if (!pointer) return;
+  if (!proveQdrantIntent(storage, intent)) return;
   await (deps.ensureManaged ?? ensureManagedQdrant)(resolved);
   const client = qdrantClientForStore(storage, env);
   await validateTargetedCollection(storage, env, pointer, client);

@@ -8,11 +8,13 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, normalize, relative, sep } from "node:path";
 import { effectiveTaskLifecycle, type TaskLifecycleSettings } from "../../models/config.ts";
+import { parseTaskLifecycleDuration } from "../../models/duration.ts";
 import { type Task, type TaskTombstone, taskLifecycleState } from "../../models/task.ts";
 import type { TaskLifecyclePending } from "../../models/task-lifecycle.ts";
 import type { TimeEntry } from "../../models/time.ts";
 import {
   canonicalTaskHash,
+  MutationConflictError,
   purgeTaskLifecycle,
   type TaskLifecycleTransaction,
   type TaskPurgeReconciler,
@@ -39,10 +41,12 @@ import {
   durableKnowledgeWarnings,
   evaluateInTransaction,
   type ReferenceExtractor,
+  snapshotTaskTree,
 } from "./policy.ts";
 import { addTimeEntry, stopTimers } from "./time.ts";
 import type {
   ArchiveOptions,
+  BatchHooks,
   BatchOptions,
   BatchResult,
   Eligibility,
@@ -59,6 +63,7 @@ import type {
   Result,
   StopTimerOptions,
   StopTimersOptions,
+  TaskTreeSnapshot,
   TaskUpdateOptions,
   TimeMutationOptions,
   Warning,
@@ -150,6 +155,18 @@ function appendWarnings(result: Result, warnings: Warning[]): void {
   result.warnings = [...(result.warnings ?? []), ...warnings];
 }
 
+/** Tasks archived per batch by the automatic sweep, and the pause between batches. */
+const AUTO_ARCHIVE_CHUNK = 10;
+const AUTO_ARCHIVE_YIELD_MS = 5;
+const AUTO_ARCHIVE_TREE_TTL_MS = 30_000;
+/**
+ * A batch the caller names (web UI, CLI, MCP): Tasks per tree listing, and the longest stretch the
+ * event loop may be held before the batch yields. One listing per Task made 500 Tasks take minutes
+ * and froze every other request meanwhile.
+ */
+const BATCH_TREE_CHUNK = 10;
+const BATCH_MAX_BLOCK_MS = 40;
+
 export class Service implements LifecycleCore {
   readonly clock: Clock;
   private readonly hooks: Hooks;
@@ -225,7 +242,36 @@ export class Service implements LifecycleCore {
     return result;
   }
 
-  private async archiveOut(taskId: string, options: ArchiveOptions): Promise<Out<Result>> {
+  /**
+   * A caller that passed no expectedHash asked for "do this to whatever is current". The base is
+   * observed before the lifecycle lock and rechecked inside it, so a writer slipping in between is a
+   * spurious conflict: observe again and retry a few times instead of failing the caller. An
+   * explicit expectedHash is never retried.
+   */
+  private async retryUnhashed<T>(
+    given: string | undefined,
+    run: () => Promise<Out<T>>,
+  ): Promise<Out<T>> {
+    for (let attempt = 0; ; attempt++) {
+      const out = await run();
+      const err = out[1];
+      if (!blank(given) || attempt >= 4 || !err || !hasMutationConflict(err)) return out;
+    }
+  }
+
+  private archiveOut(taskId: string, options: ArchiveOptions): Promise<Out<Result>> {
+    return this.retryUnhashed(options.expectedHash, () => this.archiveOutOnce(taskId, options));
+  }
+
+  private reopenOut(taskId: string, options: ReopenOptions): Promise<Out<Result>> {
+    return this.retryUnhashed(options.expectedHash, () => this.reopenOutOnce(taskId, options));
+  }
+
+  private hardDeleteOut(taskId: string, options: HardDeleteOptions): Promise<Out<Result>> {
+    return this.retryUnhashed(options.expectedHash, () => this.hardDeleteOutOnce(taskId, options));
+  }
+
+  private async archiveOutOnce(taskId: string, options: ArchiveOptions): Promise<Out<Result>> {
     const opts = { ...options };
     let result: Result = {
       taskId,
@@ -291,7 +337,7 @@ export class Service implements LifecycleCore {
     return result;
   }
 
-  private async reopenOut(taskId: string, options: ReopenOptions): Promise<Out<Result>> {
+  private async reopenOutOnce(taskId: string, options: ReopenOptions): Promise<Out<Result>> {
     const opts = { ...options };
     let status = (opts.status ?? "").trim();
     if (status === "" || status === "done") status = "todo";
@@ -408,15 +454,48 @@ export class Service implements LifecycleCore {
       ...(options.actor !== undefined && { actor: options.actor }),
       ...(options.automatic !== undefined && { automatic: options.automatic }),
       ...(options.minimumAgeMs !== undefined && { minimumAgeMs: options.minimumAgeMs }),
+      ...(options.taskTree !== undefined && { taskTree: options.taskTree }),
     };
     const [ids, idsErr] = await attempt(() => this.resolveBatchIds(options.ids ?? []));
     if (idsErr || !ids) return [batch, idsErr];
-    for (const id of ids) {
+    // One fresh listing of the tree per chunk (not per Task) unless the caller shares a snapshot,
+    // and a yield whenever the loop has been held for BATCH_MAX_BLOCK_MS.
+    const ownTree = options.taskTree === undefined && ids.length > 1;
+    let blockedSince = Date.now();
+    let chunkOuts: Out<Result>[] = [];
+    for (let n = 0; n < ids.length; n++) {
+      const id = ids[n] as string;
+      if (n > 0 && n % BATCH_TREE_CHUNK === 0 && options.hooks?.shouldStop?.()) {
+        batch.stopped = true;
+        return [batch, joinErrors(failures)];
+      }
+      if (execute && ownTree && n % BATCH_TREE_CHUNK === 0) {
+        // The tree is listed under the lifecycle lock that also holds the chunk's archives, so a
+        // concurrent create or reopen waits for the chunk and the check sees the truth.
+        chunkOuts = await this.archiveChunkOut(
+          ids.slice(n, n + BATCH_TREE_CHUNK),
+          archiveOptions,
+          options.expectedHashes,
+        );
+      } else if (!execute && ownTree && n % BATCH_TREE_CHUNK === 0) {
+        const [tree, treeErr] = await attempt(() =>
+          this.withTransaction((tx) => snapshotTaskTree(tx)),
+        );
+        if (treeErr || !tree) return [batch, treeErr];
+        archiveOptions.taskTree = tree;
+        archiveOptions.taskTreeFresh = true;
+      }
+      if (Date.now() - blockedSince > BATCH_MAX_BLOCK_MS) {
+        await new Promise((r) => setTimeout(r, 0));
+        blockedSince = Date.now();
+      }
       archiveOptions.expectedHash = options.expectedHashes?.[id] ?? "";
       let item: Result | undefined;
       let err: Error | undefined;
       if (execute) {
-        [item, err] = await this.archiveOut(id, archiveOptions);
+        [item, err] = ownTree
+          ? (chunkOuts[n % BATCH_TREE_CHUNK] as Out<Result>)
+          : await this.archiveOut(id, archiveOptions);
       } else {
         const [eligibility, evalErr] = await attempt(() => this.evaluate(id, archiveOptions));
         err = evalErr;
@@ -426,6 +505,7 @@ export class Service implements LifecycleCore {
         );
       }
       batch.processed++;
+      options.hooks?.onProgress?.(batch.processed, ids.length);
       if (item.taskId === "") item.taskId = id;
       if (item.operation === ("" as Operation)) item.operation = "archive";
       if (err && (item.reasons ?? []).length === 0) addReason(item, publicFailureReason(err));
@@ -438,6 +518,122 @@ export class Service implements LifecycleCore {
     }
     batch.completed = true;
     return [batch, joinErrors(failures)];
+  }
+
+  /**
+   * Archives one chunk of a named batch inside ONE lifecycle transaction. The Task tree is listed
+   * after the lock is taken and stays the truth for the whole chunk: a Task created or reopened
+   * concurrently waits for the lock, so a parent cannot be archived over a child that appeared
+   * mid-chunk. The per-Task work that needs its own transaction (pending records, the index) runs
+   * before and after the locked part.
+   */
+  private async archiveChunkOut(
+    ids: string[],
+    base: ArchiveOptions,
+    expectedHashes: Record<string, string> | undefined,
+  ): Promise<Out<Result>[]> {
+    interface Step {
+      id: string;
+      opts: ArchiveOptions;
+      result: Result;
+      err?: Error;
+      preWarnings: Warning[];
+      prePending: boolean;
+      done?: boolean;
+    }
+    const outs: Out<Result>[] = new Array(ids.length);
+    const steps: Step[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i] as string;
+      const opts: ArchiveOptions = { ...base, expectedHash: expectedHashes?.[id] ?? "" };
+      delete opts.taskTree;
+      delete opts.taskTreeFresh;
+      const result: Result = {
+        taskId: id,
+        operation: "archive",
+        changed: false,
+        eligible: false,
+        before: "",
+        after: "",
+        reasons: [],
+      };
+      let preWarnings: Warning[] = [];
+      let prePending = false;
+      if (blank(opts.expectedHash)) {
+        const pre = await this.flushTaskLifecyclePending(id);
+        preWarnings = pre.warnings;
+        prePending = pre.hadPending;
+        appendWarnings(result, preWarnings);
+        if (pre.error) {
+          outs[i] = [result, pre.error];
+          continue;
+        }
+        const [hash, hashErr] = await attempt(() => this.observedTaskHash(id));
+        if (hashErr) {
+          outs[i] = [result, hashErr];
+          continue;
+        }
+        opts.expectedHash = hash;
+      }
+      steps.push({ id, opts, result, preWarnings, prePending });
+    }
+    const hashless = new Set(ids.filter((id) => blank(expectedHashes?.[id])));
+    if (steps.length > 0) {
+      const [settings, settingsErr] = await attempt(() => this.settings());
+      const now = this.clock();
+      if (settingsErr || !settings) {
+        for (const st of steps) st.err = settingsErr ?? new Error("lifecycle settings unavailable");
+      } else {
+        const [, txErr] = await attempt(() =>
+          this.withTransaction(async (tx) => {
+            const tree = await snapshotTaskTree(tx);
+            for (const st of steps) {
+              const [mutated, mutateErr] = await this.archiveInTransaction(
+                tx,
+                st.id,
+                { ...st.opts, taskTree: tree, taskTreeFresh: true },
+                settings,
+                now,
+              );
+              mutated.warnings = [...st.preWarnings, ...(mutated.warnings ?? [])];
+              if (mutated.warnings.length === 0) delete mutated.warnings;
+              st.result = mutated;
+              if (mutateErr) st.err = mutateErr;
+              st.done = true;
+            }
+          }),
+        );
+        if (txErr) for (const st of steps) if (!st.done) st.err = txErr;
+      }
+    }
+    for (const st of steps) {
+      const i = ids.indexOf(st.id);
+      if (st.err && hashless.has(st.id) && hasMutationConflict(st.err)) {
+        // Changed between the hash read and the lock: take the single-Task path, which retries.
+        outs[i] = await this.archiveOut(st.id, { ...base, expectedHash: "" });
+        continue;
+      }
+      if (st.err) {
+        outs[i] = [st.result, st.err];
+        continue;
+      }
+      const post = await this.flushTaskLifecyclePending(st.id);
+      appendWarnings(st.result, post.warnings);
+      if (post.error) {
+        outs[i] = [st.result, post.error];
+        continue;
+      }
+      if (st.result.eligible && !st.result.changed && !st.prePending && !post.hadPending) {
+        const [, indexErr] = await attempt(() => this.indexTask(st.id));
+        if (indexErr) {
+          outs[i] = [st.result, indexErr];
+          continue;
+        }
+      }
+      this.populateResultLifecycle(st.result);
+      outs[i] = [st.result, undefined];
+    }
+    return outs;
   }
 
   /** Previews or restores archived/done Tasks. Preview never mutates canonical state. */
@@ -459,7 +655,12 @@ export class Service implements LifecycleCore {
     };
     const failures: Error[] = [];
     const ids = uniqueSorted(options.ids ?? []);
-    for (const id of ids) {
+    for (let n = 0; n < ids.length; n++) {
+      const id = ids[n] as string;
+      if (n > 0 && n % BATCH_TREE_CHUNK === 0 && options.hooks?.shouldStop?.()) {
+        batch.stopped = true;
+        return [batch, joinErrors(failures)];
+      }
       const [task, getErr] = await attempt(() => this.storage.tasks.get(id));
       let err = getErr;
       let item: Result = {
@@ -493,6 +694,7 @@ export class Service implements LifecycleCore {
       if (item.taskId === "") item.taskId = id;
       if (item.operation === ("" as Operation)) item.operation = "reopen";
       batch.processed++;
+      options.hooks?.onProgress?.(batch.processed, ids.length);
       if (item.changed) batch.changed++;
       batch.items.push(item);
       if (err) {
@@ -504,8 +706,71 @@ export class Service implements LifecycleCore {
     return [batch, joinErrors(failures)];
   }
 
-  autoArchive(actor: string): Promise<BatchResult> {
-    return this.batchArchive({ execute: true, actor, automatic: true });
+  /**
+   * The automatic sweep (server start, then hourly). Archiving a Task costs a transaction, so the
+   * sweep names only the Tasks that can possibly be eligible by age (done, not archived, past the
+   * archive deadline) plus the ones with a pending archive record, and archives them in small
+   * batches that yield to the event loop in between. Everything else would only have been reported
+   * ineligible after a per-Task transaction, which with thousands of Tasks held the server for minutes.
+   */
+  async autoArchive(actor: string): Promise<BatchResult> {
+    const settings = this.settings();
+    const merged: BatchResult = {
+      operation: "batch_archive",
+      execute: true,
+      completed: false,
+      processed: 0,
+      changed: 0,
+      items: [],
+    };
+    if (!settings.autoArchive) {
+      merged.completed = true;
+      return merged;
+    }
+    const ageMs = Number(parseTaskLifecycleDuration(settings.archiveAfter) / 1_000_000n);
+    const nowMs = this.clock().getTime();
+    const ids: string[] = [];
+    await this.withTransaction(async (tx) => {
+      for (const task of await tx.listActiveTasks()) {
+        if (task.archived || task.status !== "done") continue;
+        // A done Task without a completion time is reported by the full evaluation.
+        if (task.completedAt !== undefined && epochMs(task.completedAt) + ageMs > nowMs) continue;
+        ids.push(task.id);
+      }
+      for (const record of tx.listTaskLifecyclePending("archive")) ids.push(record.taskId);
+    });
+    const failures: Error[] = [];
+    const unique = uniqueSorted(ids);
+    let taskTree: TaskTreeSnapshot | undefined;
+    let taskTreeAt = 0;
+    for (let i = 0; i < unique.length; i += AUTO_ARCHIVE_CHUNK) {
+      // One listing of the tree for many Tasks, not one per Task: archiving a finished Task cannot
+      // change whether its ancestors have unfinished descendants. Listing thousands of Tasks blocks
+      // the event loop for a second or two, so the snapshot is renewed only when it is old.
+      if (!taskTree || Date.now() - taskTreeAt > AUTO_ARCHIVE_TREE_TTL_MS) {
+        taskTree = await this.withTransaction((tx) => snapshotTaskTree(tx));
+        taskTreeAt = Date.now();
+      }
+      const [batch, err] = await this.batchArchiveOut({
+        execute: true,
+        actor,
+        automatic: true,
+        taskTree,
+        ids: unique.slice(i, i + AUTO_ARCHIVE_CHUNK),
+      });
+      merged.processed += batch.processed;
+      merged.changed += batch.changed;
+      merged.items.push(...batch.items);
+      if (batch.failedTaskId !== undefined && merged.failedTaskId === undefined) {
+        merged.failedTaskId = batch.failedTaskId;
+      }
+      if (err) failures.push(err);
+      await new Promise((r) => setTimeout(r, AUTO_ARCHIVE_YIELD_MS));
+    }
+    merged.completed = true;
+    const err = joinErrors(failures);
+    if (err) throw withPartial(err, merged);
+    return merged;
   }
 
   private async resolveBatchIds(requested: string[]): Promise<string[]> {
@@ -526,7 +791,10 @@ export class Service implements LifecycleCore {
     return result;
   }
 
-  private async hardDeleteOut(taskId: string, options: HardDeleteOptions): Promise<Out<Result>> {
+  private async hardDeleteOutOnce(
+    taskId: string,
+    options: HardDeleteOptions,
+  ): Promise<Out<Result>> {
     const opts = { ...options };
     const now = this.clock();
     const result: Result = {
@@ -772,17 +1040,23 @@ export class Service implements LifecycleCore {
    * Maps the shared public request contract onto the lifecycle service. `hardDeleteAuthorized` is
    * supplied only by a trusted adapter boundary and is never read from the request.
    */
-  executePublic(request: Request, hardDeleteAuthorized: boolean): Promise<PublicOutcome> {
-    return this.executePublicWithCapabilities(request, {
-      archive: true,
-      hardDelete: hardDeleteAuthorized,
-    });
+  executePublic(
+    request: Request,
+    hardDeleteAuthorized: boolean,
+    hooks?: BatchHooks,
+  ): Promise<PublicOutcome> {
+    return this.executePublicWithCapabilities(
+      request,
+      { archive: true, hardDelete: hardDeleteAuthorized },
+      hooks,
+    );
   }
 
   /** For policy-aware trusted adapters such as MCP; capabilities are never read from request data. */
   async executePublicWithCapabilities(
     request: Request,
     capabilities: PublicCapabilities,
+    hooks?: BatchHooks,
   ): Promise<PublicOutcome> {
     const response: Response = {
       operation: request.operation,
@@ -893,6 +1167,7 @@ export class Service implements LifecycleCore {
           ...(actor !== undefined && { actor }),
           ...(minimumAgeMs !== undefined && { minimumAgeMs }),
           ...(request.expectedHashes !== undefined && { expectedHashes: request.expectedHashes }),
+          ...(hooks !== undefined && { hooks }),
         });
         copyBatchResponse(response, batch);
         err = batchErr;
@@ -904,6 +1179,7 @@ export class Service implements LifecycleCore {
           execute: request.execute,
           ...(actor !== undefined && { actor }),
           ...(request.expectedHashes !== undefined && { expectedHashes: request.expectedHashes }),
+          ...(hooks !== undefined && { hooks }),
         });
         copyBatchResponse(response, batch);
         err = batchErr;
@@ -982,12 +1258,15 @@ export class Service implements LifecycleCore {
    * after the lock is released.
    */
   async updateTask(taskId: string, options: TaskUpdateOptions = {}): Promise<Task> {
-    let expectedHash = options.expectedHash ?? "";
-    if (blank(expectedHash)) expectedHash = this.observedTaskHash(taskId);
+    // An explicit expectedHash is optimistic: a stale base is a conflict. Without one the caller
+    // asked for "apply this change to whatever is current": `mutate` runs on the fresh copy read
+    // inside the lifecycle lock, so concurrent updates serialize on that lock instead of failing
+    // on a hash that was observed before it (a spurious conflict).
+    const expectedHash = options.expectedHash ?? "";
     let updated: Task | undefined;
     await this.withTransaction(async (tx) => {
       const current = await tx.getTask(taskId);
-      tx.checkTaskExpectedHash(current, expectedHash);
+      if (!blank(expectedHash)) tx.checkTaskExpectedHash(current, expectedHash);
       if (current.archived) {
         throw new Error(`Task "${taskId}" is archived; reopen it before updating`);
       }
@@ -1004,15 +1283,31 @@ export class Service implements LifecycleCore {
       const now = this.clock();
       applyStatusTransition(candidate, requestedStatus, now);
       candidate.updatedAt = wireTime(now);
+      const historyMark = await tx.taskHistoryLength(taskId);
       await tx.updateTask(candidate);
       try {
         await tx.saveTaskVersion(before, candidate, options.actor ?? "", wireTime(now), "");
       } catch (e) {
+        // The two undo steps are independent: restore the file even if the trim refuses, and
+        // report every failure.
+        const rollbackErrors: Error[] = [];
+        try {
+          await tx.trimTaskHistory(taskId, historyMark, {
+            newHash: canonicalTaskHash(candidate),
+            baseHash: canonicalTaskHash(before),
+            author: options.actor ?? "",
+          });
+        } catch (trimErr) {
+          rollbackErrors.push(toError(trimErr));
+        }
         try {
           await tx.updateTask(before);
-        } catch (rollbackErr) {
+        } catch (restoreErr) {
+          rollbackErrors.push(toError(restoreErr));
+        }
+        if (rollbackErrors.length > 0) {
           throw new Error(
-            `${toError(e).message}; rollback Task "${taskId}" failed: ${toError(rollbackErr).message}`,
+            `${toError(e).message}; rollback Task "${taskId}" failed: ${rollbackErrors.map((r) => r.message).join("; ")}`,
             { cause: e },
           );
         }
@@ -1037,6 +1332,21 @@ export class Service implements LifecycleCore {
    * indexing hooks run only after the complete commit.
    */
   async reorderTasks(
+    items: ReorderItem[],
+    expectedHashes?: Record<string, string>,
+  ): Promise<number> {
+    // Items without a caller hash are observed before the lock; a writer slipping in is retried.
+    const unhashed = items.some((i) => blank(expectedHashes?.[i.taskId]));
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.reorderTasksOnce(items, expectedHashes);
+      } catch (e) {
+        if (!unhashed || attempt >= 4 || !hasMutationConflict(e)) throw e;
+      }
+    }
+  }
+
+  private async reorderTasksOnce(
     items: ReorderItem[],
     expectedHashes?: Record<string, string>,
   ): Promise<number> {
@@ -1497,6 +1807,7 @@ function copyBatchResponse(response: Response, batch: BatchResult): void {
   response.changed = batch.changed;
   if (batch.failedTaskId !== undefined) response.failedTaskId = batch.failedTaskId;
   response.items = [...batch.items];
+  if (batch.stopped) response.stopped = true;
 }
 
 async function rollbackLifecycleMutation(
@@ -1586,4 +1897,13 @@ async function resumeLifecycleMutation(
   pending.canonicalComplete = true;
   savePending(tx, pending);
   return taskWithLifecycleData(task, pending.desired);
+}
+
+/** Whether a stale-base MutationConflictError is in the error's cause chain. */
+function hasMutationConflict(err: unknown): boolean {
+  for (let e: unknown = err, depth = 0; e && depth < 8; depth++) {
+    if (e instanceof MutationConflictError) return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
 }

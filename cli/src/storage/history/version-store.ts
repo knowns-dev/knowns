@@ -1,7 +1,7 @@
 // Port of internal/storage/version_store.go: task and doc revision history over the JSONL
 // HistoryStore, with the legacy `.knowns/versions/*.json` formats still readable and migrated on
 // first write.
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { Doc } from "../../models/doc.ts";
 import type { Task } from "../../models/task.ts";
@@ -19,6 +19,7 @@ import type {
   TaskVersionHistory,
   TaskVersionHistoryPage,
 } from "../../models/version.ts";
+import { readFileRetrying } from "../core/fs-retry.ts";
 import { safeHistoryId } from "../core/locks.ts";
 import { goTrimSpace, writeJson } from "../core/util.ts";
 import { MutationConflictError } from "./conflicts.ts";
@@ -174,7 +175,7 @@ export class VersionStore {
     }
     let data: string;
     try {
-      data = readFileSync(this.versionPath(taskId), "utf8");
+      data = readFileRetrying(this.versionPath(taskId), "utf8");
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") {
         return { taskId, currentVersion: 0, versions: [] };
@@ -367,7 +368,7 @@ export class VersionStore {
         if (seen.has(name.slice("task-".length, -".json".length))) continue;
         let h: TaskVersionHistory;
         try {
-          h = decodeTaskVersionHistory(JSON.parse(readFileSync(join(dir, name), "utf8")));
+          h = decodeTaskVersionHistory(JSON.parse(readFileRetrying(join(dir, name), "utf8")));
         } catch {
           continue;
         }
@@ -396,7 +397,7 @@ export class VersionStore {
     const path = this.versionPath(taskId);
     let data: string;
     try {
-      data = readFileSync(path, "utf8");
+      data = readFileRetrying(path, "utf8");
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
       throw e;
@@ -414,7 +415,7 @@ export class VersionStore {
   async migrateLegacyTaskHistory(taskId: string): Promise<void> {
     if (this.hasJsonlHistory("task", taskId)) return;
     const path = this.versionPath(taskId);
-    const legacy = decodeTaskVersionHistory(JSON.parse(readFileSync(path, "utf8")));
+    const legacy = decodeTaskVersionHistory(JSON.parse(readFileRetrying(path, "utf8")));
     await this.history.migrateLegacyTask(path, taskId, legacy);
   }
 
@@ -446,7 +447,7 @@ export class VersionStore {
       const legacyPath = this.legacyDocVersionPath(path);
       let data: string;
       try {
-        data = readFileSync(legacyPath, "utf8");
+        data = readFileRetrying(legacyPath, "utf8");
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
         throw e;
@@ -508,7 +509,7 @@ export class VersionStore {
   private loadDocVersionIndex(): { paths: Record<string, string> } {
     let data: string;
     try {
-      data = readFileSync(this.docVersionIndexPath(), "utf8");
+      data = readFileRetrying(this.docVersionIndexPath(), "utf8");
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") return { paths: {} };
       throw new Error(`read doc version index: ${(e as Error).message}`, { cause: e });
@@ -535,7 +536,7 @@ export class VersionStore {
   private loadStableDocHistoryByID(docId: string): DocVersionHistory | undefined {
     let data: string;
     try {
-      data = readFileSync(this.stableDocVersionPath(docId), "utf8");
+      data = readFileRetrying(this.stableDocVersionPath(docId), "utf8");
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw e;
@@ -563,7 +564,7 @@ export class VersionStore {
       if (!name.startsWith("docid-") || !name.endsWith(".json")) continue;
       let h: DocVersionHistory;
       try {
-        h = decodeDocVersionHistory(JSON.parse(readFileSync(join(dir, name), "utf8")));
+        h = decodeDocVersionHistory(JSON.parse(readFileRetrying(join(dir, name), "utf8")));
       } catch {
         continue;
       }
@@ -601,7 +602,7 @@ export class VersionStore {
     if (docPath === "") return { ok: false };
     let data: string;
     try {
-      data = readFileSync(this.legacyDocVersionPath(docPath), "utf8");
+      data = readFileRetrying(this.legacyDocVersionPath(docPath), "utf8");
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") return { ok: false };
       throw new Error(`read doc version history ${docPath}: ${(e as Error).message}`, { cause: e });

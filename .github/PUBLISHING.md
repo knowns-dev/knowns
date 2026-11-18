@@ -148,9 +148,9 @@ Before publishing, test the build locally:
 rm -rf node_modules bun.lockb
 bun install
 
-# Run full CI checks
+# Run full CI checks (`bun run test`, not bare `bun test`: the 30 s suite-wide --timeout lives in that script)
 bun run lint
-bun test
+bun run test
 bun run build
 
 # Test the built CLI
@@ -186,3 +186,11 @@ After first publish, configure your package on npm:
 - [NPM Package](https://www.npmjs.com/package/knowns)
 - [GitHub Repository](https://github.com/knowns-dev/knowns)
 - [GitHub Actions](https://github.com/knowns-dev/knowns/actions)
+
+## Release note to carry: npm `bin/knowns.js` is now a binary
+
+On macOS and Linux the npm postinstall replaces `bin/knowns.js` with the native binary (a hard link to the platform package's file), so `knowns` starts without a Node process. On Windows the `.cmd`/`.ps1`/sh shims call the staged `knowns.exe` directly (with a fallback to `node bin/knowns.js`). Consequences for users and scripts:
+
+- Do not run `node .../bin/knowns.js`; nothing Knowns writes (sync, docs, MCP configs) emits that command.
+- `knowns update` on an npm install goes through the package manager and never writes the binary in place.
+- Old staged runtimes under `npm-runtime` (about 125 MB each) are pruned on install.

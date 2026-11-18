@@ -2,22 +2,14 @@
 // canonical file and its history together, with expected-hash (optimistic concurrency) checks and
 // rollback. The entity stores are reached through the ports in ports.ts.
 import { createHash } from "node:crypto";
-import {
-  closeSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeSync,
-} from "node:fs";
+import { closeSync, fsyncSync, mkdirSync, openSync, rmSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Doc } from "../../models/doc.ts";
 import { deriveTaskIdPrefix, normalizeTaskIdPrefix } from "../../models/id.ts";
 import type { MemoryEntry } from "../../models/memory.ts";
 import type { Task } from "../../models/task.ts";
 import type { HistoryRecord, TaskVersion } from "../../models/version.ts";
+import { readFileRetrying, renameRetrying } from "../core/fs-retry.ts";
 import { withDocMutationLocks } from "../core/locks.ts";
 import { goTrimSpace } from "../core/util.ts";
 import { DocIdentityConflictError, MutationConflictError } from "./conflicts.ts";
@@ -48,6 +40,12 @@ import type { DocRevisionOptions } from "./version-store.ts";
 
 /** DocMutationOptions: audit context for an atomic document mutation. */
 export interface DocMutationOptions {
+  /**
+   * With no expectedHash: re-applies the caller's edit to the document read under the lock, so a
+   * concurrent writer's change is kept and the update never fails on a hash observed before the
+   * lock. Same-path updates only.
+   */
+  rebase?: (doc: Doc) => void;
   actor?: string;
   source?: string;
   section?: string;
@@ -99,7 +97,7 @@ function writeDocDeleteTransaction(root: string, m: DocDeleteTransaction): void 
     } finally {
       closeSync(fd);
     }
-    renameSync(tmp, docDeleteTransactionPath(root, m.entityId));
+    renameRetrying(tmp, docDeleteTransactionPath(root, m.entityId));
   } finally {
     rmSync(tmp, { force: true });
   }
@@ -453,9 +451,16 @@ async function mutateDocInner(
     }
     await ctx.docs.validateStableId(firstNonEmpty(current.id, newDoc.id), oldPath);
     let expected = goTrimSpace(opts.expectedHash ?? "");
+    const rebased = expected === "" && opts.rebase !== undefined && oldPath === newPath;
+    if (rebased) {
+      const fresh: Doc = { ...current };
+      opts.rebase?.(fresh);
+      for (const k of Object.keys(newDoc)) delete (newDoc as unknown as Record<string, unknown>)[k];
+      Object.assign(newDoc, fresh);
+    }
     if (expected === "") expected = hashDoc(docStateOf(oldDoc));
     const currentHash = hashDoc(docStateOf(current));
-    if (expected !== currentHash) {
+    if (!rebased && expected !== currentHash) {
       throw new MutationConflictError(
         "doc",
         firstNonEmpty(current.id, newDoc.id, oldPath),
@@ -478,6 +483,9 @@ async function mutateDocInner(
 
     const oldCanonical: Doc = { ...current };
     const candidate: Doc = { ...newDoc };
+    const docId = firstNonEmpty(candidate.id, current.id);
+    const hasStream = docId !== "" && ctx.versions.hasJsonlHistory("doc", docId);
+    const mark = hasStream ? await ctx.versions.historyStore().countRecords("doc", docId) : 0;
     await ctx.docs.update(candidate);
     try {
       await ctx.versions.saveDocRevisionWithOptions(oldCanonical, candidate, {
@@ -486,13 +494,33 @@ async function mutateDocInner(
         section: opts.section,
       });
     } catch (err) {
-      let rollbackErr: unknown;
+      // Two independent undo steps; both run and every failure is reported. The append may have
+      // landed before the failing step: remove exactly that record (and nothing else).
+      const rollbackErrors: string[] = [];
+      try {
+        if (hasStream) {
+          const ok = await ctx.versions.historyStore().removeTailIfOwn("doc", docId, mark, {
+            newHash: canonicalDocHash(candidate),
+            baseHash: hashDoc(docStateOf(oldCanonical)),
+            author: opts.actor ?? "",
+          });
+          if (!ok)
+            throw new Error(
+              `history of Doc "${docId}" changed during a failed write; not truncating`,
+            );
+        }
+      } catch (e) {
+        rollbackErrors.push((e as Error).message);
+      }
       try {
         await ctx.docs.writeExact(oldCanonical);
       } catch (e) {
-        rollbackErr = e;
+        rollbackErrors.push((e as Error).message);
       }
-      throw combineMutationRollbackError(err, rollbackErr);
+      throw combineMutationRollbackError(
+        err,
+        rollbackErrors.length > 0 ? new Error(rollbackErrors.join("; ")) : undefined,
+      );
     }
     newDoc.canonicalHash = canonicalDocHash(candidate);
   });
@@ -520,7 +548,7 @@ interface MemoryRewrite {
 
 async function docRawBytes(ctx: HistoryContext, path: string): Promise<Buffer | undefined> {
   try {
-    return readFileSync(join(ctx.root, "docs", ...`${path}.md`.split("/")));
+    return readFileRetrying(join(ctx.root, "docs", ...`${path}.md`.split("/")));
   } catch {
     return undefined;
   }

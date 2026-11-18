@@ -43,7 +43,7 @@ test.describe("Context pack", () => {
 		await page.goto(`${server.baseURL}/context`);
 		await page.getByRole("textbox", { name: "Retrieve query" }).fill("pelican");
 		await page.getByRole("button", { name: "Build pack" }).click();
-		await expect(page.getByRole("alert")).toContainText("boom");
+		await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toContainText("boom");
 	});
 
 	test("is reachable from the sidebar", async ({ page }) => {

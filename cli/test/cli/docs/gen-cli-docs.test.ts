@@ -6,6 +6,8 @@
 //   D13  `task assignees` and `task list --unassigned`; those pages are compared byte for byte with
 //        the reference PR #156 ships (head 2b3f88d), checked in under pr156/.
 //   D14  `knowns qdrant setup`.
+//   D15  the `--section` flag text (doc-section-parser): code-fence lines are not headings, and an
+//        edit keeps the heading line.
 import { beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -53,6 +55,15 @@ const D8_ROOT_ROW: [string, string] = [
 const PRGZMS_PAGE = "knowns_decision_resolve.md";
 const isD8Page = (name: string): boolean => /^knowns_import(_[a-z]+)?\.md$/.test(name);
 
+const D15_SHOW: [string, string] = [
+  "Show specific section by number or title (a bare integer is the heading index; # lines in code fences are not headings) |",
+  "Show specific section by number or title |",
+];
+const D15_EDIT: [string, string] = [
+  "Target section to replace (used with --content); the heading line is kept and only the body is replaced, so --content must not repeat it |",
+  "Target section to replace (used with --content) |",
+];
+
 /** The TS pages with the D8, D13 and D14 deltas taken out, comparable to the 0.34.1 pages. */
 function withoutSpecDeltas(ts: Map<string, string>): Map<string, string> {
   const out = new Map<string, string>();
@@ -65,9 +76,17 @@ function withoutSpecDeltas(ts: Map<string, string>): Map<string, string> {
     ) {
       continue;
     }
-    let b = withoutHotfix(body);
+    let b = withoutHotfix(body)
+      .replaceAll(D15_SHOW[0], D15_SHOW[1])
+      .replaceAll(D15_EDIT[0], D15_EDIT[1]);
     if (name === "knowns.md") b = b.replace(D8_ROOT_ROW[0], D8_ROOT_ROW[1]);
     if (name === "knowns_qdrant.md") b = b.replace(D14_SETUP_ROW, "");
+    if (name === "knowns_browser.md") {
+      b = b
+        .split("\n")
+        .filter((l) => !l.startsWith("| `--foreground` |") && !l.startsWith("| `--stop` |"))
+        .join("\n");
+    }
     if (name === "knowns_task.md") {
       b = b.replace(
         "- [`knowns task assignees`](knowns_task_assignees.md) — Count tasks per assignee\n",
@@ -298,6 +317,14 @@ describe("lint", () => {
     expect(findings(root, "knowns task list --unasigned")).toEqual([
       "knowns task list does not accept --unasigned",
     ]);
+  });
+});
+
+describe("D9", () => {
+  test("browser documents --foreground and --stop", () => {
+    const page = tsPages.get("knowns_browser.md") ?? "";
+    expect(page).toContain("| `--foreground` |");
+    expect(page).toContain("| `--stop` |");
   });
 });
 

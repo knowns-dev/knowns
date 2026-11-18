@@ -19,13 +19,21 @@
 //
 // Limit: Bun fixes os.homedir() at process start, so code that calls homedir() without checking
 // HOME first still sees the real home. The guard in step 4 is what catches such a regression.
-import { afterAll } from "bun:test";
+import { afterAll, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setDaemonCommand } from "../../src/runtime/queue.ts";
 // Side effect: restores the fixtures' empty directories that a clean clone lacks.
 import "./fixture-dirs.ts";
+
+// Bun 1.3.12 ignores `timeout` in bunfig.toml, and this call only covers the first file of a
+// multi-file run (probed: with three 7 s async tests in three files, two died at 5 s). The real
+// default is the `--timeout 30000` flag in the `test` script of package.json, which CI uses; this
+// line only helps a bare `bun test` on a single file. 5 s is too tight for tests that spawn real
+// processes on a loaded or Windows runner; 30 s still ends a hang fast. Files that call
+// setDefaultTimeout or pass a per-test timeout keep theirs.
+setDefaultTimeout(30_000);
 
 const realHome = homedir();
 const REAL_FILES = [
@@ -113,3 +121,66 @@ if (!alreadyApplied)
       );
     }
   });
+
+// 5a. No worker thread may outlive the run. Bun 1.3.12 on Windows panics at process exit while a
+// worker is alive (CI: "Internal assertion failure", workers_spawned(11) workers_terminated(9),
+// exit 3, after the last test had passed). The shared search pool is stopped here, as the daemon
+// does on shutdown; any other bundled worker still alive is a leak and is named by its start stack.
+if (!alreadyApplied)
+  afterAll(async () => {
+    const { stopSharedSearchPool } = await import("../../src/mcp/pool.ts");
+    const { liveBundledWorkers } = await import("../../src/util/worker.ts");
+    await stopSharedSearchPool();
+    const end = Date.now() + 3000;
+    while (liveBundledWorkers().length > 0 && Date.now() < end) await Bun.sleep(25);
+    const left = liveBundledWorkers();
+    if (left.length === 0) return;
+    for (const { worker } of left) void worker.terminate();
+    throw new Error(
+      `${left.length} worker thread(s) were still alive at the end of the run; stop them in the file's afterAll:\n${left
+        .map((l) => l.startedAt.split("\n").slice(0, 6).join("\n"))
+        .join("\n--\n")}`,
+    );
+  });
+
+// 5. Fail the run when a runtime-selecting env key is still changed at its end. bun runs every
+// file in ONE process, so a file that sets KNOWNS_RUNTIME_ROOT and does not put it back points all
+// later files at its dead temp dir; one unrestored override once failed 24 tests in other suites.
+// The snapshot is taken after step 2.
+//
+// This is deliberately an end-of-run check only. Hooks registered here run once for the whole run,
+// not once per file, so there is no point between files at which "the previous file is finished"
+// can be told from "this file's beforeAll has set its own root". A check at a file boundary (an
+// earlier version) blamed the next file's own setup and, by restoring the keys, broke its tests.
+// The value in the message names the leaking suite (its temp dir prefix, for example
+// knowns-tray-rt-...). HOME and USERPROFILE are not guarded: a harness moves them for the length of
+// an in-process runTs, and a call still in flight at the end is not a leak. A leak that a later file
+// overwrites and restores to the original is not seen, which is the price of the simple check.
+const GUARDED_ENV = [
+  "KNOWNS_RUNTIME_ROOT",
+  "KNOWNS_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_STATE_HOME",
+  "XDG_RUNTIME_DIR",
+  "APPDATA",
+  "LOCALAPPDATA",
+  // A test that points PATH at a sandbox bin and does not restore it leaves every later file in
+  // the process without System32 or /bin (CI Windows, readProcessInfo returned undefined).
+  "PATH",
+] as const;
+const envSnapshot = new Map<string, string | undefined>(
+  GUARDED_ENV.map((k) => [k, process.env[k]]),
+);
+afterAll(() => {
+  const drift: string[] = [];
+  for (const [k, was] of envSnapshot) {
+    const now = process.env[k];
+    if (now !== was) drift.push(`${k}: ${JSON.stringify(was)} -> ${JSON.stringify(now)}`);
+  }
+  if (drift.length === 0) return;
+  throw new Error(
+    `a test file left test-environment keys changed at the end of the run; the value names its temp dir. Restore them in afterAll/finally:\n  ${drift.join("\n  ")}`,
+  );
+});

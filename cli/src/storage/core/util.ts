@@ -1,8 +1,10 @@
 // Port of internal/storage/util.go: atomic writes, Go-compatible JSON, frontmatter and section
 // helpers shared by every entity store.
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AcceptanceCriterion } from "../../models/task.ts";
+import { readUtf8Retrying, renameRetrying } from "./fs-retry.ts";
 
 // --- text helpers ------------------------------------------------------------------------------
 
@@ -97,7 +99,7 @@ export function decodeGenericObject(text: string): Record<string, unknown> {
 
 /** readJSON: read and parse a JSON file (BOM tolerant). */
 export function readJson(path: string): unknown {
-  return parseJsonPreservingNumbers(readFileSync(path, "utf8"));
+  return parseJsonPreservingNumbers(readUtf8Retrying(path));
 }
 
 /** writeJSON: indented JSON plus a trailing newline, written atomically. */
@@ -123,7 +125,7 @@ export function atomicWrite(dst: string, data: string | Uint8Array): void {
   const tmp = join(dir, `.tmp-knowns-${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`);
   try {
     writeFileSync(tmp, data, { mode: 0o600, flag: "wx" });
-    renameSync(tmp, dst);
+    renameRetrying(tmp, dst);
   } catch (e) {
     rmSync(tmp, { force: true });
     throw e;

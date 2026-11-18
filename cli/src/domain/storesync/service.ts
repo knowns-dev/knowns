@@ -2,13 +2,15 @@
 // their remotes from inside the shared runtime (store spec D3). Every Git decision, state field and
 // message follows the Go service so Go and TypeScript can alternate on one linked store.
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, statSync, watch, writeFileSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { dirname, join, sep } from "node:path";
-import { goLogf } from "../../runtime/queue.ts";
+import { goLogf, retryWhileBusy } from "../../runtime/queue.ts";
+import { readFileRetrying } from "../../storage/core/fs-retry.ts";
 import { globalRootPath } from "../../storage/core/global-root.ts";
 import { withSyncLocks } from "../../storage/core/locks.ts";
 import { MachineRegistry } from "../../storage/core/machine-registry.ts";
+import { statSignature } from "../../storage/core/stat-signature.ts";
 import { ensureStoreGitignore } from "../../storage/core/store-clone.ts";
 import { recordSyncArrivals, type SyncArrival } from "../../storage/history/sync-provenance.ts";
 import { classifyFailure, DEFAULT_GIT_TIMEOUT_MS, git } from "./git.ts";
@@ -99,13 +101,60 @@ export interface FoundStore {
   projects: string[];
 }
 
-/** discoverStores groups the registry's store-linked projects by store. */
+/**
+ * discoverStores groups the registry's store-linked projects by store. The daemon asks every few
+ * seconds (each tick and each keep-alive check); loading the registry canonicalizes every project
+ * path against the disk, which was the largest cost of an otherwise idle daemon with a UI open. The
+ * answer only depends on the registry file, so it is kept per stat signature and re-read when the
+ * file changes or after DISCOVER_TTL_MS.
+ */
+const DISCOVER_TTL_MS = 30_000;
+const discovered = new Map<string, { sig: string; at: number; found: FoundStore[] }>();
+export const discoverStats = { loads: 0 };
+
+/** The registry file's signature; undefined while the file was touched moments ago (racy: it is
+ * read again, never cached), "missing" for no file. */
+function registrySig(path: string): string | undefined {
+  try {
+    return statSignature(statSync(path, { bigint: true }));
+  } catch {
+    return "missing";
+  }
+}
+
+const copyOf = (found: FoundStore[]): FoundStore[] =>
+  found.map((f) => ({ ...f, projects: [...f.projects] }));
+
 export function discoverStores(registryPath: string): FoundStore[] {
+  const sig = registrySig(registryPath);
+  const hit = discovered.get(registryPath);
+  if (hit && sig !== undefined && hit.sig === sig && Date.now() - hit.at < DISCOVER_TTL_MS) {
+    return copyOf(hit.found);
+  }
+  const found = loadStores(registryPath);
+  discoverStats.loads++;
+  // A failed load (a transient EPERM on Windows, a half-written file) is not "no stores": never
+  // cache it. The last good answer stands, so a tick cannot mistake a hiccup for every store being
+  // unlinked; with nothing known yet it is empty, and the next call tries again.
+  if (found === undefined) return hit ? copyOf(hit.found) : [];
+  // Remember the answer even while the file is racy (sig undefined): it never serves a cache hit
+  // then (no signature equals ""), but it is still the last good answer if the next read fails.
+  discovered.set(registryPath, { sig: sig ?? "", at: Date.now(), found });
+  return copyOf(found);
+}
+
+/** The linked stores, or undefined when the registry could not be read. */
+function loadStores(registryPath: string): FoundStore[] | undefined {
   const reg = new MachineRegistry(registryPath);
   try {
-    reg.loadReadOnly();
-  } catch {
-    return [];
+    // The same busy-file retry the queue readers use: a registry being replaced is briefly
+    // unreadable on Windows.
+    retryWhileBusy(() => reg.loadReadOnly());
+  } catch (err) {
+    goLogf(
+      `[storesync] registry unreadable, keeping the last known stores: ${(err as Error).message}`,
+    );
+    return undefined;
   }
   const byName = new Map<string, FoundStore>();
   for (const p of reg.projects) {
@@ -142,6 +191,80 @@ const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
     }, ms);
     signal.addEventListener("abort", done, { once: true });
   });
+
+const IDLE_TICK_MS = 5000;
+
+/**
+ * One fs.watch on the registry's directory for the life of a sync loop (not one per idle wait: a
+ * watch costs a handle and, on Linux, an inotify instance). `sleep` ends early on a change to a
+ * registry file or on abort; a change that lands between two sleeps is remembered. Where the watch
+ * cannot start the timeout is the wake-up.
+ */
+export class RegistryWatch {
+  private w: ReturnType<typeof watch> | undefined;
+  private woken = false;
+  private release: (() => void) | undefined;
+
+  constructor(registryPath: string) {
+    try {
+      const base = registryPath.slice(
+        0,
+        Math.max(registryPath.lastIndexOf("/"), registryPath.lastIndexOf("\\")),
+      );
+      this.w = watch(base === "" ? "." : base, (_e, name) => {
+        if (name === undefined || name === null || name.toString().startsWith("registry")) {
+          this.woken = true;
+          this.release?.();
+        }
+      });
+      this.w.on("error", () => {});
+    } catch {
+      // no watch: the timeout is the wake-up
+    }
+  }
+
+  sleep(ms: number, signal: AbortSignal): Promise<void> {
+    if (this.woken) {
+      this.woken = false;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const finish = () => {
+        clearTimeout(t);
+        signal.removeEventListener("abort", finish);
+        this.release = undefined;
+        this.woken = false;
+        resolve();
+      };
+      const t = setTimeout(finish, ms);
+      if (signal.aborted) return finish();
+      signal.addEventListener("abort", finish, { once: true });
+      this.release = finish;
+    });
+  }
+
+  close(): void {
+    try {
+      this.w?.close();
+    } catch {
+      // already closed
+    }
+  }
+}
+
+/** Sleeps up to ms; a change in the registry's directory (best effort) or an abort ends it early. */
+export async function sleepUntilChange(
+  registryPath: string,
+  ms: number,
+  signal: AbortSignal,
+): Promise<void> {
+  const watcher = new RegistryWatch(registryPath);
+  try {
+    await watcher.sleep(ms, signal);
+  } finally {
+    watcher.close();
+  }
+}
 
 /** statusPath: the path of one `git status --porcelain` line. */
 export function statusPath(line: string): string {
@@ -215,6 +338,15 @@ export class Service {
 
   /** Run syncs until the signal aborts. */
   async run(signal: AbortSignal): Promise<void> {
+    const registryWatch = new RegistryWatch(this.cfg.registryPath);
+    try {
+      await this.loop(signal, registryWatch);
+    } finally {
+      registryWatch.close();
+    }
+  }
+
+  private async loop(signal: AbortSignal, registryWatch: RegistryWatch): Promise<void> {
     for (;;) {
       try {
         await this.tick(signal);
@@ -225,7 +357,11 @@ export class Service {
         goLogf(`[storesync] sync pass failed: ${(e as Error).message}`);
       }
       if (signal.aborted) return;
-      await sleep(this.cfg.tickMs, signal);
+      // With no store linked nothing here can change except the registry, so wait longer and let a
+      // registry change end the wait at once (one watch on the registry's directory; the longer
+      // wait is also the fallback where a watch does not fire).
+      const idle = this.stores.size === 0 && discoverStores(this.cfg.registryPath).length === 0;
+      await (idle ? registryWatch.sleep(IDLE_TICK_MS, signal) : sleep(this.cfg.tickMs, signal));
       if (signal.aborted) return;
     }
   }
@@ -722,7 +858,7 @@ export class Service {
     const local = new Map<string, Buffer>();
     for (const p of paths) {
       try {
-        local.set(p, readFileSync(join(clone, p)));
+        local.set(p, readFileRetrying(join(clone, p)));
       } catch {
         // absent locally
       }
@@ -844,7 +980,7 @@ export class Service {
         const p = statusPath(line);
         if (p === "") continue;
         try {
-          saved.set(p, readFileSync(join(clone, p)));
+          saved.set(p, readFileRetrying(join(clone, p)));
         } catch (e) {
           if ((e as NodeJS.ErrnoException).code === "ENOENT") removed.push(p);
         }

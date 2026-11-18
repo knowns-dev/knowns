@@ -1,6 +1,7 @@
 // Port of internal/storage/store_clone.go: the managed block of a store clone's .gitignore.
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { readFileRetrying } from "./fs-retry.ts";
 
 const STORE_IGNORE_BEGIN = "# >>> knowns: machine-local state, never synced (store spec D1) >>>";
 const STORE_IGNORE_END = "# <<< knowns <<<";
@@ -24,7 +25,7 @@ export function ensureStoreGitignore(cloneRoot: string): boolean {
   const path = join(cloneRoot, ".gitignore");
   let existing = "";
   try {
-    existing = readFileSync(path, "utf8");
+    existing = readFileRetrying(path, "utf8");
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
       throw new Error(`read ${path}: ${(e as Error).message}`);

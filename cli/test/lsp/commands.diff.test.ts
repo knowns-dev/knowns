@@ -2,7 +2,8 @@
 // typescript-language-server) are real; managed installs are hidden by an empty HOME and
 // KNOWN_LSP_AUTO_INSTALL=0. The daemon is disabled for both so no background process is involved.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hasGoBin, makePair, normalized, runBoth } from "../cli/commands/harness.ts";
 
@@ -20,6 +21,26 @@ afterAll(() => {
 });
 
 const cases = hasGoBin ? describe : describe.skip;
+
+/**
+ * `lsp list`, `cleanup` and `install` print what is installed on the host (which servers are on
+ * PATH, and what each one answers to --version), and the Go oracle and the TS port do not read a
+ * host's servers the same way (the macOS /usr/bin/sourcekit-lsp and clangd shims, a dotnet tool
+ * dir): a parity run is only meaningful on a PATH with no language server. Both sides read the
+ * test process's PATH (the oracle through the harness env, the TS side in process), so it is
+ * swapped around the call.
+ */
+const NO_SERVERS = realpathSync(mkdtempSync(join(tmpdir(), "knowns-lsp-nopath-")));
+async function withNoServers<T>(fn: () => Promise<T>): Promise<T> {
+  const real = process.env.PATH;
+  process.env.PATH = NO_SERVERS;
+  try {
+    return await fn();
+  } finally {
+    if (real === undefined) delete process.env.PATH;
+    else process.env.PATH = real;
+  }
+}
 const hasBin = (n: string): boolean => Bun.which(n) !== null;
 
 function scrub(pair: ReturnType<typeof makePair>, side: "go" | "ts", text: string): string {
@@ -77,16 +98,13 @@ cases("lsp commands", () => {
     ["code", "deps", "--plain"],
   ]) {
     // `lsp install ruby` checks the no-gem error path; with gem on PATH (GitHub's ubuntu image)
-    // both sides start a real ruby-lsp install instead.
-    const skip = args[2] === "ruby" && hasBin("gem");
-    test.skipIf(skip)(
-      args.join(" "),
-      async () => {
-        const { go, ts } = await both(pair, args);
-        expect(ts).toEqual(go);
-      },
-      60_000,
-    );
+    // both sides would start a real ruby-lsp install, which is why the `lsp` commands run on a
+    // PATH with no tool on it.
+    test(args.join(" "), async () => {
+      const run = () => both(pair, args);
+      const { go, ts } = await (args[0] === "lsp" ? withNoServers(run) : run());
+      expect(ts).toEqual(go);
+    }, 60_000);
   }
 
   test.skipIf(!hasBin("gopls"))(

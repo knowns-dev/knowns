@@ -21,6 +21,17 @@ interface Client {
 
 export class SSEBroker implements Broadcaster {
   private clients = new Set<Client>();
+  /** Called with the new client count whenever a subscriber joins or leaves (daemon-served UI idle). */
+  onChange: ((size: number) => void) | undefined;
+
+  private add(c: Client): void {
+    this.clients.add(c);
+    this.onChange?.(this.clients.size);
+  }
+
+  private remove(c: Client): void {
+    if (this.clients.delete(c)) this.onChange?.(this.clients.size);
+  }
 
   get size(): number {
     return this.clients.size;
@@ -53,12 +64,12 @@ export class SSEBroker implements Broadcaster {
           },
         };
         client = c;
-        this.clients.add(c);
+        this.add(c);
         c.push(`event: connected\ndata: {"timestamp":${Date.now()}}\n\n`);
-        signal?.addEventListener("abort", () => this.clients.delete(c));
+        signal?.addEventListener("abort", () => this.remove(c));
       },
       cancel: () => {
-        if (client) this.clients.delete(client);
+        if (client) this.remove(client);
       },
     });
     return new Response(stream, {

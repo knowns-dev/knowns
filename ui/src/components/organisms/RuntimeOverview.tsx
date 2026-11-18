@@ -35,6 +35,7 @@ import type {
 	RuntimeService,
 } from "@/ui/api/client";
 import { useRuntimeMonitor } from "@/ui/hooks/useRuntimeMonitor";
+import { useVisiblePolling } from "@/ui/hooks/useVisiblePolling";
 import { cn } from "@/ui/lib/utils";
 import { Badge, type BadgeTone } from "../ui/knowns/badge";
 import { Button as KnButton, buttonClass } from "../ui/knowns/button";
@@ -1186,11 +1187,7 @@ export function RuntimeOverview() {
 		}
 	}, []);
 
-	useEffect(() => {
-		void loadServices();
-		const interval = window.setInterval(loadServices, 7000);
-		return () => window.clearInterval(interval);
-	}, [loadServices]);
+	useVisiblePolling(loadServices, ["service:status"]);
 	// A queued job collapses three distinct backend states into one label if
 	// treated as a single bucket: ready to run now, waiting out a retry
 	// backoff, or dead-lettered (permanently skipped by the scheduler,

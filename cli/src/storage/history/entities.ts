@@ -1,5 +1,6 @@
 // Task and Doc state as history sees it: snapshots, canonical hashes, change tracking, markdown
 // section handling and replay. Ports of the pure parts of version_store.go and history_adapter.go.
+
 import { randomBytes } from "node:crypto";
 import type { Doc } from "../../models/doc.ts";
 import type { MemoryEntry } from "../../models/memory.ts";
@@ -14,6 +15,7 @@ import type {
   TaskVersion,
   TaskVersionHistory,
 } from "../../models/version.ts";
+import { bareIndex, proseMask } from "../core/doc-sections.ts";
 import { goTrimSpace } from "../core/util.ts";
 import {
   type AnyMap,
@@ -388,13 +390,14 @@ export function headingLevel(line: string): number {
 export function docMarkdownSections(content: string): MarkdownSection[] {
   const lines = content.split("\n");
   const sections: MarkdownSection[] = [];
+  const mask = proseMask(lines);
   lines.forEach((line, i) => {
-    if (!line.startsWith("#")) return;
+    if (!mask[i] || !line.startsWith("#")) return;
     const level = headingLevel(line);
     if (level === 0) return;
     let end = lines.length;
     for (let j = i + 1; j < lines.length; j++) {
-      const next = headingLevel(lines[j] as string);
+      const next = mask[j] ? headingLevel(lines[j] as string) : 0;
       if (next > 0 && next <= level) {
         end = j;
         break;
@@ -422,11 +425,10 @@ export function findMarkdownSection(
   if (sections.length === 0) return undefined;
   const ref = goTrimSpace(sectionRef.replace(/^[# ]+/, ""));
   const lowerRef = ref.toLowerCase();
+  const num = bareIndex(ref);
+  if (num !== undefined && num >= 1 && num <= sections.length) return sections[num - 1];
   return sections.find(
-    (s) =>
-      String(s.index) === ref ||
-      s.title.toLowerCase() === lowerRef ||
-      s.title.toLowerCase().includes(lowerRef),
+    (s) => s.title.toLowerCase() === lowerRef || s.title.toLowerCase().includes(lowerRef),
   );
 }
 

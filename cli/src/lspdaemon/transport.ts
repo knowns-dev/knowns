@@ -5,6 +5,7 @@ import net from "node:net";
 import { dirname } from "node:path";
 import type { Ctx } from "../lsp/context.ts";
 import { ctxErr } from "../lsp/context.ts";
+import { endpointAlive } from "../util/endpoint-alive.ts";
 import { endpoint, type Paths, type TransportEndpoint } from "./identity.ts";
 
 const isWindows = process.platform === "win32";
@@ -106,6 +107,11 @@ function removeStaleSocket(path: string): Promise<void> {
 export async function listenEndpoint(paths: Paths): Promise<net.Server> {
   const ep = endpoint(paths);
   if (!isWindows) await removeStaleSocket(ep.address);
+  // On Windows a net.Server whose listen() fails on a pipe that is already served makes Bun 1.3.12
+  // panic when the process ends, so a live pipe is detected by connecting and never listened on.
+  else if (await endpointAlive(ep.address, 500)) {
+    throw new Error(`LSP daemon socket already active: ${ep.address}`);
+  }
   const server = net.createServer();
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);

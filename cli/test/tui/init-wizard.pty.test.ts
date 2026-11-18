@@ -6,7 +6,15 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { treeDiff } from "../cli/commands/init-harness.ts";
-import { askedInOrder, hasGoBin, hasPty, KEY, type PtyStep, runBoth } from "./pty-harness.ts";
+import {
+  askedInOrder,
+  assertSameExit,
+  hasGoBin,
+  hasPty,
+  KEY,
+  type PtyStep,
+  runBoth,
+} from "./pty-harness.ts";
 
 const cases = hasGoBin && hasPty ? describe : describe.skip;
 
@@ -21,7 +29,7 @@ const TITLES = [
 const norm = (m: Map<string, string>) => m;
 
 function expectSame(r: ReturnType<typeof runBoth>, titles = TITLES): void {
-  expect(r.ts.exit).toBe(r.go.exit);
+  assertSameExit(r);
   expect(askedInOrder(r.ts.transcript, titles)).toEqual(askedInOrder(r.go.transcript, titles));
   expect(treeDiff(norm(r.goTree), norm(r.tsTree))).toEqual([]);
   expect(treeDiff(norm(r.goHome), norm(r.tsHome))).toEqual([]);

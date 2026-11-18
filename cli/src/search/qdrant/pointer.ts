@@ -9,13 +9,12 @@ import {
   fsyncSync,
   mkdirSync,
   openSync,
-  readFileSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, normalize, sep } from "node:path";
 import { z } from "zod";
+import { readFileRetrying, renameRetrying } from "../../platform/fs-retry.ts";
 import { contentHash } from "../hash.ts";
 import { goJson } from "../json.ts";
 import { goTimeString } from "../time.ts";
@@ -126,7 +125,7 @@ export function loadQdrantPointer(storeRoot: string): QdrantPointer | undefined 
   const path = qdrantPointerPath(storeRoot);
   let data: string;
   try {
-    data = readFileSync(path, "utf8");
+    data = readFileRetrying(path, "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw new Error(`read qdrant pointer: ${(err as Error).message}`);
@@ -223,7 +222,7 @@ export function loadQdrantGenerations(storeRoot: string): QdrantGenerationRecord
   const path = qdrantGenerationsPath(storeRoot);
   let data: string;
   try {
-    data = readFileSync(path, "utf8");
+    data = readFileRetrying(path, "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw new Error(`read qdrant generations: ${(err as Error).message}`);
@@ -253,7 +252,7 @@ function atomicWriteSearchFile(dst: string, data: string): void {
     } finally {
       closeSync(fd);
     }
-    renameSync(tmp, dst);
+    renameRetrying(tmp, dst);
   } catch (err) {
     if (existsSync(tmp)) rmSync(tmp, { force: true });
     throw err;

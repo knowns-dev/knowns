@@ -13,7 +13,7 @@ import {
   readTextIfExists,
   writeJsonMap,
 } from "./json-files.ts";
-import { mcpCommand, mcpCommandFlat } from "./mcp-command.ts";
+import { isKnownsWritten, mcpCommand, mcpCommandFlat } from "./mcp-command.ts";
 import { setCodexMcpServer } from "./runtimeinstall.ts";
 
 function mkdirp(dir: string, what?: string): void {
@@ -214,7 +214,7 @@ export function syncMcpConfigs(
       label,
       "mcpServers",
       (k) => {
-        if (k.command === cmd) return false;
+        if (!isKnownsWritten(k.command, k.args) || k.command === cmd) return false;
         k.command = cmd;
         k.args = args;
         return true;
@@ -246,6 +246,7 @@ export function syncMcpConfigs(
       "~/.gemini/antigravity/mcp_config.json",
       "mcpServers",
       (k) => {
+        if (!isKnownsWritten(k.command, k.args, { allowProject: true })) return false;
         if (k.command === cmd && sameStrings(k.args, expected)) return false;
         k.command = cmd;
         k.args = expected;
@@ -263,7 +264,10 @@ export function syncMcpConfigs(
       "mcp",
       (k) => {
         const existing = k.command;
-        if (Array.isArray(existing) && existing.length > 0 && existing[0] === cmd) return false;
+        // Only an array command can be Knowns's; a string or missing one is the user's own.
+        if (!Array.isArray(existing) || !isKnownsWritten(existing[0], existing.slice(1)))
+          return false;
+        if (existing.length > 0 && existing[0] === cmd) return false;
         k.command = [cmd, ...args];
         return true;
       },

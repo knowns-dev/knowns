@@ -6,12 +6,14 @@
 #   $env:KNOWNS_INSTALL_DIR  — install directory (default: ~\.knowns\bin)
 #   $env:KNOWNS_VERSION      — specific version (default: latest)
 #   $env:KNOWNS_BASE_URL     — release download prefix (default: GitHub releases)
+#   $env:KNOWNS_NO_MODIFY_PATH — set to 1 to leave your user PATH alone (a hint is printed instead)
 
 $ErrorActionPreference = "Stop"
 
 $Repo = "knowns-dev/knowns"
 $Binary = "knowns.exe"
 $AliasBinary = "kn.exe"
+$Engine = "knowns-engine.exe"
 $DefaultInstallDir = Join-Path $env:USERPROFILE ".knowns\bin"
 $KnownsHome = Join-Path $env:USERPROFILE ".knowns"
 $InstallDir = if ($env:KNOWNS_INSTALL_DIR) { $env:KNOWNS_INSTALL_DIR } else { $DefaultInstallDir }
@@ -101,19 +103,113 @@ try {
     tar -xzf (Join-Path $TmpDir $Archive) -C $TmpDir
     Write-Host "`r  + Extracted                  " -ForegroundColor Green
 
-    # Find the main binary (knowns.exe specifically — avoid matching knowns-embed.exe)
-    $ExtractedBin = Get-ChildItem -Path $TmpDir -Filter "knowns.exe" -Recurse | Select-Object -First 1
-    if (-not $ExtractedBin) {
-        Write-Host "  x knowns.exe not found in archive" -ForegroundColor Red
-        exit 1
+    # Find the archive root: the folder with layout.json (launcher + engine archives) or knowns.exe.
+    # In a launcher archive knowns.exe is the ENGINE (so an older updater installs something that
+    # runs) and knowns.launcher.exe is the launcher; layout.json says which becomes which.
+    $LayoutFile = Get-ChildItem -Path $TmpDir -Filter "layout.json" -Recurse | Select-Object -First 1
+    $LauncherSrc = $null
+    if ($LayoutFile) {
+        $ExtractRoot = $LayoutFile.Directory.FullName
+        $layout = Get-Content -Raw -Path $LayoutFile.FullName | ConvertFrom-Json
+        if ($layout.layout -ne 1) {
+            Write-Host "  x Unsupported archive layout $($layout.layout); update install.ps1" -ForegroundColor Red
+            exit 1
+        }
+        $EngineSrc = Join-Path $ExtractRoot $layout.engine.file
+        $LauncherSrc = Join-Path $ExtractRoot $layout.launcher.file
+        if (-not (Test-Path $EngineSrc) -or -not (Test-Path $LauncherSrc)) {
+            Write-Host "  x Archive is missing the launcher or the engine" -ForegroundColor Red
+            exit 1
+        }
+    } else {
+        # knowns.exe specifically (not knowns-embed.exe or the like)
+        $ExtractedBin = Get-ChildItem -Path $TmpDir -Filter "knowns.exe" -Recurse | Select-Object -First 1
+        if (-not $ExtractedBin) {
+            Write-Host "  x knowns.exe not found in archive" -ForegroundColor Red
+            exit 1
+        }
+        $ExtractRoot = $ExtractedBin.Directory.FullName
+        $EngineSrc = $ExtractedBin.FullName
     }
-    $ExtractRoot = $ExtractedBin.Directory.FullName
 
     # Install bundle
     Write-Host "  . Installing to $InstallDir..." -NoNewline -ForegroundColor DarkGray
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-    Copy-Item -Path $ExtractedBin.FullName -Destination (Join-Path $InstallDir $Binary) -Force
-    Copy-Item -Path $ExtractedBin.FullName -Destination (Join-Path $InstallDir $AliasBinary) -Force
+    # A running exe cannot be overwritten or deleted on Windows but can be renamed, so each file is
+    # moved aside to <name>.old first. A previous .old that is still running is locked: give the new
+    # one a unique name rather than fail; the next install sweeps them.
+    # The files go in as one unit: every new file is first copied next to its destination, then each
+    # is swapped in, and a failure puts the already swapped ones back.
+    function Install-Set($Items) {
+        $staged = @()
+        try {
+            foreach ($it in $Items) {
+                $tmp = "$($it.Dest).new"
+                Copy-Item -Path $it.Source -Destination $tmp -Force -ErrorAction Stop
+                $staged += $tmp
+            }
+        } catch {
+            foreach ($t in $staged) { Remove-Item -Path $t -Force -ErrorAction SilentlyContinue }
+            throw
+        }
+        $done = @()
+        try {
+            foreach ($it in $Items) {
+                $aside = $null
+                if (Test-Path $it.Dest) {
+                    $aside = "$($it.Dest).old"
+                    Remove-Item -Path $aside -Force -ErrorAction SilentlyContinue
+                    if (Test-Path $aside) { $aside = "$($it.Dest).old.$([DateTime]::UtcNow.Ticks)" }
+                    Move-Item -Path $it.Dest -Destination $aside -Force -ErrorAction Stop
+                }
+                try {
+                    Move-Item -Path "$($it.Dest).new" -Destination $it.Dest -Force -ErrorAction Stop
+                } catch {
+                    if ($aside) { Move-Item -Path $aside -Destination $it.Dest -Force -ErrorAction SilentlyContinue }
+                    throw
+                }
+                $done += @{ Dest = $it.Dest; Aside = $aside }
+            }
+        } catch {
+            [array]::Reverse($done)
+            foreach ($d in $done) {
+                Remove-Item -Path $d.Dest -Force -ErrorAction SilentlyContinue
+                if ($d.Aside) { Move-Item -Path $d.Aside -Destination $d.Dest -Force -ErrorAction SilentlyContinue }
+            }
+            foreach ($t in $staged) { Remove-Item -Path $t -Force -ErrorAction SilentlyContinue }
+            throw
+        }
+    }
+    function Remove-Exe($Path) {
+        if (-not (Test-Path $Path)) { return }
+        Remove-Item -Path $Path -Force -ErrorAction SilentlyContinue
+        if (Test-Path $Path) { Move-Item -Path $Path -Destination "$Path.old.$([DateTime]::UtcNow.Ticks)" -Force -ErrorAction SilentlyContinue }
+    }
+    Get-ChildItem -Path $InstallDir -Filter "*.exe.old*" -ErrorAction SilentlyContinue | ForEach-Object {
+        Remove-Item -Path $_.FullName -Force -ErrorAction SilentlyContinue
+    }
+
+    $EngineDest = Join-Path $InstallDir $Engine
+    $BinaryDest = Join-Path $InstallDir $Binary
+    $AliasDest = Join-Path $InstallDir $AliasBinary
+    if ($LauncherSrc) {
+        # The engine first (an older launcher keeps working with it), then the launcher as knowns.exe
+        # and as the kn.exe copy.
+        Install-Set @(
+            @{ Source = $EngineSrc; Dest = $EngineDest },
+            @{ Source = $LauncherSrc; Dest = $BinaryDest },
+            @{ Source = $LauncherSrc; Dest = $AliasDest }
+        )
+    } else {
+        # An archive without a launcher (0.35 and older): the engine alone is knowns.exe and kn.exe.
+        Install-Set @(
+            @{ Source = $EngineSrc; Dest = $BinaryDest },
+            @{ Source = $EngineSrc; Dest = $AliasDest }
+        )
+        Remove-Exe $EngineDest
+    }
+    # knowns-proxy.exe was a transitional name of the launcher.
+    Remove-Exe (Join-Path $InstallDir "knowns-proxy.exe")
 
     # Colocated ONNX Runtime DLLs
     foreach ($pattern in @("onnxruntime*.dll")) {
@@ -140,12 +236,17 @@ try {
     [IO.File]::WriteAllText((Join-Path $KnownsHome "install.json"), ($metadata | ConvertTo-Json), (New-Object System.Text.UTF8Encoding $false))
     Write-Host "  + Recorded install metadata in $KnownsHome\install.json" -ForegroundColor Green
 
-    # Add to PATH if not already there
+    # Add to PATH if not already there. KNOWNS_NO_MODIFY_PATH=1 leaves the persistent user PATH alone.
     $UserPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
     if ($UserPath -notlike "*$InstallDir*") {
-        [System.Environment]::SetEnvironmentVariable("Path", "$InstallDir;$UserPath", "User")
-        $env:Path = "$InstallDir;$env:Path"
-        Write-Host "  + Added $InstallDir to PATH" -ForegroundColor Green
+        if ($env:KNOWNS_NO_MODIFY_PATH -eq "1") {
+            Write-Host "  . KNOWNS_NO_MODIFY_PATH=1: your PATH was not changed. To use knowns, add this directory to it:" -ForegroundColor DarkGray
+            Write-Host "      $InstallDir" -ForegroundColor DarkGray
+        } else {
+            [System.Environment]::SetEnvironmentVariable("Path", "$InstallDir;$UserPath", "User")
+            $env:Path = "$InstallDir;$env:Path"
+            Write-Host "  + Added $InstallDir to PATH" -ForegroundColor Green
+        }
     }
 
     # Verify

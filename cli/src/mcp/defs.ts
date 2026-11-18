@@ -59,9 +59,9 @@ export const tasksTool = (): Tool =>
 - get: Read task details. Required: taskId. Optional: none. Returns: task metadata, acceptance criteria, plan, notes, spec links, and time spent.
 - update: Modify task fields, ACs, plan, or notes. Required: taskId. Optional: title, description, status, priority, assignee, labels, spec, fulfills, order, addAc, checkAc, uncheckAc, removeAc, plan, notes, appendNotes, clear, return. Returns: compact summary by default; use return=full for the legacy task payload.
 - delete: Remove a task or preview removal. Required: taskId. Optional: dryRun (default true). Returns: deletion preview or confirmation.
-- list: List tasks with filters. Required: none. Optional: status, priority, assignee, unassigned, label, spec, includeHistorical. Returns: matching task summaries with IDs, titles, statuses, priorities, assignees, labels, and spec links.
+- list: List tasks with filters. Required: none. Optional: status, priority, assignee, unassigned, label, spec, parent, query, includeHistorical, limit, cursor, detail. Returns: {results, total, limit, nextCursor?}; results are summaries (id, title, status, priority, assignee, labels, parent, order, updatedAt), first 50 by default. Pass nextCursor as cursor for the next page; detail=full returns full tasks; use get for one task.
 - history: View task change history. Required: taskId. Optional: none. Returns: chronological change entries with timestamps and metadata.
-- board: Show tasks grouped by status. Required: none. Optional: none. Returns: board columns containing task summaries by status.
+- board: Show tasks grouped by status. Required: none. Optional: status, limit, cursor. Returns: columns with the first 20 task summaries each, the full count and nextCursor; pass status plus cursor to page one column.
 - archive/unarchive: Preview by default; set execute=true to mutate. Required: taskId.
 - batch_archive/batch_unarchive: Preview by default; set execute=true to mutate. Optional: ids for batch_archive; required for batch_unarchive.
 - hard_delete: Permission-gated separately from archive. Required: taskId, confirmed=true, and non-empty reason.
@@ -88,8 +88,14 @@ export const tasksTool = (): Tool =>
       }),
       str("taskId", "Task ID (required for get, update, delete, history)"),
       bool("metadata", "Return payload-free paginated history metadata"),
-      num("offset", "History metadata offset (newest first)"),
-      num("limit", "History metadata page size"),
+      num(
+        "offset",
+        "History metadata offset (newest first); list start offset, cursor is preferred",
+      ),
+      num(
+        "limit",
+        "History metadata page size; list page size (default 50, max 200); board per-column size (default 20)",
+      ),
       str("revision", "Explicit history revision detail (vN or numeric)"),
       str("title", "Task title (required for create, optional for update)"),
       str("description", "Task description (create, update)"),
@@ -101,7 +107,7 @@ export const tasksTool = (): Tool =>
       }),
       str("assignee", "Task assignee (create, update, list)"),
       strArr("labels", "Task labels (create, update)"),
-      str("parent", "Parent task ID for subtasks (create)"),
+      str("parent", "Parent task ID for subtasks (create); only subtasks of this task (list)"),
       str(
         "prefix",
         "Custom task ID prefix for create; overrides the project default without changing config",
@@ -125,6 +131,11 @@ export const tasksTool = (): Tool =>
       str("label", "Filter by label (list)"),
       bool("unassigned", "Only Tasks with no assignee; cannot be combined with assignee (list)"),
       bool("includeHistorical", "Include archived Tasks in the result (list)"),
+      str("query", "Case-insensitive text in title or description (list)"),
+      str("cursor", "Opaque cursor from a previous list or board response nextCursor"),
+      str("detail", "List detail: summary (default) or full task payloads", {
+        enum: ["summary", "full"],
+      }),
       bool("dryRun", "Preview only without deleting (default: true) (delete)"),
       strArr("ids", "Task IDs for batch lifecycle actions"),
       bool("execute", "Execute a lifecycle mutation; defaults to false preview"),
@@ -165,7 +176,10 @@ export const docsTool = (): Tool =>
       bool("includeHistory", "Include structured revision history metadata with get responses"),
       bool("info", "Return document stats without content (get)"),
       bool("toc", "Return table of contents only (get)"),
-      str("section", "Section by heading title or number (get, update)"),
+      str(
+        "section",
+        "Section by heading title or bare integer index (get, update). Update replaces the heading line too, so content should start with it; content without a heading keeps the existing heading",
+      ),
       str("line", "Specific lines e.g. '42' or '10-20' (get)"),
       str("appendContent", "Append to existing content (update)"),
       str("newPath", "Rename document to new path (update)"),

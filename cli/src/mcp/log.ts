@@ -1,17 +1,9 @@
 // Port of newMCPLogger (internal/mcp/server.go): lines go to stderr and to
 // ~/.knowns/logs/mcp.log with size rotation, never to stdout.
-import {
-  closeSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeSync,
-} from "node:fs";
+import { closeSync, mkdirSync, openSync, readdirSync, rmSync, statSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { renameRetrying } from "../storage/core/fs-retry.ts";
 
 const DEFAULT_MAX_SIZE = 10 * 1024 * 1024;
 const DEFAULT_MAX_BACKUPS = 3;
@@ -47,13 +39,13 @@ class RotatingFile {
       rmSync(`${p}.${this.maxBackups}`, { force: true });
       for (let i = this.maxBackups - 1; i >= 1; i--) {
         try {
-          renameSync(`${p}.${i}`, `${p}.${i + 1}`);
+          renameRetrying(`${p}.${i}`, `${p}.${i + 1}`);
         } catch {
           // missing backup
         }
       }
       try {
-        renameSync(p, `${p}.1`);
+        renameRetrying(p, `${p}.1`);
       } catch {
         // ignore
       }

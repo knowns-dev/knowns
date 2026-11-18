@@ -93,6 +93,12 @@ export interface Result {
   deadline?: string;
 }
 
+/** Children by parent and the Tasks by id at one moment: what the descendant check reads. */
+export interface TaskTreeSnapshot {
+  children: Map<string, string[]>;
+  tasks: Map<string, { archived: boolean; status: string }>;
+}
+
 export interface ArchiveOptions {
   actor?: string;
   expectedHash?: string;
@@ -100,6 +106,10 @@ export interface ArchiveOptions {
   automatic?: boolean;
   /** A caller-selected retention threshold in ms; an explicit 0 stays distinct from "none". */
   minimumAgeMs?: number;
+  /** Internal: a snapshot of the Task tree shared by the Tasks of one automatic sweep chunk. */
+  taskTree?: TaskTreeSnapshot;
+  /** Internal: taskTree was listed for this very chunk, so the per-Task re-listing is skipped. */
+  taskTreeFresh?: boolean;
 }
 
 export interface ReopenOptions {
@@ -115,16 +125,30 @@ export interface HardDeleteOptions {
   expectedHash?: string;
 }
 
+/**
+ * Observers of a named batch (the Activity Tray). `shouldStop` is asked at each chunk boundary and
+ * ends the batch there, keeping everything already done; `onProgress` follows every Task.
+ */
+export interface BatchHooks {
+  onProgress?: (processed: number, total: number) => void;
+  shouldStop?: () => boolean;
+}
+
 export interface BatchOptions {
+  hooks?: BatchHooks;
   ids?: string[];
   execute?: boolean;
   actor?: string;
   automatic?: boolean;
   minimumAgeMs?: number;
   expectedHashes?: Record<string, string>;
+  /** Internal: see ArchiveOptions.taskTree. */
+  taskTree?: TaskTreeSnapshot;
 }
 
 export interface BatchResult {
+  /** The batch was stopped at a chunk boundary by `hooks.shouldStop`; processed Tasks stay done. */
+  stopped?: boolean;
   operation: Operation;
   execute: boolean;
   completed: boolean;
@@ -158,6 +182,8 @@ export interface PublicCapabilities {
 }
 
 export interface Response {
+  /** Set when a batch was stopped at a chunk boundary (never on the wire). */
+  stopped?: boolean;
   operation: Operation;
   execute: boolean;
   completed: boolean;

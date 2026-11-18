@@ -17,6 +17,7 @@ knowns browser [flags]
 |---|---|---|---|
 | `--allow-task-hard-delete` | `bool` | — | Grant this server instance Task hard-delete capability |
 | `--dev` | `bool` | — | Enable development mode (verbose logging) |
+| `--foreground` | `bool` | — | Keep serving in this terminal; Ctrl+C stops the UI (default: the runtime daemon serves it) |
 | `--no-open` | `bool` | — | Don't automatically open browser |
 | `--open` | `bool` | — | Open browser after starting |
 | `--password` | `string` | — | Protect WebUI with a password (in-memory only) |
@@ -24,6 +25,7 @@ knowns browser [flags]
 | `--project` | `string` | — | Project path to open directly |
 | `--restart` | `bool` | — | Restart server if already running |
 | `--scan` | `string` | — | Comma-separated directories to scan for projects |
+| `--stop` | `bool` | — | Stop the UI running on --port, or for this project |
 | `--tunnel` | `bool` | — | Expose via a Cloudflare Quick Tunnel (requires cloudflared) |
 
 ## Inherited flags

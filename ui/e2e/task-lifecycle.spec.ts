@@ -155,7 +155,8 @@ test.describe("Task lifecycle workflows", () => {
 		await page.goto(`${server.baseURL}/tasks`);
 		await expect(page.getByText(active.title)).toBeVisible();
 		await expect(page.getByText(archived.title)).toHaveCount(0);
-		expect(listRequests).toEqual([""]);
+		// The shell asks for the light list (no description, notes, plan or time entries).
+		expect(listRequests).toEqual(["?summary=true"]);
 		await selectLifecycle(page, "archived");
 		await historicalStarted;
 		await selectLifecycle(page, "current");
@@ -242,11 +243,13 @@ test.describe("Task lifecycle workflows", () => {
 		await page.getByRole("menuitem", { name: /Done before now/ }).click();
 		await expect(page.getByTestId(`lifecycle-item-${doneID}`)).toBeVisible();
 		const lateDoneID = createTask("Lifecycle Done After Preview", "--status done");
+		// Confirming starts a background operation: the dialog closes at once (the tray shows the rest).
 		await dialog.getByTestId("lifecycle-confirm").click();
-		await expect(dialog.getByTestId("lifecycle-progress")).toContainText("Changed 1");
-		await expect(dialog.getByTestId("lifecycle-event")).toBeVisible();
-
-		await dialog.getByRole("button", { name: "Cancel" }).click();
+		await expect(dialog).toBeHidden();
+		await expect.poll(async () => {
+			const task = await page.request.get(`${server.baseURL}/api/tasks/${doneID}`).then((response) => response.json());
+			return task.lifecycleState;
+		}).toBe("archived");
 		const lateDone = await page.request.get(`${server.baseURL}/api/tasks/${lateDoneID}`).then((response) => response.json());
 		expect(lateDone.lifecycleState).toBe("done");
 		await page.goto(`${server.baseURL}/tasks`);
@@ -267,7 +270,7 @@ test.describe("Task lifecycle workflows", () => {
 		const lateArchivedID = createTask("Lifecycle Archived After Restore Preview", "--status done");
 		server.cli(`task archive ${lateArchivedID} --yes`);
 		await dialog.getByTestId("lifecycle-confirm").click();
-		await expect(dialog.getByTestId("lifecycle-progress")).toContainText("Changed 1");
+		await expect(dialog).toBeHidden();
 		await expect.poll(async () => {
 			const task = await page.request.get(`${server.baseURL}/api/tasks/${doneID}`).then((response) => response.json());
 			return task.lifecycleState;
@@ -276,10 +279,9 @@ test.describe("Task lifecycle workflows", () => {
 		expect(lateArchived.lifecycleState).toBe("archived");
 	});
 
-	test("renders stable skips and warnings and supports retry after a partial execution response", async ({ page }) => {
+	test("renders stable skips and warnings and starts the batch as a background operation", async ({ page }) => {
 		const doneID = createTask("Lifecycle Partial Retry", "--status done");
-		let executeCalls = 0;
-		const executeBodies: Array<{ ids?: string[]; execute?: boolean }> = [];
+		const executeBodies: Array<{ ids?: string[]; execute?: boolean; background?: boolean }> = [];
 		const completedAt = new Date(Date.now() - 60_000).toISOString();
 		const deadline = new Date(Date.now() - 30_000).toISOString();
 		const base = {
@@ -318,35 +320,19 @@ test.describe("Task lifecycle workflows", () => {
 				await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...base, execute: false, completed: true }) });
 				return;
 			}
-			executeCalls += 1;
 			executeBodies.push(body);
-			if (executeCalls === 1) {
-				await route.fulfill({
-					status: 500,
-					contentType: "application/json",
-					body: JSON.stringify({
-						...base,
-						execute: true,
-						completed: true,
-						processed: 2,
-						changed: 1,
-						failedTaskId: doneID,
-						items: [
-							{
-								...base.items[0],
-								changed: true,
-								after: "archived",
-								archivedAt: new Date().toISOString(),
-								reasons: [{ code: "operation_failed", message: "event checkpoint repair is pending" }],
-								event: { id: "stable-event-1", type: "archive", taskId: doneID, at: new Date().toISOString(), from: "done", to: "archived" },
-							},
-							base.items[1],
-						],
-					}),
-				});
-				return;
-			}
-			await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...base, execute: true, completed: true, processed: 2 }) });
+			// 202 and an operation: the tray follows it from here.
+			await route.fulfill({
+				status: 202,
+				contentType: "application/json",
+				body: JSON.stringify({
+					operation: {
+						id: "op_e2e_1", source: "web", kind: "batch_archive", title: "Archiving 2 tasks", project: null, projectRoot: null,
+						state: "running", progress: { done: 0, total: 2 }, cancellable: true, retryable: false, error: null, message: null,
+						startedAt: Date.now(), updatedAt: Date.now(), finishedAt: null,
+					},
+				}),
+			});
 		});
 
 		await page.goto(`${server.baseURL}/kanban`);
@@ -359,16 +345,11 @@ test.describe("Task lifecycle workflows", () => {
 		await expect(page.getByTestId(`lifecycle-item-${doneID}`).getByTestId("lifecycle-timestamps")).toContainText("Completed");
 		await expect(page.getByTestId(`lifecycle-item-${doneID}`).getByTestId("lifecycle-deadline")).toBeVisible();
 		await dialog.getByTestId("lifecycle-confirm").click();
-		await expect(dialog.getByTestId("lifecycle-progress")).toContainText(`Failed at #${doneID}`);
-		await expect(dialog.getByTestId("lifecycle-progress")).toContainText("Repair pending");
-		await expect(page.getByTestId(`lifecycle-item-${doneID}`)).toContainText("Repair pending");
-		await expect(page.getByTestId(`lifecycle-item-${doneID}`).getByTestId("lifecycle-timestamps")).toContainText("Archived");
-		await expect(dialog.getByRole("button", { name: "Retry remaining" })).toBeVisible();
-		await dialog.getByRole("button", { name: "Retry remaining" }).click();
-		await expect(dialog.getByTestId("lifecycle-progress")).toContainText("Complete");
-		expect(executeCalls).toBe(2);
+		await expect(dialog).toBeHidden();
+		expect(executeBodies).toHaveLength(1);
+		expect(executeBodies[0].background).toBe(true);
+		expect(executeBodies[0].execute).toBe(true);
 		expect(executeBodies[0].ids).toEqual([doneID, "blocked1"]);
-		expect(executeBodies[1].ids).toEqual(executeBodies[0].ids);
 		expect(new Set(executeBodies[0].ids).size).toBe(executeBodies[0].ids?.length);
 	});
 
