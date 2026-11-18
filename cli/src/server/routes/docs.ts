@@ -55,6 +55,12 @@ export function toDocResponse(d: Doc): Obj {
   return out;
 }
 
+/** GET /api/docs?summary=true: toDocResponse without the body, plus its UTF-8 size in bytes. */
+export function toDocSummary(d: Doc): Obj {
+  const { content: _body, ...rest } = toDocResponse(d);
+  return { ...rest, size: Buffer.byteLength(d.content ?? "", "utf8") };
+}
+
 function decodedWildcard(raw: string): string {
   let r = raw;
   try {
@@ -143,9 +149,11 @@ export function registerDocs(r: Router, app: App): void {
 
   r.get(
     "/api/docs",
-    guard(() => {
+    guard((c) => {
       try {
         const docs = app.need().docs.list();
+        if (c.query("summary") === "true")
+          return jsonResponse(200, { docs: docs.map(toDocSummary) });
         return jsonResponse(200, { docs: docs.map(toDocResponse) });
       } catch (e) {
         return respondError(500, errMessage(e));
