@@ -137,7 +137,9 @@ export function discoverStores(registryPath: string): FoundStore[] {
   // cache it. The last good answer stands, so a tick cannot mistake a hiccup for every store being
   // unlinked; with nothing known yet it is empty, and the next call tries again.
   if (found === undefined) return hit ? copyOf(hit.found) : [];
-  if (sig !== undefined) discovered.set(registryPath, { sig, at: Date.now(), found });
+  // Remember the answer even while the file is racy (sig undefined): it never serves a cache hit
+  // then (no signature equals ""), but it is still the last good answer if the next read fails.
+  discovered.set(registryPath, { sig: sig ?? "", at: Date.now(), found });
   return copyOf(found);
 }
 

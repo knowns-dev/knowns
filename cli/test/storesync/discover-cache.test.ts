@@ -131,6 +131,30 @@ test("P2-1: a registry touched moments ago is read again, not cached (racy rule)
   }
 });
 
+test("P2-1: the last good answer survives an unreadable file even while the file is racy", () => {
+  const dir = mkdtempSync(join(tmpdir(), "knowns-discover-racygood-"));
+  const saved = process.env.KNOWNS_STAT_RACY_MS;
+  delete process.env.KNOWNS_STAT_RACY_MS; // default window: a fresh file is never cached
+  try {
+    const path = join(dir, "registry.json");
+    mkdirSync(join(dir, "proj"), { recursive: true });
+    const entry = {
+      id: "one",
+      name: "one",
+      path: join(dir, "proj"),
+      lastUsed: "2026-11-16T00:00:00Z",
+      store: { name: "one", remote: "git@example.com:x.git", project: "one" },
+    };
+    writeFileSync(path, JSON.stringify([entry]));
+    expect(discoverStores(path).map((f) => f.store)).toEqual(["one"]);
+    writeFileSync(path, '[{"id":"one",');
+    expect(discoverStores(path).map((f) => f.store)).toEqual(["one"]);
+  } finally {
+    process.env.KNOWNS_STAT_RACY_MS = saved ?? "-1";
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("P3-2: one watch serves many waits, and a change between two waits is not lost", async () => {
   const dir = mkdtempSync(join(tmpdir(), "knowns-regwatch-"));
   try {
