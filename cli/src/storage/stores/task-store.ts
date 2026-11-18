@@ -203,18 +203,19 @@ export class TaskStore {
    * the latest updatedAt (what listActive keeps) but the other file is left for the write and
    * doctor paths to repair.
    */
-  listActiveReadOnly(): Task[] {
-    return this.listDirReadOnly(this.tasksDir());
+  listActiveReadOnly(skipped?: { count: number }): Task[] {
+    return this.listDirReadOnly(this.tasksDir(), skipped);
   }
 
-  listArchivedReadOnly(): Task[] {
-    return this.listDirReadOnly(this.archiveDir());
+  /** `skipped.count` is raised for each file that could not be read or parsed (the list is partial). */
+  listArchivedReadOnly(skipped?: { count: number }): Task[] {
+    return this.listDirReadOnly(this.archiveDir(), skipped);
   }
 
-  private listDirReadOnly(dir: string): Task[] {
+  private listDirReadOnly(dir: string, skipped?: { count: number }): Task[] {
     const pass = sharedTaskParses.pass(dir + sep);
     try {
-      return this.listDirShared(dir, pass);
+      return this.listDirShared(dir, pass, skipped);
     } finally {
       pass.end(); // forget the files that are gone
     }
@@ -223,6 +224,7 @@ export class TaskStore {
   private listDirShared(
     dir: string,
     cache: { read: (path: string, parse: () => Task) => Task },
+    skipped?: { count: number },
   ): Task[] {
     const byId = new Map<string, Task>();
     for (const e of readDirSorted(dir)) {
@@ -232,6 +234,7 @@ export class TaskStore {
       try {
         task = cache.read(path, () => this.parseFile(path));
       } catch {
+        if (skipped) skipped.count++;
         continue;
       }
       const existing = byId.get(task.id);

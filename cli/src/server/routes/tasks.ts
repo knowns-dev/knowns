@@ -14,14 +14,7 @@ import {
   type Request as LifecycleRequest,
   Service,
 } from "../../domain/tasklifecycle/index.ts";
-import {
-  DEFAULT_PAGE_SIZE,
-  matchesQuery,
-  orderKey,
-  pageTasks,
-  parseLimit,
-  type SortKey,
-} from "../../domain/tasklifecycle/summary.ts";
+import { DEFAULT_PAGE_SIZE, parseLimit } from "../../domain/tasklifecycle/summary.ts";
 import {
   eventToWire,
   historyMetadataPageToWire,
@@ -44,6 +37,7 @@ import { attachWorkedBy } from "../../storage/stores/agent-work-store.ts";
 import { type App, requireStore } from "../app.ts";
 import { decodeStruct, type FieldType, jsonKind, timeField } from "../gojson.ts";
 import { type Ctx, errMessage, jsonResponse, type Router, respondError } from "../http.ts";
+import { parseTaskSort, taskIndexFor } from "../list-index.ts";
 import { atoi, type Obj, readMap, readStruct } from "./support.ts";
 
 // ---- response shape -------------------------------------------------------------------------
@@ -224,7 +218,10 @@ function parseListQuery(c: Ctx) {
   const limitRaw = p.get("limit");
   const limit = parseLimit(limitRaw ?? undefined, DEFAULT_PAGE_SIZE);
   if (typeof limit !== "number") return limit.error;
+  const sort = parseTaskSort(p.get("sort"));
+  if (sort === undefined) return "sort must be order or updated-desc";
   return {
+    sort,
     summary: p.get("summary") === "true" || p.get("summary") === "1",
     paged: limitRaw !== null || p.has("cursor"),
     limit,
@@ -238,31 +235,6 @@ function parseListQuery(c: Ctx) {
       query: p.get("query") ?? undefined,
     },
   };
-}
-
-/** The key sortTasks orders by: lifecycle, then order (unset last), then id. */
-function lifecycleKey(t: Task): SortKey {
-  return [lifecycleRank(t), ...orderKey(t)];
-}
-
-function lifecycleRank(t: Task): number {
-  const s = taskLifecycleState(t);
-  return s === "active" ? 0 : s === "done" ? 1 : 2;
-}
-
-function sortTasks(tasks: Task[]): Task[] {
-  // sort.Slice is not stable but the comparator is total (ID breaks ties).
-  return [...tasks].sort((a, b) => {
-    const ra = lifecycleRank(a);
-    const rb = lifecycleRank(b);
-    if (ra !== rb) return ra - rb;
-    if (a.order !== undefined || b.order !== undefined) {
-      if (a.order === undefined) return 1;
-      if (b.order === undefined) return -1;
-      if (a.order !== b.order) return a.order - b.order;
-    }
-    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-  });
 }
 
 function loadTimeEntries(s: Storage, t: Task): void {
@@ -460,42 +432,58 @@ export function registerTasks(r: Router, app: App): void {
       const s = app.need();
       const inc = parseIncludeHistorical(c);
       if (typeof inc === "string") return respondError(400, inc);
-      let tasks: Task[];
+      const q = parseListQuery(c);
+      if (typeof q === "string") return respondError(400, q);
+      const index = taskIndexFor(s.tasks);
+      // The index serves frozen, shared tasks; a response copies the ones it shows.
+      const shown = (tasks: readonly Task[]): Task[] => {
+        const copies = tasks.map((t) => ({ ...t }));
+        attachAgent(s, copies);
+        return copies;
+      };
+      const wire = (t: Task): Obj => {
+        if (q.summary) return summaryResponse(t);
+        loadTimeEntries(s, t);
+        return taskResponse(t);
+      };
       try {
-        tasks = s.tasks.listActive();
-        if (inc) tasks = [...tasks, ...s.tasks.listArchived()];
+        if (!q.paged) {
+          // The unpaged call old UIs make: every task, in full unless summary=true.
+          const all = index.all({ includeArchived: inc, sort: q.sort, query: q.query });
+          return jsonResponse(200, shown(all).map(wire));
+        }
+        const page = index.page({
+          includeArchived: inc,
+          sort: q.sort,
+          query: q.query,
+          limit: q.limit,
+          ...(q.cursor !== undefined && { cursor: q.cursor }),
+        });
+        if ("error" in page) return respondError(400, page.error);
+        const body: Obj = {
+          tasks: shown(page.items).map(wire),
+          total: page.total,
+          limit: page.limit,
+        };
+        if (page.nextCursor) body.nextCursor = page.nextCursor;
+        return jsonResponse(200, body);
       } catch (e) {
         return respondError(500, errMessage(e));
       }
+    }),
+  );
+
+  // Counts per status (and of the archive), under every filter but status, without a page.
+  r.get(
+    "/api/tasks/counts",
+    guard((c) => {
       const q = parseListQuery(c);
       if (typeof q === "string") return respondError(400, q);
-      const sorted = sortTasks(tasks.filter((t) => matchesQuery(t, q.query)));
-      if (!q.paged) {
-        // The unpaged call old UIs make: every task, in full unless summary=true.
-        attachAgent(s, sorted);
-        return jsonResponse(
-          200,
-          sorted.map((t) => {
-            if (q.summary) return summaryResponse(t);
-            loadTimeEntries(s, t);
-            return taskResponse(t);
-          }),
-        );
+      try {
+        return jsonResponse(200, taskIndexFor(app.need().tasks).counts(q.query));
+      } catch (e) {
+        return respondError(500, errMessage(e));
       }
-      const page = pageTasks(sorted, q.limit, q.cursor, lifecycleKey);
-      if ("error" in page) return respondError(400, page.error);
-      attachAgent(s, page.items);
-      const body: Obj = {
-        tasks: page.items.map((t) => {
-          if (q.summary) return summaryResponse(t);
-          loadTimeEntries(s, t);
-          return taskResponse(t);
-        }),
-        total: page.total,
-        limit: page.limit,
-      };
-      if (page.nextCursor) body.nextCursor = page.nextCursor;
-      return jsonResponse(200, body);
     }),
   );
 

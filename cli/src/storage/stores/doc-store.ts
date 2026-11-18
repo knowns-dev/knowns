@@ -195,6 +195,12 @@ const sharedDocParses = new StatCache<Doc>();
 
 type DocReader = { read: (path: string, parse: () => Doc) => Doc };
 
+/** What a read-only listing visited: every directory it listed and how many files it had to skip. */
+export interface DocScanTrack {
+  dirs: string[];
+  skipped: number;
+}
+
 /** Drops this store's parsed docs from the shared cache (the project was closed or switched). */
 export function releaseDocCache(root: string): void {
   sharedDocParses.dropPrefix(root + sep);
@@ -218,8 +224,8 @@ export class DocStore {
   }
 
   /** list() under one shared retry budget, so one locked file cannot multiply the wait. */
-  private listBudgeted(cache: DocReader | undefined): Doc[] {
-    return withRetryBudget(LIST_RETRY_BUDGET_MS, () => this.listWith(cache));
+  private listBudgeted(cache: DocReader | undefined, track?: DocScanTrack): Doc[] {
+    return withRetryBudget(LIST_RETRY_BUDGET_MS, () => this.listWith(cache, track));
   }
 
   /**
@@ -227,21 +233,23 @@ export class DocStore {
    * stat is unchanged is neither reread nor reparsed. The Docs are shared between calls and deeply
    * frozen: they cannot be mutated.
    */
-  listReadOnly(): Doc[] {
+  listReadOnly(track?: DocScanTrack): Doc[] {
     const pass = sharedDocParses.pass(this.root + sep);
     try {
-      return this.listBudgeted(pass);
+      return this.listBudgeted(pass, track);
     } finally {
       pass.end(); // forget the files that are gone
     }
   }
 
-  private listWith(cache: DocReader | undefined): Doc[] {
-    const docs = this.walkDocs(this.docsDir(), "", false, "", cache);
+  private listWith(cache: DocReader | undefined, track?: DocScanTrack): Doc[] {
+    const docs = this.walkDocs(this.docsDir(), "", false, "", cache, track);
     let imported: Doc[] = [];
     try {
-      imported = this.listImported(cache);
+      track?.dirs.push(this.importsDir());
+      imported = this.listImported(cache, track);
     } catch {
+      if (track) track.skipped++;
       return docs; // non-fatal
     }
     docs.push(...imported);
@@ -265,15 +273,16 @@ export class DocStore {
     }
   }
 
-  private listImported(cache?: DocReader): Doc[] {
+  private listImported(cache?: DocReader, track?: DocScanTrack): Doc[] {
     const docs: Doc[] = [];
     for (const e of readDirSorted(this.importsDir())) {
       if (!e.isDirectory()) continue;
       try {
         docs.push(
-          ...this.walkDocs(join(this.importsDir(), e.name, "docs"), "", true, e.name, cache),
+          ...this.walkDocs(join(this.importsDir(), e.name, "docs"), "", true, e.name, cache, track),
         );
       } catch {
+        if (track) track.skipped++;
         // skip an unreadable import
       }
     }
@@ -286,15 +295,18 @@ export class DocStore {
     imported: boolean,
     importSource: string,
     cache?: DocReader,
+    track?: DocScanTrack,
   ): Doc[] {
     const docs: Doc[] = [];
+    track?.dirs.push(dir);
     for (const e of readDirSorted(dir)) {
       const full = join(dir, e.name);
       if (e.isDirectory()) {
         const sub = relBase === "" ? e.name : `${relBase}/${e.name}`;
         try {
-          docs.push(...this.walkDocs(full, sub, imported, importSource, cache));
+          docs.push(...this.walkDocs(full, sub, imported, importSource, cache, track));
         } catch {
+          if (track) track.skipped++;
           // skip
         }
         continue;
@@ -306,6 +318,7 @@ export class DocStore {
         const parse = () => this.parseFile(full, rel, relBase, imported, importSource);
         docs.push(cache ? cache.read(full, parse) : parse());
       } catch {
+        if (track) track.skipped++;
         // skip
       }
     }
