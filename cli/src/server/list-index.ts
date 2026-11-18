@@ -151,6 +151,17 @@ interface SortDef {
 
 const SORT_DEFS: Record<string, SortDef> = {
   order: { keyOf: lifecycleKey },
+  // The Kanban column order: ordered tasks by `order`, then the unordered ones by priority and
+  // newest update first, so a new task lands at the top of its priority, not at a random id.
+  board: {
+    keyOf: (t) => [
+      t.order === undefined ? 1 : 0,
+      t.order ?? 0,
+      PRIORITY_RANK[t.priority] ?? 3,
+      -updatedMs(t.updatedAt),
+      t.id,
+    ],
+  },
   id: { keyOf: (t) => [t.id] },
   title: { keyOf: (t) => [t.title.toLowerCase(), t.id] },
   status: { keyOf: (t) => [t.status, t.id] },

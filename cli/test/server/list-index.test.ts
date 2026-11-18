@@ -658,6 +658,29 @@ describe("task sorts, lifecycle and filters", () => {
     expect(ratios).toEqual([...ratios].sort((a, b) => a - b));
   });
 
+  test("sort=board: ordered tasks first, then priority, then newest update, then id", async () => {
+    const got = await traverse("sort=board&lifecycle=all", 5);
+    expect(new Set(got.map((t) => t.id)).size).toBe(36);
+    const key = (t: Row) => [
+      t.order === undefined ? 1 : 0,
+      t.order ?? 0,
+      prioRank(t.priority),
+      -Date.parse(t.updatedAt),
+      t.id,
+    ];
+    const cmp = (a: Row, b: Row) => {
+      const x = key(a);
+      const y = key(b);
+      for (let i = 0; i < x.length; i++)
+        if (x[i] !== y[i]) return (x[i] as number) < (y[i] as number) ? -1 : 1;
+      return 0;
+    };
+    expect(got.map((t) => t.id)).toEqual([...got].sort(cmp).map((t) => t.id));
+    // within one priority the unordered tail is newest first
+    const high = got.filter((t) => t.priority === "high").map((t) => t.updatedAt);
+    expect(high).toEqual([...high].sort().reverse());
+  });
+
   test("an unknown sort or lifecycle is a 400 that lists the keys", async () => {
     const s = await get("/api/tasks?limit=5&sort=nope");
     expect(s.status).toBe(400);
