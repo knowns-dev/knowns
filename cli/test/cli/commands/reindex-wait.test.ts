@@ -151,7 +151,7 @@ describe("search --reindex waits on progress (KN-Q6DVKQ)", () => {
 
 describe("search --reindex when the runtime daemon is gone (KN-Q6DVKQ review)", () => {
   // A pid that no longer runs: a child that has already exited.
-  const deadPid = Bun.spawnSync(["true"]).pid;
+  const deadPid = Bun.spawnSync([process.execPath, "-e", "0"]).pid;
   const alive = () => writeFileSync(q.pidFile(), String(process.pid));
   const crash = () => writeFileSync(q.pidFile(), String(deadPid));
 
