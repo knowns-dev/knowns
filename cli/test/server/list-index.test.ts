@@ -769,7 +769,14 @@ describe("task sorts, lifecycle and filters", () => {
     await Bun.sleep(3300);
     await get("/api/tasks?limit=50&lifecycle=all");
     const p95s: string[] = [];
-    const budget = process.platform === "win32" ? 30 : 10;
+    // Shared CI runners are slower and noisier; the bench exists to catch an O(N) re-parse per request (hundreds of ms in 0.35), so CI gets a loose absolute budget.
+    const budget = process.env.CI
+      ? process.platform === "win32"
+        ? 90
+        : 40
+      : process.platform === "win32"
+        ? 30
+        : 10;
     for (const key of TASK_SORT_KEYS) {
       for (const suffix of ["", "-desc"]) {
         // The best of up to three rounds: other processes on a shared machine add spikes that say
@@ -819,8 +826,14 @@ describe("list bench", () => {
       // The racy window is what makes a just-written store rescan; wait it out like a quiet store.
       await Bun.sleep(3300);
       await get("/api/tasks?limit=50"); // cold: the one parse of 1000 files
-      // Windows timers and file systems are slower; the budget there is three times the Mac's.
-      const budget = process.platform === "win32" ? 30 : 10;
+      // Shared CI runners are slower and noisier; the bench exists to catch an O(N) re-parse per request (hundreds of ms in 0.35), so CI gets a loose absolute budget.
+      const budget = process.env.CI
+        ? process.platform === "win32"
+          ? 90
+          : 40
+        : process.platform === "win32"
+          ? 30
+          : 10;
       // The best p95 of up to three rounds: spikes from other processes on a shared machine say
       // nothing about the index.
       const best = async (path: string): Promise<number> => {
