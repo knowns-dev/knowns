@@ -13,7 +13,18 @@
 //    than trust a timestamp that may not have ticked.
 //  - Sorted views (by status, per sort) are rebuilt only when a scan returned different objects.
 //  - A scan that had to skip a file (Windows rename retries, a half-written file) is never
-//    committed as fresh: the next request scans again.
+//    committed as fresh: the next request scans again, and meanwhile the entry from the scan
+//    before stays in the list (a file that vanishes between readdir and read is a rename or a
+//    replace far more often than a delete; the next scan confirms or refutes it). So the counts
+//    and the list do not dip while an external writer renames files.
+//
+// Paging guarantee. A cursor is the sort key of the last item served, never a position, so a
+// rebuild of the index between two pages cannot shift the next page. With sort=updated-desc the
+// key is (updatedAt, id) and an update only moves a task to the top, before every cursor: inside
+// one traversal an id is returned at most once (a task updated meanwhile may be missed by that
+// traversal; the client sees it through the tasks:updated event). With sort=order the key is
+// (lifecycle, order, id); a task whose status or order changes mid-traversal can cross the cursor
+// and be returned twice, so a client paging in that order dedupes by id.
 
 import {
   compareKeys,
@@ -27,7 +38,13 @@ import {
 import type { Doc } from "../models/doc.ts";
 import type { Task } from "../models/task.ts";
 import { taskLifecycleState } from "../models/task.ts";
-import { DirFreshness, type FreshnessOptions } from "../storage/core/dir-freshness.ts";
+import {
+  DirFreshness,
+  type FreshnessOptions,
+  type KeptEntry,
+  newScanState,
+  type ScanState,
+} from "../storage/core/dir-freshness.ts";
 import type { DocScanTrack, DocStore } from "../storage/stores/doc-store.ts";
 import { parseIso } from "../storage/stores/internal.ts";
 import type { TaskStore } from "../storage/stores/task-store.ts";
@@ -78,6 +95,21 @@ export function pageEntries<T>(
   return page;
 }
 
+/**
+ * Active and archived tasks in one list. The two directories are scanned at different moments, so
+ * a task moved between them can be in both: it is listed once, as the copy with the later updatedAt
+ * (the active one on a tie, like `listAll`).
+ */
+function withoutDuplicates(active: readonly Task[], archived: readonly Task[]): Task[] {
+  const byId = new Map<string, Task>();
+  for (const t of active) byId.set(t.id, t);
+  for (const t of archived) {
+    const have = byId.get(t.id);
+    if (!have || updatedMs(t.updatedAt) > updatedMs(have.updatedAt)) byId.set(t.id, t);
+  }
+  return [...byId.values()];
+}
+
 function sameObjects<T>(a: readonly T[] | undefined, b: readonly T[]): boolean {
   if (a === undefined || a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
@@ -117,6 +149,8 @@ interface TaskView {
 class Part<T> {
   readonly fresh: DirFreshness;
   items: T[] | undefined;
+  /** What the last scan read by path: the fallback when a file cannot be read mid-scan. */
+  seen: ReadonlyMap<string, KeptEntry<T>> | undefined;
   version = 0;
   constructor(opts?: FreshnessOptions) {
     this.fresh = new DirFreshness(opts);
@@ -151,18 +185,19 @@ export class TaskIndex {
     this.archived.fresh.markDirty();
   }
 
-  private refresh(part: Part<Task>, dir: string, scan: (s: { count: number }) => Task[]): void {
+  private refresh(part: Part<Task>, dir: string, scan: (s: ScanState<Task>) => Task[]): void {
     if (part.items !== undefined && part.fresh.fresh()) return;
     part.fresh.watchDirs([dir]);
     const pass = part.fresh.begin([dir]);
-    const skipped = { count: 0 };
+    const state = newScanState(part.seen);
     this.scans++;
-    const items = scan(skipped);
+    const items = scan(state);
+    part.seen = state.seen;
     if (!sameObjects(part.items, items)) {
       part.items = items;
       part.version++;
     }
-    part.fresh.commit(pass, [dir], skipped.count === 0);
+    part.fresh.commit(pass, [dir], state.skipped === 0);
   }
 
   private load(includeArchived: boolean): void {
@@ -183,7 +218,7 @@ export class TaskIndex {
     let v = this.views.get(k);
     if (v) return v;
     const tasks = includeArchived
-      ? [...(this.active.items ?? []), ...(this.archived.items ?? [])]
+      ? withoutDuplicates(this.active.items ?? [], this.archived.items ?? [])
       : (this.active.items ?? []);
     const keyOf = sortKeys[sort];
     const all = tasks.map((item) => ({ item, key: keyOf(item) }));
@@ -327,9 +362,10 @@ export class DocIndex {
     const p = this.part;
     if (p.items !== undefined && p.fresh.fresh()) return;
     const pass = p.fresh.begin(this.dirs ?? [this.store.docsDir(), this.store.importsDir()]);
-    const track: DocScanTrack = { dirs: [], skipped: 0 };
+    const track: DocScanTrack = { dirs: [], ...newScanState(p.seen) };
     this.scans++;
     const docs = this.store.listReadOnly(track);
+    p.seen = track.seen;
     if (!sameObjects(p.items, docs)) {
       p.items = docs;
       p.version++;

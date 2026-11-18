@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import type { Doc } from "../../models/doc.ts";
+import { readOrKeep, type ScanState } from "../core/dir-freshness.ts";
 import { bareIndex, proseMask } from "../core/doc-sections.ts";
 import { readUtf8Retrying, withRetryBudget } from "../core/fs-retry.ts";
 import { resolveSafe } from "../core/safe-path.ts";
@@ -196,9 +197,8 @@ const sharedDocParses = new StatCache<Doc>();
 type DocReader = { read: (path: string, parse: () => Doc) => Doc };
 
 /** What a read-only listing visited: every directory it listed and how many files it had to skip. */
-export interface DocScanTrack {
+export interface DocScanTrack extends ScanState<Doc> {
   dirs: string[];
-  skipped: number;
 }
 
 /** Drops this store's parsed docs from the shared cache (the project was closed or switched). */
@@ -314,11 +314,16 @@ export class DocStore {
       if (!e.name.endsWith(".md")) continue;
       const base = e.name.slice(0, -3);
       const rel = relBase === "" ? base : `${relBase}/${base}`;
+      const parse = () => this.parseFile(full, rel, relBase, imported, importSource);
+      const read = () => (cache ? cache.read(full, parse) : parse());
+      if (track) {
+        const doc = readOrKeep(track, full, read);
+        if (doc !== undefined) docs.push(doc);
+        continue;
+      }
       try {
-        const parse = () => this.parseFile(full, rel, relBase, imported, importSource);
-        docs.push(cache ? cache.read(full, parse) : parse());
+        docs.push(read());
       } catch {
-        if (track) track.skipped++;
         // skip
       }
     }

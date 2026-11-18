@@ -8,6 +8,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +17,11 @@ import type { Task } from "../../src/models/task.ts";
 import { Server } from "../../src/server/index.ts";
 import { DocIndex, TaskIndex } from "../../src/server/list-index.ts";
 import { createStorage } from "../../src/storage/adapters.ts";
+import {
+  KEEP_PREVIOUS_MS,
+  newScanState,
+  readOrKeep,
+} from "../../src/storage/core/dir-freshness.ts";
 import { Store } from "../../src/storage/core/store.ts";
 import { renderTask } from "../../src/storage/stores/task-store.ts";
 
@@ -236,64 +242,163 @@ for (let i = 0; i < 60; i++) {
 });
 
 describe("index freshness", () => {
-  test("a quiet directory is not rescanned; a write, an age or an in-place edit is", async () => {
-    const prev = process.env.KNOWNS_STAT_RACY_MS;
-    process.env.KNOWNS_STAT_RACY_MS = "-60000"; // treat every file as old, like a quiet store
-    try {
-      const ix = new TaskIndex(storage.tasks, { maxAgeMs: 150 });
-      const page = () => {
-        const p = ix.page({
-          includeArchived: false,
-          sort: "order",
-          query: {},
-          limit: 50,
-        });
-        if ("error" in p) throw new Error(p.error);
-        return p;
-      };
-      const first = page();
-      const scans = ix.scans;
-      for (let i = 0; i < 200; i++) page();
-      expect(ix.scans).toBe(scans); // 200 pages, no scan
+  const taskPage = (ix: TaskIndex, query = {}, limit = 50) => {
+    const p = ix.page({ includeArchived: false, sort: "order", query, limit });
+    if ("error" in p) throw new Error(p.error);
+    return p;
+  };
 
-      // A write through the directory (create) is seen.
-      const path = writeTask(task(700, { title: "Fresh AAAA" }));
-      ix.invalidate(); // the watcher is async; the signature path is exercised below
-      expect(page().total).toBe(first.total + 1);
+  test("a quiet directory is not rescanned; a change is seen by signature, dirty flag and age", async () => {
+    // "Quiet" is a clock past the racy window, not a switch that turns the rule off.
+    const later = () => Date.now() + 10_000;
+    const ix = new TaskIndex(storage.tasks, { maxAgeMs: 60_000, now: later });
+    const first = taskPage(ix);
+    taskPage(ix); // the first scan could not commit: the dirs were not signed yet
+    const scans = ix.scans;
+    for (let i = 0; i < 200; i++) taskPage(ix);
+    expect(ix.scans).toBe(scans); // 200 pages, no scan
 
-      // The signature alone (no dirty flag) also sees a rename into the directory.
-      const ix2 = new TaskIndex(storage.tasks, { maxAgeMs: 60_000 });
-      const total = () => {
-        const p = ix2.page({ includeArchived: false, sort: "order", query: {}, limit: 1 });
-        return "error" in p ? -1 : p.total;
-      };
-      const t0 = total();
-      writeFileSync(`${path}.new`, renderTask(task(701, { title: "Second one" })));
-      renameSync(`${path}.new`, join(root, "tasks", "task-LX-0701 - Second.md"));
-      expect(total()).toBe(t0 + 1);
+    // The directory signature alone sees a rename into the directory. A real mtime may share the
+    // tick of the earlier one (NTFS: 15.6 ms), so move it by hand: the product rule under test is
+    // "a different signature is a rescan", not the speed of this machine's clock.
+    const dir = join(root, "tasks");
+    const path = join(dir, "task-LX-0700 - Fresh.md");
+    writeFileSync(`${path}.new`, renderTask(task(700, { title: "Fresh AAAA" })));
+    renameSync(`${path}.new`, path);
+    const bump = new Date(Date.now() - 20_000);
+    utimesSync(dir, bump, bump);
+    expect(taskPage(ix).total).toBe(first.total + 1);
 
-      // An in-place edit does not touch the directory: it is seen once the state is old enough.
-      const ix3 = new TaskIndex(storage.tasks, { maxAgeMs: 100 });
-      const title = () => {
-        const p = ix3.page({
-          includeArchived: false,
-          sort: "order",
-          query: { query: "Fresh" },
-          limit: 5,
-        });
-        return "error" in p ? "" : (p.items[0]?.title ?? "");
-      };
-      expect(title()).toBe("Fresh AAAA");
-      writeFileSync(path, renderTask(task(700, { title: "Fresh BBBB" }))); // in place, no rename
-      await Bun.sleep(250);
-      expect(title()).toBe("Fresh BBBB");
-      rmSync(path);
-      rmSync(join(root, "tasks", "task-LX-0701 - Second.md"));
-    } finally {
-      if (prev === undefined) delete process.env.KNOWNS_STAT_RACY_MS;
-      else process.env.KNOWNS_STAT_RACY_MS = prev;
-    }
+    // An in-place edit does not touch the directory: the dirty flag (a watcher event or a write by
+    // this process) or the age of the state makes the next call scan.
+    writeFileSync(path, renderTask(task(700, { title: "Fresh BBBB" })));
+    ix.invalidate();
+    expect(taskPage(ix, { query: "Fresh" }).items[0]?.title).toBe("Fresh BBBB");
+    const aging = new TaskIndex(storage.tasks, { maxAgeMs: 100, now: later });
+    taskPage(aging);
+    taskPage(aging);
+    expect(taskPage(aging, { query: "Fresh" }).items[0]?.title).toBe("Fresh BBBB");
+    writeFileSync(path, renderTask(task(700, { title: "Fresh CCCC" })));
+    await Bun.sleep(150); // older than maxAgeMs
+    expect(taskPage(aging, { query: "Fresh" }).items[0]?.title).toBe("Fresh CCCC");
+    rmSync(path);
   });
+
+  test("inside the racy window of a directory an unchanged signature proves nothing", () => {
+    // The real clock: every file written below is younger than DIR_RACY_MS.
+    const ix = new TaskIndex(storage.tasks);
+    taskPage(ix);
+    const dir = join(root, "tasks");
+    const before = ix.scans;
+    taskPage(ix);
+    taskPage(ix);
+    expect(ix.scans).toBe(before + 2); // the directory is recent: every call scans
+    // Back-to-back changes, each possibly in the same file system tick as the last (the 39 of 40
+    // misses NTFS showed): every one is seen, because no signature was ever trusted.
+    for (let i = 0; i < 25; i++) {
+      const path = join(dir, `task-LX-08${String(i).padStart(2, "0")} - Tick.md`);
+      writeFileSync(path, renderTask(task(800 + i, { title: `Tick ${i}` })));
+      expect(taskPage(ix, { query: "Tick" }).total).toBe(i + 1);
+    }
+    for (const f of readdirSync(dir).filter((x) => x.includes("Tick"))) rmSync(join(dir, f));
+    expect(taskPage(ix, { query: "Tick" }).total).toBe(0);
+  });
+
+  test("a file that vanishes mid-scan keeps its entry until a later scan confirms the delete", () => {
+    const calls = { n: 0 };
+    const state = newScanState<string>();
+    expect(readOrKeep(state, "/a", () => "A1")).toBe("A1");
+    const second = newScanState<string>(state.seen);
+    const gone = () => {
+      calls.n++;
+      throw new Error("ENOENT");
+    };
+    expect(readOrKeep(second, "/a", gone)).toBe("A1"); // kept
+    expect(second.skipped).toBe(1); // so the pass is not committed as fresh
+    expect(readOrKeep(second, "/never-seen", gone)).toBeUndefined();
+    // a path that keeps failing is given up after KEEP_PREVIOUS_MS
+    const third = newScanState<string>(second.seen);
+    expect(readOrKeep(third, "/a", gone, Date.now() + KEEP_PREVIOUS_MS + 1)).toBeUndefined();
+  });
+
+  test("a task in both the active and the archive dir is listed once", () => {
+    const dir = join(root, "tasks");
+    const t = task(950, { title: "Moving" });
+    const a = writeTask(t);
+    const b = writeTask({ ...t, archived: true }, join(root, "archive"));
+    const ix = new TaskIndex(storage.tasks);
+    const ids = (() => {
+      const p = ix.page({
+        includeArchived: true,
+        sort: "order",
+        query: { query: "Moving" },
+        limit: 50,
+      });
+      return "error" in p ? [] : p.items.map((x) => x.id);
+    })();
+    expect(ids).toEqual(["LX-0950"]);
+    rmSync(a);
+    rmSync(b);
+    expect(readdirSync(dir).some((f) => f.includes("0950"))).toBe(false);
+  });
+
+  test("an external writer renaming and rewriting files: counts never dip, no id twice per traversal", async () => {
+    const N = 200;
+    const dir = join(root, "tasks");
+    for (const f of readdirSync(dir)) rmSync(join(dir, f));
+    const mk = (i: number, title: string, status: string): Task =>
+      task(i, {
+        id: `EX-${String(i).padStart(4, "0")}`,
+        title,
+        status,
+        updatedAt: "2026-02-01T00:00:00Z",
+      });
+    const nameOf = (i: number, title: string) =>
+      `task-EX-${String(i).padStart(4, "0")} - ${title.replaceAll(" ", "-")}.md`;
+    for (let i = 0; i < N; i++)
+      writeFileSync(join(dir, nameOf(i, `T ${i}`)), renderTask(mk(i, `T ${i}`, "todo")));
+    const writer = join(tmp, "storm.ts");
+    writeFileSync(
+      writer,
+      `import { renameSync, writeFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { renderTask } from ${JSON.stringify(new URL("../../src/storage/stores/task-store.ts", import.meta.url).href)};
+const dir = process.argv[2]; const N = ${N};
+const end = Date.now() + 3000; let n = 0;
+const files = new Map(readdirSync(dir).map((f) => [f.match(/EX-\\d+/)[0], f]));
+while (Date.now() < end) {
+  const i = (n * 37) % N; const id = "EX-" + String(i).padStart(4, "0");
+  const title = "R " + n; const to = "task-" + id + " - " + title.replaceAll(" ", "-") + ".md";
+  renameSync(join(dir, files.get(id)), join(dir, to)); files.set(id, to);
+  // not atomic, like an editor: a reader may see the file empty
+  writeFileSync(join(dir, to), renderTask({ id, title, description: "", status: n % 2 ? "done" : "todo", priority: "medium", labels: [], createdAt: "2026-02-01T00:00:00Z", updatedAt: "2026-02-01T00:00:00Z", archived: false, acceptanceCriteria: [], timeSpent: 0 }));
+  n++; await Bun.sleep(3);
+}
+`,
+    );
+    await pageAll("&sort=updated-desc", 50); // cold
+    const child = Bun.spawn([process.execPath, writer, dir], {
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    let dips = 0;
+    let dupes = 0;
+    let reads = 0;
+    while (child.exitCode === null) {
+      const ids = await pageAll("&sort=updated-desc", 50);
+      reads++;
+      if (new Set(ids).size !== ids.length) dupes++;
+      if (ids.length < N) dips++;
+      const c = await get("/api/tasks/counts");
+      if (c.body.total < N) dips++;
+      await Bun.sleep(5);
+    }
+    expect(await child.exited).toBe(0);
+    expect(reads).toBeGreaterThan(3);
+    expect(dips).toBe(0);
+    expect(dupes).toBe(0);
+    for (const f of readdirSync(dir)) rmSync(join(dir, f));
+  }, 60_000);
 });
 
 describe("doc list index", () => {
@@ -380,7 +485,7 @@ describe("list bench", () => {
     };
     try {
       // The racy window is what makes a just-written store rescan; wait it out like a quiet store.
-      process.env.KNOWNS_STAT_RACY_MS = "-60000";
+      await Bun.sleep(3300);
       await get("/api/tasks?limit=50"); // cold: the one parse of 1000 files
       const full = await sample("/api/tasks?limit=50", 100);
       const summary = await sample("/api/tasks?limit=50&summary=true", 100);

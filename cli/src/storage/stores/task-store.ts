@@ -1,6 +1,6 @@
 // Port of internal/storage/task_store.go: tasks in .knowns/tasks/ and .knowns/archive/, deletion
 // tombstones, and the byte-exact markdown renderer.
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { type Dirent, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize, sep } from "node:path";
 import {
   newPrefixedTaskId,
@@ -9,6 +9,7 @@ import {
   taskFileName,
 } from "../../models/id.ts";
 import type { Task, TaskTombstone } from "../../models/task.ts";
+import { readOrKeep, type ScanState } from "../core/dir-freshness.ts";
 import {
   linkRetrying,
   readUtf8Retrying,
@@ -173,6 +174,31 @@ export function releaseTaskCache(root: string): void {
   sharedTaskParses.dropPrefix(root + sep);
 }
 
+/**
+ * readdir, twice when the first listing lacks a file the previous scan had. A rename (an editor, an
+ * external tool) can be missed by a listing that runs through the directory while it happens: the
+ * old name is gone and the new one was added where the listing had already passed. The second
+ * listing finds it; a file that is really deleted is absent from both, so it is dropped at once.
+ * The union keeps a name either listing saw; one deleted in between fails to read and is kept for
+ * one more scan by readOrKeep.
+ */
+function listStable(dir: string, state: ScanState<Task> | undefined): Dirent[] {
+  const first = readDirSorted(dir);
+  if (!state?.previous) return first;
+  const names = new Set(first.map((e) => e.name));
+  let vanished = false;
+  for (const path of state.previous.keys()) {
+    if (!names.has(basename(path))) {
+      vanished = true;
+      break;
+    }
+  }
+  if (!vanished) return first;
+  const extra = readDirSorted(dir).filter((e) => !names.has(e.name));
+  if (extra.length === 0) return first;
+  return [...first, ...extra].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
 export class TaskStore {
   readonly root: string;
 
@@ -203,19 +229,19 @@ export class TaskStore {
    * the latest updatedAt (what listActive keeps) but the other file is left for the write and
    * doctor paths to repair.
    */
-  listActiveReadOnly(skipped?: { count: number }): Task[] {
-    return this.listDirReadOnly(this.tasksDir(), skipped);
+  listActiveReadOnly(state?: ScanState<Task>): Task[] {
+    return this.listDirReadOnly(this.tasksDir(), state);
   }
 
-  /** `skipped.count` is raised for each file that could not be read or parsed (the list is partial). */
-  listArchivedReadOnly(skipped?: { count: number }): Task[] {
-    return this.listDirReadOnly(this.archiveDir(), skipped);
+  /** With a ScanState, a file that cannot be read keeps its entry from the previous scan (see readOrKeep). */
+  listArchivedReadOnly(state?: ScanState<Task>): Task[] {
+    return this.listDirReadOnly(this.archiveDir(), state);
   }
 
-  private listDirReadOnly(dir: string, skipped?: { count: number }): Task[] {
+  private listDirReadOnly(dir: string, state?: ScanState<Task>): Task[] {
     const pass = sharedTaskParses.pass(dir + sep);
     try {
-      return this.listDirShared(dir, pass, skipped);
+      return this.listDirShared(dir, pass, state);
     } finally {
       pass.end(); // forget the files that are gone
     }
@@ -224,19 +250,23 @@ export class TaskStore {
   private listDirShared(
     dir: string,
     cache: { read: (path: string, parse: () => Task) => Task },
-    skipped?: { count: number },
+    state?: ScanState<Task>,
   ): Task[] {
     const byId = new Map<string, Task>();
-    for (const e of readDirSorted(dir)) {
+    for (const e of listStable(dir, state)) {
       if (e.isDirectory() || !e.name.endsWith(".md")) continue;
       const path = join(dir, e.name);
-      let task: Task;
-      try {
-        task = cache.read(path, () => this.parseFile(path));
-      } catch {
-        if (skipped) skipped.count++;
-        continue;
+      let task: Task | undefined;
+      const read = () => cache.read(path, () => this.parseFile(path));
+      if (state) task = readOrKeep(state, path, read);
+      else {
+        try {
+          task = read();
+        } catch {
+          task = undefined;
+        }
       }
+      if (task === undefined) continue;
       const existing = byId.get(task.id);
       if (
         existing &&
