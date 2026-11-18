@@ -10,12 +10,15 @@ import {
   RegistryWatch,
 } from "../../src/domain/storesync/service.ts";
 
-// A file written by a test is brand new, which the racy rule never serves from a cache; -1 lets
-// the tests below exercise real cache hits (the rule itself is covered by its own test).
+// A file written by a test is brand new, which the racy rule never serves from a cache; a negative
+// window lets the tests below exercise real cache hits (the rule itself is covered by its own test).
+// It is -60 s and not -1 ms on purpose: a file's mtime and ctime can run ahead of Date.now() (a
+// Windows runner showed a few ms of skew, and ctime cannot be set back with utimes), which kept the
+// signature "racy" and re-read the file on 8 of 21 calls.
 let savedRacy: string | undefined;
 beforeAll(() => {
   savedRacy = process.env.KNOWNS_STAT_RACY_MS;
-  process.env.KNOWNS_STAT_RACY_MS = "-1";
+  process.env.KNOWNS_STAT_RACY_MS = "-60000";
 });
 afterAll(() => {
   if (savedRacy === undefined) delete process.env.KNOWNS_STAT_RACY_MS;
@@ -104,7 +107,7 @@ test("P2-1: a failed registry load is never cached as 'no stores'", () => {
     writeFileSync(path, '[{"id":"one",');
     expect(discoverStores(path).map((f) => f.store)).toEqual(["one"]);
     // The repaired file is picked up on the very next call (the failure was not cached for 30 s).
-    // A different length on purpose: this suite turns the racy rule off (KNOWNS_STAT_RACY_MS=-1), so on
+    // A different length on purpose: this suite turns the racy rule off (a negative KNOWNS_STAT_RACY_MS), so on
     // a filesystem whose mtime and ctime tick coarsely (ext4) a same-size rewrite would share the
     // signature of the previous version. The racy rule itself is the next test.
     writeFileSync(path, JSON.stringify([{ ...entry, store: { ...entry.store, name: "second" } }]));

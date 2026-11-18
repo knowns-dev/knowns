@@ -52,7 +52,7 @@ const due = (id: string, requestedAt: number) => ({
 describe("queue scan cache", () => {
   test("an unchanged queue file is not parsed again, a changed one is", () => {
     // A file written seconds ago is never trusted (see stat-signature.ts); this test needs the cache.
-    process.env.KNOWNS_STAT_RACY_MS = "-1";
+    process.env.KNOWNS_STAT_RACY_MS = "-60000";
     const p = project("cache");
     q.updateQueue(p, (s) => {
       s.jobs.push(due("a", Date.now()));

@@ -112,7 +112,7 @@ type Poisonable = {
 };
 
 test("identity proofs read the file, not the cache; a lifecycle write refuses a cached hash that disagrees", async () => {
-  process.env.KNOWNS_STAT_RACY_MS = "-1"; // let fresh files be cached, as an old file would be
+  process.env.KNOWNS_STAT_RACY_MS = "-60000"; // let fresh files be cached, as an old file would be (-60 s: tolerates a clock running ahead)
   try {
     const { root, original, id } = taskFixture();
     const rec = new FilesystemReconciler(root) as unknown as Poisonable;
