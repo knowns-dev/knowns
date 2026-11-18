@@ -9,21 +9,14 @@ import { Board } from "../components/organisms";
 import { TaskDetailSheet } from "../components/organisms/TaskDetail/TaskDetailSheet";
 import { TaskGroupedView } from "./TasksPage/TaskGroupedView";
 import { TaskListView } from "./TasksPage/TaskListView";
-import {
-	ALL_ASSIGNEES,
-	assigneeLabel,
-	filterTasksByAssignee,
-	groupTasksByAssignee,
-	UNASSIGNED,
-} from "./TasksPage/assignees";
-import { mergeTaskSubset } from "./TasksPage/mergeTasks";
+import { ALL_ASSIGNEES, assigneeLabel, UNASSIGNED } from "./TasksPage/assignees";
 import { Button } from "../components/ui/button";
 import { Menu } from "@/ui/components/ui/knowns/menu";
-import { api, LifecycleAPIError } from "../api/client";
+import { api, LifecycleAPIError, type TaskFilters } from "../api/client";
+import { useTaskCounts } from "../hooks/useTaskCounts";
 import type { TaskLifecycleResponse } from "../models/taskLifecycle";
 import { TaskLifecycleDialog } from "../components/organisms/TaskLifecycleDialog";
 import { toast } from "../components/ui/sonner";
-import { useSSEEvent } from "../contexts/SSEContext";
 import {
 	PageContent,
 	PageError,
@@ -47,13 +40,8 @@ const BATCH_ARCHIVE_OPTIONS = [
 ];
 
 interface TasksPageProps {
-	tasks: Task[];
-	loading: boolean;
-	error?: string | null;
-	onRetry?: () => void;
+	/** Called after a change made here that the rest of the app may want to refresh. */
 	onTasksUpdate: () => void;
-	/** Board drag-and-drop replaces the whole task set, so it needs the list form. */
-	onTasksReplace?: (tasks: Task[]) => void;
 	selectedTask?: Task | null;
 	onTaskClose?: () => void;
 	onNewTask: () => void;
@@ -86,12 +74,7 @@ function isViewMode(value: unknown): value is ViewMode {
 }
 
 export default function TasksPage({
-	tasks,
-	loading,
-	error,
-	onRetry,
 	onTasksUpdate,
-	onTasksReplace,
 	selectedTask: externalSelectedTask,
 	onTaskClose,
 	onNewTask,
@@ -119,9 +102,6 @@ export default function TasksPage({
 	const [restoreResponse, setRestoreResponse] = useState<TaskLifecycleResponse | null>(null);
 	const [restoreError, setRestoreError] = useState<string | null>(null);
 	const [restoreLoading, setRestoreLoading] = useState(false);
-	const [historicalTasks, setHistoricalTasks] = useState<Task[] | null>(null);
-	const [historicalLoading, setHistoricalLoading] = useState(false);
-	const historicalRequestRef = useRef<{ generation: number; controller?: AbortController }>({ generation: 0 });
 	const restoreGenerationRef = useRef(0);
 	const restoreInFlightRef = useRef(false);
 	const [restoreScope, setRestoreScope] = useState<{ generation: number; ids: readonly string[] } | null>(null);
@@ -132,76 +112,21 @@ export default function TasksPage({
 	const [archiveRequest, setArchiveRequest] = useState<{ generation: number; minimumAgeMs: number; label: string; ids?: readonly string[] } | null>(null);
 	const archiveGenerationRef = useRef(0);
 	const archiveInFlightRef = useRef(false);
-	const historicalMode = lifecycleFilter === "archived" || lifecycleFilter === "all";
 
-	const loadHistorical = useCallback(async () => {
-		historicalRequestRef.current.controller?.abort();
-		const controller = new AbortController();
-		const generation = historicalRequestRef.current.generation + 1;
-		historicalRequestRef.current = { generation, controller };
-		setHistoricalLoading(true);
-		try {
-			const data = await api.getTasks({ includeHistorical: true, summary: true, signal: controller.signal });
-			if (historicalRequestRef.current.generation === generation) setHistoricalTasks(data);
-		} catch (error) {
-			if (!(error instanceof DOMException && error.name === "AbortError")) {
-				toast.error(error instanceof Error ? error.message : "Failed to load historical Tasks");
-			}
-		} finally {
-			if (historicalRequestRef.current.generation === generation) setHistoricalLoading(false);
-		}
-	}, []);
-
-	useEffect(() => {
-		if (historicalMode) {
-			void loadHistorical();
-			return () => historicalRequestRef.current.controller?.abort();
-		}
-		historicalRequestRef.current.controller?.abort();
-		historicalRequestRef.current = { generation: historicalRequestRef.current.generation + 1 };
-		setHistoricalTasks(null);
-		setHistoricalLoading(false);
-	}, [historicalMode, loadHistorical]);
-
-	const invalidateHistorical = useCallback(() => {
-		if (historicalMode) void loadHistorical();
-	}, [historicalMode, loadHistorical]);
-
-	useSSEEvent("tasks:refresh", invalidateHistorical, [invalidateHistorical]);
-	// One task changed: patch it in the historical list instead of refetching every task.
-	useSSEEvent(
-		"tasks:updated",
-		({ task }) => {
-			if (!historicalMode) return;
-			setHistoricalTasks((prev) => {
-				if (prev === null) return prev;
-				const i = prev.findIndex((t) => t.id === task.id);
-				if (i < 0) return [...prev, task];
-				const next = [...prev];
-				next[i] = task;
-				return next;
-			});
-		},
-		[historicalMode],
+	// Lifecycle and assignee are server-side filters; the views page their own data from them.
+	const filters = useMemo<TaskFilters>(
+		() => ({
+			...(lifecycleFilter !== "current" ? { lifecycle: lifecycleFilter } : {}),
+			...(assigneeFilter === UNASSIGNED ? { unassigned: true } : assigneeFilter !== ALL_ASSIGNEES ? { assignee: assigneeFilter } : {}),
+		}),
+		[lifecycleFilter, assigneeFilter],
 	);
-	useSSEEvent("tasks:archived", invalidateHistorical, [invalidateHistorical]);
-	useSSEEvent("tasks:unarchived", invalidateHistorical, [invalidateHistorical]);
-	useSSEEvent("tasks:batch-archived", invalidateHistorical, [invalidateHistorical]);
+	// People for the picker come from the server's counts under the lifecycle filter alone.
+	const lifecycleOnly = useMemo<TaskFilters>(() => (lifecycleFilter !== "current" ? { lifecycle: lifecycleFilter } : {}), [lifecycleFilter]);
+	const { counts: peopleCounts } = useTaskCounts(lifecycleOnly);
+	const { counts: shownCounts } = useTaskCounts(filters);
+	const shownTotal = shownCounts?.total ?? null;
 
-	const taskSource = historicalMode ? historicalTasks || [] : tasks;
-
-	const lifecycleTasks = useMemo(() => {
-		switch (lifecycleFilter) {
-			case "active": return taskSource.filter((task) => task.lifecycleState === "active");
-			case "done": return taskSource.filter((task) => task.lifecycleState === "done");
-			case "archived": return taskSource.filter((task) => task.lifecycleState === "archived");
-			case "all": return taskSource;
-			default: return taskSource.filter((task) => task.lifecycleState !== "archived");
-		}
-	}, [taskSource, lifecycleFilter]);
-
-	// Counts follow the lifecycle filter so each option says how many Tasks picking it shows.
-	const assigneeGroups = useMemo(() => groupTasksByAssignee(lifecycleTasks), [lifecycleTasks]);
 	const assigneeOptions = useMemo<ComboboxOption[]>(() => {
 		const count = (n: number) => `${n} ${n === 1 ? "task" : "tasks"}`;
 		const person = (key: string, n: number): ComboboxOption =>
@@ -213,44 +138,42 @@ export default function TasksPage({
 						supportingText: count(n),
 						avatar: <KnAvatar label={assigneeLabel(key).replace(/^@/, "")} size="xs" shape="circle" decorative />,
 					};
+		const by = peopleCounts?.byAssignee ?? {};
+		const people = Object.entries(by)
+			.filter(([a, n]) => a !== "" && n > 0)
+			.sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]));
 		return [
-			{ value: ALL_ASSIGNEES, label: "All assignees", supportingText: count(lifecycleTasks.length), icon: <Users className="h-3.5 w-3.5" /> },
+			{ value: ALL_ASSIGNEES, label: "All assignees", supportingText: peopleCounts ? count(peopleCounts.total) : undefined, icon: <Users className="h-3.5 w-3.5" /> },
 			// Keep a picked person listed at 0 when the lifecycle filter empties them.
-			...(assigneeFilter !== ALL_ASSIGNEES && !assigneeGroups.some((group) => group.key === assigneeFilter)
-				? [person(assigneeFilter, 0)]
-				: []),
-			...assigneeGroups.map((group) => person(group.key, group.tasks.length)),
+			...(assigneeFilter !== ALL_ASSIGNEES && assigneeFilter !== UNASSIGNED && !people.some(([a]) => a === assigneeFilter) ? [person(assigneeFilter, 0)] : []),
+			...people.map(([a, n]) => person(a, n)),
+			...((by[""] ?? 0) > 0 || assigneeFilter === UNASSIGNED ? [person(UNASSIGNED, by[""] ?? 0)] : []),
 		];
-	}, [assigneeGroups, assigneeFilter, lifecycleTasks.length]);
+	}, [peopleCounts, assigneeFilter]);
 
-	const visibleTasks = useMemo(
-		() => filterTasksByAssignee(lifecycleTasks, assigneeFilter),
-		[lifecycleTasks, assigneeFilter],
-	);
-
-	// The Board hands back the subset it was given; merge it so filtered-out Tasks
-	// are not dropped from the app's Task set. A historical Board shows archived
-	// Tasks too: only update known ids and reload the historical list it reads.
-	const replaceBoardTasks = useCallback((updated: Task[]) => {
-		if (onTasksReplace) onTasksReplace(mergeTaskSubset(tasks, updated, { appendNew: !historicalMode }));
-		else onTasksUpdate();
-		if (historicalMode) void loadHistorical();
-	}, [tasks, onTasksReplace, onTasksUpdate, historicalMode, loadHistorical]);
-
-	const archivedIDs = useMemo(
-		() => taskSource.filter((task) => task.lifecycleState === "archived").map((task) => task.id),
-		[taskSource],
-	);
+	// The archived tasks (for "Restore archived…"): every id, paged through the server's list.
+	const archivedCount = peopleCounts?.archived.total ?? 0;
+	const fetchArchivedIds = async (): Promise<string[]> => {
+		const ids: string[] = [];
+		let cursor: string | undefined;
+		do {
+			const page = await api.getTasksPage({ lifecycle: "archived", limit: 200, sort: "id", ...(cursor ? { cursor } : {}) });
+			for (const t of page.tasks) ids.push(t.id);
+			cursor = page.nextCursor;
+		} while (cursor);
+		return ids;
+	};
 
 	const previewRestore = async () => {
-		const requestedIDs = [...archivedIDs];
 		const generation = ++restoreGenerationRef.current;
 		setRestoreOpen(true);
 		setRestoreScope(null);
 		setRestoreResponse(null);
 		setRestoreError(null);
 		setRestoreLoading(true);
+		let requestedIDs: string[] = [];
 		try {
+			requestedIDs = await fetchArchivedIds();
 			const response = await api.batchUnarchiveTasks(requestedIDs, false);
 			if (restoreGenerationRef.current !== generation) return;
 			setRestoreScope({ generation, ids: Object.freeze(requestedIDs) });
@@ -284,7 +207,6 @@ export default function TasksPage({
 				setRestoreError(error instanceof Error ? error.message : "Failed to restore Tasks");
 			}
 			onTasksUpdate();
-			await loadHistorical().catch(() => {});
 		} finally {
 			restoreInFlightRef.current = false;
 			if (restoreGenerationRef.current === generation) setRestoreLoading(false);
@@ -298,12 +220,6 @@ export default function TasksPage({
 		setRestoreScope(null);
 		setRestoreResponse(null);
 		setRestoreError(null);
-	};
-
-	const reconcileTasks = async () => {
-		const current = await api.getTasks({ summary: true });
-		if (onTasksReplace) onTasksReplace(current);
-		else onTasksUpdate();
 	};
 
 	const handleBatchArchivePreview = async (minimumAgeMs: number, label: string, selectedIds?: readonly string[]) => {
@@ -347,7 +263,7 @@ export default function TasksPage({
 				if (error instanceof LifecycleAPIError && error.response) setArchiveResponse(error.response);
 				setArchiveError(error instanceof Error ? error.message : "Failed to archive Tasks");
 			}
-			await reconcileTasks().catch(() => {});
+			onTasksUpdate();
 		} finally {
 			archiveInFlightRef.current = false;
 			if (archiveGenerationRef.current === generation) setArchiveLoading(false);
@@ -372,13 +288,23 @@ export default function TasksPage({
 		navigateTo(`${detailBasePath}/${task.id}`);
 	};
 
+	// The detail sheet's pickers (parent, subtasks) need the whole set: fetched only once a task is open.
+	const [allTasks, setAllTasks] = useState<Task[]>([]);
+	useEffect(() => {
+		if (!selectedTask) return;
+		let live = true;
+		api.getTasks({ summary: true, includeHistorical: true }).then((t) => live && setAllTasks(t)).catch(() => {});
+		return () => {
+			live = false;
+		};
+	}, [selectedTask?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
 	const handleNavigateToTask = (taskId: string) => {
 		navigateTo(`${detailBasePath}/${taskId}`);
 	};
 
 	const refreshVisibleData = () => {
 		onTasksUpdate();
-		if (historicalMode) void loadHistorical();
 	};
 
 	return (
@@ -388,7 +314,7 @@ export default function TasksPage({
 				title="Tasks"
 				status={
 					<span className="tabular-nums">
-						{visibleTasks.length} {visibleTasks.length === 1 ? "task" : "tasks"}
+						{shownTotal ?? "..."} {shownTotal === 1 ? "task" : "tasks"}
 					</span>
 				}
 				actions={
@@ -413,7 +339,7 @@ export default function TasksPage({
 							options={assigneeOptions}
 							className="w-full min-w-56 sm:w-auto"
 						/>
-						{archivedIDs.length > 0 && (lifecycleFilter === "archived" || lifecycleFilter === "all") && (
+						{archivedCount > 0 && (lifecycleFilter === "archived" || lifecycleFilter === "all") && (
 							<Button variant="outline" size="sm" onClick={previewRestore} className="h-11 gap-1.5 sm:h-8">
 								<ArchiveRestore className="h-3.5 w-3.5" /> Restore archived…
 							</Button>
@@ -472,46 +398,23 @@ export default function TasksPage({
 			/>
 
 			<PageContent size="full" className="flex min-h-0 flex-1 flex-col overflow-hidden py-5">
-				{loading ? (
-					<PageLoading label="Loading Tasks" className="flex-1" />
-				) : error && taskSource.length === 0 ? (
-					<PageError
-						description={error}
-						onRetry={onRetry}
-						className="flex-1"
-					/>
-				) : historicalMode && historicalLoading && historicalTasks === null ? (
-					<PageLoading label="Loading historical Tasks" className="flex-1" />
-				) : taskSource.length === 0 && !historicalMode && viewMode !== "board" ? (
-					// The board keeps its empty columns (they are drop targets); the header owns "New Task".
-					<div className="flex flex-1 items-center justify-center" data-testid="tasks-empty">
-						<NoRuns title="No Tasks yet" description="Create the first Task with New Task, or let an agent create one over MCP." />
-					</div>
-				) : viewMode === "board" ? (
-					<Board
-						tasks={visibleTasks}
-						onTasksUpdate={replaceBoardTasks}
-						onTaskClick={handleTaskClick}
-					/>
+				{viewMode === "board" ? (
+					<Board filters={filters} onTaskClick={handleTaskClick} onChanged={onTasksUpdate} />
 				) : viewMode === "list" ? (
 					<TaskListView
-						tasks={visibleTasks}
+						filters={filters}
 						onTaskClick={handleTaskClick}
 						onArchiveSelected={(ids) => void handleBatchArchivePreview(0, SELECTED_ARCHIVE_LABEL, ids)}
 					/>
 				) : (
-					<TaskGroupedView
-						tasks={visibleTasks}
-						onTaskClick={handleTaskClick}
-						onNewTask={onNewTask}
-					/>
+					<TaskGroupedView filters={filters} onTaskClick={handleTaskClick} onNewTask={onNewTask} />
 				)}
 			</PageContent>
 
 			{/* Task Detail Sheet */}
 			<TaskDetailSheet
 				task={selectedTask}
-				allTasks={taskSource}
+				allTasks={allTasks}
 				onClose={() => {
 					setSelectedTask(null);
 					if (onTaskClose) onTaskClose();

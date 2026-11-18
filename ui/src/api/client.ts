@@ -293,6 +293,56 @@ async function lifecycleFetch(
 	return response;
 }
 
+/** Server-side filters of GET /api/tasks (and /counts). */
+export interface TaskFilters {
+	status?: string;
+	priority?: string;
+	assignee?: string;
+	label?: string;
+	/** A parent task id, or "none" for root tasks. */
+	parent?: string;
+	query?: string;
+	/** Only tasks without an assignee (wins over `assignee`). */
+	unassigned?: boolean;
+	/** current (default: active and done, not archived), active, done, archived or all. */
+	lifecycle?: "current" | "active" | "done" | "archived" | "all";
+	includeHistorical?: boolean;
+}
+
+export interface TaskPageQuery extends TaskFilters {
+	limit?: number;
+	cursor?: string;
+	/** order, or <key> / <key>-desc for title, id, status, priority, assignee, spec, progress, updated, created. */
+	sort?: string;
+}
+
+export interface TaskPage {
+	tasks: Task[];
+	total: number;
+	limit: number;
+	nextCursor?: string;
+}
+
+export interface TaskCounts {
+	total: number;
+	byStatus: Record<string, number>;
+	/** Per assignee under the other filters; "" counts the unassigned. */
+	byAssignee?: Record<string, number>;
+	archived: { total: number; byStatus: Record<string, number> };
+}
+
+function taskQueryParams(f: TaskFilters): URLSearchParams {
+	const params = new URLSearchParams();
+	for (const key of ["status", "priority", "assignee", "label", "parent", "query"] as const) {
+		const v = f[key];
+		if (v) params.set(key, v);
+	}
+	if (f.unassigned) params.set("unassigned", "true");
+	if (f.lifecycle && f.lifecycle !== "current") params.set("lifecycle", f.lifecycle);
+	else if (f.includeHistorical) params.set("includeHistorical", "true");
+	return params;
+}
+
 export const api = {
 	/** summary drops description, notes, plan and time entries; open a task with getTask for those. */
 	async getTasks(options?: { includeHistorical?: boolean; summary?: boolean; signal?: AbortSignal }): Promise<Task[]> {
@@ -306,6 +356,27 @@ export const api = {
 		}
 		const data = (await res.json()) as TaskDTO[];
 		return data.map(parseTaskDTO);
+	},
+
+	/** One page of the paged task list (keyset cursor). Summaries only: no description, notes or plan. */
+	async getTasksPage(options: TaskPageQuery & { signal?: AbortSignal }): Promise<TaskPage> {
+		const params = taskQueryParams(options);
+		params.set("summary", "true");
+		params.set("limit", String(options.limit ?? 50));
+		params.set("sort", options.sort ?? "updated-desc");
+		if (options.cursor) params.set("cursor", options.cursor);
+		const res = await apiFetch(`${API_BASE}/api/tasks?${params.toString()}`, { signal: options.signal });
+		if (!res.ok) throw new Error(`Failed to fetch tasks (${res.status})`);
+		const body = (await res.json()) as { tasks: TaskDTO[] | null; total: number; limit: number; nextCursor?: string };
+		return { tasks: (body.tasks ?? []).map(parseTaskDTO), total: body.total, limit: body.limit, nextCursor: body.nextCursor };
+	},
+
+	/** Counts per status under the same filters (status itself is ignored), without a page. */
+	async getTaskCounts(options?: TaskFilters & { signal?: AbortSignal }): Promise<TaskCounts> {
+		const params = taskQueryParams(options ?? {});
+		const res = await apiFetch(`${API_BASE}/api/tasks/counts${params.size ? `?${params.toString()}` : ""}`, { signal: options?.signal });
+		if (!res.ok) throw new Error(`Failed to fetch task counts (${res.status})`);
+		return (await res.json()) as TaskCounts;
 	},
 
 	async getTask(id: string, options?: { signal?: AbortSignal }): Promise<Task> {

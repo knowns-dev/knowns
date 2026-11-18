@@ -183,10 +183,17 @@ export default function AppShell() {
 			.catch(() => setProjectActive(true));
 	}, []);
 
+	// The whole task set is only needed by the Dashboard, the create form and an open task's pickers:
+	// the Tasks and Board views page their own data, so no other page pays for a full list.
+	const needsAllTasks = currentPage === "dashboard" || showCreateForm || Boolean(requestedDirectTaskId);
+	const allTasksLoaded = useRef(false);
 	useEffect(() => {
-		void loadCurrentTasks(true);
-		return () => currentRequestRef.current.controller?.abort();
-	}, [loadCurrentTasks]);
+		if (needsAllTasks && !allTasksLoaded.current) {
+			allTasksLoaded.current = true;
+			void loadCurrentTasks(true);
+		}
+	}, [needsAllTasks, loadCurrentTasks]);
+	useEffect(() => () => currentRequestRef.current.controller?.abort(), []);
 
 	useEffect(() => {
 		directRequestRef.current.controller?.abort();
@@ -234,7 +241,7 @@ export default function AppShell() {
 	});
 
 	useSSEEvent("tasks:refresh", () => {
-		void loadCurrentTasks();
+		if (allTasksLoaded.current) void loadCurrentTasks();
 	});
 
 	// Handle workspace switch — full page reload for clean state
@@ -245,14 +252,8 @@ export default function AppShell() {
 	}, []);
 
 	const handleTaskCreated = () => {
-		void loadCurrentTasks();
+		if (allTasksLoaded.current) void loadCurrentTasks();
 		refreshDirectTask();
-	};
-
-	const handleTasksUpdate = (updatedTasks: Task[]) => {
-		currentRequestRef.current.controller?.abort();
-		currentRequestRef.current = { generation: currentRequestRef.current.generation + 1 };
-		setTasks(updatedTasks.filter((task) => task.lifecycleState !== "archived"));
 	};
 
 	const toggleTheme = async (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -328,12 +329,7 @@ export default function AppShell() {
 
 				return (
 					<TasksPage
-						tasks={currentTasks}
-						loading={loading}
-						error={taskLoadError}
-						onRetry={() => void loadCurrentTasks(true)}
 						onTasksUpdate={handleTaskCreated}
-						onTasksReplace={handleTasksUpdate}
 						selectedTask={selectedTask}
 						initialView={boardRoute ? "board" : undefined}
 						detailBasePath={boardRoute ? "/kanban" : "/tasks"}

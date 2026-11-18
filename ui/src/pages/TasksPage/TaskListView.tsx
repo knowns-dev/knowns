@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Archive, Columns3, FileText, Search } from "lucide-react";
 import type { Task } from "@/ui/models/task";
+import type { SortRule } from "@/ui/components/ui/knowns/data-table/table-utils";
 import { Button } from "@/ui/components/ui/knowns/button";
 import { Input } from "@/ui/components/ui/knowns/input";
 import { Menu, type MenuItem } from "@/ui/components/ui/knowns/menu";
@@ -11,14 +12,22 @@ import {
 	type Density,
 } from "@/ui/components/ui/knowns/data-table/data-table";
 import { LabelList, PriorityBadge, TaskStatusIcon } from "@/ui/components/molecules";
-import { LoadMore } from "@/ui/components/molecules/LoadMore";
+import { ListTail } from "@/ui/components/molecules/ListTail";
+import { Skeleton } from "@/ui/components/ui/knowns/skeleton";
+import { useTaskColumns } from "@/ui/hooks/useTaskColumns";
+import { useTaskCounts } from "@/ui/hooks/useTaskCounts";
+import { useDebouncedValue } from "@/ui/hooks/useDebouncedValue";
+import type { TaskFilters } from "@/ui/api/client";
 import { TaskLifecycleBadge } from "@/ui/components/molecules/TaskLifecycleBadge";
 import { useConfig } from "@/ui/contexts/ConfigContext";
 import { getStatusLabel } from "@/ui/utils/colors";
 import { navigateTo } from "../../lib/navigation";
 
 interface TaskListViewProps {
-	tasks: Task[];
+	/** Server-side filters from the page (assignee, lifecycle); search, sort and status are the list's own. */
+	filters: TaskFilters;
+	/** Reports how many tasks the current filters match, for the page header. */
+	onTotal?: (total: number | null) => void;
 	onTaskClick: (task: Task) => void;
 	/** Opens the archive preview for these ids. */
 	onArchiveSelected: (ids: string[]) => void;
@@ -76,13 +85,47 @@ function progressOf(task: Task) {
 	return { done, total: criteria.length };
 }
 
-export function TaskListView({ tasks, onTaskClick, onArchiveSelected }: TaskListViewProps) {
+/** DataTable column id -> the server sort key; columns not listed cannot be sorted server-side. */
+const SERVER_SORT: Record<string, string> = {
+	task: "id",
+	status: "status",
+	priority: "priority",
+	assignee: "assignee",
+	spec: "spec",
+	progress: "progress",
+	updated: "updated",
+};
+
+const DEFAULT_SORT: SortRule[] = [{ id: "updated", desc: true }];
+const PAGE = 50;
+/** Enough that the table never scrolls inside itself: the list's own container scrolls and pages. */
+const NO_INNER_SCROLL = 1_000_000;
+
+function serverSort(rule: SortRule | undefined): string {
+	const key = rule ? SERVER_SORT[rule.id] : undefined;
+	if (!rule || !key) return "updated-desc";
+	return rule.desc ? `${key}-desc` : key;
+}
+
+function RowSkeleton() {
+	return (
+		<div className="flex items-center gap-3 px-4 py-2.5">
+			<Skeleton className="h-3 w-14" />
+			<Skeleton className="h-4 flex-1" />
+			<Skeleton className="h-4 w-20" />
+		</div>
+	);
+}
+
+export function TaskListView({ filters, onTotal, onTaskClick, onArchiveSelected }: TaskListViewProps) {
 	const { config } = useConfig();
 	const [grouping, setGrouping] = useState<Grouping>(() => readStored(GROUP_STORAGE_KEY, ["flat", "status"] as const, "flat"));
 	const [density, setDensity] = useState<Density>(() =>
 		readStored(DENSITY_STORAGE_KEY, ["compact", "default", "comfortable"] as const, "default"),
 	);
 	const [query, setQuery] = useState("");
+	const searchTerm = useDebouncedValue(query.trim(), 250);
+	const [sort, setSort] = useState<SortRule[]>(DEFAULT_SORT);
 	const [hidden, setHidden] = useState<Set<string>>(() => new Set(["spec"]));
 	const [selected, setSelected] = useState<string[]>([]);
 
@@ -90,6 +133,15 @@ export function TaskListView({ tasks, onTaskClick, onArchiveSelected }: TaskList
 		() => (config.statuses as string[] | undefined) || ["todo", "in-progress", "in-review", "done", "blocked"],
 		[config.statuses],
 	);
+
+	// Search, sort, grouping and the page's filters all run on the server; this view only holds the
+	// pages it has fetched so far and asks for the next one as the scroll nears the end.
+	const baseFilters = useMemo<TaskFilters>(() => ({ ...filters, ...(searchTerm ? { query: searchTerm } : {}) }), [filters, searchTerm]);
+	const keys = useMemo(() => (grouping === "status" ? statuses : [""]), [grouping, statuses]);
+	const filtersFor = useCallback((key: string): TaskFilters => (key ? { ...baseFilters, status: key } : baseFilters), [baseFilters]);
+	const sortKey = serverSort(sort[0]);
+	const feeds = useTaskColumns({ keys, filtersFor, sort: sortKey, pageSize: PAGE });
+	const { counts } = useTaskCounts(baseFilters);
 
 	const columns = useMemo<DataColumn<Task>[]>(
 		() => [
@@ -239,38 +291,27 @@ export function TaskListView({ tasks, onTaskClick, onArchiveSelected }: TaskList
 		[columns, hidden],
 	);
 
-	const searched = useMemo(() => {
-		const q = query.trim().toLowerCase();
-		if (!q) return tasks;
-		return tasks.filter(
-			(t) =>
-				t.id.toLowerCase().includes(q) ||
-				t.title.toLowerCase().includes(q) ||
-				(t.description ?? t.descriptionPreview ?? "").toLowerCase().includes(q) ||
-				(t.assignee ?? "").toLowerCase().includes(q) ||
-				(t.labels ?? []).some((l) => l.toLowerCase().includes(q)),
-		);
-	}, [tasks, query]);
+
+	const all = feeds.all;
+	const total = counts?.total ?? null;
+	useEffect(() => onTotal?.(total), [total, onTotal]);
 
 	// Keep the selection to Tasks that still exist (archived rows leave the list).
 	useEffect(() => {
-		const ids = new Set(tasks.map((t) => t.id));
+		const ids = new Set(all.map((t) => t.id));
 		setSelected((current) => {
 			const next = current.filter((id) => ids.has(id));
 			return next.length === current.length ? current : next;
 		});
-	}, [tasks]);
+	}, [all]);
 
-	const groups = useMemo(() => {
-		const byStatus = new Map<string, Task[]>();
-		for (const t of searched) {
-			const list = byStatus.get(t.status) ?? [];
-			list.push(t);
-			byStatus.set(t.status, list);
-		}
-		const ordered = [...statuses, ...[...byStatus.keys()].filter((s) => !statuses.includes(s))];
-		return ordered.filter((s) => byStatus.has(s)).map((s) => ({ status: s, rows: byStatus.get(s) as Task[] }));
-	}, [searched, statuses]);
+	// The Task column header shows id and title together; a click sorts by id on the server.
+	const onSortChange = useCallback((rules: SortRule[]) => {
+		// One server sort at a time: the newest rule wins, and an unsupported column is ignored.
+		const last = rules[rules.length - 1];
+		if (!last) setSort(DEFAULT_SORT);
+		else if (SERVER_SORT[last.id]) setSort([last]);
+	}, []);
 
 	const changeGrouping = useCallback((value: string) => {
 		const next = value === "status" ? "status" : "flat";
@@ -287,7 +328,7 @@ export function TaskListView({ tasks, onTaskClick, onArchiveSelected }: TaskList
 	const [groupShown, setGroupShown] = useState<Record<string, number>>({});
 
 	const getRowId = useCallback((t: Task) => t.id, []);
-	const empty = <span>{tasks.length === 0 ? "No Tasks yet." : "No Tasks match the current filters."}</span>;
+	const empty = <span>{searchTerm || Object.keys(filters).length > 0 ? "No Tasks match the current filters." : "No Tasks yet."}</span>;
 
 	return (
 		<div className="flex h-full min-h-0 flex-col gap-3" data-testid="task-list-view">
@@ -331,58 +372,81 @@ export function TaskListView({ tasks, onTaskClick, onArchiveSelected }: TaskList
 				/>
 			</div>
 
-			<div className="min-h-0 flex-1 overflow-auto">
+			<div className="min-h-0 flex-1 overflow-auto" aria-busy={keys.some((k) => feeds.column(k).status === "loading" || feeds.column(k).status === "loadingMore")}>
 				{grouping === "flat" ? (
-					<DataTable
-						aria-label="Tasks"
-						rows={searched}
-						columns={visibleColumns}
-						getRowId={getRowId}
-						defaultSort={[{ id: "priority", desc: false }]}
-						selectable
-						selected={selected}
-						onSelectedChange={setSelected}
-						search={false}
-						controls={false}
-						filterRow
-						density={density}
-						onRowClick={onTaskClick}
-						empty={empty}
-					/>
-				) : groups.length === 0 ? (
-					<div className="flex min-h-64 items-center justify-center text-sm text-muted-foreground">{empty}</div>
+					(() => {
+						const col = feeds.column("");
+						return (
+							<>
+								<DataTable
+									aria-label="Tasks"
+									rows={col.items}
+									columns={visibleColumns}
+									getRowId={getRowId}
+									sort={sort}
+									onSortChange={onSortChange}
+									selectable
+									selected={selected}
+									onSelectedChange={setSelected}
+									search={false}
+									controls={false}
+									pageSize={false}
+									maxHeight={NO_INNER_SCROLL}
+									density={density}
+									onRowClick={onTaskClick}
+									loading={col.status === "loading" && col.items.length === 0}
+									empty={col.status === "loading" ? <span>Loading Tasks</span> : empty}
+								/>
+								<ListTail
+									hasMore={col.hasMore}
+									busy={col.status === "loadingMore" || (col.status === "loading" && col.items.length > 0)}
+									error={col.error}
+									count={col.items.length}
+									onMore={() => feeds.loadMore("")}
+									onRetry={() => feeds.retry("")}
+									skeleton={<RowSkeleton />}
+									skeletonCount={3}
+								/>
+							</>
+						);
+					})()
 				) : (
 					<div className="flex flex-col gap-4">
-						{groups.map((group) => {
-							const have = groupShown[group.status] ?? GROUP_PAGE;
+						{keys.map((status) => {
+							const col = feeds.column(status);
+							const n = counts?.byStatus[status] ?? col.total;
+							// An empty status stays out of the way once it has answered.
+							if (col.status === "ready" && col.items.length === 0 && n === 0) return null;
 							return (
-								<div key={group.status}>
+								<div key={status} className="max-h-[420px] overflow-y-auto rounded-2xl">
 									<DataTable
-										title={getStatusLabel(group.status)}
+										title={`${getStatusLabel(status)} (${n})`}
 										titleAs="h3"
-										rows={group.rows.slice(0, have)}
+										rows={col.items}
 										columns={visibleColumns}
 										getRowId={getRowId}
-										defaultSort={[{ id: "priority", desc: false }]}
+										sort={sort}
+										onSortChange={onSortChange}
 										selectable
 										selected={selected}
 										onSelectedChange={setSelected}
 										search={false}
 										controls={false}
 										pageSize={false}
-										maxHeight={360}
+										maxHeight={NO_INNER_SCROLL}
 										density={density}
 										onRowClick={onTaskClick}
 									/>
-									{group.rows.length > have && (
-										<LoadMore
-											remaining={group.rows.length - have}
-											pageSize={GROUP_PAGE}
-											onMore={() =>
-												setGroupShown((s) => ({ ...s, [group.status]: (s[group.status] ?? GROUP_PAGE) + GROUP_PAGE }))
-											}
-										/>
-									)}
+									<ListTail
+										hasMore={col.hasMore}
+										busy={col.status === "loadingMore" || col.status === "loading"}
+										error={col.error}
+										count={col.items.length}
+										onMore={() => feeds.loadMore(status)}
+										onRetry={() => feeds.retry(status)}
+										skeleton={<RowSkeleton />}
+										skeletonCount={col.items.length === 0 ? 4 : 2}
+									/>
 								</div>
 							);
 						})}
