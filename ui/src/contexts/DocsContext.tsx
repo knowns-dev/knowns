@@ -98,6 +98,26 @@ export function DocsProvider({ children }: { children: React.ReactNode }) {
 		};
 	}, [needsBodyPath, needsBodyKey]);
 
+	// First open on /docs/<path>: ask for that doc's body at once instead of after the list, and show it
+	// as soon as it arrives. The list still decides the sidebar; its doc then reuses this body.
+	const routeDocPath = location.pathname.match(/^\/docs\/(.+)$/)?.[1] ?? null;
+	useEffect(() => {
+		if (!routeDocPath || docsRef.current.length > 0) return;
+		let live = true;
+		getDoc(decodeURIComponent(routeDocPath))
+			.then((got) => {
+				if (!live || !got) return;
+				const full = got as unknown as Doc;
+				bodyCache.current.set(full.path, { key: docVersionKey(full), content: full.content ?? "" });
+				// Only while the list has not arrived; after that the list owns the selection.
+				if (docsRef.current.length === 0) setSelectedDocState((prev) => prev ?? { ...full, content: full.content ?? "" });
+			})
+			.catch(() => {});
+		return () => {
+			live = false;
+		};
+	}, [routeDocPath]);
+
 	// Persist filter state
 	useEffect(() => {
 		localStorage.setItem("docs-specs-only", String(showSpecsOnly));
