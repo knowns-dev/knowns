@@ -15,6 +15,10 @@
     "p95RatioMax": 1.5,
     "p95SlackMs": 25
   },
+  "win32": {
+    "_comment": "Decided by the user 2026-11-18. Measured on Windows (Bun 1.3.12): a worker thread costs at least 26-33 MB working set, ours ~47 MB, and under load the daemon holds three (watcher, job, search), so daemon + 5 proxies + UI peaks at 370-390 MB against 300 on macOS/Linux. Idle workers expire (30 s runner, 60 s search) and a quiet daemon measures 130-200 MB, but under this harness the working set does not fall back after the load (365-408 MB at the end of idle), so no idle limit is asserted; the end-of-idle total is only reported. Following up: task 'One shared worker for jobs, watcher and search'.",
+    "totalWorkingSetMB": 400
+  },
   "tabPollMs": 15000,
   "orphanWaitSeconds": 75,
   "daemonIdleTimeoutMs": 15000
