@@ -32,9 +32,7 @@ export function useTaskCounts(filters: TaskFilters, enabled = true): { counts: T
 	}, []);
 	useSSEEvent("tasks:updated", refresh);
 	useSSEEvent("tasks:refresh", refresh);
-	useSSEEvent("tasks:archived", refresh);
-	useSSEEvent("tasks:unarchived", refresh);
-	useSSEEvent("tasks:batch-archived", refresh);
+	useSSEEvent("tasks:lifecycle", refresh);
 
 	return { counts, refresh };
 }

@@ -66,6 +66,9 @@ export function useTaskColumns({ keys, filtersFor, sort = "updated-desc", pageSi
 	stateRef.current = state;
 	const generation = useRef(0);
 	const inFlight = useRef(new Set<string>());
+	// Per list: the newest first-page/replace/head request issued, so an older answer arriving late is dropped.
+	const headSeq = useRef(new Map<string, number>());
+	const seqCounter = useRef(0);
 	const controllers = useRef(new Set<AbortController>());
 
 	const setCol = useCallback((key: string, fn: (c: Internal) => Internal) => {
@@ -73,12 +76,17 @@ export function useTaskColumns({ keys, filtersFor, sort = "updated-desc", pageSi
 	}, []);
 
 	const fetchPage = useCallback(
-		async (key: string, mode: "first" | "next" | "head") => {
-			if (mode !== "head" && inFlight.current.has(key)) return;
+		async (key: string, mode: "first" | "next" | "head" | "replace") => {
+			if ((mode === "first" || mode === "next") && inFlight.current.has(key)) return;
 			const gen = generation.current;
 			const ctl = new AbortController();
 			controllers.current.add(ctl);
-			if (mode !== "head") {
+			const quiet = mode === "head" || mode === "replace";
+			const seq = ++seqCounter.current;
+			// A merging head refresh never supersedes a reload or first page; it is superseded by them.
+			if (mode === "first" || mode === "replace") headSeq.current.set(key, seq);
+			const seen = headSeq.current.get(key);
+			if (!quiet) {
 				inFlight.current.add(key);
 				setCol(key, (c) => ({ ...c, error: null, status: mode === "first" ? "loading" : "loadingMore" }));
 			}
@@ -92,19 +100,25 @@ export function useTaskColumns({ keys, filtersFor, sort = "updated-desc", pageSi
 					signal: ctl.signal,
 				});
 				if (gen !== generation.current) return;
+				// A newer first-page request for this list superseded this one while it was in flight.
+				if (mode === "first" || mode === "replace") {
+					if (headSeq.current.get(key) !== seq) return;
+				} else if (mode === "head" && headSeq.current.get(key) !== seen) return;
 				setCol(key, (c) => {
 					if (mode === "first") return { ...c, items: appendPage([], page.tasks), total: page.total, cursor: page.nextCursor, exhausted: !page.nextCursor, hasMore: !!page.nextCursor, status: "ready", error: null };
 					if (mode === "next") return { ...c, items: appendPage(c.items, page.tasks), total: page.total, cursor: page.nextCursor, exhausted: !page.nextCursor, hasMore: !!page.nextCursor, status: "ready", error: null };
+					// replace: a lifecycle or reorder event; rows that left the list must go, so start from the fresh first page
+					if (mode === "replace") return { ...c, items: appendPage([], page.tasks), total: page.total, cursor: page.nextCursor, exhausted: !page.nextCursor, hasMore: !!page.nextCursor, status: "ready", error: null };
 					// head: the freshest page leads, what was scrolled past it follows (deduplicated), cursor kept
 					return { ...c, items: appendPage(page.tasks, c.items), total: page.total };
 				});
 			} catch (e) {
 				if (e instanceof DOMException && e.name === "AbortError") return;
-				if (gen !== generation.current || mode === "head") return;
+				if (gen !== generation.current || quiet) return;
 				setCol(key, (c) => ({ ...c, status: "error", error: e instanceof Error ? e.message : "Tasks could not be loaded." }));
 			} finally {
 				controllers.current.delete(ctl);
-				if (mode !== "head" && gen === generation.current) inFlight.current.delete(key);
+				if (!quiet && gen === generation.current) inFlight.current.delete(key);
 			}
 		},
 		[pageSize, setCol],
@@ -143,6 +157,11 @@ export function useTaskColumns({ keys, filtersFor, sort = "updated-desc", pageSi
 	const refresh = useCallback(() => {
 		if (!enabled) return;
 		for (const k of keys) void fetchPage(k, "head");
+	}, [enabled, keys, fetchPage]);
+	// Rows can leave a list (archive, restore, reorder): reload its first page instead of merging.
+	const reload = useCallback(() => {
+		if (!enabled) return;
+		for (const k of keys) void fetchPage(k, "replace");
 	}, [enabled, keys, fetchPage]);
 
 	const patch = useCallback(
@@ -194,9 +213,9 @@ export function useTaskColumns({ keys, filtersFor, sort = "updated-desc", pageSi
 
 	useSSEEvent("tasks:updated", ({ task }) => patch(task), [patch]);
 	useSSEEvent("tasks:refresh", refresh, [refresh]);
-	useSSEEvent("tasks:archived", refresh, [refresh]);
-	useSSEEvent("tasks:unarchived", refresh, [refresh]);
-	useSSEEvent("tasks:batch-archived", refresh, [refresh]);
+	// Archive, unarchive and restore all arrive as one lifecycle event; a reorder changes column order.
+	useSSEEvent("tasks:lifecycle", reload, [reload]);
+	useSSEEvent("tasks:reordered", reload, [reload]);
 
 	const column = useCallback(
 		(key: string): ColumnState => {

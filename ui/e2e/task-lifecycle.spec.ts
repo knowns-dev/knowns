@@ -130,57 +130,60 @@ test.describe("Task lifecycle settings", () => {
 });
 
 test.describe("Task lifecycle workflows", () => {
-	test("keeps default Task fetch current-only and ignores a stale historical response", async ({ page }) => {
+	test("keeps default Task fetch current-only and ignores a stale archived response", async ({ page }) => {
 		const active = taskDTO("current1", "Current-only Task", "active");
 		const archived = taskDTO("archive1", "Archived must not leak", "archived");
-		let releaseHistorical!: () => void;
-		let markHistoricalStarted!: () => void;
-		const historicalGate = new Promise<void>((resolve) => { releaseHistorical = resolve; });
-		const historicalStarted = new Promise<void>((resolve) => { markHistoricalStarted = resolve; });
+		let releaseArchived!: () => void;
+		let markArchivedStarted!: () => void;
+		const archivedGate = new Promise<void>((resolve) => { releaseArchived = resolve; });
+		const archivedStarted = new Promise<void>((resolve) => { markArchivedStarted = resolve; });
 		const listRequests: string[] = [];
+		const pageBody = (tasks: unknown[]) => JSON.stringify({ tasks, total: tasks.length, limit: 50 });
 		await page.route("**/api/tasks**", async (route) => {
 			const url = new URL(route.request().url());
 			if (route.request().method() !== "GET" || url.pathname !== "/api/tasks") return route.continue();
 			listRequests.push(url.search);
-			if (url.searchParams.get("includeHistorical") === "true") {
-				markHistoricalStarted();
-				await historicalGate;
-				await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([active, archived]) }).catch(() => {});
+			if (url.searchParams.get("lifecycle") === "archived") {
+				markArchivedStarted();
+				await archivedGate;
+				await route.fulfill({ status: 200, contentType: "application/json", body: pageBody([archived]) }).catch(() => {});
 				return;
 			}
-			// Even a buggy current endpoint response is defensively stripped of archived content.
-			await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([active, archived]) });
+			await route.fulfill({ status: 200, contentType: "application/json", body: pageBody([active]) });
 		});
 
 		await page.goto(`${server.baseURL}/tasks`);
+		await page.getByRole("button", { name: "List view" }).click();
 		await expect(page.getByText(active.title)).toBeVisible();
 		await expect(page.getByText(archived.title)).toHaveCount(0);
-		// The shell asks for the light list (no description, notes, plan or time entries).
-		expect(listRequests).toEqual(["?summary=true"]);
+		// Current is the server default: no lifecycle parameter, and every request is a bounded page.
+		expect(listRequests.filter((q) => q.includes("lifecycle="))).toEqual([]);
+		expect(listRequests.every((q) => q.includes("limit="))).toBe(true);
 		await selectLifecycle(page, "archived");
-		await historicalStarted;
+		await archivedStarted;
 		await selectLifecycle(page, "current");
-		releaseHistorical();
+		releaseArchived();
 		await page.waitForTimeout(100);
 		await expect(page.getByText(active.title)).toBeVisible();
 		await expect(page.getByText(archived.title)).toHaveCount(0);
-		expect(listRequests.filter((query) => query.includes("includeHistorical=true"))).toHaveLength(1);
+		expect(listRequests.filter((q) => q.includes("lifecycle=archived")).length).toBeGreaterThanOrEqual(1);
 	});
 
-	test("refreshes an unchanged Archived view on lifecycle events without applying stale history", async ({ page }) => {
+	test("refreshes an unchanged Archived view on lifecycle events without applying stale pages", async ({ page }) => {
 		const taskID = createTask("Lifecycle Live Historical", "--status done");
 		let releaseFirst!: () => void;
 		let markFirstStarted!: () => void;
 		const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
 		const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
-		let historicalCalls = 0;
+		let archivedCalls = 0;
 		await page.route("**/api/tasks**", async (route) => {
 			const url = new URL(route.request().url());
-			if (route.request().method() !== "GET" || url.pathname !== "/api/tasks" || url.searchParams.get("includeHistorical") !== "true") {
+			if (route.request().method() !== "GET" || url.pathname !== "/api/tasks" || url.searchParams.get("lifecycle") !== "archived") {
 				return route.continue();
 			}
-			historicalCalls += 1;
-			if (historicalCalls === 1) {
+			archivedCalls += 1;
+			if (archivedCalls === 1) {
+				// The first archived page is fetched now but delivered late, after newer ones.
 				const staleResponse = await route.fetch();
 				markFirstStarted();
 				await firstGate;
@@ -192,13 +195,14 @@ test.describe("Task lifecycle workflows", () => {
 		});
 
 		await page.goto(`${server.baseURL}/tasks`);
+		await page.getByRole("button", { name: "List view" }).click();
 		await selectLifecycle(page, "archived");
 		await firstStarted;
 		const archiveResponse = await page.request.post(`${server.baseURL}/api/tasks/${taskID}/archive`, {
 			data: { taskId: taskID, execute: true },
 		});
 		expect(archiveResponse.ok()).toBeTruthy();
-		await expect.poll(() => historicalCalls).toBeGreaterThanOrEqual(2);
+		await expect.poll(() => archivedCalls).toBeGreaterThanOrEqual(2);
 		await expect(page.getByText("Lifecycle Live Historical").first()).toBeVisible();
 		releaseFirst();
 		await page.waitForTimeout(100);
@@ -209,7 +213,7 @@ test.describe("Task lifecycle workflows", () => {
 			data: { taskId: taskID, execute: true },
 		});
 		expect(unarchiveResponse.ok()).toBeTruthy();
-		await expect.poll(() => historicalCalls).toBeGreaterThanOrEqual(3);
+		await expect.poll(() => archivedCalls).toBeGreaterThanOrEqual(3);
 		await expect(page.getByText("Lifecycle Live Historical")).toHaveCount(0);
 		await expect(page.locator("#task-lifecycle-filter")).toHaveValue("archived");
 	});
