@@ -26,7 +26,7 @@ const flag = (n: string) => argv.indexOf(`--${n}`);
 const val = (n: string, d: string): string => (flag(n) >= 0 ? (argv[flag(n) + 1] ?? d) : d);
 const isWin = process.platform === "win32";
 const hosted = process.env.CI === "1" || process.env.CI === "true";
-const plat = (cfg as Record<string, any>)[process.platform] as
+const plat = (cfg as Record<string, unknown>)[process.platform] as
   | { totalWorkingSetMB?: number }
   | undefined;
 const limits = {
