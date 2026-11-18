@@ -76,7 +76,7 @@ export function TaskGroupedView({ filters, onTotal, onTaskClick, onNewTask }: Ta
 	const keys = useMemo(() => groups.map((g) => g.key), [groups]);
 	const filtersByKey = useMemo(() => new Map(groups.map((g) => [g.key, g.filters])), [groups]);
 	const filtersFor = useCallback((key: string): TaskFilters => filtersByKey.get(key) ?? baseFilters, [filtersByKey, baseFilters]);
-	const feeds = useTaskColumns({ keys, filtersFor, sort: "order", pageSize: PAGE, enabled: groupBy === "status" || counts !== null });
+	const feeds = useTaskColumns({ keys, filtersFor, sort: "board", pageSize: PAGE, enabled: groupBy === "status" || counts !== null });
 
 	const total = useMemo(() => {
 		if (!counts) return null;

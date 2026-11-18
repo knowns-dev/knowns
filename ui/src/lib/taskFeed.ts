@@ -74,14 +74,14 @@ export function applyUpdate(
 ): Task[] {
 	const i = items.findIndex((t) => t.id === task.id);
 	if (!matchesFilters(task, filters)) return i < 0 ? (items as Task[]) : items.filter((t) => t.id !== task.id);
-	if (sort !== "updated-desc" && sort !== "order") {
+	if (sort !== "updated-desc" && sort !== "order" && sort !== "board") {
 		// Any other server sort: its slot for a changed task is unknown, so only replace what is loaded.
 		if (i < 0) return items as Task[];
 		const next = items.slice();
 		next[i] = task;
 		return next;
 	}
-	if (sort === "order") {
+	if (sort === "order" || sort === "board") {
 		// A changed order or status moves the card: drop the old copy, place the new one by its order.
 		const without = i >= 0 ? items.filter((t) => t.id !== task.id) : (items as Task[]);
 		const moved = i >= 0 && orderCompare(task, items[i] as Task) !== 0;
@@ -105,11 +105,20 @@ export function applyUpdate(
 }
 
 /** The server's sort=order key: ordered tasks first by order, then the rest, id as the tie-break. */
+const PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
+
+/** sort=board: ordered cards by order; the unordered tail by priority, then newest update, then id. */
 function orderCompare(a: Task, b: Task): number {
 	const ao = a.order === undefined || a.order === null ? 1 : 0;
 	const bo = b.order === undefined || b.order === null ? 1 : 0;
 	if (ao !== bo) return ao - bo;
 	if (ao === 0 && (a.order as number) !== (b.order as number)) return (a.order as number) - (b.order as number);
+	if (ao === 1) {
+		const p = (PRIORITY_RANK[a.priority] ?? 3) - (PRIORITY_RANK[b.priority] ?? 3);
+		if (p !== 0) return p;
+		const u = ms(b) - ms(a);
+		if (u !== 0) return u;
+	}
 	return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 

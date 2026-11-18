@@ -148,7 +148,7 @@ export default function Board({ filters = NO_FILTERS, onTaskClick, onChanged }: 
 
 	// Each visible column is its own server-paged list in the user's manual order (sort=order).
 	const filtersFor = useCallback((status: string): TaskFilters => ({ ...filters, status }), [filters]);
-	const feeds = useTaskColumns({ keys: visibleStatuses, filtersFor, sort: "order", pageSize: COLUMN_PAGE });
+	const feeds = useTaskColumns({ keys: visibleStatuses, filtersFor, sort: "board", pageSize: COLUMN_PAGE });
 	const { counts, refresh: refreshCounts } = useTaskCounts(filters);
 
 	const toggleColumn = (status: TaskStatus) => {
