@@ -115,7 +115,7 @@ export default function DashboardPage({ tasks, loading }: DashboardPageProps) {
 		};
 		const requests = [
 			getSDDStats().then((value) => markFresh("sdd", value)).catch(() => markError("Spec coverage")),
-			getDocs().then((value) => markFresh("docs", value)).catch(() => markError("Document inventory")),
+			getDocs({ summary: true }).then((value) => markFresh("docs", value)).catch(() => markError("Document inventory")),
 			memoryApi.list("project").then((value) => markFresh("memories", value)).catch(() => markError("Memory health")),
 			decisionApi.list().then((value) => markFresh("decisions", value)).catch(() => markError("Decision inventory")),
 			decisionApi.reviewInbox().then((value) => markFresh("decisionReview", value)).catch(() => markError("Decision review")),

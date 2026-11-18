@@ -796,8 +796,9 @@ function encodeDocPath(path: string): string {
 	return path.split("/").map(encodeURIComponent).join("/");
 }
 
-export async function getDocs(): Promise<Doc[]> {
-	const res = await apiFetch(`${API_BASE}/api/docs`);
+/** summary=true: metadata only, no bodies (a server that predates it ignores it and sends them). */
+export async function getDocs(options?: { summary?: boolean }): Promise<Doc[]> {
+	const res = await apiFetch(`${API_BASE}/api/docs${options?.summary ? "?summary=true" : ""}`);
 	if (!res.ok) {
 		throw new Error("Failed to fetch docs");
 	}
