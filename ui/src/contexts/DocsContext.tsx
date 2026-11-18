@@ -1,13 +1,15 @@
 import { useRouterState } from "@tanstack/react-router";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Task } from "@/ui/models/task";
-import { getDoc, getDocs, getTasksBySpec } from "../api/client";
+import { getDoc, getDocsPage, getTasksBySpec } from "../api/client";
 import { navigateTo } from "../lib/navigation";
 import { useSSEEvent } from "./SSEContext";
 import { normalizePath, toDisplayPath, isSpec, getSpecStatusOrder, type Doc } from "../lib/utils";
 
 interface DocsContextType {
 	docs: Doc[];
+	/** More pages of the list are still arriving. */
+	walking: boolean;
 	loading: boolean;
 	error: string | null;
 	selectedDoc: Doc | null;
@@ -41,6 +43,8 @@ function withCachedBody(doc: Doc, cache: Map<string, { key: string; content: str
 }
 
 const DocsContext = createContext<DocsContextType | null>(null);
+
+const DOC_PAGE = 100;
 
 export function DocsProvider({ children }: { children: React.ReactNode }) {
 	const location = useRouterState({ select: (state) => state.location });
@@ -127,19 +131,45 @@ export function DocsProvider({ children }: { children: React.ReactNode }) {
 		setShowSpecsOnlyState(show);
 	}, []);
 
+	// The list arrives a page at a time, newest update first: the first page paints the tree at once and
+	// the rest streams in behind it (a newer walk, from an SSE event, cancels the one in progress).
+	const walkRef = useRef<AbortController | null>(null);
+	const loadedOnce = useRef(false);
+	const [walking, setWalking] = useState(false);
 	const loadDocs = useCallback(() => {
+		walkRef.current?.abort();
+		const ctl = new AbortController();
+		walkRef.current = ctl;
 		setError(null);
-		getDocs({ summary: true })
-			.then((data) => {
-				setDocs(data as unknown as Doc[]);
-				setLoading(false);
-			})
-			.catch((err) => {
-				console.error("Failed to load docs:", err);
-				setError(err instanceof Error ? err.message : "Failed to load documentation");
-				setLoading(false);
-			});
+		(async () => {
+			const seen = new Map<string, Doc>();
+			let cursor: string | undefined;
+			setWalking(true);
+			for (;;) {
+				const page = await getDocsPage({ limit: DOC_PAGE, ...(cursor ? { cursor } : {}), signal: ctl.signal });
+				for (const d of page.docs) seen.set((d as unknown as Doc).path, d as unknown as Doc);
+				cursor = page.nextCursor;
+				// The first walk streams into the tree; a re-walk (after an update) swaps in only when complete,
+				// so nothing the person is looking at drops out meanwhile.
+				if (!loadedOnce.current || !cursor) {
+					setDocs([...seen.values()]);
+					setLoading(false);
+				}
+				if (!cursor) {
+					loadedOnce.current = true;
+					break;
+				}
+			}
+			setWalking(false);
+		})().catch((err) => {
+			if (ctl.signal.aborted) return;
+			console.error("Failed to load docs:", err);
+			setError(err instanceof Error ? err.message : "Failed to load documentation");
+			setLoading(false);
+			setWalking(false);
+		});
 	}, []);
+	useEffect(() => () => walkRef.current?.abort(), []);
 
 	// Initial load
 	useEffect(() => {
@@ -262,6 +292,7 @@ export function DocsProvider({ children }: { children: React.ReactNode }) {
 			bodyLoading,
 			setSelectedDoc,
 			selectDocByPath,
+			walking,
 			isEditing,
 			setIsEditing,
 			editedContent,
@@ -276,7 +307,7 @@ export function DocsProvider({ children }: { children: React.ReactNode }) {
 			navigateToFolder,
 		}),
 		[
-			docs, loading, error, selectedDoc, bodyLoading, setSelectedDoc, selectDocByPath,
+			docs, loading, walking, error, selectedDoc, bodyLoading, setSelectedDoc, selectDocByPath,
 			isEditing, editedContent, linkedTasks, showSpecsOnly, setShowSpecsOnly,
 			linkedTasksExpanded, loadDocs, currentFolder, navigateToFolder,
 		]

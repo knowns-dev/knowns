@@ -288,17 +288,6 @@ export default function TasksPage({
 		navigateTo(`${detailBasePath}/${task.id}`);
 	};
 
-	// The detail sheet's pickers (parent, subtasks) need the whole set: fetched only once a task is open.
-	const [allTasks, setAllTasks] = useState<Task[]>([]);
-	useEffect(() => {
-		if (!selectedTask) return;
-		let live = true;
-		api.getTasks({ summary: true, includeHistorical: true }).then((t) => live && setAllTasks(t)).catch(() => {});
-		return () => {
-			live = false;
-		};
-	}, [selectedTask?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
 	const handleNavigateToTask = (taskId: string) => {
 		navigateTo(`${detailBasePath}/${taskId}`);
 	};
@@ -414,7 +403,6 @@ export default function TasksPage({
 			{/* Task Detail Sheet */}
 			<TaskDetailSheet
 				task={selectedTask}
-				allTasks={allTasks}
 				onClose={() => {
 					setSelectedTask(null);
 					if (onTaskClose) onTaskClose();

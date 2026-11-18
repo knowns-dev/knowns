@@ -76,7 +76,7 @@ function DocsPageInner() {
 	}
 
 	const {
-		docs, loading, error, selectedDoc, bodyLoading, setSelectedDoc,
+		docs, loading, walking, error, selectedDoc, bodyLoading, setSelectedDoc,
 		isEditing, setIsEditing, editedContent, setEditedContent,
 		linkedTasks, showSpecsOnly, setShowSpecsOnly,
 		linkedTasksExpanded, setLinkedTasksExpanded,
@@ -379,6 +379,7 @@ function DocsPageInner() {
 	const currentDocAnnotations = selectedDoc ? annotationCtx.getByDoc(currentDocPath) : [];
 
 	const sidebarContent = (
+		<>
 		<DocsNavSidebar
 			docs={docs}
 			selectedDocPath={selectedDoc?.path}
@@ -389,6 +390,14 @@ function DocsPageInner() {
 			onCreateDoc={openCreateView}
 			onItemSelect={() => setMobileSidebarOpen(false)}
 		/>
+		{walking && !loading && (
+			<div className="flex flex-col gap-2 px-3 pb-3" role="status" aria-busy="true" aria-label="Loading more docs">
+				{[78, 64, 88].map((w, i) => (
+					<Skeleton key={i} className="h-4" style={{ width: `${w}%` }} />
+				))}
+			</div>
+		)}
+		</>
 	);
 
 	const docReference = selectedDoc ? `@doc/${toDisplayPath(selectedDoc.path).replace(/\.md$/, "")}` : "";

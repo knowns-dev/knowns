@@ -877,6 +877,22 @@ export async function getDocs(options?: { summary?: boolean }): Promise<Doc[]> {
 	return data.docs || [];
 }
 
+export interface DocPage {
+	docs: Doc[];
+	total: number;
+	nextCursor?: string;
+}
+
+/** One page of the docs summary list, most recently updated first (limit/cursor/sort are server-side). */
+export async function getDocsPage(options: { limit: number; cursor?: string; signal?: AbortSignal }): Promise<DocPage> {
+	const params = new URLSearchParams({ summary: "true", sort: "updated-desc", limit: String(options.limit) });
+	if (options.cursor) params.set("cursor", options.cursor);
+	const res = await apiFetch(`${API_BASE}/api/docs?${params}`, { signal: options.signal });
+	if (!res.ok) throw new Error("Failed to fetch docs");
+	const data = await res.json();
+	return { docs: data.docs || [], total: data.total ?? 0, nextCursor: data.nextCursor };
+}
+
 export async function getDoc(path: string): Promise<Doc | null> {
 	// Encode each path segment separately to preserve '/' for the wildcard route.
 	const encodedPath = encodeDocPath(path);
